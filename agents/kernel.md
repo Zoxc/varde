@@ -812,7 +812,9 @@ loops counter-clockwise, holes clockwise, so the region is on the left of
 every segment; the curve id names the wall. The kernel knows no sketch:
 whoever builds a profile (regen) turns lines into `Conic2::line`, arcs
 into exact conics of at most 90° and splines into fitted chains, and
-merges regions. `Profile::check` holds what needs no tolerance: at least
+merges regions (`varde_sketch::Profiles::merge`, exact, by the pieces'
+shared vertices; see `agents/sketch.md`). A sketch piece's ends are put at
+its vertices (`Profiles::vertices`), so segments close to the bit. `Profile::check` holds what needs no tolerance: at least
 one loop, at most `MAX_PROFILE_SEGMENTS` (`1 << 16`) segments, loops of
 two or more segments, each segment within the patch bounds with its ends
 within `MAX_COORD` and apart, each segment starting **to the bit** where
@@ -1185,3 +1187,12 @@ with tracing.
   (`λ1² = 4w²λ0λ2`), not `Quadric::cylinder`: it holds for every conic
   weight, and for arcs it is the circular cylinder up to scale.
 - **`Solid::area`** is new next to `Solid::volume`.
+- **`Profiles::merge` returns the loops** (`Vec<Vec<Piece>>`, outer
+  counter-clockwise, holes clockwise, unnested) rather than a merged
+  `Region`, and takes region indices; `Piece` gained its vertices
+  (`start`, `end`, into the new `Profiles::vertices`) so loops join up
+  exactly. `Profiles::resolve` takes a slice of `RegionRef`s (the curve
+  lists are worked out once) and `Profiles::reference` makes them.
+  `MAX_REGION_CURVES` is twice `MAX_CURVES` (a curve can bound several
+  loops), and `RegionRef::check` takes the coordinate limit, since the
+  sketch crate doesn't know `MAX_COORD`.

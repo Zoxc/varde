@@ -363,6 +363,38 @@ details and the timings.
   `holes` (clockwise) as pieces, for extrude, its `outline` flattened for
   drawing and picking (outer first), its `area` and `bounds`;
   `Profiles::region_at` picks one by the even-odd rule on the outline.
+  A `Piece` also names the vertices it runs between (`start`, `end`,
+  indices into `Profiles::vertices`, the merged places): loops join up by
+  them exactly, where the curves' own places meet only within the
+  tolerance, so whoever builds exact geometry (regen, for the kernel's
+  profiles, whose loops must close to the bit) puts piece ends there.
+- **Merging** (`profile/merge.rs`): `Profiles::merge(&[usize])` gives
+  the loops bounding several regions together (repeats count once), the
+  union on the left of each, so outer loops counter-clockwise and holes
+  clockwise, unnested. Exact: regions never overlap, and pieces shared by
+  two picked regions are the same edge (curve and parameters to the bit)
+  run opposite ways, so they cancel; what's left is traced again by vertex,
+  each piece followed by its successor in its own loop where that's still
+  there, else the first left starting where it ends, and walks passing a
+  vertex twice are cut there into loops that don't (regions meeting at a
+  corner only: touching loops, which extrude refuses anyway). Picking a
+  hole's inside with the region round it fills the hole. `MergeError`:
+  `Empty`, `NoRegion(index)`, `Open` (hand-made profiles only).
+- **References** (`profile/reference.rs`): a `RegionRef { curves, holes,
+  inside }` names a region for a feature to keep (serde): the sorted
+  curve ids of its outer loop and of each hole (holes' lists sorted too)
+  and a point strictly inside. `Profiles::reference(index)` makes one,
+  the point the middle of the widest span inside along 16 horizontal
+  lines across the region's box, preferring one `region_at` agrees with
+  (None for a region too thin, or of more than `MAX_REGION_CURVES`, twice
+  `MAX_CURVES`, ids). `Profiles::resolve(&[RegionRef])` finds each: the
+  one region with the same curve lists, else (none or several, as for the
+  two halves of a circle cut by a line) the region its point is in, else
+  none (the feature fails with "region not found"). So a region survives
+  curves added elsewhere and dimensions changed, and a region split in
+  two resolves to the half its point is in. `RegionRef::check(max)` holds
+  what a file could get wrong: at most `MAX_REGION_CURVES` ids, lists not
+  empty and sorted without repeats, `inside` finite and within `max`.
 - **Near misses**: `Profiles::open_ends` are the ends only one piece
   reaches; `Profiles::near_misses(gap)` pairs those within `gap`, which
   is the view's (a few pixels in sketch units), so profiles don't depend

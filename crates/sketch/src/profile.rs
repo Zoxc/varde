@@ -31,6 +31,12 @@ use crate::sets::Sets;
 use crate::spline::bezier;
 use crate::{Curve, Id, Sketch};
 
+mod merge;
+mod reference;
+
+pub use merge::MergeError;
+pub use reference::{MAX_REGION_CURVES, RegionRef, RegionRefError};
+
 /// The most places where curves are cut: their ends and where they meet.
 /// A sketch people draw has a few per curve; a file could have every line
 /// cross every other, millions.
@@ -69,11 +75,19 @@ const ROUNDING: f64 = 2e-7;
 /// its sweep, 2π for a circle; a spline's from 0 at its start (a closed
 /// one's first point) to 1 at its end (see
 /// [`BSpline`](crate::BSpline)).
+///
+/// `start` and `end` are the vertices it runs between, indices into
+/// [`Profiles::vertices`]: pieces meeting there share them, where their
+/// curves' own places meet only within the tolerance. Loops join up by
+/// them exactly, and whoever builds exact geometry from pieces puts the
+/// ends there.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Piece {
     pub curve: Id,
     pub from: f64,
     pub to: f64,
+    pub start: usize,
+    pub end: usize,
 }
 
 /// A region of the sketch: what an outer loop encloses, less its holes.
@@ -114,6 +128,10 @@ pub struct NearMiss {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Profiles {
     pub regions: Vec<Region>,
+    /// Where the pieces' ends are, by [`Piece::start`] and [`Piece::end`]:
+    /// the places curves were cut, merged within the tolerance, each a
+    /// curve's end's place if one is among them.
+    pub vertices: Vec<DVec2>,
     /// Sorted by `x`, for [`Profiles::near_misses`].
     pub open_ends: Vec<OpenEnd>,
 }
@@ -260,8 +278,13 @@ impl Sketch {
         let edges = edges(&curves, &kept, &splits, &vertex_of, tolerance, &mut work)?;
         let graph = Graph::new(&curves, vertices, edges, tolerance);
         let open_ends = graph.open_ends();
+        let vertices = graph.vertices.clone();
         let regions = graph.regions(&mut work)?;
-        Ok(Profiles { regions, open_ends })
+        Ok(Profiles {
+            regions,
+            vertices,
+            open_ends,
+        })
     }
 }
 
@@ -935,10 +958,13 @@ impl<'c> Graph<'c> {
             .iter()
             .map(|&h| {
                 let (from, to) = self.params(h);
+                let (start, end) = self.ends(h);
                 Piece {
                     curve: self.curves[self.edges[h / 2].curve].0,
                     from,
                     to,
+                    start,
+                    end,
                 }
             })
             .collect()

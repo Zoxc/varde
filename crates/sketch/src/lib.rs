@@ -50,8 +50,8 @@ pub use geometry::{ArcPoints, arc_sweep, arc_through, crossing, foot};
 pub use joint::Joint;
 pub use offset::{MAX_OFFSET_WORK, MITER_TURN, OffsetPair};
 pub use profile::{
-    MAX_NEAR_MISSES, MAX_NEAR_PAIRS, MAX_SPLITS, MAX_WORK, NearMiss, OpenEnd, Piece, Profiles,
-    Region, TooComplex,
+    MAX_NEAR_MISSES, MAX_NEAR_PAIRS, MAX_REGION_CURVES, MAX_SPLITS, MAX_WORK, MergeError, NearMiss,
+    OpenEnd, Piece, Profiles, Region, RegionRef, RegionRefError, TooComplex,
 };
 pub use propose::{Accepted, DragSession, Rejected, propose};
 pub use solve::{Analysis, Budget, DEFAULT_ITERATIONS, Failure, Goal, Solution, analyse, solve};

@@ -81,6 +81,7 @@ fn closed(sketch: &Sketch, region: &Region) {
             let next = &pieces[(i + 1) % pieces.len()];
             let (end, start) = (place(piece, piece.to), place(next, next.from));
             assert!(end.distance(start) <= 1e-6 * size, "{end} {start}");
+            assert_eq!(piece.end, next.start);
         }
     }
     let outer = area(sketch, &region.outer);
@@ -905,4 +906,257 @@ fn four_circles_in_squares_as_a_solver_leaves_them_make_five_regions_each() {
     let mut expected = vec![corner; 16];
     expected.extend([25.0 * PI; 4]);
     about(&areas(&found), &expected);
+}
+
+/// Checks `loops`, merged, join up by their vertices, piece to piece, and
+/// pass no vertex twice, and gives their areas, sorted.
+fn merged_areas(sketch: &Sketch, profiles: &Profiles, loops: &[Vec<Piece>]) -> Vec<f64> {
+    for found in loops {
+        assert!(!found.is_empty());
+        let mut starts = BTreeSet::new();
+        for (i, piece) in found.iter().enumerate() {
+            assert_eq!(piece.end, found[(i + 1) % found.len()].start);
+            assert!(starts.insert(piece.start), "{found:?}");
+            assert!(piece.start < profiles.vertices.len());
+        }
+    }
+    let mut areas: Vec<f64> = loops.iter().map(|found| area(sketch, found)).collect();
+    areas.sort_by(f64::total_cmp);
+    areas
+}
+
+/// The index of the region `point` is in.
+fn at_point(profiles: &Profiles, x: f64, y: f64) -> usize {
+    profiles.region_at(DVec2::new(x, y)).unwrap()
+}
+
+#[test]
+fn regions_side_by_side_merge_into_one_loop() {
+    let mut sketch = Sketch::default();
+    rectangle(&mut sketch, 0.0, 0.0, 2.0, 1.0);
+    let a = point(&mut sketch, 1.0, 0.0);
+    let b = point(&mut sketch, 1.0, 1.0);
+    let middle = line(&mut sketch, a, b);
+    let profiles = profiles(&sketch);
+    assert_eq!(profiles.regions.len(), 2);
+    let loops = profiles.merge(&[0, 1]).unwrap();
+    assert_eq!(loops.len(), 1);
+    about(&merged_areas(&sketch, &profiles, &loops), &[2.0]);
+    assert!(loops[0].iter().all(|piece| piece.curve != middle));
+    // Either way round, and repeats counting once, the same.
+    assert_eq!(profiles.merge(&[1, 0, 1]).unwrap(), loops);
+    // One region is its own loops.
+    assert_eq!(
+        profiles.merge(&[1]).unwrap(),
+        vec![profiles.regions[1].outer.clone()]
+    );
+}
+
+#[test]
+fn a_hole_and_what_fills_it_merge_into_the_plate() {
+    let mut sketch = Sketch::default();
+    let sides = rectangle(&mut sketch, 0.0, 0.0, 10.0, 10.0);
+    round(&mut sketch, 5.0, 5.0, 2.0);
+    round(&mut sketch, 2.0, 2.0, 1.0);
+    let profiles = profiles(&sketch);
+    let plate = at_point(&profiles, 8.0, 8.0);
+    let disc = at_point(&profiles, 5.0, 5.0);
+    let small = at_point(&profiles, 2.0, 2.0);
+    // The plate alone keeps both holes.
+    let loops = profiles.merge(&[plate]).unwrap();
+    let hole = PI * 4.0;
+    let little = PI;
+    about(
+        &merged_areas(&sketch, &profiles, &loops),
+        &[-hole, -little, 100.0],
+    );
+    // With the disc, one hole's gone.
+    let loops = profiles.merge(&[disc, plate]).unwrap();
+    about(&merged_areas(&sketch, &profiles, &loops), &[-little, 100.0]);
+    // With both, the square.
+    let loops = profiles.merge(&[disc, plate, small]).unwrap();
+    about(&merged_areas(&sketch, &profiles, &loops), &[100.0]);
+    assert_eq!(curves(&loops[0]), sides.into_iter().collect());
+    // The discs alone are two loops.
+    let loops = profiles.merge(&[small, disc]).unwrap();
+    about(&merged_areas(&sketch, &profiles, &loops), &[little, hole]);
+}
+
+#[test]
+fn halves_of_a_circle_merge_into_the_circle() {
+    let mut sketch = Sketch::default();
+    let circle = round(&mut sketch, 0.0, 0.0, 3.0);
+    let a = point(&mut sketch, -1.0, -5.0);
+    let b = point(&mut sketch, 2.0, 5.0);
+    line(&mut sketch, a, b);
+    let profiles = profiles(&sketch);
+    assert_eq!(profiles.regions.len(), 2);
+    let loops = profiles.merge(&[0, 1]).unwrap();
+    assert_eq!(loops.len(), 1);
+    assert!(loops[0].iter().all(|piece| piece.curve == circle));
+    about(&merged_areas(&sketch, &profiles, &loops), &[PI * 9.0]);
+}
+
+#[test]
+fn regions_apart_or_at_a_corner_stay_loops_of_their_own() {
+    let mut sketch = Sketch::default();
+    // Three in a row, the middle one sharing a side with each.
+    rectangle(&mut sketch, 0.0, 0.0, 3.0, 1.0);
+    for x in [1.0, 2.0] {
+        let a = point(&mut sketch, x, 0.0);
+        let b = point(&mut sketch, x, 1.0);
+        line(&mut sketch, a, b);
+    }
+    // And one touching the last at its corner.
+    rectangle(&mut sketch, 3.0, 1.0, 4.0, 2.0);
+    let profiles = profiles(&sketch);
+    let [first, middle, last, corner] =
+        [(0.5, 0.5), (1.5, 0.5), (2.5, 0.5), (3.5, 1.5)].map(|(x, y)| at_point(&profiles, x, y));
+    let loops = profiles.merge(&[first, last]).unwrap();
+    about(&merged_areas(&sketch, &profiles, &loops), &[1.0, 1.0]);
+    let loops = profiles.merge(&[first, middle, last]).unwrap();
+    about(&merged_areas(&sketch, &profiles, &loops), &[3.0]);
+    // Cut where they meet, as two loops, whichever way they were traced.
+    let loops = profiles.merge(&[first, middle, last, corner]).unwrap();
+    about(&merged_areas(&sketch, &profiles, &loops), &[1.0, 3.0]);
+}
+
+#[test]
+fn merging_nothing_or_a_missing_region_fails() {
+    let mut sketch = Sketch::default();
+    rectangle(&mut sketch, 0.0, 0.0, 1.0, 1.0);
+    let profiles = profiles(&sketch);
+    assert_eq!(profiles.merge(&[]), Err(MergeError::Empty));
+    assert_eq!(profiles.merge(&[0, 1]), Err(MergeError::NoRegion(1)));
+    assert_eq!(
+        Profiles::default().merge(&[usize::MAX]),
+        Err(MergeError::NoRegion(usize::MAX))
+    );
+}
+
+#[test]
+fn every_region_is_found_again_by_its_reference() {
+    let mut sketch = Sketch::default();
+    rectangle(&mut sketch, 0.0, 0.0, 10.0, 10.0);
+    round(&mut sketch, 5.0, 5.0, 2.0);
+    // A line across the disc splits it into two regions of the same
+    // curves, told apart by the point inside.
+    let a = point(&mut sketch, 3.0, 3.0);
+    let b = point(&mut sketch, 7.0, 7.5);
+    line(&mut sketch, a, b);
+    // A thin one.
+    rectangle(&mut sketch, 1.0, 8.0, 9.0, 8.01);
+    let profiles = profiles(&sketch);
+    let references: Vec<RegionRef> = (0..profiles.regions.len())
+        .map(|index| profiles.reference(index).unwrap())
+        .collect();
+    let found = profiles.resolve(&references);
+    let all: Vec<Option<usize>> = (0..profiles.regions.len()).map(Some).collect();
+    assert_eq!(found, all);
+    for (index, reference) in references.iter().enumerate() {
+        assert_eq!(reference.check(1e6), Ok(()));
+        assert_eq!(profiles.region_at(reference.inside), Some(index));
+    }
+    assert_eq!(profiles.reference(profiles.regions.len()), None);
+}
+
+#[test]
+fn a_region_is_found_again_after_its_sketch_changes() {
+    let mut sketch = Sketch::default();
+    let sides = rectangle(&mut sketch, 0.0, 0.0, 10.0, 10.0);
+    let hole = round(&mut sketch, 5.0, 5.0, 2.0);
+    let before = profiles(&sketch);
+    let plate = at_point(&before, 9.0, 9.0);
+    let reference = before.reference(plate).unwrap();
+    let mut expected: Vec<Id> = sides.clone();
+    expected.sort_unstable();
+    assert_eq!(reference.curves, expected);
+    assert_eq!(reference.holes, vec![vec![hole]]);
+
+    // Curves added elsewhere, and the plate made smaller so the point
+    // inside is outside it: found by its curves.
+    rectangle(&mut sketch, 20.0, 0.0, 30.0, 10.0);
+    for point in &mut sketch.points {
+        if point.at.x == 10.0 {
+            point.at.x = 8.0;
+        }
+    }
+    sketch.curves.iter_mut().for_each(|entry| {
+        if let Curve::Circle { radius, .. } = &mut entry.curve {
+            *radius = 1.0;
+        }
+    });
+    let mut moved = reference.clone();
+    moved.inside = DVec2::new(9.0, 9.0);
+    let after = profiles(&sketch);
+    let plate = at_point(&after, 7.0, 7.0);
+    assert_eq!(after.resolve(&[moved.clone()]), vec![Some(plate)]);
+    assert_eq!(after.regions[plate].holes.len(), 1);
+
+    // Split by a line across it: no region has its curves, so the one
+    // its point is in.
+    let a = point(&mut sketch, 0.0, 8.5);
+    let b = point(&mut sketch, 8.0, 8.5);
+    line(&mut sketch, a, b);
+    let split = profiles(&sketch);
+    let top = at_point(&split, 5.0, 9.0);
+    let mut inside = reference.clone();
+    inside.inside = DVec2::new(5.0, 9.0);
+    assert_eq!(split.resolve(&[inside]), vec![Some(top)]);
+    // With its point outside every region, it's gone.
+    assert_eq!(split.resolve(&[moved]), vec![None]);
+}
+
+#[test]
+fn references_from_files_are_checked() {
+    let mut sketch = Sketch::default();
+    rectangle(&mut sketch, 0.0, 0.0, 10.0, 10.0);
+    round(&mut sketch, 5.0, 5.0, 2.0);
+    round(&mut sketch, 2.0, 2.0, 1.0);
+    let profiles = profiles(&sketch);
+    let good = profiles.reference(at_point(&profiles, 9.0, 9.0)).unwrap();
+    assert_eq!(good.holes.len(), 2);
+    assert_eq!(good.check(1e6), Ok(()));
+    let bytes = postcard::to_allocvec(&good).unwrap();
+    assert_eq!(postcard::from_bytes::<RegionRef>(&bytes).unwrap(), good);
+
+    let wrong = |change: &dyn Fn(&mut RegionRef)| {
+        let mut reference = good.clone();
+        change(&mut reference);
+        reference.check(1e6)
+    };
+    assert_eq!(wrong(&|r| r.curves.clear()), Err(RegionRefError::Unsorted));
+    assert_eq!(
+        wrong(&|r| r.curves.reverse()),
+        Err(RegionRefError::Unsorted)
+    );
+    assert_eq!(
+        wrong(&|r| r.curves.push(r.curves[3])),
+        Err(RegionRefError::Unsorted)
+    );
+    assert_eq!(wrong(&|r| r.holes.reverse()), Err(RegionRefError::Unsorted));
+    assert_eq!(
+        wrong(&|r| r.holes[0].clear()),
+        Err(RegionRefError::Unsorted)
+    );
+    for inside in [
+        DVec2::new(f64::NAN, 0.0),
+        DVec2::new(0.0, f64::INFINITY),
+        DVec2::new(0.0, -2e6),
+    ] {
+        let found = wrong(&|r| r.inside = inside);
+        assert!(
+            matches!(found, Err(RegionRefError::Inside(at)) if at.x.to_bits() == inside.x.to_bits()),
+            "{found:?}"
+        );
+    }
+    let many = RegionRef {
+        curves: good.curves.clone(),
+        holes: vec![good.holes[0].clone(); MAX_REGION_CURVES],
+        inside: good.inside,
+    };
+    assert_eq!(
+        many.check(1e6),
+        Err(RegionRefError::TooManyCurves(4 + MAX_REGION_CURVES))
+    );
 }
