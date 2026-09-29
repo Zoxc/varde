@@ -496,6 +496,18 @@ is missed), sorted ascending. `self_pairs(margin)` queries every box
 through `par_map` and returns the pairs `[i, j]`, `i < j`, sorted. Results
 never depend on the tree's shape or the thread count.
 
+Boxes that crowd each other (long thin triangles, or a profile's long
+chords all crossing one spot) can make pairs of nearly every two, and
+collecting them would run out of memory long before an operation's
+budget. So operations with a budget take `pairs_within(ids, margin, keep,
+work)` (and `self_pairs_within`): for a chunk of 256 ids at a time it
+first counts the pairs `keep` takes (each query stopping once past what
+`work` has left), spends them, and only then collects them, failing with
+`TooComplex` as soon as they would be more than the work left. The
+outcome depends only on how many pairs there are. Repair's pair search
+and the extrude's separation use it; `check`, which has no budget, still
+takes `self_pairs` (after a repair its pairs are ones repair counted).
+
 ### Refinement (`mesh/refine.rs`)
 
 Red–green, exact, every split at `½`. The mesh under refinement is a set of
@@ -879,7 +891,29 @@ steps:
    most 16 times all told here, and never below `MIN_SPLIT`; past these,
    `TooComplex`). Coordinates below `1e-30` are flushed to 0 for spade,
    which refuses tiny non-zero ones: its exact predicates then decide only
-   which triangles there are, far above that difference.
+   which triangles there are, and moving points by that little changes
+   only triangles with corners that close to a line, slivers along the
+   convex hull outside the region (separation keeps every vertex far from
+   the chords it doesn't end). The points go in in a fixed shuffled order
+   (SplitMix64, the same everywhere), with spade's hierarchy for point
+   location, and spade's vertex numbers are mapped back to ours: in the
+   loops' order each vertex of a hole inside a fine outline took apart
+   about half the triangles, `n²` flips before the budget was looked at
+   (two circles of 32 768 sides: 7.5 s; now 0.2 s).
+   - **Flat corners, on the second try** (step 5): a corner at a loop
+     vertex that is obtuse with the vertex within 64 resolutions of the
+     opposite side (short segments meeting nearly straight, such as a
+     circle cut into uneven arcs) gets a Steiner point moved in from the
+     vertex along the bisector of the tangents there, by half the shorter
+     chord meeting there (or a quarter or a sixteenth of that): where the
+     way in crosses no segment's hull, the point is more than half that
+     distance and 4 resolutions from every hull and Steiner point, and no
+     Steiner point is already within that distance of the vertex. Of two
+     new points too close, the later vertex's is dropped. A flat ear
+     whose corner gets one gets no centroid. Such a sliver comes within
+     the resolution of the walls, and a flat ear's centroid lies as close
+     to its sides as the ear is flat; the point takes the vertex's corner
+     instead.
 4. **Mesh** (`build`). The chain's vertices and the Steiner points at
    `from`, then again moved by `offset = normal·(to − from)`. Each segment's
    wall is two patches, `(a0, a1, b1)` and `(a0, b1, b0)`, whose curved
@@ -890,7 +924,16 @@ steps:
    End cap triangles as triangulated, start cap reversed.
 5. **Repair and check**: `repair_within` with the same work, then
    `Solid::new` checks it all. In every test so far repair finds nothing
-   to split: the construction already passes.
+   to split: the construction already passes. If steps 3 to 5 fail with
+   `Invalid` or `TooComplex` and work is left, they run again from the
+   separated chain with flat corners mended (step 3); if that fails too,
+   the first error stands. Moving points in from every flat corner can
+   line them up into slivers of their own (along a fine polygon), so it
+   isn't the first try: the second only adds solids. A circle of radius
+   0.01 to 1 000 cut at random angles into arcs of 0.06° to 86° failed
+   at the default tolerance one time in three before, and now one in
+   thirteen, all of radius under 0.11, whose shortest arcs are under a
+   hundred resolutions long.
 
 A curved wall's surface is the cylinder over its conic: with `λ` the
 barycentric coordinates of a point's projection on the conic's control
@@ -902,19 +945,29 @@ circular cylinder this way, ellipse, parabola and hyperbola arcs their
 cylinders. Straight walls: the plane through the segment, normal
 `chord × normal` (out of the region).
 
-Work: separation spends the segments plus the pairs each round,
-triangulation 8 per vertex plus the triangles each round, then the
-patches, then repair. Segment counts past `MAX_PATCHES / 4` are
+Work: separation spends the segments plus the pairs each round (counted
+before they are collected, see "BVH"), triangulation 8 per vertex before
+triangulating plus the triangles each round, placing flat corners' points
+the segments, Steiner points and candidates plus the ones found near, then
+the patches, then repair. Segment counts past `MAX_PATCHES / 4` are
 `TooComplex`.
 
 Measured (release): the tests' 80 × 80 plate with 64 round holes 1.1
 apart (260 segments) comes out with 940 vertices a cap and 4 012
-patches; a 210 × 210 plate with 400 such holes, about 20 000 patches in
-0.14 s; a plate with four holes splits nothing (20 segments, 92
-patches). A ring of radius 10, 0.001 wide, needs 1 024 segments. 600
-random plates with holes and weights from 0.05 to 20, most refused as
-touching: the slowest took 28 ms. A circle of 4 096 arcs of radius 100
-gives about 22 000 patches in 0.16 s. A square with one side a conic of
+patches; a 210 × 210 plate with 400 such holes, 22 620 patches in
+0.47 s, on the second try (holes pass 0.1 from the plate's sides, which
+have no vertices: the edges between the holes along a side keep leaving
+their arcs along the tangent, and halving those arcs never ends); a
+plate with four holes splits nothing (20 segments, 92 patches). A ring
+of radius 10, 0.001 wide, needs 1 024 segments. 600 random plates with
+holes and weights from 0.05 to 20, most refused as touching: the slowest
+took 32 ms. A circle of 4 096 arcs of radius 100 gives about 22 300
+patches in 0.13 s. A 16 384-gon of radius 100 takes 0.5 s; a 65 536-gon
+fails as `Invalid` in 5 s (its sides turn by 2e-7 over 1e-2). A quarter
+disc whose arc is 16 384 straight pieces, and two circles of 16 384
+sides round each other, are `TooComplex` in about 1 s: their caps are
+fans or strips of long thin triangles whose boxes overlap by the
+thousand, more pairs than the budget. A square with one side a conic of
 any weight from `1/64` to 64 bulging either way passes (with weight 20
 or more and bulging well into the region, after halving that side once
 for the fold check).
@@ -928,7 +981,12 @@ cusped; a tilted frame far out, also with axes a little off square;
 faces named per curve in profile order, the pieces of a halved segment
 on its face; every refusal (extents, frames, overlapping, touching and
 crossing loops, bad nesting, cusps, segments running back, too thin, out
-of budget) with its error; the same bits at 1 and 8 threads.
+of budget) with its error; the same bits at 1 and 8 threads. Circles cut
+into uneven arcs at three tolerances (the second try, at 1 and 8
+threads too); a star of 65 535 long chords refused within its budget
+rather than collecting two billion pairs; two circles of 16 384 sides
+triangulated in about a second unoptimized (over a minute in the loops'
+order).
 
 Known gaps:
 
@@ -942,7 +1000,23 @@ Known gaps:
   construction keeps concave bulges inside their triangles and passes
   `check` without repair in every test.
 - Flat cap triangles thinner than the resolution (nearly collinear
-  vertices) fail as flat pairs in repair: `Invalid`.
+  vertices) fail as flat pairs in repair: `Invalid`. The second try
+  mends those at loop vertices, but **fine polygons at coarse
+  tolerances** (thousands of sides turning by about a resolution over
+  their length, a 1 024-gon of radius 10 at fit 0.1) still fail: the
+  moved-in points line up into slivers of their own, as their triangles
+  between each other are as flat. Quality refinement of the caps
+  (circumcentres of bad triangles) would mend it.
+- **Caps of long thin triangles**: fans from one vertex (a sector whose
+  arc is many straight pieces) and strips between two fine polygons have
+  boxes overlapping by the thousand; past a few thousand segments their
+  pairs exceed the budget (`TooComplex`). Also mended by refinement, or a
+  finer broad phase than boxes.
+- **Narrow corners where halving doesn't converge**: an inner edge along
+  a curve's tangent between two curves that both come close to a
+  straight side with no vertices near (a row of holes 0.1 from a plate's
+  side) keeps coming back as the arcs are halved, until `MAX_CAP_DEPTH`;
+  the second try's moved-in points mend the cases seen.
 
 ## Volume and area (`Solid::volume`, `Solid::area`, `src/quadrature.rs`)
 
@@ -1093,9 +1167,15 @@ with tracing.
 - **Caps are triangulated with `spade`** (constrained Delaunay, exact
   predicates, builds for wasm; the kernel's only new dependency), then
   mended in rounds (Steiner points at ears, halving curves at narrow
-  corners and folds), rather than by ear-clipping. Only its insertion,
-  constraints and face walks are used; its refinement, whose hash sets
-  could be iterated in a random order, is not.
+  corners and folds), rather than by ear-clipping. Only its insertion
+  (with its hierarchy for point location), constraints and face walks
+  are used; its refinement and its bulk loading, whose hash sets could
+  be iterated in a random order, are not. The points go in in a fixed
+  shuffled order, which bounds the flips.
+- **Flat corners are mended on a second try** of the caps, when the
+  first fails, rather than always: moved-in points can line up into
+  slivers of their own, so doing it first lost some solids the plain
+  caps give.
 - **`extrude` takes a `Frame`** (origin and axes) and the extent as
   `from < to` along its normal; flipping and sides are the caller's.
 - **`KernelError::Profile(ProfileError)`** carries a profile's own

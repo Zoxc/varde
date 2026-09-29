@@ -48,7 +48,6 @@ impl Work {
     }
 
     /// The units left.
-    #[cfg(test)]
     pub(crate) fn left(&self) -> u64 {
         self.left
     }

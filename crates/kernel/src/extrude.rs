@@ -15,7 +15,9 @@
 //! other (so the polygon of their chords is simple and every bulge clear
 //! of the rest) and where a cap patch's corner would be too narrow or too
 //! wide, and the caps get Steiner points where two of the loop's curves
-//! meet smoothly. The rules are written down in `agents/kernel.md`.
+//! meet smoothly and, on a second try if the first fails, where short
+//! segments meet nearly straight. The rules are written down in
+//! `agents/kernel.md`.
 
 use glam::{DMat3, DVec2, DVec3};
 
@@ -119,11 +121,22 @@ pub fn extrude(
     let mut work = Work::new(budget);
     let mut chain = Chain::new(profile, margin)?;
     chain.separate(&mut work)?;
-    let cap = cap::triangulate(&mut chain, margin, &mut work)?;
-    let mesh = build(&chain, &cap, frame, from, to, feature)?;
-    work.spend(mesh.tris().len())?;
-    let mesh = mesh.repair_within(tol, &mut work)?;
-    Solid::new(mesh, tol)
+    let solid = |mut chain: Chain, flat_corners, work: &mut Work| {
+        let cap = cap::triangulate(&mut chain, margin, flat_corners, work)?;
+        let mesh = build(&chain, &cap, frame, from, to, feature)?;
+        work.spend(mesh.tris().len())?;
+        Solid::new(mesh.repair_within(tol, work)?, tol)
+    };
+    // Caps with slivers along short segments meeting nearly straight fail
+    // the hull rules next to the walls. Moving Steiner points in from such
+    // corners mends most, but can line the points up into slivers of
+    // their own, so it is the second try.
+    match solid(chain.clone(), false, &mut work) {
+        Err(first @ (KernelError::Invalid(_) | KernelError::TooComplex)) if work.left() > 0 => {
+            solid(chain, true, &mut work).map_err(|_| first)
+        }
+        result => result,
+    }
 }
 
 /// The closed mesh: the chain's vertices and the Steiner points at `from`,

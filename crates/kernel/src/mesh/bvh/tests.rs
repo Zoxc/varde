@@ -74,3 +74,55 @@ fn pairs_are_deterministic() {
     let pairs = assert_deterministic(|| Bvh::new(boxes.clone()).self_pairs(0.1));
     assert!(!pairs.is_empty());
 }
+
+#[test]
+fn pairs_within_a_budget() {
+    use crate::budget::Work;
+    use crate::{Budget, KernelError};
+    let mut rng = Rng::new(8);
+    let boxes = random_boxes(&mut rng, 1000);
+    let bvh = Bvh::new(boxes);
+    let all = bvh.self_pairs(4.0);
+    assert!(all.len() > 300, "{}", all.len());
+    // Enough work: the same pairs, one unit each.
+    let mut work = Work::new(&Budget::new(all.len() as u64 + 5));
+    assert_eq!(bvh.self_pairs_within(4.0, &mut work), Ok(all.clone()));
+    assert_eq!(work.left(), 5);
+    // One unit short: refused, whatever the chunks.
+    let mut work = Work::new(&Budget::new(all.len() as u64 - 1));
+    assert_eq!(
+        bvh.self_pairs_within(4.0, &mut work),
+        Err(KernelError::TooComplex)
+    );
+    // Some boxes, and a filter.
+    let ids: Vec<u32> = (0..1000).step_by(3).collect();
+    let mut work = Work::new(&Budget::DEFAULT);
+    let odd = bvh
+        .pairs_within(&ids, 4.0, |i, j| i != j && j % 2 == 1, &mut work)
+        .unwrap();
+    let mut expected = Vec::new();
+    for &i in &ids {
+        let mut near = Vec::new();
+        bvh.query(&bvh.bounds(i), 4.0, &mut near);
+        expected.extend(
+            near.into_iter()
+                .filter(|&j| j != i && j % 2 == 1)
+                .map(|j| [i, j]),
+        );
+    }
+    assert_eq!(odd, expected);
+    // A hundred boxes all overlapping, with room for fewer pairs than
+    // one box has: refused while counting the first.
+    let bvh = Bvh::new(vec![
+        Bounds3 {
+            min: glam::DVec3::ZERO,
+            max: glam::DVec3::ONE,
+        };
+        100
+    ]);
+    let mut work = Work::new(&Budget::new(10));
+    assert_eq!(
+        bvh.self_pairs_within(0.0, &mut work),
+        Err(KernelError::TooComplex)
+    );
+}

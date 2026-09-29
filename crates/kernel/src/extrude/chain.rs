@@ -234,8 +234,8 @@ impl Chain {
                     .map(|s| Bounds3::around(&s.hull()).expect("three points"))
                     .collect(),
             );
-            let pairs = bvh.self_pairs(margin);
-            work.spend(segs.len().saturating_add(pairs.len()))?;
+            work.spend(segs.len())?;
+            let pairs = bvh.self_pairs_within(margin, work)?;
             let next = next_in_loop(&starts);
             let tests = par_map(&pairs, |&[i, j]| {
                 let (a, b) = (&segs[i as usize], &segs[j as usize]);

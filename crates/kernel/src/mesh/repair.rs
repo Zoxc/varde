@@ -126,18 +126,13 @@ fn failures(pieces: &[Piece], tol: &Tolerance, work: &mut Work) -> Result<Vec<u3
     }
 
     let bvh = Bvh::new(pieces.iter().map(|p| p.patch.bounds()).collect());
-    let near = par_map(&changed, |&p| {
-        let mut near = Vec::new();
-        bvh.query(&bvh.bounds(p), margin, &mut near);
-        // Each pair once: with an unchanged piece, or the later one.
-        near.retain(|&q| q != p && (!pieces[q as usize].changed || q > p));
-        near
-    });
-    let mut pairs = Vec::new();
-    for (&p, near) in changed.iter().zip(near) {
-        pairs.extend(near.into_iter().map(|q| [p, q]));
-    }
-    work.spend(pairs.len())?;
+    // Each pair once: with an unchanged piece, or the later one.
+    let pairs = bvh.pairs_within(
+        &changed,
+        margin,
+        |p, q| q != p && (!pieces[q as usize].changed || q > p),
+        work,
+    )?;
     let split = par_map(&pairs, |&[p, q]| {
         let (a, b) = (&pieces[p as usize], &pieces[q as usize]);
         let ids = [a.origin, b.origin];

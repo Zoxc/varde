@@ -643,3 +643,128 @@ fn random_plates_with_holes() {
     }
     assert!(built >= 10, "{built}");
 }
+
+#[test]
+fn crowded_boxes_run_out_of_budget_not_memory() {
+    // A star of 65 535 chords, each nearly a diameter and leaving the one
+    // before at 0.28°: every two boxes overlap, some two billion pairs,
+    // which must run out of the budget before they are collected.
+    let (n, k) = (65_535, 32_717);
+    let points: Vec<DVec2> = (0..n)
+        .map(|i| {
+            let angle = (i * k % n) as f64 / n as f64 * std::f64::consts::TAU;
+            DVec2::new(angle.cos(), angle.sin()) * 100.0
+        })
+        .collect();
+    let star = profile(vec![polygon(&points, 0)]);
+    assert_eq!(star.check(), Ok(()));
+    assert_eq!(
+        extrude(&star, &Frame::XY, 0.0, 1.0, 1, &TOL, &Budget::new(1 << 20)),
+        Err(KernelError::TooComplex)
+    );
+}
+
+/// `p` with the segments an extrude at `tol` takes as straight, those
+/// whose control point is within the resolution of their chord, made
+/// straight: the profile whose area the solid has.
+fn straightened(p: &Profile, tol: &Tolerance) -> Profile {
+    let straight = |s: &Segment| {
+        let c = &s.conic;
+        let chord = c.p1 - c.p0;
+        if chord.perp_dot(c.c - c.p0).abs() > tol.resolution() * chord.length() {
+            *s
+        } else {
+            Segment::line(c.p0, c.p1, s.curve).unwrap()
+        }
+    };
+    Profile {
+        loops: p
+            .loops
+            .iter()
+            .map(|lp| Loop {
+                segments: lp.segments.iter().map(straight).collect(),
+            })
+            .collect(),
+    }
+}
+
+/// The circle of radius `r` round the origin cut at random angles into
+/// arcs of `min` to 1.5 radians and what is left, of curves `0..`.
+fn cut_circle(rng: &mut Rng, r: f64, min: f64) -> Loop {
+    let mut angles = vec![0.0];
+    loop {
+        let next = angles.last().unwrap() + rng.log_range(min, 1.5);
+        if next >= std::f64::consts::TAU - min {
+            break;
+        }
+        angles.push(next);
+    }
+    let points: Vec<DVec2> = angles
+        .iter()
+        .map(|&a| DVec2::new(a.cos(), a.sin()) * r)
+        .collect();
+    let n = points.len();
+    Loop {
+        segments: (0..n)
+            .map(|i| arc(DVec2::ZERO, points[i], points[(i + 1) % n], i as u64))
+            .collect(),
+    }
+}
+
+#[test]
+fn circles_cut_unevenly() {
+    // Short arcs among long ones meet the next nearly straight, so the
+    // caps' corners there are flat: an ear's centroid lies about as
+    // close to its sides as the ear is flat, and slivers along the loop
+    // come within the resolution of the walls. Moving Steiner points in
+    // from those corners mends them. The same bits at 1 and 8 threads.
+    let mut rng = Rng::new(3);
+    let cases: Vec<(Profile, f64, Tolerance)> = (0..120)
+        .map(|case| {
+            let r = rng.log_range(0.1, 1e3);
+            let p = profile(vec![cut_circle(&mut rng, r, 2e-3)]);
+            let tol = Tolerance::new([Tolerance::MIN_FIT, 1e-3, 1e-2][case % 3]).unwrap();
+            (p, r, tol)
+        })
+        .collect();
+    let results = assert_deterministic(|| {
+        cases
+            .iter()
+            .map(|(p, r, tol)| extrude(p, &Frame::XY, 0.0, *r, 1, tol, &Budget::DEFAULT))
+            .collect::<Vec<_>>()
+    });
+    for (case, ((p, r, tol), result)) in cases.iter().zip(results).enumerate() {
+        let solid = result.unwrap_or_else(|e| panic!("case {case}: {e}"));
+        assert_eq!(solid.mesh().check_faces(tol), Ok(()));
+        let exact = straightened(p, tol).area() * r;
+        assert!(
+            (solid.volume() - exact).abs() < 1e-12 * exact,
+            "case {case}"
+        );
+    }
+}
+
+#[test]
+fn fine_rings_triangulate_in_time() {
+    // Two circles of 16 384 straight sides each: inserted in the loops'
+    // order, each vertex of the inner one would take apart about half
+    // the triangles between the circles, some 10^8 flips in all, before
+    // the budget is ever looked at. Shuffled, each takes a few.
+    let ring = |r: f64| {
+        let n = 16_384;
+        let points: Vec<DVec2> = (0..n)
+            .map(|i| {
+                let angle = i as f64 / n as f64 * std::f64::consts::TAU;
+                DVec2::new(angle.cos(), angle.sin()) * r
+            })
+            .collect();
+        polygon(&points, 0)
+    };
+    let p = profile(vec![ring(100.0), reversed(&ring(50.0))]);
+    let start = std::time::Instant::now();
+    // The budget runs out after the first triangulation.
+    let result = extrude(&p, &Frame::XY, 0.0, 1.0, 1, &TOL, &Budget::new(1 << 19));
+    assert_eq!(result, Err(KernelError::TooComplex));
+    // About a second unoptimized; in the loops' order, over a minute.
+    assert!(start.elapsed().as_secs() < 30, "{:?}", start.elapsed());
+}
