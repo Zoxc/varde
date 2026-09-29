@@ -68,9 +68,37 @@ const TURN: f64 = 0.17453292519943295;
 /// `cos` of [`Display::SMOOTH_DEGREES`].
 const COS_SMOOTH: f64 = 0.9998476951563913;
 
+/// The most a tessellation may make of each part of a [`RenderMesh`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Limits {
+    pub(crate) vertices: u64,
+    pub(crate) indices: u64,
+    pub(crate) edges: u64,
+}
+
+impl Limits {
+    /// [`RenderMesh::MAX_VERTICES`] and the others.
+    pub(crate) const RENDER: Limits = Limits {
+        vertices: RenderMesh::MAX_VERTICES as u64,
+        indices: RenderMesh::MAX_INDICES as u64,
+        edges: RenderMesh::MAX_EDGES as u64,
+    };
+}
+
 /// `mesh`, which must pass [`Mesh::check`], as triangles: see the module
 /// docs.
 pub(crate) fn tessellate(mesh: &Mesh, display: &Display) -> Result<RenderMesh, MeshError> {
+    tessellate_within(mesh, display, &Limits::RENDER)
+}
+
+/// [`tessellate`], failing with [`MeshError::TooLarge`] if the mesh
+/// would have more of a part than `limits` allow, which must be within
+/// [`Limits::RENDER`]. Each part is counted before it's made.
+pub(crate) fn tessellate_within(
+    mesh: &Mesh,
+    display: &Display,
+    limits: &Limits,
+) -> Result<RenderMesh, MeshError> {
     let Some(bounds) = Bounds3::around(mesh.verts()) else {
         return Ok(RenderMesh::default());
     };
@@ -111,9 +139,7 @@ pub(crate) fn tessellate(mesh: &Mesh, display: &Display) -> Result<RenderMesh, M
     let at_least = (mesh.verts().len() as u64)
         .saturating_add(edge_points)
         .saturating_add(inner_total);
-    if triangles.saturating_mul(3) > RenderMesh::MAX_INDICES as u64
-        || at_least > RenderMesh::MAX_VERTICES as u64
-    {
+    if triangles.saturating_mul(3) > limits.indices || at_least > limits.vertices {
         return Err(MeshError::TooLarge);
     }
 
@@ -156,6 +182,14 @@ pub(crate) fn tessellate(mesh: &Mesh, display: &Display) -> Result<RenderMesh, M
             !smooth[e as usize] || face_key(face(a)) != face_key(face(b))
         })
         .collect();
+    let feature_segments: u64 = edge_ids
+        .iter()
+        .filter(|&&e| feature[e as usize])
+        .map(|&e| u64::from(counts[e as usize]))
+        .sum();
+    if feature_segments > limits.edges {
+        return Err(MeshError::TooLarge);
+    }
 
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut normals: Vec<[f32; 3]> = Vec::new();
@@ -245,7 +279,7 @@ pub(crate) fn tessellate(mesh: &Mesh, display: &Display) -> Result<RenderMesh, M
     }
     drop(edge_vertices);
     let inner_base = positions.len() as u64;
-    if inner_base.saturating_add(inner_total) > RenderMesh::MAX_VERTICES as u64 {
+    if inner_base.saturating_add(inner_total) > limits.vertices {
         return Err(MeshError::TooLarge);
     }
 

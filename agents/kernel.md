@@ -742,9 +742,12 @@ tessellation too).
   feature) count as one name. So a cylinder draws its two rims, not the
   seams between its four quarter walls, and a box its twelve edges, not
   the diagonals of its sides.
-- **Limits.** Triangle and vertex counts are worked out from the segment
-  counts before any point inside a patch is evaluated, and more than
-  `RenderMesh::MAX_*` fails with `MeshError::TooLarge`; the parts go
+- **Limits.** Triangle, vertex and feature-edge counts are worked out
+  from the segment counts before any point inside a patch is evaluated,
+  and more than `RenderMesh::MAX_*` fails with `MeshError::TooLarge`.
+  The limits are a parameter (`Limits`, `tessellate_within`) so tests
+  reach them with small meshes: each part may be exactly its limit, one
+  more fails. The parts go
   through `RenderMesh::from_parts`, so a position past `MAX_POSITION`
   (a mesh's control points may reach `MAX_CONTROL`) fails with `Values`.
 - **Determinism.** Counts, normals, edge points and patches are pure maps
@@ -757,7 +760,14 @@ follows the largest count, but at a corner of a skewed patch (a cylinder
 wall triangle, whose far corner is round the arc) the inner grid's corner
 is two steps round from the patch's, and the triangle there is two steps
 wide: on the test cylinder the worst triangle's middle is 1.85 chords off
-the surface. A flat torus of 262 144 patches tessellates in about 0.13 s
+the surface. Very skewed patches (a wall a hundredth of its arc
+high) stitch into slivers whose face normals are far from their vertex
+normals; shading uses the vertex normals, so it doesn't show. Positions
+are `f32`: far from the origin, features smaller than an `f32` step
+there (about 0.03 mm at 5e5 mm) collapse into degenerate or flipped
+triangles, as in any `f32` mesh, but no cracks open: both sides of an
+edge read the same rounded samples.
+A flat torus of 262 144 patches tessellates in about 0.13 s
 (release, several threads).
 
 Tests: a cube is 12 triangles, 24 vertices and 12 edges with axis

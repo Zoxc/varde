@@ -341,3 +341,94 @@ fn tessellation_is_deterministic() {
     let solid = Solid::cylinder(DVec3::ZERO, 2.0, 1.0, 1, &TOL).unwrap();
     assert_deterministic(|| solid.tessellate(&Display::default()).unwrap());
 }
+
+/// The size checks, against limits a small mesh reaches: each part may
+/// be as large as its limit and no larger. The real limits take millions
+/// of patches to reach.
+#[test]
+fn a_mesh_past_any_limit_is_too_large() {
+    let mut builder = MeshBuilder::new();
+    add_round_octahedron(&mut builder, DVec3::ZERO, 10.0, false);
+    add_round_octahedron(&mut builder, DVec3::new(0.0, 0.0, 0.2), 9.7, true);
+    let refined = builder
+        .build()
+        .unwrap()
+        .repair(&TOL, &Budget::default())
+        .unwrap();
+    let display = Display::default();
+    for mesh in [
+        Mesh::cylinder(DVec3::ZERO, 3.0, 5.0, 1, &TOL).unwrap(),
+        // Split corners: more vertices than points.
+        torus(24, 12, 3.0, 1.0),
+        refined,
+    ] {
+        let full = tessellate(&mesh, &display).unwrap();
+        let exact = Limits {
+            vertices: full.positions().len() as u64,
+            indices: full.indices().len() as u64,
+            edges: full.edges().len() as u64,
+        };
+        assert!(exact.edges > 0);
+        assert_eq!(
+            tessellate_within(&mesh, &display, &exact).as_ref(),
+            Ok(&full)
+        );
+        for tight in [
+            Limits {
+                vertices: exact.vertices - 1,
+                ..exact
+            },
+            Limits {
+                indices: exact.indices - 1,
+                ..exact
+            },
+            Limits {
+                edges: exact.edges - 1,
+                ..exact
+            },
+        ] {
+            assert_eq!(
+                tessellate_within(&mesh, &display, &tight),
+                Err(MeshError::TooLarge),
+                "{tight:?} of {exact:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_limits_are_the_render_meshs() {
+    assert_eq!(Limits::RENDER.vertices, RenderMesh::MAX_VERTICES as u64);
+    assert_eq!(Limits::RENDER.indices, RenderMesh::MAX_INDICES as u64);
+    assert_eq!(Limits::RENDER.edges, RenderMesh::MAX_EDGES as u64);
+}
+
+/// A solid smaller than an `f32` step where it is loses its shape to
+/// rounding, but no cracks open: the triangles that keep three distinct
+/// corners still meet side to side, to the bit, as the samples each side
+/// reads are the same. (A collapsed triangle's two other sides cancel.)
+#[test]
+fn a_tiny_solid_far_out_opens_no_cracks() {
+    let solid = Solid::cylinder(DVec3::new(9e5, -9e5, 0.0), 0.01, 0.01, 1, &TOL).unwrap();
+    let mesh = solid.tessellate(&Display::default()).unwrap();
+    let p = mesh.positions();
+    let mut sides: BTreeMap<([u32; 3], [u32; 3]), i64> = BTreeMap::new();
+    let mut collapsed = 0;
+    for tri in mesh.indices().chunks(3) {
+        let q = [0, 1, 2].map(|i| bits(p[tri[i] as usize]));
+        if q[0] == q[1] || q[1] == q[2] || q[2] == q[0] {
+            collapsed += 1;
+            continue;
+        }
+        for i in 0..3 {
+            *sides.entry((q[i], q[(i + 1) % 3])).or_default() += 1;
+        }
+    }
+    assert!(collapsed > 0);
+    for (&(a, b), &n) in &sides {
+        assert_eq!(sides.get(&(b, a)), Some(&n), "side {a:?} -> {b:?}");
+    }
+    for n in mesh.normals() {
+        assert!((Vec3::from(*n).length() - 1.0).abs() < 1e-6);
+    }
+}
