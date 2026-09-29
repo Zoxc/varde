@@ -51,6 +51,7 @@ pub use bvh::Bvh;
 pub use check::CheckError;
 pub use face::{Face, FaceName, FacePart, Quadric, Surface};
 pub(crate) use hull::apart;
+pub(crate) use repair::MIN_SPLIT;
 
 /// A hash map with a fixed hasher, for maps only looked up in, never
 /// iterated: nothing can then depend on its order, and lookups by vertex

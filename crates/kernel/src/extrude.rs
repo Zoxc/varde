@@ -4,8 +4,9 @@
 //! normal, from one distance to another. The solid is exact: caps are
 //! flat patches whose boundary edges are the profile's conics and whose
 //! inner edges are straight, and each segment's wall is two patches
-//! ([`cylinder_strip`]), flat for a straight segment and on the exact
-//! cylinder over the conic for a curved one. Walls and caps share their
+//! ([`cylinder_strip`](crate::patch::cylinder_strip)), flat for a
+//! straight segment and on the exact cylinder over the conic for a curved
+//! one. Walls and caps share their
 //! edge records, so the solid is closed by construction; repair then
 //! splits whatever breaks the fold or hull rules, and the result passes
 //! [`Mesh::check`].
@@ -20,9 +21,9 @@ use glam::{DMat3, DVec2, DVec3};
 
 use crate::budget::{Budget, Work};
 use crate::mesh::{Face, FaceName, FacePart, Mesh, MeshBuilder, Quadric, Surface};
-use crate::patch::{Conic2, Conic3, PatchError, cylinder_strip};
+use crate::patch::{Conic2, Conic3, PatchError};
 use crate::profile::{Profile, ProfileError};
-use crate::{KernelError, MAX_COORD, Solid, Tolerance};
+use crate::{KernelError, MAX_COORD, Solid, Tolerance, in_range};
 
 mod cap;
 mod chain;
@@ -66,10 +67,7 @@ impl Frame {
     /// The origin finite and within [`MAX_COORD`], the axes unit and
     /// square within [`Self::SLACK`].
     fn check(&self) -> Result<(), KernelError> {
-        let m = self.origin.abs().max_element();
-        if !(self.origin.is_finite() && m <= f64::from(MAX_COORD)) {
-            return Err(PatchError::Coordinate(m).into());
-        }
+        in_range(self.origin)?;
         let unit = |v: DVec3| (v.length() - 1.0).abs() <= Self::SLACK;
         if !(unit(self.x) && unit(self.y) && self.x.dot(self.y).abs() <= Self::SLACK) {
             return Err(PatchError::Degenerate.into());
@@ -147,14 +145,9 @@ fn build(
         .chain(cap.steiner.iter().copied())
         .collect();
     let bottom: Vec<DVec3> = points.iter().map(|&p| frame.point(p, from)).collect();
-    let max = f64::from(MAX_COORD);
     for &p in &bottom {
-        for p in [p, p + offset] {
-            let m = p.abs().max_element();
-            if !(p.is_finite() && m <= max) {
-                return Err(PatchError::Coordinate(m).into());
-            }
-        }
+        in_range(p)?;
+        in_range(p + offset)?;
     }
 
     let mut builder = MeshBuilder::new();
@@ -211,24 +204,20 @@ fn build(
         let (first, last) = (starts[l], starts[l + 1]);
         for a0 in first..last {
             let a1 = if a0 + 1 == last { first } else { a0 + 1 };
-            let (b0, b1) = (a0 + up, a1 + up);
+            let (a, b) = ([a0, a1], [a0 + up, a1 + up]);
             let seg = &segs[a0 as usize];
+            let face = sides[seg.side as usize];
             if seg.curved {
-                let ctrl = frame.point(seg.conic.c, from);
                 let curve = Conic3 {
                     p0: bottom[a0 as usize],
-                    c: ctrl,
+                    c: frame.point(seg.conic.c, from),
                     w: seg.conic.w,
                     p1: bottom[a1 as usize],
                 };
-                let strip = cylinder_strip(&curve, offset)?;
-                builder.edge(a0, a1, ctrl, seg.conic.w);
-                builder.edge(b0, b1, ctrl + offset, seg.conic.w);
-                builder.edge(a0, b1, strip[0].c[2], strip[0].w[2]);
+                builder.curved_wall(a, b, &curve, offset, face)?;
+            } else {
+                builder.wall(a, b, face);
             }
-            let face = sides[seg.side as usize];
-            builder.tri([a0, a1, b1], face);
-            builder.tri([a0, b1, b0], face);
         }
     }
     for &[a, b, c] in &cap.tris {

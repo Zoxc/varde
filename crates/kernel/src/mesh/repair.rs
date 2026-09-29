@@ -30,7 +30,8 @@ use crate::{KernelError, MAX_PATCHES, Tolerance};
 /// splitting them further only makes more that fail. Pieces of a surface
 /// that keeps clear of itself pass long before this: a patch of size `s`
 /// on a curve of radius `R` sags by about `s²/8R`.
-const MIN_SPLIT: f64 = 64.0;
+/// An extrude's profile segments are halved no smaller either.
+pub(crate) const MIN_SPLIT: f64 = 64.0;
 
 impl Mesh {
     /// The mesh with the fold and control-hull invariants restored by

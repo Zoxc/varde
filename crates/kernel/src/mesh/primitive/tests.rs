@@ -2,6 +2,7 @@ use glam::DVec3;
 
 use super::super::tests::TOL;
 use super::*;
+use crate::MAX_COORD;
 use crate::mesh::CheckError;
 use crate::test_rng::Rng;
 

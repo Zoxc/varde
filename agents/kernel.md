@@ -863,7 +863,8 @@ steps:
      triangle) whose tangents turn by 180° or more, like two arcs in a row
      of a circle, gets a Steiner point at the triangle's centroid.
    - A corner between a curved segment and an inner edge that isn't open
-     gets that segment halved: its tangent turns towards its chord. For a
+     gets that segment halved: the new chord leaves the corner closer to
+     the curve's tangent, which halving keeps. For a
      segment bulging into the region (concave, control point on the left)
      an open corner at both ends means the control point, and so the whole
      bulge, lies inside the triangle.
@@ -883,7 +884,9 @@ steps:
    `from`, then again moved by `offset = normal·(to − from)`. Each segment's
    wall is two patches, `(a0, a1, b1)` and `(a0, b1, b0)`, whose curved
    edges are set from `cylinder_strip` (bottom, top = bottom moved by
-   `offset`, and the diagonal), so the caps share the walls' edge records.
+   `offset`, and the diagonal), so the caps share the walls' edge records
+   (`MeshBuilder::wall` and `curved_wall`, which the box and cylinder use
+   too).
    End cap triangles as triangulated, start cap reversed.
 5. **Repair and check**: `repair_within` with the same work, then
    `Solid::new` checks it all. In every test so far repair finds nothing
@@ -910,7 +913,22 @@ patches; a 210 × 210 plate with 400 such holes, about 20 000 patches in
 0.14 s; a plate with four holes splits nothing (20 segments, 92
 patches). A ring of radius 10, 0.001 wide, needs 1 024 segments. 600
 random plates with holes and weights from 0.05 to 20, most refused as
-touching: the slowest took 28 ms.
+touching: the slowest took 28 ms. A circle of 4 096 arcs of radius 100
+gives about 22 000 patches in 0.16 s. A square with one side a conic of
+any weight from `1/64` to 64 bulging either way passes (with weight 20
+or more and bulging well into the region, after halving that side once
+for the fold check).
+
+Tests: boxes, cylinders, a plate with holes, a slot, a half disc, a
+lens, a thin ring, a rounded rectangle, a bitten square, an S, an
+ellipse and a parabolic arch have their analytic volumes and areas and
+pass `check_faces`; so do random outlines and random plates with holes at
+every tolerance, or they are refused as touching, nesting wrongly or
+cusped; a tilted frame far out, also with axes a little off square;
+faces named per curve in profile order, the pieces of a halved segment
+on its face; every refusal (extents, frames, overlapping, touching and
+crossing loops, bad nesting, cusps, segments running back, too thin, out
+of budget) with its error; the same bits at 1 and 8 threads.
 
 Known gaps:
 
@@ -973,11 +991,11 @@ there by `RenderMesh::from_parts`.
 | `MAX_PATCHES` | `1 << 22` | patches in a mesh; ids and counts fit a `u32` |
 | `MAX_REFINE_DEPTH` | 24 | red splits from an input patch: `2^24` times smaller |
 | `MAX_WORK` | `1 << 26` | work units in one operation: about half a minute on one thread |
-| `MIN_SPLIT` (repair) | 64 resolutions | the smallest piece repair splits |
+| `MIN_SPLIT` (repair) | 64 resolutions | the smallest piece repair splits, and the smallest profile segment an extrude halves |
 | `MAX_PROFILE_SEGMENTS` | `1 << 16` | segments in a profile |
 | `SIN_MIN` (extrude) | `1e-3` | cusps between segments; the narrowest cap patch corner |
-| `MIN_SPLIT`, `MAX_SPLIT_DEPTH` (extrude) | 64 resolutions, 24 | the smallest segment halved, and how often |
-| `MAX_ROUNDS`, `MAX_CAP_DEPTH` (caps) | 32, 16 | rounds of mending the caps, and halvings a segment may have had for them |
+| `MAX_SPLIT_DEPTH` (extrude) | 24 | how often a profile segment may be halved |
+| `MAX_ROUNDS`, `MAX_CAP_DEPTH` (caps) | 32, 16 | rounds of mending the caps, and the halvings all told past which the caps halve a segment no more |
 
 `Budget` is a limit (`Budget::new(work)`, at most `MAX_WORK`;
 `Budget::DEFAULT`); an operation counts it down in a `Work` its steps share

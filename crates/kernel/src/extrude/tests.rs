@@ -170,7 +170,26 @@ fn a_thin_band() {
         assert!((solid.volume() - exact).abs() < 1e-13 * disc);
         let surface = 2.0 * exact + 2.0 * PI * (outer + inner);
         assert!((solid.area() - surface).abs() < 1e-13 * disc);
+        // The pieces of a halved arc are walls of its face.
+        assert!(solid.mesh().tris().len() > 4 * 8 * 2);
+        let walls = [0, 1].map(|c| [0, 1, 2, 3].map(|s| side(c, s)));
+        assert_eq!(parts(&solid)[2..], *walls.as_flattened());
     }
+}
+
+#[test]
+fn sides_are_numbered_per_curve_in_profile_order() {
+    // Curve 5 is two sides of the outline and the hole: its walls count
+    // on through both loops.
+    let mut outline = rect(DVec2::ZERO, DVec2::splat(10.0), 0);
+    outline.segments[1].curve = 5;
+    outline.segments[3].curve = 5;
+    let p = profile(vec![outline, circle(DVec2::splat(5.0), 2.0, 5, true)]);
+    let solid = run(&p, &Frame::XY, 0.0, 1.0).unwrap();
+    let mut expected = vec![FacePart::StartCap, FacePart::EndCap];
+    expected.extend([side(0, 0), side(5, 0), side(2, 0), side(5, 1)]);
+    expected.extend((2..6).map(|s| side(5, s)));
+    assert_eq!(parts(&solid), expected);
 }
 
 #[test]
@@ -455,9 +474,10 @@ fn bad_input_is_refused() {
         circle(DVec2::ZERO, 1.0, 0, false),
         circle(DVec2::new(1.5, 0.0), 1.0, 1, false),
     ]);
+    // Named as given, not by the pieces the arcs were halved into.
     assert!(matches!(
         run(&circles, &Frame::XY, 0.0, 1.0),
-        Err(KernelError::Profile(ProfileError::Touching(_)))
+        Err(KernelError::Profile(ProfileError::Touching([(0, a), (1, b)]))) if a < 4 && b < 4
     ));
     let bowtie = profile(vec![polygon(
         &[

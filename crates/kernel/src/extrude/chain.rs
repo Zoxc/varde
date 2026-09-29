@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use glam::{DVec2, DVec3};
 
 use crate::budget::Work;
-use crate::mesh::{Bvh, apart};
+use crate::mesh::{Bvh, MIN_SPLIT, apart};
 use crate::par::par_map;
 use crate::patch::{Bounds3, Conic2};
 use crate::profile::{Profile, ProfileError};
@@ -18,11 +18,6 @@ pub(super) const SIN_MIN: f64 = 1e-3;
 
 /// How many times a segment of the profile may be halved.
 pub(super) const MAX_SPLIT_DEPTH: u8 = 24;
-
-/// The smallest segment halved, in resolutions across its control
-/// points: pieces a few resolutions long can't keep the margin from their
-/// own neighbours, so halving them only makes more that fail.
-const MIN_SPLIT: f64 = 64.0;
 
 /// A piece of a loop.
 #[derive(Debug, Clone, Copy)]
@@ -171,7 +166,10 @@ impl Chain {
     }
 
     /// Whether `seg` may be halved: it is curved, was halved fewer than
-    /// `max_depth` times, and spans at least [`MIN_SPLIT`] resolutions.
+    /// `max_depth` times, and its control points span at least
+    /// [`MIN_SPLIT`] resolutions, as repair splits no smaller piece:
+    /// pieces a few resolutions long can't keep the margin from their own
+    /// neighbours, so halving them only makes more that fail.
     pub fn splittable(&self, seg: &Seg, max_depth: u8) -> bool {
         let b = Bounds3::around(&seg.hull()).expect("three points");
         seg.curved

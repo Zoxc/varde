@@ -56,6 +56,17 @@ pub use tolerance::Tolerance;
 /// [`RenderMesh::MAX_POSITION`].
 pub const MAX_COORD: f32 = 1e6;
 
+/// Refuses a point that isn't finite or has a coordinate past
+/// [`MAX_COORD`], NaN included.
+pub(crate) fn in_range(p: glam::DVec3) -> Result<(), patch::PatchError> {
+    let m = p.abs().max_element();
+    if p.is_finite() && m <= f64::from(MAX_COORD) {
+        Ok(())
+    } else {
+        Err(patch::PatchError::Coordinate(m))
+    }
+}
+
 /// The most patches a mesh may have. Halfedge ids (three per patch) and
 /// every count derived from them then fit a `u32` with room to spare.
 pub const MAX_PATCHES: usize = 1 << 22;

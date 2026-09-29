@@ -11,9 +11,10 @@
 //!   ear) whose tangents turn by about 180° or more, as two arcs in a row
 //!   of a circle do, gets a Steiner point at its centroid.
 //! - A corner between a curved segment and an inner edge that is too
-//!   narrow or too wide gets that segment halved: its tangent turns
-//!   towards its chord. For a segment bulging into the region, that keeps
-//!   the bulge inside its triangle.
+//!   narrow or too wide gets that segment halved: the new chord leaves
+//!   the corner closer to the curve's tangent, which halving keeps. For a
+//!   segment bulging into the region, that keeps the bulge inside its
+//!   triangle.
 //! - A triangle whose corners are all open but whose patch still fails
 //!   the fold check (a bulge of weight above 1 into the triangle can) gets
 //!   its curved segments halved: their weights go towards 1.
@@ -95,10 +96,10 @@ pub(super) fn triangulate(
     Err(KernelError::TooComplex)
 }
 
-/// A spade point, with coordinates too small for it (below about
-/// `1e-43`, and not zero) taken as zero. The triangulation only decides
-/// which triangles there are; the chain's separation keeps every choice
-/// it makes far above such a difference.
+/// A spade point, with coordinates below `1e-30` taken as zero: spade
+/// refuses non-zero ones below about `1e-43`. The triangulation only
+/// decides which triangles there are; the chain's separation keeps every
+/// choice it makes far above such a difference.
 fn point(p: DVec2) -> Point2<f64> {
     let flush = |x: f64| if x.abs() < 1e-30 { 0.0 } else { x };
     Point2::new(flush(p.x), flush(p.y))

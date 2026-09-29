@@ -7,8 +7,8 @@ use std::f64::consts::FRAC_1_SQRT_2;
 use glam::DVec3;
 
 use super::{Face, FaceName, FacePart, Mesh, MeshBuilder, Quadric, Surface};
-use crate::patch::{Conic3, PatchError, cylinder_strip};
-use crate::{KernelError, MAX_COORD, Tolerance};
+use crate::patch::{Conic3, PatchError};
+use crate::{KernelError, Tolerance, in_range};
 
 impl Mesh {
     /// The axis-aligned box from `min` to `min + size`, as the extrusion
@@ -19,9 +19,10 @@ impl Mesh {
     /// clockwise seen from `+z` from the one along `-y`, segment 0. Every
     /// face is tagged with its plane.
     ///
-    /// Every corner must be within [`MAX_COORD`] of the origin and every
-    /// size above zero, and the box must pass [`Mesh::check`] with `tol`
-    /// (a box much thinner than the resolution doesn't).
+    /// Every corner must be within [`MAX_COORD`](crate::MAX_COORD) of the
+    /// origin and every size above zero, and the box must pass
+    /// [`Mesh::check`] with `tol` (a box much thinner than the resolution
+    /// doesn't).
     pub fn cuboid(
         min: DVec3,
         size: DVec3,
@@ -63,9 +64,8 @@ impl Mesh {
                     d: n.dot(rect[k][0]),
                 },
             });
-            let (a0, a1, b0, b1) = (bottom[k], bottom[(k + 1) % 4], top[k], top[(k + 1) % 4]);
-            builder.tri([a0, a1, b1], face);
-            builder.tri([a0, b1, b0], face);
+            let (a, b) = (k, (k + 1) % 4);
+            builder.wall([bottom[a], bottom[b]], [top[a], top[b]], face);
         }
         finish(builder, tol)
     }
@@ -73,15 +73,16 @@ impl Mesh {
     /// The circular cylinder of `radius` standing on `base`, the centre of
     /// its bottom, and rising `height` along `+z`, as the extrusion of a
     /// circle of four exact quarter arcs: each wall an exact
-    /// [`cylinder_strip`], each cap four quarter discs around its centre.
+    /// [`cylinder_strip`](crate::patch::cylinder_strip), each cap four
+    /// quarter discs around its centre.
     /// The bottom is the [`FacePart::StartCap`] and the top the
     /// [`FacePart::EndCap`] of `feature`, tagged with their planes; the
     /// walls are [`FacePart::Side`]s of curve 0, segments 0 to 3 counter-
     /// clockwise seen from `+z` from `+x`, tagged with the cylinder.
     ///
-    /// Every point of it must be within [`MAX_COORD`] of the origin, the
-    /// radius and height above zero, and the cylinder must pass
-    /// [`Mesh::check`] with `tol`.
+    /// Every point of it must be within [`MAX_COORD`](crate::MAX_COORD) of
+    /// the origin, the radius and height above zero, and the cylinder must
+    /// pass [`Mesh::check`] with `tol`.
     pub fn cylinder(
         base: DVec3,
         radius: f64,
@@ -107,11 +108,6 @@ impl Mesh {
             let (p, q) = (rim[k], rim[(k + 1) % 4]);
             let ctrl = p + q - base;
             let arc = Conic3::new(p, ctrl, FRAC_1_SQRT_2, q)?;
-            let strip = cylinder_strip(&arc, up)?;
-            let (a0, a1, b0, b1) = (bottom[k], bottom[(k + 1) % 4], top[k], top[(k + 1) % 4]);
-            builder.edge(a0, a1, ctrl, FRAC_1_SQRT_2);
-            builder.edge(b0, b1, ctrl + up, FRAC_1_SQRT_2);
-            builder.edge(a0, b1, strip[0].c[2], strip[0].w[2]);
             let face = builder.face(Face {
                 name: FaceName {
                     feature,
@@ -122,10 +118,11 @@ impl Mesh {
                 },
                 surface: wall,
             });
-            builder.tri([a0, a1, b1], face);
-            builder.tri([a0, b1, b0], face);
-            builder.tri([centres[0], a1, a0], start);
-            builder.tri([centres[1], b0, b1], end);
+            let next = (k + 1) % 4;
+            let (a, b) = ([bottom[k], bottom[next]], [top[k], top[next]]);
+            builder.curved_wall(a, b, &arc, up, face)?;
+            builder.tri([centres[0], a[1], a[0]], start);
+            builder.tri([centres[1], b[0], b[1]], end);
         }
         finish(builder, tol)
     }
@@ -148,16 +145,6 @@ fn finish(builder: MeshBuilder, tol: &Tolerance) -> Result<Mesh, KernelError> {
     let mesh = builder.build().expect("a primitive's triangles pair up");
     mesh.check(tol).map_err(KernelError::Invalid)?;
     Ok(mesh)
-}
-
-/// Refuses a point not within [`MAX_COORD`] of the origin (NaN included).
-fn in_range(p: DVec3) -> Result<(), KernelError> {
-    let m = p.abs().max_element();
-    if p.is_finite() && m <= f64::from(MAX_COORD) {
-        Ok(())
-    } else {
-        Err(PatchError::Coordinate(m).into())
-    }
 }
 
 /// Refuses a size not above zero (NaN included).

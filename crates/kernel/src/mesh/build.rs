@@ -4,6 +4,7 @@ use glam::DVec3;
 
 use super::{Edge, Face, Halfedge, LookupMap, Mesh, Tri};
 use crate::MAX_PATCHES;
+use crate::patch::{Conic3, PatchError, cylinder_strip};
 
 /// Builds a [`Mesh`] from vertices and triangles given by vertex ids,
 /// pairing halfedges by the vertices they run between: `a → b` pairs with
@@ -81,6 +82,35 @@ impl MeshBuilder {
     /// outside, on face `face`.
     pub fn tri(&mut self, corners: [u32; 3], face: u32) {
         self.tris.push((corners, face));
+    }
+
+    /// Adds the flat wall swept by moving the straight edge from `a0` to
+    /// `a1` to the one from `b0` to `b1`, on `face`: the triangles `(a0,
+    /// a1, b1)` and `(a0, b1, b0)`, as [`cylinder_strip`] makes them.
+    pub(crate) fn wall(&mut self, [a0, a1]: [u32; 2], [b0, b1]: [u32; 2], face: u32) {
+        self.tri([a0, a1, b1], face);
+        self.tri([a0, b1, b0], face);
+    }
+
+    /// Adds the wall swept by moving `bottom`, the curve from vertex `a[0]`
+    /// to `a[1]`, along `offset` to the vertices `b`, on `face`: the two
+    /// patches of [`cylinder_strip`], with the bottom, the top and the
+    /// diagonal from `a[0]` to `b[1]` made its curves. Walls and caps
+    /// sharing those vertices share the curves.
+    pub(crate) fn curved_wall(
+        &mut self,
+        a: [u32; 2],
+        b: [u32; 2],
+        bottom: &Conic3,
+        offset: DVec3,
+        face: u32,
+    ) -> Result<(), PatchError> {
+        let [first, second] = cylinder_strip(bottom, offset)?;
+        self.edge(a[0], a[1], bottom.c, bottom.w);
+        self.edge(b[0], b[1], second.c[1], second.w[1]);
+        self.edge(a[0], b[1], first.c[2], first.w[2]);
+        self.wall(a, b, face);
+        Ok(())
     }
 
     /// The mesh, with each halfedge paired to the one running back and
