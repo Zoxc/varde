@@ -1,0 +1,157 @@
+use std::collections::BTreeMap;
+
+use glam::DVec3;
+
+use super::{Edge, Face, Halfedge, Mesh, Tri};
+use crate::MAX_PATCHES;
+
+/// Builds a [`Mesh`] from vertices and triangles given by vertex ids,
+/// pairing halfedges by the vertices they run between: `a → b` pairs with
+/// `b → a`. That is topology, never a comparison of positions. Edges are
+/// straight unless given a curve with [`MeshBuilder::edge`].
+///
+/// The mesh built has its halfedges paired and its `Edge` records shared;
+/// it still has to pass [`Mesh::check`].
+#[derive(Debug, Clone, Default)]
+pub struct MeshBuilder {
+    verts: Vec<DVec3>,
+    faces: Vec<Face>,
+    tris: Vec<([u32; 3], u32)>,
+    curves: BTreeMap<(u32, u32), Edge>,
+}
+
+/// Why [`MeshBuilder::build`] can't pair the triangles up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuildError {
+    /// More than [`MAX_PATCHES`] triangles.
+    TooManyPatches(usize),
+    /// A triangle naming a vertex or face that wasn't added, or the same
+    /// vertex twice; its index.
+    Tri(usize),
+    /// Two halfedges running from `a` to `b`.
+    Duplicate(u32, u32),
+    /// A halfedge from `a` to `b` with none running back.
+    Open(u32, u32),
+    /// A curve given for vertices no triangle joins.
+    UnusedEdge(u32, u32),
+}
+
+impl std::fmt::Display for BuildError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BuildError::TooManyPatches(n) => write!(f, "{n} triangles are more than {MAX_PATCHES}"),
+            BuildError::Tri(t) => write!(
+                f,
+                "triangle {t} names a missing or repeated vertex, or a missing face"
+            ),
+            BuildError::Duplicate(a, b) => write!(f, "two halfedges run from vertex {a} to {b}"),
+            BuildError::Open(a, b) => write!(f, "no halfedge runs back from vertex {b} to {a}"),
+            BuildError::UnusedEdge(a, b) => write!(f, "no triangle joins vertices {a} and {b}"),
+        }
+    }
+}
+
+impl std::error::Error for BuildError {}
+
+impl MeshBuilder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Adds a vertex at `p`, returning its id.
+    pub fn vert(&mut self, p: DVec3) -> u32 {
+        self.verts.push(p);
+        (self.verts.len() - 1) as u32
+    }
+
+    /// Adds a face, returning its id.
+    pub fn face(&mut self, face: Face) -> u32 {
+        self.faces.push(face);
+        (self.faces.len() - 1) as u32
+    }
+
+    /// Makes the edge between vertices `a` and `b` (either way round) the
+    /// curve with control point `ctrl` and weight `weight`.
+    pub fn edge(&mut self, a: u32, b: u32, ctrl: DVec3, weight: f64) {
+        self.curves
+            .insert((a.min(b), a.max(b)), Edge { ctrl, weight });
+    }
+
+    /// Adds the triangle with `corners`, counter-clockwise seen from
+    /// outside, on face `face`.
+    pub fn tri(&mut self, corners: [u32; 3], face: u32) {
+        self.tris.push((corners, face));
+    }
+
+    /// The mesh, with each halfedge paired to the one running back and
+    /// the `Edge` records numbered in the order their first halfedge
+    /// comes.
+    pub fn build(self) -> Result<Mesh, BuildError> {
+        let n = self.tris.len();
+        if n > MAX_PATCHES {
+            return Err(BuildError::TooManyPatches(n));
+        }
+        let (nv, nf) = (self.verts.len(), self.faces.len());
+        for (t, (c, face)) in self.tris.iter().enumerate() {
+            let distinct = c[0] != c[1] && c[1] != c[2] && c[2] != c[0];
+            if !distinct || c.iter().any(|&v| v as usize >= nv) || *face as usize >= nf {
+                return Err(BuildError::Tri(t));
+            }
+        }
+        // Directed edge (a, b) → halfedge.
+        let mut directed = BTreeMap::new();
+        for (t, (c, _)) in self.tris.iter().enumerate() {
+            for i in 0..3 {
+                let (a, b) = (c[i], c[(i + 1) % 3]);
+                if directed.insert((a, b), (3 * t + i) as u32).is_some() {
+                    return Err(BuildError::Duplicate(a, b));
+                }
+            }
+        }
+        let mut tris = Vec::with_capacity(n);
+        let mut edges: Vec<Edge> = Vec::with_capacity(3 * n / 2);
+        let mut edge_of = vec![u32::MAX; 3 * n];
+        let mut used = 0;
+        for (t, &(c, face)) in self.tris.iter().enumerate() {
+            let mut halfedges = [Halfedge {
+                start: 0,
+                pair: 0,
+                edge: 0,
+            }; 3];
+            for i in 0..3 {
+                let h = 3 * t + i;
+                let (a, b) = (c[i], c[(i + 1) % 3]);
+                let pair = *directed.get(&(b, a)).ok_or(BuildError::Open(a, b))?;
+                if edge_of[pair as usize] == u32::MAX {
+                    let key = (a.min(b), a.max(b));
+                    let edge = match self.curves.get(&key) {
+                        Some(&curve) => {
+                            used += 1;
+                            curve
+                        }
+                        None => Edge::straight(self.verts[a as usize], self.verts[b as usize]),
+                    };
+                    edge_of[h] = edges.len() as u32;
+                    edges.push(edge);
+                } else {
+                    edge_of[h] = edge_of[pair as usize];
+                }
+                halfedges[i] = Halfedge {
+                    start: a,
+                    pair,
+                    edge: edge_of[h],
+                };
+            }
+            tris.push(Tri { halfedges, face });
+        }
+        if used != self.curves.len() {
+            let unused = self
+                .curves
+                .keys()
+                .find(|&&(a, b)| !directed.contains_key(&(a, b)));
+            let &(a, b) = unused.expect("a curve no triangle uses");
+            return Err(BuildError::UnusedEdge(a, b));
+        }
+        Ok(Mesh::from_parts(self.verts, edges, tris, self.faces))
+    }
+}

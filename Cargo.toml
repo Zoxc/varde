@@ -46,6 +46,9 @@ faer = { version = "0.24", default-features = false, features = ["std", "sparse-
 # Triangulates fills in the sketch being edited: even-odd, holes included.
 # Pure Rust, builds for wasm.
 tess2-rust = "1.1"
+# Parallel maps in the kernel, native only: the web worker runs the same
+# code sequentially.
+rayon = "1"
 crc32fast = "1"
 toml = "1"
 directories = "6"

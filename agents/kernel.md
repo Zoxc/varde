@@ -10,8 +10,11 @@ a primitive is numerically off. Planes, circles, arcs and cylinders are
 exact in this representation; everything is `f64`, and only drawing
 goes to `f32` (`RenderMesh`).
 
-What exists today: the patch math (`patch`), below. Solids are still the
-analytic cuboid of `Shape`, tessellated directly.
+What exists today: the patch math (`patch`), closed meshes of patches with
+the check of their invariants, the BVH and the hull tests (`mesh`), the
+tolerances (`Tolerance`) and the parallel map (`par`), below. Solids are
+still the analytic cuboid of `Shape`, tessellated directly; `Solid` comes to
+wrap a checked `Mesh` when tessellation lands.
 
 ## Patch math (`src/patch.rs`, `src/patch/`)
 
@@ -284,6 +287,208 @@ corners' tangents; clockwise sub-patches facing the other way; bad weights
 `from_hom` giving the same bits at any scale; cylinder strips on their
 cylinders, within their strip and sharing their edges.
 
+## Tolerances (`src/tolerance.rs`)
+
+`Tolerance` holds the design's **fit** tolerance (how far a fitted curve or
+patch may be from the true surfaces), in mm, within `MIN_FIT ..= MAX_FIT`
+(`1e-5 ..= 1e-1`), default `1e-3`; `new` refuses anything else. The
+**resolution** is a thousandth of it: the margin the hull rules keep, and
+where refinement stops. Neither ever decides that two things are the same
+vertex or edge.
+
+## Parallel maps and determinism (`src/par.rs`)
+
+`par_map(items, f)` is `items.iter().map(f).collect()`, on rayon's pool
+natively (`par_iter`, an indexed collect, so in input order) and plain
+sequential on wasm (rayon is a native-only dependency). It is the only code
+that knows about rayon. The rules every parallel step follows:
+
+- A pure map over input sorted by stable keys, collected in that order;
+  never `for_each` into a shared sink.
+- Floating-point reductions (sums, bounds) after collecting, sequentially in
+  key order, never rayon's `sum`/`reduce`.
+- Ids handed out in one sequential pass over the collected results.
+- No iteration order from a hasher: sorted `Vec`s or `BTreeMap`s.
+- Errors: the first in input order (collecting `Result`s does that).
+
+Tests use `par::assert_deterministic(f)`, which runs `f` on a 1-thread and
+an 8-thread pool and compares the results' `Debug` text (an `f64` prints as
+the shortest decimal that reads back to the same bits, so equal text is
+equal bits). `on_threads(n, f)` runs `f` on an `n`-thread pool.
+
+## Meshes (`src/mesh.rs`, `src/mesh/`)
+
+| file | holds |
+|---|---|
+| `mesh.rs` | `Mesh`, `Edge`, `Halfedge`, `Tri`, accessors |
+| `mesh/face.rs` | `Face`, `FaceName`, `FacePart`, `Surface`, `Quadric` |
+| `mesh/build.rs` | `MeshBuilder`: triangles by vertex id, paired up |
+| `mesh/check.rs` | `Mesh::check`, `Mesh::check_faces`, `CheckError` |
+| `mesh/bvh.rs` | `Bvh`: boxes, queries, self pairs |
+| `mesh/hull.rs` | GJK (`apart`) and the three hull rules |
+| `mesh/tests.rs` and `mesh/*/tests.rs` | hand-built solids, one bad mesh per rule, determinism |
+
+### Structure
+
+A halfedge mesh in the Manifold style. `verts: Vec<DVec3>` are the patch
+corners. `edges: Vec<Edge>` holds, once per undirected edge, the middle
+control point and weight (`Edge { ctrl, weight }`), shared by the two
+halfedges that run along it: neighbours trace the same curve because they
+read the same record, not because two copies agree. `tris: Vec<Tri>`, each
+three `Halfedge { start, pair, edge }` and a `face`. Halfedge `h` is corner
+`h % 3` of triangle `h / 3` and runs to the next corner (`Mesh::next`);
+corners run counter-clockwise seen from outside. `Mesh::patch(t)` is
+triangle `t` as a `Patch`: corners from the starts, edge `i` from halfedge
+`i`'s record. All ids are `u32`; `MAX_PATCHES` (`1 << 22`) keeps three per
+patch well inside.
+
+`faces: Vec<Face>`: `Face { name: FaceName, surface: Surface }`.
+`FaceName { feature: u64, part: FacePart }` is stable across
+regenerations; `FacePart` is `StartCap`, `EndCap`, `Side { curve, segment }`
+or `Split(n)` (a face an operation made). `Surface` is the construction's
+claim: `Plane { n, d }` (`n·x = d`, `n` any length), `Quadric`, or `Free`.
+`Quadric { origin, a, b, c }` is `F(x) = y·(a·y) + 2b·y + c` with `y = x −
+origin`: measuring from a point near the surface keeps the rounding of `F`
+relative to the quadric's size. `Quadric::cylinder(point, axis, radius)`
+builds a circular cylinder. The distance to it is taken to first order,
+`|F| / |∇F|`.
+
+The fields are private to `mesh` (its child modules, such as refinement,
+edit them directly). `Mesh::from_parts` takes the four tables unchecked.
+`MeshBuilder` takes vertices, faces, curved edges (`edge(a, b, ctrl, w)`,
+either way round; others are straight) and triangles by vertex id, and
+pairs halfedge `a → b` with `b → a`: topology, never a comparison of
+positions. It numbers edges in the order their first halfedge comes and
+refuses repeated or unpaired directed edges, bad triangles and curves no
+triangle uses. What it builds still has to pass `check`.
+
+### The invariants and `check`
+
+`Mesh::check(&Tolerance)` is where a mesh becomes trusted; the empty mesh
+passes. It returns the first failure in the order below, and within a rule
+by the lowest halfedge, vertex, edge or triangle (triangle pairs
+lexicographically), so a mesh always gives the same `CheckError`.
+
+1. **Topology** (sequential): at most `MAX_PATCHES` triangles; no more
+   vertices than halfedges, exactly half as many edges as halfedges, and at
+   most `MAX_PATCHES` faces (`Counts`); every index in range (`Index`);
+   `pair(pair(h)) = h ≠ pair(h)`, with the pair running between the same
+   two vertices the other way (`Pair`); no halfedge from a vertex to itself
+   (`Loop`); directed edges unique (`DirectedEdge`); every vertex starts
+   some halfedge, and walking round it by `next(pair(h))` from its first
+   halfedge visits all of them before coming back: one fan (`Fan`). Faces
+   no triangle uses are allowed.
+2. **Shared edges**: `edge(h) = edge(pair(h))` (`SharedEdge`), each edge
+   used by exactly two halfedges (`EdgeUse`), and every patch within the
+   coordinate and weight bounds of `Patch::check` (`Patch`).
+3. **Fold**: every patch has a `fold_direction` (`Fold`).
+4. **Control hulls** (below): `Hull`, `EdgeNeighbours`,
+   `VertexNeighbours`, and `SameCorners` for two triangles on the same
+   three vertices, which no plane can split.
+5. **Face tags**, in debug builds only (`cfg!(debug_assertions)`, so tests
+   too), and on demand with `check_faces` once `check` has passed: a patch
+   on a `Plane` has all six control points within the resolution of it; a
+   patch on a `Quadric` has 15 points (a grid four steps along each edge)
+   within the resolution to first order. A plane with a zero or non-finite
+   normal fails.
+
+Steps 2–3, 5 and the hull tests of 4 run per patch or per pair through
+`par_map`.
+
+### Control hulls
+
+A patch lies in the convex hull of its six control points (weights are
+positive). Hull pairs come from a BVH over the patches' boxes with the
+resolution as margin; two patches sharing a vertex share a control point, so
+every neighbour pair is among them. Each pair is classified by the vertices
+its triangles share, which is topology:
+
+- **None: non-neighbours.** Their hulls are more than the resolution apart
+  (GJK below).
+- **Two: edge neighbours** (the topology check makes them share the edge
+  between the two, run opposite ways). Take the shared edge's control points
+  `P`, `C`, `Q` and each patch's other three control points (opposite
+  corner, the two other edges' control points).
+  - A **straight** edge (`C` within the resolution of the line `PQ`)
+    leaves the plane free to turn about the line. Both sides must clear it
+    by more than the resolution: project everything along the line; the
+    best plane clears `a`'s points and `b`'s mirrored ones (`−x`) by the
+    distance from the origin to their hull.
+  - A **curved** edge fixes the plane through `P`, `C`, `Q`. One patch's
+    points must be more than the resolution off it on one side, and the
+    other's no more than the resolution past it on the other side. A point
+    of a patch is a Bernstein-weighted mean of its control points, so the
+    strict patch meets the plane only along the shared edge, and the two
+    can meet only there. The lax side is what lets a flat cap meet a curved
+    wall along a curved edge: the cap lies in the edge's plane.
+- **One: vertex neighbours.** A plane through the shared vertex `V` with
+  the other five control points of each more than the resolution to either
+  side. With unit normal `n` that is `n·x > margin` for every `x` in
+  `{a_i − V} ∪ {V − b_i}`, and the best `n` clears them by the distance
+  from the origin to their hull, so it is GJK again.
+- **Three:** `SameCorners`, always a failure.
+
+For flat triangles, which are their own hulls, the three rules say exactly
+that the mesh is embedded (two flat triangles meeting only at a vertex
+span pointed cones, which a plane through the vertex always splits).
+
+**GJK** (`hull::apart(a, b, margin)`): on the Minkowski difference of the
+two point sets, measured from `a[0]` so rounding is relative to the hulls'
+size. Each step has `v`, the closest point of the current simplex (a point
+of the difference, so `|v|` bounds the distance from above), and the
+support point `w` furthest along `−v`, so `v·w / |v|` bounds it from below
+for any `v`. It answers **apart** only once that lower bound exceeds the
+margin, and **not apart** once `|v|` is within the margin, when the
+simplex holds the origin, when a step makes no progress, or after 64
+steps: conservative both ways it can be. The closest point of a simplex of
+up to four points is found by trying every face (subset) of it: the
+origin's projection onto the face's affine hull, solved from the Gram
+matrix, kept when its barycentric coordinates are non-negative; the nearest
+kept one is the closest point. Faces whose Gram determinant is below `1e-12`
+of the product of its diagonal are skipped, which is exact: their points
+lie in smaller faces. So flat and collinear sets (coplanar cap triangles)
+need no special case. Ties keep the smaller face, then the first.
+
+### BVH
+
+`Bvh::new(boxes)` builds sequentially: a leaf holds up to 4 boxes; an inner
+node splits its boxes at the median of their centres along the longest axis
+of the centres' box, with ties broken by index (`select_nth_unstable_by` on
+a total key). `query(box, margin, out)` appends every box within `margin`
+of the query along every axis (a box gap can only underestimate the true
+distance, and rounding the sums is monotone, so nothing within the margin
+is missed), sorted ascending. `self_pairs(margin)` queries every box
+through `par_map` and returns the pairs `[i, j]`, `i < j`, sorted. Results
+never depend on the tree's shape or the thread count.
+
+### Costs
+
+`check` on a flat torus of 262 144 triangles takes about 0.7 s on one
+thread and 0.27 s on eight (release; the topology pass is sequential);
+about 2.7 µs per patch.
+
+### Tests
+
+Hand-built solids pass `check` and `check_faces`, at the origin and moved
+by about `3e5`: a tetrahedron, a box with plane tags, a flat octahedron, a
+round octahedron (every edge a quarter circle, weight `√½`), a half
+cylinder (exact quarter-circle walls from `cylinder_strip`, quarter-disc
+caps with curved edges, a flat side; plane and cylinder tags), and a flat
+torus of 2 304 triangles. One bad mesh per rule is caught with the expected
+error: indices and counts, unpaired and self-paired halfedges, a loop,
+repeated directed edges, two fans at a vertex and an unused vertex,
+halfedges naming different edges and an edge used twice over, bad weights
+and coordinates, a zero corner normal, overlapping tetrahedra (and two
+corner to corner, passing at twice the resolution apart and failing at
+half), edge neighbours folded flat onto each other and across a sideways
+curved edge (and passing when it curves outwards), crossing vertex
+neighbours, triangles on the same corners, and wrong plane and cylinder
+tags. GJK is tested against boxes a known gap apart (face to face and
+corner to corner, randomly rotated and moved), point clouds either side of
+a plane, and flat, collinear and repeated points; the BVH against brute
+force. `check`, the BVH's pairs, and the first failure of a jittered torus
+are the same at 1 and 8 threads.
+
 ## Deviations
 
 - **The normal numerator is a cubic with 10 coefficients**, not a quartic
@@ -306,3 +511,21 @@ cylinders, within their strip and sharing their edges.
   `Point` trait, and there is an `f64` box type, `Bounds<P>`.
 - The weight bounds stay at `1/64 ..= 64`: nothing in the tests asked for
   other values.
+- **Edge neighbours across a curved edge**: the plane through the edge's
+  control points must have one patch's other control points more than the
+  resolution off it and the other's no more than the resolution past it on
+  the other side, not both strictly off it. Both strictly off would refuse
+  every flat cap along a curved edge, since the cap lies in that edge's
+  plane; with one side strict the two still meet only along the edge.
+  Straight edges and vertex neighbours, whose plane is free, keep both
+  sides strict.
+- **Neighbours are told apart by the vertices two triangles share**
+  (none, one, two, or three, which always fails), not stored adjacency.
+- **The face-tag check** takes a plane's six control points, and samples 15
+  points of a quadric patch against the first-order distance `|F|/|∇F|`.
+  `Quadric` carries an `origin` its form is written around. Tags are
+  checked in debug builds by `check` and on demand by `check_faces`.
+- **`Tolerance` lives in the kernel** (fit bounds `1e-5 ..= 1e-1` mm,
+  default `1e-3`), and `check` takes it for the hull margin.
+- `Solid` still wraps `Shape`; it becomes a checked `Mesh` with
+  tessellation.
