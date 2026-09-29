@@ -34,9 +34,9 @@ impl RenderMesh {
     pub const MAX_INDICES: usize = 3 << 24;
     /// The most edges a mesh may have, about 33 million.
     pub const MAX_EDGES: usize = 1 << 25;
-    /// The largest coordinate a position may have: the farthest a solid
-    /// whose [`bounds`](crate::Solid::bounds) are within [`MAX_COORD`] of
-    /// its origin reaches from a position within it.
+    /// The largest coordinate a position may have: the farthest a point
+    /// within [`MAX_COORD`] gets moved by a length within it, as a sketch
+    /// at the limit extruded by the longest distance would be.
     pub const MAX_POSITION: f32 = 2.0 * MAX_COORD;
 
     /// A mesh of these parts, if they make one; see [`RenderMesh`] for what is

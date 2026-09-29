@@ -119,8 +119,8 @@ impl TryFrom<Unchecked> for Document {
 }
 
 impl Document {
-    /// The document a new design shows off: empty, until there's a
-    /// feature that makes a body.
+    /// A sample design for tests: empty until there's a feature that
+    /// makes a body. New designs start from [`Document::default`].
     pub fn example() -> Self {
         Document::default()
     }

@@ -41,9 +41,9 @@ pub use tolerance::Tolerance;
 /// The largest coordinate or size, in model units, a design may have: its
 /// sketches' coordinates and lengths, and so the solids built from them. A
 /// file could carry any number, and NaN would make a document unequal to
-/// itself, while tessellation adds positions to sizes and
-/// multiplies edge lengths, which overflow to infinity well within the
-/// `f32` range. Within this bound they cannot, and meshes stay within
+/// itself, while building and drawing solids adds sizes to coordinates
+/// and multiplies lengths, which would overflow to infinity well within
+/// the `f32` range. Within this bound they cannot, and meshes stay within
 /// [`RenderMesh::MAX_POSITION`].
 pub const MAX_COORD: f32 = 1e6;
 

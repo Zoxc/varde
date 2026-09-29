@@ -5,7 +5,6 @@ use varde_render::Camera;
 
 use super::*;
 
-/// The mesh of `document`.
 /// A box's mesh, as a document with one would show.
 fn cube() -> Arc<RenderMesh> {
     let tol = varde_kernel::Tolerance::DEFAULT;

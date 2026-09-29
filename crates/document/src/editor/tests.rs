@@ -443,6 +443,20 @@ fn adding_a_sketch_past_the_last_id_fails() {
         EditError::OutOfIds.to_string(),
         "the document has no ids left"
     );
+
+    // The last id there is is taken, and then no more.
+    let mut editor = Editor::new(Document {
+        next_id: u64::MAX - 1,
+        ..Document::default()
+    });
+    editor.apply(editor.document().add_sketch(XY)).unwrap();
+    assert_eq!(editor.document().features()[0].id, FeatureId(u64::MAX - 1));
+    assert_eq!(
+        editor.apply(editor.document().add_sketch(XY)),
+        Err(EditError::OutOfIds)
+    );
+    assert_eq!(editor.document().features().len(), 1);
+    assert_eq!(editor.revision(), Revision(1));
 }
 
 #[test]

@@ -102,20 +102,41 @@ fn solids_are_drawn_into_one_mesh() {
     assert_eq!(draw([], &display).unwrap(), RenderMesh::default());
 }
 
+/// A design read from a file holding "Sketch 1" (id 0) and bodies it
+/// makes: "Body 1" (id 1), shown, and "Body 2" (id 2), hidden, if
+/// `hidden_too`. No command adds bodies yet.
+fn with_bodies(hidden_too: bool) -> Document {
+    let body = |id: u8, visible: u8| [&[id, 6][..], b"Body ", &[b'0' + id, visible, 0]].concat();
+    let mut bytes = vec![1 + u8::from(hidden_too)];
+    bytes.extend(body(1, 1));
+    if hidden_too {
+        bytes.extend(body(2, 0));
+    }
+    bytes.extend([1, 0, 8]);
+    bytes.extend(b"Sketch 1");
+    // Visible, a sketch on XY, empty; millimetres, and the next id.
+    bytes.extend([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3]);
+    Document::from_postcard(&bytes).unwrap()
+}
+
 #[test]
-fn solids_of_bodies_not_in_the_document_are_not_drawn() {
-    // A solid for a body the document doesn't hold isn't drawn.
-    let (editor, _) = sketched();
-    let body = {
-        // Ids are opaque: the only way to one is a document's body.
-        let bytes = postcard::to_stdvec(&0u64).unwrap();
-        postcard::from_bytes::<BodyId>(&bytes).unwrap()
+fn only_the_solids_of_shown_bodies_are_drawn() {
+    let (both, one) = (with_bodies(true), with_bodies(false));
+    let ids = |document: &Document| -> Vec<BodyId> {
+        document.bodies().iter().map(|body| body.id).collect()
     };
-    let solids = [(body, cuboid(0.0, 1.0))];
-    assert_eq!(
-        tessellate(editor.document(), &solids).unwrap(),
-        RenderMesh::default()
-    );
+    let [shown, hidden] = ids(&both)[..] else {
+        panic!("two bodies");
+    };
+    assert!(!both.body(hidden).unwrap().visible);
+    assert_eq!(ids(&one), [shown]);
+
+    let solids = [(shown, cuboid(0.0, 1.0)), (hidden, cuboid(3.0, 2.0))];
+    let display = Display::new(&Tolerance::DEFAULT);
+    let alone = solids[0].1.tessellate(&display).unwrap();
+    // Hidden, or not in the document at all.
+    assert_eq!(tessellate(&both, &solids).unwrap(), alone);
+    assert_eq!(tessellate(&one, &solids).unwrap(), alone);
 }
 
 /// Adds a sketch on XY that doesn't solve, as a file could hold: a line

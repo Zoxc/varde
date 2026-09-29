@@ -310,15 +310,7 @@ fn draws_bodies_far_along_the_view_axis() {
     // Far behind the target, but on screen in an orthographic front view.
     let mut camera = Camera::default();
     camera.look_from(View::Front);
-    let mut mesh = RenderMesh::default();
-    mesh.append_at(
-        &Solid::cuboid(DVec3::ZERO, DVec3::splat(2.0), 0, &Tolerance::DEFAULT)
-            .unwrap()
-            .tessellate(&varde_kernel::Display::default())
-            .unwrap(),
-        Vec3::new(0.0, 1000.0, 0.0),
-    )
-    .unwrap();
+    let mesh = cube(2.0, Vec3::new(0.0, 1000.0, 0.0));
     let Some(pixels) = render(&camera, &mesh, VIEWPORT, CLIP, 1.0) else {
         eprintln!("no GPU adapter, skipping");
         return;
@@ -342,13 +334,8 @@ fn edges_stay_in_front_of_faces_zoomed_into_a_large_scene() {
     let mut camera = Camera::default();
     camera.set_target(Vec3::new(0.5, 0.0, 1.0));
     camera.zoom(0.01 / camera.view_height());
-    let cube = Solid::cuboid(DVec3::ZERO, DVec3::ONE, 0, &Tolerance::DEFAULT)
-        .unwrap()
-        .tessellate(&varde_kernel::Display::default())
-        .unwrap();
-    let mut mesh = RenderMesh::default();
-    mesh.append_at(&cube, Vec3::ZERO).unwrap();
-    mesh.append_at(&cube, Vec3::Y * 1e5).unwrap();
+    let mut mesh = cube(1.0, Vec3::ZERO);
+    mesh.append(&cube(1.0, Vec3::Y * 1e5)).unwrap();
     let Some(pixels) = render(&camera, &mesh, VIEWPORT, CLIP, 1.0) else {
         eprintln!("no GPU adapter, skipping");
         return;
@@ -373,15 +360,7 @@ fn axes_stay_put_zoomed_into_a_large_scene() {
     // to find the ground loses pixels to rounding.
     let mut camera = Camera::default();
     camera.zoom(0.01 / camera.view_height());
-    let mut mesh = RenderMesh::default();
-    mesh.append_at(
-        &Solid::cuboid(DVec3::ZERO, DVec3::ONE, 0, &Tolerance::DEFAULT)
-            .unwrap()
-            .tessellate(&varde_kernel::Display::default())
-            .unwrap(),
-        Vec3::Y * varde_kernel::MAX_COORD,
-    )
-    .unwrap();
+    let mesh = cube(1.0, Vec3::Y * varde_kernel::MAX_COORD);
     let Some(pixels) = render(&camera, &mesh, VIEWPORT, CLIP, 1.0) else {
         eprintln!("no GPU adapter, skipping");
         return;
@@ -474,15 +453,7 @@ fn looks_the_same_on_srgb_and_linear_targets() {
     // A face of a cube filling the centre of the viewport, which the grid
     // is hidden behind. Partly covered grid lines and edges may differ, since the
     // linear target blends encoded values.
-    let mut mesh = RenderMesh::default();
-    mesh.append_at(
-        &Solid::cuboid(DVec3::ZERO, DVec3::splat(2.0), 0, &Tolerance::DEFAULT)
-            .unwrap()
-            .tessellate(&varde_kernel::Display::default())
-            .unwrap(),
-        Vec3::ZERO,
-    )
-    .unwrap();
+    let mesh = cube(2.0, Vec3::ZERO);
     let mut camera = Camera::default();
     camera.set_target(Vec3::ONE);
     camera.look_from(View::Front);
@@ -542,22 +513,20 @@ fn lines(segments: &[(Vec3, Vec3)]) -> RenderLines {
     lines
 }
 
+/// A box `size` on a side from `at`, tessellated. Built at the origin and
+/// moved, so it can reach past [`varde_kernel::MAX_COORD`], which a
+/// solid can't.
 fn cube(size: f32, at: Vec3) -> RenderMesh {
-    let mut mesh = RenderMesh::default();
-    mesh.append_at(
-        &Solid::cuboid(
-            DVec3::ZERO,
-            Vec3::splat(size).as_dvec3(),
-            0,
-            &Tolerance::DEFAULT,
-        )
-        .unwrap()
-        .tessellate(&varde_kernel::Display::default())
-        .unwrap(),
-        at,
-    )
-    .unwrap();
-    mesh
+    let solid = Solid::cuboid(
+        DVec3::ZERO,
+        DVec3::splat(f64::from(size)),
+        0,
+        &Tolerance::DEFAULT,
+    );
+    let mesh = solid.unwrap().tessellate(&varde_kernel::Display::default());
+    let mut moved = RenderMesh::default();
+    moved.append_at(&mesh.unwrap(), at).unwrap();
+    moved
 }
 
 #[test]

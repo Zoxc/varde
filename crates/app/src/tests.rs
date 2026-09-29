@@ -797,7 +797,7 @@ fn a_save_waiting_for_edits_the_lane_drops_on_starting_is_sent() {
 fn undoing_the_edits_a_save_waits_for_saves_at_once() {
     let (mut varde, requests, _lane) = sketching_in_open_file();
     let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
-    let with_cube = document(&varde).editor.revision();
+    let edited = document(&varde).editor.revision();
     place_point(&mut varde);
     let _ = varde.update(Message::Ui(Ui::File(File::Save)));
     assert!(sent(&requests).is_empty());
@@ -805,8 +805,8 @@ fn undoing_the_edits_a_save_waits_for_saves_at_once() {
     let doc = document(&varde);
     assert!(!doc.proposing());
     // Only the point is dropped.
-    assert_eq!(doc.editor.revision(), with_cube);
-    assert_eq!(saving(&sent(&requests)), with_cube);
+    assert_eq!(doc.editor.revision(), edited);
+    assert_eq!(saving(&sent(&requests)), edited);
 }
 
 #[test]
@@ -900,21 +900,21 @@ fn the_save_landing_last_is_what_is_saved() {
     };
     let change = an_edit(document(&varde));
     edit(&mut varde, change);
-    let one_cube = document(&varde).editor.revision();
+    let one_edit = document(&varde).editor.revision();
     let change = an_edit(document(&varde));
     edit(&mut varde, change);
     let _ = varde.update(Message::Ui(Ui::File(File::Save)));
-    let two_cubes = saving(&sent(&requests));
+    let two_edits = saving(&sent(&requests));
     edit(&mut varde, Edit::Undo);
     let _ = varde.update(Message::Ui(Ui::File(File::Save)));
     let back = saving(&sent(&requests));
-    assert_eq!(back, one_cube);
+    assert_eq!(back, one_edit);
 
-    let _ = varde.update(saved(two_cubes, Ok(())));
+    let _ = varde.update(saved(two_edits, Ok(())));
     assert!(document(&varde).edited());
     let _ = varde.update(saved(back, Ok(())));
     assert!(!document(&varde).edited());
-    assert_eq!(document(&varde).saved_revision(), Some(one_cube));
+    assert_eq!(document(&varde).saved_revision(), Some(one_edit));
 }
 
 /// Two saves in flight: the lane may drop the first for the second, and
