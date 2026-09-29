@@ -104,8 +104,9 @@ direction, which `look_from(View)` is a case of; the camera has no roll, so
 up is only chosen freely for a vertical normal (see `notes/SketchImpl.md`).
 
 The document mesh (the regeneration lane evaluates the feature history
-into the bodies' solids and tessellates the visible ones with
-`Solid::tessellate`, see `agents/kernel.md`) and the visible sketches'
+into the bodies' solids, extruding sketch regions, and tessellates the
+visible ones with `Solid::tessellate`, see "Bodies from the history" in
+`agents/kernel.md`) and the visible sketches'
 lines are kept in the app's `MeshFeed` and keyed by `Editor::generation()`, so they're only
 rebuilt when the document changes; the viewport widget just draws what it's
 handed. The renderer's GPU copies are keyed by their `Arc`s instead, since
@@ -124,6 +125,22 @@ again with another `exclude`. Sketch curves are flattened by
 `Sketch::flatten` (lines exact, circles into `CIRCLE_SEGMENTS`, arcs their
 share) and placed with the document's `Plane::placement`.
 
+An answer also carries the features that failed and why (`failed`, an
+extrude whose region is gone, whose profile the kernel refuses, or that
+joins, cuts or intersects, which isn't available yet) and the box of each
+body that has a solid (`bodies`). A request can carry a `Draft`, an
+extrude being set up and not committed (new, or one being edited), with a
+revision the app counts up: the lane answers with it applied as its
+command would apply it, and says how it went (`Drafted`, with the
+revision and its error); a draft that fails, or that the document
+refuses, is answered with the committed model and the draft's error. The
+lane keeps a cache of what it worked out per feature (profiles, solids,
+meshes, whether each sketch solves), keyed by a hash of the feature, the
+tolerance and its inputs' keys, holding what the last request used, so an
+edit or a draft being dragged reruns only what it changes. The app sends
+no drafts yet and doesn't show `failed` (the extrude session and the
+timeline come with the extrude UI).
+
 Natively each open document has a regeneration thread (`regen::lane`),
 started by an iced subscription keyed by the document's id. The
 subscription's stream first hands the app the lane's sender, then yields
@@ -136,13 +153,15 @@ Closing the document ends the subscription and with it the thread.
 On the web the lane is a Web Worker with the same API. It shares no memory
 with the page, so a request is the generation, the postcard-encoded
 document (the encoding `.vrdp` records use) and the sketch to leave out, and
-the answer is a small postcard head and the mesh's positions, normals,
+the answer is a small postcard head (with the failed features, the
+bodies' boxes and the draft's outcome) and the mesh's positions, normals,
 indices and edges and the sketches' line points and ends as raw bytes. Both
 directions transfer their `ArrayBuffer`s instead of copying them. The page
 checks what comes back before using it (whole elements, a size bound,
 indices and edges within the vertex count, positions and points within
-their bound, line ends splitting the points into polylines of two or more;
-see `regen::wire`). The worker can't see new messages while it works, so
+their bound, line ends splitting the points into polylines of two or more,
+bodies' boxes finite and in order; see `regen::wire`). The worker keeps
+its cache between requests, as the thread does. The worker can't see new messages while it works, so
 the page keeps latest-wins itself: one request is with the worker at a
 time, and newer ones replace each other until it answers. A job that has
 started always finishes. If the worker dies (a panic traps it), the

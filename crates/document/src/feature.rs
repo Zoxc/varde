@@ -13,6 +13,15 @@ use crate::Extrude;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct FeatureId(pub(crate) u64);
 
+impl FeatureId {
+    /// Its number, unique in its document among features and bodies: for
+    /// naming what the feature makes outside the document, such as the
+    /// faces of an extrude's solid.
+    pub fn get(self) -> u64 {
+        self.0
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Feature {
     pub id: FeatureId,

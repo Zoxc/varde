@@ -1,30 +1,18 @@
 use std::sync::Arc;
 
-use varde_document::{Document, Editor};
-use varde_kernel::{Display, MeshPart, Solid, Tolerance};
+use varde_document::{Command, Document, Editor, FeatureKind};
+use varde_kernel::MeshPart;
 
 use super::*;
-use crate::handle;
 use crate::tests::sketched;
-
-/// A box and a cylinder, as regenerating a document with them would draw
-/// them.
-fn two_solids() -> RenderMesh {
-    let tol = Tolerance::DEFAULT;
-    let cuboid = Solid::cuboid(glam::DVec3::ZERO, glam::DVec3::ONE, 1, &tol).unwrap();
-    let cylinder = Solid::cylinder(glam::DVec3::X * 3.0, 1.0, 2.0, 2, &tol).unwrap();
-    let display = Display::new(&tol);
-    let mut mesh = cuboid.tessellate(&display).unwrap();
-    mesh.append(&cylinder.tessellate(&display).unwrap())
-        .unwrap();
-    mesh
-}
+use crate::{Draft, handle};
 
 fn regenerate(editor: &Editor) -> Request {
     Request::Regenerate {
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
+        draft: None,
     }
 }
 
@@ -33,7 +21,10 @@ fn regenerated(generation: u64) -> Head {
     Head::Regenerated {
         generation: generation.into(),
         exclude: None,
+        draft: None,
         unsolved: Vec::new(),
+        failed: Vec::new(),
+        bodies: Vec::new(),
     }
 }
 
@@ -53,10 +44,47 @@ fn request_round_trips() {
         generation,
         document,
         exclude,
+        draft,
     } = decode_request(&bytes).unwrap();
     assert_eq!(generation, editor.generation());
     assert_eq!(*document, *editor.document());
     assert_eq!(exclude, None);
+    assert_eq!(draft, None);
+}
+
+#[test]
+fn request_with_a_draft_round_trips() {
+    let editor = Editor::new(Document::example());
+    let FeatureKind::Extrude(extrude) = &editor.document().features()[1].kind else {
+        panic!("the example's second feature is its extrude");
+    };
+    let draft = Draft {
+        revision: 7,
+        feature: Some(editor.document().features()[1].id),
+        extrude: extrude.clone(),
+    };
+    let request = Request::Regenerate {
+        generation: editor.generation(),
+        document: editor.snapshot(),
+        exclude: None,
+        draft: Some(draft.clone()),
+    };
+    let decoded = decode_request(&encode_request(&request)).unwrap();
+    assert_eq!(decoded.draft(), Some(7));
+    let Request::Regenerate { draft: back, .. } = decoded;
+    assert_eq!(back, Some(draft));
+
+    // The answer says which draft it had.
+    let Response::Regenerated { draft, .. } = round_trip(&handle(request)) else {
+        panic!("regeneration failed");
+    };
+    assert_eq!(
+        draft,
+        Some(Drafted {
+            revision: 7,
+            error: None
+        })
+    );
 }
 
 #[test]
@@ -66,6 +94,7 @@ fn request_leaving_out_a_sketch_round_trips() {
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: Some(feature),
+        draft: None,
     };
     let Request::Regenerate {
         document, exclude, ..
@@ -87,35 +116,77 @@ fn request_leaving_out_a_sketch_round_trips() {
 
 #[test]
 fn regenerated_round_trips() {
-    let (mut editor, _) = sketched();
+    // The example plate, its sketch shown, a sketch that doesn't solve,
+    // and an extrude that fails.
+    let mut editor = Editor::new(Document::example());
     let unsolved = crate::tests::unsolvable(&mut editor);
+    let cut = crate::history::tests::add_cut(&mut editor);
+    let sketch = editor.document().features()[0].id;
+    editor
+        .apply(Command::SetFeatureVisible(sketch, true))
+        .unwrap();
     let bytes = encode_request(&regenerate(&editor));
-    let mut response = handle(decode_request(&bytes).unwrap());
-    // No feature makes a body yet, so the model is put in by hand.
-    let Response::Regenerated { mesh, .. } = &mut response else {
+    let response = handle(decode_request(&bytes).unwrap());
+    let Response::Regenerated {
+        mesh: sent,
+        bodies: boxes,
+        ..
+    } = &response
+    else {
         panic!("regeneration failed");
     };
-    *mesh = Arc::new(two_solids());
     let Response::Regenerated {
         generation,
         exclude,
+        draft,
         mesh,
         sketches,
         unsolved: marked,
+        failed,
+        bodies,
     } = round_trip(&response)
     else {
         panic!("regeneration failed");
     };
     assert_eq!(generation, editor.generation());
     assert_eq!(exclude, None);
+    assert_eq!(draft, None);
     assert_eq!(marked, [unsolved]);
-    assert_eq!(*mesh, two_solids());
+    assert_eq!(failed.len(), 1);
+    assert_eq!(failed[0].0, cut);
+    assert_eq!(mesh, *sent);
+    assert!(mesh.triangle_count() > 0);
     assert!(!mesh.edges().is_empty());
+    assert_eq!(bodies, *boxes);
+    assert_eq!(bodies.len(), 1);
     assert_eq!(
         *sketches,
         crate::flatten_sketches(editor.document(), None).unwrap()
     );
-    assert_eq!(sketches.ends().len(), 3);
+    assert_eq!(sketches.ends().len(), 6);
+}
+
+#[test]
+fn bodies_boxes_must_be_boxes() {
+    let body = Document::example().bodies()[0].id;
+    for bad in [
+        [[1.0; 3], [0.0; 3]],
+        [[f32::NAN, 0.0, 0.0], [1.0; 3]],
+        [[0.0; 3], [f32::INFINITY, 1.0, 1.0]],
+    ] {
+        let mut head = regenerated(4);
+        if let Head::Regenerated { bodies, .. } = &mut head {
+            bodies.extend([(body, [[0.0; 3], [1.0; 3]]), (body, bad)]);
+        }
+        let Response::Failed {
+            generation, error, ..
+        } = decode_reply(&head.encode()[..], &slices(&triangle())).unwrap()
+        else {
+            panic!("a bad box was taken");
+        };
+        assert_eq!(u64::from(generation), 4);
+        assert_eq!(error, Error::Bounds.to_string());
+    }
 }
 
 #[test]
@@ -135,12 +206,14 @@ fn failed_round_trips() {
     let response = Response::Failed {
         generation: Generation::from(u64::MAX),
         exclude: Some(feature),
+        draft: Some(2),
         error: "the kernel gave up".to_owned(),
     };
     assert!(encode_reply(&response).1.is_none());
     let Response::Failed {
         generation,
         exclude,
+        draft,
         error,
     } = round_trip(&response)
     else {
@@ -148,6 +221,7 @@ fn failed_round_trips() {
     };
     assert_eq!(u64::from(generation), u64::MAX);
     assert_eq!(exclude, Some(feature));
+    assert_eq!(draft, Some(2));
     assert_eq!(error, "the kernel gave up");
 }
 
@@ -279,9 +353,12 @@ fn triangle() -> Vec<Vec<u8>> {
     let response = Response::Regenerated {
         generation: Generation::from(0),
         exclude: None,
+        draft: None,
         mesh: Arc::new(mesh),
         sketches: Arc::new(lines),
         unsolved: Vec::new(),
+        failed: Vec::new(),
+        bodies: Vec::new(),
     };
     let (_, mesh) = encode_reply(&response);
     mesh.unwrap().map(<[u8]>::to_vec).to_vec()
@@ -561,6 +638,7 @@ fn damaged_encodings_never_panic() {
     let failed = Head::Failed {
         generation: Generation::from(3),
         exclude: None,
+        draft: Some(1),
         error: "no".to_owned(),
     }
     .encode();
@@ -593,6 +671,7 @@ fn huge_lengths_are_refused_without_allocating_them() {
     let mut head = Head::Failed {
         generation: Generation::from(3),
         exclude: None,
+        draft: None,
         error: String::new(),
     }
     .encode();

@@ -24,8 +24,13 @@
 //! [`RenderMesh`] and [`RenderLines`] limits, both before they're copied,
 //! so a broken reply doesn't allocate without bound, and together the parts
 //! make a [`RenderMesh`] by [`RenderMesh::from_parts`] and [`RenderLines`]
-//! by [`RenderLines::from_parts`]. Malformed bytes are refused, never a
-//! panic; see [`decode_request`] and [`decode_reply`].
+//! by [`RenderLines::from_parts`]; the bodies' boxes in the head are
+//! finite with their corners in order. The failed features' ids and the
+//! sketches that don't solve are only marks, so they aren't checked
+//! against a document. Malformed bytes are refused, never a panic; see
+//! [`decode_request`] and [`decode_reply`]. A request's draft isn't
+//! checked as it's decoded: applying it goes through the document's
+//! checks.
 //!
 //! [`Document::to_postcard`]: varde_document::Document::to_postcard
 //! [`codec`]: varde_document::codec
@@ -34,17 +39,18 @@ use std::fmt;
 use std::mem::size_of;
 use std::sync::Arc;
 
+use glam::Vec3;
 use serde::{Deserialize, Serialize};
-use varde_document::{DecodeError, FeatureId, Generation, codec};
-use varde_kernel::{LinesError, LinesPart, MeshError, MeshPart, RenderLines, RenderMesh};
+use varde_document::{BodyId, DecodeError, FeatureId, Generation, codec};
+use varde_kernel::{Aabb, LinesError, LinesPart, MeshError, MeshPart, RenderLines, RenderMesh};
 use varde_lane::bytes::Buffer;
 
-use crate::{Request, Response};
+use crate::{Drafted, Request, Response};
 
-/// The most bytes a reply's head may have. A head is a generation and a
-/// few feature ids, or an error message, so this is far more than any real
-/// one needs.
-pub const MAX_HEAD_BYTES: usize = 1 << 20;
+/// The most bytes a reply's head may have. A head is a generation, a few
+/// feature ids, the failed features' messages and a box per body, or an
+/// error message, so this is far more than any real one needs.
+pub const MAX_HEAD_BYTES: usize = 1 << 26;
 
 /// The most bytes a request may have. Documents are far smaller; the
 /// bound keeps a broken request from being copied without end.
@@ -73,14 +79,21 @@ pub enum Head {
     Regenerated {
         generation: Generation,
         exclude: Option<FeatureId>,
+        draft: Option<Drafted>,
         /// The sketches that don't solve. Only marks, so an id naming no
         /// sketch of the document marks nothing, and isn't checked.
         unsolved: Vec<FeatureId>,
+        /// The features that failed, likewise only marks.
+        failed: Vec<(FeatureId, String)>,
+        /// Each body's box, its least and greatest corner, checked to be
+        /// finite and in order ([`Error::Bounds`]).
+        bodies: Vec<(BodyId, [[f32; 3]; 2])>,
     },
     /// A [`Response::Failed`].
     Failed {
         generation: Generation,
         exclude: Option<FeatureId>,
+        draft: Option<u64>,
         error: String,
     },
 }
@@ -108,14 +121,23 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Option<[&[u8]; MODEL_PARTS
         Response::Regenerated {
             generation,
             exclude,
+            draft,
             mesh,
             sketches,
             unsolved,
+            failed,
+            bodies,
         } => (
             Head::Regenerated {
                 generation: *generation,
                 exclude: *exclude,
+                draft: draft.clone(),
                 unsolved: unsolved.clone(),
+                failed: failed.clone(),
+                bodies: bodies
+                    .iter()
+                    .map(|(body, aabb)| (*body, [aabb.min.to_array(), aabb.max.to_array()]))
+                    .collect(),
             }
             .encode(),
             Some([
@@ -130,11 +152,13 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Option<[&[u8]; MODEL_PARTS
         Response::Failed {
             generation,
             exclude,
+            draft,
             error,
         } => (
             Head::Failed {
                 generation: *generation,
                 exclude: *exclude,
+                draft: *draft,
                 error: error.clone(),
             }
             .encode(),
@@ -156,31 +180,60 @@ pub fn decode_reply(
         Head::Regenerated {
             generation,
             exclude,
+            draft,
             unsolved,
-        } => match decode_model(parts) {
-            Ok((mesh, sketches)) => Response::Regenerated {
-                generation,
-                exclude,
-                mesh: Arc::new(mesh),
-                sketches: Arc::new(sketches),
-                unsolved,
-            },
-            Err(error) => Response::Failed {
-                generation,
-                exclude,
-                error: error.to_string(),
-            },
-        },
+            failed,
+            bodies,
+        } => {
+            let model =
+                decode_bodies(&bodies).and_then(|bodies| Ok((bodies, decode_model(parts)?)));
+            match model {
+                Ok((bodies, (mesh, sketches))) => Response::Regenerated {
+                    generation,
+                    exclude,
+                    draft,
+                    mesh: Arc::new(mesh),
+                    sketches: Arc::new(sketches),
+                    unsolved,
+                    failed,
+                    bodies,
+                },
+                Err(error) => Response::Failed {
+                    generation,
+                    exclude,
+                    draft: draft.map(|draft| draft.revision),
+                    error: error.to_string(),
+                },
+            }
+        }
         Head::Failed {
             generation,
             exclude,
+            draft,
             error,
         } => Response::Failed {
             generation,
             exclude,
+            draft,
             error,
         },
     })
+}
+
+/// The bodies' boxes of a [`Head::Regenerated`], each checked to be
+/// finite with its least corner below its greatest.
+fn decode_bodies(bodies: &[(BodyId, [[f32; 3]; 2])]) -> Result<Vec<(BodyId, Aabb)>, Error> {
+    bodies
+        .iter()
+        .map(|&(body, [min, max])| {
+            let (min, max) = (Vec3::from(min), Vec3::from(max));
+            if min.is_finite() && max.is_finite() && min.cmple(max).all() {
+                Ok((body, Aabb { min, max }))
+            } else {
+                Err(Error::Bounds)
+            }
+        })
+        .collect()
 }
 
 /// Decodes and checks the model's parts following a [`Head::Regenerated`]:
@@ -301,6 +354,8 @@ pub enum Error {
     RenderMesh(MeshError),
     /// The parts don't make lines.
     RenderLines(LinesError),
+    /// A body's box isn't finite, or its corners are out of order.
+    Bounds,
 }
 
 impl fmt::Display for Error {
@@ -315,6 +370,7 @@ impl fmt::Display for Error {
             }
             Error::RenderMesh(e) => e.fmt(f),
             Error::RenderLines(e) => e.fmt(f),
+            Error::Bounds => f.write_str("a body's box isn't one"),
         }
     }
 }
@@ -327,7 +383,8 @@ impl std::error::Error for Error {
             | Error::TooLarge { .. }
             | Error::Partial { .. }
             | Error::RenderMesh(_)
-            | Error::RenderLines(_) => None,
+            | Error::RenderLines(_)
+            | Error::Bounds => None,
         }
     }
 }

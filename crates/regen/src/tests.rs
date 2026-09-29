@@ -1,15 +1,17 @@
 use glam::{DVec2, Vec3};
-use varde_document::{Command, Document, Editor, OriginPlane, Plane, Sketch};
-use varde_kernel::Tolerance;
+use varde_document::{Command, Document, Editor, Operation, OriginPlane, Plane, Sketch};
+use varde_kernel::{Solid, Tolerance};
 use varde_sketch::{CIRCLE_SEGMENTS, Constraint, Curve};
 
 use super::*;
+use crate::history::tests::example_extrude;
 
 fn regenerate(editor: &Editor, exclude: Option<FeatureId>) -> Request {
     Request::Regenerate {
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude,
+        draft: None,
     }
 }
 
@@ -58,20 +60,30 @@ fn regenerate_tessellates_the_snapshot() {
     let Response::Regenerated {
         generation,
         exclude,
+        draft,
         mesh,
         sketches,
         unsolved,
+        failed,
+        bodies,
     } = handle(regenerate(&editor, None))
     else {
         panic!("regeneration failed");
     };
     assert_eq!(generation, editor.generation());
     assert_eq!(exclude, None);
+    assert_eq!(draft, None);
     // Sketches make no bodies.
-    assert!(evaluate(editor.document()).is_empty());
+    assert!(
+        evaluate(editor.document(), &mut Cache::default())
+            .bodies
+            .is_empty()
+    );
     assert_eq!(*mesh, RenderMesh::default());
     assert_eq!(sketches.ends().len(), 2);
     assert!(unsolved.is_empty());
+    assert!(failed.is_empty());
+    assert!(bodies.is_empty());
 }
 
 fn cuboid(min: f64, size: f64) -> Solid {
@@ -84,13 +96,52 @@ fn cuboid(min: f64, size: f64) -> Solid {
     .unwrap()
 }
 
+/// `solids` as the history's solids of `bodies`, filed under keys of
+/// their own.
+fn made(solids: impl IntoIterator<Item = (BodyId, Solid)>) -> Evaluation {
+    let bodies = solids
+        .into_iter()
+        .enumerate()
+        .map(|(k, (body, solid))| BodySolid {
+            body,
+            solid: Arc::new(solid),
+            key: Keyer::new("test").number(k as u64).finish(),
+        })
+        .collect();
+    Evaluation {
+        bodies,
+        failed: Vec::new(),
+    }
+}
+
+/// The example plate ("Body 1", shown) and, if `hidden_too`, a second
+/// extrude of it making "Body 2", hidden.
+fn with_bodies(hidden_too: bool) -> Document {
+    let mut editor = Editor::new(Document::example());
+    if hidden_too {
+        let extrude = Extrude {
+            operation: Operation::NewBody(BodyId::NEW),
+            ..example_extrude(editor.document())
+        };
+        editor
+            .apply(editor.document().add_extrude(extrude))
+            .unwrap();
+        let body = editor.document().bodies()[1].id;
+        editor.apply(Command::SetVisible(body, false)).unwrap();
+    }
+    editor.document().clone()
+}
+
 #[test]
 fn solids_are_drawn_into_one_mesh() {
+    let document = with_bodies(true);
+    let body = document.bodies()[0].id;
     let (a, b) = (cuboid(0.0, 1.0), cuboid(3.0, 2.0));
     let display = Display::new(&Tolerance::DEFAULT);
-    let mesh = draw([&a, &b], &display).unwrap();
     let mut both = a.tessellate(&display).unwrap();
     both.append(&b.tessellate(&display).unwrap()).unwrap();
+    let evaluation = made([(body, a), (body, b)]);
+    let mesh = tessellate(&document, &evaluation, &mut Cache::default()).unwrap();
     assert_eq!(mesh, both);
     assert_eq!(mesh.triangle_count(), 24);
     assert_eq!(
@@ -100,28 +151,8 @@ fn solids_are_drawn_into_one_mesh() {
             max: Vec3::splat(5.0)
         }
     );
-    assert_eq!(draw([], &display).unwrap(), RenderMesh::default());
-}
-
-/// The example plate ("Body 1", shown) and, if `hidden_too`, a second
-/// extrude of it making "Body 2", hidden.
-fn with_bodies(hidden_too: bool) -> Document {
-    let mut editor = Editor::new(Document::example());
-    if hidden_too {
-        let FeatureKind::Extrude(extrude) = &editor.document().features()[1].kind else {
-            panic!("the example's second feature is its extrude");
-        };
-        let extrude = varde_document::Extrude {
-            operation: varde_document::Operation::NewBody(BodyId::NEW),
-            ..extrude.clone()
-        };
-        editor
-            .apply(editor.document().add_extrude(extrude))
-            .unwrap();
-        let body = editor.document().bodies()[1].id;
-        editor.apply(Command::SetVisible(body, false)).unwrap();
-    }
-    editor.document().clone()
+    let none = tessellate(&document, &made([]), &mut Cache::default()).unwrap();
+    assert_eq!(none, RenderMesh::default());
 }
 
 #[test]
@@ -136,12 +167,13 @@ fn only_the_solids_of_shown_bodies_are_drawn() {
     assert!(!both.body(hidden).unwrap().visible);
     assert_eq!(ids(&one), [shown]);
 
-    let solids = [(shown, cuboid(0.0, 1.0)), (hidden, cuboid(3.0, 2.0))];
+    let solids = made([(shown, cuboid(0.0, 1.0)), (hidden, cuboid(3.0, 2.0))]);
     let display = Display::new(&Tolerance::DEFAULT);
-    let alone = solids[0].1.tessellate(&display).unwrap();
+    let alone = solids.bodies[0].solid.tessellate(&display).unwrap();
     // Hidden, or not in the document at all.
-    assert_eq!(tessellate(&both, &solids).unwrap(), alone);
-    assert_eq!(tessellate(&one, &solids).unwrap(), alone);
+    let mut cache = Cache::default();
+    assert_eq!(tessellate(&both, &solids, &mut cache).unwrap(), alone);
+    assert_eq!(tessellate(&one, &solids, &mut cache).unwrap(), alone);
 }
 
 /// Solids are drawn to the document's tolerance: a coarser one gives a
@@ -152,14 +184,19 @@ fn solids_are_drawn_to_the_document_s_tolerance() {
     let body = editor.document().bodies()[0].id;
     let tolerance = Tolerance::DEFAULT;
     let cylinder = Solid::cylinder(glam::DVec3::ZERO, 10.0, 1.0, 0, &tolerance).unwrap();
-    let solids = [(body, cylinder)];
-    let fine = tessellate(editor.document(), &solids).unwrap();
+    let solids = made([(body, cylinder)]);
+    // One cache: the mesh is filed by the tolerance too.
+    let mut cache = Cache::default();
+    let fine = tessellate(editor.document(), &solids, &mut cache).unwrap();
     let coarse = Tolerance::new(Tolerance::MAX_FIT).unwrap();
     editor.apply(Command::SetTolerance(coarse)).unwrap();
-    let drawn = tessellate(editor.document(), &solids).unwrap();
+    let drawn = tessellate(editor.document(), &solids, &mut cache).unwrap();
     assert_eq!(
         drawn,
-        solids[0].1.tessellate(&Display::new(&coarse)).unwrap()
+        solids.bodies[0]
+            .solid
+            .tessellate(&Display::new(&coarse))
+            .unwrap()
     );
     assert!(drawn.triangle_count() < fine.triangle_count());
 }
@@ -370,4 +407,160 @@ fn lines_are_drawn_without_the_ends_a_chamfer_cuts_off() {
             [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
         ]
     );
+}
+
+fn regenerate_with(editor: &Editor, draft: Option<Draft>) -> Request {
+    Request::Regenerate {
+        generation: editor.generation(),
+        document: editor.snapshot(),
+        exclude: None,
+        draft,
+    }
+}
+
+/// The model of a regeneration that worked.
+struct Answer {
+    draft: Option<Drafted>,
+    mesh: Arc<RenderMesh>,
+    failed: Vec<(FeatureId, String)>,
+    bodies: Vec<(BodyId, varde_kernel::Aabb)>,
+}
+
+fn answered(response: Response) -> Answer {
+    let Response::Regenerated {
+        draft,
+        mesh,
+        failed,
+        bodies,
+        ..
+    } = response
+    else {
+        panic!("regeneration failed: {response:?}");
+    };
+    Answer {
+        draft,
+        mesh,
+        failed,
+        bodies,
+    }
+}
+
+#[test]
+fn the_example_plate_regenerates_and_draws() {
+    let editor = Editor::new(Document::example());
+    let answer = answered(handle(regenerate(&editor, None)));
+    assert!(answer.failed.is_empty(), "{:?}", answer.failed);
+    assert!(answer.mesh.triangle_count() > 0);
+    assert!(!answer.mesh.edges().is_empty());
+    let body = editor.document().bodies()[0].id;
+    let bounds = varde_kernel::Aabb {
+        min: Vec3::new(-30.0, -20.0, 0.0),
+        max: Vec3::new(30.0, 20.0, 10.0),
+    };
+    assert_eq!(answer.bodies, [(body, bounds)]);
+    assert_eq!(answer.mesh.bounds(), Some(bounds));
+}
+
+/// A draft of revision `revision` making a new body from the example's
+/// regions, `text` long, flipped.
+fn new_body_draft(document: &Document, revision: u64, text: &str) -> Draft {
+    Draft {
+        revision,
+        feature: None,
+        extrude: Extrude {
+            extent: varde_document::Extent::OneSide(crate::history::tests::length(document, text)),
+            flip: true,
+            operation: Operation::NewBody(BodyId::NEW),
+            ..example_extrude(document)
+        },
+    }
+}
+
+#[test]
+fn a_draft_is_answered_as_if_applied() {
+    let editor = Editor::new(Document::example());
+    let draft = new_body_draft(editor.document(), 7, "3");
+    let answer = answered(handle(regenerate_with(&editor, Some(draft))));
+    assert_eq!(
+        answer.draft,
+        Some(Drafted {
+            revision: 7,
+            error: None
+        })
+    );
+    assert!(answer.failed.is_empty());
+    let [(first, _), (_, below)] = answer.bodies[..] else {
+        panic!("two bodies");
+    };
+    assert_eq!(first, editor.document().bodies()[0].id);
+    assert_eq!((below.min.z, below.max.z), (-3.0, 0.0));
+    assert_eq!(answer.mesh.bounds().unwrap().min.z, -3.0);
+
+    // An extrude edited: the body it makes changes.
+    let feature = editor.document().features()[1].id;
+    let draft = Draft {
+        revision: 8,
+        feature: Some(feature),
+        extrude: Extrude {
+            flip: false,
+            ..new_body_draft(editor.document(), 0, "20").extrude
+        },
+    };
+    let answer = answered(handle(regenerate_with(&editor, Some(draft))));
+    assert_eq!(answer.draft.unwrap().error, None);
+    let [(_, bounds)] = answer.bodies[..] else {
+        panic!("one body");
+    };
+    assert_eq!((bounds.min.z, bounds.max.z), (0.0, 20.0));
+}
+
+#[test]
+fn a_failing_draft_leaves_the_model_as_it_was() {
+    let editor = Editor::new(Document::example());
+    let committed = answered(handle(regenerate(&editor, None)));
+    let cut = Draft {
+        extrude: Extrude {
+            operation: Operation::Cut(Default::default()),
+            ..new_body_draft(editor.document(), 0, "3").extrude
+        },
+        ..new_body_draft(editor.document(), 3, "3")
+    };
+    // One the document refuses: its sketch is the extrude.
+    let mut refused = new_body_draft(editor.document(), 4, "3");
+    refused.extrude.sketch = editor.document().features()[1].id;
+    for (draft, error) in [
+        (cut, "cutting isn't available yet".to_owned()),
+        (refused.clone(), {
+            let command = editor.document().add_extrude(refused.extrude.clone());
+            let mut probe = Editor::new(editor.document().clone());
+            probe.apply(command).unwrap_err().to_string()
+        }),
+    ] {
+        let revision = draft.revision;
+        let answer = answered(handle(regenerate_with(&editor, Some(draft))));
+        assert_eq!(
+            answer.draft,
+            Some(Drafted {
+                revision,
+                error: Some(error)
+            })
+        );
+        assert_eq!(answer.mesh, committed.mesh);
+        assert_eq!(answer.bodies, committed.bodies);
+        assert!(answer.failed.is_empty());
+    }
+}
+
+#[test]
+fn dragging_a_draft_reruns_only_the_draft() {
+    let editor = Editor::new(Document::example());
+    let mut regenerator = Regenerator::default();
+    let draft = new_body_draft(editor.document(), 1, "3");
+    answered(regenerator.handle(regenerate_with(&editor, Some(draft))));
+    let (_, before) = regenerator.cache().counts();
+    let draft = new_body_draft(editor.document(), 2, "4");
+    let answer = answered(regenerator.handle(regenerate_with(&editor, Some(draft))));
+    assert_eq!(answer.draft.unwrap().revision, 2);
+    // The draft's solid and its mesh.
+    assert_eq!(regenerator.cache().counts().1, before + 2);
 }

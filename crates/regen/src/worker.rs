@@ -10,7 +10,9 @@
 //! Latest wins through a [`mailbox`] holding a [`Newest`]: one request is
 //! with the worker at a time and newer ones replace each other on the page
 //! until it answers. A job that has started runs to the end, since the
-//! worker can't see messages meanwhile; jobs are short so far.
+//! worker can't see messages meanwhile. The worker keeps its
+//! [`Regenerator`]'s cache from one request to the next, as the native
+//! thread does.
 //!
 //! A worker that stops (a panic traps its wasm instance, or its script or
 //! wasm didn't load) is terminated and the request it had is answered with
@@ -26,7 +28,7 @@ use varde_lane::{bytes, worker};
 use crate::lane::{Lane, Responses};
 use crate::newest::Newest;
 use crate::wire;
-use crate::{Request, Response, handle};
+use crate::{Regenerator, Request, Response};
 
 /// Starts a lane in a new Web Worker. Send requests through the [`Lane`],
 /// read responses from [`Responses`]; dropping the latter terminates the
@@ -62,6 +64,7 @@ impl Wire for Regenerate {
         Response::Failed {
             generation: request.generation(),
             exclude: request.exclude(),
+            draft: request.draft(),
             error,
         }
     }
@@ -70,13 +73,14 @@ impl Wire for Regenerate {
 /// Runs the worker's side: answers each request posted to it, one at a
 /// time. Called by the worker's `main`, in the worker.
 pub fn serve() {
-    worker::serve("the regeneration worker", |message| {
+    let mut regenerator = Regenerator::default();
+    worker::serve("the regeneration worker", move |message| {
         let ([part], []) = (&message.parts[..], &message.objects[..]) else {
             return Err(Refused::Else);
         };
         let bytes = bytes::copy(part, wire::MAX_REQUEST_BYTES)?;
         let request = wire::decode_request(&bytes)?;
-        let response = handle(request);
+        let response = regenerator.handle(request);
         let (head, model) = wire::encode_reply(&response);
         let mut parts = vec![&head[..]];
         parts.extend(model.into_iter().flatten());

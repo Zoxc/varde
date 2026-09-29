@@ -140,6 +140,7 @@ fn failure_ends_regenerating_and_keeps_the_last_mesh() {
     feed.request(&editor, None);
     let request = regen.borrow_mut().remove(0);
     feed.apply(Response::Failed {
+        draft: None,
         generation: request.generation(),
         exclude: request.exclude(),
         error: "the kernel failed".to_owned(),
@@ -227,6 +228,7 @@ fn sketches_are_shown_with_their_mesh() {
     feed.request(&editor, None);
     let request = regen.borrow_mut().remove(0);
     feed.apply(Response::Failed {
+        draft: None,
         generation: request.generation(),
         exclude: request.exclude(),
         error: "no".to_owned(),
@@ -300,6 +302,7 @@ fn only_the_sketch_asked_for_last_is_shown_left_out() {
 
     // A failure of the same generation doesn't replace it.
     feed.apply(Response::Failed {
+        draft: None,
         generation: editor.generation(),
         exclude: Some(feature),
         error: "no".to_owned(),
@@ -319,6 +322,7 @@ fn a_failure_doesn_t_hold_back_leaving_out_another_sketch() {
     feed.request(&editor, None);
     let request = regen.borrow_mut().remove(0);
     feed.apply(Response::Failed {
+        draft: None,
         generation: request.generation(),
         exclude: None,
         error: "the worker stopped".to_owned(),
@@ -340,6 +344,7 @@ fn a_failure_doesn_t_hold_back_leaving_out_another_sketch() {
     feed.request(&editor, None);
     let request = regen.borrow_mut().remove(0);
     feed.apply(Response::Failed {
+        draft: None,
         generation: request.generation(),
         exclude: None,
         error: "again".to_owned(),

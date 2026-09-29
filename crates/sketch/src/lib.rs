@@ -73,6 +73,14 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Id(u32);
 
+impl Id {
+    /// Its number, unique in its sketch: for naming what's made from the
+    /// item outside the sketch, such as the wall an extruded curve sweeps.
+    pub fn get(self) -> u32 {
+        self.0
+    }
+}
+
 impl fmt::Display for Id {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)

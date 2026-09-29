@@ -16,18 +16,19 @@ use varde_lane::thread::{self, OnClose};
 
 use crate::lane::{Lane, Responses};
 use crate::newest::Newest;
-use crate::{Request, Response, handle};
+use crate::{Regenerator, Request, Response};
 
 /// Starts a lane on a new thread. Send requests through the [`Lane`], read
 /// responses from [`Responses`]; dropping the latter ends the thread.
 pub fn spawn() -> (Lane, Responses) {
-    spawn_on(handle)
+    let mut regenerator = Regenerator::default();
+    spawn_on(move |request| regenerator.handle(request))
 }
 
 /// Starts a lane doing its work with `handle`, which tests can swap for one
 /// that fails. A job that panics is answered with [`Response::Failed`], so
 /// the UI hears back either way, and the lane goes on.
-fn spawn_on(handle: fn(Request) -> Response) -> (Lane, Responses) {
+fn spawn_on(handle: impl FnMut(Request) -> Response + Send + 'static) -> (Lane, Responses) {
     thread::spawn(
         "regenerate",
         Newest::default(),
@@ -35,9 +36,11 @@ fn spawn_on(handle: fn(Request) -> Response) -> (Lane, Responses) {
         handle,
         |request: &Request| {
             let (generation, exclude) = (request.generation(), request.exclude());
+            let draft = request.draft();
             move |error| Response::Failed {
                 generation,
                 exclude,
+                draft,
                 error,
             }
         },

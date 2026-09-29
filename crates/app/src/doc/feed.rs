@@ -71,6 +71,7 @@ impl MeshFeed {
                 generation,
                 document: editor.snapshot(),
                 exclude,
+                draft: None,
             });
         }
     }
@@ -89,6 +90,7 @@ impl MeshFeed {
                 mesh,
                 sketches,
                 unsolved,
+                ..
             } => {
                 self.mesh = mesh;
                 self.sketches = sketches;
@@ -100,6 +102,7 @@ impl MeshFeed {
                 generation,
                 exclude,
                 error,
+                ..
             } => self.failed = Some((generation, exclude, error)),
         }
     }

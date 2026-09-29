@@ -2,13 +2,14 @@ use varde_document::{Command, Document, Editor, FeatureId, FeatureKind, OriginPl
 use varde_lane::thread::testing::{join_in_time, next};
 
 use super::*;
-use crate::Transport;
+use crate::{Transport, handle};
 
 fn regenerate(editor: &Editor) -> Request {
     Request::Regenerate {
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
+        draft: None,
     }
 }
 

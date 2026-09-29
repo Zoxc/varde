@@ -189,6 +189,7 @@ fn one_line() -> Response {
         generation: Generation::from(1),
         document: Arc::new(with_a_line()),
         exclude: None,
+        draft: None,
     })
 }
 

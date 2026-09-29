@@ -1093,17 +1093,89 @@ Commands:
 XY, extruded 10 mm as "Body 1", made through the commands. New designs
 still start from `Document::default()`, empty: the example is for tests.
 
-`varde_regen::evaluate(document)` runs the features in order and returns
-the solids they give, as `(BodyId, Solid)` pairs in feature order (none
-today: extrudes aren't evaluated yet). `varde_regen::tessellate(document,
-solids)` draws the solids of the visible bodies the document holds into
-one `RenderMesh`, each through `Solid::tessellate` at
-`Display::new(&document.tolerance())`, joined by
-`RenderMesh::append`. Solids are in world space: there are no body
-positions. A mesh past `RenderMesh`'s limits fails the generation with
-the `MeshError`, as before. The response and its wire format didn't
-change: the mesh crosses to the page as the same parts and is checked
-there by `RenderMesh::from_parts`.
+### Regeneration (`crates/regen`)
+
+`varde_regen::evaluate(document, cache)` (`src/history.rs`) runs the
+features in order and gives an `Evaluation`: each body's solid
+(`BodySolid`, in the order they were made) and the features that failed,
+with why (`failed`, in the document's order). A failing feature changes no
+body, and the later ones still run.
+
+- A **sketch** gives its `Profiles` (`Sketch::profiles`; too complex fails
+  the extrudes using it).
+- An **extrude** resolves its regions (`Profiles::resolve`; one gone is
+  "region not found"), merges them (`Profiles::merge`), turns the loops
+  into a kernel `Profile` (below), and calls `kernel::extrude` on the
+  sketch plane's `Frame` (from `Plane::placement`), over `Extrude::span()`,
+  with the document's tolerance and `Budget::DEFAULT`, faces named by
+  `FeatureId::get()`. A `NewBody` body gets the solid. Join, cut and
+  intersect fail with "joining (cutting, intersecting) isn't available
+  yet" before building anything. Through all's span is worked out first
+  (`through_all`): the extent along the normal of the boxes (`bounds3`,
+  the control points') of every body made before it and not excluded,
+  plus 1 % of that extent and 1 mm at each end, clamped to `MAX_COORD`;
+  none is "there's no body to go through".
+
+**Pieces to conics** (`src/profile.rs`, `profile(sketch, profiles, loops,
+fit)`). Each piece becomes segments named by its curve's `Id::get()`, its
+ends put at its vertices (`Profiles::vertices`), so loops close to the
+bit:
+
+- A line piece is `Conic2::line` between its vertices.
+- A circle or arc piece (sweep `|to − from|`, counter-clockwise when `to >
+  from`) is halved until each part is at most 90° (with `1e-9` slack; at
+  most twice, four parts for a whole circle). The middle of a part from `a`
+  to `b` about `c` is `c + r·d/|d|` with `d` the chord `b − a` turned a
+  quarter clockwise (anticlockwise for a clockwise piece), or `−(a − c + b −
+  c)` for sweeps over 270°, where the chord vanishes. Each part is exact,
+  without `cos` or `sin`: control point `c + m·2r²/|m|²`, weight `|m|/2r`,
+  `m = a + b − 2c`. `r` is the circle's radius (an arc's start's distance
+  from its centre); the parts share their middles to the bit.
+- A spline piece (`src/profile/fit.rs`) is the open `BSpline::piece`
+  between its parameters, cut at its breaks into cubic Béziers from the
+  points and derivatives there (each break evaluated once, so neighbours
+  share it), reversed for a piece running backwards. Each Bézier is fitted
+  by one conic along its end tangents (so the chain turns smoothly), its
+  weight putting the conic's shoulder where the cubic crosses the line from
+  the chord's middle to the control point, or else weight 1; accepted when
+  the tangents meet ahead of both ends, turn by under 90°, the weight is
+  within `0.25..=4`, and 15 samples of the cubic lie in the control
+  triangle within half the fit tolerance of the conic (by its implicit
+  form over its gradient, `λ1² = 4w²·λ0·λ2`). Otherwise a Bézier within a
+  quarter of the tolerance of its chord becomes a straight conic, and any
+  other is halved (at most 24 times; past that `ProfileError::Fit`). At
+  most `MAX_PROFILE_SEGMENTS` segments are made (`TooManySegments`).
+  Measured on a closed spline about 10 across: 5, 47 and 409 segments at
+  fits of 0.1, 1e-3 and 1e-5 mm.
+
+**Cache** (`src/cache.rs`). Every result is filed under a 128-bit key (two
+SipHash runs, one salted, over the length-prefixed parts): a sketch's
+profiles by its plane and sketch (postcard-encoded), whether it solves by
+the sketch, an extrude's solid (or error) by its feature id, the extrude,
+the tolerance's bits, its span's bits and its sketch's key, and a body's
+mesh by its solid's key and the tolerance. The regenerator keeps what the
+request being answered and the one before used (`Cache::begin` drops the
+rest), so an unrelated edit, or a draft dragged, reruns only what changed.
+The lane owns it: the native thread's closure, or the worker's `serve`.
+
+**Drafts.** `Request::Regenerate` has `draft: Option<Draft { revision,
+feature, extrude }>`: an extrude being set up (`feature: None`, applied as
+`AddExtrude`, the body `BodyId::NEW`) or edited (`SetExtrude`), applied to
+a copy of the document through an `Editor`, so its checks apply. The
+answer carries `Drafted { revision, error }`; a draft the document refuses,
+or whose feature fails, is answered with the committed model and its
+error. `Response::Failed` carries the draft's revision too.
+
+**The answer.** `Response::Regenerated` adds `failed` and `bodies:
+Vec<(BodyId, Aabb)>` (each body with a solid, shown or not, from
+`Solid::bounds`). `tessellate(document, evaluation, cache)` draws the
+visible bodies' solids at `Display::new(&document.tolerance())`, joined
+by `RenderMesh::append`; a mesh past `RenderMesh`'s limits fails the
+generation with the `MeshError`, as before. On the web the reply's head
+carries `draft`, `failed` and the boxes as corner arrays, checked finite
+and in order on receipt (`wire::Error::Bounds`); `MAX_HEAD_BYTES` is 64
+MiB. Touched bodies for a draft's join, cut or intersect wait for
+`kernel::touches`.
 
 ## Limits, budgets and errors (`src/lib.rs`, `src/budget.rs`, `src/error.rs`)
 
@@ -1246,3 +1318,16 @@ with tracing.
   `MAX_REGION_CURVES` is twice `MAX_CURVES` (a curve can bound several
   loops), and `RegionRef::check` takes the coordinate limit, since the
   sketch crate doesn't know `MAX_COORD`.
+- **The regeneration cache keeps what the last request used**, not two
+  generations: a draft dragged or an edit only ever reuses the request
+  before's results. It also keeps meshes and whether sketches solve, and
+  keys are 128-bit hashes of the values' postcard encodings, not their
+  `Hash` (sketches hold `f64`s).
+- **A failing draft is answered with the committed model** and the
+  draft's error (`Drafted`), rather than the draft applied without its
+  body; `touched` isn't in the response until `kernel::touches` exists.
+- **Join, cut and intersect fail before building the tool solid**; the
+  through-all span is still worked out first, from every earlier body not
+  excluded (touching isn't known yet).
+- **`FeatureId::get` and `Id::get`** give the numbers face names and wall
+  curves carry.
