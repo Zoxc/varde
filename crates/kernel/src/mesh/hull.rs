@@ -203,18 +203,30 @@ struct Simplex {
 
 impl Simplex {
     /// The point of the simplex's hull closest to the origin, and the
-    /// smallest face of the simplex holding it.
+    /// smallest face of the simplex holding it. The last point is the
+    /// support point just added, and the face holds it.
     ///
-    /// Every face (every non-empty subset of affinely independent points)
-    /// is tried: the origin's projection onto the face's affine hull,
-    /// kept when its barycentric coordinates are all non-negative. The
-    /// closest point lies inside some face and is that face's projection,
-    /// so the nearest projection kept is it. Subsets that are nearly
-    /// degenerate are skipped; their points are covered by smaller faces.
-    /// Ties keep the first found, smaller faces first.
+    /// Every face holding the last point (every subset of affinely
+    /// independent points with it) is tried: the origin's projection onto
+    /// the face's affine hull, kept when its barycentric coordinates are
+    /// all non-negative. The closest point lies inside some face and is
+    /// that face's projection, so the nearest projection kept is it.
+    /// Subsets that are nearly degenerate are skipped; their points are
+    /// covered by smaller faces. Ties keep the first found, smaller faces
+    /// first.
+    ///
+    /// Only faces with the last point: the support point `w` was added
+    /// because `v·w < v·v`, so the segment from the old closest point `v`
+    /// towards `w` comes closer to the origin, and the new closest point
+    /// is on a face with `w` (faces without it are the old simplex, no
+    /// closer than `v`). When `w` is square to `v` and far out, the
+    /// segment comes closer by less than the rounding of a squared length;
+    /// trying the old faces too then kept `v` and dropped `w`, and the
+    /// next step found `w` again, until GJK gave up.
     fn closest(&self) -> (DVec3, Simplex) {
+        let last = 1u32 << (self.len - 1);
         let mut best: Option<(f64, DVec3, Simplex)> = None;
-        for mask in 1..(1u32 << self.len) {
+        for mask in (1..(1u32 << self.len)).filter(|mask| mask & last != 0) {
             let mut face = Simplex {
                 points: [DVec3::ZERO; 4],
                 len: 0,
@@ -236,7 +248,7 @@ impl Simplex {
                 }
             }
         }
-        // A single point always projects to itself.
+        // The last point alone always projects to itself.
         let (_, q, face) = best.expect("a closest point");
         (q, face)
     }

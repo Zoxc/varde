@@ -529,6 +529,40 @@ fn wrong_face_tags_are_caught() {
     }
 }
 
+#[test]
+fn face_tags_of_any_scale_are_measured() {
+    // The side on x = 1 is face 3, triangles 6 and 7. A normal whose
+    // length overflows used to make every distance 0, and one whose square
+    // underflows every distance infinite.
+    let mut mesh = Mesh::cuboid(DVec3::ZERO, DVec3::ONE, 1, &TOL).unwrap();
+    for scale in [1e-200, 1e-160, 1e160, 1e200, 1e300] {
+        mesh.faces[3].surface = Surface::Plane {
+            n: DVec3::X * scale,
+            d: scale,
+        };
+        assert_eq!(mesh.check_faces(&TOL), Ok(()), "{scale:e}");
+        mesh.faces[3].surface = Surface::Plane {
+            n: DVec3::X * scale,
+            d: 2.0 * scale,
+        };
+        assert_eq!(
+            mesh.check_faces(&TOL),
+            Err(CheckError::Face(6)),
+            "{scale:e}"
+        );
+    }
+    // A quadric whose gradient overflows where its value doesn't: about
+    // the plane z = 0, which the wall rises half a unit off.
+    let mut mesh = half_cylinder(0.5, DVec3::ZERO);
+    let Surface::Quadric(mut q) = mesh.faces[3].surface else {
+        panic!("the half cylinder's wall");
+    };
+    q.b = DVec3::Z * 1e308;
+    q.c = 0.0;
+    mesh.faces[3].surface = Surface::Quadric(q);
+    assert!(matches!(mesh.check_faces(&TOL), Err(CheckError::Face(_))));
+}
+
 // Order.
 
 #[test]

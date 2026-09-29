@@ -124,3 +124,35 @@ fn bad_parameters_are_refused() {
         Err(KernelError::Invalid(CheckError::Hull(0, 2)))
     );
 }
+
+#[test]
+fn long_thin_boxes_pass_check() {
+    // A hundred resolutions thick and up to 2e7 times as long, where GJK
+    // used to give up on the hulls of the top and a long side (from about
+    // 1.2e7). Past about 3e7 GJK runs out of digits, and from about 7e7 a
+    // corner's normal coefficient falls under the fold check's floor.
+    let fine = Tolerance::new(Tolerance::MIN_FIT).unwrap();
+    let at = DVec3::new(-147626.8648737723, -656331.4518769319, -870337.0748753285);
+    let size = DVec3::new(
+        0.00019860975513606848,
+        7951.529175430838,
+        0.00019860975513606848,
+    );
+    assert_eq!(Mesh::cuboid(at, size, 1, &fine).map(|_| ()), Ok(()));
+    for fit in [Tolerance::MIN_FIT, 1e-3, Tolerance::MAX_FIT] {
+        let tol = Tolerance::new(fit).unwrap();
+        let thin = 100.0 * tol.resolution();
+        for aspect in [1e2, 1e5, 1e7, 2e7] {
+            let long = thin * aspect;
+            for size in [
+                DVec3::new(thin, long, thin),
+                DVec3::new(long, thin, thin),
+                DVec3::new(thin, thin, long),
+                DVec3::new(long, long, thin),
+            ] {
+                let cuboid = Mesh::cuboid(DVec3::splat(-1e5), size, 1, &tol);
+                assert_eq!(cuboid.map(|_| ()), Ok(()), "{fit} {size}");
+            }
+        }
+    }
+}

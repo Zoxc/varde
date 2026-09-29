@@ -50,9 +50,21 @@ impl Surface {
     /// About how far `x` is from the surface: exact for a plane, to first
     /// order for a quadric, 0 for [`Surface::Free`]. Infinite, or NaN, for
     /// a surface that isn't well defined (a zero or non-finite normal).
+    ///
+    /// A plane's `n` and `d` are first divided by `n`'s largest
+    /// coordinate, so a normal of any finite size measures the same: its
+    /// length could otherwise overflow, making every distance 0, or its
+    /// square underflow, making every distance infinite.
     pub fn distance(&self, x: DVec3) -> f64 {
         match self {
-            Surface::Plane { n, d } => (n.dot(x) - d).abs() / n.length(),
+            Surface::Plane { n, d } => {
+                let scale = n.abs().max_element();
+                if !(scale > 0.0 && scale.is_finite()) {
+                    return f64::INFINITY;
+                }
+                let (n, d) = (*n / scale, d / scale);
+                (n.dot(x) - d).abs() / n.length()
+            }
             Surface::Quadric(q) => q.distance(x),
             Surface::Free => 0.0,
         }
@@ -100,12 +112,18 @@ impl Quadric {
     }
 
     /// `|F(x)| / |∇F(x)|`: the distance from `x` to the quadric to first
-    /// order. Infinite where the gradient vanishes off the surface.
+    /// order. Infinite where the gradient vanishes off the surface, or
+    /// where it overflows (a finite value over an infinite gradient would
+    /// otherwise put `x` on the surface), and NaN where `F` does.
     pub fn distance(&self, x: DVec3) -> f64 {
         let f = self.value(x).abs();
         if f == 0.0 {
             return 0.0;
         }
-        f / self.gradient(x).length()
+        let gradient = self.gradient(x).length();
+        if !gradient.is_finite() {
+            return f64::INFINITY;
+        }
+        f / gradient
     }
 }

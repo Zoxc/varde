@@ -245,3 +245,32 @@ fn long_thin_hulls_are_told_apart() {
         assert!(!apart(&moved(&points, m, DVec3::ZERO), &[DVec3::ZERO], 0.1));
     }
 }
+
+#[test]
+fn a_support_point_square_to_the_closest_is_kept() {
+    // The top and a long side of a 2e-4 × 7951 × 2e-4 box meet at a
+    // corner, and a plane through it clears the rest by about 3e-5. From
+    // the corner (0, 0, 1e-4) of the difference, the support point (0,
+    // -7951, 0) is square to it: the segment's closest point is nearer by
+    // less than the rounding of its squared length. Keeping the point
+    // alone then found the same support point again and again, and GJK
+    // gave up, in some orders of the points.
+    let points = [
+        DVec3::new(0.0, -7951.0, 0.0),
+        DVec3::new(2e-4, 0.0, 0.0),
+        DVec3::new(1e-4, -3975.5, 0.0),
+        DVec3::new(1e-4, 0.0, 0.0),
+        DVec3::new(0.0, -3975.5, 0.0),
+        DVec3::new(-2e-4, 0.0, 2e-4),
+        DVec3::new(0.0, 0.0, 2e-4),
+        DVec3::new(-1e-4, 0.0, 2e-4),
+        DVec3::new(0.0, 0.0, 1e-4),
+        DVec3::new(-1e-4, 0.0, 1e-4),
+    ];
+    for start in 0..points.len() {
+        let mut order = points;
+        order.rotate_left(start);
+        assert!(apart(&order, &[DVec3::ZERO], 1e-8), "from {start}");
+        assert!(!apart(&order, &[DVec3::ZERO], 1e-4), "from {start}");
+    }
+}

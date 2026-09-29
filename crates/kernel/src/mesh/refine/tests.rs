@@ -131,3 +131,19 @@ fn leaves_too_deep_or_too_small_are_not_split() {
     let result = refiner.split(&[leaf], &mut Work::new(&Budget::DEFAULT));
     assert_eq!(result, Err(KernelError::TooComplex));
 }
+
+#[test]
+fn leaves_past_the_patch_limit_are_not_made() {
+    // Every leaf is at least one piece, so a round with more leaves than
+    // `MAX_PATCHES` fails anyway: the refiner stops as it gets there,
+    // before making the rest of the round's leaves and their pieces.
+    let mesh = round_octahedron(DVec3::ZERO);
+    let mut refiner = Refiner::new(&mesh, 0.0);
+    assert_eq!(refiner.max_leaves, crate::MAX_PATCHES);
+    refiner.max_leaves = 20;
+    let mut work = Work::new(&Budget::DEFAULT);
+    // 8 leaves, and 3 more a split: the fifth split would make 23.
+    let all: Vec<u32> = (0..8).collect();
+    assert_eq!(refiner.split(&all, &mut work), Err(KernelError::TooComplex));
+    assert_eq!(refiner.leaves.iter().flatten().count(), 20);
+}

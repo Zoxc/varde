@@ -33,7 +33,7 @@ use glam::DVec3;
 use super::{Edge, Face, LookupMap, Mesh, MeshBuilder, Surface};
 use crate::budget::Work;
 use crate::patch::{Conic3, Patch};
-use crate::{KernelError, MAX_REFINE_DEPTH};
+use crate::{KernelError, MAX_PATCHES, MAX_REFINE_DEPTH};
 
 /// An undirected edge by its end vertices, the smaller first.
 type Key = (u32, u32);
@@ -78,6 +78,11 @@ pub(super) struct Refiner<'a> {
     /// Leaves whose control points span less than this along every axis
     /// aren't split.
     min_size: f64,
+    /// The most leaves there may be: [`MAX_PATCHES`], as every leaf is
+    /// at least one piece.
+    max_leaves: usize,
+    /// How many leaves there are (the `Some`s of `leaves`).
+    live: usize,
     verts: Vec<DVec3>,
     /// Leaves by id; `None` once split.
     leaves: Vec<Option<Leaf>>,
@@ -101,6 +106,8 @@ impl<'a> Refiner<'a> {
         let mut refiner = Refiner {
             faces: &mesh.faces,
             min_size,
+            max_leaves: MAX_PATCHES,
+            live: mesh.tris.len(),
             verts: mesh.verts.clone(),
             leaves: Vec::with_capacity(mesh.tris.len()),
             edges: LookupMap::default(),
@@ -131,7 +138,11 @@ impl<'a> Refiner<'a> {
     /// the order given) and whatever the rules above take with them.
     /// Each split takes a unit of `work`. Fails with
     /// [`KernelError::TooComplex`] rather than split a leaf that is
-    /// [`MAX_REFINE_DEPTH`] levels deep or too small.
+    /// [`MAX_REFINE_DEPTH`] levels deep or too small, or make more than
+    /// [`MAX_PATCHES`] leaves: the pieces would be more still, so the
+    /// round would fail anyway, and stopping here bounds what a round
+    /// holds before it is counted (a round could otherwise split every
+    /// leaf of a mesh just under the limit, and more by the rules above).
     pub(super) fn split(&mut self, requested: &[u32], work: &mut Work) -> Result<(), KernelError> {
         let mut stack = Vec::new();
         for &t in requested {
@@ -262,9 +273,10 @@ impl<'a> Refiner<'a> {
         let leaf = self.leaf(t).clone();
         let bounds = leaf.patch.bounds();
         let small = (bounds.max - bounds.min).max_element() < self.min_size;
-        if leaf.level >= MAX_REFINE_DEPTH || small {
+        if leaf.level >= MAX_REFINE_DEPTH || small || self.live + 3 > self.max_leaves {
             return Err(KernelError::TooComplex);
         }
+        self.live += 3;
         let planar = self.planar(leaf.face);
         // The exact children, for their inner edges; a planar leaf's are
         // straight.

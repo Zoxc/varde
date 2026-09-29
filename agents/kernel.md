@@ -361,7 +361,11 @@ claim: `Plane { n, d }` (`n·x = d`, `n` any length), `Quadric`, or `Free`.
 origin`: measuring from a point near the surface keeps the rounding of `F`
 relative to the quadric's size. `Quadric::cylinder(point, axis, radius)`
 builds a circular cylinder. The distance to it is taken to first order,
-`|F| / |∇F|`.
+`|F| / |∇F|`, and is infinite where the gradient overflows (a finite `F`
+over it would put every point on the surface). A plane's `n` and `d` are
+divided by `n`'s largest coordinate before measuring, so a normal of any
+finite size gives the same distances (its length could overflow, putting
+every point on the plane, or its square underflow).
 
 The fields are private to `mesh` (its child modules, such as refinement,
 edit them directly). `Mesh::from_parts` takes the four tables unchecked.
@@ -461,7 +465,14 @@ matrix for a segment, from the cross product of the edges for a triangle
 (`μ0 = −n·(x0 × e1)/n²`, `μ1 = −n·(e0 × x0)/n²` with `n = e0 × e1`, and
 the point itself `n·(n·x0)/n²`) and by Cramer's rule on the edges for a
 tetrahedron, kept when its barycentric coordinates are non-negative; the
-nearest kept one is the closest point. The Gram matrix squares the
+nearest kept one is the closest point. Only faces holding the support
+point just added are tried: it was added because it comes closer along
+`−v`, so the new closest point is on a face with it, and the old faces are
+no closer than `v`. Trying them too dropped a support point square to `v`
+and far out (the top and a long side of a 2e-4 × 7951 × 2e-4 box): the
+segment to it comes closer by less than the rounding of a squared length,
+so the old point won, the next step found the same support point, and GJK
+gave up. The Gram matrix squares the
 conditioning: on a long thin triangle of the difference (the top and a
 side of a 611 × 0.066 × 0.187 box) it lost eight digits, the point came
 out off the closest, and GJK stopped short and called hulls 0.03 apart
@@ -526,9 +537,11 @@ straight-edge rule, and the pieces cover exactly the region the parent did
 neighbours on other faces. A patch that is flat but tagged `Free` gets the
 exact split and may then not pass.
 
-A leaf is not split past `MAX_REFINE_DEPTH` levels or when its control
-points span less than the refiner's minimum size along every axis:
-`TooComplex`.
+A leaf is not split past `MAX_REFINE_DEPTH` levels, when its control
+points span less than the refiner's minimum size along every axis, or when
+there would be more than `MAX_PATCHES` leaves (every leaf is at least one
+piece, so that round would fail anyway; stopping there bounds what one
+round makes before it is counted): `TooComplex`.
 
 ### Repair (`mesh/repair.rs`)
 
@@ -602,6 +615,14 @@ Parameters are refused with `KernelError::Patch` (every point within
 `MAX_COORD` of the origin and finite, sizes above zero), and a solid the
 tolerance can't hold (a box thinner than the resolution) with `Invalid`.
 
+**Slivers.** A flat triangle about `3e7` times longer than it is wide is
+where `check` stops working: GJK runs out of digits on hulls that long and
+that close (the closest point of a simplex rounds relative to its far
+points, and turning `v` by that much moves `v·w` by more than the margin),
+and from about `7e7` a corner's normal coefficient falls under the fold
+check's floor. A box a hundred resolutions thick passes up to `2e7` times
+as long. Caps and walls should be triangulated well within that.
+
 ### Costs
 
 `check` on a flat torus of 262 144 triangles takes about 0.7 s on one
@@ -635,9 +656,11 @@ curved edge (and passing when it curves outwards), crossing vertex
 neighbours, triangles on the same corners, and wrong plane and cylinder
 tags. GJK is tested against boxes a known gap apart (face to face and
 corner to corner, randomly rotated and moved), point clouds either side of
-a plane, flat, collinear and repeated points, and the long thin hulls of a
-611 × 0.066 × 0.187 box's corner in any order and rotation; the BVH against
-brute force. A mesh breaking two rules gives the earlier invariant's error
+a plane, flat, collinear and repeated points, the long thin hulls of a
+611 × 0.066 × 0.187 box's corner in any order and rotation, and a support
+point square to the closest point from every starting point; the BVH
+against brute force. Plane tags with normals from `1e-200` to `1e300` long
+measure the same, and a quadric whose gradient overflows fails. A mesh breaking two rules gives the earlier invariant's error
 (bounds before a fold, hulls before a face tag, in debug builds too).
 `check`, the BVH's pairs, and the first failure of a jittered torus are the
 same at 1 and 8 threads.
@@ -647,7 +670,7 @@ Refinement: a red split bisects its three neighbours (the red children are
 leaf; splitting at a corner again and again stays graded (a bounded number
 of new pieces per level, and the mesh stays closed); a flat cap's pieces
 have straight inner edges and pass `check_faces`; too deep and too small
-leaves aren't split. Repair: a thin shell (two round octahedra 0.2 and 0.05
+leaves aren't split, nor any past the most leaves there may be. Repair: a thin shell (two round octahedra 0.2 and 0.05
 apart, the inner facing in) is split evenly until it passes; a cylinder
 with a box beside it, 0.1 to 0.001 off the wall, is split only near the
 box, keeps every piece on its cylinder or plane within `1e-12` and the box
@@ -662,7 +685,8 @@ repairs are the same at 1 and 8 threads.
 Constructors: 50 random boxes and cylinders (sizes `1e-2..1e3`, moved up to
 `1e5`) pass `check` and lie on their faces within `1e-12`; faces are named
 as an extrude names them; bad parameters are refused, and a box thinner
-than the resolution fails `check`.
+than the resolution fails `check`; boxes a hundred resolutions thick and up
+to `2e7` times as long pass at every tolerance.
 
 ## Limits, budgets and errors (`src/lib.rs`, `src/budget.rs`, `src/error.rs`)
 
