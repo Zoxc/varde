@@ -45,6 +45,8 @@ it describes changes:
   closing and quitting.
 - `agents/web-files.md`: the web IO worker, OPFS, pickers, downloads.
 - `agents/file-format.md`: the `.vrdp` format.
+- `agents/kernel.md`: the geometry kernel: rational quadratic curves and
+  patches, their splits, the fold check, exact arcs and cylinders.
 - `notes/Threading.md`: the threading plan (built steps and what's still open).
 - `agents/crates.md`: the crate table and dependency graph, the web build's
   worker binaries, assets, and the roadmap by crate.

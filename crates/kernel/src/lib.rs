@@ -4,16 +4,21 @@
 //! as it's read; a [`Solid`] is the geometry it [`build`](Shape::build)s,
 //! which is never stored; and a [`RenderMesh`] is a solid tessellated for
 //! drawing. Curves drawn with the model, such as sketches, are
-//! [`RenderLines`]. Only analytic primitives exist so far, and no booleans. The
-//! intent is to back [`Solid`] with a robust mesh-boolean kernel such as
-//! [manifold](https://github.com/elalish/manifold), which the other two
-//! layers wouldn't see.
+//! [`RenderLines`]. Only analytic primitives exist so far, and no booleans.
+//!
+//! Solids are to become closed meshes of rational quadratic triangles,
+//! with booleans built the way [manifold](https://github.com/elalish/manifold)
+//! builds them for flat triangles. The math of one curve or triangle is in
+//! [`patch`].
 
 mod aabb;
+pub mod patch;
 mod render_lines;
 mod render_mesh;
 mod shape;
 mod solid;
+#[cfg(test)]
+mod test_rng;
 
 pub use aabb::Aabb;
 pub use render_lines::{LinesError, LinesPart, RenderLines};

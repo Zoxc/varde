@@ -1,6 +1,6 @@
 [package]
 name = "varde-kernel"
-description = "Geometry kernel: shapes, solids and tessellation (future: booleans on a manifold backend)"
+description = "Geometry kernel: rational quadratic patches, shapes, solids and tessellation"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
