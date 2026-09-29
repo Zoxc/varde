@@ -58,15 +58,12 @@ impl Document {
     pub fn add_cube(&self) -> Command {
         let number = next_number(self.bodies.iter().map(|body| body.name.as_str()), "Cube");
         // A document's positions and shapes' bounds are within
-        // `MAX_COORD`, which `Document::check` holds, so its shapes build
-        // and these sums stay finite.
+        // `MAX_COORD`, which `Document::check` holds, so these sums stay
+        // finite.
         let x = self
             .bodies
             .iter()
-            .map(|body| {
-                let solid = body.shape.build().expect("a document's shapes are checked");
-                body.position.x + solid.bounds().max.x + CUBE_GAP
-            })
+            .map(|body| body.position.x + body.shape.bounds().max.x + CUBE_GAP)
             .fold(0.0, f32::max);
         Command::AddBody {
             name: format!("Cube {number}"),

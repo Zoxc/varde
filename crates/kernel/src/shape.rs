@@ -1,7 +1,7 @@
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
-use crate::{MAX_COORD, Solid};
+use crate::{Aabb, KernelError, MAX_COORD, Solid, Tolerance};
 
 /// What a body is made of, as a document stores it: a recipe that
 /// [`build`](Shape::build)s a [`Solid`].
@@ -37,12 +37,31 @@ impl Shape {
         }
     }
 
+    /// The box it takes up, from the origin: [`Solid::bounds`] of what it
+    /// builds, worked out without building it.
+    pub fn bounds(&self) -> Aabb {
+        match self {
+            Shape::Cuboid { size } => Aabb {
+                min: Vec3::ZERO,
+                max: *size,
+            },
+        }
+    }
+
     /// The solid this makes, once it passes [`Shape::check`], so that
     /// every [`RenderMesh`](crate::RenderMesh) tessellated from it stays
-    /// within [`RenderMesh::MAX_POSITION`](crate::RenderMesh::MAX_POSITION).
+    /// within [`RenderMesh::MAX_POSITION`](crate::RenderMesh::MAX_POSITION):
+    /// a box of feature 0 at the default [`Tolerance`] (see
+    /// [`Solid::cuboid`]). A box too thin for the tolerance's resolution,
+    /// or too thin for its length, fails [`ShapeError::Kernel`].
     pub fn build(&self) -> Result<Solid, ShapeError> {
         self.check()?;
-        Ok(Solid::new(self.clone()))
+        match self {
+            Shape::Cuboid { size } => {
+                Solid::cuboid(glam::DVec3::ZERO, size.as_dvec3(), 0, &Tolerance::DEFAULT)
+                    .map_err(ShapeError::Kernel)
+            }
+        }
     }
 }
 
@@ -51,6 +70,8 @@ impl Shape {
 pub enum ShapeError {
     /// A cuboid size not above zero, or past [`MAX_COORD`].
     Size(Vec3),
+    /// The kernel can't build it.
+    Kernel(KernelError),
 }
 
 impl std::fmt::Display for ShapeError {
@@ -60,6 +81,7 @@ impl std::fmt::Display for ShapeError {
                 f,
                 "the shape has a size of {size}, not above zero and within {MAX_COORD}"
             ),
+            ShapeError::Kernel(error) => error.fmt(f),
         }
     }
 }

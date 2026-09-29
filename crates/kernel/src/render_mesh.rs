@@ -5,7 +5,8 @@ use crate::{Aabb, MAX_COORD};
 /// A solid tessellated for drawing: an indexed triangle mesh with
 /// per-vertex normals and the feature edges to outline.
 ///
-/// Vertices are duplicated along sharp edges so that faces are flat shaded.
+/// Vertices are duplicated where normals split (along sharp edges), and
+/// shared where the surface is smooth.
 ///
 /// A mesh is always drawable: there is a normal for every position, the
 /// indices make whole triangles, indices and edges refer to vertices that
@@ -94,27 +95,6 @@ impl RenderMesh {
     /// Feature edges (face boundaries) as pairs of vertex indices.
     pub fn edges(&self) -> &[[u32; 2]] {
         &self.edges
-    }
-
-    /// Appends a planar quad with corners in counter-clockwise order.
-    ///
-    /// For building primitives, which stay far below
-    /// [`RenderMesh::MAX_VERTICES`]; meshes that can grow without bound are
-    /// combined with [`RenderMesh::append_at`], which checks.
-    pub(crate) fn push_quad(&mut self, corners: [Vec3; 4]) {
-        debug_assert!(self.positions.len() <= Self::MAX_VERTICES - 4);
-        let [a, b, _, d] = corners;
-        let normal = (b - a).cross(d - a).normalize_or_zero();
-        let base = self.positions.len() as u32;
-
-        for p in corners {
-            self.positions.push(p.to_array());
-            self.normals.push(normal.to_array());
-        }
-        self.indices
-            .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
-        self.edges
-            .extend((0..4).map(|i| [base + i, base + (i + 1) % 4]));
     }
 
     /// Appends another mesh, its vertices moved by `offset`.

@@ -1,18 +1,19 @@
 //! Geometry kernel.
 //!
-//! Three layers: a [`Shape`] is what a document stores, a recipe checked
-//! as it's read; a [`Solid`] is the geometry it [`build`](Shape::build)s,
-//! which is never stored; and a [`RenderMesh`] is a solid tessellated for
-//! drawing. Curves drawn with the model, such as sketches, are
-//! [`RenderLines`]. Only analytic primitives exist so far, and no booleans.
+//! A [`Solid`] is a closed mesh of rational quadratic triangles that
+//! passes the mesh's checks, and never stored; a [`RenderMesh`] is a solid
+//! tessellated for drawing ([`Solid::tessellate`], within a [`Display`]'s
+//! targets). Curves drawn with the model, such as sketches, are
+//! [`RenderLines`]. A [`Shape`] is the recipe of a box a document stores
+//! for now, checked as it's read, that [`build`](Shape::build)s a solid.
 //!
-//! Solids are to become closed meshes of rational quadratic triangles,
-//! with booleans built the way [manifold](https://github.com/elalish/manifold)
-//! builds them for flat triangles. The math of one curve or triangle is in
-//! [`patch`]; closed meshes of them, the check of their invariants, the
-//! BVH over them, their refinement and repair, and box and cylinder
-//! meshes are in [`mesh`]. Operations on them are bounded by a [`Budget`]
-//! and the limits here, and fail with a [`KernelError`].
+//! Booleans are to be built the way
+//! [manifold](https://github.com/elalish/manifold) builds them for flat
+//! triangles. The math of one curve or triangle is in [`patch`]; closed
+//! meshes of them, the check of their invariants, the BVH over them,
+//! their refinement and repair, and box and cylinder meshes are in
+//! [`mesh`]. Operations on them are bounded by a [`Budget`] and the limits
+//! here, and fail with a [`KernelError`].
 
 mod aabb;
 mod budget;
@@ -24,6 +25,7 @@ mod render_lines;
 mod render_mesh;
 mod shape;
 mod solid;
+mod tessellate;
 #[cfg(test)]
 mod test_rng;
 mod tolerance;
@@ -35,6 +37,7 @@ pub use render_lines::{LinesError, LinesPart, RenderLines};
 pub use render_mesh::{MeshError, MeshPart, RenderMesh};
 pub use shape::{Shape, ShapeError};
 pub use solid::Solid;
+pub use tessellate::Display;
 pub use tolerance::Tolerance;
 
 /// The largest coordinate or size, in model units, a shape or a position

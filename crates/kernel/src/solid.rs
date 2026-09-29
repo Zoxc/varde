@@ -1,52 +1,105 @@
-use glam::Vec3;
+use glam::DVec3;
 
-use crate::{Aabb, RenderMesh, Shape};
+use crate::mesh::Mesh;
+use crate::patch::Bounds3;
+use crate::tessellate::{Display, tessellate};
+use crate::{Aabb, KernelError, MeshError, RenderMesh, Tolerance};
 
-/// A closed solid, as the kernel works with it: built from a [`Shape`] by
-/// [`Shape::build`], and never stored.
+/// A closed solid: a [`Mesh`] of rational quadratic patches that passes
+/// [`Mesh::check`], always. It is never stored; documents keep what builds
+/// it.
 ///
-/// For now it only holds its shape, which it tessellates analytically.
-/// Booleans, fillets, etc. will need a proper kernel backend behind it.
+/// The only ways to get one are [`Solid::new`], which checks, and the
+/// constructors here, which build meshes that are checked as they're
+/// made.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Solid {
-    shape: Shape,
+    mesh: Mesh,
 }
 
 impl Solid {
-    pub(crate) fn new(shape: Shape) -> Self {
-        Solid { shape }
+    /// The solid bounded by `mesh`, if it passes [`Mesh::check`] with
+    /// `tol`; [`KernelError::Invalid`] with the first failure if not.
+    pub fn new(mesh: Mesh, tol: &Tolerance) -> Result<Solid, KernelError> {
+        mesh.check(tol).map_err(KernelError::Invalid)?;
+        Ok(Solid { mesh })
     }
 
-    /// The solid's axis-aligned bounds in its own coordinates.
-    pub fn bounds(&self) -> Aabb {
-        match self.shape {
-            Shape::Cuboid { size } => Aabb {
-                min: Vec3::ZERO,
-                max: size,
-            },
+    /// The empty solid.
+    pub fn empty() -> Solid {
+        Solid {
+            mesh: Mesh::default(),
         }
     }
 
-    pub fn tessellate(&self) -> RenderMesh {
-        match self.shape {
-            Shape::Cuboid { size } => cuboid(size),
-        }
+    /// The axis-aligned box from `min` to `min + size`: see
+    /// [`Mesh::cuboid`], which also names its faces after `feature`.
+    pub fn cuboid(
+        min: DVec3,
+        size: DVec3,
+        feature: u64,
+        tol: &Tolerance,
+    ) -> Result<Solid, KernelError> {
+        // `Mesh::cuboid` checks what it builds.
+        Mesh::cuboid(min, size, feature, tol).map(|mesh| Solid { mesh })
     }
-}
 
-fn cuboid(size: Vec3) -> RenderMesh {
-    let v = |x: f32, y: f32, z: f32| Vec3::new(x, y, z) * size;
-    let mut mesh = RenderMesh::default();
+    /// The circular cylinder standing on `base` along `+z`: see
+    /// [`Mesh::cylinder`].
+    pub fn cylinder(
+        base: DVec3,
+        radius: f64,
+        height: f64,
+        feature: u64,
+        tol: &Tolerance,
+    ) -> Result<Solid, KernelError> {
+        // `Mesh::cylinder` checks what it builds.
+        Mesh::cylinder(base, radius, height, feature, tol).map(|mesh| Solid { mesh })
+    }
 
-    // Each face listed counter-clockwise when viewed from outside.
-    mesh.push_quad([v(0., 0., 0.), v(0., 1., 0.), v(1., 1., 0.), v(1., 0., 0.)]); // -Z
-    mesh.push_quad([v(0., 0., 1.), v(1., 0., 1.), v(1., 1., 1.), v(0., 1., 1.)]); // +Z
-    mesh.push_quad([v(0., 0., 0.), v(1., 0., 0.), v(1., 0., 1.), v(0., 0., 1.)]); // -Y
-    mesh.push_quad([v(0., 1., 0.), v(0., 1., 1.), v(1., 1., 1.), v(1., 1., 0.)]); // +Y
-    mesh.push_quad([v(0., 0., 0.), v(0., 0., 1.), v(0., 1., 1.), v(0., 1., 0.)]); // -X
-    mesh.push_quad([v(1., 0., 0.), v(1., 1., 0.), v(1., 1., 1.), v(1., 0., 1.)]); // +X
+    /// The patches bounding it.
+    pub fn mesh(&self) -> &Mesh {
+        &self.mesh
+    }
 
-    mesh
+    pub fn into_mesh(self) -> Mesh {
+        self.mesh
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.mesh.is_empty()
+    }
+
+    /// The box around its control points, which holds every point of it,
+    /// or `None` for the empty solid.
+    pub fn bounds3(&self) -> Option<Bounds3> {
+        let corners = Bounds3::around(self.mesh.verts())?;
+        Some(
+            self.mesh
+                .edges()
+                .iter()
+                .fold(corners, |b, edge| b.include(edge.ctrl)),
+        )
+    }
+
+    /// [`Solid::bounds3`] in `f32`, as drawing takes it. Rounding to
+    /// nearest is monotonic, so the box still holds every position of
+    /// [`Solid::tessellate`]'s mesh.
+    pub fn bounds(&self) -> Option<Aabb> {
+        self.bounds3().map(|b| Aabb {
+            min: b.min.as_vec3(),
+            max: b.max.as_vec3(),
+        })
+    }
+
+    /// The solid as triangles for drawing, within `display`'s targets:
+    /// see [`Display`]. Fails with [`MeshError::TooLarge`] if that would
+    /// take more vertices, indices or edges than a [`RenderMesh`] may
+    /// hold, and with [`MeshError::Values`] if a position is past
+    /// [`RenderMesh::MAX_POSITION`].
+    pub fn tessellate(&self, display: &Display) -> Result<RenderMesh, MeshError> {
+        tessellate(&self.mesh, display)
+    }
 }
 
 #[cfg(test)]

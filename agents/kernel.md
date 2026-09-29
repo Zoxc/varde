@@ -14,9 +14,9 @@ What exists today: the patch math (`patch`), closed meshes of patches with
 the check of their invariants, the BVH and the hull tests, red–green
 refinement and repair, and box and cylinder meshes (`mesh`), the
 tolerances (`Tolerance`), the limits, `Budget` and `KernelError`, and the
-parallel map (`par`), below. Solids are still the analytic cuboid of
-`Shape`, tessellated directly; `Solid` comes to wrap a checked `Mesh` when
-tessellation lands.
+parallel map (`par`), below, and `Solid`, a checked mesh, with its
+tessellation for drawing (`tessellate`). `Shape`, the box recipe
+documents still store, builds a `Solid` through `Mesh::cuboid`.
 
 ## Patch math (`src/patch.rs`, `src/patch/`)
 
@@ -688,6 +688,92 @@ as an extrude names them; bad parameters are refused, and a box thinner
 than the resolution fails `check`; boxes a hundred resolutions thick and up
 to `2e7` times as long pass at every tolerance.
 
+## Solids and tessellation (`src/solid.rs`, `src/tessellate.rs`)
+
+`Solid` wraps a `Mesh` that passes `check`: `Solid::new(mesh, tol)` runs
+the check and fails with `Invalid`, `Solid::cuboid` and `Solid::cylinder`
+wrap the checked primitives, and `Solid::empty()` is the empty solid.
+`mesh()`/`into_mesh()` give the patches back, `bounds3()` is the `f64`
+box around the control points (which holds the solid) and `bounds()` the
+same in `f32` (`None` when empty; rounding is monotonic, so it holds the
+tessellation too). `Shape::build` makes a box of feature 0 at the default
+tolerance, and fails with `ShapeError::Kernel` for a checked shape the
+kernel refuses (thinner than the resolution, or than its length allows);
+`Shape::bounds` gives its box without building it.
+
+`Solid::tessellate(&Display)` gives a `RenderMesh`. `Display::new(tol)`
+(default: the default tolerance) sets the targets:
+
+- **Per-edge counts.** Each `Edge` record gets a number of equal parameter
+  steps from its own curve only (`segments`): the chord of each step
+  within `max(fit, 1e-3 × the solid's diagonal)` of the curve at the
+  step's middle, the tangent turning at most 10° along a step (the unit
+  tangents' dot at least `cos 10°`, written as a literal so no platform's
+  `cos` decides a count), at most 64 steps. It starts from the turn
+  between the end tangents (the chord between their unit vectors over
+  10° in radians, an underestimate) and grows by the square root of the
+  chord error's ratio, at least one step at a time. Only `+ − × ÷ √`, so
+  the counts are the same everywhere. A straight edge is one step.
+- **Shared samples.** Each edge's points are evaluated once, along its
+  first halfedge (the lowest), from its conic (`Conic3::eval`), and both
+  patches beside it use those vertices, so neighbours share their boundary
+  points to the bit: no cracks.
+- **The inside of a patch.** A patch whose edges are all one step is one
+  triangle. Otherwise, with `m = max(counts, 3)`, it is sampled at the
+  points of the regular barycentric grid of `m` steps at least one step in
+  from its boundary: `(i + 1, j + 1, k + 1) / m` with `i + j + k = l = m −
+  3`, triangulated regularly (`l²` triangles). The ring between that inner
+  grid and the boundary is three strips, one per edge, from the edge's `n`
+  segments to the inner grid's side of `l`, split at the diagonals from
+  each corner to the inner grid's corner next to it: `n + l` triangles
+  each. A strip advances the side that makes the shorter new diagonal
+  (the outer one on a tie), so its triangles follow the geometry where
+  the grid runs skewed to the edges. With `l = 0` the ring is a fan round
+  the single inner point.
+- **Normals** are the patches' own (`Patch::normal`, normalized; the fold
+  direction stands in should it vanish). Along an edge, the two sides'
+  normals are compared at every sample: if they agree within 1° everywhere
+  (dot at least `cos 1°`) the edge is **smooth**, its inner samples are one
+  vertex each with the normalized mean normal; if not it is **split**,
+  and each side gets its own vertices. Round a mesh vertex, the corners
+  between two split edges are one vertex, with their normals summed and
+  normalized; a vertex with no split edge is one vertex.
+- **Feature edges** (`RenderMesh` edges, along the edge's samples): every
+  split edge, and every edge between two faces of different names, where
+  the walls of one profile curve's segments (`Side { curve, .. }` of one
+  feature) count as one name. So a cylinder draws its two rims, not the
+  seams between its four quarter walls, and a box its twelve edges, not
+  the diagonals of its sides.
+- **Limits.** Triangle and vertex counts are worked out from the segment
+  counts before any point inside a patch is evaluated, and more than
+  `RenderMesh::MAX_*` fails with `MeshError::TooLarge`; the parts go
+  through `RenderMesh::from_parts`, so a position past `MAX_POSITION`
+  (a mesh's control points may reach `MAX_CONTROL`) fails with `Values`.
+- **Determinism.** Counts, normals, edge points and patches are pure maps
+  through `par_map`; vertex numbering is one sequential pass (corner
+  groups by vertex, then edge samples by edge, then patch interiors by
+  triangle).
+
+The chord target holds on the edges. Inside a patch the grid spacing
+follows the largest count, but at a corner of a skewed patch (a cylinder
+wall triangle, whose far corner is round the arc) the inner grid's corner
+is two steps round from the patch's, and the triangle there is two steps
+wide: on the test cylinder the worst triangle's middle is 1.85 chords off
+the surface. A flat torus of 262 144 patches tessellates in about 0.13 s
+(release, several threads).
+
+Tests: a cube is 12 triangles, 24 vertices and 12 edges with axis
+normals; a cylinder's normals are radial on the wall and axial on the
+caps, it encloses slightly less than `πr²h`, its triangles are within the
+chord (2.5 chords at the skewed corners), only its rims are feature
+edges, and a rim point is two vertices (wall and cap); round octahedra,
+half cylinders, a torus, a box, and a repaired thin shell (pieces of mixed
+sizes) are watertight: every triangle side is met by one running the other
+way between the same positions, to the bit; edge counts meet the chord and
+turn by dense sampling and one fewer wouldn't; the strip joins any two
+counts; results are the same at 1 and 8 threads; far positions are
+refused.
+
 ## Limits, budgets and errors (`src/lib.rs`, `src/budget.rs`, `src/error.rs`)
 
 | constant | value | why |
@@ -745,8 +831,6 @@ with tracing.
   checked in debug builds by `check` and on demand by `check_faces`.
 - **`Tolerance` lives in the kernel** (fit bounds `1e-5 ..= 1e-1` mm,
   default `1e-3`), and `check` takes it for the hull margin.
-- `Solid` still wraps `Shape`; it becomes a checked `Mesh` with
-  tessellation.
 - **Flat faces are split with straight inner edges** (red and green), not
   by the exact blossom: see "Refinement". The region is the same; the
   exact split's curved inner edges would lie in the face's plane with both
@@ -767,6 +851,19 @@ with tracing.
   is left to tracing.
 - **The box and cylinder are `Mesh` constructors** (`Mesh::cuboid`,
   `Mesh::cylinder`) that take the feature id and the tolerance and always
-  run `check`; wrapping them in `Solid` comes with tessellation.
+  run `check`; `Solid::cuboid` and `Solid::cylinder` wrap them.
 - **GJK's triangle and tetrahedron projections use cross and triple
   products** instead of the Gram matrix (a fix: see "Control hulls").
+- **Stitching by the shorter diagonal**, not a pattern fixed by the
+  counts alone: pairing points by parameter made triangles two steps wide
+  along skewed cylinder walls. Both are crack-free, since the boundary
+  points are shared either way.
+- **Walls of one profile curve are one face for feature edges**: the
+  segments of a curve (`Side { curve, segment }`) are separate faces, and
+  drawing every face boundary would draw a circle's seams.
+- **`Solid::bounds` is an `Option`** (`None` for the empty solid), and
+  `Solid::bounds3` gives the `f64` box. `Display` holds only the fit
+  tolerance; the other targets are its constants.
+- **The chord target is kept on edges only**; inside a patch it can be
+  about twice off at the corners of skewed patches (see "Solids and
+  tessellation").

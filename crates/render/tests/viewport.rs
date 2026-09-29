@@ -315,7 +315,8 @@ fn draws_bodies_far_along_the_view_axis() {
         &Shape::cuboid(Vec3::splat(2.0))
             .build()
             .unwrap()
-            .tessellate(),
+            .tessellate(&varde_kernel::Display::default())
+            .unwrap(),
         Vec3::new(0.0, 1000.0, 0.0),
     )
     .unwrap();
@@ -342,7 +343,11 @@ fn edges_stay_in_front_of_faces_zoomed_into_a_large_scene() {
     let mut camera = Camera::default();
     camera.set_target(Vec3::new(0.5, 0.0, 1.0));
     camera.zoom(0.01 / camera.view_height());
-    let cube = Shape::cuboid(Vec3::ONE).build().unwrap().tessellate();
+    let cube = Shape::cuboid(Vec3::ONE)
+        .build()
+        .unwrap()
+        .tessellate(&varde_kernel::Display::default())
+        .unwrap();
     let mut mesh = RenderMesh::default();
     mesh.append_at(&cube, Vec3::ZERO).unwrap();
     mesh.append_at(&cube, Vec3::Y * 1e5).unwrap();
@@ -372,7 +377,11 @@ fn axes_stay_put_zoomed_into_a_large_scene() {
     camera.zoom(0.01 / camera.view_height());
     let mut mesh = RenderMesh::default();
     mesh.append_at(
-        &Shape::cuboid(Vec3::ONE).build().unwrap().tessellate(),
+        &Shape::cuboid(Vec3::ONE)
+            .build()
+            .unwrap()
+            .tessellate(&varde_kernel::Display::default())
+            .unwrap(),
         Vec3::Y * varde_kernel::MAX_COORD,
     )
     .unwrap();
@@ -473,7 +482,8 @@ fn looks_the_same_on_srgb_and_linear_targets() {
         &Shape::cuboid(Vec3::splat(2.0))
             .build()
             .unwrap()
-            .tessellate(),
+            .tessellate(&varde_kernel::Display::default())
+            .unwrap(),
         Vec3::ZERO,
     )
     .unwrap();
@@ -542,7 +552,8 @@ fn cube(size: f32, at: Vec3) -> RenderMesh {
         &Shape::cuboid(Vec3::splat(size))
             .build()
             .unwrap()
-            .tessellate(),
+            .tessellate(&varde_kernel::Display::default())
+            .unwrap(),
         at,
     )
     .unwrap();

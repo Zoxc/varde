@@ -8,10 +8,10 @@ use crate::par::assert_deterministic;
 use crate::patch::{Conic3, PatchError, cylinder_strip};
 use crate::test_rng::Rng;
 
-pub(super) const TOL: Tolerance = Tolerance::DEFAULT;
+pub(crate) const TOL: Tolerance = Tolerance::DEFAULT;
 
 /// A face named `part` of feature 1 on `surface`.
-pub(super) fn face(part: u32, surface: Surface) -> Face {
+pub(crate) fn face(part: u32, surface: Surface) -> Face {
     Face {
         name: FaceName {
             feature: 1,
@@ -21,13 +21,13 @@ pub(super) fn face(part: u32, surface: Surface) -> Face {
     }
 }
 
-pub(super) fn free(builder: &mut MeshBuilder) -> u32 {
+pub(crate) fn free(builder: &mut MeshBuilder) -> u32 {
     builder.face(face(0, Surface::Free))
 }
 
 /// The tetrahedron on the origin and the unit axes, moved by `offset`,
 /// added to `builder`.
-pub(super) fn add_tetrahedron(builder: &mut MeshBuilder, offset: DVec3) {
+pub(crate) fn add_tetrahedron(builder: &mut MeshBuilder, offset: DVec3) {
     let f = free(builder);
     let v = [DVec3::ZERO, DVec3::X, DVec3::Y, DVec3::Z].map(|p| builder.vert(p + offset));
     for [a, b, c] in [[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]] {
@@ -35,7 +35,7 @@ pub(super) fn add_tetrahedron(builder: &mut MeshBuilder, offset: DVec3) {
     }
 }
 
-pub(super) fn tetrahedron(offset: DVec3) -> Mesh {
+pub(crate) fn tetrahedron(offset: DVec3) -> Mesh {
     let mut builder = MeshBuilder::new();
     add_tetrahedron(&mut builder, offset);
     builder.build().unwrap()
@@ -43,7 +43,7 @@ pub(super) fn tetrahedron(offset: DVec3) -> Mesh {
 
 /// The octahedron's triangles, counter-clockwise from outside, on its
 /// vertices `+x, +y, +z, -x, -y, -z`.
-pub(super) const OCTAHEDRON: [[u32; 3]; 8] = [
+pub(crate) const OCTAHEDRON: [[u32; 3]; 8] = [
     [0, 1, 2],
     [3, 4, 2],
     [1, 3, 2],
@@ -56,7 +56,7 @@ pub(super) const OCTAHEDRON: [[u32; 3]; 8] = [
 
 /// An octahedron with vertices `verts`, triangles `tris` (each on its own
 /// free face) and curved edges `curves`.
-pub(super) fn octahedron(
+pub(crate) fn octahedron(
     verts: [DVec3; 6],
     tris: &[[u32; 3]],
     curves: &[(u32, u32, DVec3, f64)],
@@ -75,7 +75,7 @@ pub(super) fn octahedron(
     builder.build().unwrap()
 }
 
-pub(super) const UNIT: [DVec3; 6] = [
+pub(crate) const UNIT: [DVec3; 6] = [
     DVec3::X,
     DVec3::Y,
     DVec3::Z,
@@ -88,7 +88,7 @@ pub(super) const UNIT: [DVec3; 6] = [
 /// every edge a quarter circle through its ends (control point where the
 /// end tangents meet, weight √½), so each patch is on the sphere along its
 /// edges. It faces out, or in if `inward`, and is one free face.
-pub(super) fn add_round_octahedron(
+pub(crate) fn add_round_octahedron(
     builder: &mut MeshBuilder,
     centre: DVec3,
     radius: f64,
@@ -108,7 +108,7 @@ pub(super) fn add_round_octahedron(
 
 /// The unit round octahedron (see [`add_round_octahedron`]) around
 /// `offset`.
-pub(super) fn round_octahedron(offset: DVec3) -> Mesh {
+pub(crate) fn round_octahedron(offset: DVec3) -> Mesh {
     let mut builder = MeshBuilder::new();
     add_round_octahedron(&mut builder, offset, 1.0, false);
     builder.build().unwrap()
@@ -116,7 +116,7 @@ pub(super) fn round_octahedron(offset: DVec3) -> Mesh {
 
 /// A torus of flat triangles around the z axis: `n` steps around the
 /// axis, `m` around the tube.
-pub(super) fn torus(n: u32, m: u32, big: f64, small: f64) -> Mesh {
+pub(crate) fn torus(n: u32, m: u32, big: f64, small: f64) -> Mesh {
     let mut builder = MeshBuilder::new();
     let f = free(&mut builder);
     for i in 0..n {
@@ -143,7 +143,7 @@ pub(super) fn torus(n: u32, m: u32, big: f64, small: f64) -> Mesh {
 /// [`cylinder_strip`], two quarter-disc caps at each end, and a flat wall
 /// of two rectangles. Faces are tagged with their planes and cylinder,
 /// offset by `offset`.
-pub(super) fn half_cylinder(h: f64, offset: DVec3) -> Mesh {
+pub(crate) fn half_cylinder(h: f64, offset: DVec3) -> Mesh {
     let mut builder = MeshBuilder::new();
     let at = |x: f64, y: f64, z: f64| DVec3::new(x, y, z) + offset;
     // Bottom: centre, +x, +y, -x; then the same on top.

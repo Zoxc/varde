@@ -70,7 +70,11 @@ fn mesh_past_the_buffer_limit_is_skipped() {
         return;
     };
     assert_eq!(device.limits().max_buffer_size, 512);
-    let cube = Shape::cuboid(Vec3::ONE).build().unwrap().tessellate();
+    let cube = Shape::cuboid(Vec3::ONE)
+        .build()
+        .unwrap()
+        .tessellate(&varde_kernel::Display::default())
+        .unwrap();
     let mut mesh = cube.clone();
     mesh.append_at(&cube, Vec3::X * 2.0).unwrap();
     let mesh = Arc::new(mesh);

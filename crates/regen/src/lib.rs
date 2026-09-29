@@ -56,7 +56,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use varde_document::{Document, FeatureId, FeatureKind, Generation, Snapshot};
-use varde_kernel::{LinesError, MeshError, RenderLines, RenderMesh, ShapeError};
+use varde_kernel::{Display, LinesError, MeshError, RenderLines, RenderMesh, ShapeError};
 use varde_sketch::{Budget, Goal};
 
 /// Carries [`Request`]s to a lane without waiting for them to be handled;
@@ -175,12 +175,16 @@ fn regenerate(
 /// Tessellates all visible bodies of `document` into a single mesh in world
 /// space. Fails if it would have more vertices, indices or edges than a
 /// [`RenderMesh`] may hold, which a file with enough bodies in it can ask
-/// for, or, which a checked document can't, if a shape doesn't build.
+/// for, or if a shape doesn't build (a checked box too thin for the
+/// kernel's resolution, or for its length).
 pub fn tessellate(document: &Document) -> Result<RenderMesh, TessellateError> {
     let mut mesh = RenderMesh::default();
     for body in document.bodies().iter().filter(|b| b.visible) {
         let solid = body.shape.build().map_err(TessellateError::Shape)?;
-        mesh.append_at(&solid.tessellate(), body.position)
+        let drawn = solid
+            .tessellate(&Display::default())
+            .map_err(TessellateError::Mesh)?;
+        mesh.append_at(&drawn, body.position)
             .map_err(TessellateError::Mesh)?;
     }
     Ok(mesh)

@@ -3,7 +3,11 @@ use crate::Shape;
 
 #[test]
 fn append_offsets_indices() {
-    let cube = Shape::cuboid(Vec3::ONE).build().unwrap().tessellate();
+    let cube = Shape::cuboid(Vec3::ONE)
+        .build()
+        .unwrap()
+        .tessellate(&crate::Display::default())
+        .unwrap();
     let mut mesh = cube.clone();
     mesh.append_at(&cube, Vec3::ZERO).unwrap();
     let base = cube.positions.len() as u32;
@@ -15,7 +19,11 @@ fn append_offsets_indices() {
 
 #[test]
 fn append_refuses_more_than_the_limits() {
-    let cube = Shape::cuboid(Vec3::ONE).build().unwrap().tessellate();
+    let cube = Shape::cuboid(Vec3::ONE)
+        .build()
+        .unwrap()
+        .tessellate(&crate::Display::default())
+        .unwrap();
     // Zeroed, so the pages aren't touched.
     let len = RenderMesh::MAX_VERTICES - cube.positions.len() + 1;
     let mut mesh = RenderMesh {
@@ -42,7 +50,11 @@ fn append_refuses_more_than_the_limits() {
 
 #[test]
 fn append_at_moves_positions_but_not_normals() {
-    let cube = Shape::cuboid(Vec3::ONE).build().unwrap().tessellate();
+    let cube = Shape::cuboid(Vec3::ONE)
+        .build()
+        .unwrap()
+        .tessellate(&crate::Display::default())
+        .unwrap();
     let mut mesh = RenderMesh::default();
     mesh.append_at(&cube, Vec3::new(1.0, 2.0, 3.0)).unwrap();
     assert_eq!(mesh.normals, cube.normals);
@@ -94,7 +106,11 @@ fn rebuild(mesh: RenderMesh) -> Result<RenderMesh, MeshError> {
 fn from_parts_takes_a_mesh() {
     assert_eq!(rebuild(triangle()), Ok(triangle()));
     assert_eq!(rebuild(RenderMesh::default()), Ok(RenderMesh::default()));
-    let cube = Shape::cuboid(Vec3::ONE).build().unwrap().tessellate();
+    let cube = Shape::cuboid(Vec3::ONE)
+        .build()
+        .unwrap()
+        .tessellate(&crate::Display::default())
+        .unwrap();
     assert_eq!(rebuild(cube.clone()), Ok(cube));
 }
 
