@@ -93,12 +93,8 @@ pub(crate) fn edge_neighbours_apart(
     let (p, c, q) = (a.p[ea], a.c[ea], a.p[(ea + 1) % 3]);
     let others = |x: &Patch, e: usize| [x.p[(e + 2) % 3], x.c[(e + 1) % 3], x.c[(e + 2) % 3]];
     let (oa, ob) = (others(a, ea), others(b, eb));
-    let Some(u) = (q - p).try_normalize() else {
+    let Some((u, across)) = across_line(p, q) else {
         return false;
-    };
-    let across = |x: DVec3| {
-        let d = x - p;
-        d - u * d.dot(u)
     };
     let bulge = across(c);
     if bulge.length() <= margin {
@@ -119,6 +115,26 @@ pub(crate) fn edge_neighbours_apart(
             .map(|&s| sign * s)
             .fold(f64::NEG_INFINITY, f64::max);
         (a_min > margin && b_max < margin) || (a_min > -margin && b_max < -margin)
+    })
+}
+
+/// The unit direction from `p` to `q`, and the part of `x - p` across the
+/// line through them, or `None` if they are the same point.
+fn across_line(p: DVec3, q: DVec3) -> Option<(DVec3, impl Fn(DVec3) -> DVec3)> {
+    let u = (q - p).try_normalize()?;
+    Some((u, move |x: DVec3| {
+        let d = x - p;
+        d - u * d.dot(u)
+    }))
+}
+
+/// Whether every edge's control point is within `margin` of the line
+/// through its ends: the patch is then within `margin` of its flat
+/// triangle, and the hull rules on it are about the triangle itself.
+pub(super) fn flat(patch: &Patch, margin: f64) -> bool {
+    (0..3).all(|i| {
+        across_line(patch.p[i], patch.p[(i + 1) % 3])
+            .is_some_and(|(_, across)| across(patch.c[i]).length() <= margin)
     })
 }
 

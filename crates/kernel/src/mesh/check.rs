@@ -90,12 +90,24 @@ impl Mesh {
     /// margin, and in debug builds face tags ([`Self::check_faces`]).
     /// The empty mesh passes.
     pub fn check(&self, tol: &Tolerance) -> Result<(), CheckError> {
-        self.check_topology()?;
-        let patches = self.checked_patches()?;
+        let patches = self.check_embedding(tol)?;
         if cfg!(debug_assertions) {
             self.check_faces_of(&patches, tol)?;
         }
-        self.check_hulls(&patches, tol)
+        Ok(())
+    }
+
+    /// Invariants 1 to 4, everything but the face tags, returning the
+    /// patches.
+    pub(super) fn check_embedding(&self, tol: &Tolerance) -> Result<Vec<Patch>, CheckError> {
+        self.check_topology()?;
+        let patches = self.bounded_patches()?;
+        let folds = par_map(&patches, |patch| patch.fold_direction().is_some());
+        if let Some(t) = folds.iter().position(|&passes| !passes) {
+            return Err(CheckError::Fold(t as u32));
+        }
+        self.check_hulls(&patches, tol)?;
+        Ok(patches)
     }
 
     /// Invariants 1 and 2 without the geometry: pairs, directed edges,
@@ -187,17 +199,14 @@ impl Mesh {
         Ok(())
     }
 
-    /// Every triangle as a patch within the coordinate and weight bounds
-    /// (the rest of invariant 2) that passes the fold check (invariant 3).
-    fn checked_patches(&self) -> Result<Vec<Patch>, CheckError> {
+    /// Every triangle as a patch, each within the coordinate and weight
+    /// bounds (the rest of invariant 2).
+    pub(super) fn bounded_patches(&self) -> Result<Vec<Patch>, CheckError> {
         let tris: Vec<u32> = (0..self.tris.len() as u32).collect();
         let checked = par_map(&tris, |&t| {
             let patch = self.patch(t as usize);
             patch.check().map_err(|e| CheckError::Patch(t, e))?;
-            match patch.fold_direction() {
-                Some(_) => Ok(patch),
-                None => Err(CheckError::Fold(t)),
-            }
+            Ok(patch)
         });
         checked.into_iter().collect()
     }
@@ -251,46 +260,42 @@ impl Mesh {
     }
 }
 
-/// Invariant 4 for triangles `ids`, the patches `patches` with corners at
-/// the vertex ids `corners`, whose boxes come within `margin`. The rule is
-/// chosen by how many vertices they share, which is topology.
+/// Invariant 4 for the patches `a` and `b`, with corners at the vertex
+/// ids `ca` and `cb`, whose boxes come within `margin`; an error names
+/// them `i` and `j`. The rule is chosen by how many vertices they share,
+/// which is topology.
 pub(super) fn check_pair(
-    ids: [u32; 2],
+    [i, j]: [u32; 2],
     [a, b]: [&Patch; 2],
     [ca, cb]: [[u32; 3]; 2],
     margin: f64,
 ) -> Result<(), CheckError> {
-    let [i, j] = ids;
-    // (corner of a, corner of b) for each shared vertex.
-    let mut found = [(0, 0); 3];
-    let mut count = 0;
-    for (k, &corner) in ca.iter().enumerate() {
-        if let Some(l) = cb.iter().position(|&v| v == corner) {
-            found[count] = (k, l);
-            count += 1;
+    match ca.iter().filter(|v| cb.contains(v)).count() {
+        0 => non_neighbours_apart(a, b, margin)
+            .then_some(())
+            .ok_or(CheckError::Hull(i, j)),
+        1 => {
+            let ka = (0..3)
+                .find(|&k| cb.contains(&ca[k]))
+                .expect("a shared corner");
+            let kb = (0..3).find(|&k| cb[k] == ca[ka]).expect("a shared corner");
+            vertex_neighbours_apart(a, ka, b, kb, margin)
+                .then_some(())
+                .ok_or(CheckError::VertexNeighbours(i, j))
         }
-    }
-    let shared = &found[..count];
-    let ok = match *shared {
-        [] => non_neighbours_apart(a, b, margin),
-        [(ka, kb)] => vertex_neighbours_apart(a, ka, b, kb, margin),
-        [(k0, l0), (k1, l1)] => {
-            // The edge of `a` from one shared corner to the other, and
-            // `b`'s, which runs the other way.
-            let ea = if (k0 + 1) % 3 == k1 { k0 } else { k1 };
-            let eb = if (l1 + 1) % 3 == l0 { l1 } else { l0 };
-            edge_neighbours_apart(a, ea, b, eb, margin)
+        2 => {
+            // The edge of each running between the two shared corners;
+            // the topology check has them run it opposite ways.
+            let edge = |x: [u32; 3], y: [u32; 3]| {
+                (0..3)
+                    .find(|&k| y.contains(&x[k]) && y.contains(&x[(k + 1) % 3]))
+                    .expect("an edge between shared corners")
+            };
+            edge_neighbours_apart(a, edge(ca, cb), b, edge(cb, ca), margin)
+                .then_some(())
+                .ok_or(CheckError::EdgeNeighbours(i, j))
         }
-        _ => return Err(CheckError::SameCorners(i, j)),
-    };
-    if ok {
-        Ok(())
-    } else {
-        Err(match shared.len() {
-            0 => CheckError::Hull(i, j),
-            1 => CheckError::VertexNeighbours(i, j),
-            _ => CheckError::EdgeNeighbours(i, j),
-        })
+        _ => Err(CheckError::SameCorners(i, j)),
     }
 }
 

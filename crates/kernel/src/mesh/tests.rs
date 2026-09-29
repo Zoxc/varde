@@ -84,21 +84,34 @@ pub(super) const UNIT: [DVec3; 6] = [
     DVec3::NEG_Z,
 ];
 
-/// The octahedron with every edge a quarter of the unit circle through
-/// its ends: control point where the end tangents meet, weight √½. Each
-/// patch is on the sphere along its edges.
-pub(super) fn round_octahedron(offset: DVec3) -> Mesh {
-    let verts = UNIT.map(|p| p + offset);
-    let mut curves = Vec::new();
+/// Adds to `builder` the octahedron of `radius` around `centre` with
+/// every edge a quarter circle through its ends (control point where the
+/// end tangents meet, weight √½), so each patch is on the sphere along its
+/// edges. It faces out, or in if `inward`, and is one free face.
+pub(super) fn add_round_octahedron(
+    builder: &mut MeshBuilder,
+    centre: DVec3,
+    radius: f64,
+    inward: bool,
+) {
+    let f = free(builder);
+    let v = UNIT.map(|p| builder.vert(centre + p * radius));
     for [a, b, c] in OCTAHEDRON {
+        let tri = if inward { [a, c, b] } else { [a, b, c] };
+        builder.tri(tri.map(|i| v[i as usize]), f);
         for (x, y) in [(a, b), (b, c), (c, a)] {
-            if x < y {
-                let ctrl = UNIT[x as usize] + UNIT[y as usize] + offset;
-                curves.push((x, y, ctrl, FRAC_1_SQRT_2));
-            }
+            let ctrl = centre + (UNIT[x as usize] + UNIT[y as usize]) * radius;
+            builder.edge(v[x as usize], v[y as usize], ctrl, FRAC_1_SQRT_2);
         }
     }
-    octahedron(verts, &OCTAHEDRON, &curves)
+}
+
+/// The unit round octahedron (see [`add_round_octahedron`]) around
+/// `offset`.
+pub(super) fn round_octahedron(offset: DVec3) -> Mesh {
+    let mut builder = MeshBuilder::new();
+    add_round_octahedron(&mut builder, offset, 1.0, false);
+    builder.build().unwrap()
 }
 
 /// A torus of flat triangles around the z axis: `n` steps around the
@@ -514,6 +527,32 @@ fn wrong_face_tags_are_caught() {
     if cfg!(debug_assertions) {
         assert_eq!(mesh.check(&TOL), Err(CheckError::Face(8)));
     }
+}
+
+// Order.
+
+#[test]
+fn the_first_failure_is_by_invariant_then_index() {
+    // A fold in triangle 0 and a coordinate out of bounds in triangle 4:
+    // the bounds (invariant 2) come first.
+    let ctrl = DVec3::X + (DVec3::new(0.5, 0.0, 0.5) - DVec3::X) * 0.5;
+    let mut mesh = octahedron(UNIT, &OCTAHEDRON, &[(0, 1, ctrl, 1.0)]);
+    mesh.verts[5].z = f64::INFINITY;
+    assert!(matches!(
+        mesh.check(&TOL),
+        Err(CheckError::Patch(4, PatchError::Coordinate(_)))
+    ));
+    // Overlapping hulls and a wrong face tag: the hulls (invariant 4),
+    // in debug builds as in release.
+    let mut builder = MeshBuilder::new();
+    add_tetrahedron(&mut builder, DVec3::ZERO);
+    add_tetrahedron(&mut builder, DVec3::new(0.3, 0.2, 0.1));
+    let mut mesh = builder.build().unwrap();
+    mesh.faces[1].surface = Surface::Plane {
+        n: DVec3::Z,
+        d: 100.0,
+    };
+    assert!(matches!(mesh.check(&TOL), Err(CheckError::Hull(..))));
 }
 
 // Determinism.

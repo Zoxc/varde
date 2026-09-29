@@ -129,7 +129,8 @@ impl Bvh {
     /// Every pair `[i, j]`, `i < j`, of boxes within `margin` of each
     /// other along every axis, sorted. The queries run in parallel.
     pub fn self_pairs(&self, margin: f64) -> Vec<[u32; 2]> {
-        let found = par_map(&self.items_in_order(), |&i| {
+        let ids: Vec<u32> = (0..self.boxes.len() as u32).collect();
+        let found = par_map(&ids, |&i| {
             let mut near = Vec::new();
             self.query(&self.boxes[i as usize], margin, &mut near);
             near.retain(|&j| j > i);
@@ -140,10 +141,6 @@ impl Bvh {
             pairs.extend(near.into_iter().map(|j| [i as u32, j]));
         }
         pairs
-    }
-
-    fn items_in_order(&self) -> Vec<u32> {
-        (0..self.boxes.len() as u32).collect()
     }
 }
 

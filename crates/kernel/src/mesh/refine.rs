@@ -28,11 +28,9 @@
 //! plane through their shared edge, which an exact split's curved inner
 //! edges, lying in the face's plane with both pieces, would not be.
 
-use std::collections::BTreeMap;
-
 use glam::DVec3;
 
-use super::{Edge, Face, Mesh, MeshBuilder, Surface};
+use super::{Edge, Face, LookupMap, Mesh, MeshBuilder, Surface};
 use crate::budget::Work;
 use crate::patch::{Conic3, Patch};
 use crate::{KernelError, MAX_REFINE_DEPTH};
@@ -85,13 +83,13 @@ pub(super) struct Refiner<'a> {
     leaves: Vec<Option<Leaf>>,
     /// Every edge record by its ends, including whole edges since split
     /// (a coarser leaf still has the whole edge as its side).
-    edges: BTreeMap<Key, Edge>,
+    edges: LookupMap<Key, Edge>,
     /// The midpoint vertex of each split edge.
-    mids: BTreeMap<Key, u32>,
+    mids: LookupMap<Key, u32>,
     /// The whole edge each half was split from.
-    halves: BTreeMap<Key, Key>,
+    halves: LookupMap<Key, Key>,
     /// The leaf with each directed edge, as its side.
-    owner: BTreeMap<(u32, u32), u32>,
+    owner: LookupMap<(u32, u32), u32>,
 }
 
 impl<'a> Refiner<'a> {
@@ -105,10 +103,10 @@ impl<'a> Refiner<'a> {
             min_size,
             verts: mesh.verts.clone(),
             leaves: Vec::with_capacity(mesh.tris.len()),
-            edges: BTreeMap::new(),
-            mids: BTreeMap::new(),
-            halves: BTreeMap::new(),
-            owner: BTreeMap::new(),
+            edges: LookupMap::default(),
+            mids: LookupMap::default(),
+            halves: LookupMap::default(),
+            owner: LookupMap::default(),
         };
         for (t, tri) in mesh.tris.iter().enumerate() {
             let corners = tri.halfedges.map(|h| h.start);
@@ -234,9 +232,23 @@ impl<'a> Refiner<'a> {
         Ok(m)
     }
 
-    /// The patch with `corners` whose edges are the records by their ends.
-    fn patch_at(&self, corners: [u32; 3]) -> Result<Patch, KernelError> {
-        let edge = |i: usize| self.edges[&key(corners[i], corners[(i + 1) % 3])];
+    /// The patch with `corners` whose edges are the records by their
+    /// ends, except that the edge between the vertices `straight`, if
+    /// given, is straight (it has no record).
+    fn patch_at(
+        &self,
+        corners: [u32; 3],
+        straight: Option<(u32, u32)>,
+    ) -> Result<Patch, KernelError> {
+        let straight = straight.map(|(a, b)| key(a, b));
+        let edge = |i: usize| {
+            let (a, b) = (corners[i], corners[(i + 1) % 3]);
+            if straight == Some(key(a, b)) {
+                Edge::straight(self.verts[a as usize], self.verts[b as usize])
+            } else {
+                self.edges[&key(a, b)]
+            }
+        };
         let e = [edge(0), edge(1), edge(2)];
         Ok(Patch::new(
             corners.map(|v| self.verts[v as usize]),
@@ -289,7 +301,7 @@ impl<'a> Refiner<'a> {
         ];
         self.leaves[t as usize] = None;
         for (c, corners) in children.into_iter().enumerate() {
-            let patch = self.patch_at(corners)?;
+            let patch = self.patch_at(corners, None)?;
             if let Some(kids) = &exact {
                 // The records are the ones the split made, whichever side
                 // split each edge first.
@@ -337,7 +349,7 @@ impl<'a> Refiner<'a> {
             let halves = [self.conic(a, m), self.conic(m, b)];
             let [first, second] = if self.planar(leaf.face) {
                 // Joined to the opposite corner by a straight edge.
-                let straight = |x: [u32; 3]| self.patch_at_with(x, (m, o));
+                let straight = |x: [u32; 3]| self.patch_at(x, Some((m, o)));
                 [straight([a, m, o])?, straight([m, b, o])?]
             } else {
                 leaf.patch.bisect_with(i, 0.5, halves)?
@@ -346,25 +358,6 @@ impl<'a> Refiner<'a> {
             pieces.push(piece([m, b, o], second));
         }
         Ok(pieces)
-    }
-
-    /// [`Self::patch_at`] with the edge between `inner` straight, before it
-    /// has a record.
-    fn patch_at_with(&self, corners: [u32; 3], inner: (u32, u32)) -> Result<Patch, KernelError> {
-        let edge = |i: usize| {
-            let (a, b) = (corners[i], corners[(i + 1) % 3]);
-            if key(a, b) == key(inner.0, inner.1) {
-                Edge::straight(self.verts[a as usize], self.verts[b as usize])
-            } else {
-                self.edges[&key(a, b)]
-            }
-        };
-        let e = [edge(0), edge(1), edge(2)];
-        Ok(Patch::new(
-            corners.map(|v| self.verts[v as usize]),
-            e.map(|e| e.ctrl),
-            e.map(|e| e.weight),
-        )?)
     }
 
     /// Marks every leaf unchanged.

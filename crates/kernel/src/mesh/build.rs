@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use glam::DVec3;
 
-use super::{Edge, Face, Halfedge, Mesh, Tri};
+use super::{Edge, Face, Halfedge, LookupMap, Mesh, Tri};
 use crate::MAX_PATCHES;
 
 /// Builds a [`Mesh`] from vertices and triangles given by vertex ids,
@@ -99,7 +99,7 @@ impl MeshBuilder {
             }
         }
         // Directed edge (a, b) → halfedge.
-        let mut directed = BTreeMap::new();
+        let mut directed = LookupMap::with_capacity_and_hasher(3 * n, Default::default());
         for (t, (c, _)) in self.tris.iter().enumerate() {
             for i in 0..3 {
                 let (a, b) = (c[i], c[(i + 1) % 3]);

@@ -1,36 +1,22 @@
-use std::f64::consts::FRAC_1_SQRT_2;
-
 use glam::DVec3;
 
-use super::super::tests::{OCTAHEDRON, TOL, UNIT, face, octahedron, round_octahedron, tetrahedron};
+use super::super::tests::{
+    OCTAHEDRON, TOL, UNIT, add_round_octahedron, face, octahedron, round_octahedron, tetrahedron,
+};
 use super::*;
+use crate::Tolerance;
 use crate::mesh::{MeshBuilder, Surface};
 use crate::par::assert_deterministic;
 use crate::patch::PatchError;
 use crate::test_rng::Rng;
-
-/// Adds to `builder` the octahedron of `radius` around the origin whose
-/// edges are quarter circles, facing out, or in if `inward`.
-fn add_round_octahedron(builder: &mut MeshBuilder, radius: f64, inward: bool) {
-    let f = builder.face(face(0, Surface::Free));
-    let v = UNIT.map(|p| builder.vert(p * radius));
-    for [a, b, c] in OCTAHEDRON {
-        let tri = if inward { [a, c, b] } else { [a, b, c] };
-        builder.tri(tri.map(|i| v[i as usize]), f);
-        for (x, y) in [(a, b), (b, c), (c, a)] {
-            let ctrl = (UNIT[x as usize] + UNIT[y as usize]) * radius;
-            builder.edge(v[x as usize], v[y as usize], ctrl, FRAC_1_SQRT_2);
-        }
-    }
-}
 
 /// A thin curved plate closed on itself: the shell between two round
 /// octahedra, of radius `radius` and `radius - thickness`, the inner one
 /// facing in. Their hulls overlap until each side is split finely enough.
 fn shell(radius: f64, thickness: f64) -> Mesh {
     let mut builder = MeshBuilder::new();
-    add_round_octahedron(&mut builder, radius, false);
-    add_round_octahedron(&mut builder, radius - thickness, true);
+    add_round_octahedron(&mut builder, DVec3::ZERO, radius, false);
+    add_round_octahedron(&mut builder, DVec3::ZERO, radius - thickness, true);
     builder.build().unwrap()
 }
 
@@ -58,10 +44,31 @@ fn cylinder_and_box(gap: f64) -> Mesh {
     let (s, c) = 30f64.to_radians().sin_cos();
     let corner = DVec3::new(c, s, 0.0) * (1.0 + gap) + DVec3::Z * 0.5;
     let cuboid = Mesh::cuboid(corner, DVec3::splat(0.5), 2, &TOL).unwrap();
+    both(&cylinder, &cuboid)
+}
+
+/// `a` and `b` as one mesh, `b`'s vertices and triangles after `a`'s.
+fn both(a: &Mesh, b: &Mesh) -> Mesh {
     let mut builder = MeshBuilder::new();
-    add_mesh(&mut builder, &cylinder, 0);
-    add_mesh(&mut builder, &cuboid, cylinder.verts().len() as u32);
+    add_mesh(&mut builder, a, 0);
+    add_mesh(&mut builder, b, a.verts().len() as u32);
     builder.build().unwrap()
+}
+
+/// Two round octahedra of `radius`, side by side along `x` with
+/// `gap` between their nearest corners.
+fn two_spheres(radius: f64, gap: f64) -> Mesh {
+    let mut builder = MeshBuilder::new();
+    add_round_octahedron(&mut builder, DVec3::ZERO, radius, false);
+    add_round_octahedron(&mut builder, DVec3::X * (2.0 * radius + gap), radius, false);
+    builder.build().unwrap()
+}
+
+/// `mesh` repaired with `tol`, and the work that took.
+fn repair_counting(mesh: Mesh, tol: &Tolerance) -> (Result<Mesh, KernelError>, u64) {
+    let mut work = Work::new(&Budget::DEFAULT);
+    let result = mesh.repair_within(tol, &mut work);
+    (result, Budget::DEFAULT.work() - work.left())
 }
 
 /// A tetrahedron of four patches bulging out like a sphere, with each
@@ -152,6 +159,21 @@ fn repair_splits_only_near_the_trouble_and_keeps_surfaces() {
 }
 
 #[test]
+fn face_tags_are_carried_through() {
+    // Repair neither checks the input's face tags nor promises them: a
+    // wrong one comes through, and the result fails only `check_faces`.
+    let mut mesh = cylinder_and_box(1e-2);
+    // Face 2 is the cylinder's first wall.
+    mesh.faces[2].surface = Surface::Plane {
+        n: DVec3::Z,
+        d: 100.0,
+    };
+    let repaired = mesh.repair(&TOL, &Budget::DEFAULT).unwrap();
+    assert_eq!(repaired.check_embedding(&TOL).err(), None);
+    assert!(repaired.check_faces(&TOL).is_err());
+}
+
+#[test]
 fn a_fold_is_repaired() {
     let mesh = bulging_tetrahedron(1.5);
     assert_eq!(mesh.check(&TOL), Err(CheckError::Fold(0)));
@@ -176,18 +198,40 @@ fn what_splitting_cant_mend_fails() {
         Err(KernelError::Invalid(CheckError::Fold(0)))
     );
 
-    // Two tetrahedra corner to corner, closer than the resolution: the
-    // pieces at the corners are split until they are too small to split.
-    let mut builder = MeshBuilder::new();
-    add_mesh(&mut builder, &tetrahedron(DVec3::ZERO), 0);
-    let offset = DVec3::X * (1.0 + 0.5 * TOL.resolution());
-    add_mesh(&mut builder, &tetrahedron(offset), 4);
-    let touching = builder.build().unwrap();
-    let mut work = Work::new(&Budget::DEFAULT);
-    let result = touching.repair_within(&TOL, &mut work);
+    // Flat triangles closer than the resolution fail at once: their
+    // pieces keep the gap, and nothing splitting does brings them apart.
+    // Two boxes face to face used to be split to the end of the budget.
+    let gap = 0.5 * TOL.resolution();
+    let tetrahedra = both(
+        &tetrahedron(DVec3::ZERO),
+        &tetrahedron(DVec3::X * (1.0 + gap)),
+    );
+    let (result, work) = repair_counting(tetrahedra, &TOL);
+    assert_eq!(result, Err(KernelError::Invalid(CheckError::Hull(0, 4))));
+    assert!(work < 1000, "{work}");
+    let boxes = both(
+        &Mesh::cuboid(DVec3::ZERO, DVec3::ONE, 1, &TOL).unwrap(),
+        &Mesh::cuboid(DVec3::Z * (1.0 + gap), DVec3::ONE, 2, &TOL).unwrap(),
+    );
+    // The lower box's top against the upper one's bottom.
+    let (result, work) = repair_counting(boxes, &TOL);
+    assert_eq!(result, Err(KernelError::Invalid(CheckError::Hull(2, 12))));
+    assert!(work < 1000, "{work}");
+
+    // Round surfaces that touch are split until the pieces at the touch
+    // are flat within the resolution, then fail the same way.
+    let (result, work) = repair_counting(two_spheres(1.0, gap), &TOL);
+    assert!(
+        matches!(result, Err(KernelError::Invalid(CheckError::Hull(..)))),
+        "{result:?}"
+    );
+    assert!(work < 100_000, "{work}");
+    // Small ones reach the smallest piece repair splits first.
+    let coarse = Tolerance::new(Tolerance::MAX_FIT).unwrap();
+    let spheres = two_spheres(200.0 * coarse.resolution(), 0.5 * coarse.resolution());
+    let (result, work) = repair_counting(spheres, &coarse);
     assert_eq!(result, Err(KernelError::TooComplex));
-    // It stopped there, well within the budget.
-    assert!(work.left() > Budget::DEFAULT.work() / 2);
+    assert!(work < 100_000, "{work}");
 
     // Running out of the budget.
     assert_eq!(

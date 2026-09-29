@@ -8,18 +8,20 @@
 //! before. Splitting shrinks hulls towards the surface (a child's hull
 //! lies in its parent's) and turns normal coefficients towards the true
 //! normals, so a mesh whose surface doesn't fold or touch itself passes
-//! after enough splits. One that does runs into
-//! [`MAX_REFINE_DEPTH`](crate::MAX_REFINE_DEPTH), pieces too small to
-//! split ([`MIN_SPLIT`] resolutions) or the budget, and fails with
-//! [`KernelError::TooComplex`]; repair never gives a mesh that fails
-//! [`Mesh::check`].
+//! after enough splits. One that does fails: with
+//! [`KernelError::Invalid`] at once where no split can mend it (a
+//! degenerate corner, or flat pieces breaking a hull rule), and otherwise
+//! with [`KernelError::TooComplex`] at
+//! [`MAX_REFINE_DEPTH`](crate::MAX_REFINE_DEPTH), at pieces too small to
+//! split ([`MIN_SPLIT`] resolutions) or out of budget. Repair never gives
+//! a mesh that fails [`Mesh::check`].
 
 use super::check::check_pair;
+use super::hull::flat;
 use super::refine::{Piece, Refiner};
 use super::{Bvh, CheckError, Mesh};
 use crate::budget::{Budget, Work};
 use crate::par::par_map;
-use crate::patch::Patch;
 use crate::{KernelError, MAX_PATCHES, Tolerance};
 
 /// The smallest piece repair splits, in resolutions across (along the
@@ -37,9 +39,11 @@ impl Mesh {
     ///
     /// The mesh must pass the topology and shared-edge parts of
     /// [`Mesh::check`], and its patches must be within the patch bounds;
-    /// otherwise it fails with [`KernelError::Invalid`]. The result passes
-    /// `check` with `tol`, face tags aside: splitting keeps patches on
-    /// their surfaces, up to rounding.
+    /// otherwise it fails with [`KernelError::Invalid`]. So does a failure
+    /// no split can mend, naming the input triangles it came from. The
+    /// result passes `check` with `tol`, face tags aside: those aren't
+    /// checked, and splitting keeps patches on their surfaces up to
+    /// rounding.
     pub fn repair(self, tol: &Tolerance, budget: &Budget) -> Result<Mesh, KernelError> {
         self.repair_within(tol, &mut Work::new(budget))
     }
@@ -51,22 +55,19 @@ impl Mesh {
         work: &mut Work,
     ) -> Result<Mesh, KernelError> {
         self.check_topology().map_err(KernelError::Invalid)?;
-        let tris: Vec<u32> = (0..self.tris.len() as u32).collect();
-        work.spend(tris.len())?;
-        let pieces: Vec<Piece> = par_map(&tris, |&t| Piece {
-            corners: self.corners(t),
-            patch: self.patch(t as usize),
-            face: self.tris[t as usize].face,
-            leaf: t,
-            origin: t,
-            changed: true,
-        });
-        for (t, piece) in pieces.iter().enumerate() {
-            piece
-                .patch
-                .check()
-                .map_err(|e| KernelError::Invalid(CheckError::Patch(t as u32, e)))?;
-        }
+        let patches = self.bounded_patches().map_err(KernelError::Invalid)?;
+        work.spend(patches.len())?;
+        let pieces: Vec<Piece> = (0..self.tris.len() as u32)
+            .zip(patches)
+            .map(|(t, patch)| Piece {
+                corners: self.corners(t),
+                patch,
+                face: self.tris[t as usize].face,
+                leaf: t,
+                origin: t,
+                changed: true,
+            })
+            .collect();
         let mut failing = failures(&pieces, tol, work)?;
         if failing.is_empty() {
             return Ok(self);
@@ -86,7 +87,9 @@ impl Mesh {
             }
         };
         let mesh = refiner.mesh(&pieces);
-        debug_assert_eq!(mesh.check(tol), Ok(()));
+        // Face tags aside: they are the input's claims, which repair
+        // neither checks nor promises.
+        debug_assert_eq!(mesh.check_embedding(tol).err(), None);
         Ok(mesh)
     }
 }
@@ -94,8 +97,9 @@ impl Mesh {
 /// The leaves to split: those of pieces that changed and fail the fold
 /// check, and of pairs with a changed piece that fail the hull rules,
 /// sorted. A piece with a degenerate corner
-/// ([`Patch::degenerate_corner`]) fails the repair, naming the input
-/// triangle it came from.
+/// ([`Patch::degenerate_corner`](crate::patch::Patch::degenerate_corner)),
+/// or a failing pair of flat pieces ([`flat`]), fails the repair, naming
+/// the input triangles they came from.
 fn failures(pieces: &[Piece], tol: &Tolerance, work: &mut Work) -> Result<Vec<u32>, KernelError> {
     let margin = tol.resolution();
     let changed: Vec<u32> = (0..pieces.len() as u32)
@@ -135,19 +139,24 @@ fn failures(pieces: &[Piece], tol: &Tolerance, work: &mut Work) -> Result<Vec<u3
     work.spend(pairs.len())?;
     let split = par_map(&pairs, |&[p, q]| {
         let (a, b) = (&pieces[p as usize], &pieces[q as usize]);
-        match check_pair([p, q], [&a.patch, &b.patch], [a.corners, b.corners], margin) {
-            Ok(()) => [false; 2],
-            // Splitting a patch that is its own hull (flat, with straight
-            // edges) brings it no further from a non-neighbour, unless
-            // both are.
-            Err(CheckError::Hull(..)) => match [flat(&a.patch, margin), flat(&b.patch, margin)] {
-                [true, true] => [true; 2],
-                [fa, fb] => [!fa, !fb],
-            },
-            Err(_) => [true; 2],
+        let ids = [a.origin, b.origin];
+        let Err(e) = check_pair(ids, [&a.patch, &b.patch], [a.corners, b.corners], margin) else {
+            return Ok([false; 2]);
+        };
+        match [flat(&a.patch, margin), flat(&b.patch, margin)] {
+            // The rules on flat triangles are exact, and their pieces
+            // keep the same angles at shared corners and edges and the
+            // same gaps, only smaller next to the margin: splitting can't
+            // mend them.
+            [true, true] => Err(e),
+            // A flat piece is its own hull: splitting brings it no
+            // further from a non-neighbour.
+            [fa, fb] if matches!(e, CheckError::Hull(..)) => Ok([!fa, !fb]),
+            _ => Ok([true; 2]),
         }
     });
     for (&[p, q], split) in pairs.iter().zip(split) {
+        let split = split.map_err(KernelError::Invalid)?;
         for (piece, split) in [p, q].into_iter().zip(split) {
             if split {
                 leaves.push(pieces[piece as usize].leaf);
@@ -167,19 +176,6 @@ enum Fold {
     /// Fails at a corner whose edges leave it at 0° or 180°, which every
     /// piece keeping the corner will.
     Never,
-}
-
-/// Whether every edge's control point is within `margin` of the line
-/// through its ends, so the patch is within `margin` of its flat triangle.
-fn flat(patch: &Patch, margin: f64) -> bool {
-    (0..3).all(|i| {
-        let (p, q) = (patch.p[i], patch.p[(i + 1) % 3]);
-        let Some(u) = (q - p).try_normalize() else {
-            return false;
-        };
-        let d = patch.c[i] - p;
-        (d - u * d.dot(u)).length() <= margin
-    })
 }
 
 #[cfg(test)]

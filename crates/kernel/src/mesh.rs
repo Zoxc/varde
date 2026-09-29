@@ -30,6 +30,9 @@
 //! The rules and the reasons for them are written down in
 //! `agents/kernel.md`.
 
+use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, DefaultHasher};
+
 use glam::DVec3;
 
 use crate::patch::Patch;
@@ -47,6 +50,11 @@ pub use build::{BuildError, MeshBuilder};
 pub use bvh::Bvh;
 pub use check::CheckError;
 pub use face::{Face, FaceName, FacePart, Quadric, Surface};
+
+/// A hash map with a fixed hasher, for maps only looked up in, never
+/// iterated: nothing can then depend on its order, and lookups by vertex
+/// ids beat a `BTreeMap`'s on large meshes.
+pub(crate) type LookupMap<K, V> = HashMap<K, V, BuildHasherDefault<DefaultHasher>>;
 
 /// A closed mesh of rational quadratic patches. Halfedge `h` is corner
 /// `h % 3` of triangle `h / 3`, running from that corner to the next.

@@ -313,7 +313,9 @@ that knows about rayon. The rules every parallel step follows:
 - Floating-point reductions (sums, bounds) after collecting, sequentially in
   key order, never rayon's `sum`/`reduce`.
 - Ids handed out in one sequential pass over the collected results.
-- No iteration order from a hasher: sorted `Vec`s or `BTreeMap`s.
+- No iteration order from a hasher: sorted `Vec`s or `BTreeMap`s. A map
+  only looked up in, never iterated, may be a `mesh::LookupMap` (a
+  `HashMap` with a fixed hasher).
 - Errors: the first in input order (collecting `Result`s does that).
 
 Tests use `par::assert_deterministic(f)`, which runs `f` on a 1-thread and
@@ -375,7 +377,8 @@ triangle uses. What it builds still has to pass `check`.
 `Mesh::check(&Tolerance)` is where a mesh becomes trusted; the empty mesh
 passes. It returns the first failure in the order below, and within a rule
 by the lowest halfedge, vertex, edge or triangle (triangle pairs
-lexicographically), so a mesh always gives the same `CheckError`.
+lexicographically), so a mesh always gives the same `CheckError`, in debug
+and release builds alike (face tags, checked in debug only, come last).
 
 1. **Topology** (sequential): at most `MAX_PATCHES` triangles; no more
    vertices than halfedges, exactly half as many edges as halfedges, and at
@@ -428,7 +431,10 @@ its triangles share, which is topology:
     of a patch is a Bernstein-weighted mean of its control points, so the
     strict patch meets the plane only along the shared edge, and the two
     can meet only there. The lax side is what lets a flat cap meet a curved
-    wall along a curved edge: the cap lies in the edge's plane.
+    wall along a curved edge: the cap lies in the edge's plane. It may
+    cross the plane by up to the resolution, so near the edge the two may
+    overlap by that much: below the resolution, where nothing is told
+    apart anyway, and what rounding of a cap built in the plane needs.
 - **One: vertex neighbours.** A plane through the shared vertex `V` with
   the other five control points of each more than the resolution to either
   side. With unit normal `n` that is `n·x > margin` for every `x` in
@@ -498,9 +504,10 @@ and pieces keep their shapes however deep they go (bisecting again and
 again would make slivers, which fail the fold check).
 
 Everything is keyed by vertex ids, never positions: edge records by their
-ends (`BTreeMap`, smaller id first), the midpoint of each split edge, the
+ends (smaller id first), the midpoint of each split edge, the
 whole edge each half came from, and which leaf has each directed edge as a
-side. An edge is split the first time a leaf on either side splits, with
+side, in `LookupMap`s, which are never iterated. An edge is split the
+first time a leaf on either side splits, with
 `Conic3::split_half` on its record, and both sides read the halves and
 midpoint from the table. A red child's corners and boundary halves come
 from the table and its inner edges from `split4`; in debug builds each
@@ -540,10 +547,15 @@ so the same rule. What fails is split:
   split mends it, as every piece keeping the corner has the same edge
   directions there, and repair fails at once with `Invalid(Fold(t))`, `t`
   the input triangle the piece came from.
-- A failing pair: the leaves of both, except that for non-neighbours a
-  piece whose edges are all straight (within the resolution) is left
-  alone unless both are: it is its own hull, and splitting it brings no
-  piece of it further away.
+- A failing pair: the leaves of both, except for **flat** pieces, whose
+  edges are all straight within the resolution (`hull::flat`), so that
+  each is its own hull. If both are flat, repair fails at once with
+  `Invalid` and the pair's error, naming the input triangles the pieces
+  came from: the rules on flat triangles are exact, and their pieces keep
+  the angles at shared corners and edges and the gaps, only smaller next
+  to the margin, so no split mends them. If one is, and they are
+  non-neighbours, only the other is split: splitting a flat piece brings
+  no piece of it further away.
 
 The rounds end when nothing fails, or with `TooComplex` at
 `MAX_REFINE_DEPTH`, at pieces less than `MIN_SPLIT` (64) resolutions across,
@@ -552,14 +564,21 @@ keep the hull margin from their own neighbours, and splitting them only
 makes more that fail (two tetrahedra touching corner to corner went from 6
 failing pieces a round to thousands at about 8 resolutions); a surface that
 keeps clear of itself passes long before, since a patch of size `s` on a
-curve of radius `R` sags by about `s²/8R`. In debug builds the result is
-checked in full.
+curve of radius `R` sags by about `s²/8R`. Round surfaces that touch stop
+sooner, once the pieces at the touch are flat (at `s ≈ √(8R·resolution)`,
+above `MIN_SPLIT` for `R` over about 500 resolutions). Touching flat faces
+fail at once: two boxes face to face, or two cylinders side by side or end
+to end, used to be split to the end of the budget (12 to 27 s) and now fail
+in 2 to 80 ms. Round surfaces overlapping over an area within the
+resolution (a shell thinner than it) still run out the budget, about 15 s.
+In debug builds the result is checked in full, face tags aside: those are
+the input's claims, which repair neither checks nor promises.
 
 Work, from the budget: a unit per piece tested for folds, per pair tested,
 per leaf split, and the number of pieces each round (the BVH and the
 pieces). All is counted in sequential passes, so running out doesn't depend
 on the thread count. The fold and pair tests run through `par_map` over
-sorted lists; the splits are sequential.
+sorted lists; the splits, the pieces and the BVH are sequential.
 
 ### Boxes and cylinders (`mesh/primitive.rs`)
 
@@ -590,10 +609,13 @@ thread and 0.27 s on eight (release; the topology pass is sequential);
 about 2.7 µs per patch.
 
 Repair of the thin shell in the tests (radius 10, both sides split evenly;
-release, seven threads, one in brackets): 0.2 thick, 1 024 patches in 8 ms;
-0.01 thick, 16 384 in 72 ms (124 ms); 0.001 thick, 262 144 in 1.3 s (2.2 s),
-about 16 units of work per patch. The refinement, the pieces and the BVH
-are sequential, which is why seven threads give only 1.7×.
+release, seven threads, one in brackets): 0.2 thick, 1 024 patches in 4 ms
+(7 ms); 0.01 thick, 16 384 in 52 ms (111 ms); 0.001 thick, 262 144 in
+0.88 s (1.9 s), about 16 units of work per patch. The refinement, the
+pieces and the BVH are sequential, which is why seven threads give about
+2×: of the 0.88 s, splitting takes 0.35 s, and rebuilding the mesh 0.2 s.
+The refiner's and the builder's maps are hashed (`LookupMap`); as
+`BTreeMap`s they made repair half as slow again.
 
 ### Tests
 
@@ -615,8 +637,10 @@ tags. GJK is tested against boxes a known gap apart (face to face and
 corner to corner, randomly rotated and moved), point clouds either side of
 a plane, flat, collinear and repeated points, and the long thin hulls of a
 611 × 0.066 × 0.187 box's corner in any order and rotation; the BVH against
-brute force. `check`, the BVH's pairs, and the first failure of a jittered
-torus are the same at 1 and 8 threads.
+brute force. A mesh breaking two rules gives the earlier invariant's error
+(bounds before a fold, hulls before a face tag, in debug builds too).
+`check`, the BVH's pairs, and the first failure of a jittered torus are the
+same at 1 and 8 threads.
 
 Refinement: a red split bisects its three neighbours (the red children are
 `split4`'s, the green ones `bisect`'s); splitting a green piece splits its
@@ -628,10 +652,13 @@ apart, the inner facing in) is split evenly until it passes; a cylinder
 with a box beside it, 0.1 to 0.001 off the wall, is split only near the
 box, keeps every piece on its cylinder or plane within `1e-12` and the box
 whole; a tetrahedron bulging so far its patches fail the fold check passes
-at 16 patches; a mesh that passes comes back unchanged; a cusp fails at
-once, tetrahedra touching closer than the resolution fail once too small,
-a small budget runs out, and bad topology and weights are refused; the
-shell's and the cylinder's repairs are the same at 1 and 8 threads.
+at 16 patches; a mesh that passes comes back unchanged; a wrong face tag
+is carried through (the result fails only `check_faces`); a cusp fails at
+once, as do tetrahedra corner to corner and boxes face to face closer than
+the resolution; round octahedra touching fail once the pieces at the touch
+are flat, and small ones once they are too small; a small budget runs out,
+and bad topology and weights are refused; the shell's and the cylinder's
+repairs are the same at 1 and 8 threads.
 Constructors: 50 random boxes and cylinders (sizes `1e-2..1e3`, moved up to
 `1e5`) pass `check` and lie on their faces within `1e-12`; faces are named
 as an extrude names them; bad parameters are refused, and a box thinner
@@ -707,8 +734,9 @@ with tracing.
   leaf is.
 - **Repair splits both patches of a failing pair**, except a flat
   non-neighbour, and fails at once on a degenerate corner
-  (`Patch::degenerate_corner`, new), and on pieces under `MIN_SPLIT` = 64
-  resolutions as well as at `MAX_REFINE_DEPTH` and the budget.
+  (`Patch::degenerate_corner`, new) and on a failing pair of flat pieces,
+  and on pieces under `MIN_SPLIT` = 64 resolutions as well as at
+  `MAX_REFINE_DEPTH` and the budget.
 - **`Budget` is a limit and `Work` its counter**: operations take `&Budget`
   as planned and count down a `Work` shared by their steps. `MAX_WORK` is
   `1 << 26`, about half a minute of repair on one thread. `MAX_TRACE_STEPS`
