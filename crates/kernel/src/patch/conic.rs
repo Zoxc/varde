@@ -121,12 +121,13 @@ pub(super) fn standard_corner<P: Point>(h: P::Hom) -> Result<(P, f64), PatchErro
 
 /// The homogeneous edge control point `h` between corners of homogeneous
 /// weights `wa` and `wb`, in the standard form: its point and the weight
-/// `w / √(wa·wb)`. Symmetric in `wa` and `wb`, so both directions of an
-/// edge give the same bits.
+/// `w / (√wa·√wb)`. Symmetric in `wa` and `wb`, so both directions of an
+/// edge give the same bits. Taking the roots first keeps the product
+/// from overflowing or going subnormal for weights of any scale.
 pub(super) fn standard_edge<P: Point>(h: P::Hom, wa: f64, wb: f64) -> Result<(P, f64), PatchError> {
     let (x, w) = P::parts(h);
     if w > 0.0 && w.is_finite() {
-        Ok((x / w, w / (wa * wb).sqrt()))
+        Ok((x / w, w / (wa.sqrt() * wb.sqrt())))
     } else {
         Err(PatchError::Weight(w))
     }

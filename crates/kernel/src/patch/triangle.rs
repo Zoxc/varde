@@ -309,7 +309,7 @@ fn rows(net: &[[DVec4; 3]; 3], u: DVec3) -> [DVec4; 3] {
 /// The spatial part of the 4D cross product of homogeneous points: the
 /// normal of the plane through the three points they stand for.
 /// Alternating and linear in each argument.
-pub(super) fn cross4(a: DVec4, b: DVec4, c: DVec4) -> DVec3 {
+fn cross4(a: DVec4, b: DVec4, c: DVec4) -> DVec3 {
     let (a3, b3, c3) = (a.truncate(), b.truncate(), c.truncate());
     b3.cross(c3) * a.w - a3.cross(c3) * b.w + a3.cross(b3) * c.w
 }

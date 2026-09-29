@@ -55,9 +55,11 @@ polynomial and de Casteljau and blossoming are exact. The blossom is
 
 **Back to the standard form.** A homogeneous curve with end weights `wa`,
 `wb` becomes standard by scaling each barycentric coordinate by `1/√w`:
-the points stay, and the middle weight `w` becomes `w / √(wa·wb)`. That
+the points stay, and the middle weight `w` becomes `w / (√wa·√wb)`. That
 depends only on the edge's own three homogeneous points and is symmetric
-in the ends, so both sides of an edge get the same bits.
+in the ends, so both sides of an edge get the same bits. The roots are
+taken before multiplying, so homogeneous points of any scale work (the
+product of the end weights alone could overflow or go subnormal).
 
 **Splitting** at `t` runs de Casteljau on the homogeneous points and
 renormalizes each half. The halves' weights lie between the parent's and 1
@@ -146,8 +148,13 @@ normal's numerator is a **cubic** with ten Bernstein coefficients
 (1,0,2), (0,3,0), (0,2,1), (0,1,2), (0,0,3)` (powers of `u0, u1, u2`),
 with `n(u) = Σ 3!/(i!j!k!)·u0^i·u1^j·u2^k·c`. The corner coefficient is
 the cross product of the two edge tangents leaving the corner,
-`2w01(c01 − p0) × 2w20(c20 − p0)`. They are computed with the net moved to
-`p0`, which keeps rounding relative to the patch.
+`2w01(c01 − p0) × 2w20(c20 − p0)`. Each term `cross4(x, y, z)` of three
+net entries is computed as `wx·wy·wz·(y − x) × (z − x)` of their points,
+so its rounding is relative to the distances between those three points,
+not to their distance from anything else. (Computed from the net moved to
+`p0`, a pinched patch whose heavy control points lie close together but
+far from `p0` got rounding bounds far too big, and failed the floor below
+although its parent passed.)
 
 **The fold check** (`fold_direction`) looks for a unit `d` with
 `c·d > FOLD_MARGIN·|c|` for every coefficient. Every normal is a positive
@@ -160,7 +167,11 @@ triple circumcentre on the sphere is tried (`smallest_cone`; ties keep the
 first, so the result depends only on input order). A coefficient whose
 length is at most `FOLD_FLOOR` times the summed size of the terms it came
 from counts as zero and fails the check: a corner whose edges leave at 0°
-or 180°, which no amount of splitting fixes.
+or 180°, which no amount of splitting fixes. A coefficient's rounding is
+at most `16·ε` of that size (`ROUNDING`), so one past the floor points
+within `ROUNDING / FOLD_FLOOR` (about `3.6e-7`) radians of its true
+direction, less than the margin: a patch that passes doesn't fold (a
+compile-time assertion keeps the constants that way).
 
 It is **preserved by splitting**: a sub-patch's cubic is a positive
 constant times the parent's cubic at projectively mapped points, so its
@@ -169,14 +180,40 @@ cubic at points inside the domain, which are convex combinations of the
 parent's coefficients. The cone `{c : c·d > ε|c|}` is convex, so the
 parent's `d` passes for every child (tested for 4-way splits, bisections
 and random sub-triangles). Invertible affine maps keep it too (normals
-transform by the cofactor matrix).
+transform by the cofactor matrix). In floating point it holds only while
+the pieces stay reasonably shaped: a sliver about `1/FOLD_FLOOR` times
+longer than it is wide can't be told from a fold by rounding, and bisecting
+again and again near an edge's end makes such slivers. Splits at `½` (what
+red–green refinement uses) don't.
 
-**The normal cone** (`normal_cone`) is that smallest cone, widened by
-`1e-9` rad for rounding, or angle π when the coefficients don't fit in an
-open half-space. It holds every normal of the patch. `NormalCone::apart`
-says two cones share no direction either way round (the angle between the
-axes exceeds the sum of the angles, and so does its supplement), the
-certificate that two patches can't meet in a closed loop.
+**The normal cone** (`normal_cone`) is that smallest cone, with each
+coefficient's direction first turned away from the axis by its own
+rounding bound (`ROUNDING` times its size over its length) plus `1e-9`
+rad. It holds every normal of the patch. A coefficient that rounding may
+have turned by a radian or more (one that should be zero but isn't, say)
+gives `NormalCone::ALL`; one that is exactly zero with no terms behind it
+is left out. `NormalCone::apart` says two cones share no direction either
+way round (the angle between the axes exceeds the sum of the angles, and
+so does its supplement), the certificate that two patches can't meet in a
+closed loop.
+
+A cone keeps its half-angle as a cosine and a sine, and the cone and
+`apart` are worked out with `+ − × ÷ √` only: angles between directions
+come from the pair `(a·b, |a×b|)`, compared through the sine of their
+difference. `acos` of a dot product loses half the digits near 0 (angles
+below about `1e-8` rad round to 0), which let a cone miss its patch's
+normals and let two cones around the same axis come out apart; and its
+last bits differ between platforms' maths libraries. `angle()` (by
+`atan2`) is for showing and tests only.
+
+**Determinism.** The fold check, the cone and `apart` use only correctly
+rounded arithmetic, so they give the same bits natively and on wasm.
+`Conic::arc` uses `cos` and `sin`, which come from the platform's maths
+library and can differ in the last bit between platforms (so do the
+sketch's own angles). Arcs whose ends are known as points can be built
+without them: for ends `a`, `b` at radius `r` from the centre (sweep
+under 180°), the control point is `centre + (a + b − 2·centre)·2r² / |a + b
+− 2·centre|²` and the weight `|a + b − 2·centre| / 2r`.
 
 ### Exact cylinder strips
 
@@ -237,11 +274,15 @@ sampled points; halving symmetric to the bit; neighbours splitting a shared
 edge (by `split4` or `bisect` at `½`, or halves passed to both) getting the
 same bits; the fold check passing on every child of a parent that passed,
 with the parent's direction; failing on folded, cusped and collinear
-patches; the exact cone path when the quick directions fail; normal cones
-holding sampled normals; the corner coefficients against the corners'
-tangents; clockwise sub-patches facing the other way; bad weights
-(homogeneous ones too), coordinates, arcs and split positions refused; cylinder strips on their cylinders, within their strip and sharing
-their edges.
+patches; the fold check surviving four levels of uneven splits, and a
+pinched heavy piece; the exact cone path when the quick directions fail;
+normal cones holding sampled normals, also of nearly flat patches whose
+normals spread by less than `1e-8` rad; cones around the same axis (and
+coplanar flat triangles) never apart; the corner coefficients against the
+corners' tangents; clockwise sub-patches facing the other way; bad weights
+(homogeneous ones too), coordinates, arcs and split positions refused;
+`from_hom` giving the same bits at any scale; cylinder strips on their
+cylinders, within their strip and sharing their edges.
 
 ## Deviations
 

@@ -259,6 +259,38 @@ fn non_positive_homogeneous_weights_are_refused() {
 }
 
 #[test]
+fn homogeneous_points_at_any_scale_give_the_same_curve() {
+    // Powers of two scale exactly, so the results must match to the bit;
+    // the corner weights' product would overflow or go subnormal.
+    let scales = [2f64.powi(530), 2f64.powi(-530)];
+    let mut rng = Rng::new(21);
+    for _ in 0..CASES {
+        let patch = random_patch(&mut rng, (W_MIN, W_MAX));
+        let conic = patch.edge(0);
+        let (a, b) = (rng.range(0.0, 0.5), rng.range(0.5, 1.0));
+        let h = [
+            conic.blossom(a, a),
+            conic.blossom(a, b),
+            conic.blossom(b, b),
+        ];
+        let domain = random_domain(&mut rng);
+        let corners = domain.map(|d| patch.blossom(d, d));
+        let edges = [0, 1, 2].map(|i| patch.blossom(domain[i], domain[(i + 1) % 3]));
+        let (Ok(piece), Ok(sub)) = (Conic3::from_hom(h), Patch::from_hom(corners, edges)) else {
+            continue;
+        };
+        for s in scales {
+            let scaled = Conic3::from_hom(h.map(|x| x * s)).unwrap();
+            assert!(same_conic(&scaled, &piece), "{scaled:?} {piece:?}");
+            let scaled = Patch::from_hom(corners.map(|x| x * s), edges.map(|x| x * s)).unwrap();
+            for i in 0..3 {
+                assert!(same_conic(&scaled.edge(i), &sub.edge(i)));
+            }
+        }
+    }
+}
+
+#[test]
 fn bad_coordinates_are_refused() {
     for x in [f64::NAN, f64::INFINITY, MAX_CONTROL * 1.5] {
         let p = DVec3::new(0.0, x, 0.0);
@@ -442,7 +474,7 @@ fn flat_triangles_have_the_flat_normal() {
     assert_eq!(patch.fold_direction(), Some(flat.normalize()));
     let cone = patch.normal_cone();
     assert!(cone.axis.distance(flat.normalize()) < 1e-12);
-    assert!(cone.angle < 1e-6);
+    assert!(cone.angle() < 1e-6);
 }
 
 #[test]
@@ -536,6 +568,20 @@ fn the_smallest_cone_beats_every_other_axis() {
     }
 }
 
+/// The angle between two directions, accurate near 0 and π too.
+fn angle_between(a: DVec3, b: DVec3) -> f64 {
+    a.cross(b).length().atan2(a.dot(b))
+}
+
+/// The cone of half-angle `angle` around `axis`.
+fn cone(axis: DVec3, angle: f64) -> NormalCone {
+    NormalCone {
+        axis,
+        cos: angle.cos(),
+        sin: angle.sin(),
+    }
+}
+
 #[test]
 fn normal_cones_hold_the_normals() {
     let mut rng = Rng::new(11);
@@ -543,32 +589,84 @@ fn normal_cones_hold_the_normals() {
     for _ in 0..CASES {
         let patch = random_patch(&mut rng, (0.2, 5.0));
         let cone = patch.normal_cone();
-        if cone.angle >= PI {
+        if cone.angle() >= FRAC_PI_2 {
             continue;
         }
         narrow += 1;
         for _ in 0..40 {
-            let n = patch.normal(rng.bary()).normalize();
-            assert!(n.dot(cone.axis).clamp(-1.0, 1.0).acos() <= cone.angle + 1e-9);
-        }
-        // A patch that passes the fold check has a cone narrower than a
-        // half-space.
-        if patch.fold_direction().is_some() {
-            assert!(cone.angle < FRAC_PI_2);
+            let n = patch.normal(rng.bary());
+            assert!(angle_between(n, cone.axis) <= cone.angle());
         }
     }
     assert!(narrow > CASES / 2);
+    // A patch that passes the fold check has a cone narrower than a
+    // half-space.
+    for _ in 0..CASES {
+        let patch = random_patch(&mut rng, (W_MIN, W_MAX));
+        if patch.fold_direction().is_some() {
+            assert!(patch.normal_cone().cos > 0.0);
+        }
+    }
+}
+
+#[test]
+fn normal_cones_hold_the_normals_of_nearly_flat_patches() {
+    // Normals spread by less than 1e-8 radians, where the cosine of the
+    // spread rounds to 1.
+    let mut rng = Rng::new(23);
+    for _ in 0..CASES {
+        let p = [rng.point(10.0), rng.point(10.0), rng.point(10.0)];
+        let mut patch = Patch::flat(p).unwrap();
+        let n = (p[1] - p[0]).cross(p[2] - p[0]).normalize();
+        patch.c[0] += n * rng.range(1e-8, 1e-7);
+        let cone = patch.normal_cone();
+        assert!(cone.angle() < 1e-6);
+        for _ in 0..40 {
+            let n = patch.normal(rng.bary());
+            assert!(angle_between(n, cone.axis) <= cone.angle());
+        }
+    }
 }
 
 #[test]
 fn cones_apart_are_neither_parallel_nor_opposite() {
-    let cone = |axis: DVec3, angle| NormalCone { axis, angle };
     let up = cone(DVec3::Z, 0.3);
     assert!(up.apart(&cone(DVec3::X, 0.3)));
     assert!(!up.apart(&cone(DVec3::Z, 0.1)));
     assert!(!up.apart(&cone(-DVec3::Z, 0.1)));
     assert!(!up.apart(&cone(DVec3::new(1.0, 0.0, 1.0).normalize(), 0.6)));
     assert!(!up.apart(&cone(DVec3::X, PI)));
+    assert!(!up.apart(&NormalCone::ALL));
+    assert!(!NormalCone::ALL.apart(&cone(DVec3::X, PI)));
+    assert!(!NormalCone::ALL.apart(&NormalCone::ALL));
+    // Reaching past a right angle between them, they can't be apart.
+    assert!(!cone(DVec3::Z, 1.0).apart(&cone(DVec3::X, 0.6)));
+    assert!(cone(DVec3::Z, 0.7).apart(&cone(DVec3::X, 0.6)));
+}
+
+#[test]
+fn cones_around_parallel_axes_are_never_apart() {
+    let mut rng = Rng::new(24);
+    for _ in 0..CASES {
+        // The same direction, normalized from different lengths: the
+        // axes can differ in their last bits.
+        let v = rng.point(10.0);
+        let a = v.normalize();
+        let b = (v * rng.range(0.1, 10.0)).normalize();
+        for angle in [0.0, 1e-12, 1e-9] {
+            let (ca, cb) = (cone(a, angle), cone(b, angle));
+            assert!(!ca.apart(&cb) && !cb.apart(&ca));
+            assert!(!ca.apart(&cone(-b, angle)));
+        }
+        // Two flat triangles in one plane.
+        let (o, x, y) = (rng.point(10.0), rng.point(1.0), rng.point(1.0));
+        let mut triangle = || {
+            let at = |rng: &mut Rng| o + x * rng.range(-5.0, 5.0) + y * rng.range(-5.0, 5.0);
+            Patch::flat([at(&mut rng), at(&mut rng), at(&mut rng)]).unwrap()
+        };
+        let (s, t) = (triangle(), triangle());
+        assert!(!s.normal_cone().apart(&t.normal_cone()));
+    }
 }
 
 #[test]
@@ -742,6 +840,93 @@ fn folds_stay_away_from_split_pieces() {
         }
     }
     assert!(passed > CASES / 2, "{passed}");
+}
+
+#[test]
+fn folds_stay_away_from_thin_heavy_pieces() {
+    // A piece four splits down from `parent`: a sliver whose heavy
+    // weights make its normal coefficients small beside the control
+    // points' distance from its corner. The parent passes the fold check,
+    // so the piece must too.
+    let v = |x, y, z| DVec3::new(x, y, z);
+    let parent = Patch::new(
+        [
+            v(-5.257701758334976, 2.416793468396584, -8.138530636545166),
+            v(1.5165798510253676, -3.708682463054707, 2.1485628354328803),
+            v(4.018732246308739, -7.501775227545069, -1.1524633800139465),
+        ],
+        [
+            v(-4.613491886982054, -0.24433360307899932, -5.334098287302249),
+            v(2.8561205379148182, -3.9214819026049694, 1.4971374182083954),
+            v(-0.23950284323849758, -3.586551916827714, -1.396259534383839),
+        ],
+        [1.4706616521691764, 30.42862307740844, 40.86109266993717],
+    )
+    .unwrap();
+    let piece = Patch::new(
+        [
+            v(-2.9327429198753223, -0.575532530024423, -4.65513681101916),
+            v(-4.894353301266745, 1.3783112162494633, -6.963055953448907),
+            v(4.018732246308739, -7.501775227545069, -1.1524633800139465),
+        ],
+        [
+            v(-3.675892922692623, 0.16469127799182837, -5.529356947442225),
+            v(0.13034116937922674, -3.626567071978696, -1.050576159087738),
+            v(0.13117317593788116, -3.627462707411272, -1.0506698295440347),
+        ],
+        [1.0307403404020519, 37.04587688957472, 28.932093770379424],
+    )
+    .unwrap();
+    let d = parent.fold_direction().unwrap();
+    for c in piece.normal_coeffs() {
+        assert!(c.dot(d) > FOLD_MARGIN * c.length());
+    }
+    assert!(piece.fold_direction().is_some());
+}
+
+#[test]
+fn folds_stay_away_from_deeply_split_pieces() {
+    let mut rng = Rng::new(22);
+    let mut passed = 0;
+    for _ in 0..CASES {
+        // Bulging edges and weights over the whole range.
+        let p = [rng.point(10.0), rng.point(10.0), rng.point(10.0)];
+        let spread = rng.range(0.2, 1.5);
+        let c = [0, 1, 2].map(|i| {
+            let (a, b) = (p[i], p[(i + 1) % 3]);
+            (a + b) * 0.5 + rng.point(spread * (b - a).length())
+        });
+        let w = [0, 1, 2].map(|_| rng.log_range(W_MIN, W_MAX));
+        let patch = Patch::new(p, c, w).unwrap();
+        let Some(d) = patch.fold_direction() else {
+            continue;
+        };
+        passed += 1;
+        let mut pieces = vec![patch];
+        for _ in 0..4 {
+            let mut next = Vec::new();
+            for piece in &pieces {
+                let children = if rng.unit() < 0.5 {
+                    piece.split4().map(|c| c.to_vec())
+                } else {
+                    let edge = (rng.next_u64() % 3) as usize;
+                    piece.bisect(edge, rng.range(0.1, 0.9)).map(|c| c.to_vec())
+                };
+                // Past the weight bounds: refused, which repair handles.
+                let Ok(children) = children else { continue };
+                for child in children {
+                    assert!(child.fold_direction().is_some(), "{patch:?} → {child:?}");
+                    for c in child.normal_coeffs() {
+                        assert!(c.dot(d) > FOLD_MARGIN * c.length());
+                    }
+                    next.push(child);
+                }
+            }
+            next.truncate(8);
+            pieces = next;
+        }
+    }
+    assert!(passed > CASES / 3, "{passed}");
 }
 
 #[test]

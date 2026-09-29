@@ -8,11 +8,8 @@
 //! with ten Bernstein coefficients, each `G_i` being linear in `u`. Every
 //! normal is a positive combination of them.
 
-use std::f64::consts::PI;
-
 use glam::DVec3;
 
-use super::triangle::cross4;
 use super::{FOLD_FLOOR, FOLD_MARGIN, Patch};
 
 /// The multi-indices `(i, j, k)` of the normal's cubic Bernstein
@@ -36,26 +33,73 @@ fn slot(i: usize, j: usize) -> usize {
     [6, 3, 1, 0][i] + (3 - i - j)
 }
 
-/// Slack added to a normal cone's angle, radians, for the rounding in its
-/// coefficients.
+/// A bound on a normal coefficient's rounding error, relative to the size
+/// of the terms it was summed from. Each term, a weighted cross product of
+/// two differences, is off by at most about `7·ε/2` of its size, and adding
+/// up to six of them and scaling adds about `3·ε`: `16·ε` has room to
+/// spare. Divided by the coefficient's length it bounds how far, in
+/// radians, the coefficient's direction may be off.
+const ROUNDING: f64 = 16.0 * f64::EPSILON;
+
+/// Slack added to a normal cone's angle, radians, for the rounding in
+/// measuring angles from its axis.
 const CONE_SLACK: f64 = 1e-9;
 
-/// A cone of directions: every direction within `angle` (radians, at most
-/// π) of the unit `axis`.
+/// Apart cones must clear each other by this much more than rounding in
+/// the sine of the angle between their axes can hide.
+const APART_ROUNDING: f64 = 8.0 * f64::EPSILON;
+
+// A coefficient that passes the floor points within `ROUNDING /
+// FOLD_FLOOR` radians of its true direction, less than the fold check's
+// margin, so a patch that passes really doesn't fold. Its normal cone is
+// widened by up to twice that, and so still fits in a half-space.
+const _: () = assert!(2.0 * (ROUNDING / FOLD_FLOOR + CONE_SLACK) < FOLD_MARGIN);
+
+/// A cone of directions: every direction within the half-angle `θ` of the
+/// unit `axis`, `θ` in `[0, π]`.
+///
+/// `θ` is kept as its cosine and sine, so deciding with it takes only
+/// correctly rounded arithmetic: `acos` loses half the digits of an angle
+/// near 0, and its last bits differ between platforms' maths libraries.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct NormalCone {
     pub axis: DVec3,
-    pub angle: f64,
+    /// `cos θ`.
+    pub cos: f64,
+    /// `sin θ`, not negative.
+    pub sin: f64,
 }
 
 impl NormalCone {
+    /// Every direction: `θ = π`.
+    pub const ALL: NormalCone = NormalCone {
+        axis: DVec3::Z,
+        cos: -1.0,
+        sin: 0.0,
+    };
+
+    /// The half-angle `θ`, radians. For showing: decisions use
+    /// [`Self::cos`] and [`Self::sin`].
+    pub fn angle(&self) -> f64 {
+        self.sin.atan2(self.cos)
+    }
+
     /// Whether no direction in this cone is parallel to one in `other`,
     /// either way round: two patches with cones apart can't meet in a
     /// closed loop.
     pub fn apart(&self, other: &NormalCone) -> bool {
-        let between = self.axis.dot(other.axis).clamp(-1.0, 1.0).acos();
-        let reach = self.angle + other.angle;
-        between > reach && PI - between > reach
+        // The angles add up to the reach R; the axes are φ apart. Apart
+        // means R < φ < π - R, so R < 90°, and then sin(φ - R) > 0 and
+        // sin(π - φ - R) > 0. Each angle below 90° first, so that R's sine
+        // and cosine can't wrap past a full turn.
+        if !(self.cos > 0.0 && other.cos > 0.0) {
+            return false;
+        }
+        let cos_r = self.cos * other.cos - self.sin * other.sin;
+        let sin_r = self.sin * other.cos + self.cos * other.sin;
+        let cos_phi = self.axis.dot(other.axis);
+        let sin_phi = self.axis.cross(other.axis).length();
+        cos_r > 0.0 && sin_phi * cos_r - cos_phi.abs() * sin_r > APART_ROUNDING
     }
 }
 
@@ -73,7 +117,18 @@ impl Patch {
     /// [`Self::normal_coeffs`], with the size of the terms each was summed
     /// from, which bounds its rounding error.
     fn normal_coeffs_scaled(&self) -> ([DVec3; 10], [f64; 10]) {
-        let net = self.net_from(self.p[0]);
+        // The term of net entries x, y and z (homogeneous points, weights
+        // wx, wy, wz) is `cross4(x, y, z) = wx·wy·wz·(y - x) × (z - x)`:
+        // written with differences, its rounding stays relative to the
+        // distances between the three points, not their distance from
+        // anywhere else. Entry (i, j) as its point and weight: corner i
+        // when i == j, else the control point of the edge between corners
+        // i and j.
+        let entry = |i: usize, j: usize| match (i + 3 - j) % 3 {
+            0 => (self.p[i], 1.0),
+            1 => (self.c[j], self.w[j]),
+            _ => (self.c[i], self.w[i]),
+        };
         let mut sum = [DVec3::ZERO; 10];
         let mut size = [0.0; 10];
         for a in 0..3 {
@@ -84,12 +139,11 @@ impl Patch {
                     count[b] += 1;
                     count[c] += 1;
                     let k = slot(count[0], count[1]);
-                    let (x, y, z) = (net[0][a], net[1][b], net[2][c]);
-                    sum[k] += cross4(x, y, z);
-                    let (x3, y3, z3) = (x.truncate(), y.truncate(), z.truncate());
-                    size[k] += x.w.abs() * y3.length() * z3.length()
-                        + y.w.abs() * x3.length() * z3.length()
-                        + z.w.abs() * x3.length() * y3.length();
+                    let ((x, wx), (y, wy), (z, wz)) = (entry(0, a), entry(1, b), entry(2, c));
+                    let (dy, dz) = (y - x, z - x);
+                    let weight = wx * wy * wz;
+                    sum[k] += dy.cross(dz) * weight;
+                    size[k] += weight * dy.length() * dz.length();
                 }
             }
         }
@@ -130,28 +184,52 @@ impl Patch {
     }
 
     /// The cone holding every normal direction of the patch: the smallest
-    /// cone around its normal coefficients, widened a little for rounding.
-    /// If they don't fit in an open half-space the angle is π.
+    /// cone around its normal coefficients, each widened by how far
+    /// rounding may have turned it. A coefficient rounding may have turned
+    /// by a radian or more, such as one that should be zero but isn't,
+    /// gives [`NormalCone::ALL`]; one that is exactly zero, with no terms
+    /// to round, is left out.
     pub fn normal_cone(&self) -> NormalCone {
-        let dirs: Vec<DVec3> = self
-            .normal_coeffs()
-            .iter()
-            .map(|c| c.normalize_or_zero())
-            .filter(|&d| d != DVec3::ZERO)
-            .collect();
-        if dirs.is_empty() {
-            return NormalCone {
-                axis: DVec3::Z,
-                angle: PI,
-            };
+        let (coeffs, size) = self.normal_coeffs_scaled();
+        let mut dirs = Vec::with_capacity(10);
+        let mut errors = Vec::with_capacity(10);
+        for k in 0..10 {
+            if size[k] == 0.0 {
+                continue;
+            }
+            let length = coeffs[k].length();
+            // NaN from coordinates that aren't finite, infinity from a
+            // length of zero.
+            let error = ROUNDING * size[k] / length;
+            if error.is_nan() || error >= 1.0 {
+                return NormalCone::ALL;
+            }
+            dirs.push(coeffs[k] / length);
+            errors.push(error);
         }
-        let (axis, least) = smallest_cone(&dirs);
-        let angle = if least > 0.0 {
-            (least.min(1.0).acos() + CONE_SLACK).min(PI)
-        } else {
-            PI
-        };
-        NormalCone { axis, angle }
+        if dirs.is_empty() {
+            return NormalCone::ALL;
+        }
+        let (axis, _) = smallest_cone(&dirs);
+        // The widest of the directions, each turned further from the axis
+        // by its error and the slack: a turn by atan(t), with t twice the
+        // angle, which is at least the angle for angles below 1.
+        let (mut cos, mut sin) = (1.0, 0.0);
+        for (d, error) in dirs.iter().zip(errors) {
+            let (c, s) = (axis.dot(*d), axis.cross(*d).length());
+            let t = 2.0 * (error + CONE_SLACK);
+            let norm = (1.0 + t * t).sqrt();
+            let (c, s) = ((c - s * t) / norm, (s + c * t) / norm);
+            if s <= 0.0 {
+                // Turned to π or past it.
+                return NormalCone::ALL;
+            }
+            // Wider when sin(θ - widest) > 0.
+            if s * cos - c * sin > 0.0 {
+                (cos, sin) = (c, s);
+            }
+        }
+        NormalCone { axis, cos, sin }
     }
 }
 
