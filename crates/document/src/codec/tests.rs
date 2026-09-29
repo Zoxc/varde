@@ -55,16 +55,20 @@ fn deserializing_a_document_checks_it() {
 /// Checking a document as it's deserialized doesn't change its bytes.
 #[test]
 fn a_document_encodes_as_before() {
+    let mut editor = crate::Editor::new(Document::default());
+    let xy = crate::Plane::Origin(crate::OriginPlane::XY);
+    editor.apply(editor.document().add_sketch(xy)).unwrap();
     assert_eq!(
-        with_body().to_postcard(),
+        editor.document().to_postcard(),
         [
-            // The body: id 1, "Body 1", visible, made by feature 0.
-            1, 1, 6, 66, 111, 100, 121, 32, 49, 1, 0,
+            // No bodies.
+            0,
             // The feature: id 0, "Sketch 1", visible, a sketch on XY,
             // empty.
             1, 0, 8, 83, 107, 101, 116, 99, 104, 32, 49, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-            // Millimetres, and the next id.
-            0, 2
+            // Millimetres, the tolerance, 0.001 as an f64, and the next
+            // id.
+            0, 0xfc, 0xa9, 0xf1, 0xd2, 0x4d, 0x62, 0x50, 0x3f, 1
         ]
     );
 }

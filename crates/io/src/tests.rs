@@ -42,7 +42,7 @@ pub(crate) fn auto_saved_at(path: &Path) -> Option<AutoSaved> {
 
 /// A new design with `sketches` sketches.
 pub(crate) fn with_sketches(sketches: usize) -> Document {
-    let mut editor = Editor::new(Document::example());
+    let mut editor = Editor::new(Document::default());
     for _ in 0..sketches {
         editor.apply(editor.document().add_sketch(XY)).unwrap();
     }

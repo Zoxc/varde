@@ -388,26 +388,10 @@ impl Sketch {
     pub fn pin_units(&mut self, design: &Design) {
         for entry in &mut self.dimensions {
             let dimension = &mut entry.dimension;
-            let ask = dimension.measure.ask(design);
-            let value = &mut dimension.value;
             // Pinned, it has no bare lengths left, so it's the same value
             // in any units if it's the same in these.
-            let pinned = varde_expr::pin_units(&value.text, &ask)
-                .ok()
-                .filter(|text| varde_expr::evaluate(text, &ask) == Ok(value.value));
-            value.text = pinned.unwrap_or_else(|| exact(value.value, ask.quantity));
+            dimension.value.pin_units(&dimension.measure.ask(design));
         }
-    }
-}
-
-/// `value`, in model units, as a text that evaluates to it exactly in any
-/// design units: its shortest exact decimal, with the model unit, `mm` or
-/// `rad`, if it has one.
-pub(crate) fn exact(value: f64, quantity: Quantity) -> String {
-    match quantity {
-        Quantity::Length => format!("{value:e} mm"),
-        Quantity::Angle => format!("{value:e} rad"),
-        Quantity::Number => format!("{value:e}"),
     }
 }
 

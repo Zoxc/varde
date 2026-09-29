@@ -1,5 +1,6 @@
 use glam::{DVec2, Vec3};
 use varde_document::{Command, Document, Editor, OriginPlane, Plane, Sketch};
+use varde_kernel::Tolerance;
 use varde_sketch::{CIRCLE_SEGMENTS, Constraint, Curve};
 
 use super::*;
@@ -102,21 +103,25 @@ fn solids_are_drawn_into_one_mesh() {
     assert_eq!(draw([], &display).unwrap(), RenderMesh::default());
 }
 
-/// A design read from a file holding "Sketch 1" (id 0) and bodies it
-/// makes: "Body 1" (id 1), shown, and "Body 2" (id 2), hidden, if
-/// `hidden_too`. No command adds bodies yet.
+/// The example plate ("Body 1", shown) and, if `hidden_too`, a second
+/// extrude of it making "Body 2", hidden.
 fn with_bodies(hidden_too: bool) -> Document {
-    let body = |id: u8, visible: u8| [&[id, 6][..], b"Body ", &[b'0' + id, visible, 0]].concat();
-    let mut bytes = vec![1 + u8::from(hidden_too)];
-    bytes.extend(body(1, 1));
+    let mut editor = Editor::new(Document::example());
     if hidden_too {
-        bytes.extend(body(2, 0));
+        let FeatureKind::Extrude(extrude) = &editor.document().features()[1].kind else {
+            panic!("the example's second feature is its extrude");
+        };
+        let extrude = varde_document::Extrude {
+            operation: varde_document::Operation::NewBody(BodyId::NEW),
+            ..extrude.clone()
+        };
+        editor
+            .apply(editor.document().add_extrude(extrude))
+            .unwrap();
+        let body = editor.document().bodies()[1].id;
+        editor.apply(Command::SetVisible(body, false)).unwrap();
     }
-    bytes.extend([1, 0, 8]);
-    bytes.extend(b"Sketch 1");
-    // Visible, a sketch on XY, empty; millimetres, and the next id.
-    bytes.extend([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3]);
-    Document::from_postcard(&bytes).unwrap()
+    editor.document().clone()
 }
 
 #[test]
@@ -137,6 +142,26 @@ fn only_the_solids_of_shown_bodies_are_drawn() {
     // Hidden, or not in the document at all.
     assert_eq!(tessellate(&both, &solids).unwrap(), alone);
     assert_eq!(tessellate(&one, &solids).unwrap(), alone);
+}
+
+/// Solids are drawn to the document's tolerance: a coarser one gives a
+/// cylinder fewer triangles.
+#[test]
+fn solids_are_drawn_to_the_document_s_tolerance() {
+    let mut editor = Editor::new(Document::example());
+    let body = editor.document().bodies()[0].id;
+    let tolerance = Tolerance::DEFAULT;
+    let cylinder = Solid::cylinder(glam::DVec3::ZERO, 10.0, 1.0, 0, &tolerance).unwrap();
+    let solids = [(body, cylinder)];
+    let fine = tessellate(editor.document(), &solids).unwrap();
+    let coarse = Tolerance::new(Tolerance::MAX_FIT).unwrap();
+    editor.apply(Command::SetTolerance(coarse)).unwrap();
+    let drawn = tessellate(editor.document(), &solids).unwrap();
+    assert_eq!(
+        drawn,
+        solids[0].1.tessellate(&Display::new(&coarse)).unwrap()
+    );
+    assert!(drawn.triangle_count() < fine.triangle_count());
 }
 
 /// Adds a sketch on XY that doesn't solve, as a file could hold: a line

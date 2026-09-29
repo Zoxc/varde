@@ -20,7 +20,7 @@ fn connected() -> (MeshFeed, Rc<RefCell<Vec<Request>>>) {
 /// An editor, at generation 0, on a document with a sketch holding one
 /// line.
 fn one_line() -> Editor {
-    let mut editor = Editor::new(Document::example());
+    let mut editor = Editor::new(Document::default());
     add_sketch(&mut editor);
     Editor::new(editor.document().clone())
 }
@@ -29,7 +29,9 @@ fn one_line() -> Editor {
 /// the generations apart.
 fn add_line(editor: &mut Editor) {
     let feature = &editor.document().features()[0];
-    let FeatureKind::Sketch { sketch, .. } = &feature.kind;
+    let FeatureKind::Sketch { sketch, .. } = &feature.kind else {
+        panic!("the first feature is a sketch");
+    };
     let mut sketch = sketch.clone();
     let y = sketch.curves.len() as f64;
     let start = sketch.add_point(glam::DVec2::new(0.0, y)).unwrap();
@@ -209,7 +211,7 @@ fn add_sketch(editor: &mut Editor) {
 
 #[test]
 fn sketches_are_shown_with_their_mesh() {
-    let mut editor = Editor::new(Document::example());
+    let mut editor = Editor::new(Document::default());
     let (mut feed, regen) = connected();
     assert_eq!(feed.sketches().segment_count(), 0);
     add_sketch(&mut editor);
@@ -248,7 +250,7 @@ fn left_out(requests: &RefCell<Vec<Request>>) -> Vec<Option<FeatureId>> {
 
 #[test]
 fn leaving_out_another_sketch_asks_again() {
-    let mut editor = Editor::new(Document::example());
+    let mut editor = Editor::new(Document::default());
     add_sketch(&mut editor);
     let feature = editor.document().features()[0].id;
     let (mut feed, regen) = connected();
@@ -267,7 +269,7 @@ fn leaving_out_another_sketch_asks_again() {
 
 #[test]
 fn only_the_sketch_asked_for_last_is_shown_left_out() {
-    let mut editor = Editor::new(Document::example());
+    let mut editor = Editor::new(Document::default());
     add_sketch(&mut editor);
     let feature = editor.document().features()[0].id;
     let (mut feed, regen) = connected();
@@ -309,7 +311,7 @@ fn only_the_sketch_asked_for_last_is_shown_left_out() {
 
 #[test]
 fn a_failure_doesn_t_hold_back_leaving_out_another_sketch() {
-    let mut editor = Editor::new(Document::example());
+    let mut editor = Editor::new(Document::default());
     add_sketch(&mut editor);
     let feature = editor.document().features()[0].id;
     let (mut feed, regen) = connected();

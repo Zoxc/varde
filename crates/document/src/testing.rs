@@ -1,33 +1,44 @@
 //! Documents for the crate's tests.
 
-use crate::{Body, BodyId, Document, FeatureId, FeatureKind, OriginPlane, Plane, Sketch};
+use crate::{BodyId, Document, Editor, Extrude, FeatureId, FeatureKind, Operation};
 
-/// A document with "Sketch 1" on XY and "Body 1", made by it: no feature
-/// makes bodies yet, but a file could name any feature as a body's maker.
+/// The example design: "Sketch 1", "Extrude 1" and "Body 1", which the
+/// extrude makes.
 pub(crate) fn with_body() -> Document {
-    let mut document = Document::default();
-    let feature = document
-        .add_feature(
-            "Sketch 1",
-            FeatureKind::Sketch {
-                plane: Plane::Origin(OriginPlane::XY),
-                sketch: Sketch::default(),
-            },
-        )
-        .unwrap();
-    add_body(&mut document, "Body 1", feature);
-    document.check().unwrap();
-    document
+    Document::example()
 }
 
-/// Adds a body made by `feature` with a new id.
-pub(crate) fn add_body(document: &mut Document, name: &str, feature: FeatureId) -> BodyId {
-    let id = BodyId(document.new_id().unwrap());
-    document.bodies.push(Body {
-        id,
-        name: name.to_owned(),
-        visible: true,
-        created_by: feature,
-    });
-    id
+/// Extrude `feature` of `document`'s extrude.
+pub(crate) fn extrude_of(document: &Document, feature: FeatureId) -> &Extrude {
+    match &document
+        .feature(feature)
+        .expect("the feature is there")
+        .kind
+    {
+        FeatureKind::Extrude(extrude) => extrude,
+        FeatureKind::Sketch { .. } => panic!("feature {} is a sketch", feature.0),
+    }
+}
+
+/// The example's extrude with `operation`.
+pub(crate) fn plate(operation: Operation) -> Extrude {
+    let example = Document::example();
+    Extrude {
+        operation,
+        ..extrude_of(&example, example.features[1].id).clone()
+    }
+}
+
+/// Adds another extrude of the example's plate making a new body, as one
+/// edit: the extrude's id and the body's.
+pub(crate) fn extrude_again(editor: &mut Editor) -> (FeatureId, BodyId) {
+    let extrude = plate(Operation::NewBody(BodyId::NEW));
+    editor
+        .apply(editor.document().add_extrude(extrude))
+        .unwrap();
+    let document = editor.document();
+    let feature = document.features.last().unwrap().id;
+    let body = document.bodies.last().unwrap().id;
+    assert_eq!(document.body(body).unwrap().created_by, feature);
+    (feature, body)
 }

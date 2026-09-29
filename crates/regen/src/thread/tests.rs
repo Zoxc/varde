@@ -26,7 +26,9 @@ fn with_sketch() -> (Editor, FeatureId) {
 /// Adds a line to the sketch `feature`, as one edit, so the lines
 /// answered for each generation are as many as it is.
 fn add_line(editor: &mut Editor, feature: FeatureId) {
-    let FeatureKind::Sketch { sketch, .. } = &editor.document().features()[0].kind;
+    let FeatureKind::Sketch { sketch, .. } = &editor.document().features()[0].kind else {
+        panic!("the first feature is a sketch");
+    };
     let mut sketch = sketch.clone();
     let y = sketch.curves.len() as f64;
     let start = sketch.add_point(glam::DVec2::new(0.0, y)).unwrap();

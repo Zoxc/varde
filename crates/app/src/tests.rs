@@ -620,9 +620,10 @@ fn a_read_only_document_refuses_edits_but_moves_the_camera() {
 #[test]
 fn a_refused_edit_is_shown() {
     // A document from a file that has used up its ids: no bodies, no
-    // features, millimetres and `next_id` at `u64::MAX` as a postcard
-    // varint.
+    // features, millimetres, the default tolerance and `next_id` at
+    // `u64::MAX` as a postcard varint.
     let mut bytes = vec![0, 0, 0];
+    bytes.extend(varde_document::Tolerance::DEFAULT.fit().to_le_bytes());
     bytes.extend([0xff; 9]);
     bytes.push(0x01);
     let full = Document::from_postcard(&bytes).unwrap();

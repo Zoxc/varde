@@ -323,6 +323,30 @@ impl Value {
             })
         }
     }
+
+    /// Writes `ask`'s length unit into the text after each bare number
+    /// that took it ([`pin_units`]), so it means the same in any units:
+    /// for changing the design's units, `ask` being for the units before.
+    /// The value stays exactly as it was. A text the units would take past
+    /// [`MAX_LEN`], or that doesn't give the value, is replaced by the
+    /// value, exactly ([`exact`]).
+    pub fn pin_units(&mut self, ask: &Ask) {
+        let pinned = pin_units(&self.text, ask)
+            .ok()
+            .filter(|text| evaluate(text, ask) == Ok(self.value));
+        self.text = pinned.unwrap_or_else(|| exact(self.value, ask.quantity));
+    }
+}
+
+/// `value`, in model units, as a text that evaluates to it exactly in any
+/// design units: its shortest exact decimal, with the model unit, `mm` or
+/// `rad`, if it has one, such as `1.25e1 mm`.
+pub fn exact(value: f64, quantity: Quantity) -> String {
+    match quantity {
+        Quantity::Length => format!("{value:e} mm"),
+        Quantity::Angle => format!("{value:e} rad"),
+        Quantity::Number => format!("{value:e}"),
+    }
 }
 
 /// `value`, in model units, shown in `unit` with its symbol, to a few

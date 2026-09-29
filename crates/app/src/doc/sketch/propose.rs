@@ -133,8 +133,10 @@ impl Analyses {
 /// The sketch of the sketch feature `feature` of `document`, if it holds
 /// one.
 pub(super) fn sketch_of(document: &Document, feature: FeatureId) -> Option<&Sketch> {
-    let FeatureKind::Sketch { sketch, .. } = &document.feature(feature)?.kind;
-    Some(sketch)
+    match &document.feature(feature)?.kind {
+        FeatureKind::Sketch { sketch, .. } => Some(sketch),
+        FeatureKind::Extrude(_) => None,
+    }
 }
 
 /// What the solver said of a proposal.

@@ -6,14 +6,19 @@
 
 pub mod codec;
 mod editor;
+mod example;
+mod extrude;
 mod feature;
 pub mod name;
+mod removal;
 #[cfg(test)]
 mod testing;
 
 pub use codec::DecodeError;
 pub use editor::{Command, Editor, Generation, Revision};
+pub use extrude::{Extent, Extrude, ExtrudeError, MAX_EXTRUDE_REGIONS, Operation, Targets};
 pub use feature::{Feature, FeatureId, FeatureKind, OriginPlane, Placement, Plane};
+pub use removal::{Removable, Removal};
 
 use std::fmt;
 use std::sync::Arc;
@@ -22,8 +27,8 @@ use serde::{Deserialize, Serialize};
 // The types and limits the model's API names, so that clients editing a
 // document need only this crate.
 pub use varde_expr::LengthUnit;
-pub use varde_kernel::MAX_COORD;
-pub use varde_sketch::{Design, Sketch, SketchError};
+pub use varde_kernel::{MAX_COORD, Tolerance};
+pub use varde_sketch::{Design, RegionRef, Sketch, SketchError};
 
 /// The application's name, as the user sees it.
 pub const APP_NAME: &str = "Varde CAD";
@@ -40,6 +45,14 @@ pub type Snapshot = Arc<Document>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct BodyId(u64);
 
+impl BodyId {
+    /// Stands for the body an extrude not added yet will make
+    /// ([`Operation::NewBody`]), which a command adding it gives a new id.
+    /// No document's body has it: ids are below the next id, which is at
+    /// most this.
+    pub const NEW: BodyId = BodyId(u64::MAX);
+}
+
 /// The longest body or feature name, in bytes, a document may hold. The
 /// editor only makes short ones, but a file could carry any length, and the
 /// side panel lays each name out on the UI thread, where a long enough one
@@ -47,8 +60,9 @@ pub struct BodyId(u64);
 pub const MAX_NAME_LEN: usize = 1024;
 
 /// A body: a solid the feature history makes. The document holds only
-/// its name and whether it's shown, and which feature makes it; its
-/// geometry is whatever regenerating the history gives it.
+/// its name and whether it's shown, and which feature makes it (an
+/// extrude making a new body, [`Operation::NewBody`]); its geometry is
+/// whatever regenerating the history gives it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Body {
     pub id: BodyId,
@@ -62,7 +76,7 @@ pub struct Body {
 /// by construction: the ways to get one are [`Document::default`],
 /// [`Document::example`], an [`Editor`] edit, which is checked, and
 /// deserializing one, which goes through [`Unchecked::check`].
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "Unchecked")]
 pub struct Document {
     bodies: Vec<Body>,
@@ -71,8 +85,25 @@ pub struct Document {
     /// number in a dimension's expression is read in. The model itself is
     /// in millimetres whatever they are.
     units: LengthUnit,
+    /// The design's fit tolerance in millimetres, see
+    /// [`Document::tolerance`].
+    tolerance: f64,
     /// The id the next body or feature gets.
     next_id: u64,
+}
+
+/// A new design: no bodies or features, in millimetres, to the default
+/// tolerance.
+impl Default for Document {
+    fn default() -> Self {
+        Document {
+            bodies: Vec::new(),
+            features: Vec::new(),
+            units: LengthUnit::default(),
+            tolerance: Tolerance::DEFAULT.fit(),
+            next_id: 0,
+        }
+    }
 }
 
 /// A [`Document`] as deserialized, before [`Document::check`]: the same
@@ -87,6 +118,7 @@ pub struct Unchecked {
     bodies: Vec<Body>,
     features: Vec<Feature>,
     units: LengthUnit,
+    tolerance: f64,
     next_id: u64,
 }
 
@@ -97,12 +129,14 @@ impl Unchecked {
             bodies,
             features,
             units,
+            tolerance,
             next_id,
         } = self;
         let document = Document {
             bodies,
             features,
             units,
+            tolerance,
             next_id,
         };
         document.check()?;
@@ -119,12 +153,6 @@ impl TryFrom<Unchecked> for Document {
 }
 
 impl Document {
-    /// A sample design for tests: empty until there's a feature that
-    /// makes a body. New designs start from [`Document::default`].
-    pub fn example() -> Self {
-        Document::default()
-    }
-
     /// A new id for a body or a feature. Fails, leaving the document as it
     /// was, once the ids have run out: `next_id` may come from a file, so
     /// it can be anything.
@@ -179,6 +207,15 @@ impl Document {
         self.units
     }
 
+    /// The design's tolerance: how far fitted curves and surfaces may be
+    /// from the true ones (1 µm unless changed, see
+    /// [`Command::SetTolerance`]), and a thousandth of that, the finest
+    /// detail the kernel keeps apart.
+    pub fn tolerance(&self) -> Tolerance {
+        // Checked by `check`, which every document passes.
+        Tolerance::new(self.tolerance).unwrap_or_default()
+    }
+
     /// What the document's sketches are checked against: [`MAX_COORD`]
     /// and its units.
     pub fn design(&self) -> Design {
@@ -202,14 +239,17 @@ impl Document {
     /// [`Editor::apply`] refuses a command that does: body ids are in
     /// increasing order and below `next_id`, so bodies added later get new
     /// ids and come last, where an edit adds them, and the same for
-    /// feature ids, no name is longer than [`MAX_NAME_LEN`], every body
-    /// is made by a feature the document holds, and every sketch passes
-    /// [`Sketch::check`] against [`MAX_COORD`] and the document's units
-    /// ([`Document::design`]), so every dimension's expression gives its
-    /// value in them.
+    /// feature ids; no name is longer than [`MAX_NAME_LEN`]; the tolerance
+    /// is one [`Tolerance::new`] takes; every body is made by an extrude
+    /// the document holds that names it as its new body, and every such
+    /// body is there; every sketch passes [`Sketch::check`] against
+    /// [`MAX_COORD`] and the document's units ([`Document::design`]), so
+    /// every dimension's expression gives its value in them; and every
+    /// extrude uses a sketch feature before it, has regions, distances and
+    /// an operation as [`Extrude`] describes, and excludes only bodies
+    /// features before it make.
     pub fn check(&self) -> Result<(), CheckError> {
-        // Features first: a body's creator is found by binary search, which
-        // needs them in order.
+        // Orders first: features and bodies are found by binary search.
         if let Some(pair) = self
             .features
             .windows(2)
@@ -217,28 +257,39 @@ impl Document {
         {
             return Err(CheckError::FeatureOrder(pair[1].id, pair[0].id));
         }
+        if let Some(pair) = self.bodies.windows(2).find(|pair| pair[0].id >= pair[1].id) {
+            return Err(CheckError::Order(pair[1].id, pair[0].id));
+        }
+        if Tolerance::new(self.tolerance).is_none() {
+            return Err(CheckError::Tolerance(self.tolerance));
+        }
         for body in &self.bodies {
             let id = body.id;
             if body.name.len() > MAX_NAME_LEN {
                 return Err(CheckError::NameLength(id, body.name.len()));
             }
-            if self.feature_index(body.created_by).is_none() {
+            let made = self.feature(body.created_by).is_some_and(|feature| {
+                matches!(&feature.kind, FeatureKind::Extrude(extrude)
+                    if extrude.operation.new_body() == Some(id))
+            });
+            if !made {
                 return Err(CheckError::Creator(id, body.created_by));
             }
         }
-        for feature in &self.features {
+        let design = self.design();
+        for (index, feature) in self.features.iter().enumerate() {
             let id = feature.id;
             if feature.name.len() > MAX_NAME_LEN {
                 return Err(CheckError::FeatureNameLength(id, feature.name.len()));
             }
             match &feature.kind {
                 FeatureKind::Sketch { plane: _, sketch } => sketch
-                    .check(&self.design())
+                    .check(&design)
                     .map_err(|why| CheckError::Sketch(id, why))?,
+                FeatureKind::Extrude(extrude) => self
+                    .check_extrude(index, extrude)
+                    .map_err(|why| CheckError::Extrude(id, why))?,
             }
-        }
-        if let Some(pair) = self.bodies.windows(2).find(|pair| pair[0].id >= pair[1].id) {
-            return Err(CheckError::Order(pair[1].id, pair[0].id));
         }
         if let Some(last) = self.bodies.last()
             && last.id.0 >= self.next_id
@@ -250,6 +301,39 @@ impl Document {
             _ => Ok(()),
         }
     }
+
+    /// Checks `extrude`, feature `index`, see [`Document::check`].
+    fn check_extrude(&self, index: usize, extrude: &Extrude) -> Result<(), ExtrudeError> {
+        let before = &self.features[..index];
+        let sketch = before
+            .binary_search_by_key(&extrude.sketch, |feature| feature.id)
+            .ok()
+            .filter(|&at| matches!(before[at].kind, FeatureKind::Sketch { .. }));
+        if sketch.is_none() {
+            return Err(ExtrudeError::Sketch(extrude.sketch));
+        }
+        extrude.check_own(&self.design())?;
+        let id = self.features[index].id;
+        if let Some(body) = extrude.operation.new_body()
+            && self.body(body).is_none_or(|body| body.created_by != id)
+        {
+            return Err(ExtrudeError::NewBody(body));
+        }
+        let excluded = extrude.operation.excluded();
+        if !excluded.windows(2).all(|pair| pair[0] < pair[1]) {
+            return Err(ExtrudeError::ExcludedOrder);
+        }
+        for &body in excluded {
+            let earlier = self
+                .body(body)
+                .and_then(|body| self.feature_index(body.created_by))
+                .is_some_and(|maker| maker < index);
+            if !earlier {
+                return Err(ExtrudeError::Excluded(body));
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Why a [`Document`] fails [`Document::check`], and where.
@@ -257,7 +341,8 @@ impl Document {
 pub enum CheckError {
     /// A body's name is this many bytes, over [`MAX_NAME_LEN`].
     NameLength(BodyId, usize),
-    /// A body is made by a feature the document doesn't hold.
+    /// A body's maker isn't an extrude the document holds that makes it
+    /// as its new body.
     Creator(BodyId, FeatureId),
     /// The first body's id doesn't come after the second's, the one
     /// before it.
@@ -268,6 +353,11 @@ pub enum CheckError {
     FeatureNameLength(FeatureId, usize),
     /// A sketch feature's sketch fails [`Sketch::check`].
     Sketch(FeatureId, SketchError),
+    /// An extrude feature is wrong, see [`ExtrudeError`].
+    Extrude(FeatureId, ExtrudeError),
+    /// The fit tolerance, in millimetres, isn't one [`Tolerance::new`]
+    /// takes.
+    Tolerance(f64),
     /// The first feature's id doesn't come after the second's, the one
     /// before it.
     FeatureOrder(FeatureId, FeatureId),
@@ -285,7 +375,7 @@ impl fmt::Display for CheckError {
             ),
             CheckError::Creator(id, feature) => write!(
                 f,
-                "body {} is made by feature {}, which isn't there",
+                "body {} is made by feature {}, which isn't an extrude making it",
                 id.0, feature.0
             ),
             CheckError::Order(id, before) => {
@@ -298,6 +388,13 @@ impl fmt::Display for CheckError {
                 id.0
             ),
             CheckError::Sketch(id, why) => write!(f, "feature {}: {why}", id.0),
+            CheckError::Extrude(id, why) => write!(f, "feature {}: {why}", id.0),
+            CheckError::Tolerance(fit) => write!(
+                f,
+                "the tolerance {fit} mm isn't from {} to {} mm",
+                Tolerance::MIN_FIT,
+                Tolerance::MAX_FIT
+            ),
             CheckError::FeatureOrder(id, before) => {
                 write!(f, "feature id {} doesn't come after {}", id.0, before.0)
             }
@@ -312,6 +409,7 @@ impl std::error::Error for CheckError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             CheckError::Sketch(_, why) => Some(why),
+            CheckError::Extrude(_, why) => Some(why),
             _ => None,
         }
     }

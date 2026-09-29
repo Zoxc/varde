@@ -1037,23 +1037,68 @@ platform's `cos` decides them.
 
 A document's `Body` is `{ id, name, visible, created_by: FeatureId }`: no
 shape and no position. Its geometry is whatever the feature history gives
-it when regenerated. `Document::check` wants every body's `created_by` to
-name a feature the document holds; `RemoveFeature` also removes the
-bodies the feature makes, in the same undo step. Body and feature ids
-still share one counter.
+it when regenerated. Body and feature ids share one counter. Only an
+extrude makes bodies: `Document::check` wants every body's `created_by`
+to be an extrude whose operation is `NewBody` of that body, and every
+`NewBody` body to be there (so no two extrudes make one body). The Add
+cube command, its toolbar button and `CUBE_SIZE` are gone.
 
-No feature makes a body yet (sketches make profiles), so no command adds
-one; the Add cube command, its toolbar button and `CUBE_SIZE` are gone,
-and `Document::example()` is the empty document. A file can still hold
-bodies naming any feature, which draw nothing. `RemoveBody` and
-`SetVisible` work on bodies as before.
+### The extrude feature (`crates/document/src/extrude.rs`)
+
+`FeatureKind::Extrude(Extrude { sketch, regions, extent, flip,
+operation })`:
+
+- `sketch`: a sketch feature listed before it.
+- `regions`: `1..=MAX_EXTRUDE_REGIONS` (256) `varde_sketch::RegionRef`s,
+  each passing `RegionRef::check(MAX_COORD)`. They're made by
+  `Profiles::reference` when picked; regen resolves them
+  (`Profiles::resolve`) and merges them (`Profiles::merge`).
+- `extent`: `OneSide(d)`, `Symmetric(d)` (the whole depth, half each
+  side), `TwoSides(along, against)` or `ThroughAll`. Distances are
+  `varde_expr::Value`s checked against `Extent::ask(design)`: a length
+  from `MIN_LENGTH` (1 µm, as dimensions) to `MAX_COORD`, bare numbers in
+  the design's units; two sides together at most `MAX_COORD`. Through all
+  is only for `Cut`.
+- `flip` swaps one side's direction and two sides' sides; symmetric and
+  through all ignore it. `Extrude::span()` gives the `(from, to)` along
+  the sketch plane's normal that `kernel::extrude` takes (`None` for
+  through all, which regen works out from the bodies).
+- `operation`: `NewBody(BodyId)`, or `Join`, `Cut`, `Intersect` of
+  `Targets { excluded }`, the bodies taken out (sorted without repeats,
+  each made by an earlier feature).
+
+Commands:
+
+- `AddExtrude { name, extrude }` (`Document::add_extrude` names it
+  "Extrude N") adds it and hides its sketch; a `NewBody` extrude also adds
+  "Body N" with the id after the feature's, replacing whatever id the
+  command held (`BodyId::NEW` stands for it, an id no body has). One undo
+  step.
+- `SetExtrude { feature, extrude }` replaces it whole, the caller passing
+  regions freshly referenced from the sketch as it is. A `NewBody` that
+  stays one keeps its body; one that stops removes the body and drops it
+  from other features' excluded lists; one that starts adds a body.
+- `RemoveFeature` and `RemoveBody` apply `Document::removal(Removable)`:
+  the feature (a body's maker, for a body) and every later feature using
+  one removed (`FeatureKind::uses`: an extrude's sketch), in timeline
+  order, and the bodies they make; the removed bodies are dropped from
+  the rest's excluded lists. One undo step. The app asks `removal` before
+  sending the command to show what goes.
+- `SetTolerance(Tolerance)`: the document's fit tolerance
+  (`Document::tolerance()`, stored as its `f64`, checked with
+  `Tolerance::new`, default 1 µm). `SetUnits` pins extrude distances as
+  it pins dimensions (`Value::pin_units`).
+
+`Document::example()` is a 60 × 40 mm plate with a hole of radius 8 on
+XY, extruded 10 mm as "Body 1", made through the commands. New designs
+still start from `Document::default()`, empty: the example is for tests.
 
 `varde_regen::evaluate(document)` runs the features in order and returns
 the solids they give, as `(BodyId, Solid)` pairs in feature order (none
-today). `varde_regen::tessellate(document, solids)` draws the solids of
-the visible bodies the document holds into one `RenderMesh`, each through
-`Solid::tessellate` at `Display::new(&Tolerance::DEFAULT)` (the design's
-own tolerance comes with the document setting), joined by
+today: extrudes aren't evaluated yet). `varde_regen::tessellate(document,
+solids)` draws the solids of the visible bodies the document holds into
+one `RenderMesh`, each through `Solid::tessellate` at
+`Display::new(&document.tolerance())`, joined by
 `RenderMesh::append`. Solids are in world space: there are no body
 positions. A mesh past `RenderMesh`'s limits fails the generation with
 the `MeshError`, as before. The response and its wire format didn't
@@ -1161,11 +1206,16 @@ with tracing.
 - **`Shape` is gone**, not kept as a test helper: `Solid::cuboid` and
   `Solid::cylinder` are the test solids, so `Shape`, `ShapeError` and
   `position_in_range` were removed from the kernel.
-- **Until a feature makes bodies**, `Document::check` only asks that a
-  body's `created_by` names a feature the document holds (of any kind),
-  `RemoveFeature` removes just the bodies that feature makes, and
-  `RemoveBody` removes only the body; the full cascade and the stricter
-  checks come with the extrude feature.
+- **`Symmetric` is the whole depth**, half each side, and extrude
+  distances are at least `MIN_LENGTH` (1 µm), as dimensions are, rather
+  than only above zero.
+- **`BodyId::NEW`** stands for the body an extrude not yet added makes;
+  `AddExtrude` and `SetExtrude` give the body its id whatever the
+  command held, so callers never guess ids. Bodies are named by the
+  command ("Body N").
+- **`Document::removal` takes a `Removable`** (`Feature` or `Body`) and
+  returns `Removal { features, bodies }`; only an extrude's sketch counts
+  as a use, and excluded lists are dropped from rather than cascading.
 - **Caps are triangulated with `spade`** (constrained Delaunay, exact
   predicates, builds for wasm; the kernel's only new dependency), then
   mended in rounds (Steiner points at ears, halving curves at narrow

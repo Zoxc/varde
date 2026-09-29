@@ -1,9 +1,11 @@
-//! Features: the steps a design is built from, today only sketches, and
-//! the planes they're drawn on.
+//! Features: the steps a design is built from, sketches and extrudes, and
+//! the planes sketches are drawn on.
 
 use glam::{DVec2, DVec3};
 use serde::{Deserialize, Serialize};
 use varde_sketch::Sketch;
+
+use crate::Extrude;
 
 /// A feature's handle in one document. It's opaque: ids come from the
 /// document's features, not from literals. Features and bodies take their
@@ -16,7 +18,7 @@ pub struct Feature {
     pub id: FeatureId,
     pub name: String,
     /// Whether it's drawn with the model: a sketch's curves, when it isn't
-    /// being edited.
+    /// being edited. An extrude's solid is drawn by its body's visibility.
     pub visible: bool,
     pub kind: FeatureKind,
 }
@@ -24,6 +26,18 @@ pub struct Feature {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum FeatureKind {
     Sketch { plane: Plane, sketch: Sketch },
+    Extrude(Extrude),
+}
+
+impl FeatureKind {
+    /// The feature it builds on, which comes before it: an extrude's
+    /// sketch. Removing that removes this too.
+    pub fn uses(&self) -> Option<FeatureId> {
+        match self {
+            FeatureKind::Sketch { .. } => None,
+            FeatureKind::Extrude(extrude) => Some(extrude.sketch),
+        }
+    }
 }
 
 /// A plane a sketch is drawn on.

@@ -1,6 +1,9 @@
 use super::*;
-use crate::testing::{add_body, with_body};
-use crate::{CheckError, Design, FeatureId, FeatureKind, Plane, Sketch};
+use crate::testing::{extrude_again, extrude_of, plate, with_body};
+use crate::{
+    CheckError, Design, ExtrudeError, FeatureId, FeatureKind, Operation, Plane, Removable, Removal,
+    Sketch, Targets,
+};
 
 #[test]
 fn undo_redo_roundtrip() {
@@ -83,16 +86,21 @@ fn check_refuses_ids_a_new_body_could_reuse() {
     assert_eq!(document.check(), Ok(()));
     document.next_id = 0;
     let first = document.bodies[0].id;
-    let feature = document.features[0].id;
-    // Bodies and features take ids from one counter.
-    assert_eq!(first.0, feature.0 + 1);
+    let extrude = document.features[1].id;
+    // Bodies and features take ids from one counter: the extrude's, then
+    // its body's.
+    assert_eq!(first.0, extrude.0 + 1);
     assert_eq!(document.check(), Err(CheckError::NextId(first)));
     assert!(Document::from_postcard(&document.to_postcard()).is_err());
 
-    let mut document = with_body();
-    let second = add_body(&mut document, "Twin", feature);
+    let mut editor = Editor::new(with_body());
+    let (_, second) = extrude_again(&mut editor);
+    let mut document = editor.document().clone();
     assert_eq!(document.check(), Ok(()));
-    assert_eq!(document.body(second).map(|b| b.name.as_str()), Some("Twin"));
+    assert_eq!(
+        document.body(second).map(|b| b.name.as_str()),
+        Some("Body 2")
+    );
 
     // Bodies out of id order would break lookups by id.
     let mut swapped = document.clone();
@@ -106,42 +114,101 @@ fn check_refuses_ids_a_new_body_could_reuse() {
 }
 
 #[test]
-fn check_refuses_a_body_no_feature_makes() {
+fn check_refuses_a_body_no_extrude_makes() {
     let mut document = with_body();
     let body = document.bodies[0].id;
-    let missing = FeatureId(document.next_id);
-    document.bodies[0].created_by = missing;
-    assert_eq!(document.check(), Err(CheckError::Creator(body, missing)));
-    assert!(Document::from_postcard(&document.to_postcard()).is_err());
-    // A body's id isn't a feature's.
-    document.bodies[0].created_by = FeatureId(body.0);
+    let [sketch, extrude] = [0, 1].map(|index| document.features[index].id);
+    for maker in [FeatureId(document.next_id), FeatureId(body.0), sketch] {
+        document.bodies[0].created_by = maker;
+        assert_eq!(document.check(), Err(CheckError::Creator(body, maker)));
+        assert!(Document::from_postcard(&document.to_postcard()).is_err());
+    }
+    // An extrude making another body doesn't make this one.
+    let mut editor = Editor::new(with_body());
+    let (_, second) = extrude_again(&mut editor);
+    let mut twins = editor.document().clone();
+    twins.bodies[1].created_by = extrude;
+    assert_eq!(twins.check(), Err(CheckError::Creator(second, extrude)));
+
+    // Nor may an extrude name a body that isn't its.
+    let mut orphan = with_body();
+    orphan.bodies.clear();
     assert_eq!(
-        document.check(),
-        Err(CheckError::Creator(body, FeatureId(body.0)))
+        orphan.check(),
+        Err(CheckError::Extrude(extrude, ExtrudeError::NewBody(body)))
     );
 }
 
 #[test]
-fn removing_a_feature_removes_the_bodies_it_makes() {
-    let mut document = with_body();
-    let first = document.features[0].id;
-    let second = document
-        .add_feature(
-            "Sketch 2",
-            FeatureKind::Sketch {
-                plane: XY,
-                sketch: Sketch::default(),
-            },
-        )
-        .unwrap();
-    let kept = add_body(&mut document, "Body 2", second);
-    let mut editor = Editor::new(document.clone());
-    editor.apply(Command::RemoveFeature(first)).unwrap();
-    let bodies: Vec<_> = editor.document().bodies().iter().map(|b| b.id).collect();
-    assert_eq!(bodies, [kept]);
-    // One step to undo.
+fn removing_a_sketch_removes_the_extrudes_using_it_and_their_bodies() {
+    let mut editor = Editor::new(with_body());
+    let (second, body) = extrude_again(&mut editor);
+    // A third, cutting, but not from the first body.
+    let first_body = editor.document().bodies[0].id;
+    let cut = plate(Operation::Cut(Targets {
+        excluded: vec![first_body, body],
+    }));
+    editor.apply(editor.document().add_extrude(cut)).unwrap();
+    let document = editor.document().clone();
+    let [sketch, first, _, third] = [0, 1, 2, 3].map(|index| document.features[index].id);
+    // A sketch the extrudes don't use.
+    editor.apply(editor.document().add_sketch(XY)).unwrap();
+    let other = editor.document().features.last().unwrap().id;
+    let document = editor.document().clone();
+
+    let removal = document.removal(Removable::Feature(sketch));
+    assert_eq!(
+        removal,
+        Removal {
+            features: vec![sketch, first, second, third],
+            bodies: vec![first_body, body],
+        }
+    );
+    // A body takes its extrude with it, and nothing else here; the cut
+    // drops it from those it excludes.
+    let removal = document.removal(Removable::Body(body));
+    assert_eq!(
+        removal,
+        Removal {
+            features: vec![second],
+            bodies: vec![body],
+        }
+    );
+    assert_eq!(document.removal(Removable::Feature(second)), removal);
+    assert!(
+        document
+            .removal(Removable::Feature(other))
+            .bodies
+            .is_empty()
+    );
+    assert!(
+        document
+            .removal(Removable::Feature(FeatureId(document.next_id)))
+            .is_empty()
+    );
+    assert!(
+        document
+            .removal(Removable::Body(BodyId(document.next_id)))
+            .is_empty()
+    );
+
+    // The commands remove what `removal` lists, as one step to undo.
+    editor.apply(Command::RemoveBody(body)).unwrap();
+    let after = editor.document();
+    assert_eq!(after.features.len(), 4);
+    assert!(after.feature(second).is_none());
+    assert_eq!(after.bodies.len(), 1);
+    assert_eq!(extrude_of(after, third).operation.excluded(), [first_body]);
     editor.undo();
     assert_eq!(*editor.document(), document);
+
+    editor.apply(Command::RemoveFeature(sketch)).unwrap();
+    let ids: Vec<_> = editor.document().features.iter().map(|f| f.id).collect();
+    assert_eq!(ids, [other]);
+    assert!(editor.document().bodies.is_empty());
+    editor.undo();
+    assert_eq!(*editor.document(), document);
+    assert_eq!(editor.revision(), Revision(3));
 }
 
 #[test]
@@ -276,6 +343,7 @@ fn sketch_of(editor: &Editor, id: FeatureId) -> &Sketch {
         .kind
     {
         FeatureKind::Sketch { sketch, .. } => sketch,
+        FeatureKind::Extrude(_) => panic!("feature {} is an extrude", id.0),
     }
 }
 

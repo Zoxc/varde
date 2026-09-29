@@ -371,12 +371,12 @@ fn exact_values_evaluate_exactly() {
     ] {
         let length = varde_expr::Ask::length(LengthUnit::In, 1e6);
         assert_eq!(
-            varde_expr::evaluate(&exact(value, Quantity::Length), &length),
+            varde_expr::evaluate(&varde_expr::exact(value, Quantity::Length), &length),
             Ok(value)
         );
         let angle = varde_expr::Ask::angle(LengthUnit::Ft, 1e6);
         assert_eq!(
-            varde_expr::evaluate(&exact(value, Quantity::Angle), &angle),
+            varde_expr::evaluate(&varde_expr::exact(value, Quantity::Angle), &angle),
             Ok(value)
         );
     }

@@ -137,23 +137,27 @@ fn timeline<'a>(
 /// A feature in the Timeline, marked failed if it's `unsolved`: clicking
 /// selects it, double-clicking edits it.
 fn feature_row(feature: &Feature, selected: bool, unsolved: bool) -> Element<'_, Message> {
-    let FeatureKind::Sketch { plane, .. } = &feature.kind;
+    let (icon, note) = match &feature.kind {
+        FeatureKind::Sketch { .. } if unsolved => (Icon::Sketch, Some("Doesn't solve")),
+        FeatureKind::Sketch { plane, .. } => (Icon::Sketch, Some(plane.name())),
+        FeatureKind::Extrude(_) => (Icon::Body, None),
+    };
     let row = SelectableRow {
-        icon: Icon::Sketch,
+        icon,
         name: feature.name.as_str().into(),
         faint: !feature.visible,
         danger: unsolved,
-        note: Some(if unsolved {
-            "Doesn't solve"
-        } else {
-            plane.name()
-        }),
+        note,
         indent: 8.0,
         selected,
     };
-    row.view(Message::Look(Look::SelectFeature(feature.id)))
-        .on_double_click(Message::Look(Look::EditSketch(feature.id)))
-        .into()
+    let row = row.view(Message::Look(Look::SelectFeature(feature.id)));
+    match feature.kind {
+        FeatureKind::Sketch { .. } => row
+            .on_double_click(Message::Look(Look::EditSketch(feature.id)))
+            .into(),
+        FeatureKind::Extrude(_) => row.into(),
+    }
 }
 
 /// A row of a list that's selected by clicking it: an icon, a name, and a
@@ -238,7 +242,9 @@ fn objects(document: &Document, editable: bool) -> Element<'_, Message> {
             Some(Message::Edit(Edit::RemoveBody(body.id))),
         )
     });
-    let sketches = document.features().iter().map(|feature| {
+    let is_sketch = |feature: &&Feature| matches!(feature.kind, FeatureKind::Sketch { .. });
+    let count = document.features().iter().filter(is_sketch).count();
+    let sketches = document.features().iter().filter(is_sketch).map(|feature| {
         object_row(
             Icon::Sketch,
             &feature.name,
@@ -251,7 +257,7 @@ fn objects(document: &Document, editable: bool) -> Element<'_, Message> {
     column(
         std::iter::once(group("Bodies", document.bodies().len()))
             .chain(bodies)
-            .chain([group("Sketches", document.features().len())])
+            .chain([group("Sketches", count)])
             .chain(sketches),
     )
     .into()

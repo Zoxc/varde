@@ -15,7 +15,7 @@ fn round_trip<T: Serialize + for<'a> Deserialize<'a>>(message: &T) -> T {
 
 /// A design with a hidden sketch.
 fn hidden() -> Document {
-    let mut editor = Editor::new(Document::example());
+    let mut editor = Editor::new(Document::default());
     let xy = varde_document::Plane::Origin(varde_document::OriginPlane::XY);
     editor.apply(editor.document().add_sketch(xy)).unwrap();
     let sketch = editor.document().features()[0].id;
@@ -362,12 +362,16 @@ fn swap_document(message: &[u8], placeholder: &Document, document: &[u8]) -> Vec
 fn a_document_that_fails_its_checks_is_refused() {
     // Two copies of a sketch, spliced into a design's bytes since a
     // document's fields are private and one can't be decoded unchecked: no
-    // bodies, the feature count, the feature, millimetres and the next id.
+    // bodies, the feature count, the feature, millimetres, the tolerance
+    // and the next id.
     let sketched = hidden().to_postcard();
-    let [0, 1, feature @ .., 0, 1] = &sketched[..] else {
+    let [0, 1, rest @ ..] = &sketched[..] else {
         panic!("not the design's bytes: {sketched:?}");
     };
-    let twins = [&[0, 2], feature, feature, &[0, 1]].concat();
+    let (feature, tail) = rest.split_at(rest.len() - 10);
+    assert_eq!(tail[0], 0, "millimetres");
+    assert_eq!(tail[9], 1, "the next id");
+    let twins = [&[0, 2], feature, feature, tail].concat();
     assert!(Document::from_postcard(&twins).is_err());
     let bytes = encode(
         &ToWorker {

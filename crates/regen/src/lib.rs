@@ -57,7 +57,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use varde_document::{BodyId, Document, FeatureId, FeatureKind, Generation, Snapshot};
-use varde_kernel::{Display, LinesError, MeshError, RenderLines, RenderMesh, Solid, Tolerance};
+use varde_kernel::{Display, LinesError, MeshError, RenderLines, RenderMesh, Solid};
 use varde_sketch::{Budget, Goal};
 
 /// Carries [`Request`]s to a lane without waiting for them to be handled;
@@ -176,21 +176,21 @@ fn regenerate(
 
 /// The solids the feature history of `document` gives its bodies, each
 /// with the body it is, in the features' order. A body without one has
-/// no geometry. Sketches make profiles and no bodies, and they're the
-/// only features there are yet, so today there are none.
+/// no geometry. Sketches make profiles and no bodies; extrudes aren't
+/// evaluated yet, so today there are none.
 pub fn evaluate(document: &Document) -> Vec<(BodyId, Solid)> {
     let solids = Vec::new();
     for feature in document.features() {
         match &feature.kind {
-            FeatureKind::Sketch { .. } => {}
+            FeatureKind::Sketch { .. } | FeatureKind::Extrude(_) => {}
         }
     }
     solids
 }
 
 /// Tessellates the `solids` of the visible bodies of `document` (see
-/// [`evaluate`]) into a single mesh in world space, within the default
-/// [`Tolerance`]'s [`Display`]. Fails if it would have more vertices,
+/// [`evaluate`]) into a single mesh in world space, within the
+/// [`Display`] of the document's tolerance ([`Document::tolerance`]). Fails if it would have more vertices,
 /// indices or edges than a [`RenderMesh`] may hold, which a file with
 /// enough bodies in it can ask for.
 pub fn tessellate(
@@ -201,7 +201,7 @@ pub fn tessellate(
         .iter()
         .filter(|(id, _)| document.body(*id).is_some_and(|body| body.visible))
         .map(|(_, solid)| solid);
-    draw(shown, &Display::new(&Tolerance::DEFAULT))
+    draw(shown, &Display::new(&document.tolerance()))
 }
 
 /// `solids` tessellated within `display` into one mesh.
@@ -235,7 +235,9 @@ pub fn flatten_sketches(
         .iter()
         .filter(|feature| feature.visible && Some(feature.id) != exclude);
     for feature in shown {
-        let FeatureKind::Sketch { plane, sketch } = &feature.kind;
+        let FeatureKind::Sketch { plane, sketch } = &feature.kind else {
+            continue;
+        };
         let placement = plane.placement();
         let cut_back = sketch.cut_back();
         for entry in sketch.curves.iter().filter(|entry| !entry.construction) {
@@ -270,7 +272,9 @@ pub fn unsolved(document: &Document) -> Vec<FeatureId> {
         .features()
         .iter()
         .filter(|feature| {
-            let FeatureKind::Sketch { sketch, .. } = &feature.kind;
+            let FeatureKind::Sketch { sketch, .. } = &feature.kind else {
+                return false;
+            };
             varde_sketch::solve(sketch, &Goal::Settle, &budget).is_err()
         })
         .map(|feature| feature.id)

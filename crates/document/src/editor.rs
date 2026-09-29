@@ -2,14 +2,20 @@ use std::{collections::VecDeque, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 use varde_expr::LengthUnit;
+use varde_kernel::Tolerance;
 use varde_sketch::Sketch;
 
-use crate::{BodyId, Document, EditError, FeatureId, FeatureKind, Plane, Snapshot};
+use crate::{
+    Body, BodyId, Document, EditError, Extent, Extrude, FeatureId, FeatureKind, Operation, Plane,
+    Removable, Snapshot,
+};
 
 /// An edit to a [`Document`]. [`Editor::apply`] refuses one that would
 /// leave the document failing [`Document::check`].
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
+    /// Removes a body with the feature that makes it, and so with all
+    /// [`Document::removal`] lists for it.
     RemoveBody(BodyId),
     SetVisible(BodyId, bool),
     /// Adds a feature holding an empty sketch on `plane`.
@@ -23,7 +29,28 @@ pub enum Command {
         feature: FeatureId,
         sketch: Box<Sketch>,
     },
-    /// Removes a feature and the bodies it makes.
+    /// Adds an extrude, hiding the sketch it uses. One making a new body
+    /// adds the body, "Body N" one past the bodies so named, and gives it
+    /// its id whatever [`Operation::NewBody`] held ([`BodyId::NEW`]).
+    AddExtrude {
+        name: String,
+        extrude: Box<Extrude>,
+    },
+    /// Replaces an extrude feature's extrude, as edited: the caller passes
+    /// the regions as references made again from the sketch as it is now
+    /// (`varde_sketch::Profiles::reference`), not the old ones. One that
+    /// made a new body and still does keeps the body; one that stops
+    /// making it removes it, dropping it from the other features'
+    /// excluded lists; one that starts making one adds it, as
+    /// [`Command::AddExtrude`] does.
+    SetExtrude {
+        feature: FeatureId,
+        extrude: Box<Extrude>,
+    },
+    /// Removes a feature with every later feature that uses it, directly
+    /// or through others, and the bodies they all make, dropping those
+    /// bodies from the other features' excluded lists: what
+    /// [`Document::removal`] lists.
     RemoveFeature(FeatureId),
     SetFeatureVisible(FeatureId, bool),
     /// Changes the design's units. Every dimension's expression first has
@@ -31,6 +58,8 @@ pub enum Command {
     /// ([`Sketch::pin_units`]), so it means what it did, and no value or
     /// geometry changes.
     SetUnits(LengthUnit),
+    /// Changes the design's tolerance, see [`Document::tolerance`].
+    SetTolerance(Tolerance),
     /// Replaces the whole document, e.g. with unsaved changes recovered
     /// after a crash.
     Replace(Box<Document>),
@@ -47,6 +76,32 @@ impl Document {
             plane,
         }
     }
+
+    /// The command adding `extrude`, named one past the highest
+    /// "Extrude N" in the document, like [`Document::add_sketch`].
+    pub fn add_extrude(&self, extrude: Extrude) -> Command {
+        let names = self.features.iter().map(|feature| feature.name.as_str());
+        Command::AddExtrude {
+            name: format!("Extrude {}", next_number(names, "Extrude")),
+            extrude: Box::new(extrude),
+        }
+    }
+
+    /// Adds a visible body made by `feature` with a new id, "Body N" one
+    /// past the bodies so named, see [`Document::add_sketch`]. New ids are
+    /// the highest, so it goes last.
+    fn add_body(&mut self, feature: FeatureId) -> Result<BodyId, EditError> {
+        let names = self.bodies.iter().map(|body| body.name.as_str());
+        let name = format!("Body {}", next_number(names, "Body"));
+        let id = BodyId(self.new_id()?);
+        self.bodies.push(Body {
+            id,
+            name,
+            visible: true,
+            created_by: feature,
+        });
+        Ok(id)
+    }
 }
 
 /// One past the highest `N` of the `names` that are "`kind` N", or 1. A
@@ -62,6 +117,17 @@ fn next_number<'a>(names: impl Iterator<Item = &'a str>, kind: &str) -> u64 {
         })
         .max()
         .map_or(1, |highest| highest.saturating_add(1))
+}
+
+impl Document {
+    /// Has extrude `feature` make `body` as its new body.
+    fn set_new_body(&mut self, feature: FeatureId, body: BodyId) {
+        if let Some(index) = self.feature_index(feature)
+            && let FeatureKind::Extrude(extrude) = &mut self.features[index].kind
+        {
+            extrude.operation = Operation::NewBody(body);
+        }
+    }
 }
 
 /// Names a state of an [`Editor`]'s document, see [`Editor::revision`].
@@ -209,11 +275,12 @@ impl Editor {
         let replacing = matches!(command, Command::Replace(_));
         let next = match command {
             Command::RemoveBody(id) => {
-                let Some(index) = document.body_index(id) else {
+                let removal = document.removal(Removable::Body(id));
+                if removal.is_empty() {
                     return Ok(());
-                };
+                }
                 let mut next = Document::clone(document);
-                next.bodies.remove(index);
+                next.remove(&removal);
                 next
             }
             Command::SetVisible(id, visible) => {
@@ -238,23 +305,75 @@ impl Editor {
                     .feature_index(feature)
                     .filter(|&index| match &document.features[index].kind {
                         FeatureKind::Sketch { sketch: old, .. } => *old != *sketch,
+                        FeatureKind::Extrude(_) => false,
                     })
                 else {
                     return Ok(());
                 };
                 let mut next = Document::clone(document);
-                match &mut next.features[index].kind {
-                    FeatureKind::Sketch { sketch: old, .. } => *old = *sketch,
+                if let FeatureKind::Sketch { sketch: old, .. } = &mut next.features[index].kind {
+                    *old = *sketch;
+                }
+                next
+            }
+            Command::AddExtrude { name, extrude } => {
+                let mut next = Document::clone(document);
+                let sketch = extrude.sketch;
+                let makes_body = extrude.operation.new_body().is_some();
+                let id = next.add_feature(name, FeatureKind::Extrude(*extrude))?;
+                if makes_body {
+                    let body = next.add_body(id)?;
+                    next.set_new_body(id, body);
+                }
+                if let Some(index) = next.feature_index(sketch) {
+                    next.features[index].visible = false;
+                }
+                next
+            }
+            Command::SetExtrude {
+                feature,
+                mut extrude,
+            } => {
+                let Some((index, old)) = document.feature_index(feature).and_then(|index| {
+                    match &document.features[index].kind {
+                        FeatureKind::Extrude(old) => Some((index, old)),
+                        FeatureKind::Sketch { .. } => None,
+                    }
+                }) else {
+                    return Ok(());
+                };
+                let kept = old.operation.new_body();
+                if let (Some(body), Operation::NewBody(new)) = (kept, &mut extrude.operation) {
+                    *new = body;
+                }
+                if *old == *extrude {
+                    return Ok(());
+                }
+                let mut next = Document::clone(document);
+                let makes_body = extrude.operation.new_body().is_some();
+                next.features[index].kind = FeatureKind::Extrude(*extrude);
+                match (kept, makes_body) {
+                    (Some(body), false) => {
+                        if let Some(at) = next.body_index(body) {
+                            next.bodies.remove(at);
+                        }
+                        next.drop_excluded(&[body]);
+                    }
+                    (None, true) => {
+                        let body = next.add_body(feature)?;
+                        next.set_new_body(feature, body);
+                    }
+                    _ => {}
                 }
                 next
             }
             Command::RemoveFeature(id) => {
-                let Some(index) = document.feature_index(id) else {
+                let removal = document.removal(Removable::Feature(id));
+                if removal.is_empty() {
                     return Ok(());
-                };
+                }
                 let mut next = Document::clone(document);
-                next.features.remove(index);
-                next.bodies.retain(|body| body.created_by != id);
+                next.remove(&removal);
                 next
             }
             Command::SetFeatureVisible(id, visible) => {
@@ -274,12 +393,26 @@ impl Editor {
                 }
                 let mut next = Document::clone(document);
                 let before = document.design();
+                let ask = Extent::ask(&before);
                 for feature in &mut next.features {
                     match &mut feature.kind {
                         FeatureKind::Sketch { sketch, .. } => sketch.pin_units(&before),
+                        FeatureKind::Extrude(extrude) => {
+                            for value in extrude.extent.values_mut() {
+                                value.pin_units(&ask);
+                            }
+                        }
                     }
                 }
                 next.units = units;
+                next
+            }
+            Command::SetTolerance(tolerance) => {
+                if tolerance == document.tolerance() {
+                    return Ok(());
+                }
+                let mut next = Document::clone(document);
+                next.tolerance = tolerance.fit();
                 next
             }
             Command::Replace(replacement) => {

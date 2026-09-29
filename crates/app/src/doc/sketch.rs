@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use glam::DVec2;
 use varde_document::{
-    FeatureId, FeatureKind, Generation, OriginPlane, Placement, Plane, Revision, Sketch,
+    Feature, FeatureId, FeatureKind, Generation, OriginPlane, Placement, Plane, Revision, Sketch,
 };
 use varde_expr::Value;
 use varde_render::{Camera, Projection};
@@ -327,7 +327,8 @@ impl Doc {
     /// takes the Timeline's place. It stays selected in the Timeline for
     /// after.
     pub(crate) fn enter_sketch(&mut self, id: FeatureId) {
-        if self.editor.document().feature(id).is_none() {
+        let is_sketch = |feature: &Feature| matches!(feature.kind, FeatureKind::Sketch { .. });
+        if !self.editor.document().feature(id).is_some_and(is_sketch) {
             return;
         }
         self.picking_plane = false;
@@ -542,8 +543,10 @@ impl Doc {
             session.aim = session.aim.map(unsnapped);
         }
         match document.feature(session.feature) {
-            Some(feature) => {
-                let FeatureKind::Sketch { sketch, .. } = &feature.kind;
+            Some(Feature {
+                kind: FeatureKind::Sketch { sketch, .. },
+                ..
+            }) => {
                 // What's selected and drawn on may be waiting on the
                 // solver.
                 let waiting = session.waiting.take();
@@ -618,7 +621,7 @@ impl Doc {
                 }
                 session.waiting = waiting;
             }
-            None => self.end_session(),
+            _ => self.end_session(),
         }
     }
 
@@ -629,7 +632,9 @@ impl Doc {
         static NONE: BTreeSet<Id> = BTreeSet::new();
         let session = self.sketch.as_ref()?;
         let feature = self.editor.document().feature(session.feature)?;
-        let FeatureKind::Sketch { plane, .. } = &feature.kind;
+        let FeatureKind::Sketch { plane, .. } = &feature.kind else {
+            return None;
+        };
         let waiting = session.waiting.as_ref();
         let (refusal, solver_error) = match &session.refusal {
             Some(Refusal::Rejected(why)) => (Some(why), None),
@@ -745,7 +750,9 @@ impl Doc {
     pub(crate) fn edited_sketch(&self) -> Option<(Plane, &Sketch)> {
         let session = self.sketch.as_ref()?;
         let feature = self.editor.document().feature(session.feature)?;
-        let FeatureKind::Sketch { plane, sketch } = &feature.kind;
+        let FeatureKind::Sketch { plane, sketch } = &feature.kind else {
+            return None;
+        };
         Some((*plane, sketch))
     }
 
