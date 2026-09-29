@@ -1,0 +1,23 @@
+[package]
+name = "varde-lane"
+description = "What the regeneration and IO lanes share: a thread natively and a Web Worker on the web, taking requests and yielding responses"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+futures.workspace = true
+
+# The page's and the worker's sides of a Web Worker.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+log.workspace = true
+wasm-bindgen.workspace = true
+js-sys.workspace = true
+web-sys = { workspace = true, features = [
+    "console",
+    "DedicatedWorkerGlobalScope",
+    "ErrorEvent",
+    "Event",
+    "MessageEvent",
+    "Worker",
+] }

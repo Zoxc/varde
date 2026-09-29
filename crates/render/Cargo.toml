@@ -1,0 +1,15 @@
+[package]
+name = "varde-render"
+description = "wgpu renderer for CAD models, independent of the UI toolkit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+varde-kernel.workspace = true
+wgpu.workspace = true
+glam.workspace = true
+bytemuck.workspace = true
+
+[dev-dependencies]
+pollster.workspace = true

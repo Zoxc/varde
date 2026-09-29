@@ -1,0 +1,1602 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Varde UI Mock</title>
+<!--
+  Interactive mock of the varde shell. Open directly in a browser.
+
+  Try: open a recent file, drag to orbit (right-drag pans, wheel zooms),
+  click faces, double-click to select the body, hold Alt (swaps
+  timeline/objects), drag timeline rows or the rollback marker, double-click
+  a sketch in the timeline, S to sketch, Esc to back out, click the view
+  cube, ? for shortcuts.
+  Deep links: #bracket, #bracket/face, #bracket/body, #bracket/sketch,
+  #bracket/tools, #bracket/sketchtools, #empty; append /still to disable animations.
+-->
+<style>
+:root {
+  --side-w: 256px;
+  --title-h: 36px;
+  --tool-h: 40px;
+  --status-h: 28px;
+  --accent: #0a95ad;
+  --accent-soft: rgba(10, 149, 173, .13);
+  --hl: #e3f5da;
+  --hl-line: #9dd488;
+  --c-sketch: #0a95ad;
+  --c-solid: #8a6fc4;
+  --c-cons: #e0861a;
+  --c-insp: #13a08f;
+  --logo-a: #5e4a93;
+  --logo-b: #9a88c8;
+  --logo-dot: #5dbf4a;
+  --text: #2b3036;
+  --muted: #6c747d;
+  --faint: #9aa2ab;
+  --desk: radial-gradient(1200px 700px at 15% 10%, #e1dcec, transparent 60%), radial-gradient(900px 600px at 90% 90%, #d8e8d8, transparent 60%), linear-gradient(135deg, #d8dce6, #c9d0dc);
+  --title-bg: #e9ebef;
+  --panel: #fafafb;
+  --tabstrip: #eef0f3;
+  --vp-top: #f7f7f9;
+  --vp-bot: #dfe1e6;
+  --line: rgba(20, 30, 40, .11);
+  --chip: rgba(20, 30, 40, .07);
+  --edge: #34303f;
+  --wall: #4a4556;
+  --through: #e3e5e9;
+  --grid: rgba(40, 40, 60, .08);
+  --grid-major: rgba(40, 40, 60, .17);
+  --ok: #3d9b35;
+  --halo: #f4f4f7;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --accent: #39b9cf;
+    --accent-soft: rgba(57, 185, 207, .16);
+    --hl: rgba(118, 204, 96, .15);
+    --hl-line: rgba(118, 204, 96, .5);
+    --c-sketch: #39b9cf;
+    --c-solid: #a896d6;
+    --c-cons: #f0a24a;
+    --c-insp: #3fcfbd;
+    --logo-a: #7d6bb3;
+    --logo-b: #b3a6dc;
+    --logo-dot: #76d062;
+    --text: #e4e7ea;
+    --muted: #9aa3ac;
+    --faint: #69727c;
+    --desk: radial-gradient(1200px 700px at 15% 10%, #26213a, transparent 60%), radial-gradient(900px 600px at 90% 90%, #1b2a1f, transparent 60%), linear-gradient(135deg, #14151b, #0e1013);
+    --title-bg: #17181d;
+    --panel: #212228;
+    --tabstrip: #1b1c21;
+    --vp-top: #2b2c32;
+    --vp-bot: #1a1b1f;
+    --line: rgba(255, 255, 255, .08);
+    --chip: rgba(255, 255, 255, .08);
+    --edge: #0e0d12;
+    --wall: #221f29;
+    --through: #1f2024;
+    --grid: rgba(255, 255, 255, .05);
+    --grid-major: rgba(255, 255, 255, .11);
+    --ok: #5cc052;
+    --halo: #24252b;
+  }
+}
+:root[data-theme="dark"] {
+  --accent: #39b9cf;
+  --accent-soft: rgba(57, 185, 207, .16);
+  --hl: rgba(118, 204, 96, .15);
+  --hl-line: rgba(118, 204, 96, .5);
+  --c-sketch: #39b9cf;
+  --c-solid: #a896d6;
+  --c-cons: #f0a24a;
+  --c-insp: #3fcfbd;
+  --logo-a: #7d6bb3;
+  --logo-b: #b3a6dc;
+  --logo-dot: #76d062;
+  --text: #e4e7ea;
+  --muted: #9aa3ac;
+  --faint: #69727c;
+  --desk: radial-gradient(1200px 700px at 15% 10%, #26213a, transparent 60%), radial-gradient(900px 600px at 90% 90%, #1b2a1f, transparent 60%), linear-gradient(135deg, #14151b, #0e1013);
+  --title-bg: #17181d;
+  --panel: #212228;
+  --tabstrip: #1b1c21;
+  --vp-top: #2b2c32;
+  --vp-bot: #1a1b1f;
+  --line: rgba(255, 255, 255, .08);
+  --chip: rgba(255, 255, 255, .08);
+  --edge: #0e0d12;
+  --wall: #221f29;
+  --through: #1f2024;
+  --grid: rgba(255, 255, 255, .05);
+  --grid-major: rgba(255, 255, 255, .11);
+  --ok: #5cc052;
+  --halo: #24252b;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--desk);
+  color: var(--text);
+  font: 12.5px/1.35 system-ui, "Inter", "Segoe UI", sans-serif;
+  overflow: hidden;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+  display: grid; place-items: center;
+}
+button { font: inherit; color: inherit; }
+svg.i { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+svg.c-sketch { color: var(--c-sketch); }
+svg.c-solid { color: var(--c-solid); }
+svg.c-cons { color: var(--c-cons); }
+svg.c-insp { color: var(--c-insp); }
+kbd {
+  font: 500 10.5px/1 ui-monospace, "SF Mono", Menlo, monospace;
+  padding: 3px 5px; border-radius: 4px;
+  background: var(--chip); color: var(--muted);
+  border: 1px solid var(--line);
+}
+
+/* ---- window ---- */
+#win {
+  position: relative; overflow: hidden;
+  width: min(1480px, calc(100vw - 56px)); height: min(920px, calc(100vh - 56px));
+  border-radius: 12px; background: var(--panel);
+  box-shadow: 0 0 0 1px rgba(0,0,0,.14), 0 2px 6px rgba(0,0,0,.08), 0 30px 80px rgba(20, 15, 40, .32);
+}
+#app { position: absolute; inset: 0; }
+
+.titlebar {
+  position: absolute; top: 0; left: 0; right: 0; height: var(--title-h); z-index: 12;
+  display: flex; align-items: center; gap: 8px; padding: 0 8px 0 12px;
+  background: var(--title-bg); border-bottom: 1px solid var(--line);
+}
+.titlebar .brand { display: flex; align-items: center; gap: 7px; font-weight: 700; }
+.titlebar .title { position: absolute; left: 50%; transform: translateX(-50%); color: var(--muted); white-space: nowrap; }
+.titlebar .title b { color: var(--text); font-weight: 600; }
+.winctl { display: flex; gap: 8px; margin-left: 4px; }
+.winctl button {
+  width: 22px; height: 22px; border-radius: 50%; border: 0; padding: 0; cursor: pointer;
+  display: grid; place-items: center; background: var(--chip); color: var(--muted);
+}
+.winctl button:hover { background: var(--hl); color: var(--text); }
+.winctl button.close:hover { background: #e0564b; color: #fff; }
+.winctl svg.i { width: 11px; height: 11px; stroke-width: 2; }
+.logo { width: 18px; height: 18px; flex: none; }
+.logo .la { fill: var(--logo-a); stroke: var(--logo-a); }
+.logo .lb { fill: var(--logo-b); stroke: var(--logo-b); }
+.logo .la, .logo .lb { stroke-width: 1.1; stroke-linejoin: round; }
+.logo .ld { fill: var(--logo-dot); }
+
+.toolbar {
+  position: absolute; top: var(--title-h); left: 0; right: 0; height: var(--tool-h); z-index: 11;
+  display: flex; align-items: center; gap: 2px; padding-right: 8px;
+  background: var(--panel); border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.file {
+  position: relative; flex: none; width: var(--side-w); height: 100%;
+  display: flex; align-items: center; gap: 8px; padding: 0 10px 0 12px;
+  border-right: 1px solid var(--line); cursor: pointer;
+}
+.file:hover { background: var(--hl); }
+.file .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.file .ext { color: var(--faint); font-weight: 400; }
+.file .dirty { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); flex: none; }
+.file .chev { margin-left: auto; color: var(--muted); }
+.ctx { display: flex; align-items: center; gap: 6px; padding: 0 12px; height: 100%; font-weight: 600; border-right: 1px solid var(--line); }
+.tag { background: var(--accent-soft); color: var(--accent); font-weight: 600; border-radius: 5px; padding: 2px 7px; font-size: 11px; }
+.ops { display: flex; align-items: center; gap: 2px; padding: 0 6px; min-width: 0; }
+.op {
+  display: flex; align-items: center; gap: 6px;
+  height: 28px; padding: 0 8px;
+  border: 0; border-radius: 6px; background: none; cursor: pointer;
+}
+.op:hover { background: var(--hl); }
+.op .k { color: var(--faint); font: 500 10.5px ui-monospace, Menlo, monospace; }
+.op.on { background: var(--accent-soft); color: var(--accent); }
+.op.on .k { color: var(--accent); opacity: .7; }
+.op.primary { background: var(--accent); color: #fff; }
+.op.primary:hover { filter: brightness(1.08); }
+.op.icon { padding: 0 6px; color: var(--muted); height: 26px; }
+.op.icon:hover { color: var(--text); }
+.sep { width: 1px; height: 18px; background: var(--line); margin: 0 4px; flex: none; }
+.spacer { flex: 1; }
+.ops.enter .op { animation: opIn .2s cubic-bezier(.2,.8,.2,1) both; animation-delay: calc(var(--i) * 16ms); }
+@keyframes opIn { from { opacity: 0; transform: translateY(-3px); } }
+
+@media (max-width: 1380px) { .ops .op:not(.primary) .lbl, .ops .op .k { display: none; } .ops .op { padding: 0 7px; } }
+@media (max-width: 1660px) { .ops.many .op:not(.primary) .lbl, .ops.many .op .k { display: none; } .ops.many .op { padding: 0 7px; } }
+
+.statusbar {
+  position: absolute; bottom: 0; left: 0; right: 0; height: var(--status-h); z-index: 11;
+  display: flex; align-items: center; gap: 12px; padding: 0 12px;
+  background: var(--title-bg); border-top: 1px solid var(--line);
+  font-size: 12px; color: var(--muted); white-space: nowrap;
+}
+.info { display: flex; align-items: center; gap: 8px; color: var(--text); }
+.info .muted { color: var(--muted); }
+.info .accent { color: var(--accent); font-weight: 600; }
+.info .dotok { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+.info svg.i { width: 14px; height: 14px; }
+.hints { display: flex; align-items: center; gap: 14px; }
+.h { display: flex; align-items: center; gap: 5px; }
+.mouse { width: 11px; height: 15px; color: var(--muted); }
+.mouse rect { fill: none; stroke: currentColor; stroke-width: 1; }
+.mouse .b { fill: var(--accent); }
+
+/* ---- tool bar (Alt) ---- */
+.gbar {
+  position: absolute; top: calc(var(--title-h) + var(--tool-h)); left: var(--side-w); right: 0; z-index: 12;
+  display: flex; align-items: stretch; padding: 0 4px 6px; overflow-x: auto;
+  background: var(--panel); border-bottom: 1px solid var(--line);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, .10);
+}
+.grp { display: flex; flex-direction: column; align-items: center; padding: 0 4px; border-right: 1px solid var(--line); }
+.grp:last-child { border-right: 0; }
+.grp .gl { align-self: stretch; margin: 0 -4px 4px; padding: 4px 0; text-align: center; font-weight: 600; color: var(--muted); background: var(--tabstrip); border-bottom: 1px solid var(--line); }
+.grp .btns { display: flex; gap: 2px; }
+.gbtn {
+  min-width: 50px; height: 54px; padding: 4px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  border: 0; border-radius: 6px; background: none; cursor: pointer; white-space: nowrap;
+}
+.gbtn:hover { background: var(--hl); }
+.gbtn svg.i { width: 24px; height: 24px; stroke-width: 1.45; }
+
+/* ---- menu ---- */
+.menu {
+  position: absolute; top: calc(100% + 4px); left: 8px; width: 240px; z-index: 30;
+  padding: 4px; border-radius: 9px; cursor: default;
+  background: var(--panel); border: 1px solid var(--line); box-shadow: 0 8px 30px rgba(0,0,0,.18);
+}
+.menu button {
+  width: 100%; display: flex; align-items: center; gap: 10px;
+  height: 28px; padding: 0 8px; border: 0; background: none; border-radius: 6px; cursor: pointer; text-align: left;
+}
+.menu button:hover { background: var(--hl); }
+.menu button .k { margin-left: auto; color: var(--faint); font-size: 11px; }
+.menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 2px; }
+
+/* ---- side panel ---- */
+.side {
+  position: absolute; top: calc(var(--title-h) + var(--tool-h)); left: 0; bottom: var(--status-h); width: var(--side-w); z-index: 9;
+  background: var(--panel); border-right: 1px solid var(--line);
+  display: flex; flex-direction: column;
+}
+.tabs { display: flex; gap: 2px; padding: 8px 8px 0; background: var(--tabstrip); border-bottom: 1px solid var(--line); }
+.tab {
+  display: flex; align-items: center; gap: 6px;
+  height: 30px; padding: 0 12px; margin-bottom: -1px;
+  border: 1px solid transparent; border-bottom: 0; border-radius: 7px 7px 0 0;
+  background: none; color: var(--muted); cursor: pointer;
+}
+.tab:hover { background: var(--hl); color: var(--text); }
+.tab.on, .tab.peek { background: var(--panel); border-color: var(--line); color: var(--text); font-weight: 600; box-shadow: inset 0 2px 0 var(--accent); }
+.tab.peek { color: var(--accent); }
+.tab kbd { padding: 1px 4px; font-size: 9.5px; font-weight: 500; }
+.list { padding: 6px 8px; overflow: auto; flex: 1; }
+.row {
+  position: relative; display: flex; align-items: center; gap: 8px;
+  height: 28px; padding: 0 8px; border-radius: 6px; cursor: default;
+}
+.row[draggable="true"] { cursor: grab; }
+.row:hover { background: var(--hl); }
+.row.sel, .row.sel:hover { background: var(--accent-soft); }
+.row.editing { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.row.rolled { opacity: .4; }
+.row.dragging { opacity: .3; }
+.row .ic { color: var(--muted); display: flex; }
+.row .meta { margin-left: auto; color: var(--faint); font-size: 11.5px; }
+.row .eye { margin-left: auto; border: 0; background: none; padding: 2px; color: var(--faint); cursor: pointer; display: flex; opacity: 0; }
+.row:hover .eye, .row .eye.off { opacity: 1; }
+.row .eye:hover { color: var(--text); }
+.row.group { color: var(--muted); font-weight: 600; font-size: 11.5px; }
+.row.dim .name { color: var(--faint); }
+.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
+.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
+.marker { position: relative; display: flex; align-items: center; gap: 6px; height: 16px; padding: 0 8px; color: var(--accent); font-size: 10.5px; font-weight: 600; border-radius: 6px; }
+.marker[draggable="true"] { cursor: grab; }
+.marker[draggable="true"]:hover { background: var(--hl); }
+.marker::before { content: ""; width: 7px; height: 7px; border-radius: 2px; background: var(--accent); transform: rotate(45deg); flex: none; }
+.marker::after { content: ""; flex: 1; height: 2px; border-radius: 1px; background: var(--accent); opacity: .6; }
+.empty-note { padding: 14px 12px; color: var(--muted); line-height: 1.5; }
+
+/* ---- viewport ---- */
+.vp {
+  position: absolute; top: calc(var(--title-h) + var(--tool-h)); left: var(--side-w); right: 0; bottom: var(--status-h);
+  background: linear-gradient(180deg, var(--vp-top), var(--vp-bot));
+}
+#scene { width: 100%; height: 100%; display: block; }
+body.dragging #scene { cursor: grabbing; }
+body.dragging .face, body.dragging .hole { pointer-events: none; }
+.grid line { stroke: var(--grid); vector-effect: non-scaling-stroke; }
+.grid line.major { stroke: var(--grid-major); }
+
+.face, .tf, .wall {
+  stroke: var(--edge); stroke-width: 1; stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+.face { fill: var(--f); cursor: pointer; }
+.wall { fill: var(--wall); }
+.thru { fill: var(--through); }
+.face:hover { fill: var(--fh); }
+.hole:hover .wall { fill: #4f7a45; }
+.face.sel { fill: var(--fs); stroke: var(--accent); }
+.hole.sel .wall { fill: #2c6571; stroke: var(--accent); }
+.hole { cursor: pointer; }
+.tangent { stroke: var(--edge); opacity: .3; vector-effect: non-scaling-stroke; }
+.ghost { opacity: .3; pointer-events: none; }
+
+.oplane { fill: var(--c-cons); fill-opacity: .08; stroke: var(--c-cons); stroke-opacity: .6; vector-effect: non-scaling-stroke; cursor: pointer; }
+.oplane:hover { fill: var(--hl-line); fill-opacity: .35; }
+.oplane.sel { fill: var(--accent); fill-opacity: .25; stroke: var(--accent); stroke-opacity: 1; }
+.oplane-label { font: 600 4px system-ui, sans-serif; fill: var(--c-cons); pointer-events: none; text-anchor: middle; }
+.axis { stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+
+.sk-plane { fill: var(--accent); fill-opacity: .05; stroke: none; }
+.sk-grid { stroke: var(--accent); stroke-opacity: .12; vector-effect: non-scaling-stroke; }
+.sk-grid.major { stroke-opacity: .24; }
+.sk { fill: none; stroke: var(--accent); stroke-width: 1.8; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.sk-pt { fill: var(--halo); stroke: var(--accent); stroke-width: 1.2; vector-effect: non-scaling-stroke; }
+.sk-dim { stroke: var(--text); stroke-opacity: .55; vector-effect: non-scaling-stroke; }
+.sk-dim-end { fill: var(--text); fill-opacity: .6; }
+.sk-label {
+  font: 600 4.2px system-ui, sans-serif; fill: var(--text);
+  paint-order: stroke; stroke: var(--halo); stroke-width: 1.4px; stroke-linejoin: round;
+  text-anchor: middle; dominant-baseline: middle;
+}
+.sk-visible { stroke-width: 1.2; opacity: .8; }
+
+.cube-wrap { position: absolute; top: 10px; right: 12px; display: flex; align-items: flex-start; gap: 2px; }
+.cube { width: 96px; height: 96px; }
+.cube polygon { fill: var(--f); stroke: var(--edge); stroke-opacity: .45; stroke-width: .6; cursor: pointer; }
+.cube polygon:hover { fill: var(--hl-line); }
+.cube text { font: 700 17px system-ui, sans-serif; fill: var(--text); fill-opacity: .7; text-anchor: middle; dominant-baseline: central; pointer-events: none; }
+.home-btn { margin-top: 6px; width: 26px; height: 26px; border-radius: 7px; border: 1px solid var(--line); background: var(--panel); color: var(--muted); cursor: pointer; display: grid; place-items: center; }
+.home-btn:hover { background: var(--hl); color: var(--text); }
+.hint-center {
+  position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%);
+  color: var(--muted); display: flex; align-items: center; gap: 6px; pointer-events: none;
+}
+
+/* ---- welcome ---- */
+.welcome { position: absolute; top: var(--title-h); left: 0; right: 0; bottom: var(--status-h); overflow: auto; background: var(--vp-top); }
+.wel-inner { max-width: 920px; margin: 0 auto; padding: 48px 40px; }
+.section-label { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--faint); margin: 0 0 12px; }
+.section-label + * { margin-bottom: 36px; }
+.cta { display: flex; gap: 10px; }
+.btn {
+  display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 14px 0 12px;
+  border-radius: 8px; border: 1px solid var(--line); background: var(--panel); cursor: pointer; font-weight: 600;
+}
+.btn:hover { background: var(--hl); border-color: var(--hl-line); }
+.btn kbd { margin-left: 4px; }
+.btn.primary { background: var(--accent); border-color: transparent; color: #fff; }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn.primary kbd { background: rgba(255,255,255,.18); border-color: rgba(255,255,255,.25); color: #fff; }
+.recent { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+.rc { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; cursor: pointer; text-align: left; padding: 0; background: var(--panel); }
+.rc:hover { border-color: var(--hl-line); }
+.rc:hover .meta { background: var(--hl); }
+.rc .th { aspect-ratio: 4 / 3; display: grid; place-items: center; padding: 16px; background: var(--tabstrip); }
+.rc .th svg { width: 100%; height: 100%; }
+.rc .meta { padding: 10px 12px 11px; border-top: 1px solid var(--line); }
+.rc .meta b { font-weight: 600; }
+.rc .meta b span { color: var(--faint); font-weight: 400; }
+.rc .meta div { color: var(--muted); font-size: 11.5px; margin-top: 2px; display: flex; justify-content: space-between; }
+.tf { stroke-width: .8; }
+
+/* ---- overlays ---- */
+.toast {
+  position: absolute; left: 50%; bottom: calc(var(--status-h) + 14px); transform: translate(-50%, 8px); z-index: 40;
+  padding: 7px 12px; border-radius: 8px; background: var(--text); color: var(--vp-top);
+  opacity: 0; transition: opacity .15s, transform .15s; pointer-events: none;
+}
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
+.modal-bg { position: absolute; inset: 0; z-index: 50; background: rgba(0,0,0,.25); display: grid; place-items: center; }
+.modal {
+  width: min(560px, calc(100% - 32px)); max-height: 80%; overflow: auto;
+  padding: 18px 20px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); box-shadow: 0 20px 60px rgba(0,0,0,.25);
+}
+.modal h2 { margin: 0 0 12px; font-size: 15px; }
+.modal .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 24px; }
+.modal h3 { grid-column: 1 / -1; margin: 10px 0 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--faint); }
+.modal .kv { display: flex; justify-content: space-between; align-items: center; padding: 3px 0; }
+.modal p { color: var(--muted); margin: 14px 0 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+.still *, .still *::before, .still *::after { animation: none !important; transition: none !important; }
+@media (max-width: 860px) {
+  #win { width: 100vw; height: 100vh; border-radius: 0; }
+  .side, .cube-wrap, .ops, .ctx, .hints, .winctl, .titlebar .title, .gbar { display: none; }
+  .vp { left: 0; }
+  .file { width: auto; border-right: 0; }
+  .wel-inner { padding: 32px 16px; }
+  .recent { grid-template-columns: repeat(2, 1fr); }
+}
+</style>
+</head>
+<body>
+<div id="win">
+  <div id="app"></div>
+  <div class="toast" id="toast"></div>
+</div>
+
+<script>
+// ---------------------------------------------------------------- icons
+const I = {
+  sketch: '<path d="M4 20h16"/><path d="M14.5 4.5l5 5L9 20H4v-5z"/>',
+  extrude: '<path d="M4 15l8 4 8-4-8-4z"/><path d="M12 11V3M9 6l3-3 3 3"/>',
+  revolve: '<path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M17.5 2.5v4h4"/>',
+  hole: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/>',
+  fillet: '<path d="M5 20V11a6 6 0 0 1 6-6h9"/>',
+  chamfer: '<path d="M5 20V10l5-5h10"/>',
+  combine: '<rect x="3" y="3" width="11" height="11" rx="1.5"/><rect x="10" y="10" width="11" height="11" rx="1.5"/>',
+  measure: '<path d="M3 17L17 3l4 4L7 21z"/><path d="M7 13l2 2M10 10l2 2M13 7l2 2"/>',
+  pushpull: '<rect x="4" y="13" width="16" height="7" rx="1"/><path d="M12 10V3M9 6l3-3 3 3"/>',
+  offset: '<rect x="3" y="3" width="18" height="18" rx="2"/><rect x="8" y="8" width="8" height="8" rx="1"/>',
+  line: '<path d="M6 18L18 6"/><circle cx="5" cy="19" r="1.6"/><circle cx="19" cy="5" r="1.6"/>',
+  rect: '<rect x="4" y="6" width="16" height="12" rx="1"/>',
+  circle: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r=".8" fill="currentColor"/>',
+  arc: '<path d="M4 18A9 9 0 0 1 20 18"/>',
+  trim: '<circle cx="6" cy="7" r="2.5"/><circle cx="6" cy="17" r="2.5"/><path d="M8.2 8.4L20 17M8.2 15.6L20 7"/>',
+  dim: '<path d="M4 7v10M20 7v10M5 12h14"/><path d="M7.5 9.5L5 12l2.5 2.5M16.5 9.5L19 12l-2.5 2.5"/>',
+  constrain: '<rect x="5" y="11" width="14" height="9" rx="1.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+  check: '<path d="M5 12.5l4.5 4.5L19 7"/>',
+  edit: '<path d="M14.5 4.5l5 5L9 20H4v-5z"/>',
+  eye: '<path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z"/><circle cx="12" cy="12" r="2.5"/>',
+  eyeoff: '<path d="M3 3l18 18"/><path d="M10.6 6.1A9 9 0 0 1 12 6c6 0 9.5 6 9.5 6a16 16 0 0 1-2.7 3.3M6.6 7.6C4 9.3 2.5 12 2.5 12s3.5 6 9.5 6a9 9 0 0 0 3.4-.7"/>',
+  rollback: '<path d="M4 4v16"/><path d="M20 12H8M12 8l-4 4 4 4"/>',
+  trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
+  undo: '<path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>',
+  redo: '<path d="M15 14l5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  folder: '<path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/>',
+  export: '<path d="M12 15V3M8 7l4-4 4 4"/><path d="M4 16v4h16v-4"/>',
+  chev: '<path d="M7 10l5 5 5-5"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+  moon: '<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/>',
+  body: '<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/>',
+  origin: '<path d="M5 19V5M5 19h14M5 19l8-8"/>',
+  plane: '<path d="M3 16l5-8h13l-5 8z"/>',
+  search: '<circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/>',
+  help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .8-1 1.5V14"/><circle cx="12" cy="17" r=".6" fill="currentColor"/>',
+  home: '<path d="M4 11l8-7 8 7"/><path d="M6 9.5V20h12V9.5"/>',
+  save: '<path d="M5 4h11l3 3v13H5z"/><path d="M8 4v5h7V4M8 20v-6h8v6"/>',
+  close: '<path d="M6 6l12 12M18 6L6 18"/>',
+  min: '<path d="M6 12h12"/>',
+  max: '<rect x="6" y="6" width="12" height="12" rx="1.5"/>',
+  sweep: '<path d="M4 18c4 0 5-12 12-12"/><circle cx="17" cy="6" r="3"/><circle cx="4.5" cy="18" r="1.5"/>',
+  loft: '<rect x="3" y="15" width="10" height="5" rx="1"/><circle cx="16" cy="6" r="3.5"/><path d="M3 15l9.5-9M13 15l6.5-7"/>',
+  box: '<path d="M4 8l8-4 8 4v8l-8 4-8-4z"/><path d="M4 8l8 4 8-4M12 12v8"/>',
+  shell: '<path d="M4 8l8-4 8 4v8l-8 4-8-4z"/><path d="M8 9.5l4-2 4 2v5l-4 2-4-2z"/>',
+  move: '<path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/>',
+  axis: '<path d="M5 19L19 5"/><path d="M15 5h4v4"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/>',
+  point: '<circle cx="12" cy="12" r="2.5" fill="currentColor"/><path d="M12 3v4M12 17v4M3 12h4M17 12h4"/>',
+  section: '<path d="M4 8l8-4 8 4v8l-8 4-8-4z"/><path d="M3 13l18-4" stroke-dasharray="2 2"/>',
+  polygon: '<path d="M12 3.5l8 5.8-3 9.2H7l-3-9.2z"/>',
+  spline: '<path d="M3 17c3-9 6-9 9-5s6 4 9-5"/><circle cx="3" cy="17" r="1.3"/><circle cx="21" cy="7" r="1.3"/>',
+  extend: '<path d="M3 18L13 8"/><path d="M13 8l7-7" stroke-dasharray="2 2.2"/><path d="M15 21V11"/>',
+  mirror: '<path d="M12 3v18" stroke-dasharray="2 2"/><path d="M9 7L3 17h6zM15 7l6 10h-6z"/>',
+  coincident: '<path d="M4 20L20 4M4 4l16 16"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/>',
+  parallel: '<path d="M8 20L14 4M12 20l6-16"/>',
+  perpendicular: '<path d="M4 20h16M12 20V5"/>',
+  tangent: '<circle cx="10" cy="13" r="6"/><path d="M3 7h18"/>',
+  equal: '<path d="M5 9h14M5 15h14"/>',
+  paint: '<circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 0 0 16z" fill="currentColor"/>',
+};
+// Icon colour by category: sketch, solid/body, construction, inspect.
+const CAT = {};
+for (const [cat, names] of Object.entries({
+  sketch: 'sketch line rect circle arc trim dim constrain polygon spline extend mirror coincident parallel perpendicular tangent equal',
+  solid: 'extrude revolve hole fillet chamfer combine pushpull offset body paint sweep loft box shell move',
+  cons: 'plane origin axis point',
+  insp: 'measure section',
+})) for (const n of names.split(' ')) CAT[n] = cat;
+const icon = (n, cls = 'i') => `<svg class="${cls}${CAT[n] ? ' c-' + CAT[n] : ''}" viewBox="0 0 24 24">${I[n] || ''}</svg>`;
+// A folded "V": two slabs meeting at a crease, with a sketch point above.
+const LOGO = `<svg class="logo" viewBox="0 0 24 24">
+  <path class="la" d="M2.6 6.2h5.2l4.2 8.6v6z"/>
+  <path class="lb" d="M21.4 6.2h-5.2L12 14.8v6z"/>
+  <circle class="ld" cx="12" cy="4.6" r="2"/>
+</svg>`;
+
+function mouse(btn) {
+  const wheel = '<rect class="b" x="4.1" y="2.2" width="1.8" height="3" rx=".9"/>';
+  const b = {
+    l: '<path class="b" d="M5 .5A4.5 4.5 0 0 0 .5 5v1H5z"/>',
+    r: '<path class="b" d="M5 .5A4.5 4.5 0 0 1 9.5 5v1H5z"/>',
+    m: wheel, w: wheel,
+  }[btn];
+  return `<svg class="mouse" viewBox="0 0 10 14"><rect x=".5" y=".5" width="9" height="13" rx="4.5"/>${b}</svg>`;
+}
+
+// ---------------------------------------------------------------- 3D
+const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const norm = a => { const l = Math.hypot(...a); return a.map(x => x / l); };
+const rad = d => d * Math.PI / 180;
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+// Orthographic camera orbiting target T. yaw around +Z, pitch above the XY plane.
+function makeProj(yaw, pitch, T) {
+  const cy = Math.cos(rad(yaw)), sy = Math.sin(rad(yaw)), cp = Math.cos(rad(pitch)), sp = Math.sin(rad(pitch));
+  const d = [cp * cy, cp * sy, sp], r = [-sy, cy, 0], u = [-sp * cy, -sp * sy, cp];
+  const light = norm([0, 1, 2].map(i => -0.45 * r[i] + 0.7 * u[i] + 0.6 * d[i]));
+  const P = (x, y, z) => { const q = [x - T[0], y - T[1], z - T[2]]; return [dot(q, r), -dot(q, u)]; };
+  return { P, d, r, u, light, depth: p => dot(sub(p, T), d) };
+}
+let proj;
+const pts = (a, pr = proj) => a.map(p => pr.P(...p).map(n => n.toFixed(2)).join(',')).join(' ');
+// Mean depth of a set of points, for painter's-order sorting.
+const depthOf = (ps, pr = proj) => ps.reduce((s, p) => s + pr.depth(p), 0) / ps.length;
+// Per-axis [min, max] of a list of points.
+const bounds = ps => ps[0].map((_, i) => [Math.min(...ps.map(p => p[i])), Math.max(...ps.map(p => p[i]))]);
+const lineP = (a, b, cls, pr = proj) => {
+  const [x1, y1] = pr.P(...a), [x2, y2] = pr.P(...b);
+  return `<line class="${cls}" x1="${x1.toFixed(2)}" y1="${y1.toFixed(2)}" x2="${x2.toFixed(2)}" y2="${y2.toFixed(2)}"/>`;
+};
+const circ = (f, cu, cv, r, n = 48, a0 = 0, a1 = Math.PI * 2) => {
+  const o = [];
+  for (let i = 0; i < n; i++) { const t = a0 + (a1 - a0) * i / n; o.push(f(cu + r * Math.cos(t), cv + r * Math.sin(t))); }
+  return o;
+};
+const zc = z => (u, v) => [u, v, z];
+const xc = x => (u, v) => [x, u, v];
+
+// Lit face colour, plus the selected and hovered variants, which keep the
+// shading and only swap the hue so a selected face still reads as 3D.
+function shade(n, pr, dark) {
+  const i = Math.max(0, dot(n, pr.light));
+  const L = dark ? 30 + 32 * i : 54 + 33 * i;
+  const l = (h, s, dl = 0) => `hsl(${h} ${s}% ${(L + dl).toFixed(1)}%)`;
+  return dark
+    ? { f: l(258, 9), s: l(188, 42, 2), h: l(110, 26, 2) }
+    : { f: l(258, 11), s: l(188, 52, -2), h: l(110, 34, 0) };
+}
+
+let uid = 0;
+// Faces are planar polygons with outward normals; back faces are culled and
+// the rest painted far-to-near. Holes are drawn on their face: the near rim is
+// the wall, the far rim clipped to it is where you see through.
+function solidSvg(faces, pr, interactive) {
+  const vis = faces.filter(f => dot(f.n, pr.d) > 1e-4)
+    .map(f => ({ f, z: depthOf(f.p, pr) }))
+    .sort((a, b) => a.z - b.z);
+  const bodySel = interactive && st.sel?.kind === 'body';
+  const dark = isDark();
+  let out = '';
+  for (const { f } of vis) {
+    const c = shade(f.n, pr, dark), p = pts(f.p, pr);
+    if (interactive) {
+      const sel = bodySel || st.sel?.id === f.id;
+      out += `<polygon class="face${sel ? ' sel' : ''}" data-face="${f.id}" style="--f:${c.f};--fs:${c.s};--fh:${c.h}" points="${p}"/>`;
+    } else {
+      out += `<polygon class="tf" style="fill:${c.f}${f.smooth ? ';stroke:' + c.f : ''}" points="${p}"/>`;
+    }
+    for (const [a, b] of f.tangents || []) out += lineP(a, b, 'tangent', pr);
+    for (const h of f.holes || []) {
+      const id = 'c' + (uid++);
+      const sel = bodySel || st.sel?.id === h.id;
+      const attrs = interactive ? ` class="hole${sel ? ' sel' : ''}" data-face="${h.id}"` : '';
+      const near = pts(h.near, pr);
+      out += `<g${attrs}><clipPath id="${id}"><polygon points="${near}"/></clipPath>
+        <polygon class="wall" points="${near}"/>
+        <polygon class="thru" clip-path="url(#${id})" points="${pts(h.far, pr)}"/></g>`;
+    }
+  }
+  return out;
+}
+
+const HA0 = circ(zc(0), 50, 25, 8), HA1 = circ(zc(10), 50, 25, 8);
+const HB0 = circ(xc(0), 25, 45, 7), HB1 = circ(xc(10), 25, 45, 7);
+const Lprof = y => [[0, y, 0], [80, y, 0], [80, y, 10], [10, y, 10], [10, y, 70], [0, y, 70]];
+// `feat` ties holes and fillet edges to the timeline feature that makes them.
+const BRACKET = [
+  { id: 'side', n: [0, -1, 0], p: Lprof(0) },
+  { id: 'side-b', n: [0, 1, 0], p: Lprof(50).reverse() },
+  { id: 'bottom', n: [0, 0, -1], p: [[0, 0, 0], [80, 0, 0], [80, 50, 0], [0, 50, 0]], holes: [{ id: 'hole-a', feat: 'h1', near: HA0, far: HA1 }] },
+  { id: 'back', n: [-1, 0, 0], p: [[0, 0, 0], [0, 50, 0], [0, 50, 70], [0, 0, 70]], holes: [{ id: 'hole-b', feat: 'h2', near: HB0, far: HB1 }] },
+  { id: 'base-x', n: [1, 0, 0], p: [[80, 0, 0], [80, 50, 0], [80, 50, 10], [80, 0, 10]] },
+  { id: 'base-top', n: [0, 0, 1], p: [[10, 0, 10], [80, 0, 10], [80, 50, 10], [10, 50, 10]], holes: [{ id: 'hole-a', feat: 'h1', near: HA1, far: HA0 }], tangents: [[[12, 0, 10], [12, 50, 10]]] },
+  { id: 'up-x', n: [1, 0, 0], p: [[10, 0, 10], [10, 50, 10], [10, 50, 70], [10, 0, 70]], holes: [{ id: 'hole-b', feat: 'h2', near: HB1, far: HB0 }], tangents: [[[10, 0, 12], [10, 50, 12]]] },
+  { id: 'up-top', n: [0, 0, 1], p: [[0, 0, 70], [10, 0, 70], [10, 50, 70], [0, 50, 70]] },
+];
+const bracketAt = active => BRACKET.map(f => ({
+  ...f,
+  holes: (f.holes || []).filter(h => active.has(h.feat)),
+  tangents: active.has('f1') ? f.tangents : [],
+}));
+
+const VIEWS = {
+  home: { yaw: -58, pitch: 24 },
+  top: { yaw: -90, pitch: 90 }, bottom: { yaw: -90, pitch: -90 },
+  front: { yaw: -90, pitch: 0 }, back: { yaw: 90, pitch: 0 },
+  right: { yaw: 0, pitch: 0 }, left: { yaw: 180, pitch: 0 },
+};
+const HOME = { ...VIEWS.home, zoom: 0.8, px: 0, py: 0 };
+
+// Planes that can hold a sketch: map (u, v) in the plane to model space.
+const PLANES = {
+  'side':     { f: (u, v) => [u, 0, v], b: [0, 80, 0, 70], view: VIEWS.front },
+  'side-b':   { f: (u, v) => [u, 50, v], b: [0, 80, 0, 70], view: VIEWS.back },
+  'bottom':   { f: (u, v) => [u, v, 0], b: [0, 80, 0, 50], view: VIEWS.bottom },
+  'back':     { f: (u, v) => [0, u, v], b: [0, 50, 0, 70], view: VIEWS.left },
+  'base-top': { f: (u, v) => [u, v, 10], b: [0, 80, 0, 50], view: VIEWS.top },
+  'base-x':   { f: (u, v) => [80, u, v], b: [0, 50, 0, 10], view: VIEWS.right },
+  'up-x':     { f: (u, v) => [10, u, v], b: [0, 50, 0, 70], view: VIEWS.right },
+  'up-top':   { f: (u, v) => [u, v, 70], b: [0, 10, 0, 50], view: VIEWS.top },
+  'plane-xy': { f: (u, v) => [u, v, 0], b: [0, 40, 0, 40], view: VIEWS.top },
+  'plane-xz': { f: (u, v) => [u, 0, v], b: [0, 40, 0, 40], view: VIEWS.front },
+  'plane-yz': { f: (u, v) => [0, u, v], b: [0, 40, 0, 40], view: VIEWS.right },
+};
+
+const SKETCHES = {
+  s1: {
+    plane: 'side', closed: [[0, 0], [80, 0], [80, 10], [10, 10], [10, 70], [0, 70]], circles: [],
+    dims: [{ a: [0, -9], b: [80, -9], t: '80' }, { a: [-9, 0], b: [-9, 70], t: '70' }, { a: [89, 0], b: [89, 10], t: '10' }, { a: [0, 79], b: [10, 79], t: '10' }],
+    summary: '6 lines · 4 dimensions',
+  },
+  s2: {
+    plane: 'base-top', circles: [{ c: [50, 25], r: 8 }],
+    dims: [{ a: [50, -8], b: [80, -8], t: '30' }, { a: [88, 0], b: [88, 25], t: '25' }], labels: [{ p: [64, 37], t: 'Ø16' }],
+    summary: '1 circle · 3 dimensions',
+  },
+  s3: {
+    plane: 'up-x', circles: [{ c: [25, 45], r: 7 }],
+    dims: [{ a: [25, 79], b: [50, 79], t: '25' }, { a: [58, 10], b: [58, 45], t: '35' }], labels: [{ p: [37, 57], t: 'Ø14' }],
+    summary: '1 circle · 3 dimensions',
+  },
+};
+
+const FACE_INFO = {
+  'side': ['Planar face', '1 400 mm²', 'Extrude 1'],
+  'side-b': ['Planar face', '1 400 mm²', 'Extrude 1'],
+  'bottom': ['Planar face', '3 799 mm²', 'Extrude 1'],
+  'back': ['Planar face', '3 346 mm²', 'Extrude 1'],
+  'base-top': ['Planar face', '3 299 mm²', 'Extrude 1'],
+  'base-x': ['Planar face', '500 mm²', 'Extrude 1'],
+  'up-x': ['Planar face', '2 846 mm²', 'Extrude 1'],
+  'up-top': ['Planar face', '500 mm²', 'Extrude 1'],
+  'hole-a': ['Cylindrical face', 'Ø16 × 10 mm', 'Hole 1'],
+  'hole-b': ['Cylindrical face', 'Ø14 × 10 mm', 'Hole 2'],
+  'plane-xy': ['Origin plane', 'XY', 'Origin'],
+  'plane-xz': ['Origin plane', 'XZ', 'Origin'],
+  'plane-yz': ['Origin plane', 'YZ', 'Origin'],
+};
+
+// ---------------------------------------------------------------- documents
+const BRACKET_TIMELINE = [
+  { id: 's1', type: 'sketch', name: 'Sketch 1', meta: 'Front' },
+  { id: 'e1', type: 'extrude', name: 'Extrude 1', meta: '50 mm', info: 'Distance 50 mm · New body' },
+  { id: 's2', type: 'sketch', name: 'Sketch 2', meta: 'Face' },
+  { id: 'h1', type: 'hole', name: 'Hole 1', meta: 'Ø16 thru', info: 'Simple · Ø16 mm · Through all' },
+  { id: 's3', type: 'sketch', name: 'Sketch 3', meta: 'Face' },
+  { id: 'h2', type: 'hole', name: 'Hole 2', meta: 'Ø14 thru', info: 'Simple · Ø14 mm · Through all' },
+  { id: 'f1', type: 'fillet', name: 'Fillet 1', meta: 'R2', info: '1 edge · R2 mm · Tangent chain' },
+];
+const RECENT = [
+  { name: 'bracket', path: '~/parts', when: '2 h ago', thumb: 'bracket' },
+  { name: 'enclosure-lid', path: '~/proj/sensor', when: 'Yesterday', thumb: 'lid' },
+  { name: 'spacer-m6', path: '~/parts', when: '3 days ago', thumb: 'spacer' },
+  { name: 'gearbox-mount', path: '~/proj/rover', when: 'Sep 12', thumb: 'mount' },
+];
+
+// `rollback` is how many timeline features are applied (the marker position).
+function makeDoc(kind, name) {
+  return kind === 'bracket'
+    ? { kind, name, dirty: true, T: [40, 25, 32], timeline: BRACKET_TIMELINE.map(t => ({ ...t })), rollback: BRACKET_TIMELINE.length, hidden: new Set(['origin', 's1', 's2', 's3']) }
+    : { kind, name, dirty: false, T: [18, 18, 14], timeline: [], rollback: 0, hidden: new Set() };
+}
+
+// ---------------------------------------------------------------- state
+const st = {
+  screen: 'welcome', doc: null,
+  mode: 'model',   // 'model' | 'sketch'
+  sketch: null,    // { id, plane }
+  tool: null,      // active sketch tool
+  pick: false,     // waiting for a plane to sketch on
+  sel: null,       // { kind: 'face'|'hole'|'plane'|'feature'|'body', id }
+  panel: 'timeline', alt: false, menu: false, help: false,
+  gbarPinned: false, prevCam: null,
+};
+const cam = { ...HOME };
+const root = document.documentElement;
+const $ = s => document.querySelector(s);
+
+// Features applied to the model: up to the marker, or up to (not including)
+// the sketch being edited, since editing rolls the model back to it.
+function activeFeatures() {
+  const tl = st.doc.timeline;
+  const n = st.mode === 'sketch' ? tl.findIndex(t => t.id === st.sketch.id) : st.doc.rollback;
+  return new Set(tl.slice(0, n).map(t => t.id));
+}
+const hasBody = () => st.doc.kind === 'bracket' && activeFeatures().has('e1');
+
+// ---------------------------------------------------------------- operations per context
+function context() {
+  if (st.mode === 'sketch') return st.tool ? 'tool' : 'sketch';
+  if (st.pick) return 'pick';
+  return st.sel ? st.sel.kind : 'none';
+}
+
+function ops() {
+  const c = context();
+  const measure = [{ sep: 1 }, { id: 'measure', label: 'Measure', icon: 'measure', key: 'I' }];
+  switch (c) {
+    case 'none':
+    case 'pick':
+      return [
+        { id: 'sketch', label: 'Sketch', icon: 'sketch', key: 'S', on: c === 'pick' },
+        { id: 'extrude', label: 'Extrude', icon: 'extrude', key: 'E' },
+        { id: 'revolve', label: 'Revolve', icon: 'revolve' },
+        { id: 'hole', label: 'Hole', icon: 'hole', key: 'H' },
+        { id: 'fillet', label: 'Fillet', icon: 'fillet', key: 'F' },
+        { id: 'combine', label: 'Combine', icon: 'combine' },
+        ...measure,
+      ];
+    case 'face':
+      return [
+        { id: 'sketch', label: 'Sketch on face', icon: 'sketch', key: 'S' },
+        { id: 'pushpull', label: 'Press pull', icon: 'pushpull', key: 'Q' },
+        { id: 'extrude', label: 'Extrude', icon: 'extrude', key: 'E' },
+        { id: 'hole', label: 'Hole', icon: 'hole', key: 'H' },
+        { id: 'offset', label: 'Offset face', icon: 'offset' },
+        ...measure,
+      ];
+    case 'hole':
+      return [
+        { id: 'pushpull', label: 'Press pull', icon: 'pushpull', key: 'Q' },
+        { id: 'fillet', label: 'Fillet edges', icon: 'fillet', key: 'F' },
+        { id: 'chamfer', label: 'Chamfer edges', icon: 'chamfer' },
+        { id: 'edit-feature', label: 'Edit ' + FACE_INFO[st.sel.id][2], icon: 'edit', key: 'Enter' },
+        ...measure,
+      ];
+    case 'plane':
+      return [
+        { id: 'sketch', label: 'Sketch on plane', icon: 'sketch', key: 'S' },
+        { id: 'offset-plane', label: 'Offset plane', icon: 'plane' },
+        ...measure,
+      ];
+    case 'body':
+      return [
+        { id: 'appearance', label: 'Appearance', icon: 'paint', key: 'A' },
+        { id: 'material', label: 'Material', icon: 'body' },
+        { id: 'hide', label: 'Hide', icon: 'eyeoff', key: 'V' },
+        { id: 'export', label: 'Export…', icon: 'export' },
+        ...measure,
+      ];
+    case 'feature': {
+      const f = st.doc.timeline.find(t => t.id === st.sel.id);
+      return [
+        f.type === 'sketch'
+          ? { id: 'edit-sketch', label: 'Edit sketch', icon: 'sketch', key: 'Enter' }
+          : { id: 'edit-feature', label: 'Edit ' + f.name, icon: 'edit', key: 'Enter' },
+        { id: 'rollback', label: 'Roll back here', icon: 'rollback' },
+        { id: 'suppress', label: 'Suppress', icon: 'eyeoff' },
+        { id: 'rename', label: 'Rename', icon: 'edit', key: 'F2' },
+        { sep: 1 },
+        { id: 'delete', label: 'Delete', icon: 'trash', key: 'Del' },
+      ];
+    }
+    case 'sketch':
+    case 'tool':
+      return [
+        ...Object.entries(TOOLS).filter(([, t]) => t.key)
+          .map(([id, { label, key }]) => ({ id: 'tool:' + id, label, icon: id, key, on: st.tool === id })),
+        { sep: 1 },
+        { id: 'finish', label: 'Finish sketch', icon: 'check', key: 'Esc', primary: true },
+      ];
+  }
+  return [];
+}
+
+// The Alt bar: the full set of operations, grouped by kind.
+// It follows the mode (model or sketch) but not the selection.
+// Items are [icon, label, op]; op defaults to the icon name.
+const G = (name, items) => [name, items.map(([icon, label, op = icon]) => ({ icon, label, op }))];
+const MODEL_GROUPS = [
+  G('Sketch', [['sketch', 'Sketch']]),
+  G('Create', [['extrude', 'Extrude'], ['revolve', 'Revolve'], ['sweep', 'Sweep'], ['loft', 'Loft'], ['hole', 'Hole'], ['box', 'Box']]),
+  G('Modify', [['pushpull', 'Press pull'], ['fillet', 'Fillet'], ['chamfer', 'Chamfer'], ['shell', 'Shell'], ['combine', 'Combine'], ['move', 'Move']]),
+  G('Construct', [['plane', 'Plane', 'offset-plane'], ['axis', 'Axis'], ['point', 'Point']]),
+  G('Inspect', [['measure', 'Measure'], ['section', 'Section']]),
+];
+const SKETCH_GROUPS = [
+  G('Create', [['line', 'Line', 'tool:line'], ['rect', 'Rectangle', 'tool:rect'], ['circle', 'Circle', 'tool:circle'], ['arc', 'Arc', 'tool:arc'],
+               ['polygon', 'Polygon', 'tool:polygon'], ['spline', 'Spline', 'tool:spline']]),
+  G('Modify', [['trim', 'Trim', 'tool:trim'], ['extend', 'Extend', 'tool:extend'], ['offset', 'Offset', 'tool:offset'], ['mirror', 'Mirror', 'tool:mirror']]),
+  G('Constraints', [['coincident', 'Coincident', 'tool:constrain'], ['parallel', 'Parallel', 'tool:constrain'], ['perpendicular', 'Perpendicular', 'tool:constrain'],
+                    ['tangent', 'Tangent', 'tool:constrain'], ['equal', 'Equal', 'tool:constrain']]),
+  G('Dimension', [['dim', 'Dimension', 'tool:dim']]),
+];
+const GLOBAL_FLAT = [...MODEL_GROUPS, ...SKETCH_GROUPS].flatMap(([, items]) => items);
+
+function gbar() {
+  return `<div class="gbar">
+    ${(st.mode === 'sketch' ? SKETCH_GROUPS : MODEL_GROUPS).map(([name, items]) => `<div class="grp">
+      <div class="gl">${name}</div>
+      <div class="btns">${items.map(o => `<button class="gbtn" data-act="gop:${o.op}" title="${o.label}">${icon(o.icon)}${o.label}</button>`).join('')}</div>
+    </div>`).join('')}
+  </div>`;
+}
+
+// Run an operation from the Alt bar. Sketch tools need a sketch first.
+function globalOp(op) {
+  if (op.startsWith('tool:') && st.mode !== 'sketch') { st.pick = true; st.sel = null; toast('Pick a plane to sketch on first'); return; }
+  if (op === 'sketch' && st.mode === 'sketch') { toast('Already in a sketch'); return; }
+  doOp(op);
+}
+
+// Sketch tools. The ones with a key are listed in the sketch toolbar, in this order.
+const Tool = (label, key, hint) => ({ label, key, hint });
+const TOOLS = {
+  line: Tool('Line', 'L', 'Click start point'), rect: Tool('Rectangle', 'R', 'Click first corner'),
+  circle: Tool('Circle', 'C', 'Click center point'), arc: Tool('Arc', 'A', 'Click start point'),
+  trim: Tool('Trim', 'T', 'Click a segment to trim'), offset: Tool('Offset', 'O', 'Select a loop to offset'),
+  dim: Tool('Dimension', 'D', 'Select geometry to dimension'), constrain: Tool('Constrain', 'K', 'Select entities to constrain'),
+  polygon: Tool('Polygon', '', 'Click center point'), spline: Tool('Spline', '', 'Click first fit point'),
+  extend: Tool('Extend', '', 'Click a segment to extend'), mirror: Tool('Mirror', '', 'Select entities to mirror'),
+};
+
+function hints() {
+  const k = s => s.split(' ').map(x => x.startsWith('mouse:') ? mouse(x.slice(6)) : `<kbd>${x}</kbd>`).join('');
+  const h = list => list.map(([keys, label]) => `<span class="h">${k(keys)}<span>${label}</span></span>`).join('');
+  if (st.screen === 'welcome') return h([['N', 'New design'], ['O', 'Open'], ['?', 'Shortcuts']]);
+  const nav = [['mouse:l', 'Drag to orbit'], ['mouse:r', 'Pan'], ['mouse:w', 'Zoom']];
+  switch (context()) {
+    case 'none': return h([['mouse:l', 'Select'], ['mouse:l mouse:l', 'Body'], ...nav, ['Alt', 'Objects + tools']]);
+    case 'pick': return h([['mouse:l', 'Pick plane'], ...nav, ['Esc', 'Cancel']]);
+    case 'face': case 'plane': return h([['S', 'Sketch'], ['Q', 'Press pull'], ['mouse:l mouse:l', 'Body'], ['Esc', 'Clear']]);
+    case 'hole': return h([['F', 'Fillet'], ['Enter', 'Edit hole'], ['mouse:l mouse:l', 'Body'], ['Esc', 'Clear']]);
+    case 'feature': return h([['Enter', 'Edit'], ['Del', 'Delete'], ['mouse:l', 'Drag to reorder'], ['Esc', 'Clear']]);
+    case 'body': return h([['V', 'Hide'], ['A', 'Appearance'], ['Esc', 'Clear']]);
+    case 'sketch': return h([['L', 'Line'], ['R', 'Rect'], ['C', 'Circle'], ['D', 'Dimension'], ['Esc', 'Finish']]);
+    case 'tool': return h([['mouse:l', TOOLS[st.tool].hint], ['Shift', 'No snap'], ['Tab', 'Type value'], ['Esc', 'Stop tool']]);
+  }
+  return '';
+}
+
+function info() {
+  if (st.screen === 'welcome') return `<span class="muted">No document open</span>`;
+  const c = context();
+  if (c === 'pick') return `<span class="accent">Select a plane or planar face for the new sketch</span>`;
+  if (c === 'sketch' || c === 'tool') {
+    const s = SKETCHES[st.sketch.id];
+    const name = st.doc.timeline.find(t => t.id === st.sketch.id).name;
+    return s
+      ? `<span class="dotok"></span><b>${name}</b><span class="muted">Fully constrained · ${s.summary}</span>`
+      : `<b>${name}</b><span class="muted">Empty · on ${FACE_INFO[st.sketch.plane]?.[1] || 'face'}</span>`;
+  }
+  if (c === 'none') {
+    const d = st.doc, rolled = d.timeline.length - d.rollback;
+    if (d.kind !== 'bracket') return `<span class="muted">Empty design · mm</span>`;
+    return `<span class="muted">No selection · ${hasBody() ? 1 : 0} body · ${d.timeline.length} features${rolled ? ` (${rolled} rolled back)` : ''} · mm</span>`;
+  }
+  if (c === 'face' || c === 'hole' || c === 'plane') {
+    const [t, d, f] = FACE_INFO[st.sel.id];
+    return `${icon(c === 'plane' ? 'plane' : 'body')}<b>${t}</b><span>${d}</span><span class="muted">${f}</span>`;
+  }
+  if (c === 'body') return `${icon('body')}<b>Bracket</b><span>84.3 cm³</span><span class="muted">228 g · Aluminium 6061</span>`;
+  if (c === 'feature') {
+    const f = st.doc.timeline.find(t => t.id === st.sel.id);
+    const extra = f.type === 'sketch' ? (SKETCHES[f.id]?.summary || 'Empty') : f.info;
+    return `${icon(f.type)}<b>${f.name}</b><span class="muted">${extra}</span>`;
+  }
+  return '';
+}
+
+// ---------------------------------------------------------------- chrome
+function titlebar() {
+  const title = st.screen === 'doc'
+    ? `<b>${st.doc.name}.varde</b>${st.doc.dirty ? ' — Edited' : ''}`
+    : 'Welcome';
+  return `<div class="titlebar">
+    <span class="brand">${LOGO}varde</span>
+    <span class="title">${title}</span>
+    <div class="spacer"></div>
+    <button class="op icon" data-act="theme" title="Toggle theme">${icon(isDark() ? 'sun' : 'moon')}</button>
+    <button class="op icon" data-act="help" title="Shortcuts (?)">${icon('help')}</button>
+    <div class="winctl">
+      <button data-act="toast:Minimize" title="Minimize">${icon('min')}</button>
+      <button data-act="toast:Maximize" title="Maximize">${icon('max')}</button>
+      <button class="close" data-act="toast:Close" title="Close">${icon('close')}</button>
+    </div>
+  </div>`;
+}
+
+let lastOpsKey = '';
+function toolbar() {
+  const d = st.doc;
+  let ctx;
+  if (st.mode === 'sketch') {
+    const name = d.timeline.find(t => t.id === st.sketch.id).name;
+    ctx = `${name}<span class="tag">${st.tool ? TOOLS[st.tool].label : 'Editing sketch'}</span>`;
+  } else {
+    ctx = `Model${st.pick ? '<span class="tag">New sketch</span>' : ''}`;
+  }
+
+  const list = ops();
+  const key = list.map(o => o.id).join();
+  const enter = key !== lastOpsKey;
+  lastOpsKey = key;
+  let i = 0;
+  const opsHtml = list.map(o => o.sep ? '<span class="sep"></span>' : `
+    <button class="op${o.on ? ' on' : ''}${o.primary ? ' primary' : ''}" style="--i:${i++}" data-act="op:${o.id}" title="${o.label}${o.key ? ` (${o.key})` : ''}">
+      ${icon(o.icon)}<span class="lbl">${o.label}</span>${o.key && !o.primary ? `<span class="k">${o.key}</span>` : ''}
+    </button>`).join('');
+
+  return `<div class="toolbar">
+    <div class="file" data-act="menu">
+      <span class="name">${d.name}<span class="ext">.varde</span></span>
+      ${d.dirty ? '<span class="dirty" title="Unsaved changes"></span>' : ''}
+      ${icon('chev', 'i chev')}
+      ${st.menu ? `
+        <div class="menu">
+          <button data-act="new">${icon('plus')}New design<span class="k">Ctrl N</span></button>
+          <button data-act="open:bracket">${icon('folder')}Open…<span class="k">Ctrl O</span></button>
+          <button data-act="toast:Saved">${icon('save')}Save<span class="k">Ctrl S</span></button>
+          <button data-act="toast:Export">${icon('export')}Export…<span class="k">Ctrl E</span></button>
+          <hr>
+          <button data-act="home">${icon('close')}Close document</button>
+        </div>` : ''}
+    </div>
+    <div class="ctx">${ctx}</div>
+    <div class="ops${list.length > 8 ? ' many' : ''}${enter ? ' enter' : ''}">${opsHtml}</div>
+    <div class="spacer"></div>
+    <button class="op icon" data-act="toast:Undo" title="Undo (Ctrl Z)">${icon('undo')}</button>
+    <button class="op icon" data-act="toast:Redo" title="Redo (Ctrl Shift Z)">${icon('redo')}</button>
+    <span class="sep"></span>
+    <button class="op icon" data-act="toast:Command palette" title="Commands (Ctrl K)">${icon('search')}</button>
+  </div>`;
+}
+
+const statusbar = () => `<div class="statusbar"><div class="info">${info()}</div><div class="spacer"></div><div class="hints">${hints()}</div></div>`;
+
+// ---------------------------------------------------------------- side panel
+function side() {
+  const shown = st.alt ? (st.panel === 'timeline' ? 'objects' : 'timeline') : st.panel;
+  const tab = (id, label, ic) => `
+    <button class="tab${shown === id ? (st.alt ? ' peek' : ' on') : ''}" data-act="tab:${id}">
+      ${icon(ic)}${label}${id !== st.panel && !st.alt ? '<kbd>Alt</kbd>' : ''}
+    </button>`;
+  return `
+    <div class="tabs">${tab('timeline', 'Timeline', 'rollback')}${tab('objects', 'Objects', 'body')}</div>
+    <div class="list">${shown === 'timeline' ? timeline() : objects()}</div>`;
+}
+
+// The timeline is rendered as one sequence with the rollback marker in it,
+// so rows and marker can be dragged to any position the same way.
+function timeline() {
+  const d = st.doc, tl = d.timeline;
+  if (!tl.length) return `<div class="empty-note">No features yet.<br>Pick an origin plane and press <kbd>S</kbd> to start a sketch.</div>`;
+  const editing = st.mode === 'sketch';
+  const cut = editing ? tl.findIndex(t => t.id === st.sketch.id) + 1 : d.rollback;
+  const seq = [...tl.slice(0, cut), { marker: true }, ...tl.slice(cut)];
+  const drag = editing ? '' : ' draggable="true"';
+  return seq.map((t, i) => {
+    if (t.marker) return `<div class="marker tl-item" data-idx="${i}" data-drag="marker"${drag} title="Drag to roll back">${editing ? 'Rolled back' : ''}</div>`;
+    const cls = ['row', 'tl-item'];
+    if (editing && t.id === st.sketch.id) cls.push('editing');
+    else if (i > cut) cls.push('rolled');
+    if (st.sel?.kind === 'feature' && st.sel.id === t.id) cls.push('sel');
+    return `<div class="${cls.join(' ')}" data-idx="${i}" data-drag="row" data-id="${t.id}"${drag} data-act="tl:${t.id}">
+      <span class="ic">${icon(t.type)}</span><span class="name">${t.name}</span><span class="meta">${t.meta || ''}</span></div>`;
+  }).join('');
+}
+
+function objects() {
+  const d = st.doc, hid = d.hidden;
+  const row = (id, name, ic, depth, { group, sel, eye = true } = {}) => {
+    const off = hid.has(id);
+    return `<div class="row${group ? ' group' : ''}${sel ? ' sel' : ''}${off ? ' dim' : ''}" data-act="obj:${id}" style="padding-left:${8 + depth * 16}px">
+      <span class="ic">${icon(group ? 'chev' : ic)}</span><span class="name">${name}</span>
+      ${eye ? `<button class="eye${off ? ' off' : ''}" data-act="eye:${id}" title="${off ? 'Show' : 'Hide'}">${icon(off ? 'eyeoff' : 'eye')}</button>` : ''}
+    </div>`;
+  };
+  const sketches = d.timeline.filter(t => t.type === 'sketch');
+  let out = row('origin', 'Origin', 'origin', 0, { group: true });
+  if (!hid.has('origin')) {
+    for (const p of ['xy', 'xz', 'yz']) out += row('plane-' + p, p.toUpperCase() + ' plane', 'plane', 1, { sel: st.sel?.id === 'plane-' + p, eye: false });
+  }
+  const body = hasBody();
+  out += row('bodies', `Bodies <span class="meta">${body ? 1 : 0}</span>`, '', 0, { group: true, eye: false });
+  if (body) out += row('body', 'Bracket', 'body', 1, { sel: st.sel?.kind === 'body' });
+  out += row('sketches', `Sketches <span class="meta">${sketches.length}</span>`, '', 0, { group: true, eye: false });
+  for (const s of sketches) out += row(s.id, s.name, 'sketch', 1, { sel: st.sel?.id === s.id });
+  return out;
+}
+
+// ---------------------------------------------------------------- viewport
+function gridSvg(cx, cy) {
+  let g = '';
+  for (let x = -80; x <= 160; x += 10) g += lineP([x, -90, 0], [x, 140, 0], x % 50 ? '' : 'major');
+  for (let y = -90; y <= 140; y += 10) g += lineP([-80, y, 0], [160, y, 0], y % 50 ? '' : 'major');
+  return `<defs>
+      <radialGradient id="gridfade" gradientUnits="userSpaceOnUse" cx="${cx}" cy="${cy}" r="150">
+        <stop offset="0" stop-color="#fff"/><stop offset=".5" stop-color="#fff" stop-opacity=".7"/><stop offset="1" stop-color="#fff" stop-opacity="0"/>
+      </radialGradient>
+      <mask id="gridmask"><rect x="-2000" y="-2000" width="4000" height="4000" fill="url(#gridfade)"/></mask>
+    </defs><g class="grid" mask="url(#gridmask)">${g}</g>`;
+}
+
+function originSvg() {
+  const planes = [
+    { id: 'plane-yz', p: [[0, 0, 0], [0, 40, 0], [0, 40, 40], [0, 0, 40]], lab: 'YZ', lp: [0, 34, 36] },
+    { id: 'plane-xz', p: [[0, 0, 0], [40, 0, 0], [40, 0, 40], [0, 0, 40]], lab: 'XZ', lp: [34, 0, 36] },
+    { id: 'plane-xy', p: [[0, 0, 0], [40, 0, 0], [40, 40, 0], [0, 40, 0]], lab: 'XY', lp: [34, 34, 0] },
+  ].map(p => ({ ...p, z: depthOf(p.p) })).sort((a, b) => a.z - b.z);
+  let out = '';
+  for (const p of planes) {
+    const [lx, ly] = proj.P(...p.lp);
+    out += `<polygon class="oplane${st.sel?.id === p.id ? ' sel' : ''}" data-face="${p.id}" points="${pts(p.p)}"/><text class="oplane-label" x="${lx}" y="${ly}">${p.lab}</text>`;
+  }
+  const axis = (to, c) => lineP([0, 0, 0], to, 'axis').replace('class="axis"', `class="axis" stroke="${c}"`);
+  return out + `<g style="pointer-events:none">${axis([55, 0, 0], '#d9412b')}${axis([0, 55, 0], '#3d9b35')}${axis([0, 0, 55], '#1f6fd1')}</g>`;
+}
+
+function sketchGeomSvg(id, planeKey, withDims) {
+  const s = SKETCHES[id];
+  if (!s) return '';
+  const f = PLANES[planeKey].f, at = uv => proj.P(...f(...uv));
+  const extra = withDims ? '' : ' sk-visible';
+  let out = '';
+  const pt = p => { const [x, y] = proj.P(...p); return `<circle class="sk-pt" cx="${x}" cy="${y}" r="1"/>`; };
+  if (s.closed) {
+    const ps = s.closed.map(([u, v]) => f(u, v));
+    out += `<polygon class="sk${extra}" points="${pts(ps)}"/>`;
+    if (withDims) out += ps.map(pt).join('');
+  }
+  for (const c of s.circles || []) {
+    out += `<polygon class="sk${extra}" points="${pts(circ(f, c.c[0], c.c[1], c.r))}"/>`;
+    if (withDims) out += pt(f(...c.c));
+  }
+  if (withDims) {
+    for (const d of s.dims || []) {
+      const a = at(d.a), b = at(d.b);
+      out += `<line class="sk-dim" x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}"/>`;
+      out += `<circle class="sk-dim-end" cx="${a[0]}" cy="${a[1]}" r=".7"/><circle class="sk-dim-end" cx="${b[0]}" cy="${b[1]}" r=".7"/>`;
+      out += `<text class="sk-label" x="${(a[0] + b[0]) / 2}" y="${(a[1] + b[1]) / 2}">${d.t}</text>`;
+    }
+    for (const l of s.labels || []) { const [x, y] = at(l.p); out += `<text class="sk-label" x="${x}" y="${y}">${l.t}</text>`; }
+  }
+  return out;
+}
+
+function sketchPlaneSvg(planeKey) {
+  const { f, b } = PLANES[planeKey];
+  const m = 15, [u0, u1, v0, v1] = [b[0] - m, b[1] + m, b[2] - m, b[3] + m];
+  let out = `<polygon class="sk-plane" points="${pts([f(u0, v0), f(u1, v0), f(u1, v1), f(u0, v1)])}"/>`;
+  for (let u = Math.ceil(u0 / 5) * 5; u <= u1; u += 5) out += lineP(f(u, v0), f(u, v1), 'sk-grid' + (u % 10 ? '' : ' major'));
+  for (let v = Math.ceil(v0 / 5) * 5; v <= v1; v += 5) out += lineP(f(u0, v), f(u1, v), 'sk-grid' + (v % 10 ? '' : ' major'));
+  return out;
+}
+
+const viewBox = () => { const w = 380 * cam.zoom, h = 250 * cam.zoom; return `${cam.px - w / 2} ${cam.py - h / 2} ${w} ${h}`; };
+
+function sceneInner() {
+  const d = st.doc;
+  proj = makeProj(cam.yaw, cam.pitch, d.T);
+  const inSketch = st.mode === 'sketch';
+  const active = activeFeatures();
+  const [gx, gy] = proj.P(d.T[0], d.T[1], 0);
+
+  let model = '';
+  if (!d.hidden.has('origin') && !(inSketch && d.kind === 'bracket')) model += originSvg();
+  if (d.kind === 'bracket' && active.has('e1') && !d.hidden.has('body')) model += solidSvg(bracketAt(active), proj, true);
+
+  let overlay = '';
+  if (inSketch) {
+    overlay += sketchPlaneSvg(st.sketch.plane) + sketchGeomSvg(st.sketch.id, st.sketch.plane, true);
+  } else if (d.kind === 'bracket') {
+    // Sketches show when made visible, or when nothing has consumed them yet.
+    for (const id of Object.keys(SKETCHES)) {
+      const unconsumed = id === 's1' && !active.has('e1');
+      if (active.has(id) && (!d.hidden.has(id) || unconsumed)) overlay += sketchGeomSvg(id, SKETCHES[id].plane, false);
+    }
+  }
+  return `${gridSvg(gx, gy)}<g class="${inSketch ? 'ghost' : ''}">${model}</g><g style="pointer-events:none">${overlay}</g>`;
+}
+
+function cubeInner() {
+  const pr = makeProj(cam.yaw, cam.pitch, [0, 0, 0]);
+  const s = 25, L = v => [dot(v, pr.r), -dot(v, pr.u)], dark = isDark();
+  const faces = [
+    { n: [0, 0, 1], k: 'T', name: 'Top', u: [1, 0, 0], v: [0, -1, 0], view: 'top' },
+    { n: [0, 0, -1], k: 'U', name: 'Under', u: [1, 0, 0], v: [0, 1, 0], view: 'bottom' },
+    { n: [0, -1, 0], k: 'F', name: 'Front', u: [1, 0, 0], v: [0, 0, -1], view: 'front' },
+    { n: [0, 1, 0], k: 'B', name: 'Back', u: [-1, 0, 0], v: [0, 0, -1], view: 'back' },
+    { n: [1, 0, 0], k: 'R', name: 'Right', u: [0, 1, 0], v: [0, 0, -1], view: 'right' },
+    { n: [-1, 0, 0], k: 'L', name: 'Left', u: [0, -1, 0], v: [0, 0, -1], view: 'left' },
+  ].filter(f => dot(f.n, pr.d) > 1e-3);
+  let out = '';
+  for (const f of faces) {
+    const c = f.n.map(x => x * s);
+    const corner = (a, b) => L([0, 1, 2].map(i => c[i] + (a * f.u[i] + b * f.v[i]) * s)).map(x => (x + 48).toFixed(2)).join(',');
+    const i = Math.max(0, dot(f.n, pr.light));
+    const fill = dark ? `hsl(258 8% ${(30 + 20 * i).toFixed(1)}%)` : `hsl(258 10% ${(80 + 16 * i).toFixed(1)}%)`;
+    const [cx, cy] = L(c).map(x => x + 48), [a, b] = L(f.u), [cc, dd] = L(f.v);
+    out += `<polygon style="--f:${fill}" data-act="view:${f.view}" points="${[corner(-1, -1), corner(1, -1), corner(1, 1), corner(-1, 1)].join(' ')}"><title>${f.name}</title></polygon>
+      <text transform="matrix(${a} ${b} ${cc} ${dd} ${cx} ${cy})">${f.k}</text>`;
+  }
+  return out;
+}
+
+function redrawScene() {
+  const s = $('#scene');
+  if (!s) return;
+  s.setAttribute('viewBox', viewBox());
+  s.innerHTML = sceneInner();
+  $('#cube').innerHTML = cubeInner();
+}
+// Orbit, pan and zoom input can fire many times per frame; redraw once per frame.
+let redrawQueued = 0;
+const queueRedraw = () => { redrawQueued ||= requestAnimationFrame(() => { redrawQueued = 0; redrawScene(); }); };
+
+let camAnim = 0;
+function animateCam(to, ms = 650) {
+  const from = { ...cam }, tgt = { ...cam, ...to };
+  const dyaw = ((tgt.yaw - from.yaw) % 360 + 540) % 360 - 180;
+  cancelAnimationFrame(camAnim);
+  if (reduced || ms === 0) { Object.assign(cam, tgt, { yaw: from.yaw + dyaw }); redrawScene(); return; }
+  const t0 = performance.now();
+  const step = now => {
+    const k = Math.min(1, (now - t0) / ms), e = 1 - Math.pow(1 - k, 3);
+    cam.yaw = from.yaw + dyaw * e;
+    for (const p of ['pitch', 'zoom', 'px', 'py']) cam[p] = from[p] + (tgt[p] - from[p]) * e;
+    redrawScene();
+    if (k < 1) camAnim = requestAnimationFrame(step);
+  };
+  camAnim = requestAnimationFrame(step);
+}
+
+// Camera that looks straight at a sketch plane, centred on it.
+function sketchCam(planeKey) {
+  const { f, b, view } = PLANES[planeKey];
+  const [px, py] = makeProj(view.yaw, view.pitch, st.doc.T).P(...f((b[0] + b[1]) / 2, (b[2] + b[3]) / 2));
+  return { ...view, px, py, zoom: 0.8 };
+}
+
+// ---------------------------------------------------------------- welcome
+function thumbGroups(kind) {
+  const box = (x0, x1, y0, y1, z0, z1, holes = []) => [
+    { n: [0, 0, 1], p: [[x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]], holes: holes.map(h => ({ near: h(z1), far: h(z0) })) },
+    { n: [0, 0, -1], p: [[x0, y0, z0], [x0, y1, z0], [x1, y1, z0], [x1, y0, z0]] },
+    { n: [0, -1, 0], p: [[x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1]] },
+    { n: [0, 1, 0], p: [[x0, y1, z0], [x0, y1, z1], [x1, y1, z1], [x1, y1, z0]] },
+    { n: [1, 0, 0], p: [[x1, y0, z0], [x1, y1, z0], [x1, y1, z1], [x1, y0, z1]] },
+    { n: [-1, 0, 0], p: [[x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0]] },
+  ];
+  const hc = (x, y, r) => z => circ(zc(z), x, y, r, 28);
+  const slot = (x0, x1, y0, y1) => z => [[x0, y0, z], [x1, y0, z], [x1, y1, z], [x0, y1, z]];
+  if (kind === 'bracket') return [BRACKET];
+  if (kind === 'lid') {
+    const holes = [[6, 6], [84, 6], [6, 54], [84, 54]].map(([x, y]) => hc(x, y, 2.5));
+    for (let i = 0; i < 6; i++) holes.push(slot(30, 62, 18 + i * 5, 20 + i * 5));
+    return [box(0, 90, 0, 60, 0, 7, holes)];
+  }
+  if (kind === 'spacer') {
+    const r = 16, h = 34, n = 32, faces = [];
+    for (let i = 0; i < n; i++) {
+      const a0 = i / n * Math.PI * 2, a1 = (i + 1) / n * Math.PI * 2, am = (a0 + a1) / 2;
+      const P0 = [r * Math.cos(a0), r * Math.sin(a0)], P1 = [r * Math.cos(a1), r * Math.sin(a1)];
+      faces.push({ n: [Math.cos(am), Math.sin(am), 0], smooth: true, p: [[...P0, 0], [...P1, 0], [...P1, h], [...P0, h]] });
+    }
+    faces.push({ n: [0, 0, 1], p: circ(zc(h), 0, 0, r, n), holes: [{ near: circ(zc(h), 0, 0, 6.5, 28), far: circ(zc(0), 0, 0, 6.5, 28) }] });
+    faces.push({ n: [0, 0, -1], p: circ(zc(0), 0, 0, r, n) });
+    return [faces];
+  }
+  if (kind === 'mount') {
+    return [
+      box(0, 100, 0, 60, 0, 8, [[7, 7], [93, 7], [7, 53], [93, 53]].map(([x, y]) => hc(x, y, 3))),
+      box(15, 35, 20, 40, 8, 30, [hc(25, 30, 5)]),
+      box(65, 85, 20, 40, 8, 30, [hc(75, 30, 5)]),
+    ];
+  }
+  return [];
+}
+
+function thumb(kind) {
+  const groups = thumbGroups(kind);
+  const all = groups.flat().flatMap(f => f.p);
+  const pr = makeProj(-58, 26, bounds(all).map(([a, b]) => (a + b) / 2));
+  // The first group is the base; the rest sit on it and are painted far-to-near.
+  const cen = g => depthOf(g.flatMap(f => f.p), pr);
+  const [base, ...rest] = groups;
+  const svg = [base, ...rest.sort((a, b) => cen(a) - cen(b))].map(g => solidSvg(g, pr, false)).join('');
+  const [[x0, x1], [y0, y1]] = bounds(all.map(p => pr.P(...p)));
+  const pad = 4;
+  return `<svg viewBox="${x0 - pad} ${y0 - pad} ${x1 - x0 + pad * 2} ${y1 - y0 + pad * 2}">${svg}</svg>`;
+}
+
+function welcome() {
+  return `
+    <div class="welcome">
+      <div class="wel-inner">
+        <div class="section-label">Start</div>
+        <div class="cta">
+          <button class="btn primary" data-act="new">${icon('plus')}New design<kbd>N</kbd></button>
+          <button class="btn" data-act="open:bracket">${icon('folder')}Open…<kbd>O</kbd></button>
+        </div>
+        <div class="section-label">Recent</div>
+        <div class="recent">
+          ${RECENT.map(r => `
+            <button class="rc" data-act="open:${r.name}">
+              <div class="th">${thumb(r.thumb)}</div>
+              <div class="meta"><b>${r.name}<span>.varde</span></b><div><span>${r.path}</span><span>${r.when}</span></div></div>
+            </button>`).join('')}
+        </div>
+      </div>
+    </div>`;
+}
+
+// ---------------------------------------------------------------- render
+function render() {
+  const app = $('#app');
+  const help = st.help ? helpModal() : '';
+  if (st.screen === 'welcome') {
+    app.innerHTML = titlebar() + welcome() + statusbar() + help;
+    return;
+  }
+  const hint = st.doc.kind === 'empty' && !st.doc.timeline.length && st.mode === 'model' && !st.pick && !st.sel
+    ? `<div class="hint-center">Select an origin plane, then <kbd>S</kbd> to sketch</div>` : '';
+  app.innerHTML = titlebar() + toolbar() + `
+    <div class="side">${side()}</div>
+    <div class="vp">
+      <svg id="scene" viewBox="${viewBox()}" preserveAspectRatio="xMidYMid meet">${sceneInner()}</svg>
+      <div class="cube-wrap">
+        <button class="home-btn" data-act="view:home" title="Home view">${icon('home')}</button>
+        <svg id="cube" class="cube" viewBox="0 0 96 96">${cubeInner()}</svg>
+      </div>
+      ${hint}
+    </div>` + (st.alt || st.gbarPinned ? gbar() : '') + statusbar() + help;
+}
+
+function helpModal() {
+  const kv = (k, v) => `<div class="kv"><span>${v}</span><span>${k.split(' ').map(x => `<kbd>${x}</kbd>`).join(' ')}</span></div>`;
+  return `<div class="modal-bg" data-act="help"><div class="modal" data-act="noop">
+    <h2>Keyboard &amp; mouse</h2>
+    <div class="cols">
+      <h3>Everywhere</h3>
+      ${kv('Ctrl K', 'Command palette')}${kv('?', 'This sheet')}
+      ${kv('Esc', 'Back out one level')}${kv('Alt', 'Hold: other tab + tool bar')}${kv('Alt', 'Tap: keep the tool bar open')}
+      <h3>Model</h3>
+      ${kv('S', 'Sketch')}${kv('E', 'Extrude')}${kv('Q', 'Press pull')}${kv('H', 'Hole')}${kv('F', 'Fillet')}${kv('I', 'Measure')}
+      <h3>Sketch</h3>
+      ${kv('L', 'Line')}${kv('R', 'Rectangle')}${kv('C', 'Circle')}${kv('A', 'Arc')}${kv('T', 'Trim')}${kv('D', 'Dimension')}
+      <h3>Mouse</h3>
+      <div class="kv"><span>Select face</span><span>${mouse('l')} click</span></div>
+      <div class="kv"><span>Select body</span><span>${mouse('l')} double-click</span></div>
+      <div class="kv"><span>Orbit</span><span>${mouse('l')} drag</span></div>
+      <div class="kv"><span>Pan</span><span>${mouse('r')} / ${mouse('m')} drag</span></div>
+      <div class="kv"><span>Zoom</span><span>${mouse('w')} wheel</span></div>
+      <div class="kv"><span>Reorder / roll back</span><span>drag in timeline</span></div>
+    </div>
+    <p>The toolbar only lists operations that apply to the current context and selection. Shortcut letters follow the same list, so what you see is what the keyboard does.</p>
+  </div></div>`;
+}
+
+// ---------------------------------------------------------------- actions
+let toastTimer;
+function toast(msg) {
+  const t = $('#toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 1400);
+}
+
+function isDark() {
+  const t = root.dataset.theme;
+  return t ? t === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+}
+
+function openDoc(kind, name, intro = true) {
+  Object.assign(st, { screen: 'doc', doc: makeDoc(kind, name), mode: 'model', sketch: null, tool: null, pick: false, sel: null, menu: false });
+  if (intro && !reduced) {
+    Object.assign(cam, HOME, { yaw: HOME.yaw - 75, pitch: 8, zoom: 1.7 });
+    requestAnimationFrame(() => animateCam(HOME, 1100));
+  } else {
+    Object.assign(cam, HOME);
+  }
+}
+
+// New sketches go in at the marker, like any new feature.
+function enterSketch(id, plane, isNew) {
+  const d = st.doc;
+  if (isNew) {
+    const n = d.timeline.filter(t => t.type === 'sketch').length + 1;
+    id = 'n' + Date.now();
+    d.timeline.splice(d.rollback, 0, { id, type: 'sketch', name: 'Sketch ' + n, meta: FACE_INFO[plane][0] === 'Origin plane' ? FACE_INFO[plane][1] : 'Face' });
+    d.rollback++;
+    d.dirty = true;
+  }
+  st.prevCam = { ...cam };
+  Object.assign(st, { mode: 'sketch', sketch: { id, plane }, tool: null, pick: false, sel: null });
+  animateCam(sketchCam(plane), 750);
+}
+
+function finishSketch() {
+  Object.assign(st, { mode: 'model', sketch: null, tool: null });
+  animateCam(st.prevCam || HOME, 750);
+}
+
+function doOp(id) {
+  if (id.startsWith('tool:')) { const t = id.slice(5); st.tool = st.tool === t ? null : t; return; }
+  const d = st.doc;
+  switch (id) {
+    case 'sketch':
+      if (st.sel && (st.sel.kind === 'face' || st.sel.kind === 'plane')) enterSketch(null, st.sel.id, true);
+      else { st.pick = !st.pick; st.sel = null; }
+      return;
+    case 'finish': finishSketch(); return;
+    case 'edit-sketch': enterSketch(st.sel.id, SKETCHES[st.sel.id]?.plane || 'plane-xy'); return;
+    case 'hide': d.hidden.add('body'); st.sel = null; return;
+    case 'rollback': d.rollback = d.timeline.findIndex(t => t.id === st.sel.id) + 1; st.sel = null; return;
+    case 'delete': {
+      const i = d.timeline.findIndex(t => t.id === st.sel.id);
+      d.timeline.splice(i, 1);
+      if (i < d.rollback) d.rollback--;
+      d.dirty = true;
+      st.sel = null;
+      return;
+    }
+  }
+  const o = ops().find(o => o.id === id) || GLOBAL_FLAT.find(o => o.op === id);
+  toast((o ? o.label : id) + ' — not wired up in the mock');
+}
+
+function faceClick(id) {
+  if (st.mode === 'sketch') return;
+  const kind = id.startsWith('hole') ? 'hole' : id.startsWith('plane') ? 'plane' : 'face';
+  if (st.pick) {
+    if (kind === 'hole') { toast('Pick a planar face'); return; }
+    enterSketch(null, id, true);
+    return;
+  }
+  st.sel = st.sel && st.sel.id === id ? null : { kind, id };
+}
+
+function act(a) {
+  const [k, ...rest] = a.split(':');
+  const v = rest.join(':');
+  if (k !== 'menu') st.menu = false;
+  switch (k) {
+    case 'new': openDoc('empty', 'Untitled'); break;
+    case 'open': openDoc('bracket', v); break;
+    case 'home': Object.assign(st, { screen: 'welcome', doc: null }); break;
+    case 'menu': st.menu = !st.menu; break;
+    case 'theme': root.dataset.theme = isDark() ? 'light' : 'dark'; break;
+    case 'help': st.help = !st.help; break;
+    case 'toast': toast(v); return;
+    case 'view': animateCam(v === 'home' ? HOME : { ...VIEWS[v], px: 0, py: 0 }); return;
+    case 'op': doOp(v); break;
+    case 'gop': altUsed = true; globalOp(v); break;
+    case 'tab': st.panel = v; break;
+    case 'tl':
+      if (st.mode === 'sketch') return;
+      st.pick = false;
+      st.sel = st.sel?.id === v ? null : { kind: 'feature', id: v };
+      break;
+    case 'eye': {
+      const h = st.doc.hidden;
+      h.has(v) ? h.delete(v) : h.add(v);
+      break;
+    }
+    case 'obj':
+      if (v === 'body') st.sel = { kind: 'body', id: 'body' };
+      else if (v.startsWith('plane-')) st.sel = { kind: 'plane', id: v };
+      else if (st.doc.timeline.some(t => t.id === v)) st.sel = { kind: 'feature', id: v };
+      else return;
+      break;
+    default: return;
+  }
+  render();
+}
+
+// ---------------------------------------------------------------- input
+let drag = null, justDragged = false, altUsed = false, altDownAt = 0;
+
+document.addEventListener('click', e => {
+  if (justDragged) return;
+  const el = e.target.closest('[data-act]');
+  if (el) {
+    if (el.dataset.act !== 'noop') act(el.dataset.act);
+    return;
+  }
+  const f = e.target.closest('[data-face]');
+  if (f) { st.menu = false; faceClick(f.dataset.face); render(); return; }
+  if (e.target.closest('#scene') && st.screen === 'doc') {
+    if (st.mode === 'sketch' && st.tool) toast(TOOLS[st.tool].hint + ' — drawing not in mock');
+    else st.sel = null;
+    st.menu = false;
+    render();
+  } else if (st.menu && !e.target.closest('.file')) { st.menu = false; render(); }
+});
+
+document.addEventListener('dblclick', e => {
+  if (st.screen !== 'doc' || st.mode === 'sketch') return;
+  // Double-clicking the model selects the whole body.
+  const f = e.target.closest('.face, .hole');
+  if (f) { st.sel = { kind: 'body', id: 'body' }; render(); return; }
+  const r = e.target.closest('[data-act^="tl:"], [data-act^="obj:"]');
+  if (!r) return;
+  const id = r.dataset.act.split(':')[1];
+  const t = st.doc.timeline.find(t => t.id === id);
+  if (!t) return;
+  if (t.type === 'sketch') enterSketch(t.id, SKETCHES[t.id]?.plane || 'plane-xy');
+  else toast('Edit ' + t.name + ' — not wired up in the mock');
+  render();
+});
+
+// Timeline drag and drop: rows reorder, the marker sets the rollback point.
+let dnd = null;
+const clearDrop = () => document.querySelectorAll('.drop-before, .drop-after').forEach(el => el.classList.remove('drop-before', 'drop-after'));
+document.addEventListener('dragstart', e => {
+  const el = e.target.closest?.('[data-drag]');
+  if (!el) return;
+  dnd = { from: +el.dataset.idx };
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', el.dataset.id || 'marker');
+  requestAnimationFrame(() => el.classList.add('dragging'));
+});
+// The insertion point is a gap between items; it's always drawn as a line
+// above the item after the gap (or below the last one), so each gap has
+// exactly one look. Anywhere below the list means "at the end".
+document.addEventListener('dragover', e => {
+  if (!dnd) return;
+  const list = e.target.closest('.list');
+  clearDrop();
+  if (!list) { dnd.to = null; return; }
+  e.preventDefault();
+  const items = [...list.querySelectorAll('.tl-item')];
+  const el = e.target.closest('.tl-item');
+  let to = items.length;
+  if (el) {
+    const r = el.getBoundingClientRect();
+    to = +el.dataset.idx + (e.clientY > r.top + r.height / 2 ? 1 : 0);
+  }
+  dnd.to = to;
+  if (to < items.length) items[to].classList.add('drop-before');
+  else items[items.length - 1].classList.add('drop-after');
+});
+document.addEventListener('drop', e => {
+  if (!dnd || dnd.to == null) return;
+  e.preventDefault();
+  const d = st.doc;
+  const seq = [...d.timeline.slice(0, d.rollback), { marker: true }, ...d.timeline.slice(d.rollback)];
+  const [item] = seq.splice(dnd.from, 1);
+  seq.splice(dnd.to > dnd.from ? dnd.to - 1 : dnd.to, 0, item);
+  d.rollback = seq.findIndex(t => t.marker);
+  d.timeline = seq.filter(t => !t.marker);
+  d.dirty = true;
+  dnd = null;
+  render();
+});
+document.addEventListener('dragend', () => {
+  dnd = null;
+  clearDrop();
+  document.querySelectorAll('.dragging').forEach(el => el.classList.remove('dragging'));
+});
+
+const unitsPerPx = () => {
+  const s = $('#scene').getBoundingClientRect();
+  return Math.max(380 * cam.zoom / s.width, 250 * cam.zoom / s.height);
+};
+
+document.addEventListener('pointerdown', e => {
+  if (!e.target.closest('#scene')) return;
+  if (st.alt) altUsed = true;
+  drag = { x: e.clientX, y: e.clientY, b: e.button, moved: false, cam: { ...cam } };
+});
+window.addEventListener('pointermove', e => {
+  if (!drag) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  if (!drag.moved) {
+    if (Math.hypot(dx, dy) < 4) return;
+    drag.moved = true;
+    cancelAnimationFrame(camAnim);
+    document.body.classList.add('dragging');
+  }
+  if (drag.b === 0) {
+    cam.yaw = drag.cam.yaw - dx * 0.4;
+    cam.pitch = clamp(drag.cam.pitch + dy * 0.4, -90, 90);
+  } else {
+    const k = unitsPerPx();
+    cam.px = drag.cam.px - dx * k;
+    cam.py = drag.cam.py - dy * k;
+  }
+  queueRedraw();
+});
+window.addEventListener('pointerup', () => {
+  if (drag?.moved) { justDragged = true; setTimeout(() => { justDragged = false; }, 0); }
+  drag = null;
+  document.body.classList.remove('dragging');
+});
+document.addEventListener('contextmenu', e => { if (e.target.closest('#scene')) e.preventDefault(); });
+document.addEventListener('wheel', e => {
+  const s = e.target.closest('#scene');
+  if (!s) return;
+  e.preventDefault();
+  cancelAnimationFrame(camAnim);
+  // Zoom towards the cursor: keep the point under it fixed.
+  const at = () => { const p = s.createSVGPoint(); p.x = e.clientX; p.y = e.clientY; return p.matrixTransform(s.getScreenCTM().inverse()); };
+  const before = at();
+  cam.zoom = clamp(cam.zoom * Math.exp(e.deltaY * 0.0012), 0.25, 4);
+  s.setAttribute('viewBox', viewBox());
+  const after = at();
+  cam.px += before.x - after.x;
+  cam.py += before.y - after.y;
+  queueRedraw();
+}, { passive: false });
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Alt') {
+    e.preventDefault();
+    if (!e.repeat && st.screen === 'doc') { st.alt = true; altUsed = false; altDownAt = performance.now(); render(); }
+    return;
+  }
+  if (e.altKey) altUsed = true;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.key === '?') { st.help = !st.help; render(); return; }
+  if (st.help) { if (e.key === 'Escape') { st.help = false; render(); } return; }
+
+  const key = e.key === 'Delete' ? 'Del' : e.key.length === 1 ? e.key.toUpperCase() : e.key;
+  if (st.screen === 'welcome') {
+    if (key === 'N') { openDoc('empty', 'Untitled'); render(); }
+    if (key === 'O') { openDoc('bracket', 'bracket'); render(); }
+    return;
+  }
+  if (e.key === 'Escape') {
+    if (st.menu) st.menu = false;
+    else if (st.gbarPinned) st.gbarPinned = false;
+    else if (st.tool) st.tool = null;
+    else if (st.pick) st.pick = false;
+    else if (st.sel) st.sel = null;
+    else if (st.mode === 'sketch') finishSketch();
+    render();
+    return;
+  }
+  const o = ops().find(o => o.key === key);
+  if (o) { e.preventDefault(); doOp(o.id); render(); }
+});
+
+document.addEventListener('keyup', e => {
+  if (e.key !== 'Alt') return;
+  e.preventDefault();
+  if (!st.alt) return;
+  st.alt = false;
+  // A quick tap on its own pins the bar open (or closes it again).
+  if (!altUsed && performance.now() - altDownAt < 300) st.gbarPinned = !st.gbarPinned;
+  render();
+});
+window.addEventListener('blur', () => { if (st.alt) { st.alt = false; render(); } });
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', render);
+
+// Deep links for screenshots (listed in the header comment).
+{
+  const [doc, view] = location.hash.slice(1).split('/');
+  if (location.hash.endsWith('/still')) root.classList.add('still');
+  if (doc === 'empty') openDoc('empty', 'Untitled', false);
+  if (doc === 'bracket') {
+    openDoc('bracket', 'bracket', false);
+    if (view === 'face') st.sel = { kind: 'face', id: 'base-top' };
+    if (view === 'body') st.sel = { kind: 'body', id: 'body' };
+    if (view === 'sketch' || view === 'sketchtools') {
+      Object.assign(st, { mode: 'sketch', sketch: { id: 's1', plane: 'side' } });
+      Object.assign(cam, sketchCam('side'));
+    }
+  }
+  if (view === 'tools' || view === 'sketchtools') st.gbarPinned = true;
+}
+render();
+</script>
+</body>
+</html>

@@ -1,0 +1,64 @@
+[package]
+name = "varde-io"
+description = "File system access off the UI thread: the IO lane, which owns the open documents, their lock files and the recent files list, and the file pickers that feed it"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+varde-document.workspace = true
+varde-lane.workspace = true
+serde.workspace = true
+# The .vrdp format, src/vrdp.rs, and the wire format, src/wire.rs.
+postcard.workspace = true
+snap.workspace = true
+crc32fast.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+directories.workspace = true
+rfd.workspace = true
+# recent.toml; the web has no recent files list.
+toml.workspace = true
+
+# The IO Web Worker, the Origin Private File System and the page's file
+# pickers and downloads.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# The worker's wake channel and the page's responses.
+futures.workspace = true
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+js-sys.workspace = true
+log.workspace = true
+web-sys = { workspace = true, features = [
+    "Blob",
+    "BlobPropertyBag",
+    "console",
+    "Document",
+    "DomException",
+    "Element",
+    "EventTarget",
+    "File",
+    "FileList",
+    "FileSystemDirectoryHandle",
+    "FileSystemFileHandle",
+    "FileSystemGetDirectoryOptions",
+    "FileSystemGetFileOptions",
+    "FileSystemHandle",
+    "FileSystemReadWriteOptions",
+    "FileSystemSyncAccessHandle",
+    "FileSystemWritableFileStream",
+    "HtmlAnchorElement",
+    "HtmlElement",
+    "HtmlInputElement",
+    "Node",
+    "StorageManager",
+    "Url",
+    "Window",
+    "WorkerGlobalScope",
+    "WorkerNavigator",
+    "WritableStream",
+] }
+
+[dev-dependencies]
+# Polling the native lane's responses.
+futures.workspace = true

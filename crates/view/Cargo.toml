@@ -1,0 +1,20 @@
+[package]
+name = "varde-view"
+description = "iced widgets and layout"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+varde-document.workspace = true
+varde-render.workspace = true
+varde-kernel.workspace = true
+iced.workspace = true
+glam.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+# Blocks on wgpu setup in headless render tests.
+pollster.workspace = true
+# Builds the meshes the viewport tests show.
+varde-regen.workspace = true

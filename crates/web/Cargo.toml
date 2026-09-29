@@ -1,0 +1,13 @@
+[package]
+name = "varde-web"
+description = "WebAssembly build of varde (build with `trunk serve` from this directory)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+varde-app.workspace = true
+iced = { workspace = true, features = ["webgl", "fira-sans"] }
+console_error_panic_hook.workspace = true
+console_log.workspace = true
+log.workspace = true

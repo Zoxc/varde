@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Varde CAD</title>
+    <style>
+      /* The light theme's background, `LIGHT.panel` in crates/view/src/theme.rs,
+         which the app starts in; shown until iced draws its first frame. */
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #fafafb; }
+      canvas { display: block; width: 100%; height: 100%; }
+    </style>
+    <link data-trunk rel="rust" data-bin="varde-web" />
+    <!-- The regeneration Web Worker, from varde-regen. -->
+    <link data-trunk rel="rust" href="../regen/Cargo.toml" data-bin="varde-regen-worker" data-type="worker" />
+    <!-- The IO Web Worker, from varde-io: new designs in the Origin Private File System. -->
+    <link data-trunk rel="rust" href="../io/Cargo.toml" data-bin="varde-io-worker" data-type="worker" />
+    <!-- Starts either worker, see the script. -->
+    <link data-trunk rel="copy-file" href="worker_loader.js" />
+  </head>
+  <body></body>
+</html>

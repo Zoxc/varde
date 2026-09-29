@@ -1,0 +1,15 @@
+[package]
+name = "varde"
+description = "Native executable"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+varde-app.workspace = true
+# Its output goes to stderr, see `src/main.rs`.
+log.workspace = true
+
+# Embeds the application icon; only does anything when targeting Windows.
+[build-dependencies]
+winresource.workspace = true

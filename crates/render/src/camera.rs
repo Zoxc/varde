@@ -1,0 +1,279 @@
+use std::ops::Range;
+
+use glam::{Mat4, Vec2, Vec3, Vec4};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Projection {
+    #[default]
+    Orthographic,
+    Perspective,
+}
+
+/// A side to look at the model from, like the faces of a view cube.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum View {
+    Top,
+    Bottom,
+    Front,
+    Back,
+    Right,
+    Left,
+}
+
+impl View {
+    pub const ALL: [View; 6] = [
+        View::Top,
+        View::Bottom,
+        View::Front,
+        View::Back,
+        View::Right,
+        View::Left,
+    ];
+
+    /// Yaw and pitch in radians. Front looks along +Y, Right along -X.
+    fn angles(self) -> (f32, f32) {
+        use std::f32::consts::{FRAC_PI_2, PI};
+        match self {
+            View::Top => (-FRAC_PI_2, FRAC_PI_2),
+            View::Bottom => (-FRAC_PI_2, -FRAC_PI_2),
+            View::Front => (-FRAC_PI_2, 0.0),
+            View::Back => (FRAC_PI_2, 0.0),
+            View::Right => (0.0, 0.0),
+            View::Left => (PI, 0.0),
+        }
+    }
+
+    /// Unit vector from the model towards the camera.
+    pub fn normal(self) -> Vec3 {
+        let (yaw, pitch) = self.angles();
+        // Exact, although the angles aren't.
+        backward(yaw, pitch).round()
+    }
+
+    /// Unit vector pointing right on screen when looking from this view.
+    pub fn right(self) -> Vec3 {
+        let (yaw, _) = self.angles();
+        right(yaw).round()
+    }
+
+    /// Unit vector pointing up on screen when looking from this view.
+    pub fn up(self) -> Vec3 {
+        let (yaw, pitch) = self.angles();
+        up(yaw, pitch).round()
+    }
+}
+
+/// An orbiting camera. The world is Z-up.
+///
+/// Both projections show the same extent at the target, so switching between
+/// them keeps the model roughly the same size on screen.
+///
+/// The fields are private so the methods can keep the camera finite and
+/// bounded, which the depth range relies on: yaw finite, pitch within
+/// [`Self::PITCH_LIMIT`], the target within [`Self::EXTENT`] and the
+/// distance from [`Self::MIN_DISTANCE`] to [`Self::EXTENT`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Camera {
+    projection: Projection,
+    target: Vec3,
+    /// Rotation around the world Z axis, in radians.
+    yaw: f32,
+    /// Elevation above the XY plane, in radians.
+    pitch: f32,
+    /// At least [`Self::MIN_DISTANCE`].
+    distance: f32,
+    /// Vertical field of view, in radians. In orthographic mode this only
+    /// determines how much of the scene is visible at `distance`.
+    fov_y: f32,
+}
+
+/// Looking at the origin from above the front right.
+impl Default for Camera {
+    fn default() -> Self {
+        Self {
+            projection: Projection::default(),
+            target: Vec3::ZERO,
+            yaw: -60f32.to_radians(),
+            pitch: 30f32.to_radians(),
+            distance: 9.0,
+            fov_y: 45f32.to_radians(),
+        }
+    }
+}
+
+impl Camera {
+    /// Straight down or up. The view basis comes from yaw and pitch rather
+    /// than a fixed up vector, so the poles are well defined.
+    pub const PITCH_LIMIT: f32 = std::f32::consts::FRAC_PI_2;
+    /// Bound on the target's coordinates and the orbit distance, the
+    /// kernel's coordinate limit, so the camera stays finite however far it
+    /// is panned or zoomed.
+    pub const EXTENT: f32 = varde_kernel::MAX_COORD;
+    /// The closest [`Self::zoom`] brings the eye to the target.
+    pub const MIN_DISTANCE: f32 = 1e-3;
+
+    pub fn projection(&self) -> Projection {
+        self.projection
+    }
+
+    pub fn set_projection(&mut self, projection: Projection) {
+        self.projection = projection;
+    }
+
+    /// The point the camera orbits and looks at.
+    pub fn target(&self) -> Vec3 {
+        self.target
+    }
+
+    /// Moves the target, clamped within [`Self::EXTENT`] of the origin like
+    /// [`Self::pan`]. A target that isn't finite is ignored.
+    pub fn set_target(&mut self, target: Vec3) {
+        if target.is_finite() {
+            let extent = Vec3::splat(Self::EXTENT);
+            self.target = target.clamp(-extent, extent);
+        }
+    }
+
+    /// How far the eye is from the target.
+    pub fn distance(&self) -> f32 {
+        self.distance
+    }
+
+    pub(crate) fn eye(&self) -> Vec3 {
+        self.target + self.backward() * self.distance
+    }
+
+    /// Unit vector from the target towards the camera.
+    pub fn backward(&self) -> Vec3 {
+        backward(self.yaw, self.pitch)
+    }
+
+    /// Unit vector pointing right on screen.
+    pub fn right(&self) -> Vec3 {
+        right(self.yaw)
+    }
+
+    /// Unit vector pointing up on screen.
+    pub fn up(&self) -> Vec3 {
+        up(self.yaw, self.pitch)
+    }
+
+    /// Height of the visible region at the target, in world units.
+    pub fn view_height(&self) -> f32 {
+        2.0 * self.distance * (self.fov_y * 0.5).tan()
+    }
+
+    /// Half the visible width and height at the target, for a viewport of
+    /// `aspect`.
+    pub(crate) fn half_extents(&self, aspect: f32) -> Vec2 {
+        let half_height = self.view_height() * 0.5;
+        Vec2::new(half_height * aspect, half_height)
+    }
+
+    /// The eye in homogeneous coordinates: w = 1, or in orthographic mode
+    /// the direction towards the camera with w = 0, an eye at infinity.
+    pub(crate) fn eye_homogeneous(&self) -> Vec4 {
+        match self.projection {
+            Projection::Perspective => self.eye().extend(1.0),
+            Projection::Orthographic => self.backward().extend(0.0),
+        }
+    }
+
+    pub(crate) fn view(&self) -> Mat4 {
+        Mat4::look_at_rh(self.eye(), self.target, self.up())
+    }
+
+    /// The projection for a viewport of `aspect`, drawing `depth`, distances
+    /// in front of the eye. `aspect` must be positive and finite, like
+    /// [`Viewport::aspect`]'s.
+    ///
+    /// [`Viewport::aspect`]: crate::Viewport::aspect
+    pub(crate) fn projection_matrix(&self, aspect: f32, depth: Range<f32>) -> Mat4 {
+        match self.projection {
+            Projection::Perspective => {
+                let near = (self.distance * 0.01).max(1e-3);
+                Mat4::perspective_rh(self.fov_y, aspect, near, depth.end.max(near * 2.0))
+            }
+            Projection::Orthographic => {
+                let half = self.half_extents(aspect);
+                // The near plane may be behind the eye, so zooming in never
+                // clips geometry.
+                Mat4::orthographic_rh(-half.x, half.x, -half.y, half.y, depth.start, depth.end)
+            }
+        }
+    }
+
+    /// Rotates the camera around its target by the given angles in radians.
+    /// Non-finite angles are ignored.
+    pub fn orbit(&mut self, delta_yaw: f32, delta_pitch: f32) {
+        if !(delta_yaw.is_finite() && delta_pitch.is_finite()) {
+            return;
+        }
+        self.yaw = (self.yaw + delta_yaw).rem_euclid(std::f32::consts::TAU);
+        self.pitch = (self.pitch + delta_pitch).clamp(-Self::PITCH_LIMIT, Self::PITCH_LIMIT);
+    }
+
+    /// Moves the target in the view plane. `delta` is in fractions of the
+    /// viewport height, so panning tracks the cursor at the target depth.
+    /// The target stays within [`Self::EXTENT`] of the origin, and a pan
+    /// that isn't finite is ignored.
+    pub fn pan(&mut self, delta_x: f32, delta_y: f32) {
+        let offset = (-self.right() * delta_x + self.up() * delta_y) * self.view_height();
+        if offset.is_finite() {
+            // Clamped rather than ignored if the sum overflows.
+            let extent = Vec3::splat(Self::EXTENT);
+            self.target = (self.target + offset).clamp(-extent, extent);
+        }
+    }
+
+    /// Looks at the target from `view`, keeping the distance.
+    pub fn look_from(&mut self, view: View) {
+        (self.yaw, self.pitch) = view.angles();
+    }
+
+    /// The camera a fraction `t` of the way from `self` to `to`, turning the
+    /// short way round. Distance changes geometrically so zoom feels even.
+    /// Projection and field of view are taken from `to`.
+    pub fn lerp(&self, to: &Camera, t: f32) -> Camera {
+        use std::f32::consts::{PI, TAU};
+        let yaw = (to.yaw - self.yaw + PI).rem_euclid(TAU) - PI;
+        Camera {
+            target: self.target.lerp(to.target, t),
+            yaw: self.yaw + yaw * t,
+            pitch: self.pitch + (to.pitch - self.pitch) * t,
+            distance: self.distance * (to.distance / self.distance).powf(t),
+            ..*to
+        }
+    }
+
+    /// Multiplies the orbit distance, e.g. `0.9` to move 10% closer. A `NaN`
+    /// factor is ignored.
+    pub fn zoom(&mut self, factor: f32) {
+        if !factor.is_nan() {
+            self.distance = (self.distance * factor).clamp(Self::MIN_DISTANCE, Self::EXTENT);
+        }
+    }
+}
+
+/// Unit vector towards a camera at `yaw` and `pitch`, from its target.
+fn backward(yaw: f32, pitch: f32) -> Vec3 {
+    let (sy, cy) = yaw.sin_cos();
+    let (sp, cp) = pitch.sin_cos();
+    Vec3::new(cp * cy, cp * sy, sp)
+}
+
+/// Unit vector right on screen for a camera at `yaw`.
+fn right(yaw: f32) -> Vec3 {
+    let (sy, cy) = yaw.sin_cos();
+    Vec3::new(-sy, cy, 0.0)
+}
+
+/// Unit vector up on screen for a camera at `yaw` and `pitch`.
+fn up(yaw: f32, pitch: f32) -> Vec3 {
+    let (sy, cy) = yaw.sin_cos();
+    let (sp, cp) = pitch.sin_cos();
+    Vec3::new(-sp * cy, -sp * sy, cp)
+}
+
+#[cfg(test)]
+mod tests;

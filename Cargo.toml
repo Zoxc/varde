@@ -1,0 +1,56 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+default-members = ["crates/binary"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+
+[workspace.dependencies]
+varde-kernel = { path = "crates/kernel" }
+varde-sketch = { path = "crates/sketch" }
+varde-render = { path = "crates/render" }
+varde-document = { path = "crates/document" }
+varde-lane = { path = "crates/lane" }
+varde-regen = { path = "crates/regen" }
+varde-io = { path = "crates/io" }
+varde-view = { path = "crates/view" }
+varde-app = { path = "crates/app" }
+
+iced = { version = "0.14", features = ["svg", "canvas"] }
+# Rasterizes the window icon. Must match the resvg version iced renders SVGs
+# with, so it is shared rather than built twice.
+resvg = { version = "0.45", default-features = false }
+# Must match the wgpu version used by iced_wgpu so types are shared.
+wgpu = "27"
+glam = { version = "0.30", features = ["bytemuck", "serde"] }
+bytemuck = { version = "1", features = ["derive"] }
+# Blocks on wgpu setup in headless render tests.
+pollster = "0.4"
+serde = { version = "1", features = ["derive"] }
+postcard = { version = "1", features = ["use-std"] }
+snap = "1"
+crc32fast = "1"
+toml = "1"
+directories = "6"
+# Channels for the regeneration and IO lanes; already built for iced.
+futures = { version = "0.3.34", default-features = false, features = ["std"] }
+# The portal backend talks D-Bus to the desktop, so no GTK is linked.
+rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }
+# Web bindings. Versions match what iced and wgpu already pull in.
+wasm-bindgen = "0.2.106"
+wasm-bindgen-futures = "0.4.79"
+js-sys = "0.3.83"
+web-sys = "0.3.83"
+# Panics and `log` output (the app's, iced's and wgpu's) to the browser
+# console, in crates/web.
+console_error_panic_hook = "0.1"
+console_log = "1"
+log = "0.4"
+# Embeds the Windows executable icon, in the build script of crates/binary.
+winresource = { version = "0.1", default-features = false }
+
+[profile.dev.package."*"]
+opt-level = 2
