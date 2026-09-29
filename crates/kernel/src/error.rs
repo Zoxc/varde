@@ -1,5 +1,6 @@
 use crate::mesh::CheckError;
 use crate::patch::PatchError;
+use crate::profile::ProfileError;
 
 /// Why a kernel operation gives no solid. It never gives an invalid one
 /// instead.
@@ -15,6 +16,8 @@ pub enum KernelError {
     Invalid(CheckError),
     /// A parameter or a split gave geometry outside the patch bounds.
     Patch(PatchError),
+    /// A profile that can't be extruded.
+    Profile(ProfileError),
 }
 
 impl std::fmt::Display for KernelError {
@@ -23,6 +26,7 @@ impl std::fmt::Display for KernelError {
             KernelError::TooComplex => f.write_str("the geometry is too complex to work out"),
             KernelError::Invalid(e) => write!(f, "the geometry is invalid: {e}"),
             KernelError::Patch(e) => write!(f, "the geometry is out of bounds: {e}"),
+            KernelError::Profile(e) => write!(f, "the profile can't be extruded: {e}"),
         }
     }
 }
@@ -32,5 +36,11 @@ impl std::error::Error for KernelError {}
 impl From<PatchError> for KernelError {
     fn from(e: PatchError) -> Self {
         KernelError::Patch(e)
+    }
+}
+
+impl From<ProfileError> for KernelError {
+    fn from(e: ProfileError) -> Self {
+        KernelError::Profile(e)
     }
 }

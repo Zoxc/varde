@@ -15,7 +15,8 @@ the check of their invariants, the BVH and the hull tests, red–green
 refinement and repair, and box and cylinder meshes (`mesh`), the
 tolerances (`Tolerance`), the limits, `Budget` and `KernelError`, and the
 parallel map (`par`), below, and `Solid`, a checked mesh, with its
-tessellation for drawing (`tessellate`). Documents store no geometry:
+tessellation for drawing (`tessellate`) and its volume and area, and
+`extrude`, which sweeps a `Profile` into a solid. Documents store no geometry:
 bodies are the outputs of the feature history, which `varde-regen`
 evaluates into solids and draws (see "Bodies from the history").
 
@@ -782,6 +783,162 @@ turn by dense sampling and one fewer wouldn't; the strip joins any two
 counts; results are the same at 1 and 8 threads; far positions are
 refused.
 
+## Profiles and extrude (`src/profile.rs`, `src/extrude.rs`, `src/extrude/`)
+
+| file | holds |
+|---|---|
+| `profile.rs` | `Profile`, `Loop`, `Segment`, `ProfileError`, `Profile::check`, signed areas |
+| `extrude.rs` | `Frame`, `extrude`, building the mesh, the walls' surfaces |
+| `extrude/chain.rs` | the segments the solid is built on: classifying, cusps, separating |
+| `extrude/cap.rs` | the caps' triangulation and the rounds that mend it |
+| `profile/tests.rs`, `extrude/tests.rs` | profile builders (exact arcs without trig, circles, rectangles), shapes with analytic volumes |
+
+### Profiles
+
+A `Profile` is loops of `Segment { conic: Conic2, curve: u64 }`: outer
+loops counter-clockwise, holes clockwise, so the region is on the left of
+every segment; the curve id names the wall. The kernel knows no sketch:
+whoever builds a profile (regen) turns lines into `Conic2::line`, arcs
+into exact conics of at most 90° and splines into fitted chains, and
+merges regions. `Profile::check` holds what needs no tolerance: at least
+one loop, at most `MAX_PROFILE_SEGMENTS` (`1 << 16`) segments, loops of
+two or more segments, each segment within the patch bounds with its ends
+within `MAX_COORD` and apart, each segment starting **to the bit** where
+the one before ends (closure is never decided by distance), and every
+loop enclosing some area. `Loop::area` is signed: the polygon of the ends
+plus each segment's bulge off its chord, `½∫ (P − p0) × P' dt`, by
+Gauss–Legendre over pieces split off at `½` until their weights are within
+`0.9..=1.1` (a weight far from 1 crowds a conic's points, which the rule
+can't follow). Whether loops touch, cross or nest needs the resolution and
+is the extrude's to find.
+
+### Extrude
+
+`extrude(profile, frame, from, to, feature, tol, budget)`: the profile on
+`Frame { origin, x, y }` (unit axes, square within `1e-9`; the normal is
+`x × y`), swept from `from` to `to` along the normal (`from < to`, both
+within `MAX_COORD`, every corner of the solid within `MAX_COORD` of the
+origin). Faces: `StartCap` (at `from`, facing back), `EndCap`, and
+`Side { curve, segment }` per input segment, `segment` counting the
+segments of that curve in profile order; pieces a segment is split into
+share its face. Caps are tagged with their planes, straight walls with
+theirs, curved walls with the cylinder over their conic (below). The
+steps:
+
+1. **Chain** (`Chain::new`). A segment whose control point is within the
+   resolution of its chord (and between its ends) becomes
+   `Conic2::line`; one on the chord's line past an end runs back on itself
+   and is `Degenerate`. At each joint the tangents (towards the control
+   points, or along a straight segment) must not leave the same way within
+   a sine of `SIN_MIN` (`1e-3`): a `Cusp`, angle 0° or 360°. The curved
+   segments of a two-segment loop are halved, so no two segments share
+   both ends.
+2. **Separation** (`Chain::separate`). Every two segments' control hulls,
+   through a BVH over their boxes: two that share no end must be more than
+   the resolution apart (GJK, as for patches), two in a row must be split
+   by a line through their shared end with the resolution to spare (the
+   hull of one's other control points and the other's mirrored through
+   the end is more than the resolution from it). Failing curved segments
+   are halved at `½` and the round runs again. Halving shrinks hulls, so
+   passing pairs keep passing. Then no two segments cross or touch, the
+   polygon of the chords is simple, and each curve's bulge off its chord
+   lies in its own hull, clear of everything else. A failing pair that
+   can't be halved (straight, halved 24 times, or less than `MIN_SPLIT` =
+   64 resolutions across: such pieces can't keep the margin from their own
+   neighbours, and halving them only makes more that fail) is `Touching`.
+   This is what makes a thin ring's arcs short enough that the two
+   circles' chords keep apart.
+3. **Caps** (`cap::triangulate`). The constrained Delaunay triangulation
+   (`spade`) of the chord polygon's vertices and the Steiner points, with
+   the chords as constraints. Its triangles are classified by winding
+   number, walked from the outer face across sides: crossing a chord from
+   its right to its left adds one. The region is where it is 1; any other
+   value than 0 or 1 is `Nesting` (a hole outside everything, an outer
+   loop in material, a loop running the wrong way). Each triangle's patch
+   takes the segments along its sides as curved edges; inner edges are
+   straight. Then the corners are checked between the curves' tangents,
+   not the chords (a corner is open when the cross product exceeds
+   `SIN_MIN` times the lengths):
+   - An **ear** (two of the loop's segments meeting at a corner of one
+     triangle) whose tangents turn by 180° or more, like two arcs in a row
+     of a circle, gets a Steiner point at the triangle's centroid.
+   - A corner between a curved segment and an inner edge that isn't open
+     gets that segment halved: its tangent turns towards its chord. For a
+     segment bulging into the region (concave, control point on the left)
+     an open corner at both ends means the control point, and so the whole
+     bulge, lies inside the triangle.
+   - A triangle whose corners are open but whose patch fails the fold
+     check gets its curved segments halved. For weights up to 1 the fold
+     check passes exactly when a bulge's control point is inside the
+     triangle; above 1 a little before.
+   - A Steiner point within the resolution of a concave segment's hull
+     would leave the region once that segment is halved, so the segment is
+     halved instead.
+   Each round triangulates afresh (at most 32 rounds, segments halved at
+   most 16 times all told here, and never below `MIN_SPLIT`; past these,
+   `TooComplex`). Coordinates below `1e-30` are flushed to 0 for spade,
+   which refuses tiny non-zero ones: its exact predicates then decide only
+   which triangles there are, far above that difference.
+4. **Mesh** (`build`). The chain's vertices and the Steiner points at
+   `from`, then again moved by `offset = normal·(to − from)`. Each segment's
+   wall is two patches, `(a0, a1, b1)` and `(a0, b1, b0)`, whose curved
+   edges are set from `cylinder_strip` (bottom, top = bottom moved by
+   `offset`, and the diagonal), so the caps share the walls' edge records.
+   End cap triangles as triangulated, start cap reversed.
+5. **Repair and check**: `repair_within` with the same work, then
+   `Solid::new` checks it all. In every test so far repair finds nothing
+   to split: the construction already passes.
+
+A curved wall's surface is the cylinder over its conic: with `λ` the
+barycentric coordinates of a point's projection on the conic's control
+triangle `p0, c, p1`, a conic of weight `w` is `λ1² = 4w²·λ0·λ2`. The `λ`
+are affine in the point and constant along the normal (projected with the
+dual axes of `x`, `y` and the normal, so it holds for axes a little off
+square), which makes this a `Quadric`, written around `p0`. Arcs get the
+circular cylinder this way, ellipse, parabola and hyperbola arcs their
+cylinders. Straight walls: the plane through the segment, normal
+`chord × normal` (out of the region).
+
+Work: separation spends the segments plus the pairs each round,
+triangulation 8 per vertex plus the triangles each round, then the
+patches, then repair. Segment counts past `MAX_PATCHES / 4` are
+`TooComplex`.
+
+Measured (release): the tests' 80 × 80 plate with 64 round holes 1.1
+apart (260 segments) comes out with 940 vertices a cap and 4 012
+patches; a 210 × 210 plate with 400 such holes, about 20 000 patches in
+0.14 s; a plate with four holes splits nothing (20 segments, 92
+patches). A ring of radius 10, 0.001 wide, needs 1 024 segments. 600
+random plates with holes and weights from 0.05 to 20, most refused as
+touching: the slowest took 28 ms.
+
+Known gaps:
+
+- **Sharp or crowded curves at coarse tolerances** can come out
+  `Invalid` from repair (a flat cap piece and a wall piece a vertex apart
+  within the resolution) instead of `Touching`: seen only with conic
+  weights far from 1 (0.05 to 20) meeting at narrow angles.
+- **Repair of a cap patch along a concave curve**, should it ever be
+  needed, splits with straight inner edges; a piece whose corner at the
+  curve's midpoint turns inside out then fails with `TooComplex`. The
+  construction keeps concave bulges inside their triangles and passes
+  `check` without repair in every test.
+- Flat cap triangles thinner than the resolution (nearly collinear
+  vertices) fail as flat pairs in repair: `Invalid`.
+
+## Volume and area (`Solid::volume`, `Solid::area`, `src/quadrature.rs`)
+
+The volume is a third of `∫ (P − o)·n` over the surface (divergence
+theorem, `o` the middle of the bounds), the area `∫ |P_u × P_v|`, each
+patch integrated over its parameter triangle cut into its four half-edge
+pieces, each by the 8 × 8 Gauss–Legendre rule through the collapsed
+square (`u0 = s`, `u1 = (1 − s)t`, Jacobian `1 − s`): 256 points. A patch
+with a weight outside `0.7..=1.4` is split (`split4`, up to five times)
+first. The tests hold it to `1e-12` relative on boxes, cylinders and
+extrudes. Patch sums are added sequentially in patch order.
+The Gauss nodes and weights are written out, not computed, so no
+platform's `cos` decides them.
+
 ## Bodies from the history (`varde-document`, `varde-regen`)
 
 A document's `Body` is `{ id, name, visible, created_by: FeatureId }`: no
@@ -817,6 +974,10 @@ there by `RenderMesh::from_parts`.
 | `MAX_REFINE_DEPTH` | 24 | red splits from an input patch: `2^24` times smaller |
 | `MAX_WORK` | `1 << 26` | work units in one operation: about half a minute on one thread |
 | `MIN_SPLIT` (repair) | 64 resolutions | the smallest piece repair splits |
+| `MAX_PROFILE_SEGMENTS` | `1 << 16` | segments in a profile |
+| `SIN_MIN` (extrude) | `1e-3` | cusps between segments; the narrowest cap patch corner |
+| `MIN_SPLIT`, `MAX_SPLIT_DEPTH` (extrude) | 64 resolutions, 24 | the smallest segment halved, and how often |
+| `MAX_ROUNDS`, `MAX_CAP_DEPTH` (caps) | 32, 16 | rounds of mending the caps, and halvings a segment may have had for them |
 
 `Budget` is a limit (`Budget::new(work)`, at most `MAX_WORK`;
 `Budget::DEFAULT`); an operation counts it down in a `Work` its steps share
@@ -824,8 +985,9 @@ there by `RenderMesh::from_parts`.
 about a patch or a pair of patches tested or split: repair measured about
 0.5 µs a unit on one thread and 0.3 µs on seven. `KernelError` is
 `TooComplex`, `Invalid(CheckError)` (the input breaks an invariant the
-operation can't restore, or the result would), and `Patch(PatchError)` (a
-parameter, or a split outside the patch bounds). `MAX_TRACE_STEPS` comes
+operation can't restore, or the result would), `Patch(PatchError)` (a
+parameter, or a split outside the patch bounds), and
+`Profile(ProfileError)` (a profile that can't be extruded). `MAX_TRACE_STEPS` comes
 with tracing.
 
 ## Deviations
@@ -910,3 +1072,18 @@ with tracing.
   `RemoveFeature` removes just the bodies that feature makes, and
   `RemoveBody` removes only the body; the full cascade and the stricter
   checks come with the extrude feature.
+- **Caps are triangulated with `spade`** (constrained Delaunay, exact
+  predicates, builds for wasm; the kernel's only new dependency), then
+  mended in rounds (Steiner points at ears, halving curves at narrow
+  corners and folds), rather than by ear-clipping. Only its insertion,
+  constraints and face walks are used; its refinement, whose hash sets
+  could be iterated in a random order, is not.
+- **`extrude` takes a `Frame`** (origin and axes) and the extent as
+  `from < to` along its normal; flipping and sides are the caller's.
+- **`KernelError::Profile(ProfileError)`** carries a profile's own
+  errors: `Empty`, `TooManySegments`, `Short`, `Segment`, `Degenerate`,
+  `Open`, `Area`, `Cusp`, `Touching`, `Nesting`, `Triangulation`.
+- **Curved walls are tagged with the conic's own cylinder**
+  (`λ1² = 4w²λ0λ2`), not `Quadric::cylinder`: it holds for every conic
+  weight, and for arcs it is the circular cylinder up to scale.
+- **`Solid::area`** is new next to `Solid::volume`.

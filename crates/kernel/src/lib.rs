@@ -7,6 +7,10 @@
 //! [`RenderLines`]. Documents store no solids: they store the features
 //! that build them.
 //!
+//! [`extrude()`] sweeps a [`Profile`], closed loops of conics placed on a
+//! [`Frame`], into an exact solid; [`Solid::volume`] and [`Solid::area`]
+//! measure one.
+//!
 //! Booleans are to be built the way
 //! [manifold](https://github.com/elalish/manifold) builds them for flat
 //! triangles. The math of one curve or triangle is in [`patch`]; closed
@@ -18,9 +22,12 @@
 mod aabb;
 mod budget;
 mod error;
+mod extrude;
 pub mod mesh;
 mod par;
 pub mod patch;
+mod profile;
+mod quadrature;
 mod render_lines;
 mod render_mesh;
 mod solid;
@@ -32,6 +39,8 @@ mod tolerance;
 pub use aabb::Aabb;
 pub use budget::Budget;
 pub use error::KernelError;
+pub use extrude::{Frame, extrude};
+pub use profile::{Loop, MAX_PROFILE_SEGMENTS, Profile, ProfileError, Segment};
 pub use render_lines::{LinesError, LinesPart, RenderLines};
 pub use render_mesh::{MeshError, MeshPart, RenderMesh};
 pub use solid::Solid;

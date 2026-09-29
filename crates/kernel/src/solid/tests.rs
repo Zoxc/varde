@@ -80,3 +80,28 @@ fn the_empty_solid_draws_nothing() {
     );
     assert_eq!(Solid::new(Mesh::default(), &TOL), Ok(solid));
 }
+
+#[test]
+fn volumes_and_areas_are_analytic() {
+    let (min, size) = (DVec3::new(-3.0, 1e4, 7.0), DVec3::new(2.0, 0.5, 30.0));
+    let cuboid = Solid::cuboid(min, size, 0, &TOL).unwrap();
+    let volume = size.x * size.y * size.z;
+    assert!((cuboid.volume() - volume).abs() < 1e-12 * volume);
+    let area = 2.0 * (size.x * size.y + size.y * size.z + size.z * size.x);
+    assert!((cuboid.area() - area).abs() < 1e-12 * area);
+
+    let pi = std::f64::consts::PI;
+    for (r, h) in [(2.0, 5.0), (1e-2, 40.0), (300.0, 1.0)] {
+        let cylinder = Solid::cylinder(DVec3::new(5.0, -4.0, 1e3), r, h, 1, &TOL).unwrap();
+        let volume = pi * r * r * h;
+        assert!(
+            (cylinder.volume() - volume).abs() < 1e-12 * volume,
+            "{} {volume}",
+            cylinder.volume()
+        );
+        let area = 2.0 * pi * r * (r + h);
+        assert!((cylinder.area() - area).abs() < 1e-12 * area);
+    }
+    assert_eq!(Solid::empty().volume(), 0.0);
+    assert_eq!(Solid::empty().area(), 0.0);
+}
