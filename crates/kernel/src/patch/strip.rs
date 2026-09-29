@@ -13,8 +13,8 @@ use glam::DVec3;
 
 use super::{Conic3, Patch, PatchError};
 
-/// How far out of the bottom's plane `offset` must point, as the sine of
-/// the angle between them, for a strip over a curved bottom.
+/// How far `offset` must turn away from a straight bottom, or out of a
+/// curved bottom's plane, as the sine of the angle between them.
 const MIN_TILT: f64 = 1e-9;
 
 /// The strip swept by moving `bottom` along `offset`, as two patches on
@@ -45,7 +45,8 @@ pub fn cylinder_strip(bottom: &Conic3, offset: DVec3) -> Result<[Patch; 2], Patc
     let (b0, b1) = (top.p0, top.p1);
 
     let chord = a1 - a0;
-    if chord.cross(offset) == DVec3::ZERO {
+    // Also refuses a zero offset or chord.
+    if chord.cross(offset).length() <= MIN_TILT * chord.length() * offset.length() {
         return Err(PatchError::Degenerate);
     }
     let plane = (ca - a0).cross(chord);

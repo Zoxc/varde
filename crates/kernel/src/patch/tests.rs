@@ -157,7 +157,7 @@ fn arcs_in_space_lie_on_their_circles() {
 }
 
 #[test]
-fn a_quarter_circle_splits_into_equal_quarters() {
+fn four_quarter_arcs_close_the_circle() {
     // Four quarters around: the ends meet, and the full turn closes.
     let arcs: Vec<Conic2> = (0..4)
         .map(|i| Conic2::arc(DVec2::ZERO, 2.0, i as f64 * FRAC_PI_2, FRAC_PI_2).unwrap())
@@ -221,6 +221,41 @@ fn bad_weights_are_refused() {
         c.w = w;
         assert!(c.check().is_err());
     }
+}
+
+#[test]
+fn non_positive_homogeneous_weights_are_refused() {
+    let conic = Conic3::line(DVec3::ZERO, DVec3::X).unwrap();
+    let patch = Patch::flat([DVec3::ZERO, DVec3::X, DVec3::Y]).unwrap();
+    for w in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+        for slot in 0..3 {
+            let mut h = conic.hom();
+            h[slot].w = w;
+            assert!(matches!(Conic3::from_hom(h), Err(PatchError::Weight(_))));
+        }
+        let net = patch.net();
+        let corners = [0, 1, 2].map(|i| net[i][i]);
+        let edges = [net[0][1], net[1][2], net[2][0]];
+        for slot in 0..3 {
+            let (mut c, mut e) = (corners, edges);
+            c[slot].w = w;
+            assert!(matches!(
+                Patch::from_hom(c, edges),
+                Err(PatchError::Weight(_))
+            ));
+            e[slot].w = w;
+            assert!(matches!(
+                Patch::from_hom(corners, e),
+                Err(PatchError::Weight(_))
+            ));
+        }
+    }
+    // Scaling a whole corner leaves the patch as it was.
+    let net = patch.net();
+    let corners = [net[0][0] * 4.0, net[1][1], net[2][2]];
+    let edges = [net[0][1] * 2.0, net[1][2], net[2][0] * 2.0];
+    let same = Patch::from_hom(corners, edges).unwrap();
+    assert!(same.p == patch.p && same.c == patch.c && same.w == patch.w);
 }
 
 #[test]
@@ -373,14 +408,23 @@ fn patch_derivatives_and_normals_agree() {
 }
 
 #[test]
-fn the_corner_coefficient_is_the_corner_cross_product() {
+fn corner_coefficients_are_the_corner_cross_products() {
     let mut rng = Rng::new(9);
-    let patch = random_patch(&mut rng, (0.5, 2.0));
-    let coeffs = patch.normal_coeffs();
-    // At corner 0 the derivatives are 2·w01·(c01 − p0) and 2·w20·(c20 − p0).
-    let expected = ((patch.c[0] - patch.p[0]) * (2.0 * patch.w[0]))
-        .cross((patch.c[2] - patch.p[0]) * (2.0 * patch.w[2]));
-    assert!(coeffs[0].distance(expected) <= 1e-9 * expected.length());
+    for _ in 0..CASES {
+        let patch = random_patch(&mut rng, (W_MIN, W_MAX));
+        let coeffs = patch.normal_coeffs();
+        // At corner i the edge tangents leaving it are 2·w·(c − p) along
+        // edge i and along edge i + 2 (which ends at corner i), in the
+        // order that keeps the corners counter-clockwise.
+        for (i, slot) in [(0, 0), (1, 6), (2, 9)] {
+            let k = (i + 2) % 3;
+            let out = (patch.c[i] - patch.p[i]) * (2.0 * patch.w[i]);
+            let back = (patch.c[k] - patch.p[i]) * (2.0 * patch.w[k]);
+            let expected = out.cross(back);
+            let tolerance = 1e-12 * scale(&patch.hull()).powi(2) * W_MAX * W_MAX;
+            assert!(coeffs[slot].distance(expected) <= tolerance, "corner {i}");
+        }
+    }
 }
 
 #[test]
@@ -537,6 +581,14 @@ fn sub_patches_reproduce_the_parent() {
             continue;
         };
         assert_reproduces(&patch, domain, &child, &mut rng);
+
+        // The clockwise domain gives the same surface, facing the other
+        // way.
+        let [d0, d1, d2] = domain;
+        let flipped = patch.sub([d0, d2, d1]).unwrap();
+        assert_reproduces(&patch, [d0, d2, d1], &flipped, &mut rng);
+        let b = DVec3::splat(1.0 / 3.0);
+        assert!(flipped.normal(b).dot(child.normal(b)) < 0.0);
     }
 }
 
@@ -554,10 +606,10 @@ fn splitting_a_patch_reproduces_it() {
         let t = rng.range(0.05, 0.95);
         let children = patch.bisect(edge, t).unwrap();
         let (a, b, o) = (edge, (edge + 1) % 3, (edge + 2) % 3);
-        let e = |i: usize| DVec3::from_array(std::array::from_fn(|j| (i == j) as u8 as f64));
-        let m = e(a) * (1.0 - t) + e(b) * t;
-        assert_reproduces(&patch, [e(a), m, e(o)], &children[0], &mut rng);
-        assert_reproduces(&patch, [m, e(b), e(o)], &children[1], &mut rng);
+        let [a, b, o] = [a, b, o].map(|i| DVec3::AXES[i]);
+        let m = a * (1.0 - t) + b * t;
+        assert_reproduces(&patch, [a, m, o], &children[0], &mut rng);
+        assert_reproduces(&patch, [m, b, o], &children[1], &mut rng);
     }
 }
 
@@ -846,6 +898,11 @@ fn strips_refuse_offsets_that_stay_flat() {
         cylinder_strip(&line, DVec3::X * -2.0),
         Err(PatchError::Degenerate)
     );
+    assert_eq!(
+        cylinder_strip(&line, DVec3::new(1.0, 0.0, 1e-12)),
+        Err(PatchError::Degenerate)
+    );
+    assert!(cylinder_strip(&line, DVec3::new(1.0, 0.0, 1e-6)).is_ok());
     let arc = Conic3::arc(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 0.0, 1.0).unwrap();
     assert_eq!(cylinder_strip(&arc, DVec3::X), Err(PatchError::Degenerate));
     assert_eq!(

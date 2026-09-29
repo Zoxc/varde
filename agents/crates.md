@@ -50,7 +50,7 @@ checked-in `assets/logo.ico` is embedded as the Windows executable icon by
 
 ## Roadmap by crate
 
-- **kernel**: manifold backend (`manifold3d` crate) for booleans; extrude/revolve from sketch profiles; later B-rep or an OCCT binding if exact geometry is needed.
+- **kernel**: closed meshes of rational quadratic patches with a `check` of their invariants, refinement and repair; tessellation of them; extrude from sketch profiles; union, difference and intersection built the way Manifold builds them, by counting, on curved patches (`agents/kernel.md`); later revolve, taper and GPU evaluation of the patches.
 - **sketch**: the shape tools' geometry (trim, offset, fillet).
 - **document**: parametric feature history (sketch → extrude → boolean) with regeneration, then command-based undo instead of snapshots.
 - **render**: picking (ID buffer), selection highlight, silhouette lines, MSAA for the model's faces, anti-aliased feature edges, view cube, a camera that can roll (for sketches on faces).

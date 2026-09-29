@@ -33,7 +33,6 @@ pub trait Point:
     /// The largest absolute coordinate.
     fn max_abs(self) -> f64;
     fn is_finite(self) -> bool;
-    fn dot(self, other: Self) -> f64;
 }
 
 mod sealed {
@@ -63,9 +62,6 @@ impl Point for DVec2 {
     fn is_finite(self) -> bool {
         DVec2::is_finite(self)
     }
-    fn dot(self, other: Self) -> f64 {
-        DVec2::dot(self, other)
-    }
 }
 
 impl Point for DVec3 {
@@ -88,9 +84,6 @@ impl Point for DVec3 {
     }
     fn is_finite(self) -> bool {
         DVec3::is_finite(self)
-    }
-    fn dot(self, other: Self) -> f64 {
-        DVec3::dot(self, other)
     }
 }
 
@@ -117,7 +110,7 @@ pub type Conic3 = Conic<DVec3>;
 
 /// The corner `h` as a point, with its homogeneous weight, which must be
 /// positive.
-pub(super) fn corner<P: Point>(h: P::Hom) -> Result<(P, f64), PatchError> {
+pub(super) fn standard_corner<P: Point>(h: P::Hom) -> Result<(P, f64), PatchError> {
     let (x, w) = P::parts(h);
     if w > 0.0 && w.is_finite() {
         Ok((x / w, w))
@@ -130,7 +123,7 @@ pub(super) fn corner<P: Point>(h: P::Hom) -> Result<(P, f64), PatchError> {
 /// weights `wa` and `wb`, in the standard form: its point and the weight
 /// `w / √(wa·wb)`. Symmetric in `wa` and `wb`, so both directions of an
 /// edge give the same bits.
-pub(super) fn edge<P: Point>(h: P::Hom, wa: f64, wb: f64) -> Result<(P, f64), PatchError> {
+pub(super) fn standard_edge<P: Point>(h: P::Hom, wa: f64, wb: f64) -> Result<(P, f64), PatchError> {
     let (x, w) = P::parts(h);
     if w > 0.0 && w.is_finite() {
         Ok((x / w, w / (wa * wb).sqrt()))
@@ -192,9 +185,9 @@ impl<P: Point> Conic<P> {
     /// form. Every homogeneous weight must be positive, and the result
     /// must pass [`Conic::check`].
     pub fn from_hom(h: [P::Hom; 3]) -> Result<Self, PatchError> {
-        let (p0, w0) = corner::<P>(h[0])?;
-        let (p1, w1) = corner::<P>(h[2])?;
-        let (c, w) = edge::<P>(h[1], w0, w1)?;
+        let (p0, w0) = standard_corner::<P>(h[0])?;
+        let (p1, w1) = standard_corner::<P>(h[2])?;
+        let (c, w) = standard_edge::<P>(h[1], w0, w1)?;
         Self::new(p0, c, w, p1)
     }
 
@@ -283,10 +276,7 @@ impl<P: Point> Conic<P> {
 
     /// The box around the control points, and so around the curve.
     pub fn bounds(&self) -> Bounds<P> {
-        Bounds {
-            min: self.p0.min(self.c).min(self.p1),
-            max: self.p0.max(self.c).max(self.p1),
-        }
+        Bounds::point(self.p0).include(self.c).include(self.p1)
     }
 }
 

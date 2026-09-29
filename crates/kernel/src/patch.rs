@@ -78,19 +78,23 @@ pub type Bounds2 = Bounds<DVec2>;
 pub type Bounds3 = Bounds<DVec3>;
 
 impl<P: Point> Bounds<P> {
+    /// The box holding only `p`.
+    pub fn point(p: P) -> Self {
+        Bounds { min: p, max: p }
+    }
+
     /// The box around `points`, or `None` if there are none.
     pub fn around(points: &[P]) -> Option<Self> {
         let (&first, rest) = points.split_first()?;
-        Some(rest.iter().fold(
-            Bounds {
-                min: first,
-                max: first,
-            },
-            |b, &p| Bounds {
-                min: b.min.min(p),
-                max: b.max.max(p),
-            },
-        ))
+        Some(rest.iter().fold(Self::point(first), |b, &p| b.include(p)))
+    }
+
+    /// The box grown to hold `p`.
+    pub fn include(self, p: P) -> Self {
+        Bounds {
+            min: self.min.min(p),
+            max: self.max.max(p),
+        }
     }
 
     /// The box around both.

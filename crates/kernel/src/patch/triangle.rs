@@ -1,7 +1,7 @@
 use glam::{DVec3, DVec4};
 
-use super::conic::{corner, edge};
-use super::{Bounds3, Conic3, PatchError, Point, check_point, check_weight};
+use super::conic::{standard_corner, standard_edge};
+use super::{Bounds, Bounds3, Conic3, PatchError, Point, check_point, check_weight};
 
 /// A rational quadratic triangle in the standard form (see the
 /// [module](super) docs): corners `p`, and edge `i` from corner `i` to
@@ -19,13 +19,6 @@ pub struct Patch {
     pub p: [DVec3; 3],
     pub c: [DVec3; 3],
     pub w: [f64; 3],
-}
-
-/// The corner of the barycentric domain `i`: `e(0) = (1, 0, 0)`.
-fn e(i: usize) -> DVec3 {
-    let mut v = DVec3::ZERO;
-    v[i] = 1.0;
-    v
 }
 
 impl Patch {
@@ -111,12 +104,12 @@ impl Patch {
         let mut p = [DVec3::ZERO; 3];
         let mut cw = [0.0; 3];
         for i in 0..3 {
-            (p[i], cw[i]) = corner::<DVec3>(corners[i])?;
+            (p[i], cw[i]) = standard_corner::<DVec3>(corners[i])?;
         }
         let mut c = [DVec3::ZERO; 3];
         let mut w = [0.0; 3];
         for i in 0..3 {
-            (c[i], w[i]) = edge::<DVec3>(edges[i], cw[i], cw[(i + 1) % 3])?;
+            (c[i], w[i]) = standard_edge::<DVec3>(edges[i], cw[i], cw[(i + 1) % 3])?;
         }
         Self::new(p, c, w)
     }
@@ -130,7 +123,7 @@ impl Patch {
     }
 
     /// The denominator at `u`: the weight of the homogeneous point there.
-    /// It is at least `min(1, W_MIN)` in the triangle.
+    /// It is at least [`W_MIN`](super::W_MIN) in the triangle.
     pub fn weight_at(&self, u: DVec3) -> f64 {
         blossom(&self.net(), u, u).w
     }
@@ -177,31 +170,20 @@ impl Patch {
 
     /// The four children of splitting at the edge midpoints, in the
     /// layout of [`Self::SPLIT4_DOMAINS`]. Each edge is split by
-    /// [`Conic3::split_half`], so a neighbour bisecting its side of the
-    /// edge at `½` gets the same bits.
+    /// [`Conic3::split_half`], which is symmetric to the bit, so a
+    /// neighbour splitting its side of the edge at `½` (by `split4` or
+    /// `bisect`) gets the same halves and midpoint.
     pub fn split4(&self) -> Result<[Self; 4], PatchError> {
         let halves = [
             self.edge(0).split_half()?,
             self.edge(1).split_half()?,
             self.edge(2).split_half()?,
         ];
-        self.split4_with(halves)
-    }
-
-    /// [`Self::split4`] with the edges' halves given: `halves[i]` are edge
-    /// `i`'s pieces from corner `i` to its midpoint and on to corner
-    /// `i + 1`, split once and shared with the neighbour.
-    pub fn split4_with(&self, halves: [[Conic3; 2]; 3]) -> Result<[Self; 4], PatchError> {
-        for (i, h) in halves.iter().enumerate() {
-            self.check_halves(i, h)?;
-        }
         let net = self.net();
         let [[_, m01, _], [_, _, m12], [m20, _, _], _] = Self::SPLIT4_DOMAINS;
-        let inner = |a: DVec3, b: DVec3| -> Result<(DVec3, f64), PatchError> {
+        let inner = |a: DVec3, b: DVec3| {
             let h = blossom(&net, a, b);
-            let wa = blossom(&net, a, a).w;
-            let wb = blossom(&net, b, b).w;
-            edge_from(h, wa, wb)
+            standard_edge::<DVec3>(h, blossom(&net, a, a).w, blossom(&net, b, b).w)
         };
         // Edges between the midpoints: 01–12, 12–20 and 20–01.
         let ea = inner(m01, m12)?;
@@ -244,7 +226,10 @@ impl Patch {
     }
 
     /// [`Self::bisect`] with the edge's halves given: from corner `edge`
-    /// to the split point at `t`, and on to corner `edge + 1`.
+    /// to the split point at `t`, and on to corner `edge + 1`. The halves
+    /// must come from splitting this edge at `t` (the neighbour's side at
+    /// `1 - t`, reversed): only their ends are checked, and the new inner
+    /// edge is built for `t`.
     pub fn bisect_with(
         &self,
         edge: usize,
@@ -260,8 +245,9 @@ impl Patch {
         self.check_halves(edge, &halves)?;
         let (ia, ib, io) = (edge, (edge + 1) % 3, (edge + 2) % 3);
         let net = self.net();
-        let md = e(ia) * (1.0 - t) + e(ib) * t;
-        let inner = edge_from(blossom(&net, md, e(io)), blossom(&net, md, md).w, 1.0)?;
+        let [a, b, o] = [ia, ib, io].map(|i| DVec3::AXES[i]);
+        let md = a * (1.0 - t) + b * t;
+        let inner = standard_edge::<DVec3>(blossom(&net, md, o), blossom(&net, md, md).w, 1.0)?;
         let m = halves[0].p1;
         let side = |c: &Conic3| (c.c, c.w);
         Ok([
@@ -298,11 +284,8 @@ impl Patch {
 
     /// The box around the control points, and so around the patch.
     pub fn bounds(&self) -> Bounds3 {
-        let hull = self.hull();
-        let (min, max) = hull[1..]
-            .iter()
-            .fold((hull[0], hull[0]), |(lo, hi), &p| (lo.min(p), hi.max(p)));
-        Bounds3 { min, max }
+        let [first, rest @ ..] = self.hull();
+        rest.into_iter().fold(Bounds::point(first), Bounds::include)
     }
 }
 
@@ -329,13 +312,6 @@ fn rows(net: &[[DVec4; 3]; 3], u: DVec3) -> [DVec4; 3] {
 pub(super) fn cross4(a: DVec4, b: DVec4, c: DVec4) -> DVec3 {
     let (a3, b3, c3) = (a.truncate(), b.truncate(), c.truncate());
     b3.cross(c3) * a.w - a3.cross(c3) * b.w + a3.cross(b3) * c.w
-}
-
-/// The standard form of a patch edge's homogeneous control point `h`
-/// between corners of homogeneous weights `wa` and `wb`: its control point
-/// and weight.
-fn edge_from(h: DVec4, wa: f64, wb: f64) -> Result<(DVec3, f64), PatchError> {
-    edge::<DVec3>(h, wa, wb)
 }
 
 /// The patch with corners `p` and edges `(control point, weight)`.

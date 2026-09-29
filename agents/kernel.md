@@ -66,7 +66,7 @@ computation is written symmetrically (`(h0+h1)/2`, `(h1+h2)/2`, their
 mean): the reversed curve gives the same halves reversed and swapped, to
 the bit, and `split(0.5)` is `split_half`. At other positions `1 - t`
 rounds, so **a shared edge is split once and the halves are handed to both
-sides** (`Patch::bisect_with`, `Patch::split4_with`).
+sides** (`Patch::bisect_with`).
 
 A piece's own standard parameter is a *projective* reparametrization of
 the parent's: the piece between parent parameters `t0` and `t1` has at `s`
@@ -116,8 +116,12 @@ patch.
   are `(a, m, o)` and `(m, b, o)`. At `t = ½` a neighbour bisecting or
   4-splitting its side of the edge gets the same halves and `m`, to the
   bit (red–green refinement relies on this).
-- Halves passed to the `_with` variants must run from corner `i` through
-  one shared point to corner `i + 1`, or they're refused (`Mismatch`).
+- `bisect_with(i, t, halves)` takes the halves of a shared edge split
+  once at `t` (the neighbour passes them reversed, at `1 - t`). They must
+  run from corner `i` through one shared point to corner `i + 1`, or
+  they're refused (`Mismatch`); that they were split at `t` is the
+  caller's promise. `split4` needs no such variant: it only splits at `½`,
+  where both sides get the same bits anyway.
 - The middle edges of a split can leave `[W_MIN, W_MAX]` for extreme
   parents (two edges bulging at `W_MAX`, the third at `W_MIN`); the split
   is then refused with `Weight`. As pieces shrink, their weights go to 1.
@@ -201,7 +205,7 @@ neighbouring segments share their rulings and the caps share the top and
 bottom edges to the bit. A counter-clockwise arc (seen from where `offset`
 points) gives outward normals. A straight bottom gives the two flat
 triangles of the parallelogram. An `offset` along a straight bottom or in a
-curved bottom's plane is refused.
+curved bottom's plane (within a sine of `1e-9`) is refused.
 
 ### Limits and errors
 
@@ -234,8 +238,9 @@ edge (by `split4` or `bisect` at `½`, or halves passed to both) getting the
 same bits; the fold check passing on every child of a parent that passed,
 with the parent's direction; failing on folded, cusped and collinear
 patches; the exact cone path when the quick directions fail; normal cones
-holding sampled normals; bad weights, coordinates, arcs and split positions
-refused; cylinder strips on their cylinders, within their strip and sharing
+holding sampled normals; the corner coefficients against the corners'
+tangents; clockwise sub-patches facing the other way; bad weights
+(homogeneous ones too), coordinates, arcs and split positions refused; cylinder strips on their cylinders, within their strip and sharing
 their edges.
 
 ## Deviations
