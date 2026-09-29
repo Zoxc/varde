@@ -39,6 +39,8 @@ the relevant one before changing that area, and keep it in step when behaviour
 it describes changes:
 
 - `agents/viewport.md`: the viewport widget, `MeshFeed`, the regeneration lanes.
+- `agents/sketch.md`: the sketch model, editing it, drawing it and the input
+  on it in the viewport, hit testing and the drawing tools.
 - `agents/files.md`: the IO lane, sidecar locks, auto-save, recovery, saving,
   closing and quitting.
 - `agents/web-files.md`: the web IO worker, OPFS, pickers, downloads.
@@ -76,8 +78,9 @@ there is no adapter. Tests pass temporary directories (or none) to
 
 Crates in `crates/`, dependencies only pointing down:
 `binary`/`web` → `app` → `view` → `render` → `kernel`; `document` → `kernel`,
-`sketch`; `regen` and `io` → `document` + `lane`. `kernel`, `sketch`, `document`,
-`lane`, `regen`, `io` have no UI code; `render` has no iced dependency.
+`sketch`; `regen`, `solve` and `io` → `document` + `lane` (`solve` also
+`sketch`). `kernel`, `sketch`, `document`, `lane`, `regen`, `solve`, `io` have
+no UI code; `render` has no iced dependency.
 
 - **State and update**: all app state lives in `varde-app` and is mutated only
   in iced's `update` on the UI thread. `document::Editor` applies `Command`s and
@@ -91,18 +94,23 @@ Crates in `crates/`, dependencies only pointing down:
   - `regen`: one lane per open document, latest-wins single slot, responses
     tagged with the editor generation. The app's `MeshFeed` owns the transport
     and drops stale answers.
+  - `solve`: one lane per open document for the sketch solver: proposals and
+    analyses queued in order, drag steps latest wins, the two taking turns; the
+    lane keeps the drag session. Every sketch edit is proposed through it and
+    committed once accepted (`Doc::propose`, see `agents/sketch.md`).
   - `io`: one ordered-queue lane for the whole app; *all* file system access
     goes through it. It owns open `DocumentFile`s (app holds `FileId`s), the
     `.design.vrdp.autosave` sidecar lock, auto-save, crash recovery, the store of
     new designs and `recent.toml`. File pickers (`io::pick`) run on the UI
     thread/page, never in the lane. Web side: OPFS (`io/src/opfs.rs`,
     `io/src/web.rs`) and the File System Access API or download fallback.
-- **Web workers**: trunk builds three wasm binaries from `crates/web/index.html`:
-  `varde-web`, `varde-regen-worker` (a bin of `varde-regen`) and
-  `varde-io-worker` (a bin of `varde-io`), `no-modules` target, started via
+- **Web workers**: trunk builds four wasm binaries from `crates/web/index.html`:
+  `varde-web`, `varde-regen-worker` (a bin of `varde-regen`),
+  `varde-solve-worker` (a bin of `varde-solve`) and `varde-io-worker` (a bin of
+  `varde-io`), `no-modules` target, started via
   `crates/web/worker_loader.js` rather than trunk's shims. Page and worker share
   no memory: messages are postcard bytes in transferred `ArrayBuffer`s, validated
-  on receipt (`regen::wire`, `io::wire`).
+  on receipt (`regen::wire`, `solve::wire`, `io::wire`).
 - **Rendering**: the viewport is an iced `shader` widget whose primitive calls
   `varde_render::Renderer`, compositing onto iced's frame; GPU objects stay on the
   UI thread, workers only produce CPU-side `RenderMesh`es.

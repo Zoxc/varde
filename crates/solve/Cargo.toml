@@ -1,0 +1,31 @@
+[package]
+name = "varde-solve"
+description = "The sketch solver behind a request/response boundary, so proposals and drags solve off the UI thread"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+varde-document.workspace = true
+varde-lane.workspace = true
+varde-sketch.workspace = true
+varde-expr.workspace = true
+glam.workspace = true
+serde.workspace = true
+
+# The Web Worker lane.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+futures.workspace = true
+# The wire format, src/wire.rs.
+postcard.workspace = true
+wasm-bindgen.workspace = true
+js-sys.workspace = true
+# The worker's clock, src/clock.rs.
+web-sys = { workspace = true, features = ["Performance", "WorkerGlobalScope"] }
+
+[dev-dependencies]
+# Waiting on the thread lane in tests.
+varde-lane = { workspace = true, features = ["testing"] }
+futures.workspace = true
+# src/wire.rs is tested natively.
+postcard.workspace = true

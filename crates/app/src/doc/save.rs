@@ -231,7 +231,8 @@ impl Downloads {
     }
 }
 
-/// Saves of a document sent to the IO lane and not answered yet.
+/// Saves of a document sent to the IO lane and not answered yet, and
+/// those waiting to be sent.
 ///
 /// The lane answers every Save As, in order. A Save is only answered if
 /// no newer one replaced it while it waited, but the newest one always
@@ -243,20 +244,37 @@ pub(crate) struct Saves {
     pub(crate) save: Option<Revision>,
     /// The revisions of the Save Ases, in the order sent.
     pub(crate) save_as: Vec<Revision>,
+    /// Saves the user asked for while edits waited on the solver, in the
+    /// order asked: sent once the edits are answered, so what's on screen
+    /// is saved, see [`Doc::proposals_settled`].
+    pub(crate) waiting: Vec<Deferred>,
+}
+
+/// A save waiting for the edits waiting on the solver.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Deferred {
+    Save,
+    /// To the file the user chose.
+    SaveAs(Chosen),
 }
 
 impl Saves {
     pub(crate) fn any(&self) -> bool {
-        self.save.is_some() || !self.save_as.is_empty()
+        self.save.is_some() || !self.save_as.is_empty() || !self.waiting.is_empty()
     }
 
     /// Whether a save of kind `failed` failing is superseded by one still
-    /// in flight, which is newer, since saves are answered in the order
-    /// sent: a Save As, which gives the document another file or fails
-    /// itself, or a Save if the failed one was a Save too. A Save writes
-    /// the document's own file, not the one a Save As was to write.
+    /// in flight or waiting to be sent, which is newer, since saves are
+    /// answered in the order sent: a Save As, which gives the document
+    /// another file or fails itself, or a Save if the failed one was a
+    /// Save too. A Save writes the document's own file, not the one a
+    /// Save As was to write.
     pub(crate) fn supersede(&self, failed: SaveKind) -> bool {
-        !self.save_as.is_empty() || (failed == SaveKind::Save && self.save.is_some())
+        let save_as = |deferred: &Deferred| matches!(deferred, Deferred::SaveAs(_));
+        let save_waits = self.waiting.contains(&Deferred::Save);
+        !self.save_as.is_empty()
+            || self.waiting.iter().any(save_as)
+            || (failed == SaveKind::Save && (self.save.is_some() || save_waits))
     }
 
     /// Whether `revision` is on its way to a file.
@@ -301,6 +319,9 @@ pub(crate) enum Step {
     /// try again, unless a newer one in flight supersedes it, see
     /// [`Saves::supersede`].
     Saving(Changes),
+    /// The edits waiting on the solver, which may leave changes to ask
+    /// about once they're committed.
+    Proposing,
 }
 
 /// What happens to unsaved changes on the way out.
@@ -454,10 +475,40 @@ impl Doc {
         self.persist.saves.any()
     }
 
-    /// Whether leaving now would lose changes, unsaved or on their way to
-    /// the file.
+    /// Whether leaving now would lose changes, unsaved, on their way to
+    /// the file or waiting on the solver.
     pub(crate) fn at_stake(&self) -> bool {
-        self.unsaved() || self.saving()
+        self.unsaved() || self.saving() || self.proposing()
+    }
+
+    /// Goes on with what waited for the edits waiting on the solver, once
+    /// they're answered or dropped: the saves asked for meanwhile, then
+    /// leaving.
+    pub(crate) fn proposals_settled(&mut self, cx: &mut Files) -> Next {
+        if self.proposing() {
+            return Next::Stay;
+        }
+        for deferred in mem::take(&mut self.persist.saves.waiting) {
+            match deferred {
+                Deferred::Save => self.save(cx),
+                Deferred::SaveAs(chose) => self.save_as(cx, chose),
+            }
+        }
+        self.resume_leaving(cx)
+    }
+
+    /// Keeps `deferred` to send once the edits waiting on the solver are
+    /// answered, if any are: whether it waits. A Save waiting already
+    /// saves what this would.
+    fn defer(&mut self, deferred: Deferred) -> bool {
+        if !self.proposing() {
+            return false;
+        }
+        let waiting = &mut self.persist.saves.waiting;
+        if deferred != Deferred::Save || !waiting.contains(&deferred) {
+            waiting.push(deferred);
+        }
+        true
     }
 
     /// Hides why the last save or auto-save failed.
@@ -478,7 +529,7 @@ impl Doc {
         let Some(file) = self.persist.target.design_file() else {
             return;
         };
-        if !self.unsent() {
+        if self.defer(Deferred::Save) || !self.unsent() {
             return;
         }
         let revision = self.editor.revision();
@@ -495,6 +546,9 @@ impl Doc {
     /// Sends the document to the new file the user `chose` in the Save As
     /// dialog, which asked about replacing the one there.
     fn save_as(&mut self, cx: &mut Files, chose: Chosen) {
+        if self.defer(Deferred::SaveAs(chose.clone())) {
+            return;
+        }
         let revision = self.editor.revision();
         let (file, document) = (self.persist.target.file(), self.editor.snapshot());
         let to = match chose {
@@ -732,15 +786,19 @@ impl Doc {
 
     /// Restores the changes offered as recovered, as one undoable edit
     /// that leaves the document edited, and auto-saves them at once. A
-    /// read-only document keeps offering them.
-    pub(crate) fn restore_recovered(&mut self, cx: &mut Files) {
+    /// read-only document keeps offering them. The edits waiting on the
+    /// solver were made on the document replaced, so they're dropped, as
+    /// undo drops them, and what waited for them goes on.
+    pub(crate) fn restore_recovered(&mut self, cx: &mut Files) -> Next {
         if self.editable()
             && let Some(offer) = self.persist.recovered.take()
         {
+            self.drop_proposals();
             self.apply(Command::Replace(Box::new(offer.document)));
             self.sync();
             self.auto_save_now(cx);
         }
+        self.proposals_settled(cx)
     }
 
     /// Drops the changes offered as recovered, and has the IO lane delete
@@ -997,6 +1055,8 @@ impl Doc {
             }
         });
         let ok = result.is_ok();
+        // The access may have changed, which the sketch's tool depends on.
+        self.sync();
         self.saved(SaveKind::SaveAs, revision, result);
         // A new design whose store entry was closed, or failed, as this was
         // on its way has nowhere to be auto-saved to: it gets another.
@@ -1017,10 +1077,19 @@ impl Doc {
         self.go(cx, to, Changes::Keep)
     }
 
-    /// Leaves the document for `to`, unless the user is to be asked about
-    /// unsaved changes first (unless they chose to discard them) or saves
-    /// are still in flight: then it happens once they're answered.
+    /// Leaves the document for `to`, unless edits wait on the solver or
+    /// the user is to be asked about unsaved changes first (unless they
+    /// chose to discard them), or saves are still in flight: then it
+    /// happens once they're answered.
     fn go(&mut self, cx: &mut Files, to: Leave, changes: Changes) -> Next {
+        if changes == Changes::Keep && self.proposing() {
+            self.file_menu = false;
+            self.persist.leaving = Some(Leaving {
+                to,
+                step: Step::Proposing,
+            });
+            return Next::Stay;
+        }
         if changes == Changes::Keep && self.unsaved() {
             self.file_menu = false;
             self.persist.leaving = Some(Leaving {
@@ -1059,10 +1128,18 @@ impl Doc {
         Next::Left(to)
     }
 
-    /// Goes on leaving the document once its saves are answered. One
-    /// failing has cancelled leaving already, see [`Doc::saved`].
+    /// Goes on leaving the document once its saves, or the edits waiting
+    /// on the solver, are answered. A save failing has cancelled leaving
+    /// already, see [`Doc::saved`].
     pub(crate) fn resume_leaving(&mut self, cx: &mut Files) -> Next {
         match self.persist.leaving {
+            Some(Leaving {
+                to,
+                step: Step::Proposing,
+            }) if !self.proposing() => {
+                self.persist.leaving = None;
+                self.go(cx, to, Changes::Keep)
+            }
             // Not while asking where to save, or whether it may: the save
             // it's leaving with is still to come.
             Some(Leaving {

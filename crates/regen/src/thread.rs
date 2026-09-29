@@ -34,8 +34,12 @@ fn spawn_on(handle: fn(Request) -> Response) -> (Lane, Responses) {
         OnClose::Stop,
         handle,
         |request: &Request| {
-            let generation = request.generation();
-            move |error| Response::Failed { generation, error }
+            let (generation, exclude) = (request.generation(), request.exclude());
+            move |error| Response::Failed {
+                generation,
+                exclude,
+                error,
+            }
         },
     )
 }

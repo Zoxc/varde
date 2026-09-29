@@ -7,6 +7,8 @@ use varde_io::lane::Lane as IoLane;
 use varde_io::{Chosen, Response as IoResponse};
 use varde_regen::Response as RegenResponse;
 use varde_regen::lane::Lane as RegenLane;
+use varde_solve::Response as SolveResponse;
+use varde_solve::lane::Lane as SolveLane;
 
 use crate::doc::DocId;
 
@@ -32,6 +34,9 @@ pub(crate) enum Message {
     /// The peek key pressed or released, see `Held::PEEK`: shows the other
     /// panel tab while held.
     PeekPanel(bool),
+    /// The command modifier (`Ctrl`, or `Cmd` on macOS) pressed or
+    /// released: clicking a list's row adds to the selection while held.
+    CommandHeld(bool),
     /// The user asked to close the window: the app decides when it does.
     CloseRequested(window::Id),
     /// On the web, the page may be going away (the tab closing or
@@ -57,4 +62,8 @@ pub(crate) enum ForDoc {
     RegenReady(RegenLane),
     /// Work handed to the regeneration lane is done.
     Computed(RegenResponse),
+    /// The solver lane started; sketch edits are proposed through it.
+    SolveReady(SolveLane),
+    /// The solver lane answered a request.
+    Solved(SolveResponse),
 }

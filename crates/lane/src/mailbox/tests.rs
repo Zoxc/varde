@@ -1,22 +1,44 @@
-use std::sync::Arc;
-
-use varde_document::Document;
-
 use super::*;
 
-fn regenerate(generation: u64) -> Request {
-    Request::Regenerate {
-        generation: generation.into(),
-        document: Arc::new(Document::default()),
+/// A latest-wins slot of generations, like the regeneration lane's: a
+/// newer one replaces the one waiting, and one older than any sent is
+/// refused.
+#[derive(Debug, Default)]
+struct Newest {
+    waiting: Option<u64>,
+    wanted: Option<u64>,
+}
+
+impl Pending<u64> for Newest {
+    fn push(&mut self, request: u64) -> Option<u64> {
+        if self.wanted > Some(request) {
+            return Some(request);
+        }
+        self.wanted = Some(request);
+        self.waiting.replace(request)
     }
+
+    fn pop(&mut self) -> Option<u64> {
+        self.waiting.take()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.waiting.is_none()
+    }
+}
+
+type Mailbox = super::Mailbox<u64, Newest>;
+
+fn regenerate(generation: u64) -> u64 {
+    generation
 }
 
 /// What `next` says to do: `Some(Some(generation))` to post that generation,
 /// `Some(None)` to start a worker, `None` for nothing.
-fn act(next: Next) -> Option<Option<u64>> {
+fn act(next: Next<u64>) -> Option<Option<u64>> {
     match next {
         Next::Nothing => None,
-        Next::Post(request) => Some(Some(request.generation().into())),
+        Next::Post(generation) => Some(Some(generation)),
         Next::Start => Some(None),
     }
 }
@@ -80,7 +102,7 @@ fn fail_reports_the_request_being_worked_on() {
     let mut mailbox = ready();
     mailbox.send(regenerate(4));
     let (failed, next) = mailbox.fail();
-    assert_eq!((failed.map(u64::from), act(next)), (Some(4), NOTHING));
+    assert_eq!((failed, act(next)), (Some(4), NOTHING));
 
     // No worker is left: the next request starts one, and waits for it.
     assert_eq!(act(mailbox.send(regenerate(5))), START);
@@ -95,7 +117,7 @@ fn a_waiting_request_outlives_a_worker_that_dies_on_another() {
     mailbox.send(regenerate(6));
     // 5 killed the worker; 6 never reached it, so a new one starts for it.
     let (failed, next) = mailbox.fail();
-    assert_eq!((failed.map(u64::from), act(next)), (Some(5), START));
+    assert_eq!((failed, act(next)), (Some(5), START));
     assert_eq!(act(mailbox.send(regenerate(7))), NOTHING);
     assert_eq!(act(mailbox.ready()), post(7));
 }
@@ -106,7 +128,7 @@ fn a_worker_that_never_started_fails_what_waits_for_it() {
     mailbox.send(regenerate(2));
     // Another worker would likely not start either, so 2 isn't kept for it.
     let (failed, next) = mailbox.fail();
-    assert_eq!((failed.map(u64::from), act(next)), (Some(2), NOTHING));
+    assert_eq!((failed, act(next)), (Some(2), NOTHING));
 
     // Nor after a worker died on a request, and the one started for the
     // request waiting didn't load.
@@ -114,9 +136,9 @@ fn a_worker_that_never_started_fails_what_waits_for_it() {
     assert_eq!(act(mailbox.ready()), post(3));
     mailbox.send(regenerate(4));
     let (failed, next) = mailbox.fail();
-    assert_eq!((failed.map(u64::from), act(next)), (Some(3), START));
+    assert_eq!((failed, act(next)), (Some(3), START));
     let (failed, next) = mailbox.fail();
-    assert_eq!((failed.map(u64::from), act(next)), (Some(4), NOTHING));
+    assert_eq!((failed, act(next)), (Some(4), NOTHING));
 }
 
 #[test]
@@ -129,10 +151,7 @@ fn a_worker_that_fails_to_start_is_not_started_again() {
         assert_eq!(act(next), NOTHING);
         assert_eq!(act(mailbox.send(regenerate(generation))), START);
         let (failed, next) = mailbox.fail();
-        assert_eq!(
-            (failed.map(u64::from), act(next)),
-            (Some(generation), NOTHING)
-        );
+        assert_eq!((failed, act(next)), (Some(generation), NOTHING));
     }
 }
 
@@ -142,7 +161,7 @@ fn an_idle_worker_owes_nothing() {
     mailbox.send(regenerate(1));
     mailbox.done();
     let (failed, next) = mailbox.fail();
-    assert_eq!((failed.map(u64::from), act(next)), (None, NOTHING));
+    assert_eq!((failed, act(next)), (None, NOTHING));
     assert_eq!(act(mailbox.send(regenerate(2))), START);
     assert_eq!(act(mailbox.ready()), post(2));
 }
@@ -153,4 +172,22 @@ fn older_request_than_the_one_with_the_worker_is_dropped() {
     assert_eq!(act(mailbox.send(regenerate(5))), post(5));
     assert_eq!(act(mailbox.send(regenerate(3))), NOTHING);
     assert_eq!(act(mailbox.done()), NOTHING);
+}
+
+#[test]
+fn busy_is_the_request_with_the_worker() {
+    let mut mailbox = Mailbox::default();
+    mailbox.send(regenerate(1));
+    assert_eq!(mailbox.busy(), None);
+    mailbox.ready();
+    assert_eq!(mailbox.busy(), Some(&1));
+    mailbox.send(regenerate(2));
+    assert_eq!(mailbox.busy(), Some(&1));
+    mailbox.done();
+    assert_eq!(mailbox.busy(), Some(&2));
+    mailbox.done();
+    assert_eq!(mailbox.busy(), None);
+    mailbox.send(regenerate(3));
+    mailbox.fail();
+    assert_eq!(mailbox.busy(), None);
 }

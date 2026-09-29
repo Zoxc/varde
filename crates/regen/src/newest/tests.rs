@@ -8,6 +8,7 @@ fn regenerate(generation: u64) -> Request {
     Request::Regenerate {
         generation: generation.into(),
         document: Arc::new(Document::default()),
+        exclude: None,
     }
 }
 

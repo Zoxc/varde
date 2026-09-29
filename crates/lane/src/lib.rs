@@ -1,18 +1,22 @@
 //! A lane: requests handled away from the UI thread, one at a time, their
 //! responses coming back as a stream for an iced `Subscription::run` to
-//! yield as messages. The regeneration lanes (`varde-regen`) and the IO
-//! lane (`varde-io`) are both built from what's here; each keeps its own
-//! requests, the order it takes them in and its wire format.
+//! yield as messages. The regeneration and solver lanes (`varde-regen`,
+//! `varde-solve`) and the IO lane (`varde-io`) are all built from what's
+//! here; each keeps its own requests, the order it takes them in and its
+//! wire format.
 //!
 //! Natively a lane is a thread, see `thread`. On the web it's a Web
 //! Worker: `page` is the page's side of one, `worker` the worker's, and
 //! messages cross between them as bytes, copied out within a bound (see
-//! `bytes`).
+//! `bytes`). A worker taking one request at a time has the rest wait on
+//! the page, in a `mailbox`, which also drives the page's side of such a
+//! lane.
 //! Either way the UI sends through a [`Transport`] and never waits, and
 //! the target's [`Lane`] and [`Responses`] are re-exported here, so a lane
 //! built from them names its types once for both.
 
 pub mod bytes;
+pub mod mailbox;
 #[cfg(target_arch = "wasm32")]
 mod message;
 #[cfg(target_arch = "wasm32")]

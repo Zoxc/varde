@@ -212,5 +212,7 @@ impl<R, S> Drop for Responses<R, S> {
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 #[cfg(test)]
 mod tests;

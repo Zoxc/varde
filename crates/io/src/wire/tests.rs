@@ -358,7 +358,7 @@ fn swap_document(message: &[u8], placeholder: &Document, document: &[u8]) -> Vec
 fn a_document_that_fails_its_checks_is_refused() {
     // Two copies of the example's cube, spliced into its bytes since a
     // document's fields are private and one can't be decoded unchecked:
-    // the body count, the body, no sketches and the next id.
+    // the body count, the body, no features and the next id.
     let example = Document::example().to_postcard();
     let [1, body @ .., 0, 1] = &example[..] else {
         panic!("not the example's bytes: {example:?}");

@@ -1,59 +1,120 @@
-//! The 3D viewport: an iced shader widget backed by [`varde_render`].
+//! The 3D viewport: an iced shader widget backed by [`varde_render`], and
+//! in a sketch the sketch being edited, drawn by the renderer too, and the
+//! input on it.
+
+mod sketch;
 
 use std::sync::{Arc, Weak};
 
 use iced::widget::shader::{self, Action};
 use iced::widget::{container, stack};
-use iced::{Element, Event, Length, Point, Rectangle, mouse};
-use varde_kernel::RenderMesh;
-use varde_render::{Camera, ClipRect, Colors, Frame, PrepareError, Renderer, Slot, wgpu};
+use iced::{Element, Event, Length, Point, Rectangle, keyboard, mouse};
+use varde_kernel::{RenderLines, RenderMesh};
+use varde_render::{
+    Camera, ClipRect, Colors, Frame, GridPlane, PrepareError, Renderer, SketchLayer, SketchScene,
+    Slot, wgpu,
+};
 
-use crate::chrome::mouse_hint;
+use crate::anchors::Anchors;
+use crate::chrome::{chord_hint, mouse_hint};
 use crate::icons::MouseButton;
-use crate::theme::Palette;
+use crate::shortcut::Held;
+use crate::theme::{Palette, SketchColors};
 use crate::{Look, Message, controls};
+
+pub(crate) use sketch::Sketching;
 
 const ORBIT_SPEED: f32 = 0.008;
 const ZOOM_PER_LINE: f32 = 0.9;
 const ZOOM_PER_PIXEL: f32 = 0.995;
 
-/// The 3D viewport showing `mesh` from `camera`, with the controls over its
-/// top-right corner.
+/// The 3D viewport showing `mesh` and the finished `sketches` from
+/// `camera`, with the controls over its top-right corner, and in a sketch
+/// the sketch being edited, with the layer of widgets anchored to it.
 pub(crate) fn viewport<'a>(
     mesh: &Arc<RenderMesh>,
+    sketches: &Arc<RenderLines>,
     camera: &'a Camera,
     palette: &Palette,
+    sketching: Option<Sketching<'a>>,
 ) -> Element<'a, Message> {
-    let scene = iced::widget::shader(program(mesh, camera, palette))
+    // Constraint glyphs, nudged apart; dimensions' labels, where they're
+    // put; the value field, in a layer of its own so its state stays its
+    // own as labels come and go; the glyph of where a drawing tool snaps,
+    // by the cursor; and the drawing tool's fields, beside it.
+    let anchors = sketching.as_ref().map(|sketching| {
+        let placement = sketching.placement();
+        let glyphs = Anchors::new(*camera, placement, sketching.glyphs());
+        let labels = Anchors::new(*camera, placement, sketching.labels());
+        let field = Anchors::new(*camera, placement, sketching.field());
+        let snap = Anchors::new(*camera, placement, sketching.snap_glyph());
+        let fields = Anchors::new(*camera, placement, sketching.fields());
+        [
+            Element::from(glyphs.nudged(sketch::GLYPH_OFFSET)),
+            labels.into(),
+            field.into(),
+            snap.nudged(sketch::SNAP_OFFSET).into(),
+            fields.beside(sketch::FIELDS_OFFSET).into(),
+        ]
+    });
+    let program = program(mesh, sketches, camera, palette, sketching);
+    let scene = iced::widget::shader(program)
         .width(Length::Fill)
         .height(Length::Fill);
     let controls = container(controls::view_controls(camera))
         .align_right(Length::Fill)
         .padding([10, 12]);
-    stack![scene, controls].into()
+    // The layers over the scene take only what's over their widgets, and
+    // let the rest through to it.
+    stack![scene]
+        .extend(anchors.into_iter().flatten())
+        .push(controls)
+        .into()
 }
 
-/// The shader program drawing `mesh` from `camera` in `palette`'s colors.
-fn program(mesh: &Arc<RenderMesh>, camera: &Camera, palette: &Palette) -> Program {
-    Program(Scene {
-        mesh: mesh.clone(),
-        camera: *camera,
-        colors: palette.scene,
-    })
+/// The shader program drawing `mesh` and `sketches` from `camera` in
+/// `palette`'s colors, in `sketching`'s sketch if there is one.
+fn program<'a>(
+    mesh: &Arc<RenderMesh>,
+    sketches: &Arc<RenderLines>,
+    camera: &Camera,
+    palette: &Palette,
+    sketching: Option<Sketching<'a>>,
+) -> Program<'a> {
+    Program {
+        scene: Scene {
+            mesh: mesh.clone(),
+            sketches: sketches.clone(),
+            camera: *camera,
+            colors: palette.scene,
+            sketch_plane: sketching.as_ref().map(Sketching::grid),
+        },
+        sketching,
+        sketch_colors: palette.sketching,
+    }
 }
 
 /// The viewport's shader program: handles input and hands iced the scene it
 /// was built with to draw.
-struct Program(Scene);
+struct Program<'a> {
+    scene: Scene,
+    /// The sketch being edited, if one is.
+    sketching: Option<Sketching<'a>>,
+    sketch_colors: SketchColors,
+}
 
-/// What one frame of the viewport draws.
+/// What one frame of the viewport draws but the sketch being edited.
 #[derive(Debug, Clone)]
 struct Scene {
     mesh: Arc<RenderMesh>,
+    sketches: Arc<RenderLines>,
     camera: Camera,
     colors: Colors,
+    /// The plane of the sketch being edited, if one is.
+    sketch_plane: Option<GridPlane>,
 }
 
+/// What dragging in the viewport does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DragKind {
     Orbit,
@@ -61,30 +122,50 @@ enum DragKind {
 }
 
 impl DragKind {
-    /// What dragging with `button` does, if anything. Keep [`hints`] in
-    /// step.
-    fn for_button(button: mouse::Button) -> Option<Self> {
+    /// What dragging with `button` while `modifiers` are held does, if
+    /// anything, in a sketch if `sketching`. The middle button, and the
+    /// right one with [`Held::ORBIT`], orbit, the right one pans, and the
+    /// left one orbits too outside a sketch; in a sketch it's for selecting
+    /// and editing geometry instead. Keep [`hints`] and `README.md` in step.
+    fn for_button(
+        button: mouse::Button,
+        modifiers: keyboard::Modifiers,
+        sketching: bool,
+    ) -> Option<Self> {
         match button {
-            mouse::Button::Left => Some(DragKind::Orbit),
-            mouse::Button::Right | mouse::Button::Middle => Some(DragKind::Pan),
+            mouse::Button::Middle => Some(DragKind::Orbit),
+            mouse::Button::Right if Held::ORBIT.is_held(modifiers) => Some(DragKind::Orbit),
+            mouse::Button::Right => Some(DragKind::Pan),
+            mouse::Button::Left if !sketching => Some(DragKind::Orbit),
             _ => None,
         }
     }
 }
 
-/// The status bar hints for the viewport's mouse bindings, see
-/// [`DragKind::for_button`].
-pub fn hints<'a>() -> [Element<'a, Message>; 3] {
+/// The status bar hints for the viewport's mouse bindings, in a sketch if
+/// `sketching`, see [`DragKind::for_button`]. Orbiting with the middle
+/// button isn't hinted: it's the wheel's icon, which zooms.
+pub fn hints<'a>(sketching: bool) -> [Element<'a, Message>; 3] {
+    let orbit = if sketching {
+        chord_hint(Held::ORBIT, MouseButton::Right, "Orbit")
+    } else {
+        mouse_hint(MouseButton::Left, "Drag to orbit")
+    };
     [
-        mouse_hint(MouseButton::Left, "Drag to orbit"),
+        orbit,
         mouse_hint(MouseButton::Right, "Pan"),
         mouse_hint(MouseButton::Wheel, "Zoom"),
     ]
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 struct Interaction {
     drag: Option<(DragKind, Point)>,
+    /// The modifiers held, which change what a drag does, and `Ctrl`
+    /// (`Cmd`) adds to a sketch's selection.
+    modifiers: keyboard::Modifiers,
+    /// What's kept of the sketch being edited.
+    sketch: sketch::Input,
     /// Names this widget's [`Slot`] in the [`Pipeline`], for as long as the
     /// widget lives.
     slot: Arc<SlotKey>,
@@ -94,7 +175,7 @@ struct Interaction {
 #[derive(Debug, Default)]
 struct SlotKey;
 
-impl shader::Program<Message> for Program {
+impl shader::Program<Message> for Program<'_> {
     type State = Interaction;
     type Primitive = Primitive;
 
@@ -105,14 +186,107 @@ impl shader::Program<Message> for Program {
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> Option<Action<Message>> {
-        let Event::Mouse(event) = event else {
-            return None;
+        if let Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) = event {
+            state.modifiers = *modifiers;
+            let sketching = self.sketching.as_ref()?;
+            return sketching.modifiers_changed(
+                &mut state.sketch,
+                bounds,
+                cursor,
+                &self.scene.camera,
+                *modifiers,
+            );
+        }
+        let camera = match event {
+            // The left button is the sketch's in a sketch, and moving the
+            // cursor while the camera isn't dragged.
+            Event::Mouse(
+                mouse::Event::ButtonPressed(mouse::Button::Left)
+                | mouse::Event::ButtonReleased(mouse::Button::Left),
+            ) => self.sketching.is_none(),
+            Event::Mouse(mouse::Event::CursorMoved { .. }) => state.drag.is_some(),
+            Event::Mouse(_) => true,
+            _ => false,
         };
+        if camera {
+            let Event::Mouse(event) = event else {
+                return None;
+            };
+            return self.camera(state, *event, bounds, cursor);
+        }
+        let sketching = self.sketching.as_ref()?;
+        let camera = &self.scene.camera;
+        sketching.update(
+            &mut state.sketch,
+            event,
+            bounds,
+            cursor,
+            camera,
+            state.modifiers,
+        )
+    }
 
-        match *event {
+    fn draw(&self, state: &Interaction, _cursor: mouse::Cursor, bounds: Rectangle) -> Primitive {
+        let sketch = self.sketching.as_ref().map(|sketching| {
+            let camera = &self.scene.camera;
+            let (base, live) = sketching.layers(
+                &state.sketch,
+                camera,
+                bounds,
+                self.sketch_colors,
+                state.modifiers,
+            );
+            SketchFrame {
+                plane: sketching.grid(),
+                base,
+                live,
+            }
+        });
+        Primitive {
+            scene: self.scene.clone(),
+            sketch,
+            slot: state.slot.clone(),
+        }
+    }
+
+    fn mouse_interaction(
+        &self,
+        state: &Interaction,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+    ) -> mouse::Interaction {
+        match state.drag {
+            Some((DragKind::Orbit, _)) => mouse::Interaction::Grabbing,
+            Some((DragKind::Pan, _)) => mouse::Interaction::Move,
+            None => self
+                .sketching
+                .as_ref()
+                .and_then(|sketching| sketching.mouse_interaction(&state.sketch, bounds, cursor))
+                .unwrap_or_default(),
+        }
+    }
+}
+
+impl Program<'_> {
+    /// Whether a sketch is being edited, where the left button is for its
+    /// geometry.
+    fn sketching(&self) -> bool {
+        self.sketching.is_some()
+    }
+
+    /// Takes the mouse `event` as a move of the camera: orbiting, panning
+    /// and zooming.
+    fn camera(
+        &self,
+        state: &mut Interaction,
+        event: mouse::Event,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+    ) -> Option<Action<Message>> {
+        match event {
             mouse::Event::ButtonPressed(button) => {
                 let position = cursor.position_over(bounds)?;
-                let kind = DragKind::for_button(button)?;
+                let kind = DragKind::for_button(button, state.modifiers, self.sketching())?;
                 state.drag = Some((kind, position));
                 Some(Action::capture())
             }
@@ -151,34 +325,24 @@ impl shader::Program<Message> for Program {
             _ => None,
         }
     }
-
-    fn draw(&self, state: &Interaction, _cursor: mouse::Cursor, _bounds: Rectangle) -> Primitive {
-        Primitive {
-            scene: self.0.clone(),
-            slot: state.slot.clone(),
-        }
-    }
-
-    fn mouse_interaction(
-        &self,
-        state: &Interaction,
-        _bounds: Rectangle,
-        _cursor: mouse::Cursor,
-    ) -> mouse::Interaction {
-        match state.drag {
-            Some((DragKind::Orbit, _)) => mouse::Interaction::Grabbing,
-            Some((DragKind::Pan, _)) => mouse::Interaction::Move,
-            None => mouse::Interaction::default(),
-        }
-    }
 }
 
 /// A frame's scene and the widget that draws it.
 #[derive(Debug, Clone)]
 struct Primitive {
     scene: Scene,
+    /// The sketch being edited, if one is.
+    sketch: Option<SketchFrame>,
     /// The widget's key to its slot in the [`Pipeline`].
     slot: Arc<SlotKey>,
+}
+
+/// What a frame draws of the sketch being edited: see [`SketchScene`].
+#[derive(Debug, Clone)]
+struct SketchFrame {
+    plane: GridPlane,
+    base: Arc<SketchLayer>,
+    live: SketchLayer,
 }
 
 impl shader::Primitive for Primitive {
@@ -203,6 +367,16 @@ impl shader::Primitive for Primitive {
             &Frame {
                 camera: &scene.camera,
                 mesh: &scene.mesh,
+                sketches: &scene.sketches,
+                // A sketch being edited moves the grid onto its plane and
+                // fades the model.
+                grid: scene.sketch_plane.unwrap_or(GridPlane::XY),
+                faded: scene.sketch_plane.is_some(),
+                sketch: self.sketch.as_ref().map(|sketch| SketchScene {
+                    plane: sketch.plane,
+                    base: &sketch.base,
+                    live: &sketch.live,
+                }),
                 viewport: varde_render::Viewport {
                     x: bounds.x * scale,
                     y: bounds.y * scale,
@@ -216,7 +390,7 @@ impl shader::Primitive for Primitive {
         );
         // `prepare` can't send a message, so this can't reach the UI.
         if let Err(error) = prepared {
-            log::error!("Couldn't draw the model: {error}");
+            log::error!("Couldn't draw the design: {error}");
         }
     }
 

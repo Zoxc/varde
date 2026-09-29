@@ -41,3 +41,39 @@ socket.
 display handle the instance is given (`Rdh::Wayland` → Wayland platform), not by
 probing for a socket. It will arrive with an iced release on wgpu ≥ 29. Not
 reported, since it's fixed upstream.
+
+## Parallel instances crash in the Vulkan loader
+
+**Version:** wgpu 27.0.1 / wgpu-hal 27.0.4, on vulkan-loader 1.4.341 (Fedora
+44) with Mesa 26.1.8's llvmpipe as the only Vulkan device.
+
+**What was hit.** `cargo test -p varde-render --test viewport` died with
+SIGSEGV in about one run in four (5 of 20), with every test passing
+otherwise. Each GPU test made and dropped its own `wgpu::Instance` and
+device, and the test harness runs them on parallel threads.
+
+**Cause.** Under gdb, one test thread crashed in the loader's
+`loader_get_icd_and_device`, reached from `vkSetDebugUtilsObjectNameEXT`
+(wgpu-hal naming objects while `Renderer::new` built its pipelines), at
+the same moment another thread was creating its own instance. The loader's
+lookup from a device to its driver isn't safe against another instance
+being created or destroyed concurrently.
+
+**Why it's not ours.**
+- The crash is inside the loader, called from wgpu-hal; varde only asked
+  wgpu for pipelines, on its own device, as any user of wgpu does.
+- With `--test-threads=1` it didn't happen in 20 runs.
+- The app itself never has more than one instance, so it's only the tests
+  that create them in parallel.
+
+**Cost here.** Each GPU test binary makes one instance and device, once, in
+a `static OnceLock`, and its tests share it: `crates/render/tests/viewport.rs`,
+`crates/render/tests/limits.rs` and `crates/view/src/viewport/tests.rs`
+(`recursion_limit` raised in the render tests for the `Sync` check on the
+static). 30 runs of each with no crash. If a later loader is fixed, tests
+could go back to their own devices, but sharing one is cheaper anyway.
+
+**Upstream status.** Not reported. Whether it's the loader's or wgpu-hal
+calling a device-level function while another instance is torn down wasn't
+settled; a reduced reproduction (two threads creating instances and naming
+objects) would tell, and is what a report needs.

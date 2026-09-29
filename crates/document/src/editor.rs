@@ -2,9 +2,11 @@ use std::{collections::VecDeque, sync::Arc};
 
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
+use varde_expr::LengthUnit;
 use varde_kernel::Shape;
+use varde_sketch::Sketch;
 
-use crate::{BodyId, Document, EditError, Snapshot};
+use crate::{BodyId, Document, EditError, FeatureId, FeatureKind, Plane, Snapshot};
 
 /// An edit to a [`Document`]. [`Editor::apply`] refuses one that would
 /// leave the document failing [`Document::check`].
@@ -17,6 +19,24 @@ pub enum Command {
     },
     RemoveBody(BodyId),
     SetVisible(BodyId, bool),
+    /// Adds a feature holding an empty sketch on `plane`.
+    AddSketch {
+        name: String,
+        plane: Plane,
+    },
+    /// Replaces a sketch feature's sketch whole: how every edit inside a
+    /// sketch is committed, as one undoable change.
+    SetSketch {
+        feature: FeatureId,
+        sketch: Box<Sketch>,
+    },
+    RemoveFeature(FeatureId),
+    SetFeatureVisible(FeatureId, bool),
+    /// Changes the design's units. Every dimension's expression first has
+    /// the old units written in after its bare numbers
+    /// ([`Sketch::pin_units`]), so it means what it did, and no value or
+    /// geometry changes.
+    SetUnits(LengthUnit),
     /// Replaces the whole document, e.g. with unsaved changes recovered
     /// after a crash.
     Replace(Box<Document>),
@@ -36,12 +56,7 @@ impl Document {
     /// farthest along x. Once that is past the coordinate limit, the
     /// editor refuses it.
     pub fn add_cube(&self) -> Command {
-        let number = self
-            .bodies
-            .iter()
-            .filter_map(|body| body.name.strip_prefix("Cube ")?.parse::<u64>().ok())
-            .max()
-            .map_or(1, |highest| highest.saturating_add(1));
+        let number = next_number(self.bodies.iter().map(|body| body.name.as_str()), "Cube");
         // A document's positions and shapes' bounds are within
         // `MAX_COORD`, which `Document::check` holds, so its shapes build
         // and these sums stay finite.
@@ -59,6 +74,32 @@ impl Document {
             position: Vec3::new(x, 0.0, 0.0),
         }
     }
+
+    /// The command adding a new sketch on `plane`, named one past the
+    /// highest "Sketch N" in the document, as [`add_cube`](Self::add_cube)
+    /// names cubes.
+    pub fn add_sketch(&self, plane: Plane) -> Command {
+        let names = self.features.iter().map(|feature| feature.name.as_str());
+        Command::AddSketch {
+            name: format!("Sketch {}", next_number(names, "Sketch")),
+            plane,
+        }
+    }
+}
+
+/// One past the highest `N` of the `names` that are "`kind` N", or 1. A
+/// file could hold the highest number there is, which is then reused: a
+/// repeated name is harmless.
+fn next_number<'a>(names: impl Iterator<Item = &'a str>, kind: &str) -> u64 {
+    names
+        .filter_map(|name| {
+            name.strip_prefix(kind)?
+                .strip_prefix(' ')?
+                .parse::<u64>()
+                .ok()
+        })
+        .max()
+        .map_or(1, |highest| highest.saturating_add(1))
 }
 
 /// Names a state of an [`Editor`]'s document, see [`Editor::revision`].
@@ -129,11 +170,13 @@ pub struct Editor {
 }
 
 /// A document in an editor's history, with the revision naming it, which
-/// stays with it through undo and redo.
+/// stays with it through undo and redo, and its lineage, see
+/// [`Editor::lineage`].
 #[derive(Debug, Clone)]
 struct State {
     document: Arc<Document>,
     revision: Revision,
+    lineage: Revision,
 }
 
 impl Editor {
@@ -145,6 +188,7 @@ impl Editor {
             current: State {
                 document: Arc::new(document),
                 revision: Revision(0),
+                lineage: Revision(0),
             },
             undo: VecDeque::new(),
             redo: Vec::new(),
@@ -170,6 +214,16 @@ impl Editor {
         self.current.revision
     }
 
+    /// Names the line of edits the document comes from: the revision of
+    /// the document it began with, the first or one that replaced it
+    /// whole ([`Command::Replace`]). It changes only when an edit, undo or
+    /// redo crosses such a replacement, when ids in the document, which
+    /// otherwise name the same things from one state to the next, may name
+    /// other things than before.
+    pub fn lineage(&self) -> Revision {
+        self.current.lineage
+    }
+
     /// Grows on every change, undo and redo included: for ordering work
     /// about the document, such as regenerating it, where the newest wins.
     pub fn generation(&self) -> Generation {
@@ -190,6 +244,7 @@ impl Editor {
         // as it was, and one that would change nothing returns before
         // copying.
         let document = &self.current.document;
+        let replacing = matches!(command, Command::Replace(_));
         let next = match command {
             Command::AddBody {
                 name,
@@ -219,6 +274,60 @@ impl Editor {
                 next.bodies[index].visible = visible;
                 next
             }
+            Command::AddSketch { name, plane } => {
+                let mut next = Document::clone(document);
+                let sketch = Sketch::default();
+                next.add_feature(name, FeatureKind::Sketch { plane, sketch })?;
+                next
+            }
+            Command::SetSketch { feature, sketch } => {
+                let Some(index) = document
+                    .feature_index(feature)
+                    .filter(|&index| match &document.features[index].kind {
+                        FeatureKind::Sketch { sketch: old, .. } => *old != *sketch,
+                    })
+                else {
+                    return Ok(());
+                };
+                let mut next = Document::clone(document);
+                match &mut next.features[index].kind {
+                    FeatureKind::Sketch { sketch: old, .. } => *old = *sketch,
+                }
+                next
+            }
+            Command::RemoveFeature(id) => {
+                let Some(index) = document.feature_index(id) else {
+                    return Ok(());
+                };
+                let mut next = Document::clone(document);
+                next.features.remove(index);
+                next
+            }
+            Command::SetFeatureVisible(id, visible) => {
+                let Some(index) = document
+                    .feature_index(id)
+                    .filter(|&index| document.features[index].visible != visible)
+                else {
+                    return Ok(());
+                };
+                let mut next = Document::clone(document);
+                next.features[index].visible = visible;
+                next
+            }
+            Command::SetUnits(units) => {
+                if units == document.units {
+                    return Ok(());
+                }
+                let mut next = Document::clone(document);
+                let before = document.design();
+                for feature in &mut next.features {
+                    match &mut feature.kind {
+                        FeatureKind::Sketch { sketch, .. } => sketch.pin_units(&before),
+                    }
+                }
+                next.units = units;
+                next
+            }
             Command::Replace(replacement) => {
                 if *replacement == **document {
                     return Ok(());
@@ -231,11 +340,17 @@ impl Editor {
         let revision = self.next_revision;
         // One per edit: a u64 won't run out.
         self.next_revision = Revision(revision.0 + 1);
+        let lineage = if replacing {
+            revision
+        } else {
+            self.current.lineage
+        };
         let before = std::mem::replace(
             &mut self.current,
             State {
                 document: Arc::new(next),
                 revision,
+                lineage,
             },
         );
         self.push_undo(before);

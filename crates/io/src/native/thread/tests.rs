@@ -1,33 +1,11 @@
 use std::path::Path;
-use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll, Waker};
-use std::time::{Duration, Instant};
 
-use futures::Stream;
+use varde_lane::thread::testing::{TIMEOUT, next};
 
 use super::*;
 use crate::tests::{TempDir, with_bodies};
 use crate::{Access, Chosen, Closing, FileId, OpenId, RecentFile, SaveError, SaveTo, Transport};
-
-/// How long a test waits for the lane before failing.
-const TIMEOUT: Duration = Duration::from_secs(10);
-
-/// The next response, polled without an executor.
-fn next(responses: &mut Responses) -> Response {
-    let start = Instant::now();
-    let mut cx = Context::from_waker(Waker::noop());
-    loop {
-        match Pin::new(&mut *responses).poll_next(&mut cx) {
-            Poll::Ready(Some(response)) => return response,
-            Poll::Ready(None) => panic!("the lane ended"),
-            Poll::Pending if start.elapsed() < TIMEOUT => {
-                std::thread::sleep(Duration::from_millis(1))
-            }
-            Poll::Pending => panic!("no response from the lane"),
-        }
-    }
-}
 
 #[test]
 fn answers_in_order_and_closes_files_when_dropped() {

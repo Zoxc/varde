@@ -1,10 +1,15 @@
 [package]
 name = "varde-sketch"
-description = "2D sketch geometry and constraint solving"
+description = "2D sketches: geometry, constraints and solving them"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
+faer.workspace = true
+varde-expr = { workspace = true, features = ["serde"] }
 glam.workspace = true
 serde.workspace = true
+
+[dev-dependencies]
+postcard.workspace = true

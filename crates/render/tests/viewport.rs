@@ -1,10 +1,16 @@
 //! Renders into an offscreen texture and checks the scene stays inside its viewport.
+// Holding the shared wgpu device in a `static` asks whether it's `Sync`
+// deeper than the default limit.
+#![recursion_limit = "256"]
 
 use std::sync::Arc;
 
 use glam::Vec3;
-use varde_kernel::{RenderMesh, Shape};
-use varde_render::{Camera, ClipRect, Colors, Frame, Renderer, Srgb, View, Viewport, wgpu};
+use varde_kernel::{RenderLines, RenderMesh, Shape};
+use varde_render::{
+    Camera, ClipRect, Colors, Frame, GridPlane, LINE_WIDTH, LineStyle, PointStyle, Projection,
+    Renderer, SketchLayer, SketchScene, Space, Srgb, Srgba, View, Viewport, wgpu,
+};
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 /// A black background and a grey model, with the app's scene colours
@@ -21,16 +27,29 @@ const COLORS: Colors = Colors {
         Srgb([0.20, 0.45, 0.85]),
     ],
     origin_outline: Srgb([0.2, 0.22, 0.25]),
+    // Pure yellow, found by its lack of blue.
+    sketch: Srgb([1.0, 1.0, 0.0]),
+    faded_alpha: 0.3,
 };
 const SIZE: [u32; 2] = [512, 256];
 const SENTINEL: [u8; 4] = [255, 0, 255, 255];
 
+/// The one device the tests share, if there's an adapter. The Vulkan
+/// loader isn't thread safe across instances: a test creating its own
+/// while another names an object on its device crashed it
+/// (`loader_get_icd_and_device`, SIGSEGV about one run in three), so the
+/// instance and device are made once for the whole binary.
 fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
-    let instance = wgpu::Instance::default();
-    let adapter =
-        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
-            .ok()?;
-    pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()
+    static DEVICE: std::sync::OnceLock<Option<(wgpu::Device, wgpu::Queue)>> =
+        std::sync::OnceLock::new();
+    DEVICE
+        .get_or_init(|| {
+            let instance = wgpu::Instance::default();
+            let options = wgpu::RequestAdapterOptions::default();
+            let adapter = pollster::block_on(instance.request_adapter(&options)).ok()?;
+            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()
+        })
+        .clone()
 }
 
 /// Renders `mesh` into `viewport` and returns RGBA8 pixels, row-major.
@@ -54,6 +73,84 @@ fn render_to(
     clip: ClipRect,
     scale_factor: f32,
 ) -> Option<Vec<[u8; 4]>> {
+    draw(
+        format,
+        &Frame {
+            camera,
+            mesh: &Arc::new(mesh.clone()),
+            sketches: &Arc::default(),
+            grid: GridPlane::XY,
+            faded: false,
+            sketch: None,
+            viewport,
+            target_size: SIZE,
+            scale_factor,
+            colors: COLORS,
+        },
+        clip,
+    )
+}
+
+/// What a test draws besides the model, and how.
+#[derive(Default)]
+struct Extras {
+    sketches: RenderLines,
+    grid: GridPlane,
+    faded: bool,
+    /// The sketch being edited: its plane and a layer of it, drawn as its
+    /// live layer if `live`, else as its base layer.
+    sketch: Option<(GridPlane, SketchLayer)>,
+    live: bool,
+}
+
+/// Renders `mesh` and `extras` into [`VIEWPORT`] at a scale factor of 1.
+fn render_with(camera: &Camera, mesh: &RenderMesh, extras: Extras) -> Option<Vec<[u8; 4]>> {
+    render_scaled(camera, mesh, extras, VIEWPORT, CLIP, 1.0)
+}
+
+/// Like [`render_with`], into `viewport` at `scale_factor`.
+fn render_scaled(
+    camera: &Camera,
+    mesh: &RenderMesh,
+    extras: Extras,
+    viewport: Viewport,
+    clip: ClipRect,
+    scale_factor: f32,
+) -> Option<Vec<[u8; 4]>> {
+    let layers = extras.sketch.map(|(plane, layer)| {
+        let (base, live) = if extras.live {
+            (SketchLayer::default(), layer)
+        } else {
+            (layer, SketchLayer::default())
+        };
+        (plane, Arc::new(base), live)
+    });
+    let sketch = layers.as_ref().map(|(plane, base, live)| SketchScene {
+        plane: *plane,
+        base,
+        live,
+    });
+    draw(
+        FORMAT,
+        &Frame {
+            camera,
+            mesh: &Arc::new(mesh.clone()),
+            sketches: &Arc::new(extras.sketches),
+            grid: extras.grid,
+            faded: extras.faded,
+            sketch,
+            viewport,
+            target_size: SIZE,
+            scale_factor,
+            colors: COLORS,
+        },
+        clip,
+    )
+}
+
+/// Draws `frame` within `clip` into a target of `format`, and returns the
+/// stored bytes.
+fn draw(format: wgpu::TextureFormat, frame: &Frame<'_>, clip: ClipRect) -> Option<Vec<[u8; 4]>> {
     let (device, queue) = device()?;
     let [width, height] = SIZE;
 
@@ -75,21 +172,7 @@ fn render_to(
 
     let renderer = Renderer::new(&device, format);
     let mut slot = renderer.slot(&device);
-    renderer
-        .prepare(
-            &mut slot,
-            &device,
-            &queue,
-            &Frame {
-                camera,
-                mesh: &Arc::new(mesh.clone()),
-                viewport,
-                target_size: SIZE,
-                scale_factor,
-                colors: COLORS,
-            },
-        )
-        .unwrap();
+    renderer.prepare(&mut slot, &device, &queue, frame).unwrap();
 
     let mut encoder = device.create_command_encoder(&Default::default());
     let [r, g, b, a] = SENTINEL.map(|c| c as f64 / 255.0);
@@ -419,4 +502,686 @@ fn looks_the_same_on_srgb_and_linear_targets() {
     }
     let lit = pixel(&srgb, cx, cy);
     assert!(lit[..3].iter().all(|&c| c > 64), "centre is {lit:?}");
+}
+
+/// Whether a pixel is mostly [`COLORS`]' sketch yellow, which nothing else
+/// in the scene is.
+fn yellow([r, g, b, _]: [u8; 4]) -> bool {
+    r > 150 && g > 150 && b < 100
+}
+
+/// The centre of [`VIEWPORT`], in whole pixels.
+const CENTER: (u32, u32) = (CLIP.x + CLIP.width / 2, CLIP.y + CLIP.height / 2);
+
+/// Where `world` is drawn in [`VIEWPORT`] by `camera`, orthographic.
+fn on_screen(camera: &Camera, world: Vec3) -> (u32, u32) {
+    let pixels = VIEWPORT.height / camera.view_height();
+    let offset = world - camera.target();
+    let x = VIEWPORT.x + VIEWPORT.width / 2.0 + offset.dot(camera.right()) * pixels;
+    let y = VIEWPORT.y + VIEWPORT.height / 2.0 - offset.dot(camera.up()) * pixels;
+    (x as u32, y as u32)
+}
+
+/// Whether any pixel of column `x` within [`CLIP`] is yellow.
+fn yellow_in_column(pixels: &[[u8; 4]], x: u32) -> bool {
+    (CLIP.y..CLIP.y + CLIP.height).any(|y| yellow(pixel(pixels, x, y)))
+}
+
+/// Lines from `a` to `b`, one segment each.
+fn lines(segments: &[(Vec3, Vec3)]) -> RenderLines {
+    let mut lines = RenderLines::default();
+    for &(a, b) in segments {
+        lines.push([a, b]).unwrap();
+    }
+    lines
+}
+
+fn cube(size: f32, at: Vec3) -> RenderMesh {
+    let mut mesh = RenderMesh::default();
+    mesh.append_at(
+        &Shape::cuboid(Vec3::splat(size))
+            .build()
+            .unwrap()
+            .tessellate(),
+        at,
+    )
+    .unwrap();
+    mesh
+}
+
+#[test]
+fn sketches_are_hidden_by_bodies_in_front_of_them() {
+    // From the top, across a cube from 0 to 2: beneath it, on its top face
+    // and above it.
+    let mut camera = Camera::default();
+    camera.look_from(View::Top);
+    let mesh = cube(2.0, Vec3::ZERO);
+    for (z, hidden) in [(-1.0, true), (2.0, false), (3.0, false)] {
+        let (from, to) = (Vec3::new(-3.0, 1.0, z), Vec3::new(5.0, 1.0, z));
+        let extras = Extras {
+            sketches: lines(&[(from, to)]),
+            ..Extras::default()
+        };
+        let Some(pixels) = render_with(&camera, &mesh, extras) else {
+            eprintln!("no GPU adapter, skipping");
+            return;
+        };
+        for x in [-2.0, -0.5, 1.0, 2.5, 4.0] {
+            let over_cube = (0.0..=2.0).contains(&x);
+            let (column, _) = on_screen(&camera, Vec3::new(x, 1.0, z));
+            assert_eq!(
+                yellow_in_column(&pixels, column),
+                !(hidden && over_cube),
+                "z {z}, x {x}"
+            );
+        }
+    }
+}
+
+#[test]
+fn sketch_lines_keep_their_width_on_screen() {
+    // Across the bottom half from the top, measured in a column left of
+    // the origin, clear of the grid's axes and the origin marker.
+    let mut camera = Camera::default();
+    camera.look_from(View::Top);
+    let [width, height] = SIZE;
+    let measure = |scale: f32, zoom: f32| {
+        let mut camera = camera;
+        camera.zoom(zoom);
+        let y = -0.2 * camera.view_height();
+        let extras = Extras {
+            sketches: lines(&[(Vec3::new(-100.0, y, 0.0), Vec3::new(100.0, y, 0.0))]),
+            ..Extras::default()
+        };
+        let size = [width as f32 / 2.0 * scale, height as f32 / 2.0 * scale];
+        let viewport = Viewport {
+            x: 0.0,
+            y: 0.0,
+            width: size[0],
+            height: size[1],
+        };
+        let clip = ClipRect {
+            x: 0,
+            y: 0,
+            width: size[0] as u32,
+            height: size[1] as u32,
+        };
+        let pixels = render_scaled(
+            &camera,
+            &RenderMesh::default(),
+            extras,
+            viewport,
+            clip,
+            scale,
+        )?;
+        // How much of the column the line covers, from how much redder
+        // than blue it is, which grid lines and the background aren't.
+        let column = clip.width / 4;
+        let covered: f32 = (clip.height / 2 + 4..clip.height)
+            .map(|y| {
+                let [r, _, b, _] = pixel(&pixels, column, y);
+                f32::from(r.saturating_sub(b)) / 255.0
+            })
+            .sum();
+        Some(covered)
+    };
+    let (Some(one), Some(two), Some(zoomed)) =
+        (measure(1.0, 1.0), measure(2.0, 1.0), measure(1.0, 0.01))
+    else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    assert!(
+        (LINE_WIDTH * 0.8..LINE_WIDTH * 1.3).contains(&one),
+        "{one} pixels wide"
+    );
+    assert!((1.8..2.2).contains(&(two / one)), "grew {}x", two / one);
+    // The same however far away.
+    assert!((zoomed - one).abs() < 0.2, "{zoomed} zoomed in, {one} not");
+}
+
+#[test]
+fn sketch_lines_crossing_the_near_plane_are_cut_there() {
+    // In perspective from the front, a line running from in front of the
+    // target to behind the eye, up and right of it: it heads for the top
+    // right corner, and nothing of it may come round behind the eye to
+    // the bottom left.
+    let mut camera = Camera::default();
+    camera.set_projection(Projection::Perspective);
+    camera.look_from(View::Front);
+    let extras = Extras {
+        sketches: lines(&[(Vec3::new(1.0, 5.0, 1.0), Vec3::new(1.0, -30.0, 1.0))]),
+        ..Extras::default()
+    };
+    let Some(pixels) = render_with(&camera, &RenderMesh::default(), extras) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let (cx, cy) = CENTER;
+    let mut drawn = 0;
+    for y in CLIP.y..CLIP.y + CLIP.height {
+        for x in CLIP.x..CLIP.x + CLIP.width {
+            if yellow(pixel(&pixels, x, y)) {
+                assert!(x >= cx && y <= cy, "line at ({x}, {y})");
+                drawn += 1;
+            }
+        }
+    }
+    assert!(drawn > 10, "only {drawn} pixels of line");
+}
+
+#[test]
+fn faded_model_shows_only_its_nearest_faces_faintly() {
+    // From the front, the centre of a cube's front face, with another cube
+    // behind it drawn first.
+    let mut camera = Camera::default();
+    camera.set_target(Vec3::ONE);
+    camera.look_from(View::Front);
+    let near = cube(2.0, Vec3::ZERO);
+    let mut both = cube(2.0, Vec3::Y * 5.0);
+    both.append_at(&near, Vec3::ZERO).unwrap();
+    let faded = || Extras {
+        faded: true,
+        ..Extras::default()
+    };
+    let (Some(opaque), Some(faint), Some(faint_both)) = (
+        render_with(&camera, &near, Extras::default()),
+        render_with(&camera, &near, faded()),
+        render_with(&camera, &both, faded()),
+    ) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let (cx, cy) = CENTER;
+    let lit = pixel(&opaque, cx, cy);
+    let dim = pixel(&faint, cx, cy);
+    // Over the black background.
+    for (lit, dim) in lit[..3].iter().zip(&dim[..3]) {
+        let expected = f32::from(*lit) * COLORS.faded_alpha;
+        assert!((f32::from(*dim) - expected).abs() <= 1.5, "{dim} for {lit}");
+    }
+    assert_eq!(pixel(&faint_both, cx, cy), dim);
+}
+
+#[test]
+fn faded_model_still_hides_sketches_behind_it() {
+    let mut camera = Camera::default();
+    camera.set_target(Vec3::ONE);
+    camera.look_from(View::Front);
+    let behind = || Extras {
+        sketches: lines(&[(Vec3::new(-1.0, 3.0, 1.0), Vec3::new(3.0, 3.0, 1.0))]),
+        faded: true,
+        ..Extras::default()
+    };
+    let (Some(alone), Some(hidden)) = (
+        render_with(&camera, &RenderMesh::default(), behind()),
+        render_with(&camera, &cube(2.0, Vec3::ZERO), behind()),
+    ) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let (cx, _) = CENTER;
+    assert!(yellow_in_column(&alone, cx));
+    assert!(!yellow_in_column(&hidden, cx));
+}
+
+#[test]
+fn grid_is_drawn_on_its_plane() {
+    // From the front, the XZ plane shows its X axis left of the origin and
+    // its Z axis below it, where the origin marker has none. The XY plane
+    // is seen edge on, so neither shows.
+    let mut camera = Camera::default();
+    camera.look_from(View::Front);
+    let xz = GridPlane::new(Vec3::ZERO, Vec3::X, Vec3::Z).unwrap();
+    let with_grid = |grid| Extras {
+        grid,
+        ..Extras::default()
+    };
+    let (Some(on_xz), Some(on_xy)) = (
+        render_with(&camera, &RenderMesh::default(), with_grid(xz)),
+        render_with(&camera, &RenderMesh::default(), with_grid(GridPlane::XY)),
+    ) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let red: fn([u8; 4]) -> bool = |[r, g, _, _]| r > 150 && g < 100;
+    let blue: fn([u8; 4]) -> bool = |[r, _, b, _]| b > 150 && b > r + 80;
+    let (cx, cy) = CENTER;
+    let x_axis = (cy - 1..=cy + 1).map(|y| pixel(&on_xz, cx - 30, y));
+    let z_axis = (cx - 1..=cx + 1).map(|x| pixel(&on_xz, x, cy + 20));
+    assert!(x_axis.clone().any(red), "{:?}", x_axis.collect::<Vec<_>>());
+    assert!(z_axis.clone().any(blue), "{:?}", z_axis.collect::<Vec<_>>());
+    assert!(!(cy - 1..=cy + 1).any(|y| red(pixel(&on_xy, cx - 30, y))));
+    assert!(!(cx - 1..=cx + 1).any(|x| blue(pixel(&on_xy, x, cy + 20))));
+}
+
+/// Looking straight down at the XY plane with the origin in the middle,
+/// 12.8 units across the view's height: a unit is 10 logical pixels in
+/// [`SKETCH_VIEW`].
+fn top_camera() -> Camera {
+    let mut camera = Camera::default();
+    camera.look_from(View::Top);
+    camera.zoom(12.8 / camera.view_height());
+    camera
+}
+
+/// The logical size of the viewport the sketch pass is tested in, at the
+/// target's top left: the whole target at a scale factor of 2.
+const SKETCH_VIEW: [f32; 2] = [256.0, 128.0];
+
+/// Draws `extras` from `camera` over `mesh` into [`SKETCH_VIEW`] at
+/// `scale`, and returns the pixels.
+fn render_sketch(
+    camera: &Camera,
+    mesh: &RenderMesh,
+    extras: Extras,
+    scale: f32,
+) -> Option<Vec<[u8; 4]>> {
+    let [width, height] = SKETCH_VIEW.map(|s| s * scale);
+    let viewport = Viewport {
+        x: 0.0,
+        y: 0.0,
+        width,
+        height,
+    };
+    let clip = ClipRect {
+        x: 0,
+        y: 0,
+        width: width as u32,
+        height: height as u32,
+    };
+    render_scaled(camera, mesh, extras, viewport, clip, scale)
+}
+
+/// `layer` of a sketch on the XY plane, drawn as its base layer.
+fn sketched(layer: SketchLayer) -> Extras {
+    Extras {
+        sketch: Some((GridPlane::XY, layer)),
+        ..Extras::default()
+    }
+}
+
+/// Where the sketch point `x`, `y` shows through [`top_camera`], in
+/// physical pixels at `scale`.
+fn sketch_pixel(x: f32, y: f32, scale: f32) -> (f32, f32) {
+    let [width, height] = SKETCH_VIEW;
+    (
+        (width / 2.0 + x * 10.0) * scale,
+        (height / 2.0 - y * 10.0) * scale,
+    )
+}
+
+const YELLOW: Srgba = Srgba([1.0, 1.0, 0.0, 1.0]);
+const RED: Srgba = Srgba([1.0, 0.0, 0.0, 1.0]);
+const BLUE: Srgba = Srgba([0.0, 0.0, 1.0, 1.0]);
+const GREEN: Srgba = Srgba([0.0, 1.0, 0.0, 1.0]);
+
+/// How much of a pixel yellow covers, over the black background: as much
+/// as its red and green are above its blue, which the grid's grey isn't.
+fn yellowness([r, g, b, _]: [u8; 4]) -> f32 {
+    f32::from(r.min(g).saturating_sub(b)) / 255.0
+}
+
+/// A layer with a line in `style` along the sketch's `y`, from `x` to `-x`.
+fn line_layer(y: f32, x: f32, style: LineStyle) -> SketchLayer {
+    let mut layer = SketchLayer::default();
+    let (x, y) = (f64::from(x), f64::from(y));
+    let points = [glam::DVec2::new(-x, y), glam::DVec2::new(x, y)];
+    layer.polyline(Space::Sketch, &points, style);
+    layer
+}
+
+/// How much of column `x` yellow covers, in pixels.
+fn yellow_down(pixels: &[[u8; 4]], x: u32, rows: std::ops::Range<u32>) -> f32 {
+    rows.map(|y| yellowness(pixel(pixels, x, y))).sum()
+}
+
+#[test]
+fn sketch_lines_keep_their_width_at_any_zoom_and_scale() {
+    let style = LineStyle {
+        color: YELLOW,
+        width: 3.0,
+        dash: None,
+    };
+    let measure = |scale: f32, zoom: f32, projection| {
+        let mut camera = top_camera();
+        camera.set_projection(projection);
+        camera.zoom(zoom);
+        // A quarter of the view below the middle, measured left of it,
+        // clear of the grid's axes and the origin marker.
+        let height = camera.view_height();
+        let layer = line_layer(-0.25 * height, 100.0 * height, style);
+        let pixels = render_sketch(&camera, &RenderMesh::default(), sketched(layer), scale)?;
+        let [width, rows] = SKETCH_VIEW.map(|s| (s * scale) as u32);
+        Some(yellow_down(&pixels, width / 4, rows / 2 + 4..rows))
+    };
+    use Projection::{Orthographic, Perspective};
+    let (Some(one), Some(two), Some(zoomed), Some(perspective)) = (
+        measure(1.0, 1.0, Orthographic),
+        measure(2.0, 1.0, Orthographic),
+        measure(1.0, 1e-3, Orthographic),
+        measure(1.0, 50.0, Perspective),
+    ) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    assert!((2.8..3.2).contains(&one), "{one} pixels wide");
+    assert!((1.9..2.1).contains(&(two / one)), "grew {}x", two / one);
+    assert!((zoomed - one).abs() < 0.1, "{zoomed} zoomed in, {one} not");
+    assert!(
+        (perspective - one).abs() < 0.1,
+        "{perspective} in perspective"
+    );
+}
+
+#[test]
+fn sketch_lines_are_anti_aliased_at_their_edges() {
+    // A pixel wide, on the boundary between two rows: half of each.
+    let style = LineStyle {
+        color: YELLOW,
+        width: 1.0,
+        dash: None,
+    };
+    let (_, row) = sketch_pixel(0.0, -3.3, 1.0);
+    let Some(pixels) = render_sketch(
+        &top_camera(),
+        &RenderMesh::default(),
+        sketched(line_layer(-3.3, 100.0, style)),
+        1.0,
+    ) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let row = row.round() as u32;
+    for y in [row - 1, row] {
+        let covered = yellowness(pixel(&pixels, 40, y));
+        assert!(
+            (0.4..0.6).contains(&covered),
+            "row {y} is {covered} covered"
+        );
+    }
+    for y in [row - 2, row + 1] {
+        assert_eq!(yellowness(pixel(&pixels, 40, y)), 0.0, "row {y}");
+    }
+}
+
+/// How much of each pixel of row `y` from `x` yellow covers.
+fn yellow_along(pixels: &[[u8; 4]], y: u32, x: std::ops::Range<u32>) -> Vec<f32> {
+    x.map(|x| yellowness(pixel(pixels, x, y))).collect()
+}
+
+#[test]
+fn dashes_run_on_along_a_polyline() {
+    // Six pixels on and four off, two wide on the middle of a row.
+    let style = LineStyle {
+        color: YELLOW,
+        width: 2.0,
+        dash: Some([6.0, 4.0]),
+    };
+    let y = -3.35;
+    let (_, row) = sketch_pixel(0.0, y, 1.0);
+    let row = row as u32;
+    // In one segment, and in many of a third of a dash.
+    let mut chained = SketchLayer::default();
+    let points: Vec<_> = (0..=120)
+        .map(|i| glam::DVec2::new(-12.0 + 0.2 * f64::from(i), y.into()))
+        .collect();
+    chained.polyline(Space::Sketch, &points, style);
+    let straight = line_layer(y, 12.0, style);
+    let camera = top_camera();
+    let mesh = RenderMesh::default();
+    let (Some(straight), Some(chained), Some(live)) = (
+        render_sketch(&camera, &mesh, sketched(straight.clone()), 1.0),
+        render_sketch(&camera, &mesh, sketched(chained), 1.0),
+        render_sketch(
+            &camera,
+            &mesh,
+            Extras {
+                live: true,
+                ..sketched(straight)
+            },
+            1.0,
+        ),
+    ) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let span = 20..230;
+    let along = yellow_along(&straight, row, span.clone());
+    // Six in ten covered, repeating every ten pixels.
+    let lit = along.iter().sum::<f32>() / along.len() as f32;
+    assert!((0.55..0.65).contains(&lit), "{lit} covered");
+    for (x, pair) in along.iter().zip(&along[10..]).enumerate() {
+        assert!((pair.0 - pair.1).abs() < 0.1, "{x}: {along:?}");
+    }
+    assert!(along.iter().any(|&c| c > 0.95) && along.iter().any(|&c| c < 0.05));
+    // The same through many segments, and drawn as the live layer.
+    let chained = yellow_along(&chained, row, span.clone());
+    for (x, (a, b)) in along.iter().zip(&chained).enumerate() {
+        assert!((a - b).abs() < 0.1, "{x}: {a} and {b}");
+    }
+    assert!(live == straight, "the live layer draws differently");
+}
+
+#[test]
+fn sketch_lines_crossing_the_near_plane_are_cut_there_too() {
+    // As `sketch_lines_crossing_the_near_plane_are_cut_there`, in the
+    // sketch being edited, on a plane a unit above XY.
+    let mut camera = Camera::default();
+    camera.set_projection(Projection::Perspective);
+    camera.look_from(View::Front);
+    let plane = GridPlane::new(Vec3::Z, Vec3::X, Vec3::Y).unwrap();
+    let mut layer = SketchLayer::default();
+    let points = [glam::DVec2::new(1.0, 5.0), glam::DVec2::new(1.0, -30.0)];
+    let style = LineStyle {
+        color: YELLOW,
+        width: 2.0,
+        dash: None,
+    };
+    layer.polyline(Space::Sketch, &points, style);
+    let extras = Extras {
+        sketch: Some((plane, layer)),
+        ..Extras::default()
+    };
+    let Some(pixels) = render_with(&camera, &RenderMesh::default(), extras) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let (cx, cy) = CENTER;
+    let mut drawn = 0;
+    for y in CLIP.y..CLIP.y + CLIP.height {
+        for x in CLIP.x..CLIP.x + CLIP.width {
+            if yellow(pixel(&pixels, x, y)) {
+                assert!(x >= cx && y <= cy, "line at ({x}, {y})");
+                drawn += 1;
+            }
+        }
+    }
+    assert!(drawn > 10, "only {drawn} pixels of line");
+}
+
+#[test]
+fn a_point_is_a_smooth_disc_with_a_rim() {
+    let style = PointStyle {
+        radius: 6.0,
+        rim_width: 2.0,
+        rim: RED,
+        fill: BLUE,
+        fixed: false,
+    };
+    // Rim and fill, and a fixed point: a red disc.
+    let mut layer = SketchLayer::default();
+    layer.point(glam::DVec2::new(5.0, 3.0), style);
+    layer.point(
+        glam::DVec2::new(-5.0, 3.0),
+        PointStyle {
+            fixed: true,
+            ..style
+        },
+    );
+    for scale in [1.0, 2.0] {
+        let Some(pixels) = render_sketch(
+            &top_camera(),
+            &RenderMesh::default(),
+            sketched(layer.clone()),
+            scale,
+        ) else {
+            eprintln!("no GPU adapter, skipping");
+            return;
+        };
+        let pixels = &pixels;
+        let near = |x: f32, y: f32| {
+            let (cx, cy) = sketch_pixel(x, y, scale);
+            move |dx: f32, dy: f32| pixel(pixels, (cx + dx) as u32, (cy + dy) as u32)
+        };
+        let at = near(5.0, 3.0);
+        // Blue inside, red on the rim.
+        let [r, _, b, _] = at(0.0, 0.0);
+        assert!(b > 240 && r < 10, "centre {:?}", at(0.0, 0.0));
+        let [r, _, b, _] = at(5.0 * scale, 0.0);
+        assert!(r > 200 && b < 50, "rim {:?}", at(5.0 * scale, 0.0));
+        // Red, and not the grid's grey.
+        let red = |[r, g, _, _]: [u8; 4]| f32::from(r.saturating_sub(g)) / 255.0;
+        let fixed = near(-5.0, 3.0);
+        assert!(red(fixed(0.0, 0.0)) > 0.95, "{:?}", fixed(0.0, 0.0));
+        assert!(red(fixed(0.0, 7.0 * scale)) < 0.05);
+        // Covering a disc, partly at its edge.
+        let (mut covered, mut partly) = (0.0, 0);
+        let reach = (8.0 * scale) as i32;
+        for dy in -reach..reach {
+            for dx in -reach..reach {
+                let coverage = red(fixed(dx as f32, dy as f32));
+                covered += coverage;
+                partly += usize::from((0.1..0.9).contains(&coverage));
+            }
+        }
+        let area = std::f32::consts::PI * (6.0 * scale).powi(2);
+        assert!((covered - area).abs() < area * 0.03, "{covered} of {area}");
+        assert!(partly > 8, "only {partly} pixels partly covered");
+    }
+}
+
+#[test]
+fn a_fill_leaves_its_holes_empty() {
+    let square = |min: f64, max: f64| {
+        [(min, min), (max, min), (max, max), (min, max)].map(|(x, y)| glam::DVec2::new(x, y))
+    };
+    let (outer, hole) = (square(-5.0, 3.0), square(-3.0, 1.0));
+    let mut layer = SketchLayer::default();
+    layer.fill(Space::Sketch, [&outer[..], &hole[..]], GREEN);
+    // The same in screen space, 20 logical pixels square at the top left.
+    let corners = [(10.0, 10.0), (30.0, 10.0), (30.0, 30.0), (10.0, 30.0)];
+    let screen = corners.map(|(x, y)| glam::DVec2::new(x, y));
+    layer.fill(Space::Screen, [&screen[..]], GREEN);
+    for scale in [1.0, 2.0] {
+        let Some(pixels) = render_sketch(
+            &top_camera(),
+            &RenderMesh::default(),
+            sketched(layer.clone()),
+            scale,
+        ) else {
+            eprintln!("no GPU adapter, skipping");
+            return;
+        };
+        let green = |(x, y): (f32, f32)| {
+            let [r, g, b, _] = pixel(&pixels, x as u32, y as u32);
+            g > 200 && r < 50 && b < 50
+        };
+        assert!(green(sketch_pixel(-4.5, -1.5, scale)), "in the ring");
+        assert!(green(sketch_pixel(2.5, 2.5, scale)), "in the ring");
+        assert!(!green(sketch_pixel(-1.5, -1.5, scale)), "in the hole");
+        assert!(!green(sketch_pixel(-5.5, -1.5, scale)), "outside");
+        assert!(green((20.0 * scale, 20.0 * scale)), "in the screen's");
+        assert!(!green((35.0 * scale, 20.0 * scale)), "right of it");
+    }
+}
+
+#[test]
+fn a_triangle_is_filled_like_an_arrowhead() {
+    // An arrowhead in screen space pointing left, its tip at (10, 20), and
+    // one in sketch space.
+    let corners = [(10.0, 20.0), (40.0, 10.0), (40.0, 30.0)];
+    let mut layer = SketchLayer::default();
+    layer.triangle(
+        Space::Screen,
+        corners.map(|(x, y)| glam::DVec2::new(x, y)),
+        GREEN,
+    );
+    let corners = [(-2.0, -2.0), (2.0, -2.0), (0.0, 2.0)];
+    layer.triangle(
+        Space::Sketch,
+        corners.map(|(x, y)| glam::DVec2::new(x, y)),
+        GREEN,
+    );
+    for scale in [1.0, 2.0] {
+        let Some(pixels) = render_sketch(
+            &top_camera(),
+            &RenderMesh::default(),
+            sketched(layer.clone()),
+            scale,
+        ) else {
+            eprintln!("no GPU adapter, skipping");
+            return;
+        };
+        let green = |(x, y): (f32, f32)| {
+            let [r, g, b, _] = pixel(&pixels, x as u32, y as u32);
+            g > 200 && r < 50 && b < 50
+        };
+        assert!(green((35.0 * scale, 20.0 * scale)), "inside");
+        assert!(green((15.0 * scale, 20.0 * scale)), "near the tip");
+        assert!(!green((15.0 * scale, 12.0 * scale)), "beside the tip");
+        assert!(!green((45.0 * scale, 20.0 * scale)), "behind it");
+        assert!(green(sketch_pixel(0.0, 0.0, scale)), "in the sketch's");
+        assert!(!green(sketch_pixel(1.8, 1.8, scale)), "beside the sketch's");
+    }
+}
+
+#[test]
+fn the_sketch_is_drawn_over_the_faded_model() {
+    // From the top, across a cube standing on the sketch's plane: its top
+    // is in front of the sketch, which shows over it anyway.
+    let camera = top_camera();
+    let style = LineStyle {
+        color: YELLOW,
+        width: 2.0,
+        dash: None,
+    };
+    let extras = Extras {
+        faded: true,
+        ..sketched(line_layer(1.0, 5.0, style))
+    };
+    let Some(pixels) = render_sketch(&camera, &cube(2.0, Vec3::ZERO), extras, 1.0) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let rows = 0..SKETCH_VIEW[1] as u32;
+    for x in [-3.0, 0.5, 1.5, 3.0] {
+        let (column, _) = sketch_pixel(x, 0.0, 1.0);
+        let covered = yellow_down(&pixels, column as u32, rows.clone());
+        assert!(covered > 1.5, "at {x}: {covered}");
+    }
+}
+
+#[test]
+fn screen_space_lines_show_in_perspective_from_afar() {
+    // Far enough that the near plane is more than a unit in front of the
+    // eye, which the screen's coordinates mustn't be cut by.
+    let mut camera = top_camera();
+    camera.set_projection(Projection::Perspective);
+    camera.zoom(1000.0);
+    assert!(camera.near() > 1.0);
+    let mut layer = SketchLayer::default();
+    let points = [(10.0, 60.0), (240.0, 60.0)].map(glam::DVec2::from);
+    let style = LineStyle {
+        color: YELLOW,
+        width: 2.0,
+        dash: None,
+    };
+    layer.polyline(Space::Screen, &points, style);
+    let Some(pixels) = render_sketch(&camera, &RenderMesh::default(), sketched(layer), 1.0) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let covered = yellow_down(&pixels, 40, 50..70);
+    assert!((1.8..2.2).contains(&covered), "{covered} pixels wide");
 }

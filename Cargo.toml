@@ -10,16 +10,23 @@ license = "AGPL-3.0-or-later"
 
 [workspace.dependencies]
 varde-kernel = { path = "crates/kernel" }
+varde-expr = { path = "crates/expr" }
 varde-sketch = { path = "crates/sketch" }
 varde-render = { path = "crates/render" }
 varde-document = { path = "crates/document" }
 varde-lane = { path = "crates/lane" }
 varde-regen = { path = "crates/regen" }
+varde-solve = { path = "crates/solve" }
 varde-io = { path = "crates/io" }
 varde-view = { path = "crates/view" }
 varde-app = { path = "crates/app" }
 
-iced = { version = "0.14", features = ["svg", "canvas"] }
+# `advanced` for the layer of widgets anchored over the viewport, a widget
+# of its own.
+iced = { version = "0.14", features = ["svg", "canvas", "advanced"] }
+# Runs the document screen headless in the app's tests, to see which keys
+# its widgets take. The version iced is built on.
+iced_runtime = "0.14"
 # Rasterizes the window icon. Must match the resvg version iced renders SVGs
 # with, so it is shared rather than built twice.
 resvg = { version = "0.45", default-features = false }
@@ -32,6 +39,13 @@ pollster = "0.4"
 serde = { version = "1", features = ["derive"] }
 postcard = { version = "1", features = ["use-std"] }
 snap = "1"
+# Linear algebra for the sketch solver: sparse Cholesky for its steps,
+# dense column-pivoted QR for its analysis. Without rayon, which the web
+# can't use.
+faer = { version = "0.24", default-features = false, features = ["std", "sparse-linalg"] }
+# Triangulates fills in the sketch being edited: even-odd, holes included.
+# Pure Rust, builds for wasm.
+tess2-rust = "1.1"
 crc32fast = "1"
 toml = "1"
 directories = "6"

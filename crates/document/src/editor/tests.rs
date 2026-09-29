@@ -1,5 +1,5 @@
 use super::*;
-use crate::CheckError;
+use crate::{CheckError, Design, FeatureId, FeatureKind, Plane, Sketch};
 
 #[test]
 fn undo_redo_roundtrip() {
@@ -172,15 +172,6 @@ fn check_refuses_geometry_out_of_bounds() {
     let mut document = Document::example();
     document.bodies[0].position = Vec3::splat(-crate::MAX_COORD);
     document.bodies[0].shape = Shape::cuboid(Vec3::splat(crate::MAX_COORD));
-    let mut sketch = crate::Sketch::default();
-    let a = varde_sketch::PointId(0);
-    sketch
-        .points
-        .push(glam::DVec2::splat(f64::from(crate::MAX_COORD)));
-    sketch
-        .constraints
-        .push(varde_sketch::Constraint::Distance(a, a, 1.0));
-    document.sketches.push(sketch);
     assert_eq!(document.check(), Ok(()));
 
     // NaN would make the document unequal to itself, so no-op edits count.
@@ -197,76 +188,6 @@ fn check_refuses_geometry_out_of_bounds() {
         flat.check(),
         Err(CheckError::Shape(id, crate::ShapeError::Size(_))) if id == flat.bodies[0].id
     ));
-    refused(&|d| {
-        d.sketches.push(crate::Sketch::default());
-        d.sketches[0].points.push(glam::DVec2::new(f64::NAN, 0.0));
-    });
-    refused(&|d| {
-        let mut sketch = crate::Sketch::default();
-        sketch.points.push(glam::DVec2::ZERO);
-        let a = varde_sketch::PointId(0);
-        sketch
-            .constraints
-            .push(varde_sketch::Constraint::Distance(a, a, f64::INFINITY));
-        d.sketches.push(sketch);
-    });
-}
-
-#[test]
-fn check_refuses_unknown_sketch_points() {
-    use varde_sketch::{Constraint, Entity, PointId};
-    let refused = |sketch: crate::Sketch| {
-        let mut document = Document::example();
-        document.sketches.push(sketch);
-        assert!(document.check().is_err());
-        assert!(matches!(
-            Document::from_postcard(&document.to_postcard()),
-            Err(crate::DecodeError { .. })
-        ));
-    };
-    let mut sketch = crate::Sketch::default();
-    sketch.points.extend([glam::DVec2::ZERO, glam::DVec2::ONE]);
-    let (a, b) = (PointId(0), PointId(1));
-    sketch.entities.push(Entity::Arc {
-        center: a,
-        start: b,
-        end: a,
-    });
-    sketch.constraints.push(Constraint::Vertical(a, b));
-    let mut document = Document::example();
-    document.sketches.push(sketch.clone());
-    assert_eq!(document.check(), Ok(()));
-
-    let mut line = crate::Sketch::default();
-    line.entities.push(Entity::Line {
-        start: PointId(0),
-        end: PointId(u32::MAX),
-    });
-    refused(line);
-    let mut arc = sketch.clone();
-    arc.entities.push(Entity::Arc {
-        center: a,
-        start: b,
-        end: PointId(2),
-    });
-    refused(arc);
-    let mut distance = sketch;
-    distance
-        .constraints
-        .push(Constraint::Distance(PointId(2), a, 1.0));
-    let mut document = Document::example();
-    document.sketches.push(distance.clone());
-    assert_eq!(
-        document.check(),
-        Err(CheckError::Sketch(
-            0,
-            crate::SketchError::UnknownPoint {
-                id: PointId(2),
-                points: 2
-            }
-        ))
-    );
-    refused(distance);
 }
 
 #[test]
@@ -284,6 +205,28 @@ fn replace_is_one_undoable_edit() {
         .unwrap();
     assert_eq!(editor.revision(), Revision(0));
     assert!(editor.can_redo());
+}
+
+#[test]
+fn the_lineage_changes_only_across_a_replacement() {
+    let mut editor = Editor::new(Document::example());
+    let first = editor.lineage();
+    editor.apply(add_cube()).unwrap();
+    editor.undo();
+    editor.redo();
+    assert_eq!(editor.lineage(), first);
+
+    editor.apply(Command::Replace(Box::default())).unwrap();
+    let replaced = editor.lineage();
+    assert_ne!(replaced, first);
+    editor.apply(add_cube()).unwrap();
+    assert_eq!(editor.lineage(), replaced);
+    editor.undo();
+    assert_eq!(editor.lineage(), replaced);
+    editor.undo();
+    assert_eq!(editor.lineage(), first);
+    editor.redo();
+    assert_eq!(editor.lineage(), replaced);
 }
 
 #[test]
@@ -375,4 +318,372 @@ fn add_cube_numbers_and_places_past_the_bodies() {
     };
     assert_eq!(name, "Cube 8");
     assert_eq!(position, Vec3::new(4.0 + 1.0 + CUBE_GAP, 0.0, 0.0));
+}
+
+const XY: Plane = Plane::Origin(crate::OriginPlane::XY);
+
+/// A sketch holding a line from the origin to `end`.
+fn line_to(end: glam::DVec2) -> Sketch {
+    let mut sketch = Sketch::default();
+    let start = sketch.add_point(glam::DVec2::ZERO).unwrap();
+    let end = sketch.add_point(end).unwrap();
+    sketch
+        .add_curve(varde_sketch::Curve::Line { start, end }, false)
+        .unwrap();
+    sketch
+}
+
+/// An editor on the example with "Sketch 1" on XY added, and its id.
+fn sketched() -> (Editor, FeatureId) {
+    let mut editor = Editor::new(Document::example());
+    editor.apply(editor.document().add_sketch(XY)).unwrap();
+    let id = editor.document().features()[0].id;
+    (editor, id)
+}
+
+fn sketch_of(editor: &Editor, id: FeatureId) -> &Sketch {
+    match &editor
+        .document()
+        .feature(id)
+        .expect("the feature exists")
+        .kind
+    {
+        FeatureKind::Sketch { sketch, .. } => sketch,
+    }
+}
+
+#[test]
+fn a_sketch_is_added_visible_and_empty_and_removed() {
+    let (mut editor, id) = sketched();
+    let feature = &editor.document().features()[0];
+    assert_eq!(feature.name, "Sketch 1");
+    assert!(feature.visible);
+    assert_eq!(
+        feature.kind,
+        FeatureKind::Sketch {
+            plane: XY,
+            sketch: Sketch::default()
+        }
+    );
+    // Bodies and features take ids from one counter.
+    assert_eq!(id, FeatureId(editor.document().bodies[0].id.0 + 1));
+    assert_eq!(editor.document().next_id, id.0 + 1);
+    assert_eq!(editor.revision(), Revision(1));
+
+    editor.apply(Command::RemoveFeature(id)).unwrap();
+    assert!(editor.document().features().is_empty());
+    assert!(editor.document().feature(id).is_none());
+    editor.undo();
+    assert_eq!(
+        editor.document().feature(id).map(|f| f.name.as_str()),
+        Some("Sketch 1")
+    );
+
+    // Removing what isn't there changes nothing.
+    let revision = editor.revision();
+    editor
+        .apply(Command::RemoveFeature(FeatureId(id.0 + 1)))
+        .unwrap();
+    assert_eq!(editor.revision(), revision);
+}
+
+#[test]
+fn add_sketch_numbers_past_the_sketches() {
+    let (mut editor, _) = sketched();
+    assert_eq!(
+        editor.document().add_sketch(XY),
+        Command::AddSketch {
+            name: "Sketch 2".to_owned(),
+            plane: XY,
+        }
+    );
+    for name in ["Sketch 7", "Sketch", "Sketchy 9", "Sketch x", "Cube 20"] {
+        let plane = Plane::Origin(crate::OriginPlane::YZ);
+        editor
+            .apply(Command::AddSketch {
+                name: name.to_owned(),
+                plane,
+            })
+            .unwrap();
+    }
+    let Command::AddSketch { name, plane } = editor.document().add_sketch(XY) else {
+        panic!("add_sketch adds a sketch");
+    };
+    assert_eq!((name.as_str(), plane), ("Sketch 8", XY));
+    // Cubes are numbered apart from sketches.
+    let Command::AddBody { name, .. } = editor.document().add_cube() else {
+        panic!("add_cube adds a body");
+    };
+    assert_eq!(name, "Cube 2");
+    // Features keep the order they were added in, which is by id.
+    let ids: Vec<_> = editor.document().features().iter().map(|f| f.id).collect();
+    assert!(ids.windows(2).all(|pair| pair[0] < pair[1]));
+}
+
+#[test]
+fn set_sketch_replaces_a_sketch_as_one_edit() {
+    let (mut editor, id) = sketched();
+    let line = line_to(glam::DVec2::new(10.0, 5.0));
+    editor
+        .apply(Command::SetSketch {
+            feature: id,
+            sketch: Box::new(line.clone()),
+        })
+        .unwrap();
+    assert_eq!(*sketch_of(&editor, id), line);
+    assert_eq!(editor.revision(), Revision(2));
+    editor.undo();
+    assert_eq!(*sketch_of(&editor, id), Sketch::default());
+    editor.redo();
+
+    // The same sketch again, or one for a feature that isn't there,
+    // changes nothing.
+    let snapshot = editor.snapshot();
+    editor
+        .apply(Command::SetSketch {
+            feature: id,
+            sketch: Box::new(line.clone()),
+        })
+        .unwrap();
+    editor
+        .apply(Command::SetSketch {
+            feature: FeatureId(id.0 + 1),
+            sketch: Box::new(line),
+        })
+        .unwrap();
+    assert!(Arc::ptr_eq(&snapshot, &editor.snapshot()));
+}
+
+#[test]
+fn set_sketch_refuses_a_sketch_failing_its_check() {
+    let (mut editor, id) = sketched();
+    let snapshot = editor.snapshot();
+    let far = f64::from(crate::MAX_COORD) * 2.0;
+    for end in [glam::DVec2::new(far, 0.0), glam::DVec2::new(0.0, f64::NAN)] {
+        assert!(matches!(
+            editor.apply(Command::SetSketch {
+                feature: id,
+                sketch: Box::new(line_to(end)),
+            }),
+            Err(EditError::Invalid(CheckError::Sketch(
+                feature,
+                crate::SketchError::Coordinate { .. }
+            ))) if feature == id
+        ));
+    }
+    // A line whose end isn't a point.
+    let mut dangling = line_to(glam::DVec2::ONE);
+    dangling.points.pop();
+    assert!(matches!(
+        editor.apply(Command::SetSketch {
+            feature: id,
+            sketch: Box::new(dangling),
+        }),
+        Err(EditError::Invalid(CheckError::Sketch(
+            _,
+            crate::SketchError::Reference { .. }
+        )))
+    ));
+    assert!(Arc::ptr_eq(&snapshot, &editor.snapshot()));
+    assert_eq!(editor.revision(), Revision(1));
+}
+
+#[test]
+fn a_sketch_feature_is_shown_and_hidden() {
+    let (mut editor, id) = sketched();
+    editor.apply(Command::SetFeatureVisible(id, false)).unwrap();
+    assert!(!editor.document().features()[0].visible);
+    assert_eq!(editor.revision(), Revision(2));
+
+    // Hiding it again, or a feature that isn't there, changes nothing.
+    let snapshot = editor.snapshot();
+    editor.apply(Command::SetFeatureVisible(id, false)).unwrap();
+    editor
+        .apply(Command::SetFeatureVisible(FeatureId(id.0 + 1), true))
+        .unwrap();
+    assert!(Arc::ptr_eq(&snapshot, &editor.snapshot()));
+
+    editor.undo();
+    assert!(editor.document().features()[0].visible);
+}
+
+#[test]
+fn adding_a_sketch_past_the_last_id_fails() {
+    let mut editor = Editor::new(Document {
+        next_id: u64::MAX,
+        ..Document::default()
+    });
+    assert_eq!(
+        editor.apply(editor.document().add_sketch(XY)),
+        Err(EditError::OutOfIds)
+    );
+    assert!(editor.document().features().is_empty());
+    assert!(!editor.can_undo());
+    assert_eq!(
+        EditError::OutOfIds.to_string(),
+        "the document has no ids left"
+    );
+}
+
+#[test]
+fn check_refuses_features_a_file_could_get_wrong() {
+    let refused = |document: &Document, error: CheckError| {
+        assert_eq!(document.check(), Err(error));
+        assert!(matches!(
+            Document::from_postcard(&document.to_postcard()),
+            Err(crate::DecodeError { .. })
+        ));
+    };
+    let (mut editor, first) = sketched();
+    editor.apply(editor.document().add_sketch(XY)).unwrap();
+    let document = editor.document().clone();
+    let second = document.features[1].id;
+    assert_eq!(
+        Document::from_postcard(&document.to_postcard()),
+        Ok(document.clone())
+    );
+
+    let mut swapped = document.clone();
+    swapped.features.swap(0, 1);
+    refused(&swapped, CheckError::FeatureOrder(first, second));
+    let mut twins = document.clone();
+    twins.features[1].id = first;
+    refused(&twins, CheckError::FeatureOrder(first, first));
+
+    let mut reused = document.clone();
+    reused.next_id = second.0;
+    refused(&reused, CheckError::FeatureNextId(second));
+
+    let mut long = document.clone();
+    long.features[0].name = "é".repeat(crate::MAX_NAME_LEN);
+    refused(
+        &long,
+        CheckError::FeatureNameLength(first, 2 * crate::MAX_NAME_LEN),
+    );
+
+    // A sketch is checked against the coordinate limit, and named by its
+    // feature.
+    let mut far = document;
+    let max = f64::from(crate::MAX_COORD);
+    far.features[1].kind = FeatureKind::Sketch {
+        plane: XY,
+        sketch: line_to(glam::DVec2::new(max, -max)),
+    };
+    assert_eq!(far.check(), Ok(()));
+    let sketch = line_to(glam::DVec2::new(max.next_up(), 0.0));
+    far.features[1].kind = FeatureKind::Sketch { plane: XY, sketch };
+    assert!(matches!(
+        far.check(),
+        Err(CheckError::Sketch(id, crate::SketchError::Coordinate { .. })) if id == second
+    ));
+    assert!(Document::from_postcard(&far.to_postcard()).is_err());
+    assert!(
+        far.check()
+            .unwrap_err()
+            .to_string()
+            .starts_with(&format!("feature {}: sketch point", second.0))
+    );
+}
+
+/// `line_to((10, 0))` with a driving dimension of the line's length, typed
+/// as `text`, in `units`.
+fn dimensioned(text: &str, units: LengthUnit) -> Sketch {
+    use varde_sketch::{Dimension, Measure, Side};
+    let mut sketch = line_to(glam::DVec2::new(10.0, 0.0));
+    let line = sketch.curves[0].id;
+    let design = Design {
+        max: f64::from(crate::MAX_COORD),
+        units,
+    };
+    let measure = Measure::Length(line);
+    let value = varde_expr::Value::new(text, &measure.ask(&design)).unwrap();
+    sketch
+        .add_dimension(Dimension {
+            measure,
+            value,
+            driving: true,
+            label: glam::DVec2::ZERO,
+            side: Side::Positive,
+        })
+        .unwrap();
+    sketch
+}
+
+fn dimension_text(editor: &Editor, id: FeatureId) -> &str {
+    &sketch_of(editor, id).dimensions[0].dimension.value.text
+}
+
+#[test]
+fn a_sketch_s_values_are_checked_in_the_design_s_units() {
+    let (mut editor, id) = sketched();
+    assert_eq!(editor.document().units(), LengthUnit::Mm);
+    editor
+        .apply(Command::SetSketch {
+            feature: id,
+            sketch: Box::new(dimensioned("4 + 6", LengthUnit::Mm)),
+        })
+        .unwrap();
+    // "4 + 6" read in inches isn't the millimetres stored.
+    let snapshot = editor.snapshot();
+    assert!(matches!(
+        editor.apply(Command::SetSketch {
+            feature: id,
+            sketch: Box::new(dimensioned("4 + 6.5", LengthUnit::In)),
+        }),
+        Err(EditError::Invalid(CheckError::Sketch(
+            feature,
+            crate::SketchError::Value(_)
+        ))) if feature == id
+    ));
+    assert!(Arc::ptr_eq(&snapshot, &editor.snapshot()));
+
+    // A file whose values its units don't give isn't opened.
+    let mut document = editor.document().clone();
+    document.units = LengthUnit::In;
+    assert!(matches!(
+        Document::from_postcard(&document.to_postcard()),
+        Err(error) if error.to_string().contains("doesn't give")
+    ));
+}
+
+#[test]
+fn set_units_pins_bare_numbers_and_changes_no_value() {
+    let (mut editor, id) = sketched();
+    editor
+        .apply(Command::SetSketch {
+            feature: id,
+            sketch: Box::new(dimensioned("4 + 6", LengthUnit::Mm)),
+        })
+        .unwrap();
+    let before = editor.document().clone();
+    let revision = editor.revision();
+
+    editor.apply(Command::SetUnits(LengthUnit::In)).unwrap();
+    assert_eq!(editor.document().units(), LengthUnit::In);
+    assert_eq!(dimension_text(&editor, id), "(4 + 6) mm");
+    let value = |editor: &Editor| sketch_of(editor, id).dimensions[0].dimension.value.value;
+    assert_eq!(value(&editor), 10.0);
+    assert_eq!(
+        sketch_of(&editor, id).points,
+        sketch_of(&Editor::new(before.clone()), id).points
+    );
+    // It's still a document a file can hold.
+    assert_eq!(
+        Document::from_postcard(&editor.document().to_postcard()).as_ref(),
+        Ok(editor.document())
+    );
+
+    // Back to millimetres, already pinned, nothing more is written.
+    editor.apply(Command::SetUnits(LengthUnit::Mm)).unwrap();
+    assert_eq!(dimension_text(&editor, id), "(4 + 6) mm");
+    // The same units change nothing.
+    let now = editor.revision();
+    editor.apply(Command::SetUnits(LengthUnit::Mm)).unwrap();
+    assert_eq!(editor.revision(), now);
+
+    // One step each to undo.
+    editor.undo();
+    editor.undo();
+    assert_eq!(*editor.document(), before);
+    assert_eq!(editor.revision(), revision);
 }

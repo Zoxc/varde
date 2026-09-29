@@ -1,9 +1,13 @@
 [package]
 name = "varde-lane"
-description = "What the regeneration and IO lanes share: a thread natively and a Web Worker on the web, taking requests and yielding responses"
+description = "What the regeneration, solver and IO lanes share: a thread natively and a Web Worker on the web, taking requests and yielding responses"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+
+[features]
+# `thread::testing`, for other crates' tests of their lanes.
+testing = []
 
 [dependencies]
 futures.workspace = true

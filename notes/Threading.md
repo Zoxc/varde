@@ -12,9 +12,15 @@ Plan steps 1-6 are built: a regeneration lane per open document and one IO
 lane for the app, natively threads and on the web Web Workers, the IO lane
 with saving, auto-save, recovery and the sidecar lock, over OPFS on the web.
 `agents/` says how they work (`viewport.md`, `files.md`,
-`web-files.md`). The sketch solver, the solver lane,
-proposals, dragging, per-feature caching and cancellation are still open,
-see steps 7-8 of the plan; manifold isn't wired in yet. The design below is
+`web-files.md`). Of step 7, the sketch solver (`varde-sketch`), the
+solver lane (`varde-solve`, a lane per open document, natively a thread and
+on the web a Web Worker) and the app's side are built: every sketch edit is
+proposed and committed once accepted, one in flight and the rest queued,
+dropped by undo, waited for by Save and closing; drags are sessions of the
+lane's, committed on release as a proposed move; drag steps stay in the
+lane (see "Dragging"). `agents/sketch.md` says how. Per-feature caching and
+cancellation are still open, see step 8 of the plan; manifold isn't wired
+in yet. The design below is
 kept as it was decided, including for what's built: where the code differs,
 the code wins.
 
@@ -86,9 +92,9 @@ enum Response {
     Accepted { base: u64, solutions: Vec<Solution>, mesh: Option<Arc<RenderMesh>> },
     /// The edit is invalid and was not applied.
     Rejected { base: u64, reason: Invalid },
-    Regenerated { generation: Generation, mesh: Arc<RenderMesh> },
+    Regenerated { generation: Generation, mesh: Arc<RenderMesh>, sketches: Arc<RenderLines> },
     Dragged { session: u64, solution: Solution },
-    Failed { generation: Generation, error: String },
+    Failed { generation: Generation, exclude: Option<FeatureId>, error: String },
     Progress { generation: Generation, done: u32, total: u32 },
 }
 
@@ -113,7 +119,10 @@ enum Invalid {
 The crate `varde-regen` (no iced) holds `Request`/`Response`, the pure
 `handle(Request) -> Response` logic and the lanes that carry them; the
 `Transport` trait they're sent through is in `varde-lane`, see "Lanes".
-`app` wires it into iced. Only `Regenerate` exists so far.
+`app` wires it into iced. Only `Regenerate` exists so far, with
+`exclude: Option<FeatureId>` in place of `until`: it leaves the one sketch
+out of the flattened sketch lines. `until` replaces it once features build
+on each other.
 
 ### UI rules
 
@@ -242,7 +251,11 @@ states that shouldn't enter history. So a drag doesn't write to the
   is committed as one `Command::SetSketchPoints { sketch, points }`: one
   undo entry per drag. It was validated by the drag solve, so it commits
   at once, as long as the committed revision is still the one the drag
-  started from.
+  started from. Built otherwise: the app can't tell which answer is the
+  final target's (a step that doesn't converge isn't answered), so release
+  proposes the move to the final target on the last converged solution, a
+  short solve on the branch the drag was on, committed as one
+  `Command::SetSketch` when accepted, with its analysis.
 - Any other edit to the sketch during the drag (e.g. undo by keyboard)
   cancels the session. Escape cancels it too; nothing to roll back since
   the document was never touched.
@@ -288,7 +301,33 @@ out simplest to solve drag steps inline in `update` with an iteration cap
 and only fall back to the solver lane above a size or time budget. Measure
 first, but keep the solver API pure (`fn solve(&Sketch, drag, cancel) ->
 Solution`, warm starting from the sketch's own points) so either placement
-works.
+works. Built so (`varde_sketch::solve(&Sketch, &Goal, &Budget)`, with
+`Budget::expired` as the cancel): on a 342-curve plate a drag step takes
+about 1.3 ms natively and 2 ms in wasm, see Performance in
+`notes/SketchImpl.md`.
+
+**Decided (step 2e): drag steps stay in the lane.** Measured natively
+(release, 30 steps of a drag of a plate's corner, the next step sent once
+the last was answered): a step inline (`DragSession::step`) against the
+round trip through the native lane (`varde_solve::lane`):
+
+| sketch | inline | through the lane |
+|--------|--------|------------------|
+| plate, 1 cell (fixed) | 0.002 ms | 0.015 ms |
+| plate, 3 × 3 (fixed) | 0.10 ms | 0.11 ms |
+| plate, 9 × 9 (fixed, 342 curves) | 1.6 ms | 1.7 ms |
+| plate, 9 × 9 (free) | 1.1 ms | 1.4 ms |
+
+Inline would be fast enough for typical sketches (a frame is 16 ms, and
+wasm steps are about 2 ms at the plate's size) and simpler: no session ids,
+no `Dragged` answers to match. But the lane costs little over the solve
+itself, a step can take up to `DRAG_TIME` (100 ms) on a sketch the solver
+struggles with, which inline would stall the UI and the camera for, and the
+lane is there anyway for proposals, whose answers a drag must be ordered
+with. So the lane path is kept and the inline one isn't built. The web's
+worker round trip (a `postMessage` each way, the sketch only with a
+session's first step) wasn't measured separately; the headless Firefox run
+of step 2c answered drag steps through it.
 
 ### Snapshots
 
@@ -577,7 +616,7 @@ stale), put `Request`/`Response` and the pure `handle` in `varde-regen` and the
 ran the regeneration lane as a thread per document natively and a Web
 Worker on the web, and built the IO lane natively and then on the web over
 OPFS. Snapshots are a whole `Arc<Document>`, not shared parts. Not done from
-them: the solver lane and cancellation of a running job.
+them: cancellation of a running job.
 
 7. **Solver** lands with the pure API above and the solver lane, plus
    proposals: commands that can be invalid go through `Propose`, commit on

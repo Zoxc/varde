@@ -7,14 +7,20 @@ license.workspace = true
 
 [dependencies]
 varde-document.workspace = true
+varde-sketch.workspace = true
+varde-expr.workspace = true
 varde-kernel.workspace = true
 varde-regen.workspace = true
+varde-solve.workspace = true
 varde-io.workspace = true
 varde-render.workspace = true
 varde-view.workspace = true
 iced.workspace = true
 glam.workspace = true
 log.workspace = true
+
+[dev-dependencies]
+iced_runtime.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 resvg.workspace = true

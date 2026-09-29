@@ -117,5 +117,66 @@ fn pan_and_zoom_stay_bounded() {
         min: Vec3::ZERO,
         max: Vec3::ONE,
     };
-    assert!(crate::scene::view_projection(&camera, 1.0, Some(bounds)).is_finite());
+    assert!(
+        crate::scene::view_projection(&camera, 1.0, &crate::GridPlane::XY, Some(bounds))
+            .is_finite()
+    );
+}
+
+#[test]
+fn facing_a_view_matches_looking_from_it() {
+    for view in View::ALL {
+        let (mut from, mut faced) = (Camera::default(), Camera::default());
+        from.look_from(view);
+        faced.face(view.normal(), view.up());
+        assert!(close(faced.backward(), from.backward()), "{view:?}");
+        assert!(close(faced.right(), from.right()), "{view:?}");
+        assert!(close(faced.up(), from.up()), "{view:?}");
+        assert_eq!(faced.target, from.target);
+        assert_eq!(faced.distance, from.distance);
+    }
+}
+
+#[test]
+fn facing_straight_down_turns_to_the_up_given() {
+    for up in [
+        Vec3::X,
+        Vec3::NEG_X,
+        Vec3::Y,
+        Vec3::new(1.0, 1.0, 0.0).normalize(),
+    ] {
+        for normal in [Vec3::Z, Vec3::NEG_Z] {
+            let mut camera = Camera::default();
+            camera.face(normal, up);
+            assert!(close(camera.backward(), normal), "{normal} {up}");
+            assert!(close(camera.up(), up), "{normal} {up}");
+            assert!(close(camera.right(), up.cross(normal)), "{normal} {up}");
+        }
+    }
+}
+
+#[test]
+fn facing_a_tilted_plane_keeps_z_up() {
+    let normal = Vec3::new(1.0, 2.0, 0.5).normalize();
+    let mut camera = Camera::default();
+    // Up is asked for upside down, which the camera can't roll to.
+    camera.face(normal * 3.0, Vec3::NEG_Z);
+    assert!(close(camera.backward(), normal));
+    assert!(camera.up().z > 0.0);
+    assert!(camera.right().z.abs() < 1e-6);
+    assert!(camera.view().is_finite());
+}
+
+#[test]
+fn facing_nothing_in_particular_changes_nothing() {
+    let mut camera = Camera::default();
+    for normal in [Vec3::ZERO, Vec3::NAN, Vec3::new(f32::INFINITY, 0.0, 0.0)] {
+        camera.face(normal, Vec3::Y);
+        assert_eq!(camera, Camera::default(), "{normal}");
+    }
+    // Straight down with no horizontal up keeps the way it's turned.
+    let mut camera = Camera::default();
+    camera.face(Vec3::Z, Vec3::Z);
+    assert!(close(camera.backward(), Vec3::Z));
+    assert_eq!(camera.yaw, Camera::default().yaw);
 }

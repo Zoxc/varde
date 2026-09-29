@@ -139,8 +139,16 @@ impl Camera {
         self.distance
     }
 
-    pub(crate) fn eye(&self) -> Vec3 {
+    /// Where the eye is. In orthographic mode only its direction from the
+    /// target means anything: the eye is as if at infinity there.
+    pub fn eye(&self) -> Vec3 {
         self.target + self.backward() * self.distance
+    }
+
+    /// How far in front of the eye the perspective projection starts
+    /// drawing: what's nearer is cut off.
+    pub fn near(&self) -> f32 {
+        (self.distance * 0.01).max(1e-3)
     }
 
     /// Unit vector from the target towards the camera.
@@ -191,7 +199,7 @@ impl Camera {
     pub(crate) fn projection_matrix(&self, aspect: f32, depth: Range<f32>) -> Mat4 {
         match self.projection {
             Projection::Perspective => {
-                let near = (self.distance * 0.01).max(1e-3);
+                let near = self.near();
                 Mat4::perspective_rh(self.fov_y, aspect, near, depth.end.max(near * 2.0))
             }
             Projection::Orthographic => {
@@ -226,9 +234,38 @@ impl Camera {
         }
     }
 
-    /// Looks at the target from `view`, keeping the distance.
+    /// Looks at the target from `view`, keeping the distance. The same as
+    /// [`Self::face`] with the view's normal and up.
     pub fn look_from(&mut self, view: View) {
         (self.yaw, self.pitch) = view.angles();
+    }
+
+    /// Looks straight at a plane whose `normal` points towards the camera,
+    /// keeping the target and the distance, with `up` pointing up on screen
+    /// as far as the camera can: it orbits without rolling, so up on
+    /// screen is the world's Z as seen from `normal`, unless `normal` is
+    /// vertical, when `up` chooses the way the camera turns.
+    ///
+    /// That's enough for the origin planes, seen from their normals with
+    /// their y axis up, as their placements in the document are. A normal
+    /// that's zero or not finite is ignored, and so is an `up` that doesn't
+    /// say which way to turn.
+    pub fn face(&mut self, normal: Vec3, up: Vec3) {
+        let Some(normal) = normal.try_normalize() else {
+            return;
+        };
+        if normal.truncate().length() > VERTICAL {
+            self.yaw = normal.y.atan2(normal.x);
+            self.pitch = normal.z.clamp(-1.0, 1.0).asin();
+            return;
+        }
+        // Straight down or up, where up on screen is `-sin(pitch)` times
+        // the horizontal direction `yaw` points to.
+        let pitch = Self::PITCH_LIMIT.copysign(normal.z);
+        if let Some(turn) = (-up.truncate() * pitch.signum()).try_normalize() {
+            self.yaw = turn.y.atan2(turn.x);
+        }
+        self.pitch = pitch;
     }
 
     /// The camera a fraction `t` of the way from `self` to `to`, turning the
@@ -254,6 +291,11 @@ impl Camera {
         }
     }
 }
+
+/// How far from vertical, as the length of its horizontal part, a unit
+/// normal [`Camera::face`] turns to may be and still count as straight up
+/// or down: within rounding of it.
+const VERTICAL: f32 = 1e-6;
 
 /// Unit vector towards a camera at `yaw` and `pitch`, from its target.
 fn backward(yaw: f32, pitch: f32) -> Vec3 {

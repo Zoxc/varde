@@ -1,12 +1,8 @@
 use std::collections::VecDeque;
 use std::sync::mpsc;
-use std::task::Waker;
-use std::time::{Duration, Instant};
 
+use super::testing::{TIMEOUT, join_in_time, next};
 use super::*;
-
-/// How long a test waits for the lane before failing.
-const TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Requests in the order sent, except that `0` is refused.
 #[derive(Default)]
@@ -33,30 +29,6 @@ impl Pending<u32> for Fifo {
 /// The answer to a panic in tests that don't expect one.
 fn no_panic<S>(_: &u32) -> fn(String) -> S {
     |error| panic!("the lane panicked: {error}")
-}
-
-/// The next response, polled without an executor.
-fn next<S>(responses: &mut Responses<u32, S>) -> S {
-    let start = Instant::now();
-    let mut cx = Context::from_waker(Waker::noop());
-    loop {
-        match Pin::new(&mut *responses).poll_next(&mut cx) {
-            Poll::Ready(Some(response)) => return response,
-            Poll::Ready(None) => panic!("the lane ended"),
-            Poll::Pending if start.elapsed() < TIMEOUT => thread::sleep(Duration::from_millis(1)),
-            Poll::Pending => panic!("no response from the lane"),
-        }
-    }
-}
-
-fn join_in_time(join: JoinHandle<()>) {
-    let (done, finished) = mpsc::channel();
-    thread::spawn(move || done.send(join.join().is_ok()));
-    assert_eq!(
-        finished.recv_timeout(TIMEOUT),
-        Ok(true),
-        "the lane didn't end"
-    );
 }
 
 #[test]

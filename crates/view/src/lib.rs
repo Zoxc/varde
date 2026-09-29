@@ -8,28 +8,52 @@
 // limit on recent nightlies.
 #![recursion_limit = "256"]
 
+mod anchors;
 mod chrome;
+mod constrain;
 mod controls;
+pub mod dimension;
 mod document;
+mod escape;
+mod hit;
 mod icons;
 mod panels;
+mod projection;
 mod shortcut;
+mod snap;
+pub mod spline;
+mod split;
+#[cfg(test)]
+mod testing;
 mod theme;
 mod toolbar;
+pub mod typed;
 mod view_cube;
 mod viewport;
 mod welcome;
 
 use std::path::PathBuf;
 
-use varde_document::BodyId;
+use glam::DVec2;
+use varde_document::{BodyId, FeatureId, OriginPlane};
+use varde_expr::LengthUnit;
 use varde_render::{Projection, View};
+use varde_sketch::{Id, Sketch};
 
-pub use document::{DocumentState, MeshStatus, Overlay, RecoveredChanges, document};
+pub use constrain::{ConstraintKind, ConstraintSet};
+pub use document::{
+    ActiveTool, DocumentState, MeshStatus, Overlay, RecoveredChanges, SketchState, ValueField,
+    ValueTarget, document,
+};
 pub use icons::LOGO_SVG;
-pub use shortcut::{Binding, Held, document_bindings, pressed, welcome_bindings};
+pub use shortcut::{Binding, DocumentKeys, Held, document_bindings, pressed, welcome_bindings};
+pub use snap::{Inference, Level, SNAP_TOLERANCE, Snap, Target};
 pub use theme::{Mode, theme as iced_theme};
 pub use welcome::{RecentCard, StoredDesign, WelcomeState, welcome};
+
+/// The text field a dimension's value is typed in, placing it or editing
+/// it in place: there's one at a time, focused as it opens.
+pub const VALUE_FIELD: iced::widget::Id = iced::widget::Id::new("dimension-value");
 
 /// What the user asks for through the view, grouped by what acts on it.
 /// The app has messages of its own on top, from its subscriptions, lanes
@@ -83,16 +107,184 @@ pub enum Edit {
     AddCube,
     RemoveBody(BodyId),
     ToggleVisible(BodyId),
+    /// Adds a sketch on `plane` and edits it.
+    NewSketch(OriginPlane),
+    RemoveFeature(FeatureId),
+    ToggleFeatureVisible(FeatureId),
+    /// A click in the sketch being edited with its tool.
+    ToolClick(ToolClick),
+    /// Ends dragging geometry in the sketch being edited, where it was
+    /// dragged to.
+    DropGeometry,
+    /// Deletes what's selected in the sketch being edited, and what
+    /// depends on it.
+    DeleteSelection,
+    /// Turns the curves selected in the sketch being edited between normal
+    /// and construction geometry, or while a tool is in use, the shapes it
+    /// draws next.
+    ToggleConstruction,
+    /// Constrains the geometry selected in the sketch being edited so, if
+    /// it fits, see [`ConstraintKind::make`].
+    Constrain(ConstraintKind),
+    /// Takes the value typed in the value field: places the dimension
+    /// with it, or sets the one edited to it, if it reads as a value of
+    /// the kind asked for; else says why.
+    SubmitValue,
+    /// Ends dragging a dimension's label in the sketch being edited,
+    /// where it was dragged to.
+    DropLabel,
+    /// Turns the dimensions selected in the sketch being edited between
+    /// driving and reference: all references unless they all are, then
+    /// all driving.
+    ToggleReference,
+    /// Places the shape the tool is drawing where the cursor last was, as
+    /// the values typed in its fields fix it, or ends the spline the
+    /// Spline tool is drawing: `Enter` while drawing.
+    PlaceShape,
+    /// Switches the splines selected in the sketch being edited between
+    /// through fit points and by control points, each keeping its shape
+    /// as closely as it can.
+    ConvertSplines,
+    /// Gives the fit points selected in the sketch being edited handles,
+    /// or the ends of the splines selected, or takes them away where they
+    /// all have them.
+    ToggleHandles,
+    /// Adds a point to the spline `spline` where it passes nearest `at`,
+    /// in sketch coordinates: a double-click on it.
+    InsertSplinePoint {
+        spline: Id,
+        at: DVec2,
+    },
+    /// Changes the design's units.
+    SetUnits(LengthUnit),
     Undo,
     Redo,
 }
 
 /// What only changes how the open document is looked at: the camera, the
-/// side panel tab, closing the file menu.
+/// side panel tab, closing the file menu, what's selected, and editing a
+/// sketch, which is looking at it closely.
 #[derive(Debug, Clone)]
 pub enum Look {
     CloseFileMenu,
+    /// Backs out of whatever is open, the innermost first: the file menu,
+    /// picking a plane, dragging geometry, the shape the sketch's tool is
+    /// drawing, the tool (or the Constrain tool), the sketch, the
+    /// selection.
+    Escape,
     SelectPanel(Panel),
+    /// Starts picking the plane for a new sketch, or backs out of it.
+    PickPlane,
+    /// Edits the sketch feature.
+    EditSketch(FeatureId),
+    /// Leaves the sketch being edited.
+    FinishSketch,
+    /// Selects a feature in the Timeline.
+    SelectFeature(FeatureId),
+    /// A click in the sketch being edited without a tool, or on a row of
+    /// its Geometry list, on `hit` if anything: selects it alone, or
+    /// nothing, or with `add` (`Ctrl`, or `Cmd` on macOS) adds it to the
+    /// selection or takes it out.
+    ClickGeometry {
+        hit: Option<Id>,
+        add: bool,
+    },
+    /// Selects the items of the sketch being edited that a box dragged
+    /// over them selects: those alone, or with `add` as well.
+    SelectBox {
+        ids: Vec<Id>,
+        add: bool,
+    },
+    /// A row of the sketch's Geometry or Constraints list, or a constraint's
+    /// glyph, clicked: selects its item alone, or with `Ctrl` (`Cmd` on
+    /// macOS) held, which the app knows, adds it to the selection or takes
+    /// it out.
+    ClickRow(Id),
+    /// An item of the sketch being edited hovered in a list or by its
+    /// glyph, or none: the viewport highlights it, or what a constraint
+    /// ties together.
+    HoverItem(Option<Id>),
+    /// Clears the selection: the sketch's in a sketch, else the Timeline's.
+    ClearSelection,
+    /// Where the drawing tool's next click would snap to, and what to,
+    /// with the cursor where it is, or none: the glyph shown by the
+    /// cursor.
+    Snap(Option<Snap>),
+    /// The click the drawing tool would take with the cursor where it is,
+    /// sent as the cursor moves while its shape has fields (see
+    /// [`typed::fields`]): where they show, what they measure until values
+    /// are typed, and where `Enter` places the shape. Says where it snaps
+    /// too, as [`Look::Snap`] would.
+    Aim(ToolClick),
+    /// Moves the focus to the drawing tool's next field, taking the value
+    /// typed in the one it leaves: `Tab` while drawing.
+    NextField,
+    /// Switches the Rectangle tool between drawing from a corner and from
+    /// the centre.
+    ToggleCentered,
+    /// Switches the Spline tool between drawing through fit points and by
+    /// control points.
+    ToggleSplineKind,
+    /// Shows the curvature comb of the splines selected, or hides it.
+    ToggleComb,
+    /// Ends picking what the Mirror tool mirrors: its next click picks the
+    /// line to mirror about. `Enter`, once it has picked something.
+    MirrorAbout,
+    /// Takes up `tool` in the sketch being edited, or puts it down if it's
+    /// the one in use.
+    SelectTool(Tool),
+    /// Takes up the Constrain tool, which offers the constraints that fit
+    /// the selection, or puts it down.
+    ToggleConstrain,
+    /// Shows the constraints' glyphs in the viewport, or hides them.
+    ToggleGlyphs,
+    /// Drags the item `id` of the sketch being edited, grabbed at `from`,
+    /// to `to`, in sketch coordinates. Shown until it's dropped
+    /// ([`Edit::DropGeometry`]) or `Esc` puts it back.
+    DragGeometry {
+        id: Id,
+        from: DVec2,
+        to: DVec2,
+    },
+    /// Puts back the geometry being dragged in the sketch being edited, if
+    /// any is: `Esc` during a drag, which does nothing else then, even if
+    /// the drag hasn't moved anything yet.
+    CancelDrag,
+    /// A dimension's label pressed: selects it alone, or with `add`
+    /// (`Ctrl`, or `Cmd` on macOS, which the app knows) adds it to the
+    /// selection or takes it out, and grabs the label to drag.
+    PressLabel {
+        id: Id,
+        add: bool,
+    },
+    /// Drags the label of the dimension `id`, grabbed at `from`, to `to`,
+    /// in sketch coordinates. Shown until it's dropped
+    /// ([`Edit::DropLabel`]).
+    DragLabel {
+        id: Id,
+        from: DVec2,
+        to: DVec2,
+    },
+    /// Opens the value field on the dimension `id` to change its value,
+    /// showing its expression as typed: in the Constraints list if
+    /// `in_list`, else at its label.
+    EditDimension {
+        id: Id,
+        in_list: bool,
+    },
+    /// The text in the value field, as typed.
+    ValueInput(String),
+    /// Closes the value field, changing nothing.
+    CancelValue,
+    /// Switches the Dimension tool between the radius and the diameter of
+    /// the circle or arc it's placing a dimension of.
+    SwitchRound,
+    /// Gives the Geometry list this share of the Sketch tab's height.
+    SplitSketchTab(f32),
+    /// The Geometry list scrolled to this offset, in pixels.
+    ScrollGeometry(f32),
+    /// The Constraints list scrolled to this offset, in pixels.
+    ScrollConstraints(f32),
     /// Turns the camera around its target by these angles in radians.
     Orbit {
         yaw: f32,
@@ -108,6 +300,190 @@ pub enum Look {
     SetProjection(Projection),
 }
 
+/// A tool drawing in a sketch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Tool {
+    /// Connected lines, click after click.
+    Line,
+    /// Centre, then a point on the circle.
+    Circle,
+    /// Start, end, then a point on the arc.
+    Arc,
+    /// A lone point.
+    Point,
+    /// Two opposite corners, or the centre and a corner: four lines, held
+    /// horizontal and vertical.
+    Rectangle,
+    /// The centre, then a corner: equal lines with their corners on a
+    /// construction circle.
+    Polygon,
+    /// A smooth curve through the points clicked, or by them as control
+    /// points, until a double-click, `Enter` or its first point again.
+    Spline,
+    /// Measures what's clicked: see `dimension::measure`.
+    Dimension,
+    /// Takes away the piece of a curve clicked, between the curves
+    /// cutting it.
+    Trim,
+    /// Lengthens a line, an arc or a spline clicked, at the end nearer the
+    /// click, to the next curve it meets.
+    Extend,
+    /// Copies the chain of curves clicked (or selected) a distance to one
+    /// side, the cursor's or typed, tied to it by that distance.
+    Offset,
+    /// Mirrors geometry about a line: the selection, or what's clicked
+    /// until `Enter`, then the line clicked.
+    Mirror,
+    /// Rounds the corner clicked, where two lines end, with an arc tangent
+    /// to both, of the radius the cursor's or typed.
+    Fillet,
+    /// Cuts the corner clicked with a line across it, as far back as the
+    /// cursor's, or the distances or the distance and the angle typed.
+    Chamfer,
+}
+
+impl Tool {
+    /// In the order the toolbar shows them.
+    pub const ALL: [Tool; 14] = [
+        Tool::Line,
+        Tool::Rectangle,
+        Tool::Circle,
+        Tool::Arc,
+        Tool::Polygon,
+        Tool::Spline,
+        Tool::Point,
+        Tool::Dimension,
+        Tool::Trim,
+        Tool::Extend,
+        Tool::Offset,
+        Tool::Mirror,
+        Tool::Fillet,
+        Tool::Chamfer,
+    ];
+
+    /// The tool as the user sees it.
+    pub fn label(self) -> &'static str {
+        match self {
+            Tool::Line => "Line",
+            Tool::Circle => "Circle",
+            Tool::Arc => "Arc",
+            Tool::Point => "Point",
+            Tool::Rectangle => "Rectangle",
+            Tool::Polygon => "Polygon",
+            Tool::Spline => "Spline",
+            Tool::Dimension => "Dimension",
+            Tool::Trim => "Trim",
+            Tool::Extend => "Extend",
+            Tool::Offset => "Offset",
+            Tool::Mirror => "Mirror",
+            Tool::Fillet => "Fillet",
+            Tool::Chamfer => "Chamfer",
+        }
+    }
+
+    /// Whether it draws shapes, which `X` can make construction geometry
+    /// and which snap, rather than measuring or changing them.
+    pub fn draws(self) -> bool {
+        !matches!(
+            self,
+            Tool::Dimension
+                | Tool::Trim
+                | Tool::Extend
+                | Tool::Offset
+                | Tool::Mirror
+                | Tool::Fillet
+                | Tool::Chamfer
+        )
+    }
+
+    /// Whether it works on a corner where two lines end: Fillet and
+    /// Chamfer.
+    pub fn corners(self) -> bool {
+        matches!(self, Tool::Fillet | Tool::Chamfer)
+    }
+
+    /// Whether it picks something with a click, then places what it makes
+    /// of it through the cursor, where the button's let go: Offset its
+    /// copy of a chain, Fillet and Chamfer theirs on a corner.
+    pub fn places(self) -> bool {
+        matches!(self, Tool::Offset | Tool::Fillet | Tool::Chamfer)
+    }
+
+    /// What a tool that [`places`](Tool::places) picks with a click on
+    /// `hit` at `at` in `sketch`: Offset the chain the curve is in
+    /// ([`Sketch::chain_of`]), Fillet and Chamfer the corner at the point,
+    /// as it and its lines ([`Sketch::corner_lines`]). Empty for nothing
+    /// to pick, or another tool.
+    pub fn pick(self, sketch: &Sketch, hit: Id, at: DVec2) -> Vec<Id> {
+        match self {
+            Tool::Offset => sketch.chain_of(hit),
+            _ if self.corners() => sketch
+                .corner_lines(hit, at)
+                .map(|[a, b]| vec![hit, a, b])
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        }
+    }
+}
+
+/// A click in the sketch being edited with its tool, from the viewport.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ToolClick {
+    /// Where, in sketch coordinates, snapped (see [`Snap`]), within
+    /// `MAX_COORD` of zero.
+    pub at: DVec2,
+    /// What it snapped to, if anything: a drawing tool ties its point
+    /// there to it.
+    pub target: Option<Target>,
+    /// How the shape runs from its start, if that snapped: a drawing tool
+    /// holds it so.
+    pub inference: Option<Inference>,
+    /// The point or curve under the cursor, if there is one: what the
+    /// Dimension tool picks. For Trim and Extend, and Offset picking its
+    /// chain, the curve under it, points aside, for Mirror's line to
+    /// mirror about the line (see [`ActiveTool::about`]), and for Fillet
+    /// and Chamfer picking their corner the point where lines make one.
+    pub hit: Option<Id>,
+    /// A pixel's size at `at`, in sketch units, above zero: a shape
+    /// smaller than that can't have been meant, and is refused.
+    pub pixel: f64,
+    /// Whether it's the second click of a double-click.
+    pub double: bool,
+    /// Whether the reference modifier (`Alt`) is held, which places the
+    /// Dimension tool's dimension as a reference.
+    pub reference: bool,
+}
+
+impl ToolClick {
+    /// Where it goes, and what snapped it there.
+    pub fn snap(&self) -> Snap {
+        Snap {
+            at: self.at,
+            target: self.target,
+            inference: self.inference,
+        }
+    }
+
+    /// The same click, going where `snap` says, snapped as it says.
+    pub fn snapped(self, snap: Snap) -> ToolClick {
+        ToolClick {
+            at: snap.at,
+            target: snap.target,
+            inference: snap.inference,
+            ..self
+        }
+    }
+
+    /// The point of the sketch's it snapped to, if any: the origin, or one
+    /// a drawing tool takes as its own.
+    pub fn point(&self) -> Option<Id> {
+        match self.target {
+            Some(Target::Point(id)) => Some(id),
+            _ => None,
+        }
+    }
+}
+
 /// What to do about unsaved changes before closing the document or
 /// quitting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -120,25 +496,50 @@ pub enum Unsaved {
     Cancel,
 }
 
-/// A tab of the side panel.
+/// A tab of the side panel. Two show at a time: Timeline and Objects, or
+/// in a sketch Sketch and Objects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Panel {
     Timeline,
+    /// The sketch being edited: its geometry and constraints.
+    Sketch,
     #[default]
     Objects,
 }
 
 impl Panel {
-    pub fn other(self) -> Self {
+    /// The tab listing the features, or in a sketch what it holds, which
+    /// shows with Objects.
+    fn features(sketching: bool) -> Self {
+        if sketching {
+            Panel::Sketch
+        } else {
+            Panel::Timeline
+        }
+    }
+
+    /// The other of the two tabs showing, given whether a sketch is being
+    /// edited.
+    pub fn other(self, sketching: bool) -> Self {
         match self {
-            Panel::Timeline => Panel::Objects,
-            Panel::Objects => Panel::Timeline,
+            Panel::Timeline | Panel::Sketch => Panel::Objects,
+            Panel::Objects => Panel::features(sketching),
+        }
+    }
+
+    /// The tab to show on entering (`sketching`) or leaving a sketch:
+    /// Sketch and Timeline trade places, and Objects stays.
+    pub fn for_sketching(self, sketching: bool) -> Self {
+        match self {
+            Panel::Timeline | Panel::Sketch => Panel::features(sketching),
+            Panel::Objects => Panel::Objects,
         }
     }
 
     fn label(self) -> &'static str {
         match self {
             Panel::Timeline => "Timeline",
+            Panel::Sketch => "Sketch",
             Panel::Objects => "Objects",
         }
     }

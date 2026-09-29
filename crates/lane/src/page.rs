@@ -222,7 +222,7 @@ impl Host {
 
     /// Posts `parts` to the worker, transferring them, followed by
     /// `objects`, cloned: the worker gets them as a
-    /// [`Message`](crate::worker::Message). If it can't, the worker is
+    /// [`crate::worker::Message`]. If it can't, the worker is
     /// terminated and why logged, for the page to [`fail`](Page::fail)
     /// with.
     pub fn post(&self, parts: &[&[u8]], objects: &[JsValue]) -> Result<(), String> {

@@ -176,10 +176,7 @@ impl RenderMesh {
 
     /// Axis-aligned bounds, or `None` for an empty mesh.
     pub fn bounds(&self) -> Option<Aabb> {
-        let mut points = self.positions.iter().map(|p| Vec3::from(*p));
-        let first = points.next()?;
-        let (min, max) = points.fold((first, first), |(min, max), p| (min.min(p), max.max(p)));
-        Some(Aabb { min, max })
+        Aabb::around(&self.positions)
     }
 }
 
@@ -200,7 +197,7 @@ fn in_range(part: MeshPart, indices: &[u32], vertices: usize) -> Result<(), Mesh
 
 /// Whether every coordinate in `values` is within `max` of zero, and so
 /// finite.
-fn within(values: &[[f32; 3]], max: f32) -> bool {
+pub(crate) fn within(values: &[[f32; 3]], max: f32) -> bool {
     values.as_flattened().iter().all(|v| v.abs() <= max)
 }
 

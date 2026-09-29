@@ -9,6 +9,8 @@ license.workspace = true
 varde-document.workspace = true
 varde-lane.workspace = true
 varde-kernel.workspace = true
+# Solves each sketch, to tell those that don't.
+varde-sketch.workspace = true
 serde.workspace = true
 
 # The Web Worker lane.
@@ -22,6 +24,8 @@ js-sys.workspace = true
 log.workspace = true
 
 [dev-dependencies]
+# Waiting on the thread lane in tests.
+varde-lane = { workspace = true, features = ["testing"] }
 futures.workspace = true
 glam.workspace = true
 # src/wire.rs is tested natively.

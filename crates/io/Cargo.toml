@@ -60,5 +60,7 @@ web-sys = { workspace = true, features = [
 ] }
 
 [dev-dependencies]
+# Waiting on the thread lane in tests.
+varde-lane = { workspace = true, features = ["testing"] }
 # Polling the native lane's responses.
 futures.workspace = true

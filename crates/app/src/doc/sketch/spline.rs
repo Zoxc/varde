@@ -1,0 +1,183 @@
+//! Splines in the sketch being edited: the Spline tool, which places the
+//! points clicked until a double-click, `Enter` or a click on its first
+//! point ends the spline, switching between through fit points and by
+//! control points as it goes; and what's done to splines selected:
+//! switching their kind, handles, a point added on one, and the
+//! curvature comb. Each change is a [`SketchEdit`], proposed like any
+//! other (see [`propose`](super::propose)), one undo step.
+
+use varde_sketch::{
+    Add, Curve, Id, MAX_SPLINE_POINTS, OutOfIds, Sketch, SketchEdit, Spline, SplineKind,
+    control_knots,
+};
+use varde_view::{Target, Tool, ToolClick};
+
+use super::Drawing;
+use super::edit::place;
+use crate::doc::Doc;
+
+impl Doc {
+    /// Takes `click` with the Spline tool, `drawing`: on its first point,
+    /// once it has enough to close, ends the spline closed; a
+    /// double-click, once it has enough, ends it open where it is; else
+    /// the click places its next point. A point within a pixel of the
+    /// last, on its first before it can close, on a point of the sketch's
+    /// it has already, or past [`MAX_SPLINE_POINTS`], is refused.
+    pub(super) fn spline_click(&mut self, mut drawing: Drawing, click: ToolClick) {
+        let active = drawing.active();
+        if active.closes(click.at, click.pixel) {
+            self.end_spline(drawing, true);
+            return;
+        }
+        if click.double {
+            if active.spline_ends() {
+                self.end_spline(drawing, false);
+            }
+            return;
+        }
+        let near_last = drawing
+            .placed
+            .last()
+            .is_some_and(|last| last.distance(click.at) < click.pixel);
+        let again = matches!(click.target, Some(Target::Point(id))
+            if !id.is_builtin() && drawing.targets.contains(&Some(Target::Point(id))));
+        // On the first point with too few to close.
+        let first = active.on_first(click.at, click.pixel);
+        if near_last || again || first || drawing.placed.len() >= MAX_SPLINE_POINTS {
+            return;
+        }
+        drawing.placed.push(click.at);
+        drawing.targets.push(click.target);
+        self.set_drawing(drawing);
+    }
+
+    /// Ends the spline the Spline tool is drawing where it is, open:
+    /// `Enter`. Whether the Spline tool is in use, whatever it made of
+    /// it.
+    pub(super) fn end_spline_here(&mut self) -> bool {
+        let drawing = self
+            .sketch
+            .as_ref()
+            .and_then(|session| session.tool.clone());
+        match drawing {
+            Some(drawing) if drawing.tool == Tool::Spline => {
+                if drawing.active().spline_ends() {
+                    self.end_spline(drawing, false);
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Proposes the spline `drawing` has placed, open or `closed`, of the
+    /// kind it draws, from its points placed where they snapped (see
+    /// [`place`]), and starts it afresh. Nothing if it has too few for
+    /// its kind.
+    fn end_spline(&mut self, mut drawing: Drawing, closed: bool) {
+        let Some(sketch) = self.editable_sketch() else {
+            return;
+        };
+        let kind = drawing.active().spline_kind();
+        if drawing.placed.len() < kind.least(closed) {
+            return;
+        }
+        let add = match spline_add(sketch, &drawing, kind, closed) {
+            Ok(add) => add,
+            Err(out) => {
+                self.refuse(out.into());
+                return;
+            }
+        };
+        if self.propose(SketchEdit::Add(add)) {
+            drawing.restart();
+            self.set_drawing(drawing);
+        }
+    }
+
+    /// Switches the Spline tool between drawing through fit points and by
+    /// control points, keeping the points placed.
+    pub(crate) fn toggle_spline_kind(&mut self) {
+        let drawing = self.sketch.as_mut().and_then(|s| s.tool.as_mut());
+        if let Some(drawing) = drawing.filter(|drawing| drawing.tool == Tool::Spline) {
+            drawing.control = !drawing.control;
+        }
+    }
+
+    /// Switches the splines selected between through fit points and by
+    /// control points, each keeping its shape as closely as it can: a
+    /// proposal each.
+    pub(crate) fn convert_splines(&mut self) {
+        let Some(sketch) = self.editable_sketch() else {
+            return;
+        };
+        let Some(session) = &self.sketch else {
+            return;
+        };
+        for edit in varde_view::spline::conversions(sketch, &session.selection) {
+            self.propose(edit);
+        }
+    }
+
+    /// Gives the fit points selected handles, or the ends of the splines
+    /// selected, or takes them away where they all have them (see
+    /// [`varde_view::spline::handles`]).
+    pub(crate) fn toggle_handles(&mut self) {
+        let Some(sketch) = self.editable_sketch() else {
+            return;
+        };
+        let Some(session) = &self.sketch else {
+            return;
+        };
+        if let Some(edit) = varde_view::spline::handles(sketch, &session.selection) {
+            self.propose(edit);
+        }
+    }
+
+    /// Adds a point to the spline `spline` where it passes nearest `at`
+    /// (see [`SketchEdit::InsertPoint`]).
+    pub(crate) fn insert_spline_point(&mut self, spline: Id, at: glam::DVec2) {
+        if self.editable_sketch().is_some() && at.is_finite() {
+            self.propose(SketchEdit::InsertPoint { spline, near: at });
+        }
+    }
+
+    /// Shows the curvature comb of the splines selected, or hides it.
+    pub(crate) fn toggle_comb(&mut self) {
+        if let Some(session) = &mut self.sketch {
+            session.comb = !session.comb;
+        }
+    }
+}
+
+/// The spline of `kind` that `drawing` has placed, open or `closed`, as
+/// an addition to `sketch`: its points where they snapped (see
+/// [`place`]), by control points with knots from where they are.
+fn spline_add(
+    sketch: &Sketch,
+    drawing: &Drawing,
+    kind: SplineKind,
+    closed: bool,
+) -> Result<Add, OutOfIds> {
+    let mut add = Add::new(sketch);
+    let mut points = Vec::with_capacity(drawing.placed.len());
+    for (&at, &target) in drawing.placed.iter().zip(&drawing.targets) {
+        points.push(place(sketch, &mut add, at, target)?);
+    }
+    let knots = match kind {
+        SplineKind::Through => Vec::new(),
+        SplineKind::Control => control_knots(&drawing.placed, closed),
+    };
+    let spline = Spline {
+        kind,
+        points,
+        closed,
+        handles: Vec::new(),
+        knots,
+    };
+    add.curve(Curve::Spline(spline), drawing.construction)?;
+    Ok(add)
+}
+
+#[cfg(test)]
+mod tests;

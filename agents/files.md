@@ -101,7 +101,11 @@ locking and writing all happen in the lane, and editing, the camera and the
 UI carry on meanwhile. A save still waiting behind another save of the same
 file is replaced by it. The answer carries the revision, which becomes the
 saved one, so edits made while saving keep the document edited. The title
-and the status bar say "Saving…" while a save is in flight. Saving takes the
+and the status bar say "Saving…" while a save is in flight. A Save or Save
+As asked for while sketch edits wait on the solver waits for them too (it
+counts as in flight) and is sent once they're answered or undone, so what's
+on screen is saved; auto-saves don't wait (see `agents/sketch.md`). Saving
+takes the
 `.vrdp`'s own lock like opening does, waiting at most two seconds for
 another program to let go of it. If the file was changed by someone else
 since it was opened or last saved, the save is refused; a banner says so
@@ -122,8 +126,9 @@ lock. A read-only design can't be saved (Save is disabled, and `Ctrl S`
 does nothing), but can be saved as a copy, which is editable if its lock
 could be taken. The new file joins the recent files.
 
-**Closing and quitting.** Closing the document, or the window, with unsaved
-changes asks whether to save them first, not to, or to stay. With a save in
+**Closing and quitting.** Closing the document, or the window, waits for
+sketch edits waiting on the solver first, then with unsaved changes asks
+whether to save them first, not to, or to stay. With a save in
 flight, it waits for the answer ("Saving…"), and stays if a save failed
 that no newer one supersedes, unless the changes were to be dropped anyway. Closing the window is
 intercepted (iced's exit on close request is off) for this. Quitting then

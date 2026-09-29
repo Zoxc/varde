@@ -3,17 +3,20 @@
 //! Three layers: a [`Shape`] is what a document stores, a recipe checked
 //! as it's read; a [`Solid`] is the geometry it [`build`](Shape::build)s,
 //! which is never stored; and a [`RenderMesh`] is a solid tessellated for
-//! drawing. Only analytic primitives exist so far, and no booleans. The
+//! drawing. Curves drawn with the model, such as sketches, are
+//! [`RenderLines`]. Only analytic primitives exist so far, and no booleans. The
 //! intent is to back [`Solid`] with a robust mesh-boolean kernel such as
 //! [manifold](https://github.com/elalish/manifold), which the other two
 //! layers wouldn't see.
 
 mod aabb;
+mod render_lines;
 mod render_mesh;
 mod shape;
 mod solid;
 
 pub use aabb::Aabb;
+pub use render_lines::{LinesError, LinesPart, RenderLines};
 pub use render_mesh::{MeshError, MeshPart, RenderMesh};
 pub use shape::{Shape, ShapeError};
 pub use solid::Solid;

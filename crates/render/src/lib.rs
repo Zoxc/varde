@@ -8,8 +8,13 @@
 mod camera;
 mod renderer;
 mod scene;
+mod sketch;
 
 pub use camera::{Camera, Projection, View};
-pub use renderer::{ClipRect, Colors, Frame, PrepareError, Renderer, Slot, Srgb, Viewport};
+pub use renderer::{
+    ClipRect, Colors, Frame, LINE_WIDTH, PrepareError, Renderer, Slot, Srgb, Viewport,
+};
+pub use scene::GridPlane;
+pub use sketch::{LineStyle, PointStyle, SketchLayer, SketchScene, Space, Srgba};
 
 pub use wgpu;

@@ -30,7 +30,7 @@ impl Message {
 }
 
 /// Why a lane refused a message the other side posted. The lane words it,
-/// naming the worker, see [`Refused::word`], so each lane only says what
+/// naming the worker, see `Refused::word`, so each lane only says what
 /// was wrong. Any error converts to [`Refused::Broken`], so `?` refuses
 /// what doesn't decode.
 #[derive(Debug)]

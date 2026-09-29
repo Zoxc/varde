@@ -1,0 +1,376 @@
+use glam::DVec2;
+use iced::keyboard::{self, key};
+use varde_sketch::{Constraint, Curve, Id, Kind, SplineKind};
+use varde_view::{Edit, Look, Message as Ui, Target, Tool, ToolClick};
+
+use crate::Message;
+use crate::doc::sketch::tests::{
+    Answered, at, click, click_at, click_on, drawing, letter, sketch, sketching, undo_to,
+};
+use crate::doc::sketch::{Doc, Sketch};
+
+fn enter() -> keyboard::Key {
+    keyboard::Key::Named(key::Named::Enter)
+}
+
+/// Double-clicks the tool in use at `x`, `y`: a click, then its second.
+fn double_click(doc: &mut Answered, x: f64, y: f64) {
+    click(doc, x, y);
+    doc.update(Edit::ToolClick(ToolClick {
+        double: true,
+        ..click_at(x, y)
+    }));
+}
+
+/// The splines of `sketch`, by id.
+fn splines(sketch: &Sketch) -> Vec<(Id, varde_sketch::Spline)> {
+    sketch
+        .curves
+        .iter()
+        .filter_map(|entry| match &entry.curve {
+            Curve::Spline(spline) => Some((entry.id, spline.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The places of `ids` in `sketch`.
+fn places(sketch: &Sketch, ids: &[Id]) -> Vec<DVec2> {
+    ids.iter().map(|&id| sketch.point(id).unwrap().at).collect()
+}
+
+/// Draws a spline through a wave with the Spline tool, ending it with a
+/// double-click, putting the tool down after, and gives its id.
+fn draw_wave(doc: &mut Answered) -> Id {
+    doc.key(letter("n"));
+    for (x, y) in [(0.0, 0.0), (5.0, 4.0), (10.0, 1.0), (15.0, -3.0)] {
+        click(doc, x, y);
+    }
+    double_click(doc, 20.0, 0.0);
+    doc.look(Look::Escape);
+    splines(sketch(doc)).last().unwrap().0
+}
+
+/// Presses `key` with Shift in `doc`, sending what it sends.
+fn shift_key(doc: &mut Answered, key: &str) {
+    let press = crate::tests::press(letter(key), keyboard::Modifiers::SHIFT);
+    match crate::keys::document_key((doc.keys(), press)) {
+        Some(Message::Ui(Ui::Edit(edit))) => doc.update(edit),
+        Some(Message::Ui(Ui::Look(look))) => doc.look(look),
+        other => panic!("{key}: {other:?}"),
+    }
+}
+
+fn select(doc: &mut Answered, id: Id) {
+    doc.look(Look::ClickGeometry {
+        hit: Some(id),
+        add: false,
+    });
+}
+
+#[test]
+fn the_spline_tool_draws_through_the_points_clicked_until_a_double_click() {
+    let (mut doc, _, _) = sketching();
+    let before = sketch(&doc).clone();
+    doc.key(letter("n"));
+    assert_eq!(drawing(&doc).map(|d| d.tool), Some(Tool::Spline));
+    click(&mut doc, 0.0, 0.0);
+    click(&mut doc, 5.0, 4.0);
+    // Nothing is made until it ends; a click on the last point again, or
+    // within a pixel of it, places nothing.
+    click(&mut doc, 5.0, 4.05);
+    assert_eq!(*sketch(&doc), before);
+    assert_eq!(drawing(&doc).unwrap().placed.len(), 2);
+    double_click(&mut doc, 10.0, 1.0);
+    let drawn = sketch(&doc).clone();
+    let [(_, spline)] = &splines(&drawn)[..] else {
+        panic!("{drawn:?}");
+    };
+    assert_eq!((spline.kind, spline.closed), (SplineKind::Through, false));
+    assert_eq!(
+        places(&drawn, &spline.points),
+        [at(0.0, 0.0), at(5.0, 4.0), at(10.0, 1.0)]
+    );
+    // The tool stays, afresh, for the next.
+    let tool = drawing(&doc).unwrap();
+    assert_eq!(tool.tool, Tool::Spline);
+    assert!(tool.placed.is_empty());
+    let analysis = doc.sketch_state().unwrap().analysis.unwrap();
+    assert_eq!(analysis.freedom, 6);
+    assert_eq!(undo_to(&mut doc, &before), 1);
+
+    // One point is no spline: a double-click there does nothing.
+    double_click(&mut doc, 3.0, 3.0);
+    assert_eq!(*sketch(&doc), before);
+    assert_eq!(drawing(&doc).unwrap().placed.len(), 1);
+}
+
+#[test]
+fn enter_ends_the_spline_and_its_first_point_closes_it() {
+    let (mut doc, _, _) = sketching();
+    let before = sketch(&doc).clone();
+    doc.key(letter("n"));
+    // Enter with one point placed ends nothing.
+    click(&mut doc, 0.0, 0.0);
+    assert!(crate::tests::press_in(&doc, enter()).is_none());
+    click(&mut doc, 8.0, 2.0);
+    doc.key(enter());
+    let [(_, spline)] = &splines(sketch(&doc))[..] else {
+        panic!("one spline");
+    };
+    assert_eq!(spline.points.len(), 2);
+    assert_eq!(undo_to(&mut doc, &before), 1);
+
+    // Round, and back to the first point, within the snap's reach of
+    // it: closed through the three.
+    for (x, y) in [(0.0, 0.0), (10.0, 0.0), (5.0, 8.0)] {
+        click(&mut doc, x, y);
+    }
+    click(&mut doc, 0.3, -0.2);
+    let [(_, spline)] = &splines(sketch(&doc))[..] else {
+        panic!("one spline");
+    };
+    assert!(spline.closed);
+    assert_eq!(spline.points.len(), 3);
+    // A closed spline is a profile on its own.
+    let profiles = doc.sketch_state().unwrap().profiles.unwrap();
+    assert_eq!(profiles.as_ref().unwrap().regions.len(), 1);
+    assert_eq!(undo_to(&mut doc, &before), 1);
+
+    // Back to the first point with too few to close: nothing is placed
+    // on top of it, to close on it after (the tool is afresh).
+    assert!(drawing(&doc).unwrap().placed.is_empty());
+    for (x, y) in [(0.0, 0.0), (10.0, 0.0)] {
+        click(&mut doc, x, y);
+    }
+    click(&mut doc, 0.3, -0.2);
+    assert_eq!(drawing(&doc).unwrap().placed, [at(0.0, 0.0), at(10.0, 0.0)]);
+}
+
+#[test]
+fn q_switches_the_spline_tool_to_control_points() {
+    let (mut doc, _, _) = sketching();
+    let before = sketch(&doc).clone();
+    doc.key(letter("n"));
+    click(&mut doc, 0.0, 0.0);
+    doc.key(letter("q"));
+    assert!(drawing(&doc).unwrap().control);
+    assert_eq!(drawing(&doc).unwrap().placed.len(), 1);
+    for (x, y) in [(4.0, 6.0), (10.0, 6.0)] {
+        click(&mut doc, x, y);
+    }
+    // By control points it takes four.
+    assert!(crate::tests::press_in(&doc, enter()).is_none());
+    double_click(&mut doc, 14.0, 0.0);
+    let drawn = sketch(&doc).clone();
+    let [(id, spline)] = &splines(&drawn)[..] else {
+        panic!("{drawn:?}");
+    };
+    assert_eq!(spline.kind, SplineKind::Control);
+    assert_eq!(spline.points.len(), 4);
+    // Starting and ending at its first and last control points.
+    let geom = drawn.flatten(&drawn.curve(*id).unwrap().curve).unwrap();
+    assert!(geom[0].distance(at(0.0, 0.0)) < 1e-9);
+    assert!(geom.last().unwrap().distance(at(14.0, 0.0)) < 1e-9);
+    // Kept for the next.
+    assert!(drawing(&doc).unwrap().control);
+    assert_eq!(undo_to(&mut doc, &before), 1);
+    doc.key(letter("q"));
+    assert!(!drawing(&doc).unwrap().control);
+}
+
+#[test]
+fn a_spline_s_points_snap_and_are_tied_as_any_shape_s() {
+    let (mut doc, _, _) = sketching();
+    // A line to start on, and to end on.
+    doc.look(Look::SelectTool(Tool::Line));
+    click(&mut doc, 0.0, -5.0);
+    click(&mut doc, 20.0, -5.0);
+    doc.look(Look::Escape);
+    doc.look(Look::Escape);
+    let lined = sketch(&doc).clone();
+    let entry = &lined.curves[0];
+    let (line, [start, _]) = (entry.id, entry.curve.ends().unwrap());
+    doc.look(Look::SelectTool(Tool::Spline));
+    click(&mut doc, -6.0, 3.0);
+    click_on(&mut doc, 0.0, -5.0, Some(start));
+    doc.update(Edit::ToolClick(ToolClick {
+        target: Some(Target::On(line)),
+        ..click_at(12.0, -5.0)
+    }));
+    // A point it has already is none to go through again (but its first,
+    // which closes it).
+    click_on(&mut doc, 0.0, -5.0, Some(start));
+    assert_eq!(drawing(&doc).unwrap().placed.len(), 3);
+    doc.key(enter());
+    let drawn = sketch(&doc).clone();
+    let (_, spline) = splines(&drawn).pop().unwrap();
+    assert!(!spline.closed);
+    assert_eq!(spline.points[1], start);
+    let last = spline.points[2];
+    assert!(drawn.constraints.iter().any(|entry| entry.constraint
+        == Constraint::PointOnCurve {
+            point: last,
+            curve: line
+        }));
+}
+
+#[test]
+fn handles_come_and_go_by_their_key() {
+    let (mut doc, _, _) = sketching();
+    let id = draw_wave(&mut doc);
+    let before = sketch(&doc).clone();
+    // With the spline selected, at its ends.
+    select(&mut doc, id);
+    shift_key(&mut doc, "H");
+    let handled = sketch(&doc).clone();
+    let spline = handled.spline(id).unwrap();
+    let [first, last] = spline.ends().unwrap();
+    assert!(spline.has_handle(first) && spline.has_handle(last));
+    assert_eq!(spline.handles.len(), 2);
+    assert_eq!(undo_to(&mut doc, &before), 1);
+    shift_key(&mut doc, "H");
+    // And away again, in one step.
+    let with = sketch(&doc).clone();
+    shift_key(&mut doc, "H");
+    assert!(sketch(&doc).spline(id).unwrap().handles.is_empty());
+    assert_eq!(undo_to(&mut doc, &with), 1);
+
+    // At a fit point selected, there.
+    let middle = sketch(&doc).spline(id).unwrap().points[2];
+    select(&mut doc, middle);
+    shift_key(&mut doc, "H");
+    assert!(sketch(&doc).spline(id).unwrap().has_handle(middle));
+    // A tip dragged is any point's drag; deleted, its handle goes.
+    let tip = sketch(&doc).spline(id).unwrap().handles[2].tip;
+    select(&mut doc, tip);
+    doc.update(Edit::DeleteSelection);
+    assert!(!sketch(&doc).spline(id).unwrap().has_handle(middle));
+}
+
+#[test]
+fn a_double_click_on_a_spline_adds_a_point_and_delete_takes_one() {
+    let (mut doc, _, _) = sketching();
+    let id = draw_wave(&mut doc);
+    let before = sketch(&doc).clone();
+    let near = sketch(&doc).nearest_on(id, at(7.5, 3.0)).unwrap();
+    doc.update(Edit::InsertSplinePoint {
+        spline: id,
+        at: near,
+    });
+    let inserted = sketch(&doc).clone();
+    let spline = inserted.spline(id).unwrap();
+    assert_eq!(spline.points.len(), 6);
+    assert!(inserted.point(spline.points[2]).unwrap().at.distance(near) < 1e-6);
+    assert_eq!(undo_to(&mut doc, &before), 1);
+
+    // Deleting a fit point keeps a smooth spline through the rest.
+    let second = before.spline(id).unwrap().points[1];
+    select(&mut doc, second);
+    doc.update(Edit::DeleteSelection);
+    let spline = sketch(&doc).spline(id).unwrap();
+    assert_eq!(spline.points.len(), 4);
+    assert_eq!(undo_to(&mut doc, &before), 1);
+}
+
+#[test]
+fn q_converts_the_splines_selected_and_back() {
+    let (mut doc, _, _) = sketching();
+    let id = draw_wave(&mut doc);
+    let before = sketch(&doc).clone();
+    // Nothing selected, Q does nothing.
+    assert!(crate::tests::press_in(&doc, letter("q")).is_none());
+    select(&mut doc, id);
+    doc.key(letter("q"));
+    assert_eq!(sketch(&doc).spline(id).unwrap().kind, SplineKind::Control);
+    let converted = sketch(&doc).clone();
+    select(&mut doc, id);
+    doc.key(letter("q"));
+    let back = sketch(&doc).clone();
+    assert_eq!(back.spline(id).unwrap().kind, SplineKind::Through);
+    // Through its places at its knots, the fit points it had.
+    let (was, is) = (
+        before.flatten(&before.curve(id).unwrap().curve).unwrap(),
+        back.flatten(&back.curve(id).unwrap().curve).unwrap(),
+    );
+    for place in was {
+        let nearest = is
+            .iter()
+            .map(|p| p.distance(place))
+            .fold(f64::INFINITY, f64::min);
+        assert!(nearest < 0.05, "{place}: {nearest}");
+    }
+    assert_eq!(undo_to(&mut doc, &converted), 1);
+    assert_eq!(undo_to(&mut doc, &before), 1);
+}
+
+#[test]
+fn u_shows_the_curvature_comb() {
+    let (mut doc, _, _) = sketching();
+    let state = |doc: &Doc| doc.sketch_state().unwrap().comb;
+    assert!(!state(&doc));
+    doc.key(letter("u"));
+    assert!(state(&doc));
+    doc.key(letter("u"));
+    assert!(!state(&doc));
+}
+
+#[test]
+fn trim_extend_and_offset_take_splines() {
+    let (mut doc, _, _) = sketching();
+    let id = draw_wave(&mut doc);
+    // A line across it at x = 7.
+    doc.look(Look::SelectTool(Tool::Line));
+    click(&mut doc, 7.0, -8.0);
+    click(&mut doc, 7.0, 8.0);
+    doc.look(Look::Escape);
+    doc.look(Look::Escape);
+    let before = sketch(&doc).clone();
+
+    doc.key(letter("t"));
+    let near = before.nearest_on(id, at(2.0, 2.0)).unwrap();
+    doc.update(Edit::ToolClick(ToolClick {
+        hit: Some(id),
+        ..click_at(near.x, near.y)
+    }));
+    let trimmed = sketch(&doc).clone();
+    let [start, _] = trimmed.spline(id).unwrap().ends().unwrap();
+    assert!((trimmed.point(start).unwrap().at.x - 7.0).abs() < 1e-3);
+    assert_eq!(undo_to(&mut doc, &before), 1);
+
+    // Its end on to a wall.
+    doc.look(Look::Escape);
+    doc.look(Look::SelectTool(Tool::Line));
+    click(&mut doc, 26.0, -8.0);
+    click(&mut doc, 26.0, 8.0);
+    doc.look(Look::Escape);
+    doc.look(Look::Escape);
+    let walled = sketch(&doc).clone();
+    doc.key(letter("j"));
+    doc.update(Edit::ToolClick(ToolClick {
+        hit: Some(id),
+        ..click_at(19.5, 0.0)
+    }));
+    let extended = sketch(&doc).clone();
+    let [_, end] = extended.spline(id).unwrap().ends().unwrap();
+    assert!((extended.point(end).unwrap().at.x - 26.0).abs() < 1e-3);
+    assert_eq!(undo_to(&mut doc, &walled), 1);
+
+    // Offset alone, by a click to its side: a spline, tied by one
+    // dimension.
+    doc.look(Look::Escape);
+    doc.key(letter("o"));
+    doc.update(Edit::ToolClick(ToolClick {
+        hit: Some(id),
+        ..click_at(10.0, 1.0)
+    }));
+    // In a chain with nothing: picked alone.
+    assert_eq!(drawing(&doc).unwrap().picked, [id]);
+    let side = walled.nearest_on(id, at(10.0, 6.0)).unwrap() + DVec2::new(0.0, 2.0);
+    click(&mut doc, side.x, side.y);
+    let offset = sketch(&doc).clone();
+    let copy = offset.curves.last().unwrap();
+    assert_eq!(copy.curve.kind(), Kind::Spline);
+    assert_eq!(offset.dimensions.len(), 1);
+    assert_eq!(undo_to(&mut doc, &walled), 1);
+}

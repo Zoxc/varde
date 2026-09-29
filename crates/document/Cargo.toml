@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 varde-kernel.workspace = true
 varde-sketch.workspace = true
+varde-expr = { workspace = true, features = ["serde"] }
 glam.workspace = true
 serde.workspace = true
 postcard.workspace = true

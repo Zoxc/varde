@@ -1,24 +1,16 @@
-use std::pin::Pin;
-use std::sync::mpsc;
-use std::task::{Context, Poll, Waker};
-use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
-
-use futures::Stream;
 use glam::Vec3;
 use varde_document::{Command, Document, Editor};
 use varde_kernel::Shape;
+use varde_lane::thread::testing::{join_in_time, next};
 
 use super::*;
 use crate::Transport;
-
-/// How long a test waits for the lane before failing.
-const TIMEOUT: Duration = Duration::from_secs(10);
 
 fn regenerate(editor: &Editor) -> Request {
     Request::Regenerate {
         generation: editor.generation(),
         document: editor.snapshot(),
+        exclude: None,
     }
 }
 
@@ -32,38 +24,15 @@ fn add_cube(editor: &mut Editor) {
         .unwrap();
 }
 
-/// The next response, polled without an executor.
-fn next(responses: &mut Responses) -> Response {
-    let start = Instant::now();
-    let mut cx = Context::from_waker(Waker::noop());
-    loop {
-        match Pin::new(&mut *responses).poll_next(&mut cx) {
-            Poll::Ready(Some(response)) => return response,
-            Poll::Ready(None) => panic!("the lane ended"),
-            Poll::Pending if start.elapsed() < TIMEOUT => {
-                std::thread::sleep(Duration::from_millis(1))
-            }
-            Poll::Pending => panic!("no response from the lane"),
-        }
-    }
-}
-
-fn join_in_time(join: JoinHandle<()>) {
-    let (done, finished) = mpsc::channel();
-    std::thread::spawn(move || done.send(join.join().is_ok()));
-    assert_eq!(
-        finished.recv_timeout(TIMEOUT),
-        Ok(true),
-        "the lane didn't end"
-    );
-}
-
 #[test]
 fn round_trip() {
     let editor = Editor::new(Document::example());
     let (mut lane, mut responses) = spawn();
     lane.send(regenerate(&editor));
-    let Response::Regenerated { generation, mesh } = next(&mut responses) else {
+    let Response::Regenerated {
+        generation, mesh, ..
+    } = next(&mut responses)
+    else {
         panic!("regeneration failed");
     };
     assert_eq!(generation, editor.generation());
@@ -82,7 +51,10 @@ fn burst_ends_with_the_newest() {
     // is the newest.
     let mut last = 0;
     while last < u64::from(editor.generation()) {
-        let Response::Regenerated { generation, mesh } = next(&mut responses) else {
+        let Response::Regenerated {
+            generation, mesh, ..
+        } = next(&mut responses)
+        else {
             panic!("regeneration failed");
         };
         let generation = u64::from(generation);
@@ -128,7 +100,10 @@ fn lane_keeps_going_after_a_job_panics() {
 
     add_cube(&mut editor);
     lane.send(regenerate(&editor));
-    let Response::Regenerated { generation, mesh } = next(&mut responses) else {
+    let Response::Regenerated {
+        generation, mesh, ..
+    } = next(&mut responses)
+    else {
         panic!("generation 2 failed");
     };
     assert_eq!(u64::from(generation), 2);

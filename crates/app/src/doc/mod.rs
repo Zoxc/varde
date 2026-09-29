@@ -4,6 +4,7 @@
 mod camera;
 mod feed;
 mod save;
+mod sketch;
 
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -11,10 +12,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use glam::Vec3;
 use iced::Element;
 use varde_document::name::UNTITLED;
-use varde_document::{CUBE_SIZE, Command, Document, EditError, Editor};
+use varde_document::{CUBE_SIZE, Command, Document, EditError, Editor, FeatureId, LengthUnit};
 use varde_io::{Access, Offer, OpenId};
 use varde_render::{Camera, Projection};
-use varde_view::{Edit, Look, Message as Ui, Mode, Overlay, Panel};
+use varde_solve::{Request as SolveRequest, Transport};
+use varde_view::{DocumentKeys, Edit, Look, Message as Ui, Mode, Overlay, Panel, Snap};
 
 #[cfg(test)]
 pub(crate) use camera::CAMERA_ANIMATION;
@@ -24,6 +26,8 @@ use save::Persist;
 #[cfg(test)]
 pub(crate) use save::{AutoSave, Picking};
 pub(crate) use save::{Downloader, Downloads, Leave, Target};
+use sketch::GEOMETRY_SHARE;
+pub(crate) use sketch::{Focus, Proposals, SketchSession};
 
 use crate::{Files, ForDoc, Next};
 
@@ -36,6 +40,15 @@ pub(crate) struct Doc {
     /// The mesh the viewport shows, as it comes from the document's
     /// regeneration lane.
     pub(crate) feed: MeshFeed,
+    /// The document's solver lane, a thread natively and a Web Worker on
+    /// the web, once it has started, see [`Varde::solve_lane`]: sketch
+    /// edits are proposed through it, drags stepped and sketches analysed.
+    /// Until then proposals wait in [`Doc::proposals`].
+    ///
+    /// [`Varde::solve_lane`]: crate::Varde::solve_lane
+    pub(crate) solver: Option<Box<dyn Transport<SolveRequest>>>,
+    /// What's asked of the solver lane and not answered yet.
+    pub(crate) proposals: Proposals,
     /// Why the document can't be edited, if it can't.
     pub(crate) read_only: Option<String>,
     /// Why the last edit was refused, if it was.
@@ -44,6 +57,22 @@ pub(crate) struct Doc {
     pub(crate) name: String,
     pub(crate) panel: Panel,
     pub(crate) file_menu: bool,
+    /// Whether the plane for a new sketch is being picked.
+    pub(crate) picking_plane: bool,
+    /// The feature selected in the Timeline, if any.
+    pub(crate) selected_feature: Option<FeatureId>,
+    /// The sketch being edited, if one is.
+    pub(crate) sketch: Option<SketchSession>,
+    /// The share of the Sketch tab's height the Geometry list takes, kept
+    /// from one sketch to the next.
+    pub(crate) sketch_split: f32,
+    /// What the value field is to do once it shows, which the app asks of
+    /// it: see [`Doc::take_focus`].
+    focus: Option<Focus>,
+    /// The design's units chosen while edits waited on the solver, set
+    /// once they're answered: their values were read in the units before.
+    /// Undoing them, which drops them, drops this too.
+    pub(crate) units_waiting: Option<LengthUnit>,
     animation: Option<CameraAnimation>,
     /// Saving and leaving it, see [`Persist`].
     persist: Persist,
@@ -128,20 +157,37 @@ impl Doc {
             editor,
             camera: home_camera(Projection::default()),
             feed: MeshFeed::new(),
+            solver: None,
+            proposals: Proposals::default(),
             read_only: read_only(access),
             edit_error: None,
             name,
             panel: Panel::default(),
             file_menu: false,
+            picking_plane: false,
+            selected_feature: None,
+            sketch: None,
+            sketch_split: GEOMETRY_SHARE,
+            focus: None,
+            units_waiting: None,
             animation: None,
         };
         doc.sync();
         doc
     }
 
-    /// Asks for the mesh of the document if it changed.
+    /// Lets go of what the document no longer holds, see [`Doc::prune`],
+    /// asks for the model if the document changed, or the sketch being
+    /// edited did, which is left out of it, and finds the profiles of the
+    /// sketch shown if it changed.
     pub(crate) fn sync(&mut self) {
-        self.feed.request(&self.editor);
+        self.refresh_waiting();
+        self.prune();
+        self.send_proposal();
+        self.request_analysis();
+        let exclude = self.sketch.as_ref().map(|session| session.feature);
+        self.feed.request(&self.editor, exclude);
+        self.refresh_profiles();
     }
 
     /// Whether the camera is turning to a new view.
@@ -174,12 +220,24 @@ impl Doc {
     }
 
     /// Applies `command`, keeping why it failed, if it did.
-    fn apply(&mut self, command: Command) {
+    pub(crate) fn apply(&mut self, command: Command) {
         self.edit(|editor| editor.apply(command));
     }
 
-    /// Takes `message`, asking something of the document itself.
+    /// Takes `message`, asking something of the document itself. What
+    /// the solver last refused shows until then.
     pub(crate) fn update(&mut self, message: Edit) {
+        self.end_refusal();
+        // Any other edit, a click of the Dimension tool included, leaves
+        // the value field; placing one opens another. Not a label let go
+        // of: the release of a double-click opening the field on it. Nor
+        // placing a shape while a drawing tool's field is open, which
+        // takes the value typed there first.
+        let placing = matches!(message, Edit::ToolClick(_) | Edit::PlaceShape)
+            && self.drawing_field().is_some();
+        if !(placing || matches!(message, Edit::SubmitValue | Edit::DropLabel)) {
+            self.close_value();
+        }
         match message {
             Edit::ToggleFileMenu => self.file_menu = !self.file_menu,
             Edit::DismissSaveError => self.dismiss_save_error(),
@@ -191,7 +249,38 @@ impl Doc {
                     self.apply(Command::SetVisible(id, visible));
                 }
             }
+            Edit::NewSketch(plane) => self.new_sketch(plane),
+            Edit::RemoveFeature(id) => self.apply(Command::RemoveFeature(id)),
+            Edit::ToggleFeatureVisible(id) => {
+                if let Some(feature) = self.editor.document().feature(id) {
+                    let visible = !feature.visible;
+                    self.apply(Command::SetFeatureVisible(id, visible));
+                }
+            }
+            Edit::ToolClick(click) => self.tool_click(click),
+            Edit::DropGeometry => self.drop_geometry(),
+            Edit::DeleteSelection => self.delete_selection(),
+            Edit::ToggleConstruction => self.toggle_construction(),
+            Edit::Constrain(kind) => self.constrain(kind),
+            Edit::SubmitValue => self.submit_value(),
+            Edit::DropLabel => self.drop_label(),
+            Edit::ToggleReference => self.toggle_reference(),
+            Edit::PlaceShape => self.place_shape(),
+            Edit::ConvertSplines => self.convert_splines(),
+            Edit::ToggleHandles => self.toggle_handles(),
+            Edit::InsertSplinePoint { spline, at } => self.insert_spline_point(spline, at),
+            // Edits waiting on the solver have their values read in the
+            // units they were made in: the units are set once they're
+            // answered.
+            Edit::SetUnits(units) if self.proposing() => self.units_waiting = Some(units),
+            Edit::SetUnits(units) => self.apply(Command::SetUnits(units)),
+            // Undoing an edit still waiting on the solver drops it, and
+            // those after it.
+            Edit::Undo if self.proposing() => self.drop_proposals(),
             Edit::Undo => self.edit_surely(Editor::undo),
+            // The edits waiting come after what's undone, as a new edit
+            // does, and name items by the ids the sketch has without it.
+            Edit::Redo if self.proposing() => {}
             Edit::Redo => self.edit_surely(Editor::redo),
         }
 
@@ -199,10 +288,114 @@ impl Doc {
     }
 
     /// Takes `message`, which only changes how the document is looked at.
+    /// An action in the sketch ends what the solver last refused showing.
     pub(crate) fn look(&mut self, message: Look) {
+        self.look_at(message);
+        self.list_selection();
+        // A drag's step shows another sketch, and letting go of it the
+        // sketch before.
+        self.refresh_profiles();
+    }
+
+    /// Takes `message`, see [`Doc::look`].
+    fn look_at(&mut self, message: Look) {
+        if matches!(
+            message,
+            Look::Escape
+                | Look::ClickGeometry { .. }
+                | Look::ClickRow(_)
+                | Look::SelectBox { .. }
+                | Look::ClearSelection
+                | Look::SelectTool(_)
+                | Look::ToggleConstrain
+                | Look::PressLabel { .. }
+                | Look::EditDimension { .. }
+        ) {
+            self.end_refusal();
+        }
+        // Acting on the sketch elsewhere leaves the value field.
+        if matches!(
+            message,
+            Look::ClickGeometry { .. }
+                | Look::ClickRow(_)
+                | Look::SelectBox { .. }
+                | Look::SelectTool(_)
+                | Look::ToggleConstrain
+                | Look::PressLabel { .. }
+                | Look::DragGeometry { .. }
+                | Look::EditSketch(_)
+                | Look::FinishSketch
+                | Look::PickPlane
+        ) {
+            self.close_value();
+        }
         match message {
             Look::CloseFileMenu => self.file_menu = false,
-            Look::SelectPanel(panel) => self.panel = panel,
+            Look::Escape => self.escape(),
+            // Only the tabs showing can be picked, but a message sent before
+            // entering or leaving a sketch may come after.
+            Look::SelectPanel(panel) => self.panel = panel.for_sketching(self.sketch.is_some()),
+            Look::PickPlane => self.pick_plane(),
+            Look::EditSketch(id) => self.enter_sketch(id),
+            Look::FinishSketch => self.finish_sketch(),
+            Look::SelectFeature(id) => {
+                if self.editor.document().feature(id).is_some() {
+                    self.selected_feature = Some(id);
+                }
+            }
+            Look::ClickGeometry { hit, add } => self.click_geometry(hit, add),
+            // The app turns this into a `ClickGeometry`, knowing the keys
+            // held; alone, it selects.
+            Look::ClickRow(id) => self.click_geometry(Some(id), false),
+            Look::HoverItem(id) => self.hover_item(id),
+            Look::Snap(snap) => {
+                if let Some(session) = &mut self.sketch {
+                    session.snap = snap;
+                }
+            }
+            Look::Aim(click) => {
+                if let Some(session) = &mut self.sketch {
+                    session.snap = Some(click.snap()).filter(Snap::snapped);
+                    session.aim = Some(click);
+                }
+            }
+            Look::NextField => self.next_field(),
+            Look::ToggleCentered => self.toggle_centered(),
+            Look::ToggleSplineKind => self.toggle_spline_kind(),
+            Look::ToggleComb => self.toggle_comb(),
+            Look::MirrorAbout => self.mirror_about(),
+            Look::ToggleConstrain => self.toggle_constrain(),
+            Look::ToggleGlyphs => self.toggle_glyphs(),
+            Look::SelectBox { ids, add } => self.select_box(ids, add),
+            Look::ClearSelection => self.clear_selection(),
+            Look::SelectTool(tool) => self.select_tool(tool),
+            Look::DragGeometry { id, from, to } => self.drag_geometry(id, from, to),
+            Look::CancelDrag => {
+                if let Some(session) = &mut self.sketch {
+                    session.drag = None;
+                }
+            }
+            Look::PressLabel { id, add } => self.press_label(id, add),
+            Look::DragLabel { id, from, to } => self.drag_label(id, from, to),
+            Look::EditDimension { id, in_list } => self.edit_dimension(id, in_list),
+            Look::ValueInput(text) => self.value_input(text),
+            Look::CancelValue => self.close_value(),
+            Look::SwitchRound => self.switch_round(),
+            Look::SplitSketchTab(share) => {
+                if share.is_finite() {
+                    self.sketch_split = share.clamp(0.0, 1.0);
+                }
+            }
+            Look::ScrollGeometry(offset) => {
+                if let Some(session) = &mut self.sketch {
+                    session.scroll = offset;
+                }
+            }
+            Look::ScrollConstraints(offset) => {
+                if let Some(session) = &mut self.sketch {
+                    session.constraint_scroll = offset;
+                }
+            }
             Look::Orbit { yaw, pitch } => {
                 self.animation = None;
                 self.camera.orbit(yaw, pitch);
@@ -215,11 +408,20 @@ impl Doc {
                 self.animation = None;
                 self.camera.zoom(factor);
             }
-            Look::ResetCamera => self.animate_camera(home_camera(self.camera.projection())),
+            // In a sketch, Home faces it.
+            Look::ResetCamera => {
+                let home = self
+                    .sketch_camera()
+                    .unwrap_or_else(|| home_camera(self.camera.projection()));
+                self.animate_camera(home);
+            }
             Look::LookFrom(view) => {
                 let mut to = self.camera;
                 to.look_from(view);
-                to.set_target(HOME_TARGET);
+                to.set_target(
+                    self.sketch_camera()
+                        .map_or(HOME_TARGET, |home| home.target()),
+                );
                 self.animate_camera(to);
             }
             Look::SetProjection(projection) => {
@@ -243,6 +445,35 @@ impl Doc {
         self.feed.apply(response);
     }
 
+    /// Starts sending requests to `lane`, the document's solver lane:
+    /// the proposals waiting, and the analysis of the sketch being edited.
+    pub(crate) fn solver_ready(&mut self, lane: impl Transport<SolveRequest> + 'static) {
+        self.solver = Some(Box::new(lane));
+        self.sync();
+    }
+
+    /// Stops showing why the solver refused the last edit.
+    fn end_refusal(&mut self) {
+        if let Some(session) = &mut self.sketch {
+            session.refusal = None;
+        }
+    }
+
+    /// What the document screen's shortcuts depend on, or `None` while
+    /// the user is asked about unsaved changes: only the prompt's buttons
+    /// and `Esc` act then, not keys changing the document behind it.
+    pub(crate) fn keys(&self) -> Option<DocumentKeys> {
+        self.prompt()
+            .is_none()
+            .then(|| DocumentKeys::new(self.editable(), self.selected_feature, self.sketch_state()))
+    }
+
+    /// Whether the other panel tab shows with the peek key `held`: not in
+    /// the Dimension tool, where it's held to place references.
+    pub(crate) fn peeks(&self, held: bool) -> bool {
+        held && !self.dimensioning()
+    }
+
     /// Takes `message`, an answer for this document: the app has checked
     /// it's for this one and not one closed since.
     pub(crate) fn answer(&mut self, cx: &mut Files, message: ForDoc) -> Next {
@@ -257,15 +488,28 @@ impl Doc {
                 self.computed(response);
                 Next::Stay
             }
+            // Proposals whose sketch went while the lane started are
+            // dropped, which a save may have waited for.
+            ForDoc::SolveReady(lane) => {
+                self.solver_ready(lane);
+                self.proposals_settled(cx)
+            }
+            ForDoc::Solved(response) => {
+                self.solved(response);
+                self.proposals_settled(cx)
+            }
         }
     }
 
-    /// The document screen, showing the other panel tab if `peek`.
+    /// The document screen, showing the other panel tab if `peek`, unless
+    /// the Dimension tool is in use, where the peek key places references.
     pub(crate) fn view(&self, peek: bool, mode: Mode) -> Element<'_, Ui> {
+        let peek = self.peeks(peek);
         varde_view::document(varde_view::DocumentState {
             editor: &self.editor,
             camera: &self.camera,
             mesh: self.feed.mesh(),
+            sketches: self.feed.sketches(),
             mesh_status: self.feed.status(&self.editor),
             name: &self.name,
             edited: self.edited(),
@@ -284,6 +528,11 @@ impl Doc {
             panel: self.panel,
             peek,
             mode,
+            picking_plane: self.picking_plane,
+            selected_feature: self.selected_feature,
+            sketch: self.sketch_state(),
+            unsolved: self.feed.unsolved(),
+            proposing: self.proposing(),
         })
     }
 }

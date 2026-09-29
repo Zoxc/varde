@@ -13,6 +13,7 @@ mod when;
 
 use std::path::PathBuf;
 
+use iced::futures::Stream;
 use iced::keyboard::{self, key};
 use iced::{Element, Subscription, Task, window};
 
@@ -24,7 +25,7 @@ use varde_io::{
 };
 use varde_view::{File, Held, Look, Message as Ui, Mode, Unsaved};
 
-use crate::doc::{Doc, DocId, Downloader, Downloads, Leave};
+use crate::doc::{Doc, DocId, Downloader, Downloads, Focus, Leave};
 use crate::io::Io;
 use crate::keys::{document_key, welcome_key};
 use crate::message::{ForDoc, Message};
@@ -36,6 +37,9 @@ pub(crate) struct Varde {
     mode: Mode,
     /// Whether the peek key is held, see [`Held::PEEK`].
     peeking: bool,
+    /// Whether the command modifier (`Ctrl`, or `Cmd` on macOS) is held,
+    /// with which clicking a list's row adds to the selection.
+    command: bool,
     files: Files,
     /// The window to close once the IO lane is done, see [`Varde::quit`].
     quitting: Option<window::Id>,
@@ -143,12 +147,24 @@ impl Varde {
             screen: Screen::Welcome(Welcome::default()),
             mode: Mode::default(),
             peeking: false,
+            command: false,
             files,
             quitting: None,
         }
     }
 
     pub(crate) fn update(&mut self, message: Message) -> Task<Message> {
+        let task = self.handle(message);
+        // A value field opened, or a value refused, has the field take the
+        // focus once it shows.
+        match self.screen.doc_mut().and_then(Doc::take_focus) {
+            Some(focus) => Task::batch([task, focus_field(focus)]),
+            None => task,
+        }
+    }
+
+    /// Takes `message`, see [`Varde::update`].
+    fn handle(&mut self, message: Message) -> Task<Message> {
         // Once quitting, whatever is sent to the lane would come after the
         // flush the window closes on, see `Varde::quit`.
         if self.quitting.is_some() && !while_quitting(&message) {
@@ -179,18 +195,42 @@ impl Varde {
             Message::IoReady(lane) => self.files.io.ready(Box::new(lane)),
             Message::Io(response) => return self.io_response(response),
 
-            Message::Ui(Ui::Edit(message)) => self.with_doc(|doc, _| doc.update(message)),
+            Message::Ui(Ui::Edit(message)) => {
+                // Undo may drop the edits a save waits for.
+                return self.step(|doc, cx| {
+                    doc.update(message);
+                    doc.proposals_settled(cx)
+                });
+            }
             Message::Ui(Ui::Look(message)) => {
-                // A clicked tab ends the peek, or the peek would show the
-                // other one; the next change of modifiers starts it again.
-                if let Look::SelectPanel(_) = message {
-                    self.peeking = false;
-                }
+                let message = match message {
+                    // A clicked tab ends the peek, or the peek would show
+                    // the other one; the next change of modifiers starts it
+                    // again.
+                    Look::SelectPanel(_) => {
+                        self.peeking = false;
+                        message
+                    }
+                    // A row or a label knows nothing of the keys held.
+                    Look::ClickRow(id) => Look::ClickGeometry {
+                        hit: Some(id),
+                        add: self.command,
+                    },
+                    Look::PressLabel { id, .. } => Look::PressLabel {
+                        id,
+                        add: self.command,
+                    },
+                    message => message,
+                };
                 self.with_doc(|doc, _| doc.look(message));
             }
             Message::Ui(Ui::ToggleTheme) => self.mode = self.mode.toggled(),
             Message::PeekPanel(peeking) => self.peeking = peeking,
-            Message::AnimationFrame(now) => self.with_doc(|doc, _| doc.animation_frame(now)),
+            Message::CommandHeld(held) => self.command = held,
+            Message::AnimationFrame(now) => self.with_doc(|doc, _| {
+                doc.animation_frame(now);
+                doc.tick(now);
+            }),
         }
         Task::none()
     }
@@ -202,7 +242,7 @@ impl Varde {
             File::Save => return self.step(|doc, cx| doc.request_save(cx)),
             File::SaveAs => return self.step(|doc, cx| doc.request_save_as(cx)),
             File::Unsaved(choice) => return self.step(|doc, cx| doc.answer_unsaved(cx, choice)),
-            File::RestoreChanges => self.with_doc(|doc, files| doc.restore_recovered(files)),
+            File::RestoreChanges => return self.step(|doc, cx| doc.restore_recovered(cx)),
             File::DiscardChanges => self.with_doc(|doc, files| doc.discard_recovered(files)),
         }
         Task::none()
@@ -378,15 +418,14 @@ impl Varde {
         let prompting = doc.is_some_and(|doc| doc.prompt().is_some());
         Subscription::batch([
             keyboard::listen().filter_map(peek_key),
+            keyboard::listen().filter_map(command_key),
             keyboard::listen().with(prompting).filter_map(escape_key),
             // The release is never seen if the window loses focus while
             // the peek key is held, e.g. to an Alt+Tab.
             window::events().filter_map(unfocused),
             match doc {
                 None => keyboard::listen().filter_map(welcome_key),
-                Some(doc) => keyboard::listen()
-                    .with(doc.editable())
-                    .filter_map(document_key),
+                Some(doc) => keyboard::listen().with(doc.keys()).filter_map(document_key),
             },
             // Closing waits for saves and asks about unsaved changes, see
             // `run`.
@@ -396,10 +435,14 @@ impl Varde {
             // The browser asks before the page goes, while it would lose
             // changes.
             only_if(self.at_stake(), platform::guard),
-            only_if(doc.is_some_and(|doc| doc.animating()), || {
-                window::frames().map(Message::AnimationFrame)
-            }),
+            // While the camera turns, and edits wait on the solver until
+            // they've waited long enough to say so.
+            only_if(
+                doc.is_some_and(|doc| doc.animating() || doc.timing()),
+                || window::frames().map(Message::AnimationFrame),
+            ),
             self.regen_lane(),
+            self.solve_lane(),
             Self::io_lane(),
             only_if(self.auto_saving(), platform::auto_save_ticks),
         ])
@@ -437,15 +480,24 @@ impl Varde {
     /// the lane ends with it (the thread stops, the worker is terminated)
     /// and a new document gets a new one.
     fn regen_lane(&self) -> Subscription<Message> {
-        use iced::futures::{StreamExt, future, stream};
-
-        fn start(id: &DocId) -> impl iced::futures::Stream<Item = Message> + use<> {
-            let id = *id;
-            let (lane, responses) = varde_regen::lane::spawn();
-            stream::once(future::ready(Message::Doc(id, ForDoc::RegenReady(lane))))
-                .chain(responses.map(move |response| Message::Doc(id, ForDoc::Computed(response))))
+        fn start(id: &DocId) -> impl Stream<Item = Message> + use<> {
+            let lane = varde_regen::lane::spawn();
+            doc_lane(*id, lane, ForDoc::RegenReady, ForDoc::Computed)
         }
+        match self.screen.doc() {
+            Some(doc) => Subscription::run_with(doc.id, start),
+            None => Subscription::none(),
+        }
+    }
 
+    /// Runs the open document's solver lane: yields [`ForDoc::SolveReady`]
+    /// once it has started, then its responses. Keyed by the document, like
+    /// [`Varde::regen_lane`], so the lane ends with it.
+    fn solve_lane(&self) -> Subscription<Message> {
+        fn start(id: &DocId) -> impl Stream<Item = Message> + use<> {
+            let lane = varde_solve::lane::spawn();
+            doc_lane(*id, lane, ForDoc::SolveReady, ForDoc::Solved)
+        }
         match self.screen.doc() {
             Some(doc) => Subscription::run_with(doc.id, start),
             None => Subscription::none(),
@@ -463,6 +515,21 @@ impl Default for Varde {
     }
 }
 
+/// The messages of a lane started for the document `id`, as `(lane,
+/// responses)`: `ready` with the lane, then each response as `answer`
+/// makes it.
+fn doc_lane<L, S: Stream>(
+    id: DocId,
+    (lane, responses): (L, S),
+    ready: fn(L) -> ForDoc,
+    answer: fn(S::Item) -> ForDoc,
+) -> impl Stream<Item = Message> + use<L, S> {
+    use iced::futures::{StreamExt, future, stream};
+
+    stream::once(future::ready(Message::Doc(id, ready(lane))))
+        .chain(responses.map(move |response| Message::Doc(id, answer(response))))
+}
+
 /// Whether `message` still acts while the window waits for the IO lane to
 /// flush: the lane's own and those that only change the view, none of which
 /// can send the lane more work, see `Varde::quit`.
@@ -471,9 +538,16 @@ fn while_quitting(message: &Message) -> bool {
         message,
         Message::IoReady(_)
             | Message::Io(_)
-            | Message::Doc(_, ForDoc::RegenReady(_) | ForDoc::Computed(_))
+            | Message::Doc(
+                _,
+                ForDoc::RegenReady(_)
+                    | ForDoc::Computed(_)
+                    | ForDoc::SolveReady(_)
+                    | ForDoc::Solved(_)
+            )
             | Message::AnimationFrame(_)
             | Message::PeekPanel(_)
+            | Message::CommandHeld(_)
             | Message::Ui(Ui::Look(_) | Ui::ToggleTheme)
     )
 }
@@ -508,9 +582,21 @@ fn peek_key(event: keyboard::Event) -> Option<Message> {
     }
 }
 
+/// Tells whether the command modifier is held, see [`Varde::command`].
+fn command_key(event: keyboard::Event) -> Option<Message> {
+    match event {
+        keyboard::Event::ModifiersChanged(modifiers) => {
+            Some(Message::CommandHeld(modifiers.command()))
+        }
+        _ => None,
+    }
+}
+
 /// Escape, given whether the user is being asked about unsaved changes:
-/// stays if so, and closes the file menu otherwise.
+/// stays if so, and otherwise backs out of what's open, see
+/// [`Look::Escape`].
 fn escape_key((prompting, event): (bool, keyboard::Event)) -> Option<Message> {
+    // With any modifiers, unlike a shortcut.
     let keyboard::Event::KeyPressed {
         key: keyboard::Key::Named(key::Named::Escape),
         ..
@@ -521,13 +607,25 @@ fn escape_key((prompting, event): (bool, keyboard::Event)) -> Option<Message> {
     Some(Message::Ui(if prompting {
         Ui::File(File::Unsaved(Unsaved::Cancel))
     } else {
-        Ui::Look(Look::CloseFileMenu)
+        Ui::Look(Look::Escape)
     }))
 }
 
 /// Stops peeking once the window loses focus.
 fn unfocused((_, event): (window::Id, window::Event)) -> Option<Message> {
     matches!(event, window::Event::Unfocused).then_some(Message::PeekPanel(false))
+}
+
+/// Has the value field take the focus, and select its text as `focus`
+/// says: all of it to overtype, or the part a refusal is about.
+fn focus_field(focus: Focus) -> Task<Message> {
+    use iced::widget::operation;
+
+    let select = match focus {
+        Focus::All => operation::select_all(varde_view::VALUE_FIELD),
+        Focus::Range(start, end) => operation::select_range(varde_view::VALUE_FIELD, start, end),
+    };
+    operation::focus(varde_view::VALUE_FIELD).chain(select)
 }
 
 /// Asks the user for a design to open, answering with

@@ -131,6 +131,20 @@ pub fn mouse_hint<'a>(button: MouseButton, label: &'a str) -> Element<'a, Messag
     hint(icons::mouse(button), label)
 }
 
+/// A status bar hint: using the mouse `button` with `key` held does `label`.
+pub fn chord_hint<'a>(
+    key: impl Into<KeyName>,
+    button: MouseButton,
+    label: &'a str,
+) -> Element<'a, Message> {
+    hint(
+        row![key_chip(key, ChipSize::Normal), icons::mouse(button)]
+            .spacing(3)
+            .align_y(Alignment::Center),
+        label,
+    )
+}
+
 fn hint<'a>(input: impl Into<Element<'a, Message>>, label: &'a str) -> Element<'a, Message> {
     row![input.into(), text(label).size(12)]
         .spacing(5)

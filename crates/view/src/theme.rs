@@ -70,9 +70,51 @@ pub struct Palette {
     pub scene: Colors,
     /// Icons for solids and bodies.
     pub solid: Color,
+    /// Icons for sketches and their curves.
+    pub sketch: Color,
+    /// Icons for construction: planes, points.
+    pub construction: Color,
     /// View cube faces, turned away from the light and facing it.
     pub cube_shade: Color,
     pub cube_lit: Color,
+    /// The sketch being edited, as the viewport draws it.
+    pub sketching: SketchColors,
+}
+
+/// The colours of the sketch being edited, by the state of what's drawn.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SketchColors {
+    /// Curves and the rims of points, while the constraints leave them
+    /// free to move.
+    pub curve: Color,
+    /// Curves and points the constraints fix: darker.
+    pub fixed: Color,
+    /// What's in a conflict, or a refused edit ran into, and glyphs of
+    /// constraints in one.
+    pub conflict: Color,
+    /// Construction curves, drawn dashed.
+    pub construction: Color,
+    /// What's selected.
+    pub selected: Color,
+    /// What's under the cursor.
+    pub hovered: Color,
+    /// Inside the points' rims: the mock's halo.
+    pub point_fill: Color,
+    /// The shape a tool is drawing, before it's placed.
+    pub preview: Color,
+    /// The box dragged to select, filled and outlined.
+    pub box_fill: Color,
+    pub box_line: Color,
+    /// The sketch's origin and axes.
+    pub axis: Color,
+    /// Where a drawing tool snaps: its glyph, and its guides, dashed.
+    pub guide: Color,
+    /// The regions the curves enclose, shaded lightly under them.
+    pub region: Color,
+    /// The region under the cursor, over its shading.
+    pub region_hovered: Color,
+    /// The rings marking open ends that almost meet.
+    pub near_miss: Color,
 }
 
 // Scene colours the same in both palettes.
@@ -84,11 +126,25 @@ const AXES: [Srgb; 3] = [
 const FEATURE_EDGE: Srgb = Srgb([0.12, 0.13, 0.15]);
 const GRID: Srgb = Srgb([0.45, 0.49, 0.54]);
 const ORIGIN_OUTLINE: Srgb = Srgb([0.2, 0.22, 0.25]);
+/// The model behind a sketch being edited: the mock's ghosted model.
+const FADED_ALPHA: f32 = 0.3;
 
 /// `color` for the renderer, which takes no alpha.
 const fn srgb(color: Color) -> Srgb {
     Srgb([color.r, color.g, color.b])
 }
+
+/// `color` with the opacity `a`.
+const fn alpha(color: Color, a: f32) -> Color {
+    Color { a, ..color }
+}
+
+// The mock's colours for sketches and for construction, used by the
+// renderer, the icons and the sketch being edited alike.
+const LIGHT_SKETCH: Color = color!(0x0a95ad);
+const LIGHT_CONSTRUCTION: Color = color!(0xe0861a);
+const DARK_SKETCH: Color = color!(0x39b9cf);
+const DARK_CONSTRUCTION: Color = color!(0xf0a24a);
 
 const LIGHT: Palette = Palette {
     accent: color!(0x0a95ad),
@@ -120,11 +176,32 @@ const LIGHT: Palette = Palette {
         grid: GRID,
         axes: AXES,
         origin_outline: ORIGIN_OUTLINE,
+        sketch: srgb(LIGHT_SKETCH),
+        faded_alpha: FADED_ALPHA,
     },
     solid: color!(0x8a6fc4),
+    sketch: LIGHT_SKETCH,
+    construction: LIGHT_CONSTRUCTION,
     // hsl(258 10% 80%) to hsl(258 10% 96%).
     cube_shade: color!(0xcac7d1),
     cube_lit: color!(0xf4f4f6),
+    sketching: SketchColors {
+        curve: LIGHT_SKETCH,
+        fixed: color!(0x0b5566),
+        conflict: color!(0xe0564b),
+        construction: LIGHT_CONSTRUCTION,
+        selected: color!(0x2f5fd8),
+        hovered: color!(0x3d9b35),
+        point_fill: color!(0xf4f4f7),
+        preview: alpha(LIGHT_SKETCH, 0.75),
+        box_fill: alpha(LIGHT_SKETCH, 0.08),
+        box_line: alpha(LIGHT_SKETCH, 0.7),
+        axis: color!(0x8a939e),
+        guide: color!(0xc2701d),
+        region: alpha(LIGHT_SKETCH, 0.1),
+        region_hovered: color!(0x3d9b35, 0.18),
+        near_miss: color!(0xe0564b),
+    },
 };
 
 const DARK: Palette = Palette {
@@ -155,11 +232,32 @@ const DARK: Palette = Palette {
         grid: GRID,
         axes: AXES,
         origin_outline: ORIGIN_OUTLINE,
+        sketch: srgb(DARK_SKETCH),
+        faded_alpha: FADED_ALPHA,
     },
     solid: color!(0xa896d6),
+    sketch: DARK_SKETCH,
+    construction: DARK_CONSTRUCTION,
     // hsl(258 8% 30%) to hsl(258 8% 50%).
     cube_shade: color!(0x4a4653),
     cube_lit: color!(0x7b758a),
+    sketching: SketchColors {
+        curve: DARK_SKETCH,
+        fixed: color!(0x1f8394),
+        conflict: color!(0xe0564b),
+        construction: DARK_CONSTRUCTION,
+        selected: color!(0x7ea2ff),
+        hovered: color!(0x76cc60),
+        point_fill: color!(0x24252b),
+        preview: alpha(DARK_SKETCH, 0.75),
+        box_fill: alpha(DARK_SKETCH, 0.1),
+        box_line: alpha(DARK_SKETCH, 0.7),
+        axis: color!(0x6b737d),
+        guide: color!(0xf0a24a),
+        region: alpha(DARK_SKETCH, 0.12),
+        region_hovered: color!(0x76cc60, 0.2),
+        near_miss: color!(0xe0564b),
+    },
 };
 
 /// For names and headings.
@@ -594,12 +692,64 @@ pub fn float_button(theme: &Theme, status: button::Status) -> button::Style {
     }
 }
 
+/// The chip a constraint's glyph sits on over the viewport, outlined in
+/// the danger colour while the constraint is in a conflict.
+pub fn glyph(theme: &Theme, conflict: bool) -> container::Style {
+    let p = palette(theme);
+    let edge = if conflict { p.danger } else { p.line };
+    container::Style {
+        border: outline(edge, GLYPH_RADIUS),
+        ..filled(alpha(p.panel, 0.9), p.text)
+    }
+}
+
+/// Corner radius of a constraint's [`glyph`].
+const GLYPH_RADIUS: f32 = 4.0;
+
 /// A list row under the cursor, like a body in the side panel.
 pub fn hovered_row(theme: &Theme) -> container::Style {
     let p = palette(theme);
     container::Style {
         border: border::rounded(CONTROL_RADIUS),
         ..filled(p.hl, p.text)
+    }
+}
+
+/// A selected list row, like a feature in the Timeline.
+pub fn selected_row(theme: &Theme) -> container::Style {
+    let p = palette(theme);
+    container::Style {
+        border: border::rounded(CONTROL_RADIUS),
+        ..filled(p.accent_soft, p.text)
+    }
+}
+
+/// A list row that can be selected: a [`selected_row`] if `selected`,
+/// else a [`hovered_row`] while `hovered`, else bare.
+pub fn list_row(selected: bool, hovered: bool) -> fn(&Theme) -> container::Style {
+    if selected {
+        selected_row
+    } else if hovered {
+        hovered_row
+    } else {
+        |_| container::Style::default()
+    }
+}
+
+/// The accent colour, for what's asked of the user, like picking a plane.
+pub fn accent_text(theme: &Theme) -> text::Style {
+    text::Style {
+        color: Some(palette(theme).accent),
+    }
+}
+
+/// A tag after the toolbar's context, saying what's going on in it:
+/// accent text on the soft accent.
+pub fn tag(theme: &Theme) -> container::Style {
+    let p = palette(theme);
+    container::Style {
+        border: border::rounded(5),
+        ..filled(p.accent_soft, p.accent)
     }
 }
 

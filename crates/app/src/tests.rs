@@ -7,12 +7,15 @@ use glam::Vec3;
 use iced::futures::StreamExt;
 use iced::futures::executor::block_on;
 use iced::time::Instant;
-use varde_document::{Command, Document, Editor, Generation, MAX_COORD, Revision, Shape};
+use varde_document::{
+    Command, Document, Editor, FeatureId, Generation, MAX_COORD, OriginPlane, Revision, Shape,
+};
 use varde_io::{
     Access, Closing, FileId, Offer, OpenId, Opened, PickedFrom, ReadOnly, SaveError, SaveTo,
 };
 use varde_regen::{Request, Response, Transport, handle, lane};
 use varde_render::Camera;
+use varde_solve::{Request as SolveRequest, Response as SolveResponse, Solver};
 use varde_view::{Edit, MeshStatus, Panel, Welcome as WelcomeUi};
 
 use super::*;
@@ -38,25 +41,26 @@ fn window_icon_renders() {
     assert!(platform::window_icon().is_some());
 }
 
-fn untitled() -> Doc {
+pub(crate) fn untitled() -> Doc {
     Doc::new(
         Document::default(),
         Origin::new(Target::None, Access::Edit, "Untitled".to_owned()),
     )
 }
 
-/// Hands requests to the test through a shared list, to answer later.
-struct Deferred(Rc<RefCell<Vec<Request>>>);
+/// Stands in for a lane: hands requests to the test through a shared
+/// list, to answer later, when and in what order it likes.
+pub(crate) struct Deferred<R>(pub(crate) Rc<RefCell<Vec<R>>>);
 
-impl Transport<Request> for Deferred {
-    fn send(&mut self, request: Request) {
+impl<R> Transport<R> for Deferred<R> {
+    fn send(&mut self, request: R) {
         self.0.borrow_mut().push(request);
     }
 }
 
 /// A document whose regeneration requests wait for the test to answer
 /// them, and the list they wait in.
-fn deferred() -> (Doc, Rc<RefCell<Vec<Request>>>) {
+pub(crate) fn deferred() -> (Doc, Rc<RefCell<Vec<Request>>>) {
     let requests = Rc::default();
     let mut doc = untitled();
     doc.feed.connect(Deferred(Rc::clone(&requests)));
@@ -65,9 +69,72 @@ fn deferred() -> (Doc, Rc<RefCell<Vec<Request>>>) {
 }
 
 /// Answers the requests waiting, as the lane's messages would.
-fn answer(doc: &mut Doc, requests: &RefCell<Vec<Request>>) {
+pub(crate) fn answer(doc: &mut Doc, requests: &RefCell<Vec<Request>>) {
     for request in requests.take() {
         doc.computed(handle(request));
+    }
+}
+
+/// A test's stand-in for a document's solver lane: requests wait until
+/// the test answers them, with a [`Solver`] of its own as the lane would,
+/// which keeps the drag in progress.
+pub(crate) struct SolveLane {
+    requests: Rc<RefCell<Vec<SolveRequest>>>,
+    solver: Solver,
+}
+
+impl SolveLane {
+    /// Starts `doc`'s solver lane, as the lane's first message does.
+    pub(crate) fn connect(doc: &mut Doc) -> Self {
+        let lane = Self::new();
+        doc.solver_ready(lane.transport());
+        lane
+    }
+
+    /// A lane not connected to a document yet: see
+    /// [`SolveLane::transport`].
+    pub(crate) fn new() -> Self {
+        Self {
+            requests: Rc::default(),
+            solver: Solver::default(),
+        }
+    }
+
+    /// What a document sends the lane through.
+    pub(crate) fn transport(&self) -> impl Transport<SolveRequest> + 'static {
+        Deferred(Rc::clone(&self.requests))
+    }
+
+    /// The requests waiting, which stay waiting.
+    pub(crate) fn waiting(&self) -> Vec<SolveRequest> {
+        self.requests.borrow().clone()
+    }
+
+    /// The answer to the first request waiting, if it has one, taking it.
+    pub(crate) fn respond(&mut self) -> Option<SolveResponse> {
+        let request = {
+            let mut requests = self.requests.borrow_mut();
+            if requests.is_empty() {
+                return None;
+            }
+            requests.remove(0)
+        };
+        self.solver.handle(request)
+    }
+
+    /// Answers the requests waiting, and those answering them sends, until
+    /// none wait.
+    pub(crate) fn answer(&mut self, doc: &mut Doc) {
+        while !self.requests.borrow().is_empty() {
+            self.answer_first(doc);
+        }
+    }
+
+    /// Answers the first request waiting, if one is.
+    pub(crate) fn answer_first(&mut self, doc: &mut Doc) {
+        if let Some(response) = self.respond() {
+            doc.solved(response);
+        }
     }
 }
 
@@ -91,6 +158,7 @@ fn one_cube() -> Response {
     handle(Request::Regenerate {
         generation: editor.generation(),
         document: editor.snapshot(),
+        exclude: None,
     })
 }
 
@@ -238,14 +306,20 @@ fn work_for_a_closed_document_is_dropped() {
     );
 }
 
-/// Stands in for the IO lane: hands requests to the test, which answers
-/// them itself.
-struct FakeLane(Rc<RefCell<Vec<IoRequest>>>);
+#[test]
+fn the_solver_lane_goes_to_its_document() {
+    let mut varde = Varde::new();
+    let _ = varde.update(Message::Ui(Ui::Welcome(WelcomeUi::NewDesign)));
+    let closed = document(&varde).id;
+    let _ = varde.update(Message::Ui(Ui::File(File::CloseDocument)));
+    let _ = varde.update(Message::Ui(Ui::Welcome(WelcomeUi::NewDesign)));
+    let open = document(&varde).id;
 
-impl varde_io::Transport<IoRequest> for FakeLane {
-    fn send(&mut self, request: IoRequest) {
-        self.0.borrow_mut().push(request);
-    }
+    let (lane, _responses) = varde_solve::lane::spawn();
+    let _ = varde.update(Message::Doc(closed, ForDoc::SolveReady(lane.clone())));
+    assert!(document(&varde).solver.is_none());
+    let _ = varde.update(Message::Doc(open, ForDoc::SolveReady(lane)));
+    assert!(document(&varde).solver.is_some());
 }
 
 /// An app with its IO lane replaced by a list of the requests sent.
@@ -255,7 +329,7 @@ fn with_files() -> (Varde, Rc<RefCell<Vec<IoRequest>>>) {
     varde
         .files
         .io
-        .ready(Box::new(FakeLane(Rc::clone(&requests))));
+        .ready(Box::new(Deferred(Rc::clone(&requests))));
     (varde, requests)
 }
 
@@ -405,7 +479,7 @@ fn an_open_given_up_on_is_abandoned_before_the_next() {
     varde
         .files
         .io
-        .ready(Box::new(FakeLane(Rc::clone(&requests))));
+        .ready(Box::new(Deferred(Rc::clone(&requests))));
     let sent: Vec<String> = requests
         .borrow()
         .iter()
@@ -494,7 +568,7 @@ fn requests_before_the_lane_starts_wait_for_it() {
     varde
         .files
         .io
-        .ready(Box::new(FakeLane(Rc::clone(&requests))));
+        .ready(Box::new(Deferred(Rc::clone(&requests))));
     assert!(matches!(
         requests.borrow()[..],
         [
@@ -576,9 +650,10 @@ fn a_read_only_document_refuses_edits_but_moves_the_camera() {
 
 #[test]
 fn a_refused_edit_is_shown() {
-    // A document from a file that has used up its body ids: no bodies, no
-    // sketches and `next_id` at `u64::MAX` as a postcard varint.
-    let mut bytes = vec![0, 0];
+    // A document from a file that has used up its ids: no bodies, no
+    // features, millimetres and `next_id` at `u64::MAX` as a postcard
+    // varint.
+    let mut bytes = vec![0, 0, 0];
     bytes.extend([0xff; 9]);
     bytes.push(0x01);
     let full = Document::from_postcard(&bytes).unwrap();
@@ -590,7 +665,7 @@ fn a_refused_edit_is_shown() {
     assert!(doc.editor.document().bodies().is_empty());
     assert_eq!(
         doc.edit_error.as_ref().map(ToString::to_string).as_deref(),
-        Some("the document has no body ids left")
+        Some("the document has no ids left")
     );
     doc.look(Look::Orbit {
         yaw: 0.1,
@@ -612,7 +687,7 @@ fn a_read_only_document_keeps_offering_what_was_recovered() {
         ..Origin::new(Target::None, read_only, "Design".to_owned())
     };
     let mut doc = Doc::new(Document::default(), origin);
-    doc.restore_recovered(&mut Files::new(None));
+    let _ = doc.restore_recovered(&mut Files::new(None));
     assert!(doc.recovered().is_some());
     assert_eq!(doc.editor.revision(), Revision::from(0));
 }
@@ -660,6 +735,126 @@ fn saved(revision: Revision, result: Result<(), SaveError>) -> Message {
 
 fn window_id() -> window::Id {
     window::Id::unique()
+}
+
+/// An app showing `/d/part.vrdp` as [`with_open_file`] does, in a new
+/// sketch on XY, with a Point tool in use and a solver lane the test
+/// answers, the requests sent so far forgotten.
+fn sketching_in_open_file() -> (Varde, Rc<RefCell<Vec<IoRequest>>>, SolveLane) {
+    let (mut varde, requests) = with_open_file();
+    let _ = varde.update(Message::Ui(Ui::Edit(Edit::NewSketch(OriginPlane::XY))));
+    let mut lane = SolveLane::new();
+    varde
+        .screen
+        .doc_mut()
+        .unwrap()
+        .solver_ready(lane.transport());
+    solve(&mut varde, &mut lane);
+    let _ = varde.update(Message::Ui(Ui::Look(Look::SelectTool(
+        varde_view::Tool::Point,
+    ))));
+    requests.borrow_mut().clear();
+    (varde, requests, lane)
+}
+
+/// Answers the solver's requests waiting, and those that sends, as its
+/// lane's messages would.
+fn solve(varde: &mut Varde, lane: &mut SolveLane) {
+    let id = document(varde).id;
+    while let Some(response) = lane.respond() {
+        let _ = varde.update(Message::Doc(id, ForDoc::Solved(response)));
+    }
+}
+
+/// Places a point with the Point tool, which waits on the solver.
+fn place_point(varde: &mut Varde) {
+    let _ = varde.update(Message::Ui(Ui::Edit(Edit::ToolClick(
+        varde_view::ToolClick {
+            at: glam::DVec2::new(1.0, 2.0),
+            target: None,
+            inference: None,
+            pixel: 0.1,
+            double: false,
+            hit: None,
+            reference: false,
+        },
+    ))));
+}
+
+#[test]
+fn save_waits_for_the_edits_on_the_solver() {
+    let (mut varde, requests, mut lane) = sketching_in_open_file();
+    place_point(&mut varde);
+    let _ = varde.update(Message::Ui(Ui::File(File::Save)));
+    // Saving, but nothing sent until the point is committed or not.
+    assert!(sent(&requests).is_empty());
+    assert!(document(&varde).saving());
+    assert!(varde.title().contains("Saving…"));
+    solve(&mut varde, &mut lane);
+    let doc = document(&varde);
+    assert_eq!(saving(&sent(&requests)), doc.editor.revision());
+    assert_eq!(doc.edited_sketch().unwrap().1.points.len(), 1);
+    // Saving again while one waits sends one save.
+    place_point(&mut varde);
+    let _ = varde.update(Message::Ui(Ui::File(File::Save)));
+    let _ = varde.update(Message::Ui(Ui::File(File::Save)));
+    solve(&mut varde, &mut lane);
+    assert_eq!(saving(&sent(&requests)), document(&varde).editor.revision());
+}
+
+#[test]
+fn a_save_waiting_for_edits_the_lane_drops_on_starting_is_sent() {
+    let (mut varde, requests) = with_open_file();
+    let _ = varde.update(Message::Ui(Ui::Edit(Edit::NewSketch(OriginPlane::XY))));
+    let feature = document(&varde).sketch.as_ref().unwrap().feature;
+    let _ = varde.update(Message::Ui(Ui::Look(Look::SelectTool(
+        varde_view::Tool::Point,
+    ))));
+    // No lane yet: the point waits in the app, and the save for it.
+    place_point(&mut varde);
+    let _ = varde.update(Message::Ui(Ui::File(File::Save)));
+    let _ = varde.update(Message::Ui(Ui::Edit(Edit::RemoveFeature(feature))));
+    assert!(document(&varde).proposing());
+    assert!(sent(&requests).is_empty());
+    // The lane starts, and the point's sketch is gone, so it's dropped.
+    let (lane, _responses) = varde_solve::lane::spawn();
+    let id = document(&varde).id;
+    let _ = varde.update(Message::Doc(id, ForDoc::SolveReady(lane)));
+    assert!(!document(&varde).proposing());
+    assert_eq!(saving(&sent(&requests)), document(&varde).editor.revision());
+}
+
+#[test]
+fn undoing_the_edits_a_save_waits_for_saves_at_once() {
+    let (mut varde, requests, _lane) = sketching_in_open_file();
+    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let with_cube = document(&varde).editor.revision();
+    place_point(&mut varde);
+    let _ = varde.update(Message::Ui(Ui::File(File::Save)));
+    assert!(sent(&requests).is_empty());
+    let _ = varde.update(Message::Ui(Ui::Edit(Edit::Undo)));
+    let doc = document(&varde);
+    assert!(!doc.proposing());
+    // Only the point is dropped.
+    assert_eq!(doc.editor.revision(), with_cube);
+    assert_eq!(saving(&sent(&requests)), with_cube);
+}
+
+#[test]
+fn closing_waits_for_the_edits_on_the_solver_then_asks() {
+    let (mut varde, requests, mut lane) = sketching_in_open_file();
+    // Saved, so only the edit waiting would be lost.
+    let _ = varde.update(Message::Ui(Ui::File(File::Save)));
+    let revision = saving(&sent(&requests));
+    let _ = varde.update(saved(revision, Ok(())));
+    place_point(&mut varde);
+    assert!(document(&varde).at_stake());
+    let _ = varde.update(Message::Ui(Ui::File(File::CloseDocument)));
+    assert!(matches!(varde.screen, Screen::Document(_)));
+    assert_eq!(document(&varde).prompt(), None);
+    solve(&mut varde, &mut lane);
+    assert_eq!(document(&varde).prompt(), Some(Leave::Close));
+    assert!(sent(&requests).is_empty());
 }
 
 #[test]
@@ -933,6 +1128,52 @@ fn a_read_only_design_is_saved_as_and_becomes_editable() {
     assert!(document(&varde).read_only.is_none());
     let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
     assert_eq!(document(&varde).editor.revision(), Revision::from(1));
+}
+
+#[test]
+fn a_save_as_leaving_the_design_read_only_puts_the_sketch_tool_down() {
+    let (mut varde, requests) = with_open_file();
+    let _ = varde.update(Message::Ui(Ui::Edit(Edit::NewSketch(OriginPlane::XY))));
+    let _ = varde.update(Message::Ui(Ui::Look(Look::SelectTool(
+        varde_view::Tool::Line,
+    ))));
+    let _ = varde.update(Message::Ui(Ui::Edit(Edit::ToolClick(
+        varde_view::ToolClick {
+            at: glam::DVec2::ZERO,
+            target: None,
+            inference: None,
+            pixel: 0.1,
+            double: false,
+            hit: None,
+            reference: false,
+        },
+    ))));
+    assert!(document(&varde).keys().unwrap().drawing);
+    let _ = varde.update(Message::Ui(Ui::File(File::SaveAs)));
+    let doc_id = document(&varde).id;
+    let _ = varde.update(Message::Doc(
+        doc_id,
+        ForDoc::SaveAsPicked(Some(Chosen::Path("/d/b.vrdp".into()))),
+    ));
+    let [IoRequest::SaveAs { revision, .. }] = sent(&requests)[..] else {
+        panic!("not a save as");
+    };
+    let _ = varde.update(Message::Io(IoResponse::SavedAs {
+        file: Some(FileId(0)),
+        to: Chosen::Path("/d/b.vrdp".into()),
+        revision,
+        result: Ok(varde_io::SavedAs {
+            file: FileId(0),
+            access: Access::ReadOnly(ReadOnly::InUse),
+            offered: false,
+        }),
+    }));
+    let doc = document(&varde);
+    assert!(doc.read_only.is_some());
+    // Still in the sketch, to look at, but without the tool.
+    let session = doc.sketch.as_ref().unwrap();
+    assert!(session.tool.is_none());
+    assert!(!doc.keys().unwrap().drawing);
 }
 
 #[test]
@@ -1834,6 +2075,59 @@ fn recovered_changes_are_restored_as_one_edit() {
             closing: Closing::Clean
         }]
     ));
+}
+
+#[test]
+fn restoring_recovered_changes_drops_the_edits_waiting() {
+    // What was recovered has a sketch of its own where the one drawn in
+    // now is.
+    let mut editor = Editor::new(Document::example());
+    editor
+        .apply(
+            editor
+                .document()
+                .add_sketch(varde_document::Plane::Origin(OriginPlane::XY)),
+        )
+        .unwrap();
+    let feature = editor.document().features().last().unwrap().id;
+    let mut sketch = varde_sketch::Sketch::default();
+    sketch.add_point(glam::DVec2::new(5.0, 5.0)).unwrap();
+    editor
+        .apply(Command::SetSketch {
+            feature,
+            sketch: Box::new(sketch),
+        })
+        .unwrap();
+    let recovered = editor.document().clone();
+    let (mut varde, requests) = with_recovered(recovered.clone());
+    let _ = varde.update(Message::Ui(Ui::Edit(Edit::NewSketch(OriginPlane::XY))));
+    assert_eq!(document(&varde).sketch.as_ref().unwrap().feature, feature);
+    let mut lane = SolveLane::new();
+    varde
+        .screen
+        .doc_mut()
+        .unwrap()
+        .solver_ready(lane.transport());
+    solve(&mut varde, &mut lane);
+    let _ = varde.update(Message::Ui(Ui::Look(Look::SelectTool(
+        varde_view::Tool::Point,
+    ))));
+    place_point(&mut varde);
+    let _ = varde.update(Message::Ui(Ui::File(File::Save)));
+    requests.borrow_mut().clear();
+
+    // The point was drawn in the document replaced, not in this one.
+    let _ = varde.update(Message::Ui(Ui::File(File::RestoreChanges)));
+    assert!(!document(&varde).proposing());
+    solve(&mut varde, &mut lane);
+    assert_eq!(*document(&varde).editor.document(), recovered);
+    // The save that waited for it goes.
+    let sent = sent(&requests);
+    assert!(
+        sent.iter()
+            .any(|request| matches!(request, IoRequest::Save { .. })),
+        "{sent:?}"
+    );
 }
 
 #[test]
@@ -3437,7 +3731,7 @@ fn a_tab_clicked_while_peeking_is_shown() {
 }
 
 /// Pressing `key` with `modifiers`, as iced reports it.
-fn press(key: keyboard::Key, modifiers: keyboard::Modifiers) -> keyboard::Event {
+pub(crate) fn press(key: keyboard::Key, modifiers: keyboard::Modifiers) -> keyboard::Event {
     keyboard::Event::KeyPressed {
         modified_key: key.clone(),
         key,
@@ -3458,6 +3752,377 @@ fn escape_either_stays_or_closes_the_file_menu() {
     ));
     assert!(matches!(
         escape_key((false, escape())),
-        Some(Message::Ui(Ui::Look(Look::CloseFileMenu)))
+        Some(Message::Ui(Ui::Look(Look::Escape)))
     ));
+}
+
+/// The sketches of `doc` by name, each with whether it's visible.
+fn sketches(doc: &Doc) -> Vec<(&str, bool)> {
+    let features = doc.editor.document().features();
+    features
+        .iter()
+        .map(|feature| (feature.name.as_str(), feature.visible))
+        .collect()
+}
+
+/// The sketch being edited in `doc`, if one is.
+fn edited(doc: &Doc) -> Option<FeatureId> {
+    doc.sketch.as_ref().map(|session| session.feature)
+}
+
+/// Lets the camera's animation run to its end.
+fn settle_camera(doc: &mut Doc) {
+    doc.animation_frame(Instant::now() + 2 * CAMERA_ANIMATION);
+    assert!(!doc.animating());
+}
+
+#[test]
+fn a_new_sketch_is_made_on_the_plane_picked_and_entered() {
+    let mut doc = untitled();
+    doc.look(Look::SelectPanel(Panel::Timeline));
+    doc.look(Look::PickPlane);
+    assert!(doc.picking_plane);
+    // Again backs out, and so does Escape.
+    doc.look(Look::PickPlane);
+    assert!(!doc.picking_plane);
+    doc.look(Look::PickPlane);
+    doc.look(Look::Escape);
+    assert!(!doc.picking_plane);
+    assert_eq!(edited(&doc), None);
+
+    doc.look(Look::PickPlane);
+    doc.update(Edit::NewSketch(OriginPlane::XZ));
+    assert!(!doc.picking_plane);
+    assert_eq!(sketches(&doc), [("Sketch 1", true)]);
+    let feature = doc.editor.document().features()[0].id;
+    assert_eq!(edited(&doc), Some(feature));
+    assert_eq!(doc.panel, Panel::Sketch);
+    assert_eq!(doc.selected_feature, Some(feature));
+
+    // The camera turns to face the plane, from the side its normal points
+    // to, centred on it.
+    assert!(doc.animating());
+    settle_camera(&mut doc);
+    assert!(doc.camera.backward().abs_diff_eq(-Vec3::Y, 1e-5));
+    assert!(doc.camera.up().abs_diff_eq(Vec3::Z, 1e-5));
+    assert_eq!(doc.camera.target().y, 0.0);
+
+    // One undoable edit.
+    doc.update(Edit::Undo);
+    assert!(!doc.editor.can_undo());
+}
+
+#[test]
+fn a_sketch_is_not_made_in_a_read_only_document() {
+    let mut editor = Editor::new(Document::default());
+    editor
+        .apply(
+            editor
+                .document()
+                .add_sketch(varde_document::Plane::Origin(OriginPlane::XY)),
+        )
+        .unwrap();
+    let mut doc = Doc::new(
+        editor.document().clone(),
+        Origin::new(
+            Target::None,
+            Access::ReadOnly(ReadOnly::InUse),
+            "a".to_owned(),
+        ),
+    );
+    doc.look(Look::PickPlane);
+    assert!(!doc.picking_plane);
+    doc.update(Edit::NewSketch(OriginPlane::XY));
+    assert_eq!(sketches(&doc).len(), 1);
+    assert_eq!(edited(&doc), None);
+
+    // Its sketches can still be looked into, but not changed.
+    let feature = doc.editor.document().features()[0].id;
+    doc.look(Look::EditSketch(feature));
+    assert_eq!(edited(&doc), Some(feature));
+    doc.update(Edit::ToggleFeatureVisible(feature));
+    assert_eq!(sketches(&doc), [("Sketch 1", true)]);
+}
+
+/// A document with a sketch on XY, not entered, whose regeneration
+/// requests wait for the test, and the list they wait in.
+pub(crate) fn with_sketch() -> (Doc, FeatureId, Rc<RefCell<Vec<Request>>>) {
+    let (mut doc, requests) = deferred();
+    doc.update(Edit::NewSketch(OriginPlane::XY));
+    let feature = edited(&doc).unwrap();
+    doc.look(Look::FinishSketch);
+    answer(&mut doc, &requests);
+    (doc, feature, requests)
+}
+
+/// What the requests waiting asked to leave out, answering them.
+fn left_out(doc: &mut Doc, requests: &RefCell<Vec<Request>>) -> Vec<Option<FeatureId>> {
+    let asked = requests
+        .borrow()
+        .iter()
+        .map(|Request::Regenerate { exclude, .. }| *exclude)
+        .collect();
+    answer(doc, requests);
+    asked
+}
+
+#[test]
+fn a_sketch_is_left_out_of_the_model_while_it_is_edited() {
+    let (mut doc, feature, requests) = with_sketch();
+    let generation = doc.editor.generation();
+    assert_eq!(doc.feed.left_out(), Some(None));
+
+    // Entering asks again for the same generation, without the sketch.
+    doc.look(Look::EditSketch(feature));
+    assert_eq!(left_out(&mut doc, &requests), [Some(feature)]);
+    assert_eq!(doc.feed.generation(), Some(generation));
+    assert_eq!(doc.feed.left_out(), Some(Some(feature)));
+    assert_eq!(doc.feed.status(&doc.editor), MeshStatus::Current);
+
+    // Edits in it keep it out.
+    doc.update(Edit::AddCube);
+    assert_eq!(left_out(&mut doc, &requests), [Some(feature)]);
+
+    // Leaving asks for it back.
+    doc.look(Look::Escape);
+    assert_eq!(edited(&doc), None);
+    assert_eq!(left_out(&mut doc, &requests), [None]);
+    assert_eq!(doc.feed.left_out(), Some(None));
+}
+
+#[test]
+fn the_sketch_tab_takes_the_timeline_s_place_in_a_sketch() {
+    let (mut doc, feature, _) = with_sketch();
+    doc.look(Look::SelectPanel(Panel::Timeline));
+
+    doc.look(Look::EditSketch(feature));
+    assert_eq!(doc.panel, Panel::Sketch);
+    assert_eq!(doc.panel.other(true), Panel::Objects);
+    // The Timeline isn't there to pick.
+    doc.look(Look::SelectPanel(Panel::Timeline));
+    assert_eq!(doc.panel, Panel::Sketch);
+    doc.look(Look::SelectPanel(Panel::Objects));
+    assert_eq!(doc.panel.other(true), Panel::Sketch);
+    // Objects stays chosen after leaving.
+    doc.look(Look::FinishSketch);
+    assert_eq!(doc.panel, Panel::Objects);
+    assert_eq!(doc.panel.other(false), Panel::Timeline);
+
+    doc.look(Look::SelectPanel(Panel::Sketch));
+    assert_eq!(doc.panel, Panel::Timeline);
+    doc.look(Look::EditSketch(feature));
+    doc.look(Look::FinishSketch);
+    assert_eq!(doc.panel, Panel::Timeline);
+}
+
+#[test]
+fn escape_backs_out_of_one_thing_at_a_time() {
+    let (mut doc, feature, _) = with_sketch();
+    doc.look(Look::EditSketch(feature));
+    doc.update(Edit::ToggleFileMenu);
+    doc.look(Look::Escape);
+    assert!(!doc.file_menu);
+    assert_eq!(edited(&doc), Some(feature));
+    doc.look(Look::Escape);
+    assert_eq!(edited(&doc), None);
+    // The sketch stays selected in the Timeline, until the next Escape.
+    assert_eq!(doc.selected_feature, Some(feature));
+    doc.look(Look::Escape);
+    assert_eq!(doc.selected_feature, None);
+}
+
+#[test]
+fn undoing_a_sketch_s_creation_leaves_it() {
+    let (mut doc, requests) = deferred();
+    doc.look(Look::SelectPanel(Panel::Timeline));
+    doc.update(Edit::NewSketch(OriginPlane::YZ));
+    answer(&mut doc, &requests);
+    assert!(edited(&doc).is_some());
+
+    doc.update(Edit::Undo);
+    assert_eq!(edited(&doc), None);
+    assert_eq!(doc.selected_feature, None);
+    assert_eq!(doc.panel, Panel::Timeline);
+    assert_eq!(left_out(&mut doc, &requests), [None]);
+
+    // Redo brings the sketch back, but doesn't enter it.
+    doc.update(Edit::Redo);
+    assert_eq!(sketches(&doc).len(), 1);
+    assert_eq!(edited(&doc), None);
+}
+
+#[test]
+fn sketches_are_hidden_and_shown_from_objects() {
+    let (mut doc, feature, requests) = with_sketch();
+    doc.update(Edit::ToggleFeatureVisible(feature));
+    assert_eq!(sketches(&doc), [("Sketch 1", false)]);
+    answer(&mut doc, &requests);
+    doc.update(Edit::ToggleFeatureVisible(feature));
+    assert_eq!(sketches(&doc), [("Sketch 1", true)]);
+    doc.update(Edit::Undo);
+    assert_eq!(sketches(&doc), [("Sketch 1", false)]);
+}
+
+/// Pressing `key` on the document screen of `doc`, as the app's
+/// subscription hears it.
+pub(crate) fn press_in(doc: &Doc, key: keyboard::Key) -> Option<Message> {
+    crate::keys::document_key((doc.keys(), press(key, Default::default())))
+}
+
+/// Sends what pressing `key` in `doc` sends to it, if anything.
+pub(crate) fn key_in(doc: &mut Doc, key: keyboard::Key) {
+    match press_in(doc, key) {
+        Some(Message::Ui(Ui::Edit(edit))) => doc.update(edit),
+        Some(Message::Ui(Ui::Look(look))) => doc.look(look),
+        Some(other) => panic!("unexpected {other:?}"),
+        None => {}
+    }
+}
+
+#[test]
+fn the_selected_feature_is_edited_with_enter_and_deleted_with_delete() {
+    let (mut doc, feature, _) = with_sketch();
+    let enter = || keyboard::Key::Named(key::Named::Enter);
+    let delete = || keyboard::Key::Named(key::Named::Delete);
+    doc.look(Look::Escape);
+    assert!(press_in(&doc, enter()).is_none());
+    assert!(press_in(&doc, delete()).is_none());
+
+    doc.look(Look::SelectFeature(feature));
+    key_in(&mut doc, enter());
+    assert_eq!(edited(&doc), Some(feature));
+    // In the sketch, they're the sketch's, which has nothing selected.
+    assert!(press_in(&doc, delete()).is_none());
+    doc.look(Look::FinishSketch);
+
+    key_in(&mut doc, delete());
+    assert!(sketches(&doc).is_empty());
+    assert_eq!(doc.selected_feature, None);
+    doc.update(Edit::Undo);
+    assert_eq!(sketches(&doc).len(), 1);
+}
+
+#[test]
+fn s_starts_a_sketch_outside_sketches() {
+    let (mut doc, feature, _) = with_sketch();
+    let s = || keyboard::Key::Character("s".into());
+    key_in(&mut doc, s());
+    assert!(doc.picking_plane);
+    doc.look(Look::EditSketch(feature));
+    assert!(!doc.picking_plane);
+    assert!(press_in(&doc, s()).is_none());
+    doc.look(Look::PickPlane);
+    assert!(!doc.picking_plane);
+}
+
+#[test]
+fn no_shortcut_acts_under_the_unsaved_changes_prompt() {
+    let mut cx = Files::new(None);
+    let file = FileId(4);
+    let mut doc = Doc::new(
+        Document::default(),
+        Origin::new(
+            Target::File { file, picked: None },
+            Access::Edit,
+            "Part".to_owned(),
+        ),
+    );
+    doc.update(Edit::NewSketch(OriginPlane::XY));
+    let feature = edited(&doc).unwrap();
+    doc.look(Look::FinishSketch);
+    doc.look(Look::SelectFeature(feature));
+    let delete = || keyboard::Key::Named(key::Named::Delete);
+    assert!(press_in(&doc, delete()).is_some());
+
+    assert!(matches!(doc.leave(&mut cx, Leave::Close), Next::Stay));
+    assert_eq!(doc.prompt(), Some(Leave::Close));
+    // Only the prompt's buttons and Escape answer it: the keys don't edit
+    // the document behind it.
+    assert!(press_in(&doc, delete()).is_none());
+    assert!(press_in(&doc, keyboard::Key::Character("s".into())).is_none());
+    assert!(press_in(&doc, keyboard::Key::Named(key::Named::Space)).is_none());
+}
+
+#[test]
+fn geometry_selected_is_what_the_sketch_holds() {
+    use glam::DVec2;
+
+    let (mut doc, feature, _) = with_sketch();
+    let mut sketch = varde_document::Sketch::default();
+    let a = sketch.add_point(DVec2::ZERO).unwrap();
+    let b = sketch.add_point(DVec2::new(40.0, 20.0)).unwrap();
+    let line = sketch
+        .add_curve(varde_sketch::Curve::Line { start: a, end: b }, false)
+        .unwrap();
+    doc.editor
+        .apply(Command::SetSketch {
+            feature,
+            sketch: Box::new(sketch.clone()),
+        })
+        .unwrap();
+    doc.look(Look::EditSketch(feature));
+
+    // Home frames what's drawn, facing the plane from above.
+    doc.look(Look::Orbit {
+        yaw: 1.0,
+        pitch: -0.5,
+    });
+    doc.look(Look::ResetCamera);
+    settle_camera(&mut doc);
+    assert!(doc.camera.backward().abs_diff_eq(Vec3::Z, 1e-5));
+    assert!(doc.camera.up().abs_diff_eq(Vec3::Y, 1e-5));
+    assert!(
+        doc.camera
+            .target()
+            .abs_diff_eq(Vec3::new(20.0, 10.0, 0.0), 1e-4)
+    );
+    assert!(doc.camera.view_height() >= 40.0);
+
+    let selection = |doc: &Doc| doc.sketch.as_ref().unwrap().selection.clone();
+    doc.look(Look::ClickGeometry {
+        hit: Some(line),
+        add: false,
+    });
+    doc.look(Look::ClickGeometry {
+        hit: Some(b),
+        add: false,
+    });
+    assert_eq!(selection(&doc).into_iter().collect::<Vec<_>>(), [b]);
+
+    // What an edit takes away is no longer selected.
+    sketch.delete(&[line]);
+    doc.editor
+        .apply(Command::SetSketch {
+            feature,
+            sketch: Box::new(sketch),
+        })
+        .unwrap();
+    doc.sync();
+    assert!(selection(&doc).is_empty());
+    doc.look(Look::ClickGeometry {
+        hit: Some(b),
+        add: false,
+    });
+    assert!(selection(&doc).is_empty());
+}
+
+#[test]
+fn a_sketch_is_made_and_left_through_the_app() {
+    let mut varde = Varde::new();
+    let _ = varde.update(Message::Ui(Ui::Welcome(WelcomeUi::NewDesign)));
+    let _ = varde.update(Message::Ui(Ui::Look(Look::PickPlane)));
+    assert!(document(&varde).picking_plane);
+    let _ = varde.view();
+    let _ = varde.update(Message::Ui(Ui::Edit(Edit::NewSketch(OriginPlane::XY))));
+    assert!(edited(document(&varde)).is_some());
+    let _ = varde.view();
+    // Peeking in a sketch shows Objects, and the Sketch tab from it.
+    let _ = varde.update(Message::PeekPanel(true));
+    let _ = varde.view();
+    let _ = varde.update(Message::Ui(Ui::Look(Look::SelectPanel(Panel::Objects))));
+    let _ = varde.update(Message::PeekPanel(true));
+    let _ = varde.view();
+    let _ = varde.update(Message::Ui(Ui::Look(Look::Escape)));
+    assert!(edited(document(&varde)).is_none());
+    let _ = varde.view();
 }

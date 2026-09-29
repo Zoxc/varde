@@ -1,7 +1,8 @@
 //! The slot both lanes keep their waiting request in: latest wins.
 //!
 //! Natively it's the thread's pending request (`src/thread.rs`), on the web
-//! the page's `Mailbox` (`src/mailbox.rs`). Plain Rust, so the rule is
+//! what the page's [`Mailbox`](varde_lane::mailbox::Mailbox) keeps
+//! (`src/worker.rs`). Plain Rust, so the rule is
 //! written and tested once.
 
 use varde_document::Generation;

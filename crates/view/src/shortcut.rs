@@ -4,18 +4,31 @@
 
 use std::borrow::Cow;
 
-use iced::keyboard::Modifiers;
+use iced::keyboard::{Key as KeyPress, Modifiers, key::Named};
+use varde_document::FeatureId;
 
-use crate::{File, Message, Welcome};
+use crate::{ConstraintKind, ConstraintSet, Edit, File, Look, Message, SketchState, Tool, Welcome};
 
 /// A key pressed on its own, or with the platform's command modifier
 /// (`Ctrl`, or `Cmd` on macOS) and maybe Shift.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Shortcut {
-    /// The key's character, an ASCII lower case letter.
-    key: char,
+    key: Key,
     shift: bool,
     command: bool,
+}
+
+/// The key of a [`Shortcut`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Key {
+    /// An ASCII lower case letter.
+    Letter(char),
+    Enter,
+    /// `Delete`, or `Backspace`, which macOS calls delete.
+    Delete,
+    Escape,
+    Space,
+    Tab,
 }
 
 impl Shortcut {
@@ -26,13 +39,61 @@ impl Shortcut {
         shift: true,
         ..Self::SAVE
     };
+    /// Starts a new sketch.
+    pub const SKETCH: Self = Self::plain('s');
+    pub const ENTER: Self = Self::named(Key::Enter);
+    pub const DELETE: Self = Self::named(Key::Delete);
+    /// Only labels the key: the app matches it itself, with any
+    /// modifiers, since what it does depends on what's open (see
+    /// `escape_key` there).
+    pub const ESCAPE: Self = Self::named(Key::Escape);
+    /// Clears the selection.
+    pub const SPACE: Self = Self::named(Key::Space);
+    /// Turns geometry between normal and construction.
+    pub const CONSTRUCTION: Self = Self::plain('x');
+    /// Takes up the Constrain tool.
+    pub const CONSTRAIN: Self = Self::plain('k');
+    /// Turns the dimensions selected between driving and reference: with
+    /// Shift, as `D` takes up the Dimension tool.
+    pub const REFERENCE: Self = Self::shifted('d');
+    /// Switches the Dimension tool between a circle's or an arc's radius
+    /// and its diameter.
+    pub const SWITCH_ROUND: Self = Self::named(Key::Tab);
+    /// Moves to a drawing tool's next field. The key switching the
+    /// Dimension tool's measure, which draws nothing.
+    pub const NEXT_FIELD: Self = Self::SWITCH_ROUND;
+    /// Switches the Rectangle tool between drawing from a corner and from
+    /// the centre: a letter no tool or constraint has, by the left hand.
+    pub const CENTERED: Self = Self::plain('q');
+    /// Switches the Spline tool, or the splines selected, between through
+    /// fit points and by control points: the Rectangle tool's switch, as
+    /// the two never go together.
+    pub const SPLINE_KIND: Self = Self::CENTERED;
+    /// Gives the fit points selected handles, or takes them away: with
+    /// Shift, as `H` is Horizontal's.
+    pub const HANDLES: Self = Self::shifted('h');
+    /// Shows the curvature comb of the splines selected, or hides it: a
+    /// letter no tool or constraint has (cUrvature).
+    pub const COMB: Self = Self::plain('u');
 
     const fn plain(key: char) -> Self {
         assert!(key.is_ascii_lowercase());
+        Self::named(Key::Letter(key))
+    }
+
+    const fn named(key: Key) -> Self {
         Self {
             key,
             shift: false,
             command: false,
+        }
+    }
+
+    /// The letter with Shift held, where the letter alone is a tool's.
+    const fn shifted(key: char) -> Self {
+        Self {
+            shift: true,
+            ..Self::plain(key)
         }
     }
 
@@ -53,22 +114,41 @@ impl Shortcut {
         };
         let command = if self.command { command } else { "" };
         let shift = if self.shift { "Shift " } else { "" };
-        format!("{command}{shift}{}", self.key.to_ascii_uppercase())
+        let key: Cow<'_, str> = match self.key {
+            Key::Letter(c) => c.to_ascii_uppercase().to_string().into(),
+            Key::Enter => "Enter".into(),
+            Key::Delete => "Del".into(),
+            Key::Escape => "Esc".into(),
+            Key::Space => "Space".into(),
+            Key::Tab => "Tab".into(),
+        };
+        format!("{command}{shift}{key}")
     }
 
     /// Whether pressing `key` with `modifiers` is this shortcut. Alt, and
     /// any modifier the shortcut doesn't ask for, rule it out.
-    pub fn matches(self, key: &str, modifiers: Modifiers) -> bool {
+    pub fn matches(self, key: &KeyPress, modifiers: Modifiers) -> bool {
         let command = if self.command {
             modifiers.command()
         } else {
             !modifiers.control() && !modifiers.logo()
         };
-        let mut chars = key.chars();
-        let is_key = chars
-            .next()
-            .is_some_and(|c| c.eq_ignore_ascii_case(&self.key))
-            && chars.next().is_none();
+        let is_key = match (self.key, key) {
+            (Key::Letter(letter), KeyPress::Character(c)) => {
+                let mut chars = c.chars();
+                chars
+                    .next()
+                    .is_some_and(|c| c.eq_ignore_ascii_case(&letter))
+                    && chars.next().is_none()
+            }
+            (Key::Enter, KeyPress::Named(Named::Enter))
+            | (Key::Delete, KeyPress::Named(Named::Delete | Named::Backspace))
+            | (Key::Escape, KeyPress::Named(Named::Escape))
+            | (Key::Space, KeyPress::Named(Named::Space))
+            | (Key::Tab, KeyPress::Named(Named::Tab)) => true,
+            (Key::Space, KeyPress::Character(c)) => c == " ",
+            _ => false,
+        };
         is_key && command && modifiers.shift() == self.shift && !modifiers.alt()
     }
 }
@@ -107,20 +187,362 @@ pub fn welcome_bindings() -> [Binding; 2] {
     ]
 }
 
-/// The document screen's shortcuts: Save and Save As, in that order. Save
-/// is disabled unless the document is `editable`.
-pub fn document_bindings(editable: bool) -> [Binding; 2] {
+/// The file's shortcuts: Save and Save As, in that order. Save is
+/// disabled unless the document is `editable`.
+pub fn file_bindings(editable: bool) -> [Binding; 2] {
     [
         Binding::new(Shortcut::SAVE, Message::File(File::Save), editable),
         Binding::new(Shortcut::SAVE_AS, Message::File(File::SaveAs), true),
     ]
 }
 
+impl Tool {
+    /// The key taking up the tool.
+    pub fn shortcut(self) -> Shortcut {
+        match self {
+            Tool::Line => Shortcut::plain('l'),
+            Tool::Circle => Shortcut::plain('c'),
+            Tool::Arc => Shortcut::plain('a'),
+            Tool::Point => Shortcut::plain('p'),
+            Tool::Rectangle => Shortcut::plain('r'),
+            // Polygon's `G`: its `P` is the Point tool's.
+            Tool::Polygon => Shortcut::plain('g'),
+            // A letter of its name: `S` is New sketch's, `P` the Point
+            // tool's, `L` the Line tool's.
+            Tool::Spline => Shortcut::plain('n'),
+            Tool::Dimension => Shortcut::plain('d'),
+            Tool::Trim => Shortcut::plain('t'),
+            // Free letters: `E` is Equal's, `M` Midpoint's.
+            Tool::Extend => Shortcut::plain('j'),
+            Tool::Offset => Shortcut::plain('o'),
+            Tool::Mirror => Shortcut::plain('w'),
+            Tool::Fillet => Shortcut::plain('f'),
+            // Bevel: `C` is the Circle tool's.
+            Tool::Chamfer => Shortcut::plain('b'),
+        }
+    }
+}
+
+impl ConstraintKind {
+    /// The key applying the constraint to the selection: its initial, or
+    /// a letter of its name, or with Shift where a tool has the letter
+    /// (Trim `T`, Fillet `F`, Point `P`, Circle `C`, Rectangle `R`, New
+    /// sketch `S`).
+    /// Recorded in `agents/sketch.md` and `README.md`. None for equal
+    /// offsets, which only the Offset tool makes.
+    pub fn shortcut(self) -> Option<Shortcut> {
+        Some(match self {
+            ConstraintKind::Coincident => Shortcut::plain('i'),
+            ConstraintKind::Horizontal => Shortcut::plain('h'),
+            ConstraintKind::Vertical => Shortcut::plain('v'),
+            ConstraintKind::Parallel => Shortcut::shifted('p'),
+            // A right angle.
+            ConstraintKind::Perpendicular => Shortcut::shifted('r'),
+            ConstraintKind::Tangent => Shortcut::shifted('t'),
+            // `S` is New sketch's.
+            ConstraintKind::Smooth => Shortcut::shifted('s'),
+            ConstraintKind::Equal => Shortcut::plain('e'),
+            ConstraintKind::Concentric => Shortcut::shifted('c'),
+            ConstraintKind::Midpoint => Shortcut::plain('m'),
+            ConstraintKind::Symmetric => Shortcut::plain('y'),
+            ConstraintKind::Fix => Shortcut::shifted('f'),
+            ConstraintKind::Offset => return None,
+        })
+    }
+}
+
+/// What the document screen's shortcuts depend on, besides the screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct DocumentKeys {
+    /// Whether the document can be changed.
+    pub editable: bool,
+    /// Whether a sketch is being edited.
+    pub sketching: bool,
+    /// The feature selected in the Timeline, if any.
+    pub selected: Option<FeatureId>,
+    /// Whether anything is selected in the sketch being edited.
+    pub geometry_selected: bool,
+    /// Whether a tool drawing shapes is in use in the sketch being edited.
+    pub drawing: bool,
+    /// Whether any dimensions are selected in the sketch being edited.
+    pub dimensions_selected: bool,
+    /// Whether the Dimension tool is placing a dimension of a circle or an
+    /// arc, which can be its radius or its diameter.
+    pub round_picked: bool,
+    /// Whether the drawing tool's shape has fields to type values in, see
+    /// [`ActiveTool::fields`](crate::ActiveTool::fields).
+    pub fields: bool,
+    /// Whether the Rectangle tool is in use.
+    pub rectangle: bool,
+    /// Whether the Spline tool is in use.
+    pub spline: bool,
+    /// Whether the Spline tool has placed enough points to end its spline.
+    pub spline_ends: bool,
+    /// Whether any splines are selected in the sketch being edited, and no
+    /// drawing tool is in use.
+    pub splines_selected: bool,
+    /// Whether handles can be given to, or taken from, what's selected in
+    /// the sketch being edited (see [`crate::spline::handles`]).
+    pub handles: bool,
+    /// Whether the Mirror tool has picked what it mirrors and can go on
+    /// to the line to mirror about.
+    pub mirror_picked: bool,
+    /// The constraints that fit what's selected in the sketch being
+    /// edited.
+    pub constraints: ConstraintSet,
+}
+
+impl DocumentKeys {
+    /// The keys of a document, which can be changed if `editable`, with
+    /// `selected` selected in the Timeline and `sketch` being edited, if
+    /// they are.
+    pub fn new(
+        editable: bool,
+        selected: Option<FeatureId>,
+        sketch: Option<SketchState<'_>>,
+    ) -> Self {
+        Self {
+            editable,
+            sketching: sketch.is_some(),
+            selected,
+            geometry_selected: sketch.is_some_and(|sketch| !sketch.selection.is_empty()),
+            drawing: sketch.is_some_and(|sketch| sketch.tool.is_some_and(|tool| tool.tool.draws())),
+            dimensions_selected: sketch.is_some_and(|sketch| {
+                let mut selected = sketch.selection.iter();
+                selected.any(|&id| sketch.sketch.dimension(id).is_some())
+            }),
+            round_picked: sketch.is_some_and(|sketch| {
+                sketch.tool.is_some_and(|tool| {
+                    tool.tool == Tool::Dimension
+                        && crate::dimension::round(sketch.sketch, tool.picked)
+                })
+            }),
+            fields: sketch
+                .is_some_and(|sketch| sketch.tool.is_some_and(|tool| !tool.fields().is_empty())),
+            rectangle: sketch
+                .is_some_and(|sketch| sketch.tool.is_some_and(|tool| tool.tool == Tool::Rectangle)),
+            spline: sketch
+                .is_some_and(|sketch| sketch.tool.is_some_and(|tool| tool.tool == Tool::Spline)),
+            spline_ends: sketch
+                .is_some_and(|sketch| sketch.tool.is_some_and(|tool| tool.spline_ends())),
+            splines_selected: sketch.is_some_and(|sketch| {
+                !sketch.tool.is_some_and(|tool| tool.tool.draws())
+                    && crate::spline::any_selected(sketch.sketch, sketch.selection)
+            }),
+            handles: sketch.is_some_and(|sketch| {
+                crate::spline::handles(sketch.sketch, sketch.selection).is_some()
+            }),
+            mirror_picked: sketch.is_some_and(|sketch| {
+                sketch.tool.is_some_and(|tool| {
+                    tool.tool == Tool::Mirror && !tool.about && !tool.picked.is_empty()
+                })
+            }),
+            constraints: sketch.map_or_else(ConstraintSet::default, |sketch| {
+                ConstraintKind::fitting(sketch.sketch, sketch.selection)
+                    .into_iter()
+                    .collect()
+            }),
+        }
+    }
+}
+
+/// Starting a new sketch, which asks for its plane first. Disabled in a
+/// sketch, and unless the document can be changed.
+pub fn sketch_binding(keys: DocumentKeys) -> Binding {
+    Binding::new(
+        Shortcut::SKETCH,
+        Message::Look(Look::PickPlane),
+        keys.editable && !keys.sketching,
+    )
+}
+
+/// Taking up `tool`, or putting it down: in a sketch that can be changed.
+pub fn tool_binding(tool: Tool, keys: DocumentKeys) -> Binding {
+    Binding::new(
+        tool.shortcut(),
+        Message::Look(Look::SelectTool(tool)),
+        keys.editable && keys.sketching,
+    )
+}
+
+/// Taking up the Constrain tool, or putting it down: in a sketch that can
+/// be changed.
+pub fn constrain_binding(keys: DocumentKeys) -> Binding {
+    Binding::new(
+        Shortcut::CONSTRAIN,
+        Message::Look(Look::ToggleConstrain),
+        keys.editable && keys.sketching,
+    )
+}
+
+/// Applying the constraint `kind` to the selection: while it fits it, in a
+/// sketch that can be changed. None for a kind with no key.
+pub fn constraint_binding(kind: ConstraintKind, keys: DocumentKeys) -> Option<Binding> {
+    Some(Binding::new(
+        kind.shortcut()?,
+        Message::Edit(Edit::Constrain(kind)),
+        keys.editable && keys.sketching && keys.constraints.contains(kind),
+    ))
+}
+
+/// Turning geometry between normal and construction: what's selected, or
+/// the tool's next shapes, in a sketch that can be changed.
+pub fn construction_binding(keys: DocumentKeys) -> Binding {
+    Binding::new(
+        Shortcut::CONSTRUCTION,
+        Message::Edit(Edit::ToggleConstruction),
+        keys.editable && keys.sketching && (keys.geometry_selected || keys.drawing),
+    )
+}
+
+/// Turning the dimensions selected between driving and reference: while
+/// any are, in a sketch that can be changed.
+pub fn reference_binding(keys: DocumentKeys) -> Binding {
+    Binding::new(
+        Shortcut::REFERENCE,
+        Message::Edit(Edit::ToggleReference),
+        keys.editable && keys.sketching && keys.dimensions_selected,
+    )
+}
+
+/// `Tab`: moving to the drawing tool's next field while its shape has
+/// fields, switching the Dimension tool between radius and diameter while
+/// it places one of a circle or an arc. The two never go together, as the
+/// Dimension tool draws nothing.
+fn tab_binding(keys: DocumentKeys) -> Binding {
+    let message = if keys.fields {
+        Look::NextField
+    } else {
+        Look::SwitchRound
+    };
+    Binding::new(
+        Shortcut::NEXT_FIELD,
+        Message::Look(message),
+        keys.editable && (keys.fields || keys.round_picked),
+    )
+}
+
+/// `Enter` in a sketch: placing the drawing tool's shape while it has
+/// fields, or ending the Spline tool's spline, going on to the line to
+/// mirror about once the Mirror tool has picked what it mirrors. They
+/// never go together, as the Mirror tool draws nothing and the Spline
+/// tool has no fields.
+fn enter_binding(keys: DocumentKeys) -> Binding {
+    let message = if keys.mirror_picked {
+        Message::Look(Look::MirrorAbout)
+    } else {
+        Message::Edit(Edit::PlaceShape)
+    };
+    Binding::new(
+        Shortcut::ENTER,
+        message,
+        keys.editable && (keys.fields || keys.mirror_picked || keys.spline_ends),
+    )
+}
+
+/// `Q`: switching the Rectangle tool between from a corner and from the
+/// centre, the Spline tool between through fit points and by control
+/// points, or without a drawing tool the splines selected, converting
+/// them. Only one of them at a time.
+pub fn switch_binding(keys: DocumentKeys) -> Binding {
+    let message = if keys.rectangle {
+        Message::Look(Look::ToggleCentered)
+    } else if keys.spline {
+        Message::Look(Look::ToggleSplineKind)
+    } else {
+        Message::Edit(Edit::ConvertSplines)
+    };
+    Binding::new(
+        Shortcut::CENTERED,
+        message,
+        keys.editable && (keys.rectangle || keys.spline || keys.splines_selected),
+    )
+}
+
+/// Giving the fit points selected handles, or taking them away: while
+/// they can be, in a sketch that can be changed, and no drawing tool is
+/// in use, as converting splines waits for one.
+pub fn handles_binding(keys: DocumentKeys) -> Binding {
+    Binding::new(
+        Shortcut::HANDLES,
+        Message::Edit(Edit::ToggleHandles),
+        keys.editable && keys.sketching && keys.handles && !keys.drawing,
+    )
+}
+
+/// Showing the splines' curvature comb, or hiding it: in any sketch, as
+/// it changes nothing.
+pub fn comb_binding(keys: DocumentKeys) -> Binding {
+    Binding::new(
+        Shortcut::COMB,
+        Message::Look(Look::ToggleComb),
+        keys.sketching,
+    )
+}
+
+/// The document screen's shortcuts: the file's (Save, Save As), starting a
+/// sketch, clearing the selection, outside a sketch editing and deleting
+/// the feature selected in the Timeline, if there is one, and in a sketch
+/// its tools, deleting what's selected, construction, the Constrain tool,
+/// the constraints that fit the selection, turning dimensions between
+/// driving and reference, `Tab` (see `tab_binding`), placing the shape
+/// being drawn, going on to the Mirror tool's line, switching the
+/// Rectangle tool between from a corner and from the centre (and the
+/// Spline tool and splines between their kinds), handles and the
+/// curvature comb.
+pub fn document_bindings(keys: DocumentKeys) -> Vec<Binding> {
+    let feature = keys.selected.filter(|_| !keys.sketching);
+    let feature = feature.into_iter().flat_map(|id| {
+        [
+            Binding::new(Shortcut::ENTER, Message::Look(Look::EditSketch(id)), true),
+            Binding::new(
+                Shortcut::DELETE,
+                Message::Edit(Edit::RemoveFeature(id)),
+                keys.editable,
+            ),
+        ]
+    });
+    let sketch = keys.sketching.then(|| {
+        Tool::ALL
+            .map(|tool| tool_binding(tool, keys))
+            .into_iter()
+            .chain([
+                Binding::new(
+                    Shortcut::DELETE,
+                    Message::Edit(Edit::DeleteSelection),
+                    keys.editable && keys.geometry_selected,
+                ),
+                construction_binding(keys),
+                constrain_binding(keys),
+                reference_binding(keys),
+                tab_binding(keys),
+                enter_binding(keys),
+                switch_binding(keys),
+                handles_binding(keys),
+                comb_binding(keys),
+            ])
+            .chain(
+                ConstraintKind::ALL
+                    .into_iter()
+                    .filter_map(move |kind| constraint_binding(kind, keys)),
+            )
+    });
+    file_bindings(keys.editable)
+        .into_iter()
+        .chain([
+            sketch_binding(keys),
+            Binding::new(Shortcut::SPACE, Message::Look(Look::ClearSelection), true),
+        ])
+        .chain(feature)
+        .chain(sketch.into_iter().flatten())
+        .collect()
+}
+
 /// The message of the first enabled binding of `bindings` that pressing
 /// `key` with `modifiers` is, if any.
 pub fn pressed(
     bindings: impl IntoIterator<Item = Binding>,
-    key: &str,
+    key: &KeyPress,
     modifiers: Modifiers,
 ) -> Option<Message> {
     bindings
@@ -145,6 +567,22 @@ impl Held {
         label: "Alt",
         mac_label: "Option",
     };
+
+    /// Held while placing a dimension with the Dimension tool to place it
+    /// as a reference. The peek key: in the Dimension tool it doesn't peek.
+    pub const REFERENCE: Self = Self::PEEK;
+
+    /// Held to orbit with the right mouse button, which pans otherwise.
+    pub const ORBIT: Self = Self {
+        is_held: Modifiers::shift,
+        label: "Shift",
+        mac_label: "Shift",
+    };
+
+    /// Held while clicking with a drawing tool to place the point where
+    /// the cursor is, snapping to nothing. The orbit key, which orbits
+    /// only with the right button.
+    pub const FREE: Self = Self::ORBIT;
 
     /// Whether it's held among `modifiers`.
     pub fn is_held(self, modifiers: Modifiers) -> bool {
@@ -194,6 +632,10 @@ impl KeyName {
 mod tests {
     use super::*;
 
+    fn key(c: &str) -> KeyPress {
+        KeyPress::Character(c.into())
+    }
+
     #[test]
     fn labels() {
         assert_eq!(Shortcut::NEW.label(), "N");
@@ -204,25 +646,47 @@ mod tests {
         };
         assert_eq!(Shortcut::SAVE.label(), format!("{command} S"));
         assert_eq!(Shortcut::SAVE_AS.label(), format!("{command} Shift S"));
+        assert_eq!(Shortcut::ENTER.label(), "Enter");
+        assert_eq!(Shortcut::DELETE.label(), "Del");
+        assert_eq!(Shortcut::ESCAPE.label(), "Esc");
+        assert_eq!(Shortcut::SPACE.label(), "Space");
+        assert_eq!(Tool::Line.shortcut().label(), "L");
     }
 
     #[test]
     fn matches() {
         let none = Modifiers::empty();
-        assert!(Shortcut::NEW.matches("n", none));
-        assert!(!Shortcut::NEW.matches("n", Modifiers::CTRL));
-        assert!(!Shortcut::NEW.matches("N", Modifiers::SHIFT));
-        assert!(!Shortcut::NEW.matches("o", none));
-        assert!(!Shortcut::NEW.matches("nn", none));
-        assert!(!Shortcut::NEW.matches("", none));
+        assert!(Shortcut::NEW.matches(&key("n"), none));
+        assert!(!Shortcut::NEW.matches(&key("n"), Modifiers::CTRL));
+        assert!(!Shortcut::NEW.matches(&key("N"), Modifiers::SHIFT));
+        assert!(!Shortcut::NEW.matches(&key("o"), none));
+        assert!(!Shortcut::NEW.matches(&key("nn"), none));
+        assert!(!Shortcut::NEW.matches(&key(""), none));
 
         let command = Modifiers::COMMAND;
-        assert!(Shortcut::SAVE.matches("s", command));
-        assert!(!Shortcut::SAVE.matches("s", none));
-        assert!(!Shortcut::SAVE.matches("s", command | Modifiers::ALT));
-        assert!(!Shortcut::SAVE.matches("S", command | Modifiers::SHIFT));
-        assert!(Shortcut::SAVE_AS.matches("S", command | Modifiers::SHIFT));
-        assert!(!Shortcut::SAVE_AS.matches("s", command));
+        assert!(Shortcut::SAVE.matches(&key("s"), command));
+        assert!(!Shortcut::SAVE.matches(&key("s"), none));
+        assert!(!Shortcut::SAVE.matches(&key("s"), command | Modifiers::ALT));
+        assert!(!Shortcut::SAVE.matches(&key("S"), command | Modifiers::SHIFT));
+        assert!(Shortcut::SAVE_AS.matches(&key("S"), command | Modifiers::SHIFT));
+        assert!(!Shortcut::SAVE_AS.matches(&key("s"), command));
+    }
+
+    #[test]
+    fn named_keys_match() {
+        let none = Modifiers::empty();
+        let named = KeyPress::Named;
+        assert!(Shortcut::ENTER.matches(&named(Named::Enter), none));
+        assert!(!Shortcut::ENTER.matches(&named(Named::Enter), Modifiers::CTRL));
+        assert!(Shortcut::DELETE.matches(&named(Named::Delete), none));
+        assert!(Shortcut::DELETE.matches(&named(Named::Backspace), none));
+        assert!(Shortcut::ESCAPE.matches(&named(Named::Escape), none));
+        assert!(!Shortcut::ESCAPE.matches(&named(Named::Enter), none));
+        assert!(!Shortcut::ENTER.matches(&key("e"), none));
+        assert!(!Shortcut::NEW.matches(&named(Named::Enter), none));
+        assert!(Shortcut::SPACE.matches(&named(Named::Space), none));
+        assert!(Shortcut::SPACE.matches(&key(" "), none));
+        assert!(!Shortcut::SPACE.matches(&named(Named::Space), Modifiers::CTRL));
     }
 
     #[test]
@@ -232,14 +696,420 @@ mod tests {
         assert!(!Held::PEEK.is_held(Modifiers::CTRL));
     }
 
+    fn keys(editable: bool) -> DocumentKeys {
+        DocumentKeys {
+            editable,
+            ..DocumentKeys::default()
+        }
+    }
+
     #[test]
     fn a_disabled_binding_is_a_dead_key() {
         let command = Modifiers::COMMAND;
         let shift = command | Modifiers::SHIFT;
-        let save = |editable| pressed(document_bindings(editable), "s", command);
+        let save = |editable| pressed(document_bindings(keys(editable)), &key("s"), command);
         assert!(matches!(save(true), Some(Message::File(File::Save))));
         assert!(save(false).is_none());
-        let save_as = pressed(document_bindings(false), "S", shift);
+        let save_as = pressed(document_bindings(keys(false)), &key("S"), shift);
         assert!(matches!(save_as, Some(Message::File(File::SaveAs))));
+    }
+
+    #[test]
+    fn a_sketch_is_started_outside_sketches_only() {
+        let sketch = |keys| pressed(document_bindings(keys), &key("s"), Modifiers::empty());
+        assert!(matches!(
+            sketch(keys(true)),
+            Some(Message::Look(Look::PickPlane))
+        ));
+        assert!(sketch(keys(false)).is_none());
+        let sketching = DocumentKeys {
+            sketching: true,
+            ..keys(true)
+        };
+        assert!(sketch(sketching).is_none());
+    }
+
+    #[test]
+    fn the_selected_feature_is_edited_and_deleted() {
+        let id = {
+            let mut editor = varde_document::Editor::new(Default::default());
+            let plane = varde_document::Plane::Origin(varde_document::OriginPlane::XY);
+            editor.apply(editor.document().add_sketch(plane)).unwrap();
+            editor.document().features()[0].id
+        };
+        let none = Modifiers::empty();
+        let enter = KeyPress::Named(Named::Enter);
+        let delete = KeyPress::Named(Named::Delete);
+        let selected = DocumentKeys {
+            selected: Some(id),
+            ..keys(true)
+        };
+        assert!(matches!(
+            pressed(document_bindings(selected), &enter, none),
+            Some(Message::Look(Look::EditSketch(edited))) if edited == id
+        ));
+        assert!(matches!(
+            pressed(document_bindings(selected), &delete, none),
+            Some(Message::Edit(Edit::RemoveFeature(removed))) if removed == id
+        ));
+        // Read-only, it can be looked into but not deleted.
+        let read_only = DocumentKeys {
+            editable: false,
+            ..selected
+        };
+        assert!(pressed(document_bindings(read_only), &enter, none).is_some());
+        assert!(pressed(document_bindings(read_only), &delete, none).is_none());
+        // Nothing selected, or in a sketch, neither does anything.
+        assert!(pressed(document_bindings(keys(true)), &enter, none).is_none());
+        let sketching = DocumentKeys {
+            sketching: true,
+            ..selected
+        };
+        assert!(pressed(document_bindings(sketching), &enter, none).is_none());
+        assert!(pressed(document_bindings(sketching), &delete, none).is_none());
+    }
+
+    #[test]
+    fn tools_are_taken_up_in_a_sketch_that_can_be_changed() {
+        let sketching = DocumentKeys {
+            sketching: true,
+            ..keys(true)
+        };
+        let none = Modifiers::empty();
+        for tool in Tool::ALL {
+            let letter = tool.shortcut().label().to_lowercase();
+            assert!(matches!(
+                pressed(document_bindings(sketching), &key(&letter), none),
+                Some(Message::Look(Look::SelectTool(taken))) if taken == tool
+            ));
+            let read_only = DocumentKeys {
+                editable: false,
+                ..sketching
+            };
+            assert!(pressed(document_bindings(read_only), &key(&letter), none).is_none());
+            assert!(pressed(document_bindings(keys(true)), &key(&letter), none).is_none());
+        }
+    }
+
+    #[test]
+    fn geometry_is_deleted_and_made_construction_once_selected() {
+        let none = Modifiers::empty();
+        let delete = KeyPress::Named(Named::Delete);
+        let sketching = DocumentKeys {
+            sketching: true,
+            ..keys(true)
+        };
+        assert!(pressed(document_bindings(sketching), &delete, none).is_none());
+        assert!(pressed(document_bindings(sketching), &key("x"), none).is_none());
+        let selected = DocumentKeys {
+            geometry_selected: true,
+            ..sketching
+        };
+        assert!(matches!(
+            pressed(document_bindings(selected), &delete, none),
+            Some(Message::Edit(Edit::DeleteSelection))
+        ));
+        assert!(matches!(
+            pressed(document_bindings(selected), &key("x"), none),
+            Some(Message::Edit(Edit::ToggleConstruction))
+        ));
+        // A tool takes X for its next shapes.
+        let drawing = DocumentKeys {
+            drawing: true,
+            ..sketching
+        };
+        assert!(pressed(document_bindings(drawing), &key("x"), none).is_some());
+        let read_only = DocumentKeys {
+            editable: false,
+            ..selected
+        };
+        assert!(pressed(document_bindings(read_only), &delete, none).is_none());
+        assert!(pressed(document_bindings(read_only), &key("x"), none).is_none());
+    }
+
+    #[test]
+    fn constraints_are_applied_by_their_keys_while_they_fit() {
+        let sketching = DocumentKeys {
+            sketching: true,
+            ..keys(true)
+        };
+        let shift = Modifiers::SHIFT;
+        let tangent = |keys| pressed(document_bindings(keys), &key("T"), shift);
+        assert!(tangent(sketching).is_none());
+        let fitting = DocumentKeys {
+            constraints: [ConstraintKind::Tangent].into_iter().collect(),
+            ..sketching
+        };
+        assert!(matches!(
+            tangent(fitting),
+            Some(Message::Edit(Edit::Constrain(ConstraintKind::Tangent)))
+        ));
+        let read_only = DocumentKeys {
+            editable: false,
+            ..fitting
+        };
+        assert!(tangent(read_only).is_none());
+        // K takes up the Constrain tool.
+        assert!(matches!(
+            pressed(document_bindings(sketching), &key("k"), Modifiers::empty()),
+            Some(Message::Look(Look::ToggleConstrain))
+        ));
+    }
+
+    #[test]
+    fn no_two_of_a_sketch_s_keys_are_the_same() {
+        let all = DocumentKeys {
+            sketching: true,
+            geometry_selected: true,
+            dimensions_selected: true,
+            round_picked: true,
+            fields: true,
+            rectangle: true,
+            spline: true,
+            spline_ends: true,
+            splines_selected: true,
+            handles: true,
+            constraints: ConstraintKind::ALL.into_iter().collect(),
+            ..keys(true)
+        };
+        let shortcuts: Vec<_> = document_bindings(all)
+            .into_iter()
+            .map(|binding| binding.shortcut)
+            .collect();
+        for (i, shortcut) in shortcuts.iter().enumerate() {
+            assert!(
+                !shortcuts[..i].contains(shortcut),
+                "{} twice",
+                shortcut.label()
+            );
+        }
+        assert_eq!(ConstraintKind::Fix.shortcut().unwrap().label(), "Shift F");
+        assert_eq!(ConstraintKind::Offset.shortcut(), None);
+    }
+
+    #[test]
+    fn dimensions_turn_to_references_and_rounds_switch_by_their_keys() {
+        let sketching = DocumentKeys {
+            sketching: true,
+            ..keys(true)
+        };
+        let shift_d = |keys| pressed(document_bindings(keys), &key("D"), Modifiers::SHIFT);
+        let tab = |keys| {
+            let tab = KeyPress::Named(Named::Tab);
+            pressed(document_bindings(keys), &tab, Modifiers::empty())
+        };
+        assert!(shift_d(sketching).is_none());
+        assert!(tab(sketching).is_none());
+        let selected = DocumentKeys {
+            dimensions_selected: true,
+            ..sketching
+        };
+        assert!(matches!(
+            shift_d(selected),
+            Some(Message::Edit(Edit::ToggleReference))
+        ));
+        let placing = DocumentKeys {
+            round_picked: true,
+            ..sketching
+        };
+        assert!(matches!(
+            tab(placing),
+            Some(Message::Look(Look::SwitchRound))
+        ));
+        // D alone takes up the Dimension tool.
+        assert!(matches!(
+            pressed(document_bindings(selected), &key("d"), Modifiers::empty()),
+            Some(Message::Look(Look::SelectTool(Tool::Dimension)))
+        ));
+        // And T, J, O, W, F and B the shape tools.
+        let shapes = [
+            ("t", Tool::Trim),
+            ("j", Tool::Extend),
+            ("o", Tool::Offset),
+            ("w", Tool::Mirror),
+            ("f", Tool::Fillet),
+            ("b", Tool::Chamfer),
+        ];
+        for (letter, tool) in shapes {
+            let sent = pressed(
+                document_bindings(selected),
+                &key(letter),
+                Modifiers::empty(),
+            );
+            assert!(
+                matches!(sent, Some(Message::Look(Look::SelectTool(t))) if t == tool),
+                "{letter}: {sent:?}"
+            );
+        }
+        let enter = |keys| {
+            let enter = KeyPress::Named(Named::Enter);
+            pressed(document_bindings(keys), &enter, Modifiers::empty())
+        };
+        assert!(enter(sketching).is_none());
+        let mirroring = DocumentKeys {
+            mirror_picked: true,
+            ..sketching
+        };
+        assert!(matches!(
+            enter(mirroring),
+            Some(Message::Look(Look::MirrorAbout))
+        ));
+        let read_only = DocumentKeys {
+            editable: false,
+            ..selected
+        };
+        assert!(shift_d(read_only).is_none());
+        assert_eq!(Shortcut::REFERENCE.label(), "Shift D");
+        assert_eq!(Shortcut::SWITCH_ROUND.label(), "Tab");
+    }
+
+    #[test]
+    fn a_drawing_tool_s_fields_take_tab_and_enter_places_its_shape() {
+        let sketching = DocumentKeys {
+            sketching: true,
+            ..keys(true)
+        };
+        let none = Modifiers::empty();
+        let tab = KeyPress::Named(Named::Tab);
+        let enter = KeyPress::Named(Named::Enter);
+        assert!(pressed(document_bindings(sketching), &tab, none).is_none());
+        assert!(pressed(document_bindings(sketching), &enter, none).is_none());
+        let fields = DocumentKeys {
+            fields: true,
+            ..sketching
+        };
+        assert!(matches!(
+            pressed(document_bindings(fields), &tab, none),
+            Some(Message::Look(Look::NextField))
+        ));
+        assert!(matches!(
+            pressed(document_bindings(fields), &enter, none),
+            Some(Message::Edit(Edit::PlaceShape))
+        ));
+        let read_only = DocumentKeys {
+            editable: false,
+            ..fields
+        };
+        assert!(pressed(document_bindings(read_only), &tab, none).is_none());
+        assert!(pressed(document_bindings(read_only), &enter, none).is_none());
+        // Q switches the Rectangle tool only.
+        let q = key("q");
+        assert!(pressed(document_bindings(sketching), &q, none).is_none());
+        let rectangle = DocumentKeys {
+            rectangle: true,
+            ..sketching
+        };
+        assert!(matches!(
+            pressed(document_bindings(rectangle), &q, none),
+            Some(Message::Look(Look::ToggleCentered))
+        ));
+        assert_eq!(Tool::Rectangle.shortcut().label(), "R");
+        assert_eq!(Tool::Polygon.shortcut().label(), "G");
+    }
+
+    #[test]
+    fn splines_take_their_keys() {
+        let sketching = DocumentKeys {
+            sketching: true,
+            ..keys(true)
+        };
+        let none = Modifiers::empty();
+        let sent =
+            |keys, key: &KeyPress, modifiers| pressed(document_bindings(keys), key, modifiers);
+        // N takes up the Spline tool, Q then switches its kind.
+        assert!(matches!(
+            sent(sketching, &key("n"), none),
+            Some(Message::Look(Look::SelectTool(Tool::Spline)))
+        ));
+        assert!(sent(sketching, &key("q"), none).is_none());
+        let drawing = DocumentKeys {
+            spline: true,
+            drawing: true,
+            ..sketching
+        };
+        assert!(matches!(
+            sent(drawing, &key("q"), none),
+            Some(Message::Look(Look::ToggleSplineKind))
+        ));
+        // Enter ends it once it has enough.
+        let enter = KeyPress::Named(Named::Enter);
+        assert!(sent(drawing, &enter, none).is_none());
+        let ends = DocumentKeys {
+            spline_ends: true,
+            ..drawing
+        };
+        assert!(matches!(
+            sent(ends, &enter, none),
+            Some(Message::Edit(Edit::PlaceShape))
+        ));
+        // Splines selected: Q converts them, Shift H handles them, and U
+        // shows their comb, which it does in any sketch.
+        let selected = DocumentKeys {
+            splines_selected: true,
+            handles: true,
+            ..sketching
+        };
+        assert!(matches!(
+            sent(selected, &key("q"), none),
+            Some(Message::Edit(Edit::ConvertSplines))
+        ));
+        assert!(matches!(
+            sent(selected, &key("H"), Modifiers::SHIFT),
+            Some(Message::Edit(Edit::ToggleHandles))
+        ));
+        assert!(sent(sketching, &key("H"), Modifiers::SHIFT).is_none());
+        for keys in [sketching, selected] {
+            assert!(matches!(
+                sent(keys, &key("u"), none),
+                Some(Message::Look(Look::ToggleComb))
+            ));
+        }
+        assert!(sent(keys(true), &key("u"), none).is_none());
+        let read_only = DocumentKeys {
+            editable: false,
+            ..selected
+        };
+        assert!(sent(read_only, &key("q"), none).is_none());
+        assert!(sent(read_only, &key("H"), Modifiers::SHIFT).is_none());
+        assert_eq!(Tool::Spline.shortcut().label(), "N");
+        assert_eq!(Shortcut::HANDLES.label(), "Shift H");
+    }
+
+    #[test]
+    fn handles_wait_for_the_drawing_tool() {
+        // Fit points selected while the Spline tool (or any drawing
+        // tool) is drawing: Shift H is the tool's, as Q is, not theirs.
+        let drawing = DocumentKeys {
+            sketching: true,
+            drawing: true,
+            spline: true,
+            handles: true,
+            ..keys(true)
+        };
+        let shift_h = |keys| pressed(document_bindings(keys), &key("H"), Modifiers::SHIFT);
+        assert!(shift_h(drawing).is_none());
+        assert!(matches!(
+            shift_h(DocumentKeys {
+                drawing: false,
+                spline: false,
+                ..drawing
+            }),
+            Some(Message::Edit(Edit::ToggleHandles))
+        ));
+    }
+
+    #[test]
+    fn space_clears_the_selection_everywhere() {
+        let space = KeyPress::Named(Named::Space);
+        let sketching = DocumentKeys {
+            sketching: true,
+            ..keys(false)
+        };
+        for keys in [keys(true), keys(false), sketching] {
+            assert!(matches!(
+                pressed(document_bindings(keys), &space, Modifiers::empty()),
+                Some(Message::Look(Look::ClearSelection))
+            ));
+        }
     }
 }
