@@ -23,6 +23,10 @@
 //! 5. Face tags: patches on `Plane` and `Quadric` faces lie on them within
 //!    the resolution, checked in debug builds (and tests) only.
 //!
+//! [`Mesh::repair`] restores invariants 3 and 4 by exact red–green
+//! refinement, and [`Mesh::cuboid`] and [`Mesh::cylinder`] build boxes and
+//! cylinders that pass them all.
+//!
 //! The rules and the reasons for them are written down in
 //! `agents/kernel.md`.
 
@@ -35,6 +39,9 @@ mod bvh;
 mod check;
 mod face;
 mod hull;
+mod primitive;
+mod refine;
+mod repair;
 
 pub use build::{BuildError, MeshBuilder};
 pub use bvh::Bvh;

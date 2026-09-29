@@ -183,6 +183,20 @@ impl Patch {
         fold_direction(&dirs, flat)
     }
 
+    /// A corner whose normal coefficient is too small to tell from zero
+    /// ([`FOLD_FLOOR`]), the first if several: its two edges leave it at
+    /// 0° or 180°. The patch fails the fold check, and so does every piece
+    /// split from it that keeps the corner, whose edges leave it the same
+    /// ways: splitting can't mend it.
+    pub fn degenerate_corner(&self) -> Option<usize> {
+        let (coeffs, size) = self.normal_coeffs_scaled();
+        // (3,0,0), (0,3,0) and (0,0,3).
+        [0, 6, 9].into_iter().position(|k| {
+            let length = coeffs[k].length();
+            length.is_nan() || length <= FOLD_FLOOR * size[k]
+        })
+    }
+
     /// The cone holding every normal direction of the patch: the smallest
     /// cone around its normal coefficients, each widened by how far
     /// rounding may have turned it. A coefficient rounding may have turned

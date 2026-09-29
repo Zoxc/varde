@@ -1,7 +1,7 @@
 /// The design's tolerances, in model units (mm): the **fit** tolerance,
 /// how far a fitted curve or patch may be from the true surfaces, and the
-/// **resolution**, a thousandth of it, the size below which the kernel
-/// stops refining and the margin its hull rules keep.
+/// **resolution**, a thousandth of it, the margin the kernel's hull rules
+/// keep and the scale at which refinement stops.
 ///
 /// Neither ever decides that two things are the same vertex or edge.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -30,8 +30,8 @@ impl Tolerance {
         self.fit
     }
 
-    /// A thousandth of the fit tolerance: where refinement stops, and the
-    /// margin hulls keep from each other.
+    /// A thousandth of the fit tolerance: the margin hulls keep from each
+    /// other, and the scale at which refinement stops.
     pub fn resolution(self) -> f64 {
         self.fit / 1000.0
     }

@@ -100,7 +100,7 @@ impl Mesh {
 
     /// Invariants 1 and 2 without the geometry: pairs, directed edges,
     /// fans, and shared edge records.
-    fn check_topology(&self) -> Result<(), CheckError> {
+    pub(super) fn check_topology(&self) -> Result<(), CheckError> {
         let nt = self.tris.len();
         if nt > MAX_PATCHES {
             return Err(CheckError::TooManyPatches(nt));
@@ -240,45 +240,57 @@ impl Mesh {
         let pairs = bvh.self_pairs(margin);
         let results = par_map(&pairs, |&[i, j]| {
             let (a, b) = (&patches[i as usize], &patches[j as usize]);
-            let (ca, cb) = (self.corners(i), self.corners(j));
-            // (corner of a, corner of b) for each shared vertex.
-            let mut found = [(0, 0); 3];
-            let mut count = 0;
-            for (k, &corner) in ca.iter().enumerate() {
-                if let Some(l) = cb.iter().position(|&v| v == corner) {
-                    found[count] = (k, l);
-                    count += 1;
-                }
-            }
-            let shared = &found[..count];
-            let ok = match *shared {
-                [] => non_neighbours_apart(a, b, margin),
-                [(ka, kb)] => vertex_neighbours_apart(a, ka, b, kb, margin),
-                [(k0, l0), (k1, l1)] => {
-                    // The edge of `a` from one shared corner to the other,
-                    // and `b`'s, which runs the other way.
-                    let ea = if (k0 + 1) % 3 == k1 { k0 } else { k1 };
-                    let eb = if (l1 + 1) % 3 == l0 { l1 } else { l0 };
-                    edge_neighbours_apart(a, ea, b, eb, margin)
-                }
-                _ => return Err(CheckError::SameCorners(i, j)),
-            };
-            if ok {
-                Ok(())
-            } else {
-                Err(match shared.len() {
-                    0 => CheckError::Hull(i, j),
-                    1 => CheckError::VertexNeighbours(i, j),
-                    _ => CheckError::EdgeNeighbours(i, j),
-                })
-            }
+            check_pair([i, j], [a, b], [self.corners(i), self.corners(j)], margin)
         });
         results.into_iter().collect()
     }
 
     /// The vertex ids at the corners of triangle `t`.
-    fn corners(&self, t: u32) -> [u32; 3] {
+    pub(super) fn corners(&self, t: u32) -> [u32; 3] {
         self.tris[t as usize].halfedges.map(|h| h.start)
+    }
+}
+
+/// Invariant 4 for triangles `ids`, the patches `patches` with corners at
+/// the vertex ids `corners`, whose boxes come within `margin`. The rule is
+/// chosen by how many vertices they share, which is topology.
+pub(super) fn check_pair(
+    ids: [u32; 2],
+    [a, b]: [&Patch; 2],
+    [ca, cb]: [[u32; 3]; 2],
+    margin: f64,
+) -> Result<(), CheckError> {
+    let [i, j] = ids;
+    // (corner of a, corner of b) for each shared vertex.
+    let mut found = [(0, 0); 3];
+    let mut count = 0;
+    for (k, &corner) in ca.iter().enumerate() {
+        if let Some(l) = cb.iter().position(|&v| v == corner) {
+            found[count] = (k, l);
+            count += 1;
+        }
+    }
+    let shared = &found[..count];
+    let ok = match *shared {
+        [] => non_neighbours_apart(a, b, margin),
+        [(ka, kb)] => vertex_neighbours_apart(a, ka, b, kb, margin),
+        [(k0, l0), (k1, l1)] => {
+            // The edge of `a` from one shared corner to the other, and
+            // `b`'s, which runs the other way.
+            let ea = if (k0 + 1) % 3 == k1 { k0 } else { k1 };
+            let eb = if (l1 + 1) % 3 == l0 { l1 } else { l0 };
+            edge_neighbours_apart(a, ea, b, eb, margin)
+        }
+        _ => return Err(CheckError::SameCorners(i, j)),
+    };
+    if ok {
+        Ok(())
+    } else {
+        Err(match shared.len() {
+            0 => CheckError::Hull(i, j),
+            1 => CheckError::VertexNeighbours(i, j),
+            _ => CheckError::EdgeNeighbours(i, j),
+        })
     }
 }
 

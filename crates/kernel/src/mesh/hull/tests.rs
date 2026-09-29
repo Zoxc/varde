@@ -211,3 +211,37 @@ fn curved_edge_neighbours() {
     ));
     assert!(!edge_neighbours_apart(&wall, 0, &tilted(0.1), 1, MARGIN));
 }
+
+#[test]
+fn long_thin_hulls_are_told_apart() {
+    // The top of a 611 × 0.066 × 0.187 box and its front side meet at a
+    // corner, with the rest of each more than 0.03 clear of any plane
+    // through it tilted between them. Solved through the Gram matrix, a
+    // thin triangle of the Minkowski difference lost enough digits to
+    // stop GJK short, in one order of the points and not the other.
+    let (sx, sy, sz) = (611.1071037741102, 0.0659348838221904, 0.1866932464521183);
+    let t0 = DVec3::new(0.0, 0.0, sz);
+    let t1 = DVec3::new(sx, 0.0, sz);
+    let t2 = DVec3::new(sx, sy, sz);
+    let top = Patch::flat([t0, t1, t2]).unwrap();
+    let side = Patch::flat([DVec3::ZERO, DVec3::X * sx, t1]).unwrap();
+    assert!(vertex_neighbours_apart(&top, 1, &side, 2, MARGIN));
+    let mut points: Vec<DVec3> = top.hull().iter().map(|&x| x - t1).collect();
+    points.extend(side.hull().iter().map(|&x| t1 - x));
+    points.retain(|&x| x != DVec3::ZERO);
+    let mut rng = Rng::new(5);
+    for _ in 0..20 {
+        // Any order of the points, and any rotation.
+        for i in (1..points.len()).rev() {
+            let j = (rng.next_u64() % (i as u64 + 1)) as usize;
+            points.swap(i, j);
+        }
+        let m = rotation(&mut rng);
+        assert!(apart(
+            &moved(&points, m, DVec3::ZERO),
+            &[DVec3::ZERO],
+            MARGIN
+        ));
+        assert!(!apart(&moved(&points, m, DVec3::ZERO), &[DVec3::ZERO], 0.1));
+    }
+}

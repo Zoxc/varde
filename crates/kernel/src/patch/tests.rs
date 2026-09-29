@@ -500,6 +500,8 @@ fn folded_and_degenerate_patches_fail_the_fold_check() {
         .collect();
     assert!(signs.iter().any(|&z| z > 0.0) && signs.iter().any(|&z| z < 0.0));
     assert_eq!(folded.fold_direction(), None);
+    // Splitting may mend it: no corner is degenerate.
+    assert_eq!(folded.degenerate_corner(), None);
 
     // Edge 01 leaves corner 0 along edge 20: a corner of 0°.
     let p = [DVec3::ZERO, DVec3::new(2.0, 0.0, 0.0), DVec3::ONE];
@@ -514,10 +516,15 @@ fn folded_and_degenerate_patches_fail_the_fold_check() {
     )
     .unwrap();
     assert_eq!(cusp.fold_direction(), None);
+    // Splitting can't: the piece keeping the corner keeps it degenerate.
+    assert_eq!(cusp.degenerate_corner(), Some(0));
+    assert_eq!(cusp.split4().unwrap()[0].degenerate_corner(), Some(0));
 
     // All corners on a line.
     let line = Patch::flat([DVec3::ZERO, DVec3::X, DVec3::X * 2.0]).unwrap();
     assert_eq!(line.fold_direction(), None);
+    assert_eq!(line.degenerate_corner(), Some(0));
+    assert_eq!(Patch::flat(p).unwrap().degenerate_corner(), None);
 }
 
 #[test]

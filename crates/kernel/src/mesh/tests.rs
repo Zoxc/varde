@@ -8,10 +8,10 @@ use crate::par::assert_deterministic;
 use crate::patch::{Conic3, PatchError, cylinder_strip};
 use crate::test_rng::Rng;
 
-const TOL: Tolerance = Tolerance::DEFAULT;
+pub(super) const TOL: Tolerance = Tolerance::DEFAULT;
 
 /// A face named `part` of feature 1 on `surface`.
-fn face(part: u32, surface: Surface) -> Face {
+pub(super) fn face(part: u32, surface: Surface) -> Face {
     Face {
         name: FaceName {
             feature: 1,
@@ -21,13 +21,13 @@ fn face(part: u32, surface: Surface) -> Face {
     }
 }
 
-fn free(builder: &mut MeshBuilder) -> u32 {
+pub(super) fn free(builder: &mut MeshBuilder) -> u32 {
     builder.face(face(0, Surface::Free))
 }
 
 /// The tetrahedron on the origin and the unit axes, moved by `offset`,
 /// added to `builder`.
-fn add_tetrahedron(builder: &mut MeshBuilder, offset: DVec3) {
+pub(super) fn add_tetrahedron(builder: &mut MeshBuilder, offset: DVec3) {
     let f = free(builder);
     let v = [DVec3::ZERO, DVec3::X, DVec3::Y, DVec3::Z].map(|p| builder.vert(p + offset));
     for [a, b, c] in [[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]] {
@@ -35,41 +35,15 @@ fn add_tetrahedron(builder: &mut MeshBuilder, offset: DVec3) {
     }
 }
 
-fn tetrahedron(offset: DVec3) -> Mesh {
+pub(super) fn tetrahedron(offset: DVec3) -> Mesh {
     let mut builder = MeshBuilder::new();
     add_tetrahedron(&mut builder, offset);
     builder.build().unwrap()
 }
 
-/// The box from `min` to `min + size`, two flat triangles to a side, each
-/// side a plane face.
-fn flat_box(min: DVec3, size: DVec3) -> Mesh {
-    let mut builder = MeshBuilder::new();
-    for i in 0..8 {
-        let corner = DVec3::new((i & 1) as f64, ((i >> 1) & 1) as f64, ((i >> 2) & 1) as f64);
-        builder.vert(min + corner * size);
-    }
-    let max = min + size;
-    // Each side counter-clockwise from outside, with its outward normal.
-    let sides: [([u32; 4], DVec3, f64); 6] = [
-        ([0, 2, 3, 1], -DVec3::Z, -min.z),
-        ([4, 5, 7, 6], DVec3::Z, max.z),
-        ([0, 1, 5, 4], -DVec3::Y, -min.y),
-        ([2, 6, 7, 3], DVec3::Y, max.y),
-        ([0, 4, 6, 2], -DVec3::X, -min.x),
-        ([1, 3, 7, 5], DVec3::X, max.x),
-    ];
-    for (i, ([a, b, c, d], n, dist)) in sides.into_iter().enumerate() {
-        let f = builder.face(face(i as u32, Surface::Plane { n, d: dist }));
-        builder.tri([a, b, c], f);
-        builder.tri([a, c, d], f);
-    }
-    builder.build().unwrap()
-}
-
 /// The octahedron's triangles, counter-clockwise from outside, on its
 /// vertices `+x, +y, +z, -x, -y, -z`.
-const OCTAHEDRON: [[u32; 3]; 8] = [
+pub(super) const OCTAHEDRON: [[u32; 3]; 8] = [
     [0, 1, 2],
     [3, 4, 2],
     [1, 3, 2],
@@ -82,7 +56,11 @@ const OCTAHEDRON: [[u32; 3]; 8] = [
 
 /// An octahedron with vertices `verts`, triangles `tris` (each on its own
 /// free face) and curved edges `curves`.
-fn octahedron(verts: [DVec3; 6], tris: &[[u32; 3]], curves: &[(u32, u32, DVec3, f64)]) -> Mesh {
+pub(super) fn octahedron(
+    verts: [DVec3; 6],
+    tris: &[[u32; 3]],
+    curves: &[(u32, u32, DVec3, f64)],
+) -> Mesh {
     let mut builder = MeshBuilder::new();
     for p in verts {
         builder.vert(p);
@@ -97,7 +75,7 @@ fn octahedron(verts: [DVec3; 6], tris: &[[u32; 3]], curves: &[(u32, u32, DVec3, 
     builder.build().unwrap()
 }
 
-const UNIT: [DVec3; 6] = [
+pub(super) const UNIT: [DVec3; 6] = [
     DVec3::X,
     DVec3::Y,
     DVec3::Z,
@@ -109,7 +87,7 @@ const UNIT: [DVec3; 6] = [
 /// The octahedron with every edge a quarter of the unit circle through
 /// its ends: control point where the end tangents meet, weight √½. Each
 /// patch is on the sphere along its edges.
-fn round_octahedron(offset: DVec3) -> Mesh {
+pub(super) fn round_octahedron(offset: DVec3) -> Mesh {
     let verts = UNIT.map(|p| p + offset);
     let mut curves = Vec::new();
     for [a, b, c] in OCTAHEDRON {
@@ -125,7 +103,7 @@ fn round_octahedron(offset: DVec3) -> Mesh {
 
 /// A torus of flat triangles around the z axis: `n` steps around the
 /// axis, `m` around the tube.
-fn torus(n: u32, m: u32, big: f64, small: f64) -> Mesh {
+pub(super) fn torus(n: u32, m: u32, big: f64, small: f64) -> Mesh {
     let mut builder = MeshBuilder::new();
     let f = free(&mut builder);
     for i in 0..n {
@@ -152,7 +130,7 @@ fn torus(n: u32, m: u32, big: f64, small: f64) -> Mesh {
 /// [`cylinder_strip`], two quarter-disc caps at each end, and a flat wall
 /// of two rectangles. Faces are tagged with their planes and cylinder,
 /// offset by `offset`.
-fn half_cylinder(h: f64, offset: DVec3) -> Mesh {
+pub(super) fn half_cylinder(h: f64, offset: DVec3) -> Mesh {
     let mut builder = MeshBuilder::new();
     let at = |x: f64, y: f64, z: f64| DVec3::new(x, y, z) + offset;
     // Bottom: centre, +x, +y, -x; then the same on top.
@@ -201,7 +179,7 @@ fn hand_built_solids_pass() {
     for offset in [DVec3::ZERO, far] {
         let solids = [
             tetrahedron(offset),
-            flat_box(offset, DVec3::new(1.0, 2.0, 3.0)),
+            Mesh::cuboid(offset, DVec3::new(1.0, 2.0, 3.0), 1, &TOL).unwrap(),
             octahedron(UNIT.map(|p| p + offset), &OCTAHEDRON, &[]),
             round_octahedron(offset),
             half_cylinder(2.0, offset),
@@ -509,15 +487,16 @@ fn patches_on_the_same_corners_are_caught() {
 
 #[test]
 fn wrong_face_tags_are_caught() {
-    let mut mesh = flat_box(DVec3::ZERO, DVec3::ONE);
+    // Face 3 is the side on x = 1, triangles 6 and 7.
+    let mut mesh = Mesh::cuboid(DVec3::ZERO, DVec3::ONE, 1, &TOL).unwrap();
     mesh.faces[3].surface = Surface::Plane {
-        n: DVec3::Y,
+        n: DVec3::X,
         d: 1.0 + 2.0 * TOL.resolution(),
     };
     assert_eq!(mesh.check_faces(&TOL), Err(CheckError::Face(6)));
     // Within the resolution it passes.
     mesh.faces[3].surface = Surface::Plane {
-        n: DVec3::Y * 3.0,
+        n: DVec3::X * 3.0,
         d: 3.0 * (1.0 + 0.5 * TOL.resolution()),
     };
     assert_eq!(mesh.check_faces(&TOL), Ok(()));

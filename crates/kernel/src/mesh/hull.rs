@@ -228,63 +228,68 @@ impl Simplex {
     /// The origin's projection onto the affine hull of the points, if its
     /// barycentric coordinates are all non-negative and the points are
     /// clearly affinely independent.
+    ///
+    /// Triangles and tetrahedra are solved with cross and triple products
+    /// of the edges, not the Gram matrix: that squares the conditioning,
+    /// and on a long thin triangle (a hull thousands of times longer than
+    /// it is wide) lost enough digits to put the point off the closest, so
+    /// that GJK stopped short and called hulls far apart not apart.
     fn projection(&self) -> Option<DVec3> {
         let x0 = self.points[0];
         let e = [1, 2, 3].map(|i| self.points[i.min(self.len - 1)] - x0);
-        // Solve G·μ = r, G the Gram matrix of the edges from x0, r_i =
-        // -e_i·x0; the point is x0 + Σ μ_i·e_i.
-        let g = |i: usize, j: usize| e[i].dot(e[j]);
-        let r = |i: usize| -e[i].dot(x0);
-        let mu: [f64; 3] = match self.len {
-            1 => return Some(x0),
+        match self.len {
+            1 => Some(x0),
             2 => {
-                let g00 = g(0, 0);
-                if g00.is_nan() || g00 <= 0.0 {
+                let g = e[0].dot(e[0]);
+                if g.is_nan() || g <= 0.0 {
                     return None;
                 }
-                [r(0) / g00, 0.0, 0.0]
+                let mu = -e[0].dot(x0) / g;
+                (0.0..=1.0).contains(&mu).then(|| x0 + e[0] * mu)
             }
             3 => {
-                let (g00, g01, g11) = (g(0, 0), g(0, 1), g(1, 1));
-                let det = g00 * g11 - g01 * g01;
-                if det.is_nan() || det <= 1e-12 * g00 * g11 {
+                // With n = e0 × e1, x0 + μ0·e0 + μ1·e1 is the projection
+                // for μ0 = -n·(x0 × e1)/n² and μ1 = -n·(e0 × x0)/n².
+                let n = e[0].cross(e[1]);
+                let nn = n.dot(n);
+                if nn.is_nan() || nn <= DEGENERATE * DEGENERATE * e[0].dot(e[0]) * e[1].dot(e[1]) {
                     return None;
                 }
-                let (r0, r1) = (r(0), r(1));
-                [
-                    (r0 * g11 - r1 * g01) / det,
-                    (g00 * r1 - g01 * r0) / det,
-                    0.0,
-                ]
+                let mu0 = -n.dot(x0.cross(e[1])) / nn;
+                let mu1 = -n.dot(e[0].cross(x0)) / nn;
+                if mu0 < 0.0 || mu1 < 0.0 || mu0 + mu1 > 1.0 {
+                    return None;
+                }
+                // The point itself straight from the normal, which rounds
+                // relative to its distance rather than to x0's.
+                Some(n * (n.dot(x0) / nn))
             }
             _ => {
-                let m = glam::DMat3::from_cols(
-                    DVec3::new(g(0, 0), g(1, 0), g(2, 0)),
-                    DVec3::new(g(0, 1), g(1, 1), g(2, 1)),
-                    DVec3::new(g(0, 2), g(1, 2), g(2, 2)),
-                );
-                let det = m.determinant();
-                if det.is_nan() || det <= 1e-12 * g(0, 0) * g(1, 1) * g(2, 2) {
+                // x0 + Σ μi·ei = 0 by Cramer's rule on the edges.
+                let det = e[0].dot(e[1].cross(e[2]));
+                let size = e[0].length() * e[1].length() * e[2].length();
+                if det.is_nan() || det.abs() <= DEGENERATE * size {
                     return None;
                 }
-                let rhs = DVec3::new(r(0), r(1), r(2));
-                // Cramer's rule.
-                let solve = |k: usize| {
-                    let mut cols = [m.x_axis, m.y_axis, m.z_axis];
-                    cols[k] = rhs;
-                    glam::DMat3::from_cols(cols[0], cols[1], cols[2]).determinant() / det
-                };
-                [solve(0), solve(1), solve(2)]
+                let r = -x0;
+                let mu = [
+                    r.dot(e[1].cross(e[2])) / det,
+                    e[0].dot(r.cross(e[2])) / det,
+                    e[0].dot(e[1].cross(r)) / det,
+                ];
+                if mu.iter().any(|&m| m < 0.0) || mu.iter().sum::<f64>() > 1.0 {
+                    return None;
+                }
+                Some(DVec3::ZERO)
             }
-        };
-        let k = self.len - 1;
-        let first = 1.0 - mu[..k].iter().sum::<f64>();
-        if first < 0.0 || mu[..k].iter().any(|&m| m < 0.0) {
-            return None;
         }
-        Some((0..k).fold(x0, |q, i| q + e[i] * mu[i]))
     }
 }
+
+/// Faces of a simplex flatter than this (the sine of the angle between
+/// two edges, or the volume of three over their lengths' product) are
+/// skipped: their points lie within that much of a smaller face.
+const DEGENERATE: f64 = 1e-12;
 
 #[cfg(test)]
 mod tests;
