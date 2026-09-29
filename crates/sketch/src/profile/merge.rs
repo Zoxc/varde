@@ -1,10 +1,9 @@
 //! Several regions as one: [`Profiles::merge`].
 
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
 use std::fmt;
 
-use super::{Piece, Profiles};
+use super::{Piece, Profiles, pinches};
 
 /// Why regions couldn't be merged.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -13,8 +12,9 @@ pub enum MergeError {
     Empty,
     /// There's no region by this index.
     NoRegion(usize),
-    /// The pieces left don't join up into loops: profiles that weren't
-    /// found by [`Sketch::profiles`](crate::Sketch::profiles).
+    /// The pieces left don't join up into loops, or name vertices the
+    /// profiles don't have: profiles that weren't found by
+    /// [`Sketch::profiles`](crate::Sketch::profiles).
     Open,
 }
 
@@ -71,7 +71,7 @@ impl Profiles {
             }
         }
         let alive = cancel(&pieces);
-        trace(&pieces, &next, alive)
+        trace(&pieces, &next, alive, self.vertices.len())
     }
 }
 
@@ -120,21 +120,29 @@ fn cancel(pieces: &[Piece]) -> Vec<bool> {
 /// The `alive` pieces traced into loops that pass no vertex twice, each
 /// piece followed by its `next` in its own loop where that's alive and
 /// not yet taken, or else by the first alive piece not yet taken that
-/// starts where it ends.
+/// starts where it ends. `vertices` is how many there are.
 fn trace(
     pieces: &[Piece],
     next: &[usize],
     alive: Vec<bool>,
+    vertices: usize,
 ) -> Result<Vec<Vec<Piece>>, MergeError> {
+    if pieces
+        .iter()
+        .any(|piece| piece.start >= vertices || piece.end >= vertices)
+    {
+        return Err(MergeError::Open);
+    }
     // The pieces left by the vertex each starts at, in order, and how many
     // of those at the front are taken, as they only ever become.
-    let mut leaving: BTreeMap<usize, (Vec<usize>, usize)> = BTreeMap::new();
+    let mut leaving: Vec<(Vec<usize>, usize)> = vec![(Vec::new(), 0); vertices];
     for (i, piece) in pieces.iter().enumerate() {
         if alive[i] {
-            leaving.entry(piece.start).or_default().0.push(i);
+            leaving[piece.start].0.push(i);
         }
     }
     let mut taken = vec![false; pieces.len()];
+    let mut passed = vec![usize::MAX; vertices];
     let mut loops = Vec::new();
     for first in 0..pieces.len() {
         if !alive[first] || taken[first] {
@@ -144,54 +152,28 @@ fn trace(
         let mut at = first;
         loop {
             taken[at] = true;
-            walk.push(at);
+            walk.push(pieces[at]);
             let end = pieces[at].end;
             let follow = next[at];
             at = if alive[follow] && !taken[follow] && pieces[follow].start == end {
                 follow
             } else {
-                let untaken = leaving.get_mut(&end).and_then(|(out, skip)| {
-                    while out.get(*skip).is_some_and(|&i| taken[i]) {
-                        *skip += 1;
-                    }
-                    out.get(*skip).copied()
-                });
-                match untaken {
-                    Some(i) => i,
+                let (out, skip) = &mut leaving[end];
+                while out.get(*skip).is_some_and(|&i| taken[i]) {
+                    *skip += 1;
+                }
+                match out.get(*skip) {
+                    Some(&i) => i,
                     None => break,
                 }
             };
         }
         // Every vertex has as many pieces left arriving as leaving, so the
         // walk stops where it started.
-        let last = walk[walk.len() - 1];
-        if pieces[last].end != pieces[first].start {
+        if walk[walk.len() - 1].end != walk[0].start {
             return Err(MergeError::Open);
         }
-        pinches(pieces, &walk, &mut loops);
+        pinches(&walk, |piece| piece.start, &mut passed, &mut loops);
     }
     Ok(loops)
-}
-
-/// Cuts the closed `walk` where it passes a vertex twice into loops that
-/// don't, onto `loops`.
-fn pinches(pieces: &[Piece], walk: &[usize], loops: &mut Vec<Vec<Piece>>) {
-    // Where in the path so far each vertex is left from.
-    let mut passed: BTreeMap<usize, usize> = BTreeMap::new();
-    let mut path: Vec<Piece> = Vec::with_capacity(walk.len());
-    for &i in walk {
-        let piece = pieces[i];
-        if let Some(&place) = passed.get(&piece.start) {
-            let closed = path.split_off(place);
-            for passing in &closed {
-                passed.remove(&passing.start);
-            }
-            loops.push(closed);
-        }
-        passed.insert(piece.start, path.len());
-        path.push(piece);
-    }
-    if !path.is_empty() {
-        loops.push(path);
-    }
 }

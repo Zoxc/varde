@@ -379,7 +379,8 @@ details and the timings.
   vertex twice are cut there into loops that don't (regions meeting at a
   corner only: touching loops, which extrude refuses anyway). Picking a
   hole's inside with the region round it fills the hole. `MergeError`:
-  `Empty`, `NoRegion(index)`, `Open` (hand-made profiles only).
+  `Empty`, `NoRegion(index)`, `Open` (hand-made profiles only: pieces
+  that don't join up or name vertices the profiles lack).
 - **References** (`profile/reference.rs`): a `RegionRef { curves, holes,
   inside }` names a region for a feature to keep (serde): the sorted
   curve ids of its outer loop and of each hole (holes' lists sorted too)

@@ -5,14 +5,11 @@ use glam::DVec2;
 use super::*;
 
 /// The exact arc from `a` to `b` round `center`, the shorter way (under
-/// 180°), built without trigonometry: control point `center + (a + b −
-/// 2·center)·2r² / |a + b − 2·center|²`, weight `|a + b − 2·center| / 2r`.
+/// 180°), built without trigonometry ([`Conic2::arc_between`]).
 pub(crate) fn arc(center: DVec2, a: DVec2, b: DVec2, curve: u64) -> Segment {
     let r = (a - center).length();
-    let m = a + b - center * 2.0;
-    let c = center + m * (2.0 * r * r / m.length_squared());
     Segment {
-        conic: Conic2::new(a, c, m.length() / (2.0 * r), b).unwrap(),
+        conic: Conic2::arc_between(center, r, a, b).unwrap(),
         curve,
     }
 }

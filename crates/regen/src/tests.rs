@@ -528,8 +528,14 @@ fn a_failing_draft_leaves_the_model_as_it_was() {
     // One the document refuses: its sketch is the extrude.
     let mut refused = new_body_draft(editor.document(), 4, "3");
     refused.extrude.sketch = editor.document().features()[1].id;
+    // One editing a feature that isn't an extrude.
+    let sketch = Draft {
+        feature: Some(editor.document().features()[0].id),
+        ..new_body_draft(editor.document(), 5, "3")
+    };
     for (draft, error) in [
         (cut, "cutting isn't available yet".to_owned()),
+        (sketch, "the draft's feature isn't an extrude".to_owned()),
         (refused.clone(), {
             let command = editor.document().add_extrude(refused.extrude.clone());
             let mut probe = Editor::new(editor.document().clone());

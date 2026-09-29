@@ -170,6 +170,27 @@ fn four_quarter_arcs_close_the_circle() {
 }
 
 #[test]
+fn arcs_between_their_ends_match_arcs_by_angle() {
+    let center = DVec2::new(3.0, -1.5);
+    for (radius, start, sweep) in [
+        (2.0, 0.3, FRAC_PI_2),
+        (2.0, 0.3, -FRAC_PI_2),
+        (0.5, -2.0, 0.1),
+        (1e4, 1.0, -1.2),
+    ] {
+        let by_angle = Conic2::arc(center, radius, start, sweep).unwrap();
+        let between = Conic2::arc_between(center, radius, by_angle.p0, by_angle.p1).unwrap();
+        let near = 1e-12 * (radius + center.length());
+        assert!(between.c.distance(by_angle.c) <= near, "{radius} {sweep}");
+        assert!((between.w - by_angle.w).abs() <= 1e-12);
+        assert_eq!((between.p0, between.p1), (by_angle.p0, by_angle.p1));
+    }
+    // A half turn has no control point.
+    let (a, b) = (center + DVec2::X, center - DVec2::X);
+    assert!(Conic2::arc_between(center, 1.0, a, b).is_err());
+}
+
+#[test]
 fn bad_arcs_are_refused() {
     let arc = |radius, start, sweep| Conic2::arc(DVec2::ZERO, radius, start, sweep);
     assert!(arc(1.0, 0.0, FRAC_PI_2).is_ok());

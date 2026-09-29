@@ -758,7 +758,8 @@ impl<'c> Graph<'c> {
             bridged.extend(open);
             let mut loops = Vec::new();
             for found in bridged {
-                self.pinches(found, &mut passed, &mut loops, work)?;
+                work.spend(found.len())?;
+                pinches(&found, |h| self.ends(h).0, &mut passed, &mut loops);
             }
             loops.retain(|found| !found.is_empty());
             let areas: Vec<f64> = loops.iter().map(|found| self.area(found)).collect();
@@ -774,38 +775,6 @@ impl<'c> Graph<'c> {
             });
         }
         Ok(walks)
-    }
-
-    /// Cuts the loop `found` where it passes a vertex twice into loops
-    /// that don't, onto `loops`. `passed` is where in the path so far each
-    /// vertex is, by the half-edge leaving it, `usize::MAX` for none, as
-    /// it's left.
-    fn pinches(
-        &self,
-        found: Vec<usize>,
-        passed: &mut [usize],
-        loops: &mut Vec<Vec<usize>>,
-        work: &mut Work,
-    ) -> Result<(), TooComplex> {
-        let mut path: Vec<usize> = Vec::with_capacity(found.len());
-        for h in found {
-            let from = self.ends(h).0;
-            if passed[from] != usize::MAX {
-                let closed = path.split_off(passed[from]);
-                work.spend(closed.len())?;
-                for &g in &closed {
-                    passed[self.ends(g).0] = usize::MAX;
-                }
-                loops.push(closed);
-            }
-            passed[from] = path.len();
-            path.push(h);
-        }
-        for &h in &path {
-            passed[self.ends(h).0] = usize::MAX;
-        }
-        loops.push(path);
-        Ok(())
     }
 
     /// The area `found` encloses, positive counter-clockwise.
@@ -1132,6 +1101,36 @@ fn sort_around(leaving: &mut [Leaving], length: &dyn Fn(usize) -> f64, rounding:
             group.sort_by(|a, b| side(a).total_cmp(&side(b)));
         }
     }
+}
+
+/// Cuts the closed walk `found` where it passes a vertex twice into loops
+/// that don't, onto `loops`, each step leaving the vertex `from` gives.
+/// `passed` is where in the path so far each vertex is left from,
+/// `usize::MAX` for none, as it's given and left: indexed by vertex, so
+/// every vertex must be within it.
+fn pinches<T: Copy>(
+    found: &[T],
+    from: impl Fn(T) -> usize,
+    passed: &mut [usize],
+    loops: &mut Vec<Vec<T>>,
+) {
+    let mut path: Vec<T> = Vec::with_capacity(found.len());
+    for &step in found {
+        let vertex = from(step);
+        if passed[vertex] != usize::MAX {
+            let closed = path.split_off(passed[vertex]);
+            for &passing in &closed {
+                passed[from(passing)] = usize::MAX;
+            }
+            loops.push(closed);
+        }
+        passed[vertex] = path.len();
+        path.push(step);
+    }
+    for &step in &path {
+        passed[from(step)] = usize::MAX;
+    }
+    loops.push(path);
 }
 
 #[cfg(test)]

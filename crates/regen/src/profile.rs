@@ -104,7 +104,6 @@ struct Segments {
 
 impl Segments {
     fn push(&mut self, conic: Conic2, curve: u64) -> Result<(), ProfileError> {
-        conic.check()?;
         self.count += 1;
         if self.count > MAX_PROFILE_SEGMENTS {
             return Err(ProfileError::TooManySegments);
@@ -152,7 +151,8 @@ fn piece_segments(
 
 /// Adds the arc of the circle about `center` of `radius` from `a` to `b`,
 /// turning by `sweep` radians, counter-clockwise if `ccw`: halved until
-/// each part is at most 90°, each part exact.
+/// each part is at most 90°, each part exact
+/// ([`Conic2::arc_between`]).
 #[allow(clippy::too_many_arguments)]
 fn arc(
     center: DVec2,
@@ -186,7 +186,7 @@ fn arc_parts(
     out: &mut Segments,
 ) -> Result<(), ProfileError> {
     if halvings == 0 {
-        return out.push(arc_conic(center, radius, a, b)?, curve);
+        return out.push(Conic2::arc_between(center, radius, a, b)?, curve);
     }
     let middle = arc_middle(center, radius, a, b, sweep, ccw);
     let half = sweep / 2.0;
@@ -232,16 +232,6 @@ fn arc_middle(center: DVec2, radius: f64, a: DVec2, b: DVec2, sweep: f64, ccw: b
         }
     };
     center + direction * (radius / direction.length())
-}
-
-/// The exact conic of the arc about `center` of `radius` from `a` to `b`,
-/// less than 180°: its control point where the tangents at the ends meet,
-/// `center + m·2r²/|m|²` with `m = a + b − 2·center`, and its weight the
-/// cosine of half the angle, `|m| / 2r`.
-fn arc_conic(center: DVec2, radius: f64, a: DVec2, b: DVec2) -> Result<Conic2, PatchError> {
-    let m = a + b - center * 2.0;
-    let control = center + m * (2.0 * radius * radius / m.length_squared());
-    Conic2::new(a, control, m.length() / (2.0 * radius), b)
 }
 
 #[cfg(test)]

@@ -55,7 +55,11 @@ polynomial and de Casteljau and blossoming are exact. The blossom is
   where the end tangents meet (at `r / cos(θ/2)` from the centre, on the
   bisector) and weight `cos(θ/2)` (`Conic2::arc`, `Conic3::arc`, which in
   3D takes the circle's plane as two orthonormal axes; other axes give the
-  matching ellipse arc).
+  matching ellipse arc). Those take angles and use the platform's `cos`
+  and `sin`; `Conic2::arc_between(center, r, a, b)` builds the same arc
+  (under 180°) from its ends without them, so its bits don't depend on the
+  platform: with `m = a + b − 2·center`, `c = center + m·2r²/|m|²` and
+  `w = |m|/2r`. Profiles from sketches are built with it.
 - Weights below 1 give ellipse arcs, 1 parabolas, above 1 hyperbolas.
   Reversing a curve keeps `c` and `w`, so an edge record needs no
   direction.
@@ -1128,8 +1132,7 @@ bit:
   to `b` about `c` is `c + r·d/|d|` with `d` the chord `b − a` turned a
   quarter clockwise (anticlockwise for a clockwise piece), or `−(a − c + b −
   c)` for sweeps over 270°, where the chord vanishes. Each part is exact,
-  without `cos` or `sin`: control point `c + m·2r²/|m|²`, weight `|m|/2r`,
-  `m = a + b − 2c`. `r` is the circle's radius (an arc's start's distance
+  without `cos` or `sin` (`Conic2::arc_between`). `r` is the circle's radius (an arc's start's distance
   from its centre); the parts share their middles to the bit.
 - A spline piece (`src/profile/fit.rs`) is the open `BSpline::piece`
   between its parameters, cut at its breaks into cubic Béziers from the

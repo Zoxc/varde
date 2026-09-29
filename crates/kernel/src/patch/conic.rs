@@ -325,6 +325,18 @@ impl Conic2 {
         let ([p0, c, p1], w) = arc_parts(radius, start, sweep)?;
         Self::new(center + p0, center + c, w, center + p1)
     }
+
+    /// The exact arc of the circle of `radius` around `center` from `a` to
+    /// `b` (both on it), the shorter way round, which must be under 180°,
+    /// built from its ends without `cos` or `sin`, so no platform's maths
+    /// library decides a bit: with `m = a + b − 2·center`, its control
+    /// point `center + m·2r²/|m|²`, where the end tangents meet, and its
+    /// weight `|m|/2r`, the cosine of half the angle.
+    pub fn arc_between(center: DVec2, radius: f64, a: DVec2, b: DVec2) -> Result<Self, PatchError> {
+        let m = a + b - center * 2.0;
+        let control = center + m * (2.0 * radius * radius / m.length_squared());
+        Self::new(a, control, m.length() / (2.0 * radius), b)
+    }
 }
 
 impl Conic3 {

@@ -340,7 +340,17 @@ fn applied(document: &Document, draft: &Draft) -> Result<(Document, FeatureId), 
     let extrude = Box::new(draft.extrude.clone());
     let command = match draft.feature {
         None => document.add_extrude(draft.extrude.clone()),
-        Some(feature) => Command::SetExtrude { feature, extrude },
+        Some(feature) => {
+            // `SetExtrude` leaves anything else as it is, which would
+            // answer the draft as applied.
+            let is_extrude = document
+                .feature(feature)
+                .is_some_and(|feature| matches!(feature.kind, FeatureKind::Extrude(_)));
+            if !is_extrude {
+                return Err("the draft's feature isn't an extrude".to_owned());
+            }
+            Command::SetExtrude { feature, extrude }
+        }
     };
     let mut editor = Editor::new(document.clone());
     editor.apply(command).map_err(|error| error.to_string())?;

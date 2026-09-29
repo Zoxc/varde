@@ -1032,6 +1032,14 @@ fn merging_nothing_or_a_missing_region_fails() {
         Profiles::default().merge(&[usize::MAX]),
         Err(MergeError::NoRegion(usize::MAX))
     );
+    // Hand-made profiles whose pieces don't join up, or name vertices
+    // they don't have.
+    let mut broken = profiles.clone();
+    broken.regions[0].outer.pop();
+    assert_eq!(broken.merge(&[0]), Err(MergeError::Open));
+    let mut broken = profiles.clone();
+    broken.regions[0].outer[0].start = profiles.vertices.len();
+    assert_eq!(broken.merge(&[0]), Err(MergeError::Open));
 }
 
 #[test]
