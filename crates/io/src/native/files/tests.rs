@@ -4,7 +4,7 @@ use varde_document::Document;
 
 use super::*;
 use crate::native::sidecar::sidecar_path;
-use crate::tests::{TempDir, auto_saved_at, with_cube_named};
+use crate::tests::{TempDir, auto_saved_at, with_sketch_named};
 use crate::{Picked, PickedFrom};
 
 fn open(files: &mut Files, path: &Path) -> Result<Opened, String> {
@@ -232,7 +232,7 @@ fn offered(opened: &Opened) -> Option<&Document> {
 
 /// A document other than the example, as an edit would leave it.
 fn edited() -> Arc<Document> {
-    let edited = Arc::new(Document::default());
+    let edited = Arc::new(crate::tests::with_sketches(1));
     assert_ne!(*edited, Document::example());
     edited
 }
@@ -1249,7 +1249,7 @@ fn a_save_keeps_recovered_changes_not_answered_yet() {
     let dir = TempDir::new("files-save-keeps-recovered");
     let design = dir.design();
     // Neither what's saved below nor what `save_as` writes.
-    let recovered = with_cube_named("Recovered");
+    let recovered = with_sketch_named("Recovered");
     crashed_with(&design, &recovered);
     let mut files = Files::new(Stores::default());
     let opened = open(&mut files, &design).unwrap();
@@ -1299,7 +1299,7 @@ fn a_save_keeps_recovered_changes_not_answered_yet() {
 
 /// A version of the design neither the example nor [`edited`].
 fn saved_elsewhere() -> Document {
-    with_cube_named("Saved elsewhere")
+    with_sketch_named("Saved elsewhere")
 }
 
 /// Opens `design` in a lane of its own and auto-saves `document` to it,

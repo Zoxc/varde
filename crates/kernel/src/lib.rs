@@ -4,8 +4,8 @@
 //! passes the mesh's checks, and never stored; a [`RenderMesh`] is a solid
 //! tessellated for drawing ([`Solid::tessellate`], within a [`Display`]'s
 //! targets). Curves drawn with the model, such as sketches, are
-//! [`RenderLines`]. A [`Shape`] is the recipe of a box a document stores
-//! for now, checked as it's read, that [`build`](Shape::build)s a solid.
+//! [`RenderLines`]. Documents store no solids: they store the features
+//! that build them.
 //!
 //! Booleans are to be built the way
 //! [manifold](https://github.com/elalish/manifold) builds them for flat
@@ -23,7 +23,6 @@ mod par;
 pub mod patch;
 mod render_lines;
 mod render_mesh;
-mod shape;
 mod solid;
 mod tessellate;
 #[cfg(test)]
@@ -35,14 +34,14 @@ pub use budget::Budget;
 pub use error::KernelError;
 pub use render_lines::{LinesError, LinesPart, RenderLines};
 pub use render_mesh::{MeshError, MeshPart, RenderMesh};
-pub use shape::{Shape, ShapeError};
 pub use solid::Solid;
 pub use tessellate::Display;
 pub use tolerance::Tolerance;
 
-/// The largest coordinate or size, in model units, a shape or a position
-/// may have. A file could carry any `f32`, and NaN would make a document
-/// unequal to itself, while tessellation adds positions to sizes and
+/// The largest coordinate or size, in model units, a design may have: its
+/// sketches' coordinates and lengths, and so the solids built from them. A
+/// file could carry any number, and NaN would make a document unequal to
+/// itself, while tessellation adds positions to sizes and
 /// multiplies edge lengths, which overflow to infinity well within the
 /// `f32` range. Within this bound they cannot, and meshes stay within
 /// [`RenderMesh::MAX_POSITION`].
@@ -64,9 +63,3 @@ pub const MAX_REFINE_DEPTH: u32 = 24;
 /// in about half a microsecond on one thread. So an operation stops after
 /// about half a minute of work at most.
 pub const MAX_WORK: u64 = 1 << 26;
-
-/// Whether `position` is somewhere a solid may be placed: every coordinate
-/// within [`MAX_COORD`] of zero, and so finite.
-pub fn position_in_range(position: glam::Vec3) -> bool {
-    position.abs().cmple(glam::Vec3::splat(MAX_COORD)).all()
-}

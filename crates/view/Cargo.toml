@@ -18,5 +18,3 @@ log.workspace = true
 [dev-dependencies]
 # Blocks on wgpu setup in headless render tests.
 pollster.workspace = true
-# Builds the meshes the viewport tests show.
-varde-regen.workspace = true

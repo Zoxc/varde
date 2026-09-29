@@ -104,7 +104,6 @@ pub enum Edit {
     /// Hides why the last save failed.
     DismissSaveError,
     ToggleFileMenu,
-    AddCube,
     RemoveBody(BodyId),
     ToggleVisible(BodyId),
     /// Adds a sketch on `plane` and edits it.

@@ -1,13 +1,11 @@
 use std::fs::{File, OpenOptions};
 use std::sync::Arc;
 
-use varde_document::Document;
-
 use super::Origin::{Downloaded, Edited};
 use super::*;
-use crate::tests::{TempDir, with_bodies};
+use crate::tests::{TempDir, with_sketches};
 
-/// A plain file in `dir` holding a design with as many bodies as each of
+/// A plain file in `dir` holding a design with as many sketches as each of
 /// `records` says, auto-saved in turn, marked as downloaded where it says
 /// so. The rules of [`Held::end`] are the web's too, which holds an entry
 /// through another [`Storage`].
@@ -20,18 +18,18 @@ fn held(dir: &TempDir, records: &[(usize, Origin)]) -> Held<File> {
         .open(dir.0.join("entry"))
         .unwrap();
     let mut held = Held::new(file);
-    for &(bodies, origin) in records {
-        held.append(None, None, &Arc::new(with_bodies(bodies)), origin)
+    for &(sketches, origin) in records {
+        held.append(None, None, &Arc::new(with_sketches(sketches)), origin)
             .unwrap();
     }
     held
 }
 
-/// The number of bodies of the design `held` holds, if any.
-fn bodies(held: &mut Held<File>) -> Option<usize> {
+/// The number of sketches of the design `held` holds, if any.
+fn sketches(held: &mut Held<File>) -> Option<usize> {
     held.read()
         .unwrap()
-        .map(|saved| saved.document.bodies().len())
+        .map(|saved| saved.document.features().len())
 }
 
 /// The clean close empties it to be deleted, whatever is in it.
@@ -40,7 +38,7 @@ fn ending_with_close_empties_it() {
     let dir = TempDir::new("held-close");
     let mut entry = held(&dir, &[(1, Downloaded), (0, Edited)]);
     assert!(entry.end(Ending::Close).unwrap());
-    assert_eq!(bodies(&mut entry), None);
+    assert_eq!(sketches(&mut entry), None);
 }
 
 /// Released, it's deleted only if there's nothing in it, which stays.
@@ -49,7 +47,7 @@ fn ending_with_release_keeps_what_is_in_it() {
     let dir = TempDir::new("held-release");
     let mut entry = held(&dir, &[(1, Edited), (0, Downloaded)]);
     assert!(!entry.end(Ending::Release).unwrap());
-    assert_eq!(bodies(&mut entry), Some(0));
+    assert_eq!(sketches(&mut entry), Some(0));
     entry.clear().unwrap();
     assert!(entry.end(Ending::Release).unwrap());
 }
@@ -64,11 +62,11 @@ fn ending_with_close_but_downloaded_goes_back_to_the_download() {
     assert!(!entry.end(Ending::CloseButDownloaded).unwrap());
     let saved = entry.read().unwrap().unwrap();
     assert!(saved.origin.is_download());
-    assert_eq!(saved.document.bodies().len(), 1);
+    assert_eq!(saved.document.features().len(), 1);
 
     let mut never = held(&dir, &[(1, Edited)]);
     assert!(never.end(Ending::CloseButDownloaded).unwrap());
-    assert_eq!(bodies(&mut never), None);
+    assert_eq!(sketches(&mut never), None);
 }
 
 /// Only one that may hold a download reads for it: one auto-saved as
@@ -86,7 +84,7 @@ fn ending_with_close_but_downloaded_reads_only_what_may_hold_one() {
         .into_storage();
     let mut again = Held::new(file).left_behind();
     assert!(!again.end(Ending::CloseButDownloaded).unwrap());
-    assert_eq!(bodies(&mut again), Some(1));
+    assert_eq!(sketches(&mut again), Some(1));
 }
 
 /// Discarding from the welcome screen takes the design as downloaded when
@@ -97,9 +95,9 @@ fn ending_with_discard_keeps_a_download_under_changes() {
     let dir = TempDir::new("held-discard");
     let mut entry = held(&dir, &[(1, Downloaded), (0, Edited)]).left_behind();
     assert!(!entry.end(Ending::Discard).unwrap());
-    assert_eq!(bodies(&mut entry), Some(1));
+    assert_eq!(sketches(&mut entry), Some(1));
     assert!(entry.end(Ending::Discard).unwrap());
-    assert_eq!(bodies(&mut entry), None);
+    assert_eq!(sketches(&mut entry), None);
 
     let mut never = held(&dir, &[(1, Edited)]);
     assert!(never.end(Ending::Discard).unwrap());
@@ -114,18 +112,18 @@ fn checking_an_auto_save_says_what_is_wrong() {
         document: postcard::from_bytes(document).unwrap(),
         origin: Origin::Edited,
     };
-    let document = Document::example().to_postcard();
+    let document = with_sketches(1).to_postcard();
     assert!(AutoSaved::check(unchecked(Some("a".into()), &document)).is_ok());
     assert_eq!(
         AutoSaved::check(unchecked(Some("é".repeat(70_000)), &document)).err(),
         Some(AutoSavedError::Name(140_000))
     );
-    // The next id, now 0, which the cube's id 0 isn't below.
+    // The next id, now 0, which the sketch's id 0 isn't below.
     let mut invalid = document;
     *invalid.last_mut().unwrap() = 0;
     assert!(matches!(
         AutoSaved::check(unchecked(None, &invalid)),
-        Err(AutoSavedError::Document(CheckError::NextId(_)))
+        Err(AutoSavedError::Document(CheckError::FeatureNextId(_)))
     ));
 }
 

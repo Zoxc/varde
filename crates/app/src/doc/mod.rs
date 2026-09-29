@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use glam::Vec3;
 use iced::Element;
 use varde_document::name::UNTITLED;
-use varde_document::{CUBE_SIZE, Command, Document, EditError, Editor, FeatureId, LengthUnit};
+use varde_document::{Command, Document, EditError, Editor, FeatureId, LengthUnit};
 use varde_io::{Access, Offer, OpenId};
 use varde_render::{Camera, Projection};
 use varde_solve::{Request as SolveRequest, Transport};
@@ -121,11 +121,11 @@ impl Origin {
     }
 }
 
-/// Where Home and the view cube turn the camera to look at: the centre of
-/// the first cube Add Cube makes.
-const HOME_TARGET: Vec3 = Vec3::splat(CUBE_SIZE / 2.0);
+/// Where Home and the view cube turn the camera to look at: a point just
+/// off the origin, so a part drawn from it is in view.
+const HOME_TARGET: Vec3 = Vec3::splat(1.0);
 
-/// The camera Home turns to, framed on the first cube.
+/// The camera Home turns to, framed on the origin.
 fn home_camera(projection: Projection) -> Camera {
     let mut camera = Camera::default();
     camera.set_projection(projection);
@@ -241,7 +241,6 @@ impl Doc {
         match message {
             Edit::ToggleFileMenu => self.file_menu = !self.file_menu,
             Edit::DismissSaveError => self.dismiss_save_error(),
-            Edit::AddCube => self.apply(self.editor.document().add_cube()),
             Edit::RemoveBody(id) => self.apply(Command::RemoveBody(id)),
             Edit::ToggleVisible(id) => {
                 if let Some(body) = self.editor.document().body(id) {

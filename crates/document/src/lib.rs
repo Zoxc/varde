@@ -8,20 +8,21 @@ pub mod codec;
 mod editor;
 mod feature;
 pub mod name;
+#[cfg(test)]
+mod testing;
 
 pub use codec::DecodeError;
-pub use editor::{CUBE_SIZE, Command, Editor, Generation, Revision};
+pub use editor::{Command, Editor, Generation, Revision};
 pub use feature::{Feature, FeatureId, FeatureKind, OriginPlane, Placement, Plane};
 
 use std::fmt;
 use std::sync::Arc;
 
-use glam::Vec3;
 use serde::{Deserialize, Serialize};
 // The types and limits the model's API names, so that clients editing a
 // document need only this crate.
 pub use varde_expr::LengthUnit;
-pub use varde_kernel::{MAX_COORD, Shape, ShapeError};
+pub use varde_kernel::MAX_COORD;
 pub use varde_sketch::{Design, Sketch, SketchError};
 
 /// The application's name, as the user sees it.
@@ -45,13 +46,16 @@ pub struct BodyId(u64);
 /// stalls it or overflows text shaping.
 pub const MAX_NAME_LEN: usize = 1024;
 
+/// A body: a solid the feature history makes. The document holds only
+/// its name and whether it's shown, and which feature makes it; its
+/// geometry is whatever regenerating the history gives it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Body {
     pub id: BodyId,
     pub name: String,
-    pub shape: Shape,
-    pub position: Vec3,
     pub visible: bool,
+    /// The feature that makes the body, listed in the document.
+    pub created_by: FeatureId,
 }
 
 /// The fields are private so that a document passes [`Document::check`]
@@ -115,14 +119,10 @@ impl TryFrom<Unchecked> for Document {
 }
 
 impl Document {
-    /// A document holding the cube [`add_cube`](Document::add_cube) adds
-    /// to a new one: "Cube 1", with a corner at the origin.
+    /// The document a new design shows off: empty, until there's a
+    /// feature that makes a body.
     pub fn example() -> Self {
-        let mut editor = Editor::new(Document::default());
-        editor
-            .apply(editor.document().add_cube())
-            .expect("a new document takes a cube");
-        editor.document().clone()
+        Document::default()
     }
 
     /// A new id for a body or a feature. Fails, leaving the document as it
@@ -134,29 +134,10 @@ impl Document {
         Ok(id)
     }
 
-    /// Adds a body with a new id, see [`new_id`](Document::new_id). New
-    /// ids are the highest, so it goes last, keeping the bodies in order.
-    /// The rest of [`Document::check`] is up to the caller, as
-    /// [`Editor::apply`] does.
-    pub(crate) fn add_body(
-        &mut self,
-        name: impl Into<String>,
-        shape: Shape,
-        position: Vec3,
-    ) -> Result<BodyId, EditError> {
-        let id = BodyId(self.new_id()?);
-        self.bodies.push(Body {
-            id,
-            name: name.into(),
-            shape,
-            position,
-            visible: true,
-        });
-        Ok(id)
-    }
-
-    /// Adds a visible feature with a new id, like
-    /// [`add_body`](Document::add_body).
+    /// Adds a visible feature with a new id, see
+    /// [`new_id`](Document::new_id). New ids are the highest, so it goes
+    /// last, keeping the features in order. The rest of
+    /// [`Document::check`] is up to the caller, as [`Editor::apply`] does.
     pub(crate) fn add_feature(
         &mut self,
         name: impl Into<String>,
@@ -221,23 +202,29 @@ impl Document {
     /// [`Editor::apply`] refuses a command that does: body ids are in
     /// increasing order and below `next_id`, so bodies added later get new
     /// ids and come last, where an edit adds them, and the same for
-    /// feature ids, no name is longer than [`MAX_NAME_LEN`], every
-    /// coordinate is within [`MAX_COORD`], every cuboid size above zero,
-    /// and every sketch passes [`Sketch::check`] against [`MAX_COORD`] and
-    /// the document's units ([`Document::design`]), so every dimension's
-    /// expression gives its value in them.
+    /// feature ids, no name is longer than [`MAX_NAME_LEN`], every body
+    /// is made by a feature the document holds, and every sketch passes
+    /// [`Sketch::check`] against [`MAX_COORD`] and the document's units
+    /// ([`Document::design`]), so every dimension's expression gives its
+    /// value in them.
     pub fn check(&self) -> Result<(), CheckError> {
+        // Features first: a body's creator is found by binary search, which
+        // needs them in order.
+        if let Some(pair) = self
+            .features
+            .windows(2)
+            .find(|pair| pair[0].id >= pair[1].id)
+        {
+            return Err(CheckError::FeatureOrder(pair[1].id, pair[0].id));
+        }
         for body in &self.bodies {
             let id = body.id;
-            if !varde_kernel::position_in_range(body.position) {
-                return Err(CheckError::Position(id, body.position));
-            }
             if body.name.len() > MAX_NAME_LEN {
                 return Err(CheckError::NameLength(id, body.name.len()));
             }
-            body.shape
-                .check()
-                .map_err(|why| CheckError::Shape(id, why))?;
+            if self.feature_index(body.created_by).is_none() {
+                return Err(CheckError::Creator(id, body.created_by));
+            }
         }
         for feature in &self.features {
             let id = feature.id;
@@ -258,13 +245,6 @@ impl Document {
         {
             return Err(CheckError::NextId(last.id));
         }
-        if let Some(pair) = self
-            .features
-            .windows(2)
-            .find(|pair| pair[0].id >= pair[1].id)
-        {
-            return Err(CheckError::FeatureOrder(pair[1].id, pair[0].id));
-        }
         match self.features.last() {
             Some(last) if last.id.0 >= self.next_id => Err(CheckError::FeatureNextId(last.id)),
             _ => Ok(()),
@@ -275,12 +255,10 @@ impl Document {
 /// Why a [`Document`] fails [`Document::check`], and where.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CheckError {
-    /// A body's position is past [`MAX_COORD`], or not a number.
-    Position(BodyId, Vec3),
     /// A body's name is this many bytes, over [`MAX_NAME_LEN`].
     NameLength(BodyId, usize),
-    /// A body's shape fails [`Shape::check`].
-    Shape(BodyId, ShapeError),
+    /// A body is made by a feature the document doesn't hold.
+    Creator(BodyId, FeatureId),
     /// The first body's id doesn't come after the second's, the one
     /// before it.
     Order(BodyId, BodyId),
@@ -300,17 +278,16 @@ pub enum CheckError {
 impl fmt::Display for CheckError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            CheckError::Position(id, position) => write!(
-                f,
-                "body {} is at {position}, outside the limit of {MAX_COORD}",
-                id.0
-            ),
             CheckError::NameLength(id, len) => write!(
                 f,
                 "body {} has a name of {len} bytes, over the limit of {MAX_NAME_LEN}",
                 id.0
             ),
-            CheckError::Shape(id, why) => write!(f, "body {}: {why}", id.0),
+            CheckError::Creator(id, feature) => write!(
+                f,
+                "body {} is made by feature {}, which isn't there",
+                id.0, feature.0
+            ),
             CheckError::Order(id, before) => {
                 write!(f, "body id {} doesn't come after {}", id.0, before.0)
             }
@@ -334,7 +311,6 @@ impl fmt::Display for CheckError {
 impl std::error::Error for CheckError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            CheckError::Shape(_, why) => Some(why),
             CheckError::Sketch(_, why) => Some(why),
             _ => None,
         }

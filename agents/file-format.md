@@ -7,8 +7,9 @@ crash-safe (a torn final record is ignored and later truncated), access is
 guarded by file locks, and a save fails with a conflict if the file changed
 since it was opened.
 
-A document (`crates/document/src/lib.rs`) holds its bodies (a name, a
-`Shape`, a position, whether it's visible), its features (a name, whether
+A document (`crates/document/src/lib.rs`) holds its bodies (a name,
+whether it's visible and the feature that makes it: no geometry, which
+regenerating the feature history gives), its features (a name, whether
 it's visible, and for now always a sketch: an origin plane, XY, XZ or YZ,
 and the `varde_sketch::Sketch`, whose points, lines, circles, arcs
 (a fillet an arc and a chamfer a line with a `Corner`: the two lines and
@@ -23,7 +24,8 @@ typed and its value), the design's units (a
 `varde_expr::LengthUnit`, millimetres by default) and the next id bodies
 and features take. A document read from a file is checked
 (`Document::check`, which runs `Sketch::check` on each sketch): body and
-feature ids increasing and below the next id, names, coordinates, radii
+feature ids increasing and below the next id, every body made by a
+feature the document holds, names, coordinates, radii
 and labels within bounds, a sketch's item counts bounded, every reference
 naming an item of the right kind, every fillet and chamfer on a corner
 of two lines ending at its point, every spline's point count (at most

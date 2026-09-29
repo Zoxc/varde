@@ -1,23 +1,23 @@
 use std::sync::Arc;
 
-use glam::Vec3;
-use varde_document::{Command, Document, Editor};
-use varde_kernel::{MeshPart, Shape};
+use varde_document::{Document, Editor};
+use varde_kernel::{Display, MeshPart, Solid, Tolerance};
 
 use super::*;
 use crate::handle;
 use crate::tests::sketched;
 
-fn two_cubes() -> Editor {
-    let mut editor = Editor::new(Document::example());
-    editor
-        .apply(Command::AddBody {
-            name: "Cube 2".to_owned(),
-            shape: Shape::cuboid(Vec3::splat(1.0)),
-            position: Vec3::X * 3.0,
-        })
+/// A box and a cylinder, as regenerating a document with them would draw
+/// them.
+fn two_solids() -> RenderMesh {
+    let tol = Tolerance::DEFAULT;
+    let cuboid = Solid::cuboid(glam::DVec3::ZERO, glam::DVec3::ONE, 1, &tol).unwrap();
+    let cylinder = Solid::cylinder(glam::DVec3::X * 3.0, 1.0, 2.0, 2, &tol).unwrap();
+    let display = Display::new(&tol);
+    let mut mesh = cuboid.tessellate(&display).unwrap();
+    mesh.append(&cylinder.tessellate(&display).unwrap())
         .unwrap();
-    editor
+    mesh
 }
 
 fn regenerate(editor: &Editor) -> Request {
@@ -47,14 +47,14 @@ fn round_trip(response: &Response) -> Response {
 
 #[test]
 fn request_round_trips() {
-    let editor = two_cubes();
+    let (editor, _) = sketched();
     let bytes = encode_request(&regenerate(&editor));
     let Request::Regenerate {
         generation,
         document,
         exclude,
     } = decode_request(&bytes).unwrap();
-    assert_eq!(u64::from(generation), 1);
+    assert_eq!(generation, editor.generation());
     assert_eq!(*document, *editor.document());
     assert_eq!(exclude, None);
 }
@@ -88,16 +88,14 @@ fn request_leaving_out_a_sketch_round_trips() {
 #[test]
 fn regenerated_round_trips() {
     let (mut editor, _) = sketched();
-    editor
-        .apply(Command::AddBody {
-            name: "Cube 2".to_owned(),
-            shape: Shape::cuboid(Vec3::splat(1.0)),
-            position: Vec3::X * 3.0,
-        })
-        .unwrap();
     let unsolved = crate::tests::unsolvable(&mut editor);
     let bytes = encode_request(&regenerate(&editor));
-    let response = handle(decode_request(&bytes).unwrap());
+    let mut response = handle(decode_request(&bytes).unwrap());
+    // No feature makes a body yet, so the model is put in by hand.
+    let Response::Regenerated { mesh, .. } = &mut response else {
+        panic!("regeneration failed");
+    };
+    *mesh = Arc::new(two_solids());
     let Response::Regenerated {
         generation,
         exclude,
@@ -111,8 +109,8 @@ fn regenerated_round_trips() {
     assert_eq!(generation, editor.generation());
     assert_eq!(exclude, None);
     assert_eq!(marked, [unsolved]);
-    assert_eq!(*mesh, crate::tessellate(editor.document()).unwrap());
-    assert_eq!(mesh.triangle_count(), 24);
+    assert_eq!(*mesh, two_solids());
+    assert!(!mesh.edges().is_empty());
     assert_eq!(
         *sketches,
         crate::flatten_sketches(editor.document(), None).unwrap()
@@ -207,7 +205,7 @@ fn unbounded_positions_fail_their_generation() {
 
 #[test]
 fn malformed_request_is_an_error() {
-    let request = encode_request(&regenerate(&two_cubes()));
+    let request = encode_request(&regenerate(&sketched().0));
     let mut garbage = request[..2].to_vec();
     garbage.extend([64, 0xff]);
     garbage.extend([0xff; 63]);
@@ -226,7 +224,7 @@ fn malformed_request_is_an_error() {
 
 #[test]
 fn bytes_after_the_request_are_an_error() {
-    let mut request = encode_request(&regenerate(&two_cubes()));
+    let mut request = encode_request(&regenerate(&sketched().0));
     request.push(0);
     assert_eq!(
         decode_request(&request).unwrap_err().to_string(),
@@ -557,7 +555,7 @@ fn random_bytes_never_panic() {
 #[test]
 fn damaged_encodings_never_panic() {
     let mut rng = Rng(0xdecade);
-    let request = encode_request(&regenerate(&two_cubes()));
+    let request = encode_request(&regenerate(&sketched().0));
     let (head, _) = encode_reply(&handle(decode_request(&request).unwrap()));
     let parts = triangle();
     let failed = Head::Failed {

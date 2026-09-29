@@ -1,9 +1,10 @@
 use super::*;
+use crate::testing::{add_body, with_body};
 use crate::{CheckError, Design, FeatureId, FeatureKind, Plane, Sketch};
 
 #[test]
 fn undo_redo_roundtrip() {
-    let mut editor = Editor::new(Document::example());
+    let mut editor = Editor::new(with_body());
     let id = editor.document().bodies[0].id;
 
     editor.apply(Command::RemoveBody(id)).unwrap();
@@ -19,7 +20,7 @@ fn undo_redo_roundtrip() {
 
 #[test]
 fn undo_and_redo_give_a_state_back_its_revision() {
-    let mut editor = Editor::new(Document::example());
+    let mut editor = Editor::new(with_body());
     let id = editor.document().bodies[0].id;
     let loaded = editor.revision();
     let generation = editor.generation();
@@ -47,7 +48,7 @@ fn undo_and_redo_give_a_state_back_its_revision() {
 
 #[test]
 fn snapshot_is_shared_and_unaffected_by_edits() {
-    let mut editor = Editor::new(Document::example());
+    let mut editor = Editor::new(with_body());
     let snapshot = editor.snapshot();
     assert!(Arc::ptr_eq(&snapshot, &editor.snapshot()));
 
@@ -59,7 +60,7 @@ fn snapshot_is_shared_and_unaffected_by_edits() {
 
 #[test]
 fn edits_that_change_nothing_are_dropped() {
-    let mut editor = Editor::new(Document::example());
+    let mut editor = Editor::new(with_body());
     let snapshot = editor.snapshot();
     let id = editor.document().bodies[0].id;
     let missing = BodyId(id.0 + 1);
@@ -68,7 +69,7 @@ fn edits_that_change_nothing_are_dropped() {
     editor.apply(Command::SetVisible(missing, false)).unwrap();
     editor.apply(Command::SetVisible(id, true)).unwrap();
     editor
-        .apply(Command::Replace(Box::new(Document::example())))
+        .apply(Command::Replace(Box::new(with_body())))
         .unwrap();
 
     assert!(Arc::ptr_eq(&snapshot, &editor.snapshot()));
@@ -76,57 +77,20 @@ fn edits_that_change_nothing_are_dropped() {
     assert!(!editor.can_undo());
 }
 
-fn add_cube() -> Command {
-    Command::AddBody {
-        name: "Cube".to_owned(),
-        shape: varde_kernel::Shape::cuboid(glam::Vec3::ONE),
-        position: glam::Vec3::ZERO,
-    }
-}
-
-#[test]
-fn adding_a_body_past_the_last_id_fails() {
-    // `next_id` comes from the file, so it can be anything.
-    let document = Document {
-        next_id: u64::MAX,
-        ..Document::default()
-    };
-    let document = Document::from_postcard(&document.to_postcard()).unwrap();
-    let mut editor = Editor::new(document);
-    assert_eq!(editor.apply(add_cube()), Err(EditError::OutOfIds));
-    assert!(editor.document().bodies.is_empty());
-    assert_eq!(editor.revision(), Revision(0));
-    assert!(!editor.can_undo());
-
-    let mut editor = Editor::new(Document {
-        next_id: u64::MAX - 1,
-        ..Document::default()
-    });
-    editor.apply(add_cube()).unwrap();
-    assert_eq!(editor.document().bodies[0].id, BodyId(u64::MAX - 1));
-    assert_eq!(editor.apply(add_cube()), Err(EditError::OutOfIds));
-    assert_eq!(editor.document().bodies.len(), 1);
-    assert_eq!(editor.revision(), Revision(1));
-}
-
 #[test]
 fn check_refuses_ids_a_new_body_could_reuse() {
-    let mut document = Document::example();
+    let mut document = with_body();
     assert_eq!(document.check(), Ok(()));
     document.next_id = 0;
     let first = document.bodies[0].id;
+    let feature = document.features[0].id;
+    // Bodies and features take ids from one counter.
+    assert_eq!(first.0, feature.0 + 1);
     assert_eq!(document.check(), Err(CheckError::NextId(first)));
     assert!(Document::from_postcard(&document.to_postcard()).is_err());
 
-    let mut document = Document::example();
-    document
-        .add_body(
-            "Twin",
-            varde_kernel::Shape::cuboid(glam::Vec3::ONE),
-            glam::Vec3::ZERO,
-        )
-        .unwrap();
-    let second = document.bodies[1].id;
+    let mut document = with_body();
+    let second = add_body(&mut document, "Twin", feature);
     assert_eq!(document.check(), Ok(()));
     assert_eq!(document.body(second).map(|b| b.name.as_str()), Some("Twin"));
 
@@ -142,8 +106,47 @@ fn check_refuses_ids_a_new_body_could_reuse() {
 }
 
 #[test]
+fn check_refuses_a_body_no_feature_makes() {
+    let mut document = with_body();
+    let body = document.bodies[0].id;
+    let missing = FeatureId(document.next_id);
+    document.bodies[0].created_by = missing;
+    assert_eq!(document.check(), Err(CheckError::Creator(body, missing)));
+    assert!(Document::from_postcard(&document.to_postcard()).is_err());
+    // A body's id isn't a feature's.
+    document.bodies[0].created_by = FeatureId(body.0);
+    assert_eq!(
+        document.check(),
+        Err(CheckError::Creator(body, FeatureId(body.0)))
+    );
+}
+
+#[test]
+fn removing_a_feature_removes_the_bodies_it_makes() {
+    let mut document = with_body();
+    let first = document.features[0].id;
+    let second = document
+        .add_feature(
+            "Sketch 2",
+            FeatureKind::Sketch {
+                plane: XY,
+                sketch: Sketch::default(),
+            },
+        )
+        .unwrap();
+    let kept = add_body(&mut document, "Body 2", second);
+    let mut editor = Editor::new(document.clone());
+    editor.apply(Command::RemoveFeature(first)).unwrap();
+    let bodies: Vec<_> = editor.document().bodies().iter().map(|b| b.id).collect();
+    assert_eq!(bodies, [kept]);
+    // One step to undo.
+    editor.undo();
+    assert_eq!(*editor.document(), document);
+}
+
+#[test]
 fn check_refuses_long_names() {
-    let mut document = Document::example();
+    let mut document = with_body();
     document.bodies[0].name = "é".repeat(crate::MAX_NAME_LEN / 2);
     assert_eq!(document.check(), Ok(()));
     // Long enough to overflow text shaping, yet a small file.
@@ -159,49 +162,17 @@ fn check_refuses_long_names() {
 }
 
 #[test]
-fn check_refuses_geometry_out_of_bounds() {
-    let refused = |edit: &dyn Fn(&mut Document)| {
-        let mut document = Document::example();
-        edit(&mut document);
-        assert!(document.check().is_err());
-        assert!(matches!(
-            Document::from_postcard(&document.to_postcard()),
-            Err(crate::DecodeError { .. })
-        ));
-    };
-    let mut document = Document::example();
-    document.bodies[0].position = Vec3::splat(-crate::MAX_COORD);
-    document.bodies[0].shape = Shape::cuboid(Vec3::splat(crate::MAX_COORD));
-    assert_eq!(document.check(), Ok(()));
-
-    // NaN would make the document unequal to itself, so no-op edits count.
-    for bad in [f32::NAN, f32::INFINITY, 1e20, 3e38] {
-        refused(&|d| d.bodies[0].position = Vec3::new(0.0, bad, 0.0));
-        refused(&|d| d.bodies[0].shape = Shape::cuboid(Vec3::new(1.0, 1.0, bad)));
-    }
-    for bad in [0.0, -1.0, f32::NAN] {
-        refused(&|d| d.bodies[0].shape = Shape::cuboid(Vec3::new(2.0, bad, 2.0)));
-    }
-    let mut flat = Document::example();
-    flat.bodies[0].shape = Shape::cuboid(Vec3::new(2.0, 0.0, 2.0));
-    assert!(matches!(
-        flat.check(),
-        Err(CheckError::Shape(id, crate::ShapeError::Size(_))) if id == flat.bodies[0].id
-    ));
-}
-
-#[test]
 fn replace_is_one_undoable_edit() {
-    let mut editor = Editor::new(Document::example());
+    let mut editor = Editor::new(with_body());
     editor.apply(Command::Replace(Box::default())).unwrap();
     assert_eq!(*editor.document(), Document::default());
     assert_eq!(editor.revision(), Revision(1));
     editor.undo();
-    assert_eq!(*editor.document(), Document::example());
+    assert_eq!(*editor.document(), with_body());
 
     // Replacing it with what it is changes nothing.
     editor
-        .apply(Command::Replace(Box::new(Document::example())))
+        .apply(Command::Replace(Box::new(with_body())))
         .unwrap();
     assert_eq!(editor.revision(), Revision(0));
     assert!(editor.can_redo());
@@ -209,9 +180,9 @@ fn replace_is_one_undoable_edit() {
 
 #[test]
 fn the_lineage_changes_only_across_a_replacement() {
-    let mut editor = Editor::new(Document::example());
+    let mut editor = Editor::new(with_body());
     let first = editor.lineage();
-    editor.apply(add_cube()).unwrap();
+    editor.apply(editor.document().add_sketch(XY)).unwrap();
     editor.undo();
     editor.redo();
     assert_eq!(editor.lineage(), first);
@@ -219,7 +190,7 @@ fn the_lineage_changes_only_across_a_replacement() {
     editor.apply(Command::Replace(Box::default())).unwrap();
     let replaced = editor.lineage();
     assert_ne!(replaced, first);
-    editor.apply(add_cube()).unwrap();
+    editor.apply(editor.document().add_sketch(XY)).unwrap();
     assert_eq!(editor.lineage(), replaced);
     editor.undo();
     assert_eq!(editor.lineage(), replaced);
@@ -231,43 +202,31 @@ fn the_lineage_changes_only_across_a_replacement() {
 
 #[test]
 fn edits_that_fail_check_are_refused() {
-    let mut editor = Editor::new(Document::example());
-    for position in [Vec3::new(0.0, 2.0 * crate::MAX_COORD, 0.0), Vec3::NAN] {
-        let add = Command::AddBody {
-            name: "Far".to_owned(),
-            shape: Shape::cuboid(Vec3::ONE),
-            position,
-        };
-        assert!(matches!(
-            editor.apply(add),
-            Err(EditError::Invalid(CheckError::Position(..)))
-        ));
-    }
-    let add = Command::AddBody {
+    let mut editor = Editor::new(with_body());
+    let add = Command::AddSketch {
         name: "é".repeat(crate::MAX_NAME_LEN),
-        shape: Shape::cuboid(Vec3::ONE),
-        position: Vec3::ZERO,
+        plane: XY,
     };
     assert!(matches!(
         editor.apply(add),
-        Err(EditError::Invalid(CheckError::NameLength(..)))
+        Err(EditError::Invalid(CheckError::FeatureNameLength(..)))
     ));
 
-    let mut replacement = Document::example();
+    let mut replacement = with_body();
     replacement.next_id = 0;
     assert!(matches!(
         editor.apply(Command::Replace(Box::new(replacement))),
         Err(EditError::Invalid(_))
     ));
 
-    assert_eq!(*editor.document(), Document::example());
+    assert_eq!(*editor.document(), with_body());
     assert_eq!(editor.revision(), Revision(0));
     assert!(!editor.can_undo());
 }
 
 #[test]
 fn undo_forgets_the_oldest_edits_past_the_cap() {
-    let mut editor = Editor::new(Document::example());
+    let mut editor = Editor::new(with_body());
     let id = editor.document().bodies[0].id;
     for i in 0..MAX_UNDO + 1 {
         editor.apply(Command::SetVisible(id, i % 2 == 1)).unwrap();
@@ -288,38 +247,6 @@ fn undo_forgets_the_oldest_edits_past_the_cap() {
     assert_eq!(editor.undo.len(), MAX_UNDO);
 }
 
-#[test]
-fn add_cube_numbers_and_places_past_the_bodies() {
-    let mut editor = Editor::new(Document::default());
-    assert_eq!(
-        editor.document().add_cube(),
-        Command::AddBody {
-            name: "Cube 1".to_owned(),
-            shape: Shape::cuboid(Vec3::splat(CUBE_SIZE)),
-            position: Vec3::ZERO,
-        }
-    );
-    editor
-        .apply(Command::AddBody {
-            name: "Cube 7".to_owned(),
-            shape: Shape::cuboid(Vec3::ONE),
-            position: Vec3::new(4.0, 0.0, 0.0),
-        })
-        .unwrap();
-    editor
-        .apply(Command::AddBody {
-            name: "Cube".to_owned(),
-            shape: Shape::cuboid(Vec3::ONE),
-            position: Vec3::ZERO,
-        })
-        .unwrap();
-    let Command::AddBody { name, position, .. } = editor.document().add_cube() else {
-        panic!("add_cube adds a body");
-    };
-    assert_eq!(name, "Cube 8");
-    assert_eq!(position, Vec3::new(4.0 + 1.0 + CUBE_GAP, 0.0, 0.0));
-}
-
 const XY: Plane = Plane::Origin(crate::OriginPlane::XY);
 
 /// A sketch holding a line from the origin to `end`.
@@ -333,9 +260,9 @@ fn line_to(end: glam::DVec2) -> Sketch {
     sketch
 }
 
-/// An editor on the example with "Sketch 1" on XY added, and its id.
+/// An editor on a new document with "Sketch 1" on XY added, and its id.
 fn sketched() -> (Editor, FeatureId) {
-    let mut editor = Editor::new(Document::example());
+    let mut editor = Editor::new(Document::default());
     editor.apply(editor.document().add_sketch(XY)).unwrap();
     let id = editor.document().features()[0].id;
     (editor, id)
@@ -365,8 +292,6 @@ fn a_sketch_is_added_visible_and_empty_and_removed() {
             sketch: Sketch::default()
         }
     );
-    // Bodies and features take ids from one counter.
-    assert_eq!(id, FeatureId(editor.document().bodies[0].id.0 + 1));
     assert_eq!(editor.document().next_id, id.0 + 1);
     assert_eq!(editor.revision(), Revision(1));
 
@@ -410,11 +335,6 @@ fn add_sketch_numbers_past_the_sketches() {
         panic!("add_sketch adds a sketch");
     };
     assert_eq!((name.as_str(), plane), ("Sketch 8", XY));
-    // Cubes are numbered apart from sketches.
-    let Command::AddBody { name, .. } = editor.document().add_cube() else {
-        panic!("add_cube adds a body");
-    };
-    assert_eq!(name, "Cube 2");
     // Features keep the order they were added in, which is by id.
     let ids: Vec<_> = editor.document().features().iter().map(|f| f.id).collect();
     assert!(ids.windows(2).all(|pair| pair[0] < pair[1]));

@@ -1,14 +1,17 @@
 use std::sync::Arc;
 
 use iced::widget::shader::Pipeline as _;
-use varde_document::Document;
 use varde_render::Camera;
 
 use super::*;
 
 /// The mesh of `document`.
-fn shown(document: &Document) -> Arc<RenderMesh> {
-    Arc::new(varde_regen::tessellate(document).unwrap())
+/// A box's mesh, as a document with one would show.
+fn cube() -> Arc<RenderMesh> {
+    let tol = varde_kernel::Tolerance::DEFAULT;
+    let solid = varde_kernel::Solid::cuboid(glam::DVec3::ZERO, glam::DVec3::splat(2.0), 0, &tol);
+    let display = varde_kernel::Display::new(&tol);
+    Arc::new(solid.unwrap().tessellate(&display).unwrap())
 }
 
 /// The one device the tests share, if there's an adapter. The Vulkan
@@ -181,13 +184,13 @@ fn next_document_does_not_show_the_previous_mesh() {
         eprintln!("no GPU adapter, skipping");
         return;
     };
-    let cube = shown(&Document::example());
+    let cube = cube();
     let mut shared = Pipeline::new(&device, &queue, FORMAT);
     let widget = Interaction::default();
     let first = render(&device, &queue, &mut shared, &widget, &cube);
 
     // An empty document's mesh, and no mesh yet.
-    for next in [shown(&Document::default()), Arc::default()] {
+    for next in [Arc::new(RenderMesh::default()), Arc::default()] {
         let expected = render(
             &device,
             &queue,
@@ -210,8 +213,8 @@ fn viewports_in_one_frame_show_their_own_mesh() {
         eprintln!("no GPU adapter, skipping");
         return;
     };
-    let cube = shown(&Document::example());
-    let empty = shown(&Document::default());
+    let cube = cube();
+    let empty = Arc::new(RenderMesh::default());
     let alone = |mesh: &Arc<RenderMesh>| {
         let mut pipeline = Pipeline::new(&device, &queue, FORMAT);
         render(
@@ -239,7 +242,7 @@ fn trim_drops_the_slots_of_gone_viewports() {
         eprintln!("no GPU adapter, skipping");
         return;
     };
-    let mesh = shown(&Document::example());
+    let mesh = cube();
     let mut pipeline = Pipeline::new(&device, &queue, FORMAT);
     let kept = Interaction::default();
     render(&device, &queue, &mut pipeline, &kept, &mesh);
@@ -284,7 +287,7 @@ fn sketches_show_and_go_with_their_document() {
         eprintln!("no GPU adapter, skipping");
         return;
     };
-    let empty = shown(&Document::default());
+    let empty = Arc::new(RenderMesh::default());
     let alone = |sketches: &Arc<RenderLines>| {
         let mut pipeline = Pipeline::new(&device, &queue, FORMAT);
         let widget = Interaction::default();

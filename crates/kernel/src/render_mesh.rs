@@ -97,6 +97,12 @@ impl RenderMesh {
         &self.edges
     }
 
+    /// Appends another mesh, as [`append_at`](Self::append_at) does
+    /// without moving it.
+    pub fn append(&mut self, other: &RenderMesh) -> Result<(), MeshError> {
+        self.append_at(other, Vec3::ZERO)
+    }
+
     /// Appends another mesh, its vertices moved by `offset`.
     ///
     /// Fails, leaving `self` as it was, with [`MeshError::TooLarge`] if

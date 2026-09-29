@@ -1,7 +1,7 @@
 use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 
-use varde_document::{Command, Editor};
+use varde_document::{Command, Editor, OriginPlane, Plane};
 
 use super::*;
 
@@ -26,16 +26,14 @@ impl Drop for TempDir {
     }
 }
 
-/// The example design with `n` more boxes, each version told apart.
+/// The example design with `n` sketches, each version told apart.
 fn edited(n: usize) -> Document {
     let mut editor = Editor::new(Document::example());
-    let cube = editor.document().bodies()[0].clone();
     for i in 0..n {
         editor
-            .apply(Command::AddBody {
-                name: format!("Box {i}"),
-                shape: cube.shape.clone(),
-                position: cube.position,
+            .apply(Command::AddSketch {
+                name: format!("Sketch {i}"),
+                plane: Plane::Origin(OriginPlane::XY),
             })
             .unwrap();
     }

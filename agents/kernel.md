@@ -15,8 +15,9 @@ the check of their invariants, the BVH and the hull tests, red–green
 refinement and repair, and box and cylinder meshes (`mesh`), the
 tolerances (`Tolerance`), the limits, `Budget` and `KernelError`, and the
 parallel map (`par`), below, and `Solid`, a checked mesh, with its
-tessellation for drawing (`tessellate`). `Shape`, the box recipe
-documents still store, builds a `Solid` through `Mesh::cuboid`.
+tessellation for drawing (`tessellate`). Documents store no geometry:
+bodies are the outputs of the feature history, which `varde-regen`
+evaluates into solids and draws (see "Bodies from the history").
 
 ## Patch math (`src/patch.rs`, `src/patch/`)
 
@@ -696,10 +697,7 @@ wrap the checked primitives, and `Solid::empty()` is the empty solid.
 `mesh()`/`into_mesh()` give the patches back, `bounds3()` is the `f64`
 box around the control points (which holds the solid) and `bounds()` the
 same in `f32` (`None` when empty; rounding is monotonic, so it holds the
-tessellation too). `Shape::build` makes a box of feature 0 at the default
-tolerance, and fails with `ShapeError::Kernel` for a checked shape the
-kernel refuses (thinner than the resolution, or than its length allows);
-`Shape::bounds` gives its box without building it.
+tessellation too).
 
 `Solid::tessellate(&Display)` gives a `RenderMesh`. `Display::new(tol)`
 (default: the default tolerance) sets the targets:
@@ -773,6 +771,33 @@ way between the same positions, to the bit; edge counts meet the chord and
 turn by dense sampling and one fewer wouldn't; the strip joins any two
 counts; results are the same at 1 and 8 threads; far positions are
 refused.
+
+## Bodies from the history (`varde-document`, `varde-regen`)
+
+A document's `Body` is `{ id, name, visible, created_by: FeatureId }`: no
+shape and no position. Its geometry is whatever the feature history gives
+it when regenerated. `Document::check` wants every body's `created_by` to
+name a feature the document holds; `RemoveFeature` also removes the
+bodies the feature makes, in the same undo step. Body and feature ids
+still share one counter.
+
+No feature makes a body yet (sketches make profiles), so no command adds
+one; the Add cube command, its toolbar button and `CUBE_SIZE` are gone,
+and `Document::example()` is the empty document. A file can still hold
+bodies naming any feature, which draw nothing. `RemoveBody` and
+`SetVisible` work on bodies as before.
+
+`varde_regen::evaluate(document)` runs the features in order and returns
+the solids they give, as `(BodyId, Solid)` pairs in feature order (none
+today). `varde_regen::tessellate(document, solids)` draws the solids of
+the visible bodies the document holds into one `RenderMesh`, each through
+`Solid::tessellate` at `Display::new(&Tolerance::DEFAULT)` (the design's
+own tolerance comes with the document setting), joined by
+`RenderMesh::append`. Solids are in world space: there are no body
+positions. A mesh past `RenderMesh`'s limits fails the generation with
+the `MeshError`, as before. The response and its wire format didn't
+change: the mesh crosses to the page as the same parts and is checked
+there by `RenderMesh::from_parts`.
 
 ## Limits, budgets and errors (`src/lib.rs`, `src/budget.rs`, `src/error.rs`)
 
@@ -867,3 +892,11 @@ with tracing.
 - **The chord target is kept on edges only**; inside a patch it can be
   about twice off at the corners of skewed patches (see "Solids and
   tessellation").
+- **`Shape` is gone**, not kept as a test helper: `Solid::cuboid` and
+  `Solid::cylinder` are the test solids, so `Shape`, `ShapeError` and
+  `position_in_range` were removed from the kernel.
+- **Until a feature makes bodies**, `Document::check` only asks that a
+  body's `created_by` names a feature the document holds (of any kind),
+  `RemoveFeature` removes just the bodies that feature makes, and
+  `RemoveBody` removes only the body; the full cascade and the stricter
+  checks come with the extrude feature.

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use varde_document::{Document, MAX_NAME_LEN};
 
 use super::*;
-use crate::tests::{TempDir, auto_saved_at, with_bodies};
+use crate::tests::{TempDir, auto_saved_at, with_sketches};
 
 #[test]
 fn sidecar_sits_next_to_the_document() {
@@ -105,8 +105,8 @@ fn auto_saves_go_through_the_lock() {
     let dir = TempDir::new("sidecar-append");
     let mut sidecar = lock(&dir.0.join("doc.vrdp")).unwrap();
     let start = std::time::Instant::now();
-    for bodies in [1, 0, 1] {
-        let document = with_bodies(bodies);
+    for sketches in [1, 0, 1] {
+        let document = with_sketches(sketches);
         sidecar
             .append(None, &Arc::new(document.clone()), Origin::Edited)
             .unwrap();
@@ -116,7 +116,7 @@ fn auto_saves_go_through_the_lock() {
     assert_eq!(lock(&dir.0.join("doc.vrdp")).unwrap_err(), ReadOnly::InUse);
     // Readable by a reader that doesn't lock it.
     let copy = auto_saved_at(&dir.sidecar()).unwrap();
-    assert_eq!(*copy.document, Document::example());
+    assert_eq!(*copy.document, with_sketches(1));
 }
 
 /// Each auto-save keeps the saved version of the design it was based on,
@@ -153,12 +153,12 @@ fn auto_saves_keep_whether_they_were_downloaded() {
         .unwrap();
     assert!(!sidecar.read().unwrap().unwrap().origin.is_download());
     sidecar
-        .append(None, &Arc::new(Document::example()), Origin::Downloaded)
+        .append(None, &Arc::new(with_sketches(1)), Origin::Downloaded)
         .unwrap();
     assert!(sidecar.read().unwrap().unwrap().origin.is_download());
     let copy = auto_saved_at(&dir.sidecar()).unwrap();
     assert!(copy.origin.is_download());
-    assert_eq!(*copy.document, Document::example());
+    assert_eq!(*copy.document, with_sketches(1));
 
     sidecar
         .append(None, &Arc::new(Document::default()), Origin::Edited)

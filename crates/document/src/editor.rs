@@ -1,9 +1,7 @@
 use std::{collections::VecDeque, sync::Arc};
 
-use glam::Vec3;
 use serde::{Deserialize, Serialize};
 use varde_expr::LengthUnit;
-use varde_kernel::Shape;
 use varde_sketch::Sketch;
 
 use crate::{BodyId, Document, EditError, FeatureId, FeatureKind, Plane, Snapshot};
@@ -12,11 +10,6 @@ use crate::{BodyId, Document, EditError, FeatureId, FeatureKind, Plane, Snapshot
 /// leave the document failing [`Document::check`].
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
-    AddBody {
-        name: String,
-        shape: Shape,
-        position: Vec3,
-    },
     RemoveBody(BodyId),
     SetVisible(BodyId, bool),
     /// Adds a feature holding an empty sketch on `plane`.
@@ -30,6 +23,7 @@ pub enum Command {
         feature: FeatureId,
         sketch: Box<Sketch>,
     },
+    /// Removes a feature and the bodies it makes.
     RemoveFeature(FeatureId),
     SetFeatureVisible(FeatureId, bool),
     /// Changes the design's units. Every dimension's expression first has
@@ -42,39 +36,10 @@ pub enum Command {
     Replace(Box<Document>),
 }
 
-/// The edge length of a cube made by [`Document::add_cube`].
-pub const CUBE_SIZE: f32 = 2.0;
-
-/// The gap [`Document::add_cube`] leaves between a new cube and the bodies
-/// before it.
-const CUBE_GAP: f32 = 1.0;
-
 impl Document {
-    /// The command adding the next cube, named and placed from the
-    /// document so that holds across sessions and undo: numbered one past
-    /// the highest "Cube N" in it, and placed past the body reaching
-    /// farthest along x. Once that is past the coordinate limit, the
-    /// editor refuses it.
-    pub fn add_cube(&self) -> Command {
-        let number = next_number(self.bodies.iter().map(|body| body.name.as_str()), "Cube");
-        // A document's positions and shapes' bounds are within
-        // `MAX_COORD`, which `Document::check` holds, so these sums stay
-        // finite.
-        let x = self
-            .bodies
-            .iter()
-            .map(|body| body.position.x + body.shape.bounds().max.x + CUBE_GAP)
-            .fold(0.0, f32::max);
-        Command::AddBody {
-            name: format!("Cube {number}"),
-            shape: Shape::cuboid(Vec3::splat(CUBE_SIZE)),
-            position: Vec3::new(x, 0.0, 0.0),
-        }
-    }
-
     /// The command adding a new sketch on `plane`, named one past the
-    /// highest "Sketch N" in the document, as [`add_cube`](Self::add_cube)
-    /// names cubes.
+    /// highest "Sketch N" in the document, so that the numbering holds
+    /// across sessions and undo.
     pub fn add_sketch(&self, plane: Plane) -> Command {
         let names = self.features.iter().map(|feature| feature.name.as_str());
         Command::AddSketch {
@@ -243,15 +208,6 @@ impl Editor {
         let document = &self.current.document;
         let replacing = matches!(command, Command::Replace(_));
         let next = match command {
-            Command::AddBody {
-                name,
-                shape,
-                position,
-            } => {
-                let mut next = Document::clone(document);
-                next.add_body(name, shape, position)?;
-                next
-            }
             Command::RemoveBody(id) => {
                 let Some(index) = document.body_index(id) else {
                     return Ok(());
@@ -298,6 +254,7 @@ impl Editor {
                 };
                 let mut next = Document::clone(document);
                 next.features.remove(index);
+                next.bodies.retain(|body| body.created_by != id);
                 next
             }
             Command::SetFeatureVisible(id, visible) => {

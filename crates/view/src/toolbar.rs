@@ -238,14 +238,7 @@ fn ops<'a>(state: &DocumentState<'a>) -> Vec<Element<'a, Message>> {
         });
         return [sketch, separator()].into_iter().chain(planes).collect();
     }
-    vec![
-        sketch,
-        op(
-            Icon::Box,
-            "Box",
-            editable.then_some(Message::Edit(Edit::AddCube)),
-        ),
-    ]
+    vec![sketch]
 }
 
 /// The label of the button making a sketch on `plane`.

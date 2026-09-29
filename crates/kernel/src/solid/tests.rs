@@ -1,13 +1,11 @@
 use glam::{Vec3, Vec3Swizzles};
 
 use super::*;
-use crate::Shape;
 use crate::mesh::tests::{TOL, tetrahedron};
 
 #[test]
 fn cuboid_normals_point_outwards() {
-    let mesh = Shape::cuboid(Vec3::splat(2.0))
-        .build()
+    let mesh = Solid::cuboid(DVec3::ZERO, DVec3::splat(2.0), 0, &Tolerance::DEFAULT)
         .unwrap()
         .tessellate(&Display::default())
         .unwrap();
@@ -28,7 +26,13 @@ fn cuboid_normals_point_outwards() {
 
 #[test]
 fn bounds_match_the_tessellation() {
-    let solid = Shape::cuboid(Vec3::new(1.0, 2.0, 3.0)).build().unwrap();
+    let solid = Solid::cuboid(
+        DVec3::ZERO,
+        DVec3::new(1.0, 2.0, 3.0),
+        0,
+        &Tolerance::DEFAULT,
+    )
+    .unwrap();
     let mesh = solid.tessellate(&Display::default()).unwrap();
     assert_eq!(solid.bounds(), mesh.bounds());
 }

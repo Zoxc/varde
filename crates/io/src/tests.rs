@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use varde_document::{Command, Document, Editor};
+use varde_document::{Command, Document, Editor, OriginPlane, Plane};
 
 use crate::autosave::AutoSaved;
 use crate::vrdp::{HeldFile, to_bytes};
@@ -40,33 +40,28 @@ pub(crate) fn auto_saved_at(path: &Path) -> Option<AutoSaved> {
     HeldFile::<_, AutoSaved>::new(file).read().unwrap()
 }
 
-/// The example design with `bodies` of its bodies.
-pub(crate) fn with_bodies(bodies: usize) -> Document {
+/// A new design with `sketches` sketches.
+pub(crate) fn with_sketches(sketches: usize) -> Document {
     let mut editor = Editor::new(Document::example());
-    let removed: Vec<_> = editor.document().bodies()[bodies..]
-        .iter()
-        .map(|body| body.id)
-        .collect();
-    for id in removed {
-        editor.apply(Command::RemoveBody(id)).unwrap();
+    for _ in 0..sketches {
+        editor.apply(editor.document().add_sketch(XY)).unwrap();
     }
     editor.document().clone()
 }
 
-/// The example design with a copy of its cube named `name`, to tell it
-/// apart by.
-pub(crate) fn with_cube_named(name: &str) -> Document {
+/// The example design with a sketch named `name`, to tell it apart by.
+pub(crate) fn with_sketch_named(name: &str) -> Document {
     let mut editor = Editor::new(Document::example());
-    let cube = editor.document().bodies()[0].clone();
     editor
-        .apply(Command::AddBody {
+        .apply(Command::AddSketch {
             name: name.to_owned(),
-            shape: cube.shape,
-            position: cube.position,
+            plane: XY,
         })
         .unwrap();
     editor.document().clone()
 }
+
+const XY: Plane = Plane::Origin(OriginPlane::XY);
 
 impl Drop for TempDir {
     fn drop(&mut self) {

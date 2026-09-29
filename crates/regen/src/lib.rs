@@ -3,9 +3,10 @@
 //!
 //! The UI sends a [`Request`] tagged with the editor generation it's of
 //! (see [`Editor::generation`]) and never waits; the [`Response`] comes back
-//! later tagged with the same one. Today the work is tessellating the
-//! bodies, flattening the visible sketches' curves and solving every
-//! sketch, to tell those that don't solve. It runs in a
+//! later tagged with the same one. Today the work is evaluating the
+//! feature history into the bodies' solids ([`evaluate`]) and
+//! tessellating the visible ones, flattening the visible sketches' curves
+//! and solving every sketch, to tell those that don't solve. It runs in a
 //! [`lane`] per document: natively a thread, on the web a Web
 //! Worker, which shares no memory with the page, so requests and responses
 //! cross it as bytes (see `src/wire.rs`). Both lanes have the same API, so
@@ -55,8 +56,8 @@ pub use crate::worker::serve as serve_worker;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use varde_document::{Document, FeatureId, FeatureKind, Generation, Snapshot};
-use varde_kernel::{Display, LinesError, MeshError, RenderLines, RenderMesh, ShapeError};
+use varde_document::{BodyId, Document, FeatureId, FeatureKind, Generation, Snapshot};
+use varde_kernel::{Display, LinesError, MeshError, RenderLines, RenderMesh, Solid, Tolerance};
 use varde_sketch::{Budget, Goal};
 
 /// Carries [`Request`]s to a lane without waiting for them to be handled;
@@ -167,25 +168,50 @@ fn regenerate(
     document: &Document,
     exclude: Option<FeatureId>,
 ) -> Result<(RenderMesh, RenderLines), String> {
-    let mesh = tessellate(document).map_err(|error| error.to_string())?;
+    let solids = evaluate(document);
+    let mesh = tessellate(document, &solids).map_err(|error| error.to_string())?;
     let sketches = flatten_sketches(document, exclude).map_err(|error| error.to_string())?;
     Ok((mesh, sketches))
 }
 
-/// Tessellates all visible bodies of `document` into a single mesh in world
-/// space. Fails if it would have more vertices, indices or edges than a
-/// [`RenderMesh`] may hold, which a file with enough bodies in it can ask
-/// for, or if a shape doesn't build (a checked box too thin for the
-/// kernel's resolution, or for its length).
-pub fn tessellate(document: &Document) -> Result<RenderMesh, TessellateError> {
+/// The solids the feature history of `document` gives its bodies, each
+/// with the body it is, in the features' order. A body without one has
+/// no geometry. Sketches make profiles and no bodies, and they're the
+/// only features there are yet, so today there are none.
+pub fn evaluate(document: &Document) -> Vec<(BodyId, Solid)> {
+    let solids = Vec::new();
+    for feature in document.features() {
+        match &feature.kind {
+            FeatureKind::Sketch { .. } => {}
+        }
+    }
+    solids
+}
+
+/// Tessellates the `solids` of the visible bodies of `document` (see
+/// [`evaluate`]) into a single mesh in world space, within the default
+/// [`Tolerance`]'s [`Display`]. Fails if it would have more vertices,
+/// indices or edges than a [`RenderMesh`] may hold, which a file with
+/// enough bodies in it can ask for.
+pub fn tessellate(
+    document: &Document,
+    solids: &[(BodyId, Solid)],
+) -> Result<RenderMesh, MeshError> {
+    let shown = solids
+        .iter()
+        .filter(|(id, _)| document.body(*id).is_some_and(|body| body.visible))
+        .map(|(_, solid)| solid);
+    draw(shown, &Display::new(&Tolerance::DEFAULT))
+}
+
+/// `solids` tessellated within `display` into one mesh.
+fn draw<'a>(
+    solids: impl IntoIterator<Item = &'a Solid>,
+    display: &Display,
+) -> Result<RenderMesh, MeshError> {
     let mut mesh = RenderMesh::default();
-    for body in document.bodies().iter().filter(|b| b.visible) {
-        let solid = body.shape.build().map_err(TessellateError::Shape)?;
-        let drawn = solid
-            .tessellate(&Display::default())
-            .map_err(TessellateError::Mesh)?;
-        mesh.append_at(&drawn, body.position)
-            .map_err(TessellateError::Mesh)?;
+    for solid in solids {
+        mesh.append(&solid.tessellate(display)?)?;
     }
     Ok(mesh)
 }
@@ -250,26 +276,6 @@ pub fn unsolved(document: &Document) -> Vec<FeatureId> {
         .map(|feature| feature.id)
         .collect()
 }
-
-/// Why [`tessellate`] fails.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum TessellateError {
-    /// A body's shape doesn't build.
-    Shape(ShapeError),
-    /// The bodies' meshes don't make one [`RenderMesh`].
-    Mesh(MeshError),
-}
-
-impl std::fmt::Display for TessellateError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TessellateError::Shape(error) => error.fmt(f),
-            TessellateError::Mesh(error) => error.fmt(f),
-        }
-    }
-}
-
-impl std::error::Error for TessellateError {}
 
 #[cfg(test)]
 mod tests;

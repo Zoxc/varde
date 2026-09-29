@@ -12,11 +12,11 @@ fn regenerate(editor: &Editor, exclude: Option<FeatureId>) -> Request {
     }
 }
 
-/// The example cube and a sketch on the XZ plane holding a line from
+/// A sketch on the XZ plane holding a line from
 /// (0, 0) to (2, 1), a construction circle, and a quarter arc, and the
 /// sketch's id.
 pub(crate) fn sketched() -> (Editor, FeatureId) {
-    let mut editor = Editor::new(Document::example());
+    let mut editor = Editor::new(Document::default());
     editor
         .apply(editor.document().add_sketch(Plane::Origin(OriginPlane::XZ)))
         .unwrap();
@@ -53,7 +53,7 @@ pub(crate) fn sketched() -> (Editor, FeatureId) {
 
 #[test]
 fn regenerate_tessellates_the_snapshot() {
-    let editor = Editor::new(Document::example());
+    let (editor, _) = sketched();
     let Response::Regenerated {
         generation,
         exclude,
@@ -66,10 +66,56 @@ fn regenerate_tessellates_the_snapshot() {
     };
     assert_eq!(generation, editor.generation());
     assert_eq!(exclude, None);
-    assert_eq!(*mesh, crate::tessellate(editor.document()).unwrap());
-    assert_eq!(mesh.triangle_count(), 12);
-    assert_eq!(*sketches, RenderLines::default());
+    // Sketches make no bodies.
+    assert!(evaluate(editor.document()).is_empty());
+    assert_eq!(*mesh, RenderMesh::default());
+    assert_eq!(sketches.ends().len(), 2);
     assert!(unsolved.is_empty());
+}
+
+fn cuboid(min: f64, size: f64) -> Solid {
+    Solid::cuboid(
+        glam::DVec3::splat(min),
+        glam::DVec3::splat(size),
+        0,
+        &Tolerance::DEFAULT,
+    )
+    .unwrap()
+}
+
+#[test]
+fn solids_are_drawn_into_one_mesh() {
+    let (a, b) = (cuboid(0.0, 1.0), cuboid(3.0, 2.0));
+    let display = Display::new(&Tolerance::DEFAULT);
+    let mesh = draw([&a, &b], &display).unwrap();
+    let mut both = a.tessellate(&display).unwrap();
+    both.append(&b.tessellate(&display).unwrap()).unwrap();
+    assert_eq!(mesh, both);
+    assert_eq!(mesh.triangle_count(), 24);
+    assert_eq!(
+        mesh.bounds().unwrap(),
+        varde_kernel::Aabb {
+            min: Vec3::ZERO,
+            max: Vec3::splat(5.0)
+        }
+    );
+    assert_eq!(draw([], &display).unwrap(), RenderMesh::default());
+}
+
+#[test]
+fn solids_of_bodies_not_in_the_document_are_not_drawn() {
+    // A solid for a body the document doesn't hold isn't drawn.
+    let (editor, _) = sketched();
+    let body = {
+        // Ids are opaque: the only way to one is a document's body.
+        let bytes = postcard::to_stdvec(&0u64).unwrap();
+        postcard::from_bytes::<BodyId>(&bytes).unwrap()
+    };
+    let solids = [(body, cuboid(0.0, 1.0))];
+    assert_eq!(
+        tessellate(editor.document(), &solids).unwrap(),
+        RenderMesh::default()
+    );
 }
 
 /// Adds a sketch on XY that doesn't solve, as a file could hold: a line
@@ -120,7 +166,7 @@ fn regenerate_flattens_the_sketches() {
     let Response::Regenerated { mesh, sketches, .. } = handle(regenerate(&editor, None)) else {
         panic!("regeneration failed");
     };
-    assert_eq!(mesh.triangle_count(), 12);
+    assert_eq!(mesh.triangle_count(), 0);
     assert_eq!(
         *sketches,
         flatten_sketches(editor.document(), None).unwrap()

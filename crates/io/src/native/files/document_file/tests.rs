@@ -1,5 +1,5 @@
 use super::*;
-use crate::tests::{TempDir, with_cube_named};
+use crate::tests::{TempDir, with_sketch_named};
 use crate::vrdp::to_bytes;
 
 /// The design in `dir`, not created yet.
@@ -9,7 +9,7 @@ fn doc_path(dir: &TempDir) -> PathBuf {
 
 /// A document told apart by `n`.
 fn edited(n: usize) -> Document {
-    with_cube_named(&format!("Edit {n}"))
+    with_sketch_named(&format!("Edit {n}"))
 }
 
 #[test]

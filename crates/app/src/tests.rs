@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Duration;
 
 use glam::Vec3;
@@ -8,7 +9,7 @@ use iced::futures::StreamExt;
 use iced::futures::executor::block_on;
 use iced::time::Instant;
 use varde_document::{
-    Command, Document, Editor, FeatureId, Generation, MAX_COORD, OriginPlane, Revision, Shape,
+    Command, Document, Editor, FeatureId, Generation, LengthUnit, OriginPlane, Plane, Revision,
 };
 use varde_io::{
     Access, Closing, FileId, Offer, OpenId, Opened, PickedFrom, ReadOnly, SaveError, SaveTo,
@@ -138,6 +139,14 @@ impl SolveLane {
     }
 }
 
+/// An edit through the UI that always changes the document: its units,
+/// switched to the next ones.
+pub(crate) fn an_edit(doc: &Doc) -> Edit {
+    let units = doc.editor.document().units();
+    let at = LengthUnit::ALL.iter().position(|&u| u == units).unwrap();
+    Edit::SetUnits(LengthUnit::ALL[(at + 1) % LengthUnit::ALL.len()])
+}
+
 fn document(varde: &Varde) -> &Doc {
     match &varde.screen {
         Screen::Document(doc) => doc,
@@ -145,127 +154,86 @@ fn document(varde: &Varde) -> &Doc {
     }
 }
 
-/// The mesh of a document with one cube in it, for generation 1.
-fn one_cube() -> Response {
+/// A design holding a sketch on XY with one line in it.
+fn with_a_line() -> Document {
     let mut editor = Editor::new(Document::default());
     editor
-        .apply(Command::AddBody {
-            name: "Cube".to_owned(),
-            shape: Shape::cuboid(Vec3::splat(1.0)),
-            position: Vec3::ZERO,
+        .apply(editor.document().add_sketch(Plane::Origin(OriginPlane::XY)))
+        .unwrap();
+    let feature = editor.document().features()[0].id;
+    let mut sketch = varde_document::Sketch::default();
+    let start = sketch.add_point(glam::DVec2::ZERO).unwrap();
+    let end = sketch.add_point(glam::DVec2::new(3.0, 1.0)).unwrap();
+    sketch
+        .add_curve(varde_sketch::Curve::Line { start, end }, false)
+        .unwrap();
+    editor
+        .apply(Command::SetSketch {
+            feature,
+            sketch: Box::new(sketch),
         })
         .unwrap();
+    editor.document().clone()
+}
+
+/// Draws a line in `doc`, which regenerating shows: one edit, replacing
+/// it with [`with_a_line`].
+fn draw_line(doc: &mut Doc) {
+    doc.apply(Command::Replace(Box::new(with_a_line())));
+    doc.sync();
+}
+
+/// The model of [`with_a_line`], for generation 1.
+fn one_line() -> Response {
     handle(Request::Regenerate {
-        generation: editor.generation(),
-        document: editor.snapshot(),
+        generation: Generation::from(1),
+        document: Arc::new(with_a_line()),
         exclude: None,
     })
 }
 
 #[test]
-fn edit_ends_with_the_new_mesh_shown() {
+fn edit_ends_with_the_new_model_shown() {
     let (mut doc, requests) = deferred();
     answer(&mut doc, &requests);
     assert_eq!(doc.feed.generation(), Some(Generation::from(0)));
-    assert_eq!(doc.feed.mesh().triangle_count(), 0);
+    assert_eq!(doc.feed.sketches().segment_count(), 0);
 
-    doc.update(Edit::AddCube);
+    draw_line(&mut doc);
     answer(&mut doc, &requests);
     assert_eq!(doc.feed.status(&doc.editor), MeshStatus::Current);
-    assert_eq!(doc.feed.mesh().triangle_count(), 12);
+    assert_eq!(doc.feed.sketches().segment_count(), 1);
 
     doc.update(Edit::Undo);
     answer(&mut doc, &requests);
     assert_eq!(doc.feed.status(&doc.editor), MeshStatus::Current);
-    assert_eq!(doc.feed.mesh().triangle_count(), 0);
-}
-
-fn names_and_positions(doc: &Doc) -> Vec<(&str, Vec3)> {
-    let bodies = doc.editor.document().bodies();
-    bodies
-        .iter()
-        .map(|b| (b.name.as_str(), b.position))
-        .collect()
+    assert_eq!(doc.feed.sketches().segment_count(), 0);
 }
 
 #[test]
-fn added_cubes_are_numbered_and_placed_from_the_document() {
-    let mut doc = untitled();
-    doc.update(Edit::AddCube);
-    doc.update(Edit::AddCube);
-    assert_eq!(
-        names_and_positions(&doc),
-        [("Cube 1", Vec3::ZERO), ("Cube 2", Vec3::new(3.0, 0.0, 0.0))]
-    );
-
-    // Undo, or reopening the document, doesn't skip or repeat one.
-    doc.update(Edit::Undo);
-    doc.update(Edit::AddCube);
-    let reopened = doc.editor.document().clone();
-    let mut doc = Doc::new(
-        reopened,
-        Origin::new(Target::None, Access::Edit, "Untitled".to_owned()),
-    );
-    doc.update(Edit::AddCube);
-    assert_eq!(
-        names_and_positions(&doc),
-        [
-            ("Cube 1", Vec3::ZERO),
-            ("Cube 2", Vec3::new(3.0, 0.0, 0.0)),
-            ("Cube 3", Vec3::new(6.0, 0.0, 0.0)),
-        ]
-    );
-}
-
-#[test]
-fn no_cube_is_added_past_the_coordinate_limit() {
-    let mut editor = Editor::new(Document::default());
-    editor
-        .apply(Command::AddBody {
-            name: "Cube 7".to_owned(),
-            shape: Shape::cuboid(Vec3::ONE),
-            position: Vec3::new(MAX_COORD - 2.0, 0.0, 0.0),
-        })
-        .unwrap();
-    let document = editor.document().clone();
-    let mut doc = Doc::new(
-        document,
-        Origin::new(Target::None, Access::Edit, "Untitled".to_owned()),
-    );
-    // The first one lands on the limit.
-    doc.update(Edit::AddCube);
-    assert!(doc.edit_error.is_none());
-    let document = doc.editor.document().clone();
-    assert_eq!(document.bodies()[1].position.x, MAX_COORD);
-    doc.update(Edit::AddCube);
-    assert_eq!(doc.editor.document(), &document);
-    assert!(doc.edit_error.is_some());
-}
-
-#[test]
-fn computed_message_shows_a_late_mesh() {
+fn computed_message_shows_a_late_model() {
     let (mut doc, requests) = deferred();
     answer(&mut doc, &requests);
 
-    doc.update(Edit::AddCube);
+    draw_line(&mut doc);
     doc.look(Look::Orbit {
         yaw: 0.1,
         pitch: 0.0,
     });
     assert_eq!(doc.feed.status(&doc.editor), MeshStatus::Regenerating);
-    assert_eq!(doc.feed.mesh().triangle_count(), 0);
+    assert_eq!(doc.feed.sketches().segment_count(), 0);
     let request = requests.borrow_mut().pop().unwrap();
     assert!(requests.borrow().is_empty());
 
     doc.computed(handle(request));
     assert_eq!(doc.feed.status(&doc.editor), MeshStatus::Current);
-    assert_eq!(doc.feed.mesh().triangle_count(), 12);
+    assert_eq!(doc.feed.sketches().segment_count(), 1);
 }
 
 #[test]
 fn nothing_is_requested_until_the_lane_is_ready() {
     let mut doc = untitled();
-    doc.update(Edit::AddCube);
+    draw_line(&mut doc);
     assert_eq!(doc.feed.generation(), None);
     assert_eq!(doc.feed.status(&doc.editor), MeshStatus::Regenerating);
 
@@ -274,13 +242,13 @@ fn nothing_is_requested_until_the_lane_is_ready() {
     let response = block_on(responses.next()).unwrap();
     doc.computed(response);
     assert_eq!(doc.feed.status(&doc.editor), MeshStatus::Current);
-    assert_eq!(doc.feed.mesh().triangle_count(), 12);
+    assert_eq!(doc.feed.sketches().segment_count(), 1);
 
     doc.update(Edit::Undo);
     let response = block_on(responses.next()).unwrap();
     doc.computed(response);
     assert_eq!(doc.feed.status(&doc.editor), MeshStatus::Current);
-    assert_eq!(doc.feed.mesh().triangle_count(), 0);
+    assert_eq!(doc.feed.sketches().segment_count(), 0);
 }
 
 #[test]
@@ -295,11 +263,11 @@ fn work_for_a_closed_document_is_dropped() {
 
     let (lane, _responses) = lane::spawn();
     let _ = varde.update(Message::Doc(closed, ForDoc::RegenReady(lane)));
-    let _ = varde.update(Message::Doc(closed, ForDoc::Computed(one_cube())));
+    let _ = varde.update(Message::Doc(closed, ForDoc::Computed(one_line())));
     assert!(!document(&varde).feed.connected());
     assert_eq!(document(&varde).feed.generation(), None);
 
-    let _ = varde.update(Message::Doc(open, ForDoc::Computed(one_cube())));
+    let _ = varde.update(Message::Doc(open, ForDoc::Computed(one_line())));
     assert_eq!(
         document(&varde).feed.generation(),
         Some(Generation::from(1))
@@ -355,7 +323,7 @@ fn opened(id: OpenId, path: PathBuf, file: u64, access: Access) -> Message {
         path: Some(path),
         result: Ok(Opened {
             file: FileId(file),
-            document: Document::example(),
+            document: with_a_line(),
             access,
             recovered: Ok(None),
             downloaded: false,
@@ -628,11 +596,12 @@ fn a_read_only_document_refuses_edits_but_moves_the_camera() {
         document(&varde).read_only.as_deref(),
         Some("the design is open elsewhere")
     );
-    let body = document(&varde).editor.document().bodies()[0].id;
+    let sketch = document(&varde).editor.document().features()[0].id;
     for message in [
-        Message::Ui(Ui::Edit(Edit::AddCube)),
-        Message::Ui(Ui::Edit(Edit::RemoveBody(body))),
-        Message::Ui(Ui::Edit(Edit::ToggleVisible(body))),
+        Message::Ui(Ui::Edit(an_edit(document(&varde)))),
+        Message::Ui(Ui::Edit(Edit::NewSketch(OriginPlane::XY))),
+        Message::Ui(Ui::Edit(Edit::RemoveFeature(sketch))),
+        Message::Ui(Ui::Edit(Edit::ToggleFeatureVisible(sketch))),
         Message::Ui(Ui::Edit(Edit::Undo)),
         Message::Ui(Ui::Edit(Edit::Redo)),
     ] {
@@ -661,8 +630,8 @@ fn a_refused_edit_is_shown() {
         full,
         Origin::new(Target::None, Access::Edit, "Full".to_owned()),
     );
-    doc.update(Edit::AddCube);
-    assert!(doc.editor.document().bodies().is_empty());
+    doc.update(Edit::NewSketch(OriginPlane::XY));
+    assert!(doc.editor.document().features().is_empty());
     assert_eq!(
         doc.edit_error.as_ref().map(ToString::to_string).as_deref(),
         Some("the document has no ids left")
@@ -827,7 +796,7 @@ fn a_save_waiting_for_edits_the_lane_drops_on_starting_is_sent() {
 #[test]
 fn undoing_the_edits_a_save_waits_for_saves_at_once() {
     let (mut varde, requests, _lane) = sketching_in_open_file();
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let with_cube = document(&varde).editor.revision();
     place_point(&mut varde);
     let _ = varde.update(Message::Ui(Ui::File(File::Save)));
@@ -864,7 +833,7 @@ fn save_sends_the_document_and_marks_it_saved_when_answered() {
     let _ = varde.update(Message::Ui(Ui::File(File::Save)));
     assert!(sent(&requests).is_empty());
 
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let _ = varde.update(Message::Ui(Ui::File(File::Save)));
     let sent = sent(&requests);
     let revision = saving(&sent);
@@ -882,10 +851,10 @@ fn save_sends_the_document_and_marks_it_saved_when_answered() {
 #[test]
 fn edits_made_while_saving_keep_the_document_edited() {
     let (mut varde, requests) = with_open_file();
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let _ = varde.update(Message::Ui(Ui::File(File::Save)));
     let revision = saving(&sent(&requests));
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let _ = varde.update(saved(revision, Ok(())));
     let doc = document(&varde);
     assert_eq!(doc.saved_revision(), Some(revision));
@@ -900,7 +869,8 @@ fn undoing_back_to_the_saved_state_leaves_nothing_to_save() {
     let edit = |varde: &mut Varde, edit| {
         let _ = varde.update(Message::Ui(Ui::Edit(edit)));
     };
-    edit(&mut varde, Edit::AddCube);
+    let change = an_edit(document(&varde));
+    edit(&mut varde, change);
     assert!(varde.title().contains("Edited"));
     edit(&mut varde, Edit::Undo);
     assert!(!document(&varde).edited());
@@ -928,9 +898,11 @@ fn the_save_landing_last_is_what_is_saved() {
     let edit = |varde: &mut Varde, edit| {
         let _ = varde.update(Message::Ui(Ui::Edit(edit)));
     };
-    edit(&mut varde, Edit::AddCube);
+    let change = an_edit(document(&varde));
+    edit(&mut varde, change);
     let one_cube = document(&varde).editor.revision();
-    edit(&mut varde, Edit::AddCube);
+    let change = an_edit(document(&varde));
+    edit(&mut varde, change);
     let _ = varde.update(Message::Ui(Ui::File(File::Save)));
     let two_cubes = saving(&sent(&requests));
     edit(&mut varde, Edit::Undo);
@@ -950,13 +922,13 @@ fn the_save_landing_last_is_what_is_saved() {
 #[test]
 fn saving_lasts_until_the_newest_save_is_answered() {
     let (mut varde, requests) = with_open_file();
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let _ = varde.update(Message::Ui(Ui::File(File::Save)));
     let first = saving(&sent(&requests));
     // The same revision again isn't sent twice.
     let _ = varde.update(Message::Ui(Ui::File(File::Save)));
     assert!(sent(&requests).is_empty());
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let _ = varde.update(Message::Ui(Ui::File(File::Save)));
     let second = saving(&sent(&requests));
 
@@ -971,7 +943,7 @@ fn saving_lasts_until_the_newest_save_is_answered() {
 #[test]
 fn a_conflict_is_shown_with_save_as() {
     let (mut varde, requests) = with_open_file();
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let _ = varde.update(Message::Ui(Ui::File(File::Save)));
     let revision = saving(&sent(&requests));
     let _ = varde.update(saved(revision, Err(SaveError::Conflict)));
@@ -1012,7 +984,7 @@ fn a_conflict_is_shown_with_save_as() {
 #[test]
 fn another_save_error_is_shown_and_can_be_dismissed() {
     let (mut varde, requests) = with_open_file();
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let _ = varde.update(Message::Ui(Ui::File(File::Save)));
     let revision = saving(&sent(&requests));
     let _ = varde.update(saved(
@@ -1036,7 +1008,7 @@ fn saving_an_untitled_design_asks_where() {
         home: None,
     }));
     let _ = varde.update(Message::Ui(Ui::Welcome(WelcomeUi::NewDesign)));
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     sent(&requests);
     let _ = varde.update(Message::Ui(Ui::File(File::Save)));
     assert!(document(&varde).picking().is_some());
@@ -1126,7 +1098,7 @@ fn a_read_only_design_is_saved_as_and_becomes_editable() {
         }),
     }));
     assert!(document(&varde).read_only.is_none());
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     assert_eq!(document(&varde).editor.revision(), Revision::from(1));
 }
 
@@ -1197,7 +1169,7 @@ fn a_cancelled_save_as_sends_nothing() {
 #[test]
 fn closing_waits_for_a_save_in_flight() {
     let (mut varde, requests) = with_open_file();
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let _ = varde.update(Message::Ui(Ui::File(File::Save)));
     let revision = saving(&sent(&requests));
     let _ = varde.update(Message::Ui(Ui::File(File::CloseDocument)));
@@ -1220,7 +1192,7 @@ fn closing_waits_for_a_save_in_flight() {
 #[test]
 fn closing_is_cancelled_if_the_save_it_waits_for_fails() {
     let (mut varde, requests) = with_open_file();
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let _ = varde.update(Message::Ui(Ui::File(File::Save)));
     let revision = saving(&sent(&requests));
     let _ = varde.update(Message::Ui(Ui::File(File::CloseDocument)));
@@ -1239,10 +1211,10 @@ fn closing_is_cancelled_if_the_save_it_waits_for_fails() {
 #[test]
 fn a_failed_save_superseded_by_a_newer_one_is_not_shown() {
     let (mut varde, requests) = with_open_file();
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let _ = varde.update(Message::Ui(Ui::File(File::Save)));
     let first = saving(&sent(&requests));
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let _ = varde.update(Message::Ui(Ui::File(File::Save)));
     let second = saving(&sent(&requests));
     let _ = varde.update(Message::Ui(Ui::File(File::CloseDocument)));
@@ -1258,10 +1230,10 @@ fn a_failed_save_superseded_by_a_newer_one_is_not_shown() {
 #[test]
 fn the_newest_save_failing_is_shown_and_cancels_leaving() {
     let (mut varde, requests) = with_open_file();
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let _ = varde.update(Message::Ui(Ui::File(File::Save)));
     let first = saving(&sent(&requests));
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let _ = varde.update(Message::Ui(Ui::File(File::Save)));
     let second = saving(&sent(&requests));
     let _ = varde.update(Message::Ui(Ui::File(File::CloseDocument)));
@@ -1277,7 +1249,7 @@ fn the_newest_save_failing_is_shown_and_cancels_leaving() {
 #[test]
 fn a_save_as_supersedes_a_failed_save() {
     let (mut varde, requests) = with_open_file();
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let _ = varde.update(Message::Ui(Ui::File(File::Save)));
     let revision = saving(&sent(&requests));
     let _ = varde.update(Message::Ui(Ui::File(File::SaveAs)));
@@ -1310,7 +1282,7 @@ fn a_save_as_supersedes_a_failed_save() {
 #[test]
 fn a_save_does_not_supersede_a_failed_save_as() {
     let (mut varde, requests) = with_open_file();
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let _ = varde.update(Message::Ui(Ui::File(File::SaveAs)));
     let id = document(&varde).id;
     let _ = varde.update(Message::Doc(
@@ -1343,7 +1315,7 @@ fn a_save_does_not_supersede_a_failed_save_as() {
 #[test]
 fn a_successful_save_clears_an_auto_save_error() {
     let (mut varde, requests) = with_open_file();
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let _ = varde.update(Message::Ui(Ui::File(File::Save)));
     let revision = saving(&sent(&requests));
     let _ = varde.update(Message::Io(IoResponse::AutoSaved {
@@ -1368,7 +1340,7 @@ fn a_successful_auto_save_clears_only_an_auto_save_error() {
             result,
         })
     };
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let _ = varde.update(auto_saved(Err("no room".to_owned())));
     assert!(save_error(&varde).is_some());
     let _ = varde.update(auto_saved(Ok(())));
@@ -1384,7 +1356,7 @@ fn a_successful_auto_save_clears_only_an_auto_save_error() {
 #[test]
 fn closing_unsaved_changes_asks_and_cancel_stays() {
     let (mut varde, requests) = with_open_file();
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let _ = varde.update(Message::Ui(Ui::File(File::CloseDocument)));
     assert_eq!(document(&varde).prompt(), Some(Leave::Close));
     let _ = varde.update(Message::Ui(Ui::File(File::Unsaved(Unsaved::Cancel))));
@@ -1409,7 +1381,7 @@ fn a_document_says_when_it_is_left() {
             "Part".to_owned(),
         ),
     );
-    doc.update(Edit::AddCube);
+    doc.update(an_edit(&doc));
 
     assert!(matches!(doc.leave(&mut cx, Leave::Close), Next::Stay));
     assert_eq!(doc.prompt(), Some(Leave::Close));
@@ -1429,7 +1401,7 @@ fn a_document_says_when_it_is_left() {
 #[test]
 fn closing_unsaved_changes_without_saving() {
     let (mut varde, requests) = with_open_file();
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let _ = varde.update(Message::Ui(Ui::File(File::CloseDocument)));
     let _ = varde.update(Message::Ui(Ui::File(File::Unsaved(Unsaved::Discard))));
     assert!(is_welcome(&varde));
@@ -1445,7 +1417,7 @@ fn closing_unsaved_changes_without_saving() {
 #[test]
 fn closing_unsaved_changes_saves_first() {
     let (mut varde, requests) = with_open_file();
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let _ = varde.update(Message::Ui(Ui::File(File::CloseDocument)));
     let _ = varde.update(Message::Ui(Ui::File(File::Unsaved(Unsaved::Save))));
     let revision = saving(&sent(&requests));
@@ -1465,7 +1437,7 @@ fn closing_unsaved_changes_saves_first() {
 fn closing_an_untitled_design_saves_as_first_or_stays() {
     let (mut varde, requests) = with_files();
     let _ = varde.update(Message::Ui(Ui::Welcome(WelcomeUi::NewDesign)));
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let _ = varde.update(Message::Ui(Ui::File(File::CloseDocument)));
     let _ = varde.update(Message::Ui(Ui::File(File::Unsaved(Unsaved::Save))));
     assert!(document(&varde).picking().is_some());
@@ -1513,7 +1485,7 @@ fn closing_an_untitled_design_saves_as_first_or_stays() {
 fn quitting_closes_the_file_and_waits_for_the_lane() {
     let (mut varde, requests) = with_open_file();
     let window = window_id();
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let _ = varde.update(Message::CloseRequested(window));
     assert_eq!(document(&varde).prompt(), Some(Leave::Quit(window)));
     assert!(varde.quitting.is_none());
@@ -1570,7 +1542,7 @@ fn quitting_from_the_welcome_screen_flushes_first() {
 fn quitting_while_asked_about_closing_quits() {
     let (mut varde, requests) = with_open_file();
     let window = window_id();
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let _ = varde.update(Message::Ui(Ui::File(File::CloseDocument)));
     let _ = varde.update(Message::CloseRequested(window));
     assert_eq!(document(&varde).prompt(), Some(Leave::Quit(window)));
@@ -1602,7 +1574,7 @@ fn a_saved_edit_is_there_on_reopening() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("part.vrdp");
-    write_design(&path, &Document::example());
+    write_design(&path, &with_a_line());
 
     // Not the user's recent files.
     let (lane, mut responses) = varde_io::lane::spawn_at(varde_io::Stores::default());
@@ -1618,8 +1590,8 @@ fn a_saved_edit_is_there_on_reopening() {
     };
     let _ = varde.update(Message::Ui(Ui::Welcome(WelcomeUi::OpenPath(path.clone()))));
     answer(&mut varde, |r| matches!(r, IoResponse::Opened { .. }));
-    let bodies = document(&varde).editor.document().bodies().len();
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
+    let edited = document(&varde).editor.document().clone();
     let _ = varde.update(Message::Ui(Ui::File(File::Save)));
     answer(&mut varde, |r| matches!(r, IoResponse::Saved { .. }));
     assert!(!document(&varde).edited());
@@ -1630,10 +1602,7 @@ fn a_saved_edit_is_there_on_reopening() {
 
     let _ = varde.update(Message::Ui(Ui::Welcome(WelcomeUi::OpenPath(path.clone()))));
     answer(&mut varde, |r| matches!(r, IoResponse::Opened { .. }));
-    assert_eq!(
-        document(&varde).editor.document().bodies().len(),
-        bodies + 1
-    );
+    assert_eq!(*document(&varde).editor.document(), edited);
     assert!(document(&varde).read_only.is_none());
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1643,7 +1612,7 @@ fn a_saved_edit_is_there_on_reopening() {
 #[test]
 fn saving_state_is_shown() {
     let (mut varde, requests) = with_open_file();
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let _ = varde.update(Message::Ui(Ui::File(File::Save)));
     let revision = saving(&sent(&requests));
     let _ = varde.view();
@@ -1663,7 +1632,7 @@ fn saving_state_is_shown() {
 fn a_new_design_is_not_saved_as_twice_at_once() {
     let (mut varde, requests) = with_files();
     let _ = varde.update(Message::Ui(Ui::Welcome(WelcomeUi::NewDesign)));
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let _ = varde.update(Message::Ui(Ui::File(File::SaveAs)));
     let id = document(&varde).id;
     let _ = varde.update(Message::Doc(
@@ -1696,7 +1665,7 @@ fn a_new_design_is_not_saved_as_twice_at_once() {
 #[test]
 fn backing_out_of_save_as_keeps_closing_for_a_save_in_flight() {
     let (mut varde, requests) = with_open_file();
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let _ = varde.update(Message::Ui(Ui::File(File::Save)));
     let revision = saving(&sent(&requests));
     let _ = varde.update(Message::Ui(Ui::File(File::SaveAs)));
@@ -1714,7 +1683,7 @@ fn backing_out_of_save_as_keeps_closing_for_a_save_in_flight() {
 #[test]
 fn closing_a_read_only_design_with_edits_saves_as() {
     let (mut varde, requests) = with_open_file();
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let _ = varde.update(Message::Ui(Ui::File(File::SaveAs)));
     let id = document(&varde).id;
     let _ = varde.update(Message::Doc(
@@ -1722,7 +1691,7 @@ fn closing_a_read_only_design_with_edits_saves_as() {
         ForDoc::SaveAsPicked(Some(Chosen::Path("/r/b.vrdp".into()))),
     ));
     let revision = document(&varde).editor.revision();
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     sent(&requests);
     let _ = varde.update(Message::Io(IoResponse::SavedAs {
         file: Some(FileId(0)),
@@ -1894,7 +1863,7 @@ fn an_edited_document_is_auto_saved_once_idle() {
     tick(&mut varde, start, 10);
     assert!(sent(&requests).is_empty());
 
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     tick(&mut varde, start, 11);
     tick(&mut varde, start, 13);
     assert!(sent(&requests).is_empty());
@@ -1915,7 +1884,7 @@ fn an_edited_document_is_auto_saved_once_idle() {
     assert!(sent(&requests).is_empty());
 
     // A saved document isn't auto-saved, nor one on its way to its file.
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let _ = varde.update(Message::Ui(Ui::File(File::Save)));
     let revision = saving(&sent(&requests));
     tick(&mut varde, start, 31);
@@ -1926,7 +1895,7 @@ fn an_edited_document_is_auto_saved_once_idle() {
     assert!(sent(&requests).is_empty());
 
     // Nor once quitting, as it would come after the flush.
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     tick(&mut varde, start, 51);
     let _ = varde.update(Message::CloseRequested(window_id()));
     let _ = varde.update(Message::Ui(Ui::File(File::Unsaved(Unsaved::Discard))));
@@ -1945,7 +1914,8 @@ fn undoing_back_to_the_saved_state_empties_what_was_auto_saved() {
     let edit = |varde: &mut Varde, edit| {
         let _ = varde.update(Message::Ui(Ui::Edit(edit)));
     };
-    edit(&mut varde, Edit::AddCube);
+    let change = an_edit(document(&varde));
+    edit(&mut varde, change);
     tick(&mut varde, start, 0);
     tick(&mut varde, start, 3);
     assert_eq!(auto_saves(&sent(&requests)), [(0, 1)]);
@@ -1974,7 +1944,8 @@ fn undoing_back_to_the_saved_state_empties_what_was_auto_saved() {
 
     // A save failing leaves what was auto-saved: the state it was of is
     // auto-saved in its place.
-    edit(&mut varde, Edit::AddCube);
+    let change = an_edit(document(&varde));
+    edit(&mut varde, change);
     let _ = varde.update(Message::Ui(Ui::File(File::Save)));
     let revision = saving(&sent(&requests));
     let _ = varde.update(saved(revision, Err(SaveError::Failed("full".into()))));
@@ -1997,7 +1968,9 @@ fn a_read_only_design_is_never_auto_saved() {
         unreachable!()
     };
     doc.editor
-        .apply(Command::RemoveBody(doc.editor.document().bodies()[0].id))
+        .apply(Command::RemoveFeature(
+            doc.editor.document().features()[0].id,
+        ))
         .unwrap();
     sent(&requests);
     let start = Instant::now();
@@ -2026,7 +1999,7 @@ fn with_recovered_changed(
         path: Some(path),
         result: Ok(Opened {
             file: FileId(0),
-            document: Document::example(),
+            document: with_a_line(),
             access: Access::Edit,
             recovered: Ok(Some(Offer {
                 document: recovered,
@@ -2047,7 +2020,7 @@ fn recovered_changes_are_restored_as_one_edit() {
     let _ = varde.view();
 
     // Auto-saves wait for the answer, so as not to replace them.
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let start = Instant::now();
     tick(&mut varde, start, 0);
     tick(&mut varde, start, 10);
@@ -2063,7 +2036,7 @@ fn recovered_changes_are_restored_as_one_edit() {
     tick(&mut varde, start, 14);
     assert_eq!(auto_saves(&sent(&requests)), [(0, 2)]);
     let _ = varde.update(Message::Ui(Ui::Edit(Edit::Undo)));
-    assert_eq!(document(&varde).editor.document().bodies().len(), 2);
+    assert_eq!(document(&varde).editor.document().features().len(), 1);
 
     // Closing now discards it all.
     let _ = varde.update(Message::Ui(Ui::File(File::CloseDocument)));
@@ -2081,7 +2054,7 @@ fn recovered_changes_are_restored_as_one_edit() {
 fn restoring_recovered_changes_drops_the_edits_waiting() {
     // What was recovered has a sketch of its own where the one drawn in
     // now is.
-    let mut editor = Editor::new(Document::example());
+    let mut editor = Editor::new(with_a_line());
     editor
         .apply(
             editor
@@ -2135,7 +2108,7 @@ fn recovered_changes_can_be_discarded() {
     let (mut varde, requests) = with_recovered(Document::default());
     let _ = varde.update(Message::Ui(Ui::File(File::DiscardChanges)));
     assert!(document(&varde).recovered().is_none());
-    assert_eq!(*document(&varde).editor.document(), Document::example());
+    assert_eq!(*document(&varde).editor.document(), with_a_line());
     assert!(!document(&varde).edited());
     assert!(matches!(
         sent(&requests)[..],
@@ -2187,9 +2160,9 @@ fn saving_as_another_file_leaves_the_recovered_changes_behind() {
     let _ = varde.update(Message::Ui(Ui::File(File::DiscardChanges)));
     let _ = varde.update(Message::Ui(Ui::File(File::RestoreChanges)));
     assert!(sent(&requests).is_empty());
-    assert_eq!(*document(&varde).editor.document(), Document::example());
+    assert_eq!(*document(&varde).editor.document(), with_a_line());
     // Auto-saves no longer wait for an answer.
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let start = Instant::now();
     tick(&mut varde, start, 0);
     tick(&mut varde, start, 10);
@@ -2227,7 +2200,7 @@ fn the_page_leaving_auto_saves_at_once() {
     assert!(sent(&requests).is_empty());
     assert!(!varde.at_stake());
 
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     assert!(varde.at_stake());
     let _ = varde.update(Message::PageLeaving);
     assert_eq!(auto_saves(&sent(&requests)), [(0, 1)]);
@@ -2247,7 +2220,7 @@ fn the_page_leaving_auto_saves_at_once() {
 
     // Changes offered to be restored aren't replaced before the answer.
     let (mut varde, requests) = with_recovered(Document::default());
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let _ = varde.update(Message::PageLeaving);
     assert!(sent(&requests).is_empty());
 }
@@ -2307,7 +2280,7 @@ fn with_new_design() -> (Varde, Rc<RefCell<Vec<IoRequest>>>) {
 fn a_new_design_auto_saves_to_its_entry_until_saved_as() {
     let (mut varde, requests) = with_new_design();
     let start = Instant::now();
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     tick(&mut varde, start, 0);
     tick(&mut varde, start, 3);
     assert_eq!(auto_saves(&sent(&requests)), [(9, 1)]);
@@ -2344,7 +2317,7 @@ fn a_new_design_auto_saves_to_its_entry_until_saved_as() {
     assert_eq!(document(&varde).target().design_file(), Some(FileId(9)));
     sent(&requests);
     // From now on Save saves.
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let _ = varde.update(Message::Ui(Ui::File(File::Save)));
     assert!(matches!(
         sent(&requests)[..],
@@ -2358,7 +2331,7 @@ fn a_new_design_auto_saves_to_its_entry_until_saved_as() {
 #[test]
 fn a_new_design_not_saved_is_discarded_with_its_entry() {
     let (mut varde, requests) = with_new_design();
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let _ = varde.update(Message::Ui(Ui::File(File::CloseDocument)));
     assert_eq!(document(&varde).prompt(), Some(Leave::Close));
     let _ = varde.update(Message::Ui(Ui::File(File::Unsaved(Unsaved::Discard))));
@@ -2426,7 +2399,7 @@ fn an_entry_failing_after_a_save_as_is_not_shown() {
 fn a_failed_auto_save_is_shown() {
     let (mut varde, requests) = with_new_design();
     let start = Instant::now();
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     tick(&mut varde, start, 0);
     tick(&mut varde, start, 3);
     assert_eq!(auto_saves(&sent(&requests)), [(9, 1)]);
@@ -2537,7 +2510,7 @@ fn a_failed_save_as_an_entry_was_closed_for_asks_for_another() {
     let [.., IoRequest::New { id }] = sent(&requests)[..] else {
         panic!("no store entry asked for");
     };
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let _ = varde.update(Message::Ui(Ui::File(File::SaveAs)));
     let doc_id = document(&varde).id;
     let _ = varde.update(Message::Doc(
@@ -2629,9 +2602,9 @@ fn recovered_designs_are_offered_on_the_welcome_screen() {
         panic!("not opened: {sent_now:?}");
     };
     assert_eq!(*asked, path);
-    let mut editor = Editor::new(Document::example());
-    let cube = editor.document().bodies()[0].id;
-    editor.apply(Command::RemoveBody(cube)).unwrap();
+    let mut editor = Editor::new(with_a_line());
+    let sketch = editor.document().features()[0].id;
+    editor.apply(Command::RemoveFeature(sketch)).unwrap();
     let left = editor.document().clone();
     let _ = varde.update(Message::Io(IoResponse::Opened {
         id: *id,
@@ -2760,7 +2733,9 @@ impl Session {
 
     /// Edits and waits for the edit to be auto-saved.
     fn edit_and_auto_save(&mut self) {
-        let _ = self.varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+        let _ = self
+            .varde
+            .update(Message::Ui(Ui::Edit(an_edit(document(&self.varde)))));
         let start = Instant::now();
         tick(&mut self.varde, start, 0);
         tick(&mut self.varde, start, 3);
@@ -2776,7 +2751,7 @@ fn auto_saved_edits_undone_are_not_recovered_after_a_crash() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("part.vrdp");
-    write_design(&path, &Document::example());
+    write_design(&path, &with_a_line());
 
     let mut crashed = Session::new(&dir);
     let _ = crashed
@@ -2803,7 +2778,7 @@ fn auto_saved_edits_undone_are_not_recovered_after_a_crash() {
         .update(Message::Ui(Ui::Welcome(WelcomeUi::OpenPath(path.clone()))));
     session.answer(|r| matches!(r, IoResponse::Opened { .. }));
     let doc = document(&session.varde);
-    assert_eq!(*doc.editor.document(), Document::example());
+    assert_eq!(*doc.editor.document(), with_a_line());
     assert!(doc.recovered().is_none());
     drop(session);
     let _ = std::fs::remove_dir_all(&dir);
@@ -2818,7 +2793,7 @@ fn auto_saved_edits_are_recovered_after_a_crash() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("part.vrdp");
-    write_design(&path, &Document::example());
+    write_design(&path, &with_a_line());
 
     // A new design, edited and auto-saved.
     let mut crashed = Session::new(&dir);
@@ -2868,7 +2843,7 @@ fn auto_saved_edits_are_recovered_after_a_crash() {
         .update(Message::Ui(Ui::Welcome(WelcomeUi::OpenPath(path.clone()))));
     session.answer(|r| matches!(r, IoResponse::Opened { .. }));
     let doc = document(&session.varde);
-    assert_eq!(*doc.editor.document(), Document::example());
+    assert_eq!(*doc.editor.document(), with_a_line());
     assert_eq!(doc.recovered().map(|offer| &offer.document), Some(&edited));
     let _ = session
         .varde
@@ -2901,7 +2876,7 @@ fn recovered_changes_not_answered_outlive_a_save() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("part.vrdp");
-    write_design(&path, &Document::example());
+    write_design(&path, &with_a_line());
 
     let mut crashed = Session::new(&dir);
     let _ = crashed
@@ -2924,10 +2899,10 @@ fn recovered_changes_not_answered_outlive_a_save() {
             .map(|offer| &offer.document),
         Some(&edited)
     );
-    let id = document(&session.varde).editor.document().bodies()[0].id;
+    let id = document(&session.varde).editor.document().features()[0].id;
     let _ = session
         .varde
-        .update(Message::Ui(Ui::Edit(Edit::ToggleVisible(id))));
+        .update(Message::Ui(Ui::Edit(Edit::ToggleFeatureVisible(id))));
     let _ = session.varde.update(Message::Ui(Ui::File(File::Save)));
     session.answer(|r| matches!(r, IoResponse::Saved { result: Ok(()), .. }));
     let _ = session
@@ -2967,10 +2942,10 @@ fn downloads(varde: &mut Varde, result: Result<(), String>) {
 fn a_download_is_kept_in_the_entry_after_the_auto_saves_before_it() {
     let (mut varde, requests) = with_new_design();
     let start = Instant::now();
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     tick(&mut varde, start, 0);
     tick(&mut varde, start, 3);
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     downloads(&mut varde, Ok(()));
     let sent_now = sent(&requests);
     assert_eq!(auto_saves(&sent_now), [(9, 1)]);
@@ -2995,7 +2970,7 @@ fn a_download_is_kept_in_the_entry_after_the_auto_saves_before_it() {
     tick(&mut varde, start, 10);
     tick(&mut varde, start, 20);
     assert!(sent(&requests).is_empty());
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     tick(&mut varde, start, 21);
     tick(&mut varde, start, 24);
     let sent_now = sent(&requests);
@@ -3016,10 +2991,10 @@ fn a_download_is_kept_in_the_entry_after_the_auto_saves_before_it() {
 fn undoing_back_to_a_download_keeps_it_in_the_entry() {
     let (mut varde, requests) = with_new_design();
     let start = Instant::now();
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     downloads(&mut varde, Ok(()));
     assert_eq!(downloads_kept(&sent(&requests)), [(9, 1)]);
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     tick(&mut varde, start, 0);
     tick(&mut varde, start, 3);
     assert_eq!(auto_saves(&sent(&requests)), [(9, 2)]);
@@ -3048,7 +3023,7 @@ fn closed_clean(sent: &[IoRequest], file: u64) -> bool {
 #[test]
 fn closing_after_a_download_keeps_the_entry() {
     let (mut varde, requests) = with_new_design();
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     downloads(&mut varde, Ok(()));
     assert_eq!(downloads_kept(&sent(&requests)), [(9, 1)]);
     let _ = varde.update(Message::Ui(Ui::File(File::CloseDocument)));
@@ -3062,7 +3037,7 @@ fn closing_after_a_download_keeps_the_entry() {
 #[test]
 fn closing_through_a_download_from_the_prompt_keeps_the_entry() {
     let (mut varde, requests) = with_new_design();
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let _ = varde.update(Message::Ui(Ui::File(File::CloseDocument)));
     let _ = varde.update(Message::Ui(Ui::File(File::Unsaved(Unsaved::Save))));
     // Natively the Save As dialog is showing now; the web downloads
@@ -3086,9 +3061,9 @@ fn closing_through_a_download_from_the_prompt_keeps_the_entry() {
 fn not_saving_after_a_download_goes_back_to_it() {
     let (mut varde, requests) = with_new_design();
     let start = Instant::now();
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     downloads(&mut varde, Ok(()));
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     tick(&mut varde, start, 0);
     tick(&mut varde, start, 3);
     let sent_now = sent(&requests);
@@ -3118,9 +3093,9 @@ fn with_new_design_on_its_way() -> (Varde, Rc<RefCell<Vec<IoRequest>>>, OpenId) 
 fn a_download_before_the_entry_is_made_is_kept_once_it_is() {
     let (mut varde, requests, id) = with_new_design_on_its_way();
     let start = Instant::now();
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     downloads(&mut varde, Ok(()));
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     // Nowhere to auto-save to yet.
     tick(&mut varde, start, 0);
     tick(&mut varde, start, 3);
@@ -3149,7 +3124,7 @@ fn a_download_before_the_entry_is_made_is_kept_once_it_is() {
 
     // Not edited since: nothing more to auto-save.
     let (mut varde, requests, id) = with_new_design_on_its_way();
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     downloads(&mut varde, Ok(()));
     let _ = varde.update(Message::Io(IoResponse::Created {
         id,
@@ -3166,7 +3141,7 @@ fn a_download_before_the_entry_is_made_is_kept_once_it_is() {
 #[test]
 fn a_download_before_an_entry_that_fails_is_not_kept() {
     let (mut varde, requests, id) = with_new_design_on_its_way();
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     downloads(&mut varde, Ok(()));
     let _ = varde.update(Message::Io(IoResponse::Created {
         id,
@@ -3186,10 +3161,10 @@ fn a_download_before_an_entry_that_fails_is_not_kept() {
 fn a_download_closed_before_the_entry_is_made_is_kept() {
     for edited_since in [false, true] {
         let (mut varde, requests, id) = with_new_design_on_its_way();
-        let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+        let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
         downloads(&mut varde, Ok(()));
         if edited_since {
-            let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+            let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
         }
         let _ = varde.update(Message::Ui(Ui::File(File::CloseDocument)));
         if edited_since {
@@ -3209,7 +3184,7 @@ fn a_download_closed_before_the_entry_is_made_is_kept() {
     }
 
     let (mut varde, requests, id) = with_new_design_on_its_way();
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     downloads(&mut varde, Ok(()));
     let _ = varde.update(Message::Ui(Ui::File(File::CloseDocument)));
     let _ = varde.update(Message::Io(IoResponse::Created {
@@ -3225,7 +3200,7 @@ fn a_download_closed_before_the_entry_is_made_is_kept() {
 #[test]
 fn a_failed_download_keeps_the_entry() {
     let (mut varde, requests) = with_new_design();
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     sent(&requests);
     downloads(&mut varde, Err("no".to_owned()));
     assert!(sent(&requests).is_empty());
@@ -3268,7 +3243,9 @@ fn a_downloaded_design_is_kept_and_listed_apart() {
         .update(Message::Ui(Ui::Welcome(WelcomeUi::NewDesign)));
     session.answer(|r| matches!(r, IoResponse::Created { .. }));
     session.edit_and_auto_save();
-    let _ = session.varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = session
+        .varde
+        .update(Message::Ui(Ui::Edit(an_edit(document(&session.varde)))));
     downloads(&mut session.varde, Ok(()));
     let downloaded = document(&session.varde).editor.document().clone();
     let _ = session
@@ -3349,10 +3326,14 @@ fn a_design_downloaded_before_its_entry_is_made_is_kept() {
     let _ = session
         .varde
         .update(Message::Ui(Ui::Welcome(WelcomeUi::NewDesign)));
-    let _ = session.varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = session
+        .varde
+        .update(Message::Ui(Ui::Edit(an_edit(document(&session.varde)))));
     downloads(&mut session.varde, Ok(()));
     let downloaded = document(&session.varde).editor.document().clone();
-    let _ = session.varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = session
+        .varde
+        .update(Message::Ui(Ui::Edit(an_edit(document(&session.varde)))));
     let _ = session
         .varde
         .update(Message::Ui(Ui::File(File::CloseDocument)));
@@ -3402,7 +3383,7 @@ fn a_listed_design_opens_as_its_entry_holds_it() {
             path: Some(path),
             result: Ok(Opened {
                 file: FileId(4),
-                document: Document::example(),
+                document: with_a_line(),
                 access: Access::Edit,
                 recovered: Ok(None),
                 downloaded: holds,
@@ -3496,7 +3477,7 @@ fn a_file_only_read_opens_as_an_untitled_copy() {
 fn saving_to_a_picked_file_asks_whether_it_may_first() {
     let (mut varde, requests) = with_picked_file(picked(3, PickedFrom::Handle));
     let id = document(&varde).id;
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let _ = varde.update(Message::Ui(Ui::File(File::Save)));
     assert!(sent(&requests).is_empty());
     assert!(document(&varde).picking().is_some());
@@ -3541,7 +3522,7 @@ fn saving_to_a_picked_file_asks_whether_it_may_first() {
 fn only_the_answer_waited_for_is_taken() {
     let (mut varde, requests) = with_picked_file(picked(3, PickedFrom::Handle));
     let id = document(&varde).id;
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let _ = varde.update(Message::Ui(Ui::File(File::Save)));
     let other = Chosen::Path("/d/other.vrdp".into());
     let _ = varde.update(Message::Doc(id, ForDoc::SaveAsPicked(Some(other))));
@@ -3562,7 +3543,7 @@ fn only_the_answer_waited_for_is_taken() {
 fn closing_a_picked_file_saves_once_allowed() {
     let (mut varde, requests) = with_picked_file(picked(3, PickedFrom::Handle));
     let id = document(&varde).id;
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let _ = varde.update(Message::Ui(Ui::File(File::CloseDocument)));
     let _ = varde.update(Message::Ui(Ui::File(File::Unsaved(Unsaved::Save))));
     assert!(sent(&requests).is_empty());
@@ -3575,7 +3556,7 @@ fn closing_a_picked_file_saves_once_allowed() {
     // Not allowed: it stays.
     let (mut varde, requests) = with_picked_file(picked(4, PickedFrom::Handle));
     let id = document(&varde).id;
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let _ = varde.update(Message::Ui(Ui::File(File::CloseDocument)));
     let _ = varde.update(Message::Ui(Ui::File(File::Unsaved(Unsaved::Save))));
     let _ = varde.update(Message::Doc(id, ForDoc::Writable(Err("no".to_owned()))));
@@ -3591,11 +3572,11 @@ fn closing_a_picked_file_saves_once_allowed() {
 fn discarding_goes_on_after_a_save_is_refused() {
     let (mut varde, requests) = with_picked_file(picked(3, PickedFrom::Handle));
     let id = document(&varde).id;
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let _ = varde.update(Message::Ui(Ui::File(File::Save)));
     let _ = varde.update(Message::Doc(id, ForDoc::Writable(Ok(()))));
     let revision = saving(&sent(&requests));
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let _ = varde.update(Message::Ui(Ui::File(File::CloseDocument)));
     let _ = varde.update(Message::Ui(Ui::File(File::Unsaved(Unsaved::Discard))));
     let _ = varde.update(Message::Ui(Ui::File(File::Save)));
@@ -3612,10 +3593,10 @@ fn discarding_goes_on_after_a_save_is_refused() {
 #[test]
 fn discarding_goes_on_after_backing_out_of_save_as() {
     let (mut varde, requests) = with_open_file();
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let _ = varde.update(Message::Ui(Ui::File(File::Save)));
     let revision = saving(&sent(&requests));
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let _ = varde.update(Message::Ui(Ui::File(File::CloseDocument)));
     let _ = varde.update(Message::Ui(Ui::File(File::Unsaved(Unsaved::Discard))));
     let _ = varde.update(Message::Ui(Ui::File(File::SaveAs)));
@@ -3641,7 +3622,7 @@ fn a_design_saved_as_a_picked_file_goes_on_from_it() {
         result: Ok(FileId(5)),
     }));
     let doc_id = document(&varde).id;
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::AddCube)));
+    let _ = varde.update(Message::Ui(Ui::Edit(an_edit(document(&varde)))));
     let _ = varde.update(Message::Ui(Ui::File(File::SaveAs)));
     assert!(document(&varde).picking().is_some());
     // Backing out sends nothing.
@@ -3880,7 +3861,7 @@ fn a_sketch_is_left_out_of_the_model_while_it_is_edited() {
     assert_eq!(doc.feed.status(&doc.editor), MeshStatus::Current);
 
     // Edits in it keep it out.
-    doc.update(Edit::AddCube);
+    doc.update(an_edit(&doc));
     assert_eq!(left_out(&mut doc, &requests), [Some(feature)]);
 
     // Leaving asks for it back.

@@ -5,8 +5,8 @@
 
 use std::sync::Arc;
 
-use glam::Vec3;
-use varde_kernel::{RenderLines, RenderMesh, Shape};
+use glam::{DVec3, Vec3};
+use varde_kernel::{RenderLines, RenderMesh, Solid, Tolerance};
 use varde_render::{
     Camera, ClipRect, Colors, Frame, GridPlane, LINE_WIDTH, LineStyle, PointStyle, Projection,
     Renderer, SketchLayer, SketchScene, Space, Srgb, Srgba, View, Viewport, wgpu,
@@ -312,8 +312,7 @@ fn draws_bodies_far_along_the_view_axis() {
     camera.look_from(View::Front);
     let mut mesh = RenderMesh::default();
     mesh.append_at(
-        &Shape::cuboid(Vec3::splat(2.0))
-            .build()
+        &Solid::cuboid(DVec3::ZERO, DVec3::splat(2.0), 0, &Tolerance::DEFAULT)
             .unwrap()
             .tessellate(&varde_kernel::Display::default())
             .unwrap(),
@@ -343,8 +342,7 @@ fn edges_stay_in_front_of_faces_zoomed_into_a_large_scene() {
     let mut camera = Camera::default();
     camera.set_target(Vec3::new(0.5, 0.0, 1.0));
     camera.zoom(0.01 / camera.view_height());
-    let cube = Shape::cuboid(Vec3::ONE)
-        .build()
+    let cube = Solid::cuboid(DVec3::ZERO, DVec3::ONE, 0, &Tolerance::DEFAULT)
         .unwrap()
         .tessellate(&varde_kernel::Display::default())
         .unwrap();
@@ -377,8 +375,7 @@ fn axes_stay_put_zoomed_into_a_large_scene() {
     camera.zoom(0.01 / camera.view_height());
     let mut mesh = RenderMesh::default();
     mesh.append_at(
-        &Shape::cuboid(Vec3::ONE)
-            .build()
+        &Solid::cuboid(DVec3::ZERO, DVec3::ONE, 0, &Tolerance::DEFAULT)
             .unwrap()
             .tessellate(&varde_kernel::Display::default())
             .unwrap(),
@@ -479,8 +476,7 @@ fn looks_the_same_on_srgb_and_linear_targets() {
     // linear target blends encoded values.
     let mut mesh = RenderMesh::default();
     mesh.append_at(
-        &Shape::cuboid(Vec3::splat(2.0))
-            .build()
+        &Solid::cuboid(DVec3::ZERO, DVec3::splat(2.0), 0, &Tolerance::DEFAULT)
             .unwrap()
             .tessellate(&varde_kernel::Display::default())
             .unwrap(),
@@ -549,11 +545,15 @@ fn lines(segments: &[(Vec3, Vec3)]) -> RenderLines {
 fn cube(size: f32, at: Vec3) -> RenderMesh {
     let mut mesh = RenderMesh::default();
     mesh.append_at(
-        &Shape::cuboid(Vec3::splat(size))
-            .build()
-            .unwrap()
-            .tessellate(&varde_kernel::Display::default())
-            .unwrap(),
+        &Solid::cuboid(
+            DVec3::ZERO,
+            Vec3::splat(size).as_dvec3(),
+            0,
+            &Tolerance::DEFAULT,
+        )
+        .unwrap()
+        .tessellate(&varde_kernel::Display::default())
+        .unwrap(),
         at,
     )
     .unwrap();

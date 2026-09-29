@@ -4,7 +4,7 @@ use std::sync::Arc;
 use varde_lane::thread::testing::{TIMEOUT, next};
 
 use super::*;
-use crate::tests::{TempDir, with_bodies};
+use crate::tests::{TempDir, with_sketches};
 use crate::{Access, Chosen, Closing, FileId, OpenId, RecentFile, SaveError, SaveTo, Transport};
 
 #[test]
@@ -180,12 +180,12 @@ fn saves_waiting_behind_a_running_one_collapse() {
     else {
         panic!("not opened");
     };
-    let snapshot = |bodies: usize| Arc::new(with_bodies(bodies));
-    for (revision, bodies) in [(1, 0), (2, 1), (3, 0)] {
+    let snapshot = |sketches: usize| Arc::new(with_sketches(sketches));
+    for (revision, sketches) in [(1, 0), (2, 1), (3, 0)] {
         lane.send(Request::Save {
             file: opened.file,
             revision: revision.into(),
-            document: snapshot(bodies),
+            document: snapshot(sketches),
         });
         if revision == 1 {
             running.recv_timeout(TIMEOUT).unwrap();
@@ -332,12 +332,12 @@ fn auto_saves_waiting_behind_a_running_one_collapse() {
     else {
         panic!("not opened");
     };
-    let snapshot = |bodies: usize| Arc::new(with_bodies(bodies));
-    for (revision, bodies) in [(1, 0), (2, 1), (3, 0)] {
+    let snapshot = |sketches: usize| Arc::new(with_sketches(sketches));
+    for (revision, sketches) in [(1, 0), (2, 1), (3, 0)] {
         lane.send(Request::AutoSave {
             file: opened.file,
             revision: revision.into(),
-            document: snapshot(bodies),
+            document: snapshot(sketches),
         });
         if revision == 1 {
             running.recv_timeout(TIMEOUT).unwrap();

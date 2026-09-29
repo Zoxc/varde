@@ -173,7 +173,8 @@ fn an_edit_answered_for_an_older_revision_is_proposed_again() {
     let before = t.editor.revision();
     click_waiting(&mut t.doc, 1.0, 1.0);
     // Committed meanwhile, not through the solver.
-    t.doc.update(Edit::AddCube);
+    let feature = t.editor.document().features()[0].id;
+    t.doc.update(Edit::ToggleFeatureVisible(feature));
     let after = t.editor.revision();
     t.lane.answer_first(&mut t.doc);
     assert!(sketch(&t).points.is_empty());
@@ -181,7 +182,7 @@ fn an_edit_answered_for_an_older_revision_is_proposed_again() {
     assert_ne!(before, after);
     t.lane.answer(&mut t.doc);
     assert_eq!(sketch(&t).points.len(), 1);
-    assert_eq!(t.editor.document().bodies().len(), 1);
+    assert!(!t.editor.document().features()[0].visible);
 }
 
 #[test]
@@ -271,7 +272,8 @@ fn a_drag_cancelled_or_cut_short_commits_nothing() {
 
     // Another edit ends it, as a tool taken up does.
     drag(&mut t);
-    t.update(Edit::AddCube);
+    let feature = t.editor.document().features()[0].id;
+    t.update(Edit::ToggleFeatureVisible(feature));
     assert!(t.sketch.as_ref().unwrap().drag.is_none());
     drag(&mut t);
     t.look(Look::SelectTool(Tool::Line));

@@ -1,9 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use glam::Vec3;
-use varde_document::{Command, Document, FeatureId};
-use varde_kernel::Shape;
+use varde_document::{Command, Document, FeatureId, FeatureKind};
 
 use varde_regen::handle;
 
@@ -19,27 +17,45 @@ fn connected() -> (MeshFeed, Rc<RefCell<Vec<Request>>>) {
     (feed, requests)
 }
 
-fn add_cube(editor: &mut Editor) {
-    let offset = editor.document().bodies().len() as f32 * 3.0;
+/// An editor, at generation 0, on a document with a sketch holding one
+/// line.
+fn one_line() -> Editor {
+    let mut editor = Editor::new(Document::example());
+    add_sketch(&mut editor);
+    Editor::new(editor.document().clone())
+}
+
+/// Adds a line to the first sketch, as one edit, so the lines shown tell
+/// the generations apart.
+fn add_line(editor: &mut Editor) {
+    let feature = &editor.document().features()[0];
+    let FeatureKind::Sketch { sketch, .. } = &feature.kind;
+    let mut sketch = sketch.clone();
+    let y = sketch.curves.len() as f64;
+    let start = sketch.add_point(glam::DVec2::new(0.0, y)).unwrap();
+    let end = sketch.add_point(glam::DVec2::new(1.0, y)).unwrap();
+    sketch
+        .add_curve(varde_sketch::Curve::Line { start, end }, false)
+        .unwrap();
+    let feature = feature.id;
     editor
-        .apply(Command::AddBody {
-            name: "Cube".to_owned(),
-            shape: Shape::cuboid(Vec3::splat(2.0)),
-            position: Vec3::X * offset,
+        .apply(Command::SetSketch {
+            feature,
+            sketch: Box::new(sketch),
         })
         .unwrap();
 }
 
 #[test]
 fn requests_only_newer_generations() {
-    let mut editor = Editor::new(Document::example());
+    let mut editor = one_line();
     let (mut feed, regen) = connected();
 
     feed.request(&editor, None);
     feed.request(&editor, None);
     assert_eq!(regen.borrow().len(), 1);
 
-    add_cube(&mut editor);
+    add_line(&mut editor);
     feed.request(&editor, None);
     let generations: Vec<_> = regen
         .borrow()
@@ -51,12 +67,12 @@ fn requests_only_newer_generations() {
 
 #[test]
 fn undo_is_regenerated_and_shown() {
-    let mut editor = Editor::new(Document::example());
+    let mut editor = one_line();
     let (mut feed, regen) = connected();
-    add_cube(&mut editor);
+    add_line(&mut editor);
     feed.request(&editor, None);
     feed.apply(handle(regen.borrow_mut().remove(0)));
-    assert_eq!(feed.mesh().triangle_count(), 24);
+    assert_eq!(feed.sketches().segment_count(), 2);
 
     // Back to a state seen before, but a newer generation: asked for and
     // shown again rather than taken for the older mesh.
@@ -65,34 +81,34 @@ fn undo_is_regenerated_and_shown() {
     assert_eq!(feed.status(&editor), MeshStatus::Regenerating);
     feed.apply(handle(regen.borrow_mut().remove(0)));
     assert_eq!(feed.status(&editor), MeshStatus::Current);
-    assert_eq!(feed.mesh().triangle_count(), 12);
+    assert_eq!(feed.sketches().segment_count(), 1);
 }
 
 #[test]
 fn keeps_the_last_mesh_while_regenerating() {
-    let mut editor = Editor::new(Document::example());
+    let mut editor = one_line();
     let (mut feed, regen) = connected();
     feed.request(&editor, None);
     feed.apply(handle(regen.borrow_mut().remove(0)));
 
-    add_cube(&mut editor);
+    add_line(&mut editor);
     feed.request(&editor, None);
     assert_eq!(feed.status(&editor), MeshStatus::Regenerating);
     assert_eq!(feed.generation(), Some(Generation::from(0)));
-    assert_eq!(feed.mesh().triangle_count(), 12);
+    assert_eq!(feed.sketches().segment_count(), 1);
 
     feed.apply(handle(regen.borrow_mut().remove(0)));
     assert_eq!(feed.status(&editor), MeshStatus::Current);
-    assert_eq!(feed.mesh().triangle_count(), 24);
+    assert_eq!(feed.sketches().segment_count(), 2);
 }
 
 #[test]
 fn drops_out_of_order_and_superseded_responses() {
-    let mut editor = Editor::new(Document::example());
+    let mut editor = one_line();
     let (mut feed, regen) = connected();
     for _ in 0..3 {
         feed.request(&editor, None);
-        add_cube(&mut editor);
+        add_line(&mut editor);
     }
     feed.request(&editor, None);
     let mut responses: Vec<_> = regen.take().into_iter().map(handle).collect();
@@ -103,7 +119,7 @@ fn drops_out_of_order_and_superseded_responses() {
     feed.apply(newest.clone());
     feed.apply(older);
     assert_eq!(feed.generation(), Some(Generation::from(3)));
-    assert_eq!(feed.mesh().triangle_count(), 48);
+    assert_eq!(feed.sketches().segment_count(), 4);
 
     // A repeat of what's shown changes nothing either.
     feed.apply(newest);
@@ -113,12 +129,12 @@ fn drops_out_of_order_and_superseded_responses() {
 
 #[test]
 fn failure_ends_regenerating_and_keeps_the_last_mesh() {
-    let mut editor = Editor::new(Document::example());
+    let mut editor = one_line();
     let (mut feed, regen) = connected();
     feed.request(&editor, None);
     feed.apply(handle(regen.borrow_mut().remove(0)));
 
-    add_cube(&mut editor);
+    add_line(&mut editor);
     feed.request(&editor, None);
     let request = regen.borrow_mut().remove(0);
     feed.apply(Response::Failed {
@@ -131,29 +147,29 @@ fn failure_ends_regenerating_and_keeps_the_last_mesh() {
         MeshStatus::Failed("the kernel failed")
     );
     assert_eq!(feed.generation(), Some(Generation::from(0)));
-    assert_eq!(feed.mesh().triangle_count(), 12);
+    assert_eq!(feed.sketches().segment_count(), 1);
 
     // A late mesh for the generation that failed changes nothing.
     feed.apply(handle(request));
     assert_eq!(feed.generation(), Some(Generation::from(0)));
 
     // The next edit hides the error while it regenerates, then clears it.
-    add_cube(&mut editor);
+    add_line(&mut editor);
     feed.request(&editor, None);
     assert_eq!(feed.status(&editor), MeshStatus::Regenerating);
     feed.apply(handle(regen.borrow_mut().remove(0)));
     assert_eq!(feed.status(&editor), MeshStatus::Current);
-    assert_eq!(feed.mesh().triangle_count(), 36);
+    assert_eq!(feed.sketches().segment_count(), 3);
 }
 
 /// Nothing is asked for before the lane has started, and then the
 /// editor's newest generation.
 #[test]
 fn requests_nothing_until_connected() {
-    let mut editor = Editor::new(Document::example());
+    let mut editor = one_line();
     let mut feed = MeshFeed::new();
     feed.request(&editor, None);
-    add_cube(&mut editor);
+    add_line(&mut editor);
     feed.request(&editor, None);
     assert!(!feed.connected());
 
@@ -214,7 +230,6 @@ fn sketches_are_shown_with_their_mesh() {
         error: "no".to_owned(),
     });
     assert_eq!(feed.sketches().segment_count(), 1);
-    assert_eq!(feed.mesh().triangle_count(), 12);
 
     add_sketch(&mut editor);
     feed.request(&editor, None);

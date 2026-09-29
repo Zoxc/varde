@@ -1,6 +1,4 @@
-use glam::Vec3;
-use varde_document::{Command, Document, Editor};
-use varde_kernel::Shape;
+use varde_document::{Command, Document, Editor, FeatureId, FeatureKind, OriginPlane, Plane};
 use varde_lane::thread::testing::{join_in_time, next};
 
 use super::*;
@@ -14,37 +12,62 @@ fn regenerate(editor: &Editor) -> Request {
     }
 }
 
-fn add_cube(editor: &mut Editor) {
+/// An editor, at generation 0, on a document holding an empty sketch on
+/// XY, and the sketch's id.
+fn with_sketch() -> (Editor, FeatureId) {
+    let mut editor = Editor::new(Document::default());
     editor
-        .apply(Command::AddBody {
-            name: "Cube".to_owned(),
-            shape: Shape::cuboid(Vec3::splat(1.0)),
-            position: Vec3::ZERO,
+        .apply(editor.document().add_sketch(Plane::Origin(OriginPlane::XY)))
+        .unwrap();
+    let feature = editor.document().features()[0].id;
+    (Editor::new(editor.document().clone()), feature)
+}
+
+/// Adds a line to the sketch `feature`, as one edit, so the lines
+/// answered for each generation are as many as it is.
+fn add_line(editor: &mut Editor, feature: FeatureId) {
+    let FeatureKind::Sketch { sketch, .. } = &editor.document().features()[0].kind;
+    let mut sketch = sketch.clone();
+    let y = sketch.curves.len() as f64;
+    let start = sketch.add_point(glam::DVec2::new(0.0, y)).unwrap();
+    let end = sketch.add_point(glam::DVec2::new(1.0, y)).unwrap();
+    sketch
+        .add_curve(varde_sketch::Curve::Line { start, end }, false)
+        .unwrap();
+    editor
+        .apply(Command::SetSketch {
+            feature,
+            sketch: Box::new(sketch),
         })
         .unwrap();
 }
 
 #[test]
 fn round_trip() {
-    let editor = Editor::new(Document::example());
+    let (editor, _) = crate::tests::sketched();
     let (mut lane, mut responses) = spawn();
     lane.send(regenerate(&editor));
     let Response::Regenerated {
-        generation, mesh, ..
+        generation,
+        sketches,
+        ..
     } = next(&mut responses)
     else {
         panic!("regeneration failed");
     };
     assert_eq!(generation, editor.generation());
-    assert_eq!(*mesh, crate::tessellate(editor.document()).unwrap());
+    assert_eq!(
+        *sketches,
+        crate::flatten_sketches(editor.document(), None).unwrap()
+    );
 }
 
 #[test]
 fn burst_ends_with_the_newest() {
-    let mut editor = Editor::new(Document::default());
+    let (mut editor, feature) = with_sketch();
     let (mut lane, mut responses) = spawn();
     for _ in 0..20 {
-        add_cube(&mut editor);
+        add_line(&mut editor, feature);
         lane.send(regenerate(&editor));
     }
     // Some may be skipped, but those that arrive are in order, and the last
@@ -52,14 +75,16 @@ fn burst_ends_with_the_newest() {
     let mut last = 0;
     while last < u64::from(editor.generation()) {
         let Response::Regenerated {
-            generation, mesh, ..
+            generation,
+            sketches,
+            ..
         } = next(&mut responses)
         else {
             panic!("regeneration failed");
         };
         let generation = u64::from(generation);
         assert!(generation > last);
-        assert_eq!(mesh.triangle_count() as u64, generation * 12);
+        assert_eq!(sketches.ends().len() as u64, generation);
         last = generation;
     }
 }
@@ -89,23 +114,25 @@ fn panics_on_generation_1(request: Request) -> Response {
 
 #[test]
 fn lane_keeps_going_after_a_job_panics() {
-    let mut editor = Editor::new(Document::default());
+    let (mut editor, feature) = with_sketch();
     let (mut lane, mut responses) = spawn_on(panics_on_generation_1);
-    add_cube(&mut editor);
+    add_line(&mut editor, feature);
     lane.send(regenerate(&editor));
     assert!(matches!(
         next(&mut responses),
         Response::Failed { generation, .. } if u64::from(generation) == 1
     ));
 
-    add_cube(&mut editor);
+    add_line(&mut editor, feature);
     lane.send(regenerate(&editor));
     let Response::Regenerated {
-        generation, mesh, ..
+        generation,
+        sketches,
+        ..
     } = next(&mut responses)
     else {
         panic!("generation 2 failed");
     };
     assert_eq!(u64::from(generation), 2);
-    assert_eq!(mesh.triangle_count(), 24);
+    assert_eq!(sketches.ends().len(), 2);
 }

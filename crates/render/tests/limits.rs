@@ -6,8 +6,8 @@
 
 use std::sync::Arc;
 
-use glam::Vec3;
-use varde_kernel::{RenderLines, RenderMesh, Shape};
+use glam::{DVec3, Vec3};
+use varde_kernel::{RenderLines, RenderMesh, Solid, Tolerance};
 use varde_render::{
     Camera, Colors, Frame, GridPlane, LineStyle, PrepareError, Renderer, SketchLayer, SketchScene,
     Space, Srgb, Srgba, Viewport, wgpu,
@@ -70,8 +70,7 @@ fn mesh_past_the_buffer_limit_is_skipped() {
         return;
     };
     assert_eq!(device.limits().max_buffer_size, 512);
-    let cube = Shape::cuboid(Vec3::ONE)
-        .build()
+    let cube = Solid::cuboid(DVec3::ZERO, DVec3::ONE, 0, &Tolerance::DEFAULT)
         .unwrap()
         .tessellate(&varde_kernel::Display::default())
         .unwrap();

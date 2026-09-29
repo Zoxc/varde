@@ -13,11 +13,15 @@ fn round_trip<T: Serialize + for<'a> Deserialize<'a>>(message: &T) -> T {
     decode(&encode(message, MAX_MESSAGE_BYTES).unwrap()).unwrap()
 }
 
-/// The example design with its cube hidden.
+/// A design with a hidden sketch.
 fn hidden() -> Document {
     let mut editor = Editor::new(Document::example());
-    let cube = editor.document().bodies()[0].id;
-    editor.apply(Command::SetVisible(cube, false)).unwrap();
+    let xy = varde_document::Plane::Origin(varde_document::OriginPlane::XY);
+    editor.apply(editor.document().add_sketch(xy)).unwrap();
+    let sketch = editor.document().features()[0].id;
+    editor
+        .apply(Command::SetFeatureVisible(sketch, false))
+        .unwrap();
     editor.document().clone()
 }
 
@@ -356,14 +360,14 @@ fn swap_document(message: &[u8], placeholder: &Document, document: &[u8]) -> Vec
 /// A document is checked as it's decoded, like one read from a file.
 #[test]
 fn a_document_that_fails_its_checks_is_refused() {
-    // Two copies of the example's cube, spliced into its bytes since a
-    // document's fields are private and one can't be decoded unchecked:
-    // the body count, the body, no features and the next id.
-    let example = Document::example().to_postcard();
-    let [1, body @ .., 0, 1] = &example[..] else {
-        panic!("not the example's bytes: {example:?}");
+    // Two copies of a sketch, spliced into a design's bytes since a
+    // document's fields are private and one can't be decoded unchecked: no
+    // bodies, the feature count, the feature, millimetres and the next id.
+    let sketched = hidden().to_postcard();
+    let [0, 1, feature @ .., 0, 1] = &sketched[..] else {
+        panic!("not the design's bytes: {sketched:?}");
     };
-    let twins = [&[2], body, body, &[0, 1]].concat();
+    let twins = [&[0, 2], feature, feature, &[0, 1]].concat();
     assert!(Document::from_postcard(&twins).is_err());
     let bytes = encode(
         &ToWorker {
@@ -371,14 +375,14 @@ fn a_document_that_fails_its_checks_is_refused() {
             request: Request::AutoSave {
                 file: FileId(0),
                 revision: 1.into(),
-                document: Arc::new(Document::example()),
+                document: Arc::new(hidden()),
             },
         },
         MAX_MESSAGE_BYTES,
     )
     .unwrap();
     assert!(decode::<ToWorker>(&bytes).is_ok());
-    let bytes = swap_document(&bytes, &Document::example(), &twins);
+    let bytes = swap_document(&bytes, &hidden(), &twins);
     assert!(matches!(decode::<ToWorker>(&bytes), Err(Error::Decode(_))));
 
     let bytes = encode(

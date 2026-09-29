@@ -1,10 +1,11 @@
 use std::error::Error;
 
 use super::*;
+use crate::testing::with_body;
 
 #[test]
 fn a_document_round_trips() {
-    let document = Document::example();
+    let document = with_body();
     assert_eq!(
         Document::from_postcard(&document.to_postcard()),
         Ok(document)
@@ -17,17 +18,12 @@ fn a_document_round_trips() {
 fn bytes_after_a_document_are_refused() {
     // Laid out as the IO lane's auto-saves: no base (the tail of a design
     // file), no name, the document and whether it was downloaded.
-    let auto_saved = (
-        None::<(u64, u32, u64)>,
-        None::<String>,
-        Document::example(),
-        false,
-    );
+    let auto_saved = (None::<(u64, u32, u64)>, None::<String>, with_body(), false);
     assert!(matches!(
         Document::from_postcard(&postcard::to_stdvec(&auto_saved).unwrap()),
         Err(error) if error.source().is_none() && error.to_string().contains("after the end")
     ));
-    let mut padded = Document::example().to_postcard();
+    let mut padded = with_body().to_postcard();
     padded.push(0);
     assert!(Document::from_postcard(&padded).is_err());
 }
@@ -42,8 +38,8 @@ fn malformed_bytes_are_refused() {
 /// [`Document::from_postcard`], which keeps the message of what's wrong.
 #[test]
 fn deserializing_a_document_checks_it() {
-    let mut bytes = Document::example().to_postcard();
-    // The next id, now 0, which the cube's id 0 isn't below.
+    let mut bytes = with_body().to_postcard();
+    // The next id, now 0, which the body's id 1 isn't below.
     *bytes.last_mut().unwrap() = 0;
     assert!(postcard::from_bytes::<Document>(&bytes).is_err());
     assert!(matches!(
@@ -60,10 +56,15 @@ fn deserializing_a_document_checks_it() {
 #[test]
 fn a_document_encodes_as_before() {
     assert_eq!(
-        Document::example().to_postcard(),
+        with_body().to_postcard(),
         [
-            1, 0, 6, 67, 117, 98, 101, 32, 49, 0, 0, 0, 0, 64, 0, 0, 0, 64, 0, 0, 0, 64, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1
+            // The body: id 1, "Body 1", visible, made by feature 0.
+            1, 1, 6, 66, 111, 100, 121, 32, 49, 1, 0,
+            // The feature: id 0, "Sketch 1", visible, a sketch on XY,
+            // empty.
+            1, 0, 8, 83, 107, 101, 116, 99, 104, 32, 49, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+            // Millimetres, and the next id.
+            0, 2
         ]
     );
 }

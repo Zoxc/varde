@@ -1,10 +1,10 @@
 use super::*;
-use crate::Shape;
+use crate::{Solid, Tolerance};
+use glam::DVec3;
 
 #[test]
 fn append_offsets_indices() {
-    let cube = Shape::cuboid(Vec3::ONE)
-        .build()
+    let cube = Solid::cuboid(DVec3::ZERO, DVec3::ONE, 0, &Tolerance::DEFAULT)
         .unwrap()
         .tessellate(&crate::Display::default())
         .unwrap();
@@ -19,8 +19,7 @@ fn append_offsets_indices() {
 
 #[test]
 fn append_refuses_more_than_the_limits() {
-    let cube = Shape::cuboid(Vec3::ONE)
-        .build()
+    let cube = Solid::cuboid(DVec3::ZERO, DVec3::ONE, 0, &Tolerance::DEFAULT)
         .unwrap()
         .tessellate(&crate::Display::default())
         .unwrap();
@@ -50,8 +49,7 @@ fn append_refuses_more_than_the_limits() {
 
 #[test]
 fn append_at_moves_positions_but_not_normals() {
-    let cube = Shape::cuboid(Vec3::ONE)
-        .build()
+    let cube = Solid::cuboid(DVec3::ZERO, DVec3::ONE, 0, &Tolerance::DEFAULT)
         .unwrap()
         .tessellate(&crate::Display::default())
         .unwrap();
@@ -106,8 +104,7 @@ fn rebuild(mesh: RenderMesh) -> Result<RenderMesh, MeshError> {
 fn from_parts_takes_a_mesh() {
     assert_eq!(rebuild(triangle()), Ok(triangle()));
     assert_eq!(rebuild(RenderMesh::default()), Ok(RenderMesh::default()));
-    let cube = Shape::cuboid(Vec3::ONE)
-        .build()
+    let cube = Solid::cuboid(DVec3::ZERO, DVec3::ONE, 0, &Tolerance::DEFAULT)
         .unwrap()
         .tessellate(&crate::Display::default())
         .unwrap();

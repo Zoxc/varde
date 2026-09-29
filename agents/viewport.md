@@ -103,8 +103,10 @@ the camera to look straight at a plane with its normal and an up
 direction, which `look_from(View)` is a case of; the camera has no roll, so
 up is only chosen freely for a vertical normal (see `notes/SketchImpl.md`).
 
-The tessellated document mesh and the visible sketches' lines are kept in
-the app's `MeshFeed` and keyed by `Editor::generation()`, so they're only
+The document mesh (the regeneration lane evaluates the feature history
+into the bodies' solids and tessellates the visible ones with
+`Solid::tessellate`, see `agents/kernel.md`) and the visible sketches'
+lines are kept in the app's `MeshFeed` and keyed by `Editor::generation()`, so they're only
 rebuilt when the document changes; the viewport widget just draws what it's
 handed. The renderer's GPU copies are keyed by their `Arc`s instead, since
 iced shares one pipeline between documents whose generations each start at
