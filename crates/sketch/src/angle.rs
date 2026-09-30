@@ -86,3 +86,68 @@ pub(crate) fn between(a: DVec2, b: DVec2) -> f64 {
 pub(crate) fn to_angle(v: DVec2) -> f64 {
     atan2(v.y, v.x)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::f64::consts::{FRAC_PI_2, PI};
+
+    use super::*;
+
+    /// Whether `a` and `b` are the same kind of number: both not a number,
+    /// the same infinity or zero (by sign), or both finite and non-zero.
+    fn same_kind(a: f64, b: f64) -> bool {
+        let kind = |x: f64| {
+            if x.is_nan() {
+                0
+            } else if x == 0.0 {
+                if x.is_sign_negative() { 1 } else { 2 }
+            } else if x.is_infinite() {
+                if x < 0.0 { 3 } else { 4 }
+            } else {
+                5
+            }
+        };
+        kind(a) == kind(b)
+    }
+
+    #[test]
+    fn special_values_are_the_standard_ones() {
+        // What values from a file or a form can bring: zeros of both
+        // signs, infinities, not a number, the axes and the wrap at π.
+        let (inf, nan) = (f64::INFINITY, f64::NAN);
+        for (got, want) in [
+            (sin(0.0), 0.0),
+            (sin(-0.0), -0.0),
+            (sin(inf), nan),
+            (cos(nan), nan),
+            (tan(-0.0), -0.0),
+            (acos(1.0), 0.0),
+            (acos(1.0 + f64::EPSILON), nan),
+            (exp(-inf), 0.0),
+            (ln(0.0), -inf),
+            (ln(-1.0), nan),
+            (hypot(inf, nan), inf),
+            (atan2(0.0, -1.0), PI),
+            (atan2(-0.0, -1.0), -PI),
+            (atan2(-0.0, 0.0), -0.0),
+            (atan2(0.0, -0.0), PI),
+            (atan2(1.0, 0.0), FRAC_PI_2),
+            (atan2(nan, 1.0), nan),
+            (atan2(inf, inf), PI / 4.0),
+        ] {
+            assert!(
+                same_kind(got, want) && (got == want || got.is_nan()),
+                "{got} {want}"
+            );
+        }
+        assert_eq!(to_angle(DVec2::new(-1.0, -0.0)), -PI);
+        assert_eq!(between(DVec2::X, -DVec2::X), PI);
+        assert!(between(DVec2::ZERO, DVec2::X).is_nan());
+        // A turn by an angle that's a multiple of π/2 is off the axis by
+        // no more than the rounding of π.
+        for k in 0..8 {
+            let at = from_angle(f64::from(k) * FRAC_PI_2);
+            assert!(at.x.abs().min(at.y.abs()) < 1e-15 && (at.length() - 1.0).abs() < 1e-15);
+        }
+    }
+}

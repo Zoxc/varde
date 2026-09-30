@@ -1339,3 +1339,59 @@ fn arc_ends_take_their_bits_from_libm() {
         assert!(vertices.contains(&bits(p)), "{p}");
     }
 }
+
+#[test]
+fn angles_on_the_wrap_and_the_axes_give_whole_regions() {
+    // Where `atan2` jumps from π to −π, and at multiples of π/2 and π/4,
+    // with `+0` and `−0` where a coordinate is zero and at radii far
+    // apart: a circle cut through its centre by a line at each of those
+    // angles is two half discs, and an arc from angle 0 to π (or back)
+    // closed by its diameter is one.
+    let half_turn = |r: f64| PI * r * r / 2.0;
+    let areas = |sketch: &Sketch| {
+        sketch
+            .profiles()
+            .unwrap()
+            .regions
+            .iter()
+            .map(|region| region.area)
+            .collect::<Vec<_>>()
+    };
+    let near = |got: f64, want: f64| (got - want).abs() <= 1e-9 * want;
+    for r in [1e-3, 1.0, 1e4, 3e5] {
+        let q = r * std::f64::consts::FRAC_1_SQRT_2;
+        for zero in [0.0, -0.0] {
+            let across = [
+                DVec2::new(r, zero),
+                DVec2::new(q, q),
+                DVec2::new(zero, r),
+                DVec2::new(-q, q),
+            ];
+            for way in across {
+                let mut sketch = Sketch::default();
+                let center = sketch.add_point(DVec2::ZERO).unwrap();
+                circle(&mut sketch, center, r);
+                let a = sketch.add_point(-2.0 * way).unwrap();
+                let b = sketch.add_point(2.0 * way).unwrap();
+                line(&mut sketch, a, b);
+                let got = areas(&sketch);
+                assert_eq!(got.len(), 2, "{r} {zero} {way}");
+                assert!(got.iter().all(|&a| near(a, half_turn(r))), "{got:?}");
+            }
+            for upper in [true, false] {
+                let mut sketch = Sketch::default();
+                let center = sketch.add_point(DVec2::ZERO).unwrap();
+                let east = sketch.add_point(DVec2::new(r, 0.0)).unwrap();
+                let west = sketch.add_point(DVec2::new(-r, zero)).unwrap();
+                let (start, end) = if upper { (east, west) } else { (west, east) };
+                sketch
+                    .add_curve(Curve::Arc { center, start, end }, false)
+                    .unwrap();
+                line(&mut sketch, east, west);
+                let got = areas(&sketch);
+                assert_eq!(got.len(), 1, "{r} {zero} {upper}");
+                assert!(near(got[0], half_turn(r)), "{got:?}");
+            }
+        }
+    }
+}

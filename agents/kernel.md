@@ -376,6 +376,16 @@ conics, extrudes and joins of random sketches (lines, circles, arcs,
 closed splines) natively (x86_64 Linux) and as `wasm32-unknown-unknown`
 under node. The hashes were equal, and equal to the web's before the
 change (which only moved native bits); before it, native differed.
+Checked again with chains of two to four features: polygons given
+fillets, chamfers (by distance and by angle) and offsets as edits,
+extruded on tilted frames and joined, cut and intersected in turn, and
+the solver on angle and length dimensions (systems up to about a hundred
+variables): equal natively and on wasm, and at 1 and 8 threads. On
+sketches at exact angles (multiples of π/4, `±0` coordinates, radii from
+0.1 to 1e5) no edit or profile changed its outcome from before, only
+last bits. `libm`'s own per-architecture code (x86, aarch64, wasm32) is
+`sqrt`, `fma`, rounding and the like, all exact, so it can't split the
+platforms either.
 
 ## Meshes (`src/mesh.rs`, `src/mesh/`)
 
