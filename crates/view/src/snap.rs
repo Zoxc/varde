@@ -25,7 +25,7 @@
 //! arc, to the tangent arc.
 
 use glam::DVec2;
-use varde_sketch::{Curve, Id, Sketch, arc_sweep, crossing};
+use varde_sketch::{Curve, Id, Sketch, angle, arc_sweep, crossing};
 
 use crate::dimension::sector_holds;
 use crate::hit;
@@ -366,10 +366,10 @@ fn tangent_points(sketch: &Sketch, start: DVec2) -> Vec<Snap> {
         if distance <= radius || distance.is_nan() {
             continue;
         }
-        let spread = (radius / distance).acos();
-        let toward = away.to_angle();
-        for angle in [toward + spread, toward - spread] {
-            let at = center + radius * DVec2::from_angle(angle);
+        let spread = angle::acos(radius / distance);
+        let toward = angle::to_angle(away);
+        for turn in [toward + spread, toward - spread] {
+            let at = center + radius * angle::from_angle(turn);
             if on_round(sketch, id, at) {
                 found.push(Snap {
                     inference: Some(Inference::Tangent(id)),

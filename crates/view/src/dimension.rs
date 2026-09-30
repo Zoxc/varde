@@ -7,7 +7,7 @@ use std::f64::consts::{PI, TAU};
 
 use glam::DVec2;
 use varde_expr::{LengthUnit, format};
-use varde_sketch::{Curve, Dimension, Id, Kind, Measure, Role, Side, Sketch};
+use varde_sketch::{Curve, Dimension, Id, Kind, Measure, Role, Side, Sketch, angle};
 
 /// Under this sine of the angle between them, two lines picked are
 /// parallel, and dimensioned by the distance between them rather than
@@ -190,7 +190,9 @@ fn angle(sketch: &Sketch, a: Id, b: Id, at: DVec2) -> Option<(Measure, Side)> {
 /// Whether the direction `toward` is within the angle `sweep` turning
 /// counter-clockwise from the direction `from`.
 pub(crate) fn sector_holds(from: DVec2, sweep: f64, toward: DVec2) -> bool {
-    from.angle_to(toward).rem_euclid(TAU) <= sweep
+    // Signed as glam's `angle_to`, by libm: the side picked is saved.
+    let turn = angle::between(from, toward) * from.perp_dot(toward).signum();
+    turn.rem_euclid(TAU) <= sweep
 }
 
 /// A measure as the user sees it: "Length", "Horizontal distance".

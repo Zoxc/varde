@@ -31,6 +31,19 @@ versions (and `powi`, `powf`, and glam's angle and rotation methods)
 through `disallowed-methods`; tests using std as an independent
 reference, or to build inputs, allow it in their module.
 
+The module is public (`varde_sketch::angle`, with `log10` and `pow` too)
+because `varde-view` makes saved values of its own: a line's end from a
+typed angle and the polygon's corners (`typed.rs`), tangent points
+(`snap.rs`), the length an extrude drag snaps to (`extrude::snap_step`)
+and the side a dimension is placed on (`dimension::sector_holds`, a signed
+angle). They take these helpers, so the same typed edit gives the same
+bits natively and on the web; `crates/view/clippy.toml` bans the same
+`f64` and glam `D*` methods. Display only, and on std: the view's `f32`
+maths (the view cube's letters, the zoom per wheel step) is not listed,
+and the drawn arc of an angle dimension
+(`viewport/sketch/dimensions.rs`) allows the lint. Tests build inputs
+with the helpers and check saved bits against `libm` directly.
+
 A **spline** (`spline.rs`, `Curve::Spline(Spline)`, "Spline 1") is a
 cubic non-rational B-spline, open (clamped) or `closed` (periodic), its
 parameter from 0 to 1. `SplineKind::Through` passes through its

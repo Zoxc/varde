@@ -140,6 +140,35 @@ fn a_line_s_values_hold_its_end_and_the_cursor_moves_the_rest() {
 }
 
 #[test]
+fn a_typed_angle_places_the_end_with_libm_s_bits() {
+    // The end is saved, so it has to have the same bits natively and on
+    // the web: libm's, not the platform's. At 9.2° glibc's sine is an ulp
+    // off libm's (x86_64 Linux).
+    let placed = [at(1.0, 1.0)];
+    let mut tool = testing::tool(Tool::Line, &placed, &[None]);
+    let both = [typed(Field::Angle, "9.2"), typed(Field::Length, "10")];
+    tool.typed = &both;
+    let angle = tool.value_in(Field::Angle).unwrap().value;
+    let direction = DVec2::new(libm::cos(angle), libm::sin(angle));
+    let line = outline(&tool, at(30.0, 6.0)).unwrap();
+    let Outline::Line { start, end } = line else {
+        panic!("{line:?}")
+    };
+    assert_eq!(end, start + direction * 10.0);
+    let back = libm::atan2(end.y - start.y, end.x - start.x);
+    assert_eq!(line.value(Field::Angle), Some(back));
+
+    // As far along it as the cursor goes, the same.
+    let angle = [typed(Field::Angle, "9.2")];
+    tool.typed = &angle;
+    let Some(Outline::Line { end, .. }) = outline(&tool, at(30.0, 6.0)) else {
+        panic!()
+    };
+    let along = (at(30.0, 6.0) - start).dot(direction);
+    assert_eq!(end, start + direction * along);
+}
+
+#[test]
 fn a_circle_s_and_an_arc_s_values_hold_their_size() {
     let center = [at(0.0, 0.0)];
     let mut circle = testing::tool(Tool::Circle, &center, &[None]);

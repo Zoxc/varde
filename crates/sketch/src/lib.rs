@@ -20,7 +20,7 @@
 //! model units, millimetres. A [`Sketch`] read from a file is trusted only
 //! after [`Sketch::check`].
 
-mod angle;
+pub mod angle;
 mod check;
 mod constraint;
 mod corner;

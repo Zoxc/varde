@@ -10,7 +10,8 @@
 //! functions, so the two agree to the bit.
 //!
 //! The crate's `clippy.toml` refuses std's versions, so the sketch keeps
-//! to these; tests that use std as an independent reference allow it in
+//! to these, and so does `varde-view` wherever it makes points or values
+//! that are saved (typed angles, tangent snaps, snapped lengths); tests that use std as an independent reference allow it in
 //! their module. [`from_angle`] is `cos` and `sin` taken apart, not a
 //! joint `sincos`, as std's `sin_cos` is on wasm.
 
@@ -18,64 +19,76 @@ use glam::DVec2;
 
 /// The sine of `x` radians.
 #[inline]
-pub(crate) fn sin(x: f64) -> f64 {
+pub fn sin(x: f64) -> f64 {
     libm::sin(x)
 }
 
 /// The cosine of `x` radians.
 #[inline]
-pub(crate) fn cos(x: f64) -> f64 {
+pub fn cos(x: f64) -> f64 {
     libm::cos(x)
 }
 
 /// The tangent of `x` radians.
 #[inline]
-pub(crate) fn tan(x: f64) -> f64 {
+pub fn tan(x: f64) -> f64 {
     libm::tan(x)
 }
 
 /// The angle in `[−π, π]` of the direction `(x, y)`, from +x towards +y.
 #[inline]
-pub(crate) fn atan2(y: f64, x: f64) -> f64 {
+pub fn atan2(y: f64, x: f64) -> f64 {
     libm::atan2(y, x)
 }
 
 /// The angle in `[0, π]` whose cosine is `x`; not a number outside
 /// `[−1, 1]`.
 #[inline]
-pub(crate) fn acos(x: f64) -> f64 {
+pub fn acos(x: f64) -> f64 {
     libm::acos(x)
 }
 
 /// `e` to the power `x`.
 #[inline]
-pub(crate) fn exp(x: f64) -> f64 {
+pub fn exp(x: f64) -> f64 {
     libm::exp(x)
 }
 
 /// The natural logarithm of `x`.
 #[inline]
-pub(crate) fn ln(x: f64) -> f64 {
+pub fn ln(x: f64) -> f64 {
     libm::log(x)
+}
+
+/// The base-10 logarithm of `x`.
+#[inline]
+pub fn log10(x: f64) -> f64 {
+    libm::log10(x)
+}
+
+/// `x` to the power `y`.
+#[inline]
+pub fn pow(x: f64, y: f64) -> f64 {
+    libm::pow(x, y)
 }
 
 /// `√(x² + y²)`, without overflow or underflow on the way.
 #[inline]
-pub(crate) fn hypot(x: f64, y: f64) -> f64 {
+pub fn hypot(x: f64, y: f64) -> f64 {
     libm::hypot(x, y)
 }
 
 /// The unit vector at `angle` radians from +x towards +y, `(cos, sin)`:
 /// glam's `DVec2::from_angle` with these bits.
 #[inline]
-pub(crate) fn from_angle(angle: f64) -> DVec2 {
+pub fn from_angle(angle: f64) -> DVec2 {
     DVec2::new(cos(angle), sin(angle))
 }
 
 /// The angle in `[0, π]` between `a` and `b`, by `acos` of their cosine:
 /// glam's `DVec2::angle_to` without its sign, with these bits.
 #[inline]
-pub(crate) fn between(a: DVec2, b: DVec2) -> f64 {
+pub fn between(a: DVec2, b: DVec2) -> f64 {
     let cos = a.dot(b) / (a.length_squared() * b.length_squared()).sqrt();
     acos(cos.clamp(-1.0, 1.0))
 }
@@ -83,7 +96,7 @@ pub(crate) fn between(a: DVec2, b: DVec2) -> f64 {
 /// The angle in `[−π, π]` of `v` from +x towards +y: glam's
 /// `DVec2::to_angle` with these bits.
 #[inline]
-pub(crate) fn to_angle(v: DVec2) -> f64 {
+pub fn to_angle(v: DVec2) -> f64 {
     atan2(v.y, v.x)
 }
 
@@ -127,6 +140,9 @@ mod tests {
             (ln(0.0), -inf),
             (ln(-1.0), nan),
             (hypot(inf, nan), inf),
+            (log10(0.0), -inf),
+            (pow(10.0, 3.0), 1000.0),
+            (pow(0.0, -1.0), inf),
             (atan2(0.0, -1.0), PI),
             (atan2(-0.0, -1.0), -PI),
             (atan2(-0.0, 0.0), -0.0),

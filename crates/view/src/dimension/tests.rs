@@ -11,7 +11,7 @@ fn shapes() -> (Sketch, [Id; 6], [Id; 2]) {
     let lone = point(&mut sketch, 20.0, 20.0);
     let [c, d] = [(0.0, 10.0), (10.0, 15.0)].map(|(x, y)| point(&mut sketch, x, y));
     let parallel = line(&mut sketch, c, d);
-    let up = DVec2::from_angle(60f64.to_radians()) * 10.0;
+    let up = varde_sketch::angle::from_angle(60f64.to_radians()) * 10.0;
     let e = point(&mut sketch, up.x, up.y);
     let steep = line(&mut sketch, a, e);
     let center = point(&mut sketch, 40.0, 0.0);
@@ -120,11 +120,11 @@ fn an_angle_is_the_one_the_label_is_in_or_across_the_corner_from() {
     let mut sketch = Sketch::default();
     let o = point(&mut sketch, 0.0, 0.0);
     let x = point(&mut sketch, 10.0, 0.0);
-    let up = DVec2::from_angle(60f64.to_radians()) * 10.0;
+    let up = varde_sketch::angle::from_angle(60f64.to_radians()) * 10.0;
     let e = point(&mut sketch, up.x, up.y);
     let (a, b) = (line(&mut sketch, o, x), line(&mut sketch, o, e));
     let degrees = |toward: f64| {
-        let at = DVec2::from_angle(toward.to_radians()) * 3.0;
+        let at = varde_sketch::angle::from_angle(toward.to_radians()) * 3.0;
         let (measure, side) = measure(&sketch, &[a, b], at, false).unwrap();
         sketch.measure(&measure, side).unwrap().to_degrees()
     };

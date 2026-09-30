@@ -18,3 +18,5 @@ log.workspace = true
 [dev-dependencies]
 # Blocks on wgpu setup in headless render tests.
 pollster.workspace = true
+# An independent reference for the bits of saved angles.
+libm.workspace = true

@@ -91,7 +91,7 @@ fn the_nearest_wins() {
 #[test]
 fn an_arc_is_hit_only_where_it_runs() {
     let d = drawn();
-    let on = |angle: f64| DVec2::new(0.0, 20.0) + DVec2::from_angle(angle) * 5.0;
+    let on = |angle: f64| DVec2::new(0.0, 20.0) + varde_sketch::angle::from_angle(angle) * 5.0;
     assert_eq!(hit(&d.sketch, on(0.8), 0.2), Some(d.arc));
     // On its circle, but past its end.
     assert_eq!(hit(&d.sketch, on(3.9), 0.2), None);

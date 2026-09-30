@@ -10,6 +10,7 @@ use std::f64::consts::TAU;
 
 use glam::DVec2;
 use varde_expr::{Ask, Error, ErrorKind, Quantity, Span, Value};
+use varde_sketch::angle::{atan2, from_angle, to_angle};
 use varde_sketch::{
     ArcPoints, Design, Id, Measure, Setback, Sketch, SplineKind, arc_sweep, arc_through,
     flatten_spline,
@@ -300,7 +301,7 @@ impl Outline {
         let value = match (self, field) {
             (Outline::Line { start, end }, Field::Length) => start.distance(*end),
             (Outline::Line { start, end }, Field::Angle) => {
-                let angle = (*end - *start).to_angle();
+                let angle = to_angle(*end - *start);
                 if angle < 0.0 { angle + TAU } else { angle }
             }
             (Outline::Circle { radius, .. } | Outline::Polygon { radius, .. }, Field::Diameter) => {
@@ -316,7 +317,7 @@ impl Outline {
             // At its first end, inside the corner.
             (Outline::Chamfer { corner, ends }, Field::Angle) => {
                 let (back, across) = (*corner - ends[0], ends[1] - ends[0]);
-                back.perp_dot(across).abs().atan2(back.dot(across))
+                atan2(back.perp_dot(across).abs(), back.dot(across))
             }
             _ => return None,
         };
@@ -334,7 +335,7 @@ impl Outline {
             }
             Outline::Arc(arc) => {
                 let (from, to) = (arc.start - arc.center, arc.end - arc.center);
-                arc.center + DVec2::from_angle(arc_sweep(from, to) / 2.0).rotate(from)
+                arc.center + from_angle(arc_sweep(from, to) / 2.0).rotate(from)
             }
             Outline::Rectangle { corners, .. } => corners[2],
             Outline::Polygon { corners, .. } => corners[0],
@@ -364,7 +365,7 @@ pub fn outline(tool: &ActiveTool, at: DVec2) -> Option<Outline> {
                 (None, None) => at,
                 (Some(length), None) => start + toward(start) * length,
                 (length, Some(angle)) => {
-                    let direction = DVec2::from_angle(angle);
+                    let direction = from_angle(angle);
                     // Along the angle as far as the cursor goes, unless
                     // the length is typed too.
                     let along = (at - start).dot(direction).max(0.0);
@@ -417,7 +418,7 @@ pub fn outline(tool: &ActiveTool, at: DVec2) -> Option<Outline> {
             let corners = (0..sides)
                 .map(|k| {
                     let turn = TAU * f64::from(k) / f64::from(sides);
-                    center + DVec2::from_angle(turn).rotate(first)
+                    center + from_angle(turn).rotate(first)
                 })
                 .collect();
             Outline::Polygon {

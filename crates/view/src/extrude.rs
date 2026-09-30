@@ -14,7 +14,7 @@ use iced::widget::{
 use iced::{Alignment, Element, Length};
 use varde_document::{BodyId, ExtrudeError, FeatureId, Placement, Plane};
 use varde_expr::LengthUnit;
-use varde_sketch::{Profiles, Region};
+use varde_sketch::{Profiles, Region, angle};
 
 use crate::chrome::{hrule, small_button, tip};
 use crate::escape::OnEscape;
@@ -368,7 +368,7 @@ pub fn snap_step(pixel: f64, units: LengthUnit) -> Option<f64> {
     if !(least > 0.0 && least.is_finite()) {
         return None;
     }
-    let power = 10f64.powi(least.log10().floor() as i32);
+    let power = angle::pow(10.0, angle::log10(least).floor());
     let step = [1.0, 2.0, 5.0, 10.0]
         .into_iter()
         .map(|m| m * power)

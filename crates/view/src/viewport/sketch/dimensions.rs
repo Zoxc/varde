@@ -216,7 +216,9 @@ fn between(p: DVec2, q: DVec2, p_on: DVec2, q_on: DVec2, label: DVec2) -> Lines 
 /// The angle from line `a` to line `b` (or a handle) on `side` (see [`Measure::Angle`])
 /// as an arc around where they meet through `label`, over that angle or
 /// the one across the corner from it, whichever `label` is in, the lines
-/// extended to its ends where it's past them.
+/// extended to its ends where it's past them. Drawn only, never saved, so
+/// std's trigonometry is fine here.
+#[allow(clippy::disallowed_methods)]
 fn angle(sketch: &Sketch, a: Id, b: Id, side: Side, label: DVec2) -> Option<Lines> {
     let measure = Measure::Angle(a, b);
     let meet = sketch.anchor(&measure)?;

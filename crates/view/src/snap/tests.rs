@@ -237,9 +237,14 @@ fn a_line_from_an_arc_s_end_infers_the_tangent_and_touches_circles() {
     // 60° either side of straight down to its centre.
     let placed = [at(20.0, 4.0)];
     let line = tool(Tool::Line, &placed, &[None]);
-    let touch = at(20.0, 0.0) + 2.0 * DVec2::from_angle(30f64.to_radians());
+    let touch = at(20.0, 0.0) + 2.0 * varde_sketch::angle::from_angle(30f64.to_radians());
     let tangent = snapped(&d.sketch, &line, touch.x + 0.1, touch.y);
     assert!(tangent.at.abs_diff_eq(touch, 1e-12), "{tangent:?}");
+    // With libm's bits, the same natively and on the web: the tangent
+    // point is saved with the line.
+    let turn = libm::atan2(4.0, 0.0) - libm::acos(2.0 / 4.0);
+    let touch = at(20.0, 0.0) + 2.0 * DVec2::new(libm::cos(turn), libm::sin(turn));
+    assert_eq!(tangent.at, touch);
     assert_eq!(tangent.target, Some(Target::On(d.circle)));
     assert_eq!(tangent.inference, Some(Inference::Tangent(d.circle)));
 }
