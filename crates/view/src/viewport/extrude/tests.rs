@@ -70,6 +70,8 @@ fn state<'a>(
         targets: Vec::new(),
         grabbed,
         error: None,
+        refused: None,
+        checking: false,
         ready: !picked.is_empty(),
         editable: true,
         units: LengthUnit::Mm,

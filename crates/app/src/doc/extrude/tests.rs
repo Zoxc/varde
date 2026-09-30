@@ -7,6 +7,7 @@ use varde_regen::Request;
 use varde_view::{Distance, Edit, ExtentKind, ExtrudeLook, Look, Mode, OperationKind};
 
 use super::*;
+use crate::doc::sketch::CHECKING;
 use crate::tests::{answer, deferred, example, key_in, press_in};
 
 type Requests = Rc<RefCell<Vec<Request>>>;
@@ -296,7 +297,7 @@ fn the_handle_drags_the_distance_and_flips_one_side() {
 }
 
 #[test]
-fn a_draft_the_document_refuses_shows_why_and_is_not_committed() {
+fn two_sides_over_the_limit_block_ok() {
     let (mut doc, sketch, requests) = plate();
     key_in(&mut doc, key("e"));
     let region = plate_region(&doc, sketch);
@@ -306,14 +307,66 @@ fn a_draft_the_document_refuses_shows_why_and_is_not_committed() {
         let text = "600000".to_owned();
         extrude(&mut doc, ExtrudeLook::Input { distance, text });
     }
-    answer(&mut doc, &requests);
-    assert!(doc.feed.draft_error().is_some());
-    assert!(doc.extrude_state().unwrap().error.is_some());
-    // Committed, the document refuses it too, and the session stays.
+    // Each side is taken, but together they're over: OK says why at
+    // once, before the preview's answer.
+    let state = doc.extrude_state().unwrap();
+    assert!(state.fields.iter().all(|field| field.error.is_none()));
+    assert!(!state.ready);
+    assert_eq!(state.refused, Some(varde_document::ExtrudeError::Length));
+    let _ = doc.view(false, Mode::default());
+    assert!(press_in(&doc, enter()).is_none());
     doc.update(Edit::CommitExtrude);
     assert!(doc.extrude.is_some());
-    assert!(doc.edit_error.is_some());
+    assert_eq!(doc.edit_error, None);
     assert!(extrudes(&doc).is_empty());
+    answer(&mut doc, &requests);
+    assert!(doc.extrude_state().unwrap().error.is_some());
+
+    // Exactly at the limit, the document takes it.
+    let text = "400000".to_owned();
+    extrude(
+        &mut doc,
+        ExtrudeLook::Input {
+            distance: Distance::Second,
+            text,
+        },
+    );
+    let state = doc.extrude_state().unwrap();
+    assert_eq!(state.refused, None);
+    assert!(state.ready);
+    doc.update(Edit::CommitExtrude);
+    assert_eq!(doc.edit_error, None);
+    assert!(doc.extrude.is_none());
+    assert_eq!(extrudes(&doc)[0].span(), Some((-400000.0, 600000.0)));
+}
+
+#[test]
+fn a_two_sides_knob_stops_at_the_limit() {
+    let (mut doc, sketch, _) = plate();
+    key_in(&mut doc, key("e"));
+    let region = plate_region(&doc, sketch);
+    extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region });
+    extrude(&mut doc, ExtrudeLook::Extent(ExtentKind::TwoSides));
+    let text = "600000".to_owned();
+    extrude(
+        &mut doc,
+        ExtrudeLook::Input {
+            distance: Distance::First,
+            text,
+        },
+    );
+    extrude(&mut doc, ExtrudeLook::GrabHandle(Distance::Second));
+    let drag = |to| ExtrudeLook::DragHandle {
+        distance: Distance::Second,
+        to,
+    };
+    let second = |doc: &Doc| doc.extrude.as_ref().unwrap().fields[1].value.clone();
+    let before = second(&doc);
+    extrude(&mut doc, drag(-500000.0));
+    assert_eq!(second(&doc), before);
+    extrude(&mut doc, drag(-400000.0));
+    assert_eq!(second(&doc).unwrap().value, 400000.0);
+    assert!(doc.extrude_state().unwrap().ready);
 }
 
 /// The example, and a sketch on XY after it holding a circle of radius 3
@@ -587,4 +640,135 @@ fn a_bare_distance_keeps_its_length_when_the_units_change() {
     let extrudes = extrudes(&doc);
     assert_eq!(extrudes.len(), 1);
     assert_eq!(extrudes[0].span(), Some((0.0, 20.0)));
+}
+
+/// The plate of [`plate`] with its solver lane, being sketched in, the
+/// hole selected and deleted, the deletion left with the solver, and the
+/// sketch left: the plate's region, picked from the extrude session
+/// started then, is to lose its hole.
+fn plate_with_the_hole_deleted_waiting() -> (Doc, FeatureId, Requests, crate::tests::SolveLane) {
+    let (mut doc, sketch, requests) = plate();
+    let mut lane = crate::tests::SolveLane::connect(&mut doc);
+    doc.look(Look::EditFeature(sketch));
+    lane.answer(&mut doc);
+    answer(&mut doc, &requests);
+    let Some(FeatureKind::Sketch { sketch: drawn, .. }) =
+        doc.editor.document().feature(sketch).map(|f| &f.kind)
+    else {
+        panic!("no sketch");
+    };
+    let circle = drawn
+        .curves
+        .iter()
+        .find(|curve| matches!(curve.curve, varde_sketch::Curve::Circle { .. }))
+        .unwrap()
+        .id;
+    doc.look(Look::SelectBox {
+        ids: vec![circle],
+        add: false,
+    });
+    doc.update(Edit::DeleteSelection);
+    assert!(doc.proposing());
+    doc.look(Look::FinishSketch);
+    assert!(doc.sketch.is_none());
+    assert!(doc.proposing());
+    key_in(&mut doc, key("e"));
+    let region = plate_region(&doc, sketch);
+    extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region });
+    (doc, sketch, requests, lane)
+}
+
+#[test]
+fn ok_waits_for_the_sketch_edits_left_with_the_solver() {
+    let (mut doc, sketch, requests, mut lane) = plate_with_the_hole_deleted_waiting();
+    let state = doc.extrude_state().unwrap();
+    assert!(!state.ready);
+    assert!(!state.checking);
+    // Neither the screen's Enter nor the field's commits.
+    assert!(press_in(&doc, enter()).is_none());
+    doc.update(Edit::CommitExtrude);
+    assert!(doc.extrude.is_some());
+    assert!(extrudes(&doc).is_empty());
+    assert_eq!(doc.edit_error, None);
+
+    // Answered, the pick is the plate's region without its hole, which
+    // the preview is asked for again.
+    lane.answer(&mut doc);
+    assert!(!doc.proposing());
+    let Some(FeatureKind::Sketch { sketch: drawn, .. }) =
+        doc.editor.document().feature(sketch).map(|f| &f.kind)
+    else {
+        panic!("no sketch");
+    };
+    let profiles = drawn.profiles().unwrap();
+    let [whole] = &profiles.regions[..] else {
+        panic!("{:?}", profiles.regions);
+    };
+    assert!(whole.holes.is_empty());
+    assert_eq!(doc.extrude.as_ref().unwrap().picked, BTreeSet::from([0]));
+    assert!(doc.extrude_state().unwrap().ready);
+    let draft = last_draft(&requests).expect("the preview is asked for again");
+    assert_eq!(profiles.resolve(&draft.extrude.regions), [Some(0)]);
+
+    key_in(&mut doc, enter());
+    assert!(doc.extrude.is_none());
+    let [extrude] = extrudes(&doc)[..] else {
+        panic!("one extrude");
+    };
+    assert_eq!(profiles.resolve(&extrude.regions), [Some(0)]);
+    // One undo takes the extrude out and leaves the sketch edit.
+    doc.update(Edit::Undo);
+    assert!(extrudes(&doc).is_empty());
+    let Some(FeatureKind::Sketch { sketch: undone, .. }) =
+        doc.editor.document().feature(sketch).map(|f| &f.kind)
+    else {
+        panic!("no sketch");
+    };
+    assert_eq!(undone.profiles().unwrap(), profiles);
+}
+
+#[test]
+fn a_slow_solver_says_checking_in_the_extrude_panel() {
+    let (mut doc, _, _, mut lane) = plate_with_the_hole_deleted_waiting();
+    assert!(!doc.extrude_state().unwrap().checking);
+    // Frames are wanted to tell, outside the sketch too.
+    assert!(doc.timing());
+    let later = iced::time::Instant::now() + CHECKING + std::time::Duration::from_millis(1);
+    doc.tick(later);
+    let state = doc.extrude_state().unwrap();
+    assert!(state.checking);
+    assert!(!state.ready);
+    let _ = doc.view(false, Mode::default());
+    lane.answer(&mut doc);
+    let state = doc.extrude_state().unwrap();
+    assert!(!state.checking);
+    assert!(state.ready);
+}
+
+#[test]
+fn undo_while_the_sketch_edits_wait_frees_ok() {
+    let (mut doc, sketch, _, mut lane) = plate_with_the_hole_deleted_waiting();
+    let before = doc.editor.revision();
+    doc.update(Edit::Undo);
+    assert!(!doc.proposing());
+    assert_eq!(doc.editor.revision(), before);
+    let session = doc.extrude.as_ref().unwrap();
+    assert_eq!(session.picked, BTreeSet::from([plate_region(&doc, sketch)]));
+    assert!(doc.extrude_state().unwrap().ready);
+    // The dropped edit's answer changes nothing.
+    lane.answer(&mut doc);
+    doc.update(Edit::CommitExtrude);
+    let [extrude] = extrudes(&doc)[..] else {
+        panic!("one extrude");
+    };
+    let Some(FeatureKind::Sketch { sketch: drawn, .. }) =
+        doc.editor.document().feature(sketch).map(|f| &f.kind)
+    else {
+        panic!("no sketch");
+    };
+    let profiles = drawn.profiles().unwrap();
+    assert_eq!(
+        profiles.resolve(&extrude.regions),
+        [Some(plate_region(&doc, sketch))]
+    );
 }

@@ -2616,13 +2616,30 @@ picked and the extent's distances have read at least once, with
 (`Drafted.error`) shows in the panel while it's the latest's.
 
 **Committing** (`Edit::CommitExtrude`: OK, `Enter` in a distance field or,
-outside one, the screen's `Enter`) needs the session ready: an extrude
-whole and no distance refused. A draft whose feature fails can still be
-committed; it shows red in the Timeline. It applies
-`AddExtrude` (the document's name "Extrude N", adding the body and hiding
-the sketch) or `SetExtrude`, one undo step, selects the new extrude and
-ends the session; refused by the document (two sides over `MAX_COORD`,
-say), the session stays and the edit error shows. `Esc` or Cancel drops
+outside one, the screen's `Enter`) needs `Doc::extrude_ready`: the
+document editable, **no sketch edits waiting on the solver**
+(`Doc::proposing`), and the session ready (`ExtrudeSession::ready`): an
+extrude whole, no distance refused, and passing the extrude's own check
+against the document's design (`Extrude::check_own`, public for this:
+two sides together over `MAX_COORD`, say). The own check's refusal shows
+in the panel at once (`ExtrudeState.refused`, in place of the draft's
+error). The solver wait is because edits made in a sketch just left are
+committed only once the solver accepts them: an extrude committed before
+would be of the sketch without them (its regions found again afterwards,
+maybe another one than the preview showed) and would come before them in
+the undo history. Once they're answered, `prune_extrude` finds the picked
+regions again in the new sketch and the draft is asked for again, so
+what OK commits is what was previewed; undo in the window drops them and
+frees OK. After `CHECKING` (100 ms) the panel says "Checking the
+sketch…" (`ExtrudeState.checking`, from `Proposals::slow`), under the
+refusal and the draft's error. `commit_extrude` checks `extrude_ready`
+itself, since a field's `Enter` sends `CommitExtrude` whatever the
+state. A draft whose feature fails can still be committed; it shows red
+in the Timeline. It applies `AddExtrude` (the document's name "Extrude
+N", adding the body and hiding the sketch) or `SetExtrude`, one undo
+step, selects the new extrude and ends the session; refused by the
+document (left to the cross-references, which the session keeps valid,
+so no test reaches it), the session stays and the edit error shows. `Esc` or Cancel drops
 the session and its draft, and the model is asked for again without it.
 
 **The panel** (`view/src/extrude.rs`) floats at the viewport's right: the
@@ -2639,7 +2656,10 @@ the excluded ones, in the order they were made; ticked unless excluded;
 only taking bodies made before the extrude edited; bodies undone away
 drop out), the draft's error, Cancel and OK. The handle and region picking are in `agents/viewport.md`.
 Dragging a knob types its distance (one side past the plane flips; a knob
-on the plane changes nothing) as the design's units format it. If the
+on the plane changes nothing) as the design's units format it. A knob
+stops where its field would refuse the distance, or where the extrude's
+own check would refuse the extrude and didn't before (two sides together
+over `MAX_COORD`). If the
 design's units change while the session is open, each distance's value is
 pinned as the document pins its own (`Value::pin_units` with the units
 it was read in, `ExtrudeSession::follow_units`), so a bare "20" typed in

@@ -12,7 +12,7 @@ use iced::widget::{
     Space, button, checkbox, column, container, opaque, row, space, text, text_input,
 };
 use iced::{Alignment, Element, Length};
-use varde_document::{BodyId, FeatureId, Placement, Plane};
+use varde_document::{BodyId, ExtrudeError, FeatureId, Placement, Plane};
 use varde_expr::LengthUnit;
 use varde_sketch::{Profiles, Region};
 
@@ -224,6 +224,13 @@ pub struct ExtrudeState<'a> {
     pub grabbed: Option<Distance>,
     /// Why the preview failed, if it did.
     pub error: Option<&'a str>,
+    /// Why the extrude as set up can't be committed, if its own check
+    /// refuses it (two sides over the limit together, say): shown in
+    /// place of [`ExtrudeState::error`].
+    pub refused: Option<ExtrudeError>,
+    /// Whether sketch edits have waited on the solver long enough to say
+    /// so: OK waits for them, and the panel says why.
+    pub checking: bool,
     /// Whether OK can be pressed.
     pub ready: bool,
     /// Whether the document can be changed.
@@ -439,9 +446,17 @@ pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
         });
         column![heading("Bodies"), column(rows).spacing(4)].spacing(6)
     });
-    let error = state
-        .error
-        .map(|error| text(error).size(12).style(theme::danger_text));
+    // Why OK can't be pressed, or the preview failed, or that OK waits
+    // on the solver.
+    let error = match (state.refused, state.error) {
+        (Some(refused), _) => Some(text(refused.to_string()).size(12).style(theme::danger_text)),
+        (None, Some(error)) => Some(text(error).size(12).style(theme::danger_text)),
+        (None, None) => state.checking.then(|| {
+            text("Checking the sketch…")
+                .size(12)
+                .style(theme::muted_text)
+        }),
+    };
     let buttons = row![
         space::horizontal(),
         small_button("Cancel", Emphasis::Secondary)

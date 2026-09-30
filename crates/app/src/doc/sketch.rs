@@ -24,6 +24,8 @@ use varde_view::{ActiveTool, SketchState, Snap, Target, Tool, ToolClick, ValueFi
 
 use super::{Doc, HOME_TARGET, home_camera};
 pub(crate) use dimension::Focus;
+#[cfg(test)]
+pub(crate) use propose::CHECKING;
 use propose::sketch_of;
 pub(crate) use propose::{Analyses, Proposals};
 

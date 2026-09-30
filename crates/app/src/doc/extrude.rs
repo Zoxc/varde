@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use varde_document::{
-    BodyId, Command, Design, Document, Extent, Extrude, FeatureId, FeatureKind,
+    BodyId, Command, Design, Document, Extent, Extrude, ExtrudeError, FeatureId, FeatureKind,
     MAX_EXTRUDE_REGIONS, Operation, RegionRef, Sketch, Targets,
 };
 use varde_expr::{Unit, Value};
@@ -317,15 +317,26 @@ impl ExtrudeSession {
         })
     }
 
-    /// Whether it can be committed: it's whole, and none of the
-    /// distances its extent takes is refused.
-    fn ready(&self) -> bool {
+    /// Why the extrude as set up can't be committed to a document of
+    /// `design`, if its own check refuses it: two sides over
+    /// [`MAX_COORD`](varde_document::MAX_COORD) together, say. None
+    /// while it isn't whole.
+    fn refused(&self, design: &Design) -> Option<ExtrudeError> {
+        self.extrude()?.check_own(design).err()
+    }
+
+    /// Whether it can be committed to a document of `design`: it's whole,
+    /// none of the distances its extent takes is refused, and it passes
+    /// its own check ([`ExtrudeSession::refused`]). What's left to the
+    /// document are the references to other features and bodies, which
+    /// the session keeps valid.
+    fn ready(&self, design: &Design) -> bool {
         let typed = self
             .extent
             .distances()
             .iter()
             .all(|distance| self.fields[distance.index()].error.is_none());
-        typed && self.extrude().is_some()
+        typed && self.extrude().is_some() && self.refused(design).is_none()
     }
 
     /// Takes `body` out of the join, cut or intersect, or puts it back,
@@ -355,7 +366,10 @@ impl ExtrudeSession {
 
     /// Moves the knob of `distance` to `to`, in millimetres along the
     /// sketch plane's normal: one side's goes past the plane by flipping.
-    /// A knob on the plane changes nothing.
+    /// A knob on the plane changes nothing, and so does one where the
+    /// field refuses the distance, or where the extrude's own check would
+    /// refuse it and didn't before (two sides together over the limit):
+    /// the knob stops there.
     fn drag(&mut self, distance: Distance, to: f64, document: &Document) {
         let (length, flip) = match (self.extent, distance) {
             (ExtentKind::OneSide, Distance::First) => (to.abs(), Some(to < 0.0)),
@@ -372,9 +386,16 @@ impl ExtrudeSession {
         if field.error.is_some() {
             return;
         }
-        self.fields[distance.index()] = field;
+        let design = document.design();
+        let refused = self.refused(&design).is_some();
+        let old = std::mem::replace(&mut self.fields[distance.index()], field);
+        let old_flip = self.flip;
         if let Some(flip) = flip {
             self.flip = flip;
+        }
+        if !refused && self.refused(&design).is_some() {
+            self.fields[distance.index()] = old;
+            self.flip = old_flip;
         }
     }
 }
@@ -474,16 +495,31 @@ impl Doc {
         }
     }
 
+    /// Whether the extrude being set up can be committed: the document
+    /// can be changed, no sketch edits wait on the solver, and the session
+    /// is ready ([`ExtrudeSession::ready`]). Edits left with the solver
+    /// are committed after it answers, and may change the regions picked,
+    /// which are found again then: until they are, the preview isn't of
+    /// what would be committed, and the extrude would come before them in
+    /// the undo history.
+    pub(crate) fn extrude_ready(&self) -> bool {
+        self.extrude.as_ref().is_some_and(|session| {
+            self.editable() && !self.proposing() && session.ready(&self.editor.document().design())
+        })
+    }
+
     /// Adds the extrude being set up, or changes the one edited, as one
-    /// undo step, and ends the session: if it's ready, and the document
-    /// takes it. Refused, the session stays, and why shows.
+    /// undo step, and ends the session: if it's ready
+    /// ([`Doc::extrude_ready`]: the edits left with the solver answered),
+    /// and the document takes it. Refused, the session stays, and why
+    /// shows.
     pub(crate) fn commit_extrude(&mut self) {
+        if !self.extrude_ready() {
+            return;
+        }
         let Some(session) = &self.extrude else {
             return;
         };
-        if !(self.editable() && session.ready()) {
-            return;
-        }
         let Some(extrude) = session.extrude() else {
             return;
         };
@@ -588,7 +624,9 @@ impl Doc {
             targets: self.extrude_targets(session),
             grabbed: session.grabbed,
             error: self.feed.draft_error(),
-            ready: self.editable() && session.ready(),
+            refused: session.refused(&document.design()),
+            checking: self.proposals.slow(),
+            ready: self.extrude_ready(),
             editable: self.editable(),
             units: document.units(),
         })

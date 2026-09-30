@@ -152,7 +152,13 @@ impl Extrude {
     /// and each region, the distances and their sum, and that through all
     /// only cuts. The references to other features and bodies are
     /// [`Document::check`](crate::Document::check)'s.
-    pub(crate) fn check_own(&self, design: &Design) -> Result<(), ExtrudeError> {
+    ///
+    /// It's the part of [`Document::check`](crate::Document::check) that
+    /// looks at the extrude alone, for callers who want to know before
+    /// applying it: the extrude panel runs it on every view to tell
+    /// whether OK can be pressed, so it has to stay cheap and depend on
+    /// nothing more than the extrude and the design.
+    pub fn check_own(&self, design: &Design) -> Result<(), ExtrudeError> {
         let count = self.regions.len();
         if !(1..=MAX_EXTRUDE_REGIONS).contains(&count) {
             return Err(ExtrudeError::Regions(count));

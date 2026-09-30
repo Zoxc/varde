@@ -48,6 +48,8 @@ fn state_of<'a>(profiles: &'a Arc<Profiles>, picked: &'a BTreeSet<usize>) -> Ext
         targets: Vec::new(),
         grabbed: None,
         error: None,
+        refused: None,
+        checking: false,
         ready: true,
         editable: true,
         units: LengthUnit::Mm,
@@ -119,4 +121,18 @@ fn drags_snap_to_round_steps_of_the_units() {
     assert_eq!(snap_step(0.0, LengthUnit::Mm), None);
     assert_eq!(snap_step(f64::NAN, LengthUnit::Mm), None);
     assert_eq!(snap_step(f64::INFINITY, LengthUnit::Mm), None);
+}
+
+#[test]
+fn the_panel_builds_with_why_ok_waits() {
+    let profiles = plate();
+    let picked = BTreeSet::from([0]);
+    let mut state = state_of(&profiles, &picked);
+    state.ready = false;
+    state.checking = true;
+    let _ = panel(&state);
+    state.error = Some("the preview failed");
+    let _ = panel(&state);
+    state.refused = Some(ExtrudeError::Length);
+    let _ = panel(&state);
 }

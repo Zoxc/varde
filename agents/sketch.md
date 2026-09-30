@@ -717,7 +717,10 @@ bar says why (`EditError::Sketch`).
   what's on screen is saved; leaving waits for them first
   (`Step::Proposing`), then asks about unsaved changes as usual, unless
   the user already chose to discard. Auto-save doesn't wait: it saves
-  what's committed.
+  what's committed. An extrude's OK waits too (`Doc::extrude_ready`),
+  since its regions are of the sketch the edits change: an `Enter` in
+  the window is dropped, and the panel says "Checking the sketch…" after
+  `CHECKING`.
 - **Analysis**: on entering a sketch, and whenever its revision has none
   (undo, redo), the app asks `Analyse` of the committed sketch, one at a
   time (answers name only the revision, which two sketches share); an
