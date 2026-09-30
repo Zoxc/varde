@@ -2630,7 +2630,12 @@ maybe another one than the preview showed) and would come before them in
 the undo history. Once they're answered, `prune_extrude` finds the picked
 regions again in the new sketch and the draft is asked for again, so
 what OK commits is what was previewed; undo in the window drops them and
-frees OK. After `CHECKING` (100 ms) the panel says "Checking the
+frees OK. So do the other ways the wait ends (tested): a rejected edit
+(the picks stay), the sketch deleted (its edits dropped once answered,
+the session gone with it), restoring recovered changes (drops them), a
+units change in the window (set after the answers, then followed by the
+session); read-only in the window ends the session. A solver lane not
+started yet keeps OK waiting, as saving waits. After `CHECKING` (100 ms) the panel says "Checking the
 sketch…" (`ExtrudeState.checking`, from `Proposals::slow`) when
 there's neither a refusal nor a draft error to show. OK, the screen's
 `Enter` binding and the hint take `ExtrudeState.ready`, which is
@@ -2664,7 +2669,8 @@ on the plane changes nothing) as the design's units format it. A knob
 stops where its field would refuse the distance, or where the extrude's
 own check would refuse the extrude and didn't before (two sides together
 over `MAX_COORD`; one side and symmetric only stop where the field
-would). If the design's units change while the session is open, each
+would). Two sides typed over the limit already, a knob only moves back
+towards it. If the design's units change while the session is open, each
 distance's value is pinned as the document pins its own
 (`Value::pin_units` with the units it was read in,
 `ExtrudeSession::follow_units`, from `prune_extrude` as the change is

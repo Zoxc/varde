@@ -372,7 +372,8 @@ impl ExtrudeSession {
     /// A knob on the plane changes nothing, and so does one where the
     /// field refuses the distance, or where the extrude's own check would
     /// refuse it and didn't before (two sides together over the limit):
-    /// the knob stops there.
+    /// the knob stops there. Already over the limit, it only moves back
+    /// towards it.
     fn drag(&mut self, distance: Distance, to: f64, document: &Document) {
         let (length, flip) = match (self.extent, distance) {
             (ExtentKind::OneSide, Distance::First) => (to.abs(), Some(to < 0.0)),
@@ -390,13 +391,23 @@ impl ExtrudeSession {
             return;
         }
         let design = document.design();
-        let refused = self.refused(&design).is_some();
+        let before = self.refused(&design);
         let old = std::mem::replace(&mut self.fields[distance.index()], field);
         let old_flip = self.flip;
         if let Some(flip) = flip {
             self.flip = flip;
         }
-        if !refused && self.refused(&design).is_some() {
+        let worse = match (before, self.refused(&design)) {
+            (_, None) => false,
+            (None, Some(_)) => true,
+            // Already over the limit (typed so), the knob only goes back
+            // towards it.
+            (Some(_), Some(after)) => {
+                after == ExtrudeError::Length
+                    && old.value.as_ref().is_none_or(|old| length > old.value)
+            }
+        };
+        if worse {
             self.fields[distance.index()] = old;
             self.flip = old_flip;
         }

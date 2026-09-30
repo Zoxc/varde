@@ -846,3 +846,239 @@ fn undo_while_the_sketch_edits_wait_frees_ok() {
         [Some(plate_region(&doc, sketch))]
     );
 }
+
+#[test]
+fn the_sketch_deleted_while_its_edits_wait_frees_ok() {
+    let (mut doc, sketch, requests, mut lane) = plate_with_the_hole_deleted_waiting();
+    doc.update(Edit::RemoveFeature(sketch));
+    assert!(doc.editor.document().feature(sketch).is_none());
+    // Its session goes with it; its edits are dropped once answered.
+    assert!(doc.extrude.is_none());
+    lane.answer(&mut doc);
+    assert!(!doc.proposing());
+    assert!(!doc.proposals.slow());
+    // Back again, without the edit, a session on it is ready at once.
+    doc.update(Edit::Undo);
+    assert!(!doc.proposing());
+    answer(&mut doc, &requests);
+    doc.look(Look::SelectFeature(sketch));
+    key_in(&mut doc, key("e"));
+    let region = plate_region(&doc, sketch);
+    extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region });
+    assert!(doc.extrude_state().unwrap().ready);
+    doc.update(Edit::CommitExtrude);
+    assert_eq!(extrudes(&doc).len(), 1);
+}
+
+#[test]
+fn read_only_while_the_sketch_edits_wait_ends_the_session() {
+    let (mut doc, sketch, _, mut lane) = plate_with_the_hole_deleted_waiting();
+    let before = drawn(&doc, sketch).clone();
+    doc.read_only = Some("test".to_owned());
+    doc.sync();
+    assert!(doc.extrude.is_none());
+    doc.update(Edit::CommitExtrude);
+    // The answer can't be committed, and nothing waits any more.
+    lane.answer(&mut doc);
+    assert!(!doc.proposing());
+    assert_eq!(*drawn(&doc, sketch), before);
+    assert!(extrudes(&doc).is_empty());
+    // Editable again (a Save As to a file of its own), OK is free.
+    doc.read_only = None;
+    doc.sync();
+    key_in(&mut doc, key("e"));
+    let region = plate_region(&doc, sketch);
+    extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region });
+    assert!(doc.extrude_state().unwrap().ready);
+}
+
+#[test]
+fn recovery_restored_while_the_sketch_edits_wait_frees_ok() {
+    let (plate_doc, sketch, _) = plate();
+    let document = plate_doc.editor.document().clone();
+    let origin = crate::doc::Origin {
+        recovered: Some(varde_io::Offer {
+            document: document.clone(),
+            design_changed: false,
+        }),
+        ..crate::doc::Origin::new(
+            crate::doc::Target::None,
+            varde_io::Access::Edit,
+            "Design".to_owned(),
+        )
+    };
+    let mut doc = Doc::new(document, origin);
+    let requests = Requests::default();
+    doc.feed
+        .connect(crate::tests::Deferred(Rc::clone(&requests)));
+    doc.sync();
+    answer(&mut doc, &requests);
+    let mut lane = crate::tests::SolveLane::connect(&mut doc);
+    doc.look(Look::EditFeature(sketch));
+    lane.answer(&mut doc);
+    let circle = drawn(&doc, sketch)
+        .curves
+        .iter()
+        .find(|curve| matches!(curve.curve, varde_sketch::Curve::Circle { .. }))
+        .unwrap()
+        .id;
+    doc.look(Look::SelectBox {
+        ids: vec![circle],
+        add: false,
+    });
+    doc.update(Edit::DeleteSelection);
+    doc.look(Look::FinishSketch);
+    key_in(&mut doc, key("e"));
+    let region = plate_region(&doc, sketch);
+    extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region });
+    assert!(doc.proposing());
+    assert!(!doc.extrude_state().unwrap().ready);
+
+    let _ = doc.restore_recovered(&mut crate::Files::new(None));
+    assert!(!doc.proposing());
+    // The recovered plate has its hole: the session found its region
+    // again, and OK is free.
+    let session = doc.extrude.as_ref().unwrap();
+    assert_eq!(session.picked, BTreeSet::from([plate_region(&doc, sketch)]));
+    assert!(doc.extrude_state().unwrap().ready);
+    lane.answer(&mut doc);
+    assert_eq!(drawn(&doc, sketch).profiles().unwrap().regions.len(), 2);
+    doc.update(Edit::CommitExtrude);
+    assert_eq!(extrudes(&doc).len(), 1);
+}
+
+#[test]
+fn units_changed_while_the_sketch_edits_wait_are_set_once_answered() {
+    let (mut doc, sketch, _, mut lane) = plate_with_the_hole_deleted_waiting();
+    doc.update(Edit::SetUnits(varde_expr::LengthUnit::In));
+    assert_eq!(doc.editor.document().units(), varde_expr::LengthUnit::Mm);
+    assert!(!doc.extrude_state().unwrap().ready);
+    lane.answer(&mut doc);
+    assert!(!doc.proposing());
+    assert_eq!(doc.editor.document().units(), varde_expr::LengthUnit::In);
+    let state = doc.extrude_state().unwrap();
+    assert_eq!(state.refused, None);
+    assert!(state.ready);
+    doc.update(Edit::CommitExtrude);
+    assert_eq!(doc.edit_error, None);
+    let [extrude] = extrudes(&doc)[..] else {
+        panic!("one extrude");
+    };
+    // Still the 10 mm it started with.
+    assert_eq!(extrude.span(), Some((0.0, 10.0)));
+    let profiles = drawn(&doc, sketch).profiles().unwrap();
+    assert_eq!(profiles.resolve(&extrude.regions), [Some(0)]);
+}
+
+#[test]
+fn an_edit_the_solver_rejects_while_waiting_frees_ok_and_keeps_the_pick() {
+    let (mut doc, sketch, _) = plate();
+    let mut lane = crate::tests::SolveLane::connect(&mut doc);
+    doc.look(Look::EditFeature(sketch));
+    lane.answer(&mut doc);
+    let line = drawn(&doc, sketch)
+        .curves
+        .iter()
+        .find(|curve| matches!(curve.curve, varde_sketch::Curve::Line { .. }))
+        .unwrap()
+        .id;
+    let constrain = |doc: &mut Doc| {
+        doc.look(Look::SelectBox {
+            ids: vec![line],
+            add: false,
+        });
+        doc.update(Edit::Constrain(varde_view::ConstraintKind::Horizontal));
+    };
+    constrain(&mut doc);
+    lane.answer(&mut doc);
+    let committed = drawn(&doc, sketch).clone();
+    assert_eq!(committed.constraints.len(), 1);
+    // Again restates it, which the solver refuses once the sketch is
+    // left.
+    constrain(&mut doc);
+    assert!(doc.proposing());
+    doc.look(Look::FinishSketch);
+    key_in(&mut doc, key("e"));
+    let region = plate_region(&doc, sketch);
+    extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region });
+    assert!(!doc.extrude_state().unwrap().ready);
+    lane.answer(&mut doc);
+    assert!(!doc.proposing());
+    assert_eq!(*drawn(&doc, sketch), committed);
+    assert_eq!(
+        doc.extrude.as_ref().unwrap().picked,
+        BTreeSet::from([region])
+    );
+    assert!(doc.extrude_state().unwrap().ready);
+    doc.update(Edit::CommitExtrude);
+    assert_eq!(extrudes(&doc).len(), 1);
+}
+
+#[test]
+fn ok_waits_for_a_solver_lane_not_started_yet() {
+    let (mut doc, sketch, requests) = plate();
+    doc.look(Look::EditFeature(sketch));
+    answer(&mut doc, &requests);
+    let circle = drawn(&doc, sketch)
+        .curves
+        .iter()
+        .find(|curve| matches!(curve.curve, varde_sketch::Curve::Circle { .. }))
+        .unwrap()
+        .id;
+    doc.look(Look::SelectBox {
+        ids: vec![circle],
+        add: false,
+    });
+    doc.update(Edit::DeleteSelection);
+    doc.look(Look::FinishSketch);
+    assert!(doc.proposing());
+    key_in(&mut doc, key("e"));
+    let region = plate_region(&doc, sketch);
+    extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region });
+    assert!(!doc.extrude_state().unwrap().ready);
+    let later = iced::time::Instant::now() + CHECKING + std::time::Duration::from_millis(1);
+    doc.tick(later);
+    assert!(doc.extrude_state().unwrap().checking);
+    doc.update(Edit::CommitExtrude);
+    assert!(extrudes(&doc).is_empty());
+
+    // The lane starts, gets the edit and answers it.
+    let mut lane = crate::tests::SolveLane::connect(&mut doc);
+    lane.answer(&mut doc);
+    assert!(!doc.proposing());
+    let state = doc.extrude_state().unwrap();
+    assert!(!state.checking);
+    assert!(state.ready);
+    assert_eq!(drawn(&doc, sketch).profiles().unwrap().regions.len(), 1);
+    doc.update(Edit::CommitExtrude);
+    assert_eq!(extrudes(&doc).len(), 1);
+}
+
+#[test]
+fn a_two_sides_knob_over_the_limit_only_goes_back_towards_it() {
+    let (mut doc, _) = plate_session(ExtentKind::TwoSides, "600000");
+    extrude(
+        &mut doc,
+        ExtrudeLook::Input {
+            distance: Distance::Second,
+            text: "600000".to_owned(),
+        },
+    );
+    assert!(doc.extrude_state().unwrap().refused.is_some());
+    extrude(&mut doc, ExtrudeLook::GrabHandle(Distance::Second));
+    let drag = |to| ExtrudeLook::DragHandle {
+        distance: Distance::Second,
+        to,
+    };
+    let second = |doc: &Doc| doc.extrude.as_ref().unwrap().fields[1].value.clone();
+    // Further over, it stays.
+    extrude(&mut doc, drag(-700000.0));
+    assert_eq!(second(&doc).unwrap().value, 600000.0);
+    // Back towards the limit, still over, it follows.
+    extrude(&mut doc, drag(-500000.0));
+    assert_eq!(second(&doc).unwrap().value, 500000.0);
+    assert!(!doc.extrude_state().unwrap().ready);
+    extrude(&mut doc, drag(-400000.0));
+    assert_eq!(second(&doc).unwrap().value, 400000.0);
+    assert!(doc.extrude_state().unwrap().ready);
+}
