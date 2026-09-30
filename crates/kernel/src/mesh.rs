@@ -21,7 +21,7 @@
 //!    resolution apart, and neighbours are split by a plane through what
 //!    they share.
 //! 5. Face tags: patches on `Plane` and `Quadric` faces lie on them within
-//!    the resolution, checked in debug builds (and tests) only.
+//!    the resolution, checked in every build.
 //!
 //! [`Mesh::repair`] restores invariants 3 and 4 by exact red–green
 //! refinement, and [`Mesh::cuboid`] and [`Mesh::cylinder`] build boxes and

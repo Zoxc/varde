@@ -8,10 +8,10 @@ use std::f64::consts::{FRAC_1_SQRT_2, TAU};
 use glam::DVec3;
 
 use super::*;
-use crate::Tolerance;
 use crate::par::assert_deterministic;
 use crate::patch::{Conic3, PatchError, cylinder_strip};
 use crate::test_rng::Rng;
+use crate::{KernelError, Solid, Tolerance};
 
 pub(crate) const TOL: Tolerance = Tolerance::DEFAULT;
 
@@ -529,9 +529,33 @@ fn wrong_face_tags_are_caught() {
     mesh.faces[3].surface =
         Surface::Quadric(Quadric::cylinder(DVec3::ZERO, DVec3::Z, radius).unwrap());
     assert_eq!(mesh.check_faces(&TOL), Err(CheckError::Face(8)));
-    if cfg!(debug_assertions) {
-        assert_eq!(mesh.check(&TOL), Err(CheckError::Face(8)));
-    }
+    assert_eq!(mesh.check(&TOL), Err(CheckError::Face(8)));
+}
+
+#[test]
+fn solids_with_wrong_face_tags_are_refused() {
+    // `check` tests face tags in every build, so `Solid::new` refuses a
+    // mesh whose only fault is a wrong tag. Debug builds always did; this
+    // failed only under `cargo test -p varde-kernel --release`.
+    // Face 3 of the box is the side on x = 1, triangles 6 and 7.
+    let mut mesh = Mesh::cuboid(DVec3::ZERO, DVec3::ONE, 1, &TOL).unwrap();
+    assert_eq!(mesh.check_embedding(&TOL).err(), None);
+    mesh.faces[3].surface = Surface::Plane {
+        n: DVec3::X,
+        d: 1.1,
+    };
+    assert_eq!(
+        Solid::new(mesh, &TOL),
+        Err(KernelError::Invalid(CheckError::Face(6)))
+    );
+    // Face 3 of the half cylinder is its wall, from triangle 8.
+    let mut mesh = half_cylinder(1.0, DVec3::ZERO);
+    mesh.faces[3].surface =
+        Surface::Quadric(Quadric::cylinder(DVec3::ZERO, DVec3::Z, 1.1).unwrap());
+    assert_eq!(
+        Solid::new(mesh, &TOL),
+        Err(KernelError::Invalid(CheckError::Face(8)))
+    );
 }
 
 #[test]

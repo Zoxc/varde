@@ -128,7 +128,11 @@ pub(super) fn refined(
     let floor = MIN_SPLIT * tol.resolution();
     // The refiners split leaves down to an eighth of the floor, for the
     // neighbours red–green splits along with a piece at the floor.
-    let mut refiners = [Refiner::new(a, floor / 8.0), Refiner::new(b, floor / 8.0)];
+    let resolution = tol.resolution();
+    let mut refiners = [
+        Refiner::new(a, resolution, floor / 8.0),
+        Refiner::new(b, resolution, floor / 8.0),
+    ];
     let mut meshes = [a.clone(), b.clone()];
     // Each triangle's leaf in its refiner.
     let mut leaves: [Vec<u32>; 2] = [

@@ -87,14 +87,11 @@ impl std::error::Error for CheckError {}
 impl Mesh {
     /// Checks every invariant (see the [module](super) docs): topology,
     /// shared edges, folds, control hulls with `tol`'s resolution as the
-    /// margin, and in debug builds face tags ([`Self::check_faces`]).
+    /// margin, and face tags ([`Self::check_faces`]), in every build.
     /// The empty mesh passes.
     pub fn check(&self, tol: &Tolerance) -> Result<(), CheckError> {
         let patches = self.check_embedding(tol)?;
-        if cfg!(debug_assertions) {
-            self.check_faces_of(&patches, tol)?;
-        }
-        Ok(())
+        self.check_faces_of(&patches, tol)
     }
 
     /// Invariants 1 to 4, everything but the face tags, returning the
@@ -214,8 +211,8 @@ impl Mesh {
     /// Invariant 5: every patch on a `Plane` face has its six control
     /// points within `tol`'s resolution of the plane, and every patch on
     /// a `Quadric` face has sampled points within it of the quadric (to
-    /// first order). [`Self::check`] runs this in debug builds only; call
-    /// it after `check` passes.
+    /// first order). [`Self::check`] runs this last; on its own, call it
+    /// on a mesh that passes the rest of `check`.
     pub fn check_faces(&self, tol: &Tolerance) -> Result<(), CheckError> {
         let patches: Vec<Patch> = (0..self.tris.len()).map(|t| self.patch(t)).collect();
         self.check_faces_of(&patches, tol)

@@ -446,7 +446,7 @@ triangle uses. What it builds still has to pass `check`.
 passes. It returns the first failure in the order below, and within a rule
 by the lowest halfedge, vertex, edge or triangle (triangle pairs
 lexicographically), so a mesh always gives the same `CheckError`, in debug
-and release builds alike (face tags, checked in debug only, come last).
+and release builds alike (face tags come last).
 
 1. **Topology** (sequential): at most `MAX_PATCHES` triangles; no more
    vertices than halfedges, exactly half as many edges as halfedges, and at
@@ -464,8 +464,9 @@ and release builds alike (face tags, checked in debug only, come last).
 4. **Control hulls** (below): `Hull`, `EdgeNeighbours`,
    `VertexNeighbours`, and `SameCorners` for two triangles on the same
    three vertices, which no plane can split.
-5. **Face tags**, in debug builds only (`cfg!(debug_assertions)`, so tests
-   too), and on demand with `check_faces` once `check` has passed: a patch
+5. **Face tags**, in every build (so every `Solid`'s tags are true
+   claims), and on their own with `check_faces` on a mesh that passes the
+   rest: a patch
    on a `Plane` has all six control points within the resolution of it; a
    patch on a `Quadric` has 15 points (a grid four steps along each edge)
    within the resolution to first order. A plane with a zero or non-finite
@@ -613,6 +614,17 @@ straight-edge rule, and the pieces cover exactly the region the parent did
 neighbours on other faces. A patch that is flat but tagged `Free` gets the
 exact split and may then not pass.
 
+The `Plane` tag isn't trusted for this. Before an input leaf (level 0) is
+split or bisected as planar, its six control points are tested against the
+plane with the resolution, the same test `check_faces` makes; one off it
+fails with `Invalid(Face(t))`, `t` its input triangle, rather than be
+reshaped (with the tag trusted, a cylinder wall tagged as a plane came out
+of repair with pieces 7.6e-2 off the cylinder). Deeper leaves aren't tested
+again: a straight split keeps the pieces' control points in the parent's
+hull, and testing them could fail from rounding at exactly the resolution.
+A patch within the resolution of its plane is still split straight, so its
+pieces may be up to that far off it, as `check` allows.
+
 A leaf is not split past `MAX_REFINE_DEPTH` levels, when its control
 points span less than the refiner's minimum size along every axis, or when
 there would be more than `MAX_PATCHES` leaves (every leaf is at least one
@@ -660,8 +672,10 @@ fail at once: two boxes face to face, or two cylinders side by side or end
 to end, used to be split to the end of the budget (12 to 27 s) and now fail
 in 2 to 80 ms. Round surfaces overlapping over an area within the
 resolution (a shell thinner than it) still run out the budget, about 15 s.
-In debug builds the result is checked in full, face tags aside: those are
-the input's claims, which repair neither checks nor promises.
+In debug builds the result is checked in full, face tags aside: repair
+refuses a wrong `Plane` tag on a patch it splits (see "Refinement"), but
+other tags, and those of patches it doesn't split, are the input's claims,
+which it neither checks nor promises. `Solid::new` checks them.
 
 Work, from the budget: a unit per piece tested for folds, per pair tested,
 per leaf split, and the number of pieces each round (the BVH and the
@@ -737,7 +751,9 @@ a plane, flat, collinear and repeated points, the long thin hulls of a
 point square to the closest point from every starting point; the BVH
 against brute force. Plane tags with normals from `1e-200` to `1e300` long
 measure the same, and a quadric whose gradient overflows fails. A mesh breaking two rules gives the earlier invariant's error
-(bounds before a fold, hulls before a face tag, in debug builds too).
+(bounds before a fold, hulls before a face tag). A mesh whose only fault
+is a wrong `Plane` or `Quadric` tag is refused by `Solid::new` (before, in
+release it passed).
 `check`, the BVH's pairs, and the first failure of a jittered torus are the
 same at 1 and 8 threads.
 
@@ -751,8 +767,10 @@ apart, the inner facing in) is split evenly until it passes; a cylinder
 with a box beside it, 0.1 to 0.001 off the wall, is split only near the
 box, keeps every piece on its cylinder or plane within `1e-12` and the box
 whole; a tetrahedron bulging so far its patches fail the fold check passes
-at 16 patches; a mesh that passes comes back unchanged; a wrong face tag
-is carried through (the result fails only `check_faces`); a cusp fails at
+at 16 patches; a mesh that passes comes back unchanged; a cylinder wall tagged
+as a plane fails with `Invalid(Face(t))` naming a wall triangle, and caps
+tagged half a resolution off their planes are still split straight and
+pass `check`; a cusp fails at
 once, as do tetrahedra corner to corner and boxes face to face closer than
 the resolution; round octahedra touching fail once the pieces at the touch
 are flat, and small ones once they are too small; a small budget runs out,
@@ -2673,7 +2691,7 @@ parameter, or a split outside the patch bounds),
 - **The face-tag check** takes a plane's six control points, and samples 15
   points of a quadric patch against the first-order distance `|F|/|∇F|`.
   `Quadric` carries an `origin` its form is written around. Tags are
-  checked in debug builds by `check` and on demand by `check_faces`.
+  checked in every build by `check`, and on their own by `check_faces`.
 - **`Tolerance` lives in the kernel** (fit bounds `1e-5 ..= 1e-1` mm,
   default `1e-3`), and `check` takes it for the hull margin.
 - **Flat faces are split with straight inner edges** (red and green), not

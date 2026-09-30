@@ -27,10 +27,18 @@
 //! being the plane, and neighbours inside a flat face stay separable by a
 //! plane through their shared edge, which an exact split's curved inner
 //! edges, lying in the face's plane with both pieces, would not be.
+//! That is only right for a patch that is on its plane, so the tag isn't
+//! trusted: an input patch whose control points aren't all within the
+//! resolution of it ([`on_surface`], the test [`Mesh::check_faces`]
+//! makes) fails the split with [`CheckError::Face`] naming it, rather
+//! than be reshaped. Its straight pieces keep their control points in its
+//! hull, so deeper leaves aren't tested again (rounding could fail them
+//! at exactly the resolution).
 
 use glam::DVec3;
 
-use super::{Edge, Face, LookupMap, Mesh, MeshBuilder, Surface};
+use super::check::on_surface;
+use super::{CheckError, Edge, Face, LookupMap, Mesh, MeshBuilder, Surface};
 use crate::budget::Work;
 use crate::patch::{Conic3, Patch};
 use crate::{KernelError, MAX_PATCHES, MAX_REFINE_DEPTH};
@@ -85,6 +93,9 @@ pub(crate) struct Piece {
 #[derive(Debug)]
 pub(crate) struct Refiner<'a> {
     faces: &'a [Face],
+    /// The resolution input patches on a [`Surface::Plane`] face are
+    /// tested against before they are split as planar.
+    resolution: f64,
     /// Leaves whose control points span less than this along every axis
     /// aren't split.
     min_size: f64,
@@ -113,10 +124,11 @@ impl<'a> Refiner<'a> {
     /// Every triangle of `mesh`, which passes the topology check, as a
     /// leaf at level 0, with the triangle's index as its id. Leaves whose
     /// control points span less than `min_size` along every axis won't be
-    /// split.
-    pub(crate) fn new(mesh: &'a Mesh, min_size: f64) -> Self {
+    /// split. `resolution` is the tolerance's, for the plane tags.
+    pub(crate) fn new(mesh: &'a Mesh, resolution: f64, min_size: f64) -> Self {
         let mut refiner = Refiner {
             faces: &mesh.faces,
+            resolution,
             min_size,
             max_leaves: MAX_PATCHES,
             live: mesh.tris.len(),
@@ -225,8 +237,19 @@ impl<'a> Refiner<'a> {
         None
     }
 
-    fn planar(&self, face: u32) -> bool {
-        matches!(self.faces[face as usize].surface, Surface::Plane { .. })
+    /// Whether `leaf` is split with straight inner edges: whether it is on
+    /// a [`Surface::Plane`] face. An input leaf (level 0) that isn't on
+    /// that plane within the resolution fails with [`CheckError::Face`]
+    /// naming its triangle; see the [module](self) docs.
+    fn planar(&self, leaf: &Leaf) -> Result<bool, KernelError> {
+        let surface = &self.faces[leaf.face as usize].surface;
+        if !matches!(surface, Surface::Plane { .. }) {
+            return Ok(false);
+        }
+        if leaf.level == 0 && !on_surface(&leaf.patch, surface, self.resolution) {
+            return Err(KernelError::Invalid(CheckError::Face(leaf.origin)));
+        }
+        Ok(true)
     }
 
     /// The conic from vertex `a` to vertex `b` along their edge record.
@@ -295,8 +318,8 @@ impl<'a> Refiner<'a> {
         if leaf.level >= MAX_REFINE_DEPTH || small || self.live + 3 > self.max_leaves {
             return Err(KernelError::TooComplex);
         }
+        let planar = self.planar(&leaf)?;
         self.live += 3;
-        let planar = self.planar(leaf.face);
         // The exact children, for their inner edges; a planar leaf's are
         // straight.
         let exact = if planar {
@@ -383,7 +406,7 @@ impl<'a> Refiner<'a> {
             );
             let [a, b, o] = [0, 1, 2].map(|k| leaf.corners[(i + k) % 3]);
             let halves = [self.conic(a, m), self.conic(m, b)];
-            let [first, second] = if self.planar(leaf.face) {
+            let [first, second] = if self.planar(leaf)? {
                 // Joined to the opposite corner by a straight edge.
                 let straight = |x: [u32; 3]| self.patch_at(x, Some((m, o)));
                 [straight([a, m, o])?, straight([m, b, o])?]

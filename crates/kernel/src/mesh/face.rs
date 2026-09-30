@@ -32,8 +32,10 @@ pub enum FacePart {
 
 /// The surface a face lies on, as its construction claims. It is a claim
 /// the kernel may use to cut exactly, checked by
-/// [`Mesh::check_faces`](super::Mesh::check_faces), never a second copy
-/// of the geometry.
+/// [`Mesh::check_faces`](super::Mesh::check_faces) as part of every
+/// [`Mesh::check`](super::Mesh::check) (so every `Solid`'s tags hold), and
+/// by repair before it splits a patch as planar; never a second copy of
+/// the geometry.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Surface {
     /// The points `x` with `n·x = d`; `n` need not be a unit vector.

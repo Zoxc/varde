@@ -13,7 +13,7 @@ fn split(refiner: &mut Refiner, leaves: &[u32]) {
 #[test]
 fn a_red_split_bisects_its_neighbours() {
     let mesh = tetrahedron(DVec3::ZERO);
-    let mut refiner = Refiner::new(&mesh, 0.0);
+    let mut refiner = Refiner::new(&mesh, TOL.resolution(), 0.0);
     split(&mut refiner, &[0]);
     let pieces = refiner.pieces().unwrap();
     // Three green pairs, then the four red children.
@@ -46,7 +46,7 @@ fn a_red_split_bisects_its_neighbours() {
 #[test]
 fn splitting_a_green_piece_splits_its_leaf() {
     let mesh = tetrahedron(DVec3::ZERO);
-    let mut refiner = Refiner::new(&mesh, 0.0);
+    let mut refiner = Refiner::new(&mesh, TOL.resolution(), 0.0);
     split(&mut refiner, &[0]);
     let green = refiner.pieces().unwrap()[0].clone();
     assert_eq!(green.leaf, 1);
@@ -66,7 +66,7 @@ fn refinement_stays_graded() {
     // differ by more than one, and the pieces around grow in number only
     // with the depth.
     let mesh = round_octahedron(DVec3::ZERO);
-    let mut refiner = Refiner::new(&mesh, 0.0);
+    let mut refiner = Refiner::new(&mesh, TOL.resolution(), 0.0);
     let mut counts = Vec::new();
     for _ in 0..12 {
         let pieces = refiner.pieces().unwrap();
@@ -93,7 +93,7 @@ fn planar_leaves_split_with_straight_inner_edges() {
     // Triangle 2 is the first quarter of the bottom cap: centre, then its
     // arc from the rim at 90° to 0°.
     let cap = mesh.patch(2);
-    let mut refiner = Refiner::new(&mesh, 0.0);
+    let mut refiner = Refiner::new(&mesh, TOL.resolution(), 0.0);
     split(&mut refiner, &[2]);
     let pieces = refiner.pieces().unwrap();
     let arc = cap.edge(1).split_half().unwrap();
@@ -117,11 +117,11 @@ fn planar_leaves_split_with_straight_inner_edges() {
 #[test]
 fn leaves_too_deep_or_too_small_are_not_split() {
     let mesh = tetrahedron(DVec3::ZERO);
-    let mut refiner = Refiner::new(&mesh, 2.0);
+    let mut refiner = Refiner::new(&mesh, TOL.resolution(), 2.0);
     let result = refiner.split(&[0], &mut Work::new(&Budget::DEFAULT));
     assert_eq!(result, Err(KernelError::TooComplex));
 
-    let mut refiner = Refiner::new(&mesh, 0.0);
+    let mut refiner = Refiner::new(&mesh, TOL.resolution(), 0.0);
     let mut leaf = 0;
     for _ in 0..MAX_REFINE_DEPTH {
         split(&mut refiner, &[leaf]);
@@ -138,7 +138,7 @@ fn leaves_past_the_patch_limit_are_not_made() {
     // `MAX_PATCHES` fails anyway: the refiner stops as it gets there,
     // before making the rest of the round's leaves and their pieces.
     let mesh = round_octahedron(DVec3::ZERO);
-    let mut refiner = Refiner::new(&mesh, 0.0);
+    let mut refiner = Refiner::new(&mesh, TOL.resolution(), 0.0);
     assert_eq!(refiner.max_leaves, crate::MAX_PATCHES);
     refiner.max_leaves = 20;
     let mut work = Work::new(&Budget::DEFAULT);

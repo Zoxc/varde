@@ -14,7 +14,13 @@
 //! with [`KernelError::TooComplex`] at
 //! [`MAX_REFINE_DEPTH`](crate::MAX_REFINE_DEPTH), at pieces too small to
 //! split ([`MIN_SPLIT`] resolutions) or out of budget. Repair never gives
-//! a mesh that fails [`Mesh::check`].
+//! a mesh that fails the embedding part of [`Mesh::check`]. It doesn't
+//! check face tags, with one exception: an input patch it splits on a
+//! [`Surface::Plane`](super::Surface::Plane) face, whose pieces get
+//! straight inner edges, must be on that plane, or repair fails with
+//! [`CheckError::Face`] naming it rather than reshape it. Other tags pass
+//! through unchecked, and splitting keeps patches on their surfaces up to
+//! rounding.
 
 use super::check::check_pair;
 use super::hull::flat;
@@ -41,10 +47,11 @@ impl Mesh {
     /// The mesh must pass the topology and shared-edge parts of
     /// [`Mesh::check`], and its patches must be within the patch bounds;
     /// otherwise it fails with [`KernelError::Invalid`]. So does a failure
-    /// no split can mend, naming the input triangles it came from. The
-    /// result passes `check` with `tol`, face tags aside: those aren't
-    /// checked, and splitting keeps patches on their surfaces up to
-    /// rounding.
+    /// no split can mend, naming the input triangles it came from, and a
+    /// patch to split whose face's `Plane` tag is wrong
+    /// ([`CheckError::Face`]). The result passes `check` with `tol`, face
+    /// tags aside: other tags aren't checked, and splitting keeps patches
+    /// on their surfaces up to rounding.
     pub fn repair(self, tol: &Tolerance, budget: &Budget) -> Result<Mesh, KernelError> {
         self.repair_within(tol, &mut Work::new(budget))
     }
@@ -73,7 +80,7 @@ impl Mesh {
         if failing.is_empty() {
             return Ok(self);
         }
-        let mut refiner = Refiner::new(&self, MIN_SPLIT * tol.resolution());
+        let mut refiner = Refiner::new(&self, tol.resolution(), MIN_SPLIT * tol.resolution());
         let pieces = loop {
             refiner.split(&failing, work)?;
             let pieces = refiner.pieces()?;
@@ -88,8 +95,8 @@ impl Mesh {
             }
         };
         let mesh = refiner.mesh(&pieces);
-        // Face tags aside: they are the input's claims, which repair
-        // neither checks nor promises.
+        // Face tags aside: unsplit patches, and any not on a plane, keep
+        // the input's claims, which repair doesn't check.
         debug_assert_eq!(mesh.check_embedding(tol).err(), None);
         Ok(mesh)
     }

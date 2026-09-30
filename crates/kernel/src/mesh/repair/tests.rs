@@ -164,18 +164,71 @@ fn repair_splits_only_near_the_trouble_and_keeps_surfaces() {
 }
 
 #[test]
-fn face_tags_are_carried_through() {
-    // Repair neither checks the input's face tags nor promises them: a
-    // wrong one comes through, and the result fails only `check_faces`.
+fn a_wrong_plane_tag_fails() {
+    // Repair splits a patch on a `Plane` face with straight inner edges,
+    // which is only right if it is on the plane. One that isn't fails,
+    // naming its triangle, rather than be reshaped. This used to pass,
+    // with the wall's pieces moved 7.6e-2 off the cylinder.
     let mut mesh = cylinder_and_box(1e-2);
     // Face 2 is the cylinder's first wall.
     mesh.faces[2].surface = Surface::Plane {
         n: DVec3::Z,
         d: 100.0,
     };
+    let result = mesh.clone().repair(&TOL, &Budget::DEFAULT);
+    let Err(KernelError::Invalid(CheckError::Face(t))) = result else {
+        panic!("{result:?}");
+    };
+    assert_eq!(mesh.tris()[t as usize].face, 2);
+}
+
+#[test]
+fn plane_tags_within_the_resolution_are_trusted() {
+    // The cylinder's caps tagged half a resolution off their planes:
+    // within the tolerance `check` allows, so the caps are still split as
+    // planar, with straight inner edges, and the result passes `check`.
+    let mut mesh = cylinder_and_box(1e-3);
+    let half = 0.5 * TOL.resolution();
+    let mut caps = Vec::new();
+    for (f, face) in mesh.faces.iter_mut().enumerate() {
+        if let Surface::Plane { n, d } = face.surface {
+            face.surface = Surface::Plane {
+                n,
+                d: d + half * n.length(),
+            };
+            caps.push(f as u32);
+        }
+        if caps.len() == 2 {
+            break;
+        }
+    }
+    assert_eq!(caps, [0, 1]);
+    let on_caps = |mesh: &Mesh| {
+        (0..mesh.tris().len())
+            .filter(|&t| caps.contains(&mesh.tris()[t].face))
+            .collect::<Vec<_>>()
+    };
+    let before = on_caps(&mesh).len();
     let repaired = mesh.repair(&TOL, &Budget::DEFAULT).unwrap();
-    assert_eq!(repaired.check_embedding(&TOL).err(), None);
-    assert!(repaired.check_faces(&TOL).is_err());
+    assert_eq!(repaired.check(&TOL), Ok(()));
+    let after = on_caps(&repaired);
+    assert!(after.len() > before, "{before} -> {}", after.len());
+    // The pieces are on the caps' true planes, z = 0 and z = 2, and the
+    // middle pieces of red splits have straight edges all round, where an
+    // exact split's would be arcs.
+    let straight = |patch: &crate::patch::Patch, i: usize| {
+        let (a, b) = (patch.p[i], patch.p[(i + 1) % 3]);
+        (patch.c[i] - (a + b) * 0.5).length() < 1e-12 && patch.w[i] == 1.0
+    };
+    let mut middles = 0;
+    for &t in &after {
+        let patch = repaired.patch(t);
+        let z = patch.p[0].z;
+        assert!(z == 0.0 || z == 2.0, "patch {t}");
+        assert!(patch.hull().iter().all(|x| x.z == z), "patch {t}");
+        middles += usize::from((0..3).all(|i| straight(&patch, i)));
+    }
+    assert!(middles > 0);
 }
 
 #[test]
