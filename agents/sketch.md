@@ -21,7 +21,8 @@ holds its radii equal, the radius changes evenly along it.
 **Angles** (`angle.rs`): every `sin`, `cos`, `tan`, `atan2`, `acos`,
 `exp`, `ln` and `hypot` in the crate goes through `crate::angle`, which
 wraps the `libm` crate (`from_angle(a)` is `(cos a, sin a)`, `to_angle(v)`
-is `atan2(v.y, v.x)`, `between(a, b)` is glam's `angle_to` unsigned), not
+is `atan2(v.y, v.x)`, `between(a, b)` is glam's `angle_to` unsigned and
+`angle_to(a, b)` signed as glam's, by `a.perp_dot(b)`), not
 std's or glam's, which come from the platform's maths library. So an arc's
 start angle, the places `Geom::at` gives (the profile vertices at arc ends
 and crossings), and the edit-time results have the same bits natively and
@@ -34,9 +35,9 @@ reference, or to build inputs, allow it in their module.
 The module is public (`varde_sketch::angle`, with `log10` and `pow` too)
 because `varde-view` makes saved values of its own: a line's end from a
 typed angle and the polygon's corners (`typed.rs`), tangent points
-(`snap.rs`), the length an extrude drag snaps to (`extrude::snap_step`)
-and the side a dimension is placed on (`dimension::sector_holds`, a signed
-angle). They take these helpers, so the same typed edit gives the same
+(`snap.rs`), the length an extrude drag snaps to (`extrude::snap_step`),
+and `dimension::sector_holds` (`angle_to`), which picks the side a
+dimension is placed on and whether a snap lands on an arc's run. They take these helpers, so the same typed edit gives the same
 bits natively and on the web; `crates/view/clippy.toml` bans the same
 `f64` and glam `D*` methods. Display only, and on std: the view's `f32`
 maths (the view cube's letters, the zoom per wheel step) is not listed,
