@@ -81,7 +81,8 @@ pub struct DocumentState<'a> {
     /// What deleting a feature or body would take with it, asked about
     /// before it's deleted, if it's being asked.
     pub deleting: Option<DeletePrompt<'a>>,
-    /// Whether edits are waiting on the solver, which undo drops.
+    /// Whether edits are waiting on the solver: undo drops the newest
+    /// of them, and redo is off.
     pub proposing: bool,
 }
 

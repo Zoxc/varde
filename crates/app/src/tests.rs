@@ -785,25 +785,49 @@ fn save_waits_for_the_edits_on_the_solver() {
 }
 
 #[test]
-fn a_save_waiting_for_edits_the_lane_drops_on_starting_is_sent() {
+fn a_save_waiting_for_an_edit_and_a_delete_behind_it_saves_both() {
     let (mut varde, requests) = with_open_file();
     let _ = varde.update(Message::Ui(Ui::Edit(Edit::NewSketch(OriginPlane::XY))));
     let feature = document(&varde).sketch.as_ref().unwrap().feature;
     let _ = varde.update(Message::Ui(Ui::Look(Look::SelectTool(
         varde_view::Tool::Point,
     ))));
-    // No lane yet: the point waits in the app, and the save for it.
+    // No lane yet: the point waits in the app, the save for it, and the
+    // sketch's deletion behind it.
     place_point(&mut varde);
     let _ = varde.update(Message::Ui(Ui::File(File::Save)));
     let _ = varde.update(Message::Ui(Ui::Edit(Edit::RemoveFeature(feature))));
+    assert!(
+        document(&varde)
+            .editor
+            .document()
+            .feature(feature)
+            .is_some()
+    );
     assert!(document(&varde).proposing());
     assert!(sent(&requests).is_empty());
-    // The lane starts, and the point's sketch is gone, so it's dropped.
-    let (lane, _responses) = varde_solve::lane::spawn();
-    let id = document(&varde).id;
-    let _ = varde.update(Message::Doc(id, ForDoc::SolveReady(lane)));
-    assert!(!document(&varde).proposing());
-    assert_eq!(saving(&sent(&requests)), document(&varde).editor.revision());
+    // The lane starts: the point is committed, then the sketch deleted,
+    // and then it's saved.
+    let mut lane = SolveLane::new();
+    varde
+        .screen
+        .doc_mut()
+        .unwrap()
+        .solver_ready(lane.transport());
+    assert!(sent(&requests).is_empty());
+    solve(&mut varde, &mut lane);
+    let doc = document(&varde);
+    assert!(!doc.proposing());
+    assert!(doc.editor.document().feature(feature).is_none());
+    assert_eq!(saving(&sent(&requests)), doc.editor.revision());
+    // Undoing the deletion brings the sketch back with its point.
+    let _ = varde.update(Message::Ui(Ui::Edit(Edit::Undo)));
+    let doc = document(&varde);
+    let points = match &doc.editor.document().feature(feature).unwrap().kind {
+        varde_document::FeatureKind::Sketch { sketch, .. } => sketch.points.len(),
+        varde_document::FeatureKind::Extrude(_) => panic!("a sketch"),
+    };
+    assert_eq!(points, 1);
 }
 
 #[test]

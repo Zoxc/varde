@@ -9,9 +9,11 @@
 //! answered, the sketch is shown, and drawn on, with them applied
 //! ([`Waiting`]). An accepted proposal commits its sketch, solved, as one
 //! [`Command::SetSketch`]; a rejected one changes nothing and says why
-//! until the next action. Undo drops them all. A proposal answered for a
-//! revision no longer the document's (something else was committed
-//! meanwhile) is proposed again.
+//! until the next action. Other changes to the document made meanwhile
+//! wait behind them, in order, so what's committed keeps the order the
+//! user made it in, and undo takes back the newest of what waits, dropping
+//! it. A proposal answered for a revision no longer the document's
+//! (something else was committed meanwhile) is proposed again.
 
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -23,7 +25,7 @@ use varde_sketch::{Analysis, Id, Rejected, SketchEdit};
 use varde_solve::{Request, Response, Tag};
 
 use super::{Refusal, Waiting};
-use crate::doc::Doc;
+use crate::doc::{Change, Doc};
 
 /// How long edits wait on the solver before the status bar says it's
 /// checking them: most are answered well within it.
@@ -38,8 +40,9 @@ const ANALYSES: usize = 8;
 pub(crate) struct Proposals {
     /// The proposal with the lane, and the revision it was proposed on.
     in_flight: Option<(Revision, Proposal)>,
-    /// Proposals waiting for the one in flight, in the order made.
-    queued: VecDeque<Proposal>,
+    /// Proposals waiting for the one in flight, and other changes to the
+    /// document waiting behind them, in the order made.
+    queued: VecDeque<Pending>,
     /// Answers still to come to proposals dropped while with the lane,
     /// which are ignored: the lane answers proposals in the order sent.
     dropped: usize,
@@ -53,6 +56,14 @@ pub(crate) struct Proposals {
     analysing: Option<(Revision, FeatureId)>,
     /// The drag session the next drag is.
     next_drag: u64,
+}
+
+/// What waits for the proposal in flight, see [`Proposals::queued`].
+#[derive(Debug, Clone)]
+enum Pending {
+    Proposal(Proposal),
+    /// Made once the proposals before it are answered.
+    Change(Change),
 }
 
 /// An edit of a sketch to propose.
@@ -87,7 +98,16 @@ impl Proposals {
     /// The proposals waiting, the one in flight first.
     fn waiting(&self) -> impl Iterator<Item = &Proposal> {
         let in_flight = self.in_flight.as_ref().map(|(_, proposal)| proposal);
-        in_flight.into_iter().chain(&self.queued)
+        let queued = self.queued.iter().filter_map(|pending| match pending {
+            Pending::Proposal(proposal) => Some(proposal),
+            Pending::Change(_) => None,
+        });
+        in_flight.into_iter().chain(queued)
+    }
+
+    /// Has `change` wait behind the proposals waiting.
+    pub(crate) fn wait(&mut self, change: Change) {
+        self.queued.push_back(Pending::Change(change));
     }
 
     /// Stops timing the wait once nothing is waiting.
@@ -186,48 +206,73 @@ impl Doc {
             proposals.since = Some(Instant::now());
             proposals.slow = false;
         }
-        proposals.queued.push_back(Proposal {
+        proposals.queued.push_back(Pending::Proposal(Proposal {
             feature,
             edit,
             from,
-        });
+        }));
         self.send_proposal();
         self.refresh_waiting();
         true
     }
 
     /// Sends the lane the next proposal, if none is with it, on the sketch
-    /// committed now. One whose sketch is gone is dropped.
+    /// committed now, making the changes waiting before it first. One
+    /// whose sketch is gone is dropped.
     pub(crate) fn send_proposal(&mut self) {
-        let Some(solver) = &mut self.solver else {
-            return;
-        };
-        let proposals = &mut self.proposals;
-        while proposals.in_flight.is_none() {
-            let Some(proposal) = proposals.queued.pop_front() else {
-                break;
-            };
-            let revision = self.editor.revision();
-            let Some(committed) = sketch_of(self.editor.document(), proposal.feature) else {
-                continue;
-            };
-            let sketch = match &proposal.from {
-                Some((at, from)) if *at == revision => from.clone(),
-                _ => Arc::new(committed.clone()),
-            };
-            solver.send(Request::Propose {
-                base: revision,
-                sketch,
-                edit: proposal.edit.clone(),
-                units: self.editor.document().units(),
-            });
-            proposals.in_flight = Some((revision, proposal));
+        while self.proposals.in_flight.is_none() {
+            match self.proposals.queued.front() {
+                None => break,
+                Some(Pending::Change(_)) => {
+                    if let Some(Pending::Change(change)) = self.proposals.queued.pop_front() {
+                        self.make(change);
+                    }
+                }
+                Some(Pending::Proposal(_)) => {
+                    let Some(solver) = &mut self.solver else {
+                        break;
+                    };
+                    let Some(Pending::Proposal(proposal)) = self.proposals.queued.pop_front()
+                    else {
+                        break;
+                    };
+                    let revision = self.editor.revision();
+                    let Some(committed) = sketch_of(self.editor.document(), proposal.feature)
+                    else {
+                        continue;
+                    };
+                    let sketch = match &proposal.from {
+                        Some((at, from)) if *at == revision => from.clone(),
+                        _ => Arc::new(committed.clone()),
+                    };
+                    solver.send(Request::Propose {
+                        base: revision,
+                        sketch,
+                        edit: proposal.edit.clone(),
+                        units: self.editor.document().units(),
+                    });
+                    self.proposals.in_flight = Some((revision, proposal));
+                }
+            }
         }
-        proposals.settle();
+        self.proposals.settle();
     }
 
-    /// Drops the edits waiting on the solver, as undo does: those with
-    /// the lane are answered still, and ignored.
+    /// Takes back the newest of what waits, as undo does: the last change
+    /// or proposal queued, or else the proposal with the lane, which is
+    /// answered still, and ignored. Those before it don't depend on it.
+    pub(crate) fn drop_newest(&mut self) {
+        let proposals = &mut self.proposals;
+        if proposals.queued.pop_back().is_none() && proposals.in_flight.take().is_some() {
+            proposals.dropped = proposals.dropped.saturating_add(1);
+        }
+        proposals.settle();
+        self.refresh_waiting();
+    }
+
+    /// Drops everything waiting on the solver, and the changes waiting
+    /// behind it, as restoring recovered changes does: the proposal with
+    /// the lane is answered still, and ignored.
     pub(crate) fn drop_proposals(&mut self) {
         let proposals = &mut self.proposals;
         if proposals.in_flight.take().is_some() {
@@ -235,7 +280,6 @@ impl Doc {
         }
         proposals.queued.clear();
         proposals.settle();
-        self.units_waiting = None;
         self.refresh_waiting();
     }
 
@@ -277,13 +321,6 @@ impl Doc {
             }
         }
         self.sync();
-        // Units chosen while edits waited, now they're all answered.
-        if !self.proposing()
-            && let Some(units) = self.units_waiting.take()
-        {
-            self.apply(Command::SetUnits(units));
-            self.sync();
-        }
     }
 
     /// Takes the `answer` to the proposal on `base` with the lane, unless
@@ -300,7 +337,7 @@ impl Doc {
         if base != sent || base != self.editor.revision() {
             // Something else was committed since it was proposed: it's
             // proposed again on what's committed now.
-            proposals.queued.push_front(proposal);
+            proposals.queued.push_front(Pending::Proposal(proposal));
             self.send_proposal();
             return;
         }

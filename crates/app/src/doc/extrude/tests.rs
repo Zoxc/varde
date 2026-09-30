@@ -850,21 +850,29 @@ fn undo_while_the_sketch_edits_wait_frees_ok() {
 #[test]
 fn the_sketch_deleted_while_its_edits_wait_frees_ok() {
     let (mut doc, sketch, requests, mut lane) = plate_with_the_hole_deleted_waiting();
+    // The deletion waits behind the edit, and is made once it's answered.
     doc.update(Edit::RemoveFeature(sketch));
-    assert!(doc.editor.document().feature(sketch).is_none());
-    // Its session goes with it; its edits are dropped once answered.
-    assert!(doc.extrude.is_none());
+    assert!(doc.editor.document().feature(sketch).is_some());
     lane.answer(&mut doc);
+    assert!(doc.editor.document().feature(sketch).is_none());
+    // Its session goes with it.
+    assert!(doc.extrude.is_none());
     assert!(!doc.proposing());
     assert!(!doc.proposals.slow());
-    // Back again, without the edit, a session on it is ready at once.
+    // Back again, with the edit, a session on it is ready at once.
     doc.update(Edit::Undo);
     assert!(!doc.proposing());
+    assert!(doc.editor.document().feature(sketch).is_some());
     answer(&mut doc, &requests);
     doc.look(Look::SelectFeature(sketch));
     key_in(&mut doc, key("e"));
-    let region = plate_region(&doc, sketch);
-    extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region });
+    // The plate alone, its hole deleted.
+    let regions = drawn(&doc, sketch).profiles().unwrap().regions;
+    let [plate] = &regions[..] else {
+        panic!("{regions:?}");
+    };
+    assert!(plate.holes.is_empty());
+    extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region: 0 });
     assert!(doc.extrude_state().unwrap().ready);
     doc.update(Edit::CommitExtrude);
     assert_eq!(extrudes(&doc).len(), 1);
@@ -1318,12 +1326,13 @@ fn every_step_across_a_replacement_ends_the_session_opened_before_it() {
 }
 
 #[test]
-fn restoring_with_a_delete_prompt_and_units_waiting_drops_all_three() {
+fn restoring_drops_the_session_and_the_changes_waiting() {
     let (opened, a, _) = plate_extruded("10");
     let opened = opened.editor.document().clone();
     let (recovered, _, _) = plate_extruded("30");
     let recovered = recovered.editor.document().clone();
     let sketch = opened.features()[0].id;
+    let units = opened.units();
     let origin = crate::doc::Origin {
         recovered: Some(varde_io::Offer {
             document: recovered.clone(),
@@ -1358,13 +1367,14 @@ fn restoring_with_a_delete_prompt_and_units_waiting_drops_all_three() {
     doc.update(Edit::DeleteSelection);
     doc.look(Look::FinishSketch);
     assert!(doc.proposing());
-    // The extrude being edited, units waiting, and the delete prompt.
+    // The extrude being edited, and new units and a delete waiting
+    // behind the edit.
     doc.look(Look::EditFeature(a));
     assert!(doc.extrude.is_some());
     doc.update(Edit::SetUnits(varde_expr::LengthUnit::In));
-    assert_eq!(doc.units_waiting, Some(varde_expr::LengthUnit::In));
     doc.update(Edit::RemoveFeature(sketch));
-    assert!(doc.delete_prompt().is_some());
+    assert!(doc.delete_prompt().is_none());
+    assert_eq!(doc.editor.document().units(), units);
 
     let _ = doc.restore_recovered(&mut crate::Files::new(None));
     assert_eq!(*doc.editor.document(), recovered);
@@ -1372,8 +1382,8 @@ fn restoring_with_a_delete_prompt_and_units_waiting_drops_all_three() {
     assert!(last_draft(&requests).is_none());
     assert!(doc.delete_prompt().is_none());
     assert!(doc.deleting.is_none());
-    assert_eq!(doc.units_waiting, None);
-    // The dropped edit's answer sets nothing.
+    // The dropped edit's answer sets nothing, and what waited behind it
+    // was dropped too.
     lane.answer(&mut doc);
     assert!(!doc.proposing());
     assert_eq!(*doc.editor.document(), recovered);
@@ -1492,4 +1502,49 @@ fn timeline_a_b_a_lists_only_the_extrude_edited() {
     assert_eq!(listed(&doc), []);
     answer(&mut doc, &requests);
     assert_eq!(listed(&doc), [body]);
+}
+
+#[test]
+fn a_delete_waiting_behind_sketch_edits_asks_once_it_is_made() {
+    let (mut doc, a, _) = plate_extruded("10");
+    let sketch = doc.editor.document().features()[0].id;
+    let mut lane = crate::tests::SolveLane::connect(&mut doc);
+    doc.look(Look::EditFeature(sketch));
+    lane.answer(&mut doc);
+    let circle = drawn(&doc, sketch)
+        .curves
+        .iter()
+        .find(|curve| matches!(curve.curve, varde_sketch::Curve::Circle { .. }))
+        .unwrap()
+        .id;
+    doc.look(Look::SelectBox {
+        ids: vec![circle],
+        add: false,
+    });
+    doc.update(Edit::DeleteSelection);
+    doc.look(Look::FinishSketch);
+    assert!(doc.proposing());
+    // The extrude goes with the sketch: asked once the edit is answered.
+    doc.update(Edit::RemoveFeature(sketch));
+    assert!(doc.delete_prompt().is_none());
+    lane.answer(&mut doc);
+    assert!(!doc.proposing());
+    let circles = |doc: &Doc| {
+        drawn(doc, sketch)
+            .curves
+            .iter()
+            .filter(|curve| matches!(curve.curve, varde_sketch::Curve::Circle { .. }))
+            .count()
+    };
+    assert_eq!(circles(&doc), 0);
+    let prompt = doc.delete_prompt().unwrap();
+    assert_eq!(prompt.features.len(), 2);
+    doc.update(Edit::ConfirmDelete);
+    assert!(doc.editor.document().features().is_empty());
+    // Undone in order: the deletion, then the edit.
+    doc.update(Edit::Undo);
+    assert!(doc.editor.document().feature(a).is_some());
+    assert_eq!(circles(&doc), 0);
+    doc.update(Edit::Undo);
+    assert_eq!(circles(&doc), 1);
 }

@@ -787,8 +787,9 @@ impl Doc {
     /// Restores the changes offered as recovered, as one undoable edit
     /// that leaves the document edited, and auto-saves them at once. A
     /// read-only document keeps offering them. The edits waiting on the
-    /// solver were made on the document replaced, so they're dropped, as
-    /// undo drops them, and what waited for them goes on.
+    /// solver, and the changes waiting behind them, were made on the
+    /// document replaced, so they're dropped, and what waited for them
+    /// goes on.
     pub(crate) fn restore_recovered(&mut self, cx: &mut Files) -> Next {
         if self.editable()
             && let Some(offer) = self.persist.recovered.take()

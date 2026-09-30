@@ -15,7 +15,8 @@ use glam::Vec3;
 use iced::Element;
 use varde_document::name::UNTITLED;
 use varde_document::{
-    Command, Document, EditError, Editor, FeatureId, FeatureKind, LengthUnit, Removable,
+    BodyId, Command, Document, EditError, Editor, FeatureId, FeatureKind, LengthUnit, OriginPlane,
+    Removable, Removal, Tolerance,
 };
 use varde_io::{Access, Offer, OpenId};
 use varde_render::{Camera, Projection};
@@ -79,10 +80,6 @@ pub(crate) struct Doc {
     /// What the value field is to do once it shows, which the app asks of
     /// it: see [`Doc::take_focus`].
     focus: Option<Focus>,
-    /// The design's units chosen while edits waited on the solver, set
-    /// once they're answered: their values were read in the units before.
-    /// Undoing them, which drops them, drops this too.
-    pub(crate) units_waiting: Option<LengthUnit>,
     animation: Option<CameraAnimation>,
     /// Saving and leaving it, see [`Persist`].
     persist: Persist,
@@ -181,7 +178,6 @@ impl Doc {
             extrude: None,
             sketch_split: GEOMETRY_SHARE,
             focus: None,
-            units_waiting: None,
             animation: None,
         };
         doc.sync();
@@ -194,11 +190,11 @@ impl Doc {
     /// or the extrude being set up, and finds the profiles of the sketch
     /// shown if it changed.
     pub(crate) fn sync(&mut self) {
+        self.send_proposal();
         self.refresh_waiting();
         self.prune_deleting();
         self.prune();
         self.prune_extrude();
-        self.send_proposal();
         self.request_analysis();
         self.request_model();
         self.refresh_profiles();
@@ -265,21 +261,15 @@ impl Doc {
             Edit::ToggleFileMenu => self.file_menu = !self.file_menu,
             Edit::DismissSaveError => self.dismiss_save_error(),
             Edit::RemoveBody(id) => self.remove(Removable::Body(id)),
-            Edit::ToggleVisible(id) => {
-                if let Some(body) = self.editor.document().body(id) {
-                    let visible = !body.visible;
-                    self.apply(Command::SetVisible(id, visible));
-                }
+            Edit::ToggleVisible(id) => self.change(Change::ToggleVisible(id)),
+            // Not another plane picked while the new sketch waits.
+            Edit::NewSketch(plane) => {
+                self.picking_plane = false;
+                self.change(Change::NewSketch(plane));
             }
-            Edit::NewSketch(plane) => self.new_sketch(plane),
             Edit::RemoveFeature(id) => self.remove(Removable::Feature(id)),
             Edit::ConfirmDelete => self.confirm_delete(),
-            Edit::ToggleFeatureVisible(id) => {
-                if let Some(feature) = self.editor.document().feature(id) {
-                    let visible = !feature.visible;
-                    self.apply(Command::SetFeatureVisible(id, visible));
-                }
-            }
+            Edit::ToggleFeatureVisible(id) => self.change(Change::ToggleFeatureVisible(id)),
             Edit::ToolClick(click) => self.tool_click(click),
             Edit::DropGeometry => self.drop_geometry(),
             Edit::DeleteSelection => self.delete_selection(),
@@ -293,23 +283,53 @@ impl Doc {
             Edit::ToggleHandles => self.toggle_handles(),
             Edit::InsertSplinePoint { spline, at } => self.insert_spline_point(spline, at),
             Edit::CommitExtrude => self.commit_extrude(),
-            // Edits waiting on the solver have their values read in the
-            // units they were made in: the units are set once they're
-            // answered.
-            Edit::SetUnits(units) if self.proposing() => self.units_waiting = Some(units),
-            Edit::SetUnits(units) => self.apply(Command::SetUnits(units)),
-            Edit::SetTolerance(tolerance) => self.apply(Command::SetTolerance(tolerance)),
-            // Undoing an edit still waiting on the solver drops it, and
-            // those after it.
-            Edit::Undo if self.proposing() => self.drop_proposals(),
+            Edit::SetUnits(units) => self.change(Change::SetUnits(units)),
+            Edit::SetTolerance(tolerance) => self.change(Change::SetTolerance(tolerance)),
+            // What waits on the solver, and what waits behind it, is newer
+            // than anything committed: undo takes back the newest of it.
+            Edit::Undo if self.proposing() => self.drop_newest(),
             Edit::Undo => self.edit_surely(Editor::undo),
-            // The edits waiting come after what's undone, as a new edit
-            // does, and name items by the ids the sketch has without it.
+            // What waits comes after what's undone, as a new edit does,
+            // and edits waiting name items by the ids the sketch has
+            // without it.
             Edit::Redo if self.proposing() => {}
             Edit::Redo => self.edit_surely(Editor::redo),
         }
 
         self.sync();
+    }
+
+    /// Makes `change`, or, while edits wait on the solver, has it wait
+    /// behind them, see [`Proposals`]: so what's committed, and so undo,
+    /// keeps the order the user made them in.
+    fn change(&mut self, change: Change) {
+        if self.proposing() {
+            self.proposals.wait(change);
+        } else {
+            self.make(change);
+        }
+    }
+
+    /// Makes `change` now, on the document as it is.
+    pub(crate) fn make(&mut self, change: Change) {
+        match change {
+            Change::Remove { target, confirmed } => self.remove_now(target, confirmed),
+            Change::ToggleVisible(id) => {
+                if let Some(body) = self.editor.document().body(id) {
+                    let visible = !body.visible;
+                    self.apply(Command::SetVisible(id, visible));
+                }
+            }
+            Change::ToggleFeatureVisible(id) => {
+                if let Some(feature) = self.editor.document().feature(id) {
+                    let visible = !feature.visible;
+                    self.apply(Command::SetFeatureVisible(id, visible));
+                }
+            }
+            Change::NewSketch(plane) => self.new_sketch(plane),
+            Change::SetUnits(units) => self.apply(Command::SetUnits(units)),
+            Change::SetTolerance(tolerance) => self.apply(Command::SetTolerance(tolerance)),
+        }
     }
 
     /// Takes `message`, which only changes how the document is looked at.
@@ -586,6 +606,26 @@ impl Doc {
             proposing: self.proposing(),
         })
     }
+}
+
+/// A change to the document other than a sketch edit, as the user asked
+/// for it, which waits behind the edits waiting on the solver, see
+/// [`Doc::change`]. It's made on the document as it is then, so toggling
+/// twice toggles back.
+#[derive(Debug, Clone)]
+pub(crate) enum Change {
+    /// Removes `target` and what goes with it, asking first if more goes
+    /// than `confirmed`, what the user said yes to, if anything, see
+    /// [`Doc::remove`].
+    Remove {
+        target: Removable,
+        confirmed: Option<Removal>,
+    },
+    ToggleVisible(BodyId),
+    ToggleFeatureVisible(FeatureId),
+    NewSketch(OriginPlane),
+    SetUnits(LengthUnit),
+    SetTolerance(Tolerance),
 }
 
 /// A prompt over the document screen, see [`Doc::dialog`].

@@ -4,7 +4,7 @@
 use varde_document::{Command, Generation, Removable, Removal};
 use varde_view::DeletePrompt;
 
-use super::Doc;
+use super::{Change, Doc};
 
 /// A removal the user is asked about before it's applied: what was asked
 /// to be removed, everything that goes with it, and the generation of
@@ -20,13 +20,40 @@ impl Doc {
     /// if no other feature goes with it (a feature's own bodies, or a
     /// body's own feature, go without asking), or else asks first,
     /// listing everything that would go. Nothing in a read-only
-    /// document.
+    /// document. While edits wait on the solver it waits behind them, see
+    /// [`Doc::change`], and asks once it's made.
     pub(crate) fn remove(&mut self, target: Removable) {
+        self.change(Change::Remove {
+            target,
+            confirmed: None,
+        });
+    }
+
+    /// Removes what the delete prompt lists, and closes it: Delete. The
+    /// command removes exactly that, as the document hasn't changed since
+    /// (the prompt goes if it does, see [`Doc::prune_deleting`]). While
+    /// edits wait on the solver it waits behind them, and asks again if
+    /// more would go by then.
+    pub(crate) fn confirm_delete(&mut self) {
+        let Some(deleting) = self.deleting.take() else {
+            return;
+        };
+        if deleting.generation == self.editor.generation() {
+            self.change(Change::Remove {
+                target: deleting.target,
+                confirmed: Some(deleting.removal),
+            });
+        }
+    }
+
+    /// Removes `target` now, as [`Doc::remove`] says, without asking if
+    /// the user said yes to removing all that goes with it, `confirmed`.
+    pub(super) fn remove_now(&mut self, target: Removable, confirmed: Option<Removal>) {
         if !self.editable() {
             return;
         }
         let removal = self.editor.document().removal(target);
-        if removal.features.len() <= 1 {
+        if removal.features.len() <= 1 || confirmed.as_ref() == Some(&removal) {
             self.apply(command(target));
         } else {
             self.file_menu = false;
@@ -35,18 +62,6 @@ impl Doc {
                 removal,
                 generation: self.editor.generation(),
             });
-        }
-    }
-
-    /// Removes what the delete prompt lists, and closes it: Delete. The
-    /// command removes exactly that, as the document hasn't changed since
-    /// (the prompt goes if it does, see [`Doc::prune_deleting`]).
-    pub(crate) fn confirm_delete(&mut self) {
-        let Some(deleting) = self.deleting.take() else {
-            return;
-        };
-        if deleting.generation == self.editor.generation() {
-            self.apply(command(deleting.target));
         }
     }
 

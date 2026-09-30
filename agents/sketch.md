@@ -700,7 +700,8 @@ back, and a Line chain whose last point is gone (undone) starts afresh.
 Across a replacement of the whole document (restoring recovered changes,
 or undoing or redoing that: `Editor::lineage` changes) ids may name other
 items, so the selection is cleared and the tool starts its shape afresh;
-restoring drops the edits waiting on the solver, as undo does. The sketch
+restoring drops the edits waiting on the solver, and the changes waiting
+behind them. The sketch
 session only resets, since it reads the sketch its id names now and never
 writes back what it read before; an extrude session holds values read
 before the replacement, so it ends instead (`Doc::prune_extrude`). A
@@ -729,13 +730,32 @@ bar says why (`EditError::Sketch`).
   red, until the next action (an edit, a click, a tool, `Esc`). A lane
   that fails on one (`Failed`) says so the same way. An answer for a
   revision that's no longer the document's (something else was committed
-  meanwhile) is proposed again. Undo while any wait drops them all instead
-  of undoing, and the answer to the one with the lane is ignored when it
-  comes (`dropped` counts them: the lane answers proposals in order).
-  Redo does nothing while any wait: they come after what's undone, as a
-  new edit would, and an `Add` names the items before it by id. After ~100 ms of waiting (`CHECKING`, told by frames while waiting) the
-  status bar says "Checking…". Until the lane has started, proposals wait
-  in the app.
+  meanwhile) is proposed again; nothing the user does commits meanwhile
+  (below), so that's a safeguard. After ~100 ms of waiting (`CHECKING`,
+  told by frames while waiting) the status bar says "Checking…". Until
+  the lane has started, proposals wait in the app.
+- **Other changes wait behind them** (`Doc::change`, `Change`): while any
+  proposal waits, every other change to the document (deleting a feature
+  or body, confirming the delete prompt, toggling visibility, a new
+  sketch, units, tolerance) queues behind it in `Proposals`, in order,
+  and is made, on the document as it is then, once those before it are
+  answered: toggling twice toggles back, a delete asks then if more goes
+  with it than was confirmed, and edits made after new units are read in
+  them. So what's committed, and so the undo history, keeps the order the
+  user made it in. Undo while anything waits takes back the newest
+  waiting item (`Doc::drop_newest`), the last one queued or else the
+  proposal with the lane, whose answer is ignored when it comes
+  (`dropped` counts them: the lane answers proposals in order); those
+  before it never depend on it. Redo does nothing while any wait: what
+  waits comes after what's undone, as a new edit would, and an `Add` names
+  the items before it by id; what undo dropped from the queue isn't
+  redone. The other rule considered, committing other changes at once and
+  having undo drop proposals only while they're the newest change, lets
+  an answer land on top of a later change (the history out of order) and
+  a proposal committed then clear the redo of a change undone after it;
+  queueing has neither. The cost: a change waits as long as the solver
+  does, with "Checking…" showing. An extrude's OK isn't queued: it
+  waits, see below.
 - **Saving and closing wait for them**: Save and Save As asked for while
   proposals wait are kept (`Saves::waiting`, which counts as saving) and
   sent once they're answered or dropped (`Doc::proposals_settled`), so
@@ -1028,8 +1048,8 @@ bar says why (`EditError::Sketch`).
 - **Units**: the file menu sets the design's (`Edit::SetUnits`, a
   `Command::SetUnits`); dimensions show in them (`varde_expr::format`).
   Chosen while edits wait on the solver, whose values were read in the
-  units before, they're kept (`Doc::units_waiting`) and set once the
-  edits are all answered; undo dropping the edits drops them too.
+  units before, they wait behind them like any other change (see
+  Proposals).
 
 ## In the viewport (`crates/view/src/viewport/sketch.rs`)
 

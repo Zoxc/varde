@@ -8,7 +8,8 @@ use varde_view::{ConstraintKind, Edit, Look, Tool};
 
 use super::*;
 use crate::doc::sketch::tests::{
-    at, click_at, lines, position, selection, shown, sketch, sketching, undo_to, with_shapes,
+    Answered, at, click_at, lines, position, selection, shown, sketch, sketching, undo_to,
+    with_shapes,
 };
 use crate::doc::{Origin, Target};
 use crate::tests::{SolveLane, answer};
@@ -141,13 +142,19 @@ fn edits_after_a_refused_one_are_proposed_still() {
 }
 
 #[test]
-fn undo_drops_the_edits_waiting_and_their_answers() {
+fn undo_drops_the_newest_edit_waiting_and_its_answer() {
     let (mut t, _, _) = sketching();
     t.look(Look::SelectTool(Tool::Point));
     let before = t.editor.revision();
     click_waiting(&mut t.doc, 1.0, 1.0);
     click_waiting(&mut t.doc, 2.0, 2.0);
     assert!(t.keys().is_some());
+    t.doc.update(Edit::Undo);
+    assert!(t.proposing());
+    let [point] = &shown(&t).points[..] else {
+        panic!("{:?}", shown(&t));
+    };
+    assert_eq!(point.at, at(1.0, 1.0));
     t.doc.update(Edit::Undo);
     assert!(!t.proposing());
     assert!(shown(&t).points.is_empty());
@@ -172,9 +179,11 @@ fn an_edit_answered_for_an_older_revision_is_proposed_again() {
     t.look(Look::SelectTool(Tool::Point));
     let before = t.editor.revision();
     click_waiting(&mut t.doc, 1.0, 1.0);
-    // Committed meanwhile, not through the solver.
+    // Committed meanwhile, not through the solver (what the user changes
+    // waits behind it instead, but should anything).
     let feature = t.editor.document().features()[0].id;
-    t.doc.update(Edit::ToggleFeatureVisible(feature));
+    t.doc.apply(Command::SetFeatureVisible(feature, false));
+    t.doc.sync();
     let after = t.editor.revision();
     t.lane.answer_first(&mut t.doc);
     assert!(sketch(&t).points.is_empty());
@@ -502,4 +511,86 @@ fn redo_while_edits_wait_does_nothing() {
         [a, b, d].map(|id| position(drawn, id)),
         [at(0.0, 0.0), at(10.0, 0.0), at(10.0, 10.0)]
     );
+}
+
+#[test]
+fn undo_after_an_edit_made_while_others_wait_takes_back_that_edit() {
+    let (mut t, feature, _) = sketching();
+    t.look(Look::SelectTool(Tool::Point));
+    click_waiting(&mut t.doc, 1.0, 1.0);
+    t.doc.look(Look::FinishSketch);
+    assert!(t.proposing());
+    // Deleted before the solver answers, then taken back.
+    t.doc.update(Edit::RemoveFeature(feature));
+    t.doc.update(Edit::Undo);
+    t.lane.answer(&mut t.doc);
+    assert!(!t.proposing());
+    let points =
+        |t: &Answered| sketch_of(t.editor.document(), feature).map(|sketch| sketch.points.len());
+    assert_eq!(points(&t), Some(1), "the deletion undone, the point kept");
+    // The point is the next step back, and forward again; the deletion
+    // taken back while it waited isn't redone.
+    t.update(Edit::Undo);
+    assert_eq!(points(&t), Some(0));
+    t.update(Edit::Redo);
+    assert_eq!(points(&t), Some(1));
+    assert!(!t.editor.can_redo());
+}
+
+#[test]
+fn changes_made_while_edits_wait_are_made_after_them_in_order() {
+    let (mut t, feature, _) = sketching();
+    t.look(Look::SelectTool(Tool::Point));
+    let before = t.editor.revision();
+    click_waiting(&mut t.doc, 1.0, 1.0);
+    // Hidden and shown again, each on the document as it is by then.
+    t.doc.update(Edit::ToggleFeatureVisible(feature));
+    t.doc.update(Edit::ToggleFeatureVisible(feature));
+    click_waiting(&mut t.doc, 2.0, 2.0);
+    assert_eq!(t.editor.revision(), before);
+    assert_eq!(shown(&t).points.len(), 2);
+    t.lane.answer(&mut t.doc);
+    assert!(!t.proposing());
+    assert_eq!(sketch(&t).points.len(), 2);
+    let visible = |t: &Answered| t.editor.document().feature(feature).unwrap().visible;
+    assert!(visible(&t));
+    // Undone newest first: the second point, shown, hidden, the first.
+    t.update(Edit::Undo);
+    assert_eq!(sketch(&t).points.len(), 1);
+    assert!(visible(&t));
+    t.update(Edit::Undo);
+    assert!(!visible(&t));
+    t.update(Edit::Undo);
+    assert!(visible(&t));
+    assert_eq!(sketch(&t).points.len(), 1);
+    t.update(Edit::Undo);
+    assert_eq!(t.editor.revision(), before);
+    // And redone in the same order.
+    t.update(Edit::Redo);
+    assert_eq!(sketch(&t).points.len(), 1);
+    t.update(Edit::Redo);
+    assert!(!visible(&t));
+    t.update(Edit::Redo);
+    t.update(Edit::Redo);
+    assert!(visible(&t));
+    assert_eq!(sketch(&t).points.len(), 2);
+    assert!(!t.editor.can_redo());
+}
+
+#[test]
+fn undo_takes_back_a_change_waiting_before_the_edit_it_waits_for() {
+    let (mut t, feature, _) = sketching();
+    t.look(Look::SelectTool(Tool::Point));
+    click_waiting(&mut t.doc, 1.0, 1.0);
+    t.doc.update(Edit::ToggleFeatureVisible(feature));
+    // The newest is the change: it goes, the point stays waiting.
+    t.doc.update(Edit::Undo);
+    assert!(t.proposing());
+    assert_eq!(shown(&t).points.len(), 1);
+    // Redo has nothing to bring back while the point waits.
+    t.doc.update(Edit::Redo);
+    t.lane.answer(&mut t.doc);
+    assert_eq!(sketch(&t).points.len(), 1);
+    assert!(t.editor.document().feature(feature).unwrap().visible);
+    assert!(!t.editor.can_redo());
 }

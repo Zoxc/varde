@@ -15,8 +15,8 @@ with saving, auto-save, recovery and the sidecar lock, over OPFS on the web.
 `web-files.md`). Of step 7, the sketch solver (`varde-sketch`), the
 solver lane (`varde-solve`, a lane per open document, natively a thread and
 on the web a Web Worker) and the app's side are built: every sketch edit is
-proposed and committed once accepted, one in flight and the rest queued,
-dropped by undo, waited for by Save and closing; drags are sessions of the
+proposed and committed once accepted, one in flight and the rest queued
+(other changes queue behind them), dropped newest first by undo, waited for by Save and closing; drags are sessions of the
 lane's, committed on release as a proposed move; drag steps stay in the
 lane (see "Dragging"). `agents/sketch.md` says how. Per-feature caching and
 cancellation are still open, see step 8 of the plan; manifold isn't wired
@@ -209,8 +209,10 @@ takes more than ~100 ms). Camera and UI carry on. Edits are ordered, so
 unlike the other requests this isn't latest-wins: one proposal is in
 flight per document, further edits queue behind it, and each is proposed
 against the committed state the previous one produced. If one is rejected,
-the queued ones are still proposed and may be rejected too. Undo while a
-proposal is pending drops it (and anything queued behind it), the natural
+the queued ones are still proposed and may be rejected too. Other changes
+to the document made meanwhile queue behind them and are made once
+they're answered, so the history keeps the order they were made in. Undo
+while anything is pending drops the newest pending item, the natural
 meaning of undoing an edit the user just made. A `base` that no longer
 matches the committed revision can't happen with one proposal in flight,
 but is still checked, and the proposal is re-sent if it does.
