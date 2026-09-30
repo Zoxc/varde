@@ -17,8 +17,9 @@ tolerances (`Tolerance`), the limits, `Budget` and `KernelError`, and the
 parallel map (`par`), below, and `Solid`, a checked mesh, with its
 tessellation for drawing (`tessellate`) and its volume and area,
 `extrude`, which sweeps a `Profile` into a solid, and `boolean` and
-`touches` for solids of flat patches, with the curved booleans' counting
-and pair decisions built (their cuts not yet). Documents store no geometry:
+`touches` for solids of flat and curved patches (curved cuts exact where
+planes meet planes or quadrics, traced and fitted elsewhere). Documents
+store no geometry:
 bodies are the outputs of the feature history, which `varde-regen`
 evaluates into solids and draws (see "Bodies from the history").
 
@@ -1051,14 +1052,15 @@ through identities that hold whatever values the primitives take, so the
 result is a closed manifold by construction and nothing is ever merged
 because two points are close.
 
-Complete so far for **flat patches** (every edge straight within the
-resolution, `hull::flat`; such a patch is taken as the triangle on its
-corners), whose primitives are exact. With a **curved patch** in either
-operand the primitives are numerical (see "Curved primitives"), pairs of
-faces are decided by certificates and refinement (see "Pairs of faces"),
-and there it stops: tracing and fitting the curved cuts and assembling
-the result aren't built, so `boolean` then fails with
-`KernelError::Boolean(BooleanError::Curved)`, while `touches` answers.
+For **flat patches** (every edge straight within the resolution,
+`hull::flat`; such a patch is taken as the triangle on its corners) the
+primitives are exact and every cut is a straight segment. With a
+**curved patch** in either operand the primitives are numerical (see
+"Curved primitives"), pairs of faces are decided by certificates and
+refinement (see "Pairs of faces"), and each decided arc is cut along a
+chain of shared edges: exact where two planes or a plane and a quadric
+meet (the faces' tags say), traced and fitted within the fit tolerance
+elsewhere (see "Cutting curved faces").
 
 | file | holds |
 |---|---|
@@ -1073,10 +1075,16 @@ the result aren't built, so `boolean` then fails with
 | `boolean/exact.rs` | exact signs: `Approx` (float with an error bound), `Exp` (expansions), `Poly` in `ε`, `Pred`, `sign`, `orient2d` |
 | `boolean/flat.rs` | `Flat`, the primitives of flat operands, with the symbolic perturbation |
 | `boolean/count.rs` | broad phase, the stored primitives, `x12`/`x21`, winding numbers |
-| `boolean/assemble.rs` | new vertices, kept pieces of edges, cut edges, each cut face triangulated |
-| `boolean/triangulate.rs` | a face's kept loops in its parameter domain into triangles |
+| `boolean/surface.rs` | the exact paths: what a patch lies on (`Shape`), crossings solved again on planes and quadrics, a plane's conic on a quadric (`section`) |
+| `boolean/chain.rs` | each arc's chain of shared edges: straight, exact, or traced and fitted; halving its curves |
+| `boolean/chain/trace.rs` | the point where two patches meet (Newton on four unknowns), marching along the cut, fitting conics, inverting a point into a patch |
+| `boolean/assemble.rs` | new vertices, kept pieces of edges, cut edges, the rounds of cutting the faces, the faces' copies |
+| `boolean/assemble/face.rs` | one face cut: its layout, loops, curved sides, triangles, their inner edges' curves (exact bands on quadrics) |
+| `boolean/assemble/merge.rs` | merging refinement's pieces that came through whole |
+| `boolean/triangulate.rs` | a face's kept loops in its parameter domain into triangles, curved sides' corners, Steiner points |
 | `boolean/cleanup.rs` | collapsing and flipping the degenerate triangles flush operands leave |
 | `boolean/tests.rs` | boxes in every flush, edge-on and vertex-on configuration, tori, determinism |
+| `boolean/curved_tests.rs` | cylinders and boxes (exact), crossing cylinders, a free surface, a saddle, extrudes, chains, merging, random bars |
 
 ### The primitives
 
@@ -1347,9 +1355,199 @@ arcs don't cross. Pieces flat within the resolution certify each other
 as planar, which is what ends refinement at a tangency long before the
 floor (at pieces about `√(8·R·resolution)` across).
 
-`refined` returns the operands as refined (the same surfaces, split), the
-counts and every pair's arcs (`Arc { tris, plus, minus }`, by end vertex
-id): what tracing, fitting and assembling curved cuts will start from.
+`refined` returns the operands as refined (the same surfaces, split; the
+operands' vertices first, then refinement's), the tree of each operand's
+red splits (`mesh::Node`: corners, patch, parent) and each refined
+triangle's leaf in it, the counts and every pair's arcs (`Arc { tris,
+plus, minus }`, by end vertex id): what cutting the curved faces starts
+from.
+
+### Cutting curved faces (`boolean/chain.rs`, `boolean/surface.rs`, `boolean/assemble/`)
+
+With curved operands, `boolean` takes `pairs::refined`'s operands,
+counts and arcs, builds the operands' tables again and `Curved`'s
+primitives (for `order`), and assembles as for flat operands, with these
+additions.
+
+**Crossings on curved edges.** Each crossing's parameter is solved again
+where the face crossed is a plane (the quadratic of the edge's conic
+against it, exactly) or a quadric (Newton's method on `F(C(t))`), when
+the edge is curved or the face isn't planar; the root nearest the
+count's position within `1e-6` of it, else the position stays
+(`surface::polish`). A vertex on an exactly straight edge (weight 1,
+control point at the middle: `lined`) is interpolated as before; on any
+other edge it is the conic's point from its blossom `B(t, t)`, and the
+edge is split into pieces between its crossings by blossoming
+(`[B(s,s), B(s,t), B(t,t)]`), each piece one record both faces beside
+the edge read. An arc only straight within the resolution keeps its
+curve (a straight piece of it was `3e-8` off a cylinder).
+
+**Chains** (`chain::chain`, per arc, through `par_map`): the cut from an
+arc's `+` end to its `−` end as vertices and curves, and every vertex's
+position in both patches' domains.
+
+- **Two planar patches**: one straight edge, exact.
+- **A plane and a quadric** (a planar patch, its face's `Plane` tag or
+  its corners' plane, against a patch on a `Quadric` face): the conic
+  the plane cuts the quadric in, exact (`surface::section`). The
+  tangents at the ends are `n × ∇F`, the control point where they meet
+  in the plane, and the weight from where the line from the chord's
+  middle `M` to the control point `C` meets the quadric, at `σ` of the
+  way (a quadratic): the conic's middle is `(M + w·C)/(1 + w)`, so `w =
+  σ/(1 − σ)`. Which of the conic's two arcs between the ends is chosen by
+  a guide point (the quadric patch's point halfway between the ends in
+  its domain), and arcs that would turn by more than about 45°
+  (`MAX_TURN_COS` 0.7), or need a weight under ½, are halved at the
+  conic's point on that line (at most 6 times); a plane along a
+  cylinder's rulings gives a straight edge. The arcs are kept only if
+  their middles invert into the quadric patch.
+- **Anything else** (quadric against quadric, `Free` faces): **traced**
+  and **fitted** (`chain/trace.rs`). A point where the patches meet solves
+  `P(u) = Q(v)` and lies on a given plane: four equations in `u0, u1, v0,
+  v1`, Newton's method with Gaussian elimination (partial pivoting), at
+  most 40 steps, accepted within `1e-11` of the patches' size. Marching
+  starts at the `+` end along `n_P × n_Q` turned to leave the patch whose
+  side the end is on inwards, steps `h` along the tangent and corrects on
+  the plane square to it through the predicted point; a step is taken
+  when the tangent turns by under about 20°, the point moved on and lies
+  within half a step of the prediction, and within half a barycentric
+  unit of both triangles, `h` growing ×1.5 on easy steps and halving on
+  failures, down to `1e-9` of the size; it ends at the `−` end once that
+  is within 1.5 steps ahead, and gives up past `MAX_TRACE_STEPS` (4096)
+  steps or 16 times the patches' size of length. Fitting takes the whole
+  run as one conic and halves it at its middle traced point (or at the
+  curve's point on the chord's bisecting plane) until each conic is
+  within a quarter of the fit tolerance of the curve at `¼`, `½` and `¾`
+  (each projected onto the curve by the same Newton solve), turns by
+  under about 45°, and has a weight within `2·W_MIN ..= W_MAX/2`: at most
+  16 halvings. If tracing or fitting fails, the arc falls back to one
+  conic along the end tangents, else a straight edge: only the geometry
+  suffers.
+- **The fitted conics' plane.** A conic's control points span its plane,
+  and the hull rule between the two patches beside a curved edge wants
+  one on either side of it. A planar face's cut lies in its plane (the
+  other face leaves it: the cap-and-wall case). Between two curved faces
+  the conic is put in the plane through its chord that **bisects the
+  crease** the result has there: spanned by the tangent and the sum of
+  the result's outward normals (`n_P + n_Q`, or `n_P − n_Q` where `B`'s
+  faces turn over, for a difference): the two bands then lie on either
+  side. Fitted in the curve's own osculating plane, crossing cylinders'
+  bands failed the edge-neighbour rule and repair split them into a
+  hundred thousand patches in vain.
+- **The fitted conics' weight.** The triangles beside a cut take the
+  patch's own curves as their other sides, and an edge weight far from
+  the one those follow reparametrizes the triangle and pulls its inside
+  off the surface (a weight of 0.69 on a short, nearly straight cut
+  where the patch's own curve had 0.9998 put a thin band 0.007 off a
+  surface of size 1). So the weight tried first is the geometric mean of
+  the curved patches' own weights over the straight domain segments
+  between the conic's ends, and only if that strays past the tolerance
+  the one through the curve's point on the line from `M` to `C` (found
+  on the plane holding that line and square to the conic's plane; the
+  perpendicular bisector's point is the middle only of symmetric arcs).
+
+The chains' vertices get ids after the crossings (arc by arc), and their
+curves are records; a chain that isn't exact marks its edges fitted.
+
+**Faces** are cut in one of three layouts (`face::Layout`):
+
+- **Flat** patches (straight edges): the corner triangle's affine
+  coordinates, as for flat operands (vertices on sides placed exactly,
+  others projected and moved into the domain).
+- **Planar** patches with curved edges (caps): the same affine
+  coordinates of the plane, vertices on curved sides where they project
+  (tagged with their side, not moved onto the corner triangle), inner
+  edges straight, as refinement makes them on planes.
+- **Curved** patches: the parameter domain. Vertices on sides at their
+  parameters (a patch's side is its edge's conic in the same parameter),
+  others from the chain's domain positions (Newton's inversions),
+  moved into the domain. Inner edges are the patch's own curves over the
+  straight domain segments (blossoms `B(a, b)` normalized with `B(a,a).w`
+  and `B(b,b).w`, exact), except on a quadric (below).
+
+**Curved sides when triangulating.** The loops' curved sides (a cut's
+curves, and on flat or planar patches pieces of the operand's curved
+edges) are given to the triangulation as their tangents at their ends in
+the layout (`Bends`; on a curved patch the 3D tangent mapped into the
+domain by least squares). A triangle's corner between a curved side and
+another side must be **open** (the curve's tangent strictly inside the
+angle, by a sine of `1e-3`), else the curve bulges out of the triangle
+and the patch folds. The ear clipping ranks ears: coincident corners,
+proper, proper with a closed curved corner, zero area, anything else
+(with curves, "zero area" relative: twice the area within `1e-9` of the
+longest side's square, and with four vertices left an ear whose
+remaining triangle is of zero area counts as one). Then, in up to four
+rounds, a triangle with a closed corner between **two** curved sides
+(two arcs of one smooth curve meeting at a vertex: any triangle with
+both folds there) gets a Steiner point at its centroid and is split in
+three (flips then improve them, keeping corners open); one with a closed
+corner between a curved and a straight side asks for that curve to be
+**split**, which no point inside mends. Sides of about zero length (a tie
+left vertices at one place) aren't judged. A loop of two vertices (a lens
+between two curves) asks for its curves to be split and is left out
+until they are.
+
+**Rounds** (`assemble`, at most `SPLIT_ROUNDS` = 6): every face is cut;
+the curves asked for are halved — a chain's curve by `Chain::split` (an
+exact curve by `split_half`, still exact; a fitted one at the curve's
+point on the plane square to it through its middle, both halves fitted
+again), an operand's curved edge by a **vertex added on it** at the
+middle parameter of the piece asked for, which both faces beside the
+edge get (a face kept whole with such a vertex on an edge is cut too, its
+boundary triangulated again); and every face is cut again. A triangle
+along a cut on a curved face also asks for the cut's curve beside it to
+be halved when its patch strays from the face's patch by more than half
+the fit tolerance at the 15 sample points (each inverted into the patch
+from its domain position): a cut whose domain preimage bends far from
+the straight domain segment leaves the band's inside off the surface.
+
+**Exact bands on quadrics** (`face::exact_bands`). A rational quadratic
+triangle lies on a quadric when its three sides are conics on it whose
+planes meet in one point `O` on it; a cylinder's ruling lies in a plane
+through any point, with the same (linear) curve whatever the point. The
+patch's own curves all lie in planes through its common point, so its
+blossom sub-triangles are exact; a plane cut's conic lies in its cutting
+plane, which generally doesn't hold that point. So the inner edges are
+chosen over a spanning tree of the face's triangles (across inner edges),
+rooted at a triangle with a ruling or a fitted side (which needs nothing):
+from the leaves in, each triangle whose other two sides are conics in
+planes meeting at their shared vertex `V` takes `O` where the line those
+planes meet in leaves the quadric again (`surface::second_point`) and
+makes the edge to its parent the quadric's conic in the plane through the
+edge's ends and `O` (`section`), kept only as one arc and only if neither
+triangle on it then fails the fold check (a far `O` can reparametrize the
+curve badly). An unrefined cylinder strip cut by planes always has a
+ruling in each region, so a cylinder through a box comes out exact to
+rounding. A triangle on a `Quadric` face still off it by more than half
+the resolution at the sample points (a fitted cut's band, the tree's
+root) goes on a **copy of its face claiming no surface** (`Surface::Free`,
+same name, so no feature edge), keeping the face tag check true.
+
+**Diagonals along a cut.** Faces of `B` join no two vertices of one cut
+by a diagonal (as no face joins two vertices on one domain side): the
+face of `A` across may join them too, which would make two edges between
+the same vertices.
+
+**Ties** leave vertices at one place (a crossing at an edge's end, where
+a vertex of one operand lies on a face of the other, as refinement's
+midpoints often do). The clean-up collapses the zero-length edges; for it
+to merge the two sides of a zero-width triangle, an inner edge whose
+ends lie at the very places a boundary edge's do takes that edge's curve,
+and a diagonal left by cutting an ear with two corners at one place, one
+of its sides curved, takes that curve's tangents (and no flip moves it),
+standing for it in the triangulation.
+
+**Merging over-refined patches** (`assemble/merge.rs`). The pair
+decisions split the operands (red–green) wherever they couldn't decide a
+pair; pieces far from any cut come through whole. A node of the
+refinement tree whose pieces all came through whole is restored as its
+own patch, largest first, unless a vertex inside it (a midpoint the
+refinement made) is still a corner of a triangle outside it (a
+neighbour across its edge still split finer): then its children are
+tried instead. A restored node is within one face, with its own corners
+and edge records: exactly the operand's surface. A ball just inside a
+slab, whose pairs were refined to rule out loops, comes back as the slab's
+12 patches and the ball's 8.
 
 ### Assembly (`boolean/assemble.rs`)
 
@@ -1360,7 +1558,9 @@ id): what tracing, fitting and assembling curved cuts will start from.
 - **New vertices are records**: "edge `e` of `A` through face `f` of `B`"
   (the `x12` list, sorted by edge then face) and the same for `B`'s edges;
   ids after both operands' vertices. Positions come from `crossing`,
-  interpolated from the edge's nearer end (exactly the end at 0 and 1),
+  on an exactly straight edge interpolated from the edge's nearer end
+  (exactly the end at 0 and 1; on a curved one see "Cutting curved
+  faces"),
   made non-decreasing along each edge in the order `order` gave, and
   put exactly on the crossed face where it is square to an axis (so a
   result's flush faces stay flush when it is fed on). `crossing` is the
@@ -1373,7 +1573,8 @@ id): what tracing, fitting and assembling curved cuts will start from.
   insertion, which can't fail), and its pieces kept by the winding number
   running from its start: both faces beside it read the same pieces.
 - **Cut edges**: each face pair's arcs (from `pairs`; for flat operands
-  its two ends, joined), with signs seen from `A`
+  its two ends, joined), each along its chain (for two planar patches one
+  straight edge), with signs seen from `A`
   (the crossing of an edge of `A` as the face of `A` runs it, and minus
   the crossing of an edge of `B` as the face of `B` runs it). Keeping
   the outside of `B`, a face of `A` runs its cut from the +1 end to the
@@ -1392,9 +1593,10 @@ id): what tracing, fitting and assembling curved cuts will start from.
   on the records.
   Faces are cut in parallel (`par_map`), the rest sequentially.
 - The result's faces are `A`'s then `B`'s (turned over for a
-  difference), less those no triangle is on any more, so chained
-  booleans don't pile up faces; halfedges pair up by vertex id in
-  `MeshBuilder`, never by position.
+  difference), then the copies claiming no surface, less those no
+  triangle is on any more, so chained booleans don't pile up faces;
+  halfedges pair up by vertex id in `MeshBuilder`, never by position,
+  and every triangle side with a curve record gets it.
 
 ### Triangulating a face's loops (`boolean/triangulate.rs`)
 
@@ -1419,13 +1621,17 @@ sides), a proper triangle with no other vertex in or on it (the best
 shaped one, for polygons up to 64 vertices; the first found beyond; a
 vertex at one of its corners' positions, such as a bridge's other end,
 only blocks it if one of its sides leaves into it or along its sides),
-a zero-area ear with no vertex on it, then any. No diagonal joins two
-vertices on one side of the domain (it would lie along the side, and the
-patch across could add the same one) or repeats an edge. Then diagonals
-are flipped towards the Delaunay triangulation (the far corner inside the
-near triangle's circle, the quadrilateral convex, the new diagonal
-allowed; at most 8 flips per triangle), which removes the thin triangles
-greedy ear cutting leaves.
+a zero-area ear with no vertex on it, then any (with curved sides a
+proper ear whose curved corners aren't open ranks between the proper
+and the zero-area ones: see "Cutting curved faces"). No diagonal joins
+two vertices on one side of the domain (it would lie along the side, and
+the patch across could add the same one), in a face of `B` two vertices
+of one cut, or repeats an edge. Then diagonals are flipped towards the
+Delaunay triangulation (the far corner inside the near triangle's
+circle, the quadrilateral convex, the new diagonal allowed and the
+curved corners open; at most 8 flips per triangle), which removes the
+thin triangles greedy ear cutting leaves. With curved sides, Steiner
+points follow (see "Cutting curved faces").
 
 ### Clean-up (`boolean/cleanup.rs`)
 
@@ -1449,6 +1655,16 @@ before the mesh is built, at most 64 rounds:
 - **Drop** connected parts enclosing no volume (at most an eighth of the
   resolution times their area): what is left of flush faces meeting.
 
+With curves (the soup's records by vertex pair): an edge with a curve
+(its control point more than an eighth of the resolution off its chord)
+is never collapsed, and only triangles of straight sides are flipped,
+into a neighbour of straight sides or on a plane face, and only if the
+curved corners of the two new triangles stay open (checked in 3D). A
+collapse merges each gone triangle's two sides from its far corner: where
+their curves differ, the one between two faces (a cut, which lies on
+both) is kept, and if neither or both are, the collapse isn't made. The
+curves of the other edges moved onto the kept vertex go with them.
+
 Collapsing removes an edge and keeps a closed manifold; it never decides
 that two separate vertices are one. What the clean-up can't mend fails the
 final check.
@@ -1463,9 +1679,8 @@ operands intersected, or subtracted the other way, work.
 
 ### Errors and budget
 
-`KernelError::Boolean(BooleanError)`: `Curved` (curved cuts aren't
-traced and assembled yet: after the pair decisions), `InsideOut` (a
-curved operand's sign from `Solid::volume`), `Inconsistent` (the
+`KernelError::Boolean(BooleanError)`: `InsideOut` (a curved operand's
+sign from `Solid::volume`), `Inconsistent` (the
 decisions don't fit together: never with exact primitives), `Degenerate` (a face's loops couldn't be triangulated, or
 the triangles don't pair up). `TooComplex` past the budget or
 `MAX_PATCHES`, `Invalid` when the result fails `check`. Work: the broad
@@ -1474,7 +1689,10 @@ stored primitive and per candidate crossing, the square of each edge's
 crossings (ordering them), `n²·(1 + n/64)` per cut face with `n` its cuts
 plus 6 (ear clipping), and the soup's size per clean-up round; then
 repair's own. With curved patches also 16 units per edge–face search, a
-unit per pair decided, and per refinement split and piece, every round.
+unit per pair decided, and per refinement split and piece, every round;
+`MAX_TRACE_STEPS / 64` per arc not between two planar patches, a unit per
+curve of the chains, and a unit per curve halved in the rounds of cutting
+the faces (each of which counts its ear clipping again).
 
 ### Costs
 
@@ -1489,6 +1707,14 @@ rounds, 10–30 ms. Two cylinders tangent along a line refine along it to
 pieces flat within the resolution: about 2.5 s at the default tolerance
 (13 000 pieces after 10 rounds), since each round counts everything
 again and the searches near the tangency run to their caps.
+
+Curved booleans, release, several threads: a cylinder through a box, 4 ms
+(64 patches); crossing cylinders, 20–26 ms (700–820 patches, most of them
+the fitted bands at the default tolerance); the hidden loop in the round
+octahedron, 14 ms; a pin through a plate's hole wall, 20 ms (308
+patches); tangent cylinders, 0.1 s at the coarsest tolerance and 0.8 s at
+the default. 200 random turned bars against boxes, the four operations
+each: 3.7 s all told.
 
 ### Tests
 
@@ -1511,8 +1737,8 @@ tori of 2 304 patches, one upright through the other's hole crossing its
 tube on both sides, and one through a box, where `|A ∪ B| + |A ∩ B| =
 |A| + |B|` and `|A − B| = |A| − |A ∩ B|`; results fed on as inputs
 (steps joined flush, a hole, a half cut away, filled back in); face names
-of both operands kept, and faces no triangle uses dropped; `touches`; empty operands; refusals (curved,
-inside out, out of budget); the same bits at 1 and 8 threads. Unit
+of both operands kept, and faces no triangle uses dropped; `touches`; empty operands; refusals (inside
+out, out of budget); the same bits at 1 and 8 threads. Unit
 tests: expansions against known values, the float filter never
 contradicting the exact sign, `orient2d` near a line and far out,
 triangulating a square with a hole, a concave loop, a zero-width loop and
@@ -1537,6 +1763,29 @@ joined by the side of the saddle point they are on, which the ends alone
 don't say), tangent cylinders (decided, deterministic), `touches`, the
 budget, joining ends round a pair, and the same bits at 1 and 8 threads.
 
+Curved booleans (`curved_tests.rs`), all four operations both ways where
+it matters, every result checked with its face tags, volumes against
+analytic ones (or the identities `|A ∪ B| + |A ∩ B| = |A| + |B|`, `|A −
+B| = |A| − |A ∩ B|` where there are none): a cylinder through a box, a
+blind hole, a thin bar within one triangle of each face, and a bar turned
+off every axis through a slab (every patch on its plane or cylinder to
+`1e-12`, no fitted patch); crossing cylinders (volumes against a Simpson
+integral within a tenth of the fit tolerance times the area, the cut's
+vertices on both cylinders within a quarter of it, only the bands
+fitted); a pin through a plate's hole wall (upright cylinders meeting in
+lines, exact); a boss joined flush on a plate; a block through the
+plate's hole, and one whose side runs exactly through a vertex of the
+plate's caps (a tie); a round octahedron cut through its middle and with
+a hidden loop; the saddle above and below its saddle point; tangent
+cylinders (union not a manifold, the rest the operands); a plate drilled,
+joined and drilled again, fed on; merging back a ball and slab refined
+and not cut; the same bits at 1 and 8 threads; 24 random turned bars
+against boxes, each result right or refused. Unit tests: exact ellipse
+arcs of a tilted plane through a cylinder, crossings solved exactly on a
+plane and a cylinder, the second point of a line on a cylinder, tracing
+crossing cylinders and fitting at two tolerances, inverting a point into
+a patch.
+
 Found by fuzzing, with regression tests: random boxes on a half grid
 (flush faces, shared edges and corners everywhere) against the cells
 they fill, alone and fed on in chains, where a result that is a manifold
@@ -1553,8 +1802,20 @@ manifolds.
 
 ### Known gaps
 
-- **Curved booleans stop after the pair decisions** (`Curved`): tracing,
-  fitting, exact plane and quadric cuts, assembly and repair come next.
+- **Curved cuts near arcs fail as invalid now and then**: about one
+  random turned bar against a box in sixteen gives some operation `Invalid`
+  (a fold or hull rule repair can't mend): a planar cap's triangle whose
+  arc bulges out of it after the rounds, or a flat sliver along a cut
+  next to a curve that no flip may take. None came out wrong.
+- **Fitted bands leave their face's claim**: triangles along a fitted
+  cut on a quadric (quadric against quadric, a quadric against a free
+  surface), and an exact band tree's root where no ruling frees it, go on
+  a copy of the face claiming no surface; a later boolean then traces
+  and fits where they are cut again instead of cutting exactly.
+- **Fitted chains are dense**: each conic within a quarter of the fit
+  tolerance and turning at most 45°, and bands straying past half of it
+  halved, so crossing cylinders at the default tolerance come out with
+  some 700 patches, most along the cut.
 - A tangency along a line reads as not touching (`touches` says false for
   two cylinders side by side): no crossing shows it, and the fixed rules
   take no certificate as no loop. Flat solids touching do meet.
@@ -1578,31 +1839,13 @@ manifolds.
   hull rules.
 - Ear clipping is quadratic to cubic in a face's cut vertices; faces cut
   by thousands of edges run out of budget.
-
-### For the curved booleans
-
-What the tracing, fitting and assembly (still to come) start from, and
-what is still flat-only:
-
-- `pairs::refined` gives the refined operands, their `Counts` (crossing
-  records `(edge, face, i)` with signs and parameters on the refined
-  edges; rebuild `Input`s from the meshes to read them) and every face
-  pair's `Arc`s between end ids (`first_ids`: after both operands'
-  vertices, `x12`'s records, then `x21`'s). Each arc is decided once for
-  its pair; both faces must be cut along the same chain.
-- `assemble` takes arcs, but places new vertices by `lerp` along straight
-  edges and cuts each face along straight domain segments between the
-  ends: curved edges need `conic.eval(t)` (and the split halves shared,
-  `Conic3::split` once per edge), arcs traced chains of shared conic
-  `Edge`s, interior points' domain positions the patch's inverse; `build`
-  makes every edge straight, and untouched curved patches must keep
-  their edge records.
-- The clean-up is flat-only (it measures corner triangles).
 - Ties in curved primitives are decided by a threshold (a 64th of the
-  resolution) and `A`'s perturbation direction; exact plane and quadric
-  paths selected by face tags aren't used for decisions yet.
-- `Input::volume` is flat-only; curved operands' sign comes from
-  `Solid::volume`, which costs about as much as counting.
+  resolution) and `A`'s perturbation direction; the face tags choose the
+  cuts' exact geometry, not the decisions. `Input::volume` is flat-only;
+  curved operands' sign comes from `Solid::volume`, which costs about as
+  much as counting.
+- Merging restores only whole nodes of the refinement tree with no finer
+  neighbour: pieces next to a cut stay as refined.
 
 ## Bodies from the history (`varde-document`, `varde-regen`)
 
@@ -1842,6 +2085,10 @@ offered ones' (`tolerance_choices`).
 |---|---|---|
 | `MAX_PATCHES` | `1 << 22` | patches in a mesh; ids and counts fit a `u32` |
 | `MAX_REFINE_DEPTH` | 24 | red splits from an input patch: `2^24` times smaller |
+| `MAX_TRACE_STEPS` | 4096 | steps tracing one cut of a boolean; past them the cut falls back to a simpler curve |
+| `SPLIT_ROUNDS` (boolean) | 6 | rounds of halving curves while cutting faces |
+| `MAX_TURN_COS` (boolean) | 0.7 | the most a cut's conic turns (about 45°) |
+| `MEND_ROUNDS` (boolean) | 4 | rounds of Steiner points in one face's triangulation |
 | `MAX_WORK` | `1 << 26` | work units in one operation: about half a minute on one thread |
 | `MIN_SPLIT` (repair) | 64 resolutions | the smallest piece repair splits, and the smallest profile segment an extrude halves |
 | `MAX_PROFILE_SEGMENTS` | `1 << 16` | segments in a profile |
@@ -1858,8 +2105,7 @@ about a patch or a pair of patches tested or split: repair measured about
 operation can't restore, or the result would), `Patch(PatchError)` (a
 parameter, or a split outside the patch bounds),
 `Profile(ProfileError)` (a profile that can't be extruded), and
-`Boolean(BooleanError)` (see "Booleans"). `MAX_TRACE_STEPS` comes
-with tracing.
+`Boolean(BooleanError)` (see "Booleans").
 
 ## Deviations
 
@@ -2011,9 +2257,8 @@ with tracing.
   union and in otherwise, then by two generic translations), rather than
   plain floating point: with rounded decisions, flush boxes (the commonest
   CAD boolean) came out as zero-thickness slivers instead of clean
-  results. Curved operands are counted and their pairs decided, and then
-  refused (`BooleanError::Curved`) until curved cuts are assembled.
-- **`KernelError::Boolean(BooleanError)`** is new: `Curved`, `InsideOut`,
+  results.
+- **`KernelError::Boolean(BooleanError)`** is new: `InsideOut`,
   `Inconsistent`, `Degenerate`.
 - **Winding numbers are propagated along edges** from one ray per
   connected part rather than summed for every vertex: the same numbers
@@ -2052,3 +2297,33 @@ with tracing.
   resolution, decided the way `A`'s perturbation would move things.
 - **`touches` on curved solids runs the pair decisions too**, so a
   loop no edge crossing shows still counts.
+- **Fitted cut conics lie in the plane bisecting the result's crease**
+  (spanned by the cut's tangent and the sum of the result's outward
+  normals), not the curve's osculating plane, and take the weight of the
+  patches' own curves between their ends where that stays within the
+  tolerance: otherwise the hull rule fails across the cut and the bands
+  leave the surface (see "Cutting curved faces").
+- **Exact bands on quadrics are chosen over a spanning tree** of each
+  cut face's triangles, rooted at one with a ruling; the common-point
+  construction gives each triangle its edge to its parent. Triangles it
+  can't make exact, and fitted bands, go on a **copy of their face
+  claiming no surface** (same name), so the face tags stay true claims.
+- **Cut faces are cut in rounds**: curves whose triangles fold or stray
+  are halved (cuts' chains, and operands' curved edges by a vertex added
+  on them that both faces get), with Steiner points where two arcs of one
+  curve meet, as the extrude's caps are mended; planar patches with curved
+  edges are triangulated in their plane with straight inner edges, curved
+  patches in their domain.
+- **Crossing positions are solved again** on planes (exactly) and
+  quadrics (Newton), and curved edges are split by blossoming, for the
+  exact cuts.
+- **Faces of `B` join no two vertices of one cut by a diagonal**, so the
+  two faces of a pair can't both add the same edge.
+- **The clean-up carries curves**: it never collapses a curved edge nor
+  flips across a curve, and a collapse keeps the cut's curve where two
+  sides merge.
+- **Merging over-refined patches restores nodes of the pair decisions'
+  refinement tree** whose pieces all came through whole; there is no
+  merging of the result's own triangles (nor of repair's splits).
+- **`MAX_TRACE_STEPS` is 4096** per cut, in `lib.rs`; a cut that runs out
+  falls back to one conic along its ends' tangents, or a straight edge.

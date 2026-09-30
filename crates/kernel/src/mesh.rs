@@ -49,9 +49,10 @@ mod repair;
 pub use build::{BuildError, MeshBuilder};
 pub use bvh::Bvh;
 pub use check::CheckError;
+pub(crate) use check::samples;
 pub use face::{Face, FaceName, FacePart, Quadric, Surface};
 pub(crate) use hull::{apart, straight};
-pub(crate) use refine::Refiner;
+pub(crate) use refine::{Node, Refiner};
 pub(crate) use repair::MIN_SPLIT;
 
 /// A hash map with a fixed hasher, for maps only looked up in, never

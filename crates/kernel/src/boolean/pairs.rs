@@ -30,7 +30,7 @@ use super::count::{self, Counts};
 use super::curved::Curved;
 use super::input::Input;
 use crate::budget::Work;
-use crate::mesh::{MIN_SPLIT, Mesh, Refiner, apart};
+use crate::mesh::{MIN_SPLIT, Mesh, Node, Refiner, apart};
 use crate::par::par_map;
 use crate::patch::NormalCone;
 use crate::{KernelError, MAX_PATCHES, MAX_REFINE_DEPTH, Tolerance};
@@ -99,14 +99,17 @@ pub(super) fn flat(a: &Input, b: &Input, counts: &Counts) -> Result<Vec<Arc>, Ke
 }
 
 /// What the pair decisions leave once every pair is decided: the operands
-/// as refined for it (the same surfaces, split), their counts, and every
-/// pair of faces' arcs, sorted. What the tracing, fitting and assembly
-/// of curved cuts (not built yet) start from.
+/// as refined for it (the same surfaces, split; their vertices first the
+/// operands' own, then those refinement made), the tree of each
+/// operand's red splits and each refined triangle's leaf in it, their
+/// counts, and every pair of faces' arcs, sorted. What the tracing,
+/// fitting and assembly of the curved cuts start from.
 #[derive(Debug)]
-#[allow(dead_code)] // `a`, `b` and `arcs` are for the assembly to come.
 pub(super) struct Refined {
     pub(super) a: Mesh,
     pub(super) b: Mesh,
+    pub(super) tree: [Vec<Node>; 2],
+    pub(super) leaf: [Vec<u32>; 2],
     pub(super) counts: Counts,
     pub(super) arcs: Vec<Arc>,
 }
@@ -132,6 +135,7 @@ pub(super) fn refined(
         (0..a.tris().len() as u32).collect(),
         (0..b.tris().len() as u32).collect(),
     ];
+
     // A pair is split once a round, and at most `MAX_REFINE_DEPTH` times.
     for _ in 0..=2 * MAX_REFINE_DEPTH {
         let split = {
@@ -148,7 +152,15 @@ pub(super) fn refined(
             Ok(split) => split,
             Err((counts, arcs)) => {
                 let [a, b] = meshes;
-                return Ok(Refined { a, b, counts, arcs });
+                let [ra, rb] = &refiners;
+                return Ok(Refined {
+                    a,
+                    b,
+                    tree: [ra.nodes().to_vec(), rb.nodes().to_vec()],
+                    leaf: leaves,
+                    counts,
+                    arcs,
+                });
             }
         };
         for k in 0..2 {
@@ -424,4 +436,4 @@ fn pseudo_angle(d: DVec2) -> f64 {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

@@ -14,9 +14,9 @@
 //! [`boolean()`] unites, subtracts and intersects solids the way
 //! [manifold](https://github.com/elalish/manifold) does for flat
 //! triangles, by counting from primitives each worked out once, so the
-//! result is always a closed manifold; so far for flat patches only
-//! (with curved ones, the counting and the decisions about pairs of
-//! patches are built, the cuts not yet).
+//! result is always a closed manifold, with curved patches cut along
+//! exact conics where planes meet quadrics and along fitted ones
+//! elsewhere.
 //! [`touches`] says whether two solids meet. The math of one curve or
 //! triangle is in [`patch`]; closed
 //! meshes of them, the check of their invariants, the BVH over them,
@@ -84,6 +84,12 @@ pub const MAX_PATCHES: usize = 1 << 22;
 /// invariants there, such as one with a cusp, makes the operation
 /// [`KernelError::TooComplex`].
 pub const MAX_REFINE_DEPTH: u32 = 24;
+
+/// The most steps tracing one cut of a boolean may take, marching along
+/// where two curved patches meet. A cut that needs more (it wanders, or
+/// runs along a tangency) falls back to a simpler curve between its
+/// ends: only its geometry suffers, never the topology.
+pub const MAX_TRACE_STEPS: usize = 4096;
 
 /// The most work one operation may do, in the units of [`Budget`]: about
 /// one patch or pair of patches tested or split each, which repair does

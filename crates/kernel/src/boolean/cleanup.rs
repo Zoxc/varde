@@ -15,23 +15,33 @@
 //! the same surface. Components that enclose no volume go. It never
 //! decides that two separate vertices are one: a collapse removes an
 //! edge, keeping the surface a closed manifold.
+//!
+//! Curved edges (those with a record in [`Soup::curves`]) are never
+//! collapsed or flipped, nor are triangles with one: the clean-up is
+//! about the flat triangles flush planar faces leave. A collapse moves the
+//! curves of the edges it moves onto the vertex kept.
 
 use glam::DVec3;
 
+use super::assemble::Curves;
 use super::parts;
 use crate::KernelError;
 use crate::budget::Work;
+use crate::mesh::{Edge, straight};
 
 /// How many rounds of collapses and flips at most.
 const ROUNDS: usize = 64;
 
 /// A triangle soup being cleaned: positions, triangles on vertex ids,
-/// and each triangle's face.
+/// each triangle's face, and the curves of its edges that aren't
+/// straight (by the vertices they join, the lower first; records of edges
+/// no triangle has any more are left, and ignored).
 #[derive(Debug, Clone)]
 pub(super) struct Soup {
     pub(super) pos: Vec<DVec3>,
     pub(super) tris: Vec<[u32; 3]>,
     pub(super) faces: Vec<u32>,
+    pub(super) curves: Curves,
 }
 
 struct Cleaner<'a> {
@@ -39,6 +49,10 @@ struct Cleaner<'a> {
     alive: Vec<bool>,
     /// Each vertex's triangles.
     around: Vec<Vec<u32>>,
+    /// Whether each face is a plane: a triangle of one with curved sides
+    /// may still be flipped into, its new inner side straight in the
+    /// plane.
+    planar: &'a [bool],
     /// Edges no longer than this are short, triangles no higher are flat.
     small: f64,
     /// Triangles no higher than this are thin: flipped when the triangle
@@ -52,6 +66,7 @@ struct Cleaner<'a> {
 /// every triangle on its face).
 pub(super) fn clean(
     soup: &mut Soup,
+    planar: &[bool],
     small: f64,
     thin: f64,
     work: &mut Work,
@@ -66,6 +81,7 @@ pub(super) fn clean(
         alive: vec![true; soup.tris.len()],
         soup,
         around,
+        planar,
         small,
         thin,
     };
@@ -121,7 +137,51 @@ impl Cleaner<'_> {
     }
 
     fn thin(&self, t: u32) -> bool {
-        self.height(self.soup.tris[t as usize]).0 <= self.thin.max(self.small)
+        let tri = self.soup.tris[t as usize];
+        self.straight_sides(tri) && self.height(tri).0 <= self.thin.max(self.small)
+    }
+
+    /// Whether the edge between `u` and `v` is curved: its record's
+    /// control point more than `small` off the line through its ends (or
+    /// off the point both are at).
+    fn curved(&self, u: u32, v: u32) -> bool {
+        let Some(edge) = self.soup.curves.get(&(u.min(v), u.max(v))) else {
+            return false;
+        };
+        let (p, q) = (self.p(u), self.p(v));
+        if p.distance(q) <= self.small {
+            edge.ctrl.distance(p) > self.small
+        } else {
+            !straight(p, edge.ctrl, q, self.small)
+        }
+    }
+
+    /// Whether the corners of `tri` along its curved sides are open: the
+    /// curve's tangent there (towards its control point) strictly inside
+    /// the angle, as seen along the triangle's normal.
+    fn open(&self, tri: [u32; 3]) -> bool {
+        let normal = self.normal(tri);
+        (0..3).all(|i| {
+            let (v, next, prev) = (tri[i], tri[(i + 1) % 3], tri[(i + 2) % 3]);
+            let (out, back) = (self.curved(v, next), self.curved(prev, v));
+            if !out && !back {
+                return true;
+            }
+            let dir = |w: u32, curved: bool| {
+                let p = self.p(v);
+                if curved {
+                    self.soup.curves[&(v.min(w), v.max(w))].ctrl - p
+                } else {
+                    self.p(w) - p
+                }
+            };
+            let (l, b) = (dir(next, out), dir(prev, back));
+            l.cross(b).dot(normal) > 1e-3 * l.length() * b.length() * normal.length()
+        })
+    }
+
+    fn straight_sides(&self, tri: [u32; 3]) -> bool {
+        (0..3).all(|i| !self.curved(tri[i], tri[(i + 1) % 3]))
     }
 
     /// The short edges of living triangles, each once, sorted.
@@ -133,7 +193,7 @@ impl Cleaner<'_> {
             }
             for i in 0..3 {
                 let (u, v) = (tri[i], tri[(i + 1) % 3]);
-                if self.p(u).distance(self.p(v)) <= self.small {
+                if self.p(u).distance(self.p(v)) <= self.small && !self.curved(u, v) {
                     out.push([u.min(v), u.max(v)]);
                 }
             }
@@ -174,6 +234,35 @@ impl Cleaner<'_> {
         let shared = self.shared(u, v);
         if shared.len() != 2 {
             return false;
+        }
+        // Each triangle going takes its two sides from the far corner into
+        // one. Where their curves differ, the one between two faces (a
+        // cut, which lies on both) stays; if that isn't one side, the
+        // collapse can't be made.
+        let mut merged: Vec<(u32, Option<Edge>)> = Vec::new();
+        for &t in &shared {
+            let tri = self.soup.tris[t as usize];
+            let w = *tri
+                .iter()
+                .find(|&&x| x != u && x != v)
+                .expect("a third corner");
+            let record = |a: u32| self.soup.curves.get(&(a.min(w), a.max(w))).copied();
+            let (ru, rv) = (record(u), record(v));
+            if self.same_curve(u, v, w) {
+                continue;
+            }
+            let between = |a: u32| {
+                self.shared(a, w)
+                    .iter()
+                    .any(|&s| s != t && self.soup.faces[s as usize] != self.soup.faces[t as usize])
+            };
+            match (between(u), between(v)) {
+                (true, false) => merged.push((w, ru)),
+                (false, true) => merged.push((w, rv)),
+                _ => {
+                    return false;
+                }
+            }
         }
         let moved: Vec<u32> = self.around[v as usize]
             .iter()
@@ -233,7 +322,37 @@ impl Cleaner<'_> {
             }
             return false;
         }
+        // The curves of the edges moved from `v` to `u`; where `u` had
+        // that edge already, its own stays, unless the merge chose.
+        for w in affected {
+            if let Some(edge) = self.soup.curves.remove(&(v.min(w), v.max(w)))
+                && w != u
+            {
+                self.soup.curves.entry((u.min(w), u.max(w))).or_insert(edge);
+            }
+        }
+        for (w, edge) in merged {
+            let k = (u.min(w), u.max(w));
+            match edge {
+                Some(edge) => self.soup.curves.insert(k, edge),
+                None => self.soup.curves.remove(&k),
+            };
+        }
         true
+    }
+
+    /// Whether the edges from `u` and from `v` (at one place) to `w`
+    /// trace the same curve, within `small`.
+    fn same_curve(&self, u: u32, v: u32, w: u32) -> bool {
+        let record = |a: u32| self.soup.curves.get(&(a.min(w), a.max(w))).copied();
+        match (record(u), record(v)) {
+            (None, None) => true,
+            (Some(_), None) => !self.curved(u, w),
+            (None, Some(_)) => !self.curved(v, w),
+            (Some(a), Some(b)) => {
+                a.ctrl.distance(b.ctrl) <= self.small && (a.weight - b.weight).abs() <= 1e-6
+            }
+        }
     }
 
     /// Takes triangle `t` out.
@@ -334,10 +453,14 @@ impl Cleaner<'_> {
             .iter()
             .find(|&&w| w != a && w != b)
             .expect("a third corner");
-        if d == c || self.neighbours(c).contains(&d) {
+        let flat = self.straight_sides(other) || self.planar[self.soup.faces[s as usize] as usize];
+        if d == c || self.neighbours(c).contains(&d) || !flat {
             return false;
         }
         let (n1, n2) = ([c, a, d], [c, d, b]);
+        if !(self.open(n1) && self.open(n2)) {
+            return false;
+        }
         if h > self.small
             && (self.soup.faces[s as usize] != self.soup.faces[t as usize]
                 || self.height(n1).0.min(self.height(n2).0) <= h)

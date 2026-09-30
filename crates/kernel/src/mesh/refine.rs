@@ -57,6 +57,16 @@ struct Leaf {
     changed: bool,
 }
 
+/// A patch the refinement has made or started from: an input patch, or
+/// a red child of one, with its parent's id (`u32::MAX` for an input
+/// patch). Ids are leaf ids: a leaf is a node not split (yet).
+#[derive(Debug, Clone)]
+pub(crate) struct Node {
+    pub corners: [u32; 3],
+    pub patch: Patch,
+    pub parent: u32,
+}
+
 /// A triangle of the conforming mesh: a whole leaf, or half of one.
 #[derive(Debug, Clone)]
 pub(crate) struct Piece {
@@ -86,6 +96,8 @@ pub(crate) struct Refiner<'a> {
     verts: Vec<DVec3>,
     /// Leaves by id; `None` once split.
     leaves: Vec<Option<Leaf>>,
+    /// Every node ever a leaf, by id.
+    nodes: Vec<Node>,
     /// Every edge record by its ends, including whole edges since split
     /// (a coarser leaf still has the whole edge as its side).
     edges: LookupMap<Key, Edge>,
@@ -110,6 +122,7 @@ impl<'a> Refiner<'a> {
             live: mesh.tris.len(),
             verts: mesh.verts.clone(),
             leaves: Vec::with_capacity(mesh.tris.len()),
+            nodes: Vec::with_capacity(mesh.tris.len()),
             edges: LookupMap::default(),
             mids: LookupMap::default(),
             halves: LookupMap::default(),
@@ -122,12 +135,18 @@ impl<'a> Refiner<'a> {
                 refiner.edges.insert(key(a, b), mesh.edges[h.edge as usize]);
                 refiner.owner.insert((a, b), t as u32);
             }
+            let patch = mesh.patch(t);
+            refiner.nodes.push(Node {
+                corners,
+                patch,
+                parent: u32::MAX,
+            });
             refiner.leaves.push(Some(Leaf {
                 corners,
                 face: tri.face,
                 origin: t as u32,
                 level: 0,
-                patch: mesh.patch(t),
+                patch,
                 changed: false,
             }));
         }
@@ -323,6 +342,11 @@ impl<'a> Refiner<'a> {
             for i in 0..3 {
                 self.owner.insert((corners[i], corners[(i + 1) % 3]), id);
             }
+            self.nodes.push(Node {
+                corners,
+                patch,
+                parent: t,
+            });
             self.leaves.push(Some(Leaf {
                 corners,
                 face: leaf.face,
@@ -370,6 +394,11 @@ impl<'a> Refiner<'a> {
             pieces.push(piece([m, b, o], second));
         }
         Ok(pieces)
+    }
+
+    /// Every node the refinement has had, by id: the tree of red splits.
+    pub(crate) fn nodes(&self) -> &[Node] {
+        &self.nodes
     }
 
     /// Marks every leaf unchanged.

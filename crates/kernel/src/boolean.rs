@@ -20,11 +20,14 @@
 //!    other solid is the sum of its `s02`.
 //! 4. **Assembly**: new vertices are records ("edge `e` through face
 //!    `f`"); edges are cut at them in the order along the edge; each face
-//!    pair's cut runs between its two ends; the parts are kept by winding
-//!    number for the operation; each cut face's kept part is triangulated
-//!    in its parameter domain, and the halfedges pair up by vertex id.
-//! 5. **Clean-up, repair and check**: the degenerate triangles flush
-//!    operands leave are removed, and the result is repaired and checked.
+//!    pair's cut runs along a chain of shared edges between its ends; the
+//!    parts are kept by winding number for the operation; each cut face's
+//!    kept part is triangulated in its parameter domain (or its plane),
+//!    and the halfedges pair up by vertex id.
+//! 5. **Clean-up, merge, repair and check**: the degenerate triangles
+//!    flush operands leave are removed, pieces refinement split and
+//!    nothing cut are merged back, and the result is repaired and
+//!    checked.
 //!
 //! The primitives come in two kinds. For **flat patches** (every edge
 //! straight within the resolution) they are exact, with symbolic
@@ -37,20 +40,27 @@
 //! several ends join up. Pairs that can't be decided from their ends and
 //! a normal-cone certificate are refined, both operands split exactly
 //! (red–green) and counted again, down to a size floor where fixed rules
-//! decide (see [`pairs`]). Tracing and fitting the curved cuts, and
-//! assembling the result from them, aren't built yet: a curved boolean
-//! gets that far and then fails with [`BooleanError::Curved`]. See
-//! `agents/kernel.md`.
+//! decide (see [`pairs`]).
+//!
+//! Then each decided arc gets its geometry (see [`chain`]): two planes
+//! meet in a line and a plane cuts a quadric in a conic, both exact (the
+//! faces' tags say which, see [`surface`]); anything else is traced where
+//! the patches meet and fitted with conics within the fit tolerance. Cut
+//! curved faces keep their own surface wherever they can: their new inner
+//! edges are the patch's own curves, and along a cut of a quadric they are
+//! chosen so that the triangles there lie on it exactly too (see
+//! [`assemble`]). See `agents/kernel.md`.
 
 use std::cmp::Ordering;
 
 use glam::DVec3;
 
 use crate::budget::{Budget, Work};
-use crate::mesh::{BuildError, Face, Mesh, MeshBuilder};
+use crate::mesh::{self, BuildError, Face, Mesh, MeshBuilder};
 use crate::{KernelError, Solid, Tolerance};
 
 mod assemble;
+mod chain;
 mod cleanup;
 mod count;
 mod curved;
@@ -58,6 +68,7 @@ mod exact;
 mod flat;
 mod input;
 mod pairs;
+mod surface;
 mod triangulate;
 
 use count::Crossing;
@@ -77,9 +88,6 @@ pub enum Op {
 /// Why a boolean gives no solid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BooleanError {
-    /// An operand has a curved patch: curved cuts are counted and their
-    /// pairs decided, but not yet traced and assembled.
-    Curved,
     /// An operand faces inwards, or its winding numbers aren't 0 and 1.
     InsideOut,
     /// The decisions don't fit together. Exact primitives never do this.
@@ -92,7 +100,6 @@ pub enum BooleanError {
 impl std::fmt::Display for BooleanError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            BooleanError::Curved => "booleans on curved faces aren't available yet",
             BooleanError::InsideOut => "a solid is inside out",
             BooleanError::Inconsistent => "where the solids cross doesn't add up",
             BooleanError::Degenerate => "a cut face couldn't be triangulated",
@@ -155,8 +162,8 @@ trait Primitives: Sync {
 
 /// `a op b`, within `budget`: a solid that passes `check`, always.
 ///
-/// Fails with [`KernelError::Boolean`] for an operand with a curved patch
-/// (not yet), or one that is inside out (see [`BooleanError`]); with
+/// Fails with [`KernelError::Boolean`] for an operand that is inside out,
+/// or decisions that don't fit together (see [`BooleanError`]); with
 /// [`KernelError::TooComplex`] past the budget; and with
 /// [`KernelError::Invalid`] when the result can't pass `check` with `tol`,
 /// such as two solids touching along an edge or at a point, where the
@@ -189,18 +196,41 @@ fn unchecked(
     work: &mut Work,
 ) -> Result<Mesh, KernelError> {
     let (ia, ib) = inputs(a, b, tol)?;
-    if ia.curved || ib.curved {
-        // Counted and decided pair by pair; the cuts aren't traced and
-        // assembled yet.
-        pairs::refined(a.mesh(), b.mesh(), op == Op::Union, tol, work)?;
-        return Err(KernelError::Boolean(BooleanError::Curved));
-    }
-    let prims = flat::Flat::new(&ia, &ib, op == Op::Union);
-    let counts = count::count(&ia, &ib, &prims, tol, work)?;
-    let arcs = pairs::flat(&ia, &ib, &counts)?;
-    let (mut soup, faces) = assemble::assemble(op, &ia, &ib, &counts, &arcs, &prims, work)?;
+    let grow = op == Op::Union;
+    let (mut soup, faces) = if ia.curved || ib.curved {
+        // Counted and decided pair by pair, the operands refined where a
+        // pair needs it.
+        let refined = pairs::refined(a.mesh(), b.mesh(), grow, tol, work)?;
+        let (ra, rb) = (Input::new(&refined.a, tol), Input::new(&refined.b, tol));
+        let prims = curved::Curved::new(&ra, &rb, grow, tol);
+        let refinement = assemble::Refinement {
+            tree: [&refined.tree[0], &refined.tree[1]],
+            leaf: [&refined.leaf[0], &refined.leaf[1]],
+        };
+        assemble::assemble(
+            op,
+            &ra,
+            &rb,
+            &refined.counts,
+            &refined.arcs,
+            &prims,
+            tol,
+            Some(&refinement),
+            work,
+        )?
+    } else {
+        let prims = flat::Flat::new(&ia, &ib, grow);
+        let counts = count::count(&ia, &ib, &prims, tol, work)?;
+        let arcs = pairs::flat(&ia, &ib, &counts)?;
+        assemble::assemble(op, &ia, &ib, &counts, &arcs, &prims, tol, None, work)?
+    };
+    let planar: Vec<bool> = faces
+        .iter()
+        .map(|f| matches!(f.surface, mesh::Surface::Plane { .. }))
+        .collect();
     cleanup::clean(
         &mut soup,
+        &planar,
         tol.resolution() / 8.0,
         4.0 * tol.resolution(),
         work,
@@ -286,6 +316,13 @@ fn build(soup: cleanup::Soup, faces: Vec<Face>) -> Result<Mesh, KernelError> {
         .collect();
     for (tri, face) in soup.tris.iter().zip(soup.faces) {
         builder.tri(tri.map(|v| id[v as usize]), face_id[face as usize]);
+        // The curves of its sides that have one.
+        for i in 0..3 {
+            let (u, v) = (tri[i], tri[(i + 1) % 3]);
+            if let Some(edge) = soup.curves.get(&(u.min(v), u.max(v))) {
+                builder.edge(id[u as usize], id[v as usize], edge.ctrl, edge.weight);
+            }
+        }
     }
     builder.build().map_err(|e| match e {
         BuildError::TooManyPatches(_) => KernelError::TooComplex,
@@ -316,3 +353,6 @@ fn parts(n: usize, links: impl IntoIterator<Item = [u32; 2]>) -> Vec<u32> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod curved_tests;

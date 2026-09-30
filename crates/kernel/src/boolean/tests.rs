@@ -395,11 +395,6 @@ fn empty_operands() {
 #[test]
 fn refusals() {
     let a = cube([0.0; 3], [2.0; 3]);
-    let cyl = Solid::cylinder(DVec3::ONE, 0.5, 1.0, 3, &TOL).unwrap();
-    assert_eq!(
-        run(&a, &cyl, Op::Union),
-        Err(KernelError::Boolean(BooleanError::Curved))
-    );
     // Inside out: every triangle reversed.
     let inverted = rebuilt(a.mesh(), |p| p, true);
     assert_eq!(

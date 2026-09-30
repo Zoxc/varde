@@ -301,7 +301,7 @@ pub(super) fn check_pair(
 
 /// Barycentric points where face tags are sampled on quadrics: a grid of
 /// 15, four steps along each edge.
-fn samples() -> impl Iterator<Item = glam::DVec3> {
+pub(crate) fn samples() -> impl Iterator<Item = glam::DVec3> {
     (0..=4).flat_map(|i| {
         (0..=4 - i).map(move |j| {
             let (u, v) = (i as f64 / 4.0, j as f64 / 4.0);

@@ -18,7 +18,7 @@ fn cylinder(base: [f64; 3], r: f64, h: f64) -> Solid {
 
 /// The cylinder of radius `r` along `x` from `x0` to `x1`, its axis
 /// through `(·, y, z)`.
-fn cylinder_x(y: f64, z: f64, r: f64, x0: f64, x1: f64) -> Solid {
+pub(crate) fn cylinder_x(y: f64, z: f64, r: f64, x0: f64, x1: f64) -> Solid {
     let frame = Frame {
         origin: DVec3::new(0.0, y, z),
         x: DVec3::Y,
@@ -32,7 +32,7 @@ fn cylinder_x(y: f64, z: f64, r: f64, x0: f64, x1: f64) -> Solid {
 
 /// The box from `min` to `max` in the frame turned by `q`: each face its
 /// own plane.
-fn turned_box(min: DVec3, max: DVec3, q: DQuat) -> Solid {
+pub(crate) fn turned_box(min: DVec3, max: DVec3, q: DQuat) -> Solid {
     let verts: Vec<DVec3> = (0..8)
         .map(|i| {
             let pick = |bit: u32, lo: f64, hi: f64| if i >> bit & 1 == 0 { lo } else { hi };
@@ -214,7 +214,7 @@ fn touching() {
 /// The round octahedron, and a box whose top face, square to `d`, is `h`
 /// from the centre along it, reaching well past the octahedron to the
 /// sides; the top's diagonal is off `d`.
-fn poke(h: f64) -> (Solid, Solid) {
+pub(crate) fn poke(h: f64) -> (Solid, Solid) {
     let ball = Solid::new(round_octahedron(DVec3::ZERO), &TOL).unwrap();
     let d = DVec3::ONE.normalize();
     let q = DQuat::from_rotation_arc(DVec3::Z, d);
@@ -224,7 +224,7 @@ fn poke(h: f64) -> (Solid, Solid) {
 
 /// How far the round octahedron reaches along `(1, 1, 1)`: at its
 /// patch's middle, by symmetry.
-fn reach() -> f64 {
+pub(crate) fn reach() -> f64 {
     let mesh = round_octahedron(DVec3::ZERO);
     let d = DVec3::ONE.normalize();
     (0..mesh.tris().len())
@@ -256,7 +256,7 @@ fn a_hidden_loop_is_found() {
 
 /// A solid whose top is the saddle `z = 10 + (x² − y²)/2` over a
 /// triangle round the saddle point, on vertical walls down to `z = 0`.
-fn saddle() -> Solid {
+pub(crate) fn saddle() -> Solid {
     let f = |x: f64, y: f64| 10.0 + 0.5 * (x * x - y * y);
     // Its polar form: the height of the control point between two corners.
     let blossom = |a: DVec2, b: DVec2| 10.0 + 0.5 * (a.x * b.x - a.y * b.y);
