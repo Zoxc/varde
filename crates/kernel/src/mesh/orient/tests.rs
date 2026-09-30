@@ -3,7 +3,7 @@
     reason = "std maths as an independent reference, or to build inputs"
 )]
 
-use std::f64::consts::{PI, TAU};
+use std::f64::consts::{FRAC_1_SQRT_2, PI, TAU};
 
 use glam::DVec2;
 
@@ -12,7 +12,7 @@ use crate::mesh::MeshBuilder;
 use crate::mesh::tests::{TOL, joined};
 use crate::par::assert_deterministic;
 use crate::profile::tests::{arc, circle, rect};
-use crate::{Budget, Frame, KernelError, Loop, Op, Profile, Solid, boolean, extrude};
+use crate::{Budget, Frame, KernelError, Loop, Op, Profile, Solid, Tolerance, boolean, extrude};
 
 fn cube(min: [f64; 3], size: f64) -> Mesh {
     Mesh::cuboid(DVec3::from(min), DVec3::splat(size), 1, &TOL).unwrap()
@@ -71,6 +71,7 @@ fn lune_bounds_hold() {
         crate::mesh::tests::round_octahedron(DVec3::new(0.2, 0.1, 0.3)),
         crate::mesh::tests::half_cylinder(0.1, DVec3::ZERO),
         ring(1.0, 0.95, 64).into_mesh(),
+        mushroom(5.0, 0.5, 0.5, 10.0, false),
         run(
             &solid(across),
             &solid(cylinder([-1.0, 0.0, 0.5], 0.8, 3.0)),
@@ -84,10 +85,20 @@ fn lune_bounds_hold() {
             // Measured from a corner, the triangle adds nothing, and of
             // the lunes' cones only the far edge's is left, inside the
             // hull too.
-            let (own, size) = patch_volume(&patch, patch.p[0]);
-            assert!(own.abs() <= size, "{t}: {own} {size}");
+            let (flux, size) = patch_volume(&patch, patch.p[0]);
+            assert!(flux.abs() <= size, "{t}: {flux} {size}");
+            let own = flux + lune_cones(&patch, patch.p[0]).0;
             let bound = lune_bound(&patch);
             assert!(own.abs() <= bound + 1e-15, "{t}: {own} {bound}");
+            // And it is the same measured from anywhere.
+            for o in [DVec3::new(7.0, -3.0, 20.0), DVec3::new(-40.0, 5.0, -9.0)] {
+                let (flux, size) = patch_volume(&patch, o);
+                let (cones, cone_size) = lune_cones(&patch, o);
+                let (tet, _) = orient3d(o, patch.p);
+                let there = flux - tet / 6.0 + cones;
+                let allowed = 1e-9 * (size + cone_size);
+                assert!((there - own).abs() <= allowed, "{t} {o}: {there} {own}");
+            }
         }
     }
     // The hull's area: a square with points inside and on its sides.
@@ -102,6 +113,47 @@ fn lune_bounds_hold() {
     assert_eq!(hull_area(square), 4.0);
     let line = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0].map(|x| DVec2::new(x, 2.0 * x));
     assert_eq!(hull_area(line), 0.0);
+}
+
+#[test]
+fn segment_shares_are_the_conics_areas() {
+    // Parabola, circular arcs of half angle α (w = cos α), and every
+    // weight against the area worked out by Simpson's rule on the
+    // control triangle (−1, 0), (0, 1), (1, 0), whose area is 1.
+    assert!((segment_share(1.0) - 2.0 / 3.0).abs() < 1e-15);
+    for alpha in [0.05, 0.1, 0.5, PI / 4.0, 1.0, 1.4, 1.5] {
+        let (s, c) = f64::sin_cos(alpha);
+        let want = (2.0 * alpha - (2.0 * alpha).sin()) * c / (2.0 * s * s * s);
+        let got = segment_share(c);
+        assert!(
+            (got - want).abs() < 1e-12 * want.max(1e-3),
+            "{alpha}: {got} {want}"
+        );
+    }
+    let simpson = |w: f64| {
+        let f = |s: f64| {
+            let d = (1.0 + w) + (1.0 - w) * s * s;
+            2.0 * w * (1.0 - s * s) * ((1.0 + w) - (1.0 - w) * s * s) / (d * d * d)
+        };
+        let n = 200_000;
+        let step = 2.0 / n as f64;
+        (0..=n)
+            .map(|k| {
+                let weight = if k == 0 || k == n {
+                    1.0
+                } else {
+                    [2.0, 4.0][k % 2]
+                };
+                weight * f(-1.0 + step * k as f64)
+            })
+            .sum::<f64>()
+            * step
+            / 3.0
+    };
+    for w in [1.0 / 64.0, 0.1, 0.5, 0.9, 1.0 + 1e-9, 1.1, 2.0, 10.0, 64.0] {
+        let (got, want) = (segment_share(w), simpson(w));
+        assert!((got - want).abs() < 1e-10, "{w}: {got} {want}");
+    }
 }
 
 #[test]
@@ -311,6 +363,11 @@ fn crossing_and_drilled_curved_solids_pass() {
 /// A ring of height 1, its outside a circle of radius `outer` in four
 /// quarter arcs, its hole a circle of radius `inner` in `n` arcs.
 fn ring(outer: f64, inner: f64, n: usize) -> Solid {
+    try_ring(outer, inner, n).unwrap()
+}
+
+/// [`ring`], if the extrude makes it.
+fn try_ring(outer: f64, inner: f64, n: usize) -> Result<Solid, KernelError> {
     let hole = (0..n)
         .map(|k| {
             let at = |k: usize| {
@@ -326,7 +383,7 @@ fn ring(outer: f64, inner: f64, n: usize) -> Solid {
             Loop { segments: hole },
         ],
     };
-    extrude(&profile, &Frame::XY, 0.0, 1.0, 5, &TOL, &Budget::DEFAULT).unwrap()
+    extrude(&profile, &Frame::XY, 0.0, 1.0, 5, &TOL, &Budget::DEFAULT)
 }
 
 #[test]
@@ -449,7 +506,374 @@ fn orientation_is_the_same_on_any_thread_count() {
         (&cylinder([20.0, 5.0, 3.0], 1.0, 4.0), false),
     ]);
     let ring = ring(1.0, 0.9, 64);
-    let counts =
-        assert_deterministic(|| (island.check_counted(&TOL), ring.mesh().check_counted(&TOL)));
-    assert!(matches!(counts, (Ok(_), Ok(n)) if n > 0), "{counts:?}");
+    let mushrooms = [false, true].map(|turned| mushroom(5.0, 0.5, 0.5, 10.0, turned));
+    let counts = assert_deterministic(|| {
+        (
+            island.check_counted(&TOL),
+            ring.mesh().check_counted(&TOL),
+            mushrooms.each_ref().map(|m| m.check_counted(&TOL)),
+        )
+    });
+    assert!(
+        matches!(counts, (Ok(_), Ok(n), [Ok(m), Err(_)]) if n > 0 && m > 0),
+        "{counts:?}"
+    );
+}
+
+/// A mushroom: a square rod `a` across its diagonals from `z = −h` up to
+/// a disc of radius `r` and thickness `t` whose top, at `z = 0`, is
+/// bounded by four quarter circles and whose underside by the square on
+/// their ends. Its first corner is at the rod's foot, far below the top.
+fn mushroom(r: f64, t: f64, a: f64, h: f64, turned: bool) -> Mesh {
+    let mut builder = MeshBuilder::new();
+    let f = crate::mesh::tests::free(&mut builder);
+    let dirs = [DVec3::X, DVec3::Y, DVec3::NEG_X, DVec3::NEG_Y];
+    let foot = dirs.map(|d| builder.vert(d * a - DVec3::Z * h));
+    let neck = dirs.map(|d| builder.vert(d * a - DVec3::Z * t));
+    let under = dirs.map(|d| builder.vert(d * r - DVec3::Z * t));
+    let top = dirs.map(|d| builder.vert(d * r));
+    let mut tri = |[a, b, c]: [u32; 3]| builder.tri(if turned { [a, c, b] } else { [a, b, c] }, f);
+    tri([foot[0], foot[3], foot[2]]);
+    tri([foot[0], foot[2], foot[1]]);
+    for i in 0..4 {
+        let j = (i + 1) % 4;
+        for (low, high) in [(foot, neck), (under, top)] {
+            tri([low[i], low[j], high[j]]);
+            tri([low[i], high[j], high[i]]);
+        }
+        tri([neck[i], neck[j], under[j]]);
+        tri([neck[i], under[j], under[i]]);
+    }
+    let centre = builder.vert(DVec3::ZERO);
+    for i in 0..4 {
+        let j = (i + 1) % 4;
+        builder.tri(
+            if turned {
+                [centre, top[j], top[i]]
+            } else {
+                [centre, top[i], top[j]]
+            },
+            f,
+        );
+        builder.edge(top[i], top[j], (dirs[i] + dirs[j]) * r, FRAC_1_SQRT_2);
+    }
+    builder.build().unwrap()
+}
+
+#[test]
+fn far_flat_faces_bounded_by_curves_count() {
+    // The disc's top is flat, so its patches are never integrated, but
+    // measured from the rod's foot each adds to its corner triangle's
+    // volume the cones of the lunes along its arcs, h·(π − 2)r²/3 in all,
+    // more than the whole volume. Only the cones the rim's patches add
+    // the other way cancel them, so what an integrated patch adds is
+    // taken without its lunes' cones. Before, this mushroom was refused
+    // and turned inside out it passed.
+    let (r, t, a, h) = (5.0, 0.5, 0.5, 10.0);
+    let upright = mushroom(r, t, a, h, false);
+    let volume = Solid::new(upright, &TOL).map(|s| s.volume());
+    // Between the rod and the prism on the underside, and that plus the
+    // lunes' prism.
+    let (low, lunes) = (2.0 * r * r * t + 2.0 * a * a * (h - t), (PI - 2.0) * r * r);
+    assert!(
+        matches!(volume, Ok(v) if low < v && v < low + lunes * t && 3.0 * v < lunes * h),
+        "{volume:?}"
+    );
+    let turned = mushroom(r, t, a, h, true);
+    assert_eq!(turned.check(&TOL), Err(CheckError::InsideOut(0)));
+}
+
+/// One shell of [`nested`]'s: a box, or a cylinder standing in the box's
+/// footprint, turned inside out or not, and the shell it lies in.
+struct Nested {
+    mesh: Mesh,
+    volume: f64,
+    turned: bool,
+    parent: Option<usize>,
+}
+
+/// Random boxes and cylinders nested up to four deep, some side by
+/// side, each facing the right way for where it lies. Corners are on a grid of `(0.5, 0.75, 8)`, so rays along
+/// `(2, 3, 32)` from one shell's corner often run through the others'
+/// edges and corners.
+fn nested(rng: &mut crate::test_rng::Rng) -> Vec<Nested> {
+    const STEP: DVec3 = DVec3::new(0.5, 0.75, 8.0);
+    fn place(
+        rng: &mut crate::test_rng::Rng,
+        (lo, hi): (DVec3, DVec3),
+        depth: usize,
+        parent: Option<usize>,
+        winding: i32,
+        out: &mut Vec<Nested>,
+    ) {
+        let n = if depth == 0 {
+            1 + rng.next_u64() % 3
+        } else if depth < 4 {
+            rng.next_u64() % 3
+        } else {
+            0
+        } as usize;
+        let axis = depth % 2;
+        fn steps(rng: &mut crate::test_rng::Rng, k: u64) -> f64 {
+            (rng.next_u64() % k) as f64
+        }
+        for i in 0..n {
+            let (mut slab_lo, mut slab_hi) = (lo, hi);
+            let width = hi[axis] - lo[axis];
+            slab_lo[axis] = lo[axis] + width * i as f64 / n as f64;
+            slab_hi[axis] = lo[axis] + width * (i + 1) as f64 / n as f64;
+            // At least a step in from the slab on every side, on the grid.
+            let min = ((slab_lo / STEP).floor()
+                + 1.0
+                + DVec3::new(steps(rng, 3), steps(rng, 3), steps(rng, 2)))
+                * STEP;
+            let max = ((slab_hi / STEP).ceil()
+                - 1.0
+                - DVec3::new(steps(rng, 3), steps(rng, 3), steps(rng, 2)))
+                * STEP;
+            if (max - min).cmplt(DVec3::new(1.0, 1.5, 8.0)).any() {
+                continue;
+            }
+            let cylinder = rng.next_u64().is_multiple_of(3);
+            let turned = winding == 1;
+            let (mesh, volume, inside) = if cylinder {
+                let r = ((max - min).truncate().min_element() / 2.0 / 0.25).floor() * 0.25;
+                let centre = (min + max) / 2.0;
+                let base = DVec3::new(centre.x, centre.y, min.z);
+                let mesh = Mesh::cylinder(base, r, max.z - min.z, 2, &TOL).unwrap();
+                // Clear of the walls' chords, which run between the
+                // quarter points: a square of half side r/2 fits inside.
+                let half = DVec3::new(0.5 * r - 0.3, 0.5 * r - 0.3, 0.0);
+                (
+                    mesh,
+                    PI * r * r * (max.z - min.z),
+                    (
+                        DVec3::new(centre.x, centre.y, min.z) - half,
+                        DVec3::new(centre.x, centre.y, max.z) + half,
+                    ),
+                )
+            } else {
+                let mesh = Mesh::cuboid(min, max - min, 1, &TOL).unwrap();
+                (mesh, (max - min).element_product(), (min, max))
+            };
+            let me = out.len();
+            out.push(Nested {
+                mesh,
+                volume,
+                turned,
+                parent,
+            });
+            let inner = winding + if turned { -1 } else { 1 };
+            place(rng, inside, depth + 1, Some(me), inner, out);
+        }
+    }
+    let mut out = Vec::new();
+    let span = DVec3::new(24.0, 24.0, 64.0);
+    place(rng, (DVec3::ZERO, span), 0, None, 0, &mut out);
+    out
+}
+
+#[test]
+fn random_nested_shells_are_told_right() {
+    // Against the nesting they were built with: a shell is right when the
+    // shells round it wind 0 about it and it faces out, or 1 and it faces
+    // in. The parts go into the mesh in a random order; the check names
+    // the first wrong shell in that order, and a right mesh's volume is
+    // the shells' own, signed.
+    let mut rng = crate::test_rng::Rng::new(56);
+    let (mut right, mut wrong) = (0, 0);
+    for case in 0..300 {
+        let mut shells = nested(&mut rng);
+        // Half the cases with one or two shells turned the wrong way.
+        if case % 2 == 1 {
+            for _ in 0..1 + rng.next_u64() % 2 {
+                let i = (rng.next_u64() % shells.len() as u64) as usize;
+                shells[i].turned = !shells[i].turned;
+            }
+        }
+        let sign = |s: &Nested| if s.turned { -1 } else { 1 };
+        let mut order: Vec<usize> = (0..shells.len()).collect();
+        for i in (1..order.len()).rev() {
+            order.swap(i, (rng.next_u64() % (i as u64 + 1)) as usize);
+        }
+        let mut first = 0;
+        let mut want = Ok(());
+        for &i in &order {
+            let mut winding = 0;
+            let mut up = shells[i].parent;
+            while let Some(p) = up {
+                winding += sign(&shells[p]);
+                up = shells[p].parent;
+            }
+            let fine = if shells[i].turned {
+                winding == 1
+            } else {
+                winding == 0
+            };
+            if !fine && want.is_ok() {
+                want = Err(CheckError::InsideOut(first));
+            }
+            first += shells[i].mesh.tris().len() as u32;
+        }
+        let parts: Vec<(&Mesh, bool)> = order
+            .iter()
+            .map(|&i| (&shells[i].mesh, shells[i].turned))
+            .collect();
+        let mesh = joined(&parts);
+        assert_eq!(mesh.check(&TOL), want, "case {case}");
+        if want.is_ok() {
+            right += 1;
+            let volume: f64 = shells.iter().map(|s| f64::from(sign(s)) * s.volume).sum();
+            let got = solid(mesh).volume();
+            assert!(
+                (got - volume).abs() < 1e-9 * volume.abs().max(1.0),
+                "case {case}: {got} {volume}"
+            );
+        } else {
+            wrong += 1;
+        }
+    }
+    assert!(right > 50 && wrong > 50, "{right} {wrong}");
+}
+
+/// `mesh` with every vertex and control point moved by `f`, on one free
+/// face, turned inside out if `turned`.
+fn moved(mesh: &Mesh, f: impl Fn(DVec3) -> DVec3, turned: bool) -> Mesh {
+    let mut builder = MeshBuilder::new();
+    let face = crate::mesh::tests::free(&mut builder);
+    for &p in mesh.verts() {
+        builder.vert(f(p));
+    }
+    for (t, tri) in mesh.tris().iter().enumerate() {
+        let [a, b, c] = tri.halfedges.map(|h| h.start);
+        builder.tri(if turned { [a, c, b] } else { [a, b, c] }, face);
+        let patch = mesh.patch(t);
+        for (i, (u, v)) in [(a, b), (b, c), (c, a)].into_iter().enumerate() {
+            builder.edge(u, v, f(patch.c[i]), patch.w[i]);
+        }
+    }
+    builder.build().unwrap()
+}
+
+#[test]
+fn thin_tilted_slabs_far_out_are_told() {
+    // Slabs as thin for their size as the fold rule lets a box be (about
+    // 1e7 times as wide as thick), tilted off every axis, near the origin
+    // and far out, at the finest tolerance. Upright they pass with their
+    // volume; turned over they are refused. (Floating point tells them:
+    // a corner triangle's rounding is about ε·size³, the volume size²
+    // times the thickness.)
+    let tol = Tolerance::new(Tolerance::MIN_FIT).unwrap();
+    let x = DVec3::new(2.0, 1.0, 2.0) / 3.0;
+    let y = DVec3::new(-1.0, 2.0, 0.0).normalize();
+    let z = x.cross(y);
+    for (size, thickness, offset) in [
+        (1.2e6, 0.1, DVec3::ZERO),
+        (1e4, 1e-3, DVec3::new(-2e5, 1e5, 3e5)),
+        (1e3, 1e-4, DVec3::new(6e5, 5e5, -6e5)),
+    ] {
+        let corner = DVec3::new(-size / 2.0, -size / 2.0, 0.0);
+        let slab = Mesh::cuboid(corner, DVec3::new(size, size, thickness), 1, &tol).unwrap();
+        let tilt = |p: DVec3| offset + x * p.x + y * p.y + z * p.z;
+        let upright = moved(&slab, tilt, false);
+        let want = size * size * thickness;
+        let volume = Solid::new(upright, &tol).map(|s| s.volume());
+        assert!(
+            matches!(volume, Ok(v) if (v - want).abs() < 0.01 * want),
+            "{size} {thickness}: {volume:?} {want}"
+        );
+        let turned = moved(&slab, tilt, true);
+        assert_eq!(
+            turned.check(&tol),
+            Err(CheckError::InsideOut(0)),
+            "{thickness}"
+        );
+        // A void a tenth as wide and half as thick in the middle of it,
+        // and the same facing out.
+        let inner = DVec3::new(size / 20.0, size / 20.0, thickness / 2.0);
+        let void = Mesh::cuboid(-inner / 2.0 + DVec3::Z * thickness / 2.0, inner, 1, &tol).unwrap();
+        for (turned, want) in [(true, Ok(())), (false, Err(CheckError::InsideOut(12)))] {
+            let mesh = joined(&[(&slab, false), (&void, turned)]);
+            let mesh = moved(&mesh, tilt, false);
+            assert_eq!(mesh.check(&tol), want, "{size} {thickness} {turned}");
+        }
+    }
+}
+
+#[test]
+fn random_thin_curved_shells_are_told() {
+    // Rings of random size and thickness with holes in random numbers of
+    // arcs, and mushrooms of random proportions: upright they pass (the
+    // rings with their volume), turned over they are refused.
+    let mut rng = crate::test_rng::Rng::new(6);
+    let mut rings = 0;
+    for case in 0..40 {
+        let outer = rng.range(1.0, 5.0);
+        let inner = outer * (1.0 - rng.log_range(0.005, 0.2));
+        let n = 4 + (rng.next_u64() % 61) as usize;
+        let Ok(solid) = try_ring(outer, inner, n) else {
+            continue;
+        };
+        rings += 1;
+        let want = PI * (outer * outer - inner * inner);
+        assert!(
+            (solid.volume() - want).abs() < 1e-9 * want.max(1.0),
+            "ring {case}: {} {want}",
+            solid.volume()
+        );
+        let turned = joined(&[(solid.mesh(), true)]);
+        assert_eq!(
+            turned.check(&TOL),
+            Err(CheckError::InsideOut(0)),
+            "ring {case}"
+        );
+    }
+    assert!(rings > 20, "{rings}");
+    for case in 0..100 {
+        let r = rng.range(1.0, 10.0);
+        let t = rng.range(0.05, 1.0);
+        let a = rng.range(0.1, r / 4.0);
+        let h = t + rng.range(0.5, 40.0);
+        let upright = mushroom(r, t, a, h, false);
+        assert_eq!(
+            upright.check(&TOL),
+            Ok(()),
+            "mushroom {case}: {r} {t} {a} {h}"
+        );
+        let turned = mushroom(r, t, a, h, true);
+        assert_eq!(
+            turned.check(&TOL),
+            Err(CheckError::InsideOut(0)),
+            "mushroom {case}: {r} {t} {a} {h}"
+        );
+    }
+}
+
+#[test]
+fn lune_bounds_hold_on_random_patches() {
+    // Random corners, control points off the edges' middles by up to three
+    // times their size, weights over their whole range: whatever passes
+    // the fold rule adds no more than its bound (185 000 of them came to
+    // at most a third of it).
+    let mut rng = crate::test_rng::Rng::new(9);
+    let mut tried = 0;
+    for _ in 0..3000 {
+        let p = [rng.point(1.0), rng.point(1.0), rng.point(1.0)];
+        let c = [0, 1, 2].map(|i| {
+            let e = rng.log_range(1e-3, 3.0);
+            (p[i] + p[(i + 1) % 3]) / 2.0 + rng.point(e)
+        });
+        let w = [0, 1, 2].map(|_| rng.log_range(1.0 / 64.0, 64.0));
+        let Ok(patch) = Patch::new(p, c, w) else {
+            continue;
+        };
+        if patch.fold_direction().is_none() {
+            continue;
+        }
+        tried += 1;
+        let own = patch_volume(&patch, p[0]).0 + lune_cones(&patch, p[0]).0;
+        let bound = lune_bound(&patch);
+        assert!(own.abs() <= 0.5 * bound, "{patch:?}: {own} {bound}");
+    }
+    assert!(tried > 1000, "{tried}");
 }

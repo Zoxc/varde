@@ -15,10 +15,11 @@
 //!   patch of another: their hulls are more than the resolution apart.
 //! - **Sign**: the shell's volume, bounded rather than integrated. The
 //!   corner triangles' volume, summed in triangle order, then the
-//!   difference each patch makes to it integrated ([`patch_volume`]) for
-//!   the patches that could move it most, one by one, until what the rest
-//!   could still move it by ([`lune_bound`]) and the rounding can't change
-//!   its sign.
+//!   difference each patch makes to it integrated ([`patch_volume`], with
+//!   the cones over its lunes, [`lune_cones`], so that it doesn't depend
+//!   on where it is measured from) for the patches that could move it
+//!   most, one by one, until what the rest could still move it by
+//!   ([`lune_bound`]) and the rounding can't change its sign.
 //! - **Nesting**: the other shells' winding number at the shell's first
 //!   corner `p`, taken only when another shell's box holds `p` (a shell's
 //!   winding number is 0 outside its box). It is the signed number of
@@ -264,8 +265,13 @@ impl Mesh {
 ///
 /// The corner triangles' volume, `shares`' `tet` summed in triangle
 /// order, with a bound on its rounding (each term's, and the sum's), is
-/// off the shell's by what each patch adds to its triangle's. Patches are integrated in order of how much they could
-/// add (`bound`, largest first, then by index) until the volume is further
+/// off the shell's by what each patch adds to its triangle's: the
+/// volume of the closed surface of the patch, its triangle and its lunes
+/// (the patch's integral from `o` less the triangle's, plus
+/// [`lune_cones`]), which is the same from any `o` and which
+/// [`lune_bound`] bounds. Patches are integrated in order of how much
+/// they could add (`bound`, largest first, then by index) until the
+/// volume is further
 /// from zero than the rest of them could move it plus the rounding and
 /// the integrals' error ([`QUADRATURE`]). Where the corner triangles'
 /// rounding is what leaves it open (their cones from `o` cancel to digits
@@ -309,7 +315,7 @@ fn shell_sign(
     let (mut fix, mut fix_err) = (0.0f64, 0.0f64);
     let mut k = 0;
     let mut batch = 1;
-    let mut volumes: Vec<(f64, f64)> = Vec::new();
+    let mut volumes: Vec<(f64, f64, f64)> = Vec::new();
     loop {
         let v = flat + fix;
         let slack = flat_err + fix_err + 2.0 * f64::EPSILON * (flat.abs() + fix.abs());
@@ -332,19 +338,71 @@ fn shell_sign(
         if volumes.is_empty() {
             let end = (k + batch).min(order.len());
             volumes = par_map(&order[k..end], |&(_, t)| {
-                patch_volume(&patches[t as usize], o)
+                let patch = &patches[t as usize];
+                let (volume, size) = patch_volume(patch, o);
+                let (lune, lune_size) = lune_cones(patch, o);
+                (volume + lune, size, lune_size)
             });
             volumes.reverse();
             batch = (2 * batch).min(MAX_BATCH);
         }
-        let (volume, size) = volumes.pop().expect("a batch");
+        let (volume, size, lune_size) = volumes.pop().expect("a batch");
         let s = share(order[k].1);
         fix += volume - s.tet;
-        fix_err += QUADRATURE * size.max(s.tet.abs())
+        fix_err += QUADRATURE * (size.max(s.tet.abs()) + lune_size)
             + s.err
             + 2.0 * f64::EPSILON * (volume.abs() + s.tet.abs() + fix.abs());
         k += 1;
     }
+}
+
+/// What the cones from `o` over `patch`'s lunes add to its volume, and
+/// their scale: with them, what an integrated patch adds to its corner
+/// triangle's volume is that of the closed surface of the patch, its
+/// triangle turned over and its lunes, which lies in its control hull
+/// and doesn't depend on `o`, so [`lune_bound`] bounds it.
+///
+/// Edge `i`'s lune is the flat piece between the curve and its chord,
+/// in the plane of its ends and control point, bounded by the chord
+/// from corner `i` to corner `i + 1` and the curve back. Its cone from
+/// `o` holds `(pᵢ − o)·A/3`, `A` its area vector: `A` is `(pᵢ₊₁ − pᵢ) ×
+/// (cᵢ − pᵢ)/2`, the control triangle's, times [`segment_share`] of the
+/// weight. The patch beside the edge has the same lune turned over, so
+/// in a shell all of them cancel; but where one of the two is integrated
+/// and the other isn't, the cone would be left over, and from an `o`
+/// far off it can be larger than the whole volume.
+fn lune_cones(patch: &Patch, o: DVec3) -> (f64, f64) {
+    let (mut sum, mut size) = (0.0, 0.0);
+    for i in 0..3 {
+        let (a, b, c) = (patch.p[i], patch.p[(i + 1) % 3], patch.c[i]);
+        let area = (b - a).cross(c - a) * (0.5 * segment_share(patch.w[i]));
+        let d = a - o;
+        sum += d.dot(area) / 3.0;
+        size += d.abs().dot(area.abs()) / 3.0;
+    }
+    (sum, size)
+}
+
+/// The area between a conic of weight `w` (its ends' weights 1) and its
+/// chord, as a share of its control triangle's: 2/3 for a parabola, and
+/// `(2α − sin 2α) cos α / (2 sin³ α)` for a circular arc of half angle
+/// `α` (`w = cos α`). Splitting the curve in the middle leaves two of
+/// weight `√((1 + w)/2)` and the triangle on the chord, so
+/// `S(w) = w/(1 + w) + w/(1 + w)²·S(√((1 + w)/2))`, and the weights go
+/// to 1, the distance a quarter each time; near 1, `S(1 + ε) = 2/3 +
+/// 4ε/15 + O(ε²)`. Only `+ − × ÷ √`, so the same bits everywhere.
+fn segment_share(mut w: f64) -> f64 {
+    let (mut sum, mut scale) = (0.0f64, 1.0f64);
+    // From the weights' limits, 1/64 and 64, under twenty steps.
+    for _ in 0..64 {
+        if (w - 1.0).abs() < 1e-8 {
+            break;
+        }
+        sum += scale * w / (1.0 + w);
+        scale *= w / ((1.0 + w) * (1.0 + w));
+        w = ((1.0 + w) / 2.0).sqrt();
+    }
+    sum + scale * (2.0 / 3.0 + 4.0 / 15.0 * (w - 1.0))
 }
 
 /// `6·` the volume of some of a shell's corner triangles, `tris`,
@@ -408,7 +466,9 @@ fn orient3d(o: DVec3, [a, b, c]: [DVec3; 3]) -> (f64, f64) {
 /// that of its corner triangle: the patch, its triangle and the lunes
 /// between its curved edges and their chords (which the two patches
 /// beside an edge share, turned opposite ways, so they cancel in a
-/// shell) lie in its control points' hull, as its weights are positive,
+/// shell; [`lune_cones`] adds them to an integrated patch, whose
+/// neighbour may not be) lie in its control points' hull, as its weights
+/// are positive,
 /// so the volume between them is no more than the hull's. That is no more
 /// than the prism of the hull's shadow on the triangle's plane (the
 /// convex hull of the control points' shadows) as deep as the control

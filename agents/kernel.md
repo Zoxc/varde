@@ -510,7 +510,20 @@ number and that plus `S`'s sign.
   an integrand that cancels over the patch doesn't shrink it) is integrated for
   the patches that could move it most, in batches through `par_map` but
   added one by one, until the volume is further from zero than what the
-  rest could still move it by (`lune_bound`) plus the rounding. The bound:
+  rest could still move it by (`lune_bound`) plus the rounding. An
+  integrated patch's difference includes the cones from `o` over its
+  three lunes (`lune_cones`): each edge's lune, the flat piece between
+  the curve and its chord, has area vector `S(w)·(pᵢ₊₁ − pᵢ) × (cᵢ −
+  pᵢ)/2`, `S(w)` the conic segment's share of its control triangle
+  (`segment_share`: halving the curve gives `S(w) = w/(1 + w) +
+  w/(1 + w)²·S(√((1 + w)/2))`, the weights going to 1 a quarter of the
+  way each time, then `S(1 + ε) ≈ 2/3 + 4ε/15`; only `+ − × ÷ √`). So
+  what it adds is the volume of the closed surface of the patch, its
+  triangle turned over and its lunes, the same from any `o`. Without
+  them an integrated patch beside one that isn't (a flat face's patches
+  never are) left its lunes' cones in the sum, which from a far `o` can
+  outweigh the whole volume: a thin disc bounded by quarter arcs on top
+  of a long rod was refused, and turned inside out it passed. The bound:
   the patch, its triangle and the lunes between its curved edges and
   their chords (shared by the two patches beside an edge, turned opposite
   ways, so they cancel in a shell) lie in its control points' hull, which
@@ -846,8 +859,19 @@ told by integrating a few patches; a tetrahedron whose corner volume
 floating point can't tell is worked out exactly; a plate with twenty
 voids cut by booleans passes and refuses one void turned over; the
 float bound on corner volumes never contradicts the exact sign; the
-lune bound holds on curved patches; and the result and the count are
-the same at 1 and 8 threads. A mesh whose only fault
+lune bound holds on curved patches and on random ones over the whole
+weight range (185 000 came to at most a third of it), and what an integrated patch adds
+is the same measured from anywhere; the segment shares match the
+circular segments' areas and Simpson's rule; a thin disc bounded by
+quarter arcs on a long rod (its first corner at the rod's foot) passes
+and turned over is refused, as do a hundred of random proportions and
+forty random thin rings; 300 random nestings of boxes and cylinders up
+to four deep, on a grid that sends the rays through edges and corners,
+some shells turned wrong, match the nesting they were built with (the
+first wrong shell named, a right mesh's volume the shells' signed
+sum); slabs as thin as the fold rule allows, tilted and far out at the
+finest tolerance, pass with a void and refuse it turned; and the
+result and the count are the same at 1 and 8 threads. A mesh whose only fault
 is a wrong `Plane` or `Quadric` tag is refused by `Solid::new` (before, in
 release it passed).
 `check`, the BVH's pairs, and the first failure of a jittered torus are the
