@@ -5,6 +5,8 @@
 
 use glam::DVec2;
 
+use crate::angle;
+
 use super::basis::curvature;
 use crate::CIRCLE_SEGMENTS;
 use crate::intersect::Geom;
@@ -446,7 +448,7 @@ fn wind(b: &Bezier, at: DVec2, depth: u32) -> f64 {
     let inside = at.cmpge(min).all() && at.cmple(max).all();
     if !inside || depth == 0 {
         let (p, q) = (b[0] - at, b[3] - at);
-        return p.perp_dot(q).atan2(p.dot(q));
+        return angle::atan2(p.perp_dot(q), p.dot(q));
     }
     let (first, second) = halves(b);
     wind(&first, at, depth - 1) + wind(&second, at, depth - 1)

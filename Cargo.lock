@@ -4146,6 +4146,7 @@ name = "varde-kernel"
 version = "0.1.0"
 dependencies = [
  "glam 0.30.10",
+ "libm",
  "rayon",
  "serde",
  "spade",
@@ -4199,6 +4200,7 @@ version = "0.1.0"
 dependencies = [
  "faer",
  "glam 0.30.10",
+ "libm",
  "postcard",
  "serde",
  "varde-expr",

@@ -1,3 +1,8 @@
+#![allow(
+    clippy::disallowed_methods,
+    reason = "std maths as an independent reference, or to build inputs"
+)]
+
 use std::collections::BTreeMap;
 use std::f64::consts::{FRAC_1_SQRT_2, PI};
 

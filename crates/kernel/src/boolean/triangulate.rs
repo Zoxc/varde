@@ -842,6 +842,10 @@ fn ear(ring: &[Vert], i: usize, edges: &BTreeSet<(u32, u32)>, bends: &Bends) -> 
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "std maths as an independent reference, or to build inputs"
+)]
 mod tests {
     use super::super::exact::orient2d;
     use super::*;

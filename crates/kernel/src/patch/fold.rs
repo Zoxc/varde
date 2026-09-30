@@ -81,7 +81,7 @@ impl NormalCone {
     /// The half-angle `θ`, radians. For showing: decisions use
     /// [`Self::cos`] and [`Self::sin`].
     pub fn angle(&self) -> f64 {
-        self.sin.atan2(self.cos)
+        crate::trig::atan2(self.sin, self.cos)
     }
 
     /// Whether no direction in this cone is parallel to one in `other`,

@@ -303,6 +303,10 @@ fn section_into(
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "std maths as an independent reference, or to build inputs"
+)]
 mod tests {
     use super::*;
 

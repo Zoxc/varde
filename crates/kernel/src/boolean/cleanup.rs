@@ -39,6 +39,7 @@ use crate::KernelError;
 use crate::budget::Work;
 use crate::mesh::{Edge, Face, Surface, on_surface, straight};
 use crate::patch::Patch;
+use crate::trig;
 
 /// How many rounds of collapses and flips at most.
 const ROUNDS: usize = 64;
@@ -752,7 +753,7 @@ impl Cleaner<'_> {
             }
             let angle = |x: u32, p: u32, q: u32| {
                 let (e, f) = (self.p(p) - self.p(x), self.p(q) - self.p(x));
-                e.cross(f).length().atan2(e.dot(f))
+                trig::atan2(e.cross(f).length(), e.dot(f))
             };
             if angle(a, u, v) + angle(b, v, u) <= std::f64::consts::PI + 1e-9 {
                 continue;

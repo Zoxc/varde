@@ -7,6 +7,8 @@ use std::rc::Rc;
 
 use glam::DVec2;
 
+use crate::angle;
+
 use crate::origin::axis;
 use crate::sets::Sets;
 use crate::spline::bezier::Path;
@@ -862,7 +864,7 @@ impl System {
                             let at = |p: PointSlots| p.map(|slot| self.value(slot));
                             let ([cx, cy], [ex, ey]) = (at(center), at(end));
                             let (dx, dy) = (ex - cx, ey - cy);
-                            let length = dx.hypot(dy);
+                            let length = angle::hypot(dx, dy);
                             if length > 0.0 {
                                 residuals.push(Residual::FixDirection {
                                     point: end,
@@ -938,8 +940,8 @@ impl System {
                 a: self.direction(sketch, a)?,
                 b: self.direction(sketch, b)?,
                 sign,
-                cos: value.cos(),
-                sin: value.sin(),
+                cos: angle::cos(value),
+                sin: angle::sin(value),
             },
             Measure::Radius(id) => Residual::Radius {
                 round: self.round(sketch, id)?,

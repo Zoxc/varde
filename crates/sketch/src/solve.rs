@@ -433,8 +433,8 @@ impl Solver<'_, '_> {
                     return Err(Failure::OutOfTime);
                 }
                 *self.spent += 1;
-                let lambda =
-                    diagonal.max(1.0) * (damping * cost / self.scale.powi(2)).max(DAMPING_FLOOR);
+                let lambda = diagonal.max(1.0)
+                    * (damping * cost / (self.scale * self.scale)).max(DAMPING_FLOOR);
                 let rhs: Vec<f64> = f.iter().map(|r| -r).collect();
                 let step = normal.solve(lambda, &rhs).map(|u| {
                     let mut step = vec![0.0; n];

@@ -4,6 +4,7 @@ use std::ops::{Add, Div, Mul, Sub};
 use glam::{DVec2, DVec3, DVec4};
 
 use super::{Bounds, PatchError, check_point, check_weight};
+use crate::trig;
 
 /// A point the curves can be built on: [`DVec2`] or [`DVec3`].
 pub trait Point:
@@ -337,7 +338,7 @@ const MAX_ARC_SWEEP: f64 = std::f64::consts::FRAC_PI_2 * (1.0 + 1e-12);
 /// An arc of the circle of `radius` around the origin, from angle `start`
 /// through `sweep` (counter-clockwise if positive), in the standard form:
 /// its ends, its control point where the end tangents meet, and its
-/// weight `cos(sweep/2)`.
+/// weight `cos(sweep/2)`, by [`trig`], so the same bits on every platform.
 fn arc_parts(radius: f64, start: f64, sweep: f64) -> Result<([DVec2; 3], f64), PatchError> {
     if !(radius > 0.0 && radius <= super::MAX_CONTROL) {
         return Err(PatchError::Parameter(radius));
@@ -348,9 +349,9 @@ fn arc_parts(radius: f64, start: f64, sweep: f64) -> Result<([DVec2; 3], f64), P
     if !(sweep != 0.0 && sweep.abs() <= MAX_ARC_SWEEP) {
         return Err(PatchError::Parameter(sweep));
     }
-    let at = |angle: f64, r: f64| DVec2::new(angle.cos(), angle.sin()) * r;
+    let at = |angle: f64, r: f64| trig::unit(angle) * r;
     let half = sweep * 0.5;
-    let w = half.cos();
+    let w = trig::cos(half);
     Ok((
         [
             at(start, radius),
@@ -372,9 +373,8 @@ impl Conic2 {
 
     /// The exact arc of the circle of `radius` around `center` from `a` to
     /// `b` (both on it), the shorter way round, which must be under 180°,
-    /// built from its ends without `cos` or `sin`, so no platform's maths
-    /// library decides a bit: with `m = a + b − 2·center`, its control
-    /// point `center + m·2r²/|m|²`, where the end tangents meet, and its
+    /// built from its ends without `cos` or `sin`, by `+ − × ÷ √` only:
+    /// with `m = a + b − 2·center`, its control point `center + m·2r²/|m|²`, where the end tangents meet, and its
     /// weight `|m|/2r`, the cosine of half the angle.
     pub fn arc_between(center: DVec2, radius: f64, a: DVec2, b: DVec2) -> Result<Self, PatchError> {
         let m = a + b - center * 2.0;

@@ -240,7 +240,8 @@ fn wrapped(kept: &[f64], j: isize) -> f64 {
 /// and `second`: positive turning left going on, one over the radius.
 /// Not a number where it doesn't move.
 pub(crate) fn curvature(first: DVec2, second: DVec2) -> f64 {
-    first.perp_dot(second) / first.length().powi(3)
+    let length = first.length();
+    first.perp_dot(second) / (length * length * length)
 }
 
 /// Whether `knots` strictly increase from `from` to `to`, each at least

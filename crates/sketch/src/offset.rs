@@ -57,6 +57,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::f64::consts::{PI, TAU};
 
 use glam::DVec2;
+
+use crate::angle;
 use varde_expr::Value;
 
 use crate::intersect::{Geom, meet, tolerance};
@@ -203,7 +205,7 @@ impl Sketch {
                 let center = at(center)?;
                 let from = at(start)? - center;
                 let sweep = arc_sweep(from, at(end)? - center);
-                DVec2::from_angle(sweep / 2.0).rotate(from).try_normalize()
+                angle::from_angle(sweep / 2.0).rotate(from).try_normalize()
             }
             Curve::Circle { .. } => Some(DVec2::splat(std::f64::consts::FRAC_1_SQRT_2)),
             Curve::Line { .. } | Curve::Spline(_) => None,
@@ -456,7 +458,7 @@ impl Sketch {
                 (&raws[i].geom, &raws[j].geom),
                 (Geom::Segment { .. }, Geom::Segment { .. })
             );
-            let angle = way_in.angle_to(way_out).abs();
+            let angle = angle::between(way_in, way_out);
             let met = crossing(end, way_in, start, way_out)
                 .filter(|&(t, u)| lines && angle <= MITER_TURN && t >= 0.0 && u <= 0.0)
                 .map(|(t, _)| end + way_in * t);
@@ -471,9 +473,9 @@ impl Sketch {
             // Round the corner from the one copy's end to the other's
             // start, clockwise turning right, counter-clockwise left.
             let (begin, sweep, forward) = if shift > 0.0 {
-                (to.to_angle(), arc_sweep(to, from), false)
+                (angle::to_angle(to), arc_sweep(to, from), false)
             } else {
-                (from.to_angle(), arc_sweep(from, to), true)
+                (angle::to_angle(from), arc_sweep(from, to), true)
             };
             raws.push(Raw {
                 geom: Geom::Round {
@@ -1265,7 +1267,7 @@ fn span_distance(geom: &Geom, from: f64, to: f64, point: DVec2) -> f64 {
             along.dot(point - start) / along.length_squared()
         }
         Geom::Round { center, begin, .. } => {
-            let u = ((point - center).to_angle() - begin).rem_euclid(TAU);
+            let u = (angle::to_angle(point - center) - begin).rem_euclid(TAU);
             // A part round a circle may go on past a turn.
             if u < from { u + TAU } else { u }
         }

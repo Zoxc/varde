@@ -6,6 +6,8 @@ use std::collections::HashSet;
 use std::f64::consts::{PI, TAU};
 
 use glam::DVec2;
+
+use crate::angle;
 use serde::{Deserialize, Serialize};
 use varde_expr::{Ask, Quantity, Value};
 
@@ -234,7 +236,7 @@ impl Sketch {
         let (a_start, a_end) = self.direction(a)?;
         let (b_start, b_end) = self.direction(b)?;
         let (u, w) = ((a_end - a_start) * side.sign(), b_end - b_start);
-        let angle = u.perp_dot(w).atan2(u.dot(w));
+        let angle = angle::atan2(u.perp_dot(w), u.dot(w));
         Some(if angle < 0.0 { angle + TAU } else { angle })
     }
 

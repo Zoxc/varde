@@ -1,3 +1,8 @@
+#![allow(
+    clippy::disallowed_methods,
+    reason = "std maths as an independent reference, or to build inputs"
+)]
+
 use std::collections::BTreeSet;
 use std::f64::consts::PI;
 
@@ -1267,4 +1272,70 @@ fn a_region_of_curves_several_share_is_only_found_among_them() {
         after.resolve(&[moved]),
         vec![Some(at_point(&after, 13.0, 5.0))]
     );
+}
+
+#[test]
+fn arc_ends_take_their_bits_from_libm() {
+    // Arcs and circles at random places, angles and radii, and lines
+    // crossing them. Each arc's ends are vertices placed by `libm`'s
+    // trigonometry, never the platform's maths library, so a sketch gives
+    // the same profiles on every platform.
+    let mut state = 0x5eed_u64;
+    let mut unit = || {
+        // SplitMix64.
+        state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        let mut z = state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        ((z ^ (z >> 31)) >> 11) as f64 / (1u64 << 53) as f64
+    };
+    let on = |center: DVec2, radius: f64, angle: f64| {
+        center + DVec2::new(libm::cos(angle), libm::sin(angle)) * radius
+    };
+    let mut sketch = Sketch::default();
+    let mut expected = Vec::new();
+    for _ in 0..50 {
+        let center = DVec2::new(unit() * 100.0, unit() * 100.0);
+        let radius = 1.0 + unit() * 30.0;
+        if unit() < 0.2 {
+            let id = sketch.add_point(center).unwrap();
+            circle(&mut sketch, id, radius);
+            continue;
+        }
+        let (from, to) = (unit() * 20.0 - 10.0, unit() * 20.0 - 10.0);
+        let [c, start, end] = [center, on(center, radius, from), on(center, radius, to)]
+            .map(|at| sketch.add_point(at).unwrap());
+        sketch
+            .add_curve(
+                Curve::Arc {
+                    center: c,
+                    start,
+                    end,
+                },
+                false,
+            )
+            .unwrap();
+        // As the sketch places them: the start at its angle, the end that
+        // plus the sweep.
+        let (a, b) = (
+            sketch.point(start).unwrap().at - center,
+            sketch.point(end).unwrap().at - center,
+        );
+        let (begin, finish) = (libm::atan2(a.y, a.x), libm::atan2(b.y, b.x));
+        let sweep = TAU - (begin - finish).rem_euclid(TAU);
+        expected.push(on(center, a.length(), begin));
+        expected.push(on(center, a.length(), begin + sweep));
+    }
+    for _ in 0..20 {
+        let a = point(&mut sketch, unit() * 140.0 - 20.0, unit() * 140.0 - 20.0);
+        let b = point(&mut sketch, unit() * 140.0 - 20.0, unit() * 140.0 - 20.0);
+        line(&mut sketch, a, b);
+    }
+    let profiles = sketch.profiles().unwrap();
+    assert!(!profiles.regions.is_empty());
+    let bits = |p: DVec2| (p.x.to_bits(), p.y.to_bits());
+    let vertices: BTreeSet<_> = profiles.vertices.iter().map(|&p| bits(p)).collect();
+    for p in expected {
+        assert!(vertices.contains(&bits(p)), "{p}");
+    }
 }

@@ -1,3 +1,8 @@
+#![allow(
+    clippy::disallowed_methods,
+    reason = "std maths as an independent reference, or to build inputs"
+)]
+
 use std::f64::consts::{FRAC_PI_4, PI};
 
 use glam::DVec2;

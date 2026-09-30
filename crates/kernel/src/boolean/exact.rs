@@ -537,6 +537,10 @@ pub(super) fn counted<T>(f: impl FnOnce() -> T) -> (T, usize) {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "std maths as an independent reference, or to build inputs"
+)]
 mod tests {
     use super::*;
     use crate::test_rng::Rng;

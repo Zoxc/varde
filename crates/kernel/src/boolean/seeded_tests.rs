@@ -19,6 +19,11 @@
 //! builds run a case of most (`cases`), and none of the slowest, which
 //! other tests cover there.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "std maths as an independent reference, or to build inputs"
+)]
+
 use std::f64::consts::PI;
 
 use glam::{DMat3, DQuat, DVec2, DVec3, Vec3};

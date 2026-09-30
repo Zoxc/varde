@@ -22,7 +22,8 @@
 //! meshes of them, the check of their invariants, the BVH over them,
 //! their refinement and repair, and box and cylinder meshes are in
 //! [`mesh`]. Operations on them are bounded by a [`Budget`] and the limits
-//! here, and fail with a [`KernelError`].
+//! here, and fail with a [`KernelError`]. Angles go through [`trig`],
+//! whose bits are the same on every platform.
 
 mod aabb;
 mod boolean;
@@ -41,6 +42,7 @@ mod tessellate;
 #[cfg(test)]
 mod test_rng;
 mod tolerance;
+pub mod trig;
 
 pub use aabb::Aabb;
 pub use boolean::{BooleanError, Op, boolean, touches};

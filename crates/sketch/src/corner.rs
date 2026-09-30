@@ -12,6 +12,8 @@ use std::collections::{HashMap, HashSet};
 use std::f64::consts::PI;
 
 use glam::DVec2;
+
+use crate::angle;
 use serde::{Deserialize, Serialize};
 use varde_expr::Value;
 
@@ -101,7 +103,7 @@ impl Legs {
     /// Half the angle between the legs, above zero and below a right
     /// angle.
     fn half(&self) -> f64 {
-        self.a.perp_dot(self.b).abs().atan2(self.a.dot(self.b)) / 2.0
+        angle::atan2(self.a.perp_dot(self.b).abs(), self.a.dot(self.b)) / 2.0
     }
 
     /// The way from the corner into it, halfway between the legs.
@@ -169,7 +171,7 @@ impl Sketch {
             .iter()
             .filter_map(|entry| {
                 let (along, _) = self.leg(at, entry.id)?;
-                let off = along.perp_dot(way).abs().atan2(along.dot(way));
+                let off = angle::atan2(along.perp_dot(way).abs(), along.dot(way));
                 Some((off, entry.id, along))
             })
             .collect();
@@ -213,12 +215,12 @@ impl Sketch {
             (legs, lines)
         };
         let half = legs.half();
-        let back = radius / half.tan();
+        let back = radius / angle::tan(half);
         if !(radius > 0.0 && back <= legs.a_length && back <= legs.b_length) {
             return Err(EditError::NoRoom);
         }
         let arc = ArcPoints {
-            center: legs.corner + legs.bisector() * (radius / half.sin()),
+            center: legs.corner + legs.bisector() * (radius / angle::sin(half)),
             start: legs.corner + legs.a * back,
             end: legs.corner + legs.b * back,
         };
@@ -247,7 +249,7 @@ impl Sketch {
                 if !(angle > 0.0 && far < PI) {
                     return Err(EditError::NoRoom);
                 }
-                (d, d * angle.sin() / far.sin())
+                (d, d * angle::sin(angle) / angle::sin(far))
             }
         };
         let fits = |along: f64, length: f64| along > 0.0 && along <= length;
@@ -294,7 +296,7 @@ impl Sketch {
     pub fn fillet_through(&self, at: Id, lines: [Id; 2], place: DVec2) -> Option<f64> {
         let (legs, into) = self.depth_into(at, lines, place)?;
         // The centre is `radius / sin(half)` in, the middle a radius less.
-        let sin = legs.half().sin();
+        let sin = angle::sin(legs.half());
         Some(into * sin / (1.0 - sin))
     }
 
@@ -304,7 +306,7 @@ impl Sketch {
     /// through the cursor. `None` if `place` isn't into it.
     pub fn chamfer_through(&self, at: Id, lines: [Id; 2], place: DVec2) -> Option<f64> {
         let (legs, into) = self.depth_into(at, lines, place)?;
-        Some(into / legs.half().cos())
+        Some(into / angle::cos(legs.half()))
     }
 
     /// The lines fillets and chamfers cut back, each with what's left of

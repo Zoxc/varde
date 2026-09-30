@@ -1,0 +1,30 @@
+# Angles, logarithms and powers from std come from the platform's maths
+# library, whose last bits differ between platforms (see `src/trig.rs`).
+# The kernel takes them from `crate::trig` (the `libm` crate) instead, the
+# same bits natively and on wasm. Tests using std as an independent
+# reference allow `clippy::disallowed_methods` in their module.
+disallowed-methods = [
+    { path = "f64::sin", reason = "platform maths library; use libm / crate::trig" },
+    { path = "f64::cos", reason = "platform maths library; use libm / crate::trig" },
+    { path = "f64::sin_cos", reason = "platform maths library; use libm / crate::trig" },
+    { path = "f64::tan", reason = "platform maths library; use libm / crate::trig" },
+    { path = "f64::asin", reason = "platform maths library; use libm / crate::trig" },
+    { path = "f64::acos", reason = "platform maths library; use libm / crate::trig" },
+    { path = "f64::atan", reason = "platform maths library; use libm / crate::trig" },
+    { path = "f64::atan2", reason = "platform maths library; use libm / crate::trig" },
+    { path = "f64::exp", reason = "platform maths library; use libm / crate::trig" },
+    { path = "f64::exp_m1", reason = "platform maths library; use libm / crate::trig" },
+    { path = "f64::ln", reason = "platform maths library; use libm / crate::trig" },
+    { path = "f64::ln_1p", reason = "platform maths library; use libm / crate::trig" },
+    { path = "f64::log", reason = "platform maths library; use libm / crate::trig" },
+    { path = "f64::log2", reason = "platform maths library; use libm / crate::trig" },
+    { path = "f64::log10", reason = "platform maths library; use libm / crate::trig" },
+    { path = "f64::powf", reason = "platform maths library; use libm / crate::trig" },
+    { path = "f64::powi", reason = "platform maths library; use libm / crate::trig" },
+    { path = "f64::cbrt", reason = "platform maths library; use libm / crate::trig" },
+    { path = "f64::hypot", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DVec2::from_angle", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DVec2::to_angle", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DVec2::angle_to", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DVec3::angle_between", reason = "platform maths library; use libm / crate::trig" },
+]

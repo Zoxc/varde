@@ -37,6 +37,8 @@ Pure math on one curve or one triangle, no mesh:
 | `patch/strip.rs` | `cylinder_strip`: exact cylinder patches |
 | `patch/tests.rs` | property tests; `src/test_rng.rs` is their seeded generator |
 
+Angles go through `src/trig.rs` (see "Deterministic trigonometry").
+
 ### Curves
 
 A `Conic<P>` runs from `p0` to `p1`, pulled towards the control point `c`
@@ -59,10 +61,10 @@ polynomial and de Casteljau and blossoming are exact. The blossom is
   where the end tangents meet (at `r / cos(θ/2)` from the centre, on the
   bisector) and weight `cos(θ/2)` (`Conic2::arc`, `Conic3::arc`, which in
   3D takes the circle's plane as two orthonormal axes; other axes give the
-  matching ellipse arc). Those take angles and use the platform's `cos`
-  and `sin`; `Conic2::arc_between(center, r, a, b)` builds the same arc
-  (under 180°) from its ends without them, so its bits don't depend on the
-  platform: with `m = a + b − 2·center`, `c = center + m·2r²/|m|²` and
+  matching ellipse arc). Those take angles, through `trig::cos` and
+  `trig::sin` (see "Deterministic trigonometry"); `Conic2::arc_between(center,
+  r, a, b)` builds the same arc (under 180°) from its ends without them,
+  by `+ − × ÷ √` only: with `m = a + b − 2·center`, `c = center + m·2r²/|m|²` and
   `w = |m|/2r`. Profiles from sketches are built with it.
 - Weights below 1 give ellipse arcs, 1 parabolas, above 1 hyperbolas.
   Reversing a curve keeps `c` and `w`, so an edge record needs no
@@ -230,10 +232,10 @@ last bits differ between platforms' maths libraries. `angle()` (by
 
 **Determinism.** The fold check, the cone and `apart` use only correctly
 rounded arithmetic, so they give the same bits natively and on wasm.
-`Conic::arc` uses `cos` and `sin`, which come from the platform's maths
-library and can differ in the last bit between platforms (so do the
-sketch's own angles). Arcs whose ends are known as points can be built
-without them: for ends `a`, `b` at radius `r` from the centre (sweep
+`Conic::arc` uses `cos` and `sin` from `trig`, which are the same code
+everywhere, so its bits are the same too (the sketch takes its angles the
+same way). Arcs whose ends are known as points can be built without
+them: for ends `a`, `b` at radius `r` from the centre (sweep
 under 180°), the control point is `centre + (a + b − 2·centre)·2r² / |a + b
 − 2·centre|²` and the weight `|a + b − 2·centre| / 2r`.
 
@@ -334,10 +336,37 @@ that knows about rayon. The rules every parallel step follows:
   `HashMap` with a fixed hasher).
 - Errors: the first in input order (collecting `Result`s does that).
 
+Every angle the kernel turns into a place or a decision goes through
+`trig` (below), so it has the same bits on every platform too.
+
 Tests use `par::assert_deterministic(f)`, which runs `f` on a 1-thread and
 an 8-thread pool and compares the results' `Debug` text (an `f64` prints as
 the shortest decimal that reads back to the same bits, so equal text is
 equal bits). `on_threads(n, f)` runs `f` on an `n`-thread pool.
+
+### Deterministic trigonometry (`src/trig.rs`)
+
+`+ − × ÷ √` are correctly rounded, so they give the same bits everywhere;
+std's `sin`, `cos`, `atan2`, `ln`, `powi`, ... are not: they come from the
+platform's maths library (glibc natively on Linux, the system's own on
+macOS and Windows), whose last bits differ. On `wasm32-unknown-unknown`
+std's are the `libm` crate's code already. `varde_kernel::trig` wraps
+`libm` (pure Rust, pinned by `Cargo.lock`): `sin`, `cos`, `sin_cos`,
+`tan`, `asin`, `acos`, `atan2`, `unit(angle)` (`(cos, sin)` as a `DVec2`)
+and `angle(v)` (`atan2(v.y, v.x)`). So natively the kernel gets the web's
+bits, and every platform the same. `sin_cos` is two calls, never a joint
+`sincos`. A `libm` upgrade can change bits, on every platform at once.
+
+The kernel's decisions use only `+ − × ÷ √`, exact signs and `trig`.
+`crates/kernel/clippy.toml` keeps it so: `disallowed-methods` refuses
+std's `f64` trigonometry, exponentials, logarithms, `powf`, `powi`,
+`cbrt` and `hypot`, and glam's `DVec2::from_angle`, `to_angle`,
+`angle_to` and `DVec3::angle_between`. Tests that use std as an
+independent reference, or to build inputs, allow
+`clippy::disallowed_methods` in their module (`src/test_rng.rs` too, so
+its inputs keep their bits); tests comparing bits with the code use
+`trig`. Users: `Conic::arc`, the clean-up's Delaunay flip test (the angles
+opposite a diagonal, by `atan2`) and `NormalCone::angle`.
 
 ## Meshes (`src/mesh.rs`, `src/mesh/`)
 
@@ -2836,3 +2865,8 @@ parameter, or a split outside the patch bounds),
   merging of the result's own triangles (nor of repair's splits).
 - **`MAX_TRACE_STEPS` is 4096** per cut, in `lib.rs`; a cut that runs out
   falls back to one conic along its ends' tangents, or a straight edge.
+- **The kernel has its own trig module**, `varde_kernel::trig`, beside
+  the sketch's `angle` module, rather than one helper shared by both: the
+  sketch doesn't depend on the kernel, and both wrap the same `libm`
+  functions, so they agree to the bit. New kernel code takes angles only
+  from `trig`.

@@ -52,6 +52,10 @@ rayon = "1"
 # Constrained Delaunay triangulation of extrude caps. Pure Rust with exact
 # predicates, builds for wasm.
 spade = { version = "2.15", default-features = false, features = ["std"] }
+# Trigonometry for the kernel and the sketch: pure Rust, the same code
+# natively and on wasm (where std's own is this code already), so angles
+# give the same bits everywhere. The platform's maths library would not.
+libm = "0.2.16"
 crc32fast = "1"
 toml = "1"
 directories = "6"

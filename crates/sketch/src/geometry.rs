@@ -5,6 +5,8 @@ use std::f64::consts::TAU;
 
 use glam::DVec2;
 
+use crate::angle;
+
 /// An arc by its centre and its ends, counter-clockwise from `start` to
 /// `end`, as [`Curve::Arc`](crate::Curve::Arc) keeps one.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -42,7 +44,7 @@ pub fn arc_through(a: DVec2, b: DVec2, through: DVec2) -> Option<ArcPoints> {
 /// direction `to`, in `(0, 2π]`: the same direction is a whole turn, as
 /// an arc whose ends are is.
 pub fn arc_sweep(from: DVec2, to: DVec2) -> f64 {
-    TAU - (from.to_angle() - to.to_angle()).rem_euclid(TAU)
+    TAU - (angle::to_angle(from) - angle::to_angle(to)).rem_euclid(TAU)
 }
 
 /// Where `point` is nearest on the endless line through `start` and

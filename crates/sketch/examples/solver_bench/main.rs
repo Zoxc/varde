@@ -13,6 +13,11 @@
 //! The cases are in `bench.rs`, apart from the clock, so they can be timed
 //! under wasm too; `notes/SketchImpl.md` has the numbers.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "std maths as an independent reference, or to build inputs"
+)]
+
 mod bench;
 
 use std::time::Instant;

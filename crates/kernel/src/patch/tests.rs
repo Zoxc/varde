@@ -1,3 +1,8 @@
+#![allow(
+    clippy::disallowed_methods,
+    reason = "std maths as an independent reference, or to build inputs"
+)]
+
 use std::f64::consts::{FRAC_PI_2, PI};
 
 use glam::{DVec2, DVec3};
@@ -5,6 +10,7 @@ use glam::{DVec2, DVec3};
 use super::fold::{fold_direction, smallest_cone};
 use super::*;
 use crate::test_rng::Rng;
+use crate::trig;
 
 /// How many random cases each property test runs.
 const CASES: usize = 400;
@@ -121,7 +127,7 @@ fn arcs_lie_on_their_circles() {
         let start = rng.range(-PI, PI);
         let sweep = rng.range(-FRAC_PI_2, FRAC_PI_2);
         let arc = Conic2::arc(center, radius, start, sweep).unwrap();
-        assert_eq!(arc.w, (sweep / 2.0).cos());
+        assert_eq!(arc.w, trig::cos(sweep / 2.0));
         let tolerance = 1e-12 * (radius + center.abs().max_element());
         for i in 0..=16 {
             let t = i as f64 / 16.0;
@@ -188,6 +194,45 @@ fn arcs_between_their_ends_match_arcs_by_angle() {
     // A half turn has no control point.
     let (a, b) = (center + DVec2::X, center - DVec2::X);
     assert!(Conic2::arc_between(center, 1.0, a, b).is_err());
+}
+
+#[test]
+fn arcs_by_angle_take_their_bits_from_libm() {
+    // The same bits on every platform: `libm`'s `cos` and `sin`, never
+    // the platform's maths library.
+    let at = |angle: f64, r: f64| DVec2::new(libm::cos(angle), libm::sin(angle)) * r;
+    let mut rng = Rng::new(7);
+    for _ in 0..CASES {
+        let center = DVec2::new(rng.range(-100.0, 100.0), rng.range(-100.0, 100.0));
+        let radius = rng.log_range(1e-3, 1e3);
+        let start = rng.range(-4.0 * PI, 4.0 * PI);
+        let sweep = rng.range(-FRAC_PI_2, FRAC_PI_2);
+        if sweep == 0.0 {
+            continue;
+        }
+        let half = sweep * 0.5;
+        let w = libm::cos(half);
+        let points = [
+            at(start, radius),
+            at(start + half, radius / w),
+            at(start + sweep, radius),
+        ];
+        let arc = Conic2::arc(center, radius, start, sweep).unwrap();
+        assert_eq!(
+            [arc.p0, arc.c, arc.p1],
+            points.map(|p| center + p),
+            "{start} {sweep}"
+        );
+        assert_eq!(arc.w.to_bits(), w.to_bits());
+
+        let x = rng.direction();
+        let y = x.any_orthonormal_vector();
+        let center = rng.point(100.0);
+        let place = |p: DVec2| center + x * p.x + y * p.y;
+        let arc = Conic3::arc(center, x, y, radius, start, sweep).unwrap();
+        assert_eq!([arc.p0, arc.c, arc.p1], points.map(place));
+        assert_eq!(arc.w.to_bits(), w.to_bits());
+    }
 }
 
 #[test]

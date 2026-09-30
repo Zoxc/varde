@@ -8,6 +8,8 @@ use std::sync::Arc;
 
 use glam::DVec2;
 
+use crate::angle;
+
 use crate::flatten::arc_segments;
 use crate::spline::bezier::{self, Path};
 use crate::{Curve, Id, Sketch, arc_sweep, crossing, foot};
@@ -106,7 +108,7 @@ impl Geom {
                 Geom::Round {
                     center,
                     radius: from.length(),
-                    begin: from.to_angle(),
+                    begin: angle::to_angle(from),
                     sweep: arc_sweep(from, to),
                 }
             }
@@ -182,7 +184,7 @@ impl Geom {
                 radius,
                 begin,
                 ..
-            } => center + radius * DVec2::from_angle(begin + u),
+            } => center + radius * angle::from_angle(begin + u),
             Geom::Spline(ref path) => path.at(u),
         }
     }
@@ -195,7 +197,7 @@ impl Geom {
         match *self {
             Geom::Segment { start, end } => ((end - start).normalize() * sign, 0.0),
             Geom::Round { radius, begin, .. } => {
-                (DVec2::from_angle(begin + u).perp() * sign, sign / radius)
+                (angle::from_angle(begin + u).perp() * sign, sign / radius)
             }
             Geom::Spline(ref path) => path.heading(u, forward),
         }
@@ -241,7 +243,7 @@ impl Geom {
                 let angle = f64::from(quarter) * FRAC_PI_2;
                 let u = (angle - begin).rem_euclid(TAU);
                 if (low..=high).contains(&u) || (low..=high).contains(&(u + TAU)) {
-                    let at = center + radius * DVec2::from_angle(angle);
+                    let at = center + radius * angle::from_angle(angle);
                     (min, max) = (min.min(at), max.max(at));
                 }
             }
@@ -269,7 +271,7 @@ impl Geom {
                 begin,
                 sweep,
             } => {
-                let u = ((point - center).to_angle() - begin).rem_euclid(TAU);
+                let u = (angle::to_angle(point - center) - begin).rem_euclid(TAU);
                 if sweep >= TAU || u <= sweep {
                     return Some(u);
                 }
@@ -307,7 +309,7 @@ impl Geom {
                 sweep,
                 ..
             } => {
-                let u = ((point - center).to_angle() - begin).rem_euclid(TAU);
+                let u = (angle::to_angle(point - center) - begin).rem_euclid(TAU);
                 // Past an arc's end, whichever end is nearer round.
                 if u <= sweep || sweep >= TAU {
                     u
@@ -357,7 +359,7 @@ impl Geom {
     pub(crate) fn winding(&self, u0: f64, u1: f64, point: DVec2) -> f64 {
         let chord = |a: DVec2, b: DVec2| {
             let (a, b) = (a - point, b - point);
-            a.perp_dot(b).atan2(a.dot(b))
+            angle::atan2(a.perp_dot(b), a.dot(b))
         };
         match *self {
             Geom::Segment { .. } => chord(self.at(u0), self.at(u1)),
@@ -395,7 +397,7 @@ impl Geom {
             Geom::Segment { .. } => 0.0,
             Geom::Round { radius, .. } => {
                 let sweep = u1 - u0;
-                radius * radius / 2.0 * (sweep - sweep.sin())
+                radius * radius / 2.0 * (sweep - angle::sin(sweep))
             }
             Geom::Spline(ref path) => path.bulge(u0, u1),
         }

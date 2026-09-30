@@ -4,6 +4,8 @@ use std::f64::consts::TAU;
 
 use glam::DVec2;
 
+use crate::angle;
+
 use crate::intersect::Geom;
 use crate::{Curve, Sketch, arc_sweep};
 
@@ -80,7 +82,7 @@ pub fn cut_line(
 /// point, as [`Sketch::flatten`] draws a circle.
 pub fn flatten_circle(center: DVec2, radius: f64) -> Vec<DVec2> {
     let mut points: Vec<_> = (0..CIRCLE_SEGMENTS)
-        .map(|i| center + radius * DVec2::from_angle(TAU * i as f64 / CIRCLE_SEGMENTS as f64))
+        .map(|i| center + radius * angle::from_angle(TAU * i as f64 / CIRCLE_SEGMENTS as f64))
         .collect();
     points.push(points[0]);
     points
@@ -92,14 +94,14 @@ pub fn flatten_circle(center: DVec2, radius: f64) -> Vec<DVec2> {
 /// changing evenly from one end's to the other's.
 pub fn flatten_arc(center: DVec2, start: DVec2, end: DVec2) -> Vec<DVec2> {
     let (from, to) = (start - center, end - center);
-    let begin = from.to_angle();
+    let begin = angle::to_angle(from);
     let sweep = arc_sweep(from, to);
     let segments = arc_segments(sweep);
     let (r0, r1) = (from.length(), to.length());
     let mut points = vec![start];
     points.extend((1..segments).map(|i| {
         let t = i as f64 / segments as f64;
-        center + (r0 + (r1 - r0) * t) * DVec2::from_angle(begin + sweep * t)
+        center + (r0 + (r1 - r0) * t) * angle::from_angle(begin + sweep * t)
     }));
     points.push(end);
     points

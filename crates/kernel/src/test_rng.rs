@@ -1,6 +1,11 @@
 //! A small seeded generator for the kernel's property tests, so they need
 //! no dependency and every run sees the same inputs.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "std maths as an independent reference, or to build inputs"
+)]
+
 use glam::DVec3;
 
 /// SplitMix64: fast, and good enough for picking test inputs.

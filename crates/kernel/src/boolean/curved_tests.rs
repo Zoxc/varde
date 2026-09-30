@@ -2,6 +2,11 @@
 //! cuts are exact, and crossing cylinders, a free surface and a saddle,
 //! whose cuts are traced and fitted.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "std maths as an independent reference, or to build inputs"
+)]
+
 use std::f64::consts::PI;
 
 use glam::{DMat3, DQuat, DVec2, DVec3};

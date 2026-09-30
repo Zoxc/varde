@@ -213,7 +213,7 @@ pub(crate) fn dependencies(jacobian: &Mat<f64>) -> Dependencies {
     );
     let fixed = (0..columns)
         .map(|var| {
-            let part: f64 = (0..free).map(|k| null[(var, k)].powi(2)).sum();
+            let part: f64 = (0..free).map(|k| null[(var, k)] * null[(var, k)]).sum();
             part.sqrt() <= FIXED_TOLERANCE
         })
         .collect();

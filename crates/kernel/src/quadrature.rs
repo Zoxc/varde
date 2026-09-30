@@ -64,6 +64,10 @@ pub(crate) fn triangle_rule() -> impl Iterator<Item = (glam::DVec3, f64)> {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "std maths as an independent reference, or to build inputs"
+)]
 mod tests {
     use super::*;
 

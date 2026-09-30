@@ -26,6 +26,8 @@ use std::fmt;
 
 use glam::DVec2;
 
+use crate::angle;
+
 use crate::intersect::{Geom, meet, tolerance};
 use crate::sets::Sets;
 use crate::spline::bezier;
@@ -679,7 +681,7 @@ impl<'c> Graph<'c> {
             let start = self.ends(h).0;
             out[start].push(Leaving {
                 h,
-                angle: direction.to_angle(),
+                angle: angle::to_angle(direction),
                 curvature,
                 off: geom.at(from) - self.vertices[start],
             });
@@ -1088,7 +1090,7 @@ fn sort_around(leaving: &mut [Leaving], length: &dyn Fn(usize) -> f64, rounding:
                 .fold(f64::INFINITY, f64::min)
                 / 2.0;
             let side = |leaving: &Leaving| {
-                let off = DVec2::from_angle(base).perp_dot(leaving.off);
+                let off = angle::from_angle(base).perp_dot(leaving.off);
                 let off = if off.abs() <= rounding { 0.0 } else { off };
                 // Across the angles' wrap, the long way round.
                 let turned = match leaving.angle - base {
@@ -1096,7 +1098,7 @@ fn sort_around(leaving: &mut [Leaving], length: &dyn Fn(usize) -> f64, rounding:
                     turned if turned < -PI => turned + TAU,
                     turned => turned,
                 };
-                off + turned.sin() * along + leaving.curvature * along * along / 2.0
+                off + angle::sin(turned) * along + leaving.curvature * along * along / 2.0
             };
             group.sort_by(|a, b| side(a).total_cmp(&side(b)));
         }

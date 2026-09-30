@@ -18,6 +18,19 @@ drawn in a chain share the point between them. An arc runs
 counter-clockwise from `start` to `end` around `center`; until the solver
 holds its radii equal, the radius changes evenly along it.
 
+**Angles** (`angle.rs`): every `sin`, `cos`, `tan`, `atan2`, `acos`,
+`exp`, `ln` and `hypot` in the crate goes through `crate::angle`, which
+wraps the `libm` crate (`from_angle(a)` is `(cos a, sin a)`, `to_angle(v)`
+is `atan2(v.y, v.x)`, `between(a, b)` is glam's `angle_to` unsigned), not
+std's or glam's, which come from the platform's maths library. So an arc's
+start angle, the places `Geom::at` gives (the profile vertices at arc ends
+and crossings), and the edit-time results have the same bits natively and
+on the web (where std's are this code already), and the kernel's `trig`
+agrees with them to the bit. `crates/sketch/clippy.toml` refuses std's
+versions (and `powi`, `powf`) through `disallowed-methods`; tests using
+std as an independent reference, or to build inputs, allow it in their
+module.
+
 A **spline** (`spline.rs`, `Curve::Spline(Spline)`, "Spline 1") is a
 cubic non-rational B-spline, open (clamped) or `closed` (periodic), its
 parameter from 0 to 1. `SplineKind::Through` passes through its

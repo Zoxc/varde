@@ -9,6 +9,7 @@ license.workspace = true
 faer.workspace = true
 varde-expr = { workspace = true, features = ["serde"] }
 glam.workspace = true
+libm.workspace = true
 serde.workspace = true
 
 [dev-dependencies]

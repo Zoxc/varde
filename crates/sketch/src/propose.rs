@@ -8,6 +8,8 @@ use std::f64::consts::PI;
 use std::fmt;
 
 use glam::DVec2;
+
+use crate::angle;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -260,7 +262,7 @@ fn continuation(
                 Measure::Angle(..) => old + (new - old) * t,
                 // Evenly in proportion, as a length only changes by a
                 // factor at each step.
-                _ => (old.ln() + (new.ln() - old.ln()) * t).exp(),
+                _ => angle::exp(angle::ln(*old) + (angle::ln(*new) - angle::ln(*old)) * t),
             };
             let dimension = stepped
                 .dimension_mut(*id)
@@ -284,7 +286,7 @@ fn continuation(
 fn steps(measure: &Measure, old: f64, new: f64) -> u32 {
     let steps = match measure {
         Measure::Angle(..) => (new - old).abs() / ANGLE_STEP,
-        _ => (new.ln() - old.ln()).abs() / LENGTH_STEP.ln(),
+        _ => (angle::ln(new) - angle::ln(old)).abs() / angle::ln(LENGTH_STEP),
     };
     if steps.is_finite() {
         // Within a u32 once bounded; the cast of a number to an integer
