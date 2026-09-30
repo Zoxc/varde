@@ -3,10 +3,11 @@
 
 use iced::widget::{
     MouseArea, Space, button, column, container, hover, mouse_area, row, scrollable, space, stack,
-    text, text_input,
+    text, text_input, tooltip,
 };
 use iced::{Alignment, Element, Font, Length, Padding};
-use varde_document::{Document, Feature, FeatureId, FeatureKind};
+use varde_document::{Document, Extent, Feature, FeatureId, FeatureKind};
+use varde_expr::LengthUnit;
 use varde_sketch::{ConstraintEntry, Curve, DimensionEntry, Id, Sketch};
 
 use crate::chrome::{ChipSize, Edge, edged, icon_button, key_chip};
@@ -19,7 +20,7 @@ use crate::{
     ValueTarget, dimension, split,
 };
 
-const ROW_HEIGHT: f32 = 28.0;
+pub(crate) const ROW_HEIGHT: f32 = 28.0;
 
 /// The docked panel left of the viewport. Shows the selected tab, or the
 /// other one while peeking with the peek key held. Bodies and features can
@@ -88,7 +89,12 @@ pub fn side_panel<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
     let content = match (shown, state.sketch) {
         (Panel::Sketch, Some(sketch)) => sketch_tab(sketch),
         (Panel::Objects, _) => scrolled(objects(document, editable)),
-        _ => scrolled(timeline(document, state.selected_feature, state.unsolved)),
+        _ => scrolled(timeline(
+            document,
+            state.selected_feature,
+            state.unsolved,
+            state.failed,
+        )),
     };
 
     edged(
@@ -115,11 +121,12 @@ fn empty_note<'a>(note: impl text::IntoFragment<'a>) -> Element<'a, Message> {
 }
 
 /// The features in the order they were added, the `selected` one
-/// highlighted, and those `unsolved` marked.
+/// highlighted, those `unsolved` or `failed` marked.
 fn timeline<'a>(
     document: &'a Document,
     selected: Option<FeatureId>,
     unsolved: &[FeatureId],
+    failed: &'a [(FeatureId, String)],
 ) -> Element<'a, Message> {
     if document.features().is_empty() {
         return empty_note(format!(
@@ -127,33 +134,84 @@ fn timeline<'a>(
             Shortcut::SKETCH.label()
         ));
     }
+    let units = document.units();
     column(document.features().iter().map(|feature| {
         let unsolved = unsolved.contains(&feature.id);
-        feature_row(feature, selected == Some(feature.id), unsolved)
+        let failed = failed
+            .iter()
+            .find(|(id, _)| *id == feature.id)
+            .map(|(_, why)| why.as_str());
+        feature_row(
+            feature,
+            units,
+            selected == Some(feature.id),
+            unsolved,
+            failed,
+        )
     }))
     .into()
 }
 
-/// A feature in the Timeline, marked failed if it's `unsolved`: clicking
-/// selects it, double-clicking edits it.
-fn feature_row(feature: &Feature, selected: bool, unsolved: bool) -> Element<'_, Message> {
-    let (icon, note) = match &feature.kind {
-        FeatureKind::Sketch { .. } if unsolved => (Icon::Sketch, Some("Doesn't solve")),
-        FeatureKind::Sketch { plane, .. } => (Icon::Sketch, Some(plane.name())),
-        FeatureKind::Extrude(_) => (Icon::Body, None),
+/// The icon of `feature`, in the Timeline and wherever it's listed.
+pub(crate) fn feature_icon(feature: &Feature) -> Icon {
+    match feature.kind {
+        FeatureKind::Sketch { .. } => Icon::Sketch,
+        FeatureKind::Extrude(_) => Icon::Extrude,
+    }
+}
+
+/// A feature in the Timeline, with its note: a sketch's plane, an
+/// extrude's distances in `units`. Marked failed if it's `unsolved`, or
+/// `failed` and why, which hovering it tells. Clicking selects it,
+/// double-clicking edits it.
+fn feature_row<'a>(
+    feature: &'a Feature,
+    units: LengthUnit,
+    selected: bool,
+    unsolved: bool,
+    failed: Option<&'a str>,
+) -> Element<'a, Message> {
+    let note = match &feature.kind {
+        FeatureKind::Sketch { .. } if unsolved => "Doesn't solve".into(),
+        FeatureKind::Sketch { plane, .. } => plane.name().into(),
+        FeatureKind::Extrude(extrude) => extent_note(&extrude.extent, units).into(),
     };
     let row = SelectableRow {
-        icon,
+        icon: feature_icon(feature),
         name: feature.name.as_str().into(),
         faint: !feature.visible,
-        danger: unsolved,
-        note,
+        danger: unsolved || failed.is_some(),
+        note: Some(note),
         indent: 8.0,
         selected,
     };
-    row.view(Message::Look(Look::SelectFeature(feature.id)))
-        .on_double_click(Message::Look(Look::EditFeature(feature.id)))
-        .into()
+    let row = row
+        .view(Message::Look(Look::SelectFeature(feature.id)))
+        .on_double_click(Message::Look(Look::EditFeature(feature.id)));
+    match failed {
+        Some(why) => tooltip(
+            row,
+            container(text(why).size(12).style(theme::danger_text))
+                .padding([3, 6])
+                .max_width(SIDE_PANEL_WIDTH * 1.5)
+                .style(theme::menu),
+            tooltip::Position::Bottom,
+        )
+        .into(),
+        None => row.into(),
+    }
+}
+
+/// How far an extrude goes, for its Timeline row, in `units`: "10 mm",
+/// "10 mm symmetric", "10 mm + 5 mm", "Through all".
+pub(crate) fn extent_note(extent: &Extent, units: LengthUnit) -> String {
+    let length = |value: &varde_expr::Value| varde_expr::format(value.value, Some(units.into()));
+    match extent {
+        Extent::OneSide(d) => length(d),
+        Extent::Symmetric(d) => format!("{} symmetric", length(d)),
+        Extent::TwoSides(a, b) => format!("{} + {}", length(a), length(b)),
+        Extent::ThroughAll => "Through all".to_owned(),
+    }
 }
 
 /// A row of a list that's selected by clicking it: an icon, a name, and a
@@ -167,7 +225,7 @@ struct SelectableRow<'a> {
     /// Whether the name is in the danger colour, as a sketch that doesn't
     /// solve or a constraint in conflict is.
     danger: bool,
-    note: Option<&'static str>,
+    note: Option<text::Fragment<'a>>,
     /// Room left of the icon, in pixels.
     indent: f32,
     selected: bool,
@@ -187,6 +245,7 @@ impl<'a> SelectableRow<'a> {
                     },
                     space::horizontal(),
                     self.note
+                        .clone()
                         .map(|note| text(note).size(11.5).style(theme::faint_text)),
                 ]
                 .spacing(8)
@@ -431,7 +490,7 @@ fn item_row<'a>(
         name: name.into(),
         faint: sketch.pending.contains(&id),
         danger,
-        note,
+        note: note.map(Into::into),
         indent: 24.0,
         selected: sketch.selection.contains(&id),
     };
@@ -615,6 +674,29 @@ pub(crate) fn value_field<'a>(placeholder: &str, text: &'a str) -> Element<'a, M
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_extrude_is_noted_by_its_distances_in_the_units() {
+        let length = |value: f64| varde_expr::Value {
+            text: String::new(),
+            value,
+        };
+        let mm = LengthUnit::Mm;
+        assert_eq!(extent_note(&Extent::OneSide(length(10.0)), mm), "10 mm");
+        assert_eq!(
+            extent_note(&Extent::OneSide(length(12.7)), LengthUnit::In),
+            "0.5 in"
+        );
+        assert_eq!(
+            extent_note(&Extent::Symmetric(length(4.0)), mm),
+            "4 mm symmetric"
+        );
+        assert_eq!(
+            extent_note(&Extent::TwoSides(length(10.0), length(2.5)), mm),
+            "10 mm + 2.5 mm"
+        );
+        assert_eq!(extent_note(&Extent::ThroughAll, mm), "Through all");
+    }
 
     #[test]
     fn only_the_rows_in_view_are_laid_out() {

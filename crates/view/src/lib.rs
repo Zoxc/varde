@@ -36,15 +36,15 @@ mod welcome;
 use std::path::PathBuf;
 
 use glam::DVec2;
-use varde_document::{BodyId, FeatureId, OriginPlane};
+use varde_document::{BodyId, FeatureId, OriginPlane, Tolerance};
 use varde_expr::LengthUnit;
 use varde_render::{Projection, View};
 use varde_sketch::{Id, Sketch};
 
 pub use constrain::{ConstraintKind, ConstraintSet};
 pub use document::{
-    ActiveTool, DocumentState, MeshStatus, Overlay, RecoveredChanges, SketchState, ValueField,
-    ValueTarget, document,
+    ActiveTool, DeletePrompt, DocumentState, MeshStatus, Overlay, RecoveredChanges, SketchState,
+    ValueField, ValueTarget, document,
 };
 pub use extrude::{
     Candidate, Distance, DistanceField, ExtentKind, ExtrudeLook, ExtrudeState, Handle,
@@ -109,11 +109,20 @@ pub enum Edit {
     /// Hides why the last save failed.
     DismissSaveError,
     ToggleFileMenu,
+    /// Removes the body and the feature making it, as one undo step, at
+    /// once if nothing else goes with them, or else asking first (see
+    /// [`DeletePrompt`]).
     RemoveBody(BodyId),
     ToggleVisible(BodyId),
     /// Adds a sketch on `plane` and edits it.
     NewSketch(OriginPlane),
+    /// Removes the feature and the bodies it makes, as one undo step, at
+    /// once if no other feature depends on it, or else asking first (see
+    /// [`DeletePrompt`]).
     RemoveFeature(FeatureId),
+    /// Removes what the delete prompt lists, as one undo step: its
+    /// Delete button.
+    ConfirmDelete,
     ToggleFeatureVisible(FeatureId),
     /// A click in the sketch being edited with its tool.
     ToolClick(ToolClick),
@@ -164,6 +173,8 @@ pub enum Edit {
     CommitExtrude,
     /// Changes the design's units.
     SetUnits(LengthUnit),
+    /// Changes the design's tolerance, which regenerates everything.
+    SetTolerance(Tolerance),
     Undo,
     Redo,
 }
@@ -174,10 +185,13 @@ pub enum Edit {
 #[derive(Debug, Clone)]
 pub enum Look {
     CloseFileMenu,
-    /// Backs out of whatever is open, the innermost first: the file menu,
-    /// picking a plane, dragging geometry, the shape the sketch's tool is
-    /// drawing, the tool (or the Constrain tool), the sketch, the
-    /// selection.
+    /// Closes the delete prompt, deleting nothing: its Cancel button, or
+    /// `Esc`.
+    CancelDelete,
+    /// Backs out of whatever is open, the innermost first: the delete
+    /// prompt, the file menu, picking a plane, dragging geometry, the
+    /// shape the sketch's tool is drawing, the tool (or the Constrain
+    /// tool), the sketch, the selection.
     Escape,
     SelectPanel(Panel),
     /// Starts picking the plane for a new sketch, or backs out of it.

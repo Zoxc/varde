@@ -176,7 +176,9 @@ dropped asks again without one). An answer of the same generation is
 taken only if it's for what was asked last, sketch and draft revision
 both, so a late answer for an older draft never replaces a newer one;
 the draft's error shows in the panel only while it's for the draft asked
-for last. The app doesn't show `failed` yet.
+for last. The feed keeps the answer's `failed` with the model shown, and
+the Timeline marks those features (see "The extrude UI" in
+`agents/kernel.md`).
 
 Natively each open document has a regeneration thread (`regen::lane`),
 started by an iced subscription keyed by the document's id. The

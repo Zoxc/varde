@@ -1229,6 +1229,39 @@ and OK. The handle and region picking are in `agents/viewport.md`.
 Dragging a knob types its distance (one side past the plane flips; a knob
 on the plane changes nothing) as the design's units format it.
 
+**The Timeline** (`view/src/panels.rs`) shows an extrude with the extrude
+icon and its distances as the note, in the design's units
+(`extent_note`: "10 mm", "10 mm symmetric", "10 mm + 5 mm", "Through
+all"). A feature in the answer's `failed` (which `MeshFeed` keeps with
+the model shown, `failed_features`) has its name in the danger colour
+and tells why in a tooltip; a sketch that doesn't solve is marked as
+before. Double-clicking an extrude opens its session.
+
+**Deleting** (`app/src/doc/delete.rs`): `Edit::RemoveFeature` (`Delete`
+on the Timeline's selection) and `Edit::RemoveBody` (Objects' bin) ask
+`Document::removal` what goes. If that's one feature (a feature and its
+own bodies, or a body and the feature making it) the command applies at
+once. Otherwise the app keeps a `Deleting` (the target, the `Removal`,
+the editor's generation) and the view shows `DeletePrompt` over the
+whole screen, on the unsaved-changes prompt's scrim: "Delete *name* and
+N features that depend on it?", the features in timeline order with
+their icons, then the bodies, scrolling past about ten rows, Cancel
+(`Look::CancelDelete`, also `Esc`: `Doc::dialog` tells the escape key
+which prompt is up, the unsaved one first) and Delete
+(`Edit::ConfirmDelete`, danger style, no `Enter`). While it's up
+`Doc::keys` is `None`, so no shortcut acts behind it. Delete applies the
+same command, so exactly the listed set goes, one undo step. The prompt
+is dropped in `sync` once the generation moves (undo, a proposal
+committing, recovery), and a stale one is neither shown nor applied. A
+read-only document asks nothing and deletes nothing.
+
+**Tolerance** (`view/src/toolbar.rs`): the file menu has a "Tolerance"
+heading under Units with 0.1 µm, 1 µm and 10 µm, each sending
+`Edit::SetTolerance` (`Command::SetTolerance`, one undo step, which
+regenerates everything as the cache keys hold the tolerance). A value
+from a file that isn't one of those shows as a fourth, unticked row,
+named in µm.
+
 ## Limits, budgets and errors (`src/lib.rs`, `src/budget.rs`, `src/error.rs`)
 
 | constant | value | why |

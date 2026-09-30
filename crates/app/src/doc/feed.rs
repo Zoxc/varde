@@ -24,6 +24,9 @@ pub(crate) struct MeshFeed {
     sketches: Arc<RenderLines>,
     /// The sketches that don't solve, of the same generation as `mesh`.
     unsolved: Vec<FeatureId>,
+    /// The features that failed and why, of the same generation as
+    /// `mesh`, in the document's order.
+    failed_features: Vec<(FeatureId, String)>,
     /// How the draft of the model shown went, if it had one.
     drafted: Option<Drafted>,
     /// What `mesh` is of, or `None` before the first one arrives.
@@ -149,12 +152,14 @@ impl MeshFeed {
                 mesh,
                 sketches,
                 unsolved,
+                failed,
                 draft,
                 ..
             } => {
                 self.mesh = mesh;
                 self.sketches = sketches;
                 self.unsolved = unsolved;
+                self.failed_features = failed;
                 self.drafted = draft;
                 self.shown = Some(asked);
                 self.failed = None;
@@ -253,6 +258,12 @@ impl MeshFeed {
     /// The sketches that don't solve, as the model shown found.
     pub(crate) fn unsolved(&self) -> &[FeatureId] {
         &self.unsolved
+    }
+
+    /// The features that failed and why, as the model shown found: with
+    /// a draft, those of the document with the draft applied.
+    pub(crate) fn failed_features(&self) -> &[(FeatureId, String)] {
+        &self.failed_features
     }
 }
 

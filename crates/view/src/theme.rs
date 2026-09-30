@@ -548,10 +548,22 @@ impl Emphasis {
 /// The main call to action: accent fill with white text.
 pub fn primary_button(theme: &Theme, status: button::Status) -> button::Style {
     let p = palette(theme);
+    filled_button(p, p.accent, status)
+}
+
+/// The main call to action where it destroys something: danger fill with
+/// white text.
+pub fn danger_button(theme: &Theme, status: button::Status) -> button::Style {
+    let p = palette(theme);
+    filled_button(p, p.danger, status)
+}
+
+/// A button filled with `fill`, with white text.
+fn filled_button(p: &Palette, fill: Color, status: button::Status) -> button::Style {
     let background = match status {
-        button::Status::Disabled => p.accent.scale_alpha(0.5),
-        _ if is_hovered(status) => brighten(p.accent, 1.08),
-        _ => p.accent,
+        button::Status::Disabled => fill.scale_alpha(0.5),
+        _ if is_hovered(status) => brighten(fill, 1.08),
+        _ => fill,
     };
     button::Style {
         background: Some(Background::Color(background)),

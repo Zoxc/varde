@@ -3727,14 +3727,18 @@ pub(crate) fn press(key: keyboard::Key, modifiers: keyboard::Modifiers) -> keybo
 }
 
 #[test]
-fn escape_either_stays_or_closes_the_file_menu() {
+fn escape_cancels_a_prompt_or_closes_the_file_menu() {
     let escape = || press(keyboard::Key::Named(key::Named::Escape), Default::default());
     assert!(matches!(
-        escape_key((true, escape())),
+        escape_key((Some(Dialog::Unsaved), escape())),
         Some(Message::Ui(Ui::File(File::Unsaved(Unsaved::Cancel))))
     ));
     assert!(matches!(
-        escape_key((false, escape())),
+        escape_key((Some(Dialog::Delete), escape())),
+        Some(Message::Ui(Ui::Look(Look::CancelDelete)))
+    ));
+    assert!(matches!(
+        escape_key((None, escape())),
         Some(Message::Ui(Ui::Look(Look::Escape)))
     ));
 }

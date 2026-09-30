@@ -25,7 +25,7 @@ use varde_io::{
 };
 use varde_view::{File, Held, Look, Message as Ui, Mode, Unsaved};
 
-use crate::doc::{Doc, DocId, Downloader, Downloads, Focus, Leave};
+use crate::doc::{Dialog, Doc, DocId, Downloader, Downloads, Focus, Leave};
 use crate::io::Io;
 use crate::keys::{document_key, welcome_key};
 use crate::message::{ForDoc, Message};
@@ -415,11 +415,11 @@ impl Varde {
 
     pub(crate) fn subscription(&self) -> Subscription<Message> {
         let doc = self.screen.doc();
-        let prompting = doc.is_some_and(|doc| doc.prompt().is_some());
+        let dialog = doc.and_then(Doc::dialog);
         Subscription::batch([
             keyboard::listen().filter_map(peek_key),
             keyboard::listen().filter_map(command_key),
-            keyboard::listen().with(prompting).filter_map(escape_key),
+            keyboard::listen().with(dialog).filter_map(escape_key),
             // The release is never seen if the window loses focus while
             // the peek key is held, e.g. to an Alt+Tab.
             window::events().filter_map(unfocused),
@@ -592,10 +592,10 @@ fn command_key(event: keyboard::Event) -> Option<Message> {
     }
 }
 
-/// Escape, given whether the user is being asked about unsaved changes:
-/// stays if so, and otherwise backs out of what's open, see
-/// [`Look::Escape`].
-fn escape_key((prompting, event): (bool, keyboard::Event)) -> Option<Message> {
+/// Escape, given the prompt the user is being asked, if any: cancels it
+/// (staying, or deleting nothing), and otherwise backs out of what's
+/// open, see [`Look::Escape`].
+fn escape_key((dialog, event): (Option<Dialog>, keyboard::Event)) -> Option<Message> {
     // With any modifiers, unlike a shortcut.
     let keyboard::Event::KeyPressed {
         key: keyboard::Key::Named(key::Named::Escape),
@@ -604,10 +604,10 @@ fn escape_key((prompting, event): (bool, keyboard::Event)) -> Option<Message> {
     else {
         return None;
     };
-    Some(Message::Ui(if prompting {
-        Ui::File(File::Unsaved(Unsaved::Cancel))
-    } else {
-        Ui::Look(Look::Escape)
+    Some(Message::Ui(match dialog {
+        Some(Dialog::Unsaved) => Ui::File(File::Unsaved(Unsaved::Cancel)),
+        Some(Dialog::Delete) => Ui::Look(Look::CancelDelete),
+        None => Ui::Look(Look::Escape),
     }))
 }
 

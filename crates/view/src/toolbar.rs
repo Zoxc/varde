@@ -1,8 +1,10 @@
 //! The document toolbar and its file menu.
 
+use std::borrow::Cow;
+
 use iced::widget::{Space, button, column, container, mouse_area, opaque, row, space, text};
 use iced::{Alignment, Element, Length, Padding, mouse};
-use varde_document::{EXTENSION, OriginPlane};
+use varde_document::{EXTENSION, OriginPlane, Tolerance};
 use varde_expr::LengthUnit;
 
 use crate::chrome::{Edge, edged, hrule, icon_button, key_label, vrule};
@@ -317,11 +319,29 @@ fn op_button(
 const UNITS: [(LengthUnit, &str); 2] =
     [(LengthUnit::Mm, "Millimetres"), (LengthUnit::In, "Inches")];
 
+/// The tolerances the file menu offers, by fit tolerance in mm, with
+/// their names.
+const TOLERANCES: [(f64, &str); 3] = [(1e-4, "0.1 µm"), (1e-3, "1 µm"), (1e-2, "10 µm")];
+
+/// The name of the fit tolerance `fit`, in mm, in micrometres to three
+/// decimals without trailing zeros: "0.05 µm", "25 µm".
+fn tolerance_label(fit: f64) -> String {
+    let mut text = format!("{:.3}", fit * 1000.0);
+    let kept = text.trim_end_matches('0').trim_end_matches('.').len();
+    text.truncate(kept);
+    format!("{text} µm")
+}
+
 /// The file menu, as a layer over the whole screen. Clicking outside the
-/// menu closes it. Save, and changing the design's `units`, are disabled
-/// unless the document is `editable`.
-pub fn file_menu(editable: bool, units: LengthUnit) -> Element<'static, Message> {
-    let item = |icon, label, key: Option<Shortcut>, message: Option<Message>| {
+/// menu closes it. Save, and changing the design's `units` or its
+/// `tolerance`, are disabled unless the document is `editable`. A
+/// tolerance the menu doesn't offer, from a file, shows unticked.
+pub fn file_menu(
+    editable: bool,
+    units: LengthUnit,
+    tolerance: Tolerance,
+) -> Element<'static, Message> {
+    let item = |icon, label: Cow<'static, str>, key: Option<Shortcut>, message: Option<Message>| {
         let enabled = message.is_some();
         let key = key.map(|key| container(key_label(key)).align_right(Length::Fill));
         button(
@@ -345,9 +365,9 @@ pub fn file_menu(editable: bool, units: LengthUnit) -> Element<'static, Message>
     };
     let separator = || container(hrule()).padding([4, 2]);
 
-    let bound = |icon, label, binding: Binding| {
+    let bound = |icon, label: &'static str, binding: Binding| {
         let message = binding.sends();
-        item(icon, label, Some(binding.shortcut), message)
+        item(icon, label.into(), Some(binding.shortcut), message)
     };
 
     // Export and the rest join Save once they exist.
@@ -359,31 +379,42 @@ pub fn file_menu(editable: bool, units: LengthUnit) -> Element<'static, Message>
     ];
     // A new design starts in millimetres; its units are chosen here, and
     // changed here later.
-    let heading = container(
-        text("Units")
-            .size(11.5)
-            .font(SEMIBOLD)
-            .style(theme::muted_text),
-    )
-    .padding([4, 8]);
+    let heading = |label| {
+        container(
+            text(label)
+                .size(11.5)
+                .font(SEMIBOLD)
+                .style(theme::muted_text),
+        )
+        .padding([4, 8])
+    };
+    let ticked = |on| if on { Icon::Check } else { Icon::Blank };
     let choices = UNITS.map(|(unit, label)| {
         let message = editable.then_some(Message::Edit(Edit::SetUnits(unit)));
-        let icon = if unit == units {
-            Icon::Check
-        } else {
-            Icon::Blank
-        };
-        item(icon, label, None, message).into()
+        item(ticked(unit == units), label.into(), None, message).into()
+    });
+    // How closely curved surfaces are fitted, which is rarely changed.
+    let offered = TOLERANCES.map(|(fit, label)| (fit, label.to_owned()));
+    let listed = TOLERANCES.iter().any(|&(fit, _)| fit == tolerance.fit());
+    let other = (!listed).then(|| (tolerance.fit(), tolerance_label(tolerance.fit())));
+    let tolerances = offered.into_iter().chain(other).map(|(fit, label)| {
+        let message = Tolerance::new(fit)
+            .filter(|_| editable)
+            .map(|tolerance| Message::Edit(Edit::SetTolerance(tolerance)));
+        let on = listed && fit == tolerance.fit();
+        item(ticked(on), label.into(), None, message).into()
     });
     let menu = container(
         column![
             saving,
-            heading,
+            heading("Units"),
             column(choices),
+            heading("Tolerance"),
+            column(tolerances),
             separator(),
             item(
                 Icon::Close,
-                "Close document",
+                "Close document".into(),
                 None,
                 Some(Message::File(File::CloseDocument))
             ),
@@ -403,4 +434,21 @@ pub fn file_menu(editable: bool, units: LengthUnit) -> Element<'static, Message>
     .on_press(Message::Look(Look::CloseFileMenu))
     .on_right_press(Message::Look(Look::CloseFileMenu))
     .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tolerances_are_named_in_micrometres() {
+        for (fit, label) in TOLERANCES {
+            assert!(Tolerance::new(fit).is_some(), "{label}");
+            assert_eq!(tolerance_label(fit), label);
+        }
+        assert_eq!(tolerance_label(Tolerance::MIN_FIT), "0.01 µm");
+        assert_eq!(tolerance_label(Tolerance::MAX_FIT), "100 µm");
+        assert_eq!(tolerance_label(0.025), "25 µm");
+        assert_eq!(tolerance_label(5e-5), "0.05 µm");
+    }
 }

@@ -368,7 +368,9 @@ impl Doc {
     /// Mirror tool has picked), the tool, the sketch, the feature
     /// selected.
     pub(crate) fn escape(&mut self) {
-        if self.file_menu {
+        if self.deleting.is_some() {
+            self.deleting = None;
+        } else if self.file_menu {
             self.file_menu = false;
         } else if self.picking_plane {
             self.picking_plane = false;

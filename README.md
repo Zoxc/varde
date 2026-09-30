@@ -26,9 +26,10 @@ reopen a recent file, or recover unsaved changes left by a crash.
 | peek at the other side tab  | hold `Alt` (`Option` on macOS)             |
 | new sketch                  | `S`, then pick the XY, XZ or YZ plane      |
 | edit a sketch               | double-click it in the Timeline, or select it and press `Enter` |
-| delete a sketch             | select it in the Timeline and press `Delete` |
+| delete a feature            | select it in the Timeline and press `Delete`; if other features use it, a prompt lists everything that goes with it first (`Esc` cancels) |
+| delete a body               | the bin by it in Objects, which deletes the extrude making it too |
 | extrude                     | `E` (with a sketch selected in the Timeline, its regions), click the regions to extrude (again to take one out), then drag the arrow's knob or type the distance in the panel; `Enter` or OK adds it, `Esc` cancels |
-| edit an extrude             | double-click it in the Timeline, or select it and press `Enter` |
+| edit an extrude             | double-click it in the Timeline, or select it and press `Enter`; an extrude that fails shows red there, and hovering it says why |
 | draw in a sketch            | `L` line, `R` rectangle, `C` circle, `A` arc, `G` polygon, `N` spline, `P` point, then click; `Esc` stops; clicks snap (see below), hold `Shift` not to; `Tab` to type sizes (see below) |
 | line tool                   | click point after point; click the first point to close the loop, `Esc` or double-click to end; clicking a point already there joins it |
 | rectangle                   | two opposite corners, or with `Q` the centre and a corner (`Q` again goes back); it comes held level and upright |
@@ -46,6 +47,7 @@ reopen a recent file, or recover unsaved changes left by a crash.
 | save / save as              | `Ctrl S` / `Ctrl Shift S` (`Cmd` on macOS) |
 | close the file menu         | `Esc`                                      |
 | design units                | the file menu: millimetres or inches       |
+| design tolerance            | the file menu: 0.1 µm, 1 µm (the default) or 10 µm, how closely curved shapes are fitted |
 
 ### Snapping
 

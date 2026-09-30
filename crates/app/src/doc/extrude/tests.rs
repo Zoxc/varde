@@ -2,9 +2,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use iced::keyboard::{self, key};
-use varde_document::{Command, Document, Editor, FeatureId, FeatureKind, Operation};
+use varde_document::{Command, Document, Editor, FeatureId, FeatureKind, Operation, Tolerance};
 use varde_regen::Request;
-use varde_view::{Distance, Edit, ExtentKind, ExtrudeLook, Look, OperationKind};
+use varde_view::{Distance, Edit, ExtentKind, ExtrudeLook, Look, Mode, OperationKind};
 
 use super::*;
 use crate::tests::{answer, deferred, key_in, press_in};
@@ -409,4 +409,60 @@ fn the_panel_s_field_takes_typing_enter_as_ok_and_escape_as_cancel() {
         ),
         "{shortcuts:?}"
     );
+}
+
+/// The example, "Sketch 1" and "Extrude 1" making "Body 1", answered by
+/// the regeneration lane, whose requests wait for the test.
+fn example() -> (Doc, Requests) {
+    let (mut doc, requests) = deferred();
+    doc.apply(Command::Replace(Box::new(Document::example())));
+    doc.sync();
+    answer(&mut doc, &requests);
+    (doc, requests)
+}
+
+#[test]
+fn a_failing_extrude_is_marked_in_the_timeline() {
+    let (mut doc, requests) = example();
+    let feature = doc.editor.document().features()[1].id;
+    assert!(doc.feed.failed_features().is_empty());
+
+    // Joining isn't available yet, so it fails and makes nothing.
+    let mut extrude = extrudes(&doc)[0].clone();
+    extrude.operation = Operation::Join(Default::default());
+    doc.apply(Command::SetExtrude {
+        feature,
+        extrude: Box::new(extrude),
+    });
+    doc.sync();
+    answer(&mut doc, &requests);
+    let failed = doc.feed.failed_features();
+    assert_eq!(failed.len(), 1);
+    assert_eq!(failed[0].0, feature);
+    assert!(failed[0].1.contains("isn't available"), "{}", failed[0].1);
+    assert_eq!(doc.feed.mesh().triangle_count(), 0);
+    doc.look(Look::SelectPanel(varde_view::Panel::Timeline));
+    let _ = doc.view(false, Mode::default());
+
+    // Undone, it goes again.
+    doc.update(Edit::Undo);
+    answer(&mut doc, &requests);
+    assert!(doc.feed.failed_features().is_empty());
+}
+
+#[test]
+fn the_tolerance_is_set_from_the_file_menu() {
+    let (mut doc, _) = example();
+    doc.update(Edit::ToggleFileMenu);
+    let _ = doc.view(false, Mode::default());
+    let coarse = Tolerance::new(1e-2).unwrap();
+    doc.update(Edit::SetTolerance(coarse));
+    assert_eq!(doc.editor.document().tolerance(), coarse);
+    // A value the menu doesn't offer shows too.
+    doc.update(Edit::SetTolerance(Tolerance::new(5e-5).unwrap()));
+    doc.update(Edit::ToggleFileMenu);
+    let _ = doc.view(false, Mode::default());
+    doc.update(Edit::Undo);
+    doc.update(Edit::Undo);
+    assert_eq!(doc.editor.document().tolerance(), Tolerance::DEFAULT);
 }

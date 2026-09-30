@@ -6,10 +6,10 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use glam::DVec2;
-use iced::widget::{Space, button, column, container, opaque, row, space, stack, text};
+use iced::widget::{Space, button, column, container, opaque, row, scrollable, space, stack, text};
 use iced::{Alignment, Element, Length};
 use varde_document::EXTENSION;
-use varde_document::{APP_NAME, EditError, Editor, FeatureId, Plane};
+use varde_document::{APP_NAME, Body, EditError, Editor, Feature, FeatureId, Plane};
 use varde_expr::LengthUnit;
 use varde_kernel::{RenderLines, RenderMesh};
 use varde_render::Camera;
@@ -18,13 +18,13 @@ use varde_sketch::{
 };
 
 use crate::chrome::{self, chord_hint, key_hint, mouse_hint, small_button};
-use crate::icons::MouseButton;
+use crate::icons::{self, Icon, MouseButton};
 use crate::shortcut::{DocumentKeys, Held, Shortcut};
 use crate::theme::Emphasis;
 use crate::typed::Field;
 use crate::{
-    ConstraintKind, Edit, ExtrudeState, File, Message, Panel, Snap, Target, Tool, Unsaved, panels,
-    theme, toolbar, viewport,
+    ConstraintKind, Edit, ExtrudeState, File, Look, Message, Panel, Snap, Target, Tool, Unsaved,
+    panels, theme, toolbar, viewport,
 };
 
 /// Borrowed state needed to build the document screen.
@@ -75,6 +75,12 @@ pub struct DocumentState<'a> {
     pub extrudable: bool,
     /// The sketches that don't solve, as regenerating found.
     pub unsolved: &'a [FeatureId],
+    /// The features that failed and why, as regenerating found, in the
+    /// document's order.
+    pub failed: &'a [(FeatureId, String)],
+    /// What deleting a feature or body would take with it, asked about
+    /// before it's deleted, if it's being asked.
+    pub deleting: Option<DeletePrompt<'a>>,
     /// Whether edits are waiting on the solver, which undo drops.
     pub proposing: bool,
 }
@@ -381,6 +387,19 @@ pub enum MeshStatus<'a> {
     Failed(&'a str),
 }
 
+/// Asks whether to delete a feature or a body, and every feature and
+/// body that goes with it, before it's deleted.
+#[derive(Debug, Clone)]
+pub struct DeletePrompt<'a> {
+    /// The name of the feature or body asked to be deleted.
+    pub name: &'a str,
+    /// The features that go, in the Timeline's order: those depending on
+    /// it, and it or the feature making it.
+    pub features: Vec<&'a Feature>,
+    /// The bodies those make, which go with them.
+    pub bodies: Vec<&'a Body>,
+}
+
 /// A layer over the whole document screen.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Overlay {
@@ -452,13 +471,19 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
         ]
         .height(Length::Fill),
     ];
-    let content = match state.overlay {
-        Some(Overlay::UnsavedPrompt) => Element::from(stack![content, unsaved_prompt(state.name)]),
-        Some(Overlay::FileMenu) => {
-            let units = state.editor.document().units();
-            Element::from(stack![content, toolbar::file_menu(editable, units)])
+    // The prompt about unsaved changes shows over the delete prompt,
+    // which shows over the file menu.
+    let content = match (state.overlay, &state.deleting) {
+        (Some(Overlay::UnsavedPrompt), _) => {
+            Element::from(stack![content, unsaved_prompt(state.name)])
         }
-        None => content.into(),
+        (_, Some(deleting)) => Element::from(stack![content, delete_prompt(deleting)]),
+        (Some(Overlay::FileMenu), None) => {
+            let document = state.editor.document();
+            let menu = toolbar::file_menu(editable, document.units(), document.tolerance());
+            Element::from(stack![content, menu])
+        }
+        (None, None) => content.into(),
     };
 
     chrome::window(content, status(&state), hints(&state))
@@ -744,6 +769,69 @@ fn unsaved_prompt(name: &str) -> Element<'_, Message> {
                 choice("Save", Unsaved::Save, Emphasis::Primary),
             ]
             .spacing(8),
+        ]
+        .spacing(8)
+        .width(380),
+    )
+    .padding(18)
+    .style(theme::menu);
+
+    opaque(
+        container(opaque(dialog))
+            .center(Length::Fill)
+            .style(theme::scrim),
+    )
+}
+
+/// Asks whether to delete what `prompt` lists, as a dialog over the
+/// whole screen like [`unsaved_prompt`]: "Delete Sketch 1 and 2 features
+/// that depend on it?", then the features, in the Timeline's order, and
+/// the bodies, scrolling past about ten rows, and Cancel and Delete.
+fn delete_prompt<'a>(prompt: &DeletePrompt<'a>) -> Element<'a, Message> {
+    /// The rows shown before the list scrolls.
+    const ROWS: f32 = 10.5;
+    let others = prompt.features.len().saturating_sub(1);
+    let depend = if others == 1 { "depends" } else { "depend" };
+    let question = format!(
+        "Delete {} and {} that {depend} on it?",
+        prompt.name,
+        counted(others, "feature", "features")
+    );
+    let item = |icon, name: &'a str| {
+        row![icons::icon(icon, icons::INLINE), text(name)]
+            .spacing(8)
+            .height(panels::ROW_HEIGHT)
+            .align_y(Alignment::Center)
+            .into()
+    };
+    let features = prompt
+        .features
+        .iter()
+        .map(|feature| item(panels::feature_icon(feature), feature.name.as_str()));
+    let bodies = prompt
+        .bodies
+        .iter()
+        .map(|body| item(Icon::Body, body.name.as_str()));
+    let rows = prompt.features.len().saturating_add(prompt.bodies.len());
+    // Counts are bounded by the document's, far below f32's exact range.
+    let shown = (rows as f32).min(ROWS);
+    let list = scrollable(column(features.chain(bodies)))
+        .height(shown * panels::ROW_HEIGHT)
+        .width(Length::Fill);
+    let cancel = button(text("Cancel").font(theme::SEMIBOLD))
+        .padding([6, 14])
+        .style(theme::secondary_button)
+        .on_press(Message::Look(Look::CancelDelete));
+    let delete = button(text("Delete").font(theme::SEMIBOLD))
+        .padding([6, 14])
+        .style(theme::danger_button)
+        .on_press(Message::Edit(Edit::ConfirmDelete));
+    let dialog = container(
+        column![
+            text(question).size(14).font(theme::SEMIBOLD),
+            list,
+            Space::new().height(4),
+            row![space::horizontal(), cancel, delete].spacing(8),
         ]
         .spacing(8)
         .width(380),

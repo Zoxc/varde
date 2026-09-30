@@ -2,6 +2,7 @@
 //! [`save`].
 
 mod camera;
+mod delete;
 mod extrude;
 mod feed;
 mod save;
@@ -13,7 +14,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use glam::Vec3;
 use iced::Element;
 use varde_document::name::UNTITLED;
-use varde_document::{Command, Document, EditError, Editor, FeatureId, FeatureKind, LengthUnit};
+use varde_document::{
+    Command, Document, EditError, Editor, FeatureId, FeatureKind, LengthUnit, Removable,
+};
 use varde_io::{Access, Offer, OpenId};
 use varde_render::{Camera, Projection};
 use varde_solve::{Request as SolveRequest, Transport};
@@ -22,6 +25,7 @@ use varde_view::{DocumentKeys, Edit, Look, Message as Ui, Mode, Overlay, Panel, 
 #[cfg(test)]
 pub(crate) use camera::CAMERA_ANIMATION;
 pub(crate) use camera::CameraAnimation;
+use delete::Deleting;
 pub(crate) use extrude::ExtrudeSession;
 use feed::MeshFeed;
 use save::Persist;
@@ -59,6 +63,8 @@ pub(crate) struct Doc {
     pub(crate) name: String,
     pub(crate) panel: Panel,
     pub(crate) file_menu: bool,
+    /// The removal the user is asked about, if one is: see [`Doc::remove`].
+    pub(crate) deleting: Option<Deleting>,
     /// Whether the plane for a new sketch is being picked.
     pub(crate) picking_plane: bool,
     /// The feature selected in the Timeline, if any.
@@ -168,6 +174,7 @@ impl Doc {
             name,
             panel: Panel::default(),
             file_menu: false,
+            deleting: None,
             picking_plane: false,
             selected_feature: None,
             sketch: None,
@@ -188,6 +195,7 @@ impl Doc {
     /// shown if it changed.
     pub(crate) fn sync(&mut self) {
         self.refresh_waiting();
+        self.prune_deleting();
         self.prune();
         self.prune_extrude();
         self.send_proposal();
@@ -256,7 +264,7 @@ impl Doc {
         match message {
             Edit::ToggleFileMenu => self.file_menu = !self.file_menu,
             Edit::DismissSaveError => self.dismiss_save_error(),
-            Edit::RemoveBody(id) => self.apply(Command::RemoveBody(id)),
+            Edit::RemoveBody(id) => self.remove(Removable::Body(id)),
             Edit::ToggleVisible(id) => {
                 if let Some(body) = self.editor.document().body(id) {
                     let visible = !body.visible;
@@ -264,7 +272,8 @@ impl Doc {
                 }
             }
             Edit::NewSketch(plane) => self.new_sketch(plane),
-            Edit::RemoveFeature(id) => self.apply(Command::RemoveFeature(id)),
+            Edit::RemoveFeature(id) => self.remove(Removable::Feature(id)),
+            Edit::ConfirmDelete => self.confirm_delete(),
             Edit::ToggleFeatureVisible(id) => {
                 if let Some(feature) = self.editor.document().feature(id) {
                     let visible = !feature.visible;
@@ -289,6 +298,7 @@ impl Doc {
             // answered.
             Edit::SetUnits(units) if self.proposing() => self.units_waiting = Some(units),
             Edit::SetUnits(units) => self.apply(Command::SetUnits(units)),
+            Edit::SetTolerance(tolerance) => self.apply(Command::SetTolerance(tolerance)),
             // Undoing an edit still waiting on the solver drops it, and
             // those after it.
             Edit::Undo if self.proposing() => self.drop_proposals(),
@@ -348,6 +358,7 @@ impl Doc {
         }
         match message {
             Look::CloseFileMenu => self.file_menu = false,
+            Look::CancelDelete => self.deleting = None,
             Look::Escape => self.escape(),
             // Only the tabs showing can be picked, but a message sent before
             // entering or leaving a sketch may come after.
@@ -482,13 +493,26 @@ impl Doc {
     }
 
     /// What the document screen's shortcuts depend on, or `None` while
-    /// the user is asked about unsaved changes: only the prompt's buttons
-    /// and `Esc` act then, not keys changing the document behind it.
+    /// the user is asked about unsaved changes or deleting: only the
+    /// prompt's buttons and `Esc` act then, not keys changing the document
+    /// behind it.
     pub(crate) fn keys(&self) -> Option<DocumentKeys> {
-        self.prompt().is_none().then(|| {
+        self.dialog().is_none().then(|| {
             DocumentKeys::new(self.editable(), self.selected_feature, self.sketch_state())
                 .with_extrude(self.extrudable(), self.extrude_state().as_ref())
         })
+    }
+
+    /// The prompt the user is being asked, if any, which `Esc` cancels:
+    /// about unsaved changes, over the one about deleting.
+    pub(crate) fn dialog(&self) -> Option<Dialog> {
+        if self.prompt().is_some() {
+            Some(Dialog::Unsaved)
+        } else if self.delete_prompt().is_some() {
+            Some(Dialog::Delete)
+        } else {
+            None
+        }
     }
 
     /// Whether the other panel tab shows with the peek key `held`: not in
@@ -557,9 +581,20 @@ impl Doc {
             extrude: self.extrude_state(),
             extrudable: self.extrudable(),
             unsolved: self.feed.unsolved(),
+            failed: self.feed.failed_features(),
+            deleting: self.delete_prompt(),
             proposing: self.proposing(),
         })
     }
+}
+
+/// A prompt over the document screen, see [`Doc::dialog`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum Dialog {
+    /// About unsaved changes, before the document is closed.
+    Unsaved,
+    /// About deleting more than was asked for.
+    Delete,
 }
 
 /// The name shown for the design at `path`: its file name without the
