@@ -374,8 +374,9 @@ impl Conic2 {
     /// The exact arc of the circle of `radius` around `center` from `a` to
     /// `b` (both on it), the shorter way round, which must be under 180°,
     /// built from its ends without `cos` or `sin`, by `+ − × ÷ √` only:
-    /// with `m = a + b − 2·center`, its control point `center + m·2r²/|m|²`, where the end tangents meet, and its
-    /// weight `|m|/2r`, the cosine of half the angle.
+    /// with `m = a + b − 2·center`, its control point
+    /// `center + m·2r²/|m|²`, where the end tangents meet, and its weight
+    /// `|m|/2r`, the cosine of half the angle.
     pub fn arc_between(center: DVec2, radius: f64, a: DVec2, b: DVec2) -> Result<Self, PatchError> {
         let m = a + b - center * 2.0;
         let control = center + m * (2.0 * radius * radius / m.length_squared());

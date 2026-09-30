@@ -27,9 +27,9 @@ start angle, the places `Geom::at` gives (the profile vertices at arc ends
 and crossings), and the edit-time results have the same bits natively and
 on the web (where std's are this code already), and the kernel's `trig`
 agrees with them to the bit. `crates/sketch/clippy.toml` refuses std's
-versions (and `powi`, `powf`) through `disallowed-methods`; tests using
-std as an independent reference, or to build inputs, allow it in their
-module.
+versions (and `powi`, `powf`, and glam's angle and rotation methods)
+through `disallowed-methods`; tests using std as an independent
+reference, or to build inputs, allow it in their module.
 
 A **spline** (`spline.rs`, `Curve::Spline(Spline)`, "Spline 1") is a
 cubic non-rational B-spline, open (clamped) or `closed` (periodic), its

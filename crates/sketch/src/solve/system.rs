@@ -8,7 +8,6 @@ use std::rc::Rc;
 use glam::DVec2;
 
 use crate::angle;
-
 use crate::origin::axis;
 use crate::sets::Sets;
 use crate::spline::bezier::Path;

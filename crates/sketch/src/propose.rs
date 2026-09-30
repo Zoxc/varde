@@ -8,10 +8,9 @@ use std::f64::consts::PI;
 use std::fmt;
 
 use glam::DVec2;
-
-use crate::angle;
 use serde::{Deserialize, Serialize};
 
+use crate::angle;
 use crate::{
     Analysis, Budget, Design, EditError, Failure, Goal, Id, Measure, Sketch, SketchEdit, analyse,
     solve,

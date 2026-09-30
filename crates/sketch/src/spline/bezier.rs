@@ -5,10 +5,9 @@
 
 use glam::DVec2;
 
-use crate::angle;
-
 use super::basis::curvature;
 use crate::CIRCLE_SEGMENTS;
+use crate::angle;
 use crate::intersect::Geom;
 
 /// How far a spline's polyline may stray from it, as a share of its size

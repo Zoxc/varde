@@ -235,9 +235,9 @@ rounded arithmetic, so they give the same bits natively and on wasm.
 `Conic::arc` uses `cos` and `sin` from `trig`, which are the same code
 everywhere, so its bits are the same too (the sketch takes its angles the
 same way). Arcs whose ends are known as points can be built without
-them: for ends `a`, `b` at radius `r` from the centre (sweep
-under 180°), the control point is `centre + (a + b − 2·centre)·2r² / |a + b
-− 2·centre|²` and the weight `|a + b − 2·centre| / 2r`.
+them: for ends `a`, `b` at radius `r` from the centre (sweep under 180°),
+the control point is `centre + (a + b − 2·centre)·2r² / |a + b −
+2·centre|²` and the weight `|a + b − 2·centre| / 2r`.
 
 ### Exact cylinder strips
 
@@ -360,13 +360,22 @@ bits, and every platform the same. `sin_cos` is two calls, never a joint
 The kernel's decisions use only `+ − × ÷ √`, exact signs and `trig`.
 `crates/kernel/clippy.toml` keeps it so: `disallowed-methods` refuses
 std's `f64` trigonometry, exponentials, logarithms, `powf`, `powi`,
-`cbrt` and `hypot`, and glam's `DVec2::from_angle`, `to_angle`,
-`angle_to` and `DVec3::angle_between`. Tests that use std as an
+`cbrt` and `hypot`, and glam's methods built on them (`DVec2::from_angle`,
+`to_angle`, `angle_to`, the vectors' `angle_between`, `rotate_*` and
+`slerp`, and the angle and rotation constructors of `DMat2`, `DMat3`,
+`DQuat`, `DAffine2` and `DAffine3`). Tests that use std as an
 independent reference, or to build inputs, allow
 `clippy::disallowed_methods` in their module (`src/test_rng.rs` too, so
 its inputs keep their bits); tests comparing bits with the code use
 `trig`. Users: `Conic::arc`, the clean-up's Delaunay flip test (the angles
 opposite a diagonal, by `atan2`) and `NormalCone::angle`.
+
+Checked across platforms when this went in: a scratch `cdylib` on the
+kernel, the sketch and regen's profile step hashed the profiles, their
+conics, extrudes and joins of random sketches (lines, circles, arcs,
+closed splines) natively (x86_64 Linux) and as `wasm32-unknown-unknown`
+under node. The hashes were equal, and equal to the web's before the
+change (which only moved native bits); before it, native differed.
 
 ## Meshes (`src/mesh.rs`, `src/mesh/`)
 
@@ -2868,5 +2877,6 @@ parameter, or a split outside the patch bounds),
 - **The kernel has its own trig module**, `varde_kernel::trig`, beside
   the sketch's `angle` module, rather than one helper shared by both: the
   sketch doesn't depend on the kernel, and both wrap the same `libm`
-  functions, so they agree to the bit. New kernel code takes angles only
-  from `trig`.
+  functions, so they agree to the bit. A crate of its own for a dozen
+  one-line wrappers, or the sketch depending on the kernel, wasn't worth
+  it. New kernel code takes angles only from `trig`.

@@ -5,7 +5,6 @@ use std::f64::consts::TAU;
 use glam::DVec2;
 
 use crate::angle;
-
 use crate::intersect::Geom;
 use crate::{Curve, Sketch, arc_sweep};
 

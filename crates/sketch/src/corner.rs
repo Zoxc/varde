@@ -12,11 +12,10 @@ use std::collections::{HashMap, HashSet};
 use std::f64::consts::PI;
 
 use glam::DVec2;
-
-use crate::angle;
 use serde::{Deserialize, Serialize};
 use varde_expr::Value;
 
+use crate::angle;
 use crate::{
     ArcPoints, Curve, CurveEntry, Dimension, EditError, Id, Measure, OutOfIds, Side, Sketch,
 };

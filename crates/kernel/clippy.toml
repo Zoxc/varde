@@ -1,8 +1,9 @@
-# Angles, logarithms and powers from std come from the platform's maths
-# library, whose last bits differ between platforms (see `src/trig.rs`).
-# The kernel takes them from `crate::trig` (the `libm` crate) instead, the
-# same bits natively and on wasm. Tests using std as an independent
-# reference allow `clippy::disallowed_methods` in their module.
+# Angles, logarithms and powers from std, and glam's angle and rotation
+# methods built on them, come from the platform's maths library, whose
+# last bits differ between platforms (see `src/trig.rs`). The kernel takes
+# them from `crate::trig` (the `libm` crate) instead, the same bits natively
+# and on wasm. Tests using std as an independent reference allow
+# `clippy::disallowed_methods` in their module.
 disallowed-methods = [
     { path = "f64::sin", reason = "platform maths library; use libm / crate::trig" },
     { path = "f64::cos", reason = "platform maths library; use libm / crate::trig" },
@@ -12,7 +13,14 @@ disallowed-methods = [
     { path = "f64::acos", reason = "platform maths library; use libm / crate::trig" },
     { path = "f64::atan", reason = "platform maths library; use libm / crate::trig" },
     { path = "f64::atan2", reason = "platform maths library; use libm / crate::trig" },
+    { path = "f64::sinh", reason = "platform maths library; use libm / crate::trig" },
+    { path = "f64::cosh", reason = "platform maths library; use libm / crate::trig" },
+    { path = "f64::tanh", reason = "platform maths library; use libm / crate::trig" },
+    { path = "f64::asinh", reason = "platform maths library; use libm / crate::trig" },
+    { path = "f64::acosh", reason = "platform maths library; use libm / crate::trig" },
+    { path = "f64::atanh", reason = "platform maths library; use libm / crate::trig" },
     { path = "f64::exp", reason = "platform maths library; use libm / crate::trig" },
+    { path = "f64::exp2", reason = "platform maths library; use libm / crate::trig" },
     { path = "f64::exp_m1", reason = "platform maths library; use libm / crate::trig" },
     { path = "f64::ln", reason = "platform maths library; use libm / crate::trig" },
     { path = "f64::ln_1p", reason = "platform maths library; use libm / crate::trig" },
@@ -26,5 +34,50 @@ disallowed-methods = [
     { path = "glam::DVec2::from_angle", reason = "platform maths library; use libm / crate::trig" },
     { path = "glam::DVec2::to_angle", reason = "platform maths library; use libm / crate::trig" },
     { path = "glam::DVec2::angle_to", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DVec2::angle_between", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DVec2::rotate_towards", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DVec2::exp", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DVec2::ln", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DVec2::powf", reason = "platform maths library; use libm / crate::trig" },
     { path = "glam::DVec3::angle_between", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DVec3::rotate_towards", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DVec3::rotate_axis", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DVec3::rotate_x", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DVec3::rotate_y", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DVec3::rotate_z", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DVec3::slerp", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DVec3::exp", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DVec3::ln", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DVec3::powf", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DMat2::from_angle", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DMat2::from_scale_angle", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DMat3::from_angle", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DMat3::from_axis_angle", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DMat3::from_euler", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DMat3::from_rotation_x", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DMat3::from_rotation_y", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DMat3::from_rotation_z", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DMat3::from_scale_angle_translation", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DMat3::to_euler", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DQuat::angle_between", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DQuat::from_axis_angle", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DQuat::from_euler", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DQuat::from_rotation_arc", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DQuat::from_rotation_x", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DQuat::from_rotation_y", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DQuat::from_rotation_z", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DQuat::from_scaled_axis", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DQuat::rotate_towards", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DQuat::slerp", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DQuat::to_axis_angle", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DQuat::to_euler", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DQuat::to_scaled_axis", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DAffine2::from_angle", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DAffine2::from_angle_translation", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DAffine2::from_scale_angle_translation", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DAffine2::to_scale_angle_translation", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DAffine3::from_axis_angle", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DAffine3::from_rotation_x", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DAffine3::from_rotation_y", reason = "platform maths library; use libm / crate::trig" },
+    { path = "glam::DAffine3::from_rotation_z", reason = "platform maths library; use libm / crate::trig" },
 ]

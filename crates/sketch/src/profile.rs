@@ -27,7 +27,6 @@ use std::fmt;
 use glam::DVec2;
 
 use crate::angle;
-
 use crate::intersect::{Geom, meet, tolerance};
 use crate::sets::Sets;
 use crate::spline::bezier;

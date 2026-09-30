@@ -57,10 +57,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::f64::consts::{PI, TAU};
 
 use glam::DVec2;
-
-use crate::angle;
 use varde_expr::Value;
 
+use crate::angle;
 use crate::intersect::{Geom, meet, tolerance};
 use crate::{
     Constraint, Curve, Design, Dimension, EditError, Id, Kind, Measure, Side, Sketch, arc_sweep,

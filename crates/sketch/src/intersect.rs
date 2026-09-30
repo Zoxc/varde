@@ -9,7 +9,6 @@ use std::sync::Arc;
 use glam::DVec2;
 
 use crate::angle;
-
 use crate::flatten::arc_segments;
 use crate::spline::bezier::{self, Path};
 use crate::{Curve, Id, Sketch, arc_sweep, crossing, foot};

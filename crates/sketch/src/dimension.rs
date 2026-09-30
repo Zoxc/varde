@@ -6,11 +6,10 @@ use std::collections::HashSet;
 use std::f64::consts::{PI, TAU};
 
 use glam::DVec2;
-
-use crate::angle;
 use serde::{Deserialize, Serialize};
 use varde_expr::{Ask, Quantity, Value};
 
+use crate::angle;
 use crate::constraint::own_point;
 use crate::{Design, EditError, Id, Role, Side, Sketch, crossing, foot};
 
