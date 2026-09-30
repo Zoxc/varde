@@ -47,8 +47,8 @@ pub use document::{
     ValueField, ValueTarget, document,
 };
 pub use extrude::{
-    Candidate, Distance, DistanceField, ExtentKind, ExtrudeLook, ExtrudeState, Handle,
-    OperationKind, snap_step,
+    Candidate, Distance, DistanceField, ExtentKind, ExtrudeLook, ExtrudeState, ExtrudeTarget,
+    Handle, OperationKind, snap_step,
 };
 pub use icons::LOGO_SVG;
 pub use shortcut::{Binding, DocumentKeys, Held, document_bindings, pressed, welcome_bindings};

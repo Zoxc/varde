@@ -14,7 +14,8 @@ use varde_document::{
 use varde_expr::{Unit, Value};
 use varde_sketch::Profiles;
 use varde_view::{
-    Candidate, Distance, DistanceField, ExtentKind, ExtrudeLook, ExtrudeState, OperationKind,
+    Candidate, Distance, DistanceField, ExtentKind, ExtrudeLook, ExtrudeState, ExtrudeTarget,
+    OperationKind,
 };
 
 use super::{Doc, Focus};
@@ -46,8 +47,9 @@ pub(crate) struct ExtrudeSession {
     pub(crate) fields: [DistanceText; 2],
     pub(crate) flip: bool,
     pub(crate) operation: OperationKind,
-    /// The bodies the edited extrude's join, cut or intersect leaves out.
-    excluded: Vec<BodyId>,
+    /// The bodies a join, cut or intersect leaves out, sorted: the
+    /// edited extrude's to start with.
+    pub(crate) excluded: Vec<BodyId>,
     /// The handle's knob being dragged, if one is.
     pub(crate) grabbed: Option<Distance>,
     /// The design as the fields' texts were last read, whose units bare
@@ -315,18 +317,40 @@ impl ExtrudeSession {
         })
     }
 
-    /// Whether it can be committed: it's whole, none of the distances its
-    /// extent takes is refused, and its operation is available.
+    /// Whether it can be committed: it's whole, and none of the
+    /// distances its extent takes is refused.
     fn ready(&self) -> bool {
         let typed = self
             .extent
             .distances()
             .iter()
             .all(|distance| self.fields[distance.index()].error.is_none());
-        typed
-            && self.operation.available()
-            && self.extent != ExtentKind::ThroughAll
-            && self.extrude().is_some()
+        typed && self.extrude().is_some()
+    }
+
+    /// Takes `body` out of the join, cut or intersect, or puts it back,
+    /// if it's one of `document`'s made before the extrude edited.
+    fn toggle_target(&mut self, body: BodyId, document: &Document) {
+        match self.excluded.binary_search(&body) {
+            Ok(at) => {
+                self.excluded.remove(at);
+            }
+            Err(at) => {
+                let made_before = document.body(body).is_some_and(|made| {
+                    let maker = document
+                        .features()
+                        .iter()
+                        .position(|f| f.id == made.created_by);
+                    let edited = self.feature.and_then(|feature| {
+                        document.features().iter().position(|f| f.id == feature)
+                    });
+                    maker.is_some_and(|maker| edited.is_none_or(|edited| maker < edited))
+                });
+                if made_before {
+                    self.excluded.insert(at, body);
+                }
+            }
+        }
     }
 
     /// Moves the knob of `distance` to `to`, in millimetres along the
@@ -424,7 +448,8 @@ impl Doc {
                 session.refresh(document);
             }
             ExtrudeLook::Extent(kind) => {
-                if kind != ExtentKind::ThroughAll {
+                // Only a cut goes through all.
+                if kind != ExtentKind::ThroughAll || session.operation == OperationKind::Cut {
                     session.extent = kind;
                 }
             }
@@ -433,10 +458,12 @@ impl Doc {
             }
             ExtrudeLook::Flip => session.flip = !session.flip,
             ExtrudeLook::Operation(kind) => {
-                if kind.available() {
-                    session.operation = kind;
+                session.operation = kind;
+                if kind != OperationKind::Cut && session.extent == ExtentKind::ThroughAll {
+                    session.extent = ExtentKind::OneSide;
                 }
             }
+            ExtrudeLook::Target(body) => session.toggle_target(body, document),
             ExtrudeLook::GrabHandle(distance) => session.grabbed = Some(distance),
             ExtrudeLook::DragHandle { distance, to } => {
                 if session.grabbed == Some(distance) {
@@ -501,6 +528,10 @@ impl Doc {
             return;
         }
         session.follow_units(document);
+        // Bodies gone (by undo, say) can't be taken out.
+        session
+            .excluded
+            .retain(|&body| document.body(body).is_some());
     }
 
     /// The extrude being set up as the regeneration lane previews it, and
@@ -554,12 +585,32 @@ impl Doc {
             fields: [session.fields[0].field(), session.fields[1].field()],
             flip: session.flip,
             operation: session.operation,
+            targets: self.extrude_targets(session),
             grabbed: session.grabbed,
             error: self.feed.draft_error(),
             ready: self.editable() && session.ready(),
             editable: self.editable(),
             units: document.units(),
         })
+    }
+}
+
+impl Doc {
+    /// The bodies the session's join, cut or intersect lists: those its
+    /// preview touches and those taken out, in the order they were made.
+    fn extrude_targets(&self, session: &ExtrudeSession) -> Vec<ExtrudeTarget<'_>> {
+        if !session.operation.has_targets() {
+            return Vec::new();
+        }
+        let touched = self.feed.draft_touched();
+        (self.editor.document().bodies().iter())
+            .filter(|body| touched.contains(&body.id) || session.excluded.contains(&body.id))
+            .map(|body| ExtrudeTarget {
+                body: body.id,
+                name: &body.name,
+                included: session.excluded.binary_search(&body.id).is_err(),
+            })
+            .collect()
     }
 }
 

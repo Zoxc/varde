@@ -3,7 +3,7 @@
 //!
 //! Each result is filed under a [`Key`]: a hash of everything it depends
 //! on, the feature's own settings, the tolerance, and the keys of its
-//! inputs (an extrude's sketch). A feature that didn't change, and whose
+//! inputs (an extrude's sketch, a boolean's operands). A feature that didn't change, and whose
 //! inputs didn't, has the same key, and its result is taken as it was.
 //! The cache lives in the lane (a thread natively, the worker on the web)
 //! and keeps what the last two requests used ([`Cache::begin`]), so
@@ -15,7 +15,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
 use serde::Serialize;
-use varde_kernel::{RenderMesh, Solid};
+use varde_kernel::{KernelError, RenderMesh, Solid};
 use varde_sketch::{Profiles, TooComplex};
 
 /// A hash of what a result depends on, 128 bits: two SipHash runs with
@@ -77,6 +77,10 @@ enum Entry {
     Solves(bool),
     /// An extrude's solid, or why it has none.
     Solid(Result<Arc<Solid>, String>),
+    /// Whether two solids touch.
+    Touches(Result<bool, KernelError>),
+    /// A boolean of two solids.
+    Boolean(Result<Arc<Solid>, KernelError>),
     /// A solid drawn.
     Mesh(Arc<RenderMesh>),
 }
@@ -150,6 +154,28 @@ impl Cache {
     ) -> Result<Arc<Solid>, String> {
         match self.entry(key, || Entry::Solid(make().map(Arc::new))) {
             Entry::Solid(solid) => solid,
+            _ => unreachable!("keys of different kinds differ"),
+        }
+    }
+
+    pub(crate) fn touches(
+        &mut self,
+        key: Key,
+        make: impl FnOnce() -> Result<bool, KernelError>,
+    ) -> Result<bool, KernelError> {
+        match self.entry(key, || Entry::Touches(make())) {
+            Entry::Touches(touches) => touches,
+            _ => unreachable!("keys of different kinds differ"),
+        }
+    }
+
+    pub(crate) fn boolean(
+        &mut self,
+        key: Key,
+        make: impl FnOnce() -> Result<Solid, KernelError>,
+    ) -> Result<Arc<Solid>, KernelError> {
+        match self.entry(key, || Entry::Boolean(make().map(Arc::new))) {
+            Entry::Boolean(solid) => solid,
             _ => unreachable!("keys of different kinds differ"),
         }
     }

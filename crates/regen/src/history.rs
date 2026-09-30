@@ -7,11 +7,16 @@
 //! kernel profile ([`profile`]) and sweeps it
 //! with [`varde_kernel::extrude`] on the sketch's plane, over
 //! [`Extrude::span`], within the document's tolerance and the default
-//! budget, its faces named by its feature id. A new body gets that
-//! solid. Join, cut and intersect aren't available yet, and fail so; a
-//! through-all extent's span is worked out from the bodies it could cut
-//! ([`through_all`]). A feature that fails records why and changes no
-//! body; the later ones still run.
+//! budget, its faces named by its feature id: the tool solid. A new body
+//! gets it. A join, cut or intersect finds the bodies made before it that
+//! the tool touches ([`varde_kernel::touches`]), takes out those it
+//! excludes, and replaces each of the rest by its union with, difference
+//! from or intersection with the tool ([`varde_kernel::boolean`], the
+//! body first), one at a time: bodies never merge. A through-all extent's
+//! span is worked out from the bodies made before it ([`through_all`]).
+//! A feature that fails records why, in words for the Timeline
+//! (`src/message.rs`), and changes no body; the later ones
+//! still run.
 //!
 //! Every result goes through the [`Cache`], keyed by what it depends on,
 //! so only what an edit changes runs again.
@@ -23,10 +28,11 @@ use std::sync::Arc;
 use varde_document::{
     BodyId, Document, Extrude, Feature, FeatureId, FeatureKind, MAX_COORD, Operation, Plane, Sketch,
 };
-use varde_kernel::{Budget, Frame, Solid, Tolerance};
+use varde_kernel::{Budget, Frame, Op, Solid, Tolerance};
 use varde_sketch::{Profiles, TooComplex};
 
 use crate::cache::{Cache, Key, Keyer};
+use crate::message::{self, Doing};
 use crate::profile::profile;
 
 /// What the history gives: the solids of the bodies, and the features
@@ -37,6 +43,11 @@ pub struct Evaluation {
     pub bodies: Vec<BodySolid>,
     /// The features that failed and why, in the document's order.
     pub failed: Vec<(FeatureId, String)>,
+    /// Each join, cut or intersect that got as far as its tool solid,
+    /// with the bodies made before it that the tool touches, taken out
+    /// or not, in the order they were made; in the document's order.
+    /// One failing while finding them lists those found before.
+    pub touched: Vec<(FeatureId, Vec<BodyId>)>,
 }
 
 /// A body's solid.
@@ -90,14 +101,14 @@ pub fn evaluate(document: &Document, cache: &mut Cache) -> Evaluation {
                     continue;
                 };
                 let run = Run {
+                    document,
                     feature,
                     extrude,
                     sketch,
                     tolerance,
                 };
-                match run.evaluate(&evaluation.bodies, cache) {
-                    Ok(made) => evaluation.bodies.extend(made),
-                    Err(error) => evaluation.failed.push((feature.id, error)),
+                if let Err(error) = run.evaluate(&mut evaluation, cache) {
+                    evaluation.failed.push((feature.id, error));
                 }
             }
         }
@@ -107,6 +118,7 @@ pub fn evaluate(document: &Document, cache: &mut Cache) -> Evaluation {
 
 /// An extrude being evaluated.
 struct Run<'a> {
+    document: &'a Document,
     feature: &'a Feature,
     extrude: &'a Extrude,
     sketch: &'a SketchOutput<'a>,
@@ -114,8 +126,9 @@ struct Run<'a> {
 }
 
 impl Run<'_> {
-    /// The bodies it makes, given those made before it, or why it fails.
-    fn evaluate(&self, before: &[BodySolid], cache: &mut Cache) -> Result<Vec<BodySolid>, String> {
+    /// Adds the body it makes to `evaluation`, or changes those it works
+    /// on, given those made before it; or why it fails, changing none.
+    fn evaluate(&self, evaluation: &mut Evaluation, cache: &mut Cache) -> Result<(), String> {
         let placement = self.sketch.plane.placement();
         let frame = Frame {
             origin: placement.origin,
@@ -124,30 +137,112 @@ impl Run<'_> {
         };
         let span = match self.extrude.span() {
             Some(span) => span,
-            None => {
-                let targets = before
-                    .iter()
-                    .filter(|made| !self.extrude.operation.excluded().contains(&made.body))
-                    .map(|made| &*made.solid);
-                through_all(&frame, targets).ok_or("there's no body to go through")?
-            }
+            None => through_all(&frame, evaluation.bodies.iter().map(|made| &*made.solid))
+                .ok_or("there's no body to go through")?,
         };
-        let body = match &self.extrude.operation {
-            Operation::NewBody(body) => *body,
-            Operation::Join(_) => return Err("joining isn't available yet".to_owned()),
-            Operation::Cut(_) => return Err("cutting isn't available yet".to_owned()),
-            Operation::Intersect(_) => return Err("intersecting isn't available yet".to_owned()),
-        };
-        let key = Keyer::new("extrude")
+        // The tool depends on the regions and where it runs, not on what
+        // it's then used for, so changing the operation or its bodies
+        // finds it again.
+        let tool_key = Keyer::new("extrude")
             .number(self.feature.id.get())
-            .value(self.extrude)
+            .value(&self.extrude.regions)
             .number(self.tolerance.fit().to_bits())
             .number(span.0.to_bits())
             .number(span.1.to_bits())
             .key(self.sketch.key)
             .finish();
-        let solid = cache.solid(key, || self.solid(&frame, span))?;
-        Ok(vec![BodySolid { body, solid, key }])
+        let tool = cache.solid(tool_key, || self.solid(&frame, span))?;
+        let (op, doing) = match &self.extrude.operation {
+            Operation::NewBody(body) => {
+                evaluation.bodies.push(BodySolid {
+                    body: *body,
+                    solid: tool,
+                    key: tool_key,
+                });
+                return Ok(());
+            }
+            Operation::Join(_) => (Op::Union, Doing::Joining),
+            Operation::Cut(_) => (Op::Difference, Doing::Cutting),
+            Operation::Intersect(_) => (Op::Intersection, Doing::Intersecting),
+        };
+        let touched = self.touched(&evaluation.bodies, (&tool, tool_key), cache);
+        let found = touched.as_ref().unwrap_or_else(|(found, _)| found).clone();
+        evaluation.touched.push((self.feature.id, found));
+        let touched = touched.map_err(|(_, error)| error)?;
+        let excluded = self.extrude.operation.excluded();
+        let targets: Vec<BodyId> = (touched.iter())
+            .filter(|body| !excluded.contains(body))
+            .copied()
+            .collect();
+        if touched.is_empty() {
+            return Err("it doesn't touch any body".to_owned());
+        }
+        if targets.is_empty() {
+            return Err("every body it touches is taken out of it".to_owned());
+        }
+        // Worked out for every target before any body changes.
+        let mut changed = Vec::with_capacity(targets.len());
+        for made in evaluation
+            .bodies
+            .iter()
+            .filter(|m| targets.contains(&m.body))
+        {
+            let key = Keyer::new("boolean")
+                .bytes(doing.name().as_bytes())
+                .key(made.key)
+                .key(tool_key)
+                .finish();
+            let solid = cache
+                .boolean(key, || {
+                    varde_kernel::boolean(&made.solid, &tool, op, &self.tolerance, &Budget::DEFAULT)
+                })
+                .map_err(|error| message::boolean(doing, self.body_name(made.body), error))?;
+            changed.push(BodySolid {
+                body: made.body,
+                solid,
+                key,
+            });
+        }
+        for change in changed {
+            if let Some(made) = evaluation.bodies.iter_mut().find(|m| m.body == change.body) {
+                *made = change;
+            }
+        }
+        Ok(())
+    }
+
+    /// The bodies of `bodies` that `tool`, filed under `tool_key`,
+    /// touches, in their order; or
+    /// those found before one couldn't be told, and why.
+    fn touched(
+        &self,
+        bodies: &[BodySolid],
+        (tool, tool_key): (&Solid, Key),
+        cache: &mut Cache,
+    ) -> Result<Vec<BodyId>, (Vec<BodyId>, String)> {
+        let mut touched = Vec::new();
+        for made in bodies {
+            let key = Keyer::new("touches").key(made.key).key(tool_key).finish();
+            let touches = cache.touches(key, || {
+                varde_kernel::touches(&made.solid, tool, &self.tolerance, &Budget::DEFAULT)
+            });
+            match touches {
+                Ok(true) => touched.push(made.body),
+                Ok(false) => {}
+                Err(error) => {
+                    let error = message::boolean(Doing::Touching, self.body_name(made.body), error);
+                    return Err((touched, error));
+                }
+            }
+        }
+        Ok(touched)
+    }
+
+    /// The name of `body`, as the Timeline's messages give it.
+    fn body_name(&self, body: BodyId) -> &str {
+        self.document
+            .body(body)
+            .map_or("a body", |body| body.name.as_str())
     }
 
     /// The solid swept from the regions over `span` on `frame`.
@@ -173,7 +268,7 @@ impl Run<'_> {
             &self.tolerance,
             &Budget::DEFAULT,
         )
-        .map_err(|e| e.to_string())
+        .map_err(message::extrude)
     }
 }
 

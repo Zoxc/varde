@@ -19,6 +19,7 @@
 
 mod cache;
 mod history;
+mod message;
 mod newest;
 mod profile;
 #[cfg(not(target_arch = "wasm32"))]
@@ -121,6 +122,11 @@ pub struct Drafted {
     /// Why the draft gives no solid, or can't be applied: the model
     /// answered is then the committed one, without it.
     pub error: Option<String>,
+    /// For a join, cut or intersect, the bodies its solid touches, taken
+    /// out of it or not, in the order they were made: those the panel
+    /// lists to take out or put back. Empty for a new body, or where the
+    /// draft failed before its solid was made.
+    pub touched: Vec<BodyId>,
 }
 
 impl Response {
@@ -258,25 +264,31 @@ impl Regenerator {
         let Some(draft) = draft else {
             return self.model(document, exclude, None);
         };
-        let error = match applied(document, draft) {
+        let (error, touched) = match applied(document, draft) {
             Ok((drafted, feature)) => {
                 let evaluation = evaluate(&drafted, &mut self.cache);
+                let touched = (evaluation.touched.iter())
+                    .find(|(id, _)| *id == feature)
+                    .map(|(_, touched)| touched.clone())
+                    .unwrap_or_default();
                 match evaluation.failed.iter().find(|(id, _)| *id == feature) {
-                    Some((_, error)) => error.clone(),
+                    Some((_, error)) => (error.clone(), touched),
                     None => {
                         let done = Drafted {
                             revision: draft.revision,
                             error: None,
+                            touched,
                         };
                         return self.draw(&drafted, evaluation, exclude, Some(done));
                     }
                 }
             }
-            Err(error) => error,
+            Err(error) => (error, Vec::new()),
         };
         let failed = Drafted {
             revision: draft.revision,
             error: Some(error),
+            touched,
         };
         self.model(document, exclude, Some(failed))
     }

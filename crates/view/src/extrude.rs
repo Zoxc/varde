@@ -8,9 +8,11 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use glam::{DVec2, DVec3};
-use iced::widget::{Space, button, column, container, opaque, row, space, text, text_input};
+use iced::widget::{
+    Space, button, checkbox, column, container, opaque, row, space, text, text_input,
+};
 use iced::{Alignment, Element, Length};
-use varde_document::{FeatureId, Placement, Plane};
+use varde_document::{BodyId, FeatureId, Placement, Plane};
 use varde_expr::LengthUnit;
 use varde_sketch::{Profiles, Region};
 
@@ -104,10 +106,10 @@ impl OperationKind {
         }
     }
 
-    /// Whether it can be chosen yet: joining, cutting and intersecting
-    /// wait for booleans.
-    pub fn available(self) -> bool {
-        self == OperationKind::NewBody
+    /// Whether it works on bodies already there, which the panel then
+    /// lists.
+    pub fn has_targets(self) -> bool {
+        self != OperationKind::NewBody
     }
 }
 
@@ -147,7 +149,11 @@ pub enum ExtrudeLook {
     },
     /// Turns the direction round, for one side and two sides.
     Flip,
+    /// Chooses the operation. Leaving a cut, through all goes back to
+    /// one side.
     Operation(OperationKind),
+    /// Takes a body out of a join, cut or intersect, or puts it back.
+    Target(BodyId),
     /// A knob of the handle pressed: the viewport follows the cursor
     /// until it's let go of.
     GrabHandle(Distance),
@@ -182,6 +188,15 @@ pub struct DistanceField<'a> {
     pub value: Option<f64>,
 }
 
+/// A body a join, cut or intersect touches, or one taken out of it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ExtrudeTarget<'a> {
+    pub body: BodyId,
+    pub name: &'a str,
+    /// Whether it's worked on: not taken out.
+    pub included: bool,
+}
+
 /// The extrude being set up, and how it's shown.
 #[derive(Debug, Clone)]
 pub struct ExtrudeState<'a> {
@@ -202,6 +217,9 @@ pub struct ExtrudeState<'a> {
     pub fields: [DistanceField<'a>; 2],
     pub flip: bool,
     pub operation: OperationKind,
+    /// For a join, cut or intersect, the bodies its preview touches and
+    /// those taken out of it, in the order they were made.
+    pub targets: Vec<ExtrudeTarget<'a>>,
     /// The knob grabbed, if one is.
     pub grabbed: Option<Distance>,
     /// Why the preview failed, if it did.
@@ -379,12 +397,11 @@ pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
     let send = |look: ExtrudeLook| editable.then_some(Message::Look(Look::Extrude(look)));
 
     let extents = ExtentKind::ALL.map(|kind| {
-        // Through all only cuts, which isn't available yet.
-        let message = (kind != ExtentKind::ThroughAll)
-            .then(|| send(ExtrudeLook::Extent(kind)))
-            .flatten();
+        // Through all only cuts.
+        let through = kind == ExtentKind::ThroughAll && state.operation != OperationKind::Cut;
+        let message = send(ExtrudeLook::Extent(kind)).filter(|_| !through);
         let choice = choice(kind.label(), state.extent == kind, message);
-        if kind == ExtentKind::ThroughAll {
+        if through {
             tip(choice, text("Only a cut goes through all"))
         } else {
             choice
@@ -403,13 +420,24 @@ pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
         .flips()
         .then(|| choice("Flip", state.flip, send(ExtrudeLook::Flip)));
     let operations = OperationKind::ALL.map(|kind| {
-        let message = send(ExtrudeLook::Operation(kind)).filter(|_| kind.available());
-        let choice = choice(kind.label(), state.operation == kind, message);
-        if kind.available() {
-            choice
-        } else {
-            tip(choice, text("Not available yet"))
-        }
+        choice(
+            kind.label(),
+            state.operation == kind,
+            send(ExtrudeLook::Operation(kind)),
+        )
+    });
+    let targets = (state.operation.has_targets() && !state.targets.is_empty()).then(|| {
+        let rows = state.targets.iter().map(|&target| {
+            checkbox(target.included)
+                .label(target.name)
+                .size(14)
+                .text_size(12)
+                .on_toggle_maybe(editable.then_some(move |_| {
+                    Message::Look(Look::Extrude(ExtrudeLook::Target(target.body)))
+                }))
+                .into()
+        });
+        column![heading("Bodies"), column(rows).spacing(4)].spacing(6)
     });
     let error = state
         .error
@@ -439,6 +467,7 @@ pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
         hrule(),
         heading("Operation"),
         grid(operations),
+        targets,
         error,
         Space::new().height(2),
         buttons,

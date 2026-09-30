@@ -82,9 +82,34 @@ fn request_with_a_draft_round_trips() {
         draft,
         Some(Drafted {
             revision: 7,
-            error: None
+            error: None,
+            touched: Vec::new(),
         })
     );
+
+    // A join taking out the body it touches fails, and says what it
+    // touches.
+    let body = editor.document().bodies()[0].id;
+    let mut join = extrude.clone();
+    join.operation = varde_document::Operation::Join(varde_document::Targets {
+        excluded: vec![body],
+    });
+    let request = Request::Regenerate {
+        generation: editor.generation(),
+        document: editor.snapshot(),
+        exclude: None,
+        draft: Some(Draft {
+            revision: 8,
+            feature: None,
+            extrude: join,
+        }),
+    };
+    let Response::Regenerated { draft, .. } = round_trip(&handle(request)) else {
+        panic!("regeneration failed");
+    };
+    let draft = draft.unwrap();
+    assert_eq!((draft.revision, draft.touched), (8, vec![body]));
+    assert!(draft.error.is_some());
 }
 
 #[test]
@@ -120,7 +145,7 @@ fn regenerated_round_trips() {
     // and an extrude that fails.
     let mut editor = Editor::new(Document::example());
     let unsolved = crate::tests::unsolvable(&mut editor);
-    let cut = crate::history::tests::add_cut(&mut editor);
+    let cut = crate::history::tests::add_failing(&mut editor);
     let sketch = editor.document().features()[0].id;
     editor
         .apply(Command::SetFeatureVisible(sketch, true))

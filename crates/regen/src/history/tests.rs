@@ -25,12 +25,14 @@ pub(crate) fn length(document: &Document, text: &str) -> Value {
     Value::new(text, &Extent::ask(&document.design())).unwrap()
 }
 
-/// Adds a cut through all of the example's regions, which isn't
-/// available yet. Its id.
-pub(crate) fn add_cut(editor: &mut Editor) -> FeatureId {
+/// Adds a join of the example's regions that takes its only body out,
+/// which fails. Its id.
+pub(crate) fn add_failing(editor: &mut Editor) -> FeatureId {
+    let body = editor.document().bodies()[0].id;
     let extrude = Extrude {
-        extent: Extent::ThroughAll,
-        operation: Operation::Cut(Targets::default()),
+        operation: Operation::Join(Targets {
+            excluded: vec![body],
+        }),
         ..example_extrude(editor.document())
     };
     editor
@@ -38,6 +40,91 @@ pub(crate) fn add_cut(editor: &mut Editor) -> FeatureId {
         .unwrap();
     editor.document().features().last().unwrap().id
 }
+
+/// Adds a sketch on XY drawn by `draw`, and an extrude of all its
+/// regions over `extent` with `operation`. The extrude's id.
+pub(crate) fn add_extrude(
+    editor: &mut Editor,
+    draw: impl FnOnce(&mut Sketch),
+    extent: Extent,
+    operation: Operation,
+) -> FeatureId {
+    editor
+        .apply(editor.document().add_sketch(Plane::Origin(OriginPlane::XY)))
+        .unwrap();
+    let feature = editor.document().features().last().unwrap().id;
+    let mut sketch = Sketch::default();
+    draw(&mut sketch);
+    let profiles = sketch.profiles().unwrap();
+    let regions = (0..profiles.regions.len())
+        .map(|index| profiles.reference(index).unwrap())
+        .collect();
+    editor
+        .apply(Command::SetSketch {
+            feature,
+            sketch: Box::new(sketch),
+        })
+        .unwrap();
+    let extrude = Extrude {
+        sketch: feature,
+        regions,
+        extent,
+        flip: false,
+        operation,
+    };
+    editor
+        .apply(editor.document().add_extrude(extrude))
+        .unwrap();
+    editor.document().features().last().unwrap().id
+}
+
+/// Draws the rectangle from `min` to `max`.
+pub(crate) fn rectangle(min: (f64, f64), max: (f64, f64)) -> impl FnOnce(&mut Sketch) {
+    move |sketch| {
+        let corners = [
+            (min.0, min.1),
+            (max.0, min.1),
+            (max.0, max.1),
+            (min.0, max.1),
+        ]
+        .map(|(x, y)| sketch.add_point(DVec2::new(x, y)).unwrap());
+        for (k, &start) in corners.iter().enumerate() {
+            let end = corners[(k + 1) % corners.len()];
+            sketch.add_curve(Curve::Line { start, end }, false).unwrap();
+        }
+    }
+}
+
+/// Draws the circle about `center` of `radius`.
+pub(crate) fn disc(center: (f64, f64), radius: f64) -> impl FnOnce(&mut Sketch) {
+    move |sketch| {
+        let center = sketch.add_point(DVec2::new(center.0, center.1)).unwrap();
+        sketch
+            .add_curve(Curve::Circle { center, radius }, false)
+            .unwrap();
+    }
+}
+
+/// `a` and `b` together, as the extent of two sides.
+pub(crate) fn two_sides(document: &Document, a: &str, b: &str) -> Extent {
+    Extent::TwoSides(length(document, a), length(document, b))
+}
+
+/// Adds a pocket 13 × 20 mm and 4 mm deep cut up into the example
+/// plate's bottom, clear of its hole, the tool from 1 mm below it. The
+/// cut's id.
+pub(crate) fn add_pocket(editor: &mut Editor) -> FeatureId {
+    let extent = two_sides(editor.document(), "4", "1");
+    add_extrude(
+        editor,
+        rectangle((-25.0, -10.0), (-12.0, 10.0)),
+        extent,
+        Operation::Cut(Targets::default()),
+    )
+}
+
+/// The volume the pocket takes away.
+pub(crate) const POCKET: f64 = 13.0 * 20.0 * 4.0;
 
 fn evaluated(document: &Document) -> Evaluation {
     evaluate(document, &mut Cache::default())
@@ -183,8 +270,30 @@ fn several_regions_are_merged() {
 #[test]
 fn a_failing_feature_changes_no_body_and_later_ones_still_run() {
     let mut editor = Editor::new(Document::example());
-    let cut = add_cut(&mut editor);
+    let failing = add_failing(&mut editor);
     // A flipped extrude after it, making a second body below the plate.
+    let below = plate_below(&mut editor);
+    let evaluation = evaluated(editor.document());
+    assert_eq!(
+        evaluation.failed,
+        [(
+            failing,
+            "every body it touches is taken out of it".to_owned()
+        )]
+    );
+    let bodies: Vec<BodyId> = editor.document().bodies().iter().map(|b| b.id).collect();
+    let made: Vec<BodyId> = evaluation.bodies.iter().map(|made| made.body).collect();
+    assert_eq!(made, bodies);
+    assert_eq!(bodies[1], below);
+    assert_near(evaluation.bodies[0].solid.volume(), plate(8.0, 10.0));
+    let bounds = evaluation.bodies[1].solid.bounds3().unwrap();
+    assert_eq!((bounds.min.z, bounds.max.z), (-3.0, 0.0));
+    assert_near(evaluation.bodies[1].solid.volume(), plate(8.0, 3.0));
+    assert_eq!(evaluation.touched, [(failing, vec![bodies[0]])]);
+}
+
+/// Adds a second plate, 3 mm thick, below the example's: its body.
+fn plate_below(editor: &mut Editor) -> BodyId {
     let extrude = Extrude {
         flip: true,
         extent: Extent::OneSide(length(editor.document(), "3")),
@@ -193,41 +302,160 @@ fn a_failing_feature_changes_no_body_and_later_ones_still_run() {
     editor
         .apply(editor.document().add_extrude(extrude))
         .unwrap();
-    let evaluation = evaluated(editor.document());
-    assert_eq!(
-        evaluation.failed,
-        [(cut, "cutting isn't available yet".to_owned())]
-    );
-    let bodies: Vec<BodyId> = editor.document().bodies().iter().map(|b| b.id).collect();
-    let made: Vec<BodyId> = evaluation.bodies.iter().map(|made| made.body).collect();
-    assert_eq!(made, bodies);
-    let below = evaluation.bodies[1].solid.bounds3().unwrap();
-    assert_eq!((below.min.z, below.max.z), (-3.0, 0.0));
-    assert_near(evaluation.bodies[1].solid.volume(), plate(8.0, 3.0));
+    editor.document().bodies().last().unwrap().id
+}
+
+/// The only body's solid, after checking nothing failed.
+fn only_body(evaluation: &Evaluation) -> &Solid {
+    assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
+    let [made] = &evaluation.bodies[..] else {
+        panic!("one body");
+    };
+    &made.solid
 }
 
 #[test]
-fn join_and_intersect_are_not_available_yet() {
-    for (operation, error) in [
-        (Operation::Join(Targets::default()), "joining"),
-        (Operation::Intersect(Targets::default()), "intersecting"),
-    ] {
-        let mut editor = Editor::new(Document::example());
-        let extrude = Extrude {
-            operation,
-            ..example_extrude(editor.document())
-        };
-        editor
-            .apply(editor.document().add_extrude(extrude))
-            .unwrap();
-        let evaluation = evaluated(editor.document());
-        assert_eq!(evaluation.failed.len(), 1);
-        assert_eq!(
-            evaluation.failed[0].1,
-            format!("{error} isn't available yet")
-        );
-        assert_eq!(evaluation.bodies.len(), 1);
-    }
+fn a_pocket_is_cut_into_the_plate() {
+    let mut editor = Editor::new(Document::example());
+    let cut = add_pocket(&mut editor);
+    let evaluation = evaluated(editor.document());
+    let solid = only_body(&evaluation);
+    assert_near(solid.volume(), plate(8.0, 10.0) - POCKET);
+    let bounds = solid.bounds3().unwrap();
+    assert_eq!((bounds.min.z, bounds.max.z), (0.0, 10.0));
+    let body = editor.document().bodies()[0].id;
+    assert_eq!(evaluation.touched, [(cut, vec![body])]);
+    // The pocket's faces carry the cut's id.
+    let cut = cut.get();
+    assert!(
+        solid
+            .mesh()
+            .faces()
+            .iter()
+            .any(|face| face.name.feature == cut)
+    );
+}
+
+#[test]
+fn a_boss_is_joined_to_the_plate() {
+    let mut editor = Editor::new(Document::example());
+    let extent = Extent::OneSide(length(editor.document(), "15"));
+    add_extrude(
+        &mut editor,
+        disc((20.0, 0.0), 5.0),
+        extent,
+        Operation::Join(Targets::default()),
+    );
+    let evaluation = evaluated(editor.document());
+    let solid = only_body(&evaluation);
+    assert_near(solid.volume(), plate(8.0, 10.0) + PI * 25.0 * 5.0);
+    let bounds = solid.bounds3().unwrap();
+    assert_eq!((bounds.min.z, bounds.max.z), (0.0, 15.0));
+}
+
+#[test]
+fn the_plate_is_intersected() {
+    let mut editor = Editor::new(Document::example());
+    let extent = two_sides(editor.document(), "20", "20");
+    add_extrude(
+        &mut editor,
+        rectangle((0.0, -30.0), (40.0, 30.0)),
+        extent,
+        Operation::Intersect(Targets::default()),
+    );
+    let evaluation = evaluated(editor.document());
+    let solid = only_body(&evaluation);
+    // The plate's right half, with half the hole.
+    assert_near(solid.volume(), (30.0 * 40.0 - PI * 64.0 / 2.0) * 10.0);
+    let bounds = solid.bounds3().unwrap();
+    assert_eq!((bounds.min.x, bounds.max.x), (0.0, 30.0));
+}
+
+#[test]
+fn through_all_cuts_through_the_bodies() {
+    let mut editor = Editor::new(Document::example());
+    add_extrude(
+        &mut editor,
+        disc((-20.0, 10.0), 3.0),
+        Extent::ThroughAll,
+        Operation::Cut(Targets::default()),
+    );
+    let evaluation = evaluated(editor.document());
+    let solid = only_body(&evaluation);
+    assert_near(solid.volume(), plate(8.0, 10.0) - PI * 9.0 * 10.0);
+}
+
+#[test]
+fn bodies_taken_out_are_left_as_they_are() {
+    let mut editor = Editor::new(Document::example());
+    let top = editor.document().bodies()[0].id;
+    let below = plate_below(&mut editor);
+    let cut = add_extrude(
+        &mut editor,
+        disc((-20.0, 10.0), 3.0),
+        Extent::ThroughAll,
+        Operation::Cut(Targets {
+            excluded: vec![top],
+        }),
+    );
+    let evaluation = evaluated(editor.document());
+    assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
+    assert_eq!(evaluation.touched, [(cut, vec![top, below])]);
+    let volumes: Vec<f64> = (evaluation.bodies.iter())
+        .map(|made| made.solid.volume())
+        .collect();
+    assert_near(volumes[0], plate(8.0, 10.0));
+    assert_near(volumes[1], plate(8.0, 3.0) - PI * 9.0 * 3.0);
+}
+
+#[test]
+fn a_join_touching_no_body_fails() {
+    let mut editor = Editor::new(Document::example());
+    let extent = Extent::OneSide(length(editor.document(), "5"));
+    let join = add_extrude(
+        &mut editor,
+        disc((100.0, 100.0), 2.0),
+        extent,
+        Operation::Join(Targets::default()),
+    );
+    let evaluation = evaluated(editor.document());
+    assert_eq!(
+        evaluation.failed,
+        [(join, "it doesn't touch any body".to_owned())]
+    );
+    assert_eq!(evaluation.touched, [(join, vec![])]);
+    assert_near(evaluation.bodies[0].solid.volume(), plate(8.0, 10.0));
+}
+
+#[test]
+fn editing_the_plate_regenerates_the_cut() {
+    let mut editor = Editor::new(Document::example());
+    add_pocket(&mut editor);
+    let mut cache = Cache::default();
+    cache.begin();
+    let before = evaluate(editor.document(), &mut cache);
+    assert_near(only_body(&before).volume(), plate(8.0, 10.0) - POCKET);
+    let (_, worked) = cache.counts();
+
+    let feature = editor.document().features()[1].id;
+    let extrude = Extrude {
+        extent: Extent::OneSide(length(editor.document(), "12")),
+        ..example_extrude(editor.document())
+    };
+    editor
+        .apply(Command::SetExtrude {
+            feature,
+            extrude: Box::new(extrude),
+        })
+        .unwrap();
+    cache.begin();
+    let after = evaluate(editor.document(), &mut cache);
+    let solid = only_body(&after);
+    assert_near(solid.volume(), plate(8.0, 12.0) - POCKET);
+    assert_eq!(solid.bounds3().unwrap().max.z, 12.0);
+    // The plate, whether the pocket's tool touches it, and the cut ran
+    // again; both sketches and the pocket's tool were found.
+    assert_eq!(cache.counts().1, worked + 3);
 }
 
 #[test]

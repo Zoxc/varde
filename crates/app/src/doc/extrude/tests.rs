@@ -316,17 +316,84 @@ fn a_draft_the_document_refuses_shows_why_and_is_not_committed() {
     assert!(extrudes(&doc).is_empty());
 }
 
+/// The example, and a sketch on XY after it holding a circle of radius 3
+/// about (-20, 10), on the plate, selected: its id.
+fn example_and_a_hole() -> (Doc, FeatureId, Requests) {
+    let (mut doc, requests) = example();
+    let plane = varde_document::Plane::Origin(varde_document::OriginPlane::XY);
+    doc.apply(doc.editor.document().add_sketch(plane));
+    let sketch = doc.editor.document().features().last().unwrap().id;
+    let mut drawn = varde_sketch::Sketch::default();
+    let center = drawn.add_point(glam::DVec2::new(-20.0, 10.0)).unwrap();
+    drawn
+        .add_curve(
+            varde_sketch::Curve::Circle {
+                center,
+                radius: 3.0,
+            },
+            false,
+        )
+        .unwrap();
+    doc.apply(Command::SetSketch {
+        feature: sketch,
+        sketch: Box::new(drawn),
+    });
+    doc.sync();
+    answer(&mut doc, &requests);
+    doc.look(Look::SelectFeature(sketch));
+    (doc, sketch, requests)
+}
+
 #[test]
-fn join_cut_intersect_and_through_all_are_not_offered_yet() {
-    let (mut doc, sketch, _) = plate();
-    key_in(&mut doc, key("e"));
-    let region = plate_region(&doc, sketch);
-    extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region });
+fn a_cut_lists_the_bodies_it_touches_and_goes_through_all() {
+    let (mut doc, sketch, requests) = example_and_a_hole();
+    let body = doc.editor.document().bodies()[0].id;
+    doc.look(Look::StartExtrude);
+    extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region: 0 });
+    // Only a cut goes through all.
+    extrude(&mut doc, ExtrudeLook::Extent(ExtentKind::ThroughAll));
+    assert_eq!(doc.extrude.as_ref().unwrap().extent, ExtentKind::OneSide);
     extrude(&mut doc, ExtrudeLook::Operation(OperationKind::Cut));
     extrude(&mut doc, ExtrudeLook::Extent(ExtentKind::ThroughAll));
-    let session = doc.extrude.as_ref().unwrap();
-    assert_eq!(session.operation, OperationKind::NewBody);
-    assert_eq!(session.extent, ExtentKind::OneSide);
+    assert_eq!(doc.extrude.as_ref().unwrap().extent, ExtentKind::ThroughAll);
+    answer(&mut doc, &requests);
+    assert_eq!(doc.feed.draft_error(), None);
+    let listed = |doc: &Doc| {
+        let state = doc.extrude_state().unwrap();
+        (state.targets.iter())
+            .map(|target| (target.body, target.name.to_owned(), target.included))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(listed(&doc), [(body, "Body 1".to_owned(), true)]);
+    let _ = doc.view(false, Mode::default());
+
+    // Taken out, it stays listed, and the cut has nothing to cut.
+    extrude(&mut doc, ExtrudeLook::Target(body));
+    assert_eq!(listed(&doc), [(body, "Body 1".to_owned(), false)]);
+    answer(&mut doc, &requests);
+    assert_eq!(
+        doc.feed.draft_error(),
+        Some("every body it touches is taken out of it")
+    );
+    extrude(&mut doc, ExtrudeLook::Target(body));
+    assert_eq!(doc.extrude.as_ref().unwrap().excluded, []);
+
+    // Joining can't go through all: it goes back to one side.
+    extrude(&mut doc, ExtrudeLook::Operation(OperationKind::Join));
+    assert_eq!(doc.extrude.as_ref().unwrap().extent, ExtentKind::OneSide);
+    extrude(&mut doc, ExtrudeLook::Operation(OperationKind::Cut));
+    extrude(&mut doc, ExtrudeLook::Extent(ExtentKind::ThroughAll));
+    doc.update(Edit::CommitExtrude);
+    assert_eq!(doc.edit_error, None);
+    assert!(doc.extrude.is_none());
+    let cut = extrudes(&doc)[1].clone();
+    assert_eq!(cut.extent, varde_document::Extent::ThroughAll);
+    assert_eq!(cut.operation, Operation::Cut(Default::default()));
+    // The cut adds no body.
+    assert_eq!(doc.editor.document().bodies().len(), 1);
+    answer(&mut doc, &requests);
+    assert!(doc.feed.failed_features().is_empty());
+    assert!(doc.feed.mesh().triangle_count() > 0);
 }
 
 #[test]
@@ -452,7 +519,8 @@ fn a_failing_extrude_is_marked_in_the_timeline() {
     let feature = doc.editor.document().features()[1].id;
     assert!(doc.feed.failed_features().is_empty());
 
-    // Joining isn't available yet, so it fails and makes nothing.
+    // A join has no body before it to join, so it fails and makes
+    // nothing.
     let mut extrude = extrudes(&doc)[0].clone();
     extrude.operation = Operation::Join(Default::default());
     doc.apply(Command::SetExtrude {
@@ -464,7 +532,7 @@ fn a_failing_extrude_is_marked_in_the_timeline() {
     let failed = doc.feed.failed_features();
     assert_eq!(failed.len(), 1);
     assert_eq!(failed[0].0, feature);
-    assert!(failed[0].1.contains("isn't available"), "{}", failed[0].1);
+    assert_eq!(failed[0].1, "it doesn't touch any body");
     assert_eq!(doc.feed.mesh().triangle_count(), 0);
     doc.look(Look::SelectPanel(varde_view::Panel::Timeline));
     let _ = doc.view(false, Mode::default());

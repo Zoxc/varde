@@ -156,13 +156,15 @@ again with another `exclude`. Sketch curves are flattened by
 share) and placed with the document's `Plane::placement`.
 
 An answer also carries the features that failed and why (`failed`, an
-extrude whose region is gone, whose profile the kernel refuses, or that
-joins, cuts or intersects, which isn't available yet) and the box of each
+extrude whose region is gone, whose profile the kernel refuses, or whose
+join, cut or intersect touches no body or can't be worked out) and the box of each
 body that has a solid (`bodies`). A request can carry a `Draft`, an
 extrude being set up and not committed (new, or one being edited), with a
 revision the app counts up: the lane answers with it applied as its
 command would apply it, and says how it went (`Drafted`, with the
-revision and its error); a draft that fails, or that the document
+revision, its error and the bodies a join, cut or intersect touches,
+which the panel lists: `MeshFeed::draft_touched` gives the newest
+answer's while a draft is asked for); a draft that fails, or that the document
 refuses, is answered with the committed model and the draft's error. The
 lane keeps a cache of what it worked out per feature (profiles, solids,
 meshes, whether each sketch solves), keyed by a hash of the feature, the

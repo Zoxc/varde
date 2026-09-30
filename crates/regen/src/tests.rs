@@ -110,7 +110,7 @@ fn made(solids: impl IntoIterator<Item = (BodyId, Solid)>) -> Evaluation {
         .collect();
     Evaluation {
         bodies,
-        failed: Vec::new(),
+        ..Evaluation::default()
     }
 }
 
@@ -485,7 +485,8 @@ fn a_draft_is_answered_as_if_applied() {
         answer.draft,
         Some(Drafted {
             revision: 7,
-            error: None
+            error: None,
+            touched: vec![],
         })
     );
     assert!(answer.failed.is_empty());
@@ -518,9 +519,13 @@ fn a_draft_is_answered_as_if_applied() {
 fn a_failing_draft_leaves_the_model_as_it_was() {
     let editor = Editor::new(Document::example());
     let committed = answered(handle(regenerate(&editor, None)));
-    let cut = Draft {
+    // A join taking out the only body it touches.
+    let body = editor.document().bodies()[0].id;
+    let join = Draft {
         extrude: Extrude {
-            operation: Operation::Cut(Default::default()),
+            operation: Operation::Join(varde_document::Targets {
+                excluded: vec![body],
+            }),
             ..new_body_draft(editor.document(), 0, "3").extrude
         },
         ..new_body_draft(editor.document(), 3, "3")
@@ -533,14 +538,26 @@ fn a_failing_draft_leaves_the_model_as_it_was() {
         feature: Some(editor.document().features()[0].id),
         ..new_body_draft(editor.document(), 5, "3")
     };
-    for (draft, error) in [
-        (cut, "cutting isn't available yet".to_owned()),
-        (sketch, "the draft's feature isn't an extrude".to_owned()),
-        (refused.clone(), {
-            let command = editor.document().add_extrude(refused.extrude.clone());
-            let mut probe = Editor::new(editor.document().clone());
-            probe.apply(command).unwrap_err().to_string()
-        }),
+    for (draft, error, touched) in [
+        (
+            join,
+            "every body it touches is taken out of it".to_owned(),
+            vec![body],
+        ),
+        (
+            sketch,
+            "the draft's feature isn't an extrude".to_owned(),
+            vec![],
+        ),
+        (
+            refused.clone(),
+            {
+                let command = editor.document().add_extrude(refused.extrude.clone());
+                let mut probe = Editor::new(editor.document().clone());
+                probe.apply(command).unwrap_err().to_string()
+            },
+            vec![],
+        ),
     ] {
         let revision = draft.revision;
         let answer = answered(handle(regenerate_with(&editor, Some(draft))));
@@ -548,7 +565,8 @@ fn a_failing_draft_leaves_the_model_as_it_was() {
             answer.draft,
             Some(Drafted {
                 revision,
-                error: Some(error)
+                error: Some(error),
+                touched,
             })
         );
         assert_eq!(answer.mesh, committed.mesh);
@@ -569,4 +587,81 @@ fn dragging_a_draft_reruns_only_the_draft() {
     assert_eq!(answer.draft.unwrap().revision, 2);
     // The draft's solid and its mesh.
     assert_eq!(regenerator.cache().counts().1, before + 2);
+}
+
+#[test]
+fn a_cut_draft_lists_what_it_touches_and_is_answered_from_the_cache() {
+    // The pocket's sketch committed, its cut a draft.
+    let mut editor = Editor::new(Document::example());
+    let mut probe = Editor::new(editor.document().clone());
+    let pocket = crate::history::tests::add_pocket(&mut probe);
+    let [.., sketch, cut] = probe.document().features() else {
+        unreachable!()
+    };
+    let (
+        FeatureKind::Sketch {
+            plane,
+            sketch: drawn,
+        },
+        FeatureKind::Extrude(extrude),
+    ) = (&sketch.kind, &cut.kind)
+    else {
+        unreachable!()
+    };
+    assert_eq!(cut.id, pocket);
+    editor.apply(editor.document().add_sketch(*plane)).unwrap();
+    let feature = editor.document().features()[2].id;
+    assert_eq!(feature, sketch.id);
+    editor
+        .apply(Command::SetSketch {
+            feature,
+            sketch: Box::new(drawn.clone()),
+        })
+        .unwrap();
+    let body = editor.document().bodies()[0].id;
+    let mut regenerator = Regenerator::default();
+    let committed = answered(regenerator.handle(regenerate(&editor, None)));
+    let (_, before) = regenerator.cache().counts();
+
+    let mut draft = Draft {
+        revision: 1,
+        feature: None,
+        extrude: extrude.clone(),
+    };
+    let answer = answered(regenerator.handle(regenerate_with(&editor, Some(draft.clone()))));
+    assert_eq!(
+        answer.draft,
+        Some(Drafted {
+            revision: 1,
+            error: None,
+            touched: vec![body],
+        })
+    );
+    assert_ne!(answer.mesh, committed.mesh);
+    // Only the draft's tool, whether it touches the plate, the cut and
+    // its mesh were worked out: the rest was found.
+    let (_, worked) = regenerator.cache().counts();
+    assert_eq!(worked, before + 4);
+
+    // Taking the plate out: the tool and whether it touches are found;
+    // only the plate's mesh, which the request before didn't draw, is
+    // worked out again.
+    let mut out = draft.clone();
+    out.revision = 2;
+    out.extrude.operation = Operation::Cut(varde_document::Targets {
+        excluded: vec![body],
+    });
+    let answer = answered(regenerator.handle(regenerate_with(&editor, Some(out))));
+    let drafted = answer.draft.unwrap();
+    assert_eq!(drafted.touched, [body]);
+    assert!(drafted.error.is_some());
+    assert_eq!(answer.mesh, committed.mesh);
+    assert_eq!(regenerator.cache().counts().1, worked + 1);
+
+    // Dragging the pocket deeper: only its tool, touching, cut and mesh.
+    draft.revision = 3;
+    draft.extrude.extent = crate::history::tests::two_sides(editor.document(), "5", "1");
+    let deeper = answered(regenerator.handle(regenerate_with(&editor, Some(draft))));
+    assert_eq!(deeper.draft.unwrap().error, None);
+    assert_eq!(regenerator.cache().counts().1, worked + 5);
 }

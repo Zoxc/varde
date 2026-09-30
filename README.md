@@ -3,13 +3,14 @@
 A CAD application written in Rust, on [iced](https://iced.rs) and
 [wgpu](https://wgpu.rs). It runs as a desktop app and in the browser.
 
-Varde is early work in progress. Today it opens, edits and saves designs made
-of simple solids and shows them in a 3D viewport, and draws lines,
-rectangles, circles, arcs, polygons, splines and points in sketches on the
-origin planes, held in place by constraints and sized by dimensions, and
-trims, extends, offsets and mirrors them. Extrude and
-booleans are still to come, and the file format may change between
-versions without a way to read older files.
+Varde is early work in progress. Today it draws lines, rectangles, circles,
+arcs, polygons, splines and points in sketches on the origin planes, held in
+place by constraints and sized by dimensions, and trims, extends, offsets and
+mirrors them. It extrudes a sketch's regions into solids with exact curved
+faces, as new bodies or joined to, cut from or intersected with the bodies
+already there, and opens, edits and saves the designs, shown in a 3D
+viewport. The file format may change between versions without a way to read
+older files.
 
 To build and run it yourself, see [BUILDING.md](BUILDING.md).
 
@@ -29,6 +30,7 @@ reopen a recent file, or recover unsaved changes left by a crash.
 | delete a feature            | select it in the Timeline and press `Delete`; if other features use it, a prompt lists everything that goes with it first (`Esc` cancels) |
 | delete a body               | the bin by it in Objects, which deletes the extrude making it too |
 | extrude                     | `E` (with a sketch selected in the Timeline, its regions), click the regions to extrude (again to take one out), then drag the arrow's knob or type the distance in the panel; `Enter` or OK adds it, `Esc` cancels |
+| join, cut, intersect        | in the extrude panel, under Operation; it works on every body it touches, listed under Bodies, where unticking one leaves it alone; only a cut can go Through all |
 | edit an extrude             | double-click it in the Timeline, or select it and press `Enter`; an extrude that fails shows red there, and hovering it says why |
 | draw in a sketch            | `L` line, `R` rectangle, `C` circle, `A` arc, `G` polygon, `N` spline, `P` point, then click; `Esc` stops; clicks snap (see below), hold `Shift` not to; `Tab` to type sizes (see below) |
 | line tool                   | click point after point; click the first point to close the loop, `Esc` or double-click to end; clicking a point already there joins it |

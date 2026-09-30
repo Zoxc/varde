@@ -45,6 +45,7 @@ fn state_of<'a>(profiles: &'a Arc<Profiles>, picked: &'a BTreeSet<usize>) -> Ext
         fields: [field(Some(10.0)), field(Some(3.0))],
         flip: false,
         operation: OperationKind::NewBody,
+        targets: Vec::new(),
         grabbed: None,
         error: None,
         ready: true,

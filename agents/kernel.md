@@ -21,7 +21,8 @@ tessellation for drawing (`tessellate`) and its volume and area,
 planes meet planes or quadrics, traced and fitted elsewhere). Documents
 store no geometry:
 bodies are the outputs of the feature history, which `varde-regen`
-evaluates into solids and draws (see "Bodies from the history").
+evaluates into solids, extrudes making bodies or joining, cutting and
+intersecting them, and draws (see "Bodies from the history").
 
 ## Patch math (`src/patch.rs`, `src/patch/`)
 
@@ -2325,13 +2326,44 @@ body, and the later ones still run.
   into a kernel `Profile` (below), and calls `kernel::extrude` on the
   sketch plane's `Frame` (from `Plane::placement`), over `Extrude::span()`,
   with the document's tolerance and `Budget::DEFAULT`, faces named by
-  `FeatureId::get()`. A `NewBody` body gets the solid. Join, cut and
-  intersect fail with "joining (cutting, intersecting) isn't available
-  yet" before building anything. Through all's span is worked out first
-  (`through_all`): the extent along the normal of the boxes (`bounds3`,
-  the control points') of every body made before it and not excluded,
-  plus 1 % of that extent and 1 mm at each end, clamped to `MAX_COORD`;
-  none is "there's no body to go through".
+  `FeatureId::get()`: the tool solid. A `NewBody` body gets it. Through
+  all's span is worked out first (`through_all`): the extent along the
+  normal of the boxes (`bounds3`, the control points') of every body made
+  before it, excluded or not (so the panel can still list those), plus
+  1 % of that extent and 1 mm at each end, clamped to `MAX_COORD`; none
+  is "there's no body to go through".
+- A **join, cut or intersect** asks `kernel::touches` of every body made
+  before it, in the order they were made, against the tool: those are
+  the touched bodies (`Evaluation::touched`, per feature, also when it
+  fails after finding them). Taking out its excluded ones leaves the
+  targets; none touched is "it doesn't touch any body", all excluded
+  "every body it touches is taken out of it". Each target is replaced by
+  `kernel::boolean(body, tool, op)` with `Union`, `Difference` or
+  `Intersection`, the body always first (a flush boss put first in a
+  union came out right but with some 30,000 patches). Every target's
+  result is worked out before any body changes, so one failing changes
+  none. **Bodies never merge**: a join touching two bodies adds the
+  tool to each, so they overlap, since bodies are the document's and a
+  merged one would leave the other without geometry. Bodies not touched
+  or excluded keep their solids; a body cut away whole, or intersected
+  with only a flush face, is left with the empty solid (drawn as nothing,
+  no box).
+
+**Error texts** (`src/message.rs`). What the Timeline's tooltip and the
+panel show is worded for the user, not the kernel: an extrude's own
+`KernelError` becomes "its regions are too complex to extrude…" for
+`TooComplex`, "its regions have parts too thin or too close together to
+extrude at this tolerance, as where curves touch tangentially" for
+`Invalid`, and the profile errors say what's wrong with the outline
+(touching or crossing itself, loops that don't nest, a cusp, a loop of
+no area); a boolean's error names the body and what was being done
+("joining it to Body 2 leaves no clean solid: they meet only along an
+edge, at a point, or on tangent faces; move it to overlap more or to
+clear it" for `Invalid`, which is what edge-touching unions and tangent
+contacts give; "… can't be worked out: they meet on faces too nearly
+flush or tangent to tell apart; move it a little" for `Inconsistent`;
+"… is too complex to work out…" for `TooComplex`). Body names are looked
+up when the message is made, not kept in the cache.
 
 **Pieces to conics** (`src/profile.rs`, `profile(sketch, profiles, loops,
 fit)`). Each piece becomes segments named by its curve's `Id::get()`, its
@@ -2368,8 +2400,13 @@ bit:
 SipHash runs, one salted, over the length-prefixed parts): a sketch's
 profiles by its plane and sketch (postcard-encoded), whether it solves by
 the sketch, an extrude's solid (or error) by its feature id, the extrude,
-the tolerance's bits, its span's bits and its sketch's key, and a body's
-mesh by its solid's key and the tolerance. The regenerator keeps what the
+the regions, the tolerance's bits, its span's bits and its sketch's key
+(not the operation or the excluded bodies, so toggling those finds the
+tool), whether a body touches a tool by the two solids' keys, a
+boolean's result (or `KernelError`) by the operation and the two solids'
+keys, which then keys the body's solid, and a body's mesh by its solid's
+key and the tolerance. Editing an earlier extrude changes its body's key
+and so reruns every boolean after it on that body. The regenerator keeps what the
 request being answered and the one before used (`Cache::begin` drops the
 rest), so an unrelated edit, or a draft dragged, reruns only what changed.
 The lane owns it: the native thread's closure, or the worker's `serve`.
@@ -2378,9 +2415,12 @@ The lane owns it: the native thread's closure, or the worker's `serve`.
 feature, extrude }>`: an extrude being set up (`feature: None`, applied as
 `AddExtrude`, the body `BodyId::NEW`) or edited (`SetExtrude`), applied to
 a copy of the document through an `Editor`, so its checks apply. The
-answer carries `Drafted { revision, error }`; a draft the document refuses,
-or whose feature fails, is answered with the committed model and its
-error. `Response::Failed` carries the draft's revision too.
+answer carries `Drafted { revision, error, touched }`; a draft the
+document refuses, or whose feature fails, is answered with the committed
+model and its error. `touched` is the draft's touched bodies (empty for a
+new body), there even when it fails after finding them, so the panel can
+list a body to take out that makes it fail. `Response::Failed` carries
+the draft's revision too.
 
 **The answer.** `Response::Regenerated` adds `failed` and `bodies:
 Vec<(BodyId, Aabb)>` (each body with a solid, shown or not, from
@@ -2390,8 +2430,16 @@ by `RenderMesh::append`; a mesh past `RenderMesh`'s limits fails the
 generation with the `MeshError`, as before. On the web the reply's head
 carries `draft`, `failed` and the boxes as corner arrays, checked finite
 and in order on receipt (`wire::Error::Bounds`); `MAX_HEAD_BYTES` is 64
-MiB. Touched bodies for a draft's join, cut or intersect wait for
-`kernel::touches`.
+MiB. The draft's touched bodies cross in the head as marks, unchecked.
+
+**Gaps.** Every join, cut or intersect asks `touches` of every body
+before it on each edit that changes the tool (cached otherwise).
+`touches` says false for a tangency along a line, so a boss tangent to a
+body only there is "it doesn't touch any body". An operation that runs
+out of budget takes about 2–3.5 s on one native thread and holds the
+single-threaded web worker longer, with drafts queued behind it (latest
+wins, so only the newest waits). The cache keeps only what the last
+request used, so toggling a body out of a cut and back reruns the cut.
 
 ## The extrude UI (`crates/view`, `crates/app`)
 
@@ -2426,7 +2474,8 @@ picked and the extent's distances have read at least once, with
 
 **Committing** (`Edit::CommitExtrude`: OK, `Enter` in a distance field or,
 outside one, the screen's `Enter`) needs the session ready: an extrude
-whole, no distance refused, New body, and not through all. It applies
+whole and no distance refused. A draft whose feature fails can still be
+committed; it shows red in the Timeline. It applies
 `AddExtrude` (the document's name "Extrude N", adding the body and hiding
 the sketch) or `SetExtrude`, one undo step, selects the new extrude and
 ends the session; refused by the document (two sides over `MAX_COORD`,
@@ -2434,12 +2483,18 @@ say), the session stays and the edit error shows. `Esc` or Cancel drops
 the session and its draft, and the model is asked for again without it.
 
 **The panel** (`view/src/extrude.rs`) floats at the viewport's right: the
-title and region count, the extents (Through all disabled: only a cut
-goes through all), the distance fields (the first is `VALUE_FIELD`, which
+title and region count, the extents (Through all only while Cut is
+chosen, else disabled with "Only a cut goes through all"; choosing
+another operation while through all goes back to one side), the distance fields (the first is `VALUE_FIELD`, which
 takes the focus as the session opens, all selected; `Esc` in it cancels),
-Flip for one side and two sides, the operations (Join, Cut and Intersect
-disabled with a "Not available yet" tooltip), the draft's error, Cancel
-and OK. The handle and region picking are in `agents/viewport.md`.
+Flip for one side and two sides, the operations, for Join, Cut and
+Intersect a "Bodies" list with a checkbox per body (`ExtrudeTarget`: the
+draft's touched bodies as the newest answer with a draft gave them,
+`MeshFeed::draft_touched`, kept while a changed draft is on its way, and
+the excluded ones, in the order they were made; ticked unless excluded;
+`ExtrudeLook::Target` toggles, keeping the session's `excluded` sorted and
+only taking bodies made before the extrude edited; bodies undone away
+drop out), the draft's error, Cancel and OK. The handle and region picking are in `agents/viewport.md`.
 Dragging a knob types its distance (one side past the plane flips; a knob
 on the plane changes nothing) as the design's units format it. If the
 design's units change while the session is open, each distance's value is
@@ -2458,7 +2513,11 @@ before. Double-clicking an extrude opens its session.
 
 **Deleting** (`app/src/doc/delete.rs`): `Edit::RemoveFeature` (`Delete`
 on the Timeline's selection) and `Edit::RemoveBody` (Objects' bin) ask
-`Document::removal` what goes. If that's one feature (a feature and its
+`Document::removal` what goes. Joins, cuts and intersects don't depend on
+the bodies they touch (they're found again when regenerating), so a
+body's removal takes only its maker (and what uses that); a later join
+left touching nothing fails in the Timeline. For a body the prompt asks
+"Delete *Body N* and M features with it?", counting its maker. If that's one feature (a feature and its
 own bodies, or a body and the feature making it) the command applies at
 once. Otherwise the app keeps a `Deleting` (the target, the `Removal`,
 the editor's generation) and the view shows `DeletePrompt` over the
@@ -2635,10 +2694,13 @@ parameter, or a split outside the patch bounds),
   `Hash` (sketches hold `f64`s).
 - **A failing draft is answered with the committed model** and the
   draft's error (`Drafted`), rather than the draft applied without its
-  body; `touched` isn't in the response until `kernel::touches` exists.
-- **Join, cut and intersect fail before building the tool solid**; the
-  through-all span is still worked out first, from every earlier body not
-  excluded (touching isn't known yet).
+  body. `touched` is in `Drafted`, not beside it on the response.
+- **Join, cut and intersect work on each target body on its own**: a
+  join never merges bodies, it adds the tool to every body it touches.
+- **Through all spans every earlier body**, excluded ones too, so the
+  touched list the panel shows doesn't lose a body once it's taken out.
+- **A join, cut or intersect that touches no target fails** ("it doesn't
+  touch any body"), rather than doing nothing silently.
 - **`FeatureId::get` and `Id::get`** give the numbers face names and wall
   curves carry.
 - **A reference whose curves several regions share resolves only among

@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use varde_document::{Editor, Extrude, FeatureId, Generation};
+use varde_document::{BodyId, Editor, Extrude, FeatureId, Generation};
 use varde_kernel::{RenderLines, RenderMesh};
 use varde_regen::{Draft, Drafted, Request, Response, Transport};
 use varde_view::MeshStatus;
@@ -212,6 +212,16 @@ impl MeshFeed {
         (drafted.revision == revision)
             .then_some(drafted.error.as_deref())
             .flatten()
+    }
+
+    /// The bodies the draft's solid touches, as the newest answer with a
+    /// draft found, while a draft is asked for: kept while a changed
+    /// draft is on its way, so the panel's list doesn't blink.
+    pub(crate) fn draft_touched(&self) -> &[BodyId] {
+        match (&self.draft, &self.drafted) {
+            (Some(_), Some(drafted)) => &drafted.touched,
+            _ => &[],
+        }
     }
 
     /// How the mesh shown stands against the editor's document. A failure

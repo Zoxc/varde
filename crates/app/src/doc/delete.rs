@@ -77,6 +77,7 @@ impl Doc {
         };
         Some(DeletePrompt {
             name,
+            body: matches!(deleting.target, Removable::Body(_)),
             features: (deleting.removal.features.iter())
                 .filter_map(|&id| document.feature(id))
                 .collect(),

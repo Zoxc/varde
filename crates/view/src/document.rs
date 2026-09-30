@@ -393,6 +393,9 @@ pub enum MeshStatus<'a> {
 pub struct DeletePrompt<'a> {
     /// The name of the feature or body asked to be deleted.
     pub name: &'a str,
+    /// Whether it's a body, which goes with the feature making it, rather
+    /// than a feature.
+    pub body: bool,
     /// The features that go, in the Timeline's order: those depending on
     /// it, and it or the feature making it.
     pub features: Vec<&'a Feature>,
@@ -800,18 +803,28 @@ fn dialog_button<'a>(
 
 /// Asks whether to delete what `prompt` lists, as a dialog over the
 /// whole screen like [`unsaved_prompt`]: "Delete Sketch 1 and 2 features
-/// that depend on it?", then the features, in the Timeline's order, and
-/// the bodies, scrolling past about ten rows, and Cancel and Delete.
+/// that depend on it?" (for a body, "Delete Body 1 and 3 features with
+/// it?", counting the one making it), then the features, in the
+/// Timeline's order, and the bodies, scrolling past about ten rows, and
+/// Cancel and Delete.
 fn delete_prompt<'a>(prompt: &DeletePrompt<'a>) -> Element<'a, Message> {
     /// The rows shown before the list scrolls.
     const ROWS: f32 = 10.5;
-    let others = prompt.features.len().saturating_sub(1);
-    let depend = if others == 1 { "depends" } else { "depend" };
-    let question = format!(
-        "Delete {} and {} that {depend} on it?",
-        prompt.name,
-        counted(others, "feature", "features")
-    );
+    let question = if prompt.body {
+        format!(
+            "Delete {} and {} with it?",
+            prompt.name,
+            counted(prompt.features.len(), "feature", "features")
+        )
+    } else {
+        let others = prompt.features.len().saturating_sub(1);
+        let depend = if others == 1 { "depends" } else { "depend" };
+        format!(
+            "Delete {} and {} that {depend} on it?",
+            prompt.name,
+            counted(others, "feature", "features")
+        )
+    };
     let item = |icon, name: &'a str| {
         row![icons::icon(icon, icons::INLINE), text(name)]
             .spacing(8)

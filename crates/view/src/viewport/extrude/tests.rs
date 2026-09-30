@@ -67,6 +67,7 @@ fn state<'a>(
         fields: [field; 2],
         flip: false,
         operation: OperationKind::NewBody,
+        targets: Vec::new(),
         grabbed,
         error: None,
         ready: !picked.is_empty(),
