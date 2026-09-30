@@ -336,7 +336,10 @@ impl ExtrudeSession {
             .distances()
             .iter()
             .all(|distance| self.fields[distance.index()].error.is_none());
-        typed && self.extrude().is_some() && self.refused(design).is_none()
+        typed
+            && self
+                .extrude()
+                .is_some_and(|extrude| extrude.check_own(design).is_ok())
     }
 
     /// Takes `body` out of the join, cut or intersect, or puts it back,

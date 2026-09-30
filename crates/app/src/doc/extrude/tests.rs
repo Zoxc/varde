@@ -32,17 +32,22 @@ fn plate() -> (Doc, FeatureId, Requests) {
 
 /// The plate's region with the hole in it, by its index.
 fn plate_region(doc: &Doc, sketch: FeatureId) -> usize {
-    let Some(FeatureKind::Sketch { sketch, .. }) =
-        doc.editor.document().feature(sketch).map(|f| &f.kind)
-    else {
-        panic!("no sketch");
-    };
-    let profiles = sketch.profiles().unwrap();
+    let profiles = drawn(doc, sketch).profiles().unwrap();
     profiles
         .regions
         .iter()
         .position(|region| region.holes.len() == 1)
         .unwrap()
+}
+
+/// The sketch of the sketch feature `sketch` of `doc`'s document.
+fn drawn(doc: &Doc, sketch: FeatureId) -> &varde_sketch::Sketch {
+    let Some(FeatureKind::Sketch { sketch, .. }) =
+        doc.editor.document().feature(sketch).map(|f| &f.kind)
+    else {
+        panic!("no sketch");
+    };
+    sketch
 }
 
 fn key(c: &str) -> keyboard::Key {
@@ -369,6 +374,99 @@ fn a_two_sides_knob_stops_at_the_limit() {
     assert!(doc.extrude_state().unwrap().ready);
 }
 
+/// The plate's session, its region picked and its extent `kind`, the
+/// first distance typed as `first`.
+fn plate_session(kind: ExtentKind, first: &str) -> (Doc, Requests) {
+    let (mut doc, sketch, requests) = plate();
+    key_in(&mut doc, key("e"));
+    let region = plate_region(&doc, sketch);
+    extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region });
+    extrude(&mut doc, ExtrudeLook::Extent(kind));
+    let text = first.to_owned();
+    extrude(
+        &mut doc,
+        ExtrudeLook::Input {
+            distance: Distance::First,
+            text,
+        },
+    );
+    (doc, requests)
+}
+
+#[test]
+fn one_side_and_symmetric_knobs_stop_only_where_the_field_would() {
+    let first = |doc: &Doc| doc.extrude.as_ref().unwrap().fields[0].value.clone();
+    let drag = |to| ExtrudeLook::DragHandle {
+        distance: Distance::First,
+        to,
+    };
+    // One side reaches the limit, flipped too.
+    let (mut doc, _) = plate_session(ExtentKind::OneSide, "10");
+    extrude(&mut doc, ExtrudeLook::GrabHandle(Distance::First));
+    extrude(&mut doc, drag(-1_000_000.0));
+    assert_eq!(first(&doc).unwrap().value, 1_000_000.0);
+    assert!(doc.extrude.as_ref().unwrap().flip);
+    assert!(doc.extrude_state().unwrap().ready);
+    extrude(&mut doc, drag(1_000_001.0));
+    assert_eq!(first(&doc).unwrap().value, 1_000_000.0);
+
+    // Symmetric's knob is half its distance.
+    let (mut doc, _) = plate_session(ExtentKind::Symmetric, "10");
+    extrude(&mut doc, ExtrudeLook::GrabHandle(Distance::First));
+    extrude(&mut doc, drag(500_000.0));
+    assert_eq!(first(&doc).unwrap().value, 1_000_000.0);
+    assert!(doc.extrude_state().unwrap().ready);
+    extrude(&mut doc, drag(-500_001.0));
+    assert_eq!(first(&doc).unwrap().value, 1_000_000.0);
+}
+
+#[test]
+fn an_extrude_over_the_limit_can_be_cancelled() {
+    let (mut doc, _) = plate_session(ExtentKind::TwoSides, "600000");
+    extrude(
+        &mut doc,
+        ExtrudeLook::Input {
+            distance: Distance::Second,
+            text: "600000".to_owned(),
+        },
+    );
+    assert!(doc.extrude_state().unwrap().refused.is_some());
+    extrude(&mut doc, ExtrudeLook::Cancel);
+    assert!(doc.extrude.is_none());
+
+    let (mut doc, _) = plate_session(ExtentKind::TwoSides, "600000");
+    extrude(
+        &mut doc,
+        ExtrudeLook::Input {
+            distance: Distance::Second,
+            text: "600000".to_owned(),
+        },
+    );
+    doc.look(Look::Escape);
+    assert!(doc.extrude.is_none());
+    assert!(extrudes(&doc).is_empty());
+}
+
+#[test]
+fn two_sides_at_the_limit_stay_ready_when_the_units_change() {
+    let (mut doc, _) = plate_session(ExtentKind::TwoSides, "600000");
+    extrude(
+        &mut doc,
+        ExtrudeLook::Input {
+            distance: Distance::Second,
+            text: "400000".to_owned(),
+        },
+    );
+    assert!(doc.extrude_state().unwrap().ready);
+    doc.update(Edit::SetUnits(varde_expr::LengthUnit::In));
+    let state = doc.extrude_state().unwrap();
+    assert_eq!(state.refused, None);
+    assert!(state.ready);
+    doc.update(Edit::CommitExtrude);
+    assert_eq!(doc.edit_error, None);
+    assert_eq!(extrudes(&doc)[0].span(), Some((-400000.0, 600000.0)));
+}
+
 /// The example, and a sketch on XY after it holding a circle of radius 3
 /// about (-20, 10), on the plate, selected: its id.
 fn example_and_a_hole() -> (Doc, FeatureId, Requests) {
@@ -467,12 +565,7 @@ fn a_sketch_changed_under_the_session_keeps_its_regions_picked() {
     let region = plate_region(&doc, sketch);
     extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region });
     // A point added elsewhere changes the sketch, not the region.
-    let Some(FeatureKind::Sketch { sketch: drawn, .. }) =
-        doc.editor.document().feature(sketch).map(|f| &f.kind)
-    else {
-        panic!("no sketch");
-    };
-    let mut drawn = drawn.clone();
+    let mut drawn = drawn(&doc, sketch).clone();
     drawn.add_point(glam::DVec2::new(100.0, 100.0)).unwrap();
     doc.apply(Command::SetSketch {
         feature: sketch,
@@ -633,6 +726,7 @@ fn a_bare_distance_keeps_its_length_when_the_units_change() {
     let session = doc.extrude.as_ref().unwrap();
     assert_eq!(session.fields[0].value.as_ref().unwrap().value, 20.0);
     assert_eq!(session.fields[0].error, None);
+    assert!(doc.extrude_state().unwrap().ready);
     answer(&mut doc, &requests);
     assert_eq!(doc.feed.draft_error(), None);
     doc.update(Edit::CommitExtrude);
@@ -652,12 +746,7 @@ fn plate_with_the_hole_deleted_waiting() -> (Doc, FeatureId, Requests, crate::te
     doc.look(Look::EditFeature(sketch));
     lane.answer(&mut doc);
     answer(&mut doc, &requests);
-    let Some(FeatureKind::Sketch { sketch: drawn, .. }) =
-        doc.editor.document().feature(sketch).map(|f| &f.kind)
-    else {
-        panic!("no sketch");
-    };
-    let circle = drawn
+    let circle = drawn(&doc, sketch)
         .curves
         .iter()
         .find(|curve| matches!(curve.curve, varde_sketch::Curve::Circle { .. }))
@@ -695,12 +784,7 @@ fn ok_waits_for_the_sketch_edits_left_with_the_solver() {
     // the preview is asked for again.
     lane.answer(&mut doc);
     assert!(!doc.proposing());
-    let Some(FeatureKind::Sketch { sketch: drawn, .. }) =
-        doc.editor.document().feature(sketch).map(|f| &f.kind)
-    else {
-        panic!("no sketch");
-    };
-    let profiles = drawn.profiles().unwrap();
+    let profiles = drawn(&doc, sketch).profiles().unwrap();
     let [whole] = &profiles.regions[..] else {
         panic!("{:?}", profiles.regions);
     };
@@ -719,12 +803,7 @@ fn ok_waits_for_the_sketch_edits_left_with_the_solver() {
     // One undo takes the extrude out and leaves the sketch edit.
     doc.update(Edit::Undo);
     assert!(extrudes(&doc).is_empty());
-    let Some(FeatureKind::Sketch { sketch: undone, .. }) =
-        doc.editor.document().feature(sketch).map(|f| &f.kind)
-    else {
-        panic!("no sketch");
-    };
-    assert_eq!(undone.profiles().unwrap(), profiles);
+    assert_eq!(drawn(&doc, sketch).profiles().unwrap(), profiles);
 }
 
 #[test]
@@ -761,12 +840,7 @@ fn undo_while_the_sketch_edits_wait_frees_ok() {
     let [extrude] = extrudes(&doc)[..] else {
         panic!("one extrude");
     };
-    let Some(FeatureKind::Sketch { sketch: drawn, .. }) =
-        doc.editor.document().feature(sketch).map(|f| &f.kind)
-    else {
-        panic!("no sketch");
-    };
-    let profiles = drawn.profiles().unwrap();
+    let profiles = drawn(&doc, sketch).profiles().unwrap();
     assert_eq!(
         profiles.resolve(&extrude.regions),
         [Some(plate_region(&doc, sketch))]
