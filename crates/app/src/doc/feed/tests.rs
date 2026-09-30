@@ -452,3 +452,42 @@ fn a_draft_dropped_is_regenerating_until_the_model_without_it_shows() {
     feed.apply(handle(regen.take().pop().unwrap()));
     assert_eq!(feed.status(&editor), MeshStatus::Current);
 }
+
+#[test]
+fn touched_bodies_are_kept_within_a_run_of_drafts_only() {
+    // A join of the example's plate sketch, new, onto the plate.
+    let editor = Editor::new(Document::example());
+    let plate = editor.document().features()[1].id;
+    let FeatureKind::Extrude(extrude) = &editor.document().features()[1].kind else {
+        panic!("the example's second feature is its extrude");
+    };
+    let mut join = extrude.clone();
+    join.operation = varde_document::Operation::Join(varde_document::Targets::default());
+    let body = editor.document().bodies()[0].id;
+    let (mut feed, regen) = connected();
+    feed.request_with(&editor, None, Some((None, join.clone())));
+    feed.apply(handle(regen.take().pop().unwrap()));
+    assert_eq!(feed.draft_touched(), [body]);
+
+    // A draft the document refuses, its sketch the extrude, keeps the
+    // list: its touch test didn't run.
+    let mut refused = join.clone();
+    refused.sketch = plate;
+    feed.request_with(&editor, None, Some((None, refused)));
+    feed.apply(handle(regen.take().pop().unwrap()));
+    assert!(feed.draft_error().is_some());
+    assert_eq!(feed.draft_touched(), [body]);
+
+    // Without a draft, unanswered, then another: a new run, listing
+    // nothing until its answer.
+    feed.request_with(&editor, None, None);
+    regen.take();
+    feed.request_with(&editor, None, Some((None, join.clone())));
+    assert_eq!(feed.draft_touched(), []);
+    feed.apply(handle(regen.take().pop().unwrap()));
+    assert_eq!(feed.draft_touched(), [body]);
+
+    // Another feature's draft, with none in between, likewise.
+    feed.request_with(&editor, None, Some((Some(plate), join)));
+    assert_eq!(feed.draft_touched(), []);
+}

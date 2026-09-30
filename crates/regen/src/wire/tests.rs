@@ -83,7 +83,7 @@ fn request_with_a_draft_round_trips() {
         Some(Drafted {
             revision: 7,
             error: None,
-            touched: Vec::new(),
+            touched: None,
         })
     );
 
@@ -105,7 +105,7 @@ fn request_with_a_draft_round_trips() {
         panic!("regeneration failed");
     };
     let draft = draft.unwrap();
-    assert_eq!((draft.revision, draft.touched), (8, vec![body]));
+    assert_eq!((draft.revision, draft.touched), (8, Some(vec![body])));
 }
 
 #[test]

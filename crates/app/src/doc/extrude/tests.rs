@@ -1178,3 +1178,90 @@ fn undoing_a_replacement_ends_a_new_extrude_session() {
     doc.update(Edit::Redo);
     assert!(doc.extrude.is_none());
 }
+
+/// The bodies the extrude panel lists.
+fn listed(doc: &Doc) -> Vec<varde_document::BodyId> {
+    let state = doc.extrude_state().unwrap();
+    state.targets.iter().map(|target| target.body).collect()
+}
+
+/// Starts a cut of `example_and_a_hole`'s circle.
+fn start_a_cut(doc: &mut Doc, sketch: FeatureId) {
+    doc.look(Look::StartExtrude);
+    extrude(doc, ExtrudeLook::PickRegion { sketch, region: 0 });
+    extrude(doc, ExtrudeLook::Operation(OperationKind::Cut));
+}
+
+#[test]
+fn a_new_session_doesn_t_list_the_last_one_s_bodies() {
+    let (mut doc, sketch, requests) = example_and_a_hole();
+    let body = doc.editor.document().bodies()[0].id;
+    start_a_cut(&mut doc, sketch);
+    answer(&mut doc, &requests);
+    assert_eq!(listed(&doc), [body]);
+
+    // Cancelled, and started again before the answer without the draft.
+    extrude(&mut doc, ExtrudeLook::Cancel);
+    assert!(doc.extrude.is_none());
+    doc.look(Look::SelectFeature(sketch));
+    start_a_cut(&mut doc, sketch);
+    assert!(last_draft(&requests).is_some());
+    assert_eq!(listed(&doc), []);
+    answer(&mut doc, &requests);
+    assert_eq!(listed(&doc), [body]);
+}
+
+#[test]
+fn switching_to_another_extrude_doesn_t_list_its_bodies() {
+    let (mut doc, sketch, requests) = example_and_a_hole();
+    let body = doc.editor.document().bodies()[0].id;
+    for _ in 0..2 {
+        doc.look(Look::SelectFeature(sketch));
+        start_a_cut(&mut doc, sketch);
+        doc.update(Edit::CommitExtrude);
+        assert_eq!(doc.edit_error, None);
+    }
+    answer(&mut doc, &requests);
+    let features = doc.editor.document().features();
+    let (first, second) = (features[3].id, features[4].id);
+    doc.look(Look::EditFeature(second));
+    answer(&mut doc, &requests);
+    assert_eq!(listed(&doc), [body]);
+
+    // The other one, straight from the Timeline: nothing until its
+    // answer.
+    doc.look(Look::EditFeature(first));
+    assert_eq!(doc.extrude.as_ref().unwrap().feature, Some(first));
+    assert_eq!(listed(&doc), []);
+    answer(&mut doc, &requests);
+    assert_eq!(listed(&doc), [body]);
+}
+
+#[test]
+fn new_body_and_back_keeps_the_bodies_listed() {
+    let (mut doc, sketch, requests) = example_and_a_hole();
+    let body = doc.editor.document().bodies()[0].id;
+    start_a_cut(&mut doc, sketch);
+    answer(&mut doc, &requests);
+    extrude(&mut doc, ExtrudeLook::Operation(OperationKind::NewBody));
+    answer(&mut doc, &requests);
+    extrude(&mut doc, ExtrudeLook::Operation(OperationKind::Cut));
+    assert_eq!(listed(&doc), [body]);
+}
+
+#[test]
+fn a_draft_the_document_refuses_keeps_the_bodies_listed() {
+    let (mut doc, sketch, requests) = example_and_a_hole();
+    let body = doc.editor.document().bodies()[0].id;
+    start_a_cut(&mut doc, sketch);
+    answer(&mut doc, &requests);
+    extrude(&mut doc, ExtrudeLook::Extent(ExtentKind::TwoSides));
+    for distance in [Distance::First, Distance::Second] {
+        let text = "600000".to_owned();
+        extrude(&mut doc, ExtrudeLook::Input { distance, text });
+    }
+    answer(&mut doc, &requests);
+    assert!(doc.extrude_state().unwrap().error.is_some());
+    assert!(doc.feed.draft_error().is_some());
+    assert_eq!(listed(&doc), [body]);
+}

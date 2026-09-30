@@ -486,7 +486,8 @@ fn a_draft_is_answered_as_if_applied() {
         Some(Drafted {
             revision: 7,
             error: None,
-            touched: vec![],
+            // A new body isn't tested for touching.
+            touched: None,
         })
     );
     assert!(answer.failed.is_empty());
@@ -542,12 +543,14 @@ fn a_failing_draft_leaves_the_model_as_it_was() {
         (
             join,
             "it doesn't touch any body not taken out of it".to_owned(),
-            vec![],
+            // Tested, touching nothing.
+            Some(vec![]),
         ),
         (
             sketch,
             "the draft's feature isn't an extrude".to_owned(),
-            vec![],
+            // Refused before any tool: not tested.
+            None,
         ),
         (
             refused.clone(),
@@ -556,7 +559,7 @@ fn a_failing_draft_leaves_the_model_as_it_was() {
                 let mut probe = Editor::new(editor.document().clone());
                 probe.apply(command).unwrap_err().to_string()
             },
-            vec![],
+            None,
         ),
     ] {
         let revision = draft.revision;
@@ -634,7 +637,7 @@ fn a_cut_draft_lists_what_it_touches_and_is_answered_from_the_cache() {
         Some(Drafted {
             revision: 1,
             error: None,
-            touched: vec![body],
+            touched: Some(vec![body]),
         })
     );
     assert_ne!(cut.mesh, committed.mesh);
@@ -653,7 +656,7 @@ fn a_cut_draft_lists_what_it_touches_and_is_answered_from_the_cache() {
     });
     let answer = answered(regenerator.handle(regenerate_with(&editor, Some(out))));
     let drafted = answer.draft.unwrap();
-    assert_eq!(drafted.touched, []);
+    assert_eq!(drafted.touched, Some(vec![]));
     assert!(drafted.error.is_some());
     assert_eq!(answer.mesh, committed.mesh);
     assert_eq!(regenerator.cache().counts().1, worked + 1);

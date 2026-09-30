@@ -29,6 +29,16 @@ pub(crate) struct MeshFeed {
     failed_features: Vec<(FeatureId, String)>,
     /// How the draft of the model shown went, if it had one.
     drafted: Option<Drafted>,
+    /// The bodies the newest draft answered that ran the touch test
+    /// touches, and that draft's revision: kept across answers that
+    /// didn't run it, so the panel's list doesn't empty while a draft
+    /// fails before its tool exists, or while New body is picked.
+    touched: Option<(u64, Vec<BodyId>)>,
+    /// The first revision of the current run of drafts: those of one
+    /// extrude set up without a pause. A run starts when a draft is
+    /// asked for after none, or for another feature; touched bodies
+    /// answered for an earlier run aren't listed.
+    run: u64,
     /// What `mesh` is of, or `None` before the first one arrives.
     shown: Option<Asked>,
     /// What was asked for last.
@@ -109,9 +119,12 @@ impl MeshFeed {
         };
         let draft = draft.map(|(feature, extrude)| match &self.draft {
             Some(last) if last.feature == feature && last.extrude == extrude => last.clone(),
-            _ => {
+            last => {
                 // One per change of a draft: a u64 won't run out.
                 self.revision += 1;
+                if last.as_ref().is_none_or(|last| last.feature != feature) {
+                    self.run = self.revision;
+                }
                 Draft {
                     revision: self.revision,
                     feature,
@@ -160,6 +173,18 @@ impl MeshFeed {
                 self.sketches = sketches;
                 self.unsolved = unsolved;
                 self.failed_features = failed;
+                if let Some(Drafted {
+                    revision,
+                    touched: Some(touched),
+                    ..
+                }) = &draft
+                    && self
+                        .touched
+                        .as_ref()
+                        .is_none_or(|(kept, _)| kept <= revision)
+                {
+                    self.touched = Some((*revision, touched.clone()));
+                }
                 self.drafted = draft;
                 self.shown = Some(asked);
                 self.failed = None;
@@ -214,12 +239,15 @@ impl MeshFeed {
             .flatten()
     }
 
-    /// The bodies the draft's solid touches, as the newest answer with a
-    /// draft found, while a draft is asked for: kept while a changed
-    /// draft is on its way, so the panel's list doesn't blink.
+    /// The bodies the draft's solid touches, as the newest answer of the
+    /// current run of drafts that ran the touch test found, while a draft
+    /// is asked for: kept while a changed draft is on its way, and while
+    /// one fails before its tool exists or makes a new body, so the
+    /// panel's list doesn't blink. Empty until the run's first such
+    /// answer, so another extrude's bodies aren't listed.
     pub(crate) fn draft_touched(&self) -> &[BodyId] {
-        match (&self.draft, &self.drafted) {
-            (Some(_), Some(drafted)) => &drafted.touched,
+        match (&self.draft, &self.touched) {
+            (Some(_), Some((revision, touched))) if *revision >= self.run => touched,
             _ => &[],
         }
     }

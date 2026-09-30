@@ -124,10 +124,12 @@ pub struct Drafted {
     pub error: Option<String>,
     /// For a join, cut or intersect, the bodies its solid touches, less
     /// those taken out of it, in the order they were made: those the
-    /// panel lists to take out, with those taken out to put back. Empty
-    /// for a new body, or where the draft failed before its solid was
-    /// made. See [`Evaluation::touched`].
-    pub touched: Vec<BodyId>,
+    /// panel lists to take out, with those taken out to put back. `None`
+    /// where the touch test didn't run: for a new body, where the draft
+    /// failed before its solid was made, or where the document refused
+    /// it; `Some` of an empty list where it ran and touched nothing. See
+    /// [`Evaluation::touched`].
+    pub touched: Option<Vec<BodyId>>,
 }
 
 impl Response {
@@ -270,8 +272,7 @@ impl Regenerator {
                 let evaluation = evaluate(&drafted, &mut self.cache);
                 let touched = (evaluation.touched.iter())
                     .find(|(id, _)| *id == feature)
-                    .map(|(_, touched)| touched.clone())
-                    .unwrap_or_default();
+                    .map(|(_, touched)| touched.clone());
                 match evaluation.failed.iter().find(|(id, _)| *id == feature) {
                     Some((_, error)) => (error.clone(), touched),
                     None => {
@@ -284,7 +285,7 @@ impl Regenerator {
                     }
                 }
             }
-            Err(error) => (error, Vec::new()),
+            Err(error) => (error, None),
         };
         let failed = Drafted {
             revision: draft.revision,

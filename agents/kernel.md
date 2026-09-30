@@ -2557,7 +2557,9 @@ a copy of the document through an `Editor`, so its checks apply. The
 answer carries `Drafted { revision, error, touched }`; a draft the
 document refuses, or whose feature fails, is answered with the committed
 model and its error. `touched` is the draft's touched bodies less the
-excluded ones (empty for a new body), there even when it fails after
+excluded ones, `None` where the touch test didn't run (a new body, a draft
+failing before its tool exists, one the document refuses) and `Some` of
+an empty list where it touched nothing; there even when it fails after
 finding them, with the body `touches` couldn't tell last, so the panel
 can list a body to take out that makes it fail. `Response::Failed` carries
 the draft's revision too.
@@ -2665,9 +2667,12 @@ another operation while through all goes back to one side), the distance fields 
 takes the focus as the session opens, all selected; `Esc` in it cancels),
 Flip for one side and two sides, the operations, for Join, Cut and
 Intersect a "Bodies" list with a checkbox per body (`ExtrudeTarget`: the
-draft's touched bodies as the newest answer with a draft gave them,
-`MeshFeed::draft_touched`, kept while a changed draft is on its way, and
-the excluded ones, in the order they were made; ticked unless excluded;
+draft's touched bodies as the newest answer of the current run of drafts
+that ran the touch test gave them, `MeshFeed::draft_touched`: kept while a
+changed draft is on its way, and while one fails before its tool exists
+or makes a new body; a run starts when a draft is asked for after none,
+or for another feature, and lists nothing until its first such answer,
+so a new session never shows another's bodies. Then the excluded ones, in the order they were made; ticked unless excluded;
 `ExtrudeLook::Target` toggles, keeping the session's `excluded` sorted and
 only taking bodies made before the extrude edited; bodies undone away
 drop out), the refusal, the draft's error or "Checking the sketch…",

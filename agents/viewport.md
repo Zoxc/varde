@@ -164,7 +164,8 @@ revision the app counts up: the lane answers with it applied as its
 command would apply it, and says how it went (`Drafted`, with the
 revision, its error and the bodies a join, cut or intersect touches,
 which the panel lists: `MeshFeed::draft_touched` gives the newest
-answer's while a draft is asked for); a draft that fails, or that the document
+answer's that ran the touch test, of the current run of drafts, while a
+draft is asked for); a draft that fails, or that the document
 refuses, is answered with the committed model and the draft's error. The
 lane keeps a cache of what it worked out per feature (profiles, solids,
 meshes, whether each sketch solves), keyed by a hash of the feature, the
