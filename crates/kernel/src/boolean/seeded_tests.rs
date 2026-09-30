@@ -6,7 +6,7 @@
 //!
 //! Every operation must give a solid that is right, or fail: never a
 //! wrong one, and never a panic. Right means it passes `check` (every
-//! `Solid` does) and its face tags, the four results of a pair keep the
+//! `Solid` does, face tags included), the four results of a pair keep the
 //! volume identities `|A ∪ B| + |A ∩ B| = |A| + |B|` and `|A − B| = |A| −
 //! |A ∩ B|` within the fit tolerance, analytic volumes where there are
 //! some, and points sampled around the operands are inside the result

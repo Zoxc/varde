@@ -231,6 +231,53 @@ fn plane_tags_within_the_resolution_are_trusted() {
 }
 
 #[test]
+fn plane_tags_past_the_resolution_fail() {
+    // The other side of the guard: the caps tagged one and a half
+    // resolutions off their planes. Their patches are split, so repair
+    // fails naming a cap triangle rather than trust the tag.
+    let mut mesh = cylinder_and_box(1e-3);
+    let off = 1.5 * TOL.resolution();
+    for face in &mut mesh.faces[..2] {
+        let Surface::Plane { n, d } = face.surface else {
+            panic!("the caps are faces 0 and 1");
+        };
+        face.surface = Surface::Plane {
+            n,
+            d: d + off * n.length(),
+        };
+    }
+    let result = mesh.clone().repair(&TOL, &Budget::DEFAULT);
+    let Err(KernelError::Invalid(CheckError::Face(t))) = result else {
+        panic!("{result:?}");
+    };
+    assert!(mesh.tris()[t as usize].face < 2, "{t}");
+}
+
+#[test]
+fn a_wrong_quadric_tag_passes_repair_but_not_solid_new() {
+    // Repair splits quadric patches exactly, trusting nothing, so it
+    // carries a wrong `Quadric` tag through; `Solid::new` refuses the
+    // result, in every build, naming the same triangle at 1 and 8
+    // threads. Face 2 is the cylinder's first wall.
+    let mut mesh = cylinder_and_box(1e-2);
+    let Surface::Quadric(_) = mesh.faces[2].surface else {
+        panic!("face 2 is a wall");
+    };
+    mesh.faces[2].surface =
+        Surface::Quadric(crate::mesh::Quadric::cylinder(DVec3::ZERO, DVec3::Z, 1.01).unwrap());
+    let result = assert_deterministic(|| {
+        let repaired = mesh.clone().repair(&TOL, &Budget::DEFAULT).unwrap();
+        assert_eq!(repaired.check_embedding(&TOL).err(), None);
+        let face = |t: u32| repaired.tris()[t as usize].face;
+        crate::Solid::new(repaired.clone(), &TOL).map_err(|e| match e {
+            KernelError::Invalid(CheckError::Face(t)) => face(t),
+            e => panic!("{e:?}"),
+        })
+    });
+    assert_eq!(result.err(), Some(2));
+}
+
+#[test]
 fn a_fold_is_repaired() {
     let mesh = bulging_tetrahedron(1.5);
     assert_eq!(mesh.check(&TOL), Err(CheckError::Fold(0)));

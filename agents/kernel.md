@@ -470,7 +470,10 @@ and release builds alike (face tags come last).
    on a `Plane` has all six control points within the resolution of it; a
    patch on a `Quadric` has 15 points (a grid four steps along each edge)
    within the resolution to first order. A plane with a zero or non-finite
-   normal fails.
+   normal fails. It is cheap next to 1 to 4 (release, measured): about 13%
+   of their time single-threaded on extruded plates with 16 and 64 holes
+   (1 004 and 4 012 patches), 6 to 10% on 7 threads, and 0.5% on a
+   262 144-patch torus of `Free` faces.
 
 Steps 2–3, 5 and the hull tests of 4 run per patch or per pair through
 `par_map`.
@@ -772,7 +775,10 @@ whole; a tetrahedron bulging so far its patches fail the fold check passes
 at 16 patches; a mesh that passes comes back unchanged; a cylinder wall tagged
 as a plane fails with `Invalid(Face(t))` naming a wall triangle, and caps
 tagged half a resolution off their planes are still split straight and
-pass `check`; a cusp fails at
+pass `check`, where one and a half resolutions off fails naming a cap; a
+wall tagged as a wrong cylinder comes through repair (quadric patches are
+split exactly, trusting nothing) and `Solid::new` refuses it, the same at
+1 and 8 threads; a cusp fails at
 once, as do tetrahedra corner to corner and boxes face to face closer than
 the resolution; round octahedra touching fail once the pieces at the touch
 are flat, and small ones once they are too small; a small budget runs out,
