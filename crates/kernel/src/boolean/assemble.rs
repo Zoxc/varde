@@ -8,6 +8,7 @@ use super::cleanup::Soup;
 use super::count::{Counts, Crossing};
 use super::exact::orient2d;
 use super::input::{Input, Side};
+use super::pairs::{Arc, first_ids};
 use super::triangulate::{Vert, triangulate};
 use super::{BooleanError, Op, Primitives};
 use crate::KernelError;
@@ -76,13 +77,11 @@ struct Along {
 }
 
 impl Along {
-    #[allow(clippy::too_many_arguments)]
     fn new(
         side: Side,
         input: &Input,
         crossings: &[Crossing],
         first_id: u32,
-        params: &[f64],
         windings: &[i32],
         keep: Keep,
         prims: &impl Primitives,
@@ -109,7 +108,7 @@ impl Along {
                 let at = here
                     .iter()
                     .position(|&x| {
-                        prims.order(side, e, crossings[k].face, crossings[x].face)
+                        prims.order(side, e, &crossings[k], &crossings[x])
                             == std::cmp::Ordering::Less
                     })
                     .unwrap_or(here.len());
@@ -123,7 +122,7 @@ impl Along {
             for &k in &here {
                 kept.push(keep.keeps(side, w));
                 w += i32::from(crossings[k].x);
-                at = at.max(params[k]);
+                at = at.max(crossings[k].t);
                 verts.push((first_id + k as u32, at));
             }
             kept.push(keep.keeps(side, w));
@@ -156,26 +155,22 @@ struct Cut {
     cuts: Vec<[u32; 2]>,
 }
 
-/// The result's triangles, before clean-up: vertices are the operands'
-/// (`A`'s, then `B`'s) and then the new ones (`x12`'s, then `x21`'s).
-#[allow(clippy::too_many_arguments)]
+/// The result's triangles, before clean-up, from the counts and each
+/// pair of faces' cut `arcs` (each a straight cut between its ends, so
+/// far): vertices are the operands' (`A`'s, then
+/// `B`'s) and then the new ones (`x12`'s, then `x21`'s).
 pub(super) fn assemble(
     op: Op,
     a: &Input,
     b: &Input,
     counts: &Counts,
+    arcs: &[Arc],
     prims: &impl Primitives,
     work: &mut Work,
 ) -> Result<(Soup, Vec<Face>), KernelError> {
     let keep = Keep::of(op);
-    let (nva, nvb) = (a.mesh.verts().len() as u32, b.mesh.verts().len() as u32);
-    let first12 = nva + nvb;
-    let first21 = first12 + counts.x12.len() as u32;
-
-    // New vertices: where the edges cross, from their parameters.
-    work.spend(counts.x12.len() + counts.x21.len())?;
-    let t12 = par_map(&counts.x12, |c| prims.crossing(Side::A, c.edge, c.face));
-    let t21 = par_map(&counts.x21, |c| prims.crossing(Side::B, c.edge, c.face));
+    let nva = a.mesh.verts().len() as u32;
+    let [first12, first21] = first_ids(a, b, counts);
 
     // Ordering the crossings along each edge compares every two.
     for crossings in [&counts.x12, &counts.x21] {
@@ -184,26 +179,8 @@ pub(super) fn assemble(
         }
     }
     let along = [
-        Along::new(
-            Side::A,
-            a,
-            &counts.x12,
-            first12,
-            &t12,
-            &counts.w03,
-            keep,
-            prims,
-        ),
-        Along::new(
-            Side::B,
-            b,
-            &counts.x21,
-            first21,
-            &t21,
-            &counts.w30,
-            keep,
-            prims,
-        ),
+        Along::new(Side::A, a, &counts.x12, first12, &counts.w03, keep, prims),
+        Along::new(Side::B, b, &counts.x21, first21, &counts.w30, keep, prims),
     ];
     // Their positions, from the parameters as ordered along the edges,
     // and exactly on the face crossed where it is square to an axis (so
@@ -235,40 +212,21 @@ pub(super) fn assemble(
         }
     }
 
-    // The ends of each face pair's cut, with their signs seen from A.
-    let mut ends: Vec<([u32; 2], u32, i8)> = Vec::new();
-    for (i, c) in counts.x12.iter().enumerate() {
-        let [forward, backward] = a.edge_tris[c.edge as usize];
-        let id = first12 + i as u32;
-        ends.push(([forward, c.face], id, c.x));
-        ends.push(([backward, c.face], id, -c.x));
-    }
-    for (i, c) in counts.x21.iter().enumerate() {
-        let [forward, backward] = b.edge_tris[c.edge as usize];
-        let id = first21 + i as u32;
-        ends.push(([c.face, forward], id, -c.x));
-        ends.push(([c.face, backward], id, c.x));
-    }
-    ends.sort_unstable();
-    let mut cuts_a: Vec<(u32, [u32; 2])> = Vec::new();
-    let mut cuts_b: Vec<(u32, [u32; 2])> = Vec::new();
-    for pair in ends.chunk_by(|x, y| x.0 == y.0) {
-        let [(face, u, su), (_, v, sv)] = pair else {
-            return Err(KernelError::Boolean(BooleanError::Inconsistent));
-        };
-        if su + sv != 0 {
-            return Err(KernelError::Boolean(BooleanError::Inconsistent));
-        }
-        let (plus, minus) = if *su > 0 { (*u, *v) } else { (*v, *u) };
+    // Each face's cut edges, as it runs them. Keeping the outside of `B`,
+    // a face of `A` runs its cut from the +1 end to the −1 end; faces of
+    // `B` the other way round from that.
+    let mut cuts_a: Vec<(u32, [u32; 2])> = Vec::with_capacity(arcs.len());
+    let mut cuts_b: Vec<(u32, [u32; 2])> = Vec::with_capacity(arcs.len());
+    for arc in arcs {
         let run = |side| {
             if keep.starts_at_plus(side) {
-                [plus, minus]
+                [arc.plus, arc.minus]
             } else {
-                [minus, plus]
+                [arc.minus, arc.plus]
             }
         };
-        cuts_a.push((face[0], run(Side::A)));
-        cuts_b.push((face[1], run(Side::B)));
+        cuts_a.push((arc.tris[0], run(Side::A)));
+        cuts_b.push((arc.tris[1], run(Side::B)));
     }
     cuts_a.sort_unstable();
     cuts_b.sort_unstable();

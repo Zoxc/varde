@@ -18,7 +18,7 @@ use glam::DVec3;
 
 use super::exact::{self, Num, Pred, Pt, V3, cross, det, dir, dot, sub};
 use super::input::{Input, Side};
-use super::{Cross11, Primitives, UP};
+use super::{BooleanError, Cross11, Crossing, Primitives, UP};
 
 /// The primitives of two flat operands.
 pub(super) struct Flat<'a> {
@@ -46,7 +46,8 @@ impl<'a> Flat<'a> {
         }
     }
 
-    fn pt(&self, side: Side, v: u32) -> Pt {
+    /// Vertex `v` of `side` as an exact point, perturbed if it is `A`'s.
+    pub(super) fn pt(&self, side: Side, v: u32) -> Pt {
         let p = self.input(side).pos(v);
         match side {
             Side::A => Pt {
@@ -57,12 +58,79 @@ impl<'a> Flat<'a> {
         }
     }
 
+    /// Vertex `v` of `A`'s first perturbation, `s·n_v`.
+    pub(super) fn perturb(&self, v: u32) -> DVec3 {
+        self.perturb[v as usize]
+    }
+
     fn tri(&self, side: Side, t: u32) -> [Pt; 3] {
         self.input(side).tris[t as usize].map(|v| self.pt(side, v))
     }
 
     fn edge(&self, side: Side, e: u32) -> [Pt; 2] {
         self.input(side).edges[e as usize].map(|v| self.pt(side, v))
+    }
+
+    /// Whether the plane of the corners of face `f` of the other operand
+    /// is above vertex `v` of `side` along [`UP`], or `None` if the plane
+    /// is along `UP`.
+    pub(super) fn plane_above(&self, side: Side, v: u32, f: u32) -> Option<bool> {
+        let x = self.pt(side, v);
+        let t = self.tri(side.other(), f);
+        let facing = exact::sign(&Orient {
+            p: t[0],
+            q: t[1],
+            r: t[2],
+        });
+        // The ray `x + s·UP` meets the plane at `s = (t0 − x)·n / UP·n`,
+        // and `UP·n` has the sign `facing`.
+        (facing != 0).then(|| exact::sign(&Reach { x0: x, t }) == facing)
+    }
+
+    /// Whether edge `e` of `A` is above edge `g` of `B` where the lines
+    /// through them cross seen along [`UP`], the one running from its
+    /// right to its left over the other being `sigma` (+1 for `e`, as in
+    /// [`Cross11`]).
+    pub(super) fn e_above(&self, e: u32, g: u32, sigma: i8) -> bool {
+        let [a, b] = self.edge(Side::A, e);
+        let [c, d] = self.edge(Side::B, g);
+        // The point of `e` is `λ` above that of `g` along `UP`, with
+        // `λ = det[a − c, g, e] / det[g, e, UP]`.
+        let h = match exact::sign(&Height { a, b, c, d }) {
+            0 => 1,
+            h => h,
+        };
+        h * sigma > 0
+    }
+
+    /// Where along edge `e` of `side` (0 at its start, 1 at its end) the
+    /// line through it meets the plane of the corners of face `f` of the
+    /// other: only the position, never a decision.
+    pub(super) fn crossing(&self, side: Side, e: u32, f: u32) -> f64 {
+        let [x0, x1] = self.edge(side, e);
+        let t = self.tri(side.other(), f);
+        let at = exact::ratio(&Reach { x0, t }, &Across { x0, x1, t });
+        if at.is_finite() {
+            at.clamp(0.0, 1.0)
+        } else {
+            0.5
+        }
+    }
+
+    /// The order along edge `e` of `side`, in its direction, of where its
+    /// line meets the planes of the corners of faces `f1` and `f2` of the
+    /// other, ties by face.
+    pub(super) fn order_faces(&self, side: Side, e: u32, f1: u32, f2: u32) -> Ordering {
+        let [x0, x1] = self.edge(side, e);
+        let (t1, t2) = (self.tri(side.other(), f1), self.tri(side.other(), f2));
+        let d1 = exact::sign(&Across { x0, x1, t: t1 });
+        let d2 = exact::sign(&Across { x0, x1, t: t2 });
+        let diff = exact::sign(&Between { x0, x1, t1, t2 }) * d1 * d2;
+        match diff {
+            -1 => Ordering::Less,
+            1 => Ordering::Greater,
+            _ => f1.cmp(&f2),
+        }
     }
 }
 
@@ -113,15 +181,9 @@ impl Primitives for Flat<'_> {
         // `det[g, e, UP]` for the directions `g = d − c` and `e = b − a`:
         // with `a` and `b` on opposite sides of `g`, the sign of `b`'s.
         let sigma = ob;
-        // The point of `e` is `λ` above that of `g` along `UP`, with
-        // `λ = det[a − c, g, e] / det[g, e, UP]`.
-        let h = match exact::sign(&Height { a, b, c, d }) {
-            0 => 1,
-            h => h,
-        };
         // `g` crosses `e` from its right to its left where `e` crosses
         // `g` the other way.
-        if h * sigma > 0 {
+        if self.e_above(e, g, sigma) {
             Cross11 {
                 a_under: 0,
                 b_under: -sigma,
@@ -134,28 +196,32 @@ impl Primitives for Flat<'_> {
         }
     }
 
-    fn order(&self, side: Side, e: u32, f1: u32, f2: u32) -> Ordering {
-        let [x0, x1] = self.edge(side, e);
-        let (t1, t2) = (self.tri(side.other(), f1), self.tri(side.other(), f2));
-        let d1 = exact::sign(&Across { x0, x1, t: t1 });
-        let d2 = exact::sign(&Across { x0, x1, t: t2 });
-        let diff = exact::sign(&Between { x0, x1, t1, t2 }) * d1 * d2;
-        match diff {
-            -1 => Ordering::Less,
-            1 => Ordering::Greater,
-            _ => f1.cmp(&f2),
+    fn searches(&self, _: Side, _: u32, _: u32) -> bool {
+        // A segment meets a triangle once at most.
+        false
+    }
+
+    fn search_work(&self) -> usize {
+        1
+    }
+
+    fn crossings(
+        &self,
+        side: Side,
+        e: u32,
+        f: u32,
+        x: i32,
+    ) -> Result<Vec<(i8, f64)>, BooleanError> {
+        match x {
+            0 => Ok(Vec::new()),
+            -1 | 1 => Ok(vec![(x as i8, self.crossing(side, e, f))]),
+            // A straight edge meets a flat face once at most.
+            _ => Err(BooleanError::Inconsistent),
         }
     }
 
-    fn crossing(&self, side: Side, e: u32, f: u32) -> f64 {
-        let [x0, x1] = self.edge(side, e);
-        let t = self.tri(side.other(), f);
-        let at = exact::ratio(&Reach { x0, t }, &Across { x0, x1, t });
-        if at.is_finite() {
-            at.clamp(0.0, 1.0)
-        } else {
-            0.5
-        }
+    fn order(&self, side: Side, e: u32, c1: &Crossing, c2: &Crossing) -> Ordering {
+        self.order_faces(side, e, c1.face, c2.face)
     }
 }
 

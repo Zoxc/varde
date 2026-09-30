@@ -10,20 +10,28 @@ use crate::par::par_map;
 use crate::patch::Bounds3;
 use crate::{KernelError, Tolerance};
 
-/// An edge of one operand crossing a face of the other: `x` is +1 where
-/// the edge, run in its own direction, enters the other solid there, −1
-/// where it leaves.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Crossing `i` of an edge of one operand through a face of the other,
+/// counting along the edge: `x` is +1 where the edge, run in its own
+/// direction, enters the other solid there, −1 where it leaves, and `t`
+/// where along the edge it is (0 at its start, 1 at its end; a position
+/// only, never a decision). The record `(edge, face, i)` is the new
+/// vertex there.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct Crossing {
     pub(super) edge: u32,
     pub(super) face: u32,
+    pub(super) i: u32,
     pub(super) x: i8,
+    pub(super) t: f64,
 }
 
 /// What the counting decides.
 #[derive(Debug)]
 pub(super) struct Counts {
-    /// Edges of `A` through faces of `B`, sorted by edge then face.
+    /// The pairs (triangle of `A`, triangle of `B`) whose boxes meet,
+    /// sorted.
+    pub(super) pairs: Vec<[u32; 2]>,
+    /// Edges of `A` through faces of `B`, sorted by edge, face and index.
     pub(super) x12: Vec<Crossing>,
     /// Edges of `B` through faces of `A`, likewise.
     pub(super) x21: Vec<Crossing>,
@@ -114,8 +122,12 @@ pub(super) fn count(
 
     // x12(e, f) = s02(end, f) − s02(start, f) − Σ over f's edges h (as f
     // runs them) of the times e's shadow crosses under h.
-    let x12 = crossings(&ef_a, a, b, &s02, work, |e, h| s11.get([e, h]).a_under)?;
-    let x21 = crossings(&ef_b, b, a, &s20, work, |g, k| s11.get([k, g]).b_under)?;
+    let x12 = crossings(Side::A, &ef_a, a, b, &s02, prims, work, |e, h| {
+        s11.get([e, h]).a_under
+    })?;
+    let x21 = crossings(Side::B, &ef_b, b, a, &s20, prims, work, |g, k| {
+        s11.get([k, g]).b_under
+    })?;
 
     let w03 = windings(a, &seeds_a, &x12, &s02);
     let w30 = windings(b, &seeds_b, &x21, &s20);
@@ -125,7 +137,13 @@ pub(super) fn count(
             return Err(KernelError::Boolean(BooleanError::InsideOut));
         }
     }
-    Ok(Counts { x12, x21, w03, w30 })
+    Ok(Counts {
+        pairs,
+        x12,
+        x21,
+        w03,
+        w30,
+    })
 }
 
 /// The layer counts of `other`'s faces (`bvh` over their boxes) above
@@ -159,13 +177,17 @@ fn layers(
     Table::new(keys, |v, f| prims.s02(side, v, f), work)
 }
 
-/// The crossings of the candidate edges of `input` with faces of
-/// `other`, by the identity, keeping those that aren't zero.
+/// The crossings of the candidate edges of `input` (on `side`) with
+/// faces of `other`: how many by the identity, and where from `prims`
+/// (which also looks for crossings in and out again where it may).
+#[allow(clippy::too_many_arguments)]
 fn crossings(
+    side: Side,
     ef: &[[u32; 2]],
     input: &Input,
     other: &Input,
     s02: &Table<i8>,
+    prims: &impl Primitives,
     work: &mut Work,
     shadow: impl Fn(u32, u32) -> i8 + Sync,
 ) -> Result<Vec<Crossing>, KernelError> {
@@ -179,17 +201,27 @@ fn crossings(
         }
         x
     });
+    // Where they are: the pairs crossed, and those the edge may cross in
+    // and out of.
+    let asked: Vec<([u32; 2], i32)> = ef
+        .iter()
+        .zip(x)
+        .filter(|&(&[e, f], x)| x != 0 || prims.searches(side, e, f))
+        .map(|(&ef, x)| (ef, x))
+        .collect();
+    work.spend(asked.len().saturating_mul(prims.search_work()))?;
+    let found = par_map(&asked, |&([e, f], x)| prims.crossings(side, e, f, x));
     let mut out = Vec::new();
-    for (&[edge, face], x) in ef.iter().zip(x) {
-        match x {
-            0 => {}
-            -1 | 1 => out.push(Crossing {
+    for (&([edge, face], _), found) in asked.iter().zip(found) {
+        let found = found.map_err(KernelError::Boolean)?;
+        for (i, (x, t)) in found.into_iter().enumerate() {
+            out.push(Crossing {
                 edge,
                 face,
-                x: x as i8,
-            }),
-            // A straight edge meets a flat face once at most.
-            _ => return Err(KernelError::Boolean(BooleanError::Inconsistent)),
+                i: i as u32,
+                x,
+                t,
+            });
         }
     }
     Ok(out)

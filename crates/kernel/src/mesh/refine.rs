@@ -59,7 +59,7 @@ struct Leaf {
 
 /// A triangle of the conforming mesh: a whole leaf, or half of one.
 #[derive(Debug, Clone)]
-pub(super) struct Piece {
+pub(crate) struct Piece {
     pub corners: [u32; 3],
     pub patch: Patch,
     pub face: u32,
@@ -73,7 +73,7 @@ pub(super) struct Piece {
 
 /// A mesh under red–green refinement: see the [module](self) docs.
 #[derive(Debug)]
-pub(super) struct Refiner<'a> {
+pub(crate) struct Refiner<'a> {
     faces: &'a [Face],
     /// Leaves whose control points span less than this along every axis
     /// aren't split.
@@ -102,7 +102,7 @@ impl<'a> Refiner<'a> {
     /// leaf at level 0, with the triangle's index as its id. Leaves whose
     /// control points span less than `min_size` along every axis won't be
     /// split.
-    pub(super) fn new(mesh: &'a Mesh, min_size: f64) -> Self {
+    pub(crate) fn new(mesh: &'a Mesh, min_size: f64) -> Self {
         let mut refiner = Refiner {
             faces: &mesh.faces,
             min_size,
@@ -143,7 +143,7 @@ impl<'a> Refiner<'a> {
     /// round would fail anyway, and stopping here bounds what a round
     /// holds before it is counted (a round could otherwise split every
     /// leaf of a mesh just under the limit, and more by the rules above).
-    pub(super) fn split(&mut self, requested: &[u32], work: &mut Work) -> Result<(), KernelError> {
+    pub(crate) fn split(&mut self, requested: &[u32], work: &mut Work) -> Result<(), KernelError> {
         let mut stack = Vec::new();
         for &t in requested {
             stack.push(t);
@@ -336,7 +336,7 @@ impl<'a> Refiner<'a> {
     }
 
     /// The conforming mesh's triangles, leaf by leaf in id order.
-    pub(super) fn pieces(&self) -> Result<Vec<Piece>, KernelError> {
+    pub(crate) fn pieces(&self) -> Result<Vec<Piece>, KernelError> {
         let mut pieces = Vec::with_capacity(self.leaves.len());
         for (id, leaf) in self.leaves.iter().enumerate() {
             let Some(leaf) = leaf else { continue };
@@ -381,7 +381,7 @@ impl<'a> Refiner<'a> {
 
     /// The mesh made of `pieces` (from [`Self::pieces`]), with the input's
     /// faces and every vertex made.
-    pub(super) fn mesh(&self, pieces: &[Piece]) -> Mesh {
+    pub(crate) fn mesh(&self, pieces: &[Piece]) -> Mesh {
         let mut builder = MeshBuilder::new();
         for &v in &self.verts {
             builder.vert(v);

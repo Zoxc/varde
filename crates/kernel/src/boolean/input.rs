@@ -1,12 +1,12 @@
 //! An operand of a boolean, with the tables the counting reads: its
-//! triangles' corners, its edges' ends and the triangles on each side.
+//! triangles' corners, its edges' ends and the triangles on each side,
+//! and which of its edges are straight and which patches flat or planar.
 
 use glam::DVec3;
 
-use super::BooleanError;
-use crate::mesh::{Mesh, flat};
-use crate::patch::{Bounds3, smallest_cone};
-use crate::{KernelError, Tolerance};
+use crate::Tolerance;
+use crate::mesh::{Mesh, straight};
+use crate::patch::{Bounds3, Conic3, Patch, smallest_cone};
 
 /// The most different triangle normals round a vertex among which the
 /// smallest cone is looked for (it takes the fourth power of their
@@ -46,29 +46,42 @@ pub(super) struct Input<'a> {
     pub(super) edge_tris: Vec<[u32; 2]>,
     /// The box around each patch's control points.
     pub(super) boxes: Vec<Bounds3>,
+    /// Each triangle's patch.
+    pub(super) patches: Vec<Patch>,
+    /// Whether each edge is straight within the resolution: then it is
+    /// taken as the segment between its ends, and decided exactly.
+    pub(super) straight: Vec<bool>,
+    /// Whether each patch's edges are all straight: then it is taken as
+    /// the triangle on its corners, and decided exactly.
+    pub(super) flat: Vec<bool>,
+    /// Whether each patch lies in the plane of its corners within the
+    /// resolution (flat patches do, and so do caps with curved edges):
+    /// then which side of it a point is on is decided exactly, against
+    /// that plane.
+    pub(super) planar: Vec<bool>,
+    /// Whether any patch isn't flat.
+    pub(super) curved: bool,
 }
 
 impl<'a> Input<'a> {
     /// The tables of `mesh`, which must pass `check` (a [`Solid`]'s mesh
-    /// does). Every patch must be flat within the resolution: curved
-    /// patches are refused with [`BooleanError::Curved`] until the curved
-    /// primitives exist. A flat patch is taken as the triangle on its
-    /// corners.
+    /// does), with straightness and flatness judged within `tol`'s
+    /// resolution.
     ///
     /// [`Solid`]: crate::Solid
-    pub(super) fn new(mesh: &'a Mesh, tol: &Tolerance) -> Result<Input<'a>, KernelError> {
+    pub(super) fn new(mesh: &'a Mesh, tol: &Tolerance) -> Input<'a> {
+        let margin = tol.resolution();
         let n = mesh.tris().len();
         let mut tris = Vec::with_capacity(n);
         let mut edges = vec![[0u32; 2]; mesh.edges().len()];
         let mut edge_tris = vec![[0u32; 2]; mesh.edges().len()];
         let mut tri_edges = Vec::with_capacity(n);
         let mut boxes = Vec::with_capacity(n);
+        let mut patches = Vec::with_capacity(n);
         for (t, tri) in mesh.tris().iter().enumerate() {
             let patch = mesh.patch(t);
-            if !flat(&patch, tol.resolution()) {
-                return Err(KernelError::Boolean(BooleanError::Curved));
-            }
             boxes.push(patch.bounds());
+            patches.push(patch);
             let hs = tri.halfedges;
             tris.push(hs.map(|h| h.start));
             let mut te = [(0u32, true); 3];
@@ -86,14 +99,49 @@ impl<'a> Input<'a> {
             }
             tri_edges.push(te);
         }
-        Ok(Input {
+        let straight: Vec<bool> = edges
+            .iter()
+            .zip(mesh.edges())
+            .map(|(&[s, e], edge)| {
+                let [p, q] = [s, e].map(|v| mesh.verts()[v as usize]);
+                straight(p, edge.ctrl, q, margin)
+            })
+            .collect();
+        let flat: Vec<bool> = tri_edges
+            .iter()
+            .map(|te| te.iter().all(|&(e, _)| straight[e as usize]))
+            .collect();
+        let planar: Vec<bool> = patches
+            .iter()
+            .zip(&flat)
+            .map(|(patch, &flat)| flat || planar(patch, margin))
+            .collect();
+        let curved = flat.iter().any(|&f| !f);
+        Input {
             mesh,
             tris,
             edges,
             tri_edges,
             edge_tris,
             boxes,
-        })
+            patches,
+            straight,
+            flat,
+            planar,
+            curved,
+        }
+    }
+
+    /// Edge `e` as a curve, in its own direction.
+    pub(super) fn conic(&self, e: u32) -> Conic3 {
+        let [s, t] = self.edges[e as usize];
+        let edge = self.mesh.edges()[e as usize];
+        Conic3 {
+            p0: self.pos(s),
+            c: edge.ctrl,
+            w: edge.weight,
+            p1: self.pos(t),
+        }
     }
 
     pub(super) fn pos(&self, v: u32) -> DVec3 {
@@ -111,7 +159,7 @@ impl<'a> Input<'a> {
     }
 
     /// The volume enclosed by the triangles on the corners, summed in
-    /// triangle order: positive for a solid facing out.
+    /// triangle order: positive for a flat solid facing out.
     pub(super) fn volume(&self) -> f64 {
         let Some(&o) = self.mesh.verts().first() else {
             return 0.0;
@@ -125,7 +173,8 @@ impl<'a> Input<'a> {
     }
 
     /// Each vertex's direction out of the solid: one that leaves by
-    /// every triangle round the vertex (on the outer side of each one's
+    /// every triangle round the vertex (a curved patch's normal at the
+    /// corner standing in for its triangle's) (on the outer side of each one's
     /// plane) wherever there is one, so that moving the vertices along
     /// them moves every face outwards. The sum of the triangles' unit
     /// normals, normalized, when it does; else the axis of the smallest
@@ -137,8 +186,17 @@ impl<'a> Input<'a> {
         let mut around: Vec<Vec<DVec3>> = vec![Vec::new(); self.mesh.verts().len()];
         for t in 0..self.tris.len() as u32 {
             let [a, b, c] = self.corners(t);
-            let n = (b - a).cross(c - a).normalize_or_zero();
-            for v in self.tris[t as usize] {
+            let flat = (b - a).cross(c - a).normalize_or_zero();
+            for (k, v) in self.tris[t as usize].into_iter().enumerate() {
+                // A curved patch's own normal at the corner.
+                let n = if self.flat[t as usize] {
+                    flat
+                } else {
+                    self.patches[t as usize]
+                        .normal(DVec3::AXES[k])
+                        .try_normalize()
+                        .unwrap_or(flat)
+                };
                 around[v as usize].push(n);
             }
         }
@@ -164,4 +222,14 @@ impl<'a> Input<'a> {
             })
             .collect()
     }
+}
+
+/// Whether `patch`'s control points all lie within `margin` of the plane
+/// through its corners (which aren't on one line).
+fn planar(patch: &Patch, margin: f64) -> bool {
+    let [p0, p1, p2] = patch.p;
+    let Some(n) = (p1 - p0).cross(p2 - p0).try_normalize() else {
+        return false;
+    };
+    patch.c.iter().all(|&c| n.dot(c - p0).abs() <= margin)
 }

@@ -132,10 +132,15 @@ fn across_line(p: DVec3, q: DVec3) -> Option<(DVec3, impl Fn(DVec3) -> DVec3)> {
 /// through its ends: the patch is then within `margin` of its flat
 /// triangle, and the hull rules on it are about the triangle itself.
 pub(crate) fn flat(patch: &Patch, margin: f64) -> bool {
-    (0..3).all(|i| {
-        across_line(patch.p[i], patch.p[(i + 1) % 3])
-            .is_some_and(|(_, across)| across(patch.c[i]).length() <= margin)
-    })
+    (0..3).all(|i| straight(patch.p[i], patch.c[i], patch.p[(i + 1) % 3], margin))
+}
+
+/// Whether the curve from `p` to `q` with control point `c` is straight
+/// within `margin`: `c` within `margin` of the line through its ends
+/// (which are apart). With a positive weight, the curve is then within
+/// `margin` of that line.
+pub(crate) fn straight(p: DVec3, c: DVec3, q: DVec3, margin: f64) -> bool {
+    across_line(p, q).is_some_and(|(_, across)| across(c).length() <= margin)
 }
 
 /// Whether the convex hulls of `a` and `b` (neither empty) are more than

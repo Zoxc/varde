@@ -17,8 +17,8 @@ tolerances (`Tolerance`), the limits, `Budget` and `KernelError`, and the
 parallel map (`par`), below, and `Solid`, a checked mesh, with its
 tessellation for drawing (`tessellate`) and its volume and area,
 `extrude`, which sweeps a `Profile` into a solid, and `boolean` and
-`touches` for solids of flat patches (the counting skeleton the curved
-booleans build on). Documents store no geometry:
+`touches` for solids of flat patches, with the curved booleans' counting
+and pair decisions built (their cuts not yet). Documents store no geometry:
 bodies are the outputs of the feature history, which `varde-regen`
 evaluates into solids and draws (see "Bodies from the history").
 
@@ -1051,16 +1051,25 @@ through identities that hold whatever values the primitives take, so the
 result is a closed manifold by construction and nothing is ever merged
 because two points are close.
 
-So far only **flat patches** (every edge straight within the resolution,
-`hull::flat`; such a patch is taken as the triangle on its corners): an
-operand with a curved patch is refused with
-`KernelError::Boolean(BooleanError::Curved)`. The pieces are written
-against the curved interfaces (below), so the curved primitives swap in.
+Complete so far for **flat patches** (every edge straight within the
+resolution, `hull::flat`; such a patch is taken as the triangle on its
+corners), whose primitives are exact. With a **curved patch** in either
+operand the primitives are numerical (see "Curved primitives"), pairs of
+faces are decided by certificates and refinement (see "Pairs of faces"),
+and there it stops: tracing and fitting the curved cuts and assembling
+the result aren't built, so `boolean` then fails with
+`KernelError::Boolean(BooleanError::Curved)`, while `touches` answers.
 
 | file | holds |
 |---|---|
 | `boolean.rs` | `Op`, `BooleanError`, `UP`, `Cross11`, the `Primitives` trait, `boolean`, `touches`, building the mesh, `parts` (connected parts, for the rays and the clean-up) |
-| `boolean/input.rs` | `Input`: an operand's tables (corners, edges' ends and triangles, boxes), vertex normals, flat volume |
+| `boolean/input.rs` | `Input`: an operand's tables (corners, edges' ends and triangles, boxes, patches, which edges are straight and which patches flat or planar), vertex normals, flat volume |
+| `boolean/curved.rs` | `Curved`, the primitives with curved patches: ray-derived shadow crossings, layers above a vertex, crossings of an edge through a patch, ties |
+| `boolean/curved/ray.rs` | the ray tests `ρ` (exact for straight edges and at every edge's ends) |
+| `boolean/curved/arcs.rs` | where two edges' shadows cross: one conic written implicitly, the other put in, a quartic |
+| `boolean/curved/solve.rs` | points of a patch above a vertex, and an edge's crossings through a patch: subdivision and Newton |
+| `boolean/curved/bernstein.rs` | Bernstein polynomials: products, evaluation, root isolation |
+| `boolean/pairs.rs` | each pair of faces' ends and arcs; for curved operands the certificates, the refinement loop (`refined`) and the fixed rules |
 | `boolean/exact.rs` | exact signs: `Approx` (float with an error bound), `Exp` (expansions), `Poly` in `ε`, `Pred`, `sign`, `orient2d` |
 | `boolean/flat.rs` | `Flat`, the primitives of flat operands, with the symbolic perturbation |
 | `boolean/count.rs` | broad phase, the stored primitives, `x12`/`x21`, winding numbers |
@@ -1093,13 +1102,21 @@ projection.
   under `e`. Flat edges cross once at most, so one of them is ±1 or both
   0; projected conics can cross up to four times, and only the sums
   matter.
-- `order(side, e, f1, f2)`: the order of an edge's two crossings along it.
-- `crossing(side, e, f)`: where along the edge it crosses: a position
-  only, never a decision.
+- `crossings(side, e, f, x)`: the crossings of edge `e` through face `f`
+  whose signed number the counting gives as `x` (below): each one's sign
+  and where along the edge it is (a position only, never a decision).
+  Their signs add up to `x` whatever a search finds: the count wins.
+  `searches(side, e, f)` says whether the pair is asked with `x = 0` too
+  (an edge that may pass through a face and back: a curved edge, or a
+  curved face).
+- `order(side, e, c1, c2)`: the order of two of an edge's crossings along
+  it.
 
 Each is asked once per pair and stored in a sorted table (`count::Table`,
 by `(vertex, face)` or `(edge of A, edge of B)`), which everything that
 needs it reads. An edge's direction is that of its lower halfedge.
+`Flat` (below) implements them exactly; `Curved` (see "Curved
+primitives") for operands with curved patches.
 
 ### Exact predicates and the perturbation (`boolean/flat.rs`, `boolean/exact.rs`)
 
@@ -1183,8 +1200,13 @@ three edges.
    passes under an edge of `f`, crossing it from its left to its right
    taking one away whichever way `f` faces. `x21(g, f)` for an edge of
    `B` through a face of `A` is the same with `S'(g, k) = −σ` when `k`
-   (of `A`) passes above `g` (`b_under`). A flat triangle and a segment meet once at
-   most: any other value is `Inconsistent`.
+   (of `A`) passes above `g` (`b_under`). Then `crossings` turns each
+   pair's count into **crossing records** `(edge, face, i)`, `i`
+   counting along the edge, each with its sign `x` and position `t`
+   (`count::Crossing`): the new vertices. A flat triangle and a segment
+   meet once at most, so for flat operands any count but −1, 0 and 1 is
+   `Inconsistent`; a curved edge and patch may meet several times, and in
+   and out again where the count is 0.
 5. **Winding numbers**: at each part's first vertex the sum of its layer
    counts (every layer above, signed, is the winding number of the other
    solid round it), and from there along the edges, each changing it by
@@ -1200,6 +1222,134 @@ edges (each as its face runs it): the difference is minus the number of
 signed crossings of the two projected boundaries, which is zero for two
 closed curves. So each face pair's cut has as many ends going in as out;
 for flat triangles, exactly one of each or none.
+
+### Curved primitives (`boolean/curved.rs`, `boolean/curved/`)
+
+With a curved patch in either operand, `Curved` gives the primitives:
+numerical where what they are about is curved, exact (through `Flat`'s
+predicates, `A` perturbed the same way) where it is straight or flat. An
+edge is **straight** when its control point is within the resolution of
+the line through its ends (`hull::straight`), and is then taken as that
+segment; a patch is **flat** when its three edges are, and taken as its
+corner triangle; a patch is **planar** when its control points are within
+the resolution of its corners' plane (caps with curved edges are), and
+which side of it a point is on is then decided exactly against that
+plane. Each is judged once per edge or patch, so every primitive sees the
+same.
+
+**Why the shadow crossings are derived.** The counting's identities (a
+face pair's ends balance; windings agree along edges) hold whatever the
+values of `s02` and of the split of a crossing between `a_under` and
+`b_under`, as long as for every pair of faces the signed number of
+crossings of their projected boundaries is zero, as it is for two closed
+curves. Crossings of curved edges found pair by pair can't promise it: one
+near a shared vertex may be counted by both edges there, or neither. So,
+as Manifold derives its edge crossings from shared vertex decisions, the
+signed number of crossings of the shadows of `e` (from `a` to `b`, of
+`A`) and `h` (from `c` to `d`, of `B`) is derived from **ray tests**:
+
+```text
+I(e, h) = ρ(b, h) − ρ(a, h) − ρ⁻(c, e) + ρ⁻(d, e)
+```
+
+`ρ(v, h)` is the signed number of times `h`'s shadow crosses the ray from
+`v` along `RAY = (3, −2, 0)` (square to `UP`, square to no axis), +1
+where `h` crosses it going left (towards `ACROSS = UP × RAY = (64, 96,
+−13)`); `ρ⁻` the same for the ray behind the vertex. Walking a point `x`
+along `e`, `ρ(x, h)` changes by `σ` where `x` crosses `h`, by `+1` where
+`x` crosses the ray behind `c` going left and by `−1` for the ray behind
+`d`, whatever way `h` runs there; that is the formula. Summed over the
+edges of a face `q` the end terms cancel and what is left is the change,
+from `a` to `b`, of `ω(v, q) = Σ ρ(v, h)`, the winding number of `q`'s
+shadow's boundary round `v`, which sums to zero round a face of `A`. So
+the balance holds by construction, for any values of `ρ`. Each `ρ` is
+about one vertex and one edge of the other operand: which side of the
+ray's line an end of the edge is on is exact (`(c − v)·ACROSS` with `A`'s
+vertices perturbed, never 0, and asked as the same polynomial whoever
+asks, so antisymmetric); a straight edge is exact throughout; a curved
+one's shadow crosses the line at the roots of a quadratic in Bernstein
+form whose end coefficients take the exact signs (so the number of roots
+has the right parity), and whether each is ahead of `v` is decided in
+floating point.
+
+**`s11`.** `I(e, g)` as above. For two straight edges its crossing (one
+at most) is above or below by `Flat`'s exact `Height`. Otherwise the
+crossings are solved for (`curved/arcs.rs`): the curvier shadow (by
+`|det M| / (|H0|·|H1|·|H2|)` of its homogeneous control points) written
+implicitly as `λ1² = 4·λ0·λ2`, `λ = adj(M)·X` with the adjugate's rows
+`H1 × H2, H2 × H0, H0 × H1`, the other put in to give a quartic in its
+parameter (a straight shadow is its line, and gives a quadratic), roots
+isolated in Bernstein form (Descartes' rule, halving by de Casteljau,
+bisection; `curved/bernstein.rs`), the other parameter back from the
+ratios of `λ`, kept if in `[0, 1]`. Each crossing's height difference
+splits it into `a_under` or `b_under`. If their `σ` don't add up to `I`,
+the missing ones go by the heights where the two edges' ends come closest
+to the other (where they must be).
+
+**`s02(v, f)`.** A flat triangle: exact (`Flat`). A planar patch:
+`ω(v, f)` where its plane is above `v` (exact), 0 where not. A curved
+patch: `ω(v, f)` when `v` is below all its control points, 0 when above;
+otherwise the points of `f` straight above and below `v` are solved for
+(`solve::hits`: the parameter triangle split by blossoming, pieces whose
+control points' shadows' box misses `v` dropped, Newton on the shadow's
+two coordinates in pieces whose normals all lean one way along `UP`),
+their facings made to add up to `ω(v, f)` (a shadow covers a point as
+often as its boundary winds round it, counted by facing) by adding the
+nearest found just outside the triangle or dropping those inside nearest
+its sides, and those above counted.
+
+**Crossings.** A straight edge through a planar patch: at most one, at
+`Flat`'s exact position on the corners' plane. Otherwise solved for
+(`solve::edge_patch`: edge and triangle split together, pieces dropped by
+their boxes and by a slab along the patch piece's normal, which a
+tangency needs; Newton on `E(t) = P(u)`), and made to add up to the count
+the same way; ones the search didn't find go where the two came closest.
+Such pairs are searched with a count of 0 too, so an edge passing into a
+face and back out gets both crossings. Crossings are ordered along an
+edge by position, ties exactly (a straight edge through two planar
+patches) or by face and index.
+
+**Ties.** Heights within a 64th of the resolution are ties, decided as
+`A`'s perturbation would (`A` moved by `ε·s·n_v`): at an edge crossing,
+`e` is above if the perturbation interpolated along it points up; a point
+of a patch above a vertex of `A` is above if the vertex's perturbation
+points down, and above a vertex of `B` if the patch's corners' do up. So
+flush planar faces between a curved and a flat operand behave as between
+flat ones. Vertex directions of curved patches are their normals at the
+corner.
+
+### Pairs of faces (`boolean/pairs.rs`)
+
+A pair (triangle `p` of `A`, `q` of `B`) is every pair whose boxes meet,
+and any with ends. Its **ends** are the crossing records on its faces'
+edges through the other face (sign seen from `A`); the counting leaves
+as many of each sign. For flat operands they are two or none, joined into
+one arc (else `Inconsistent`). With curved patches a pair is decided from
+its ends only with a **certificate** that no closed loop hides in it: the
+patches' normal cones apart (`NormalCone::apart`: no normal of one
+parallel to one of the other, and a loop needs one), both planar, or,
+with no ends, their control hulls apart (GJK). Then no ends is no cut,
+two ends are one arc, and more ends of two planar patches join in order
+along the line their planes meet in (if they alternate).
+
+Any other pair is **refined**: both patches, where larger than the floor
+(`MIN_SPLIT` resolutions across their control points' box), are split by
+the red–green `Refiner` (so neighbours across split edges are too, flat
+faces with straight inner edges), and everything is counted again, every
+new vertex and edge with primitives of its own (`refined`: one refiner
+per operand kept across rounds, so green pieces are never bisected
+again; rounds up to `2·MAX_REFINE_DEPTH`, else `TooComplex`). A pair of
+pieces both at the floor is decided by **fixed rules**: no certificate
+means no loop, and the ends, by angle round their middle in the plane of
+`p`'s corners (a pseudo-angle, `+ − ÷` only), join each + to a later −
+as parentheses match, starting after the lowest running sum, so the
+arcs don't cross. Pieces flat within the resolution certify each other
+as planar, which is what ends refinement at a tangency long before the
+floor (at pieces about `√(8·R·resolution)` across).
+
+`refined` returns the operands as refined (the same surfaces, split), the
+counts and every pair's arcs (`Arc { tris, plus, minus }`, by end vertex
+id): what tracing, fitting and assembling curved cuts will start from.
 
 ### Assembly (`boolean/assemble.rs`)
 
@@ -1222,7 +1372,8 @@ for flat triangles, exactly one of each or none.
 - **Edges**: each edge's crossings are ordered along it (`order`, by
   insertion, which can't fail), and its pieces kept by the winding number
   running from its start: both faces beside it read the same pieces.
-- **Cut edges**: each face pair's two ends, with signs seen from `A`
+- **Cut edges**: each face pair's arcs (from `pairs`; for flat operands
+  its two ends, joined), with signs seen from `A`
   (the crossing of an edge of `A` as the face of `A` runs it, and minus
   the crossing of an edge of `B` as the face of `B` runs it). Keeping
   the outside of `B`, a face of `A` runs its cut from the +1 end to the
@@ -1312,16 +1463,18 @@ operands intersected, or subtracted the other way, work.
 
 ### Errors and budget
 
-`KernelError::Boolean(BooleanError)`: `Curved` (not yet), `InsideOut`,
-`Inconsistent` (the decisions don't fit together: never with exact
-primitives), `Degenerate` (a face's loops couldn't be triangulated, or
+`KernelError::Boolean(BooleanError)`: `Curved` (curved cuts aren't
+traced and assembled yet: after the pair decisions), `InsideOut` (a
+curved operand's sign from `Solid::volume`), `Inconsistent` (the
+decisions don't fit together: never with exact primitives), `Degenerate` (a face's loops couldn't be triangulated, or
 the triangles don't pair up). `TooComplex` past the budget or
 `MAX_PATCHES`, `Invalid` when the result fails `check`. Work: the broad
 phase's pairs and the rays' hits (counted before collecting), one unit per
 stored primitive and per candidate crossing, the square of each edge's
 crossings (ordering them), `n²·(1 + n/64)` per cut face with `n` its cuts
 plus 6 (ear clipping), and the soup's size per clean-up round; then
-repair's own.
+repair's own. With curved patches also 16 units per edge–face search, a
+unit per pair decided, and per refinement split and piece, every round.
 
 ### Costs
 
@@ -1329,6 +1482,13 @@ Release, several threads: two flat tori of 36 864 patches each, crossing
 each other: 0.13 s to the mesh before repair, 0.34 s with repair and the
 check (their union is 70 784 patches). Ties go to the exact path, which
 allocates; flush boxes are dominated by it but tiny.
+
+Curved pair decisions, release: a cylinder through a box, crossing
+cylinders, a hidden loop in the round octahedron, a saddle, each a few
+rounds, 10–30 ms. Two cylinders tangent along a line refine along it to
+pieces flat within the resolution: about 2.5 s at the default tolerance
+(13 000 pieces after 10 rounds), since each round counts everything
+again and the searches near the tangency run to their caps.
 
 ### Tests
 
@@ -1358,6 +1518,25 @@ contradicting the exact sign, `orient2d` near a line and far out,
 triangulating a square with a hole, a concave loop, a zero-width loop and
 a vertex landing on the domain's side (no diagonal along a side).
 
+Curved (`curved/tests.rs`, `pairs/tests.rs`): the ray-derived shadow
+crossings against dense polylines of random curves, straight and curved
+(and the solved crossings' parameters, signs and heights); straight edges'
+exact rays against the numerical ones; the points of random patches above
+a point adding up, by facing, to the winding number of their shadow's
+boundary; edge crossings on both the edge and the patch, and a line
+through a cylinder crossing it once each way where it should to `1e-12`;
+picking crossings to fit a count; Bernstein roots. Pair decisions: a
+cylinder through a box both ways round (two closed curves, every end on
+both surfaces to `1e-9`, windings 0), a blind hole (one curve, the bar's
+end inside), crossing cylinders (two curves on both cylinders), an arc
+passing through a turned face and back (two crossings counted 0), a hidden
+loop the counting alone can't see (a face cutting a small cap off a
+round-octahedron patch: found by refinement, one curve on the plane), a
+saddle cut above and below its saddle point (the four ends on its patch
+joined by the side of the saddle point they are on, which the ends alone
+don't say), tangent cylinders (decided, deterministic), `touches`, the
+budget, joining ends round a pair, and the same bits at 1 and 8 threads.
+
 Found by fuzzing, with regression tests: random boxes on a half grid
 (flush faces, shared edges and corners everywhere) against the cells
 they fill, alone and fed on in chains, where a result that is a manifold
@@ -1374,6 +1553,14 @@ manifolds.
 
 ### Known gaps
 
+- **Curved booleans stop after the pair decisions** (`Curved`): tracing,
+  fitting, exact plane and quadric cuts, assembly and repair come next.
+- A tangency along a line reads as not touching (`touches` says false for
+  two cylinders side by side): no crossing shows it, and the fixed rules
+  take no certificate as no loop. Flat solids touching do meet.
+- Each refinement round counts both operands again from scratch, and a
+  search stops at 1 024 pieces (placing a crossing it didn't find where
+  the edge came closest); tangent pairs are slow (see "Costs").
 - **Coplanar faces facing each other, triangulated differently**: a
   folded sheet whose two sides don't share their triangles can't be
   collapsed away (seen once in about 3 600 chained grid-box booleans).
@@ -1394,30 +1581,28 @@ manifolds.
 
 ### For the curved booleans
 
-- `Primitives` is the seam: `Flat` swaps for curved primitives (conic
-  `s11` with root isolation and heights, rational `s02`), which are
-  numerical and decided once, not exact. `s02` and `s11` already answer
-  in the form curved ones need (signed layer counts; `s11` as its two
-  sums, whatever the number of crossings); `order` and `crossing` name a
-  crossing by `(edge, face)` and need its index too.
-- `count::crossings` refuses `|x12| > 1`; a curved edge and patch can
-  cross several times, so crossings become records `(edge, face, i)`.
-- `Input::new` refuses curved patches and reads each as the triangle on
-  its corners; the perturbation's vertex directions (`vertex_normals`)
-  are only `Flat`'s.
-- `assemble` assumes each face pair's cut is one segment with two ends:
-  curved pairs need the per-pair decisions (refinement, certificates,
-  fixed rules) and cut chains of several vertices and conic edges; the
-  cut face's domain positions of interior points need the patch's
-  inverse; `build` makes every edge straight, and untouched curved
-  patches must keep their edge records.
-- The clean-up and `Input::volume` are flat-only. The corner triangles
-  of a curved solid needn't enclose its volume (two patches of a lens
-  enclose none), and `Solid::volume` is about as slow as the whole flat
-  counting of two big tori (0.09 s each for 36 864 patches), so the
-  sign check needs a cheaper curved measure or to go into `check`.
-- `touches` refuses curved solids too, so regen can't list touched bodies
-  of extrudes with arcs until then.
+What the tracing, fitting and assembly (still to come) start from, and
+what is still flat-only:
+
+- `pairs::refined` gives the refined operands, their `Counts` (crossing
+  records `(edge, face, i)` with signs and parameters on the refined
+  edges; rebuild `Input`s from the meshes to read them) and every face
+  pair's `Arc`s between end ids (`first_ids`: after both operands'
+  vertices, `x12`'s records, then `x21`'s). Each arc is decided once for
+  its pair; both faces must be cut along the same chain.
+- `assemble` takes arcs, but places new vertices by `lerp` along straight
+  edges and cuts each face along straight domain segments between the
+  ends: curved edges need `conic.eval(t)` (and the split halves shared,
+  `Conic3::split` once per edge), arcs traced chains of shared conic
+  `Edge`s, interior points' domain positions the patch's inverse; `build`
+  makes every edge straight, and untouched curved patches must keep
+  their edge records.
+- The clean-up is flat-only (it measures corner triangles).
+- Ties in curved primitives are decided by a threshold (a 64th of the
+  resolution) and `A`'s perturbation direction; exact plane and quadric
+  paths selected by face tags aren't used for decisions yet.
+- `Input::volume` is flat-only; curved operands' sign comes from
+  `Solid::volume`, which costs about as much as counting.
 
 ## Bodies from the history (`varde-document`, `varde-regen`)
 
@@ -1826,8 +2011,8 @@ with tracing.
   union and in otherwise, then by two generic translations), rather than
   plain floating point: with rounded decisions, flush boxes (the commonest
   CAD boolean) came out as zero-thickness slivers instead of clean
-  results. Curved operands are refused (`BooleanError::Curved`) until the
-  curved primitives come.
+  results. Curved operands are counted and their pairs decided, and then
+  refused (`BooleanError::Curved`) until curved cuts are assembled.
 - **`KernelError::Boolean(BooleanError)`** is new: `Curved`, `InsideOut`,
   `Inconsistent`, `Degenerate`.
 - **Winding numbers are propagated along edges** from one ray per
@@ -1846,3 +2031,24 @@ with tracing.
   winding number 0 or 1 (`InsideOut`), since `check` doesn't look at
   orientation.
 - **`Bvh::hits_within`** generalizes `pairs_within` to any query box.
+- **Curved shadow crossings are derived from ray tests**, not taken from
+  solving each pair of projected conics: `I(e, h) = ρ(b, h) − ρ(a, h) −
+  ρ⁻(c, e) + ρ⁻(d, e)`, so every face pair's ends balance whatever the
+  numerical answers (see "Curved primitives"). The quartic is still
+  solved, for where the crossings are and which edge is above.
+- **Layers above a vertex and edge crossings on curved patches are found
+  by subdivision and Newton's method**, not by a closed-form 2×2
+  quadratic system or a degree-8 polynomial, and then made to fit the
+  counts (a vertex's layers add up to the patch's shadow's winding number
+  round it; an edge's crossings to the counted `x`). Edge–face pairs that
+  may pass in and out again are searched with a count of 0 too.
+- **Pairs are refined by refining both whole operands and counting
+  again**, not pair by pair: every new vertex and edge gets its own
+  primitives through the same counting. Besides normal cones apart, two
+  planar patches and (with no ends) hulls apart certify no loops, and
+  pieces flat within the resolution count as planar, which stops
+  refinement at tangencies well above the floor.
+- **Ties in curved primitives** are heights within a 64th of the
+  resolution, decided the way `A`'s perturbation would move things.
+- **`touches` on curved solids runs the pair decisions too**, so a
+  loop no edge crossing shows still counts.

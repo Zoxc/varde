@@ -26,14 +26,21 @@
 //! 5. **Clean-up, repair and check**: the degenerate triangles flush
 //!    operands leave are removed, and the result is repaired and checked.
 //!
-//! This is the counting skeleton for **flat patches**: patches whose
-//! edges are straight within the resolution. The primitives are exact,
-//! with symbolic perturbation breaking ties (see [`flat`]), and the new
-//! edges are straight. Curved primitives (conic `s11`, rational `s02`,
-//! pair refinement for hidden loops and arc pairing, tracing and fitting
-//! the cuts) come in through [`Primitives`] and the assembly's cut edges;
-//! until then an operand with a curved patch is refused with
-//! [`BooleanError::Curved`]. See `agents/kernel.md`.
+//! The primitives come in two kinds. For **flat patches** (every edge
+//! straight within the resolution) they are exact, with symbolic
+//! perturbation breaking ties (see [`flat`]), and the new edges are
+//! straight. When an operand has a **curved patch** they are numerical
+//! solves (see [`curved`]), each worked out once and shared, and exact
+//! wherever the pieces they are about are straight or flat. Curved pairs
+//! of faces then need their own decisions: whether a closed loop may
+//! hide in a pair of patches that no edge crossing shows, and which of
+//! several ends join up. Pairs that can't be decided from their ends and
+//! a normal-cone certificate are refined, both operands split exactly
+//! (red–green) and counted again, down to a size floor where fixed rules
+//! decide (see [`pairs`]). Tracing and fitting the curved cuts, and
+//! assembling the result from them, aren't built yet: a curved boolean
+//! gets that far and then fails with [`BooleanError::Curved`]. See
+//! `agents/kernel.md`.
 
 use std::cmp::Ordering;
 
@@ -46,11 +53,14 @@ use crate::{KernelError, Solid, Tolerance};
 mod assemble;
 mod cleanup;
 mod count;
+mod curved;
 mod exact;
 mod flat;
 mod input;
+mod pairs;
 mod triangulate;
 
+use count::Crossing;
 use input::{Input, Side};
 
 /// A boolean operation.
@@ -67,7 +77,8 @@ pub enum Op {
 /// Why a boolean gives no solid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BooleanError {
-    /// An operand has a curved patch: curved booleans aren't built yet.
+    /// An operand has a curved patch: curved cuts are counted and their
+    /// pairs decided, but not yet traced and assembled.
     Curved,
     /// An operand faces inwards, or its winding numbers aren't 0 and 1.
     InsideOut,
@@ -121,13 +132,25 @@ trait Primitives: Sync {
     /// `s11`: how the shadows of edge `e` of `A` and edge `g` of `B`
     /// cross.
     fn s11(&self, e: u32, g: u32) -> Cross11;
-    /// The order along edge `e` of `side`, in its direction, of its
-    /// crossings with faces `f1` and `f2` of the other operand. Both
-    /// crossings exist.
-    fn order(&self, side: Side, e: u32, f1: u32, f2: u32) -> Ordering;
-    /// Where along edge `e` of `side` (0 at its start, 1 at its end) it
-    /// crosses face `f` of the other: only the position, never a decision.
-    fn crossing(&self, side: Side, e: u32, f: u32) -> f64;
+    /// Whether edge `e` of `side` may pass through face `f` of the other
+    /// and back again, which the count, `0`, doesn't show: then
+    /// [`Self::crossings`] is asked for the pair with a count of `0` too.
+    fn searches(&self, side: Side, e: u32, f: u32) -> bool;
+    /// About how much work [`Self::crossings`] is, in units of the
+    /// budget.
+    fn search_work(&self) -> usize;
+    /// The crossings of edge `e` of `side` through face `f` of the other,
+    /// whose signed number is `x` (+1 entering the other solid, −1
+    /// leaving): each crossing's sign and where along the edge it is (0
+    /// at its start, 1 at its end), in order along the edge. Their signs
+    /// add up to `x`, whatever the search for them finds: the count wins,
+    /// the search only gives the positions. Fails with
+    /// [`BooleanError::Inconsistent`] where no such crossings can be.
+    fn crossings(&self, side: Side, e: u32, f: u32, x: i32)
+    -> Result<Vec<(i8, f64)>, BooleanError>;
+    /// The order along edge `e` of `side`, in its direction, of two of
+    /// its crossings.
+    fn order(&self, side: Side, e: u32, c1: &Crossing, c2: &Crossing) -> Ordering;
 }
 
 /// `a op b`, within `budget`: a solid that passes `check`, always.
@@ -166,9 +189,16 @@ fn unchecked(
     work: &mut Work,
 ) -> Result<Mesh, KernelError> {
     let (ia, ib) = inputs(a, b, tol)?;
+    if ia.curved || ib.curved {
+        // Counted and decided pair by pair; the cuts aren't traced and
+        // assembled yet.
+        pairs::refined(a.mesh(), b.mesh(), op == Op::Union, tol, work)?;
+        return Err(KernelError::Boolean(BooleanError::Curved));
+    }
     let prims = flat::Flat::new(&ia, &ib, op == Op::Union);
     let counts = count::count(&ia, &ib, &prims, tol, work)?;
-    let (mut soup, faces) = assemble::assemble(op, &ia, &ib, &counts, &prims, work)?;
+    let arcs = pairs::flat(&ia, &ib, &counts)?;
+    let (mut soup, faces) = assemble::assemble(op, &ia, &ib, &counts, &arcs, &prims, work)?;
     cleanup::clean(
         &mut soup,
         tol.resolution() / 8.0,
@@ -181,7 +211,8 @@ fn unchecked(
 /// Whether `a` and `b` touch or overlap: whether an edge of one crosses a
 /// face of the other or a vertex of one is inside the other, with solids
 /// that only touch (flush faces, an edge on a face) counted as touching.
-/// Only the broad phase and the counting run.
+/// Only the broad phase and the counting run (with curved patches, also
+/// the refinement that finds loops no edge crossing shows).
 pub fn touches(
     a: &Solid,
     b: &Solid,
@@ -192,19 +223,35 @@ pub fn touches(
         return Ok(false);
     }
     let (ia, ib) = inputs(a, b, tol)?;
+    let mut work = Work::new(budget);
+    if ia.curved || ib.curved {
+        let refined = pairs::refined(a.mesh(), b.mesh(), true, tol, &mut work)?;
+        return Ok(refined.counts.meet());
+    }
     let prims = flat::Flat::new(&ia, &ib, true);
-    let counts = count::count(&ia, &ib, &prims, tol, &mut Work::new(budget))?;
+    let counts = count::count(&ia, &ib, &prims, tol, &mut work)?;
     Ok(counts.meet())
 }
 
+/// The operands' tables, once both are known to face out: a solid's
+/// volume must be positive (the corner triangles' for a flat one, which
+/// is exact, else the solid's own).
 fn inputs<'a>(
     a: &'a Solid,
     b: &'a Solid,
     tol: &Tolerance,
 ) -> Result<(Input<'a>, Input<'a>), KernelError> {
-    let ia = Input::new(a.mesh(), tol)?;
-    let ib = Input::new(b.mesh(), tol)?;
-    if ia.volume() <= 0.0 || ib.volume() <= 0.0 {
+    let ia = Input::new(a.mesh(), tol);
+    let ib = Input::new(b.mesh(), tol);
+    let out = |solid: &Solid, input: &Input| {
+        let volume = if input.curved {
+            solid.volume()
+        } else {
+            input.volume()
+        };
+        volume > 0.0
+    };
+    if !out(a, &ia) || !out(b, &ib) {
         return Err(KernelError::Boolean(BooleanError::InsideOut));
     }
     Ok((ia, ib))

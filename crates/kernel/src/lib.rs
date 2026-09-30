@@ -14,7 +14,9 @@
 //! [`boolean()`] unites, subtracts and intersects solids the way
 //! [manifold](https://github.com/elalish/manifold) does for flat
 //! triangles, by counting from primitives each worked out once, so the
-//! result is always a closed manifold; so far for flat patches only.
+//! result is always a closed manifold; so far for flat patches only
+//! (with curved ones, the counting and the decisions about pairs of
+//! patches are built, the cuts not yet).
 //! [`touches`] says whether two solids meet. The math of one curve or
 //! triangle is in [`patch`]; closed
 //! meshes of them, the check of their invariants, the BVH over them,
