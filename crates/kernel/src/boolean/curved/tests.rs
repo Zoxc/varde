@@ -3,7 +3,7 @@ use glam::{DVec2, DVec3};
 use super::super::exact::Pt;
 use super::arcs::cross;
 use super::ray::{RayEdge, ray};
-use super::solve::{edge_patch, hits};
+use super::solve::{edge_patch, hits, near_patch};
 use super::*;
 use crate::patch::{Conic3, Patch};
 use crate::test_rng::Rng;
@@ -342,15 +342,25 @@ fn picked_crossings_add_up_to_the_count() {
     };
     // As found.
     let found = [hit(0.2, 1, 0.0), hit(0.6, -1, 0.0)];
-    assert_eq!(pick(&found, 0, 0.5), vec![(1, 0.2), (-1, 0.6)]);
+    assert_eq!(pick(&found, 0, 0.5), vec![(1, 0.2, true), (-1, 0.6, true)]);
     // The count has one the search put just outside the patch.
     let found = [hit(0.2, 1, 0.0), hit(0.6, -1, 0.0), hit(0.9, 1, 1e-12)];
-    assert_eq!(pick(&found, 1, 0.5), vec![(1, 0.2), (-1, 0.6), (1, 0.9)]);
+    assert_eq!(
+        pick(&found, 1, 0.5),
+        vec![(1, 0.2, true), (-1, 0.6, true), (1, 0.9, true)]
+    );
     // The count has none of a crossing found near the edge's end.
     let found = [hit(1e-13, 1, 0.0), hit(0.5, -1, 0.0), hit(0.7, 1, 0.0)];
-    assert_eq!(pick(&found, 0, 0.5), vec![(-1, 0.5), (1, 0.7)]);
-    // Nothing found: at the closest place.
-    assert_eq!(pick(&[], -2, 0.25), vec![(-1, 0.25), (-1, 0.25)]);
+    assert_eq!(pick(&found, 0, 0.5), vec![(-1, 0.5, true), (1, 0.7, true)]);
+    // One more than found, where it found the two meeting: placed there,
+    // not solved.
+    let found = [hit(0.3, -1, 1e-6), hit(0.6, 1, 0.0)];
+    assert_eq!(pick(&found, 2, 0.5), vec![(1, 0.3, false), (1, 0.6, true)]);
+    // Nothing found: at the closest place, not solved.
+    assert_eq!(
+        pick(&[], -2, 0.25),
+        vec![(-1, 0.25, false), (-1, 0.25, false)]
+    );
 }
 
 #[test]
@@ -378,4 +388,34 @@ fn shadows_along_each_other_are_told() {
         };
         assert!(cross(&e, &off, &axes).is_some());
     }
+}
+
+#[test]
+fn points_near_a_patch_are_certified_and_others_not() {
+    // Points of random patches, and the same off them along the normal
+    // or out past a side: only the first are within a micrometre, and
+    // they are found so.
+    let mut rng = Rng::new(51);
+    let within = 1e-6;
+    let mut most = 0;
+    for _ in 0..200 {
+        let patch = random_patch(&mut rng);
+        let at = DVec3::new(
+            rng.range(0.1, 1.0),
+            rng.range(0.1, 1.0),
+            rng.range(0.1, 1.0),
+        );
+        let at = at / at.element_sum();
+        let v = at.y;
+        let x = patch.eval(at);
+        let (d, nodes) = near_patch(x, &patch, within);
+        assert!(d.is_some_and(|d| d <= within), "{d:?} after {nodes}");
+        most = most.max(nodes);
+        let n = patch.normal(at).normalize();
+        assert_eq!(near_patch(x + n * 1e-4, &patch, within).0, None);
+        // On the surface beyond a side of the triangle.
+        let beyond = patch.eval(DVec3::new(-0.05, v, 1.05 - v));
+        assert_eq!(near_patch(beyond, &patch, within).0, None);
+    }
+    assert!(most <= 256, "{most}");
 }

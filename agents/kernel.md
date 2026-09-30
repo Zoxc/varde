@@ -1347,7 +1347,7 @@ elsewhere (see "Cutting curved faces").
 | `boolean/curved.rs` | `Curved`, the primitives with curved patches: ray-derived shadow crossings, layers above a vertex, crossings of an edge through a patch, ties |
 | `boolean/curved/ray.rs` | the ray tests `ρ` (exact for straight edges and at every edge's ends) |
 | `boolean/curved/arcs.rs` | where two edges' shadows cross: one conic written implicitly, the other put in, a quartic |
-| `boolean/curved/solve.rs` | points of a patch above a vertex, and an edge's crossings through a patch: subdivision and Newton |
+| `boolean/curved/solve.rs` | points of a patch above a vertex, an edge's crossings through a patch, and a certified distance to a patch: subdivision and Newton |
 | `boolean/curved/bernstein.rs` | Bernstein polynomials: products, evaluation, root isolation |
 | `boolean/pairs.rs` | each pair of faces' ends and arcs; for curved operands the certificates, the refinement loop (`refined`) and the fixed rules |
 | `boolean/exact.rs` | exact signs: `Approx` (float with an error bound), `Exp` (expansions), `Poly` in `ε`, `Pred`, `sign`, `orient2d` |
@@ -1638,6 +1638,8 @@ kept no crossing (a hit the count overrules, as where the edge leaves a
 vertex on the patch's corner: nearest the patch), else where they came
 closest (the middle of the smallest pieces the search looked at, which
 had put such a crossing a sixteenth of the edge from the vertex).
+Those are marked as not solved (`Crossing::solved`, from `pick`), and
+must lie on the other operand once placed (see "Assembly").
 Such pairs are searched with a count of 0 too, so an edge passing into a
 face and back out gets both crossings. Crossings are ordered along an
 edge by position, ties exactly (a straight edge through two planar
@@ -1783,6 +1785,10 @@ solved again on the conic (from its point nearest the segment's, then
 against the face crossed): a nearly straight cut whose control point is
 far from its chord's middle runs at another pace, and the segment's
 parameter put a vertex `2e-3` along it from the plane it crossed.
+None of this puts a crossing the search didn't solve onto the other
+surface for sure (a plane's root may be beside the patch, a quadric's
+only within `1e-6` of the placement, a free face's never), so those are
+checked once placed (see "Assembly").
 
 **Chains** (`chain::chain`, per arc, through `par_map`): the cut from an
 arc's `+` end to its `−` end as vertices and curves, and every vertex's
@@ -1910,6 +1916,21 @@ be halved when its patch strays from the face's patch by more than half
 the fit tolerance at the 15 sample points (each inverted into the patch
 from its domain position): a cut whose domain preimage bends far from
 the straight domain segment leaves the band's inside off the surface.
+A triangle off its face's quadric (see "Exact bands on quadrics") by
+more than half the fit tolerance at the samples asks for its curved
+sides on the face's boundary (cut or edge pieces) to be halved the same
+way. Each face reports the largest of these two distances over its
+triangles (`Cutout::stray`, NaN as infinite), and the round the largest
+of all; **the round kept must be within the fit tolerance**, else the
+operation fails as `TooComplex`. Halving can't bring every band within
+it: a vertex off the surface keeps the triangles at it that far however
+small they get (bars through boxes at the finest tolerance: 5.6e-4 off
+in every round, their union and `bar − box` kept at 56 times the
+tolerance before), a triangle with no curved side on the boundary has
+nothing to halve, and a fitted chain's stray only halves with its
+curves. Between half the tolerance and the tolerance, a result that
+ran out of rounds is kept: within the contract. `TooComplex`'s advice,
+a coarser tolerance, holds: the leftover is of a fixed size.
 
 **Cuts along a flush rim.** Where a plane meets a quadric exactly along
 an operand's curved edge lying on both (a boss's rim on a plate's flush
@@ -1954,7 +1975,12 @@ ruling in each region, so a cylinder through a box comes out exact to
 rounding. A triangle on a `Quadric` face still off it by more than half
 the resolution at the sample points (a fitted cut's band, the tree's
 root) goes on a **copy of its face claiming no surface** (`Surface::Free`,
-same name, so no feature edge), keeping the face tag check true.
+same name, so no feature edge), keeping the face tag check true. Such a
+triangle is still held to the fit tolerance from the quadric, as those
+along a cut are from the patch (see "Rounds"): before, nothing bounded
+the triangles no ruling freed and no cut ran along, and at a crossing
+placed 1.3e-4 off a small cylinder's wall they came out that far off
+at every tolerance.
 
 **Diagonals along a cut.** Faces of `B` join no two vertices of one cut
 by a diagonal (as no face joins two vertices on one domain side): the
@@ -2013,6 +2039,22 @@ now take 20 ms.
   worked out exactly (a near tie: two tiny numbers that are all rounding
   put vertices off the result, with the wrong volume), and for an exact
   tie the ratio of the first powers of `ε` that aren't zero.
+- **Crossings only placed are certified** (`Cutting::certify`): a
+  crossing the search didn't solve (see "Curved primitives") lies on its
+  edge but on the other surface only by luck, so once placed it must be
+  within the resolution of the patch it crosses, or of another patch of
+  the other operand whose box comes that near (a crossing through the
+  side two patches share lands on either), by `solve::near_patch`: the
+  foot of the perpendicular (Gauss–Newton) moved into the patch's
+  triangle, else a search splitting the triangle by blossoming, pieces
+  whose control points' box is farther dropped, nearest box and then
+  nearest middle first, up to 512 pieces. Every distance it finds is to
+  a point of the patch, so a `Some` is certified; not found, or past
+  the cap, the operation fails as `Inconsistent`. Before, such a vertex
+  4 resolutions off a cylinder (a curved rim against a crossing
+  cylinder's wall, search capped) came out in four `Ok` results, its
+  bands on a copy claiming no surface, and one 5.6e-4 off (bars through
+  boxes) likewise.
 - **Edges**: each edge's crossings are ordered along it (by insertion,
   which can't fail: by their places where they are more than the
   resolution apart, else by `order`), and its pieces kept by the winding
@@ -2163,7 +2205,10 @@ made only if their curves are one (else a plane face took a cylinder's
 inner edge there, 0.02 off its plane, and repair trusted the tag). A
 triangle a collapse gives another curve off its face's surface (a
 fitted cut's, merged onto the face's own curve) goes on the face's copy
-claiming no surface, as fitted bands do (`leave_surfaces`).
+claiming no surface, as fitted bands do (`leave_surfaces`), held to the
+fit tolerance as they are: one further off than it (its control points
+from a plane, its samples from a quadric) fails the operation as
+`TooComplex`.
 
 A triangle of zero height (no more than an eighth of the resolution) and
 straight sides may also be flipped into a neighbour with curved sides:
@@ -2213,10 +2258,13 @@ operands intersected, or subtracted the other way, work.
 
 `KernelError::Boolean(BooleanError)`: `Inconsistent` (the decisions
 don't fit together: with near ties taken as ties, flat operands too can,
-rarely; also a winding number out of `0..=1`, see "Counting"),
+rarely; also a winding number out of `0..=1`, see "Counting"; or a
+crossing the search only placed isn't on the other operand),
 `Degenerate` (a face's loops
 couldn't be triangulated, or the triangles don't pair up). `TooComplex`
-past the budget or `MAX_PATCHES`, `Invalid` when the result fails
+past the budget or `MAX_PATCHES`, or with triangles still off their face
+by more than the fit tolerance after the rounds of cutting or the
+clean-up; `Invalid` when the result fails
 `check` (a result with a shell facing the wrong way among the others is
 `Invalid(InsideOut)`, never a wrong `Ok`). Work: the broad phase's
 pairs and the rays' hits (counted
@@ -2244,8 +2292,11 @@ after each chunk of 1 024 searches (a search running to its cap of
 about 300 pieces a search took some 70 µs), a
 unit per pair decided, and per refinement split and piece, every round;
 `MAX_TRACE_STEPS / 64` per arc not between two planar patches, a unit per
-curve of the chains, and a unit per curve halved in the rounds of cutting
-the faces (each of which counts its ear clipping again).
+curve of the chains, a unit per curve halved in the rounds of cutting
+the faces (each of which counts its ear clipping again), and for each
+crossing only placed a unit per 4 pieces certifying it looked at, and
+one per 64 of the other operand's boxes, where the patch crossed wasn't
+near enough.
 
 ### Costs
 
@@ -2339,7 +2390,9 @@ exact rays against the numerical ones; the points of random patches above
 a point adding up, by facing, to the winding number of their shadow's
 boundary; edge crossings on both the edge and the patch, and a line
 through a cylinder crossing it once each way where it should to `1e-12`;
-picking crossings to fit a count; Bernstein roots. Pair decisions: a
+picking crossings to fit a count (those only placed marked so);
+points on random patches certified near them, and the same off them
+along the normal or on the surface past a side not; Bernstein roots. Pair decisions: a
 cylinder through a box both ways round (two closed curves, every end on
 both surfaces to `1e-9`, windings 0), a blind hole (one curve, the bar's
 end inside), crossing cylinders (two curves on both cylinders), an arc
@@ -2389,7 +2442,20 @@ each result right by its closed-form volume or refused (their bands' far
 point at infinity along the axis). A box cut from a wall over a very
 shallow hyperbola, cut again across its cap's nearly straight edge, on
 an axis frame and a tilted one (the identities; the crossings on the
-edge's conic, not at the segment's parameter). Unit tests: exact ellipse
+edge's conic, not at the segment's parameter). Crossings the search only
+placed, off the surface they cross, and bands past the fit tolerance: a
+curved rim against a crossing cylinder's wall (a crossing 4 resolutions
+off it, four `Ok`s before), every new vertex on both surfaces or
+refused; bars through boxes at the finest tolerance (a crossing 5.6e-4
+off the bar, bands as far) and a small cylinder across a 75° wall in
+three pieces (1.3e-4, on triangles along no cut), at three tolerances,
+with the check on the crossings and, through a test-only switch
+(`assemble::UNCERTIFIED`), without it: each result refused or its
+claim-free patches within the tolerance of their walls, the union and
+`bar − box` refused as too complex without the check at the finest
+tolerance, and all four through without it at the default one, where
+the bands are between half the tolerance and the tolerance, their
+volumes right. Unit tests: exact ellipse
 arcs of a tilted plane through a cylinder, crossings solved exactly on a
 plane and a cylinder, the second point of a line on a cylinder and at
 infinity on a parabolic cylinder, tracing
@@ -2490,12 +2556,10 @@ to 72 of its 96 operations and left the others as they were.
   across a convex wall over an arc meet it most: 8 of 120 random box
   operations across 20°–60° walls fail (unions and differences, all on
   convex walls), and a box whose face runs along the arc's chord (inside
-  the bulge) fails its union and difference. Plane-against-cylinder cuts
-  that should be exact can be off by 1–4e-6 where a band triangle fell
-  back to a copy claiming no surface; small boxes across walls over arcs
-  (a tenth wide, z 2..7) up to `1.5e-5` in volume, the copies up to
-  `1.3e-4` off the wall (within half the fit tolerance, which bounds
-  only the triangles along a cut).
+  the bulge) fails its union and difference. Results off by more than
+  `1e-7` in volume (up to `6.6e-5`) came from crossings the search only
+  placed, off the surface they cross, with the triangles at them on
+  copies claiming no surface: they are refused now (below).
 - **Fitted bands leave their face's claim**: triangles along a fitted
   cut on a quadric (quadric against quadric, a quadric against a free
   surface), and an exact band tree's root where no ruling frees it, go on
@@ -2523,6 +2587,27 @@ to 72 of its 96 operations and left the others as they were.
   certificate can't settle (two cylinders tangent or crossing at a
   slant) refine for many rounds, and
   parts built in long chains occasionally run out of budget there.
+- **Crossings only placed are refused, not solved**, where they aren't
+  on the other operand (`Inconsistent`): nothing yet solves them again
+  on a plane or quadric with their sign and patch checked. The seeded
+  suite's tallies didn't move (bars 22 of 24 pairs, walls 112 of 120,
+  coaxial 37 of 40, bosses 64 of 64, drilled 160 of 160, tangent 72 of
+  96, chains 200 of 240, turned 156 of 160, related 112 of 120), but one
+  of the five bosses joined flush over drilled holes is refused (a cap
+  edge through a hole's wall at its rim, placed 7.6e-5 off it), and in a
+  fuzzer of walls over arcs, conics and circles cut by boxes and
+  cylinders (about 2 000 operations a seed, two seeds) refusals went
+  from 101 and 104 to 149 and 136, and of 1 000 turned boxes across such
+  walls from 27 and 18 to 37 and 23; the results off in volume by more
+  than `1e-7` went from 90 to 3 (one case, `3.6e-6`, a box turned a
+  thousandth of a radian: unexplained, within the tolerance).
+- **Bands past the fit tolerance are refused, not mended**: halving
+  can't move bands at a vertex off the surface, and a triangle off its
+  quadric with no curved side on the face's boundary has nothing to
+  halve; at the finest tolerances such cases are `TooComplex`. Fuzzing
+  walls at fits `1e-4` and `1e-5` found no result where the bound on
+  triangles off their quadric (not only those along a cut) changed the
+  outcome: it is a backstop.
 - **Coplanar faces facing each other, triangulated differently**: a
   folded sheet whose two sides don't share their triangles can't be
   collapsed away (seen once in about 3 600 chained grid-box booleans).
@@ -3047,7 +3132,8 @@ offered ones' (`tolerance_choices`).
 | `MAX_PATCHES` | `1 << 22` | patches in a mesh; ids and counts fit a `u32` |
 | `MAX_REFINE_DEPTH` | 24 | red splits from an input patch: `2^24` times smaller |
 | `MAX_TRACE_STEPS` | 4096 | steps tracing one cut of a boolean; past them the cut falls back to a simpler curve |
-| `SPLIT_ROUNDS` (boolean) | 6 | rounds of halving curves while cutting faces |
+| `SPLIT_ROUNDS` (boolean) | 6 | rounds of halving curves while cutting faces; what the last keeps must be within the fit tolerance |
+| `MAX_NEAR_NODES` (boolean) | 512 | pieces of a patch looked at certifying a crossing only placed |
 | `MAX_TURN_COS` (boolean) | 0.7 | the most a cut's conic turns (about 45°) |
 | `MEND_ROUNDS` (boolean) | 4 | rounds of Steiner points in one face's triangulation |
 | `MAX_WORK` | `1 << 22` | work units in one operation: about two seconds on one thread at most; the heaviest booleans measured take about half of it |
@@ -3395,3 +3481,21 @@ parameter, or a split outside the patch bounds),
   committed scene after two draft revisions. Kept apart from the
   per-feature entries so `counts` stay feature counts; a size-bounded
   cache can fold it into its own policy.
+- **What the rounds of cutting keep is bounded by the fit tolerance**,
+  including a round that finished: every triangle held to it (along a
+  cut, from the patch; off a quadric onto the copy claiming no surface,
+  from the quadric) must be within it, else `TooComplex`. The plan
+  refused only when the rounds ran out with bands along a cut past it; a
+  round can also finish with a triangle off its quadric that has no
+  curved side on the face's boundary to halve. Such triangles ask for
+  their boundary curves to be halved from half the tolerance, as those
+  along a cut do, and the clean-up's moves onto the copies are held to
+  the same bound.
+- **A crossing only placed is certified against the other operand's
+  patches near it**, not only the one it crosses: a crossing at a cap
+  edge's end lands a micrometre past the patch crossed, in the next one
+  of the same plane, and the plan's check refused it (a boss's rim
+  tangent to cap edges between holes). The foot of the perpendicular is
+  tried before the search, which ran into its cap on a thin triangle
+  holding the point. Without the two, 8 of the 160 drilled plates'
+  operations were refused.

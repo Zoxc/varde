@@ -12,6 +12,7 @@
 
 use glam::{DVec2, DVec3};
 
+use super::super::chain::trace::invert;
 use super::Axes;
 use crate::patch::{Bounds3, Conic3, Patch};
 
@@ -150,6 +151,67 @@ pub(crate) fn edge_patch(edge: &Conic3, patch: &Patch) -> (Vec<EdgeHit>, f64, us
         })
         .collect();
     (hits, search.closest.2, search.nodes)
+}
+
+/// The most pieces [`near_patch`] looks at.
+const MAX_NEAR_NODES: usize = 512;
+
+/// Whether `x` lies within `within` of `patch` (its triangle of the
+/// domain, not the surface beyond), certified: `Some` of the distance to
+/// a point of the patch found that near, `None` where none was found
+/// (farther, or past the search's cap), and how many pieces it looked at.
+/// First the foot of the perpendicular from `x` (Gauss–Newton from the
+/// middle), moved into the triangle; then, where that isn't near enough,
+/// the patch's triangle split by blossoming, pieces whose control points'
+/// box (which holds each piece) is farther than `within` dropped, and the
+/// rest looked at nearest box first, then nearest middle. Each is a
+/// point of the patch, so the distance found is one to the patch.
+pub(crate) fn near_patch(x: DVec3, patch: &Patch, within: f64) -> (Option<f64>, usize) {
+    let middle = |d: [DVec3; 3]| patch.eval((d[0] + d[1] + d[2]) / 3.0).distance(x);
+    let foot = invert(patch, x, DVec3::splat(1.0 / 3.0)).max(DVec3::ZERO);
+    let sum = foot.element_sum();
+    let mut best = if sum > 0.0 && sum.is_finite() {
+        patch.eval(foot / sum).distance(x)
+    } else {
+        f64::INFINITY
+    };
+    if best <= within {
+        return (Some(best), 1);
+    }
+    let mut nodes = 1;
+    // Pieces to look at: how near their box comes, how near their middle
+    // is, and their triangle.
+    let mut open: Vec<(f64, f64, [DVec3; 3])> = vec![(0.0, middle(DVec3::AXES), DVec3::AXES)];
+    while let Some(i) = open
+        .iter()
+        .enumerate()
+        .min_by(|a, b| a.1.0.total_cmp(&b.1.0).then(a.1.1.total_cmp(&b.1.1)))
+        .map(|(i, _)| i)
+    {
+        let (_, mid, d) = open.swap_remove(i);
+        nodes += 1;
+        if nodes > MAX_NEAR_NODES {
+            break;
+        }
+        let points = piece_points(patch, d);
+        for p in &points[..3] {
+            best = best.min(p.distance(x));
+        }
+        best = best.min(mid);
+        if best <= within {
+            return (Some(best), nodes);
+        }
+        for q in quarters(d) {
+            let Some(b) = Bounds3::around(&piece_points(patch, q)) else {
+                continue;
+            };
+            let gap = (b.min - x).max(x - b.max).max(DVec3::ZERO).length();
+            if gap <= within {
+                open.push((gap, middle(q), q));
+            }
+        }
+    }
+    (None, nodes)
 }
 
 fn sign(x: f64) -> i8 {

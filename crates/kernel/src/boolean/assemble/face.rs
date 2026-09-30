@@ -75,9 +75,16 @@ pub(super) struct Cutout {
     pub(super) off: Vec<bool>,
     pub(super) curves: Vec<((u32, u32), Edge)>,
     pub(super) steiner: Vec<DVec3>,
-    /// The cut edges some triangle beside which strays from the patch by
-    /// more than half the fit tolerance: to be split.
+    /// The boundary edges to split: the cut edges some triangle beside
+    /// which strays from the patch by more than half the fit tolerance,
+    /// and the sides of a triangle off its face's quadric by that much.
     pub(super) split: Vec<(u32, u32)>,
+    /// How far the triangles held to the fit tolerance stray, at most:
+    /// those along a cut from the face's patch, and those off the face's
+    /// quadric (on its copy claiming no surface) from the quadric; NaN
+    /// counted as infinite. The others lie on the patch (its own curves)
+    /// or within half the resolution of the quadric.
+    pub(super) stray: f64,
 }
 
 /// Where a face's own added points are numbered from until they are
@@ -396,6 +403,7 @@ pub(super) fn cut_face(
                 .collect(),
             steiner,
             split: wanted,
+            stray: 0.0,
         });
     }
 
@@ -441,6 +449,9 @@ pub(super) fn cut_face(
     let edge_of = |u: u32, v: u32| edge_at(key(u, v), &inner);
     let cuts: BTreeSet<(u32, u32)> = job.cuts.iter().map(|h| key(h[0], h[1])).collect();
     let mut split: BTreeSet<(u32, u32)> = wanted.into_iter().collect();
+    let mut stray = 0.0f64;
+    // A distance, NaN as infinite (so it strays, and the maximum sees it).
+    let far = |d: f64| if d.is_nan() { f64::INFINITY } else { d };
     let off = tris
         .iter()
         .map(|&tri| {
@@ -449,30 +460,41 @@ pub(super) fn cut_face(
             else {
                 return true;
             };
+            let keys = [0, 1, 2].map(|i| key(tri[i], tri[(i + 1) % 3]));
             // A triangle along a cut: how far it strays from the patch.
-            let sides: Vec<(u32, u32)> = (0..3)
-                .map(|i| key(tri[i], tri[(i + 1) % 3]))
-                .filter(|k| cuts.contains(k))
-                .collect();
+            let sides: Vec<(u32, u32)> = keys.into_iter().filter(|k| cuts.contains(k)).collect();
             if !sides.is_empty() {
                 let d = tri.map(at);
-                let strays = samples().any(|u| {
-                    let x = piece.eval(u);
-                    let guess = d[0] * u.x + d[1] * u.y + d[2] * u.z;
-                    let d = patch.eval(invert(patch, x, guess)).distance(x);
-                    d.is_nan() || d > tol.fit() / 2.0
-                });
-                if strays {
+                let from_patch = samples()
+                    .map(|u| {
+                        let x = piece.eval(u);
+                        let guess = d[0] * u.x + d[1] * u.y + d[2] * u.z;
+                        far(patch.eval(invert(patch, x, guess)).distance(x))
+                    })
+                    .fold(0.0, f64::max);
+                stray = stray.max(from_patch);
+                if from_patch > tol.fit() / 2.0 {
                     split.extend(sides);
                 }
             }
-            match surface {
-                Surface::Quadric(_) => samples().any(|u| {
-                    let d = surface.distance(piece.eval(u));
-                    d.is_nan() || d > tol.resolution() / 2.0
-                }),
-                _ => false,
+            let Surface::Quadric(_) = surface else {
+                return false;
+            };
+            let from_surface = samples()
+                .map(|u| far(surface.distance(piece.eval(u))))
+                .fold(0.0, f64::max);
+            if from_surface <= tol.resolution() / 2.0 {
+                return false;
             }
+            // Off the quadric, onto the copy claiming no surface: held to
+            // the fit tolerance all the same (a band tree's root that no
+            // ruling frees, which nothing along a cut bounds), its curved
+            // sides on the face's boundary halved while it strays.
+            stray = stray.max(from_surface);
+            if from_surface > tol.fit() / 2.0 {
+                split.extend(keys.into_iter().filter(|k| boundary.contains(k)));
+            }
+            true
         })
         .collect();
     Ok(Cutout {
@@ -481,6 +503,7 @@ pub(super) fn cut_face(
         curves: inner.into_iter().collect(),
         steiner,
         split: split.into_iter().collect(),
+        stray,
     })
 }
 

@@ -15,8 +15,9 @@ use crate::{KernelError, Tolerance};
 /// counting along the edge: `x` is +1 where the edge, run in its own
 /// direction, enters the other solid there, −1 where it leaves, and `t`
 /// where along the edge it is (0 at its start, 1 at its end; a position
-/// only, never a decision). The record `(edge, face, i)` is the new
-/// vertex there.
+/// only, never a decision), and whether the search for it `solved` it
+/// (found the edge meeting the face there) or only placed it for the
+/// count. The record `(edge, face, i)` is the new vertex there.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct Crossing {
     pub(super) edge: u32,
@@ -24,6 +25,7 @@ pub(super) struct Crossing {
     pub(super) i: u32,
     pub(super) x: i8,
     pub(super) t: f64,
+    pub(super) solved: bool,
 }
 
 /// What the counting decides.
@@ -308,13 +310,14 @@ fn crossings(
     }
     let mut out = Vec::new();
     for (&([edge, face], _), found) in asked.iter().zip(found) {
-        for (i, (x, t)) in found.into_iter().enumerate() {
+        for (i, (x, t, solved)) in found.into_iter().enumerate() {
             out.push(Crossing {
                 edge,
                 face,
                 i: i as u32,
                 x,
                 t,
+                solved,
             });
         }
     }

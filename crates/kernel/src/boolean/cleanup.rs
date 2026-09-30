@@ -35,11 +35,11 @@ use glam::DVec3;
 
 use super::assemble::Curves;
 use super::parts;
-use crate::KernelError;
 use crate::budget::Work;
-use crate::mesh::{Edge, Face, Surface, on_surface, straight};
+use crate::mesh::{Edge, Face, Surface, on_surface, samples, straight};
 use crate::patch::Patch;
 use crate::trig;
+use crate::{KernelError, Tolerance};
 
 /// How many rounds of collapses and flips at most.
 const ROUNDS: usize = 64;
@@ -86,13 +86,14 @@ struct Cleaner<'a> {
 /// Cleans `soup`: see the module docs. `small` is the size below which
 /// edges and heights count as zero, and `thin` the height below which a
 /// triangle is flipped into its neighbour on the same face (which keeps
-/// every triangle on its face).
+/// every triangle on its face). Fails as too complex where a collapse
+/// leaves a triangle further than the fit tolerance off its face.
 pub(super) fn clean(
     soup: &mut Soup,
     faces: &mut Vec<Face>,
     small: f64,
     thin: f64,
-    resolution: f64,
+    tol: &Tolerance,
     work: &mut Work,
 ) -> Result<(), KernelError> {
     let planar = faces
@@ -173,7 +174,7 @@ pub(super) fn clean(
         }
     }
     c.drop_empty_components();
-    c.leave_surfaces(faces, resolution);
+    c.leave_surfaces(faces, tol)?;
     let Cleaner { alive, soup, .. } = c;
     let mut keep = alive.iter();
     soup.faces.retain(|_| *keep.next().expect("a flag"));
@@ -477,8 +478,14 @@ impl Cleaner<'_> {
     /// Moves the triangles a collapse gave a curve off their face's
     /// surface (a fitted cut's, where it took the place of the face's own
     /// curve) to a copy of the face claiming no surface, as the cuts' own
-    /// bands go, so face tags stay true claims.
-    fn leave_surfaces(&mut self, faces: &mut Vec<Face>, resolution: f64) {
+    /// bands go, so face tags stay true claims; one further off than the
+    /// fit tolerance fails the operation as too complex, as the cuts'
+    /// bands do.
+    fn leave_surfaces(
+        &mut self,
+        faces: &mut Vec<Face>,
+        tol: &Tolerance,
+    ) -> Result<(), KernelError> {
         let mut touched = std::mem::take(&mut self.recurved);
         touched.sort_unstable();
         touched.dedup();
@@ -501,14 +508,28 @@ impl Cleaner<'_> {
                 }
             };
             let sides = [side(0), side(1), side(2)];
-            let on = Patch::new(
+            let patch = Patch::new(
                 tri.map(|v| self.p(v)),
                 sides.map(|s| s.0),
                 sides.map(|s| s.1),
-            )
-            .is_ok_and(|patch| on_surface(&patch, &surface, resolution));
-            if on {
-                continue;
+            );
+            if let Ok(patch) = &patch {
+                if on_surface(patch, &surface, tol.resolution()) {
+                    continue;
+                }
+                // How far off: the control points bound a plane's distance,
+                // the samples a quadric's (as the cuts' bands are measured).
+                let far = |x: DVec3| {
+                    let d = surface.distance(x);
+                    if d.is_nan() { f64::INFINITY } else { d }
+                };
+                let off = match surface {
+                    Surface::Plane { .. } => patch.hull().into_iter().map(far).fold(0.0, f64::max),
+                    _ => samples().map(|u| far(patch.eval(u))).fold(0.0, f64::max),
+                };
+                if off > tol.fit() {
+                    return Err(KernelError::TooComplex);
+                }
             }
             let copy = *copies.entry(face).or_insert_with(|| {
                 faces.push(Face {
@@ -521,6 +542,7 @@ impl Cleaner<'_> {
             });
             self.soup.faces[t as usize] = copy;
         }
+        Ok(())
     }
 
     /// Whether the edges from `u` and from `v` (at one place) to `w`

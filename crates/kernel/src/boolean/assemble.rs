@@ -14,8 +14,12 @@
 //! boundary that bulges out of the triangle it is a side of, gets that
 //! curve halved (a cut's by its chain, an operand's edge by a vertex
 //! added on it that both faces beside it get) and every face is cut
-//! again. Then refinement's pieces that came through whole are merged
-//! back (see [`merge`]).
+//! again. A triangle off its face's quadric (onto the face's copy
+//! claiming no surface) by that much gets its curved sides on the face's
+//! boundary halved the same way. What the last round keeps must be within
+//! the fit tolerance, or the operation fails as too complex. Then
+//! refinement's pieces that came through whole are merged back (see
+//! [`merge`]).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -24,6 +28,7 @@ use glam::DVec3;
 use super::chain::{self, Chain};
 use super::cleanup::Soup;
 use super::count::{Counts, Crossing};
+use super::curved::solve::near_patch;
 use super::input::{Input, Side};
 use super::pairs::{Arc, first_ids};
 use super::surface::{Shape, polish};
@@ -41,7 +46,10 @@ mod merge;
 use face::{Cut, FIRST_STEINER, Layout, cut_face, project};
 
 /// How many rounds of halving curves the faces are cut in, at most (see
-/// the [module](self) docs); what the last leaves is for repair.
+/// the [module](self) docs). The last may leave corners the
+/// triangulation asked to split, for repair, and triangles straying from
+/// their face by up to the fit tolerance; one straying further fails the
+/// operation as too complex.
 const SPLIT_ROUNDS: usize = 6;
 
 /// Curves by the vertices they join, the lower id first.
@@ -379,6 +387,7 @@ pub(super) fn assemble(
         base: Vec::new(),
     };
     cutting.base = cutting.positions();
+    cutting.certify(work)?;
 
     // Each arc's chain.
     let chain_jobs: Vec<chain::Job> = arcs.iter().map(|arc| cutting.chain_job(arc)).collect();
@@ -409,6 +418,14 @@ pub(super) fn assemble(
         let cut = cutting.round(&extras, &chains, work)?;
         let done = cut.split.is_empty() && cut.more.iter().all(BTreeMap::is_empty);
         if done || round >= SPLIT_ROUNDS {
+            // Halving couldn't bring every triangle within the fit
+            // tolerance (a crossing off the surface keeps the bands at
+            // it that far however small, and a band tree's root may have
+            // no side to halve): past it, the result would be wrong by
+            // the tolerance's own measure.
+            if cut.stray > tol.fit() {
+                return Err(KernelError::TooComplex);
+            }
             break cut;
         }
         round += 1;
@@ -456,6 +473,13 @@ pub(super) fn assemble(
     cutting.finish(last, refinement, work)
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Tests only: whether to skip [`Cutting::certify`] on this thread, to
+    /// see what the rest makes of crossings placed off the surface.
+    pub(super) static UNCERTIFIED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// The operands and what the counting made of them, which every round of
 /// cutting the faces reads.
 struct Cutting<'a> {
@@ -490,6 +514,9 @@ struct Round {
     split: BTreeMap<usize, Vec<usize>>,
     /// The parameters on the operands' edges to add vertices at.
     more: [BTreeMap<u32, Vec<f64>>; 2],
+    /// How far the faces' triangles held to the fit tolerance stray, at
+    /// most (see [`face::Cutout::stray`]).
+    stray: f64,
 }
 
 /// The cuts' vertices and edges, as a round numbers them.
@@ -557,6 +584,65 @@ impl Cutting<'_> {
             }
         }
         base
+    }
+
+    /// Checks that each crossing the search didn't solve, only placed
+    /// for the count (where it found the two meeting but kept nothing,
+    /// else where they came closest), lies on the other operand's
+    /// surface: within the resolution of the patch it crosses, or of
+    /// another of that operand's patches near it (a crossing through the
+    /// side two patches share lands on either), by a certified distance.
+    /// Its vertex is on its edge, but nothing else puts it on the other
+    /// surface (solving it again moves it onto a plane, though not into
+    /// the patch, onto a quadric only from near, and not at all on a face
+    /// claiming no surface). One farther, or past the search's cap, fails
+    /// the operation as `Inconsistent`.
+    fn certify(&self, work: &mut Work) -> Result<(), KernelError> {
+        #[cfg(test)]
+        if UNCERTIFIED.get() {
+            return Ok(());
+        }
+        let mut asked = Vec::new();
+        for (crossings, other, first) in [
+            (&self.counts.x12, self.b, self.first[0]),
+            (&self.counts.x21, self.a, self.first[1]),
+        ] {
+            for (k, c) in crossings.iter().enumerate() {
+                if !c.solved {
+                    asked.push((other, c.face, first + k as u32));
+                }
+            }
+        }
+        let resolution = self.tol.resolution();
+        let near = par_map(&asked, |&(other, face, id)| {
+            let x = self.base[id as usize];
+            let (d, mut cost) = near_patch(x, &other.patches[face as usize], resolution);
+            if d.is_some() {
+                return (true, cost.div_ceil(NEAR_NODES_PER_UNIT));
+            }
+            let mut units = cost.div_ceil(NEAR_NODES_PER_UNIT) + other.boxes.len() / 64;
+            for (t, b) in other.boxes.iter().enumerate() {
+                if t == face as usize || (b.min - x).max(x - b.max).max_element() > resolution {
+                    continue;
+                }
+                let d;
+                (d, cost) = near_patch(x, &other.patches[t], resolution);
+                units += cost.div_ceil(NEAR_NODES_PER_UNIT);
+                if d.is_some() {
+                    return (true, units);
+                }
+            }
+            (false, units)
+        });
+        work.spend(
+            near.iter()
+                .map(|&(_, units)| units)
+                .fold(0, usize::saturating_add),
+        )?;
+        if near.iter().any(|&(on, _)| !on) {
+            return Err(KernelError::Boolean(super::BooleanError::Inconsistent));
+        }
+        Ok(())
     }
 
     /// What tracing and fitting `arc`'s chain needs.
@@ -716,6 +802,7 @@ impl Cutting<'_> {
             .into_iter()
             .collect::<Result<_, _>>()
             .map_err(KernelError::Boolean)?;
+        let stray = cut.iter().map(|c| c.stray).fold(0.0, f64::max);
         // The chain edges to halve, by arc, and the operands' edges to add
         // vertices on.
         let mut split: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
@@ -740,6 +827,7 @@ impl Cutting<'_> {
             whole,
             split,
             more,
+            stray,
         })
     }
 
@@ -1127,6 +1215,10 @@ fn lined(input: &Input, e: u32) -> bool {
     let [s, t] = input.edges[e as usize].map(|v| input.pos(v));
     edge.weight == 1.0 && edge.ctrl == (s + t) * 0.5
 }
+
+/// Pieces of a patch looked at certifying an unsolved crossing's distance
+/// to it, to a unit of work (as the crossings' searches count theirs).
+const NEAR_NODES_PER_UNIT: usize = 4;
 
 /// Steps of triangulating a face (a vertex tested against a diagonal,
 /// say) to a unit of work.

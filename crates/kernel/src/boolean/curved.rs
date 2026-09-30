@@ -62,7 +62,7 @@ use crate::patch::Conic3;
 mod arcs;
 mod bernstein;
 mod ray;
-mod solve;
+pub(super) mod solve;
 
 use ray::{RayEdge, ray};
 
@@ -667,9 +667,9 @@ impl Primitives for Curved<'_> {
 /// their edges, until they do (see [`fit_count`]); any the search didn't
 /// find go where it found the two meeting but kept no crossing (a tie at
 /// the patch's side or the edge's end, whose sign the count overrules:
-/// nearest the patch), else at `closest`; as `(sign, t)` in order along
-/// the edge.
-fn pick(found: &[solve::EdgeHit], x: i32, closest: f64) -> Vec<(i8, f64)> {
+/// nearest the patch), else at `closest`; as `(sign, t, solved)` in order
+/// along the edge, those only placed not solved.
+fn pick(found: &[solve::EdgeHit], x: i32, closest: f64) -> Vec<(i8, f64, bool)> {
     let (chosen, missing) = fit_count(
         found
             .iter()
@@ -689,10 +689,10 @@ fn pick(found: &[solve::EdgeHit], x: i32, closest: f64) -> Vec<(i8, f64)> {
         .min_by(|a, b| a.0.out.total_cmp(&b.0.out))
         .map(|(h, _)| h.t);
     let at = spare.unwrap_or(closest).clamp(0.0, 1.0);
-    let mut out: Vec<(i8, f64)> = missing.into_iter().map(|s| (s, at)).collect();
+    let mut out: Vec<(i8, f64, bool)> = missing.into_iter().map(|s| (s, at, false)).collect();
     for (h, &c) in found.iter().zip(&chosen) {
         if c {
-            out.push((h.x, h.t.clamp(0.0, 1.0)));
+            out.push((h.x, h.t.clamp(0.0, 1.0), true));
         }
     }
     out.sort_by(|a, b| a.1.total_cmp(&b.1));

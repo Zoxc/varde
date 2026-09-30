@@ -167,10 +167,12 @@ trait Primitives: Sync {
     fn margin(&self) -> f64;
     /// The crossings of edge `e` of `side` through face `f` of the other,
     /// whose signed number is `x` (+1 entering the other solid, −1
-    /// leaving): each crossing's sign and where along the edge it is (0
-    /// at its start, 1 at its end), in order along the edge. Their signs
-    /// add up to `x`, whatever the search for them finds: the count wins,
-    /// the search only gives the positions. Also how much work finding
+    /// leaving): each crossing's sign, where along the edge it is (0 at
+    /// its start, 1 at its end), in order along the edge, and whether it
+    /// was solved (a place where the two meet) or only placed for the
+    /// count, which the result checks. Their signs add up to `x`,
+    /// whatever the search for them finds: the count wins, the search
+    /// only gives the positions. Also how much work finding
     /// them took, in units of the budget (at least
     /// [`Self::search_work`]). Fails with [`BooleanError::Inconsistent`]
     /// where no such crossings can be.
@@ -180,9 +182,9 @@ trait Primitives: Sync {
     fn order(&self, side: Side, e: u32, c1: &Crossing, c2: &Crossing) -> Ordering;
 }
 
-/// What [`Primitives::crossings`] gives: each crossing's sign and
-/// position, and the work it took.
-type Found = (Vec<(i8, f64)>, usize);
+/// What [`Primitives::crossings`] gives: each crossing's sign, position
+/// and whether it was solved, and the work it took.
+type Found = (Vec<(i8, f64, bool)>, usize);
 
 /// `a op b`, within `budget`: a solid that passes `check`, always.
 ///
@@ -261,7 +263,7 @@ fn unchecked(
         &mut faces,
         tol.resolution() / 8.0,
         4.0 * tol.resolution(),
-        tol.resolution(),
+        tol,
         work,
     )?;
     build(soup, faces)

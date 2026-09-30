@@ -53,6 +53,11 @@ fn plate() -> Solid {
 
 /// `solid` moved by the rigid motion `f`, face tags too.
 fn moved(solid: &Solid, f: impl Fn(DVec3) -> DVec3) -> Solid {
+    moved_at(solid, &TOL, f)
+}
+
+/// [`moved`], checked at `tol`.
+fn moved_at(solid: &Solid, tol: &Tolerance, f: impl Fn(DVec3) -> DVec3) -> Solid {
     let mesh = solid.mesh();
     let origin = f(DVec3::ZERO);
     let turn = |d: DVec3| f(d) - origin;
@@ -88,7 +93,7 @@ fn moved(solid: &Solid, f: impl Fn(DVec3) -> DVec3) -> Solid {
         }
         builder.tri(corners, tri.face);
     }
-    Solid::new(builder.build().unwrap(), &TOL).unwrap()
+    Solid::new(builder.build().unwrap(), tol).unwrap()
 }
 
 fn run(a: &Solid, b: &Solid, op: Op) -> Solid {
@@ -593,11 +598,23 @@ fn flush_bosses_joined_on_drilled_plates() {
         [(-0.8, 0.45, 0.4), (2.15, 0.2, 0.55), (0.5, -0.45, 0.5)],
         [(-2.0, -0.05, 0.3), (0.8, 0.65, 0.5), (-0.2, 0.3, 0.3)],
     ];
+    let mut refused = 0;
     for [(x1, y1, r1), (x2, y2, r2), (bx, by, br)] in cases {
         let plate = run(&slab, &drill(x1, y1, r1), Op::Difference);
         let plate = run(&plate, &drill(x2, y2, r2), Op::Difference);
         let boss = cylinder([bx, by, 1.0], br, 1.0);
-        let joined = run(&plate, &boss, Op::Union);
+        // One of them has a crossing of a cap edge through the hole's
+        // wall at its rim that the search only placed, 7.6e-5 off the
+        // wall: refused, since nothing puts such a crossing on a quadric
+        // yet.
+        let joined = match boolean(&plate, &boss, Op::Union, &TOL, &Budget::DEFAULT) {
+            Ok(joined) => joined,
+            Err(KernelError::Boolean(BooleanError::Inconsistent)) => {
+                refused += 1;
+                continue;
+            }
+            Err(e) => panic!("boss at ({bx}, {by}): {e:?}"),
+        };
         // Where the boss covers a hole, its cap and the hole's wall meet
         // flush along arcs of both rims, some of it fitted.
         let want = 24.0 - PI * (r1 * r1 + r2 * r2) + PI * br * br;
@@ -607,6 +624,7 @@ fn flush_bosses_joined_on_drilled_plates() {
             joined.volume()
         );
     }
+    assert!(refused <= 1, "{refused}");
 }
 
 #[test]
@@ -748,6 +766,229 @@ fn random_bars_through_boxes_are_right_or_refused() {
     }
     // Most go through.
     assert!(done >= 20, "{done}");
+}
+
+/// How far the furthest sample point of `solid`'s claim-free patches is
+/// from the surface of the face of `of` it was split off (by name).
+fn free_off(solid: &Solid, of: &[crate::mesh::Face]) -> f64 {
+    let mesh = solid.mesh();
+    let mut worst = 0.0f64;
+    for (t, tri) in mesh.tris().iter().enumerate() {
+        let face = mesh.faces()[tri.face as usize];
+        if !matches!(face.surface, Surface::Free) {
+            continue;
+        }
+        let Some(source) = of.iter().find(|f| f.name == face.name) else {
+            continue;
+        };
+        let patch = mesh.patch(t);
+        for u in samples() {
+            let d = source.surface.distance(patch.eval(u));
+            worst = worst.max(if d.is_nan() { f64::INFINITY } else { d });
+        }
+    }
+    worst
+}
+
+/// The faces of `solid` on quadrics.
+fn walls(solid: &Solid) -> Vec<crate::mesh::Face> {
+    solid
+        .mesh()
+        .faces()
+        .iter()
+        .filter(|f| matches!(f.surface, Surface::Quadric(_)))
+        .copied()
+        .collect()
+}
+
+/// How far off both operands' surfaces the vertices of `result` that are
+/// no operand's vertex and lie within a thousand resolutions of both are,
+/// at most: where the operands meet, which a new vertex must be on (to
+/// the resolution). Each operand's surfaces near the vertex: those of its
+/// faces with a patch whose box, grown by the thousand resolutions, holds
+/// it.
+fn off_both(result: &Solid, a: &Solid, b: &Solid) -> f64 {
+    let reach = 1000.0 * TOL.resolution();
+    let old: Vec<[u64; 3]> = a
+        .mesh()
+        .verts()
+        .iter()
+        .chain(b.mesh().verts())
+        .map(|p| p.to_array().map(f64::to_bits))
+        .collect();
+    let near = |solid: &Solid, x: DVec3| {
+        let mesh = solid.mesh();
+        (0..mesh.tris().len())
+            .filter(|&t| {
+                let b = mesh.patch(t).bounds();
+                (b.min - x).max(x - b.max).max_element() <= reach
+            })
+            .map(|t| mesh.faces()[mesh.tris()[t].face as usize].surface)
+            .filter(|s| !matches!(s, Surface::Free))
+            .map(|s| s.distance(x))
+            .fold(f64::INFINITY, f64::min)
+    };
+    let mut worst = 0.0f64;
+    for &x in result.mesh().verts() {
+        if old.contains(&x.to_array().map(f64::to_bits)) {
+            continue;
+        }
+        let d = near(a, x).max(near(b, x));
+        if d <= reach {
+            worst = worst.max(d);
+        }
+    }
+    worst
+}
+
+#[test]
+fn crossings_the_search_only_placed_are_on_both_surfaces_or_refused() {
+    // A cylinder's curved rim edge against a crossing cylinder's wall
+    // (found fuzzing related solids, seed 1, case 19): the search stopped
+    // at its cap having found nothing, and the crossing the count has was
+    // placed where the two came closest, 4 resolutions off the wall.
+    // Solving it again on the quadric didn't move it that far, and its
+    // band went on a copy of the wall claiming no surface: all four
+    // operations were `Ok` with that vertex off. Each must be refused or
+    // have every new vertex on both surfaces.
+    let a = extruded_on(
+        vec![circle(
+            DVec2::new(-0.005620956664202037, -0.278018636511416),
+            0.7279328535649163,
+            0,
+            false,
+        )],
+        Frame {
+            origin: DVec3::new(
+                -0.9438686345190801,
+                -0.6103550207631896,
+                -0.47465561761757846,
+            ),
+            x: DVec3::Z,
+            y: DVec3::X,
+        },
+        -0.2188208636714538,
+        0.5634685272668086,
+        1,
+    );
+    let b = extruded_on(
+        vec![circle(
+            DVec2::new(0.0, 0.2495900097054698),
+            0.5442945356289746,
+            0,
+            false,
+        )],
+        Frame {
+            origin: DVec3::new(
+                -1.221887271030496,
+                -0.6103550207631896,
+                -0.47465561761757846,
+            ),
+            x: DVec3::X,
+            y: DVec3::Y,
+        },
+        -2.005620956664202,
+        1.994379043335798,
+        2,
+    );
+    for (x, y, op) in [
+        (&a, &b, Op::Union),
+        (&a, &b, Op::Intersection),
+        (&a, &b, Op::Difference),
+        (&b, &a, Op::Difference),
+    ] {
+        if let Ok(solid) = boolean(x, y, op, &TOL, &Budget::DEFAULT) {
+            let off = off_both(&solid, &a, &b);
+            assert!(off <= TOL.resolution(), "{op:?}: a vertex {off:e} off");
+        }
+    }
+}
+
+/// `f` run with the check that crossings the search only placed lie on
+/// the surface they cross skipped (`certified` false) or not.
+fn certified<T>(certified: bool, f: impl FnOnce() -> T) -> T {
+    super::assemble::UNCERTIFIED.set(!certified);
+    let out = f();
+    super::assemble::UNCERTIFIED.set(false);
+    out
+}
+
+/// `a ∪ b`, `a ∩ b`, `a − b` and `b − a` at `tol`: each result's volume and
+/// how far its claim-free patches are from the surfaces of the faces of
+/// `of` they were split off (see [`free_off`]), or the error.
+fn four_off(
+    a: &Solid,
+    b: &Solid,
+    of: &[crate::mesh::Face],
+    tol: &Tolerance,
+) -> [Result<(f64, f64), KernelError>; 4] {
+    [
+        (a, b, Op::Union),
+        (a, b, Op::Intersection),
+        (a, b, Op::Difference),
+        (b, a, Op::Difference),
+    ]
+    .map(|(x, y, op)| {
+        boolean(x, y, op, tol, &Budget::DEFAULT).map(|s| (s.volume(), free_off(&s, of)))
+    })
+}
+
+#[test]
+fn bands_left_straying_past_the_tolerance_are_refused() {
+    // A turned bar through a box (the seeded bars' generator, seed 1, its
+    // 55th draw), at the finest tolerance: a crossing the search never
+    // found sits 5.6e-4 off the bar's cylinder, and no halving of the cut
+    // moves the bands at it closer. When the rounds of halving ran out
+    // the result was kept, its union and `bar − box` with bands that far
+    // off: 56 times the tolerance. The crossing is now refused as off the
+    // surface; past that check, the bands are, as too complex. Each
+    // result must be refused or within the tolerance, and past the check
+    // at the default tolerance all four work.
+    let c = DVec3::new(
+        -0.5602419740309785,
+        -0.9158090161441121,
+        -0.5998650939477481,
+    );
+    let r = 0.25075971600313085;
+    let q = DQuat::from_xyzw(
+        0.24549388299162075,
+        0.23391712913142826,
+        0.06117124477628997,
+        0.9387617423633786,
+    );
+    let min = DVec3::new(
+        -0.5613423608645569,
+        -1.3805744401035636,
+        -1.0752425209742054,
+    );
+    let size = DVec3::new(2.1318065114018347, 0.8784937534517324, 1.328642506451723);
+    for fit in [1e-5, 1e-3] {
+        let tol = Tolerance::new(fit).unwrap();
+        let bar = Solid::cylinder(DVec3::new(0.0, 0.0, -2.0), r, 4.0, 2, &tol).unwrap();
+        let bar = moved_at(&bar, &tol, |p| q * p + c);
+        let block = Solid::cuboid(min, size, 1, &tol).unwrap();
+        for check in [true, false] {
+            let got = certified(check, || four_off(&bar, &block, &walls(&bar), &tol));
+            for (k, result) in got.iter().enumerate() {
+                match result {
+                    Ok((_, off)) => assert!(*off <= fit, "fit {fit}, result {k}: {off:e} off"),
+                    Err(e) => assert!(check || fit < 1e-3, "fit {fit}, result {k}: {e:?}"),
+                }
+            }
+            if !check && fit < 1e-3 {
+                // The union and `bar − box`, which were kept.
+                assert!(matches!(got[0], Err(KernelError::TooComplex)));
+                assert!(matches!(got[2], Err(KernelError::TooComplex)));
+            }
+            if let [Ok((u, _)), Ok((i, _)), Ok((d, _)), Ok((e, _))] = got {
+                let (va, vb) = (bar.volume(), block.volume());
+                let within = fit * (bar.area() + block.area()) / 100.0;
+                assert!((u + i - va - vb).abs() <= within);
+                assert!((d - (va - i)).abs() <= within);
+                assert!((e - (vb - i)).abs() <= within);
+            }
+        }
+    }
 }
 
 /// A 10 × 10 square whose top side, from (10, 10) to (0, 10), is an arc
@@ -1137,6 +1378,63 @@ fn shallow_level_arcs_are_never_wrong() {
     }
     // All twelve go through today.
     assert!(done >= 9, "{done}");
+}
+
+#[test]
+fn band_roots_off_their_wall_are_bounded() {
+    // A small cylinder across a 75° concave wall in three pieces (found
+    // fuzzing): a crossing the search only placed sits 1.3e-4 off the
+    // small cylinder's wall, and the triangles at it, some along no cut
+    // (band trees' roots no ruling frees), went on a copy of the wall
+    // claiming no surface, that far off at every tolerance: the union
+    // was kept at 1.3 times the tolerance of 1e-4. The crossing is now
+    // refused as off the surface; past that check, the triangles are,
+    // as too complex. Each result must be refused or within the
+    // tolerance of the walls, and past the check at the default
+    // tolerance all four work, their volumes right.
+    let arch = Arch {
+        deg: 75.35906468803832,
+        convex: false,
+        parts: 3,
+    };
+    let frame = Frame {
+        origin: DVec3::ZERO,
+        x: DVec3::NEG_X,
+        y: DVec3::Y,
+    };
+    let c = DVec2::new(9.226584160671807, 9.44224065070859);
+    let tool = circle(c, 9.335067680464189 - c.x, 30, false);
+    for fit in [1e-5, 1e-4, 1e-3] {
+        let tol = Tolerance::new(fit).unwrap();
+        let build = |lp: &Loop, from: f64, to: f64, feature: u64| {
+            let profile = Profile {
+                loops: vec![lp.clone()],
+            };
+            extrude(&profile, &frame, from, to, feature, &tol, &Budget::DEFAULT).unwrap()
+        };
+        let a = build(&arch.profile(), 0.0, 5.0, 9);
+        let b = build(&tool, 2.0, 7.0, 30);
+        let wall = [walls(&a), walls(&b)].concat();
+        for check in [true, false] {
+            let got = certified(check, || four_off(&a, &b, &wall, &tol));
+            for (k, result) in got.iter().enumerate() {
+                match result {
+                    Ok((_, off)) => assert!(*off <= fit, "fit {fit}, result {k}: {off:e} off"),
+                    Err(e) => assert!(check || fit < 1e-3, "fit {fit}, result {k}: {e:?}"),
+                }
+            }
+            if !check && fit < 1e-3 {
+                assert!(matches!(got[0], Err(KernelError::TooComplex)));
+            }
+            if let [Ok((u, _)), Ok((i, _)), Ok((d, _)), Ok((e, _))] = got {
+                let (va, vb) = (a.volume(), b.volume());
+                let within = fit * (a.area() + b.area()) / 100.0;
+                assert!((u + i - va - vb).abs() <= within);
+                assert!((d - (va - i)).abs() <= within);
+                assert!((e - (vb - i)).abs() <= within);
+            }
+        }
+    }
 }
 
 /// A 10 × 10 square whose top side, from (10, 10) to (0, 10), is the

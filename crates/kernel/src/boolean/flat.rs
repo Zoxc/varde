@@ -230,7 +230,7 @@ impl Primitives for Flat<'_> {
     fn crossings(&self, side: Side, e: u32, f: u32, x: i32) -> Result<Found, BooleanError> {
         match x {
             0 => Ok((Vec::new(), 1)),
-            -1 | 1 => Ok((vec![(x as i8, self.crossing(side, e, f))], 1)),
+            -1 | 1 => Ok((vec![(x as i8, self.crossing(side, e, f), true)], 1)),
             // A straight edge meets a flat face once at most.
             _ => Err(BooleanError::Inconsistent),
         }
