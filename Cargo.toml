@@ -74,3 +74,8 @@ winresource = { version = "0.1", default-features = false }
 
 [profile.dev.package."*"]
 opt-level = 2
+
+# The kernel's vector math is glam's inline functions, compiled at the
+# kernel's own opt-level: at 0 its tests run about 8 times slower.
+[profile.dev.package.varde-kernel]
+opt-level = 1
