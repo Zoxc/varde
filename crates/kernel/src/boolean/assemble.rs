@@ -31,7 +31,7 @@ use super::count::{Counts, Crossing};
 use super::curved::solve::near_patch;
 use super::input::{Input, Side};
 use super::pairs::{Arc, first_ids};
-use super::surface::{Shape, polish};
+use super::surface::{Crossed, Shape, polish};
 use super::triangulate::Meter;
 use super::{Op, Primitives, segment};
 use crate::budget::Work;
@@ -348,7 +348,10 @@ pub(super) fn assemble(
             work.spend(run.len().saturating_mul(run.len()))?;
         }
     }
-    let params = [params(a, b, &counts.x12), params(b, a, &counts.x21)];
+    let (params12, units12) = params(a, b, &counts.x12, tol.resolution());
+    let (params21, units21) = params(b, a, &counts.x21, tol.resolution());
+    work.spend(units12.saturating_add(units21))?;
+    let params = [params12, params21];
     let along = [
         Along::new(
             Side::A,
@@ -475,9 +478,13 @@ pub(super) fn assemble(
 
 #[cfg(test)]
 thread_local! {
-    /// Tests only: whether to skip [`Cutting::certify`] on this thread, to
-    /// see what the rest makes of crossings placed off the surface.
-    pub(super) static UNCERTIFIED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Tests only: whether, on this thread, crossings the search only
+    /// placed are placed as they were before they went to a root on the
+    /// patch crossed (on a plane its nearest root, on a quadric one within
+    /// `1e-6`, else where the search put them; see [`params`]) and
+    /// [`Cutting::certify`] is skipped, to see what the rest makes of
+    /// crossings off the surface.
+    pub(super) static LOOSE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// The operands and what the counting made of them, which every round of
@@ -592,14 +599,14 @@ impl Cutting<'_> {
     /// surface: within the resolution of the patch it crosses, or of
     /// another of that operand's patches near it (a crossing through the
     /// side two patches share lands on either), by a certified distance.
-    /// Its vertex is on its edge, but nothing else puts it on the other
-    /// surface (solving it again moves it onto a plane, though not into
-    /// the patch, onto a quadric only from near, and not at all on a face
-    /// claiming no surface). One farther, or past the search's cap, fails
-    /// the operation as `Inconsistent`.
+    /// Its vertex is on its edge, and on the other surface where it went
+    /// to a root on the patch crossed ([`params`]), but not on a face
+    /// claiming no surface or where no root of its sign is on the patch.
+    /// One farther, or past the search's cap, fails the operation as
+    /// `Inconsistent`.
     fn certify(&self, work: &mut Work) -> Result<(), KernelError> {
         #[cfg(test)]
-        if UNCERTIFIED.get() {
+        if LOOSE.get() {
             return Ok(());
         }
         let mut asked = Vec::new();
@@ -1176,7 +1183,10 @@ fn alternate(
 
 /// Each crossing's parameter along its edge, solved again exactly where
 /// the face crossed is a plane or a quadric and the edge curved, or the
-/// face curved (a straight edge through a planar patch is exact already).
+/// face curved (a straight edge through a planar patch is exact already):
+/// at a root of the edge against the surface, a crossing the search only
+/// placed at one with its sign on the patch crossed (see [`polish`]).
+/// Also the work checking roots on the patches took.
 ///
 /// A straight edge's crossings are found along the segment between its
 /// ends, in its parameter; but where the edge isn't exactly that segment
@@ -1185,25 +1195,48 @@ fn alternate(
 /// chord's middle): that parameter is solved again on the conic, from the
 /// conic's point nearest the segment's. Taken as it was, it put a vertex
 /// `2e-3` along the edge from the plane it crossed.
-fn params(input: &Input, other: &Input, crossings: &[Crossing]) -> Vec<f64> {
-    par_map(crossings, |c| {
+fn params(
+    input: &Input,
+    other: &Input,
+    crossings: &[Crossing],
+    resolution: f64,
+) -> (Vec<f64>, usize) {
+    // Tests only: a negative distance no root's point is within, so
+    // `polish` falls back on what it did before for crossings only placed.
+    #[cfg(test)]
+    let loose = LOOSE.get();
+    #[cfg(not(test))]
+    let loose = false;
+    let placed = par_map(crossings, |c| {
         let straight = input.straight[c.edge as usize];
         let [s, e] = input.edges[c.edge as usize].map(|v| input.pos(v));
         let shape = Shape::of(other, c.face);
-        let t = if straight && other.planar[c.face as usize] {
-            c.t
+        let crossed = Crossed {
+            patch: &other.patches[c.face as usize],
+            x: c.x,
+            solved: c.solved,
+            resolution: if loose && !c.solved { -1.0 } else { resolution },
+        };
+        let (t, nodes) = if straight && other.planar[c.face as usize] {
+            (c.t, 0)
         } else if straight {
-            polish(&segment(s, e), c.t, &shape)
+            polish(&segment(s, e), c.t, &shape, &crossed)
         } else {
-            return polish(&input.conic(c.edge), c.t, &shape);
+            return polish(&input.conic(c.edge), c.t, &shape, &crossed);
         };
         if lined(input, c.edge) {
-            return t;
+            return (t, nodes);
         }
         let conic = input.conic(c.edge);
         let guess = param_on(&conic, lerp(s, e, t), f64::INFINITY).unwrap_or(t);
-        polish(&conic, guess, &shape)
-    })
+        let (t, more) = polish(&conic, guess, &shape, &crossed);
+        (t, nodes.saturating_add(more))
+    });
+    let units = placed
+        .iter()
+        .map(|&(_, nodes)| nodes.div_ceil(NEAR_NODES_PER_UNIT))
+        .fold(0, usize::saturating_add);
+    (placed.into_iter().map(|(t, _)| t).collect(), units)
 }
 
 /// Whether edge `e` of `input` is exactly the segment between its ends

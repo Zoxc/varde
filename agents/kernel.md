@@ -1638,8 +1638,10 @@ kept no crossing (a hit the count overrules, as where the edge leaves a
 vertex on the patch's corner: nearest the patch), else where they came
 closest (the middle of the smallest pieces the search looked at, which
 had put such a crossing a sixteenth of the edge from the vertex).
-Those are marked as not solved (`Crossing::solved`, from `pick`), and
-must lie on the other operand once placed (see "Assembly").
+Those are marked as not solved (`Crossing::solved`, from `pick`): on a
+plane or a quadric they go to the edge's root on the patch crossed once
+placed (see "Cutting curved faces"), and they must lie on the other
+operand (see "Assembly").
 Such pairs are searched with a count of 0 too, so an edge passing into a
 face and back out gets both crossings. Crossings are ordered along an
 edge by position, ties exactly (a straight edge through two planar
@@ -1761,15 +1763,41 @@ primitives (for `order`), and assembles as for flat operands, with these
 additions.
 
 **Crossings on curved edges.** Each crossing's parameter is solved again
-where the face crossed is a plane (the quadratic of the edge's conic
-against it, exactly: the root in the edge nearest the count's position,
-however far, so the vertex lies on the plane its triangles are tagged
-with even where the search found no crossing and the position is only
-where the two came closest, once `1e-4` off) or a quadric (Newton's
-method on `F(C(t))`: the root within `1e-6` of the count's position,
-else the position stays), when the edge is curved or the face isn't
-planar (`surface::polish`). A root a rounding outside the edge
-(`1e-9`) is at its end, and one within `1e-12` of an end is put there
+where the face crossed is a plane or a quadric, when the edge is curved
+or the face isn't planar (`surface::polish`), at a root of the edge
+against the surface, exactly: a quadratic for a plane (the edge's
+conic's Bernstein form against it) or for an exactly straight edge on a
+quadric (`F(p₀ + s·d)`, with a discriminant a rounding below 0 taken as
+a double root: a touching edge touches), else a quartic, `F(C(t))` times
+the square of the conic's denominator, in Bernstein form (the
+homogeneous control points put in the quadric's 4 × 4 form about the
+edge's first end), its roots isolated by `curved/bernstein.rs` and each
+given up to two Newton steps that bring `F` nearer 0. Which root:
+
+- Solved by the search: the nearest on a plane (however far: the search
+  found a point of the patch, which is the plane; where the search
+  found no crossing and the position is only where the two came
+  closest, it was once `1e-4` off), or on a quadric within `1e-6` of
+  the count's position.
+- Only placed (see "Curved primitives"), or solved with its quadric
+  root further: the nearest root **with the crossing's sign** (the
+  surface's gradient, turned to the patch's outward normal at its
+  middle, against the edge's tangent there; a tangent root fits either)
+  **whose point is within the resolution of the patch crossed**
+  (`solve::near_patch`, certified): this pair's crossing, not the
+  edge's way back out or another patch's. The search runs out of pieces
+  (see "Crossings") and places such a crossing up to `1.6e-3` of its
+  edge from the root: a bar turned through a box had a vertex `5.6e-4`
+  off the cylinder and 22 to 35 patches of each result on copies
+  claiming no surface; and a plane crossed twice by a curved edge took
+  the root of the other sign when it was nearer.
+- No root fits: as it was before (a plane's nearest root for a crossing
+  only placed, a quadric's within `1e-6`, else the position), and the
+  check on crossings only placed decides (see "Assembly").
+
+Faces claiming no surface keep the position. A root a rounding outside
+the edge (`1e-9`, and the quartic's past an end found by Newton from
+it) is at its end, and one within `1e-12` of an end is put there
 exactly (`surface::at_end`), so a crossing at a vertex lying on the
 other surface is at the vertex to the bit: a root just past the end
 was dropped for the edge's other root, and the vertex went `1.6e-4` off
@@ -1785,10 +1813,6 @@ solved again on the conic (from its point nearest the segment's, then
 against the face crossed): a nearly straight cut whose control point is
 far from its chord's middle runs at another pace, and the segment's
 parameter put a vertex `2e-3` along it from the plane it crossed.
-None of this puts a crossing the search didn't solve onto the other
-surface for sure (a plane's root may be beside the patch, a quadric's
-only within `1e-6` of the placement, a free face's never), so those are
-checked once placed (see "Assembly").
 
 **Chains** (`chain::chain`, per arc, through `par_map`): the cut from an
 arc's `+` end to its `−` end as vertices and curves, and every vertex's
@@ -2041,7 +2065,10 @@ now take 20 ms.
   tie the ratio of the first powers of `ε` that aren't zero.
 - **Crossings only placed are certified** (`Cutting::certify`): a
   crossing the search didn't solve (see "Curved primitives") lies on its
-  edge but on the other surface only by luck, so once placed it must be
+  edge, and on the other surface where it went to a root on the patch
+  crossed (see "Crossings on curved edges"), but otherwise only by luck
+  (a face claiming no surface, no root of its sign on the patch), so
+  once placed it must be
   within the resolution of the patch it crosses, or of another patch of
   the other operand whose box comes that near (a crossing through the
   side two patches share lands on either), by `solve::near_patch`: the
@@ -2293,10 +2320,11 @@ about 300 pieces a search took some 70 µs), a
 unit per pair decided, and per refinement split and piece, every round;
 `MAX_TRACE_STEPS / 64` per arc not between two planar patches, a unit per
 curve of the chains, a unit per curve halved in the rounds of cutting
-the faces (each of which counts its ear clipping again), and for each
-crossing only placed a unit per 4 pieces certifying it looked at, and
-one per 64 of the other operand's boxes, where the patch crossed wasn't
-near enough.
+the faces (each of which counts its ear clipping again), a unit per 4
+pieces of the patch crossed looked at checking a crossing's roots on it
+(see "Crossings on curved edges"), and for each crossing only placed a
+unit per 4 pieces certifying it looked at, and one per 64 of the other
+operand's boxes, where the patch crossed wasn't near enough.
 
 ### Costs
 
@@ -2443,23 +2471,30 @@ point at infinity along the axis). A box cut from a wall over a very
 shallow hyperbola, cut again across its cap's nearly straight edge, on
 an axis frame and a tilted one (the identities; the crossings on the
 edge's conic, not at the segment's parameter). Crossings the search only
-placed, off the surface they cross, and bands past the fit tolerance: a
-curved rim against a crossing cylinder's wall (a crossing 4 resolutions
-off it, four `Ok`s before), every new vertex on both surfaces or
-refused; bars through boxes at the finest tolerance (a crossing 5.6e-4
-off the bar, bands as far) and a small cylinder across a 75° wall in
-three pieces (1.3e-4, on triangles along no cut), at three tolerances,
-with the check on the crossings and, through a test-only switch
-(`assemble::UNCERTIFIED`), without it: each result refused or its
-claim-free patches within the tolerance of their walls, the union and
-`bar − box` refused as too complex without the check at the finest
-tolerance, and all four through without it at the default one, where
-the bands are between half the tolerance and the tolerance, their
-volumes right. Unit tests: exact ellipse
-arcs of a tilted plane through a cylinder, crossings solved exactly on a
-plane and a cylinder, the second point of a line on a cylinder and at
-infinity on a parabolic cylinder, tracing
-crossing cylinders and fitting at two tolerances, inverting a point into
+placed, and bands past the fit tolerance: a curved rim against a
+crossing cylinder's wall (a crossing 4 resolutions off it, four `Ok`s
+before, then refused), all four `Ok` with every new vertex on both
+surfaces; two bars turned through boxes (crossings `5.6e-4` and `2e-4`
+off the bar) and a small cylinder across a 75° wall in three pieces
+(`1.3e-4`, on triangles along no cut), at up to three tolerances, all
+four exact (no patch claiming no surface) with the volume identities to
+`1e-11`, and through a test-only switch (`assemble::LOOSE`: crossings
+only placed left where they were and not checked) each result refused
+or its claim-free patches within the tolerance of their walls, the
+union (and `bar − box`) refused as too complex at the finest tolerances,
+and all four through at the default one, where the bands are between
+half the tolerance and the tolerance, their volumes right. Unit tests:
+exact ellipse arcs of a tilted plane through a cylinder, crossings
+solved exactly on a plane and a cylinder, crossings only placed going to
+their root on a tilted cylinder's patch from `1e-3` and `0.05` off (a
+segment and an ellipse arc, to `1e-15`; the other sign, a root off the
+patch or none: the position stays), a line grazing the wall `1e-5` off
+a ruling placed a third of the edge off, a tangent line (a double
+root), a plane crossed twice (each sign its own root wherever placed),
+the second point of a line on a cylinder and at infinity on a parabolic
+cylinder, tracing crossing cylinders and fitting at two tolerances,
+inverting a point into a patch.
+
 a patch.
 
 Found by fuzzing, with regression tests: random boxes on a half grid
@@ -2587,20 +2622,38 @@ to 72 of its 96 operations and left the others as they were.
   certificate can't settle (two cylinders tangent or crossing at a
   slant) refine for many rounds, and
   parts built in long chains occasionally run out of budget there.
-- **Crossings only placed are refused, not solved**, where they aren't
-  on the other operand (`Inconsistent`): nothing yet solves them again
-  on a plane or quadric with their sign and patch checked. The seeded
-  suite's tallies didn't move (bars 22 of 24 pairs, walls 112 of 120,
-  coaxial 37 of 40, bosses 64 of 64, drilled 160 of 160, tangent 72 of
-  96, chains 200 of 240, turned 156 of 160, related 112 of 120), but one
-  of the five bosses joined flush over drilled holes is refused (a cap
-  edge through a hole's wall at its rim, placed 7.6e-5 off it), and in a
-  fuzzer of walls over arcs, conics and circles cut by boxes and
-  cylinders (about 2 000 operations a seed, two seeds) refusals went
-  from 101 and 104 to 149 and 136, and of 1 000 turned boxes across such
-  walls from 27 and 18 to 37 and 23; the results off in volume by more
-  than `1e-7` went from 90 to 3 (one case, `3.6e-6`, a box turned a
-  thousandth of a radian: unexplained, within the tolerance).
+- **Crossings only placed are refused where no root holds them**: on a
+  face claiming no surface, or where no root of the crossing's sign lies
+  on the patch crossed, a crossing the search only placed is checked
+  and refused if it isn't on the other operand (`Inconsistent`). Placing
+  them at checked roots on planes and quadrics won back more than the
+  check cost. The seeded suite's tallies didn't move through either
+  change (bars 22 of 24 pairs, walls 112 of 120, coaxial 37 of 40,
+  bosses 64 of 64, drilled 160 of 160, tangent 72 of 96, chains 200 of
+  240, turned 156 of 160, related 112 of 120), and the five bosses
+  joined flush over drilled holes all work again. In a fuzzer of walls
+  over arcs, conics and circles cut by boxes and cylinders, alone and
+  fed on (about 2 050 operations a seed, default tolerance), and of
+  1 000 boxes turned across such walls, refusals (of which
+  `Inconsistent`), and results off in volume by more than `1e-7` (most
+  within the tolerance):
+
+  | run | before the check | with the check | placed at roots |
+  |---|---|---|---|
+  | walls, seed 21 | 101 (6), 47 off | 149 (94), 0 off | 73 (9), 0 off |
+  | walls, seed 5 | 104 (1), 31 off | 136 (83), 0 off | 59 (1), 0 off |
+  | turned, seed 21 | 27 (0), 9 off | 37 (20), 3 off | 17 (0), 3 off |
+  | turned, seed 5 | 18 (0), 3 off | 23 (5), 0 off | 18 (0), 0 off |
+
+  At the finest tolerance (`1e-5`, seed 21) 79 refusals (21
+  `Inconsistent`), none off. The `Inconsistent`s left are fed-on cases
+  (walls over parabolas cut by a box, then by a small cylinder) and
+  ones that failed so before either change. The three off, one turned
+  case (a box turned a thousandth of a radian across a wall over an
+  arc), went from `3.6e-6` to `5.6e-7`: a plane nearly along a
+  cylinder's rulings cuts it in nearly straight arcs whose weights come
+  from a rounding-sized bulge, and the bands beside them stray by up to
+  `1e-7`, at most `1e-10` off in the bars through boxes above.
 - **Bands past the fit tolerance are refused, not mended**: halving
   can't move bands at a vertex off the surface, and a triangle off its
   quadric with no curved side on the face's boundary has nothing to
@@ -3133,7 +3186,7 @@ offered ones' (`tolerance_choices`).
 | `MAX_REFINE_DEPTH` | 24 | red splits from an input patch: `2^24` times smaller |
 | `MAX_TRACE_STEPS` | 4096 | steps tracing one cut of a boolean; past them the cut falls back to a simpler curve |
 | `SPLIT_ROUNDS` (boolean) | 6 | rounds of halving curves while cutting faces; what the last keeps must be within the fit tolerance |
-| `MAX_NEAR_NODES` (boolean) | 512 | pieces of a patch looked at certifying a crossing only placed |
+| `MAX_NEAR_NODES` (boolean) | 512 | pieces of a patch looked at certifying a crossing only placed, or checking a root of an edge is on it |
 | `MAX_TURN_COS` (boolean) | 0.7 | the most a cut's conic turns (about 45°) |
 | `MEND_ROUNDS` (boolean) | 4 | rounds of Steiner points in one face's triangulation |
 | `MAX_WORK` | `1 << 22` | work units in one operation: about two seconds on one thread at most; the heaviest booleans measured take about half of it |
@@ -3499,3 +3552,18 @@ parameter, or a split outside the patch bounds),
   tried before the search, which ran into its cap on a thin triangle
   holding the point. Without the two, 8 of the 160 drilled plates'
   operations were refused.
+- **Crossings only placed go to a root checked on the patch**, by a
+  certified distance within the resolution (`solve::near_patch`), not
+  by inverting the point into the patch with a slack: that is what the
+  check after it asks, and a crossing at a side two patches share lands
+  a rounding past either. A root whose tangent lies in the surface (a
+  double root) fits either sign. Where no root fits, the placement is
+  what it was before (a plane's nearest root, a quadric's within
+  `1e-6`) and the check decides, so the change can't add a refusal
+  there. Crossings the search solved keep their placement (a plane's
+  nearest root, unchecked), except a quadric root further than `1e-6`,
+  which is now taken if it passes the same checks. The test switch that
+  skipped the check (`UNCERTIFIED`) became `LOOSE`, which also leaves
+  crossings only placed where they were, so the backstops can still be
+  tested. The bars through boxes are exact to `1e-9` of their size, not
+  `1e-12`, until section arcs' weights are taken from the angle.

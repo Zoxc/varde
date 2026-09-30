@@ -60,7 +60,7 @@ use crate::mesh::Surface;
 use crate::patch::Conic3;
 
 mod arcs;
-mod bernstein;
+pub(super) mod bernstein;
 mod ray;
 pub(super) mod solve;
 

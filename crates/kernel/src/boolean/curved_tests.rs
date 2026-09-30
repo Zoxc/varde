@@ -598,23 +598,14 @@ fn flush_bosses_joined_on_drilled_plates() {
         [(-0.8, 0.45, 0.4), (2.15, 0.2, 0.55), (0.5, -0.45, 0.5)],
         [(-2.0, -0.05, 0.3), (0.8, 0.65, 0.5), (-0.2, 0.3, 0.3)],
     ];
-    let mut refused = 0;
     for [(x1, y1, r1), (x2, y2, r2), (bx, by, br)] in cases {
         let plate = run(&slab, &drill(x1, y1, r1), Op::Difference);
         let plate = run(&plate, &drill(x2, y2, r2), Op::Difference);
         let boss = cylinder([bx, by, 1.0], br, 1.0);
         // One of them has a crossing of a cap edge through the hole's
         // wall at its rim that the search only placed, 7.6e-5 off the
-        // wall: refused, since nothing puts such a crossing on a quadric
-        // yet.
-        let joined = match boolean(&plate, &boss, Op::Union, &TOL, &Budget::DEFAULT) {
-            Ok(joined) => joined,
-            Err(KernelError::Boolean(BooleanError::Inconsistent)) => {
-                refused += 1;
-                continue;
-            }
-            Err(e) => panic!("boss at ({bx}, {by}): {e:?}"),
-        };
+        // wall, which goes to the edge's root on the wall.
+        let joined = run(&plate, &boss, Op::Union);
         // Where the boss covers a hole, its cap and the hole's wall meet
         // flush along arcs of both rims, some of it fitted.
         let want = 24.0 - PI * (r1 * r1 + r2 * r2) + PI * br * br;
@@ -624,7 +615,6 @@ fn flush_bosses_joined_on_drilled_plates() {
             joined.volume()
         );
     }
-    assert!(refused <= 1, "{refused}");
 }
 
 #[test]
@@ -842,15 +832,17 @@ fn off_both(result: &Solid, a: &Solid, b: &Solid) -> f64 {
 }
 
 #[test]
-fn crossings_the_search_only_placed_are_on_both_surfaces_or_refused() {
+fn crossings_the_search_only_placed_go_onto_both_surfaces() {
     // A cylinder's curved rim edge against a crossing cylinder's wall
     // (found fuzzing related solids, seed 1, case 19): the search stopped
     // at its cap having found nothing, and the crossing the count has was
     // placed where the two came closest, 4 resolutions off the wall.
     // Solving it again on the quadric didn't move it that far, and its
     // band went on a copy of the wall claiming no surface: all four
-    // operations were `Ok` with that vertex off. Each must be refused or
-    // have every new vertex on both surfaces.
+    // operations were `Ok` with that vertex off (then refused, once
+    // crossings only placed were checked). Now it goes to the rim's root
+    // on the wall: all four `Ok`, every new vertex on both surfaces, the
+    // volumes adding up.
     let a = extruded_on(
         vec![circle(
             DVec2::new(-0.005620956664202037, -0.278018636511416),
@@ -891,25 +883,33 @@ fn crossings_the_search_only_placed_are_on_both_surfaces_or_refused() {
         1.994379043335798,
         2,
     );
-    for (x, y, op) in [
+    let [u, i, d, e] = [
         (&a, &b, Op::Union),
         (&a, &b, Op::Intersection),
         (&a, &b, Op::Difference),
         (&b, &a, Op::Difference),
-    ] {
-        if let Ok(solid) = boolean(x, y, op, &TOL, &Budget::DEFAULT) {
-            let off = off_both(&solid, &a, &b);
-            assert!(off <= TOL.resolution(), "{op:?}: a vertex {off:e} off");
-        }
-    }
+    ]
+    .map(|(x, y, op)| {
+        let solid = run(x, y, op);
+        let off = off_both(&solid, &a, &b);
+        assert!(off <= 1e-12, "{op:?}: a vertex {off:e} off");
+        solid.volume()
+    });
+    let (va, vb) = (a.volume(), b.volume());
+    let within = TOL.fit() * (a.area() + b.area()) / 100.0;
+    assert!((u + i - va - vb).abs() <= within);
+    assert!((d - (va - i)).abs() <= within);
+    assert!((e - (vb - i)).abs() <= within);
 }
 
-/// `f` run with the check that crossings the search only placed lie on
-/// the surface they cross skipped (`certified` false) or not.
+/// `f` run with crossings the search only placed left as they were
+/// before they were placed at a root on the patch crossed, and the check
+/// that they lie on the surface they cross skipped (`certified` false),
+/// or not.
 fn certified<T>(certified: bool, f: impl FnOnce() -> T) -> T {
-    super::assemble::UNCERTIFIED.set(!certified);
+    super::assemble::LOOSE.set(!certified);
     let out = f();
-    super::assemble::UNCERTIFIED.set(false);
+    super::assemble::LOOSE.set(false);
     out
 }
 
@@ -933,17 +933,78 @@ fn four_off(
     })
 }
 
+/// `a ∪ b`, `a ∩ b`, `a − b` and `b − a` at `tol`, each checked exact
+/// (every patch on its face's surface to `rel` of `size`, none claiming
+/// no surface), and the three volume identities to `within`.
+fn four_exact(a: &Solid, b: &Solid, tol: &Tolerance, size: f64, rel: f64, within: f64) {
+    let [u, i, d, e] = [
+        (a, b, Op::Union),
+        (a, b, Op::Intersection),
+        (a, b, Op::Difference),
+        (b, a, Op::Difference),
+    ]
+    .map(|(x, y, op)| {
+        let solid = boolean(x, y, op, tol, &Budget::DEFAULT)
+            .unwrap_or_else(|e| panic!("fit {}, {op:?}: {e:?}", tol.fit()));
+        exact_to(&format!("fit {}, {op:?}", tol.fit()), &solid, size, rel);
+        solid.volume()
+    });
+    let (va, vb) = (a.volume(), b.volume());
+    for (what, off) in [
+        ("A ∪ B + A ∩ B", u + i - va - vb),
+        ("A − B", d - (va - i)),
+        ("B − A", e - (vb - i)),
+    ] {
+        assert!(
+            off.abs() <= within,
+            "fit {}: {what} off by {off:e}",
+            tol.fit()
+        );
+    }
+}
+
+/// [`four_off`] with crossings the search only placed left where they
+/// were and not checked: each result refused (only at a fit finer than
+/// `1e-3`) or its claim-free patches within the fit tolerance of their
+/// walls `of`, and the volume identities within the tolerance's
+/// allowance. The results, for the caller's own checks.
+fn four_loose(
+    a: &Solid,
+    b: &Solid,
+    of: &[crate::mesh::Face],
+    tol: &Tolerance,
+) -> [Result<(f64, f64), KernelError>; 4] {
+    let fit = tol.fit();
+    let got = certified(false, || four_off(a, b, of, tol));
+    for (k, result) in got.iter().enumerate() {
+        match result {
+            Ok((_, off)) => assert!(*off <= fit, "fit {fit}, result {k}: {off:e} off"),
+            Err(e) => assert!(fit < 1e-3, "fit {fit}, result {k}: {e:?}"),
+        }
+    }
+    if let [Ok((u, _)), Ok((i, _)), Ok((d, _)), Ok((e, _))] = got {
+        let (va, vb) = (a.volume(), b.volume());
+        let within = fit * (a.area() + b.area()) / 100.0;
+        assert!((u + i - va - vb).abs() <= within);
+        assert!((d - (va - i)).abs() <= within);
+        assert!((e - (vb - i)).abs() <= within);
+    }
+    got
+}
+
 #[test]
 fn bands_left_straying_past_the_tolerance_are_refused() {
     // A turned bar through a box (the seeded bars' generator, seed 1, its
-    // 55th draw), at the finest tolerance: a crossing the search never
-    // found sits 5.6e-4 off the bar's cylinder, and no halving of the cut
-    // moves the bands at it closer. When the rounds of halving ran out
-    // the result was kept, its union and `bar − box` with bands that far
-    // off: 56 times the tolerance. The crossing is now refused as off the
-    // surface; past that check, the bands are, as too complex. Each
-    // result must be refused or within the tolerance, and past the check
-    // at the default tolerance all four work.
+    // 55th draw): the search for a box edge's crossing through the bar's
+    // wall ran out of pieces, and the crossing the count has was placed
+    // where the two came closest, 1.6e-3 of the edge from its root and
+    // 5.6e-4 off the cylinder; no halving of the cut moves the bands at
+    // it closer. When the rounds of halving ran out the result was kept,
+    // at the finest tolerance with bands 56 times the tolerance off. Now
+    // the crossing goes to the edge's root on the patch crossed: all four
+    // exact at every tolerance. Left where it was (and not checked), the
+    // bands are refused as too complex where they are past the tolerance,
+    // and kept within it at the default one.
     let c = DVec3::new(
         -0.5602419740309785,
         -0.9158090161441121,
@@ -967,28 +1028,51 @@ fn bands_left_straying_past_the_tolerance_are_refused() {
         let bar = Solid::cylinder(DVec3::new(0.0, 0.0, -2.0), r, 4.0, 2, &tol).unwrap();
         let bar = moved_at(&bar, &tol, |p| q * p + c);
         let block = Solid::cuboid(min, size, 1, &tol).unwrap();
-        for check in [true, false] {
-            let got = certified(check, || four_off(&bar, &block, &walls(&bar), &tol));
-            for (k, result) in got.iter().enumerate() {
-                match result {
-                    Ok((_, off)) => assert!(*off <= fit, "fit {fit}, result {k}: {off:e} off"),
-                    Err(e) => assert!(check || fit < 1e-3, "fit {fit}, result {k}: {e:?}"),
-                }
-            }
-            if !check && fit < 1e-3 {
-                // The union and `bar − box`, which were kept.
-                assert!(matches!(got[0], Err(KernelError::TooComplex)));
-                assert!(matches!(got[2], Err(KernelError::TooComplex)));
-            }
-            if let [Ok((u, _)), Ok((i, _)), Ok((d, _)), Ok((e, _))] = got {
-                let (va, vb) = (bar.volume(), block.volume());
-                let within = fit * (bar.area() + block.area()) / 100.0;
-                assert!((u + i - va - vb).abs() <= within);
-                assert!((d - (va - i)).abs() <= within);
-                assert!((e - (vb - i)).abs() <= within);
-            }
+        // Exact but for the weights of nearly straight section arcs,
+        // which come from a rounding-sized bulge (1e-10 off).
+        four_exact(&bar, &block, &tol, 4.0, 1e-9, 1e-11);
+        let loose = four_loose(&bar, &block, &walls(&bar), &tol);
+        if fit < 1e-3 {
+            // The union and `bar − box`, which were kept.
+            assert!(matches!(loose[0], Err(KernelError::TooComplex)));
+            assert!(matches!(loose[2], Err(KernelError::TooComplex)));
+        } else {
+            assert!(
+                loose
+                    .iter()
+                    .all(|r| r.as_ref().is_ok_and(|&(_, off)| off > 1e-4))
+            );
         }
     }
+}
+
+#[test]
+fn a_crossing_the_search_misses_lands_on_the_cylinder() {
+    // Another turned bar through a box (the seeded bars' generator, seed
+    // 2, its 132nd draw): the search for a box edge's crossing through
+    // the bar's wall ran out of pieces, the crossing was placed 1.0e-4 of
+    // the edge from its root, 2.0e-4 off the cylinder, and 2 to 4 patches
+    // of every result went on copies of the wall claiming no surface,
+    // the volume identities off by 2.7e-5; then all four were refused as
+    // off the surface. Now they are exact.
+    let c = DVec3::new(0.7778535523495764, 0.3332140911888426, 0.3730829564654845);
+    let q = DQuat::from_xyzw(
+        -0.2856207075786154,
+        0.34875799816262115,
+        -0.11249121681212451,
+        0.885513634146883,
+    );
+    let bar = moved(&cylinder([0.0, 0.0, -2.0], 0.20027727793058037, 4.0), |p| {
+        q * p + c
+    });
+    let block = Solid::cuboid(
+        DVec3::new(-0.789859021193339, -0.6396402831554717, -0.7650470984448043),
+        DVec3::new(1.1924531490632726, 2.0146868583713413, 2.642857569158646),
+        1,
+        &TOL,
+    )
+    .unwrap();
+    four_exact(&bar, &block, &TOL, 4.0, 1e-9, 1e-11);
 }
 
 /// A 10 × 10 square whose top side, from (10, 10) to (0, 10), is an arc
@@ -1383,15 +1467,15 @@ fn shallow_level_arcs_are_never_wrong() {
 #[test]
 fn band_roots_off_their_wall_are_bounded() {
     // A small cylinder across a 75° concave wall in three pieces (found
-    // fuzzing): a crossing the search only placed sits 1.3e-4 off the
+    // fuzzing): a crossing the search only placed sat 1.3e-4 off the
     // small cylinder's wall, and the triangles at it, some along no cut
     // (band trees' roots no ruling frees), went on a copy of the wall
     // claiming no surface, that far off at every tolerance: the union
-    // was kept at 1.3 times the tolerance of 1e-4. The crossing is now
-    // refused as off the surface; past that check, the triangles are,
-    // as too complex. Each result must be refused or within the
-    // tolerance of the walls, and past the check at the default
-    // tolerance all four work, their volumes right.
+    // was kept at 1.3 times the tolerance of 1e-4. Now the crossing goes
+    // to the edge's root on the patch crossed: all four exact at every
+    // tolerance. Left where it was (and not checked), the triangles are
+    // refused as too complex where they are past the tolerance, and kept
+    // within it at the default one.
     let arch = Arch {
         deg: 75.35906468803832,
         convex: false,
@@ -1414,25 +1498,17 @@ fn band_roots_off_their_wall_are_bounded() {
         };
         let a = build(&arch.profile(), 0.0, 5.0, 9);
         let b = build(&tool, 2.0, 7.0, 30);
+        four_exact(&a, &b, &tol, 10.0, 1e-12, 1e-10);
         let wall = [walls(&a), walls(&b)].concat();
-        for check in [true, false] {
-            let got = certified(check, || four_off(&a, &b, &wall, &tol));
-            for (k, result) in got.iter().enumerate() {
-                match result {
-                    Ok((_, off)) => assert!(*off <= fit, "fit {fit}, result {k}: {off:e} off"),
-                    Err(e) => assert!(check || fit < 1e-3, "fit {fit}, result {k}: {e:?}"),
-                }
-            }
-            if !check && fit < 1e-3 {
-                assert!(matches!(got[0], Err(KernelError::TooComplex)));
-            }
-            if let [Ok((u, _)), Ok((i, _)), Ok((d, _)), Ok((e, _))] = got {
-                let (va, vb) = (a.volume(), b.volume());
-                let within = fit * (a.area() + b.area()) / 100.0;
-                assert!((u + i - va - vb).abs() <= within);
-                assert!((d - (va - i)).abs() <= within);
-                assert!((e - (vb - i)).abs() <= within);
-            }
+        let loose = four_loose(&a, &b, &wall, &tol);
+        if fit < 1e-3 {
+            assert!(matches!(loose[0], Err(KernelError::TooComplex)));
+        } else {
+            assert!(
+                loose
+                    .iter()
+                    .all(|r| r.as_ref().is_ok_and(|&(_, off)| off > 1e-5))
+            );
         }
     }
 }
