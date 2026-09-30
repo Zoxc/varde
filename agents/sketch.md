@@ -35,10 +35,18 @@ reference, or to build inputs, allow it in their module.
 The module is public (`varde_sketch::angle`, with `log10` and `pow` too)
 because `varde-view` makes saved values of its own: a line's end from a
 typed angle and the polygon's corners (`typed.rs`), tangent points
-(`snap.rs`), the length an extrude drag snaps to (`extrude::snap_step`),
-and `dimension::sector_holds` (`angle_to`), which picks the side a
-dimension is placed on and whether a snap lands on an arc's run. They take these helpers, so the same typed edit gives the same
-bits natively and on the web; `crates/view/clippy.toml` bans the same
+(`snap.rs`), the length an extrude drag snaps to (`extrude::snap_step`:
+its decade by `log10`, the step itself read from its decimal text, as
+`pow(10, k)` can be an ulp off for negative `k`), and
+`dimension::sector_holds`, which picks the side a dimension is placed on
+and whether a snap lands on an arc's run. That one turns by `arc_sweep`
+(so by `atan2`), not by `acos` of the cosine as glam's `angle_to` does:
+the turn to the very vector an arc's sweep was made to is that sweep to
+the bit, so an arc's own ends are on its run (by `acos`, a quarter of
+random arcs lost their end by up to 10⁻⁸ radians), a direction along the
+start is no turn, and one of no length is in no sector. They take these
+helpers, so the same typed edit gives the same bits natively and on the
+web; `crates/view/clippy.toml` bans the same
 `f64` and glam `D*` methods. Display only, and on std: the view's `f32`
 maths (the view cube's letters, the zoom per wheel step) is not listed,
 and the drawn arc of an angle dimension

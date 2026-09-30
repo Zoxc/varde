@@ -198,3 +198,61 @@ fn a_spline_s_handle_measures_its_angle_alone_and_its_length_with_its_point() {
     assert_eq!(measured(&sketch, &[fit[0]], 1.0, 1.0), None);
     assert_eq!(measured(&sketch, &[spline], 1.0, 1.0), None);
 }
+
+#[test]
+fn a_sector_holds_its_own_ends_and_not_a_direction_of_no_length() {
+    let dirs = [
+        at(1.0, 0.0),
+        at(0.0, 1.0),
+        at(0.3, 2.0),
+        at(-1.0, 0.5),
+        at(-2.0, -0.1),
+    ];
+    for from in dirs {
+        // Its start, at any sweep.
+        assert!(sector_holds(from, 1e-6, from), "{from}");
+        assert!(sector_holds(from, 1e-6, from * 3.0), "{from}");
+        // Straight across, a half turn to within the rounding of the
+        // two directions' angles, and not under it.
+        for across in [-from, at(-from.x, -from.y + 0.0), -2.0 * from] {
+            assert!(sector_holds(from, PI + 1e-12, across), "{from} {across}");
+            assert!(!sector_holds(from, PI - 1e-9, across), "{from} {across}");
+        }
+        // A quarter turn back is three quarters on.
+        assert!(!sector_holds(from, PI, -from.perp()), "{from}");
+        assert!(sector_holds(from, 1.5 * PI + 1e-9, -from.perp()), "{from}");
+        // No direction at all is in no sector.
+        assert!(!sector_holds(from, TAU, DVec2::ZERO), "{from}");
+        assert!(!sector_holds(DVec2::ZERO, TAU, from), "{from}");
+    }
+    // Axis-aligned opposites, with a negative zero too, are a half turn
+    // to the bit.
+    assert!(sector_holds(at(0.0, 1.0), PI, at(0.0, -1.0)));
+    assert!(sector_holds(at(1.0, 0.0), PI, at(-1.0, -0.0)));
+    assert!(sector_holds(at(-1.0, 0.0), PI, at(1.0, -0.0)));
+}
+
+#[test]
+fn an_arc_s_sector_holds_both_its_ends() {
+    // Whether a place on an arc's circle is on its run is `sector_holds`
+    // of the arc's sweep: its own ends are on it, however it turns. By
+    // `acos` of the cosine, the turn to its end can come out up to 10⁻⁸
+    // over the sweep made by `atan2`.
+    let mut seed = 0x9e37_79b9_7f4a_7c15_u64;
+    let mut next = || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        (seed >> 11) as f64 / (1u64 << 53) as f64
+    };
+    for _ in 0..2000 {
+        let (a, b, radius) = (next() * TAU, next() * TAU, 0.1 + next() * 100.0);
+        let center = at(next() * 100.0 - 50.0, next() * 100.0 - 50.0);
+        let start = center + varde_sketch::angle::from_angle(a) * radius;
+        let end = center + varde_sketch::angle::from_angle(b) * radius;
+        let (from, to) = (start - center, end - center);
+        let sweep = varde_sketch::arc_sweep(from, to);
+        assert!(sector_holds(from, sweep, to), "{from} {to} {sweep}");
+        assert!(sector_holds(from, sweep, from), "{from} {to} {sweep}");
+    }
+}

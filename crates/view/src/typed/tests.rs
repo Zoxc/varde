@@ -373,3 +373,38 @@ fn a_spline_runs_through_the_points_placed_to_the_cursor() {
     let empty = testing::tool(Tool::Spline, &[], &[]);
     assert_eq!(super::outline(&empty, at(1.0, 1.0)), None);
 }
+
+#[test]
+fn typed_angles_at_the_edges_place_the_end_with_libm_s_bits() {
+    let design = testing::DESIGN;
+    let placed = [at(3.0, -2.0)];
+    let tool = testing::tool(Tool::Line, &placed, &[None]);
+    // Neither none nor a whole turn, nor under none, nor not a number.
+    for text in ["0", "360", "-90", "1e400", "0/0", "inf"] {
+        assert!(read(&tool, Field::Angle, text, &design).is_err(), "{text}");
+    }
+    for degrees in ["90", "180", "270", "0.000001", "359.999999"] {
+        for length in ["0.001", "1", "1e6"] {
+            let angle = read(&tool, Field::Angle, degrees, &design).unwrap();
+            let size = read(&tool, Field::Length, length, &design).unwrap();
+            let both = [(Field::Angle, angle.clone()), (Field::Length, size.clone())];
+            let typing = ActiveTool {
+                typed: &both,
+                ..tool
+            };
+            let line = outline(&typing, at(30.0, 6.0)).unwrap();
+            let Outline::Line { start, end } = line else {
+                panic!("{line:?}")
+            };
+            let direction = DVec2::new(libm::cos(angle.value), libm::sin(angle.value));
+            assert_eq!(end, start + direction * size.value, "{degrees} {length}");
+            // The angle shown for it is the one typed, to its rounding.
+            let shown = line.value(Field::Angle).unwrap();
+            let slack = 1e-15 * design.max / size.value;
+            assert!(
+                (shown - angle.value).abs() < slack,
+                "{degrees} {length}: {shown}"
+            );
+        }
+    }
+}

@@ -7,7 +7,7 @@ use std::f64::consts::{PI, TAU};
 
 use glam::DVec2;
 use varde_expr::{LengthUnit, format};
-use varde_sketch::{Curve, Dimension, Id, Kind, Measure, Role, Side, Sketch, angle};
+use varde_sketch::{Curve, Dimension, Id, Kind, Measure, Role, Side, Sketch, arc_sweep};
 
 /// Under this sine of the angle between them, two lines picked are
 /// parallel, and dimensioned by the distance between them rather than
@@ -188,10 +188,21 @@ fn angle(sketch: &Sketch, a: Id, b: Id, at: DVec2) -> Option<(Measure, Side)> {
 }
 
 /// Whether the direction `toward` is within the angle `sweep` turning
-/// counter-clockwise from the direction `from`.
+/// counter-clockwise from the direction `from`; never for a direction of
+/// no length.
+///
+/// The turn is [`arc_sweep`]'s, by libm's `atan2` (the side picked and the
+/// snaps it lets through are saved), so an arc's own ends are on its run:
+/// the turn to `toward` the very vector the sweep was made to is that
+/// sweep to the bit, and `toward` along `from` is no turn, not a whole one.
+/// (`acos` of the cosine, as glam's `angle_to` has it, is up to 10⁻⁸ off
+/// near no turn and a half turn.)
 pub(crate) fn sector_holds(from: DVec2, sweep: f64, toward: DVec2) -> bool {
-    // By libm: the side picked is saved.
-    angle::angle_to(from, toward).rem_euclid(TAU) <= sweep
+    if from == DVec2::ZERO || toward == DVec2::ZERO {
+        return false;
+    }
+    let turn = arc_sweep(from, toward);
+    turn <= sweep || turn == TAU
 }
 
 /// A measure as the user sees it: "Length", "Horizontal distance".

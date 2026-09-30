@@ -362,18 +362,25 @@ fn loop_moment(polyline: &[DVec2]) -> (f64, DVec2) {
 /// The step, in millimetres, a length dragged at `pixel` millimetres a
 /// pixel snaps to in `units`: the roundest 1, 2 or 5 times a power of ten
 /// of the units at least a few pixels long. `None` for a pixel
-/// that isn't finite and above zero.
+/// that isn't finite and above zero, or a step past the largest double.
+///
+/// The step is saved with the extrude it snaps, so it's made the same
+/// natively and on the web: its decade by libm's `log10`, and the step
+/// the nearest double to its decimal, read from its text (exact and
+/// portable, where `pow(10, k)` can be an ulp off for negative `k`).
 pub fn snap_step(pixel: f64, units: LengthUnit) -> Option<f64> {
     let least = pixel * SNAP_PIXELS / units.mm();
     if !(least > 0.0 && least.is_finite()) {
         return None;
     }
-    let power = angle::pow(10.0, angle::log10(least).floor());
-    let step = [1.0, 2.0, 5.0, 10.0]
+    // Within ±324 for any positive finite `least`. Should the logarithm
+    // round down across a power of ten, the 10 still finds that power.
+    let decade = angle::log10(least).floor() as i32;
+    let step = [(1, 0), (2, 0), (5, 0), (1, 1)]
         .into_iter()
-        .map(|m| m * power)
+        .filter_map(|(m, up)| format!("{m}e{}", decade + up).parse::<f64>().ok())
         .find(|&step| step >= least)?;
-    Some(step * units.mm())
+    Some(step * units.mm()).filter(|step| step.is_finite())
 }
 
 /// The floating panel of the extrude being set up.
