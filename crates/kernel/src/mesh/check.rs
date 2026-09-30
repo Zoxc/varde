@@ -48,6 +48,11 @@ pub enum CheckError {
     VertexNeighbours(u32, u32),
     /// Triangles sharing all three corners.
     SameCorners(u32, u32),
+    /// The shell (connected part) whose lowest triangle is `t` faces the
+    /// wrong way for where it lies among the others: inside out, or
+    /// facing out inside another solid, or in where it isn't inside one.
+    /// Also for a shell whose volume is too close to zero to tell.
+    InsideOut(u32),
 }
 
 impl std::fmt::Display for CheckError {
@@ -78,6 +83,10 @@ impl std::fmt::Display for CheckError {
                 write!(f, "patches {a} and {b} aren't split at their shared vertex")
             }
             CheckError::SameCorners(a, b) => write!(f, "patches {a} and {b} share all corners"),
+            CheckError::InsideOut(t) => write!(
+                f,
+                "the shell with patch {t} faces the wrong way for where it lies"
+            ),
         }
     }
 }
@@ -87,24 +96,38 @@ impl std::error::Error for CheckError {}
 impl Mesh {
     /// Checks every invariant (see the [module](super) docs): topology,
     /// shared edges, folds, control hulls with `tol`'s resolution as the
-    /// margin, and face tags ([`Self::check_faces`]), in every build.
-    /// The empty mesh passes.
+    /// margin, orientation, and face tags ([`Self::check_faces`]), in
+    /// every build. The empty mesh passes.
     pub fn check(&self, tol: &Tolerance) -> Result<(), CheckError> {
-        let patches = self.check_embedding(tol)?;
-        self.check_faces_of(&patches, tol)
+        self.check_counted(tol).map(drop)
     }
 
-    /// Invariants 1 to 4, everything but the face tags, returning the
-    /// patches.
+    /// [`Self::check`], giving how many patches' volumes it integrated to
+    /// tell which way the shells face (the rest is linear in the patches
+    /// and their hull pairs), for callers that charge the work.
+    pub(crate) fn check_counted(&self, tol: &Tolerance) -> Result<usize, CheckError> {
+        let (patches, bvh) = self.check_embedded(tol)?;
+        let integrated = self.check_orientation(&patches, &bvh, tol.resolution())?;
+        self.check_faces_of(&patches, tol)?;
+        Ok(integrated)
+    }
+
+    /// Invariants 1 to 4, returning the patches: everything but the
+    /// orientation and the face tags.
     pub(super) fn check_embedding(&self, tol: &Tolerance) -> Result<Vec<Patch>, CheckError> {
+        self.check_embedded(tol).map(|(patches, _)| patches)
+    }
+
+    /// [`Self::check_embedding`], with the BVH over the patches' boxes.
+    pub(super) fn check_embedded(&self, tol: &Tolerance) -> Result<(Vec<Patch>, Bvh), CheckError> {
         self.check_topology()?;
         let patches = self.bounded_patches()?;
         let folds = par_map(&patches, |patch| patch.fold_direction().is_some());
         if let Some(t) = folds.iter().position(|&passes| !passes) {
             return Err(CheckError::Fold(t as u32));
         }
-        self.check_hulls(&patches, tol)?;
-        Ok(patches)
+        let bvh = self.check_hulls(&patches, tol)?;
+        Ok((patches, bvh))
     }
 
     /// Invariants 1 and 2 without the geometry: pairs, directed edges,
@@ -208,11 +231,11 @@ impl Mesh {
         checked.into_iter().collect()
     }
 
-    /// Invariant 5: every patch on a `Plane` face has its six control
+    /// Invariant 6: every patch on a `Plane` face has its six control
     /// points within `tol`'s resolution of the plane, and every patch on
     /// a `Quadric` face has sampled points within it of the quadric (to
     /// first order). [`Self::check`] runs this last; on its own, call it
-    /// on a mesh that passes the rest of `check`.
+    /// on a mesh that passes the rest of `check` (orientation aside).
     pub fn check_faces(&self, tol: &Tolerance) -> Result<(), CheckError> {
         let patches: Vec<Patch> = (0..self.tris.len()).map(|t| self.patch(t)).collect();
         self.check_faces_of(&patches, tol)
@@ -233,9 +256,9 @@ impl Mesh {
     }
 
     /// Invariant 4 over every pair of patches whose boxes come within the
-    /// resolution, from the BVH. Pairs that share vertices always do,
-    /// sharing control points.
-    fn check_hulls(&self, patches: &[Patch], tol: &Tolerance) -> Result<(), CheckError> {
+    /// resolution, from the BVH, which it returns. Pairs that share
+    /// vertices always do, sharing control points.
+    fn check_hulls(&self, patches: &[Patch], tol: &Tolerance) -> Result<Bvh, CheckError> {
         let margin = tol.resolution();
         let bvh = Bvh::new(patches.iter().map(Patch::bounds).collect());
         let pairs = bvh.self_pairs(margin);
@@ -243,7 +266,8 @@ impl Mesh {
             let (a, b) = (&patches[i as usize], &patches[j as usize]);
             check_pair([i, j], [a, b], [self.corners(i), self.corners(j)], margin)
         });
-        results.into_iter().collect()
+        results.into_iter().collect::<Result<(), _>>()?;
+        Ok(bvh)
     }
 
     /// The vertex ids at the corners of triangle `t`.

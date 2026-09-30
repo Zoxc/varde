@@ -397,6 +397,7 @@ platforms either.
 | `mesh/check.rs` | `Mesh::check`, `Mesh::check_faces`, `CheckError` |
 | `mesh/bvh.rs` | `Bvh`: boxes, queries, self pairs |
 | `mesh/hull.rs` | GJK (`apart`) and the three hull rules |
+| `mesh/orient.rs` | invariant 5: shells, their volume signs, their nesting by rays |
 | `mesh/refine.rs` | red–green refinement: leaves, pieces, the split rules |
 | `mesh/repair.rs` | `Mesh::repair`: test, split what fails, test again |
 | `mesh/primitive.rs` | `Mesh::cuboid`, `Mesh::cylinder` |
@@ -464,7 +465,10 @@ and release builds alike (face tags come last).
 4. **Control hulls** (below): `Hull`, `EdgeNeighbours`,
    `VertexNeighbours`, and `SameCorners` for two triangles on the same
    three vertices, which no plane can split.
-5. **Face tags**, in every build (so every `Solid`'s tags are true
+5. **Orientation** (below), in every build: every shell faces out, or in
+   where it bounds a void, so the winding number is 0 or 1 everywhere
+   (`InsideOut(t)`, `t` the lowest triangle of the first bad shell).
+6. **Face tags**, in every build (so every `Solid`'s tags are true
    claims), and on their own with `check_faces` on a mesh that passes the
    rest: a patch
    on a `Plane` has all six control points within the resolution of it; a
@@ -475,8 +479,76 @@ and release builds alike (face tags come last).
    (1 004 and 4 012 patches), 6 to 10% on 7 threads, and 0.5% on a
    262 144-patch torus of `Free` faces.
 
-Steps 2–3, 5 and the hull tests of 4 run per patch or per pair through
-`par_map`.
+Steps 2–3, 6 and the hull tests of 4 run per patch or per pair through
+`par_map`, and step 5 per triangle and per shell. `check_counted` is
+`check` returning how many patches step 5 integrated, for callers that
+charge work; `check_embedding` (repair's) stops after step 4.
+
+### Orientation (`mesh/orient.rs`)
+
+Topology makes each connected shell consistently oriented, so what is
+left is one sign per shell and how the shells nest. Since shells don't
+meet (invariant 4), the winding number is 0 or 1 everywhere exactly when,
+for every shell `S`, the other shells' winding number at a point of `S`
+is 0 if `S` faces out and 1 if it faces in: every region of space
+borders some shell, and near `S` its two sides have the others' winding
+number and that plus `S`'s sign.
+
+- **Shells** are the components of the triangles by halfedge pairs,
+  numbered by their lowest triangle. A vertex has one fan, so shells share
+  no vertex, and every patch of one is a non-neighbour of every patch of
+  another: their hulls are more than the resolution apart.
+- **Sign**: the shell's volume, from its first corner `o`. The corner
+  triangles' volumes, each `det[a − o, b − o, c − o]` in floating point
+  with Shewchuk's error bound for `orient3d` (`(7 + 56ε)ε` times the
+  permanent), summed in triangle order carrying each addition's error
+  (Ogita, Rump and Oishi's `Sum2`, whose own bound doesn't grow with the
+  number of triangles). Then the
+  difference each patch makes to its triangle's (`solid::patch_volume`,
+  with a `1e-9` relative allowance for the quadrature) is integrated for
+  the patches that could move it most, in batches through `par_map` but
+  added one by one, until the volume is further from zero than what the
+  rest could still move it by (`lune_bound`) plus the rounding. The bound:
+  the patch, its triangle and the lunes between its curved edges and
+  their chords (shared by the two patches beside an edge, turned opposite
+  ways, so they cancel in a shell) lie in its control points' hull, which
+  lies in the prism over the convex hull of the control points' shadows
+  on the triangle's plane, as deep as they lie either side of it; twice
+  that, for safety. Where the corner triangles' rounding is what leaves
+  the sign open, their volume is worked out exactly once
+  (`exact::value`, expansions). A shell still too close to zero to tell
+  fails.
+- **Nesting**: the other shells' winding number at `o`, taken only when
+  another shell's box holds `o` (from a BVH over the shells' boxes; a
+  shell's winding number is 0 outside its box), and then only over those
+  shells: the signed number of their **corner triangles** a ray from `o`
+  along `(2, 3, 32)` passes through, up to the top of their boxes (the
+  patch BVH gives the triangles near the ray). That equals the curved
+  surfaces' winding number: moving each patch straight onto its corner
+  triangle, and each curved edge onto its chord (which both patches
+  beside it do alike), keeps every point in the patch's control hull,
+  more than the resolution from `o`, so the winding number round `o`
+  doesn't change on the way. A triangle is crossed when
+  `det[a − o, b − o, RAY]` and its two turns all have the sign of
+  `D = det[a − o, b − o, c − o]`, and counts `sign(D)` (+1 leaving by its
+  outer side). All are exact signs (`boolean::exact`) with `o` moved an
+  infinitely small way along a fixed `NUDGE` and then `T2` and `T3`: with
+  those three spanning space, an edge's sign is zero in every power only
+  for an edge along the ray (the ray then runs alongside the triangle's
+  plane, off it: no crossing) and `D` only for a triangle whose corners
+  are on a line (which the ray misses). So there is no grazing case, no
+  list of fallback directions and no refusal for want of a clean ray.
+
+Cost (release, loaded machine, embedding means steps 1 to 4): the flat
+torus of 262 144 triangles, one shell, about 25 ms against 270 ms for the
+rest of `check` on seven threads (70 ms against 0.9 s on one), about 10%
+and 7%; an extruded plate with 900 holes (40 140 patches, nothing to
+integrate) 3 ms against 50 ms, about 5%. Cylinders need integrating
+(their walls' bounds add up to more than their corner volume): six
+patches each, some 20 µs a patch on one thread, so a thousand separate
+small boxes and cylinders (14 000 patches) take 12 ms against 12 ms for
+the rest on seven threads, and a plate with twenty voids (292 patches)
+0.4 ms against 0.6 ms.
 
 ### Control hulls
 
@@ -720,7 +792,7 @@ as long. Caps and walls should be triangulated well within that.
 
 `check` on a flat torus of 262 144 triangles takes about 0.7 s on one
 thread and 0.27 s on eight (release; the topology pass is sequential);
-about 2.7 µs per patch.
+about 2.7 µs per patch, before the orientation (above) added about 10%.
 
 Repair of the thin shell in the tests (radius 10, both sides split evenly;
 release, seven threads, one in brackets): 0.2 thick, 1 024 patches in 4 ms
@@ -754,7 +826,23 @@ a plane, flat, collinear and repeated points, the long thin hulls of a
 point square to the closest point from every starting point; the BVH
 against brute force. Plane tags with normals from `1e-200` to `1e300` long
 measure the same, and a quadric whose gradient overflows fails. A mesh breaking two rules gives the earlier invariant's error
-(bounds before a fold, hulls before a face tag). A mesh whose only fault
+(bounds before a fold, hulls before a face tag).
+Orientation (`mesh/orient/tests.rs`): a box and a cylinder turned inside
+out; a 10 mm cube with a second shell turned in far off (box, cylinder)
+or beside it, facing out inside it (clear of its walls, anywhere, a
+cylinder), and a void inside a void, each refused naming the bad
+shell's first triangle; a void, a second body, a void with an island,
+a box less a cylinder inside it, a pin joined into a void, a ring with
+a disc in its hole, crossing cylinders and a drilled plate pass, and
+turned over are refused; rays leaving along the edge between two
+triangles, through a box's corner and from the plane of a face (a box
+in an L's notch) are decided and right; a ring a twentieth thick is
+told by integrating a few patches; a tetrahedron whose corner volume
+floating point can't tell is worked out exactly; a plate with twenty
+voids cut by booleans passes and refuses one void turned over; the
+float bound on corner volumes never contradicts the exact sign; the
+lune bound holds on curved patches; and the result and the count are
+the same at 1 and 8 threads. A mesh whose only fault
 is a wrong `Plane` or `Quadric` tag is refused by `Solid::new` (before, in
 release it passed).
 `check`, the BVH's pairs, and the first failure of a jittered torus are the
@@ -1342,7 +1430,9 @@ flat operands too.
    at the first vertex against the crossings would put the whole part on
    the wrong side), and every winding number to be 0 or 1 (`InsideOut`
    otherwise). The operands' own volumes must be positive
-   too (`InsideOut`): `check` doesn't look at orientation. A flat
+   too (`InsideOut`), which `Solid::new` now makes sure of for every
+   shell (invariant 5), so this is left over until the booleans rely on
+   it. A flat
    operand's is its corner triangles' (exact); a curved one's the same,
    less the volume between each patch and its triangle, integrated
    (`solid::patch_volume`, 32 units each) for the patches that could move
@@ -1350,9 +1440,8 @@ flat operands too.
    (`Input::faces_out`): each patch, its triangle and the lunes between
    its curved edges and their chords (which the two patches beside an
    edge share, turned opposite ways) lie in its control points' hull, so
-   the volume between the two is no more than twice the control points'
-   distance from the triangle's plane times the square of their spread
-   (twice that again, for safety). Integrating every patch took 0.8 s on
+   the volume between the two is no more than `lune_bound` (see
+   "Orientation"). Integrating every patch took 0.8 s on
    a body of 47 000 patches, before any work was counted; small patches
    are rarely needed.
 
@@ -2228,7 +2317,17 @@ random, each of a pair's four results (`A ∪ B`, `A ∩ B`, `A − B`,
 within the fit tolerance and analytic volumes where known, and points
 sampled round the operands (away from their surfaces) are inside the
 result exactly when the operation says, by the winding numbers of the
-operands' and the result's tessellations. Failures are counted and each
+operands' and the result's tessellations (the result's exactly 0 or
+1), and every shell of the result faces the right way for where it
+lies, by an oracle that shares nothing with `check`: shells found
+again, each one's volume by quadrature, and the other shells' winding
+number at one of its first corners clear of them by solid angles of
+their tessellations (0 for a shell facing out, 1 for a void). The
+volume identities can't see a whole shell of an operand classified
+wrong, since the union loses what the intersection gains and the
+difference keeps it turned over; the oracle can (a unit test gives it
+hand-built wrong shells). About 180 results of the suite have several
+shells. Failures are counted and each
 test holds a floor on the share that works. Its tests: coaxial, stacked
 flush, nested, crossing and across pairs on random frames, on a grid
 and off it; parts built in chains of twenty (plates, bosses, slots,
@@ -2937,8 +3036,9 @@ parameter, or a split outside the patch bounds),
   rules). Collapses keep the lower vertex id and the link condition; they
   remove edges of zero length and never identify separate vertices.
 - **Operands must face out**: their volumes must be positive and every
-  winding number 0 or 1 (`InsideOut`), since `check` doesn't look at
-  orientation.
+  winding number 0 or 1 (`InsideOut`). `check` now makes sure of the
+  first for every shell (invariant 5); the booleans keep their own test
+  until they rely on it.
 - **`Bvh::hits_within`** generalizes `pairs_within` to any query box.
 - **Curved shadow crossings are derived from ray tests**, not taken from
   solving each pair of projected conics: `I(e, h) = ρ(b, h) − ρ(a, h) −
@@ -3014,3 +3114,25 @@ parameter, or a split outside the patch bounds),
   functions, so they agree to the bit. A crate of its own for a dozen
   one-line wrappers, or the sketch depending on the kernel, wasn't worth
   it. New kernel code takes angles only from `trig`.
+- **Orientation is invariant 5, before the face tags (now 6)**, run in
+  every build and kept out of `check_embedding`, repair's check.
+- **The nesting rays are perturbed, not retried**: the ray's start is
+  moved symbolically (the booleans' `exact` numbers, a fixed `NUDGE`
+  then `T2`, `T3`), so no edge or corner is ever grazed, rather than
+  trying a list of tilted directions and refusing when all graze.
+- **Corner volumes carry error bounds** (Shewchuk's `orient3d` bound per
+  triangle, the sum's own), and are worked out exactly where those can't
+  tell the sign. A cruder bound (`n·ε` times `|a|·|b|·|c|` summed) was
+  too loose to tell the sign of a box 2e7 times as long as thick.
+- **A tighter lune bound**, shared with the booleans' operand test: the
+  prism over the convex hull of the control points' shadows on the
+  triangle's plane, times two, rather than four times the largest
+  offset times the square of the spread. It is never larger, and it
+  leaves an extruded plate with 900 holes nothing to integrate.
+- **No valid ring has a corner volume of the wrong sign**: four outer
+  quarter arcs against a fine hole break the hull rules (the hole's
+  wall crosses the outer arcs' hulls), and the extrude splits them until
+  the corner volume is positive again. The thin ring's test checks that
+  it is told by integrating instead.
+- **The inverted-operand tests** of the booleans now assert `Solid::new`
+  refuses the operand, since it can't be built any more.

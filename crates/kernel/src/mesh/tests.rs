@@ -46,6 +46,35 @@ pub(crate) fn tetrahedron(offset: DVec3) -> Mesh {
     builder.build().unwrap()
 }
 
+/// One mesh of the `parts`' shells, each copied with its faces and edge
+/// curves, and turned inside out (every triangle reversed) where its flag
+/// says so. Unchecked.
+pub(crate) fn joined(parts: &[(&Mesh, bool)]) -> Mesh {
+    let mut builder = MeshBuilder::new();
+    for &(mesh, turned) in parts {
+        let verts: Vec<u32> = mesh.verts().iter().map(|&p| builder.vert(p)).collect();
+        let faces: Vec<u32> = mesh.faces().iter().map(|&f| builder.face(f)).collect();
+        for (t, tri) in mesh.tris().iter().enumerate() {
+            let [a, b, c] = tri.halfedges.map(|h| verts[h.start as usize]);
+            builder.tri(
+                if turned { [a, c, b] } else { [a, b, c] },
+                faces[tri.face as usize],
+            );
+            for (i, h) in tri.halfedges.into_iter().enumerate() {
+                let end = mesh.end((3 * t + i) as u32);
+                let edge = mesh.edges()[h.edge as usize];
+                builder.edge(
+                    verts[h.start as usize],
+                    verts[end as usize],
+                    edge.ctrl,
+                    edge.weight,
+                );
+            }
+        }
+    }
+    builder.build().unwrap()
+}
+
 /// The octahedron's triangles, counter-clockwise from outside, on its
 /// vertices `+x, +y, +z, -x, -y, -z`.
 pub(crate) const OCTAHEDRON: [[u32; 3]; 8] = [
@@ -500,7 +529,7 @@ fn patches_on_the_same_corners_are_caught() {
     assert_eq!(mesh.check(&TOL), Err(CheckError::SameCorners(0, 1)));
 }
 
-// Invariant 5: face tags.
+// Invariant 6: face tags.
 
 #[test]
 fn wrong_face_tags_are_caught() {

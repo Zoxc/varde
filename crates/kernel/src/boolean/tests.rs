@@ -7,7 +7,7 @@ use glam::DVec3;
 
 use super::*;
 use crate::mesh::tests::{OCTAHEDRON, TOL, UNIT};
-use crate::mesh::{Face, FaceName, FacePart, Mesh, MeshBuilder, Surface};
+use crate::mesh::{CheckError, Face, FaceName, FacePart, Mesh, MeshBuilder, Surface};
 use crate::par::assert_deterministic;
 
 fn cube(min: [f64; 3], size: [f64; 3]) -> Solid {
@@ -64,8 +64,14 @@ fn diamond(cx: f64, cz: f64, r: f64, y0: f64, y1: f64) -> Solid {
 }
 
 /// The flat solid with `mesh`'s triangles and faces, its vertices moved
-/// by `f`, and every triangle reversed if `inverted`.
-fn rebuilt(mesh: &Mesh, f: impl Fn(DVec3) -> DVec3, inverted: bool) -> Solid {
+/// by `f`.
+fn rebuilt(mesh: &Mesh, f: impl Fn(DVec3) -> DVec3) -> Solid {
+    Solid::new(rebuilt_mesh(mesh, f, false), &TOL).unwrap()
+}
+
+/// The flat mesh with `mesh`'s triangles and faces, its vertices moved by
+/// `f`, and every triangle reversed if `inverted`.
+fn rebuilt_mesh(mesh: &Mesh, f: impl Fn(DVec3) -> DVec3, inverted: bool) -> Mesh {
     let mut builder = MeshBuilder::new();
     for &p in mesh.verts() {
         builder.vert(f(p));
@@ -77,7 +83,7 @@ fn rebuilt(mesh: &Mesh, f: impl Fn(DVec3) -> DVec3, inverted: bool) -> Solid {
         let [a, b, c] = t.halfedges.map(|h| h.start);
         builder.tri(if inverted { [a, c, b] } else { [a, b, c] }, t.face);
     }
-    Solid::new(builder.build().unwrap(), &TOL).unwrap()
+    builder.build().unwrap()
 }
 
 fn run(a: &Solid, b: &Solid, op: Op) -> Result<Solid, KernelError> {
@@ -383,11 +389,9 @@ fn touching() {
     assert!(!t(&cube([3.0; 3], [1.0; 3])));
     assert!(!t(&Solid::empty()));
     assert!(touches(&cube([0.5; 3], [1.0; 3]), &a, &tol, &Budget::DEFAULT).unwrap());
-    // Boxes apart are told without any work, a solid inside out too.
+    // Boxes apart are told without any work.
     let apart = |b: &Solid| touches(&a, b, &tol, &Budget::new(0));
     assert_eq!(apart(&cube([2.1, 0.0, 0.0], [1.0; 3])), Ok(false));
-    let inverted = rebuilt(cube([0.0, 0.0, -3.0], [1.0; 3]).mesh(), |p| p, true);
-    assert_eq!(apart(&inverted), Ok(false));
     assert_eq!(
         apart(&cube([2.0, 0.0, 0.0], [1.0; 3])),
         Err(KernelError::TooComplex)
@@ -408,11 +412,11 @@ fn empty_operands() {
 #[test]
 fn refusals() {
     let a = cube([0.0; 3], [2.0; 3]);
-    // Inside out: every triangle reversed.
-    let inverted = rebuilt(a.mesh(), |p| p, true);
+    // Inside out, every triangle reversed: not a solid.
+    let inverted = rebuilt_mesh(a.mesh(), |p| p, true);
     assert_eq!(
-        run(&inverted, &cube([1.0; 3], [2.0; 3]), Op::Union),
-        Err(KernelError::Boolean(BooleanError::InsideOut))
+        Solid::new(inverted, &TOL),
+        Err(KernelError::Invalid(CheckError::InsideOut(0)))
     );
     assert_eq!(
         boolean(
@@ -531,10 +535,10 @@ fn tori_keep_the_volume_identities() {
     // volume follows from the others': |A ∪ B| + |A ∩ B| = |A| + |B| and
     // |A − B| = |A| − |A ∩ B|.
     let torus = crate::mesh::tests::torus(48, 24, 3.0, 1.0);
-    let a = rebuilt(&torus, |p| p, false);
+    let a = rebuilt(&torus, |p| p);
     let turn = glam::DQuat::from_rotation_x(std::f64::consts::FRAC_PI_2)
         * glam::DQuat::from_rotation_z(0.1);
-    let upright = rebuilt(&torus, |p| turn * p + DVec3::new(1.5, 0.1, 0.2), false);
+    let upright = rebuilt(&torus, |p| turn * p + DVec3::new(1.5, 0.1, 0.2));
     let block = cube([0.5, -0.7, -2.0], [4.0, 1.3, 4.0]);
     for (name, b) in [("upright", &upright), ("box", &block)] {
         let (va, vb) = (a.volume(), b.volume());
@@ -561,8 +565,8 @@ fn signs_worked_out_exactly_are_counted() {
     // counting charges them, far more than for the same torus moved off
     // itself, where floating point tells every sign.
     let torus = crate::mesh::tests::torus(24, 12, 3.0, 1.0);
-    let a = rebuilt(&torus, |p| p, false);
-    let moved = rebuilt(&torus, |p| p + DVec3::new(0.31, 0.17, 0.23), false);
+    let a = rebuilt(&torus, |p| p);
+    let moved = rebuilt(&torus, |p| p + DVec3::new(0.31, 0.17, 0.23));
     let spent = |b: &Solid| {
         let mut work = Work::new(&Budget::DEFAULT);
         let (ia, ib) = inputs(&a, b, &TOL, &mut work).unwrap();

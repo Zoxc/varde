@@ -64,7 +64,7 @@ mod chain;
 mod cleanup;
 mod count;
 mod curved;
-mod exact;
+pub(crate) mod exact;
 mod flat;
 mod input;
 mod pairs;

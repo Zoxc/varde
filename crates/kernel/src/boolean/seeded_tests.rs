@@ -216,11 +216,180 @@ fn wrong_points(a: &Solid, b: &Solid, op: Op, r: &Solid, tol: &Tolerance, rng: &
             Op::Intersection => ia && ib,
             Op::Difference => ia && !ib,
         };
-        if (w - w.round()).abs() > 0.1 || (w > 0.5) != want {
+        // Exactly 0 or 1: a result winding round twice (a shell facing
+        // out inside another) or minus once (a shell facing in outside
+        // every other) is wrong even where it lands on the right side of
+        // a half.
+        if (w - w.round()).abs() > 0.1 || w.round() != f64::from(u8::from(want)) {
             wrong += 1;
         }
     }
     wrong
+}
+
+/// `mesh`'s shells, the components of its triangles by halfedge pairs, in
+/// the order of their lowest triangles, each as a mesh of its own with the
+/// vertices and faces it uses. Worked out here, apart from `check`, for
+/// [`shells_face_out`].
+fn shell_meshes(mesh: &Mesh) -> Vec<Mesh> {
+    let n = mesh.tris().len();
+    let mut shell = vec![usize::MAX; n];
+    let mut out = Vec::new();
+    for first in 0..n {
+        if shell[first] != usize::MAX {
+            continue;
+        }
+        let id = out.len();
+        shell[first] = id;
+        let (mut stack, mut tris) = (vec![first], Vec::new());
+        while let Some(t) = stack.pop() {
+            tris.push(t);
+            for h in mesh.tris()[t].halfedges {
+                let u = h.pair as usize / 3;
+                if shell[u] == usize::MAX {
+                    shell[u] = id;
+                    stack.push(u);
+                }
+            }
+        }
+        tris.sort_unstable();
+        let mut builder = crate::mesh::MeshBuilder::new();
+        let mut verts = vec![u32::MAX; mesh.verts().len()];
+        let mut faces = vec![u32::MAX; mesh.faces().len()];
+        for &t in &tris {
+            let tri = mesh.tris()[t];
+            let corners = tri.halfedges.map(|h| {
+                let v = h.start as usize;
+                if verts[v] == u32::MAX {
+                    verts[v] = builder.vert(mesh.verts()[v]);
+                }
+                verts[v]
+            });
+            let f = tri.face as usize;
+            if faces[f] == u32::MAX {
+                faces[f] = builder.face(mesh.faces()[f]);
+            }
+            let patch = mesh.patch(t);
+            for i in 0..3 {
+                builder.edge(corners[i], corners[(i + 1) % 3], patch.c[i], patch.w[i]);
+            }
+            builder.tri(corners, faces[f]);
+        }
+        out.push(builder.build().unwrap());
+    }
+    out
+}
+
+/// Whether every shell of `mesh` faces the right way for where it lies,
+/// by a floating-point oracle that shares nothing with `check`: each
+/// shell's volume by quadrature, and the other shells' winding number at
+/// one of its corners by the solid angles of their tessellations, which
+/// must be 0 for a shell facing out and 1 for one facing in (a void).
+/// The corner is the first of the shell's first few that is clear of the
+/// other shells' tessellations by several chords; a shell with none is
+/// passed over. A boolean that took a whole shell of an operand for
+/// inside when it is outside, or the other way, keeps it turned the
+/// wrong way or nested wrongly, and the volume identities can't see it.
+fn shells_face_out(mesh: &Mesh, tol: &Tolerance) -> Result<(), String> {
+    let shells = shell_meshes(mesh);
+    if shells.len() < 2 {
+        let volume = shells.first().map_or(1.0, shell_volume);
+        return if volume > 0.0 {
+            Ok(())
+        } else {
+            Err(format!("the only shell has volume {volume}"))
+        };
+    }
+    let display = Display::new(tol);
+    let tessellated: Vec<(Vec<[Vec3; 3]>, f64)> = shells
+        .iter()
+        .map(|m| {
+            let drawn = crate::tessellate::tessellate(m, &display).unwrap();
+            let pos = drawn.positions();
+            let tris = drawn
+                .indices()
+                .chunks(3)
+                .map(|c| [0, 1, 2].map(|k| Vec3::from(pos[c[k] as usize])))
+                .collect();
+            let bounds = crate::patch::Bounds3::around(m.verts()).unwrap();
+            let bounds = m.edges().iter().fold(bounds, |b, e| b.include(e.ctrl));
+            (tris, display.chord((bounds.max - bounds.min).length()))
+        })
+        .collect();
+    let clear = 8.0 * tessellated.iter().map(|&(_, c)| c).fold(0.0, f64::max);
+    for (i, m) in shells.iter().enumerate() {
+        let volume = shell_volume(m);
+        let others = || (0..shells.len()).filter(move |&j| j != i);
+        let away = |p: DVec3| {
+            others().all(|j| {
+                tessellated[j]
+                    .0
+                    .iter()
+                    .all(|t| to_triangle(p, t.map(|v| v.as_dvec3())) > clear)
+            })
+        };
+        let Some(&p) = m.verts().iter().take(16).find(|&&p| away(p)) else {
+            continue;
+        };
+        let w: f64 = others()
+            .map(|j| winding(&tessellated[j].0, p.as_vec3()))
+            .sum();
+        let want = if volume > 0.0 { 0.0 } else { 1.0 };
+        if (w - w.round()).abs() > 0.1 || w.round() != want {
+            return Err(format!(
+                "shell {i} of {}: volume {volume}, the others wind {w} round {p}",
+                shells.len()
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The volume a shell's mesh encloses, by quadrature.
+fn shell_volume(mesh: &Mesh) -> f64 {
+    let o = mesh.verts()[0];
+    (0..mesh.tris().len())
+        .map(|t| crate::solid::patch_volume(&mesh.patch(t), o))
+        .sum()
+}
+
+#[test]
+fn the_shell_oracle_sees_wrong_shells() {
+    // A 10 mm cube with a second shell: turned in far off, facing out
+    // inside it (reached by a boolean's other operand or not), turned in
+    // outside it where another operand would cover it: all wrong. A void
+    // (turned in inside it) and a second body beside it are right.
+    let tol = Tolerance::DEFAULT;
+    let cube =
+        |min: f64, size: f64| Mesh::cuboid(DVec3::splat(min), DVec3::splat(size), 1, &tol).unwrap();
+    let big = cube(0.0, 10.0);
+    let far = Mesh::cuboid(DVec3::new(50.0, 0.0, 0.0), DVec3::splat(2.0), 2, &tol).unwrap();
+    let far_cylinder = Mesh::cylinder(DVec3::new(50.0, 0.0, 0.0), 2.0, 3.0, 2, &tol).unwrap();
+    let wrong = [
+        (&far, true),
+        (&far_cylinder, true),
+        (&cube(1.0, 2.0), false),
+        (&cube(6.0, 2.0), false),
+        (&cube(12.0, 2.0), true),
+    ];
+    for (i, &(shell, turned)) in wrong.iter().enumerate() {
+        let mesh = crate::mesh::tests::joined(&[(&big, false), (shell, turned)]);
+        assert!(shells_face_out(&mesh, &tol).is_err(), "case {i}");
+    }
+    let turned = crate::mesh::tests::joined(&[(&big, true)]);
+    assert!(shells_face_out(&turned, &tol).is_err());
+    for (i, (shell, turned)) in [
+        (&cube(1.0, 2.0), true),
+        (&far, false),
+        (&far_cylinder, false),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mesh = crate::mesh::tests::joined(&[(&big, false), (shell, turned)]);
+        assert_eq!(shells_face_out(&mesh, &tol), Ok(()), "case {i}");
+    }
+    assert_eq!(shells_face_out(&big, &tol), Ok(()));
 }
 
 /// What a batch of operations came to.
@@ -268,6 +437,9 @@ fn four(
             Ok(solid) => {
                 let wrong = wrong_points(x, y, op, &solid, tol, rng);
                 assert_eq!(wrong, 0, "{name}, {op:?}: {wrong} points on the wrong side");
+                if let Err(why) = shells_face_out(solid.mesh(), tol) {
+                    panic!("{name}, {op:?}: {why}");
+                }
                 tally.ok += 1;
                 Some(solid)
             }

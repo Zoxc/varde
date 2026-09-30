@@ -17,13 +17,13 @@ use glam::DVec3;
 
 /// The second perturbation: a fixed translation of every perturbed point,
 /// generic so that it breaks the ties the first one leaves.
-pub(super) const T2: DVec3 = DVec3::new(
+pub(crate) const T2: DVec3 = DVec3::new(
     0.271_828_182_845_904_5,
     -0.593_762_184_935_115_2,
     0.689_413_223_871_442_7,
 );
 /// The third perturbation, independent of the first two.
-pub(super) const T3: DVec3 = DVec3::new(
+pub(crate) const T3: DVec3 = DVec3::new(
     -0.318_274_654_401_827_1,
     0.161_803_398_874_989_5,
     0.428_571_428_571_428_6,
@@ -37,7 +37,7 @@ const INFLATE: f64 = 1.0 + 8.0 * f64::EPSILON;
 /// Numbers predicates are evaluated in: [`Approx`] for the constant term
 /// alone, fast, and [`Poly`]s of [`Exp`] (or of `Approx`) for every power
 /// of `ε`.
-pub(super) trait Num: Clone {
+pub(crate) trait Num: Clone {
     fn lit(x: f64) -> Self;
     /// A perturbed coordinate: its value, then its coefficients of `ε`,
     /// `ε²` and `ε³`. Numbers without powers of `ε` keep the value.
@@ -50,7 +50,7 @@ pub(super) trait Num: Clone {
 /// A floating-point value with a bound on how far rounding may have taken
 /// it from the exact value of the same expression.
 #[derive(Debug, Clone, Copy)]
-pub(super) struct Approx {
+pub(crate) struct Approx {
     v: f64,
     err: f64,
 }
@@ -118,7 +118,7 @@ impl Num for Approx {
 /// An exact value as a floating-point expansion: a sum of non-overlapping
 /// components in increasing magnitude, none zero (so zero is empty).
 #[derive(Debug, Clone, Default)]
-pub(super) struct Exp(Vec<f64>);
+pub(crate) struct Exp(Vec<f64>);
 
 impl Exp {
     /// The sign of the exact value: that of its largest component.
@@ -258,7 +258,7 @@ fn two_product(a: f64, b: f64) -> (f64, f64) {
 
 /// A polynomial in `ε`, lowest power first.
 #[derive(Debug, Clone)]
-pub(super) struct Poly<N>(pub(super) Vec<N>);
+pub(crate) struct Poly<N>(pub(crate) Vec<N>);
 
 impl<N: Num> Num for Poly<N> {
     fn lit(x: f64) -> Self {
@@ -316,14 +316,14 @@ impl<N: Num> Num for Poly<N> {
 /// A point of a predicate: a vertex's position and, for a perturbed one,
 /// its first perturbation direction.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(super) struct Pt {
-    pub(super) p: DVec3,
+pub(crate) struct Pt {
+    pub(crate) p: DVec3,
     /// `None` for a point that isn't perturbed.
-    pub(super) n: Option<DVec3>,
+    pub(crate) n: Option<DVec3>,
 }
 
 /// A point or direction as a vector of numbers.
-pub(super) type V3<N> = [N; 3];
+pub(crate) type V3<N> = [N; 3];
 
 /// Coordinates (and perturbation directions' components) smaller than
 /// this count as zero. Products of expansions are exact only while they
@@ -340,7 +340,7 @@ fn flush(x: f64) -> f64 {
 impl Pt {
     /// The point, perturbed if it is, with coordinates below [`FLUSH`]
     /// taken as zero.
-    pub(super) fn v3<N: Num>(&self) -> V3<N> {
+    pub(crate) fn v3<N: Num>(&self) -> V3<N> {
         let p = self.p;
         match self.n {
             Some(n) => [0, 1, 2].map(|i| N::perturbed([flush(p[i]), flush(n[i]), T2[i], T3[i]])),
@@ -350,19 +350,19 @@ impl Pt {
 }
 
 /// A fixed direction.
-pub(super) fn dir<N: Num>(d: DVec3) -> V3<N> {
+pub(crate) fn dir<N: Num>(d: DVec3) -> V3<N> {
     [0, 1, 2].map(|i| N::lit(d[i]))
 }
 
-pub(super) fn sub<N: Num>(a: &V3<N>, b: &V3<N>) -> V3<N> {
+pub(crate) fn sub<N: Num>(a: &V3<N>, b: &V3<N>) -> V3<N> {
     [0, 1, 2].map(|i| a[i].sub(&b[i]))
 }
 
-pub(super) fn dot<N: Num>(a: &V3<N>, b: &V3<N>) -> N {
+pub(crate) fn dot<N: Num>(a: &V3<N>, b: &V3<N>) -> N {
     a[0].mul(&b[0]).add(&a[1].mul(&b[1])).add(&a[2].mul(&b[2]))
 }
 
-pub(super) fn cross<N: Num>(a: &V3<N>, b: &V3<N>) -> V3<N> {
+pub(crate) fn cross<N: Num>(a: &V3<N>, b: &V3<N>) -> V3<N> {
     [
         a[1].mul(&b[2]).sub(&a[2].mul(&b[1])),
         a[2].mul(&b[0]).sub(&a[0].mul(&b[2])),
@@ -371,12 +371,12 @@ pub(super) fn cross<N: Num>(a: &V3<N>, b: &V3<N>) -> V3<N> {
 }
 
 /// `det[a, b, c] = (a × b)·c`.
-pub(super) fn det<N: Num>(a: &V3<N>, b: &V3<N>, c: &V3<N>) -> N {
+pub(crate) fn det<N: Num>(a: &V3<N>, b: &V3<N>, c: &V3<N>) -> N {
     dot(&cross(a, b), c)
 }
 
 /// A predicate: a number built from its points.
-pub(super) trait Pred {
+pub(crate) trait Pred {
     fn eval<N: Num>(&self) -> N;
     /// How much the value changes per unit of distance the configuration
     /// is from its tie (a point from a line or plane, say), roughly: its
@@ -388,7 +388,7 @@ pub(super) trait Pred {
 
 /// The predicate's sign as `ε → 0⁺`: that of its first non-zero
 /// coefficient, or 0 if every one is zero.
-pub(super) fn sign(pred: &impl Pred) -> i8 {
+pub(crate) fn sign(pred: &impl Pred) -> i8 {
     if let Some(s) = pred.eval::<Approx>().sign()
         && s != 0
     {
@@ -403,6 +403,13 @@ pub(super) fn sign(pred: &impl Pred) -> i8 {
         .unwrap_or(0)
 }
 
+/// The predicate's value (its constant term), worked out exactly and then
+/// rounded: within a few units in the last place of the exact value.
+pub(crate) fn value(pred: &impl Pred) -> f64 {
+    worked_out();
+    pred.eval::<Exp>().value()
+}
+
 /// [`sign`], taking a constant term within `tie` of the distance units
 /// ([`Pred::scale`]) as zero: the configuration within `tie` of a tie is
 /// decided as the tie, by the perturbation. The curved primitives decide
@@ -411,7 +418,7 @@ pub(super) fn sign(pred: &impl Pred) -> i8 {
 /// coarsest tolerance is on it for all of them, not beside it for the
 /// exact predicates and on it for the numerical ones. With `tie` zero,
 /// exactly [`sign`].
-pub(super) fn sign_tied(pred: &impl Pred, tie: f64) -> i8 {
+pub(crate) fn sign_tied(pred: &impl Pred, tie: f64) -> i8 {
     let limit = tie * pred.scale();
     if limit.is_nan() || limit <= 0.0 {
         return sign(pred);
@@ -440,7 +447,7 @@ pub(super) fn sign_tied(pred: &impl Pred, tie: f64) -> i8 {
 /// The constant terms of a near tie are both tiny and all rounding, so
 /// their plain floating-point ratio can be anything: an edge nearly in
 /// a face's plane would be cut far from where it crosses it.
-pub(super) fn ratio(num: &impl Pred, den: &impl Pred) -> f64 {
+pub(crate) fn ratio(num: &impl Pred, den: &impl Pred) -> f64 {
     let (n, d) = (num.eval::<Approx>(), den.eval::<Approx>());
     let close = |x: Approx| x.err <= x.v.abs() * CLOSE;
     if d.v != 0.0 && close(d) && close(n) {
@@ -459,7 +466,7 @@ pub(super) fn ratio(num: &impl Pred, den: &impl Pred) -> f64 {
 const CLOSE: f64 = 1e-12;
 
 /// The sign of `(b − a) × (c − a)` in the plane, exactly.
-pub(super) fn orient2d(a: glam::DVec2, b: glam::DVec2, c: glam::DVec2) -> i8 {
+pub(crate) fn orient2d(a: glam::DVec2, b: glam::DVec2, c: glam::DVec2) -> i8 {
     fn eval<N: Num>(a: glam::DVec2, b: glam::DVec2, c: glam::DVec2) -> N {
         let (ax, ay) = (N::lit(a.x), N::lit(a.y));
         let (bx, by) = (N::lit(b.x).sub(&ax), N::lit(b.y).sub(&ay));
@@ -478,7 +485,7 @@ pub(super) fn orient2d(a: glam::DVec2, b: glam::DVec2, c: glam::DVec2) -> i8 {
 /// small fraction `δ` of the way (`p + δ·(center − p)`): ties between
 /// points that move and points that don't are broken as they are then,
 /// while the points that move keep their shape among themselves.
-pub(super) fn orient2d_towards(pts: [(glam::DVec2, bool); 3], center: glam::DVec2) -> i8 {
+pub(crate) fn orient2d_towards(pts: [(glam::DVec2, bool); 3], center: glam::DVec2) -> i8 {
     let s = orient2d(pts[0].0, pts[1].0, pts[2].0);
     if s != 0 || pts.iter().all(|&(_, moves)| !moves) {
         return s;
@@ -524,13 +531,13 @@ fn worked_out() {
 /// from start to end (sharing none out to others, as a primitive or a
 /// face's triangulation) is that work's own, however the threads share
 /// the work out, so the budget it is charged to stays the same.
-pub(super) fn exact_count() -> usize {
+pub(crate) fn exact_count() -> usize {
     EXACT.with(std::cell::Cell::get)
 }
 
 /// `f`'s value, and how many signs and ratios it worked out exactly (see
 /// [`exact_count`]).
-pub(super) fn counted<T>(f: impl FnOnce() -> T) -> (T, usize) {
+pub(crate) fn counted<T>(f: impl FnOnce() -> T) -> (T, usize) {
     let before = exact_count();
     let value = f();
     (value, exact_count().wrapping_sub(before))

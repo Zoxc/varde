@@ -14,7 +14,7 @@ use glam::{DMat3, DQuat, DVec2, DVec3};
 use super::pairs::tests::{cylinder_x, poke, reach, saddle};
 use super::*;
 use crate::mesh::tests::TOL;
-use crate::mesh::{Quadric, Surface, samples};
+use crate::mesh::{CheckError, Quadric, Surface, samples};
 use crate::par::assert_deterministic;
 use crate::profile::tests::{circle, rect};
 use crate::{Frame, Loop, Profile, Segment, extrude};
@@ -609,8 +609,9 @@ fn flush_bosses_joined_on_drilled_plates() {
     }
 }
 
-/// `solid` with every triangle turned over, its edges' curves kept.
-fn inverted(solid: &Solid) -> Solid {
+/// `solid`'s mesh with every triangle turned over, its edges' curves
+/// kept: inside out, so not a solid.
+fn inverted(solid: &Solid) -> Mesh {
     let mesh = solid.mesh();
     let mut builder = crate::mesh::MeshBuilder::new();
     for &p in mesh.verts() {
@@ -627,7 +628,7 @@ fn inverted(solid: &Solid) -> Solid {
         }
         builder.tri([a, c, b], tri.face);
     }
-    Solid::new(builder.build().unwrap(), &TOL).unwrap()
+    builder.build().unwrap()
 }
 
 #[test]
@@ -649,32 +650,28 @@ fn curved_operands_facing_in_are_told_cheaply() {
         ("crossing", &crossing),
         ("drilled", &drilled),
     ] {
-        for (turned, solid) in [(false, solid.clone()), (true, inverted(solid))] {
-            let input = Input::new(solid.mesh(), &TOL);
+        let volume = solid.volume();
+        for (turned, mesh) in [(false, solid.mesh().clone()), (true, inverted(solid))] {
+            let input = Input::new(&mesh, &TOL);
             let mut work = crate::budget::Work::new(&Budget::DEFAULT);
             let out = input.faces_out(1, &mut work).unwrap();
-            assert_eq!(out, solid.volume() > 0.0, "{name}, turned {turned}");
+            assert_eq!(out, (volume > 0.0) != turned, "{name}, turned {turned}");
             assert_eq!(out, !turned, "{name}");
             // One unit a patch for the pass, one more for each patch
             // integrated: the crossing cylinders' small fitted bands
             // mostly aren't.
-            let patches = solid.mesh().tris().len() as u64;
+            let patches = mesh.tris().len() as u64;
             let integrated = Budget::DEFAULT.work() - work.left() - patches;
             if name == "crossing" {
                 assert!(2 * integrated < patches, "{integrated} of {patches}");
             }
         }
     }
-    assert_eq!(
-        boolean(
-            &inverted(&upright),
-            &across,
-            Op::Union,
-            &TOL,
-            &Budget::DEFAULT
-        ),
-        Err(KernelError::Boolean(BooleanError::InsideOut))
-    );
+    // Turned over, it isn't a solid.
+    assert!(matches!(
+        Solid::new(inverted(&upright), &TOL),
+        Err(KernelError::Invalid(CheckError::InsideOut(_)))
+    ));
 }
 
 #[test]

@@ -5,7 +5,7 @@
 use glam::DVec3;
 
 use crate::budget::Work;
-use crate::mesh::{Mesh, straight};
+use crate::mesh::{Mesh, lune_bound, straight};
 use crate::patch::{Bounds3, Conic3, Patch, smallest_cone};
 use crate::{KernelError, Tolerance};
 
@@ -182,9 +182,7 @@ impl<'a> Input<'a> {
     /// hull (its weights are positive), as do its corner triangle and the
     /// lunes between its curved edges and their chords (which the two
     /// patches beside an edge share, turned opposite ways), so the volume
-    /// between the two is no more than the hull's, itself no more than
-    /// twice the control points' distance from the triangle's plane times
-    /// the square of their spread (twice that again, for safety). The
+    /// between the two is no more than the hull's ([`lune_bound`]). The
     /// whole solid's integral took 0.8 s on a body of 47 000 patches,
     /// before any work was counted; most of them are small and flat
     /// enough to leave out.
@@ -200,29 +198,12 @@ impl<'a> Input<'a> {
             let [a, b, c] = self.corners(t as u32).map(|p| p - o);
             a.dot(b.cross(c)) / 6.0
         };
-        let bound = |patch: &Patch| {
-            let [p0, p1, p2] = patch.p;
-            let Some(n) = (p1 - p0).cross(p2 - p0).try_normalize() else {
-                return f64::INFINITY;
-            };
-            let off = patch
-                .c
-                .iter()
-                .map(|&c| (c - p0).dot(n).abs())
-                .fold(0.0, f64::max);
-            let points = [p0, p1, p2, patch.c[0], patch.c[1], patch.c[2]];
-            let spread = points
-                .iter()
-                .flat_map(|&x| points.iter().map(move |&y| x.distance_squared(y)))
-                .fold(0.0, f64::max);
-            4.0 * off * spread
-        };
         let mut v: f64 = (0..self.tris.len()).map(tet).sum();
         let mut order: Vec<(f64, usize)> = self
             .patches
             .iter()
             .enumerate()
-            .map(|(t, patch)| (bound(patch), t))
+            .map(|(t, patch)| (lune_bound(patch), t))
             .filter(|&(b, _)| b > 0.0)
             .collect();
         order.sort_by(|x, y| y.0.total_cmp(&x.0).then(x.1.cmp(&y.1)));
