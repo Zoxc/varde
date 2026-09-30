@@ -750,12 +750,13 @@ fn banner<'a>(
 /// keeps it from being clicked.
 fn unsaved_prompt(name: &str) -> Element<'_, Message> {
     let choice = |label, choice, emphasis: Emphasis| {
-        button(text(label).font(theme::SEMIBOLD))
-            .padding([6, 14])
-            .style(emphasis.button_style())
-            .on_press(Message::File(File::Unsaved(choice)))
+        dialog_button(
+            label,
+            emphasis.button_style(),
+            Message::File(File::Unsaved(choice)),
+        )
     };
-    let dialog = container(
+    dialog(
         column![
             text(format!("Save the changes to {name}.{EXTENSION}?"))
                 .size(14)
@@ -770,17 +771,31 @@ fn unsaved_prompt(name: &str) -> Element<'_, Message> {
             ]
             .spacing(8),
         ]
-        .spacing(8)
-        .width(380),
+        .spacing(8),
     )
-    .padding(18)
-    .style(theme::menu);
+}
 
+/// `content` as a dialog over the whole screen, which dims the rest and
+/// keeps it from being clicked.
+fn dialog<'a>(content: iced::widget::Column<'a, Message>) -> Element<'a, Message> {
+    let dialog = container(content.width(380)).padding(18).style(theme::menu);
     opaque(
         container(opaque(dialog))
             .center(Length::Fill)
             .style(theme::scrim),
     )
+}
+
+/// A dialog's button, labelled `label`, in `style`, sending `message`.
+fn dialog_button<'a>(
+    label: &'a str,
+    style: fn(&iced::Theme, button::Status) -> button::Style,
+    message: Message,
+) -> iced::widget::Button<'a, Message> {
+    button(text(label).font(theme::SEMIBOLD))
+        .padding([6, 14])
+        .style(style)
+        .on_press(message)
 }
 
 /// Asks whether to delete what `prompt` lists, as a dialog over the
@@ -818,31 +833,24 @@ fn delete_prompt<'a>(prompt: &DeletePrompt<'a>) -> Element<'a, Message> {
     let list = scrollable(column(features.chain(bodies)))
         .height(shown * panels::ROW_HEIGHT)
         .width(Length::Fill);
-    let cancel = button(text("Cancel").font(theme::SEMIBOLD))
-        .padding([6, 14])
-        .style(theme::secondary_button)
-        .on_press(Message::Look(Look::CancelDelete));
-    let delete = button(text("Delete").font(theme::SEMIBOLD))
-        .padding([6, 14])
-        .style(theme::danger_button)
-        .on_press(Message::Edit(Edit::ConfirmDelete));
-    let dialog = container(
+    let cancel = dialog_button(
+        "Cancel",
+        theme::secondary_button,
+        Message::Look(Look::CancelDelete),
+    );
+    let delete = dialog_button(
+        "Delete",
+        theme::danger_button,
+        Message::Edit(Edit::ConfirmDelete),
+    );
+    dialog(
         column![
             text(question).size(14).font(theme::SEMIBOLD),
             list,
             Space::new().height(4),
             row![space::horizontal(), cancel, delete].spacing(8),
         ]
-        .spacing(8)
-        .width(380),
-    )
-    .padding(18)
-    .style(theme::menu);
-
-    opaque(
-        container(opaque(dialog))
-            .center(Length::Fill)
-            .style(theme::scrim),
+        .spacing(8),
     )
 }
 

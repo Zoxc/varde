@@ -7,7 +7,7 @@ use varde_regen::Request;
 use varde_view::{Distance, Edit, ExtentKind, ExtrudeLook, Look, Mode, OperationKind};
 
 use super::*;
-use crate::tests::{answer, deferred, key_in, press_in};
+use crate::tests::{answer, deferred, example, key_in, press_in};
 
 type Requests = Rc<RefCell<Vec<Request>>>;
 
@@ -209,10 +209,7 @@ fn escape_leaves_no_trace() {
 
 #[test]
 fn a_double_clicked_extrude_reopens_with_its_values_and_is_set_again() {
-    let (mut doc, requests) = deferred();
-    doc.apply(Command::Replace(Box::new(Document::example())));
-    doc.sync();
-    answer(&mut doc, &requests);
+    let (mut doc, requests) = example();
     let features = doc.editor.document().features();
     let (sketch, feature) = (features[0].id, features[1].id);
 
@@ -254,10 +251,7 @@ fn a_double_clicked_extrude_reopens_with_its_values_and_is_set_again() {
 
 #[test]
 fn enter_on_a_selected_extrude_edits_it() {
-    let (mut doc, requests) = deferred();
-    doc.apply(Command::Replace(Box::new(Document::example())));
-    doc.sync();
-    answer(&mut doc, &requests);
+    let (mut doc, _) = example();
     let feature = doc.editor.document().features()[1].id;
     doc.look(Look::SelectFeature(feature));
     key_in(&mut doc, enter());
@@ -367,11 +361,52 @@ fn a_sketch_changed_under_the_session_keeps_its_regions_picked() {
     doc.sync();
     let session = doc.extrude.as_ref().unwrap();
     assert_eq!(session.picked, BTreeSet::from([plate_region(&doc, sketch)]));
+    // And undone, too.
+    doc.update(Edit::Undo);
+    let session = doc.extrude.as_ref().unwrap();
+    assert_eq!(session.picked, BTreeSet::from([plate_region(&doc, sketch)]));
+}
+
+#[test]
+fn undoing_the_extrude_edited_away_ends_the_session_and_its_draft() {
+    let (mut doc, requests) = example();
+    let feature = doc.editor.document().features()[1].id;
+    doc.look(Look::EditFeature(feature));
+    extrude(
+        &mut doc,
+        ExtrudeLook::Input {
+            distance: Distance::First,
+            text: "20".to_owned(),
+        },
+    );
+    assert!(last_draft(&requests).is_some());
+    // The example came in as one step.
+    doc.update(Edit::Undo);
+    assert!(doc.editor.document().features().is_empty());
+    assert!(doc.extrude.is_none());
+    assert!(last_draft(&requests).is_none());
+}
+
+#[test]
+fn a_read_only_document_has_no_session() {
+    let (mut doc, requests) = example();
+    let feature = doc.editor.document().features()[1].id;
+    doc.look(Look::EditFeature(feature));
+    assert!(doc.extrude.is_some());
+    // Say its file turned out read-only.
+    doc.read_only = Some("test".to_owned());
+    doc.sync();
+    assert!(doc.extrude.is_none());
+    assert!(last_draft(&requests).is_none());
+    doc.look(Look::EditFeature(feature));
+    doc.look(Look::StartExtrude);
+    assert!(doc.extrude.is_none());
+    assert!(press_in(&doc, key("e")).is_none());
 }
 
 #[test]
 fn the_panel_s_field_takes_typing_enter_as_ok_and_escape_as_cancel() {
-    use crate::doc::sketch::tests::{pressed, typing};
+    use crate::tests::{pressed, typing};
     use varde_view::Message as Ui;
 
     let (mut doc, sketch, _) = plate();
@@ -409,16 +444,6 @@ fn the_panel_s_field_takes_typing_enter_as_ok_and_escape_as_cancel() {
         ),
         "{shortcuts:?}"
     );
-}
-
-/// The example, "Sketch 1" and "Extrude 1" making "Body 1", answered by
-/// the regeneration lane, whose requests wait for the test.
-fn example() -> (Doc, Requests) {
-    let (mut doc, requests) = deferred();
-    doc.apply(Command::Replace(Box::new(Document::example())));
-    doc.sync();
-    answer(&mut doc, &requests);
-    (doc, requests)
 }
 
 #[test]

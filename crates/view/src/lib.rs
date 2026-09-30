@@ -189,9 +189,9 @@ pub enum Look {
     /// `Esc`.
     CancelDelete,
     /// Backs out of whatever is open, the innermost first: the delete
-    /// prompt, the file menu, picking a plane, dragging geometry, the
-    /// shape the sketch's tool is drawing, the tool (or the Constrain
-    /// tool), the sketch, the selection.
+    /// prompt, the file menu, picking a plane, the extrude being set up,
+    /// dragging geometry, the shape the sketch's tool is drawing, the tool
+    /// (or the Constrain tool), the sketch, the selection.
     Escape,
     SelectPanel(Panel),
     /// Starts picking the plane for a new sketch, or backs out of it.

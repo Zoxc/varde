@@ -5,7 +5,7 @@
 //! The OS draws the title bar; the app sets its text in `Varde::title`.
 
 use iced::widget::{
-    Button, Container, Rule, Text, button, column, container, row, rule, space, text,
+    Button, Container, Rule, Text, button, column, container, row, rule, space, text, tooltip,
 };
 use iced::{Alignment, Element, Font, Length};
 
@@ -13,6 +13,23 @@ use crate::Message;
 use crate::icons::{self, Icon, MouseButton};
 use crate::shortcut::KeyName;
 use crate::theme::{self, Emphasis, Mode, Tone};
+
+/// `content` telling `tip` below it while hovered, in a small box no
+/// wider than about one and a half side panels.
+pub(crate) fn tip<'a>(
+    content: impl Into<Element<'a, Message>>,
+    tip: Text<'a>,
+) -> Element<'a, Message> {
+    tooltip(
+        content,
+        container(tip.size(12))
+            .padding([3, 6])
+            .max_width(theme::SIDE_PANEL_WIDTH * 1.5)
+            .style(theme::menu),
+        tooltip::Position::Bottom,
+    )
+    .into()
+}
 
 /// Includes the 1 px border.
 const STATUS_BAR_HEIGHT: f32 = 28.0;

@@ -1198,7 +1198,8 @@ reference can't be picked); the extent kind, the two distance fields
 (text, last good `Value`, error, read with `Extent::ask`), flip, the
 operation and the excluded bodies (kept from the edited extrude). When
 the source sketch changes under it (undo), the picked regions are found
-again by their references (`Profiles::resolve`). An edited extrude's
+again by their references (`Profiles::resolve`); while its regions can't
+be found none are picked, and the references wait for them. An edited extrude's
 references that aren't found are counted (`missing`, shown in the panel)
 and dropped: `SetExtrude` gets fresh references of what's picked. Editing
 never changes the extrude's sketch, so `SetExtrude` doesn't hide one.

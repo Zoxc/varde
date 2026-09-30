@@ -1,18 +1,15 @@
 use iced::keyboard::{self, key};
-use varde_document::{BodyId, Document, FeatureId};
+use varde_document::{BodyId, FeatureId};
 use varde_view::{Edit, Look, Mode};
 
 use super::*;
 use crate::doc::Dialog;
-use crate::tests::{answer, deferred, key_in, press_in};
+use crate::tests::{key_in, press_in};
 
 /// A document holding the example: "Sketch 1", and "Extrude 1" making
 /// "Body 1" of it, answered by the regeneration lane; the three ids.
 fn example() -> (Doc, FeatureId, FeatureId, BodyId) {
-    let (mut doc, requests) = deferred();
-    doc.apply(Command::Replace(Box::new(Document::example())));
-    doc.sync();
-    answer(&mut doc, &requests);
+    let (doc, _) = crate::tests::example();
     let document = doc.editor.document();
     let [sketch, extrude] = [0, 1].map(|k| document.features()[k].id);
     let body = document.bodies()[0].id;

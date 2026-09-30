@@ -35,7 +35,9 @@ pub(crate) struct ExtrudeSession {
     /// The regions picked, by index into the source's profiles.
     pub(crate) picked: BTreeSet<usize>,
     /// The references to them, in the same order, made as they're picked
-    /// (and again when the sketch changes).
+    /// (and again when the sketch changes). Kept while the source's
+    /// regions can't be found, which leaves none picked, to find them
+    /// again once they can.
     references: Vec<RegionRef>,
     /// How many of the edited extrude's regions weren't found.
     pub(crate) missing: usize,
@@ -227,7 +229,7 @@ impl ExtrudeSession {
             match kept {
                 Some(at) if old[at].sketch == *sketch => self.found.push(old.swap_remove(at)),
                 _ => {
-                    remap |= Some(id) == self.source && kept.is_some();
+                    remap |= Some(id) == self.source;
                     // A sketch too complex for its regions to be found has
                     // none to pick.
                     if let Ok(profiles) = sketch.profiles()
@@ -243,19 +245,13 @@ impl ExtrudeSession {
             }
         }
         if remap {
-            let references = std::mem::take(&mut self.references);
-            let picked = self
-                .source
-                .and_then(|source| self.found(source))
-                .map_or_else(BTreeSet::new, |found| {
-                    found
-                        .profiles
-                        .resolve(&references)
-                        .into_iter()
-                        .flatten()
-                        .collect()
-                });
-            self.pick(picked);
+            let source = self.source.and_then(|source| self.found(source));
+            match source.map(|found| found.profiles.resolve(&self.references)) {
+                Some(resolved) => self.pick(resolved.into_iter().flatten().collect()),
+                // Its regions can't be found for now: the references wait
+                // for the sketch to have them again.
+                None => self.picked.clear(),
+            }
         }
         true
     }
@@ -264,7 +260,7 @@ impl ExtrudeSession {
     /// the distances its extent takes, as they last read.
     fn extrude(&self) -> Option<Extrude> {
         let sketch = self.source?;
-        if self.references.is_empty() {
+        if self.picked.is_empty() {
             return None;
         }
         let value = |distance: Distance| self.fields[distance.index()].value.clone();

@@ -11,10 +11,10 @@ use super::*;
 use crate::Message;
 use crate::doc::CAMERA_ANIMATION;
 use crate::doc::sketch::tests::{
-    Answered, at, click, click_at, drawing, position, pressed, selection, sketch, sketching,
-    typing, undo_to,
+    Answered, at, click, click_at, drawing, position, selection, sketch, sketching, undo_to,
 };
 use crate::doc::sketch::{Refusal, Sketch};
+use crate::tests::{pressed, typing};
 
 /// Clicks the tool in use at `x`, `y` on `hit`, with the reference
 /// modifier held if `reference`.

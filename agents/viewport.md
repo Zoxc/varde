@@ -169,7 +169,7 @@ meshes, whether each sketch solves), keyed by a hash of the feature, the
 tolerance and its inputs' keys, holding what the last request used, so an
 edit or a draft being dragged reruns only what it changes. The app sends
 the extrude being set up as the draft (see "Setting up an extrude"
-below); `MeshFeed` gives each draft differing from the last the next
+above); `MeshFeed` gives each draft differing from the last the next
 revision, counted over the document's life, and asks again whenever the
 generation, the sketch left out or the draft revision changes (a draft
 dropped asks again without one). An answer of the same generation is

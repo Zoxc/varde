@@ -8,15 +8,13 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use glam::{DVec2, DVec3};
-use iced::widget::{
-    Space, button, column, container, opaque, row, space, text, text_input, tooltip,
-};
+use iced::widget::{Space, button, column, container, opaque, row, space, text, text_input};
 use iced::{Alignment, Element, Length};
 use varde_document::{FeatureId, Placement, Plane};
 use varde_expr::LengthUnit;
 use varde_sketch::{Profiles, Region};
 
-use crate::chrome::{hrule, small_button};
+use crate::chrome::{hrule, small_button, tip};
 use crate::escape::OnEscape;
 use crate::theme::{self, Emphasis, SEMIBOLD};
 use crate::{Edit, Look, Message, VALUE_FIELD};
@@ -359,7 +357,13 @@ pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
         .size(13)
         .font(SEMIBOLD);
     let regions = match state.picked.len() {
-        0 if state.candidates.is_empty() => "No closed regions to extrude".to_owned(),
+        0 if state
+            .candidates
+            .iter()
+            .all(|candidate| candidate.profiles.regions.is_empty()) =>
+        {
+            "No closed regions to extrude".to_owned()
+        }
         0 => "Click regions to extrude".to_owned(),
         1 => "1 region".to_owned(),
         n => format!("{n} regions"),
@@ -381,7 +385,7 @@ pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
             .flatten();
         let choice = choice(kind.label(), state.extent == kind, message);
         if kind == ExtentKind::ThroughAll {
-            tip(choice, "Only a cut goes through all")
+            tip(choice, text("Only a cut goes through all"))
         } else {
             choice
         }
@@ -404,7 +408,7 @@ pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
         if kind.available() {
             choice
         } else {
-            tip(choice, "Not available yet")
+            tip(choice, text("Not available yet"))
         }
     });
     let error = state
@@ -474,18 +478,6 @@ fn choice<'a>(label: &'a str, on: bool, message: Option<Message>) -> Element<'a,
     .padding([3, 6])
     .style(theme::flat_button(on))
     .on_press_maybe(message)
-    .into()
-}
-
-/// `content` telling `tip` when hovered.
-fn tip<'a>(content: Element<'a, Message>, tip: &'a str) -> Element<'a, Message> {
-    tooltip(
-        content,
-        container(text(tip).size(12))
-            .padding([3, 6])
-            .style(theme::menu),
-        tooltip::Position::Bottom,
-    )
     .into()
 }
 

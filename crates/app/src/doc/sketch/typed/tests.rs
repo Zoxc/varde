@@ -10,9 +10,9 @@ use super::*;
 use crate::doc::CAMERA_ANIMATION;
 use crate::doc::sketch::Focus;
 use crate::doc::sketch::tests::{
-    Answered, at, click, click_at, click_on, drawing, position, pressed, sketch, sketching, typing,
-    undo_to,
+    Answered, at, click, click_at, click_on, drawing, position, sketch, sketching, undo_to,
 };
+use crate::tests::{pressed, typing};
 
 /// Moves the cursor to `x`, `y` with the tool in use, snapping to
 /// nothing, as the viewport tells the app while its shape has fields.

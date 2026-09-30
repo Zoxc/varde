@@ -2,18 +2,12 @@ use std::cell::RefCell;
 use std::collections::BTreeSet;
 
 use glam::DVec2;
-use iced::advanced::renderer::Headless;
-use iced::advanced::widget::operation::{self, focusable};
 use iced::keyboard::{self, key};
-use iced::{Event, Font, Pixels, Size, mouse};
-use iced_runtime::user_interface::{Cache, UserInterface};
 use varde_document::{Command, Document, Editor, FeatureId, MAX_COORD, OriginPlane};
 use varde_io::{Access, ReadOnly};
 use varde_regen::Request;
 use varde_sketch::{Curve, Id};
-use varde_view::{Edit, Look, Message as Ui, Mode, Tool, ToolClick};
-
-use crate::Message;
+use varde_view::{Edit, Look, Tool, ToolClick};
 
 use super::*;
 use crate::doc::{Origin, Target};
@@ -154,60 +148,6 @@ pub(super) fn undo_to(doc: &mut Answered, before: &Sketch) -> usize {
         steps += 1;
     }
     steps
-}
-
-/// Pressing `key`, which types `text` if any.
-pub(crate) fn typing(key: keyboard::Key, text: Option<&str>) -> Event {
-    let mut event = crate::tests::press(key, keyboard::Modifiers::empty());
-    if let keyboard::Event::KeyPressed { text: typed, .. } = &mut event {
-        *typed = text.map(Into::into);
-    }
-    Event::Keyboard(event)
-}
-
-/// What pressing each of `keys` does to the document screen of `doc`
-/// shown headless: the messages its widgets send, and those the app's
-/// shortcuts send for what the widgets leave, as `keyboard::listen` hands
-/// the app only the events no widget captured. With the value field
-/// focused first, if `focused`.
-pub(crate) fn pressed(doc: &Doc, keys: &[Event], focused: bool) -> (Vec<Ui>, Vec<Message>) {
-    let Some(mut renderer) = iced::futures::executor::block_on(iced::Renderer::new(
-        Font::DEFAULT,
-        Pixels(13.0),
-        Some("tiny-skia"),
-    )) else {
-        panic!("no headless renderer");
-    };
-    let view = doc.view(false, Mode::Light);
-    let mut ui = UserInterface::build(
-        view,
-        Size::new(1280.0, 800.0),
-        Cache::default(),
-        &mut renderer,
-    );
-    // As the app has it when the field opens.
-    if focused {
-        let mut focus = focusable::focus(varde_view::VALUE_FIELD);
-        ui.operate(&renderer, &mut focus);
-        let mut select = operation::text_input::select_all(varde_view::VALUE_FIELD);
-        ui.operate(&renderer, &mut select);
-    }
-    let mut sent = Vec::new();
-    let mut shortcuts = Vec::new();
-    for key in keys {
-        let (_, statuses) = ui.update(
-            std::slice::from_ref(key),
-            mouse::Cursor::Unavailable,
-            &mut renderer,
-            &mut iced::advanced::clipboard::Null,
-            &mut sent,
-        );
-        if let (Event::Keyboard(event), [iced::event::Status::Ignored]) = (key, statuses.as_slice())
-        {
-            shortcuts.extend(crate::keys::document_key((doc.keys(), event.clone())));
-        }
-    }
-    (sent, shortcuts)
 }
 
 #[test]

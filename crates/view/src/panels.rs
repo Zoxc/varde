@@ -3,7 +3,7 @@
 
 use iced::widget::{
     MouseArea, Space, button, column, container, hover, mouse_area, row, scrollable, space, stack,
-    text, text_input, tooltip,
+    text, text_input,
 };
 use iced::{Alignment, Element, Font, Length, Padding};
 use varde_document::{Document, Extent, Feature, FeatureId, FeatureKind};
@@ -189,15 +189,7 @@ fn feature_row<'a>(
         .view(Message::Look(Look::SelectFeature(feature.id)))
         .on_double_click(Message::Look(Look::EditFeature(feature.id)));
     match failed {
-        Some(why) => tooltip(
-            row,
-            container(text(why).size(12).style(theme::danger_text))
-                .padding([3, 6])
-                .max_width(SIDE_PANEL_WIDTH * 1.5)
-                .style(theme::menu),
-            tooltip::Position::Bottom,
-        )
-        .into(),
+        Some(why) => crate::chrome::tip(row, text(why).style(theme::danger_text)),
         None => row.into(),
     }
 }

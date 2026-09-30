@@ -362,11 +362,11 @@ impl Doc {
         self.panel = self.panel.for_sketching(false);
     }
 
-    /// Backs out of whatever is open, the innermost first: the file menu,
-    /// picking a plane, the extrude being set up, the value field, a label grabbed, the drag of
-    /// geometry, the shape the tool is drawing (or what the Dimension or
-    /// Mirror tool has picked), the tool, the sketch, the feature
-    /// selected.
+    /// Backs out of whatever is open, the innermost first: the delete
+    /// prompt, the file menu, picking a plane, the extrude being set up,
+    /// the value field, a label grabbed, the drag of geometry, the shape
+    /// the tool is drawing (or what the Dimension or Mirror tool has
+    /// picked), the tool, the sketch, the feature selected.
     pub(crate) fn escape(&mut self) {
         if self.deleting.is_some() {
             self.deleting = None;
@@ -830,4 +830,4 @@ fn follow_selection(selection: &BTreeSet<Id>, listed_on: &mut BTreeSet<Id>, sket
 }
 
 #[cfg(test)]
-pub(crate) mod tests;
+mod tests;

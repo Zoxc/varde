@@ -69,6 +69,17 @@ pub(crate) fn deferred() -> (Doc, Rc<RefCell<Vec<Request>>>) {
     (doc, requests)
 }
 
+/// A document holding the example, "Sketch 1" and "Extrude 1" making
+/// "Body 1", answered by the regeneration lane, whose requests wait for
+/// the test, and the list they wait in.
+pub(crate) fn example() -> (Doc, Rc<RefCell<Vec<Request>>>) {
+    let (mut doc, requests) = deferred();
+    doc.apply(Command::Replace(Box::new(Document::example())));
+    doc.sync();
+    answer(&mut doc, &requests);
+    (doc, requests)
+}
+
 /// Answers the requests waiting, as the lane's messages would.
 pub(crate) fn answer(doc: &mut Doc, requests: &RefCell<Vec<Request>>) {
     for request in requests.take() {
@@ -4112,4 +4123,63 @@ fn a_sketch_is_made_and_left_through_the_app() {
     let _ = varde.update(Message::Ui(Ui::Look(Look::Escape)));
     assert!(edited(document(&varde)).is_none());
     let _ = varde.view();
+}
+
+/// Pressing `key`, which types `text` if any.
+pub(crate) fn typing(key: keyboard::Key, text: Option<&str>) -> iced::Event {
+    let mut event = press(key, keyboard::Modifiers::empty());
+    if let keyboard::Event::KeyPressed { text: typed, .. } = &mut event {
+        *typed = text.map(Into::into);
+    }
+    iced::Event::Keyboard(event)
+}
+
+/// What pressing each of `keys` does to the document screen of `doc`
+/// shown headless: the messages its widgets send, and those the app's
+/// shortcuts send for what the widgets leave, as `keyboard::listen` hands
+/// the app only the events no widget captured. With the value field
+/// focused first, if `focused`.
+pub(crate) fn pressed(doc: &Doc, keys: &[iced::Event], focused: bool) -> (Vec<Ui>, Vec<Message>) {
+    use iced::advanced::renderer::Headless;
+    use iced::advanced::widget::operation::{self, focusable};
+    use iced_runtime::user_interface::{Cache, UserInterface};
+
+    let Some(mut renderer) = block_on(iced::Renderer::new(
+        iced::Font::DEFAULT,
+        iced::Pixels(13.0),
+        Some("tiny-skia"),
+    )) else {
+        panic!("no headless renderer");
+    };
+    let view = doc.view(false, Mode::Light);
+    let mut ui = UserInterface::build(
+        view,
+        iced::Size::new(1280.0, 800.0),
+        Cache::default(),
+        &mut renderer,
+    );
+    // As the app has it when the field opens.
+    if focused {
+        let mut focus = focusable::focus(varde_view::VALUE_FIELD);
+        ui.operate(&renderer, &mut focus);
+        let mut select = operation::text_input::select_all(varde_view::VALUE_FIELD);
+        ui.operate(&renderer, &mut select);
+    }
+    let mut sent = Vec::new();
+    let mut shortcuts = Vec::new();
+    for key in keys {
+        let (_, statuses) = ui.update(
+            std::slice::from_ref(key),
+            iced::mouse::Cursor::Unavailable,
+            &mut renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut sent,
+        );
+        if let (iced::Event::Keyboard(event), [iced::event::Status::Ignored]) =
+            (key, statuses.as_slice())
+        {
+            shortcuts.extend(crate::keys::document_key((doc.keys(), event.clone())));
+        }
+    }
+    (sent, shortcuts)
 }
