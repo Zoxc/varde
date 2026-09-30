@@ -125,7 +125,7 @@ pub fn extrude(
         let cap = cap::triangulate(&mut chain, margin, flat_corners, work)?;
         let mesh = build(&chain, &cap, frame, from, to, feature)?;
         work.spend(mesh.tris().len())?;
-        Solid::new(mesh.repair_within(tol, work)?, tol)
+        Solid::new_within(mesh.repair_within(tol, work)?, tol, work)
     };
     // Caps with slivers along short segments meeting nearly straight fail
     // the hull rules next to the walls. Moving Steiner points in from such

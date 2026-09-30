@@ -53,9 +53,7 @@ fn corner_volumes_come_with_true_error_bounds() {
         let (det, err) = orient3d(o, [a, b, c]);
         let exact = exact::sign(&Volume {
             start: Pt { p: o, n: None },
-            a,
-            b,
-            c,
+            corners: [a, b, c],
         });
         if det.abs() > err {
             assert_eq!(det.signum() as i8, exact, "{o} {a} {b} {c}");
@@ -86,7 +84,8 @@ fn lune_bounds_hold() {
             // Measured from a corner, the triangle adds nothing, and of
             // the lunes' cones only the far edge's is left, inside the
             // hull too.
-            let own = patch_volume(&patch, patch.p[0]);
+            let (own, size) = patch_volume(&patch, patch.p[0]);
+            assert!(own.abs() <= size, "{t}: {own} {size}");
             let bound = lune_bound(&patch);
             assert!(own.abs() <= bound + 1e-15, "{t}: {own} {bound}");
         }

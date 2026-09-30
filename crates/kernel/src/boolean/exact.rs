@@ -50,7 +50,7 @@ pub(crate) trait Num: Clone {
 /// A floating-point value with a bound on how far rounding may have taken
 /// it from the exact value of the same expression.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct Approx {
+pub(super) struct Approx {
     v: f64,
     err: f64,
 }
@@ -118,7 +118,7 @@ impl Num for Approx {
 /// An exact value as a floating-point expansion: a sum of non-overlapping
 /// components in increasing magnitude, none zero (so zero is empty).
 #[derive(Debug, Clone, Default)]
-pub(crate) struct Exp(Vec<f64>);
+pub(super) struct Exp(Vec<f64>);
 
 impl Exp {
     /// The sign of the exact value: that of its largest component.
@@ -258,7 +258,7 @@ fn two_product(a: f64, b: f64) -> (f64, f64) {
 
 /// A polynomial in `ε`, lowest power first.
 #[derive(Debug, Clone)]
-pub(crate) struct Poly<N>(pub(crate) Vec<N>);
+pub(super) struct Poly<N>(pub(super) Vec<N>);
 
 impl<N: Num> Num for Poly<N> {
     fn lit(x: f64) -> Self {
@@ -358,11 +358,11 @@ pub(crate) fn sub<N: Num>(a: &V3<N>, b: &V3<N>) -> V3<N> {
     [0, 1, 2].map(|i| a[i].sub(&b[i]))
 }
 
-pub(crate) fn dot<N: Num>(a: &V3<N>, b: &V3<N>) -> N {
+pub(super) fn dot<N: Num>(a: &V3<N>, b: &V3<N>) -> N {
     a[0].mul(&b[0]).add(&a[1].mul(&b[1])).add(&a[2].mul(&b[2]))
 }
 
-pub(crate) fn cross<N: Num>(a: &V3<N>, b: &V3<N>) -> V3<N> {
+pub(super) fn cross<N: Num>(a: &V3<N>, b: &V3<N>) -> V3<N> {
     [
         a[1].mul(&b[2]).sub(&a[2].mul(&b[1])),
         a[2].mul(&b[0]).sub(&a[0].mul(&b[2])),
@@ -403,11 +403,17 @@ pub(crate) fn sign(pred: &impl Pred) -> i8 {
         .unwrap_or(0)
 }
 
-/// The predicate's value (its constant term), worked out exactly and then
-/// rounded: within a few units in the last place of the exact value.
-pub(crate) fn value(pred: &impl Pred) -> f64 {
+/// The sum of `parts`' values (their constant terms), worked out exactly
+/// and then rounded: within a few units in the last place of the exact
+/// sum. The parts are worked out through `par_map` and added in order, so
+/// the rounded sum doesn't depend on the thread count. Counts as one sign
+/// worked out exactly ([`exact_count`]).
+pub(crate) fn sum_value<P: Pred + Sync>(parts: &[P]) -> f64 {
     worked_out();
-    pred.eval::<Exp>().value()
+    crate::par::par_map(parts, |part| part.eval::<Exp>())
+        .iter()
+        .fold(Exp::default(), |sum, part| sum.add(part))
+        .value()
 }
 
 /// [`sign`], taking a constant term within `tie` of the distance units
@@ -418,7 +424,7 @@ pub(crate) fn value(pred: &impl Pred) -> f64 {
 /// coarsest tolerance is on it for all of them, not beside it for the
 /// exact predicates and on it for the numerical ones. With `tie` zero,
 /// exactly [`sign`].
-pub(crate) fn sign_tied(pred: &impl Pred, tie: f64) -> i8 {
+pub(super) fn sign_tied(pred: &impl Pred, tie: f64) -> i8 {
     let limit = tie * pred.scale();
     if limit.is_nan() || limit <= 0.0 {
         return sign(pred);
@@ -447,7 +453,7 @@ pub(crate) fn sign_tied(pred: &impl Pred, tie: f64) -> i8 {
 /// The constant terms of a near tie are both tiny and all rounding, so
 /// their plain floating-point ratio can be anything: an edge nearly in
 /// a face's plane would be cut far from where it crosses it.
-pub(crate) fn ratio(num: &impl Pred, den: &impl Pred) -> f64 {
+pub(super) fn ratio(num: &impl Pred, den: &impl Pred) -> f64 {
     let (n, d) = (num.eval::<Approx>(), den.eval::<Approx>());
     let close = |x: Approx| x.err <= x.v.abs() * CLOSE;
     if d.v != 0.0 && close(d) && close(n) {
@@ -466,7 +472,7 @@ pub(crate) fn ratio(num: &impl Pred, den: &impl Pred) -> f64 {
 const CLOSE: f64 = 1e-12;
 
 /// The sign of `(b − a) × (c − a)` in the plane, exactly.
-pub(crate) fn orient2d(a: glam::DVec2, b: glam::DVec2, c: glam::DVec2) -> i8 {
+pub(super) fn orient2d(a: glam::DVec2, b: glam::DVec2, c: glam::DVec2) -> i8 {
     fn eval<N: Num>(a: glam::DVec2, b: glam::DVec2, c: glam::DVec2) -> N {
         let (ax, ay) = (N::lit(a.x), N::lit(a.y));
         let (bx, by) = (N::lit(b.x).sub(&ax), N::lit(b.y).sub(&ay));
@@ -485,7 +491,7 @@ pub(crate) fn orient2d(a: glam::DVec2, b: glam::DVec2, c: glam::DVec2) -> i8 {
 /// small fraction `δ` of the way (`p + δ·(center − p)`): ties between
 /// points that move and points that don't are broken as they are then,
 /// while the points that move keep their shape among themselves.
-pub(crate) fn orient2d_towards(pts: [(glam::DVec2, bool); 3], center: glam::DVec2) -> i8 {
+pub(super) fn orient2d_towards(pts: [(glam::DVec2, bool); 3], center: glam::DVec2) -> i8 {
     let s = orient2d(pts[0].0, pts[1].0, pts[2].0);
     if s != 0 || pts.iter().all(|&(_, moves)| !moves) {
         return s;
@@ -537,7 +543,7 @@ pub(crate) fn exact_count() -> usize {
 
 /// `f`'s value, and how many signs and ratios it worked out exactly (see
 /// [`exact_count`]).
-pub(crate) fn counted<T>(f: impl FnOnce() -> T) -> (T, usize) {
+pub(super) fn counted<T>(f: impl FnOnce() -> T) -> (T, usize) {
     let before = exact_count();
     let value = f();
     (value, exact_count().wrapping_sub(before))

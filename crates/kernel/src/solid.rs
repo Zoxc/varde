@@ -1,11 +1,17 @@
 use glam::DVec3;
 
+use crate::budget::Work;
 use crate::mesh::Mesh;
 use crate::par::par_map;
 use crate::patch::{Bounds3, Patch};
 use crate::quadrature::triangle_rule;
 use crate::tessellate::{Display, tessellate};
 use crate::{Aabb, KernelError, MeshError, RenderMesh, Tolerance};
+
+/// Units of work per patch whose volume [`Mesh::check`] integrates to
+/// tell which way a shell faces (about 17 µs a patch on one thread, the
+/// units about half a microsecond): see [`Solid::new_within`].
+pub(crate) const INTEGRATE_WORK: usize = 32;
 
 /// A closed solid: a [`Mesh`] of rational quadratic patches that passes
 /// [`Mesh::check`], always. It is never stored; documents keep what builds
@@ -23,15 +29,23 @@ impl Solid {
     /// The solid bounded by `mesh`, if it passes [`Mesh::check`] with
     /// `tol`; [`KernelError::Invalid`] with the first failure if not.
     pub fn new(mesh: Mesh, tol: &Tolerance) -> Result<Solid, KernelError> {
-        Solid::new_counted(mesh, tol).map(|(solid, _)| solid)
+        mesh.check(tol).map_err(KernelError::Invalid)?;
+        Ok(Solid { mesh })
     }
 
-    /// [`Solid::new`], with how many patches' volumes the check
-    /// integrated ([`Mesh::check_counted`]), for callers that charge the
-    /// work.
-    pub(crate) fn new_counted(mesh: Mesh, tol: &Tolerance) -> Result<(Solid, usize), KernelError> {
+    /// [`Solid::new`] for an operation with `work` left: it charges
+    /// [`INTEGRATE_WORK`] for each patch whose volume the check integrated
+    /// ([`Mesh::check_counted`]), after the check, since only the check
+    /// tells how many. So a mesh can pass and still be
+    /// [`KernelError::TooComplex`].
+    pub(crate) fn new_within(
+        mesh: Mesh,
+        tol: &Tolerance,
+        work: &mut Work,
+    ) -> Result<Solid, KernelError> {
         let integrated = mesh.check_counted(tol).map_err(KernelError::Invalid)?;
-        Ok((Solid { mesh }, integrated))
+        work.spend(integrated.saturating_mul(INTEGRATE_WORK))?;
+        Ok(Solid { mesh })
     }
 
     /// The empty solid.
@@ -112,7 +126,7 @@ impl Solid {
             return 0.0;
         };
         let o = (bounds.min + bounds.max) * 0.5;
-        self.sum(|patch| flux(patch, o))
+        self.sum(|patch| flux(patch, o).x)
     }
 
     /// Its surface area: the integral of `|P_u × P_v|` over each patch's
@@ -153,7 +167,7 @@ impl Solid {
 /// crowd towards some corner or edge where the rule can't follow them, is
 /// split first ([`Patch::split4`], up to five times) until its pieces'
 /// weights are near 1, and `f` summed over them.
-fn pieces(patch: &Patch, depth: u32, f: &impl Fn(&Patch) -> f64) -> f64 {
+fn pieces<T: std::iter::Sum>(patch: &Patch, depth: u32, f: &impl Fn(&Patch) -> T) -> T {
     /// The weights within which a patch is integrated as it is: a
     /// quarter circle's `√½` is, to rounding.
     const WELL_SHAPED: std::ops::RangeInclusive<f64> = 0.7..=1.4;
@@ -168,21 +182,26 @@ fn pieces(patch: &Patch, depth: u32, f: &impl Fn(&Patch) -> f64) -> f64 {
 }
 
 /// A third of the integral of `(P − o)·n` over `patch`: its share of the
-/// volume a closed surface of patches encloses (see [`Solid::volume`]).
-fn flux(patch: &Patch, o: glam::DVec3) -> f64 {
+/// volume a closed surface of patches encloses (see [`Solid::volume`]);
+/// and the same of its absolute value, the scale of the quadrature's
+/// error however the integrand cancels.
+fn flux(patch: &Patch, o: glam::DVec3) -> glam::DVec2 {
     triangle_rule()
         .map(|(u, w)| {
             let [p, pu, pv] = patch.eval_derivs(u);
-            w * (p - o).dot(pu.cross(pv))
+            let term = w * (p - o).dot(pu.cross(pv));
+            glam::DVec2::new(term, term.abs())
         })
-        .sum::<f64>()
+        .sum::<glam::DVec2>()
         / 3.0
 }
 
 /// [`flux`] for a patch, split where its weights ask as
-/// [`Solid::volume`] does.
-pub(crate) fn patch_volume(patch: &Patch, o: glam::DVec3) -> f64 {
-    pieces(patch, 0, &|piece| flux(piece, o))
+/// [`Solid::volume`] does: its share of the volume, and the scale of the
+/// error.
+pub(crate) fn patch_volume(patch: &Patch, o: glam::DVec3) -> (f64, f64) {
+    let sized = pieces(patch, 0, &|piece| flux(piece, o));
+    (sized.x, sized.y)
 }
 
 #[cfg(test)]

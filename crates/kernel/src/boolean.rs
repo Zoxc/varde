@@ -117,12 +117,9 @@ fn tie(tol: &Tolerance) -> f64 {
 
 /// Units of work per patch that checking the result takes (about 2.7 µs
 /// a patch on one thread, the units about half a microsecond), not
-/// counting the patches it integrates to tell which way the shells face.
+/// counting the patches it integrates to tell which way the shells face
+/// ([`Solid::new_within`] charges those).
 const CHECK_WORK: usize = 5;
-
-/// Units of work per patch whose volume the result's check integrates
-/// (about 17 µs a patch on one thread).
-const INTEGRATE_WORK: usize = 32;
 
 /// The projection direction every primitive shares: nearly `+z`, tilted
 /// off every axis so that walls along the axes, which CAD models are full
@@ -218,9 +215,7 @@ pub fn boolean(
     // The check that makes it a solid, a few units a patch, and the
     // patches it integrated, charged once it has told how many.
     work.spend(mesh.tris().len().saturating_mul(CHECK_WORK))?;
-    let (solid, integrated) = Solid::new_counted(mesh, tol)?;
-    work.spend(integrated.saturating_mul(INTEGRATE_WORK))?;
-    Ok(solid)
+    Solid::new_within(mesh, tol, &mut work)
 }
 
 /// The result's mesh, before repair and the check.

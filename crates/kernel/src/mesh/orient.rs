@@ -53,14 +53,19 @@ const RAY: DVec3 = DVec3::new(2.0, 3.0, 32.0);
 const NUDGE: DVec3 = DVec3::new(0.6, 0.0, 0.8);
 
 /// How far an integrated patch's volume may be off, relative to the
-/// larger of it and its corner triangle's (the quadrature isn't exact for
-/// rational patches; the tests hold it to `1e-12`).
+/// integral of the integrand's absolute value, or the corner triangle's
+/// volume where that is larger (the quadrature isn't exact for rational
+/// patches; the solids' volumes are held to `1e-12` in their tests).
 const QUADRATURE: f64 = 1e-9;
 
 /// The most patches of one shell integrated in one parallel batch. Batches
 /// start at one patch and double, so a shell decided after a few wastes
 /// little; which patches count as integrated doesn't depend on them.
 const MAX_BATCH: usize = 64;
+
+/// How many corner triangles make one parallel part of a shell's volume
+/// worked out exactly.
+const EXACT_CHUNK: usize = 4096;
 
 /// The mesh's shells: components of its triangles by halfedge pairs.
 struct Shells {
@@ -304,7 +309,7 @@ fn shell_sign(
     let (mut fix, mut fix_err) = (0.0f64, 0.0f64);
     let mut k = 0;
     let mut batch = 1;
-    let mut volumes: Vec<f64> = Vec::new();
+    let mut volumes: Vec<(f64, f64)> = Vec::new();
     loop {
         let v = flat + fix;
         let slack = flat_err + fix_err + 2.0 * f64::EPSILON * (flat.abs() + fix.abs());
@@ -312,8 +317,11 @@ fn shell_sign(
             return (Some(v > 0.0), k);
         }
         if !exact && (k == order.len() || flat_err > rest[k] + fix_err) {
-            let corners = Corners { mesh, tris, o };
-            flat = exact::value(&corners) / 6.0;
+            let parts: Vec<Corners> = tris
+                .chunks(EXACT_CHUNK)
+                .map(|tris| Corners { mesh, tris, o })
+                .collect();
+            flat = exact::sum_value(&parts) / 6.0;
             flat_err = 8.0 * f64::EPSILON * flat.abs();
             exact = true;
             continue;
@@ -329,18 +337,23 @@ fn shell_sign(
             volumes.reverse();
             batch = (2 * batch).min(MAX_BATCH);
         }
-        let volume = volumes.pop().expect("a batch");
+        let (volume, size) = volumes.pop().expect("a batch");
         let s = share(order[k].1);
         fix += volume - s.tet;
-        fix_err += QUADRATURE * volume.abs().max(s.tet.abs())
+        fix_err += QUADRATURE * size.max(s.tet.abs())
             + s.err
             + 2.0 * f64::EPSILON * (volume.abs() + s.tet.abs() + fix.abs());
         k += 1;
     }
 }
 
-/// `6·` the volume of a shell's corner triangles, `tris`, measured from
-/// `o`: the sum of `det[a − o, b − o, c − o]`.
+/// `6·` the volume of some of a shell's corner triangles, `tris`,
+/// measured from `o`: the sum of `det[a − o, b − o, c − o]`. Worked out
+/// exactly it takes about 3.4 µs a triangle on one thread (the running
+/// sum stays a few components long, since `Exp`'s additions drop the
+/// zeros their rounding errors leave), a little more than the rest of
+/// the check; the shell's triangles are worked out in chunks of
+/// [`EXACT_CHUNK`] in parallel.
 struct Corners<'a> {
     mesh: &'a Mesh,
     tris: &'a [u32],
@@ -462,8 +475,9 @@ fn hull_area(mut points: [DVec2; 6]) -> f64 {
 /// triangle whose corners are on a line (which the ray misses), and an
 /// edge's for an edge along the ray (then the ray runs alongside the
 /// triangle's plane, off it, and misses it too).
-fn crossing(start: Pt, [a, b, c]: [DVec3; 3]) -> i8 {
-    let d = exact::sign(&Volume { start, a, b, c });
+fn crossing(start: Pt, corners: [DVec3; 3]) -> i8 {
+    let d = exact::sign(&Volume { start, corners });
+    let [a, b, c] = corners;
     if d == 0 {
         return 0;
     }
@@ -493,15 +507,13 @@ impl Pred for Beside {
 /// plane `start` lies on.
 struct Volume {
     start: Pt,
-    a: DVec3,
-    b: DVec3,
-    c: DVec3,
+    corners: [DVec3; 3],
 }
 
 impl Pred for Volume {
     fn eval<N: Num>(&self) -> N {
         let s = self.start.v3::<N>();
-        let [a, b, c] = [self.a, self.b, self.c].map(unmoved::<N>);
+        let [a, b, c] = self.corners.map(unmoved::<N>);
         det(&sub(&a, &s), &sub(&b, &s), &sub(&c, &s))
     }
 }

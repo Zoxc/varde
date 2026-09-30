@@ -349,7 +349,7 @@ fn shells_face_out(mesh: &Mesh, tol: &Tolerance) -> Result<(), String> {
 fn shell_volume(mesh: &Mesh) -> f64 {
     let o = mesh.verts()[0];
     (0..mesh.tris().len())
-        .map(|t| crate::solid::patch_volume(&mesh.patch(t), o))
+        .map(|t| crate::solid::patch_volume(&mesh.patch(t), o).0)
         .sum()
 }
 

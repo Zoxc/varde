@@ -505,7 +505,9 @@ number and that plus `S`'s sign.
   (Ogita, Rump and Oishi's `Sum2`, whose own bound doesn't grow with the
   number of triangles). Then the
   difference each patch makes to its triangle's (`solid::patch_volume`,
-  with a `1e-9` relative allowance for the quadrature) is integrated for
+  with an allowance for the quadrature of `1e-9` times the integral of
+  the integrand's absolute value, which the same quadrature gives, so
+  an integrand that cancels over the patch doesn't shrink it) is integrated for
   the patches that could move it most, in batches through `par_map` but
   added one by one, until the volume is further from zero than what the
   rest could still move it by (`lune_bound`) plus the rounding. The bound:
@@ -516,7 +518,10 @@ number and that plus `S`'s sign.
   on the triangle's plane, as deep as they lie either side of it; twice
   that, for safety. Where the corner triangles' rounding is what leaves
   the sign open, their volume is worked out exactly once
-  (`exact::value`, expansions). A shell still too close to zero to tell
+  (`exact::sum_value`, expansions, in parallel chunks of 4 096
+  triangles added in order: about 3.4 µs a triangle on one thread, a
+  little more than the rest of `check`, and not charged; only near-flat
+  shells, which invariant 4 all but rules out, need it). A shell still too close to zero to tell
   fails.
 - **Nesting**: the other shells' winding number at `o`, taken only when
   another shell's box holds `o` (from a BVH over the shells' boxes; a
@@ -1104,7 +1109,8 @@ steps:
    too).
    End cap triangles as triangulated, start cap reversed.
 5. **Repair and check**: `repair_within` with the same work, then
-   `Solid::new` checks it all. In every test so far repair finds nothing
+   `Solid::new_within` checks it all (charging the patches the
+   orientation step integrated). In every test so far repair finds nothing
    to split: the construction already passes. If steps 3 to 5 fail with
    `Invalid` or `TooComplex` and work is left, they run again from the
    separated chain with flat corners mended (step 3); if that fails too,
@@ -1130,7 +1136,8 @@ Work: separation spends the segments plus the pairs each round (counted
 before they are collected, see "BVH"), triangulation 8 per vertex before
 triangulating plus the triangles each round, placing flat corners' points
 the segments, Steiner points and candidates plus the ones found near, then
-the patches, then repair. Segment counts past `MAX_PATCHES / 4` are
+the patches, then repair, then 32 for each patch the check integrated
+(`INTEGRATE_WORK`; about six for each cylinder-like wall). Segment counts past `MAX_PATCHES / 4` are
 `TooComplex`.
 
 Measured (release): the tests' 80 × 80 plate with 64 round holes 1.1
@@ -2131,7 +2138,7 @@ units per patch of the result for the check that makes it a solid (about
 2.7 µs a patch; `CHECK_WORK`), spent before it, plus 32 for each patch
 whose volume the check integrated to tell which way the shells face
 (about 17 µs a patch; `INTEGRATE_WORK`), which `Mesh::check_counted`
-reports and `Solid::new_counted` passes on, so it is spent after the
+reports and `Solid::new_within` spends (extrude's check too), after the
 check: a result can pass it and still be `TooComplex`. The operands
 cost nothing for their orientation, which their own check settled. With curved patches also each edge–face search a unit per 4
 pieces it looked at, at least 16: the 16 spent before it runs, the rest
