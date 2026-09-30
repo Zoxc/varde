@@ -27,10 +27,10 @@
 //! by [`RenderLines::from_parts`]; the bodies' boxes in the head are
 //! finite with their corners in order. The failed features' ids, the
 //! sketches that don't solve and the bodies a draft touches are only
-//! marks, so they aren't checked against a document. Malformed bytes are refused, never a panic; see
-//! [`decode_request`] and [`decode_reply`]. A request's draft isn't
-//! checked as it's decoded: applying it goes through the document's
-//! checks.
+//! marks, so they aren't checked against a document. Malformed bytes are
+//! refused, never a panic; see [`decode_request`] and [`decode_reply`]. A
+//! request's draft isn't checked as it's decoded: applying it goes through
+//! the document's checks.
 //!
 //! [`Document::to_postcard`]: varde_document::Document::to_postcard
 //! [`codec`]: varde_document::codec

@@ -2675,7 +2675,8 @@ so a new session never shows another's bodies; then the excluded ones,
 in the order they were made; ticked unless excluded;
 `ExtrudeLook::Target` toggles, keeping the session's `excluded` sorted and
 only taking bodies made before the extrude edited; bodies undone away
-drop out), the refusal, the draft's error or "Checking the sketch…",
+drop out, and aren't taken out again when redone: undo gives the ids
+back, so a new edit may give theirs to other bodies), the refusal, the draft's error or "Checking the sketch…",
 Cancel and OK. The handle and region picking are in `agents/viewport.md`.
 Dragging a knob types its distance (one side past the plane flips; a knob
 on the plane changes nothing) as the design's units format it. A knob

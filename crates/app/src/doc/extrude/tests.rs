@@ -1254,3 +1254,242 @@ fn a_draft_the_document_refuses_keeps_the_bodies_listed() {
     assert!(doc.feed.draft_error().is_some());
     assert_eq!(listed(&doc), [body]);
 }
+
+/// The plate extruded 10 as extrude A, and then replaced whole by a
+/// document from the same base whose extrude, 30, took A's id: as
+/// restoring recovered changes does. And A's id.
+fn plate_replaced() -> (Doc, FeatureId, Requests, Document, Document) {
+    let (mut doc, a, requests) = plate_extruded("10");
+    let before = doc.editor.document().clone();
+    let (recovered, b, _) = plate_extruded("30");
+    assert_eq!(a, b);
+    let recovered = recovered.editor.document().clone();
+    doc.drop_proposals();
+    doc.apply(Command::Replace(Box::new(recovered.clone())));
+    doc.sync();
+    answer(&mut doc, &requests);
+    (doc, a, requests, before, recovered)
+}
+
+/// The first distance of the session's extrude edited, typed.
+fn first(doc: &Doc) -> String {
+    doc.extrude.as_ref().unwrap().fields[0].text.clone()
+}
+
+#[test]
+fn every_step_across_a_replacement_ends_the_session_opened_before_it() {
+    let (mut doc, a, requests, before, recovered) = plate_replaced();
+    // Opened after the restore, on the recovered extrude: undoing the
+    // restore ends it, as the id names the one replaced again.
+    doc.look(Look::EditFeature(a));
+    assert_eq!(first(&doc), "30");
+    doc.update(Edit::Undo);
+    assert_eq!(*doc.editor.document(), before);
+    assert!(doc.extrude.is_none());
+    assert!(last_draft(&requests).is_none());
+    // Redone, then undone again: each ends the session opened in between.
+    doc.look(Look::EditFeature(a));
+    assert_eq!(first(&doc), "10");
+    doc.update(Edit::Redo);
+    assert_eq!(*doc.editor.document(), recovered);
+    assert!(doc.extrude.is_none());
+    doc.look(Look::EditFeature(a));
+    assert_eq!(first(&doc), "30");
+    extrude(
+        &mut doc,
+        ExtrudeLook::Input {
+            distance: Distance::First,
+            text: "20".to_owned(),
+        },
+    );
+    doc.update(Edit::Undo);
+    assert!(doc.extrude.is_none());
+    assert!(last_draft(&requests).is_none());
+    // OK then has nothing to write.
+    doc.update(Edit::CommitExtrude);
+    assert_eq!(*doc.editor.document(), before);
+    // A session opened on this side of it stays through an ordinary edit
+    // and its undo.
+    doc.look(Look::EditFeature(a));
+    doc.update(Edit::SetTolerance(Tolerance::new(1e-2).unwrap()));
+    doc.update(Edit::Undo);
+    assert_eq!(*doc.editor.document(), before);
+    assert_eq!(first(&doc), "10");
+}
+
+#[test]
+fn restoring_with_a_delete_prompt_and_units_waiting_drops_all_three() {
+    let (opened, a, _) = plate_extruded("10");
+    let opened = opened.editor.document().clone();
+    let (recovered, _, _) = plate_extruded("30");
+    let recovered = recovered.editor.document().clone();
+    let sketch = opened.features()[0].id;
+    let origin = crate::doc::Origin {
+        recovered: Some(varde_io::Offer {
+            document: recovered.clone(),
+            design_changed: false,
+        }),
+        ..crate::doc::Origin::new(
+            crate::doc::Target::None,
+            varde_io::Access::Edit,
+            "Design".to_owned(),
+        )
+    };
+    let mut doc = Doc::new(opened, origin);
+    let requests = Requests::default();
+    doc.feed
+        .connect(crate::tests::Deferred(Rc::clone(&requests)));
+    doc.sync();
+    answer(&mut doc, &requests);
+    let mut lane = crate::tests::SolveLane::connect(&mut doc);
+    // An edit waiting on the solver.
+    doc.look(Look::EditFeature(sketch));
+    lane.answer(&mut doc);
+    let circle = drawn(&doc, sketch)
+        .curves
+        .iter()
+        .find(|curve| matches!(curve.curve, varde_sketch::Curve::Circle { .. }))
+        .unwrap()
+        .id;
+    doc.look(Look::SelectBox {
+        ids: vec![circle],
+        add: false,
+    });
+    doc.update(Edit::DeleteSelection);
+    doc.look(Look::FinishSketch);
+    assert!(doc.proposing());
+    // The extrude being edited, units waiting, and the delete prompt.
+    doc.look(Look::EditFeature(a));
+    assert!(doc.extrude.is_some());
+    doc.update(Edit::SetUnits(varde_expr::LengthUnit::In));
+    assert_eq!(doc.units_waiting, Some(varde_expr::LengthUnit::In));
+    doc.update(Edit::RemoveFeature(sketch));
+    assert!(doc.delete_prompt().is_some());
+
+    let _ = doc.restore_recovered(&mut crate::Files::new(None));
+    assert_eq!(*doc.editor.document(), recovered);
+    assert!(doc.extrude.is_none());
+    assert!(last_draft(&requests).is_none());
+    assert!(doc.delete_prompt().is_none());
+    assert!(doc.deleting.is_none());
+    assert_eq!(doc.units_waiting, None);
+    // The dropped edit's answer sets nothing.
+    lane.answer(&mut doc);
+    assert!(!doc.proposing());
+    assert_eq!(*doc.editor.document(), recovered);
+    doc.update(Edit::ConfirmDelete);
+    doc.update(Edit::CommitExtrude);
+    assert_eq!(*doc.editor.document(), recovered);
+}
+
+#[test]
+fn undo_and_redo_mid_session_keep_the_bodies_listed() {
+    let (mut doc, sketch, requests) = example_and_a_hole();
+    let body = doc.editor.document().bodies()[0].id;
+    start_a_cut(&mut doc, sketch);
+    answer(&mut doc, &requests);
+    assert_eq!(listed(&doc), [body]);
+    let revision = last_draft(&requests).map(|draft| draft.revision);
+    doc.update(Edit::SetTolerance(Tolerance::new(1e-2).unwrap()));
+    assert_eq!(listed(&doc), [body]);
+    answer(&mut doc, &requests);
+    for edit in [Edit::Undo, Edit::Redo, Edit::Undo] {
+        doc.update(edit);
+        assert!(doc.extrude.is_some());
+        // The same draft, asked for of the document undone or redone.
+        let draft = last_draft(&requests).unwrap();
+        assert!(revision.is_none() || Some(draft.revision) >= revision);
+        assert_eq!(listed(&doc), [body]);
+        answer(&mut doc, &requests);
+        assert_eq!(listed(&doc), [body]);
+    }
+}
+
+#[test]
+fn a_body_taken_out_and_undone_away_leaves_the_draft_whole() {
+    let (mut doc, sketch, requests) = example_and_a_hole();
+    let body = doc.editor.document().bodies()[0].id;
+    // A second body, a peg through the hole's circle.
+    doc.look(Look::StartExtrude);
+    extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region: 0 });
+    extrude(&mut doc, ExtrudeLook::Extent(ExtentKind::Symmetric));
+    extrude(
+        &mut doc,
+        ExtrudeLook::Input {
+            distance: Distance::First,
+            text: "100".to_owned(),
+        },
+    );
+    doc.update(Edit::CommitExtrude);
+    assert_eq!(doc.edit_error, None);
+    let peg = doc.editor.document().bodies()[1].id;
+    answer(&mut doc, &requests);
+
+    // A cut of the circle, a wider one, taking the peg out.
+    doc.look(Look::SelectFeature(sketch));
+    start_a_cut(&mut doc, sketch);
+    extrude(&mut doc, ExtrudeLook::Extent(ExtentKind::ThroughAll));
+    answer(&mut doc, &requests);
+    assert_eq!(listed(&doc), [body, peg]);
+    extrude(&mut doc, ExtrudeLook::Target(peg));
+    answer(&mut doc, &requests);
+    assert_eq!(doc.extrude.as_ref().unwrap().excluded, [peg]);
+    assert_eq!(listed(&doc), [body, peg]);
+    assert_eq!(doc.feed.draft_error(), None);
+
+    // Undone away, the peg is neither listed nor named by the draft,
+    // which the document takes.
+    doc.update(Edit::Undo);
+    assert!(doc.editor.document().body(peg).is_none());
+    assert!(doc.extrude.is_some());
+    assert_eq!(doc.extrude.as_ref().unwrap().excluded, []);
+    let draft = last_draft(&requests).unwrap();
+    assert_eq!(draft.extrude.operation, Operation::Cut(Default::default()));
+    assert_eq!(listed(&doc), [body]);
+    answer(&mut doc, &requests);
+    assert_eq!(doc.feed.draft_error(), None);
+    assert_eq!(listed(&doc), [body]);
+    // Redone, it's back but not taken out again: after an undo, a new
+    // edit could have given its id to another body. The list shows it.
+    doc.update(Edit::Redo);
+    assert!(doc.editor.document().body(peg).is_some());
+    assert_eq!(doc.extrude.as_ref().unwrap().excluded, []);
+    answer(&mut doc, &requests);
+    assert_eq!(listed(&doc), [body, peg]);
+    assert!(doc.extrude_state().unwrap().targets[1].included);
+    doc.update(Edit::CommitExtrude);
+    assert_eq!(doc.edit_error, None);
+    assert!(doc.extrude.is_none());
+}
+
+#[test]
+fn timeline_a_b_a_lists_only_the_extrude_edited() {
+    let (mut doc, sketch, requests) = example_and_a_hole();
+    let body = doc.editor.document().bodies()[0].id;
+    for _ in 0..2 {
+        doc.look(Look::SelectFeature(sketch));
+        start_a_cut(&mut doc, sketch);
+        doc.update(Edit::CommitExtrude);
+        assert_eq!(doc.edit_error, None);
+    }
+    answer(&mut doc, &requests);
+    let features = doc.editor.document().features();
+    let (a, b) = (features[3].id, features[4].id);
+    doc.look(Look::EditFeature(a));
+    answer(&mut doc, &requests);
+    assert_eq!(listed(&doc), [body]);
+
+    // To B and straight back to A, neither answered: A's earlier answer
+    // is of another run.
+    doc.look(Look::EditFeature(b));
+    assert_eq!(listed(&doc), []);
+    doc.look(Look::EditFeature(a));
+    assert_eq!(doc.extrude.as_ref().unwrap().feature, Some(a));
+    assert_eq!(listed(&doc), []);
+    // B's answer is dropped; A's lists the body.
+    let b_request = requests.borrow_mut().remove(0);
+    doc.computed(varde_regen::handle(b_request));
+    assert_eq!(listed(&doc), []);
+    answer(&mut doc, &requests);
+    assert_eq!(listed(&doc), [body]);
+}
