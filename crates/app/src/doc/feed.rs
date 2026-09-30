@@ -196,10 +196,12 @@ impl MeshFeed {
 
     /// The newest generation a response was applied for.
     fn answered(&self) -> Option<Generation> {
-        self.failed
-            .as_ref()
-            .map(|(asked, _)| asked.generation)
-            .or(self.shown.map(|shown| shown.generation))
+        self.last_answered().map(|asked| asked.generation)
+    }
+
+    /// What the response applied last answered, model or failure.
+    fn last_answered(&self) -> Option<Asked> {
+        self.failed.as_ref().map(|(asked, _)| *asked).or(self.shown)
     }
 
     /// Why the draft asked for last fails, once its answer is shown: none
@@ -214,11 +216,20 @@ impl MeshFeed {
 
     /// How the mesh shown stands against the editor's document. A failure
     /// of an older generation than the editor's isn't reported: that document
-    /// is gone, and the current one is still being built.
+    /// is gone, and the current one is still being built. Nor is the model
+    /// shown current while another draft than its, or none, is asked for:
+    /// a preview cancelled or changed still shows until the answer.
     pub(crate) fn status(&self, editor: &Editor) -> MeshStatus<'_> {
-        if self
-            .answered()
-            .is_none_or(|answered| answered < editor.generation())
+        let redrafted =
+            self.last_answered()
+                .zip(self.requested)
+                .is_some_and(|(last, requested)| {
+                    last.generation == requested.generation && last.draft != requested.draft
+                });
+        if redrafted
+            || self
+                .answered()
+                .is_none_or(|answered| answered < editor.generation())
         {
             return MeshStatus::Regenerating;
         }

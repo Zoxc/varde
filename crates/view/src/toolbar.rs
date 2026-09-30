@@ -332,6 +332,25 @@ fn tolerance_label(fit: f64) -> String {
     format!("{text} µm")
 }
 
+/// The tolerances the file menu lists for a design of `tolerance`, by
+/// fit tolerance in mm, with their names and whether they're ticked: the
+/// ones offered, and `tolerance` unticked after them if it isn't one,
+/// under a name none of them has.
+fn tolerance_choices(tolerance: Tolerance) -> Vec<(f64, String, bool)> {
+    let fit = tolerance.fit();
+    let listed = TOLERANCES.iter().any(|&(offered, _)| offered == fit);
+    let offered = TOLERANCES.map(|(offered, label)| (offered, label.to_owned(), offered == fit));
+    let other = (!listed).then(|| {
+        // Rounded as it's named, it may look like one offered: then it's
+        // named exactly, in millimetres.
+        let label = tolerance_label(fit);
+        let taken = TOLERANCES.iter().any(|&(_, offered)| offered == label);
+        let label = if taken { format!("{fit} mm") } else { label };
+        (fit, label, false)
+    });
+    offered.into_iter().chain(other).collect()
+}
+
 /// The file menu, as a layer over the whole screen. Clicking outside the
 /// menu closes it. Save, and changing the design's `units` or its
 /// `tolerance`, are disabled unless the document is `editable`. A
@@ -394,16 +413,14 @@ pub fn file_menu(
         item(ticked(unit == units), label.into(), None, message).into()
     });
     // How closely curved surfaces are fitted, which is rarely changed.
-    let offered = TOLERANCES.map(|(fit, label)| (fit, label.to_owned()));
-    let listed = TOLERANCES.iter().any(|&(fit, _)| fit == tolerance.fit());
-    let other = (!listed).then(|| (tolerance.fit(), tolerance_label(tolerance.fit())));
-    let tolerances = offered.into_iter().chain(other).map(|(fit, label)| {
-        let message = Tolerance::new(fit)
-            .filter(|_| editable)
-            .map(|tolerance| Message::Edit(Edit::SetTolerance(tolerance)));
-        let on = listed && fit == tolerance.fit();
-        item(ticked(on), label.into(), None, message).into()
-    });
+    let tolerances = tolerance_choices(tolerance)
+        .into_iter()
+        .map(|(fit, label, on)| {
+            let message = Tolerance::new(fit)
+                .filter(|_| editable)
+                .map(|tolerance| Message::Edit(Edit::SetTolerance(tolerance)));
+            item(ticked(on), label.into(), None, message).into()
+        });
     let menu = container(
         column![
             saving,
@@ -439,6 +456,26 @@ pub fn file_menu(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_tolerance_not_offered_is_listed_unticked_under_its_own_name() {
+        let near = f64::from_bits(1e-3_f64.to_bits() + 1);
+        for fit in [5e-5, near, 1.0004e-3, 0.0999999] {
+            let choices = tolerance_choices(Tolerance::new(fit).unwrap());
+            assert_eq!(choices.len(), TOLERANCES.len() + 1, "{fit}");
+            assert!(choices.iter().all(|&(.., on)| !on), "{fit}");
+            let (last, label, _) = choices.last().unwrap();
+            assert_eq!(*last, fit);
+            assert!(
+                TOLERANCES.iter().all(|&(_, offered)| offered != label),
+                "{fit} is named {label}, as an offered one is"
+            );
+        }
+        let choices = tolerance_choices(Tolerance::DEFAULT);
+        assert_eq!(choices.len(), TOLERANCES.len());
+        let ticked: Vec<f64> = choices.iter().filter(|c| c.2).map(|c| c.0).collect();
+        assert_eq!(ticked, [Tolerance::DEFAULT.fit()]);
+    }
 
     #[test]
     fn tolerances_are_named_in_micrometres() {

@@ -8,8 +8,8 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use varde_document::{
-    BodyId, Command, Document, Extent, Extrude, FeatureId, FeatureKind, MAX_EXTRUDE_REGIONS,
-    Operation, RegionRef, Sketch, Targets,
+    BodyId, Command, Design, Document, Extent, Extrude, FeatureId, FeatureKind,
+    MAX_EXTRUDE_REGIONS, Operation, RegionRef, Sketch, Targets,
 };
 use varde_expr::{Unit, Value};
 use varde_sketch::Profiles;
@@ -50,6 +50,9 @@ pub(crate) struct ExtrudeSession {
     excluded: Vec<BodyId>,
     /// The handle's knob being dragged, if one is.
     pub(crate) grabbed: Option<Distance>,
+    /// The design as the fields' texts were last read, whose units bare
+    /// numbers in them are in: see [`ExtrudeSession::follow_units`].
+    design: Design,
 }
 
 /// A sketch's profiles, and the sketch they're of.
@@ -131,6 +134,7 @@ impl ExtrudeSession {
             operation: OperationKind::NewBody,
             excluded: Vec::new(),
             grabbed: None,
+            design: document.design(),
         }
     }
 
@@ -200,6 +204,27 @@ impl ExtrudeSession {
             .into_iter()
             .map(|(_, reference)| reference)
             .collect();
+    }
+
+    /// Keeps each distance's length where the design's units changed
+    /// since its field was read, as the document does its own: the units
+    /// the text was read in are written after its bare numbers. A text
+    /// that's refused stays as typed, to be read in the new units.
+    fn follow_units(&mut self, document: &Document) {
+        let design = document.design();
+        if design == self.design {
+            return;
+        }
+        let ask = Extent::ask(&self.design);
+        for field in &mut self.fields {
+            if let Some(value) = &mut field.value {
+                value.pin_units(&ask);
+                if field.error.is_none() {
+                    field.text = value.text.clone();
+                }
+            }
+        }
+        self.design = design;
     }
 
     /// Finds the profiles of the sketches of `document` whose regions can
@@ -473,7 +498,9 @@ impl Doc {
         });
         if !(editable && edited && session.refresh(document)) {
             self.extrude = None;
+            return;
         }
+        session.follow_units(document);
     }
 
     /// The extrude being set up as the regeneration lane previews it, and

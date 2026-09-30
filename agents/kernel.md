@@ -1228,7 +1228,12 @@ Flip for one side and two sides, the operations (Join, Cut and Intersect
 disabled with a "Not available yet" tooltip), the draft's error, Cancel
 and OK. The handle and region picking are in `agents/viewport.md`.
 Dragging a knob types its distance (one side past the plane flips; a knob
-on the plane changes nothing) as the design's units format it.
+on the plane changes nothing) as the design's units format it. If the
+design's units change while the session is open, each distance's value is
+pinned as the document pins its own (`Value::pin_units` with the units
+it was read in, `ExtrudeSession::follow_units`), so a bare "20" typed in
+millimetres becomes "20 mm" rather than disagreeing with the document; a
+refused text stays as typed.
 
 **The Timeline** (`view/src/panels.rs`) shows an extrude with the extrude
 icon and its distances as the note, in the design's units
@@ -1261,7 +1266,8 @@ heading under Units with 0.1 µm, 1 µm and 10 µm, each sending
 `Edit::SetTolerance` (`Command::SetTolerance`, one undo step, which
 regenerates everything as the cache keys hold the tolerance). A value
 from a file that isn't one of those shows as a fourth, unticked row,
-named in µm.
+named in µm, or exactly in mm where its rounded name would be one of the
+offered ones' (`tolerance_choices`).
 
 ## Limits, budgets and errors (`src/lib.rs`, `src/budget.rs`, `src/error.rs`)
 

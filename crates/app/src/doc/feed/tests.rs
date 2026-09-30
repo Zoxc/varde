@@ -429,3 +429,26 @@ fn a_failing_draft_says_why_for_its_revision_only() {
     feed.request_with(&editor, None, Some((feature, extrude)));
     assert_eq!(feed.draft_error(), None);
 }
+
+#[test]
+fn a_draft_dropped_is_regenerating_until_the_model_without_it_shows() {
+    let (editor, draft) = plate_draft();
+    let (mut feed, regen) = connected();
+    feed.request_with(&editor, None, Some(draft.clone()));
+    feed.apply(handle(regen.take().pop().unwrap()));
+    assert_eq!(feed.status(&editor), MeshStatus::Current);
+    assert!(feed.mesh().triangle_count() > 0);
+
+    // Cancelled: the draft's model still shows, which isn't the
+    // document's.
+    feed.request_with(&editor, None, None);
+    assert_eq!(feed.status(&editor), MeshStatus::Regenerating);
+    feed.apply(handle(regen.take().pop().unwrap()));
+    assert_eq!(feed.status(&editor), MeshStatus::Current);
+
+    // Another draft likewise, until its answer.
+    feed.request_with(&editor, None, Some(draft));
+    assert_eq!(feed.status(&editor), MeshStatus::Regenerating);
+    feed.apply(handle(regen.take().pop().unwrap()));
+    assert_eq!(feed.status(&editor), MeshStatus::Current);
+}

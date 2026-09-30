@@ -491,3 +491,32 @@ fn the_tolerance_is_set_from_the_file_menu() {
     doc.update(Edit::Undo);
     assert_eq!(doc.editor.document().tolerance(), Tolerance::DEFAULT);
 }
+
+#[test]
+fn a_bare_distance_keeps_its_length_when_the_units_change() {
+    let (mut doc, sketch, requests) = plate();
+    key_in(&mut doc, key("e"));
+    let region = plate_region(&doc, sketch);
+    extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region });
+    let text = "20".to_owned();
+    extrude(
+        &mut doc,
+        ExtrudeLook::Input {
+            distance: Distance::First,
+            text,
+        },
+    );
+    // Typed in millimetres, it stays 20 mm in inches, which the draft
+    // and the document take.
+    doc.update(Edit::SetUnits(varde_expr::LengthUnit::In));
+    let session = doc.extrude.as_ref().unwrap();
+    assert_eq!(session.fields[0].value.as_ref().unwrap().value, 20.0);
+    assert_eq!(session.fields[0].error, None);
+    answer(&mut doc, &requests);
+    assert_eq!(doc.feed.draft_error(), None);
+    doc.update(Edit::CommitExtrude);
+    assert_eq!(doc.edit_error, None);
+    let extrudes = extrudes(&doc);
+    assert_eq!(extrudes.len(), 1);
+    assert_eq!(extrudes[0].span(), Some((0.0, 20.0)));
+}

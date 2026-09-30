@@ -176,7 +176,9 @@ dropped asks again without one). An answer of the same generation is
 taken only if it's for what was asked last, sketch and draft revision
 both, so a late answer for an older draft never replaces a newer one;
 the draft's error shows in the panel only while it's for the draft asked
-for last. The feed keeps the answer's `failed` with the model shown, and
+for last. While the draft asked for last (or its absence) isn't the one
+the model shown has, a preview changed or cancelled, the status bar says
+"Regenerating…" too. The feed keeps the answer's `failed` with the model shown, and
 the Timeline marks those features (see "The extrude UI" in
 `agents/kernel.md`).
 
