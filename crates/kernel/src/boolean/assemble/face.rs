@@ -120,18 +120,29 @@ fn on_hypotenuse(v: f64) -> DVec2 {
 
 /// A vertex inside the face (it is, for the perturbed operands) as
 /// placed from its position, moved onto the domain's side where rounding
-/// or a tie put it on or beyond it. The triangulation then treats it as
-/// inside, infinitely close.
-fn into_domain(at: DVec2) -> DVec2 {
-    let u = if at.x < TINY { 0.0 } else { at.x };
-    let v = if at.y < TINY { 0.0 } else { at.y };
+/// or a tie put it on or beyond it, or within `snap` of it. The
+/// triangulation then treats it as inside, infinitely close.
+fn into_domain(at: DVec2, snap: f64) -> DVec2 {
+    let snap = snap.max(TINY);
+    let u = if at.x < snap { 0.0 } else { at.x };
+    let v = if at.y < snap { 0.0 } else { at.y };
     let p = DVec2::new(u, v);
-    if orient2d(DOMAIN[1], DOMAIN[2], p) > 0 {
+    if orient2d(DOMAIN[1], DOMAIN[2], p) > 0 && 1.0 - (u + v) >= snap {
         p
     } else {
         on_hypotenuse((v - u + 1.0) / 2.0)
     }
 }
+
+/// How near a side of a curved patch's domain a vertex inverted into it
+/// is taken to be on it (see [`into_domain`]): the inversion's rounding.
+/// A cut along a flush rim inverts to points on the side, each a rounding
+/// inside it or not; left where rounding put them, their order across
+/// the side was noise, and the triangulation took a fan from the corner
+/// across them for proper, three corners on the rim in the patch: of
+/// zero area, which fails the fold check. On the side they lie on one
+/// line, moved inwards alike.
+const SNAP: f64 = 1e-12;
 
 /// Where `x` is in the plane of `corners`, affinely: `(0, 0)` at the
 /// first, `(1, 0)` at the second, `(0, 1)` at the third.
@@ -222,17 +233,20 @@ pub(super) fn cut_face(
         }
         let projected = || project(corner_pos, pos[id as usize]);
         let at = match layout {
-            Layout::Flat => into_domain(projected()),
+            Layout::Flat => into_domain(projected(), 0.0),
             Layout::Planar => projected(),
             Layout::Curved => {
                 let inside = job
                     .inside
                     .binary_search_by_key(&id, |x| x.0)
                     .map(|i| job.inside[i].1);
-                into_domain(match inside {
-                    Ok(u) => DVec2::new(u.y, u.z),
-                    Err(_) => projected(),
-                })
+                into_domain(
+                    match inside {
+                        Ok(u) => DVec2::new(u.y, u.z),
+                        Err(_) => projected(),
+                    },
+                    SNAP,
+                )
             }
         };
         Vert {

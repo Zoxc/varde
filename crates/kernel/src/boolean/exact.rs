@@ -394,6 +394,7 @@ pub(super) fn sign(pred: &impl Pred) -> i8 {
     {
         return s;
     }
+    worked_out();
     pred.eval::<Poly<Exp>>()
         .0
         .iter()
@@ -419,6 +420,7 @@ pub(super) fn sign_tied(pred: &impl Pred, tie: f64) -> i8 {
     if approx.v.abs() - approx.err > limit {
         return if approx.v > 0.0 { 1 } else { -1 };
     }
+    worked_out();
     let poly = pred.eval::<Poly<Exp>>().0;
     let skip = usize::from(poly.first().is_some_and(|c| c.value().abs() <= limit));
     poly.iter()
@@ -444,6 +446,7 @@ pub(super) fn ratio(num: &impl Pred, den: &impl Pred) -> f64 {
     if d.v != 0.0 && close(d) && close(n) {
         return n.v / d.v;
     }
+    worked_out();
     let (n, d) = (num.eval::<Poly<Exp>>(), den.eval::<Poly<Exp>>());
     match d.0.iter().position(|c| c.sign() != 0) {
         Some(k) => n.0.get(k).map_or(0.0, Exp::value) / d.0[k].value(),
@@ -466,6 +469,7 @@ pub(super) fn orient2d(a: glam::DVec2, b: glam::DVec2, c: glam::DVec2) -> i8 {
     if let Some(s) = eval::<Approx>(a, b, c).sign() {
         return s;
     }
+    worked_out();
     eval::<Exp>(a, b, c).sign()
 }
 
@@ -479,6 +483,7 @@ pub(super) fn orient2d_towards(pts: [(glam::DVec2, bool); 3], center: glam::DVec
     if s != 0 || pts.iter().all(|&(_, moves)| !moves) {
         return s;
     }
+    worked_out();
     let coord = |p: f64, c: f64, moves: bool| {
         let p = Exp::lit(p);
         Poly(if moves {
@@ -499,6 +504,36 @@ pub(super) fn orient2d_towards(pts: [(glam::DVec2, bool); 3], center: glam::DVec
         .map(Exp::sign)
         .find(|&s| s != 0)
         .unwrap_or(0)
+}
+
+thread_local! {
+    /// How many signs and ratios this thread has worked out exactly: see
+    /// [`exact_count`].
+    static EXACT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Counts one more sign or ratio worked out exactly.
+fn worked_out() {
+    EXACT.with(|n| n.set(n.get().wrapping_add(1)));
+}
+
+/// How many signs and ratios this thread has worked out exactly so far,
+/// with expansions: some hundred times what floating point takes, where
+/// operands tie (flush faces, a solid against itself, cuts along a line)
+/// nearly every time. What it grows by over some work done on one thread
+/// from start to end (sharing none out to others, as a primitive or a
+/// face's triangulation) is that work's own, however the threads share
+/// the work out, so the budget it is charged to stays the same.
+pub(super) fn exact_count() -> usize {
+    EXACT.with(std::cell::Cell::get)
+}
+
+/// `f`'s value, and how many signs and ratios it worked out exactly (see
+/// [`exact_count`]).
+pub(super) fn counted<T>(f: impl FnOnce() -> T) -> (T, usize) {
+    let before = exact_count();
+    let value = f();
+    (value, exact_count().wrapping_sub(before))
 }
 
 #[cfg(test)]

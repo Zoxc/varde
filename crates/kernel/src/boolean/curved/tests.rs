@@ -294,6 +294,45 @@ fn an_edge_through_a_cylinder_is_found_where_it_is() {
 }
 
 #[test]
+fn an_edge_grazing_a_cylinder_is_found_twice() {
+    // A plate's cap edge running through a boss's rim a little inside it,
+    // on the wall's bottom side: it passes in and out of the wall 0.068
+    // apart, within one of the search's small pieces. Newton's method
+    // found one and the piece was left: the count (0) then dropped it,
+    // and the edge was taken for not crossing the boss at all.
+    let wall = Patch::new(
+        [
+            DVec3::new(-0.7, -0.45, 1.0),
+            DVec3::new(-0.05, -1.1, 1.0),
+            DVec3::new(-0.05, -1.1, 2.0),
+        ],
+        [
+            DVec3::new(-0.7, -1.1, 1.0),
+            DVec3::new(-0.05, -1.1, 1.5),
+            DVec3::new(-0.7, -1.1, 1.5),
+        ],
+        [
+            std::f64::consts::FRAC_1_SQRT_2,
+            1.0,
+            std::f64::consts::FRAC_1_SQRT_2,
+        ],
+    )
+    .unwrap();
+    let edge = segment(
+        DVec3::new(3.0, -2.0, 1.0),
+        DVec3::new(-1.1953577324240583, -0.7969051549493722, 1.0),
+    );
+    let (found, _, _) = edge_patch(&edge, &wall);
+    let signs: Vec<i8> = found.iter().map(|h| h.x).collect();
+    assert_eq!(signs, vec![1, -1], "{found:?}");
+    for h in &found {
+        let p = edge.eval(h.t);
+        let r = (p.truncate() - glam::DVec2::new(-0.05, -0.45)).length();
+        assert!((r - 0.65).abs() < 1e-12, "{r}");
+    }
+}
+
+#[test]
 fn picked_crossings_add_up_to_the_count() {
     let hit = |t: f64, x: i8, out: f64| solve::EdgeHit {
         t,

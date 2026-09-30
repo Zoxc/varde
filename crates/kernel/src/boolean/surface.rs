@@ -58,6 +58,15 @@ impl Shape {
         }
     }
 
+    /// How far `x` is from the surface: infinite where nothing is known.
+    pub(super) fn distance(&self, x: DVec3) -> f64 {
+        match self {
+            Shape::Plane { n, d } => (n.dot(x) - d).abs(),
+            Shape::Quadric(q) => q.distance(x),
+            Shape::Other => f64::INFINITY,
+        }
+    }
+
     /// `x` moved onto the plane, for a plane; as it is otherwise.
     pub(super) fn onto(&self, x: DVec3) -> DVec3 {
         match *self {

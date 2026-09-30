@@ -1265,7 +1265,19 @@ flat operands too.
    at the first vertex against the crossings would put the whole part on
    the wrong side), and every winding number to be 0 or 1 (`InsideOut`
    otherwise). The operands' own volumes must be positive
-   too (`InsideOut`): `check` doesn't look at orientation.
+   too (`InsideOut`): `check` doesn't look at orientation. A flat
+   operand's is its corner triangles' (exact); a curved one's the same,
+   less the volume between each patch and its triangle, integrated
+   (`solid::patch_volume`, 32 units each) for the patches that could move
+   it most until what the rest could no longer changes the sign
+   (`Input::faces_out`): each patch, its triangle and the lunes between
+   its curved edges and their chords (which the two patches beside an
+   edge share, turned opposite ways) lie in its control points' hull, so
+   the volume between the two is no more than twice the control points'
+   distance from the triangle's plane times the square of their spread
+   (twice that again, for safety). Integrating every patch took 0.8 s on
+   a body of 47 000 patches, before any work was counted; small patches
+   are rarely needed.
 
 Consequences, from the counting alone: a vertex's winding number and
 its edges' crossings agree, and for every pair of faces (`p` of `A`, `q`
@@ -1354,8 +1366,17 @@ its sides, and those above counted.
 `Flat`'s exact position on the corners' plane. Otherwise solved for
 (`solve::edge_patch`: edge and triangle split together, pieces dropped by
 their boxes and by a slab along the patch piece's normal, which a
-tangency needs; Newton on `E(t) = P(u)`), and made to add up to the count
-the same way; ones the search didn't find go where the two came closest.
+tangency needs; Newton on `E(t) = P(u)`; once it finds a crossing in a
+piece, the rest of the edge's piece either side of it, less a thousandth
+of it round the crossing, is searched again: an edge running through a
+wall a little inside its rim, in and out within one small piece, lost
+the second crossing, the count 0 dropped the first, and the edge was
+taken for not crossing at all), and made to add up to the count the same
+way; ones the search didn't find go where it found the two meeting but
+kept no crossing (a hit the count overrules, as where the edge leaves a
+vertex on the patch's corner: nearest the patch), else where they came
+closest (the middle of the smallest pieces the search looked at, which
+had put such a crossing a sixteenth of the edge from the vertex).
 Such pairs are searched with a count of 0 too, so an edge passing into a
 face and back out gets both crossings. Crossings are ordered along an
 edge by position, ties exactly (a straight edge through two planar
@@ -1579,7 +1600,12 @@ curves are records; a chain that isn't exact marks its edges fitted.
 - **Curved** patches: the parameter domain. Vertices on sides at their
   parameters (a patch's side is its edge's conic in the same parameter),
   others from the chain's domain positions (Newton's inversions),
-  moved into the domain. Inner edges are the patch's own curves over the
+  moved into the domain, and onto a side they are within `1e-12` of (the
+  inversion's rounding: a cut along a flush rim inverts to points on the
+  side, each a rounding inside it or not, and ear clipping took a fan
+  from the corner across them for proper, three corners on the rim, which
+  folds; on the side they lie on one line and move inwards alike). Inner
+  edges are the patch's own curves over the
   straight domain segments (blossoms `B(a, b)` normalized with `B(a,a).w`
   and `B(b,b).w`, exact), except on a quadric (below).
 
@@ -1626,8 +1652,11 @@ cut's vertices (where the plate's cap triangles' edges cross the wall)
 aren't the edge's. Halving curves never makes the two meet (every round
 doubled them: a round took 15 s). So before the rounds, the edge gets a
 vertex at each of the cut's vertices lying on it (`flush_extras`, as the
-rounds add them): the edge and the cut then come in the same pieces,
-lying on each other, which the clean-up merges.
+rounds add them), and again at the new vertices of every cut halved in
+a round: the edge and the cut then come in the same pieces, lying on
+each other, which the clean-up merges. (Without the halves' vertices, a
+cylinder inside a larger one sharing its top kept a triangle with three
+corners on the rim, which folds.)
 
 **Exact bands on quadrics** (`face::exact_bands`). A rational quadratic
 triangle lies on a quadric when its three sides are conics on it whose
@@ -1710,8 +1739,18 @@ now take 20 ms.
   next one with the sign wanted is brought forward if it is at the same
   place (`alternate`: a tie, whose order the positions can't give, as a
   refinement midpoint on the other operand's plane crossed by two of its
-  faces at once). Crossings apart in the wrong order, which would put a
-  vertex off the face it crosses, are `Inconsistent`.
+  faces at once), or the edge between the two grazes both faces'
+  surfaces (within the resolution there and midway, and no more than
+  `MIN_SPLIT` resolutions long: a tangency, where a crossing's place
+  along the edge is as good as unknown: a plate's cap edge tangent to a
+  boss's rim at the boss's own vertex had its in and out crossings a
+  micrometre apart in the wrong order). A crossing in and the next out
+  (or out and in) a grazing stretch apart go to one place, where the
+  edge is nearest both surfaces (either, midway, or an end of the edge
+  within reach), so the clean-up collapses the piece between; left
+  apart they left triangles of zero width at the rim no split mends.
+  Crossings apart in the wrong order, which would put a vertex off the
+  face it crosses, are `Inconsistent`.
 - **Cut edges**: each face pair's arcs (from `pairs`; for flat operands
   its two ends, joined), each along its chain (for two planar patches one
   straight edge), with signs seen from `A`
@@ -1781,10 +1820,17 @@ every round).
 The faces of a round are triangulated in parallel and count their
 steps together (`triangulate::Meter`: a vertex tested against an ear, a
 triangle looked at by the flips and mending, the sides looked at
-bridging a hole), up to what the budget has left (16 steps a unit), past
-which every triangulation stops and the round fails with `TooComplex`;
-what they took is spent after. Whether they get past it depends only on
-the total, not on the order the threads count in.
+bridging a hole, and 64 for each orientation floating point can't tell,
+worked out exactly: some hundred times the work), up to what the budget
+has left (16 steps a unit), past which every triangulation stops and the
+round fails with `TooComplex`; what they took is spent after. Whether
+they get past it depends only on the total, not on the order the threads
+count in. The exact orientations are counted per thread (a face is
+triangulated on one thread, start to end). A face whose vertices lie
+along lines (cuts along straight edges) decides nearly every orientation
+exactly, and ear clipping without proper ears is cubic: one of 105
+vertices took 1.3 s a round, counted as 0.08 s of work before, and a
+single round could have run for minutes before the budget stopped it.
 
 ### Clean-up (`boolean/cleanup.rs`)
 
@@ -1798,7 +1844,15 @@ before the mesh is built, at most 64 rounds:
   turns over. Two triangles the collapse makes the same but facing each
   other both go: a sheet of zero thickness folded onto the surface,
   which flush contacts at saddle vertices leave. A collapse that fails
-  the check is undone.
+  the check is undone. An edge up to four resolutions long with an end
+  inside a plane face (every triangle round it on that face, every edge
+  from it straight) is collapsed onto its other end too, the same way,
+  as long as no triangle moved turns over or gets a closed curved
+  corner: moving such a vertex within the plane leaves the surface as
+  it is (these rounds, and again with the Delaunay flips below). A
+  crossing a tie left a micrometre along a cap edge from where the cut
+  passes (a cap edge tangent to a boss's rim) left a triangle of zero
+  width there whose corner at the rim was closed.
 - **Flip** the longest side of a triangle whose height over it is no more
   than an eighth of the resolution, or no more than four resolutions when
   the triangle across is on the same face (so every triangle stays on its
@@ -1874,17 +1928,25 @@ operands intersected, or subtracted the other way, work.
 
 ### Errors and budget
 
-`KernelError::Boolean(BooleanError)`: `InsideOut` (a curved operand's
-sign from `Solid::volume`, or a winding number out of `0..=1`),
+`KernelError::Boolean(BooleanError)`: `InsideOut` (an operand's volume
+not positive, see "Counting", or a winding number out of `0..=1`),
 `Inconsistent` (the decisions don't fit together: with near ties taken
 as ties, flat operands too can, rarely), `Degenerate` (a face's loops
 couldn't be triangulated, or the triangles don't pair up). `TooComplex`
 past the budget or `MAX_PATCHES`, `Invalid` when the result fails
 `check`. Work: the broad phase's pairs and the rays' hits (counted
 before collecting), one unit per stored primitive and per candidate
-crossing, the square of each edge's crossings (ordering them), a unit
+crossing, and 20 more for each sign or ratio a primitive or a crossing
+worked out exactly (a tie's expansions in powers of the perturbation,
+some ten microseconds: counted per thread by `exact::counted` round each
+primitive, which shares no work out, and spent after each chunk of 1 024;
+a flat torus of 18 432 patches against itself, every primitive a tie,
+ran 16 s before running out, and stops in 1.6 s now), the square of each
+edge's crossings (ordering them), a unit
 per cut face and its triangulation's steps over 16 (the `Meter`, see
-"Triangulating"), the soup's size per clean-up round, the triangles per
+"Triangulating"; an exact orientation 4 units), a unit per operand
+patch and 32 per patch whose volume is integrated for the operands'
+signs, the soup's size per clean-up round, the triangles per
 round of merging, repair's own, and 5 units per patch of the result for
 the check that makes it a solid (about 2.7 µs a patch). With curved patches also each edge–face search a unit per 4
 pieces it looked at, at least 16: the 16 spent before it runs, the rest
@@ -2065,7 +2127,13 @@ builds run one case of each. Unit tests for the step: near ties decided
 as ties (`sign_tied`), crossings at one place put in turn (`alternate`),
 shadows along each other told apart, crossings at an edge's end put at
 it, curves and patches keeping the coordinates their control points
-share, and extrudes' tops at `to` exactly.
+share, and extrudes' tops at `to` exactly. Found hunting bugs, with
+tests: a boss whose rim runs tangent to a cap edge between eight
+symmetric holes, bosses joined flush on drilled plates, a cylinder
+inside a larger one sharing its top, an edge grazing a cylinder found
+crossing twice, operands facing in told without integrating every
+patch, and the exact signs of a triangulation and of the counting
+charged.
 
 Fuzzed without a test (release): the seeded suite's generators at
 larger counts (about 2 000 operations: `related` pairs 14 % refused,
@@ -2126,8 +2194,9 @@ to 72 of its 96 operations and left the others as they were.
   take no certificate as no loop. Flat solids touching do meet.
 - Each refinement round counts both operands again from scratch, and a
   search stops at 1 024 pieces (placing a crossing it didn't find where
-  the edge came closest): pairs a certificate can't settle (two
-  cylinders tangent or crossing at a slant) refine for many rounds, and
+  it found the two meeting, else where they came closest): pairs a
+  certificate can't settle (two cylinders tangent or crossing at a
+  slant) refine for many rounds, and
   parts built in long chains occasionally run out of budget there.
 - **Coplanar faces facing each other, triangulated differently**: a
   folded sheet whose two sides don't share their triangles can't be
@@ -2135,28 +2204,49 @@ to 72 of its 96 operations and left the others as they were.
 - **Flush faces after rounding**: flat solids flush in exact arithmetic
   but turned and moved now mostly work (94 of 96 turned grid boxes'
   operations); a few still fail as `Invalid` or `Inconsistent`.
-- **Holes whose rims share a tangent with a long cap edge**: drilling a
-  second hole of the same size beside the first, in line with it, on a
-  large plate (a 20 × 20 box, holes 2.4 apart) can leave a cap edge from
-  a far corner passing within a micrometre of the new rim: the triangles
-  there are zero-height at a closed corner no flip may open, and the
-  result fails as `Invalid` (2 of 60 steps drilling such a box).
-- **Flush bosses joined over holes** fail now and then. The boss's wall,
-  cut along its rim where the rim is dropped, can get a triangle whose
-  three corners lie on the rim (three arcs of one circle, zero area),
-  which fails the fold check: seen when the drilled plate under the boss
-  came from a slightly different triangulation of its cap (the
-  `chained_results` test's plate with the sliver threshold at 0.01 or
-  0.05). A boss whose rim crosses eight holes of the plate fails as
-  `Inconsistent`: a face's kept edges don't close into loops. One hole or
-  two crossing the rim work. Bugs to find.
+- **Long cap triangles and cuts passing close to their sides**: a cap
+  triangulated once (an extrude's, or a cut face's) keeps long thin
+  triangles from far corners to rims. Drilling a second hole of the same
+  size beside the first, in line with it, on a large plate (a 20 × 20
+  box, holes 2.4 apart) leaves a band a few tenths of a millimetre wide
+  between the new rim and such a triangle's side, 16 mm long: the
+  triangles across it reach from the side's far ends to the rim, and
+  those from either end whose line grazes the rim close a corner there
+  that halving the rim never opens (a fold), or, with the rim split at
+  its point nearest the side, are so thin their hulls come within the
+  resolution (2 of 60 steps drilling such a box fail as `Invalid`). A
+  small box cut at a corner of a plate with 400 holes crosses two long
+  edges from the plate's corner 3 µm apart, with the same result. Mending
+  it needs vertices on the long side, graded along the band (quality
+  refinement of the caps): one vertex under the rim moved the grazing
+  lines elsewhere, and failed more flush bosses and drilled plates than
+  it mended.
+- **Flush bosses on drilled plates**: of 150 random plates with two holes
+  and a boss, each of the four operations, 15, 6, 5 and 13 fail (18, 7,
+  10 and 13 before the fixes below), mostly where the boss is flush
+  with the plate's bottom too or overlaps a hole: tangencies and the
+  long cap triangles above. None came out wrong. Fixed: a boss whose rim
+  runs along a cap edge between symmetric holes, tangent to it at a
+  vertex both have (`Inconsistent`: crossings a micrometre apart in the
+  wrong order, then zero-width triangles at the rim); a boss's wall cut
+  along its flush rim getting a triangle with three corners on the rim
+  (cut vertices inverted into the wall's domain a rounding either side
+  of its side); a cap edge passing through a boss's rim a little inside
+  it taken as not crossing (the search found one crossing of two).
 - Triangles thinner than the resolution across two faces (a cut passing
   within a resolution or two of a vertex) aren't flipped, and fail the
   hull rules.
 - Ear clipping is quadratic to cubic in a face's cut vertices; faces cut
   by thousands of edges run out of budget, now counted as they go.
-- `Input::volume` is flat-only; curved operands' sign comes from
-  `Solid::volume`, which costs about as much as counting.
+- **Failing operations run past two seconds on one thread**: a unit of
+  work in the counting of refinement rounds is about 0.8 µs on one
+  thread (native), so an operation that runs out of budget while
+  refining a tangency takes about 3.3 s; on the web's single worker,
+  slower still. The steps that ran far past what they were charged are
+  counted now (the triangulations' and the counting's exact signs, the
+  operands' volumes), so none runs unbounded; the price is that an
+  operation full of ties runs out sooner (a flat torus of 9 216 patches
+  united with itself, 4.2 s on one thread, is `TooComplex` now).
 - Merging restores only whole nodes of the refinement tree with no finer
   neighbour: pieces next to a cut stay as refined.
 

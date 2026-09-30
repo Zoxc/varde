@@ -32,7 +32,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use glam::DVec2;
 
 use super::BooleanError;
-use super::exact::orient2d_towards;
+use super::exact::{exact_count, orient2d_towards};
 
 /// A vertex of a loop: its id, where it is in the domain, the sides of
 /// the domain triangle it lies on (bit `i` for the side from corner `i`
@@ -87,6 +87,28 @@ impl Vert {
 /// domain moved as [`Vert::inside`] says.
 fn orient(a: &Vert, b: &Vert, c: &Vert) -> i8 {
     orient2d_towards([a, b, c].map(|v| (v.at, v.inside())), CENTER)
+}
+
+thread_local! {
+    /// [`exact_count`] where [`exact_steps`] last looked. A face is
+    /// triangulated on one thread, start to end, so what it counts is its
+    /// own, however the faces are shared out.
+    static SEEN: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// What an orientation worked out exactly counts for in steps: some two
+/// microseconds, where a step is a tenth of that. A face whose vertices
+/// all lie near a line (cuts along one) had its ear clipping decide
+/// almost every orientation exactly, a million of them a round, 1.3 s
+/// counted as 0.08 s of work.
+const EXACT_STEPS: usize = 64;
+
+/// The steps the orientations worked out exactly since the last call
+/// stand for.
+fn exact_steps() -> usize {
+    let now = exact_count();
+    SEEN.with(|seen| now.wrapping_sub(seen.replace(now)))
+        .saturating_mul(EXACT_STEPS)
 }
 
 /// How many vertices a polygon may have for the best ear to be looked for
@@ -226,6 +248,23 @@ pub(super) fn triangulate(
     first_steiner: u32,
     meter: &Meter,
 ) -> Result<Triangulation, BooleanError> {
+    // Only this face's exact orientations are counted from here, and
+    // what they took is counted at the end too.
+    exact_steps();
+    let out = triangulate_counted(loops, bends, first_steiner, meter);
+    if !meter.take(exact_steps()) {
+        return Err(BooleanError::Degenerate);
+    }
+    out
+}
+
+/// [`triangulate`], counting its steps as it goes.
+fn triangulate_counted(
+    loops: Vec<Vec<Vert>>,
+    bends: &Bends,
+    first_steiner: u32,
+    meter: &Meter,
+) -> Result<Triangulation, BooleanError> {
     // A loop of two vertices (two curves between the same two points)
     // has no triangle: its curves are to be split, and until they are it
     // is left out, which the mesh then fails to close over.
@@ -263,7 +302,7 @@ pub(super) fn triangulate(
         return Ok(out);
     }
     for _ in 0..MEND_ROUNDS {
-        if !meter.take(out.tris.len()) {
+        if !meter.take(out.tris.len().saturating_add(exact_steps())) {
             return Err(BooleanError::Degenerate);
         }
         all.sort_by_key(|v| v.id);
@@ -364,7 +403,7 @@ fn triangulate_loops(
     for (outer, holes) in outers.into_iter().zip(owned) {
         // Bridging looks at every side for each vertex tried.
         let size: usize = outer.len() + holes.iter().map(Vec::len).sum::<usize>();
-        if !meter.take(size.saturating_mul(size)) {
+        if !meter.take(size.saturating_mul(size).saturating_add(exact_steps())) {
             return Err(BooleanError::Degenerate);
         }
         let poly = bridge(outer, holes);
@@ -545,7 +584,7 @@ fn improve(
     let mut changed = true;
     while changed && flips > 0 {
         changed = false;
-        if !meter.take(tris.len()) {
+        if !meter.take(tris.len().saturating_add(exact_steps())) {
             return;
         }
         for t in 0..tris.len() {
@@ -669,7 +708,7 @@ fn clip(
                         .min_by(|(a, i), (b, j)| a.level.cmp(&b.level).then(i.cmp(j)))
                 })
         };
-        if !meter.take(tried.get().saturating_mul(n)) {
+        if !meter.take(tried.get().saturating_mul(n).saturating_add(exact_steps())) {
             return Err(BooleanError::Degenerate);
         }
         let Some((_, i)) = best else {
@@ -840,6 +879,35 @@ mod tests {
         for &[a, b, c] in &tris {
             assert!(orient2d(at(a), at(b), at(c)) > 0);
         }
+    }
+
+    #[test]
+    fn orientations_worked_out_exactly_are_counted() {
+        // A band along a line, its vertices on its two sides, as cuts
+        // along a straight edge leave them: nearly every orientation the
+        // ear clipping asks is a tie floating point can't tell, some
+        // hundred times the work of one it can, and each counts for
+        // `EXACT_STEPS`. As many vertices round a circle take a fraction.
+        let n = 40;
+        let low = (0..=n).map(|i| (f64::from(i) / f64::from(n), 0.0));
+        let high = (0..=n).rev().map(|i| (f64::from(i) / f64::from(n), 0.25));
+        let band: Vec<(f64, f64)> = low.chain(high).collect();
+        let round: Vec<(f64, f64)> = (0..band.len())
+            .map(|i| {
+                let a = std::f64::consts::TAU * i as f64 / band.len() as f64;
+                (a.cos(), a.sin())
+            })
+            .collect();
+        let used = |points: &[(f64, f64)]| {
+            let meter = Meter::new(u64::MAX);
+            triangulate(vec![loop_of(points, 0)], &Bends::new(), 100, &meter).unwrap();
+            meter.used()
+        };
+        let (band, round) = (used(&band), used(&round));
+        assert!(
+            band > 100 * EXACT_STEPS as u64 && band > 10 * round,
+            "{band} {round}"
+        );
     }
 
     #[test]

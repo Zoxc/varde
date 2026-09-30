@@ -674,6 +674,40 @@ fn flush_bosses_on_plates() {
 }
 
 #[test]
+fn boss_rim_tangent_to_cap_edges_between_holes() {
+    // A boss standing on a plate whose rim passes between eight holes
+    // placed symmetrically: the plate's cap has an edge along `x = 3`
+    // between two holes' rims, tangent to the rim at the boss's own vertex
+    // `(3, 0)`, which is a vertex of the cap too. The crossings the counting
+    // gives that edge there were placed a micrometre apart in the wrong
+    // order (`Inconsistent`), and once put in and out in turn left
+    // triangles of zero width at the rim (`Invalid`).
+    let tol = Tolerance::DEFAULT;
+    let mut loops = vec![rect(DVec2::splat(-6.0), DVec2::splat(6.0), 0)];
+    let holes = [(1.0, 3.0), (3.0, 1.0), (3.0, -1.0), (1.0, -3.0)];
+    for (k, &(x, y)) in holes.iter().enumerate() {
+        for (sx, sy) in [(1.0, 1.0), (-1.0, -1.0)] {
+            let c = DVec2::new(sx * x, sy * y);
+            loops.push(circle(c, 0.4, 10 + 2 * k as u64, true));
+        }
+    }
+    let plate = extruded(loops, &Frame::XY, 0.0, 1.0, 1, &tol).unwrap();
+    let boss = extruded(
+        vec![circle(DVec2::ZERO, 3.0, 0, false)],
+        &Frame::XY,
+        1.0,
+        2.0,
+        2,
+        &tol,
+    )
+    .unwrap();
+    let joined = boolean(&plate, &boss, Op::Union, &tol, &Budget::DEFAULT).unwrap();
+    joined.mesh().check_faces(&tol).unwrap();
+    let want = plate.volume() + boss.volume();
+    assert!((joined.volume() - want).abs() < 1e-9, "{}", joined.volume());
+}
+
+#[test]
 fn seeded_booleans_are_deterministic() {
     let tol = Tolerance::DEFAULT;
     let mut rng = Rng::new(71);

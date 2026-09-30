@@ -664,8 +664,10 @@ impl Primitives for Curved<'_> {
 
 /// The crossings to record from those `found`, whose signs must add up to
 /// `x`: those inside the edge and the patch, less or plus those nearest
-/// their edges, until they do (see [`fit_count`]), and at `closest` along
-/// the edge for any the search didn't find; as `(sign, t)` in order along
+/// their edges, until they do (see [`fit_count`]); any the search didn't
+/// find go where it found the two meeting but kept no crossing (a tie at
+/// the patch's side or the edge's end, whose sign the count overrules:
+/// nearest the patch), else at `closest`; as `(sign, t)` in order along
 /// the edge.
 fn pick(found: &[solve::EdgeHit], x: i32, closest: f64) -> Vec<(i8, f64)> {
     let (chosen, missing) = fit_count(
@@ -674,10 +676,20 @@ fn pick(found: &[solve::EdgeHit], x: i32, closest: f64) -> Vec<(i8, f64)> {
             .map(|h| (h.x, h.out, h.t.min(1.0 - h.t).min(h.u.min_element()))),
         x,
     );
-    let mut out: Vec<(i8, f64)> = missing
-        .into_iter()
-        .map(|s| (s, closest.clamp(0.0, 1.0)))
-        .collect();
+    // Where the search found the two meeting and the count kept nothing:
+    // the edge touches the patch there. At a tangency, or where the edge
+    // leaves a vertex on the patch's corner, a crossing the count has
+    // there, but not with the sign found, is missed, and `closest` is only
+    // the middle of the smallest pieces the search looked at, which put a
+    // crossing at a vertex a sixteenth of the edge away from it.
+    let spare = found
+        .iter()
+        .zip(&chosen)
+        .filter(|&(_, &c)| !c)
+        .min_by(|a, b| a.0.out.total_cmp(&b.0.out))
+        .map(|(h, _)| h.t);
+    let at = spare.unwrap_or(closest).clamp(0.0, 1.0);
+    let mut out: Vec<(i8, f64)> = missing.into_iter().map(|s| (s, at)).collect();
     for (h, &c) in found.iter().zip(&chosen) {
         if c {
             out.push((h.x, h.t.clamp(0.0, 1.0)));

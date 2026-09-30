@@ -130,7 +130,12 @@ pub(super) fn clean(
         for [u, v] in c.short_edges() {
             // An earlier collapse may have taken the edge already: then no
             // triangle has both ends.
-            if c.collapse(u, v) {
+            if c.collapse(u, v, false) {
+                changed = true;
+            }
+        }
+        for [u, v] in c.plane_edges() {
+            if c.inside_plane(v) && c.collapse(u, v, true) {
                 changed = true;
             }
         }
@@ -154,6 +159,11 @@ pub(super) fn clean(
         let mut changed = false;
         for t in 0..c.soup.tris.len() as u32 {
             if c.alive[t as usize] && c.delaunay(t) {
+                changed = true;
+            }
+        }
+        for [u, v] in c.plane_edges() {
+            if c.inside_plane(v) && c.collapse(u, v, true) {
                 changed = true;
             }
         }
@@ -261,6 +271,52 @@ impl Cleaner<'_> {
         out
     }
 
+    /// Whether `v` lies inside a plane face: every living triangle round
+    /// it is on that one face, and every edge from it straight. Moving it
+    /// within the plane leaves the surface as it is.
+    fn inside_plane(&self, v: u32) -> bool {
+        let around = &self.around[v as usize];
+        let Some(&first) = around.first() else {
+            return false;
+        };
+        let face = self.soup.faces[first as usize];
+        self.planes[face as usize].is_some()
+            && around.iter().all(|&t| self.soup.faces[t as usize] == face)
+            && self.neighbours(v).into_iter().all(|w| !self.curved(v, w))
+    }
+
+    /// The straight edges of living triangles longer than `small` and no
+    /// longer than `thin`, with an end inside a plane face (see
+    /// [`Self::inside_plane`]): as `[u, v]`, `v` that end, to be moved onto
+    /// `u`. Such a vertex, a crossing a tie put a little way along an edge
+    /// from where the cut passes (an edge of a cap tangent to a boss's rim
+    /// crossed in and out a micrometre apart), leaves triangles no split
+    /// mends: one of zero width between its two sides and the rim, whose
+    /// corner at the rim is closed.
+    fn plane_edges(&self) -> Vec<[u32; 2]> {
+        let mut out = Vec::new();
+        for (t, tri) in self.soup.tris.iter().enumerate() {
+            if !self.alive[t] || self.planes[self.soup.faces[t] as usize].is_none() {
+                continue;
+            }
+            for i in 0..3 {
+                let (u, v) = (tri[i], tri[(i + 1) % 3]);
+                let length = self.p(u).distance(self.p(v));
+                if length <= self.small || length > self.thin || self.curved(u, v) {
+                    continue;
+                }
+                for [u, v] in [[u, v], [v, u]] {
+                    if self.inside_plane(v) {
+                        out.push([u, v]);
+                    }
+                }
+            }
+        }
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
     /// The living triangles with both `u` and `v` as corners.
     fn shared(&self, u: u32, v: u32) -> Vec<u32> {
         self.around[u as usize]
@@ -282,13 +338,14 @@ impl Cleaner<'_> {
         out
     }
 
-    /// Collapses the edge `u`–`v` (`u < v`) onto `u`, if allowed: every
-    /// vertex round it keeps one fan (the surface stays a manifold), and
-    /// no proper triangle turns over. Two triangles the collapse makes
-    /// the same but facing each other (a sheet of zero thickness folded
-    /// onto the surface, which flush operands leave at vertices where
-    /// the perturbation can't move every face outwards) both go.
-    fn collapse(&mut self, u: u32, v: u32) -> bool {
+    /// Collapses the edge `u`–`v` onto `u`, if allowed: every vertex round
+    /// it keeps one fan (the surface stays a manifold), and no proper
+    /// triangle turns over (`strict`: none at all, and their corners along
+    /// curves stay open). Two triangles the collapse makes the same but
+    /// facing each other (a sheet of zero thickness folded onto the
+    /// surface, which flush operands leave at vertices where the
+    /// perturbation can't move every face outwards) both go.
+    fn collapse(&mut self, u: u32, v: u32, strict: bool) -> bool {
         let shared = self.shared(u, v);
         if shared.len() != 2 {
             return false;
@@ -376,12 +433,11 @@ impl Cleaner<'_> {
 
         let turned = cancelled.is_none()
             || moved.iter().zip(&saved_tris).any(|(&t, &old)| {
+                let new = self.soup.tris[t as usize];
                 self.alive[t as usize]
-                    && self.height(old).0 > self.small
-                    && self
-                        .normal(old)
-                        .dot(self.normal(self.soup.tris[t as usize]))
-                        <= 0.0
+                    && (strict || self.height(old).0 > self.small)
+                    && (self.normal(old).dot(self.normal(new)) <= 0.0
+                        || (strict && !(self.height(new).0 > self.small && self.open(new))))
             });
         if turned || affected.iter().any(|&w| w != v && !self.one_fan(w)) {
             // Undo.

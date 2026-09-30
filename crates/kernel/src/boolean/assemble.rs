@@ -30,7 +30,7 @@ use super::surface::{Shape, polish};
 use super::triangulate::Meter;
 use super::{Op, Primitives, segment};
 use crate::budget::Work;
-use crate::mesh::{Edge, Face, Node, Surface};
+use crate::mesh::{Edge, Face, MIN_SPLIT, Node, Surface};
 use crate::par::par_map;
 use crate::patch::{Conic3, Point};
 use crate::{KernelError, Tolerance};
@@ -119,6 +119,7 @@ impl Along {
     fn new(
         side: Side,
         input: &Input,
+        other: &Input,
         crossings: &[Crossing],
         params: &[f64],
         first_id: u32,
@@ -149,6 +150,20 @@ impl Along {
             let near = |k1: usize, k2: usize| {
                 conic.eval(params[k1]).distance(conic.eval(params[k2])) <= resolution
             };
+            // Crossings a little further apart along a stretch of the edge
+            // lying on both faces' surfaces (within the resolution): where
+            // the edge grazes them, a tangency, the crossings' places along
+            // it are as good as unknown, and may be in either order.
+            let grazing = |k1: usize, k2: usize| {
+                let (t1, t2) = (params[k1], params[k2]);
+                let points = [t1, (t1 + t2) / 2.0, t2].map(|t| conic.eval(t));
+                points[0].distance(points[2]) <= MIN_SPLIT * resolution
+                    && [k1, k2].iter().all(|&k| {
+                        let shape = Shape::of(other, crossings[k].face);
+                        points.iter().all(|&p| shape.distance(p) <= resolution)
+                    })
+            };
+            let together = |k1: usize, k2: usize| near(k1, k2) || grazing(k1, k2);
             // By insertion, which can't fail however the order behaves:
             // by the crossings' places where they are apart, else as the
             // primitives order them (exactly, for flat operands).
@@ -167,20 +182,59 @@ impl Along {
                     .unwrap_or(here.len());
                 here.insert(at, k);
             }
-            alternate(&mut here, windings[s as usize], |k| crossings[k].x, near);
+            alternate(
+                &mut here,
+                windings[s as usize],
+                |k| crossings[k].x,
+                together,
+            );
             let mut w = windings[s as usize];
             // The parameters follow the order: rounding may have swapped
             // two that are close. Two apart in the wrong order would put a
             // vertex off the face it crosses.
             let mut at = 0.0f64;
             let mut last = None;
-            for &k in &here {
+            // A crossing in and the next out (or out and in) a grazing
+            // stretch apart go to one place: the piece between, within the
+            // resolution of the surface, has no size to speak of, and at
+            // one place the clean-up collapses it. Left apart, a
+            // micrometre, it left triangles along the rim with three
+            // corners that far apart, and one of zero width between the
+            // edge, the rim and the vertex, which no split mends. The
+            // place is where the edge is nearest both surfaces: one of the
+            // two, midway, or an end of the edge within the stretch's
+            // reach (where the edge touches the surface at its vertex).
+            let mut place: Vec<f64> = here.iter().map(|&k| params[k]).collect();
+            let mut j = 0;
+            while j + 1 < here.len() {
+                let (k1, k2) = (here[j], here[j + 1]);
+                if crossings[k1].x != crossings[k2].x && !near(k1, k2) && grazing(k1, k2) {
+                    let (t1, t2) = (params[k1], params[k2]);
+                    let middle = conic.eval((t1 + t2) / 2.0);
+                    let reach = MIN_SPLIT * resolution;
+                    let shapes = [k1, k2].map(|k| Shape::of(other, crossings[k].face));
+                    let off = |t: f64| {
+                        let p = conic.eval(t);
+                        shapes.iter().map(|s| s.distance(p)).fold(0.0, f64::max)
+                    };
+                    let best = [0.0, 1.0, t1, (t1 + t2) / 2.0, t2]
+                        .into_iter()
+                        .filter(|&t| conic.eval(t).distance(middle) <= reach)
+                        .min_by(|&x, &y| off(x).total_cmp(&off(y)))
+                        .unwrap_or((t1 + t2) / 2.0);
+                    (place[j], place[j + 1]) = (best, best);
+                    j += 2;
+                } else {
+                    j += 1;
+                }
+            }
+            for (&k, &param) in here.iter().zip(&place) {
                 kept.push(keep.keeps(side, w));
                 w += i32::from(crossings[k].x);
-                if params[k] < at && last.is_some_and(|l| !near(l, k)) {
+                if param < at && last.is_some_and(|l| !together(l, k)) {
                     return Err(KernelError::Boolean(super::BooleanError::Inconsistent));
                 }
-                at = at.max(params[k]);
+                at = at.max(param);
                 at_of[k] = at;
                 last = Some(k);
                 verts.push((first_id + k as u32, at));
@@ -291,6 +345,7 @@ pub(super) fn assemble(
         Along::new(
             Side::A,
             a,
+            b,
             &counts.x12,
             &params[0],
             first12,
@@ -302,6 +357,7 @@ pub(super) fn assemble(
         Along::new(
             Side::B,
             b,
+            a,
             &counts.x21,
             &params[1],
             first21,
@@ -346,7 +402,8 @@ pub(super) fn assemble(
     // it is a side of, that curve is halved (a cut's by its chain, an
     // operand's edge by a vertex added on it, which both faces beside it
     // get) and the faces are cut again.
-    let mut extras = cutting.flush_extras(&chain_jobs, &chains);
+    let mut extras = [BTreeMap::new(), BTreeMap::new()];
+    cutting.flush_extras(&chain_jobs, &chains, 0..arcs.len(), &mut extras);
     let mut round = 0;
     let last = loop {
         let cut = cutting.round(&extras, &chains, work)?;
@@ -387,6 +444,14 @@ pub(super) fn assemble(
         for ((arc, _), chain) in wanted.iter().zip(halved) {
             chains[*arc] = chain;
         }
+        // A flush rim's edge gets the halved chains' new vertices too, so
+        // the two keep coming in the same pieces.
+        cutting.flush_extras(
+            &chain_jobs,
+            &chains,
+            wanted.iter().map(|(arc, _)| *arc),
+            &mut extras,
+        );
     };
     cutting.finish(last, refinement, work)
 }
@@ -514,10 +579,16 @@ impl Cutting<'_> {
     /// and the cut come in the same pieces, which lie on each other and
     /// which the clean-up merges. Halving the pieces' curves as the rounds
     /// do would never make the two meet.
-    fn flush_extras(&self, jobs: &[chain::Job], chains: &[Chain]) -> [BTreeMap<u32, Vec<f64>>; 2] {
+    fn flush_extras(
+        &self,
+        jobs: &[chain::Job],
+        chains: &[Chain],
+        which: impl Iterator<Item = usize>,
+        extras: &mut [BTreeMap<u32, Vec<f64>>; 2],
+    ) {
         let resolution = self.tol.resolution();
-        let mut extras: [BTreeMap<u32, Vec<f64>>; 2] = [BTreeMap::new(), BTreeMap::new()];
-        for ((arc, job), chain) in self.arcs.iter().zip(jobs).zip(chains) {
+        for i in which {
+            let (arc, job, chain) = (&self.arcs[i], &jobs[i], &chains[i]);
             let (plane, k) = match job.shapes {
                 [Shape::Plane { n, d }, Shape::Quadric(_)] => ((n, d), 1),
                 [Shape::Quadric(_), Shape::Plane { n, d }] => ((n, d), 0),
@@ -561,7 +632,6 @@ impl Cutting<'_> {
             list.sort_by(f64::total_cmp);
             list.dedup();
         }
-        extras
     }
 
     /// Where the crossing vertex `id` is in triangle `t` of `side`

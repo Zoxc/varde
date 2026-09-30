@@ -575,6 +575,145 @@ fn chained_results() {
 }
 
 #[test]
+fn flush_bosses_joined_on_drilled_plates() {
+    // A plate drilled twice, then a boss standing on it joined: the boss's
+    // wall is cut along its rim, flush with the plate's cap, and the cut's
+    // curves halved in rounds lie on the rim. A rim that didn't get the
+    // halves' vertices kept a band of zero width with a triangle whose
+    // three corners lay on it (three arcs of one circle), and a cut
+    // inverted into the wall's domain a rounding inside its side or not
+    // was triangulated as a fan from the corner across it; both fold.
+    // These failed so before (as did one in ten such random cases).
+    let slab = cube([-3.0, -2.0, 0.0], [6.0, 4.0, 1.0]);
+    let drill = |x: f64, y: f64, r: f64| cylinder([x, y, -1.0], r, 4.0);
+    let cases = [
+        [(-1.55, 0.6, 0.3), (0.65, -0.75, 0.4), (0.95, 0.0, 0.65)],
+        [(-1.55, -0.15, 0.25), (0.5, 0.05, 0.5), (-0.05, -0.35, 0.85)],
+        [(-1.5, -0.65, 0.55), (2.15, -0.1, 0.65), (0.2, 0.4, 0.3)],
+        [(-0.8, 0.45, 0.4), (2.15, 0.2, 0.55), (0.5, -0.45, 0.5)],
+        [(-2.0, -0.05, 0.3), (0.8, 0.65, 0.5), (-0.2, 0.3, 0.3)],
+    ];
+    for [(x1, y1, r1), (x2, y2, r2), (bx, by, br)] in cases {
+        let plate = run(&slab, &drill(x1, y1, r1), Op::Difference);
+        let plate = run(&plate, &drill(x2, y2, r2), Op::Difference);
+        let boss = cylinder([bx, by, 1.0], br, 1.0);
+        let joined = run(&plate, &boss, Op::Union);
+        // Where the boss covers a hole, its cap and the hole's wall meet
+        // flush along arcs of both rims, some of it fitted.
+        let want = 24.0 - PI * (r1 * r1 + r2 * r2) + PI * br * br;
+        assert!(
+            (joined.volume() - want).abs() < 1e-6,
+            "boss at ({bx}, {by}): {} not {want}",
+            joined.volume()
+        );
+    }
+}
+
+/// `solid` with every triangle turned over, its edges' curves kept.
+fn inverted(solid: &Solid) -> Solid {
+    let mesh = solid.mesh();
+    let mut builder = crate::mesh::MeshBuilder::new();
+    for &p in mesh.verts() {
+        builder.vert(p);
+    }
+    for &face in mesh.faces() {
+        builder.face(face);
+    }
+    for (t, tri) in mesh.tris().iter().enumerate() {
+        let [a, b, c] = tri.halfedges.map(|h| h.start);
+        let patch = mesh.patch(t);
+        for (i, (u, v)) in [(a, b), (b, c), (c, a)].into_iter().enumerate() {
+            builder.edge(v, u, patch.c[i], patch.w[i]);
+        }
+        builder.tri([a, c, b], tri.face);
+    }
+    Solid::new(builder.build().unwrap(), &TOL).unwrap()
+}
+
+#[test]
+fn curved_operands_facing_in_are_told_cheaply() {
+    // Whether an operand faces out: its corner triangles' volume, less
+    // what the patches that could move it most take, integrated one by
+    // one only until the rest can't change the sign. The same answer as
+    // the whole integral, turned over too.
+    let upright = cylinder([0.0, 0.0, -2.0], 1.0, 4.0);
+    let across = cylinder_x(0.1, 0.2, 0.7, -2.0, 2.0);
+    let crossing = run(&upright, &across, Op::Union);
+    let drilled = run(
+        &plate(),
+        &cylinder([-1.5, -0.5, -1.0], 0.4, 3.0),
+        Op::Difference,
+    );
+    for (name, solid) in [
+        ("cylinder", &upright),
+        ("crossing", &crossing),
+        ("drilled", &drilled),
+    ] {
+        for (turned, solid) in [(false, solid.clone()), (true, inverted(solid))] {
+            let input = Input::new(solid.mesh(), &TOL);
+            let mut work = crate::budget::Work::new(&Budget::DEFAULT);
+            let out = input.faces_out(1, &mut work).unwrap();
+            assert_eq!(out, solid.volume() > 0.0, "{name}, turned {turned}");
+            assert_eq!(out, !turned, "{name}");
+            // One unit a patch for the pass, one more for each patch
+            // integrated: the crossing cylinders' small fitted bands
+            // mostly aren't.
+            let patches = solid.mesh().tris().len() as u64;
+            let integrated = Budget::DEFAULT.work() - work.left() - patches;
+            if name == "crossing" {
+                assert!(2 * integrated < patches, "{integrated} of {patches}");
+            }
+        }
+    }
+    assert_eq!(
+        boolean(
+            &inverted(&upright),
+            &across,
+            Op::Union,
+            &TOL,
+            &Budget::DEFAULT
+        ),
+        Err(KernelError::Boolean(BooleanError::InsideOut))
+    );
+}
+
+#[test]
+fn flush_rims_take_the_halved_cuts_vertices() {
+    // A cylinder inside a larger one, sharing its top's plane (off
+    // centre, on a sketch plane): the cut of the larger's top along the
+    // smaller's flush rim is halved in rounds, and the rim, whose pieces
+    // the cut lies on, takes the halves' vertices too. Without them the
+    // band of zero width between the two kept a triangle with three
+    // corners on the rim, which folds. The union is the larger.
+    let frame = Frame {
+        origin: DVec3::new(0.75, -0.25, 0.0),
+        x: DVec3::Y,
+        y: DVec3::Z,
+    };
+    let a = extruded_on(
+        vec![circle(DVec2::new(0.25, -0.25), 0.5, 0, false)],
+        frame,
+        -0.25,
+        0.5,
+        1,
+    );
+    let b = extruded_on(
+        vec![circle(DVec2::new(0.0, -0.5), 1.0, 0, false)],
+        frame,
+        -1.0,
+        0.5,
+        2,
+    );
+    let union = run(&a, &b, Op::Union);
+    assert!(
+        (union.volume() - b.volume()).abs() < 1e-9,
+        "{} {}",
+        union.volume(),
+        b.volume()
+    );
+}
+
+#[test]
 fn over_refined_patches_merge_back() {
     // The ball just inside the slab: the pairs near its top were refined
     // (the slab's face too) to certify they hold no loop, and nothing is

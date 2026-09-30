@@ -41,6 +41,12 @@ const RESIDUAL: f64 = 1e-9;
 /// solution Newton finds may be and still count as the piece's.
 const PIECE_SLACK: f64 = 1e-9;
 
+/// Once Newton's method finds a crossing in a piece, the rest of the
+/// edge's piece either side of it is searched again, but for this share
+/// of it round the crossing: another crossing that near is a tangency
+/// the counting's ties decide.
+const AROUND: f64 = 1e-3;
+
 /// A point of a patch whose shadow along `UP` is a vertex's: where it is
 /// in the patch (`u`, barycentric, which may be a little outside the
 /// triangle), how far above the vertex it is, which way the patch faces
@@ -349,6 +355,19 @@ impl CrossSearch<'_> {
                 && in_piece(d, u)
             {
                 self.found.push((tt, u));
+                // The rest of the edge's piece, either side of it, may
+                // cross the patch's piece again: an edge running through
+                // a wall a little inside its rim goes in and out within
+                // one piece, and the second crossing was never looked for.
+                let gap = AROUND * (t[1] - t[0]);
+                if !deep {
+                    if tt - gap > t[0] {
+                        self.visit([t[0], tt - gap], d, depth + 1);
+                    }
+                    if tt + gap < t[1] {
+                        self.visit([tt + gap, t[1]], d, depth + 1);
+                    }
+                }
                 return;
             }
             if deep {

@@ -4,9 +4,10 @@
 
 use glam::DVec3;
 
-use crate::Tolerance;
+use crate::budget::Work;
 use crate::mesh::{Mesh, straight};
 use crate::patch::{Bounds3, Conic3, Patch, smallest_cone};
+use crate::{KernelError, Tolerance};
 
 /// The most different triangle normals round a vertex among which the
 /// smallest cone is looked for (it takes the fourth power of their
@@ -170,6 +171,74 @@ impl<'a> Input<'a> {
                 a.dot(b.cross(c)) / 6.0
             })
             .sum()
+    }
+
+    /// Whether the solid faces out: its volume is positive. For flat
+    /// patches, the corner triangles' ([`Self::volume`]). With curved ones,
+    /// the same, less the volume between each patch and its triangle,
+    /// integrated ([`crate::solid::patch_volume`], `per_patch` work each)
+    /// for the patches that could move it most until what the rest could
+    /// no longer changes the sign: each patch lies in its control points'
+    /// hull (its weights are positive), as do its corner triangle and the
+    /// lunes between its curved edges and their chords (which the two
+    /// patches beside an edge share, turned opposite ways), so the volume
+    /// between the two is no more than the hull's, itself no more than
+    /// twice the control points' distance from the triangle's plane times
+    /// the square of their spread (twice that again, for safety). The
+    /// whole solid's integral took 0.8 s on a body of 47 000 patches,
+    /// before any work was counted; most of them are small and flat
+    /// enough to leave out.
+    pub(super) fn faces_out(&self, per_patch: usize, work: &mut Work) -> Result<bool, KernelError> {
+        if !self.curved {
+            return Ok(self.volume() > 0.0);
+        }
+        work.spend(self.patches.len())?;
+        let Some(&o) = self.mesh.verts().first() else {
+            return Ok(false);
+        };
+        let tet = |t: usize| {
+            let [a, b, c] = self.corners(t as u32).map(|p| p - o);
+            a.dot(b.cross(c)) / 6.0
+        };
+        let bound = |patch: &Patch| {
+            let [p0, p1, p2] = patch.p;
+            let Some(n) = (p1 - p0).cross(p2 - p0).try_normalize() else {
+                return f64::INFINITY;
+            };
+            let off = patch
+                .c
+                .iter()
+                .map(|&c| (c - p0).dot(n).abs())
+                .fold(0.0, f64::max);
+            let points = [p0, p1, p2, patch.c[0], patch.c[1], patch.c[2]];
+            let spread = points
+                .iter()
+                .flat_map(|&x| points.iter().map(move |&y| x.distance_squared(y)))
+                .fold(0.0, f64::max);
+            4.0 * off * spread
+        };
+        let mut v: f64 = (0..self.tris.len()).map(tet).sum();
+        let mut order: Vec<(f64, usize)> = self
+            .patches
+            .iter()
+            .enumerate()
+            .map(|(t, patch)| (bound(patch), t))
+            .filter(|&(b, _)| b > 0.0)
+            .collect();
+        order.sort_by(|x, y| y.0.total_cmp(&x.0).then(x.1.cmp(&y.1)));
+        // What the patches from each on could still move it by.
+        let mut rest = vec![0.0f64; order.len() + 1];
+        for k in (0..order.len()).rev() {
+            rest[k] = rest[k + 1] + order[k].0;
+        }
+        for (k, &(_, t)) in order.iter().enumerate() {
+            if v.abs() > rest[k] {
+                break;
+            }
+            work.spend(per_patch)?;
+            v += crate::solid::patch_volume(&self.patches[t], o) - tet(t);
+        }
+        Ok(v > 0.0)
     }
 
     /// Each vertex's direction out of the solid: one that leaves by

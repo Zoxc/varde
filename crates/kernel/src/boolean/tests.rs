@@ -542,6 +542,26 @@ fn tori_keep_the_volume_identities() {
 }
 
 #[test]
+fn signs_worked_out_exactly_are_counted() {
+    // A flat torus against itself: every primitive is a tie, worked out
+    // exactly with the perturbation, some ten microseconds each. The
+    // counting charges them, far more than for the same torus moved off
+    // itself, where floating point tells every sign.
+    let torus = crate::mesh::tests::torus(24, 12, 3.0, 1.0);
+    let a = rebuilt(&torus, |p| p, false);
+    let moved = rebuilt(&torus, |p| p + DVec3::new(0.31, 0.17, 0.23), false);
+    let spent = |b: &Solid| {
+        let mut work = Work::new(&Budget::DEFAULT);
+        let (ia, ib) = inputs(&a, b, &TOL, &mut work).unwrap();
+        let prims = flat::Flat::tied(&ia, &ib, true, tie(&TOL));
+        count::count(&ia, &ib, &prims, &TOL, &mut work).unwrap();
+        Budget::DEFAULT.work() - work.left()
+    };
+    let (itself, off) = (spent(&a), spent(&moved));
+    assert!(itself > 5 * off, "{itself} {off}");
+}
+
+#[test]
 fn unused_faces_are_dropped() {
     // A box less one through it: its two end faces go, and a chain of
     // results carries only faces it uses.
@@ -841,10 +861,10 @@ fn crossings_are_where_the_perturbed_edges_cross() {
     // where rounding in the plane's normal does.
     for (a, b, _) in shared_faces(24) {
         for op in [Op::Union, Op::Difference] {
-            let (ia, ib) = inputs(&a, &b, &TOL).unwrap();
+            let mut work = Work::new(&Budget::DEFAULT);
+            let (ia, ib) = inputs(&a, &b, &TOL, &mut work).unwrap();
             let grow = op == Op::Union;
             let prims = flat::Flat::tied(&ia, &ib, grow, 0.0);
-            let mut work = Work::new(&Budget::DEFAULT);
             let counts = count::count(&ia, &ib, &prims, &TOL, &mut work).unwrap();
             let s = if grow { 1.0 } else { -1.0 };
             let normals = ia.vertex_normals();

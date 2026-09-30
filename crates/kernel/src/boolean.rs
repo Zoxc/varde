@@ -222,7 +222,7 @@ fn unchecked(
     tol: &Tolerance,
     work: &mut Work,
 ) -> Result<Mesh, KernelError> {
-    let (ia, ib) = inputs(a, b, tol)?;
+    let (ia, ib) = inputs(a, b, tol, work)?;
     let grow = op == Op::Union;
     let (mut soup, faces) = if ia.curved || ib.curved {
         // Counted and decided pair by pair, the operands refined where a
@@ -277,8 +277,8 @@ pub fn touches(
     if a.is_empty() || b.is_empty() {
         return Ok(false);
     }
-    let (ia, ib) = inputs(a, b, tol)?;
     let mut work = Work::new(budget);
+    let (ia, ib) = inputs(a, b, tol, &mut work)?;
     if ia.curved || ib.curved {
         let refined = pairs::refined(a.mesh(), b.mesh(), true, tol, &mut work)?;
         return Ok(refined.counts.meet());
@@ -289,28 +289,24 @@ pub fn touches(
 }
 
 /// The operands' tables, once both are known to face out: a solid's
-/// volume must be positive (the corner triangles' for a flat one, which
-/// is exact, else the solid's own).
+/// volume must be positive (see [`Input::faces_out`]).
 fn inputs<'a>(
     a: &'a Solid,
     b: &'a Solid,
     tol: &Tolerance,
+    work: &mut Work,
 ) -> Result<(Input<'a>, Input<'a>), KernelError> {
     let ia = Input::new(a.mesh(), tol);
     let ib = Input::new(b.mesh(), tol);
-    let out = |solid: &Solid, input: &Input| {
-        let volume = if input.curved {
-            solid.volume()
-        } else {
-            input.volume()
-        };
-        volume > 0.0
-    };
-    if !out(a, &ia) || !out(b, &ib) {
+    if !ia.faces_out(VOLUME_WORK, work)? || !ib.faces_out(VOLUME_WORK, work)? {
         return Err(KernelError::Boolean(BooleanError::InsideOut));
     }
     Ok((ia, ib))
 }
+
+/// The work of integrating a patch's share of the volume: about 17 µs a
+/// patch on one thread.
+const VOLUME_WORK: usize = 32;
 
 /// The mesh of the cleaned triangles: the vertices and faces no triangle
 /// uses dropped (so chained booleans don't pile up faces long gone), the

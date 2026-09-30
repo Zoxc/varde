@@ -105,15 +105,7 @@ impl Solid {
             return 0.0;
         };
         let o = (bounds.min + bounds.max) * 0.5;
-        self.sum(|patch| {
-            triangle_rule()
-                .map(|(u, w)| {
-                    let [p, pu, pv] = patch.eval_derivs(u);
-                    w * (p - o).dot(pu.cross(pv))
-                })
-                .sum::<f64>()
-                / 3.0
-        })
+        self.sum(|patch| flux(patch, o))
     }
 
     /// Its surface area: the integral of `|P_u × P_v|` over each patch's
@@ -132,25 +124,8 @@ impl Solid {
         })
     }
 
-    /// `f` over every patch, summed in patch order. A patch with a weight
-    /// far from 1, whose points crowd towards some corner or edge where
-    /// the rule can't follow them, is split first ([`Patch::split4`], up
-    /// to five times) until its pieces' weights are near 1, and `f` summed
-    /// over them.
+    /// `f` over every patch, summed in patch order (see [`pieces`]).
     fn sum(&self, f: impl Fn(&Patch) -> f64 + Sync + Send) -> f64 {
-        /// The weights within which a patch is integrated as it is: a
-        /// quarter circle's `√½` is, to rounding.
-        const WELL_SHAPED: std::ops::RangeInclusive<f64> = 0.7..=1.4;
-        fn pieces(patch: &Patch, depth: u32, f: &impl Fn(&Patch) -> f64) -> f64 {
-            let shaped = patch.w.iter().all(|w| WELL_SHAPED.contains(w));
-            if depth < 5
-                && !shaped
-                && let Ok(children) = patch.split4()
-            {
-                return children.iter().map(|c| pieces(c, depth + 1, f)).sum();
-            }
-            f(patch)
-        }
         let tris: Vec<usize> = (0..self.mesh.tris().len()).collect();
         par_map(&tris, |&t| pieces(&self.mesh.patch(t), 0, &f))
             .into_iter()
@@ -165,6 +140,42 @@ impl Solid {
     pub fn tessellate(&self, display: &Display) -> Result<RenderMesh, MeshError> {
         tessellate(&self.mesh, display)
     }
+}
+
+/// `f` over `patch`. A patch with a weight far from 1, whose points
+/// crowd towards some corner or edge where the rule can't follow them, is
+/// split first ([`Patch::split4`], up to five times) until its pieces'
+/// weights are near 1, and `f` summed over them.
+fn pieces(patch: &Patch, depth: u32, f: &impl Fn(&Patch) -> f64) -> f64 {
+    /// The weights within which a patch is integrated as it is: a
+    /// quarter circle's `√½` is, to rounding.
+    const WELL_SHAPED: std::ops::RangeInclusive<f64> = 0.7..=1.4;
+    let shaped = patch.w.iter().all(|w| WELL_SHAPED.contains(w));
+    if depth < 5
+        && !shaped
+        && let Ok(children) = patch.split4()
+    {
+        return children.iter().map(|c| pieces(c, depth + 1, f)).sum();
+    }
+    f(patch)
+}
+
+/// A third of the integral of `(P − o)·n` over `patch`: its share of the
+/// volume a closed surface of patches encloses (see [`Solid::volume`]).
+fn flux(patch: &Patch, o: glam::DVec3) -> f64 {
+    triangle_rule()
+        .map(|(u, w)| {
+            let [p, pu, pv] = patch.eval_derivs(u);
+            w * (p - o).dot(pu.cross(pv))
+        })
+        .sum::<f64>()
+        / 3.0
+}
+
+/// [`flux`] for a patch, split where its weights ask as
+/// [`Solid::volume`] does.
+pub(crate) fn patch_volume(patch: &Patch, o: glam::DVec3) -> f64 {
+    pieces(patch, 0, &|piece| flux(piece, o))
 }
 
 #[cfg(test)]

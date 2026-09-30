@@ -2,6 +2,7 @@
 //! stored by pair, the crossings of edges with faces by the identity, and
 //! winding numbers from the layer counts.
 
+use super::exact::counted;
 use super::input::{Input, Side};
 use super::{BooleanError, Primitives, UP, parts};
 use crate::budget::Work;
@@ -54,6 +55,14 @@ impl Counts {
 /// How many crossing searches run between spending their work.
 const SEARCH_CHUNK: usize = 1024;
 
+/// The work of a sign worked out exactly (see [`counted`]): a tied
+/// predicate's expansions in powers of the perturbation take up to some
+/// ten microseconds, where a unit is about half of one. A flat torus of
+/// 9 216 patches against itself, every primitive a tie, took 4.2 s on one
+/// thread for 1.4 million units, and one of 18 432 ran 16 s before the
+/// budget stopped it.
+const EXACT_WORK: usize = 20;
+
 /// Values stored by the pair they were worked out for, sorted by it.
 struct Table<V> {
     keys: Vec<[u32; 2]>,
@@ -62,7 +71,10 @@ struct Table<V> {
 
 impl<V: Copy + Send> Table<V> {
     /// `f` of every key of `keys` (sorted and deduplicated here), through
-    /// `par_map`, one unit of work each.
+    /// `par_map`, one unit of work each before, and [`EXACT_WORK`] for
+    /// each sign `f` worked out exactly after each chunk of
+    /// [`SEARCH_CHUNK`] keys, so a table of ties stops within a chunk of
+    /// the budget.
     fn new(
         mut keys: Vec<[u32; 2]>,
         f: impl Fn(u32, u32) -> V + Sync + Send,
@@ -71,7 +83,13 @@ impl<V: Copy + Send> Table<V> {
         keys.sort_unstable();
         keys.dedup();
         work.spend(keys.len())?;
-        let values = par_map(&keys, |&[i, j]| f(i, j));
+        let mut values = Vec::with_capacity(keys.len());
+        for chunk in keys.chunks(SEARCH_CHUNK) {
+            let found = par_map(chunk, |&[i, j]| counted(|| f(i, j)));
+            let exact: usize = found.iter().map(|x| x.1).fold(0, usize::saturating_add);
+            work.spend(exact.saturating_mul(EXACT_WORK))?;
+            values.extend(found.into_iter().map(|x| x.0));
+        }
         Ok(Table { keys, values })
     }
 
@@ -274,11 +292,15 @@ fn crossings(
     let mut found = Vec::with_capacity(asked.len());
     for chunk in asked.chunks(SEARCH_CHUNK) {
         work.spend(chunk.len().saturating_mul(least))?;
-        let here = par_map(chunk, |&([e, f], x)| prims.crossings(side, e, f, x));
+        let here = par_map(chunk, |&([e, f], x)| {
+            counted(|| prims.crossings(side, e, f, x))
+        });
         let mut more = 0usize;
-        for result in here {
+        for (result, exact) in here {
             let (crossings, cost) = result.map_err(KernelError::Boolean)?;
-            more = more.saturating_add(cost.saturating_sub(least));
+            more = more
+                .saturating_add(cost.saturating_sub(least))
+                .saturating_add(exact.saturating_mul(EXACT_WORK));
             found.push(crossings);
         }
         work.spend(more)?;
