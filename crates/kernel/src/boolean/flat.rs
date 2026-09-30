@@ -150,13 +150,12 @@ impl Primitives for Flat<'_> {
     fn crossing(&self, side: Side, e: u32, f: u32) -> f64 {
         let [x0, x1] = self.edge(side, e);
         let t = self.tri(side.other(), f);
-        let num = exact::approx(&Reach { x0, t });
-        let den = exact::approx(&Across { x0, x1, t });
-        den.iter()
-            .position(|&d| d != 0.0)
-            .map(|k| num.get(k).copied().unwrap_or(0.0) / den[k])
-            .filter(|t| t.is_finite())
-            .map_or(0.5, |t| t.clamp(0.0, 1.0))
+        let at = exact::ratio(&Reach { x0, t }, &Across { x0, x1, t });
+        if at.is_finite() {
+            at.clamp(0.0, 1.0)
+        } else {
+            0.5
+        }
     }
 }
 

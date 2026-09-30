@@ -268,7 +268,7 @@ pub(super) fn fold_direction(dirs: &[DVec3], hint: DVec3) -> Option<DVec3> {
 /// every candidate is tried: each direction, the bisector of each pair,
 /// and the point on the sphere equally far from each triple. Ties keep
 /// the first found, so the answer depends only on the input order.
-pub(super) fn smallest_cone(dirs: &[DVec3]) -> (DVec3, f64) {
+pub(crate) fn smallest_cone(dirs: &[DVec3]) -> (DVec3, f64) {
     let least = |d: DVec3| dirs.iter().map(|c| c.dot(d)).fold(f64::INFINITY, f64::min);
     let mut best = (dirs[0], least(dirs[0]));
     let mut try_axis = |d: DVec3| {

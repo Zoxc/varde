@@ -592,3 +592,355 @@ fn deterministic() {
     let d = cube([0.5, -0.7, -2.0], [4.0, 1.3, 4.0]);
     assert_deterministic(|| run(&t, &d, Op::Difference).map(Solid::into_mesh)).unwrap();
 }
+
+/// A box on the half grid: corners at `−0.5 + 0.5·min` and sizes
+/// `0.5·size`, with its cells in a grid of 8³.
+fn grid_box(min: [i32; 3], size: [i32; 3]) -> (Solid, Cells) {
+    let at = |i: i32| -0.5 + 0.5 * f64::from(i);
+    let lo = DVec3::new(at(min[0]), at(min[1]), at(min[2]));
+    let solid = cube(lo.to_array(), size.map(|s| 0.5 * f64::from(s)));
+    let mut cells = [[[false; 8]; 8]; 8];
+    for (x, plane) in cells.iter_mut().enumerate() {
+        for (y, row) in plane.iter_mut().enumerate() {
+            for (z, cell) in row.iter_mut().enumerate() {
+                let inside = |i: usize, k: usize| {
+                    let i = i as i32;
+                    i >= min[k] && i < min[k] + size[k]
+                };
+                *cell = inside(x, 0) && inside(y, 1) && inside(z, 2);
+            }
+        }
+    }
+    (solid, cells)
+}
+
+/// A random [`grid_box`] inside the grid.
+fn random_grid_box(rng: &mut crate::test_rng::Rng) -> (Solid, Cells) {
+    let min: [i32; 3] = std::array::from_fn(|_| (rng.unit() * 6.0) as i32);
+    let size = min.map(|m| (1 + (rng.unit() * f64::from(7 - m)) as i32).min(8 - m));
+    grid_box(min, size)
+}
+
+/// Cells of the half grid, of 0.5 each way.
+type Cells = [[[bool; 8]; 8]; 8];
+
+fn combine(a: &Cells, b: &Cells, op: Op) -> Cells {
+    let mut out = *a;
+    for (x, plane) in out.iter_mut().enumerate() {
+        for (y, row) in plane.iter_mut().enumerate() {
+            for (z, cell) in row.iter_mut().enumerate() {
+                let q = b[x][y][z];
+                *cell = match op {
+                    Op::Union => *cell || q,
+                    Op::Intersection => *cell && q,
+                    Op::Difference => *cell && !q,
+                };
+            }
+        }
+    }
+    out
+}
+
+fn cells_volume(c: &Cells) -> f64 {
+    c.iter().flatten().flatten().filter(|&&c| c).count() as f64 / 8.0
+}
+
+/// Whether the cells make a manifold: round every grid vertex, the full
+/// cells and the empty ones of its eight are each joined through faces.
+fn cells_manifold(c: &Cells) -> bool {
+    let cell = |x: i32, y: i32, z: i32| {
+        let ok = |i: i32| (0..8).contains(&i);
+        ok(x) && ok(y) && ok(z) && c[x as usize][y as usize][z as usize]
+    };
+    for x in 0..=8 {
+        for y in 0..=8 {
+            for z in 0..=8 {
+                let full: [bool; 8] = std::array::from_fn(|i| {
+                    cell(
+                        x - 1 + (i & 1) as i32,
+                        y - 1 + (i >> 1 & 1) as i32,
+                        z - 1 + (i >> 2) as i32,
+                    )
+                });
+                for want in [true, false] {
+                    let Some(first) = (0..8).find(|&i| full[i] == want) else {
+                        continue;
+                    };
+                    let mut seen = vec![first];
+                    let mut k = 0;
+                    while k < seen.len() {
+                        for bit in 0..3 {
+                            let d = seen[k] ^ (1 << bit);
+                            if full[d] == want && !seen.contains(&d) {
+                                seen.push(d);
+                            }
+                        }
+                        k += 1;
+                    }
+                    if seen.len() != full.iter().filter(|&&f| f == want).count() {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+    true
+}
+
+/// Runs `a op b` against the cells it should fill: a manifold result
+/// must come out with their volume, and one that isn't may only fail
+/// as invalid.
+fn against_cells(name: &str, a: &Solid, b: &Solid, op: Op, want: &Cells) -> Option<Solid> {
+    let volume = cells_volume(want);
+    match run(a, b, op) {
+        Ok(s) => {
+            assert!(
+                (s.volume() - volume).abs() < 1e-9,
+                "{name} {op:?}: volume {} not {volume}",
+                s.volume()
+            );
+            Some(s)
+        }
+        Err(KernelError::Invalid(_)) if !cells_manifold(want) => None,
+        Err(e) => panic!("{name} {op:?}: {e}"),
+    }
+}
+
+#[test]
+fn grid_boxes_flush_and_touching() {
+    // A face touching the domain side of a cut face (a notch at a face's
+    // edge), and a crossing landing a rounding past a cut face's side.
+    for (a, b) in [
+        (([2, 2, 1], [4, 5, 6]), ([1, 5, 4], [1, 2, 1])),
+        (([2, 1, 5], [1, 5, 2]), ([0, 2, 1], [3, 5, 5])),
+    ] {
+        let ((sa, ca), (sb, cb)) = (grid_box(a.0, a.1), grid_box(b.0, b.1));
+        for op in [Op::Union, Op::Intersection, Op::Difference] {
+            against_cells("pair", &sa, &sb, op, &combine(&ca, &cb, op));
+            against_cells("pair", &sb, &sa, op, &combine(&cb, &ca, op));
+        }
+    }
+    // Random boxes on the half grid: flush faces, shared edges and
+    // corners everywhere.
+    let mut rng = crate::test_rng::Rng::new(1);
+    for i in 0..40 {
+        let ((sa, ca), (sb, cb)) = (random_grid_box(&mut rng), random_grid_box(&mut rng));
+        for op in [Op::Union, Op::Intersection, Op::Difference] {
+            against_cells(&format!("{i}"), &sa, &sb, op, &combine(&ca, &cb, op));
+        }
+    }
+}
+
+#[test]
+fn grid_boxes_chained() {
+    // Results fed on: crossings on faces square to an axis stay exactly
+    // on them, and a vertex where faces facing opposite ways meet (so the
+    // perturbation can't move every face outwards) leaves a folded sheet
+    // the clean-up takes out.
+    let steps = [
+        (([2, 5, 3], [5, 2, 2]), Op::Union),
+        (([0, 4, 0], [2, 1, 7]), Op::Union),
+        (([5, 2, 4], [1, 3, 3]), Op::Union),
+        (([1, 5, 2], [5, 1, 3]), Op::Intersection),
+    ];
+    let (mut s, mut c) = grid_box([1, 1, 1], [4, 4, 4]);
+    for (i, ((min, size), op)) in steps.into_iter().enumerate() {
+        let (b, cb) = grid_box(min, size);
+        c = combine(&c, &cb, op);
+        s = against_cells(&format!("step {i}"), &s, &b, op, &c).expect("a manifold");
+    }
+    let mut rng = crate::test_rng::Rng::new(2);
+    let ops = [Op::Union, Op::Intersection, Op::Difference];
+    for i in 0..12 {
+        let (mut s, mut c) = random_grid_box(&mut rng);
+        for step in 0..5 {
+            let (b, cb) = random_grid_box(&mut rng);
+            let op = ops[(rng.unit() * 3.0) as usize];
+            let want = combine(&c, &cb, op);
+            if let Some(r) = against_cells(&format!("{i}/{step}"), &s, &b, op, &want) {
+                (s, c) = (r, want);
+            }
+        }
+    }
+}
+
+/// The tetrahedron on four points, facing out.
+fn tetrahedron(p: [DVec3; 4]) -> Solid {
+    let n = (p[1] - p[0]).cross(p[2] - p[0]);
+    let tris = if n.dot(p[3] - p[0]) < 0.0 {
+        [[0, 1, 2], [0, 3, 1], [1, 3, 2], [2, 3, 0]]
+    } else {
+        [[0, 2, 1], [0, 1, 3], [1, 2, 3], [2, 0, 3]]
+    };
+    polytope(&p, &tris)
+}
+
+/// Pairs of tetrahedra sharing a face on a plane askew to the axes, its
+/// corners the same numbers in both: the second one on the far side of
+/// it, or inside the first.
+fn shared_faces(count: usize) -> Vec<(Solid, Solid, bool)> {
+    let mut rng = crate::test_rng::Rng::new(9);
+    let mut out = Vec::new();
+    while out.len() < count {
+        let p: [DVec3; 3] = std::array::from_fn(|_| rng.point(2.0));
+        let n = (p[1] - p[0]).cross(p[2] - p[0]);
+        if n.length() < 0.5 {
+            continue;
+        }
+        let c = (p[0] + p[1] + p[2]) / 3.0;
+        let top = c + n.normalize() * rng.range(0.5, 2.0) + rng.point(0.3);
+        let inside = out.len() % 2 == 0;
+        let apex = if inside {
+            let w: [f64; 4] =
+                std::array::from_fn(|i| rng.range(if i == 3 { 0.2 } else { 0.1 }, 1.0));
+            (p[0] * w[0] + p[1] * w[1] + p[2] * w[2] + top * w[3]) / w.iter().sum::<f64>()
+        } else {
+            c - n.normalize() * rng.range(0.5, 2.0) + rng.point(0.3)
+        };
+        out.push((
+            tetrahedron([p[0], p[1], p[2], top]),
+            tetrahedron([p[0], p[1], p[2], apex]),
+            inside,
+        ));
+    }
+    out
+}
+
+#[test]
+fn tetrahedra_sharing_a_face_askew() {
+    // The same corners in both, so the faces are flush exactly, but
+    // their normals round: the perturbation must move every face of a
+    // thin corner outwards (the normals' sum doesn't always), or flush
+    // faces leave slivers.
+    for (i, (a, b, inside)) in shared_faces(24).into_iter().enumerate() {
+        let (va, vb) = (a.volume(), b.volume());
+        let want = if inside {
+            [va, vb, va - vb, 0.0]
+        } else {
+            [va + vb, 0.0, va, vb]
+        };
+        for (k, (x, y, op)) in [
+            (&a, &b, Op::Union),
+            (&a, &b, Op::Intersection),
+            (&a, &b, Op::Difference),
+            (&b, &a, Op::Difference),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let got = run(x, y, op).unwrap_or_else(|e| panic!("{i} {op:?} {k}: {e}"));
+            assert!(
+                (got.volume() - want[k]).abs() < 1e-9,
+                "{i} {op:?} {k}: {} not {}",
+                got.volume(),
+                want[k]
+            );
+        }
+    }
+}
+
+#[test]
+fn crossings_are_where_the_perturbed_edges_cross() {
+    // An edge in the other's face plane crosses it (for the perturbed
+    // operands) where the first powers of the perturbation put it, not
+    // where rounding in the plane's normal does.
+    for (a, b, _) in shared_faces(24) {
+        for op in [Op::Union, Op::Difference] {
+            let (ia, ib) = inputs(&a, &b, &TOL).unwrap();
+            let grow = op == Op::Union;
+            let prims = flat::Flat::new(&ia, &ib, grow);
+            let mut work = Work::new(&Budget::DEFAULT);
+            let counts = count::count(&ia, &ib, &prims, &TOL, &mut work).unwrap();
+            let s = if grow { 1.0 } else { -1.0 };
+            let normals = ia.vertex_normals();
+            // Where edge `e` of `side` crosses face `f` of the other, with
+            // `A` moved by `eps`, in floating point.
+            let at = |side: Side, e: u32, f: u32, eps: f64| {
+                let moved = |side: Side, v: u32| {
+                    let input = if side == Side::A { &ia } else { &ib };
+                    let p = input.pos(v);
+                    if side == Side::A {
+                        p + normals[v as usize] * (s * eps)
+                            + exact::T2 * eps * eps
+                            + exact::T3 * eps * eps * eps
+                    } else {
+                        p
+                    }
+                };
+                let (input, other) = if side == Side::A {
+                    (&ia, &ib)
+                } else {
+                    (&ib, &ia)
+                };
+                let [x0, x1] = input.edges[e as usize].map(|v| moved(side, v));
+                let [t0, t1, t2] = other.tris[f as usize].map(|v| moved(side.other(), v));
+                let n = (t1 - t0).cross(t2 - t0);
+                (t0 - x0).dot(n) / (x1 - x0).dot(n)
+            };
+            for (side, crossings) in [(Side::A, &counts.x12), (Side::B, &counts.x21)] {
+                for c in crossings {
+                    let got = prims.crossing(side, c.edge, c.face);
+                    let want = at(side, c.edge, c.face, 1e-7).clamp(0.0, 1.0);
+                    assert!(
+                        (got - want).abs() < 1e-4,
+                        "{side:?} {c:?}: {got} not {want}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn turned_grid_boxes_are_right_or_refused() {
+    // Flush boxes turned and moved together: every coordinate rounded, so
+    // flush faces are near ties rather than ties. Some can't be told
+    // apart from slivers and fail as invalid, but whatever comes out must
+    // have the right volume: a crossing of an edge nearly in a face's
+    // plane is placed from the exact ratio, not from two tiny rounded
+    // numbers (which put vertices off the result).
+    let mut rng = crate::test_rng::Rng::new(31);
+    let mut right = 0;
+    for i in 0..=231 {
+        let ((a, ca), (b, cb)) = (random_grid_box(&mut rng), random_grid_box(&mut rng));
+        let q = glam::DQuat::from_axis_angle(rng.direction(), rng.range(0.0, 6.0));
+        let shift = rng.point(100.0);
+        if i < 200 {
+            continue;
+        }
+        let turn = |s: &Solid| {
+            // Turned plane tags would be off by rounding: free faces.
+            let mut builder = MeshBuilder::new();
+            for &p in s.mesh().verts() {
+                builder.vert(q * p + shift);
+            }
+            for &f in s.mesh().faces() {
+                builder.face(Face {
+                    surface: Surface::Free,
+                    ..f
+                });
+            }
+            for t in s.mesh().tris() {
+                builder.tri(t.halfedges.map(|h| h.start), t.face);
+            }
+            Solid::new(builder.build().unwrap(), &TOL).unwrap()
+        };
+        let (a, b) = (turn(&a), turn(&b));
+        for op in [Op::Union, Op::Intersection, Op::Difference] {
+            let want = cells_volume(&combine(&ca, &cb, op));
+            match run(&a, &b, op) {
+                Ok(s) => {
+                    assert!(
+                        (s.volume() - want).abs() < 1e-6,
+                        "{i} {op:?}: {} not {want}",
+                        s.volume()
+                    );
+                    right += 1;
+                }
+                Err(KernelError::Invalid(_)) => {}
+                Err(e) => panic!("{i} {op:?}: {e}"),
+            }
+        }
+    }
+    assert!(right > 60, "{right}");
+}

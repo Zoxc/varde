@@ -6,6 +6,7 @@ use glam::{DVec2, DVec3};
 
 use super::cleanup::Soup;
 use super::count::{Counts, Crossing};
+use super::exact::orient2d;
 use super::input::{Input, Side};
 use super::triangulate::{Vert, triangulate};
 use super::{BooleanError, Op, Primitives};
@@ -67,7 +68,7 @@ struct Along {
     /// end is the next edge's start).
     start: Vec<u32>,
     /// The new vertices' ids, edge by edge, in order along the edge, with
-    /// their parameters.
+    /// their parameters (never decreasing along an edge).
     verts: Vec<(u32, f64)>,
     /// Whether each piece is kept: an edge with `k` crossings has `k + 1`
     /// pieces, at `start[e] + e..`.
@@ -116,10 +117,14 @@ impl Along {
             }
             let [s, _] = input.edges[e as usize];
             let mut w = windings[s as usize];
+            // The parameters follow the order: rounding may have swapped
+            // two that are close.
+            let mut at = 0.0f64;
             for &k in &here {
                 kept.push(keep.keeps(side, w));
                 w += i32::from(crossings[k].x);
-                verts.push((first_id + k as u32, params[k]));
+                at = at.max(params[k]);
+                verts.push((first_id + k as u32, at));
             }
             kept.push(keep.keeps(side, w));
         }
@@ -171,19 +176,6 @@ pub(super) fn assemble(
     work.spend(counts.x12.len() + counts.x21.len())?;
     let t12 = par_map(&counts.x12, |c| prims.crossing(Side::A, c.edge, c.face));
     let t21 = par_map(&counts.x21, |c| prims.crossing(Side::B, c.edge, c.face));
-    let mut pos: Vec<DVec3> = a
-        .mesh
-        .verts()
-        .iter()
-        .chain(b.mesh.verts())
-        .copied()
-        .collect();
-    for (input, crossings, params) in [(a, &counts.x12, &t12), (b, &counts.x21, &t21)] {
-        for (c, &t) in crossings.iter().zip(params.iter()) {
-            let [s, e] = input.edges[c.edge as usize].map(|v| input.pos(v));
-            pos.push(lerp(s, e, t));
-        }
-    }
 
     // Ordering the crossings along each edge compares every two.
     for crossings in [&counts.x12, &counts.x21] {
@@ -213,6 +205,35 @@ pub(super) fn assemble(
             prims,
         ),
     ];
+    // Their positions, from the parameters as ordered along the edges,
+    // and exactly on the face crossed where it is square to an axis (so
+    // flush faces of results fed on stay flush).
+    let mut pos: Vec<DVec3> = a
+        .mesh
+        .verts()
+        .iter()
+        .chain(b.mesh.verts())
+        .copied()
+        .collect();
+    pos.resize(first21 as usize + counts.x21.len(), DVec3::ZERO);
+    for (input, other, along, crossings, first) in [
+        (a, b, &along[0], &counts.x12, first12),
+        (b, a, &along[1], &counts.x21, first21),
+    ] {
+        for e in 0..input.edges.len() as u32 {
+            let [s, en] = input.edges[e as usize].map(|v| input.pos(v));
+            for &(id, t) in along.of(e).0 {
+                let mut p = lerp(s, en, t);
+                let [c0, c1, c2] = other.corners(crossings[(id - first) as usize].face);
+                for k in 0..3 {
+                    if c0[k] == c1[k] && c0[k] == c2[k] {
+                        p[k] = c0[k];
+                    }
+                }
+                pos[id as usize] = p;
+            }
+        }
+    }
 
     // The ends of each face pair's cut, with their signs seen from A.
     let mut ends: Vec<([u32; 2], u32, i8)> = Vec::new();
@@ -351,6 +372,51 @@ fn lerp(s: DVec3, e: DVec3, t: f64) -> DVec3 {
     }
 }
 
+/// Domain coordinates smaller than this are zero: far below anything
+/// rounding can tell, and it keeps the exact orientation tests' products
+/// clear of underflow.
+const TINY: f64 = 1.0 / (1u128 << 64) as f64;
+
+/// The point at `t` from corner `from` to corner `to` of the domain,
+/// exactly on that side.
+fn on_side(from: DVec2, to: DVec2, t: f64) -> DVec2 {
+    let t = if t < TINY { 0.0 } else { t };
+    let p = from + (to - from) * t;
+    if from.x + from.y == 1.0 && to.x + to.y == 1.0 {
+        on_hypotenuse(p.y)
+    } else {
+        p
+    }
+}
+
+/// The point of the side `u + v = 1` at `v` (in `[0, 1]`), with the sum
+/// exact: the larger coordinate is taken as given and the other is one
+/// less it, which is exact from ½ up.
+fn on_hypotenuse(v: f64) -> DVec2 {
+    let v = v.clamp(0.0, 1.0);
+    if v >= 0.5 {
+        DVec2::new(1.0 - v, v)
+    } else {
+        let u = 1.0 - v;
+        DVec2::new(u, 1.0 - u)
+    }
+}
+
+/// A vertex inside the face (it is, for the perturbed operands) as
+/// placed from its position, moved onto the domain's side where rounding
+/// or a tie put it on or beyond it. The triangulation then treats it as
+/// inside, infinitely close.
+fn into_domain(at: DVec2) -> DVec2 {
+    let u = if at.x < TINY { 0.0 } else { at.x };
+    let v = if at.y < TINY { 0.0 } else { at.y };
+    let p = DVec2::new(u, v);
+    if orient2d(DOMAIN[1], DOMAIN[2], p) > 0 {
+        p
+    } else {
+        on_hypotenuse((v - u + 1.0) / 2.0)
+    }
+}
+
 /// The triangles of the kept part of one face, as its triangle runs.
 fn cut_face(
     input: &Input,
@@ -384,7 +450,7 @@ fn cut_face(
             chain.push(id);
             known.push(Vert {
                 id,
-                at: DOMAIN[s] + (DOMAIN[en] - DOMAIN[s]) * param,
+                at: on_side(DOMAIN[s], DOMAIN[en], param),
                 sides: 1 << i,
             });
         }
@@ -412,7 +478,7 @@ fn cut_face(
                 let x = pos[id as usize] - p0;
                 Vert {
                     id,
-                    at: DVec2::new(x.cross(d2).dot(n) / nn, d1.cross(x).dot(n) / nn),
+                    at: into_domain(DVec2::new(x.cross(d2).dot(n) / nn, d1.cross(x).dot(n) / nn)),
                     sides: 0,
                 }
             }

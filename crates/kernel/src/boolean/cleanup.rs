@@ -7,8 +7,9 @@
 //! corners lie on a line. This is the flat version of Manifold's
 //! clean-up. Short edges are collapsed, keeping the lower vertex id (the
 //! operands' own vertices come first) when the collapse keeps a manifold
-//! (the link condition: the ends' only common neighbours are the two
-//! corners opposite the edge) and turns no proper triangle over; a
+//! (every vertex round it keeps one fan, once two triangles it makes the
+//! same but facing each other, a sheet of zero thickness, are taken out
+//! together) and turns no proper triangle over; a
 //! triangle of zero height whose edges aren't short has its longest edge
 //! flipped, which splits the triangle beyond at the far corner and leaves
 //! the same surface. Components that enclose no volume go. It never
@@ -163,28 +164,15 @@ impl Cleaner<'_> {
         out
     }
 
-    /// Collapses the edge `u`–`v` (`u < v`) onto `u`, if allowed.
+    /// Collapses the edge `u`–`v` (`u < v`) onto `u`, if allowed: every
+    /// vertex round it keeps one fan (the surface stays a manifold), and
+    /// no proper triangle turns over. Two triangles the collapse makes
+    /// the same but facing each other (a sheet of zero thickness folded
+    /// onto the surface, which flush operands leave at vertices where
+    /// the perturbation can't move every face outwards) both go.
     fn collapse(&mut self, u: u32, v: u32) -> bool {
         let shared = self.shared(u, v);
         if shared.len() != 2 {
-            return false;
-        }
-        let mut opposite: Vec<u32> = shared
-            .iter()
-            .map(|&t| {
-                let tri = self.soup.tris[t as usize];
-                *tri.iter()
-                    .find(|&&w| w != u && w != v)
-                    .expect("a third corner")
-            })
-            .collect();
-        opposite.sort_unstable();
-        if opposite[0] == opposite[1] {
-            return false;
-        }
-        let (nu, nv) = (self.neighbours(u), self.neighbours(v));
-        let common: Vec<u32> = nu.iter().copied().filter(|w| nv.contains(w)).collect();
-        if common != opposite {
             return false;
         }
         let moved: Vec<u32> = self.around[v as usize]
@@ -192,18 +180,25 @@ impl Cleaner<'_> {
             .copied()
             .filter(|t| !shared.contains(t))
             .collect();
-        for &t in &moved {
-            let old = self.soup.tris[t as usize];
-            let new = old.map(|w| if w == v { u } else { w });
-            if self.height(old).0 > self.small && self.normal(old).dot(self.normal(new)) <= 0.0 {
-                return false;
-            }
-        }
+        let mut affected: Vec<u32> = [u, v]
+            .into_iter()
+            .chain(
+                self.around[u as usize]
+                    .iter()
+                    .chain(&self.around[v as usize])
+                    .flat_map(|&t| self.soup.tris[t as usize]),
+            )
+            .collect();
+        affected.sort_unstable();
+        affected.dedup();
+        let saved_around: Vec<Vec<u32>> = affected
+            .iter()
+            .map(|&w| self.around[w as usize].clone())
+            .collect();
+        let saved_tris: Vec<[u32; 3]> = moved.iter().map(|&t| self.soup.tris[t as usize]).collect();
+
         for &t in &shared {
-            self.alive[t as usize] = false;
-            for w in self.soup.tris[t as usize] {
-                self.around[w as usize].retain(|&s| s != t);
-            }
+            self.kill(t);
         }
         for &t in &moved {
             for w in &mut self.soup.tris[t as usize] {
@@ -214,7 +209,110 @@ impl Cleaner<'_> {
             self.around[u as usize].push(t);
         }
         self.around[v as usize].clear();
+        let cancelled = self.cancel_pairs(u);
+
+        let turned = cancelled.is_none()
+            || moved.iter().zip(&saved_tris).any(|(&t, &old)| {
+                self.alive[t as usize]
+                    && self.height(old).0 > self.small
+                    && self
+                        .normal(old)
+                        .dot(self.normal(self.soup.tris[t as usize]))
+                        <= 0.0
+            });
+        if turned || affected.iter().any(|&w| w != v && !self.one_fan(w)) {
+            // Undo.
+            for &t in shared.iter().chain(cancelled.iter().flatten()) {
+                self.alive[t as usize] = true;
+            }
+            for (&t, &old) in moved.iter().zip(&saved_tris) {
+                self.soup.tris[t as usize] = old;
+            }
+            for (&w, list) in affected.iter().zip(saved_around) {
+                self.around[w as usize] = list;
+            }
+            return false;
+        }
         true
+    }
+
+    /// Takes triangle `t` out.
+    fn kill(&mut self, t: u32) {
+        self.alive[t as usize] = false;
+        for w in self.soup.tris[t as usize] {
+            self.around[w as usize].retain(|&s| s != t);
+        }
+    }
+
+    /// Takes out the pairs of triangles round `u` on the same corners
+    /// facing each other, and gives them; `None` (and nothing taken out)
+    /// when two are the same facing the same way.
+    fn cancel_pairs(&mut self, u: u32) -> Option<Vec<u32>> {
+        // Each triangle's corners from its lowest, and whether that is
+        // the way it runs or the other.
+        let mut keyed: Vec<([u32; 3], bool, u32)> = self.around[u as usize]
+            .iter()
+            .map(|&t| {
+                let tri = self.soup.tris[t as usize];
+                let i = (0..3).min_by_key(|&i| tri[i]).expect("three corners");
+                let (a, b, c) = (tri[i], tri[(i + 1) % 3], tri[(i + 2) % 3]);
+                if b < c {
+                    ([a, b, c], true, t)
+                } else {
+                    ([a, c, b], false, t)
+                }
+            })
+            .collect();
+        keyed.sort_unstable();
+        let mut out = Vec::new();
+        for same in keyed.chunk_by(|x, y| x.0 == y.0) {
+            match same {
+                [_] => {}
+                [(_, x, s), (_, y, t)] if x != y => out.extend([*s, *t]),
+                _ => return None,
+            }
+        }
+        for &t in &out {
+            self.kill(t);
+        }
+        Some(out)
+    }
+
+    /// Whether the living triangles round `w` make one fan: their sides
+    /// across `w` join up into a single loop (or there are none).
+    fn one_fan(&self, w: u32) -> bool {
+        let mut link: Vec<(u32, u32)> = self.around[w as usize]
+            .iter()
+            .map(|&t| {
+                let tri = self.soup.tris[t as usize];
+                let i = tri.iter().position(|&x| x == w).expect("a corner");
+                (tri[(i + 1) % 3], tri[(i + 2) % 3])
+            })
+            .collect();
+        if link.is_empty() {
+            return true;
+        }
+        link.sort_unstable();
+        if link.windows(2).any(|p| p[0].0 == p[1].0) {
+            return false;
+        }
+        let mut ends: Vec<u32> = link.iter().map(|l| l.1).collect();
+        ends.sort_unstable();
+        if ends.windows(2).any(|p| p[0] == p[1]) {
+            return false;
+        }
+        let first = link[0].0;
+        let mut at = first;
+        for step in 1..=link.len() {
+            let Ok(i) = link.binary_search_by_key(&at, |l| l.0) else {
+                return false;
+            };
+            at = link[i].1;
+            if at == first {
+                return step == link.len();
+            }
+        }
+        false
     }
 
     /// Flips the longest side of the thin triangle `t`, if allowed: one

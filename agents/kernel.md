@@ -1108,14 +1108,26 @@ determinants and plane sides of the input coordinates. Ties, which CAD
 geometry makes on purpose (flush faces, a vertex on a face, edges
 meeting), are broken by **symbolic perturbation**: every vertex of `A`
 moves by `ε·s·n_v + ε²·T2 + ε³·T3` for an infinitely small `ε`, with
-`n_v` its direction out of `A` (the normalized sum of the unit normals of
-its triangles), `s = +1` for a union (`A` grows: flush faces overlap and
+`n_v` its direction out of `A`, `s = +1` for a union (`A` grows: flush faces overlap and
 merge) and −1 for a difference or intersection (`A` shrinks: flush faces
 cut cleanly), and `T2`, `T3` fixed generic translations for what the first
 order leaves tied. `B` stays. This is Manifold's "expand P" rule made
 into a real configuration: the perturbed operands are a genuine
 arrangement in general position, so every decision is true of it and
 the counting identities hold without exception.
+
+`n_v` leaves by every triangle round the vertex (it is on the outer side
+of each one's plane) wherever such a direction exists, so every face of
+`A` moves outwards (or inwards) as a whole and flush faces part cleanly:
+the normalized sum of the triangles' unit normals when it does, else the
+axis of the smallest cone round their normals (`patch::smallest_cone`,
+for up to 16 different normals). The sum alone fails at thin corners
+(two faces nearly folded onto each other) and left slivers of zero
+thickness where such a corner's face lay flush on the other operand.
+At a saddle (faces round the vertex facing opposite ways) no direction
+leaves by all, and the sum is kept: some face there moves the wrong way
+and a flush contact leaves a sheet of zero thickness folded onto the
+surface, which the clean-up takes out.
 
 Each predicate is a polynomial in the points' coordinates, and so in
 `ε`; its sign is that of the first coefficient that isn't zero. The
@@ -1127,7 +1139,12 @@ the bound can't (a tie or a near one) is every coefficient worked out
 exactly with floating-point expansions (`Exp`, Shewchuk's two-sum and
 Dekker's two-product, no fused multiply-add) as polynomials (`Poly<Exp>`).
 All of it is `+ − ×`, correctly rounded, so the signs are the same on
-every platform. A predicate zero in every power (only if `T2` and `T3`
+every platform. Dekker's product is exact only clear of underflow, so
+coordinates and perturbation components below `2⁻¹⁰⁰` are taken as zero
+(`exact::FLUSH`): products of up to six such numbers (the degree of
+`Between`) then stay exact. Without it, points a `1e-160` apart gave
+signs that disagreed with the same determinant asked in another order.
+A predicate zero in every power (only if `T2` and `T3`
 happen to lie in the tie's degenerate directions) takes a fixed sign.
 
 The predicates: `Orient` `det[q − p, r − p, UP]` (which side of `p → q`
@@ -1193,7 +1210,15 @@ for flat triangles, exactly one of each or none.
 - **New vertices are records**: "edge `e` of `A` through face `f` of `B`"
   (the `x12` list, sorted by edge then face) and the same for `B`'s edges;
   ids after both operands' vertices. Positions come from `crossing`,
-  interpolated from the edge's nearer end (exactly the end at 0 and 1).
+  interpolated from the edge's nearer end (exactly the end at 0 and 1),
+  made non-decreasing along each edge in the order `order` gave, and
+  put exactly on the crossed face where it is square to an axis (so a
+  result's flush faces stay flush when it is fed on). `crossing` is the
+  limit of `num/den` as `ε → 0`: the constant terms' ratio in floating
+  point only when both are known to a relative `1e-12`; else they are
+  worked out exactly (a near tie: two tiny numbers that are all rounding
+  put vertices off the result, with the wrong volume), and for an exact
+  tie the ratio of the first powers of `ε` that aren't zero.
 - **Edges**: each edge's crossings are ordered along it (`order`, by
   insertion, which can't fail), and its pieces kept by the winding number
   running from its start: both faces beside it read the same pieces.
@@ -1210,7 +1235,10 @@ for flat triangles, exactly one of each or none.
   the topology alone. They are triangulated in the patch's parameter
   domain (corners `(0,0)`, `(1,0)`, `(0,1)`; vertices on a side placed by
   their parameter exactly on it and tagged with that side, interior ones
-  solved from the plane), then turned into triangles on the records.
+  solved from the plane and moved onto the side they lie on or beyond by
+  rounding or a tie; coordinates below `2⁻⁶⁴` are zero, and points of
+  the side `u + v = 1` sum to one exactly), then turned into triangles
+  on the records.
   Faces are cut in parallel (`par_map`), the rest sequentially.
 - The result's faces are `A`'s then `B`'s (turned over for a
   difference), less those no triangle is on any more, so chained
@@ -1223,7 +1251,13 @@ The loops are right for the perturbed operands however close their
 points are in fact: flush faces give loops of zero width whose points
 coincide, and interior vertices may sit exactly on the domain's sides.
 A constrained Delaunay triangulation (`spade`) merges coincident points,
-so ear clipping is used: it always completes. Loops touching the
+so ear clipping is used: it always completes. Interior vertices (on no
+side) are inside the face for the perturbed operands however close to a
+side they are placed, so every orientation test takes them as moved
+towards `(¼, ¼)` by an infinitely small fraction of the way
+(`exact::orient2d_towards`): a hole touching the domain's side, or a
+cut vertex a rounding beyond it, is then triangulated as the thin region
+it is rather than folded over. Loops touching the
 domain's sides are outer loops; the others are outer or holes by their
 signed area. Each hole goes to the smallest outer loop around one of its
 points and is bridged in from its rightmost vertex to the nearest vertex
@@ -1231,7 +1265,9 @@ it sees (inside the angle there, crossing no side); then ears are cut in
 this order of preference: an ear with two corners at one position (so
 zero-width loops come apart into zero-width triangles along zero-length
 sides), a proper triangle with no other vertex in or on it (the best
-shaped one, for polygons up to 64 vertices; the first found beyond),
+shaped one, for polygons up to 64 vertices; the first found beyond; a
+vertex at one of its corners' positions, such as a bridge's other end,
+only blocks it if one of its sides leaves into it or along its sides),
 a zero-area ear with no vertex on it, then any. No diagonal joins two
 vertices on one side of the domain (it would lie along the side, and the
 patch across could add the same one) or repeats an edge. Then diagonals
@@ -1247,9 +1283,12 @@ before the mesh is built, at most 64 rounds:
 
 - **Collapse** edges no longer than an eighth of the resolution onto
   their lower vertex id (the operands' own vertices come first, so they
-  stay where they are), when the link condition holds (the ends' common
-  neighbours are exactly the two corners opposite the edge, so the
-  surface stays a manifold) and no proper triangle turns over.
+  stay where they are), when every vertex round the edge keeps one fan
+  afterwards (the surface stays a manifold) and no proper triangle
+  turns over. Two triangles the collapse makes the same but facing each
+  other both go: a sheet of zero thickness folded onto the surface,
+  which flush contacts at saddle vertices leave. A collapse that fails
+  the check is undone.
 - **Flip** the longest side of a triangle whose height over it is no more
   than an eighth of the resolution, or no more than four resolutions when
   the triangle across is on the same face (so every triangle stays on its
@@ -1319,16 +1358,34 @@ contradicting the exact sign, `orient2d` near a line and far out,
 triangulating a square with a hole, a concave loop, a zero-width loop and
 a vertex landing on the domain's side (no diagonal along a side).
 
+Found by fuzzing, with regression tests: random boxes on a half grid
+(flush faces, shared edges and corners everywhere) against the cells
+they fill, alone and fed on in chains, where a result that is a manifold
+must come out with its volume and one that isn't may only fail as
+invalid; tetrahedra sharing a face askew to the axes, the same corners
+in both; crossings where the perturbed edges cross (checked against the
+operands moved by a small `ε` in floating point); the same boxes turned
+and moved, whose results must have the right volume or fail; signs of
+points `1e-160` apart asked in every order. Fuzzed without a test
+(release, a minute each): octahedra and boxes on the half grid, and
+extruded star polygons on three frames, by the volume identities; none
+came out wrong. The rest that fail are mostly exact results that aren't
+manifolds.
+
 ### Known gaps
 
+- **Coplanar faces facing each other, triangulated differently**: a
+  folded sheet whose two sides don't share their triangles can't be
+  collapsed away (seen once in about 3 600 chained grid-box booleans).
 - **Flush faces after rounding**: operands flush in exact arithmetic but
   turned and moved (every coordinate rounded) have near ties instead of
   ties; each is decided once, so the topology stays valid, but the
   decisions no longer follow the perturbation's intent, and zero-thickness
   sheets of two coincident faces can remain, which the clean-up can't
-  remove: about 30 % of such cases (six flush box configurations, twenty
-  random motions, three operations) fail with `Invalid`. Flush extrude joins on a
-  tilted sketch plane are this case.
+  remove: about 12 % of random flush boxes on a half grid, turned and
+  moved together, fail with `Invalid` where the exact result is a
+  manifold (whatever comes out has the right volume). Flush extrude
+  joins on a tilted sketch plane are this case.
 - Triangles thinner than the resolution across two faces (a cut passing
   within a resolution or two of a vertex) aren't flipped, and fail the
   hull rules.

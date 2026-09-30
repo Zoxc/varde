@@ -5,8 +5,13 @@ use glam::DVec3;
 
 use super::BooleanError;
 use crate::mesh::{Mesh, flat};
-use crate::patch::Bounds3;
+use crate::patch::{Bounds3, smallest_cone};
 use crate::{KernelError, Tolerance};
+
+/// The most different triangle normals round a vertex among which the
+/// smallest cone is looked for (it takes the fourth power of their
+/// number).
+const CONE_NORMALS: usize = 16;
 
 /// Which operand.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -119,21 +124,44 @@ impl<'a> Input<'a> {
             .sum()
     }
 
-    /// Each vertex's direction out of the solid: the sum of the unit
-    /// normals of the triangles round it, normalized. It only perturbs
-    /// ties, so any direction that leaves by every face round the vertex
-    /// will do.
+    /// Each vertex's direction out of the solid: one that leaves by
+    /// every triangle round the vertex (on the outer side of each one's
+    /// plane) wherever there is one, so that moving the vertices along
+    /// them moves every face outwards. The sum of the triangles' unit
+    /// normals, normalized, when it does; else the axis of the smallest
+    /// cone round their normals (for up to [`CONE_NORMALS`] different
+    /// ones), which does whenever any direction does. Where none does (a
+    /// saddle), the sum: it only perturbs ties, and any direction keeps
+    /// the operands real.
     pub(super) fn vertex_normals(&self) -> Vec<DVec3> {
-        let mut sums = vec![DVec3::ZERO; self.mesh.verts().len()];
+        let mut around: Vec<Vec<DVec3>> = vec![Vec::new(); self.mesh.verts().len()];
         for t in 0..self.tris.len() as u32 {
             let [a, b, c] = self.corners(t);
             let n = (b - a).cross(c - a).normalize_or_zero();
             for v in self.tris[t as usize] {
-                sums[v as usize] += n;
+                around[v as usize].push(n);
             }
         }
-        sums.into_iter()
-            .map(|n| n.try_normalize().unwrap_or(DVec3::Z))
+        around
+            .into_iter()
+            .map(|mut normals| {
+                let sum = normals.iter().copied().sum::<DVec3>().try_normalize();
+                let leaves = |d: DVec3| normals.iter().all(|n| n.dot(d) > 0.0);
+                if let Some(d) = sum
+                    && leaves(d)
+                {
+                    return d;
+                }
+                normals.sort_by(|a, b| a.to_array().partial_cmp(&b.to_array()).expect("finite"));
+                normals.dedup();
+                if (1..=CONE_NORMALS).contains(&normals.len()) {
+                    let (axis, least) = smallest_cone(&normals);
+                    if least > 0.0 {
+                        return axis;
+                    }
+                }
+                sum.unwrap_or(DVec3::Z)
+            })
             .collect()
     }
 }

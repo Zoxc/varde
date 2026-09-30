@@ -25,7 +25,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use glam::DVec2;
 
 use super::BooleanError;
-use super::exact::orient2d;
+use super::exact::orient2d_towards;
 
 /// A vertex of a loop: its id, where it is in the domain, and the sides
 /// of the domain triangle it lies on (bit `i` for the side from corner `i`
@@ -35,6 +35,30 @@ pub(super) struct Vert {
     pub(super) id: u32,
     pub(super) at: DVec2,
     pub(super) sides: u8,
+}
+
+/// Where vertices inside the domain move towards, infinitely little, to
+/// break their ties with its sides: a point inside the domain triangle.
+const CENTER: DVec2 = DVec2::new(0.25, 0.25);
+
+impl Vert {
+    /// Whether it lies inside the domain (on none of its sides), however
+    /// close to a side its position is: then it counts as moved towards
+    /// [`CENTER`] by an infinitely small fraction of the way.
+    fn inside(&self) -> bool {
+        self.sides == 0
+    }
+
+    /// Whether it is at the same place as `other`, moves included.
+    fn same(&self, other: &Vert) -> bool {
+        self.at == other.at && self.inside() == other.inside()
+    }
+}
+
+/// The sign of `(b − a) × (c − a)`, exactly, with the vertices inside the
+/// domain moved as [`Vert::inside`] says.
+fn orient(a: &Vert, b: &Vert, c: &Vert) -> i8 {
+    orient2d_towards([a, b, c].map(|v| (v.at, v.inside())), CENTER)
 }
 
 /// How many vertices a polygon may have for the best ear to be looked for
@@ -59,9 +83,8 @@ pub(super) fn triangulate(loops: Vec<Vec<Vert>>) -> Result<Vec<[u32; 3]>, Boolea
     }
     let mut owned: Vec<Vec<Vec<Vert>>> = vec![Vec::new(); outers.len()];
     for hole in holes {
-        let at = hole[0].at;
         let inside = (0..outers.len())
-            .filter(|&o| winding(&outers[o], at) != 0)
+            .filter(|&o| winding(&outers[o], &hole[0]) != 0)
             .min_by(|&x, &y| area(&outers[x]).total_cmp(&area(&outers[y])));
         let o = inside.unwrap_or_else(|| {
             (0..outers.len())
@@ -94,16 +117,16 @@ fn area(l: &[Vert]) -> f64 {
 }
 
 /// The winding number of `l` round `p`.
-fn winding(l: &[Vert], p: DVec2) -> i32 {
+fn winding(l: &[Vert], p: &Vert) -> i32 {
     let n = l.len();
     let mut w = 0;
     for i in 0..n {
-        let (a, b) = (l[i].at, l[(i + 1) % n].at);
-        if a.y <= p.y {
-            if b.y > p.y && orient2d(a, b, p) > 0 {
+        let (a, b) = (&l[i], &l[(i + 1) % n]);
+        if a.at.y <= p.at.y {
+            if b.at.y > p.at.y && orient(a, b, p) > 0 {
                 w += 1;
             }
-        } else if b.y <= p.y && orient2d(a, b, p) < 0 {
+        } else if b.at.y <= p.at.y && orient(a, b, p) < 0 {
             w -= 1;
         }
     }
@@ -149,7 +172,7 @@ fn bridge(outer: Vec<Vert>, mut holes: Vec<Vec<Vert>>) -> Vec<Vert> {
         let pick = order
             .iter()
             .copied()
-            .find(|&i| in_cone(&poly, i, h.at) && sees(h, poly[i], &poly, others))
+            .find(|&i| in_cone(&poly, i, &h) && sees(h, poly[i], &poly, others))
             .unwrap_or(order[0]);
         let mut joined = Vec::with_capacity(poly.len() + hole.len() + 2);
         joined.extend_from_slice(&poly[..=pick]);
@@ -162,11 +185,11 @@ fn bridge(outer: Vec<Vert>, mut holes: Vec<Vec<Vert>>) -> Vec<Vert> {
 }
 
 /// Whether `p` lies in the polygon's interior angle at vertex `i`.
-fn in_cone(poly: &[Vert], i: usize, p: DVec2) -> bool {
+fn in_cone(poly: &[Vert], i: usize, p: &Vert) -> bool {
     let n = poly.len();
-    let (prev, m, next) = (poly[(i + n - 1) % n].at, poly[i].at, poly[(i + 1) % n].at);
-    let (left_in, left_out) = (orient2d(prev, m, p) > 0, orient2d(m, next, p) > 0);
-    if orient2d(prev, m, next) >= 0 {
+    let (prev, m, next) = (&poly[(i + n - 1) % n], &poly[i], &poly[(i + 1) % n]);
+    let (left_in, left_out) = (orient(prev, m, p) > 0, orient(m, next, p) > 0);
+    if orient(prev, m, next) >= 0 {
         left_in && left_out
     } else {
         left_in || left_out
@@ -186,14 +209,14 @@ fn sees(h: Vert, m: Vert, poly: &[Vert], holes: &[Vec<Vert>]) -> bool {
                 if ends.contains(&u.id) || ends.contains(&v.id) {
                     return true;
                 }
-                let (ou, ov) = (orient2d(h.at, m.at, u.at), orient2d(h.at, m.at, v.at));
+                let (ou, ov) = (orient(&h, &m, &u), orient(&h, &m, &v));
                 if ou == 0 && between(h.at, m.at, u.at) {
                     return false;
                 }
                 if ou * ov >= 0 {
                     return true;
                 }
-                orient2d(u.at, v.at, h.at) * orient2d(u.at, v.at, m.at) > 0
+                orient(&u, &v, &h) * orient(&u, &v, &m) > 0
             })
         })
 }
@@ -262,10 +285,10 @@ fn improve(tris: &mut [[u32; 3]], verts: &[Vert], fixed: &BTreeSet<(u32, u32)>) 
                     || vc.sides & vd.sides != 0
                     || owner.contains_key(&(c, d))
                     || owner.contains_key(&(d, c))
-                    || orient2d(va.at, vb.at, vc.at) <= 0
-                    || orient2d(vb.at, va.at, vd.at) <= 0
-                    || orient2d(vc.at, va.at, vd.at) <= 0
-                    || orient2d(vc.at, vd.at, vb.at) <= 0
+                    || orient(&va, &vb, &vc) <= 0
+                    || orient(&vb, &va, &vd) <= 0
+                    || orient(&vc, &va, &vd) <= 0
+                    || orient(&vc, &vd, &vb) <= 0
                     || !in_circle(va.at, vb.at, vc.at, vd.at)
                 {
                     continue;
@@ -380,33 +403,52 @@ fn ear(ring: &[Vert], i: usize, edges: &BTreeSet<(u32, u32)>) -> Option<Ear> {
     if p.sides & q.sides != 0 || edges.contains(&(p.id.min(q.id), p.id.max(q.id))) {
         return None;
     }
-    let turn = orient2d(p.at, c.at, q.at);
-    let coincident = p.at == c.at || c.at == q.at || p.at == q.at;
+    let turn = orient(&p, &c, &q);
+    let coincident = p.same(&c) || c.same(&q) || p.same(&q);
     // The ends of a zero-area ear: its two corners furthest apart.
-    let (s, e) = [(p.at, q.at), (p.at, c.at), (c.at, q.at)]
+    let (s, e) = [(p, q), (p, c), (c, q)]
         .into_iter()
         .max_by(|x, y| {
-            x.0.distance_squared(x.1)
-                .total_cmp(&y.0.distance_squared(y.1))
+            x.0.at
+                .distance_squared(x.1.at)
+                .total_cmp(&y.0.at.distance_squared(y.1.at))
         })
         .expect("three sides");
     let others = ring.iter().filter(|v| ![p.id, c.id, q.id].contains(&v.id));
     let level = if coincident || turn == 0 {
         // Nothing else on the segment it covers.
         let blocked = others
-            .filter(|v| v.at != s && v.at != e)
-            .any(|v| orient2d(s, e, v.at) == 0 && between(s, e, v.at));
+            .filter(|v| !v.same(&s) && !v.same(&e))
+            .any(|v| orient(&s, &e, v) == 0 && between(s.at, e.at, v.at));
         match (blocked, coincident) {
             (true, _) => 3,
             (false, true) => 0,
             (false, false) => 2,
         }
     } else if turn > 0 {
-        // Nothing else in or on it, even at a corner's position.
-        let blocked = others.into_iter().any(|v| {
-            orient2d(p.at, c.at, v.at) >= 0
-                && orient2d(c.at, q.at, v.at) >= 0
-                && orient2d(q.at, p.at, v.at) >= 0
+        // Nothing else in or on it. A vertex at a corner's position (a
+        // bridge's other end, loops touching) only if one of its sides
+        // leaves it into the ear or along one of the ear's sides.
+        let corners = [(q, p, c), (p, c, q), (c, q, p)];
+        let ids = [p.id, c.id, q.id];
+        let blocked = (0..n).any(|j| {
+            let v = &ring[j];
+            if ids.contains(&v.id)
+                || orient(&p, &c, v) < 0
+                || orient(&c, &q, v) < 0
+                || orient(&q, &p, v) < 0
+            {
+                return false;
+            }
+            let Some(&(before, k, after)) = corners.iter().find(|(_, k, _)| k.same(v)) else {
+                return true;
+            };
+            [ring[(j + n - 1) % n], ring[(j + 1) % n]].iter().any(|w| {
+                !ids.contains(&w.id)
+                    && !w.same(&k)
+                    && orient(&before, &k, w) >= 0
+                    && orient(&k, &after, w) >= 0
+            })
         });
         if blocked { 3 } else { 1 }
     } else {
@@ -424,6 +466,7 @@ fn ear(ring: &[Vert], i: usize, edges: &BTreeSet<(u32, u32)>) -> Option<Ear> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::exact::orient2d;
     use super::*;
 
     fn loop_of(points: &[(f64, f64)], first: u32) -> Vec<Vert> {

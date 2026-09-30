@@ -17,13 +17,13 @@ use glam::DVec3;
 
 /// The second perturbation: a fixed translation of every perturbed point,
 /// generic so that it breaks the ties the first one leaves.
-const T2: DVec3 = DVec3::new(
+pub(super) const T2: DVec3 = DVec3::new(
     0.271_828_182_845_904_5,
     -0.593_762_184_935_115_2,
     0.689_413_223_871_442_7,
 );
 /// The third perturbation, independent of the first two.
-const T3: DVec3 = DVec3::new(
+pub(super) const T3: DVec3 = DVec3::new(
     -0.318_274_654_401_827_1,
     0.161_803_398_874_989_5,
     0.428_571_428_571_428_6,
@@ -68,11 +68,6 @@ impl Approx {
         } else {
             None
         }
-    }
-
-    /// The value as computed.
-    pub(super) fn value(self) -> f64 {
-        self.v
     }
 
     fn rounded(v: f64, err: f64) -> Approx {
@@ -133,6 +128,11 @@ impl Exp {
             Some(&x) if x < 0.0 => -1,
             _ => 0,
         }
+    }
+
+    /// The value, rounded.
+    fn value(&self) -> f64 {
+        self.0.iter().sum()
     }
 
     /// `e + b`, exactly.
@@ -325,13 +325,26 @@ pub(super) struct Pt {
 /// A point or direction as a vector of numbers.
 pub(super) type V3<N> = [N; 3];
 
+/// Coordinates (and perturbation directions' components) smaller than
+/// this count as zero. Products of expansions are exact only while they
+/// stay clear of underflow: with every number zero or at least this, the
+/// products of up to six of them the predicates take are. Far below any
+/// geometry, and the same for every predicate, so they all still see one
+/// configuration.
+const FLUSH: f64 = 1.0 / (1u128 << 100) as f64;
+
+fn flush(x: f64) -> f64 {
+    if x.abs() < FLUSH { 0.0 } else { x }
+}
+
 impl Pt {
-    /// The point, perturbed if it is.
+    /// The point, perturbed if it is, with coordinates below [`FLUSH`]
+    /// taken as zero.
     pub(super) fn v3<N: Num>(&self) -> V3<N> {
         let p = self.p;
         match self.n {
-            Some(n) => [0, 1, 2].map(|i| N::perturbed([p[i], n[i], T2[i], T3[i]])),
-            None => [0, 1, 2].map(|i| N::lit(p[i])),
+            Some(n) => [0, 1, 2].map(|i| N::perturbed([flush(p[i]), flush(n[i]), T2[i], T3[i]])),
+            None => [0, 1, 2].map(|i| N::lit(flush(p[i]))),
         }
     }
 }
@@ -383,15 +396,32 @@ pub(super) fn sign(pred: &impl Pred) -> i8 {
         .unwrap_or(0)
 }
 
-/// The predicate's coefficients in floating point, perturbations
-/// included: for positions, not decisions.
-pub(super) fn approx(pred: &impl Pred) -> Vec<f64> {
-    pred.eval::<Poly<Approx>>()
-        .0
-        .into_iter()
-        .map(Approx::value)
-        .collect()
+/// `num / den` as `ε → 0⁺`, in floating point, for positions (not
+/// decisions): the ratio of their constant terms, worked out exactly and
+/// then rounded unless floating point already has both to [`CLOSE`], or
+/// where `den`'s is zero, the ratio of the first coefficients of `den`
+/// that isn't and of `num`'s beside it. Not a number when `den` is zero
+/// in every power.
+///
+/// The constant terms of a near tie are both tiny and all rounding, so
+/// their plain floating-point ratio can be anything: an edge nearly in
+/// a face's plane would be cut far from where it crosses it.
+pub(super) fn ratio(num: &impl Pred, den: &impl Pred) -> f64 {
+    let (n, d) = (num.eval::<Approx>(), den.eval::<Approx>());
+    let close = |x: Approx| x.err <= x.v.abs() * CLOSE;
+    if d.v != 0.0 && close(d) && close(n) {
+        return n.v / d.v;
+    }
+    let (n, d) = (num.eval::<Poly<Exp>>(), den.eval::<Poly<Exp>>());
+    match d.0.iter().position(|c| c.sign() != 0) {
+        Some(k) => n.0.get(k).map_or(0.0, Exp::value) / d.0[k].value(),
+        None => f64::NAN,
+    }
 }
+
+/// The relative error below which [`ratio`] takes floating point's
+/// values as they are.
+const CLOSE: f64 = 1e-12;
 
 /// The sign of `(b − a) × (c − a)` in the plane, exactly.
 pub(super) fn orient2d(a: glam::DVec2, b: glam::DVec2, c: glam::DVec2) -> i8 {
@@ -405,6 +435,38 @@ pub(super) fn orient2d(a: glam::DVec2, b: glam::DVec2, c: glam::DVec2) -> i8 {
         return s;
     }
     eval::<Exp>(a, b, c).sign()
+}
+
+/// The sign of `(b − a) × (c − a)` in the plane, exactly, for points
+/// of which those with `true` are moved towards `center` by an infinitely
+/// small fraction `δ` of the way (`p + δ·(center − p)`): ties between
+/// points that move and points that don't are broken as they are then,
+/// while the points that move keep their shape among themselves.
+pub(super) fn orient2d_towards(pts: [(glam::DVec2, bool); 3], center: glam::DVec2) -> i8 {
+    let s = orient2d(pts[0].0, pts[1].0, pts[2].0);
+    if s != 0 || pts.iter().all(|&(_, moves)| !moves) {
+        return s;
+    }
+    let coord = |p: f64, c: f64, moves: bool| {
+        let p = Exp::lit(p);
+        Poly(if moves {
+            let d = Exp::lit(c).sub(&p);
+            vec![p, d]
+        } else {
+            vec![p]
+        })
+    };
+    let [a, b, c] =
+        pts.map(|(p, moves)| [coord(p.x, center.x, moves), coord(p.y, center.y, moves)]);
+    let (bx, by) = (b[0].sub(&a[0]), b[1].sub(&a[1]));
+    let (cx, cy) = (c[0].sub(&a[0]), c[1].sub(&a[1]));
+    bx.mul(&cy)
+        .sub(&by.mul(&cx))
+        .0
+        .iter()
+        .map(Exp::sign)
+        .find(|&s| s != 0)
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -448,6 +510,52 @@ mod tests {
                 .add(&Exp::lit(v[4]).mul(&Exp::lit(v[5])));
             if let Some(s) = a.sign() {
                 assert_eq!(s, e.sign());
+            }
+        }
+    }
+
+    /// `det[q − p, r − p, UP]`.
+    struct Orient3([Pt; 3]);
+
+    impl Pred for Orient3 {
+        fn eval<N: Num>(&self) -> N {
+            let [p, q, r] = self.0.map(|x| x.v3::<N>());
+            det(&sub(&q, &p), &sub(&r, &p), &dir(DVec3::new(2.0, 3.0, 32.0)))
+        }
+    }
+
+    #[test]
+    fn signs_agree_however_small_the_coordinates() {
+        // Points stacked along z within 1e-140..1e-170 of each other: the
+        // products of their differences underflow, where expansions
+        // aren't exact. The same orientation asked in any order must
+        // agree.
+        let mut rng = Rng::new(5);
+        let n = Some(DVec3::new(0.3, 0.5, 0.8).normalize());
+        let found = [
+            DVec3::new(-6.5512545830042e-163, 2.737149257890908e-162, 1.0),
+            DVec3::new(2.1726651218110564e-162, -2.4790985788555624e-163, 1.0),
+            DVec3::new(4.2039487036732694e-163, 2.2229505953788046e-162, 1.0),
+        ];
+        for k in 0..500 {
+            let scale = 10f64.powf(-rng.range(140.0, 170.0));
+            let mut point = || {
+                let x = rng.point(1.0);
+                DVec3::new(x.x * scale, x.y * scale, (x.z * 4.0).round())
+            };
+            let pts = if k == 0 {
+                found
+            } else {
+                [point(), point(), point()]
+            };
+            for mask in 0..8 {
+                let [a, b, c] = [0, 1, 2].map(|i| Pt {
+                    p: pts[i],
+                    n: if mask >> i & 1 == 1 { n } else { None },
+                });
+                let s = sign(&Orient3([a, b, c]));
+                assert_eq!(s, -sign(&Orient3([b, a, c])), "{pts:?} {mask}");
+                assert_eq!(s, sign(&Orient3([b, c, a])), "{pts:?} {mask}");
             }
         }
     }

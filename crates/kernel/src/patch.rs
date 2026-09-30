@@ -40,6 +40,7 @@ mod triangle;
 
 pub use conic::{Conic, Conic2, Conic3, Point};
 pub use fold::NormalCone;
+pub(crate) use fold::smallest_cone;
 pub use strip::cylinder_strip;
 pub use triangle::Patch;
 
