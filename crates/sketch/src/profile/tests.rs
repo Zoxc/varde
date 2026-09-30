@@ -1168,3 +1168,103 @@ fn references_from_files_are_checked() {
         Err(RegionRefError::TooManyCurves(4 + MAX_REGION_CURVES))
     );
 }
+
+#[test]
+fn a_region_s_point_inside_keeps_clear_of_its_outline() {
+    // An L 17 high with a notch 1 high cut from its bottom right, the
+    // notch a region of its own: the first line across the L, at a
+    // height of 1, runs along the notch's top, and the middle of the
+    // widest span there is the notch's corner.
+    let mut sketch = Sketch::default();
+    let points: Vec<Id> = [(0.0, 0.0), (5.0, 0.0), (10.0, 0.0), (10.0, 1.0), (5.0, 1.0)]
+        .iter()
+        .chain(&[(10.0, 17.0), (0.0, 17.0)])
+        .map(|&(x, y)| point(&mut sketch, x, y))
+        .collect();
+    for (a, b) in [
+        (0, 1),
+        (1, 4),
+        (4, 3),
+        (3, 5),
+        (5, 6),
+        (6, 0),
+        (1, 2),
+        (2, 3),
+    ] {
+        line(&mut sketch, points[a], points[b]);
+    }
+    let found = profiles(&sketch);
+    let l = at_point(&found, 2.0, 10.0);
+    let reference = found.reference(l).unwrap();
+    let outline = &found.regions[l].outline;
+    let clearance = outline
+        .iter()
+        .flat_map(|polyline| {
+            (0..polyline.len()).map(|i| (polyline[i], polyline[(i + 1) % polyline.len()]))
+        })
+        .map(|(a, b)| {
+            let t = ((reference.inside - a).dot(b - a) / (b - a).length_squared()).clamp(0.0, 1.0);
+            reference.inside.distance(a + (b - a) * t)
+        })
+        .fold(f64::INFINITY, f64::min);
+    assert!(
+        clearance >= 1.0,
+        "{} is {clearance} from the outline",
+        reference.inside
+    );
+
+    // The notch a hair higher and a hole in the L: the L's curves differ,
+    // so it's found by its point, which must still be in the L.
+    for entry in &mut sketch.points {
+        if entry.at.y == 1.0 {
+            entry.at.y = 1.0 + 1e-6;
+        }
+    }
+    round(&mut sketch, 3.0, 12.0, 1.0);
+    let after = profiles(&sketch);
+    assert_eq!(
+        after.resolve(&[reference]),
+        vec![Some(at_point(&after, 2.0, 10.0))]
+    );
+}
+
+#[test]
+fn a_region_of_curves_several_share_is_only_found_among_them() {
+    // A disc in a plate, cut in two by a line across it: both halves
+    // are bounded by the circle and the line.
+    let mut sketch = Sketch::default();
+    rectangle(&mut sketch, 0.0, 0.0, 20.0, 10.0);
+    let center = point(&mut sketch, 5.0, 5.0);
+    circle(&mut sketch, center, 3.0);
+    let a = point(&mut sketch, 5.0, 1.0);
+    let b = point(&mut sketch, 5.0, 9.0);
+    line(&mut sketch, a, b);
+    let before = profiles(&sketch);
+    let left = at_point(&before, 4.0, 5.0);
+    let reference = before.reference(left).unwrap();
+    assert_eq!(
+        before.resolve(std::slice::from_ref(&reference)),
+        vec![Some(left)]
+    );
+
+    // The disc and its line moved right: the point inside the left half
+    // is in the plate now, which isn't bounded by those curves.
+    for entry in &mut sketch.points {
+        if entry.at.x == 5.0 {
+            entry.at.x = 14.0;
+        }
+    }
+    let after = profiles(&sketch);
+    assert_eq!(
+        after.region_at(reference.inside),
+        Some(at_point(&after, 1.0, 1.0))
+    );
+    assert_eq!(after.resolve(std::slice::from_ref(&reference)), vec![None]);
+    // Its point in one of them, it's that one.
+    let mut moved = reference;
+    moved.inside.x += 9.0;
+    assert_eq!(
+        after.resolve(&[moved]),
+        vec![Some(at_point(&after, 13.0, 5.0))]
+    );
+}

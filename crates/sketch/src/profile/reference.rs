@@ -100,13 +100,17 @@ impl Region {
         (ids(&self.outer), holes)
     }
 
-    /// A point well inside the region, as it's drawn: the middle of the
-    /// widest span inside it along one of [`SCANLINES`] horizontal lines
-    /// across its box, by the even-odd rule on its outline, preferring one
-    /// that [`Region::contains`] agrees is inside.
+    /// A point well inside the region, as it's drawn: along each of
+    /// [`SCANLINES`] horizontal lines across its box, the middle of the
+    /// widest span inside it by the even-odd rule on its outline that
+    /// [`Region::contains`] agrees is inside, and of those the one
+    /// furthest from the outline. A span's middle can lie on the outline,
+    /// where a line runs along an edge or through a corner, and a point
+    /// there is as much in the region beside it once the sketch moves a
+    /// hair: none if every one is on it.
     fn inside(&self) -> Option<DVec2> {
         let (min, max) = self.bounds;
-        let mut best: Option<(bool, f64, DVec2)> = None;
+        let mut best: Option<(f64, DVec2)> = None;
         let mut crossings = Vec::new();
         for k in 1..=SCANLINES {
             let y = min.y + (max.y - min.y) * k as f64 / (SCANLINES + 1) as f64;
@@ -127,19 +131,44 @@ impl Region {
                 }
             }
             crossings.sort_by(f64::total_cmp);
-            for span in crossings.as_chunks::<2>().0 {
-                let width = span[1] - span[0];
-                let point = DVec2::new((span[0] + span[1]) / 2.0, y);
-                if !(width > 0.0 && point.is_finite()) {
-                    continue;
-                }
-                let key = (self.contains(point), width);
-                if best.is_none_or(|(inside, widest, _)| key > (inside, widest)) {
-                    best = Some((key.0, key.1, point));
+            let widest = crossings
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|span| (span[1] - span[0], DVec2::new((span[0] + span[1]) / 2.0, y)))
+                .filter(|&(width, point)| width > 0.0 && point.is_finite() && self.contains(point))
+                .reduce(|widest, span| if span.0 > widest.0 { span } else { widest });
+            if let Some((_, point)) = widest {
+                let clearance = self.clearance(point);
+                if clearance > 0.0 && best.is_none_or(|(most, _)| clearance > most) {
+                    best = Some((clearance, point));
                 }
             }
         }
-        best.map(|(_, _, point)| point)
+        best.map(|(_, point)| point)
+    }
+
+    /// How far `point` is from the nearest edge of the outline.
+    fn clearance(&self, point: DVec2) -> f64 {
+        let mut nearest = f64::INFINITY;
+        for polyline in &self.outline {
+            let Some(&last) = polyline.last() else {
+                continue;
+            };
+            let mut before = last;
+            for &at in polyline {
+                let edge = at - before;
+                let along = (point - before).dot(edge) / edge.length_squared();
+                let foot = if along.is_finite() {
+                    before + edge * along.clamp(0.0, 1.0)
+                } else {
+                    before
+                };
+                nearest = nearest.min(point.distance(foot));
+                before = at;
+            }
+        }
+        nearest
     }
 }
 
@@ -162,20 +191,27 @@ impl Profiles {
 
     /// The region each of `references` names, in the same order: the one
     /// region bounded by the same curves, outer loop and holes; or, with
-    /// none or several, the region its point inside is in
-    /// ([`Profiles::region_at`]); or else none, the region's gone.
+    /// several, the one of them its point inside is in; or, with none, the
+    /// region its point is in ([`Profiles::region_at`]); or else none, the
+    /// region's gone. With several, a point in another region names none:
+    /// it's a region of those curves that was meant, and one of other
+    /// curves would be extruded without a word.
     pub fn resolve(&self, references: &[RegionRef]) -> Vec<Option<usize>> {
         let ids: Vec<(Vec<Id>, Vec<Vec<Id>>)> =
             self.regions.iter().map(Region::curve_ids).collect();
         references
             .iter()
             .map(|reference| {
-                let mut same = ids.iter().enumerate().filter(|(_, (curves, holes))| {
+                let same = |(curves, holes): &(Vec<Id>, Vec<Vec<Id>>)| {
                     *curves == reference.curves && *holes == reference.holes
-                });
-                match (same.next(), same.next()) {
+                };
+                let mut found = ids.iter().enumerate().filter(|(_, ids)| same(ids));
+                match (found.next(), found.next()) {
                     (Some((index, _)), None) => Some(index),
-                    _ => self.region_at(reference.inside),
+                    (None, _) => self.region_at(reference.inside),
+                    (Some(_), Some(_)) => self
+                        .region_at(reference.inside)
+                        .filter(|&index| same(&ids[index])),
                 }
             })
             .collect()

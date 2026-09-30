@@ -385,13 +385,18 @@ details and the timings.
   inside }` names a region for a feature to keep (serde): the sorted
   curve ids of its outer loop and of each hole (holes' lists sorted too)
   and a point strictly inside. `Profiles::reference(index)` makes one,
-  the point the middle of the widest span inside along 16 horizontal
-  lines across the region's box, preferring one `region_at` agrees with
-  (None for a region too thin, or of more than `MAX_REGION_CURVES`, twice
+  the point, of the middles of the widest span inside (that `region_at`
+  agrees with) along each of 16 horizontal lines across the region's box,
+  the one furthest from the outline: a line along an edge or through a
+  corner puts a middle on the outline, which a hair's move of the sketch
+  hands to the region beside (None for a region too thin, every middle
+  on the outline, or of more than `MAX_REGION_CURVES`, twice
   `MAX_CURVES`, ids). `Profiles::resolve(&[RegionRef])` finds each: the
-  one region with the same curve lists, else (none or several, as for the
-  two halves of a circle cut by a line) the region its point is in, else
-  none (the feature fails with "region not found"). So a region survives
+  one region with the same curve lists; with several (as for the two
+  halves of a circle cut by a line), the one of them its point is in;
+  with none, the region its point is in; else none (the feature fails
+  with "region not found"). With several, a point in a region of other
+  curves finds none rather than extruding that region unannounced. So a region survives
   curves added elsewhere and dimensions changed, and a region split in
   two resolves to the half its point is in. `RegionRef::check(max)` holds
   what a file could get wrong: at most `MAX_REGION_CURVES` ids, lists not

@@ -1334,3 +1334,9 @@ with tracing.
   excluded (touching isn't known yet).
 - **`FeatureId::get` and `Id::get`** give the numbers face names and wall
   curves carry.
+- **A reference whose curves several regions share resolves only among
+  them**: its point inside picks one of those regions, and a point in a
+  region of other curves (the disc it was cut from moved away) finds
+  none, "region not found", instead of that region being extruded
+  without a word. With no region of its curves, the point decides as
+  planned.
