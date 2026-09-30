@@ -1197,9 +1197,13 @@ three edges.
 (`Orient`, `Height`, `Reach`, and the ray tests' `Beside` and `Ahead`)
 take a constant term within the **tie distance** (a 64th of the
 resolution, `boolean::tie`) times the predicate's `scale` (how much it
-changes per unit of distance from its tie: `|UP|·|q − p|` for `Orient`,
-the triangle's normal's length for `Reach`, and so on) as zero, and go
-on to the perturbation's powers. So a configuration within the tie
+changes per unit of distance from its tie: `|UP × (q − p)|` for
+`Orient`, `|det[g, e, UP]| / |UP|` for `Height`, the triangle's normal's
+length for `Reach`, `|RAY|·|(d − c)·ACROSS|` for `Ahead`) as zero, and go
+on to the perturbation's powers. The scales make the tie one distance
+for every predicate, the one the curved primitives use for heights (a
+review found `Height`'s 32 times larger and `Orient`'s and `Ahead`'s
+larger along steep or ray-wise edges). So a configuration within the tie
 distance of a tie is decided as the tie it stands for: faces flush in
 exact arithmetic but turned and moved, every coordinate rounded, merge
 or part cleanly as the unmoved ones do (of 96 random flush grid boxes'
@@ -1426,14 +1430,22 @@ ends, their control hulls apart (GJK). Then no ends is no cut, two ends
 are one arc, and more ends of two planar patches join in order along the
 line their planes meet in (if they alternate). Without the cylinder
 certificate a box's side against a boss's wall along it refined without
-end.
+end. The argument holds for the exact plane and cylinder; the patches
+are only within the resolution of them, so a loop the certificate
+misses lies within about the resolution of both surfaces (a near
+tangency),
+and leaving it out moves the result by less than that.
 
 Two patches on **one surface** (their faces claim quadrics and points
 sampled on each lie on the other's within the resolution: a pin in a
 hole cut by the same circle, cylinders of one radius stacked or
 overlapping) don't meet at all once `A` is perturbed off it, so they have
 no cut, and ends there are `Inconsistent`. Such pairs had no certificate
-and were refined for a minute or two before running out of budget.
+and were refined for a minute or two before running out of budget. The
+test is within the resolution, not exact: surfaces a hair apart or
+tilted pass too. Where those cross, the counting gives ends and the
+pair is `Inconsistent`; a loop they hide lies within the resolution of
+both, and leaving it out moves the result by less than that.
 
 Any other pair is **refined**: both patches, where larger than the floor
 (`MIN_SPLIT` resolutions across their control points' box), are split by
@@ -1834,6 +1846,20 @@ patches in one plane has either patch off it, so the hull rule can't
 hold there, and repair split along it down to flat pieces: 114 000
 patches for the filled plate, 36 now.
 
+Last, **slivers on plane faces** go (`delaunay`, after the rounds above,
+in rounds of its own): a straight side between two triangles of one
+plane face, either of them a sliver (the sine of its narrowest angle
+under `SLIVER` = 0.02), is flipped towards the Delaunay triangulation
+(the two angles facing it add up to more than π) when both new
+triangles are proper and their curved corners open. Each input triangle
+is cut on its own, so a long thin one (a plate's cap between its far
+corners and a hole) leaves slivers when a second hole's rim crosses it
+at a glancing angle; at a far corner they were under `1e-7` radians
+wide, which breaks the vertex rule of the hulls and no split mends. Of
+160 operations drilling plates hole after hole, 148 worked before and
+all do now; drilling a 20 × 20 box in a grid of 60 holes, 12 steps
+failed before and 2 now.
+
 Collapsing removes an edge and keeps a closed manifold; it never decides
 that two separate vertices are one. What the clean-up can't mend fails the
 final check.
@@ -1908,6 +1934,22 @@ A unit of work is about 0.2 to 0.7 µs on one thread across these and
 across booleans that fail, so `MAX_WORK` (about 4.2 million) lets the
 heaviest of them through with room to spare and stops a failing one
 within about two seconds on one thread.
+
+**Whole-body costs.** Much of an operation's work is over everything
+both operands hold, whatever the boolean touches: every refinement
+round rebuilds and counts both operands, the clean-up looks at the whole
+soup each round, repair tests every pair of the result near each other
+and the check spends five units a patch. So a small hole drilled into a
+plate of 6 588 patches costs about 0.15 million units (0.1 s), into
+one of 17 596 about 0.38 million (0.24 s), and into a box already
+drilled with 60 holes (5 156 patches) about 0.48 million: 0.21 million
+in the pair decisions' rounds, 0.16 million in repair, 0.06 million in
+the clean-up. At roughly 20 to 100 units a patch, a body past some
+50 000 to 200 000 patches can take no boolean within `MAX_WORK`. On
+the web the regen worker is one thread, and wasm runs slower than
+native, so a boolean that fails at the budget holds the worker for
+several seconds; drags queue behind it (latest wins, but a running
+operation isn't stopped).
 
 ### Tests
 
@@ -2014,7 +2056,8 @@ and off it; parts built in chains of twenty (plates, bosses, slots,
 rounded blocks, plates with holes on the sketch planes, joined, cut and
 now and then intersected, each result fed on); solids turned and moved
 at random against boxes and bars; cylinders side by side with gaps and
-overlaps of `1e-9` to `1e-3` at two tolerances; pins in holes of their
+overlaps of `1e-9` to `1e-3` at two tolerances; plates drilled hole
+after hole (in rows, or anywhere on a grid); pins in holes of their
 own circle and cylinders of one radius stacked and overlapping; bosses
 flush on plates; the same bits at 1 and 8 threads. In release it runs
 in about 25 s (37 s one test after another, 83 s on one thread); debug
@@ -2031,7 +2074,9 @@ tangencies, below), turned flush grid boxes (900 operations, 875 right,
 the rest refused), tangent cylinders at three tolerances and seven
 offsets (564 of 882 right, the rest refused), and every result right by
 the volume identities, face tags and sampled points, and the same bits
-at 1 and 8 threads.
+at 1 and 8 threads. Those counts came before the tie distance was made
+one distance for every predicate, which took the tangent test from 74
+to 72 of its 96 operations and left the others as they were.
 
 ### Known gaps
 
@@ -2090,6 +2135,21 @@ at 1 and 8 threads.
 - **Flush faces after rounding**: flat solids flush in exact arithmetic
   but turned and moved now mostly work (94 of 96 turned grid boxes'
   operations); a few still fail as `Invalid` or `Inconsistent`.
+- **Holes whose rims share a tangent with a long cap edge**: drilling a
+  second hole of the same size beside the first, in line with it, on a
+  large plate (a 20 × 20 box, holes 2.4 apart) can leave a cap edge from
+  a far corner passing within a micrometre of the new rim: the triangles
+  there are zero-height at a closed corner no flip may open, and the
+  result fails as `Invalid` (2 of 60 steps drilling such a box).
+- **Flush bosses joined over holes** fail now and then. The boss's wall,
+  cut along its rim where the rim is dropped, can get a triangle whose
+  three corners lie on the rim (three arcs of one circle, zero area),
+  which fails the fold check: seen when the drilled plate under the boss
+  came from a slightly different triangulation of its cap (the
+  `chained_results` test's plate with the sliver threshold at 0.01 or
+  0.05). A boss whose rim crosses eight holes of the plate fails as
+  `Inconsistent`: a face's kept edges don't close into loops. One hole or
+  two crossing the rim work. Bugs to find.
 - Triangles thinner than the resolution across two faces (a cut passing
   within a resolution or two of a vertex) aren't flipped, and fail the
   hull rules.
@@ -2559,6 +2619,9 @@ parameter, or a split outside the patch bounds),
 - **Two patches on one quadric, and a plane against a cylinder patch
   whose normals keep within a half-space, are certificates** of no hidden
   loop, beside the plan's normal cones apart.
+- **The clean-up flips slivers on plane faces towards Delaunay**, across
+  the pieces of different input triangles, which cutting each triangle
+  on its own can't do (see "Clean-up").
 - **The clean-up merges coplanar faces along curves** where it can (a
   curved edge between two triangles in one plane is flipped away), and
   moves triangles a collapse gives an off-surface curve to their face's

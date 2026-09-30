@@ -14,7 +14,10 @@
 //! flipped, which splits the triangle beyond at the far corner and leaves
 //! the same surface. Components that enclose no volume go. It never
 //! decides that two separate vertices are one: a collapse removes an
-//! edge, keeping the surface a closed manifold.
+//! edge, keeping the surface a closed manifold. Last, slivers left on
+//! plane faces (each input triangle is cut on its own, and long thin ones
+//! leave slivers) are flipped towards the Delaunay triangulation of their
+//! face.
 //!
 //! Curved edges (those whose record in [`Soup::curves`] bends by more
 //! than the short length) are never collapsed or flipped: the clean-up
@@ -39,6 +42,9 @@ use crate::patch::Patch;
 
 /// How many rounds of collapses and flips at most.
 const ROUNDS: usize = 64;
+
+/// Triangles whose narrowest angle's sine is below this are slivers.
+const SLIVER: f64 = 0.02;
 
 /// A triangle soup being cleaned: positions, triangles on vertex ids,
 /// each triangle's face, and the curves of its edges that aren't
@@ -135,6 +141,19 @@ pub(super) fn clean(
         }
         for t in 0..c.soup.tris.len() as u32 {
             if c.alive[t as usize] && c.unbend(t) {
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    // Then slivers on plane faces, flipped towards Delaunay.
+    for _ in 0..ROUNDS {
+        work.spend(c.soup.tris.len())?;
+        let mut changed = false;
+        for t in 0..c.soup.tris.len() as u32 {
+            if c.alive[t as usize] && c.delaunay(t) {
                 changed = true;
             }
         }
@@ -547,11 +566,7 @@ impl Cleaner<'_> {
         let tri = self.soup.tris[t as usize];
         let (h, i) = self.height(tri);
         let [a, b, c] = [tri[i], tri[(i + 1) % 3], tri[(i + 2) % 3]];
-        // The triangle across `a → b` runs `b → a`.
-        let Some(&s) = self.shared(a, b).iter().find(|&&s| {
-            let o = self.soup.tris[s as usize];
-            s != t && (0..3).any(|j| o[j] == b && o[(j + 1) % 3] == a)
-        }) else {
+        let Some(s) = self.across(t, a, b) else {
             return false;
         };
         let other = self.soup.tris[s as usize];
@@ -603,14 +618,101 @@ impl Cleaner<'_> {
             }
             return false;
         }
-        self.soup.tris[t as usize] = n1;
-        self.soup.tris[s as usize] = n2;
+        self.swap(t, s, [a, b], c, d);
         self.soup.faces[t as usize] = self.soup.faces[s as usize];
-        self.around[a as usize].retain(|&x| x != s);
-        self.around[b as usize].retain(|&x| x != t);
-        self.around[c as usize].push(s);
-        self.around[d as usize].push(t);
         true
+    }
+
+    /// The living triangle across the side `u → v` of triangle `t`: the
+    /// one running `v → u`.
+    fn across(&self, t: u32, u: u32, v: u32) -> Option<u32> {
+        self.shared(u, v).into_iter().find(|&s| {
+            let o = self.soup.tris[s as usize];
+            s != t && (0..3).any(|j| o[j] == v && o[(j + 1) % 3] == u)
+        })
+    }
+
+    /// Flips the side `u → v` of triangle `t`, whose far corner is `a`,
+    /// and of `s` across it, whose far corner is `b`: they become `[a, u,
+    /// b]` and `[a, b, v]`.
+    fn swap(&mut self, t: u32, s: u32, [u, v]: [u32; 2], a: u32, b: u32) {
+        self.soup.tris[t as usize] = [a, u, b];
+        self.soup.tris[s as usize] = [a, b, v];
+        self.around[u as usize].retain(|&x| x != s);
+        self.around[v as usize].retain(|&x| x != t);
+        self.around[a as usize].push(s);
+        self.around[b as usize].push(t);
+    }
+
+    /// The sine of the narrowest angle of `tri` (its corners' triangle).
+    fn narrowest(&self, tri: [u32; 3]) -> f64 {
+        let mut l = [0, 1, 2].map(|i| self.p(tri[(i + 1) % 3]).distance(self.p(tri[i])));
+        l.sort_by(f64::total_cmp);
+        let d = l[1] * l[2];
+        if d > 0.0 {
+            self.normal(tri).length() / d
+        } else {
+            0.0
+        }
+    }
+
+    /// Flips a straight side of triangle `t` on a plane face, shared with a
+    /// triangle of the same face, towards the Delaunay triangulation (the
+    /// angles facing the side add up to more than π), where either of the
+    /// two is a sliver ([`SLIVER`]) and the two new triangles are proper
+    /// with their curved corners open. Cutting each input triangle on its
+    /// own leaves slivers where the triangles were long and thin, as a
+    /// plate's caps are between its corners and a hole: a second hole's
+    /// rim then crosses their sides at a glancing angle, and triangles
+    /// under 1e-7 radians wide at a far corner broke the hull rule there,
+    /// which no split mends.
+    fn delaunay(&mut self, t: u32) -> bool {
+        let tri = self.soup.tris[t as usize];
+        let face = self.soup.faces[t as usize];
+        let Some((up, _)) = self.planes[face as usize] else {
+            return false;
+        };
+        for i in 0..3 {
+            let (u, v, a) = (tri[i], tri[(i + 1) % 3], tri[(i + 2) % 3]);
+            if self.curved(u, v) {
+                continue;
+            }
+            let Some(s) = self
+                .across(t, u, v)
+                .filter(|&s| self.soup.faces[s as usize] == face)
+            else {
+                continue;
+            };
+            let other = self.soup.tris[s as usize];
+            let b = *other
+                .iter()
+                .find(|&&w| w != u && w != v)
+                .expect("a third corner");
+            if a == b || self.neighbours(a).contains(&b) {
+                continue;
+            }
+            if self.narrowest(tri).min(self.narrowest(other)) > SLIVER {
+                continue;
+            }
+            let angle = |x: u32, p: u32, q: u32| {
+                let (e, f) = (self.p(p) - self.p(x), self.p(q) - self.p(x));
+                e.cross(f).length().atan2(e.dot(f))
+            };
+            if angle(a, u, v) + angle(b, v, u) <= std::f64::consts::PI + 1e-9 {
+                continue;
+            }
+            let (n1, n2) = ([a, u, b], [a, b, v]);
+            let proper =
+                |n: [u32; 3]| self.height(n).0 > self.small && self.normal(n).dot(up) > 0.0;
+            if !(proper(n1) && proper(n2) && self.open(n1) && self.open(n2)) {
+                continue;
+            }
+            self.swap(t, s, [u, v], a, b);
+            // The new side is straight: no record from an edge there before.
+            self.soup.curves.remove(&(a.min(b), a.max(b)));
+            return true;
+        }
+        false
     }
 
     /// Flips a curved side of triangle `t` whose neighbour across it lies
@@ -633,10 +735,7 @@ impl Cleaner<'_> {
             if !self.curved(u, v) {
                 continue;
             }
-            let Some(&s) = self.shared(u, v).iter().find(|&&s| {
-                let o = self.soup.tris[s as usize];
-                s != t && (0..3).any(|j| o[j] == v && o[(j + 1) % 3] == u)
-            }) else {
+            let Some(s) = self.across(t, u, v) else {
                 continue;
             };
             let same = self.planes[self.soup.faces[s as usize] as usize].is_some_and(|(n, d)| {
@@ -662,14 +761,9 @@ impl Cleaner<'_> {
                 continue;
             }
             let face = self.soup.faces[t as usize].min(self.soup.faces[s as usize]);
-            self.soup.tris[t as usize] = n1;
-            self.soup.tris[s as usize] = n2;
+            self.swap(t, s, [u, v], a, b);
             self.soup.faces[t as usize] = face;
             self.soup.faces[s as usize] = face;
-            self.around[u as usize].retain(|&x| x != s);
-            self.around[v as usize].retain(|&x| x != t);
-            self.around[a as usize].push(s);
-            self.around[b as usize].push(t);
             self.soup.curves.remove(&(u.min(v), u.max(v)));
             return true;
         }

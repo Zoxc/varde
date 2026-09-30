@@ -1,7 +1,8 @@
 //! The seeded random suite: booleans of extruded and primitive solids in
 //! the configurations CAD makes on purpose (flush, coaxial, stacked,
-//! nested, a pin in its hole, tangent, a hair apart) and at random, alone
-//! and in chains each fed the previous result.
+//! nested, a pin in its hole, tangent, a hair apart, holes drilled one
+//! after another) and at random, alone and in chains each fed the
+//! previous result.
 //!
 //! Every operation must give a solid that is right, or fail: never a
 //! wrong one, and never a panic. Right means it passes `check` (every
@@ -627,7 +628,7 @@ fn coaxial_solids_and_pins_in_holes() {
 
 #[test]
 fn flush_bosses_on_plates() {
-    // A circle inside a rectangle (or poking out of it), both extruded
+    // A circle inside a rectangle (one near its corner), both extruded
     // over the same span or sharing one cap's plane: flush caps with
     // curved rims, on a sketch plane and on a frame whose axes are
     // swapped round.
@@ -686,4 +687,54 @@ fn seeded_booleans_are_deterministic() {
             });
         }
     }
+}
+
+#[test]
+fn plates_drilled_hole_after_hole() {
+    // Holes drilled one after another into a plate, as a user places
+    // them: of one size, in rows or anywhere on a grid. Each cuts the
+    // long cap triangles the ones before left between the plate's corners
+    // and their rims, at a glancing angle where rims share a tangent: 148
+    // of these 160 operations worked before slivers on plane faces were
+    // flipped towards Delaunay, all of them after.
+    let tol = Tolerance::DEFAULT;
+    let mut tally = Tally::default();
+    let mut rng = Rng::new(81);
+    let mut samples = Rng::new(82);
+    for plate in 0..cases(4, 1) {
+        let size = DVec3::new(
+            (rng.range(4.0, 12.0) * 4.0).round() / 4.0,
+            (rng.range(3.0, 8.0) * 4.0).round() / 4.0,
+            1.0,
+        );
+        let mut current = Solid::cuboid(DVec3::ZERO, size, 1, &tol).unwrap();
+        let r = [0.25, 0.4, 0.5][rng.next_u64() as usize % 3];
+        let rows = rng.next_u64().is_multiple_of(2);
+        for hole in 0..cases(10, 2) {
+            let (x, y) = if rows {
+                (1.0 + 1.5 * (hole % 4) as f64, 1.0 + 1.5 * (hole / 4) as f64)
+            } else {
+                (
+                    (rng.range(0.75, size.x - 0.75) * 4.0).round() / 4.0,
+                    (rng.range(0.75, size.y - 0.75) * 4.0).round() / 4.0,
+                )
+            };
+            let drill =
+                Solid::cylinder(DVec3::new(x, y, -1.0), r, 3.0, 10 + hole as u64, &tol).unwrap();
+            let name = format!("plate {plate}, hole {hole}");
+            let out = four(
+                &current,
+                &drill,
+                None,
+                &tol,
+                &mut samples,
+                &mut tally,
+                &name,
+            );
+            if let Some(next) = out[2].clone() {
+                current = next;
+            }
+        }
+    }
+    tally.at_least(0.95, "drilled");
 }

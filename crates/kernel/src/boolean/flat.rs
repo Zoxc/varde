@@ -35,8 +35,7 @@ pub(super) struct Flat<'a> {
     /// Each vertex of `A`'s first perturbation, `s·n_v`.
     perturb: Vec<DVec3>,
     /// Distances this close to a tie are decided as it
-    /// ([`exact::sign_tied`]): 0 between flat operands, which are exact,
-    /// and the curved primitives' tie beside curved ones.
+    /// ([`exact::sign_tied`]); 0 decides exactly.
     tie: f64,
 }
 
@@ -257,7 +256,9 @@ impl Pred for Orient {
     }
 
     fn scale(&self) -> f64 {
-        UP.length() * (self.q.p - self.p.p).length()
+        // `|UP × (q − p)|` times how far `r` is from the plane through
+        // `p → q` along `UP`: where its shadow is beside the line's.
+        UP.cross(self.q.p - self.p.p).length()
     }
 }
 
@@ -282,9 +283,9 @@ impl Pred for Height {
     }
 
     fn scale(&self) -> f64 {
-        // `λ·det[g, e, UP]`, `λ` the height.
+        // `λ·det[g, e, UP]`, the height `λ·|UP|`.
         let (g, e) = (self.d.p - self.c.p, self.b.p - self.a.p);
-        g.cross(e).dot(UP).abs()
+        g.cross(e).dot(UP).abs() / UP.length()
     }
 }
 

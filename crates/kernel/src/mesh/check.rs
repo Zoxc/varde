@@ -294,8 +294,6 @@ pub(super) fn check_pair(
     }
 }
 
-/// Barycentric points where face tags are sampled on quadrics: a grid of
-/// 15, four steps along each edge.
 /// Whether `patch` lies on `surface` as a face tag claims (see
 /// [`Mesh::check_faces`]): a plane's patch with its six control points
 /// within `resolution` of it, a quadric's with its [`samples`].
@@ -310,6 +308,8 @@ pub(crate) fn on_surface(patch: &Patch, surface: &super::Surface, resolution: f6
     }
 }
 
+/// Barycentric points where face tags are sampled on quadrics: a grid of
+/// 15, four steps along each edge.
 pub(crate) fn samples() -> impl Iterator<Item = glam::DVec3> {
     (0..=4).flat_map(|i| {
         (0..=4 - i).map(move |j| {

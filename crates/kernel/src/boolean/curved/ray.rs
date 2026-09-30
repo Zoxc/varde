@@ -15,8 +15,8 @@
 use glam::DVec3;
 
 use super::super::exact::{self, Num, Pred, Pt, dir, dot, sub};
-use super::Axes;
 use super::bernstein;
+use super::{Axes, first_sign, sign};
 use crate::patch::Conic3;
 
 /// The direction rays run along: horizontal (square to [`UP`](super::UP)),
@@ -75,9 +75,9 @@ impl Pred for Ahead {
     }
 
     fn scale(&self) -> f64 {
-        // The crossing's distance along the ray times the edge's length
-        // across it, roughly.
-        RAY.length() * ACROSS.length() * (self.d.p - self.c.p).length()
+        // The crossing's distance along the ray times `|RAY|` and how far
+        // the edge runs across it, `(d − c)·ACROSS`.
+        RAY.length() * (self.d.p - self.c.p).dot(ACROSS).abs()
     }
 }
 
@@ -156,30 +156,21 @@ pub(crate) fn ray(v: Pt, g: &RayEdge, ahead: bool, axes: &Axes, tie: f64) -> i32
 fn tied_ahead(v: Pt, g: &RayEdge, s: f64, axes: &Axes) -> i8 {
     let (_, tangent) = g.conic.eval_deriv(s);
     let (ta, tb) = (tangent.dot(axes.along), tangent.dot(axes.across));
-    // The motion of `v` less that of `g`'s point: one of them is `A`'s.
-    let (mine, sign_t) = match (v.n, g.c.n, g.d.n) {
+    // `A`'s motion (`v`'s, or `g`'s point's), and which way it moves `v`
+    // relative to `g`.
+    let (motion, towards) = match (v.n, g.c.n, g.d.n) {
         (Some(n), _, _) => (n, 1.0),
-        (None, Some(c), Some(d)) => (-(c * (1.0 - s) + d * s), -1.0),
+        (None, Some(c), Some(d)) => (c * (1.0 - s) + d * s, -1.0),
         _ => return 1,
     };
     let e = |d: DVec3| {
+        let d = d * towards;
         let (da, db) = (d.dot(axes.along), d.dot(axes.across));
         (db * ta - da * tb) * tb
     };
-    [mine, exact::T2 * sign_t, exact::T3 * sign_t]
-        .into_iter()
-        .map(|d| sign(e(d)))
-        .find(|&x| x != 0)
-        .unwrap_or(1)
-}
-
-fn sign(x: f64) -> i8 {
-    if x > 0.0 {
-        1
-    } else if x < 0.0 {
-        -1
-    } else {
-        0
+    match first_sign(motion, e) {
+        0 => 1,
+        x => x,
     }
 }
 

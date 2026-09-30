@@ -409,16 +409,16 @@ impl<'a> Curved<'a> {
         if across == 0.0 {
             return None;
         }
-        let motion = match side {
-            Side::A => self.perturb_along(e, h.t),
+        // `A`'s motion there (the edge's, or the patch's), and which way
+        // it moves the edge relative to the patch.
+        let (motion, towards) = match side {
+            Side::A => (self.perturb_along(e, h.t), 1.0),
             Side::B => {
                 let corners = self.a.tris[f as usize];
-                -(0..3)
-                    .map(|i| self.flat.perturb(corners[i]) * h.u[i])
-                    .sum::<DVec3>()
+                let at: DVec3 = (0..3).map(|i| self.flat.perturb(corners[i]) * h.u[i]).sum();
+                (at, -1.0)
             }
         };
-        let sign_t = if side == Side::A { 1.0 } else { -1.0 };
         // The crossing's step in the domain, `(du0, du1)` by least squares
         // on `P_u`, `P_v`; its `u_k` part is `du·w`-like: that of the
         // barycentric step.
@@ -434,13 +434,10 @@ impl<'a> Curved<'a> {
             let du1 = (g00 * r1 - g01 * r0) / det;
             [du0, du1, -du0 - du1][k]
         };
-        // The perturbation order by order: `δ`, then the generic
-        // translations (the patch's own when the edge is `B`'s).
-        [motion, exact::T2 * sign_t, exact::T3 * sign_t]
-            .into_iter()
-            .map(|d| sign(step_k(d)))
-            .find(|&s| s != 0)
-            .map(|s| s > 0)
+        match first_sign(motion, |d| step_k(d * towards)) {
+            0 => None,
+            s => Some(s > 0),
+        }
     }
 
     /// `s02` for a curved patch: the points of the patch straight above or
@@ -488,7 +485,7 @@ impl<'a> Curved<'a> {
 /// order `delta` (each vertex's own direction, as interpolated there),
 /// else of the two generic translations that follow it, as the exact
 /// predicates take them; 0 if all three are.
-fn first_sign(delta: DVec3, f: impl Fn(DVec3) -> f64) -> i8 {
+pub(super) fn first_sign(delta: DVec3, f: impl Fn(DVec3) -> f64) -> i8 {
     [delta, exact::T2, exact::T3]
         .into_iter()
         .map(|d| sign(f(d)))

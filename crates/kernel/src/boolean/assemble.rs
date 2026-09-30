@@ -981,9 +981,6 @@ impl Cutting<'_> {
     }
 }
 
-/// Each crossing's parameter along its edge, solved again exactly where
-/// the face crossed is a plane or a quadric and the edge curved, or the
-/// face curved (a straight edge through a planar patch is exact already).
 /// Makes an edge's crossings, `order`ed along it, go in and out of the
 /// other solid in turn from its start's winding number `w`, as they do
 /// on any path through a solid: where one would take the winding number
@@ -1015,6 +1012,9 @@ fn alternate(
     }
 }
 
+/// Each crossing's parameter along its edge, solved again exactly where
+/// the face crossed is a plane or a quadric and the edge curved, or the
+/// face curved (a straight edge through a planar patch is exact already).
 fn params(input: &Input, other: &Input, crossings: &[Crossing]) -> Vec<f64> {
     par_map(crossings, |c| {
         let straight = input.straight[c.edge as usize];
