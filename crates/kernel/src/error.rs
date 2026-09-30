@@ -1,3 +1,4 @@
+use crate::boolean::BooleanError;
 use crate::mesh::CheckError;
 use crate::patch::PatchError;
 use crate::profile::ProfileError;
@@ -18,6 +19,8 @@ pub enum KernelError {
     Patch(PatchError),
     /// A profile that can't be extruded.
     Profile(ProfileError),
+    /// A boolean that can't be worked out.
+    Boolean(BooleanError),
 }
 
 impl std::fmt::Display for KernelError {
@@ -27,6 +30,7 @@ impl std::fmt::Display for KernelError {
             KernelError::Invalid(e) => write!(f, "the geometry is invalid: {e}"),
             KernelError::Patch(e) => write!(f, "the geometry is out of bounds: {e}"),
             KernelError::Profile(e) => write!(f, "the profile can't be extruded: {e}"),
+            KernelError::Boolean(e) => write!(f, "the boolean can't be worked out: {e}"),
         }
     }
 }

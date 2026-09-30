@@ -11,15 +11,19 @@
 //! [`Frame`], into an exact solid; [`Solid::volume`] and [`Solid::area`]
 //! measure one.
 //!
-//! Booleans are to be built the way
-//! [manifold](https://github.com/elalish/manifold) builds them for flat
-//! triangles. The math of one curve or triangle is in [`patch`]; closed
+//! [`boolean()`] unites, subtracts and intersects solids the way
+//! [manifold](https://github.com/elalish/manifold) does for flat
+//! triangles, by counting from primitives each worked out once, so the
+//! result is always a closed manifold; so far for flat patches only.
+//! [`touches`] says whether two solids meet. The math of one curve or
+//! triangle is in [`patch`]; closed
 //! meshes of them, the check of their invariants, the BVH over them,
 //! their refinement and repair, and box and cylinder meshes are in
 //! [`mesh`]. Operations on them are bounded by a [`Budget`] and the limits
 //! here, and fail with a [`KernelError`].
 
 mod aabb;
+mod boolean;
 mod budget;
 mod error;
 mod extrude;
@@ -37,6 +41,7 @@ mod test_rng;
 mod tolerance;
 
 pub use aabb::Aabb;
+pub use boolean::{BooleanError, Op, boolean, touches};
 pub use budget::Budget;
 pub use error::KernelError;
 pub use extrude::{Frame, extrude};

@@ -15,8 +15,10 @@ the check of their invariants, the BVH and the hull tests, red–green
 refinement and repair, and box and cylinder meshes (`mesh`), the
 tolerances (`Tolerance`), the limits, `Budget` and `KernelError`, and the
 parallel map (`par`), below, and `Solid`, a checked mesh, with its
-tessellation for drawing (`tessellate`) and its volume and area, and
-`extrude`, which sweeps a `Profile` into a solid. Documents store no geometry:
+tessellation for drawing (`tessellate`) and its volume and area,
+`extrude`, which sweeps a `Profile` into a solid, and `boolean` and
+`touches` for solids of flat patches (the counting skeleton the curved
+booleans build on). Documents store no geometry:
 bodies are the outputs of the feature history, which `varde-regen`
 evaluates into solids and draws (see "Bodies from the history").
 
@@ -1037,6 +1039,311 @@ extrudes. Patch sums are added sequentially in patch order.
 The Gauss nodes and weights are written out, not computed, so no
 platform's `cos` decides them.
 
+## Booleans (`src/boolean.rs`, `src/boolean/`)
+
+`boolean(a, b, op, tol, budget)` gives `a ∪ b`, `a − b` or `a ∩ b`
+(`Op::{Union, Difference, Intersection}`) as a `Solid`, and `touches(a,
+b, tol, budget)` whether two solids meet, running only the broad phase
+and the counting. They follow Manifold's `boolean3.cpp` and
+`boolean_result.cpp`: every topological fact comes from a few
+primitives, each worked out once and stored by the pair it is about,
+through identities that hold whatever values the primitives take, so the
+result is a closed manifold by construction and nothing is ever merged
+because two points are close.
+
+So far only **flat patches** (every edge straight within the resolution,
+`hull::flat`; such a patch is taken as the triangle on its corners): an
+operand with a curved patch is refused with
+`KernelError::Boolean(BooleanError::Curved)`. The pieces are written
+against the curved interfaces (below), so the curved primitives swap in.
+
+| file | holds |
+|---|---|
+| `boolean.rs` | `Op`, `BooleanError`, `UP`, `Cross11`, the `Primitives` trait, `boolean`, `touches`, building the mesh |
+| `boolean/input.rs` | `Input`: an operand's tables (corners, edges' ends and triangles, boxes), vertex normals, flat volume |
+| `boolean/exact.rs` | exact signs: `Approx` (float with an error bound), `Exp` (expansions), `Poly` in `ε`, `Pred`, `sign`, `orient2d` |
+| `boolean/flat.rs` | `Flat`, the primitives of flat operands, with the symbolic perturbation |
+| `boolean/count.rs` | broad phase, the stored primitives, `x12`/`x21`, winding numbers |
+| `boolean/assemble.rs` | new vertices, kept pieces of edges, cut edges, each cut face triangulated |
+| `boolean/triangulate.rs` | a face's kept loops in its parameter domain into triangles |
+| `boolean/cleanup.rs` | collapsing and flipping the degenerate triangles flush operands leave |
+| `boolean/tests.rs` | boxes in every flush, edge-on and vertex-on configuration, tori, determinism |
+
+### The primitives
+
+One fixed projection direction for everything, `UP = (2, 3, 32)`: nearly
+`+z`, tilted off every axis so walls along the axes don't all project to
+lines, with small integer coordinates so exact predicates take it as it
+is. Heights, "above" and "below" are along it; "seen from `+UP`" is the
+projection.
+
+- `s02(v, f)`: the signed number of layers of face `f` of the other
+  operand above vertex `v`: +1 where `f` faces up (`n·UP > 0`), −1 where
+  it faces down, 0 where the ray from `v` along `UP` misses it. A flat
+  triangle along `UP` (its projection a line) gives 0. For curved patches,
+  hits where the patch folds over in projection cancel in pairs, so the
+  signed count only changes where the vertex's projection crosses the
+  patch's boundary or the vertex passes through it, as for flat ones.
+- `s11(e, g)` (`Cross11`, for an edge `e` of `A` and `g` of `B`, each in
+  its own direction): whether their projections cross, `sigma` the sign of
+  `det[g, e, UP]` (+1 where `e` crosses `g` from its right to its left,
+  seen from `+UP`), and which passes above at the crossing.
+- `order(side, e, f1, f2)`: the order of an edge's two crossings along it.
+- `crossing(side, e, f)`: where along the edge it crosses: a position
+  only, never a decision.
+
+Each is asked once per pair and stored in a sorted table (`count::Table`,
+by `(vertex, face)` or `(edge of A, edge of B)`), which everything that
+needs it reads. An edge's direction is that of its lower halfedge.
+
+### Exact predicates and the perturbation (`boolean/flat.rs`, `boolean/exact.rs`)
+
+For flat operands the primitives are exact: signs of `3 × 3`
+determinants and plane sides of the input coordinates. Ties, which CAD
+geometry makes on purpose (flush faces, a vertex on a face, edges
+meeting), are broken by **symbolic perturbation**: every vertex of `A`
+moves by `ε·s·n_v + ε²·T2 + ε³·T3` for an infinitely small `ε`, with
+`n_v` its direction out of `A` (the normalized sum of the unit normals of
+its triangles), `s = +1` for a union (`A` grows: flush faces overlap and
+merge) and −1 for a difference or intersection (`A` shrinks: flush faces
+cut cleanly), and `T2`, `T3` fixed generic translations for what the first
+order leaves tied. `B` stays. This is Manifold's "expand P" rule made
+into a real configuration: the perturbed operands are a genuine
+arrangement in general position, so every decision is true of it and
+the counting identities hold without exception.
+
+Each predicate is a polynomial in the points' coordinates, and so in
+`ε`; its sign is that of the first coefficient that isn't zero. The
+constant term is first evaluated in floating point with a running error
+bound (`Approx`: each `+ − ×` adds its operands' bounds, their products
+with the other's value, and half an ulp of the result, inflated a
+little), which decides almost every sign without allocating. Only when
+the bound can't (a tie or a near one) is every coefficient worked out
+exactly with floating-point expansions (`Exp`, Shewchuk's two-sum and
+Dekker's two-product, no fused multiply-add) as polynomials (`Poly<Exp>`).
+All of it is `+ − ×`, correctly rounded, so the signs are the same on
+every platform. A predicate zero in every power (only if `T2` and `T3`
+happen to lie in the tie's degenerate directions) takes a fixed sign.
+
+The predicates: `Orient` `det[q − p, r − p, UP]` (which side of `p → q`
+the point `r` projects), `PlaneSide` `(t0 − x)·n` (which side of a
+triangle's plane), `Height` `det[a − c, d − c, b − a]` (with `σ`, which
+edge is above at a crossing: the point of `e` is `λ` above that of `g`,
+`λ = det[a − c, g, e] / det[g, e, UP]`), and `Reach`, `Across`, `Between`
+for where an edge meets a plane and in which order. A vertex is above
+a face's plane along the ray when `(t0 − x)·n` has the sign of `n·UP`;
+it projects into the triangle when it is on the interior side of all
+three edges.
+
+### Counting (`boolean/count.rs`)
+
+1. **Broad phase**: a BVH over both operands' patch boxes; the pairs
+   (triangle of `A`, triangle of `B`) whose boxes meet (margin 0, `≤`, so
+   touching boxes count), counted against the budget before they are
+   collected (`Bvh::pairs_within`). From them the candidate edge–face
+   pairs of each operand, sorted.
+2. **Layer counts** for each end of a candidate edge against the face,
+   and for the first vertex of each connected part of an operand against
+   every face of the other that a ray up from it may meet
+   (`Bvh::hits_within`: `pairs_within` for any query box; the ray's box
+   runs to the top of the other operand's box).
+3. **Edge against edge** for each candidate edge against the edges of
+   the candidate face.
+4. **Crossings** by Manifold's identity: for an edge `e` of `A` from `a`
+   to `b` and a face `f` of `B`,
+   `x12(e, f) = s02(b, f) − s02(a, f) − Σ S(e, h)` over `f`'s edges `h`
+   as `f` runs them, where `S(e, h) = σ` when `h` passes above `e` (and
+   `−σ` for `h` running the other way). Walking along `e`, the signed
+   number of layers of `f` above changes by one each time `e` passes
+   through `f` (entering `B` through it: +1) and each time `e`'s shadow
+   passes under an edge of `f`, crossing it from its left to its right
+   taking one away whichever way `f` faces. `x21(g, f)` for an edge of
+   `B` through a face of `A` is the same with `S'(g, k) = −σ` when `k`
+   (of `A`) passes above `g`. A flat triangle and a segment meet once at
+   most: any other value is `Inconsistent`.
+5. **Winding numbers**: at each part's first vertex the sum of its layer
+   counts (every layer above, signed, is the winding number of the other
+   solid round it), and from there along the edges, each changing it by
+   its crossings; then every edge is checked to agree (`Inconsistent`
+   otherwise, never seen) and every winding number to be 0 or 1
+   (`InsideOut` otherwise). The operands' own volumes must be positive
+   too (`InsideOut`): `check` doesn't look at orientation.
+
+Consequences, from the counting alone: a vertex's winding number and
+its edges' crossings agree, and for every pair of faces (`p` of `A`, `q`
+of `B`) `Σ x12(e, q)` over `p`'s edges equals `Σ x21(h, p)` over `q`'s
+edges (each as its face runs it): the difference is minus the number of
+signed crossings of the two projected boundaries, which is zero for two
+closed curves. So each face pair's cut has as many ends going in as out;
+for flat triangles, exactly one of each or none.
+
+### Assembly (`boolean/assemble.rs`)
+
+- **What is kept**: union keeps what of each is outside the other
+  (winding 0), intersection what is inside (1), `A − B` what of `A` is
+  outside `B` and what of `B` is inside `A`, turned over (its plane tags
+  too).
+- **New vertices are records**: "edge `e` of `A` through face `f` of `B`"
+  (the `x12` list, sorted by edge then face) and the same for `B`'s edges;
+  ids after both operands' vertices. Positions come from `crossing`,
+  interpolated from the edge's nearer end (exactly the end at 0 and 1).
+- **Edges**: each edge's crossings are ordered along it (`order`, by
+  insertion, which can't fail), and its pieces kept by the winding number
+  running from its start: both faces beside it read the same pieces.
+- **Cut edges**: each face pair's two ends, with signs seen from `A`
+  (the crossing of an edge of `A` as the face of `A` runs it, and minus
+  the crossing of an edge of `B` as the face of `B` runs it). Keeping
+  the outside of `B`, a face of `A` runs its cut from the +1 end to the
+  −1 end (it leaves its edge where the edge enters `B`); keeping the
+  inside, the other way; faces of `B` the other way round from that. The
+  two faces of a pair then run their shared cut edge opposite ways.
+- **Faces**: a face with no cut is kept whole or dropped by its first
+  corner's winding number. A cut face's kept halfedges (pieces of its
+  edges and its cuts) leave each vertex once, so its loops follow from
+  the topology alone. They are triangulated in the patch's parameter
+  domain (corners `(0,0)`, `(1,0)`, `(0,1)`; vertices on a side placed by
+  their parameter exactly on it and tagged with that side, interior ones
+  solved from the plane), then turned into triangles on the records.
+  Faces are cut in parallel (`par_map`), the rest sequentially.
+- The result's faces are `A`'s then `B`'s (turned over for a
+  difference), unused ones kept; halfedges pair up by vertex id in
+  `MeshBuilder`, never by position.
+
+### Triangulating a face's loops (`boolean/triangulate.rs`)
+
+The loops are right for the perturbed operands however close their
+points are in fact: flush faces give loops of zero width whose points
+coincide, and interior vertices may sit exactly on the domain's sides.
+A constrained Delaunay triangulation (`spade`) merges coincident points,
+so ear clipping is used: it always completes. Loops touching the
+domain's sides are outer loops; the others are outer or holes by their
+signed area. Each hole goes to the smallest outer loop around one of its
+points and is bridged in from its rightmost vertex to the nearest vertex
+it sees (inside the angle there, crossing no side); then ears are cut in
+this order of preference: an ear with two corners at one position (so
+zero-width loops come apart into zero-width triangles along zero-length
+sides), a proper triangle with no other vertex in or on it (the best
+shaped one, for polygons up to 64 vertices; the first found beyond),
+a zero-area ear with no vertex on it, then any. No diagonal joins two
+vertices on one side of the domain (it would lie along the side, and the
+patch across could add the same one) or repeats an edge. Then diagonals
+are flipped towards the Delaunay triangulation (the far corner inside the
+near triangle's circle, the quadrilateral convex, the new diagonal
+allowed; at most 8 flips per triangle), which removes the thin triangles
+greedy ear cutting leaves.
+
+### Clean-up (`boolean/cleanup.rs`)
+
+The flat version of Manifold's degenerate clean-up, on the triangle soup
+before the mesh is built, at most 64 rounds:
+
+- **Collapse** edges no longer than an eighth of the resolution onto
+  their lower vertex id (the operands' own vertices come first, so they
+  stay where they are), when the link condition holds (the ends' common
+  neighbours are exactly the two corners opposite the edge, so the
+  surface stays a manifold) and no proper triangle turns over.
+- **Flip** the longest side of a triangle whose height over it is no more
+  than an eighth of the resolution, or no more than four resolutions when
+  the triangle across is on the same face (so every triangle stays on its
+  face's surface) and the flip leaves nothing thinner. The far corner of a
+  flat triangle lies on that side, so the two new triangles cover the one
+  across exactly.
+- **Drop** connected parts enclosing no volume (at most an eighth of the
+  resolution times their area): what is left of flush faces meeting.
+
+Collapsing removes an edge and keeps a closed manifold; it never decides
+that two separate vertices are one. What the clean-up can't mend fails the
+final check.
+
+### Results that aren't manifolds
+
+Where the exact result isn't a manifold (two boxes touching along an
+edge or at a corner, united; a box less a solid touching its skin from
+inside at a point or along a line), the perturbation gives parts a zero
+distance apart, and the result fails `check` with `Invalid`. The same
+operands intersected, or subtracted the other way, work.
+
+### Errors and budget
+
+`KernelError::Boolean(BooleanError)`: `Curved` (not yet), `InsideOut`,
+`Inconsistent` (the decisions don't fit together: never with exact
+primitives), `Degenerate` (a face's loops couldn't be triangulated, or
+the triangles don't pair up). `TooComplex` past the budget or
+`MAX_PATCHES`, `Invalid` when the result fails `check`. Work: the broad
+phase's pairs and the rays' hits (counted before collecting), one unit per
+stored primitive and per candidate crossing, the square of each edge's
+crossings (ordering them), `n²·(1 + n/64)` per cut face with `n` its cuts
+plus 6 (ear clipping), and the soup's size per clean-up round; then
+repair's own.
+
+### Costs
+
+Release, several threads: two flat tori of 36 864 patches each, crossing
+each other: 0.13 s to the mesh before repair, 0.34 s with repair and the
+check (their union is 70 784 patches). Ties go to the exact path, which
+allocates; flush boxes are dominated by it but tiny.
+
+### Tests
+
+Boxes against boxes both ways round, for the three operations, against
+analytic volumes (every result passes `check`, its patches lie on their
+faces and plane faces face the way their triangles do): overlapping at a
+corner and askew, one inside, one through the other, crossing, apart;
+flush: the same box, a pocket sharing one face's plane, boxes sharing
+four, two or one face planes, a slab flush with two sides, one inside
+at a corner; face to face over a whole face, part of one, offset,
+standing on top, and a face larger than the other's; touching along an
+edge and at a corner (union `Invalid`); a diamond prism with its four
+long edges on four faces of the box (the box less it is four prisms
+touching: `Invalid`), a shorter one inside, one with its side edges on
+the box's top edges; octahedra with their middle vertices on the box's
+top edges, touching the top face from below and from above with a
+vertex, and poking through it; a box turned 45° through another;
+40 random pairs of boxes in general position, turned and moved; tori
+of 2 304 patches crossing a box and each other, where `|A ∪ B| + |A ∩ B|
+= |A| + |B|` and `|A − B| = |A| − |A ∩ B|`; results fed on as inputs
+(steps joined flush, a hole, a half cut away, filled back in); face names
+of both operands kept; `touches`; empty operands; refusals (curved,
+inside out, out of budget); the same bits at 1 and 8 threads. Unit
+tests: expansions against known values, the float filter never
+contradicting the exact sign, `orient2d` near a line and far out,
+triangulating a square with a hole, a concave loop, a zero-width loop and
+a vertex on the domain's side.
+
+### Known gaps
+
+- **Flush faces after rounding**: operands flush in exact arithmetic but
+  turned and moved (every coordinate rounded) have near ties instead of
+  ties; each is decided once, so the topology stays valid, but the
+  decisions no longer follow the perturbation's intent, and zero-thickness
+  sheets of two coincident faces can remain, which the clean-up can't
+  remove: about 30 % of such cases (six flush box configurations, twenty
+  random motions, three operations) fail with `Invalid`. Flush extrude joins on a
+  tilted sketch plane are this case.
+- Triangles thinner than the resolution across two faces (a cut passing
+  within a resolution or two of a vertex) aren't flipped, and fail the
+  hull rules.
+- Ear clipping is quadratic to cubic in a face's cut vertices; faces cut
+  by thousands of edges run out of budget.
+
+### For the curved booleans
+
+- `Primitives` is the seam: `Flat` swaps for curved primitives (conic
+  `s11` with root isolation and heights, rational `s02`), which are
+  numerical and decided once, not exact; `order` and `crossing` for
+  curved edges.
+- `count::crossings` refuses `|x12| > 1`; a curved edge and patch can
+  cross several times, so crossings become records `(edge, face, i)`.
+- `assemble` assumes each face pair's cut is one segment with two ends:
+  curved pairs need the per-pair decisions (refinement, certificates,
+  fixed rules) and cut chains of several vertices and conic edges; the
+  cut face's domain positions of interior points need the patch's
+  inverse; `build` makes every edge straight, and untouched curved
+  patches must keep their edge records.
+- The clean-up and `Input::volume` are flat-only.
+- `touches` refuses curved solids too, so regen can't list touched bodies
+  of extrudes with arcs until then.
+
 ## Bodies from the history (`varde-document`, `varde-regen`)
 
 A document's `Body` is `{ id, name, visible, created_by: FeatureId }`: no
@@ -1289,8 +1596,9 @@ about a patch or a pair of patches tested or split: repair measured about
 0.5 µs a unit on one thread and 0.3 µs on seven. `KernelError` is
 `TooComplex`, `Invalid(CheckError)` (the input breaks an invariant the
 operation can't restore, or the result would), `Patch(PatchError)` (a
-parameter, or a split outside the patch bounds), and
-`Profile(ProfileError)` (a profile that can't be extruded). `MAX_TRACE_STEPS` comes
+parameter, or a split outside the patch bounds),
+`Profile(ProfileError)` (a profile that can't be extruded), and
+`Boolean(BooleanError)` (see "Booleans"). `MAX_TRACE_STEPS` comes
 with tracing.
 
 ## Deviations
@@ -1437,3 +1745,29 @@ with tracing.
   that sketch's regions, so `SetExtrude` never moves an extrude to
   another sketch, and nothing needs hiding. References the edit can't
   find again are dropped on OK, not kept failing.
+- **Booleans on flat patches first, with exact predicates**: the
+  counting skeleton decides flat operands with exact signs and symbolic
+  perturbation (`A`'s vertices moved along their normals, out for a
+  union and in otherwise, then by two generic translations), rather than
+  plain floating point: with rounded decisions, flush boxes (the commonest
+  CAD boolean) came out as zero-thickness slivers instead of clean
+  results. Curved operands are refused (`BooleanError::Curved`) until the
+  curved primitives come.
+- **`KernelError::Boolean(BooleanError)`** is new: `Curved`, `InsideOut`,
+  `Inconsistent`, `Degenerate`.
+- **Winding numbers are propagated along edges** from one ray per
+  connected part rather than summed for every vertex: the same numbers
+  by the counting identity (and checked on every edge), without a ray
+  through the whole other solid from every vertex (with the float filter
+  not allocating, counting the big tori went from 0.65 s to 0.1 s).
+- **Cut faces are ear-clipped, then flipped towards Delaunay**, not
+  triangulated by `spade`: flush operands give loops whose points
+  coincide, which a constrained Delaunay triangulation merges.
+- **A clean-up collapses and flips degenerate triangles** before repair
+  (repair only splits, and fails at once on flat pieces breaking the hull
+  rules). Collapses keep the lower vertex id and the link condition; they
+  remove edges of zero length and never identify separate vertices.
+- **Operands must face out**: their volumes must be positive and every
+  winding number 0 or 1 (`InsideOut`), since `check` doesn't look at
+  orientation.
+- **`Bvh::hits_within`** generalizes `pairs_within` to any query box.

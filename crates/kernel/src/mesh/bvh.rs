@@ -188,13 +188,28 @@ impl Bvh {
         keep: impl Fn(u32, u32) -> bool + Sync,
         work: &mut Work,
     ) -> Result<Vec<[u32; 2]>, KernelError> {
+        self.hits_within(ids, |i| self.boxes[i as usize], margin, keep, work)
+    }
+
+    /// For each id `i` of `ids`, the pairs `[i, j]` with the boxes `j`
+    /// within `margin` of `query(i)` along every axis that `keep(i, j)`
+    /// takes: [`Self::pairs_within`] for any query boxes, counted against
+    /// `work` the same way.
+    pub(crate) fn hits_within(
+        &self,
+        ids: &[u32],
+        query: impl Fn(u32) -> Bounds3 + Sync,
+        margin: f64,
+        keep: impl Fn(u32, u32) -> bool + Sync,
+        work: &mut Work,
+    ) -> Result<Vec<[u32; 2]>, KernelError> {
         let mut pairs = Vec::new();
         for chunk in ids.chunks(CHUNK) {
             // More than this many, from any one box, is already too many.
             let most = usize::try_from(work.left()).unwrap_or(usize::MAX);
             let counts = par_map(chunk, |&i| {
                 let mut count = 0usize;
-                self.visit(&self.boxes[i as usize], margin, |j| {
+                self.visit(&query(i), margin, |j| {
                     count += usize::from(keep(i, j));
                     count <= most
                 });
@@ -203,7 +218,7 @@ impl Bvh {
             work.spend(counts.into_iter().fold(0, usize::saturating_add))?;
             let found = par_map(chunk, |&i| {
                 let mut near = Vec::new();
-                self.query(&self.boxes[i as usize], margin, &mut near);
+                self.query(&query(i), margin, &mut near);
                 near.retain(|&j| keep(i, j));
                 near
             });

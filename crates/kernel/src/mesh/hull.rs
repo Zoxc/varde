@@ -131,7 +131,7 @@ fn across_line(p: DVec3, q: DVec3) -> Option<(DVec3, impl Fn(DVec3) -> DVec3)> {
 /// Whether every edge's control point is within `margin` of the line
 /// through its ends: the patch is then within `margin` of its flat
 /// triangle, and the hull rules on it are about the triangle itself.
-pub(super) fn flat(patch: &Patch, margin: f64) -> bool {
+pub(crate) fn flat(patch: &Patch, margin: f64) -> bool {
     (0..3).all(|i| {
         across_line(patch.p[i], patch.p[(i + 1) % 3])
             .is_some_and(|(_, across)| across(patch.c[i]).length() <= margin)
