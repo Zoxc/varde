@@ -514,8 +514,8 @@ impl Cutting<'_> {
     /// Where the operands' vertices and the crossings are: the crossings
     /// from their parameters as ordered along the edges, and exactly on
     /// the face crossed where it lies in a plane square to an axis (so
-    /// flush faces of results fed on stay flush): each coordinate that
-    /// every control point of the patch crossed has is set to it, which
+    /// flush faces of results fed on stay flush): each coordinate all six
+    /// control points of the crossed patch share is set to theirs, which
     /// only ever takes off rounding. The patch's corners alone won't do:
     /// a wall over an arc whose ends are level has three corners at one
     /// height while it bulges off it.

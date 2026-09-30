@@ -2267,9 +2267,10 @@ to 72 of its 96 operations and left the others as they were.
   cap triangles aren't fold-checked). None came out wrong. Boxes cut
   across a convex wall over an arc meet it most: 8 of 120 random box
   operations across 20°–60° walls fail (unions and differences, all on
-  convex walls), and a box whose face runs along
-  the arc's chord (inside the bulge) fails its union and difference. Plane-against-cylinder cuts that should be exact can be off by
-  1–4e-6 where a band triangle fell back to a copy claiming no surface.
+  convex walls), and a box whose face runs along the arc's chord (inside
+  the bulge) fails its union and difference. Plane-against-cylinder cuts
+  that should be exact can be off by 1–4e-6 where a band triangle fell
+  back to a copy claiming no surface.
 - **Fitted bands leave their face's claim**: triangles along a fitted
   cut on a quadric (quadric against quadric, a quadric against a free
   surface), and an exact band tree's root where no ruling frees it, go on

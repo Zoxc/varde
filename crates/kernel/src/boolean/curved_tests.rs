@@ -16,7 +16,6 @@ use super::*;
 use crate::mesh::tests::TOL;
 use crate::mesh::{Quadric, Surface, samples};
 use crate::par::assert_deterministic;
-use crate::patch::Conic2;
 use crate::profile::tests::{circle, rect};
 use crate::{Frame, Loop, Profile, Segment, extrude};
 
@@ -845,16 +844,12 @@ impl Arch {
             Segment::line(a1, points[0], 1).unwrap(),
         ];
         for i in 0..n {
-            let (p, q) = (points[i], points[i + 1]);
-            let r = (p - center).length();
-            // Counter-clockwise round the square: convex arcs run the
-            // short way clockwise round their centre, concave ones not.
-            let conic = if self.convex {
-                Conic2::arc_between(center, r, q, p).unwrap().reversed()
-            } else {
-                Conic2::arc_between(center, r, p, q).unwrap()
-            };
-            segments.push(Segment { conic, curve: 2 });
+            segments.push(crate::profile::tests::arc(
+                center,
+                points[i],
+                points[i + 1],
+                2,
+            ));
         }
         segments.push(Segment::line(points[n], a0, 3).unwrap());
         Loop { segments }
@@ -1110,19 +1105,19 @@ fn a_wall_with_level_corners_keeps_its_crossings() {
         7,
     );
     let quarter = PI / 4.0;
+    let slab = cube([-2.0, -2.0, 0.5], [4.0, 4.0, 0.5]);
+    // Each job's other operand and its volume, the six-arc circle's
+    // heights and what the two share, all in closed form.
     let jobs = [
-        ("over 0..2", big.clone(), 0.0, 2.0, quarter),
-        ("over 1..2", big, 1.0, 2.0, 0.0),
-        (
-            "a slab",
-            cube([-2.0, -2.0, 0.5], [4.0, 4.0, 0.5]),
-            0.0,
-            2.0,
-            quarter / 2.0,
-        ),
+        ("over 0..2", big.clone(), PI, 0.0, 2.0, quarter),
+        ("over 1..2", big, PI, 1.0, 2.0, 0.0),
+        ("a slab", slab, 8.0, 0.0, 2.0, quarter / 2.0),
     ];
-    for (name, a, from, to, both) in jobs {
+    for (name, a, va, from, to, both) in jobs {
         let b = extruded(vec![lp.clone()], from, to, 8);
+        let vb = quarter * (to - from);
+        assert!((a.volume() - va).abs() <= 1e-12, "{name}: {}", a.volume());
+        assert!((b.volume() - vb).abs() <= 1e-12, "{name}: {}", b.volume());
         let results = all_four(&a, &b, 1e-9);
         volumes(name, &a, &b, &results, both, 1e-9);
     }
