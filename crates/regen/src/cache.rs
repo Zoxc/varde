@@ -8,7 +8,8 @@
 //! The cache lives in the lane (a thread natively, the worker on the web)
 //! and keeps what the last two requests used ([`Cache::begin`]), so
 //! dragging a distance back and forth, or a draft answered after the
-//! committed model, finds everything else still there.
+//! committed model, finds everything else still there. A request can
+//! also keep what it doesn't use ([`Cache::keep`]).
 
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -117,6 +118,16 @@ impl Cache {
         };
         self.hits += 1;
         Some(entry)
+    }
+
+    /// Keeps the result filed under `key`, if the request before left
+    /// one, for the next request, without using it: what an edit leaves
+    /// unused but likely to be asked for again, such as the boolean of a
+    /// body taken out of a cut, which putting it back asks for.
+    pub(crate) fn keep(&mut self, key: Key) {
+        if let Some(entry) = self.previous.remove(&key) {
+            self.current.insert(key, entry);
+        }
     }
 
     /// The result filed under `key`, or `make`'s, filed.

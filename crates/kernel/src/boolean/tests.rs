@@ -379,6 +379,15 @@ fn touching() {
     assert!(!t(&cube([3.0; 3], [1.0; 3])));
     assert!(!t(&Solid::empty()));
     assert!(touches(&cube([0.5; 3], [1.0; 3]), &a, &tol, &Budget::DEFAULT).unwrap());
+    // Boxes apart are told without any work, a solid inside out too.
+    let apart = |b: &Solid| touches(&a, b, &tol, &Budget::new(0));
+    assert_eq!(apart(&cube([2.1, 0.0, 0.0], [1.0; 3])), Ok(false));
+    let inverted = rebuilt(cube([0.0, 0.0, -3.0], [1.0; 3]).mesh(), |p| p, true);
+    assert_eq!(apart(&inverted), Ok(false));
+    assert_eq!(
+        apart(&cube([2.0, 0.0, 0.0], [1.0; 3])),
+        Err(KernelError::TooComplex)
+    );
 }
 
 #[test]

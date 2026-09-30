@@ -1055,7 +1055,9 @@ platform's `cos` decides them.
 `boolean(a, b, op, tol, budget)` gives `a ∪ b`, `a − b` or `a ∩ b`
 (`Op::{Union, Difference, Intersection}`) as a `Solid`, and `touches(a,
 b, tol, budget)` whether two solids meet, running only the broad phase
-and the counting. They follow Manifold's `boolean3.cpp` and
+and the counting (and nothing, answering false, for solids whose boxes
+are more than the resolution apart, so asking it of far bodies is
+cheap). They follow Manifold's `boolean3.cpp` and
 `boolean_result.cpp`: every topological fact comes from a few
 primitives, each worked out once and stored by the pair it is about,
 through identities that hold whatever values the primitives take, so the
@@ -2335,9 +2337,11 @@ body, and the later ones still run.
 - A **join, cut or intersect** asks `kernel::touches` of every body made
   before it, in the order they were made, against the tool: those are
   the touched bodies (`Evaluation::touched`, per feature, also when it
-  fails after finding them). Taking out its excluded ones leaves the
-  targets; none touched is "it doesn't touch any body", all excluded
-  "every body it touches is taken out of it". Each target is replaced by
+  fails after finding them). An excluded body `touches` can't tell is
+  passed over (not listed), so taking out a body that fails gets past
+  it; any other such failure fails the feature. Taking out its excluded
+  ones leaves the targets; none touched is "it doesn't touch any body",
+  all excluded "every body it touches is taken out of it". Each target is replaced by
   `kernel::boolean(body, tool, op)` with `Union`, `Difference` or
   `Intersection`, the body always first (a flush boss put first in a
   union came out right but with some 30,000 patches). Every target's
@@ -2347,7 +2351,8 @@ body, and the later ones still run.
   merged one would leave the other without geometry. Bodies not touched
   or excluded keep their solids; a body cut away whole, or intersected
   with only a flush face, is left with the empty solid (drawn as nothing,
-  no box).
+  no box, touching nothing after), without an error: it's what was
+  asked for, and the body stays listed in Objects.
 
 **Error texts** (`src/message.rs`). What the Timeline's tooltip and the
 panel show is worded for the user, not the kernel: an extrude's own
@@ -2399,16 +2404,19 @@ bit:
 **Cache** (`src/cache.rs`). Every result is filed under a 128-bit key (two
 SipHash runs, one salted, over the length-prefixed parts): a sketch's
 profiles by its plane and sketch (postcard-encoded), whether it solves by
-the sketch, an extrude's solid (or error) by its feature id, the extrude,
+the sketch, an extrude's solid (or error) by its feature id,
 the regions, the tolerance's bits, its span's bits and its sketch's key
-(not the operation or the excluded bodies, so toggling those finds the
-tool), whether a body touches a tool by the two solids' keys, a
+(not the operation, the extent or the excluded bodies, so toggling those
+finds the tool; the span stands for the extent and flip), whether a body touches a tool by the two solids' keys, a
 boolean's result (or `KernelError`) by the operation and the two solids'
 keys, which then keys the body's solid, and a body's mesh by its solid's
 key and the tolerance. Editing an earlier extrude changes its body's key
 and so reruns every boolean after it on that body. The regenerator keeps what the
 request being answered and the one before used (`Cache::begin` drops the
 rest), so an unrelated edit, or a draft dragged, reruns only what changed.
+A join, cut or intersect also keeps (`Cache::keep`) the boolean of each
+body it touches but excludes, if the request before had it, so taking a
+body out and putting it back only draws it again.
 The lane owns it: the native thread's closure, or the worker's `serve`.
 
 **Drafts.** `Request::Regenerate` has `draft: Option<Draft { revision,
@@ -2433,13 +2441,16 @@ and in order on receipt (`wire::Error::Bounds`); `MAX_HEAD_BYTES` is 64
 MiB. The draft's touched bodies cross in the head as marks, unchecked.
 
 **Gaps.** Every join, cut or intersect asks `touches` of every body
-before it on each edit that changes the tool (cached otherwise).
+before it on each edit that changes the tool (cached otherwise; bodies
+whose boxes are apart are answered at once).
 `touches` says false for a tangency along a line, so a boss tangent to a
 body only there is "it doesn't touch any body". An operation that runs
 out of budget takes about 2–3.5 s on one native thread and holds the
 single-threaded web worker longer, with drafts queued behind it (latest
 wins, so only the newest waits). The cache keeps only what the last
-request used, so toggling a body out of a cut and back reruns the cut.
+request used (and excluded bodies' booleans): switching the operation
+away and back, or an edit undone after two requests, reruns the
+booleans.
 
 ## The extrude UI (`crates/view`, `crates/app`)
 
@@ -2689,14 +2700,19 @@ parameter, or a split outside the patch bounds),
   sketch crate doesn't know `MAX_COORD`.
 - **The regeneration cache keeps what the last request used**, not two
   generations: a draft dragged or an edit only ever reuses the request
-  before's results. It also keeps meshes and whether sketches solve, and
+  before's results, plus the booleans of bodies a join, cut or intersect
+  takes out (`Cache::keep`), for putting them back. It also keeps meshes and whether sketches solve, and
   keys are 128-bit hashes of the values' postcard encodings, not their
   `Hash` (sketches hold `f64`s).
 - **A failing draft is answered with the committed model** and the
   draft's error (`Drafted`), rather than the draft applied without its
   body. `touched` is in `Drafted`, not beside it on the response.
 - **Join, cut and intersect work on each target body on its own**: a
-  join never merges bodies, it adds the tool to every body it touches.
+  join never merges bodies, it adds the tool to every body it touches,
+  so two bodies a join bridges overlap. The document has no way for a
+  feature to consume a body (only `NewBody` makes one), and a merged
+  body would leave the other listed without geometry; choosing a single
+  body to join to is the user's way round it (take the others out).
 - **Through all spans every earlier body**, excluded ones too, so the
   touched list the panel shows doesn't lose a body once it's taken out.
 - **A join, cut or intersect that touches no target fails** ("it doesn't

@@ -409,6 +409,58 @@ fn bodies_taken_out_are_left_as_they_are() {
 }
 
 #[test]
+fn a_join_touching_two_bodies_is_added_to_each() {
+    let mut editor = Editor::new(Document::example());
+    let top = editor.document().bodies()[0].id;
+    let below = plate_below(&mut editor);
+    let extent = two_sides(editor.document(), "15", "5");
+    let join = add_extrude(
+        &mut editor,
+        disc((20.0, 0.0), 5.0),
+        extent,
+        Operation::Join(Targets::default()),
+    );
+    let evaluation = evaluated(editor.document());
+    assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
+    assert_eq!(evaluation.touched, [(join, vec![top, below])]);
+    // Bodies never merge: both hold the boss, so they overlap.
+    let boss = PI * 25.0 * 20.0;
+    assert_near(
+        evaluation.bodies[0].solid.volume(),
+        plate(8.0, 10.0) + boss - PI * 25.0 * 10.0,
+    );
+    assert_near(
+        evaluation.bodies[1].solid.volume(),
+        plate(8.0, 3.0) + boss - PI * 25.0 * 3.0,
+    );
+}
+
+#[test]
+fn a_body_cut_away_whole_is_left_empty() {
+    let mut editor = Editor::new(Document::example());
+    add_extrude(
+        &mut editor,
+        rectangle((-40.0, -30.0), (40.0, 30.0)),
+        Extent::ThroughAll,
+        Operation::Cut(Targets::default()),
+    );
+    // A join after it has nothing left to touch.
+    let extent = Extent::OneSide(length(editor.document(), "5"));
+    let join = add_extrude(
+        &mut editor,
+        disc((20.0, 0.0), 5.0),
+        extent,
+        Operation::Join(Targets::default()),
+    );
+    let evaluation = evaluated(editor.document());
+    assert_eq!(
+        evaluation.failed,
+        [(join, "it doesn't touch any body".to_owned())]
+    );
+    assert!(evaluation.bodies[0].solid.is_empty());
+}
+
+#[test]
 fn a_join_touching_no_body_fails() {
     let mut editor = Editor::new(Document::example());
     let extent = Extent::OneSide(length(editor.document(), "5"));

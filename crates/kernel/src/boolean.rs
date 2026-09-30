@@ -267,14 +267,20 @@ fn unchecked(
 /// face of the other or a vertex of one is inside the other, with solids
 /// that only touch (flush faces, an edge on a face) counted as touching.
 /// Only the broad phase and the counting run (with curved patches, also
-/// the refinement that finds loops no edge crossing shows).
+/// the refinement that finds loops no edge crossing shows), and not even
+/// those for solids whose boxes (the control points', which hold them)
+/// are more than the resolution apart.
 pub fn touches(
     a: &Solid,
     b: &Solid,
     tol: &Tolerance,
     budget: &Budget,
 ) -> Result<bool, KernelError> {
-    if a.is_empty() || b.is_empty() {
+    let (Some(ba), Some(bb)) = (a.bounds3(), b.bounds3()) else {
+        return Ok(false);
+    };
+    let gap = tol.resolution();
+    if (ba.min - bb.max).max_element() > gap || (bb.min - ba.max).max_element() > gap {
         return Ok(false);
     }
     let mut work = Work::new(budget);

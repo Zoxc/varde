@@ -628,16 +628,16 @@ fn a_cut_draft_lists_what_it_touches_and_is_answered_from_the_cache() {
         feature: None,
         extrude: extrude.clone(),
     };
-    let answer = answered(regenerator.handle(regenerate_with(&editor, Some(draft.clone()))));
+    let cut = answered(regenerator.handle(regenerate_with(&editor, Some(draft.clone()))));
     assert_eq!(
-        answer.draft,
+        cut.draft,
         Some(Drafted {
             revision: 1,
             error: None,
             touched: vec![body],
         })
     );
-    assert_ne!(answer.mesh, committed.mesh);
+    assert_ne!(cut.mesh, committed.mesh);
     // Only the draft's tool, whether it touches the plate, the cut and
     // its mesh were worked out: the rest was found.
     let (_, worked) = regenerator.cache().counts();
@@ -658,10 +658,18 @@ fn a_cut_draft_lists_what_it_touches_and_is_answered_from_the_cache() {
     assert_eq!(answer.mesh, committed.mesh);
     assert_eq!(regenerator.cache().counts().1, worked + 1);
 
-    // Dragging the pocket deeper: only its tool, touching, cut and mesh.
+    // Putting it back finds the cut, kept while it was out; only its
+    // mesh, which the request before didn't draw, is worked out again.
     draft.revision = 3;
+    let back = answered(regenerator.handle(regenerate_with(&editor, Some(draft.clone()))));
+    assert_eq!(back.draft.unwrap().error, None);
+    assert_eq!(back.mesh, cut.mesh);
+    assert_eq!(regenerator.cache().counts().1, worked + 2);
+
+    // Dragging the pocket deeper: only its tool, touching, cut and mesh.
+    draft.revision = 4;
     draft.extrude.extent = crate::history::tests::two_sides(editor.document(), "5", "1");
     let deeper = answered(regenerator.handle(regenerate_with(&editor, Some(draft))));
     assert_eq!(deeper.draft.unwrap().error, None);
-    assert_eq!(regenerator.cache().counts().1, worked + 5);
+    assert_eq!(regenerator.cache().counts().1, worked + 6);
 }

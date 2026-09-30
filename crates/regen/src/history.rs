@@ -165,15 +165,21 @@ impl Run<'_> {
             Operation::Cut(_) => (Op::Difference, Doing::Cutting),
             Operation::Intersect(_) => (Op::Intersection, Doing::Intersecting),
         };
-        let touched = self.touched(&evaluation.bodies, (&tool, tool_key), cache);
+        let excluded = self.extrude.operation.excluded();
+        let touched = self.touched(&evaluation.bodies, excluded, (&tool, tool_key), cache);
         let found = touched.as_ref().unwrap_or_else(|(found, _)| found).clone();
         evaluation.touched.push((self.feature.id, found));
         let touched = touched.map_err(|(_, error)| error)?;
-        let excluded = self.extrude.operation.excluded();
-        let targets: Vec<BodyId> = (touched.iter())
-            .filter(|body| !excluded.contains(body))
-            .copied()
-            .collect();
+        let mut targets = Vec::with_capacity(touched.len());
+        for made in (evaluation.bodies.iter()).filter(|made| touched.contains(&made.body)) {
+            if excluded.contains(&made.body) {
+                // What the request before worked out, kept for putting
+                // it back.
+                cache.keep(boolean_key(doing, made.key, tool_key));
+            } else {
+                targets.push(made.body);
+            }
+        }
         if touched.is_empty() {
             return Err("it doesn't touch any body".to_owned());
         }
@@ -187,11 +193,7 @@ impl Run<'_> {
             .iter()
             .filter(|m| targets.contains(&m.body))
         {
-            let key = Keyer::new("boolean")
-                .bytes(doing.name().as_bytes())
-                .key(made.key)
-                .key(tool_key)
-                .finish();
+            let key = boolean_key(doing, made.key, tool_key);
             let solid = cache
                 .boolean(key, || {
                     varde_kernel::boolean(&made.solid, &tool, op, &self.tolerance, &Budget::DEFAULT)
@@ -212,11 +214,13 @@ impl Run<'_> {
     }
 
     /// The bodies of `bodies` that `tool`, filed under `tool_key`,
-    /// touches, in their order; or
-    /// those found before one couldn't be told, and why.
+    /// touches, in their order; or those found before one couldn't be
+    /// told, and why. A body in `excluded` that can't be told is passed
+    /// over, so taking it out gets past it.
     fn touched(
         &self,
         bodies: &[BodySolid],
+        excluded: &[BodyId],
         (tool, tool_key): (&Solid, Key),
         cache: &mut Cache,
     ) -> Result<Vec<BodyId>, (Vec<BodyId>, String)> {
@@ -229,6 +233,7 @@ impl Run<'_> {
             match touches {
                 Ok(true) => touched.push(made.body),
                 Ok(false) => {}
+                Err(_) if excluded.contains(&made.body) => {}
                 Err(error) => {
                     let error = message::boolean(Doing::Touching, self.body_name(made.body), error);
                     return Err((touched, error));
@@ -270,6 +275,16 @@ impl Run<'_> {
         )
         .map_err(message::extrude)
     }
+}
+
+/// The key of `doing` the tool filed under `tool` to the body's solid
+/// filed under `body`: the body's new solid's.
+fn boolean_key(doing: Doing, body: Key, tool: Key) -> Key {
+    Keyer::new("boolean")
+        .bytes(doing.name().as_bytes())
+        .key(body)
+        .key(tool)
+        .finish()
 }
 
 /// The span along `frame`'s normal that goes through all of `bodies`:
