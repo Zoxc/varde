@@ -3,7 +3,7 @@
 //! winding numbers from the layer counts.
 
 use super::input::{Input, Side};
-use super::{BooleanError, Cross11, Primitives, UP};
+use super::{BooleanError, Primitives, UP, parts};
 use crate::budget::Work;
 use crate::mesh::Bvh;
 use crate::par::par_map;
@@ -78,16 +78,14 @@ pub(super) fn count(
     tol: &Tolerance,
     work: &mut Work,
 ) -> Result<Counts, KernelError> {
-    let na = a.tris.len() as u32;
-    let bvh = Bvh::new(a.boxes.iter().chain(&b.boxes).copied().collect());
+    let (bvh_a, bvh_b) = (Bvh::new(a.boxes.clone()), Bvh::new(b.boxes.clone()));
 
     // Broad phase: triangle pairs whose boxes meet.
-    let ids: Vec<u32> = (0..na).collect();
-    let pairs = bvh.pairs_within(&ids, 0.0, |_, j| j >= na, work)?;
+    let ids: Vec<u32> = (0..a.tris.len() as u32).collect();
+    let pairs = bvh_b.hits_within(&ids, |p| a.boxes[p as usize], 0.0, |_, _| true, work)?;
     let mut ef_a = Vec::with_capacity(3 * pairs.len());
     let mut ef_b = Vec::with_capacity(3 * pairs.len());
     for &[p, q] in &pairs {
-        let q = q - na;
         ef_a.extend(a.tri_edges[p as usize].map(|(e, _)| [e, q]));
         ef_b.extend(b.tri_edges[q as usize].map(|(g, _)| [g, p]));
     }
@@ -99,8 +97,9 @@ pub(super) fn count(
     // Layer counts: each part's first vertex against every face its ray up
     // may meet, for the winding numbers, and each end of a candidate edge
     // against the face, for the crossings.
-    let s02 = layers(Side::A, a, b, &bvh, &ef_a, prims, tol, work)?;
-    let s20 = layers(Side::B, b, a, &bvh, &ef_b, prims, tol, work)?;
+    let (seeds_a, seeds_b) = (seeds(a), seeds(b));
+    let s02 = layers(Side::A, a, b, &bvh_b, &seeds_a, &ef_a, prims, tol, work)?;
+    let s20 = layers(Side::B, b, a, &bvh_a, &seeds_b, &ef_b, prims, tol, work)?;
 
     // Edge against edge: each candidate edge against the other's face's
     // edges, stored as (edge of A, edge of B).
@@ -115,17 +114,11 @@ pub(super) fn count(
 
     // x12(e, f) = s02(end, f) − s02(start, f) − Σ over f's edges h (as f
     // runs them) of the times e's shadow crosses under h.
-    let x12 = crossings(&ef_a, a, b, &s02, work, |e, h| match s11.get([e, h]) {
-        Some(Cross11 { sigma, a_above }) if !a_above => sigma,
-        _ => 0,
-    })?;
-    let x21 = crossings(&ef_b, b, a, &s20, work, |g, k| match s11.get([k, g]) {
-        Some(Cross11 { sigma, a_above }) if a_above => -sigma,
-        _ => 0,
-    })?;
+    let x12 = crossings(&ef_a, a, b, &s02, work, |e, h| s11.get([e, h]).a_under)?;
+    let x21 = crossings(&ef_b, b, a, &s20, work, |g, k| s11.get([k, g]).b_under)?;
 
-    let w03 = windings(a, &x12, &s02);
-    let w30 = windings(b, &x21, &s20);
+    let w03 = windings(a, &seeds_a, &x12, &s02);
+    let w30 = windings(b, &seeds_b, &x21, &s20);
     for (input, x, w) in [(a, &x12, &w03), (b, &x21, &w30)] {
         agree(input, x, w)?;
         if w.iter().any(|&w| !(0..=1).contains(&w)) {
@@ -135,44 +128,30 @@ pub(super) fn count(
     Ok(Counts { x12, x21, w03, w30 })
 }
 
-/// The layer counts of `other`'s faces above `input`'s vertices that the
-/// winding numbers and crossings read.
+/// The layer counts of `other`'s faces (`bvh` over their boxes) above
+/// `input`'s vertices that the winding numbers and crossings read.
 #[allow(clippy::too_many_arguments)]
 fn layers(
     side: Side,
     input: &Input,
     other: &Input,
     bvh: &Bvh,
+    seeds: &[u32],
     ef: &[[u32; 2]],
     prims: &impl Primitives,
     tol: &Tolerance,
     work: &mut Work,
 ) -> Result<Table<i8>, KernelError> {
-    let nb = other.tris.len() as u32;
     let mut keys = Vec::new();
     // Rays: from the first vertex of each connected part along UP to the
     // top of `other`'s box.
     if let Some(top) = other.boxes.iter().map(|b| b.max.z).reduce(f64::max) {
-        let verts = seeds(input);
         let ray = |v: u32| {
             let p = input.pos(v);
             let reach = ((top - p.z) / UP.z).max(0.0);
             Bounds3::point(p).include(p + UP * reach)
         };
-        // `other`'s faces in the BVH: after `A`'s for `B`'s, first for
-        // `A`'s.
-        let (lo, hi) = match side {
-            Side::A => (bvh.len() as u32 - nb, bvh.len() as u32),
-            Side::B => (0, nb),
-        };
-        let hits = bvh.hits_within(
-            &verts,
-            ray,
-            tol.resolution(),
-            |_, j| (lo..hi).contains(&j),
-            work,
-        )?;
-        keys.extend(hits.into_iter().map(|[v, j]| [v, j - lo]));
+        keys = bvh.hits_within(seeds, ray, tol.resolution(), |_, _| true, work)?;
     }
     for &[e, f] in ef {
         keys.extend(input.edges[e as usize].map(|v| [v, f]));
@@ -218,28 +197,17 @@ fn crossings(
 
 /// The lowest vertex of each connected part of `input`, in order.
 fn seeds(input: &Input) -> Vec<u32> {
-    let mut part: Vec<u32> = (0..input.mesh.verts().len() as u32).collect();
-    fn root(part: &mut [u32], mut v: u32) -> u32 {
-        while part[v as usize] != v {
-            part[v as usize] = part[part[v as usize] as usize];
-            v = part[v as usize];
-        }
-        v
-    }
-    for &[s, e] in &input.edges {
-        let (x, y) = (root(&mut part, s), root(&mut part, e));
-        part[x.max(y) as usize] = x.min(y);
-    }
+    let part = parts(input.mesh.verts().len(), input.edges.iter().copied());
     (0..part.len() as u32)
-        .filter(|&v| root(&mut part, v) == v)
+        .filter(|&v| part[v as usize] == v)
         .collect()
 }
 
 /// Each vertex's winding number in the other solid: at each part's
-/// first vertex the sum of its layer counts, and from there along the
-/// edges, each changing it by its crossings (the same sum, by the
-/// counting identity).
-fn windings(input: &Input, x: &[Crossing], s02: &Table<i8>) -> Vec<i32> {
+/// first vertex (`seeds`) the sum of its layer counts, and from there
+/// along the edges, each changing it by its crossings (the same sum, by
+/// the counting identity).
+fn windings(input: &Input, seeds: &[u32], x: &[Crossing], s02: &Table<i8>) -> Vec<i32> {
     let nv = input.mesh.verts().len();
     let mut change = vec![0i32; input.edges.len()];
     for c in x {
@@ -265,7 +233,7 @@ fn windings(input: &Input, x: &[Crossing], s02: &Table<i8>) -> Vec<i32> {
     let mut w = vec![0i32; nv];
     let mut seen = vec![false; nv];
     let mut queue = std::collections::VecDeque::new();
-    for seed in seeds(input) {
+    for &seed in seeds {
         let lo = s02.keys.partition_point(|k| k[0] < seed);
         let hi = s02.keys.partition_point(|k| k[0] <= seed);
         w[seed as usize] = s02.values[lo..hi].iter().map(|&s| i32::from(s)).sum();

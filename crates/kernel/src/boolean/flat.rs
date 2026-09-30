@@ -91,24 +91,24 @@ impl Primitives for Flat<'_> {
         }
         // The ray `x + s·UP` meets the plane at `s = (t0 − x)·n / UP·n`,
         // and `UP·n` has the sign `facing`.
-        if exact::sign(&PlaneSide { x, t }) != facing {
+        if exact::sign(&Reach { x0: x, t }) != facing {
             return 0;
         }
         facing
     }
 
-    fn s11(&self, e: u32, g: u32) -> Option<Cross11> {
+    fn s11(&self, e: u32, g: u32) -> Cross11 {
         let [a, b] = self.edge(Side::A, e);
         let [c, d] = self.edge(Side::B, g);
         let oc = exact::sign(&Orient { p: a, q: b, r: c });
         let od = exact::sign(&Orient { p: a, q: b, r: d });
         if oc == od || oc == 0 || od == 0 {
-            return None;
+            return Cross11::default();
         }
         let oa = exact::sign(&Orient { p: c, q: d, r: a });
         let ob = exact::sign(&Orient { p: c, q: d, r: b });
         if oa == ob || oa == 0 || ob == 0 {
-            return None;
+            return Cross11::default();
         }
         // `det[g, e, UP]` for the directions `g = d − c` and `e = b − a`:
         // with `a` and `b` on opposite sides of `g`, the sign of `b`'s.
@@ -119,10 +119,19 @@ impl Primitives for Flat<'_> {
             0 => 1,
             h => h,
         };
-        Some(Cross11 {
-            sigma,
-            a_above: h * sigma > 0,
-        })
+        // `g` crosses `e` from its right to its left where `e` crosses
+        // `g` the other way.
+        if h * sigma > 0 {
+            Cross11 {
+                a_under: 0,
+                b_under: -sigma,
+            }
+        } else {
+            Cross11 {
+                a_under: sigma,
+                b_under: 0,
+            }
+        }
     }
 
     fn order(&self, side: Side, e: u32, f1: u32, f2: u32) -> Ordering {
@@ -172,18 +181,6 @@ fn normal<N: Num>(t: &[Pt; 3]) -> V3<N> {
     cross(&sub(&t[1].v3(), &t0), &sub(&t[2].v3(), &t0))
 }
 
-/// `(t0 − x)·n`: positive when `x` is behind the triangle's plane.
-struct PlaneSide {
-    x: Pt,
-    t: [Pt; 3],
-}
-
-impl Pred for PlaneSide {
-    fn eval<N: Num>(&self) -> N {
-        dot(&sub(&self.t[0].v3(), &self.x.v3()), &normal(&self.t))
-    }
-}
-
 /// `det[a − c, d − c, b − a]`.
 struct Height {
     a: Pt,
@@ -199,8 +196,9 @@ impl Pred for Height {
     }
 }
 
-/// `(t0 − x0)·n`: the numerator of the parameter where the line through
-/// `x0` and `x1` meets the triangle's plane.
+/// `(t0 − x0)·n`: positive when `x0` is behind the triangle's plane, and
+/// the numerator of the parameter where the line through `x0` and `x1`
+/// meets it.
 struct Reach {
     x0: Pt,
     t: [Pt; 3],

@@ -2,7 +2,7 @@ use glam::DVec3;
 
 use super::*;
 use crate::mesh::tests::{OCTAHEDRON, TOL, UNIT};
-use crate::mesh::{Face, FaceName, FacePart, MeshBuilder, Surface};
+use crate::mesh::{Face, FaceName, FacePart, Mesh, MeshBuilder, Surface};
 use crate::par::assert_deterministic;
 
 fn cube(min: [f64; 3], size: [f64; 3]) -> Solid {
@@ -56,6 +56,23 @@ fn diamond(cx: f64, cz: f64, r: f64, y0: f64, y1: f64) -> Solid {
         tris.push([k, 4 + n, n]);
     }
     polytope(&verts, &tris)
+}
+
+/// The flat solid with `mesh`'s triangles and faces, its vertices moved
+/// by `f`, and every triangle reversed if `inverted`.
+fn rebuilt(mesh: &Mesh, f: impl Fn(DVec3) -> DVec3, inverted: bool) -> Solid {
+    let mut builder = MeshBuilder::new();
+    for &p in mesh.verts() {
+        builder.vert(f(p));
+    }
+    for &face in mesh.faces() {
+        builder.face(face);
+    }
+    for t in mesh.tris() {
+        let [a, b, c] = t.halfedges.map(|h| h.start);
+        builder.tri(if inverted { [a, c, b] } else { [a, b, c] }, t.face);
+    }
+    Solid::new(builder.build().unwrap(), &TOL).unwrap()
 }
 
 fn run(a: &Solid, b: &Solid, op: Op) -> Result<Solid, KernelError> {
@@ -384,19 +401,7 @@ fn refusals() {
         Err(KernelError::Boolean(BooleanError::Curved))
     );
     // Inside out: every triangle reversed.
-    let m = a.mesh();
-    let mut builder = MeshBuilder::new();
-    for &p in m.verts() {
-        builder.vert(p);
-    }
-    for &f in m.faces() {
-        builder.face(f);
-    }
-    for t in m.tris() {
-        let c = t.halfedges.map(|h| h.start);
-        builder.tri([c[0], c[2], c[1]], t.face);
-    }
-    let inverted = Solid::new(builder.build().unwrap(), &TOL).unwrap();
+    let inverted = rebuilt(a.mesh(), |p| p, true);
     assert_eq!(
         run(&inverted, &cube([1.0; 3], [2.0; 3]), Op::Union),
         Err(KernelError::Boolean(BooleanError::InsideOut))
@@ -508,6 +513,53 @@ fn turned_and_moved() {
             }
         }
     }
+}
+
+#[test]
+fn tori_keep_the_volume_identities() {
+    // Flat tori of 2 304 patches: one turned upright through the other's
+    // hole, crossing its tube on both sides, and one through a box.
+    // Nothing is flush, so every result's
+    // volume follows from the others': |A ∪ B| + |A ∩ B| = |A| + |B| and
+    // |A − B| = |A| − |A ∩ B|.
+    let torus = crate::mesh::tests::torus(48, 24, 3.0, 1.0);
+    let a = rebuilt(&torus, |p| p, false);
+    let turn = glam::DQuat::from_rotation_x(std::f64::consts::FRAC_PI_2)
+        * glam::DQuat::from_rotation_z(0.1);
+    let upright = rebuilt(&torus, |p| turn * p + DVec3::new(1.5, 0.1, 0.2), false);
+    let block = cube([0.5, -0.7, -2.0], [4.0, 1.3, 4.0]);
+    for (name, b) in [("upright", &upright), ("box", &block)] {
+        let (va, vb) = (a.volume(), b.volume());
+        let [union, both, less] =
+            [Op::Union, Op::Intersection, Op::Difference].map(|op| run(&a, b, op).unwrap());
+        let [union, both, less] = [&union, &both, &less].map(|s| {
+            faces_face_out(s);
+            s.volume()
+        });
+        assert!(both > 0.1, "{name}: {both}");
+        let scale = 1e-9 * (va + vb);
+        assert!(
+            (union + both - va - vb).abs() < scale,
+            "{name}: {union} + {both}"
+        );
+        assert!((less - (va - both)).abs() < scale, "{name}: {less}");
+    }
+}
+
+#[test]
+fn unused_faces_are_dropped() {
+    // A box less one through it: its two end faces go, and a chain of
+    // results carries only faces it uses.
+    let a = cube([0.0; 3], [2.0; 3]);
+    let b = cube([-1.0, 0.5, 0.5], [4.0, 1.0, 1.0]);
+    let r = run(&a, &b, Op::Difference).unwrap();
+    let mesh = r.mesh();
+    let mut used = vec![false; mesh.faces().len()];
+    for t in mesh.tris() {
+        used[t.face as usize] = true;
+    }
+    assert!(used.iter().all(|&u| u), "{used:?}");
+    assert_eq!(mesh.faces().len(), 10);
 }
 
 #[test]

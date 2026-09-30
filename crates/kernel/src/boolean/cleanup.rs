@@ -17,6 +17,7 @@
 
 use glam::DVec3;
 
+use super::parts;
 use crate::KernelError;
 use crate::budget::Work;
 
@@ -71,7 +72,9 @@ pub(super) fn clean(
         work.spend(c.soup.tris.len())?;
         let mut changed = false;
         for [u, v] in c.short_edges() {
-            if !c.shared(u, v).is_empty() && c.collapse(u, v) {
+            // An earlier collapse may have taken the edge already: then no
+            // triangle has both ends.
+            if c.collapse(u, v) {
                 changed = true;
             }
         }
@@ -263,41 +266,28 @@ impl Cleaner<'_> {
     /// than `small` times their area.
     fn drop_empty_components(&mut self) {
         let n = self.soup.pos.len();
-        let mut parent: Vec<u32> = (0..n as u32).collect();
-        fn find(parent: &mut [u32], mut v: u32) -> u32 {
-            while parent[v as usize] != v {
-                parent[v as usize] = parent[parent[v as usize] as usize];
-                v = parent[v as usize];
-            }
-            v
-        }
-        for (t, tri) in self.soup.tris.iter().enumerate() {
-            if self.alive[t] {
-                for &w in &tri[1..] {
-                    let (x, y) = (find(&mut parent, tri[0]), find(&mut parent, w));
-                    if x != y {
-                        parent[x.max(y) as usize] = x.min(y);
-                    }
-                }
-            }
-        }
+        let living = || {
+            self.soup
+                .tris
+                .iter()
+                .zip(&self.alive)
+                .filter(|(_, alive)| **alive)
+                .map(|(tri, _)| *tri)
+        };
+        let part = parts(n, living().flat_map(|[a, b, c]| [[a, b], [a, c]]));
         let mut volume = vec![0.0f64; n];
         let mut area = vec![0.0f64; n];
-        for (t, tri) in self.soup.tris.iter().enumerate() {
-            if self.alive[t] {
-                let root = find(&mut parent, tri[0]);
-                let o = self.soup.pos[root as usize];
-                let [a, b, c] = tri.map(|v| self.soup.pos[v as usize] - o);
-                volume[root as usize] += a.dot(b.cross(c)) / 6.0;
-                area[root as usize] += (b - a).cross(c - a).length() / 2.0;
-            }
+        for tri in living() {
+            let root = part[tri[0] as usize];
+            let o = self.soup.pos[root as usize];
+            let [a, b, c] = tri.map(|v| self.soup.pos[v as usize] - o);
+            volume[root as usize] += a.dot(b.cross(c)) / 6.0;
+            area[root as usize] += (b - a).cross(c - a).length() / 2.0;
         }
-        for t in 0..self.soup.tris.len() {
-            if self.alive[t] {
-                let root = find(&mut parent, self.soup.tris[t][0]) as usize;
-                if volume[root].abs() <= self.small * area[root] {
-                    self.alive[t] = false;
-                }
+        for (tri, alive) in self.soup.tris.iter().zip(&mut self.alive) {
+            let root = part[tri[0] as usize] as usize;
+            if *alive && volume[root].abs() <= self.small * area[root] {
+                *alive = false;
             }
         }
     }

@@ -292,22 +292,17 @@ pub(super) fn assemble(
             })
             .fold(0, usize::saturating_add),
     )?;
+    // Each operand, and where its vertices start.
+    let operand = |side| match side {
+        Side::A => (a, 0),
+        Side::B => (b, nva),
+    };
     let cut = par_map(&jobs, |job| {
-        let input = match job.side {
-            Side::A => a,
-            Side::B => b,
-        };
-        let offset = match job.side {
-            Side::A => 0,
-            Side::B => nva,
-        };
+        let (input, offset) = operand(job.side);
         cut_face(input, job, &along[job.side as usize], offset, &pos)
     });
     for (job, result) in jobs.iter().zip(cut) {
-        let input = match job.side {
-            Side::A => a,
-            Side::B => b,
-        };
+        let (input, _) = operand(job.side);
         for tri in result.map_err(KernelError::Boolean)? {
             tris.push(tri);
             faces.push(face_id(job.side, input, job.tri, face_offset));
@@ -423,12 +418,6 @@ fn cut_face(
             }
         }
     };
-    let next = |u: u32| -> Option<u32> {
-        halfedges
-            .binary_search_by_key(&u, |h| h[0])
-            .ok()
-            .map(|i| halfedges[i][1])
-    };
     let mut used = vec![false; halfedges.len()];
     let mut loops = Vec::new();
     for i in 0..halfedges.len() {
@@ -447,7 +436,7 @@ fn cut_face(
             }
             used[k] = true;
             l.push(vert(u));
-            u = next(u).ok_or(BooleanError::Inconsistent)?;
+            u = halfedges[k][1];
             if u == first {
                 break;
             }

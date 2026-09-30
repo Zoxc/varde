@@ -73,7 +73,8 @@ pub enum BooleanError {
     InsideOut,
     /// The decisions don't fit together. Exact primitives never do this.
     Inconsistent,
-    /// A cut face's part couldn't be triangulated.
+    /// A cut face's kept part couldn't be triangulated, or the triangles
+    /// don't pair up into a closed surface.
     Degenerate,
 }
 
@@ -82,7 +83,7 @@ impl std::fmt::Display for BooleanError {
         f.write_str(match self {
             BooleanError::Curved => "booleans on curved faces aren't available yet",
             BooleanError::InsideOut => "a solid is inside out",
-            BooleanError::Inconsistent => "the intersection's decisions don't fit together",
+            BooleanError::Inconsistent => "where the solids cross doesn't add up",
             BooleanError::Degenerate => "a cut face couldn't be triangulated",
         })
     }
@@ -96,14 +97,19 @@ impl std::error::Error for BooleanError {}
 /// the exact predicates take it as it is.
 const UP: DVec3 = DVec3::new(2.0, 3.0, 32.0);
 
-/// How edges `e` of `A` and `g` of `B` cross, seen along [`UP`], in their
-/// own directions: `sigma` is the sign of `det[g, e, UP]` (+1 where `e`
-/// crosses `g` from its right to its left), and `a_above` says whether
-/// `e` passes above `g` there.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// How the shadows of edge `e` of `A` and edge `g` of `B` cross, seen
+/// along [`UP`], each edge in its own direction, as the counting reads
+/// them: `a_under` sums, over the crossings where `e` passes under `g`,
+/// +1 where `e` crosses `g` from its right to its left (the sign of
+/// `det[g, e, UP]`) and −1 the other way; `b_under` sums the same over
+/// the crossings where `g` passes under `e`, for `g` crossing `e`. Two
+/// flat edges cross once at most, so one of them is ±1 or both are 0;
+/// projected conics can cross several times, and their sums are what
+/// counts.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct Cross11 {
-    sigma: i8,
-    a_above: bool,
+    a_under: i8,
+    b_under: i8,
 }
 
 /// The primitives the counting reads. Each is asked once per pair, and
@@ -112,8 +118,9 @@ trait Primitives: Sync {
     /// `s02`: the signed number of layers of face `f` of the other operand
     /// above vertex `v` of `side`, along [`UP`].
     fn s02(&self, side: Side, v: u32, f: u32) -> i8;
-    /// `s11`: how edge `e` of `A` and edge `g` of `B` cross, if they do.
-    fn s11(&self, e: u32, g: u32) -> Option<Cross11>;
+    /// `s11`: how the shadows of edge `e` of `A` and edge `g` of `B`
+    /// cross.
+    fn s11(&self, e: u32, g: u32) -> Cross11;
     /// The order along edge `e` of `side`, in its direction, of its
     /// crossings with faces `f1` and `f2` of the other operand. Both
     /// crossings exist.
@@ -126,7 +133,7 @@ trait Primitives: Sync {
 /// `a op b`, within `budget`: a solid that passes `check`, always.
 ///
 /// Fails with [`KernelError::Boolean`] for an operand with a curved patch
-/// (not yet), or one that is inside out; with
+/// (not yet), or one that is inside out (see [`BooleanError`]); with
 /// [`KernelError::TooComplex`] past the budget; and with
 /// [`KernelError::Invalid`] when the result can't pass `check` with `tol`,
 /// such as two solids touching along an edge or at a point, where the
@@ -203,18 +210,21 @@ fn inputs<'a>(
     Ok((ia, ib))
 }
 
-/// The mesh of the cleaned triangles: vertices no triangle uses dropped,
-/// the rest numbered in order, halfedges paired by vertex id. No
-/// triangles give the empty mesh.
+/// The mesh of the cleaned triangles: the vertices and faces no triangle
+/// uses dropped (so chained booleans don't pile up faces long gone), the
+/// rest numbered in order, halfedges paired by vertex id. No triangles
+/// give the empty mesh.
 fn build(soup: cleanup::Soup, faces: Vec<Face>) -> Result<Mesh, KernelError> {
     if soup.tris.is_empty() {
         return Ok(Mesh::default());
     }
     let mut used = vec![false; soup.pos.len()];
-    for tri in &soup.tris {
+    let mut used_faces = vec![false; faces.len()];
+    for (tri, &face) in soup.tris.iter().zip(&soup.faces) {
         for &v in tri {
             used[v as usize] = true;
         }
+        used_faces[face as usize] = true;
     }
     let mut builder = MeshBuilder::new();
     let id: Vec<u32> = used
@@ -222,16 +232,39 @@ fn build(soup: cleanup::Soup, faces: Vec<Face>) -> Result<Mesh, KernelError> {
         .zip(&soup.pos)
         .map(|(&used, &p)| if used { builder.vert(p) } else { u32::MAX })
         .collect();
-    for f in faces {
-        builder.face(f);
-    }
+    let face_id: Vec<u32> = used_faces
+        .iter()
+        .zip(faces)
+        .map(|(&used, f)| if used { builder.face(f) } else { u32::MAX })
+        .collect();
     for (tri, face) in soup.tris.iter().zip(soup.faces) {
-        builder.tri(tri.map(|v| id[v as usize]), face);
+        builder.tri(tri.map(|v| id[v as usize]), face_id[face as usize]);
     }
     builder.build().map_err(|e| match e {
         BuildError::TooManyPatches(_) => KernelError::TooComplex,
         _ => KernelError::Boolean(BooleanError::Degenerate),
     })
+}
+
+/// Each vertex's connected part, as its lowest vertex id, of `n`
+/// vertices joined by `links`.
+fn parts(n: usize, links: impl IntoIterator<Item = [u32; 2]>) -> Vec<u32> {
+    fn root(part: &mut [u32], mut v: u32) -> u32 {
+        while part[v as usize] != v {
+            part[v as usize] = part[part[v as usize] as usize];
+            v = part[v as usize];
+        }
+        v
+    }
+    let mut part: Vec<u32> = (0..n as u32).collect();
+    for [u, v] in links {
+        let (x, y) = (root(&mut part, u), root(&mut part, v));
+        part[x.max(y) as usize] = x.min(y);
+    }
+    for v in 0..n as u32 {
+        part[v as usize] = root(&mut part, v);
+    }
+    part
 }
 
 #[cfg(test)]

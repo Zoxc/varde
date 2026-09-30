@@ -1059,7 +1059,7 @@ against the curved interfaces (below), so the curved primitives swap in.
 
 | file | holds |
 |---|---|
-| `boolean.rs` | `Op`, `BooleanError`, `UP`, `Cross11`, the `Primitives` trait, `boolean`, `touches`, building the mesh |
+| `boolean.rs` | `Op`, `BooleanError`, `UP`, `Cross11`, the `Primitives` trait, `boolean`, `touches`, building the mesh, `parts` (connected parts, for the rays and the clean-up) |
 | `boolean/input.rs` | `Input`: an operand's tables (corners, edges' ends and triangles, boxes), vertex normals, flat volume |
 | `boolean/exact.rs` | exact signs: `Approx` (float with an error bound), `Exp` (expansions), `Poly` in `ε`, `Pred`, `sign`, `orient2d` |
 | `boolean/flat.rs` | `Flat`, the primitives of flat operands, with the symbolic perturbation |
@@ -1085,9 +1085,14 @@ projection.
   signed count only changes where the vertex's projection crosses the
   patch's boundary or the vertex passes through it, as for flat ones.
 - `s11(e, g)` (`Cross11`, for an edge `e` of `A` and `g` of `B`, each in
-  its own direction): whether their projections cross, `sigma` the sign of
-  `det[g, e, UP]` (+1 where `e` crosses `g` from its right to its left,
-  seen from `+UP`), and which passes above at the crossing.
+  its own direction): how their projections cross, as the two sums the
+  counting reads. `a_under` sums over the crossings where `e` passes
+  under `g` the sign `σ` of `det[g, e, UP]` (+1 where `e` crosses `g`
+  from its right to its left, seen from `+UP`); `b_under` sums `−σ` (`g`
+  crossing `e` from its right to its left) over those where `g` passes
+  under `e`. Flat edges cross once at most, so one of them is ±1 or both
+  0; projected conics can cross up to four times, and only the sums
+  matter.
 - `order(side, e, f1, f2)`: the order of an edge's two crossings along it.
 - `crossing(side, e, f)`: where along the edge it crosses: a position
   only, never a decision.
@@ -1126,40 +1131,42 @@ every platform. A predicate zero in every power (only if `T2` and `T3`
 happen to lie in the tie's degenerate directions) takes a fixed sign.
 
 The predicates: `Orient` `det[q − p, r − p, UP]` (which side of `p → q`
-the point `r` projects), `PlaneSide` `(t0 − x)·n` (which side of a
-triangle's plane), `Height` `det[a − c, d − c, b − a]` (with `σ`, which
-edge is above at a crossing: the point of `e` is `λ` above that of `g`,
-`λ = det[a − c, g, e] / det[g, e, UP]`), and `Reach`, `Across`, `Between`
-for where an edge meets a plane and in which order. A vertex is above
+the point `r` projects), `Height` `det[a − c, d − c, b − a]` (with `σ`,
+which edge is above at a crossing: the point of `e` is `λ` above that of
+`g`, `λ = det[a − c, g, e] / det[g, e, UP]`), `Reach` `(t0 − x)·n` (the
+side of a triangle's plane `x` is on, and the numerator of where a line
+from `x` meets it), `Across` `(x1 − x0)·n` (its denominator) and
+`Between` (which of two planes an edge meets first). A vertex is above
 a face's plane along the ray when `(t0 − x)·n` has the sign of `n·UP`;
 it projects into the triangle when it is on the interior side of all
 three edges.
 
 ### Counting (`boolean/count.rs`)
 
-1. **Broad phase**: a BVH over both operands' patch boxes; the pairs
+1. **Broad phase**: a BVH over each operand's patch boxes; the pairs
    (triangle of `A`, triangle of `B`) whose boxes meet (margin 0, `≤`, so
-   touching boxes count), counted against the budget before they are
-   collected (`Bvh::pairs_within`). From them the candidate edge–face
-   pairs of each operand, sorted.
+   touching boxes count: `A`'s boxes looked up in `B`'s BVH), counted
+   against the budget before they are collected (`Bvh::hits_within`).
+   From them the candidate edge–face pairs of each operand, sorted.
 2. **Layer counts** for each end of a candidate edge against the face,
    and for the first vertex of each connected part of an operand against
-   every face of the other that a ray up from it may meet
-   (`Bvh::hits_within`: `pairs_within` for any query box; the ray's box
-   runs to the top of the other operand's box).
+   every face of the other that a ray up from it may meet (the ray's
+   box, which runs to the top of the other operand's box, looked up in
+   the other's BVH with `Bvh::hits_within`: `pairs_within` for any
+   query box).
 3. **Edge against edge** for each candidate edge against the edges of
    the candidate face.
 4. **Crossings** by Manifold's identity: for an edge `e` of `A` from `a`
    to `b` and a face `f` of `B`,
    `x12(e, f) = s02(b, f) − s02(a, f) − Σ S(e, h)` over `f`'s edges `h`
-   as `f` runs them, where `S(e, h) = σ` when `h` passes above `e` (and
-   `−σ` for `h` running the other way). Walking along `e`, the signed
+   as `f` runs them, where `S(e, h) = σ` when `h` passes above `e`
+   (`a_under`; and `−σ` for `h` running the other way). Walking along `e`, the signed
    number of layers of `f` above changes by one each time `e` passes
    through `f` (entering `B` through it: +1) and each time `e`'s shadow
    passes under an edge of `f`, crossing it from its left to its right
    taking one away whichever way `f` faces. `x21(g, f)` for an edge of
    `B` through a face of `A` is the same with `S'(g, k) = −σ` when `k`
-   (of `A`) passes above `g`. A flat triangle and a segment meet once at
+   (of `A`) passes above `g` (`b_under`). A flat triangle and a segment meet once at
    most: any other value is `Inconsistent`.
 5. **Winding numbers**: at each part's first vertex the sum of its layer
    counts (every layer above, signed, is the winding number of the other
@@ -1206,7 +1213,8 @@ for flat triangles, exactly one of each or none.
   solved from the plane), then turned into triangles on the records.
   Faces are cut in parallel (`par_map`), the rest sequentially.
 - The result's faces are `A`'s then `B`'s (turned over for a
-  difference), unused ones kept; halfedges pair up by vertex id in
+  difference), less those no triangle is on any more, so chained
+  booleans don't pile up faces; halfedges pair up by vertex id in
   `MeshBuilder`, never by position.
 
 ### Triangulating a face's loops (`boolean/triangulate.rs`)
@@ -1299,16 +1307,17 @@ touching: `Invalid`), a shorter one inside, one with its side edges on
 the box's top edges; octahedra with their middle vertices on the box's
 top edges, touching the top face from below and from above with a
 vertex, and poking through it; a box turned 45° through another;
-40 random pairs of boxes in general position, turned and moved; tori
-of 2 304 patches crossing a box and each other, where `|A ∪ B| + |A ∩ B|
-= |A| + |B|` and `|A − B| = |A| − |A ∩ B|`; results fed on as inputs
+40 random pairs of boxes in general position, turned and moved; flat
+tori of 2 304 patches, one upright through the other's hole crossing its
+tube on both sides, and one through a box, where `|A ∪ B| + |A ∩ B| =
+|A| + |B|` and `|A − B| = |A| − |A ∩ B|`; results fed on as inputs
 (steps joined flush, a hole, a half cut away, filled back in); face names
-of both operands kept; `touches`; empty operands; refusals (curved,
+of both operands kept, and faces no triangle uses dropped; `touches`; empty operands; refusals (curved,
 inside out, out of budget); the same bits at 1 and 8 threads. Unit
 tests: expansions against known values, the float filter never
 contradicting the exact sign, `orient2d` near a line and far out,
 triangulating a square with a hole, a concave loop, a zero-width loop and
-a vertex on the domain's side.
+a vertex landing on the domain's side (no diagonal along a side).
 
 ### Known gaps
 
@@ -1330,17 +1339,26 @@ a vertex on the domain's side.
 
 - `Primitives` is the seam: `Flat` swaps for curved primitives (conic
   `s11` with root isolation and heights, rational `s02`), which are
-  numerical and decided once, not exact; `order` and `crossing` for
-  curved edges.
+  numerical and decided once, not exact. `s02` and `s11` already answer
+  in the form curved ones need (signed layer counts; `s11` as its two
+  sums, whatever the number of crossings); `order` and `crossing` name a
+  crossing by `(edge, face)` and need its index too.
 - `count::crossings` refuses `|x12| > 1`; a curved edge and patch can
   cross several times, so crossings become records `(edge, face, i)`.
+- `Input::new` refuses curved patches and reads each as the triangle on
+  its corners; the perturbation's vertex directions (`vertex_normals`)
+  are only `Flat`'s.
 - `assemble` assumes each face pair's cut is one segment with two ends:
   curved pairs need the per-pair decisions (refinement, certificates,
   fixed rules) and cut chains of several vertices and conic edges; the
   cut face's domain positions of interior points need the patch's
   inverse; `build` makes every edge straight, and untouched curved
   patches must keep their edge records.
-- The clean-up and `Input::volume` are flat-only.
+- The clean-up and `Input::volume` are flat-only. The corner triangles
+  of a curved solid needn't enclose its volume (two patches of a lens
+  enclose none), and `Solid::volume` is about as slow as the whole flat
+  counting of two big tori (0.09 s each for 36 864 patches), so the
+  sign check needs a cheaper curved measure or to go into `check`.
 - `touches` refuses curved solids too, so regen can't list touched bodies
   of extrudes with arcs until then.
 

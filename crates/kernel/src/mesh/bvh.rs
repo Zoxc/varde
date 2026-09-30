@@ -6,7 +6,7 @@ use crate::patch::Bounds3;
 /// How many boxes a leaf holds at most.
 const LEAF: usize = 4;
 
-/// How many boxes [`Bvh::pairs_within`] counts the pairs of at a time
+/// How many ids [`Bvh::hits_within`] counts the pairs of at a time
 /// before collecting them.
 const CHUNK: usize = 256;
 

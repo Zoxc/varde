@@ -9,10 +9,16 @@
 //! first cuts off ears with two corners at one position (so loops of zero
 //! width come apart into triangles of zero width), then proper triangles
 //! with nothing in or on them, then ears of zero area, then any ear, and
-//! leaves degenerate triangles to the clean-up after it. It never adds a diagonal between two vertices on one
-//! side of the domain triangle (they would lie along it, and the patch
-//! beside that side could add the same one), nor one that is already an
-//! edge.
+//! leaves degenerate triangles to the clean-up after it. It never adds a
+//! diagonal between two vertices on one side of the domain triangle (they
+//! would lie along it, and the patch beside that side could add the same
+//! one), nor one that is already an edge. Then diagonals are flipped
+//! towards the Delaunay triangulation.
+//!
+//! Extrude's caps use `spade`'s constrained Delaunay triangulation
+//! instead: it merges coincident points, which these loops have, while
+//! caps have none but can have many thousand vertices, where ear
+//! clipping is too slow.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -495,7 +501,8 @@ mod tests {
 
     #[test]
     fn a_vertex_on_a_side_is_respected() {
-        // Two triangles joined at a vertex on the domain's side.
+        // Two triangles joined at a vertex on the domain's side (not
+        // tagged with it: an interior vertex that lands there).
         let v = |id, x, y, sides| Vert {
             id,
             at: DVec2::new(x, y),
@@ -511,9 +518,19 @@ mod tests {
         let all = l.clone();
         let tris = triangulate(vec![l]).unwrap();
         let at = |id: u32| all[id as usize].at;
-        eprintln!("{tris:?}");
+        assert_eq!(tris.len(), 3, "{tris:?}");
+        assert_eq!(total_area(&tris, at), 0.25, "{tris:?}");
         for &[a, b, c] in &tris {
             assert!(orient2d(at(a), at(b), at(c)) >= 0, "{tris:?}");
+        }
+        // No diagonal between vertices on one side of the domain.
+        for &[a, b, c] in &tris {
+            for (u, v) in [(a, b), (b, c), (c, a)] {
+                let (u, v) = (all[u as usize], all[v as usize]);
+                let side = (u.id as usize + 1) % 5 == v.id as usize
+                    || (v.id as usize + 1) % 5 == u.id as usize;
+                assert!(side || u.sides & v.sides == 0, "{tris:?}");
+            }
         }
     }
 }
