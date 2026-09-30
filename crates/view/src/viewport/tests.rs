@@ -83,6 +83,7 @@ fn primitive_with(
         &Camera::default(),
         crate::theme::Mode::Light.palette(),
         None,
+        None,
     )
     .draw(state, mouse::Cursor::Unavailable, bounds())
 }
@@ -359,6 +360,7 @@ fn handle(state: &mut Interaction, event: Event, sketching: bool) -> Option<Acti
         &Camera::default(),
         crate::theme::Mode::Light.palette(),
         sketching.then(|| Sketching::new(state_of_sketch, true)),
+        None,
     );
     let cursor = mouse::Cursor::Available(Point::new(10.0, 10.0));
     program.update(state, &event, bounds(), cursor)
@@ -420,6 +422,7 @@ fn the_sketch_being_edited_is_drawn_with_the_scene() {
             &Camera::default(),
             crate::theme::Mode::Light.palette(),
             Some(sketching),
+            None,
         )
         .draw(&state, mouse::Cursor::Unavailable, bounds())
     };
@@ -472,6 +475,7 @@ fn a_region_with_a_hole_is_shaded_around_it() {
             &camera,
             crate::theme::Mode::Light.palette(),
             Some(Sketching::new(state, true)),
+            None,
         );
         let mut interaction = Interaction::default();
         if let Some((x, y)) = hover {

@@ -27,6 +27,8 @@ reopen a recent file, or recover unsaved changes left by a crash.
 | new sketch                  | `S`, then pick the XY, XZ or YZ plane      |
 | edit a sketch               | double-click it in the Timeline, or select it and press `Enter` |
 | delete a sketch             | select it in the Timeline and press `Delete` |
+| extrude                     | `E` (with a sketch selected in the Timeline, its regions), click the regions to extrude (again to take one out), then drag the arrow's knob or type the distance in the panel; `Enter` or OK adds it, `Esc` cancels |
+| edit an extrude             | double-click it in the Timeline, or select it and press `Enter` |
 | draw in a sketch            | `L` line, `R` rectangle, `C` circle, `A` arc, `G` polygon, `N` spline, `P` point, then click; `Esc` stops; clicks snap (see below), hold `Shift` not to; `Tab` to type sizes (see below) |
 | line tool                   | click point after point; click the first point to close the loop, `Esc` or double-click to end; clicking a point already there joins it |
 | rectangle                   | two opposite corners, or with `Q` the centre and a corner (`Q` again goes back); it comes held level and upright |

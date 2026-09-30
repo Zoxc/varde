@@ -1667,7 +1667,7 @@ fn field_error<'a>(field: ValueField<'_>) -> Option<Element<'a, Message>> {
 }
 
 /// A line `width` pixels wide in `color`, dashed if `dashed`.
-fn line(color: Color, width: f32, dashed: bool) -> LineStyle {
+pub(super) fn line(color: Color, width: f32, dashed: bool) -> LineStyle {
     LineStyle {
         color: srgba(color),
         width,
@@ -1700,13 +1700,13 @@ fn ring(color: Color) -> PointStyle {
 }
 
 /// Fills `region` on `layer` in `color`, by its outline, holes left out.
-fn fill_region(layer: &mut SketchLayer, region: &Region, color: Color) {
+pub(super) fn fill_region(layer: &mut SketchLayer, region: &Region, color: Color) {
     let outline = region.outline.iter().map(Vec::as_slice);
     layer.fill(Space::Sketch, outline, srgba(color));
 }
 
 /// `color` for the renderer.
-fn srgba(color: Color) -> Srgba {
+pub(super) fn srgba(color: Color) -> Srgba {
     Srgba([color.r, color.g, color.b, color.a])
 }
 

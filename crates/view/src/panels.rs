@@ -151,13 +151,9 @@ fn feature_row(feature: &Feature, selected: bool, unsolved: bool) -> Element<'_,
         indent: 8.0,
         selected,
     };
-    let row = row.view(Message::Look(Look::SelectFeature(feature.id)));
-    match feature.kind {
-        FeatureKind::Sketch { .. } => row
-            .on_double_click(Message::Look(Look::EditSketch(feature.id)))
-            .into(),
-        FeatureKind::Extrude(_) => row.into(),
-    }
+    row.view(Message::Look(Look::SelectFeature(feature.id)))
+        .on_double_click(Message::Look(Look::EditFeature(feature.id)))
+        .into()
 }
 
 /// A row of a list that's selected by clicking it: an icon, a name, and a

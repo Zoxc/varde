@@ -3821,7 +3821,7 @@ fn a_sketch_is_not_made_in_a_read_only_document() {
 
     // Its sketches can still be looked into, but not changed.
     let feature = doc.editor.document().features()[0].id;
-    doc.look(Look::EditSketch(feature));
+    doc.look(Look::EditFeature(feature));
     assert_eq!(edited(&doc), Some(feature));
     doc.update(Edit::ToggleFeatureVisible(feature));
     assert_eq!(sketches(&doc), [("Sketch 1", true)]);
@@ -3856,7 +3856,7 @@ fn a_sketch_is_left_out_of_the_model_while_it_is_edited() {
     assert_eq!(doc.feed.left_out(), Some(None));
 
     // Entering asks again for the same generation, without the sketch.
-    doc.look(Look::EditSketch(feature));
+    doc.look(Look::EditFeature(feature));
     assert_eq!(left_out(&mut doc, &requests), [Some(feature)]);
     assert_eq!(doc.feed.generation(), Some(generation));
     assert_eq!(doc.feed.left_out(), Some(Some(feature)));
@@ -3878,7 +3878,7 @@ fn the_sketch_tab_takes_the_timeline_s_place_in_a_sketch() {
     let (mut doc, feature, _) = with_sketch();
     doc.look(Look::SelectPanel(Panel::Timeline));
 
-    doc.look(Look::EditSketch(feature));
+    doc.look(Look::EditFeature(feature));
     assert_eq!(doc.panel, Panel::Sketch);
     assert_eq!(doc.panel.other(true), Panel::Objects);
     // The Timeline isn't there to pick.
@@ -3893,7 +3893,7 @@ fn the_sketch_tab_takes_the_timeline_s_place_in_a_sketch() {
 
     doc.look(Look::SelectPanel(Panel::Sketch));
     assert_eq!(doc.panel, Panel::Timeline);
-    doc.look(Look::EditSketch(feature));
+    doc.look(Look::EditFeature(feature));
     doc.look(Look::FinishSketch);
     assert_eq!(doc.panel, Panel::Timeline);
 }
@@ -3901,7 +3901,7 @@ fn the_sketch_tab_takes_the_timeline_s_place_in_a_sketch() {
 #[test]
 fn escape_backs_out_of_one_thing_at_a_time() {
     let (mut doc, feature, _) = with_sketch();
-    doc.look(Look::EditSketch(feature));
+    doc.look(Look::EditFeature(feature));
     doc.update(Edit::ToggleFileMenu);
     doc.look(Look::Escape);
     assert!(!doc.file_menu);
@@ -3991,7 +3991,7 @@ fn s_starts_a_sketch_outside_sketches() {
     let s = || keyboard::Key::Character("s".into());
     key_in(&mut doc, s());
     assert!(doc.picking_plane);
-    doc.look(Look::EditSketch(feature));
+    doc.look(Look::EditFeature(feature));
     assert!(!doc.picking_plane);
     assert!(press_in(&doc, s()).is_none());
     doc.look(Look::PickPlane);
@@ -4043,7 +4043,7 @@ fn geometry_selected_is_what_the_sketch_holds() {
             sketch: Box::new(sketch.clone()),
         })
         .unwrap();
-    doc.look(Look::EditSketch(feature));
+    doc.look(Look::EditFeature(feature));
 
     // Home frames what's drawn, facing the plane from above.
     doc.look(Look::Orbit {

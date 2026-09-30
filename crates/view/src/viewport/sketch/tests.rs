@@ -69,6 +69,7 @@ fn shown(sketching: Sketching<'_>) -> Program<'_> {
         &top_camera(),
         Mode::Light.palette(),
         Some(sketching),
+        None,
     )
 }
 
@@ -738,6 +739,7 @@ fn a_grabbed_label_follows_the_cursor_until_let_go() {
         &top_camera(),
         Mode::Light.palette(),
         Some(Sketching::new(grabbed, true)),
+        None,
     );
     let mut state = Interaction::default();
     // Where it was grabbed, then a little way off, which isn't a drag.

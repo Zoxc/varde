@@ -8,8 +8,8 @@ use varde_expr::LengthUnit;
 use crate::chrome::{Edge, edged, hrule, icon_button, key_label, vrule};
 use crate::icons::{self, Icon};
 use crate::shortcut::{
-    Binding, Shortcut, comb_binding, constrain_binding, constraint_binding, file_bindings,
-    handles_binding, sketch_binding, switch_binding, tool_binding,
+    Binding, Shortcut, comb_binding, constrain_binding, constraint_binding, extrude_binding,
+    file_bindings, handles_binding, sketch_binding, switch_binding, tool_binding,
 };
 use crate::theme::{self, Emphasis, SEMIBOLD, SIDE_PANEL_INNER_WIDTH, Tone};
 use crate::{ActiveTool, ConstraintKind, DocumentState, Edit, File, Look, Message, Overlay, Tool};
@@ -32,7 +32,15 @@ pub fn toolbar<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
         ),
         None => (
             "Model",
-            state.picking_plane.then(|| "New sketch".to_owned()),
+            if state.picking_plane {
+                Some("New sketch".to_owned())
+            } else {
+                state.extrude.as_ref().map(|extrude| {
+                    extrude
+                        .editing
+                        .map_or_else(|| "Extrude".to_owned(), |name| format!("Editing {name}"))
+                })
+            },
         ),
     };
     let tag = tag.map(|tag| {
@@ -226,6 +234,12 @@ fn ops<'a>(state: &DocumentState<'a>) -> Vec<Element<'a, Message>> {
         sketch_binding(keys),
         state.picking_plane,
     );
+    let extrude = bound_op(
+        Icon::Extrude,
+        "Extrude",
+        extrude_binding(keys),
+        state.extrude.is_some(),
+    );
     if state.picking_plane {
         // Picking a plane in the viewport comes with picking, so the
         // origin planes are offered here.
@@ -236,9 +250,12 @@ fn ops<'a>(state: &DocumentState<'a>) -> Vec<Element<'a, Message>> {
                 editable.then_some(Message::Edit(Edit::NewSketch(plane))),
             )
         });
-        return [sketch, separator()].into_iter().chain(planes).collect();
+        return [sketch, extrude, separator()]
+            .into_iter()
+            .chain(planes)
+            .collect();
     }
-    vec![sketch]
+    vec![sketch, extrude]
 }
 
 /// The label of the button making a sketch on `plane`.

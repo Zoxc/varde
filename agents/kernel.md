@@ -1180,6 +1180,55 @@ and in order on receipt (`wire::Error::Bounds`); `MAX_HEAD_BYTES` is 64
 MiB. Touched bodies for a draft's join, cut or intersect wait for
 `kernel::touches`.
 
+## The extrude UI (`crates/view`, `crates/app`)
+
+**The session** (`app/src/doc/extrude.rs`, `Doc::extrude`, an
+`ExtrudeSession`) is started by the Extrude tool (`E`, `Look::StartExtrude`,
+outside sketches, where `E` is Equal's; again, or `Esc`, cancels it) or by
+editing an extrude (`Look::EditFeature` on one: a double-click in the
+Timeline, or `Enter` with it selected). It never runs with a sketch
+session, nor in a read-only document. It holds: the extrude edited, if
+any; the source sketch (the one selected in the Timeline, the edited
+extrude's, or else the one the first region picked is in, which un-picking
+every region lets go of again); the profiles of the source, or before
+there is one of every visible sketch with regions (each found once, and
+again when its sketch changes); the regions picked, as indices and as
+`Profiles::reference`s made as they're picked (a region too thin for a
+reference can't be picked); the extent kind, the two distance fields
+(text, last good `Value`, error, read with `Extent::ask`), flip, the
+operation and the excluded bodies (kept from the edited extrude). When
+the source sketch changes under it (undo), the picked regions are found
+again by their references (`Profiles::resolve`). An edited extrude's
+references that aren't found are counted (`missing`, shown in the panel)
+and dropped: `SetExtrude` gets fresh references of what's picked. Editing
+never changes the extrude's sketch, so `SetExtrude` doesn't hide one.
+
+**The preview** is the session's extrude sent as the request's draft
+(`Doc::request_model` after every edit and look): whole once a region is
+picked and the extent's distances have read at least once, with
+`NewBody(BodyId::NEW)` for a new body. See `agents/viewport.md` for how
+`MeshFeed` numbers drafts and keeps the newest answer; the draft's error
+(`Drafted.error`) shows in the panel while it's the latest's.
+
+**Committing** (`Edit::CommitExtrude`: OK, `Enter` in a distance field or,
+outside one, the screen's `Enter`) needs the session ready: an extrude
+whole, no distance refused, New body, and not through all. It applies
+`AddExtrude` (the document's name "Extrude N", adding the body and hiding
+the sketch) or `SetExtrude`, one undo step, selects the new extrude and
+ends the session; refused by the document (two sides over `MAX_COORD`,
+say), the session stays and the edit error shows. `Esc` or Cancel drops
+the session and its draft, and the model is asked for again without it.
+
+**The panel** (`view/src/extrude.rs`) floats at the viewport's right: the
+title and region count, the extents (Through all disabled: only a cut
+goes through all), the distance fields (the first is `VALUE_FIELD`, which
+takes the focus as the session opens, all selected; `Esc` in it cancels),
+Flip for one side and two sides, the operations (Join, Cut and Intersect
+disabled with a "Not available yet" tooltip), the draft's error, Cancel
+and OK. The handle and region picking are in `agents/viewport.md`.
+Dragging a knob types its distance (one side past the plane flips; a knob
+on the plane changes nothing) as the design's units format it.
+
 ## Limits, budgets and errors (`src/lib.rs`, `src/budget.rs`, `src/error.rs`)
 
 | constant | value | why |
@@ -1340,3 +1389,11 @@ with tracing.
   none, "region not found", instead of that region being extruded
   without a word. With no region of its curves, the point decides as
   planned.
+- **The Extrude tool is enabled while any sketch is visible** (or one is
+  selected), not only one with regions: finding every visible sketch's
+  profiles on each change was more than the button needs. A session
+  without regions to pick says so in its panel.
+- **Editing an extrude keeps its sketch**: the session only picks among
+  that sketch's regions, so `SetExtrude` never moves an extrude to
+  another sketch, and nothing needs hiding. References the edit can't
+  find again are dropped on OK, not kept failing.

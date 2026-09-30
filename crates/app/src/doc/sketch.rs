@@ -304,9 +304,13 @@ const FRAME_MARGIN: f32 = 1.5;
 
 impl Doc {
     /// Starts picking the plane for a new sketch, or backs out of it.
-    /// Only outside a sketch, in a document that can be edited.
+    /// Only outside a sketch and an extrude, in a document that can be
+    /// edited.
     pub(crate) fn pick_plane(&mut self) {
-        self.picking_plane = !self.picking_plane && self.editable() && self.sketch.is_none();
+        self.picking_plane = !self.picking_plane
+            && self.editable()
+            && self.sketch.is_none()
+            && self.extrude.is_none();
     }
 
     /// Adds a sketch on `plane` and edits it, unless that's refused.
@@ -332,6 +336,7 @@ impl Doc {
             return;
         }
         self.picking_plane = false;
+        self.extrude = None;
         self.selected_feature = Some(id);
         self.sketch = Some(SketchSession::new(id, self.editor.lineage()));
         self.panel = self.panel.for_sketching(true);
@@ -358,7 +363,7 @@ impl Doc {
     }
 
     /// Backs out of whatever is open, the innermost first: the file menu,
-    /// picking a plane, the value field, a label grabbed, the drag of
+    /// picking a plane, the extrude being set up, the value field, a label grabbed, the drag of
     /// geometry, the shape the tool is drawing (or what the Dimension or
     /// Mirror tool has picked), the tool, the sketch, the feature
     /// selected.
@@ -367,6 +372,8 @@ impl Doc {
             self.file_menu = false;
         } else if self.picking_plane {
             self.picking_plane = false;
+        } else if self.extrude.is_some() {
+            self.extrude = None;
         } else if let Some(session) = &mut self.sketch {
             if session.value.take().is_some()
                 || session.label.take().is_some()
@@ -821,4 +828,4 @@ fn follow_selection(selection: &BTreeSet<Id>, listed_on: &mut BTreeSet<Id>, sket
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

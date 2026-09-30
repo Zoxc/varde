@@ -48,6 +48,36 @@ first `Esc` closes it. A label takes its own press; the `Program` then
 follows the cursor while the app says a label is grabbed, and sends the
 drag and the release.
 
+Setting up an extrude (`viewport/extrude.rs`, `crate::extrude`, the
+app's `doc/extrude.rs`), the `Program` is given the session
+(`Extruding`) in place of a sketch: the model isn't faded and the grid
+stays on XY, and the renderer's sketch layers carry the extrude. Before
+the source sketch is chosen, every candidate's regions (the visible
+sketches with any, each on its own plane) are filled in the live layer
+in screen space, projected every frame; after, the source's regions are
+the base layer on its plane, those picked filled stronger and outlined,
+kept until the profiles (by pointer), the picked set or the colours
+change. The region hovered is filled over them. Picking casts the
+cursor's ray onto each candidate's plane (`Projector::cursor`), asks
+`Profiles::region_at` there and takes the nearest hit by depth
+(`Projector::depth`); a left press on a region picks it (captured),
+anywhere else the left button orbits as outside a sketch, and the camera
+keeps the other buttons. The handle is an arrow from the picked regions'
+area-weighted centre (holes taking theirs away) along the plane's
+normal: its shaft is drawn in screen space in the live layer, and each
+knob is a widget in an `Anchors` layer whose placement has the axis as
+its x axis, so the knob at `t` mm is the "sketch point" `(t, 0)`. One
+side has a knob at its distance (negative when flipped), symmetric at
+half of it, two sides one per side. Pressing a knob sends
+`GrabHandle`; while the app says one is grabbed the `Program` follows
+the cursor (the raw position, over the rest of the window too): the
+distance is the point of the axis nearest the cursor's ray
+(`Projector::ray`), snapped to the roundest 1, 2 or 5 × 10ⁿ of the
+design's units at least 6 pixels long (`snap_step`), and nothing while
+looking along the axis; letting go sends `DropHandle`. The floating
+panel is the viewport's last layer, at its right under the camera
+controls, `opaque` so clicks on it don't reach the scene.
+
 The renderer draws, in order: the background; the model's faces, or with
 `Frame::faded` its depth and then only its nearest faces blended at
 `Colors::faded_alpha` (depth still written); its feature edges; the grid,
@@ -138,8 +168,15 @@ lane keeps a cache of what it worked out per feature (profiles, solids,
 meshes, whether each sketch solves), keyed by a hash of the feature, the
 tolerance and its inputs' keys, holding what the last request used, so an
 edit or a draft being dragged reruns only what it changes. The app sends
-no drafts yet and doesn't show `failed` (the extrude session and the
-timeline come with the extrude UI).
+the extrude being set up as the draft (see "Setting up an extrude"
+below); `MeshFeed` gives each draft differing from the last the next
+revision, counted over the document's life, and asks again whenever the
+generation, the sketch left out or the draft revision changes (a draft
+dropped asks again without one). An answer of the same generation is
+taken only if it's for what was asked last, sketch and draft revision
+both, so a late answer for an older draft never replaces a newer one;
+the draft's error shows in the panel only while it's for the draft asked
+for last. The app doesn't show `failed` yet.
 
 Natively each open document has a regeneration thread (`regen::lane`),
 started by an iced subscription keyed by the document's id. The

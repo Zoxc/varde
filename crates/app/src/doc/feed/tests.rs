@@ -353,3 +353,79 @@ fn a_failure_doesn_t_hold_back_leaving_out_another_sketch() {
     feed.apply(handle(request));
     assert_eq!(feed.left_out(), Some(Some(feature)));
 }
+
+/// The example's plate sketch, and its extrude as a draft of a new one.
+fn plate_draft() -> (Editor, (Option<FeatureId>, varde_document::Extrude)) {
+    let example = Document::example();
+    let FeatureKind::Extrude(extrude) = &example.features()[1].kind else {
+        panic!("the second feature is an extrude");
+    };
+    let extrude = extrude.clone();
+    let mut editor = Editor::new(example);
+    let feature = editor.document().features()[1].id;
+    editor.apply(Command::RemoveFeature(feature)).unwrap();
+    (Editor::new(editor.document().clone()), (None, extrude))
+}
+
+/// The draft revision each request waiting carries.
+fn revisions(regen: &RefCell<Vec<Request>>) -> Vec<Option<u64>> {
+    regen.borrow().iter().map(Request::draft).collect()
+}
+
+#[test]
+fn a_draft_is_asked_for_once_per_change_and_its_newest_answer_kept() {
+    let (editor, draft) = plate_draft();
+    let (mut feed, regen) = connected();
+    feed.request(&editor, None);
+    feed.request_with(&editor, None, Some(draft.clone()));
+    feed.request_with(&editor, None, Some(draft.clone()));
+    let mut taller = draft.clone();
+    taller.1.extent = varde_document::Extent::OneSide(
+        varde_expr::Value::new(
+            "20",
+            &varde_document::Extent::ask(&editor.document().design()),
+        )
+        .unwrap(),
+    );
+    feed.request_with(&editor, None, Some(taller));
+    assert_eq!(revisions(&regen), [None, Some(1), Some(2)]);
+
+    // Answered in order, only the newest draft's answer is shown: the
+    // model without it and the older draft come after it here.
+    let answers: Vec<Response> = regen.take().into_iter().map(handle).collect();
+    let [plain, first, second] = <[Response; 3]>::try_from(answers).unwrap();
+    feed.apply(second);
+    assert_eq!(feed.shown_draft(), Some(2));
+    assert_eq!(feed.draft_error(), None);
+    feed.apply(first);
+    feed.apply(plain);
+    assert_eq!(feed.shown_draft(), Some(2));
+
+    // Without the draft, the model is asked for again, and taken.
+    feed.request_with(&editor, None, None);
+    assert_eq!(revisions(&regen), [None]);
+    feed.apply(handle(regen.take().pop().unwrap()));
+    assert_eq!(feed.shown_draft(), None);
+    assert_eq!(feed.mesh().triangle_count(), 0);
+
+    // The same draft again is a new one, after another.
+    feed.request_with(&editor, None, Some(draft));
+    assert_eq!(revisions(&regen), [Some(3)]);
+}
+
+#[test]
+fn a_failing_draft_says_why_for_its_revision_only() {
+    let (editor, (feature, mut extrude)) = plate_draft();
+    extrude.regions.clear();
+    let (mut feed, regen) = connected();
+    feed.request_with(&editor, None, Some((feature, extrude.clone())));
+    feed.apply(handle(regen.take().pop().unwrap()));
+    assert!(feed.draft_error().is_some());
+    // Answered with the model without it.
+    assert_eq!(feed.shown_draft(), Some(1));
+    assert_eq!(feed.mesh().triangle_count(), 0);
+    // Another draft asked for, the error is no longer its.
+    extrude.flip = true;
+    feed.request_with(&editor, None, Some((feature, extrude)));
+    assert_eq!(feed.draft_error(), None);
+}

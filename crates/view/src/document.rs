@@ -23,8 +23,8 @@ use crate::shortcut::{DocumentKeys, Held, Shortcut};
 use crate::theme::Emphasis;
 use crate::typed::Field;
 use crate::{
-    ConstraintKind, Edit, File, Message, Panel, Snap, Target, Tool, Unsaved, panels, theme,
-    toolbar, viewport,
+    ConstraintKind, Edit, ExtrudeState, File, Message, Panel, Snap, Target, Tool, Unsaved, panels,
+    theme, toolbar, viewport,
 };
 
 /// Borrowed state needed to build the document screen.
@@ -68,6 +68,11 @@ pub struct DocumentState<'a> {
     pub selected_feature: Option<FeatureId>,
     /// The sketch being edited, if one is.
     pub sketch: Option<SketchState<'a>>,
+    /// The extrude being set up, if one is: never with a sketch.
+    pub extrude: Option<ExtrudeState<'a>>,
+    /// Whether there's a sketch to extrude regions of: the Extrude tool
+    /// works outside sketches then.
+    pub extrudable: bool,
     /// The sketches that don't solve, as regenerating found.
     pub unsolved: &'a [FeatureId],
     /// Whether edits are waiting on the solver, which undo drops.
@@ -83,6 +88,7 @@ impl DocumentState<'_> {
     /// What the screen's shortcuts depend on.
     pub(crate) fn keys(&self) -> DocumentKeys {
         DocumentKeys::new(self.editable(), self.selected_feature, self.sketch)
+            .with_extrude(self.extrudable, self.extrude.as_ref())
     }
 }
 
@@ -440,6 +446,8 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
                 state
                     .sketch
                     .map(|sketch| viewport::Sketching::new(sketch, editable)),
+                state.extrude.clone().map(viewport::Extruding::new),
+                state.extrude.as_ref().map(crate::extrude::panel),
             ),
         ]
         .height(Length::Fill),
@@ -462,6 +470,15 @@ fn hints<'a>(state: &DocumentState<'a>) -> Vec<Element<'a, Message>> {
     let sketching = state.sketch.is_some();
     let keys: Vec<_> = if state.picking_plane {
         vec![key_hint(Shortcut::ESCAPE, "Cancel")]
+    } else if let Some(extrude) = &state.extrude {
+        let pick = extrude
+            .editable
+            .then(|| mouse_hint(MouseButton::Left, "Pick regions"));
+        let ok = extrude.ready.then(|| key_hint(Shortcut::ENTER, "OK"));
+        [pick, ok, Some(key_hint(Shortcut::ESCAPE, "Cancel"))]
+            .into_iter()
+            .flatten()
+            .collect()
     } else if let Some(sketch) = state.sketch {
         sketch_hints(&sketch, state.editable())
     } else if state.selected_feature.is_some() {
@@ -786,6 +803,22 @@ fn status<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
             .style(theme::muted_text),
             refusal,
             checking,
+        ]
+        .spacing(4)
+        .into();
+    }
+    if let Some(extrude) = &state.extrude {
+        let regions = match extrude.picked.len() {
+            0 => "pick the regions to extrude".to_owned(),
+            n => format!("{} picked", counted(n, "region", "regions")),
+        };
+        return row![
+            text(extrude.editing.unwrap_or("New extrude"))
+                .size(12)
+                .font(theme::SEMIBOLD),
+            text(format!("· {regions}{}", status_suffix(state)))
+                .size(12)
+                .style(theme::muted_text),
         ]
         .spacing(4)
         .into();

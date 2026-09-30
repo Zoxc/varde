@@ -7,7 +7,10 @@ use std::borrow::Cow;
 use iced::keyboard::{Key as KeyPress, Modifiers, key::Named};
 use varde_document::FeatureId;
 
-use crate::{ConstraintKind, ConstraintSet, Edit, File, Look, Message, SketchState, Tool, Welcome};
+use crate::{
+    ConstraintKind, ConstraintSet, Edit, ExtrudeState, File, Look, Message, SketchState, Tool,
+    Welcome,
+};
 
 /// A key pressed on its own, or with the platform's command modifier
 /// (`Ctrl`, or `Cmd` on macOS) and maybe Shift.
@@ -41,6 +44,8 @@ impl Shortcut {
     };
     /// Starts a new sketch.
     pub const SKETCH: Self = Self::plain('s');
+    /// Starts a new extrude: outside sketches, where `E` is Equal's.
+    pub const EXTRUDE: Self = Self::plain('e');
     pub const ENTER: Self = Self::named(Key::Enter);
     pub const DELETE: Self = Self::named(Key::Delete);
     /// Only labels the key: the app matches it itself, with any
@@ -290,6 +295,12 @@ pub struct DocumentKeys {
     /// The constraints that fit what's selected in the sketch being
     /// edited.
     pub constraints: ConstraintSet,
+    /// Whether there's a sketch to extrude regions of, outside a sketch.
+    pub extrudable: bool,
+    /// Whether an extrude is being set up.
+    pub extruding: bool,
+    /// Whether the extrude being set up can be committed.
+    pub extrude_ready: bool,
 }
 
 impl DocumentKeys {
@@ -342,17 +353,42 @@ impl DocumentKeys {
                     .into_iter()
                     .collect()
             }),
+            extrudable: false,
+            extruding: false,
+            extrude_ready: false,
+        }
+    }
+
+    /// The same keys where there's a sketch to extrude regions of if
+    /// `extrudable`, with `extrude` being set up, if one is.
+    pub fn with_extrude(self, extrudable: bool, extrude: Option<&ExtrudeState<'_>>) -> Self {
+        Self {
+            extrudable,
+            extruding: extrude.is_some(),
+            extrude_ready: extrude.is_some_and(|extrude| extrude.ready),
+            ..self
         }
     }
 }
 
 /// Starting a new sketch, which asks for its plane first. Disabled in a
-/// sketch, and unless the document can be changed.
+/// sketch or an extrude, and unless the document can be changed.
 pub fn sketch_binding(keys: DocumentKeys) -> Binding {
     Binding::new(
         Shortcut::SKETCH,
         Message::Look(Look::PickPlane),
-        keys.editable && !keys.sketching,
+        keys.editable && !keys.sketching && !keys.extruding,
+    )
+}
+
+/// Starting a new extrude, or backing out of the one being set up:
+/// outside a sketch, while there's a sketch to extrude, in a document
+/// that can be changed.
+pub fn extrude_binding(keys: DocumentKeys) -> Binding {
+    Binding::new(
+        Shortcut::EXTRUDE,
+        Message::Look(Look::StartExtrude),
+        keys.editable && !keys.sketching && (keys.extrudable || keys.extruding),
     )
 }
 
@@ -491,10 +527,10 @@ pub fn comb_binding(keys: DocumentKeys) -> Binding {
 /// Spline tool and splines between their kinds), handles and the
 /// curvature comb.
 pub fn document_bindings(keys: DocumentKeys) -> Vec<Binding> {
-    let feature = keys.selected.filter(|_| !keys.sketching);
+    let feature = keys.selected.filter(|_| !keys.sketching && !keys.extruding);
     let feature = feature.into_iter().flat_map(|id| {
         [
-            Binding::new(Shortcut::ENTER, Message::Look(Look::EditSketch(id)), true),
+            Binding::new(Shortcut::ENTER, Message::Look(Look::EditFeature(id)), true),
             Binding::new(
                 Shortcut::DELETE,
                 Message::Edit(Edit::RemoveFeature(id)),
@@ -527,12 +563,23 @@ pub fn document_bindings(keys: DocumentKeys) -> Vec<Binding> {
                     .filter_map(move |kind| constraint_binding(kind, keys)),
             )
     });
+    // Outside a sketch, where `E` is Equal's.
+    let extrude = (!keys.sketching).then(|| extrude_binding(keys));
+    let commit = keys.extruding.then(|| {
+        Binding::new(
+            Shortcut::ENTER,
+            Message::Edit(Edit::CommitExtrude),
+            keys.editable && keys.extrude_ready,
+        )
+    });
     file_bindings(keys.editable)
         .into_iter()
         .chain([
             sketch_binding(keys),
             Binding::new(Shortcut::SPACE, Message::Look(Look::ClearSelection), true),
         ])
+        .chain(extrude)
+        .chain(commit)
         .chain(feature)
         .chain(sketch.into_iter().flatten())
         .collect()
@@ -746,7 +793,7 @@ mod tests {
         };
         assert!(matches!(
             pressed(document_bindings(selected), &enter, none),
-            Some(Message::Look(Look::EditSketch(edited))) if edited == id
+            Some(Message::Look(Look::EditFeature(edited))) if edited == id
         ));
         assert!(matches!(
             pressed(document_bindings(selected), &delete, none),
@@ -1096,6 +1143,66 @@ mod tests {
             }),
             Some(Message::Edit(Edit::ToggleHandles))
         ));
+    }
+
+    #[test]
+    fn e_starts_an_extrude_outside_sketches_and_enter_commits_it() {
+        let none = Modifiers::empty();
+        let e = |keys| pressed(document_bindings(keys), &key("e"), none);
+        let enter = |keys| {
+            let enter = KeyPress::Named(Named::Enter);
+            pressed(document_bindings(keys), &enter, none)
+        };
+        assert!(e(keys(true)).is_none());
+        let extrudable = DocumentKeys {
+            extrudable: true,
+            ..keys(true)
+        };
+        assert!(matches!(
+            e(extrudable),
+            Some(Message::Look(Look::StartExtrude))
+        ));
+        let read_only = DocumentKeys {
+            editable: false,
+            ..extrudable
+        };
+        assert!(e(read_only).is_none());
+        // In a sketch, E is Equal's.
+        let sketching = DocumentKeys {
+            sketching: true,
+            ..extrudable
+        };
+        assert!(!matches!(
+            e(sketching),
+            Some(Message::Look(Look::StartExtrude))
+        ));
+
+        // While setting one up, Enter is OK once it's ready, not editing
+        // the feature selected, and S starts no sketch.
+        let id = {
+            let mut editor = varde_document::Editor::new(Default::default());
+            let plane = varde_document::Plane::Origin(varde_document::OriginPlane::XY);
+            editor.apply(editor.document().add_sketch(plane)).unwrap();
+            editor.document().features()[0].id
+        };
+        let extruding = DocumentKeys {
+            extruding: true,
+            selected: Some(id),
+            ..extrudable
+        };
+        assert!(enter(extruding).is_none());
+        assert!(pressed(document_bindings(extruding), &key("s"), none).is_none());
+        let ready = DocumentKeys {
+            extrude_ready: true,
+            ..extruding
+        };
+        assert!(matches!(
+            enter(ready),
+            Some(Message::Edit(Edit::CommitExtrude))
+        ));
+        // E again backs out.
+        assert!(matches!(e(ready), Some(Message::Look(Look::StartExtrude))));
+        assert_eq!(Shortcut::EXTRUDE.label(), "E");
     }
 
     #[test]

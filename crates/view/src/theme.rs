@@ -692,6 +692,20 @@ pub fn float_button(theme: &Theme, status: button::Status) -> button::Style {
     }
 }
 
+/// A knob of the extrude handle over the viewport: an accent dot with a
+/// rim in the panel's colour, to show on any face.
+pub fn knob(theme: &Theme) -> container::Style {
+    let p = palette(theme);
+    container::Style {
+        border: Border {
+            color: p.panel,
+            width: 2.0,
+            radius: 999.0.into(),
+        },
+        ..container::background(p.accent)
+    }
+}
+
 /// The chip a constraint's glyph sits on over the viewport, outlined in
 /// the danger colour while the constraint is in a conflict.
 pub fn glyph(theme: &Theme, conflict: bool) -> container::Style {

@@ -120,16 +120,7 @@ impl Projector {
     /// size there. `None` where the cursor's ray misses the plane, runs
     /// along it, or meets it behind the eye or past [`MAX_COORD`].
     pub(crate) fn cursor(&self, pixel: DVec2) -> Option<Cursor> {
-        if !pixel.is_finite() {
-            return None;
-        }
-        let offset = (pixel - self.center) / self.scale;
-        let at_target = self.target + self.right * offset.x - self.up * offset.y;
-        let (origin, direction) = if self.perspective {
-            (self.eye, at_target - self.eye)
-        } else {
-            (at_target, -self.backward)
-        };
+        let (origin, direction) = self.ray(pixel)?;
         let Placement {
             origin: plane,
             x,
@@ -157,6 +148,29 @@ impl Projector {
         };
         let pixel = pixel.min(f64::from(MAX_COORD));
         (pixel > 0.0).then_some(Cursor { at, pixel })
+    }
+
+    /// The ray through the screen position `pixel`, as where it starts
+    /// and its direction, not of unit length: from the eye in a
+    /// perspective view, from the target's depth in an orthographic one.
+    /// `None` for a position that isn't finite.
+    pub(crate) fn ray(&self, pixel: DVec2) -> Option<(DVec3, DVec3)> {
+        if !pixel.is_finite() {
+            return None;
+        }
+        let offset = (pixel - self.center) / self.scale;
+        let at_target = self.target + self.right * offset.x - self.up * offset.y;
+        Some(if self.perspective {
+            (self.eye, at_target - self.eye)
+        } else {
+            (at_target, -self.backward)
+        })
+    }
+
+    /// How far in front of the eye the sketch point `at` is, or of the
+    /// target in an orthographic view: nearer is smaller.
+    pub(crate) fn depth(&self, at: DVec2) -> f64 {
+        self.view(self.placement.to_world(at)).1
     }
 
     /// The world point `p` in the view: across the screen (right, up) and

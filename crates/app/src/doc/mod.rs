@@ -2,6 +2,7 @@
 //! [`save`].
 
 mod camera;
+mod extrude;
 mod feed;
 mod save;
 mod sketch;
@@ -12,7 +13,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use glam::Vec3;
 use iced::Element;
 use varde_document::name::UNTITLED;
-use varde_document::{Command, Document, EditError, Editor, FeatureId, LengthUnit};
+use varde_document::{Command, Document, EditError, Editor, FeatureId, FeatureKind, LengthUnit};
 use varde_io::{Access, Offer, OpenId};
 use varde_render::{Camera, Projection};
 use varde_solve::{Request as SolveRequest, Transport};
@@ -21,6 +22,7 @@ use varde_view::{DocumentKeys, Edit, Look, Message as Ui, Mode, Overlay, Panel, 
 #[cfg(test)]
 pub(crate) use camera::CAMERA_ANIMATION;
 pub(crate) use camera::CameraAnimation;
+pub(crate) use extrude::ExtrudeSession;
 use feed::MeshFeed;
 use save::Persist;
 #[cfg(test)]
@@ -63,6 +65,8 @@ pub(crate) struct Doc {
     pub(crate) selected_feature: Option<FeatureId>,
     /// The sketch being edited, if one is.
     pub(crate) sketch: Option<SketchSession>,
+    /// The extrude being set up, if one is: never with a sketch.
+    pub(crate) extrude: Option<ExtrudeSession>,
     /// The share of the Sketch tab's height the Geometry list takes, kept
     /// from one sketch to the next.
     pub(crate) sketch_split: f32,
@@ -167,6 +171,7 @@ impl Doc {
             picking_plane: false,
             selected_feature: None,
             sketch: None,
+            extrude: None,
             sketch_split: GEOMETRY_SHARE,
             focus: None,
             units_waiting: None,
@@ -176,18 +181,28 @@ impl Doc {
         doc
     }
 
-    /// Lets go of what the document no longer holds, see [`Doc::prune`],
-    /// asks for the model if the document changed, or the sketch being
-    /// edited did, which is left out of it, and finds the profiles of the
-    /// sketch shown if it changed.
+    /// Lets go of what the document no longer holds, see [`Doc::prune`]
+    /// and [`Doc::prune_extrude`], asks for the model if the document
+    /// changed, or the sketch being edited did, which is left out of it,
+    /// or the extrude being set up, and finds the profiles of the sketch
+    /// shown if it changed.
     pub(crate) fn sync(&mut self) {
         self.refresh_waiting();
         self.prune();
+        self.prune_extrude();
         self.send_proposal();
         self.request_analysis();
-        let exclude = self.sketch.as_ref().map(|session| session.feature);
-        self.feed.request(&self.editor, exclude);
+        self.request_model();
         self.refresh_profiles();
+    }
+
+    /// Asks for the model if the document changed, the sketch left out of
+    /// it (the one being edited) or the extrude being set up did, which is
+    /// previewed as a draft.
+    fn request_model(&mut self) {
+        let exclude = self.sketch.as_ref().map(|session| session.feature);
+        let draft = self.draft();
+        self.feed.request_with(&self.editor, exclude, draft);
     }
 
     /// Whether the camera is turning to a new view.
@@ -268,6 +283,7 @@ impl Doc {
             Edit::ConvertSplines => self.convert_splines(),
             Edit::ToggleHandles => self.toggle_handles(),
             Edit::InsertSplinePoint { spline, at } => self.insert_spline_point(spline, at),
+            Edit::CommitExtrude => self.commit_extrude(),
             // Edits waiting on the solver have their values read in the
             // units they were made in: the units are set once they're
             // answered.
@@ -294,6 +310,8 @@ impl Doc {
         // A drag's step shows another sketch, and letting go of it the
         // sketch before.
         self.refresh_profiles();
+        // The extrude being set up is previewed as it changes.
+        self.request_model();
     }
 
     /// Takes `message`, see [`Doc::look`].
@@ -322,7 +340,7 @@ impl Doc {
                 | Look::ToggleConstrain
                 | Look::PressLabel { .. }
                 | Look::DragGeometry { .. }
-                | Look::EditSketch(_)
+                | Look::EditFeature(_)
                 | Look::FinishSketch
                 | Look::PickPlane
         ) {
@@ -335,7 +353,12 @@ impl Doc {
             // entering or leaving a sketch may come after.
             Look::SelectPanel(panel) => self.panel = panel.for_sketching(self.sketch.is_some()),
             Look::PickPlane => self.pick_plane(),
-            Look::EditSketch(id) => self.enter_sketch(id),
+            Look::EditFeature(id) => match self.editor.document().feature(id).map(|f| &f.kind) {
+                Some(FeatureKind::Extrude(_)) => self.edit_extrude(id),
+                _ => self.enter_sketch(id),
+            },
+            Look::StartExtrude => self.start_extrude(),
+            Look::Extrude(message) => self.extrude_look(message),
             Look::FinishSketch => self.finish_sketch(),
             Look::SelectFeature(id) => {
                 if self.editor.document().feature(id).is_some() {
@@ -462,9 +485,10 @@ impl Doc {
     /// the user is asked about unsaved changes: only the prompt's buttons
     /// and `Esc` act then, not keys changing the document behind it.
     pub(crate) fn keys(&self) -> Option<DocumentKeys> {
-        self.prompt()
-            .is_none()
-            .then(|| DocumentKeys::new(self.editable(), self.selected_feature, self.sketch_state()))
+        self.prompt().is_none().then(|| {
+            DocumentKeys::new(self.editable(), self.selected_feature, self.sketch_state())
+                .with_extrude(self.extrudable(), self.extrude_state().as_ref())
+        })
     }
 
     /// Whether the other panel tab shows with the peek key `held`: not in
@@ -530,6 +554,8 @@ impl Doc {
             picking_plane: self.picking_plane,
             selected_feature: self.selected_feature,
             sketch: self.sketch_state(),
+            extrude: self.extrude_state(),
+            extrudable: self.extrudable(),
             unsolved: self.feed.unsolved(),
             proposing: self.proposing(),
         })

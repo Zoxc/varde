@@ -397,7 +397,7 @@ fn a_sketch_that_does_not_solve_is_marked_and_can_be_mended() {
     // Marked in the Timeline.
     assert_eq!(doc.feed.unsolved(), [feature]);
 
-    doc.look(Look::EditSketch(feature));
+    doc.look(Look::EditFeature(feature));
     lane.answer(&mut doc);
     let state = doc.sketch_state().unwrap();
     assert!(state.unsolved);

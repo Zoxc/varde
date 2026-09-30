@@ -69,7 +69,7 @@ pub(super) fn sketching() -> (Answered, FeatureId, std::rc::Rc<RefCell<Vec<Reque
     let (mut doc, feature, requests) = with_sketch();
     let lane = SolveLane::connect(&mut doc);
     let mut doc = Answered { doc, lane };
-    doc.look(Look::EditSketch(feature));
+    doc.look(Look::EditFeature(feature));
     answer(&mut doc, &requests);
     (doc, feature, requests)
 }
@@ -157,7 +157,7 @@ pub(super) fn undo_to(doc: &mut Answered, before: &Sketch) -> usize {
 }
 
 /// Pressing `key`, which types `text` if any.
-pub(super) fn typing(key: keyboard::Key, text: Option<&str>) -> Event {
+pub(crate) fn typing(key: keyboard::Key, text: Option<&str>) -> Event {
     let mut event = crate::tests::press(key, keyboard::Modifiers::empty());
     if let keyboard::Event::KeyPressed { text: typed, .. } = &mut event {
         *typed = text.map(Into::into);
@@ -170,7 +170,7 @@ pub(super) fn typing(key: keyboard::Key, text: Option<&str>) -> Event {
 /// shortcuts send for what the widgets leave, as `keyboard::listen` hands
 /// the app only the events no widget captured. With the value field
 /// focused first, if `focused`.
-pub(super) fn pressed(doc: &Doc, keys: &[Event], focused: bool) -> (Vec<Ui>, Vec<Message>) {
+pub(crate) fn pressed(doc: &Doc, keys: &[Event], focused: bool) -> (Vec<Ui>, Vec<Message>) {
     let Some(mut renderer) = iced::futures::executor::block_on(iced::Renderer::new(
         Font::DEFAULT,
         Pixels(13.0),
@@ -485,7 +485,7 @@ fn tools_are_taken_up_and_put_down() {
         ),
     );
     let feature = read_only.editor.document().features()[0].id;
-    read_only.look(Look::EditSketch(feature));
+    read_only.look(Look::EditFeature(feature));
     read_only.look(Look::SelectTool(Tool::Line));
     assert!(drawing(&read_only).is_none());
     assert!(press_in(&read_only, keyboard::Key::Character("l".into())).is_none());

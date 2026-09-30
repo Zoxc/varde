@@ -15,6 +15,7 @@ mod controls;
 pub mod dimension;
 mod document;
 mod escape;
+mod extrude;
 mod hit;
 mod icons;
 mod panels;
@@ -44,6 +45,10 @@ pub use constrain::{ConstraintKind, ConstraintSet};
 pub use document::{
     ActiveTool, DocumentState, MeshStatus, Overlay, RecoveredChanges, SketchState, ValueField,
     ValueTarget, document,
+};
+pub use extrude::{
+    Candidate, Distance, DistanceField, ExtentKind, ExtrudeLook, ExtrudeState, Handle,
+    OperationKind, snap_step,
 };
 pub use icons::LOGO_SVG;
 pub use shortcut::{Binding, DocumentKeys, Held, document_bindings, pressed, welcome_bindings};
@@ -154,6 +159,9 @@ pub enum Edit {
         spline: Id,
         at: DVec2,
     },
+    /// Adds the extrude being set up, or changes the one being edited, as
+    /// one undo step, and ends its session: OK, or `Enter`.
+    CommitExtrude,
     /// Changes the design's units.
     SetUnits(LengthUnit),
     Undo,
@@ -174,8 +182,15 @@ pub enum Look {
     SelectPanel(Panel),
     /// Starts picking the plane for a new sketch, or backs out of it.
     PickPlane,
-    /// Edits the sketch feature.
-    EditSketch(FeatureId),
+    /// Edits the feature: a sketch is entered, an extrude opens its
+    /// session (see [`Look::StartExtrude`]) with its values.
+    EditFeature(FeatureId),
+    /// Starts setting up a new extrude, from the sketch selected in the
+    /// Timeline if one is, or backs out of the extrude being set up.
+    StartExtrude,
+    /// Changes the extrude being set up, see [`ExtrudeLook`]: it isn't in
+    /// the document until [`Edit::CommitExtrude`].
+    Extrude(ExtrudeLook),
     /// Leaves the sketch being edited.
     FinishSketch,
     /// Selects a feature in the Timeline.

@@ -59,6 +59,7 @@ icons! {
     Rollback => r#"<path d="M4 4v16"/><path d="M20 12H8M12 8l-4 4 4 4"/>"#,
     Save => r#"<path d="M5 4h11l3 3v13H5z"/><path d="M8 4v5h7V4M8 20v-6h8v6"/>"#,
     Sketch => r#"<path d="M4 20h16"/><path d="M14.5 4.5l5 5L9 20H4v-5z"/>"#,
+    Extrude => r#"<path d="M4 15l8 4 8-4-8-4z"/><path d="M12 11V3M9 6l3-3 3 3"/>"#,
     Check => r#"<path d="M5 12.5l4.5 4.5L19 7"/>"#,
     Plane => r#"<path d="M3 16l5-8h13l-5 8z"/>"#,
     Line => r#"<path d="M6 18L18 6"/><circle cx="5" cy="19" r="1.6"/><circle cx="19" cy="5" r="1.6"/>"#,
@@ -104,7 +105,7 @@ impl Icon {
     /// otherwise the text colour.
     pub fn tint(self, palette: &Palette) -> Color {
         match self {
-            Icon::Body => palette.solid,
+            Icon::Body | Icon::Extrude => palette.solid,
             Icon::Sketch
             | Icon::Line
             | Icon::Circle

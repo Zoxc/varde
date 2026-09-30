@@ -2,6 +2,7 @@
 //! in a sketch the sketch being edited, drawn by the renderer too, and the
 //! input on it.
 
+mod extrude;
 mod sketch;
 
 use std::sync::{Arc, Weak};
@@ -22,6 +23,7 @@ use crate::shortcut::Held;
 use crate::theme::{Palette, SketchColors};
 use crate::{Look, Message, controls};
 
+pub(crate) use extrude::Extruding;
 pub(crate) use sketch::Sketching;
 
 const ORBIT_SPEED: f32 = 0.008;
@@ -30,13 +32,17 @@ const ZOOM_PER_PIXEL: f32 = 0.995;
 
 /// The 3D viewport showing `mesh` and the finished `sketches` from
 /// `camera`, with the controls over its top-right corner, and in a sketch
-/// the sketch being edited, with the layer of widgets anchored to it.
+/// the sketch being edited, with the layer of widgets anchored to it, or
+/// setting up an extrude, its regions and handle, and `panel`, floating
+/// over the viewport's right under the controls.
 pub(crate) fn viewport<'a>(
     mesh: &Arc<RenderMesh>,
     sketches: &Arc<RenderLines>,
     camera: &'a Camera,
     palette: &Palette,
     sketching: Option<Sketching<'a>>,
+    extruding: Option<Extruding<'a>>,
+    panel: Option<Element<'a, Message>>,
 ) -> Element<'a, Message> {
     // Constraint glyphs, nudged apart; dimensions' labels, where they're
     // put; the value field, in a layer of its own so its state stays its
@@ -57,7 +63,11 @@ pub(crate) fn viewport<'a>(
             fields.beside(sketch::FIELDS_OFFSET).into(),
         ]
     });
-    let program = program(mesh, sketches, camera, palette, sketching);
+    // The handle's knobs, on its axis.
+    let knobs = extruding
+        .as_ref()
+        .and_then(|extruding| extruding.knobs(camera));
+    let program = program(mesh, sketches, camera, palette, sketching, extruding);
     let scene = iced::widget::shader(program)
         .width(Length::Fill)
         .height(Length::Fill);
@@ -66,20 +76,29 @@ pub(crate) fn viewport<'a>(
         .padding([10, 12]);
     // The layers over the scene take only what's over their widgets, and
     // let the rest through to it.
+    let panel = panel.map(|panel| {
+        container(panel)
+            .align_right(Length::Fill)
+            .padding(iced::Padding::from([0, 12]).top(crate::extrude::PANEL_TOP))
+    });
     stack![scene]
         .extend(anchors.into_iter().flatten())
+        .extend(knobs)
         .push(controls)
+        .extend(panel.map(Element::from))
         .into()
 }
 
 /// The shader program drawing `mesh` and `sketches` from `camera` in
-/// `palette`'s colors, in `sketching`'s sketch if there is one.
+/// `palette`'s colors, in `sketching`'s sketch if there is one, or
+/// setting up `extruding`'s extrude.
 fn program<'a>(
     mesh: &Arc<RenderMesh>,
     sketches: &Arc<RenderLines>,
     camera: &Camera,
     palette: &Palette,
     sketching: Option<Sketching<'a>>,
+    extruding: Option<Extruding<'a>>,
 ) -> Program<'a> {
     Program {
         scene: Scene {
@@ -90,6 +109,7 @@ fn program<'a>(
             sketch_plane: sketching.as_ref().map(Sketching::grid),
         },
         sketching,
+        extruding,
         sketch_colors: palette.sketching,
     }
 }
@@ -100,6 +120,8 @@ struct Program<'a> {
     scene: Scene,
     /// The sketch being edited, if one is.
     sketching: Option<Sketching<'a>>,
+    /// The extrude being set up, if one is: never with a sketch.
+    extruding: Option<Extruding<'a>>,
     sketch_colors: SketchColors,
 }
 
@@ -166,6 +188,8 @@ struct Interaction {
     modifiers: keyboard::Modifiers,
     /// What's kept of the sketch being edited.
     sketch: sketch::Input,
+    /// What's kept of the extrude being set up.
+    extrude: extrude::Input,
     /// Names this widget's [`Slot`] in the [`Pipeline`], for as long as the
     /// widget lives.
     slot: Arc<SlotKey>,
@@ -197,6 +221,21 @@ impl shader::Program<Message> for Program<'_> {
                 *modifiers,
             );
         }
+        // The extrude's picking and handle come first, unless the camera
+        // is being dragged; the rest goes on as outside a sketch.
+        if let Some(extruding) = &self.extruding
+            && state.drag.is_none()
+            && let Event::Mouse(event) = event
+            && let Some(action) = extruding.mouse(
+                &mut state.extrude,
+                *event,
+                bounds,
+                cursor,
+                &self.scene.camera,
+            )
+        {
+            return Some(action);
+        }
         let camera = match event {
             // The left button is the sketch's in a sketch, and moving the
             // cursor while the camera isn't dragged.
@@ -227,6 +266,19 @@ impl shader::Program<Message> for Program<'_> {
     }
 
     fn draw(&self, state: &Interaction, _cursor: mouse::Cursor, bounds: Rectangle) -> Primitive {
+        let extrude = self.extruding.as_ref().map(|extruding| {
+            let (base, live) = extruding.layers(
+                &state.extrude,
+                &self.scene.camera,
+                bounds,
+                self.sketch_colors,
+            );
+            SketchFrame {
+                plane: extruding.plane(),
+                base,
+                live,
+            }
+        });
         let sketch = self.sketching.as_ref().map(|sketching| {
             let camera = &self.scene.camera;
             let (base, live) = sketching.layers(
@@ -244,7 +296,7 @@ impl shader::Program<Message> for Program<'_> {
         });
         Primitive {
             scene: self.scene.clone(),
-            sketch,
+            sketch: sketch.or(extrude),
             slot: state.slot.clone(),
         }
     }
@@ -262,6 +314,10 @@ impl shader::Program<Message> for Program<'_> {
                 .sketching
                 .as_ref()
                 .and_then(|sketching| sketching.mouse_interaction(&state.sketch, bounds, cursor))
+                .or_else(|| {
+                    let extruding = self.extruding.as_ref()?;
+                    extruding.mouse_interaction(&state.extrude, bounds, cursor)
+                })
                 .unwrap_or_default(),
         }
     }
