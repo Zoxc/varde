@@ -87,13 +87,10 @@ fn request_with_a_draft_round_trips() {
         })
     );
 
-    // A join taking out the body it touches fails, and says what it
-    // touches.
+    // A join says what it touches.
     let body = editor.document().bodies()[0].id;
     let mut join = extrude.clone();
-    join.operation = varde_document::Operation::Join(varde_document::Targets {
-        excluded: vec![body],
-    });
+    join.operation = varde_document::Operation::Join(varde_document::Targets::default());
     let request = Request::Regenerate {
         generation: editor.generation(),
         document: editor.snapshot(),
@@ -109,7 +106,6 @@ fn request_with_a_draft_round_trips() {
     };
     let draft = draft.unwrap();
     assert_eq!((draft.revision, draft.touched), (8, vec![body]));
-    assert!(draft.error.is_some());
 }
 
 #[test]

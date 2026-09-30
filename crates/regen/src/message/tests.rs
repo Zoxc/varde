@@ -40,3 +40,31 @@ fn extrude_failures_speak_of_the_regions() {
     let text = extrude(KernelError::Invalid(CheckError::Counts));
     assert!(text.contains("too thin or too close"), "{text}");
 }
+
+#[test]
+fn every_boolean_failure_starts_in_lower_case() {
+    let errors = [
+        KernelError::TooComplex,
+        KernelError::Invalid(CheckError::Counts),
+        KernelError::Patch(varde_kernel::patch::PatchError::Mismatch),
+        KernelError::Profile(ProfileError::Nesting),
+        KernelError::Boolean(BooleanError::InsideOut),
+        KernelError::Boolean(BooleanError::Inconsistent),
+        KernelError::Boolean(BooleanError::Degenerate),
+    ];
+    let doings = [
+        Doing::Touching,
+        Doing::Joining,
+        Doing::Cutting,
+        Doing::Intersecting,
+    ];
+    for error in errors {
+        for doing in doings {
+            let text = boolean(doing, "Body 2", error);
+            assert!(text.starts_with(doing.name()), "{text}");
+            assert!(text.contains("Body 2"), "{text}");
+        }
+        let text = extrude(error);
+        assert!(text.starts_with(char::is_lowercase), "{text}");
+    }
+}

@@ -8,11 +8,12 @@
 //! with [`varde_kernel::extrude`] on the sketch's plane, over
 //! [`Extrude::span`], within the document's tolerance and the default
 //! budget, its faces named by its feature id: the tool solid. A new body
-//! gets it. A join, cut or intersect finds the bodies made before it that
-//! the tool touches ([`varde_kernel::touches`]), takes out those it
-//! excludes, and replaces each of the rest by its union with, difference
-//! from or intersection with the tool ([`varde_kernel::boolean`], the
-//! body first), one at a time: bodies never merge. A through-all extent's
+//! gets it. A join, cut or intersect finds the bodies made before it,
+//! less those it excludes, that the tool touches
+//! ([`varde_kernel::touches`]), and replaces each of those by its union
+//! with, difference from or intersection with the tool
+//! ([`varde_kernel::boolean`], the body first), one at a time: bodies
+//! never merge. A through-all extent's
 //! span is worked out from the bodies made before it ([`through_all`]).
 //! A feature that fails records why, in words for the Timeline
 //! (`src/message.rs`), and changes no body; the later ones
@@ -44,9 +45,11 @@ pub struct Evaluation {
     /// The features that failed and why, in the document's order.
     pub failed: Vec<(FeatureId, String)>,
     /// Each join, cut or intersect that got as far as its tool solid,
-    /// with the bodies made before it that the tool touches, taken out
-    /// or not, in the order they were made; in the document's order.
-    /// One failing while finding them lists those found before.
+    /// with the bodies made before it and not taken out of it that the
+    /// tool touches, in the order they were made; in the document's
+    /// order.
+    /// One failing while finding them lists those found before and the
+    /// body it couldn't tell, which taking out gets past.
     pub touched: Vec<(FeatureId, Vec<BodyId>)>,
 }
 
@@ -76,6 +79,16 @@ const THROUGH_ALL_MARGIN_MM: f64 = 1.0;
 
 /// Evaluates the history of `document`, see the module's docs.
 pub fn evaluate(document: &Document, cache: &mut Cache) -> Evaluation {
+    evaluate_within(document, cache, Budget::DEFAULT)
+}
+
+/// [`evaluate`], with `touching` the budget of each
+/// [`varde_kernel::touches`], which tests make small to see it fail.
+pub(crate) fn evaluate_within(
+    document: &Document,
+    cache: &mut Cache,
+    touching: Budget,
+) -> Evaluation {
     let tolerance = document.tolerance();
     let mut sketches: Vec<SketchOutput> = Vec::new();
     let mut evaluation = Evaluation::default();
@@ -106,6 +119,7 @@ pub fn evaluate(document: &Document, cache: &mut Cache) -> Evaluation {
                     extrude,
                     sketch,
                     tolerance,
+                    touching,
                 };
                 if let Err(error) = run.evaluate(&mut evaluation, cache) {
                     evaluation.failed.push((feature.id, error));
@@ -123,6 +137,8 @@ struct Run<'a> {
     extrude: &'a Extrude,
     sketch: &'a SketchOutput<'a>,
     tolerance: Tolerance,
+    /// The budget of each [`varde_kernel::touches`].
+    touching: Budget,
 }
 
 impl Run<'_> {
@@ -169,22 +185,22 @@ impl Run<'_> {
         let touched = self.touched(&evaluation.bodies, excluded, (&tool, tool_key), cache);
         let found = touched.as_ref().unwrap_or_else(|(found, _)| found).clone();
         evaluation.touched.push((self.feature.id, found));
-        let touched = touched.map_err(|(_, error)| error)?;
-        let mut targets = Vec::with_capacity(touched.len());
-        for made in (evaluation.bodies.iter()).filter(|made| touched.contains(&made.body)) {
-            if excluded.contains(&made.body) {
-                // What the request before worked out, kept for putting
-                // it back.
-                cache.keep(boolean_key(doing, made.key, tool_key));
-            } else {
-                targets.push(made.body);
-            }
-        }
-        if touched.is_empty() {
-            return Err("it doesn't touch any body".to_owned());
+        let targets = touched.map_err(|(_, error)| error)?;
+        let mut taken_out = false;
+        for made in (evaluation.bodies.iter()).filter(|made| excluded.contains(&made.body)) {
+            // What the request before worked out, kept for putting it
+            // back.
+            cache.keep(touches_key(made.key, tool_key));
+            cache.keep(boolean_key(doing, made.key, tool_key));
+            taken_out = true;
         }
         if targets.is_empty() {
-            return Err("every body it touches is taken out of it".to_owned());
+            return Err(if taken_out {
+                "it doesn't touch any body not taken out of it"
+            } else {
+                "it doesn't touch any body"
+            }
+            .to_owned());
         }
         // Worked out for every target before any body changes.
         let mut changed = Vec::with_capacity(targets.len());
@@ -213,10 +229,12 @@ impl Run<'_> {
         Ok(())
     }
 
-    /// The bodies of `bodies` that `tool`, filed under `tool_key`,
-    /// touches, in their order; or those found before one couldn't be
-    /// told, and why. A body in `excluded` that can't be told is passed
-    /// over, so taking it out gets past it.
+    /// The bodies of `bodies` not in `excluded` that `tool`, filed under
+    /// `tool_key`, touches, in their order; or those found before one
+    /// couldn't be told and that one, and why. Excluded bodies aren't
+    /// asked about: the panel lists them anyway, and one that can't be
+    /// told would otherwise use up the budget again on every change,
+    /// though taking it out is the way past it.
     fn touched(
         &self,
         bodies: &[BodySolid],
@@ -225,17 +243,17 @@ impl Run<'_> {
         cache: &mut Cache,
     ) -> Result<Vec<BodyId>, (Vec<BodyId>, String)> {
         let mut touched = Vec::new();
-        for made in bodies {
-            let key = Keyer::new("touches").key(made.key).key(tool_key).finish();
-            let touches = cache.touches(key, || {
-                varde_kernel::touches(&made.solid, tool, &self.tolerance, &Budget::DEFAULT)
+        for made in bodies.iter().filter(|made| !excluded.contains(&made.body)) {
+            let touches = cache.touches(touches_key(made.key, tool_key), || {
+                varde_kernel::touches(&made.solid, tool, &self.tolerance, &self.touching)
             });
             match touches {
                 Ok(true) => touched.push(made.body),
                 Ok(false) => {}
-                Err(_) if excluded.contains(&made.body) => {}
                 Err(error) => {
                     let error = message::boolean(Doing::Touching, self.body_name(made.body), error);
+                    // Listed, so the panel offers to take it out.
+                    touched.push(made.body);
                     return Err((touched, error));
                 }
             }
@@ -275,6 +293,12 @@ impl Run<'_> {
         )
         .map_err(message::extrude)
     }
+}
+
+/// The key of whether the tool filed under `tool` touches the body's
+/// solid filed under `body`.
+fn touches_key(body: Key, tool: Key) -> Key {
+    Keyer::new("touches").key(body).key(tool).finish()
 }
 
 /// The key of `doing` the tool filed under `tool` to the body's solid

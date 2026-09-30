@@ -122,10 +122,11 @@ pub struct Drafted {
     /// Why the draft gives no solid, or can't be applied: the model
     /// answered is then the committed one, without it.
     pub error: Option<String>,
-    /// For a join, cut or intersect, the bodies its solid touches, taken
-    /// out of it or not, in the order they were made: those the panel
-    /// lists to take out or put back. Empty for a new body, or where the
-    /// draft failed before its solid was made.
+    /// For a join, cut or intersect, the bodies its solid touches, less
+    /// those taken out of it, in the order they were made: those the
+    /// panel lists to take out, with those taken out to put back. Empty
+    /// for a new body, or where the draft failed before its solid was
+    /// made. See [`Evaluation::touched`].
     pub touched: Vec<BodyId>,
 }
 

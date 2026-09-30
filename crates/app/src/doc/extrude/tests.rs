@@ -373,7 +373,7 @@ fn a_cut_lists_the_bodies_it_touches_and_goes_through_all() {
     answer(&mut doc, &requests);
     assert_eq!(
         doc.feed.draft_error(),
-        Some("every body it touches is taken out of it")
+        Some("it doesn't touch any body not taken out of it")
     );
     extrude(&mut doc, ExtrudeLook::Target(body));
     assert_eq!(doc.extrude.as_ref().unwrap().excluded, []);

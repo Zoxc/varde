@@ -541,8 +541,8 @@ fn a_failing_draft_leaves_the_model_as_it_was() {
     for (draft, error, touched) in [
         (
             join,
-            "every body it touches is taken out of it".to_owned(),
-            vec![body],
+            "it doesn't touch any body not taken out of it".to_owned(),
+            vec![],
         ),
         (
             sketch,
@@ -643,9 +643,9 @@ fn a_cut_draft_lists_what_it_touches_and_is_answered_from_the_cache() {
     let (_, worked) = regenerator.cache().counts();
     assert_eq!(worked, before + 4);
 
-    // Taking the plate out: the tool and whether it touches are found;
-    // only the plate's mesh, which the request before didn't draw, is
-    // worked out again.
+    // Taking the plate out: the tool is found, whether it touches isn't
+    // asked; only the plate's mesh, which the request before didn't
+    // draw, is worked out again.
     let mut out = draft.clone();
     out.revision = 2;
     out.extrude.operation = Operation::Cut(varde_document::Targets {
@@ -653,13 +653,14 @@ fn a_cut_draft_lists_what_it_touches_and_is_answered_from_the_cache() {
     });
     let answer = answered(regenerator.handle(regenerate_with(&editor, Some(out))));
     let drafted = answer.draft.unwrap();
-    assert_eq!(drafted.touched, [body]);
+    assert_eq!(drafted.touched, []);
     assert!(drafted.error.is_some());
     assert_eq!(answer.mesh, committed.mesh);
     assert_eq!(regenerator.cache().counts().1, worked + 1);
 
-    // Putting it back finds the cut, kept while it was out; only its
-    // mesh, which the request before didn't draw, is worked out again.
+    // Putting it back finds whether it touches and the cut, kept while
+    // it was out; only its mesh, which the request before didn't draw,
+    // is worked out again.
     draft.revision = 3;
     let back = answered(regenerator.handle(regenerate_with(&editor, Some(draft.clone()))));
     assert_eq!(back.draft.unwrap().error, None);

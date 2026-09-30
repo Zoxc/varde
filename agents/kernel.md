@@ -2331,17 +2331,23 @@ body, and the later ones still run.
   `FeatureId::get()`: the tool solid. A `NewBody` body gets it. Through
   all's span is worked out first (`through_all`): the extent along the
   normal of the boxes (`bounds3`, the control points') of every body made
-  before it, excluded or not (so the panel can still list those), plus
+  before it, excluded or not (so taking one out or putting it back
+  keeps the tool, and what was worked out with it), plus
   1 % of that extent and 1 mm at each end, clamped to `MAX_COORD`; none
   is "there's no body to go through".
 - A **join, cut or intersect** asks `kernel::touches` of every body made
-  before it, in the order they were made, against the tool: those are
-  the touched bodies (`Evaluation::touched`, per feature, also when it
-  fails after finding them). An excluded body `touches` can't tell is
-  passed over (not listed), so taking out a body that fails gets past
-  it; any other such failure fails the feature. Taking out its excluded
-  ones leaves the targets; none touched is "it doesn't touch any body",
-  all excluded "every body it touches is taken out of it". Each target is replaced by
+  before it and not excluded, in the order they were made, against the
+  tool: those are the touched bodies and the targets
+  (`Evaluation::touched`, per feature, also when it fails after finding
+  them). Excluded bodies aren't asked about (the panel lists them from
+  the session anyway), so taking out a body `touches` can't tell gets
+  past it without spending the budget on it again at every change; a
+  body it can't tell that isn't excluded fails the feature and is listed
+  last, so the panel offers to take it out. No target is "it doesn't
+  touch any body", or "it doesn't touch any body not taken out of it"
+  when it excludes some. The excluded bodies' touch and boolean results
+  from the request before are kept (`Cache::keep`) for putting them
+  back. Each target is replaced by
   `kernel::boolean(body, tool, op)` with `Union`, `Difference` or
   `Intersection`, the body always first (a flush boss put first in a
   union came out right but with some 30,000 patches). Every target's
@@ -2367,8 +2373,11 @@ edge, at a point, or on tangent faces; move it to overlap more or to
 clear it" for `Invalid`, which is what edge-touching unions and tangent
 contacts give; "… can't be worked out: they meet on faces too nearly
 flush or tangent to tell apart; move it a little" for `Inconsistent`;
-"… is too complex to work out…" for `TooComplex`). Body names are looked
-up when the message is made, not kept in the cache.
+"… is too complex to work out…" for `TooComplex`; "… can't be worked
+out: one of them is inside out" for `InsideOut`, which doesn't say which
+operand). Every message starts in lower case, the Timeline putting it
+after the feature's name. Body names are looked up when the message is
+made, not kept in the cache.
 
 **Pieces to conics** (`src/profile.rs`, `profile(sketch, profiles, loops,
 fit)`). Each piece becomes segments named by its curve's `Id::get()`, its
@@ -2414,9 +2423,9 @@ key and the tolerance. Editing an earlier extrude changes its body's key
 and so reruns every boolean after it on that body. The regenerator keeps what the
 request being answered and the one before used (`Cache::begin` drops the
 rest), so an unrelated edit, or a draft dragged, reruns only what changed.
-A join, cut or intersect also keeps (`Cache::keep`) the boolean of each
-body it touches but excludes, if the request before had it, so taking a
-body out and putting it back only draws it again.
+A join, cut or intersect also keeps (`Cache::keep`) whether the tool
+touches each body it excludes and their boolean, if the request before
+had them, so taking a body out and putting it back only draws it again.
 The lane owns it: the native thread's closure, or the worker's `serve`.
 
 **Drafts.** `Request::Regenerate` has `draft: Option<Draft { revision,
@@ -2425,9 +2434,10 @@ feature, extrude }>`: an extrude being set up (`feature: None`, applied as
 a copy of the document through an `Editor`, so its checks apply. The
 answer carries `Drafted { revision, error, touched }`; a draft the
 document refuses, or whose feature fails, is answered with the committed
-model and its error. `touched` is the draft's touched bodies (empty for a
-new body), there even when it fails after finding them, so the panel can
-list a body to take out that makes it fail. `Response::Failed` carries
+model and its error. `touched` is the draft's touched bodies less the
+excluded ones (empty for a new body), there even when it fails after
+finding them, with the body `touches` couldn't tell last, so the panel
+can list a body to take out that makes it fail. `Response::Failed` carries
 the draft's revision too.
 
 **The answer.** `Response::Regenerated` adds `failed` and `bodies:
@@ -2700,8 +2710,8 @@ parameter, or a split outside the patch bounds),
   sketch crate doesn't know `MAX_COORD`.
 - **The regeneration cache keeps what the last request used**, not two
   generations: a draft dragged or an edit only ever reuses the request
-  before's results, plus the booleans of bodies a join, cut or intersect
-  takes out (`Cache::keep`), for putting them back. It also keeps meshes and whether sketches solve, and
+  before's results, plus the touch tests and booleans of bodies a join,
+  cut or intersect takes out (`Cache::keep`), for putting them back. It also keeps meshes and whether sketches solve, and
   keys are 128-bit hashes of the values' postcard encodings, not their
   `Hash` (sketches hold `f64`s).
 - **A failing draft is answered with the committed model** and the
@@ -2713,8 +2723,8 @@ parameter, or a split outside the patch bounds),
   feature to consume a body (only `NewBody` makes one), and a merged
   body would leave the other listed without geometry; choosing a single
   body to join to is the user's way round it (take the others out).
-- **Through all spans every earlier body**, excluded ones too, so the
-  touched list the panel shows doesn't lose a body once it's taken out.
+- **Through all spans every earlier body**, excluded ones too, so taking
+  one out or putting it back doesn't change the tool.
 - **A join, cut or intersect that touches no target fails** ("it doesn't
   touch any body"), rather than doing nothing silently.
 - **`FeatureId::get` and `Id::get`** give the numbers face names and wall

@@ -273,14 +273,18 @@ fn a_failing_feature_changes_no_body_and_later_ones_still_run() {
     let failing = add_failing(&mut editor);
     // A flipped extrude after it, making a second body below the plate.
     let below = plate_below(&mut editor);
-    let evaluation = evaluated(editor.document());
+    let mut cache = Cache::default();
+    let evaluation = evaluate(editor.document(), &mut cache);
     assert_eq!(
         evaluation.failed,
         [(
             failing,
-            "every body it touches is taken out of it".to_owned()
+            "it doesn't touch any body not taken out of it".to_owned()
         )]
     );
+    // The sketch's profiles and the three solids: whether the join
+    // touches the body it takes out isn't asked.
+    assert_eq!(cache.counts().1, 4);
     let bodies: Vec<BodyId> = editor.document().bodies().iter().map(|b| b.id).collect();
     let made: Vec<BodyId> = evaluation.bodies.iter().map(|made| made.body).collect();
     assert_eq!(made, bodies);
@@ -289,7 +293,7 @@ fn a_failing_feature_changes_no_body_and_later_ones_still_run() {
     let bounds = evaluation.bodies[1].solid.bounds3().unwrap();
     assert_eq!((bounds.min.z, bounds.max.z), (-3.0, 0.0));
     assert_near(evaluation.bodies[1].solid.volume(), plate(8.0, 3.0));
-    assert_eq!(evaluation.touched, [(failing, vec![bodies[0]])]);
+    assert_eq!(evaluation.touched, [(failing, vec![])]);
 }
 
 /// Adds a second plate, 3 mm thick, below the example's: its body.
@@ -400,7 +404,7 @@ fn bodies_taken_out_are_left_as_they_are() {
     );
     let evaluation = evaluated(editor.document());
     assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
-    assert_eq!(evaluation.touched, [(cut, vec![top, below])]);
+    assert_eq!(evaluation.touched, [(cut, vec![below])]);
     let volumes: Vec<f64> = (evaluation.bodies.iter())
         .map(|made| made.solid.volume())
         .collect();
@@ -696,4 +700,78 @@ fn a_spline_is_extruded_within_the_tolerance() {
     // On YZ, extruded along X.
     let bounds = solid.bounds3().unwrap();
     assert_eq!((bounds.min.x, bounds.max.x), (0.0, 2.0));
+}
+
+/// The extrude `feature` of `editor`'s document, changed by `change`,
+/// as one edit.
+fn set_extrude(editor: &mut Editor, feature: FeatureId, change: impl FnOnce(&mut Extrude)) {
+    let Some(FeatureKind::Extrude(extrude)) = editor.document().feature(feature).map(|f| &f.kind)
+    else {
+        panic!("{feature:?} is an extrude");
+    };
+    let mut extrude = extrude.clone();
+    change(&mut extrude);
+    editor
+        .apply(Command::SetExtrude {
+            feature,
+            extrude: Box::new(extrude),
+        })
+        .unwrap();
+}
+
+/// A body `touches` can't tell fails the feature and is listed, so the
+/// panel offers to take it out; taken out, it isn't asked about.
+#[test]
+fn a_body_that_cant_be_told_is_passed_over_or_listed() {
+    let mut editor = Editor::new(Document::example());
+    let top = editor.document().bodies()[0].id;
+    let below = plate_below(&mut editor);
+    let extent = two_sides(editor.document(), "20", "20");
+    let cut = add_extrude(
+        &mut editor,
+        disc((-20.0, 10.0), 3.0),
+        extent,
+        Operation::Cut(Targets::default()),
+    );
+    let all = editor.document().clone();
+    set_extrude(&mut editor, cut, |extrude| {
+        extrude.operation = Operation::Cut(Targets {
+            excluded: vec![top],
+        });
+    });
+    let taken_out = editor.document().clone();
+    // The same with a thicker plate on top, so what the plate below
+    // needs is kept from it, and the top plate's `touches`, if asked,
+    // runs again, with no budget, and can't tell.
+    let first = editor.document().features()[1].id;
+    set_extrude(&mut editor, first, |extrude| {
+        extrude.extent = Extent::OneSide(length(&all, "12"));
+    });
+    let mut cache = Cache::default();
+    cache.begin();
+    let warm = evaluate(editor.document(), &mut cache);
+    assert!(warm.failed.is_empty(), "{:?}", warm.failed);
+
+    cache.begin();
+    let evaluation = evaluate_within(&taken_out, &mut cache, Budget::new(0));
+    assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
+    assert_eq!(evaluation.touched, [(cut, vec![below])]);
+    assert_near(evaluation.bodies[0].solid.volume(), plate(8.0, 10.0));
+    assert_near(
+        evaluation.bodies[1].solid.volume(),
+        plate(8.0, 3.0) - PI * 9.0 * 3.0,
+    );
+
+    cache.begin();
+    let evaluation = evaluate_within(&all, &mut cache, Budget::new(0));
+    let [(failed, error)] = &evaluation.failed[..] else {
+        panic!("{:?}", evaluation.failed);
+    };
+    assert_eq!(*failed, cut);
+    assert!(
+        error.starts_with("finding where it meets Body 1"),
+        "{error}"
+    );
+    assert_eq!(evaluation.touched, [(cut, vec![top])]);
+    assert_near(evaluation.bodies[1].solid.volume(), plate(8.0, 3.0));
 }
