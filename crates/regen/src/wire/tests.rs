@@ -136,6 +136,24 @@ fn request_leaving_out_a_sketch_round_trips() {
 }
 
 #[test]
+fn untested_and_touching_nothing_stay_apart() {
+    for touched in [None, Some(Vec::new()), Some(vec![BodyId::NEW])] {
+        let mut head = regenerated(1);
+        if let Head::Regenerated { draft, .. } = &mut head {
+            *draft = Some(Drafted {
+                revision: 3,
+                error: None,
+                touched: touched.clone(),
+            });
+        }
+        let Head::Regenerated { draft, .. } = Head::decode(&head.encode()).unwrap() else {
+            panic!("a regenerated head");
+        };
+        assert_eq!(draft.unwrap().touched, touched);
+    }
+}
+
+#[test]
 fn regenerated_round_trips() {
     // The example plate, its sketch shown, a sketch that doesn't solve,
     // and an extrude that fails.

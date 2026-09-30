@@ -2641,10 +2641,9 @@ regions again in the new sketch and the draft is asked for again, so
 what OK commits is what was previewed; undo in the window drops them and
 frees OK. So do the other ways the wait ends (tested): a rejected edit
 (the picks stay), the sketch deleted (its edits dropped once answered,
-the session gone with it), restoring recovered changes (drops them; one that changes the document
-ends the session, above), a
-units change in the window (set after the answers, then followed by the
-session); read-only in the window ends the session. A solver lane not
+the session gone with it), restoring recovered changes (drops them; one
+that changes the document ends the session, above), a units change in
+the window (set after the answers, then followed by the session); read-only in the window ends the session. A solver lane not
 started yet keeps OK waiting, as saving waits. After `CHECKING` (100 ms) the panel says "Checking the
 sketch…" (`ExtrudeState.checking`, from `Proposals::slow`) when
 there's neither a refusal nor a draft error to show. OK, the screen's
@@ -2672,7 +2671,8 @@ that ran the touch test gave them, `MeshFeed::draft_touched`: kept while a
 changed draft is on its way, and while one fails before its tool exists
 or makes a new body; a run starts when a draft is asked for after none,
 or for another feature, and lists nothing until its first such answer,
-so a new session never shows another's bodies. Then the excluded ones, in the order they were made; ticked unless excluded;
+so a new session never shows another's bodies; then the excluded ones,
+in the order they were made; ticked unless excluded;
 `ExtrudeLook::Target` toggles, keeping the session's `excluded` sorted and
 only taking bodies made before the extrude edited; bodies undone away
 drop out), the refusal, the draft's error or "Checking the sketch…",

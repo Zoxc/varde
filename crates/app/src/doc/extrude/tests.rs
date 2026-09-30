@@ -1086,18 +1086,7 @@ fn a_two_sides_knob_over_the_limit_only_goes_back_towards_it() {
 /// The plate with its region extruded by `distance` as a new body,
 /// committed, and the extrude.
 fn plate_extruded(distance: &str) -> (Doc, FeatureId, Requests) {
-    let (mut doc, sketch, requests) = plate();
-    doc.look(Look::SelectFeature(sketch));
-    doc.look(Look::StartExtrude);
-    let region = plate_region(&doc, sketch);
-    extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region });
-    extrude(
-        &mut doc,
-        ExtrudeLook::Input {
-            distance: Distance::First,
-            text: distance.to_owned(),
-        },
-    );
+    let (mut doc, requests) = plate_session(ExtentKind::OneSide, distance);
     doc.update(Edit::CommitExtrude);
     let feature = doc.editor.document().features().last().unwrap().id;
     answer(&mut doc, &requests);

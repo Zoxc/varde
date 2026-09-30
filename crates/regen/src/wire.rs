@@ -25,9 +25,9 @@
 //! so a broken reply doesn't allocate without bound, and together the parts
 //! make a [`RenderMesh`] by [`RenderMesh::from_parts`] and [`RenderLines`]
 //! by [`RenderLines::from_parts`]; the bodies' boxes in the head are
-//! finite with their corners in order. The failed features' ids and the
-//! sketches that don't solve are only marks, so they aren't checked
-//! against a document. Malformed bytes are refused, never a panic; see
+//! finite with their corners in order. The failed features' ids, the
+//! sketches that don't solve and the bodies a draft touches are only
+//! marks, so they aren't checked against a document. Malformed bytes are refused, never a panic; see
 //! [`decode_request`] and [`decode_reply`]. A request's draft isn't
 //! checked as it's decoded: applying it goes through the document's
 //! checks.
