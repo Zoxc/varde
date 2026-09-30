@@ -76,7 +76,13 @@ taken before multiplying, so homogeneous points of any scale work (the
 product of the end weights alone could overflow or go subnormal).
 
 **Splitting** at `t` runs de Casteljau on the homogeneous points and
-renormalizes each half. The halves' weights lie between the parent's and 1
+renormalizes each half. A coordinate all three control points share (a
+curve in a plane square to an axis, as CAD models are full of) is kept
+exactly in the halves and in points of the curve (`Point::shared`):
+homogeneous division alone rounds it, and the pieces of a flat cap's rim
+came out an ulp off its plane, so the cap of one extrude and the flush
+cap of the next no longer tied but nearly tied. Patches do the same in
+`eval`, `curve` and the inner edges of their splits. The halves' weights lie between the parent's and 1
 (`w' = sqrt((1+w)/2)` at `½`), so they stay within bounds. At `½` the
 computation is written symmetrically (`(h0+h1)/2`, `(h1+h2)/2`, their
 mean): the reversed curve gives the same halves reversed and swapped, to
@@ -924,7 +930,10 @@ steps:
      to its sides as the ear is flat; the point takes the vertex's corner
      instead.
 4. **Mesh** (`build`). The chain's vertices and the Steiner points at
-   `from`, then again moved by `offset = normal·(to − from)`. Each segment's
+   `from`, then again at `to` (placed there, not moved up by `offset =
+   normal·(to − from)`: `from + (to − from)` can round away from `to`, and
+   a solid extruded from `to` on, a boss on this one's top, would then
+   stand a rounding off flush rather than on it). Each segment's
    wall is two patches, `(a0, a1, b1)` and `(a0, b1, b0)`, whose curved
    edges are set from `cylinder_strip` (bottom, top = bottom moved by
    `offset`, and the diagonal), so the caps share the walls' edge records
@@ -1085,6 +1094,7 @@ elsewhere (see "Cutting curved faces").
 | `boolean/cleanup.rs` | collapsing and flipping the degenerate triangles flush operands leave |
 | `boolean/tests.rs` | boxes in every flush, edge-on and vertex-on configuration, tori, determinism |
 | `boolean/curved_tests.rs` | cylinders and boxes (exact), crossing cylinders, a free surface, a saddle, extrudes, chains, merging, random bars |
+| `boolean/seeded_tests.rs` | the seeded random suite: related pairs, parts built in chains of twenty, turned solids, near tangencies, pins and coaxial cylinders, flush bosses |
 
 ### The primitives
 
@@ -1182,6 +1192,24 @@ from `x` meets it), `Across` `(x1 − x0)·n` (its denominator) and
 a face's plane along the ray when `(t0 − x)·n` has the sign of `n·UP`;
 it projects into the triangle when it is on the interior side of all
 three edges.
+
+**Near ties are ties** (`exact::sign_tied`). The deciding predicates
+(`Orient`, `Height`, `Reach`, and the ray tests' `Beside` and `Ahead`)
+take a constant term within the **tie distance** (a 64th of the
+resolution, `boolean::tie`) times the predicate's `scale` (how much it
+changes per unit of distance from its tie: `|UP|·|q − p|` for `Orient`,
+the triangle's normal's length for `Reach`, and so on) as zero, and go
+on to the perturbation's powers. So a configuration within the tie
+distance of a tie is decided as the tie it stands for: faces flush in
+exact arithmetic but turned and moved, every coordinate rounded, merge
+or part cleanly as the unmoved ones do (of 96 random flush grid boxes'
+operations turned and moved, 94 now work, 71 did with exact signs), and
+the exact predicates and the curved primitives, which decide heights
+that close as ties too, see one configuration: a cylinder `1e-9` off a
+box's face was beside it for the exact tests and on it for the
+numerical ones, and the winding numbers disagreed (`InsideOut`). The
+positions (`Across`, `Between`, `crossing`) stay exact. It is used for
+flat operands too.
 
 ### Counting (`boolean/count.rs`)
 
@@ -1329,18 +1357,56 @@ face and back out gets both crossings. Crossings are ordered along an
 edge by position, ties exactly (a straight edge through two planar
 patches) or by face and index.
 
-**Ties.** Heights within a 64th of the resolution are ties, decided as
-`A`'s perturbation `δ` would (`A` moved by `ε·s·n_v`), to first order: at
-an edge crossing, `e` (moved by `δ` interpolated along it) rises over `g`
-by `δ·m / UP·m`, `m = g' × e'` the two tangents' normal (the crossing
-slides along `g` as the shadows shift); a point of a patch with normal
-`n` there rises over a vertex of `A` by `−n·δ / n·UP`, and over a vertex
-of `B` by `n·δ / n·UP` with `δ` the patch's corners' interpolated. Where
-the numerator is 0, by `δ·UP`, as for horizontal surfaces. (Deciding
-all by `δ·UP` took a vertex beside a vertical wall as above or below it
-by which way it moved along the wall.) So flush planar faces between a
-curved and a flat operand behave as between flat ones. Vertex directions
-of curved patches are their normals at the corner.
+**Ties.** Heights within the tie distance are ties, decided as `A`'s
+perturbation would (`A` moved by `ε·s·n_v + ε²·T2 + ε³·T3`), order by
+order, each to first order (`first_sign`: the first order `δ`, then the
+two translations, as the exact predicates take them; stopping at `δ`
+decided a vertex on the line where two flush faces meet against the
+exact predicates' second order): at an edge crossing, `e` (moved by `δ`
+interpolated along it) rises over `g` by `δ·m / UP·m`, `m = g' × e'` the
+two tangents' normal (the crossing slides along `g` as the shadows
+shift); where the tangents are parallel (`|m|` within `1e-9` of theirs),
+by `(T × δ)·(T × UP)`, `T` the tangent (the crossing slides along both);
+a point of a patch with normal `n` there rises over a vertex of `A` by
+`−n·δ / n·UP`, and over a vertex of `B` by `n·δ / n·UP` with `δ` the
+patch's corners' interpolated. Where every order is 0, by `δ·UP`, as for
+horizontal surfaces. So flush planar faces between a curved and a flat
+operand behave as between flat ones. Vertex directions of curved
+patches are their normals at the corner. Beyond heights:
+
+- **Rays through a vertex.** Where a curved edge's shadow crosses the
+  ray's line at the vertex itself as far as rounding tells (the vertex an
+  end of the edge, or on it: a pin's rim vertex on the hole's rim),
+  whether the crossing is ahead of or behind it is the perturbation's:
+  the vertex moves by `δ` relative to the edge, the crossing to
+  `ε·(δ_across·T_along / T_across − δ_along)` along the ray (`ray::
+  tied_ahead`, order by order). Taken from the rounded point it was
+  noise, and a pin's rim vertex wound −1 round the plate.
+- **Shadows along each other.** Where one edge's shadow lies on the
+  other's conic (the same arc in both operands, or a piece of it:
+  `arcs::cross` gives `None` when the polynomial is zero within `1e-10`
+  of its terms), every crossing the ray tests count goes the same way,
+  by the heights where the two come nearest or, tied there, the
+  parallel rule above. Solving that polynomial gave random roots.
+- **Crossings at an end.** Crossings of the shadows solved at an end of
+  either edge (within the tie of it: two edges from one vertex) are left
+  to the count, which knows from the ray tests whether they are there;
+  those the count has and the solve lacks go by the heights where the two
+  come nearest (found by golden-section search between the samples, not
+  the nearest sample, which put a vertex a sample's height above the
+  edge it lay on).
+- **Crossings at a patch's side.** A crossing of an edge through a patch
+  within the tie of the patch's side (an edge of `A` lying in the plane
+  where `B`'s wall meets its flush cap, say) is inside the patch or not
+  as the perturbation moves it: the edge moved by `δ` relative to the
+  patch moves the crossing by `δ − e'·(δ·n)/(e'·n)` on the surface, and
+  it stays in if that heads across the side into the patch
+  (`Curved::tie_inside`). Taken where rounding put it, a plate's
+  diagonal crossed a boss's wall on neither side of its rim.
+- **Edges in the surface.** An edge lying in the surface a patch's face
+  claims (sampled within the resolution) isn't searched with a count of
+  0: the perturbation takes it off to one side, and the search found
+  crossings in and out where rounding had them.
 
 ### Pairs of faces (`boolean/pairs.rs`)
 
@@ -1351,10 +1417,23 @@ as many of each sign. For flat operands they are two or none, joined into
 one arc (else `Inconsistent`). With curved patches a pair is decided from
 its ends only with a **certificate** that no closed loop hides in it: the
 patches' normal cones apart (`NormalCone::apart`: no normal of one
-parallel to one of the other, and a loop needs one), both planar, or,
-with no ends, their control hulls apart (GJK). Then no ends is no cut,
-two ends are one arc, and more ends of two planar patches join in order
-along the line their planes meet in (if they alternate).
+parallel to one of the other, and a loop needs one), both planar, one
+planar and the other on a **cylinder** (its face's quadric, unchanged
+along a direction: `pairs::along`) with its normals within a half-space
+(a plane cuts a cylinder in lines along it, which run out of the patch,
+or in a conic round it, whose normals turn right round), or, with no
+ends, their control hulls apart (GJK). Then no ends is no cut, two ends
+are one arc, and more ends of two planar patches join in order along the
+line their planes meet in (if they alternate). Without the cylinder
+certificate a box's side against a boss's wall along it refined without
+end.
+
+Two patches on **one surface** (their faces claim quadrics and points
+sampled on each lie on the other's within the resolution: a pin in a
+hole cut by the same circle, cylinders of one radius stacked or
+overlapping) don't meet at all once `A` is perturbed off it, so they have
+no cut, and ends there are `Inconsistent`. Such pairs had no certificate
+and were refined for a minute or two before running out of budget.
 
 Any other pair is **refined**: both patches, where larger than the floor
 (`MIN_SPLIT` resolutions across their control points' box), are split by
@@ -1393,7 +1472,12 @@ with even where the search found no crossing and the position is only
 where the two came closest, once `1e-4` off) or a quadric (Newton's
 method on `F(C(t))`: the root within `1e-6` of the count's position,
 else the position stays), when the edge is curved or the face isn't
-planar (`surface::polish`). A vertex on an exactly straight edge (weight 1,
+planar (`surface::polish`). A root a rounding outside the edge
+(`1e-9`) is at its end, and one within `1e-12` of an end is put there
+exactly (`surface::at_end`), so a crossing at a vertex lying on the
+other surface is at the vertex to the bit: a root just past the end
+was dropped for the edge's other root, and the vertex went `1.6e-4` off
+the plane it claimed. A vertex on an exactly straight edge (weight 1,
 control point at the middle: `lined`) is interpolated as before; on any
 other edge it is the conic's point from its blossom `B(t, t)`, and the
 edge is split into pieces between its crossings by blossoming
@@ -1407,8 +1491,11 @@ position in both patches' domains.
 
 - **Two planar patches**: one straight edge, exact.
 - **A plane and a quadric** (a planar patch, its face's `Plane` tag or
-  its corners' plane, against a patch on a `Quadric` face): the conic
-  the plane cuts the quadric in, exact (`surface::section`). The
+  its corners' plane, against a patch on a `Quadric` face): where an
+  edge of either patch runs from one end of the arc to the other (at
+  their very places) on the plane and the quadric, that edge whole (a
+  cap's rim on the other's flush cap: `chain::along_edge`); else the
+  conic the plane cuts the quadric in, exact (`surface::section`). The
   tangents at the ends are `n × ∇F`, the control point where they meet
   in the plane, and the weight from where the line from the chord's
   middle `M` to the control point `C` meets the quadric, at `σ` of the
@@ -1520,6 +1607,16 @@ the fit tolerance at the 15 sample points (each inverted into the patch
 from its domain position): a cut whose domain preimage bends far from
 the straight domain segment leaves the band's inside off the surface.
 
+**Cuts along a flush rim.** Where a plane meets a quadric exactly along
+an operand's curved edge lying on both (a boss's rim on a plate's flush
+cap), the band between the edge and the cut is of zero width, and the
+cut's vertices (where the plate's cap triangles' edges cross the wall)
+aren't the edge's. Halving curves never makes the two meet (every round
+doubled them: a round took 15 s). So before the rounds, the edge gets a
+vertex at each of the cut's vertices lying on it (`flush_extras`, as the
+rounds add them): the edge and the cut then come in the same pieces,
+lying on each other, which the clean-up merges.
+
 **Exact bands on quadrics** (`face::exact_bands`). A rational quadratic
 triangle lies on a quadric when its three sides are conics on it whose
 planes meet in one point `O` on it; a cylinder's ruling lies in a plane
@@ -1566,7 +1663,11 @@ neighbour across its edge still split finer): then its children are
 tried instead. A restored node is within one face, with its own corners
 and edge records: exactly the operand's surface. A ball just inside a
 slab, whose pairs were refined to rule out loops, comes back as the slab's
-12 patches and the ball's 8.
+12 patches and the ball's 8. Demoting a candidate can bring another's
+into the way, a round later, so the rounds run until none is demoted,
+each looking at every triangle (flags by node and by vertex, a unit of
+work each): on 48 000 refined triangles they took 14 s with sets, and
+now take 20 ms.
 
 ### Assembly (`boolean/assemble.rs`)
 
@@ -1588,9 +1689,17 @@ slab, whose pairs were refined to rule out loops, comes back as the slab's
   worked out exactly (a near tie: two tiny numbers that are all rounding
   put vertices off the result, with the wrong volume), and for an exact
   tie the ratio of the first powers of `ε` that aren't zero.
-- **Edges**: each edge's crossings are ordered along it (`order`, by
-  insertion, which can't fail), and its pieces kept by the winding number
-  running from its start: both faces beside it read the same pieces.
+- **Edges**: each edge's crossings are ordered along it (by insertion,
+  which can't fail: by their places where they are more than the
+  resolution apart, else by `order`), and its pieces kept by the winding
+  number running from its start: both faces beside it read the same
+  pieces. Crossings of a solid's boundary go in and out in turn on any
+  path, so where one would take the winding number out of `0..=1`, the
+  next one with the sign wanted is brought forward if it is at the same
+  place (`alternate`: a tie, whose order the positions can't give, as a
+  refinement midpoint on the other operand's plane crossed by two of its
+  faces at once). Crossings apart in the wrong order, which would put a
+  vertex off the face it crosses, are `Inconsistent`.
 - **Cut edges**: each face pair's arcs (from `pairs`; for flat operands
   its two ends, joined), each along its chain (for two planar patches one
   straight edge), with signs seen from `A`
@@ -1634,9 +1743,11 @@ domain's sides are outer loops; the others are outer or holes by their
 signed area. Each hole goes to the smallest outer loop around one of its
 points and is bridged in from its rightmost vertex to the nearest vertex
 it sees (inside the angle there, crossing no side); then ears are cut in
-this order of preference: an ear with two corners at one position (so
-zero-width loops come apart into zero-width triangles along zero-length
-sides), a proper triangle with no other vertex in or on it (the best
+this order of preference: an ear with two corners at one position
+(within `1e-9` in the layout, on a side or not: tied vertices whose
+positions came by different roundings, and a cut's vertex a moment off
+the side it lies on; so zero-width loops come apart into zero-width
+triangles along zero-length sides), a proper triangle with no other vertex in or on it (the best
 shaped one, for polygons up to 64 vertices; the first found beyond; a
 vertex at one of its corners' positions, such as a bridge's other end,
 only blocks it if one of its sides leaves into it or along its sides),
@@ -1650,7 +1761,18 @@ Delaunay triangulation (the far corner inside the near triangle's
 circle, the quadrilateral convex, the new diagonal allowed and the
 curved corners open; at most 8 flips per triangle), which removes the
 thin triangles greedy ear cutting leaves. With curved sides, Steiner
-points follow (see "Cutting curved faces").
+points follow (see "Cutting curved faces"), in no triangle of zero width
+(corners on a line: a band between two curves lying on each other, which
+no point or split mends; asking for splits there doubled the curves
+every round).
+
+The faces of a round are triangulated in parallel and count their
+steps together (`triangulate::Meter`: a vertex tested against an ear, a
+triangle looked at by the flips and mending, the sides looked at
+bridging a hole), up to what the budget has left (16 steps a unit), past
+which every triangulation stops and the round fails with `TooComplex`;
+what they took is spent after. Whether they get past it depends only on
+the total, not on the order the threads count in.
 
 ### Clean-up (`boolean/cleanup.rs`)
 
@@ -1673,6 +1795,9 @@ before the mesh is built, at most 64 rounds:
   across exactly.
 - **Drop** connected parts enclosing no volume (at most an eighth of the
   resolution times their area): what is left of flush faces meeting.
+- A face and its copy claiming no surface (see "Exact bands on
+  quadrics") are one face here (`Soup::sources`): a cut is only between
+  two faces of different sources.
 
 With curves (the soup's records by vertex pair): an edge with a curve
 (its control point more than an eighth of the resolution off its chord)
@@ -1686,7 +1811,28 @@ curves of the other edges moved onto the kept vertex go with them; where
 an edge from each end of the collapsed edge runs to one vertex (not
 across a gone triangle), the two become one edge, and the collapse is
 made only if their curves are one (else a plane face took a cylinder's
-inner edge there, 0.02 off its plane, and repair trusted the tag).
+inner edge there, 0.02 off its plane, and repair trusted the tag). A
+triangle a collapse gives another curve off its face's surface (a
+fitted cut's, merged onto the face's own curve) goes on the face's copy
+claiming no surface, as fitted bands do (`leave_surfaces`).
+
+A triangle of zero height (no more than an eighth of the resolution) and
+straight sides may also be flipped into a neighbour with curved sides:
+the new side from its far corner, which lies on the neighbour's side, is
+the neighbour's own curve from there to its far corner (the neighbour
+bisected there by blossoming, `inner_curve`), so the two new triangles
+are exactly its pieces, on its surface. Collinear triangles left on
+curved faces failed the fold check.
+
+A curved edge between two triangles in one plane (two plane faces of
+one plane meeting along a curve: a pin filling its hole, united with the
+plate) is flipped away when the two make a convex quadrilateral whose
+curved corners stay open (`unbend`): the new triangles cover the same
+region whatever the curve between them, and both go on the lower of the
+two faces, which merge there. No plane through a curve between two
+patches in one plane has either patch off it, so the hull rule can't
+hold there, and repair split along it down to flat pieces: 114 000
+patches for the filled plate, 36 now.
 
 Collapsing removes an edge and keeps a closed manifold; it never decides
 that two separate vertices are one. What the clean-up can't mend fails the
@@ -1703,15 +1849,18 @@ operands intersected, or subtracted the other way, work.
 ### Errors and budget
 
 `KernelError::Boolean(BooleanError)`: `InsideOut` (a curved operand's
-sign from `Solid::volume`), `Inconsistent` (the
-decisions don't fit together: never with exact primitives), `Degenerate` (a face's loops couldn't be triangulated, or
-the triangles don't pair up). `TooComplex` past the budget or
-`MAX_PATCHES`, `Invalid` when the result fails `check`. Work: the broad
-phase's pairs and the rays' hits (counted before collecting), one unit per
-stored primitive and per candidate crossing, the square of each edge's
-crossings (ordering them), `n²·(1 + n/64)` per cut face with `n` its cuts
-plus 6 (ear clipping), and the soup's size per clean-up round; then
-repair's own. With curved patches also each edge–face search a unit per 4
+sign from `Solid::volume`, or a winding number out of `0..=1`),
+`Inconsistent` (the decisions don't fit together: with near ties taken
+as ties, flat operands too can, rarely), `Degenerate` (a face's loops
+couldn't be triangulated, or the triangles don't pair up). `TooComplex`
+past the budget or `MAX_PATCHES`, `Invalid` when the result fails
+`check`. Work: the broad phase's pairs and the rays' hits (counted
+before collecting), one unit per stored primitive and per candidate
+crossing, the square of each edge's crossings (ordering them), a unit
+per cut face and its triangulation's steps over 16 (the `Meter`, see
+"Triangulating"), the soup's size per clean-up round, the triangles per
+round of merging, repair's own, and 5 units per patch of the result for
+the check that makes it a solid (about 2.7 µs a patch). With curved patches also each edge–face search a unit per 4
 pieces it looked at, at least 16: the 16 spent before it runs, the rest
 after each chunk of 1 024 searches (a search running to its cap of
 1 024 pieces, as where two surfaces lie along each other, is 256; at
@@ -1742,6 +1891,23 @@ octahedron, 14 ms; a pin through a plate's hole wall, 20 ms (308
 patches); tangent cylinders, 0.1 s at the coarsest tolerance and 0.8 s at
 the default. 200 random turned bars against boxes, the four operations
 each: 3.7 s all told.
+
+**Threads.** Release, one thread and seven (the budget's units in
+brackets): two flat tori of 36 864 patches each united, 0.71 s and
+0.45 s (0.72 million); a plate with 144 holes less a slab across them,
+0.35 s and 0.15 s (0.34 million); the plate joined to a boss across 38
+of them, 0.72 s and 0.28 s (1.9 million); crossing cylinders, 31 ms and
+24 ms (62 000). The seeded suite, its tests one after another: 83 s and
+37 s. So rayon gives 1.3 to 2.6 times, about 2.2 over the suite: the
+counting's primitives, the searches, the chains, the faces' cuts and
+repair's tests run in parallel, but rebuilding each refinement round's
+tables (`Input::new`, the vertex normals, the refiner's pieces), the
+BVHs, the clean-up, merging and the check's topology are sequential.
+
+A unit of work is about 0.2 to 0.7 µs on one thread across these and
+across booleans that fail, so `MAX_WORK` (about 4.2 million) lets the
+heaviest of them through with room to spare and stops a failing one
+within about two seconds on one thread.
 
 ### Tests
 
@@ -1833,20 +1999,65 @@ extruded star polygons on three frames, by the volume identities; none
 came out wrong. The rest that fail are mostly exact results that aren't
 manifolds.
 
+**The seeded suite** (`seeded_tests.rs`). Booleans of extruded and
+primitive solids in the configurations CAD makes on purpose and at
+random, each of a pair's four results (`A ∪ B`, `A ∩ B`, `A − B`,
+`B − A`) right or failed, never wrong: a result passes `check` (as every
+`Solid` does) and its face tags, the four keep the volume identities
+within the fit tolerance and analytic volumes where known, and points
+sampled round the operands (away from their surfaces) are inside the
+result exactly when the operation says, by the winding numbers of the
+operands' and the result's tessellations. Failures are counted and each
+test holds a floor on the share that works. Its tests: coaxial, stacked
+flush, nested, crossing and across pairs on random frames, on a grid
+and off it; parts built in chains of twenty (plates, bosses, slots,
+rounded blocks, plates with holes on the sketch planes, joined, cut and
+now and then intersected, each result fed on); solids turned and moved
+at random against boxes and bars; cylinders side by side with gaps and
+overlaps of `1e-9` to `1e-3` at two tolerances; pins in holes of their
+own circle and cylinders of one radius stacked and overlapping; bosses
+flush on plates; the same bits at 1 and 8 threads. In release it runs
+in about 25 s (37 s one test after another, 83 s on one thread); debug
+builds run one case of each. Unit tests for the step: near ties decided
+as ties (`sign_tied`), crossings at one place put in turn (`alternate`),
+shadows along each other told apart, crossings at an edge's end put at
+it, curves and patches keeping the coordinates their control points
+share, and extrudes' tops at `to` exactly.
+
+Fuzzed without a test (release): the seeded suite's generators at
+larger counts (about 2 000 operations: `related` pairs 14 % refused,
+parts in chains 20 %, random turned solids 4 %, most of the rest
+tangencies, below), turned flush grid boxes (900 operations, 875 right,
+the rest refused), tangent cylinders at three tolerances and seven
+offsets (564 of 882 right, the rest refused), and every result right by
+the volume identities, face tags and sampled points, and the same bits
+at 1 and 8 threads.
+
 ### Known gaps
 
-- **Curved cuts near arcs fail as invalid now and then**: about one
-  random turned bar against a box in sixteen gives some operation `Invalid`
-  (a fold or hull rule repair can't mend): a planar cap's triangle whose
-  arc bulges out of it after the rounds, or a flat sliver along a cut
-  next to a curve that no flip may take. None came out wrong. Of 200 such
-  pairs (seed 7, the four operations each), 12 had some operation fail
-  (26 in all: 14 edge-neighbour, 8 fold, 2 hull and 2 vertex-neighbour
-  rules). In 2 others `|A ∪ B| + |A ∩ B|` missed `|A| + |B|` by 1–4e-6:
-  within the fit tolerance, but not the 1e-12 of exact cuts, since a few
-  band triangles on the bar's wall stayed off it (a band tree's root, or
-  a cut that fell back to fitting) and went on a copy claiming no
-  surface.
+- **Tangencies leave cusps.** Where a plane or a cylinder touches a
+  cylinder along a line (a boss tangent to a plate's edge, a slot's side
+  on a hole), the exact result's faces meet in a corner of zero angle,
+  which no patch holds (its corner would be degenerate): such results
+  fail as `Invalid` (the fold rule), or, where splitting the thin slivers
+  there converges, come out right with many patches (a cylinder inscribed
+  in a square prism, united with it: over 100 000). Unions of solids
+  touching along a line aren't manifolds and fail as `Invalid`, as boxes
+  touching along an edge do. Most of the operations the seeded suite's
+  generators refuse are these.
+- **Coplanar faces meeting along a curve** (a flush boss the first
+  operand of a union with the plate it stands in, both over one span)
+  keep curved edges between patches in one plane, which the hull rule
+  can't pass; the clean-up flips them away where the two triangles make
+  a convex quadrilateral (a pin filling its hole, united: 36 patches),
+  and where they don't, repair splits along the curve down to flat
+  pieces (right, about 30 000 patches). With the plate as the first
+  operand the union is the plate.
+- **Curved cuts near arcs fail as invalid now and then**: a planar cap's
+  triangle whose arc bulges out of it after the rounds, or a flat sliver
+  along a cut next to a curve that no flip may take. None came out
+  wrong. Plane-against-cylinder cuts that should be exact can be off by
+  1–4e-6 where a band triangle fell back to a copy claiming no surface.
 - **Fitted bands leave their face's claim**: triangles along a fitted
   cut on a quadric (quadric against quadric, a quadric against a free
   surface), and an exact band tree's root where no ruling frees it, go on
@@ -1856,53 +2067,36 @@ manifolds.
   tolerance and turning at most 45°, and bands straying past half of it
   halved, so crossing cylinders at the default tolerance come out with
   some 700 patches, most along the cut.
-- **Tangencies are fragile**: two upright cylinders of radius 1 side by
-  side along `x`, touching along a line where both have a seam edge (at
-  the coarsest tolerance): with the second one 1 or 0.5 high, both unions
-  fail (`Inconsistent`; the exact union isn't a manifold, so no result is
-  right) and the rest come out right; 0.25 high every operation fails
-  with `InsideOut` (a vertex on the tangent line winds −1), and with both
-  caps flush (both 2 high) every one fails. Coincident walls (coaxial
-  cylinders of one radius) always fail, some only after a minute or two
-  of refinement (the budget isn't tuned yet). Ties between curved
-  patches are decided by a threshold, to first order of the perturbation,
-  and layers the search didn't find by where most of the patch is, not
-  by the perturbation throughout. Fuzzed in release (random extruded
-  bars, slots, rounded boxes and plates with holes on turned frames,
-  coaxial, stacked flush, nested and crossing pairs, chains of eight,
-  each checked by the volume identities, face tags and sampled points
-  against the operands' tessellations; about 10 000 operations, 18 %
-  refused, most of them flush, coaxial or tangent), and side by side, a
-  hair apart or overlapping by `1e-9`–`1e-4`, turned: every result right
-  or refused, and the same bits at 1 and 8 threads.
+- **Ties are decided to first order in each power of the perturbation**,
+  by a tie distance (a 64th of the resolution) and heights, positions
+  and sides worked out in floating point near them: consistent in the
+  flush, coaxial, stacked and tangent cases the suite tries, and where
+  they aren't the operation fails (`Inconsistent`, `InsideOut`), never
+  wrong. Near ties at about the tie distance itself (things a 64th of
+  the resolution apart) decide one way or the other by rounding. Flat
+  operands' exact predicates take near ties as ties too, so they can now
+  (rarely) be `Inconsistent`.
 - A tangency along a line reads as not touching (`touches` says false for
   two cylinders side by side): no crossing shows it, and the fixed rules
   take no certificate as no loop. Flat solids touching do meet.
 - Each refinement round counts both operands again from scratch, and a
   search stops at 1 024 pieces (placing a crossing it didn't find where
-  the edge came closest); tangent pairs are slow (see "Costs").
+  the edge came closest): pairs a certificate can't settle (two
+  cylinders tangent or crossing at a slant) refine for many rounds, and
+  parts built in long chains occasionally run out of budget there.
 - **Coplanar faces facing each other, triangulated differently**: a
   folded sheet whose two sides don't share their triangles can't be
   collapsed away (seen once in about 3 600 chained grid-box booleans).
-- **Flush faces after rounding**: operands flush in exact arithmetic but
-  turned and moved (every coordinate rounded) have near ties instead of
-  ties; each is decided once, so the topology stays valid, but the
-  decisions no longer follow the perturbation's intent, and zero-thickness
-  sheets of two coincident faces can remain, which the clean-up can't
-  remove: about 12 % of random flush boxes on a half grid, turned and
-  moved together, fail with `Invalid` where the exact result is a
-  manifold (whatever comes out has the right volume). Flush extrude
-  joins on a tilted sketch plane are this case.
+- **Flush faces after rounding**: flat solids flush in exact arithmetic
+  but turned and moved now mostly work (94 of 96 turned grid boxes'
+  operations); a few still fail as `Invalid` or `Inconsistent`.
 - Triangles thinner than the resolution across two faces (a cut passing
   within a resolution or two of a vertex) aren't flipped, and fail the
   hull rules.
 - Ear clipping is quadratic to cubic in a face's cut vertices; faces cut
-  by thousands of edges run out of budget.
-- Ties in curved primitives are decided by a threshold (a 64th of the
-  resolution) and `A`'s perturbation direction; the face tags choose the
-  cuts' exact geometry, not the decisions. `Input::volume` is flat-only;
-  curved operands' sign comes from `Solid::volume`, which costs about as
-  much as counting.
+  by thousands of edges run out of budget, now counted as they go.
+- `Input::volume` is flat-only; curved operands' sign comes from
+  `Solid::volume`, which costs about as much as counting.
 - Merging restores only whole nodes of the refinement tree with no finer
   neighbour: pieces next to a cut stay as refined.
 
@@ -2148,7 +2342,7 @@ offered ones' (`tolerance_choices`).
 | `SPLIT_ROUNDS` (boolean) | 6 | rounds of halving curves while cutting faces |
 | `MAX_TURN_COS` (boolean) | 0.7 | the most a cut's conic turns (about 45°) |
 | `MEND_ROUNDS` (boolean) | 4 | rounds of Steiner points in one face's triangulation |
-| `MAX_WORK` | `1 << 26` | work units in one operation: about half a minute on one thread |
+| `MAX_WORK` | `1 << 22` | work units in one operation: about two seconds on one thread at most; the heaviest booleans measured take about half of it |
 | `MIN_SPLIT` (repair) | 64 resolutions | the smallest piece repair splits, and the smallest profile segment an extrude halves |
 | `MAX_PROFILE_SEGMENTS` | `1 << 16` | segments in a profile |
 | `SIN_MIN` (extrude) | `1e-3` | cusps between segments; the narrowest cap patch corner |
@@ -2220,7 +2414,8 @@ parameter, or a split outside the patch bounds),
   `MAX_REFINE_DEPTH` and the budget.
 - **`Budget` is a limit and `Work` its counter**: operations take `&Budget`
   as planned and count down a `Work` shared by their steps. `MAX_WORK` is
-  `1 << 26`, about half a minute of repair on one thread. `MAX_TRACE_STEPS`
+  `1 << 22` (about 4.2 million units, two seconds on one thread; it was
+  `1 << 26` until the booleans' charges were measured). `MAX_TRACE_STEPS`
   is left to tracing.
 - **The box and cylinder are `Mesh` constructors** (`Mesh::cuboid`,
   `Mesh::cylinder`) that take the feature id and the tolerance and always
@@ -2353,7 +2548,21 @@ parameter, or a split outside the patch bounds),
   pieces flat within the resolution count as planar, which stops
   refinement at tangencies well above the floor.
 - **Ties in curved primitives** are heights within a 64th of the
-  resolution, decided the way `A`'s perturbation would move things.
+  resolution, decided the way `A`'s perturbation would move things,
+  order by order (its first order, then the two translations).
+- **Near ties are ties for the exact predicates too** (`sign_tied`):
+  within the same tie distance, a deciding predicate's constant term is
+  taken as zero. The plan has flat operands decided exactly; with
+  rounded coordinates (turned and moved flush solids) exact signs broke
+  the perturbation's intent, and beside curved operands they disagreed
+  with the curved primitives' ties.
+- **Two patches on one quadric, and a plane against a cylinder patch
+  whose normals keep within a half-space, are certificates** of no hidden
+  loop, beside the plan's normal cones apart.
+- **The clean-up merges coplanar faces along curves** where it can (a
+  curved edge between two triangles in one plane is flipped away), and
+  moves triangles a collapse gives an off-surface curve to their face's
+  copy claiming no surface.
 - **`touches` on curved solids runs the pair decisions too**, so a
   loop no edge crossing shows still counts.
 - **Fitted cut conics lie in the plane bisecting the result's crease**

@@ -26,7 +26,7 @@ use super::super::chain::trace::{domain_step, invert};
 use super::super::exact::orient2d;
 use super::super::input::Input;
 use super::super::surface::{Guide, Shape, second_point, section};
-use super::super::triangulate::{Bends, NO_CUT, Vert, triangulate};
+use super::super::triangulate::{Bends, Meter, NO_CUT, Vert, triangulate};
 use super::{Along, Curves, key};
 use crate::Tolerance;
 use crate::mesh::{Edge, Quadric, Surface, samples, straight};
@@ -160,6 +160,7 @@ pub(super) fn cut_face(
     pos: &[DVec3],
     curves: &Curves,
     fitted: &BTreeSet<(u32, u32)>,
+    meter: &Meter,
     tol: &Tolerance,
 ) -> Result<Cutout, BooleanError> {
     let t = job.tri;
@@ -314,7 +315,7 @@ pub(super) fn cut_face(
             ],
         );
     }
-    let triangulation = triangulate(loops, &bends, FIRST_STEINER)?;
+    let triangulation = triangulate(loops, &bends, FIRST_STEINER, meter)?;
     let tris = triangulation.tris;
     // Curves the triangulation wants split for its corners.
     let wanted: Vec<(u32, u32)> = triangulation

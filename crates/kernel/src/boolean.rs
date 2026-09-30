@@ -31,8 +31,8 @@
 //!
 //! The primitives come in two kinds. For **flat patches** (every edge
 //! straight within the resolution) they are exact, with symbolic
-//! perturbation breaking ties (see [`flat`]), and the new edges are
-//! straight. When an operand has a **curved patch** they are numerical
+//! perturbation breaking ties, near ties within a tie distance included
+//! (see [`flat`]), and the new edges are straight. When an operand has a **curved patch** they are numerical
 //! solves (see [`curved`]), each worked out once and shared, and exact
 //! wherever the pieces they are about are straight or flat. Curved pairs
 //! of faces then need their own decisions: whether a closed loop may
@@ -56,7 +56,7 @@ use std::cmp::Ordering;
 use glam::DVec3;
 
 use crate::budget::{Budget, Work};
-use crate::mesh::{self, BuildError, Face, Mesh, MeshBuilder};
+use crate::mesh::{BuildError, Face, Mesh, MeshBuilder};
 use crate::{KernelError, Solid, Tolerance};
 
 mod assemble;
@@ -90,7 +90,8 @@ pub enum Op {
 pub enum BooleanError {
     /// An operand faces inwards, or its winding numbers aren't 0 and 1.
     InsideOut,
-    /// The decisions don't fit together. Exact primitives never do this.
+    /// The decisions don't fit together: near ties decided as ties that
+    /// no one configuration has, rarely.
     Inconsistent,
     /// A cut face's kept part couldn't be triangulated, or the triangles
     /// don't pair up into a closed surface.
@@ -108,6 +109,18 @@ impl std::fmt::Display for BooleanError {
 }
 
 impl std::error::Error for BooleanError {}
+
+/// How near two things must be for the primitives to decide them as a
+/// tie, by the perturbation: a 64th of the resolution. Exact ties (flush
+/// faces, a vertex on a face) and those rounding leaves (the same faces
+/// turned and moved, every coordinate rounded) then decide alike.
+fn tie(tol: &Tolerance) -> f64 {
+    tol.resolution() / 64.0
+}
+
+/// Units of work per patch that checking the result takes (about 2.7 µs
+/// a patch on one thread, the units about half a microsecond).
+const CHECK_WORK: usize = 5;
 
 /// The projection direction every primitive shares: nearly `+z`, tilted
 /// off every axis so that walls along the axes, which CAD models are full
@@ -196,6 +209,8 @@ pub fn boolean(
     }
     let mesh = unchecked(a, b, op, tol, &mut work)?;
     let mesh = mesh.repair_within(tol, &mut work)?;
+    // The check that makes it a solid, a few units a patch.
+    work.spend(mesh.tris().len().saturating_mul(CHECK_WORK))?;
     Solid::new(mesh, tol)
 }
 
@@ -231,20 +246,18 @@ fn unchecked(
             work,
         )?
     } else {
-        let prims = flat::Flat::new(&ia, &ib, grow);
+        let prims = flat::Flat::tied(&ia, &ib, grow, tie(tol));
         let counts = count::count(&ia, &ib, &prims, tol, work)?;
         let arcs = pairs::flat(&ia, &ib, &counts)?;
         assemble::assemble(op, &ia, &ib, &counts, &arcs, &prims, tol, None, work)?
     };
-    let planar: Vec<bool> = faces
-        .iter()
-        .map(|f| matches!(f.surface, mesh::Surface::Plane { .. }))
-        .collect();
+    let mut faces = faces;
     cleanup::clean(
         &mut soup,
-        &planar,
+        &mut faces,
         tol.resolution() / 8.0,
         4.0 * tol.resolution(),
+        tol.resolution(),
         work,
     )?;
     build(soup, faces)
@@ -270,7 +283,7 @@ pub fn touches(
         let refined = pairs::refined(a.mesh(), b.mesh(), true, tol, &mut work)?;
         return Ok(refined.counts.meet());
     }
-    let prims = flat::Flat::new(&ia, &ib, true);
+    let prims = flat::Flat::tied(&ia, &ib, true, tie(tol));
     let counts = count::count(&ia, &ib, &prims, tol, &mut work)?;
     Ok(counts.meet())
 }
@@ -379,3 +392,6 @@ mod tests;
 
 #[cfg(test)]
 mod curved_tests;
+
+#[cfg(test)]
+mod seeded_tests;

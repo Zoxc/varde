@@ -25,6 +25,10 @@ use crate::patch::Conic3;
 /// sizes (`|det M| / (|H0|·|H1|·|H2|)`), is taken as its line.
 const STRAIGHT: f64 = 1e-9;
 
+/// A shadow whose polynomial against another's conic is zero within this
+/// of its terms' sizes lies on that conic: the two run along each other.
+const ON_CONIC: f64 = 1e-10;
+
 /// A crossing of the shadows of `e` (at `t`) and `h` (at `s`): `sigma`
 /// is +1 where `e` crosses `h` from its right to its left seen from
 /// `+UP` (the sign of `det[h', e', UP]`), and `dh` how far `e`'s point is
@@ -38,22 +42,24 @@ pub(crate) struct ArcCross {
 }
 
 /// Where the shadows of `e` and `h` cross, in order along `e`. Tangencies
-/// (a double root) count as no crossing.
-pub(crate) fn cross(e: &Conic3, h: &Conic3, axes: &Axes) -> Vec<ArcCross> {
+/// (a double root) count as no crossing. `None` where the shadows lie on
+/// one conic, as far as rounding tells (the same curve, or pieces of
+/// it): they then run along each other rather than cross.
+pub(crate) fn cross(e: &Conic3, h: &Conic3, axes: &Axes) -> Option<Vec<ArcCross>> {
     let bounds = e.bounds().union(h.bounds());
     let origin = (bounds.min + bounds.max) * 0.5;
     let scale = (bounds.max - bounds.min).max_element();
     if !(scale > 0.0 && scale.is_finite()) {
-        return Vec::new();
+        return Some(Vec::new());
     }
     let (he, hh) = (
         shadow(e, origin, scale, axes),
         shadow(h, origin, scale, axes),
     );
     let pairs = if bend(&hh) >= bend(&he) {
-        solve(&he, &hh)
+        solve(&he, &hh)?
     } else {
-        solve(&hh, &he).into_iter().map(|(s, t)| (t, s)).collect()
+        solve(&hh, &he)?.into_iter().map(|(s, t)| (t, s)).collect()
     };
     let mut out = Vec::with_capacity(pairs.len());
     for (t, s) in pairs {
@@ -65,7 +71,7 @@ pub(crate) fn cross(e: &Conic3, h: &Conic3, axes: &Axes) -> Vec<ArcCross> {
         out.push(ArcCross { t, s, sigma, dh });
     }
     out.sort_by(|x, y| x.t.total_cmp(&y.t));
-    out
+    Some(out)
 }
 
 /// The homogeneous control points of `c`'s shadow, `(W·x, W·y, W)` with
@@ -111,11 +117,18 @@ fn cross2(a: (f64, f64), b: (f64, f64)) -> i8 {
 }
 
 /// The parameters `(t, s)` where the shadow `sub` (at `t`) meets the
-/// shadow `imp` (at `s`, written implicitly).
-fn solve(sub: &[DVec3; 3], imp: &[DVec3; 3]) -> Vec<(f64, f64)> {
-    let roots = if bend(imp) < STRAIGHT {
+/// shadow `imp` (at `s`, written implicitly), or `None` where `sub` lies
+/// on `imp`'s conic: the polynomial is zero within [`ON_CONIC`] of the
+/// sizes of its terms.
+fn solve(sub: &[DVec3; 3], imp: &[DVec3; 3]) -> Option<Vec<(f64, f64)>> {
+    let (poly, size): (Vec<f64>, f64) = if bend(imp) < STRAIGHT {
         let line = imp[0].cross(imp[2]);
-        bernstein::roots(&sub.map(|x| line.dot(x)))
+        let poly: Vec<f64> = sub.iter().map(|x| line.dot(*x)).collect();
+        let size = sub
+            .iter()
+            .map(|x| line.length() * x.length())
+            .fold(0.0, f64::max);
+        (poly, size)
     } else {
         let r = [
             imp[1].cross(imp[2]),
@@ -126,12 +139,20 @@ fn solve(sub: &[DVec3; 3], imp: &[DVec3; 3]) -> Vec<(f64, f64)> {
         let sq = product2(lam[1], lam[1]);
         let pr = product2(lam[0], lam[2]);
         let quartic: Vec<f64> = (0..5).map(|k| sq[k] - 4.0 * pr[k]).collect();
-        bernstein::roots(&quartic)
+        let size = (0..5)
+            .map(|k| sq[k].abs() + 4.0 * pr[k].abs())
+            .fold(0.0, f64::max);
+        (quartic, size)
     };
-    roots
-        .into_iter()
-        .filter_map(|t| on_arc(imp, at(sub, t)).map(|s| (t, s)))
-        .collect()
+    if poly.iter().all(|c| c.abs() <= ON_CONIC * size) {
+        return None;
+    }
+    Some(
+        bernstein::roots(&poly)
+            .into_iter()
+            .filter_map(|t| on_arc(imp, at(sub, t)).map(|s| (t, s)))
+            .collect(),
+    )
 }
 
 /// Where along the shadow `h` the homogeneous point `x`, on its conic, is,

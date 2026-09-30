@@ -33,6 +33,12 @@ pub trait Point:
     /// The largest absolute coordinate.
     fn max_abs(self) -> f64;
     fn is_finite(self) -> bool;
+    /// `self` with each coordinate that all of `of` have the same value
+    /// in set to that value. A curve or patch whose control points share
+    /// a coordinate (one on a plane square to an axis, as CAD models are
+    /// full of) has it all over, and so do its pieces and points, which
+    /// homogeneous division alone would round off it.
+    fn shared(self, of: &[Self]) -> Self;
 }
 
 mod sealed {
@@ -62,6 +68,17 @@ impl Point for DVec2 {
     fn is_finite(self) -> bool {
         DVec2::is_finite(self)
     }
+    fn shared(self, of: &[Self]) -> Self {
+        let mut out = self;
+        if let Some((first, rest)) = of.split_first() {
+            for k in 0..2 {
+                if rest.iter().all(|p| p[k] == first[k]) {
+                    out[k] = first[k];
+                }
+            }
+        }
+        out
+    }
 }
 
 impl Point for DVec3 {
@@ -84,6 +101,17 @@ impl Point for DVec3 {
     }
     fn is_finite(self) -> bool {
         DVec3::is_finite(self)
+    }
+    fn shared(self, of: &[Self]) -> Self {
+        let mut out = self;
+        if let Some((first, rest)) = of.split_first() {
+            for k in 0..3 {
+                if rest.iter().all(|p| p[k] == first[k]) {
+                    out[k] = first[k];
+                }
+            }
+        }
+        out
     }
 }
 
@@ -197,7 +225,7 @@ impl<P: Point> Conic<P> {
         let s = 1.0 - t;
         let (b0, b1, b2) = (s * s, 2.0 * s * t, t * t);
         let d = b0 + b1 * self.w + b2;
-        (self.p0 * b0 + self.c * (b1 * self.w) + self.p1 * b2) / d
+        ((self.p0 * b0 + self.c * (b1 * self.w) + self.p1 * b2) / d).shared(&self.hull())
     }
 
     /// The point at `t` and the first derivative there.
@@ -254,19 +282,35 @@ impl<P: Point> Conic<P> {
         if !(t > 0.0 && t < 1.0) {
             return Err(PatchError::Parameter(t));
         }
-        Self::halves(self.split_hom(t))
+        self.halves(self.split_hom(t))
     }
 
     /// The two halves at `t = ½`. Symmetric to the last bit: the reversed
     /// curve gives the same two halves, reversed and swapped.
     pub fn split_half(&self) -> Result<[Self; 2], PatchError> {
-        Self::halves(self.split_half_hom())
+        self.halves(self.split_half_hom())
     }
 
-    fn halves(h: [P::Hom; 5]) -> Result<[Self; 2], PatchError> {
-        Ok([
+    /// The halves from their homogeneous points, keeping the coordinates
+    /// this curve's control points share (see [`Point::shared`]).
+    fn halves(&self, h: [P::Hom; 5]) -> Result<[Self; 2], PatchError> {
+        let [a, b] = [
             Self::from_hom([h[0], h[1], h[2]])?,
             Self::from_hom([h[2], h[3], h[4]])?,
+        ];
+        let of = self.hull();
+        let m = a.p1.shared(&of);
+        Ok([
+            Self {
+                c: a.c.shared(&of),
+                p1: m,
+                ..a
+            },
+            Self {
+                c: b.c.shared(&of),
+                p0: m,
+                ..b
+            },
         ])
     }
 

@@ -16,12 +16,15 @@ use std::collections::BTreeSet;
 
 use super::super::input::Side;
 use super::{Curves, Refinement, key};
+use crate::KernelError;
+use crate::budget::Work;
 use crate::mesh::Edge;
 
 /// Replaces the kept whole pieces (`whole`: which refined triangle of
 /// which operand each triangle is) of every refinement patch that can be
 /// restored by that patch: see the [module](self) docs. `offsets` are
 /// where each operand's vertices start.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn merge(
     tris: &mut Vec<[u32; 3]>,
     faces: &mut Vec<u32>,
@@ -30,7 +33,8 @@ pub(super) fn merge(
     curves: &mut Curves,
     refinement: &Refinement,
     offsets: [u32; 2],
-) {
+    work: &mut Work,
+) -> Result<(), KernelError> {
     for side in [Side::A, Side::B] {
         let k = side as usize;
         let (nodes, leaf) = (refinement.tree[k], refinement.leaf[k]);
@@ -69,26 +73,25 @@ pub(super) fn merge(
         // Worth restoring: split (four children), or a leaf that is two
         // green halves.
         let worth = |id: usize| !children[id].is_empty() || pieces[id] == 2;
-        let mut candidates: BTreeSet<u32> = (0..n)
-            .filter(|&id| {
+        let mut candidate: Vec<bool> = (0..n)
+            .map(|id| {
                 let parent = nodes[id].parent;
                 complete[id] && worth(id) && (parent == u32::MAX || !complete[parent as usize])
             })
-            .map(|id| id as u32)
             .collect();
-        if candidates.is_empty() {
+        if !candidate.contains(&true) {
             continue;
         }
         let depth_limit = 2 * crate::MAX_REFINE_DEPTH as usize + 2;
         // The candidate each triangle is a piece of, if any.
-        let under = |i: usize, candidates: &BTreeSet<u32>| -> Option<u32> {
+        let under = |i: usize, candidate: &[bool]| -> Option<u32> {
             let (s, t) = whole[i]?;
             if s != side {
                 return None;
             }
             let mut id = leaf[t as usize];
             for _ in 0..depth_limit {
-                if candidates.contains(&id) {
+                if candidate[id as usize] {
                     return Some(id);
                 }
                 id = nodes[id as usize].parent;
@@ -98,18 +101,40 @@ pub(super) fn merge(
             }
             None
         };
+        // Vertex ids, for flags by vertex.
+        let verts = tris
+            .iter()
+            .flatten()
+            .copied()
+            .chain(
+                nodes
+                    .iter()
+                    .flat_map(|node| node.corners.map(|v| v + offsets[k])),
+            )
+            .max()
+            .map_or(0, |v| v as usize + 1);
+        let mut corner = vec![false; verts];
+        // Each round demotes the candidates in the way a level down (each
+        // round at least one, so it ends), a unit of work per triangle.
         loop {
+            work.spend(tris.len())?;
             let covering: Vec<Option<u32>> =
-                (0..tris.len()).map(|i| under(i, &candidates)).collect();
+                (0..tris.len()).map(|i| under(i, &candidate)).collect();
             // Corners of the triangles there will be.
-            let mut corners: BTreeSet<u32> = BTreeSet::new();
+            corner.fill(false);
             for (tri, c) in tris.iter().zip(&covering) {
                 if c.is_none() {
-                    corners.extend(tri);
+                    for &v in tri {
+                        corner[v as usize] = true;
+                    }
                 }
             }
-            for &c in &candidates {
-                corners.extend(nodes[c as usize].corners.map(|v| v + offsets[k]));
+            for (id, node) in nodes.iter().enumerate() {
+                if candidate[id] {
+                    for v in node.corners {
+                        corner[(v + offsets[k]) as usize] = true;
+                    }
+                }
             }
             // A candidate with a vertex inside it that stays a corner
             // outside it gives way to its children.
@@ -117,7 +142,7 @@ pub(super) fn merge(
             for (tri, c) in tris.iter().zip(&covering) {
                 let Some(c) = c else { continue };
                 let own = nodes[*c as usize].corners.map(|v| v + offsets[k]);
-                let inside = tri.iter().any(|v| !own.contains(v) && corners.contains(v));
+                let inside = tri.iter().any(|v| !own.contains(v) && corner[*v as usize]);
                 if inside {
                     demoted.insert(*c);
                 }
@@ -126,20 +151,19 @@ pub(super) fn merge(
                 break;
             }
             for c in demoted {
-                candidates.remove(&c);
-                candidates.extend(
-                    children[c as usize]
-                        .iter()
-                        .copied()
-                        .filter(|&ch| worth(ch as usize)),
-                );
+                candidate[c as usize] = false;
+                for &ch in &children[c as usize] {
+                    if worth(ch as usize) {
+                        candidate[ch as usize] = true;
+                    }
+                }
             }
         }
-        if candidates.is_empty() {
+        if !candidate.contains(&true) {
             continue;
         }
         // Replace the pieces by their candidate, in the candidates' order.
-        let covering: Vec<Option<u32>> = (0..tris.len()).map(|i| under(i, &candidates)).collect();
+        let covering: Vec<Option<u32>> = (0..tris.len()).map(|i| under(i, &candidate)).collect();
         let mut face_of: Vec<(u32, u32)> = covering
             .iter()
             .zip(faces.iter())
@@ -170,6 +194,7 @@ pub(super) fn merge(
             off.push(false);
         }
     }
+    Ok(())
 }
 
 /// Keeps the items of `list` whose flag in `keep` is set.

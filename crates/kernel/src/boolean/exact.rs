@@ -378,6 +378,12 @@ pub(super) fn det<N: Num>(a: &V3<N>, b: &V3<N>, c: &V3<N>) -> N {
 /// A predicate: a number built from its points.
 pub(super) trait Pred {
     fn eval<N: Num>(&self) -> N;
+    /// How much the value changes per unit of distance the configuration
+    /// is from its tie (a point from a line or plane, say), roughly: its
+    /// constant term within `tie` times this is a tie in [`sign_tied`].
+    fn scale(&self) -> f64 {
+        0.0
+    }
 }
 
 /// The predicate's sign as `ε → 0⁺`: that of its first non-zero
@@ -391,6 +397,32 @@ pub(super) fn sign(pred: &impl Pred) -> i8 {
     pred.eval::<Poly<Exp>>()
         .0
         .iter()
+        .map(Exp::sign)
+        .find(|&s| s != 0)
+        .unwrap_or(0)
+}
+
+/// [`sign`], taking a constant term within `tie` of the distance units
+/// ([`Pred::scale`]) as zero: the configuration within `tie` of a tie is
+/// decided as the tie, by the perturbation. The curved primitives decide
+/// heights that close as ties too, so where a curved operand meets a flat
+/// one, both see one configuration: a vertex `1e-9` off a face at the
+/// coarsest tolerance is on it for all of them, not beside it for the
+/// exact predicates and on it for the numerical ones. With `tie` zero,
+/// exactly [`sign`].
+pub(super) fn sign_tied(pred: &impl Pred, tie: f64) -> i8 {
+    let limit = tie * pred.scale();
+    if limit.is_nan() || limit <= 0.0 {
+        return sign(pred);
+    }
+    let approx = pred.eval::<Approx>();
+    if approx.v.abs() - approx.err > limit {
+        return if approx.v > 0.0 { 1 } else { -1 };
+    }
+    let poly = pred.eval::<Poly<Exp>>().0;
+    let skip = usize::from(poly.first().is_some_and(|c| c.value().abs() <= limit));
+    poly.iter()
+        .skip(skip)
         .map(Exp::sign)
         .find(|&s| s != 0)
         .unwrap_or(0)
@@ -581,5 +613,43 @@ mod tests {
                     .mul(&Exp::lit(r.x).sub(&Exp::lit(p.x))),
             );
         assert_eq!(orient2d(p, q, r), exact.sign());
+    }
+
+    /// The side of the plane `z = 0` a point is on: its height.
+    struct Height(Pt);
+
+    impl Pred for Height {
+        fn eval<N: Num>(&self) -> N {
+            self.0.v3::<N>()[2].clone()
+        }
+
+        fn scale(&self) -> f64 {
+            1.0
+        }
+    }
+
+    #[test]
+    fn ties_within_the_tie_go_by_the_perturbation() {
+        let up = Some(glam::DVec3::Z);
+        let down = Some(-glam::DVec3::Z);
+        let at = |z: f64, n| {
+            Height(Pt {
+                p: DVec3::new(0.3, 0.2, z),
+                n,
+            })
+        };
+        // A hair below the plane, moved up: exactly below, a tie within
+        // `1e-9`, the perturbation's side.
+        assert_eq!(sign(&at(-1e-12, up)), -1);
+        assert_eq!(sign_tied(&at(-1e-12, up), 1e-9), 1);
+        assert_eq!(sign_tied(&at(1e-12, down), 1e-9), -1);
+        // Past the tie, and with none, the value decides.
+        assert_eq!(sign_tied(&at(-1e-6, up), 1e-9), -1);
+        assert_eq!(sign_tied(&at(-1e-12, up), 0.0), -1);
+        // An exact tie either way.
+        assert_eq!(sign_tied(&at(0.0, up), 0.0), 1);
+        assert_eq!(sign_tied(&at(0.0, down), 1e-9), -1);
+        // A point that doesn't move: the tie stays a tie.
+        assert_eq!(sign_tied(&at(1e-12, None), 1e-9), 0);
     }
 }

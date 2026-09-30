@@ -30,7 +30,7 @@ use super::count::{self, Counts};
 use super::curved::Curved;
 use super::input::Input;
 use crate::budget::Work;
-use crate::mesh::{MIN_SPLIT, Mesh, Node, Refiner, apart};
+use crate::mesh::{MIN_SPLIT, Mesh, Node, Refiner, Surface, apart, samples};
 use crate::par::par_map;
 use crate::patch::NormalCone;
 use crate::{KernelError, MAX_PATCHES, MAX_REFINE_DEPTH, Tolerance};
@@ -143,7 +143,7 @@ pub(super) fn refined(
             let ib = Input::new(&meshes[1], tol);
             let prims = Curved::new(&ia, &ib, grow, tol);
             let counts = count::count(&ia, &ib, &prims, tol, work)?;
-            match decide(&ia, &ib, &counts, floor, work)? {
+            match decide(&ia, &ib, &counts, floor, tol.resolution(), work)? {
                 Decision::Arcs(arcs) => Err((counts, arcs)),
                 Decision::Split(split) => Ok(split),
             }
@@ -210,6 +210,7 @@ fn decide(
     b: &Input,
     counts: &Counts,
     floor: f64,
+    resolution: f64,
     work: &mut Work,
 ) -> Result<Decision, KernelError> {
     // Where each crossing is.
@@ -273,7 +274,7 @@ fn decide(
     };
     let (cones_a, cones_b) = (cones(a, 0), cones(b, 1));
     let decided = par_map(&jobs, |(pair, ends)| {
-        pair_decision(a, b, *pair, ends, [&cones_a, &cones_b], floor)
+        pair_decision(a, b, *pair, ends, [&cones_a, &cones_b], floor, resolution)
     });
     let mut arcs = Vec::new();
     let mut split = [Vec::new(), Vec::new()];
@@ -308,6 +309,7 @@ fn pair_decision(
     ends: &[End],
     cones: [&[NormalCone]; 2],
     floor: f64,
+    resolution: f64,
 ) -> Result<PairDecision, BooleanError> {
     let (pa, pb) = (&a.patches[p as usize], &b.patches[q as usize]);
     let planar = a.planar[p as usize] && b.planar[q as usize];
@@ -326,8 +328,18 @@ fn pair_decision(
                 .collect(),
         )
     };
+    if one_surface(a, p, b, q, resolution) {
+        // The perturbation moves `A` off the surface both lie on, so
+        // they don't meet: no loop, and no ends either.
+        return if ends.is_empty() {
+            Ok(PairDecision::Arcs(Vec::new()))
+        } else {
+            Err(BooleanError::Inconsistent)
+        };
+    }
     let certified = planar
         || cones[0][p as usize].apart(&cones[1][q as usize])
+        || plane_and_cylinder(a, p, b, q, cones)
         || (ends.is_empty() && apart(&pa.hull(), &pb.hull(), 0.0));
     if certified {
         match ends {
@@ -357,6 +369,62 @@ fn pair_decision(
     // At the floor: no certificate means no loop, and the ends join in
     // order round the pair.
     Ok(arcs(round_order(pa.p, ends)?))
+}
+
+/// Whether triangle `p` of `A` and `q` of `B` lie on one curved surface:
+/// their faces claim quadrics, and points sampled on each patch lie on
+/// the other's within `resolution`. Such patches are coincident, as a
+/// pin in a hole cut by the same circle, or stacked cylinders of one
+/// radius: `A`'s perturbation takes it off the surface to one side
+/// whole, and they don't meet. (Planar patches are certified as such.)
+fn one_surface(a: &Input, p: u32, b: &Input, q: u32, resolution: f64) -> bool {
+    let surface = |input: &Input, t: u32| input.mesh.faces()[input.face(t) as usize].surface;
+    let (sa, sb) = (surface(a, p), surface(b, q));
+    if !(matches!(sa, Surface::Quadric(_)) && matches!(sb, Surface::Quadric(_))) {
+        return false;
+    }
+    let on = |patch: &crate::patch::Patch, other: &Surface| {
+        samples().all(|u| other.distance(patch.eval(u)) <= resolution)
+    };
+    on(&a.patches[p as usize], &sb) && on(&b.patches[q as usize], &sa)
+}
+
+/// Whether one of triangle `p` of `A` and `q` of `B` is planar and the
+/// other lies on a cylinder (its face's quadric, the same all along a
+/// direction) with its normals within a half-space: then they meet in no
+/// closed loop. A plane cuts a cylinder in lines along it or in a conic
+/// round it, whose normals turn right round; a patch whose normals don't
+/// holds no such conic, and lines run out of it. So flush and tangent
+/// planes on walls (a box's side along a round boss) are certified as
+/// planes meeting planes are, where the normal cones meet.
+fn plane_and_cylinder(a: &Input, p: u32, b: &Input, q: u32, cones: [&[NormalCone]; 2]) -> bool {
+    let cylinder = |input: &Input, t: u32, cone: &NormalCone| {
+        let Surface::Quadric(quadric) = input.mesh.faces()[input.face(t) as usize].surface else {
+            return false;
+        };
+        cone.cos > 0.0 && along(&quadric).is_some()
+    };
+    (a.planar[p as usize] && cylinder(b, q, &cones[1][q as usize]))
+        || (b.planar[q as usize] && cylinder(a, p, &cones[0][p as usize]))
+}
+
+/// The direction a quadric doesn't change along, if it is a cylinder: the
+/// null direction of its (symmetric) matrix, along which its linear part
+/// vanishes too, to rounding.
+pub(super) fn along(q: &crate::mesh::Quadric) -> Option<DVec3> {
+    let m = (q.a + q.a.transpose()) * 0.5;
+    let rows = [m.row(0), m.row(1), m.row(2)];
+    let d = [
+        rows[0].cross(rows[1]),
+        rows[1].cross(rows[2]),
+        rows[2].cross(rows[0]),
+    ]
+    .into_iter()
+    .max_by(|x, y| x.length_squared().total_cmp(&y.length_squared()))?
+    .try_normalize()?;
+    let size = rows.iter().map(|r| r.length()).fold(0.0, f64::max);
+    let flat = |v: DVec3| v.length() <= 1e-9 * size;
+    (size > 0.0 && flat(m * d) && q.b.dot(d).abs() <= 1e-9 * (size + q.b.length())).then_some(d)
 }
 
 /// The ends of a pair of planar patches, on the line their planes meet

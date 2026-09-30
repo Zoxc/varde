@@ -27,6 +27,7 @@
 //! clipping is too slow.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use glam::DVec2;
 
@@ -60,9 +61,13 @@ impl Vert {
         self.sides == 0
     }
 
-    /// Whether it is at the same place as `other`, moves included.
+    /// Whether it is at the same place as `other`, as far as positions
+    /// tell: within [`SHORT`] (vertices of tied operands whose positions
+    /// came by different roundings are a few ulps apart, and a cut's
+    /// vertex inside the domain a moment off a side it lies on, as where
+    /// a face is flush with the other operand along its side).
     fn same(&self, other: &Vert) -> bool {
-        self.at == other.at && self.inside() == other.inside()
+        self.at.distance(other.at) <= SHORT
     }
 
     /// Whether a diagonal may not join it to `other`: both lie on one
@@ -158,6 +163,43 @@ fn corners_open(tri: [&Vert; 3], bends: &Bends) -> bool {
 /// How many rounds of Steiner points mend corners along curved sides.
 const MEND_ROUNDS: usize = 4;
 
+/// The steps the triangulations of one round of cutting faces take, a
+/// step about a vertex tested against a diagonal or a triangle looked at,
+/// counted together by the faces cut in parallel, and the most there may
+/// be: past it every triangulation stops. Whether they get past it
+/// depends only on how many steps they take all told, not on the order
+/// the threads count them in.
+pub(super) struct Meter {
+    used: AtomicU64,
+    limit: u64,
+}
+
+impl Meter {
+    pub(super) fn new(limit: u64) -> Meter {
+        Meter {
+            used: AtomicU64::new(0),
+            limit,
+        }
+    }
+
+    /// Counts `n` more steps; false once past the limit.
+    fn take(&self, n: usize) -> bool {
+        let n = u64::try_from(n).unwrap_or(u64::MAX);
+        let before = self.used.fetch_add(n, Ordering::Relaxed);
+        before.saturating_add(n) <= self.limit
+    }
+
+    /// Whether the steps went past the limit.
+    pub(super) fn over(&self) -> bool {
+        self.used.load(Ordering::Relaxed) > self.limit
+    }
+
+    /// The steps taken.
+    pub(super) fn used(&self) -> u64 {
+        self.used.load(Ordering::Relaxed)
+    }
+}
+
 /// A triangulation: its triangles, counter-clockwise, the points it
 /// added inside, and the curved sides that should be split for its
 /// corners to open (see [`triangulate`]).
@@ -182,6 +224,7 @@ pub(super) fn triangulate(
     loops: Vec<Vec<Vert>>,
     bends: &Bends,
     first_steiner: u32,
+    meter: &Meter,
 ) -> Result<Triangulation, BooleanError> {
     // A loop of two vertices (two curves between the same two points)
     // has no triangle: its curves are to be split, and until they are it
@@ -209,7 +252,7 @@ pub(super) fn triangulate(
     let mut fixed: BTreeSet<(u32, u32)> = loops.iter().flat_map(|l| sides_of(l)).collect();
     let mut bends = bends.clone();
     let mut source = BTreeMap::new();
-    let tris = triangulate_loops(loops, &mut bends, &mut fixed, &mut source)?;
+    let tris = triangulate_loops(loops, &mut bends, &mut fixed, &mut source, meter)?;
     let bends = &bends;
     let mut out = Triangulation {
         tris,
@@ -220,6 +263,9 @@ pub(super) fn triangulate(
         return Ok(out);
     }
     for _ in 0..MEND_ROUNDS {
+        if !meter.take(out.tris.len()) {
+            return Err(BooleanError::Degenerate);
+        }
         all.sort_by_key(|v| v.id);
         let at = |id: u32| all[all.binary_search_by_key(&id, |v| v.id).expect("a vertex")];
         // Triangles with a corner between two curved sides that isn't
@@ -229,7 +275,12 @@ pub(super) fn triangulate(
         let mut bad = Vec::new();
         for t in 0..out.tris.len() {
             let tri = out.tris[t].map(&at);
-            if (0..3).any(|i| tri[i].at.distance(tri[(i + 1) % 3].at) <= SHORT) {
+            // Of zero width in the layout too (its corners on a line: a
+            // band between two curves lying on each other, where
+            // operands are flush), no point or split mends it either.
+            if (0..3).any(|i| tri[i].at.distance(tri[(i + 1) % 3].at) <= SHORT)
+                || thin(tri.each_ref())
+            {
                 continue;
             }
             let closed = closed_corners(tri.each_ref(), bends);
@@ -268,7 +319,7 @@ pub(super) fn triangulate(
         all.extend(&added);
         out.steiner.extend(added);
         all.sort_by_key(|v| v.id);
-        improve(&mut out.tris, &all, &fixed, bends);
+        improve(&mut out.tris, &all, &fixed, bends, meter);
     }
     out.split.sort_unstable();
     out.split.dedup();
@@ -281,6 +332,7 @@ fn triangulate_loops(
     bends: &mut Bends,
     kept: &mut BTreeSet<(u32, u32)>,
     source: &mut BTreeMap<(u32, u32), (u32, u32)>,
+    meter: &Meter,
 ) -> Result<Vec<[u32; 3]>, BooleanError> {
     let mut outers = Vec::new();
     let mut holes = Vec::new();
@@ -310,12 +362,17 @@ fn triangulate_loops(
     }
     let mut tris = Vec::new();
     for (outer, holes) in outers.into_iter().zip(owned) {
+        // Bridging looks at every side for each vertex tried.
+        let size: usize = outer.len() + holes.iter().map(Vec::len).sum::<usize>();
+        if !meter.take(size.saturating_mul(size)) {
+            return Err(BooleanError::Degenerate);
+        }
         let poly = bridge(outer, holes);
         let from = tris.len();
         let mut fixed = sides_of(&poly);
         let verts = poly.clone();
-        clip(poly, &mut tris, bends, &mut fixed, source)?;
-        improve(&mut tris[from..], &verts, &fixed, bends);
+        clip(poly, &mut tris, bends, &mut fixed, source, meter)?;
+        improve(&mut tris[from..], &verts, &fixed, bends, meter);
         kept.extend(fixed);
     }
     Ok(tris)
@@ -465,7 +522,13 @@ const FLIPS: usize = 8;
 /// inside the circle through the near triangle's corners. Only proper
 /// triangles are touched, the new diagonal must be allowed as the ear
 /// clipping's are, and the number of flips is bounded.
-fn improve(tris: &mut [[u32; 3]], verts: &[Vert], fixed: &BTreeSet<(u32, u32)>, bends: &Bends) {
+fn improve(
+    tris: &mut [[u32; 3]],
+    verts: &[Vert],
+    fixed: &BTreeSet<(u32, u32)>,
+    bends: &Bends,
+    meter: &Meter,
+) {
     let mut by_id: Vec<Vert> = verts.to_vec();
     by_id.sort_by_key(|v| v.id);
     by_id.dedup_by_key(|v| v.id);
@@ -482,6 +545,9 @@ fn improve(tris: &mut [[u32; 3]], verts: &[Vert], fixed: &BTreeSet<(u32, u32)>, 
     let mut changed = true;
     while changed && flips > 0 {
         changed = false;
+        if !meter.take(tris.len()) {
+            return;
+        }
         for t in 0..tris.len() {
             for i in 0..3 {
                 let (a, b, c) = (tris[t][i], tris[t][(i + 1) % 3], tris[t][(i + 2) % 3]);
@@ -562,6 +628,7 @@ fn clip(
     bends: &mut Bends,
     fixed: &mut BTreeSet<(u32, u32)>,
     source: &mut BTreeMap<(u32, u32), (u32, u32)>,
+    meter: &Meter,
 ) -> Result<(), BooleanError> {
     let key = |a: u32, b: u32| (a.min(b), a.max(b));
     let n = ring.len();
@@ -571,6 +638,12 @@ fn clip(
     let mut start = 0;
     while ring.len() > 3 {
         let n = ring.len();
+        // Each ear looked at tests every vertex against it.
+        let tried = std::cell::Cell::new(0usize);
+        let ear = |ring: &[Vert], i: usize, edges: &BTreeSet<(u32, u32)>, bends: &Bends| {
+            tried.set(tried.get() + 1);
+            ear(ring, i, edges, bends)
+        };
         let best = if n <= SEARCH {
             (0..n)
                 .filter_map(|i| ear(&ring, i, &edges, bends).map(|e| (e, i)))
@@ -596,6 +669,9 @@ fn clip(
                         .min_by(|(a, i), (b, j)| a.level.cmp(&b.level).then(i.cmp(j)))
                 })
         };
+        if !meter.take(tried.get().saturating_mul(n)) {
+            return Err(BooleanError::Degenerate);
+        }
         let Some((_, i)) = best else {
             return Err(BooleanError::Degenerate);
         };
@@ -755,7 +831,7 @@ mod tests {
         let outer = loop_of(&[(0.0, 0.0), (4.0, 0.0), (4.0, 4.0), (0.0, 4.0)], 0);
         let hole = loop_of(&[(1.0, 1.0), (1.0, 3.0), (3.0, 3.0), (3.0, 1.0)], 4);
         let all: Vec<Vert> = outer.iter().chain(&hole).copied().collect();
-        let tris = triangulate(vec![outer, hole], &Bends::new(), 100)
+        let tris = triangulate(vec![outer, hole], &Bends::new(), 100, &Meter::new(u64::MAX))
             .unwrap()
             .tris;
         assert_eq!(tris.len(), 8);
@@ -780,7 +856,9 @@ mod tests {
             0,
         );
         let all = l.clone();
-        let tris = triangulate(vec![l], &Bends::new(), 100).unwrap().tris;
+        let tris = triangulate(vec![l], &Bends::new(), 100, &Meter::new(u64::MAX))
+            .unwrap()
+            .tris;
         let at = |id: u32| all[id as usize].at;
         assert_eq!(tris.len(), 4);
         assert_eq!(total_area(&tris, at), 5.0);
@@ -803,7 +881,9 @@ mod tests {
             ],
             0,
         );
-        let tris = triangulate(vec![l], &Bends::new(), 100).unwrap().tris;
+        let tris = triangulate(vec![l], &Bends::new(), 100, &Meter::new(u64::MAX))
+            .unwrap()
+            .tris;
         assert_eq!(tris.len(), 4);
     }
 
@@ -818,7 +898,7 @@ mod tests {
         bends.insert((1, 2), [DVec2::new(0.0, 1.0), -d]);
         bends.insert((2, 0), [d, DVec2::new(-0.2, 1.0)]);
         let all = l.clone();
-        let out = triangulate(vec![l], &bends, 100).unwrap();
+        let out = triangulate(vec![l], &bends, 100, &Meter::new(u64::MAX)).unwrap();
         assert_eq!(out.steiner.len(), 1, "{out:?}");
         assert!(out.split.is_empty(), "{out:?}");
         assert_eq!(out.tris.len(), 3, "{out:?}");
@@ -849,7 +929,7 @@ mod tests {
         let l = loop_of(&[(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)], 0);
         let mut bends = Bends::new();
         bends.insert((1, 2), [DVec2::new(-1.0, 1e-6), DVec2::new(0.0, -1.0)]);
-        let out = triangulate(vec![l], &bends, 100).unwrap();
+        let out = triangulate(vec![l], &bends, 100, &Meter::new(u64::MAX)).unwrap();
         assert_eq!(out.tris.len(), 2, "{out:?}");
         assert!(out.steiner.is_empty(), "{out:?}");
         assert_eq!(out.split, vec![(1, 2)]);
@@ -873,7 +953,9 @@ mod tests {
             v(4, 0.0, 0.5, 0b100),
         ];
         let all = l.clone();
-        let tris = triangulate(vec![l], &Bends::new(), 100).unwrap().tris;
+        let tris = triangulate(vec![l], &Bends::new(), 100, &Meter::new(u64::MAX))
+            .unwrap()
+            .tris;
         let at = |id: u32| all[id as usize].at;
         assert_eq!(tris.len(), 3, "{tris:?}");
         assert_eq!(total_area(&tris, at), 0.25, "{tris:?}");

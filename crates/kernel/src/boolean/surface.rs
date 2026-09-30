@@ -85,10 +85,13 @@ pub(super) fn polish(conic: &Conic3, t: f64, shape: &Shape) -> f64 {
             let (f0, f1, f2) = (side(conic.p0), conic.w * side(conic.c), side(conic.p1));
             // f0·(1−t)² + 2f1·t(1−t) + f2·t² in powers of t.
             let (a, b, c) = (f0 - 2.0 * f1 + f2, 2.0 * (f1 - f0), f0);
+            // A root a rounding off an end (a crossing at the edge's
+            // end, on the plane) is at that end.
             return quadratic_roots(a, b, c)
                 .into_iter()
                 .flatten()
-                .filter(|s| (0.0..=1.0).contains(s))
+                .filter(|s| (-1e-9..=1.0 + 1e-9).contains(s))
+                .map(at_end)
                 .min_by(|x, y| (x - t).abs().total_cmp(&(y - t).abs()))
                 .unwrap_or(t);
         }
@@ -111,10 +114,28 @@ pub(super) fn polish(conic: &Conic3, t: f64, shape: &Shape) -> f64 {
         Shape::Other => None,
     };
     match found {
-        Some(s) if (s - t).abs() <= MAX_SHIFT && (0.0..=1.0).contains(&s) => s,
+        Some(s) if (s - t).abs() <= MAX_SHIFT && (-1e-9..=1.0 + 1e-9).contains(&s) => at_end(s),
         _ => t,
     }
 }
+
+/// A parameter `s` near `[0, 1]` in it, and one within [`END`] of an end
+/// at that end: a crossing at an edge's end (where a vertex of one
+/// operand lies on the other's surface) placed at the vertex to the bit,
+/// so the vertices of the tie coincide exactly.
+fn at_end(s: f64) -> f64 {
+    if s < END {
+        0.0
+    } else if s > 1.0 - END {
+        1.0
+    } else {
+        s
+    }
+}
+
+/// How near an end of an edge (in its parameter) a crossing is put at
+/// that end.
+const END: f64 = 1e-12;
 
 /// The real roots of `a·t² + b·t + c`, by the stable formula; a linear
 /// equation where `a` vanishes.
@@ -348,6 +369,14 @@ mod tests {
             d: 5.0,
         };
         assert_eq!(polish(&arc, 0.9, &above), 0.9);
+        // At the edge's end, on the plane: the end itself, to the bit,
+        // however the root rounds.
+        let end = Shape::Plane {
+            n: DVec3::Z,
+            d: 3.0,
+        };
+        assert_eq!(polish(&arc, 0.999_999, &end), 1.0);
+        assert_eq!(arc.eval(polish(&arc, 0.999_999, &end)), arc.p1);
     }
 
     #[test]

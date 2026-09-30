@@ -843,7 +843,7 @@ fn crossings_are_where_the_perturbed_edges_cross() {
         for op in [Op::Union, Op::Difference] {
             let (ia, ib) = inputs(&a, &b, &TOL).unwrap();
             let grow = op == Op::Union;
-            let prims = flat::Flat::new(&ia, &ib, grow);
+            let prims = flat::Flat::tied(&ia, &ib, grow, 0.0);
             let mut work = Work::new(&Budget::DEFAULT);
             let counts = count::count(&ia, &ib, &prims, &TOL, &mut work).unwrap();
             let s = if grow { 1.0 } else { -1.0 };
@@ -889,11 +889,10 @@ fn crossings_are_where_the_perturbed_edges_cross() {
 #[test]
 fn turned_grid_boxes_are_right_or_refused() {
     // Flush boxes turned and moved together: every coordinate rounded, so
-    // flush faces are near ties rather than ties. Some can't be told
-    // apart from slivers and fail as invalid, but whatever comes out must
-    // have the right volume: a crossing of an edge nearly in a face's
-    // plane is placed from the exact ratio, not from two tiny rounded
-    // numbers (which put vertices off the result).
+    // flush faces are near ties rather than ties. A few fail, but
+    // whatever comes out must have the right volume: a crossing of an
+    // edge nearly in a face's plane is placed from the exact ratio, not
+    // from two tiny rounded numbers (which put vertices off the result).
     let mut rng = crate::test_rng::Rng::new(31);
     let mut right = 0;
     for i in 0..=231 {
@@ -932,10 +931,12 @@ fn turned_grid_boxes_are_right_or_refused() {
                     );
                     right += 1;
                 }
-                Err(KernelError::Invalid(_)) => {}
+                Err(KernelError::Invalid(_) | KernelError::Boolean(_)) => {}
                 Err(e) => panic!("{i} {op:?}: {e}"),
             }
         }
     }
-    assert!(right > 60, "{right}");
+    // Near ties within the tie distance are decided as the ties they
+    // stand for: 94 of the 96 work (with exact signs, 71 did).
+    assert!(right >= 90, "{right}");
 }

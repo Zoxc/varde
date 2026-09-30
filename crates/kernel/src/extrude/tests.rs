@@ -768,3 +768,24 @@ fn fine_rings_triangulate_in_time() {
     // About a second unoptimized; in the loops' order, over a minute.
     assert!(start.elapsed().as_secs() < 30, "{:?}", start.elapsed());
 }
+
+#[test]
+fn tops_are_where_they_are_asked_to_be() {
+    // `from + (to − from)` rounds away from `to` for many values: the top
+    // is placed at `to` itself, so a solid extruded from there on stands
+    // flush on it, not a rounding off.
+    let mut rng = Rng::new(17);
+    for _ in 0..50 {
+        let from = rng.range(-3.0, 3.0);
+        let to = from + rng.range(0.1, 3.0);
+        let solid = run(
+            &profile(vec![circle(DVec2::ZERO, 1.0, 0, false)]),
+            &Frame::XY,
+            from,
+            to,
+        )
+        .unwrap();
+        let zs: Vec<f64> = solid.mesh().verts().iter().map(|p| p.z).collect();
+        assert!(zs.iter().all(|&z| z == from || z == to), "{from} {to}");
+    }
+}

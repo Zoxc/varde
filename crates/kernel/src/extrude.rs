@@ -157,34 +157,34 @@ fn build(
         .map(|s| s.conic.p0)
         .chain(cap.steiner.iter().copied())
         .collect();
+    // The top placed at `to` itself, not the bottom moved by the offset:
+    // `from + (to − from)` may round away from `to`, and a solid extruded
+    // from `to` on (a boss on this one's top) would then stand a rounding
+    // off flush instead of on it.
     let bottom: Vec<DVec3> = points.iter().map(|&p| frame.point(p, from)).collect();
-    for &p in &bottom {
+    let top: Vec<DVec3> = points.iter().map(|&p| frame.point(p, to)).collect();
+    for &p in bottom.iter().chain(&top) {
         in_range(p)?;
-        in_range(p + offset)?;
     }
 
     let mut builder = MeshBuilder::new();
-    for &p in &bottom {
+    for &p in bottom.iter().chain(&top) {
         builder.vert(p);
-    }
-    for &p in &bottom {
-        builder.vert(p + offset);
     }
     let up = bottom.len() as u32;
     let name = |part| FaceName { feature, part };
-    let base = frame.origin + normal * from;
     let start = builder.face(Face {
         name: name(FacePart::StartCap),
         surface: Surface::Plane {
             n: -normal,
-            d: -normal.dot(base),
+            d: -normal.dot(frame.origin + normal * from),
         },
     });
     let end = builder.face(Face {
         name: name(FacePart::EndCap),
         surface: Surface::Plane {
             n: normal,
-            d: normal.dot(base + offset),
+            d: normal.dot(frame.origin + normal * to),
         },
     });
     let sides: Vec<u32> = chain

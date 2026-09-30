@@ -39,18 +39,24 @@
 //!
 //! **Ties.** Heights closer than a 64th of the resolution are ties,
 //! decided the way `A`'s perturbation (out of `A` for a union, in
-//! otherwise) would decide them, so flush faces behave as they do between
-//! flat operands.
+//! otherwise, then the generic translations) would decide them, so flush
+//! faces behave as they do between flat operands; so are crossings of a
+//! ray at its vertex, shadows lying along each other, crossings at an
+//! edge's end and crossings at a patch's side. The exact predicates take
+//! near ties within the same distance as ties, so both see one
+//! configuration.
 
 use std::cmp::Ordering;
 
 use glam::DVec3;
 
 use super::count::Crossing;
+use super::exact;
 use super::flat::Flat;
 use super::input::{Input, Side};
 use super::{BooleanError, Cross11, Found, Primitives, UP, segment};
 use crate::Tolerance;
+use crate::mesh::Surface;
 use crate::patch::Conic3;
 
 mod arcs;
@@ -108,12 +114,13 @@ impl<'a> Curved<'a> {
         grow: bool,
         tol: &Tolerance,
     ) -> Curved<'a> {
+        let tie = super::tie(tol);
         Curved {
             a,
             b,
-            flat: Flat::new(a, b, grow),
+            flat: Flat::tied(a, b, grow, tie),
             axes: Axes::new(),
-            tie: tol.resolution() / 64.0,
+            tie,
             resolution: tol.resolution(),
         }
     }
@@ -157,6 +164,7 @@ impl<'a> Curved<'a> {
             &self.ray_edge(side.other(), e),
             ahead,
             &self.axes,
+            self.tie,
         )
     }
 
@@ -211,9 +219,67 @@ impl<'a> Curved<'a> {
         let (_, de) = self.curve(Side::A, e).eval_deriv(t);
         let (_, dg) = self.curve(Side::B, g).eval_deriv(s);
         let m = dg.cross(de);
-        match (sign(delta.dot(m)), sign(UP.dot(m))) {
-            (0, _) | (_, 0) => self.tie_above(e, t),
-            (x, y) => x == y,
+        if m.length() <= 1e-9 * dg.length() * de.length() {
+            return self.parallel_above(e, t);
+        }
+        let up = sign(UP.dot(m));
+        if up == 0 {
+            return self.tie_above(e, t);
+        }
+        match first_sign(delta, |d| d.dot(m)) {
+            0 => self.tie_above(e, t),
+            x => x == up,
+        }
+    }
+
+    /// Whether edge `e` of `A`, at `t`, is above an edge of `B` running
+    /// along it there (their tangents parallel, the heights tied) once
+    /// `A` is perturbed: moving `e` by `δ`, the crossing slides along
+    /// the tangent `T`, and `e` rises by `(T × δ)·(T × UP) / |T × UP|²`.
+    fn parallel_above(&self, e: u32, t: f64) -> bool {
+        let (_, tangent) = self.curve(Side::A, e).eval_deriv(t);
+        let across = tangent.cross(UP);
+        match first_sign(self.perturb_along(e, t), |d| tangent.cross(d).dot(across)) {
+            0 => self.tie_above(e, t),
+            x => x > 0,
+        }
+    }
+
+    /// Whether `e` is above `g` where their shadows run along each other:
+    /// by their heights where they are nearest, or as a tie there.
+    fn along_above(&self, e: u32, g: u32) -> bool {
+        let (ce, cg) = (self.curve(Side::A, e), self.curve(Side::B, g));
+        let flat = |p: DVec3| {
+            let q = p - UP * (p.dot(UP) / UP.length_squared());
+            (q, p.dot(self.axes.up))
+        };
+        let samples = 16;
+        let mut best = (f64::INFINITY, 0.0, 0.5);
+        for i in 1..samples {
+            let t = i as f64 / samples as f64;
+            let (qe, he) = flat(ce.eval(t));
+            for k in 0..=samples {
+                let (qg, hg) = flat(cg.eval(k as f64 / samples as f64));
+                let d = (qe - qg).length_squared();
+                if d < best.0 {
+                    best = (d, he - hg, t);
+                }
+            }
+        }
+        if best.1.abs() <= self.tie {
+            self.parallel_above(e, best.2)
+        } else {
+            best.1 > 0.0
+        }
+    }
+
+    /// Whether `e` is above `g` at their shadows' crossing `c`, ties as
+    /// the perturbation decides them.
+    fn above_at(&self, e: u32, g: u32, c: &arcs::ArcCross) -> bool {
+        if c.dh.abs() <= self.tie {
+            self.crossing_above(e, c.t, g, c.s)
+        } else {
+            c.dh > 0.0
         }
     }
 
@@ -227,23 +293,48 @@ impl<'a> Curved<'a> {
             (q, p.dot(self.axes.up))
         };
         // Each end of one against samples of the other: the height of
-        // `e`'s point less `g`'s, at the pair whose shadows are nearest.
-        let mut best = (f64::INFINITY, 0.0);
+        // `e`'s point less `g`'s, at the pair whose shadows are nearest,
+        // and where along each they are.
+        let mut best = (f64::INFINITY, 0.0, 0.5, 0.5);
         let samples = 32;
         for (ends, other, e_is_end) in [(&ce, &cg, true), (&cg, &ce, false)] {
-            for p in [ends.p0, ends.p1] {
+            for (p, end) in [(ends.p0, 0.0), (ends.p1, 1.0)] {
                 let (qp, hp) = flat(p);
-                for k in 0..=samples {
-                    let (qo, ho) = flat(other.eval(k as f64 / samples as f64));
-                    let d = (qp - qo).length_squared();
-                    if d < best.0 {
-                        best = (d, if e_is_end { hp - ho } else { ho - hp });
+                let gap = |x: f64| (qp - flat(other.eval(x)).0).length_squared();
+                let k = (0..=samples)
+                    .min_by(|&i, &j| {
+                        gap(i as f64 / samples as f64).total_cmp(&gap(j as f64 / samples as f64))
+                    })
+                    .expect("samples");
+                // Narrowed down between the samples beside the nearest
+                // (a golden-section search: the gap has one low there).
+                let (mut lo, mut hi) = (
+                    (k as f64 - 1.0).max(0.0) / samples as f64,
+                    (k as f64 + 1.0).min(samples as f64) / samples as f64,
+                );
+                let r = 0.618_033_988_749_895;
+                for _ in 0..60 {
+                    let (x1, x2) = (hi - r * (hi - lo), lo + r * (hi - lo));
+                    if gap(x1) <= gap(x2) {
+                        hi = x2;
+                    } else {
+                        lo = x1;
                     }
+                }
+                let x = (lo + hi) * 0.5;
+                let d = gap(x);
+                if d < best.0 {
+                    let ho = flat(other.eval(x)).1;
+                    best = if e_is_end {
+                        (d, hp - ho, end, x)
+                    } else {
+                        (d, ho - hp, x, end)
+                    };
                 }
             }
         }
         if best.1.abs() <= self.tie {
-            self.tie_above(e, 0.5)
+            self.crossing_above(e, best.2, g, best.3)
         } else {
             best.1 > 0.0
         }
@@ -265,7 +356,7 @@ impl<'a> Curved<'a> {
             // `v` moves; the point is above if it moves down.
             Side::A => {
                 let delta = self.flat.perturb(v);
-                match sign(n.dot(delta)) {
+                match first_sign(delta, |d| n.dot(d)) {
                     0 => delta.dot(UP) < 0.0,
                     x => facing != 0 && x != facing,
                 }
@@ -274,12 +365,82 @@ impl<'a> Curved<'a> {
             Side::B => {
                 let corners = self.a.tris[f as usize];
                 let delta: DVec3 = (0..3).map(|k| self.flat.perturb(corners[k]) * u[k]).sum();
-                match sign(n.dot(delta)) {
+                match first_sign(delta, |d| n.dot(d)) {
                     0 => delta.dot(UP) > 0.0,
                     x => facing != 0 && x == facing,
                 }
             }
         }
+    }
+
+    /// Whether the crossing `h` of edge `e` of `side` (`edge`) through
+    /// face `f` of the other (`patch`), within a tie of one of the
+    /// patch's sides, is inside the patch once `A` is perturbed, or `None`
+    /// if it isn't that near a side (or is at an end of the edge, which
+    /// the count decides). Moving the edge by `δ` relative to the patch
+    /// moves the crossing by `δ − e'·(δ·n)/(e'·n)` on the surface; it
+    /// stays in if that heads into the patch across the side.
+    fn tie_inside(
+        &self,
+        side: Side,
+        e: u32,
+        f: u32,
+        edge: &Conic3,
+        patch: &crate::patch::Patch,
+        h: &solve::EdgeHit,
+    ) -> Option<bool> {
+        if !(h.t > 1e-9 && h.t < 1.0 - 1e-9) {
+            return None;
+        }
+        let k = (0..3)
+            .min_by(|&i, &j| h.u[i].total_cmp(&h.u[j]))
+            .expect("three coordinates");
+        let [_, pu, pv] = patch.eval_derivs(h.u);
+        // The domain step towards corner `k`, and how far the side is.
+        let w = DVec3::AXES[k] - h.u;
+        let into = pu * w.x + pv * w.y;
+        let away = h.u[k].abs() * into.length();
+        if away.is_nan() || away > self.tie {
+            return None;
+        }
+        let (_, de) = edge.eval_deriv(h.t);
+        let n = pu.cross(pv);
+        let across = de.dot(n);
+        if across == 0.0 {
+            return None;
+        }
+        let motion = match side {
+            Side::A => self.perturb_along(e, h.t),
+            Side::B => {
+                let corners = self.a.tris[f as usize];
+                -(0..3)
+                    .map(|i| self.flat.perturb(corners[i]) * h.u[i])
+                    .sum::<DVec3>()
+            }
+        };
+        let sign_t = if side == Side::A { 1.0 } else { -1.0 };
+        // The crossing's step in the domain, `(du0, du1)` by least squares
+        // on `P_u`, `P_v`; its `u_k` part is `du·w`-like: that of the
+        // barycentric step.
+        let (g00, g01, g11) = (pu.dot(pu), pu.dot(pv), pv.dot(pv));
+        let det = g00 * g11 - g01 * g01;
+        if det.is_nan() || det <= 0.0 {
+            return None;
+        }
+        let step_k = |d: DVec3| {
+            let dx = d - de * (d.dot(n) / across);
+            let (r0, r1) = (pu.dot(dx), pv.dot(dx));
+            let du0 = (g11 * r0 - g01 * r1) / det;
+            let du1 = (g00 * r1 - g01 * r0) / det;
+            [du0, du1, -du0 - du1][k]
+        };
+        // The perturbation order by order: `δ`, then the generic
+        // translations (the patch's own when the edge is `B`'s).
+        [motion, exact::T2 * sign_t, exact::T3 * sign_t]
+            .into_iter()
+            .map(|d| sign(step_k(d)))
+            .find(|&s| s != 0)
+            .map(|s| s > 0)
     }
 
     /// `s02` for a curved patch: the points of the patch straight above or
@@ -321,6 +482,18 @@ impl<'a> Curved<'a> {
         }
         clamp(above)
     }
+}
+
+/// The sign of `f` of `A`'s perturbation, order by order: of its first
+/// order `delta` (each vertex's own direction, as interpolated there),
+/// else of the two generic translations that follow it, as the exact
+/// predicates take them; 0 if all three are.
+fn first_sign(delta: DVec3, f: impl Fn(DVec3) -> f64) -> i8 {
+    [delta, exact::T2, exact::T3]
+        .into_iter()
+        .map(|d| sign(f(d)))
+        .find(|&s| s != 0)
+        .unwrap_or(0)
 }
 
 fn sign(x: f64) -> i8 {
@@ -374,14 +547,34 @@ impl Primitives for Curved<'_> {
         }
         let (ce, cg) = (self.curve(Side::A, e), self.curve(Side::B, g));
         let (mut a_under, mut b_under, mut found) = (0i32, 0i32, 0i32);
-        for c in arcs::cross(&ce, &cg, &self.axes) {
-            let above = if c.dh.abs() <= self.tie {
-                self.crossing_above(e, c.t, g, c.s)
+        let Some(solved) = arcs::cross(&ce, &cg, &self.axes) else {
+            // The shadows run along each other: every crossing the ray
+            // tests count goes the same way.
+            return if self.along_above(e, g) {
+                Cross11 {
+                    a_under: 0,
+                    b_under: clamp(-count),
+                }
             } else {
-                c.dh > 0.0
+                Cross11 {
+                    a_under: clamp(count),
+                    b_under: 0,
+                }
             };
+        };
+        // Crossings at an end of either edge (within a tie of it) are
+        // there or not as the perturbation has it, which the count knows
+        // and the solve doesn't: they are left to it.
+        let ends = [ce.p0, ce.p1, cg.p0, cg.p1];
+        let mut at_end = None;
+        for c in solved {
+            let at = ce.eval(c.t);
+            if ends.iter().any(|&x| x.distance(at) <= self.tie) {
+                at_end.get_or_insert(c);
+                continue;
+            }
             let sigma = i32::from(c.sigma);
-            if above {
+            if self.above_at(e, g, &c) {
                 b_under -= sigma;
             } else {
                 a_under += sigma;
@@ -390,7 +583,11 @@ impl Primitives for Curved<'_> {
         }
         let missing = count - found;
         if missing != 0 {
-            if self.above_where_closest(e, g) {
+            let above = match at_end {
+                Some(c) => self.above_at(e, g, &c),
+                None => self.above_where_closest(e, g),
+            };
+            if above {
                 b_under -= missing;
             } else {
                 a_under += missing;
@@ -404,8 +601,19 @@ impl Primitives for Curved<'_> {
 
     fn searches(&self, side: Side, e: u32, f: u32) -> bool {
         // A segment meets a plane once at most; anything else may pass
-        // through and back.
-        !(self.input(side).straight[e as usize] && self.input(side.other()).planar[f as usize])
+        // through and back, unless it lies in the patch's surface (the
+        // perturbation takes it off to one side): the search would find
+        // crossings in and out where rounding has them.
+        let other = self.input(side.other());
+        if self.input(side).straight[e as usize] && other.planar[f as usize] {
+            return false;
+        }
+        let surface = other.mesh.faces()[other.face(f) as usize].surface;
+        if matches!(surface, Surface::Free) {
+            return true;
+        }
+        let conic = self.curve(side, e);
+        !(0..=4).all(|k| surface.distance(conic.eval(f64::from(k) / 4.0)) <= self.resolution)
     }
 
     fn search_work(&self) -> usize {
@@ -425,7 +633,19 @@ impl Primitives for Curved<'_> {
         }
         let edge = self.curve(side, e);
         let patch = &self.input(side.other()).patches[f as usize];
-        let (found, closest, nodes) = solve::edge_patch(&edge, patch);
+        let (mut found, closest, nodes) = solve::edge_patch(&edge, patch);
+        // Crossings on the patch's side, within a tie of it (an edge of one
+        // operand lying on the other's where a face is flush with it):
+        // there or not as the perturbation moves the edge across the side.
+        for h in &mut found {
+            if let Some(inside) = self.tie_inside(side, e, f, &edge, patch, h) {
+                (h.out, h.u) = if inside {
+                    (0.0, h.u.max(DVec3::splat(0.0)))
+                } else {
+                    (f64::INFINITY, h.u)
+                };
+            }
+        }
         let cost = SEARCH_WORK.max(nodes.div_ceil(NODES_PER_UNIT));
         Ok((pick(&found, x, closest), cost))
     }

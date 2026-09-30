@@ -130,11 +130,12 @@ fn shadow_crossings_come_from_the_rays() {
             conic: h,
             straight: !ch,
         };
-        let derived =
-            ray(b, &rh, true, &axes) - ray(a, &rh, true, &axes) - ray(c, &re, false, &axes)
-                + ray(d, &re, false, &axes);
+        let derived = ray(b, &rh, true, &axes, 0.0)
+            - ray(a, &rh, true, &axes, 0.0)
+            - ray(c, &re, false, &axes, 0.0)
+            + ray(d, &re, false, &axes, 0.0);
         assert_eq!(derived, want, "draw {draw}: {e:?} {h:?}");
-        let solved = cross(&e, &h, &axes);
+        let solved = cross(&e, &h, &axes).unwrap();
         assert_eq!(solved.len(), found.len(), "draw {draw}");
         for (s, f) in solved.iter().zip(&found) {
             assert!(
@@ -167,8 +168,8 @@ fn a_straight_edge_rays_alike_exactly_and_not() {
         };
         for ahead in [true, false] {
             assert_eq!(
-                ray(v, &edge(true), ahead, &axes),
-                ray(v, &edge(false), ahead, &axes)
+                ray(v, &edge(true), ahead, &axes, 0.0),
+                ray(v, &edge(false), ahead, &axes, 0.0)
             );
         }
     }
@@ -311,4 +312,31 @@ fn picked_crossings_add_up_to_the_count() {
     assert_eq!(pick(&found, 0, 0.5), vec![(-1, 0.5), (1, 0.7)]);
     // Nothing found: at the closest place.
     assert_eq!(pick(&[], -2, 0.25), vec![(-1, 0.25), (-1, 0.25)]);
+}
+
+#[test]
+fn shadows_along_each_other_are_told() {
+    // An arc against itself, reversed, and against its halves: its shadow
+    // lies on the other's conic, and there are no crossings to solve for.
+    let axes = Axes::new();
+    let mut rng = Rng::new(23);
+    for _ in 0..50 {
+        let e = random_conic(&mut rng, true);
+        assert!(cross(&e, &e, &axes).is_none());
+        assert!(cross(&e, &e.reversed(), &axes).is_none());
+        for half in e.split_half().unwrap() {
+            assert!(cross(&e, &half, &axes).is_none());
+        }
+        // Moved off along the rays, it crosses as before.
+        let off = Conic3 {
+            p0: e.p0 + axes.across * 0.3,
+            c: e.c + axes.across * 0.3,
+            ..e
+        };
+        let off = Conic3 {
+            p1: e.p1 + axes.across * 0.3,
+            ..off
+        };
+        assert!(cross(&e, &off, &axes).is_some());
+    }
 }

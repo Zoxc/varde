@@ -22,6 +22,7 @@ use glam::DVec3;
 
 use super::segment;
 use super::surface::{Guide, Shape, section};
+use crate::mesh::Quadric;
 use crate::patch::{Conic3, Patch};
 
 pub(crate) mod trace;
@@ -175,6 +176,17 @@ fn exact(job: &Job) -> Option<Chain> {
     let patches = [job.p, job.q];
     let patch = patches[k];
     let [x, y] = job.ends;
+    if let Some(edge) = along_edge(job, plane, &quadric) {
+        return Some(Chain {
+            points: Vec::new(),
+            dom: [
+                vec![job.dom[0][0], job.dom[1][0]],
+                vec![job.dom[0][1], job.dom[1][1]],
+            ],
+            curves: vec![edge],
+            exact: true,
+        });
+    }
     // Near the arc: the quadric patch's point halfway between the ends in
     // its domain.
     let guide = patch.eval((job.dom[0][k] + job.dom[1][k]) * 0.5);
@@ -203,6 +215,35 @@ fn exact(job: &Job) -> Option<Chain> {
         curves,
         exact: true,
     })
+}
+
+/// An edge of either patch from one end of the arc to the other (at
+/// their very places, as where the operands are flush: a cap's rim on
+/// the other's cap), lying on the plane and the quadric: the cut runs
+/// along it, and is it, whole. Halving it as the section's arcs are
+/// would leave the cut beside the edge in pieces the edge isn't, a band
+/// of zero width no split mends.
+fn along_edge(job: &Job, n: DVec3, quadric: &Quadric) -> Option<Conic3> {
+    let [x, y] = job.ends;
+    let d = n.dot(x);
+    [job.p, job.q]
+        .iter()
+        .flat_map(|patch| (0..3).map(|i| patch.edge(i)))
+        .find_map(|e| {
+            let e = if e.p0 == x && e.p1 == y {
+                e
+            } else if e.p0 == y && e.p1 == x {
+                e.reversed()
+            } else {
+                return None;
+            };
+            let size = 1e-12 * (1.0 + x.abs().max_element().max(y.abs().max_element()));
+            let on = [0.25, 0.5, 0.75].into_iter().all(|t| {
+                let m = e.eval(t);
+                (n.dot(m) - d).abs() <= size && quadric.distance(m) <= size
+            });
+            on.then_some(e)
+        })
 }
 
 /// An end of the arc as a point on the curve, its tangent along the arc.

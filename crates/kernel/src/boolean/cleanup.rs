@@ -26,13 +26,16 @@
 //! curve where they differ, and moves the curves of the edges it moves
 //! onto the vertex kept.
 
+use std::collections::BTreeMap;
+
 use glam::DVec3;
 
 use super::assemble::Curves;
 use super::parts;
 use crate::KernelError;
 use crate::budget::Work;
-use crate::mesh::{Edge, straight};
+use crate::mesh::{Edge, Face, Surface, on_surface, straight};
+use crate::patch::Patch;
 
 /// How many rounds of collapses and flips at most.
 const ROUNDS: usize = 64;
@@ -47,6 +50,9 @@ pub(super) struct Soup {
     pub(super) tris: Vec<[u32; 3]>,
     pub(super) faces: Vec<u32>,
     pub(super) curves: Curves,
+    /// Each face's source: itself, or for a copy claiming no surface the
+    /// face it copies (the two are one face of the result, not a cut).
+    pub(super) sources: Vec<u32>,
 }
 
 struct Cleaner<'a> {
@@ -57,7 +63,12 @@ struct Cleaner<'a> {
     /// Whether each face is a plane: a triangle of one with curved sides
     /// may still be flipped into, its new inner side straight in the
     /// plane.
-    planar: &'a [bool],
+    planar: Vec<bool>,
+    /// The triangles a collapse gave another curve, which may leave their
+    /// face's surface.
+    recurved: Vec<u32>,
+    /// Each face's plane, if it is one: its unit normal and offset.
+    planes: Vec<Option<(DVec3, f64)>>,
     /// Edges no longer than this are short, triangles no higher are flat.
     small: f64,
     /// Triangles no higher than this are thin: flipped when the triangle
@@ -71,11 +82,26 @@ struct Cleaner<'a> {
 /// every triangle on its face).
 pub(super) fn clean(
     soup: &mut Soup,
-    planar: &[bool],
+    faces: &mut Vec<Face>,
     small: f64,
     thin: f64,
+    resolution: f64,
     work: &mut Work,
 ) -> Result<(), KernelError> {
+    let planar = faces
+        .iter()
+        .map(|f| matches!(f.surface, Surface::Plane { .. }))
+        .collect();
+    let planes = faces
+        .iter()
+        .map(|f| match f.surface {
+            Surface::Plane { n, d } => {
+                let len = n.length();
+                (len > 0.0 && len.is_finite()).then(|| (n / len, d / len))
+            }
+            _ => None,
+        })
+        .collect();
     let mut around = vec![Vec::new(); soup.pos.len()];
     for (t, tri) in soup.tris.iter().enumerate() {
         for &v in tri {
@@ -87,6 +113,8 @@ pub(super) fn clean(
         soup,
         around,
         planar,
+        recurved: Vec::new(),
+        planes,
         small,
         thin,
     };
@@ -105,11 +133,17 @@ pub(super) fn clean(
                 changed = true;
             }
         }
+        for t in 0..c.soup.tris.len() as u32 {
+            if c.alive[t as usize] && c.unbend(t) {
+                changed = true;
+            }
+        }
         if !changed {
             break;
         }
     }
     c.drop_empty_components();
+    c.leave_surfaces(faces, resolution);
     let Cleaner { alive, soup, .. } = c;
     let mut keep = alive.iter();
     soup.faces.retain(|_| *keep.next().expect("a flag"));
@@ -256,10 +290,11 @@ impl Cleaner<'_> {
             if self.same_curve(u, v, w) {
                 continue;
             }
+            let source = |t: u32| self.soup.sources[self.soup.faces[t as usize] as usize];
             let between = |a: u32| {
                 self.shared(a, w)
                     .iter()
-                    .any(|&s| s != t && self.soup.faces[s as usize] != self.soup.faces[t as usize])
+                    .any(|&s| s != t && source(s) != source(t))
             };
             match (between(u), between(v)) {
                 (true, false) => merged.push((w, ru)),
@@ -357,8 +392,59 @@ impl Cleaner<'_> {
                 Some(edge) => self.soup.curves.insert(k, edge),
                 None => self.soup.curves.remove(&k),
             };
+            let on: Vec<u32> = self.shared(u, w);
+            self.recurved.extend(on);
         }
         true
+    }
+
+    /// Moves the triangles a collapse gave a curve off their face's
+    /// surface (a fitted cut's, where it took the place of the face's own
+    /// curve) to a copy of the face claiming no surface, as the cuts' own
+    /// bands go, so face tags stay true claims.
+    fn leave_surfaces(&mut self, faces: &mut Vec<Face>, resolution: f64) {
+        let mut touched = std::mem::take(&mut self.recurved);
+        touched.sort_unstable();
+        touched.dedup();
+        let mut copies: BTreeMap<u32, u32> = BTreeMap::new();
+        for t in touched {
+            if !self.alive[t as usize] {
+                continue;
+            }
+            let face = self.soup.faces[t as usize];
+            let surface = faces[face as usize].surface;
+            if matches!(surface, Surface::Free) {
+                continue;
+            }
+            let tri = self.soup.tris[t as usize];
+            let side = |i: usize| {
+                let (u, v) = (tri[i], tri[(i + 1) % 3]);
+                match self.soup.curves.get(&(u.min(v), u.max(v))) {
+                    Some(e) => (e.ctrl, e.weight),
+                    None => ((self.p(u) + self.p(v)) * 0.5, 1.0),
+                }
+            };
+            let sides = [side(0), side(1), side(2)];
+            let on = Patch::new(
+                tri.map(|v| self.p(v)),
+                sides.map(|s| s.0),
+                sides.map(|s| s.1),
+            )
+            .is_ok_and(|patch| on_surface(&patch, &surface, resolution));
+            if on {
+                continue;
+            }
+            let copy = *copies.entry(face).or_insert_with(|| {
+                faces.push(Face {
+                    surface: Surface::Free,
+                    ..faces[face as usize]
+                });
+                self.soup.sources.push(self.soup.sources[face as usize]);
+                self.planar.push(false);
+                faces.len() as u32 - 1
+            });
+            self.soup.faces[t as usize] = copy;
+        }
     }
 
     /// Whether the edges from `u` and from `v` (at one place) to `w`
@@ -474,11 +560,32 @@ impl Cleaner<'_> {
             .find(|&&w| w != a && w != b)
             .expect("a third corner");
         let flat = self.straight_sides(other) || self.planar[self.soup.faces[s as usize] as usize];
-        if d == c || self.neighbours(c).contains(&d) || !flat {
+        if d == c || self.neighbours(c).contains(&d) {
             return false;
+        }
+        // Into a curved neighbour only one of zero height, whose far corner
+        // splits the neighbour's side: the new side is the neighbour's own
+        // curve from there to its far corner, so the two new triangles are
+        // exactly its pieces.
+        let inner = if flat {
+            None
+        } else if h <= self.small {
+            match self.inner_curve(other, [b, a], c) {
+                Some(edge) => Some(edge),
+                None => return false,
+            }
+        } else {
+            return false;
+        };
+        let k = (c.min(d), c.max(d));
+        if let Some(edge) = inner {
+            self.soup.curves.insert(k, edge);
         }
         let (n1, n2) = ([c, a, d], [c, d, b]);
         if !(self.open(n1) && self.open(n2)) {
+            if inner.is_some() {
+                self.soup.curves.remove(&k);
+            }
             return false;
         }
         if h > self.small
@@ -491,6 +598,9 @@ impl Cleaner<'_> {
         if self.height(other).0 > self.small
             && (self.normal(n1).dot(before) <= 0.0 || self.normal(n2).dot(before) <= 0.0)
         {
+            if inner.is_some() {
+                self.soup.curves.remove(&k);
+            }
             return false;
         }
         self.soup.tris[t as usize] = n1;
@@ -501,6 +611,105 @@ impl Cleaner<'_> {
         self.around[c as usize].push(s);
         self.around[d as usize].push(t);
         true
+    }
+
+    /// Flips a curved side of triangle `t` whose neighbour across it lies
+    /// in the same plane (two plane faces of one plane meeting along a
+    /// curve: a pin filling its hole, united with the plate), if the two
+    /// make a convex quadrilateral whose curved corners stay open: the two
+    /// new triangles cover the same region, whatever the curve between
+    /// them, and no curve between two patches in one plane is left (no
+    /// plane through it has either patch off it, so the hull rule can't
+    /// hold there, and repair split along it down to flat pieces: 100 000
+    /// patches for a plate). Both new triangles go on the lower of the
+    /// two faces, which lie in one plane: the faces merge there.
+    fn unbend(&mut self, t: u32) -> bool {
+        let tri = self.soup.tris[t as usize];
+        let Some(plane) = self.planes[self.soup.faces[t as usize] as usize] else {
+            return false;
+        };
+        for i in 0..3 {
+            let (u, v, a) = (tri[i], tri[(i + 1) % 3], tri[(i + 2) % 3]);
+            if !self.curved(u, v) {
+                continue;
+            }
+            let Some(&s) = self.shared(u, v).iter().find(|&&s| {
+                let o = self.soup.tris[s as usize];
+                s != t && (0..3).any(|j| o[j] == v && o[(j + 1) % 3] == u)
+            }) else {
+                continue;
+            };
+            let same = self.planes[self.soup.faces[s as usize] as usize].is_some_and(|(n, d)| {
+                n.dot(plane.0) > 1.0 - 1e-12 && (d - plane.1).abs() <= self.small
+            });
+            if !same {
+                continue;
+            }
+            let b = *self.soup.tris[s as usize]
+                .iter()
+                .find(|&&w| w != u && w != v)
+                .expect("a third corner");
+            if a == b || self.neighbours(a).contains(&b) {
+                continue;
+            }
+            let (n1, n2) = ([a, u, b], [a, b, v]);
+            let up = plane.0;
+            let proper = |n: [u32; 3]| {
+                let (h, _) = self.height(n);
+                h > self.small && self.normal(n).dot(up) > 0.0
+            };
+            if !(proper(n1) && proper(n2) && self.open(n1) && self.open(n2)) {
+                continue;
+            }
+            let face = self.soup.faces[t as usize].min(self.soup.faces[s as usize]);
+            self.soup.tris[t as usize] = n1;
+            self.soup.tris[s as usize] = n2;
+            self.soup.faces[t as usize] = face;
+            self.soup.faces[s as usize] = face;
+            self.around[u as usize].retain(|&x| x != s);
+            self.around[v as usize].retain(|&x| x != t);
+            self.around[a as usize].push(s);
+            self.around[b as usize].push(t);
+            self.soup.curves.remove(&(u.min(v), u.max(v)));
+            return true;
+        }
+        false
+    }
+
+    /// The curve from `c`, on the straight side `[b, a]` of the triangle
+    /// `tri` (as `tri` runs it), to the triangle's corner across that
+    /// side: its patch's own curve there, which splits it into two exact
+    /// pieces (by blossoming, as bisecting a patch does). `None` if `c`
+    /// isn't strictly inside the side or the patch can't be split there.
+    fn inner_curve(&self, tri: [u32; 3], [b, a]: [u32; 2], c: u32) -> Option<Edge> {
+        let j = (0..3).find(|&j| tri[j] == b && tri[(j + 1) % 3] == a)?;
+        let side = |i: usize| {
+            let (u, v) = (tri[i], tri[(i + 1) % 3]);
+            match self.soup.curves.get(&(u.min(v), u.max(v))) {
+                Some(e) => (e.ctrl, e.weight),
+                None => ((self.p(u) + self.p(v)) * 0.5, 1.0),
+            }
+        };
+        let sides = [side(0), side(1), side(2)];
+        let patch = Patch::new(
+            tri.map(|v| self.p(v)),
+            sides.map(|s| s.0),
+            sides.map(|s| s.1),
+        )
+        .ok()?;
+        let (pb, pa) = (self.p(b), self.p(a));
+        let along = pa - pb;
+        let t = (self.p(c) - pb).dot(along) / along.length_squared();
+        if !(t > 0.0 && t < 1.0) {
+            return None;
+        }
+        let [first, _] = patch.bisect(j, t).ok()?;
+        // The first piece runs corner `j`, the split point, the far
+        // corner: its side from the split point is the curve.
+        Some(Edge {
+            ctrl: first.c[1],
+            weight: first.w[1],
+        })
     }
 
     /// Removes the connected components that enclose no volume: no more

@@ -222,20 +222,15 @@ impl Mesh {
     }
 
     fn check_faces_of(&self, patches: &[Patch], tol: &Tolerance) -> Result<(), CheckError> {
-        use super::Surface;
         let resolution = tol.resolution();
         let tris: Vec<u32> = (0..self.tris.len() as u32).collect();
         let on = par_map(&tris, |&t| {
-            let patch = &patches[t as usize];
             let surface = self.faces[self.tris[t as usize].face as usize].surface;
-            // Written so that NaN fails.
-            let near = |x| surface.distance(x) <= resolution;
-            let ok = match surface {
-                Surface::Free => true,
-                Surface::Plane { .. } => patch.hull().into_iter().all(near),
-                Surface::Quadric(_) => samples().all(|u| near(patch.eval(u))),
-            };
-            if ok { Ok(()) } else { Err(CheckError::Face(t)) }
+            if on_surface(&patches[t as usize], &surface, resolution) {
+                Ok(())
+            } else {
+                Err(CheckError::Face(t))
+            }
         });
         on.into_iter().collect()
     }
@@ -301,6 +296,20 @@ pub(super) fn check_pair(
 
 /// Barycentric points where face tags are sampled on quadrics: a grid of
 /// 15, four steps along each edge.
+/// Whether `patch` lies on `surface` as a face tag claims (see
+/// [`Mesh::check_faces`]): a plane's patch with its six control points
+/// within `resolution` of it, a quadric's with its [`samples`].
+pub(crate) fn on_surface(patch: &Patch, surface: &super::Surface, resolution: f64) -> bool {
+    use super::Surface;
+    // Written so that NaN fails.
+    let near = |x| surface.distance(x) <= resolution;
+    match surface {
+        Surface::Free => true,
+        Surface::Plane { .. } => patch.hull().into_iter().all(near),
+        Surface::Quadric(_) => samples().all(|u| near(patch.eval(u))),
+    }
+}
+
 pub(crate) fn samples() -> impl Iterator<Item = glam::DVec3> {
     (0..=4).flat_map(|i| {
         (0..=4 - i).map(move |j| {

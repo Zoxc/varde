@@ -27,11 +27,12 @@ use super::count::{Counts, Crossing};
 use super::input::{Input, Side};
 use super::pairs::{Arc, first_ids};
 use super::surface::{Shape, polish};
+use super::triangulate::Meter;
 use super::{Op, Primitives, segment};
 use crate::budget::Work;
 use crate::mesh::{Edge, Face, Node, Surface};
 use crate::par::par_map;
-use crate::patch::Conic3;
+use crate::patch::{Conic3, Point};
 use crate::{KernelError, Tolerance};
 
 mod face;
@@ -124,7 +125,8 @@ impl Along {
         windings: &[i32],
         keep: Keep,
         prims: &impl Primitives,
-    ) -> Along {
+        resolution: f64,
+    ) -> Result<Along, KernelError> {
         let ne = input.edges.len();
         let mut start = vec![0u32; ne + 1];
         for c in crossings {
@@ -142,38 +144,55 @@ impl Along {
             while i < crossings.len() && crossings[i].edge == e {
                 i += 1;
             }
-            // By insertion, which can't fail however the order behaves.
+            let [s, _] = input.edges[e as usize];
+            let conic = input.conic(e);
+            let near = |k1: usize, k2: usize| {
+                conic.eval(params[k1]).distance(conic.eval(params[k2])) <= resolution
+            };
+            // By insertion, which can't fail however the order behaves:
+            // by the crossings' places where they are apart, else as the
+            // primitives order them (exactly, for flat operands).
             let mut here: Vec<usize> = Vec::with_capacity(i - from);
             for k in from..i {
                 let at = here
                     .iter()
                     .position(|&x| {
-                        prims.order(side, e, &crossings[k], &crossings[x])
-                            == std::cmp::Ordering::Less
+                        if near(k, x) {
+                            prims.order(side, e, &crossings[k], &crossings[x])
+                                == std::cmp::Ordering::Less
+                        } else {
+                            params[k] < params[x]
+                        }
                     })
                     .unwrap_or(here.len());
                 here.insert(at, k);
             }
-            let [s, _] = input.edges[e as usize];
+            alternate(&mut here, windings[s as usize], |k| crossings[k].x, near);
             let mut w = windings[s as usize];
             // The parameters follow the order: rounding may have swapped
-            // two that are close.
+            // two that are close. Two apart in the wrong order would put a
+            // vertex off the face it crosses.
             let mut at = 0.0f64;
+            let mut last = None;
             for &k in &here {
                 kept.push(keep.keeps(side, w));
                 w += i32::from(crossings[k].x);
+                if params[k] < at && last.is_some_and(|l| !near(l, k)) {
+                    return Err(KernelError::Boolean(super::BooleanError::Inconsistent));
+                }
                 at = at.max(params[k]);
                 at_of[k] = at;
+                last = Some(k);
                 verts.push((first_id + k as u32, at));
             }
             kept.push(keep.keeps(side, w));
         }
-        Along {
+        Ok(Along {
             start,
             verts,
             kept,
             at: at_of,
-        }
+        })
     }
 
     /// The same with the vertices `added` (by edge: ids and parameters,
@@ -278,7 +297,8 @@ pub(super) fn assemble(
             &counts.w03,
             keep,
             prims,
-        ),
+            tol.resolution(),
+        )?,
         Along::new(
             Side::B,
             b,
@@ -288,7 +308,8 @@ pub(super) fn assemble(
             &counts.w30,
             keep,
             prims,
-        ),
+            tol.resolution(),
+        )?,
     ];
     let mut cutting = Cutting {
         a,
@@ -325,7 +346,7 @@ pub(super) fn assemble(
     // it is a side of, that curve is halved (a cut's by its chain, an
     // operand's edge by a vertex added on it, which both faces beside it
     // get) and the faces are cut again.
-    let mut extras: [BTreeMap<u32, Vec<f64>>; 2] = [BTreeMap::new(), BTreeMap::new()];
+    let mut extras = cutting.flush_extras(&chain_jobs, &chains);
     let mut round = 0;
     let last = loop {
         let cut = cutting.round(&extras, &chains, work)?;
@@ -367,7 +388,7 @@ pub(super) fn assemble(
             chains[*arc] = chain;
         }
     };
-    cutting.finish(last, refinement)
+    cutting.finish(last, refinement, work)
 }
 
 /// The operands and what the counting made of them, which every round of
@@ -487,6 +508,62 @@ impl Cutting<'_> {
         }
     }
 
+    /// Vertices to add on the operands' curved edges that a cut runs
+    /// along, where a plane meets a quadric flush with an edge on both (a
+    /// cap's rim on the other's cap): at the cut's vertices, so the edge
+    /// and the cut come in the same pieces, which lie on each other and
+    /// which the clean-up merges. Halving the pieces' curves as the rounds
+    /// do would never make the two meet.
+    fn flush_extras(&self, jobs: &[chain::Job], chains: &[Chain]) -> [BTreeMap<u32, Vec<f64>>; 2] {
+        let resolution = self.tol.resolution();
+        let mut extras: [BTreeMap<u32, Vec<f64>>; 2] = [BTreeMap::new(), BTreeMap::new()];
+        for ((arc, job), chain) in self.arcs.iter().zip(jobs).zip(chains) {
+            let (plane, k) = match job.shapes {
+                [Shape::Plane { n, d }, Shape::Quadric(_)] => ((n, d), 1),
+                [Shape::Quadric(_), Shape::Plane { n, d }] => ((n, d), 0),
+                _ => continue,
+            };
+            if !chain.exact {
+                continue;
+            }
+            let side = if k == 0 { Side::A } else { Side::B };
+            let (input, _) = self.operand(side);
+            let on_plane = |x: DVec3| (plane.0.dot(x) - plane.1).abs() <= resolution;
+            let verts: Vec<DVec3> = std::iter::once(job.ends[0])
+                .chain(chain.points.iter().copied())
+                .chain(std::iter::once(job.ends[1]))
+                .collect();
+            for &(e, _) in &input.tri_edges[arc.tris[k] as usize] {
+                if lined(input, e) {
+                    continue;
+                }
+                let conic = input.conic(e);
+                if ![0.25, 0.5, 0.75]
+                    .into_iter()
+                    .all(|t| on_plane(conic.eval(t)))
+                {
+                    continue;
+                }
+                for &x in &verts {
+                    if x == conic.p0 || x == conic.p1 {
+                        continue;
+                    }
+                    if let Some(t) = param_on(&conic, x, resolution)
+                        && t > 1e-9
+                        && t < 1.0 - 1e-9
+                    {
+                        extras[k].entry(e).or_default().push(t);
+                    }
+                }
+            }
+        }
+        for list in extras.iter_mut().flat_map(|m| m.values_mut()) {
+            list.sort_by(f64::total_cmp);
+            list.dedup();
+        }
+        extras
+    }
+
     /// Where the crossing vertex `id` is in triangle `t` of `side`
     /// (barycentric): on its side at its parameter, if its edge is one of
     /// the triangle's, else where the patch inverts its position.
@@ -539,16 +616,10 @@ impl Cutting<'_> {
         let pieces = self.edge_pieces(&stops, &mut curves)?;
         let edges = self.chain_edges(chains, &mut pos, &mut curves)?;
         let (jobs, tris, faces, whole) = self.face_jobs(chains, &edges.ids, extras);
-        // Ear clipping looks at every vertex for every ear, and more for
-        // large faces.
-        work.spend(
-            jobs.iter()
-                .map(|j| {
-                    let n = j.cuts.len() + 6;
-                    n.saturating_mul(n).saturating_mul(1 + n / 64)
-                })
-                .fold(0, usize::saturating_add),
-        )?;
+        // A unit a face before, and its triangulation's steps after (up to
+        // what is left, past which they all stop).
+        work.spend(jobs.len())?;
+        let meter = Meter::new(work.left().saturating_mul(STEPS_PER_UNIT));
         let cut = par_map(&jobs, |job| {
             let (input, offset) = self.operand(job.side);
             cut_face(
@@ -559,9 +630,14 @@ impl Cutting<'_> {
                 &pos,
                 &curves,
                 &edges.fitted,
+                &meter,
                 self.tol,
             )
         });
+        if meter.over() {
+            return Err(KernelError::TooComplex);
+        }
+        work.spend(usize::try_from(meter.used() / STEPS_PER_UNIT).unwrap_or(usize::MAX))?;
         let cut: Vec<face::Cutout> = cut
             .into_iter()
             .collect::<Result<_, _>>()
@@ -801,6 +877,7 @@ impl Cutting<'_> {
         &self,
         last: Round,
         refinement: Option<&Refinement>,
+        work: &mut Work,
     ) -> Result<(Soup, Vec<Face>), KernelError> {
         let (a, b, keep) = (self.a, self.b, self.keep);
         let face_offset = a.mesh.faces().len() as u32;
@@ -853,7 +930,8 @@ impl Cutting<'_> {
                 &mut curves,
                 refinement,
                 offsets,
-            );
+                work,
+            )?;
         }
 
         if keep.flip_b {
@@ -876,8 +954,10 @@ impl Cutting<'_> {
         for (&face, _) in faces.iter().zip(&off).filter(|x| *x.1) {
             copies.entry(face).or_insert(0);
         }
+        let mut sources: Vec<u32> = (0..out_faces.len() as u32).collect();
         for (face, copy) in &mut copies {
             *copy = out_faces.len() as u32;
+            sources.push(*face);
             out_faces.push(Face {
                 surface: Surface::Free,
                 ..out_faces[*face as usize]
@@ -894,6 +974,7 @@ impl Cutting<'_> {
                 tris,
                 faces,
                 curves,
+                sources,
             },
             out_faces,
         ))
@@ -903,6 +984,37 @@ impl Cutting<'_> {
 /// Each crossing's parameter along its edge, solved again exactly where
 /// the face crossed is a plane or a quadric and the edge curved, or the
 /// face curved (a straight edge through a planar patch is exact already).
+/// Makes an edge's crossings, `order`ed along it, go in and out of the
+/// other solid in turn from its start's winding number `w`, as they do
+/// on any path through a solid: where one would take the winding number
+/// out of `0..=1`, the next one along with the sign wanted is brought
+/// forward, if it is `near` (at one place, as far as the resolution
+/// tells: a tie, whose order its positions can't give). Exact orders
+/// already alternate and stay as they are; crossings apart that don't
+/// alternate are left, and the result fails.
+fn alternate(
+    order: &mut [usize],
+    mut w: i32,
+    sign: impl Fn(usize) -> i8,
+    near: impl Fn(usize, usize) -> bool,
+) {
+    for i in 0..order.len() {
+        let x = i32::from(sign(order[i]));
+        if (0..=1).contains(&(w + x)) {
+            w += x;
+            continue;
+        }
+        let Some(j) = (i + 1..order.len()).find(|&j| i32::from(sign(order[j])) == -x) else {
+            return;
+        };
+        if !near(order[i], order[j]) {
+            return;
+        }
+        order[i..=j].rotate_right(1);
+        w -= x;
+    }
+}
+
 fn params(input: &Input, other: &Input, crossings: &[Crossing]) -> Vec<f64> {
     par_map(crossings, |c| {
         let straight = input.straight[c.edge as usize];
@@ -929,11 +1041,44 @@ fn lined(input: &Input, e: u32) -> bool {
     edge.weight == 1.0 && edge.ctrl == (s + t) * 0.5
 }
 
+/// Steps of triangulating a face (a vertex tested against a diagonal,
+/// say) to a unit of work.
+const STEPS_PER_UNIT: u64 = 16;
+
+/// Where along `conic` the point `x` is, if it lies on it within
+/// `within`: the nearest of samples, then Newton's method on the
+/// distance.
+fn param_on(conic: &Conic3, x: DVec3, within: f64) -> Option<f64> {
+    let samples = 64;
+    let mut t = (0..=samples)
+        .map(|i| f64::from(i) / f64::from(samples))
+        .min_by(|&a, &b| {
+            conic
+                .eval(a)
+                .distance_squared(x)
+                .total_cmp(&conic.eval(b).distance_squared(x))
+        })
+        .expect("samples");
+    for _ in 0..16 {
+        let (p, d) = conic.eval_deriv(t);
+        let dd = d.length_squared();
+        if dd.is_nan() || dd <= 0.0 {
+            break;
+        }
+        let step = (x - p).dot(d) / dd;
+        t = (t + step).clamp(0.0, 1.0);
+        if step.abs() <= 1e-15 {
+            break;
+        }
+    }
+    (conic.eval(t).distance(x) <= within).then_some(t)
+}
+
 /// The point of `conic` at `t`, from its blossom, so the ends of pieces
 /// split there are it to the bit.
 fn point(conic: &Conic3, t: f64) -> DVec3 {
     let h = conic.blossom(t, t);
-    h.truncate() / h.w
+    (h.truncate() / h.w).shared(&conic.hull())
 }
 
 /// The piece of `conic` from `s` to `t`, exact by blossoming.
@@ -946,7 +1091,10 @@ fn piece(conic: &Conic3, s: f64, t: f64) -> Result<Edge, KernelError> {
         conic.blossom(s, t),
         conic.blossom(t, t),
     ])?;
-    Ok(Edge::of(&part))
+    Ok(Edge {
+        ctrl: part.c.shared(&conic.hull()),
+        weight: part.w,
+    })
 }
 
 fn face_id(side: Side, input: &Input, t: u32, offset: u32) -> u32 {
@@ -971,5 +1119,37 @@ fn lerp(s: DVec3, e: DVec3, t: f64) -> DVec3 {
         s + (e - s) * t
     } else {
         e + (s - e) * (1.0 - t)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::alternate;
+
+    #[test]
+    fn crossings_at_one_place_go_in_and_out_in_turn() {
+        // Signs by index; all at one place.
+        let signs = [1i8, 1, -1, -1];
+        let run = |order: &mut [usize], w: i32| {
+            alternate(order, w, |k| signs[k], |_, _| true);
+            let mut w = w;
+            for &k in order.iter() {
+                w += i32::from(signs[k]);
+                assert!((0..=1).contains(&w), "{order:?}");
+            }
+        };
+        let mut order = [0, 1, 2, 3];
+        run(&mut order, 0);
+        assert_eq!(order, [0, 2, 1, 3]);
+        let mut order = [0, 2, 1, 3];
+        run(&mut order, 0);
+        assert_eq!(order, [0, 2, 1, 3]);
+        let mut order = [2, 0, 3, 1];
+        run(&mut order, 1);
+        assert_eq!(order, [2, 0, 3, 1]);
+        // Apart, they stay as they are, and the result will fail.
+        let mut order = [0, 1, 2, 3];
+        alternate(&mut order, 0, |k| signs[k], |_, _| false);
+        assert_eq!(order, [0, 1, 2, 3]);
     }
 }

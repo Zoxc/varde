@@ -49,6 +49,10 @@ impl Pred for Beside {
     fn eval<N: Num>(&self) -> N {
         dot(&sub(&self.c.v3(), &self.v.v3()), &dir(ACROSS))
     }
+
+    fn scale(&self) -> f64 {
+        ACROSS.length()
+    }
 }
 
 /// With `a = c − v` and `b = d − v`: `(b·RAY)(a·ACROSS) − (a·RAY)(b·ACROSS)`,
@@ -69,6 +73,12 @@ impl Pred for Ahead {
             .mul(&dot(&a, &across))
             .sub(&dot(&a, &ray).mul(&dot(&b, &across)))
     }
+
+    fn scale(&self) -> f64 {
+        // The crossing's distance along the ray times the edge's length
+        // across it, roughly.
+        RAY.length() * ACROSS.length() * (self.d.p - self.c.p).length()
+    }
 }
 
 /// Which side of the line along [`RAY`] through `v` the point `c` is on
@@ -76,12 +86,12 @@ impl Pred for Ahead {
 /// vertex of `A` and the other a vertex of `B`, so it is never zero in
 /// fact; should it be, it is +1 asked from `A`'s vertex, and so always
 /// the opposite the other way round.
-pub(crate) fn beside(v: Pt, c: Pt) -> i8 {
+pub(crate) fn beside(v: Pt, c: Pt, tie: f64) -> i8 {
     let nonzero = |s: i8| if s == 0 { 1 } else { s };
     if v.n.is_some() || c.n.is_none() {
-        nonzero(exact::sign(&Beside { v, c }))
+        nonzero(exact::sign_tied(&Beside { v, c }, tie))
     } else {
-        -nonzero(exact::sign(&Beside { v: c, c: v }))
+        -nonzero(exact::sign_tied(&Beside { v: c, c: v }, tie))
     }
 }
 
@@ -89,13 +99,13 @@ pub(crate) fn beside(v: Pt, c: Pt) -> i8 {
 /// `v` (ahead of `v` along [`RAY`] if `ahead`, behind it if not), +1
 /// where `g` crosses it going left (towards `+ACROSS`). `v` and `g`
 /// belong to different operands.
-pub(crate) fn ray(v: Pt, g: &RayEdge, ahead: bool, axes: &Axes) -> i32 {
-    let (sc, sd) = (beside(v, g.c), beside(v, g.d));
+pub(crate) fn ray(v: Pt, g: &RayEdge, ahead: bool, axes: &Axes, tie: f64) -> i32 {
+    let (sc, sd) = (beside(v, g.c, tie), beside(v, g.d, tie));
     if g.straight {
         if sc == sd {
             return 0;
         }
-        let front = exact::sign(&Ahead { v, c: g.c, d: g.d });
+        let front = exact::sign_tied(&Ahead { v, c: g.c, d: g.d }, tie);
         let hit = if ahead { front == sc } else { front == -sc };
         return if hit { i32::from(sd) } else { 0 };
     }
@@ -120,13 +130,63 @@ pub(crate) fn ray(v: Pt, g: &RayEdge, ahead: bool, axes: &Axes) -> i32 {
         // Before the k-th root the shadow is on the side `sc·(−1)^k`, and
         // it crosses to the other.
         let before = if k % 2 == 0 { sc } else { -sc };
-        let along = hom_eval(conic, s, v.p).dot(axes.along);
-        let hit = if ahead { along > 0.0 } else { along < 0.0 };
+        let h = hom_eval(conic, s, v.p);
+        let along = h.dot(axes.along);
+        let front = if along.abs() <= tie * weight(conic, s) {
+            tied_ahead(v, g, s, axes)
+        } else {
+            sign(along)
+        };
+        let hit = if ahead { front > 0 } else { front < 0 };
         if hit {
             rho -= i32::from(before);
         }
     }
     rho
+}
+
+/// Whether the crossing of `g`'s shadow at `s` with the line through `v`
+/// is ahead of `v` (+1) or behind it (−1) once the operands are
+/// perturbed, where it is at `v` itself as far as rounding tells (`v` an
+/// end of `g`, or on it). The relative motion of `v` from `g`'s point
+/// there is `δ`, and with `T` the curve's tangent the crossing moves to
+/// `ε·(δ_across·T_along / T_across − δ_along)` along the ray: `δ` of the
+/// first order (each vertex's own direction, interpolated along `g`),
+/// else the generic translations after it.
+fn tied_ahead(v: Pt, g: &RayEdge, s: f64, axes: &Axes) -> i8 {
+    let (_, tangent) = g.conic.eval_deriv(s);
+    let (ta, tb) = (tangent.dot(axes.along), tangent.dot(axes.across));
+    // The motion of `v` less that of `g`'s point: one of them is `A`'s.
+    let (mine, sign_t) = match (v.n, g.c.n, g.d.n) {
+        (Some(n), _, _) => (n, 1.0),
+        (None, Some(c), Some(d)) => (-(c * (1.0 - s) + d * s), -1.0),
+        _ => return 1,
+    };
+    let e = |d: DVec3| {
+        let (da, db) = (d.dot(axes.along), d.dot(axes.across));
+        (db * ta - da * tb) * tb
+    };
+    [mine, exact::T2 * sign_t, exact::T3 * sign_t]
+        .into_iter()
+        .map(|d| sign(e(d)))
+        .find(|&x| x != 0)
+        .unwrap_or(1)
+}
+
+fn sign(x: f64) -> i8 {
+    if x > 0.0 {
+        1
+    } else if x < 0.0 {
+        -1
+    } else {
+        0
+    }
+}
+
+/// The weight of `conic`'s homogeneous point at `s` (positive).
+fn weight(conic: &Conic3, s: f64) -> f64 {
+    let r = 1.0 - s;
+    r * r + 2.0 * s * r * conic.w + s * s
 }
 
 /// The point of `conic` at `s` less `origin`, times the curve's positive

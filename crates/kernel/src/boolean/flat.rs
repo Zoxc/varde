@@ -11,6 +11,14 @@
 //! so every decision below is true of it, and the counting identities
 //! hold without exception. The positions returned are those of the
 //! unperturbed operands.
+//!
+//! Configurations within a tie distance of a tie (faces flush in exact
+//! arithmetic, turned and moved so every coordinate rounds) are decided
+//! as the ties they stand for ([`exact::sign_tied`]), as the curved
+//! primitives decide heights that close: the decisions are then those of
+//! the operands moved by less than that distance, and in the rare case
+//! they don't fit one configuration, the boolean fails rather than
+//! giving a wrong result.
 
 use std::cmp::Ordering;
 
@@ -26,17 +34,28 @@ pub(super) struct Flat<'a> {
     b: &'a Input<'a>,
     /// Each vertex of `A`'s first perturbation, `s·n_v`.
     perturb: Vec<DVec3>,
+    /// Distances this close to a tie are decided as it
+    /// ([`exact::sign_tied`]): 0 between flat operands, which are exact,
+    /// and the curved primitives' tie beside curved ones.
+    tie: f64,
 }
 
 impl<'a> Flat<'a> {
-    /// `grow`: whether `A` grows (a union) or shrinks.
-    pub(super) fn new(a: &'a Input<'a>, b: &'a Input<'a>, grow: bool) -> Flat<'a> {
+    /// `grow`: whether `A` grows (a union) or shrinks; configurations
+    /// within `tie` of a tie are decided as the tie (0: exactly).
+    pub(super) fn tied(a: &'a Input<'a>, b: &'a Input<'a>, grow: bool, tie: f64) -> Flat<'a> {
         let s = if grow { 1.0 } else { -1.0 };
         Flat {
             a,
             b,
             perturb: a.vertex_normals().into_iter().map(|n| n * s).collect(),
+            tie,
         }
+    }
+
+    /// The sign of a deciding predicate, ties as [`Self::tie`] says.
+    fn sign(&self, pred: &impl Pred) -> i8 {
+        exact::sign_tied(pred, self.tie)
     }
 
     fn input(&self, side: Side) -> &Input<'a> {
@@ -77,14 +96,14 @@ impl<'a> Flat<'a> {
     pub(super) fn plane_above(&self, side: Side, v: u32, f: u32) -> Option<bool> {
         let x = self.pt(side, v);
         let t = self.tri(side.other(), f);
-        let facing = exact::sign(&Orient {
+        let facing = self.sign(&Orient {
             p: t[0],
             q: t[1],
             r: t[2],
         });
         // The ray `x + s·UP` meets the plane at `s = (t0 − x)·n / UP·n`,
         // and `UP·n` has the sign `facing`.
-        (facing != 0).then(|| exact::sign(&Reach { x0: x, t }) == facing)
+        (facing != 0).then(|| self.sign(&Reach { x0: x, t }) == facing)
     }
 
     /// Whether edge `e` of `A` is above edge `g` of `B` where the lines
@@ -96,7 +115,7 @@ impl<'a> Flat<'a> {
         let [c, d] = self.edge(Side::B, g);
         // The point of `e` is `λ` above that of `g` along `UP`, with
         // `λ = det[a − c, g, e] / det[g, e, UP]`.
-        let h = match exact::sign(&Height { a, b, c, d }) {
+        let h = match self.sign(&Height { a, b, c, d }) {
             0 => 1,
             h => h,
         };
@@ -138,7 +157,7 @@ impl Primitives for Flat<'_> {
     fn s02(&self, side: Side, v: u32, f: u32) -> i8 {
         let x = self.pt(side, v);
         let t = self.tri(side.other(), f);
-        let facing = exact::sign(&Orient {
+        let facing = self.sign(&Orient {
             p: t[0],
             q: t[1],
             r: t[2],
@@ -148,7 +167,7 @@ impl Primitives for Flat<'_> {
             return 0;
         }
         for i in 0..3 {
-            let o = exact::sign(&Orient {
+            let o = self.sign(&Orient {
                 p: t[i],
                 q: t[(i + 1) % 3],
                 r: x,
@@ -159,7 +178,7 @@ impl Primitives for Flat<'_> {
         }
         // The ray `x + s·UP` meets the plane at `s = (t0 − x)·n / UP·n`,
         // and `UP·n` has the sign `facing`.
-        if exact::sign(&Reach { x0: x, t }) != facing {
+        if self.sign(&Reach { x0: x, t }) != facing {
             return 0;
         }
         facing
@@ -168,13 +187,13 @@ impl Primitives for Flat<'_> {
     fn s11(&self, e: u32, g: u32) -> Cross11 {
         let [a, b] = self.edge(Side::A, e);
         let [c, d] = self.edge(Side::B, g);
-        let oc = exact::sign(&Orient { p: a, q: b, r: c });
-        let od = exact::sign(&Orient { p: a, q: b, r: d });
+        let oc = self.sign(&Orient { p: a, q: b, r: c });
+        let od = self.sign(&Orient { p: a, q: b, r: d });
         if oc == od || oc == 0 || od == 0 {
             return Cross11::default();
         }
-        let oa = exact::sign(&Orient { p: c, q: d, r: a });
-        let ob = exact::sign(&Orient { p: c, q: d, r: b });
+        let oa = self.sign(&Orient { p: c, q: d, r: a });
+        let ob = self.sign(&Orient { p: c, q: d, r: b });
         if oa == ob || oa == 0 || ob == 0 {
             return Cross11::default();
         }
@@ -236,6 +255,10 @@ impl Pred for Orient {
         let p = self.p.v3::<N>();
         det(&sub(&self.q.v3(), &p), &sub(&self.r.v3(), &p), &dir(UP))
     }
+
+    fn scale(&self) -> f64 {
+        UP.length() * (self.q.p - self.p.p).length()
+    }
 }
 
 /// The normal `(t1 − t0) × (t2 − t0)` of a triangle.
@@ -257,6 +280,12 @@ impl Pred for Height {
         let (a, c) = (self.a.v3::<N>(), self.c.v3::<N>());
         det(&sub(&a, &c), &sub(&self.d.v3(), &c), &sub(&self.b.v3(), &a))
     }
+
+    fn scale(&self) -> f64 {
+        // `λ·det[g, e, UP]`, `λ` the height.
+        let (g, e) = (self.d.p - self.c.p, self.b.p - self.a.p);
+        g.cross(e).dot(UP).abs()
+    }
 }
 
 /// `(t0 − x0)·n`: positive when `x0` is behind the triangle's plane, and
@@ -270,6 +299,11 @@ struct Reach {
 impl Pred for Reach {
     fn eval<N: Num>(&self) -> N {
         dot(&sub(&self.t[0].v3(), &self.x0.v3()), &normal(&self.t))
+    }
+
+    fn scale(&self) -> f64 {
+        let [t0, t1, t2] = self.t.map(|t| t.p);
+        (t1 - t0).cross(t2 - t0).length()
     }
 }
 

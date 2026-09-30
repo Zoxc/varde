@@ -92,7 +92,10 @@ pub const MAX_REFINE_DEPTH: u32 = 24;
 pub const MAX_TRACE_STEPS: usize = 4096;
 
 /// The most work one operation may do, in the units of [`Budget`]: about
-/// one patch or pair of patches tested or split each, which repair does
-/// in about half a microsecond on one thread. So an operation stops after
-/// about half a minute of work at most.
-pub const MAX_WORK: u64 = 1 << 26;
+/// one patch or pair of patches tested or split each, about half a
+/// microsecond on one thread (0.2 to 0.7 µs measured across booleans that
+/// work and fail). So an operation stops after about two seconds of work
+/// at most on one thread, less on several. The heaviest booleans
+/// measured, a plate with 144 holes joined to a boss across them or two
+/// flat tori of 36 864 patches each, take about 2 million units.
+pub const MAX_WORK: u64 = 1 << 22;

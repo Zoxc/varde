@@ -128,11 +128,18 @@ impl Patch {
     /// [`Conic3::from_hom`] does, for a weight out of bounds.
     pub(crate) fn curve(&self, a: DVec3, b: DVec3) -> Result<Conic3, PatchError> {
         let net = self.net();
-        Conic3::from_hom([
+        let hull = self.hull();
+        let c = Conic3::from_hom([
             blossom(&net, a, a),
             blossom(&net, a, b),
             blossom(&net, b, b),
-        ])
+        ])?;
+        Ok(Conic3 {
+            p0: c.p0.shared(&hull),
+            c: c.c.shared(&hull),
+            p1: c.p1.shared(&hull),
+            ..c
+        })
     }
 
     /// The denominator at `u`: the weight of the homogeneous point there.
@@ -144,7 +151,7 @@ impl Patch {
     /// The point at barycentric `u`.
     pub fn eval(&self, u: DVec3) -> DVec3 {
         let x = blossom(&self.net(), u, u);
-        x.truncate() / x.w
+        (x.truncate() / x.w).shared(&self.hull())
     }
 
     /// The point at barycentric `u`, and its derivatives along `u0` and
@@ -199,9 +206,13 @@ impl Patch {
             standard_edge::<DVec3>(h, blossom(&net, a, a).w, blossom(&net, b, b).w)
         };
         // Edges between the midpoints: 01–12, 12–20 and 20–01.
-        let ea = inner(m01, m12)?;
-        let eb = inner(m12, m20)?;
-        let ec = inner(m20, m01)?;
+        // Their control points keep the coordinates the patch's share
+        // (see `Point::shared`), as the halves of its sides do.
+        let hull = self.hull();
+        let keep = |(c, w): (DVec3, f64)| (c.shared(&hull), w);
+        let ea = keep(inner(m01, m12)?);
+        let eb = keep(inner(m12, m20)?);
+        let ec = keep(inner(m20, m01)?);
         let m = [halves[0][0].p1, halves[1][0].p1, halves[2][0].p1];
         let side = |c: &Conic3| (c.c, c.w);
         let [p0, p1, p2] = self.p;
@@ -260,7 +271,8 @@ impl Patch {
         let net = self.net();
         let [a, b, o] = [ia, ib, io].map(|i| DVec3::AXES[i]);
         let md = a * (1.0 - t) + b * t;
-        let inner = standard_edge::<DVec3>(blossom(&net, md, o), blossom(&net, md, md).w, 1.0)?;
+        let (c, w) = standard_edge::<DVec3>(blossom(&net, md, o), blossom(&net, md, md).w, 1.0)?;
+        let inner = (c.shared(&self.hull()), w);
         let m = halves[0].p1;
         let side = |c: &Conic3| (c.c, c.w);
         Ok([

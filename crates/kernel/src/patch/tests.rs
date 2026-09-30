@@ -1125,3 +1125,41 @@ fn strips_refuse_offsets_that_stay_flat() {
     assert!(cylinder_strip(&arc, DVec3::Z).is_ok());
     assert!(cylinder_strip(&arc, DVec3::new(1.0, 0.0, 1e-6)).is_ok());
 }
+
+#[test]
+fn pieces_keep_the_coordinates_their_curve_shares() {
+    // Arcs in planes square to the axes, at coordinates rounding would
+    // move: their halves, points and a patch's inner edges stay in the
+    // plane to the bit, as a cap refined or cut must.
+    let mut rng = Rng::new(91);
+    for _ in 0..200 {
+        let z = rng.range(-100.0, 100.0);
+        let (c, r) = (
+            DVec2::new(rng.range(-5.0, 5.0), rng.range(-5.0, 5.0)),
+            rng.range(0.1, 3.0),
+        );
+        let a = rng.range(0.0, 6.0);
+        let arc = Conic2::arc(c, r, a, rng.range(0.2, 1.5)).unwrap();
+        let lift = |p: DVec2| DVec3::new(p.x, p.y, z);
+        let arc3 = Conic3::new(lift(arc.p0), lift(arc.c), arc.w, lift(arc.p1)).unwrap();
+        for half in arc3
+            .split_half()
+            .unwrap()
+            .into_iter()
+            .chain(arc3.split(rng.range(0.1, 0.9)).unwrap())
+        {
+            assert!(half.hull().iter().all(|p| p.z == z));
+        }
+        assert_eq!(arc3.eval(rng.unit()).z, z);
+        let patch = Patch::new(
+            [arc3.p0, arc3.p1, lift(c)],
+            [arc3.c, (arc3.p1 + lift(c)) * 0.5, (lift(c) + arc3.p0) * 0.5],
+            [arc3.w, 1.0, 1.0],
+        )
+        .unwrap();
+        for child in patch.split4().unwrap() {
+            assert!(child.hull().iter().all(|p| p.z == z));
+        }
+        assert_eq!(patch.eval(rng.bary()).z, z);
+    }
+}
