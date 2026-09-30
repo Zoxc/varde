@@ -327,16 +327,21 @@ fn a_saddle_pairs_its_ends_by_the_side_of_its_saddle_point() {
     }
 }
 
-#[test]
-fn tangent_cylinders_are_decided() {
-    // Side by side, touching along a line: decided at the size floor or
-    // once the pieces there are flat, within the budget, the same way
-    // every time. (At the coarsest tolerance, to keep the test quick:
-    // pieces are flat within it sooner.)
+/// Two cylinders side by side, touching along a line, at the coarsest
+/// tolerance (to keep the tests quick: pieces are flat within it sooner).
+fn tangent_cylinders() -> (Solid, Solid, Tolerance) {
     let tol = Tolerance::new(Tolerance::MAX_FIT).unwrap();
     let (s, c) = (0.3f64.sin(), 0.3f64.cos());
     let a = Solid::cylinder(DVec3::ZERO, 1.0, 2.0, 2, &tol).unwrap();
-    let b = Solid::cylinder(DVec3::new(2.0 * c, 2.0 * s, 0.5), 1.0, 1.0, 2, &tol).unwrap();
+    let b = Solid::cylinder(DVec3::new(2.0 * c, 2.0 * s, 0.5), 1.0, 0.25, 2, &tol).unwrap();
+    (a, b, tol)
+}
+
+#[test]
+fn tangent_cylinders_are_decided() {
+    // Decided at the size floor or once the pieces along the tangency
+    // are flat, within the budget, the same way every time.
+    let (a, b, tol) = tangent_cylinders();
     let r = assert_deterministic(|| {
         refined(
             a.mesh(),
@@ -348,8 +353,13 @@ fn tangent_cylinders_are_decided() {
         .map(|r| (r.counts.x12, r.counts.x21, r.arcs))
     });
     r.unwrap();
+}
+
+#[test]
+fn tangent_cylinders_touch_or_not() {
     // Whether a tangency touches is a tie no crossing shows; the fixed
     // rules take it as not meeting (flat solids touching do meet).
+    let (a, b, tol) = tangent_cylinders();
     touches(&a, &b, &tol, &Budget::DEFAULT).unwrap();
 }
 

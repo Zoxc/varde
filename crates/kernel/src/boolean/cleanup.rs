@@ -16,10 +16,15 @@
 //! decides that two separate vertices are one: a collapse removes an
 //! edge, keeping the surface a closed manifold.
 //!
-//! Curved edges (those with a record in [`Soup::curves`]) are never
-//! collapsed or flipped, nor are triangles with one: the clean-up is
-//! about the flat triangles flush planar faces leave. A collapse moves the
-//! curves of the edges it moves onto the vertex kept.
+//! Curved edges (those whose record in [`Soup::curves`] bends by more
+//! than the short length) are never collapsed or flipped: the clean-up
+//! is about the flat triangles flush planar faces leave. Only a triangle
+//! of straight sides is flipped, into one across of straight sides or on
+//! a plane face (whose new inner side is straight in the plane), and only
+//! if the new triangles' corners along curves stay open. A collapse
+//! merges the two sides of each triangle it takes out, keeping a cut's
+//! curve where they differ, and moves the curves of the edges it moves
+//! onto the vertex kept.
 
 use glam::DVec3;
 

@@ -27,7 +27,7 @@ use super::count::{Counts, Crossing};
 use super::input::{Input, Side};
 use super::pairs::{Arc, first_ids};
 use super::surface::{Shape, polish};
-use super::{Op, Primitives};
+use super::{Op, Primitives, segment};
 use crate::budget::Work;
 use crate::mesh::{Edge, Face, Node, Surface};
 use crate::par::par_map;
@@ -259,7 +259,6 @@ pub(super) fn assemble(
     work: &mut Work,
 ) -> Result<(Soup, Vec<Face>), KernelError> {
     let keep = Keep::of(op);
-    let nva = a.mesh.verts().len() as u32;
     let [first12, first21] = first_ids(a, b, counts);
 
     // Ordering the crossings along each edge compares every two.
@@ -291,89 +290,21 @@ pub(super) fn assemble(
             prims,
         ),
     ];
-    // Their positions, from the parameters as ordered along the edges,
-    // and exactly on the face crossed where it is square to an axis (so
-    // flush faces of results fed on stay flush).
-    let mut base: Vec<DVec3> = a
-        .mesh
-        .verts()
-        .iter()
-        .chain(b.mesh.verts())
-        .copied()
-        .collect();
-    base.resize(first21 as usize + counts.x21.len(), DVec3::ZERO);
-    for (input, other, along, crossings, first) in [
-        (a, b, &along[0], &counts.x12, first12),
-        (b, a, &along[1], &counts.x21, first21),
-    ] {
-        for e in 0..input.edges.len() as u32 {
-            let [s, en] = input.edges[e as usize];
-            let snap = |mut p: DVec3, id: u32| {
-                let [c0, c1, c2] = other.corners(crossings[(id - first) as usize].face);
-                for k in 0..3 {
-                    if c0[k] == c1[k] && c0[k] == c2[k] {
-                        p[k] = c0[k];
-                    }
-                }
-                p
-            };
-            let conic = input.conic(e);
-            let [ps, pe] = [s, en].map(|v| input.pos(v));
-            for &(id, t) in along.of(e).0 {
-                let p = if lined(input, e) {
-                    lerp(ps, pe, t)
-                } else {
-                    point(&conic, t)
-                };
-                base[id as usize] = snap(p, id);
-            }
-        }
-    }
+    let mut cutting = Cutting {
+        a,
+        b,
+        counts,
+        arcs,
+        keep,
+        tol,
+        first: [first12, first21],
+        along,
+        base: Vec::new(),
+    };
+    cutting.base = cutting.positions();
 
     // Each arc's chain.
-    let chain_jobs: Vec<chain::Job> = arcs
-        .iter()
-        .map(|arc| {
-            let [p, q] = arc.tris;
-            let ends = [arc.plus, arc.minus];
-            let dom = ends.map(|id| {
-                [
-                    place(
-                        id,
-                        Side::A,
-                        p,
-                        a,
-                        b,
-                        counts,
-                        &along,
-                        &base,
-                        [first12, first21],
-                    ),
-                    place(
-                        id,
-                        Side::B,
-                        q,
-                        a,
-                        b,
-                        counts,
-                        &along,
-                        &base,
-                        [first12, first21],
-                    ),
-                ]
-            });
-            chain::Job {
-                p: &a.patches[p as usize],
-                q: &b.patches[q as usize],
-                shapes: [Shape::of(a, p), Shape::of(b, q)],
-                planar: [a.planar[p as usize], b.planar[q as usize]],
-                ends: ends.map(|id| base[id as usize]),
-                dom,
-                on_p: ends.map(|id| id < first21),
-                flip_q: keep.flip_b,
-            }
-        })
-        .collect();
+    let chain_jobs: Vec<chain::Job> = arcs.iter().map(|arc| cutting.chain_job(arc)).collect();
     work.spend(
         chain_jobs
             .iter()
@@ -387,14 +318,7 @@ pub(super) fn assemble(
             .sum(),
     )?;
     let mut chains: Vec<Chain> = par_map(&chain_jobs, |job| chain::chain(job, tol.fit()));
-    let face_offset = a.mesh.faces().len() as u32;
-    // Each operand, and where its vertices start.
-    let operand = |side| match side {
-        Side::A => (a, 0),
-        Side::B => (b, nva),
-    };
-    let inputs = [a, b];
-    let windings = [&counts.w03, &counts.w30];
+    work.spend(chains.iter().map(|c| c.curves.len()).sum())?;
 
     // The faces, in rounds: where a triangle along a cut strays from its
     // patch, or a curve on a face's boundary bulges out of the triangle
@@ -403,29 +327,309 @@ pub(super) fn assemble(
     // get) and the faces are cut again.
     let mut extras: [BTreeMap<u32, Vec<f64>>; 2] = [BTreeMap::new(), BTreeMap::new()];
     let mut round = 0;
-    let (mut pos, mut curves, jobs, cut, mut tris, mut faces, mut whole) = loop {
-        let mut pos = base.clone();
+    let last = loop {
+        let cut = cutting.round(&extras, &chains, work)?;
+        let done = cut.split.is_empty() && cut.more.iter().all(BTreeMap::is_empty);
+        if done || round >= SPLIT_ROUNDS {
+            break cut;
+        }
+        round += 1;
+        work.spend(
+            cut.split.values().map(Vec::len).sum::<usize>()
+                + cut
+                    .more
+                    .iter()
+                    .flat_map(|m| m.values())
+                    .map(Vec::len)
+                    .sum::<usize>(),
+        )?;
+        for (k, more) in cut.more.into_iter().enumerate() {
+            for (e, ts) in more {
+                let list = extras[k].entry(e).or_default();
+                list.extend(ts);
+                list.sort_by(f64::total_cmp);
+                list.dedup();
+            }
+        }
+        let wanted: Vec<(usize, Vec<usize>)> = cut
+            .split
+            .into_iter()
+            .map(|(arc, mut segs)| {
+                segs.sort_unstable();
+                segs.dedup();
+                (arc, segs)
+            })
+            .collect();
+        let halved = par_map(&wanted, |(arc, segs)| {
+            chains[*arc].split(&chain_jobs[*arc], segs, tol.fit())
+        });
+        for ((arc, _), chain) in wanted.iter().zip(halved) {
+            chains[*arc] = chain;
+        }
+    };
+    cutting.finish(last, refinement)
+}
+
+/// The operands and what the counting made of them, which every round of
+/// cutting the faces reads.
+struct Cutting<'a> {
+    a: &'a Input<'a>,
+    b: &'a Input<'a>,
+    counts: &'a Counts,
+    arcs: &'a [Arc],
+    keep: Keep,
+    tol: &'a Tolerance,
+    /// Where the crossings of `A`'s edges' ids start, then `B`'s.
+    first: [u32; 2],
+    /// Each operand's crossings along its edges.
+    along: [Along; 2],
+    /// The operands' vertices and the crossings, by id.
+    base: Vec<DVec3>,
+}
+
+/// One round of cutting the faces: the vertices and curves so far, the
+/// faces cut and what each gave, the faces kept whole, and the curves the
+/// round asks to be halved.
+struct Round {
+    pos: Vec<DVec3>,
+    curves: Curves,
+    jobs: Vec<Cut>,
+    cut: Vec<face::Cutout>,
+    /// The triangles of the faces kept whole, their faces, and which
+    /// triangle of which operand each is (for [`merge`]).
+    tris: Vec<[u32; 3]>,
+    faces: Vec<u32>,
+    whole: Vec<Option<(Side, u32)>>,
+    /// The chain curves to halve, by arc.
+    split: BTreeMap<usize, Vec<usize>>,
+    /// The parameters on the operands' edges to add vertices at.
+    more: [BTreeMap<u32, Vec<f64>>; 2],
+}
+
+/// The cuts' vertices and edges, as a round numbers them.
+struct ChainEdges {
+    /// Every vertex of each arc's chain, its ends included, by arc.
+    ids: Vec<Vec<u32>>,
+    /// The arc and index along it of each chain edge.
+    owner: BTreeMap<(u32, u32), (usize, usize)>,
+    /// The chain edges that were fitted.
+    fitted: BTreeSet<(u32, u32)>,
+}
+
+impl Cutting<'_> {
+    /// Each operand, and where its vertices start.
+    fn operand(&self, side: Side) -> (&Input<'_>, u32) {
+        match side {
+            Side::A => (self.a, 0),
+            Side::B => (self.b, self.a.mesh.verts().len() as u32),
+        }
+    }
+
+    /// Where the operands' vertices and the crossings are: the crossings
+    /// from their parameters as ordered along the edges, and exactly on
+    /// the face crossed where it is square to an axis (so flush faces of
+    /// results fed on stay flush).
+    fn positions(&self) -> Vec<DVec3> {
+        let (a, b, counts) = (self.a, self.b, self.counts);
+        let mut base: Vec<DVec3> = a
+            .mesh
+            .verts()
+            .iter()
+            .chain(b.mesh.verts())
+            .copied()
+            .collect();
+        base.resize(self.first[1] as usize + counts.x21.len(), DVec3::ZERO);
+        for (input, other, along, crossings, first) in [
+            (a, b, &self.along[0], &counts.x12, self.first[0]),
+            (b, a, &self.along[1], &counts.x21, self.first[1]),
+        ] {
+            for e in 0..input.edges.len() as u32 {
+                let [s, en] = input.edges[e as usize];
+                let snap = |mut p: DVec3, id: u32| {
+                    let [c0, c1, c2] = other.corners(crossings[(id - first) as usize].face);
+                    for k in 0..3 {
+                        if c0[k] == c1[k] && c0[k] == c2[k] {
+                            p[k] = c0[k];
+                        }
+                    }
+                    p
+                };
+                let conic = input.conic(e);
+                let [ps, pe] = [s, en].map(|v| input.pos(v));
+                for &(id, t) in along.of(e).0 {
+                    let p = if lined(input, e) {
+                        lerp(ps, pe, t)
+                    } else {
+                        point(&conic, t)
+                    };
+                    base[id as usize] = snap(p, id);
+                }
+            }
+        }
+        base
+    }
+
+    /// What tracing and fitting `arc`'s chain needs.
+    fn chain_job(&self, arc: &Arc) -> chain::Job<'_> {
+        let (a, b) = (self.a, self.b);
+        let [p, q] = arc.tris;
+        let ends = [arc.plus, arc.minus];
+        let dom = ends.map(|id| [self.place(id, Side::A, p), self.place(id, Side::B, q)]);
+        chain::Job {
+            p: &a.patches[p as usize],
+            q: &b.patches[q as usize],
+            shapes: [Shape::of(a, p), Shape::of(b, q)],
+            planar: [a.planar[p as usize], b.planar[q as usize]],
+            ends: ends.map(|id| self.base[id as usize]),
+            dom,
+            on_p: ends.map(|id| id < self.first[1]),
+            flip_q: self.keep.flip_b,
+        }
+    }
+
+    /// Where the crossing vertex `id` is in triangle `t` of `side`
+    /// (barycentric): on its side at its parameter, if its edge is one of
+    /// the triangle's, else where the patch inverts its position.
+    fn place(&self, id: u32, side: Side, t: u32) -> DVec3 {
+        let [first12, first21] = self.first;
+        let (own, k) = if id < first21 {
+            (Side::A, (id - first12) as usize)
+        } else {
+            (Side::B, (id - first21) as usize)
+        };
+        let (input, crossing) = match side {
+            Side::A => (self.a, &self.counts.x12),
+            Side::B => (self.b, &self.counts.x21),
+        };
+        if own == side {
+            let e = crossing[k].edge;
+            let at = self.along[side as usize].at[k];
+            if let Some(i) = input.tri_edges[t as usize].iter().position(|x| x.0 == e) {
+                let forward = input.tri_edges[t as usize][i].1;
+                let (s, en) = if forward {
+                    (i, (i + 1) % 3)
+                } else {
+                    ((i + 1) % 3, i)
+                };
+                return DVec3::AXES[s] * (1.0 - at) + DVec3::AXES[en] * at;
+            }
+        }
+        let x = self.base[id as usize];
+        let at = project(input.corners(t), x);
+        let guess = DVec3::new(1.0 - at.x - at.y, at.x, at.y);
+        if Layout::of(input, t) == Layout::Flat {
+            return guess;
+        }
+        let guess = guess.max(DVec3::ZERO);
+        let guess = guess / guess.element_sum().max(f64::MIN_POSITIVE);
+        chain::trace::invert(&input.patches[t as usize], x, guess)
+    }
+
+    /// Every face cut once, with the vertices `extras` added on the
+    /// operands' edges and the cuts along `chains`.
+    fn round(
+        &self,
+        extras: &[BTreeMap<u32, Vec<f64>>; 2],
+        chains: &[Chain],
+        work: &mut Work,
+    ) -> Result<Round, KernelError> {
+        let mut pos = self.base.clone();
         let mut curves = Curves::new();
-        // The added vertices on the operands' edges, and each edge's stops
-        // with them.
-        let mut stops: Vec<Along> = Vec::with_capacity(2);
+        let stops = self.stops(extras, &mut pos)?;
+        let pieces = self.edge_pieces(&stops, &mut curves)?;
+        let edges = self.chain_edges(chains, &mut pos, &mut curves)?;
+        let (jobs, tris, faces, whole) = self.face_jobs(chains, &edges.ids, extras);
+        // Ear clipping looks at every vertex for every ear, and more for
+        // large faces.
+        work.spend(
+            jobs.iter()
+                .map(|j| {
+                    let n = j.cuts.len() + 6;
+                    n.saturating_mul(n).saturating_mul(1 + n / 64)
+                })
+                .fold(0, usize::saturating_add),
+        )?;
+        let cut = par_map(&jobs, |job| {
+            let (input, offset) = self.operand(job.side);
+            cut_face(
+                input,
+                job,
+                &stops[job.side as usize],
+                offset,
+                &pos,
+                &curves,
+                &edges.fitted,
+                self.tol,
+            )
+        });
+        let cut: Vec<face::Cutout> = cut
+            .into_iter()
+            .collect::<Result<_, _>>()
+            .map_err(KernelError::Boolean)?;
+        // The chain edges to halve, by arc, and the operands' edges to add
+        // vertices on.
+        let mut split: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+        let mut more: [BTreeMap<u32, Vec<f64>>; 2] = [BTreeMap::new(), BTreeMap::new()];
+        for k in cut.iter().flat_map(|c| &c.split) {
+            if let Some(&(arc, seg)) = edges.owner.get(k) {
+                split.entry(arc).or_default().push(seg);
+            } else if let Some(&(side, e, t0, t1)) = pieces.get(k) {
+                more[side as usize]
+                    .entry(e)
+                    .or_default()
+                    .push((t0 + t1) / 2.0);
+            }
+        }
+        Ok(Round {
+            pos,
+            curves,
+            jobs,
+            cut,
+            tris,
+            faces,
+            whole,
+            split,
+            more,
+        })
+    }
+
+    /// Each operand's edges' stops: their crossings and the vertices
+    /// `extras` adds on them (given ids after `pos`, and put there).
+    fn stops(
+        &self,
+        extras: &[BTreeMap<u32, Vec<f64>>; 2],
+        pos: &mut Vec<DVec3>,
+    ) -> Result<Vec<Along>, KernelError> {
+        let mut stops = Vec::with_capacity(2);
         for side in [Side::A, Side::B] {
             let k = side as usize;
+            let (input, _) = self.operand(side);
             let mut added: BTreeMap<u32, Vec<(u32, f64)>> = BTreeMap::new();
             for (&e, ts) in &extras[k] {
-                let conic = inputs[k].conic(e);
+                let conic = input.conic(e);
                 for &t in ts {
                     let id = u32::try_from(pos.len()).map_err(|_| KernelError::TooComplex)?;
                     pos.push(point(&conic, t));
                     added.entry(e).or_default().push((id, t));
                 }
             }
-            stops.push(along[k].with(&added));
+            stops.push(self.along[k].with(&added));
         }
-        // The curved edges' pieces, and which edge and part of it each is.
-        let mut pieces: BTreeMap<(u32, u32), (Side, u32, f64, f64)> = BTreeMap::new();
+        Ok(stops)
+    }
+
+    /// The kept pieces of the operands' curved edges between their stops:
+    /// their curves (into `curves`), and which edge and part of it each
+    /// is, by the vertices it joins.
+    #[allow(clippy::type_complexity)]
+    fn edge_pieces(
+        &self,
+        stops: &[Along],
+        curves: &mut Curves,
+    ) -> Result<BTreeMap<(u32, u32), (Side, u32, f64, f64)>, KernelError> {
+        let mut pieces = BTreeMap::new();
         for side in [Side::A, Side::B] {
-            let (input, offset) = operand(side);
+            let (input, offset) = self.operand(side);
             for e in 0..input.edges.len() as u32 {
                 if lined(input, e) {
                     continue;
@@ -450,12 +654,21 @@ pub(super) fn assemble(
                 }
             }
         }
-        // The chains' vertices and curves, and each chain edge's arc and
-        // index along it.
+        Ok(pieces)
+    }
+
+    /// The chains' vertices (given ids after `pos`, and put there) and
+    /// curves (into `curves`, where not straight).
+    fn chain_edges(
+        &self,
+        chains: &[Chain],
+        pos: &mut Vec<DVec3>,
+        curves: &mut Curves,
+    ) -> Result<ChainEdges, KernelError> {
         let mut fitted = BTreeSet::new();
-        let mut owner: BTreeMap<(u32, u32), (usize, usize)> = BTreeMap::new();
-        let mut chain_ids: Vec<Vec<u32>> = Vec::with_capacity(arcs.len());
-        for (i, (arc, chain)) in arcs.iter().zip(&chains).enumerate() {
+        let mut owner = BTreeMap::new();
+        let mut all = Vec::with_capacity(self.arcs.len());
+        for (i, (arc, chain)) in self.arcs.iter().zip(chains).enumerate() {
             let mut ids = vec![arc.plus];
             for &p in &chain.points {
                 ids.push(u32::try_from(pos.len()).map_err(|_| KernelError::TooComplex)?);
@@ -466,27 +679,43 @@ pub(super) fn assemble(
                 let k = key(w[0], w[1]);
                 owner.insert(k, (i, j));
                 if c.w != 1.0 || c.c != (c.p0 + c.p1) * 0.5 {
-                    curves.insert(
-                        k,
-                        Edge {
-                            ctrl: c.c,
-                            weight: c.w,
-                        },
-                    );
+                    curves.insert(k, Edge::of(c));
                 }
                 if !chain.exact {
                     fitted.insert(k);
                 }
             }
-            chain_ids.push(ids);
+            all.push(ids);
         }
+        Ok(ChainEdges {
+            ids: all,
+            owner,
+            fitted,
+        })
+    }
+
+    /// The faces to cut, and the triangles of those kept whole (with
+    /// their faces and which triangle each is). A face is cut if it has
+    /// cuts, or vertices `extras` adds on its edges (unless the other
+    /// solid's winding drops it); the others are kept whole or not at
+    /// all.
+    #[allow(clippy::type_complexity)]
+    fn face_jobs(
+        &self,
+        chains: &[Chain],
+        chain_ids: &[Vec<u32>],
+        extras: &[BTreeMap<u32, Vec<f64>>; 2],
+    ) -> (Vec<Cut>, Vec<[u32; 3]>, Vec<u32>, Vec<Option<(Side, u32)>>) {
+        let keep = self.keep;
+        let face_offset = self.a.mesh.faces().len() as u32;
+        let windings = [&self.counts.w03, &self.counts.w30];
         // Each face's cut edges, as it runs them, and where the cuts'
         // vertices are in it. Keeping the outside of `B`, a face of `A`
         // runs its cut from the +1 end to the −1 end; faces of `B` the
         // other way round from that.
         let mut cuts: [Vec<(u32, [u32; 2])>; 2] = [Vec::new(), Vec::new()];
         let mut inside: [Vec<(u32, u32, DVec3, u32)>; 2] = [Vec::new(), Vec::new()];
-        for (n, ((arc, chain), ids)) in arcs.iter().zip(&chains).zip(&chain_ids).enumerate() {
+        for (n, ((arc, chain), ids)) in self.arcs.iter().zip(chains).zip(chain_ids).enumerate() {
             for side in [Side::A, Side::B] {
                 let k = side as usize;
                 let tri = arc.tris[k];
@@ -508,17 +737,13 @@ pub(super) fn assemble(
         for list in &mut inside {
             list.sort_by_key(|x| (x.0, x.1));
         }
-        // Faces with cuts, or with vertices added on their edges, are cut
-        // (those unless the other solid's winding drops them); the
-        // others are kept whole or not at all.
         let mut jobs = Vec::new();
         let mut tris = Vec::new();
         let mut faces = Vec::new();
-        // Which triangle of which operand each kept whole one is.
-        let mut whole: Vec<Option<(Side, u32)>> = Vec::new();
+        let mut whole = Vec::new();
         for side in [Side::A, Side::B] {
             let k = side as usize;
-            let (input, offset) = operand(side);
+            let (input, offset) = self.operand(side);
             let (cuts, inside) = (&cuts[k], &inside[k]);
             let (mut c, mut j) = (0, 0);
             for t in 0..input.tris.len() as u32 {
@@ -564,168 +789,115 @@ pub(super) fn assemble(
                 });
             }
         }
-        // Ear clipping looks at every vertex for every ear, and more for
-        // large faces.
-        work.spend(
-            jobs.iter()
-                .map(|j| {
-                    let n = j.cuts.len() + 6;
-                    n.saturating_mul(n).saturating_mul(1 + n / 64)
-                })
-                .fold(0, usize::saturating_add),
-        )?;
-        let cut = par_map(&jobs, |job| {
-            let (input, offset) = operand(job.side);
-            cut_face(
-                input,
-                job,
-                &stops[job.side as usize],
-                offset,
-                &pos,
-                &curves,
-                &fitted,
-                tol,
-            )
-        });
-        let cut: Vec<face::Cutout> = cut
-            .into_iter()
-            .collect::<Result<_, _>>()
-            .map_err(KernelError::Boolean)?;
-        // The chain edges to halve, by arc, and the operands' edges to add
-        // vertices on.
-        let mut split: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
-        let mut more: [BTreeMap<u32, Vec<f64>>; 2] = [BTreeMap::new(), BTreeMap::new()];
-        for k in cut.iter().flat_map(|c| &c.split) {
-            if let Some(&(arc, seg)) = owner.get(k) {
-                split.entry(arc).or_default().push(seg);
-            } else if let Some(&(side, e, t0, t1)) = pieces.get(k) {
-                more[side as usize]
-                    .entry(e)
-                    .or_default()
-                    .push((t0 + t1) / 2.0);
-            }
-        }
-        let done = split.is_empty() && more.iter().all(BTreeMap::is_empty);
-        if done || round >= SPLIT_ROUNDS {
-            break (pos, curves, jobs, cut, tris, faces, whole);
-        }
-        round += 1;
-        work.spend(
-            split.values().map(Vec::len).sum::<usize>()
-                + more
-                    .iter()
-                    .flat_map(|m| m.values())
-                    .map(Vec::len)
-                    .sum::<usize>(),
-        )?;
-        for (k, more) in more.into_iter().enumerate() {
-            for (e, ts) in more {
-                let list = extras[k].entry(e).or_default();
-                list.extend(ts);
-                list.sort_by(f64::total_cmp);
-                list.dedup();
-            }
-        }
-        let wanted: Vec<(usize, Vec<usize>)> = split
-            .into_iter()
-            .map(|(arc, mut segs)| {
-                segs.sort_unstable();
-                segs.dedup();
-                (arc, segs)
-            })
-            .collect();
-        let halved = par_map(&wanted, |(arc, segs)| {
-            chains[*arc].split(&chain_jobs[*arc], segs, tol.fit())
-        });
-        for ((arc, _), chain) in wanted.iter().zip(halved) {
-            chains[*arc] = chain;
-        }
-    };
+        (jobs, tris, faces, whole)
+    }
 
-    // Faces some of whose triangles are off their surface: those go on a
-    // copy of it claiming none.
-    let mut off: Vec<bool> = vec![false; tris.len()];
-    let mut inner = Vec::new();
-    for (job, result) in jobs.iter().zip(cut) {
-        let (input, _) = operand(job.side);
-        // The points added inside the face get their ids.
-        let first = u32::try_from(pos.len()).map_err(|_| KernelError::TooComplex)?;
-        pos.extend(&result.steiner);
-        let id = |v: u32| {
-            if v >= FIRST_STEINER {
-                first + (v - FIRST_STEINER)
-            } else {
-                v
+    /// The soup of the last round's triangles: the cut faces' triangles
+    /// after those kept whole, the points they added given ids, pieces of
+    /// the refinement kept whole merged back, `B`'s faces turned over for
+    /// a difference, and triangles off their face's surface put on a copy
+    /// of it claiming none.
+    fn finish(
+        &self,
+        last: Round,
+        refinement: Option<&Refinement>,
+    ) -> Result<(Soup, Vec<Face>), KernelError> {
+        let (a, b, keep) = (self.a, self.b, self.keep);
+        let face_offset = a.mesh.faces().len() as u32;
+        let Round {
+            mut pos,
+            mut curves,
+            jobs,
+            cut,
+            mut tris,
+            mut faces,
+            mut whole,
+            ..
+        } = last;
+        let mut off: Vec<bool> = vec![false; tris.len()];
+        let mut inner = Vec::new();
+        for (job, result) in jobs.iter().zip(cut) {
+            let (input, _) = self.operand(job.side);
+            // The points added inside the face get their ids.
+            let first = u32::try_from(pos.len()).map_err(|_| KernelError::TooComplex)?;
+            pos.extend(&result.steiner);
+            let id = |v: u32| {
+                if v >= FIRST_STEINER {
+                    first + (v - FIRST_STEINER)
+                } else {
+                    v
+                }
+            };
+            for (tri, is_off) in result.tris.into_iter().zip(result.off) {
+                tris.push(tri.map(id));
+                faces.push(face_id(job.side, input, job.tri, face_offset));
+                whole.push(None);
+                off.push(is_off);
             }
-        };
-        for (tri, is_off) in result.tris.into_iter().zip(result.off) {
-            tris.push(tri.map(id));
-            faces.push(face_id(job.side, input, job.tri, face_offset));
-            whole.push(None);
-            off.push(is_off);
+            inner.extend(
+                result
+                    .curves
+                    .into_iter()
+                    .map(|((u, v), e)| (key(id(u), id(v)), e)),
+            );
         }
-        inner.extend(
-            result
-                .curves
-                .into_iter()
-                .map(|((u, v), e)| (key(id(u), id(v)), e)),
+        curves.extend(inner);
+
+        if let Some(refinement) = refinement {
+            let offsets = [0, self.operand(Side::B).1];
+            merge::merge(
+                &mut tris,
+                &mut faces,
+                &mut whole,
+                &mut off,
+                &mut curves,
+                refinement,
+                offsets,
+            );
+        }
+
+        if keep.flip_b {
+            for (tri, &face) in tris.iter_mut().zip(&faces) {
+                if face >= face_offset {
+                    tri.swap(1, 2);
+                }
+            }
+        }
+        let mut out_faces: Vec<Face> = a.mesh.faces().to_vec();
+        out_faces.extend(
+            b.mesh
+                .faces()
+                .iter()
+                .map(|&f| if keep.flip_b { flipped(f) } else { f }),
         );
-    }
-    curves.extend(inner);
-
-    if let Some(refinement) = refinement {
-        let offsets = [0, nva];
-        merge::merge(
-            &mut tris,
-            &mut faces,
-            &mut whole,
-            &mut off,
-            &mut curves,
-            refinement,
-            offsets,
-        );
-    }
-
-    if keep.flip_b {
-        for (tri, &face) in tris.iter_mut().zip(&faces) {
-            if face >= face_offset {
-                tri.swap(1, 2);
+        // Copies claiming no surface, for the faces with triangles off
+        // theirs.
+        let mut copies: BTreeMap<u32, u32> = BTreeMap::new();
+        for (&face, _) in faces.iter().zip(&off).filter(|x| *x.1) {
+            copies.entry(face).or_insert(0);
+        }
+        for (face, copy) in &mut copies {
+            *copy = out_faces.len() as u32;
+            out_faces.push(Face {
+                surface: Surface::Free,
+                ..out_faces[*face as usize]
+            });
+        }
+        for (face, &is_off) in faces.iter_mut().zip(&off) {
+            if is_off {
+                *face = copies[face];
             }
         }
+        Ok((
+            Soup {
+                pos,
+                tris,
+                faces,
+                curves,
+            },
+            out_faces,
+        ))
     }
-    let mut out_faces: Vec<Face> = a.mesh.faces().to_vec();
-    out_faces.extend(
-        b.mesh
-            .faces()
-            .iter()
-            .map(|&f| if keep.flip_b { flipped(f) } else { f }),
-    );
-    // Copies claiming no surface, for the faces with triangles off theirs.
-    let mut copies: BTreeMap<u32, u32> = BTreeMap::new();
-    for (&face, _) in faces.iter().zip(&off).filter(|x| *x.1) {
-        copies.entry(face).or_insert(0);
-    }
-    for (face, copy) in &mut copies {
-        *copy = out_faces.len() as u32;
-        out_faces.push(Face {
-            surface: Surface::Free,
-            ..out_faces[*face as usize]
-        });
-    }
-    for (face, &is_off) in faces.iter_mut().zip(&off) {
-        if is_off {
-            *face = copies[face];
-        }
-    }
-    Ok((
-        Soup {
-            pos,
-            tris,
-            faces,
-            curves,
-        },
-        out_faces,
-    ))
 }
 
 /// Each crossing's parameter along its edge, solved again exactly where
@@ -739,12 +911,7 @@ fn params(input: &Input, other: &Input, crossings: &[Crossing]) -> Vec<f64> {
         }
         let conic = if straight {
             let [s, e] = input.edges[c.edge as usize].map(|v| input.pos(v));
-            Conic3 {
-                p0: s,
-                c: (s + e) * 0.5,
-                w: 1.0,
-                p1: e,
-            }
+            segment(s, e)
         } else {
             input.conic(c.edge)
         };
@@ -772,68 +939,14 @@ fn point(conic: &Conic3, t: f64) -> DVec3 {
 /// The piece of `conic` from `s` to `t`, exact by blossoming.
 fn piece(conic: &Conic3, s: f64, t: f64) -> Result<Edge, KernelError> {
     if s == 0.0 && t == 1.0 {
-        return Ok(Edge {
-            ctrl: conic.c,
-            weight: conic.w,
-        });
+        return Ok(Edge::of(conic));
     }
     let part = Conic3::from_hom([
         conic.blossom(s, s),
         conic.blossom(s, t),
         conic.blossom(t, t),
     ])?;
-    Ok(Edge {
-        ctrl: part.c,
-        weight: part.w,
-    })
-}
-
-/// Where the crossing vertex `id` is in triangle `t` of `side`
-/// (barycentric): on its side at its parameter, if its edge is one of
-/// the triangle's, else where the patch inverts its position.
-#[allow(clippy::too_many_arguments)]
-fn place(
-    id: u32,
-    side: Side,
-    t: u32,
-    a: &Input,
-    b: &Input,
-    counts: &Counts,
-    along: &[Along; 2],
-    pos: &[DVec3],
-    [first12, first21]: [u32; 2],
-) -> DVec3 {
-    let (own, k) = if id < first21 {
-        (Side::A, (id - first12) as usize)
-    } else {
-        (Side::B, (id - first21) as usize)
-    };
-    let (input, crossing) = match side {
-        Side::A => (a, &counts.x12),
-        Side::B => (b, &counts.x21),
-    };
-    if own == side {
-        let e = crossing[k].edge;
-        let at = along[side as usize].at[k];
-        if let Some(i) = input.tri_edges[t as usize].iter().position(|x| x.0 == e) {
-            let forward = input.tri_edges[t as usize][i].1;
-            let (s, en) = if forward {
-                (i, (i + 1) % 3)
-            } else {
-                ((i + 1) % 3, i)
-            };
-            return DVec3::AXES[s] * (1.0 - at) + DVec3::AXES[en] * at;
-        }
-    }
-    let x = pos[id as usize];
-    let at = project(input.corners(t), x);
-    let guess = DVec3::new(1.0 - at.x - at.y, at.x, at.y);
-    if Layout::of(input, t) == Layout::Flat {
-        return guess;
-    }
-    let guess = guess.max(DVec3::ZERO);
-    let guess = guess / guess.element_sum().max(f64::MIN_POSITIVE);
-    chain::trace::invert(&input.patches[t as usize], x, guess)
+    Ok(Edge::of(&part))
 }
 
 fn face_id(side: Side, input: &Input, t: u32, offset: u32) -> u32 {

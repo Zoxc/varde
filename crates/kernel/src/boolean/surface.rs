@@ -12,6 +12,7 @@
 use glam::DVec3;
 
 use super::input::Input;
+use super::segment;
 use crate::mesh::{Quadric, Surface};
 use crate::patch::{Conic3, W_MAX};
 
@@ -203,14 +204,7 @@ fn section_into(
     // cylinder's rulings).
     let along = |t: DVec3, l: f64| t.cross(chord).length() <= 1e-9 * l * len;
     if along(tx, lx) && along(ty, ly) {
-        return (q.distance(m) <= 1e-9 * len).then(|| {
-            out.push(Conic3 {
-                p0: x,
-                c: m,
-                w: 1.0,
-                p1: y,
-            })
-        });
+        return (q.distance(m) <= 1e-9 * len).then(|| out.push(segment(x, y)));
     }
     // Across the chord, in the plane: which side of it the arc is on.
     let across = n.cross(chord);

@@ -31,7 +31,7 @@ Pure math on one curve or one triangle, no mesh:
 |---|---|
 | `patch.rs` | module docs, the limits, `Bounds<P>`, `PatchError` |
 | `patch/conic.rs` | `Conic<P>` (`Conic2`, `Conic3`), the `Point` trait over `DVec2`/`DVec3`, exact arcs |
-| `patch/triangle.rs` | `Patch`: net, blossom, evaluation, derivatives, sub-patches, splits |
+| `patch/triangle.rs` | `Patch`: net, blossom, evaluation, derivatives, sub-patches and curves over domain segments (`curve`), splits |
 | `patch/fold.rs` | the normal's Bernstein coefficients, the fold check, `NormalCone` |
 | `patch/strip.rs` | `cylinder_strip`: exact cylinder patches |
 | `patch/tests.rs` | property tests; `src/test_rng.rs` is their seeded generator |
@@ -1742,7 +1742,9 @@ out, out of budget); the same bits at 1 and 8 threads. Unit
 tests: expansions against known values, the float filter never
 contradicting the exact sign, `orient2d` near a line and far out,
 triangulating a square with a hole, a concave loop, a zero-width loop and
-a vertex landing on the domain's side (no diagonal along a side).
+a vertex landing on the domain's side (no diagonal along a side); with
+curved sides, a point added where two arcs of one curve meet, and a curve
+asked to be split where it closes a corner with a straight side.
 
 Curved (`curved/tests.rs`, `pairs/tests.rs`): the ray-derived shadow
 crossings against dense polylines of random curves, straight and curved
@@ -1806,7 +1808,14 @@ manifolds.
   random turned bar against a box in sixteen gives some operation `Invalid`
   (a fold or hull rule repair can't mend): a planar cap's triangle whose
   arc bulges out of it after the rounds, or a flat sliver along a cut
-  next to a curve that no flip may take. None came out wrong.
+  next to a curve that no flip may take. None came out wrong. Of 200 such
+  pairs (seed 7, the four operations each), 12 had some operation fail
+  (26 in all: 14 edge-neighbour, 8 fold, 2 hull and 2 vertex-neighbour
+  rules). In 2 others `|A ∪ B| + |A ∩ B|` missed `|A| + |B|` by 1–4e-6:
+  within the fit tolerance, but not the 1e-12 of exact cuts, since a few
+  band triangles on the bar's wall stayed off it (a band tree's root, or
+  a cut that fell back to fitting) and went on a copy claiming no
+  surface.
 - **Fitted bands leave their face's claim**: triangles along a fitted
   cut on a quadric (quadric against quadric, a quadric against a free
   surface), and an exact band tree's root where no ruling frees it, go on
@@ -1816,6 +1825,15 @@ manifolds.
   tolerance and turning at most 45°, and bands straying past half of it
   halved, so crossing cylinders at the default tolerance come out with
   some 700 patches, most along the cut.
+- **Tangencies are fragile**: two upright cylinders of radius 1 side by
+  side along `x`, touching along a line where both have a seam edge (at
+  the coarsest tolerance), come out as the tests want with the second one
+  1 high, except `B ∪ A` (`Inconsistent`); 0.5 high both unions are
+  `Inconsistent`, and 0.25 high every operation but `A ∪ B` fails with
+  `InsideOut` (a vertex on the tangent line winds −1). Ties between
+  curved patches are decided by a threshold, and layers the search
+  didn't find by where most of the patch is, not by the perturbation
+  throughout.
 - A tangency along a line reads as not touching (`touches` says false for
   two cylinders side by side): no crossing shows it, and the fixed rules
   take no certificate as no loop. Flat solids touching do meet.

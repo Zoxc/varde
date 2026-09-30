@@ -122,6 +122,19 @@ impl Patch {
         blossom(&self.net(), a, b)
     }
 
+    /// The patch's own curve over the straight domain segment from `a` to
+    /// `b` (barycentric), in the standard form: ends `B(a, a)` and
+    /// `B(b, b)`, control point `B(a, b)`, exact. Fails as
+    /// [`Conic3::from_hom`] does, for a weight out of bounds.
+    pub(crate) fn curve(&self, a: DVec3, b: DVec3) -> Result<Conic3, PatchError> {
+        let net = self.net();
+        Conic3::from_hom([
+            blossom(&net, a, a),
+            blossom(&net, a, b),
+            blossom(&net, b, b),
+        ])
+    }
+
     /// The denominator at `u`: the weight of the homogeneous point there.
     /// It is at least [`W_MIN`](super::W_MIN) in the triangle.
     pub fn weight_at(&self, u: DVec3) -> f64 {

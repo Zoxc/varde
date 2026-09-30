@@ -49,7 +49,7 @@ use glam::DVec3;
 use super::count::Crossing;
 use super::flat::Flat;
 use super::input::{Input, Side};
-use super::{BooleanError, Cross11, Primitives, UP};
+use super::{BooleanError, Cross11, Primitives, UP, segment};
 use crate::Tolerance;
 use crate::patch::Conic3;
 
@@ -124,7 +124,7 @@ impl<'a> Curved<'a> {
         let input = self.input(side);
         let conic = input.conic(e);
         if input.straight[e as usize] {
-            chord(conic.p0, conic.p1)
+            segment(conic.p0, conic.p1)
         } else {
             conic
         }
@@ -259,42 +259,11 @@ impl<'a> Curved<'a> {
         let hits = solve::hits(patch, p, &self.axes);
         // The points inside the triangle, less or plus those nearest its
         // sides, until their facings add up to the winding number.
-        let mut chosen: Vec<bool> = hits.iter().map(|h| h.out == 0.0).collect();
-        let mut sum: i32 = hits
-            .iter()
-            .zip(&chosen)
-            .filter(|&(_, &c)| c)
-            .map(|(h, _)| i32::from(h.facing))
-            .sum();
-        let mut phantoms = 0;
-        while sum != winding {
-            let want = (winding - sum).signum() as i8;
-            // A point outside facing `want`, or one inside facing the
-            // other way, nearest the triangle's sides.
-            let doubt = |h: &solve::Hit| {
-                if h.out > 0.0 {
-                    h.out
-                } else {
-                    h.u.min_element()
-                }
-            };
-            let pick = hits
-                .iter()
-                .enumerate()
-                .filter(|&(k, h)| {
-                    if chosen[k] {
-                        h.facing == -want
-                    } else {
-                        h.facing == want
-                    }
-                })
-                .min_by(|x, y| doubt(x.1).total_cmp(&doubt(y.1)));
-            match pick {
-                Some((k, _)) => chosen[k] = !chosen[k],
-                None => phantoms += i32::from(want),
-            }
-            sum += i32::from(want);
-        }
+        let (chosen, missing) = fit_count(
+            hits.iter().map(|h| (h.facing, h.out, h.u.min_element())),
+            winding,
+        );
+        let phantoms: i32 = missing.iter().map(|&s| i32::from(s)).sum();
         let mut above: i32 = hits
             .iter()
             .zip(&chosen)
@@ -309,16 +278,6 @@ impl<'a> Curved<'a> {
             }
         }
         clamp(above)
-    }
-}
-
-/// The straight segment from `p0` to `p1`.
-fn chord(p0: DVec3, p1: DVec3) -> Conic3 {
-    Conic3 {
-        p0,
-        c: (p0 + p1) * 0.5,
-        w: 1.0,
-        p1,
     }
 }
 
@@ -435,37 +394,20 @@ impl Primitives for Curved<'_> {
 
 /// The crossings to record from those `found`, whose signs must add up to
 /// `x`: those inside the edge and the patch, less or plus those nearest
-/// their edges, until they do, and at `closest` along the edge if none are
-/// left; as `(sign, t)` in order along the edge.
+/// their edges, until they do (see [`fit_count`]), and at `closest` along
+/// the edge for any the search didn't find; as `(sign, t)` in order along
+/// the edge.
 fn pick(found: &[solve::EdgeHit], x: i32, closest: f64) -> Vec<(i8, f64)> {
-    let mut chosen: Vec<bool> = found.iter().map(|h| h.out == 0.0).collect();
-    let mut sum: i32 = found
-        .iter()
-        .zip(&chosen)
-        .filter(|&(_, &c)| c)
-        .map(|(h, _)| i32::from(h.x))
-        .sum();
-    let mut out = Vec::new();
-    let doubt = |h: &solve::EdgeHit| {
-        if h.out > 0.0 {
-            h.out
-        } else {
-            h.t.min(1.0 - h.t).min(h.u.min_element())
-        }
-    };
-    while sum != x {
-        let want = (x - sum).signum() as i8;
-        let pick = found
+    let (chosen, missing) = fit_count(
+        found
             .iter()
-            .enumerate()
-            .filter(|&(k, h)| if chosen[k] { h.x == -want } else { h.x == want })
-            .min_by(|a, b| doubt(a.1).total_cmp(&doubt(b.1)));
-        match pick {
-            Some((k, _)) => chosen[k] = !chosen[k],
-            None => out.push((want, closest.clamp(0.0, 1.0))),
-        }
-        sum += i32::from(want);
-    }
+            .map(|h| (h.x, h.out, h.t.min(1.0 - h.t).min(h.u.min_element()))),
+        x,
+    );
+    let mut out: Vec<(i8, f64)> = missing
+        .into_iter()
+        .map(|s| (s, closest.clamp(0.0, 1.0)))
+        .collect();
     for (h, &c) in found.iter().zip(&chosen) {
         if c {
             out.push((h.x, h.t.clamp(0.0, 1.0)));
@@ -473,6 +415,42 @@ fn pick(found: &[solve::EdgeHit], x: i32, closest: f64) -> Vec<(i8, f64)> {
     }
     out.sort_by(|a, b| a.1.total_cmp(&b.1));
     out
+}
+
+/// Which of the solutions a search found to keep so that their signs add
+/// up to `count`, which the counting decided: each given as `(sign, out,
+/// margin)`, `out` how far outside its domain it is (0 inside) and
+/// `margin` how near its domain's sides it is if inside. Those inside
+/// first; then, one step at a time, the most doubtful is turned (a
+/// solution outside with the sign wanted taken in, or one inside with
+/// the other sign dropped: whichever is nearest the domain's sides),
+/// and where none is left the sign wanted is one the search missed.
+/// Gives whether each is kept, and the signs of those missed.
+fn fit_count(found: impl Iterator<Item = (i8, f64, f64)>, count: i32) -> (Vec<bool>, Vec<i8>) {
+    let found: Vec<(i8, f64, f64)> = found.collect();
+    let mut chosen: Vec<bool> = found.iter().map(|&(_, out, _)| out == 0.0).collect();
+    let mut sum: i32 = found
+        .iter()
+        .zip(&chosen)
+        .filter(|&(_, &c)| c)
+        .map(|(&(s, _, _), _)| i32::from(s))
+        .sum();
+    let doubt = |&(_, out, margin): &(i8, f64, f64)| if out > 0.0 { out } else { margin };
+    let mut missing = Vec::new();
+    while sum != count {
+        let want = (count - sum).signum() as i8;
+        let pick = found
+            .iter()
+            .enumerate()
+            .filter(|&(k, h)| if chosen[k] { h.0 == -want } else { h.0 == want })
+            .min_by(|a, b| doubt(a.1).total_cmp(&doubt(b.1)));
+        match pick {
+            Some((k, _)) => chosen[k] = !chosen[k],
+            None => missing.push(want),
+        }
+        sum += i32::from(want);
+    }
+    (chosen, missing)
 }
 
 #[cfg(test)]

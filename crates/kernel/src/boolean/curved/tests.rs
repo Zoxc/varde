@@ -271,7 +271,7 @@ fn an_edge_through_a_cylinder_is_found_where_it_is() {
     let cyl = crate::Solid::cylinder(DVec3::ZERO, 1.0, 1.0, 1, &tol).unwrap();
     let mesh = cyl.mesh();
     let y: f64 = 0.3;
-    let edge = chord(DVec3::new(-2.0, y, 0.5), DVec3::new(2.0, y, 0.5));
+    let edge = segment(DVec3::new(-2.0, y, 0.5), DVec3::new(2.0, y, 0.5));
     let mut entering = Vec::new();
     for t in 0..mesh.tris().len() {
         let patch = mesh.patch(t);

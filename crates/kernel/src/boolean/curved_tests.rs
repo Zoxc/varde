@@ -392,23 +392,32 @@ fn a_saddle_pairs_its_cut_the_right_way() {
     }
 }
 
-#[test]
-fn tangent_cylinders_are_decided() {
-    // Side by side, touching along a line: their union isn't a manifold
-    // (as boxes touching along an edge), the rest are the operands. At
-    // the coarsest tolerance, to keep the test quick.
+/// `x op y` for two cylinders side by side, touching along a line, at
+/// the coarsest tolerance (to keep the tests quick).
+fn tangent(op: Op, swap: bool) -> Result<(Solid, f64), KernelError> {
     let tol = Tolerance::new(Tolerance::MAX_FIT).unwrap();
     let a = Solid::cylinder(DVec3::ZERO, 1.0, 2.0, 2, &tol).unwrap();
     let b = Solid::cylinder(DVec3::new(2.0, 0.0, 0.5), 1.0, 1.0, 3, &tol).unwrap();
-    let run = |x: &Solid, y: &Solid, op| boolean(x, y, op, &tol, &Budget::DEFAULT);
+    let (x, y) = if swap { (b, a) } else { (a, b) };
+    boolean(&x, &y, op, &tol, &Budget::DEFAULT).map(|s| (s, x.volume()))
+}
+
+#[test]
+fn tangent_cylinders_meet_in_no_manifold() {
+    // Their union isn't a manifold (as boxes touching along an edge), and
+    // they have nothing in common.
     assert!(matches!(
-        run(&a, &b, Op::Union),
+        tangent(Op::Union, false),
         Err(KernelError::Invalid(_)) | Err(KernelError::TooComplex)
     ));
-    assert!(run(&a, &b, Op::Intersection).unwrap().is_empty());
-    for (x, y) in [(&a, &b), (&b, &a)] {
-        let less = run(x, y, Op::Difference).unwrap();
-        assert!((less.volume() - x.volume()).abs() < 1e-9);
+    assert!(tangent(Op::Intersection, false).unwrap().0.is_empty());
+}
+
+#[test]
+fn tangent_cylinders_less_each_other_are_themselves() {
+    for swap in [false, true] {
+        let (less, whole) = tangent(Op::Difference, swap).unwrap();
+        assert!((less.volume() - whole).abs() < 1e-9);
     }
 }
 

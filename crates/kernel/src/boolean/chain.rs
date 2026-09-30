@@ -20,6 +20,7 @@
 
 use glam::DVec3;
 
+use super::segment;
 use super::surface::{Guide, Shape, section};
 use crate::patch::{Conic3, Patch};
 
@@ -151,12 +152,7 @@ pub(super) fn chain(job: &Job, fit: f64) -> Chain {
             vec![job.dom[0][0], job.dom[1][0]],
             vec![job.dom[0][1], job.dom[1][1]],
         ],
-        curves: vec![Conic3 {
-            p0: x,
-            c: (x + y) * 0.5,
-            w: 1.0,
-            p1: y,
-        }],
+        curves: vec![segment(x, y)],
         exact,
     };
     if job.planar[0] && job.planar[1] || x == y {

@@ -330,6 +330,17 @@ fn build(soup: cleanup::Soup, faces: Vec<Face>) -> Result<Mesh, KernelError> {
     })
 }
 
+/// The straight segment from `p0` to `p1` as a curve: the control point
+/// at the midpoint and weight 1.
+fn segment(p0: DVec3, p1: DVec3) -> crate::patch::Conic3 {
+    crate::patch::Conic3 {
+        p0,
+        c: (p0 + p1) * 0.5,
+        w: 1.0,
+        p1,
+    }
+}
+
 /// Each vertex's connected part, as its lowest vertex id, of `n`
 /// vertices joined by `links`.
 fn parts(n: usize, links: impl IntoIterator<Item = [u32; 2]>) -> Vec<u32> {

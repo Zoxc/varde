@@ -13,6 +13,7 @@
 
 use glam::DVec3;
 
+use super::super::segment;
 use super::super::surface::MAX_TURN_COS;
 use crate::patch::{Conic3, Patch, W_MAX, W_MIN};
 
@@ -80,16 +81,12 @@ impl<'a> Pair<'a> {
     /// mean), which the triangles' other sides follow. A weight far from
     /// it reparametrizes the triangle, and its inside leaves the surface.
     fn weight(&self, a: &Point, b: &Point) -> f64 {
-        let own = |patch: &Patch, x: DVec3, y: DVec3| {
-            let h = patch.blossom(x, y);
-            h.w / (patch.weight_at(x).sqrt() * patch.weight_at(y).sqrt())
-        };
         let ws: Vec<f64> = [(self.p, a.u, b.u), (self.q, a.v, b.v)]
             .into_iter()
             .zip(self.curved)
             .filter(|(_, curved)| *curved)
-            .map(|((patch, x, y), _)| own(patch, x, y))
-            .filter(|w| w.is_finite() && *w > 0.0)
+            .filter_map(|((patch, x, y), _)| patch.curve(x, y).ok())
+            .map(|c| c.w)
             .collect();
         match ws[..] {
             [w] => w,
@@ -465,12 +462,7 @@ pub(crate) fn conic_along(
     let m = (a.x + b.x) * 0.5;
     let straight = |t: DVec3| t.cross(d).length() <= 1e-9 * len;
     if straight(a.tan) && straight(b.tan) {
-        return Some(Conic3 {
-            p0: a.x,
-            c: m,
-            w: 1.0,
-            p1: b.x,
-        });
+        return Some(segment(a.x, b.x));
     }
     // Closest points of a + s·ta and b + r·tb.
     let bb = a.tan.dot(b.tan);

@@ -173,10 +173,10 @@ impl<'a> Input<'a> {
     }
 
     /// Each vertex's direction out of the solid: one that leaves by
-    /// every triangle round the vertex (a curved patch's normal at the
-    /// corner standing in for its triangle's) (on the outer side of each one's
-    /// plane) wherever there is one, so that moving the vertices along
-    /// them moves every face outwards. The sum of the triangles' unit
+    /// every triangle round the vertex (on the outer side of each one's
+    /// plane, a curved patch's normal at the corner standing in for its
+    /// triangle's) wherever there is one, so that moving the vertices
+    /// along them moves every face outwards. The sum of the triangles' unit
     /// normals, normalized, when it does; else the axis of the smallest
     /// cone round their normals (for up to [`CONE_NORMALS`] different
     /// ones), which does whenever any direction does. Where none does (a

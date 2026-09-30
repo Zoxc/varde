@@ -19,7 +19,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use glam::{DVec2, DVec3, DVec4};
+use glam::{DVec2, DVec3};
 
 use super::super::BooleanError;
 use super::super::chain::trace::{domain_step, invert};
@@ -30,7 +30,7 @@ use super::super::triangulate::{Bends, NO_CUT, Vert, triangulate};
 use super::{Along, Curves, key};
 use crate::Tolerance;
 use crate::mesh::{Edge, Quadric, Surface, samples, straight};
-use crate::patch::{Conic3, Patch, W_MAX, W_MIN};
+use crate::patch::{Conic3, Patch};
 
 /// How a face is laid out for triangulating: see the [module](self) docs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -385,7 +385,6 @@ pub(super) fn cut_face(
     }
 
     let at = |id: u32| bary(at_of(id));
-    let net = patch.net();
     // The patch's own curve over each straight domain segment.
     let mut inner: BTreeMap<(u32, u32), Edge> = BTreeMap::new();
     for tri in &tris {
@@ -394,13 +393,22 @@ pub(super) fn cut_face(
             if !boundary.contains(&k) {
                 inner.entry(k).or_insert_with(|| match twinned.get(&k) {
                     Some(twin) => twin.unwrap_or_else(|| straight_edge(k.0, k.1)),
-                    None => {
-                        blossomed(&net, at(k.0), at(k.1)).unwrap_or_else(|| straight_edge(k.0, k.1))
-                    }
+                    None => patch
+                        .curve(at(k.0), at(k.1))
+                        .map_or_else(|_| straight_edge(k.0, k.1), |c| Edge::of(&c)),
                 });
             }
         }
     }
+    // The curve of the edge `k`: an inner edge's in `inner`, a boundary
+    // edge's record, else straight.
+    let edge_at = |k: (u32, u32), inner: &BTreeMap<(u32, u32), Edge>| {
+        inner
+            .get(&k)
+            .or_else(|| curves.get(&k))
+            .copied()
+            .unwrap_or_else(|| straight_edge(k.0, k.1))
+    };
     let surface = input.mesh.faces()[input.face(t) as usize].surface;
     if let Shape::Quadric(q) = Shape::of(input, t) {
         let fixed: BTreeSet<(u32, u32)> = boundary.iter().chain(twinned.keys()).copied().collect();
@@ -409,32 +417,13 @@ pub(super) fn cut_face(
             if fitted.contains(&k) {
                 return Kind::Fitted;
             }
-            let edge = inner
-                .get(&k)
-                .or_else(|| curves.get(&k))
-                .copied()
-                .unwrap_or_else(|| straight_edge(u, v));
-            Kind::of(pos_of(u), edge, pos_of(v), tol.resolution())
+            Kind::of(pos_of(u), edge_at(k, &inner), pos_of(v), tol.resolution())
         };
         let mut changed = inner.clone();
-        let edge_at = |k: (u32, u32), inner: &BTreeMap<(u32, u32), Edge>| {
-            inner
-                .get(&k)
-                .or_else(|| curves.get(&k))
-                .copied()
-                .unwrap_or_else(|| straight_edge(k.0, k.1))
-        };
         exact_bands(&q, &tris, &pos_of, &fixed, kind, edge_at, &mut changed);
         inner = changed;
     }
-    let edge_of = |u: u32, v: u32| {
-        let k = key(u, v);
-        inner
-            .get(&k)
-            .or_else(|| curves.get(&k))
-            .copied()
-            .unwrap_or_else(|| straight_edge(u, v))
-    };
+    let edge_of = |u: u32, v: u32| edge_at(key(u, v), &inner);
     let cuts: BTreeSet<(u32, u32)> = job.cuts.iter().map(|h| key(h[0], h[1])).collect();
     let mut split: BTreeSet<(u32, u32)> = wanted.into_iter().collect();
     let off = tris
@@ -486,26 +475,6 @@ fn found(placed: &[Vert], id: u32) -> DVec2 {
         .binary_search_by_key(&id, |v| v.id)
         .expect("a vertex of the loops");
     placed[i].at
-}
-
-/// The curve of the patch with homogeneous net `net` over the straight
-/// domain segment from `a` to `b` (barycentric), in the standard form,
-/// unless its weight would leave the bounds.
-fn blossomed(net: &[[DVec4; 3]; 3], a: DVec3, b: DVec3) -> Option<Edge> {
-    let blossom = |x: DVec3, y: DVec3| {
-        let mut sum = DVec4::ZERO;
-        for i in 0..3 {
-            for j in 0..3 {
-                sum += net[i][j] * (x[i] * y[j]);
-            }
-        }
-        sum
-    };
-    let h = blossom(a, b);
-    let (wa, wb) = (blossom(a, a).w, blossom(b, b).w);
-    let weight = h.w / (wa.sqrt() * wb.sqrt());
-    let ctrl = h.truncate() / h.w;
-    ((W_MIN..=W_MAX).contains(&weight) && ctrl.is_finite()).then_some(Edge { ctrl, weight })
 }
 
 /// What a triangle's side on a quadric is, for making the triangles
@@ -661,16 +630,9 @@ fn exact_bands(
         {
             // Only where both triangles on it still don't fold: a far `O`
             // can turn the curve's parametrization far from the patch's.
-            let mut tried = inner.clone();
-            tried.insert(
-                d,
-                Edge {
-                    ctrl: arc.c,
-                    weight: arc.w,
-                },
-            );
-            if unfolded(t, &tried) && unfolded(up, &tried) {
-                *inner = tried;
+            inner.insert(d, Edge::of(&arc));
+            if !(unfolded(t, inner) && unfolded(up, inner)) {
+                inner.insert(d, old);
             }
         }
     }

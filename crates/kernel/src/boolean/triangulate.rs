@@ -808,6 +808,54 @@ mod tests {
     }
 
     #[test]
+    fn two_arcs_of_one_curve_meeting_take_a_point() {
+        // The sides from 1 to 2 and from 2 to 0 are arcs of one smooth
+        // curve through 2: any triangle with both folds at 2, so a point
+        // goes inside and the triangle is split at it.
+        let l = loop_of(&[(0.0, 0.0), (1.0, 0.0), (0.0, 1.0)], 0);
+        let d = DVec2::new(-0.2, -1.0);
+        let mut bends = Bends::new();
+        bends.insert((1, 2), [DVec2::new(0.0, 1.0), -d]);
+        bends.insert((2, 0), [d, DVec2::new(-0.2, 1.0)]);
+        let all = l.clone();
+        let out = triangulate(vec![l], &bends, 100).unwrap();
+        assert_eq!(out.steiner.len(), 1, "{out:?}");
+        assert!(out.split.is_empty(), "{out:?}");
+        assert_eq!(out.tris.len(), 3, "{out:?}");
+        let vert = |id: u32| out_vert(&all, &out, id);
+        let at = |id: u32| vert(id).at;
+        assert!((total_area(&out.tris, at) - 0.5).abs() < 1e-15);
+        for tri in &out.tris {
+            let [a, b, c] = tri.map(at);
+            assert!(orient2d(a, b, c) > 0, "{out:?}");
+            assert!(corners_open(tri.map(vert).each_ref(), &bends), "{out:?}");
+        }
+    }
+
+    /// Vertex `id` of the loops `all` or the points `out` added.
+    fn out_vert(all: &[Vert], out: &Triangulation, id: u32) -> Vert {
+        if id >= 100 {
+            out.steiner[(id - 100) as usize]
+        } else {
+            all[id as usize]
+        }
+    }
+
+    #[test]
+    fn a_curve_closing_a_corner_asks_to_be_split() {
+        // The side from 1 to 2 leaves 1 along the side from 1 to 0: every
+        // triangle on it has a closed corner there, which no point inside
+        // mends. The curve is asked for.
+        let l = loop_of(&[(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)], 0);
+        let mut bends = Bends::new();
+        bends.insert((1, 2), [DVec2::new(-1.0, 1e-6), DVec2::new(0.0, -1.0)]);
+        let out = triangulate(vec![l], &bends, 100).unwrap();
+        assert_eq!(out.tris.len(), 2, "{out:?}");
+        assert!(out.steiner.is_empty(), "{out:?}");
+        assert_eq!(out.split, vec![(1, 2)]);
+    }
+
+    #[test]
     fn a_vertex_on_a_side_is_respected() {
         // Two triangles joined at a vertex on the domain's side (not
         // tagged with it: an interior vertex that lands there).

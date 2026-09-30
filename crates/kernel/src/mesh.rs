@@ -35,7 +35,7 @@ use std::hash::{BuildHasherDefault, DefaultHasher};
 
 use glam::DVec3;
 
-use crate::patch::Patch;
+use crate::patch::{Conic3, Patch};
 
 mod build;
 mod bvh;
@@ -83,6 +83,14 @@ pub struct Edge {
 }
 
 impl Edge {
+    /// The middle of `conic`.
+    pub(crate) fn of(conic: &Conic3) -> Edge {
+        Edge {
+            ctrl: conic.c,
+            weight: conic.w,
+        }
+    }
+
     /// The straight edge between `a` and `b`: the control point at the
     /// midpoint and weight 1.
     pub fn straight(a: DVec3, b: DVec3) -> Edge {
