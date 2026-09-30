@@ -1170,7 +1170,7 @@ elsewhere (see "Cutting curved faces").
 | `boolean/triangulate.rs` | a face's kept loops in its parameter domain into triangles, curved sides' corners, Steiner points |
 | `boolean/cleanup.rs` | collapsing and flipping the degenerate triangles flush operands leave |
 | `boolean/tests.rs` | boxes in every flush, edge-on and vertex-on configuration, tori, determinism |
-| `boolean/curved_tests.rs` | cylinders and boxes (exact), crossing cylinders, a free surface, a saddle, extrudes, chains, merging, random bars |
+| `boolean/curved_tests.rs` | cylinders and boxes (exact), crossing cylinders, a free surface, a saddle, extrudes, chains, merging, random bars, walls over arcs with level ends |
 | `boolean/seeded_tests.rs` | the seeded random suite: related pairs, parts built in chains of twenty, turned solids, near tangencies, pins and coaxial cylinders, flush bosses |
 
 ### The primitives
@@ -1800,8 +1800,15 @@ now take 20 ms.
   (exactly the end at 0 and 1; on a curved one see "Cutting curved
   faces"),
   made non-decreasing along each edge in the order `order` gave, and
-  put exactly on the crossed face where it is square to an axis (so a
-  result's flush faces stay flush when it is fed on). `crossing` is the
+  put exactly on the crossed face where it lies in a plane square to an
+  axis (so a result's flush faces stay flush when it is fed on): each
+  coordinate that all six control points of the patch crossed share is
+  set to theirs, which only takes off rounding (a debug assertion holds
+  the move within the resolution). The corners alone won't do: a wall
+  over an arc whose ends are level (a chord along an axis) has three
+  corners at one height and bulges off it, and crossings put on the
+  corners' plane landed off the cylinder, failing as folds or, on
+  shallow arcs, coming out with the wrong volume. `crossing` is the
   limit of `num/den` as `ε → 0`: the constant terms' ratio in floating
   point only when both are known to a relative `1e-12`; else they are
   worked out exactly (a near tie: two tiny numbers that are all rounding
@@ -2160,7 +2167,18 @@ against boxes, each result right or refused; found by fuzzing:
 cylinders side by side `1e-9` apart at the coarsest tolerance (right or
 refused), a box's face through a bar's refinement midpoints (its plane
 tag true), and a tilted bar's arc crossing a plate's cap where the
-search misses it (on the cap's plane). Unit tests: exact ellipse
+search misses it (on the cap's plane). Walls over arcs whose ends are
+level (a 10 × 10 square whose top side is the arc, extruded): 60°
+concave and convex, 20°, and 20° in three pieces (the middle one's ends
+level), on frames where the ends are level in `x`, `y` and `z`, against
+a box across the arc and a half-space across the wall, all four
+operations exact with volumes in closed form; 40 random boxes across 20°,
+45° and 60° such walls, each result right by its closed-form volume or
+refused, at least 85% going through (93% do; the rest are convex walls'
+cap pieces folding); a circle of six arcs with two level walls against a
+coaxial cylinder and a slab; and 0.5° and 2° convex arches against
+boxes, whose unions and differences came out 0.011 off in volume when
+crossings were put on the corners' plane. Unit tests: exact ellipse
 arcs of a tilted plane through a cylinder, crossings solved exactly on a
 plane and a cylinder, the second point of a line on a cylinder, tracing
 crossing cylinders and fitting at two tolerances, inverting a point into
@@ -2245,8 +2263,12 @@ to 72 of its 96 operations and left the others as they were.
   operand the union is the plate.
 - **Curved cuts near arcs fail as invalid now and then**: a planar cap's
   triangle whose arc bulges out of it after the rounds, or a flat sliver
-  along a cut next to a curve that no flip may take. None came out
-  wrong. Plane-against-cylinder cuts that should be exact can be off by
+  along a cut next to a curve that no flip may take (the boolean's own
+  cap triangles aren't fold-checked). None came out wrong. Boxes cut
+  across a convex wall over an arc meet it most: 8 of 120 random box
+  operations across 20°–60° walls fail (unions and differences, all on
+  convex walls), and a box whose face runs along
+  the arc's chord (inside the bulge) fails its union and difference. Plane-against-cylinder cuts that should be exact can be off by
   1–4e-6 where a band triangle fell back to a copy claiming no surface.
 - **Fitted bands leave their face's claim**: triangles along a fitted
   cut on a quadric (quadric against quadric, a quadric against a free

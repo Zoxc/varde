@@ -513,8 +513,12 @@ impl Cutting<'_> {
 
     /// Where the operands' vertices and the crossings are: the crossings
     /// from their parameters as ordered along the edges, and exactly on
-    /// the face crossed where it is square to an axis (so flush faces of
-    /// results fed on stay flush).
+    /// the face crossed where it lies in a plane square to an axis (so
+    /// flush faces of results fed on stay flush): each coordinate that
+    /// every control point of the patch crossed has is set to it, which
+    /// only ever takes off rounding. The patch's corners alone won't do:
+    /// a wall over an arc whose ends are level has three corners at one
+    /// height while it bulges off it.
     fn positions(&self) -> Vec<DVec3> {
         let (a, b, counts) = (self.a, self.b, self.counts);
         let mut base: Vec<DVec3> = a
@@ -531,14 +535,14 @@ impl Cutting<'_> {
         ] {
             for e in 0..input.edges.len() as u32 {
                 let [s, en] = input.edges[e as usize];
-                let snap = |mut p: DVec3, id: u32| {
-                    let [c0, c1, c2] = other.corners(crossings[(id - first) as usize].face);
-                    for k in 0..3 {
-                        if c0[k] == c1[k] && c0[k] == c2[k] {
-                            p[k] = c0[k];
-                        }
-                    }
-                    p
+                let snap = |p: DVec3, id: u32| {
+                    let face = crossings[(id - first) as usize].face;
+                    let q = p.shared(&other.patches[face as usize].hull());
+                    debug_assert!(
+                        (q - p).abs().max_element() <= self.tol.resolution(),
+                        "a crossing moved from {p} to {q}"
+                    );
+                    q
                 };
                 let conic = input.conic(e);
                 let [ps, pe] = [s, en].map(|v| input.pos(v));

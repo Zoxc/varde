@@ -16,8 +16,9 @@ use super::*;
 use crate::mesh::tests::TOL;
 use crate::mesh::{Quadric, Surface, samples};
 use crate::par::assert_deterministic;
+use crate::patch::Conic2;
 use crate::profile::tests::{circle, rect};
-use crate::{Frame, Loop, Profile, extrude};
+use crate::{Frame, Loop, Profile, Segment, extrude};
 
 fn cube(min: [f64; 3], size: [f64; 3]) -> Solid {
     Solid::cuboid(DVec3::from(min), DVec3::from(size), 1, &TOL).unwrap()
@@ -780,4 +781,397 @@ fn random_bars_through_boxes_are_right_or_refused() {
     }
     // Most go through.
     assert!(done >= 20, "{done}");
+}
+
+/// A 10 × 10 square whose top side, from (10, 10) to (0, 10), is an arc
+/// of `deg` degrees bulging out (`convex`) or in, cut into `parts` equal
+/// pieces. The arc's ends are level, and so are the middle piece's of an
+/// odd count (made by mirroring), so each such wall's corners share a
+/// coordinate that its bulge doesn't.
+struct Arch {
+    deg: f64,
+    convex: bool,
+    parts: usize,
+}
+
+impl Arch {
+    /// The arc's centre's height and its radius.
+    fn circle(&self) -> (f64, f64) {
+        let half = (self.deg / 2.0).to_radians();
+        let r = 5.0 / half.sin();
+        let h = r * half.cos();
+        (if self.convex { 10.0 - h } else { 10.0 + h }, r)
+    }
+
+    /// The top side's height at `x` in 0..10.
+    fn top(&self, x: f64) -> f64 {
+        let (yc, r) = self.circle();
+        let s = (r * r - (x - 5.0) * (x - 5.0)).sqrt();
+        if self.convex { yc + s } else { yc - s }
+    }
+
+    fn profile(&self) -> Loop {
+        let (yc, r) = self.circle();
+        let center = DVec2::new(5.0, yc);
+        // The arc's points from (10, 10), the second half mirrored.
+        let n = self.parts;
+        let half = (self.deg / 2.0).to_radians();
+        let mut points: Vec<DVec2> = (0..=n)
+            .map(|i| {
+                if i == 0 {
+                    return DVec2::new(10.0, 10.0);
+                }
+                if 2 * i > n {
+                    return DVec2::ZERO;
+                }
+                // Measured from the arc's middle, towards +x.
+                let a = half * (1.0 - 2.0 * i as f64 / n as f64);
+                let y = if self.convex {
+                    yc + r * a.cos()
+                } else {
+                    yc - r * a.cos()
+                };
+                DVec2::new(5.0 + r * a.sin(), y)
+            })
+            .collect();
+        for i in 0..=n {
+            if 2 * i > n {
+                points[i] = DVec2::new(10.0 - points[n - i].x, points[n - i].y);
+            }
+        }
+        let (a0, a1) = (DVec2::ZERO, DVec2::new(10.0, 0.0));
+        let mut segments = vec![
+            Segment::line(a0, a1, 0).unwrap(),
+            Segment::line(a1, points[0], 1).unwrap(),
+        ];
+        for i in 0..n {
+            let (p, q) = (points[i], points[i + 1]);
+            let r = (p - center).length();
+            // Counter-clockwise round the square: convex arcs run the
+            // short way clockwise round their centre, concave ones not.
+            let conic = if self.convex {
+                Conic2::arc_between(center, r, q, p).unwrap().reversed()
+            } else {
+                Conic2::arc_between(center, r, p, q).unwrap()
+            };
+            segments.push(Segment { conic, curve: 2 });
+        }
+        segments.push(Segment::line(points[n], a0, 3).unwrap());
+        Loop { segments }
+    }
+
+    /// Extruded from 0 to 5 on `frame`.
+    fn solid(&self, frame: Frame) -> Solid {
+        extruded_on(vec![self.profile()], frame, 0.0, 5.0, 9)
+    }
+
+    /// The square's area and the arc's segment, exactly.
+    fn area(&self) -> f64 {
+        let (_, r) = self.circle();
+        let t = self.deg.to_radians();
+        let segment = r * r / 2.0 * (t - t.sin());
+        if self.convex {
+            100.0 + segment
+        } else {
+            100.0 - segment
+        }
+    }
+
+    /// The area of the profile within `x0..x1` × `y0..y1`, in closed form
+    /// between the places the top crosses `y0` and `y1`.
+    fn within(&self, [x0, x1]: [f64; 2], [y0, y1]: [f64; 2]) -> f64 {
+        let (yc, r) = self.circle();
+        let (x0, x1, y0) = (x0.max(0.0), x1.min(10.0), y0.max(0.0));
+        if x0 >= x1 || y0 >= y1 {
+            return 0.0;
+        }
+        // ∫ √(r² − u²) du.
+        let big = |u: f64| (u * (r * r - u * u).sqrt() + r * r * (u / r).asin()) / 2.0;
+        let under = |a: f64, b: f64| {
+            let s = big(b - 5.0) - big(a - 5.0);
+            yc * (b - a) + if self.convex { s } else { -s }
+        };
+        let mut cuts = vec![x0, x1];
+        for y in [y0, y1] {
+            let d = r * r - (y - yc) * (y - yc);
+            if d > 0.0 && (y >= yc) == self.convex {
+                for x in [5.0 - d.sqrt(), 5.0 + d.sqrt()] {
+                    if x0 < x && x < x1 {
+                        cuts.push(x);
+                    }
+                }
+            }
+        }
+        cuts.sort_by(f64::total_cmp);
+        cuts.windows(2)
+            .map(|w| {
+                let (a, b) = (w[0], w[1]);
+                let top = self.top((a + b) / 2.0);
+                if top <= y0 {
+                    0.0
+                } else if top >= y1 {
+                    (y1 - y0) * (b - a)
+                } else {
+                    under(a, b) - y0 * (b - a)
+                }
+            })
+            .sum()
+    }
+}
+
+/// The box `x` × `y` × `z` in `frame`'s coordinates (heights along its
+/// normal), in the world: square to the axes where the frame is.
+fn framed_box(frame: Frame, x: [f64; 2], y: [f64; 2], z: [f64; 2]) -> Solid {
+    let mut lo = DVec3::splat(f64::INFINITY);
+    let mut hi = DVec3::splat(f64::NEG_INFINITY);
+    for (i, j, k) in [0, 1].into_iter().flat_map(|i| {
+        [0, 1]
+            .into_iter()
+            .flat_map(move |j| [0, 1].into_iter().map(move |k| (i, j, k)))
+    }) {
+        let p = frame.point(DVec2::new(x[i], y[j]), z[k]);
+        lo = lo.min(p);
+        hi = hi.max(p);
+    }
+    Solid::cuboid(lo, hi - lo, 1, &TOL).unwrap()
+}
+
+/// The arch on `frame` less, with and within the box `x` × `y` × `z` (in
+/// the frame's coordinates): the volume `A ∩ B` should have.
+fn arch_and_box(arch: &Arch, x: [f64; 2], y: [f64; 2], z: [f64; 2]) -> f64 {
+    let height = (z[1].min(5.0) - z[0].max(0.0)).max(0.0);
+    arch.within(x, y) * height
+}
+
+/// Frames square to the axes on which a level side is level in `y`, `z`
+/// and `x` of the world.
+const LEVEL_FRAMES: [Frame; 3] = [
+    Frame::XY,
+    Frame {
+        origin: DVec3::ZERO,
+        x: DVec3::X,
+        y: DVec3::Z,
+    },
+    Frame {
+        origin: DVec3::ZERO,
+        x: DVec3::Y,
+        y: DVec3::X,
+    },
+];
+
+#[test]
+fn a_box_across_a_wall_with_level_ends() {
+    // A wall piece whose ends are level has three corners sharing a
+    // coordinate its bulge doesn't: crossings on it stay on the
+    // cylinder rather than being put on its corners' plane.
+    let arches = [
+        Arch {
+            deg: 60.0,
+            convex: false,
+            parts: 1,
+        },
+        Arch {
+            deg: 60.0,
+            convex: true,
+            parts: 1,
+        },
+        Arch {
+            deg: 20.0,
+            convex: true,
+            parts: 1,
+        },
+        Arch {
+            deg: 20.0,
+            convex: false,
+            parts: 3,
+        },
+    ];
+    for (f, frame) in LEVEL_FRAMES.into_iter().enumerate() {
+        for arch in &arches {
+            let a = arch.solid(frame);
+            let va = arch.area() * 5.0;
+            assert!((a.volume() - va).abs() <= 1e-9, "{}", a.volume() - va);
+            let mid = arch.top(5.0);
+            let tools = [
+                // A box across the arc's middle (for the 60° concave arc,
+                // near the one it was found with, (4, 8, −1) + (2, 2, 7)).
+                ([4.0, 6.0], [mid - 1.0, mid + 1.0], [-1.0, 6.0]),
+                // A half-space whose face x = 4 crosses the wall.
+                ([4.0, 14.0], [-1.0, 14.0], [-1.0, 6.0]),
+            ];
+            let found = ([4.0, 6.0], [8.0, 10.0], [-1.0, 6.0]);
+            let found = (!arch.convex).then_some(found);
+            for (x, y, z) in tools.into_iter().chain(found) {
+                let name = format!(
+                    "frame {f}, {}° {} in {}, box {x:?} {y:?}",
+                    arch.deg,
+                    if arch.convex { "convex" } else { "concave" },
+                    arch.parts
+                );
+                let b = framed_box(frame, x, y, z);
+                let results = all_four(&a, &b, 1e-9);
+                volumes(&name, &a, &b, &results, arch_and_box(arch, x, y, z), 1e-9);
+                for solid in &results {
+                    exact_to(&name, solid, 10.0, 1e-10);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn random_boxes_across_walls_with_level_ends() {
+    // Boxes of random sizes across 20°, 45° and 60° walls with level
+    // ends, through them or from the top: each result right by its
+    // volume in closed form, or refused.
+    let mut rng = crate::test_rng::Rng::new(60);
+    let (mut done, mut all) = (0, 0);
+    for i in 0..40 {
+        let arch = Arch {
+            deg: [20.0, 45.0, 60.0][i % 3],
+            convex: rng.unit() < 0.5,
+            parts: 1,
+        };
+        let frame = LEVEL_FRAMES[i % 3];
+        let a = arch.solid(frame);
+        let va = arch.area() * 5.0;
+        let t = rng.range(0.5, 9.5);
+        let size = rng.range(0.3, 3.0);
+        let off = DVec2::new(rng.range(-0.8, 0.8), rng.range(-0.8, 0.8)) * size;
+        let c = DVec2::new(t, arch.top(t)) + off;
+        let x = [c.x - size / 2.0, c.x + size / 2.0];
+        let y = [c.y - size / 2.0, c.y + size / 2.0];
+        let z = if rng.unit() < 0.5 {
+            [-1.0, 6.0]
+        } else {
+            [2.0, 7.0]
+        };
+        let b = framed_box(frame, x, y, z);
+        let vb = b.volume();
+        let both = arch_and_box(&arch, x, y, z);
+        for (op, want) in [
+            (Op::Union, va + vb - both),
+            (Op::Intersection, both),
+            (Op::Difference, va - both),
+        ] {
+            all += 1;
+            match boolean(&a, &b, op, &TOL, &Budget::DEFAULT) {
+                Ok(solid) => {
+                    let got = solid.volume();
+                    assert!(
+                        (got - want).abs() <= 1e-8,
+                        "case {i}, {op:?}: volume {got}, not {want}"
+                    );
+                    done += 1;
+                }
+                Err(KernelError::Invalid(_) | KernelError::TooComplex) => {}
+                Err(e) => panic!("case {i}, {op:?}: {e:?}"),
+            }
+        }
+    }
+    // Most go through (a third did when crossings were put on the walls'
+    // corners' planes). The rest are unions and differences with convex
+    // walls whose cap pieces fold.
+    assert!(done * 100 >= all * 85, "{done} of {all}");
+}
+
+/// The circle of radius 0.5 round (0.5, 0.2) in six arcs from `+x`, its
+/// points from exact constants: the arcs from 60° to 120° and from 240°
+/// to 300° have level ends.
+fn six_arcs() -> Loop {
+    let center = DVec2::new(0.5, 0.2);
+    let s = 0.5 * 0.75f64.sqrt();
+    let points = [
+        DVec2::new(1.0, 0.2),
+        DVec2::new(0.75, 0.2 + s),
+        DVec2::new(0.25, 0.2 + s),
+        DVec2::new(0.0, 0.2),
+        DVec2::new(0.25, 0.2 - s),
+        DVec2::new(0.75, 0.2 - s),
+    ];
+    Loop {
+        segments: (0..6)
+            .map(|i| crate::profile::tests::arc(center, points[i], points[(i + 1) % 6], 0))
+            .collect(),
+    }
+}
+
+#[test]
+fn a_wall_with_level_corners_keeps_its_crossings() {
+    // A circle of six arcs, two of whose walls have corners at one `y`,
+    // against a coaxial cylinder of four and a slab.
+    let lp = six_arcs();
+    let level = lp.segments[1].conic;
+    assert_eq!(level.p0.y, level.p1.y);
+    let big = extruded(
+        vec![circle(DVec2::new(0.5, 0.2), 1.0, 0, false)],
+        0.0,
+        1.0,
+        7,
+    );
+    let quarter = PI / 4.0;
+    let jobs = [
+        ("over 0..2", big.clone(), 0.0, 2.0, quarter),
+        ("over 1..2", big, 1.0, 2.0, 0.0),
+        (
+            "a slab",
+            cube([-2.0, -2.0, 0.5], [4.0, 4.0, 0.5]),
+            0.0,
+            2.0,
+            quarter / 2.0,
+        ),
+    ];
+    for (name, a, from, to, both) in jobs {
+        let b = extruded(vec![lp.clone()], from, to, 8);
+        let results = all_four(&a, &b, 1e-9);
+        volumes(name, &a, &b, &results, both, 1e-9);
+    }
+}
+
+#[test]
+fn shallow_level_arcs_are_never_wrong() {
+    // Crossings put on the corners' plane of a wall this shallow cut it
+    // by a band on a copy of its face that no tag check sees: the union
+    // and difference came back with the wrong volume. Every result must
+    // be right by its volume in closed form, or refused.
+    let mut done = 0;
+    for deg in [0.5, 2.0] {
+        let arch = Arch {
+            deg,
+            convex: true,
+            parts: 1,
+        };
+        let a = arch.solid(Frame::XY);
+        let va = arch.area() * 5.0;
+        assert!(
+            (a.volume() - va).abs() <= 1e-9,
+            "{deg}°: {}",
+            a.volume() - va
+        );
+        for (x0, y0) in [(8.3, 7.77), (-1.0, 8.54)] {
+            let (x, y, z) = ([x0, x0 + 1.7], [y0, y0 + 2.3], [-0.7, 3.3]);
+            let b = framed_box(Frame::XY, x, y, z);
+            let (vb, both) = (b.volume(), arch_and_box(&arch, x, y, z));
+            for (op, want) in [
+                (Op::Union, va + vb - both),
+                (Op::Intersection, both),
+                (Op::Difference, va - both),
+            ] {
+                match boolean(&a, &b, op, &TOL, &Budget::DEFAULT) {
+                    Ok(solid) => {
+                        let got = solid.volume();
+                        assert!(
+                            (got - want).abs() <= 1e-9,
+                            "{deg}°, box at ({x0}, {y0}), {op:?}: volume {got}, not {want}"
+                        );
+                    }
+                    Err(KernelError::Invalid(_) | KernelError::TooComplex) => continue,
+                    Err(e) => panic!("{deg}°, {op:?}: {e:?}"),
+                }
+                done += 1;
+            }
+        }
+    }
+    // All twelve go through today.
+    assert!(done >= 9, "{done}");
 }
