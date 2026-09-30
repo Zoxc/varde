@@ -1170,3 +1170,181 @@ fn shallow_level_arcs_are_never_wrong() {
     // All twelve go through today.
     assert!(done >= 9, "{done}");
 }
+
+/// A 10 × 10 square whose top side, from (10, 10) to (0, 10), is the
+/// parabola (a spline's piece: weight 1) with its control point at
+/// (5, 10 − 2·`depth`): `y = 10 − 0.04·depth·x·(10 − x)`.
+fn parabolic_arch(depth: f64) -> Loop {
+    let (a0, a1) = (DVec2::ZERO, DVec2::new(10.0, 0.0));
+    let (top0, top1) = (DVec2::new(10.0, 10.0), DVec2::new(0.0, 10.0));
+    let top = crate::patch::Conic2::new(top0, DVec2::new(5.0, 10.0 - 2.0 * depth), 1.0, top1);
+    Loop {
+        segments: vec![
+            Segment::line(a0, a1, 0).unwrap(),
+            Segment::line(a1, top0, 1).unwrap(),
+            Segment {
+                conic: top.unwrap(),
+                curve: 2,
+            },
+            Segment::line(top1, a0, 3).unwrap(),
+        ],
+    }
+}
+
+#[test]
+fn boxes_across_parabolic_walls_are_right() {
+    // The patches of a wall over a parabola have their curves' planes
+    // meet at infinity, along its axis. Bands along a cut took their
+    // inner edges through a point found as the far root of a quadratic
+    // whose leading term was all rounding, off in a random direction, and
+    // came out up to 1e-3 off the wall on a copy of its face claiming no
+    // surface: unions and differences 3.6e-3 off in volume.
+    let depth = 3.0;
+    let lp = parabolic_arch(depth);
+    let top = |x: f64| 10.0 - 0.04 * depth * x * (10.0 - x);
+    // ∫ top from `x0` to `x1`.
+    let under = |x0: f64, x1: f64| {
+        10.0 * (x1 - x0)
+            - 0.04 * depth * (5.0 * (x1 * x1 - x0 * x0) - (x1.powi(3) - x0.powi(3)) / 3.0)
+    };
+    let frames = [
+        Frame::XY,
+        Frame {
+            origin: DVec3::new(-12.25, -0.5, -8.0),
+            x: DVec3::NEG_Z,
+            y: DVec3::NEG_Y,
+        },
+        Frame {
+            origin: DVec3::new(0.1, 0.2, 0.3),
+            x: DVec3::X,
+            y: DVec3::new(0.0, 0.6, 0.8),
+        },
+    ];
+    let va = 5.0 * under(0.0, 10.0);
+    let (mut done, mut all) = (0, 0);
+    for (f, frame) in frames.into_iter().enumerate() {
+        let a = extruded_on(vec![lp.clone()], frame, 0.0, 5.0, 9);
+        assert!((a.volume() - va).abs() <= 1e-9, "{}", a.volume() - va);
+        for (x0, width, z) in [
+            (8.41, 0.06, [1.0, 4.0]),
+            (6.2, 0.47, [-1.0, 6.0]),
+            (1.3, 0.2, [2.0, 7.0]),
+            (4.9, 0.3, [1.0, 4.0]),
+        ] {
+            let x1 = x0 + width;
+            // Across the wall: from under its lowest point there to over
+            // its highest.
+            let (lo, hi) = (
+                top(x0).min(top(x1)).min(top(5.0f64.clamp(x0, x1))),
+                top(x0).max(top(x1)),
+            );
+            let y = [lo - 0.02, hi + 0.02];
+            let b = extruded_on(
+                vec![rect(DVec2::new(x0, y[0]), DVec2::new(x1, y[1]), 30)],
+                frame,
+                z[0],
+                z[1],
+                30,
+            );
+            let height = z[1].min(5.0) - z[0].max(0.0);
+            let both = (under(x0, x1) - y[0] * width) * height;
+            if f == 2 && x0 == 8.41 {
+                // The same bits at 1 and 8 threads.
+                let mesh = assert_deterministic(|| {
+                    boolean(&a, &b, Op::Difference, &TOL, &Budget::DEFAULT).map(|s| s.into_mesh())
+                });
+                assert!(mesh.is_ok());
+            }
+            let vb = b.volume();
+            for (x, y, op, want) in [
+                (&a, &b, Op::Union, va + vb - both),
+                (&a, &b, Op::Intersection, both),
+                (&a, &b, Op::Difference, va - both),
+                (&b, &a, Op::Difference, vb - both),
+            ] {
+                all += 1;
+                match boolean(x, y, op, &TOL, &Budget::DEFAULT) {
+                    Ok(solid) => {
+                        let got = solid.volume();
+                        assert!(
+                            (got - want).abs() <= 1e-8,
+                            "frame {f}, box at {x0}, {op:?}: volume {got}, not {want}"
+                        );
+                        done += 1;
+                    }
+                    Err(KernelError::Invalid(_) | KernelError::TooComplex) => {
+                        println!("frame {f}, box at {x0}, {op:?} refused");
+                    }
+                    Err(e) => panic!("frame {f}, box at {x0}, {op:?}: {e:?}"),
+                }
+            }
+        }
+    }
+    assert!(done * 10 >= all * 9, "{done} of {all}");
+}
+
+#[test]
+fn cuts_across_nearly_straight_edges_of_results() {
+    // A box cut from a wall over a very shallow hyperbola (weight 2.13)
+    // leaves a cut on its cap within the resolution of straight, whose
+    // control point is far from its chord's middle. Crossings on such an
+    // edge were found along the segment and put at the conic's point of
+    // the segment's parameter, 2e-3 away along it: off the plane crossed
+    // (moved back only on planes square to an axis, past the snap's
+    // bound) and, on a tilted frame, the union 1.8e-4 off in volume.
+    let v = DVec2::new;
+    let top = crate::patch::Conic2::new(
+        v(10.0, 10.0),
+        v(4.378525581743227, 9.999726510682816),
+        2.1312268667924372,
+        v(0.0, 10.0),
+    )
+    .unwrap();
+    let lp = Loop {
+        segments: vec![
+            Segment::line(v(0.0, 0.0), v(10.0, 0.0), 0).unwrap(),
+            Segment::line(v(10.0, 0.0), v(10.0, 10.0), 1).unwrap(),
+            Segment {
+                conic: top,
+                curve: 2,
+            },
+            Segment::line(v(0.0, 10.0), v(0.0, 0.0), 3).unwrap(),
+        ],
+    };
+    let first = rect(
+        v(6.154462296097111, 9.973702360893435),
+        v(6.486625153233848, 10.445907560013437),
+        30,
+    );
+    let second = rect(
+        v(6.190644268668397, 9.960157904094217),
+        v(6.272710048175984, 10.086441493557576),
+        40,
+    );
+    let q = DQuat::from_axis_angle(DVec3::new(0.3, -0.5, 0.8).normalize(), 0.7);
+    for frame in [
+        Frame {
+            origin: DVec3::new(7.5, 13.0, -10.75),
+            x: DVec3::X,
+            y: DVec3::NEG_Z,
+        },
+        Frame {
+            origin: DVec3::new(0.5, -1.0, 2.0),
+            x: q * DVec3::X,
+            y: q * DVec3::Y,
+        },
+    ] {
+        let a = extruded_on(vec![lp.clone()], frame, 0.0, 5.0, 9);
+        let b = extruded_on(vec![first.clone()], frame, 1.0, 4.0, 30);
+        let c = extruded_on(vec![second.clone()], frame, -1.0, 3.0, 40);
+        let piece = run(&a, &b, Op::Intersection);
+        let [u, i, d] =
+            [Op::Union, Op::Intersection, Op::Difference].map(|op| run(&piece, &c, op).volume());
+        let (vp, vc) = (piece.volume(), c.volume());
+        // The piece's volume: the box's, less what lies over the top.
+        assert!((vp - 0.026049739363).abs() <= 1e-10, "{vp}");
+        assert!((u + i - vp - vc).abs() <= 1e-7, "{frame:?}: {u} + {i}");
+        assert!((d + i - vp).abs() <= 1e-7, "{frame:?}: {d} + {i}");
+        assert!((i - 0.004290201848).abs() <= 1e-7, "{frame:?}: {i}");
+    }
+}

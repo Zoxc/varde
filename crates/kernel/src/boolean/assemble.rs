@@ -1089,19 +1089,32 @@ fn alternate(
 /// Each crossing's parameter along its edge, solved again exactly where
 /// the face crossed is a plane or a quadric and the edge curved, or the
 /// face curved (a straight edge through a planar patch is exact already).
+///
+/// A straight edge's crossings are found along the segment between its
+/// ends, in its parameter; but where the edge isn't exactly that segment
+/// ([`lined`]) its vertices are its conic's points, whose parameter runs
+/// at another pace (a nearly straight cut whose control point is off its
+/// chord's middle): that parameter is solved again on the conic, from the
+/// conic's point nearest the segment's. Taken as it was, it put a vertex
+/// `2e-3` along the edge from the plane it crossed.
 fn params(input: &Input, other: &Input, crossings: &[Crossing]) -> Vec<f64> {
     par_map(crossings, |c| {
         let straight = input.straight[c.edge as usize];
-        if straight && other.planar[c.face as usize] {
-            return c.t;
-        }
-        let conic = if straight {
-            let [s, e] = input.edges[c.edge as usize].map(|v| input.pos(v));
-            segment(s, e)
+        let [s, e] = input.edges[c.edge as usize].map(|v| input.pos(v));
+        let shape = Shape::of(other, c.face);
+        let t = if straight && other.planar[c.face as usize] {
+            c.t
+        } else if straight {
+            polish(&segment(s, e), c.t, &shape)
         } else {
-            input.conic(c.edge)
+            return polish(&input.conic(c.edge), c.t, &shape);
         };
-        polish(&conic, c.t, &Shape::of(other, c.face))
+        if lined(input, c.edge) {
+            return t;
+        }
+        let conic = input.conic(c.edge);
+        let guess = param_on(&conic, lerp(s, e, t), f64::INFINITY).unwrap_or(t);
+        polish(&conic, guess, &shape)
     })
 }
 

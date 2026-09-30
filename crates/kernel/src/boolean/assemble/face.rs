@@ -625,11 +625,16 @@ fn exact_bands(
             .into_iter()
             .find(|&x| x == e2.0 || x == e2.1)
             .expect("two sides share a vertex");
-        let Some(o) = second_point(q, pos(v), n1.cross(n2)) else {
+        let Some((dir, inv)) = second_point(q, pos(v), n1.cross(n2)) else {
             continue;
         };
+        // The plane through the edge's ends `x`, `y` and `O = V + dir/inv`:
+        // `(x − O) × (y − O)` times `inv`, which holds as `O` goes to
+        // infinity (on a parabolic cylinder: the plane through `x` and `y`
+        // along its axis, the patch's own curves' plane).
         let (x, y) = (pos(d.0), pos(d.1));
-        let Some(normal) = (x - o).cross(y - o).try_normalize() else {
+        let (a, b) = (x - pos(v), y - pos(v));
+        let Some(normal) = (a.cross(b) * inv + (y - x).cross(dir)).try_normalize() else {
             continue;
         };
         let old = inner[&d];

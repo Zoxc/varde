@@ -1593,7 +1593,12 @@ other edge it is the conic's point from its blossom `B(t, t)`, and the
 edge is split into pieces between its crossings by blossoming
 (`[B(s,s), B(s,t), B(t,t)]`), each piece one record both faces beside
 the edge read. An arc only straight within the resolution keeps its
-curve (a straight piece of it was `3e-8` off a cylinder).
+curve (a straight piece of it was `3e-8` off a cylinder); its crossings
+are found along the segment between its ends, so their parameters are
+solved again on the conic (from its point nearest the segment's, then
+against the face crossed): a nearly straight cut whose control point is
+far from its chord's middle runs at another pace, and the segment's
+parameter put a vertex `2e-3` along it from the plane it crossed.
 
 **Chains** (`chain::chain`, per arc, through `par_map`): the cut from an
 arc's `+` end to its `−` end as vertices and curves, and every vertex's
@@ -1750,7 +1755,17 @@ planes meet in leaves the quadric again (`surface::second_point`) and
 makes the edge to its parent the quadric's conic in the plane through the
 edge's ends and `O` (`section`), kept only as one arc and only if neither
 triangle on it then fails the fold check (a far `O` can reparametrize the
-curve badly). An unrefined cylinder strip cut by planes always has a
+curve badly). `O` may be at infinity: a parabolic cylinder's curves (a
+wall over a spline's piece, weight 1) all have planes along its axis,
+which meets it nowhere else. So `second_point` gives the reciprocal of
+the distance to `O`, the root nearest 0 of the quadratic in it (well
+conditioned, 0 at infinity), and the plane's normal is `(x − V) × (y −
+V)` times it plus `(y − x) ×` the line's direction. Solved for the
+distance itself, the root was a quadratic's huge one whose leading term
+was all rounding; the plane went through a point far off in a random
+direction, and big triangles of the wall came out up to `1e-3` off it on
+a `Free` copy of the face: unions and differences up to `0.1` off in
+volume, each `Ok`. An unrefined cylinder strip cut by planes always has a
 ruling in each region, so a cylinder through a box comes out exact to
 rounding. A triangle on a `Quadric` face still off it by more than half
 the resolution at the sample points (a fitted cut's band, the tree's
@@ -2178,9 +2193,16 @@ refused, at least 85% going through (93% do; the rest are convex walls'
 cap pieces folding); a circle of six arcs with two level walls against a
 coaxial cylinder and a slab; and 0.5° and 2° convex arches against
 boxes, whose unions and differences came out 0.011 off in volume when
-crossings were put on the corners' plane. Unit tests: exact ellipse
+crossings were put on the corners' plane. Walls over a parabola (a
+spline's piece) on three frames, one tilted, against boxes across them,
+each result right by its closed-form volume or refused (their bands' far
+point at infinity along the axis). A box cut from a wall over a very
+shallow hyperbola, cut again across its cap's nearly straight edge, on
+an axis frame and a tilted one (the identities; the crossings on the
+edge's conic, not at the segment's parameter). Unit tests: exact ellipse
 arcs of a tilted plane through a cylinder, crossings solved exactly on a
-plane and a cylinder, the second point of a line on a cylinder, tracing
+plane and a cylinder, the second point of a line on a cylinder and at
+infinity on a parabolic cylinder, tracing
 crossing cylinders and fitting at two tolerances, inverting a point into
 a patch.
 
@@ -2270,7 +2292,10 @@ to 72 of its 96 operations and left the others as they were.
   convex walls), and a box whose face runs along the arc's chord (inside
   the bulge) fails its union and difference. Plane-against-cylinder cuts
   that should be exact can be off by 1–4e-6 where a band triangle fell
-  back to a copy claiming no surface.
+  back to a copy claiming no surface; small boxes across walls over arcs
+  (a tenth wide, z 2..7) up to `1.5e-5` in volume, the copies up to
+  `1.3e-4` off the wall (within half the fit tolerance, which bounds
+  only the triangles along a cut).
 - **Fitted bands leave their face's claim**: triangles along a fitted
   cut on a quadric (quadric against quadric, a quadric against a free
   surface), and an exact band tree's root where no ruling frees it, go on

@@ -163,22 +163,27 @@ fn quadratic_roots(a: f64, b: f64, c: f64) -> [Option<f64>; 2] {
     [Some(q / a), Some(c / q)]
 }
 
-/// The point other than `v` (on the quadric) where the line through `v`
-/// along `dir` meets `q`, if it does, finitely.
-pub(super) fn second_point(q: &Quadric, v: DVec3, dir: DVec3) -> Option<DVec3> {
+/// Where the line through `v` (on the quadric) along `dir` meets `q`
+/// again, if it does: the unit direction and the reciprocal `t` of the
+/// distance along it, so the point is `v + dir / t`. `t` is 0 where the
+/// line meets `q` again only at infinity: along the axis of a parabolic
+/// cylinder, where the planes of all the curves of a patch on it meet
+/// (their common point is at infinity). Solved in `t` (`c·t² + b·t + a =
+/// 0` for `F(v + s·dir) = a·s² + b·s + c`), whose root nearest 0 is well
+/// conditioned however far the point: in `s` it was the huge root of a
+/// quadratic whose leading term was all rounding, and put a band's cut
+/// through a point off in a random direction.
+pub(super) fn second_point(q: &Quadric, v: DVec3, dir: DVec3) -> Option<(DVec3, f64)> {
     let dir = dir.try_normalize()?;
-    // F(v + s·dir) = F(v) + s·∇F(v)·dir + s²·dir·A·dir, F(v) ≈ 0.
     let a = dir.dot(q.a * dir);
     let b = q.gradient(v).dot(dir);
     let c = q.value(v);
-    let roots = quadratic_roots(a, b, c);
-    // The root further from `v`; the nearer one is `v` itself.
-    let s = roots
+    // The root nearer 0; the other, near infinity, is `v` itself.
+    let t = quadratic_roots(c, b, a)
         .into_iter()
         .flatten()
-        .max_by(|x, y| x.abs().total_cmp(&y.abs()))?;
-    let o = v + dir * s;
-    (s.is_finite() && s.abs() > 0.0 && o.is_finite()).then_some(o)
+        .min_by(|x, y| x.abs().total_cmp(&y.abs()))?;
+    t.is_finite().then_some((dir, t))
 }
 
 /// Which of the two points where a chord's bisector meets the conic an
@@ -395,8 +400,21 @@ mod tests {
     #[test]
     fn second_points() {
         let q = Quadric::cylinder(DVec3::ZERO, DVec3::Z, 1.0).unwrap();
-        let o = second_point(&q, DVec3::X, DVec3::new(-1.0, 1.0, 0.3)).unwrap();
+        let (dir, t) = second_point(&q, DVec3::X, DVec3::new(-1.0, 1.0, 0.3)).unwrap();
+        let o = DVec3::X + dir / t;
         assert!((o - DVec3::new(0.0, 1.0, 0.3)).length() < 1e-15, "{o}");
+        // Along a parabolic cylinder's axis: at infinity, however the
+        // leading term rounds.
+        let p = Quadric {
+            origin: DVec3::ZERO,
+            a: glam::DMat3::from_diagonal(DVec3::new(1.0, 0.0, 0.0)),
+            b: DVec3::new(0.0, -1.0, 0.0),
+            c: 0.0,
+        };
+        let v = DVec3::new(2.0, 2.0, 1.0);
+        assert!(p.distance(v) == 0.0);
+        let (_, t) = second_point(&p, v, DVec3::new(1e-17, 1.0, 0.0)).unwrap();
+        assert!(t.abs() < 1e-15, "{t}");
         // Along the axis: no second point.
         assert!(second_point(&q, DVec3::X, DVec3::Z).is_none());
     }
