@@ -14,7 +14,7 @@ use glam::{DMat3, DQuat, DVec2, DVec3};
 use super::pairs::tests::{cylinder_x, poke, reach, saddle};
 use super::*;
 use crate::mesh::tests::TOL;
-use crate::mesh::{CheckError, Quadric, Surface, samples};
+use crate::mesh::{Quadric, Surface, samples};
 use crate::par::assert_deterministic;
 use crate::profile::tests::{circle, rect};
 use crate::{Frame, Loop, Profile, Segment, extrude};
@@ -609,69 +609,39 @@ fn flush_bosses_joined_on_drilled_plates() {
     }
 }
 
-/// `solid`'s mesh with every triangle turned over, its edges' curves
-/// kept: inside out, so not a solid.
-fn inverted(solid: &Solid) -> Mesh {
-    let mesh = solid.mesh();
-    let mut builder = crate::mesh::MeshBuilder::new();
-    for &p in mesh.verts() {
-        builder.vert(p);
-    }
-    for &face in mesh.faces() {
-        builder.face(face);
-    }
-    for (t, tri) in mesh.tris().iter().enumerate() {
-        let [a, b, c] = tri.halfedges.map(|h| h.start);
-        let patch = mesh.patch(t);
-        for (i, (u, v)) in [(a, b), (b, c), (c, a)].into_iter().enumerate() {
-            builder.edge(v, u, patch.c[i], patch.w[i]);
-        }
-        builder.tri([a, c, b], tri.face);
-    }
-    builder.build().unwrap()
-}
-
 #[test]
-fn curved_operands_facing_in_are_told_cheaply() {
-    // Whether an operand faces out: its corner triangles' volume, less
-    // what the patches that could move it most take, integrated one by
-    // one only until the rest can't change the sign. The same answer as
-    // the whole integral, turned over too.
-    let upright = cylinder([0.0, 0.0, -2.0], 1.0, 4.0);
-    let across = cylinder_x(0.1, 0.2, 0.7, -2.0, 2.0);
-    let crossing = run(&upright, &across, Op::Union);
-    let drilled = run(
-        &plate(),
-        &cylinder([-1.5, -0.5, -1.0], 0.4, 3.0),
-        Op::Difference,
+fn the_result_checks_integrations_are_charged() {
+    // A tube whose wall is a twentieth thick, notched through the wall:
+    // the corner triangles' volume can't tell which way the result
+    // faces, so its check integrates some of the patches. The
+    // operation's work is what making the mesh takes, a few units a
+    // patch for the check, and `INTEGRATE_WORK` for each patch it
+    // integrated, charged after: the operation fits that budget exactly.
+    let tube = extruded(
+        vec![
+            circle(DVec2::ZERO, 1.0, 1, false),
+            circle(DVec2::ZERO, 0.95, 2, true),
+        ],
+        0.0,
+        1.0,
+        3,
     );
-    for (name, solid) in [
-        ("cylinder", &upright),
-        ("crossing", &crossing),
-        ("drilled", &drilled),
-    ] {
-        let volume = solid.volume();
-        for (turned, mesh) in [(false, solid.mesh().clone()), (true, inverted(solid))] {
-            let input = Input::new(&mesh, &TOL);
-            let mut work = crate::budget::Work::new(&Budget::DEFAULT);
-            let out = input.faces_out(1, &mut work).unwrap();
-            assert_eq!(out, (volume > 0.0) != turned, "{name}, turned {turned}");
-            assert_eq!(out, !turned, "{name}");
-            // One unit a patch for the pass, one more for each patch
-            // integrated: the crossing cylinders' small fitted bands
-            // mostly aren't.
-            let patches = mesh.tris().len() as u64;
-            let integrated = Budget::DEFAULT.work() - work.left() - patches;
-            if name == "crossing" {
-                assert!(2 * integrated < patches, "{integrated} of {patches}");
-            }
-        }
-    }
-    // Turned over, it isn't a solid.
-    assert!(matches!(
-        Solid::new(inverted(&upright), &TOL),
-        Err(KernelError::Invalid(CheckError::InsideOut(_)))
-    ));
+    let notch = cube([0.9, -0.1, 0.5], [0.2, 0.2, 1.0]);
+    // The notch takes the wall where `|y| < 0.1` (the inner circle there
+    // is past `x = 0.9`), half the tube's height.
+    let strip = |r: f64| 0.1 * (r * r - 0.01).sqrt() + r * r * crate::trig::asin(0.1 / r);
+    let want = PI * (1.0 - 0.95 * 0.95) - 0.5 * (strip(1.0) - strip(0.95));
+    let mut work = Work::new(&Budget::DEFAULT);
+    let mesh = unchecked(&tube, &notch, Op::Difference, &TOL, &mut work).unwrap();
+    let mesh = mesh.repair_within(&TOL, &mut work).unwrap();
+    let integrated = mesh.check_counted(&TOL).unwrap();
+    assert!(integrated > 0);
+    assert!((Solid::new(mesh.clone(), &TOL).unwrap().volume() - want).abs() < 1e-9);
+    let made = Budget::DEFAULT.work() - work.left();
+    let total = made + (mesh.tris().len() * CHECK_WORK + integrated * INTEGRATE_WORK) as u64;
+    let with = |work: u64| boolean(&tube, &notch, Op::Difference, &TOL, &Budget::new(work));
+    assert_eq!(with(total).map(|s| s.mesh().clone()), Ok(mesh));
+    assert_eq!(with(total - 1), Err(KernelError::TooComplex));
 }
 
 #[test]

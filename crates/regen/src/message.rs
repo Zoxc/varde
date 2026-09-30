@@ -81,10 +81,6 @@ pub(crate) fn boolean(doing: Doing, body: &str, error: KernelError) -> String {
             "{doing} {body} can't be worked out: they meet on faces too nearly flush or \
              tangent to tell apart; move it a little"
         ),
-        // Either could be: the kernel doesn't say which.
-        KernelError::Boolean(BooleanError::InsideOut) => {
-            format!("{doing} {body} can't be worked out: one of them is inside out")
-        }
         KernelError::Boolean(BooleanError::Degenerate) => {
             format!("{doing} {body} leaves a face that can't be made: parts are too thin")
         }

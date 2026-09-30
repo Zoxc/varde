@@ -23,8 +23,15 @@ impl Solid {
     /// The solid bounded by `mesh`, if it passes [`Mesh::check`] with
     /// `tol`; [`KernelError::Invalid`] with the first failure if not.
     pub fn new(mesh: Mesh, tol: &Tolerance) -> Result<Solid, KernelError> {
-        mesh.check(tol).map_err(KernelError::Invalid)?;
-        Ok(Solid { mesh })
+        Solid::new_counted(mesh, tol).map(|(solid, _)| solid)
+    }
+
+    /// [`Solid::new`], with how many patches' volumes the check
+    /// integrated ([`Mesh::check_counted`]), for callers that charge the
+    /// work.
+    pub(crate) fn new_counted(mesh: Mesh, tol: &Tolerance) -> Result<(Solid, usize), KernelError> {
+        let integrated = mesh.check_counted(tol).map_err(KernelError::Invalid)?;
+        Ok((Solid { mesh }, integrated))
     }
 
     /// The empty solid.

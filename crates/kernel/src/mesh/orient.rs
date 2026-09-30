@@ -401,7 +401,7 @@ fn orient3d(o: DVec3, [a, b, c]: [DVec3; 3]) -> (f64, f64) {
 /// convex hull of the control points' shadows) as deep as the control
 /// points lie either side of the plane; twice that, for safety. Infinite
 /// for a triangle with no plane.
-pub(crate) fn lune_bound(patch: &Patch) -> f64 {
+fn lune_bound(patch: &Patch) -> f64 {
     let [p0, p1, p2] = patch.p;
     let Some(n) = (p1 - p0).cross(p2 - p0).try_normalize() else {
         return f64::INFINITY;

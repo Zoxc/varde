@@ -88,8 +88,6 @@ pub enum Op {
 /// Why a boolean gives no solid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BooleanError {
-    /// An operand faces inwards, or its winding numbers aren't 0 and 1.
-    InsideOut,
     /// The decisions don't fit together: near ties decided as ties that
     /// no one configuration has, rarely.
     Inconsistent,
@@ -101,7 +99,6 @@ pub enum BooleanError {
 impl std::fmt::Display for BooleanError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            BooleanError::InsideOut => "a solid is inside out",
             BooleanError::Inconsistent => "where the solids cross doesn't add up",
             BooleanError::Degenerate => "a cut face couldn't be triangulated",
         })
@@ -119,8 +116,13 @@ fn tie(tol: &Tolerance) -> f64 {
 }
 
 /// Units of work per patch that checking the result takes (about 2.7 µs
-/// a patch on one thread, the units about half a microsecond).
+/// a patch on one thread, the units about half a microsecond), not
+/// counting the patches it integrates to tell which way the shells face.
 const CHECK_WORK: usize = 5;
+
+/// Units of work per patch whose volume the result's check integrates
+/// (about 17 µs a patch on one thread).
+const INTEGRATE_WORK: usize = 32;
 
 /// The projection direction every primitive shares: nearly `+z`, tilted
 /// off every axis so that walls along the axes, which CAD models are full
@@ -187,8 +189,12 @@ type Found = (Vec<(i8, f64)>, usize);
 
 /// `a op b`, within `budget`: a solid that passes `check`, always.
 ///
-/// Fails with [`KernelError::Boolean`] for an operand that is inside out,
-/// or decisions that don't fit together (see [`BooleanError`]); with
+/// The operands face out and nest properly, as every [`Solid`] does
+/// (`check` makes sure of it), so the operation doesn't test them.
+///
+/// Fails with [`KernelError::Boolean`] for decisions that don't fit
+/// together, or a cut face that can't be triangulated (see
+/// [`BooleanError`]); with
 /// [`KernelError::TooComplex`] past the budget; and with
 /// [`KernelError::Invalid`] when the result can't pass `check` with `tol`,
 /// such as two solids touching along an edge or at a point, where the
@@ -209,9 +215,12 @@ pub fn boolean(
     }
     let mesh = unchecked(a, b, op, tol, &mut work)?;
     let mesh = mesh.repair_within(tol, &mut work)?;
-    // The check that makes it a solid, a few units a patch.
+    // The check that makes it a solid, a few units a patch, and the
+    // patches it integrated, charged once it has told how many.
     work.spend(mesh.tris().len().saturating_mul(CHECK_WORK))?;
-    Solid::new(mesh, tol)
+    let (solid, integrated) = Solid::new_counted(mesh, tol)?;
+    work.spend(integrated.saturating_mul(INTEGRATE_WORK))?;
+    Ok(solid)
 }
 
 /// The result's mesh, before repair and the check.
@@ -222,7 +231,7 @@ fn unchecked(
     tol: &Tolerance,
     work: &mut Work,
 ) -> Result<Mesh, KernelError> {
-    let (ia, ib) = inputs(a, b, tol, work)?;
+    let (ia, ib) = (Input::new(a.mesh(), tol), Input::new(b.mesh(), tol));
     let grow = op == Op::Union;
     let (mut soup, faces) = if ia.curved || ib.curved {
         // Counted and decided pair by pair, the operands refined where a
@@ -284,7 +293,7 @@ pub fn touches(
         return Ok(false);
     }
     let mut work = Work::new(budget);
-    let (ia, ib) = inputs(a, b, tol, &mut work)?;
+    let (ia, ib) = (Input::new(a.mesh(), tol), Input::new(b.mesh(), tol));
     if ia.curved || ib.curved {
         let refined = pairs::refined(a.mesh(), b.mesh(), true, tol, &mut work)?;
         return Ok(refined.counts.meet());
@@ -293,26 +302,6 @@ pub fn touches(
     let counts = count::count(&ia, &ib, &prims, tol, &mut work)?;
     Ok(counts.meet())
 }
-
-/// The operands' tables, once both are known to face out: a solid's
-/// volume must be positive (see [`Input::faces_out`]).
-fn inputs<'a>(
-    a: &'a Solid,
-    b: &'a Solid,
-    tol: &Tolerance,
-    work: &mut Work,
-) -> Result<(Input<'a>, Input<'a>), KernelError> {
-    let ia = Input::new(a.mesh(), tol);
-    let ib = Input::new(b.mesh(), tol);
-    if !ia.faces_out(VOLUME_WORK, work)? || !ib.faces_out(VOLUME_WORK, work)? {
-        return Err(KernelError::Boolean(BooleanError::InsideOut));
-    }
-    Ok((ia, ib))
-}
-
-/// The work of integrating a patch's share of the volume: about 17 µs a
-/// patch on one thread.
-const VOLUME_WORK: usize = 32;
 
 /// The mesh of the cleaned triangles: the vertices and faces no triangle
 /// uses dropped (so chained booleans don't pile up faces long gone), the

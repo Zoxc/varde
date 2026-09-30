@@ -48,7 +48,6 @@ fn every_boolean_failure_starts_in_lower_case() {
         KernelError::Invalid(CheckError::Counts),
         KernelError::Patch(varde_kernel::patch::PatchError::Mismatch),
         KernelError::Profile(ProfileError::Nesting),
-        KernelError::Boolean(BooleanError::InsideOut),
         KernelError::Boolean(BooleanError::Inconsistent),
         KernelError::Boolean(BooleanError::Degenerate),
     ];

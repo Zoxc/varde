@@ -1376,7 +1376,8 @@ operations turned and moved, 94 now work, 71 did with exact signs), and
 the exact predicates and the curved primitives, which decide heights
 that close as ties too, see one configuration: a cylinder `1e-9` off a
 box's face was beside it for the exact tests and on it for the
-numerical ones, and the winding numbers disagreed (`InsideOut`). The
+numerical ones, and the winding numbers disagreed (then `InsideOut`,
+now `Inconsistent`). The
 positions (`Across`, `Between`, `crossing`) stay exact. It is used for
 flat operands too.
 
@@ -1428,22 +1429,12 @@ flat operands too.
    otherwise, never seen), the part's last vertex's own ray to give what
    its edges carried there (`Inconsistent` otherwise: a near tie decided
    at the first vertex against the crossings would put the whole part on
-   the wrong side), and every winding number to be 0 or 1 (`InsideOut`
-   otherwise). The operands' own volumes must be positive
-   too (`InsideOut`), which `Solid::new` now makes sure of for every
-   shell (invariant 5), so this is left over until the booleans rely on
-   it. A flat
-   operand's is its corner triangles' (exact); a curved one's the same,
-   less the volume between each patch and its triangle, integrated
-   (`solid::patch_volume`, 32 units each) for the patches that could move
-   it most until what the rest could no longer changes the sign
-   (`Input::faces_out`): each patch, its triangle and the lunes between
-   its curved edges and their chords (which the two patches beside an
-   edge share, turned opposite ways) lie in its control points' hull, so
-   the volume between the two is no more than `lune_bound` (see
-   "Orientation"). Integrating every patch took 0.8 s on
-   a body of 47 000 patches, before any work was counted; small patches
-   are rarely needed.
+   the wrong side), and every winding number to be 0 or 1
+   (`Inconsistent` otherwise: the operands are solids, whose winding
+   numbers `check` makes 0 or 1 everywhere, invariant 5, so any other
+   number means decisions that don't fit together, such as side-by-side
+   cylinders nearly tangent). The operands' orientation isn't tested
+   here or anywhere in the boolean: every `Solid` passed `check`.
 
 Consequences, from the counting alone: a vertex's winding number and
 its edges' crossings agree, and for every pair of faces (`p` of `A`, `q`
@@ -2116,13 +2107,15 @@ operands intersected, or subtracted the other way, work.
 
 ### Errors and budget
 
-`KernelError::Boolean(BooleanError)`: `InsideOut` (an operand's volume
-not positive, see "Counting", or a winding number out of `0..=1`),
-`Inconsistent` (the decisions don't fit together: with near ties taken
-as ties, flat operands too can, rarely), `Degenerate` (a face's loops
+`KernelError::Boolean(BooleanError)`: `Inconsistent` (the decisions
+don't fit together: with near ties taken as ties, flat operands too can,
+rarely; also a winding number out of `0..=1`, see "Counting"),
+`Degenerate` (a face's loops
 couldn't be triangulated, or the triangles don't pair up). `TooComplex`
 past the budget or `MAX_PATCHES`, `Invalid` when the result fails
-`check`. Work: the broad phase's pairs and the rays' hits (counted
+`check` (a result with a shell facing the wrong way among the others is
+`Invalid(InsideOut)`, never a wrong `Ok`). Work: the broad phase's
+pairs and the rays' hits (counted
 before collecting), one unit per stored primitive and per candidate
 crossing, and 20 more for each sign or ratio a primitive or a crossing
 worked out exactly (a tie's expansions in powers of the perturbation,
@@ -2132,11 +2125,15 @@ a flat torus of 18 432 patches against itself, every primitive a tie,
 ran 16 s before running out, and stops in 1.6 s now), the square of each
 edge's crossings (ordering them), a unit
 per cut face and its triangulation's steps over 16 (the `Meter`, see
-"Triangulating"; an exact orientation 4 units), a unit per operand
-patch and 32 per patch whose volume is integrated for the operands'
-signs, the soup's size per clean-up round, the triangles per
-round of merging, repair's own, and 5 units per patch of the result for
-the check that makes it a solid (about 2.7 µs a patch). With curved patches also each edge–face search a unit per 4
+"Triangulating"; an exact orientation 4 units), the soup's size per
+clean-up round, the triangles per round of merging, repair's own, and 5
+units per patch of the result for the check that makes it a solid (about
+2.7 µs a patch; `CHECK_WORK`), spent before it, plus 32 for each patch
+whose volume the check integrated to tell which way the shells face
+(about 17 µs a patch; `INTEGRATE_WORK`), which `Mesh::check_counted`
+reports and `Solid::new_counted` passes on, so it is spent after the
+check: a result can pass it and still be `TooComplex`. The operands
+cost nothing for their orientation, which their own check settled. With curved patches also each edge–face search a unit per 4
 pieces it looked at, at least 16: the 16 spent before it runs, the rest
 after each chunk of 1 024 searches (a search running to its cap of
 1 024 pieces, as where two surfaces lie along each other, is 256; at
@@ -2408,7 +2405,7 @@ to 72 of its 96 operations and left the others as they were.
   by a tie distance (a 64th of the resolution) and heights, positions
   and sides worked out in floating point near them: consistent in the
   flush, coaxial, stacked and tangent cases the suite tries, and where
-  they aren't the operation fails (`Inconsistent`, `InsideOut`), never
+  they aren't the operation fails (`Inconsistent`), never
   wrong. Near ties at about the tie distance itself (things a 64th of
   the resolution apart) decide one way or the other by rounding. Flat
   operands' exact predicates take near ties as ties too, so they can now
@@ -2468,7 +2465,7 @@ to 72 of its 96 operations and left the others as they were.
   refining a tangency takes about 3.3 s; on the web's single worker,
   slower still. The steps that ran far past what they were charged are
   counted now (the triangulations' and the counting's exact signs, the
-  operands' volumes), so none runs unbounded; the price is that an
+  patches the result's check integrates), so none runs unbounded; the price is that an
   operation full of ties runs out sooner (a flat torus of 9 216 patches
   united with itself, 4.2 s on one thread, is `TooComplex` now).
 - Merging restores only whole nodes of the refinement tree with no finer
@@ -2594,9 +2591,7 @@ edge, at a point, or on tangent faces; move it to overlap more or to
 clear it" for `Invalid`, which is what edge-touching unions and tangent
 contacts give; "… can't be worked out: they meet on faces too nearly
 flush or tangent to tell apart; move it a little" for `Inconsistent`;
-"… is too complex to work out…" for `TooComplex`; "… can't be worked
-out: one of them is inside out" for `InsideOut`, which doesn't say which
-operand). Every message starts in lower case, the Timeline putting it
+"… is too complex to work out…" for `TooComplex`). Every message starts in lower case, the Timeline putting it
 after the feature's name. Body names are looked up when the message is
 made, not kept in the cache.
 
@@ -3021,8 +3016,9 @@ parameter, or a split outside the patch bounds),
   plain floating point: with rounded decisions, flush boxes (the commonest
   CAD boolean) came out as zero-thickness slivers instead of clean
   results.
-- **`KernelError::Boolean(BooleanError)`** is new: `InsideOut`,
-  `Inconsistent`, `Degenerate`.
+- **`KernelError::Boolean(BooleanError)`** is new: `Inconsistent`,
+  `Degenerate` (the planned `InsideOut` went once `check` covered
+  orientation, below).
 - **Winding numbers are propagated along edges** from one ray per
   connected part rather than summed for every vertex: the same numbers
   by the counting identity (and checked on every edge), without a ray
@@ -3035,10 +3031,18 @@ parameter, or a split outside the patch bounds),
   (repair only splits, and fails at once on flat pieces breaking the hull
   rules). Collapses keep the lower vertex id and the link condition; they
   remove edges of zero length and never identify separate vertices.
-- **Operands must face out**: their volumes must be positive and every
-  winding number 0 or 1 (`InsideOut`). `check` now makes sure of the
-  first for every shell (invariant 5); the booleans keep their own test
-  until they rely on it.
+- **Operands face out by `check`, not by a test of the boolean's**: the
+  booleans used to test each operand's volume sign (every patch a unit,
+  32 per patch integrated) and fail `InsideOut`, which only caught a
+  wholly inverted solid: a stray inverted shell, or an outward one nested
+  in another, passed and gave wrong results. `check` now covers every
+  shell's sign and nesting (invariant 5), so the booleans trust their
+  operands; `BooleanError::InsideOut` is gone, a winding number out of
+  `0..=1` in the counting is `Inconsistent` (the only way left to get
+  one, as with nearly tangent side-by-side cylinders), and the result's
+  check charges the patches it integrated. The seeded suite and a chain
+  fuzzer (60 chains of 15 app-like steps) gave the same results before
+  and after, bit for bit.
 - **`Bvh::hits_within`** generalizes `pairs_within` to any query box.
 - **Curved shadow crossings are derived from ray tests**, not taken from
   solving each pair of projected conics: `I(e, h) = ρ(b, h) − ρ(a, h) −
@@ -3124,7 +3128,8 @@ parameter, or a split outside the patch bounds),
   triangle, the sum's own), and are worked out exactly where those can't
   tell the sign. A cruder bound (`n·ε` times `|a|·|b|·|c|` summed) was
   too loose to tell the sign of a box 2e7 times as long as thick.
-- **A tighter lune bound**, shared with the booleans' operand test: the
+- **A tighter lune bound** (the booleans' operand test, which shared it,
+  is gone since, see "Operands face out by `check`"): the
   prism over the convex hull of the control points' shadows on the
   triangle's plane, times two, rather than four times the largest
   offset times the square of the spread. It is never larger, and it

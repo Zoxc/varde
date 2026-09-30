@@ -55,7 +55,6 @@ pub use check::CheckError;
 pub(crate) use check::{on_surface, samples};
 pub use face::{Face, FaceName, FacePart, Quadric, Surface};
 pub(crate) use hull::{apart, straight};
-pub(crate) use orient::lune_bound;
 pub(crate) use refine::{Node, Refiner};
 pub(crate) use repair::MIN_SPLIT;
 

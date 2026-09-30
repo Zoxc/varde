@@ -203,12 +203,13 @@ pub(super) fn count(
         // A second ray in each part, which must find what the crossings
         // carried there from the first: a near tie decided one way at
         // the first vertex, with nothing crossing to show it, would put
-        // the whole part on the wrong side.
-        if checks.iter().any(|&v| w[v as usize] != s.layers(v)) {
+        // the whole part on the wrong side. And the operands are solids,
+        // whose winding numbers are 0 or 1 everywhere (`check` makes sure
+        // of it), so any other number is decisions that don't fit.
+        if checks.iter().any(|&v| w[v as usize] != s.layers(v))
+            || w.iter().any(|&w| !(0..=1).contains(&w))
+        {
             return Err(KernelError::Boolean(BooleanError::Inconsistent));
-        }
-        if w.iter().any(|&w| !(0..=1).contains(&w)) {
-            return Err(KernelError::Boolean(BooleanError::InsideOut));
         }
     }
     Ok(Counts {

@@ -569,7 +569,7 @@ fn signs_worked_out_exactly_are_counted() {
     let moved = rebuilt(&torus, |p| p + DVec3::new(0.31, 0.17, 0.23));
     let spent = |b: &Solid| {
         let mut work = Work::new(&Budget::DEFAULT);
-        let (ia, ib) = inputs(&a, b, &TOL, &mut work).unwrap();
+        let (ia, ib) = (Input::new(a.mesh(), &TOL), Input::new(b.mesh(), &TOL));
         let prims = flat::Flat::tied(&ia, &ib, true, tie(&TOL));
         count::count(&ia, &ib, &prims, &TOL, &mut work).unwrap();
         Budget::DEFAULT.work() - work.left()
@@ -879,7 +879,7 @@ fn crossings_are_where_the_perturbed_edges_cross() {
     for (a, b, _) in shared_faces(24) {
         for op in [Op::Union, Op::Difference] {
             let mut work = Work::new(&Budget::DEFAULT);
-            let (ia, ib) = inputs(&a, &b, &TOL, &mut work).unwrap();
+            let (ia, ib) = (Input::new(a.mesh(), &TOL), Input::new(b.mesh(), &TOL));
             let grow = op == Op::Union;
             let prims = flat::Flat::tied(&ia, &ib, grow, 0.0);
             let counts = count::count(&ia, &ib, &prims, &TOL, &mut work).unwrap();
