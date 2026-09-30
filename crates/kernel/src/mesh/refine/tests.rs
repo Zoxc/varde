@@ -111,7 +111,28 @@ fn planar_leaves_split_with_straight_inner_edges() {
     }
     let refined = refiner.mesh(&pieces);
     assert_eq!(refined.check(&TOL), Ok(()));
-    assert_eq!(refined.check_faces(&TOL), Ok(()));
+}
+
+#[test]
+fn plane_tags_are_tested_before_a_straight_split() {
+    // The tetrahedron's one face tagged as the plane z = 0, which only
+    // triangle 0 is on. Triangle 0 splits (straight); its neighbours,
+    // off the plane, fail when bisected by a straight green edge, naming
+    // the first of them, and fail a red split themselves.
+    let mut mesh = tetrahedron(DVec3::ZERO);
+    mesh.faces[0].surface = Surface::Plane {
+        n: DVec3::Z,
+        d: 0.0,
+    };
+    let mut refiner = Refiner::new(&mesh, TOL.resolution(), 0.0);
+    split(&mut refiner, &[0]);
+    let result = refiner.pieces();
+    assert_eq!(
+        result.err(),
+        Some(KernelError::Invalid(CheckError::Face(1)))
+    );
+    let result = refiner.split(&[2], &mut Work::new(&Budget::DEFAULT));
+    assert_eq!(result, Err(KernelError::Invalid(CheckError::Face(2))));
 }
 
 #[test]

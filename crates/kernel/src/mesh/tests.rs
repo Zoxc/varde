@@ -204,7 +204,6 @@ fn hand_built_solids_pass() {
         ];
         for (i, mesh) in solids.iter().enumerate() {
             assert_eq!(mesh.check(&TOL), Ok(()), "solid {i} at {offset}");
-            assert_eq!(mesh.check_faces(&TOL), Ok(()), "solid {i} at {offset}");
         }
     }
     assert_eq!(torus(48, 24, 10.0, 4.0).check(&TOL), Ok(()));

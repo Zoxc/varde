@@ -266,9 +266,6 @@ fn four(
     let out = jobs.map(
         |(x, y, op)| match boolean(x, y, op, tol, &Budget::DEFAULT) {
             Ok(solid) => {
-                if let Err(e) = solid.mesh().check_faces(tol) {
-                    panic!("{name}, {op:?}: face tags {e:?}");
-                }
                 let wrong = wrong_points(x, y, op, &solid, tol, rng);
                 assert_eq!(wrong, 0, "{name}, {op:?}: {wrong} points on the wrong side");
                 tally.ok += 1;
@@ -707,7 +704,6 @@ fn boss_rim_tangent_to_cap_edges_between_holes() {
     )
     .unwrap();
     let joined = boolean(&plate, &boss, Op::Union, &tol, &Budget::DEFAULT).unwrap();
-    joined.mesh().check_faces(&tol).unwrap();
     let want = plate.volume() + boss.volume();
     assert!((joined.volume() - want).abs() < 1e-9, "{}", joined.volume());
 }

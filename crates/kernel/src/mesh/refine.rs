@@ -313,12 +313,13 @@ impl<'a> Refiner<'a> {
     /// Replaces leaf `t` by its four red children.
     fn split_leaf(&mut self, t: u32) -> Result<(), KernelError> {
         let leaf = self.leaf(t).clone();
+        // First, so a wrong tag is named whatever else stops the split.
+        let planar = self.planar(&leaf)?;
         let bounds = leaf.patch.bounds();
         let small = (bounds.max - bounds.min).max_element() < self.min_size;
         if leaf.level >= MAX_REFINE_DEPTH || small || self.live + 3 > self.max_leaves {
             return Err(KernelError::TooComplex);
         }
-        let planar = self.planar(&leaf)?;
         self.live += 3;
         // The exact children, for their inner edges; a planar leaf's are
         // straight.

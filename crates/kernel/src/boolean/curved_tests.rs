@@ -92,10 +92,7 @@ fn moved(solid: &Solid, f: impl Fn(DVec3) -> DVec3) -> Solid {
 }
 
 fn run(a: &Solid, b: &Solid, op: Op) -> Solid {
-    let solid = boolean(a, b, op, &TOL, &Budget::DEFAULT)
-        .unwrap_or_else(|e| panic!("{op:?} failed: {e:?}"));
-    solid.mesh().check_faces(&TOL).unwrap();
-    solid
+    boolean(a, b, op, &TOL, &Budget::DEFAULT).unwrap_or_else(|e| panic!("{op:?} failed: {e:?}"))
 }
 
 /// `a ∪ b`, `a ∩ b`, `a − b` and `b − a`, each checked (by `Solid`)
@@ -496,7 +493,6 @@ fn a_bar_cut_at_its_refinement_midpoints_keeps_its_planes() {
         (&bar, &block, Op::Intersection, both),
     ] {
         if let Ok(solid) = boolean(x, y, op, &TOL, &Budget::DEFAULT) {
-            solid.mesh().check_faces(&TOL).unwrap();
             assert!((solid.volume() - want).abs() < 1e-9, "{op:?}");
         }
     }
@@ -545,7 +541,6 @@ fn a_crossing_the_search_misses_stays_on_its_plane() {
     ]
     .map(|(x, y, op)| {
         let solid = boolean(x, y, op, &TOL, &Budget::DEFAULT).ok()?;
-        solid.mesh().check_faces(&TOL).unwrap();
         Some(solid.volume())
     });
     let (va, vb) = (bar.volume(), plate.volume());

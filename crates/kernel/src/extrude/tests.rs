@@ -26,12 +26,11 @@ fn run(p: &Profile, frame: &Frame, from: f64, to: f64) -> Result<Solid, KernelEr
 }
 
 /// Extrudes `p` on the XY plane from `from` to `to`, and checks what
-/// holds for every extrude: faces on their surfaces, volume and area
-/// as the profile's area and perimeter say within `rel` (relative), and
-/// that it draws.
+/// holds for every extrude beyond `check` (face tags included): volume
+/// and area as the profile's area and perimeter say within `rel`
+/// (relative), and that it draws.
 fn extruded(p: &Profile, from: f64, to: f64, perimeter: f64, rel: f64) -> Solid {
     let solid = run(p, &Frame::XY, from, to).unwrap();
-    assert_eq!(solid.mesh().check_faces(&TOL), Ok(()));
     let h = to - from;
     let area = p.area();
     let volume = solid.volume();
@@ -168,7 +167,6 @@ fn a_thin_band() {
             circle(DVec2::ZERO, inner, 1, true),
         ]);
         let solid = run(&p, &Frame::XY, 0.0, 1.0).unwrap();
-        assert_eq!(solid.mesh().check_faces(&TOL), Ok(()));
         // Measured against the whole disc, whose volume the thin one's is
         // the difference of.
         let (disc, exact) = (PI * outer * outer, PI * (outer * outer - inner * inner));
@@ -277,7 +275,6 @@ fn an_ellipse_and_a_parabola() {
     };
     let p = profile(vec![ellipse]);
     let solid = run(&p, &Frame::XY, 0.0, 1.0).unwrap();
-    assert_eq!(solid.mesh().check_faces(&TOL), Ok(()));
     assert!((solid.volume() - PI * a * b).abs() < 1e-12 * PI * a * b);
 
     // A parabolic arch (weight 1) over its chord: area ⅔ of its box.
@@ -297,7 +294,6 @@ fn an_ellipse_and_a_parabola() {
         ],
     };
     let solid = run(&profile(vec![arch]), &Frame::XY, 0.0, 1.0).unwrap();
-    assert_eq!(solid.mesh().check_faces(&TOL), Ok(()));
     assert!((solid.volume() - 2.0 / 3.0 * 4.0 * 2.0).abs() < 1e-12);
 }
 
@@ -315,7 +311,6 @@ fn a_tilted_frame_far_out() {
         circle(DVec2::new(1.0, 1.0), 4.0, 4, true),
     ]);
     let solid = run(&p, &frame, 2.0, 7.0).unwrap();
-    assert_eq!(solid.mesh().check_faces(&TOL), Ok(()));
     let exact = p.area() * 5.0;
     assert!((solid.volume() - exact).abs() < 1e-9 * exact);
     // The end cap lies on its plane, 7 along the normal.
@@ -353,7 +348,6 @@ fn many_random_outlines() {
         let height = scale * rng.range(0.05, 2.0);
         match run(&p, &Frame::XY, 0.0, height) {
             Ok(solid) => {
-                assert_eq!(solid.mesh().check_faces(&TOL), Ok(()));
                 let exact = p.area() * height;
                 assert!((solid.volume() - exact).abs() < 1e-12 * scale * scale * height);
                 built += 1;
@@ -637,7 +631,6 @@ fn random_plates_with_holes() {
         let h = rng.log_range(0.1, 100.0);
         match extrude(&p, &Frame::XY, 0.0, h, 1, &tol, &Budget::DEFAULT) {
             Ok(solid) => {
-                assert_eq!(solid.mesh().check_faces(&tol), Ok(()));
                 let exact = p.area() * h;
                 assert!((solid.volume() - exact).abs() < 1e-12 * 1e4 * h);
                 built += 1;
@@ -740,7 +733,6 @@ fn circles_cut_unevenly() {
     });
     for (case, ((p, r, tol), result)) in cases.iter().zip(results).enumerate() {
         let solid = result.unwrap_or_else(|e| panic!("case {case}: {e}"));
-        assert_eq!(solid.mesh().check_faces(tol), Ok(()));
         let exact = straightened(p, tol).area() * r;
         assert!(
             (solid.volume() - exact).abs() < 1e-12 * exact,

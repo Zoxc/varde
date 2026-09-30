@@ -761,8 +761,10 @@ Refinement: a red split bisects its three neighbours (the red children are
 `split4`'s, the green ones `bisect`'s); splitting a green piece splits its
 leaf; splitting at a corner again and again stays graded (a bounded number
 of new pieces per level, and the mesh stays closed); a flat cap's pieces
-have straight inner edges and pass `check_faces`; too deep and too small
-leaves aren't split, nor any past the most leaves there may be. Repair: a thin shell (two round octahedra 0.2 and 0.05
+have straight inner edges and pass `check`; a face tagged as a plane only
+one of its triangles is on fails at the first neighbour bisected or split
+straight, naming it; too deep and too small leaves aren't split, nor any
+past the most leaves there may be. Repair: a thin shell (two round octahedra 0.2 and 0.05
 apart, the inner facing in) is split evenly until it passes; a cylinder
 with a box beside it, 0.1 to 0.001 off the wall, is split only near the
 box, keeps every piece on its cylinder or plane within `1e-12` and the box
@@ -2698,6 +2700,9 @@ parameter, or a split outside the patch bounds),
   by the exact blossom: see "Refinement". The region is the same; the
   exact split's curved inner edges would lie in the face's plane with both
   pieces, where no plane through the edge separates them.
+  The `Plane` tag is tested first on every input patch split or bisected
+  this way (six control points against the resolution), and a wrong one
+  fails with `Invalid(Face(t))` rather than be reshaped.
 - **Refinement keeps leaves and pieces** rather than editing the halfedge
   mesh in place: leaves may have one hanging vertex per edge, rendered as
   green halves, and the mesh is rebuilt from the pieces with `MeshBuilder`

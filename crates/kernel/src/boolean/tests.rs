@@ -129,11 +129,10 @@ fn case(name: &str, a: &Solid, b: &Solid, expect: [Option<f64>; 4]) {
     }
 }
 
-/// Checks that every patch is on its face's surface, and that each plane
-/// face's normal points the way its triangles face.
+/// Checks that each plane face's normal points the way its triangles
+/// face (that every patch is on its face's surface, `Solid::new` checks).
 fn faces_face_out(solid: &Solid) {
     let mesh = solid.mesh();
-    mesh.check_faces(&TOL).unwrap();
     for (t, tri) in mesh.tris().iter().enumerate() {
         if let Surface::Plane { n, .. } = mesh.faces()[tri.face as usize].surface {
             let p = mesh.patch(t).p;

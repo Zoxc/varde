@@ -35,13 +35,11 @@ fn constructors_pass_check() {
             rng.log_range(1e-2, 1e3),
         );
         let cuboid = Mesh::cuboid(at, size, 7, &TOL).unwrap();
-        assert_eq!(cuboid.check_faces(&TOL), Ok(()));
         assert_on_faces(&cuboid, at.abs().max_element() + size.max_element());
         assert_eq!((cuboid.verts().len(), cuboid.tris().len()), (8, 12));
 
         let (radius, height) = (size.x, size.y);
         let cylinder = Mesh::cylinder(at, radius, height, 7, &TOL).unwrap();
-        assert_eq!(cylinder.check_faces(&TOL), Ok(()));
         assert_on_faces(&cylinder, at.abs().max_element() + radius.max(height));
         assert_eq!((cylinder.verts().len(), cylinder.tris().len()), (10, 16));
     }

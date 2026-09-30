@@ -132,7 +132,6 @@ fn repair_splits_only_near_the_trouble_and_keeps_surfaces() {
         assert_eq!(mesh.check(&TOL), Err(CheckError::Hull(0, 16)));
         let repaired = mesh.clone().repair(&TOL, &Budget::DEFAULT).unwrap();
         assert_eq!(repaired.check(&TOL), Ok(()));
-        assert_eq!(repaired.check_faces(&TOL), Ok(()));
         // Graded: a closer box takes a few more pieces near it.
         let n = repaired.tris().len();
         assert!(n > previous && n < 200, "{gap}: {n}");
