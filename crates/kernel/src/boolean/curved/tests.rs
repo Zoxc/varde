@@ -249,7 +249,7 @@ fn edge_crossings_are_on_both() {
         let patch = random_patch(&mut rng);
         let curved = rng.unit() < 0.7;
         let edge = random_conic(&mut rng, curved);
-        let (found, closest) = edge_patch(&edge, &patch);
+        let (found, closest, _) = edge_patch(&edge, &patch);
         assert!((0.0..=1.0).contains(&closest));
         for h in &found {
             let gap = (edge.eval(h.t) - patch.eval(h.u)).length();
@@ -275,7 +275,7 @@ fn an_edge_through_a_cylinder_is_found_where_it_is() {
     let mut entering = Vec::new();
     for t in 0..mesh.tris().len() {
         let patch = mesh.patch(t);
-        let (found, _) = edge_patch(&edge, &patch);
+        let (found, _, _) = edge_patch(&edge, &patch);
         for h in found.iter().filter(|h| h.out == 0.0) {
             let x = edge.eval(h.t).x;
             entering.push((h.x, x));

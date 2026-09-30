@@ -274,6 +274,21 @@ impl Cleaner<'_> {
             .copied()
             .filter(|t| !shared.contains(t))
             .collect();
+        // Edges from `u` and from `v` to one vertex, other than the gone
+        // triangles' sides, become one edge: only if they are one curve.
+        // Else one of the two faces there would take the other's curve,
+        // off its surface (a plane face once took a cylinder's inner
+        // edge, 0.02 off the plane, and repair trusted its tag).
+        let far: Vec<u32> = shared
+            .iter()
+            .flat_map(|&t| self.soup.tris[t as usize])
+            .collect();
+        let clash = self.neighbours(v).into_iter().any(|w| {
+            !far.contains(&w) && !self.shared(u, w).is_empty() && !self.same_curve(u, v, w)
+        });
+        if clash {
+            return false;
+        }
         let mut affected: Vec<u32> = [u, v]
             .into_iter()
             .chain(

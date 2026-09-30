@@ -101,15 +101,16 @@ pub(crate) struct EdgeHit {
     pub(crate) out: f64,
 }
 
-/// Where `edge` passes through `patch`, in order along the edge, and the
+/// Where `edge` passes through `patch`, in order along the edge, the
 /// parameter along the edge where the two came closest, for a crossing
-/// the count has and the search didn't find.
-pub(crate) fn edge_patch(edge: &Conic3, patch: &Patch) -> (Vec<EdgeHit>, f64) {
+/// the count has and the search didn't find, and how many pieces the
+/// search looked at (at most a little over [`MAX_NODES`]).
+pub(crate) fn edge_patch(edge: &Conic3, patch: &Patch) -> (Vec<EdgeHit>, f64, usize) {
     let bounds = edge.bounds().union(patch.bounds());
     let origin = (bounds.min + bounds.max) * 0.5;
     let scale = (bounds.max - bounds.min).max_element();
     if !(scale > 0.0 && scale.is_finite()) {
-        return (Vec::new(), 0.5);
+        return (Vec::new(), 0.5, 0);
     }
     let local_edge = Conic3 {
         p0: (edge.p0 - origin) / scale,
@@ -142,7 +143,7 @@ pub(crate) fn edge_patch(edge: &Conic3, patch: &Patch) -> (Vec<EdgeHit>, f64) {
             })
         })
         .collect();
-    (hits, search.closest.2)
+    (hits, search.closest.2, search.nodes)
 }
 
 fn sign(x: f64) -> i8 {

@@ -371,6 +371,11 @@ fn along_line(a: &Input, b: &Input, p: u32, q: u32, ends: &[End]) -> Option<Vec<
     {
         return None;
     }
+    // An odd number can't pair up (the counting balances every pair's
+    // ends, so it doesn't happen; left to the rules that report it).
+    if !ends.len().is_multiple_of(2) {
+        return None;
+    }
     let mut sorted = ends.to_vec();
     sorted.sort_by(|x, y| x.at.dot(d).total_cmp(&y.at.dot(d)).then(x.id.cmp(&y.id)));
     let joined: Vec<(End, End)> = sorted.chunks(2).map(|c| (c[0], c[1])).collect();

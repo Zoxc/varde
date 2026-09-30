@@ -18,7 +18,7 @@ use glam::DVec3;
 
 use super::exact::{self, Num, Pred, Pt, V3, cross, det, dir, dot, sub};
 use super::input::{Input, Side};
-use super::{BooleanError, Cross11, Crossing, Primitives, UP};
+use super::{BooleanError, Cross11, Crossing, Found, Primitives, UP};
 
 /// The primitives of two flat operands.
 pub(super) struct Flat<'a> {
@@ -205,16 +205,14 @@ impl Primitives for Flat<'_> {
         1
     }
 
-    fn crossings(
-        &self,
-        side: Side,
-        e: u32,
-        f: u32,
-        x: i32,
-    ) -> Result<Vec<(i8, f64)>, BooleanError> {
+    fn margin(&self) -> f64 {
+        0.0
+    }
+
+    fn crossings(&self, side: Side, e: u32, f: u32, x: i32) -> Result<Found, BooleanError> {
         match x {
-            0 => Ok(Vec::new()),
-            -1 | 1 => Ok(vec![(x as i8, self.crossing(side, e, f))]),
+            0 => Ok((Vec::new(), 1)),
+            -1 | 1 => Ok((vec![(x as i8, self.crossing(side, e, f))], 1)),
             // A straight edge meets a flat face once at most.
             _ => Err(BooleanError::Inconsistent),
         }

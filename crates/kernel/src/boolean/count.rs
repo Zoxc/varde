@@ -51,6 +51,9 @@ impl Counts {
     }
 }
 
+/// How many crossing searches run between spending their work.
+const SEARCH_CHUNK: usize = 1024;
+
 /// Values stored by the pair they were worked out for, sorted by it.
 struct Table<V> {
     keys: Vec<[u32; 2]>,
@@ -78,6 +81,16 @@ impl<V: Copy + Send> Table<V> {
     }
 }
 
+impl Table<i8> {
+    /// The layer counts stored for vertex `v`, summed: its winding
+    /// number, where its ray's faces are among them.
+    fn layers(&self, v: u32) -> i32 {
+        let lo = self.keys.partition_point(|k| k[0] < v);
+        let hi = self.keys.partition_point(|k| k[0] <= v);
+        self.values[lo..hi].iter().map(|&s| i32::from(s)).sum()
+    }
+}
+
 /// Counts `a` against `b` with `prims`.
 pub(super) fn count(
     a: &Input,
@@ -88,9 +101,16 @@ pub(super) fn count(
 ) -> Result<Counts, KernelError> {
     let (bvh_a, bvh_b) = (Bvh::new(a.boxes.clone()), Bvh::new(b.boxes.clone()));
 
-    // Broad phase: triangle pairs whose boxes meet.
+    // Broad phase: triangle pairs whose boxes meet, or come within the
+    // primitives' margin.
     let ids: Vec<u32> = (0..a.tris.len() as u32).collect();
-    let pairs = bvh_b.hits_within(&ids, |p| a.boxes[p as usize], 0.0, |_, _| true, work)?;
+    let pairs = bvh_b.hits_within(
+        &ids,
+        |p| a.boxes[p as usize],
+        prims.margin(),
+        |_, _| true,
+        work,
+    )?;
     let mut ef_a = Vec::with_capacity(3 * pairs.len());
     let mut ef_b = Vec::with_capacity(3 * pairs.len());
     for &[p, q] in &pairs {
@@ -102,12 +122,38 @@ pub(super) fn count(
         ef.dedup();
     }
 
-    // Layer counts: each part's first vertex against every face its ray up
-    // may meet, for the winding numbers, and each end of a candidate edge
-    // against the face, for the crossings.
-    let (seeds_a, seeds_b) = (seeds(a), seeds(b));
-    let s02 = layers(Side::A, a, b, &bvh_b, &seeds_a, &ef_a, prims, tol, work)?;
-    let s20 = layers(Side::B, b, a, &bvh_a, &seeds_b, &ef_b, prims, tol, work)?;
+    // Layer counts: each part's first and last vertex against every face
+    // its ray up may meet, for the winding numbers and their check, and
+    // each end of a candidate edge against the face, for the crossings.
+    let ([seeds_a, checks_a], [seeds_b, checks_b]) = (seeds(a), seeds(b));
+    let rays = |seeds: &[u32], checks: &[u32]| {
+        let mut rays = [seeds, checks].concat();
+        rays.sort_unstable();
+        rays.dedup();
+        rays
+    };
+    let s02 = layers(
+        Side::A,
+        a,
+        b,
+        &bvh_b,
+        &rays(&seeds_a, &checks_a),
+        &ef_a,
+        prims,
+        tol,
+        work,
+    )?;
+    let s20 = layers(
+        Side::B,
+        b,
+        a,
+        &bvh_a,
+        &rays(&seeds_b, &checks_b),
+        &ef_b,
+        prims,
+        tol,
+        work,
+    )?;
 
     // Edge against edge: each candidate edge against the other's face's
     // edges, stored as (edge of A, edge of B).
@@ -131,8 +177,18 @@ pub(super) fn count(
 
     let w03 = windings(a, &seeds_a, &x12, &s02);
     let w30 = windings(b, &seeds_b, &x21, &s20);
-    for (input, x, w) in [(a, &x12, &w03), (b, &x21, &w30)] {
+    for (input, x, w, checks, s) in [
+        (a, &x12, &w03, &checks_a, &s02),
+        (b, &x21, &w30, &checks_b, &s20),
+    ] {
         agree(input, x, w)?;
+        // A second ray in each part, which must find what the crossings
+        // carried there from the first: a near tie decided one way at
+        // the first vertex, with nothing crossing to show it, would put
+        // the whole part on the wrong side.
+        if checks.iter().any(|&v| w[v as usize] != s.layers(v)) {
+            return Err(KernelError::Boolean(BooleanError::Inconsistent));
+        }
         if w.iter().any(|&w| !(0..=1).contains(&w)) {
             return Err(KernelError::Boolean(BooleanError::InsideOut));
         }
@@ -147,29 +203,31 @@ pub(super) fn count(
 }
 
 /// The layer counts of `other`'s faces (`bvh` over their boxes) above
-/// `input`'s vertices that the winding numbers and crossings read.
+/// `input`'s vertices that the winding numbers and crossings read: every
+/// face the ray up from each of `rays` may meet, and each end of the
+/// candidate edges `ef` against their face.
 #[allow(clippy::too_many_arguments)]
 fn layers(
     side: Side,
     input: &Input,
     other: &Input,
     bvh: &Bvh,
-    seeds: &[u32],
+    rays: &[u32],
     ef: &[[u32; 2]],
     prims: &impl Primitives,
     tol: &Tolerance,
     work: &mut Work,
 ) -> Result<Table<i8>, KernelError> {
     let mut keys = Vec::new();
-    // Rays: from the first vertex of each connected part along UP to the
-    // top of `other`'s box.
+    // Rays: from the given vertices along UP to the top of `other`'s
+    // box.
     if let Some(top) = other.boxes.iter().map(|b| b.max.z).reduce(f64::max) {
         let ray = |v: u32| {
             let p = input.pos(v);
             let reach = ((top - p.z) / UP.z).max(0.0);
             Bounds3::point(p).include(p + UP * reach)
         };
-        keys = bvh.hits_within(seeds, ray, tol.resolution(), |_, _| true, work)?;
+        keys = bvh.hits_within(rays, ray, tol.resolution(), |_, _| true, work)?;
     }
     for &[e, f] in ef {
         keys.extend(input.edges[e as usize].map(|v| [v, f]));
@@ -209,11 +267,24 @@ fn crossings(
         .filter(|&(&[e, f], x)| x != 0 || prims.searches(side, e, f))
         .map(|(&ef, x)| (ef, x))
         .collect();
-    work.spend(asked.len().saturating_mul(prims.search_work()))?;
-    let found = par_map(&asked, |&([e, f], x)| prims.crossings(side, e, f, x));
+    // A chunk at a time: each search's least work spent before, the rest
+    // after, so a round of searches that run long stops within a chunk
+    // of the budget.
+    let least = prims.search_work();
+    let mut found = Vec::with_capacity(asked.len());
+    for chunk in asked.chunks(SEARCH_CHUNK) {
+        work.spend(chunk.len().saturating_mul(least))?;
+        let here = par_map(chunk, |&([e, f], x)| prims.crossings(side, e, f, x));
+        let mut more = 0usize;
+        for result in here {
+            let (crossings, cost) = result.map_err(KernelError::Boolean)?;
+            more = more.saturating_add(cost.saturating_sub(least));
+            found.push(crossings);
+        }
+        work.spend(more)?;
+    }
     let mut out = Vec::new();
     for (&([edge, face], _), found) in asked.iter().zip(found) {
-        let found = found.map_err(KernelError::Boolean)?;
         for (i, (x, t)) in found.into_iter().enumerate() {
             out.push(Crossing {
                 edge,
@@ -227,12 +298,19 @@ fn crossings(
     Ok(out)
 }
 
-/// The lowest vertex of each connected part of `input`, in order.
-fn seeds(input: &Input) -> Vec<u32> {
+/// The lowest vertex of each connected part of `input`, in order, and
+/// the highest.
+fn seeds(input: &Input) -> [Vec<u32>; 2] {
     let part = parts(input.mesh.verts().len(), input.edges.iter().copied());
-    (0..part.len() as u32)
+    let lowest: Vec<u32> = (0..part.len() as u32)
         .filter(|&v| part[v as usize] == v)
-        .collect()
+        .collect();
+    let mut highest = vec![0u32; part.len()];
+    for (v, &p) in part.iter().enumerate() {
+        highest[p as usize] = v as u32;
+    }
+    let highest = lowest.iter().map(|&p| highest[p as usize]).collect();
+    [lowest, highest]
 }
 
 /// Each vertex's winding number in the other solid: at each part's
@@ -266,9 +344,7 @@ fn windings(input: &Input, seeds: &[u32], x: &[Crossing], s02: &Table<i8>) -> Ve
     let mut seen = vec![false; nv];
     let mut queue = std::collections::VecDeque::new();
     for &seed in seeds {
-        let lo = s02.keys.partition_point(|k| k[0] < seed);
-        let hi = s02.keys.partition_point(|k| k[0] <= seed);
-        w[seed as usize] = s02.values[lo..hi].iter().map(|&s| i32::from(s)).sum();
+        w[seed as usize] = s02.layers(seed);
         seen[seed as usize] = true;
         queue.push_back(seed);
         while let Some(v) = queue.pop_front() {

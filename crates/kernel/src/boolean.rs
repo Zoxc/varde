@@ -143,22 +143,34 @@ trait Primitives: Sync {
     /// and back again, which the count, `0`, doesn't show: then
     /// [`Self::crossings`] is asked for the pair with a count of `0` too.
     fn searches(&self, side: Side, e: u32, f: u32) -> bool;
-    /// About how much work [`Self::crossings`] is, in units of the
-    /// budget.
+    /// About how much work [`Self::crossings`] is at least, in units of
+    /// the budget: what is spent before it is asked.
     fn search_work(&self) -> usize;
+    /// How near two triangles' boxes must come for the broad phase to
+    /// pair them: 0 for exact primitives; for numerical ones, as far as
+    /// what they decide as a tie or take as flat reaches, so every pair a
+    /// tie decides is counted too (a vertex a hair from a face, decided
+    /// as on it, whose edges nothing then paired with that face, put a
+    /// whole operand inside the other).
+    fn margin(&self) -> f64;
     /// The crossings of edge `e` of `side` through face `f` of the other,
     /// whose signed number is `x` (+1 entering the other solid, −1
     /// leaving): each crossing's sign and where along the edge it is (0
     /// at its start, 1 at its end), in order along the edge. Their signs
     /// add up to `x`, whatever the search for them finds: the count wins,
-    /// the search only gives the positions. Fails with
-    /// [`BooleanError::Inconsistent`] where no such crossings can be.
-    fn crossings(&self, side: Side, e: u32, f: u32, x: i32)
-    -> Result<Vec<(i8, f64)>, BooleanError>;
+    /// the search only gives the positions. Also how much work finding
+    /// them took, in units of the budget (at least
+    /// [`Self::search_work`]). Fails with [`BooleanError::Inconsistent`]
+    /// where no such crossings can be.
+    fn crossings(&self, side: Side, e: u32, f: u32, x: i32) -> Result<Found, BooleanError>;
     /// The order along edge `e` of `side`, in its direction, of two of
     /// its crossings.
     fn order(&self, side: Side, e: u32, c1: &Crossing, c2: &Crossing) -> Ordering;
 }
+
+/// What [`Primitives::crossings`] gives: each crossing's sign and
+/// position, and the work it took.
+type Found = (Vec<(i8, f64)>, usize);
 
 /// `a op b`, within `budget`: a solid that passes `check`, always.
 ///

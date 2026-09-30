@@ -67,14 +67,17 @@ impl Shape {
     }
 }
 
-/// How far along an edge (in its parameter) a crossing may move when its
-/// position is solved again exactly: past this the solve found another
-/// root, and the position stays.
+/// How far along an edge (in its parameter) a crossing of a quadric may
+/// move when its position is solved again: past this Newton's method
+/// found another root, and the position stays.
 const MAX_SHIFT: f64 = 1e-6;
 
 /// The parameter near `t` where `conic` crosses `shape`: solved exactly
-/// for a plane (a quadratic), by Newton's method for a quadric, and `t`
-/// as it is for anything else, or where nothing is found near it.
+/// for a plane (a quadratic: the root in the edge nearest `t`, however
+/// far, so the vertex lies on the plane whose tag its triangles keep,
+/// even where the search for the crossing found none and `t` is only
+/// where the two came closest), by Newton's method for a quadric, and
+/// `t` as it is for anything else, or where nothing is found near it.
 pub(super) fn polish(conic: &Conic3, t: f64, shape: &Shape) -> f64 {
     let found = match *shape {
         Shape::Plane { n, d } => {
@@ -82,10 +85,12 @@ pub(super) fn polish(conic: &Conic3, t: f64, shape: &Shape) -> f64 {
             let (f0, f1, f2) = (side(conic.p0), conic.w * side(conic.c), side(conic.p1));
             // f0·(1−t)² + 2f1·t(1−t) + f2·t² in powers of t.
             let (a, b, c) = (f0 - 2.0 * f1 + f2, 2.0 * (f1 - f0), f0);
-            quadratic_roots(a, b, c)
+            return quadratic_roots(a, b, c)
                 .into_iter()
                 .flatten()
+                .filter(|s| (0.0..=1.0).contains(s))
                 .min_by(|x, y| (x - t).abs().total_cmp(&(y - t).abs()))
+                .unwrap_or(t);
         }
         Shape::Quadric(q) => {
             let mut s = t;
@@ -334,8 +339,15 @@ mod tests {
         let q = Quadric::cylinder(DVec3::ZERO, DVec3::X, 0.9).unwrap();
         let t = polish(&arc, near(&|t| q.value(arc.eval(t))), &Shape::Quadric(q));
         assert!(q.distance(arc.eval(t)) < 1e-15);
-        // Nothing near: left as it is.
-        assert_eq!(polish(&arc, 0.9, &plane), 0.9);
+        // Far from it: on the plane all the same.
+        let t = polish(&arc, 0.9, &plane);
+        assert!((arc.eval(t).z - 1.0).abs() < 1e-15);
+        // Nowhere in the edge: left as it is.
+        let above = Shape::Plane {
+            n: DVec3::Z,
+            d: 5.0,
+        };
+        assert_eq!(polish(&arc, 0.9, &above), 0.9);
     }
 
     #[test]

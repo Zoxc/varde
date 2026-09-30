@@ -1186,13 +1186,22 @@ three edges.
 ### Counting (`boolean/count.rs`)
 
 1. **Broad phase**: a BVH over each operand's patch boxes; the pairs
-   (triangle of `A`, triangle of `B`) whose boxes meet (margin 0, `≤`, so
-   touching boxes count: `A`'s boxes looked up in `B`'s BVH), counted
-   against the budget before they are collected (`Bvh::hits_within`).
-   From them the candidate edge–face pairs of each operand, sorted.
+   (triangle of `A`, triangle of `B`) whose boxes meet (`≤`, so touching
+   boxes count: `A`'s boxes looked up in `B`'s BVH), counted against the
+   budget before they are collected (`Bvh::hits_within`). The margin is
+   the primitives' (`Primitives::margin`): 0 for exact ones, the
+   resolution for curved ones, which take edges and patches as straight
+   or planar within it and decide heights within a 64th of it as ties.
+   So every pair such a decision touches is counted: with margin 0, a
+   cylinder's seam vertex `1e-9` from another's wall (at the coarsest
+   tolerance) was decided as on it by its ray, no pair of triangles met
+   to carry a crossing out, and the whole cylinder came out inside the
+   other. From the pairs the candidate edge–face pairs of each operand,
+   sorted.
 2. **Layer counts** for each end of a candidate edge against the face,
-   and for the first vertex of each connected part of an operand against
-   every face of the other that a ray up from it may meet (the ray's
+   and for the first and last vertex of each connected part of an
+   operand against every face of the other that a ray up from it may
+   meet (the ray's
    box, which runs to the top of the other operand's box, looked up in
    the other's BVH with `Bvh::hits_within`: `pairs_within` for any
    query box).
@@ -1219,8 +1228,11 @@ three edges.
    counts (every layer above, signed, is the winding number of the other
    solid round it), and from there along the edges, each changing it by
    its crossings; then every edge is checked to agree (`Inconsistent`
-   otherwise, never seen) and every winding number to be 0 or 1
-   (`InsideOut` otherwise). The operands' own volumes must be positive
+   otherwise, never seen), the part's last vertex's own ray to give what
+   its edges carried there (`Inconsistent` otherwise: a near tie decided
+   at the first vertex against the crossings would put the whole part on
+   the wrong side), and every winding number to be 0 or 1 (`InsideOut`
+   otherwise). The operands' own volumes must be positive
    too (`InsideOut`): `check` doesn't look at orientation.
 
 Consequences, from the counting alone: a vertex's winding number and
@@ -1318,13 +1330,17 @@ edge by position, ties exactly (a straight edge through two planar
 patches) or by face and index.
 
 **Ties.** Heights within a 64th of the resolution are ties, decided as
-`A`'s perturbation would (`A` moved by `ε·s·n_v`): at an edge crossing,
-`e` is above if the perturbation interpolated along it points up; a point
-of a patch above a vertex of `A` is above if the vertex's perturbation
-points down, and above a vertex of `B` if the patch's corners' do up. So
-flush planar faces between a curved and a flat operand behave as between
-flat ones. Vertex directions of curved patches are their normals at the
-corner.
+`A`'s perturbation `δ` would (`A` moved by `ε·s·n_v`), to first order: at
+an edge crossing, `e` (moved by `δ` interpolated along it) rises over `g`
+by `δ·m / UP·m`, `m = g' × e'` the two tangents' normal (the crossing
+slides along `g` as the shadows shift); a point of a patch with normal
+`n` there rises over a vertex of `A` by `−n·δ / n·UP`, and over a vertex
+of `B` by `n·δ / n·UP` with `δ` the patch's corners' interpolated. Where
+the numerator is 0, by `δ·UP`, as for horizontal surfaces. (Deciding
+all by `δ·UP` took a vertex beside a vertical wall as above or below it
+by which way it moved along the wall.) So flush planar faces between a
+curved and a flat operand behave as between flat ones. Vertex directions
+of curved patches are their normals at the corner.
 
 ### Pairs of faces (`boolean/pairs.rs`)
 
@@ -1371,10 +1387,13 @@ additions.
 
 **Crossings on curved edges.** Each crossing's parameter is solved again
 where the face crossed is a plane (the quadratic of the edge's conic
-against it, exactly) or a quadric (Newton's method on `F(C(t))`), when
-the edge is curved or the face isn't planar; the root nearest the
-count's position within `1e-6` of it, else the position stays
-(`surface::polish`). A vertex on an exactly straight edge (weight 1,
+against it, exactly: the root in the edge nearest the count's position,
+however far, so the vertex lies on the plane its triangles are tagged
+with even where the search found no crossing and the position is only
+where the two came closest, once `1e-4` off) or a quadric (Newton's
+method on `F(C(t))`: the root within `1e-6` of the count's position,
+else the position stays), when the edge is curved or the face isn't
+planar (`surface::polish`). A vertex on an exactly straight edge (weight 1,
 control point at the middle: `lined`) is interpolated as before; on any
 other edge it is the conic's point from its blossom `B(t, t)`, and the
 edge is split into pieces between its crossings by blossoming
@@ -1663,7 +1682,11 @@ curved corners of the two new triangles stay open (checked in 3D). A
 collapse merges each gone triangle's two sides from its far corner: where
 their curves differ, the one between two faces (a cut, which lies on
 both) is kept, and if neither or both are, the collapse isn't made. The
-curves of the other edges moved onto the kept vertex go with them.
+curves of the other edges moved onto the kept vertex go with them; where
+an edge from each end of the collapsed edge runs to one vertex (not
+across a gone triangle), the two become one edge, and the collapse is
+made only if their curves are one (else a plane face took a cylinder's
+inner edge there, 0.02 off its plane, and repair trusted the tag).
 
 Collapsing removes an edge and keeps a closed manifold; it never decides
 that two separate vertices are one. What the clean-up can't mend fails the
@@ -1688,7 +1711,11 @@ phase's pairs and the rays' hits (counted before collecting), one unit per
 stored primitive and per candidate crossing, the square of each edge's
 crossings (ordering them), `n²·(1 + n/64)` per cut face with `n` its cuts
 plus 6 (ear clipping), and the soup's size per clean-up round; then
-repair's own. With curved patches also 16 units per edge–face search, a
+repair's own. With curved patches also each edge–face search a unit per 4
+pieces it looked at, at least 16: the 16 spent before it runs, the rest
+after each chunk of 1 024 searches (a search running to its cap of
+1 024 pieces, as where two surfaces lie along each other, is 256; at
+about 300 pieces a search took some 70 µs), a
 unit per pair decided, and per refinement split and piece, every round;
 `MAX_TRACE_STEPS / 64` per arc not between two planar patches, a unit per
 curve of the chains, and a unit per curve halved in the rounds of cutting
@@ -1782,7 +1809,11 @@ a hidden loop; the saddle above and below its saddle point; tangent
 cylinders (union not a manifold, the rest the operands); a plate drilled,
 joined and drilled again, fed on; merging back a ball and slab refined
 and not cut; the same bits at 1 and 8 threads; 24 random turned bars
-against boxes, each result right or refused. Unit tests: exact ellipse
+against boxes, each result right or refused; found by fuzzing:
+cylinders side by side `1e-9` apart at the coarsest tolerance (right or
+refused), a box's face through a bar's refinement midpoints (its plane
+tag true), and a tilted bar's arc crossing a plate's cap where the
+search misses it (on the cap's plane). Unit tests: exact ellipse
 arcs of a tilted plane through a cylinder, crossings solved exactly on a
 plane and a cylinder, the second point of a line on a cylinder, tracing
 crossing cylinders and fitting at two tolerances, inverting a point into
@@ -1827,13 +1858,23 @@ manifolds.
   some 700 patches, most along the cut.
 - **Tangencies are fragile**: two upright cylinders of radius 1 side by
   side along `x`, touching along a line where both have a seam edge (at
-  the coarsest tolerance), come out as the tests want with the second one
-  1 high, except `B ∪ A` (`Inconsistent`); 0.5 high both unions are
-  `Inconsistent`, and 0.25 high every operation but `A ∪ B` fails with
-  `InsideOut` (a vertex on the tangent line winds −1). Ties between
-  curved patches are decided by a threshold, and layers the search
-  didn't find by where most of the patch is, not by the perturbation
-  throughout.
+  the coarsest tolerance): with the second one 1 or 0.5 high, both unions
+  fail (`Inconsistent`; the exact union isn't a manifold, so no result is
+  right) and the rest come out right; 0.25 high every operation fails
+  with `InsideOut` (a vertex on the tangent line winds −1), and with both
+  caps flush (both 2 high) every one fails. Coincident walls (coaxial
+  cylinders of one radius) always fail, some only after a minute or two
+  of refinement (the budget isn't tuned yet). Ties between curved
+  patches are decided by a threshold, to first order of the perturbation,
+  and layers the search didn't find by where most of the patch is, not
+  by the perturbation throughout. Fuzzed in release (random extruded
+  bars, slots, rounded boxes and plates with holes on turned frames,
+  coaxial, stacked flush, nested and crossing pairs, chains of eight,
+  each checked by the volume identities, face tags and sampled points
+  against the operands' tessellations; about 10 000 operations, 18 %
+  refused, most of them flush, coaxial or tangent), and side by side, a
+  hair apart or overlapping by `1e-9`–`1e-4`, turned: every result right
+  or refused, and the same bits at 1 and 8 threads.
 - A tangency along a line reads as not touching (`touches` says false for
   two cylinders side by side): no crossing shows it, and the fixed rules
   take no certificate as no loop. Flat solids touching do meet.
