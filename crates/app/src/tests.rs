@@ -2134,6 +2134,20 @@ fn recovered_changes_can_be_discarded() {
     assert_eq!(document(&varde).editor.revision(), Revision::from(0));
 }
 
+/// Restoring recovered changes ends an extrude being set up, whose ids
+/// may name other things in the document restored.
+#[test]
+fn restoring_recovered_changes_ends_the_extrude_session() {
+    let (mut varde, _) = with_recovered(Document::example());
+    let sketch = document(&varde).editor.document().features()[0].id;
+    let _ = varde.update(Message::Ui(Ui::Look(Look::SelectFeature(sketch))));
+    let _ = varde.update(Message::Ui(Ui::Look(Look::StartExtrude)));
+    assert!(document(&varde).extrude.is_some());
+    let _ = varde.update(Message::Ui(Ui::File(File::RestoreChanges)));
+    assert_eq!(*document(&varde).editor.document(), Document::example());
+    assert!(document(&varde).extrude.is_none());
+}
+
 /// Saved as another file, recovered changes not answered yet stay with
 /// the design they're of, which offers them when it's next opened: the
 /// offer goes, rather than answering it for the new file. Saved over the

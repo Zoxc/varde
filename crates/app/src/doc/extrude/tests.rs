@@ -1082,3 +1082,99 @@ fn a_two_sides_knob_over_the_limit_only_goes_back_towards_it() {
     assert_eq!(second(&doc).unwrap().value, 400000.0);
     assert!(doc.extrude_state().unwrap().ready);
 }
+
+/// The plate with its region extruded by `distance` as a new body,
+/// committed, and the extrude.
+fn plate_extruded(distance: &str) -> (Doc, FeatureId, Requests) {
+    let (mut doc, sketch, requests) = plate();
+    doc.look(Look::SelectFeature(sketch));
+    doc.look(Look::StartExtrude);
+    let region = plate_region(&doc, sketch);
+    extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region });
+    extrude(
+        &mut doc,
+        ExtrudeLook::Input {
+            distance: Distance::First,
+            text: distance.to_owned(),
+        },
+    );
+    doc.update(Edit::CommitExtrude);
+    let feature = doc.editor.document().features().last().unwrap().id;
+    answer(&mut doc, &requests);
+    (doc, feature, requests)
+}
+
+#[test]
+fn restoring_a_document_whose_extrude_has_the_edited_id_ends_the_session() {
+    let (mut doc, a, requests) = plate_extruded("10");
+    // Recovered changes from the same file: another extrude, which took
+    // the same id.
+    let (recovered, b, _) = plate_extruded("30");
+    assert_eq!(a, b);
+    let recovered = recovered.editor.document().clone();
+
+    doc.look(Look::EditFeature(a));
+    extrude(
+        &mut doc,
+        ExtrudeLook::Input {
+            distance: Distance::First,
+            text: "20".to_owned(),
+        },
+    );
+    assert!(last_draft(&requests).is_some());
+    // As restoring them does.
+    doc.drop_proposals();
+    doc.apply(Command::Replace(Box::new(recovered.clone())));
+    doc.sync();
+    assert!(doc.extrude.is_none());
+    assert!(last_draft(&requests).is_none());
+    // OK has nothing to write over the recovered extrude.
+    doc.update(Edit::CommitExtrude);
+    assert_eq!(*doc.editor.document(), recovered);
+    let [extrude] = extrudes(&doc)[..] else {
+        panic!("one extrude");
+    };
+    assert_eq!(extrude.span(), Some((0.0, 30.0)));
+}
+
+#[test]
+fn undoing_a_replacement_ends_a_new_extrude_session() {
+    let (mut doc, sketch, requests) = plate();
+    // An ordinary edit, then a replacement differing from it.
+    let mut drawn = drawn(&doc, sketch).clone();
+    drawn.add_point(glam::DVec2::new(100.0, 100.0)).unwrap();
+    doc.apply(Command::SetSketch {
+        feature: sketch,
+        sketch: Box::new(drawn.clone()),
+    });
+    doc.sync();
+    let mut replaced = Editor::new(doc.editor.document().clone());
+    drawn.add_point(glam::DVec2::new(110.0, 100.0)).unwrap();
+    replaced
+        .apply(Command::SetSketch {
+            feature: sketch,
+            sketch: Box::new(drawn),
+        })
+        .unwrap();
+    doc.apply(Command::Replace(Box::new(replaced.document().clone())));
+    doc.sync();
+
+    doc.look(Look::SelectFeature(sketch));
+    doc.look(Look::StartExtrude);
+    let region = plate_region(&doc, sketch);
+    extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region });
+    assert!(last_draft(&requests).is_some());
+    // Back across the replacement: the sketch is still there, but its id
+    // may name another thing now.
+    doc.update(Edit::Undo);
+    assert!(is_sketch(doc.editor.document(), sketch));
+    assert!(doc.extrude.is_none());
+    assert!(last_draft(&requests).is_none());
+
+    // And forward across it again.
+    doc.look(Look::SelectFeature(sketch));
+    doc.look(Look::StartExtrude);
+    assert!(doc.extrude.is_some());
+    doc.update(Edit::Redo);
+    assert!(doc.extrude.is_none());
+}

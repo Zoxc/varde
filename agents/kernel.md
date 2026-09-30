@@ -2607,6 +2607,13 @@ be found none are picked, and the references wait for them. An edited extrude's
 references that aren't found are counted (`missing`, shown in the panel)
 and dropped: `SetExtrude` gets fresh references of what's picked. Editing
 never changes the extrude's sketch, so `SetExtrude` doesn't hide one.
+A replacement of the whole document (restoring recovered changes, or
+undoing or redoing that: `Editor::lineage` changes, and the session keeps
+the lineage it started in) ends the session and its draft, as its ids
+(the extrude edited, the source, the excluded bodies) may name other
+things: OK would otherwise write the values read before over whatever
+extrude the id names now. A `Replace` equal to the document is no change
+and keeps the session.
 
 **The preview** is the session's extrude sent as the request's draft
 (`Doc::request_model` after every edit and look): whole once a region is
@@ -2632,7 +2639,8 @@ regions again in the new sketch and the draft is asked for again, so
 what OK commits is what was previewed; undo in the window drops them and
 frees OK. So do the other ways the wait ends (tested): a rejected edit
 (the picks stay), the sketch deleted (its edits dropped once answered,
-the session gone with it), restoring recovered changes (drops them), a
+the session gone with it), restoring recovered changes (drops them; one that changes the document
+ends the session, above), a
 units change in the window (set after the answers, then followed by the
 session); read-only in the window ends the session. A solver lane not
 started yet keeps OK waiting, as saving waits. After `CHECKING` (100 ms) the panel says "Checking the

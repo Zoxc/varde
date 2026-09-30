@@ -678,7 +678,10 @@ back, and a Line chain whose last point is gone (undone) starts afresh.
 Across a replacement of the whole document (restoring recovered changes,
 or undoing or redoing that: `Editor::lineage` changes) ids may name other
 items, so the selection is cleared and the tool starts its shape afresh;
-restoring drops the edits waiting on the solver, as undo does. A document
+restoring drops the edits waiting on the solver, as undo does. The sketch
+session only resets, since it reads the sketch its id names now and never
+writes back what it read before; an extrude session holds values read
+before the replacement, so it ends instead (`Doc::prune_extrude`). A document
 that can't be edited, as a Save As can leave it, has no tool and no drag;
 the Save As answer syncs for that.
 
