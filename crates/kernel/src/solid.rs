@@ -50,6 +50,41 @@ impl Solid {
         Ok(Solid { mesh })
     }
 
+    /// The solid bounded by `mesh` with its faces merged
+    /// ([`Mesh::merge_faces`]), repaired first only if it fails
+    /// [`Mesh::check`] with `tol`: for a mesh built to pass, such as an
+    /// extrude's, which then takes one pass over its pairs of patches
+    /// rather than two (repair's, finding nothing, and the check's).
+    /// Repair returns a mesh that passes the check as it is, and merging
+    /// changes only names, so the solid is the one [`Mesh::repair_within`],
+    /// [`Mesh::merge_faces`] and then [`Solid::new_within`] give, for the
+    /// same work; a mesh that fails is repaired, merged and checked just
+    /// so. The check is charged as repair's first pass would be
+    /// ([`Mesh::check_counted_within`]); a merged mesh that passed it is
+    /// checked again only for what names touch
+    /// ([`Mesh::check_topology`]).
+    pub(crate) fn new_repaired_within(
+        mesh: Mesh,
+        tol: &Tolerance,
+        work: &mut Work,
+    ) -> Result<Solid, KernelError> {
+        match mesh.check_counted_within(tol, work) {
+            Ok(integrated) => {
+                let mesh = mesh.merge_faces(tol.resolution(), work)?;
+                mesh.check_topology().map_err(KernelError::Invalid)?;
+                work.spend(integrated.saturating_mul(INTEGRATE_WORK))?;
+                Ok(Solid { mesh })
+            }
+            Err(KernelError::Invalid(_)) => {
+                let mesh = mesh
+                    .repair_within(tol, work)?
+                    .merge_faces(tol.resolution(), work)?;
+                Solid::new_within(mesh, tol, work)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
     /// The empty solid.
     pub fn empty() -> Solid {
         Solid {

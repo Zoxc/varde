@@ -1,8 +1,9 @@
 use super::hull::{edge_neighbours_parted, non_neighbours_apart, vertex_neighbours_apart};
 use super::{Bvh, Mesh};
+use crate::budget::Work;
 use crate::par::par_map;
 use crate::patch::{Patch, PatchError};
-use crate::{MAX_PATCHES, Tolerance};
+use crate::{KernelError, MAX_PATCHES, Tolerance};
 
 /// Which invariant a mesh breaks, and where: the first failure found, in
 /// the order of the invariants, then of halfedge, vertex, edge or triangle
@@ -100,6 +101,12 @@ impl std::fmt::Display for CheckError {
 
 impl std::error::Error for CheckError {}
 
+impl From<CheckError> for KernelError {
+    fn from(e: CheckError) -> Self {
+        KernelError::Invalid(e)
+    }
+}
+
 impl Mesh {
     /// Checks every invariant (see the [module](super) docs): topology,
     /// shared edges, folds, control hulls with `tol`'s resolution as the
@@ -114,10 +121,40 @@ impl Mesh {
     /// and their hull pairs), for callers that charge the work.
     pub(crate) fn check_counted(&self, tol: &Tolerance) -> Result<usize, CheckError> {
         let (patches, bvh) = self.check_embedded(tol)?;
-        let integrated = self.check_orientation(&patches, &bvh, tol.resolution())?;
-        self.check_faces_of(&patches, tol)?;
+        self.check_rest(&patches, &bvh, tol)
+    }
+
+    /// [`Self::check_counted`], charging `work` what a first pass of
+    /// [`repair`](Self::repair_within) over the mesh would: two units a
+    /// patch, and one for each pair of patches whose boxes come within
+    /// the resolution, counted before they are collected
+    /// ([`Bvh::self_pairs_within`]), so boxes crowding each other fail it
+    /// with [`KernelError::TooComplex`] rather than make pairs of nearly
+    /// every two. A failure of the check is [`KernelError::Invalid`].
+    pub(crate) fn check_counted_within(
+        &self,
+        tol: &Tolerance,
+        work: &mut Work,
+    ) -> Result<usize, KernelError> {
+        let (patches, bvh) = self.check_embedded_by(tol, |bvh, margin| {
+            work.spend(self.tris.len().saturating_mul(2))?;
+            bvh.self_pairs_within(margin, work)
+        })?;
+        self.check_rest(&patches, &bvh, tol)
+            .map_err(KernelError::Invalid)
+    }
+
+    /// The invariants after the hulls: orientation and face tags.
+    fn check_rest(
+        &self,
+        patches: &[Patch],
+        bvh: &Bvh,
+        tol: &Tolerance,
+    ) -> Result<usize, CheckError> {
+        let integrated = self.check_orientation(patches, bvh, tol.resolution())?;
+        self.check_faces_of(patches, tol)?;
         #[cfg(debug_assertions)]
-        if let Some((t, why)) = self.off_forms(&patches, tol) {
+        if let Some((t, why)) = self.off_forms(patches, tol) {
             panic!("triangle {t} {why}");
         }
         Ok(integrated)
@@ -131,19 +168,32 @@ impl Mesh {
 
     /// [`Self::check_embedding`], with the BVH over the patches' boxes.
     pub(super) fn check_embedded(&self, tol: &Tolerance) -> Result<(Vec<Patch>, Bvh), CheckError> {
+        self.check_embedded_by(tol, |bvh, margin| Ok(bvh.self_pairs(margin)))
+    }
+
+    /// [`Self::check_embedded`], with `pairs` finding the pairs of boxes
+    /// within the margin from the BVH (and failing as it says).
+    fn check_embedded_by<E: From<CheckError>>(
+        &self,
+        tol: &Tolerance,
+        pairs: impl FnOnce(&Bvh, f64) -> Result<Vec<[u32; 2]>, E>,
+    ) -> Result<(Vec<Patch>, Bvh), E> {
         self.check_topology()?;
         let patches = self.bounded_patches()?;
         let folds = par_map(&patches, |patch| patch.fold_direction().is_some());
         if let Some(t) = folds.iter().position(|&passes| !passes) {
-            return Err(CheckError::Fold(t as u32));
+            return Err(CheckError::Fold(t as u32).into());
         }
-        let bvh = self.check_hulls(&patches, tol)?;
+        let margin = tol.resolution();
+        let bvh = Bvh::new(patches.iter().map(Patch::bounds).collect());
+        let pairs = pairs(&bvh, margin)?;
+        self.check_hulls(&patches, &pairs, margin)?;
         Ok((patches, bvh))
     }
 
     /// Invariants 1 and 2 without the geometry: pairs, directed edges,
     /// fans, and shared edge records.
-    pub(super) fn check_topology(&self) -> Result<(), CheckError> {
+    pub(crate) fn check_topology(&self) -> Result<(), CheckError> {
         let nt = self.tris.len();
         if nt > MAX_PATCHES {
             return Err(CheckError::TooManyPatches(nt));
@@ -320,19 +370,20 @@ impl Mesh {
             .find_map(|(t, why)| why.map(|why| (t as u32, why)))
     }
 
-    /// Invariant 4 over every pair of patches whose boxes come within the
-    /// resolution, from the BVH, which it returns. Pairs that share
-    /// vertices always do, sharing control points.
-    fn check_hulls(&self, patches: &[Patch], tol: &Tolerance) -> Result<Bvh, CheckError> {
-        let margin = tol.resolution();
-        let bvh = Bvh::new(patches.iter().map(Patch::bounds).collect());
-        let pairs = bvh.self_pairs(margin);
-        let results = par_map(&pairs, |&[i, j]| {
+    /// Invariant 4 over `pairs`, every pair of patches whose boxes come
+    /// within `margin`, the resolution. Pairs that share vertices always
+    /// do, sharing control points.
+    fn check_hulls(
+        &self,
+        patches: &[Patch],
+        pairs: &[[u32; 2]],
+        margin: f64,
+    ) -> Result<(), CheckError> {
+        let results = par_map(pairs, |&[i, j]| {
             let (a, b) = (&patches[i as usize], &patches[j as usize]);
             check_pair([i, j], [a, b], [self.corners(i), self.corners(j)], margin)
         });
-        results.into_iter().collect::<Result<(), _>>()?;
-        Ok(bvh)
+        results.into_iter().collect()
     }
 
     /// The vertex ids at the corners of triangle `t`.

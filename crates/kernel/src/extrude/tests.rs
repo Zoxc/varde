@@ -909,13 +909,94 @@ pub(super) fn plate_with_holes(cols: usize, rows: usize, w: f64, h: f64) -> Prof
     profile(loops)
 }
 
+/// A 10 × 10 square with a small hole of sharply weighted conics (from
+/// a stress of random plates): at fit 1e-2 its first try finds a flat
+/// corner only in round 5, and fails; the second, with flat corners,
+/// passes.
+fn late_fork() -> Profile {
+    let hole = |pieces: &[([f64; 2], [f64; 2], f64)], curve: u64| Loop {
+        segments: (0..pieces.len())
+            .map(|i| {
+                let (p0, c, w) = pieces[i];
+                let p1 = pieces[(i + 1) % pieces.len()].0;
+                let conic = Conic2::new(p0.into(), c.into(), w, p1.into()).unwrap();
+                Segment {
+                    conic,
+                    curve: curve + i as u64,
+                }
+            })
+            .collect(),
+    };
+    let first = hole(
+        &[
+            (
+                [-2.875792837240438, 0.767483223403253],
+                [-2.890660925723614, 0.7635802637126888],
+                1.7433118507651248,
+            ),
+            (
+                [-2.9030675584770083, 0.7421627767314306],
+                [-2.8897883435795055, 0.6871759582484847],
+                0.0924430246044685,
+            ),
+            (
+                [-2.9436688801988975, 0.6538578455034685],
+                [-2.950755066300978, 0.6118902117264731],
+                2.329109567103195,
+            ),
+            (
+                [-3.0311681095183642, 0.6155914900501958],
+                [-3.0494790995449095, 0.6646566789247408],
+                0.11484298722193315,
+            ),
+            (
+                [-3.0528969203865106, 0.7049902541566684],
+                [-3.0550152903496612, 0.7475604256957974],
+                0.7920707473624892,
+            ),
+            (
+                [-3.0537737423975715, 0.7607507853299873],
+                [-3.1494152370859987, 0.8116840831291752],
+                2.9319593279526823,
+            ),
+            (
+                [-3.162260999409073, 0.8629769235394325],
+                [-3.114782719740387, 0.8601306993229467],
+                5.427032588809919,
+            ),
+            (
+                [-3.038847795251609, 0.8486696894157061],
+                [-3.026370989442436, 0.8444215553778929],
+                0.054636538832601486,
+            ),
+            (
+                [-3.0026744445954816, 0.8635741502866685],
+                [-2.97480382993625, 0.8705352286561097],
+                1.0,
+            ),
+            (
+                [-2.9469332152770185, 0.8774963070255507],
+                [-2.9349055172428185, 0.8383534187448597],
+                0.2676830649356724,
+            ),
+            (
+                [-2.929788767256126, 0.8286604217521056],
+                [-2.8663848143122763, 0.8005842592711854],
+                0.24463669698280374,
+            ),
+        ],
+        100,
+    );
+    profile(vec![rect(DVec2::splat(-5.0), DVec2::splat(5.0), 0), first])
+}
+
 #[test]
 fn the_second_try_resumes_where_the_first_found_a_flat_corner() {
     // The two tries differ only in the flat corners, so up to the first
     // round that finds one they are the same: the second resumes there
     // and makes the caps it would have made from the start.
-    let strip = plate_with_holes(20, 2, 210.0, 30.0);
-    assert_eq!(resumes_as_from_the_start(&strip, &TOL), Some(9));
+    let fine = Tolerance::new(1e-2).unwrap();
+    assert_eq!(resumes_as_from_the_start(&late_fork(), &fine), Some(5));
     let small = plate_with_holes(4, 4, 50.0, 50.0);
     assert_eq!(resumes_as_from_the_start(&small, &TOL), None);
     // A fine polygon at a coarse tolerance is flat at once.
@@ -944,36 +1025,32 @@ fn the_second_try_resumes_where_the_first_found_a_flat_corner() {
 
 #[test]
 fn the_second_try_is_charged_only_from_where_it_resumes() {
-    // A 210 × 30 strip with 40 holes, the bottom row 0.1 from its side:
-    // the first try fails, the second, with flat corners, passes. Starting the
-    // second over would take 132 138 units in all; resuming it, 121 362.
-    // The same bits at 1 and 8 threads.
-    let p = plate_with_holes(20, 2, 210.0, 30.0);
-    let solid = assert_deterministic(|| {
-        extrude(&p, &Frame::XY, 0.0, 2.0, 9, &TOL, &Budget::new(150_000)).unwrap()
-    });
+    // `late_fork` at fit 1e-2: the first try fails, the second, with
+    // flat corners, passes. Starting the second over would take 300 794
+    // units in all; resuming it, 299 452. The same bits at 1 and 8
+    // threads.
+    let fine = Tolerance::new(1e-2).unwrap();
+    let p = late_fork();
+    let run = |units: u64| extrude(&p, &Frame::XY, 0.0, 2.0, 9, &fine, &Budget::new(units));
+    let solid = assert_deterministic(|| run(400_000).unwrap());
     let exact = p.area() * 2.0;
     assert!((solid.volume() - exact).abs() < 1e-12 * exact);
-    assert_eq!(solid.mesh().check_faces(&TOL), Ok(()));
-    assert_eq!(solid.mesh().tris().len(), 3696);
-    assert_eq!(
-        extrude(&p, &Frame::XY, 0.0, 2.0, 9, &TOL, &Budget::new(121_361)),
-        Err(KernelError::TooComplex)
-    );
-    assert_eq!(
-        extrude(&p, &Frame::XY, 0.0, 2.0, 9, &TOL, &Budget::new(121_362)),
-        Ok(solid)
-    );
+    assert_eq!(solid.mesh().check_faces(&fine), Ok(()));
+    assert_eq!(solid.mesh().tris().len(), 9656);
+    // Out of work in the second try, the first try's error stands.
+    assert!(matches!(run(299_451), Err(KernelError::Invalid(_))));
+    assert_eq!(run(299_452), Ok(solid));
 }
 
 #[test]
 fn a_first_try_out_of_work_in_its_fork_round_has_no_second() {
-    // The least budget with which the strip's first try gets as far as
+    // The least budget with which `late_fork`'s first try gets as far as
     // the round it forks in runs out within that round, after the fork:
     // with no work left there is no second try, just as one less unit
     // runs out before the fork.
-    let p = plate_with_holes(20, 2, 210.0, 30.0);
-    let margin = TOL.resolution();
+    let fine = Tolerance::new(1e-2).unwrap();
+    let p = late_fork();
+    let margin = fine.resolution();
     let mut work = Work::new(&Budget::DEFAULT);
     let mut chain = Chain::new(&p, margin).unwrap();
     chain.separate(&mut work).unwrap();
@@ -991,7 +1068,7 @@ fn a_first_try_out_of_work_in_its_fork_round_has_no_second() {
         (caps.map(|_| ()), fork.as_ref().map(Rounds::round))
     };
     let (mut lo, mut hi) = (0, Budget::DEFAULT.work());
-    assert_eq!(first(hi).1, Some(9));
+    assert_eq!(first(hi).1, Some(5));
     while hi - lo > 1 {
         let mid = lo + (hi - lo) / 2;
         if first(mid).1.is_some() {
@@ -1000,15 +1077,45 @@ fn a_first_try_out_of_work_in_its_fork_round_has_no_second() {
             lo = mid
         }
     }
-    assert_eq!(first(hi), (Err(KernelError::TooComplex), Some(9)));
+    assert_eq!(first(hi), (Err(KernelError::TooComplex), Some(5)));
     assert_eq!(first(lo), (Err(KernelError::TooComplex), None));
     for units in [lo, hi] {
         let budget = Budget::new(separated + units);
         assert_eq!(
-            extrude(&p, &Frame::XY, 0.0, 2.0, 9, &TOL, &budget),
+            extrude(&p, &Frame::XY, 0.0, 2.0, 9, &fine, &budget),
             Err(KernelError::TooComplex)
         );
     }
+}
+
+#[test]
+fn rows_of_holes_near_a_side_pass_on_the_first_try() {
+    // A 210 × 30 strip with 40 holes, the bottom row 0.1 from its side:
+    // the edges from the strip's corners to the arcs along the side run
+    // along the arcs' tangents, and halving the arcs doesn't open those
+    // corners. Past `MAX_MEND_DEPTH` halvings they are left to
+    // refinement, whose halvings of the side give the arcs vertices
+    // near, on the first try; halved on to `MAX_CAP_DEPTH`, the first
+    // try failed and the second, with flat corners, passed. The same at
+    // 1 and 8 threads.
+    let p = plate_with_holes(20, 2, 210.0, 30.0);
+    let margin = TOL.resolution();
+    let mut work = Work::new(&Budget::DEFAULT);
+    let mut chain = Chain::new(&p, margin).unwrap();
+    chain.separate(&mut work).unwrap();
+    let caps = cap::triangulate(
+        Rounds::new(chain),
+        margin,
+        cap::Mode::QUALITY,
+        &mut None,
+        &mut false,
+        &mut work,
+    );
+    assert!(caps.is_ok());
+    let solid = assert_deterministic(|| run(&p, &Frame::XY, 0.0, 2.0).unwrap());
+    let exact = p.area() * 2.0;
+    assert!((solid.volume() - exact).abs() < 1e-12 * exact);
+    assert_eq!(solid.mesh().check_faces(&TOL), Ok(()));
 }
 
 #[test]

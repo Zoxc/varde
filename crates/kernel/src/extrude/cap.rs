@@ -51,8 +51,9 @@
 //! changes, or fail after [`MAX_ROUNDS`] rounds of mending (runs of
 //! refinement count apart, up to [`MAX_QUALITY_ROUNDS`], after which the
 //! caps stand as they are). A segment to halve that already spans less
-//! than [`MIN_SPLIT`](crate::mesh::MIN_SPLIT) resolutions is left to
-//! refinement, whose points can take its corner apart; if they don't,
+//! than [`MIN_SPLIT`](crate::mesh::MIN_SPLIT) resolutions, or, refining,
+//! was halved [`MAX_MEND_DEPTH`] times, is left to refinement, whose
+//! points can take its corner apart; if they don't,
 //! it fails the profile with [`ProfileError::TooFine`]: detail too small
 //! for the resolution, which a finer tolerance mends. One halved
 //! [`MAX_CAP_DEPTH`] times fails with [`KernelError::TooComplex`] at
@@ -94,6 +95,16 @@ const MAX_ROUNDS: usize = 32;
 /// caps give up halving it: mending that doesn't converge would otherwise
 /// double the segments it can't mend every round.
 pub(super) const MAX_CAP_DEPTH: u8 = 16;
+
+/// How many times, all told, a segment may have been halved before the
+/// caps, refining for quality, leave a corner it makes too narrow to
+/// refinement rather than halve it again: a corner between an arc and an
+/// inner edge along its tangent to a far vertex (a row of holes close to
+/// a plate's straight side, which has no vertices near) stays narrow
+/// however often the arc is halved, while refinement's points, or its
+/// halvings of the side they encroach on, give the arc a vertex near.
+/// Halving on to [`MAX_CAP_DEPTH`] spent the rounds and the budget first.
+const MAX_MEND_DEPTH: u8 = 6;
 
 /// Work units per vertex for one triangulation: inserting a vertex walks
 /// and flips a few edges.
@@ -200,7 +211,8 @@ impl Rounds {
 ///
 /// A round with nothing to halve and no flat corners to mend is a round
 /// of refinement, if refinement asks for anything, and then places no
-/// ears' centroids. Halvings the chain refuses as too small don't count:
+/// ears' centroids. Halvings the chain refuses as too small (or, refining,
+/// as halved [`MAX_MEND_DEPTH`] times) don't count:
 /// refinement's points can take those corners apart, and when it has
 /// nothing more to add and such halvings are left, they fail the caps as
 /// [`refused`] says; a segment halved too often fails them at once. When
@@ -276,10 +288,16 @@ pub(super) fn triangulate(
             flat.clear();
         }
         // Pieces halved too often are mending that doesn't converge, and
-        // fail; pieces too small to halve are left to refinement.
+        // fail; pieces too small to halve are left to refinement, and so,
+        // when refining, are pieces halved `MAX_MEND_DEPTH` times.
         split.sort_unstable();
         split.dedup();
-        let splittable = |&s: &u32| chain.splittable(&segs[s as usize], MAX_CAP_DEPTH, false);
+        let depth = if mode.quality {
+            MAX_MEND_DEPTH
+        } else {
+            MAX_CAP_DEPTH
+        };
+        let splittable = |&s: &u32| chain.splittable(&segs[s as usize], depth, false);
         let stuck = |split: &[u32]| -> Vec<Seg> {
             split
                 .iter()
@@ -287,9 +305,10 @@ pub(super) fn triangulate(
                 .map(|&s| segs[s as usize])
                 .collect()
         };
+        let left = |s: &Seg| chain.too_small(s) || (mode.quality && s.depth < MAX_CAP_DEPTH);
         if split
             .iter()
-            .any(|&s| !splittable(&s) && !chain.too_small(&segs[s as usize]))
+            .any(|&s| !splittable(&s) && !left(&segs[s as usize]))
         {
             return Err(refused(&chain, &stuck(&split)));
         }
@@ -370,7 +389,7 @@ pub(super) fn triangulate(
         work.spend(added.len().saturating_mul(TRIANGULATION_WORK))?;
         steiner.extend(added);
         // Only segments that may be halved are left.
-        let pieces = chain.halved(&split, MAX_CAP_DEPTH, false, refused)?;
+        let pieces = chain.halved(&split, depth, false, refused)?;
         replace(&mut chain, live, &starts, &pieces, work)?;
         if fresh {
             kept = None;
@@ -786,77 +805,108 @@ impl Live {
 /// (by index) to put a Steiner point in, and the loop vertices with a
 /// flat corner, where a Steiner point can be moved in from the vertex:
 /// flat for a resolution of `margin`. Only the last depends on `margin`.
+/// Each triangle is looked at alone, in parallel, and what they ask for
+/// is gathered in their order.
 fn mend(
     segs: &[Seg],
     starts: &[u32],
-    at: &impl Fn(u32) -> DVec2,
+    at: &(impl Fn(u32) -> DVec2 + Sync),
     tris: &[[u32; 3]],
     margin: f64,
 ) -> (Vec<u32>, Vec<usize>, Vec<u32>) {
-    let curved = |e: Option<(u32, bool)>| e.is_some_and(|(s, _)| segs[s as usize].curved);
+    let asks = par_map(tris, |tri| mend_one(segs, starts, at, tri, margin));
     let mut split = Vec::new();
     let mut ears = Vec::new();
     let mut flat = Vec::new();
-    for (t, tri) in tris.iter().enumerate() {
-        for k in 0..3 {
-            let v = tri[k];
-            if v as usize >= segs.len() {
-                continue;
-            }
-            let o = at(v);
-            let (a, b) = (at(tri[(k + 1) % 3]), at(tri[(k + 2) % 3]));
-            // Obtuse at `v`, whose distance from the side `a–b` is the
-            // cross product over that side's length.
-            let (ea, eb) = (a - o, b - o);
-            if ea.dot(eb) < 0.0 && ea.perp_dot(eb).abs() < FLAT * margin * (b - a).length() {
-                flat.push(v);
-            }
-        }
-        let sides = [0, 1, 2].map(|k| chord(starts, tri[k], tri[(k + 1) % 3]));
-        if !sides.iter().any(|&e| curved(e)) {
-            continue;
-        }
-        let (mut ear, mut narrow) = (false, false);
-        for k in 0..3 {
-            let (v, a, b) = (tri[k], tri[(k + 1) % 3], tri[(k + 2) % 3]);
-            // The side into `v` is stored from `b`: flip which end is `v`.
-            let (ea, eb) = (sides[k], sides[(k + 2) % 3].map(|(s, start)| (s, !start)));
-            if !curved(ea) && !curved(eb) {
-                continue;
-            }
-            // Along the side from `v` to `w`: its curve's tangent there.
-            let direction = |e: Option<(u32, bool)>, w: u32| match e {
-                None => at(w) - at(v),
-                Some((s, start)) => segs[s as usize].tangent(start),
-            };
-            let (da, db) = (direction(ea, a), direction(eb, b));
-            if da.perp_dot(db) > SIN_MIN * da.length() * db.length() {
-                continue;
-            }
-            if ea.is_some() && eb.is_some() {
-                ear = true;
-            } else {
-                narrow = true;
-                let (s, _) = if curved(ea) { ea } else { eb }.expect("a curved chord");
-                split.push(s);
-            }
-        }
-        if ear {
+    for (t, ask) in asks.into_iter().enumerate() {
+        split.extend_from_slice(&ask.split[..ask.splits]);
+        flat.extend_from_slice(&ask.flat[..ask.flats]);
+        if ask.ear {
             ears.push(t);
-        } else if !narrow && patch(segs, at, tri, &sides).fold_direction().is_none() {
-            // Open corners but a fold inside (a bulge of weight above 1
-            // into the triangle can): halve its curves.
-            split.extend(
-                sides
-                    .iter()
-                    .filter(|&&e| curved(e))
-                    .map(|e| e.expect("a curved chord").0),
-            );
         }
     }
     flat.sort_unstable();
     flat.dedup();
     (split, ears, flat)
+}
+
+/// What one triangle asks [`mend`] for: at most three segments to
+/// halve (one per corner, or its curved sides), whether it is an ear to
+/// put a Steiner point in, and at most three loop vertices with a flat
+/// corner, each in the order found.
+#[derive(Default)]
+struct Ask {
+    split: [u32; 3],
+    splits: usize,
+    ear: bool,
+    flat: [u32; 3],
+    flats: usize,
+}
+
+/// [`mend`] for the triangle `tri`.
+fn mend_one(
+    segs: &[Seg],
+    starts: &[u32],
+    at: &impl Fn(u32) -> DVec2,
+    tri: &[u32; 3],
+    margin: f64,
+) -> Ask {
+    let curved = |e: Option<(u32, bool)>| e.is_some_and(|(s, _)| segs[s as usize].curved);
+    let mut ask = Ask::default();
+    for k in 0..3 {
+        let v = tri[k];
+        if v as usize >= segs.len() {
+            continue;
+        }
+        let o = at(v);
+        let (a, b) = (at(tri[(k + 1) % 3]), at(tri[(k + 2) % 3]));
+        // Obtuse at `v`, whose distance from the side `a–b` is the
+        // cross product over that side's length.
+        let (ea, eb) = (a - o, b - o);
+        if ea.dot(eb) < 0.0 && ea.perp_dot(eb).abs() < FLAT * margin * (b - a).length() {
+            ask.flat[ask.flats] = v;
+            ask.flats += 1;
+        }
+    }
+    let sides = [0, 1, 2].map(|k| chord(starts, tri[k], tri[(k + 1) % 3]));
+    if !sides.iter().any(|&e| curved(e)) {
+        return ask;
+    }
+    let mut narrow = false;
+    for k in 0..3 {
+        let (v, a, b) = (tri[k], tri[(k + 1) % 3], tri[(k + 2) % 3]);
+        // The side into `v` is stored from `b`: flip which end is `v`.
+        let (ea, eb) = (sides[k], sides[(k + 2) % 3].map(|(s, start)| (s, !start)));
+        if !curved(ea) && !curved(eb) {
+            continue;
+        }
+        // Along the side from `v` to `w`: its curve's tangent there.
+        let direction = |e: Option<(u32, bool)>, w: u32| match e {
+            None => at(w) - at(v),
+            Some((s, start)) => segs[s as usize].tangent(start),
+        };
+        let (da, db) = (direction(ea, a), direction(eb, b));
+        if da.perp_dot(db) > SIN_MIN * da.length() * db.length() {
+            continue;
+        }
+        if ea.is_some() && eb.is_some() {
+            ask.ear = true;
+        } else {
+            narrow = true;
+            let (s, _) = if curved(ea) { ea } else { eb }.expect("a curved chord");
+            ask.split[ask.splits] = s;
+            ask.splits += 1;
+        }
+    }
+    if !ask.ear && !narrow && patch(segs, at, tri, &sides).fold_direction().is_none() {
+        // Open corners but a fold inside (a bulge of weight above 1
+        // into the triangle can): halve its curves.
+        for e in sides.iter().filter(|&&e| curved(e)) {
+            ask.split[ask.splits] = e.expect("a curved chord").0;
+            ask.splits += 1;
+        }
+    }
+    ask
 }
 
 /// The cap patch on triangle `tri`, in the plane `z = 0`, with its

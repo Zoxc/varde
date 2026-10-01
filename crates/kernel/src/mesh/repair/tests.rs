@@ -435,6 +435,47 @@ fn a_fold_is_repaired() {
     assert_eq!(repaired.tris().len(), 16);
 }
 
+/// The solid `mesh` gives repaired, merged and then checked, and
+/// checked first and repaired only if that fails, each within `units` of
+/// work, with the work left.
+fn both_ways(mesh: &Mesh, units: u64) -> [(Result<crate::Solid, KernelError>, u64); 2] {
+    let budget = Budget::new(units);
+    let mut work = Work::new(&budget);
+    let repaired = mesh
+        .clone()
+        .repair_within(&TOL, &mut work)
+        .and_then(|mesh| mesh.merge_faces(TOL.resolution(), &mut work))
+        .and_then(|mesh| crate::Solid::new_within(mesh, &TOL, &mut work));
+    let left = work.left();
+    let mut work = Work::new(&budget);
+    let checked = crate::Solid::new_repaired_within(mesh.clone(), &TOL, &mut work);
+    [(repaired, left), (checked, work.left())]
+}
+
+#[test]
+fn checking_first_gives_what_repairing_first_does() {
+    // A mesh that passes is kept, charged what repair's pass over it
+    // would be, so it runs out of work just where that did; one that
+    // fails, at a hull (a thin plate) or a fold, is repaired.
+    let passes = round_octahedron(DVec3::ZERO);
+    let [(repaired, left), (checked, same)] = both_ways(&passes, Budget::DEFAULT.work());
+    assert_eq!(checked, repaired);
+    assert!(checked.is_ok());
+    assert_eq!(left, same);
+    let spent = Budget::DEFAULT.work() - left;
+    for units in [spent - 1, spent] {
+        let [(repaired, _), (checked, _)] = both_ways(&passes, units);
+        assert_eq!(checked, repaired, "{units}");
+    }
+    assert!(both_ways(&passes, spent - 1)[1].0.is_err());
+    for fails in [shell(10.0, 0.2), bulging_tetrahedron(1.5)] {
+        assert!(fails.check(&TOL).is_err());
+        let [(repaired, _), (checked, _)] = both_ways(&fails, Budget::DEFAULT.work());
+        assert!(checked.is_ok());
+        assert_eq!(checked, repaired);
+    }
+}
+
 #[test]
 fn a_mesh_that_passes_is_kept() {
     let mesh = round_octahedron(DVec3::ZERO);

@@ -639,7 +639,7 @@ fn refined_caps_patches() {
     let patches = |p: &Profile| run(p, &TOL, 2.0).unwrap().mesh().tris().len();
     // The 80 × 80 plate with 64 holes, and `a_plate_with_holes`' 100 × 60
     // plate with four.
-    assert_eq!(patches(&plate_with_holes(8, 8, 80.0, 80.0)), 4532);
+    assert_eq!(patches(&plate_with_holes(8, 8, 80.0, 80.0)), 4292);
     let four = profile(vec![
         rect(DVec2::ZERO, DVec2::new(100.0, 60.0), 0),
         circle(DVec2::new(25.0, 30.0), 5.0, 4, true),
