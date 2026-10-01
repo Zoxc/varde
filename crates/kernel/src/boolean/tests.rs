@@ -7,7 +7,7 @@ use glam::DVec3;
 
 use super::*;
 use crate::mesh::tests::{OCTAHEDRON, TOL, UNIT};
-use crate::mesh::{CheckError, Face, FaceName, FacePart, Mesh, MeshBuilder, Surface};
+use crate::mesh::{CheckError, Face, FaceName, FacePart, Form, Mesh, MeshBuilder, Surface};
 use crate::par::assert_deterministic;
 
 fn cube(min: [f64; 3], size: [f64; 3]) -> Solid {
@@ -27,6 +27,7 @@ fn polytope(verts: &[DVec3], tris: &[[u32; 3]]) -> Solid {
         let f = builder.face(Face {
             name: FaceName::new(2, FacePart::Split(i as u32)),
             surface: Surface::Plane { n, d: n.dot(p) },
+            form: Form::plane(n, n.dot(p)),
         });
         builder.tri([a, b, c], f);
     }
@@ -74,7 +75,11 @@ fn rebuilt_mesh(mesh: &Mesh, f: impl Fn(DVec3) -> DVec3, inverted: bool) -> Mesh
         builder.vert(f(p));
     }
     for &face in mesh.faces() {
-        builder.face(face);
+        let form = face.form.moved(&f);
+        builder.face(Face {
+            form: if inverted { form.flipped() } else { form },
+            ..face
+        });
     }
     for t in mesh.tris() {
         let [a, b, c] = t.halfedges.map(|h| h.start);
@@ -985,10 +990,11 @@ fn moved_free(s: &Solid, f: impl Fn(DVec3) -> DVec3) -> Solid {
     for &p in s.mesh().verts() {
         builder.vert(f(p));
     }
-    for &f in s.mesh().faces() {
+    for &face in s.mesh().faces() {
         builder.face(Face {
             surface: Surface::Free,
-            ..f
+            form: face.form.moved(&f),
+            ..face
         });
     }
     for t in s.mesh().tris() {

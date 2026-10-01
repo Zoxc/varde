@@ -20,6 +20,7 @@ pub(crate) fn face(part: u32, surface: Surface) -> Face {
     Face {
         name: FaceName::new(1, FacePart::Split(part)),
         surface,
+        form: Form::Unknown,
     }
 }
 
@@ -50,7 +51,16 @@ pub(crate) fn joined(parts: &[(&Mesh, bool)]) -> Mesh {
     let mut builder = MeshBuilder::new();
     for &(mesh, turned) in parts {
         let verts: Vec<u32> = mesh.verts().iter().map(|&p| builder.vert(p)).collect();
-        let faces: Vec<u32> = mesh.faces().iter().map(|&f| builder.face(f)).collect();
+        let faces: Vec<u32> = mesh
+            .faces()
+            .iter()
+            .map(|&f| {
+                builder.face(Face {
+                    form: if turned { f.form.flipped() } else { f.form },
+                    ..f
+                })
+            })
+            .collect();
         for (t, tri) in mesh.tris().iter().enumerate() {
             let [a, b, c] = tri.halfedges.map(|h| verts[h.start as usize]);
             builder.tri(

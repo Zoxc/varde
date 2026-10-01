@@ -16,7 +16,9 @@ refinement and repair, and box and cylinder meshes (`mesh`), the
 tolerances (`Tolerance`), the limits, `Budget` and `KernelError`, and the
 parallel map (`par`), below, and `Solid`, a checked mesh, with its
 tessellation for drawing (`tessellate`) and its volume and area,
-`extrude`, which sweeps a `Profile` into a solid, and `boolean` and
+`extrude`, which sweeps a `Profile` into a solid, the swept strips
+(`sweep`: exact patches on cones and quadrics of revolution, for revolve
+to come), and `boolean` and
 `touches` for solids of flat and curved patches (curved cuts exact where
 planes meet planes or quadrics, traced and fitted elsewhere), and a
 solid's `Topology` (its faces, edges and corners as users see them, and
@@ -64,10 +66,11 @@ polynomial and de Casteljau and blossoming are exact. The blossom is
   bisector) and weight `cos(θ/2)` (`Conic2::arc`, `Conic3::arc`, which in
   3D takes the circle's plane as two orthonormal axes; other axes give the
   matching ellipse arc). Those take angles, through `trig::cos` and
-  `trig::sin` (see "Deterministic trigonometry"); `Conic2::arc_between(center,
+  `trig::sin` (see "Deterministic trigonometry"); `Conic::arc_between(center,
   r, a, b)` builds the same arc (under 180°) from its ends without them,
   by `+ − × ÷ √` only: with `m = a + b − 2·center`, `c = center + m·2r²/|m|²` and
-  `w = |m|/2r`. Profiles from sketches are built with it.
+  `w = |m|/2r`, in the plane or in space (the circle in the plane of
+  `center`, `a` and `b`). Profiles from sketches are built with it.
 - Weights below 1 give ellipse arcs, 1 parabolas, above 1 hyperbolas.
   Reversing a curve keeps `c` and `w`, so an edge record needs no
   direction.
@@ -270,6 +273,88 @@ points) gives outward normals. A straight bottom gives the two flat
 triangles of the parallelogram. An `offset` along a straight bottom or in a
 curved bottom's plane (within a sine of `1e-9`) is refused.
 
+### Swept strips (`src/sweep.rs`)
+
+A strip runs between a **bottom** curve `a0 → a1` and a **top** `b0 →
+b1`, joined by a **left** edge `a0 → b0` and a **right** one `a1 → b1`;
+its patches are `(a0, a1, b1)` and `(a0, b1, b0)`, as `cylinder_strip`'s,
+and the **diagonal** `a0 → b1` is the only curve a strip makes, so strips
+beside each other share the other four (one record each).
+`MeshBuilder::strip(a, b, patches, face)` adds the two triangles with all
+five curves. The exactness argument is the cylinder's: three conic sides
+on a quadric whose planes meet in one point `O` of it.
+
+- **Cone rulings** (`cone_ruling(p, q, apex)`): straight, weight 1, the
+  control point on the ruling at the **geometric mean** `√(dp·dq)` of the
+  ends' distances from the apex, written symmetrically
+  (`apex + ((p − apex)·√(dq/dp) + (q − apex)·√(dp/dq))/2`, so the ruling
+  either way round has the same bits). The plane through `O` and a ruling
+  cuts the cone in that ruling and the one through `O`, which meet at the
+  apex, so the projection from `O` takes the ruling through the apex
+  twice over: its distance from the apex along the ruling is a perfect
+  square, `((1 − t)·√dp + t·√dq)²`, whatever `O` is. That is this conic,
+  so the two patches beside a ruling (each with its own `O`) share one
+  record exactly. A cylinder's rulings, the apex at infinity, have the
+  control point at the midpoint; with linear rulings a quarter turn of a
+  45° cone from 1 to 2 high is `3e-3` off it (test
+  `linear_rulings_miss_the_cone`).
+- **The diagonal** lies in the plane through `a0` and `b1` along the
+  bottom's bisecting direction `m = c − (a0 + a1)/2` (on a parallel: square
+  to the axis, through the arc's middle). It meets the bottom's plane in
+  the line through `a0` along `m`, which cuts the bottom conic again at
+  `a1'` (on a parallel, half a turn round from `a1`), and the top's plane in
+  the line through `b1` along `m`, cutting the top at `b0'`. So the first
+  patch's planes meet at `a1'` when the right edge's plane holds it (a
+  cone's ruling: any plane; a meridian of a surface of revolution: its
+  plane holds the axis and so `a1'`), the second's at `b0'`. The cylinder
+  strip's sheared diagonal lies in this plane too.
+- `cone_strip(bottom, top, apex)`: any cone over a conic (circular,
+  oblique, elliptic; `top` the bottom scaled about the apex, as the caller
+  promises): rulings as above, the diagonal the bottom projected from the
+  apex onto the plane (homogeneously linear, so the bottom's homogeneous
+  control points map to the diagonal's; its ends then set to `a0` and `b1`
+  exactly). Any plane through `a0` and `b1` clear of the apex works
+  (tested for random ones); the bisecting one is used.
+- `revolution_strip(bottom, top, left, right, origin, axis)`: a quadric of
+  revolution (sphere, ellipsoid, paraboloid, hyperboloids, and cones and
+  cylinders) between two parallels (circular arcs square to the axis) and
+  two meridians (plane sections through the axis; on a cone, geometric
+  mean rulings). The diagonal is the conic in the plane through `a0`,
+  `b1` and `a1'` that touches the surface at `a0` and `b1` (its tangent
+  planes there spanned by the edges' tangents: control point where the
+  two tangent lines in the plane meet) and passes through `a1'` (weight
+  `|β1|/2√(β0·β2)` from `a1'`'s barycentric coordinates on the control
+  triangle, which every point of the conic satisfies). `a1'` comes from
+  the axis (`a1` turned half a turn about it): found again on the
+  bottom's conic along `m` it was good only to about `ε/θ²` of the radius
+  for a piece of angle `θ` (`m` is a sagitta), which tilted the plane and
+  left sphere strips of `0.45°` `2e-13` relative off; from the axis they
+  are within `1e-15`.
+
+Refusals (`PatchError`): edges not meeting at the corners to the bit
+(`Mismatch`); a straight bottom for `cone_strip` (a flat strip), an apex
+too close to the diagonal's plane, a zero axis or `a1` on it, tangents
+parallel or `a1'` on the arc itself (`Degenerate`). Poles and apexes (a
+strip with a meridian ending on the axis) aren't covered: no common point
+exists there, they are fitted (to come with revolve's caps).
+
+Tests (`sweep/tests.rs`), half on axes through the origin (bounds
+relative to the size) and half up to `1e3` out (relative to the
+coordinates), pieces from 90° down to a third of a degree: sphere strips
+within `1e-12` of their spheres (measured `7e-16`), cone strips by both
+constructions for any diagonal plane (`4e-16`), oblique and elliptic
+cones, ellipsoids, paraboloids and hyperboloids of one and two sheets,
+every patch passing the fold check; rulings the same bits either way
+round, and two cone strips side by side making the same ruling with both
+neighbours on the cone; refusals. Closed solids of revolution built from
+them (rings of 4 to 256 pieces, flat caps of arc-bounded sectors) pass
+`check`, orientation and face tags included, and turned inside out are
+refused: frustums widening and narrowing (by both constructions), sphere
+zones of one to four bands, and a lathe profile of a cone, a cylinder, a
+sphere and an ellipsoid on axes tilted and `3e5` out, with volume (and
+area where it has a closed form) within `1e-10`; the same bits at 1 and 8
+threads.
+
 ### Limits and errors
 
 | constant | value | why |
@@ -395,6 +480,7 @@ platforms either.
 |---|---|
 | `mesh.rs` | `Mesh`, `Edge`, `Halfedge`, `Tri`, accessors |
 | `mesh/face.rs` | `Face`, `FaceName`, `FacePart`, `FaceKey`, `PartKey`, `Surface`, `Quadric` |
+| `mesh/form.rs` | `Form`: what surface a face was meant to be, distances to it, the circle test |
 | `mesh/build.rs` | `MeshBuilder`: triangles by vertex id, paired up |
 | `mesh/check.rs` | `Mesh::check`, `Mesh::check_faces`, `CheckError` |
 | `mesh/bvh.rs` | `Bvh`: boxes, queries, self pairs |
@@ -419,7 +505,8 @@ triangle `t` as a `Patch`: corners from the starts, edge `i` from halfedge
 `i`'s record. All ids are `u32`; `MAX_PATCHES` (`1 << 22`) keeps three per
 patch well inside.
 
-`faces: Vec<Face>`: `Face { name: FaceName, surface: Surface }`.
+`faces: Vec<Face>`: `Face { name: FaceName, surface: Surface, form: Form }`
+(the form below, under "Forms").
 `FaceName { feature: u64, part: FacePart, instance: u64 }` is stable
 across regenerations (see "Topology and names"); `FacePart` is
 `StartCap`, `EndCap`, `Side { curve, segment }`, `Split(n)` (a face an
@@ -438,7 +525,11 @@ claim: `Plane { n, d }` (`n·x = d`, `n` any length), `Quadric`, or `Free`.
 `Quadric { origin, a, b, c }` is `F(x) = y·(a·y) + 2b·y + c` with `y = x −
 origin`: measuring from a point near the surface keeps the rounding of `F`
 relative to the quadric's size. `Quadric::cylinder(point, axis, radius)`
-builds a circular cylinder. The distance to it is taken to first order,
+builds a circular cylinder, `Quadric::sphere(centre, radius)` a sphere
+(around its centre), `Quadric::cone(apex, axis, cos, sin)` a circular
+cone of that half-angle (both nappes, `cos²·|y|² − (y·axis)²` from the
+apex), and `Quadric::revolution(origin, axis, r0, r1, r2)` the quadric of
+revolution `ρ² = r0 + r1·h + r2·h²` (`h` along the axis from `origin`). The distance to it is taken to first order,
 `|F| / |∇F|`, and is infinite where the gradient overflows (a finite `F`
 over it would put every point on the surface). A plane's `n` and `d` are
 divided by `n`'s largest coordinate before measuring, so a normal of any
@@ -492,10 +583,74 @@ and release builds alike (face tags come last).
    (1 004 and 4 012 patches), 6 to 10% on 7 threads, and 0.5% on a
    262 144-patch torus of `Free` faces.
 
+Debug builds then check the faces' forms (see "Forms"): a triangle with a
+sample further than the fit tolerance from its face's form, or on a plane
+form with its normal at the middle pointing against the form's, panics.
+A form is the construction's promise, so that is a bug, not an input to
+refuse (and release builds can't tell it, so `check`'s errors stay the
+same in both).
+
 Steps 2–3, 6 and the hull tests of 4 run per patch or per pair through
 `par_map`, and step 5 per triangle and per shell. `check_counted` is
 `check` returning how many patches step 5 integrated, for callers that
 charge work; `check_embedding` (repair's) stops after step 4.
+
+### Forms (`mesh/form.rs`)
+
+`Face::form` is what surface the construction meant the face to be, with
+its parameters; `surface` stays the claim the kernel cuts by and checks to
+the resolution. Offsets, fillets, measuring and picking will read forms;
+fitted faces are on theirs only within the fit tolerance, and a copy a
+boolean makes claim-free keeps it (it is intent, not a claim).
+
+```rust
+pub enum Form {
+    Unknown,
+    Plane { n: DVec3, d: f64 },                     // n unit, out of the solid
+    Cylinder { point: DVec3, axis: DVec3, radius: f64 },
+    ConicCylinder { conic: Conic3, along: DVec3 },  // over a non-circular conic
+    Cone { apex: DVec3, axis: DVec3, cos: f64, sin: f64 },  // one nappe, axis into it
+    Sphere { centre: DVec3, radius: f64 },
+    Torus { centre: DVec3, axis: DVec3, major: f64, minor: f64 },
+    Revolved { origin: DVec3, axis: DVec3, meridian: Conic2 },  // meridian in (ρ, h)
+}
+```
+
+Axes are unit; a half-angle is its cosine and sine (no trig). Only a
+plane's form says which way the face faces (`n` out of the solid, as its
+tag's); a curved form is the same surface either way, and which side is
+out is the patches' normals'. So `Form::flipped` turns a plane round and
+leaves the rest. `Form::plane(n, d)` takes any length of `n` (dividing
+both by it), `Unknown` for a zero or non-finite one. `Form::distance` is
+exact for planes, cylinders, cones (behind the apex, the distance to it),
+spheres and tori, and first order for the conic forms (`|F|/|∇F|` of
+`λ1² − 4w²·λ0·λ2` on the conic's control triangle, along the cylinder or
+in the meridian half-plane), 0 for `Unknown`.
+
+Who sets them: the box (planes), the cylinder (planes, `Cylinder` along
+`+z`), extrude (planes for caps and straight walls; a curved wall a
+`Cylinder` along the normal if its conic is a circle's arc, else a
+`ConicCylinder`). Booleans keep every face's form, the copies claiming no
+surface included (they copy the face), and a difference turns `B`'s
+round with its tags. The circle test (`circle_of`) asks the control point
+to be off the chord and equally far from the ends, and the weight to be
+half the chord over that distance, within `1e-10` of the arc's size plus
+64 roundings of its coordinates (a tiny arc far out still counts; one
+whose sagitta is under that is a line to rounding); the centre is `c +
+(m − c)·|c − p0|²/|c − m|²` (`m` the chord's middle), the radius the mean
+distance to the ends. It names intent only; no topology depends on it.
+
+Checked in debug builds by `check` (above) within the fit tolerance, so
+every construction and boolean in the debug test suites holds its forms.
+Tests (`mesh/form/tests.rs`): plane normalizing and flipping, distances
+against points placed off each form, conic forms to first order on both
+arcs of the conic, circles told from ellipse arcs and from a weight off by
+`1e-6` (and small arcs `9e5` out still circles), forms moved rigidly
+measuring the same; the forms extrude, the box and the cylinder give (a
+D of a line and an ellipse arc with a round hole, also tilted); booleans
+keeping forms and a difference turning the tools' round; a form the
+patches are off, and a plane form facing in, panicking in debug builds,
+and one within the fit passing.
 
 ### Orientation (`mesh/orient.rs`)
 
@@ -998,6 +1153,9 @@ tolerance, always) before they are returned:
   walls `Side { curve: 0, segment: 0..4 }` counter-clockwise from `+x`,
   tagged with the cylinder.
 
+Forms: the tags' planes, and the cylinder's walls `Form::Cylinder` along
+`+z`.
+
 Parameters are refused with `KernelError::Patch` (every point within
 `MAX_COORD` of the origin and finite, sizes above zero), and a solid the
 tolerance can't hold (a box thinner than the resolution) with `Invalid`.
@@ -1280,8 +1438,10 @@ origin). Faces: `StartCap` (at `from`, facing back), `EndCap`, and
 `Side { curve, segment }` per input segment, `segment` counting the
 segments of that curve in profile order; pieces a segment is split into
 share its face. Caps are tagged with their planes, straight walls with
-theirs, curved walls with the cylinder over their conic (below). The
-steps:
+theirs, curved walls with the cylinder over their conic (below). Their
+forms are the planes, and for curved walls `Form::Cylinder` over a
+circle's arc (`circle_of`), `Form::ConicCylinder` over another conic,
+along the normal. The steps:
 
 1. **Chain** (`Chain::new`). A segment whose control point is within the
    resolution of its chord (and between its ends) becomes
@@ -2936,7 +3096,8 @@ now take 20 ms.
   on the records.
   Faces are cut in parallel (`par_map`), the rest sequentially.
 - The result's faces are `A`'s then `B`'s (turned over for a
-  difference), then the copies claiming no surface, less those no
+  difference: plane tags and forms), then the copies claiming no
+  surface (with their faces' forms), less those no
   triangle is on any more, so chained booleans don't pile up faces;
   halfedges pair up by vertex id in `MeshBuilder`, never by position,
   and every triangle side with a curve record gets it. Each face keeps
@@ -4620,13 +4781,26 @@ parameter, or a split outside the patch bounds),
   enumerating its possible rims, instead of a 3-variable LP. It answers
   the same question for the Euclidean margin (an LP over a box would be
   conservative by up to √3) and gives the normal cone as well.
-- **No exact cone triangles.** A triangle on a true cone (not a cylinder)
-  can't have a straight ruling parametrized linearly: the ruling's induced
-  parametrization depends on the projection point, so the two patches on a
-  ruling would need different edge records. Built with a linear ruling
-  anyway, a unit cone patch is off by about `8e-4` inside. Taper is out of
-  scope, so only `cylinder_strip` exists; cones need a different edge
-  scheme when they come.
+- **Exact cone triangles with geometric-mean rulings** (this replaces the
+  earlier "no exact cone triangles", which assumed a linear ruling: that
+  one leaves a strip `8e-4` to `3e-3` off a unit-sized cone, and its induced
+  parametrization does depend on the projection point). A ruling of
+  weight 1 with its control point at `√(da·db)` from the apex is the one
+  parametrization every projection point induces, so the patches either
+  side share one record exactly (see "Swept strips"). A strip next to a
+  hyperbolic paraboloid strip (whose rulings must be linear) can't share
+  such a ruling exactly and will be fitted there.
+- **Forms as built** differ from the plan's sketch: a cylinder is `{
+  point, axis, radius }` (no line type), a revolved conic's meridian is a
+  `Conic2` in `(ρ, h)`, only a plane's form carries which way the face
+  faces, and the variants for forms not made yet (general quadrics,
+  drafted, swept, lofted walls) come with the work that makes them. The
+  debug check also checks a plane form's direction against the patches'
+  normals.
+- **`revolution_strip` takes the axis.** The diagonal's plane holds
+  `a1'`, `a1` half a turn round; found on the bottom's conic alone it
+  rounds as `ε/θ²` of the radius for small pieces, from the axis as the
+  coordinates.
 - `Conic2`/`Conic3` are aliases of one generic `Conic<P>` over the sealed
   `Point` trait, and there is an `f64` box type, `Bounds<P>`.
 - The weight bounds stay at `1/64 ..= 64`: nothing in the tests asked for

@@ -9,7 +9,8 @@
 //!
 //! [`extrude()`] sweeps a [`Profile`], closed loops of conics placed on a
 //! [`Frame`], into an exact solid; [`Solid::volume`] and [`Solid::area`]
-//! measure one.
+//! measure one. [`sweep`] makes exact strips on cones and quadrics of
+//! revolution, the walls revolved solids are to be made of.
 //!
 //! [`boolean()`] unites, subtracts and intersects solids the way
 //! [manifold](https://github.com/elalish/manifold) does for flat
@@ -38,6 +39,7 @@ mod quadrature;
 mod render_lines;
 mod render_mesh;
 mod solid;
+pub mod sweep;
 mod tessellate;
 #[cfg(test)]
 mod test_rng;

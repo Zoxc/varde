@@ -4,7 +4,7 @@ use glam::DVec3;
 
 use super::{Edge, Face, FaceKey, Halfedge, LookupMap, Mesh, Tri};
 use crate::MAX_PATCHES;
-use crate::patch::{Conic3, PatchError, cylinder_strip};
+use crate::patch::{Conic3, Patch, PatchError, cylinder_strip};
 
 /// Builds a [`Mesh`] from vertices and triangles given by vertex ids,
 /// pairing halfedges by the vertices they run between: `a → b` pairs with
@@ -117,6 +117,20 @@ impl MeshBuilder {
         self.edge(a[0], b[1], first.c[2], first.w[2]);
         self.wall(a, b, face);
         Ok(())
+    }
+
+    /// Adds a strip's two patches, `(a[0], a[1], b[1])` and `(a[0], b[1],
+    /// b[0])` (as [`crate::sweep`] makes them), on `face`, with their five
+    /// edges made their curves: walls and caps sharing those vertices
+    /// share the curves.
+    pub fn strip(&mut self, a: [u32; 2], b: [u32; 2], patches: &[Patch; 2], face: u32) {
+        let [first, second] = patches;
+        self.edge(a[0], a[1], first.c[0], first.w[0]);
+        self.edge(a[1], b[1], first.c[1], first.w[1]);
+        self.edge(b[1], a[0], first.c[2], first.w[2]);
+        self.edge(b[1], b[0], second.c[1], second.w[1]);
+        self.edge(b[0], a[0], second.c[2], second.w[2]);
+        self.wall(a, b, face);
     }
 
     /// The mesh, with each halfedge paired to the one running back and

@@ -33,6 +33,8 @@ pub trait Point:
     fn max(self, other: Self) -> Self;
     /// The largest absolute coordinate.
     fn max_abs(self) -> f64;
+    /// The dot product.
+    fn dot(self, other: Self) -> f64;
     fn is_finite(self) -> bool;
     /// `self` with each coordinate that all of `of` have the same value
     /// in set to that value. A curve or patch whose control points share
@@ -65,6 +67,9 @@ impl Point for DVec2 {
     }
     fn max_abs(self) -> f64 {
         self.abs().max_element()
+    }
+    fn dot(self, other: Self) -> f64 {
+        DVec2::dot(self, other)
     }
     fn is_finite(self) -> bool {
         DVec2::is_finite(self)
@@ -99,6 +104,9 @@ impl Point for DVec3 {
     }
     fn max_abs(self) -> f64 {
         self.abs().max_element()
+    }
+    fn dot(self, other: Self) -> f64 {
+        DVec3::dot(self, other)
     }
     fn is_finite(self) -> bool {
         DVec3::is_finite(self)
@@ -174,6 +182,20 @@ impl<P: Point> Conic<P> {
     /// midpoint and weight 1.
     pub fn line(p0: P, p1: P) -> Result<Self, PatchError> {
         Self::new(p0, (p0 + p1) * 0.5, 1.0, p1)
+    }
+
+    /// The exact arc of the circle of `radius` around `center` from `a` to
+    /// `b` (both on it), the shorter way round, which must be under 180°,
+    /// built from its ends without `cos` or `sin`, by `+ − × ÷ √` only:
+    /// with `m = a + b − 2·center`, its control point
+    /// `center + m·2r²/|m|²`, where the end tangents meet, and its weight
+    /// `|m|/2r`, the cosine of half the angle. In space the circle is the
+    /// one in the plane of `center`, `a` and `b`.
+    pub fn arc_between(center: P, radius: f64, a: P, b: P) -> Result<Self, PatchError> {
+        let m = a + b - center * 2.0;
+        let square = m.dot(m);
+        let control = center + m * (2.0 * radius * radius / square);
+        Self::new(a, control, square.sqrt() / (2.0 * radius), b)
     }
 
     /// Every coordinate finite and within
@@ -369,18 +391,6 @@ impl Conic2 {
     pub fn arc(center: DVec2, radius: f64, start: f64, sweep: f64) -> Result<Self, PatchError> {
         let ([p0, c, p1], w) = arc_parts(radius, start, sweep)?;
         Self::new(center + p0, center + c, w, center + p1)
-    }
-
-    /// The exact arc of the circle of `radius` around `center` from `a` to
-    /// `b` (both on it), the shorter way round, which must be under 180°,
-    /// built from its ends without `cos` or `sin`, by `+ − × ÷ √` only:
-    /// with `m = a + b − 2·center`, its control point
-    /// `center + m·2r²/|m|²`, where the end tangents meet, and its weight
-    /// `|m|/2r`, the cosine of half the angle.
-    pub fn arc_between(center: DVec2, radius: f64, a: DVec2, b: DVec2) -> Result<Self, PatchError> {
-        let m = a + b - center * 2.0;
-        let control = center + m * (2.0 * radius * radius / m.length_squared());
-        Self::new(a, control, m.length() / (2.0 * radius), b)
     }
 }
 

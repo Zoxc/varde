@@ -26,6 +26,9 @@
 //! 6. Face tags: patches on `Plane` and `Quadric` faces lie on them within
 //!    the resolution, checked in every build.
 //!
+//! Debug builds also check each face's [`Form`], what surface it was meant
+//! to be, against its patches within the fit tolerance.
+//!
 //! [`Mesh::repair`] restores invariants 3 and 4 by exact red–green
 //! refinement, and [`Mesh::cuboid`] and [`Mesh::cylinder`] build boxes and
 //! cylinders that pass them all.
@@ -44,6 +47,7 @@ mod build;
 mod bvh;
 mod check;
 mod face;
+mod form;
 mod hull;
 mod orient;
 mod primitive;
@@ -55,6 +59,8 @@ pub use bvh::Bvh;
 pub use check::CheckError;
 pub(crate) use check::{off_surface, samples};
 pub use face::{Face, FaceKey, FaceName, FacePart, PartKey, Quadric, Surface};
+pub use form::Form;
+pub(crate) use form::circle_of;
 pub(crate) use hull::{apart, flat, straight};
 pub(crate) use refine::{Node, Refiner};
 pub(crate) use repair::MIN_SPLIT;

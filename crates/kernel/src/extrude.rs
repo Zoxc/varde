@@ -22,7 +22,7 @@
 use glam::{DMat3, DVec2, DVec3};
 
 use crate::budget::{Budget, Work};
-use crate::mesh::{Face, FaceName, FacePart, Mesh, MeshBuilder, Quadric, Surface};
+use crate::mesh::{Face, FaceName, FacePart, Form, Mesh, MeshBuilder, Quadric, Surface, circle_of};
 use crate::patch::{Conic2, Conic3, PatchError};
 use crate::profile::{Profile, ProfileError};
 use crate::{KernelError, MAX_COORD, Solid, Tolerance, in_range};
@@ -85,7 +85,9 @@ impl Frame {
 /// of the `n`-th segment (in profile order) of curve `c` is
 /// [`FacePart::Side`]` { curve: c, segment: n }`. Caps are tagged with
 /// their planes, straight walls with theirs and curved walls with the
-/// cylinder over their conic.
+/// cylinder over their conic; their forms are the planes, and
+/// [`Form::Cylinder`] for walls over circular arcs,
+/// [`Form::ConicCylinder`] over other conics.
 ///
 /// `from` must be below `to`, both within [`MAX_COORD`], and every corner
 /// of the solid within [`MAX_COORD`] of the origin. The profile must pass
@@ -186,35 +188,34 @@ fn build(
     }
     let up = bottom.len() as u32;
     let name = |part| FaceName::new(feature, part);
+    let plane = |n: DVec3, d: f64| (Surface::Plane { n, d }, Form::plane(n, d));
+    let (surface, form) = plane(-normal, -normal.dot(frame.origin + normal * from));
     let start = builder.face(Face {
         name: name(FacePart::StartCap),
-        surface: Surface::Plane {
-            n: -normal,
-            d: -normal.dot(frame.origin + normal * from),
-        },
+        surface,
+        form,
     });
+    let (surface, form) = plane(normal, normal.dot(frame.origin + normal * to));
     let end = builder.face(Face {
         name: name(FacePart::EndCap),
-        surface: Surface::Plane {
-            n: normal,
-            d: normal.dot(frame.origin + normal * to),
-        },
+        surface,
+        form,
     });
     let sides: Vec<u32> = chain
         .sides
         .iter()
         .map(|side| {
-            let surface = if side.curved {
-                conic_cylinder(&side.conic, frame, from)
+            let (surface, form) = if side.curved {
+                (
+                    conic_cylinder(&side.conic, frame, from),
+                    wall_form(&side.conic, frame, from),
+                )
             } else {
                 let chord = side.conic.p1 - side.conic.p0;
                 // To the right of the segment, out of the region, and
                 // square to the normal whether or not the axes are.
                 let n = (frame.x * chord.x + frame.y * chord.y).cross(normal);
-                Surface::Plane {
-                    n,
-                    d: n.dot(frame.point(side.conic.p0, from)),
-                }
+                plane(n, n.dot(frame.point(side.conic.p0, from)))
             };
             builder.face(Face {
                 name: name(FacePart::Side {
@@ -222,6 +223,7 @@ fn build(
                     segment: side.segment,
                 }),
                 surface,
+                form,
             })
         })
         .collect();
@@ -253,6 +255,29 @@ fn build(
     builder
         .build()
         .map_err(|_| KernelError::Profile(ProfileError::Triangulation))
+}
+
+/// What a curved wall over `conic`, placed on `frame` at `height`, is: a
+/// [`Form::Cylinder`] if the conic is a circle's arc (`circle_of`), else
+/// a [`Form::ConicCylinder`]; both along the frame's normal.
+fn wall_form(conic: &Conic2, frame: &Frame, height: f64) -> Form {
+    let axis = frame.normal().normalize();
+    match circle_of(conic) {
+        Some((centre, radius)) => Form::Cylinder {
+            point: frame.point(centre, height),
+            axis,
+            radius,
+        },
+        None => Form::ConicCylinder {
+            conic: Conic3 {
+                p0: frame.point(conic.p0, height),
+                c: frame.point(conic.c, height),
+                w: conic.w,
+                p1: frame.point(conic.p1, height),
+            },
+            along: axis,
+        },
+    }
 }
 
 /// The cylinder over `conic`, placed on `frame` at `height`, along the

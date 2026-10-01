@@ -6,7 +6,7 @@ use std::f64::consts::FRAC_1_SQRT_2;
 
 use glam::DVec3;
 
-use super::{Face, FaceName, FacePart, Mesh, MeshBuilder, Quadric, Surface};
+use super::{Face, FaceName, FacePart, Form, Mesh, MeshBuilder, Quadric, Surface};
 use crate::patch::{Conic3, PatchError};
 use crate::{KernelError, Tolerance, in_range};
 
@@ -17,7 +17,7 @@ impl Mesh {
     /// [`FacePart::EndCap`] of `feature`; the sides are
     /// [`FacePart::Side`]s of curves 0 to 3, the rectangle's edges counter-
     /// clockwise seen from `+z` from the one along `-y`, segment 0. Every
-    /// face is tagged with its plane.
+    /// face is tagged with its plane, and has it as its [`Form`].
     ///
     /// Every corner must be within [`MAX_COORD`](crate::MAX_COORD) of the
     /// origin and every size above zero, and the box must pass
@@ -63,6 +63,7 @@ impl Mesh {
                     n,
                     d: n.dot(rect[k][0]),
                 },
+                form: Form::plane(n, n.dot(rect[k][0])),
             });
             let (a, b) = (k, (k + 1) % 4);
             builder.wall([bottom[a], bottom[b]], [top[a], top[b]], face);
@@ -78,7 +79,8 @@ impl Mesh {
     /// The bottom is the [`FacePart::StartCap`] and the top the
     /// [`FacePart::EndCap`] of `feature`, tagged with their planes; the
     /// walls are [`FacePart::Side`]s of curve 0, segments 0 to 3 counter-
-    /// clockwise seen from `+z` from `+x`, tagged with the cylinder.
+    /// clockwise seen from `+z` from `+x`, tagged with the cylinder. Forms
+    /// as the tags, the walls' [`Form::Cylinder`] along `+z`.
     ///
     /// Every point of it must be within [`MAX_COORD`](crate::MAX_COORD) of
     /// the origin, the radius and height above zero, and the cylinder must
@@ -117,6 +119,11 @@ impl Mesh {
                     },
                 ),
                 surface: wall,
+                form: Form::Cylinder {
+                    point: base,
+                    axis: DVec3::Z,
+                    radius,
+                },
             });
             let next = (k + 1) % 4;
             let (a, b) = ([bottom[k], bottom[next]], [top[k], top[next]]);
@@ -134,6 +141,7 @@ fn caps(builder: &mut MeshBuilder, feature: u64, z0: f64, z1: f64) -> [u32; 2] {
     let cap = |part, n: DVec3, z: f64| Face {
         name: FaceName::new(feature, part),
         surface: Surface::Plane { n, d: n.z * z },
+        form: Form::plane(n, n.z * z),
     };
     [
         builder.face(cap(FacePart::StartCap, DVec3::NEG_Z, z0)),

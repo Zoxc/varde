@@ -1,11 +1,15 @@
 use glam::{DMat3, DVec3};
 
+use super::Form;
+
 /// A face of a solid: the triangles that came from one surface of one
-/// feature, with the surface they lie on.
+/// feature, with the surface they lie on (a claim, checked) and the one
+/// they were meant to (their [`Form`]).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Face {
     pub name: FaceName,
     pub surface: Surface,
+    pub form: Form,
 }
 
 /// A face's stable name: the feature that made it, which part of that
@@ -220,12 +224,58 @@ impl Quadric {
     pub fn cylinder(point: DVec3, axis: DVec3, radius: f64) -> Option<Quadric> {
         let axis = axis.try_normalize()?;
         // |y|² - (y·axis)² - r²
-        let a = DMat3::IDENTITY - DMat3::from_cols(axis * axis.x, axis * axis.y, axis * axis.z);
+        let a = DMat3::IDENTITY - outer(axis, axis);
         Some(Quadric {
             origin: point,
             a,
             b: DVec3::ZERO,
             c: -radius * radius,
+        })
+    }
+
+    /// The sphere of `radius` around `centre`, written around its centre.
+    pub fn sphere(centre: DVec3, radius: f64) -> Quadric {
+        Quadric {
+            origin: centre,
+            a: DMat3::IDENTITY,
+            b: DVec3::ZERO,
+            c: -radius * radius,
+        }
+    }
+
+    /// The circular cone (both nappes) with its apex at `apex`, around the
+    /// line along `axis`, of the half-angle whose cosine and sine are
+    /// `cos` and `sin`: `cos²·|y|² − (y·axis)² = 0` for `y` from the apex
+    /// (`cos² + sin² = 1` folds the sine in). `None` for a zero or
+    /// non-finite axis.
+    pub fn cone(apex: DVec3, axis: DVec3, cos: f64, sin: f64) -> Option<Quadric> {
+        let axis = axis.try_normalize()?;
+        // Normalized here, so a half-angle given a little off unit still
+        // describes one cone.
+        let length = (cos * cos + sin * sin).sqrt();
+        let cos = cos / length;
+        Some(Quadric {
+            origin: apex,
+            a: DMat3::IDENTITY * (cos * cos) - outer(axis, axis),
+            b: DVec3::ZERO,
+            c: 0.0,
+        })
+    }
+
+    /// The quadric of revolution about the line through `origin` along
+    /// `axis` whose points at height `h` along the axis (from `origin`) lie
+    /// `ρ` from it with `ρ² = r0 + r1·h + r2·h²`: a cylinder (`r1 = r2 =
+    /// 0`), a sphere around `origin` (`r2 = −1`), a cone, an ellipsoid, a
+    /// paraboloid or a hyperboloid of revolution. `None` for a zero or
+    /// non-finite axis.
+    pub fn revolution(origin: DVec3, axis: DVec3, r0: f64, r1: f64, r2: f64) -> Option<Quadric> {
+        let axis = axis.try_normalize()?;
+        // |y|² − (y·axis)² − r0 − r1·(y·axis) − r2·(y·axis)²
+        Some(Quadric {
+            origin,
+            a: DMat3::IDENTITY - outer(axis, axis) * (1.0 + r2),
+            b: axis * (-0.5 * r1),
+            c: -r0,
         })
     }
 
@@ -256,4 +306,9 @@ impl Quadric {
         }
         f / gradient
     }
+}
+
+/// `u·vᵀ`.
+fn outer(u: DVec3, v: DVec3) -> DMat3 {
+    DMat3::from_cols(u * v.x, u * v.y, u * v.z)
 }

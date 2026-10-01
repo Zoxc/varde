@@ -115,6 +115,10 @@ impl Mesh {
         let (patches, bvh) = self.check_embedded(tol)?;
         let integrated = self.check_orientation(&patches, &bvh, tol.resolution())?;
         self.check_faces_of(&patches, tol)?;
+        #[cfg(debug_assertions)]
+        if let Some((t, why)) = self.off_forms(&patches, tol) {
+            panic!("triangle {t} {why}");
+        }
         Ok(integrated)
     }
 
@@ -273,6 +277,46 @@ impl Mesh {
             }
         });
         on.into_iter().collect()
+    }
+
+    /// Debug builds' check of the faces' forms on a mesh that passes the
+    /// rest of `check`: the first triangle with a sample ([`samples`])
+    /// further than `tol`'s fit tolerance from its face's
+    /// [`Form`](super::Form) (fitted faces are on theirs only that
+    /// closely), or on a plane form whose normal at its middle points
+    /// against the form's, and what is wrong with it. A form is intent
+    /// the construction promises, so one that doesn't hold is a bug, not
+    /// a bad input.
+    #[cfg(debug_assertions)]
+    pub(crate) fn off_forms(
+        &self,
+        patches: &[Patch],
+        tol: &Tolerance,
+    ) -> Option<(u32, &'static str)> {
+        use super::Form;
+        let fit = tol.fit();
+        // NaN fails both.
+        let within = |d: f64| d <= fit;
+        let along = |x: f64| x > 0.0;
+        let tris: Vec<u32> = (0..self.tris.len() as u32).collect();
+        let off = par_map(&tris, |&t| {
+            let form = self.faces[self.tris[t as usize].face as usize].form;
+            let patch = &patches[t as usize];
+            if samples().any(|u| !within(form.distance(patch.eval(u)))) {
+                return Some("strays from its face's form");
+            }
+            match form {
+                Form::Plane { n, .. }
+                    if !along(patch.normal(glam::DVec3::splat(1.0 / 3.0)).dot(n)) =>
+                {
+                    Some("faces against its face's plane form")
+                }
+                _ => None,
+            }
+        });
+        off.iter()
+            .enumerate()
+            .find_map(|(t, why)| why.map(|why| (t as u32, why)))
     }
 
     /// Invariant 4 over every pair of patches whose boxes come within the

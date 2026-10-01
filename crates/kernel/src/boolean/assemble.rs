@@ -1311,13 +1311,18 @@ fn face_id(side: Side, input: &Input, t: u32, offset: u32) -> u32 {
     }
 }
 
-/// The face facing the other way.
+/// The face facing the other way: its plane tag and its form turned
+/// round.
 fn flipped(f: Face) -> Face {
     let surface = match f.surface {
         Surface::Plane { n, d } => Surface::Plane { n: -n, d: -d },
         s => s,
     };
-    Face { surface, ..f }
+    Face {
+        surface,
+        form: f.form.flipped(),
+        ..f
+    }
 }
 
 #[cfg(test)]

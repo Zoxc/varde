@@ -83,7 +83,11 @@ fn moved_at(solid: &Solid, tol: &Tolerance, f: impl Fn(DVec3) -> DVec3) -> Solid
             }),
             Surface::Free => Surface::Free,
         };
-        builder.face(crate::mesh::Face { surface, ..face });
+        builder.face(crate::mesh::Face {
+            surface,
+            form: face.form.moved(&f),
+            ..face
+        });
     }
     for (t, tri) in mesh.tris().iter().enumerate() {
         let corners = tri.halfedges.map(|h| h.start);
