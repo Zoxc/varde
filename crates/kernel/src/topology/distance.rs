@@ -30,8 +30,10 @@ use crate::patch::{Bounds3, Conic3, Patch};
 const MAX_PIECES: usize = 256;
 
 /// How close, relative to the patch's or curve's size, the bounds must
-/// come for the search to stop.
-const CLOSE: f64 = 1e-9;
+/// come for the search to stop; and how much nearer, relative to the
+/// solid's size, a candidate must come than the best before it to count
+/// as nearer (see [`super::Topology::face`]).
+pub(super) const CLOSE: f64 = 1e-9;
 
 /// Newton steps towards the foot of the perpendicular.
 const NEWTON_STEPS: usize = 16;

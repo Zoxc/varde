@@ -1173,3 +1173,40 @@ fn plates_drilled_hole_after_hole() {
     }
     tally.at_least(0.95, "drilled");
 }
+
+#[test]
+fn flush_pairs_keep_their_names_either_order() {
+    // Whichever operand's flush cap the perturbation keeps, a union or an
+    // intersection of a flush pair names the same keys (as faces or
+    // aliases) either way round, so a reference doesn't depend on which
+    // body came first. 5 of these 35 pairs named different keys when only
+    // a dropped cap's first triangle was looked for on the result.
+    use std::collections::BTreeSet;
+
+    use crate::mesh::FaceKey;
+    let tol = Tolerance::DEFAULT;
+    let named = |solid: &Solid| -> BTreeSet<FaceKey> {
+        let topology = solid.topology();
+        topology
+            .regions()
+            .iter()
+            .flat_map(|r| std::iter::once(r.key).chain(r.aliases.iter().copied()))
+            .collect()
+    };
+    let mut rng = Rng::new(93);
+    let mut compared = 0;
+    for case in 0..cases(20, 2) {
+        let Some((a, b, what)) = flush_pair(&mut rng, &tol) else {
+            continue;
+        };
+        for op in [Op::Union, Op::Intersection] {
+            let ab = boolean(&a, &b, op, &tol, &Budget::DEFAULT);
+            let ba = boolean(&b, &a, op, &tol, &Budget::DEFAULT);
+            if let (Ok(ab), Ok(ba)) = (ab, ba) {
+                assert_eq!(named(&ab), named(&ba), "case {case}, {what}, {op:?}");
+                compared += 1;
+            }
+        }
+    }
+    assert!(compared >= cases(30, 2), "{compared}");
+}

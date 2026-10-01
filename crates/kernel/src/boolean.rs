@@ -52,11 +52,15 @@
 //! [`assemble`]). See `agents/kernel.md`.
 
 use std::cmp::Ordering;
+use std::collections::BTreeMap;
+use std::collections::btree_map::Entry;
 
 use glam::DVec3;
 
 use crate::budget::{Budget, Work};
-use crate::mesh::{BuildError, Face, FaceKey, Mesh, MeshBuilder};
+use crate::mesh::{BuildError, Bvh, Face, FaceKey, Mesh, MeshBuilder, Surface};
+use crate::patch::Bounds3;
+use crate::topology::distance::{Allowance, to_patches};
 use crate::{KernelError, Solid, Tolerance};
 
 mod assemble;
@@ -280,25 +284,27 @@ fn unchecked(
     covered(mesh, [a.mesh(), b.mesh()], short(tol), work)
 }
 
-/// `mesh` with an alias for each operand's plane face that no face or
-/// alias of it names any more because the other operand's face, flush
-/// with it, covered it (the perturbation keeps one of two flush caps
-/// whole and drops the other: a plate first, a boss standing in it
-/// flush on top, and the boss's top is gone). Its key, and its aliases,
-/// become aliases of the face of the same plane (unit normals within
-/// `1e-12`, offsets within `small`) that a point of it lies on, within
-/// `small`: the lowest such face. Only names: the geometry is as it was.
+/// `mesh` with an alias for each operand's plane face whose key or
+/// aliases no face or alias of it names any more because the other
+/// operand's face, flush with it, covered it (the perturbation keeps one
+/// of two flush caps whole and drops the other: a plate first, a boss
+/// standing in it flush on top, and the boss's top is gone). Those of its
+/// names become aliases of the lowest face of the same plane (unit
+/// normals within `1e-12`, offsets within `small`) that it meets: the
+/// middle of a triangle of one lies within `small` of the other (either
+/// way round, so a small face over a large one's middle is found, and a
+/// large one round a small one). Only names: the geometry is as it was.
 /// A face nothing covers (cut away, or inside the other operand) gets
-/// none. Each face looked for is charged a unit a patch of the faces it
-/// is measured against.
+/// none: a point of it on the result's boundary, facing the same way, is
+/// a point where it lay flush. Each middle looked up is charged a unit
+/// and one a patch it is measured against, and each face's lookup table
+/// a unit a triangle.
 fn covered(
     mesh: Mesh,
     operands: [&Mesh; 2],
     small: f64,
     work: &mut Work,
 ) -> Result<Mesh, KernelError> {
-    use crate::mesh::Surface;
-    use crate::topology::distance::{Allowance, to_patches};
     let unit = |surface: Surface| match surface {
         Surface::Plane { n, d } => {
             let len = n.length();
@@ -312,32 +318,28 @@ fn covered(
         .map(|f| f.name.key())
         .chain(mesh.aliases().iter().map(|&(_, key)| key))
         .collect();
-    let mut on: Vec<Vec<u32>> = vec![Vec::new(); mesh.faces().len()];
-    for (t, tri) in mesh.tris().iter().enumerate() {
-        on[tri.face as usize].push(t as u32);
-    }
+    let on = tris_by_face(&mesh);
     // The result's plane faces by offset, to find those of a plane fast.
     let mut planes: Vec<(f64, u32, DVec3)> = (0..mesh.faces().len() as u32)
         .filter_map(|g| unit(mesh.faces()[g as usize].surface).map(|(n, d)| (d, g, n)))
         .collect();
     planes.sort_by(|x, y| x.0.total_cmp(&y.0).then(x.1.cmp(&y.1)));
+    // The result's faces' tables, made when first needed.
+    let mut tables: BTreeMap<u32, Bvh> = BTreeMap::new();
     let mut added: Vec<(u32, FaceKey)> = Vec::new();
     for operand in operands {
-        let mut first = vec![u32::MAX; operand.faces().len()];
-        for (t, tri) in operand.tris().iter().enumerate().rev() {
-            first[tri.face as usize] = t as u32;
-        }
+        let tris = tris_by_face(operand);
         for (f, face) in operand.faces().iter().enumerate() {
             let Some((n, d)) = unit(face.surface) else {
                 continue;
             };
-            let key = face.name.key();
-            if first[f] == u32::MAX || named.contains(&key) {
+            let lost: Vec<FaceKey> = std::iter::once(face.name.key())
+                .chain(operand.face_aliases(f as u32))
+                .filter(|key| !named.contains(key))
+                .collect();
+            if lost.is_empty() || tris[f].is_empty() {
                 continue;
             }
-            let point = operand
-                .patch(first[f] as usize)
-                .eval(DVec3::splat(1.0 / 3.0));
             let from = planes.partition_point(|p| p.0 < d - small);
             let mut same: Vec<u32> = planes[from..]
                 .iter()
@@ -345,14 +347,32 @@ fn covered(
                 .filter(|p| p.2.dot(n) > 1.0 - 1e-12)
                 .map(|p| p.1)
                 .collect();
+            if same.is_empty() {
+                continue;
+            }
             same.sort_unstable();
+            let mine = table(operand, &tris[f], work)?;
             let mut left = Allowance::new();
             for g in same {
-                work.spend(on[g as usize].len())?;
-                let patches = on[g as usize].iter().map(|&t| mesh.patch(t as usize));
-                if to_patches(point, patches, 2.0 * small, &mut left) <= small {
-                    added.push((g, key));
-                    added.extend(operand.face_aliases(f as u32).map(|alias| (g, alias)));
+                let theirs = match tables.entry(g) {
+                    Entry::Occupied(e) => e.into_mut(),
+                    Entry::Vacant(e) => e.insert(table(&mesh, &on[g as usize], work)?),
+                };
+                let meets = lies_on(
+                    (operand, &tris[f]),
+                    (&mesh, &on[g as usize], theirs),
+                    small,
+                    work,
+                    &mut left,
+                )? || lies_on(
+                    (&mesh, &on[g as usize]),
+                    (operand, &tris[f], &mine),
+                    small,
+                    work,
+                    &mut left,
+                )?;
+                if meets {
+                    added.extend(lost.iter().map(|&key| (g, key)));
                     break;
                 }
             }
@@ -365,10 +385,59 @@ fn covered(
     Ok(mesh.with_aliases(added))
 }
 
+/// The triangles of each face of `mesh`, ascending.
+fn tris_by_face(mesh: &Mesh) -> Vec<Vec<u32>> {
+    let mut on: Vec<Vec<u32>> = vec![Vec::new(); mesh.faces().len()];
+    for (t, tri) in mesh.tris().iter().enumerate() {
+        on[tri.face as usize].push(t as u32);
+    }
+    on
+}
+
+/// The boxes of `mesh`'s triangles `tris`, in that order, for looking
+/// points up among them: charged a unit a triangle.
+fn table(mesh: &Mesh, tris: &[u32], work: &mut Work) -> Result<Bvh, KernelError> {
+    work.spend(tris.len())?;
+    Ok(Bvh::new(
+        tris.iter()
+            .map(|&t| mesh.patch(t as usize).bounds())
+            .collect(),
+    ))
+}
+
+/// Whether the middle of one of the triangles `from.1` of mesh `from.0`
+/// lies within `small` of one of the triangles `onto.1` of mesh `onto.0`
+/// (their [`table`] `onto.2`), looking in order and stopping at the
+/// first. Each middle is charged a unit and one a patch it is measured
+/// against; the distance searches share `left`.
+fn lies_on(
+    from: (&Mesh, &[u32]),
+    onto: (&Mesh, &[u32], &Bvh),
+    small: f64,
+    work: &mut Work,
+    left: &mut Allowance,
+) -> Result<bool, KernelError> {
+    let mut near = Vec::new();
+    for &t in from.1 {
+        let x = from.0.patch(t as usize).eval(DVec3::splat(1.0 / 3.0));
+        near.clear();
+        onto.2.query(&Bounds3::point(x), small, &mut near);
+        work.spend(near.len().saturating_add(1))?;
+        let patches = near
+            .iter()
+            .map(|&i| onto.0.patch(onto.1[i as usize] as usize));
+        if to_patches(x, patches, 2.0 * small, left) <= small {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// The aliases of each source face of the soup (an operand's face, `A`'s
 /// then `B`'s): the operand's own, and the keys of the faces merged into
 /// it ([`cleanup::Soup::absorb`]) with their aliases, through any chain
-/// of merges. Each pass over the merges is charged a unit a merge.
+/// of merges. Each merge in each pass is charged a unit and one a key of
+/// the two faces' sets.
 fn aliases(
     a: &Mesh,
     b: &Mesh,
@@ -387,9 +456,10 @@ fn aliases(
     // Until nothing changes: at most a pass a merge, as each pass that
     // changes something takes one more step along the chains.
     for _ in 0..=merges.len() {
-        work.spend(merges.len())?;
         let mut changed = false;
         for &(from, into) in &merges {
+            let keys = sets[from as usize].len() + sets[into as usize].len();
+            work.spend(keys.saturating_add(1))?;
             let mut add: Vec<FaceKey> = sets[from as usize].clone();
             add.push(faces[from as usize].name.key());
             let set = &mut sets[into as usize];

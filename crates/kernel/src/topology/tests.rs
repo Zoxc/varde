@@ -544,3 +544,308 @@ fn topology_and_resolving_are_deterministic() {
     let solid = drilled(1.0, &TOL);
     assert_eq!(solid.topology(), solid.topology());
 }
+
+/// The region of `solid` whose patches reach `x`, the lowest of several.
+fn region_at(solid: &Solid, topology: &Topology, x: DVec3) -> u32 {
+    (0..topology.regions().len() as u32)
+        .find(|&r| reaches(solid, topology, r, x))
+        .expect("a region there")
+}
+
+#[test]
+fn a_flush_cap_dropped_either_way_round_is_an_alias() {
+    // A boss whose top is flush with a plate's, inside it, over its edge
+    // or round its corner, standing on its middle or through it: whichever
+    // operand's top the perturbation drops, both tops' keys name a face of
+    // the result's top plane, and the one under the boss's middle where
+    // that is one face (the boss inside the plate, or an intersection).
+    // Only the dropped top's first triangle was tried, and the plate's
+    // middle lies outside the boss, so with the boss first an
+    // intersection lost the plate's top.
+    let plate = cuboid([0.0; 3], [10.0, 8.0, 2.0], 1, &TOL);
+    for (c, r, from, inside) in [
+        ([9.0, 4.0], 2.0, 1.0, false),
+        ([5.0, 4.0], 2.0, 1.0, true),
+        ([0.5, 0.5], 3.0, 1.0, false),
+        ([9.0, 4.0], 2.0, -1.0, false),
+    ] {
+        let boss = Solid::cylinder(DVec3::new(c[0], c[1], from), r, 2.0 - from, 2, &TOL).unwrap();
+        let on = DVec3::new(c[0], c[1], 2.0);
+        for operation in [Op::Union, Op::Intersection] {
+            for (a, b) in [(&plate, &boss), (&boss, &plate)] {
+                let solid = op(a, b, operation, &TOL);
+                let topology = solid.topology();
+                let top = region_at(&solid, &topology, on);
+                for k in [key(1, TOP), key(2, TOP)] {
+                    let what = format!("{c:?} {from} {operation:?} {k:?}");
+                    let found = topology.face(&solid, &k, on).expect(&what);
+                    let tris = &topology.regions()[found as usize].tris;
+                    let flat = tris.iter().all(|&t| {
+                        let p = solid.mesh().patch(t as usize);
+                        p.p.iter().chain(&p.c).all(|q| q.z == 2.0)
+                    });
+                    assert!(flat, "{what}");
+                    if inside || operation == Op::Intersection {
+                        assert_eq!(found, top, "{what}");
+                    }
+                }
+            }
+        }
+    }
+    let boss = Solid::cylinder(DVec3::new(5.0, 4.0, 1.0), 2.0, 1.0, 2, &TOL).unwrap();
+    let aliases = assert_deterministic(|| {
+        let solid = op(&boss, &plate, Op::Intersection, &TOL);
+        solid.mesh().aliases().to_vec()
+    });
+    assert_eq!(aliases.len(), 1);
+}
+
+#[test]
+fn a_covered_face_takes_its_aliases_along() {
+    // A boss flush with a plate's top merges into it (the boss's top an
+    // alias of the plate's); a lid whose top is flush with both, first in
+    // an intersection, then keeps its own top: the plate's top and the
+    // alias it held both name the lid's.
+    let plate = cuboid([0.0; 3], [10.0, 8.0, 2.0], 1, &TOL);
+    let boss = Solid::cylinder(DVec3::new(5.0, 4.0, -1.0), 2.0, 3.0, 2, &TOL).unwrap();
+    let joined = op(&plate, &boss, Op::Union, &TOL);
+    let lid = Solid::cylinder(DVec3::new(5.0, 4.0, 1.0), 3.0, 1.0, 3, &TOL).unwrap();
+    let solid = op(&lid, &joined, Op::Intersection, &TOL);
+    let topology = solid.topology();
+    let on = DVec3::new(5.0, 4.0, 2.0);
+    let top = region_at(&solid, &topology, on);
+    for k in [key(1, TOP), key(2, TOP), key(3, TOP)] {
+        assert_eq!(topology.face(&solid, &k, on), Ok(top), "{k:?}");
+    }
+}
+
+#[test]
+fn a_covered_face_s_aliases_go_along_though_its_key_lives_on() {
+    // Two blocks of one feature, the first's top holding an alias; a lid
+    // flush with that top, first in a union, keeps its own: the alias
+    // names the lid's top, though the top's own key still names the
+    // second block's. It was looked for only where the key was gone.
+    let old = key(5, TOP);
+    let blocks = op(
+        &cuboid([0.0; 3], [4.0, 4.0, 2.0], 1, &TOL),
+        &cuboid([10.0, 0.0, 0.0], [4.0, 4.0, 2.0], 1, &TOL),
+        Op::Union,
+        &TOL,
+    );
+    let mesh = blocks.into_mesh();
+    let first = (0..mesh.tris().len())
+        .find(|&t| {
+            let p = mesh.patch(t);
+            p.p.iter().all(|q| q.z == 2.0 && q.x < 5.0)
+        })
+        .unwrap();
+    let top = mesh.tris()[first].face;
+    let blocks = Solid::new(mesh.with_aliases(vec![(top, old)]), &TOL).unwrap();
+    let lid = cuboid([-1.0, -1.0, 1.0], [6.0, 6.0, 1.0], 3, &TOL);
+    let solid = op(&lid, &blocks, Op::Union, &TOL);
+    let topology = solid.topology();
+    let on = DVec3::new(2.0, 2.0, 2.0);
+    let lid_top = region_at(&solid, &topology, on);
+    assert_eq!(topology.regions()[lid_top as usize].key, key(3, TOP));
+    assert_eq!(topology.face(&solid, &old, on), Ok(lid_top));
+    let second = region_at(&solid, &topology, DVec3::new(12.0, 2.0, 2.0));
+    assert_eq!(topology.face(&solid, &key(1, TOP), on), Ok(second));
+}
+
+#[test]
+fn a_key_both_live_and_aliased_goes_by_the_point() {
+    // One feature's two bosses (as one extrude of two circles makes them):
+    // the first flush with the plate's top, so its top's key is the
+    // plate's alias, the second standing above it. The key names both;
+    // the point chooses.
+    let plate = cuboid([0.0; 3], [20.0, 8.0, 2.0], 1, &TOL);
+    let flush = Solid::cylinder(DVec3::new(5.0, 4.0, -1.0), 2.0, 3.0, 2, &TOL).unwrap();
+    let tall = Solid::cylinder(DVec3::new(15.0, 4.0, 1.0), 2.0, 3.0, 2, &TOL).unwrap();
+    let solid = op(&op(&plate, &flush, Op::Union, &TOL), &tall, Op::Union, &TOL);
+    let topology = solid.topology();
+    let regions = topology.regions();
+    assert!(regions.iter().any(|r| r.key == key(2, TOP)));
+    assert!(regions.iter().any(|r| r.aliases.contains(&key(2, TOP))));
+    for on in [DVec3::new(5.0, 4.0, 2.0), DVec3::new(15.0, 4.0, 4.0)] {
+        let found = topology.face(&solid, &key(2, TOP), on + DVec3::Z * 0.1);
+        assert_eq!(found, Ok(region_at(&solid, &topology, on)), "{on}");
+    }
+}
+
+#[test]
+fn far_huge_and_odd_points_still_resolve() {
+    // Never a panic, and the same answer every time: the nearest where
+    // the distances can be told apart (a far point still sees which box
+    // is nearer), the lowest where they can't (past the squares' range
+    // every distance is infinite) or the point isn't a number.
+    let solid = two_boxes();
+    let topology = solid.topology();
+    let top = key(1, TOP);
+    let lowest = topology.face(&solid, &top, DVec3::splat(f64::NAN)).unwrap();
+    let right = region_at(&solid, &topology, DVec3::new(25.0, 2.0, 2.0));
+    for (near, want) in [
+        (DVec3::new(1e9, 2.0, 2.0), Some(right)),
+        (DVec3::new(1e15, 1e15, 1e15), Some(right)),
+        (DVec3::new(-1e15, 2.0, 2.0), None),
+        (DVec3::splat(1e200), Some(lowest)),
+        (DVec3::splat(-f64::MAX), Some(lowest)),
+        (DVec3::new(f64::INFINITY, 0.0, 0.0), Some(lowest)),
+        (DVec3::new(1e-310, -0.0, 0.0), None),
+    ] {
+        let found = topology.face(&solid, &top, near).unwrap();
+        if let Some(want) = want {
+            assert_eq!(found, want, "{near}");
+        } else {
+            assert_ne!(found, right, "{near}");
+        }
+        assert_eq!(topology.face(&solid, &top, near), Ok(found));
+        let edge = [key(1, TOP), key(1, side(0))];
+        assert!(topology.edge(&solid, edge, near).is_ok());
+        let corner = [key(1, TOP), key(1, side(0)), key(1, side(3))];
+        assert!(topology.corner(&solid, corner, near).is_ok());
+    }
+}
+
+#[test]
+fn a_tie_goes_to_the_lowest() {
+    // Halfway between the boxes: as near the left box's top past the
+    // groove as the right box's.
+    let solid = two_boxes();
+    let topology = solid.topology();
+    let tops: Vec<u32> = (0..topology.regions().len() as u32)
+        .filter(|&r| topology.regions()[r as usize].key == key(1, TOP))
+        .collect();
+    let at = |x: f64| region_at(&solid, &topology, DVec3::new(x, 2.0, 2.0));
+    let (left, right) = (at(8.0), at(25.0));
+    let lowest = left.min(right);
+    assert!(tops.contains(&left) && tops.contains(&right));
+    let found = topology.face(&solid, &key(1, TOP), DVec3::new(15.0, 2.0, 2.0));
+    assert_eq!(found, Ok(lowest));
+}
+
+#[test]
+fn corners_where_four_faces_meet_resolve_by_any_three() {
+    // A step: a block on the left half of a slab, their fronts in one
+    // plane meeting along a straight edge, so they stay two faces, and
+    // four regions meet where the step's riser meets the front.
+    let slab = cuboid([0.0; 3], [4.0, 2.0, 1.0], 1, &TOL);
+    let block = cuboid([0.0, 0.0, 0.0], [2.0, 2.0, 2.0], 2, &TOL);
+    let solid = op(&slab, &block, Op::Union, &TOL);
+    let topology = solid.topology();
+    let vertex = DVec3::new(2.0, 0.0, 1.0);
+    let at = topology
+        .corners()
+        .iter()
+        .position(|c| solid.mesh().verts()[c.vertex as usize] == vertex)
+        .expect("a corner at the step") as u32;
+    let keys: Vec<FaceKey> = topology.corners()[at as usize]
+        .regions
+        .iter()
+        .map(|&r| topology.regions()[r as usize].key)
+        .collect();
+    assert!(keys.len() >= 4, "{keys:?}");
+    for i in 0..keys.len() {
+        for j in i + 1..keys.len() {
+            for k in j + 1..keys.len() {
+                let three = [keys[i], keys[j], keys[k]];
+                let found = topology.corner(&solid, three, vertex + DVec3::splat(0.1));
+                assert_eq!(found, Ok(at), "{three:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_chain_of_flush_joins_names_alike_at_any_size_and_tolerance() {
+    // A drilled plate and bosses joined one after another, the body first
+    // as the app joins them: through it filling a hole, flush with both
+    // its caps, standing on it, through it flush with the last one's top,
+    // a block over its edge flush with both caps, and a taller one at its
+    // other edge. Each step's faces, as the sets of keys naming each
+    // region, are the same at another size and a finer tolerance.
+    use std::collections::BTreeSet;
+
+    use glam::DVec2;
+
+    use crate::profile::tests::{circle, rect};
+    use crate::{Frame, Profile, extrude};
+    let names = |scale: f64, tol: &Tolerance| -> Vec<Vec<BTreeSet<FaceKey>>> {
+        let v = |x: f64, y: f64| DVec2::new(x, y) * scale;
+        let up = |loops, from: f64, to: f64, feature| {
+            let profile = Profile { loops };
+            let (from, to) = (from * scale, to * scale);
+            extrude(
+                &profile,
+                &Frame::XY,
+                from,
+                to,
+                feature,
+                tol,
+                &Budget::DEFAULT,
+            )
+            .unwrap()
+        };
+        let plate = up(
+            vec![
+                rect(v(-30.0, -20.0), v(30.0, 20.0), 0),
+                circle(v(-15.0, 1.0), 3.0 * scale, 4, true),
+                circle(v(20.0, 12.0), 3.0 * scale, 5, true),
+            ],
+            0.0,
+            10.0,
+            1,
+        );
+        let bosses = [
+            up(
+                vec![circle(v(-15.0, 0.0), 8.0 * scale, 0, false)],
+                0.0,
+                20.0,
+                2,
+            ),
+            up(
+                vec![circle(v(-5.0, 2.0), 6.0 * scale, 0, false)],
+                0.0,
+                10.0,
+                3,
+            ),
+            up(
+                vec![circle(v(4.0, -1.0), 5.0 * scale, 0, false)],
+                10.0,
+                20.0,
+                4,
+            ),
+            up(
+                vec![circle(v(11.0, 0.0), 4.0 * scale, 0, false)],
+                0.0,
+                20.0,
+                5,
+            ),
+            up(vec![rect(v(-40.0, -5.0), v(-25.0, 5.0), 10)], 0.0, 10.0, 6),
+            up(vec![rect(v(25.0, -25.0), v(35.0, 25.0), 10)], 0.0, 20.0, 7),
+        ];
+        let mut body = plate;
+        let mut steps = Vec::new();
+        for boss in &bosses {
+            body = crate::boolean(&body, boss, Op::Union, tol, &Budget::DEFAULT).unwrap();
+            let topology = body.topology();
+            let mut regions: Vec<BTreeSet<FaceKey>> = topology
+                .regions()
+                .iter()
+                .map(|r| {
+                    std::iter::once(r.key)
+                        .chain(r.aliases.iter().copied())
+                        .collect()
+                })
+                .collect();
+            regions.sort();
+            steps.push(regions);
+        }
+        steps
+    };
+    let first = names(1.0, &TOL);
+    // The flush tops of the last two bosses are one face, named by both.
+    let both: BTreeSet<FaceKey> = [key(4, TOP), key(5, TOP)].into();
+    assert!(first[3].contains(&both), "{:?}", first[3]);
+    assert_eq!(names(1.37, &TOL), first);
+    assert_eq!(names(1.0, &Tolerance::new(1e-4).unwrap()), first);
+}

@@ -16,11 +16,11 @@
 //! [`Topology::corner`]) takes the regions, chains or corners with those
 //! keys, by name or alias (a key absorbed when two faces on one surface
 //! merged still names the face that took it in): one is taken whatever
-//! the point says; of several, the nearest to the point, ties to the
-//! lowest index; none fails. Keys come from what the features were given,
-//! never from the mesh, so a regenerated solid with other dimensions,
-//! another tolerance or another triangulation resolves the same
-//! references to the same faces.
+//! the point says; of several, the nearest to the point, ties (within a
+//! billionth of the solid's size) to the lowest index; none fails. Keys
+//! come from what the features were given, never from the mesh, so a
+//! regenerated solid with other dimensions, another tolerance or another
+//! triangulation resolves the same references to the same faces.
 //!
 //! Names derived from keys (a copy's instance, a blend's edge, a shell's
 //! offset face) are a fixed 64-bit [`mix`]: names are stored in files, so
@@ -194,11 +194,16 @@ impl Topology {
     pub fn face(&self, solid: &Solid, key: &FaceKey, near: DVec3) -> Result<u32, NotFound> {
         let found = (0..self.regions.len() as u32).filter(|&r| self.regions[r as usize].named(key));
         let mesh = solid.mesh();
-        nearest(found, near, |r, below, left| {
-            let tris = &self.regions[r as usize].tris;
-            let patches = tris.iter().map(|&t| mesh.patch(t as usize));
-            distance::to_patches(near, patches, below, left)
-        })
+        nearest(
+            found,
+            near,
+            || slack(solid),
+            |r, below, left| {
+                let tris = &self.regions[r as usize].tris;
+                let patches = tris.iter().map(|&t| mesh.patch(t as usize));
+                distance::to_patches(near, patches, below, left)
+            },
+        )
         .ok_or(NotFound::Face)
     }
 
@@ -213,10 +218,15 @@ impl Topology {
                 || (named(r0, &faces[1]) && named(r1, &faces[0]))
         });
         let mesh = solid.mesh();
-        nearest(found, near, |c, below, left| {
-            let halfedges = &self.chains[c as usize].halfedges;
-            distance::to_curves(near, halfedges.iter().map(|&h| mesh.curve(h)), below, left)
-        })
+        nearest(
+            found,
+            near,
+            || slack(solid),
+            |c, below, left| {
+                let halfedges = &self.chains[c as usize].halfedges;
+                distance::to_curves(near, halfedges.iter().map(|&h| mesh.curve(h)), below, left)
+            },
+        )
         .ok_or(NotFound::Edge)
     }
 
@@ -230,9 +240,12 @@ impl Topology {
                 .all(|key| regions.iter().any(|&r| self.regions[r as usize].named(key)))
         });
         let verts = solid.mesh().verts();
-        nearest(found, near, |c, _, _| {
-            verts[self.corners[c as usize].vertex as usize].distance(near)
-        })
+        nearest(
+            found,
+            near,
+            || slack(solid),
+            |c, _, _| verts[self.corners[c as usize].vertex as usize].distance(near),
+        )
         .ok_or(NotFound::Corner)
     }
 }
@@ -240,27 +253,40 @@ impl Topology {
 /// Of the candidates `found`, in ascending order: the only one, or the
 /// one at the least `distance` from `near` (given the least so far, below
 /// which it must come to count, it may stop early above it; and the
-/// search allowance all candidates share), the lowest on a tie; the
+/// search allowance all candidates share), a later one counting only
+/// where it comes nearer by more than `slack()` (the searches' own
+/// accuracy, worked out only where there are several), so a tie goes to the lowest whatever the rounding; the
 /// lowest where `near` isn't finite. `None` for none.
 fn nearest(
     found: impl Iterator<Item = u32>,
     near: DVec3,
+    slack: impl FnOnce() -> f64,
     mut distance: impl FnMut(u32, f64, &mut distance::Allowance) -> f64,
 ) -> Option<u32> {
     let found: Vec<u32> = found.collect();
     if found.len() == 1 || !near.is_finite() {
         return found.first().copied();
     }
+    let slack = slack();
     let mut left = distance::Allowance::new();
     let mut best: Option<(f64, u32)> = None;
     for i in found {
-        let below = best.map_or(f64::INFINITY, |b| b.0);
+        let below = best.map_or(f64::INFINITY, |b| b.0 - slack);
         let d = distance(i, below, &mut left);
-        if best.is_none_or(|b| d < b.0) {
+        if best.is_none() || d < below {
             best = Some((d, i));
         }
     }
     best.map(|b| b.1)
+}
+
+/// How much nearer than the best before it a candidate must come to
+/// count: a billionth of `solid`'s size, about what the distance searches
+/// are accurate to.
+fn slack(solid: &Solid) -> f64 {
+    solid
+        .bounds3()
+        .map_or(0.0, |b| distance::CLOSE * (b.max - b.min).length())
 }
 
 /// The regions, numbered in the order of their lowest triangle, and each

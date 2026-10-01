@@ -1650,15 +1650,26 @@ between faces of one surface must call `Soup::absorb` the same way.
 Flush caps often never meet as triangles: the perturbation keeps one
 whole and drops the other (a plate first, a boss standing in it flush
 on top: the boss's top is gone, with no seam to mend). So after a union
-or an intersection (`boolean::covered`), an operand's plane face that no
-face or alias of the result names any more, a point of which (its first
-triangle's middle) lies within the short length on a result face of the
-same plane (unit normals within `1e-12`, offsets within the short
-length; the lowest such face), becomes an alias of it, with its own
-aliases. Only names: the geometry is untouched, and a face that was cut
-away or lay inside the other operand gets none. Each face looked for is
-charged a unit a patch of the faces it is measured against. A
-difference makes none (the tool's faces become walls of their own).
+or an intersection (`boolean::covered`), an operand's plane face whose
+key or aliases no face or alias of the result names any more gives
+those names as aliases to the lowest result face of the same plane
+(unit normals within `1e-12`, offsets within the short length) that it
+meets: the middle of a triangle of one lies within the short length of
+the other, either way round, since a large face's middles can all miss
+a small face over part of it (looking only at the dropped face's first
+triangle lost a plate's top when a boss inside it came first in an
+intersection, so the names differed with the order). A point on the
+result's boundary facing the same way as the dropped face is a point
+where it lay flush. Only names: the geometry is untouched, and a face
+that was cut away or lay inside the other operand gets none; a flush
+face kept in part keeps its key there and gets no alias for the part
+dropped. The middles are looked up through a box hierarchy of each
+face's triangles, charged a unit a triangle, and each middle a unit and
+one a patch it is measured against. A difference makes none (the
+tool's faces become walls of their own). A key can be a face's and
+another's alias at once (one feature's two bosses, one flush and merged
+into the plate's top, the other standing): it names both, and the
+point picks, which is right for a reference to either boss.
 Transforms will carry the table with the faces, as booleans do.
 
 **Resolving.** `Topology::face(solid, key, near)`: the regions named by
@@ -1666,7 +1677,10 @@ Transforms will carry the table with the faces, as booleans do.
 the chains between regions named by `a` and `b`, either way round;
 `Topology::corner(solid, [a, b, c], near)`: the corners where some
 region is named by each. One is taken whatever `near` says (even NaN);
-of several the nearest to `near`, ties to the lowest index; none is
+of several the nearest to `near`, a later one counting only where it
+comes nearer by more than a billionth of the solid's size (about what
+the searches are accurate to), so ties go to the lowest index whatever
+the rounding; none is
 `NotFound::{Face, Edge, Corner}` ("face not found", ...). The distance
 (`topology/distance.rs`) is a best-first search over pieces by
 blossoming, the box of a piece's control points (which holds it) the
@@ -1678,7 +1692,7 @@ upper bounds; it stops when no piece can come within a billionth of the
 patch's size of the best, or at 256 pieces a patch or curve. The
 candidates' patches are taken nearest box first and only while their
 box comes nearer than the best so far, across candidates too (a later
-one must come strictly nearer). One resolve's searches share a fixed
+one must come nearer by more than the billionth). One resolve's searches share a fixed
 allowance of 2²⁰ evaluations (a Newton foot 80, a patch's piece 25, a
 curve's 7); past it, the patches and curves still to look at count by
 their corners and ends alone, an upper bound. So resolving costs a
@@ -2930,10 +2944,11 @@ now take 20 ms.
   the operand's own, and, where the clean-up moved triangles of one face
   onto another of the same surface (`Soup::absorb`, a pair of sources),
   the moved face's key and aliases, through any chain of such moves
-  (`boolean::aliases`, a pass a unit of work a merge, until nothing
-  changes). A face cut away takes its aliases with it, but an operand's
-  plane face dropped whole under the other's flush face is an alias of
-  it (`boolean::covered`; see "Topology and names").
+  (`boolean::aliases`, passes over the merges until nothing changes,
+  each merge charged a unit and one a key of the two sets). A face cut
+  away takes its aliases with it, but an operand's plane face dropped
+  under the other's flush face is an alias of it (`boolean::covered`;
+  see "Topology and names").
 
 ### Triangulating a face's loops (`boolean/triangulate.rs`)
 
@@ -5172,8 +5187,10 @@ parameter, or a split outside the patch bounds),
   and the point picks); a general merge pass (one surface, one face)
   isn't built yet and must call `Soup::absorb` the same way. Not in the
   plan: flush caps one of which the perturbation drops whole (no merge
-  happens, so no pass records it) are aliased after the boolean by a
-  point of the dropped face lying on a result face of its plane
-  (`boolean::covered`); names only, never the geometry.
+  happens, so no pass records it) are aliased after the boolean where a
+  triangle middle of the dropped face lies on a result face of its plane
+  or one of that face's on it (`boolean::covered`); names only, never
+  the geometry. Ties between candidates go to the lowest index within a
+  billionth of the solid's size, not only exact ones.
   Transforms don't exist yet; the table is on `Mesh`, so they carry it
   by keeping the faces.
