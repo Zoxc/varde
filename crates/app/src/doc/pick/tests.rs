@@ -389,3 +389,66 @@ fn a_selection_outlives_regenerations_and_drops_what_s_gone() {
     answer(&mut doc, &requests);
     assert_eq!(doc.pick.selection.targets().count(), 0);
 }
+
+/// Once the extrude being set up ends, its draft's preview shows until
+/// the answer without it comes: the cursor doesn't pick it, and what's
+/// selected isn't looked for in it, so a face the draft hasn't got (an
+/// intersect keeps none of the plate's walls) isn't dropped.
+#[test]
+fn a_draft_still_shown_after_the_extrude_doesnt_drop_the_selection() {
+    use varde_view::{ExtrudeLook, OperationKind};
+
+    let (mut doc, sketch, requests) = crate::tests::example_and_a_hole();
+    let index = doc.feed.pick_index();
+    // A wall of the plate: a plane facing sideways.
+    let (face, body) = (index.picking().faces().iter().enumerate())
+        .find_map(|(i, face)| match face.summary {
+            varde_regen::Summary::Plane { n, .. } if n[2] == 0.0 => {
+                Some((u32::try_from(i).unwrap(), face.body))
+            }
+            _ => None,
+        })
+        .unwrap();
+    let pick = varde_view::Pick {
+        model: index.model(),
+        target: Picked::Face(face),
+        body,
+        at: glam::DVec3::ZERO,
+    };
+    doc.look(Look::ClickModel {
+        pick: Some(pick),
+        add: false,
+        double: false,
+    });
+    let selected: Vec<_> = doc.pick.selection.items().copied().collect();
+    assert_eq!(selected.len(), 1);
+
+    doc.look(Look::StartExtrude);
+    doc.look(Look::Extrude(ExtrudeLook::PickRegion { sketch, region: 0 }));
+    doc.look(Look::Extrude(ExtrudeLook::Operation(
+        OperationKind::Intersect,
+    )));
+    answer(&mut doc, &requests);
+    assert!(doc.feed.shows_draft());
+    let walls = |doc: &Doc| {
+        let index = doc.feed.pick_index();
+        let Some(varde_view::Selected::Face { key, .. }) = selected.first() else {
+            unreachable!()
+        };
+        index.find_face(body, key, glam::DVec3::NAN).is_some()
+    };
+    assert!(!walls(&doc), "the draft has the wall");
+    doc.look(Look::Escape);
+    assert!(doc.extrude.is_none());
+    assert!(doc.feed.shows_draft());
+    assert!(!doc.picks());
+    assert_eq!(doc.highlight(), None);
+    let items = |doc: &Doc| doc.pick.selection.items().copied().collect::<Vec<_>>();
+    assert_eq!(items(&doc), selected);
+
+    answer(&mut doc, &requests);
+    assert!(!doc.feed.shows_draft());
+    assert!(walls(&doc));
+    assert_eq!(items(&doc), selected);
+    assert!(doc.highlight().is_some());
+}

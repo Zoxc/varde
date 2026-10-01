@@ -626,10 +626,15 @@ pub(crate) fn ray_hits(origin: DVec3, direction: DVec3, [a, b, c]: [DVec3; 3]) -
     (inside && t.is_finite()).then_some(t)
 }
 
+/// The corners of `bounds`, as [`through_box`] takes them.
+pub(crate) fn aabb(bounds: varde_kernel::Aabb) -> [DVec3; 2] {
+    [bounds.min.as_dvec3(), bounds.max.as_dvec3()]
+}
+
 /// Where the ray from `origin` along `direction` is inside the box `min`
 /// to `max`, as how far along it it goes in and comes out, within `from`
 /// and `to`, if it is.
-fn through_box(
+pub(crate) fn through_box(
     origin: DVec3,
     direction: DVec3,
     [min, max]: [DVec3; 2],

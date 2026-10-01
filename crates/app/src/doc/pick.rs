@@ -37,9 +37,12 @@ impl ModelPick {
 
 impl Doc {
     /// Whether the cursor picks the model: outside sketches and the
-    /// extrude being set up, which pick what they need themselves.
+    /// extrude being set up, which pick what they need themselves, and
+    /// not while a draft's preview is still shown after it, where what's
+    /// selected would be looked for (and dropped if missing) in a model
+    /// that isn't the document's.
     pub(crate) fn picks(&self) -> bool {
-        self.sketch.is_none() && self.extrude.is_none()
+        self.sketch.is_none() && self.extrude.is_none() && !self.feed.shows_draft()
     }
 
     /// Hovers `pick`, from the viewport as the cursor moves, or nothing:
@@ -139,7 +142,11 @@ impl Doc {
     /// What the viewport draws over the model, if anything: nothing while
     /// the cursor doesn't pick it.
     pub(crate) fn highlight(&self) -> Option<&Arc<Highlight>> {
-        Some(&self.pick.highlight).filter(|highlight| self.picks() && !highlight.is_empty())
+        // Only of the model shown: one built for an earlier model would be
+        // drawn over another.
+        let current = (self.pick.built.as_ref()).is_some_and(|built| built.0 == self.feed.model());
+        Some(&self.pick.highlight)
+            .filter(|highlight| self.picks() && current && !highlight.is_empty())
     }
 }
 

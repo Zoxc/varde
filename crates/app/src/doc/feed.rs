@@ -383,6 +383,13 @@ impl MeshFeed {
         &self.mesh
     }
 
+    /// Whether the model shown has a draft applied: the preview of the
+    /// extrude being set up, or of one that just ended, until the answer
+    /// without it comes.
+    pub(crate) fn shows_draft(&self) -> bool {
+        self.shown.is_some_and(|shown| shown.draft.is_some())
+    }
+
     /// Counts the models shown: see [`varde_view::Pick::model`].
     pub(crate) fn model(&self) -> u64 {
         self.model

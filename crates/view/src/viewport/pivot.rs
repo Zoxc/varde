@@ -8,8 +8,7 @@ use varde_document::{OriginPlane, Placement, Plane};
 use varde_kernel::RenderMesh;
 use varde_render::{Camera, GRID_FADE_HEIGHTS, Projection};
 
-use super::extrude::through_box;
-use crate::pick::ray_hits;
+use crate::pick::{aabb, ray_hits, through_box};
 use crate::projection::Projector;
 
 /// What a middle click at `at`, in logical pixels from the top left of a
@@ -65,7 +64,7 @@ fn on_mesh(mesh: &RenderMesh, camera: &Camera, origin: DVec3, direction: DVec3) 
             origin - direction * back
         }
     };
-    let (near, far) = through_box(origin, direction, bounds)?;
+    let (near, far) = through_box(origin, direction, aabb(bounds), 0.0, f64::INFINITY)?;
     let corner = |index: &u32| {
         let p = mesh.positions().get(usize::try_from(*index).ok()?)?;
         Some(Vec3::from(*p).as_dvec3())

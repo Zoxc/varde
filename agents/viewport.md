@@ -442,8 +442,8 @@ the target (`Picked::Face` or `Picked::Edge`, indices into the tables),
 the body (the face's, or the chain's first face's) and the point (the
 ray's hit, or the edge's point).
 
-Outside sketches and the extrude session (`Doc::picks`; they pick what
-they need themselves) the viewport is given `ModelPicking` (the index,
+Outside sketches and the extrude session, and not over a draft's preview
+(`Doc::picks`; they pick what they need themselves) the viewport is given `ModelPicking` (the index,
 the target the app holds hovered, and what the cursor picks, `Picks`:
 faces and edges, or only one of them, from the selection's mode). It
 picks on each cursor move while the camera isn't dragged, and on each
@@ -497,8 +497,12 @@ nearer by more than a billionth of the mesh's size, so ties go to the
 lowest; the first where the point isn't finite). What isn't found is
 dropped (a hidden body's faces, a face an edit removed) and stays
 dropped; bodies the document no longer holds go too. While a sketch is
-edited or an extrude set up the selection isn't drawn or resolved, so a
-draft's preview doesn't drop it; it's found again once the cursor picks.
+edited or an extrude set up, and while an extrude's preview still shows
+after it ends (until the answer without the draft comes,
+`MeshFeed::shows_draft`), the cursor doesn't pick and the selection isn't
+drawn or resolved, so a draft's preview doesn't drop it; it's found again
+once the cursor picks. The highlight is drawn only over the model it was
+built for.
 
 Tangent chains come from the kernel: `Topology::tangent_chains` (see
 `agents/kernel.md`) gives each chain its tangent chain's lowest chain,

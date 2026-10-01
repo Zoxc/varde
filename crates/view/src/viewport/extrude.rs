@@ -23,7 +23,7 @@ use varde_sketch::Profiles;
 use super::sketch::{fill_region, fill_region_in, line};
 use crate::anchors::Anchors;
 use crate::extrude::{Distance, ExtrudeLook, ExtrudeState, Handle, snap_step};
-use crate::pick::ray_hits;
+use crate::pick::{aabb, ray_hits, through_box};
 use crate::projection::Projector;
 use crate::theme::{self, SketchColors};
 use crate::{Look, Message};
@@ -360,7 +360,7 @@ pub(crate) fn hidden(mesh: &RenderMesh, camera: &Camera, at: DVec3) -> bool {
         }
         Projection::Orthographic => (camera.backward().as_dvec3(), f64::INFINITY),
     };
-    let Some((near, far)) = through_box(at, direction, bounds) else {
+    let Some((near, far)) = through_box(at, direction, aabb(bounds), 0.0, f64::INFINITY) else {
         return false;
     };
     if far <= pull || near >= end {
@@ -386,30 +386,6 @@ pub(crate) fn hidden(mesh: &RenderMesh, camera: &Camera, at: DVec3) -> bool {
         };
         ray_hits(at, direction, [a, b, c]).is_some_and(|t| t > pull && t < end) && off_its_plane()
     })
-}
-
-/// Where the ray from `origin` along `direction` is inside `bounds`, as
-/// how far along it it goes in and comes out, if it meets it ahead.
-pub(super) fn through_box(
-    origin: DVec3,
-    direction: DVec3,
-    bounds: varde_kernel::Aabb,
-) -> Option<(f64, f64)> {
-    let (min, max) = (bounds.min.as_dvec3(), bounds.max.as_dvec3());
-    let (mut near, mut far) = (0.0f64, f64::INFINITY);
-    for axis in 0..3 {
-        let (o, d) = (origin[axis], direction[axis]);
-        if d == 0.0 {
-            if o < min[axis] || o > max[axis] {
-                return None;
-            }
-            continue;
-        }
-        let (t0, t1) = ((min[axis] - o) / d, (max[axis] - o) / d);
-        near = near.max(t0.min(t1));
-        far = far.min(t0.max(t1));
-    }
-    (near <= far).then_some((near, far))
 }
 
 /// The knob of `distance`, grabbed by pressing it if `editable`.
