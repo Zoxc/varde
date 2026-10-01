@@ -14,16 +14,17 @@
 //! Only names change. Each set takes the name of its lowest face (a
 //! member already of its key, such as another arc of the same circle,
 //! keeps its own, which numbers the piece), and every member gets the
-//! set's aliases: the other members' keys and
-//! their aliases, so references to them still resolve. The members stay
-//! separate entries of [`Mesh::faces`], each with its own surface: an
-//! arc's wall is written in the arc's own coordinates, best conditioned
-//! near it, and the exact paths of later booleans take it from there, so
-//! no tag changes and nothing a boolean decides by tags or face indices
-//! does. Faces are drawn, picked and referred to by key, so a set is one
-//! face for all of those. A set merges only if every patch of every
-//! member lies on the lowest one's surface within `small`, so a chain of
-//! near-equal surfaces can't drift.
+//! set's aliases: the other members' keys and their aliases, so
+//! references to them still resolve. The members stay separate entries
+//! of [`Mesh::faces`], each with its own surface and form: an arc's wall
+//! is written in the arc's own coordinates, best conditioned near it,
+//! and the exact paths of later booleans take it from there, so no tag
+//! changes and nothing a boolean decides by tags or face indices does.
+//! Faces are drawn, picked and referred to by key, so a set is one face
+//! for all of those; several entries can carry one name, so faces are
+//! counted by key or region, never by entry. A set merges only if every
+//! patch of every member lies on the lowest one's surface within
+//! `small`, so a chain of near-equal surfaces can't drift.
 
 use glam::DVec3;
 
@@ -170,7 +171,11 @@ impl Mesh {
             if r != f {
                 taken[r].push(self.faces[f].name.key());
                 taken[r].extend_from_slice(&own[f]);
-                let root = own[r].clone();
+            }
+        }
+        for r in 0..n {
+            if !taken[r].is_empty() {
+                let root = std::mem::take(&mut own[r]);
                 taken[r].extend(root);
             }
         }

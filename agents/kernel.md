@@ -747,14 +747,17 @@ the members' keys and their aliases (`Mesh::with_aliases` drops a face's
 own key). Faces claiming no surface (a boolean's copies) never merge on
 geometry, but a copy whose name was a member's takes the set's name and
 aliases. Only names change: the members stay their own entries of
-`faces`, each with its own surface, and vertices, edges, patches and
+`faces`, each with its own surface and form, and vertices, edges, patches and
 triangles' face indices are untouched. A circle's arcs' walls are
 written in each arc's own coordinates (`conic_cylinder`), best
 conditioned near it; giving the opposite arc the first one's quadric
 moved later booleans' exact paths off (a plate's eight drilled holes
 under a boss's rim came back `Inconsistent`), and the clean-up's rules
 read face indices. So nothing a boolean decides by tags or indices
-changes, and a set is one face wherever keys count. Faces a real step
+changes, and a set is one face wherever keys count. Several entries of
+`faces` can so carry one name: whatever counts faces (tessellation,
+topology's regions, picking) counts keys or regions, never entries.
+Faces a real step
 apart stay two (box tops `1e-3` apart, radii 1 and 1.001 stacked). A
 unit of work a patch, the patch tests a parallel map over the members'
 triangles in order: deterministic.

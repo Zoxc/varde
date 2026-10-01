@@ -1,7 +1,7 @@
 use glam::DVec3;
 
 use super::super::tests::{TOL, face};
-use super::super::{FaceName, FacePart, Mesh, MeshBuilder, Surface};
+use super::super::{FaceName, FacePart, Form, Mesh, MeshBuilder, Surface};
 use crate::budget::{Budget, Work};
 use crate::par::assert_deterministic;
 use crate::{KernelError, Solid};
@@ -35,6 +35,7 @@ fn ramp(tops: &[f64], tags: &[f64], end: FaceName) -> Mesh {
     let last = builder.face(super::super::Face {
         name: end,
         surface: Surface::Free,
+        form: Form::Unknown,
     });
     for i in 0..k {
         let top = builder.face(face(
