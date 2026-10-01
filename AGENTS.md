@@ -47,6 +47,8 @@ it describes changes:
 - `agents/file-format.md`: the `.vrdp` format.
 - `agents/kernel.md`: the geometry kernel: rational quadratic curves and
   patches, their splits, the fold check, exact arcs and cylinders.
+- `notes/Kernel.md`: the kernel's high-level overview (ideas, invariants,
+  the boolean pipeline, limits); `agents/kernel.md` holds the detail.
 - `notes/Threading.md`: the threading plan (built steps and what's still open).
 - `agents/crates.md`: the crate table and dependency graph, the web build's
   worker binaries, assets, and the roadmap by crate.
