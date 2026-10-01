@@ -49,7 +49,7 @@ reopen a recent file, or recover unsaved changes left by a crash.
 | constrain the selection     | its key (below), or `K` for the Constrain tool, which lists what fits |
 | dimension                   | `D`, then click what to measure and click where the label goes; type the value, `Enter` (see below) |
 | trim / extend / offset / mirror / fillet / chamfer | `T` / `J` / `O` / `Shift M` / `F` / `Shift B` (see Changing shapes below) |
-| leave a sketch              | `Esc`, or Finish sketch                    |
+| leave a sketch              | `Esc`, or the check by the sketch's name |
 | save / save as              | `Ctrl S` / `Ctrl Shift S` (`Cmd` on macOS) |
 | close the file menu         | `Esc`                                      |
 | design units                | the file menu: millimetres or inches       |

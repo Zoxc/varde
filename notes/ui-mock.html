@@ -227,6 +227,9 @@ kbd {
 .file .dirty { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); flex: none; }
 .file .chev { margin-left: auto; color: var(--muted); }
 .ctx { display: flex; align-items: center; gap: 6px; padding: 0 12px; height: 100%; font-weight: 600; border-right: 1px solid var(--line); }
+.wash { display: flex; align-items: center; height: 24px; margin-left: -8px; border-radius: 6px; overflow: hidden; background: var(--accent-soft); }
+.wash > span { display: flex; align-items: center; gap: 6px; padding: 0 8px; }
+.wash .op.finish { border-radius: 0; }
 .tag { background: var(--accent-soft); color: var(--accent); font-weight: 600; border-radius: 5px; padding: 2px 7px; font-size: 11px; }
 .ops { display: flex; align-items: center; gap: 2px; padding: 0 6px; min-width: 0; }
 .op {
@@ -240,6 +243,7 @@ kbd {
 .op.on .k { color: var(--accent); opacity: .7; }
 .op.primary { background: var(--accent); color: #fff; }
 .op.primary:hover { filter: brightness(1.08); }
+.op.finish { height: 24px; padding: 0 5px; }
 .op.icon { padding: 0 6px; color: var(--muted); height: 26px; }
 .op.icon:hover { color: var(--text); }
 .sep { width: 1px; height: 18px; background: var(--line); margin: 0 4px; flex: none; }
@@ -1051,8 +1055,6 @@ function ops() {
       return [
         ...Object.entries(TOOLS).filter(([, t]) => t.key)
           .map(([id, { label, key }]) => ({ id: 'tool:' + id, label, icon: id === 'offset' ? 'skoffset' : id, key, on: st.tool === id })),
-        { sep: 1 },
-        { id: 'finish', label: 'Finish sketch', icon: 'check', key: 'Esc', primary: true },
       ];
   }
   return [];
@@ -1254,7 +1256,7 @@ function toolbar() {
   let ctx;
   if (st.mode === 'sketch') {
     const name = d.timeline.find(t => t.id === st.sketch.id).name;
-    ctx = `${name}<span class="tag">${st.tool ? TOOLS[st.tool].label : 'Editing sketch'}</span>`;
+    ctx = `<span class="wash"><span>${icon('sketch')}${name}</span><button class="op primary finish" data-act="op:finish" title="Finish sketch (Esc)">${icon('check')}</button></span>${st.tool ? `<span class="tag">${TOOLS[st.tool].label}</span>` : ''}`;
   } else {
     const tag = st.op ? (st.op.editing ? 'Editing ' + st.op.name : OPS[st.op.kind].label) : st.pick ? 'New sketch' : '';
     ctx = `Model${tag ? `<span class="tag">${tag}</span>` : ''}`;

@@ -25,17 +25,17 @@ pub fn toolbar<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
     let editor = state.editor;
 
     let editable = state.editable();
-    let (context, tag) = match &state.sketch {
+    let (context, tag): (Element<'a, Message>, _) = match &state.sketch {
         Some(sketch) => (
-            sketch.name,
-            Some(match sketch.tool {
-                Some(tool) => tool_tag(&tool),
-                None if sketch.constraining => "Constrain".to_owned(),
-                None => "Editing sketch".to_owned(),
-            }),
+            sketch_pill(sketch.name),
+            match sketch.tool {
+                Some(tool) => Some(tool_tag(&tool)),
+                None if sketch.constraining => Some("Constrain".to_owned()),
+                None => None,
+            },
         ),
         None => (
-            "Model",
+            text("Model").font(SEMIBOLD).into(),
             if state.picking_plane {
                 Some("New sketch".to_owned())
             } else {
@@ -60,12 +60,10 @@ pub fn toolbar<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
             state.overlay == Some(Overlay::FileMenu),
         ),
         vrule(),
-        container(
-            row![text(context).font(SEMIBOLD), tag]
-                .spacing(6)
-                .align_y(Alignment::Center)
-        )
-        .padding([0, 12]),
+        container(row![context, tag].spacing(6).align_y(Alignment::Center))
+            // The sketch's pill starts left of where the text would, so its
+            // name lines up with "Model".
+            .padding(Padding::from([0, 12]).left(if state.sketch.is_some() { 4 } else { 12 })),
         vrule(),
         row(ops(state))
             .spacing(2)
@@ -100,6 +98,41 @@ pub fn toolbar<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
         Edge::Bottom,
         TOOLBAR_HEIGHT,
     )
+}
+
+/// The sketch being edited, named with its icon on the soft accent, joined
+/// at its right end by the button finishing it.
+fn sketch_pill<'a>(name: &'a str) -> Element<'a, Message> {
+    let finish = button(
+        container(icons::tinted(Icon::Check, icons::INLINE, |p| {
+            Emphasis::Primary.content(p)
+        }))
+        .center(Length::Fill),
+    )
+    .width(26)
+    .height(Length::Fill)
+    .padding(0)
+    .style(theme::pill_end_button)
+    .on_press(Message::Look(Look::FinishSketch));
+    container(
+        row![
+            container(
+                row![
+                    icons::icon(Icon::Sketch, icons::INLINE),
+                    text(name).font(SEMIBOLD)
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center)
+            )
+            .padding([0, 8]),
+            crate::chrome::tip(finish, text("Finish sketch (Esc)")),
+        ]
+        .height(Length::Fill)
+        .align_y(Alignment::Center),
+    )
+    .height(24)
+    .style(theme::pill)
+    .into()
 }
 
 /// What the toolbar's tag says of `tool`: its name, and how it draws: the
@@ -216,25 +249,11 @@ fn ops<'a>(state: &DocumentState<'a>) -> Vec<Element<'a, Message>> {
             })
             .into_iter()
             .flatten();
-        let finish = button(
-            row![
-                icons::tinted(Icon::Check, icons::INLINE, |p| Emphasis::Primary.content(p)),
-                text("Finish sketch").font(SEMIBOLD),
-            ]
-            .spacing(6)
-            .height(Length::Fill)
-            .align_y(Alignment::Center),
-        )
-        .height(28)
-        .padding([0, 10])
-        .style(theme::primary_button)
-        .on_press(Message::Look(Look::FinishSketch));
         return tools
             .into_iter()
             .chain([separator(), constrain])
             .chain(constraints)
             .chain(spline_ops)
-            .chain([separator(), finish.into()])
             .collect();
     }
     let sketch = bound_op(

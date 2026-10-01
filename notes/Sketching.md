@@ -42,8 +42,9 @@ Closed loops of geometry form *profiles*, the regions a later feature uses.
   it does outside, but for the Dimension tool, where `Alt` places reference
   dimensions (see When constraints disagree). Leaving the sketch brings the
   Timeline back.
-- **Leaving.** `Esc` with no tool active, or Finish sketch. Leaving never
-  loses anything: every change was already committed as it was made.
+- **Leaving.** `Esc` with no tool active, or the check by the sketch's name
+  in the toolbar. Leaving never loses anything: every change was already
+  committed as it was made.
 - **Editing later.** Double-click the sketch in the Timeline, or select it
   and press `Enter`.
 - An empty sketch is kept, as it is in the Timeline; delete it like any

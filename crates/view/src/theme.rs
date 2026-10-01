@@ -676,6 +676,21 @@ pub fn primary_button(theme: &Theme, status: button::Status) -> button::Style {
     filled_button(p, p.accent, status)
 }
 
+/// A [`primary_button`] closing the right end of a [`pill`]: square on
+/// its left, where it joins the pill.
+pub fn pill_end_button(theme: &Theme, status: button::Status) -> button::Style {
+    let style = primary_button(theme, status);
+    button::Style {
+        border: Border {
+            radius: border::Radius::new(0)
+                .top_right(CONTROL_RADIUS)
+                .bottom_right(CONTROL_RADIUS),
+            ..style.border
+        },
+        ..style
+    }
+}
+
 /// The main call to action where it destroys something: danger fill with
 /// white text.
 pub fn danger_button(theme: &Theme, status: button::Status) -> button::Style {
@@ -1144,6 +1159,16 @@ pub fn list_row(selected: bool, hovered: bool) -> fn(&Theme) -> container::Style
 pub fn accent_text(theme: &Theme) -> text::Style {
     text::Style {
         color: Some(palette(theme).accent),
+    }
+}
+
+/// The toolbar's context while editing a sketch: its name on the soft
+/// accent, ended by a [`pill_end_button`].
+pub fn pill(theme: &Theme) -> container::Style {
+    let p = palette(theme);
+    container::Style {
+        border: border::rounded(CONTROL_RADIUS),
+        ..filled(p.accent_soft, p.text)
     }
 }
 
