@@ -631,6 +631,7 @@ impl Doc {
             DocumentKeys::new(self.editable(), self.selected_feature, self.sketch_state())
                 .with_extrude(self.extrudable(), self.extrude_state().as_ref())
                 .with_rail(self.rail.state())
+                .with_edited(self.edited())
                 .with_history(
                     self.editor.can_undo() || self.proposing(),
                     self.editor.can_redo() && !self.proposing(),

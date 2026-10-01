@@ -247,10 +247,15 @@ pub fn welcome_bindings() -> [Binding; 2] {
 }
 
 /// The file's shortcuts: Save and Save As, in that order. Save is
-/// disabled unless the document is `editable`.
-pub fn file_bindings(editable: bool) -> [Binding; 2] {
+/// disabled unless the document is `editable` and `edited` since it was
+/// last saved.
+pub fn file_bindings(editable: bool, edited: bool) -> [Binding; 2] {
     [
-        Binding::new(Shortcut::SAVE, Message::File(File::Save), editable),
+        Binding::new(
+            Shortcut::SAVE,
+            Message::File(File::Save),
+            editable && edited,
+        ),
         Binding::new(Shortcut::SAVE_AS, Message::File(File::SaveAs), true),
     ]
 }
@@ -359,6 +364,8 @@ pub struct DocumentKeys {
     pub extruding: bool,
     /// Whether the extrude being set up can be committed.
     pub extrude_ready: bool,
+    /// Whether the document has changes not saved.
+    pub edited: bool,
     /// Whether undo can take anything back.
     pub undo: bool,
     /// Whether redo can bring anything back.
@@ -422,6 +429,7 @@ impl DocumentKeys {
             extrudable: false,
             extruding: false,
             extrude_ready: false,
+            edited: false,
             undo: false,
             redo: false,
             rail: None,
@@ -431,6 +439,12 @@ impl DocumentKeys {
     /// The same keys with the rail's set `rail` open, if one is.
     pub fn with_rail(self, rail: Option<crate::RailOpen>) -> Self {
         Self { rail, ..self }
+    }
+
+    /// The same keys where the document has changes not saved if
+    /// `edited`.
+    pub fn with_edited(self, edited: bool) -> Self {
+        Self { edited, ..self }
     }
 
     /// The same keys where undo can take something back if `undo`, and
@@ -678,7 +692,7 @@ pub fn document_bindings(keys: DocumentKeys) -> Vec<Binding> {
     });
     crate::rail::letter_bindings(keys)
         .into_iter()
-        .chain(file_bindings(keys.editable))
+        .chain(file_bindings(keys.editable, keys.edited))
         .chain(history_bindings(keys))
         .chain([
             sketch_binding(keys),
@@ -893,9 +907,14 @@ mod tests {
     fn a_disabled_binding_is_a_dead_key() {
         let command = Modifiers::COMMAND;
         let shift = command | Modifiers::SHIFT;
-        let save = |editable| pressed(document_bindings(keys(editable)), &key("s"), command);
-        assert!(matches!(save(true), Some(Message::File(File::Save))));
-        assert!(save(false).is_none());
+        let save = |editable, edited| {
+            let keys = keys(editable).with_edited(edited);
+            pressed(document_bindings(keys), &key("s"), command)
+        };
+        assert!(matches!(save(true, true), Some(Message::File(File::Save))));
+        assert!(save(false, true).is_none());
+        // Nothing to save.
+        assert!(save(true, false).is_none());
         let save_as = pressed(document_bindings(keys(false)), &key("S"), shift);
         assert!(matches!(save_as, Some(Message::File(File::SaveAs))));
     }

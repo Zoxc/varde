@@ -118,6 +118,7 @@ impl DocumentState<'_> {
         DocumentKeys::new(self.editable(), self.selected_feature, self.sketch)
             .with_extrude(self.extrudable, self.extrude.as_ref())
             .with_rail(self.rail)
+            .with_edited(self.edited)
             .with_history(
                 self.editor.can_undo() || self.proposing,
                 // Not while edits wait on the solver, which come after.
@@ -541,7 +542,12 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
         (_, Some(deleting)) => Element::from(stack![content, delete_prompt(deleting)]),
         (Some(Overlay::FileMenu), None) => {
             let document = state.editor.document();
-            let menu = toolbar::file_menu(editable, document.units(), document.tolerance());
+            let menu = toolbar::file_menu(
+                editable,
+                state.edited,
+                document.units(),
+                document.tolerance(),
+            );
             Element::from(stack![content, menu])
         }
         (Some(Overlay::ViewMenu), None) => {

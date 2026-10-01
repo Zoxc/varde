@@ -64,7 +64,7 @@ pub fn toolbar<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
             state.overlay == Some(Overlay::FileMenu),
         ),
         vrule(),
-        save_cell(state.editable()),
+        save_cell(state.editable(), state.edited),
         vrule(),
         container(row![context, tag].spacing(6).align_y(Alignment::Center))
             // The sketch's pill starts left of where the text would, so its
@@ -149,9 +149,9 @@ fn tool_tag(tool: &ActiveTool<'_>) -> String {
 }
 
 /// The Save button, telling its key while hovered: disabled unless the
-/// document is `editable`, as the file menu's Save is.
-fn save_cell<'a>(editable: bool) -> Element<'a, Message> {
-    let [save, _] = file_bindings(editable);
+/// document is `editable` and `edited`, as the file menu's Save is.
+fn save_cell<'a>(editable: bool, edited: bool) -> Element<'a, Message> {
+    let [save, _] = file_bindings(editable, edited);
     let button = crate::chrome::tip(
         icon_button(Icon::Save, Tone::Muted, save.sends()),
         text(format!("Save ({})", save.shortcut.label())),
@@ -440,10 +440,12 @@ fn history_button<'a>(icon: Icon, label: &str, binding: Binding) -> Element<'a, 
 
 /// The file menu, as a layer over the whole screen. Clicking outside the
 /// menu closes it. Save, and changing the design's `units` or its
-/// `tolerance`, are disabled unless the document is `editable`. A
-/// tolerance the menu doesn't offer, from a file, shows unticked.
+/// `tolerance`, are disabled unless the document is `editable`, and Save
+/// unless it's `edited` too. A tolerance the menu doesn't offer, from a
+/// file, shows unticked.
 pub fn file_menu(
     editable: bool,
+    edited: bool,
     units: LengthUnit,
     tolerance: Tolerance,
 ) -> Element<'static, Message> {
@@ -456,7 +458,7 @@ pub fn file_menu(
     };
 
     // Export and the rest join Save once they exist.
-    let [save, save_as] = file_bindings(editable);
+    let [save, save_as] = file_bindings(editable, edited);
     let saving = column![
         bound(Icon::Save, "Save", save),
         bound(Icon::Save, "Save As…", save_as),
