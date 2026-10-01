@@ -4087,6 +4087,7 @@ dependencies = [
  "iced",
  "iced_runtime",
  "log",
+ "png",
  "resvg",
  "varde-document",
  "varde-expr",

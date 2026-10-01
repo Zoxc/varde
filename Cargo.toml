@@ -27,6 +27,9 @@ iced = { version = "0.14", features = ["svg", "canvas", "advanced"] }
 # Runs the document screen headless in the app's tests, to see which keys
 # its widgets take. The version iced is built on.
 iced_runtime = "0.14"
+# Writes the app's screenshots of its screens, in its tests (see
+# agents/viewport.md). The version tiny-skia already pulls in.
+png = "0.17"
 # Rasterizes the window icon. Must match the resvg version iced renders SVGs
 # with, so it is shared rather than built twice.
 resvg = { version = "0.45", default-features = false }

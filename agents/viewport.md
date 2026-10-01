@@ -268,3 +268,47 @@ behind it starts a new worker at once, otherwise the next edit does. A worker th
 started again for the request waiting on it, which is reported as failed
 too, so a worker that always crashes can't restart without end. Closing the
 document terminates it.
+
+## Screenshots of the screen
+
+The app's tests can draw the document screen to PNGs, to look at what
+headless tests of messages and state can't show: layout, drawing order,
+colours, scale. `crates/app/src/doc/extrude/tests/shots.rs` drives a
+`Doc` through scripted scenarios with the extrude tests' fixtures (the
+plate, the example and a hole, many bodies) and the regeneration answered
+in the test (`deferred`/`answer`), builds `doc.view(..)` in a
+`UserInterface` on iced's headless **wgpu** renderer (tiny-skia would
+leave the viewport blank: only `iced_wgpu` prepares and renders shader
+primitives) and takes `Headless::screenshot` at the window's physical
+size and scale factor, which reaches the viewport's primitive as on
+screen. Hover and tooltips come from a `CursorMoved` and a later
+`RedrawRequested` sent through `ui.update`, never from poking state; the
+camera is set through `Look` messages (Home, orbit, zoom: Home shows only
+about 7.5 mm, so shots zoom out to frame the 60 mm plate). Each shot draws
+twice: the first frame, cleared to magenta, lays out the scene's caches
+and the anchored knobs and checks that less than 2 % of the window is left
+undrawn (the translucent 1 px separators show the clear colour; a viewport
+that didn't draw would be most of it); the second is cleared to the
+theme's background, as the app clears its window, and written out.
+
+The tests are `#[ignore]`d, and write nothing unless `VARDE_SHOTS` names a
+directory; with no adapter they print "no GPU adapter, skipping". Each
+makes its own wgpu instance, under a lock, so run them one at a time:
+
+```sh
+VARDE_SHOTS=$PWD/target/shots cargo test -p varde-app shots_ -- --ignored --test-threads=1
+```
+
+Scenarios (`shots_01` .. `shots_11`, each at 1280×800, scale 1, light,
+the busiest also at scale 2 and dark): `E` with every candidate's regions
+(and one hovered); a region picked before and after its answer; flip,
+symmetric, two sides, a refused distance and a draft the document
+refuses; a cut, through all, with its Bodies list, a row hovered, a body
+taken out; join and intersect, also from below the plate, and the
+"Through all" tip; 20 and 30 bodies, scrolled, also at 1024×600; the
+panel in a small window with errors; editing an extrude whose region is
+gone; the Timeline with each extent and a failed row's tip; the delete
+prompt, long and short; the file menu and its tolerances. Shots are for
+looking (pixels differ by GPU and driver), never compared and never
+committed: a fault a shot finds gets an ordinary headless test of the
+state or layout behind it.

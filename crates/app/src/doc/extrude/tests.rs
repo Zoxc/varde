@@ -2591,3 +2591,7 @@ fn dragging_the_panel_s_scrollbar_over_the_scene_only_scrolls() {
     let after = body_1(&mut ui, &renderer);
     assert!(after.y < before.y - 100.0, "{before:?} {after:?}");
 }
+
+/// Screenshots of the extrude session and the screens around it, to look
+/// at: `#[ignore]`d, and written only where `VARDE_SHOTS` says.
+mod shots;
