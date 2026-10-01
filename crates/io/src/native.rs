@@ -1,8 +1,10 @@
 //! The native build's side: the lane's thread (`thread`), what it does
 //! with each request (`files`), the lock files (`sidecar`), the store of
 //! new designs and the recent files list at their paths (`store`,
-//! `recent`), and the platform's file dialogs (`pick`).
+//! `recent`), exported files (`export`), and the platform's file dialogs
+//! (`pick`).
 
+mod export;
 pub(crate) mod files;
 pub(crate) mod pick;
 mod recent;

@@ -422,6 +422,21 @@ that a newer one overwrites, so a burst of edits costs one run after the
 current one, and one older than a request already sent is dropped.
 Closing the document ends the subscription and with it the thread.
 
+Exports are the one other request (`Request::Export`, tagged by the
+app, of the committed document as it was when asked): the lane welds the
+visible bodies into `ManifoldMesh`es (`regen::export`, see "Exporting
+3MF" in `agents/files.md`) from the same cache and answers with
+`Response::Exported`. They aren't latest-wins: each waits in an ordered
+queue of its own beside the regeneration slot (`regen::newest::Newest`,
+on both lanes), goes ahead of the regeneration waiting, and is never
+replaced or dropped by one, so an edit right after Export 3MF… still
+gets its export answered. An export doesn't begin a cache request of its
+own (that would let go of the meshes the regeneration before used and it
+doesn't). Its answer has no generation, so `MeshFeed::apply` ignores it
+and the document takes it (`Doc::export_welded`). The feed keeps the
+bodies that have a solid in the model shown, for the File menu's Export
+3MF… to go only while one is shown and regenerating hasn't failed.
+
 On the web the lane is a Web Worker with the same API. It shares no memory
 with the page, so a request is the generation, the postcard-encoded
 document (the encoding `.vrdp` records use) and the sketch to leave out, and
@@ -440,7 +455,9 @@ indices and edges within the vertex count, positions and points within
 their bound, line ends splitting the points into polylines of two or more,
 bodies' boxes finite and in order, the picking tables checked by
 `Picking::from_parts` against the mesh and naming only bodies the head
-lists; see `regen::wire`). The worker keeps
+lists; see `regen::wire`). An export's answer is a head and one part,
+the bodies' postcard, copied within 1 GiB and decoded with every
+`ManifoldMesh` checked again. The worker keeps
 its cache between requests, as the thread does. The worker can't see new messages while it works, so
 the page keeps latest-wins itself: one request is with the worker at a
 time, and newer ones replace each other until it answers. A job that has

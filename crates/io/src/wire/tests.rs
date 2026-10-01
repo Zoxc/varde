@@ -25,6 +25,18 @@ fn hidden() -> Document {
     editor.document().clone()
 }
 
+/// A tetrahedron, outward.
+fn tetrahedron() -> varde_kernel::ManifoldMesh {
+    let positions = vec![
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0],
+    ];
+    let triangles = vec![[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]];
+    varde_kernel::ManifoldMesh::new(positions, triangles).unwrap()
+}
+
 /// Every request, one of each kind.
 fn requests() -> Vec<Request> {
     let document = Arc::new(Document::example());
@@ -114,6 +126,18 @@ fn requests() -> Vec<Request> {
             entries: vec![RecentFile {
                 path: PathBuf::from("/a.vrdp"),
                 opened: crate::UnixSeconds(-12),
+            }],
+        },
+        Request::Export {
+            to: SaveTo::Picked(Picked {
+                id: 21,
+                name: "bracket.3mf".to_owned(),
+                from: PickedFrom::Handle,
+            }),
+            title: "Bracket".to_owned(),
+            bodies: vec![crate::three_mf::Body {
+                name: "Body 1".to_owned(),
+                mesh: tetrahedron(),
             }],
         },
         Request::Flush,
@@ -244,6 +268,18 @@ fn responses() -> Vec<Response> {
         Response::RecoveredDiscarded {
             path: PathBuf::from("designs/a.vrdp"),
             result: Err("in use".to_owned()),
+        },
+        Response::Exported {
+            to: Chosen::File(Picked {
+                id: 21,
+                name: "bracket.3mf".to_owned(),
+                from: PickedFrom::Handle,
+            }),
+            result: Err("couldn't write bracket.3mf".to_owned()),
+        },
+        Response::Exported {
+            to: Chosen::Path(PathBuf::from("/a.3mf")),
+            result: Ok(()),
         },
         Response::Flushed,
     ]
@@ -566,4 +602,33 @@ fn a_response_too_large_fails_its_request() {
     assert_eq!(id, OpenId(1));
     assert_eq!(path, Some(PathBuf::from("designs/a.vrdp")));
     assert_eq!(result.unwrap_err(), Error::TooLarge(len).to_string());
+}
+
+#[test]
+fn an_export_whose_mesh_is_not_a_manifold_is_refused() {
+    let request = |mesh| Request::Export {
+        to: SaveTo::Path {
+            path: PathBuf::from("a.3mf"),
+            overwrite: false,
+        },
+        title: "A".to_owned(),
+        bodies: vec![crate::three_mf::Body {
+            name: "Body 1".to_owned(),
+            mesh,
+        }],
+    };
+    let whole = encode(
+        &ToWorker {
+            seq: 0,
+            request: request(tetrahedron()),
+        },
+        MAX_MESSAGE_BYTES,
+    )
+    .unwrap();
+    assert!(decode::<ToWorker>(&whole).is_ok());
+    // The last triangle turned over: as many bytes, no longer a manifold.
+    let last = whole.len() - 2;
+    let mut turned = whole.clone();
+    turned.swap(last - 1, last);
+    assert!(decode::<ToWorker>(&turned).is_err());
 }

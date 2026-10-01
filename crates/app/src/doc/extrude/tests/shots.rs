@@ -821,7 +821,7 @@ fn shots_13_status_bar() {
         for request in requests.take() {
             doc.computed(varde_regen::Response::Failed {
                 draft: None,
-                generation: request.generation(),
+                generation: request.generation().unwrap(),
                 exclude: request.exclude(),
                 error: "the kernel ran out of room splitting the faces of a body with \
                         very many curved faces; try a coarser tolerance"

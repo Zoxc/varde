@@ -206,6 +206,10 @@ fn picked(request: &Request) -> Option<&Picked> {
         | Request::SaveAs {
             to: SaveTo::Picked(picked),
             ..
+        }
+        | Request::Export {
+            to: SaveTo::Picked(picked),
+            ..
         } => Some(picked),
         _ => None,
     }

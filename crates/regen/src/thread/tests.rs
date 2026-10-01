@@ -111,7 +111,11 @@ fn thread_ends_when_idle_and_dropped() {
 
 /// Tessellates, except that generation 1 panics.
 fn panics_on_generation_1(request: Request) -> Response {
-    assert_ne!(u64::from(request.generation()), 1, "the kernel failed");
+    assert_ne!(
+        request.generation().map(u64::from),
+        Some(1),
+        "the kernel failed"
+    );
     handle(request)
 }
 
@@ -138,4 +142,45 @@ fn lane_keeps_going_after_a_job_panics() {
     };
     assert_eq!(u64::from(generation), 2);
     assert_eq!(sketches.ends().len(), 2);
+}
+
+/// Answers like the lane, slowly, so requests sent meanwhile wait.
+fn slowly(request: Request) -> Response {
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    handle(request)
+}
+
+#[test]
+fn an_export_is_answered_though_regenerations_follow_it() {
+    let (mut editor, feature) = with_sketch();
+    let (mut lane, mut responses) = spawn_on(slowly);
+    // One running, then an export and a burst of edits waiting behind it:
+    // the edits replace each other, never the export.
+    lane.send(regenerate(&editor));
+    lane.send(Request::Export {
+        export: 1,
+        document: editor.snapshot(),
+    });
+    for _ in 0..5 {
+        add_line(&mut editor, feature);
+        lane.send(regenerate(&editor));
+    }
+    let mut exported = false;
+    loop {
+        match next(&mut responses) {
+            Response::Exported { export, result } => {
+                assert_eq!(export, 1);
+                // Nothing visible to weld in a sketch.
+                assert_eq!(result, Ok(Vec::new()));
+                assert!(!exported, "answered twice");
+                exported = true;
+            }
+            Response::Regenerated { generation, .. } if generation == editor.generation() => {
+                break;
+            }
+            Response::Regenerated { .. } => {}
+            Response::Failed { error, .. } => panic!("{error}"),
+        }
+    }
+    assert!(exported);
 }

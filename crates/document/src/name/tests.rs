@@ -47,3 +47,27 @@ fn with_extension_adds_vrdp_unless_there() {
         (PathBuf::from("/d/.vrdp.vrdp"), false)
     );
 }
+
+#[test]
+fn an_export_is_named_with_its_own_extension() {
+    assert_eq!(download_name_with("bracket", "3mf"), "bracket.3mf");
+    assert_eq!(download_name_with("bracket.3MF", "3mf"), "bracket.3MF");
+    assert_eq!(
+        download_name_with("bracket.vrdp", "3mf"),
+        "bracket.vrdp.3mf"
+    );
+    assert_eq!(download_name_with("a/b", "3mf"), "a_b.3mf");
+    assert_eq!(download_name_with("", "3mf"), "Untitled.3mf");
+    assert_eq!(
+        with_extension_of("/d/a".into(), "3mf"),
+        (PathBuf::from("/d/a.3mf"), false)
+    );
+    assert_eq!(
+        with_extension_of("/d/a.3mf".into(), "3mf"),
+        (PathBuf::from("/d/a.3mf"), true)
+    );
+    assert_eq!(
+        with_extension_of("/d/a.vrdp".into(), "3mf"),
+        (PathBuf::from("/d/a.vrdp.3mf"), false)
+    );
+}

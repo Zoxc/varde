@@ -56,8 +56,9 @@ fn face() -> PickFace {
 const NO_PARTS: &[&[u8]] = &[];
 
 fn round_trip(response: &Response) -> Response {
-    let (head, mesh) = encode_reply(response);
-    decode_reply(&head[..], mesh.as_ref().map_or(&[][..], |mesh| &mesh[..])).unwrap()
+    let (head, parts) = encode_reply(response);
+    let parts: Vec<&[u8]> = parts.iter().map(|part| &**part).collect();
+    decode_reply(&head[..], &parts).unwrap()
 }
 
 #[test]
@@ -69,7 +70,10 @@ fn request_round_trips() {
         document,
         exclude,
         draft,
-    } = decode_request(&bytes).unwrap();
+    } = decode_request(&bytes).unwrap()
+    else {
+        panic!("not a regeneration");
+    };
     assert_eq!(generation, editor.generation());
     assert_eq!(*document, *editor.document());
     assert_eq!(exclude, None);
@@ -95,7 +99,9 @@ fn request_with_a_draft_round_trips() {
     };
     let decoded = decode_request(&encode_request(&request)).unwrap();
     assert_eq!(decoded.draft(), Some(7));
-    let Request::Regenerate { draft: back, .. } = decoded;
+    let Request::Regenerate { draft: back, .. } = decoded else {
+        panic!("not a regeneration");
+    };
     assert_eq!(back, Some(draft));
 
     // The answer says which draft it had.
@@ -143,7 +149,10 @@ fn request_leaving_out_a_sketch_round_trips() {
     };
     let Request::Regenerate {
         document, exclude, ..
-    } = decode_request(&encode_request(&request)).unwrap();
+    } = decode_request(&encode_request(&request)).unwrap()
+    else {
+        panic!("not a regeneration");
+    };
     assert_eq!(*document, *editor.document());
     assert_eq!(exclude, Some(feature));
 
@@ -344,7 +353,7 @@ fn failed_round_trips() {
         draft: Some(2),
         error: "the kernel gave up".to_owned(),
     };
-    assert!(encode_reply(&response).1.is_none());
+    assert!(encode_reply(&response).1.is_empty());
     let Response::Failed {
         generation,
         exclude,
@@ -506,8 +515,9 @@ fn triangle() -> Vec<Vec<u8>> {
         merged: Vec::new(),
         bodies: Vec::new(),
     };
-    let (_, mesh) = encode_reply(&response);
-    mesh.unwrap().map(<[u8]>::to_vec).to_vec()
+    let (_, parts) = encode_reply(&response);
+    assert_eq!(parts.len(), MODEL_PARTS);
+    parts.into_iter().map(Cow::into_owned).collect()
 }
 
 fn slices(parts: &[Vec<u8>]) -> Vec<&[u8]> {
@@ -856,7 +866,7 @@ fn huge_lengths_are_refused_without_allocating_them() {
 fn refused(head: &Head, parts: &[Vec<u8>]) -> String {
     match decode_reply(&head.encode()[..], &slices(parts)).unwrap() {
         Response::Failed { error, .. } => error,
-        Response::Regenerated { .. } => panic!("a hostile reply was taken"),
+        Response::Regenerated { .. } | Response::Exported { .. } => panic!("a hostile reply was taken"),
     }
 }
 
@@ -1123,7 +1133,7 @@ fn two_plates() -> (Vec<u8>, Vec<Vec<u8>>) {
     crate::history::tests::plate_below(&mut editor);
     let response = handle(decode_request(&encode_request(&regenerate(&editor))).unwrap());
     let (head, parts) = encode_reply(&response);
-    let parts = parts.unwrap().map(<[u8]>::to_vec).to_vec();
+    let parts: Vec<Vec<u8>> = parts.iter().map(|part| part.to_vec()).collect();
     // It round-trips as it is.
     let Response::Regenerated { picking, .. } = decode_reply(&head[..], &slices(&parts)).unwrap()
     else {
@@ -1168,7 +1178,7 @@ fn cut_short_picking_parts_are_refused() {
             short[part].truncate(len);
             match decode_reply(&head[..], &slices(&short)).unwrap() {
                 Response::Failed { .. } => {}
-                Response::Regenerated { .. } => panic!("part {part} cut by {cut} was taken"),
+                Response::Regenerated { .. } | Response::Exported { .. } => panic!("part {part} cut by {cut} was taken"),
             }
         }
         // Or with more in it.
@@ -1314,6 +1324,96 @@ fn a_model_with_too_many_faces_is_answered_as_failed() {
     ));
     match round_trip(&response(MAX_FACES + 1)) {
         Response::Failed { generation, .. } => assert_eq!(generation, 4.into()),
-        Response::Regenerated { .. } => panic!("too many faces were sent"),
+        Response::Regenerated { .. } | Response::Exported { .. } => panic!("too many faces were sent"),
     }
+}
+
+#[test]
+fn an_export_round_trips_with_its_meshes_checked() {
+    let editor = Editor::new(Document::example());
+    let request = Request::Export {
+        export: 3,
+        document: editor.snapshot(),
+    };
+    let decoded = decode_request(&encode_request(&request)).unwrap();
+    assert!(
+        matches!(&decoded, Request::Export { export: 3, document } if **document == *editor.document())
+    );
+    let response = handle(decoded);
+    let Response::Exported {
+        result: Ok(bodies), ..
+    } = &response
+    else {
+        panic!("the plate wasn't exported: {response:?}");
+    };
+    let (head, parts) = encode_reply(&response);
+    assert_eq!(parts.len(), 1);
+    let back = round_trip(&response);
+    assert!(matches!(&back, Response::Exported { export: 3, result: Ok(back) } if back == bodies));
+
+    // An error crosses with no parts.
+    let failed = Response::Exported {
+        export: 4,
+        result: Err("Body 1 can't be exported: it's too large".to_owned()),
+    };
+    assert!(encode_reply(&failed).1.is_empty());
+    assert!(matches!(
+        round_trip(&failed),
+        Response::Exported { export: 4, result: Err(error) } if error.starts_with("Body 1")
+    ));
+
+    // Bodies whose mesh isn't a manifold, or missing, or cut short, or
+    // with bytes after them, answer the export with an error.
+    let mut bodies = bodies.clone();
+    let mesh = &bodies[0].mesh;
+    let mut triangles = mesh.triangles().to_vec();
+    triangles.swap_remove(0);
+    #[derive(serde::Serialize)]
+    struct Unchecked<'a> {
+        positions: &'a [[f64; 3]],
+        triangles: &'a [[u32; 3]],
+    }
+    #[derive(serde::Serialize)]
+    struct Body<'a> {
+        body: varde_document::BodyId,
+        name: &'a str,
+        mesh: Unchecked<'a>,
+    }
+    let open = postcard::to_stdvec(&[Body {
+        body: bodies[0].body,
+        name: &bodies[0].name,
+        mesh: Unchecked {
+            positions: mesh.positions(),
+            triangles: &triangles,
+        },
+    }])
+    .unwrap();
+    let whole = postcard::to_stdvec(&bodies).unwrap();
+    let mut longer = whole.clone();
+    longer.push(0);
+    for parts in [
+        vec![&open[..]],
+        vec![],
+        vec![&whole[..whole.len() - 1]],
+        vec![&longer[..]],
+        vec![&whole[..], &whole[..]],
+    ] {
+        let reply = decode_reply(&head[..], &parts).unwrap();
+        assert!(
+            matches!(
+                reply,
+                Response::Exported {
+                    export: 3,
+                    result: Err(_)
+                }
+            ),
+            "{reply:?}"
+        );
+    }
+    bodies.clear();
+    assert!(
+        decode_export(&[&postcard::to_stdvec(&bodies).unwrap()[..]])
+            .unwrap()
+            .is_empty()
+    );
 }

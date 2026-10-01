@@ -55,6 +55,8 @@ pub(crate) enum Message {
 pub(crate) enum ForDoc {
     /// The Save As dialog closed, with the chosen file if there is one.
     SaveAsPicked(Option<Chosen>),
+    /// The Export dialog closed, with the chosen file if there is one.
+    ExportPicked(Option<Chosen>),
     /// On the web: whether the browser lets the document be saved to its
     /// file, asked as the user saves.
     Writable(Result<(), String>),

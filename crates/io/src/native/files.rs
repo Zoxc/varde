@@ -335,7 +335,22 @@ impl Files {
             | Request::SaveAs {
                 to: SaveTo::Picked(_),
                 ..
+            }
+            | Request::Export {
+                to: SaveTo::Picked(_),
+                ..
             } => request.failed("only the web build picks files this way".to_owned()),
+            Request::Export {
+                to: SaveTo::Path { path, overwrite },
+                title,
+                bodies,
+            } => {
+                let path = absolute(path);
+                Response::Exported {
+                    result: super::export::export(&path, overwrite, &title, &bodies),
+                    to: Chosen::Path(path),
+                }
+            }
             Request::Flush => Response::Flushed,
         }
     }
@@ -620,7 +635,7 @@ fn write(
 }
 
 /// The file name of `path`, for messages.
-fn display_name(path: &Path) -> String {
+pub(super) fn display_name(path: &Path) -> String {
     path.file_name()
         .unwrap_or(path.as_os_str())
         .to_string_lossy()
@@ -636,7 +651,7 @@ fn absolute(path: PathBuf) -> PathBuf {
 /// Where the design at `path` really is: through symbolic links, including
 /// ones to its directory, should it not exist yet. Its lock sits next to
 /// it, so every path to a design shares one lock.
-fn resolved(path: &Path) -> PathBuf {
+pub(super) fn resolved(path: &Path) -> PathBuf {
     std::fs::canonicalize(path)
         .ok()
         .or_else(|| {

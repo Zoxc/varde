@@ -3,6 +3,7 @@
 
 mod camera;
 mod delete;
+mod export;
 mod extrude;
 mod feed;
 mod rail;
@@ -32,6 +33,9 @@ use camera::Pivot;
 #[cfg(test)]
 pub(crate) use camera::{PIVOT_FADE, PIVOT_SHOWN};
 use delete::Deleting;
+use export::Export;
+#[cfg(test)]
+pub(crate) use export::Exporting;
 pub(crate) use extrude::ExtrudeSession;
 use feed::MeshFeed;
 use rail::Rail;
@@ -115,6 +119,8 @@ pub(crate) struct Doc {
     pub(crate) rail: Rail,
     /// Saving and leaving it, see [`Persist`].
     persist: Persist,
+    /// Exporting its bodies, see [`Doc::request_export`].
+    export: Export,
 }
 
 /// Tells open documents apart, so work done for a closed document is never
@@ -219,6 +225,7 @@ impl Doc {
             pivot: None,
             cube_hovered: false,
             rail: Rail::default(),
+            export: Export::default(),
         };
         doc.sync();
         doc
@@ -313,6 +320,7 @@ impl Doc {
         match message {
             Edit::ToggleFileMenu => self.file_menu = !self.file_menu,
             Edit::DismissSaveError => self.dismiss_save_error(),
+            Edit::DismissExportError => self.dismiss_export_error(),
             Edit::DismissRefusedEdit => self.refused_edit = None,
             Edit::RemoveBody(id) => self.remove(Removable::Body(id)),
             Edit::ToggleVisible(id) => self.change(Change::ToggleVisible(id)),
@@ -604,7 +612,8 @@ impl Doc {
         self.sync();
     }
 
-    /// Shows `response`, computed for the document.
+    /// Shows `response`, computed for the document. An export's answer
+    /// goes to [`Doc::export_welded`] instead.
     pub(crate) fn computed(&mut self, response: varde_regen::Response) {
         self.feed.apply(response);
     }
@@ -671,8 +680,16 @@ impl Doc {
                 self.lane_ready(lane);
                 Next::Stay
             }
+            ForDoc::Computed(varde_regen::Response::Exported { export, result }) => {
+                self.export_welded(cx, export, result);
+                Next::Stay
+            }
             ForDoc::Computed(response) => {
                 self.computed(response);
+                Next::Stay
+            }
+            ForDoc::ExportPicked(chosen) => {
+                self.export_picked(chosen);
                 Next::Stay
             }
             // Proposals whose sketch went while the lane started are
@@ -710,6 +727,9 @@ impl Doc {
             recovered: self.recovered().map(|offer| varde_view::RecoveredChanges {
                 design_changed: offer.design_changed,
             }),
+            exportable: self.exportable(),
+            exporting: self.exporting(),
+            export_error: self.export_error(),
             // The prompt shows over the menus.
             overlay: self
                 .prompt()

@@ -36,6 +36,11 @@ pub(crate) struct MeshFeed {
     /// Each body a join merged into another, and the body holding it, of
     /// the same generation as `mesh`, in the document's order.
     merged_bodies: Vec<(BodyId, BodyId)>,
+    /// The bodies that have a solid, shown or not, of the same generation
+    /// as `mesh`, in the order they were made.
+    solid_bodies: Vec<BodyId>,
+    /// Tags the next [`Request::Export`].
+    next_export: u64,
     /// The generation the document was last replaced whole by, if it was,
     /// see [`MeshFeed::replaced`]: the ids in `unsolved`,
     /// `failed_features`, `touched_features` and `merged_bodies` of an
@@ -80,13 +85,13 @@ struct Asked {
 }
 
 impl Asked {
-    /// What `response` answers.
-    fn of(response: &Response) -> Self {
-        Self {
-            generation: response.generation(),
+    /// What `response` answers, if it's a model's: `None` for an export's.
+    fn of(response: &Response) -> Option<Self> {
+        Some(Self {
+            generation: response.generation()?,
             exclude: response.exclude(),
             draft: response.draft(),
-        }
+        })
     }
 }
 
@@ -167,14 +172,34 @@ impl MeshFeed {
         }
     }
 
+    /// Asks the lane to weld the visible bodies of the editor's committed
+    /// document for export, returning the tag its
+    /// [`Response::Exported`] will carry: `None` before the lane has
+    /// started. Answered even if regenerations follow: the lane queues
+    /// exports rather than replacing them.
+    pub(crate) fn request_export(&mut self, editor: &Editor) -> Option<u64> {
+        let regen = self.regen.as_mut()?;
+        let export = self.next_export;
+        // One per click: a u64 won't run out.
+        self.next_export += 1;
+        regen.send(Request::Export {
+            export,
+            document: editor.snapshot(),
+        });
+        Some(export)
+    }
+
     /// Shows the model in `response`, or its error next to the last one,
     /// unless a response as new was applied already. Responses arriving out
-    /// of order or superseded are dropped.
+    /// of order or superseded are dropped, and so are exports' answers,
+    /// which are the document's to take (see `Doc::computed`).
     pub(crate) fn apply(&mut self, response: Response) {
-        if !self.wanted(&response) {
+        let Some(asked) = Asked::of(&response) else {
+            return;
+        };
+        if !self.wanted(asked) {
             return;
         }
-        let asked = Asked::of(&response);
         match response {
             Response::Regenerated {
                 mesh,
@@ -184,9 +209,11 @@ impl MeshFeed {
                 touched,
                 merged,
                 draft,
+                bodies,
                 ..
             } => {
                 self.mesh = mesh;
+                self.solid_bodies = bodies.into_iter().map(|(body, _)| body).collect();
                 self.sketches = sketches;
                 self.unsolved = unsolved;
                 self.failed_features = failed;
@@ -209,6 +236,7 @@ impl MeshFeed {
                 self.failed = None;
             }
             Response::Failed { error, .. } => self.failed = Some((asked, error)),
+            Response::Exported { .. } => {}
         }
     }
 
@@ -218,11 +246,10 @@ impl MeshFeed {
     /// failure. Once a request failed, nothing more of it is taken, but a
     /// request of the same generation leaving out another sketch, entering
     /// or leaving one, is answered as usual.
-    fn wanted(&self, response: &Response) -> bool {
+    fn wanted(&self, asked: Asked) -> bool {
         let Some(answered) = self.answered() else {
             return true;
         };
-        let asked = Asked::of(response);
         if asked.generation != answered {
             return asked.generation > answered;
         }
@@ -309,6 +336,12 @@ impl MeshFeed {
             Some((.., error)) => MeshStatus::Failed(error),
             None => MeshStatus::Current,
         }
+    }
+
+    /// Whether the model shown has a solid for a body `document` shows:
+    /// one of the bodies an export would write, if the model is current.
+    pub(crate) fn shows_a_body(&self, document: &Document) -> bool {
+        (self.solid_bodies.iter()).any(|&body| document.body(body).is_some_and(|body| body.visible))
     }
 
     /// The generation of the mesh shown, if there is one yet.

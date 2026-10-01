@@ -8,8 +8,8 @@
 //! reach the worker is [`varde_lane::page`]'s.
 //!
 //! Latest wins through a [`mailbox`] holding a [`Newest`]: one request is
-//! with the worker at a time and newer ones replace each other on the page
-//! until it answers. A job that has started runs to the end, since the
+//! with the worker at a time and newer regenerations replace each other on
+//! the page until it answers; exports wait in order, never replaced. A job that has started runs to the end, since the
 //! worker can't see messages meanwhile. The worker keeps its
 //! [`Regenerator`]'s cache from one request to the next, as the native
 //! thread does.
@@ -61,12 +61,7 @@ impl Wire for Regenerate {
     }
 
     fn failed(&self, request: &Request, error: String) -> Response {
-        Response::Failed {
-            generation: request.generation(),
-            exclude: request.exclude(),
-            draft: request.draft(),
-            error,
-        }
+        request.failure()(error)
     }
 }
 
@@ -81,9 +76,9 @@ pub fn serve() {
         let bytes = bytes::copy(part, wire::MAX_REQUEST_BYTES)?;
         let request = wire::decode_request(&bytes)?;
         let response = regenerator.handle(request);
-        let (head, model) = wire::encode_reply(&response);
+        let (head, body) = wire::encode_reply(&response);
         let mut parts = vec![&head[..]];
-        parts.extend(model.into_iter().flatten());
+        parts.extend(body.iter().map(|part| &**part));
         worker::post(&parts);
         Ok(())
     });

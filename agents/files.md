@@ -143,8 +143,31 @@ its own name and renamed over the list, so two instances writing at once
 don't mix, and an entry of it that doesn't parse loses only itself.
 
 **Exporting 3MF.** The visible bodies are written as a 3MF package, for
-printing. Built so far (the lane request, the pickers and the File menu
-item are to come): `varde_regen::export` welds each visible body's solid,
+printing, from the File menu's Export 3MF… (under Save As; no key and no
+tool on the rail). It goes while the model shown has a body the document
+shows and regenerating hasn't failed, one export at a time, read-only
+designs too. Like Save As it asks where first: the platform's save dialog
+(`io::pick::pick_export`, a "3MF model" filter, suggesting `name.3mf`
+from the design's name; `.3mf` is added to a path without it, and a file
+there is replaced only if the dialog asked about the name as typed).
+Backing out does nothing. Then the app asks the document's regeneration
+lane to weld the committed document's visible bodies (`Request::Export`,
+which a later regeneration never replaces, see `agents/viewport.md`), and
+hands the bodies to the IO lane (`Request::Export`, never replaced
+either), which writes the package: natively a new file, or one written
+next to the file it replaces and renamed over it, with that file's
+permissions, through a symbolic link to its target, as a design's Save
+As does. The status bar says "Exporting…" until the IO lane answers.
+Errors (a body that doesn't weld, by name; nothing visible left to
+write; the file there; the write failing) show in a "Couldn't export"
+banner until dismissed or another export starts, the message after the
+dash in lower case as the save banner's are. An export closed or quit
+before the bodies are welded is dropped: closing doesn't wait for it,
+and bodies welded while quitting aren't sent, since they'd come after
+the flush the window closes on; one already with the IO lane is written
+before the app exits. On the web, see `web-files.md`.
+
+`varde_regen::export` welds each visible body's solid,
 in the order the history made them, into a `varde_kernel::ManifoldMesh` at
 the document's tolerance (see "Solids and tessellation" in
 `agents/kernel.md`), failing with the first body that doesn't give one, by

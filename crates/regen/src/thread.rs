@@ -1,9 +1,10 @@
 //! A lane natively: a thread that handles one document's requests one at a
 //! time.
 //!
-//! Requests go into a single slot, so a newer one replaces one still
+//! Regenerations go into a single slot, so a newer one replaces one still
 //! pending instead of queueing behind it: a burst of edits costs one run
-//! after the current one. Responses come back on a [`Responses`] stream,
+//! after the current one. Exports queue in order and are never replaced
+//! (see `src/newest.rs`). Responses come back on a [`Responses`] stream,
 //! for an iced `Subscription::run` to yield as messages. The sending side
 //! never waits for work, see [`varde_lane::thread`]. The thread ends once
 //! its [`Responses`] is dropped, which is when the subscription owning it
@@ -34,16 +35,7 @@ fn spawn_on(handle: impl FnMut(Request) -> Response + Send + 'static) -> (Lane, 
         Newest::default(),
         OnClose::Stop,
         handle,
-        |request: &Request| {
-            let (generation, exclude) = (request.generation(), request.exclude());
-            let draft = request.draft();
-            move |error| Response::Failed {
-                generation,
-                exclude,
-                draft,
-                error,
-            }
-        },
+        Request::failure,
     )
 }
 

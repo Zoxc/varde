@@ -119,6 +119,7 @@ impl Request {
             | Request::ListRecovered
             | Request::OpenRecovered { .. }
             | Request::DiscardRecovered { .. }
+            | Request::Export { .. }
             | Request::Flush => None,
         }
     }

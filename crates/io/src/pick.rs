@@ -43,6 +43,10 @@
 //! say with the site's data blocked, the file still opens and saves, only
 //! without auto-saves.
 //!
+//! Exporting a 3MF file goes the same way, through [`pick_export`]: a
+//! save picker suggesting `name.3mf`, natively or with the File System
+//! Access API, and otherwise a download of `name.3mf`.
+//!
 //! On the web the pickers and downloads are the page's, see
 //! `src/web/page/pick.rs`, and reading and writing what they handed over
 //! is the IO worker's, see `src/web/worker/disk.rs`. How a design's file
@@ -51,9 +55,9 @@
 use varde_document::APP_NAME;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use crate::native::pick::{downloader, pick_open, pick_save, writable};
+pub use crate::native::pick::{downloader, pick_export, pick_open, pick_save, writable};
 #[cfg(target_arch = "wasm32")]
-pub use crate::web::page::pick::{downloader, pick_open, pick_save, writable};
+pub use crate::web::page::pick::{downloader, pick_export, pick_open, pick_save, writable};
 
 /// Hands a design over as a download, by its file name and bytes: how
 /// saving goes where the design can't be written back to a file, see
@@ -63,4 +67,9 @@ pub type Download = fn(&str, &[u8]) -> Result<(), String>;
 /// What the file pickers call a design.
 pub(crate) fn filter() -> String {
     format!("{APP_NAME} design")
+}
+
+/// What the export picker calls a 3MF file.
+pub(crate) fn export_filter() -> String {
+    "3MF model".to_owned()
 }

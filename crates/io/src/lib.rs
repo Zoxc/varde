@@ -236,6 +236,17 @@ pub enum Request {
     /// Replaces the stored recent files list. Replaces a `WriteRecent`
     /// still waiting in the queue, unless a `LoadRecent` is queued after it.
     WriteRecent { entries: Vec<RecentFile> },
+    /// Writes `bodies` as a 3MF package titled `title`, the design's
+    /// name, where `to` says (see [`three_mf`]), answered with
+    /// [`Response::Exported`]: natively a new file at a path, replacing
+    /// one there only if `overwrite`, written next to it and renamed over
+    /// it; on the web the file the user picked in the save picker. Never
+    /// replaced, and nothing to do with the open designs' files.
+    Export {
+        to: SaveTo,
+        title: String,
+        bodies: Vec<three_mf::Body>,
+    },
     /// Does nothing, answered once everything sent before it is done, e.g.
     /// before quitting.
     Flush,
@@ -315,6 +326,12 @@ pub enum Response {
         path: PathBuf,
         result: Result<(), String>,
     },
+    /// Answers [`Request::Export`] with where it wrote: a path is made
+    /// absolute.
+    Exported {
+        to: Chosen,
+        result: Result<(), String>,
+    },
     Flushed,
 }
 
@@ -380,6 +397,10 @@ impl Request {
                 path,
                 result: Err(error),
             },
+            Request::Export { to, .. } => Response::Exported {
+                to: to.into(),
+                result: Err(error),
+            },
             Request::Flush => Response::Flushed,
         }
     }
@@ -391,6 +412,12 @@ impl Request {
             // The answer has none of the list.
             Request::WriteRecent { .. } => Request::WriteRecent {
                 entries: Vec::new(),
+            },
+            // Nor of the bodies, which may be large.
+            Request::Export { to, title, .. } => Request::Export {
+                to: to.clone(),
+                title: title.clone(),
+                bodies: Vec::new(),
             },
             // Snapshots are shared, so this clone is cheap.
             request => request.clone(),

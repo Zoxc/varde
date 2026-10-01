@@ -106,6 +106,10 @@ pub enum File {
     Save,
     /// Asks where to save the document, then saves it there.
     SaveAs,
+    /// Asks where to export the visible bodies as a 3MF file, then writes
+    /// them there; on the web without the File System Access API,
+    /// downloads it.
+    Export,
     /// The answer to the prompt about unsaved changes.
     Unsaved(Unsaved),
     /// Applies the unsaved changes a crashed session left of the document.
@@ -120,6 +124,8 @@ pub enum File {
 pub enum Edit {
     /// Hides why the last save failed.
     DismissSaveError,
+    /// Hides why the last export failed.
+    DismissExportError,
     /// Hides the sketch edit the solver refused after its sketch was
     /// left.
     DismissRefusedEdit,

@@ -107,6 +107,9 @@ enum Next {
     /// Ask the user where to save document `id`, suggesting `name`,
     /// answered with [`ForDoc::SaveAsPicked`].
     PickSaveAs { id: DocId, name: String },
+    /// Ask the user where to export document `id`'s bodies, suggesting
+    /// `name`, answered with [`ForDoc::ExportPicked`].
+    PickExport { id: DocId, name: String },
     /// Ask the browser whether document `id` may be saved to the file the
     /// user `picked`, answered with [`ForDoc::Writable`].
     AskWritable { id: DocId, picked: Picked },
@@ -259,6 +262,7 @@ impl Varde {
             File::CloseDocument => return self.leave(Leave::Close),
             File::Save => return self.step(|doc, cx| doc.request_save(cx)),
             File::SaveAs => return self.step(|doc, cx| doc.request_save_as(cx)),
+            File::Export => return self.step(|doc, cx| doc.request_export(cx)),
             File::Unsaved(choice) => return self.step(|doc, cx| doc.answer_unsaved(cx, choice)),
             File::RestoreChanges => return self.step(|doc, cx| doc.restore_recovered(cx)),
             File::DiscardChanges => self.with_doc(|doc, files| doc.discard_recovered(files)),
@@ -311,6 +315,7 @@ impl Varde {
             Next::Stay => Task::none(),
             Next::PickOpen => pick_open(),
             Next::PickSaveAs { id, name } => pick_save_as(id, &name),
+            Next::PickExport { id, name } => pick_export(id, &name),
             Next::AskWritable { id, picked } => ask_writable(id, picked),
             Next::Show(doc) => {
                 self.screen = Screen::Document(doc);
@@ -385,6 +390,12 @@ impl Varde {
                 result,
                 ..
             } => return self.saved_as(to, revision, result),
+            IoResponse::Exported { result, .. } => match self.screen.doc_mut() {
+                Some(doc) => doc.export_written(result),
+                // Closed while it was written: the file is written or not
+                // all the same.
+                None => report_failure("export", result),
+            },
             IoResponse::Flushed => {
                 if let Some(window) = self.quitting {
                     return window::close(window);
@@ -550,7 +561,8 @@ fn doc_lane<L, S: Stream>(
 
 /// Whether `message` still acts while the window waits for the IO lane to
 /// flush: the lane's own and those that only change the view, none of which
-/// can send the lane more work, see `Varde::quit`.
+/// can send the lane more work, see `Varde::quit`. Not an export's welded
+/// bodies, which would be sent to be written.
 fn while_quitting(message: &Message) -> bool {
     matches!(
         message,
@@ -559,7 +571,10 @@ fn while_quitting(message: &Message) -> bool {
             | Message::Doc(
                 _,
                 ForDoc::RegenReady(_)
-                    | ForDoc::Computed(_)
+                    | ForDoc::Computed(
+                        varde_regen::Response::Regenerated { .. }
+                            | varde_regen::Response::Failed { .. }
+                    )
                     | ForDoc::SolveReady(_)
                     | ForDoc::Solved(_)
             )
@@ -678,6 +693,16 @@ fn pick_save_as(id: DocId, name: &str) -> Task<Message> {
     Task::perform(
         async move { varde_io::pick::pick_save(&name).await },
         move |chosen| Message::Doc(id, ForDoc::SaveAsPicked(chosen)),
+    )
+}
+
+/// Asks the user where to export the document `id`'s bodies, suggesting
+/// `name`, answering with [`ForDoc::ExportPicked`].
+fn pick_export(id: DocId, name: &str) -> Task<Message> {
+    let name = name.to_owned();
+    Task::perform(
+        async move { varde_io::pick::pick_export(&name).await },
+        move |chosen| Message::Doc(id, ForDoc::ExportPicked(chosen)),
     )
 }
 

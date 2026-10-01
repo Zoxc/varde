@@ -15,13 +15,40 @@
 
 use std::fmt::Write as _;
 
+use serde::{Deserialize, Serialize};
 use varde_kernel::ManifoldMesh;
+
+/// The extension of a 3MF file, without the dot.
+pub const EXTENSION: &str = "3mf";
 
 /// One body to write: its name and its mesh, in millimetres.
 #[derive(Debug, Clone, Copy)]
 pub struct Object<'a> {
     pub name: &'a str,
     pub mesh: &'a ManifoldMesh,
+}
+
+/// A body to write, owned, as [`Request::Export`](crate::Request::Export)
+/// carries it to the lane: its mesh is checked again as it's decoded.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Body {
+    pub name: String,
+    pub mesh: ManifoldMesh,
+}
+
+impl Body {
+    pub fn object(&self) -> Object<'_> {
+        Object {
+            name: &self.name,
+            mesh: &self.mesh,
+        }
+    }
+}
+
+/// [`write()`] of `bodies`.
+pub fn package(title: &str, bodies: &[Body]) -> Result<Vec<u8>, Error> {
+    let objects: Vec<Object<'_>> = bodies.iter().map(Body::object).collect();
+    write(title, &objects)
 }
 
 /// Why no package was written.

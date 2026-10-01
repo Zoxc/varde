@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::io;
 
 use js_sys::{Array, Object, Promise, Reflect, Uint8Array};
-use varde_document::name::download_name;
+use varde_document::name::{download_name, download_name_with};
 use varde_document::{APP_NAME, EXTENSION};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::{JsCast, JsValue};
@@ -17,7 +17,8 @@ use web_sys::{
     Blob, BlobPropertyBag, FileSystemFileHandle, HtmlAnchorElement, HtmlInputElement, Url, console,
 };
 
-use crate::pick::{Download, filter};
+use crate::pick::{Download, export_filter, filter};
+use crate::three_mf;
 use crate::web::js::{call, js_error};
 use crate::{Chosen, Picked, PickedFrom};
 
@@ -103,7 +104,8 @@ pub async fn pick_open() -> Option<Chosen> {
 }
 
 async fn pick_handle() -> Result<Option<Picked>, JsValue> {
-    let Some(handles) = shown(show_open_file_picker(&picker_options(None)?)?).await? else {
+    let options = picker_options(&filter(), EXTENSION, None)?;
+    let Some(handles) = shown(show_open_file_picker(&options)?).await? else {
         return Ok(None);
     };
     register_handle(Array::from(&handles).get(0)).map(Some)
@@ -135,14 +137,32 @@ async fn pick_input() -> Result<Option<Picked>, JsValue> {
 /// Access picker. `None` if they backed out, or it failed, which the
 /// console says.
 pub async fn pick_save(name: &str) -> Option<Chosen> {
-    let pick = async {
-        let options = picker_options(Some(&download_name(name)))?;
-        match shown(show_save_file_picker(&options)?).await? {
-            Some(handle) => register_handle(handle).map(Some),
-            None => Ok(None),
-        }
-    };
-    logged(pick.await, "Couldn't pick where to save:")
+    let options = picker_options(&filter(), EXTENSION, Some(&download_name(name)));
+    logged(
+        pick_save_handle(options).await,
+        "Couldn't pick where to save:",
+    )
+}
+
+/// Asks the user where to export the design `name` as a 3MF file in the
+/// File System Access picker, suggesting `name.3mf`. `None` if they backed
+/// out, or it failed, which the console says. Only called where there's
+/// the picker: elsewhere the export is downloaded, see [`downloader`].
+pub async fn pick_export(name: &str) -> Option<Chosen> {
+    let suggested = download_name_with(name, three_mf::EXTENSION);
+    let options = picker_options(&export_filter(), three_mf::EXTENSION, Some(&suggested));
+    logged(
+        pick_save_handle(options).await,
+        "Couldn't pick where to export:",
+    )
+}
+
+/// Shows the save picker with `options`, keeping the handle it hands over.
+async fn pick_save_handle(options: Result<Object, JsValue>) -> Result<Option<Picked>, JsValue> {
+    match shown(show_save_file_picker(&options?)?).await? {
+        Some(handle) => register_handle(handle).map(Some),
+        None => Ok(None),
+    }
 }
 
 /// What a picker handed over, a failure logged to the console after
@@ -156,16 +176,21 @@ fn logged(picked: Result<Option<Picked>, JsValue>, what: &str) -> Option<Chosen>
         .map(Chosen::File)
 }
 
-/// The pickers' options: `.vrdp` files, suggesting `name` to save as.
-fn picker_options(name: Option<&str>) -> Result<Object, JsValue> {
+/// The pickers' options: files called `description` with `extension`,
+/// suggesting `name` to save as.
+fn picker_options(
+    description: &str,
+    extension: &str,
+    name: Option<&str>,
+) -> Result<Object, JsValue> {
     let accept = Object::new();
     Reflect::set(
         &accept,
         &"application/octet-stream".into(),
-        &Array::of1(&format!(".{EXTENSION}").into()),
+        &Array::of1(&format!(".{extension}").into()),
     )?;
     let kind = Object::new();
-    Reflect::set(&kind, &"description".into(), &filter().into())?;
+    Reflect::set(&kind, &"description".into(), &description.into())?;
     Reflect::set(&kind, &"accept".into(), &accept)?;
     let options = Object::new();
     Reflect::set(&options, &"types".into(), &Array::of1(&kind))?;

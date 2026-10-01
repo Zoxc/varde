@@ -65,7 +65,9 @@ fn extrude(doc: &mut Doc, message: ExtrudeLook) {
 /// The draft the last request waiting carries, if any.
 fn last_draft(requests: &Requests) -> Option<varde_regen::Draft> {
     let requests = requests.borrow();
-    let Request::Regenerate { draft, .. } = requests.last()?;
+    let Request::Regenerate { draft, .. } = requests.last()? else {
+        return None;
+    };
     draft.clone()
 }
 

@@ -9,6 +9,8 @@
 //! reply   = postcard(Head) | positions | normals | indices | edges
 //!                           | line points | line ends
 //!                           | face per triangle | chain per edge
+//!         | postcard(Head) | postcard(Vec<ExportedBody>)
+//!         | postcard(Head)
 //! ```
 //!
 //! The document in a request is its [`Document::to_postcard`] bytes,
@@ -40,9 +42,16 @@
 //! request's draft isn't checked as it's decoded: applying it goes through
 //! the document's checks.
 //!
+//! An export's bodies follow a [`Head::Exported`] that went as one part,
+//! their postcard, copied only within [`MAX_EXPORT_BYTES`]; each
+//! [`ManifoldMesh`](varde_kernel::ManifoldMesh) is checked again as it's
+//! decoded, so the page only ever writes a checked manifold. Bodies that
+//! fail to decode answer the export with the error.
+//!
 //! [`Document::to_postcard`]: varde_document::Document::to_postcard
 //! [`codec`]: varde_document::codec
 
+use std::borrow::Cow;
 use std::fmt;
 use std::mem::size_of;
 use std::sync::Arc;
@@ -53,7 +62,9 @@ use varde_document::{BodyId, DecodeError, FeatureId, Generation, codec};
 use varde_kernel::{Aabb, LinesError, LinesPart, MeshError, MeshPart, RenderLines, RenderMesh};
 use varde_lane::bytes::Buffer;
 
-use crate::{Drafted, PickChain, PickFace, Picking, PickingError, Request, Response};
+use crate::{
+    Drafted, ExportedBody, PickChain, PickFace, Picking, PickingError, Request, Response,
+};
 
 /// The most bytes a reply's head may have. A head is a generation, a few
 /// feature ids, the failed features' messages, the bodies each join, cut
@@ -100,6 +111,11 @@ mod bounded {
         seq(d, MAX_CHAINS, |_| 0, 0)
     }
 }
+
+/// The most bytes an export's bodies may have, see the module docs: far
+/// more than a design meant for printing needs, and the bound keeps a
+/// broken reply from being copied without end.
+pub const MAX_EXPORT_BYTES: usize = 1 << 30;
 
 /// The most bytes a request may have. Documents are far smaller; the
 /// bound keeps a broken request from being copied without end.
@@ -160,6 +176,12 @@ pub enum Head {
         draft: Option<u64>,
         error: String,
     },
+    /// A [`Response::Exported`]: if `Ok`, followed by one part, the
+    /// bodies' postcard.
+    Exported {
+        export: u64,
+        result: Result<(), String>,
+    },
 }
 
 impl Head {
@@ -179,12 +201,13 @@ impl Head {
 pub const MODEL_PARTS: usize = 8;
 
 /// The reply answering `response`, the mirror of [`decode_reply`]: its
-/// encoded head, and its model's parts as bytes if it has one, see
-/// [`MODEL_PARTS`]. A model whose head would be over [`MAX_HEAD_BYTES`],
-/// or whose picking tables are past [`MAX_FACES`], [`MAX_CHAINS`] or
-/// [`Picking::MAX_ALIASES`], is answered as failed, which the page would otherwise
-/// refuse with no generation to answer.
-pub fn encode_reply(response: &Response) -> (Vec<u8>, Option<[&[u8]; MODEL_PARTS]>) {
+/// encoded head, and the parts following it: its model's as bytes if it
+/// has one, see [`MODEL_PARTS`], or an export's bodies. A model whose
+/// head would be over [`MAX_HEAD_BYTES`], or whose picking tables are
+/// past [`MAX_FACES`], [`MAX_CHAINS`] or [`Picking::MAX_ALIASES`], is
+/// answered as failed, which the page would otherwise refuse with no
+/// generation to answer.
+pub fn encode_reply(response: &Response) -> (Vec<u8>, Vec<Cow<'_, [u8]>>) {
     match response {
         Response::Regenerated {
             generation,
@@ -228,11 +251,11 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Option<[&[u8]; MODEL_PARTS
                     draft: draft.as_ref().map(|draft| draft.revision),
                     error: "the model has more faces and edges than can be sent".to_owned(),
                 };
-                return (failed.encode(), None);
+                return (failed.encode(), Vec::new());
             }
             (
                 head,
-                Some([
+                [
                     bytemuck::cast_slice(mesh.positions()),
                     bytemuck::cast_slice(mesh.normals()),
                     bytemuck::cast_slice(mesh.indices()),
@@ -241,7 +264,9 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Option<[&[u8]; MODEL_PARTS
                     bytemuck::cast_slice(sketches.ends()),
                     bytemuck::cast_slice(picking.triangles()),
                     bytemuck::cast_slice(picking.edges()),
-                ]),
+                ]
+                .map(Cow::Borrowed)
+                .into(),
             )
         }
         Response::Failed {
@@ -257,8 +282,18 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Option<[&[u8]; MODEL_PARTS
                 error: error.clone(),
             }
             .encode(),
-            None,
+            Vec::new(),
         ),
+        Response::Exported { export, result } => {
+            let bodies = result.as_ref().map(|bodies| {
+                postcard::to_stdvec(bodies).expect("exported bodies always serialize")
+            });
+            let head = Head::Exported {
+                export: *export,
+                result: bodies.as_ref().map(|_| ()).map_err(|e| (*e).clone()),
+            };
+            (head.encode(), bodies.into_iter().map(Cow::Owned).collect())
+        }
     }
 }
 
@@ -328,7 +363,20 @@ pub fn decode_reply(
             draft,
             error,
         },
+        Head::Exported { export, result } => Response::Exported {
+            export,
+            result: result.and_then(|()| decode_export(parts).map_err(|e| e.to_string())),
+        },
     })
+}
+
+/// Decodes and checks the bodies following a [`Head::Exported`] that went.
+pub fn decode_export(parts: &[impl Buffer]) -> Result<Vec<ExportedBody>, Error> {
+    let [bodies] = parts else {
+        return Err(Error::ExportParts(parts.len()));
+    };
+    let bytes = copy::<u8>(Part::Export, bodies, MAX_EXPORT_BYTES)?;
+    codec::from_postcard_exact(&bytes).map_err(Error::Export)
 }
 
 /// Checks the merged bodies of a [`Head::Regenerated`]: each consumed
@@ -478,6 +526,8 @@ pub enum Part {
     RenderMesh(MeshPart),
     RenderLines(LinesPart),
     Picking(PickingPart),
+    /// An export's bodies.
+    Export,
 }
 
 /// One of the picking's index arrays.
@@ -497,6 +547,7 @@ impl fmt::Display for Part {
             Part::RenderLines(part) => part.fmt(f),
             Part::Picking(PickingPart::Triangles) => f.write_str("triangles' faces"),
             Part::Picking(PickingPart::Edges) => f.write_str("edges' chains"),
+            Part::Export => f.write_str("exported bodies"),
         }
     }
 }
@@ -525,6 +576,11 @@ pub enum Error {
     /// The picking tables don't go with the mesh, or name a body the head
     /// doesn't list.
     Picking(PickingError),
+    /// An export's bodies came in this many parts instead of one.
+    ExportParts(usize),
+    /// An export's bodies couldn't be decoded, or a mesh among them
+    /// isn't a manifold.
+    Export(DecodeError),
 }
 
 impl fmt::Display for Error {
@@ -542,6 +598,8 @@ impl fmt::Display for Error {
             Error::Bounds => f.write_str("a body's box isn't one"),
             Error::Merged => f.write_str("a merged body is listed twice or holds another"),
             Error::Picking(e) => e.fmt(f),
+            Error::ExportParts(n) => write!(f, "exported bodies in {n} parts instead of 1"),
+            Error::Export(e) => write!(f, "couldn't decode the exported bodies: {e}"),
         }
     }
 }
@@ -549,7 +607,7 @@ impl fmt::Display for Error {
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Error::Request(e) | Error::Head(e) => Some(e),
+            Error::Request(e) | Error::Head(e) | Error::Export(e) => Some(e),
             Error::Parts(_)
             | Error::TooLarge { .. }
             | Error::Partial { .. }
@@ -557,7 +615,8 @@ impl std::error::Error for Error {
             | Error::RenderLines(_)
             | Error::Bounds
             | Error::Merged
-            | Error::Picking(_) => None,
+            | Error::Picking(_)
+            | Error::ExportParts(_) => None,
         }
     }
 }

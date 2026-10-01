@@ -454,11 +454,12 @@ fn history_button<'a>(icon: Icon, label: &str, binding: Binding) -> Element<'a, 
 /// The file menu, as a layer over the whole screen. Clicking outside the
 /// menu closes it. Save, and changing the design's `units` or its
 /// `tolerance`, are disabled unless the document is `editable`, and Save
-/// unless it's `edited` too. A tolerance the menu doesn't offer, from a
-/// file, shows unticked.
+/// unless it's `edited` too. Export 3MF is disabled unless `exportable`.
+/// A tolerance the menu doesn't offer, from a file, shows unticked.
 pub fn file_menu(
     editable: bool,
     edited: bool,
+    exportable: bool,
     units: LengthUnit,
     tolerance: Tolerance,
 ) -> Element<'static, Message> {
@@ -470,11 +471,13 @@ pub fn file_menu(
         item(icon, label.into(), Some(binding.shortcut), message)
     };
 
-    // Export and the rest join Save once they exist.
     let [save, save_as] = file_bindings(editable, edited);
+    // No key: exporting is rare, and the tool rail has no tool for it.
+    let export = exportable.then_some(Message::File(File::Export));
     let saving = column![
         bound(Icon::Save, "Save", save),
         bound(Icon::Save, "Save As…", save_as),
+        item(Icon::Export, "Export 3MF…".into(), None, export),
         separator(),
     ];
     // A new design starts in millimetres; its units are chosen here, and
@@ -535,7 +538,58 @@ pub fn file_menu(
 
 #[cfg(test)]
 mod tests {
+    use iced::advanced::{Layout, Shell, clipboard};
+    use iced::{Event, Point, Rectangle, Size};
+
     use super::*;
+    use crate::testing::Laid;
+
+    /// What clicking the file menu's item `label` sends, the menu laid out
+    /// over a 800 × 600 window, `exportable` or not.
+    fn click_file_menu(label: &str, exportable: bool) -> Vec<Message> {
+        let window = Size::new(800.0, 600.0);
+        let menu = file_menu(true, true, exportable, LengthUnit::Mm, Tolerance::DEFAULT);
+        let mut laid = Laid::new(menu, window);
+        let shown = laid.texts();
+        let item = shown
+            .iter()
+            .find(|shown| shown.text == label)
+            .unwrap_or_else(|| panic!("no {label:?} in {shown:?}"));
+        let at = item.bounds.center();
+        let mut messages = Vec::new();
+        for event in [mouse::Event::ButtonPressed, mouse::Event::ButtonReleased] {
+            let mut shell = Shell::new(&mut messages);
+            laid.element.as_widget_mut().update(
+                &mut laid.tree,
+                &Event::Mouse(event(mouse::Button::Left)),
+                Layout::new(&laid.node),
+                mouse::Cursor::Available(Point::new(at.x, at.y)),
+                &laid.renderer,
+                &mut clipboard::Null,
+                &mut shell,
+                &Rectangle::with_size(window),
+            );
+        }
+        messages
+    }
+
+    #[test]
+    fn export_is_in_the_file_menu_while_there_is_something_to_export() {
+        let sent = click_file_menu("Export 3MF…", true);
+        assert!(
+            matches!(sent[..], [Message::File(File::Export)]),
+            "{sent:?}"
+        );
+        // Disabled, the click lands on the menu, which keeps it.
+        let sent = click_file_menu("Export 3MF…", false);
+        assert!(sent.is_empty(), "{sent:?}");
+        // The items around it still go.
+        let sent = click_file_menu("Save As…", false);
+        assert!(
+            matches!(sent[..], [Message::File(File::SaveAs)]),
+            "{sent:?}"
+        );
+    }
 
     #[test]
     fn a_tolerance_not_offered_is_listed_unticked_under_its_own_name() {

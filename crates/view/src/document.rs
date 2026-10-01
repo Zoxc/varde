@@ -65,6 +65,14 @@ pub struct DocumentState<'a> {
     /// Unsaved changes a session that crashed left of the document, if
     /// there are any to offer to restore.
     pub recovered: Option<RecoveredChanges>,
+    /// Whether the visible bodies can be exported now: there are some,
+    /// regenerating hasn't failed, and no export is on its way.
+    pub exportable: bool,
+    /// Whether an export is on its way to its file, after the user chose
+    /// where.
+    pub exporting: bool,
+    /// Why the last export failed, if it did, until dismissed.
+    pub export_error: Option<&'a str>,
     /// What's shown over the screen, if anything.
     pub overlay: Option<Overlay>,
     /// The selected side panel tab.
@@ -478,6 +486,18 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
         )
     });
 
+    let export_error = state.export_error.map(|error| {
+        let dismiss = small_button("Dismiss", Emphasis::Secondary)
+            .on_press(Message::Edit(Edit::DismissExportError));
+        banner(
+            text("Couldn't export")
+                .font(theme::SEMIBOLD)
+                .style(theme::danger_text),
+            error,
+            Some(dismiss.into()),
+        )
+    });
+
     let recovered = state.recovered.as_ref().map(|recovered| {
         let restore = small_button("Restore", Emphasis::Primary)
             .on_press(Message::File(File::RestoreChanges));
@@ -508,6 +528,7 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
         read_only,
         recovered,
         save_error,
+        export_error,
         row![
             panels::side_panel(&state),
             column![
@@ -545,6 +566,7 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
             let menu = toolbar::file_menu(
                 editable,
                 state.edited,
+                state.exportable,
                 document.units(),
                 document.tolerance(),
             );
@@ -1291,7 +1313,7 @@ pub(crate) fn counted(n: usize, one: &str, many: &str) -> String {
 }
 
 /// What the status bar tells of the model and the file, whatever else
-/// it says: regenerating, why the last edit failed, saving.
+/// it says: regenerating, why the last edit failed, saving, exporting.
 fn status_notes(state: &DocumentState<'_>) -> Vec<String> {
     let regenerating = match state.mesh_status {
         MeshStatus::Current => None,
@@ -1302,7 +1324,8 @@ fn status_notes(state: &DocumentState<'_>) -> Vec<String> {
         .edit_error
         .map(|error| format!("Couldn't edit: {error}"));
     let saving = state.saving.then(|| "Saving…".to_owned());
-    [regenerating, edit_error, saving]
+    let exporting = state.exporting.then(|| "Exporting…".to_owned());
+    [regenerating, edit_error, saving, exporting]
         .into_iter()
         .flatten()
         .collect()

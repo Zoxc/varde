@@ -2,9 +2,10 @@
 //! natively.
 
 use varde_document::EXTENSION;
-use varde_document::name::download_name;
+use varde_document::name::{download_name, download_name_with};
 
-use crate::pick::{Download, filter};
+use crate::pick::{Download, export_filter, filter};
+use crate::three_mf;
 use crate::{Chosen, Picked};
 
 /// Shows the Open dialog. `None` if the user backed out.
@@ -24,6 +25,18 @@ pub async fn pick_save(name: &str) -> Option<Chosen> {
         .set_title("Save design as")
         .add_filter(filter(), &[EXTENSION])
         .set_file_name(download_name(name))
+        .save_file()
+        .await?;
+    Some(Chosen::Path(file.path().to_owned()))
+}
+
+/// Shows the Export dialog for the design `name`, suggesting
+/// `name.3mf`. `None` if the user backed out.
+pub async fn pick_export(name: &str) -> Option<Chosen> {
+    let file = rfd::AsyncFileDialog::new()
+        .set_title("Export 3MF")
+        .add_filter(export_filter(), &[three_mf::EXTENSION])
+        .set_file_name(download_name_with(name, three_mf::EXTENSION))
         .save_file()
         .await?;
     Some(Chosen::Path(file.path().to_owned()))

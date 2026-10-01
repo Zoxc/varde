@@ -62,7 +62,7 @@ fn requests_only_newer_generations() {
     let generations: Vec<_> = regen
         .borrow()
         .iter()
-        .map(|Request::Regenerate { generation, .. }| u64::from(*generation))
+        .map(|request| u64::from(request.generation().unwrap()))
         .collect();
     assert_eq!(generations, [0, 1]);
 }
@@ -141,7 +141,7 @@ fn failure_ends_regenerating_and_keeps_the_last_mesh() {
     let request = regen.borrow_mut().remove(0);
     feed.apply(Response::Failed {
         draft: None,
-        generation: request.generation(),
+        generation: request.generation().unwrap(),
         exclude: request.exclude(),
         error: "the kernel failed".to_owned(),
     });
@@ -182,7 +182,7 @@ fn requests_nothing_until_connected() {
     let generations: Vec<_> = requests
         .borrow()
         .iter()
-        .map(|request| u64::from(request.generation()))
+        .map(|request| u64::from(request.generation().unwrap()))
         .collect();
     assert_eq!(generations, [1]);
 }
@@ -218,8 +218,7 @@ fn sketches_are_shown_with_their_mesh() {
     add_sketch(&mut editor);
     feed.request(&editor, None);
     let request = regen.borrow_mut().remove(0);
-    let Request::Regenerate { exclude, .. } = &request;
-    assert_eq!(*exclude, None);
+    assert_eq!(request.exclude(), None);
     feed.apply(handle(request));
     assert_eq!(feed.sketches().points(), [[0.0; 3], [1.0, 2.0, 0.0]]);
 
@@ -229,7 +228,7 @@ fn sketches_are_shown_with_their_mesh() {
     let request = regen.borrow_mut().remove(0);
     feed.apply(Response::Failed {
         draft: None,
-        generation: request.generation(),
+        generation: request.generation().unwrap(),
         exclude: request.exclude(),
         error: "no".to_owned(),
     });
@@ -243,11 +242,7 @@ fn sketches_are_shown_with_their_mesh() {
 
 /// What `requests` asked to leave out, in order.
 fn left_out(requests: &RefCell<Vec<Request>>) -> Vec<Option<FeatureId>> {
-    requests
-        .borrow()
-        .iter()
-        .map(|Request::Regenerate { exclude, .. }| *exclude)
-        .collect()
+    requests.borrow().iter().map(Request::exclude).collect()
 }
 
 #[test]
@@ -264,7 +259,7 @@ fn leaving_out_another_sketch_asks_again() {
     let generations: Vec<_> = regen
         .borrow()
         .iter()
-        .map(|request| u64::from(request.generation()))
+        .map(|request| u64::from(request.generation().unwrap()))
         .collect();
     assert_eq!(generations, [2, 2, 2]);
 }
@@ -323,7 +318,7 @@ fn a_failure_doesn_t_hold_back_leaving_out_another_sketch() {
     let request = regen.borrow_mut().remove(0);
     feed.apply(Response::Failed {
         draft: None,
-        generation: request.generation(),
+        generation: request.generation().unwrap(),
         exclude: None,
         error: "the worker stopped".to_owned(),
     });
@@ -345,7 +340,7 @@ fn a_failure_doesn_t_hold_back_leaving_out_another_sketch() {
     let request = regen.borrow_mut().remove(0);
     feed.apply(Response::Failed {
         draft: None,
-        generation: request.generation(),
+        generation: request.generation().unwrap(),
         exclude: None,
         error: "again".to_owned(),
     });

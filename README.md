@@ -33,6 +33,7 @@ sketches and editable features. It runs natively and in the browser.
   robust booleans, but with conic edges, so planes, arcs, cylinders and
   cones are exact. Other shapes, such as splines, tori and curved-on-curved
   cuts, are fitted to a tolerance.
+- Export of the visible bodies as a 3MF file for 3D printing.
 
 ## Getting started
 

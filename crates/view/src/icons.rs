@@ -62,6 +62,7 @@ icons! {
     Trash => r#"<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>"#,
     Rollback => r#"<path d="M4 4v16"/><path d="M20 12H8M12 8l-4 4 4 4"/>"#,
     Save => r#"<path d="M5 4h11l3 3v13H5z"/><path class="a" d="M8 4v5h7V4M8 20v-6h8v6"/>"#,
+    Export => r#"<path class="a" d="M12 15V3M8 7l4-4 4 4"/><path d="M4 16v4h16v-4"/>"#,
     Check => r#"<path d="M5 12.5l4.5 4.5L19 7"/>"#,
     More => r##"<circle cx="5.5" cy="12" r=".9" fill="#000"/><circle cx="12" cy="12" r=".9" fill="#000"/><circle cx="18.5" cy="12" r=".9" fill="#000"/>"##,
     // The tools, from the icon mock.
@@ -154,7 +155,7 @@ impl Icon {
             Icon::Dimension | Icon::CatDimension => IconCategory::Dimension,
             Icon::Body | Icon::Extrude | Icon::CatCreate => IconCategory::Solid,
             Icon::Plane => IconCategory::Construction,
-            Icon::Folder | Icon::Save => IconCategory::File,
+            Icon::Folder | Icon::Save | Icon::Export => IconCategory::File,
             _ => return None,
         })
     }

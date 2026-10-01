@@ -1638,7 +1638,10 @@ fn churn_answers_as_a_fresh_cache_would() {
                 generation,
                 draft: ref asked,
                 ..
-            } = request;
+            } = request
+            else {
+                unreachable!("a regeneration");
+            };
             let (_, worked) = regenerator.cache().counts();
             let joins = regenerator.cache().joins();
             // What begins the request may not evict: what the request
@@ -2088,6 +2091,7 @@ fn picking_tables_are_deterministic_and_the_same_from_the_cache() {
     let tables = |response: Response| match response {
         Response::Regenerated { mesh, picking, .. } => (mesh, picking),
         Response::Failed { error, .. } => panic!("{error}"),
+        Response::Exported { .. } => panic!("not a regeneration"),
     };
     let first = tables(handle(regenerate(&editor, None)));
     let second = tables(handle(regenerate(&editor, None)));
@@ -2478,4 +2482,35 @@ fn a_body_that_cannot_be_exported_is_named() {
         error.to_string(),
         format!("{} can't be exported: vertex 0 is out of range", body.name)
     );
+}
+
+#[test]
+fn an_export_request_is_answered_with_the_committed_bodies() {
+    let editor = Editor::new(Document::example());
+    let request = Request::Export {
+        export: 4,
+        document: editor.snapshot(),
+    };
+    let mut regenerator = Regenerator::default();
+    // After a regeneration, from its cache: the same bodies as fresh.
+    regenerator.handle(regenerate(&editor, None));
+    let Response::Exported { export: 4, result } = regenerator.handle(request.clone()) else {
+        panic!("not an export's answer");
+    };
+    let bodies = result.unwrap();
+    let evaluation = evaluate(editor.document(), &mut Cache::default());
+    assert_eq!(bodies, export(editor.document(), &evaluation).unwrap());
+    assert_eq!(bodies.len(), 1);
+    assert!(bodies[0].mesh.volume() > 0.0);
+    assert!(matches!(
+        handle(request),
+        Response::Exported { export: 4, result: Ok(fresh) } if fresh == bodies
+    ));
+    // A request with no generation, so the feed never takes it for a
+    // model.
+    let response = regenerator.handle(Request::Export {
+        export: 5,
+        document: editor.snapshot(),
+    });
+    assert_eq!(response.generation(), None);
 }

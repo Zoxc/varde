@@ -18,6 +18,7 @@ use crate::autosave::{AutoSaved, Ending, Held, Origin, to_open};
 use crate::open::OpenFiles;
 use crate::opfs::{lost_to_another_tab, new_name};
 use crate::store::{ATTEMPTS, NO_RECOVERED, NO_STORE, is_entry_name, listed_entry, newest_first};
+use crate::three_mf;
 use crate::vrdp::{
     Error as FileError, HeldFile, ReadAt, Tail, check_unchanged, from_bytes, to_bytes,
 };
@@ -118,7 +119,19 @@ impl Files {
             | Request::SaveAs {
                 to: SaveTo::Path { .. },
                 ..
+            }
+            | Request::Export {
+                to: SaveTo::Path { .. },
+                ..
             } => request.failed(NO_FILES.to_owned()),
+            Request::Export {
+                to: SaveTo::Picked(picked),
+                title,
+                bodies,
+            } => Response::Exported {
+                result: export(&picked, object, &title, &bodies).await,
+                to: Chosen::File(picked),
+            },
             Request::Open {
                 id,
                 from: Chosen::File(picked),
@@ -548,4 +561,22 @@ impl Files {
             .await
             .map_err(|e| format!("couldn't delete the recovered design: {e}"))
     }
+}
+
+/// Writes `bodies` as a 3MF package titled `title` to the file the user
+/// `picked` in the save picker, see [`Request::Export`]: replaced whole,
+/// like a design saved as it.
+async fn export(
+    picked: &Picked,
+    object: Option<Handed>,
+    title: &str,
+    bodies: &[three_mf::Body],
+) -> Result<(), String> {
+    let Some(Handed::Handle(handle)) = object else {
+        return Err(format!("{} can't be written to", picked.name));
+    };
+    let bytes = three_mf::package(title, bodies).map_err(|e| e.to_string())?;
+    disk::write(&handle, &bytes)
+        .await
+        .map_err(|e| format!("couldn't write {}: {e}", picked.name))
 }

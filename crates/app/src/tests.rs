@@ -4328,11 +4328,7 @@ pub(crate) fn with_sketch() -> (Doc, FeatureId, Rc<RefCell<Vec<Request>>>) {
 
 /// What the requests waiting asked to leave out, answering them.
 fn left_out(doc: &mut Doc, requests: &RefCell<Vec<Request>>) -> Vec<Option<FeatureId>> {
-    let asked = requests
-        .borrow()
-        .iter()
-        .map(|Request::Regenerate { exclude, .. }| *exclude)
-        .collect();
+    let asked = requests.borrow().iter().map(Request::exclude).collect();
     answer(doc, requests);
     asked
 }
@@ -5080,7 +5076,7 @@ fn a_long_status_leaves_the_key_hints_on_the_screen() {
     for request in requests.take() {
         doc.computed(Response::Failed {
             draft: None,
-            generation: request.generation(),
+            generation: request.generation().unwrap(),
             exclude: request.exclude(),
             error: "the kernel ran out of room splitting the faces of a body with very \
                     many curved faces; try a coarser tolerance"
@@ -5122,3 +5118,5 @@ fn a_long_status_leaves_the_key_hints_on_the_screen() {
         .expect("the status");
     assert!(status.bounds.height < 20.0, "{status:?}");
 }
+
+mod export;

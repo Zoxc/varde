@@ -99,4 +99,19 @@ later one are answered with the error, and no new worker is started, since
 it would hand out file ids the app holds for the old one's files; the
 browser lets go of its entries, keeping what was auto-saved.
 
-Import and export are still to come on the web.
+**Exporting 3MF** (see `files.md`) goes the way Save As does. With the
+File System Access API, Export 3MF… shows the save picker (a "3MF model"
+type, suggesting `name.3mf`), and the bodies, welded in the regeneration
+worker, go to the IO worker along with the handle, which replaces the
+file whole with the package (`createWritable()`); the picker granted the
+write, so nothing is asked. Elsewhere there's nothing to pick: the bodies
+are welded at once and the page encodes the package and downloads it as
+`<name>.3mf`, as a design's download is encoded on the page. That
+download comes when the regeneration worker answers, after the click's
+transient activation may have run out; Firefox downloads it all the same.
+Nothing is kept in OPFS for an export. The welded bodies cross both
+workers as postcard, each mesh checked again as it's decoded: from the
+regeneration worker as one part after the reply's head (within 1 GiB),
+to the IO worker in the request (within its message bound).
+
+Import is still to come on the web.

@@ -7,7 +7,8 @@
 //! history into the bodies' solids ([`evaluate`], with an extrude being
 //! set up applied as a [`Draft`]) and tessellating the visible ones,
 //! flattening the visible sketches' curves and solving every sketch, to
-//! tell those that don't solve. What it works out is kept per feature
+//! tell those that don't solve, and, asked for an export, welding the
+//! visible bodies ([`export`]). What it works out is kept per feature
 //! ([`Cache`]), so an edit reruns only what it changes. It runs in a
 //! [`lane`] per document: natively a thread, on the web a Web
 //! Worker, which shares no memory with the page, so requests and responses
@@ -88,7 +89,7 @@ pub use varde_lane::Transport;
 pub enum Request {
     /// Builds the mesh and the sketch lines of the committed document as
     /// of `generation`, with `draft` applied if there is one. Supersedes
-    /// any earlier request.
+    /// any earlier regeneration still waiting, never an export.
     Regenerate {
         generation: Generation,
         #[serde(with = "varde_document::codec::snapshot")]
@@ -99,6 +100,16 @@ pub enum Request {
         /// An extrude being set up and not committed yet, answered as if
         /// it were.
         draft: Option<Draft>,
+    },
+    /// Welds the visible bodies of the committed `document` for export
+    /// (see [`export`]), answered with [`Response::Exported`] tagged
+    /// `export`, which the app chooses. Never replaced or dropped by a
+    /// later request, unlike [`Request::Regenerate`]: exports wait in
+    /// order, ahead of a regeneration waiting, see `src/newest.rs`.
+    Export {
+        export: u64,
+        #[serde(with = "varde_document::codec::snapshot")]
+        document: Snapshot,
     },
 }
 
@@ -138,12 +149,13 @@ pub struct Drafted {
 }
 
 impl Response {
-    /// The editor generation the response is of.
-    pub fn generation(&self) -> Generation {
+    /// The editor generation the response is of: `None` for an export's.
+    pub fn generation(&self) -> Option<Generation> {
         match self {
             Response::Regenerated { generation, .. } | Response::Failed { generation, .. } => {
-                *generation
+                Some(*generation)
             }
+            Response::Exported { .. } => None,
         }
     }
 
@@ -151,6 +163,7 @@ impl Response {
     pub fn exclude(&self) -> Option<FeatureId> {
         match self {
             Response::Regenerated { exclude, .. } | Response::Failed { exclude, .. } => *exclude,
+            Response::Exported { .. } => None,
         }
     }
 
@@ -159,15 +172,18 @@ impl Response {
         match self {
             Response::Regenerated { draft, .. } => draft.as_ref().map(|draft| draft.revision),
             Response::Failed { draft, .. } => *draft,
+            Response::Exported { .. } => None,
         }
     }
 }
 
 impl Request {
-    /// The editor generation the request is of.
-    pub fn generation(&self) -> Generation {
+    /// The editor generation a [`Request::Regenerate`] is of: `None` for
+    /// an export.
+    pub fn generation(&self) -> Option<Generation> {
         match self {
-            Request::Regenerate { generation, .. } => *generation,
+            Request::Regenerate { generation, .. } => Some(*generation),
+            Request::Export { .. } => None,
         }
     }
 
@@ -175,6 +191,7 @@ impl Request {
     pub fn exclude(&self) -> Option<FeatureId> {
         match self {
             Request::Regenerate { exclude, .. } => *exclude,
+            Request::Export { .. } => None,
         }
     }
 
@@ -182,6 +199,34 @@ impl Request {
     pub fn draft(&self) -> Option<u64> {
         match self {
             Request::Regenerate { draft, .. } => draft.as_ref().map(|draft| draft.revision),
+            Request::Export { .. } => None,
+        }
+    }
+
+    /// The answer to this request should handling it fail with `error`,
+    /// e.g. by a panic: every request has one. Keeps only what the
+    /// answer needs, not the document.
+    pub fn failure(&self) -> impl FnOnce(String) -> Response + Send + use<> {
+        let failed = match self {
+            Request::Regenerate {
+                generation,
+                exclude,
+                draft,
+                ..
+            } => Err((*generation, *exclude, draft.as_ref().map(|d| d.revision))),
+            Request::Export { export, .. } => Ok(*export),
+        };
+        move |error| match failed {
+            Err((generation, exclude, draft)) => Response::Failed {
+                generation,
+                exclude,
+                draft,
+                error,
+            },
+            Ok(export) => Response::Exported {
+                export,
+                result: Err(error),
+            },
         }
     }
 }
@@ -229,6 +274,13 @@ pub enum Response {
         /// The revision of the request's draft, if it had one.
         draft: Option<u64>,
         error: String,
+    },
+    /// Answers [`Request::Export`] tagged `export`: the visible bodies
+    /// welded, in the order the history made them, or why they can't be
+    /// (see [`ExportError`]), in words to follow a colon.
+    Exported {
+        export: u64,
+        result: Result<Vec<ExportedBody>, String>,
     },
 }
 
@@ -279,6 +331,14 @@ impl Regenerator {
                         error,
                     },
                 }
+            }
+            // Not a request of its own to the cache: `Cache::begin` would
+            // let go of the meshes the regeneration before used and an
+            // export doesn't, which the next one would draw again.
+            Request::Export { export, document } => {
+                let evaluation = evaluate(&document, &mut self.cache);
+                let result = crate::export(&document, &evaluation).map_err(|e| e.to_string());
+                Response::Exported { export, result }
             }
         }
     }

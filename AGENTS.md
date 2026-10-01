@@ -103,7 +103,8 @@ no UI code; `render` has no iced dependency.
   help there).
   - `regen`: one lane per open document, latest-wins single slot, responses
     tagged with the editor generation. The app's `MeshFeed` owns the transport
-    and drops stale answers.
+    and drops stale answers. Exports (welding the visible bodies for 3MF)
+    queue in order beside the slot and are never replaced.
   - `solve`: one lane per open document for the sketch solver: proposals and
     analyses queued in order, drag steps latest wins, the two taking turns; the
     lane keeps the drag session. Every sketch edit is proposed through it and
