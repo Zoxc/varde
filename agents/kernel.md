@@ -3701,9 +3701,10 @@ still start from `Document::default()`, empty: the example is for tests.
 
 `varde_regen::evaluate(document, cache)` (`src/history.rs`) runs the
 features in order and gives an `Evaluation`: each body's solid
-(`BodySolid`, in the order they were made) and the features that failed,
-with why (`failed`, in the document's order). A failing feature changes no
-body, and the later ones still run.
+(`BodySolid`, in the order they were made), the bodies joins merged into
+others (`merged`, below) and the features that failed, with why
+(`failed`, in the document's order). A failing feature changes no body,
+and the later ones still run.
 
 - A **sketch** gives its `Profiles` (`Sketch::profiles`; too complex fails
   the extrudes using it).
@@ -3748,15 +3749,59 @@ body, and the later ones still run.
   and with one target unticking leaves nothing to work on. The
   excluded bodies' touch and boolean results are marked used
   (`Cache::keep`), so the budget evicts them last, for putting them
-  back. Each target is replaced by
-  `kernel::boolean(body, tool, op)` with `Union`, `Difference` or
-  `Intersection`, the body always first (a flush boss put first in a
+  back. A cut or intersect replaces each target by
+  `kernel::boolean(body, tool, op)` with `Difference` or
+  `Intersection`, and a join touching one body replaces it by its
+  `Union` with the tool: the body always first (a flush boss put first in a
   union came out right but with some 30,000 patches). Every target's
   result is worked out before any body changes, so one failing changes
-  none. **Bodies never merge**: a join touching two bodies adds the
-  tool to each, so they overlap, since bodies are the document's and a
-  merged one would leave the other without geometry. Bodies not touched
-  or excluded keep their solids. A target whose result is the empty
+  none. Bodies not touched or excluded keep their solids.
+- A **join touching two or more bodies merges them**: the first made
+  (the *holder*) gets the union of them all and the tool, and the others
+  are *consumed*: left out of `Evaluation::bodies` and listed in
+  `Evaluation::merged` as (consumed, holder), sorted by the consumed
+  body's id (the document's order). A later join consuming a holder
+  moves the entries naming it on to the new holder, so every entry names
+  a body in `bodies` (a `debug_assert` at the end of `evaluate` holds
+  it); `Evaluation::holder(body)` follows one. The bodies stay the
+  document's (Objects lists them); only their geometry moved. Cuts and
+  intersects stay per body, as other CAD systems keep bodies apart for
+  those, and an excluded body isn't merged (unticking it is how to join
+  to fewer bodies). The union is worked out in steps, each one
+  `kernel::boolean(running, next, Union)` cached under
+  `boolean_key(op, running key, next key)`, all or nothing (nothing is
+  written back until the last step works):
+  - **The bodies first, then the tool**: `t0 ∪ t1` (key name
+    `Doing::Merging`), then `∪ t2`…, then `∪ tool` (`Doing::Joining`).
+    That passes the bodies' own faces first, which keeps the patches
+    few: with the example plate and a plate 10 mm clear of it bridged by
+    a boss flush with their bottoms, the tool joined to the first plate
+    first left the boss's round bottom flush with the second plate in the
+    next union, which came out with 57,430 patches (0.8 s); bodies first
+    gives 120. The bodies' union doesn't depend on the tool, so
+    a join draft dragged reworks one boolean, not one per target.
+  - **Else the tool first**: if a step fails (bodies meeting each other
+    only along an edge or at a point leave no clean solid on their own,
+    though the tool bridges them: `Invalid(Fold)` for two blocks sharing
+    a vertical edge), `t0 ∪ tool` (the key a single target would use),
+    then `∪ t1`, `∪ t2`… (`Doing::Merging`). If that fails too, its
+    error is given: its first step as a join's with more than one
+    target ("joining it to Body 1 …; untick Body 1 under Bodies to leave
+    it out"), a later one as `message::merging` ("merging Body 2 into Body 1
+    leaves no clean solid: …", the tails shared with `message::boolean`).
+    The failed bodies-first steps stay cached, so the fallback reruns
+    only on the tool's changes.
+
+  With one target the path and keys are as they were before merging
+  existed. `touched` still lists every target (consumed ones too).
+  Through all spans the consumed material, which is inside the holder.
+  Excluded bodies keep, besides their touch and boolean, the keys of both
+  orders' steps for the targets plus every excluded body (in made order,
+  hashes only), so unticking one body of a merge and ticking it again
+  works out at most the merged body's mesh (nothing within the budget). A sketch placed on a consumed
+  body's face (once sketches can be placed on faces) is to follow it to
+  its holder (`Evaluation::holder`), since the face lives on there.
+- A target whose result is the empty
   solid (a body cut away whole, or intersected with a tool that touches
   it without overlapping it: flush on a face, an edge on a face, a
   corner; the kernel gives all of these as `Ok(Solid::empty())`)
@@ -3777,8 +3822,8 @@ body, and the later ones still run.
   that emptied it); the empty result stays cached (its key is right; the
   check is cheap). Hence **no body in
   an `Evaluation` is empty**: a new body's extrude never is, a union of
-  two non-empty solids isn't, and the rest fail (a `debug_assert` at the
-  end of `evaluate` holds it).
+  two non-empty solids isn't (a merged join checks anyway), and the rest
+  fail (a `debug_assert` at the end of `evaluate` holds it).
 
 **Error texts** (`src/message.rs`). What the Timeline's tooltip and the
 panel show is worded for the user, not the kernel: an extrude's own
@@ -3917,7 +3962,8 @@ the regions, the tolerance's bits, its span's bits and its sketch's key
 (not the operation, the extent or the excluded bodies, so toggling those
 finds the tool; the span stands for the extent and flip), whether a body touches a tool by the two solids' keys, a
 boolean's result (or `KernelError`) by the operation and the two solids'
-keys, which then keys the body's solid, and a body's mesh by its solid's
+keys, which then keys the body's solid (a merge step's likewise, by the
+running solid's key and the next operand's), and a body's mesh by its solid's
 key and the tolerance. Editing an earlier extrude changes its body's key
 and so reruns every boolean after it on that body. The cache is bounded
 by size: each entry records its approximate heap size (`Entry::bytes`: a
@@ -3942,7 +3988,8 @@ changed back (join, cut, join; a distance typed and typed back) find
 what they had. One request on the example with a pocket holds about
 90 kB, on a 100 mm plate with 36 holes about 1.6 MB. A join, cut or
 intersect also marks used (`Cache::keep`) whether the tool touches each
-body it excludes and their boolean, so taking a body out and putting it
+body it excludes and their boolean, and a join the steps of its merge
+with the excluded bodies put back, so taking a body out and putting it
 back only draws it again even under a small budget.
 `Cache::with_budget(0)` (tests) keeps only what the request before used,
 which was the policy before the budget. The lane owns it: the native
@@ -4012,7 +4059,17 @@ wins, so only the newest waits). The cache's sizes are estimates
 least recently used, not weighted by what an entry took to work out. On
 the web an unchanged model
 mesh is still copied over the wire, checked and uploaded again with each
-answer.
+answer. Merged bodies grow, so later booleans on them cost more (the
+budget scales with the whole body), and a later cut that worked on the
+bodies apart can fail on the merged one. The tool-first fallback can
+meet the flush blow-up the bodies-first order avoids (57,430 patches in
+the case above), and a bodies-first step that runs out of budget before
+the fallback runs about doubles the worst case, once (both are cached).
+The merge's keys kept for excluded bodies cover putting back all of
+them at once or the only one: with two taken out, putting back one
+reworks its merge. `merged` isn't on the regen answer or the wire yet,
+so Objects doesn't mark consumed bodies, and a consumed body's eye does
+nothing (the holder's decides).
 
 ## The extrude UI (`crates/view`, `crates/app`)
 
@@ -4422,12 +4479,13 @@ parameter, or a split outside the patch bounds),
 - **A failing draft is answered with the committed model** and the
   draft's error (`Drafted`), rather than the draft applied without its
   body. `touched` is in `Drafted`, not beside it on the response.
-- **Join, cut and intersect work on each target body on its own**: a
-  join never merges bodies, it adds the tool to every body it touches,
-  so two bodies a join bridges overlap. The document has no way for a
-  feature to consume a body (only `NewBody` makes one), and a merged
-  body would leave the other listed without geometry; choosing a single
-  body to join to is the user's way round it (take the others out).
+- **A join touching several bodies merges them; cut and intersect work
+  on each target body on its own.** Consuming a body is worked out at
+  regeneration, not stored in the document: targets are found by
+  `touches` there, so a stored consumption would go stale on any edit
+  upstream. A consumed body stays in the document and in Objects; regen
+  says where its geometry went (`Evaluation::merged`). Unticking all
+  but one body joins to that one alone.
 - **Through all spans every earlier body**, excluded ones too, so taking
   one out or putting it back doesn't change the tool.
 - **A join, cut or intersect that touches no target fails** ("it doesn't

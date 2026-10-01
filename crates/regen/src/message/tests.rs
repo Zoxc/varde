@@ -51,6 +51,29 @@ fn a_failure_with_other_bodies_says_to_leave_the_body_out() {
 }
 
 #[test]
+fn merging_failures_name_both_bodies_and_end_as_a_boolean_s() {
+    for error in [
+        KernelError::TooComplex,
+        KernelError::Invalid(CheckError::Counts),
+        KernelError::Boolean(BooleanError::Inconsistent),
+        KernelError::Boolean(BooleanError::Degenerate),
+        KernelError::Patch(varde_kernel::patch::PatchError::Mismatch),
+    ] {
+        let text = merging("Body 1", "Body 2", error);
+        let tail = boolean(Doing::Joining, "Body 1", error)
+            .strip_prefix("joining it to Body 1")
+            .unwrap()
+            .to_owned();
+        assert_eq!(text, format!("merging Body 2 into Body 1{tail}"));
+    }
+    let text = merging("Body 1", "Body 3", KernelError::Invalid(CheckError::Counts));
+    assert!(
+        text.starts_with("merging Body 3 into Body 1 leaves no clean solid"),
+        "{text}"
+    );
+}
+
+#[test]
 fn extrude_failures_speak_of_the_regions() {
     let touching = KernelError::Profile(ProfileError::Touching([(0, 1), (1, 0)]));
     assert_eq!(

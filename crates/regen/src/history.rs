@@ -10,10 +10,14 @@
 //! budget, its faces named by its feature id: the tool solid. A new body
 //! gets it. A join, cut or intersect finds the bodies made before it,
 //! less those it excludes, that the tool touches
-//! ([`varde_kernel::touches`]), and replaces each of those by its union
-//! with, difference from or intersection with the tool
-//! ([`varde_kernel::boolean`], the body first), one at a time: bodies
-//! never merge. A through-all extent's
+//! ([`varde_kernel::touches`]). A cut or intersect replaces each of those
+//! by its difference from or intersection with the tool
+//! ([`varde_kernel::boolean`], the body first), one at a time. A join
+//! touching one body replaces it by its union with the tool; one touching
+//! several merges them: the first made gets the union of them all and the
+//! tool, and the others are *consumed*, left out of
+//! [`Evaluation::bodies`] and listed in [`Evaluation::merged`] (see
+//! `Run::merge` for the order). A through-all extent's
 //! span is worked out from the bodies made before it ([`through_all`]).
 //! A join, cut or intersect that would leave nothing of a body fails
 //! (bodies are the document's, so an emptied one would stay listed with
@@ -44,8 +48,15 @@ use crate::profile::profile;
 #[derive(Debug, Clone, Default)]
 pub struct Evaluation {
     /// Each body that has a solid, in the order the features made them.
-    /// None is empty: a feature that would empty one fails.
+    /// None is empty: a feature that would empty one fails. A body a
+    /// join merged into another isn't here (see [`Evaluation::merged`]).
     pub bodies: Vec<BodySolid>,
+    /// Each body a join merged into another (*consumed*), and the body in
+    /// [`Evaluation::bodies`] that now holds it, in the document's order
+    /// of the consumed bodies. A body merged into one that a later join
+    /// merged in turn names the later one, so every entry names a body
+    /// in `bodies`, and no consumed body is in `bodies`.
+    pub merged: Vec<(BodyId, BodyId)>,
     /// The features that failed and why, in the document's order.
     pub failed: Vec<(FeatureId, String)>,
     /// Each join, cut or intersect that got as far as its tool solid,
@@ -55,6 +66,23 @@ pub struct Evaluation {
     /// One failing while finding them lists those found before and the
     /// body it couldn't tell, which taking out gets past.
     pub touched: Vec<(FeatureId, Vec<BodyId>)>,
+}
+
+impl Evaluation {
+    /// The body in [`Evaluation::bodies`] holding `body`'s solid: `body`
+    /// itself, or the body it was merged into. `None` for a body with no
+    /// solid (its maker failed, or it isn't the document's). Whatever
+    /// lives on a consumed body (a sketch on one of its faces, once
+    /// sketches can be placed on faces) is looked for here.
+    pub fn holder(&self, body: BodyId) -> Option<BodyId> {
+        let body = (self.merged.iter())
+            .find(|(consumed, _)| *consumed == body)
+            .map_or(body, |&(_, into)| into);
+        self.bodies
+            .iter()
+            .any(|made| made.body == body)
+            .then_some(body)
+    }
 }
 
 /// A body's solid.
@@ -131,11 +159,20 @@ pub(crate) fn evaluate_within(
             }
         }
     }
+    // In the document's order (bodies are kept in increasing id order).
+    evaluation.merged.sort_by_key(|&(consumed, _)| consumed);
     // A new body's extrude is never empty, a union of two solids that
     // aren't isn't, and a cut or intersect that would empty one fails.
     debug_assert!(
         evaluation.bodies.iter().all(|made| !made.solid.is_empty()),
         "a body is never empty"
+    );
+    debug_assert!(
+        evaluation.merged.iter().all(|(consumed, into)| {
+            let held = |body: &BodyId| evaluation.bodies.iter().any(|made| made.body == *body);
+            !held(consumed) && held(into)
+        }),
+        "a consumed body has no solid and names one that has"
     );
     evaluation
 }
@@ -204,6 +241,15 @@ impl Run<'_> {
             cache.keep(boolean_key(doing, made.key, tool_key));
             taken_out = true;
         }
+        if taken_out && doing == Doing::Joining {
+            // The merge with every body taken out put back: putting back
+            // the one taken out finds it.
+            let bodies = (evaluation.bodies.iter())
+                .filter(|made| targets.contains(&made.body) || excluded.contains(&made.body));
+            for key in merge_keys(bodies.collect(), tool_key) {
+                cache.keep(key);
+            }
+        }
         if targets.is_empty() {
             return Err(if taken_out {
                 "it doesn't touch any body not taken out of it"
@@ -211,6 +257,9 @@ impl Run<'_> {
                 "it doesn't touch any body"
             }
             .to_owned());
+        }
+        if doing == Doing::Joining && targets.len() > 1 {
+            return self.merge_into_first(evaluation, &targets, (&tool, tool_key), cache);
         }
         // Worked out for every target before any body changes. Where
         // there are others, one failing can be left out.
@@ -253,6 +302,115 @@ impl Run<'_> {
             }
         }
         Ok(())
+    }
+
+    /// Merges the bodies `targets` (two or more, in the order they were
+    /// made) and the tool, filed under `tool_key`, into the first: it gets
+    /// the union of them all, and the others are consumed (taken out of
+    /// `evaluation`'s bodies and listed in its `merged`, which entries
+    /// naming them are moved on from). Or why it fails, changing nothing.
+    fn merge_into_first(
+        &self,
+        evaluation: &mut Evaluation,
+        targets: &[BodyId],
+        tool: (&Solid, Key),
+        cache: &mut Cache,
+    ) -> Result<(), String> {
+        let bodies: Vec<&BodySolid> = (evaluation.bodies.iter())
+            .filter(|made| targets.contains(&made.body))
+            .collect();
+        let into = bodies[0].body;
+        let consumed: Vec<BodyId> = bodies[1..].iter().map(|made| made.body).collect();
+        let (solid, key) = self.merge(&bodies, tool, cache)?;
+        // A union of solids that aren't empty isn't, but it's cheap to
+        // make sure no body ever is.
+        if solid.is_empty() {
+            return Err(message::emptied(Doing::Joining, self.body_name(into)));
+        }
+        for (_, holder) in &mut evaluation.merged {
+            if consumed.contains(holder) {
+                *holder = into;
+            }
+        }
+        (evaluation.merged).extend(consumed.iter().map(|&body| (body, into)));
+        (evaluation.bodies).retain(|made| !consumed.contains(&made.body));
+        if let Some(made) = evaluation.bodies.iter_mut().find(|m| m.body == into) {
+            *made = BodySolid {
+                body: into,
+                solid,
+                key,
+            };
+        }
+        Ok(())
+    }
+
+    /// The union of `bodies` (two or more, in the order they were made)
+    /// and the tool filed under `tool_key`, and the key it's filed under;
+    /// or why it fails. Every step is a [`varde_kernel::boolean`] union,
+    /// the running solid first, cached under its own key from its
+    /// operands' keys ([`merge_keys`]). The bodies are united first and
+    /// the tool last: that passes the bodies' own faces first, which
+    /// keeps the patches few where the tool is flush with one of them
+    /// (the tool put first as a flush boss has come out with tens of
+    /// thousands of patches), and the bodies' union doesn't depend on
+    /// the tool, so dragging a draft reworks only the last step. Bodies
+    /// meeting each other only along an edge or at a point make no clean
+    /// solid on their own, though the tool bridges them, so if any step
+    /// fails the tool is joined to the first body instead, as it would
+    /// be alone, and the others are joined to that in turn; if that
+    /// fails too, its error is given.
+    fn merge(
+        &self,
+        bodies: &[&BodySolid],
+        (tool, tool_key): (&Solid, Key),
+        cache: &mut Cache,
+    ) -> Result<(Arc<Solid>, Key), String> {
+        let (first, rest) = bodies.split_first().expect("two or more bodies are merged");
+        let mut unite = |key: Key, a: &Solid, b: &Solid| {
+            let solid = cache.boolean(key, || {
+                varde_kernel::boolean(a, b, Op::Union, &self.tolerance, &Budget::DEFAULT)
+            });
+            solid.map(|solid| (solid, key))
+        };
+        // The bodies first, then the tool.
+        let mut bodies_first = Ok((Arc::clone(&first.solid), first.key));
+        for made in rest {
+            bodies_first = bodies_first.and_then(|(solid, key)| {
+                unite(
+                    boolean_key(Doing::Merging, key, made.key),
+                    &solid,
+                    &made.solid,
+                )
+            });
+        }
+        let bodies_first = bodies_first.and_then(|(solid, key)| {
+            unite(boolean_key(Doing::Joining, key, tool_key), &solid, tool)
+        });
+        if let Ok(merged) = bodies_first {
+            return Ok(merged);
+        }
+        // The tool joined to the first body, then the others.
+        let mut merged = unite(
+            boolean_key(Doing::Joining, first.key, tool_key),
+            &first.solid,
+            tool,
+        )
+        .map_err(|error| {
+            let name = self.body_name(first.body);
+            message::leave_out(message::boolean(Doing::Joining, name, error), name)
+        })?;
+        for made in rest {
+            merged = unite(
+                boolean_key(Doing::Merging, merged.1, made.key),
+                &merged.0,
+                &made.solid,
+            )
+            .map_err(|error| {
+                let (into, other) = (self.body_name(first.body), self.body_name(made.body));
+                message::merging(into, other, error)
+            })?;
+        }
+        Ok(merged)
     }
 
     /// The bodies of `bodies` not in `excluded` that `tool`, filed under
@@ -335,6 +493,29 @@ fn boolean_key(doing: Doing, body: Key, tool: Key) -> Key {
         .key(body)
         .key(tool)
         .finish()
+}
+
+/// The keys of the steps [`Run::merge`] works out for `bodies`, in the
+/// order they were made, and the tool filed under `tool`, in both orders
+/// it tries; none for fewer than two bodies.
+fn merge_keys(bodies: Vec<&BodySolid>, tool: Key) -> Vec<Key> {
+    let Some((first, rest)) = bodies.split_first().filter(|(_, rest)| !rest.is_empty()) else {
+        return Vec::new();
+    };
+    let mut keys = Vec::with_capacity(2 * bodies.len());
+    let mut key = first.key;
+    for made in rest {
+        key = boolean_key(Doing::Merging, key, made.key);
+        keys.push(key);
+    }
+    keys.push(boolean_key(Doing::Joining, key, tool));
+    let mut key = boolean_key(Doing::Joining, first.key, tool);
+    keys.push(key);
+    for made in rest {
+        key = boolean_key(Doing::Merging, key, made.key);
+        keys.push(key);
+    }
+    keys
 }
 
 /// The span along `frame`'s normal that goes through all of `bodies`:

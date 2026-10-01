@@ -14,6 +14,9 @@ pub(crate) enum Doing {
     Joining,
     Cutting,
     Intersecting,
+    /// Uniting a body a join touches with the others it touches (the key's
+    /// name only: [`merging`] words its errors).
+    Merging,
 }
 
 impl Doing {
@@ -24,6 +27,7 @@ impl Doing {
             Doing::Joining => "joining it to",
             Doing::Cutting => "cutting it from",
             Doing::Intersecting => "intersecting it with",
+            Doing::Merging => "merging",
         }
     }
 }
@@ -80,29 +84,40 @@ fn profile(error: ProfileError, finest: bool) -> String {
 
 /// Why `doing` the extrude and the body named `body` failed.
 pub(crate) fn boolean(doing: Doing, body: &str, error: KernelError) -> String {
-    let doing = doing.name();
+    failed(&format!("{} {body}", doing.name()), error)
+}
+
+/// Why merging the body named `other`, which a join touches, into the
+/// body named `into`, which it touches too and which already holds the
+/// extrude, failed.
+pub(crate) fn merging(into: &str, other: &str, error: KernelError) -> String {
+    failed(&format!("merging {other} into {into}"), error)
+}
+
+/// Why `what` (doing something with two solids) failed.
+fn failed(what: &str, error: KernelError) -> String {
     match error {
         KernelError::TooComplex => format!(
-            "{doing} {body} is too complex to work out: they may meet on faces that are \
-             tangent or nearly flush"
+            "{what} is too complex to work out: they may meet on faces that are tangent or \
+             nearly flush"
         ),
         // Hedged: not every boolean `Invalid` is such a contact (thin cap
         // triangles left next to a hole's rim fail too), so the cause is
         // a guess and moving it a suggestion. No tolerance is offered: a
         // finer one doesn't mend those either.
         KernelError::Invalid(_) => format!(
-            "{doing} {body} leaves no clean solid: they may meet only along an edge, at a \
-             point, or on tangent faces; if so, move it to overlap more or to clear it"
+            "{what} leaves no clean solid: they may meet only along an edge, at a point, or on \
+             tangent faces; if so, move it to overlap more or to clear it"
         ),
         KernelError::Boolean(BooleanError::Inconsistent) => format!(
-            "{doing} {body} can't be worked out: they meet on faces too nearly flush or \
-             tangent to tell apart; move it a little"
+            "{what} can't be worked out: they meet on faces too nearly flush or tangent to \
+             tell apart; move it a little"
         ),
         KernelError::Boolean(BooleanError::Degenerate) => {
-            format!("{doing} {body} leaves a face that can't be made: parts are too thin")
+            format!("{what} leaves a face that can't be made: parts are too thin")
         }
-        KernelError::Patch(_) => format!("{doing} {body} goes out of bounds"),
-        KernelError::Profile(error) => format!("{doing} {body} failed: {error}"),
+        KernelError::Patch(_) => format!("{what} goes out of bounds"),
+        KernelError::Profile(error) => format!("{what} failed: {error}"),
     }
 }
 
@@ -133,7 +148,9 @@ pub(crate) fn emptied(doing: Doing, body: &str) -> String {
         ),
         // A union of two solids that aren't empty isn't empty, and
         // finding where they meet makes no solid.
-        Doing::Joining | Doing::Touching => format!("{name} {body} would leave nothing of it"),
+        Doing::Joining | Doing::Touching | Doing::Merging => {
+            format!("{name} {body} would leave nothing of it")
+        }
     }
 }
 

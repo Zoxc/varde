@@ -297,7 +297,7 @@ fn a_failing_feature_changes_no_body_and_later_ones_still_run() {
 }
 
 /// Adds a second plate, 3 mm thick, below the example's: its body.
-fn plate_below(editor: &mut Editor) -> BodyId {
+pub(crate) fn plate_below(editor: &mut Editor) -> BodyId {
     let extrude = Extrude {
         flip: true,
         extent: Extent::OneSide(length(editor.document(), "3")),
@@ -477,7 +477,7 @@ fn bodies_taken_out_are_left_as_they_are() {
 }
 
 #[test]
-fn a_join_touching_two_bodies_is_added_to_each() {
+fn a_join_touching_two_bodies_merges_them() {
     let mut editor = Editor::new(Document::example());
     let top = editor.document().bodies()[0].id;
     let below = plate_below(&mut editor);
@@ -491,16 +491,217 @@ fn a_join_touching_two_bodies_is_added_to_each() {
     let evaluation = evaluated(editor.document());
     assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
     assert_eq!(evaluation.touched, [(join, vec![top, below])]);
-    // Bodies never merge: both hold the boss, so they overlap.
+    // One body, the first made: both plates and the boss outside them,
+    // counted once.
+    let solid = only_body(&evaluation);
+    assert_eq!(evaluation.bodies[0].body, top);
+    assert_near(
+        solid.volume(),
+        plate(8.0, 10.0) + plate(8.0, 3.0) + PI * 25.0 * (20.0 - 13.0),
+    );
+    let bounds = solid.bounds3().unwrap();
+    assert_eq!((bounds.min.z, bounds.max.z), (-5.0, 15.0));
+    assert_eq!(evaluation.merged, [(below, top)]);
+    assert_eq!(evaluation.holder(below), Some(top));
+    assert_eq!(evaluation.holder(top), Some(top));
+}
+
+/// Adds a new body extruded `height` up from the regions `draw` draws on
+/// XY: its id.
+fn add_body(editor: &mut Editor, draw: impl FnOnce(&mut Sketch), height: &str) -> BodyId {
+    let extent = Extent::OneSide(length(editor.document(), height));
+    add_extrude(editor, draw, extent, Operation::NewBody(BodyId::NEW));
+    editor.document().bodies().last().unwrap().id
+}
+
+/// The solids of `evaluation`'s bodies, by body.
+fn solid_of(evaluation: &Evaluation, body: BodyId) -> &Solid {
+    let made = evaluation.bodies.iter().find(|made| made.body == body);
+    &made.unwrap_or_else(|| panic!("{body:?} has a solid")).solid
+}
+
+/// Two blocks meeting only along a vertical edge, which on their own
+/// leave no clean solid, bridged by a disc round the edge: the disc is
+/// joined to the first block, then the second to that.
+#[test]
+fn a_join_bridging_bodies_meeting_along_an_edge_merges_them() {
+    let mut editor = Editor::new(Document::default());
+    let a = add_body(&mut editor, rectangle((0.0, 0.0), (10.0, 10.0)), "10");
+    let b = add_body(&mut editor, rectangle((10.0, 10.0), (20.0, 20.0)), "10");
+    let before = evaluated(editor.document());
+    let tolerance = editor.document().tolerance();
+    let alone = varde_kernel::boolean(
+        solid_of(&before, a),
+        solid_of(&before, b),
+        varde_kernel::Op::Union,
+        &tolerance,
+        &varde_kernel::Budget::DEFAULT,
+    );
+    assert!(alone.is_err(), "the blocks alone make a solid");
+    let extent = Extent::OneSide(length(editor.document(), "15"));
+    let join = add_extrude(
+        &mut editor,
+        disc((10.0, 10.0), 4.0),
+        extent,
+        Operation::Join(Targets::default()),
+    );
+    let evaluation = evaluated(editor.document());
+    assert_eq!(evaluation.touched, [(join, vec![a, b])]);
+    // Each block holds a quarter of the disc, 10 tall.
+    let solid = only_body(&evaluation);
+    assert_near(
+        solid.volume(),
+        2.0 * 1000.0 + PI * 16.0 * 15.0 - 2.0 * PI * 4.0 * 10.0,
+    );
+    assert_eq!(evaluation.merged, [(b, a)]);
+}
+
+/// The example plate and a plate 10 mm clear of it, both from z = 0, and
+/// a boss bridging the gap, flush with their bottoms. With the boss
+/// joined to the first plate before the second came in, the second's
+/// union met the boss's round bottom flush and came out with some
+/// 57,000 patches: the plates go first.
+#[test]
+fn a_join_bridging_a_gap_stays_small() {
+    let mut editor = Editor::new(Document::example());
+    let top = editor.document().bodies()[0].id;
+    let other = add_body(&mut editor, rectangle((40.0, -20.0), (100.0, 20.0)), "10");
+    let extent = Extent::OneSide(length(editor.document(), "15"));
+    add_extrude(
+        &mut editor,
+        disc((35.0, 0.0), 10.0),
+        extent,
+        Operation::Join(Targets::default()),
+    );
+    let evaluation = evaluated(editor.document());
+    let solid = only_body(&evaluation);
+    assert_eq!(evaluation.merged, [(other, top)]);
+    // The boss's parts in each plate are circular segments 5 from its
+    // centre, 10 tall.
+    let segment = 100.0 * (0.5f64).acos() - 5.0 * 75f64.sqrt();
+    let boss = PI * 100.0 * 15.0 - 2.0 * segment * 10.0;
+    assert_near(solid.volume(), plate(8.0, 10.0) + 60.0 * 40.0 * 10.0 + boss);
+    let patches = solid.mesh().tris().len();
+    assert!(patches < 1_000, "{patches} patches");
+}
+
+/// Three blocks apart in a row and a bar across all three: one body.
+#[test]
+fn a_join_touching_three_bodies_merges_them_into_the_first() {
+    let mut editor = Editor::new(Document::default());
+    let blocks = [0.0, 20.0, 40.0]
+        .map(|x| add_body(&mut editor, rectangle((x, 0.0), (x + 10.0, 10.0)), "10"));
+    let extent = Extent::OneSide(length(editor.document(), "12"));
+    let join = add_extrude(
+        &mut editor,
+        rectangle((-5.0, 3.0), (55.0, 7.0)),
+        extent,
+        Operation::Join(Targets::default()),
+    );
+    let evaluation = evaluated(editor.document());
+    assert_eq!(evaluation.touched, [(join, blocks.to_vec())]);
+    let solid = only_body(&evaluation);
+    // The bar is 60 × 4 × 12, 10 tall inside each block.
+    assert_near(
+        solid.volume(),
+        3.0 * 1000.0 + 60.0 * 4.0 * 12.0 - 3.0 * 10.0 * 4.0 * 10.0,
+    );
+    let [first, second, third] = blocks;
+    assert_eq!(evaluation.merged, [(second, first), (third, first)]);
+}
+
+/// A join merging a body that holds another merged before it: the
+/// earlier entry follows it into the new holder.
+#[test]
+fn a_chained_merge_moves_earlier_entries_on() {
+    let mut editor = Editor::new(Document::default());
+    let blocks = [0.0, 20.0, 40.0]
+        .map(|x| add_body(&mut editor, rectangle((x, 0.0), (x + 10.0, 10.0)), "10"));
+    let [first, second, third] = blocks;
+    // The second and third bridged: the third goes into the second.
+    let extent = Extent::OneSide(length(editor.document(), "10"));
+    add_extrude(
+        &mut editor,
+        rectangle((25.0, 3.0), (45.0, 7.0)),
+        extent,
+        Operation::Join(Targets::default()),
+    );
+    let evaluation = evaluated(editor.document());
+    assert_eq!(evaluation.merged, [(third, second)]);
+    assert_eq!(evaluation.bodies.len(), 2);
+    // Then the first and second: both go into the first.
+    let extent = Extent::OneSide(length(editor.document(), "10"));
+    add_extrude(
+        &mut editor,
+        rectangle((5.0, 3.0), (25.0, 7.0)),
+        extent,
+        Operation::Join(Targets::default()),
+    );
+    let evaluation = evaluated(editor.document());
+    let solid = only_body(&evaluation);
+    assert_eq!(evaluation.merged, [(second, first), (third, first)]);
+    assert_eq!(evaluation.holder(third), Some(first));
+    // Two bridges 10 × 4 between the blocks, 10 tall.
+    assert_near(solid.volume(), 3.0 * 1000.0 + 2.0 * 10.0 * 4.0 * 10.0);
+}
+
+/// A body taken out of a join touching two stays apart: the join goes
+/// into the other alone, and nothing is merged.
+#[test]
+fn a_body_taken_out_of_a_join_stays_apart() {
+    let mut editor = Editor::new(Document::example());
+    let top = editor.document().bodies()[0].id;
+    let below = plate_below(&mut editor);
+    let extent = two_sides(editor.document(), "15", "5");
+    let join = add_extrude(
+        &mut editor,
+        disc((20.0, 0.0), 5.0),
+        extent,
+        Operation::Join(Targets {
+            excluded: vec![below],
+        }),
+    );
+    let evaluation = evaluated(editor.document());
+    assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
+    assert_eq!(evaluation.touched, [(join, vec![top])]);
+    assert!(evaluation.merged.is_empty());
     let boss = PI * 25.0 * 20.0;
     assert_near(
-        evaluation.bodies[0].solid.volume(),
+        solid_of(&evaluation, top).volume(),
         plate(8.0, 10.0) + boss - PI * 25.0 * 10.0,
     );
-    assert_near(
-        evaluation.bodies[1].solid.volume(),
-        plate(8.0, 3.0) + boss - PI * 25.0 * 3.0,
-    );
+    assert_near(solid_of(&evaluation, below).volume(), plate(8.0, 3.0));
+}
+
+/// A cut or an intersect touching two bodies changes each on its own:
+/// nothing is merged.
+#[test]
+fn cuts_and_intersects_touching_two_bodies_keep_them_apart() {
+    for op in ["cut", "intersect"] {
+        let mut editor = Editor::new(Document::example());
+        let top = editor.document().bodies()[0].id;
+        let below = plate_below(&mut editor);
+        let extent = two_sides(editor.document(), "20", "20");
+        let operation = match op {
+            "cut" => Operation::Cut(Targets::default()),
+            _ => Operation::Intersect(Targets::default()),
+        };
+        add_extrude(&mut editor, disc((20.0, 0.0), 5.0), extent, operation);
+        let evaluation = evaluated(editor.document());
+        assert!(
+            evaluation.failed.is_empty(),
+            "{op}: {:?}",
+            evaluation.failed
+        );
+        assert!(evaluation.merged.is_empty(), "{op}");
+        let disc = PI * 25.0;
+        let (top_volume, below_volume) = match op {
+            "cut" => (plate(8.0, 10.0) - disc * 10.0, plate(8.0, 3.0) - disc * 3.0),
+            _ => (disc * 10.0, disc * 3.0),
+        };
+        assert_near(solid_of(&evaluation, top).volume(), top_volume);
+        assert_near(solid_of(&evaluation, below).volume(), below_volume);
+    }
 }
 
 /// A cut that would take the whole plate fails and leaves it as it was,

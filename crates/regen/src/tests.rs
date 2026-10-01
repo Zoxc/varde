@@ -1688,3 +1688,85 @@ fn many_bodies_stay_within_the_budget() {
         }
     }
 }
+
+/// A join draft touching both the example plate and a plate under it,
+/// which merges them: dragging it works out only its tool, whether it
+/// touches each plate, the tool's union with the plates' (found again)
+/// and the merged body's mesh; taking the lower plate out and putting it
+/// back finds everything again, the merge kept while it was out.
+#[test]
+fn a_join_draft_merging_two_bodies_reworks_one_boolean_when_dragged() {
+    use crate::history::tests::{add_extrude, disc, plate_below, two_sides};
+    use varde_document::Targets;
+
+    // The disc's sketch committed, its join a draft.
+    let mut editor = Editor::new(Document::example());
+    let top = editor.document().bodies()[0].id;
+    let below = plate_below(&mut editor);
+    let mut probe = Editor::new(editor.document().clone());
+    let extent = two_sides(editor.document(), "15", "5");
+    let join = Operation::Join(Targets::default());
+    add_extrude(&mut probe, disc((20.0, 0.0), 5.0), extent, join);
+    let [.., sketch, joined] = probe.document().features() else {
+        unreachable!()
+    };
+    let (
+        FeatureKind::Sketch {
+            plane,
+            sketch: drawn,
+        },
+        FeatureKind::Extrude(extrude),
+    ) = (&sketch.kind, &joined.kind)
+    else {
+        unreachable!()
+    };
+    editor.apply(editor.document().add_sketch(*plane)).unwrap();
+    let feature = editor.document().features().last().unwrap().id;
+    assert_eq!(feature, sketch.id);
+    editor
+        .apply(Command::SetSketch {
+            feature,
+            sketch: Box::new(drawn.clone()),
+        })
+        .unwrap();
+    let mut regenerator = Regenerator::default();
+    answered(regenerator.handle(regenerate(&editor, None)));
+    let mut draft = Draft {
+        revision: 1,
+        feature: None,
+        extrude: extrude.clone(),
+    };
+    let first = answered(regenerator.handle(regenerate_with(&editor, Some(draft.clone()))));
+    assert_eq!(first.draft.unwrap().touched, Some(vec![top, below]));
+    assert_eq!(first.bodies.len(), 1);
+
+    // Dragged: the tool, two touches, one union and one mesh.
+    let (_, before) = regenerator.cache().counts();
+    draft.revision = 2;
+    draft.extrude.extent = two_sides(editor.document(), "16", "5");
+    let dragged = answered(regenerator.handle(regenerate_with(&editor, Some(draft.clone()))));
+    assert_eq!(dragged.draft.unwrap().error, None);
+    assert_eq!(dragged.bodies.len(), 1);
+    let (_, worked) = regenerator.cache().counts();
+    assert_eq!(worked, before + 5);
+
+    // The lower plate taken out: the top plate's union with the tool
+    // alone and both plates' meshes are new.
+    let mut out = draft.clone();
+    out.revision = 3;
+    out.extrude.operation = Operation::Join(Targets {
+        excluded: vec![below],
+    });
+    let apart = answered(regenerator.handle(regenerate_with(&editor, Some(out))));
+    assert_eq!(apart.draft.unwrap().error, None);
+    assert_eq!(apart.bodies.len(), 2);
+    let (_, worked) = regenerator.cache().counts();
+
+    // Put back: everything is found again, the merged body's mesh too
+    // (the budget keeps it).
+    draft.revision = 4;
+    let back = answered(regenerator.handle(regenerate_with(&editor, Some(draft))));
+    assert_eq!(back.draft.unwrap().error, None);
+    assert_eq!(back.bodies.len(), 1);
+    assert_eq!(regenerator.cache().counts().1, worked);
+}
