@@ -212,23 +212,34 @@ impl Run<'_> {
             }
             .to_owned());
         }
-        // Worked out for every target before any body changes.
+        // Worked out for every target before any body changes. Where
+        // there are others, one failing can be left out.
         let mut changed = Vec::with_capacity(targets.len());
         for made in evaluation
             .bodies
             .iter()
             .filter(|m| targets.contains(&m.body))
         {
+            let name = self.body_name(made.body);
+            let fails = |message: String| match targets.len() {
+                1 => message,
+                _ => message::leave_out(message, name),
+            };
             let key = boolean_key(doing, made.key, tool_key);
             let solid = cache
                 .boolean(key, || {
                     varde_kernel::boolean(&made.solid, &tool, op, &self.tolerance, &Budget::DEFAULT)
                 })
-                .map_err(|error| message::boolean(doing, self.body_name(made.body), error))?;
+                .map_err(|error| fails(message::boolean(doing, name, error)))?;
             // The cached empty result stays: its key is right, and the
-            // check is cheap to make again.
+            // check is cheap to make again. A cut's message says to
+            // untick it already.
             if solid.is_empty() {
-                return Err(message::emptied(doing, self.body_name(made.body)));
+                let emptied = message::emptied(doing, name);
+                return Err(match doing {
+                    Doing::Cutting => emptied,
+                    _ => fails(emptied),
+                });
             }
             changed.push(BodySolid {
                 body: made.body,

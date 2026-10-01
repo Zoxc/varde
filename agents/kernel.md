@@ -2267,7 +2267,15 @@ whose control hulls are more than `r` apart (`mesh::apart`, GJK), stops
 on a pair both `settled` (flat within `r/4`: control points within
 `r/4` of the corners' plane, `input::planar`, and each edge's control
 point within `r/4` of its chord, `mesh::flat`; or no larger than
-`MIN_SPLIT·r` across), and splits the pieces that aren't.
+`MIN_SPLIT·r` across), and splits the pieces that aren't. A settled
+pair GJK calls near is dropped after all if the hulls are more than `r`
+apart along the normal of either piece's corners' plane
+(`near::apart_across`): GJK's direction to the closest points rounds
+relative to the hulls' size over their distance, and on the round
+octahedron's small pieces by a slab's large face at the finest
+tolerance it stopped short at some 3 resolutions, `true` one way round
+and `false` the other; near a tangency the pieces' planes are the
+direction it was after.
 
 Why it holds: a patch and its pieces lie in their control hulls
 (positive weights), so surfaces within `r` are never dropped, and
@@ -2276,7 +2284,8 @@ rounding, a few ulps of the coordinates a split, which nears `r` only at
 the finest tolerance some `1e5` from the origin); with the counting
 showing no crossing and no vertex inside, neither solid is inside the
 other, so they don't meet. A `true` means two flat pieces' hulls come
-within `r`, and a flat piece's hull is within `r/√2` of the piece
+within `r` (up to GJK's rounding where neither piece's plane
+separates them), and a flat piece's hull is within `r/√2` of the piece
 (`r/2` along the normal, both within `r/4` of the corners' plane, and
 `r/2` across it, the piece covering its corners' triangle but for a
 band `r/4` wide along its sides), so the surfaces come within
@@ -3168,8 +3177,11 @@ at gaps of 0 and half a resolution and not at three; a tool tangent to
 a hole from outside (seen by the counting at once); a box corner in a
 cylinder's control hull 0.13 off its wall (not touching); the round
 octahedron's cap cut 1e-4 deep inside one patch (touching); the same
-answer and work at 1 and 8 threads on a tangency and a near miss; and
-a near miss one unit short of its work `TooComplex`.
+answer and work at 1 and 8 threads on a tangency and a near miss;
+a near miss one unit short of its work `TooComplex`; and the round
+octahedron by a slab square to the diagonal its patch reaches furthest
+along, at the finest, default and coarsest tolerances, at the gaps
+above and at `2.5r`.
 
 Curved booleans (`curved_tests.rs`), all four operations both ways where
 it matters, every result checked with its face tags, volumes against
@@ -3729,9 +3741,14 @@ body, and the later ones still run.
   out…", "…leaves a face that can't be made…", "…is too complex…"),
   changing nothing. So a tool that meets one body and grazes another
   along a line fails as a whole (it used to skip the grazed body) until
-  that body is taken out. The excluded bodies' touch and boolean results
-  are marked used (`Cache::keep`), so the budget evicts them last, for
-  putting them back. Each target is replaced by
+  that body is taken out. Where a feature has more than one target, a
+  target's failing boolean (or an intersect emptying it) ends its
+  message with the way past: "…; untick Body 1 under Bodies to leave it
+  out" (`message::leave_out`); a cut emptying a body says so already,
+  and with one target unticking leaves nothing to work on. The
+  excluded bodies' touch and boolean results are marked used
+  (`Cache::keep`), so the budget evicts them last, for putting them
+  back. Each target is replaced by
   `kernel::boolean(body, tool, op)` with `Union`, `Difference` or
   `Intersection`, the body always first (a flush boss put first in a
   union came out right but with some 30,000 patches). Every target's

@@ -8,7 +8,7 @@ use glam::{DVec2, DVec3};
 use super::*;
 use crate::boolean::pairs::tests::{poke, reach};
 use crate::budget::Budget;
-use crate::mesh::tests::TOL;
+use crate::mesh::tests::{TOL, round_octahedron};
 use crate::par::assert_deterministic;
 use crate::profile::tests::{arc, circle, rect};
 use crate::profile::{Loop, Segment};
@@ -197,6 +197,45 @@ fn a_box_corner_in_a_cylinders_hull_doesnt_touch() {
         let cylinder = Solid::cylinder(DVec3::ZERO, 1.0, 2.0, 2, &tol).unwrap();
         let cube = Solid::cuboid(DVec3::new(0.8, 0.8, 0.5), DVec3::ONE, 1, &tol).unwrap();
         assert!(!both(&cylinder, &cube, &tol), "{tol:?}");
+    }
+}
+
+#[test]
+fn a_ball_by_a_slab_touches_at_a_point() {
+    // The round octahedron's patch reaches furthest along a diagonal at
+    // its middle; a slab square to it, its face the gap past that
+    // point, there or across the whole patch. At the finest tolerance
+    // the slab's large faces against the ball's small pieces left GJK
+    // short of telling them apart at 3 resolutions.
+    for fit in [Tolerance::MIN_FIT, TOL.fit(), Tolerance::MAX_FIT] {
+        let tol = Tolerance::new(fit).unwrap();
+        let r = tol.resolution();
+        let ball = Solid::new(round_octahedron(DVec3::ZERO), &tol).unwrap();
+        for d in [DVec3::ONE, DVec3::new(-1.0, -1.0, 1.0)] {
+            let d = d.normalize();
+            let (x, y) = d.any_orthonormal_pair();
+            let frame = Frame {
+                origin: DVec3::ZERO,
+                x,
+                y,
+            };
+            let along = x.cross(y).dot(d).signum();
+            for (gap, want) in GAPS {
+                let h = reach() + gap * r;
+                let span = if along > 0.0 {
+                    [h, h + 3.0]
+                } else {
+                    [-h - 3.0, -h]
+                };
+                let slab = prism(
+                    vec![rect(DVec2::splat(-3.0), DVec2::splat(3.0), 0)],
+                    &frame,
+                    span,
+                    &tol,
+                );
+                assert_eq!(both(&ball, &slab, &tol), want, "{fit} {d} {gap}");
+            }
+        }
     }
 }
 

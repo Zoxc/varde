@@ -9,7 +9,8 @@
 //! pair: drop it, stop, or split one piece or both with
 //! [`Patch::split4`] and visit the pieces' pairs. [`near`]'s visit drops
 //! a pair whose hulls are more than the distance apart (GJK,
-//! [`apart`]) and stops on a pair of [`settled`] pieces. A minimum
+//! [`apart`], or for settled pieces [`apart_across`]) and stops on a
+//! pair of [`settled`] pieces. A minimum
 //! distance is the same search with a bound in place of the yes or no:
 //! drop the pairs whose hulls are further apart than the closest points
 //! found so far, and settle the rest.
@@ -30,14 +31,18 @@
 //! wide along its sides, whose curves lie within `d/4` of them (where
 //! the edges' control points lie between their ends, as on pieces of
 //! smooth patches). So the surfaces come within `(1 + √2)·d`, about
-//! `2.4d`. Pieces stop at a size floor too ([`MIN_SPLIT`] times `d`
-//! across), where the bound is the floor piece's sag instead: that takes
-//! surfaces curving tighter than some hundreds of `d`. A `true` further
+//! `2.4d`, up to GJK's rounding where neither piece's plane separates
+//! the hulls ([`apart_across`]). Pieces stop at a size floor too
+//! ([`MIN_SPLIT`] times `d` across), where the bound is the floor
+//! piece's sag instead: that takes surfaces curving tighter than some
+//! hundreds of `d`. A `true` further
 //! than `d` is only ever a pair kept that needn't have been, never a
 //! contact missed.
 //!
 //! Every visit is charged ([`NEAR_WORK`]), sequentially, so the answer
 //! and the work spent are the same at any thread count. No trig.
+
+use glam::DVec3;
 
 use super::input::{Input, planar};
 use super::pairs;
@@ -143,6 +148,33 @@ pub(crate) fn settled(patch: &Patch, within: f64, floor: f64) -> bool {
     planar(patch, within / 4.0) && flat(patch, within / 4.0)
 }
 
+/// Whether the control hulls of `x` and `y` are more than `within`
+/// apart along the normal of either's corners' plane: for a pair of
+/// settled pieces [`apart`] calls near. GJK's direction to the closest
+/// points rounds relative to the hulls' size over their distance, so on
+/// a small piece by a large flat face (a ball by a slab, at the finest
+/// tolerance) it stopped short at some 3 resolutions; near a tangency
+/// the pieces' own planes are the direction it was after. Measured from
+/// a corner of `x`, so the rounding is relative to the pieces' size,
+/// not to their distance from the origin.
+fn apart_across(x: &Patch, y: &Patch, within: f64) -> bool {
+    let origin = x.p[0];
+    let span = |patch: &Patch, n: DVec3| {
+        let along = patch.hull().map(|p| (p - origin).dot(n));
+        let lo = along.iter().copied().fold(f64::INFINITY, f64::min);
+        let hi = along.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        (lo, hi)
+    };
+    [x, y].into_iter().any(|piece| {
+        let [p0, p1, p2] = piece.p;
+        let Some(n) = (p1 - p0).cross(p2 - p0).try_normalize() else {
+            return false;
+        };
+        let ((xlo, xhi), (ylo, yhi)) = (span(x, n), span(y, n));
+        ylo - xhi > within || xlo - yhi > within
+    })
+}
+
 /// Whether `a` and `b`, one of them with curved patches, touch or
 /// overlap, for [`touches`](super::touches): one counting
 /// ([`pairs::counted`], what [`pairs::refined`] counts first), `true`
@@ -185,6 +217,7 @@ pub(super) fn near(
                 return Step::Drop;
             }
             match (settled(x, within, floor), settled(y, within, floor)) {
+                (true, true) if apart_across(x, y, within) => Step::Drop,
                 (true, true) => Step::Stop,
                 (true, false) => Step::Split(Which::Second),
                 (false, true) => Step::Split(Which::First),

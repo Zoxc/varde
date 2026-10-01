@@ -1148,3 +1148,71 @@ fn a_cut_tangent_to_a_body_along_a_line_is_a_no_op_or_names_it() {
     assert_eq!(evaluation.touched, [(cut, vec![body])]);
     assert_near(evaluation.bodies[0].solid.volume(), PI * 4.0);
 }
+
+/// A join overlapping one body and tangent to another along a line
+/// fails as a whole, naming the tangent body and saying to untick it;
+/// unticked, the join goes into the other body alone.
+#[test]
+fn a_join_tangent_to_a_second_body_fails_until_it_is_unticked() {
+    let mut editor = Editor::new(Document::default());
+    editor
+        .apply(Command::SetTolerance(
+            Tolerance::new(Tolerance::MAX_FIT).unwrap(),
+        ))
+        .unwrap();
+    let extent = two_sides(editor.document(), "2", "2");
+    add_extrude(
+        &mut editor,
+        disc((0.0, 0.0), 1.0),
+        extent.clone(),
+        Operation::NewBody(BodyId::NEW),
+    );
+    add_extrude(
+        &mut editor,
+        rectangle((2.0, 0.0), (4.0, 3.0)),
+        extent,
+        Operation::NewBody(BodyId::NEW),
+    );
+    let [round, block] = [0, 1].map(|i| editor.document().bodies()[i].id);
+    // The disc's centre 2 from the round body's at 0.7 from x: tangent
+    // to it, and over the block's side at x = 2.
+    let center = DVec2::from_angle(0.7) * 2.0;
+    let extent = Extent::OneSide(length(editor.document(), "1"));
+    let join = add_extrude(
+        &mut editor,
+        disc((center.x, center.y), 1.0),
+        extent,
+        Operation::Join(Targets::default()),
+    );
+    let evaluation = evaluated(editor.document());
+    let [(failed, error)] = &evaluation.failed[..] else {
+        panic!("{:?}", evaluation.failed);
+    };
+    assert_eq!(*failed, join);
+    assert!(
+        error.starts_with("joining it to Body 1 leaves no clean solid"),
+        "{error}"
+    );
+    assert!(
+        error.ends_with("; untick Body 1 under Bodies to leave it out"),
+        "{error}"
+    );
+    assert_eq!(evaluation.touched, [(join, vec![round, block])]);
+    assert_near(evaluation.bodies[0].solid.volume(), PI * 4.0);
+    assert_near(evaluation.bodies[1].solid.volume(), 24.0);
+
+    set_extrude(&mut editor, join, |extrude| {
+        extrude.operation = Operation::Join(Targets {
+            excluded: vec![round],
+        });
+    });
+    let evaluation = evaluated(editor.document());
+    assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
+    assert_eq!(evaluation.touched, [(join, vec![block])]);
+    assert_near(evaluation.bodies[0].solid.volume(), PI * 4.0);
+    // The disc's part past x = 2, a segment of the circle, is in the
+    // block already.
+    let d = 2.0 - center.x;
+    let inside = d.acos() - d * (1.0 - d * d).sqrt();
+    assert_near(evaluation.bodies[1].solid.volume(), 24.0 + PI - inside);
+}

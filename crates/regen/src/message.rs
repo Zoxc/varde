@@ -106,6 +106,14 @@ pub(crate) fn boolean(doing: Doing, body: &str, error: KernelError) -> String {
     }
 }
 
+/// `message`, why a feature failed with the body named `body`, with
+/// the way past it when the feature works on other bodies too: leaving
+/// that one out (unticked, it stays as it is and the others are still
+/// worked on).
+pub(crate) fn leave_out(message: String, body: &str) -> String {
+    format!("{message}; untick {body} under Bodies to leave it out")
+}
+
 /// Why `doing` the extrude and the body named `body` fails though the
 /// kernel worked it out: it would leave nothing of the body. Bodies are
 /// the document's, so an emptied one would stay listed with no geometry.

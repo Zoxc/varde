@@ -35,6 +35,22 @@ fn boolean_failures_name_the_body_and_what_to_try() {
 }
 
 #[test]
+fn a_failure_with_other_bodies_says_to_leave_the_body_out() {
+    let text = leave_out(
+        boolean(Doing::Joining, "Body 2", KernelError::TooComplex),
+        "Body 2",
+    );
+    assert!(
+        text.starts_with("joining it to Body 2 is too complex"),
+        "{text}"
+    );
+    assert!(
+        text.ends_with("; untick Body 2 under Bodies to leave it out"),
+        "{text}"
+    );
+}
+
+#[test]
 fn extrude_failures_speak_of_the_regions() {
     let touching = KernelError::Profile(ProfileError::Touching([(0, 1), (1, 0)]));
     assert_eq!(
