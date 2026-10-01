@@ -36,7 +36,7 @@ use glam::DVec3;
 use super::assemble::Curves;
 use super::parts;
 use crate::budget::Work;
-use crate::mesh::{Edge, Face, Surface, on_surface, samples, straight};
+use crate::mesh::{Edge, Face, Surface, off_surface, straight};
 use crate::patch::Patch;
 use crate::trig;
 use crate::{KernelError, Tolerance};
@@ -514,19 +514,12 @@ impl Cleaner<'_> {
                 sides.map(|s| s.1),
             );
             if let Ok(patch) = &patch {
-                if on_surface(patch, &surface, tol.resolution()) {
+                // The control points bound a plane's distance, the samples
+                // a quadric's (as the cuts' bands are measured).
+                let off = off_surface(patch, &surface);
+                if off <= tol.resolution() {
                     continue;
                 }
-                // How far off: the control points bound a plane's distance,
-                // the samples a quadric's (as the cuts' bands are measured).
-                let far = |x: DVec3| {
-                    let d = surface.distance(x);
-                    if d.is_nan() { f64::INFINITY } else { d }
-                };
-                let off = match surface {
-                    Surface::Plane { .. } => patch.hull().into_iter().map(far).fold(0.0, f64::max),
-                    _ => samples().map(|u| far(patch.eval(u))).fold(0.0, f64::max),
-                };
                 if off > tol.fit() {
                     return Err(KernelError::TooComplex);
                 }

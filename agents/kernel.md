@@ -1619,11 +1619,13 @@ otherwise the points of `f` straight above and below `v` are solved for
 control points' shadows' box misses `v` dropped, Newton on the shadow's
 two coordinates in pieces whose normals all lean one way along `UP`; a
 point Newton's method finds from one piece in another is kept too, if
-it is in the triangle: on a steep patch every piece's shadow holds the
-vertex's, the search ran out of pieces before it got to the one holding
-the point, and the winding number's point, taken to be above, gave
-every edge at the vertex a crossing through the patch that wasn't
-there),
+it is in the triangle and the search ran out of pieces: on a steep
+patch every piece's shadow holds the vertex's, the search ran out
+before it got to the one holding the point, and the winding number's
+point, taken to be above, gave every edge at the vertex a crossing
+through the patch that wasn't there; where the search didn't run out,
+that piece finds its own, and a second find near a fold, where Newton's
+method converges loosely, would count it twice),
 their facings made to add up to `ω(v, f)` (a shadow covers a point as
 often as its boundary winds round it, counted by facing) by adding the
 nearest found just outside the triangle or dropping those inside nearest
@@ -1975,17 +1977,16 @@ the fit tolerance at the 15 sample points (each inverted into the patch
 from its domain position): a cut whose domain preimage bends far from
 the straight domain segment leaves the band's inside off the surface.
 A triangle off its face's quadric (see "Exact bands on quadrics") by
-more than half the fit tolerance at the samples asks for its curved
-sides on the face's boundary (cut or edge pieces) to be halved the same
-way. Each face reports the largest of these two distances over its
+more than half the fit tolerance at the samples asks for its sides on
+the face's boundary (cut or edge pieces) to be halved the same way. Each face reports the largest of these two distances over its
 triangles (`Cutout::stray`, NaN as infinite), and the round the largest
 of all; **the round kept must be within the fit tolerance**, else the
 operation fails as `TooComplex`. Halving can't bring every band within
 it: a vertex off the surface keeps the triangles at it that far however
 small they get (bars through boxes at the finest tolerance: 5.6e-4 off
 in every round, their union and `bar − box` kept at 56 times the
-tolerance before), a triangle with no curved side on the boundary has
-nothing to halve, and a fitted chain's stray only halves with its
+tolerance before), a triangle with no side on the boundary has nothing
+to halve, and a fitted chain's stray only halves with its
 curves. Between half the tolerance and the tolerance, a result that
 ran out of rounds is kept: within the contract. `TooComplex`'s advice,
 a coarser tolerance, holds: the leftover is of a fixed size.
@@ -2681,7 +2682,10 @@ to 72 of its 96 operations and left the others as they were.
 - **Crossings only placed are refused where no root holds them**: on a
   face claiming no surface, or where no root of the crossing's sign lies
   on the patch crossed, a crossing the search only placed is checked
-  and refused if it isn't on the other operand (`Inconsistent`). Placing
+  and refused if it isn't on the other operand (`Inconsistent`). A
+  curved edge touching a quadric is a double root of the quartic, which
+  the isolation gives as rounding has it (none, or two close together),
+  so such a crossing may find no root and be refused. Placing
   them at checked roots on planes and quadrics won back more than the
   check cost. The seeded suite's tallies didn't move through either
   change (bars 22 of 24 pairs, walls 112 of 120, coaxial 37 of 40,
@@ -2714,8 +2718,7 @@ to 72 of its 96 operations and left the others as they were.
   with section weights by angle on elliptic cylinders.
 - **Bands past the fit tolerance are refused, not mended**: halving
   can't move bands at a vertex off the surface, and a triangle off its
-  quadric with no curved side on the face's boundary has nothing to
-  halve; at the finest tolerances such cases are `TooComplex`. Fuzzing
+  quadric with no side on the face's boundary has nothing to halve; at the finest tolerances such cases are `TooComplex`. Fuzzing
   walls at fits `1e-4` and `1e-5` found no result where the bound on
   triangles off their quadric (not only those along a cut) changed the
   outcome: it is a backstop.
@@ -3598,7 +3601,7 @@ parameter, or a split outside the patch bounds),
   from the quadric) must be within it, else `TooComplex`. The plan
   refused only when the rounds ran out with bands along a cut past it; a
   round can also finish with a triangle off its quadric that has no
-  curved side on the face's boundary to halve. Such triangles ask for
+  side on the face's boundary to halve. Such triangles ask for
   their boundary curves to be halved from half the tolerance, as those
   along a cut do, and the clean-up's moves onto the copies are held to
   the same bound.
@@ -3640,11 +3643,16 @@ parameter, or a split outside the patch bounds),
   arc is a straight edge only between ends on one ruling. Parabolic and
   hyperbolic cylinders and other quadrics are as before.
 - **The points of a patch above a vertex keep Newton's method's from any
-  piece**: found while looking at a fuzzing refusal (a small cylinder
+  piece where the search ran out of pieces**: found while looking at a
+  fuzzing refusal (a small cylinder
   `1e-3` through a steep wall), not in the plan. The vertex's winding
   number had a point the search, run out of pieces, didn't find, and
   guessing it above gave every edge at the vertex a crossing that isn't
   there, which the check on crossings only placed refused
   (`Inconsistent`); the operation is still refused, now by the result's
   hull rules (`Invalid(VertexNeighbours)`), with the decisions
-  consistent.
+  consistent. Only where the search ran out: where it didn't, the
+  piece holding the point found it itself, and a second find from
+  another piece near a fold (Newton's method converging loosely, two
+  finds further apart than they are merged) would have counted it
+  twice.

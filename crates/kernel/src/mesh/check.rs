@@ -319,13 +319,23 @@ pub(super) fn check_pair(
 /// [`Mesh::check_faces`]): a plane's patch with its six control points
 /// within `resolution` of it, a quadric's with its [`samples`].
 pub(crate) fn on_surface(patch: &Patch, surface: &super::Surface, resolution: f64) -> bool {
+    off_surface(patch, surface) <= resolution
+}
+
+/// How far `patch` strays from `surface`, as [`on_surface`] measures it:
+/// the farthest of a plane's patch's six control points (which bound it),
+/// or of a quadric's patch's [`samples`]; NaN counted as infinite, so it
+/// fails every bound. 0 for [`Surface::Free`](super::Surface::Free).
+pub(crate) fn off_surface(patch: &Patch, surface: &super::Surface) -> f64 {
     use super::Surface;
-    // Written so that NaN fails.
-    let near = |x| surface.distance(x) <= resolution;
+    let far = |x| {
+        let d = surface.distance(x);
+        if d.is_nan() { f64::INFINITY } else { d }
+    };
     match surface {
-        Surface::Free => true,
-        Surface::Plane { .. } => patch.hull().into_iter().all(near),
-        Surface::Quadric(_) => samples().all(|u| near(patch.eval(u))),
+        Surface::Free => 0.0,
+        Surface::Plane { .. } => patch.hull().into_iter().map(far).fold(0.0, f64::max),
+        Surface::Quadric(_) => samples().map(|u| far(patch.eval(u))).fold(0.0, f64::max),
     }
 }
 

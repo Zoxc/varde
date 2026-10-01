@@ -15,7 +15,7 @@
 //! curve halved (a cut's by its chain, an operand's edge by a vertex
 //! added on it that both faces beside it get) and every face is cut
 //! again. A triangle off its face's quadric (onto the face's copy
-//! claiming no surface) by that much gets its curved sides on the face's
+//! claiming no surface) by that much gets its sides on the face's
 //! boundary halved the same way. What the last round keeps must be within
 //! the fit tolerance, or the operation fails as too complex. Then
 //! refinement's pieces that came through whole are merged back (see
@@ -31,7 +31,7 @@ use super::count::{Counts, Crossing};
 use super::curved::solve::near_patch;
 use super::input::{Input, Side};
 use super::pairs::{Arc, first_ids};
-use super::surface::{Crossed, Shape, polish};
+use super::surface::{Crossed, Shape, lerp, on_curve, point, polish, straight};
 use super::triangulate::Meter;
 use super::{Op, Primitives, segment};
 use crate::budget::Work;
@@ -568,7 +568,6 @@ impl Cutting<'_> {
             (b, a, &self.along[1], &counts.x21, self.first[1]),
         ] {
             for e in 0..input.edges.len() as u32 {
-                let [s, en] = input.edges[e as usize];
                 let snap = |p: DVec3, id: u32| {
                     let face = crossings[(id - first) as usize].face;
                     let q = p.shared(&other.patches[face as usize].hull());
@@ -579,14 +578,8 @@ impl Cutting<'_> {
                     q
                 };
                 let conic = input.conic(e);
-                let [ps, pe] = [s, en].map(|v| input.pos(v));
                 for &(id, t) in along.of(e).0 {
-                    let p = if lined(input, e) {
-                        lerp(ps, pe, t)
-                    } else {
-                        point(&conic, t)
-                    };
-                    base[id as usize] = snap(p, id);
+                    base[id as usize] = snap(point(&conic, t), id);
                 }
             }
         }
@@ -854,7 +847,7 @@ impl Cutting<'_> {
                 let conic = input.conic(e);
                 for &t in ts {
                     let id = u32::try_from(pos.len()).map_err(|_| KernelError::TooComplex)?;
-                    pos.push(point(&conic, t));
+                    pos.push(on_curve(&conic, t));
                     added.entry(e).or_default().push((id, t));
                 }
             }
@@ -1244,9 +1237,7 @@ fn params(
 /// cut as such. An edge only straight within the resolution (a short arc)
 /// keeps its curve.
 fn lined(input: &Input, e: u32) -> bool {
-    let edge = input.mesh.edges()[e as usize];
-    let [s, t] = input.edges[e as usize].map(|v| input.pos(v));
-    edge.weight == 1.0 && edge.ctrl == (s + t) * 0.5
+    straight(&input.conic(e))
 }
 
 /// Pieces of a patch looked at certifying an unsolved crossing's distance
@@ -1286,13 +1277,6 @@ fn param_on(conic: &Conic3, x: DVec3, within: f64) -> Option<f64> {
     (conic.eval(t).distance(x) <= within).then_some(t)
 }
 
-/// The point of `conic` at `t`, from its blossom, so the ends of pieces
-/// split there are it to the bit.
-fn point(conic: &Conic3, t: f64) -> DVec3 {
-    let h = conic.blossom(t, t);
-    (h.truncate() / h.w).shared(&conic.hull())
-}
-
 /// The piece of `conic` from `s` to `t`, exact by blossoming.
 fn piece(conic: &Conic3, s: f64, t: f64) -> Result<Edge, KernelError> {
     if s == 0.0 && t == 1.0 {
@@ -1323,15 +1307,6 @@ fn flipped(f: Face) -> Face {
         s => s,
     };
     Face { surface, ..f }
-}
-
-/// The point at `t` from `s` to `e`, exactly `s` at 0 and `e` at 1.
-fn lerp(s: DVec3, e: DVec3, t: f64) -> DVec3 {
-    if t <= 0.5 {
-        s + (e - s) * t
-    } else {
-        e + (s - e) * (1.0 - t)
-    }
 }
 
 #[cfg(test)]

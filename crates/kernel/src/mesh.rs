@@ -52,7 +52,7 @@ mod repair;
 pub use build::{BuildError, MeshBuilder};
 pub use bvh::Bvh;
 pub use check::CheckError;
-pub(crate) use check::{on_surface, samples};
+pub(crate) use check::{off_surface, samples};
 pub use face::{Face, FaceName, FacePart, Quadric, Surface};
 pub(crate) use hull::{apart, straight};
 pub(crate) use refine::{Node, Refiner};

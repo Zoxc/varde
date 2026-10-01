@@ -29,7 +29,7 @@ use super::super::surface::{Guide, Shape, second_point, section};
 use super::super::triangulate::{Bends, Meter, NO_CUT, Vert, triangulate};
 use super::{Along, Curves, key};
 use crate::Tolerance;
-use crate::mesh::{Edge, Quadric, Surface, samples, straight};
+use crate::mesh::{Edge, Quadric, Surface, off_surface, samples, straight};
 use crate::patch::{Conic3, Patch};
 
 /// How a face is laid out for triangulating: see the [module](self) docs.
@@ -480,16 +480,14 @@ pub(super) fn cut_face(
             let Surface::Quadric(_) = surface else {
                 return false;
             };
-            let from_surface = samples()
-                .map(|u| far(surface.distance(piece.eval(u))))
-                .fold(0.0, f64::max);
+            let from_surface = off_surface(&piece, &surface);
             if from_surface <= tol.resolution() / 2.0 {
                 return false;
             }
             // Off the quadric, onto the copy claiming no surface: held to
             // the fit tolerance all the same (a band tree's root that no
-            // ruling frees, which nothing along a cut bounds), its curved
-            // sides on the face's boundary halved while it strays.
+            // ruling frees, which nothing along a cut bounds), its sides
+            // on the face's boundary halved while it strays.
             stray = stray.max(from_surface);
             if from_surface > tol.fit() / 2.0 {
                 split.extend(keys.into_iter().filter(|k| boundary.contains(k)));

@@ -17,7 +17,7 @@ use super::curved::solve::near_patch;
 use super::input::Input;
 use super::segment;
 use crate::mesh::{Quadric, Surface};
-use crate::patch::{Conic3, Patch, W_MAX};
+use crate::patch::{Conic3, Patch, Point, W_MAX};
 
 /// What a patch is known to lie on, exactly.
 #[derive(Debug, Clone, Copy)]
@@ -156,18 +156,34 @@ pub(super) fn polish(conic: &Conic3, t: f64, shape: &Shape, crossed: &Crossed) -
 }
 
 /// The point of `conic` at `s`, as the crossings' vertices are placed:
-/// by interpolation on an exactly straight edge, else its blossom.
-fn point(conic: &Conic3, s: f64) -> DVec3 {
+/// by interpolation on an exactly straight edge, else by [`on_curve`].
+pub(super) fn point(conic: &Conic3, s: f64) -> DVec3 {
     if straight(conic) {
-        conic.p0.lerp(conic.p1, s)
+        lerp(conic.p0, conic.p1, s)
     } else {
-        conic.eval(s)
+        on_curve(conic, s)
+    }
+}
+
+/// The point of `conic` at `t`, from its blossom, so the ends of pieces
+/// split there are it to the bit.
+pub(super) fn on_curve(conic: &Conic3, t: f64) -> DVec3 {
+    let h = conic.blossom(t, t);
+    (h.truncate() / h.w).shared(&conic.hull())
+}
+
+/// The point at `t` from `s` to `e`, exactly `s` at 0 and `e` at 1.
+pub(super) fn lerp(s: DVec3, e: DVec3, t: f64) -> DVec3 {
+    if t <= 0.5 {
+        s + (e - s) * t
+    } else {
+        e + (s - e) * (1.0 - t)
     }
 }
 
 /// Whether `conic` is exactly the segment between its ends, as
 /// [`segment`] makes them.
-fn straight(conic: &Conic3) -> bool {
+pub(super) fn straight(conic: &Conic3) -> bool {
     conic.w == 1.0 && conic.c == (conic.p0 + conic.p1) * 0.5
 }
 
@@ -235,12 +251,13 @@ fn roots(conic: &Conic3, shape: &Shape) -> Vec<f64> {
                 .into_iter()
                 .map(|s| newton(conic, &q, s))
                 .collect();
-            // A root a rounding past an end (a crossing at the edge's
-            // end, a vertex on the quadric), which the isolation, on the
-            // open interval, doesn't give.
+            // A root at or a rounding past an end (a crossing at the
+            // edge's end, a vertex on the quadric), which the isolation,
+            // on the open interval, doesn't give.
             for end in [0.0, 1.0] {
                 let s = newton(conic, &q, end);
-                if (s - end).abs() <= 1e-9 && !(0.0..=1.0).contains(&s) {
+                let past = !(0.0..=1.0).contains(&s);
+                if (s - end).abs() <= 1e-9 && (past || q.value(point(conic, s)) == 0.0) {
                     found.push(s);
                 }
             }
@@ -436,8 +453,12 @@ fn section_into(
         let arc = match exact {
             // Exactly a ruling.
             Some((mc, _)) if mc == DVec3::ZERO => segment(x, y),
-            // Straight only to a billionth: the arc itself, which needs
-            // no guide (the other arc turns back).
+            // Straight only to a billionth: the shorter arc, with no
+            // look at the guide, whose side of a chord this near the arc
+            // is a rounding's. The other arc has the same tangent lines
+            // but runs round the far side of the cylinder, more than
+            // half way, which no patch spans, and both callers want an
+            // arc on one patch (their ends and guide on it).
             Some((mc, w)) => Conic3 {
                 p0: x,
                 c: m + mc,
@@ -1048,6 +1069,31 @@ mod tests {
             let (t, _) = polish(&line, root + 1e-4, &shape, &placed(&w.patch, x));
             assert!(point(&line, t).distance(w.p) < 1e-7, "{t}");
         }
+    }
+
+    #[test]
+    fn a_curved_edge_from_a_point_on_the_cylinder_crosses_there() {
+        // An arc from a point exactly on a cylinder (`F` exactly 0) into
+        // it: the quartic's root at the end, which the isolation (on the
+        // open interval) doesn't give and Newton's method from the end
+        // doesn't move, was lost, and the crossing stayed where placed.
+        let q = Quadric::cylinder(DVec3::ZERO, DVec3::Z, 1.0).unwrap();
+        let bottom = Conic3::arc(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, -0.5, 0.5).unwrap();
+        let strip = crate::patch::cylinder_strip(&bottom, DVec3::Z * 2.0).unwrap();
+        let start = DVec3::new(1.0, 0.0, 0.5);
+        assert_eq!(q.value(start), 0.0);
+        let patch = strip
+            .into_iter()
+            .find(|patch| near_patch(start, patch, 1e-9).0.is_some())
+            .unwrap();
+        let arc = Conic3 {
+            p0: start,
+            c: DVec3::new(0.5, 0.5, 0.5),
+            w: 0.8,
+            p1: DVec3::new(0.2, 0.3, 0.8),
+        };
+        let (t, _) = polish(&arc, 0.3, &Shape::Quadric(q), &placed(&patch, 1));
+        assert_eq!(t, 0.0);
     }
 
     #[test]

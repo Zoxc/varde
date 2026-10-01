@@ -6,7 +6,9 @@
 //! control points' box can't hold a solution; a piece small or simple
 //! enough is handed to Newton's method, started at its middle, and a
 //! solution it finds counts if it lies in that piece (so each is found
-//! once, and the next piece finds its own). Only `+ − × ÷ √`, so the
+//! once, and the next piece finds its own; above a vertex, one found from
+//! another piece counts too where the search ran out of pieces before
+//! getting to that one). Only `+ − × ÷ √`, so the
 //! answers are the same on every platform. What they find are positions
 //! and candidates; the counts decide how many there are.
 
@@ -76,18 +78,26 @@ pub(crate) fn hits(patch: &Patch, v: DVec3, axes: &Axes) -> Vec<Hit> {
         patch: &local,
         axes,
         found: Vec::new(),
+        elsewhere: Vec::new(),
         nodes: 0,
     };
     search.visit(DVec3::AXES, 0);
-    // Newton's method from one piece may end in another: a point of the
-    // patch all the same (in the triangle, within the slack), kept, as
-    // the search may run out of pieces before it gets to that one (a
-    // steep patch, whose pieces' shadows all hold the vertex's).
-    let mut found: Vec<DVec3> = search
-        .found
-        .into_iter()
-        .filter(|&u| in_piece(DVec3::AXES, u))
-        .collect();
+    // Newton's method from one piece may end in another: where the search
+    // ran out of pieces (a steep patch, whose pieces' shadows all hold the
+    // vertex's) before it got to that one, a point of the patch all the
+    // same (in the triangle, within the slack), kept. Where it didn't,
+    // that piece found its own, and a second find of it (near a fold,
+    // where Newton's method converges loosely, further off than the
+    // dedup below) would count it twice.
+    let mut found = search.found;
+    if search.nodes > MAX_NODES {
+        found.extend(
+            search
+                .elsewhere
+                .into_iter()
+                .filter(|&u| in_piece(DVec3::AXES, u)),
+        );
+    }
     found.sort_by(|a, b| a.to_array().partial_cmp(&b.to_array()).expect("finite"));
     found.dedup_by(|a, b| (*a - *b).abs().max_element() <= 1e-10);
     found
@@ -292,7 +302,10 @@ struct HitSearch<'a> {
     /// The patch moved so the vertex is at the origin, and scaled.
     patch: &'a Patch,
     axes: &'a Axes,
+    /// Points found in their own pieces.
     found: Vec<DVec3>,
+    /// Points Newton's method found from a piece they aren't in.
+    elsewhere: Vec<DVec3>,
     nodes: usize,
 }
 
@@ -319,10 +332,11 @@ impl HitSearch<'_> {
         if deep || (depth >= 2 && self.unfolded(d)) {
             let start = (d[0] + d[1] + d[2]) / 3.0;
             if let Some(u) = self.newton(start) {
-                self.found.push(u);
                 if in_piece(d, u) {
+                    self.found.push(u);
                     return;
                 }
+                self.elsewhere.push(u);
             }
             if deep {
                 return;
