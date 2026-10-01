@@ -173,44 +173,49 @@ fn a_snap_step_is_the_decimal_it_names() {
 }
 
 #[test]
-fn a_long_name_without_spaces_stays_in_the_panel() {
+fn a_long_name_without_spaces_breaks_inside_the_panel() {
     use crate::testing::Laid;
     let profiles = plate();
     let picked = BTreeSet::from([0]);
     let long = "x".repeat(200);
-    let body = BodyId::NEW;
+    let error = format!("feature 3: {long} doesn't touch it");
     let mut state = state_of(&profiles, &picked);
     state.operation = OperationKind::Cut;
     let size = iced::Size::new(400, 600);
     let max = iced::Size::new(size.width as f32, size.height as f32);
+    let target = |name| ExtrudeTarget {
+        body: BodyId::NEW,
+        name,
+        included: true,
+    };
     let short = Laid::new(
         panel(&ExtrudeState {
-            targets: vec![ExtrudeTarget {
-                body,
-                name: "Body 1",
-                included: true,
-            }],
+            targets: vec![target("Body 1")],
             ..state.clone()
         }),
         max,
     )
     .pixels(size);
     state.editing = Some(&long);
-    state.targets = vec![ExtrudeTarget {
-        body,
-        name: &long,
-        included: true,
-    }];
+    state.targets = vec![target(&long), target("Body 2")];
+    state.error = Some(&error);
     let mut laid = Laid::new(panel(&state), max);
     assert_eq!(laid.node.size().width, PANEL_WIDTH);
-    for shown in laid.texts() {
-        assert!(
-            shown.bounds.x + shown.bounds.width <= PANEL_WIDTH,
-            "{shown:?}"
-        );
+    let shown = laid.texts();
+    let find = |text: &str| {
+        let mut found = shown.iter().filter(|shown| shown.text == text);
+        found.next_back().unwrap_or_else(|| panic!("no {text:?}"))
+    };
+    let line = find("Body 2").bounds.height;
+    // The name and the message break into lines, each line inside the
+    // panel: 200 glyphs at 12 px take well over four widths of it.
+    for text in [long.as_str(), &error] {
+        let text = find(text);
+        assert!(text.bounds.height >= 4.0 * line, "{text:?}");
+        assert!(text.bounds.x + text.bounds.width <= PANEL_WIDTH, "{text:?}");
     }
     // Nothing is drawn right of the panel that the short name doesn't
-    // draw there.
+    // draw there: the title is clipped.
     let pixels = laid.pixels(size);
     let columns = PANEL_WIDTH as usize + 1..size.width as usize;
     for y in 0..size.height as usize {

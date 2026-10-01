@@ -34,11 +34,13 @@ pub(crate) const PANEL_MARGIN: f32 = 12.0;
 pub const PANEL_BODY: iced::widget::Id = iced::widget::Id::new("operation-panel-body");
 
 /// How tall the footer's message gets at most, in pixels: about five
-/// lines, clipped past that, so a long one can't push OK off the panel.
+/// lines. A longer one scrolls, so it can't push OK off the panel and
+/// none of it is lost.
 const MESSAGE_HEIGHT: f32 = 80.0;
 
-/// The horizontal padding of the panel's sections, in pixels. The body's
-/// scrollbar floats in its right padding, clear of the options.
+/// The horizontal padding of the panel's sections, in pixels. The
+/// scrollbars of the body and the message float in its right padding,
+/// clear of the text.
 const SIDE: f32 = 10.0;
 
 /// What an operation's panel shows.
@@ -49,7 +51,8 @@ pub(crate) struct Parts<'a> {
     pub summary: Option<Element<'a, Message>>,
     /// The options, scrolled when they don't fit.
     pub body: Element<'a, Message>,
-    /// Above the buttons: why OK can't be pressed, say.
+    /// Above the buttons: why OK can't be pressed, say. It scrolls past
+    /// about five lines.
     pub message: Option<Element<'a, Message>>,
     /// What OK sends, or nothing while it can't be pressed.
     pub ok: Option<Message>,
@@ -75,23 +78,28 @@ pub(crate) fn operation_panel(parts: Parts<'_>) -> Element<'_, Message> {
         container(row![title, summary].spacing(8).align_y(Alignment::Center)).padding([9.0, SIDE]),
         hrule(),
     ];
-    let scrollbar = Scrollbar::new()
-        .width(4)
-        .scroller_width(4)
-        .margin((SIDE - 4.0) / 2.0);
+    // Both scrollbars float in the right padding, clear of the text.
+    let scrollbar = Direction::Vertical(
+        Scrollbar::new()
+            .width(4)
+            .scroller_width(4)
+            .margin((SIDE - 4.0) / 2.0),
+    );
     let body = scrollable(
         container(body)
             .width(Length::Fill)
             .padding(iced::Padding::from([8.0, SIDE]).bottom(10.0)),
     )
     .id(PANEL_BODY)
-    .direction(Direction::Vertical(scrollbar))
+    .direction(scrollbar)
     .width(Length::Fill);
     let message = message.map(|message| {
-        container(message)
-            .width(Length::Fill)
-            .max_height(MESSAGE_HEIGHT)
-            .clip(true)
+        container(
+            scrollable(container(message).width(Length::Fill).padding([0.0, SIDE]))
+                .direction(scrollbar)
+                .width(Length::Fill),
+        )
+        .max_height(MESSAGE_HEIGHT)
     });
     let buttons = row![
         space::horizontal(),
@@ -101,8 +109,9 @@ pub(crate) fn operation_panel(parts: Parts<'_>) -> Element<'_, Message> {
     .spacing(6);
     let footer = column![
         hrule(),
-        container(column![message, buttons].spacing(6))
-            .padding(iced::Padding::from([8.0, SIDE]).bottom(10.0)),
+        column![message, container(buttons).padding([0.0, SIDE])]
+            .spacing(6)
+            .padding(iced::Padding::from([8.0, 0.0]).bottom(10.0)),
     ];
     let sections = Sections {
         width: PANEL_WIDTH,

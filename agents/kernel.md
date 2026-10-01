@@ -3244,8 +3244,8 @@ run past the viewport's bottom margin, and a fixed footer (the message and
 Cancel and OK), so OK and Cancel show and take clicks however many bodies
 are listed or however short the window; nothing is drawn past the panel,
 and a body's name, the field errors and the message break inside words
-that don't fit (`Wrapping::WordOrGlyph`), the message clipped past about
-five lines. Its body holds the extents (Through all only while Cut is
+that don't fit (`Wrapping::WordOrGlyph`), the message scrolling on its
+own past about five lines. Its body holds the extents (Through all only while Cut is
 chosen, else disabled with "Only a cut goes through all"; choosing
 another operation while through all goes back to one side), the distance fields (the first is `VALUE_FIELD`, which
 takes the focus as the session opens, all selected; `Esc` in it cancels),
@@ -3264,7 +3264,9 @@ drop out, and aren't taken out again when redone: undo gives the ids
 back, so a new edit may give theirs to other bodies); its footer the
 refusal, the draft's error or "Checking the sketch…", then Cancel and OK.
 The Bodies list has no scrollable of its own: the body scrolls as a
-whole, as in `notes/ui-mock.html`. The handle and region picking are in `agents/viewport.md`.
+whole, as in `notes/ui-mock.html`, keeping its offset while rows come and
+go (clamped to what's left, so no empty stretch shows), and the wheel
+over it scrolls it rather than the camera. The handle and region picking are in `agents/viewport.md`.
 Dragging a knob types its distance (one side past the plane flips; a knob
 on the plane changes nothing) as the design's units format it. A knob
 stops where its field would refuse the distance, or where the extrude's

@@ -20,6 +20,8 @@ mod hit;
 mod icons;
 mod operation_panel;
 mod panels;
+#[cfg(any(test, feature = "probe"))]
+pub mod probe;
 mod projection;
 mod shortcut;
 mod snap;

@@ -15,6 +15,10 @@ iced.workspace = true
 glam.workspace = true
 log.workspace = true
 
+[features]
+# `probe`: what other crates' tests find on a screen laid out headless.
+probe = []
+
 [dev-dependencies]
 # Blocks on wgpu setup in headless render tests.
 pollster.workspace = true

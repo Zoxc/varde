@@ -4382,19 +4382,8 @@ pub(crate) fn typing(key: keyboard::Key, text: Option<&str>) -> iced::Event {
     iced::Event::Keyboard(event)
 }
 
-/// A headless tiny-skia renderer, which measures text as the app does.
-pub(crate) fn headless() -> iced::Renderer {
-    use iced::advanced::renderer::Headless;
-    let renderer = block_on(iced::Renderer::new(
-        iced::Font::DEFAULT,
-        iced::Pixels(13.0),
-        Some("tiny-skia"),
-    ));
-    renderer.expect("a headless renderer")
-}
-
 /// A screen shown headless, see [`shown`].
-pub(crate) type Shown<'a> =
+pub(crate) type Headless<'a> =
     iced_runtime::user_interface::UserInterface<'a, Ui, iced::Theme, iced::Renderer>;
 
 /// `view` shown headless in a window of `size`, after a first redraw,
@@ -4403,7 +4392,7 @@ pub(crate) fn shown<'a>(
     view: iced::Element<'a, Ui>,
     size: iced::Size,
     renderer: &mut iced::Renderer,
-) -> Shown<'a> {
+) -> Headless<'a> {
     use iced_runtime::user_interface::{Cache, UserInterface};
     let mut ui = UserInterface::build(view, size, Cache::default(), renderer);
     let redraw = iced::Event::Window(iced::window::Event::RedrawRequested(Instant::now()));
@@ -4418,89 +4407,19 @@ pub(crate) fn shown<'a>(
     ui
 }
 
-/// A text on a screen, see [`texts`].
-#[derive(Debug, Clone)]
-pub(crate) struct Text {
-    pub text: String,
-    /// Where it is, moved by the scrollables it's in.
-    pub bounds: iced::Rectangle,
-    /// The part of `bounds` those scrollables let show, if it's in any.
-    pub visible: Option<iced::Rectangle>,
-}
-
-impl Text {
-    /// The part of it shown, as far as its scrollables go.
-    pub(crate) fn seen(&self) -> iced::Rectangle {
-        self.visible.unwrap_or(self.bounds)
-    }
-
-    /// Whether its scrollables show all of it, to a rounding error.
-    pub(crate) fn whole(&self) -> bool {
-        self.seen().height >= self.bounds.height - 0.01
-    }
-}
-
-/// Each text `ui` shows: the labels of buttons, checkboxes and the rest,
-/// which report their text and bounds to operations.
-pub(crate) fn texts(ui: &mut Shown<'_>, renderer: &iced::Renderer) -> Vec<Text> {
-    use iced::advanced::widget::{Id, Operation, operation::Scrollable};
-    use iced::{Rectangle, Size, Vector};
-
-    #[derive(Default)]
-    struct Find {
-        /// How far the scrollables entered have scrolled their content.
-        offset: Vector,
-        /// Where the scrollables entered show their content.
-        clip: Option<Rectangle>,
-        /// The scrollable just met, which the next traverse enters.
-        entering: Option<(Vector, Rectangle)>,
-        found: Vec<Text>,
-    }
-    /// The part of `bounds` inside `clip`, empty where it's outside.
-    fn within(clip: Rectangle, bounds: Rectangle) -> Rectangle {
-        clip.intersection(&bounds)
-            .unwrap_or(Rectangle::new(bounds.position(), Size::ZERO))
-    }
-    impl Operation for Find {
-        fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation<()>)) {
-            let (offset, clip) = (self.offset, self.clip);
-            if let Some((translation, bounds)) = self.entering.take() {
-                let bounds = bounds - self.offset;
-                self.offset += translation;
-                self.clip = Some(clip.map_or(bounds, |clip| within(clip, bounds)));
-            }
-            operate(self);
-            (self.offset, self.clip) = (offset, clip);
-        }
-
-        fn scrollable(
-            &mut self,
-            _id: Option<&Id>,
-            bounds: Rectangle,
-            _content_bounds: Rectangle,
-            translation: Vector,
-            _state: &mut dyn Scrollable,
-        ) {
-            self.entering = Some((translation, bounds));
-        }
-
-        fn text(&mut self, _id: Option<&Id>, bounds: Rectangle, text: &str) {
-            let bounds = bounds - self.offset;
-            self.found.push(Text {
-                text: text.to_owned(),
-                bounds,
-                visible: self.clip.map(|clip| within(clip, bounds)),
-            });
-        }
-    }
-    let mut find = Find::default();
+/// Each text `ui` shows, see [`varde_view::probe::Texts`].
+pub(crate) fn texts(
+    ui: &mut Headless<'_>,
+    renderer: &iced::Renderer,
+) -> Vec<varde_view::probe::Shown> {
+    let mut find = varde_view::probe::Texts::default();
     ui.operate(renderer, &mut find);
-    find.found
+    find.shown
 }
 
 /// What a left click at `at` on `ui` sends.
 pub(crate) fn clicked(
-    ui: &mut Shown<'_>,
+    ui: &mut Headless<'_>,
     renderer: &mut iced::Renderer,
     at: iced::Point,
 ) -> Vec<Ui> {
@@ -4531,7 +4450,7 @@ pub(crate) fn pressed(doc: &Doc, keys: &[iced::Event], focused: bool) -> (Vec<Ui
     use iced::advanced::widget::operation::{self, focusable};
     use iced_runtime::user_interface::{Cache, UserInterface};
 
-    let mut renderer = headless();
+    let mut renderer = varde_view::probe::renderer();
     let view = doc.view(false, Mode::Light);
     let mut ui = UserInterface::build(
         view,

@@ -2042,7 +2042,9 @@ fn a_cut_listing(more: usize) -> (Doc, FeatureId) {
 
 /// The texts of the extrude panel, from its title to its `OK`, in the
 /// order the screen reports them, and the `OK`.
-fn panel_texts(texts: &[crate::tests::Text]) -> (Vec<crate::tests::Text>, crate::tests::Text) {
+fn panel_texts(
+    texts: &[varde_view::probe::Shown],
+) -> (Vec<varde_view::probe::Shown>, varde_view::probe::Shown) {
     let title = texts.iter().position(|text| text.text == "New extrude");
     let title = title.expect("the panel's title");
     let ok = texts[title..].iter().position(|text| text.text == "OK");
@@ -2053,9 +2055,10 @@ fn panel_texts(texts: &[crate::tests::Text]) -> (Vec<crate::tests::Text>, crate:
 
 #[test]
 fn many_bodies_keep_ok_and_cancel_on_screen() {
-    use crate::tests::{clicked, headless, shown, texts};
+    use crate::tests::{clicked, shown, texts};
     use iced::advanced::widget::operation::scrollable::{RelativeOffset, snap_to};
     use varde_view::Message as Ui;
+    use varde_view::probe::renderer as headless;
 
     for (height, bodies) in [
         (800.0, 15),
@@ -2070,7 +2073,7 @@ fn many_bodies_keep_ok_and_cancel_on_screen() {
         let status_top = height - varde_view::STATUS_BAR_HEIGHT;
         let mut renderer = headless();
         let mut ui = shown(doc.view(false, Mode::Light), size, &mut renderer);
-        let check = |texts: &[crate::tests::Text], last: &str| {
+        let check = |texts: &[varde_view::probe::Shown], last: &str| {
             let (panel, ok) = panel_texts(texts);
             let at = format!("{bodies} bodies at {height}");
             for button in ["OK", "Cancel"] {
@@ -2127,8 +2130,9 @@ fn many_bodies_keep_ok_and_cancel_on_screen() {
 
 #[test]
 fn a_click_on_a_body_s_label_toggles_it() {
-    use crate::tests::{clicked, headless, shown, texts};
+    use crate::tests::{clicked, shown, texts};
     use varde_view::Message as Ui;
+    use varde_view::probe::renderer as headless;
 
     let (doc, _) = a_cut_listing(2);
     let body = doc.editor.document().bodies()[0].id;
@@ -2144,5 +2148,207 @@ fn a_click_on_a_body_s_label_toggles_it() {
     assert!(
         matches!(&sent[..], [Ui::Look(Look::Extrude(ExtrudeLook::Target(b)))] if *b == body),
         "{sent:?}"
+    );
+}
+
+#[test]
+fn the_wheel_over_the_panel_scrolls_it_not_the_camera_and_keeps_the_focus() {
+    use crate::tests::{shown, texts, typing};
+    use iced::advanced::widget::operation::{focusable, text_input};
+    use iced::mouse::{Cursor, Event, ScrollDelta};
+    use varde_view::Message as Ui;
+
+    let (doc, _) = a_cut_listing(29);
+    let size = iced::Size::new(1280.0, 600.0);
+    let mut renderer = varde_view::probe::renderer();
+    let mut ui = shown(doc.view(false, Mode::Light), size, &mut renderer);
+    ui.operate(&renderer, &mut focusable::focus(varde_view::VALUE_FIELD));
+    ui.operate(
+        &renderer,
+        &mut text_input::select_all(varde_view::VALUE_FIELD),
+    );
+    let mut send = |ui: &mut crate::tests::Headless<'_>, event: iced::Event, at| {
+        let mut sent = Vec::new();
+        let _ = ui.update(
+            &[event],
+            Cursor::Available(at),
+            &mut renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut sent,
+        );
+        sent
+    };
+    let wheel = |at| {
+        [
+            iced::Event::Mouse(Event::CursorMoved { position: at }),
+            iced::Event::Mouse(Event::WheelScrolled {
+                delta: ScrollDelta::Lines { x: 0.0, y: -3.0 },
+            }),
+        ]
+    };
+    // Over the scene, the wheel zooms.
+    let scene = iced::Point::new(400.0, 300.0);
+    let sent: Vec<_> = wheel(scene)
+        .into_iter()
+        .flat_map(|event| send(&mut ui, event, scene))
+        .collect();
+    assert!(matches!(sent[..], [Ui::Look(Look::Zoom(_))]), "{sent:?}");
+    // Over the panel's body, it scrolls the body and nothing else.
+    let before = texts(&mut ui, &varde_view::probe::renderer());
+    let (panel, _) = panel_texts(&before);
+    let first = panel.iter().find(|text| text.text == "Body 1").unwrap();
+    let at = first.bounds.center();
+    let sent: Vec<_> = wheel(at)
+        .into_iter()
+        .flat_map(|event| send(&mut ui, event, at))
+        .collect();
+    assert!(sent.is_empty(), "{sent:?}");
+    let after = texts(&mut ui, &varde_view::probe::renderer());
+    let (panel, _) = panel_texts(&after);
+    let moved = panel.iter().find(|text| text.text == "Body 1").unwrap();
+    assert!(
+        moved.bounds.y < first.bounds.y - 10.0,
+        "{first:?} {moved:?}"
+    );
+    // The distance field keeps the focus: it takes typing, and Esc
+    // cancels.
+    let sent = send(&mut ui, typing(key("5"), Some("5")), at);
+    assert!(
+        matches!(
+            &sent[..],
+            [Ui::Look(Look::Extrude(ExtrudeLook::Input { distance: Distance::First, text }))]
+                if text == "5"
+        ),
+        "{sent:?}"
+    );
+    let escape = keyboard::Key::Named(key::Named::Escape);
+    let sent = send(&mut ui, typing(escape, None), at);
+    assert!(
+        matches!(sent[..], [Ui::Look(Look::Extrude(ExtrudeLook::Cancel))]),
+        "{sent:?}"
+    );
+}
+
+#[test]
+fn two_sides_with_errors_keep_ok_on_a_short_screen() {
+    use crate::tests::{shown, texts};
+    use iced::advanced::widget::operation::scrollable::{RelativeOffset, snap_to};
+
+    let (mut doc, _) = a_cut_listing(5);
+    extrude(&mut doc, ExtrudeLook::Extent(ExtentKind::TwoSides));
+    for distance in [Distance::First, Distance::Second] {
+        let text = "12 parsecs".to_owned();
+        extrude(&mut doc, ExtrudeLook::Input { distance, text });
+    }
+    let size = iced::Size::new(1024.0, 600.0);
+    let status_top = size.height - varde_view::STATUS_BAR_HEIGHT;
+    let mut renderer = varde_view::probe::renderer();
+    let mut ui = shown(doc.view(false, Mode::Light), size, &mut renderer);
+    let mut snap = snap_to(
+        varde_view::PANEL_BODY,
+        RelativeOffset {
+            x: None,
+            y: Some(1.0),
+        },
+    );
+    for scrolled in [false, true] {
+        if scrolled {
+            ui.operate(&renderer, &mut snap);
+        }
+        let shown = texts(&mut ui, &renderer);
+        let (panel, ok) = panel_texts(&shown);
+        assert!(ok.whole() && ok.bounds.height >= 14.0, "{ok:?}");
+        assert!(ok.bounds.y + ok.bounds.height <= status_top, "{ok:?}");
+        // What the body shows stays above the footer.
+        for text in panel.iter().filter(|text| text.visible.is_some()) {
+            let seen = text.seen();
+            assert!(
+                seen.height <= 0.0 || seen.y + seen.height <= ok.bounds.y,
+                "{text:?}"
+            );
+        }
+        let errors: Vec<_> = panel
+            .iter()
+            .filter(|text| text.text.starts_with("unknown unit"))
+            .collect();
+        assert_eq!(errors.len(), 2, "{panel:?}");
+        // Unscrolled, both sides' errors show; scrolled to the end, the
+        // last body does.
+        if scrolled {
+            let last = panel.iter().find(|text| text.text == "Body 6").unwrap();
+            assert!(last.whole(), "{last:?}");
+        } else {
+            assert!(errors.iter().all(|error| error.whole()), "{errors:?}");
+        }
+    }
+}
+
+#[test]
+fn the_through_all_tip_shows_under_it_in_the_scrolled_body() {
+    use crate::tests::{shown, texts};
+    use iced::advanced::renderer::Headless;
+    use iced::advanced::widget::operation::scrollable::{AbsoluteOffset, scroll_to};
+    use iced::mouse::{Cursor, Event};
+    use iced::theme::Base;
+
+    let (mut doc, _) = a_cut_listing(29);
+    extrude(&mut doc, ExtrudeLook::Operation(OperationKind::Join));
+    let size = iced::Size::new(1280.0, 600.0);
+    let mut renderer = varde_view::probe::renderer();
+    let mut ui = shown(doc.view(false, Mode::Light), size, &mut renderer);
+    let offset = AbsoluteOffset {
+        x: None,
+        y: Some(40.0),
+    };
+    ui.operate(&renderer, &mut scroll_to(varde_view::PANEL_BODY, offset));
+    let shown_now = texts(&mut ui, &renderer);
+    let (panel, _) = panel_texts(&shown_now);
+    let through = panel
+        .iter()
+        .find(|text| text.text == "Through all")
+        .unwrap();
+    assert!(through.whole(), "{through:?}");
+    let theme = varde_view::iced_theme(Mode::Light);
+    let base = theme.base();
+    let style = iced::advanced::renderer::Style {
+        text_color: base.text_color,
+    };
+    let mut drawn = |at: iced::Point| {
+        let mut sent = Vec::new();
+        let _ = ui.update(
+            &[iced::Event::Mouse(Event::CursorMoved { position: at })],
+            Cursor::Available(at),
+            &mut renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut sent,
+        );
+        ui.draw(&mut renderer, &theme, &style, Cursor::Available(at));
+        let physical = iced::Size::new(size.width as u32, size.height as u32);
+        renderer.screenshot(physical, 1.0, base.background_color)
+    };
+    let away = drawn(iced::Point::new(1100.0, 20.0));
+    let over = drawn(through.bounds.center());
+    // What the tip changes, its box and shadow, centres just under the
+    // choice where the body has scrolled it to: not 40 px off, as it
+    // would be if it missed the scroll.
+    let (mut top, mut bottom) = (f32::MAX, f32::MIN);
+    for (k, (a, b)) in away.chunks(4).zip(over.chunks(4)).enumerate() {
+        if a != b {
+            let (x, y) = (
+                (k % size.width as usize) as f32,
+                (k / size.width as usize) as f32,
+            );
+            if (x - through.bounds.center_x()).abs() < 150.0 {
+                top = top.min(y);
+                bottom = bottom.max(y);
+            }
+        }
+    }
+    let below = through.bounds.y + through.bounds.height;
+    let centre = (top + bottom) / 2.0;
+    assert!(top > through.bounds.y, "{top}..{bottom} {through:?}");
+    assert!(
+        centre > below && centre < below + 35.0,
+        "{top}..{bottom} {through:?}"
     );
 }
