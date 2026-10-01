@@ -389,6 +389,42 @@ fn splines_meet_each_other() {
 }
 
 #[test]
+fn a_straight_spline_meets_a_curved_one_in_a_few_steps() {
+    // A straight piece is flat at once, but its box is the whole line's:
+    // were only the curved one halved, every piece of it in that box
+    // would be halved down to the tolerance, which runs out of steps.
+    let (mut sketch, a) = sketch_with(&wave(), false);
+    let points = [v(-1.0, 1.0), v(13.0, -0.5)]
+        .map(|p| point(&mut sketch, p.x, p.y))
+        .to_vec();
+    let b = sketch
+        .add_curve(Curve::Spline(Spline::through(points, false)), false)
+        .unwrap();
+    let (ga, gb) = (geom(&sketch, a), geom(&sketch, b));
+    for (a, b) in [(&ga, &gb), (&gb, &ga)] {
+        let mut found = Vec::new();
+        let work = bezier::crossings(a, b, 1e-9, &mut found);
+        assert!(work < bezier::MAX_MEET_STEPS, "{work}");
+    }
+    // Crossing the wave three times, where the dense polylines do.
+    let found = places(&ga, &gb);
+    let (pa, pb) = (ga.polyline(0.0, 1.0), gb.polyline(0.0, 1.0));
+    let mut crossings = 0;
+    for p in pa.windows(2) {
+        for q in pb.windows(2) {
+            if let Some((t, u)) = crate::crossing(p[0], p[1] - p[0], q[0], q[1] - q[0])
+                && (0.0..1.0).contains(&t)
+                && (0.0..1.0).contains(&u)
+            {
+                crossings += 1;
+            }
+        }
+    }
+    assert!(crossings >= 3, "{crossings}");
+    assert_eq!(found.len(), crossings, "{found:?}");
+}
+
+#[test]
 fn a_figure_of_eight_crosses_itself_once() {
     let fit = [v(0.0, 0.0), v(4.0, 3.0), v(8.0, 0.0), v(4.0, -3.0)];
     // Crossing at the middle: round the left lobe one way, the right the

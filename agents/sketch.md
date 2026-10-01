@@ -359,16 +359,29 @@ details and the timings.
   meets a line or a circle by the roots of the other's implicit function
   along each segment in Bernstein form, another spline (and itself, for
   profiles, its segments halved) by halving pairs of pieces whose boxes
-  overlap until both are within the tolerance of their chords, polished
-  by Newton's method. All bounded by `MAX_MEET_STEPS` (subdivision
+  overlap until both are within the tolerance of their chords (the
+  larger halved first, flat or not: a straight piece is flat at once, but
+  halving only the other kept every piece of it in the straight one's
+  box, and a 2-point spline across a curved one ran out of steps),
+  polished by Newton's method. All bounded by `MAX_MEET_STEPS` (subdivision
   steps; segments' boxes compared don't take one, so the cap and what's
   found don't depend on them). Where the steps run out places may be
   missing, so the work returned is `usize::MAX` and profiles are too
   complex: a missed crossing would join pieces that don't meet (two
-  wobbling rings a hair out of phase did, before). `meet` returns the
-  work done, which profiles count, in a unit of about one box compared
-  to another (a nanosecond or two): `MEET_COST` (16) for lines, circles
-  and arcs; for a spline every segment box compared (1), `STEP_COST`
+  wobbling rings a hair out of phase did, before). Trim and extend refuse
+  likewise (`Sketch::cuts` is `None`: no trim, `EditError::TooComplex`
+  for an extend), as would an offset (`EditError::TooComplex`; a corner
+  crossing that ran out is left to the cut that refuses it), though an
+  offset of a spline meets nothing. Splines whose copies are closer than
+  about 1/5000 of their length apart run out (crossings so shallow that
+  boxes overlap all along). `meet` returns the work done, which profiles
+  count, in a unit of about one box compared to another (a nanosecond or
+  two): `MEET_COST` (128) for lines, circles and arcs (60–260 ns: an
+  arc's places each take a sine and cosine or an arctangent), and
+  `APART_COST` (24) where a circle or arc is further from the other
+  than the tolerance everywhere, told by centres and radii alone (circles
+  side by side or nested, a line outside or inside one), which `meet`
+  then skips; for a spline every segment box compared (1), `STEP_COST`
   (16) a subdivision step or a step of halving Bernstein coefficients
   (kept in fixed arrays, not allocated), `BISECT_COST` (16 × 64) a root
   halved to, and for each curve's end tested against a spline its
@@ -406,9 +419,27 @@ details and the timings.
   holes, or a connected part's boundary from outside, which is a hole in
   the smallest face of another part winding round it (exact, by the
   pieces and their boxes): the faces whose box holds it are tried
-  smallest first (the first made of equal ones), so the first it's
-  inside is the one, and rings nested a thousand deep take a winding or
-  two each rather than one per ring round them.
+  smallest first (the first made of equal ones, taken from a heap), so
+  the first it's inside is the one, and rings nested a thousand deep
+  take a winding or two each rather than one per ring round them. A
+  counter-clockwise loop no wider than the tolerance is no face's outer
+  loop: a walk round a part's outside can pass a vertex twice as
+  rounding has it and give a sliver of a loop, which made the part's
+  outside no hole in the face round it.
+- **Checked**: where curves lie along each other a hair apart, or touch
+  at a place found as several a hair over the tolerance apart, the
+  pieces at those vertices can be sorted in ways that don't agree from
+  one to the next, and walks take wrong turns: loops whose pieces don't
+  join, holes running counter-clockwise or outside their face. Profiles
+  are then `TooComplex` rather than wrong: every loop of a face (slivers
+  too) and every part's outside that's a hole in one must join up
+  (`Graph::joined`), holes must run clockwise and enclose less than
+  their outer loop. Random sketches with copies a hair off and tangent
+  circles and lines hit it at about 1.5 %, plain random ones (points on
+  a half grid) about 0.2 %: a circle with a line tangent to it lying
+  along another line, three curves touching at a place, a closed spline
+  doubling back on itself. Each was wrong before, regions missing or of
+  pieces that don't join.
 - **Regions** are every face: a plate with bolt holes is the plate, with
   a hole per bolt, and each hole's inside a region of its own, as is an
   island in a hole, so regions never overlap. Slivers, faces or holes,
@@ -469,22 +500,25 @@ details and the timings.
   is the view's (a few pixels in sketch units), so profiles don't depend
   on the zoom. Bounded by `MAX_NEAR_MISSES` and `MAX_NEAR_PAIRS`.
 - **Bounds**: more than `MAX_SPLITS` cuts or `MAX_WORK` (60 M) steps is
-  `TooComplex`, never a long wait. Steps are weighed by cost (above), so
-  `MAX_WORK` is about a tenth of a second whatever the sketch: a few
-  times what dense sketches people draw take, as refusing one costs
-  more than the wait (measured share: 400 letter outlines like an "o"
-  26 %, 30 splines all crossing each other 26 %, 20 of them 11 %, a
-  plate with 900 holes and 1000 concentric circles under a quarter;
-  `normal_sketches_take_a_fraction_of_the_work` holds a third). Besides it
-  only what's linear in the sketch (splines' shapes, at most
-  `MAX_POINTS` fit points, ~40 ms) and in the cuts (1–3 µs each, more
-  where pieces are of splines, at most `MAX_SPLITS`: up to a few tenths
-  of a second, not counted). Hostile sketches measured (release, loaded
-  machine): nested 100-point splines, 3000 concentric circles, copies
-  of a spline, 1000 lines across 20 splines are `TooComplex` in
-  0.1–0.3 s (they took 0.2–2 s before the weights); 1000 lines across
-  10 splines (22 707 regions) are found in ~0.2–0.3 s, most of it the
-  cuts'. `Sketch::profiles_spending(&mut left)` also stops at what's
+  `TooComplex`, never a long wait. Steps are weighed by cost (above),
+  and each cut adds `CUT_COST` (512) up front for what follows from it
+  (pieces, vertices, sorting round them, walks, areas, boxes, polylines:
+  1–2 µs a cut, ~2.5 µs where pieces are of splines; `MAX_SPLITS` cuts
+  fit), so `MAX_WORK` is about a tenth of a second whatever the sketch:
+  a few times what dense sketches people draw take, as refusing one
+  costs more than the wait (measured share: 300 letter outlines like an
+  "o" 21 %, 20 splines all crossing each other 16 %, a plate with 900
+  holes 2 %, 1000 concentric circles 25 %;
+  `normal_sketches_take_a_fraction_of_the_work` holds a third). Besides
+  it only what's linear in the sketch (splines' shapes, at most
+  `MAX_POINTS` fit points, ~40 ms). Hostile sketches measured (release,
+  loaded machine): nested 100-point splines, 3000 concentric circles,
+  copies of a spline, 1000 lines across 20 splines, 1000–3000 short arcs
+  on circles crossing each other (which took 0.3–1.1 s before
+  `MEET_COST` was weighed by time) are `TooComplex` in 0.02–0.15 s; the
+  slowest found are 40 closed 50-point splines crossing each other
+  (10 921 regions, ~110 ms, 75 % of the work) and a 200 × 200 line grid
+  (~80 ms). `Sketch::profiles_spending(&mut left)` also stops at what's
   `left` of a budget shared over several sketches, and takes the work
   from it (all it was allowed, if too complex).
 - **Where it runs**: in the app, once per sketch shown, not in the solver

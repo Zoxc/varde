@@ -502,7 +502,8 @@ pub enum EditError {
     NothingLeft,
     /// A [`SketchEdit::Offset`] would take more steps than
     /// [`MAX_OFFSET_WORK`](crate::MAX_OFFSET_WORK) working out what's
-    /// left.
+    /// left, or it or a [`SketchEdit::Extend`] meets a spline lying along
+    /// another so closely that where they cross can't all be found.
     TooComplex,
     /// A [`SketchEdit::Fillet`]'s or [`SketchEdit::Chamfer`]'s lines make
     /// no corner at its point: two lines ending there, not chamfers, not
@@ -548,7 +549,7 @@ impl fmt::Display for EditError {
                 f.write_str("offset that far, the copy would fold where the spline curves tighter")
             }
             EditError::NothingLeft => f.write_str("offset that far, nothing is left of it"),
-            EditError::TooComplex => f.write_str("the offset is too complex to work out"),
+            EditError::TooComplex => f.write_str("that's too complex to work out"),
             EditError::NoCorner => f.write_str("only two lines ending at a point make a corner"),
             EditError::NoRoom => f.write_str("that's too large for the corner's lines"),
             &EditError::OutOfRange {

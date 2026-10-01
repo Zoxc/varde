@@ -33,10 +33,12 @@ pub(crate) struct ExtrudeSession {
     /// The profiles of the source, or before there is one of the visible
     /// sketches, those with regions.
     found: Vec<Found>,
-    /// The sketches found to have no regions to pick: too complex, past
-    /// [`REFRESH_WORK`], or but for the source with none. Kept, as those
-    /// found are, and also while not wanted, so as not to work them out
-    /// again on every change to the document until they change.
+    /// The sketches found to have no regions to pick: too complex within
+    /// the whole of [`MAX_WORK`], or but for the source with none. Kept,
+    /// as those found are, and also while not wanted, so as not to work
+    /// them out again on every change to the document until they change.
+    /// Those past what's left of [`REFRESH_WORK`] aren't: they're tried
+    /// again on the next change.
     skipped: Vec<(FeatureId, Sketch)>,
     /// How many times profiles were worked out, for tests.
     #[cfg(test)]
@@ -289,9 +291,11 @@ impl ExtrudeSession {
             }
             remap |= is_source;
             // Past the budget, not even its splines' shapes are worked
-            // out: a file may hold any number of sketches.
+            // out: a file may hold any number of sketches. Nor kept as
+            // skipped, as it's no more complex than those that took the
+            // work: tried again on a later change, when those found are
+            // kept and spend none.
             if !is_source && left == 0 {
-                self.skipped.push((id, sketch.clone()));
                 continue;
             }
             #[cfg(test)]
@@ -299,7 +303,10 @@ impl ExtrudeSession {
                 self.worked_out += 1;
             }
             // A sketch too complex for its regions to be found has none
-            // to pick.
+            // to pick; too complex for less than the whole of
+            // [`MAX_WORK`], as with that left of the budget, it may not
+            // be, and it's tried again on a later change.
+            let whole = is_source || left >= MAX_WORK;
             let found = if is_source {
                 sketch.profiles()
             } else {
@@ -313,6 +320,7 @@ impl ExtrudeSession {
                         profiles: Arc::new(profiles),
                     });
                 }
+                Err(_) if !whole => {}
                 _ => self.skipped.push((id, sketch.clone())),
             }
         }

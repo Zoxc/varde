@@ -21,6 +21,8 @@
 //! sketch; near misses, which do (the gap is a few pixels), are paired
 //! from the open ends as asked ([`Profiles::near_misses`]).
 
+use std::cmp::{Ordering, Reverse};
+use std::collections::BinaryHeap;
 use std::f64::consts::{PI, TAU};
 use std::fmt;
 
@@ -48,14 +50,23 @@ pub const MAX_SPLITS: usize = 100_000;
 /// faces, and faces a point is tested against, each one; what costs
 /// more by its share, about the time of one such step (a nanosecond or
 /// two): where two curves meet, a spline's segments' boxes compared and
-/// pieces subdivided, a winding number's chords. About a tenth of a
-/// second, whatever the sketch: a few times what dense sketches people
-/// draw take (hundreds of letters' outlines, a dozen or two splines
-/// crossing each other), as refusing one costs more than a short wait.
-/// Besides it, what's linear in the sketch's size (its splines' shapes,
-/// bounded by [`MAX_POINTS`](crate::MAX_POINTS)) and in the splits
-/// (bounded by [`MAX_SPLITS`]).
+/// pieces subdivided, a winding number's chords, and each cut what
+/// follows from it (pieces, faces). About a tenth of a second, whatever
+/// the sketch: a few times what dense sketches people draw take
+/// (hundreds of letters' outlines, a dozen or two splines crossing each
+/// other), as refusing one costs more than a short wait. Besides it,
+/// what's linear in the sketch's size (its splines' shapes, bounded by
+/// [`MAX_POINTS`](crate::MAX_POINTS)).
 pub const MAX_WORK: usize = 60_000_000;
+
+/// What each cut adds to the work, in its unit (see [`MAX_WORK`]): the
+/// pieces and vertices it makes, sorting them round, the walks round
+/// faces, their areas, boxes and polylines, and the regions' pieces,
+/// about a microsecond or two a cut, besides the few steps counted as
+/// they're taken. Every cut [`MAX_SPLITS`] allows fits in the work.
+pub(crate) const CUT_COST: usize = 512;
+
+const _: () = assert!(MAX_SPLITS * CUT_COST < MAX_WORK);
 
 /// The most near misses reported: enough to find them, however large the
 /// gap asked for is.
@@ -309,6 +320,7 @@ impl Sketch {
             .map(|(id, geom)| cut_back.get(id).copied().unwrap_or([0.0, geom.last()]))
             .collect();
         let splits = splits(&curves, &kept, tolerance, limits.splits, work)?;
+        work.spend(splits.len().saturating_mul(CUT_COST))?;
         let (vertex_of, vertices) = merge(&splits, tolerance, work)?;
         let edges = edges(&curves, &kept, &splits, &vertex_of, tolerance, work)?;
         let graph = Graph::new(&curves, vertices, edges, tolerance);
@@ -799,10 +811,15 @@ impl<'c> Graph<'c> {
             loops.retain(|found| !found.is_empty());
             let areas: Vec<f64> = loops.iter().map(|found| self.area(found)).collect();
             // Only a face's outer loop runs counter-clockwise; the largest,
-            // should rounding find two.
+            // should rounding find two. One no wider than the tolerance is
+            // a sliver, whether a face that's nothing or a walk round a
+            // part's outside that's passed a vertex twice as rounding has
+            // it: either way no face, its loops seen from outside, so
+            // that a part inside a face is a hole in it.
             let outer = (0..loops.len())
                 .filter(|&l| areas[l] > 0.0)
-                .max_by(|&a, &b| areas[a].total_cmp(&areas[b]));
+                .max_by(|&a, &b| areas[a].total_cmp(&areas[b]))
+                .filter(|&l| areas[l] > self.tolerance * self.perimeter(&loops[l]));
             walks.push(Walk {
                 loops,
                 areas,
@@ -810,6 +827,21 @@ impl<'c> Graph<'c> {
             });
         }
         Ok(walks)
+    }
+
+    /// Whether each piece of `found` starts where the one before ends,
+    /// and the first where the last does. A walk is cut into loops that
+    /// join up where the pieces are sorted round each vertex alike from
+    /// either end, as they are but for curves lying along each other a
+    /// hair apart, merged into vertices at some places and not others:
+    /// then a walk can pass a piece both ways without it being a bridge,
+    /// and its loops not join.
+    fn joined(&self, found: &[usize]) -> bool {
+        let next = found.iter().cycle().skip(1);
+        found
+            .iter()
+            .zip(next)
+            .all(|(&h, &n)| self.ends(h).1 == self.ends(n).0)
     }
 
     /// The area `found` encloses, positive counter-clockwise.
@@ -874,6 +906,18 @@ impl<'c> Graph<'c> {
         for edge in &self.edges {
             part.join(edge.start, edge.end);
         }
+        // Faces' loops, slivers too, and below the boundaries that are
+        // holes in them, all join up (see [`Graph::joined`]), or regions
+        // made of them would be wrong, a sliver among them left out
+        // wrongly: curves too close together to find regions in. The
+        // boundaries round the outside, in no face, may not.
+        let faces = walks.iter().filter(|walk| walk.outer.is_some());
+        if !faces
+            .flat_map(|walk| &walk.loops)
+            .all(|found| self.joined(found))
+        {
+            return Err(TooComplex);
+        }
         // Faces that aren't slivers, as polylines and the box they're in.
         let solid: Vec<Option<(Vec<DVec2>, Bounds)>> = walks
             .iter()
@@ -906,20 +950,23 @@ impl<'c> Graph<'c> {
             // The faces whose box holds it, smallest first (the first
             // made of those alike), so that the first it's inside is the
             // one: nested a thousand deep, it's tested against one or two
-            // rather than all of them.
+            // rather than all of them. Taken from a heap rather than
+            // sorted, as only those first are wanted.
             let cell = grid.at(point);
             work.spend(cell.len())?;
-            let mut near: Vec<(f64, usize, usize)> = (cell.iter())
+            let near: Vec<Reverse<Smallest>> = (cell.iter())
                 .filter_map(|&f| {
                     let (min, max) = solid[f].as_ref()?.1;
                     let outer = walks[f].outer?;
                     let inside = point.cmpge(min).all() && point.cmple(max).all();
-                    inside.then_some((walks[f].areas[outer], f, outer))
+                    inside.then_some(Reverse(Smallest(walks[f].areas[outer], f, outer)))
                 })
                 .collect();
-            work.spend(near.len().saturating_mul(sort_cost(near.len())))?;
-            near.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-            for (_, f, outer) in near {
+            work.spend(near.len())?;
+            let mut near = BinaryHeap::from(near);
+            let taken = sort_cost(near.len());
+            while let Some(Reverse(Smallest(_, f, outer))) = near.pop() {
+                work.spend(taken)?;
                 let outer = &walks[f].loops[outer];
                 if part.root(self.ends(outer[0]).0) == own {
                     continue;
@@ -940,10 +987,23 @@ impl<'c> Graph<'c> {
                 .filter(|&l| l != outer)
                 .map(|l| &walk.loops[l][..])
                 .collect();
+            if !holes_in[w].iter().all(|found| self.joined(found)) {
+                return Err(TooComplex);
+            }
             holes.extend(&holes_in[w]);
             // As faces are, holes no wider than the tolerance are slivers.
             holes.retain(|hole| self.area(hole).abs() > self.tolerance * self.perimeter(hole));
             let holes_area: f64 = holes.iter().map(|hole| self.area(hole).abs()).sum();
+            // Holes run clockwise, inside the outer loop. Where curves
+            // touch at a place found as several a hair over the tolerance
+            // apart, or lie along each other, the pieces at those vertices
+            // can be sorted in ways that don't agree from one to the
+            // next, and walks take wrong turns there: refused, as a region
+            // with a hole the wrong way round or outside it is wrong.
+            let backwards = holes.iter().any(|hole| self.area(hole) >= 0.0);
+            if backwards || holes_area >= area {
+                return Err(TooComplex);
+            }
             let outer = &walk.loops[outer];
             let mut outline = vec![polyline];
             outline.extend(holes.iter().map(|hole| self.flatten(hole)));
@@ -993,10 +1053,35 @@ impl<'c> Graph<'c> {
     }
 }
 
-/// The work of sorting, per item, for `count` of them: about their
-/// logarithm, at least one.
+/// The work of taking an item from a heap of `count`, or of sorting
+/// them, per item: about their logarithm, at least one.
 fn sort_cost(count: usize) -> usize {
     (usize::BITS - count.leading_zeros()).max(1) as usize
+}
+
+/// A face by its area, then its index, and its outer loop: ordered
+/// smallest first (in a [`Reverse`]), the first made of those alike.
+#[derive(Debug, Clone, Copy)]
+struct Smallest(f64, usize, usize);
+
+impl PartialEq for Smallest {
+    fn eq(&self, other: &Smallest) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+
+impl Eq for Smallest {}
+
+impl PartialOrd for Smallest {
+    fn partial_cmp(&self, other: &Smallest) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Smallest {
+    fn cmp(&self, other: &Smallest) -> Ordering {
+        (self.0.total_cmp(&other.0)).then(self.1.cmp(&other.1))
+    }
 }
 
 /// A box, its least and greatest corners.

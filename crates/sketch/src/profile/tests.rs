@@ -601,6 +601,14 @@ fn hostile_sketches() -> Vec<(&'static str, Sketch)> {
         line(&mut sketch, a, b);
     }
     sketches.push(("lines across splines", sketch));
+    // Short arcs on circles crossing each other, whose boxes are the
+    // circles': every pair worked out, a few places on each, none met.
+    let mut sketch = Sketch::default();
+    for k in 0..2000 {
+        let from = 3.0 + (k % 7) as f64 * 0.01;
+        arc(&mut sketch, k as f64 * 0.001, 0.0, 10.0, from, from + 0.05);
+    }
+    sketches.push(("arcs on crossing circles", sketch));
     sketches
 }
 
@@ -702,6 +710,86 @@ fn splines_a_hair_apart_are_too_complex_rather_than_torn() {
 }
 
 #[test]
+fn circles_a_hair_apart_are_too_complex_rather_than_torn() {
+    // A circle and its copy a billionth off, crossed by a line that meets
+    // them a little over the tolerance apart: the pieces round the places
+    // merged and those not are sorted round their vertices in ways that
+    // don't agree, and the walks round faces cut where they pass a piece
+    // both ways gave loops whose pieces didn't join.
+    let cases: [&[(f64, f64, f64)]; 2] = [
+        &[
+            (7.0, 3.5, 1.5),
+            (6.9999999993124655, 3.4999999992738484, 1.5),
+            (8.5, 1.5, 1.0),
+        ],
+        &[
+            (1.1995734960436044, 0.27114926625520286, 1.4881518819639104),
+            (1.19957349672082, 0.27114926551941815, 1.4881518819639104),
+        ],
+    ];
+    let lines = [
+        ((3.0, 8.0), (7.0, 3.0)),
+        (
+            (-0.7025531211363922, 3.8244458227794422),
+            (-0.1651362067553359, -0.8867815473179805),
+        ),
+    ];
+    for (circles, (from, to)) in cases.into_iter().zip(lines) {
+        let mut sketch = Sketch::default();
+        for &(x, y, radius) in circles {
+            round(&mut sketch, x, y, radius);
+        }
+        let (a, b) = (
+            point(&mut sketch, from.0, from.1),
+            point(&mut sketch, to.0, to.1),
+        );
+        line(&mut sketch, a, b);
+        if let Ok(found) = sketch.profiles() {
+            for region in &found.regions {
+                closed(&sketch, region);
+            }
+        }
+    }
+}
+
+#[test]
+fn three_curves_touching_at_a_place_are_found_right_or_too_complex() {
+    // Two circles touching from outside where an arc inside the larger
+    // touches it too: the touches are found a little over the tolerance
+    // apart, and the walk round the larger circle turned into the smaller
+    // one, a hole running counter-clockwise outside the face it's in.
+    let mut sketch = Sketch::default();
+    arc(
+        &mut sketch,
+        5.0,
+        6.0,
+        1.0,
+        1.5205594572141228,
+        0.37557697342606156,
+    );
+    round(&mut sketch, 5.5, 6.0, 1.5);
+    round(&mut sketch, 3.0, 6.0, 1.0);
+    // Splines through points on one line, and along the line, a closed
+    // one doubling back on itself: a region of negative area.
+    let mut doubled = Sketch::default();
+    let places = [(4.5, 1.0), (7.0, 1.0), (8.5, 1.0), (6.5, 6.5)];
+    crate::testing::spline(&mut doubled, &places, false);
+    crate::testing::spline(&mut doubled, &[(7.0, 1.0), (4.5, 1.0), (8.5, 1.0)], true);
+    let (a, b) = (point(&mut doubled, 4.5, 1.0), point(&mut doubled, 8.5, 1.0));
+    line(&mut doubled, a, b);
+    let places = [(4.5, 1.0), (3.0, 6.5), (5.5, 2.0), (3.5, 7.5), (8.5, 6.0)];
+    crate::testing::spline(&mut doubled, &places, true);
+    for sketch in [sketch, doubled] {
+        if let Ok(found) = sketch.profiles() {
+            for region in &found.regions {
+                closed(&sketch, region);
+                assert!(region.area > 0.0, "{}", region.area);
+            }
+        }
+    }
+}
+
+#[test]
 fn nested_rings_are_holes_in_the_ring_round_them() {
     // Found smallest first: each ring's hole is the one just inside.
     let mut sketch = Sketch::default();
@@ -744,6 +832,29 @@ fn profiles_spending_takes_the_work_from_what_s_left() {
     let mut left = 3 * MAX_WORK;
     assert_eq!(hostile.profiles_spending(&mut left), Err(TooComplex));
     assert!(left >= 2 * MAX_WORK, "{left}");
+}
+
+#[test]
+fn every_cut_is_counted_for_the_pieces_and_faces_it_makes() {
+    // Pieces, vertices, the walks round faces and their polylines take a
+    // microsecond or two a cut: hundreds of steps of work each, counted
+    // up front, not just the few compared.
+    let mut sketch = Sketch::default();
+    for i in 0..100 {
+        let at = i as f64;
+        let (a, b) = (point(&mut sketch, at, -1.0), point(&mut sketch, at, 100.0));
+        line(&mut sketch, a, b);
+        let (a, b) = (point(&mut sketch, -1.0, at), point(&mut sketch, 100.0, at));
+        line(&mut sketch, a, b);
+    }
+    let mut left = MAX_WORK;
+    assert_eq!(
+        sketch.profiles_spending(&mut left).unwrap().regions.len(),
+        99 * 99
+    );
+    // Two cuts a crossing.
+    let cuts = 2 * 100 * 100;
+    assert!(MAX_WORK - left >= cuts * CUT_COST, "{}", MAX_WORK - left);
 }
 
 /// A few pseudo-random numbers, the same each run.
@@ -817,6 +928,93 @@ fn random_sketch(random: &mut Random, curves: usize, snap: bool) -> Sketch {
         sketch.add_curve(curve, random.next() < 0.1).unwrap();
     }
     sketch
+}
+
+/// Adds to `sketch` copies of some of its lines and circles a hair off,
+/// circles touching some of its circles and lines touching some of them,
+/// and a few splines through its points.
+fn near_copies(sketch: &mut Sketch, random: &mut Random) {
+    let curves: Vec<Curve> = sketch
+        .curves
+        .iter()
+        .map(|entry| entry.curve.clone())
+        .collect();
+    for curve in curves {
+        let off =
+            DVec2::from_angle(random.next() * 6.0) * [1e-12, 1e-9, 1e-8, 1e-7][random.below(4)];
+        let at = |sketch: &Sketch, id: Id| sketch.point(id).unwrap().at;
+        match curve {
+            Curve::Line { start, end } if random.next() < 0.3 => {
+                let (a, b) = (at(sketch, start) + off, at(sketch, end) + off);
+                let (a, b) = (point(sketch, a.x, a.y), point(sketch, b.x, b.y));
+                line(sketch, a, b);
+            }
+            Curve::Circle { center, radius } if random.next() < 0.5 => {
+                let c = at(sketch, center);
+                let toward = DVec2::from_angle(random.next() * 6.0);
+                match random.below(3) {
+                    0 => {
+                        round(sketch, c.x + off.x, c.y + off.y, radius);
+                    }
+                    1 => {
+                        let c = c + toward * (radius + 1.0);
+                        round(sketch, c.x, c.y, 1.0);
+                    }
+                    _ => {
+                        let touch = c + toward * radius;
+                        let (a, b) = (touch - toward.perp() * 3.0, touch + toward.perp() * 2.0);
+                        let (a, b) = (point(sketch, a.x, a.y), point(sketch, b.x, b.y));
+                        line(sketch, a, b);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    for _ in 0..random.below(3) {
+        let count = 2 + random.below(4);
+        let places: Vec<(f64, f64)> = (0..count)
+            .map(|_| match random.below(2) {
+                0 if !sketch.points.is_empty() => {
+                    let at = sketch.points[random.below(sketch.points.len())].at;
+                    (at.x, at.y)
+                }
+                _ => (random.next() * 20.0, random.next() * 20.0),
+            })
+            .collect();
+        let apart = (0..count).all(|i| {
+            (0..i).all(|j| {
+                let (p, q) = (places[i], places[j]);
+                (p.0 - q.0).hypot(p.1 - q.1) > 0.5
+            })
+        });
+        if apart {
+            crate::testing::spline(sketch, &places, count > 2 && random.next() < 0.5);
+        }
+    }
+}
+
+#[test]
+fn random_sketches_with_near_copies_are_closed_or_too_complex() {
+    // Curves a hair apart and touching are where walks round faces took
+    // wrong turns: refused, never regions whose pieces don't join, holes
+    // the wrong way round or regions of no area.
+    let mut random = Random(16);
+    let mut refused = 0;
+    let rounds = 120;
+    for round in 0..rounds {
+        let mut sketch = random_sketch(&mut random, 1 + round % 30, round % 2 == 0);
+        near_copies(&mut sketch, &mut random);
+        let Ok(found) = sketch.profiles() else {
+            refused += 1;
+            continue;
+        };
+        for region in &found.regions {
+            closed(&sketch, region);
+            assert!(region.area > 0.0, "{round}: {}", region.area);
+        }
+    }
+    assert!(refused * 5 < rounds, "{refused}");
 }
 
 #[test]

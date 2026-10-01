@@ -22,10 +22,16 @@ const RELATIVE_TOLERANCE: f64 = 1e-9;
 const MIN_SIZE: f64 = 1e-3;
 
 /// What [`meet`] gives for two lines, circles or arcs, in the work a
-/// caller counts, whose unit is about a box compared to another (see
-/// [`bezier::STEP_COST`]): their crossings, and each end's nearest place
-/// on the other.
-pub(crate) const MEET_COST: usize = 16;
+/// caller counts, whose unit is about a box compared to another, a
+/// nanosecond or two (see [`bezier::STEP_COST`]): their crossings, and
+/// each end's nearest place on the other, with their parameters, an
+/// arc's each a sine and cosine or an arctangent: 60 to 260 ns.
+pub(crate) const MEET_COST: usize = 128;
+
+/// What [`meet`] gives for a line, circle or arc and a circle or arc
+/// further apart than the tolerance everywhere, in the unit of
+/// [`MEET_COST`]: told by their centres, radii and ends alone.
+pub(crate) const APART_COST: usize = 24;
 
 /// What [`Geom::winding`] adds to its work for each chord's angle it
 /// takes, in the same unit as [`MEET_COST`]: an arctangent, and for an
@@ -424,12 +430,15 @@ impl Geom {
 /// so that both are cut alike where they overlap. Places may repeat; the
 /// caller merges them. A spline meets the rest by subdivision, bounded
 /// ([`bezier::MAX_MEET_STEPS`]). The work done is returned, for a caller
-/// that counts it: [`MEET_COST`] for lines, circles and arcs, and for a
+/// that counts it: [`MEET_COST`] for lines, circles and arcs
+/// ([`APART_COST`] where they're far apart), and for a
 /// spline what [`bezier::crossings`] gives (`usize::MAX` where it ran out
 /// of steps) and the search for the ends' nearest places on it.
 pub(crate) fn meet(a: &Geom, b: &Geom, tolerance: f64, out: &mut Vec<(f64, f64)>) -> usize {
     let steps = if let (Geom::Spline(_), _) | (_, Geom::Spline(_)) = (a, b) {
         bezier::crossings(a, b, tolerance, out)
+    } else if apart(a, b, tolerance) {
+        return APART_COST;
     } else {
         for point in crossings(a, b, tolerance).into_iter().flatten() {
             if let (Some(ua), Some(ub)) = (a.param(point, tolerance), b.param(point, tolerance)) {
@@ -479,6 +488,42 @@ pub(crate) fn meet(a: &Geom, b: &Geom, tolerance: f64, out: &mut Vec<(f64, f64)>
         }
     }
     work
+}
+
+/// Whether the line, circle or arc `a` and the circle or arc `b`, or the
+/// other way round, are everywhere further apart than `tolerance`, by
+/// some way, told without places along an arc: then they meet nowhere,
+/// nor is an end of either near the other. Their whole circles are
+/// apart, side by side or one inside the other, or the line is outside
+/// the circle or inside it. False for two lines, whose ends are cheap.
+fn apart(a: &Geom, b: &Geom, tolerance: f64) -> bool {
+    // Rounding aside: the distances below are within a few rounding
+    // errors of the coordinates, a billionth of the tolerance.
+    let gap = 2.0 * tolerance;
+    match (a, b) {
+        (
+            &Geom::Round {
+                center: c1,
+                radius: r1,
+                ..
+            },
+            &Geom::Round {
+                center: c2,
+                radius: r2,
+                ..
+            },
+        ) => {
+            let between = c1.distance(c2);
+            between - r1 - r2 > gap || (r1 - r2).abs() - between > gap
+        }
+        (&Geom::Segment { start, end }, &Geom::Round { center, radius, .. })
+        | (&Geom::Round { center, radius, .. }, &Geom::Segment { start, end }) => {
+            let nearest = foot(center, start, end).distance(center);
+            let furthest = start.distance(center).max(end.distance(center));
+            nearest - radius > gap || radius - furthest > gap
+        }
+        _ => false,
+    }
 }
 
 /// Where the endless lines and whole circles of `a` and `b` cross, one

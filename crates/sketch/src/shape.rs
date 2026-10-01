@@ -58,8 +58,10 @@ struct Reached {
 
 impl Sketch {
     /// Where the curves but `skip` meet `geom`, within `tolerance`, in
-    /// order along it: each place where one or more do.
-    fn cuts(&self, geom: &Geom, skip: Id, tolerance: f64) -> Vec<Cut> {
+    /// order along it: each place where one or more do. `None` where a
+    /// spline lies along another so closely that not every place is
+    /// found ([`meet`] runs out of steps).
+    fn cuts(&self, geom: &Geom, skip: Id, tolerance: f64) -> Option<Vec<Cut>> {
         let mut found = Vec::new();
         let mut places = Vec::new();
         for entry in self.curves.iter().filter(|entry| entry.id != skip) {
@@ -67,7 +69,9 @@ impl Sketch {
                 continue;
             };
             found.clear();
-            meet(geom, &other, tolerance, &mut found);
+            if meet(geom, &other, tolerance, &mut found) == usize::MAX {
+                return None;
+            }
             let ends = entry.curve.ends();
             for &(u, v) in &found {
                 let end = ends.and_then(|[start, end]| {
@@ -114,17 +118,18 @@ impl Sketch {
             }
             first.end = first.end.or(last.end);
         }
-        cuts
+        Some(cuts)
     }
 
     /// What trimming `curve` near `near` takes away, of its shape: the
     /// span between the cuts either side of the place on it nearest
     /// `near`, or all of it where there are none (a circle needs two).
-    /// `None` if `curve` is no curve of the sketch's, or has no size.
+    /// `None` if `curve` is no curve of the sketch's, or has no size, or
+    /// where it's cut can't all be found (see [`Sketch::cuts`]).
     fn trimmed(&self, curve: Id, near: DVec2) -> Option<(Geom, Trimmed)> {
         let geom = Geom::of(self, &self.curve(curve)?.curve)?;
         let tolerance = self.curve_tolerance();
-        let mut cuts = self.cuts(&geom, curve, tolerance);
+        let mut cuts = self.cuts(&geom, curve, tolerance)?;
         // Where it meets what it's joined to, at its ends, cuts nothing.
         if geom.has_ends() {
             cuts.retain(|cut| {
@@ -251,7 +256,7 @@ impl Sketch {
     fn reached(&self, curve: Id, end: Id, reach: f64) -> Result<Reached, EditError> {
         let (ahead, from) = self.ahead(curve, end, reach)?;
         let tolerance = self.curve_tolerance();
-        let cuts = self.cuts(&ahead, curve, tolerance);
+        let cuts = (self.cuts(&ahead, curve, tolerance)).ok_or(EditError::TooComplex)?;
         // Not where it is, nor, round an arc, back at its other end.
         let far = if from == 0.0 { ahead.last() } else { 0.0 };
         let cut = cuts

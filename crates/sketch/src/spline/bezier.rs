@@ -741,8 +741,11 @@ fn bezier_pair(
             }
             continue;
         }
+        // The larger, flat or not: a straight piece is flat at once, but
+        // halving only the other would keep every piece of it in the
+        // straight one's box, however far from it.
         let (asize, bsize) = ((amax - amin).max_element(), (bmax - bmin).max_element());
-        if fb <= tolerance || (fa > tolerance && asize >= bsize) {
+        if asize >= bsize {
             let (first, second) = halves(&pa);
             let middle = (a0 + a1) / 2.0;
             stack.push((second, middle, a1, pb, b0, b1, depth + 1));

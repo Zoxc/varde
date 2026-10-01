@@ -207,6 +207,30 @@ fn trimming_a_circle_cut_once_or_a_curve_cut_nowhere_deletes_it() {
 }
 
 #[test]
+fn a_spline_along_another_is_not_trimmed_by_some_of_its_crossings() {
+    // Rings wobbling alike but for their phases, 0.017 apart past a whole
+    // turn, cross at angles so shallow that finding every place runs out
+    // of steps: trimmed between those found, a crossing missed would take
+    // away more than the piece pointed at.
+    let mut sketch = Sketch::default();
+    let ring = |phase: f64| -> Vec<(f64, f64)> {
+        (0..20)
+            .map(|i| {
+                let angle = f64::from(i) / 20.0 * std::f64::consts::TAU;
+                let r = 10.0 * (1.0 + 0.2 * (7.0 * angle + phase).sin());
+                (r * angle.cos(), r * angle.sin())
+            })
+            .collect()
+    };
+    let (first, _) = testing::spline(&mut sketch, &ring(0.7), true);
+    testing::spline(&mut sketch, &ring(7.0), true);
+    let near = DVec2::new(10.0, 0.0);
+    assert_eq!(sketch.trim_piece(first, near), None);
+    let trim = SketchEdit::Trim { curve: first, near };
+    assert!(trim.apply(&sketch, &DESIGN).is_err());
+}
+
+#[test]
 fn trimming_a_line_at_a_tangent_keeps_the_tangency() {
     let mut sketch = Sketch::default();
     let center = point(&mut sketch, 0.0, 0.0);

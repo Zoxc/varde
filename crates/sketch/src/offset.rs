@@ -598,7 +598,11 @@ impl Sketch {
                     continue;
                 }
                 found.clear();
-                meet(geom, other, tol, &mut found);
+                // Splines lying along each other run out of steps before
+                // every place is found: too complex, not cut short.
+                if meet(geom, other, tol, &mut found) == usize::MAX {
+                    return Err(EditError::TooComplex);
+                }
                 // Where a circle starts is no end of it, and changes
                 // nothing, but `meet` cuts there as at an end.
                 let starts = |geom: &Geom, u: f64| !geom.has_ends() && u == 0.0;
@@ -1223,7 +1227,12 @@ impl Work {
 fn cross(raws: &mut [Raw], [i, j]: [usize; 2], past: [&[Link]; 2], distance: f64, tol: f64) {
     let (end, start) = (raws[i].end(), raws[j].start());
     let mut found = Vec::new();
-    meet(&raws[i].geom, &raws[j].geom, tol, &mut found);
+    // Where not every place is found, crossing by the nearest found may
+    // be wrong: left as too short to cross, the two meet again when cut
+    // where copies cross, and are refused there.
+    if meet(&raws[i].geom, &raws[j].geom, tol, &mut found) == usize::MAX {
+        return;
+    }
     let off =
         |(u, v): (f64, f64)| raws[i].geom.at(u).distance(end) + raws[j].geom.at(v).distance(start);
     let Some((u, v)) = found.into_iter().min_by(|&a, &b| off(a).total_cmp(&off(b))) else {

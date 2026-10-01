@@ -1987,8 +1987,24 @@ fn the_visible_sketches_share_the_work() {
         expected.push(sketches[fit - 1]);
     }
     assert_eq!(found, expected);
-    assert_eq!(skipped, sketches[found.len() - 1..].to_vec());
+    // Not for good: those past it are no more complex than the rest.
+    assert!(skipped.is_empty(), "{skipped:?}");
     // The first past it takes all that's left, and those after aren't
     // worked out at all.
     assert_eq!(session.worked_out, found.len() + 1);
+    // Those found are kept, so the work's there for the rest as the
+    // document changes, a share each time.
+    let mut rounds = 0;
+    while doc.extrude.as_ref().unwrap().found.len() < sketches.len() + 1 {
+        rounds += 1;
+        assert!(rounds <= sketches.len(), "{rounds}");
+        let visible = rounds % 2 == 0;
+        doc.apply(Command::SetFeatureVisible(plate, visible));
+        let started = std::time::Instant::now();
+        doc.sync();
+        let took = started.elapsed().as_secs_f64();
+        assert!(took < ui_bound(), "{took}");
+    }
+    let session = doc.extrude.as_ref().unwrap();
+    assert!(session.skipped.is_empty());
 }
