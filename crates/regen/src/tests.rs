@@ -142,7 +142,7 @@ fn solids_are_drawn_into_one_mesh() {
     both.append(&b.tessellate(&display).unwrap()).unwrap();
     let evaluation = made([(body, a), (body, b)]);
     let mesh = tessellate(&document, &evaluation, &mut Cache::default()).unwrap();
-    assert_eq!(mesh, both);
+    assert_eq!(*mesh, both);
     assert_eq!(mesh.triangle_count(), 24);
     assert_eq!(
         mesh.bounds().unwrap(),
@@ -152,7 +152,7 @@ fn solids_are_drawn_into_one_mesh() {
         }
     );
     let none = tessellate(&document, &made([]), &mut Cache::default()).unwrap();
-    assert_eq!(none, RenderMesh::default());
+    assert_eq!(*none, RenderMesh::default());
 }
 
 #[test]
@@ -172,8 +172,8 @@ fn only_the_solids_of_shown_bodies_are_drawn() {
     let alone = solids.bodies[0].solid.tessellate(&display).unwrap();
     // Hidden, or not in the document at all.
     let mut cache = Cache::default();
-    assert_eq!(tessellate(&both, &solids, &mut cache).unwrap(), alone);
-    assert_eq!(tessellate(&one, &solids, &mut cache).unwrap(), alone);
+    assert_eq!(*tessellate(&both, &solids, &mut cache).unwrap(), alone);
+    assert_eq!(*tessellate(&one, &solids, &mut cache).unwrap(), alone);
 }
 
 /// Solids are drawn to the document's tolerance: a coarser one gives a
@@ -192,7 +192,7 @@ fn solids_are_drawn_to_the_document_s_tolerance() {
     editor.apply(Command::SetTolerance(coarse)).unwrap();
     let drawn = tessellate(editor.document(), &solids, &mut cache).unwrap();
     assert_eq!(
-        drawn,
+        *drawn,
         solids.bodies[0]
             .solid
             .tessellate(&Display::new(&coarse))
@@ -647,8 +647,8 @@ fn a_cut_draft_lists_what_it_touches_and_is_answered_from_the_cache() {
     assert_eq!(worked, before + 4);
 
     // Taking the plate out: the tool is found, whether it touches isn't
-    // asked; only the plate's mesh, which the request before didn't
-    // draw, is worked out again.
+    // asked, and the model's mesh is the committed one's, kept in the
+    // slot for the last two scenes: nothing is worked out.
     let mut out = draft.clone();
     out.revision = 2;
     out.extrude.operation = Operation::Cut(varde_document::Targets {
@@ -658,22 +658,268 @@ fn a_cut_draft_lists_what_it_touches_and_is_answered_from_the_cache() {
     let drafted = answer.draft.unwrap();
     assert_eq!(drafted.touched, Some(vec![]));
     assert!(drafted.error.is_some());
-    assert_eq!(answer.mesh, committed.mesh);
-    assert_eq!(regenerator.cache().counts().1, worked + 1);
+    assert!(Arc::ptr_eq(&answer.mesh, &committed.mesh));
+    assert_eq!(regenerator.cache().counts().1, worked);
 
     // Putting it back finds whether it touches and the cut, kept while
-    // it was out; only its mesh, which the request before didn't draw,
-    // is worked out again.
+    // it was out, and the scene the cut made: nothing is worked out.
     draft.revision = 3;
     let back = answered(regenerator.handle(regenerate_with(&editor, Some(draft.clone()))));
     assert_eq!(back.draft.unwrap().error, None);
-    assert_eq!(back.mesh, cut.mesh);
-    assert_eq!(regenerator.cache().counts().1, worked + 2);
+    assert!(Arc::ptr_eq(&back.mesh, &cut.mesh));
+    assert_eq!(regenerator.cache().counts().1, worked);
 
     // Dragging the pocket deeper: only its tool, touching, cut and mesh.
     draft.revision = 4;
     draft.extrude.extent = crate::history::tests::two_sides(editor.document(), "5", "1");
     let deeper = answered(regenerator.handle(regenerate_with(&editor, Some(draft))));
     assert_eq!(deeper.draft.unwrap().error, None);
-    assert_eq!(regenerator.cache().counts().1, worked + 6);
+    assert_eq!(regenerator.cache().counts().1, worked + 4);
+}
+
+/// The model's mesh is joined once per scene: requests whose shown bodies
+/// and tolerance didn't change are answered with the same `Arc`, which
+/// the renderer then doesn't upload again; a changed scene gets a new
+/// one, with the right content.
+#[test]
+fn an_unchanged_model_is_answered_with_the_same_mesh() {
+    let mut editor = Editor::new(Document::example());
+    let mut regenerator = Regenerator::default();
+    let ask = |regenerator: &mut Regenerator, request| answered(regenerator.handle(request));
+    let first = ask(&mut regenerator, regenerate(&editor, None)).mesh;
+    assert_eq!(regenerator.cache().joins(), 1);
+    let plate = editor.document().bodies()[0].id;
+    let display = Display::new(&editor.document().tolerance());
+    let drawn = |evaluation: &Evaluation| {
+        let mut mesh = RenderMesh::default();
+        for made in &evaluation.bodies {
+            mesh.append(&made.solid.tessellate(&display).unwrap())
+                .unwrap();
+        }
+        mesh
+    };
+    assert_eq!(
+        *first,
+        drawn(&evaluate(editor.document(), &mut Cache::default()))
+    );
+
+    // The same request again.
+    let again = ask(&mut regenerator, regenerate(&editor, None)).mesh;
+    assert!(Arc::ptr_eq(&again, &first));
+
+    // A new sketch no body depends on, at a new generation, then edited,
+    // and left out of the lines.
+    editor
+        .apply(editor.document().add_sketch(Plane::Origin(OriginPlane::XZ)))
+        .unwrap();
+    let sketch = editor.document().features().last().unwrap().id;
+    let after = ask(&mut regenerator, regenerate(&editor, None)).mesh;
+    assert!(Arc::ptr_eq(&after, &first));
+    let mut drawn_sketch = Sketch::default();
+    let start = drawn_sketch.add_point(DVec2::ZERO).unwrap();
+    let end = drawn_sketch.add_point(DVec2::new(1.0, 2.0)).unwrap();
+    drawn_sketch
+        .add_curve(Curve::Line { start, end }, false)
+        .unwrap();
+    editor
+        .apply(Command::SetSketch {
+            feature: sketch,
+            sketch: Box::new(drawn_sketch),
+        })
+        .unwrap();
+    let edited = ask(&mut regenerator, regenerate(&editor, Some(sketch))).mesh;
+    assert!(Arc::ptr_eq(&edited, &first));
+    // A sketch hidden.
+    editor
+        .apply(Command::SetFeatureVisible(sketch, false))
+        .unwrap();
+    let hidden_sketch = ask(&mut regenerator, regenerate(&editor, None)).mesh;
+    assert!(Arc::ptr_eq(&hidden_sketch, &first));
+    assert_eq!(regenerator.cache().joins(), 1);
+
+    // A draft that fails: the committed model's mesh.
+    let join = Draft {
+        extrude: Extrude {
+            operation: Operation::Join(varde_document::Targets {
+                excluded: vec![plate],
+            }),
+            ..new_body_draft(editor.document(), 0, "3").extrude
+        },
+        ..new_body_draft(editor.document(), 1, "3")
+    };
+    let failing = ask(&mut regenerator, regenerate_with(&editor, Some(join)));
+    assert!(failing.draft.unwrap().error.is_some());
+    assert!(Arc::ptr_eq(&failing.mesh, &first));
+    assert_eq!(regenerator.cache().joins(), 1);
+
+    // A draft that works: a new mesh with the new body in it, and the
+    // committed one found again after it.
+    let draft = new_body_draft(editor.document(), 2, "3");
+    let mut probe = Editor::new(editor.document().clone());
+    probe
+        .apply(probe.document().add_extrude(draft.extrude.clone()))
+        .unwrap();
+    let drafted = ask(&mut regenerator, regenerate_with(&editor, Some(draft))).mesh;
+    assert!(!Arc::ptr_eq(&drafted, &first));
+    assert_eq!(
+        *drafted,
+        drawn(&evaluate(probe.document(), &mut Cache::default()))
+    );
+    assert_eq!(regenerator.cache().joins(), 2);
+    let back = ask(&mut regenerator, regenerate(&editor, None)).mesh;
+    assert!(Arc::ptr_eq(&back, &first));
+    assert_eq!(regenerator.cache().joins(), 2);
+
+    // The plate hidden: an empty mesh, the same one asked again.
+    editor.apply(Command::SetVisible(plate, false)).unwrap();
+    let hidden = ask(&mut regenerator, regenerate(&editor, None)).mesh;
+    assert!(!Arc::ptr_eq(&hidden, &first));
+    assert_eq!(*hidden, RenderMesh::default());
+    let still = ask(&mut regenerator, regenerate(&editor, None)).mesh;
+    assert!(Arc::ptr_eq(&still, &hidden));
+    assert_eq!(regenerator.cache().joins(), 3);
+
+    // Shown again, right after: the scene before is found.
+    editor.apply(Command::SetVisible(plate, true)).unwrap();
+    let (_, worked) = regenerator.cache().counts();
+    let shown = ask(&mut regenerator, regenerate(&editor, None)).mesh;
+    assert!(Arc::ptr_eq(&shown, &first));
+    assert_eq!(regenerator.cache().counts().1, worked);
+    assert_eq!(regenerator.cache().joins(), 3);
+
+    // A coarser tolerance: a new mesh, drawn to it.
+    let coarse = Tolerance::new(Tolerance::MAX_FIT).unwrap();
+    editor.apply(Command::SetTolerance(coarse)).unwrap();
+    let coarser = ask(&mut regenerator, regenerate(&editor, None)).mesh;
+    assert!(!Arc::ptr_eq(&coarser, &first));
+    let display = Display::new(&coarse);
+    let evaluation = evaluate(editor.document(), &mut Cache::default());
+    assert_eq!(
+        *coarser,
+        evaluation.bodies[0].solid.tessellate(&display).unwrap()
+    );
+    assert_eq!(regenerator.cache().joins(), 4);
+}
+
+/// A scene found keeps its bodies' meshes in the cache, so the next
+/// scene that changes one body joins the others' without drawing them
+/// again.
+#[test]
+fn a_scene_found_keeps_its_bodies_meshes() {
+    let mut editor = Editor::new(Document::example());
+    let draft = new_body_draft(editor.document(), 0, "3");
+    editor
+        .apply(editor.document().add_extrude(draft.extrude))
+        .unwrap();
+    let mut regenerator = Regenerator::default();
+    let first = answered(regenerator.handle(regenerate(&editor, None))).mesh;
+    for _ in 0..3 {
+        let again = answered(regenerator.handle(regenerate(&editor, None))).mesh;
+        assert!(Arc::ptr_eq(&again, &first));
+    }
+    // The second body hidden: the plate's mesh is found, not drawn.
+    let second = editor.document().bodies()[1].id;
+    editor.apply(Command::SetVisible(second, false)).unwrap();
+    let (_, worked) = regenerator.cache().counts();
+    let plate = answered(regenerator.handle(regenerate(&editor, None))).mesh;
+    assert_eq!(regenerator.cache().counts().1, worked);
+    assert_eq!(regenerator.cache().joins(), 2);
+    let evaluation = evaluate(editor.document(), &mut Cache::default());
+    let display = Display::new(&editor.document().tolerance());
+    assert_eq!(
+        *plate,
+        evaluation.bodies[0].solid.tessellate(&display).unwrap()
+    );
+}
+
+/// The scene's key is the shown bodies' meshes in order: the same solid
+/// shown twice, or two bodies swapped, is another scene; a hidden body in
+/// the middle is left out of it.
+#[test]
+fn the_scene_key_holds_each_shown_body_in_order() {
+    let document = with_bodies(true);
+    let [shown, hidden] = [document.bodies()[0].id, document.bodies()[1].id];
+    let solids = [cuboid(0.0, 1.0), cuboid(3.0, 2.0), cuboid(9.0, 1.0)];
+    // Each solid with a key of its own, as evaluating gives them.
+    let scene = |bodies: &[(BodyId, usize)]| Evaluation {
+        bodies: bodies
+            .iter()
+            .map(|&(body, solid)| BodySolid {
+                body,
+                solid: Arc::new(solids[solid].clone()),
+                key: Keyer::new("test").number(solid as u64).finish(),
+            })
+            .collect(),
+        ..Evaluation::default()
+    };
+    let display = Display::new(&Tolerance::DEFAULT);
+    let joined = |shown: &[usize]| {
+        let mut mesh = RenderMesh::default();
+        for &solid in shown {
+            mesh.append(&solids[solid].tessellate(&display).unwrap())
+                .unwrap();
+        }
+        mesh
+    };
+    let mut cache = Cache::default();
+    let one = tessellate(&document, &scene(&[(shown, 0)]), &mut cache).unwrap();
+    assert_eq!(*one, joined(&[0]));
+    let twice = tessellate(&document, &scene(&[(shown, 0), (shown, 0)]), &mut cache).unwrap();
+    assert_eq!(*twice, joined(&[0, 0]));
+    // A hidden body between two shown ones, and the two swapped.
+    let ab = scene(&[(shown, 0), (hidden, 2), (shown, 1)]);
+    let ab = tessellate(&document, &ab, &mut cache).unwrap();
+    assert_eq!(*ab, joined(&[0, 1]));
+    let ba = scene(&[(shown, 1), (hidden, 2), (shown, 0)]);
+    let ba = tessellate(&document, &ba, &mut cache).unwrap();
+    assert_eq!(*ba, joined(&[1, 0]));
+    // Without the hidden body, the same scene as with it.
+    let without = tessellate(&document, &scene(&[(shown, 1), (shown, 0)]), &mut cache).unwrap();
+    assert!(Arc::ptr_eq(&without, &ba));
+    assert_eq!(cache.joins(), 4);
+    // No bodies: one empty mesh, found again.
+    let none = tessellate(&document, &scene(&[]), &mut cache).unwrap();
+    let again = tessellate(&document, &scene(&[(hidden, 2)]), &mut cache).unwrap();
+    assert!(Arc::ptr_eq(&none, &again));
+    assert_eq!(*none, RenderMesh::default());
+    assert_eq!(cache.joins(), 5);
+}
+
+/// The scene slot holds the last two scenes used, whatever the requests
+/// in between: a third scene pushes out the least recently used.
+#[test]
+fn the_scene_slot_holds_the_last_two_scenes_used() {
+    let document = with_bodies(false);
+    let body = document.bodies()[0].id;
+    let scenes = [
+        made([(body, cuboid(0.0, 1.0))]),
+        made([]),
+        Evaluation {
+            bodies: vec![BodySolid {
+                body,
+                solid: Arc::new(cuboid(2.0, 1.0)),
+                key: Keyer::new("test").number(7).finish(),
+            }],
+            ..Evaluation::default()
+        },
+    ];
+    let mut cache = Cache::default();
+    let ask = |cache: &mut Cache, scene: usize| {
+        cache.begin();
+        tessellate(&document, &scenes[scene], cache).unwrap()
+    };
+    let a = ask(&mut cache, 0);
+    let b = ask(&mut cache, 1);
+    for _ in 0..3 {
+        assert!(Arc::ptr_eq(&ask(&mut cache, 0), &a));
+        assert!(Arc::ptr_eq(&ask(&mut cache, 1), &b));
+    }
+    assert_eq!(cache.joins(), 2);
+    // A third scene: `a`, used least recently, goes.
+    ask(&mut cache, 2);
+    assert!(Arc::ptr_eq(&ask(&mut cache, 1), &b));
+    let later = ask(&mut cache, 0);
+    assert!(!Arc::ptr_eq(&later, &a));
+    assert_eq!(*later, *a);
+    assert_eq!(cache.joins(), 4);
 }

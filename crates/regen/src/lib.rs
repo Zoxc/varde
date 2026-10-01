@@ -239,7 +239,7 @@ impl Regenerator {
                         generation,
                         exclude,
                         draft: model.draft,
-                        mesh: Arc::new(model.mesh),
+                        mesh: model.mesh,
                         sketches: Arc::new(model.sketches),
                         unsolved: model.unsolved,
                         failed: model.failed,
@@ -341,7 +341,7 @@ impl Regenerator {
 /// A [`Response::Regenerated`]'s model.
 struct Model {
     draft: Option<Drafted>,
-    mesh: RenderMesh,
+    mesh: Arc<RenderMesh>,
     sketches: RenderLines,
     unsolved: Vec<FeatureId>,
     failed: Vec<(FeatureId, String)>,
@@ -391,27 +391,45 @@ pub fn handle(request: Request) -> Response {
 /// Tessellates the solids of the visible bodies of `document` in
 /// `evaluation` into a single mesh in world space, within the [`Display`]
 /// of the document's tolerance ([`Document::tolerance`]), each drawn once
-/// and kept in `cache`. Fails if it would have more vertices, indices or
-/// edges than a [`RenderMesh`] may hold, which a file with enough bodies
-/// in it can ask for.
+/// and kept in `cache`. The joined mesh is kept too, filed by the shown
+/// bodies' mesh keys in order (which hold the tolerance): a scene that
+/// didn't change gives the same `Arc` without joining again (see
+/// [`Cache`]). Fails if it would have more vertices, indices or edges
+/// than a [`RenderMesh`] may hold, which a file with enough bodies in it
+/// can ask for.
 pub fn tessellate(
     document: &Document,
     evaluation: &Evaluation,
     cache: &mut Cache,
-) -> Result<RenderMesh, MeshError> {
-    let display = Display::new(&document.tolerance());
-    let mut mesh = RenderMesh::default();
-    let shown = evaluation
+) -> Result<Arc<RenderMesh>, MeshError> {
+    let fit = document.tolerance().fit().to_bits();
+    let shown: Vec<_> = evaluation
         .bodies
         .iter()
-        .filter(|made| document.body(made.body).is_some_and(|body| body.visible));
-    for made in shown {
-        let key = Keyer::new("mesh")
-            .key(made.key)
-            .number(document.tolerance().fit().to_bits())
-            .finish();
-        let drawn = cache.mesh(key, || made.solid.tessellate(&display))?;
-        mesh.append(&drawn)?;
+        .filter(|made| document.body(made.body).is_some_and(|body| body.visible))
+        .map(|made| (made, Keyer::new("mesh").key(made.key).number(fit).finish()))
+        .collect();
+    let mut scene = Keyer::new("scene");
+    for (_, key) in &shown {
+        scene.key(*key);
+    }
+    let scene = scene.number(shown.len() as u64).finish();
+    let mut found = true;
+    let mesh = cache.scene(scene, |cache| {
+        found = false;
+        let display = Display::new(&document.tolerance());
+        let mut mesh = RenderMesh::default();
+        for (made, key) in &shown {
+            let drawn = cache.mesh(*key, || made.solid.tessellate(&display))?;
+            mesh.append(&drawn)?;
+        }
+        Ok(mesh)
+    })?;
+    if found {
+        // The bodies' meshes stay for the next scene that changes one.
+        for (_, key) in &shown {
+            cache.keep(*key);
+        }
     }
     Ok(mesh)
 }

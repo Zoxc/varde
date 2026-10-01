@@ -170,7 +170,12 @@ refuses, is answered with the committed model and the draft's error. The
 lane keeps a cache of what it worked out per feature (profiles, solids,
 meshes, whether each sketch solves), keyed by a hash of the feature, the
 tolerance and its inputs' keys, holding what the last request used, so an
-edit or a draft being dragged reruns only what it changes. The app sends
+edit or a draft being dragged reruns only what it changes. It also keeps
+the joined model mesh of the last two scenes (the shown bodies' mesh keys
+in order), so an answer whose shown bodies and tolerance didn't change
+carries the same `Arc<RenderMesh>` as before and the renderer, keyed by
+that `Arc`, doesn't upload it again (natively; the web wire still sends
+it whole). The app sends
 the extrude being set up as the draft (see "Setting up an extrude"
 above); `MeshFeed` gives each draft differing from the last the next
 revision, counted over the document's life, and asks again whenever the

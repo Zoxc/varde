@@ -2796,8 +2796,20 @@ the draft's revision too.
 Vec<(BodyId, Aabb)>` (each body with a solid, shown or not, from
 `Solid::bounds`). `tessellate(document, evaluation, cache)` draws the
 visible bodies' solids at `Display::new(&document.tolerance())`, joined
-by `RenderMesh::append`; a mesh past `RenderMesh`'s limits fails the
-generation with the `MeshError`, as before. On the web the reply's head
+by `RenderMesh::append` into an `Arc<RenderMesh>`; a mesh past
+`RenderMesh`'s limits fails the generation with the `MeshError` (and isn't
+kept). The joined mesh is kept in the cache under a scene key (`"scene"`,
+then each shown body's mesh key in order, which holds the tolerance, then
+the count), in a slot of its own for the last two scenes used, least
+recently used out, not aged by `Cache::begin` and not in `counts` (those
+count features; `Cache::joins` counts joins, for tests). A request whose
+scene didn't change (a sketch edit no body depends on, a sketch hidden or
+left out, a failing draft, the committed model after a draft) gets the
+same `Arc`, so natively the renderer, keyed by the `Arc`, skips the
+upload; a scene found keeps its bodies' meshes in the cache
+(`Cache::keep`) for the next scene that changes one. A size-bounded cache
+replacing the two-request policy can take the slot in as one more kind
+of entry. On the web the mesh still crosses the wire whole each time. On the web the reply's head
 carries `draft`, `failed` and the boxes as corner arrays, checked finite
 and in order on receipt (`wire::Error::Bounds`); `MAX_HEAD_BYTES` is 64
 MiB. The draft's touched bodies cross in the head as marks, unchecked.
@@ -2810,9 +2822,11 @@ body only there is "it doesn't touch any body". An operation that runs
 out of budget takes about 2–3.5 s on one native thread and holds the
 single-threaded web worker longer, with drafts queued behind it (latest
 wins, so only the newest waits). The cache keeps only what the last
-request used (and excluded bodies' booleans): switching the operation
-away and back, or an edit undone after two requests, reruns the
-booleans.
+request used (and excluded bodies' booleans, and the last two scenes'
+joined meshes): switching the operation away and back, or an edit undone
+after two requests, reruns the booleans. On the web an unchanged model
+mesh is still copied over the wire, checked and uploaded again with each
+answer.
 
 ## The extrude UI (`crates/view`, `crates/app`)
 
@@ -3308,3 +3322,10 @@ parameter, or a split outside the patch bounds),
   across, each of their two spans straight within the tolerance and no
   conic's, so two lines; span by span happened to fit one of them with
   conics, walking it the other way).
+- **The regen lane's scene slot is the last two scenes used**, least
+  recently used out, not the scenes of the last two requests aged by
+  `Cache::begin` like the per-feature results. Aged by requests it would
+  hold one scene at a time (each request uses one), so the committed
+  model asked again after a draft would be joined again. Kept apart from
+  the per-feature entries so `counts` stay feature counts; a size-bounded
+  cache can fold it into its own policy.

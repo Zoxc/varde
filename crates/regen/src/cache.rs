@@ -10,6 +10,22 @@
 //! dragging a distance back and forth, or a draft answered after the
 //! committed model, finds everything else still there. A request can
 //! also keep what it doesn't use ([`Cache::keep`]).
+//!
+//! The model's mesh, the shown bodies' meshes joined, is kept apart from
+//! the per-feature results, in a slot for the last two scenes used
+//! ([`Cache::scene`]): a request whose shown bodies and tolerance didn't
+//! change (a sketch edit no body depends on, a sketch hidden or left
+//! out, a draft that fails, or the committed model asked again after a
+//! draft) is answered with the very same `Arc`, so neither the join nor,
+//! natively, the renderer's upload (which keys its buffers by the `Arc`)
+//! is done again. The slot holds two scenes whatever the requests were,
+//! the least recently used going first, rather than ageing with
+//! [`Cache::begin`]: a draft and the committed model take turns without
+//! either being joined again, and it never holds more than two joined
+//! meshes. It's its own slot only so the per-feature counts
+//! ([`Cache::counts`]) stay counts of features; a size-bounded cache
+//! replacing the two-request policy can take scenes in as one more kind
+//! of entry under its own policy.
 
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -97,6 +113,16 @@ pub struct Cache {
     /// How many results were found and how many worked out, for tests.
     hits: usize,
     misses: usize,
+    scenes: Scenes,
+}
+
+/// The last two joined model meshes used, filed by their scene keys, the
+/// most recently used first, and how many were joined, for tests.
+#[derive(Default)]
+struct Scenes {
+    current: Option<(Key, Arc<RenderMesh>)>,
+    previous: Option<(Key, Arc<RenderMesh>)>,
+    joins: usize,
 }
 
 impl Cache {
@@ -209,9 +235,45 @@ impl Cache {
         }
     }
 
+    /// The model's mesh filed under the scene key `key`, if one of the
+    /// last two scenes used has it; otherwise `join`'s, filed in place of
+    /// the least recently used, or its error, which isn't kept. Not
+    /// counted in [`Cache::counts`].
+    pub(crate) fn scene<E>(
+        &mut self,
+        key: Key,
+        join: impl FnOnce(&mut Cache) -> Result<RenderMesh, E>,
+    ) -> Result<Arc<RenderMesh>, E> {
+        let filed = |slot: &Option<(Key, Arc<RenderMesh>)>| {
+            slot.as_ref()
+                .filter(|(filed, _)| *filed == key)
+                .map(|(_, mesh)| Arc::clone(mesh))
+        };
+        let scenes = &mut self.scenes;
+        if let Some(mesh) = filed(&scenes.current) {
+            return Ok(mesh);
+        }
+        if let Some(mesh) = filed(&scenes.previous) {
+            std::mem::swap(&mut scenes.current, &mut scenes.previous);
+            return Ok(mesh);
+        }
+        let mesh = Arc::new(join(self)?);
+        let scenes = &mut self.scenes;
+        scenes.joins += 1;
+        scenes.previous = scenes.current.take();
+        scenes.current = Some((key, Arc::clone(&mesh)));
+        Ok(mesh)
+    }
+
     /// How many results were found filed, and how many were worked out,
     /// since it was made.
     pub fn counts(&self) -> (usize, usize) {
         (self.hits, self.misses)
+    }
+
+    /// How many model meshes were joined since it was made: requests whose
+    /// scene was found don't count.
+    pub fn joins(&self) -> usize {
+        self.scenes.joins
     }
 }
