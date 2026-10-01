@@ -106,3 +106,43 @@ id keys them apart. Any later pair of pipelines that differ only by an
 override needs the same, until upstream keys the cache by the constants.
 
 **Upstream status.** Not reported, not checked against a newer wgpu.
+
+## GL resolves MSAA only inside the pass's last scissor rect
+
+**Version:** wgpu 27.0.1 / wgpu-hal 27.0.4, pulled in by iced 0.14. The code is
+unchanged in wgpu-hal 29.0.4.
+
+**What was hit.** In the browser (WebGL2), a trail of old view cubes, each at
+an earlier camera angle, drawn in a row along the top of the viewport over
+the model and the rail's open list. It showed after leaving a sketch, while
+the camera turned back and the viewport's width changed, moving the cube.
+
+**Cause.** iced draws canvas meshes into a shared 4× MSAA target with a
+resolve texture, setting a scissor rect per mesh, then composites the whole
+resolve texture onto the frame. wgpu-hal's GLES backend resolves at the end
+of the pass with `glBlitFramebuffer` over the full render size
+(`C::ResolveAttachment` in `wgpu-hal/src/gles/queue.rs`), but `C::SetScissor`
+left `GL_SCISSOR_TEST` enabled, and the blit honours it. Only the last
+mesh's rect (the cube's) is resolved; the rest of the resolve texture keeps
+earlier frames' cubes, which iced then composites over everything under the
+cube's layer. Vulkan resolves the whole attachment.
+
+**Why it's not ours.**
+- Reproduced headlessly with the shot harness (`crates/app/src/doc/extrude/tests/shots.rs`):
+  example document, a sketch entered and left, the Create list open, then 12
+  frames orbiting while the window widens from 840 to 1280. With
+  `WGPU_BACKEND=gl` the trail shows; on Vulkan the same frames are clean.
+- No varde code is in the path: the cube is a plain iced `canvas`.
+- The blit in `C::ResolveAttachment` has no `disable(SCISSOR_TEST)` before
+  it.
+
+**Cost here.** None yet: no workaround in code, the bug shows on the web.
+The fix is one line in wgpu-hal, `gl.disable(glow::SCISSOR_TEST)` before the
+blit (every pass sets its own scissor again in `begin_render_pass`), which
+would need a patched wgpu-hal until upstream has it. The alternative,
+`antialiasing: false` on wasm (`crates/app/src/lib.rs`), would make the
+cube's edges and letters jagged in the browser.
+
+**Upstream status.** Not reported. A report needs a reduced reproduction:
+a 4× MSAA pass with a resolve target, drawn under a scissor rect that moves
+between frames, then the resolve target read back on `WGPU_BACKEND=gl`.
