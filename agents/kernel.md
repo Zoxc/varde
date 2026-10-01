@@ -3616,8 +3616,8 @@ body, and the later ones still run.
   last, so the panel offers to take it out. No target is "it doesn't
   touch any body", or "it doesn't touch any body not taken out of it"
   when it excludes some. The excluded bodies' touch and boolean results
-  from the request before are kept (`Cache::keep`) for putting them
-  back. Each target is replaced by
+  are marked used (`Cache::keep`), so the budget evicts them last, for
+  putting them back. Each target is replaced by
   `kernel::boolean(body, tool, op)` with `Union`, `Difference` or
   `Intersection`, the body always first (a flush boss put first in a
   union came out right but with some 30,000 patches). Every target's
@@ -3788,13 +3788,31 @@ finds the tool; the span stands for the extent and flip), whether a body touches
 boolean's result (or `KernelError`) by the operation and the two solids'
 keys, which then keys the body's solid, and a body's mesh by its solid's
 key and the tolerance. Editing an earlier extrude changes its body's key
-and so reruns every boolean after it on that body. The regenerator keeps what the
-request being answered and the one before used (`Cache::begin` drops the
-rest), so an unrelated edit, or a draft dragged, reruns only what changed.
-A join, cut or intersect also keeps (`Cache::keep`) whether the tool
-touches each body it excludes and their boolean, if the request before
-had them, so taking a body out and putting it back only draws it again.
-The lane owns it: the native thread's closure, or the worker's `serve`.
+and so reruns every boolean after it on that body. The cache is bounded
+by size: each entry records its approximate heap size (`Entry::bytes`: a
+solid's four mesh arrays, a render mesh's four, profiles' regions, pieces,
+outlines, vertices and open ends, an error string's length, plus 128 B
+for the map slot and the `Arc`; saturating sums, since the sizes come
+from what the user drew), the request that last used it and a use
+counter. `Cache::begin` starts a request and, only while the total is
+over the budget (`BUDGET`: 256 MiB natively, 64 MiB on wasm32, per lane
+and so per open document, since a worker's memory never shrinks) or
+there are more than `MAX_ENTRIES` (2^16, so tiny entries can't pile up),
+evicts what the request before didn't use, least recently used first by
+the use counter (a total order: eviction never depends on the map's
+order, so counts are the same on every run). What the request before
+used is never evicted, so an unrelated edit, or a draft dragged, reruns
+only what changed whatever the budget (that set may exceed the budget on
+its own); within the budget, undo, redo and an option changed and
+changed back (join, cut, join; a distance typed and typed back) find
+what they had. One request on the example with a pocket holds about
+90 kB, on a 100 mm plate with 36 holes about 1.6 MB. A join, cut or
+intersect also marks used (`Cache::keep`) whether the tool touches each
+body it excludes and their boolean, so taking a body out and putting it
+back only draws it again even under a small budget.
+`Cache::with_budget(0)` (tests) keeps only what the request before used,
+which was the policy before the budget. The lane owns it: the native
+thread's closure, or the worker's `serve`.
 
 **Drafts.** `Request::Regenerate` has `draft: Option<Draft { revision,
 feature, extrude }>`: an extrude being set up (`feature: None`, applied as
@@ -3818,13 +3836,12 @@ by `RenderMesh::append` into an `Arc<RenderMesh>`; a mesh past
 `RenderMesh`'s limits fails the generation with the `MeshError` (and isn't
 kept). The joined mesh is kept in the cache under a scene key (`"scene"`,
 then each shown body's mesh key in order, which holds the tolerance, then
-the count), in a slot of its own for two scenes: least recently used
-out, except that a working draft's scene never pushes out the scene the
-last answer without a draft used (a failing draft's answer is one), so
-the committed model's scene survives any number of draft revisions,
-even when a revision's scene is the other one held. The slot isn't aged by `Cache::begin` and
-isn't in `counts` (those count features; `Cache::joins` counts joins,
-for tests). A request whose scene didn't change (a sketch edit no body
+the count), as one more kind of entry under the same budget, except that
+the scene the last answer without a draft used (a failing draft's answer
+is one) is never evicted either, so the committed model's scene survives
+any number of draft revisions, even when a revision's scene is an older
+one still held. Scenes aren't in `counts` (those count features;
+`Cache::joins` counts joins, for tests). A request whose scene didn't change (a sketch edit no body
 depends on, a sketch hidden or left out, a failing draft, the committed
 model after a draft was dragged and put away, the model just after a
 draft is committed) gets the same `Arc`, so natively the renderer, keyed
@@ -3832,9 +3849,7 @@ by the `Arc`, skips the upload; a scene found keeps its bodies' meshes in
 the cache (`Cache::keep`) for the next scene that changes one. The
 renderer doesn't try an upload of the same `Arc` again after it failed;
 the only failure is a part past the device's buffer limit, which the same
-mesh would hit again, so it is logged once. A size-bounded cache
-replacing the two-request policy can take the slot in as one more kind
-of entry. On the web the mesh still crosses the wire whole each time.
+mesh would hit again, so it is logged once. On the web the mesh still crosses the wire whole each time.
 On the web the reply's head
 carries `draft`, `failed` and the boxes as corner arrays, checked finite
 and in order on receipt (`wire::Error::Bounds`); `MAX_HEAD_BYTES` is 64
@@ -3847,10 +3862,10 @@ whose boxes are apart are answered at once).
 body only there is "it doesn't touch any body". An operation that runs
 out of budget takes about 2–3.5 s on one native thread and holds the
 single-threaded web worker longer, with drafts queued behind it (latest
-wins, so only the newest waits). The cache keeps only what the last
-request used (and excluded bodies' booleans, and two scenes' joined
-meshes): switching the operation away and back, or an edit undone
-after two requests, reruns the booleans. On the web an unchanged model
+wins, so only the newest waits). The cache's sizes are estimates
+(shared `Arc`s count once per entry holding them), and eviction is plain
+least recently used, not weighted by what an entry took to work out. On
+the web an unchanged model
 mesh is still copied over the wire, checked and uploaded again with each
 answer.
 
@@ -4233,10 +4248,14 @@ parameter, or a split outside the patch bounds),
   `MAX_REGION_CURVES` is twice `MAX_CURVES` (a curve can bound several
   loops), and `RegionRef::check` takes the coordinate limit, since the
   sketch crate doesn't know `MAX_COORD`.
-- **The regeneration cache keeps what the last request used**, not two
-  generations: a draft dragged or an edit only ever reuses the request
-  before's results, plus the touch tests and booleans of bodies a join,
-  cut or intersect takes out (`Cache::keep`), for putting them back. It also keeps meshes and whether sketches solve, and
+- **The regeneration cache is a least-recently-used cache bounded by
+  bytes on top of keeping what the last request used**, not two
+  generations: what the request before used is never evicted, and older
+  results stay while they fit the budget (256 MiB natively, 64 MiB on the
+  web); the touch tests and booleans of bodies a join, cut or intersect
+  takes out are marked used (`Cache::keep`), for putting them back. Not
+  weighted by cost: timing per entry would make eviction depend on the
+  machine. It also keeps meshes and whether sketches solve, and
   keys are 128-bit hashes of the values' postcard encodings, not their
   `Hash` (sketches hold `f64`s).
 - **A failing draft is answered with the committed model** and the
@@ -4438,15 +4457,13 @@ parameter, or a split outside the patch bounds),
   across, each of their two spans straight within the tolerance and no
   conic's, so two lines; span by span happened to fit one of them with
   conics, walking it the other way).
-- **The regen lane's scene slot holds two scenes**, least recently used
-  out except that a working draft's scene never replaces the scene of the
-  last answer without a draft, not the scenes of the last two requests aged by `Cache::begin` like the
-  per-feature results. Aged by requests it would hold one scene at a time
-  (each request uses one), so the committed model asked again after a
-  draft would be joined again; plain least recently used would lose the
-  committed scene after two draft revisions. Kept apart from the
-  per-feature entries so `counts` stay feature counts; a size-bounded
-  cache can fold it into its own policy.
+- **The regen lane's joined scenes are cache entries with one more
+  protected key**: the scene of the last answer without a draft is never
+  evicted, besides what the request before used, so the committed model
+  asked again after any number of draft revisions isn't joined again,
+  even with no budget. Scenes are counted in `joins`, not `counts`, so
+  `counts` stay feature counts. (They were a slot of two scenes before
+  the cache was bounded by bytes.)
 - **What the rounds of cutting keep is bounded by the fit tolerance**,
   including a round that finished: every triangle held to it (along a
   cut, from the patch; off a quadric onto the copy claiming no surface,

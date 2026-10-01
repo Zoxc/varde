@@ -5,37 +5,64 @@
 //! on, the feature's own settings, the tolerance, and the keys of its
 //! inputs (an extrude's sketch, a boolean's operands). A feature that didn't change, and whose
 //! inputs didn't, has the same key, and its result is taken as it was.
-//! The cache lives in the lane (a thread natively, the worker on the web)
-//! and keeps what the last two requests used ([`Cache::begin`]), so
-//! dragging a distance back and forth, or a draft answered after the
-//! committed model, finds everything else still there. A request can
-//! also keep what it doesn't use ([`Cache::keep`]).
+//! The cache lives in the lane (a thread natively, the worker on the web).
 //!
-//! The model's mesh, the shown bodies' meshes joined, is kept apart from
-//! the per-feature results, in a slot for two scenes ([`Cache::scene`]):
-//! a request whose shown bodies and tolerance didn't change (a sketch
-//! edit no body depends on, a sketch hidden or left out, a draft that
-//! fails, or the committed model asked again after a draft) is answered
-//! with the very same `Arc`, so neither the join nor, natively, the
-//! renderer's upload (which keys its buffers by the `Arc`) is done
-//! again. The slot holds two scenes whatever the requests were, rather
-//! than ageing with [`Cache::begin`], the least recently used going
-//! first, except that a draft's scene never pushes out the scene of the
-//! last answer without a draft: however long a draft is dragged, the
-//! committed model's scene stays, and putting the draft away finds it;
-//! without drafts, a body hidden and shown again finds the scene
-//! before. It never holds more than two joined meshes. It's its own slot
-//! only so the per-feature counts ([`Cache::counts`]) stay counts of
-//! features; a size-bounded cache replacing the two-request policy can
-//! take scenes in as one more kind of entry under its own policy.
+//! It's bounded by size: each result records about how many bytes it
+//! holds ([`Entry::bytes`]) and the request that last used it. When a
+//! request begins ([`Cache::begin`]) and the results add up to more than
+//! the budget ([`BUDGET`], 256 MiB natively and 64 MiB on the web, per
+//! lane and so per open document) or there are more than
+//! [`MAX_ENTRIES`], the least recently used go first, until it's within
+//! both again. What the request before used is never evicted, so
+//! dragging a distance back and forth, or a draft answered after the
+//! committed model, finds everything else still there, whatever the
+//! budget; that set may go over the budget on its own. Within the
+//! budget, undo and redo, and an option changed and changed back, find
+//! what they had. Eviction goes by a counter bumped on every use, never
+//! by the map's order, so which results go is the same on every run. A
+//! request can also use what it doesn't need ([`Cache::keep`]), such as
+//! the boolean of a body taken out of a cut, which putting it back asks
+//! for.
+//!
+//! The model's mesh, the shown bodies' meshes joined, is one more kind
+//! of result, a scene ([`Cache::scene`]), filed by the shown bodies'
+//! mesh keys: a request whose shown bodies and tolerance didn't change
+//! (a sketch edit no body depends on, a sketch hidden or left out, a
+//! draft that fails, or the committed model asked again after a draft)
+//! is answered with the very same `Arc`, so neither the join nor,
+//! natively, the renderer's upload (which keys its buffers by the `Arc`)
+//! is done again. Scenes aren't counted in [`Cache::counts`], which stay
+//! counts of features, but in [`Cache::joins`]. Besides what the request
+//! before used, the scene of the last answer without a draft is never
+//! evicted either: however long a draft is dragged, the committed model's
+//! scene stays, and putting the draft away finds it.
 
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
+use std::mem::size_of_val;
 use std::sync::Arc;
 
 use serde::Serialize;
 use varde_kernel::{KernelError, RenderMesh, Solid};
 use varde_sketch::{Profiles, TooComplex};
+
+/// How many bytes of results a cache holds before it evicts the least
+/// recently used: several requests' worth of a large model natively; less
+/// on the web, where a worker's memory never shrinks once grown.
+pub(crate) const BUDGET: usize = if cfg!(target_arch = "wasm32") {
+    64 << 20
+} else {
+    256 << 20
+};
+
+/// The most results a cache holds before it evicts the least recently
+/// used, so tiny ones (whether a sketch solves, errors) can't pile up
+/// without limit under the byte budget.
+pub(crate) const MAX_ENTRIES: usize = 1 << 16;
+
+/// What a result costs besides its own data: the map's slot, the `Arc`
+/// and the allocations' bookkeeping, about.
+const OVERHEAD: usize = 128;
 
 /// A hash of what a result depends on, 128 bits: two SipHash runs with
 /// fixed keys over the same input, one of them salted, so different
@@ -102,69 +129,193 @@ enum Entry {
     Boolean(Result<Arc<Solid>, KernelError>),
     /// A solid drawn.
     Mesh(Arc<RenderMesh>),
+    /// The model's mesh: the shown bodies' meshes joined.
+    Scene(Arc<RenderMesh>),
 }
 
-/// The results of the last two requests, see the module's docs.
-#[derive(Default)]
+impl Entry {
+    /// About how many bytes it holds, rather more than less: its data
+    /// and [`OVERHEAD`]. Results shared between entries (a solid both an
+    /// extrude's and a boolean's operand) count once in each. Saturating,
+    /// since the sizes come from what the user drew.
+    fn bytes(&self) -> usize {
+        let data = match self {
+            Entry::Profiles(profiles) => match &**profiles {
+                Ok(profiles) => profiles_bytes(profiles),
+                Err(TooComplex) => 0,
+            },
+            Entry::Solid(Ok(solid)) | Entry::Boolean(Ok(solid)) => solid_bytes(solid),
+            Entry::Solid(Err(error)) => error.len(),
+            Entry::Mesh(mesh) | Entry::Scene(mesh) => mesh_bytes(mesh),
+            Entry::Solves(_) | Entry::Touches(_) | Entry::Boolean(Err(_)) => 0,
+        };
+        data.saturating_add(OVERHEAD)
+    }
+}
+
+fn solid_bytes(solid: &Solid) -> usize {
+    let mesh = solid.mesh();
+    (size_of_val(mesh.verts()))
+        .saturating_add(size_of_val(mesh.edges()))
+        .saturating_add(size_of_val(mesh.tris()))
+        .saturating_add(size_of_val(mesh.faces()))
+        .saturating_add(size_of_val(solid))
+}
+
+fn mesh_bytes(mesh: &RenderMesh) -> usize {
+    (size_of_val(mesh.positions()))
+        .saturating_add(size_of_val(mesh.normals()))
+        .saturating_add(size_of_val(mesh.indices()))
+        .saturating_add(size_of_val(mesh.edges()))
+        .saturating_add(size_of_val(mesh))
+}
+
+fn profiles_bytes(profiles: &Profiles) -> usize {
+    let mut bytes = (size_of_val(profiles))
+        .saturating_add(size_of_val(&profiles.regions[..]))
+        .saturating_add(size_of_val(&profiles.vertices[..]))
+        .saturating_add(size_of_val(&profiles.open_ends[..]));
+    for region in &profiles.regions {
+        bytes = bytes.saturating_add(size_of_val(&region.outer[..]));
+        for hole in &region.holes {
+            bytes =
+                (bytes.saturating_add(size_of_val(hole))).saturating_add(size_of_val(&hole[..]));
+        }
+        for outline in &region.outline {
+            bytes = (bytes.saturating_add(size_of_val(outline)))
+                .saturating_add(size_of_val(&outline[..]));
+        }
+    }
+    bytes
+}
+
+/// A result held, with its size and when it was last used.
+struct Slot {
+    entry: Entry,
+    /// [`Entry::bytes`], worked out once.
+    bytes: usize,
+    /// The number of the request that last used it ([`Cache::begin`]).
+    request: u64,
+    /// When it was last used, by a counter bumped on every use: the
+    /// order eviction goes in.
+    used: u64,
+}
+
+/// The results kept, see the module's docs.
 pub struct Cache {
-    /// Those of the request being answered.
-    current: HashMap<Key, Entry>,
-    /// Those of the request before, moved to `current` as they're used
-    /// again.
-    previous: HashMap<Key, Entry>,
-    /// How many results were found and how many worked out, for tests.
+    slots: HashMap<Key, Slot>,
+    /// What the slots' sizes add up to.
+    bytes: usize,
+    /// How many bytes it holds before evicting.
+    budget: usize,
+    /// The number of the request being answered, bumped by
+    /// [`Cache::begin`].
+    request: u64,
+    /// The use counter ([`Slot::used`]).
+    used: u64,
+    /// The scene the last answer without a draft used: never evicted.
+    committed: Option<Key>,
+    /// How many results were found and how many worked out, and how many
+    /// scenes joined, for tests.
     hits: usize,
     misses: usize,
-    scenes: Scenes,
-}
-
-/// Two joined model meshes, filed by their scene keys, the most recently
-/// used first, the scene of the last answer without a draft, and how
-/// many were joined, for tests.
-#[derive(Default)]
-struct Scenes {
-    held: [Option<Scene>; 2],
-    /// The scene the last answer without a draft used: a draft's scene
-    /// doesn't push it out.
-    committed: Option<Key>,
     joins: usize,
 }
 
-/// A joined model mesh held.
-struct Scene {
-    key: Key,
-    mesh: Arc<RenderMesh>,
+impl Default for Cache {
+    fn default() -> Cache {
+        Cache::with_budget(BUDGET)
+    }
 }
 
 impl Cache {
-    /// Starts answering a request: what the one before last used goes.
-    pub fn begin(&mut self) {
-        self.previous = std::mem::take(&mut self.current);
+    /// A cache holding `budget` bytes of results besides those it never
+    /// evicts: 0 keeps only what the request before used.
+    pub(crate) fn with_budget(budget: usize) -> Cache {
+        Cache {
+            slots: HashMap::new(),
+            bytes: 0,
+            budget,
+            request: 0,
+            used: 0,
+            committed: None,
+            hits: 0,
+            misses: 0,
+            joins: 0,
+        }
     }
 
-    /// The result filed under `key`, if there is one, then kept for the
-    /// next request.
-    fn find(&mut self, key: Key) -> Option<Entry> {
-        let entry = match self.current.get(&key) {
-            Some(entry) => entry.clone(),
-            None => {
-                let entry = self.previous.remove(&key)?;
-                self.current.insert(key, entry.clone());
-                entry
+    /// Starts answering a request: if it holds more than its budget, or
+    /// more results than its cap (2^16), what the request before didn't
+    /// use goes, least recently used first, until it's within both.
+    pub fn begin(&mut self) {
+        self.request = self.request.saturating_add(1);
+        if self.within() {
+            return;
+        }
+        let previous = self.request.saturating_sub(1);
+        let mut old: Vec<(u64, Key)> = (self.slots.iter())
+            .filter(|&(key, slot)| slot.request < previous && Some(*key) != self.committed)
+            .map(|(key, slot)| (slot.used, *key))
+            .collect();
+        // Each use has its own count, so this is a total order.
+        old.sort_unstable_by_key(|&(used, _)| used);
+        for (_, key) in old {
+            if self.within() {
+                break;
             }
+            self.remove(key);
+        }
+    }
+
+    fn within(&self) -> bool {
+        self.bytes <= self.budget && self.slots.len() <= MAX_ENTRIES
+    }
+
+    fn remove(&mut self, key: Key) {
+        if let Some(slot) = self.slots.remove(&key) {
+            self.bytes = self.bytes.saturating_sub(slot.bytes);
+        }
+    }
+
+    /// Files `entry` under `key`, used now.
+    fn insert(&mut self, key: Key, entry: Entry) {
+        self.used = self.used.saturating_add(1);
+        let bytes = entry.bytes();
+        let slot = Slot {
+            entry,
+            bytes,
+            request: self.request,
+            used: self.used,
         };
+        if let Some(old) = self.slots.insert(key, slot) {
+            self.bytes = self.bytes.saturating_sub(old.bytes);
+        }
+        self.bytes = self.bytes.saturating_add(bytes);
+    }
+
+    /// The slot filed under `key`, if there is one, marked used now.
+    fn touch(&mut self, key: Key) -> Option<&Slot> {
+        let slot = self.slots.get_mut(&key)?;
+        self.used = self.used.saturating_add(1);
+        slot.request = self.request;
+        slot.used = self.used;
+        Some(slot)
+    }
+
+    /// The result filed under `key`, if there is one, marked used.
+    fn find(&mut self, key: Key) -> Option<Entry> {
+        let entry = self.touch(key)?.entry.clone();
         self.hits += 1;
         Some(entry)
     }
 
-    /// Keeps the result filed under `key`, if the request before left
-    /// one, for the next request, without using it: what an edit leaves
-    /// unused but likely to be asked for again, such as the boolean of a
-    /// body taken out of a cut, which putting it back asks for.
+    /// Marks the result filed under `key`, if there is one, used, without
+    /// using it: what an edit leaves unused but likely to be asked for
+    /// again, such as the boolean of a body taken out of a cut, which
+    /// putting it back asks for.
     pub(crate) fn keep(&mut self, key: Key) {
-        if let Some(entry) = self.previous.remove(&key) {
-            self.current.insert(key, entry);
-        }
+        self.touch(key);
     }
 
     /// The result filed under `key`, or `make`'s, filed.
@@ -172,7 +323,7 @@ impl Cache {
         self.find(key).unwrap_or_else(|| {
             self.misses += 1;
             let entry = make();
-            self.current.insert(key, entry.clone());
+            self.insert(key, entry.clone());
             entry
         })
     }
@@ -240,50 +391,34 @@ impl Cache {
             None => {
                 self.misses += 1;
                 let mesh = Arc::new(make()?);
-                self.current.insert(key, Entry::Mesh(Arc::clone(&mesh)));
+                self.insert(key, Entry::Mesh(Arc::clone(&mesh)));
                 Ok(mesh)
             }
         }
     }
 
-    /// The model's mesh filed under the scene key `key`, if one of the
-    /// two scenes held has it; otherwise `join`'s, or its error, which
-    /// isn't kept. A scene joined for a draft's answer (`drafted`) takes
-    /// the place of the least recently used scene unless that is the
-    /// scene of the last answer without a draft, any other always the
-    /// least recently used one's. Not counted in [`Cache::counts`].
+    /// The model's mesh filed under the scene key `key`, or `join`'s, or
+    /// its error, which isn't kept. Unless the answer is a draft's
+    /// (`drafted`), its scene becomes the committed one, which is never
+    /// evicted. Not counted in [`Cache::counts`].
     pub(crate) fn scene<E>(
         &mut self,
         key: Key,
         drafted: bool,
         join: impl FnOnce(&mut Cache) -> Result<RenderMesh, E>,
     ) -> Result<Arc<RenderMesh>, E> {
-        let found = (self.scenes.held.iter())
-            .position(|scene| scene.as_ref().is_some_and(|scene| scene.key == key));
-        let mesh = match found {
-            Some(i) => {
-                let held = &mut self.scenes.held;
-                held[..=i].rotate_right(1);
-                Arc::clone(&held[0].as_ref().expect("a scene was found").mesh)
-            }
+        let mesh = match self.touch(key).map(|slot| &slot.entry) {
+            Some(Entry::Scene(mesh)) => Arc::clone(mesh),
+            Some(_) => unreachable!("keys of different kinds differ"),
             None => {
                 let mesh = Arc::new(join(self)?);
-                let scenes = &mut self.scenes;
-                scenes.joins += 1;
-                let last = scenes.held.len() - 1;
-                let committed = (scenes.held[last].as_ref())
-                    .is_some_and(|scene| Some(scene.key) == scenes.committed);
-                let gone = if drafted && committed { last - 1 } else { last };
-                scenes.held[..=gone].rotate_right(1);
-                scenes.held[0] = Some(Scene {
-                    key,
-                    mesh: Arc::clone(&mesh),
-                });
+                self.joins += 1;
+                self.insert(key, Entry::Scene(Arc::clone(&mesh)));
                 mesh
             }
         };
         if !drafted {
-            self.scenes.committed = Some(key);
+            self.committed = Some(key);
         }
         Ok(mesh)
     }
@@ -297,6 +432,33 @@ impl Cache {
     /// How many model meshes were joined since it was made: requests whose
     /// scene was found don't count.
     pub fn joins(&self) -> usize {
-        self.scenes.joins
+        self.joins
+    }
+
+    /// About how many bytes of results it holds.
+    pub fn bytes(&self) -> usize {
+        self.bytes
+    }
+
+    /// How many results it holds, scenes included.
+    pub fn len(&self) -> usize {
+        self.slots.len()
+    }
+
+    /// Whether it holds nothing.
+    pub fn is_empty(&self) -> bool {
+        self.slots.is_empty()
+    }
+
+    /// The slots' sizes added up afresh, and what the request before
+    /// used, for tests: [`Cache::bytes`] must equal the first.
+    #[cfg(test)]
+    pub(crate) fn audit(&self) -> (usize, usize) {
+        let total = (self.slots.values()).fold(0usize, |sum, slot| sum.saturating_add(slot.bytes));
+        let previous = self.request.saturating_sub(1);
+        let protected = (self.slots.iter())
+            .filter(|&(key, slot)| slot.request >= previous || Some(*key) == self.committed)
+            .fold(0usize, |sum, (_, slot)| sum.saturating_add(slot.bytes));
+        (total, protected)
     }
 }

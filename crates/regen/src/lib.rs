@@ -224,6 +224,14 @@ pub struct Regenerator {
 }
 
 impl Regenerator {
+    /// One whose cache holds `budget` bytes (see [`Cache`]), for tests.
+    #[cfg(test)]
+    pub(crate) fn with_budget(budget: usize) -> Regenerator {
+        Regenerator {
+            cache: Cache::with_budget(budget),
+        }
+    }
+
     /// Does the work of `request`.
     pub fn handle(&mut self, request: Request) -> Response {
         match request {
@@ -408,8 +416,8 @@ pub fn tessellate(
     tessellate_scene(document, evaluation, false, cache)
 }
 
-/// [`tessellate`], for a draft's answer if `drafted`, which the cache's
-/// scene slot files apart (see [`Cache`]).
+/// [`tessellate`], for a draft's answer if `drafted`, whose scene doesn't
+/// become the committed one the cache never evicts (see [`Cache`]).
 fn tessellate_scene(
     document: &Document,
     evaluation: &Evaluation,

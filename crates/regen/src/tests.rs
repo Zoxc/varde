@@ -1,5 +1,5 @@
 use glam::{DVec2, Vec3};
-use varde_document::{Command, Document, Editor, Operation, OriginPlane, Plane, Sketch};
+use varde_document::{Command, Document, Editor, Extent, Operation, OriginPlane, Plane, Sketch};
 use varde_kernel::{Solid, Tolerance};
 use varde_sketch::{CIRCLE_SEGMENTS, Constraint, Curve};
 
@@ -616,23 +616,26 @@ fn a_draft_leaving_nothing_fails_each_time_it_is_dragged_there() {
     }
 }
 
+/// With the default budget, and with none: what the request before used
+/// is always kept.
 #[test]
 fn dragging_a_draft_reruns_only_the_draft() {
-    let editor = Editor::new(Document::example());
-    let mut regenerator = Regenerator::default();
-    let draft = new_body_draft(editor.document(), 1, "3");
-    answered(regenerator.handle(regenerate_with(&editor, Some(draft))));
-    let (_, before) = regenerator.cache().counts();
-    let draft = new_body_draft(editor.document(), 2, "4");
-    let answer = answered(regenerator.handle(regenerate_with(&editor, Some(draft))));
-    assert_eq!(answer.draft.unwrap().revision, 2);
-    // The draft's solid and its mesh.
-    assert_eq!(regenerator.cache().counts().1, before + 2);
+    for mut regenerator in [Regenerator::default(), Regenerator::with_budget(0)] {
+        let editor = Editor::new(Document::example());
+        let draft = new_body_draft(editor.document(), 1, "3");
+        answered(regenerator.handle(regenerate_with(&editor, Some(draft))));
+        let (_, before) = regenerator.cache().counts();
+        let draft = new_body_draft(editor.document(), 2, "4");
+        let answer = answered(regenerator.handle(regenerate_with(&editor, Some(draft))));
+        assert_eq!(answer.draft.unwrap().revision, 2);
+        // The draft's solid and its mesh.
+        assert_eq!(regenerator.cache().counts().1, before + 2);
+    }
 }
 
-#[test]
-fn a_cut_draft_lists_what_it_touches_and_is_answered_from_the_cache() {
-    // The pocket's sketch committed, its cut a draft.
+/// The example with the pocket's sketch committed, the pocket's cut as a
+/// draft of revision 1, and the plate.
+fn pocket_drafted() -> (Editor, Draft, BodyId) {
     let mut editor = Editor::new(Document::example());
     let mut probe = Editor::new(editor.document().clone());
     let pocket = crate::history::tests::add_pocket(&mut probe);
@@ -660,15 +663,31 @@ fn a_cut_draft_lists_what_it_touches_and_is_answered_from_the_cache() {
         })
         .unwrap();
     let body = editor.document().bodies()[0].id;
-    let mut regenerator = Regenerator::default();
-    let committed = answered(regenerator.handle(regenerate(&editor, None)));
-    let (_, before) = regenerator.cache().counts();
-
-    let mut draft = Draft {
+    let draft = Draft {
         revision: 1,
         feature: None,
         extrude: extrude.clone(),
     };
+    (editor, draft, body)
+}
+
+#[test]
+fn a_cut_draft_lists_what_it_touches_and_is_answered_from_the_cache() {
+    // Without a budget, only the scene the cut made, used two requests
+    // before, is joined again when the plate is put back.
+    for (mut regenerator, rejoined) in [
+        (Regenerator::default(), 0),
+        (Regenerator::with_budget(0), 1),
+    ] {
+        a_cut_draft_is_answered_from_the_cache(&mut regenerator, rejoined);
+    }
+}
+
+fn a_cut_draft_is_answered_from_the_cache(regenerator: &mut Regenerator, rejoined: usize) {
+    let (editor, mut draft, body) = pocket_drafted();
+    let committed = answered(regenerator.handle(regenerate(&editor, None)));
+    let (_, before) = regenerator.cache().counts();
+
     let cut = answered(regenerator.handle(regenerate_with(&editor, Some(draft.clone()))));
     assert_eq!(
         cut.draft,
@@ -685,8 +704,8 @@ fn a_cut_draft_lists_what_it_touches_and_is_answered_from_the_cache() {
     assert_eq!(worked, before + 4);
 
     // Taking the plate out: the tool is found, whether it touches isn't
-    // asked, and the model's mesh is the committed one's, kept in the
-    // scene slot: nothing is worked out.
+    // asked, and the model's mesh is the committed scene's, which is
+    // never evicted: nothing is worked out.
     let mut out = draft.clone();
     out.revision = 2;
     out.extrude.operation = Operation::Cut(varde_document::Targets {
@@ -700,12 +719,17 @@ fn a_cut_draft_lists_what_it_touches_and_is_answered_from_the_cache() {
     assert_eq!(regenerator.cache().counts().1, worked);
 
     // Putting it back finds whether it touches and the cut, kept while
-    // it was out, and the scene the cut made: nothing is worked out.
+    // it was out, and, within the budget, the scene the cut made: nothing
+    // is worked out but, without a budget, the cut's mesh and the scene.
     draft.revision = 3;
+    let joins = regenerator.cache().joins();
     let back = answered(regenerator.handle(regenerate_with(&editor, Some(draft.clone()))));
     assert_eq!(back.draft.unwrap().error, None);
-    assert!(Arc::ptr_eq(&back.mesh, &cut.mesh));
-    assert_eq!(regenerator.cache().counts().1, worked);
+    assert_eq!(*back.mesh, *cut.mesh);
+    assert_eq!(Arc::ptr_eq(&back.mesh, &cut.mesh), rejoined == 0);
+    assert_eq!(regenerator.cache().joins(), joins + rejoined);
+    assert_eq!(regenerator.cache().counts().1, worked + rejoined);
+    let worked = worked + rejoined;
 
     // Dragging the pocket deeper: only its tool, touching, cut and mesh.
     draft.revision = 4;
@@ -923,11 +947,11 @@ fn the_scene_key_holds_each_shown_body_in_order() {
     assert_eq!(cache.joins(), 5);
 }
 
-/// Without drafts, the scene slot holds the last two scenes used,
-/// whatever the requests in between: a third scene pushes out the least
-/// recently used.
+/// Scenes are held like any other result: within the budget, a scene
+/// used long ago is found again; without one, a scene the request before
+/// didn't use, and that isn't the committed one, goes.
 #[test]
-fn the_scene_slot_holds_the_last_two_scenes_used() {
+fn scenes_are_held_within_the_budget() {
     let document = with_bodies(false);
     let body = document.bodies()[0].id;
     let scenes = [
@@ -942,33 +966,57 @@ fn the_scene_slot_holds_the_last_two_scenes_used() {
             ..Evaluation::default()
         },
     ];
-    let mut cache = Cache::default();
-    let ask = |cache: &mut Cache, scene: usize| {
+    let ask = |cache: &mut Cache, scene: usize, drafted: bool| {
         cache.begin();
-        tessellate(&document, &scenes[scene], cache).unwrap()
+        tessellate_scene(&document, &scenes[scene], drafted, cache).unwrap()
     };
-    let a = ask(&mut cache, 0);
-    let b = ask(&mut cache, 1);
+    let mut cache = Cache::default();
+    let a = ask(&mut cache, 0, false);
+    let b = ask(&mut cache, 1, false);
+    ask(&mut cache, 2, false);
     for _ in 0..3 {
-        assert!(Arc::ptr_eq(&ask(&mut cache, 0), &a));
-        assert!(Arc::ptr_eq(&ask(&mut cache, 1), &b));
+        for (scene, mesh) in [(0, &a), (1, &b)] {
+            assert!(Arc::ptr_eq(&ask(&mut cache, scene, false), mesh));
+        }
     }
+    assert_eq!(cache.joins(), 3);
+
+    // Without a budget: the scene the request before used and the
+    // committed one stay, any other goes.
+    let mut cache = Cache::with_budget(0);
+    let a = ask(&mut cache, 0, false);
+    let b = ask(&mut cache, 1, true);
+    assert!(Arc::ptr_eq(&ask(&mut cache, 1, true), &b));
+    assert!(Arc::ptr_eq(&ask(&mut cache, 0, false), &a));
     assert_eq!(cache.joins(), 2);
-    // A third scene: `a`, used least recently, goes.
-    ask(&mut cache, 2);
-    assert!(Arc::ptr_eq(&ask(&mut cache, 1), &b));
-    let later = ask(&mut cache, 0);
+    ask(&mut cache, 2, false);
+    ask(&mut cache, 2, false);
+    let later = ask(&mut cache, 0, false);
     assert!(!Arc::ptr_eq(&later, &a));
     assert_eq!(*later, *a);
     assert_eq!(cache.joins(), 4);
 }
 
-/// However long a draft is dragged, the committed model's scene stays:
-/// each revision's scene takes the place of the one before, so putting
-/// the draft away finds the committed mesh, and committing the draft
-/// finds the last revision's.
+/// However long a draft is dragged, the committed model's scene stays,
+/// even without a budget, so putting the draft away finds the committed
+/// mesh; within the budget, committing the draft finds the last
+/// revision's, and undoing the commit the scene before.
 #[test]
 fn a_dragged_draft_leaves_the_committed_scene_held() {
+    let editor = Editor::new(Document::example());
+    let mut regenerator = Regenerator::with_budget(0);
+    let committed = answered(regenerator.handle(regenerate(&editor, None))).mesh;
+    for (revision, depth) in [(0, "3"), (1, "4"), (2, "5"), (3, "6")] {
+        let draft = new_body_draft(editor.document(), revision, depth);
+        answered(regenerator.handle(regenerate_with(&editor, Some(draft))));
+    }
+    let away = answered(regenerator.handle(regenerate(&editor, None))).mesh;
+    assert!(Arc::ptr_eq(&away, &committed));
+    assert_eq!(regenerator.cache().joins(), 5);
+    a_dragged_draft_is_found_within_the_budget();
+}
+
+fn a_dragged_draft_is_found_within_the_budget() {
     let mut editor = Editor::new(Document::example());
     let mut regenerator = Regenerator::default();
     let committed = answered(regenerator.handle(regenerate(&editor, None))).mesh;
@@ -999,25 +1047,23 @@ fn a_dragged_draft_leaves_the_committed_scene_held() {
     let done = answered(regenerator.handle(regenerate(&editor, None))).mesh;
     assert!(Arc::ptr_eq(&done, &dragged));
     assert_eq!(regenerator.cache().joins(), 5);
-    // The committed scene is a model's now: a new draft on top takes the
-    // place of the scene before the commit, not of it.
+    // A new draft on top, put away: the committed model's scene.
     let next = new_body_draft(editor.document(), 5, "2");
     let answer = answered(regenerator.handle(regenerate_with(&editor, Some(next))));
     assert!(!Arc::ptr_eq(&answer.mesh, &done));
     let after = answered(regenerator.handle(regenerate(&editor, None))).mesh;
     assert!(Arc::ptr_eq(&after, &done));
     assert_eq!(regenerator.cache().joins(), 6);
-    // Undone: the scene before the commit was pushed out, so it's joined
-    // again, with the right content.
+    // Undone: the scene before the commit, still held.
     let undone = answered(regenerator.handle(regenerate(&before, None))).mesh;
-    assert_eq!(*undone, *committed);
-    assert_eq!(regenerator.cache().joins(), 7);
+    assert!(Arc::ptr_eq(&undone, &committed));
+    assert_eq!(regenerator.cache().joins(), 6);
 }
 
-/// A draft whose scene is the older of the two held (here the plate
-/// alone, after the second body was shown) doesn't make that one the
-/// scene the next draft revision keeps: the committed model's scene stays
-/// held however the draft is dragged, and putting it away finds it.
+/// A draft whose scene is an older one still held (here the plate alone,
+/// after the second body was shown) doesn't make that one the committed
+/// scene: the committed model's scene stays held however the draft is
+/// dragged, even without a budget, and putting it away finds it.
 #[test]
 fn a_draft_finding_the_older_scene_leaves_the_committed_one_held() {
     let document = with_bodies(false);
@@ -1033,19 +1079,20 @@ fn a_draft_finding_the_older_scene_leaves_the_committed_one_held() {
     };
     let older = scene(vec![solid(0, 0.0)]);
     let committed = scene(vec![solid(0, 0.0), solid(1, 3.0)]);
-    let mut cache = Cache::default();
-    let mut ask = |evaluation: &Evaluation, drafted: bool| {
-        cache.begin();
-        tessellate_scene(&document, evaluation, drafted, &mut cache).unwrap()
-    };
-    ask(&older, false);
-    let held = ask(&committed, false);
-    // A draft that happens to give the older scene, then two revisions
-    // with scenes of their own.
-    ask(&older, true);
-    ask(&scene(vec![solid(2, 6.0)]), true);
-    ask(&scene(vec![solid(3, 9.0)]), true);
-    assert!(Arc::ptr_eq(&ask(&committed, false), &held));
+    for mut cache in [Cache::default(), Cache::with_budget(0)] {
+        let mut ask = |evaluation: &Evaluation, drafted: bool| {
+            cache.begin();
+            tessellate_scene(&document, evaluation, drafted, &mut cache).unwrap()
+        };
+        ask(&older, false);
+        let held = ask(&committed, false);
+        // A draft that happens to give the older scene, then two revisions
+        // with scenes of their own.
+        ask(&older, true);
+        ask(&scene(vec![solid(2, 6.0)]), true);
+        ask(&scene(vec![solid(3, 9.0)]), true);
+        assert!(Arc::ptr_eq(&ask(&committed, false), &held));
+    }
 }
 
 /// A join that fails (a mesh past `RenderMesh`'s limits) isn't kept and
@@ -1124,4 +1171,290 @@ fn removed_bodies_undo_and_replace_draw_what_is_shown() {
         .apply(Command::Replace(Box::new(two.clone())))
         .unwrap();
     assert_eq!(*ask(&editor), drawn(&two));
+}
+
+/// Switching a draft cut's operation to join and back to cut finds
+/// everything the first cut worked out.
+#[test]
+fn switching_the_operation_away_and_back_finds_it() {
+    let (editor, mut draft, _) = pocket_drafted();
+    let mut regenerator = Regenerator::default();
+    answered(regenerator.handle(regenerate(&editor, None)));
+    let cut = answered(regenerator.handle(regenerate_with(&editor, Some(draft.clone()))));
+    assert_eq!(cut.draft.unwrap().error, None);
+    draft.revision = 2;
+    let operation = std::mem::replace(
+        &mut draft.extrude.operation,
+        Operation::Join(varde_document::Targets::default()),
+    );
+    let join = answered(regenerator.handle(regenerate_with(&editor, Some(draft.clone()))));
+    assert_eq!(join.draft.unwrap().error, None);
+    assert_ne!(*join.mesh, *cut.mesh);
+    let (_, worked) = regenerator.cache().counts();
+    let joins = regenerator.cache().joins();
+    draft.revision = 3;
+    draft.extrude.operation = operation;
+    let again = answered(regenerator.handle(regenerate_with(&editor, Some(draft))));
+    assert_eq!(again.draft.unwrap().error, None);
+    assert!(Arc::ptr_eq(&again.mesh, &cut.mesh));
+    assert_eq!(regenerator.cache().counts().1, worked);
+    assert_eq!(regenerator.cache().joins(), joins);
+}
+
+/// The example plate made 6 mm thick: an edit with a cut after it.
+fn with_pocket() -> (Editor, FeatureId) {
+    let mut editor = Editor::new(Document::example());
+    crate::history::tests::add_pocket(&mut editor);
+    let plate = editor.document().features()[1].id;
+    (editor, plate)
+}
+
+fn set_depth(editor: &mut Editor, plate: FeatureId, depth: &str) {
+    let extent = Extent::OneSide(crate::history::tests::length(editor.document(), depth));
+    crate::history::tests::set_extrude(editor, plate, |extrude| extrude.extent = extent);
+}
+
+/// Undoing an edit, and redoing it, work out nothing: the plate, the cut
+/// after it and their meshes are found as each state left them.
+#[test]
+fn undo_and_redo_find_what_they_had() {
+    let (mut editor, plate) = with_pocket();
+    let mut regenerator = Regenerator::default();
+    let before = answered(regenerator.handle(regenerate(&editor, None)));
+    assert!(before.failed.is_empty());
+    set_depth(&mut editor, plate, "6");
+    let (_, worked) = regenerator.cache().counts();
+    let after = answered(regenerator.handle(regenerate(&editor, None)));
+    // The plate, whether the pocket touches it, the cut, and its mesh.
+    assert_eq!(regenerator.cache().counts().1, worked + 4);
+    let (_, worked) = regenerator.cache().counts();
+    let joins = regenerator.cache().joins();
+    for (mesh, step) in [
+        (&before.mesh, Editor::undo as fn(&mut Editor)),
+        (&after.mesh, Editor::redo),
+        (&before.mesh, Editor::undo),
+    ] {
+        step(&mut editor);
+        let answer = answered(regenerator.handle(regenerate(&editor, None)));
+        assert!(Arc::ptr_eq(&answer.mesh, mesh));
+    }
+    assert_eq!(regenerator.cache().counts().1, worked);
+    assert_eq!(regenerator.cache().joins(), joins);
+}
+
+/// An edit undone after several requests in between (drafts of the
+/// plate's depth dragged, then committed) finds what it had.
+#[test]
+fn an_edit_undone_after_several_requests_finds_it() {
+    let (mut editor, plate) = with_pocket();
+    let mut regenerator = Regenerator::default();
+    let first = answered(regenerator.handle(regenerate(&editor, None)));
+    let extrude = |editor: &Editor, depth: &str| Extrude {
+        extent: Extent::OneSide(crate::history::tests::length(editor.document(), depth)),
+        ..example_extrude(editor.document())
+    };
+    for (revision, depth) in [(1, "7"), (2, "8"), (3, "9")] {
+        let draft = Draft {
+            revision,
+            feature: Some(plate),
+            extrude: extrude(&editor, depth),
+        };
+        let answer = answered(regenerator.handle(regenerate_with(&editor, Some(draft))));
+        assert_eq!(answer.draft.unwrap().error, None);
+    }
+    set_depth(&mut editor, plate, "9");
+    answered(regenerator.handle(regenerate(&editor, None)));
+    let (_, worked) = regenerator.cache().counts();
+    let joins = regenerator.cache().joins();
+    editor.undo();
+    let undone = answered(regenerator.handle(regenerate(&editor, None)));
+    assert!(Arc::ptr_eq(&undone.mesh, &first.mesh));
+    assert_eq!(regenerator.cache().counts().1, worked);
+    assert_eq!(regenerator.cache().joins(), joins);
+}
+
+/// Meshes of `n` triangles, each filed under its own key in its own
+/// request (`ask`), to fill a cache with entries of one size.
+fn mesh_of(n: usize) -> RenderMesh {
+    let mut mesh = RenderMesh::default();
+    let one = cuboid(0.0, 1.0)
+        .tessellate(&Display::new(&Tolerance::DEFAULT))
+        .unwrap();
+    for _ in 0..n {
+        mesh.append(&one).unwrap();
+    }
+    mesh
+}
+
+/// What a mesh costs a cache.
+fn bytes_of(mesh: &RenderMesh) -> usize {
+    let mut cache = Cache::default();
+    ask_meshes(&mut cache, &[0], mesh);
+    cache.bytes()
+}
+
+/// Asks `cache`, in a request of its own, for the meshes filed under
+/// `keys`; whether each was found.
+fn ask_meshes(cache: &mut Cache, keys: &[u64], mesh: &RenderMesh) -> Vec<bool> {
+    cache.begin();
+    let found = keys
+        .iter()
+        .map(|&k| {
+            let mut found = true;
+            let key = Keyer::new("test").number(k).finish();
+            cache
+                .mesh(key, || {
+                    found = false;
+                    Ok::<_, ()>(mesh.clone())
+                })
+                .unwrap();
+            found
+        })
+        .collect();
+    let (total, _) = cache.audit();
+    assert_eq!(cache.bytes(), total);
+    found
+}
+
+/// The least recently used go first, and only once over the budget: with
+/// room for one request's worth besides the one before, A → B → A finds
+/// A's, A → B → C → A doesn't; without a budget, as before the cache was
+/// bounded by size, only what the request before used is found.
+#[test]
+fn a_small_budget_evicts_the_oldest_first() {
+    let mesh = mesh_of(1);
+    let budget = 2 * bytes_of(&mesh);
+    let mut cache = Cache::with_budget(budget);
+    assert_eq!(ask_meshes(&mut cache, &[0], &mesh), [false]);
+    assert_eq!(ask_meshes(&mut cache, &[1], &mesh), [false]);
+    assert_eq!(ask_meshes(&mut cache, &[0], &mesh), [true]);
+    assert_eq!(ask_meshes(&mut cache, &[1], &mesh), [true]);
+    assert_eq!(ask_meshes(&mut cache, &[2], &mesh), [false]);
+    // Over the budget: 0, used least recently, goes, and is filed again;
+    // the next request evicts 1, and finds 2.
+    assert_eq!(ask_meshes(&mut cache, &[0], &mesh), [false]);
+    assert_eq!(cache.len(), 3);
+    assert_eq!(ask_meshes(&mut cache, &[2], &mesh), [true]);
+    assert_eq!(cache.len(), 2);
+    assert!(cache.bytes() <= budget);
+    assert_eq!(ask_meshes(&mut cache, &[0, 2], &mesh), [true, true]);
+    assert_eq!(ask_meshes(&mut cache, &[1], &mesh), [false]);
+
+    let mut cache = Cache::with_budget(0);
+    assert_eq!(ask_meshes(&mut cache, &[0, 1], &mesh), [false, false]);
+    assert_eq!(ask_meshes(&mut cache, &[1], &mesh), [true]);
+    assert_eq!(ask_meshes(&mut cache, &[0, 1], &mesh), [false, true]);
+    assert_eq!(ask_meshes(&mut cache, &[2], &mesh), [false]);
+    assert_eq!(ask_meshes(&mut cache, &[1, 2], &mesh), [false, true]);
+    assert_eq!(cache.len(), 2);
+}
+
+/// Which results go doesn't depend on the map's order: the same requests
+/// to two caches (each hashing its own way) find the same results.
+#[test]
+fn eviction_is_deterministic() {
+    let mesh = mesh_of(1);
+    let budget = 4 * bytes_of(&mesh);
+    let run = || {
+        let mut cache = Cache::with_budget(budget);
+        let mut found = Vec::new();
+        for request in 0..40u64 {
+            let keys: Vec<u64> = (0..request % 4 + 1)
+                .map(|k| (request * 7 + k * 13) % 23)
+                .collect();
+            found.extend(ask_meshes(&mut cache, &keys, &mesh));
+        }
+        found
+    };
+    let first = run();
+    assert!(first.iter().any(|&found| found) && first.iter().any(|&found| !found));
+    for _ in 0..4 {
+        assert_eq!(run(), first);
+    }
+}
+
+/// The byte count stays the slots' sizes added up through inserts and
+/// evictions, and comes back within the budget at a request's start once
+/// nothing but what the request before used is over it.
+#[test]
+fn the_cache_counts_its_bytes() {
+    let meshes = [mesh_of(1), mesh_of(3), mesh_of(2)];
+    let budget = 3 * bytes_of(&meshes[1]);
+    let mut cache = Cache::with_budget(budget);
+    for request in 0..60u64 {
+        let keys: Vec<u64> = (0..(request % 4 + 1))
+            .map(|k| (request * 5 + k * 3) % 17)
+            .collect();
+        let mesh = &meshes[(request % 3) as usize];
+        // At the start of the request: within the budget, or nothing but
+        // what the request before used is left.
+        cache.begin();
+        let (total, protected) = cache.audit();
+        assert_eq!(cache.bytes(), total);
+        assert!(total <= budget || total == protected, "{request}");
+        ask_meshes_unbegun(&mut cache, &keys, mesh);
+    }
+    // Through a regenerator too, with every kind of result.
+    let (mut editor, plate) = with_pocket();
+    let mut regenerator = Regenerator::with_budget(1 << 16);
+    for depth in ["6", "7", "6", "8", "9"] {
+        set_depth(&mut editor, plate, depth);
+        answered(regenerator.handle(regenerate(&editor, None)));
+        let (total, _) = regenerator.cache().audit();
+        assert_eq!(regenerator.cache().bytes(), total);
+        assert!(total > 0);
+    }
+}
+
+/// [`ask_meshes`] within the request already begun.
+fn ask_meshes_unbegun(cache: &mut Cache, keys: &[u64], mesh: &RenderMesh) {
+    for &k in keys {
+        let key = Keyer::new("test").number(k).finish();
+        cache.mesh(key, || Ok::<_, ()>(mesh.clone())).unwrap();
+    }
+    let (total, _) = cache.audit();
+    assert_eq!(cache.bytes(), total);
+}
+
+/// The bytes one request holds on the example with a pocket and on a
+/// plate with many holes, printed to size the budget against.
+#[test]
+fn the_budget_holds_several_requests() {
+    let (editor, _) = with_pocket();
+    let mut regenerator = Regenerator::default();
+    answered(regenerator.handle(regenerate(&editor, None)));
+    let pocket = regenerator.cache().bytes();
+
+    const HOLES: u32 = 6;
+    let mut editor = Editor::new(Document::default());
+    let ten = Extent::OneSide(crate::history::tests::length(editor.document(), "10"));
+    crate::history::tests::add_extrude(
+        &mut editor,
+        crate::history::tests::rectangle((0.0, 0.0), (100.0, 100.0)),
+        ten,
+        Operation::NewBody(BodyId::NEW),
+    );
+    crate::history::tests::add_extrude(
+        &mut editor,
+        |sketch| {
+            for i in 0..HOLES {
+                for j in 0..HOLES {
+                    let at = |k: u32| 100.0 * (f64::from(k) + 0.5) / f64::from(HOLES);
+                    let center = (at(i), at(j));
+                    crate::history::tests::disc(center, 2.0)(sketch);
+                }
+            }
+        },
+        Extent::ThroughAll,
+        Operation::Cut(varde_document::Targets::default()),
+    );
+    let mut regenerator = Regenerator::default();
+    let holes = answered(regenerator.handle(regenerate(&editor, None)));
+    assert!(holes.failed.is_empty(), "{:?}", holes.failed);
+    let plate = regenerator.cache().bytes();
+    println!(
+        "one request: pocket {pocket} B, {} holes {plate} B",
+        HOLES * HOLES
+    );
+    assert!(plate.saturating_mul(8) < cache::BUDGET);
 }

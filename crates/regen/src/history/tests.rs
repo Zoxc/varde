@@ -792,7 +792,10 @@ fn an_unchanged_feature_is_taken_from_the_cache() {
     editor
         .apply(editor.document().add_sketch(Plane::Origin(OriginPlane::XZ)))
         .unwrap();
-    let mut cache = Cache::default();
+    // Without a budget, so only what the request before used is kept
+    // (the default budget keeps the rest too: see the regenerator's
+    // tests).
+    let mut cache = Cache::with_budget(0);
     cache.begin();
     let first = evaluate(editor.document(), &mut cache);
     let (_, worked) = cache.counts();
@@ -954,7 +957,11 @@ fn a_spline_is_extruded_within_the_tolerance() {
 
 /// The extrude `feature` of `editor`'s document, changed by `change`,
 /// as one edit.
-fn set_extrude(editor: &mut Editor, feature: FeatureId, change: impl FnOnce(&mut Extrude)) {
+pub(crate) fn set_extrude(
+    editor: &mut Editor,
+    feature: FeatureId,
+    change: impl FnOnce(&mut Extrude),
+) {
     let Some(FeatureKind::Extrude(extrude)) = editor.document().feature(feature).map(|f| &f.kind)
     else {
         panic!("{feature:?} is an extrude");

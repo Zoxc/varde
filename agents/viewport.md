@@ -262,11 +262,13 @@ draft is asked for); a draft that fails, or that the document
 refuses, is answered with the committed model and the draft's error. The
 lane keeps a cache of what it worked out per feature (profiles, solids,
 meshes, whether each sketch solves), keyed by a hash of the feature, the
-tolerance and its inputs' keys, holding what the last request used, so an
-edit or a draft being dragged reruns only what it changes. It also keeps
-the joined model mesh of two scenes (the shown bodies' mesh keys in
-order; a dragged draft's revisions take turns in one of the two, so the
-committed model's stays), so an answer whose shown bodies and tolerance didn't change
+tolerance and its inputs' keys, bounded by bytes (256 MiB natively, 64
+MiB on the web, least recently used out, never what the last request
+used), so an edit or a draft being dragged reruns only what it changes,
+and undo, redo or an option changed and changed back finds what it had.
+It also keeps the joined model mesh by scene (the shown bodies' mesh keys
+in order; the committed model's scene is never evicted, however long a
+draft is dragged), so an answer whose shown bodies and tolerance didn't change
 carries the same `Arc<RenderMesh>` as before and the renderer, keyed by
 that `Arc`, doesn't upload it again (natively; the web wire still sends
 it whole). The app sends
