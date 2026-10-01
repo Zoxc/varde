@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use iced::widget::{Space, button, column, container, grid, hover, row, scrollable, stack, text};
+use iced::widget::{Space, button, column, container, grid, hover, row, stack, text};
 use iced::{Alignment, Element, Length, Padding};
 use varde_document::APP_NAME;
 
@@ -119,10 +119,13 @@ pub fn welcome<'a>(state: WelcomeState<'a>) -> Element<'a, Message> {
         .padding([48, 40]);
 
     let page = stack![
-        container(scrollable(container(content).center_x(Length::Fill)))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .style(theme::welcome),
+        container(chrome::scrolled(
+            container(content).center_x(Length::Fill),
+            2.0
+        ))
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(theme::welcome),
         container(chrome::app_buttons(state.mode))
             .align_right(Length::Fill)
             .padding(8),

@@ -225,3 +225,50 @@ fn a_long_name_without_spaces_breaks_inside_the_panel() {
         }
     }
 }
+
+/// Each text of `state`'s panel and where it's laid out.
+fn texts_of(state: &ExtrudeState<'_>) -> Vec<crate::probe::Shown> {
+    crate::testing::Laid::new(panel(state), iced::Size::new(400.0, 800.0)).texts()
+}
+
+fn found<'s>(shown: &'s [crate::probe::Shown], text: &str) -> &'s crate::probe::Shown {
+    shown
+        .iter()
+        .find(|shown| shown.text == text)
+        .unwrap_or_else(|| panic!("no {text:?} in {shown:?}"))
+}
+
+#[test]
+fn flip_is_a_tick_like_the_bodies() {
+    let profiles = plate();
+    let picked = BTreeSet::from([0]);
+    let mut state = state_of(&profiles, &picked);
+    state.operation = OperationKind::Cut;
+    state.targets = vec![ExtrudeTarget {
+        body: BodyId::NEW,
+        name: "Body 1",
+        included: true,
+    }];
+    let shown = texts_of(&state);
+    // A checkbox reports its box and label together, from the panel's
+    // side padding; a button's label would start inside the button.
+    let (flip, body) = (found(&shown, "Flip"), found(&shown, "Body 1"));
+    assert_eq!(flip.bounds.x, body.bounds.x, "{flip:?} {body:?}");
+}
+
+#[test]
+fn a_field_s_error_lines_up_under_its_input() {
+    let profiles = plate();
+    let picked = BTreeSet::from([0]);
+    let mut state = state_of(&profiles, &picked);
+    let error = varde_expr::Error {
+        kind: varde_expr::ErrorKind::Empty,
+        span: varde_expr::Span::new(0, 0),
+    };
+    state.fields[0].error = Some(&error);
+    let shown = texts_of(&state);
+    let label = found(&shown, "Distance");
+    let error = found(&shown, &error.to_string());
+    assert_eq!(error.bounds.x - label.bounds.x, FIELD_INDENT);
+    assert_eq!(FIELD_INDENT, 68.0);
+}

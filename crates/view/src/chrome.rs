@@ -4,8 +4,10 @@
 //!
 //! The OS draws the title bar; the app sets its text in `Varde::title`.
 
+use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::{
-    Button, Container, Rule, Text, button, column, container, row, rule, space, text, tooltip,
+    Button, Container, Rule, Scrollable, Text, button, column, container, row, rule, scrollable,
+    space, text, tooltip,
 };
 use iced::{Alignment, Element, Font, Length};
 
@@ -75,6 +77,23 @@ fn status_bar<'a>(
 /// A 1 px horizontal separator.
 pub fn hrule<'a>() -> Rule<'a> {
     rule::horizontal(1).style(theme::separator)
+}
+
+/// `content` scrolled up and down with the app's one scrollbar: a thin
+/// faint scroller on no rail ([`theme::scrollbar`]), `margin` in from the
+/// right edge. It floats over the content, so leave it room in a padding
+/// (or embed it with `spacing`).
+pub fn scrolled<'a>(
+    content: impl Into<Element<'a, Message>>,
+    margin: f32,
+) -> Scrollable<'a, Message> {
+    let scrollbar = Scrollbar::new()
+        .width(theme::SCROLLBAR_WIDTH)
+        .scroller_width(theme::SCROLLBAR_WIDTH)
+        .margin(margin);
+    scrollable(content)
+        .direction(Direction::Vertical(scrollbar))
+        .style(theme::scrollbar)
 }
 
 /// A 1 px vertical separator.

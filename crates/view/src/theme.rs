@@ -6,7 +6,7 @@
 use std::sync::LazyLock;
 
 use iced::theme::palette::Extended;
-use iced::widget::{button, container, rule, text};
+use iced::widget::{button, checkbox, container, rule, scrollable, text};
 use iced::{
     Background, Border, Color, Font, Gradient, Radians, Shadow, Theme, Vector, border, color, font,
 };
@@ -56,7 +56,10 @@ pub struct Palette {
     /// Key chip background.
     pub chip: Color,
     pub ok: Color,
+    /// Danger text, like an error.
     pub danger: Color,
+    /// The fill of a [`danger_button`], under white text.
+    pub danger_fill: Color,
     pub warning: Color,
     /// Dims the screen behind a dialog.
     pub scrim: Color,
@@ -283,6 +286,7 @@ const LIGHT: Palette = Palette {
     chip: color!(0x141e28, 0.07),
     ok: color!(0x3d9b35),
     danger: color!(0xe0564b),
+    danger_fill: color!(0xe0564b),
     warning: color!(0xe8a317),
     scrim: color!(0x000000, 0.25),
 
@@ -337,7 +341,9 @@ const DARK: Palette = Palette {
     edge: color!(0x0e0d12),
     chip: color!(0xffffff, 0.08),
     ok: color!(0x5cc052),
-    danger: color!(0xe0564b),
+    // Lighter than the light palette's, to read on the dark panel.
+    danger: color!(0xf07563),
+    danger_fill: color!(0xe0564b),
     warning: color!(0xe8a317),
     scrim: color!(0x000000, 0.45),
 
@@ -674,21 +680,48 @@ pub fn primary_button(theme: &Theme, status: button::Status) -> button::Style {
 /// white text.
 pub fn danger_button(theme: &Theme, status: button::Status) -> button::Style {
     let p = palette(theme);
-    filled_button(p, p.danger, status)
+    filled_button(p, p.danger_fill, status)
+}
+
+/// How opaque a disabled button is, all of it: the mock's `opacity`.
+const DISABLED_OPACITY: f32 = 0.45;
+
+/// `style` faded as a whole, as a disabled button is: its fill, text and
+/// border at [`DISABLED_OPACITY`]. Fading the fill alone would leave white
+/// text on a dark panel looking pressable.
+fn faded(style: button::Style) -> button::Style {
+    let fade = |color: Color| color.scale_alpha(DISABLED_OPACITY);
+    button::Style {
+        background: style.background.map(|background| match background {
+            Background::Color(color) => Background::Color(fade(color)),
+            gradient => gradient,
+        }),
+        text_color: fade(style.text_color),
+        border: Border {
+            color: fade(style.border.color),
+            ..style.border
+        },
+        ..style
+    }
 }
 
 /// A button filled with `fill`, with white text.
 fn filled_button(p: &Palette, fill: Color, status: button::Status) -> button::Style {
-    let background = match status {
-        button::Status::Disabled => fill.scale_alpha(0.5),
-        _ if is_hovered(status) => brighten(fill, 1.08),
-        _ => fill,
+    let background = if is_hovered(status) {
+        brighten(fill, 1.08)
+    } else {
+        fill
     };
-    button::Style {
+    let style = button::Style {
         background: Some(Background::Color(background)),
         text_color: Emphasis::Primary.content(p),
         border: border::rounded(BUTTON_RADIUS),
         ..button::Style::default()
+    };
+    if status == button::Status::Disabled {
+        faded(style)
+    } else {
+        style
     }
 }
 
@@ -696,11 +729,118 @@ fn filled_button(p: &Palette, fill: Color, status: button::Status) -> button::St
 pub fn secondary_button(theme: &Theme, status: button::Status) -> button::Style {
     let p = palette(theme);
     let hovered = is_hovered(status);
-    button::Style {
+    let style = button::Style {
         background: Some(Background::Color(if hovered { p.hl } else { p.panel })),
         text_color: Emphasis::Secondary.content(p),
         border: outline(if hovered { p.hl_line } else { p.line }, BUTTON_RADIUS),
         ..button::Style::default()
+    };
+    if status == button::Status::Disabled {
+        faded(style)
+    } else {
+        style
+    }
+}
+
+/// One of a few choices, like an extrude's extent: a thin border, the
+/// hover background on hover, and accent text on the soft accent with no
+/// border while `on`. Faint while disabled.
+pub fn choice(on: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |theme, status| {
+        let p = palette(theme);
+        let enabled = status != button::Status::Disabled;
+        let base = button::Style {
+            background: None,
+            text_color: flat_content(p, Tone::Text, enabled, false),
+            border: outline(p.line, CONTROL_RADIUS),
+            ..button::Style::default()
+        };
+        if !enabled {
+            base
+        } else if on {
+            button::Style {
+                background: Some(Background::Color(p.accent_soft)),
+                text_color: p.accent,
+                border: outline(Color::TRANSPARENT, CONTROL_RADIUS),
+                ..base
+            }
+        } else if is_hovered(status) {
+            button::Style {
+                background: Some(Background::Color(p.hl)),
+                ..base
+            }
+        } else {
+            base
+        }
+    }
+}
+
+/// Corner radius of a [`tick`]'s box.
+const TICK_RADIUS: f32 = 4.0;
+
+/// A checkbox: a faint box whose border turns accent on hover, filled
+/// with the accent and a white check while ticked; its label in the
+/// text colour, whatever the colour around it.
+pub fn tick(theme: &Theme, status: checkbox::Status) -> checkbox::Style {
+    let p = palette(theme);
+    let (checked, hovered, enabled) = match status {
+        checkbox::Status::Active { is_checked } => (is_checked, false, true),
+        checkbox::Status::Hovered { is_checked } => (is_checked, true, true),
+        checkbox::Status::Disabled { is_checked } => (is_checked, false, false),
+    };
+    let edge = if checked || hovered {
+        p.accent
+    } else {
+        p.faint
+    };
+    let style = checkbox::Style {
+        background: Background::Color(if checked {
+            p.accent
+        } else {
+            Color::TRANSPARENT
+        }),
+        icon_color: Color::WHITE,
+        border: outline(edge, TICK_RADIUS),
+        text_color: Some(p.text),
+    };
+    if enabled {
+        style
+    } else {
+        let fade = |color: Color| color.scale_alpha(DISABLED_OPACITY);
+        checkbox::Style {
+            background: Background::Color(if checked {
+                fade(p.accent)
+            } else {
+                Color::TRANSPARENT
+            }),
+            border: outline(fade(edge), TICK_RADIUS),
+            text_color: Some(fade(p.text)),
+            ..style
+        }
+    }
+}
+
+/// Width of a scrollbar's scroller, in pixels. It floats over the
+/// content's edge or in a padding left for it.
+pub const SCROLLBAR_WIDTH: f32 = 4.0;
+
+/// Every scrollable's scrollbar: a thin faint scroller on no rail, as
+/// the mock's thin scrollbars.
+pub fn scrollbar(theme: &Theme, status: scrollable::Status) -> scrollable::Style {
+    let p = palette(theme);
+    let rail = scrollable::Rail {
+        background: None,
+        border: Border::default(),
+        scroller: scrollable::Scroller {
+            background: Background::Color(p.faint),
+            border: border::rounded(SCROLLBAR_WIDTH / 2.0),
+        },
+    };
+    scrollable::Style {
+        vertical_rail: rail,
+        horizontal_rail: rail,
+        gap: None,
+        ..scrollable::default(theme, status)
     }
 }
 
@@ -807,6 +947,15 @@ pub fn float_panel(theme: &Theme) -> container::Style {
     container::Style {
         border: outline(p.line, FLOAT_RADIUS),
         ..filled(p.panel, p.muted)
+    }
+}
+
+/// The panel an operation is set up in, floating over the viewport: a
+/// [`float_panel`] whose text is in the text colour, as the mock's.
+pub fn operation_panel(theme: &Theme) -> container::Style {
+    container::Style {
+        text_color: Some(palette(theme).text),
+        ..float_panel(theme)
     }
 }
 
@@ -941,6 +1090,127 @@ mod tests {
     fn palette_reads_back_the_mode() {
         for mode in [Mode::Light, Mode::Dark] {
             assert_eq!(palette(&theme(mode)), mode.palette());
+        }
+    }
+
+    /// The WCAG relative luminance of an opaque sRGB colour.
+    fn luminance(color: Color) -> f32 {
+        let linear = |c: f32| {
+            if c <= 0.04045 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * linear(color.r) + 0.7152 * linear(color.g) + 0.0722 * linear(color.b)
+    }
+
+    #[test]
+    fn dark_danger_text_reads_on_the_dark_panel() {
+        // WCAG AA for body text: 4.5:1.
+        let p = Mode::Dark.palette();
+        let ratio = (luminance(p.danger) + 0.05) / (luminance(p.panel) + 0.05);
+        assert!(ratio >= 4.5, "{ratio}");
+        assert_eq!(p.danger, color!(0xf07563));
+    }
+
+    #[test]
+    fn a_disabled_button_fades_as_a_whole() {
+        for mode in [Mode::Light, Mode::Dark] {
+            let theme = theme(mode);
+            for style in [primary_button, danger_button, secondary_button] {
+                let enabled = style(&theme, button::Status::Active);
+                let disabled = style(&theme, button::Status::Disabled);
+                let faded = |color: Color| Color {
+                    a: color.a * DISABLED_OPACITY,
+                    ..color
+                };
+                assert_eq!(disabled.text_color, faded(enabled.text_color));
+                let Some(Background::Color(fill)) = enabled.background else {
+                    panic!("a filled button");
+                };
+                assert_eq!(disabled.background, Some(Background::Color(faded(fill))));
+                assert_eq!(disabled.border.color, faded(enabled.border.color));
+            }
+        }
+    }
+
+    #[test]
+    fn a_tick_has_normal_text_and_an_accent_box_on_hover() {
+        use iced::widget::checkbox::Status;
+        for mode in [Mode::Light, Mode::Dark] {
+            let (theme, p) = (theme(mode), mode.palette());
+            for is_checked in [false, true] {
+                for status in [
+                    Status::Active { is_checked },
+                    Status::Hovered { is_checked },
+                ] {
+                    assert_eq!(tick(&theme, status).text_color, Some(p.text));
+                }
+            }
+            let rest = tick(&theme, Status::Active { is_checked: false });
+            assert_eq!(rest.border.color, p.faint);
+            assert_eq!(rest.border.width, 1.0);
+            let hovered = tick(&theme, Status::Hovered { is_checked: false });
+            assert_eq!(hovered.border.color, p.accent);
+            let on = tick(&theme, Status::Active { is_checked: true });
+            assert_eq!(on.background, Background::Color(p.accent));
+            assert_eq!(on.icon_color, Color::WHITE);
+        }
+    }
+
+    #[test]
+    fn an_operation_panel_s_text_is_not_muted() {
+        for mode in [Mode::Light, Mode::Dark] {
+            let style = operation_panel(&theme(mode));
+            assert_eq!(style.text_color, Some(mode.palette().text));
+        }
+    }
+
+    #[test]
+    fn a_choice_has_a_thin_border_unless_on() {
+        for mode in [Mode::Light, Mode::Dark] {
+            let (theme, p) = (theme(mode), mode.palette());
+            let off = choice(false)(&theme, button::Status::Active);
+            assert_eq!((off.border.width, off.border.color), (1.0, p.line));
+            let hovered = choice(false)(&theme, button::Status::Hovered);
+            assert_eq!(hovered.background, Some(Background::Color(p.hl)));
+            let on = choice(true)(&theme, button::Status::Active);
+            assert_eq!(on.border.color, Color::TRANSPARENT);
+            assert_eq!(on.background, Some(Background::Color(p.accent_soft)));
+            assert_eq!(on.text_color, p.accent);
+        }
+    }
+
+    #[test]
+    fn a_scrollbar_is_a_faint_scroller_on_no_rail() {
+        use iced::widget::scrollable::Status;
+        for mode in [Mode::Light, Mode::Dark] {
+            let (theme, p) = (theme(mode), mode.palette());
+            for status in [
+                Status::Active {
+                    is_horizontal_scrollbar_disabled: false,
+                    is_vertical_scrollbar_disabled: false,
+                },
+                Status::Hovered {
+                    is_horizontal_scrollbar_hovered: false,
+                    is_vertical_scrollbar_hovered: true,
+                    is_horizontal_scrollbar_disabled: false,
+                    is_vertical_scrollbar_disabled: false,
+                },
+                Status::Dragged {
+                    is_horizontal_scrollbar_dragged: false,
+                    is_vertical_scrollbar_dragged: true,
+                    is_horizontal_scrollbar_disabled: false,
+                    is_vertical_scrollbar_disabled: false,
+                },
+            ] {
+                let style = scrollbar(&theme, status);
+                for rail in [style.vertical_rail, style.horizontal_rail] {
+                    assert_eq!(rail.background, None);
+                    assert_eq!(rail.scroller.background, Background::Color(p.faint));
+                }
+            }
         }
     }
 }

@@ -231,3 +231,20 @@ fn without_room_for_the_header_too_the_buttons_keep_theirs() {
         );
     }
 }
+
+#[test]
+fn the_body_s_scroller_is_faint() {
+    let size = iced::Size::new(400, 300);
+    let mut laid = Laid::new(panel_of(60), Size::new(400.0, 300.0));
+    let pixels = laid.pixels(size);
+    let faint = crate::Mode::Light.palette().faint;
+    let want = faint.into_rgba8();
+    // Down the middle of the scroller, in the right padding.
+    let x = (PANEL_WIDTH - SIDE / 2.0) as usize;
+    let near =
+        |at: usize| (0..3).all(|k| (i32::from(pixels[at + k]) - i32::from(want[k])).abs() <= 2);
+    let hits = (0..size.height as usize)
+        .filter(|&y| near((y * size.width as usize + x) * 4))
+        .count();
+    assert!(hits >= 10, "{hits} faint pixels");
+}

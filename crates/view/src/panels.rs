@@ -2,15 +2,15 @@
 //! Sketch tab in place of the Timeline.
 
 use iced::widget::{
-    MouseArea, Space, button, column, container, hover, mouse_area, row, scrollable, space, stack,
-    text, text_input,
+    MouseArea, Space, button, column, container, hover, mouse_area, row, space, stack, text,
+    text_input,
 };
 use iced::{Alignment, Element, Font, Length, Padding};
 use varde_document::{Document, Extent, Feature, FeatureId, FeatureKind};
 use varde_expr::LengthUnit;
 use varde_sketch::{ConstraintEntry, Curve, DimensionEntry, Id, Sketch};
 
-use crate::chrome::{ChipSize, Edge, edged, icon_button, key_chip};
+use crate::chrome::{self, ChipSize, Edge, edged, icon_button, key_chip};
 use crate::escape::OnEscape;
 use crate::icons::{self, Icon};
 use crate::shortcut::{Held, Shortcut};
@@ -108,7 +108,8 @@ pub fn side_panel<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
 
 /// `list` scrolled within the rest of the panel.
 fn scrolled<'a>(list: Element<'a, Message>) -> Element<'a, Message> {
-    scrollable(container(list).padding([6, 8]))
+    // The scroller floats in the right padding.
+    chrome::scrolled(container(list).padding([6, 8]), 2.0)
         .height(Length::Fill)
         .into()
 }
@@ -424,7 +425,7 @@ fn virtual_list<'a>(
         Space::new().height(rows.after),
     ];
     // The scroller beside the rows rather than over their ends.
-    scrollable(container(list).padding(Padding::from([0, 8]).right(0)))
+    chrome::scrolled(container(list).padding(Padding::from([0, 8]).right(0)), 0.0)
         .spacing(2)
         .height(Length::Fill)
         .on_scroll(move |viewport| on_scroll(viewport.absolute_offset().y))

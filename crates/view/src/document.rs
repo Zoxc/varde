@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use glam::DVec2;
-use iced::widget::{Space, button, column, container, opaque, row, scrollable, space, stack, text};
+use iced::widget::{Space, button, column, container, opaque, row, space, stack, text};
 use iced::{Alignment, Element, Length};
 use varde_document::EXTENSION;
 use varde_document::{APP_NAME, Body, EditError, Editor, Feature, FeatureId, Plane};
@@ -844,7 +844,7 @@ fn delete_prompt<'a>(prompt: &DeletePrompt<'a>) -> Element<'a, Message> {
     let rows = prompt.features.len().saturating_add(prompt.bodies.len());
     // Counts are bounded by the document's, far below f32's exact range.
     let shown = (rows as f32).min(ROWS);
-    let list = scrollable(column(features.chain(bodies)))
+    let list = chrome::scrolled(column(features.chain(bodies)), 0.0)
         .height(shown * panels::ROW_HEIGHT)
         .width(Length::Fill);
     let cancel = dialog_button(

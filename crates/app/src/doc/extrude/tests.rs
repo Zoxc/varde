@@ -226,7 +226,8 @@ fn a_double_clicked_extrude_reopens_with_its_values_and_is_set_again() {
     assert_eq!(session.picked.len(), 1);
     assert_eq!(session.missing, 0);
     assert_eq!(session.extent, ExtentKind::OneSide);
-    assert_eq!(session.fields[0].text, "10");
+    // Typed "10", it shows with its unit, as a new extrude's does.
+    assert_eq!(session.fields[0].text, "10 mm");
     assert_eq!(session.operation, OperationKind::NewBody);
     let state = doc.extrude_state().unwrap();
     assert_eq!(state.editing, Some("Extrude 1"));
@@ -1290,19 +1291,19 @@ fn every_step_across_a_replacement_ends_the_session_opened_before_it() {
     // Opened after the restore, on the recovered extrude: undoing the
     // restore ends it, as the id names the one replaced again.
     doc.look(Look::EditFeature(a));
-    assert_eq!(first(&doc), "30");
+    assert_eq!(first(&doc), "30 mm");
     doc.update(Edit::Undo);
     assert_eq!(*doc.editor.document(), before);
     assert!(doc.extrude.is_none());
     assert!(last_draft(&requests).is_none());
     // Redone, then undone again: each ends the session opened in between.
     doc.look(Look::EditFeature(a));
-    assert_eq!(first(&doc), "10");
+    assert_eq!(first(&doc), "10 mm");
     doc.update(Edit::Redo);
     assert_eq!(*doc.editor.document(), recovered);
     assert!(doc.extrude.is_none());
     doc.look(Look::EditFeature(a));
-    assert_eq!(first(&doc), "30");
+    assert_eq!(first(&doc), "30 mm");
     extrude(
         &mut doc,
         ExtrudeLook::Input {
@@ -1322,7 +1323,7 @@ fn every_step_across_a_replacement_ends_the_session_opened_before_it() {
     doc.update(Edit::SetTolerance(Tolerance::new(1e-2).unwrap()));
     doc.update(Edit::Undo);
     assert_eq!(*doc.editor.document(), before);
-    assert_eq!(first(&doc), "10");
+    assert_eq!(first(&doc), "10 mm");
 }
 
 #[test]

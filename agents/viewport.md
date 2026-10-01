@@ -92,6 +92,24 @@ past it), `opaque` so clicks and the wheel on it don't reach the scene;
 the knobs' layer under it stays, empty, without knobs, so the panel's
 widget state survives the handle coming and going.
 
+The panel follows the mock's: its text in the text colour
+(`theme::operation_panel`, headings and the summary muted); extents and
+operations are choices with a 1 px border (`theme::choice`, accent on the
+soft accent and semibold while on); Flip and the Bodies rows are
+checkboxes (`theme::tick`: a faint box turning accent on hover, accent
+filled with a white check while ticked); a distance's label is 62 px with
+a 6 px gap, and why its text is refused shows under the field, 68 px in.
+Editing an extrude shows each distance with the design's unit after its
+bare numbers ("10 mm" for a typed "10", `Value::pin_units`), as a new
+one's does, while the value kept is the stored one, so OK with nothing
+changed writes nothing. Every scrollable (the panel's body and message,
+the side panel's lists, the delete prompt, the welcome page) is made by
+`chrome::scrolled`: a 4 px faint scroller on no rail (`theme::scrollbar`).
+A disabled filled button fades whole, fill, text and border at 0.45
+opacity (`DISABLED_OPACITY`), so a disabled OK reads as one in dark too;
+dark danger text is #f07563, the Delete button keeps #e0564b
+(`Palette::danger_fill`) under its white text.
+
 The renderer draws, in order: the background; the model's faces, or with
 `Frame::faded` its depth and then only its nearest faces blended at
 `Colors::faded_alpha` (depth still written); its feature edges; the grid,

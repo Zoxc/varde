@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use glam::{DVec2, DVec3};
 use iced::widget::text::Wrapping;
-use iced::widget::{button, checkbox, column, row, text, text_input};
+use iced::widget::{button, checkbox, column, container, row, text, text_input};
 use iced::{Alignment, Element, Length};
 use varde_document::{BodyId, ExtrudeError, FeatureId, Placement, Plane};
 use varde_expr::LengthUnit;
@@ -29,6 +29,14 @@ const SECOND_FIELD: iced::widget::Id = iced::widget::Id::new("extrude-second");
 /// the target: a step is the roundest length in the design's units at
 /// least this many pixels long.
 const SNAP_PIXELS: f64 = 6.0;
+
+/// How far in from the panel's side a distance's field starts: its
+/// label's width and the gap after it. Why its text is refused shows
+/// under it, as far in.
+const FIELD_INDENT: f32 = 68.0;
+
+/// The gap between a distance's label and its field.
+const FIELD_GAP: f32 = 6.0;
 
 /// How an extrude's extent is given, see `varde_document::Extent`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -419,10 +427,13 @@ pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
         };
         distance_field(label, distance, state.fields[distance.index()], editable)
     });
-    let flip = state
-        .extent
-        .flips()
-        .then(|| choice("Flip", state.flip, send(ExtrudeLook::Flip)));
+    let flip = state.extent.flips().then(|| {
+        tick(
+            "Flip",
+            state.flip,
+            editable.then_some(Message::Look(Look::Extrude(ExtrudeLook::Flip))),
+        )
+    });
     let operations = OperationKind::ALL.map(|kind| {
         choice(
             kind.label(),
@@ -432,16 +443,8 @@ pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
     });
     let targets = (state.operation.has_targets() && !state.targets.is_empty()).then(|| {
         let rows = state.targets.iter().map(|&target| {
-            checkbox(target.included)
-                .label(target.name)
-                .size(14)
-                .text_size(12)
-                // A name with no spaces breaks where the panel ends.
-                .text_wrapping(Wrapping::WordOrGlyph)
-                .on_toggle_maybe(editable.then_some(move |_| {
-                    Message::Look(Look::Extrude(ExtrudeLook::Target(target.body)))
-                }))
-                .into()
+            let message = Message::Look(Look::Extrude(ExtrudeLook::Target(target.body)));
+            tick(target.name, target.included, editable.then_some(message))
         });
         column![heading("Bodies"), column(rows).spacing(4)].spacing(6)
     });
@@ -503,17 +506,34 @@ fn grid<'a>(choices: [Element<'a, Message>; 4]) -> Element<'a, Message> {
 /// A choice of the panel's, highlighted while `on`, sending `message`, or
 /// disabled without one.
 fn choice<'a>(label: &'a str, on: bool, message: Option<Message>) -> Element<'a, Message> {
+    let font = if on { SEMIBOLD } else { iced::Font::DEFAULT };
     button(
         text(label)
             .size(12)
+            .font(font)
             .width(Length::Fill)
             .align_x(Alignment::Center),
     )
     .width(Length::Fill)
     .padding([3, 6])
-    .style(theme::flat_button(on))
+    .style(theme::choice(on))
     .on_press_maybe(message)
     .into()
+}
+
+/// A checkbox of the panel's, ticked while `on`, sending `message` when
+/// clicked, or disabled without one.
+fn tick<'a>(label: &'a str, on: bool, message: Option<Message>) -> Element<'a, Message> {
+    checkbox(on)
+        .label(label)
+        .size(15)
+        .spacing(7)
+        .text_size(12)
+        // A name with no spaces breaks where the panel ends.
+        .text_wrapping(Wrapping::WordOrGlyph)
+        .style(theme::tick)
+        .on_toggle_maybe(message.map(|message| move |_| message.clone()))
+        .into()
 }
 
 /// The field of `distance`, named `label`, showing why its text is
@@ -544,13 +564,19 @@ fn distance_field<'a>(
     };
     let input = OnEscape::new(input, Message::Look(Look::Extrude(ExtrudeLook::Cancel)));
     let error = field.error.map(|error| {
-        text(error.to_string())
-            .size(11.5)
-            .wrapping(Wrapping::WordOrGlyph)
-            .style(theme::danger_text)
+        container(
+            text(error.to_string())
+                .size(11.5)
+                .wrapping(Wrapping::WordOrGlyph)
+                .style(theme::danger_text),
+        )
+        .padding(iced::Padding::ZERO.left(FIELD_INDENT))
     });
+    let label = text(label).size(12).width(FIELD_INDENT - FIELD_GAP);
     column![
-        row![text(label).size(12).width(64), input].align_y(Alignment::Center),
+        row![label, input]
+            .spacing(FIELD_GAP)
+            .align_y(Alignment::Center),
         error,
     ]
     .spacing(2)

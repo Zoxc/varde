@@ -10,13 +10,12 @@
 
 use iced::advanced::widget::{Operation, Tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer};
-use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::text::Wrapping;
-use iced::widget::{column, container, opaque, row, scrollable, space, text};
+use iced::widget::{column, container, opaque, row, space, text};
 use iced::{Alignment, Element, Event, Length, Rectangle, Size, Vector};
 
 use crate::Message;
-use crate::chrome::{hrule, small_button};
+use crate::chrome::{hrule, scrolled, small_button};
 use crate::theme::{self, Emphasis, SEMIBOLD};
 
 /// How wide the panel is, in pixels.
@@ -85,25 +84,22 @@ pub(crate) fn operation_panel(parts: Parts<'_>) -> Element<'_, Message> {
         hrule(),
     ];
     // Both scrollbars float in the right padding, clear of the text.
-    let scrollbar = Direction::Vertical(
-        Scrollbar::new()
-            .width(4)
-            .scroller_width(4)
-            .margin((SIDE - 4.0) / 2.0),
-    );
-    let body = scrollable(
+    let margin = (SIDE - theme::SCROLLBAR_WIDTH) / 2.0;
+    let body = scrolled(
         container(body)
             .width(Length::Fill)
             .padding(iced::Padding::from([8.0, SIDE]).bottom(10.0)),
+        margin,
     )
     .id(PANEL_BODY)
-    .direction(scrollbar)
     .width(Length::Fill);
     let message = message.map(|message| {
         container(
-            scrollable(container(message).width(Length::Fill).padding([0.0, SIDE]))
-                .direction(scrollbar)
-                .width(Length::Fill),
+            scrolled(
+                container(message).width(Length::Fill).padding([0.0, SIDE]),
+                margin,
+            )
+            .width(Length::Fill),
         )
         .max_height(MESSAGE_HEIGHT)
     });
@@ -123,7 +119,7 @@ pub(crate) fn operation_panel(parts: Parts<'_>) -> Element<'_, Message> {
         width: PANEL_WIDTH,
         parts: [header.into(), body.into(), footer.into()],
     };
-    opaque(container(sections).style(theme::float_panel).clip(true))
+    opaque(container(sections).style(theme::operation_panel).clip(true))
 }
 
 /// `panel` placed over a viewport: at its right, [`PANEL_MARGIN`] in from

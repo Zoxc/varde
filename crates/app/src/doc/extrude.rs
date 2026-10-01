@@ -94,10 +94,15 @@ const DEFAULT_DISTANCE: f64 = 10.0;
 const REFRESH_WORK: usize = 2 * MAX_WORK;
 
 impl DistanceText {
-    /// The field holding `value`.
-    fn of(value: &Value) -> Self {
+    /// The field holding `value`, a distance of `document`'s. It shows
+    /// the text with the design's unit written after its bare numbers,
+    /// "10 mm" for "10", as a new extrude's does; the value stays as it
+    /// was typed, so OK with nothing changed writes nothing.
+    fn of(value: &Value, document: &Document) -> Self {
+        let mut shown = value.clone();
+        shown.pin_units(&Extent::ask(&document.design()));
         Self {
-            text: value.text.clone(),
+            text: shown.text,
             value: Some(value.clone()),
             error: None,
         }
@@ -179,12 +184,12 @@ impl ExtrudeSession {
             Extent::ThroughAll => (ExtentKind::ThroughAll, [None, None]),
         };
         session.extent = extent;
-        let first = first.map(DistanceText::of);
+        let first = first.map(|first| DistanceText::of(first, document));
         if let Some(first) = &first {
             session.fields = [first.clone(), first.clone()];
         }
         if let Some(second) = second {
-            session.fields[1] = DistanceText::of(second);
+            session.fields[1] = DistanceText::of(second, document);
         }
         session.flip = extrude.flip;
         session.operation = match &extrude.operation {
