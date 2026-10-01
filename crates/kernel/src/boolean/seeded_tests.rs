@@ -732,76 +732,116 @@ fn near_tangent_cylinders_are_right_or_refused() {
     tally.at_least(0.6, "tangent");
 }
 
+/// The frames the coaxial cases are built on: the three sketch planes
+/// (on XZ and YZ a cap's plane lies nearly along `UP`, and a rim's shadow
+/// is a thin ellipse), a frame turned off every axis and moved, and one
+/// whose caps are upright off the axes, again nearly along `UP`.
+fn coaxial_frames() -> [(&'static str, Frame); 5] {
+    let turned = DQuat::from_axis_angle(DVec3::new(1.0, 2.0, 3.0).normalize(), 1.1);
+    [
+        ("XY", Frame::XY),
+        (
+            "XZ",
+            Frame {
+                origin: DVec3::ZERO,
+                x: DVec3::X,
+                y: DVec3::Z,
+            },
+        ),
+        (
+            "YZ",
+            Frame {
+                origin: DVec3::ZERO,
+                x: DVec3::Y,
+                y: DVec3::Z,
+            },
+        ),
+        (
+            "tilted",
+            Frame {
+                origin: DVec3::new(2.5, -1.25, 7.0),
+                x: turned * DVec3::X,
+                y: turned * DVec3::Y,
+            },
+        ),
+        (
+            "upright",
+            Frame {
+                origin: DVec3::new(0.3, -0.7, 0.2),
+                x: DVec3::new(0.6, 0.8, 0.0),
+                y: DVec3::Z,
+            },
+        ),
+    ]
+}
+
 #[test]
 fn coaxial_solids_and_pins_in_holes() {
     // Walls on one cylinder: a pin cut by the circle of a plate's hole,
     // over the plate's span, through it, and inside it; cylinders of one
     // radius stacked, over one span, and overlapping; cylinders of two
-    // radii flush at one end.
+    // radii flush at one end. On each of the frames above.
     let tol = Tolerance::DEFAULT;
     let mut tally = Tally::default();
     let mut samples = Rng::new(51);
     let c = DVec2::new(0.5, 0.2);
-    let plate = extruded(
-        vec![
-            rect(DVec2::new(-3.0, -2.0), DVec2::new(3.0, 2.0), 0),
-            circle(c, 1.0, 4, true),
-        ],
-        &Frame::XY,
-        0.0,
-        1.0,
-        5,
-        &tol,
-    )
-    .unwrap();
-    // Filling the hole over the plate's span comes last: its union meets
-    // the plate's caps along the rim in their plane, which repair splits
-    // down to flat pieces (right, and heavy).
-    let pins = [
-        (-1.0, 2.0),
-        (0.5, 2.0),
-        (0.25, 0.75),
-        (1.0, 2.0),
-        (0.0, 1.0),
-    ];
-    for &(f, t) in &pins[..cases(pins.len(), 1)] {
-        let pin = extruded(vec![circle(c, 1.0, 0, false)], &Frame::XY, f, t, 7, &tol).unwrap();
-        let name = format!("pin {f}..{t}");
-        four(
-            &plate,
-            &pin,
-            Some(0.0),
+    let frames = coaxial_frames();
+    for (plane, frame) in &frames[..cases(frames.len(), 1)] {
+        let plate = extruded(
+            vec![
+                rect(DVec2::new(-3.0, -2.0), DVec2::new(3.0, 2.0), 0),
+                circle(c, 1.0, 4, true),
+            ],
+            frame,
+            0.0,
+            1.0,
+            5,
             &tol,
-            &mut samples,
-            &mut tally,
-            &name,
-        );
+        )
+        .unwrap();
+        // Filling the hole over the plate's span comes last: its union
+        // meets the plate's caps along the rim in their plane, which
+        // repair splits down to flat pieces (right, and heavy).
+        let pins = [
+            (-1.0, 2.0),
+            (0.5, 2.0),
+            (0.25, 0.75),
+            (1.0, 2.0),
+            (0.0, 1.0),
+        ];
+        for &(f, t) in &pins[..cases(pins.len(), 1)] {
+            let pin = extruded(vec![circle(c, 1.0, 0, false)], frame, f, t, 7, &tol).unwrap();
+            let name = format!("{plane} pin {f}..{t}");
+            four(
+                &plate,
+                &pin,
+                Some(0.0),
+                &tol,
+                &mut samples,
+                &mut tally,
+                &name,
+            );
+        }
+        let a = extruded(vec![circle(c, 1.0, 0, false)], frame, 0.0, 1.0, 7, &tol).unwrap();
+        let stacks = [
+            (1.0, 1.0, 2.0),
+            (0.5, 0.0, 2.0),
+            (1.0, 0.0, 2.0),
+            (1.0, 0.5, 2.0),
+            (0.5, 1.0, 2.0),
+        ];
+        for &(r, f, t) in &stacks[..cases(stacks.len(), 0)] {
+            let b = extruded(vec![circle(c, r, 0, false)], frame, f, t, 8, &tol).unwrap();
+            let both = PI * r * r * (t.min(1.0) - f.max(0.0)).max(0.0);
+            let name = format!("{plane} coaxial r {r} {f}..{t}");
+            four(&a, &b, Some(both), &tol, &mut samples, &mut tally, &name);
+        }
     }
-    let a = extruded(
-        vec![circle(c, 1.0, 0, false)],
-        &Frame::XY,
-        0.0,
-        1.0,
-        7,
-        &tol,
-    )
-    .unwrap();
-    let stacks = [
-        (1.0, 1.0, 2.0),
-        (0.5, 0.0, 2.0),
-        (1.0, 0.0, 2.0),
-        (1.0, 0.5, 2.0),
-        (0.5, 1.0, 2.0),
-    ];
-    for &(r, f, t) in &stacks[..cases(stacks.len(), 0)] {
-        let b = extruded(vec![circle(c, r, 0, false)], &Frame::XY, f, t, 8, &tol).unwrap();
-        let both = PI * r * r * (t.min(1.0) - f.max(0.0)).max(0.0);
-        let name = format!("coaxial r {r} {f}..{t}");
-        four(&a, &b, Some(both), &tol, &mut samples, &mut tally, &name);
-    }
-    // 39 of 40 work. The one left is `pin 1..2`'s union: the pin stands
-    // on the plate touching it only along the hole's rim, which is no
-    // manifold, so it is refused.
+    // 191 of 200 work. Left: `pin 1..2`'s union on every frame, the pin
+    // standing on the plate touching it only along the hole's rim (no
+    // manifold, refused); on the tilted frame the unions of `pin -1..2`,
+    // `r 1 0..2` and `r 0.5 1..2` and `r 1 0..2`'s difference fail as
+    // `Invalid` (a fold or a hull, refused).
     tally.at_least(0.95, "coaxial");
 }
 

@@ -728,3 +728,95 @@ fn first_orders_that_are_only_rounding_are_skipped() {
     let delta = DVec3::new(1.0, 1.0, 1e-6).normalize();
     assert_eq!(first_sign(delta, |d| -n.dot(d)), -1);
 }
+
+/// How the perturbed shadows of edge `e` of `A` and the same edge of `B`
+/// (two copies of one solid) cross, found by sampling where `A`'s
+/// perturbation takes `e`'s shadow across `g`'s, away from the ends: the
+/// split into `a_under` and `b_under`, and the signed number.
+fn sampled_split(prims: &Curved, e: u32) -> (i32, i32, i32) {
+    let curve = prims.curve(Side::B, e);
+    let side = |t: f64| {
+        let (_, tangent) = curve.eval_deriv(t);
+        prims.perturb_along(e, t).dot(UP.cross(tangent))
+    };
+    let n = 4096;
+    let (mut a_under, mut b_under, mut found) = (0, 0, 0);
+    let mut last = side(0.01);
+    for k in 1..=n {
+        let t = 0.01 + 0.98 * f64::from(k) / f64::from(n);
+        let now = side(t);
+        if (now > 0.0) != (last > 0.0) {
+            let sigma = if now > 0.0 { 1 } else { -1 };
+            if prims.parallel_above(e, t) {
+                b_under -= sigma;
+            } else {
+                a_under += sigma;
+            }
+            found += sigma;
+        }
+        last = now;
+    }
+    (a_under, b_under, found)
+}
+
+#[test]
+fn coincident_edges_cross_where_the_perturbation_parts_them() {
+    // Two copies of one cylinder on frames whose caps lie nearly along
+    // `UP`: each rim arc and wall diagonal of one lies on the other's.
+    // Their perturbed shadows cross round the fold of the thin ellipses,
+    // on some edges twice with `A` above at one crossing and below at the
+    // other (both sums not zero), which one sample's height for every
+    // crossing got wrong. Each split is that of the crossings found by
+    // sampling, where they are all the ray tests count.
+    use super::super::input::Input;
+    use crate::profile::tests::circle;
+    use crate::{Budget, Frame, Profile, extrude};
+    #[allow(clippy::disallowed_methods, reason = "a test frame")]
+    let q = glam::DQuat::from_axis_angle(DVec3::new(-0.3, 0.9, 0.2).normalize(), 2.3);
+    let frames = [
+        Frame {
+            origin: DVec3::new(-40.0, 13.0, 5.5),
+            x: q * DVec3::X,
+            y: q * DVec3::Y,
+        },
+        Frame {
+            origin: DVec3::ZERO,
+            x: DVec3::Y,
+            y: DVec3::Z,
+        },
+    ];
+    let tol = Tolerance::DEFAULT;
+    let (mut checked, mut both_ways) = (0, 0);
+    for frame in &frames {
+        let profile = Profile {
+            loops: vec![circle(DVec2::new(0.5, 0.2), 1.0, 0, false)],
+        };
+        let solid = extrude(&profile, frame, 0.0, 1.0, 7, &tol, &Budget::DEFAULT).unwrap();
+        let input = Input::new(solid.mesh(), &tol);
+        for grow in [false, true] {
+            let prims = Curved::new(&input, &input, grow, &tol);
+            for e in 0..input.edges.len() as u32 {
+                if input.straight[e as usize] {
+                    continue;
+                }
+                let split = prims.s11(e, e);
+                let count = prims.shadow_crossings(e, e);
+                assert_eq!(i32::from(split.a_under) - i32::from(split.b_under), count);
+                let (a_under, b_under, found) = sampled_split(&prims, e);
+                if found == count {
+                    assert_eq!(
+                        (i32::from(split.a_under), i32::from(split.b_under)),
+                        (a_under, b_under),
+                        "edge {e}, grow {grow}"
+                    );
+                    checked += 1;
+                }
+                if split.a_under != 0 && split.b_under != 0 {
+                    both_ways += 1;
+                }
+            }
+        }
+    }
+    assert!(checked >= 40, "{checked}");
+    assert!(both_ways > 0);
+}

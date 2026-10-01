@@ -866,6 +866,129 @@ fn a_cylinder_inside_one_of_its_radius_flush_at_one_end() {
     assert!((union.volume() - 2.0 * PI).abs() <= 1e-9);
 }
 
+/// The XZ and YZ sketch planes, whose caps lie nearly along `UP`.
+const SIDE_PLANES: [(&str, Frame); 2] = [
+    (
+        "XZ",
+        Frame {
+            origin: DVec3::ZERO,
+            x: DVec3::X,
+            y: DVec3::Z,
+        },
+    ),
+    (
+        "YZ",
+        Frame {
+            origin: DVec3::ZERO,
+            x: DVec3::Y,
+            y: DVec3::Z,
+        },
+    ),
+];
+
+#[test]
+fn coaxial_cylinders_on_the_side_planes() {
+    // On the XZ and YZ planes a cap's plane lies nearly along `UP`, so a
+    // rim's shadow is a thin ellipse. Where both operands have the same
+    // arc of it (a rim, or a wall's diagonal), the perturbed shadows
+    // cross round the fold once or twice, `A` above at one crossing and
+    // below at another; split by one sample's height, the crossings
+    // gave the two walls on one cylinder ends, and every operation
+    // failed as `Inconsistent` (YZ all, XZ those in 3 arcs).
+    let c = DVec2::new(0.5, 0.2);
+    for (plane, frame) in SIDE_PLANES {
+        let a = extruded_on(vec![circle(c, 1.0, 0, false)], frame, 0.0, 1.0, 7);
+        let circles = [
+            ("same", circle(c, 1.0, 0, false)),
+            ("turned", turned_circle(c, 1.0, 0, 0.7, 3)),
+        ];
+        for (what, lp) in &circles {
+            for (from, to) in [(0.0, 1.0), (0.0, 0.5), (0.5, 1.0)] {
+                let b = extruded_on(vec![lp.clone()], frame, from, to, 8);
+                let both = (to.min(1.0) - from.max(0.0)).max(0.0);
+                coaxial(&format!("{plane} {what} {from}..{to}"), &a, &b, both, 64);
+            }
+        }
+    }
+}
+
+#[test]
+fn flush_pin_in_a_hole_on_the_side_planes() {
+    // A pin in a plate's hole of its radius, flush with both caps or
+    // through one of them, on the YZ plane (see above): the pin's rims lie
+    // on the hole's.
+    let (_, frame) = SIDE_PLANES[1];
+    let c = DVec2::new(0.5, 0.2);
+    let plate = extruded_on(
+        vec![
+            rect(DVec2::new(-3.0, -2.0), DVec2::new(3.0, 2.0), 0),
+            circle(c, 1.0, 4, true),
+        ],
+        frame,
+        0.0,
+        1.0,
+        5,
+    );
+    for (from, to) in [(0.0, 1.0), (-1.0, 1.0)] {
+        let pin = extruded_on(vec![circle(c, 1.0, 0, false)], frame, from, to, 7);
+        let results = all_four(&plate, &pin, 1e-12);
+        volumes(
+            &format!("pin {from}..{to}"),
+            &plate,
+            &pin,
+            &results,
+            0.0,
+            1e-9,
+        );
+    }
+}
+
+#[test]
+fn coaxial_stacks_and_flush_pins_on_turned_frames() {
+    // As on the side planes, on a frame turned off every axis and moved
+    // far from the origin, and on one whose caps are upright off the axes
+    // (nearly along `UP` again): cylinders of one radius stacked,
+    // overlapping and over one span, and a pin flush in a plate's hole.
+    let turned = DQuat::from_axis_angle(DVec3::new(1.0, 2.0, 3.0).normalize(), 1.1);
+    let frames = [
+        Frame {
+            origin: DVec3::new(2.5, -1.25, 7.0),
+            x: turned * DVec3::X,
+            y: turned * DVec3::Y,
+        },
+        Frame {
+            origin: DVec3::new(0.3, -0.7, 0.2),
+            x: DVec3::new(0.6, 0.8, 0.0),
+            y: DVec3::Z,
+        },
+    ];
+    let c = DVec2::new(0.5, 0.2);
+    for (k, frame) in frames.into_iter().enumerate() {
+        let a = extruded_on(vec![circle(c, 1.0, 0, false)], frame, 0.0, 1.0, 7);
+        for (from, to) in [(1.0, 2.0), (0.5, 2.0), (0.0, 1.0), (0.25, 0.75)] {
+            let b = extruded_on(vec![circle(c, 1.0, 0, false)], frame, from, to, 8);
+            let both = (to.min(1.0) - from.max(0.0)).max(0.0);
+            coaxial(&format!("frame {k}, {from}..{to}"), &a, &b, both, 128);
+        }
+        let plate = extruded_on(
+            vec![
+                rect(DVec2::new(-3.0, -2.0), DVec2::new(3.0, 2.0), 0),
+                circle(c, 1.0, 4, true),
+            ],
+            frame,
+            0.0,
+            1.0,
+            5,
+        );
+        for (from, to) in [(0.0, 1.0), (-1.0, 1.0)] {
+            let pin = extruded_on(vec![circle(c, 1.0, 0, false)], frame, from, to, 7);
+            let results = all_four(&plate, &pin, 1e-12);
+            let name = format!("frame {k}, pin {from}..{to}");
+            volumes(&name, &plate, &pin, &results, 0.0, 1e-9);
+        }
+    }
+}
+
 #[test]
 fn primitive_cylinders_stacked_unite() {
     // `Solid::cylinder`s of one radius on one axis, overlapping: the

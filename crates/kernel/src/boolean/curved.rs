@@ -41,15 +41,17 @@
 //! decided the way `A`'s perturbation (out of `A` for a union, in
 //! otherwise, then the generic translations) would decide them, so flush
 //! faces behave as they do between flat operands; so are crossings of a
-//! ray at its vertex, shadows lying along each other, crossings at an
-//! edge's end and crossings at a patch's side. The exact predicates take
-//! near ties within the same distance as ties, so both see one
-//! configuration.
+//! ray at its vertex, shadows lying along each other (where the edges
+//! lie on each other in space too, crossing by crossing where the
+//! perturbation parts them), crossings at an edge's end and crossings at
+//! a patch's side. The exact predicates take near ties within the same
+//! distance as ties, so both see one configuration.
 
 use std::cmp::Ordering;
 
 use glam::DVec3;
 
+use super::assemble::param_on;
 use super::count::Crossing;
 use super::exact;
 use super::flat::Flat;
@@ -94,6 +96,12 @@ const SEARCH_WORK: usize = 16;
 /// piece's control hulls for a gap made a piece about twice as dear
 /// there (some 2.3 µs), so it is 2, not 4.
 const NODES_PER_UNIT: usize = 2;
+
+/// Where two edges lie on each other, the polynomial whose roots are the
+/// perturbed shadows' crossings is taken as zero (and the next order of
+/// the perturbation asked) when every coefficient is within this of the
+/// size of its terms: rounding.
+const ALONG_ZERO: f64 = 1e-12;
 
 /// The primitives of two operands, one of them with curved patches.
 pub(super) struct Curved<'a> {
@@ -281,6 +289,136 @@ impl<'a> Curved<'a> {
         } else {
             best.1 > 0.0
         }
+    }
+
+    /// How the `count` crossings of the shadows of edge `e` of `A` and
+    /// `g` of `B`, lying on one conic, split, where the two edges lie on
+    /// each other in space over a stretch (the same arc in both operands,
+    /// or pieces of it); `None` where they don't (one conic in shadow,
+    /// the curves apart in height: a top rim seen along the axis over a
+    /// bottom one).
+    ///
+    /// Over that stretch `A`'s perturbation `δ` takes `e`'s shadow to
+    /// the left of `g`'s where `δ·(UP × g')` is positive, so the
+    /// perturbed shadows cross where that changes sign, `σ` its sign
+    /// after, each crossing above or below by its own rise
+    /// ([`Self::parallel_above`]). With `e`'s homogeneous tangent `h`
+    /// (a quadratic, [`hodograph`]) for `g'` (turned by `o`, the sign
+    /// of `e'·g'`), `o·δ·(UP × h)` is a cubic in `t`: its roots are the
+    /// crossings. Where it is zero to rounding, the generic
+    /// translations take `δ`'s place, as in [`first_sign`]. Roots within
+    /// the tie of the stretch's ends are left to the count, as at
+    /// crossings at an end, and whatever the count has beyond those
+    /// found goes by the rise at such a root, or at an end where the
+    /// cubic is zero to rounding (a circle through exact axis points
+    /// makes them), else by [`Self::along_above`]. Seen nearly edge on
+    /// (a cap plane nearly along `UP`, as on the XZ and YZ planes), a
+    /// rim's shadow is a thin ellipse round which the perturbed shadows
+    /// cross once or twice with `A` above at one and below at the other:
+    /// one sample's height for all of them split a crossing the wrong
+    /// way.
+    fn along_crossings(&self, e: u32, g: u32, count: i32) -> Option<Cross11> {
+        let (ce, cg) = (self.curve(Side::A, e), self.curve(Side::B, g));
+        let on_g = |p: DVec3| param_on(&cg, p, self.tie);
+        let on_e = |p: DVec3| param_on(&ce, p, self.tie);
+        // The stretch of `e` on `g`: from `e`'s ends on `g` and `g`'s on
+        // `e`. Arcs are under half a turn, so it is one piece.
+        let ends = [
+            on_g(ce.p0).map(|_| 0.0),
+            on_g(ce.p1).map(|_| 1.0),
+            on_e(cg.p0),
+            on_e(cg.p1),
+        ];
+        let (lo, hi) = ends
+            .into_iter()
+            .flatten()
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), t| {
+                (lo.min(t), hi.max(t))
+            });
+        let (end_lo, end_hi) = (ce.eval(lo), ce.eval(hi));
+        if lo >= hi || end_lo.distance(end_hi) <= self.tie {
+            return None;
+        }
+        // Lifts of one conic shadow meeting at three points of it are one
+        // curve; the ends and three points between make sure.
+        let mut mid = 0.5;
+        for k in 1..4 {
+            let s = on_g(ce.eval(lo + (hi - lo) * f64::from(k) / 4.0))?;
+            if k == 2 {
+                mid = s;
+            }
+        }
+        let o = sign(ce.eval_deriv((lo + hi) * 0.5).1.dot(cg.eval_deriv(mid).1));
+        if o == 0 {
+            return None;
+        }
+        let tangent = hodograph(&ce);
+        let [a0, a1] = self.a.edges[e as usize];
+        let longest = tangent.iter().map(|h| h.length()).fold(0.0, f64::max);
+        let poly = [
+            (self.flat.perturb(a0), self.flat.perturb(a1)),
+            (exact::T2, exact::T2),
+            (exact::T3, exact::T3),
+        ]
+        .into_iter()
+        .find_map(|(d0, d1)| {
+            let f = |d: DVec3, h: DVec3| f64::from(o) * d.dot(UP.cross(h));
+            let p = [
+                f(d0, tangent[0]),
+                (2.0 * f(d0, tangent[1]) + f(d1, tangent[0])) / 3.0,
+                (f(d0, tangent[2]) + 2.0 * f(d1, tangent[1])) / 3.0,
+                f(d1, tangent[2]),
+            ];
+            let zero = ALONG_ZERO * d0.length().max(d1.length()) * UP.length() * longest;
+            p.iter().any(|c| c.abs() > zero).then_some((p, zero))
+        });
+        let (poly, zero) = poly?;
+        let roots = bernstein::roots(&poly);
+        let (mut a_under, mut b_under, mut found) = (0i32, 0i32, 0i32);
+        // Where a crossing at an end of the stretch is, if there is one:
+        // a root within the tie of it, or the end itself where the
+        // polynomial is zero there (to rounding, so a root may be just
+        // outside, and not found).
+        let mut at_end = None;
+        for (i, &t) in roots.iter().enumerate() {
+            if t <= lo || t >= hi {
+                continue;
+            }
+            let at = ce.eval(t);
+            if at.distance(end_lo) <= self.tie || at.distance(end_hi) <= self.tie {
+                at_end.get_or_insert(t);
+                continue;
+            }
+            let next = roots.get(i + 1).copied().unwrap_or(1.0);
+            let sigma = i32::from(sign(bernstein::eval(&poly, (t + next) * 0.5)));
+            if self.parallel_above(e, t) {
+                b_under -= sigma;
+            } else {
+                a_under += sigma;
+            }
+            found += sigma;
+        }
+        for end in [lo, hi] {
+            if bernstein::eval(&poly, end).abs() <= zero {
+                at_end.get_or_insert(end);
+            }
+        }
+        let missing = count - found;
+        if missing != 0 {
+            let above = match at_end {
+                Some(t) => self.parallel_above(e, t),
+                None => self.along_above(e, g),
+            };
+            if above {
+                b_under -= missing;
+            } else {
+                a_under += missing;
+            }
+        }
+        Some(Cross11 {
+            a_under: clamp(a_under),
+            b_under: clamp(b_under),
+        })
     }
 
     /// Whether `e` is above `g` at their shadows' crossing `c`, ties as
@@ -518,6 +656,13 @@ pub(super) fn first_sign(delta: DVec3, f: impl Fn(DVec3) -> f64) -> i8 {
         .unwrap_or(0)
 }
 
+/// The Bernstein coefficients of a positive multiple of `c`'s tangent,
+/// `N'·W − N·W'` over 2 for its point `N / W`: `w·(c − p0)`,
+/// `(p1 − p0) / 2`, `w·(p1 − c)`.
+fn hodograph(c: &Conic3) -> [DVec3; 3] {
+    [(c.c - c.p0) * c.w, (c.p1 - c.p0) * 0.5, (c.p1 - c.c) * c.w]
+}
+
 fn sign(x: f64) -> i8 {
     if x > 0.0 {
         1
@@ -570,8 +715,13 @@ impl Primitives for Curved<'_> {
         let (ce, cg) = (self.curve(Side::A, e), self.curve(Side::B, g));
         let (mut a_under, mut b_under, mut found) = (0i32, 0i32, 0i32);
         let Some(solved) = arcs::cross(&ce, &cg, &self.axes) else {
-            // The shadows run along each other: every crossing the ray
-            // tests count goes the same way.
+            // The shadows run along each other: where the edges lie on
+            // each other, crossing by crossing as the perturbation parts
+            // them; else every crossing the ray tests count goes the same
+            // way.
+            if let Some(split) = self.along_crossings(e, g, count) {
+                return split;
+            }
             return if self.along_above(e, g) {
                 Cross11 {
                     a_under: 0,

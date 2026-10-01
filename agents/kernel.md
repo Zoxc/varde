@@ -2088,9 +2088,60 @@ patches are their normals at the corner. Beyond heights:
 - **Shadows along each other.** Where one edge's shadow lies on the
   other's conic (the same arc in both operands, or a piece of it:
   `arcs::cross` gives `None` when the polynomial is zero within `1e-10`
-  of its terms), every crossing the ray tests count goes the same way,
-  by the heights where the two come nearest or, tied there, the
-  parallel rule above. Solving that polynomial gave random roots.
+  of its terms), solving that polynomial gave random roots. Where the
+  two edges also lie on each other in space over a stretch (`e`'s ends
+  on `g` and `g`'s on `e`, within the tie, give it; three points
+  between must be on `g` too: lifts of one conic shadow meeting at
+  three points of it are one curve), the crossings are decided one by
+  one (`Curved::along_crossings`): `A`'s perturbation `δ` takes `e`'s
+  shadow to `g`'s left where `δ·(UP × g')` is positive, so the
+  perturbed shadows cross where that changes sign, `σ` its sign after.
+  With `e`'s tangent's homogeneous numerator `h` (a quadratic in
+  Bernstein form: `w·(c − p0)`, `(p1 − p0)/2`, `w·(p1 − c)`) turned by
+  `o = sign(e'·g')` for `g'`, `o·δ·(UP × h)` is a cubic (`δ` linear
+  along the edge), whose roots in the stretch are the crossings, each
+  above or below by its own rise (the parallel rule above); zero to
+  rounding (every coefficient within `1e-12` of its terms' size), `T2`
+  and then `T3` take `δ`'s place. Roots within the tie of the stretch's
+  ends are left to the count (as crossings at an end), and whatever the
+  count has beyond those found goes by the rise at the first such root,
+  or at an end of the stretch where the cubic is zero to rounding (a
+  root there may come out just outside and not be found), else the old
+  way. Such zeros are what a circle drawn through exact axis points
+  gives on YZ: a rim vertex's `δ` lies in the upright plane of the
+  tangent there to the bit, and the old way, the height a sixteenth
+  along, split those crossings wrongly (identical cylinders failed as
+  before). The old way is for
+  every crossing the ray tests count to go the same way, by the heights
+  where the two come nearest or, tied there, the parallel rule: still
+  so where the curves are apart in height (a top rim seen along the
+  axis over a bottom one). On XY a rim's perturbed shadow never crosses
+  the other's (`δ`'s part off the circle is radial throughout), so
+  nothing changed there; where a cap's plane lies nearly along `UP`
+  (the XZ and YZ sketch planes, or any upright one) the rim's shadow is
+  a thin ellipse round whose ends the perturbed shadows cross once or
+  twice, `A` above at one crossing and below at another. One sample's
+  height for all of them gave a cylinder's two coincident walls (`A`'s
+  and `B`'s) ends, and a flush pin in its hole, a second extrude of one
+  circle or a cylinder cut back on those planes failed as
+  `Inconsistent`, every operation on YZ. Sampling the polynomial
+  instead of solving it would miss close pairs of roots. Measured in
+  release at the default tolerance with a sweep of 1 665 operations
+  (a cylinder of radius 1 in 4 arcs over 0..1 against the same circle
+  in 4 arcs or in 3 turned 0.7, over 9 spans; square prisms over the
+  same spans; pins in a plate's hole over 5 spans; union both ways,
+  intersection and differences both ways) on 9 frames (XY, XZ, YZ, XY
+  moved, an upright one off the axes, and four turned ones): failures
+  243 → 44, `Inconsistent` 235 → 34, none on XZ or YZ (94 → 0), none
+  for cylinders or pins; with the circles through exact axis points, 46
+  failures. Every volume came out within `1e-12` of its closed form. Of
+  the 5 130 decisions it made, the crossings found added up to the ray
+  tests' count in all; with exact axis points 90 differed, each by one
+  crossing at an end of the stretch where the cubic is zero, and none
+  went the old way. The seeded suite's pins and coaxial cylinders (now
+  on five frames, 200 operations) 164 → 191; the other seeded tallies
+  didn't move (related 113/120, turned 156/160, chains 203/240,
+  tangent 72/96, bosses 64/64, drilled 160/160).
 - **Crossings at an end.** Crossings of the shadows solved at an end of
   either edge (within the tie of it: two edges from one vertex) are left
   to the count, which knows from the ray tests whether they are there;
@@ -3084,8 +3135,9 @@ now and then intersected, each result fed on); solids turned and moved
 at random against boxes and bars; cylinders side by side with gaps and
 overlaps of `1e-9` to `1e-3` at two tolerances; plates drilled hole
 after hole (in rows, or anywhere on a grid); pins in holes of their
-own circle and cylinders of one radius stacked and overlapping (at
-least 95% must work: 39 of 40 do); bosses
+own circle and cylinders of one radius stacked and overlapping, on the
+three sketch planes, a frame turned off every axis and one whose caps
+are upright off the axes (at least 95% must work: 191 of 200 do); bosses
 flush on plates; the same bits at 1 and 8 threads. Each test prints its
 tally (`TALLY name: ok of total`) and each refusal (`REFUSED`), seen
 with `--nocapture`. In release it runs
@@ -3115,6 +3167,18 @@ to 72 of its 96 operations and left the others as they were.
 
 ### Known gaps
 
+- **Coaxial unions on turned frames.** After per-crossing decisions for
+  edges lying on each other, what the coaxial sweep above still refuses:
+  34 `Inconsistent`, all square prisms flush on an XY frame moved off
+  the origin or turned about `z` (flat near ties: the exact predicates'
+  `Height` and the order after a tied constant, not the curved
+  primitives); 10 unions and one difference on turned or upright frames
+  failing as `Invalid` (a fold or a hull: stacks `1..2` and `−1..0` of
+  the circle in 3 arcs turned, `0..2`, a pin `−1..2`), present with
+  or without the per-crossing rule (supposed, not checked: the flush
+  rims' extras and near twins meeting rounded rim points there); and a
+  pin standing on a plate over its hole, touching only along the rim
+  (no manifold), on every frame.
 - **Tangencies leave cusps.** Where a plane or a cylinder touches a
   cylinder along a line (a boss tangent to a plate's edge, a slot's side
   on a hole), the exact result's faces meet in a corner of zero angle,

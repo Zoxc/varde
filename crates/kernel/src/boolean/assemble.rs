@@ -1261,7 +1261,7 @@ const STEPS_PER_UNIT: u64 = 16;
 /// Where along `conic` the point `x` is, if it lies on it within
 /// `within`: the nearest of samples, then Newton's method on the
 /// distance.
-fn param_on(conic: &Conic3, x: DVec3, within: f64) -> Option<f64> {
+pub(super) fn param_on(conic: &Conic3, x: DVec3, within: f64) -> Option<f64> {
     let samples = 64;
     let mut t = (0..=samples)
         .map(|i| f64::from(i) / f64::from(samples))
