@@ -4221,3 +4221,38 @@ pub(crate) fn pressed(doc: &Doc, keys: &[iced::Event], focused: bool) -> (Vec<Ui
     }
     (sent, shortcuts)
 }
+
+#[test]
+fn closing_waits_for_a_delete_behind_sketch_edits_to_be_asked_and_answered() {
+    let (mut varde, _requests) = with_open_file();
+    let doc = varde.screen.doc_mut().unwrap();
+    doc.apply(Command::Replace(Box::new(Document::example())));
+    doc.sync();
+    let example = doc.editor.document().features()[0].id;
+    let _ = varde.update(Message::Ui(Ui::Edit(Edit::NewSketch(OriginPlane::XY))));
+    let mut lane = SolveLane::new();
+    varde
+        .screen
+        .doc_mut()
+        .unwrap()
+        .solver_ready(lane.transport());
+    solve(&mut varde, &mut lane);
+    let _ = varde.update(Message::Ui(Ui::Look(Look::SelectTool(
+        varde_view::Tool::Point,
+    ))));
+    place_point(&mut varde);
+    // The example's sketch takes its extrude with it: it asks, once made.
+    let _ = varde.update(Message::Ui(Ui::Edit(Edit::RemoveFeature(example))));
+    let _ = varde.update(Message::Ui(Ui::File(File::CloseDocument)));
+    solve(&mut varde, &mut lane);
+    assert!(!is_welcome(&varde));
+    assert!(document(&varde).delete_prompt().is_some());
+    assert_eq!(document(&varde).dialog(), Some(crate::doc::Dialog::Delete));
+    // Cancelled, closing goes on, asking about the unsaved changes.
+    let _ = varde.update(Message::Ui(Ui::Look(Look::CancelDelete)));
+    let doc = document(&varde);
+    assert!(doc.editor.document().feature(example).is_some());
+    assert_eq!(doc.prompt(), Some(Leave::Close));
+    let _ = varde.update(Message::Ui(Ui::File(File::Unsaved(Unsaved::Discard))));
+    assert!(is_welcome(&varde));
+}

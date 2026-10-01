@@ -222,7 +222,11 @@ impl Varde {
                     },
                     message => message,
                 };
-                self.with_doc(|doc, _| doc.look(message));
+                // The delete prompt cancelled may free what waited for it.
+                return self.step(|doc, cx| {
+                    doc.look(message);
+                    doc.proposals_settled(cx)
+                });
             }
             Message::Ui(Ui::ToggleTheme) => self.mode = self.mode.toggled(),
             Message::PeekPanel(peeking) => self.peeking = peeking,

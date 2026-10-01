@@ -335,7 +335,13 @@ impl Doc {
     /// Takes `message`, which only changes how the document is looked at.
     /// An action in the sketch ends what the solver last refused showing.
     pub(crate) fn look(&mut self, message: Look) {
+        let asked = self.delete_asked();
         self.look_at(message);
+        // The delete prompt cancelled: what waits on the solver, held while
+        // it was up, goes on.
+        if asked && !self.delete_asked() && self.proposing() {
+            self.sync();
+        }
         self.list_selection();
         // A drag's step shows another sketch, and letting go of it the
         // sketch before.
@@ -501,6 +507,9 @@ impl Doc {
     /// Starts sending requests to `lane`, the document's solver lane:
     /// the proposals waiting, and the analysis of the sketch being edited.
     pub(crate) fn solver_ready(&mut self, lane: impl Transport<SolveRequest> + 'static) {
+        if self.solver.is_some() {
+            self.lane_replaced();
+        }
         self.solver = Some(Box::new(lane));
         self.sync();
     }

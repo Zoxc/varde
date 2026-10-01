@@ -16,12 +16,14 @@
 //! (something else was committed meanwhile) is proposed again.
 
 use std::collections::VecDeque;
+use std::mem;
 use std::sync::Arc;
 use std::time::Duration;
 
 use iced::time::Instant;
 use varde_document::{Command, Document, FeatureId, FeatureKind, Revision, Sketch};
-use varde_sketch::{Analysis, Id, Rejected, SketchEdit};
+use varde_expr::LengthUnit;
+use varde_sketch::{Analysis, Design, Id, Rejected, SketchEdit};
 use varde_solve::{Request, Response, Tag};
 
 use super::{Refusal, Waiting};
@@ -56,6 +58,10 @@ pub(crate) struct Proposals {
     analysing: Option<(Revision, FeatureId)>,
     /// The drag session the next drag is.
     next_drag: u64,
+    /// Whether a change from the queue asks the user first (the delete
+    /// prompt): nothing waiting behind it moves until they answer, see
+    /// [`Doc::send_proposal`].
+    asking: bool,
 }
 
 /// What waits for the proposal in flight, see [`Proposals::queued`].
@@ -75,12 +81,17 @@ struct Proposal {
     /// while the document is at the revision given: a drag's last
     /// solution, which the move goes on from.
     from: Option<(Revision, Arc<Sketch>)>,
+    /// The design's units when it was made, which the values in it were
+    /// read in and shown in: new units waiting before it may be set by
+    /// the time it's proposed.
+    units: LengthUnit,
 }
 
 impl Proposals {
-    /// Whether edits are waiting on the solver.
+    /// Whether edits are waiting on the solver, or changes behind them,
+    /// or the user's answer to a change from the queue.
     pub(crate) fn any(&self) -> bool {
-        self.in_flight.is_some() || !self.queued.is_empty()
+        self.in_flight.is_some() || !self.queued.is_empty() || self.asking
     }
 
     /// Whether edits have waited on the solver long enough to say so, see
@@ -92,7 +103,7 @@ impl Proposals {
     /// Whether frames are wanted to tell when edits have waited long
     /// enough to say so.
     pub(crate) fn timing(&self) -> bool {
-        self.any() && !self.slow
+        self.any() && !self.slow && !self.asking
     }
 
     /// The proposals waiting, the one in flight first.
@@ -110,11 +121,31 @@ impl Proposals {
         self.queued.push_back(Pending::Change(change));
     }
 
-    /// Stops timing the wait once nothing is waiting.
+    /// Stops timing the wait once nothing is waiting, or while the user
+    /// is asked.
     fn settle(&mut self) {
-        if !self.any() {
+        if !self.any() || self.asking {
             self.since = None;
             self.slow = false;
+        }
+    }
+
+    /// Whether a change from the queue was asking the user, which no
+    /// longer is: its answer is made in its turn.
+    pub(crate) fn take_asking(&mut self) -> bool {
+        let asking = self.asking;
+        self.answered();
+        asking
+    }
+
+    /// The user answered the change from the queue that asked: what
+    /// waits behind it goes on, timed afresh.
+    fn answered(&mut self) {
+        if self.asking {
+            self.asking = false;
+            if self.any() {
+                self.since = Some(Instant::now());
+            }
         }
     }
 }
@@ -201,6 +232,7 @@ impl Doc {
         session.refusal = None;
         session.drag = None;
         let feature = session.feature;
+        let units = self.editor.document().units();
         let proposals = &mut self.proposals;
         if !proposals.any() {
             proposals.since = Some(Instant::now());
@@ -210,6 +242,7 @@ impl Doc {
             feature,
             edit,
             from,
+            units,
         }));
         self.send_proposal();
         self.refresh_waiting();
@@ -218,8 +251,16 @@ impl Doc {
 
     /// Sends the lane the next proposal, if none is with it, on the sketch
     /// committed now, making the changes waiting before it first. One
-    /// whose sketch is gone is dropped.
+    /// whose sketch is gone is dropped. Nothing moves while the delete
+    /// prompt is up: one a change from the queue asks is answered before
+    /// what waits behind it is made, and what's made while it's up comes
+    /// after it anyway.
     pub(crate) fn send_proposal(&mut self) {
+        if self.delete_asked() {
+            self.proposals.settle();
+            return;
+        }
+        self.proposals.answered();
         while self.proposals.in_flight.is_none() {
             let Some(pending) = self.proposals.queued.pop_front() else {
                 break;
@@ -227,6 +268,10 @@ impl Doc {
             let proposal = match pending {
                 Pending::Change(change) => {
                     self.make(change);
+                    if self.delete_asked() {
+                        self.proposals.asking = true;
+                        break;
+                    }
                     continue;
                 }
                 Pending::Proposal(proposal) => proposal,
@@ -249,7 +294,7 @@ impl Doc {
                 base: revision,
                 sketch,
                 edit: proposal.edit.clone(),
-                units: self.editor.document().units(),
+                units: proposal.units,
             });
             self.proposals.in_flight = Some((revision, proposal));
         }
@@ -259,10 +304,16 @@ impl Doc {
     /// Takes back the newest of what waits, as undo does: the last change
     /// or proposal queued, or else the proposal with the lane, which is
     /// answered still, and ignored. Those before it don't depend on it.
+    /// The question a change from the queue asks counts as newest of
+    /// all, after what waits behind it: undoing it cancels it.
     pub(crate) fn drop_newest(&mut self) {
         let proposals = &mut self.proposals;
-        if proposals.queued.pop_back().is_none() && proposals.in_flight.take().is_some() {
-            proposals.dropped = proposals.dropped.saturating_add(1);
+        if proposals.queued.pop_back().is_none() {
+            if mem::take(&mut proposals.asking) {
+                self.deleting = None;
+            } else if proposals.in_flight.take().is_some() {
+                proposals.dropped = proposals.dropped.saturating_add(1);
+            }
         }
         proposals.settle();
         self.refresh_waiting();
@@ -277,7 +328,10 @@ impl Doc {
             proposals.dropped = proposals.dropped.saturating_add(1);
         }
         proposals.queued.clear();
-        proposals.settle();
+        if mem::take(&mut proposals.asking) {
+            self.deleting = None;
+        }
+        self.proposals.settle();
         self.refresh_waiting();
     }
 
@@ -342,12 +396,20 @@ impl Doc {
         let feature = proposal.feature;
         let refusal = match answer {
             Answer::Accepted(sketch, analysis) => {
-                let before = self.editor.generation();
+                let mut sketch = Arc::unwrap_or_clone(sketch);
+                // Read in other units than the design's now: its values
+                // keep what they came to, as setting the units does.
+                let design = self.editor.document().design();
+                if proposal.units != design.units {
+                    sketch.pin_units(&Design {
+                        units: proposal.units,
+                        ..design
+                    });
+                }
                 self.apply(Command::SetSketch {
                     feature,
-                    sketch: Box::new(Arc::unwrap_or_clone(sketch)),
+                    sketch: Box::new(sketch),
                 });
-                self.keep_deleting(before);
                 // Not committed (read-only since, say), the analysis isn't
                 // of what's committed.
                 let revision = self.editor.revision();
@@ -429,6 +491,19 @@ impl Doc {
         self.proposals.timing()
     }
 
+    /// Takes a new solver lane in place of one that went (its subscription
+    /// started again): the proposal and analysis it had are never answered,
+    /// so they're asked of the new one, and no answers to dropped ones
+    /// are to come.
+    pub(crate) fn lane_replaced(&mut self) {
+        let proposals = &mut self.proposals;
+        if let Some((_, proposal)) = proposals.in_flight.take() {
+            proposals.queued.push_front(Pending::Proposal(proposal));
+        }
+        proposals.dropped = 0;
+        proposals.analysing = None;
+    }
+
     /// A new drag session's id.
     pub(super) fn next_drag(&mut self) -> u64 {
         let session = self.proposals.next_drag;
@@ -461,6 +536,10 @@ impl Doc {
                 let on = match &proposal.from {
                     Some((at, from)) if *at == revision => from,
                     _ => &sketch,
+                };
+                let design = Design {
+                    units: proposal.units,
+                    ..design
                 };
                 if let Ok(next) = proposal.edit.apply(on, &design) {
                     sketch = next;

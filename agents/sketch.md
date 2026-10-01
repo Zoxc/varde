@@ -738,15 +738,28 @@ bar says why (`EditError::Sketch`).
   or body, confirming the delete prompt, toggling visibility, a new
   sketch, units, tolerance) queues behind it in `Proposals`, in order,
   and is made, on the document as it is then, once those before it are
-  answered: toggling twice toggles back, a delete asks then if more goes
-  with it than was confirmed (and its prompt stays while the edits
-  behind it commit, `Doc::keep_deleting`), and edits made after new units are read in
-  them. So what's committed, and so the undo history, keeps the order the
-  user made it in. Undo while anything waits takes back the newest
-  waiting item (`Doc::drop_newest`), the last one queued or else the
-  proposal with the lane, whose answer is ignored when it comes
-  (`dropped` counts them: the lane answers proposals in order); those
-  before it never depend on it. Redo does nothing while any wait: what
+  answered: toggling twice toggles back, and an edit of a sketch deleted
+  before it is dropped. A delete asks then if more goes with it than
+  was confirmed, and is asked in its turn: while its prompt is up
+  nothing behind it moves (`Proposals::asking`, which counts as waiting,
+  so Save, closing and quitting wait for the answer too, and
+  "Checking…" doesn't show); Delete makes it at once and Cancel or `Esc`
+  drops it, and the queue goes on, so two deletes that both ask are
+  asked one after the other. An edit's values are read in the units
+  shown when it was made, which new units waiting before it may have
+  changed by the time it's proposed: it's proposed in its own units
+  (`Proposal::units`) and its values pinned to them when committed, as
+  setting the units pins the values already there. So what's committed,
+  and so the undo history, keeps the order the user made it in. Undo
+  while anything waits takes back the newest waiting item
+  (`Doc::drop_newest`), the last one queued, else the question a delete
+  from the queue asks (cancelling it), else the proposal with the lane,
+  whose answer is ignored when it comes (`dropped` counts them: the lane
+  answers proposals in order); those before it never depend on it. A
+  solver lane started again in place of one that went gets the proposal
+  and analysis the old one had, and no answers to dropped ones are
+  awaited from it (`Doc::lane_replaced`). A document turned read-only
+  makes none of what waits. Redo does nothing while any wait: what
   waits comes after what's undone, as a new edit would, and an `Add` names
   the items before it by id; what undo dropped from the queue isn't
   redone. The other rule considered, committing other changes at once and

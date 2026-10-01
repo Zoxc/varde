@@ -738,3 +738,38 @@ fn units_chosen_while_edits_wait_are_set_once_they_are_answered() {
     assert!(!doc.proposing());
     assert_eq!(doc.editor.document().units(), LengthUnit::In);
 }
+
+#[test]
+fn values_typed_while_new_units_wait_are_read_in_the_units_shown() {
+    let (mut doc, line) = line_to_dimension();
+    pick(&mut doc, 5.0, 0.0, line[2]);
+    place(&mut doc, 5.0, 3.0);
+    enter(&mut doc, "20");
+    let id = sketch(&doc).dimensions[0].id;
+    // 30 waits; inches wait behind it; then 50, typed while millimetres
+    // still show, so millimetres.
+    doc.doc.look(Look::EditDimension { id, in_list: false });
+    doc.doc.look(Look::ValueInput("30".into()));
+    doc.doc.update(Edit::SubmitValue);
+    doc.doc.update(Edit::SetUnits(LengthUnit::In));
+    assert_eq!(doc.editor.document().units(), LengthUnit::Mm);
+    assert!(doc.proposing());
+    doc.doc.look(Look::EditDimension { id, in_list: false });
+    doc.doc.look(Look::ValueInput("50".into()));
+    doc.doc.update(Edit::SubmitValue);
+    doc.lane.answer(&mut doc.doc);
+    assert!(!doc.proposing());
+    assert_eq!(doc.editor.document().units(), LengthUnit::In);
+    assert!((length(sketch(&doc), line) - 50.0).abs() < 1e-9);
+    let value = &sketch(&doc).dimensions[0].dimension.value;
+    assert_eq!((value.text.as_str(), value.value), ("50 mm", 50.0));
+    // Undone in the order made.
+    doc.update(Edit::Undo);
+    assert_eq!(doc.editor.document().units(), LengthUnit::In);
+    assert!((length(sketch(&doc), line) - 30.0).abs() < 1e-9);
+    doc.update(Edit::Undo);
+    assert_eq!(doc.editor.document().units(), LengthUnit::Mm);
+    assert!((length(sketch(&doc), line) - 30.0).abs() < 1e-9);
+    doc.update(Edit::Undo);
+    assert!((length(sketch(&doc), line) - 20.0).abs() < 1e-9);
+}

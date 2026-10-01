@@ -594,3 +594,42 @@ fn undo_takes_back_a_change_waiting_before_the_edit_it_waits_for() {
     assert!(t.editor.document().feature(feature).unwrap().visible);
     assert!(!t.editor.can_redo());
 }
+
+#[test]
+fn undo_and_redo_storms_while_edits_wait_keep_the_order() {
+    let (mut t, feature, _) = sketching();
+    t.look(Look::SelectTool(Tool::Point));
+    click_waiting(&mut t.doc, 1.0, 1.0);
+    t.lane.answer(&mut t.doc);
+    let one = t.editor.revision();
+    click_waiting(&mut t.doc, 2.0, 2.0);
+    t.doc.update(Edit::ToggleFeatureVisible(feature));
+    click_waiting(&mut t.doc, 3.0, 3.0);
+    t.doc.update(Edit::ToggleFeatureVisible(feature));
+    // Redo brings nothing back, however often.
+    for _ in 0..5 {
+        t.doc.update(Edit::Redo);
+    }
+    assert_eq!(shown(&t).points.len(), 3);
+    // Five undos: the four waiting newest first, then the point committed.
+    for _ in 0..5 {
+        t.doc.update(Edit::Undo);
+    }
+    assert!(!t.proposing());
+    assert!(sketch(&t).points.is_empty());
+    assert_ne!(t.editor.revision(), one);
+    // The answer to the point dropped while with the lane is ignored, and
+    // edits go on: redone, the first point; a new one after it.
+    t.doc.update(Edit::Redo);
+    assert_eq!(t.editor.revision(), one);
+    click_waiting(&mut t.doc, 4.0, 4.0);
+    for _ in 0..3 {
+        t.doc.update(Edit::Redo);
+    }
+    t.lane.answer(&mut t.doc);
+    assert!(!t.proposing());
+    let points: Vec<_> = sketch(&t).points.iter().map(|point| point.at).collect();
+    assert_eq!(points, [at(1.0, 1.0), at(4.0, 4.0)]);
+    assert!(t.editor.document().feature(feature).unwrap().visible);
+    assert!(!t.editor.can_redo());
+}

@@ -1528,7 +1528,8 @@ fn a_delete_waiting_behind_sketch_edits_asks_once_it_is_made() {
     doc.update(Edit::RemoveFeature(sketch));
     assert!(doc.delete_prompt().is_none());
     lane.answer(&mut doc);
-    assert!(!doc.proposing());
+    // Waiting for the answer still, which closing or saving waits for.
+    assert!(doc.proposing());
     let circles = |doc: &Doc| {
         drawn(doc, sketch)
             .curves
@@ -1540,6 +1541,7 @@ fn a_delete_waiting_behind_sketch_edits_asks_once_it_is_made() {
     let prompt = doc.delete_prompt().unwrap();
     assert_eq!(prompt.features.len(), 2);
     doc.update(Edit::ConfirmDelete);
+    assert!(!doc.proposing());
     assert!(doc.editor.document().features().is_empty());
     // Undone in order: the deletion, then the edit.
     doc.update(Edit::Undo);
@@ -1584,38 +1586,283 @@ fn a_delete_between_sketch_edits() -> (Doc, crate::tests::SolveLane, FeatureId, 
 }
 
 #[test]
-fn confirming_the_delete_prompt_while_edits_wait_deletes_after_them() {
+fn a_delete_from_the_queue_confirmed_is_made_in_its_turn() {
     let (mut doc, mut lane, sketch, a) = a_delete_between_sketch_edits();
     // The circle's deletion is answered: the delete is made, and asks,
-    // while the line's still waits.
-    lane.answer_first(&mut doc);
+    // and the line's waits for the answer.
+    lane.answer(&mut doc);
     assert_eq!(drawn(&doc, sketch).curves.len(), 4);
     assert!(doc.proposing());
+    assert!(lane.waiting().is_empty());
     assert_eq!(doc.delete_prompt().unwrap().features.len(), 2);
-    // Confirmed, it waits behind the line's.
+    // Confirmed, it's made at once; the line's deletion, made after it,
+    // has no sketch left to go to, as after a delete that asks nothing.
     doc.update(Edit::ConfirmDelete);
     assert!(doc.delete_prompt().is_none());
-    assert!(doc.editor.document().feature(sketch).is_some());
+    assert!(doc.editor.document().features().is_empty());
     lane.answer(&mut doc);
     assert!(!doc.proposing());
-    assert!(doc.editor.document().features().is_empty());
-    // Undone in order: the deletion, the line, the circle.
+    // Undone in order: the deletion, the circle.
     doc.update(Edit::Undo);
     assert!(doc.editor.document().feature(a).is_some());
-    assert_eq!(drawn(&doc, sketch).curves.len(), 3);
-    doc.update(Edit::Undo);
     assert_eq!(drawn(&doc, sketch).curves.len(), 4);
     doc.update(Edit::Undo);
     assert_eq!(drawn(&doc, sketch).curves.len(), 5);
 }
 
 #[test]
-fn the_delete_prompt_stays_while_the_edits_behind_it_commit() {
+fn the_edits_behind_a_delete_from_the_queue_wait_for_its_answer() {
     let (mut doc, mut lane, sketch, _) = a_delete_between_sketch_edits();
+    lane.answer(&mut doc);
+    assert_eq!(drawn(&doc, sketch).curves.len(), 4);
+    assert_eq!(doc.delete_prompt().unwrap().features.len(), 2);
+    // Cancelled, the line's deletion goes on.
+    doc.look(Look::CancelDelete);
+    assert!(doc.proposing());
     lane.answer(&mut doc);
     assert!(!doc.proposing());
     assert_eq!(drawn(&doc, sketch).curves.len(), 3);
-    assert_eq!(doc.delete_prompt().unwrap().features.len(), 2);
+    assert!(doc.delete_prompt().is_none());
+}
+
+/// The example, a hole sketched and cut through its body, and a point
+/// added to the hole's sketch waiting on the solver, with the hole's
+/// deletion and then the example sketch's asked for behind it: the lane,
+/// the hole's sketch and the example's.
+fn two_deletes_waiting() -> (Doc, crate::tests::SolveLane, FeatureId, FeatureId) {
+    let (mut doc, hole, requests) = example_and_a_hole();
+    start_a_cut(&mut doc, hole);
+    extrude(&mut doc, ExtrudeLook::Extent(ExtentKind::ThroughAll));
+    doc.update(Edit::CommitExtrude);
+    answer(&mut doc, &requests);
+    assert_eq!(doc.editor.document().features().len(), 4);
+    let example = doc.editor.document().features()[0].id;
+    let mut lane = crate::tests::SolveLane::connect(&mut doc);
+    doc.look(Look::EditFeature(hole));
+    lane.answer(&mut doc);
+    doc.look(Look::SelectTool(varde_view::Tool::Point));
+    point_at(&mut doc, 30.0, 30.0);
+    doc.look(Look::FinishSketch);
+    assert!(doc.proposing());
+    doc.update(Edit::RemoveFeature(hole));
+    doc.update(Edit::RemoveFeature(example));
+    assert!(doc.delete_prompt().is_none());
+    assert_eq!(doc.editor.document().features().len(), 4);
+    (doc, lane, hole, example)
+}
+
+/// Clicks the Point tool at `x`, `y` on nothing.
+fn point_at(doc: &mut Doc, x: f64, y: f64) {
+    doc.update(Edit::ToolClick(varde_view::ToolClick {
+        at: glam::DVec2::new(x, y),
+        target: None,
+        inference: None,
+        hit: None,
+        pixel: 0.1,
+        double: false,
+        reference: false,
+    }));
+}
+
+/// The points of the sketch feature `sketch`, if it's there.
+fn points(doc: &Doc, sketch: FeatureId) -> Option<usize> {
+    match &doc.editor.document().feature(sketch)?.kind {
+        FeatureKind::Sketch { sketch, .. } => Some(sketch.points.len()),
+        FeatureKind::Extrude(_) => None,
+    }
+}
+
+#[test]
+fn two_deletes_waiting_that_ask_are_asked_in_turn() {
+    let (mut doc, mut lane, hole, example) = two_deletes_waiting();
+    lane.answer(&mut doc);
+    assert_eq!(points(&doc, hole), Some(2));
+    // The hole's first, the other waiting for the answer.
+    let prompt = doc.delete_prompt().unwrap();
+    assert_eq!(prompt.name, "Sketch 2");
+    assert_eq!(prompt.features.len(), 2);
+    assert!(doc.proposing());
     doc.update(Edit::ConfirmDelete);
+    assert!(doc.editor.document().feature(hole).is_none());
+    // Then the example's.
+    let prompt = doc.delete_prompt().unwrap();
+    assert_eq!(
+        prompt.name,
+        doc.editor.document().feature(example).unwrap().name
+    );
+    assert_eq!(prompt.features.len(), 2);
+    assert!(doc.proposing());
+    doc.update(Edit::ConfirmDelete);
+    assert!(!doc.proposing());
     assert!(doc.editor.document().features().is_empty());
+    // Undone in order.
+    doc.update(Edit::Undo);
+    assert_eq!(doc.editor.document().features().len(), 2);
+    doc.update(Edit::Undo);
+    assert_eq!(doc.editor.document().features().len(), 4);
+    assert_eq!(points(&doc, hole), Some(2));
+    doc.update(Edit::Undo);
+    assert_eq!(points(&doc, hole), Some(1));
+}
+
+#[test]
+fn a_delete_waiting_cancelled_asks_the_next() {
+    let (mut doc, mut lane, hole, example) = two_deletes_waiting();
+    lane.answer(&mut doc);
+    assert!(doc.delete_prompt().is_some());
+    doc.look(Look::CancelDelete);
+    assert!(doc.editor.document().feature(hole).is_some());
+    let prompt = doc.delete_prompt().unwrap();
+    assert_eq!(
+        prompt.name,
+        doc.editor.document().feature(example).unwrap().name
+    );
+    // Escape cancels it as well.
+    doc.look(Look::Escape);
+    assert!(doc.delete_prompt().is_none());
+    assert!(!doc.proposing());
+    assert_eq!(doc.editor.document().features().len(), 4);
+}
+
+#[test]
+fn nothing_waiting_moves_while_a_delete_from_the_queue_asks() {
+    let (mut doc, mut lane, hole, _) = two_deletes_waiting();
+    // Another point, behind the deletes.
+    doc.look(Look::EditFeature(hole));
+    lane.answer(&mut doc);
+    doc.look(Look::SelectTool(varde_view::Tool::Point));
+    point_at(&mut doc, 40.0, 40.0);
+    lane.answer(&mut doc);
+    assert!(doc.delete_prompt().is_some());
+    assert_eq!(points(&doc, hole), Some(2), "the second point waits");
+    assert!(lane.waiting().is_empty());
+    // Not "Checking…" while the user is asked.
+    doc.tick(std::time::Instant::now() + CHECKING * 2);
+    assert!(!doc.proposals.slow());
+    // Undo takes back the newest first: the point, the example's
+    // deletion, then the question.
+    doc.update(Edit::Undo);
+    doc.update(Edit::Undo);
+    assert!(doc.delete_prompt().is_some());
+    assert!(doc.proposing());
+    doc.update(Edit::Undo);
+    assert!(doc.delete_prompt().is_none());
+    assert!(!doc.proposing());
+    assert_eq!(doc.editor.document().features().len(), 4);
+    assert_eq!(points(&doc, hole), Some(2));
+    doc.update(Edit::Undo);
+    assert_eq!(points(&doc, hole), Some(1));
+}
+
+#[test]
+fn closing_waits_for_a_delete_waiting_to_be_asked_and_answered() {
+    let (mut doc, mut lane, hole, example) = two_deletes_waiting();
+    let mut files = crate::Files::new(None);
+    assert!(matches!(
+        doc.leave(&mut files, crate::doc::Leave::Close),
+        crate::Next::Stay
+    ));
+    lane.answer(&mut doc);
+    assert!(matches!(
+        doc.proposals_settled(&mut files),
+        crate::Next::Stay
+    ));
+    assert!(doc.delete_prompt().is_some());
+    doc.update(Edit::ConfirmDelete);
+    assert!(matches!(
+        doc.proposals_settled(&mut files),
+        crate::Next::Stay
+    ));
+    assert!(doc.editor.document().feature(hole).is_none());
+    assert!(doc.delete_prompt().is_some());
+    doc.look(Look::CancelDelete);
+    assert!(doc.editor.document().feature(example).is_some());
+    // Then it asks about the unsaved changes, the deletion among them.
+    let _ = doc.proposals_settled(&mut files);
+    assert_eq!(doc.prompt(), Some(crate::doc::Leave::Close));
+}
+
+#[test]
+fn a_restarted_solver_lane_gets_the_edit_the_old_one_had() {
+    let (mut doc, lane, hole, _) = two_deletes_waiting();
+    // The lane goes before answering, and another starts in its place.
+    assert_eq!(lane.waiting().len(), 1);
+    drop(lane);
+    let mut again = crate::tests::SolveLane::connect(&mut doc);
+    again.answer(&mut doc);
+    assert_eq!(points(&doc, hole), Some(2));
+    assert!(doc.delete_prompt().is_some());
+}
+
+#[test]
+fn read_only_while_a_delete_from_the_queue_asks_deletes_nothing() {
+    let (mut doc, mut lane, _, _) = two_deletes_waiting();
+    lane.answer(&mut doc);
+    assert!(doc.delete_prompt().is_some());
+    let before = doc.editor.document().clone();
+    doc.read_only = Some("test".to_owned());
+    doc.sync();
+    // Confirmed, it can't be made, nor can the one behind it, which asks
+    // nothing.
+    doc.update(Edit::ConfirmDelete);
+    assert!(doc.delete_prompt().is_none());
+    assert!(!doc.proposing());
+    assert_eq!(*doc.editor.document(), before);
+}
+
+#[test]
+fn read_only_before_the_answer_makes_none_of_what_waits() {
+    let (mut doc, mut lane, hole, _) = two_deletes_waiting();
+    let before = doc.editor.document().clone();
+    doc.read_only = Some("test".to_owned());
+    doc.sync();
+    lane.answer(&mut doc);
+    assert!(!doc.proposing());
+    assert!(doc.delete_prompt().is_none());
+    assert_eq!(*doc.editor.document(), before);
+    assert_eq!(points(&doc, hole), Some(1));
+}
+
+#[test]
+fn restoring_while_a_delete_from_the_queue_asks_drops_the_question() {
+    let (mut doc, mut lane, _, _) = two_deletes_waiting();
+    lane.answer(&mut doc);
+    assert!(doc.delete_prompt().is_some());
+    let (recovered, _, _) = plate_extruded("30");
+    let recovered = recovered.editor.document().clone();
+    // As restoring recovered changes does.
+    doc.drop_proposals();
+    doc.apply(Command::Replace(Box::new(recovered.clone())));
+    doc.sync();
+    assert!(doc.delete_prompt().is_none());
+    assert!(doc.deleting.is_none());
+    assert!(!doc.proposing());
+    lane.answer(&mut doc);
+    assert_eq!(*doc.editor.document(), recovered);
+}
+
+#[test]
+fn an_edit_made_while_a_delete_prompt_is_up_waits_for_its_answer() {
+    let (mut doc, a, _) = plate_extruded("10");
+    let sketch = doc.editor.document().features()[0].id;
+    let mut lane = crate::tests::SolveLane::connect(&mut doc);
+    doc.look(Look::EditFeature(sketch));
+    lane.answer(&mut doc);
+    doc.update(Edit::RemoveFeature(sketch));
+    assert!(doc.delete_prompt().is_some());
+    // Behind the prompt, if anything gets there.
+    doc.look(Look::SelectTool(varde_view::Tool::Point));
+    point_at(&mut doc, 30.0, 30.0);
+    assert!(doc.proposing());
+    assert!(lane.waiting().is_empty());
+    doc.look(Look::CancelDelete);
+    lane.answer(&mut doc);
+    assert!(!doc.proposing());
+    assert!(doc.editor.document().feature(a).is_some());
+    assert!(
+        drawn(&doc, sketch)
+            .points
+            .iter()
+            .any(|p| p.at == glam::DVec2::new(30.0, 30.0))
+    );
 }

@@ -127,7 +127,9 @@ does nothing), but can be saved as a copy, which is editable if its lock
 could be taken. The new file joins the recent files.
 
 **Closing and quitting.** Closing the document, or the window, waits for
-sketch edits waiting on the solver first, then with unsaved changes asks
+sketch edits waiting on the solver first, and the changes waiting behind
+them (a delete among them that asks is asked, and waited for), then with
+unsaved changes asks
 whether to save them first, not to, or to stay. With a save in
 flight, it waits for the answer ("Saving…"), and stays if a save failed
 that no newer one supersedes, unless the changes were to be dropped anyway. Closing the window is

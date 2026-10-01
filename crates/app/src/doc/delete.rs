@@ -31,19 +31,33 @@ impl Doc {
 
     /// Removes what the delete prompt lists, and closes it: Delete. The
     /// command removes exactly that, as the document hasn't changed since
-    /// (the prompt goes if it does, see [`Doc::prune_deleting`]). While
-    /// edits wait on the solver it waits behind them, and asks again if
-    /// more would go by then.
+    /// (the prompt goes if it does, see [`Doc::prune_deleting`]). Asked by
+    /// a delete that waited behind edits on the solver, it's made at once,
+    /// in its turn, before what waits behind it. Otherwise, while edits
+    /// wait on the solver, it waits behind them, and asks again if more
+    /// would go by then.
     pub(crate) fn confirm_delete(&mut self) {
         let Some(deleting) = self.deleting.take() else {
             return;
         };
         if deleting.generation == self.editor.generation() {
-            self.change(Change::Remove {
+            let change = Change::Remove {
                 target: deleting.target,
                 confirmed: Some(deleting.removal),
-            });
+            };
+            if self.proposals.take_asking() {
+                self.make(change);
+            } else {
+                self.change(change);
+            }
         }
+    }
+
+    /// Whether the user is being asked about deleting.
+    pub(crate) fn delete_asked(&self) -> bool {
+        self.deleting
+            .as_ref()
+            .is_some_and(|deleting| deleting.generation == self.editor.generation())
     }
 
     /// Removes `target` now, as [`Doc::remove`] says, without asking if
@@ -66,9 +80,8 @@ impl Doc {
     }
 
     /// Drops the delete prompt if the document changed under it
-    /// (recovery, undo), so it never deletes a set it didn't show; a
-    /// sketch edit committing keeps it if the same goes, see
-    /// [`Doc::keep_deleting`].
+    /// (recovery, undo), so it never deletes a set it didn't show. No
+    /// sketch edit commits while it's up, see [`Doc::send_proposal`].
     pub(crate) fn prune_deleting(&mut self) {
         let generation = self.editor.generation();
         if self
@@ -77,22 +90,6 @@ impl Doc {
             .is_some_and(|deleting| deleting.generation != generation)
         {
             self.deleting = None;
-        }
-    }
-
-    /// Keeps the delete prompt shown at generation `before` across a
-    /// sketch edit committing, if the same still goes: a delete waiting
-    /// behind edits on the solver (see [`Doc::change`]) asks once it's
-    /// made, while those behind it still wait, and their committing
-    /// shouldn't take the question away.
-    pub(crate) fn keep_deleting(&mut self, before: Generation) {
-        let generation = self.editor.generation();
-        let document = self.editor.document();
-        if let Some(deleting) = self.deleting.as_mut()
-            && deleting.generation == before
-            && document.removal(deleting.target) == deleting.removal
-        {
-            deleting.generation = generation;
         }
     }
 
