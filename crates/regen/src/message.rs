@@ -58,9 +58,10 @@ fn profile(error: ProfileError) -> String {
         ProfileError::TooFine(..) => {
             "its outline has detail too small for this tolerance: try a finer tolerance".to_owned()
         }
-        ProfileError::Triangulation => {
-            "its end faces couldn't be made: parts are too thin at this tolerance".to_owned()
-        }
+        // Separation leaves every vertex clear of the chords it doesn't
+        // end, so spade or the builder refusing isn't something a finer
+        // tolerance is known to mend: none is named.
+        ProfileError::Triangulation => "its end faces couldn't be made".to_owned(),
         ProfileError::Empty
         | ProfileError::Short(_)
         | ProfileError::Segment(..)

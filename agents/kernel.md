@@ -2683,7 +2683,10 @@ no area; for `TooFine`, "its outline has detail too small for this
 tolerance: try a finer tolerance"). A message names the tolerance only
 where a finer one is the remedy: `TooComplex` is the budget or a limit,
 which a coarser tolerance doesn't change, so none suggests a coarser
-one. A boolean's error names the body and what was being done
+one; `Triangulation` ("its end faces couldn't be made") and regen's own
+`ProfileError::Fit` ("a spline couldn't be fitted: it stops or turns
+back on itself") name none, as no finer one is known to mend them. A
+boolean's error names the body and what was being done
 ("joining it to Body 2 leaves no clean solid: they may meet only along
 an edge, at a point, or on tangent faces; if so, move it to overlap
 more or to clear it" for `Invalid`, which is what edge-touching unions

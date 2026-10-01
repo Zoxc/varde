@@ -54,7 +54,9 @@ impl fmt::Display for ProfileError {
                 f,
                 "the region needs more than {MAX_PROFILE_SEGMENTS} segments"
             ),
-            ProfileError::Fit => f.write_str("a spline couldn't be fitted within the tolerance"),
+            ProfileError::Fit => {
+                f.write_str("a spline couldn't be fitted: it stops or turns back on itself")
+            }
             ProfileError::Patch(e) => write!(f, "a curve is out of bounds: {e}"),
         }
     }

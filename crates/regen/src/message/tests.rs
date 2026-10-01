@@ -36,14 +36,15 @@ fn boolean_failures_name_the_body_and_what_to_try() {
 
 #[test]
 fn extrude_failures_speak_of_the_regions() {
-    assert!(extrude(KernelError::TooComplex).contains("too complex to extrude"));
     let touching = KernelError::Profile(ProfileError::Touching([(0, 1), (1, 0)]));
     assert_eq!(
         extrude(touching),
         "its outline touches or crosses itself, or comes too close to itself"
     );
-    let text = extrude(KernelError::Invalid(CheckError::Counts));
-    assert!(text.contains("too thin or too close"), "{text}");
+    assert_eq!(
+        extrude(KernelError::Profile(ProfileError::Triangulation)),
+        "its end faces couldn't be made"
+    );
 }
 
 /// Every way an extrude can fail, kernel errors and profile ones.
@@ -73,13 +74,32 @@ fn extrude_errors() -> Vec<KernelError> {
 }
 
 #[test]
-fn extrude_failures_never_suggest_a_coarser_tolerance() {
+fn extrude_failures_name_the_tolerance_only_to_suggest_a_finer_one() {
     // A coarser tolerance mends none of them: the budget and the limits
-    // don't depend on it, and detail too small for it gets worse.
+    // don't depend on it, and detail too small for it gets worse. Where a
+    // finer one isn't known to help either, the tolerance isn't named.
+    let mut naming = 0;
     for error in extrude_errors() {
         let text = extrude(error);
         assert!(!text.contains("coarser"), "{text}");
         assert!(text.starts_with(char::is_lowercase), "{text}");
+        if text.contains("tolerance") {
+            assert!(text.ends_with(": try a finer tolerance"), "{text}");
+            naming += 1;
+        }
+    }
+    // `Invalid` and `TooFine`.
+    assert_eq!(naming, 2);
+    // Nor do regen's own profile errors, shown as they are.
+    let profile = [
+        crate::ProfileError::Missing,
+        crate::ProfileError::TooManySegments,
+        crate::ProfileError::Fit,
+        crate::ProfileError::Patch(varde_kernel::patch::PatchError::Mismatch),
+    ];
+    for error in profile {
+        let text = error.to_string();
+        assert!(!text.contains("tolerance"), "{text}");
     }
 }
 
