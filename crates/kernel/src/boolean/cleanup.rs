@@ -27,7 +27,10 @@
 //! if the new triangles' corners along curves stay open. A collapse
 //! merges the two sides of each triangle it takes out, keeping a cut's
 //! curve where they differ, and moves the curves of the edges it moves
-//! onto the vertex kept.
+//! onto the vertex kept. The exception is a curve between two triangles
+//! in one plane, where flush caps meet along a rim: [`seams`] makes it
+//! its chord, flips it away or triangulates its region again, and merges
+//! the plane faces it joined.
 
 use std::collections::BTreeMap;
 
@@ -41,6 +44,11 @@ use crate::patch::Patch;
 use crate::solid::patch_volume;
 use crate::trig;
 use crate::{KernelError, Tolerance};
+
+mod seams;
+
+#[cfg(test)]
+pub(super) use seams::DISSOLVED;
 
 /// How many rounds of collapses and flips at most.
 const ROUNDS: usize = 64;
@@ -77,6 +85,9 @@ struct Cleaner<'a> {
     recurved: Vec<u32>,
     /// Each face's plane, if it is one: its unit normal and offset.
     planes: Vec<Option<(DVec3, f64)>>,
+    /// Pairs of plane faces (the lower first) a seam joined, to be merged:
+    /// see [`seams`].
+    joined: Vec<(u32, u32)>,
     /// Edges no longer than this are short, triangles no higher are flat.
     small: f64,
     /// Triangles no higher than this are thin: flipped when the triangle
@@ -124,6 +135,7 @@ pub(super) fn clean(
         planar,
         recurved: Vec::new(),
         planes,
+        joined: Vec::new(),
         small,
         thin,
     };
@@ -147,8 +159,10 @@ pub(super) fn clean(
                 changed = true;
             }
         }
+        // Curves between two triangles in one plane: straightened, else
+        // flipped away.
         for t in 0..c.soup.tris.len() as u32 {
-            if c.alive[t as usize] && c.unbend(t) {
+            if c.alive[t as usize] && (c.straighten(t) | c.unbend(t)) {
                 changed = true;
             }
         }
@@ -156,6 +170,10 @@ pub(super) fn clean(
             break;
         }
     }
+    // What is left of them, triangulated again by regions, and the plane
+    // faces they joined made one.
+    c.dissolve(work)?;
+    c.merge_joined(faces);
     // Then slivers on plane faces, flipped towards Delaunay.
     for _ in 0..ROUNDS {
         work.spend(c.soup.tris.len())?;
@@ -666,6 +684,10 @@ impl Cleaner<'_> {
             return false;
         };
         let k = (c.min(d), c.max(d));
+        // No triangle has the edge `c`–`d`: a record of it is one left from
+        // an edge gone. The new side is the neighbour's inner curve, or
+        // straight.
+        self.soup.curves.remove(&k);
         if let Some(edge) = inner {
             self.soup.curves.insert(k, edge);
         }
@@ -796,27 +818,21 @@ impl Cleaner<'_> {
     /// them, and no curve between two patches in one plane is left (no
     /// plane through it has either patch off it, so the hull rule can't
     /// hold there, and repair split along it down to flat pieces: 100 000
-    /// patches for a plate). Both new triangles go on the lower of the
-    /// two faces, which lie in one plane: the faces merge there.
+    /// patches for a plate). Tried where making the curve its chord
+    /// ([`Self::straighten`]) leaves a triangle that isn't proper. Both new
+    /// triangles go on the lower of the two faces where both are planes
+    /// (and the faces are merged after the rounds), on `t`'s where the one
+    /// across isn't (a wall's remnant at the rim, flat in the plane).
     fn unbend(&mut self, t: u32) -> bool {
         let tri = self.soup.tris[t as usize];
-        let Some(plane) = self.planes[self.soup.faces[t as usize] as usize] else {
+        let Some(plane) = self.own_plane(t) else {
             return false;
         };
         for i in 0..3 {
             let (u, v, a) = (tri[i], tri[(i + 1) % 3], tri[(i + 2) % 3]);
-            if !self.curved(u, v) {
-                continue;
-            }
-            let Some(s) = self.across(t, u, v) else {
+            let Some(s) = self.seam(t, u, v, plane) else {
                 continue;
             };
-            let same = self.planes[self.soup.faces[s as usize] as usize].is_some_and(|(n, d)| {
-                n.dot(plane.0) > 1.0 - 1e-12 && (d - plane.1).abs() <= self.small
-            });
-            if !same {
-                continue;
-            }
             let b = *self.soup.tris[s as usize]
                 .iter()
                 .find(|&&w| w != u && w != v)
@@ -824,6 +840,9 @@ impl Cleaner<'_> {
             if a == b || self.neighbours(a).contains(&b) {
                 continue;
             }
+            // No triangle has the edge `a`–`b`: a record of it is one left
+            // from an edge gone, and the new side is straight.
+            self.soup.curves.remove(&(a.min(b), a.max(b)));
             let (n1, n2) = ([a, u, b], [a, b, v]);
             let up = plane.0;
             let proper = |n: [u32; 3]| {
@@ -833,7 +852,13 @@ impl Cleaner<'_> {
             if !(proper(n1) && proper(n2) && self.open(n1) && self.open(n2)) {
                 continue;
             }
-            let face = self.soup.faces[t as usize].min(self.soup.faces[s as usize]);
+            self.rejoin(t, s);
+            let (ft, fs) = (self.soup.faces[t as usize], self.soup.faces[s as usize]);
+            let face = if self.planes[fs as usize].is_some() {
+                ft.min(fs)
+            } else {
+                ft
+            };
             self.swap(t, s, [u, v], a, b);
             self.soup.faces[t as usize] = face;
             self.soup.faces[s as usize] = face;

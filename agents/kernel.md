@@ -1622,8 +1622,10 @@ elsewhere (see "Cutting curved faces").
 | `boolean/assemble/merge.rs` | merging refinement's pieces that came through whole |
 | `boolean/triangulate.rs` | a face's kept loops in its parameter domain into triangles, curved sides' corners, Steiner points |
 | `boolean/cleanup.rs` | collapsing and flipping the degenerate triangles flush operands leave |
+| `boolean/cleanup/seams.rs` | curved edges between two triangles in one plane: straightened, regions triangulated again, the plane faces they joined merged |
 | `boolean/tests.rs` | boxes in every flush, edge-on and vertex-on configuration, tori, determinism |
 | `boolean/curved_tests.rs` | cylinders and boxes (exact), crossing cylinders, a free surface, a saddle, extrudes, chains, merging, random bars, walls over arcs with level ends |
+| `boolean/curved_tests/flush_seams.rs` | flush unions with curved rims in either order: bosses in and on plates, over holes and edges, overlapping, a flange at a shaft's foot, a slot, at millimetre scale and on a turned frame |
 | `boolean/seeded_tests.rs` | the seeded random suite: related pairs, parts built in chains of twenty, turned solids, near tangencies, pins and coaxial cylinders, flush bosses |
 
 ### The primitives
@@ -2944,15 +2946,64 @@ bisected there by blossoming, `inner_curve`), so the two new triangles
 are exactly its pieces, on its surface. Collinear triangles left on
 curved faces failed the fold check.
 
-A curved edge between two triangles in one plane (two plane faces of
-one plane meeting along a curve: a pin filling its hole, united with the
-plate) is flipped away when the two make a convex quadrilateral whose
-curved corners stay open (`unbend`): the new triangles cover the same
-region whatever the curve between them, and both go on the lower of the
-two faces, which merge there. No plane through a curve between two
-patches in one plane has either patch off it, so the hull rule can't
-hold there, and repair split along it down to flat pieces: 114 000
-patches for the filled plate, 36 now.
+**Seams** (`cleanup/seams.rs`): a curved edge between two triangles in
+one plane. Where two operands' caps are flush and face the same way,
+the perturbation keeps one cap whole and cuts the other along the
+first's rim, whose sliver of wall then collapses away; what is left is
+a curve between two patches in one plane (both on plane faces, or one
+on a remnant of the wall at the rim, of zero height in the plane), or a
+cluster of zero-size triangles there. No plane through such a curve
+has either patch off it, so the hull rule can't hold across it, and
+repair split along it down to flat pieces: a boss united with the plate
+it stands in over one span, the boss first, gave 28 912 patches, 115 024
+at millimetre scale (a 60 × 40 × 10 plate, an r8 boss), a flange at a
+shaft's foot 28 846, two overlapping bosses of one height 9 000 to
+47 000 whichever went first; past the budget, the next boolean on such a
+body failed as `TooComplex`. "In the plane" is geometric: the corners
+and the control points of the curved sides within an eighth of the
+resolution of the triangle's own face's plane (`in_plane`), whatever the
+neighbour's tag. In the rounds, for each triangle on a plane face in
+its plane, each seam is first made its chord (`straighten`): both
+triangles lie in the plane, so their union stays exactly what it was
+(the lens between the curve and the chord moves from one to the other),
+taken only if both stay proper (higher than the short length, facing
+along the plane's normal, curved corners open, the patch passing the
+fold check). Failing that, it is flipped away when the two make a
+convex quadrilateral whose curved corners stay open (`unbend`): the new
+triangles cover the same region whatever the curve between them. A
+neighbour on a face that isn't a plane (the wall's remnant) moves onto
+the triangle's face, whose plane it lies in, rather than keep claiming a
+surface it has left; a plane face across is recorded as joined. After
+the rounds, each region of triangles in one plane that still holds a
+seam (grown across seams, edges no longer than the short length and any
+side of a triangle no higher than it) is triangulated again from its
+boundary loops with the faces' ear clipping (`dissolve`), its inner
+vertices dropped and the boundary as it was: only if the boundary
+passes no vertex twice and has no side about zero long, and the new
+triangles add no point, split no side, repeat no edge outside the
+region and are all proper, their corner triangles' areas adding up to
+the old ones' (any triangulation of the same loops does: with every
+triangle positive, that is covering it once). The new triangles go on
+the seed's face. Each region's triangulation may take up to 2²⁰ steps
+(16 a unit of work) before it is left as it is. Last, the plane faces
+seams joined are merged, each set onto its lowest id (the first
+operand's faces come first, so the body's name stays), a face moving
+only if every triangle of it lies in that one's plane and its plane
+faces the same way; copies claiming no surface go with it and take its
+name. Faces of one plane meeting along straight edges, or along no seam
+the clean-up mended, stay apart. Drawn lines go where face names
+differ, so without the merge a straightened rim would show on the flat
+top as a polygon of chords. The pin filling its hole, united with the
+plate, now 36 patches as before; the boss first 52, at millimetre scale
+52, the flange 64, the overlapping bosses 178 to 180, a boss half over
+a plate's hole 202 and 238, one over its edge 56, a slot of a cylinder
+and a box tangent to it 84 (it folded before), each with its top one
+face. Of 160 random flush unions of bosses, plates and holes (half at
+millimetre scale), 112 had over 20 times their operands' patches (up to
+132 712) and 23 failed (most past the budget); now 2 (1 166 patches)
+and none, intersections and differences as they were. A cluster of four vertices at one place at a slot's arc joint, on
+a turned frame, is the one region triangulated again in these runs (the
+union folded before).
 
 Last, **slivers on plane faces** go (`delaunay`, after the rounds above,
 in rounds of its own): a straight side between two triangles of one
@@ -3353,7 +3404,15 @@ after hole (in rows, or anywhere on a grid); pins in holes of their
 own circle and cylinders of one radius stacked and overlapping, on the
 three sketch planes, a frame turned off every axis and one whose caps
 are upright off the axes (at least 97% must work: 195 of 200 do, the pin standing on the plate over its hole refused on each); bosses
-flush on plates; the same bits at 1 and 8 threads. Each test prints its
+flush on plates, the union also with the boss first; flush caps with
+curved rims from one sketch plane (plates, drilled or not, or circles,
+rounded squares and slots, against such an outline over the same span,
+sharing one cap's plane, standing through or flush with the top; at
+millimetre and unit scale, on sketch planes and turned frames; all four
+operations both ways round), where a union over 20 times its operands'
+patches counts as failed (59 of the 60 unions work, 210 of the 240
+operations; before the seams were mended 38 and 189); the same bits at
+1 and 8 threads. Each test prints its
 tally (`TALLY name: ok of total`) and each refusal (`REFUSED`), seen
 with `--nocapture`. In release it runs
 in about 25 s (37 s one test after another, 83 s on one thread); debug
@@ -3434,14 +3493,18 @@ to 72 of its 96 operations and left the others as they were.
   touching along a line aren't manifolds and fail as `Invalid`, as boxes
   touching along an edge do. Most of the operations the seeded suite's
   generators refuse are these.
-- **Coplanar faces meeting along a curve** (a flush boss the first
-  operand of a union with the plate it stands in, both over one span)
-  keep curved edges between patches in one plane, which the hull rule
-  can't pass; the clean-up flips them away where the two triangles make
-  a convex quadrilateral (a pin filling its hole, united: 36 patches),
-  and where they don't, repair splits along the curve down to flat
-  pieces (right, about 30 000 patches). With the plate as the first
-  operand the union is the plate.
+- **Coplanar faces meeting along a curve** (flush caps with curved
+  rims, see "Seams") are mended by the clean-up but for regions whose
+  boundary passes a vertex twice or has a side about zero long (a
+  cluster on the region's edge), and regions whose new triangles
+  wouldn't all be proper: those keep their seams, and repair splits
+  along them down to flat pieces as before (right, heavy). None was
+  seen in unions; two differences of a boss less a drilled plate have
+  such a cluster where opposite-facing caps meet and fail as
+  `Invalid(Fold)`, as before. Faces of one plane that
+  no mended seam joined keep their own names (a box first against a
+  flush plate, a boss crossing a plate's edge with the plate first), and
+  the line between them is drawn.
 - **Curved cuts near arcs fail as invalid now and then**: a planar cap's
   triangle whose arc bulges out of it after the rounds, or a flat sliver
   along a cut next to a curve that no flip may take (the boolean's own
@@ -3752,8 +3815,8 @@ and the later ones still run.
   back. A cut or intersect replaces each target by
   `kernel::boolean(body, tool, op)` with `Difference` or
   `Intersection`, and a join touching one body replaces it by its
-  `Union` with the tool: the body always first (a flush boss put first in a
-  union came out right but with some 30,000 patches). Every target's
+  `Union` with the tool: the body always first (so the body's face names
+  win where flush faces of one plane merge). Every target's
   result is worked out before any body changes, so one failing changes
   none. Bodies not touched or excluded keep their solids.
 - A **join touching two or more bodies merges them**: the first made
@@ -4922,3 +4985,30 @@ parameter, or a split outside the patch bounds),
   crossing shows still counts, found by the search (it used to run the
   pair decisions for that). The search is `pub(crate)` with a visitor,
   for the minimum distances to bound.
+- **Seams: straightened first, regions as the fallback, faces merged by
+  the seams that joined them.** The plan for flush unions blowing up was
+  to triangulate again each region of triangles in one plane linked
+  across seams. Measured, nearly every seam needs no more than making
+  it its chord (both triangles in one plane, the lens moves from one to
+  the other), so that runs in the clean-up's rounds, before the flip
+  `unbend` tries, and the regions run once after as the fallback, for
+  clusters of zero-size triangles at a rim (grown across short edges and
+  flat triangles too, not across seams alone). "In one plane" is tested
+  on the neighbour's geometry, not its tag: a seam's other triangle is
+  often a remnant of the wall at the rim, tagged with the cylinder,
+  which then moves onto the plane face. A straightened triangle must
+  also pass the fold check (not in the plan; cheap, and only seams it
+  can't straighten are left to repair). Merging the plane faces is done
+  here, as a union of the faces the mended seams joined, onto the
+  lowest id; a general pass merging any adjacent faces of one surface
+  after a boolean (coaxial walls, plane faces meeting along straight
+  edges) isn't built yet and would take this over. The tests are in
+  `boolean/curved_tests/flush_seams.rs` (a new module beside
+  `curved_tests.rs`, which is long), with patch bounds from the measured
+  counts with slack rather than twice the plate-first count; the seeded
+  `flush_unions_either_order` holds unions to 95% and all four
+  operations to 85% (what fails there are intersections and
+  differences keeping a cap corner where a straight side runs on into
+  an arc at a tangent, as before). The clean-up's flips no longer keep
+  a record left from an edge no triangle has where a new straight side
+  runs (`flip`, `unbend`; `delaunay` already dropped it).

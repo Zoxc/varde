@@ -875,7 +875,7 @@ fn flush_bosses_on_plates() {
                 let boss = extruded(vec![circle(c, r, 0, false)], frame, f, t, 2, &tol).unwrap();
                 let both = PI * r * r * (t.min(0.25) - f.max(-0.25)).max(0.0);
                 let name = format!("boss r {r} at {c}, {f}..{t}");
-                four(
+                let out = four(
                     &plate,
                     &boss,
                     Some(both),
@@ -884,10 +884,194 @@ fn flush_bosses_on_plates() {
                     &mut tally,
                     &name,
                 );
+                light(&plate, &boss, &out[0], &mut tally, &name);
+                // The boss first, as a join onto a body that is the boss.
+                let want = plate.volume() + boss.volume() - both;
+                let first =
+                    union_checked(&boss, &plate, want, &tol, &mut samples, &mut tally, &name);
+                light(&boss, &plate, &first, &mut tally, &name);
             }
         }
     }
     tally.at_least(0.9, "bosses");
+}
+
+/// The patches a union may have, for operands of `inputs` patches all
+/// told, before it counts as failed: flush caps meeting along curves
+/// once left seams that repair split down to flat pieces, tens of
+/// thousands of patches.
+fn heavy(inputs: usize) -> usize {
+    20 * inputs
+}
+
+/// Counts `union` of `a` and `b`, if it worked, as failed when it is
+/// heavier than [`heavy`] allows.
+fn light(a: &Solid, b: &Solid, union: &Option<Solid>, tally: &mut Tally, name: &str) {
+    let inputs = a.mesh().tris().len() + b.mesh().tris().len();
+    if let Some(union) = union
+        && union.mesh().tris().len() > heavy(inputs)
+    {
+        println!("HEAVY {name}: {} patches", union.mesh().tris().len());
+        tally.ok -= 1;
+        tally.failed += 1;
+    }
+}
+
+/// `a ∪ b`, right (of volume `want` within the fit tolerance, its points
+/// on the right sides, its shells facing out) or failed.
+fn union_checked(
+    a: &Solid,
+    b: &Solid,
+    want: f64,
+    tol: &Tolerance,
+    rng: &mut Rng,
+    tally: &mut Tally,
+    name: &str,
+) -> Option<Solid> {
+    match boolean(a, b, Op::Union, tol, &Budget::DEFAULT) {
+        Ok(solid) => {
+            let wrong = wrong_points(a, b, Op::Union, &solid, tol, rng);
+            assert_eq!(
+                wrong, 0,
+                "{name}, the other way: {wrong} points on the wrong side"
+            );
+            if let Err(why) = shells_face_out(solid.mesh(), tol) {
+                panic!("{name}, the other way: {why}");
+            }
+            let within = tol.fit() * (a.area() + b.area()) / 5.0 + 1e-9;
+            let got = solid.volume();
+            assert!(
+                (got - want).abs() <= within,
+                "{name}, the other way: {got} vs {want}"
+            );
+            tally.ok += 1;
+            Some(solid)
+        }
+        Err(why) => {
+            println!("REFUSED {name}, the other way: {why:?}");
+            tally.failed += 1;
+            None
+        }
+    }
+}
+
+/// A random closed outline with curved sides round `c`, of about size
+/// `k`: a circle, a rounded square or a slot, its numbers on a grid of
+/// `q`.
+fn curved_outline(rng: &mut Rng, c: DVec2, k: f64, q: f64, curve: u64) -> Loop {
+    let s = |x: f64| ((x / q).round() * q).max(q);
+    match rng.next_u64() % 3 {
+        0 => circle(c, s(k * rng.range(0.3, 1.3)), curve, false),
+        1 => {
+            let r = s(k * rng.range(0.2, 0.7));
+            let w = s(k * rng.range(0.5, 2.0)) + r;
+            rounded(c - DVec2::splat(w), c + DVec2::splat(w), r, curve)
+        }
+        _ => slot(
+            c,
+            s(k * rng.range(0.2, 1.2)),
+            s(k * rng.range(0.3, 0.8)),
+            curve,
+        ),
+    }
+}
+
+/// Two solids from one sketch plane whose caps are flush with curved
+/// rims: a plate (drilled or not) or a curved outline, and a curved
+/// outline over the same span, sharing only its bottom's plane, standing
+/// through it or flush with its top; at millimetre or unit scale, on a
+/// sketch plane or a turned frame.
+fn flush_pair(rng: &mut Rng, tol: &Tolerance) -> Option<(Solid, Solid, String)> {
+    let mm = rng.next_u64().is_multiple_of(2);
+    let k = if mm { 10.0 } else { 0.1 };
+    let q = k / 20.0;
+    let s = |x: f64| (x / q).round() * q;
+    let frame = match rng.next_u64() % 3 {
+        0 => Frame::XY,
+        1 => Frame {
+            origin: DVec3::new(0.5, 0.25, -0.25) * k,
+            x: DVec3::Z,
+            y: DVec3::X,
+        },
+        _ => {
+            let turn = DQuat::from_rotation_x(rng.range(-1.0, 1.0))
+                * DQuat::from_rotation_y(rng.range(-1.0, 1.0));
+            Frame {
+                origin: rng.point(k),
+                x: turn * DVec3::X,
+                y: turn * DVec3::Y,
+            }
+        }
+    };
+    let h = if mm { 10.0 } else { 0.5 };
+    let at = |rng: &mut Rng| DVec2::new(s(rng.range(-3.0, 3.0) * k), s(rng.range(-3.0, 3.0) * k));
+    let w = 3.0 * k;
+    let (kind, first) = match rng.next_u64() % 3 {
+        0 => ("plate", vec![rect(DVec2::splat(-w), DVec2::splat(w), 0)]),
+        1 => {
+            let c = DVec2::new(s(rng.range(-1.0, 1.0) * k), s(rng.range(-1.0, 1.0) * k));
+            let r = s(rng.range(0.3, 0.8) * k).max(q);
+            let hole = circle(c, r, 10, true);
+            (
+                "drilled",
+                vec![rect(DVec2::splat(-w), DVec2::splat(w), 0), hole],
+            )
+        }
+        _ => {
+            let c = at(rng);
+            ("outlines", vec![curved_outline(rng, c, k, q, 0)])
+        }
+    };
+    let c = at(rng);
+    let second = curved_outline(rng, c, k, q, 20);
+    let (from, to) = match rng.next_u64() % 4 {
+        0 => (0.0, h),
+        1 => (0.0, 2.0 * h),
+        2 => (-h, h),
+        _ => (0.5 * h, h),
+    };
+    let a = extruded(first, &frame, 0.0, h, 1, tol)?;
+    let b = extruded(vec![second], &frame, from, to, 2, tol)?;
+    let scale = if mm { "mm" } else { "unit" };
+    Some((a, b, format!("{kind} {scale} {from}..{to}")))
+}
+
+#[test]
+fn flush_unions_either_order() {
+    // Flush caps with curved rims, from one sketch plane: the first
+    // operand's cap kept whole, the other's cut along its rim, left a
+    // curve between two patches in one plane, which repair split down to
+    // flat pieces (1 800 to 81 000 patches here), whichever went first.
+    // All four operations both ways round; a union heavier than `heavy`
+    // counts as failed. Before the seams were mended 189 of 240 worked,
+    // 38 of the 60 unions; now 210, and 59 of the unions. What fails is
+    // intersections and differences that keep a cap corner where a
+    // straight side runs on into an arc at a tangent (a degenerate
+    // corner, `Invalid(Fold)`), and one union whose cap piece has its
+    // corner inside the other's rim (`Invalid(VertexNeighbours)`).
+    let tol = Tolerance::DEFAULT;
+    let mut tally = Tally::default();
+    let mut unions = Tally::default();
+    let mut rng = Rng::new(93);
+    let mut samples = Rng::new(92);
+    for case in 0..cases(30, 2) {
+        let Some((a, b, what)) = flush_pair(&mut rng, &tol) else {
+            continue;
+        };
+        for (x, y, way) in [(&a, &b, "a, b"), (&b, &a, "b, a")] {
+            let name = format!("case {case}, {what}, {way}");
+            let out = four(x, y, None, &tol, &mut samples, &mut tally, &name);
+            let before = tally.failed;
+            light(x, y, &out[0], &mut tally, &name);
+            if out[0].is_some() && tally.failed == before {
+                unions.ok += 1;
+            } else {
+                unions.failed += 1;
+            }
+        }
+    }
+    unions.at_least(0.95, "flush unions");
+    tally.at_least(0.85, "flush operations");
 }
 
 #[test]

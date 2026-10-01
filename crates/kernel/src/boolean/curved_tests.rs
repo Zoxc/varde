@@ -2767,3 +2767,5 @@ fn nicks_by_a_crossing_cylinder_keep_their_checked_fallbacks() {
     // (`Invalid`), their chains kept.
     assert!(ok >= 4, "{ok}");
 }
+
+mod flush_seams;
