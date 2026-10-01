@@ -17,7 +17,7 @@ use crate::{Budget, Display};
 
 const TOL: Tolerance = Tolerance::DEFAULT;
 
-fn profile(loops: Vec<Loop>) -> Profile {
+pub(super) fn profile(loops: Vec<Loop>) -> Profile {
     Profile { loops }
 }
 
@@ -614,7 +614,7 @@ fn random_loop(rng: &mut Rng, center: DVec2, scale: f64, curve: u64) -> Loop {
 
 /// 30 random outlines with up to five random holes each, at every
 /// tolerance, with a height to extrude them to.
-fn random_plates() -> Vec<(Profile, Tolerance, f64)> {
+pub(super) fn random_plates() -> Vec<(Profile, Tolerance, f64)> {
     let mut rng = Rng::new(5);
     (0..30)
         .map(|case| {
@@ -673,7 +673,7 @@ fn crowded_boxes_run_out_of_budget_not_memory() {
 /// `p` with the segments an extrude at `tol` takes as straight, those
 /// whose control point is within the resolution of their chord, made
 /// straight: the profile whose area the solid has.
-fn straightened(p: &Profile, tol: &Tolerance) -> Profile {
+pub(super) fn straightened(p: &Profile, tol: &Tolerance) -> Profile {
     let straight = |s: &Segment| {
         let c = &s.conic;
         let chord = c.p1 - c.p0;
@@ -696,7 +696,7 @@ fn straightened(p: &Profile, tol: &Tolerance) -> Profile {
 
 /// The circle of radius `r` round the origin cut at random angles into
 /// arcs of `min` to 1.5 radians and what is left, of curves `0..`.
-fn cut_circle(rng: &mut Rng, r: f64, min: f64) -> Loop {
+pub(super) fn cut_circle(rng: &mut Rng, r: f64, min: f64) -> Loop {
     let mut angles = vec![0.0];
     loop {
         let next = angles.last().unwrap() + rng.log_range(min, 1.5);
@@ -720,12 +720,19 @@ fn cut_circle(rng: &mut Rng, r: f64, min: f64) -> Loop {
 /// 120 circles of random radii cut at random angles, at three
 /// tolerances, with their radii.
 fn uneven_circles() -> Vec<(Profile, f64, Tolerance)> {
-    let mut rng = Rng::new(3);
+    uneven_circles_from(3, [Tolerance::MIN_FIT, 1e-3, 1e-2])
+}
+
+/// 120 circles of radii 0.1 to 1 000 cut at random angles into arcs of
+/// at least `2e-3` radians, from the generator seeded with `seed`, case
+/// `i` at the tolerance `fits[i % 3]`, with their radii.
+pub(super) fn uneven_circles_from(seed: u64, fits: [f64; 3]) -> Vec<(Profile, f64, Tolerance)> {
+    let mut rng = Rng::new(seed);
     (0..120)
         .map(|case| {
             let r = rng.log_range(0.1, 1e3);
             let p = profile(vec![cut_circle(&mut rng, r, 2e-3)]);
-            let tol = Tolerance::new([Tolerance::MIN_FIT, 1e-3, 1e-2][case % 3]).unwrap();
+            let tol = Tolerance::new(fits[case % 3]).unwrap();
             (p, r, tol)
         })
         .collect()
@@ -835,7 +842,7 @@ fn resumes_as_from_the_start(p: &Profile, tol: &Tolerance) -> Option<usize> {
 
 /// A `w` × `h` plate with `cols` × `rows` round holes 10 apart, radii 4
 /// and 4.9 by turns, the first centred at (5, 5).
-fn plate_with_holes(cols: usize, rows: usize, w: f64, h: f64) -> Profile {
+pub(super) fn plate_with_holes(cols: usize, rows: usize, w: f64, h: f64) -> Profile {
     let mut loops = vec![rect(DVec2::ZERO, DVec2::new(w, h), 0)];
     for i in 0..cols {
         for j in 0..rows {

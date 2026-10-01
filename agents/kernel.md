@@ -2109,6 +2109,102 @@ rather than collecting two billion pairs; two circles of 16 384 sides
 triangulated in about a second unoptimized (over a minute in the loops'
 order).
 
+Cap quality (`extrude/quality_tests.rs`): profiles whose plain caps
+hold triangles too thin or too crowded for the mesh's rules, written
+ahead of the caps' quality refinement and ignored until it lands, each
+with what it fails with today (release, `--ignored`):
+
+- fine regular polygons of radius 10 (1 024, 2 048 and 4 096 sides at
+  fit 0.1, 4 096 at 1e-2, 8 192 at 1e-3): all five `Invalid`;
+- fine outlines at fit 0.1: a fine ellipse, an outline of uneven radius
+  and sides, and fine straight pieces next to an exact quarter arc are
+  `Invalid`; a plate with a fine hole and a fine ring pass;
+- a 65 536-gon of radius 100 at fit 0.1: `TooComplex`, but only after
+  about 16 s (load average ~50 on 7 cores), where a time bound wants it
+  quick;
+- fans (a quarter disc whose arc is 4 096 or 16 384 straight pieces)
+  and strips (two 8 192-gons, radii 100 and 50): `TooComplex`, repair's
+  box pairs; the 16 384 fan at a budget of `2^18` stays `TooComplex`
+  quickly (not ignored);
+- regular 64-, 256- and 1 024-gons whose vertices are 1, 2 or 3
+  resolutions off their neighbours' chord, at fits 1e-3 and 0.1: all 18
+  `Invalid`, at 3 resolutions too;
+- circles cut unevenly at fit 0.1 (seed 3) whose shortest chord is 32
+  resolutions or more: 3 of them `Invalid`; at fit 1e-2 over seeds 1 000
+  to 1 039 (1 600 cases): 32 `Invalid` in 18 seeds, and seed 1003
+  cases 2 and 104, 4000 case 23 and 517 case 70 (fit 1e-3) as their own
+  test (seed 1020 case 62 is skipped: thin-triangle circumcentres alone
+  left it, a moved-in point a few dozen resolutions from its vertex);
+- a 10 × 10 plate with a hole of twelve conics of weights up to 13.7:
+  `Invalid` at fits 1e-2 down to 1e-5;
+- corner cuts (boxes 0.3 to 2 across, flush or 0.1 in, at each corner)
+  on plates of `k × k` holes 10 apart, extruded: 15, 12 and 20 of 32
+  refused for `k = 10` at radii 2, 3 and 4, all 32 for `k = 14` at
+  radius 2; and the next hole drilled in line with one to three
+  extruded ones: 2 of 36. The plain caps fan out of the plate's corners
+  to the holes' lowest and leftmost points, on common tangent lines,
+  and a cut along such a fan's long sides fails; split into 1 mm pieces,
+  the outlines give no fans and none of these fails;
+- in regen, steep wavy spline edges (100 fit points, slope 1, widths 1,
+  5 and 20, seeds 0 to 9, fits 1e-2 and 0.1, and 30 points over 1 mm at
+  1e-2): 9 of the 10 at width 5 and 1e-2 (`TooFine` and `Invalid`)
+  and the 30 points (`TooFine`).
+
+Pinned, as they are today: the 64-hole plate's 4 012 patches, the
+four-hole plate's 92, a 100 × 1 rib's 12 (both its triangles have a
+0.6° corner, so refining every narrow triangle changes it), the
+16 384-gon's 65 532 (release), and the patches of `circles_cut_unevenly`'s
+circles (18 872) and `random_plates_with_holes`' plates (1 150) all
+told.
+
+Measured ahead of the refinement, on a scratch prototype (release, load
+average 43 to 49 on 7 cores, so times are rough): angle-bounded
+refinement on the first try, run in a round with nothing else to mend
+(rebuilding the triangulation each round, at most 64 such rounds),
+circumcentres of triangles whose narrowest angle is under the bound,
+sorted by circumradius and kept half a circumradius apart, a chord whose
+diametral circle one falls in halved (straight ones too), exempt where
+the narrowest angle is at a loop corner under 60°, the circumradius is
+under `MIN_SPLIT` resolutions or the shortest side is a chord under
+twice that. Patches, and refusals:
+
+| | today | 5° | 10° | 20° |
+|---|---|---|---|---|
+| 64-hole 80 × 80 plate | 4 012 | 4 532 | 4 836 | 5 516 |
+| 400-hole 210 × 210 plate | 22 620 | 23 688 | 24 688 | 26 884 |
+| 400 holes of radius 2 | 17 596 | 19 916 | 21 324 | 30 876 |
+| four-hole plate | 92 | 116 | 140 | 280 |
+| 100 × 1 rib | 12 | 100 | 196 | 388 |
+| corner cuts refused, `k = 10`, r 2/3/4 | 15/12/20 of 32 | 0 | 0 | 0 |
+| corner cuts refused, `k = 14`, r 2/3/4 | 32 each | 0 | 0 | 0 |
+| holes drilled in line, refused | 2 of 36 | 0 | 1 | 0 |
+| 1 024-gon, r 10, fit 0.1 | `Invalid` | 5 576 | 7 404 | 11 492 |
+| 4 096-gon, fit 0.1 or 1e-2 | `Invalid` | 24 088 | 30 936 | 47 988 |
+| 8 192-gon, fit 1e-3 | `Invalid` | 47 992 | 62 008 | 95 152 |
+| fan of 4 096 | `TooComplex` | 22 716 | 28 824 | 40 984 |
+| fan of 16 384 | `TooComplex` 2 s | 79 s | 118 s | 140 s |
+| two 8 192-gons | `TooComplex` | 96 500 | 124 460 | `TooComplex` |
+| cut circles, 1 600 at fit 1e-2, refused | 32 | 0 | 0 | 0 |
+
+Every `Ok` had its volume within 2e-13; seed 3's cut circles and the
+random plates with holes came out as today. So: 5° and 10° mend all of
+the above but the 16 384 fan, which still runs out, only much later, as
+each round rebuilds the triangulation (refining crowded caps needs
+insertion into the kept one); 20° costs too much (the rings run out,
+the radius-2 plate nearly doubles). One new refusal at 10° only: the
+third hole drilled on the 60 plate at radius 1, pitch 3 ("patch 137 may
+fold"), passing at 0°, 5° and 20°, coincidences moved. The cut circles
+need no thin-triangle step once short chords are exempt. The rib and
+the four-hole plate change at every bound (the rib's 0.6° corners have
+no small input angle to exempt them), so the pins above become measured
+counts. With the resolution as the margin of the way-in test (from the
+triangle's centroid to the circumcentre, across the hulls) an ear's own centroid
+lies within the resolution of its chords at coarse fits, so the
+prototype tests it at margin 0; and on a regular polygon every ear has
+the same circumcentre, so charging the conflict search's hits took the
+whole budget at 2 048 sides (one unit a candidate here): it needs
+deduplication or incremental insertion.
+
 Known gaps:
 
 - **Short curved segments at coarse tolerances** fail although the

@@ -319,3 +319,6 @@ fn conic_cylinder(conic: &Conic2, frame: &Frame, height: f64) -> Surface {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod quality_tests;

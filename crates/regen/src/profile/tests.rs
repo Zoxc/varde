@@ -446,6 +446,54 @@ fn dense_wavy_edges_extrude_at_coarse_tolerances() {
     assert!(refused.is_empty(), "{refused:#?}");
 }
 
+#[test]
+#[ignore = "refused until the kernel refines its caps for quality"]
+fn steep_dense_wavy_edges_extrude_at_coarse_tolerances() {
+    // Wiggles as steep as they are long, 100 fit points, at fits of 1e-2
+    // and 0.1: real detail near the tolerance, which the fitter keeps as
+    // fine chains of nearly straight conics and lines. The kernel's plain
+    // caps of such chains hold triangles thinner than the resolution
+    // (`Invalid`) or ask to halve a concave piece at a narrow corner
+    // until it is too small (`TooFine`). Also 30 points over 1 mm at
+    // 1e-2. Today 9 of the 10 at width 5 and fit 1e-2 are refused, and
+    // the 30 points; a debug build runs the first three seeds.
+    let mut cases = Vec::new();
+    let seeds = if cfg!(debug_assertions) { 3 } else { 10 };
+    for width in [1.0, 5.0, 20.0] {
+        for seed in 0..seeds {
+            for fit in [1e-2, 0.1] {
+                cases.push((100, width, seed, fit));
+            }
+        }
+    }
+    cases.push((30, 1.0, 0, 1e-2));
+    let mut refused = Vec::new();
+    for (n, width, seed, fit) in cases {
+        let spacing = width / (n - 1) as f64;
+        let mut sketch = Sketch::default();
+        wavy_plate(&mut sketch, n, width, spacing, seed);
+        let (profile, _) = picked_within(&sketch, |_| true, fit);
+        let tolerance = varde_kernel::Tolerance::new(fit).unwrap();
+        let (frame, budget) = (varde_kernel::Frame::XY, varde_kernel::Budget::DEFAULT);
+        match varde_kernel::extrude(&profile, &frame, 0.0, 10.0, 1, &tolerance, &budget) {
+            Ok(solid) => {
+                let exact = profile.area() * 10.0;
+                let volume = solid.volume();
+                assert!(
+                    (volume - exact).abs() < 1e-9 * exact,
+                    "{volume}, not {exact}"
+                );
+            }
+            Err(e) => refused.push(format!("n {n} width {width} seed {seed} fit {fit}: {e:?}")),
+        }
+    }
+    assert!(
+        refused.is_empty(),
+        "{} refused: {refused:#?}",
+        refused.len()
+    );
+}
+
 /// A closed spline through `n` points on a sliver `2·height` across and
 /// 2 long, bent by `bend` (as a fraction of the height) into an S;
 /// self-crossing, two lobes, if `bend` is 1.
