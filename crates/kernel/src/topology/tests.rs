@@ -970,3 +970,60 @@ fn edges_turning_by_a_degree_or_more_aren_t_tangent() {
     let topology = solid.topology();
     assert_eq!(topology.tangent_chains(&solid), [0, 1]);
 }
+
+/// Rims through arcs that aren't quarters, a slot's ends of two quarters
+/// each, and a hole's: each rim one tangent chain, at either tolerance,
+/// with the corners where lines meet square left apart.
+#[test]
+fn rims_through_part_arcs_and_slot_ends_are_tangent_chains() {
+    use crate::profile::tests::arc;
+    use crate::profile::{Loop, Segment};
+    let p = glam::DVec2::new;
+    let line = |a, b, curve| Segment::line(a, b, curve).unwrap();
+    // Along x, a 60° arc of radius 5 up to the left, a line on along it,
+    // and square corners back: lines 0, 2, 3, 4, arc 1.
+    let (s, c) = (libm::sin(60f64.to_radians()), libm::cos(60f64.to_radians()));
+    let bend = p(10.0 + 5.0 * s, 5.0 - 5.0 * c);
+    let end = bend + p(c, s) * 6.0;
+    let bent = Loop {
+        segments: vec![
+            line(p(0.0, 0.0), p(10.0, 0.0), 0),
+            arc(p(10.0, 5.0), p(10.0, 0.0), bend, 1),
+            line(bend, end, 2),
+            line(end, p(0.0, end.y), 3),
+            line(p(0.0, end.y), p(0.0, 0.0), 4),
+        ],
+    };
+    // A slot hole through it, clockwise: ends of two quarter arcs each.
+    let slot = Loop {
+        segments: vec![
+            arc(p(3.0, 4.0), p(3.0, 3.0), p(2.0, 4.0), 6),
+            arc(p(3.0, 4.0), p(2.0, 4.0), p(3.0, 5.0), 6),
+            line(p(3.0, 5.0), p(7.0, 5.0), 7),
+            arc(p(7.0, 4.0), p(7.0, 5.0), p(8.0, 4.0), 8),
+            arc(p(7.0, 4.0), p(8.0, 4.0), p(7.0, 3.0), 8),
+            line(p(7.0, 3.0), p(3.0, 3.0), 9),
+        ],
+    };
+    for tol in [TOL, Tolerance::new(1e-2).unwrap()] {
+        let solid = prism(vec![bent.clone(), slot.clone()], &tol);
+        let sets = tangent_sets(&solid);
+        let rim = |cap: PartKey, curves: &[u64]| {
+            let mut set: Vec<[FaceKey; 2]> = (curves.iter())
+                .map(|&curve| {
+                    let (a, b) = (key(1, cap), key(1, side(curve)));
+                    [a.min(b), a.max(b)]
+                })
+                .collect();
+            set.sort();
+            set
+        };
+        for cap in [TOP, BOTTOM] {
+            assert!(sets.contains(&rim(cap, &[0, 1, 2])), "{tol:?}: {sets:?}");
+            for curve in [3, 4] {
+                assert!(sets.contains(&rim(cap, &[curve])), "{tol:?}: {sets:?}");
+            }
+            assert!(sets.contains(&rim(cap, &[6, 7, 8, 9])), "{tol:?}: {sets:?}");
+        }
+    }
+}

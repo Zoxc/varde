@@ -416,14 +416,23 @@ are private and `Picking::from_parts` checks parts from elsewhere.
 the CPU, against the mesh drawn and its tables; no GPU id buffer (WebGL2
 readback stalls or is a frame late). The feed keeps the answer's
 `Picking` with its mesh and counts the models shown (`MeshFeed::model`,
-up whenever the mesh's or the tables' `Arc` changes; natively an
-unchanged scene comes back as the same `Arc`s and keeps its index). A
+up whenever the mesh or the tables change; natively an unchanged scene
+comes back as the same `Arc`s, from the web worker as copies, which are
+compared, and either way it keeps its index). A
 `PickIndex` (the mesh, the tables, the model's count, a bounding volume
 hierarchy over the triangles and one over the edges on a chain, each
 face's triangles and each chain's edges) is built the first time it's
-asked for (`MeshFeed::pick_index`, a `OnceCell`), sequentially (median
-splits along the longest side, ties by index, so the same mesh gives
-the same tree), and dropped with the model. Tables that don't go with
+asked for (`MeshFeed::pick_index`, a `OnceCell`), sequentially (each
+node split along the longest side of its items' middles at that side's
+middle, in one pass, or at the median where that leaves a quarter or
+less on one side, ties by index, so the same mesh gives the same tree),
+and dropped with the model. It's built on the UI thread: a plate with
+400 holes (217,000 triangles, 33,000 edges) takes about 50 ms optimized
+on a loaded machine (twice that with median splits throughout), once
+per model, on the first hover or click after it shows; a pick on it
+under a millisecond (the ignored test `measure_the_index_of_a_plate_with_400_holes`,
+run with `--config 'profile.dev.opt-level=3'`: `varde-view`'s tests don't
+build without debug assertions). Not capped. Tables that don't go with
 the mesh pick nothing. `PickIndex::pick(camera, size, at)` casts the
 cursor's ray (`Projector::ray`; in an orthographic view from far enough
 back that the whole mesh is ahead, in perspective from the near plane):
@@ -449,10 +458,12 @@ faces and edges, or only one of them, from the selection's mode). It
 picks on each cursor move while the camera isn't dragged, and on each
 frame drawn (`RedrawRequested`) whose camera, model or cursor position
 differs from those it last picked with (`Interaction::hover_seen`), so the
-hover follows an orbit, a pan, a zoom, the camera's animation or a new
-model under a cursor that stays; only when the target differs from the
-app's does it send `Look::Hover(pick)`, and `Hover(None)` once the cursor
-leaves the model or the viewport. The cursor is a pointer while
+hover follows a zoom, the camera's animation or a new model under a
+cursor that stays; only when the target differs from the app's does it
+send `Look::Hover(pick)`, and `Hover(None)` once the cursor leaves the
+model or the viewport, or the camera is dragged (past a click's slop:
+from the first frame drawn while it is; the hover is worked out again
+once the drag ends). The cursor is a pointer while
 something is hovered. A pick of a model no longer shown (its count
 differs) is dropped, and the hover is dropped once the model changes or
 the cursor stops picking (`Doc::prune_picks`, after answers, edits and
@@ -494,9 +505,19 @@ or the chains between faces so named either way round; one is taken
 wherever the point is, of several the nearest to the point (measured to
 the drawn triangles or segments; a later one counts only where it comes
 nearer by more than a billionth of the mesh's size, so ties go to the
-lowest; the first where the point isn't finite). What isn't found is
-dropped (a hidden body's faces, a face an edit removed) and stays
-dropped; bodies the document no longer holds go too. While a sketch is
+lowest; the first where the point isn't finite). A face or edge of a
+body a join merged into another is looked for in that one (the merges
+the model shown found, `MeshFeed::merged_bodies`), so it stays selected
+through the join, and the status bar names the body it's in now. What
+isn't found (a hidden body's faces, a face an edit removed), and a body
+the document no longer holds or a join merged away, stops being
+selected but is kept, in its place, and looked for in each later model
+until the selection changes (a click, a body's row, `Esc`, `Space`), so
+undoing the edit brings it back. A merged body's row in Objects selects
+the body holding it, which draws it. Replacing the document whole
+(restoring recovered changes, or undoing or redoing that) forgets what's
+selected and hovered, and the cursor doesn't pick until a model of the
+new document shows: the ids they name may be others' now. While a sketch is
 edited or an extrude set up, and while an extrude's preview still shows
 after it ends (until the answer without the draft comes,
 `MeshFeed::shows_draft`), the cursor doesn't pick and the selection isn't

@@ -29,6 +29,29 @@ fn on_top(doc: &Doc) -> varde_view::Pick {
     pick
 }
 
+/// Makes the example's plate 12 mm thick: another mesh of the same
+/// faces. (A coarser tolerance draws this plate alike.)
+fn thicken(doc: &mut Doc) {
+    let document = doc.editor.document();
+    let feature = document.features()[1].id;
+    let Some(varde_document::FeatureKind::Extrude(extrude)) =
+        document.feature(feature).map(|f| f.kind.clone())
+    else {
+        panic!("the example's second feature is its extrude");
+    };
+    let ask = varde_document::Extent::ask(&document.design());
+    let distance = varde_expr::Value::new("12", &ask).unwrap();
+    let extrude = varde_document::Extrude {
+        extent: varde_document::Extent::OneSide(distance),
+        ..extrude
+    };
+    doc.apply(varde_document::Command::SetExtrude {
+        feature,
+        extrude: Box::new(extrude),
+    });
+    doc.sync();
+}
+
 #[test]
 fn hovering_changes_only_the_highlight() {
     let (mut doc, requests) = example();
@@ -69,9 +92,8 @@ fn a_new_model_drops_the_hover_and_picks_of_the_old_one() {
     let (mut doc, requests) = example();
     let pick = on_top(&doc);
     doc.look(Look::Hover(Some(pick)));
-    // A coarser tolerance: another mesh.
-    let tolerance = varde_document::Tolerance::new(1e-2).unwrap();
-    doc.update(varde_view::Edit::SetTolerance(tolerance));
+    // A thicker plate: another mesh.
+    thicken(&mut doc);
     // Not until the new model shows.
     assert_eq!(doc.pick.hover(), Some(pick));
     answer(&mut doc, &requests);
@@ -357,8 +379,7 @@ fn a_selection_outlives_regenerations_and_drops_what_s_gone() {
     });
     let item = *doc.pick.selection.items().next().unwrap();
     // Another model of the same faces: found again by name.
-    let tolerance = varde_document::Tolerance::new(1e-2).unwrap();
-    doc.update(varde_view::Edit::SetTolerance(tolerance));
+    thicken(&mut doc);
     answer(&mut doc, &requests);
     assert_ne!(doc.feed.model(), pick.model);
     assert_eq!(doc.pick.selection.model(), Some(doc.feed.model()));
@@ -384,10 +405,13 @@ fn a_selection_outlives_regenerations_and_drops_what_s_gone() {
     answer(&mut doc, &requests);
     let items: Vec<_> = doc.pick.selection.items().copied().collect();
     assert_eq!(items, [varde_view::Selected::Body(pick.body)]);
-    // Undone, the face isn't found again: it was dropped.
+    // Undone, the face is found again: it was looked for in each model
+    // since, as the selection didn't change.
     doc.update(varde_view::Edit::Undo);
     answer(&mut doc, &requests);
-    assert_eq!(doc.pick.selection.targets().count(), 0);
+    let items: Vec<_> = doc.pick.selection.items().copied().collect();
+    assert_eq!(items, [item, varde_view::Selected::Body(pick.body)]);
+    assert_eq!(doc.pick.selection.targets().count(), 1);
 }
 
 /// Once the extrude being set up ends, its draft's preview shows until
@@ -451,4 +475,241 @@ fn a_draft_still_shown_after_the_extrude_doesnt_drop_the_selection() {
     assert!(walls(&doc));
     assert_eq!(items(&doc), selected);
     assert!(doc.highlight().is_some());
+}
+
+/// The face picked over the plate's top in `doc`, clicked alone.
+fn select_top(doc: &mut Doc) -> varde_view::Selected {
+    let pick = on_top(doc);
+    doc.look(Look::ClickModel {
+        pick: Some(pick),
+        add: false,
+        double: false,
+    });
+    *doc.pick.selection.items().next().unwrap()
+}
+
+#[test]
+fn what_an_edit_removes_comes_back_with_its_undo_until_the_selection_changes() {
+    use varde_view::Edit;
+
+    let (mut doc, requests) = example();
+    let top = select_top(&mut doc);
+    let extrude = doc.editor.document().features()[1].id;
+    doc.update(Edit::RemoveFeature(extrude));
+    answer(&mut doc, &requests);
+    assert!(doc.pick.selection.is_empty());
+    assert_eq!(doc.highlight(), None);
+    assert!(!status_bar(&doc).iter().any(|text| text == "Face"));
+    doc.update(Edit::Undo);
+    answer(&mut doc, &requests);
+    assert_eq!(
+        doc.pick.selection.items().copied().collect::<Vec<_>>(),
+        [top]
+    );
+    assert_eq!(doc.pick.selection.targets().count(), 1);
+    assert!(doc.highlight().is_some());
+    // Redone, gone again; then a click elsewhere (off the model) changes
+    // the selection, and the undo doesn't bring the face back.
+    doc.update(Edit::Redo);
+    answer(&mut doc, &requests);
+    assert!(doc.pick.selection.is_empty());
+    let model = doc.feed.model();
+    doc.look(Look::ClickModel {
+        pick: None,
+        add: false,
+        double: false,
+    });
+    assert!(doc.pick.selection.holds_nothing());
+    doc.update(Edit::Undo);
+    answer(&mut doc, &requests);
+    assert_ne!(doc.feed.model(), model);
+    assert!(doc.pick.selection.is_empty());
+}
+
+#[test]
+fn replacing_the_document_forgets_the_selection() {
+    let (mut doc, requests) = example();
+    select_top(&mut doc);
+    doc.look(Look::Hover(Some(on_top(&doc))));
+    let model = doc.feed.model();
+    // Another design restored whole: its ids might name other things.
+    doc.drop_proposals();
+    let (replacement, _) = crate::tests::two_plates();
+    doc.apply(varde_document::Command::Replace(Box::new(
+        replacement.document().clone(),
+    )));
+    doc.sync();
+    assert!(doc.pick.selection.holds_nothing());
+    assert_eq!(doc.pick.hover(), None);
+    // Until the new model shows, the old one's picks don't count.
+    assert_eq!(doc.feed.model(), model);
+    assert!(!doc.picks());
+    assert!(doc.model_picking().is_none());
+    let pick = on_top(&doc);
+    doc.look(Look::ClickModel {
+        pick: Some(pick),
+        add: false,
+        double: false,
+    });
+    doc.look(Look::Hover(Some(pick)));
+    assert!(doc.pick.selection.is_empty());
+    assert_eq!(doc.pick.hover(), None);
+    answer(&mut doc, &requests);
+    assert!(doc.picks());
+    select_top(&mut doc);
+    // And undoing the replacement forgets it too.
+    doc.update(varde_view::Edit::Undo);
+    assert!(doc.pick.selection.holds_nothing());
+}
+
+/// A face and an edge of Body 2 are looked for in Body 1 once a join
+/// merges it in, and come back to Body 2 when the join is undone; Body 2
+/// selected as a body stops being selected while it's merged, and its
+/// row in Objects selects Body 1, which draws it.
+#[test]
+fn a_join_merging_a_body_keeps_its_faces_selected_in_the_holder() {
+    use varde_regen::Summary;
+    use varde_view::{Edit, Selected};
+
+    let (editor, [top, below]) = crate::tests::two_plates();
+    let (mut doc, requests) = crate::tests::holding(editor.document().clone());
+    // Body 2's bottom, at z -3, facing down.
+    let index = doc.feed.pick_index();
+    let bottom = (index.picking().faces().iter().enumerate())
+        .find_map(|(i, face)| match face.summary {
+            Summary::Plane { n, d } if n[2] < -0.5 && (d - 3.0).abs() < 1e-9 => {
+                assert_eq!(face.body, below);
+                Some(u32::try_from(i).unwrap())
+            }
+            _ => None,
+        })
+        .unwrap();
+    let pick = varde_view::Pick {
+        model: index.model(),
+        target: Picked::Face(bottom),
+        body: below,
+        at: glam::DVec3::new(-20.0, -10.0, -3.0),
+    };
+    doc.look(Look::ClickModel {
+        pick: Some(pick),
+        add: false,
+        double: false,
+    });
+    doc.look(Look::ClickBody {
+        body: below,
+        add: true,
+    });
+    let selected: Vec<Selected> = doc.pick.selection.items().copied().collect();
+    assert_eq!(selected.len(), 2);
+
+    // Three steps: the sketch, its disc and the join.
+    crate::tests::add_join(&mut doc.editor);
+    doc.sync();
+    answer(&mut doc, &requests);
+    assert_eq!(doc.feed.merged_bodies(), [(below, top)]);
+    // The bottom, of Body 1 now, is still selected; Body 2 isn't.
+    let items: Vec<Selected> = doc.pick.selection.items().copied().collect();
+    assert_eq!(items, selected[..1]);
+    let index = doc.feed.pick_index();
+    let targets: Vec<_> = doc.pick.selection.targets().collect();
+    let [Picked::Face(face)] = targets[..] else {
+        panic!("{targets:?}");
+    };
+    let face = &index.picking().faces()[face as usize];
+    assert_eq!(face.body, top);
+    assert!(
+        matches!(face.summary, Summary::Plane { n, d } if n[2] < -0.5 && (d - 3.0).abs() < 1e-9)
+    );
+    // The status bar names the body it's in now.
+    let bar = status_bar(&doc);
+    assert_eq!(bar[..3], ["Face", "Plane", "Body 1"], "{bar:?}");
+    // The join undone: the bottom is Body 2's again.
+    for _ in 0..3 {
+        doc.update(Edit::Undo);
+    }
+    answer(&mut doc, &requests);
+    assert_eq!(doc.feed.merged_bodies(), []);
+    let index = doc.feed.pick_index();
+    let targets: Vec<_> = doc.pick.selection.targets().collect();
+    let [Picked::Face(face)] = targets[..] else {
+        panic!("{targets:?}");
+    };
+    assert_eq!(index.picking().faces()[face as usize].body, below);
+    // Redone, Body 2's row selects Body 1, which holds it.
+    for _ in 0..3 {
+        doc.update(Edit::Redo);
+    }
+    answer(&mut doc, &requests);
+    assert_eq!(doc.feed.merged_bodies(), [(below, top)]);
+    doc.look(Look::ClickBody {
+        body: below,
+        add: false,
+    });
+    assert_eq!(doc.pick.selection.bodies().collect::<Vec<_>>(), [top]);
+}
+
+/// With several bodies, Objects marks those selected as bodies, whether
+/// selected there or double-clicked in the viewport, and the viewport
+/// draws all their faces selected.
+#[test]
+fn objects_and_the_viewport_agree_on_many_bodies() {
+    use varde_view::{Edit, Panel, Selected};
+
+    let (mut editor, _) = crate::tests::two_plates();
+    let up = crate::tests::two_sides(editor.document(), "15", "1");
+    for x in [-24.0, 0.0, 24.0] {
+        let new = varde_document::Operation::NewBody(varde_document::BodyId::NEW);
+        crate::tests::add_disc(&mut editor, (x, 30.0), up.clone(), new);
+    }
+    let (mut doc, requests) = crate::tests::holding(editor.document().clone());
+    let bodies: Vec<_> = (doc.editor.document().bodies().iter())
+        .map(|body| body.id)
+        .collect();
+    assert_eq!(bodies.len(), 5);
+    doc.look(Look::SelectPanel(Panel::Objects));
+    doc.look(Look::ClickBody {
+        body: bodies[1],
+        add: false,
+    });
+    doc.look(Look::ClickBody {
+        body: bodies[3],
+        add: true,
+    });
+    // Body 5 double-clicked in the viewport with Shift.
+    let index = doc.feed.pick_index();
+    let face = index.body_faces(bodies[4]).next().unwrap();
+    let pick = varde_view::Pick {
+        model: index.model(),
+        target: Picked::Face(face),
+        body: bodies[4],
+        at: glam::DVec3::new(24.0, 30.0, 15.0),
+    };
+    doc.look(Look::ClickModel {
+        pick: Some(pick),
+        add: true,
+        double: false,
+    });
+    doc.look(Look::ClickModel {
+        pick: Some(pick),
+        add: true,
+        double: true,
+    });
+    let selected: Vec<_> = doc.pick.selection.bodies().collect();
+    assert_eq!(selected, [bodies[1], bodies[3], bodies[4]]);
+    let index = doc.feed.pick_index();
+    let faces = selected
+        .iter()
+        .flat_map(|&body| index.body_faces(body).collect::<Vec<_>>());
+    let mut faces: Vec<_> = faces.map(Picked::Face).collect();
+    faces.sort_unstable();
+    let expected = index.highlight(faces.iter().map(|&f| (f, varde_render::Emphasis::Selected)));
+    assert_eq!(**doc.highlight().unwrap(), expected);
+    // Body 4 hidden: it stays selected, as the document holds it.
+    doc.update(Edit::ToggleVisible(bodies[3]));
+    answer(&mut doc, &requests);
+    assert_eq!(doc.pick.selection.bodies().count(), 3);
+    assert!(matches!(
+        doc.pick.selection.items().next(),
+        Some(Selected::Body(_))
+    ));
 }

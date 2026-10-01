@@ -738,12 +738,21 @@ impl Bvh {
 
     /// Over `items`, the `i`th in `boxes[i]`.
     fn with_items(boxes: Vec<[Vec3; 2]>, items: Vec<u32>) -> Self {
-        let mut order: Vec<usize> = (0..boxes.len().min(items.len())).collect();
+        // Each item with its box and middle, permuted in place as the tree
+        // is built: sequential memory, not a lookup per comparison.
+        let mut entries: Vec<Entry> = (boxes.iter().zip(&items))
+            .map(|(&[min, max], &item)| Entry {
+                min,
+                max,
+                middle: min + max,
+                item,
+            })
+            .collect();
         let mut nodes = Vec::new();
-        if !order.is_empty() {
-            build(&boxes, &mut order, 0, &mut nodes);
+        if !entries.is_empty() {
+            build(&mut entries, 0, &mut nodes);
         }
-        let items = order.into_iter().map(|i| items[i]).collect();
+        let items = entries.into_iter().map(|entry| entry.item).collect();
         Self { nodes, items }
     }
 
@@ -839,38 +848,72 @@ impl Node {
     }
 }
 
-/// Builds the nodes over `order`, the items `offset..` of the whole, onto
-/// `nodes`, reordering `order` into the leaves' order.
-fn build(boxes: &[[Vec3; 2]], order: &mut [usize], offset: usize, nodes: &mut Vec<Node>) {
-    let [min, max] = (order.iter()).fold([Vec3::INFINITY, Vec3::NEG_INFINITY], |[lo, hi], &i| {
-        [lo.min(boxes[i][0]), hi.max(boxes[i][1])]
-    });
+/// Moves the entries `left` says go left before the rest, in one pass
+/// from both ends: how many go left.
+fn partition(entries: &mut [Entry], left: impl Fn(&Entry) -> bool) -> usize {
+    let (mut i, mut j) = (0, entries.len());
+    loop {
+        while i < j && left(&entries[i]) {
+            i += 1;
+        }
+        while i < j && !left(&entries[j - 1]) {
+            j -= 1;
+        }
+        if i >= j {
+            return i;
+        }
+        entries.swap(i, j - 1);
+    }
+}
+
+/// An item being built into a [`Bvh`]: its box, twice its middle, and
+/// the item.
+#[derive(Debug, Clone, Copy)]
+struct Entry {
+    min: Vec3,
+    max: Vec3,
+    middle: Vec3,
+    item: u32,
+}
+
+/// Builds the nodes over `entries`, the items `offset..` of the whole,
+/// onto `nodes`, reordering `entries` into the leaves' order. Ties along
+/// the axis split by item, so the same items give the same tree.
+fn build(entries: &mut [Entry], offset: usize, nodes: &mut Vec<Node>) {
+    let mut bounds = [Vec3::INFINITY, Vec3::NEG_INFINITY];
+    let mut middles = [Vec3::INFINITY, Vec3::NEG_INFINITY];
+    for entry in entries.iter() {
+        bounds = [bounds[0].min(entry.min), bounds[1].max(entry.max)];
+        middles = [middles[0].min(entry.middle), middles[1].max(entry.middle)];
+    }
     let index = nodes.len();
     // Items and nodes number fewer than the mesh's triangles, whose
     // indices are `u32`s.
     let at = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
     nodes.push(Node {
-        min,
-        max,
+        min: bounds[0],
+        max: bounds[1],
         start: at(offset),
-        count: at(order.len()),
+        count: at(entries.len()),
     });
-    if order.len() <= LEAF {
+    if entries.len() <= LEAF {
         return;
     }
-    let middle = |i: usize| boxes[i][0] + boxes[i][1];
-    let [lo, hi] = (order.iter()).fold([Vec3::INFINITY, Vec3::NEG_INFINITY], |[lo, hi], &i| {
-        [lo.min(middle(i)), hi.max(middle(i))]
-    });
-    let axis = (hi - lo).max_position();
-    let half = order.len() / 2;
-    order.select_nth_unstable_by(half, |&a, &b| {
-        (middle(a)[axis].total_cmp(&middle(b)[axis])).then(a.cmp(&b))
-    });
-    let (left, right) = order.split_at_mut(half);
-    build(boxes, left, offset, nodes);
+    let axis = (middles[1] - middles[0]).max_position();
+    // Split at the middle of the middles along the axis, one pass; where
+    // that leaves a side with too few (bunched items), at the median.
+    let split = (middles[0][axis] + middles[1][axis]) / 2.0;
+    let mut half = partition(entries, |entry| entry.middle[axis] < split);
+    if half < entries.len() / 4 || half > entries.len() - entries.len() / 4 {
+        half = entries.len() / 2;
+        entries.select_nth_unstable_by(half, |a, b| {
+            (a.middle[axis].total_cmp(&b.middle[axis])).then(a.item.cmp(&b.item))
+        });
+    }
+    let (left, right) = entries.split_at_mut(half);
+    build(left, offset, nodes);
     let second = nodes.len();
-    build(boxes, right, offset + half, nodes);
+    build(right, offset + half, nodes);
     nodes[index].start = at(second);
     nodes[index].count = 0;
 }

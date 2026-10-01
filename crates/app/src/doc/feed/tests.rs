@@ -562,3 +562,40 @@ fn a_body_merged_into_one_merged_later_moves_on() {
     assert_eq!(merges.held_by(a).collect::<Vec<_>>(), [c, b]);
     assert_eq!(merges.held_by(b).count(), 0);
 }
+
+/// A model shown again, the same mesh and tables in new `Arc`s (as the
+/// web worker's answers always are), keeps its count, and so its pick
+/// index; another counts on.
+#[test]
+fn the_same_model_answered_anew_keeps_its_count() {
+    let mut editor = Editor::new(varde_document::Document::example());
+    let (mut feed, regen) = connected();
+    feed.request(&editor, None);
+    feed.apply(handle(regen.take().pop().unwrap()));
+    let model = feed.model();
+    let shown = feed.mesh().clone();
+    feed.pick_index();
+    // Inches: the same solid.
+    editor
+        .apply(Command::SetUnits(varde_document::LengthUnit::In))
+        .unwrap();
+    feed.request(&editor, None);
+    let mut response = handle(regen.take().pop().unwrap());
+    let Response::Regenerated { mesh, picking, .. } = &mut response else {
+        panic!("{response:?}");
+    };
+    // Copies, as from the other side of the web worker.
+    *mesh = Arc::new(RenderMesh::clone(mesh));
+    *picking = Arc::new(Picking::clone(picking));
+    feed.apply(response);
+    assert!(!Arc::ptr_eq(feed.mesh(), &shown));
+    assert_eq!(feed.model(), model);
+    assert!(feed.index.get().is_some());
+    // The plate hidden: another model.
+    let body = editor.document().bodies()[0].id;
+    editor.apply(Command::SetVisible(body, false)).unwrap();
+    feed.request(&editor, None);
+    feed.apply(handle(regen.take().pop().unwrap()));
+    assert_ne!(feed.model(), model);
+    assert!(feed.index.get().is_none());
+}

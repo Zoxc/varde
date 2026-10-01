@@ -39,10 +39,14 @@ impl Doc {
     /// Whether the cursor picks the model: outside sketches and the
     /// extrude being set up, which pick what they need themselves, and
     /// not while a draft's preview is still shown after it, where what's
-    /// selected would be looked for (and dropped if missing) in a model
-    /// that isn't the document's.
+    /// selected would be looked for in a model that isn't the document's,
+    /// nor while the model shown is of a document since replaced whole,
+    /// whose bodies' ids may name others now.
     pub(crate) fn picks(&self) -> bool {
-        self.sketch.is_none() && self.extrude.is_none() && !self.feed.shows_draft()
+        self.sketch.is_none()
+            && self.extrude.is_none()
+            && !self.feed.shows_draft()
+            && !self.feed.predates_replacement()
     }
 
     /// Hovers `pick`, from the viewport as the cursor moves, or nothing:
@@ -72,10 +76,15 @@ impl Doc {
     /// Takes a click on `body`'s row in Objects, see
     /// [`Selection::click_body`], letting go of the feature selected in
     /// the Timeline. Not in a sketch, where Objects' rows don't select.
+    /// A body a join merged into another is drawn as that one, so
+    /// selects it.
     pub(crate) fn click_body(&mut self, body: BodyId, add: bool) {
         if self.sketch.is_some() || self.editor.document().body(body).is_none() {
             return;
         }
+        let body = (self.feed.merged_bodies().iter())
+            .find(|(merged, _)| *merged == body)
+            .map_or(body, |&(_, holder)| holder);
         self.pick.selection.click_body(body, add);
         self.selected_feature = None;
         self.refresh_highlight();
@@ -87,20 +96,35 @@ impl Doc {
         self.refresh_highlight();
     }
 
+    /// Forgets what's hovered and selected in the model: the document was
+    /// replaced whole, and the bodies they name by id may be others now.
+    pub(crate) fn forget_picks(&mut self) {
+        self.pick.hover = None;
+        self.pick.selection.clear();
+        self.refresh_highlight();
+    }
+
     /// Drops what's hovered once the model it's of isn't shown, or the
     /// cursor doesn't pick, finds what's selected again in a new model
-    /// (dropping what isn't there and bodies the document doesn't hold)
-    /// while the cursor picks, and rebuilds the highlight if what it's
+    /// while the cursor picks (what isn't there, bodies the document
+    /// doesn't hold or a join merged into another, stops being selected
+    /// but is looked for in later models; a face or edge of a merged body
+    /// in the body holding it), and rebuilds the highlight if what it's
     /// of changed.
     pub(crate) fn prune_picks(&mut self) {
         let stale = |pick: Pick| pick.model != self.feed.model() || !self.picks();
         if self.pick.hover.is_some_and(stale) {
             self.pick.hover = None;
         }
-        if self.picks() && !self.pick.selection.is_empty() {
+        if self.picks() && !self.pick.selection.holds_nothing() {
             let document = self.editor.document();
-            let exists = |body| document.body(body).is_some();
-            self.pick.selection.resolve(self.feed.pick_index(), exists);
+            let merged = self.feed.merged_bodies();
+            let drawn = |body| {
+                document.body(body)?;
+                let holder = merged.iter().find(|(merged, _)| *merged == body);
+                Some(holder.map_or(body, |&(_, holder)| holder))
+            };
+            self.pick.selection.resolve(self.feed.pick_index(), drawn);
         }
         self.refresh_highlight();
     }

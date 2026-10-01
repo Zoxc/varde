@@ -222,8 +222,14 @@ impl MeshFeed {
                 ..
             } => {
                 // The lane hands an unchanged model back as the same
-                // `Arc`s, natively: its index stays.
-                if !(Arc::ptr_eq(&self.mesh, &mesh) && Arc::ptr_eq(&self.picking, &picking)) {
+                // `Arc`s, natively; the web worker's come anew, so they're
+                // compared, far cheaper than building the index again
+                // (and a difference shows early). Unchanged, its index
+                // stays and what's selected needn't be looked for again.
+                fn same<T: PartialEq>(a: &Arc<T>, b: &Arc<T>) -> bool {
+                    Arc::ptr_eq(a, b) || a == b
+                }
+                if !(same(&self.mesh, &mesh) && same(&self.picking, &picking)) {
                     self.model = self.model.wrapping_add(1);
                     self.index = OnceCell::new();
                 }
@@ -413,6 +419,13 @@ impl MeshFeed {
     /// none are marked until a model of `generation` or newer is shown.
     pub(crate) fn replaced(&mut self, generation: Generation) {
         self.replaced = Some(generation);
+    }
+
+    /// Whether the model shown is of a document since replaced whole,
+    /// whose ids may name other things now, see [`MeshFeed::replaced`].
+    pub(crate) fn predates_replacement(&self) -> bool {
+        matches!((self.shown, self.replaced),
+            (Some(shown), Some(replaced)) if shown.generation < replaced)
     }
 
     /// Whether the features the model shown found name features of the

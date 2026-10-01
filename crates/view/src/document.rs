@@ -1235,24 +1235,27 @@ fn model_selection<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>
     let document = state.editor.document();
     let body_name = |body: BodyId| document.body(body).map_or("", |body| body.name.as_str());
     let items: Vec<&Selected> = selection.items().collect();
+    let fresh = selection.model() == Some(picking.index.model());
+    let target = selection.targets().next().filter(|_| fresh);
+    // The body a face or edge is of in the model: another than the one
+    // it was picked in where a join merged that one into it.
+    let drawn_in = |body: BodyId| {
+        let drawn = target.and_then(|target| picking.index.body(target));
+        body_name(drawn.unwrap_or(body))
+    };
     let (title, info, note): (String, String, &str) = match items[..] {
         [] => return None,
         [Selected::Face { body, .. }] => {
-            let fresh = selection.model() == Some(picking.index.model());
-            let summary = selection
-                .targets()
-                .next()
-                .filter(|_| fresh)
-                .and_then(|target| {
-                    let Picked::Face(face) = target else {
-                        return None;
-                    };
-                    picking.index.picking().faces().get(face as usize)
-                });
+            let summary = target.and_then(|target| {
+                let Picked::Face(face) = target else {
+                    return None;
+                };
+                picking.index.picking().faces().get(face as usize)
+            });
             let surface = summary.map_or("", |face| surface_name(&face.summary));
-            ("Face".into(), surface.into(), body_name(*body))
+            ("Face".into(), surface.into(), drawn_in(*body))
         }
-        [Selected::Edge { body, .. }] => ("Edge".into(), String::new(), body_name(*body)),
+        [Selected::Edge { body, .. }] => ("Edge".into(), String::new(), drawn_in(*body)),
         [Selected::Body(body)] => (body_name(*body).into(), String::new(), "Body"),
         _ => {
             let count =

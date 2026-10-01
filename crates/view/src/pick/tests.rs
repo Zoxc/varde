@@ -300,3 +300,226 @@ fn picking_only_faces_or_only_edges_skips_the_other() {
     assert_eq!(index.pick(&top, SIZE, middle, Picks::Edges), None);
     assert!(index.pick(&top, SIZE, middle, Picks::Faces).is_some());
 }
+
+/// A plate `60 × 40 × 10` times `scale` from z 0 up, its middle at
+/// `(offset, 0)`, with `holes` × `holes` holes through it on a grid,
+/// made ready for picking as model 7.
+pub(crate) fn plate_of(scale: f64, offset: f64, holes: u32) -> PickIndex {
+    use varde_document::{Command, Editor, Extent, Extrude, Operation};
+    use varde_expr::Value;
+    use varde_sketch::{Curve, Sketch};
+
+    let mut editor = Editor::new(Document::default());
+    let plane = Plane::Origin(OriginPlane::XY);
+    editor.apply(editor.document().add_sketch(plane)).unwrap();
+    let feature = editor.document().features()[0].id;
+    let mut sketch = Sketch::default();
+    let at = |x: f64, y: f64| DVec2::new(offset + x * scale, y * scale);
+    let corners = [(-30.0, -20.0), (30.0, -20.0), (30.0, 20.0), (-30.0, 20.0)]
+        .map(|(x, y)| sketch.add_point(at(x, y)).unwrap());
+    for (k, &start) in corners.iter().enumerate() {
+        let end = corners[(k + 1) % 4];
+        sketch.add_curve(Curve::Line { start, end }, false).unwrap();
+    }
+    let pitch = 56.0 / f64::from(holes.max(1));
+    let radius = pitch * 0.3;
+    for i in 0..holes {
+        for j in 0..holes {
+            let x = -28.0 + pitch * (f64::from(i) + 0.5);
+            let y = (-28.0 + pitch * (f64::from(j) + 0.5)) * 36.0 / 56.0;
+            let center = sketch.add_point(at(x, y)).unwrap();
+            let circle = Curve::Circle {
+                center,
+                radius: radius * 36.0 / 56.0 * scale,
+            };
+            sketch.add_curve(circle, false).unwrap();
+        }
+    }
+    let profiles = sketch.profiles().unwrap();
+    let region = (profiles.regions.iter())
+        .position(|region| region.holes.len() as u32 == holes * holes)
+        .and_then(|index| profiles.reference(index))
+        .unwrap();
+    editor
+        .apply(Command::SetSketch {
+            feature,
+            sketch: Box::new(sketch),
+        })
+        .unwrap();
+    let design = editor.document().design();
+    let thickness = Value::new(&(10.0 * scale).to_string(), &Extent::ask(&design)).unwrap();
+    let extrude = Extrude {
+        sketch: feature,
+        regions: vec![region],
+        extent: Extent::OneSide(thickness),
+        flip: false,
+        operation: Operation::NewBody(varde_document::BodyId::NEW),
+    };
+    editor
+        .apply(editor.document().add_extrude(extrude))
+        .unwrap();
+    let document = editor.document().clone();
+    let mut cache = Cache::default();
+    let evaluation = evaluate(&document, &mut cache);
+    let (mesh, picking) = tessellate_picking(&document, &evaluation, &mut cache).unwrap();
+    PickIndex::new(mesh, picking, 7)
+}
+
+#[test]
+#[ignore]
+fn measure_the_index_of_a_plate_with_400_holes() {
+    let start = std::time::Instant::now();
+    let document_and_mesh = plate_of(1.0, 0.0, 20);
+    let built = start.elapsed();
+    let mesh = document_and_mesh.mesh().clone();
+    let picking = document_and_mesh.picking().clone();
+    let start = std::time::Instant::now();
+    let index = PickIndex::new(mesh.clone(), picking.clone(), 1);
+    let indexed = start.elapsed();
+    let top = camera(View::Top, Projection::Perspective);
+    let start = std::time::Instant::now();
+    let mut n = 0;
+    for x in 0..40 {
+        for y in 0..30 {
+            let at = DVec2::new(f64::from(x) * 10.0, f64::from(y) * 10.0);
+            n += usize::from(index.pick(&top, SIZE, at, Picks::FacesAndEdges).is_some());
+        }
+    }
+    let picked = start.elapsed();
+    eprintln!(
+        "triangles {} edges {} faces {} chains {}: model {built:?}, index {indexed:?}, 1200 picks {picked:?} ({n} hits)",
+        mesh.triangle_count(),
+        mesh.edges().len(),
+        picking.faces().len(),
+        picking.chains().len()
+    );
+}
+
+/// Looking from `view` at `target`, `height` across the view's height, in
+/// `projection`.
+fn camera_at(view: View, projection: Projection, target: DVec3, height: f64) -> Camera {
+    let mut camera = Camera::default();
+    camera.set_projection(projection);
+    camera.look_from(view);
+    camera.set_target(target.as_vec3());
+    camera.zoom(height as f32 / camera.view_height());
+    camera
+}
+
+/// The plate's top, the edge between its front and top, and that its
+/// back's bottom edge seen over the top isn't picked, for a plate of
+/// [`plate_of`] `scale` and `offset` seen `height` across from the top
+/// and from the front and above, in both projections.
+fn picks_the_plate(index: &PickIndex, scale: f64, offset: f64, height: f64) {
+    let p = |x: f64, y: f64, z: f64| DVec3::new(offset + x * scale, y * scale, z * scale);
+    for projection in [Projection::Orthographic, Projection::Perspective] {
+        let case = format!("{projection:?} at {scale} {offset} {height}");
+        // From the top, looking at a point on the top.
+        let target = p(20.0, 5.0, 10.0);
+        let top = camera_at(View::Top, projection, target, height);
+        let pick = index
+            .pick(&top, SIZE, shown(&top, target), Picks::FacesAndEdges)
+            .unwrap_or_else(|| panic!("{case}"));
+        assert_eq!(plane(index, pick.target).0, TOP.0, "{case}");
+        assert!(
+            pick.at.distance(target) <= 1e-5 * height.max(scale),
+            "{case}: {pick:?}"
+        );
+        // 3 pixels in from the top's front edge, with the edge in view.
+        let edge = p(20.0, -20.0, 10.0);
+        let top = camera_at(View::Top, projection, edge, height);
+        let at = shown(&top, edge) - DVec2::new(0.0, 3.0);
+        let pick = index
+            .pick(&top, SIZE, at, Picks::FacesAndEdges)
+            .unwrap_or_else(|| panic!("{case}"));
+        let sides: Vec<_> = sides(index, pick.target).iter().map(|s| s.0).collect();
+        assert_eq!(sides, [FRONT.0, TOP.0], "{case}");
+        // From the front and above, the back's bottom edge, hidden.
+        let mut above = camera_at(View::Front, projection, p(0.0, 0.0, 5.0), height);
+        above.orbit(0.0, 0.6);
+        let hidden = p(24.0, 20.0, 0.0);
+        let at = shown(&above, hidden);
+        if (0.0..f64::from(SIZE[0])).contains(&at.x) && (0.0..f64::from(SIZE[1])).contains(&at.y) {
+            let back = shown(&above, p(24.0, 20.0, 10.0));
+            if at.distance(back) > 2.0 * EDGE_REACH {
+                let pick = index
+                    .pick(&above, SIZE, at, Picks::FacesAndEdges)
+                    .unwrap_or_else(|| panic!("{case}"));
+                assert_eq!(plane(index, pick.target).0, TOP.0, "{case}");
+            }
+        }
+    }
+}
+
+#[test]
+fn tiny_huge_and_far_off_models_pick_alike() {
+    for (scale, offset) in [
+        (1.0, 0.0),
+        (1e-3, 0.0),
+        (1e4, 0.0),
+        (1.0, 1e5),
+        (1e-2, -2e4),
+    ] {
+        let index = plate_of(scale, offset, 0);
+        picks_the_plate(&index, scale, offset, 60.0 * scale);
+    }
+}
+
+#[test]
+fn extreme_zooms_pick_what_shows() {
+    let index = plate_of(1.0, 0.0, 0);
+    // Zoomed in as far as the camera goes, and nearly.
+    for height in [1e-3, 1e-2, 0.1] {
+        picks_the_plate(&index, 1.0, 0.0, height);
+    }
+    // Zoomed out as far as it goes: the plate is a dot, and the cursor
+    // over it picks it.
+    for projection in [Projection::Orthographic, Projection::Perspective] {
+        let mut camera = camera_at(View::Top, projection, DVec3::new(0.0, 0.0, 5.0), 60.0);
+        camera.zoom(f32::MAX);
+        let at = shown(&camera, DVec3::new(20.0, 5.0, 10.0));
+        let pick = index.pick(&camera, SIZE, at, Picks::FacesAndEdges);
+        assert!(pick.is_some(), "{projection:?}");
+        // And well away from it, nothing.
+        let off = at + DVec2::new(50.0, 0.0);
+        assert_eq!(index.pick(&camera, SIZE, off, Picks::FacesAndEdges), None);
+    }
+}
+
+#[test]
+fn edges_seen_end_on_and_faces_seen_edge_on_pick_what_shows() {
+    let index = plate();
+    for projection in [Projection::Orthographic, Projection::Perspective] {
+        for tilt in [0.0, 1e-4, 1e-2] {
+            let case = format!("{projection:?} tilted {tilt}");
+            // The plate's corner from straight above, or nearly: its
+            // upright edge shows end on, the top's two edges meet there.
+            let mut above = camera(View::Top, projection);
+            above.orbit(0.0, -tilt);
+            let corner = DVec3::new(30.0, -20.0, 10.0);
+            let at = shown(&above, corner) + DVec2::new(2.0, 2.0);
+            let pick = index
+                .pick(&above, SIZE, at, Picks::FacesAndEdges)
+                .unwrap_or_else(|| panic!("{case}"));
+            assert!(matches!(pick.target, Picked::Edge(_)), "{case}: {pick:?}");
+            assert!(
+                shown(&above, pick.at).distance(at) <= EDGE_REACH,
+                "{case}: {pick:?}"
+            );
+            // The top seen edge on from the front, or nearly: on its line,
+            // the front's top edge, not the back's behind it.
+            let mut front = camera(View::Front, projection);
+            front.orbit(0.0, tilt);
+            let on = shown(&front, DVec3::new(10.0, -20.0, 10.0));
+            let pick = index
+                .pick(&front, SIZE, on, Picks::FacesAndEdges)
+                .unwrap_or_else(|| panic!("{case}"));
+            assert_eq!(sides(&index, pick.target), vec![FRONT, TOP], "{case}");
+            // Below it, the front.
+            let pick = index
+                .pick(&front, SIZE, on + DVec2::new(0.0, 8.0), Picks::Faces)
+                .unwrap_or_else(|| panic!("{case}"));
+            assert_eq!(plane(&index, pick.target), FRONT, "{case}");
+        }
+    }
+}

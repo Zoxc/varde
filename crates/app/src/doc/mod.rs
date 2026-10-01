@@ -250,6 +250,7 @@ impl Doc {
         let replaced = std::mem::replace(&mut self.lineage, lineage) != lineage;
         if replaced {
             self.feed.replaced(self.editor.generation());
+            self.forget_picks();
         }
         self.prune_deleting();
         self.prune(replaced);

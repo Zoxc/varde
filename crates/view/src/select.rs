@@ -8,8 +8,11 @@
 //! shows (an edit, an undo, a new tolerance), [`Selection::resolve`]
 //! finds each face and edge again by its keys and aliases
 //! ([`PickIndex::find_face`], [`PickIndex::find_edge`]), the nearest to
-//! its point among several of one name, and drops what isn't there any
-//! more.
+//! its point among several of one name. What isn't there any more
+//! (a face an edit removed, a hidden body's, a body merged into another)
+//! stops being selected, but it's kept and looked for in each later model
+//! until the selection changes, so an undo brings it back. A face or edge
+//! of a body merged into another is looked for in that one.
 //!
 //! How a click selects depends on the [`SelectionMode`]: outside the
 //! sessions a click selects the face or edge under the cursor and a
@@ -95,11 +98,24 @@ impl Selected {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Selection {
     mode: SelectionMode,
-    /// Each item with its face or edge in the model `model` (none for a
-    /// body), no two of one target or body.
-    items: Vec<(Selected, Option<Picked>)>,
+    /// Each item, in the order selected, with its face or edge in the
+    /// model `model` (none for a body), no two found of one target or
+    /// body; and what was selected but isn't found there, looked for
+    /// again in each later model until the selection changes.
+    items: Vec<Entry>,
     /// The model the items' targets are of, see [`Pick::model`].
     model: Option<u64>,
+}
+
+/// An item of a [`Selection`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Entry {
+    item: Selected,
+    /// Its face or edge, none for a body.
+    target: Option<Picked>,
+    /// Whether it was found in the model last looked in: selected, or
+    /// only looked for.
+    found: bool,
 }
 
 impl Selection {
@@ -115,26 +131,43 @@ impl Selection {
         self.mode
     }
 
+    /// Whether nothing is selected, though what was may be looked for
+    /// still (see [`Selection::holds_nothing`]).
     pub fn is_empty(&self) -> bool {
+        !self.items.iter().any(|entry| entry.found)
+    }
+
+    /// Whether nothing is selected or looked for in later models.
+    pub fn holds_nothing(&self) -> bool {
         self.items.is_empty()
     }
 
     /// What's selected, in the order it was.
     pub fn items(&self) -> impl Iterator<Item = &Selected> {
-        self.items.iter().map(|(item, _)| item)
+        self.found().map(|entry| &entry.item)
     }
 
     /// The faces and edges selected in the model [`Selection::model`].
     pub fn targets(&self) -> impl Iterator<Item = Picked> + '_ {
-        self.items.iter().filter_map(|&(_, target)| target)
+        self.found().filter_map(|entry| entry.target)
     }
 
     /// The bodies selected, as bodies.
     pub fn bodies(&self) -> impl Iterator<Item = BodyId> + '_ {
-        self.items.iter().filter_map(|(item, _)| match item {
-            Selected::Body(body) => Some(*body),
+        self.found().filter_map(|entry| match entry.item {
+            Selected::Body(body) => Some(body),
             _ => None,
         })
+    }
+
+    /// The entries selected, not those only looked for.
+    fn found(&self) -> impl Iterator<Item = &Entry> {
+        self.items.iter().filter(|entry| entry.found)
+    }
+
+    /// Forgets what's only looked for: the selection changes.
+    fn forget_missing(&mut self) {
+        self.items.retain(|entry| entry.found);
     }
 
     /// The model its faces and edges were last found in, if any.
@@ -142,46 +175,52 @@ impl Selection {
         self.model
     }
 
-    /// Selects nothing. Whether anything was.
+    /// Selects nothing, and forgets what was but isn't found. Whether
+    /// anything was selected.
     pub fn clear(&mut self) -> bool {
-        let was = !self.items.is_empty();
+        let was = !self.is_empty();
         self.items.clear();
         was
     }
 
     /// Finds the faces and edges selected in `index`'s model by their
-    /// names, if they were last found in another, dropping those that
-    /// aren't there any more, and the bodies selected for which `exists`
-    /// says no. Whether anything changed, the model they're found in
-    /// included.
-    pub fn resolve(&mut self, index: &PickIndex, exists: impl Fn(BodyId) -> bool) -> bool {
+    /// names, if they were last found in another, and those that weren't
+    /// found before; what isn't there stops being selected but is kept
+    /// to look for in later models. `drawn` says which body of the model
+    /// draws a body: itself, the body a join merged it into, or none if
+    /// the document doesn't hold it. A face or edge is looked for in that
+    /// body; a body is selected only where it's drawn as itself. Whether
+    /// anything changed, the model they're found in included.
+    pub fn resolve(&mut self, index: &PickIndex, drawn: impl Fn(BodyId) -> Option<BodyId>) -> bool {
         let before = self.items.clone();
         let fresh = self.model == Some(index.model());
         let items = std::mem::take(&mut self.items);
-        for (item, target) in items {
-            let target = match item {
-                Selected::Body(body) => {
-                    if exists(body) {
-                        None
-                    } else {
-                        continue;
-                    }
-                }
-                _ if fresh => target,
-                Selected::Face { body, key, near } => {
-                    let Some(face) = index.find_face(body, &key, near) else {
-                        continue;
-                    };
-                    Some(Picked::Face(face))
-                }
-                Selected::Edge { body, faces, near } => {
-                    let Some(chain) = index.find_edge(body, faces, near) else {
-                        continue;
-                    };
-                    Some(Picked::Edge(chain))
-                }
+        for Entry {
+            item,
+            target,
+            found,
+        } in items
+        {
+            let found = match item {
+                Selected::Body(body) => (drawn(body) == Some(body)).then_some(None),
+                _ if fresh && found => Some(target),
+                // Not found in this model before, so not now either.
+                _ if fresh => None,
+                Selected::Face { body, key, near } => drawn(body)
+                    .and_then(|body| index.find_face(body, &key, near))
+                    .map(|face| Some(Picked::Face(face))),
+                Selected::Edge { body, faces, near } => drawn(body)
+                    .and_then(|body| index.find_edge(body, faces, near))
+                    .map(|chain| Some(Picked::Edge(chain))),
             };
-            self.push(item, target);
+            match found {
+                Some(target) => self.push(item, target),
+                None => self.items.push(Entry {
+                    item,
+                    target: None,
+                    found: false,
+                }),
+            }
         }
         self.model = Some(index.model());
         !fresh || self.items != before
@@ -190,15 +229,16 @@ impl Selection {
     /// Adds `item`, whose target is `target`, unless something of that
     /// target or body is selected.
     fn push(&mut self, item: Selected, target: Option<Picked>) {
-        let taken = self
-            .items
-            .iter()
-            .any(|&(other, other_target)| match target {
-                Some(_) => other_target == target,
-                None => matches!(other, Selected::Body(body) if body == item.body()),
-            });
+        let taken = self.found().any(|other| match target {
+            Some(_) => other.target == target,
+            None => matches!(other.item, Selected::Body(body) if body == item.body()),
+        });
         if !taken {
-            self.items.push((item, target));
+            self.items.push(Entry {
+                item,
+                target,
+                found: true,
+            });
         }
     }
 
@@ -220,8 +260,10 @@ impl Selection {
             return false;
         }
         // What isn't found in this model can't be compared with what's
-        // clicked.
+        // clicked; and once the selection is changed, what wasn't found
+        // isn't looked for any more.
         let mut changed = self.resolve_in(index);
+        self.forget_missing();
         let Some(pick) = pick else {
             return if add {
                 changed
@@ -255,22 +297,23 @@ impl Selection {
         if !self.mode.takes_bodies() {
             return false;
         }
+        self.forget_missing();
         let unit = vec![(Selected::Body(body), None)];
         if add {
             return self.toggle(unit);
         }
         let before = std::mem::take(&mut self.items);
-        self.items = unit;
+        self.push(Selected::Body(body), None);
         self.items != before
     }
 
     /// Finds what's selected in `index`'s model if it was last found in
-    /// another, keeping all bodies. Whether that changed what's selected
-    /// or where.
+    /// another, keeping all bodies selected. Whether that changed what's
+    /// selected or where.
     fn resolve_in(&mut self, index: &PickIndex) -> bool {
         let before = self.items.clone();
         if self.model != Some(index.model()) {
-            self.resolve(index, |_| true);
+            self.resolve(index, Some);
         }
         self.items != before
     }
@@ -324,24 +367,20 @@ impl Selection {
     /// Takes `unit` out if all of it is selected, else adds what of it
     /// isn't. Whether anything changed.
     fn toggle(&mut self, unit: Vec<(Selected, Option<Picked>)>) -> bool {
-        let selected = |&(item, target): &(Selected, Option<Picked>)| {
-            self.items
-                .iter()
-                .any(|&(other, other_target)| match target {
-                    Some(_) => other_target == target,
-                    None => other == item,
-                })
+        // Whether `entry` is `item`, whose target is `target`.
+        let is = |entry: &Entry, &(item, target): &(Selected, Option<Picked>)| match target {
+            Some(_) => entry.target == target,
+            None => entry.item == item,
         };
         if unit.is_empty() {
             return false;
         }
-        if unit.iter().all(selected) {
-            self.items.retain(|&(other, other_target)| {
-                !unit.iter().any(|&(item, target)| match target {
-                    Some(_) => other_target == target,
-                    None => other == item,
-                })
-            });
+        if unit
+            .iter()
+            .all(|part| self.found().any(|entry| is(entry, part)))
+        {
+            self.items
+                .retain(|entry| !unit.iter().any(|part| is(entry, part)));
         } else {
             for (item, target) in unit {
                 self.push(item, target);

@@ -794,6 +794,45 @@ fn the_hover_is_worked_out_again_as_the_camera_moves() {
 }
 
 #[test]
+fn an_orbit_lets_go_of_the_hover_until_it_ends() {
+    let plate = Plate::new();
+    let at = plate.at(glam::DVec3::new(20.0, 5.0, 10.0));
+    let camera = plate.camera;
+    let mut state = Interaction::default();
+    let sent = plate.send(&mut state, &camera, None, &[redraw()], at);
+    let [Message::Look(Look::Hover(Some(pick)))] = sent[..] else {
+        panic!("{sent:?}");
+    };
+    let hovered = Some(pick.target);
+    // Pressed, not yet a drag: a click may follow, the hover stays.
+    let sent = plate.send(&mut state, &camera, hovered, &[left(true), redraw()], at);
+    assert!(sent.is_empty(), "{sent:?}");
+    // Moved past the slop: it orbits, and the next frame lets go of it.
+    let moved = Event::Mouse(mouse::Event::CursorMoved {
+        position: Point::new(at.x + 20.0, at.y),
+    });
+    let sent = plate.send(&mut state, &camera, hovered, &[moved, redraw()], at);
+    assert!(
+        matches!(
+            sent[..],
+            [
+                Message::Look(Look::Orbit { .. }),
+                Message::Look(Look::Hover(None))
+            ]
+        ),
+        "{sent:?}"
+    );
+    let sent = plate.send(&mut state, &camera, None, &[redraw()], at);
+    assert!(sent.is_empty(), "{sent:?}");
+    // Let go of, the next frame picks again, though nothing else changed.
+    let sent = plate.send(&mut state, &camera, None, &[left(false), redraw()], at);
+    assert!(
+        matches!(sent[..], [Message::Look(Look::Hover(Some(_)))]),
+        "{sent:?}"
+    );
+}
+
+#[test]
 fn the_cursor_points_over_what_a_click_selects() {
     use iced::widget::shader::Program as _;
     let plate = Plate::new();

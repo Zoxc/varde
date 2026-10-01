@@ -297,7 +297,7 @@ fn selection_is_found_again_in_a_new_model_or_dropped() {
         .unwrap();
     let coarse = index_of(editor.document(), 8);
     assert_ne!(coarse.mesh().positions(), index.mesh().positions());
-    assert!(selection.resolve(&coarse, |_| true));
+    assert!(selection.resolve(&coarse, Some));
     assert_eq!(selection.model(), Some(8));
     let found = targets(&selection);
     assert_eq!(found.len(), 2);
@@ -312,13 +312,27 @@ fn selection_is_found_again_in_a_new_model_or_dropped() {
     assert_eq!(sides, [FRONT, THICKER]);
     assert_eq!(selection.items().count(), 3);
     // Found again in the same model, nothing changes.
-    assert!(!selection.resolve(&coarse, |_| true));
+    assert!(!selection.resolve(&coarse, Some));
     // A body the document doesn't hold any more goes.
-    assert!(selection.resolve(&coarse, |body| body != top.body));
+    let gone = |body| (body != top.body).then_some(body);
+    assert!(selection.resolve(&coarse, gone));
     assert_eq!(selection.bodies().count(), 0);
     // A model without the body: its faces and edges go.
     let empty = PickIndex::new(Default::default(), Default::default(), 9);
-    assert!(selection.resolve(&empty, |_| true));
+    assert!(selection.resolve(&empty, gone));
+    assert!(selection.is_empty());
+    // But they're looked for again, and found where they are, as after
+    // an undo, until the selection changes: the body too, held again.
+    assert!(!selection.holds_nothing());
+    assert!(selection.resolve(&coarse, Some));
+    assert_eq!(targets(&selection), found);
+    assert_eq!(selection.bodies().collect::<Vec<_>>(), [top.body]);
+    assert!(selection.resolve(&empty, Some));
+    let pick = top_of(&index);
+    selection.click(&index, Some(pick), false, false);
+    selection.click(&index, None, false, false);
+    assert!(selection.holds_nothing());
+    selection.resolve(&coarse, Some);
     assert!(selection.is_empty());
 }
 

@@ -308,6 +308,19 @@ impl shader::Program<Message> for Program<'_> {
         {
             return Some(action);
         }
+        // While the camera's dragged (past a click), nothing's hovered:
+        // what was moves away from the cursor. It's worked out again once
+        // the drag ends.
+        if let Some(picking) = &self.picking
+            && state.drag.is_some()
+            && state.click.is_none()
+            && let Event::Window(iced::window::Event::RedrawRequested(_)) = event
+        {
+            state.hover_seen = None;
+            if picking.hovered.is_some() {
+                return Some(Action::publish(Message::Look(Look::Hover(None))));
+            }
+        }
         let camera = match event {
             // The left button is the sketch's in a sketch, and moving the
             // cursor while the camera isn't dragged.
