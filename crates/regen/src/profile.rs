@@ -9,8 +9,11 @@
 //! - a piece of a circle or an arc, exact conics of at most 90° each,
 //!   halving it until they are (at most four);
 //! - a piece of a spline, a chain of conics fitted to it within the
-//!   tolerance, each meeting the next along the same tangent
-//!   ([`fit`]).
+//!   tolerance, each conic over the longest run of the spline's Bézier
+//!   segments it fits, a line wherever a run is straight within the
+//!   tolerance, curved conics meeting along the same tangent; fitted in
+//!   the spline's own direction, so a piece run backwards gives the same
+//!   conics to the bit, reversed ([`fit`]).
 //!
 //! Every piece's ends are put at its vertices ([`Profiles::vertices`]),
 //! which the pieces meeting there share, so the loops close to the bit as

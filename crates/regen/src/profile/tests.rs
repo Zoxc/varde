@@ -238,6 +238,11 @@ fn largest_error(sketch: &Sketch, curve: varde_sketch::Id, l: &Loop) -> f64 {
         .fold(0.0, f64::max)
 }
 
+/// Whether `conic` is a straight segment as `Conic2::line` makes it.
+fn straight(conic: &Conic2) -> bool {
+    conic.w == 1.0 && conic.c == (conic.p0 + conic.p1) * 0.5
+}
+
 #[test]
 fn a_spline_is_fitted_within_the_tolerance_turning_smoothly() {
     let mut sketch = Sketch::default();
@@ -253,13 +258,27 @@ fn a_spline_is_fitted_within_the_tolerance_turning_smoothly() {
         // Within the tolerance, and the fine polyline's own error.
         let error = largest_error(&sketch, curve, l);
         assert!(error <= fit / 2.0 + 1e-6, "{fit}: {error}");
-        // Where conics meet, they leave along the same line.
+        // Where curved conics meet, they leave along the same line; where
+        // a line meets a conic, it turns by about the tolerance over the
+        // line's length at most.
         let n = l.segments.len();
         for k in 0..n {
             let (a, b) = (&l.segments[k].conic, &l.segments[(k + 1) % n].conic);
             assert_eq!(a.p1, b.p0);
             let (out, on) = ((a.p1 - a.c).normalize(), (b.c - b.p0).normalize());
-            assert!(out.perp_dot(on).abs() < 1e-3, "{fit}: {k} turns");
+            let kink = out.perp_dot(on).abs();
+            match (straight(a), straight(b)) {
+                (false, false) => assert!(kink < 1e-3, "{fit}: {k} turns"),
+                (true, true) => {}
+                (true, false) | (false, true) => {
+                    let length = if straight(a) {
+                        a.p0.distance(a.p1)
+                    } else {
+                        b.p0.distance(b.p1)
+                    };
+                    assert!(kink <= 2.0 * fit / length, "{fit}: {k} turns by {kink}");
+                }
+            }
             assert!(out.dot(on) > 0.0);
         }
         let area = spline_area(&sketch, curve);
@@ -325,6 +344,178 @@ fn an_open_spline_cut_by_a_line_keeps_its_vertices() {
         assert!(profiles.vertices.contains(&end));
     }
     assert!(largest_error(&sketch, spline, l) <= FIT / 2.0 + 1e-6);
+}
+
+/// The SplitMix64 generator, for corpora fixed by their seeds.
+struct SplitMix(u64);
+
+impl SplitMix {
+    /// The next number in `[0, 1)`.
+    fn next(&mut self) -> f64 {
+        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^= z >> 31;
+        (z >> 11) as f64 / (1u64 << 53) as f64
+    }
+}
+
+/// A plate `width` wide and half as high whose top edge is an open spline
+/// through `n` fit points evenly spaced along it, each but the ends moved
+/// up or down by up to `jitter / 2`; the plate is closed by three lines.
+/// The spline's id.
+fn wavy_plate(
+    sketch: &mut Sketch,
+    n: usize,
+    width: f64,
+    jitter: f64,
+    seed: u64,
+) -> varde_sketch::Id {
+    let mut rng = SplitMix(seed);
+    let last = n - 1;
+    let points: Vec<_> = (0..n)
+        .map(|i| {
+            let x = width * i as f64 / last as f64;
+            let off = if i == 0 || i == last {
+                0.0
+            } else {
+                (rng.next() - 0.5) * jitter
+            };
+            sketch.add_point(DVec2::new(x, width / 2.0 + off)).unwrap()
+        })
+        .collect();
+    let (first, end) = (points[0], points[last]);
+    let spline = sketch
+        .add_curve(Curve::Spline(Spline::through(points, false)), false)
+        .unwrap();
+    let corner = |sketch: &mut Sketch, x| sketch.add_point(DVec2::new(x, 0.0)).unwrap();
+    let (b0, b1) = (corner(sketch, 0.0), corner(sketch, width));
+    for (start, end) in [(end, b1), (b1, b0), (b0, first)] {
+        sketch.add_curve(Curve::Line { start, end }, false).unwrap();
+    }
+    spline
+}
+
+/// Whether `profile` extrudes, at the tolerance `fit`.
+fn extrudes(profile: &Profile, fit: f64) -> Result<(), varde_kernel::KernelError> {
+    let tolerance = varde_kernel::Tolerance::new(fit).unwrap();
+    let frame = varde_kernel::Frame::XY;
+    let budget = varde_kernel::Budget::DEFAULT;
+    varde_kernel::extrude(profile, &frame, 0.0, 10.0, 1, &tolerance, &budget).map(|_| ())
+}
+
+#[test]
+fn a_spline_straight_within_the_tolerance_is_one_segment() {
+    // 100 fit points over 1 mm, all within 0.0005 of a straight line.
+    let mut sketch = Sketch::default();
+    let curve = wavy_plate(&mut sketch, 100, 1.0, 0.001, 7);
+    let id = u64::from(curve.get());
+    let (profile, _) = picked_within(&sketch, |_| true, 0.1);
+    let fitted = profile.loops[0]
+        .segments
+        .iter()
+        .filter(|s| s.curve == id)
+        .count();
+    assert!(fitted <= 2, "{fitted} segments");
+    extrudes(&profile, 0.1).unwrap();
+    // Fine, it still follows every wiggle.
+    let fit = 1e-5;
+    let (profile, _) = picked_within(&sketch, |_| true, fit);
+    let error = largest_error(&sketch, curve, &profile.loops[0]);
+    assert!(error <= fit / 2.0, "{error}");
+}
+
+#[test]
+fn dense_wavy_edges_extrude_at_coarse_tolerances() {
+    let mut refused = Vec::new();
+    for width in [1.0, 5.0] {
+        for slope in [0.1, 0.3] {
+            for seed in 0..3 {
+                let n = 100;
+                let spacing = width / (n - 1) as f64;
+                let mut sketch = Sketch::default();
+                wavy_plate(&mut sketch, n, width, spacing * slope, seed);
+                let (profile, _) = picked_within(&sketch, |_| true, 0.1);
+                if let Err(e) = extrudes(&profile, 0.1) {
+                    refused.push(format!("{width} {slope} {seed}: {e:?}"));
+                }
+            }
+        }
+    }
+    assert!(refused.is_empty(), "{refused:#?}");
+}
+
+#[test]
+fn a_reversed_piece_fits_to_the_same_conics() {
+    // A rectangle split by a spline from its left side to its right: the
+    // region below runs along the spline backwards, the one above
+    // forwards. A closed spline in the upper region is the outer loop of
+    // its own region and a hole of the one round it.
+    let mut sketch = Sketch::default();
+    let points = [
+        (-6.0, 0.0),
+        (-3.0, 1.3),
+        (0.0, -0.7),
+        (2.0, 0.4),
+        (6.0, -0.2),
+    ]
+    .map(|(x, y)| sketch.add_point(DVec2::new(x, y)).unwrap());
+    let spline = sketch
+        .add_curve(
+            Curve::Spline(Spline::through(points.to_vec(), false)),
+            false,
+        )
+        .unwrap();
+    let corners = [(6.0, 8.0), (-6.0, 8.0), (-6.0, -8.0), (6.0, -8.0)]
+        .map(|(x, y)| sketch.add_point(DVec2::new(x, y)).unwrap());
+    let ring = [
+        points[4], corners[0], corners[1], points[0], corners[2], corners[3],
+    ];
+    for k in 0..ring.len() {
+        let (start, end) = (ring[k], ring[(k + 1) % ring.len()]);
+        sketch.add_curve(Curve::Line { start, end }, false).unwrap();
+    }
+    let blob_points = [(3.0, 4.0), (1.0, 6.0), (-2.0, 5.0), (-3.0, 3.0), (0.5, 2.0)]
+        .map(|(x, y)| sketch.add_point(DVec2::new(x, y)).unwrap());
+    let blob = sketch
+        .add_curve(
+            Curve::Spline(Spline::through(blob_points.to_vec(), true)),
+            false,
+        )
+        .unwrap();
+    for fit in [1e-1, 1e-3, 1e-5] {
+        let of = |profile: &Profile, curve: varde_sketch::Id| -> Vec<Conic2> {
+            let id = u64::from(curve.get());
+            let segments = profile.loops.iter().flat_map(|l| &l.segments);
+            segments
+                .filter(|s| s.curve == id)
+                .map(|s| s.conic)
+                .collect()
+        };
+        assert_eq!(sketch.profiles().unwrap().regions.len(), 3);
+        let (below, _) = picked_within(&sketch, |r| r.bounds.1.y < 4.0, fit);
+        let (above, _) = picked_within(&sketch, |r| r.holes.len() == 1, fit);
+        let (inside, _) = picked_within(&sketch, |r| r.holes.is_empty() && r.bounds.0.y > 1.0, fit);
+        // The spline piece, forwards above, backwards below.
+        let forwards = of(&above, spline);
+        let backwards: Vec<Conic2> = of(&below, spline)
+            .iter()
+            .rev()
+            .map(Conic2::reversed)
+            .collect();
+        assert!(!forwards.is_empty());
+        assert_eq!(forwards, backwards, "{fit}");
+        // The closed spline, counter-clockwise inside, clockwise as the hole.
+        let outer = of(&inside, blob);
+        let hole: Vec<Conic2> = of(&above, blob)
+            .iter()
+            .rev()
+            .map(Conic2::reversed)
+            .collect();
+        assert!(!outer.is_empty());
+        assert_eq!(outer, hole, "{fit}");
+    }
 }
 
 #[test]

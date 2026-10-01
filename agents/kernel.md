@@ -1016,7 +1016,8 @@ A `Profile` is loops of `Segment { conic: Conic2, curve: u64 }`: outer
 loops counter-clockwise, holes clockwise, so the region is on the left of
 every segment; the curve id names the wall. The kernel knows no sketch:
 whoever builds a profile (regen) turns lines into `Conic2::line`, arcs
-into exact conics of at most 90° and splines into fitted chains, and
+into exact conics of at most 90° and splines into fitted chains (in
+runs of Bézier spans, see "Pieces to conics" below), and
 merges regions (`varde_sketch::Profiles::merge`, exact, by the pieces'
 shared vertices; see `agents/sketch.md`). A sketch piece's ends are put at
 its vertices (`Profiles::vertices`), so segments close to the bit. `Profile::check` holds what needs no tolerance: at least
@@ -1256,6 +1257,15 @@ Known gaps:
   straight side with no vertices near (a row of holes 0.1 from a plate's
   side) keeps coming back as the arcs are halved, until `MAX_CAP_DEPTH`;
   the second try's moved-in points mend the cases seen.
+- **Fitted spline chains with real detail near the tolerance** (a dense
+  zigzag through 100 fit points whose wiggles are about the fit across,
+  at fits of 1e-3 to 1e-1) can still be refused: `Invalid` from flat cap
+  triangles as for fine polygons, or `TooComplex` from the narrow-corner
+  rule halving a concave curved segment whose tangent at a loop vertex
+  runs along an inner edge to a vertex further along the nearly straight
+  chain, which halving doesn't move, until the piece is under
+  `MIN_SPLIT`. Regen's run fitting (see "Pieces to conics") removed the
+  sub-tolerance cases; quality refinement of the caps would mend these.
 
 ## Volume and area (`Solid::volume`, `Solid::area`, `src/quadrature.rs`)
 
@@ -2670,19 +2680,71 @@ bit:
 - A spline piece (`src/profile/fit.rs`) is the open `BSpline::piece`
   between its parameters, cut at its breaks into cubic Béziers from the
   points and derivatives there (each break evaluated once, so neighbours
-  share it), reversed for a piece running backwards. Each Bézier is fitted
-  by one conic along its end tangents (so the chain turns smoothly), its
-  weight putting the conic's shoulder where the cubic crosses the line from
-  the chord's middle to the control point, or else weight 1; accepted when
-  the tangents meet ahead of both ends, turn by under 90°, the weight is
-  within `0.25..=4`, and 15 samples of the cubic lie in the control
-  triangle within half the fit tolerance of the conic (by its implicit
-  form over its gradient, `λ1² = 4w²·λ0·λ2`). Otherwise a Bézier within a
-  quarter of the tolerance of its chord becomes a straight conic, and any
-  other is halved (at most 24 times; past that `ProfileError::Fit`). At
-  most `MAX_PROFILE_SEGMENTS` segments are made (`TooManySegments`).
-  Measured on a closed spline about 10 across: 5, 47 and 409 segments at
-  fits of 0.1, 1e-3 and 1e-5 mm.
+  share it). It is always fitted in the spline's own direction, its ends
+  put at the vertices at its parameter ends; a piece running backwards
+  then reverses the chain and each conic (`Conic2::reversed`, exact), so
+  the two regions beside a piece get the same conics to the bit and
+  their walls coincide. The Béziers are fitted **in runs**: from each one
+  on, the run `i..=j` grows while one conic fits it and stops at the
+  first `j` that doesn't (no scanning past a failure), and the longest
+  run that fits gives one conic. A run fits:
+  - **as a line** first, if every control point of every Bézier in it is
+    within a quarter of the fit tolerance of the chord and projects
+    between its ends (rigorous, by the convex hull);
+  - else **as a conic** along the run's end tangents (from its first and
+    last Bézier; they must meet ahead of both ends and turn by under
+    90°), its weight `k/(1−k)` putting the conic's shoulder as far from
+    the chord as the furthest sample (`k` that height over the control
+    point's; a conic is furthest from its chord at its shoulder), or else
+    weight 1, within `0.25..=4`, accepted when 15 samples of each Bézier
+    and each Bézier's end lie in the control triangle within half the fit
+    tolerance of the conic (by its implicit form over its gradient,
+    `λ1² = 4w²·λ0·λ2`).
+
+  A Bézier no run fits, not even alone, is fitted on its own: a line if
+  its inner control points are within a quarter of the tolerance of its
+  chord, else one conic as above with its shoulder where the cubic at ½
+  crosses the line from the chord's middle to the control point, else
+  halved (at most 24 times; past that `ProfileError::Fit`). Curved
+  conics meet along the spline's tangent; a line meets its neighbours
+  with a kink of about the tolerance over its length at most (invisible
+  at the tolerance; the profile test bounds it by twice that). A piece
+  of `n` Béziers costs at most about `16·n²` point evaluations (`n` is
+  about `MAX_SPLINE_POINTS` = 100 at most): the worst corpus spline fits
+  in 1.2 ms. At most `MAX_PROFILE_SEGMENTS` segments are made
+  (`TooManySegments`), counted as the piece is fitted. Measured on a
+  closed spline through five points about 10 across: 5, 29 and 78
+  segments at fits of 0.1, 1e-3 and 1e-5 mm (no run takes more than one
+  of its five spans, so the counts are as span by span).
+
+  **Measured** before and after runs (a scratch corpus on the real
+  crates, each sketch extruded 10 mm on the XY frame at fits 1e-5 to 1e-1
+  mm; refused counts `before → after` at 1e-3, 1e-2, 1e-1; segment totals
+  at 1e-1). "Wavy": a plate W × W/2 whose top is an open spline through
+  `n` ∈ {10, 30, 100} evenly spaced fit points jittered by ±slope·spacing/2,
+  W ∈ {1, 5, 20, 100}, slope ∈ {0.1, 0.3, 1}, 10 seeds (360). "Control":
+  the same top by control points (60). "Blob": closed splines through 5
+  to 100 points on a perturbed circle of radius 0.2 to 100 (420). "Cut":
+  a blob cut by a line, each region (48). "Hole": a blob as a square's
+  hole, each region (48).
+
+  | set | refused at 1e-3 | at 1e-2 | at 1e-1 | segments at 1e-1 |
+  |---|---|---|---|---|
+  | wavy | 5 → 5 | 17 → 15 | 52 → 5 | 21 772 → 12 491 |
+  | control | 0 → 0 | 0 → 0 | 9 → 0 | 2 972 → 1 092 |
+  | blob | 0 → 0 | 0 → 0 | 0 → 0 | 16 602 → 4 332 |
+  | cut | 0 → 0 | 0 → 0 | 0 → 0 | 1 140 → 344 |
+  | hole | 0 → 0 | 0 → 0 | 0 → 0 | 2 180 → 590 |
+
+  Nothing failed at 1e-5 or 1e-4 before or after. The worst sampled fit
+  error stays 0.68 of the fit at 1e-3 and coarser; the worst fit time
+  fell from 2.8 to 1.2 ms. Every refusal left is the cap residue at real
+  detail near the tolerance (slope 1, see "Known gaps" under Profiles
+  and extrude), and two sketches that extruded before now fail with it
+  (wavy n = 30, W = 1, slope 1, seed 0 at 1e-2, `TooComplex`; n = 100,
+  W = 20, slope 1, seed 5 at 1e-2, `Invalid(VertexNeighbours)`): their
+  chains changed by a few segments (53 → 50, 228 → 226) and the caps'
+  fragility flipped, as it flips the other way for others.
 
 **Cache** (`src/cache.rs`). Every result is filed under a 128-bit key (two
 SipHash runs, one salted, over the length-prefixed parts): a sketch's
@@ -3210,3 +3272,12 @@ parameter, or a split outside the patch bounds),
   it is told by integrating instead.
 - **The inverted-operand tests** of the booleans now assert `Solid::new`
   refuses the operand, since it can't be built any more.
+- **A fitted run's shoulder is set by height off the chord**: the
+  furthest sample's distance from the chord over the control point's,
+  not its projection on the line from the chord's middle to the control
+  point. The projection overshoots for a lopsided run (a chord end itself
+  projects ahead of the middle) and kept an exact parabola cut into eight
+  Béziers from being one conic; at a conic's shoulder its height is
+  largest, so the height is exact for a run that is a conic. On the wavy
+  corpus it left 2 sketches that extruded before failing against 4 for
+  the projection, with fewer segments.
