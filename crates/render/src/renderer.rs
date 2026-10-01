@@ -580,6 +580,10 @@ impl Renderer {
                 None
             });
         }
+        // The regen lane hands an unchanged model back as the same `Arc`,
+        // so this skips its upload. A failed upload isn't tried again for
+        // the same `Arc`: it can only fail on the device's buffer limit,
+        // which the same mesh would hit again.
         if !std::ptr::eq(slot.source.as_ptr(), Arc::as_ptr(frame.mesh)) {
             slot.source = Arc::downgrade(frame.mesh);
             slot.mesh = upload_mesh(device, frame.mesh).unwrap_or_else(|error| {

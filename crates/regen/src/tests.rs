@@ -648,7 +648,7 @@ fn a_cut_draft_lists_what_it_touches_and_is_answered_from_the_cache() {
 
     // Taking the plate out: the tool is found, whether it touches isn't
     // asked, and the model's mesh is the committed one's, kept in the
-    // slot for the last two scenes: nothing is worked out.
+    // scene slot: nothing is worked out.
     let mut out = draft.clone();
     out.revision = 2;
     out.extrude.operation = Operation::Cut(varde_document::Targets {
@@ -885,8 +885,9 @@ fn the_scene_key_holds_each_shown_body_in_order() {
     assert_eq!(cache.joins(), 5);
 }
 
-/// The scene slot holds the last two scenes used, whatever the requests
-/// in between: a third scene pushes out the least recently used.
+/// Without drafts, the scene slot holds the last two scenes used,
+/// whatever the requests in between: a third scene pushes out the least
+/// recently used.
 #[test]
 fn the_scene_slot_holds_the_last_two_scenes_used() {
     let document = with_bodies(false);
@@ -922,4 +923,55 @@ fn the_scene_slot_holds_the_last_two_scenes_used() {
     assert!(!Arc::ptr_eq(&later, &a));
     assert_eq!(*later, *a);
     assert_eq!(cache.joins(), 4);
+}
+
+/// However long a draft is dragged, the committed model's scene stays:
+/// each revision's scene takes the place of the one before, so putting
+/// the draft away finds the committed mesh, and committing the draft
+/// finds the last revision's.
+#[test]
+fn a_dragged_draft_leaves_the_committed_scene_held() {
+    let mut editor = Editor::new(Document::example());
+    let mut regenerator = Regenerator::default();
+    let committed = answered(regenerator.handle(regenerate(&editor, None))).mesh;
+    let mut last = None;
+    for (revision, depth) in [(0, "3"), (1, "4"), (2, "5"), (3, "6")] {
+        let draft = new_body_draft(editor.document(), revision, depth);
+        let answer = answered(regenerator.handle(regenerate_with(&editor, Some(draft.clone()))));
+        assert_eq!(answer.draft.unwrap().error, None);
+        assert!(!Arc::ptr_eq(&answer.mesh, &committed));
+        last = Some((draft, answer.mesh));
+    }
+    assert_eq!(regenerator.cache().joins(), 5);
+    // Put away: the committed mesh, not joined again.
+    let away = answered(regenerator.handle(regenerate(&editor, None))).mesh;
+    assert!(Arc::ptr_eq(&away, &committed));
+    assert_eq!(regenerator.cache().joins(), 5);
+    // Taken up again at the last depth, then committed: its mesh both
+    // times, and the committed scene before it is still held.
+    let (draft, dragged) = last.unwrap();
+    let mut again = draft.clone();
+    again.revision = 4;
+    let answer = answered(regenerator.handle(regenerate_with(&editor, Some(again))));
+    assert!(Arc::ptr_eq(&answer.mesh, &dragged));
+    let before = editor.clone();
+    editor
+        .apply(editor.document().add_extrude(draft.extrude))
+        .unwrap();
+    let done = answered(regenerator.handle(regenerate(&editor, None))).mesh;
+    assert!(Arc::ptr_eq(&done, &dragged));
+    assert_eq!(regenerator.cache().joins(), 5);
+    // The committed scene is a model's now: a new draft on top takes the
+    // place of the scene before the commit, not of it.
+    let next = new_body_draft(editor.document(), 5, "2");
+    let answer = answered(regenerator.handle(regenerate_with(&editor, Some(next))));
+    assert!(!Arc::ptr_eq(&answer.mesh, &done));
+    let after = answered(regenerator.handle(regenerate(&editor, None))).mesh;
+    assert!(Arc::ptr_eq(&after, &done));
+    assert_eq!(regenerator.cache().joins(), 6);
+    // Undone: the scene before the commit was pushed out, so it's joined
+    // again, with the right content.
+    let undone = answered(regenerator.handle(regenerate(&before, None))).mesh;
+    assert_eq!(*undone, *committed);
+    assert_eq!(regenerator.cache().joins(), 7);
 }

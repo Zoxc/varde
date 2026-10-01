@@ -12,20 +12,22 @@
 //! also keep what it doesn't use ([`Cache::keep`]).
 //!
 //! The model's mesh, the shown bodies' meshes joined, is kept apart from
-//! the per-feature results, in a slot for the last two scenes used
-//! ([`Cache::scene`]): a request whose shown bodies and tolerance didn't
-//! change (a sketch edit no body depends on, a sketch hidden or left
-//! out, a draft that fails, or the committed model asked again after a
-//! draft) is answered with the very same `Arc`, so neither the join nor,
-//! natively, the renderer's upload (which keys its buffers by the `Arc`)
-//! is done again. The slot holds two scenes whatever the requests were,
-//! the least recently used going first, rather than ageing with
-//! [`Cache::begin`]: a draft and the committed model take turns without
-//! either being joined again, and it never holds more than two joined
-//! meshes. It's its own slot only so the per-feature counts
-//! ([`Cache::counts`]) stay counts of features; a size-bounded cache
-//! replacing the two-request policy can take scenes in as one more kind
-//! of entry under its own policy.
+//! the per-feature results, in a slot for two scenes ([`Cache::scene`]):
+//! a request whose shown bodies and tolerance didn't change (a sketch
+//! edit no body depends on, a sketch hidden or left out, a draft that
+//! fails, or the committed model asked again after a draft) is answered
+//! with the very same `Arc`, so neither the join nor, natively, the
+//! renderer's upload (which keys its buffers by the `Arc`) is done
+//! again. The slot holds two scenes whatever the requests were, rather
+//! than ageing with [`Cache::begin`], the least recently used going
+//! first, except that a draft's scene takes the place of the draft's
+//! scene before it, if one is held: however long a draft is dragged,
+//! the committed model's scene stays, and putting the draft away finds
+//! it; without drafts, a body hidden and shown again finds the scene
+//! before. It never holds more than two joined meshes. It's its own slot
+//! only so the per-feature counts ([`Cache::counts`]) stay counts of
+//! features; a size-bounded cache replacing the two-request policy can
+//! take scenes in as one more kind of entry under its own policy.
 
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -116,13 +118,21 @@ pub struct Cache {
     scenes: Scenes,
 }
 
-/// The last two joined model meshes used, filed by their scene keys, the
-/// most recently used first, and how many were joined, for tests.
+/// Two joined model meshes, filed by their scene keys, the most recently
+/// used first, and how many were joined, for tests.
 #[derive(Default)]
 struct Scenes {
-    current: Option<(Key, Arc<RenderMesh>)>,
-    previous: Option<(Key, Arc<RenderMesh>)>,
+    held: [Option<Scene>; 2],
     joins: usize,
+}
+
+/// A joined model mesh held.
+struct Scene {
+    key: Key,
+    mesh: Arc<RenderMesh>,
+    /// Whether only drafts' answers used it: the next draft's scene takes
+    /// its place.
+    drafted: bool,
 }
 
 impl Cache {
@@ -236,32 +246,44 @@ impl Cache {
     }
 
     /// The model's mesh filed under the scene key `key`, if one of the
-    /// last two scenes used has it; otherwise `join`'s, filed in place of
-    /// the least recently used, or its error, which isn't kept. Not
-    /// counted in [`Cache::counts`].
+    /// two scenes held has it; otherwise `join`'s, or its error, which
+    /// isn't kept. A scene joined for a draft's answer (`drafted`) takes
+    /// the place of a draft's scene held, any other the least recently
+    /// used one's; a scene found by an answer without a draft is no
+    /// longer a draft's. Not counted in [`Cache::counts`].
     pub(crate) fn scene<E>(
         &mut self,
         key: Key,
+        drafted: bool,
         join: impl FnOnce(&mut Cache) -> Result<RenderMesh, E>,
     ) -> Result<Arc<RenderMesh>, E> {
-        let filed = |slot: &Option<(Key, Arc<RenderMesh>)>| {
-            slot.as_ref()
-                .filter(|(filed, _)| *filed == key)
-                .map(|(_, mesh)| Arc::clone(mesh))
-        };
-        let scenes = &mut self.scenes;
-        if let Some(mesh) = filed(&scenes.current) {
-            return Ok(mesh);
-        }
-        if let Some(mesh) = filed(&scenes.previous) {
-            std::mem::swap(&mut scenes.current, &mut scenes.previous);
-            return Ok(mesh);
+        let held = &mut self.scenes.held;
+        let found = held
+            .iter()
+            .position(|scene| scene.as_ref().is_some_and(|scene| scene.key == key));
+        if let Some(i) = found {
+            held[..=i].rotate_right(1);
+            let scene = held[0].as_mut().expect("a scene was found");
+            scene.drafted &= drafted;
+            return Ok(Arc::clone(&scene.mesh));
         }
         let mesh = Arc::new(join(self)?);
         let scenes = &mut self.scenes;
         scenes.joins += 1;
-        scenes.previous = scenes.current.take();
-        scenes.current = Some((key, Arc::clone(&mesh)));
+        let held = &mut scenes.held;
+        let gone = match held
+            .iter()
+            .position(|scene| scene.as_ref().is_some_and(|scene| scene.drafted))
+        {
+            Some(i) if drafted => i,
+            _ => held.len() - 1,
+        };
+        held[..=gone].rotate_right(1);
+        held[0] = Some(Scene {
+            key,
+            mesh: Arc::clone(&mesh),
+            drafted,
+        });
         Ok(mesh)
     }
 

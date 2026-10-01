@@ -314,7 +314,10 @@ impl Regenerator {
         exclude: Option<FeatureId>,
         draft: Option<Drafted>,
     ) -> Result<Model, String> {
-        let mesh = tessellate(document, &evaluation, &mut self.cache)
+        // Only a draft that worked is drawn: one that failed is answered
+        // with the committed model.
+        let drafted = draft.as_ref().is_some_and(|draft| draft.error.is_none());
+        let mesh = tessellate_scene(document, &evaluation, drafted, &mut self.cache)
             .map_err(|error| error.to_string())?;
         let sketches = flatten_sketches(document, exclude).map_err(|error| error.to_string())?;
         let bodies = evaluation
@@ -402,6 +405,17 @@ pub fn tessellate(
     evaluation: &Evaluation,
     cache: &mut Cache,
 ) -> Result<Arc<RenderMesh>, MeshError> {
+    tessellate_scene(document, evaluation, false, cache)
+}
+
+/// [`tessellate`], for a draft's answer if `drafted`, which the cache's
+/// scene slot files apart (see [`Cache`]).
+fn tessellate_scene(
+    document: &Document,
+    evaluation: &Evaluation,
+    drafted: bool,
+    cache: &mut Cache,
+) -> Result<Arc<RenderMesh>, MeshError> {
     let fit = document.tolerance().fit().to_bits();
     let shown: Vec<_> = evaluation
         .bodies
@@ -415,7 +429,7 @@ pub fn tessellate(
     }
     let scene = scene.number(shown.len() as u64).finish();
     let mut found = true;
-    let mesh = cache.scene(scene, |cache| {
+    let mesh = cache.scene(scene, drafted, |cache| {
         found = false;
         let display = Display::new(&document.tolerance());
         let mut mesh = RenderMesh::default();

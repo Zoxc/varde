@@ -2800,16 +2800,24 @@ by `RenderMesh::append` into an `Arc<RenderMesh>`; a mesh past
 `RenderMesh`'s limits fails the generation with the `MeshError` (and isn't
 kept). The joined mesh is kept in the cache under a scene key (`"scene"`,
 then each shown body's mesh key in order, which holds the tolerance, then
-the count), in a slot of its own for the last two scenes used, least
-recently used out, not aged by `Cache::begin` and not in `counts` (those
-count features; `Cache::joins` counts joins, for tests). A request whose
-scene didn't change (a sketch edit no body depends on, a sketch hidden or
-left out, a failing draft, the committed model after a draft) gets the
-same `Arc`, so natively the renderer, keyed by the `Arc`, skips the
-upload; a scene found keeps its bodies' meshes in the cache
-(`Cache::keep`) for the next scene that changes one. A size-bounded cache
+the count), in a slot of its own for two scenes: least recently used
+out, except that a working draft's scene takes the place of the previous
+draft's scene if one is held, so the committed model's scene survives
+any number of draft revisions (a scene found by an answer without a
+draft stops being a draft's). The slot isn't aged by `Cache::begin` and
+isn't in `counts` (those count features; `Cache::joins` counts joins,
+for tests). A request whose scene didn't change (a sketch edit no body
+depends on, a sketch hidden or left out, a failing draft, the committed
+model after a draft was dragged and put away, the model just after a
+draft is committed) gets the same `Arc`, so natively the renderer, keyed
+by the `Arc`, skips the upload; a scene found keeps its bodies' meshes in
+the cache (`Cache::keep`) for the next scene that changes one. The
+renderer doesn't try an upload of the same `Arc` again after it failed;
+the only failure is a part past the device's buffer limit, which the same
+mesh would hit again, so it is logged once. A size-bounded cache
 replacing the two-request policy can take the slot in as one more kind
-of entry. On the web the mesh still crosses the wire whole each time. On the web the reply's head
+of entry. On the web the mesh still crosses the wire whole each time.
+On the web the reply's head
 carries `draft`, `failed` and the boxes as corner arrays, checked finite
 and in order on receipt (`wire::Error::Bounds`); `MAX_HEAD_BYTES` is 64
 MiB. The draft's touched bodies cross in the head as marks, unchecked.
@@ -2822,8 +2830,8 @@ body only there is "it doesn't touch any body". An operation that runs
 out of budget takes about 2–3.5 s on one native thread and holds the
 single-threaded web worker longer, with drafts queued behind it (latest
 wins, so only the newest waits). The cache keeps only what the last
-request used (and excluded bodies' booleans, and the last two scenes'
-joined meshes): switching the operation away and back, or an edit undone
+request used (and excluded bodies' booleans, and two scenes' joined
+meshes): switching the operation away and back, or an edit undone
 after two requests, reruns the booleans. On the web an unchanged model
 mesh is still copied over the wire, checked and uploaded again with each
 answer.
@@ -3322,10 +3330,12 @@ parameter, or a split outside the patch bounds),
   across, each of their two spans straight within the tolerance and no
   conic's, so two lines; span by span happened to fit one of them with
   conics, walking it the other way).
-- **The regen lane's scene slot is the last two scenes used**, least
-  recently used out, not the scenes of the last two requests aged by
-  `Cache::begin` like the per-feature results. Aged by requests it would
-  hold one scene at a time (each request uses one), so the committed
-  model asked again after a draft would be joined again. Kept apart from
-  the per-feature entries so `counts` stay feature counts; a size-bounded
+- **The regen lane's scene slot holds two scenes**, least recently used
+  out except that a working draft's scene replaces the previous draft's,
+  not the scenes of the last two requests aged by `Cache::begin` like the
+  per-feature results. Aged by requests it would hold one scene at a time
+  (each request uses one), so the committed model asked again after a
+  draft would be joined again; plain least recently used would lose the
+  committed scene after two draft revisions. Kept apart from the
+  per-feature entries so `counts` stay feature counts; a size-bounded
   cache can fold it into its own policy.
