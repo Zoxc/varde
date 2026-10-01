@@ -24,7 +24,7 @@
 //! 3. Fold: every patch passes the fold check.
 //! 4. Control hulls: patches that share no vertex have hulls more than the
 //!    resolution apart, and neighbours are split by a plane through what
-//!    they share.
+//!    they share (or, across a curved edge, by the cylinder over it).
 //! 5. Orientation: every shell (connected part) faces out, or in where it
 //!    bounds a void, so the winding number is 0 or 1 everywhere.
 //! 6. Face tags: patches on `Plane` and `Quadric` faces lie on them within

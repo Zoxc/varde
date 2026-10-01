@@ -438,18 +438,23 @@ chord against the meridian's). At most 16 halvings of a piece; 256 work
 units a strip (about a hundred microseconds; the `Budget`'s units are
 about half a microsecond).
 
-**Rings stay off turns.** A ring's parallel is the shared edge of the
-strips either side of it, and the edge rule takes the plane through its
-control points, square to the axis: one side must clear it, the other not
-cross it by more than the resolution. Where the meridian's tangent is
+**Rings at turns.** A ring's parallel is the shared edge of the
+strips either side of it, and the edge rule first takes the plane through
+its control points, square to the axis: one side must clear it, the other
+not cross it by more than the resolution. Where the meridian's tangent is
 square to the axis (a turn of its height: a torus's top and bottom) the
 surface touches that plane all along the parallel, so a ring there has
-both strips under it and is refused (`EdgeNeighbours`; test
-`a_ring_where_the_surface_touches_its_plane_is_refused`), and a strip over
-the turn whose ends differ in height dips under the plane of its higher
-ring. No plane through a curved edge can do better (both hulls hold the
-edge's three control points), so the bands avoid it: a piece whose
-height turns inside it (the roots in `(1e-6, 1 − 1e-6)` of the
+both strips under it (or one in it), and no plane through a curved edge
+parts them (both hulls hold the edge's three control points). `check`
+then parts them by the cylinder over the ring (see "Control hulls"): one
+strip leaves the ring inwards, the other outwards. So rings at turns are
+solids (test `rings_at_turns_are_solids` and the profiles below). Bands
+still keep their own rings off turns, as it is cheaper: rings put at the
+turns themselves pass too but cost up to half as many patches again (a
+torus off its turns at `1e-4`: 3 072 against 2 048, and a repair at
+`1e-1`), and a strip over the turn whose ends differ in height dips under
+the plane of its higher ring, which the bands' plane rule refuses. A
+piece whose height turns inside it (the roots in `(1e-6, 1 − 1e-6)` of the
 derivative's numerator, a quadratic with Bernstein coefficients `w·(hc −
 h0)`, `(h1 − h0)/2`, `w·(h1 − hc)`) is first cut where its far side comes
 back to the height of the end nearer the turn's (bisection to the bit),
@@ -459,12 +464,35 @@ neighbours fall away from the turn and clear them. Halving such a piece
 makes three: the middle one over the turn, from half way to the turn to
 where it comes back to that height. Pieces are made from the meridian's
 blossom between parameters (`Conic::piece`, which the boolean's kept
-edge pieces use too), so neighbours share their end's bits. A
-**ring at a turn is the caller's to avoid**: revolve must split full
-circles off their top and bottom (the tests split tubes at 45°) and can't
-build a profile vertex there (a flat face tangent to a round at its top,
-or two arcs meeting tangentially there): a gap revolve has to close (see
-Deviations, "Rings stay off turns").
+edge pieces use too), so neighbours share their end's bits. Revolve may
+build profile vertices at turns (a flat face tangent to a round at its
+top, two arcs meeting tangentially there, a fillet onto a plate) and
+split full circles anywhere.
+
+**Profiles with rings at turns** (`sweep/lathe/tests/turns.rs`), each
+revolved on lathes from 4 pieces, arcs as fitted bands, lines along the
+axis as exact cylinder strips, across it as discs or annuli (straight
+diagonals, the lathe halved until they pass the fold check): a puck
+`R 10` with an `r 2` round on top, and rounded top and bottom; tori `R
+20, r 2` and `R 10, r 3` split at their outside, top, inside and bottom;
+two arcs tangent at a top; an S (convex, then concave) turning at the
+joint; a boss with a concave `r 2` fillet onto a plate; a lip (half a
+torus on a cup's wall); a thin round (`R 50, r 0.5`); a rounded hole
+edge; a torus split 0.3 rad off its turns; a round over its top in one
+131° arc. At `1e-2`, `1e-3` and `1e-4` (and `1e-5` in release builds) on
+the axis and two random frames up to `1e3` out, all pass `check` with no
+repair, volume within the area times half the fit tolerance of Pappus
+(`π∮ρ² dh`), area within `4·A·fit/2` over the smallest radius, refused
+inside out; every triangle split once at `1e-2` still passes; the same
+bits at 1 and 8 threads. Counts: the puck at `1e-3` 16 pieces round the
+axis and 192 patches; the torus `R 20, r 2` at its turns 128 and 1 024 at
+`1e-3`, 256 and 2 048 at `1e-4` (an ordinary torus's counts). The thin
+round's random frames stop at `1e-4`: at `1e-5` its disc's 2 048 sectors,
+50 long and 0.15 wide, fail the hull rule against the wall far out (the
+plane through a ring arc of bulge `1.2e-4` tilts by about `1e-9` rad by
+rounding, putting the disc's centre `5e-8` off it), which is no ring at
+a turn and the same without the cylinder; revolve's discs are to be caps
+from their rings, not fans of slivers.
 
 **Caps** (`pole_cap(lathe, meridian, pole, form, tol, budget)`): the
 triangles of two meridians from the pole and the parallel between them,
@@ -542,8 +570,8 @@ anywhere, elliptic tori (`Form::Revolved`), and tubes split at any angle
 volume within the area times half the fit tolerance and area within
 `4·A·fit/2` over the smallest radius of curvature (exact for the volume
 of exact faces), and refused turned inside out; the torus counts above
-at `1e-2`, `1e-3` and `1e-4` pinned, with dense spot checks; a ring at a
-turn refused; caps off the axis and bands past their budget refused; the
+at `1e-2`, `1e-3` and `1e-4` pinned, with dense spot checks; rings at
+turns (above); caps off the axis and bands past their budget refused; the
 same bits at 1 and 8 threads.
 
 ### Limits and errors
@@ -1029,6 +1057,52 @@ its triangles share, which is topology:
     stop in "Repair"). Random pairs (2M, heights within 4 resolutions,
     random layouts and weights) that the rule passes always have their
     far control points more than the resolution apart.
+  - **The cylinder** (`hull::cylinder_apart`), for a curved edge the
+    plane fails on, in `check` and repair (`check_pair`, through
+    `edge_neighbours_parted`). Where the surface touches the edge's
+    plane all along it (a ring at a turn of a solid of revolution: a
+    torus's top, a flat face meeting a round tangentially, two arcs
+    tangent at a top, a concave fillet onto a plate) both patches hold
+    `P`, `C`, `Q` and lie on one side of every plane through them, but
+    leaving the edge across it one goes in towards the conic's centre and
+    the other out: they lie either side of the cylinder over the edge's
+    conic, square to its plane. With `λP, λC, λQ` the barycentric
+    coordinates of a point's projection onto the triangle `P, C, Q`
+    (computed relative to `C` by cross products with `n = (P − C) × (Q −
+    C)`), `F = λC² − 4w²·λP·λQ` is a quadratic function of space whose
+    zero set is that cylinder (`ρ² − ρ0²` up to a factor for a circle; the
+    form `Form`'s conic distance uses). On a patch `F = N/W²`, both of
+    degree four; their Bernstein coefficients are sums over the 21 pairs
+    of the six homogeneous control points of `F`'s polar form
+    `λC(X)λC(Y) − 2w²(λP(X)λQ(Y) + λQ(X)λP(Y))` (and of the weights'
+    product), times whole multinomial factors (1, 2, 4 or 8; the quartic
+    multinomial is cancelled in the ratio), summed in a fixed order. With
+    the shared edge as row 0 (the far corner's exponent 0), row 0 is the
+    edge itself, zero to rounding. The rule asks every ratio `N_γ/W²_γ` in
+    rows 1 to 4 to be past the threshold with one sign on one patch and
+    the other on the other, and row 0's within it; anything not finite,
+    a straight edge or a control triangle flatter than `|n|² ≤
+    1e-24·|e1|²|e2|²` is refused. Then `F`, a positive mean of the ratios,
+    has one sign on each patch except near the edge, so the two meet only
+    there (the plane rule's argument one degree up), and splitting keeps
+    it: a piece's coefficients are convex combinations of its parent's
+    (blossoms), the edge row staying zero. The **threshold** is `margin ·
+    4w² / max(hP, hQ)`, `hP` and `hQ` the far ends' heights above the
+    lines through the other end and `C`: `|∇F|` at the edge's end where it
+    is smaller (`4w²/hQ` at `P`). So the margin bounds the coefficients of
+    `F` against its gradient, about a resolution of distance from the
+    cylinder at the edge, not the distance of control points from a plane
+    as the plane rule's does. Bands and caps (`Lathe::strip`, `pole_cap`)
+    keep the plane rule alone: its failure on a fitted diagonal is what
+    tells them a strip is too coarse. With the cylinder there too, a torus
+    split 0.3 rad off its turns at `1e-1` took 8 pieces round the axis
+    instead of 16, and those strips failed the vertex rule (repaired 96 →
+    832 patches). Measured on random pairs sharing a random conic edge
+    (200 000, 195 parted): `F` evaluated at 465 points of each patch away
+    from the edge always has the coefficients' sign (test). Across the
+    kernel's other tests the rule fires in boolean repair (chains of
+    twenty, related, nicks, turned solids) with the same refusals as
+    without it.
 - **One: vertex neighbours.** A plane through the shared vertex `V` with
   the other five control points of each more than the resolution to either
   side. With unit normal `n` that is `n·x > margin` for every `x` in
@@ -1131,9 +1205,11 @@ midpoints in the order they were made.
 **Flat faces.** A leaf on a `Plane` face is split with **straight inner
 edges** (control point at the midpoint, weight 1), red and green. An exact
 split of a flat patch with a curved side has curved inner edges lying in
-the face's plane with both pieces, and the edge-neighbour rule can't hold
-there: the plane through a curved edge's control points is the face's
-plane, and neither piece is off it. Straight inner edges fall under the
+the face's plane with both pieces, and the edge-neighbour plane rule
+can't hold there: the plane through a curved edge's control points is
+the face's plane, and neither piece is off it (the cylinder over the
+edge, which `check` tries next, might part them; straight inner edges
+came first and stay). Straight inner edges fall under the
 straight-edge rule, and the pieces cover exactly the region the parent did
 (it is the plane) as long as no straight inner edge crosses a curved side.
 Where one does, the pieces cover it only up to sign: a child's corner at a
@@ -1455,10 +1531,18 @@ repeated directed edges, two fans at a vertex and an unused vertex,
 halfedges naming different edges and an edge used twice over, bad weights
 and coordinates, a zero corner normal, overlapping tetrahedra (and two
 corner to corner, passing at twice the resolution apart and failing at
-half), edge neighbours folded flat onto each other and across a sideways
-curved edge (and passing when it curves outwards), crossing vertex
+half), edge neighbours folded flat onto each other across a straight
+edge and across one curved up out of their plane (both inside the
+cylinder over it), passing across a sideways curved edge (parted by the
+cylinder) and one curving outwards (by the plane), crossing vertex
 neighbours, triangles on the same corners, and wrong plane and cylinder
-tags. GJK is tested against boxes a known gap apart (face to face and
+tags. The cylinder rule (`mesh/hull/tests.rs`) parts fitted strips at
+rings at turns (a torus's top, round into flat, flat into a concave
+fillet, an S) where the plane can't, both orders, and refuses them once
+one patch's edge weight is off by `1e-3`; it refuses two rounds folded
+out of a top, a wall lying on the cylinder under a round (which the
+plane parts) and a straight edge, and is sound on 200 000 random pairs
+(`F` at points against the coefficients' signs). GJK is tested against boxes a known gap apart (face to face and
 corner to corner, randomly rotated and moved), point clouds either side of
 a plane, flat, collinear and repeated points, the long thin hulls of a
 611 × 0.066 × 0.187 box's corner in any order and rotation, and a support
@@ -5892,47 +5976,32 @@ parameter, or a split outside the patch bounds),
   lathe). The tori come out with fewer patches than the plan estimated (768
   at the default tolerance against about 1 000, 2 560 at `1e-4` against 4
   000).
-- **Rings stay off turns.** Not in the plan, found building tori: where
-  a meridian's tangent is square to the axis the surface touches the
-  parallel's plane all along it, and the edge rule (a plane through the
-  shared curved edge's control points with the two sides on opposite
-  sides of it) can't pass there or across a strip over the turn whose
-  ends differ in height. Bands cut the piece over a turn where it comes
-  back to one height, so no ring lies at a turn. Profile vertices at
-  turns stay a gap for revolve: a full circle must be split off its top
-  and bottom (at 45°, say), and a vertex where the meridian is square to
-  the axis on both sides (a flat face meeting a round tangentially, two
-  arcs tangent at a top) is refused by `check` as built. Closing it needs
-  either a construction that keeps a ring off the turn (no plane face can
-  end there) or a hull rule for tangent edges: with one side in the
-  plane, the other's height polynomial (Bernstein coefficients the
-  heights of its control points) non-positive everywhere and negative
-  at its far corner is under the plane except on the edge. Reviewed:
-  that rule is sound where one side lies in the plane (a flat face
-  tangent to a round, a fillet tangent to a plane). Every point of a
-  patch is a positive mean of its control points' heights, so with the
-  round side's each at most the margin above the plane and its far
-  corner more than the margin below, the round side lies under the
-  plane but for less than the margin near the edge, and the flat side
-  is in it within the margin: the pair overlaps less than a margin deep,
-  which is what the edge rule promises now, and splitting either patch
-  keeps the condition, so repair and refinement stay within it. Two
-  conditions come with it. The round side's control points next to the
-  edge are in the plane only to rounding, and a fitted diagonal's isn't
-  at all (on a puck's rounded edge, `R 10`, `r 2`, at fit `1e-2` the
-  diagonal's control point was `3e-3` above the plane, 300 resolutions;
-  at `1e-3` and `1e-4` below it), so strips at such a ring must fit their
-  diagonal with its control point held in the surface's tangent plane at
-  the ring's end (one linear constraint on the four numbers fitted). And
-  the vertex neighbours at the ring's stations, whose control points
-  beside the vertex lie in the plane on both sides, must still pass the
-  vertex rule by a plane steep across the ring's tangent (expected, not
-  tried). It does not cover two round sides both under the plane (two
-  arcs tangent at a top, or a ring at a turn inside a band): each lies
-  under the plane, but nothing then shows they miss each other; that
-  needs a second certificate (the sign of `ρ² − ρ²(ring)` over each
-  side, degree-four Bernstein coefficients, `ρ` the distance from the
-  axis) or a refusal.
+- **Rings at turns: the cylinder rule.** Not in the plan, found building
+  tori: where a meridian's tangent is square to the axis the surface
+  touches the parallel's plane all along it, and the edge rule (a plane
+  through the shared curved edge's control points with the two sides on
+  opposite sides of it) can't pass there, so `check` refused every ring
+  at a turn: a full circle split at its top, a flat face meeting a round
+  tangentially, two arcs tangent at a top. Repair rescued some only at
+  coarse fits and absurd cost (a puck at `1e-2`: 64 → 80 976 patches) and
+  ran out of budget from `1e-3`, so every revolve of a profile with a
+  rounded edge would have failed. Bands first kept their own rings off
+  turns (they still do, being cheaper), but a profile vertex at a turn is
+  the boundary between two faces and can't move. Fixed by a second
+  certificate for curved edges in `check` and repair: the two patches on
+  opposite sides of the cylinder over the edge's conic, by the signs of
+  `F = λC² − 4w²·λP·λQ`'s degree-four Bernstein coefficients (see
+  "Control hulls"). A reviewed alternative, one side in the plane and the
+  other's control points under it with the fitted diagonal held in the
+  tangent plane, covers only a flat side against a round (not two rounds,
+  an S or a concave fillet) and needs a constrained fit; rejected. A
+  pencil of the plane and the cylinder (`α·F + β·plane·W`, a two-variable
+  LP) would cover creases where both sides leave the edge the same way
+  at different angles; nothing needs it yet. Bands and caps keep the
+  plane rule alone (with the cylinder they chose coarser strips that
+  failed the vertex rule). An existing test's pair, two patches across a
+  sideways curved edge, now passes (it really is embedded); the folded
+  case is one curved up out of their common plane.
 - **Caps don't grow the angular split.** The plan raised `k` when a cap
   wanted an arc halved; halving the cap's meridian toward the pole alone
   brings it within the tolerance (the error falls as `δ²` on a sphere,

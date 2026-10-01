@@ -337,6 +337,12 @@ impl Lathe {
     /// diagonal could be fitted, a patch folds, or the two come within
     /// `margin` of each other off their diagonal, all of which halving
     /// may cure.
+    ///
+    /// "Within `margin`" is the plane rule ([`edge_neighbours_apart`])
+    /// alone, not `check`'s cylinder after it: the plane's failure on the
+    /// fitted diagonal is what tells a band a strip is too coarse. With
+    /// the cylinder too, bands chose coarser strips whose patches then
+    /// failed the vertex rule.
     fn strip(
         &self,
         meridian: &Conic3,
@@ -558,7 +564,8 @@ pub struct Cap {
 /// meridian, `Conic::line`, whose rulings are then the linear ones), and
 /// the piece is halved toward the pole until each triangle is within half
 /// `tol`'s fit tolerance of `form` (as a band's strips) and passes the
-/// fold check, and the hull rule with its neighbour. Measured errors: a
+/// fold check, and the edge rule's plane with its neighbour (alone, as
+/// bands judge their strips: see `Lathe::strip`). Measured errors: a
 /// sphere's cap of angle `δ` in sectors of `φ` (radians) about
 /// `R·δ²·φ²/64` off, so each halving takes a quarter; a cone's in
 /// proportion to its length, so a half.
@@ -652,7 +659,8 @@ pub(crate) fn pole_cap_with(
         // Neighbours share the meridian between them: the first's edge 0
         // (pole to its far rim corner) and the second's edge 2 for a pole
         // at the start, the first's edge 1 and the second's edge 2 at
-        // the end.
+        // the end. By the plane rule alone, as bands judge their strips
+        // (see `Lathe::strip`).
         if patches.len() > 1 {
             let first = match pole {
                 Pole::Start => 0,

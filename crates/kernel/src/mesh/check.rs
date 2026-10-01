@@ -1,4 +1,4 @@
-use super::hull::{edge_neighbours_apart, non_neighbours_apart, vertex_neighbours_apart};
+use super::hull::{edge_neighbours_parted, non_neighbours_apart, vertex_neighbours_apart};
 use super::{Bvh, Mesh};
 use crate::par::par_map;
 use crate::patch::{Patch, PatchError};
@@ -45,7 +45,8 @@ pub enum CheckError {
     Face(u32),
     /// Triangles that share no vertex have hulls within the resolution.
     Hull(u32, u32),
-    /// Triangles sharing an edge aren't split by a plane through it.
+    /// Triangles sharing an edge aren't split by a plane through it (or
+    /// the cylinder over it, for a curved edge).
     EdgeNeighbours(u32, u32),
     /// Triangles sharing only a vertex aren't split by a plane through it.
     VertexNeighbours(u32, u32),
@@ -371,7 +372,7 @@ pub(super) fn check_pair(
                     .find(|&k| y.contains(&x[k]) && y.contains(&x[(k + 1) % 3]))
                     .expect("an edge between shared corners")
             };
-            edge_neighbours_apart(a, edge(ca, cb), b, edge(cb, ca), margin)
+            edge_neighbours_parted(a, edge(ca, cb), b, edge(cb, ca), margin)
                 .then_some(())
                 .ok_or(CheckError::EdgeNeighbours(i, j))
         }

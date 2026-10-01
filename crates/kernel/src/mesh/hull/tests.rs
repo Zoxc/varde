@@ -329,3 +329,201 @@ fn a_support_point_square_to_the_closest_is_kept() {
         assert!(!apart(&order, &[DVec3::ZERO], 1e-4), "from {start}");
     }
 }
+
+/// A meridian piece in the `x`-`z` half-plane, about the `z` axis: an
+/// arc of the circle about `(rho, h)` of `radius`, or a line.
+enum Piece {
+    Arc([f64; 2], f64, [f64; 2], [f64; 2]),
+    Line([f64; 2], [f64; 2]),
+}
+
+fn at([rho, h]: [f64; 2]) -> DVec3 {
+    DVec3::new(rho, 0.0, h)
+}
+
+/// The strip of `piece` between the first two of 64 stations round the
+/// `z` axis, its diagonal fitted to the surface it sweeps: `[0]` has the
+/// parallel at the piece's start as edge 0, `[1]` the one at its end as
+/// edge 1 (run the other way).
+fn ring_strip(piece: &Piece) -> [Patch; 2] {
+    let lathe = crate::sweep::Lathe::new(DVec3::ZERO, DVec3::Z, None, 64).unwrap();
+    let (meridian, form) = match *piece {
+        Piece::Arc(centre, minor, a, b) => (
+            Conic3::arc_between(at(centre), minor, at(a), at(b)).unwrap(),
+            crate::mesh::Form::Torus {
+                centre: DVec3::Z * centre[1],
+                axis: DVec3::Z,
+                major: centre[0],
+                minor,
+            },
+        ),
+        Piece::Line(a, b) if a[1] == b[1] => (
+            Conic3::line(at(a), at(b)).unwrap(),
+            crate::mesh::Form::plane(DVec3::Z, a[1]),
+        ),
+        Piece::Line(a, b) => (
+            Conic3::line(at(a), at(b)).unwrap(),
+            crate::mesh::Form::Cylinder {
+                point: DVec3::ZERO,
+                axis: DVec3::Z,
+                radius: a[0],
+            },
+        ),
+    };
+    let strip = crate::sweep::fitted_strip(
+        &lathe.parallel(meridian.p0, 0).unwrap(),
+        &lathe.parallel(meridian.p1, 0).unwrap(),
+        &lathe.meridian(&meridian, 0).unwrap(),
+        &lathe.meridian(&meridian, 1).unwrap(),
+        &form,
+    )
+    .unwrap()
+    .patches;
+    assert!(strip.iter().all(|p| p.fold_direction().is_some()));
+    strip
+}
+
+/// The patches either side of the ring where `below` ends and `above`
+/// starts: `above`'s first (its edge 0) and `below`'s second (edge 1).
+fn ring_pair(below: &Piece, above: &Piece) -> (Patch, Patch) {
+    (ring_strip(above)[0], ring_strip(below)[1])
+}
+
+#[test]
+fn rings_at_turns_are_parted_by_the_cylinder() {
+    use Piece::{Arc, Line};
+    let cases = [
+        // A torus's top: both sides under the ring's plane.
+        (
+            "torus top",
+            Arc([20.0, 0.0], 2.0, [21.0, 3f64.sqrt()], [20.0, 2.0]),
+            Arc([20.0, 0.0], 2.0, [20.0, 2.0], [19.0, 3f64.sqrt()]),
+        ),
+        // A puck's rounded edge meeting its flat top.
+        (
+            "round into flat",
+            Arc([8.0, 2.0], 2.0, [10.0, 2.0], [8.0, 4.0]),
+            Line([8.0, 4.0], [6.0, 4.0]),
+        ),
+        // A plate meeting a concave fillet up a boss.
+        (
+            "flat into concave",
+            Line([12.0, 0.0], [6.0, 0.0]),
+            Arc([6.0, 2.0], 2.0, [6.0, 0.0], [4.0, 2.0]),
+        ),
+        // Convex then concave, the turn at the joint.
+        (
+            "S",
+            Arc([7.0, 3.0], 3.0, [10.0, 3.0], [7.0, 6.0]),
+            Arc([7.0, 8.0], 2.0, [7.0, 6.0], [5.0, 8.0]),
+        ),
+    ];
+    for (name, below, above) in cases {
+        let (a, b) = ring_pair(&below, &above);
+        assert!(!edge_neighbours_apart(&a, 0, &b, 1, MARGIN), "{name}");
+        assert!(!edge_neighbours_apart(&b, 1, &a, 0, MARGIN), "{name}");
+        assert!(cylinder_apart(&a, 0, &b, 1, MARGIN), "{name}");
+        assert!(cylinder_apart(&b, 1, &a, 0, MARGIN), "{name}");
+        assert!(edge_neighbours_parted(&a, 0, &b, 1, MARGIN), "{name}");
+        // The edge row off the conic: the patches no longer share it.
+        for scale in [1.0 + 1e-3, 1.0 - 1e-3] {
+            let mut off = b;
+            off.w[1] *= scale;
+            assert!(!cylinder_apart(&a, 0, &off, 1, MARGIN), "{name}");
+            assert!(!cylinder_apart(&off, 1, &a, 0, MARGIN), "{name}");
+        }
+    }
+}
+
+#[test]
+fn the_cylinder_refuses_what_it_cannot_part() {
+    use Piece::{Arc, Line};
+    // Two rounds out from a top, both outside its cylinder and under its
+    // plane: folded onto each other.
+    let (a, b) = ring_pair(
+        &Arc([20.0, 0.0], 2.0, [21.0, 3f64.sqrt()], [20.0, 2.0]),
+        &Arc([20.0, 1.0], 1.0, [20.0, 2.0], [20.5, 1.0 + 0.75f64.sqrt()]),
+    );
+    assert!(!edge_neighbours_parted(&a, 0, &b, 1, MARGIN));
+    assert!(!edge_neighbours_parted(&b, 1, &a, 0, MARGIN));
+    // A wall under a round where it is upright: the plane parts them, but
+    // the wall lies on the cylinder.
+    let (a, b) = ring_pair(
+        &Line([10.0, 0.0], [10.0, 2.0]),
+        &Arc([8.0, 2.0], 2.0, [10.0, 2.0], [8.0, 4.0]),
+    );
+    assert!(edge_neighbours_apart(&a, 0, &b, 1, MARGIN));
+    assert!(!cylinder_apart(&a, 0, &b, 1, MARGIN));
+    assert!(!cylinder_apart(&b, 1, &a, 0, MARGIN));
+    assert!(edge_neighbours_parted(&a, 0, &b, 1, MARGIN));
+    // A straight edge has no cylinder.
+    let a = flat([DVec3::ZERO, DVec3::X, DVec3::new(0.5, 1.0, -0.1)]);
+    let b = flat([DVec3::X, DVec3::ZERO, DVec3::new(0.5, -1.0, -0.1)]);
+    assert!(edge_neighbours_apart(&a, 0, &b, 0, MARGIN));
+    assert!(!cylinder_apart(&a, 0, &b, 0, MARGIN));
+}
+
+/// Pairs of random patches sharing a random conic edge: wherever the
+/// cylinder rule parts them, `F` evaluated at points of each, away from
+/// the edge, has the sign the coefficients promised, opposite on the two.
+#[test]
+fn the_cylinder_rule_is_sound_on_random_pairs() {
+    let mut rng = Rng::new(86);
+    let (mut tried, mut passed) = (0, 0);
+    for _ in 0..200_000 {
+        let p = rng.point(1.0);
+        let q = rng.point(1.0);
+        let c = (p + q) / 2.0 + rng.point(0.6);
+        let w = rng.log_range(0.2, 5.0);
+        let patch = |start: DVec3, end: DVec3, rng: &mut Rng| Patch {
+            p: [start, end, rng.point(1.5)],
+            c: [c, rng.point(1.5), rng.point(1.5)],
+            w: [w, rng.log_range(0.3, 3.0), rng.log_range(0.3, 3.0)],
+        };
+        let (a, b) = (patch(p, q, &mut rng), patch(q, p, &mut rng));
+        if a.check().is_err() || b.check().is_err() {
+            continue;
+        }
+        tried += 1;
+        if !cylinder_apart(&a, 0, &b, 0, 1e-9) {
+            continue;
+        }
+        passed += 1;
+        let (e1, e2) = (p - c, q - c);
+        let n = e1.cross(e2);
+        let nn = n.dot(n);
+        let f = |x: DVec3| {
+            let s = x - c;
+            let lp = n.dot(s.cross(e2)) / nn;
+            let lq = n.dot(e1.cross(s)) / nn;
+            let lc = 1.0 - lp - lq;
+            lc * lc - 4.0 * w * w * lp * lq
+        };
+        let sign = |x: &Patch| {
+            let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+            for i in 0..=30 {
+                for j in 0..=30 - i {
+                    let far = (30 - i - j) as f64 / 30.0;
+                    if far < 0.02 {
+                        continue;
+                    }
+                    let v = f(x.eval(DVec3::new(i as f64 / 30.0, j as f64 / 30.0, far)));
+                    (lo, hi) = (lo.min(v), hi.max(v));
+                }
+            }
+            if lo > 0.0 {
+                1.0
+            } else if hi < 0.0 {
+                -1.0
+            } else {
+                0.0
+            }
+        };
+        let (sa, sb) = (sign(&a), sign(&b));
+        assert!(sa != 0.0 && sa == -sb, "{a:?} {b:?}");
+    }
+    assert!(
+        tried > 100_000 && passed > 100,
+        "tried {tried}, passed {passed}"
+    );
+}

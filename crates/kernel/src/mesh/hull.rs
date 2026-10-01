@@ -8,7 +8,10 @@
 //!   margin apart ([`non_neighbours_apart`], by GJK).
 //! - **Edge neighbours**: a plane through the shared edge's three control
 //!   points has the other three control points of one patch on one side
-//!   and the other patch's on the other ([`edge_neighbours_apart`]).
+//!   and the other patch's on the other ([`edge_neighbours_apart`]); or,
+//!   for a curved edge, the two patches lie on opposite sides of the
+//!   cylinder over the edge's conic ([`cylinder_apart`]), which is what
+//!   parts them where the surface touches the edge's plane all along it.
 //! - **Vertex neighbours** (sharing one vertex only): a plane through the
 //!   vertex has the other five control points of each on opposite sides
 //!   ([`vertex_neighbours_apart`]).
@@ -132,6 +135,152 @@ pub(crate) fn edge_neighbours_apart(
         (b_max < margin && a_min - b_max.max(0.0) > margin)
             || (a_min > -margin && a_min.min(0.0) - b_max > margin)
     })
+}
+
+/// Two patches sharing edge `ea` of `a`, which is edge `eb` of `b`: the
+/// plane rule ([`edge_neighbours_apart`]), else the cylinder rule
+/// ([`cylinder_apart`]). What `check` and repair ask of edge neighbours.
+///
+/// Bands and caps (`sweep/lathe.rs`) grade their strips by the plane rule
+/// alone: its failure on a fitted diagonal is what tells them a strip is
+/// too coarse, and with the cylinder too they chose strips that then
+/// failed the vertex rule.
+pub(crate) fn edge_neighbours_parted(
+    a: &Patch,
+    ea: usize,
+    b: &Patch,
+    eb: usize,
+    margin: f64,
+) -> bool {
+    edge_neighbours_apart(a, ea, b, eb, margin) || cylinder_apart(a, ea, b, eb, margin)
+}
+
+/// Two patches sharing the curved edge `ea` of `a`, which is edge `eb` of
+/// `b`: they lie on opposite sides of the cylinder over the edge's conic
+/// (through it, square to its plane), each clear of it but along the
+/// edge.
+///
+/// Where the surface touches the edge's plane all along the edge (a ring
+/// at a turn of a solid of revolution: a torus's top, a flat face meeting
+/// a round tangentially) both patches hold the edge's control points and
+/// lie on one side of every plane through them, so the plane rule can't
+/// part them. Leaving the edge across it, though, one goes in towards the
+/// conic's centre and the other out.
+///
+/// With the edge `P, C, Q` of weight `w`, and `λP, λC, λQ` the barycentric
+/// coordinates of a point's projection onto the control triangle,
+/// `F = λC² − 4w²·λP·λQ` is a quadratic function of space whose zero set
+/// is that cylinder (for a circle, `ρ² − ρ0²` up to a positive factor). On
+/// a patch `F` is `N/W²`, with `N` and `W²` of degree four: their
+/// Bernstein coefficients are sums over pairs of the patch's homogeneous
+/// control points of `F`'s polar form (and of the weights' product),
+/// times whole multinomial factors. With the shared edge as row 0 (the
+/// far corner's exponent 0), row 0 is the edge itself, zero to rounding.
+/// The rule asks every coefficient ratio `N_γ/W²_γ` in rows 1 to 4 to be
+/// past `margin·|∇F|` with one sign on one patch and the other sign on
+/// the other, and row 0's within it. Then `F` (a positive mean of the
+/// ratios) has one sign on each patch but near the edge, so the two meet
+/// only there, as the plane rule promises; splitting keeps it, a piece's
+/// coefficients being convex combinations of its parent's. `|∇F|` is
+/// taken as `4w²` over the larger of the far ends' heights above the
+/// lines through the other end and `C`, its value at the end where it is
+/// smaller. Unlike the plane rule's margin, which is a distance of
+/// control points, this one bounds the coefficients of `F`.
+///
+/// A straight edge (its control point within `margin` of its chord) or a
+/// nearly degenerate control triangle is refused, as is anything not
+/// finite.
+pub(crate) fn cylinder_apart(a: &Patch, ea: usize, b: &Patch, eb: usize, margin: f64) -> bool {
+    let (p, c, q, w) = (a.p[ea], a.c[ea], a.p[(ea + 1) % 3], a.w[ea]);
+    if straight(p, c, q, margin) {
+        return false;
+    }
+    let (e1, e2) = (p - c, q - c);
+    let n = e1.cross(e2);
+    let nn = n.dot(n);
+    if nn.is_nan() || nn <= 1e-24 * e1.length_squared() * e2.length_squared() {
+        return false;
+    }
+    // Barycentric coordinates (λP, λC, λQ) of a homogeneous point
+    // `(s, ω)`, `s = ω·(x − C)`, projected onto the control triangle.
+    let lambda = |s: DVec3, omega: f64| {
+        let lp = n.dot(s.cross(e2)) / nn;
+        let lq = n.dot(e1.cross(s)) / nn;
+        [lp, omega - lp - lq, lq]
+    };
+    let w2 = w * w;
+    // F's polar form, on the points' coordinates.
+    let polar =
+        |[xp, xc, xq]: [f64; 3], [yp, yc, yq]: [f64; 3]| xc * yc - 2.0 * w2 * (xp * yq + xq * yp);
+    let threshold = {
+        let root = nn.sqrt();
+        let (hq, hp) = (root / e1.length(), root / e2.length());
+        margin * 4.0 * w2 / hq.max(hp)
+    };
+    // The sign of F on the patch, or None.
+    let side = |x: &Patch, e: usize| -> Option<f64> {
+        let (e1, e2) = ((e + 1) % 3, (e + 2) % 3);
+        // Each control point's coordinates and weight.
+        let corner = |i: usize| (lambda(x.p[i] - c, 1.0), 1.0);
+        let edge = |i: usize| (lambda((x.c[i] - c) * x.w[i], x.w[i]), x.w[i]);
+        let net = [
+            corner(e),
+            edge(e),
+            corner(e1),
+            edge(e2),
+            edge(e1),
+            corner(e2),
+        ];
+        // Their multi-indices over (the edge's start, its end, the far
+        // corner).
+        let index: [[usize; 3]; 6] = [
+            [2, 0, 0],
+            [1, 1, 0],
+            [0, 2, 0],
+            [1, 0, 1],
+            [0, 1, 1],
+            [0, 0, 2],
+        ];
+        // The quadratic multinomials: 2 for a mixed index, else 1.
+        let multi = |g: [usize; 3]| if g.contains(&1) { 2.0 } else { 1.0 };
+        // Coefficients scaled by the quartic multinomial, by the first
+        // two exponents.
+        let mut num = [[0.0; 5]; 5];
+        let mut den = [[0.0; 5]; 5];
+        for i in 0..6 {
+            for j in i..6 {
+                let ((xa, wa), (xb, wb)) = (net[i], net[j]);
+                let (ga, gb) = (index[i], index[j]);
+                // A pair of different points comes twice.
+                let k = multi(ga) * multi(gb) * if i == j { 1.0 } else { 2.0 };
+                let (g0, g1) = (ga[0] + gb[0], ga[1] + gb[1]);
+                num[g0][g1] += k * polar(xa, xb);
+                den[g0][g1] += k * wa * wb;
+            }
+        }
+        let mut sign = 0.0;
+        for g0 in 0..=4 {
+            for g1 in 0..=4 - g0 {
+                let r = num[g0][g1] / den[g0][g1];
+                if !r.is_finite() || den[g0][g1] <= 0.0 {
+                    return None;
+                }
+                if g0 + g1 == 4 {
+                    // Row 0: on the edge.
+                    if r.abs() > threshold {
+                        return None;
+                    }
+                    continue;
+                }
+                if r.abs() <= threshold || (sign != 0.0 && r.signum() != sign) {
+                    return None;
+                }
+                sign = r.signum();
+            }
+        }
+        Some(sign)
+    };
+    matches!((side(a, ea), side(b, eb)), (Some(sa), Some(sb)) if sa == -sb)
 }
 
 /// The unit direction from `p` to `q`, and the part of `x - p` across the

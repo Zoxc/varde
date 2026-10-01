@@ -1060,36 +1060,6 @@ fn tori_split_anywhere_off_their_turns_are_solids() {
     }
 }
 
-#[test]
-fn a_ring_where_the_surface_touches_its_plane_is_refused() {
-    // A tube split at its top and bottom: there the torus touches the
-    // parallel's plane, both strips beside it lie under it, and no plane
-    // through the parallel parts them. `check` refuses it.
-    let (major, minor) = (20.0, 2.0);
-    let q = quarters(&Frame::Z, major, minor, 0);
-    let centre = Frame::Z.at(major, 0.0);
-    let arcs: Vec<Conic3> = (0..4)
-        .map(|i| Conic3::arc_between(centre, minor, q[i], q[(i + 1) % 4]).unwrap())
-        .collect();
-    let form = Form::Torus {
-        centre: DVec3::ZERO,
-        axis: DVec3::Z,
-        major,
-        minor,
-    };
-    let tol = Tolerance::new(1e-2).unwrap();
-    let (lathe, bands) = fit_all(Frame::Z.lathe(4), &arcs, &form, &tol).unwrap();
-    let mut assembly = Assembly::new(&lathe);
-    let (_, free) = assembly.face(Surface::Free, form);
-    for band in &bands {
-        assembly.band(band, free);
-    }
-    assert!(matches!(
-        Solid::new(assembly.build(), &tol),
-        Err(KernelError::Invalid(CheckError::EdgeNeighbours(..)))
-    ));
-}
-
 /// `π·∫ρ² dh` along a meridian in `(ρ, h)`, by the trapezoid rule on
 /// `ρ²` over 100 000 steps of its parameter: the volume it sweeps, signed.
 fn swept_volume(meridian: &Conic2) -> f64 {
@@ -1366,3 +1336,5 @@ fn caps_and_part_turns_are_the_same_on_any_thread_count() {
         (solid.volume(), solid)
     });
 }
+
+mod turns;

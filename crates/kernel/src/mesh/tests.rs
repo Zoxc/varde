@@ -497,12 +497,20 @@ fn folded_edge_neighbours_are_caught() {
     let mesh = octahedron(verts, &octahedron_starting(3), &[]);
     assert_eq!(mesh.check(&TOL), Err(CheckError::EdgeNeighbours(0, 1)));
 
+    // The same fold with the shared edge curved up out of their plane:
+    // both on one side of the plane through its control points, and both
+    // inside the cylinder over it.
+    let ctrl = DVec3::new(0.5, 0.0, 0.1);
+    let mesh = octahedron(verts, &octahedron_starting(3), &[(0, 2, ctrl, 1.0)]);
+    assert_eq!(mesh.check(&TOL), Err(CheckError::EdgeNeighbours(0, 1)));
+
     // Their shared edge curved sideways: the plane through its control
-    // points has both on one side.
+    // points has both on one side, but they lie on opposite sides of the
+    // cylinder over it (square to that plane), which parts them.
     let ctrl = DVec3::new(0.5, 0.1, 0.5);
     let mesh = octahedron(UNIT, &octahedron_starting(3), &[(0, 2, ctrl, 1.0)]);
-    assert_eq!(mesh.check(&TOL), Err(CheckError::EdgeNeighbours(0, 1)));
-    // Curved outwards instead, it passes.
+    assert_eq!(mesh.check(&TOL), Ok(()));
+    // Curved outwards instead, the plane parts them.
     let ctrl = DVec3::new(0.6, 0.0, 0.6);
     let mesh = octahedron(UNIT, &octahedron_starting(3), &[(0, 2, ctrl, 1.0)]);
     assert_eq!(mesh.check(&TOL), Ok(()));
