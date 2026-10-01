@@ -140,7 +140,9 @@ Each **face** carries:
 3. **Fold**: every patch passes the fold check.
 4. **Control hulls**: non-neighbours' hulls more than the resolution apart
    (GJK); edge and vertex neighbours separated by a plane through what they
-   share, with rules for straight and curved shared edges. For flat
+   share, with rules for straight and curved shared edges; across a
+   curved edge the plane fails on, by the cylinder over the edge's conic
+   (the signs of a quadratic that vanishes on it, one per patch). For flat
    triangles this says exactly that the mesh is embedded.
 5. **Orientation**: every shell faces out, or in where it bounds a void, so
    the winding number is 0 or 1 everywhere (shell volume signs with error
@@ -204,9 +206,10 @@ keeps its four exact edges and fits the diagonal to the face's form by
 damped Gauss–Newton. A `Lathe` turns a meridian about an axis into bands of
 such strips, halving along the meridian or round the axis until every strip
 is within half the fit tolerance and sound, and closes poles and apexes with
-fitted caps. Rings are kept off turns of the meridian's height, where no
-plane through the parallel separates the strips beside it; revolve will
-have to split profiles there.
+fitted caps. At a turn of the meridian's height no plane through the
+parallel separates the strips beside it, but the cylinder over it does,
+so profile vertices may sit at turns; bands still keep their own rings
+off turns (cheaper), but for turns within 1 % of a piece's end.
 
 ## The boolean pipeline
 

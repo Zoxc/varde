@@ -454,7 +454,7 @@ turns themselves pass too but cost up to half as many patches again (a
 torus off its turns at `1e-4`: 3 072 against 2 048, and a repair at
 `1e-1`), and a strip over the turn whose ends differ in height dips under
 the plane of its higher ring, which the bands' plane rule refuses. A
-piece whose height turns inside it (the roots in `(1e-6, 1 − 1e-6)` of the
+piece whose height turns inside it (the roots in `[1e-2, 1 − 1e-2]` of the
 derivative's numerator, a quadratic with Bernstein coefficients `w·(hc −
 h0)`, `(h1 − h0)/2`, `w·(h1 − hc)`) is first cut where its far side comes
 back to the height of the end nearer the turn's (bisection to the bit),
@@ -462,7 +462,17 @@ so the piece over the turn ends at one height (within a quarter of the
 resolution) and lies on one side of both its rings' planes, while its
 neighbours fall away from the turn and clear them. Halving such a piece
 makes three: the middle one over the turn, from half way to the turn to
-where it comes back to that height. Pieces are made from the meridian's
+where it comes back to that height. A turn within `1e-2` of a piece's
+end (`TURN_NEAR_END`, in the piece's parameter) is left to the ring
+there, which the cylinder parts (one strip leaves it inwards, the other
+outwards): balancing it would cut a piece about twice that long over the
+turn, and slivers that thin (a quarter arc turning `1e-5` rad past its
+end: `1e-5` of it) the band halved round the axis until `TooComplex`.
+Measured on a tube split, a puck's round going over its top and an S
+whose joint is past its turn, by `3e-7` to `0.1` rad, at fits `1e-2` to
+`1e-4` on three frames up to `1e4` out: 55 of 495 refused before,
+none after, volumes within the slack; `1e-3` passed them too, `1e-4`
+not. Caps keep `1e-6` for the turns that bound them. Pieces are made from the meridian's
 blossom between parameters (`Conic::piece`, which the boolean's kept
 edge pieces use too), so neighbours share their end's bits. Revolve may
 build profile vertices at turns (a flat face tangent to a round at its
@@ -484,7 +494,9 @@ the axis and two random frames up to `1e3` out, all pass `check` with no
 repair, volume within the area times half the fit tolerance of Pappus
 (`π∮ρ² dh`), area within `4·A·fit/2` over the smallest radius, refused
 inside out; every triangle split once at `1e-2` still passes; the same
-bits at 1 and 8 threads. Counts: the puck at `1e-3` 16 pieces round the
+bits at 1 and 8 threads. Turns just past rings
+(`rings_just_past_turns_are_solids`): the tube, puck and S above `1e-5`,
+`1e-4` and `1e-3` rad past them, at `1e-2` and `1e-3` on two frames. Counts: the puck at `1e-3` 16 pieces round the
 axis and 192 patches; the torus `R 20, r 2` at its turns 128 and 1 024 at
 `1e-3`, 256 and 2 048 at `1e-4` (an ordinary torus's counts). The thin
 round's random frames stop at `1e-4`: at `1e-5` its disc's 2 048 sectors,
@@ -1133,7 +1145,20 @@ its triangles share, which is topology:
     sign (test). Across the kernel's other tests the rule passes 132 pairs
     in boolean repair (chains of twenty, related, nicks, turned solids),
     all certified by exact arithmetic too, with the same refusals as
-    without it.
+    without it. Hunted further (scratch): 3.4 million adversarial pairs
+    (circular arcs down to `1e-7` rad, edges bulging `1e-12` of their
+    chord, any conic with weights at `W_MIN` and `W_MAX`, frames tilted
+    and up to `1e4` out, far corners from `1e-14` of the edge's size off
+    the cylinder, either side or both on one, and up to `1e2` off its
+    plane, margins `1e-12` to `1e-5` of the size), 50 844 parted, every
+    one certified by exact rational arithmetic, the true error at most
+    0.012 of the bound; pieces of parted pairs split down their edge
+    (`split4`, three levels) fail again now and then, with margins near
+    the coefficients up to 1.5 % a level, other conics about three times
+    as often as circles (whose threshold doesn't grow; under the plane
+    rule too, pieces near the edge are closer to it): repair splits on; booleans of the profiles below with boxes and
+    cylinders through their rounds match Pappus volumes of the clipped
+    profile and the identities, deterministic at 1 and 8 threads.
 - **One: vertex neighbours.** A plane through the shared vertex `V` with
   the other five control points of each more than the resolution to either
   side. With unit normal `n` that is `n·x > margin` for every `x` in
@@ -6034,7 +6059,13 @@ parameter, or a split outside the patch bounds),
   plane rule alone (with the cylinder they chose coarser strips that
   failed the vertex rule). An existing test's pair, two patches across a
   sideways curved edge, now passes (it really is embedded); the folded
-  case is one curved up out of their common plane.
+  case is one curved up out of their common plane. With the cylinder,
+  bands leave a turn within `1e-2` of a piece's end (in its parameter)
+  to the ring there instead of balancing it (`TURN_NEAR_END`, before
+  `1e-6`): the piece over the turn that balancing cut was a sliver
+  (`2·1e-5` of a quarter arc turning `1e-5` rad past its end), which the
+  band halved round the axis until `TooComplex`, so a profile whose arc
+  went `3e-6` to `3e-4` rad past a turn was refused at every fit.
 - **Caps don't grow the angular split.** The plan raised `k` when a cap
   wanted an arc halved; halving the cap's meridian toward the pole alone
   brings it within the tolerance (the error falls as `δ²` on a sphere,

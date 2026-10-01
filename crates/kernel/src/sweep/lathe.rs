@@ -254,6 +254,17 @@ impl Lathe {
         roots
     }
 
+    /// [`Self::turns`] of a band's piece, leaving out those within
+    /// [`TURN_NEAR_END`] of its ends: the ring there is near enough the
+    /// turn to be parted by the cylinder over it (see `check`'s edge
+    /// rule), and the piece over the turn that balancing them would cut
+    /// is a sliver a band can't fit.
+    fn band_turns(&self, piece: &Conic3) -> Vec<f64> {
+        let mut turns = self.turns(piece);
+        turns.retain(|t| (TURN_NEAR_END..=1.0 - TURN_NEAR_END).contains(t));
+        turns
+    }
+
     /// The parameter in `[lo, hi]`, over which `meridian`'s height is
     /// monotonic, where its height is `level`, by bisection to the bit.
     fn level(&self, meridian: &Conic3, lo: f64, hi: f64, level: f64) -> f64 {
@@ -282,12 +293,19 @@ impl Lathe {
     /// control points, square to the axis: one strip must clear it, the
     /// other not cross it by more than the margin. Where the meridian's
     /// tangent is square to the axis (a torus's top and bottom) the
-    /// surface touches that plane along the parallel, so no ring may sit
-    /// there, and the strip over the turn must end at one height on both
-    /// sides: then it stays on its side of both its rings' planes, and
+    /// surface touches that plane along the parallel, and only the
+    /// cylinder over the ring parts the strips (`check`'s edge rule tries
+    /// it after the plane). Bands keep their rings off turns all the same,
+    /// as it is cheaper: the strip over the turn ends at one height on
+    /// both sides, so it stays on its side of both its rings' planes, and
     /// its neighbours, falling away from the turn, clear them.
+    ///
+    /// A turn within [`TURN_NEAR_END`] of the piece's end (in its
+    /// parameter) is left to the ring there ([`Self::band_turns`]), which
+    /// the cylinder parts: one strip leaves it inwards, the other
+    /// outwards.
     fn balance(&self, piece: &Conic3, margin: f64) -> Result<Option<Vec<Conic3>>, PatchError> {
-        let turns = self.turns(piece);
+        let turns = self.band_turns(piece);
         match turns[..] {
             [] => Ok(None),
             [turn] => {
@@ -317,7 +335,7 @@ impl Lathe {
     /// meridian: in halves, or if it turns, in three with the middle one,
     /// about half as long, over the turn and ending at one height.
     fn halve(&self, piece: &Conic3) -> Result<Vec<Conic3>, PatchError> {
-        match self.turns(piece)[..] {
+        match self.band_turns(piece)[..] {
             [turn] => {
                 let t0 = 0.5 * turn;
                 let t1 = self.level(piece, turn, 1.0, self.height_at(piece, t0));
@@ -385,6 +403,16 @@ const STRIP_UNITS: usize = 256;
 const CAP_UNITS: usize = 96;
 /// How many times a band's meridian may be halved.
 const MAX_BAND_DEPTH: u32 = 16;
+
+/// How near a band's piece's end, in its parameter, a turn of its height
+/// is left to the ring there rather than balanced ([`Lathe::balance`]).
+/// Balancing a turn `t` from the end cuts a piece about `2t` long over
+/// it, whose strips are slivers: a quarter arc turning `1e-5` rad past its
+/// end gave pieces of `1e-5` of it, which the band halved round the axis
+/// until `TooComplex` (or whose solid then failed `check`), from `3e-6`
+/// to `3e-4` rad at fits `1e-2` to `1e-4`. Left to the ring, every such
+/// profile measured passes; `1e-3` did too, `1e-4` still failed.
+const TURN_NEAR_END: f64 = 1e-2;
 /// How many times a cap's meridian may be halved.
 const MAX_CAP_HALVINGS: u32 = 40;
 /// How far under half the fit tolerance a strip's or cap's measured

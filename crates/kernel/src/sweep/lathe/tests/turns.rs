@@ -455,6 +455,77 @@ fn profiles_with_rings_at_turns_are_solids_finest() {
     sweep(1e-5, 86);
 }
 
+/// Profiles with a turn `eps` (radians of its arc) past a ring: a tube
+/// split that far past its outside, top, inside and bottom; a puck whose
+/// round goes that far over its top before the flat; an S whose joint is
+/// that far past the turn.
+fn near_turns(eps: f64) -> Vec<(&'static str, Vec<Seg>)> {
+    use Seg::{Arc, Line};
+    let pt = |c: DVec2, r: f64, a: f64| c + DVec2::new(a.cos(), a.sin()) * r;
+    let (c, r) = (v(20.0, 0.0), 2.0);
+    let at = |k: usize| pt(c, r, eps + PI / 2.0 * k as f64);
+    let over = pt(v(8.0, 2.0), 2.0, PI / 2.0 + eps);
+    let c1 = v(7.0, 3.0);
+    let joint = pt(c1, 3.0, PI / 2.0 + eps);
+    let c2 = joint + (joint - c1).normalize() * 2.0;
+    let end = v(c2.x - 2.0, c2.y);
+    vec![
+        (
+            "tube",
+            (0..4).map(|k| Arc(c, r, at(k), at((k + 1) % 4))).collect(),
+        ),
+        (
+            "puck",
+            vec![
+                Line(v(0.0, 0.0), v(10.0, 0.0)),
+                Line(v(10.0, 0.0), v(10.0, 2.0)),
+                Arc(v(8.0, 2.0), 2.0, v(10.0, 2.0), over),
+                Line(over, v(0.0, over.y)),
+            ],
+        ),
+        (
+            "S",
+            vec![
+                Line(v(0.0, 0.0), v(10.0, 0.0)),
+                Line(v(10.0, 0.0), v(10.0, 3.0)),
+                Arc(c1, 3.0, v(10.0, 3.0), joint),
+                Arc(c2, 2.0, joint, end),
+                Line(end, v(0.0, end.y)),
+            ],
+        ),
+    ]
+}
+
+#[test]
+fn rings_just_past_turns_are_solids() {
+    // A turn this near a band piece's end is left to the ring there,
+    // which the cylinder parts. Balanced instead, the piece over the turn
+    // was a sliver the band halved round the axis until `TooComplex`.
+    let mut rng = Rng::new(89);
+    let frames = [Frame::Z, Frame::random(&mut rng, 1e3)];
+    for fit in [1e-2, 1e-3] {
+        let tol = Tolerance::new(fit).unwrap();
+        for eps in [1e-5, 1e-4, 1e-3] {
+            for (name, segs) in near_turns(eps) {
+                for frame in &frames {
+                    let built = build(frame, &segs, &tol)
+                        .unwrap_or_else(|e| panic!("{name} {eps:e} at {fit:e}: {e:?}"));
+                    let limit = fit / 2.0;
+                    let floor = 1e-9 * frame.scale(60.0).powi(3);
+                    let area = built.area;
+                    measure(
+                        built.mesh,
+                        &tol,
+                        built.volume,
+                        area * limit + floor,
+                        Some((area, 4.0 * area * limit / built.smallest + floor)),
+                    );
+                }
+            }
+        }
+    }
+}
+
 #[test]
 fn refined_rings_at_turns_stay_solids() {
     // Every triangle split once: the pieces at the rings keep their signs
