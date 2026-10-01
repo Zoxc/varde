@@ -10,7 +10,7 @@ use glam::{DVec2, DVec3};
 use super::*;
 use crate::mesh::FacePart;
 use crate::par::assert_deterministic;
-use crate::profile::tests::{arc, circle, polygon, rect, reversed};
+use crate::profile::tests::{arc, circle, folding_cap, polygon, rect, reversed};
 use crate::profile::{Loop, Segment};
 use crate::test_rng::Rng;
 use crate::{Budget, Display};
@@ -1326,4 +1326,64 @@ fn a_refused_halving_names_detail_too_small_wherever_it_comes() {
         Ok(())
     );
     assert_eq!(chain.len(), 10);
+}
+
+#[test]
+fn a_cap_whose_straight_split_folds_extrudes() {
+    // Each cap is one triangle with two curved sides, one concave of
+    // weight above 1. It passes the fold check, so the extrude needs no
+    // repair; but split with straight inner edges, as repair and a
+    // boolean's refinement split pieces on a plane, a child's corner at a
+    // curve's midpoint turns inside out, and splitting further keeps it
+    // so. Patches that refine safely at construction would mend that.
+    let p = profile(vec![folding_cap(false)]);
+    let solid = run(&p, &Frame::XY, 0.0, 5.0).unwrap();
+    let exact = p.area() * 5.0;
+    assert!((solid.volume() - exact).abs() <= 1e-12 * exact);
+    assert_eq!(solid.mesh().check_faces(&TOL), Ok(()));
+    let mesh = solid.mesh();
+    let caps: Vec<u32> = (0..mesh.tris().len() as u32)
+        .filter(|&t| {
+            let part = mesh.faces()[mesh.tris()[t as usize].face as usize]
+                .name
+                .part;
+            matches!(part, FacePart::StartCap | FacePart::EndCap)
+        })
+        .collect();
+    assert_eq!(caps.len(), 2);
+    for &cap in &caps {
+        assert!(mesh.patch(cap as usize).fold_direction().is_some());
+        let mut refiner = crate::mesh::Refiner::new(mesh, TOL.resolution(), 0.0);
+        let mut work = crate::budget::Work::new(&Budget::DEFAULT);
+        let mut leaves = vec![cap];
+        for depth in 1..=4 {
+            refiner.split(&leaves, &mut work).unwrap();
+            // The cap's pieces that fail the fold check, by leaf.
+            leaves = refiner
+                .pieces()
+                .unwrap()
+                .iter()
+                .filter(|q| q.origin == cap && q.patch.fold_direction().is_none())
+                .map(|q| q.leaf)
+                .collect();
+            leaves.sort_unstable();
+            leaves.dedup();
+            assert!(!leaves.is_empty(), "cap {cap} mended at depth {depth}");
+        }
+    }
+    // With a parabola for the concave side, nothing folds.
+    let p = profile(vec![folding_cap(true)]);
+    let solid = run(&p, &Frame::XY, 0.0, 5.0).unwrap();
+    let mesh = solid.mesh();
+    let mut refiner = crate::mesh::Refiner::new(mesh, TOL.resolution(), 0.0);
+    let mut work = crate::budget::Work::new(&Budget::DEFAULT);
+    let all: Vec<u32> = (0..mesh.tris().len() as u32).collect();
+    refiner.split(&all, &mut work).unwrap();
+    assert!(
+        refiner
+            .pieces()
+            .unwrap()
+            .iter()
+            .all(|q| q.patch.fold_direction().is_some())
+    );
 }

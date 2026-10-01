@@ -723,8 +723,23 @@ the face's plane with both pieces, and the edge-neighbour rule can't hold
 there: the plane through a curved edge's control points is the face's
 plane, and neither piece is off it. Straight inner edges fall under the
 straight-edge rule, and the pieces cover exactly the region the parent did
-(it is the plane). The boundary halves are the exact ones, shared with the
-neighbours on other faces. A patch that is flat but tagged `Free` gets the
+(it is the plane) as long as no straight inner edge crosses a curved side.
+Where one does, the pieces cover it only up to sign: a child's corner at a
+curved side's midpoint `M` lies between the curve's tangent there and a
+straight edge to another side's midpoint, and if that midpoint is on the
+wrong side of the tangent the corner is inside out and the child fails the
+fold check. Every later piece keeping `M` has the same tangent and edge
+direction there (red corner children keep both, a green bisector from `M`
+lies inside the inverted angle), so splitting never mends it. Measured
+(scratch sweeps on random planar patches, the straight split copied,
+failing pieces followed 14 levels): a triangle with one curved side that
+passes the fold check never folds this way, concave or convex, weights
+0.05 to 20 (0 of 8 703, and about 35 000 on a grid); with two or three
+curved sides 39 of 8 330 did for good with weights in `0.25..4` (1 of
+10 227 with weights up to 1, none when every curved side was concave),
+each already at the first split. See "Repair of a cap patch along a
+concave curve" under Profiles. The boundary halves are the exact ones,
+shared with the neighbours on other faces. A patch that is flat but tagged `Free` gets the
 exact split and may then not pass.
 
 The `Plane` tag isn't trusted for this. Before an input leaf (level 0) is
@@ -1438,7 +1453,8 @@ of budget) with its error; a small hole of sharply weighted conics
 `TooFine` at fits 0.1 and 0.05 and extruded at 0.01, and the caps'
 refused halvings `TooFine` for a small piece wherever it comes among
 them, `TooComplex` for one halved too often, halving none; the same
-bits at 1 and 8 threads. Circles cut
+bits at 1 and 8 threads; a cap triangle of two curved sides that extrudes
+but folds when split straight (see the known gaps). Circles cut
 into uneven arcs at three tolerances (the second try, at 1 and 8
 threads too); the second try's caps resumed from the first's fork the
 same as made from the start (a 210 × 30 strip with 40 holes, a row 0.1 from its side,
@@ -1481,12 +1497,37 @@ Known gaps:
   pass `apart_at_joint` by a hair: that test isn't monotone under
   halving (a halved piece at the joint moves its hull towards it), so
   "halving only shrinks hulls" holds for pairs that aren't joints.
-- **Repair of a cap patch along a concave curve**, should it ever be
-  needed, splits with straight inner edges; a piece whose corner at the
-  curve's midpoint turns inside out then fails with `Invalid(Fold)` once
-  its pieces are under `MIN_SPLIT` (they are flat). The
-  construction keeps concave bulges inside their triangles and passes
-  `check` without repair in every test.
+- **Repair of a cap patch along a concave curve**: a cap triangle with
+  two or three curved sides, in practice one of them concave with a
+  weight above 1 (rarely less; in the app only spline fits make weights
+  above 1, arcs have `w ≤ 1`), can pass the fold check and yet split
+  with straight inner edges into pieces that fold for good (see "Flat
+  faces" under Refinement). The extrude itself passes `check` without
+  repair, so it never splits such a cap; but repair after a boolean, and
+  a boolean's pair refinement (`pairs::refined`, the same `Refiner`),
+  do, whenever a cap piece meets a patch it has no certificate against
+  (a horizontal cylinder across the cap). The folded piece goes into the
+  result, and repair keeps splitting it until its pieces are flat and
+  meet a flat neighbour, failing at once as
+  `Invalid(EdgeNeighbours(t, t))` (or `Hull`, `VertexNeighbours`), or,
+  for small curves, reach the split floor first (`Invalid` of the failure
+  that asked for the split) or run out of budget (`TooComplex`).
+  Never a wrong `Ok`: the folded pieces overlap their neighbours, so
+  `check` can't pass them. Rare: about 0.2% of end-cap patches with two
+  or more curved sides of random 3-segment profiles with one concave
+  side of weight `1.2..4` fold after one split. Pinned by
+  `a_cap_whose_straight_split_folds_extrudes` (a 3-segment profile, a
+  concave hyperbola of `w ≈ 3.53`, a line and a convex hyperbola; the
+  cap's straight pieces still fold four levels down, and with a parabola
+  for the concave side none does) and `a_cap_folding_when_refined_is_refused`
+  (that prism and a cylinder along `x` across its top: every operation
+  `Invalid`, both orders; with the parabola, `Ok`). The mend, not built:
+  where a planar patch with curved sides is made (`cap.rs` `mend`,
+  `boolean/triangulate.rs`), also require its four straight children to
+  pass the fold check, and give one that fails a Steiner point at its
+  centroid (or halve the concave segment where the centroid would come
+  within the resolution of its hull), leaving pieces with at most one
+  curved side.
 - Flat cap triangles thinner than the resolution (nearly collinear
   vertices) fail as flat pairs in repair: `Invalid`. The second try
   mends those at loop vertices, but **fine polygons at coarse
@@ -2912,7 +2953,15 @@ to 72 of its 96 operations and left the others as they were.
   across a convex wall over an arc meet it most: 8 of 120 random box
   operations across 20°–60° walls fail (unions and differences, all on
   convex walls), and a box whose face runs along the arc's chord (inside
-  the bulge) fails its union and difference. Results off by more than
+  the bulge) fails its union and difference. These are the boolean's own
+  cap triangles, not refinement: in the 8 the refined operands have no
+  piece failing the fold check, and the result before repair has a cap
+  triangle with one curved side (the cut piece of the arc, `w < 1`) fanned
+  to a far corner of the square, the arc bulging across its straight
+  side (`Invalid(EdgeNeighbours)`), and in 6 of them also a flat sliver of
+  three points in line along the box's face, a degenerate corner that
+  repair stops on (`Invalid(Fold)`). Folds from refinement are the cap
+  gap under Profiles ("Repair of a cap patch along a concave curve"). Results off by more than
   `1e-7` in volume (up to `6.6e-5`) came from crossings the search only
   placed, off the surface they cross, with the triangles at them on
   copies claiming no surface: they are refused now (below).

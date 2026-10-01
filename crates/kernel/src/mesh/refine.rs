@@ -24,9 +24,14 @@
 //!
 //! Patches on a [`Surface::Plane`] face are split with straight inner
 //! edges. The pieces cover exactly the region the parent did, the plane
-//! being the plane, and neighbours inside a flat face stay separable by a
-//! plane through their shared edge, which an exact split's curved inner
-//! edges, lying in the face's plane with both pieces, would not be.
+//! being the plane, as long as no straight inner edge crosses a curved
+//! side; where one does (a triangle with two or three curved sides, one
+//! concave), a child's corner at a curve's midpoint turns inside out, the
+//! pieces cover it only up to sign, and splitting further keeps the fold
+//! (repair then refuses the mesh). Neighbours inside a flat face stay
+//! separable by a plane through their shared edge, which an exact split's
+//! curved inner edges, lying in the face's plane with both pieces, would
+//! not be.
 //! That is only right for a patch that is on its plane, so the tag isn't
 //! trusted: an input patch whose control points aren't all within the
 //! resolution of it ([`on_surface`], the test [`Mesh::check_faces`]

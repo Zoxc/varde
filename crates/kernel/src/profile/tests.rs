@@ -47,6 +47,42 @@ pub(crate) fn circle(center: DVec2, r: f64, curve: u64, clockwise: bool) -> Loop
     }
 }
 
+/// A three-sided loop whose cap is one triangle with two curved sides
+/// that splits with straight inner edges into pieces that fold: a
+/// concave hyperbola (`w ≈ 3.53`) from (0, 0) to (10, 0), a line up to
+/// about (7.13, 5.94) and a convex hyperbola (`w ≈ 1.49`) back. With
+/// `parabola`, the concave side's weight is 1 instead (same control
+/// point), which splits safely.
+pub(crate) fn folding_cap(parabola: bool) -> Loop {
+    let p = DVec2::new;
+    let top = p(7.133902943892929, 5.941672028936563);
+    let w = if parabola { 1.0 } else { 3.5270263327042333 };
+    let conic = |a, c, w, b| Conic2::new(a, c, w, b).unwrap();
+    Loop {
+        segments: vec![
+            Segment {
+                conic: conic(
+                    p(0.0, 0.0),
+                    p(5.960533243497424, 4.016383299201285),
+                    w,
+                    p(10.0, 0.0),
+                ),
+                curve: 0,
+            },
+            Segment::line(p(10.0, 0.0), top, 1).unwrap(),
+            Segment {
+                conic: conic(
+                    top,
+                    p(4.498411419974676, 4.295424552808314),
+                    1.4945411156202695,
+                    p(0.0, 0.0),
+                ),
+                curve: 2,
+            },
+        ],
+    }
+}
+
 /// The loop reversed: same curves, run the other way.
 pub(crate) fn reversed(lp: &Loop) -> Loop {
     Loop {

@@ -1683,7 +1683,8 @@ fn random_boxes_across_walls_with_level_ends() {
     }
     // Most go through (a third did when crossings were put on the walls'
     // corners' planes). The rest are unions and differences with convex
-    // walls whose cap pieces fold.
+    // walls: the boolean's own cap triangles fold (an arc's cut piece
+    // fanned to a far corner) or are flat slivers.
     assert!(done * 100 >= all * 85, "{done} of {all}");
 }
 
@@ -2013,4 +2014,43 @@ fn cuts_across_nearly_straight_edges_of_results() {
         assert!((d + i - vp).abs() <= 1e-7, "{frame:?}: {d} + {i}");
         assert!((i - 0.004290201848).abs() <= 1e-7, "{frame:?}: {i}");
     }
+}
+
+#[test]
+fn a_cap_folding_when_refined_is_refused() {
+    // A horizontal cylinder across the top of a prism whose cap is one
+    // triangle with two curved sides, one a concave hyperbola. The pair
+    // refinement splits the cap with straight inner edges, and a piece's
+    // corner at a curve's midpoint turns inside out: the folded piece goes
+    // into the result, which repair can't mend, and every operation is
+    // refused. Patches made safe to split at construction (their straight
+    // children passing the fold check) would turn these into `Ok`s.
+    let a = extruded(vec![crate::profile::tests::folding_cap(false)], 0.0, 5.0, 9);
+    let b = cylinder_x(3.0, 5.2, 0.6, -2.0, 12.0);
+    let mut work = Work::new(&Budget::DEFAULT);
+    let refined = pairs::refined(a.mesh(), b.mesh(), false, &TOL, &mut work).unwrap();
+    let folded = (0..refined.a.tris().len())
+        .filter(|&t| refined.a.patch(t).fold_direction().is_none())
+        .count();
+    assert!(folded > 0);
+    for op in [Op::Union, Op::Intersection, Op::Difference] {
+        for (x, y) in [(&a, &b), (&b, &a)] {
+            let got = boolean(x, y, op, &TOL, &Budget::DEFAULT);
+            assert!(
+                matches!(got, Err(KernelError::Invalid(_))),
+                "{op:?}: {got:?}"
+            );
+        }
+    }
+    // With a parabola for the concave side, all three go through, the
+    // identities within the fit tolerance's allowance (the cuts between
+    // the walls are fitted; they are off by about 1e-4).
+    let a = extruded(vec![crate::profile::tests::folding_cap(true)], 0.0, 5.0, 9);
+    let (va, vb) = (a.volume(), b.volume());
+    let within = TOL.fit() * (a.area() + b.area()) / 100.0;
+    let [u, i, d] =
+        [Op::Union, Op::Intersection, Op::Difference].map(|op| run(&a, &b, op).volume());
+    assert!((u + i - va - vb).abs() <= within, "{u} + {i}");
+    assert!((d + i - va).abs() <= within, "{d} + {i}");
+    assert!(i > 1.0);
 }
