@@ -1695,9 +1695,20 @@ fn many_bodies_stay_within_the_budget() {
 /// which merges them: dragging it works out only its tool, whether it
 /// touches each plate, the tool's union with the plates' (found again)
 /// and the merged body's mesh; taking the lower plate out and putting it
-/// back finds everything again, the merge kept while it was out.
+/// back finds the merge, kept while it was out: with the default budget
+/// everything is found, and with none only the merged body's mesh, which
+/// the request before didn't use, is worked out again.
 #[test]
 fn a_join_draft_merging_two_bodies_reworks_one_boolean_when_dragged() {
+    for (mut regenerator, remeshed) in [
+        (Regenerator::default(), 0),
+        (Regenerator::with_budget(0), 1),
+    ] {
+        a_join_draft_merging_two_bodies(&mut regenerator, remeshed);
+    }
+}
+
+fn a_join_draft_merging_two_bodies(regenerator: &mut Regenerator, remeshed: usize) {
     use crate::history::tests::{add_extrude, disc, plate_below, two_sides};
     use varde_document::Targets;
 
@@ -1731,7 +1742,6 @@ fn a_join_draft_merging_two_bodies_reworks_one_boolean_when_dragged() {
             sketch: Box::new(drawn.clone()),
         })
         .unwrap();
-    let mut regenerator = Regenerator::default();
     answered(regenerator.handle(regenerate(&editor, None)));
     let mut draft = Draft {
         revision: 1,
@@ -1764,11 +1774,10 @@ fn a_join_draft_merging_two_bodies_reworks_one_boolean_when_dragged() {
     assert_eq!(apart.bodies.len(), 2);
     let (_, worked) = regenerator.cache().counts();
 
-    // Put back: everything is found again, the merged body's mesh too
-    // (the budget keeps it).
+    // Put back: the touch and the merge are found again.
     draft.revision = 4;
     let back = answered(regenerator.handle(regenerate_with(&editor, Some(draft))));
     assert_eq!(back.draft.unwrap().error, None);
     assert_eq!(back.bodies.len(), 1);
-    assert_eq!(regenerator.cache().counts().1, worked);
+    assert_eq!(regenerator.cache().counts().1, worked + remeshed);
 }

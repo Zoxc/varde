@@ -457,10 +457,11 @@ pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
             tick(target.name, target.included, editable.then_some(message))
         });
         let merging = joined_into(state).map(|holder| {
+            // The mock's panel note: faint, 12 px.
             text(format!("Joined into {holder}"))
                 .size(12)
                 .wrapping(Wrapping::WordOrGlyph)
-                .style(theme::muted_text)
+                .style(theme::faint_text)
         });
         column![heading("Bodies"), column(rows).spacing(4), merging].spacing(6)
     });

@@ -69,7 +69,7 @@ use varde_kernel::{Aabb, Display, LinesError, MeshError, RenderLines, RenderMesh
 use varde_sketch::{Budget, Goal};
 
 pub use cache::Cache;
-pub use history::{BodySolid, Evaluation, evaluate};
+pub use history::{BodySolid, Evaluation, evaluate, note_merge};
 pub use profile::{ProfileError, profile};
 
 use cache::Keyer;

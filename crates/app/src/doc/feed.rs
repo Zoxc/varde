@@ -427,9 +427,10 @@ impl MeshFeed {
 }
 
 /// Which bodies joins merged into which, replayed from the bodies each
-/// join touched in the document's order: a join touching two or more
-/// merges them into the first made (the *holder*), and a body merged into
-/// one that's merged later moves on to the later holder.
+/// join touched in the document's order by regen's own rule
+/// ([`varde_regen::note_merge`]): a join touching two or more merges them
+/// into the first made (the *holder*), and a body merged into one that's
+/// merged later moves on to the later holder.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct Merges(Vec<(BodyId, BodyId)>);
 
@@ -437,15 +438,7 @@ impl Merges {
     /// Notes a working join that touched `touched`, in the order they
     /// were made.
     pub(crate) fn join(&mut self, touched: &[BodyId]) {
-        let Some((&holder, consumed)) = touched.split_first() else {
-            return;
-        };
-        for (_, held_in) in &mut self.0 {
-            if consumed.contains(held_in) {
-                *held_in = holder;
-            }
-        }
-        self.0.extend(consumed.iter().map(|&body| (body, holder)));
+        varde_regen::note_merge(&mut self.0, touched);
     }
 
     /// Whether `body` was merged into another.

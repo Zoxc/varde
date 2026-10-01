@@ -3761,7 +3761,8 @@ and the later ones still run.
   are *consumed*: left out of `Evaluation::bodies` and listed in
   `Evaluation::merged` as (consumed, holder), sorted by the consumed
   body's id (the document's order). A later join consuming a holder
-  moves the entries naming it on to the new holder, so every entry names
+  moves the entries naming it on to the new holder (`note_merge`, public
+  so the app replays merges by the same rule), so every entry names
   a body in `bodies` (a `debug_assert` at the end of `evaluate` holds
   it); `Evaluation::holder(body)` follows one. The bodies stay the
   document's (Objects lists them); only their geometry moved. Objects
@@ -3770,7 +3771,10 @@ and the later ones still run.
   shown's, with a draft as the draft merges them, none across a
   replacement) and no eye, since it's drawn as its holder is and the
   holder's flag decides; its bin removes it and its maker as for any
-  body. Cuts and
+  body. An Objects row's buttons that show on hover keep their room while
+  hidden, as the mock's do, so the note stays put: the hovered row is
+  drawn over the plain one, which shows through the dark theme's
+  highlight. Cuts and
   intersects stay per body, as other CAD systems keep bodies apart for
   those, and an excluded body isn't merged (unticking it is how to join
   to fewer bodies). The union is worked out in steps, each one
@@ -4196,7 +4200,8 @@ answer is on its way; but an excluded or ticked-again body that a join
 before the extrude merged into another isn't listed unless touched: it's
 no body of its own there (`MeshFeed::merged_before`, replaying the
 joins before it that the model shown has working and touching two or
-more, from `touched_features` and `failed_features`, as `feed::Merges`;
+more, from `touched_features` and `failed_features`, as `feed::Merges`
+by regen's `note_merge`, so the two can't disagree on a prefix;
 the final `merged` won't do, as a join after the extrude may consume a
 body it rightly lists); all in the order they were made; ticked unless excluded;
 `ExtrudeLook::Target` toggles, keeping the session's `excluded` sorted and

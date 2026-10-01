@@ -85,6 +85,23 @@ impl Evaluation {
     }
 }
 
+/// Notes in `merged`, a list like [`Evaluation::merged`], that a join
+/// merged `bodies` (in the order they were made) into the first, the
+/// *holder*: each of the others is consumed into it, and so are the bodies
+/// merged into those before. Nothing for fewer than two. How regen keeps
+/// `merged`, and how the bodies the joins touched replay it.
+pub fn note_merge(merged: &mut Vec<(BodyId, BodyId)>, bodies: &[BodyId]) {
+    let Some((&holder, consumed)) = bodies.split_first() else {
+        return;
+    };
+    for (_, held_in) in merged.iter_mut() {
+        if consumed.contains(held_in) {
+            *held_in = holder;
+        }
+    }
+    merged.extend(consumed.iter().map(|&body| (body, holder)));
+}
+
 /// A body's solid.
 #[derive(Debug, Clone)]
 pub struct BodySolid {
@@ -319,20 +336,15 @@ impl Run<'_> {
         let bodies: Vec<&BodySolid> = (evaluation.bodies.iter())
             .filter(|made| targets.contains(&made.body))
             .collect();
-        let into = bodies[0].body;
-        let consumed: Vec<BodyId> = bodies[1..].iter().map(|made| made.body).collect();
+        let merging: Vec<BodyId> = bodies.iter().map(|made| made.body).collect();
+        let (into, consumed) = (merging[0], &merging[1..]);
         let (solid, key) = self.merge(&bodies, tool, cache)?;
         // A union of solids that aren't empty isn't, but it's cheap to
         // make sure no body ever is.
         if solid.is_empty() {
             return Err(message::emptied(Doing::Joining, self.body_name(into)));
         }
-        for (_, holder) in &mut evaluation.merged {
-            if consumed.contains(holder) {
-                *holder = into;
-            }
-        }
-        (evaluation.merged).extend(consumed.iter().map(|&body| (body, into)));
+        note_merge(&mut evaluation.merged, &merging);
         (evaluation.bodies).retain(|made| !consumed.contains(&made.body));
         if let Some(made) = evaluation.bodies.iter_mut().find(|m| m.body == into) {
             *made = BodySolid {

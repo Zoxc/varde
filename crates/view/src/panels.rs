@@ -372,6 +372,13 @@ fn object_row(object: Object<'_>) -> Element<'_, Message> {
         remove,
         note,
     } = object;
+    // A button that shows only on hover keeps its room while it's hidden,
+    // as the mock's do, so the note doesn't move: the hovered row is drawn
+    // over the plain one, which shows through a translucent highlight.
+    let room = |shown: bool, button: Option<Element<'static, Message>>| {
+        button.or_else(|| shown.then(|| Space::new().width(icons::BUTTON_SIZE).into()))
+    };
+    let (has_eye, has_bin) = (toggle.is_some() && editable, remove.is_some() && editable);
     let content = move |hovered: bool| {
         let eye = toggle
             .clone()
@@ -382,11 +389,12 @@ fn object_row(object: Object<'_>) -> Element<'_, Message> {
                     Tone::Faint,
                     editable.then_some(toggle),
                 )
+                .into()
             });
         let remove = remove
             .clone()
             .filter(|_| hovered && editable)
-            .map(|message| icon_button(Icon::Trash, Tone::Faint, Some(message)));
+            .map(|message| icon_button(Icon::Trash, Tone::Faint, Some(message)).into());
         let note = (note.clone()).map(|note| text(note).size(11.5).style(theme::faint_text));
         container(
             row![
@@ -394,8 +402,8 @@ fn object_row(object: Object<'_>) -> Element<'_, Message> {
                 name(label, visible),
                 space::horizontal(),
                 note,
-                eye,
-                remove,
+                room(has_eye, eye),
+                room(has_bin, remove),
             ]
             .spacing(8)
             .height(ROW_HEIGHT)
@@ -777,6 +785,18 @@ mod tests {
         let note = at("in Body 1").unwrap_or_else(|| panic!("{shown:?}"));
         assert_eq!(at("Body 2"), Some(note - 1), "{shown:?}");
         assert!(!texts(&[]).iter().any(|text| text.starts_with("in ")));
+
+        // The row hovered is drawn over the plain one, which shows through
+        // a translucent highlight: its note is laid out in the same place
+        // in both, though the hovered one has its bin.
+        let objects = objects(document, &merged, true);
+        let mut laid = crate::testing::Laid::new(objects, iced::Size::new(300.0, 400.0));
+        let notes: Vec<_> = (laid.texts().into_iter())
+            .filter(|shown| shown.text == "in Body 1")
+            .map(|shown| shown.bounds)
+            .collect();
+        assert_eq!(notes.len(), 2, "plain and hovered");
+        assert_eq!(notes[0], notes[1]);
     }
 
     #[test]
