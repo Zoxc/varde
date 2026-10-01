@@ -86,13 +86,57 @@ The renderer draws, in order: the background; the model's faces, or with
 `Frame::faded` its depth and then only its nearest faces blended at
 `Colors::faded_alpha` (depth still written); its feature edges; the grid,
 ray traced per pixel on `Frame::grid`, a `GridPlane` (the XY plane, or a
-sketch's plane), its axis lines coloured by the world axis they lie along;
-the finished sketches (`Frame::sketches`, `RenderLines`), `LINE_WIDTH`
+sketch's plane), faded out a few view heights from the target and at
+grazing angles, with its two axis lines over it, coloured by the world
+axis they lie along; the finished sketches (`Frame::sketches`, `RenderLines`), `LINE_WIDTH`
 logical pixels wide, cut at the near plane, depth tested and pulled
 towards the camera like the edges, so bodies in front hide them but a face
 they lie on doesn't; the origin marker; and on top of it all the sketch
 being edited (`Frame::sketch`, a `SketchScene`), not depth tested, so the
 faded model never hides it.
+
+The grid's axis lines are drawn in the grid's pass (`axis_line`) but not
+faded: they run on at full strength to the horizon, and show when the
+plane is seen edge on. Each pixel's coverage comes from its distance to
+the line's image on screen, the homogeneous line through the images of a
+point of the axis (the one nearest the target, so clip coordinates stay
+small) and of its direction, exact at any distance, zoom and display
+scale in either projection, so they're anti-aliased without MSAA (which
+WebGL2 would make costly). Their depth is that of the axis's point nearest
+the pixel's ray, written as the fragment's depth (clamped to the range,
+so past the far plane they still show), and where that point is behind
+the near plane the pixel isn't drawn, which also drops the part of the
+image that's behind the eye. So bodies in front hide them like the grid.
+
+The origin marker is flat: a ring lying in the grid's plane around the
+world origin, and a dot at the origin itself, each a white core with a
+dark rim (`Colors::origin_outline`) so it reads on both themes'
+backgrounds. It's one screen-space quad: the ring is the image of a circle
+in the plane, scaled so its widest is `RING_RADIUS` logical pixels at any
+zoom, an ellipse as the plane tilts away and a segment when it's seen edge
+on (its distance is to a polygon of it, which stays right then), so it
+shows the plane the axis lines run in without a third axis sticking out
+of it; the dot stays round. It's drawn over the model and the finished
+sketches, since the origin often coincides with model corners, and under
+the sketch being edited. The world axes' directions and names are on the
+view cube instead (below).
+
+The view cube (`view_cube.rs`) is a canvas in the controls, turned with
+the camera: its faces lettered and lit as in the mock, clicking one looks
+from that side. The X, Y and Z axes are drawn on it, in the scene's axis
+colours: each along one of the four cube edges parallel to it and on past
+the cube, with an arrowhead and its letter past the tip (kept inside the
+widget, 116 px against the mock's 96, which is larger than the cube for
+them). Of the edges on a face turned to the camera, an axis takes one
+whose part past the cube nothing of the cube hides, if any, and of those
+the lowest and furthest left on screen, so in most views the axes gather
+at the cube's bottom left like a triad; a fixed corner can't do that,
+since from Home the edges from any one corner along all three positive
+directions don't all show. The edge is drawn over the faces; the part
+past the cube over them if nothing hides it, else under them, which
+hide what's behind. The letters are stroked paths rather than text, which
+a canvas draws over all its shapes, so faces can hide them too. An axis
+seen end on (head-on views) has no edge in sight and isn't drawn.
 
 Lines, the finished sketches' and the sketch being edited's, are one
 shader (`line_vertex`, `fs_line`): a quad per segment a pixel wider than

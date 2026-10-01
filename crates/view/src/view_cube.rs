@@ -1,22 +1,38 @@
 //! The view cube: a small cube in the viewport corner that turns with the
-//! camera. Clicking a face looks at the model from that side.
+//! camera. Clicking a face looks at the model from that side. The X, Y and
+//! Z axes run along edges of it in sight and past it, in the scene's axis
+//! colours, each lettered at its tip.
 
 use glam::{Vec2, Vec3};
 use iced::alignment::Vertical;
-use iced::widget::canvas::{self, Action, Frame, Geometry, Path, Stroke, Text};
+use iced::widget::canvas::{self, Action, Frame, Geometry, LineCap, LineJoin, Path, Stroke, Text};
 use iced::widget::text::Alignment;
 use iced::{Color, Element, Event, Font, Length, Point, Radians, Rectangle, Renderer, Theme, font};
 use iced::{Vector, mouse};
-use varde_render::{Camera, View};
+use varde_render::{Camera, Srgb, View};
 
 use crate::theme::{self, Palette};
 use crate::{Look, Message};
 
-/// Width and height of the widget.
-const SIZE: f32 = 96.0;
+/// Width and height of the widget: the cube, and room around it for the
+/// axes' tips and letters.
+const SIZE: f32 = 116.0;
 /// Half the cube's edge length.
 const HALF: f32 = 25.0;
 const LETTER_SIZE: f32 = 17.0;
+/// How far the axes run past the cube.
+const AXIS_OVERHANG: f32 = 12.0;
+const AXIS_WIDTH: f32 = 2.0;
+/// The arrowheads at the axes' tips: their length and half their width.
+const ARROW_LENGTH: f32 = 6.0;
+const ARROW_HALF_WIDTH: f32 = 3.0;
+/// The axes' letters: how tall, and their strokes' width.
+const AXIS_LETTER_SIZE: f32 = 8.0;
+const LETTER_WIDTH: f32 = 1.6;
+/// How far past an axis's tip, on screen, its letter's centre is.
+const AXIS_LETTER_GAP: f32 = 8.0;
+/// How close to the widget's sides a letter's centre may come.
+const AXIS_LETTER_MARGIN: f32 = 6.0;
 
 pub fn view_cube<'a>(camera: &Camera) -> Element<'a, Message> {
     canvas::Canvas::new(ViewCube {
@@ -151,6 +167,173 @@ fn fill(palette: &Palette, basis: &Basis, normal: Vec3) -> Color {
     )
 }
 
+/// The world's X, Y and Z directions.
+const WORLD_AXES: [Vec3; 3] = [Vec3::X, Vec3::Y, Vec3::Z];
+
+/// An axis as drawn: along an edge of the cube parallel to it, from the
+/// edge's start to its end, then on past the cube to its tip, in widget
+/// coordinates, with where its letter goes.
+#[derive(Debug, Clone, Copy)]
+struct Axis {
+    /// 0, 1 or 2 for X, Y or Z.
+    index: usize,
+    start: Vec2,
+    end: Vec2,
+    tip: Vec2,
+    /// Where the axis points on screen, of unit length.
+    direction: Vec2,
+    letter: Vec2,
+    /// Whether the cube hides none of the part past it, which is then
+    /// drawn over the faces; otherwise under them, which hide what's
+    /// behind them.
+    tip_shown: bool,
+}
+
+/// Whether the cube hides `p`, a point on or outside it: the ray from it
+/// towards the camera passes through the cube's inside.
+fn hidden(basis: &Basis, p: Vec3) -> bool {
+    let inside = HALF * (1.0 - 1e-3);
+    let (mut near, mut far) = (1e-3_f32, f32::INFINITY);
+    for i in 0..3 {
+        let (o, d) = (p[i], basis.backward[i]);
+        if d.abs() < 1e-9 {
+            if o.abs() >= inside {
+                return false;
+            }
+            continue;
+        }
+        let (a, b) = ((-inside - o) / d, (inside - o) / d);
+        near = near.max(a.min(b));
+        far = far.min(a.max(b));
+    }
+    near < far
+}
+
+/// The X, Y and Z axes as the cube is turned, each along one of the four
+/// edges parallel to it: of those on a face turned to the camera, one
+/// whose part past the cube nothing hides if there is one, and of those
+/// the one lowest and furthest left on screen, so the axes gather at the
+/// cube's bottom left like a triad. None for an axis pointing straight at
+/// the camera or away, which no edge in sight runs along.
+fn axes(basis: &Basis) -> [Option<Axis>; 3] {
+    let facing = |normal: Vec3| normal.dot(basis.backward) > 1e-3;
+    std::array::from_fn(|index| {
+        let along = WORLD_AXES[index];
+        let projected = basis.project(along);
+        if projected.length() < 0.05 {
+            return None;
+        }
+        let direction = projected.normalize();
+        let (u, v) = (WORLD_AXES[(index + 1) % 3], WORLD_AXES[(index + 2) % 3]);
+        [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
+            .into_iter()
+            .filter(|&(a, b)| facing(u * a) || facing(v * b))
+            .map(|(a, b)| {
+                let start = (u * a + v * b - along) * HALF;
+                let end = start + along * 2.0 * HALF;
+                let tip = end + along * AXIS_OVERHANG;
+                let tip_shown =
+                    (1..=8).all(|i| !hidden(basis, end + (tip - end) * (i as f32 / 8.0)));
+                let (start, end, tip) = (basis.point(start), basis.point(end), basis.point(tip));
+                let letter = (tip + direction * AXIS_LETTER_GAP).clamp(
+                    Vec2::splat(AXIS_LETTER_MARGIN),
+                    Vec2::splat(SIZE - AXIS_LETTER_MARGIN),
+                );
+                Axis {
+                    index,
+                    start,
+                    end,
+                    tip,
+                    direction,
+                    letter,
+                    tip_shown,
+                }
+            })
+            .max_by(|a, b| {
+                let score = |axis: &Axis| {
+                    let middle = (axis.start + axis.end) / 2.0;
+                    (axis.tip_shown, middle.y - middle.x)
+                };
+                let (a, b) = (score(a), score(b));
+                a.0.cmp(&b.0).then(a.1.total_cmp(&b.1))
+            })
+    })
+}
+
+/// The colour of axis `index`, as the scene draws it.
+fn axis_color(palette: &Palette, index: usize) -> Color {
+    let Srgb([r, g, b]) = palette.scene.axes[index];
+    Color::from_rgb(r, g, b)
+}
+
+/// The strokes of the letter of axis `index`, centred on the origin, a
+/// unit high. Drawn as paths rather than text, which a canvas puts over
+/// all its shapes, so the faces can hide one behind them.
+fn letter_strokes(index: usize) -> &'static [&'static [(f32, f32)]] {
+    const W: f32 = 0.38;
+    match index {
+        0 => &[&[(-W, -0.5), (W, 0.5)], &[(W, -0.5), (-W, 0.5)]],
+        1 => &[
+            &[(-W, -0.5), (0.0, 0.0), (W, -0.5)],
+            &[(0.0, 0.0), (0.0, 0.5)],
+        ],
+        _ => &[&[(-W, -0.5), (W, -0.5), (-W, 0.5), (W, 0.5)]],
+    }
+}
+
+/// Draws the parts of `axes` drawn over the faces if `over`, else those
+/// drawn under them. Their edges are always over: each runs along a face
+/// turned to the camera.
+fn draw_axes(frame: &mut Frame, palette: &Palette, axes: &[Option<Axis>; 3], over: bool) {
+    for axis in axes.iter().flatten() {
+        let color = axis_color(palette, axis.index);
+        let stroke = Stroke::default()
+            .with_color(color)
+            .with_width(AXIS_WIDTH)
+            .with_line_cap(LineCap::Round);
+        if over {
+            frame.stroke(&Path::line(point(axis.start), point(axis.end)), stroke);
+        }
+        if axis.tip_shown != over {
+            continue;
+        }
+        let base = axis.tip - axis.direction * ARROW_LENGTH;
+        // The shaft stops where the arrowhead starts, if there's room for
+        // one.
+        let room = (axis.tip - axis.end).length() > ARROW_LENGTH;
+        let shaft_end = if room { base } else { axis.tip };
+        frame.stroke(&Path::line(point(axis.end), point(shaft_end)), stroke);
+        if room {
+            let side = axis.direction.perp() * ARROW_HALF_WIDTH;
+            let head = Path::new(|b| {
+                b.move_to(point(axis.tip));
+                b.line_to(point(base + side));
+                b.line_to(point(base - side));
+                b.close();
+            });
+            frame.fill(&head, color);
+        }
+        let letter = Path::new(|b| {
+            for stroke in letter_strokes(axis.index) {
+                let at =
+                    |&(x, y): &(f32, f32)| point(axis.letter + Vec2::new(x, y) * AXIS_LETTER_SIZE);
+                b.move_to(at(&stroke[0]));
+                for p in &stroke[1..] {
+                    b.line_to(at(p));
+                }
+            }
+        });
+        frame.stroke(
+            &letter,
+            Stroke::default()
+                .with_color(color)
+                .with_width(LETTER_WIDTH)
+                .with_line_cap(LineCap::Round)
+                .with_line_join(LineJoin::Round),
+        );
+    }
+}
+
 fn point(v: Vec2) -> Point {
     Point::new(v.x, v.y)
 }
@@ -210,6 +393,8 @@ impl canvas::Program<Message> for ViewCube {
         let hovered = self.face_under(bounds, cursor);
         let palette = theme::palette(theme);
         let mut frame = Frame::new(renderer, bounds.size());
+        let axes = axes(&self.basis);
+        draw_axes(&mut frame, palette, &axes, false);
 
         for face in visible_faces(&self.basis) {
             let outline = Path::new(|b| {
@@ -260,6 +445,7 @@ impl canvas::Program<Message> for ViewCube {
             });
         }
 
+        draw_axes(&mut frame, palette, &axes, true);
         vec![frame.into_geometry()]
     }
 

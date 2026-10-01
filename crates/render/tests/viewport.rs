@@ -423,29 +423,66 @@ fn origin_marker_follows_scale_factor() {
             clip,
             scale,
         )?;
-        let center_y = size[1] / 2.0;
-        // The dot is white and the Z axis, pointing up on screen, is blue.
-        let (mut dot, mut axis) = (0, 0.0f32);
+        let center_x = size[0] / 2.0;
+        // The ring's core and the dot are white, and its edges nearly so:
+        // how many pixels, and how far the ring reaches sideways.
+        let (mut white, mut reach) = (0, 0.0f32);
         for y in 0..clip.height {
             for x in 0..clip.width {
-                let [r, g, b, _] = pixel(&pixels, x, y).map(i32::from);
-                if [r, g, b].iter().all(|&c| c > 240) {
-                    dot += 1;
-                } else if b > 150 && b > r + 80 && b > g + 60 {
-                    axis = axis.max(center_y - y as f32);
+                if pixel(&pixels, x, y)[..3].iter().all(|&c| c > 200) {
+                    white += 1;
+                    reach = reach.max((x as f32 + 0.5 - center_x).abs());
                 }
             }
         }
-        Some((dot as f32, axis))
+        Some((white as f32, reach))
     };
-    let (Some((dot1, axis1)), Some((dot2, axis2))) = (measure(1.0), measure(2.0)) else {
+    let (Some((white1, reach1)), Some((white2, reach2))) = (measure(1.0), measure(2.0)) else {
         eprintln!("no GPU adapter, skipping");
         return;
     };
-    assert!(dot1 > 0.0 && axis1 > 20.0, "dot {dot1}, axis {axis1}");
-    let (dot, axis) = (dot2 / dot1, axis2 / axis1);
-    assert!((3.0..5.0).contains(&dot), "dot area grew {dot}x");
-    assert!((1.8..2.2).contains(&axis), "axis length grew {axis}x");
+    assert!(
+        white1 > 0.0 && reach1 > 5.0,
+        "white {white1}, reach {reach1}"
+    );
+    let (white, reach) = (white2 / white1, reach2 / reach1);
+    assert!((3.0..5.0).contains(&white), "white area grew {white}x");
+    assert!((1.8..2.2).contains(&reach), "ring grew {reach}x");
+}
+
+#[test]
+fn origin_marker_is_a_ring_flat_in_the_grid_plane() {
+    // From the top the ring is round; from the front, with the XY plane
+    // edge on, it's flattened to a line along the X axis. The dot in the
+    // middle stays round.
+    let white = |p: [u8; 4]| p[..3].iter().all(|&c| c > 200);
+    let extent = |camera: &Camera| {
+        let pixels = render(camera, &RenderMesh::default(), VIEWPORT, CLIP, 1.0)?;
+        let (cx, cy) = CENTER;
+        let (mut wide, mut tall) = (0u32, 0u32);
+        for y in CLIP.y..CLIP.y + CLIP.height {
+            for x in CLIP.x..CLIP.x + CLIP.width {
+                if white(pixel(&pixels, x, y)) {
+                    wide = wide.max(x.abs_diff(cx));
+                    tall = tall.max(y.abs_diff(cy));
+                }
+            }
+        }
+        Some((wide, tall))
+    };
+    let mut top = Camera::default();
+    top.look_from(View::Top);
+    let mut front = Camera::default();
+    front.look_from(View::Front);
+    let (Some(top), Some(front)) = (extent(&top), extent(&front)) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    assert!(
+        (9..=12).contains(&top.0) && (9..=12).contains(&top.1),
+        "{top:?}"
+    );
+    assert!((9..=12).contains(&front.0) && front.1 <= 4, "{front:?}");
 }
 
 #[test]
@@ -532,7 +569,8 @@ fn cube(size: f32, at: Vec3) -> RenderMesh {
 #[test]
 fn sketches_are_hidden_by_bodies_in_front_of_them() {
     // From the top, across a cube from 0 to 2: beneath it, on its top face
-    // and above it.
+    // and above it. Looked at away from the origin marker's ring, which is
+    // drawn over them.
     let mut camera = Camera::default();
     camera.look_from(View::Top);
     let mesh = cube(2.0, Vec3::ZERO);
@@ -546,7 +584,7 @@ fn sketches_are_hidden_by_bodies_in_front_of_them() {
             eprintln!("no GPU adapter, skipping");
             return;
         };
-        for x in [-2.0, -0.5, 1.0, 2.5, 4.0] {
+        for x in [-2.0, -1.5, 1.0, 2.5, 4.0] {
             let over_cube = (0.0..=2.0).contains(&x);
             let (column, _) = on_screen(&camera, Vec3::new(x, 1.0, z));
             assert_eq!(
@@ -708,8 +746,9 @@ fn faded_model_still_hides_sketches_behind_it() {
 #[test]
 fn grid_is_drawn_on_its_plane() {
     // From the front, the XZ plane shows its X axis left of the origin and
-    // its Z axis below it, where the origin marker has none. The XY plane
-    // is seen edge on, so neither shows.
+    // its Z axis below it, clear of the origin marker. The XY plane is seen
+    // edge on: its grid doesn't show, but its X axis does, on and on as
+    // an axis line, and there's no Z axis.
     let mut camera = Camera::default();
     camera.look_from(View::Front);
     let xz = GridPlane::new(Vec3::ZERO, Vec3::X, Vec3::Z).unwrap();
@@ -731,7 +770,7 @@ fn grid_is_drawn_on_its_plane() {
     let z_axis = (cx - 1..=cx + 1).map(|x| pixel(&on_xz, x, cy + 20));
     assert!(x_axis.clone().any(red), "{:?}", x_axis.collect::<Vec<_>>());
     assert!(z_axis.clone().any(blue), "{:?}", z_axis.collect::<Vec<_>>());
-    assert!(!(cy - 1..=cy + 1).any(|y| red(pixel(&on_xy, cx - 30, y))));
+    assert!((cy - 1..=cy + 1).any(|y| red(pixel(&on_xy, cx - 30, y))));
     assert!(!(cx - 1..=cx + 1).any(|x| blue(pixel(&on_xy, x, cy + 20))));
 }
 
@@ -1164,4 +1203,96 @@ fn screen_space_lines_show_in_perspective_from_afar() {
     };
     let covered = yellow_down(&pixels, 40, 50..70);
     assert!((1.8..2.2).contains(&covered), "{covered} pixels wide");
+}
+
+/// The whole target as a viewport, at a scale factor of 1.
+const FULL: Viewport = Viewport {
+    x: 0.0,
+    y: 0.0,
+    width: SIZE[0] as f32,
+    height: SIZE[1] as f32,
+};
+const FULL_CLIP: ClipRect = ClipRect {
+    x: 0,
+    y: 0,
+    width: SIZE[0],
+    height: SIZE[1],
+};
+
+/// Where `world` shows in [`FULL`] from `camera`, in perspective, in
+/// pixels.
+fn in_perspective(camera: &Camera, world: Vec3) -> glam::Vec2 {
+    let offset = world - camera.eye();
+    let depth = -offset.dot(camera.backward());
+    // The view height at the target, over the distance there.
+    let slope = camera.view_height() / camera.distance();
+    let pixels = FULL.height / slope / depth;
+    glam::Vec2::new(
+        FULL.width / 2.0 + offset.dot(camera.right()) * pixels,
+        FULL.height / 2.0 - offset.dot(camera.up()) * pixels,
+    )
+}
+
+/// How red a pixel is over the black background: 1 where the X axis
+/// covers it, 0 where nothing or only the grey grid does.
+fn redness([r, g, _, _]: [u8; 4]) -> f32 {
+    (f32::from(r) - f32::from(g)).max(0.0) / (217.0 - 64.0)
+}
+
+#[test]
+fn grid_axes_run_on_unfaded_far_past_the_grid() {
+    // The -X half of the axis runs away from the camera, turned to look
+    // nearly along it, towards the horizon, far past where the grid has
+    // faded out.
+    let mut camera = Camera::default();
+    camera.set_projection(Projection::Perspective);
+    camera.orbit(0.7, -0.45);
+    let Some(pixels) = render(&camera, &RenderMesh::default(), FULL, FULL_CLIP, 1.0) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    for heights in [2.0, 8.0, 20.0, 60.0] {
+        let at = in_perspective(&camera, Vec3::X * -heights * camera.view_height());
+        let (x, y) = (at.x as u32, at.y as u32);
+        assert!(x > 2 && x < SIZE[0] - 2 && y > 2 && y < SIZE[1] - 2, "{at}");
+        let most = (y - 2..=y + 2)
+            .flat_map(|y| (x - 2..=x + 2).map(move |x| (x, y)))
+            .map(|(x, y)| redness(pixel(&pixels, x, y)))
+            .fold(0.0, f32::max);
+        assert!(
+            most > 0.9,
+            "{heights} view heights out the axis is {most} red"
+        );
+    }
+}
+
+#[test]
+fn grid_axes_are_anti_aliased() {
+    // From the top, turned so the X axis crosses the view at a slant: each
+    // column has a pixel of it at full strength, and its edges are partly
+    // covered, a line about AXIS_WIDTH wide across.
+    let mut camera = Camera::default();
+    camera.look_from(View::Top);
+    camera.orbit(0.3, 0.0);
+    let Some(pixels) = render(&camera, &RenderMesh::default(), FULL, FULL_CLIP, 1.0) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let mut partial = 0;
+    // Clear of the origin marker in the middle.
+    for x in (8..SIZE[0] / 2 - 24).chain(SIZE[0] / 2 + 24..SIZE[0] - 8) {
+        let column: Vec<f32> = (0..SIZE[1])
+            .map(|y| redness(pixel(&pixels, x, y)))
+            .collect();
+        let most = column.iter().copied().fold(0.0, f32::max);
+        let sum: f32 = column.iter().sum();
+        assert!(most > 0.8, "column {x}: {most}");
+        // 1.75 pixels across the line, a little more down a column.
+        assert!((1.4..2.6).contains(&sum), "column {x}: {sum}");
+        partial += column.iter().filter(|&&r| (0.1..0.9).contains(&r)).count();
+    }
+    assert!(
+        partial > SIZE[0] as usize / 2,
+        "only {partial} partly covered pixels"
+    );
 }

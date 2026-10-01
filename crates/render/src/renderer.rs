@@ -11,8 +11,8 @@ use crate::sketch::{FillVertex, LineInstance, PointInstance, SketchLayer, Sketch
 
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
-/// Three axis quads and the origin dot, six vertices each. See `vs_origin`.
-const ORIGIN_VERTICES: u32 = 4 * 6;
+/// One quad for the origin marker. See `vs_origin`.
+const ORIGIN_VERTICES: u32 = 6;
 
 /// A quad per segment of a line, two triangles. See `line_vertex`.
 const LINE_VERTICES: u32 = 6;
@@ -94,9 +94,9 @@ pub struct Colors {
     pub edge: Srgb,
     /// Grid lines.
     pub grid: Srgb,
-    /// The X, Y and Z axes, on the grid and the origin marker.
+    /// The X, Y and Z axes, for the grid's axis lines.
     pub axes: [Srgb; 3],
-    /// Outline of the origin marker's dot.
+    /// The rims of the origin marker's ring and dot.
     pub origin_outline: Srgb,
     /// Finished sketches' curves.
     pub sketch: Srgb,

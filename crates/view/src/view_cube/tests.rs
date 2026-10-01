@@ -89,3 +89,89 @@ fn hover_follows_the_cube_under_a_still_cursor() {
     assert!(after.update(&mut state, &press, bounds, cursor).is_some());
     assert_eq!(state, None);
 }
+
+#[test]
+fn axes_run_along_edges_in_sight() {
+    let mut camera = Camera::default();
+    for _ in 0..80 {
+        // Around and over the cube, through head-on views and the poles.
+        camera.orbit(0.37, 0.29);
+        let basis = Basis::new(&camera);
+        let faces: Vec<_> = visible_faces(&basis).collect();
+        let on_a_face = |p: Vec2| faces.iter().any(|f| contains(&f.corners, p));
+        let axes = axes(&basis);
+        for (index, axis) in axes.iter().enumerate() {
+            let along = WORLD_AXES[index];
+            let Some(axis) = axis else {
+                // Only an axis seen end on is left out.
+                assert!(basis.project(along).length() < 0.05, "{camera:?} {index}");
+                continue;
+            };
+            assert_eq!(axis.index, index);
+            assert!(
+                (axis.end - axis.start)
+                    .normalize()
+                    .abs_diff_eq(axis.direction, 1e-3)
+            );
+            // The edge's middle is on a face in sight, or its outline.
+            let middle = (axis.start + axis.end) / 2.0;
+            let near = [Vec2::ZERO, Vec2::X, -Vec2::X, Vec2::Y, -Vec2::Y]
+                .iter()
+                .any(|&d| on_a_face(middle + d * 0.5));
+            assert!(near, "{camera:?} {index}: edge off the faces");
+        }
+    }
+}
+
+#[test]
+fn hidden_is_behind_the_cube() {
+    let basis = basis(View::Front);
+    // From the front, a point behind the back face is hidden, one off to
+    // the side or in front isn't, and nor is a point on the front face.
+    assert!(hidden(&basis, Vec3::new(0.0, 2.0 * HALF, 0.0)));
+    assert!(!hidden(&basis, Vec3::new(2.0 * HALF, 2.0 * HALF, 0.0)));
+    assert!(!hidden(&basis, Vec3::new(0.0, -2.0 * HALF, 0.0)));
+    assert!(!hidden(&basis, Vec3::new(0.0, -HALF, 0.0)));
+}
+
+#[test]
+fn axes_and_their_letters_stay_inside_the_widget() {
+    let mut camera = Camera::default();
+    for _ in 0..60 {
+        camera.orbit(0.41, 0.23);
+        for axis in axes(&Basis::new(&camera)).iter().flatten() {
+            for p in [axis.start, axis.end, axis.tip] {
+                assert!(p.cmpge(Vec2::ZERO).all() && p.cmple(Vec2::splat(SIZE)).all());
+            }
+            let margin = Vec2::splat(AXIS_LETTER_MARGIN);
+            assert!(axis.letter.cmpge(margin).all());
+            assert!(axis.letter.cmple(Vec2::splat(SIZE) - margin).all());
+        }
+    }
+}
+
+#[test]
+fn home_shows_every_axis_clear_of_the_cube() {
+    let axes = axes(&Basis::new(&Camera::default()));
+    for axis in &axes {
+        let axis = axis.expect("every axis in sight");
+        assert!(axis.tip_shown, "{axis:?}");
+    }
+    // X runs right and Z up on screen, Y away, to the right and up.
+    let direction = axes.map(|a| a.unwrap().direction);
+    assert!(direction[0].x > 0.5);
+    assert!(direction[2].y < -0.5);
+    assert!(direction[1].x > 0.0 && direction[1].y < 0.0);
+}
+
+#[test]
+fn head_on_leaves_out_the_axis_seen_end_on() {
+    for view in View::ALL {
+        let axes = axes(&basis(view));
+        let shown: Vec<_> = axes.iter().map(Option::is_some).collect();
+        let end_on = view.normal().abs().max_position();
+        for (index, shown) in shown.into_iter().enumerate() {
+            assert_eq!(shown, index != end_on, "{view:?} {index}");
+        }
+    }
+}

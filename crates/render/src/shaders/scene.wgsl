@@ -156,18 +156,6 @@ fn fs_grid(in: FullscreenOut) -> GridOut {
         grid_lines(p, dp, spacing * 100.0) * level_weight(2.0 - f),
     );
 
-    var color = u.grid.rgb;
-    var alpha = lines;
-
-    let axis = dp * 1.2;
-    if abs(p.y) < axis.y {
-        color = u.grid_axes[0].rgb;
-        alpha = 0.9;
-    } else if abs(p.x) < axis.x {
-        color = u.grid_axes[1].rgb;
-        alpha = 0.9;
-    }
-
     // Fade out far from the target, and at grazing angles where lines alias.
     let extent = view_height();
     let from_focus = length(p - in_grid(u.focus.xyz));
@@ -176,10 +164,70 @@ fn fs_grid(in: FullscreenOut) -> GridOut {
     // In front of the eye and within the depth range.
     let valid = f32(clip.w > 0.0 && depth >= 0.0 && depth <= 1.0);
 
+    // The axis lines over the grid, not faded, the y axis over the x axis.
+    let pixel_at = fragment_pixels(in.position);
+    var axes = array<vec2<f32>, 2>(
+        axis_line(pixel_at, origin, dir, u.grid_x.xyz),
+        axis_line(pixel_at, origin, dir, u.grid_y.xyz),
+    );
+    var color = u.grid.rgb;
+    var alpha = lines * fade * valid;
+    var out_depth = clamp(depth, 0.0, 1.0);
+    for (var i = 0; i < 2; i++) {
+        let line = axes[i];
+        if line.x > 0.0 {
+            let a = line.x + alpha * (1.0 - line.x);
+            color = (u.grid_axes[i].rgb * line.x + color * alpha * (1.0 - line.x)) / a;
+            alpha = a;
+            out_depth = line.y;
+        }
+    }
+
     var out: GridOut;
-    out.color = output(vec4<f32>(color, alpha * fade * valid));
-    out.depth = clamp(depth, 0.0, 1.0);
+    out.color = output(vec4<f32>(color, alpha));
+    out.depth = out_depth;
     return out;
+}
+
+// How wide the grid's axis lines are, in logical pixels.
+const AXIS_WIDTH: f32 = 1.75;
+
+// The grid's axis line along `axis` (a unit vector in the grid's plane,
+// through its origin) at the pixel `p` (from `fragment_pixels`), whose ray
+// runs from `origin` along `dir`: its coverage there and its depth. The
+// line is infinite and not faded: the coverage is from the pixel's
+// distance to the line's image on screen, the homogeneous line through the
+// images of a point on it and of its direction, exact at any distance and
+// zoom in either projection, so it's anti-aliased without MSAA. The depth
+// is the axis's point nearest the ray's, and the line is cut where that
+// point is behind the near plane, so the part of the image that's behind
+// the eye isn't drawn.
+fn axis_line(p: vec2<f32>, origin: vec3<f32>, dir: vec3<f32>, axis: vec3<f32>) -> vec2<f32> {
+    // The axis's point nearest the target, so clip coordinates stay small.
+    let base = u.grid_origin.xyz + axis * dot(u.focus.xyz - u.grid_origin.xyz, axis);
+    let half_size = 0.5 * u.viewport.xy;
+    let ca = u.view_proj * vec4<f32>(base, 1.0);
+    let cd = u.view_proj * vec4<f32>(axis, 0.0);
+    let pa = vec3<f32>(ca.xy * half_size, ca.w);
+    let pd = vec3<f32>(cd.xy * half_size, cd.w);
+    let l = cross(pa, pd);
+    let span = length(l.xy);
+    // Seen end on, the image is a point.
+    let seen = span > 1e-6 * length(pa) * length(pd);
+    let distance = abs(dot(l, vec3<f32>(p, 1.0))) / max(span, 1e-30);
+
+    // The axis's point nearest the ray, at `base + axis * s`.
+    let w0 = origin - base;
+    let b = dot(dir, axis);
+    let c = dot(dir, dir);
+    let denom = c - b * b;
+    let s = (c * dot(axis, w0) - b * dot(dir, w0)) / max(denom, 1e-30);
+    let q = u.view_proj * vec4<f32>(base + axis * s, 1.0);
+    let in_front = denom > 1e-12 * c && q.w > 0.0 && q.z >= 0.0;
+
+    let half_width = 0.5 * AXIS_WIDTH * u.viewport.z;
+    let coverage = clamp(half_width + 0.5 - distance, 0.0, 1.0) * f32(seen && in_front);
+    return vec2<f32>(coverage, clamp(q.z / max(q.w, 1e-30), 0.0, 1.0));
 }
 
 // --- Model ---
@@ -552,22 +600,33 @@ fn fs_line(in: LineOut) -> @location(0) vec4<f32> {
 
 // --- Origin marker ---
 //
-// Short X/Y/Z axes and a dot at the world origin, drawn as screen-space quads
-// so they keep a constant on-screen size at any zoom level. Sizes are in
-// logical pixels, scaled to physical ones by `u.viewport.z`. Always drawn on
-// top, since the origin often coincides with model corners and edges.
+// A ring lying flat in the grid's plane around the world origin, with a dot
+// at the origin itself, each a light core with a dark rim so it reads on
+// any background. One screen-space quad: the ring keeps its size on screen
+// at any zoom, its widest RING_RADIUS logical pixels, and turns into an
+// ellipse as the plane tilts away, so it shows the plane the grid's axis
+// lines run in; the dot is always round. Sizes are in logical pixels,
+// scaled to physical ones by `u.viewport.z`. Always drawn on top, since the
+// origin often coincides with model corners and edges.
 
 struct OriginOut {
     @builtin(position) position: vec4<f32>,
-    @location(0) color: vec4<f32>,
-    // Quad-local coordinates in [-1, 1], used for anti-aliasing and the dot.
-    @location(1) local: vec2<f32>,
-    @location(2) @interpolate(flat) is_dot: u32,
+    // Where the origin shows, in pixels from the viewport's centre.
+    @location(0) @interpolate(flat) center: vec2<f32>,
+    // The ring's ellipse: the images of the grid's x and y axes, scaled so
+    // the ellipse is the unit circle's image, in pixels.
+    @location(1) @interpolate(flat) ring_x: vec2<f32>,
+    @location(2) @interpolate(flat) ring_y: vec2<f32>,
 };
 
-const AXIS_PIXELS: f32 = 70.0;
-const AXIS_WIDTH: f32 = 2.5;
-const DOT_RADIUS: f32 = 5.0;
+const RING_RADIUS: f32 = 10.0;
+// Half the width of the ring's core, and the width of the rim around it
+// and the dot's.
+const RING_CORE: f32 = 0.75;
+const RIM: f32 = 1.0;
+const DOT_RADIUS: f32 = 2.5;
+// The segments the ring is drawn as.
+const RING_SEGMENTS: u32 = 48u;
 
 fn to_pixels(clip: vec4<f32>) -> vec2<f32> {
     return clip.xy / clip.w * 0.5 * u.viewport.xy;
@@ -578,64 +637,71 @@ fn from_pixels(pixels: vec2<f32>, clip: vec4<f32>) -> vec4<f32> {
     return vec4<f32>(pixels / (0.5 * u.viewport.xy) * clip.w, 0.0, clip.w);
 }
 
+// How the image of `origin + t * direction` moves on screen as `t` leaves 0,
+// in pixels per unit, `origin` showing at clip coordinates `clip`.
+fn image_of(direction: vec3<f32>, clip: vec4<f32>) -> vec2<f32> {
+    let d = u.view_proj * vec4<f32>(direction, 0.0);
+    return (d.xy - clip.xy / clip.w * d.w) / clip.w * 0.5 * u.viewport.xy;
+}
+
 @vertex
 fn vs_origin(@builtin(vertex_index) index: u32) -> OriginOut {
-    // Two triangles per quad, corners in quad-local space.
     var corners = array<vec2<f32>, 6>(
         vec2(-1.0, -1.0), vec2(1.0, -1.0), vec2(1.0, 1.0),
         vec2(-1.0, -1.0), vec2(1.0, 1.0), vec2(-1.0, 1.0),
     );
-    let quad = index / 6u;
-    let corner = corners[index % 6u];
-
     let origin = u.view_proj * vec4<f32>(0.0, 0.0, 0.0, 1.0);
-
     var out: OriginOut;
-    out.local = corner;
-
-    if quad == 3u {
-        let offset = corner * (DOT_RADIUS + 1.0) * u.viewport.z;
-        out.position = from_pixels(to_pixels(origin) + offset, origin);
-        out.color = vec4<f32>(1.0);
-        out.is_dot = 1u;
+    if origin.w <= 0.0 {
+        // Behind the eye: nothing to draw.
+        out.position = vec4<f32>(0.0, 0.0, 0.0, 1.0);
         return out;
     }
-
-    var axes = array<vec3<f32>, 3>(vec3(1.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0), vec3(0.0, 0.0, 1.0));
-
-    // Scale the world-space axis so it spans AXIS_PIXELS at the origin.
-    let pixel_size = view_height() / u.viewport.y * u.viewport.z;
-    let tip = u.view_proj * vec4<f32>(axes[quad] * AXIS_PIXELS * pixel_size, 1.0);
-
-    let a = to_pixels(origin);
-    let b = to_pixels(tip);
-    let along = b - a;
-    let side = normalize(vec2<f32>(-along.y, along.x) + vec2<f32>(1e-6, 0.0)) * AXIS_WIDTH * 0.5 * u.viewport.z;
-
-    let t = corner.x * 0.5 + 0.5;
-    let base = select(origin, tip, t > 0.5);
-    out.position = from_pixels(mix(a, b, t) + side * corner.y, base);
-    out.color = vec4<f32>(u.axes[quad].rgb, 1.0);
-    out.is_dot = 0u;
+    let s = u.viewport.z;
+    let center = to_pixels(origin);
+    // The ellipse's semi-major axis, the larger singular value of the
+    // matrix with columns `ex` and `ey`, scaled to RING_RADIUS.
+    let ex = image_of(u.grid_x.xyz, origin);
+    let ey = image_of(u.grid_y.xyz, origin);
+    let sum = dot(ex, ex) + dot(ey, ey);
+    let det = ex.x * ey.y - ex.y * ey.x;
+    let major = sqrt(0.5 * (sum + sqrt(max(sum * sum - 4.0 * det * det, 0.0))));
+    let scale = RING_RADIUS * s / max(major, 1e-30);
+    let reach = (RING_RADIUS + RING_CORE + RIM + 1.0) * s;
+    out.position = from_pixels(center + corners[index] * reach, origin);
+    out.center = center;
+    out.ring_x = ex * scale;
+    out.ring_y = ey * scale;
     return out;
 }
 
 @fragment
 fn fs_origin(in: OriginOut) -> @location(0) vec4<f32> {
-    if in.is_dot == 1u {
-        // In physical pixels, so the outline scales and anti-aliasing stays
-        // one device pixel wide.
-        let s = u.viewport.z;
-        let radius = DOT_RADIUS * s;
-        let r = length(in.local) * (DOT_RADIUS + 1.0) * s;
-        let fill = 1.0 - smoothstep(radius - 2.0 * s, radius - s, r);
-        let coverage = 1.0 - smoothstep(radius - 0.5, radius + 0.5, r);
-        let color = mix(u.origin_outline.rgb, vec3<f32>(1.0), fill);
-        return output(vec4<f32>(color, coverage));
+    let s = u.viewport.z;
+    let p = fragment_pixels(in.position) - in.center;
+    // The distance to the ring, as a polygon fine enough to look smooth;
+    // unlike a distance through the ellipse's inverse, it stays right when
+    // the plane is seen edge on and the ellipse is a segment.
+    var ring = 1e30;
+    let step = 6.283185307 / f32(RING_SEGMENTS);
+    var a = in.ring_x;
+    for (var i = 1u; i <= RING_SEGMENTS; i++) {
+        let angle = step * f32(i);
+        let b = in.ring_x * cos(angle) + in.ring_y * sin(angle);
+        ring = min(ring, segment_distance(p, a, b).x);
+        a = b;
     }
-
-    let edge = 1.0 - smoothstep(0.6, 1.0, abs(in.local.y));
-    return output(vec4<f32>(in.color.rgb, in.color.a * edge));
+    let dot_distance = length(p) - DOT_RADIUS * s;
+    let core = max(
+        clamp(RING_CORE * s + 0.5 - ring, 0.0, 1.0),
+        clamp(0.5 - dot_distance, 0.0, 1.0),
+    );
+    let rim = max(
+        clamp((RING_CORE + RIM) * s + 0.5 - ring, 0.0, 1.0),
+        clamp(RIM * s + 0.5 - dot_distance, 0.0, 1.0),
+    );
+    let color = mix(u.origin_outline.rgb, vec3<f32>(1.0), core / max(rim, 1e-6));
+    return output(vec4<f32>(color, rim));
 }
 
 // --- The sketch being edited: points and fills ---
