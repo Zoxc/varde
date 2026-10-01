@@ -165,10 +165,11 @@ impl Chain {
         (segs, starts)
     }
 
-    /// Whether `seg` may be halved: it is curved, was halved fewer than
-    /// `max_depth` times, and isn't [`too_small`](Self::too_small).
-    pub fn splittable(&self, seg: &Seg, max_depth: u8) -> bool {
-        seg.curved && seg.depth < max_depth && !self.too_small(seg)
+    /// Whether `seg` may be halved: it is curved (or `straight` ones may
+    /// be halved too), was halved fewer than `max_depth` times, and isn't
+    /// [`too_small`](Self::too_small).
+    pub fn splittable(&self, seg: &Seg, max_depth: u8, straight: bool) -> bool {
+        (seg.curved || straight) && seg.depth < max_depth && !self.too_small(seg)
     }
 
     /// Whether `seg`'s control points span less than [`MIN_SPLIT`]
@@ -185,19 +186,21 @@ impl Chain {
 
     /// Halves the segments `ids` (indices into [`Self::flat`], sorted),
     /// or, if some aren't [`splittable`](Self::splittable) within
-    /// `max_depth`, fails with what `refused` makes of those, in order,
-    /// halving none.
+    /// `max_depth` (straight ones too with `straight`), fails with what
+    /// `refused` makes of those, in order, halving none. The halves of a
+    /// straight segment are straight, on its line and its side's face.
     pub fn split(
         &mut self,
         ids: &[u32],
         max_depth: u8,
+        straight: bool,
         refused: impl FnOnce(&Self, &[Seg]) -> KernelError,
     ) -> Result<(), KernelError> {
         let (segs, _) = self.flat();
         let unsplittable: Vec<Seg> = ids
             .iter()
             .map(|&i| segs[i as usize])
-            .filter(|s| !self.splittable(s, max_depth))
+            .filter(|s| !self.splittable(s, max_depth, straight))
             .collect();
         if !unsplittable.is_empty() {
             return Err(refused(self, &unsplittable));
@@ -266,7 +269,7 @@ impl Chain {
                 let (a, b) = (&segs[i as usize], &segs[j as usize]);
                 let halve = [(a, i), (b, j)]
                     .into_iter()
-                    .filter(|(s, _)| self.splittable(s, MAX_SPLIT_DEPTH))
+                    .filter(|(s, _)| self.splittable(s, MAX_SPLIT_DEPTH, false))
                     .map(|(_, i)| i);
                 let before = split.len();
                 split.extend(halve);
@@ -281,7 +284,9 @@ impl Chain {
             split.dedup();
             // `split` holds only splittable segments, so this can't
             // refuse; were it to, a limit would be what it hit.
-            self.split(&split, MAX_SPLIT_DEPTH, |_, _| KernelError::TooComplex)?;
+            self.split(&split, MAX_SPLIT_DEPTH, false, |_, _| {
+                KernelError::TooComplex
+            })?;
         }
     }
 

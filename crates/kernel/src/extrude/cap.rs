@@ -27,15 +27,26 @@
 //!   the vertex's corner instead. A flat ear gets this point rather than
 //!   its centroid, which lies as close to its sides as the ear is flat.
 //!
+//! - When nothing else is left to mend, a round of refinement for
+//!   quality ([`quality`]): Steiner points at the circumcentres of
+//!   triangles with an angle under 5°, chords (straight ones too) halved
+//!   where those would encroach on them. Fine polygons' fans and ears,
+//!   and a plate's fans out of a corner to holes on a common tangent,
+//!   become triangles a later cut, or the walls, can't come too close to.
+//!
 //! A Steiner point inside the hull of a segment bulging into the region
 //! could end up outside the region once that segment is halved, so that
 //! segment is halved instead. Each round triangulates afresh; the rounds
-//! stop when nothing changes, or fail after [`MAX_ROUNDS`]. A segment to
-//! halve that already spans less than
-//! [`MIN_SPLIT`](crate::mesh::MIN_SPLIT) resolutions fails the profile
-//! with [`ProfileError::TooFine`]: detail too small for the resolution,
-//! which a finer tolerance mends. One halved [`MAX_CAP_DEPTH`] times
-//! fails with [`KernelError::TooComplex`].
+//! stop when nothing changes, or fail after [`MAX_ROUNDS`] rounds of
+//! mending (rounds of refinement count apart, up to
+//! [`MAX_QUALITY_ROUNDS`], after which the caps stand as they are). A
+//! segment to halve that already spans less than
+//! [`MIN_SPLIT`](crate::mesh::MIN_SPLIT) resolutions is left to
+//! refinement, whose points can take its corner apart; if they don't,
+//! it fails the profile with [`ProfileError::TooFine`]: detail too small
+//! for the resolution, which a finer tolerance mends. One halved
+//! [`MAX_CAP_DEPTH`] times fails with [`KernelError::TooComplex`] at
+//! once.
 //!
 //! Flat corners are the only thing the two tries do differently, and up
 //! to the first round that finds one they do the same, work counted
@@ -57,6 +68,10 @@ use crate::par::par_map;
 use crate::patch::{Bounds3, Patch};
 use crate::profile::ProfileError;
 use crate::{KernelError, MAX_PATCHES};
+
+mod quality;
+
+use quality::MAX_QUALITY_ROUNDS;
 
 /// The most rounds of triangulating and mending.
 const MAX_ROUNDS: usize = 32;
@@ -92,14 +107,43 @@ pub(super) struct Cap {
     pub tris: Vec<[u32; 3]>,
 }
 
+/// What a try of the caps does besides the mending every try does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct Mode {
+    /// Refine for quality ([`quality`]).
+    pub quality: bool,
+    /// Move Steiner points in from loop vertices with flat corners.
+    pub flat_corners: bool,
+}
+
+impl Mode {
+    /// The first try: refined.
+    pub const QUALITY: Mode = Mode {
+        quality: true,
+        flat_corners: false,
+    };
+    /// The second: refined, with flat corners.
+    pub const FLAT_CORNERS: Mode = Mode {
+        quality: true,
+        flat_corners: true,
+    };
+    /// The last: neither.
+    pub const PLAIN: Mode = Mode {
+        quality: false,
+        flat_corners: false,
+    };
+}
+
 /// Where the rounds start from: the chain as halved so far, the Steiner
-/// points so far and the round's number, counting towards
-/// [`MAX_ROUNDS`] from the first try's start.
+/// points so far, the round's number, counting towards [`MAX_ROUNDS`]
+/// from the first try's start, and the rounds of refinement so far,
+/// towards [`MAX_QUALITY_ROUNDS`].
 #[derive(Debug, Clone)]
 pub(super) struct Rounds {
     chain: Chain,
     steiner: Vec<DVec2>,
     round: usize,
+    quality: usize,
 }
 
 impl Rounds {
@@ -109,6 +153,7 @@ impl Rounds {
             chain,
             steiner: Vec::new(),
             round: 0,
+            quality: 0,
         }
     }
 
@@ -121,27 +166,41 @@ impl Rounds {
 
 /// The region of the chain of `start` (separated) as triangles, from the
 /// round `start` holds on, halving segments where a cap patch needs it,
-/// and with `flat_corners`, moving Steiner points in from loop vertices
-/// with flat corners. Returns the chain as halved, with the caps.
+/// and as `mode` says, refined for quality ([`quality`]) and moving
+/// Steiner points in from loop vertices with flat corners. Returns the
+/// chain as halved, with the caps; `was_refined` is set if a round of
+/// refinement asked for anything.
 ///
-/// Without `flat_corners`, `fork` is set to the state of the first round
+/// A round with nothing to halve and no flat corners to mend is a round
+/// of refinement, if refinement asks for anything, and then places no
+/// ears' centroids. Halvings the chain refuses as too small don't count:
+/// refinement's points can take those corners apart, and when it has
+/// nothing more to add and such halvings are left, they fail the caps as
+/// [`refused`] says; a segment halved too often fails them at once.
+///
+/// Without flat corners, `fork` is set to the state of the first round
 /// that found a flat corner, taken before the round changed anything:
-/// running from there with `flat_corners` gives what running from
-/// `start` with it would, as no round before differs. That holds only as
-/// long as the flat corners found are all the flag changes in a round.
+/// running from there with flat corners gives what running from `start`
+/// with them would, as no round before differs. That holds only as long
+/// as the flat corners found are all the flag changes in a round.
 pub(super) fn triangulate(
     start: Rounds,
     margin: f64,
-    flat_corners: bool,
+    mode: Mode,
     fork: &mut Option<Rounds>,
+    was_refined: &mut bool,
     work: &mut Work,
 ) -> Result<(Chain, Cap), KernelError> {
     let Rounds {
         mut chain,
         mut steiner,
-        round: first,
+        mut round,
+        mut quality,
     } = start;
-    for round in first..MAX_ROUNDS {
+    loop {
+        if round >= MAX_ROUNDS {
+            return Err(KernelError::TooComplex);
+        }
         let (segs, starts) = chain.flat();
         let n = segs.len();
         if n.saturating_add(steiner.len()) > MAX_PATCHES / 4 {
@@ -159,15 +218,63 @@ pub(super) fn triangulate(
             }
         };
         let (mut split, ears, mut flat) = mend(&segs, &starts, &at, &tris, margin);
-        if !flat_corners && !flat.is_empty() {
+        if !mode.flat_corners && !flat.is_empty() {
             if fork.is_none() {
                 *fork = Some(Rounds {
                     chain: chain.clone(),
                     steiner: steiner.clone(),
                     round,
+                    quality,
                 });
             }
             flat.clear();
+        }
+        // Pieces halved too often are mending that doesn't converge, and
+        // fail; pieces too small to halve are left to refinement.
+        split.sort_unstable();
+        split.dedup();
+        let splittable = |&s: &u32| chain.splittable(&segs[s as usize], MAX_CAP_DEPTH, false);
+        let stuck = |split: &[u32]| -> Vec<Seg> {
+            split
+                .iter()
+                .filter(|s| !splittable(s))
+                .map(|&s| segs[s as usize])
+                .collect()
+        };
+        if split
+            .iter()
+            .any(|&s| !splittable(&s) && !chain.too_small(&segs[s as usize]))
+        {
+            return Err(refused(&chain, &stuck(&split)));
+        }
+        // With nothing to halve and no flat corners, refinement goes before
+        // the ears' centroids: its points break up ears too (a fine
+        // circle's ears all share one circumcircle, whose centre takes
+        // them all), where a centroid, as close to the loop as the ear is
+        // thin, would make every triangle at it thin, and refinement then
+        // halve the chords near it over and over.
+        if mode.quality
+            && !split.iter().any(splittable)
+            && flat.is_empty()
+            && quality < MAX_QUALITY_ROUNDS
+        {
+            let caps = quality::Caps {
+                chain: &chain,
+                segs: &segs,
+                starts: &starts,
+                at: &at,
+                tris: &tris,
+                steiner: &steiner,
+                margin,
+            };
+            let refined = caps.refine(work)?;
+            if !refined.is_empty() {
+                *was_refined = true;
+                quality += 1;
+                quality::halve(&mut chain, refined.split, work)?;
+                steiner.extend(refined.added);
+                continue;
+            }
         }
         let places = Places {
             segs: &segs,
@@ -178,15 +285,21 @@ pub(super) fn triangulate(
             margin,
         };
         let added = places.place(&ears, flat, &mut split, work)?;
-        if split.is_empty() && added.is_empty() {
-            return Ok((chain, Cap { steiner, tris }));
-        }
         split.sort_unstable();
         split.dedup();
-        chain.split(&split, MAX_CAP_DEPTH, refused)?;
+        let stuck = stuck(&split);
+        split.retain(splittable);
+        if split.is_empty() && added.is_empty() {
+            if !stuck.is_empty() {
+                return Err(refused(&chain, &stuck));
+            }
+            return Ok((chain, Cap { steiner, tris }));
+        }
+        // Only segments that may be halved are left.
+        chain.split(&split, MAX_CAP_DEPTH, false, refused)?;
         steiner.extend(added);
+        round += 1;
     }
-    Err(KernelError::TooComplex)
 }
 
 /// Why the caps can't halve the curved segments `unsplittable` (in the

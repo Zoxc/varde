@@ -1,23 +1,21 @@
 //! The caps' quality: profiles whose plain constrained Delaunay caps hold
 //! triangles too thin, or too crowded, for the mesh's rules, which the
-//! caps' quality refinement is to mend, and the patch counts of caps that
-//! pass today, for that refinement to account for.
+//! caps' refinement for quality (circumcentres of triangles with an angle
+//! under 5°, chords halved where those encroach, on the first try)
+//! mends, and the patch counts of caps refined.
 //!
-//! The tests that fail today are ignored, each with what it fails with
+//! The tests that still fail are ignored, each with what it fails with
 //! and which part of the refinement is to mend it:
 //!
-//! - "quality": angle-bounded refinement of the caps (circumcentres of
-//!   triangles with a narrow angle, chords halved where those encroach),
-//!   run on the first try;
 //! - "crowding": the same refinement started before the first repair
 //!   when the caps' boxes overlap by the thousand, inserting points into
 //!   the triangulation as it goes rather than rebuilding it;
 //! - "thin": circumcentres of triangles thinner than a few resolutions,
 //!   wherever an angle bound leaves some (chords too short to halve).
 //!
-//! In release builds the ignored ones take a few minutes all told, most
-//! of it the corner cuts and the cut circles at many seeds; debug builds
-//! run a smaller set of each.
+//! In release builds these take a few minutes all told, most of it the
+//! corner cuts and the cut circles at many seeds; debug builds run a
+//! smaller set of each.
 
 #![allow(
     clippy::disallowed_methods,
@@ -124,10 +122,9 @@ fn fan(n: usize, r: f64) -> Profile {
 // ears whose angles at the loop are about the turning angle, and an ear
 // beside a wall comes within the resolution of it at their shared vertex
 // (`Invalid(VertexNeighbours)` or `Hull`); the second try's moved-in
-// points form an inner polygon just as flat.
+// points form an inner polygon just as flat. Refined, they pass.
 
 #[test]
-#[ignore = "Invalid until quality"]
 fn fine_polygons_at_coarse_tolerances() {
     let cases = sized(
         vec![
@@ -152,7 +149,8 @@ fn fine_polygons_at_coarse_tolerances() {
 /// Fine outlines at fit 0.1 other than regular polygons: a plate with a
 /// fine hole, a fine ring, an ellipse, an outline of uneven radius and
 /// uneven sides, and fine straight pieces next to an exact quarter arc.
-/// The plate and the ring pass today, the other three are refused.
+/// With the plain caps the plate and the ring passed, the other three
+/// were refused.
 fn fine_outlines() -> Vec<(&'static str, Profile)> {
     let n = sized(2048, 1024);
     let square = rect(DVec2::splat(-15.0), DVec2::splat(15.0), 1_000_000);
@@ -206,7 +204,6 @@ fn fine_outlines() -> Vec<(&'static str, Profile)> {
 }
 
 #[test]
-#[ignore = "Invalid until quality"]
 fn fine_outlines_with_holes() {
     let tol = Tolerance::new(0.1).unwrap();
     let mut refused = Refused::default();
@@ -218,17 +215,21 @@ fn fine_outlines_with_holes() {
 }
 
 #[test]
-#[ignore = "TooComplex today, but only after about 16 s; quality is to make it quick"]
 fn a_fine_polygon_past_the_budget_runs_out_in_time() {
     // 65 536 sides of radius 100, each vertex 5e-3 resolutions off its
     // neighbours' chord at fit 0.1: more patches than the budget pays
-    // for, refined or not. Today it runs out only after 16 s (release, on a
-    // machine loaded seven times over).
+    // for, refined or not. With the plain caps it ran out only after 16 s
+    // (release, on a machine loaded seven times over), in the second
+    // try's repair. Refined, the first try's caps run out in under 6 s
+    // there, over half of it repair counting the box pairs of the fan its
+    // caps keep from their centre (its chords, under twice `MIN_SPLIT`
+    // resolutions, exempt the fan's triangles), and with no work left no
+    // second try is made.
     let p = profile(vec![ngon(65_536, 100.0)]);
     let start = Instant::now();
     let result = run(&p, &Tolerance::new(0.1).unwrap(), 1.0);
     assert_eq!(result.map(|_| ()), Err(KernelError::TooComplex));
-    let bound = sized(10, 120);
+    let bound = sized(30, 120);
     assert!(start.elapsed().as_secs() < bound, "{:?}", start.elapsed());
 }
 
@@ -236,10 +237,11 @@ fn a_fine_polygon_past_the_budget_runs_out_in_time() {
 // overlap by the thousand. Repair counts every pair of boxes before
 // anything else and runs out of budget (`TooComplex`), and a budget run
 // out leaves no second try, so only caps refined before the first repair
-// pass.
+// pass. Refined on the first try, all but the fan of 16 384 do; it runs
+// out refining, as each round triangulates afresh.
 
 #[test]
-#[ignore = "TooComplex until crowding"]
+#[ignore = "TooComplex at 16 384 until crowding"]
 fn fans_of_thin_triangles() {
     let mut refused = Refused::default();
     for n in sized(vec![4096, 16_384], vec![4096]) {
@@ -254,7 +256,6 @@ fn fans_of_thin_triangles() {
 }
 
 #[test]
-#[ignore = "TooComplex until crowding"]
 fn strips_between_fine_rings() {
     let n = sized(8192, 4096);
     let p = profile(vec![ngon(n, 100.0), reversed(&ngon(n, 50.0))]);
@@ -268,7 +269,6 @@ fn strips_between_fine_rings() {
 }
 
 #[test]
-#[ignore = "TooComplex until crowding"]
 fn crowded_caps_are_deterministic() {
     let p = fan(4096, 100.0);
     let result = assert_deterministic(|| run(&p, &TOL, 1.0));
@@ -279,7 +279,7 @@ fn crowded_caps_are_deterministic() {
 
 #[test]
 fn crowded_caps_run_out_of_budget_quickly() {
-    // Today the fan's box pairs run out of the budget at once; refined,
+    // Plain, the fan's box pairs ran out of the budget at once; refined,
     // its triangles do, as soon.
     let p = fan(16_384, 100.0);
     let start = Instant::now();
@@ -292,7 +292,6 @@ fn crowded_caps_run_out_of_budget_quickly() {
 // Cap triangles thinner than a few resolutions at single vertices.
 
 #[test]
-#[ignore = "Invalid until quality, or thin"]
 fn polygons_a_few_resolutions_off_their_chords() {
     // Regular polygons whose every vertex is 1, 2 or 3 resolutions off
     // its neighbours' chord, `r·(1 − cos 2π/n)`.
@@ -322,7 +321,6 @@ fn shortest_chord(p: &Profile) -> f64 {
 }
 
 #[test]
-#[ignore = "Invalid until quality, or thin"]
 fn circles_cut_unevenly_at_the_coarsest_tolerance() {
     // The uneven circles at fit 0.1: those whose shortest chord is 32
     // resolutions or more extrude. The same bits at 1 and 8 threads.
@@ -349,22 +347,19 @@ fn circles_cut_unevenly_at_the_coarsest_tolerance() {
 // a few dozen resolutions long meeting their neighbours nearly straight
 // at fit 1e-2 (and rarely 1e-3). The plain caps' slivers along the short
 // chords fail at the walls, the second try's moved-in points line up
-// into slivers of their own. Thin-triangle circumcentres mend all but
-// the case skipped below, a moved-in point within a few dozen
-// resolutions of its vertex; an angle bound alone may not, as the
-// triangles graded towards a chord too short to halve stay narrow.
+// into slivers of their own. Refined, with triangles whose shortest
+// side is a chord too short to halve for long exempt, they pass.
 
 #[test]
-#[ignore = "Invalid until quality, or thin"]
 fn circles_cut_unevenly_at_many_seeds() {
-    // 32 cases of these 1 600 fail today, in 18 of the 40 seeds.
-    let skip = [(1020, 62)];
+    // 32 cases of these 1 600 failed with the plain caps, in 18 of the 40
+    // seeds.
     let start = Instant::now();
     let mut refused = Refused::default();
     for seed in 1000..sized(1040, 1004) {
         let cases = uneven_circles_from(seed, [Tolerance::MIN_FIT, 1e-3, 1e-2]);
         for (case, (p, r, tol)) in cases.iter().enumerate() {
-            if case % 3 != 2 || skip.contains(&(seed, case)) {
+            if case % 3 != 2 {
                 continue;
             }
             let what = format!("seed {seed} case {case}");
@@ -372,15 +367,14 @@ fn circles_cut_unevenly_at_many_seeds() {
         }
     }
     // About three minutes in release on a machine loaded seven times
-    // over, today.
+    // over.
     refused.none();
     let bound = sized(240, 240);
     assert!(start.elapsed().as_secs() < bound, "{:?}", start.elapsed());
 }
 
 #[test]
-#[ignore = "Invalid until quality, or thin"]
-fn cut_circles_refused_today() {
+fn cut_circles_refused_with_plain_caps() {
     // Seed 1003 cases 2 and 104 and seed 4000 case 23 at fit 1e-2, seed
     // 517 case 70 at 1e-3; the same bits at 1 and 8 threads.
     let mut refused = Refused::default();
@@ -393,11 +387,31 @@ fn cut_circles_refused_today() {
 }
 
 #[test]
-#[ignore = "Invalid until quality, or thin"]
+#[ignore = "Invalid until thin, or longer"]
 fn a_hole_of_sharply_weighted_conics_at_every_tolerance() {
     // A small hole of twelve conics, weights up to 13.7 (from a stress of
-    // plates with small holes): its caps hold a sliver that the mesh's
-    // rules refuse at every tolerance, `Invalid` down to 1e-5.
+    // plates with small holes): its plain caps held a sliver that the
+    // mesh's rules refuse at every tolerance, `Invalid` down to 1e-5.
+    // Refined (at 5° or 10°) it is still `Invalid` at every fit, repair
+    // finding two pieces of one patch within the resolution at a vertex.
+    let plate = sharply_weighted_hole();
+    let mut refused = Refused::default();
+    for fit in [1e-2, 1e-3, 1e-4, 1e-5] {
+        let tol = Tolerance::new(fit).unwrap();
+        refused.solid(
+            &plate,
+            &tol,
+            1.0,
+            run(&plate, &tol, 1.0),
+            &format!("at {fit}"),
+        );
+    }
+    refused.none();
+}
+
+/// A 10 × 10 plate with a small hole of twelve conics, weights up to
+/// 13.7.
+fn sharply_weighted_hole() -> Profile {
     let p = |x: f64, y: f64| DVec2::new(x, y);
     let hole = [
         (
@@ -494,19 +508,7 @@ fn a_hole_of_sharply_weighted_conics_at_every_tolerance() {
             })
             .collect(),
     };
-    let plate = profile(vec![rect(p(-5.0, -5.0), p(5.0, 5.0), 0), hole]);
-    let mut refused = Refused::default();
-    for fit in [1e-2, 1e-3, 1e-4, 1e-5] {
-        let tol = Tolerance::new(fit).unwrap();
-        refused.solid(
-            &plate,
-            &tol,
-            1.0,
-            run(&plate, &tol, 1.0),
-            &format!("at {fit}"),
-        );
-    }
-    refused.none();
+    profile(vec![rect(p(-5.0, -5.0), p(5.0, 5.0), 0), hole])
 }
 
 // Perforated plates cut afterwards. The plain caps of a plate with rows
@@ -514,7 +516,7 @@ fn a_hole_of_sharply_weighted_conics_at_every_tolerance() {
 // to the holes' lowest and leftmost points, which lie on common tangent
 // lines; a later cut near or along their long sides fails (`Invalid`).
 // The same plates with outlines split into 1 mm pieces have no such
-// fans and none of these fails.
+// fans and none of these fails; nor do the caps refined.
 
 /// The plate `k·10` square, 2 thick, with `k × k` holes 10 apart, the
 /// first centred at (5, 5), of radius `r`, or 4 and 4.9 by turns.
@@ -534,11 +536,10 @@ fn perforated(k: usize, r: Option<f64>) -> (Solid, f64) {
 }
 
 #[test]
-#[ignore = "Invalid until quality"]
 fn corner_cuts_on_perforated_plates() {
     // Boxes 0.3 to 2 across cut from each corner, flush with the plate's
-    // sides or 0.1 in: none comes near a hole. Today 15, 12, 20 and 32
-    // of each plate's 32 are refused.
+    // sides or 0.1 in: none comes near a hole. With the plain caps 15, 12,
+    // 20 and 32 of each plate's 32 were refused.
     let plates = sized(
         vec![
             (10, Some(2.0)),
@@ -584,11 +585,10 @@ fn corner_cuts_on_perforated_plates() {
 }
 
 #[test]
-#[ignore = "Invalid until quality"]
 fn holes_drilled_in_line_with_extruded_ones() {
     // A plate with one to three holes in a row, extruded, then the next
-    // hole of the row drilled. Today 2 of the 36 are refused, the second
-    // hole 5 from the first on the smaller plate.
+    // hole of the row drilled. With the plain caps 2 of the 36 were
+    // refused, the second hole 5 from the first on the smaller plate.
     let mut refused = Refused::default();
     for size in [20.0, 60.0] {
         for r in [0.5, 1.0] {
@@ -621,17 +621,16 @@ fn holes_drilled_in_line_with_extruded_ones() {
     refused.none();
 }
 
-// Pins: caps that pass today, with their patch counts. Refinement that
-// leaves good caps alone keeps these; one that refines every narrow
-// triangle (a long rectangle's two) changes them, and records the new
-// counts here.
+// Pins: the patch counts of caps that passed before refinement, now
+// refined wherever a triangle had an angle under 5° (they were 4 012, 92,
+// 12 and 65 532 with the plain caps).
 
 #[test]
-fn caps_that_pass_keep_their_patches() {
+fn refined_caps_patches() {
     let patches = |p: &Profile| run(p, &TOL, 2.0).unwrap().mesh().tris().len();
     // The 80 × 80 plate with 64 holes, and `a_plate_with_holes`' 100 × 60
     // plate with four.
-    assert_eq!(patches(&plate_with_holes(8, 8, 80.0, 80.0)), 4012);
+    assert_eq!(patches(&plate_with_holes(8, 8, 80.0, 80.0)), 4532);
     let four = profile(vec![
         rect(DVec2::ZERO, DVec2::new(100.0, 60.0), 0),
         circle(DVec2::new(25.0, 30.0), 5.0, 4, true),
@@ -639,29 +638,31 @@ fn caps_that_pass_keep_their_patches() {
         circle(DVec2::new(50.0, 10.0), 3.0, 6, true),
         reversed(&rect(DVec2::new(45.0, 40.0), DVec2::new(55.0, 50.0), 7)),
     ]);
-    assert_eq!(patches(&four), 92);
-    // A rib 100 × 1: two triangles a cap, both with a 0.6° corner.
+    assert_eq!(patches(&four), 116);
+    // A rib 100 × 1: its two plain triangles a cap have a 0.6° corner, and
+    // no small input angle exempts them, so its long sides are halved.
     let rib = profile(vec![rect(DVec2::ZERO, DVec2::new(100.0, 1.0), 0)]);
-    assert_eq!(patches(&rib), 12);
+    assert_eq!(patches(&rib), 100);
     // 16 384 sides of radius 100.
     if !cfg!(debug_assertions) {
-        assert_eq!(patches(&profile(vec![ngon(16_384, 100.0)])), 65_532);
+        assert_eq!(patches(&profile(vec![ngon(16_384, 100.0)])), 94_096);
     }
 }
 
 #[test]
-fn uneven_circles_and_random_plates_keep_their_patches() {
+fn uneven_circles_and_random_plates_patches() {
     // The patches of `circles_cut_unevenly`'s circles and of
-    // `random_plates_with_holes`' plates that extrude, all told.
+    // `random_plates_with_holes`' plates that extrude, all told (18 872
+    // and 1 150 with the plain caps).
     let circles: usize = uneven_circles_from(3, [Tolerance::MIN_FIT, 1e-3, 1e-2])
         .iter()
         .map(|(p, r, tol)| run(p, tol, *r).unwrap().mesh().tris().len())
         .sum();
-    assert_eq!(circles, 18_872);
+    assert_eq!(circles, 30_952);
     let plates: usize = super::tests::random_plates()
         .iter()
         .filter_map(|(p, tol, h)| run(p, tol, *h).ok())
         .map(|solid| solid.mesh().tris().len())
         .sum();
-    assert_eq!(plates, 1150);
+    assert_eq!(plates, 1832);
 }

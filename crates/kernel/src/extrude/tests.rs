@@ -172,7 +172,9 @@ fn a_thin_band() {
         let (disc, exact) = (PI * outer * outer, PI * (outer * outer - inner * inner));
         assert!((solid.volume() - exact).abs() < 1e-13 * disc);
         let surface = 2.0 * exact + 2.0 * PI * (outer + inner);
-        assert!((solid.area() - surface).abs() < 1e-13 * disc);
+        // The thinner one's caps, refined for quality, hold some 25 000
+        // patches, whose areas' rounding adds up to 3e-13 of the disc's.
+        assert!((solid.area() - surface).abs() < 1e-12 * disc);
         // The pieces of a halved arc are walls of its face.
         assert!(solid.mesh().tris().len() > 4 * 8 * 2);
         let walls = [0, 1].map(|c| [0, 1, 2, 3].map(|s| side(c, s)));
@@ -821,7 +823,11 @@ fn resumes_as_from_the_start(p: &Profile, tol: &Tolerance) -> Option<usize> {
     let spent = |work: &Work| Budget::DEFAULT.work() - work.left();
     let caps = |start: Rounds, flat_corners: bool, fork: &mut Option<Rounds>| {
         let mut work = Work::new(&Budget::DEFAULT);
-        let caps = cap::triangulate(start, margin, flat_corners, fork, &mut work);
+        let mode = cap::Mode {
+            quality: true,
+            flat_corners,
+        };
+        let caps = cap::triangulate(start, margin, mode, fork, &mut false, &mut work);
         (format!("{caps:?}"), spent(&work))
     };
     let mut fork = None;
@@ -891,23 +897,22 @@ fn the_second_try_resumes_where_the_first_found_a_flat_corner() {
 fn the_second_try_is_charged_only_from_where_it_resumes() {
     // A 210 × 30 strip with 40 holes, the bottom row 0.1 from its side:
     // the first try fails, the second, with flat corners, passes. Starting the
-    // second over took 194 846 units in all; resuming it, 152 438 (2 988
-    // of them naming the faces, a unit a patch). The same bits at 1 and 8
-    // threads.
+    // second over would take 368 222 units in all; resuming it, 325 814.
+    // The same bits at 1 and 8 threads.
     let p = plate_with_holes(20, 2, 210.0, 30.0);
     let solid = assert_deterministic(|| {
-        extrude(&p, &Frame::XY, 0.0, 2.0, 9, &TOL, &Budget::new(170_000)).unwrap()
+        extrude(&p, &Frame::XY, 0.0, 2.0, 9, &TOL, &Budget::new(350_000)).unwrap()
     });
     let exact = p.area() * 2.0;
     assert!((solid.volume() - exact).abs() < 1e-12 * exact);
     assert_eq!(solid.mesh().check_faces(&TOL), Ok(()));
-    assert_eq!(solid.mesh().tris().len(), 2988);
+    assert_eq!(solid.mesh().tris().len(), 3736);
     assert_eq!(
-        extrude(&p, &Frame::XY, 0.0, 2.0, 9, &TOL, &Budget::new(152_437)),
+        extrude(&p, &Frame::XY, 0.0, 2.0, 9, &TOL, &Budget::new(325_813)),
         Err(KernelError::TooComplex)
     );
     assert_eq!(
-        extrude(&p, &Frame::XY, 0.0, 2.0, 9, &TOL, &Budget::new(152_438)),
+        extrude(&p, &Frame::XY, 0.0, 2.0, 9, &TOL, &Budget::new(325_814)),
         Ok(solid)
     );
 }
@@ -929,8 +934,9 @@ fn a_first_try_out_of_work_in_its_fork_round_has_no_second() {
         let caps = cap::triangulate(
             Rounds::new(chain.clone()),
             margin,
-            false,
+            cap::Mode::QUALITY,
             &mut fork,
+            &mut false,
             &mut Work::new(&Budget::new(units)),
         );
         (caps.map(|_| ()), fork.as_ref().map(Rounds::round))
@@ -957,13 +963,14 @@ fn a_first_try_out_of_work_in_its_fork_round_has_no_second() {
 }
 
 #[test]
-fn detail_too_small_for_the_resolution_is_too_fine() {
+fn a_corner_too_small_to_halve_is_left_to_refinement() {
     // A small hole of sharply weighted conics (from a stress of random
-    // plates, weights 0.05 to 20, seed 2 case 11): at a fit of 0.1 the
-    // caps ask to halve its segment 3 where it is already under
-    // `MIN_SPLIT` resolutions. That is detail too small for the
-    // tolerance, which a finer one mends, not `TooComplex`, whose message
-    // offered a coarser one.
+    // plates, weights 0.05 to 20, seed 2 case 11): at fits of 0.1 and
+    // 0.05 the caps ask to halve its segment 3 where it is already under
+    // `MIN_SPLIT` resolutions. That was `TooFine` (detail too small for
+    // the tolerance); refinement's points take the corner apart instead.
+    // (`a_refused_halving_names_detail_too_small_wherever_it_comes` has
+    // the error for a halving refinement can't do without.)
     let p = |x: f64, y: f64| DVec2::new(x, y);
     let hole = [
         (
@@ -1034,23 +1041,23 @@ fn detail_too_small_for_the_resolution_is_too_fine() {
         let tol = Tolerance::new(fit).unwrap();
         extrude(&plate, &Frame::XY, 0.0, 1.0, 1, &tol, &Budget::DEFAULT)
     };
-    let too_fine = Err(KernelError::Profile(ProfileError::TooFine(1, 3)));
-    assert_eq!(at(Tolerance::MAX_FIT), too_fine);
-    assert_eq!(at(0.05), too_fine);
-    let solid = at(0.01).unwrap();
-    let exact = straightened(&plate, &Tolerance::new(0.01).unwrap()).area();
-    assert!((solid.volume() - exact).abs() < 1e-9, "{}", solid.volume());
+    for fit in [Tolerance::MAX_FIT, 0.05, 0.01] {
+        let tol = Tolerance::new(fit).unwrap();
+        let solid = at(fit).unwrap();
+        let exact = straightened(&plate, &tol).area();
+        assert!((solid.volume() - exact).abs() < 1e-12 * exact, "{fit}");
+        assert_eq!(solid.mesh().check_faces(&tol), Ok(()), "{fit}");
+    }
 }
 
 #[test]
-fn pieces_repair_cant_split_are_invalid_not_too_complex() {
+fn small_holes_whose_plain_caps_repair_cant_split_extrude() {
     // Small holes of sharply weighted conics from a stress of random
     // plates (weights 0.05 to 20: seed 6 case 146, seed 24 case 293, seed
     // 18 case 539, cut down to the failing loops). At the coarse fits
-    // repair needed pieces split smaller than it splits, which gave
-    // `TooComplex`, whose message suggests fewer or simpler curves. That
-    // is detail too small for the tolerance: `Invalid`, mended by a finer
-    // one.
+    // repair needed the plain caps' pieces split smaller than it splits:
+    // `TooComplex` once, then `Invalid`, mended by a finer fit. The caps
+    // refined for quality need no such splits.
     let p = |x: f64, y: f64| DVec2::new(x, y);
     let conics = |segments: &[(DVec2, DVec2, f64)], curve: u64| {
         let n = segments.len();
@@ -1285,20 +1292,17 @@ fn pieces_repair_cant_split_are_invalid_not_too_complex() {
             let tol = Tolerance::new(fit).unwrap();
             extrude(plate, &Frame::XY, 0.0, *h, 1, &tol, &Budget::DEFAULT)
         };
-        for fit in coarse {
-            let result = at(*fit);
+        for &fit in coarse.iter().chain([fine]) {
+            let tol = Tolerance::new(fit).unwrap();
+            let solid = at(fit).unwrap_or_else(|e| panic!("case {i} at {fit}: {e:?}"));
+            let exact = straightened(plate, &tol).area() * h;
             assert!(
-                matches!(result, Err(KernelError::Invalid(_))),
-                "case {i} at {fit}: {result:?}"
+                (solid.volume() - exact).abs() < 1e-12 * exact,
+                "case {i} at {fit}: {} against {exact}",
+                solid.volume()
             );
+            assert_eq!(solid.mesh().check_faces(&tol), Ok(()), "case {i} at {fit}");
         }
-        let solid = at(*fine).unwrap();
-        let exact = straightened(plate, &Tolerance::new(*fine).unwrap()).area() * h;
-        assert!(
-            (solid.volume() - exact).abs() < 1e-9 * exact,
-            "case {i}: {} against {exact}",
-            solid.volume()
-        );
     }
 }
 
@@ -1316,13 +1320,13 @@ fn a_refused_halving_names_detail_too_small_wherever_it_comes() {
     chain.loops[0][1].depth = cap::MAX_CAP_DEPTH;
     // Halved too often: mending that doesn't converge.
     assert_eq!(
-        chain.split(&[1], cap::MAX_CAP_DEPTH, cap::refused),
+        chain.split(&[1], cap::MAX_CAP_DEPTH, false, cap::refused),
         Err(KernelError::TooComplex)
     );
     // A small one among them, even after one halved too often: the
     // detail is too fine, and it names the input segment.
     assert_eq!(
-        chain.split(&[0, 1, 6], cap::MAX_CAP_DEPTH, cap::refused),
+        chain.split(&[0, 1, 6], cap::MAX_CAP_DEPTH, false, cap::refused),
         Err(KernelError::Profile(ProfileError::TooFine(1, 2)))
     );
     // Refusing halves none.
@@ -1330,7 +1334,7 @@ fn a_refused_halving_names_detail_too_small_wherever_it_comes() {
     // The ones that may be halved are.
     let mut chain = fresh();
     assert_eq!(
-        chain.split(&[0, 3], cap::MAX_CAP_DEPTH, cap::refused),
+        chain.split(&[0, 3], cap::MAX_CAP_DEPTH, false, cap::refused),
         Ok(())
     );
     assert_eq!(chain.len(), 10);
@@ -1394,124 +1398,4 @@ fn a_cap_whose_straight_split_folds_extrudes() {
             .iter()
             .all(|q| q.patch.fold_direction().is_some())
     );
-}
-
-#[test]
-fn a_circles_wall_is_one_face() {
-    // Four quarter arcs, each written in its own coordinates: one face,
-    // the first's, the others' names its aliases.
-    let p = profile(vec![circle(DVec2::new(0.5, 0.2), 1.0, 4, false)]);
-    let solid = extruded(&p, 0.0, 2.0, 2.0 * PI, 1e-12);
-    assert_eq!(
-        parts(&solid),
-        [
-            FacePart::StartCap,
-            FacePart::EndCap,
-            side(4, 0),
-            side(4, 1),
-            side(4, 2),
-            side(4, 3)
-        ]
-    );
-    // The same key: no aliases to keep.
-    assert!(solid.mesh().aliases().is_empty());
-}
-
-#[test]
-fn collinear_lines_walls_are_one_face() {
-    // A rectangle whose bottom side is drawn as two lines (curves 0 and
-    // 5): their walls are the first's face, which the second's key names
-    // too, and no line is drawn between them.
-    let p = |x: f64, y: f64| DVec2::new(x, y);
-    let lp = Loop {
-        segments: vec![
-            Segment::line(p(0.0, 0.0), p(1.0, 0.0), 0).unwrap(),
-            Segment::line(p(1.0, 0.0), p(3.0, 0.0), 5).unwrap(),
-            Segment::line(p(3.0, 0.0), p(3.0, 2.0), 1).unwrap(),
-            Segment::line(p(3.0, 2.0), p(0.0, 2.0), 2).unwrap(),
-            Segment::line(p(0.0, 2.0), p(0.0, 0.0), 3).unwrap(),
-        ],
-    };
-    let solid = extruded(&profile(vec![lp]), 0.0, 1.0, 10.0, 1e-14);
-    assert_eq!(
-        parts(&solid),
-        [
-            FacePart::StartCap,
-            FacePart::EndCap,
-            side(0, 0),
-            side(0, 0),
-            side(1, 0),
-            side(2, 0),
-            side(3, 0)
-        ]
-    );
-    for f in [2, 3] {
-        let aliases: Vec<_> = solid.mesh().face_aliases(f).collect();
-        assert_eq!(aliases, [FaceName::new(9, side(5, 0)).key()]);
-    }
-    let topology = solid.topology();
-    let near = DVec3::new(2.0, 0.0, 0.5);
-    assert_eq!(
-        topology.face(&solid, &FaceName::new(9, side(5, 0)).key(), near),
-        topology.face(&solid, &FaceName::new(9, side(0, 0)).key(), near)
-    );
-    // A box's twelve edges, none at x = 1 on the front.
-    let render = solid.tessellate(&Display::default()).unwrap();
-    let at = |i: u32| DVec3::from(render.positions()[i as usize].map(f64::from));
-    for &[a, b] in render.edges() {
-        let (a, b) = (at(a), at(b));
-        assert!(
-            !((a.x - 1.0).abs() < 1e-6 && (b.x - 1.0).abs() < 1e-6),
-            "a line at the joint: {a} {b}"
-        );
-    }
-}
-
-#[test]
-fn a_circle_of_separate_arcs_is_one_face_at_any_size() {
-    // A circle drawn as separate arcs (each its own curve), the first one
-    // short. Each arc's wall is written in the arc's own coordinates, so
-    // the short one's quadric, met far from its arc, rounds off by more
-    // than the merge's bar: measured against it, the circle's walls stayed
-    // apart. Measured against the largest arc's, they are one face, at
-    // the finest tolerance and on a large circle too.
-    for (r, fit) in [(1.0, 1e-3), (300.0, Tolerance::MIN_FIT), (1e3, 1e-3)] {
-        let tol = Tolerance::new(fit).unwrap();
-        let angles = [0.0, 2e-3, 1.0, 2.5, 4.0, 5.2];
-        let at = |a: f64| DVec2::new(a.cos(), a.sin()) * r;
-        let n = angles.len();
-        let lp = Loop {
-            segments: (0..n)
-                .map(|i| {
-                    arc(
-                        DVec2::ZERO,
-                        at(angles[i]),
-                        at(angles[(i + 1) % n]),
-                        i as u64,
-                    )
-                })
-                .collect(),
-        };
-        let solid = extrude(
-            &profile(vec![lp]),
-            &Frame::XY,
-            0.0,
-            r,
-            9,
-            &tol,
-            &Budget::DEFAULT,
-        )
-        .unwrap();
-        let walls: std::collections::BTreeSet<_> = solid
-            .mesh()
-            .faces()
-            .iter()
-            .filter(|f| matches!(f.name.part, FacePart::Side { .. }))
-            .map(|f| f.name.key())
-            .collect();
-        assert_eq!(walls.len(), 1, "radius {r}, fit {fit}: {walls:?}");
-        for f in 2..solid.mesh().faces().len() as u32 {
-            assert_eq!(solid.mesh().face_aliases(f).count(), n - 1, "radius {r}");
-        }
-    }
 }

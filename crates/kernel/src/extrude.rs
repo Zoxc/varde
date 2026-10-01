@@ -15,9 +15,10 @@
 //! other (so the polygon of their chords is simple and every bulge clear
 //! of the rest) and where a cap patch's corner would be too narrow or too
 //! wide, and the caps get Steiner points where two of the loop's curves
-//! meet smoothly and, on a second try if the first fails, where short
-//! segments meet nearly straight. The rules are written down in
-//! `agents/kernel.md`.
+//! meet smoothly, at the circumcentres of triangles with an angle under
+//! 5° (refinement for quality) and, on a second try if the first fails,
+//! where short segments meet nearly straight. The rules are written down
+//! in `agents/kernel.md`.
 
 use glam::{DMat3, DVec2, DVec3};
 
@@ -30,7 +31,7 @@ use crate::{KernelError, MAX_COORD, Solid, Tolerance, in_range};
 mod cap;
 mod chain;
 
-use cap::{Cap, Rounds};
+use cap::{Cap, Mode, Rounds};
 use chain::Chain;
 
 /// Where a profile lies in space: its origin and the unit axes its `x`
@@ -140,23 +141,60 @@ pub fn extrude(
     // their own, so it is the second try. It resumes from the first
     // round of the first try that found such a corner: until then the two
     // are the same. With none, it would repeat the first try (with less
-    // work left, so it couldn't do better) and isn't made.
-    let mut fork = None;
-    let first = cap::triangulate(Rounds::new(chain), margin, false, &mut fork, &mut work);
-    match solid(first, &mut work) {
-        Err(
-            first @ (KernelError::Invalid(_)
-            | KernelError::TooComplex
-            | KernelError::Profile(ProfileError::TooFine(..))),
-        ) if work.left() > 0 => {
-            let Some(fork) = fork else {
-                return Err(first);
-            };
-            let second = cap::triangulate(fork, margin, true, &mut None, &mut work);
-            solid(second, &mut work).map_err(|_| first)
+    // work left, so it couldn't do better) and isn't made. Both refine
+    // the caps for quality; refining a sliver of the region thinner than
+    // the pieces the chain may be halved into can leave it worse than the
+    // plain caps, so those are the last try, if the first try's refinement
+    // did anything (else they would repeat it).
+    let retry = |e: &KernelError| {
+        matches!(
+            e,
+            KernelError::Invalid(_)
+                | KernelError::TooComplex
+                | KernelError::Profile(ProfileError::TooFine(..))
+        )
+    };
+    let (mut fork, mut refined) = (None, false);
+    let start = Rounds::new(chain.clone());
+    let caps = cap::triangulate(
+        start,
+        margin,
+        Mode::QUALITY,
+        &mut fork,
+        &mut refined,
+        &mut work,
+    );
+    let first = match solid(caps, &mut work) {
+        Err(e) if retry(&e) && work.left() > 0 => e,
+        result => return result,
+    };
+    if let Some(fork) = fork {
+        let caps = cap::triangulate(
+            fork,
+            margin,
+            Mode::FLAT_CORNERS,
+            &mut None,
+            &mut false,
+            &mut work,
+        );
+        match solid(caps, &mut work) {
+            Err(_) if work.left() > 0 => {}
+            Err(_) => return Err(first),
+            result => return result,
         }
-        result => result,
     }
+    if !refined {
+        return Err(first);
+    }
+    let caps = cap::triangulate(
+        Rounds::new(chain),
+        margin,
+        Mode::PLAIN,
+        &mut None,
+        &mut false,
+        &mut work,
+    );
+    solid(caps, &mut work).map_err(|_| first)
 }
 
 /// The closed mesh: the chain's vertices and the Steiner points at `from`,

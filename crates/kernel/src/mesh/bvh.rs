@@ -115,6 +115,18 @@ impl Bvh {
         out[from..].sort_unstable();
     }
 
+    /// Whether `f` takes the index of some box within `margin` of `query`
+    /// along every axis: it is called with them in the tree's order until
+    /// it returns true.
+    pub(crate) fn any(&self, query: &Bounds3, margin: f64, mut f: impl FnMut(u32) -> bool) -> bool {
+        let mut found = false;
+        self.visit(query, margin, |i| {
+            found = f(i);
+            !found
+        });
+        found
+    }
+
     /// Calls `f` with the index of every box within `margin` of `query`
     /// along every axis, in the tree's order, for as long as it returns
     /// true.

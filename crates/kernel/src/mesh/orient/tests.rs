@@ -388,11 +388,13 @@ fn try_ring(outer: f64, inner: f64, n: usize) -> Result<Solid, KernelError> {
 
 #[test]
 fn thin_curved_shells_are_told_by_integrating() {
-    // A ring a twentieth thick, four quarter arcs outside and 64 inside
+    // A ring a twentieth thick, four quarter arcs outside and four inside
     // (split finer by the extrude where their hulls would meet): the
     // corner triangles' volume is off by more than the ring's, and the
     // patches that could move it most are integrated until it is told.
-    let solid = ring(1.0, 0.95, 64);
+    // (With many arcs inside, the caps refined for quality leave the
+    // triangles' volume close enough to tell without.)
+    let solid = ring(1.0, 0.95, 4);
     let want = PI * (1.0 - 0.95 * 0.95);
     assert!((solid.volume() - want).abs() < 1e-9, "{}", solid.volume());
     let mesh = solid.mesh();
@@ -505,7 +507,7 @@ fn orientation_is_the_same_on_any_thread_count() {
         (&cylinder([5.0, 5.0, 3.0], 1.0, 4.0), false),
         (&cylinder([20.0, 5.0, 3.0], 1.0, 4.0), false),
     ]);
-    let ring = ring(1.0, 0.9, 64);
+    let ring = ring(1.0, 0.9, 4);
     let mushrooms = [false, true].map(|turned| mushroom(5.0, 0.5, 0.5, 10.0, turned));
     let counts = assert_deterministic(|| {
         (

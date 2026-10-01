@@ -447,16 +447,15 @@ fn dense_wavy_edges_extrude_at_coarse_tolerances() {
 }
 
 #[test]
-#[ignore = "refused until the kernel refines its caps for quality"]
 fn steep_dense_wavy_edges_extrude_at_coarse_tolerances() {
     // Wiggles as steep as they are long, 100 fit points, at fits of 1e-2
     // and 0.1: real detail near the tolerance, which the fitter keeps as
     // fine chains of nearly straight conics and lines. The kernel's plain
-    // caps of such chains hold triangles thinner than the resolution
-    // (`Invalid`) or ask to halve a concave piece at a narrow corner
-    // until it is too small (`TooFine`). Also 30 points over 1 mm at
-    // 1e-2. Today 9 of the 10 at width 5 and fit 1e-2 are refused, and
-    // the 30 points; a debug build runs the first three seeds.
+    // caps of such chains held triangles thinner than the resolution
+    // (`Invalid`) or asked to halve a concave piece at a narrow corner
+    // until it was too small (`TooFine`): 9 of the 10 at width 5 and fit
+    // 1e-2, and 30 points over 1 mm at 1e-2. Its caps refined for quality
+    // take them all. A debug build runs the first three seeds.
     let mut cases = Vec::new();
     let seeds = if cfg!(debug_assertions) { 3 } else { 10 };
     for width in [1.0, 5.0, 20.0] {
