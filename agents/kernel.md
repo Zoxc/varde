@@ -2110,7 +2110,7 @@ elsewhere (see "Cutting curved faces").
 | `boolean/tests.rs` | boxes in every flush, edge-on and vertex-on configuration, tori, determinism |
 | `boolean/curved_tests.rs` | cylinders and boxes (exact), crossing cylinders, a free surface, a saddle, extrudes, chains, merging, random bars, walls over arcs with level ends |
 | `boolean/curved_tests/flush_seams.rs` | flush unions with curved rims in either order: bosses in and on plates, over holes and edges, overlapping, a flange at a shaft's foot, a slot, at millimetre scale and on a turned frame, a chain of flush joins, caps a hair apart, bosses on a rounded corner |
-| `boolean/seeded_tests.rs` | the seeded random suite: related pairs, parts built in chains of twenty, turned solids, near tangencies, pins and coaxial cylinders, flush bosses |
+| `boolean/seeded_tests.rs` | the seeded random suite: related pairs, parts built in chains of twenty, turned solids, near tangencies, pins and coaxial cylinders, flush bosses, bosses sunk through drilled plates |
 
 ### The primitives
 
@@ -2653,6 +2653,20 @@ patches are their normals at the corner. Beyond heights:
   it stays in if that heads across the side into the patch
   (`Curved::tie_inside`). Taken where rounding put it, a plate's
   diagonal crossed a boss's wall on neither side of its rim.
+- **Crossings at an end lying on a plane.** A curved edge whose end lies
+  in a planar face's plane (within the tie, inside the face further than
+  a tie from its sides) crosses it near that end or not as the
+  perturbation puts the end on the other side of the plane from the
+  edge's inside next to it (`Curved::end_on_plane`, by `Flat::plane_side`,
+  the predicate `s02` takes the plane's side from; an edge leaving the
+  plane along it is left to the count). An edge with both ends in the
+  plane and its inside on one side crosses near both ends or neither,
+  which the count (how many more go in than out) can't tell apart; the
+  search found the two, one a rounding outside the edge and one inside,
+  and the count kept neither. So the cut of a boss's wall by a plate's
+  top, between two wall vertices at its height joined by a curve dipping
+  into the plate, ran in the triangle below the curve instead of the one
+  above (`Invalid(Fold)`), and drilling a plate twice sometimes failed.
 - **Edges in the surface.** An edge lying in the surface a patch's face
   claims (sampled within the resolution) isn't searched with a count of
   0: the perturbation takes it off to one side, and the search found
@@ -3172,6 +3186,34 @@ related 112 → 113 of 120 (with the twins below), the rest unchanged
 0.5 in 3, 4 or 6 arcs turned 0, 0.3, 1.1 or 2.9 radians, over 8 spans
 each, all three operations: 47 of 96 rows with a failure → none, every
 volume within `1e-12` of its closed form.
+
+**Cuts beside a side from end to end.** Where a plane passes through
+both ends of a curved side of a quadric triangle without the side lying
+in it, the plane's conic on the quadric runs from end to end beside the
+side, and the two bound a band (`Cutting::bands`). A boss sunk through a
+plate twice its height thick meets it so: near the holes refinement splits
+the boss's wall at the middle of its rulings, which is the plate's top,
+and joins those points with the wall's curves over straight domain
+segments, which bulge out of that plane (0.04 over a 45° piece of a wall
+of radius 1.1; a cylinder's patch isn't affine in height). With no
+vertex on the side the band was fanned from its tips across the cut's
+vertices into slivers whose three corners lie on the plane's circle
+(`Invalid(Hull)`), and the rounds halved the cut down to vertices `1e-5`
+apart doing nothing for it. So the side gets vertices across from the
+cut's (`Band::across`: in the triangle's domain, from its corner opposite
+the side, for the cut's vertices whose weights at the side's ends sum to
+at least ½), first and with every halving, as the flush rim's extras;
+those nearer a crossing already on the side than a quarter of the way to
+the next across or the side's end are left out (the crossing stands for
+them; kept, one came `3e-7` from where the walls of a hole and of the
+boss crossed on it, and left a sliver). A cut that is one curve from end
+to end has nothing across, and the band would be one triangle with a
+straight angle where the side is halved (it fails the fold check), so it
+is halved once before the rounds. Every vertex added lies on the side's
+own curve, which both triangles beside it get: no wrong result can come of
+it, at worst more pieces. Release, the seeded drilled plates with a boss
+(below) 567 → 588 of 600 with the end crossings' rule in "Ties"; the
+other seeded tallies didn't move.
 
 **Exact bands on quadrics** (`face::exact_bands`). A rational quadratic
 triangle lies on a quadric when its three sides are conics on it whose
@@ -3979,11 +4021,17 @@ operations both ways round), where a union over 10 times its operands'
 patches counts as failed (the heaviest that works is under 7 times; 59
 of the 60 unions work, at least 95% must, and 210 of the 240
 operations, at least 86%; before the seams were mended 38 and 189);
-the same bits at
+bosses on plates drilled twice, standing on them, sunk from their bottom
+up twice their thickness or through them flush with both caps, against
+closed forms of the shared area (the disc less the holes, integrated
+exactly between where the circles meet), a result over 20 times its
+operands' patches counted as failed (588 of 600, at least 97%); the
+same bits at
 1 and 8 threads. Each test prints its
 tally (`TALLY name: ok of total`) and each refusal (`REFUSED`), seen
 with `--nocapture`. In release it runs
-in about 25 s (37 s one test after another, 83 s on one thread); debug
+in about 25 s (37 s one test after another, 83 s on one thread) and the
+drilled plates with bosses, 150 cases drilled twice, on top; debug
 builds run one case of each. Unit tests for the step: near ties decided
 as ties (`sign_tied`), crossings at one place put in turn (`alternate`),
 shadows along each other told apart, crossings at an edge's end put at
@@ -4332,18 +4380,37 @@ to 72 of its 96 operations and left the others as they were.
     at 1 and 8 threads: none wrong. Against main the app's way failed 23
     of 180 → 11, chains 20 and 28 of 48 → 14 and 15, scaled by 100 43 of
     90 → 18; tangent drills 61 → 59 of 180.
-- **Flush bosses on drilled plates**: of 150 random plates with two holes
-  and a boss, each of the four operations, 15, 6, 5 and 13 fail (18, 7,
-  10 and 13 before the fixes below), mostly where the boss is flush
-  with the plate's bottom too or overlaps a hole: tangencies and the
-  long cap triangles above. None came out wrong. Fixed: a boss whose rim
-  runs along a cap edge between symmetric holes, tangent to it at a
-  vertex both have (`Inconsistent`: crossings a micrometre apart in the
-  wrong order, then zero-width triangles at the rim); a boss's wall cut
-  along its flush rim getting a triangle with three corners on the rim
-  (cut vertices inverted into the wall's domain a rounding either side
-  of its side); a cap edge passing through a boss's rim a little inside
-  it taken as not crossing (the search found one crossing of two).
+- **Flush bosses on drilled plates**: of 150 random plates 1 thick with
+  two holes and a boss standing on it, sunk from its bottom up 2 or through
+  it flush with both caps (the seeded `bosses_sunk_through_drilled_plates`),
+  each of the four operations, 3, 4, 3 and 2 fail (11, 6, 5 and 11 before
+  the bands above and the end crossings' rule, 15, 6, 5 and 13 before the
+  coplanar seams were mended); none came out wrong, and no result is
+  heavy any more. What is left: a boss through the plate whose wall
+  crosses a hole's wall, both caps flush (the two walls meet in a ruling
+  from cap to cap, and the crossings of their edges with it come `1.2e-5`
+  apart; the wall triangle fanned from a far corner to the two is a
+  sliver whose neighbours' hulls meet, `Invalid(Hull)`); a boss rim
+  tangent to a hole's rim (see tangent contacts); and a hole's rim vertex
+  lying exactly on the boss's circle, or the boss's on a hole's (an
+  operand's vertex on the other's surface, `Invalid(Fold)` or the
+  neighbour rules). Built by extruding the plate with its holes (or on
+  other frames), a few more sunk bosses fail where a band beside a wall's
+  curve ends at a hole's wall close to the curve: the face past the band
+  has the curve's piece from the vertex across from the band's end to its
+  far end as one long side, and the band's end next to it, so ear
+  clipping leaves a sliver there (leaving that vertex out moves the
+  sliver, failing as many). Fuzzed app chains (random extrudes on the origin
+  planes, joined, cut and intersected) fail as before, about one
+  operation in six, mostly at tangencies. Earlier fixes here: a boss
+  whose rim runs along a cap edge between symmetric holes, tangent to it
+  at a vertex both have (`Inconsistent`: crossings a micrometre apart in
+  the wrong order, then zero-width triangles at the rim); a boss's wall
+  cut along its flush rim getting a triangle with three corners on the
+  rim (cut vertices inverted into the wall's domain a rounding either
+  side of its side); a cap edge passing through a boss's rim a little
+  inside it taken as not crossing (the search found one crossing of
+  two).
 - Triangles thinner than the resolution across two faces (a cut passing
   within a resolution or two of a vertex) aren't flipped, and fail the
   hull rules.

@@ -408,6 +408,19 @@ pub(super) fn assemble(
     )?;
     let mut chains: Vec<Chain> = chain::chains(&chain_jobs, tol)?;
     work.spend(chains.iter().map(|c| c.curves.len()).sum())?;
+    // A cut running beside a side of its quadric triangle from end to end
+    // in one curve is halved, so the side has a vertex across from it.
+    for (i, chain) in chains.iter_mut().enumerate() {
+        let (arc, job) = (&arcs[i], &chain_jobs[i]);
+        if cutting
+            .bands(job, arc, chain)
+            .iter()
+            .any(|b| b.whole(chain))
+        {
+            work.spend(1)?;
+            *chain = chain.split(job, &[0], tol.fit());
+        }
+    }
 
     // The faces, in rounds: where a triangle along a cut strays from its
     // patch, or a curve on a face's boundary bulges out of the triangle
@@ -474,6 +487,54 @@ pub(super) fn assemble(
         );
     };
     cutting.finish(last, refinement, work)
+}
+
+/// A side of a quadric triangle that a cut by a plane runs beside, from
+/// end to end ([`Cutting::bands`]): operand `k`'s edge `e`, from corner
+/// `ends[0]` of the triangle to corner `ends[1]`.
+struct Band {
+    k: usize,
+    e: u32,
+    ends: [usize; 2],
+}
+
+impl Band {
+    /// The parameters along the side across from `chain`'s vertices, its
+    /// ends included: in the triangle's domain, from the corner opposite
+    /// the side (where the barycentric weights of the side's ends sum to
+    /// at least ½, so near it). Given these, the band between the cut and
+    /// the side is cut into a strip of triangles, each with a corner on
+    /// either; with none, it fanned from its tips into slivers whose
+    /// corners all lie on the plane's conic.
+    fn across<'c>(&'c self, chain: &'c Chain) -> impl Iterator<Item = f64> + 'c {
+        chain.dom[self.k]
+            .iter()
+            .filter_map(|&d| self.param(d))
+            .filter(|&t| t > 1e-9 && t < 1.0 - 1e-9)
+    }
+
+    /// The parameter along the side across from the barycentric point
+    /// `d` of the triangle, if `d` is near the side.
+    fn param(&self, d: DVec3) -> Option<f64> {
+        let [i, j] = self.ends;
+        let (s, e) = (d[i].max(0.0), d[j].max(0.0));
+        let sum = s + e;
+        (sum >= 0.5).then(|| e / sum)
+    }
+
+    /// Whether `chain` is one curve from one of the side's ends to the
+    /// other: then nothing is across from it, and the band would be one
+    /// triangle with a straight angle where the side is halved.
+    fn whole(&self, chain: &Chain) -> bool {
+        let dom = &chain.dom[self.k];
+        let end = |d: Option<&DVec3>| d.and_then(|&d| self.param(d)).map(|t| t > 0.5);
+        chain.points.is_empty()
+            && matches!(
+                (end(dom.first()), end(dom.last())),
+                (Some(a), Some(b)) if a != b
+            )
+            && self.across(chain).next().is_none()
+    }
 }
 
 #[cfg(test)]
@@ -675,7 +736,9 @@ impl Cutting<'_> {
     /// the other's plane (a boss's rim on a plate's flush cap), or the
     /// planar triangle's edge lying on the other's quadric (a cap's rim
     /// on the wall of a cylinder of its radius on its axis, which stands
-    /// on it or runs past it).
+    /// on it or runs past it). Also, a quadric triangle's side with both
+    /// ends in the plane but bulging out of it ([`Self::bands`]) gets
+    /// vertices across from the cut's, as [`Band::across`] says.
     fn flush_extras(
         &self,
         jobs: &[chain::Job],
@@ -727,11 +790,79 @@ impl Cutting<'_> {
                     }
                 }
             }
+            for band in self.bands(job, arc, chain) {
+                let mut across: Vec<f64> = band.across(chain).collect();
+                across.sort_by(f64::total_cmp);
+                across.dedup();
+                // Not those near a crossing already on the side, which
+                // stands for them, nearer than a quarter of the way to the
+                // next across or the side's end: two vertices that close
+                // would leave a sliver between them.
+                let (stops, _) = self.along[band.k].of(band.e);
+                for (n, &t) in across.iter().enumerate() {
+                    let before = if n == 0 { 0.0 } else { across[n - 1] };
+                    let after = across.get(n + 1).copied().unwrap_or(1.0);
+                    let gap = (t - before).min(after - t);
+                    if stops.iter().all(|&(_, s)| (s - t).abs() >= gap / 4.0) {
+                        extras[band.k].entry(band.e).or_default().push(t);
+                    }
+                }
+            }
         }
         for list in extras.iter_mut().flat_map(|m| m.values_mut()) {
             list.sort_by(f64::total_cmp);
             list.dedup();
         }
+    }
+
+    /// The sides of `arc`'s quadric triangle that its cut by a plane runs
+    /// beside, from end to end: curved sides whose two ends lie in the
+    /// plane (within the resolution) and which bulge out of it (those
+    /// lying in it are flush, see [`Self::flush_extras`]). The plane
+    /// meets the quadric in a conic through the side's ends, and between
+    /// them the cut and the side bound a band. A boss twice as tall as the
+    /// plate it is sunk through is thick meets it so: refinement splits
+    /// the boss's wall at the middle of its rulings, the plate's face, and
+    /// joins those points with curves of the wall that bulge out of it.
+    fn bands(&self, job: &chain::Job, arc: &Arc, chain: &Chain) -> Vec<Band> {
+        let (plane, k) = match job.shapes {
+            [Shape::Plane { n, d }, Shape::Quadric(_)] => ((n, d), 1),
+            [Shape::Quadric(_), Shape::Plane { n, d }] => ((n, d), 0),
+            _ => return Vec::new(),
+        };
+        if !chain.exact {
+            return Vec::new();
+        }
+        let resolution = self.tol.resolution();
+        let on_plane = |x: DVec3| (plane.0.dot(x) - plane.1).abs() <= resolution;
+        let (input, _) = self.operand(if k == 0 { Side::A } else { Side::B });
+        let t = arc.tris[k];
+        let corners = input.tris[t as usize];
+        let mut bands = Vec::new();
+        for &(e, _) in &input.tri_edges[t as usize] {
+            if lined(input, e) {
+                continue;
+            }
+            let conic = input.conic(e);
+            if !on_plane(conic.p0)
+                || !on_plane(conic.p1)
+                || [0.25, 0.5, 0.75]
+                    .into_iter()
+                    .all(|t| on_plane(conic.eval(t)))
+            {
+                continue;
+            }
+            let [s, en] = input.edges[e as usize];
+            let at = |v: u32| corners.iter().position(|&c| c == v);
+            if let (Some(from), Some(to)) = (at(s), at(en)) {
+                bands.push(Band {
+                    k,
+                    e,
+                    ends: [from, to],
+                });
+            }
+        }
+        bands
     }
 
     /// Where the crossing vertex `id` is in triangle `t` of `side`

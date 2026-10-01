@@ -105,6 +105,16 @@ impl<'a> Flat<'a> {
         (facing != 0).then(|| self.sign(&Reach { x0: x, t }) == facing)
     }
 
+    /// Which side of the plane of the corners of face `f` of the other
+    /// operand vertex `v` of `side` is on, ties as `A`'s perturbation
+    /// decides: +1 the side the face faces (out of its solid), −1 behind
+    /// it, 0 if the corners are in a line.
+    pub(super) fn plane_side(&self, side: Side, v: u32, f: u32) -> i8 {
+        let x = self.pt(side, v);
+        let t = self.tri(side.other(), f);
+        -self.sign(&Reach { x0: x, t })
+    }
+
     /// Whether edge `e` of `A` is above edge `g` of `B` where the lines
     /// through them cross seen along [`UP`], the one running from its
     /// right to its left over the other being `sigma` (+1 for `e`, as in

@@ -621,6 +621,132 @@ fn flush_bosses_joined_on_drilled_plates() {
     }
 }
 
+/// The area two discs (centre, radius) share.
+fn lens(a: (DVec2, f64), b: (DVec2, f64)) -> f64 {
+    let d = a.0.distance(b.0);
+    let (r1, r2) = (a.1, b.1);
+    if d >= r1 + r2 {
+        return 0.0;
+    }
+    if d <= (r1 - r2).abs() {
+        return PI * r1.min(r2).powi(2);
+    }
+    r1 * r1 * ((d * d + r1 * r1 - r2 * r2) / (2.0 * d * r1)).acos()
+        + r2 * r2 * ((d * d + r2 * r2 - r1 * r1) / (2.0 * d * r2)).acos()
+        - 0.5 * ((-d + r1 + r2) * (d + r1 - r2) * (d - r1 + r2) * (d + r1 + r2)).sqrt()
+}
+
+#[test]
+fn bosses_sunk_through_drilled_plates_at_their_middle() {
+    // A plate 1 thick drilled twice, and a boss from its bottom up 2 (or
+    // from -1 up 4): near the holes refinement splits the boss's wall at
+    // the middle of its rulings, which is the plate's top, and joins
+    // those points with curves of the wall that bulge out of the top's
+    // plane. The top then cuts the wall from end to end of such a curve,
+    // beside it. The band between the two was fanned from its ends into
+    // slivers with three corners on the top's circle (`Invalid`); where
+    // the curve dips into the plate, the curve's crossings at its ends,
+    // which the count can't tell from none, were dropped by rounding, and
+    // the cut went into the triangle below it. The first six failed so.
+    let slab = cube([-3.0, -2.0, 0.0], [6.0, 4.0, 1.0]);
+    let drill = |(x, y, r): (f64, f64, f64), feature| {
+        Solid::cylinder(DVec3::new(x, y, -1.0), r, 4.0, feature, &TOL).unwrap()
+    };
+    let cases = [
+        (
+            [(-1.4, -1.05, 0.4), (1.8, 1.0, 0.4)],
+            (-0.2, 0.3, 1.1),
+            0.0,
+            2.0,
+        ),
+        (
+            [(-1.4, -1.05, 0.4), (1.8, 1.0, 0.4)],
+            (-0.2, 0.3, 1.1),
+            -1.0,
+            4.0,
+        ),
+        (
+            [(-2.0, 0.7, 0.6), (1.9, -1.0, 0.3)],
+            (-0.65, -0.5, 1.1),
+            0.0,
+            2.0,
+        ),
+        // Holding a hole.
+        (
+            [(-0.7, -0.45, 0.35), (0.5, 0.7, 0.45)],
+            (-0.55, -0.35, 0.75),
+            0.0,
+            2.0,
+        ),
+        // Holding a hole, and a curve dipping into the plate.
+        (
+            [(-0.5, 0.7, 0.65), (1.5, 0.4, 0.35)],
+            (-0.25, 0.7, 1.15),
+            0.0,
+            2.0,
+        ),
+        // Crossing a hole, and a curve dipping into the plate.
+        (
+            [(-1.75, -0.55, 0.65), (1.0, 0.6, 0.55)],
+            (0.65, 0.2, 0.25),
+            0.0,
+            2.0,
+        ),
+        // Crossing a hole: the curve's vertex across from the cut's end
+        // at the hole's wall would have come 3e-7 from the walls' crossing
+        // on it (worked before; failed with every vertex across kept).
+        (
+            [(-0.8, 1.05, 0.5), (1.95, -0.75, 0.45)],
+            (-0.9, 0.25, 0.7),
+            0.0,
+            2.0,
+        ),
+    ];
+    for (holes, (bx, by, br), z0, h) in cases {
+        let plate = run(&slab, &drill(holes[0], 2), Op::Difference);
+        let plate = run(&plate, &drill(holes[1], 3), Op::Difference);
+        let boss = Solid::cylinder(DVec3::new(bx, by, z0), br, h, 4, &TOL).unwrap();
+        let disc = |(x, y, r): (f64, f64, f64)| (DVec2::new(x, y), r);
+        let (vp, vb) = (plate.volume(), boss.volume());
+        let shared = PI * br * br
+            - holes
+                .iter()
+                .map(|&o| lens(disc(o), disc((bx, by, br))))
+                .sum::<f64>();
+        let both = shared * ((z0 + h).min(1.0) - z0.max(0.0));
+        let want = [vp + vb - both, both, vp - both, vb - both];
+        let jobs = [
+            (&plate, &boss, Op::Union),
+            (&plate, &boss, Op::Intersection),
+            (&plate, &boss, Op::Difference),
+            (&boss, &plate, Op::Difference),
+        ];
+        for ((x, y, op), want) in jobs.into_iter().zip(want) {
+            let got = run(x, y, op).volume();
+            assert!(
+                (got - want).abs() < 1e-6,
+                "boss at ({bx}, {by}) from {z0}, {op:?}: {got} not {want}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_boss_sunk_through_a_drilled_plate_is_the_same_on_any_thread_count() {
+    let slab = cube([-3.0, -2.0, 0.0], [6.0, 4.0, 1.0]);
+    let drill = |x: f64, y: f64, r: f64, feature| {
+        Solid::cylinder(DVec3::new(x, y, -1.0), r, 4.0, feature, &TOL).unwrap()
+    };
+    let plate = run(&slab, &drill(-1.4, -1.05, 0.4, 2), Op::Difference);
+    let plate = run(&plate, &drill(1.8, 1.0, 0.4, 3), Op::Difference);
+    let boss = Solid::cylinder(DVec3::new(-0.2, 0.3, 0.0), 1.1, 2.0, 4, &TOL).unwrap();
+    for (x, y, op) in [(&plate, &boss, Op::Union), (&boss, &plate, Op::Difference)] {
+        let _ = assert_deterministic(|| {
+            boolean(x, y, op, &TOL, &Budget::DEFAULT).map(Solid::into_mesh)
+        });
+    }
+}
+
 /// The 60 × 40 plate with a hole of radius 8 in its middle, extruded
 /// from 0 to `h`, its hole's loop as regeneration builds it: clockwise
 /// from (8, 0), in four quarters.

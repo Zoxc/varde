@@ -589,6 +589,68 @@ impl<'a> Curved<'a> {
         }
     }
 
+    /// Whether the crossing `h` of curved edge `e` of `side` (`edge`)
+    /// through planar face `f` of the other (`patch`), within a tie of an
+    /// end of the edge that lies in the face's plane (within a tie, and
+    /// inside the face, further than a tie from its sides), is there once
+    /// `A` is perturbed, or `None` if it isn't such a crossing or the edge
+    /// leaves the plane along it. It is there if the perturbation puts
+    /// that end on the other side of the plane from the edge's inside
+    /// next to it: an edge whose ends both lie in the plane and whose
+    /// inside is on one side of it crosses near both ends or neither. The
+    /// count, which only says how many more go in than out, can't tell
+    /// the two apart, and the rounding of where the search put the two
+    /// (one a rounding outside the edge, the other inside) had the cut
+    /// of a boss's wall split at the height of a plate's face run in the
+    /// triangle beside the one it was in.
+    fn end_on_plane(
+        &self,
+        side: Side,
+        e: u32,
+        f: u32,
+        edge: &Conic3,
+        patch: &crate::patch::Patch,
+        h: &solve::EdgeHit,
+    ) -> Option<bool> {
+        let input = self.input(side);
+        let [s, en] = input.edges[e as usize];
+        let x = edge.eval(h.t.clamp(0.0, 1.0));
+        let (v, start) = if x.distance(edge.p0) <= self.tie {
+            (s, true)
+        } else if x.distance(edge.p1) <= self.tie {
+            (en, false)
+        } else {
+            return None;
+        };
+        let [p0, p1, p2] = patch.p;
+        let n = (p1 - p0).cross(p2 - p0).normalize_or_zero();
+        let end = if start { edge.p0 } else { edge.p1 };
+        if n == DVec3::ZERO || (end - p0).dot(n).abs() > self.tie {
+            return None;
+        }
+        // Inside the face, away from its sides.
+        let [_, pu, pv] = patch.eval_derivs(h.u);
+        let k = (0..3)
+            .min_by(|&i, &j| h.u[i].total_cmp(&h.u[j]))
+            .expect("three coordinates");
+        let w = DVec3::AXES[k] - h.u;
+        let away = h.u[k] * (pu * w.x + pv * w.y).length();
+        if away.is_nan() || away <= self.tie {
+            return None;
+        }
+        let (_, de) = edge.eval_deriv(if start { 0.0 } else { 1.0 });
+        let slope = de.dot(n);
+        if slope.is_nan() || slope.abs() <= 1e-9 * de.length() {
+            return None;
+        }
+        // The side of the plane the edge's inside is on next to that end.
+        let inside = if start { sign(slope) } else { -sign(slope) };
+        match self.flat.plane_side(side, v, f) {
+            0 => None,
+            at => Some(at != inside),
+        }
+    }
+
     /// `s02` for a curved patch: the points of the patch straight above or
     /// below the vertex, as many as its winding number says, counted
     /// above.
@@ -853,6 +915,16 @@ impl Primitives for Curved<'_> {
                 } else {
                     (f64::INFINITY, h.u)
                 };
+            }
+        }
+        // Crossings at an end of the edge lying on a planar patch: there or
+        // not as the perturbation puts that end on the side the edge
+        // leaves the plane to or the other.
+        if self.input(side.other()).planar[f as usize] {
+            for h in &mut found {
+                if let Some(there) = self.end_on_plane(side, e, f, &edge, patch, h) {
+                    h.out = if there { 0.0 } else { f64::INFINITY };
+                }
             }
         }
         let cost = SEARCH_WORK.max(nodes.div_ceil(NODES_PER_UNIT));

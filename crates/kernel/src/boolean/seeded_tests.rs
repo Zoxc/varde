@@ -1214,3 +1214,223 @@ fn flush_pairs_keep_their_names_either_order() {
     }
     assert!(compared >= cases(30, 2), "{compared}");
 }
+
+/// A circle's upper (`+1`) or lower (`−1`) half as a function of `x`, or
+/// a constant: the sides of the regions [`disc_less_discs`] integrates.
+#[derive(Clone, Copy)]
+enum Side2 {
+    Arc(DVec2, f64, f64),
+    Level(f64),
+}
+
+impl Side2 {
+    fn at(self, x: f64) -> f64 {
+        match self {
+            Side2::Arc(c, r, s) => c.y + s * (r * r - (x - c.x).powi(2)).max(0.0).sqrt(),
+            Side2::Level(y) => y,
+        }
+    }
+
+    /// Its integral from `a` to `b`, in closed form.
+    fn integral(self, a: f64, b: f64) -> f64 {
+        match self {
+            Side2::Level(y) => y * (b - a),
+            Side2::Arc(c, r, s) => {
+                let f = |x: f64| {
+                    let u = ((x - c.x) / r).clamp(-1.0, 1.0);
+                    0.5 * r * r * (u * (1.0 - u * u).max(0.0).sqrt() + u.asin())
+                };
+                c.y * (b - a) + s * (f(b) - f(a))
+            }
+        }
+    }
+}
+
+/// The area of the disc round `c` of radius `r` within `|y| ≤ half`,
+/// less the discs `holes`, in closed form: between the `x` where any two
+/// of the circles and lines meet or a circle turns, the region is a fixed
+/// set of strips between arcs and levels, each integrated exactly.
+fn disc_less_discs(c: DVec2, r: f64, half: f64, holes: &[(DVec2, f64)]) -> f64 {
+    let circles: Vec<(DVec2, f64)> = std::iter::once((c, r))
+        .chain(holes.iter().copied())
+        .collect();
+    let mut xs = Vec::new();
+    for (i, &(p, a)) in circles.iter().enumerate() {
+        xs.extend([p.x - a, p.x + a]);
+        for y in [-half, half] {
+            let w = a * a - (y - p.y).powi(2);
+            if w >= 0.0 {
+                xs.extend([p.x - w.sqrt(), p.x + w.sqrt()]);
+            }
+        }
+        for &(q, b) in &circles[i + 1..] {
+            let d = p.distance(q);
+            if d > 0.0 && d <= a + b && d >= (a - b).abs() {
+                let l = (a * a - b * b + d * d) / (2.0 * d);
+                let h = (a * a - l * l).max(0.0).sqrt();
+                let e = (q - p) / d;
+                let m = p + e * l;
+                xs.extend([m.x - e.y * h, m.x + e.y * h]);
+            }
+        }
+    }
+    let mut xs: Vec<f64> = xs
+        .into_iter()
+        .filter(|x| (c.x - r..=c.x + r).contains(x))
+        .collect();
+    xs.sort_by(f64::total_cmp);
+    xs.dedup();
+    let mut total = 0.0;
+    for w in xs.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let m = 0.5 * (a + b);
+        let (low, high) = (Side2::Arc(c, r, -1.0), Side2::Arc(c, r, 1.0));
+        let low = if low.at(m) > -half {
+            low
+        } else {
+            Side2::Level(-half)
+        };
+        let high = if high.at(m) < half {
+            high
+        } else {
+            Side2::Level(half)
+        };
+        let mut strips = vec![(low, high)];
+        for &(p, s) in holes {
+            if (m - p.x).abs() >= s {
+                continue;
+            }
+            let (hl, hh) = (Side2::Arc(p, s, -1.0), Side2::Arc(p, s, 1.0));
+            strips = strips
+                .into_iter()
+                .flat_map(|(l, u)| {
+                    if hh.at(m) <= l.at(m) || hl.at(m) >= u.at(m) {
+                        return vec![(l, u)];
+                    }
+                    let mut kept = Vec::new();
+                    if hl.at(m) > l.at(m) {
+                        kept.push((l, hl));
+                    }
+                    if hh.at(m) < u.at(m) {
+                        kept.push((hh, u));
+                    }
+                    kept
+                })
+                .collect();
+        }
+        for (l, u) in strips {
+            if u.at(m) > l.at(m) {
+                total += u.integral(a, b) - l.integral(a, b);
+            }
+        }
+    }
+    total
+}
+
+#[test]
+fn the_closed_form_areas_are_right() {
+    let c = DVec2::new(0.1, 0.2);
+    assert!((disc_less_discs(c, 0.7, 2.0, &[]) - PI * 0.49).abs() < 1e-12);
+    // A disc through the line y = 2: the segment past it cut off.
+    let segment = (0.5f64).acos() - 0.5 * 0.75f64.sqrt();
+    let got = disc_less_discs(DVec2::new(0.0, 1.5), 1.0, 2.0, &[]);
+    assert!((got - (PI - segment)).abs() < 1e-12);
+    // A hole holding the centre of another: the two lenses, by sampling.
+    let holes = [(DVec2::new(0.5, 0.0), 0.4), (DVec2::new(0.2, 0.5), 0.35)];
+    let got = disc_less_discs(c, 0.7, 2.0, &holes);
+    let n = 2000;
+    let mut inside = 0;
+    for i in 0..n {
+        for j in 0..n {
+            let p = c + DVec2::new(i as f64 + 0.5, j as f64 + 0.5) * (1.4 / n as f64)
+                - DVec2::splat(0.7);
+            if p.distance(c) < 0.7 && holes.iter().all(|&(q, s)| p.distance(q) >= s) {
+                inside += 1;
+            }
+        }
+    }
+    let sampled = inside as f64 * (1.4 / n as f64).powi(2);
+    assert!((got - sampled).abs() < 1e-3, "{got} vs {sampled}");
+}
+
+#[test]
+fn bosses_sunk_through_drilled_plates() {
+    // A plate 1 thick drilled twice, and a boss (a cylinder) standing on
+    // it, sunk from its bottom up 2, or through it from bottom to top,
+    // flush with both. Near the holes refinement splits the boss's wall
+    // at the middle of its rulings, which is the plate's top; one in five
+    // of these failed so, mostly sunk. A result heavier than 20 times its
+    // operands counts as failed (flush caps meeting along curves once
+    // left seams 10k patches heavy). Before a cut beside a wall's curve
+    // with both ends in a plate's face was given a strip, 567 of the 600
+    // worked; 588 now. What fails is a boss through the plate with its
+    // wall crossing a hole's wall (thin triangles where the two walls
+    // meet), a boss rim tangent to a hole's rim, and a rim vertex of one
+    // lying on the other's rim.
+    let tol = Tolerance::DEFAULT;
+    let mut tally = Tally::default();
+    let mut rng = Rng::new(5);
+    let mut samples = Rng::new(6);
+    let q = |x: f64| (x * 20.0).round() / 20.0;
+    for case in 0..cases(150, 2) {
+        let (x1, y1, r1) = (
+            q(rng.range(-2.2, -0.5)),
+            q(rng.range(-1.2, 1.2)),
+            q(rng.range(0.2, 0.7)),
+        );
+        let (x2, y2, r2) = (
+            q(rng.range(0.5, 2.2)),
+            q(rng.range(-1.2, 1.2)),
+            q(rng.range(0.2, 0.7)),
+        );
+        let (bx, by, br) = (
+            q(rng.range(-1.0, 1.0)),
+            q(rng.range(-0.8, 0.8)),
+            q(rng.range(0.2, 1.2)),
+        );
+        let mode = rng.next_u64() % 3;
+        let slab = Solid::cuboid(
+            DVec3::new(-3.0, -2.0, 0.0),
+            DVec3::new(6.0, 4.0, 1.0),
+            1,
+            &tol,
+        )
+        .unwrap();
+        let drill = |x: f64, y: f64, r: f64, feature: u64| {
+            Solid::cylinder(DVec3::new(x, y, -1.0), r, 4.0, feature, &tol).unwrap()
+        };
+        let drilled = |a: &Solid, b: &Solid| boolean(a, b, Op::Difference, &tol, &Budget::DEFAULT);
+        let Ok(plate) = drilled(&slab, &drill(x1, y1, r1, 2))
+            .and_then(|plate| drilled(&plate, &drill(x2, y2, r2, 3)))
+        else {
+            // Two holes that nearly touch.
+            println!("REFUSED case {case}: drilling");
+            continue;
+        };
+        let (z0, h, what) =
+            [(1.0, 1.0, "on"), (0.0, 2.0, "sunk"), (0.0, 1.0, "through")][mode as usize];
+        let boss = Solid::cylinder(DVec3::new(bx, by, z0), br, h, 4, &tol).unwrap();
+        let holes = [(DVec2::new(x1, y1), r1), (DVec2::new(x2, y2), r2)];
+        let shared = disc_less_discs(DVec2::new(bx, by), br, 2.0, &holes);
+        let both = shared * ((z0 + h).min(1.0) - z0.max(0.0));
+        let name = format!("case {case}, boss {what} at ({bx}, {by}) r {br}, holes {holes:?}");
+        let out = four(
+            &plate,
+            &boss,
+            Some(both),
+            &tol,
+            &mut samples,
+            &mut tally,
+            &name,
+        );
+        let inputs = plate.mesh().tris().len() + boss.mesh().tris().len();
+        for solid in out.iter().flatten() {
+            if solid.mesh().tris().len() > 20 * inputs {
+                println!("HEAVY {name}: {} patches", solid.mesh().tris().len());
+                tally.ok -= 1;
+                tally.failed += 1;
+            }
+        }
+    }
+    tally.at_least(0.97, "bosses in drilled plates");
+}
