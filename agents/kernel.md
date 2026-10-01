@@ -796,13 +796,46 @@ so the same rule. What fails is split:
   mended or a witness names the error.
 
 The rounds end when nothing fails, or with `TooComplex` at
-`MAX_REFINE_DEPTH`, at pieces less than `MIN_SPLIT` (64) resolutions across,
-past `MAX_PATCHES` or out of budget. Pieces a few resolutions across can't
-keep the hull margin from their own neighbours, and splitting them only
-makes more that fail (two tetrahedra touching corner to corner went from 6
-failing pieces a round to thousands at about 8 resolutions); a surface that
-keeps clear of itself passes long before, since a patch of size `s` on a
-curve of radius `R` sags by about `s²/8R`. Touching flat faces fail at
+`MAX_REFINE_DEPTH`, past `MAX_PATCHES` or out of budget. A leaf to split
+that is too small to fails the repair with `Invalid` of the failure that
+asked for its split (the fold check's `Fold`, or the pair's `CheckError`;
+of the first such leaf by id, and its first failure, folds then pairs in
+order): splitting can't mend it at this tolerance, and a finer one, with
+pieces larger in resolutions, may. Too small is under `MIN_SPLIT` (64)
+resolutions across (the longest side of the leaf's control-point box, the
+box the refiner measures) for a leaf flat within the resolution (`flat`),
+and under `MIN_CURVED_SPLIT` (8) for one that isn't. Pieces a few
+resolutions across can't keep the hull margin from their own neighbours,
+and splitting them only makes more that fail (two tetrahedra touching
+corner to corner went from 6 failing pieces a round to thousands at about
+8 resolutions); a surface that keeps clear of itself passes long before,
+since a patch of size `s` on a curve of radius `R` sags by about `s²/8R`.
+A flat piece's failure doesn't shrink as it is split, but a curved
+piece's sag does, and it is flat once `s` is under about `√(8R)`
+resolutions: on surfaces of radius under about 500 resolutions curved
+pieces reach 64 resolutions still curved, and small round surfaces a few
+resolutions apart need smaller pieces to pass. So only curved pieces go
+below `MIN_SPLIT`, a bounded number of levels (three at most), ending by
+flatness or the lower floor. The stop is decided in `failures` after all
+its other `Invalid` returns (a degenerate corner, flat pairs, a witness
+take precedence), and only for leaves it asks to split; the refiner's own
+floor, `MIN_CURVED_SPLIT`, stays a `TooComplex` backstop for leaves its
+conformity rules split with them. Measured (release, coarsest tolerance,
+resolution `m`): two cylinders of radius 20 to 200 `m`, 1.5 to 3 `m`
+apart, which gave `TooComplex`, repair in 1 000 to 11 000 units (68 to
+520 patches, 4 to 10 ms); of radius 5 or 10 `m`, 1.5 `m` apart,
+`Invalid(Hull)` in 570 to 1 600 units, where a tenth of the fit
+repairs them; a bulging tetrahedron a resolution across fails the fold
+check as `Invalid(Fold)`, and 32 resolutions across it is split and
+passes. On the seeded boolean suites no outcome or error kind moved
+(related 112 of 120, chains 203 of 240, turned 156 of 160, tangent 72
+of 96, coaxial 37 of 40, bosses and drilled all, before and after;
+69 s of CPU either way). In
+the random-plate stress (seeds 1 to 30, 600 cases each, every case
+extruded at one fit): at 0.1, 9 `TooComplex` became `Invalid` (100 →
+109) and at 0.05, 6 (58 → 64), the `Ok` counts unchanged (8 596 and
+8 738 of 18 000) and nothing at 0.01; each of the 11 cases extrudes at
+0.01 or 1e-3. Touching flat faces fail at
 once: two boxes face to face, or two cylinders side by side or end to end,
 used to be split to the end of the budget (12 to 27 s) and now fail in 2
 to 80 ms. Round surfaces that touch fail on a witness, mostly in the first
@@ -1340,8 +1373,9 @@ Known gaps:
   `MIN_SPLIT` at a narrow corner, mostly next to a sliver from the short
   chord to an apex 0.5 to 1.6 mm away; 19 `Invalid`, repair finding two
   flat pieces (thin cap triangles meeting, or one against a wall piece)
-  within the resolution; 1 `TooComplex`, repair's own `MIN_SPLIT` floor
-  (seed 6 case 146; `Invalid` at 0.05 and 0.01, `Ok` at 1e-3). Weights of
+  within the resolution; 1 that was `TooComplex`, repair's own floor on
+  the pieces it splits, and is `Invalid` now (seed 6 case 146; `Invalid`
+  at 0.05 and 0.01 too, `Ok` at 1e-3). Weights of
   exactly 1 fail too, if less often; nothing fails this way at 1e-3. The
   cases checked extrude at a finer tolerance (seed 2 case 11 at 0.01),
   which is what the `TooFine` and `Invalid` messages suggest; so did
@@ -1351,10 +1385,10 @@ Known gaps:
   edges fitted at 1e-5 to 0.1, with one exception: a hole of sharply
   weighted conics whose cap triangulation (the same at every tolerance)
   holds a sliver that repair splits into pieces meeting at a vertex
-  within the resolution, `Invalid` down to 1e-5. The remaining
-  `TooComplex` at 0.1 (seed 24 case 293; the first try of seed 18 case
-  539 at 0.05) is repair's `MIN_SPLIT` floor again, which
-  a finer tolerance mends although the message names none. Quality
+  within the resolution, `Invalid` down to 1e-5. Repair's floor gave
+  the last `TooComplex` at 0.1 and 0.05 (seed 24 case 293; seed 18
+  case 539 at 0.05) too, now `Invalid`, whose message suggests the
+  finer tolerance that mends them (0.01). Quality
   refinement of the caps (no sliver with a far apex) would mend most.
   One `Invalid` is a real 0.8° notch between two conics whose sides
   pass `apart_at_joint` by a hair: that test isn't monotone under
@@ -1362,7 +1396,8 @@ Known gaps:
   "halving only shrinks hulls" holds for pairs that aren't joints.
 - **Repair of a cap patch along a concave curve**, should it ever be
   needed, splits with straight inner edges; a piece whose corner at the
-  curve's midpoint turns inside out then fails with `TooComplex`. The
+  curve's midpoint turns inside out then fails with `Invalid(Fold)` once
+  its pieces are under `MIN_SPLIT` (they are flat). The
   construction keeps concave bulges inside their triangles and passes
   `check` without repair in every test.
 - Flat cap triangles thinner than the resolution (nearly collinear
@@ -3441,7 +3476,8 @@ offered ones' (`tolerance_choices`).
 | `MAX_TURN_COS` (boolean) | 0.7 | the most a cut's conic turns (about 45°) |
 | `MEND_ROUNDS` (boolean) | 4 | rounds of Steiner points in one face's triangulation |
 | `MAX_WORK` | `1 << 22` | work units in one operation: about two seconds on one thread at most; the heaviest booleans measured take about half of it |
-| `MIN_SPLIT` (repair) | 64 resolutions | the smallest piece repair splits, and the smallest profile segment an extrude halves |
+| `MIN_SPLIT` (repair) | 64 resolutions | the smallest flat piece repair splits, and the smallest profile segment an extrude halves |
+| `MIN_CURVED_SPLIT` (repair) | 8 resolutions | the smallest curved piece repair splits; the refiner's floor in repair |
 | `FLAT_STOP` (repair) | 1/16 | how flat, in resolutions, failing non-neighbour pieces must both be for repair to stop splitting them |
 | `MAX_PROFILE_SEGMENTS` | `1 << 16` | segments in a profile |
 | `SIN_MIN` (extrude) | `1e-3` | cusps between segments; the narrowest cap patch corner |
@@ -3455,7 +3491,7 @@ about a patch or a pair of patches tested or split: repair measured about
 0.5 µs a unit on one thread and 0.3 µs on seven. `KernelError` is
 `TooComplex` (the budget, or a limit such as `MAX_PATCHES`,
 `MAX_REFINE_DEPTH` or a cap of rounds: never detail too small for the
-tolerance, except repair's `MIN_SPLIT` floor, which still gives it),
+tolerance, which is `Invalid` or `ProfileError::TooFine`),
 `Invalid(CheckError)` (the input breaks an invariant the operation
 can't restore, or the result would, as for a solid too thin for its
 resolution), `Patch(PatchError)` (a
@@ -3518,8 +3554,15 @@ parameter, or a split outside the patch bounds),
   (`Patch::degenerate_corner`, new), on a failing pair of flat pieces
   (flat within a sixteenth of the resolution for non-neighbours), and on
   a failing non-neighbour pair whose surfaces it finds within the
-  resolution (a witness), and on pieces under `MIN_SPLIT` = 64
-  resolutions as well as at `MAX_REFINE_DEPTH` and the budget.
+  resolution (a witness), all with `Invalid`; with `Invalid` too, of the
+  failure that asked, on a leaf to split under `MIN_SPLIT` = 64
+  resolutions if flat or `MIN_CURVED_SPLIT` = 8 if curved (it was
+  `TooComplex` at 64 for all: only curved pieces' sag shrinks as they
+  are split, and a scale limit is detail too small for the tolerance,
+  not complexity); with `TooComplex` at `MAX_REFINE_DEPTH`,
+  `MAX_PATCHES` and the budget. A small leaf to split on a plane fails
+  with the failure that asked, not the wrong-tag `Face` the refiner
+  would have named on splitting it.
 - **`Budget` is a limit and `Work` its counter**: operations take `&Budget`
   as planned and count down a `Work` shared by their steps. `MAX_WORK` is
   `1 << 22` (about 4.2 million units, two seconds on one thread; it was

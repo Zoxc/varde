@@ -10,9 +10,10 @@ use super::super::tests::{
 };
 use super::*;
 use crate::Tolerance;
+use crate::mesh::hull;
 use crate::mesh::{MeshBuilder, Surface};
 use crate::par::assert_deterministic;
-use crate::patch::PatchError;
+use crate::patch::{Patch, PatchError};
 use crate::test_rng::Rng;
 
 /// A thin curved plate closed on itself: the shell between two round
@@ -85,6 +86,17 @@ fn two_spheres(radius: f64, gap: f64) -> Mesh {
     builder.build().unwrap()
 }
 
+/// `mesh` scaled by `s` about the origin.
+fn scaled(mut mesh: Mesh, s: f64) -> Mesh {
+    for v in &mut mesh.verts {
+        *v *= s;
+    }
+    for e in &mut mesh.edges {
+        e.ctrl *= s;
+    }
+    mesh
+}
+
 /// `mesh` repaired with `tol`, and the work that took.
 fn repair_counting(mesh: Mesh, tol: &Tolerance) -> (Result<Mesh, KernelError>, u64) {
     let mut work = Work::new(&Budget::DEFAULT);
@@ -137,6 +149,12 @@ fn repair_is_the_same_on_any_thread_count() {
     let repaired = assert_deterministic(|| shell(10.0, 0.2).repair(&TOL, &Budget::DEFAULT));
     assert!(repaired.is_ok());
     let repaired = assert_deterministic(|| cylinder_and_box(1e-3).repair(&TOL, &Budget::DEFAULT));
+    assert!(repaired.is_ok());
+    // Curved pieces split below `MIN_SPLIT`.
+    let coarse = Tolerance::new(Tolerance::MAX_FIT).unwrap();
+    let res = coarse.resolution();
+    let small = cylinders(30.0 * res, 45.0, 3.0 * res, &coarse);
+    let repaired = assert_deterministic(|| small.clone().repair(&coarse, &Budget::DEFAULT));
     assert!(repaired.is_ok());
     // Failing on a witness, and the work it took.
     let res = TOL.resolution();
@@ -425,18 +443,143 @@ fn what_splitting_cant_mend_fails() {
     assert_eq!(result, Err(KernelError::Invalid(CheckError::Hull(0, 9))));
     assert!(work < 1000, "{work}");
     // Small surfaces apart, but by too little for pieces as large as the
-    // smallest repair splits, still reach it.
-    let small = 200.0 * coarse.resolution();
+    // smallest repair splits even curved, still reach it, and fail with
+    // what asked for the split (they used to give `TooComplex`): at this
+    // tolerance splitting can't mend them. A finer one does.
+    let small = 10.0 * coarse.resolution();
     let gap = 1.5 * coarse.resolution();
     let (result, work) = repair_counting(cylinders(small, 30.0, gap, &coarse), &coarse);
-    assert_eq!(result, Err(KernelError::TooComplex));
+    assert!(
+        matches!(result, Err(KernelError::Invalid(CheckError::Hull(..)))),
+        "{result:?}"
+    );
     assert!(work < 100_000, "{work}");
+    let fine = Tolerance::new(Tolerance::MAX_FIT / 10.0).unwrap();
+    let repaired = cylinders(small, 30.0, gap, &fine).repair(&fine, &Budget::DEFAULT);
+    assert_eq!(repaired.unwrap().check(&fine), Ok(()));
+    // So do curved pieces failing the fold check: a bulging tetrahedron a
+    // resolution across. At 32 resolutions across they are split
+    // and pass (`TooComplex` before, under `MIN_SPLIT`).
+    let res = TOL.resolution();
+    let (result, _) = repair_counting(scaled(bulging_tetrahedron(1.5), res), &TOL);
+    assert!(
+        matches!(result, Err(KernelError::Invalid(CheckError::Fold(_)))),
+        "{result:?}"
+    );
+    let repaired = scaled(bulging_tetrahedron(1.5), 32.0 * res).repair(&TOL, &Budget::DEFAULT);
+    assert_eq!(repaired.unwrap().check(&TOL), Ok(()));
 
     // Running out of the budget.
     assert_eq!(
         shell(10.0, 0.05).repair(&TOL, &Budget::new(1000)),
         Err(KernelError::TooComplex)
     );
+}
+
+#[test]
+fn small_round_surfaces_are_repaired() {
+    // Cylinders of radius 20 to 200 resolutions a few resolutions apart
+    // need curved pieces under `MIN_SPLIT` to pass, and are split to them
+    // (they gave `TooComplex`).
+    let coarse = Tolerance::new(Tolerance::MAX_FIT).unwrap();
+    let res = coarse.resolution();
+    for (radius, angle, gap) in [(30.0, 45.0, 3.0), (20.0, 30.0, 1.5), (200.0, 30.0, 1.5)] {
+        let mesh = cylinders(radius * res, angle, gap * res, &coarse);
+        assert!(matches!(mesh.check(&coarse), Err(CheckError::Hull(..))));
+        let (result, work) = repair_counting(mesh, &coarse);
+        let repaired = result.unwrap();
+        assert_eq!(repaired.check(&coarse), Ok(()), "{radius}");
+        assert_eq!(repaired.check_faces(&coarse), Ok(()), "{radius}");
+        assert!(work < 100_000, "{radius}: {work}");
+    }
+}
+
+#[test]
+fn pieces_too_small_to_split_fail_with_what_asked_for_it() {
+    // A flat piece 0 and a curved piece 1 sharing an edge, 1 folded back
+    // over 0, which the edge rule refuses; neither is degenerate, and
+    // they aren't both flat, so both are to be split. Under `MIN_SPLIT`
+    // resolutions the flat one can't be.
+    let res = TOL.resolution();
+    let faces = [face(0, Surface::Free)];
+    let pair = |size: f64, shift: DVec3, ids: [u32; 4]| {
+        let [a, b, c, d] = [DVec3::ZERO, DVec3::X, DVec3::Y, DVec3::new(0.25, 0.25, 0.0)]
+            .map(|p| p * size + shift);
+        let mid = |p: DVec3, q: DVec3| (p + q) / 2.0;
+        let flat = Patch::flat([a, b, c]).unwrap();
+        let bent = mid(c, d) + DVec3::Z * 0.3 * size;
+        let curved = Patch::new([c, b, d], [mid(c, b), mid(b, d), bent], [1.0; 3]).unwrap();
+        assert!(hull::flat(&flat, res) && !hull::flat(&curved, res));
+        let piece = |corners, patch, i: u32| Piece {
+            corners,
+            patch,
+            face: 0,
+            leaf: ids[i as usize],
+            origin: ids[i as usize],
+            changed: true,
+        };
+        [
+            piece([ids[0], ids[1], ids[2]], flat, 0),
+            piece([ids[2], ids[1], ids[3]], curved, 1),
+        ]
+    };
+    let run = |pieces: &[Piece]| {
+        let mut work = Work::new(&Budget::DEFAULT);
+        failures(
+            pieces,
+            |t| &pieces[t as usize].patch,
+            &faces,
+            &TOL,
+            &mut work,
+        )
+    };
+    assert_eq!(
+        run(&pair(100.0 * res, DVec3::ZERO, [0, 1, 2, 3])),
+        Ok(vec![0, 1])
+    );
+    let small = pair(32.0 * res, DVec3::ZERO, [0, 1, 2, 3]);
+    let refused = Err(KernelError::Invalid(CheckError::EdgeNeighbours(0, 1)));
+    assert_eq!(run(&small), refused);
+    // A failure no split mends, checked first, still names the error: two
+    // flat triangles half a resolution apart.
+    let far = DVec3::X * 1.0;
+    let gap = DVec3::Z * 0.5 * res;
+    let lower = Patch::flat([far, far + DVec3::X, far + DVec3::Y]).unwrap();
+    let upper = Patch::flat([far + gap, far + gap + DVec3::Y, far + gap + DVec3::X]).unwrap();
+    let mut pieces = small.to_vec();
+    for (i, (patch, corners)) in [(lower, [4, 5, 6]), (upper, [7, 8, 9])]
+        .into_iter()
+        .enumerate()
+    {
+        pieces.push(Piece {
+            corners,
+            patch,
+            face: 0,
+            leaf: 2 + i as u32,
+            origin: 2 + i as u32,
+            changed: true,
+        });
+    }
+    assert_eq!(
+        run(&pieces),
+        Err(KernelError::Invalid(CheckError::Hull(2, 3)))
+    );
+}
+
+#[test]
+fn only_curved_pieces_are_split_below_min_split() {
+    let res = TOL.resolution();
+    let flat = |size: f64| Patch::flat([DVec3::ZERO, DVec3::X * size, DVec3::Y * size]).unwrap();
+    let curved = |size: f64| {
+        let [a, b, c] = [DVec3::ZERO, DVec3::X * size, DVec3::Y * size];
+        let bent = (a + c) / 2.0 + DVec3::Z * 0.3 * size;
+        Patch::new([a, b, c], [(a + b) / 2.0, (b + c) / 2.0, bent], [1.0; 3]).unwrap()
+    };
+    assert!(splittable(&flat(MIN_SPLIT * 1.01 * res), res));
+    assert!(!splittable(&flat(MIN_SPLIT * 0.99 * res), res));
+    assert!(splittable(&curved(MIN_SPLIT * 0.5 * res), res));
+    assert!(splittable(&curved(MIN_CURVED_SPLIT * 1.01 * res), res));
+    assert!(!splittable(&curved(MIN_CURVED_SPLIT * 0.99 * res), res));
 }
 
 #[test]

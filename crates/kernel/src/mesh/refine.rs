@@ -212,6 +212,11 @@ impl<'a> Refiner<'a> {
         self.leaves[t as usize].as_ref().expect("a leaf")
     }
 
+    /// The patch of leaf `t`, which must exist.
+    pub(crate) fn leaf_patch(&self, t: u32) -> &Patch {
+        &self.leaf(t).patch
+    }
+
     /// The edges `(i, midpoint)` of a leaf with `corners` that have a
     /// hanging vertex.
     fn hanging(&self, corners: [u32; 3]) -> impl Iterator<Item = (usize, u32)> + '_ {

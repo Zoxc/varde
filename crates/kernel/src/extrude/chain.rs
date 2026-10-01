@@ -172,9 +172,12 @@ impl Chain {
     }
 
     /// Whether `seg`'s control points span less than [`MIN_SPLIT`]
-    /// resolutions, as repair splits no smaller piece: pieces a few
+    /// resolutions, the smallest flat piece repair splits: pieces a few
     /// resolutions long can't keep the margin from their own neighbours,
-    /// so halving them only makes more that fail.
+    /// so halving them only makes more that fail. (Repair goes on to
+    /// split curved pieces, whose sag shrinks; a profile segment's halves
+    /// come within the margin of each other's neighbours whatever their
+    /// curvature, and a refused halving is `TooFine`.)
     pub fn too_small(&self, seg: &Seg) -> bool {
         let b = Bounds3::around(&seg.hull()).expect("three points");
         (b.max - b.min).max_element() < MIN_SPLIT * self.margin

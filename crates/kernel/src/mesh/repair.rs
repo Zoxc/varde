@@ -12,9 +12,11 @@
 //! [`KernelError::Invalid`] at once where no split can mend it (a
 //! degenerate corner, flat pieces breaking a hull rule, or points of two
 //! pieces that share no vertex found within the resolution: see
-//! [`witness_limit`]), and otherwise with [`KernelError::TooComplex`] at
-//! [`MAX_REFINE_DEPTH`](crate::MAX_REFINE_DEPTH), at pieces too small to
-//! split ([`MIN_SPLIT`] resolutions) or out of budget. Repair never gives
+//! [`witness_limit`]), with `Invalid` too once a piece to split is too
+//! small to ([`MIN_SPLIT`] resolutions across if flat, else
+//! [`MIN_CURVED_SPLIT`]), and otherwise with [`KernelError::TooComplex`]
+//! at [`MAX_REFINE_DEPTH`](crate::MAX_REFINE_DEPTH), past
+//! [`MAX_PATCHES`] or out of budget. Repair never gives
 //! a mesh that fails the embedding part of [`Mesh::check`]. It doesn't
 //! check face tags, with one exception: an input patch it splits on a
 //! [`Surface::Plane`] face, whose pieces get
@@ -29,17 +31,34 @@ use super::refine::{Piece, Refiner};
 use super::{Bvh, CheckError, Face, LookupMap, Mesh, Surface};
 use crate::budget::{Budget, Work};
 use crate::par::par_map;
+use crate::patch::Patch;
 use crate::{KernelError, MAX_PATCHES, Tolerance};
 use witness::{ROUNDING, surfaces_within};
 
-/// The smallest piece repair splits, in resolutions across (along the
-/// longest axis of its control points' box). Pieces a few resolutions
-/// across can't keep the hull rules' margin from their own neighbours, so
-/// splitting them further only makes more that fail. Pieces of a surface
-/// that keeps clear of itself pass long before this: a patch of size `s`
-/// on a curve of radius `R` sags by about `s²/8R`.
-/// An extrude's profile segments are halved no smaller either.
+/// The smallest flat piece repair splits, in resolutions across (along
+/// the longest axis of its leaf's control points' box; flat as [`flat`]
+/// within the resolution). Pieces a few resolutions across can't keep the
+/// hull rules' margin from their own neighbours, so splitting them
+/// further only makes more that fail; a flat piece's failure, which
+/// splitting hasn't mended by this size, doesn't shrink with it. Pieces
+/// of a surface that keeps clear of itself pass long before this: a patch
+/// of size `s` on a curve of radius `R` sags by about `s²/8R`. A piece
+/// that must be split and can't fails the repair with
+/// [`KernelError::Invalid`] of the failure that asked for the split:
+/// splitting can't mend it at this tolerance, though a finer one, with
+/// pieces larger in resolutions, may.
+/// An extrude's profile segments are halved no smaller either, for its
+/// own reasons.
 pub(crate) const MIN_SPLIT: f64 = 64.0;
+
+/// The smallest piece that isn't flat repair splits, in resolutions
+/// across, as for [`MIN_SPLIT`]. Only such pieces are split below
+/// `MIN_SPLIT`, since only their sag shrinks when split: a piece of size
+/// `s` on radius `R` is flat once `s` is under about `√(8R)` resolutions,
+/// so on surfaces of radius under about 500 resolutions curved pieces
+/// reach `MIN_SPLIT` still curved, and small round surfaces near each
+/// other (within a few resolutions) need pieces that small to pass.
+pub(crate) const MIN_CURVED_SPLIT: f64 = 8.0;
 
 /// How flat, in margins, a failing pair of non-neighbours must both be for
 /// repair to stop splitting them (each control point of an edge within
@@ -96,11 +115,21 @@ impl Mesh {
                 changed: true,
             })
             .collect();
-        let mut failing = failures(&pieces, &self.faces, tol, work)?;
+        // The input's leaves are its patches, the pieces.
+        let mut failing = failures(
+            &pieces,
+            |t| &pieces[t as usize].patch,
+            &self.faces,
+            tol,
+            work,
+        )?;
         if failing.is_empty() {
             return Ok(self);
         }
-        let mut refiner = Refiner::new(&self, tol.resolution(), MIN_SPLIT * tol.resolution());
+        // Leaves too small to split are caught by `failures` first: the
+        // refiner's own floor stops only those its rules take with them.
+        let res = tol.resolution();
+        let mut refiner = Refiner::new(&self, res, MIN_CURVED_SPLIT * res);
         let pieces = loop {
             refiner.split(&failing, work)?;
             let pieces = refiner.pieces()?;
@@ -109,7 +138,7 @@ impl Mesh {
             }
             work.spend(pieces.len())?;
             refiner.settle();
-            failing = failures(&pieces, &self.faces, tol, work)?;
+            failing = failures(&pieces, |t| refiner.leaf_patch(t), &self.faces, tol, work)?;
             if failing.is_empty() {
                 break pieces;
             }
@@ -132,8 +161,15 @@ impl Mesh {
 /// failing pair of non-neighbours whose surfaces are found within the
 /// margin ([`witness_limit`]). Of the pairs, the first such in pair order
 /// names the error.
-fn failures(
+///
+/// After those, a leaf to split that is too small to ([`splittable`]: the
+/// patch of leaf `t` is `leaf(t)`) fails the repair with the failure that
+/// asked for its split, the fold check's or the pair's, of the first such
+/// leaf by id (and the first failure asking for it, folds then pairs in
+/// order).
+fn failures<'p>(
     pieces: &[Piece],
+    leaf: impl Fn(u32) -> &'p Patch,
     faces: &[Face],
     tol: &Tolerance,
     work: &mut Work,
@@ -151,12 +187,13 @@ fn failures(
             None => Fold::Split,
         }
     });
-    let mut leaves = Vec::new();
+    // Each with what asked for it.
+    let mut leaves: Vec<(u32, Asked)> = Vec::new();
     for (&p, fold) in changed.iter().zip(folds) {
         let piece = &pieces[p as usize];
         match fold {
             Fold::Passes => {}
-            Fold::Split => leaves.push(piece.leaf),
+            Fold::Split => leaves.push((piece.leaf, Asked::Fold(piece.origin))),
             Fold::Never => return Err(KernelError::Invalid(CheckError::Fold(piece.origin))),
         }
     }
@@ -214,13 +251,45 @@ fn failures(
         let split = tested.map_err(KernelError::Invalid)?;
         for (piece, split) in [p, q].into_iter().zip(split.pieces) {
             if split {
-                leaves.push(pieces[piece as usize].leaf);
+                leaves.push((pieces[piece as usize].leaf, Asked::Pair(i)));
             }
         }
     }
-    leaves.sort_unstable();
-    leaves.dedup();
-    Ok(leaves)
+    // Stable, so each leaf keeps the first failure that asked for it.
+    leaves.sort_by_key(|&(t, _)| t);
+    leaves.dedup_by_key(|&mut (t, _)| t);
+    if let Some(&(_, asked)) = leaves.iter().find(|&&(t, _)| !splittable(leaf(t), margin)) {
+        let error = match asked {
+            Asked::Fold(origin) => CheckError::Fold(origin),
+            Asked::Pair(i) => {
+                let [a, b] = pairs[i].map(|x| &pieces[x as usize]);
+                let ids = [a.origin, b.origin];
+                check_pair(ids, [&a.patch, &b.patch], [a.corners, b.corners], margin)
+                    .expect_err("the pair failed")
+            }
+        };
+        return Err(KernelError::Invalid(error));
+    }
+    Ok(leaves.into_iter().map(|(t, _)| t).collect())
+}
+
+/// Whether repair may split a leaf with `patch`: whether it is at least
+/// [`MIN_SPLIT`] resolutions (`margin`) across along some axis of its
+/// control points' box, or [`MIN_CURVED_SPLIT`] if it isn't [`flat`]
+/// within the resolution. The box is the one the refiner measures.
+fn splittable(patch: &Patch, margin: f64) -> bool {
+    let bounds = patch.bounds();
+    let size = (bounds.max - bounds.min).max_element();
+    size >= MIN_SPLIT * margin || (size >= MIN_CURVED_SPLIT * margin && !flat(patch, margin))
+}
+
+/// The failure that asked for a leaf's split.
+#[derive(Debug, Clone, Copy)]
+enum Asked {
+    /// The fold check, on a piece from this input triangle.
+    Fold(u32),
+    /// The hull rules, on the pair of this index.
+    Pair(usize),
 }
 
 /// The first of `pairs` (by index), with what [`failures`] made of them,
