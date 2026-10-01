@@ -1640,14 +1640,22 @@ its sides, and those above counted.
 `Flat`'s exact position on the corners' plane. Otherwise solved for
 (`solve::edge_patch`: edge and triangle split together, pieces dropped by
 their boxes, by a slab along the patch piece's normal, which a
-tangency needs, and where their control points' hulls are more than
-`1e-12` apart (`hull::apart`, GJK, in the search's frame scaled to the
-unit box; the edge's and the patch's pieces lie in their control
-points' hulls, the weights being positive), which a tall or long patch
-needs: a cap edge's box held the whole width of a drill's wall 1 000
-tall and 4 wide, so only the height pruned pieces, and the row of
-pieces at the edge's height was split across the width until the
-search ran out of pieces, more than 1 024 against 23 to 33 now; Newton on `E(t) = P(u)`; once it finds a crossing in a
+tangency needs, and where their control points' hulls are apart
+(`hull::apart`, GJK, in the search's frame scaled to the unit box; the
+edge's and the patch's pieces lie in their control points' hulls, the
+weights being positive), which a tall or long patch needs: a cap edge's
+box held the whole width of a drill's wall 1 000 tall and 4 wide, so
+only the height pruned pieces, and the row of pieces at the edge's
+height was split across the width until the search ran out of pieces,
+more than 1 024 against 23 to 33 now. "Apart" is by more than `1e-12`
+(far above the rounding of the blossomed control points) plus
+`2048 · PIECE_SLACK` (about `2e-6`) of the two pieces' sizes: Newton's
+solutions count for a piece up to `PIECE_SLACK` outside it in its own
+parameters, and one just past the patch's side or the edge's end (a
+hit the count may want, see below) lies that far outside the hulls at
+the weights' bounds; with `1e-12` alone, a crossing a twentieth of a
+nanometre past a cylinder patch's side was found without the hulls and
+lost with them. Newton on `E(t) = P(u)`; once it finds a crossing in a
 piece, the rest of the edge's piece either side of it, less a thousandth
 of it round the crossing, is searched again: an edge running through a
 wall a little inside its rim, in and out within one small piece, lost
@@ -2561,7 +2569,9 @@ where its cap's diagonal crosses the drill, 300 and 1 000 tall, each to
 `a_tall_plate_is_drilled_through_all` the same through the example
 document), and a cap edge across a drill 1 010 tall crossing it twice,
 each search looking at no more than 100 pieces, at the closed-form
-parameters to `1e-12`. Unit tests:
+parameters to `1e-12`, and a crossing `5e-11` past a cylinder patch's
+side (off the axes, so the boxes don't part the pieces) found with the
+hulls as without them. Unit tests:
 exact ellipse arcs of a tilted plane through a cylinder, crossings
 solved exactly on a plane and a cylinder, crossings only placed going to
 their root on a tilted cylinder's patch from `1e-3` and `0.05` off (a
@@ -3718,9 +3728,12 @@ parameter, or a split outside the patch bounds),
   volume can be off by more than their own, `5e-6` on a `3e-7` sliver,
   with every point within `1e-4` of the true surface.
 - **Crossing searches drop pieces whose control hulls are apart**
-  (`hull::apart`, margin `1e-12` in the search's unit frame), as the
-  plan for tall walls has it, and the charge went from 4 pieces a unit
-  to 2 (a piece measured twice as dear where every piece's hulls
+  (`hull::apart`), as the plan for tall walls has it, by more than
+  `1e-12` in the search's unit frame, as planned, plus `2048 ·
+  PIECE_SLACK` of the pieces' sizes, which the plan didn't have (so a
+  solution Newton would count just past the patch's side or the edge's
+  end is never dropped; see "Crossings"), and the charge went from 4
+  pieces a unit to 2 (a piece measured twice as dear where every piece's hulls
   touch; single thread, release: random edges and patches 0.3 → 1.0 µs
   a piece but 5 times fewer pieces, 0.2 s → 0.13 s for 20 000
   searches; a cap edge across a drill 1 010 tall 1 047 → under 100

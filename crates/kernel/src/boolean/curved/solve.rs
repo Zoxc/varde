@@ -52,6 +52,26 @@ const RESIDUAL: f64 = 1e-9;
 /// solution Newton finds may be and still count as the piece's.
 const PIECE_SLACK: f64 = 1e-9;
 
+/// How far apart, for each unit of the two pieces' sizes (their boxes'
+/// longest sides), an edge's piece's control hull and a patch's piece's
+/// must be, beyond `1e-12` (thousands of times the rounding of their
+/// blossomed control points in the search's unit frame), for a crossing
+/// search to drop the two: so it drops none that holds a solution
+/// Newton's method would count as the pieces', up to [`PIECE_SLACK`]
+/// outside them in their own parameters, as one just past the patch's
+/// side or the edge's end is. A point of a piece `ε` outside it is the
+/// piece's control points weighted by Bernstein terms of which those of
+/// the edge control points are negative, about `-2ε` times their
+/// homogeneous weights in all, over the piece's weight function there;
+/// so it is within `2ε·ρ` of the piece's diameter (at most `√3` times
+/// its box's side) from the hull, `ρ` those weights over the weight
+/// function: in the standard form with weights within
+/// [`W_MIN`](crate::patch::W_MIN)`..=`[`W_MAX`](crate::patch::W_MAX),
+/// at most `64` over `1/2` along an edge and over `1/3` in a patch,
+/// twice that at a patch's corner, outside two sides. That is under
+/// `1 400·ε` of the patch's piece's size and `450·ε` of the edge's.
+const HULL_SLACK: f64 = 2048.0 * PIECE_SLACK;
+
 /// Once Newton's method finds a crossing in a piece, the rest of the
 /// edge's piece either side of it is searched again, but for this share
 /// of it round the crossing: another crossing that near is a tangency
@@ -487,17 +507,17 @@ impl CrossSearch<'_> {
         if near < (self.closest.0, self.closest.1) {
             self.closest = (near.0, near.1, mid);
         }
+        let size = |b: &Bounds3| (b.max - b.min).max_element();
+        let (se, sp) = (size(&edge_box), size(&patch_box));
         // The hulls: a tall or long patch's pieces all lie in a fat
         // edge's box across the patch's width, and splitting them on (in
         // both directions) ran the search out of pieces.
         if gap > 1e-12
             || slab_apart(&edge_points, &points)
-            || (self.hulls && apart(&edge_points, &points, 1e-12))
+            || (self.hulls && apart(&edge_points, &points, 1e-12 + HULL_SLACK * (se + sp)))
         {
             return;
         }
-        let size = |b: &Bounds3| (b.max - b.min).max_element();
-        let (se, sp) = (size(&edge_box), size(&patch_box));
         let deep = depth >= MAX_CROSS_DEPTH;
         if deep || (depth >= 4 && se.max(sp) <= 1.0 / 16.0) {
             let start = (mid, (d[0] + d[1] + d[2]) / 3.0);

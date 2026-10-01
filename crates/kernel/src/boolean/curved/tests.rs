@@ -436,6 +436,55 @@ fn an_edge_across_a_tall_wall_is_found_cheaply() {
 }
 
 #[test]
+fn a_crossing_just_past_a_patch_side_is_found_with_the_hulls() {
+    // A radial edge through a cylinder's wall a hair past a patch's
+    // straight side, the wall turned off the axes so the boxes don't
+    // part them: Newton's method counts the crossing (just outside the
+    // patch) as the piece's, and the search keeps it with the hulls
+    // tested as without them, as the count may want it there.
+    let tol = crate::Tolerance::DEFAULT;
+    let cyl = crate::Solid::cylinder(DVec3::ZERO, 3.0, 10.0, 1, &tol).unwrap();
+    let mesh = cyl.mesh();
+    let (sin, cos) = crate::trig::sin_cos(0.5);
+    let turn = |p: DVec3| DVec3::new(cos * p.x - sin * p.y, sin * p.x + cos * p.y, p.z);
+    let mut seen = 0;
+    for t in 0..mesh.tris().len() {
+        let patch = mesh.patch(t);
+        let patch = Patch {
+            p: patch.p.map(turn),
+            c: patch.c.map(turn),
+            w: patch.w,
+        };
+        // A side straight up the wall, and the corner off it.
+        let Some(i) = (0..3).find(|&i| {
+            let (p, q) = (patch.p[i], patch.p[(i + 1) % 3]);
+            p.truncate() == q.truncate() && p.z != q.z
+        }) else {
+            continue;
+        };
+        let (side, other) = (patch.p[i], patch.p[(i + 2) % 3]);
+        // A twentieth of a nanometre past the side, round the axis.
+        let away = DVec3::Z.cross(side).dot(other - side).signum();
+        let angle = crate::trig::atan2(side.y, side.x) - away * 5e-11 / 3.0;
+        let (sin, cos) = crate::trig::sin_cos(angle);
+        let at = DVec3::new(3.0 * cos, 3.0 * sin, 5.0);
+        // Through it at 0.37, not on a split of the edge's range (where
+        // the boxes would part the pieces either side).
+        let (a, b) = (0.5 * at, (0.5 + 0.5 / 0.37) * at);
+        let edge = segment(DVec3::new(a.x, a.y, 5.0), DVec3::new(b.x, b.y, 5.0));
+        for hulls in [false, true] {
+            let (found, _, _) = super::solve::edge_patch_with(&edge, &patch, hulls);
+            assert_eq!(found.len(), 1, "patch {t}, hulls {hulls}: {found:?}");
+            let h = &found[0];
+            assert!(h.out > 0.0 && h.out < 1e-9, "patch {t}: {h:?}");
+            assert!((h.t - 0.37).abs() < 1e-9, "patch {t}: {h:?}");
+        }
+        seen += 1;
+    }
+    assert!(seen >= 4, "{seen}");
+}
+
+#[test]
 fn an_edge_grazing_a_cylinder_is_found_twice() {
     // A plate's cap edge running through a boss's rim a little inside it,
     // on the wall's bottom side: it passes in and out of the wall 0.068
