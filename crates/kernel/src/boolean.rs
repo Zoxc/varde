@@ -56,7 +56,7 @@ use std::cmp::Ordering;
 use glam::DVec3;
 
 use crate::budget::{Budget, Work};
-use crate::mesh::{BuildError, Face, Mesh, MeshBuilder};
+use crate::mesh::{BuildError, Face, FaceKey, Mesh, MeshBuilder};
 use crate::{KernelError, Solid, Tolerance};
 
 mod assemble;
@@ -272,7 +272,49 @@ fn unchecked(
         tol,
         work,
     )?;
-    build(soup, faces)
+    let aliases = aliases(a.mesh(), b.mesh(), &faces, &soup, work)?;
+    build(soup, faces, &aliases)
+}
+
+/// The aliases of each source face of the soup (an operand's face, `A`'s
+/// then `B`'s): the operand's own, and the keys of the faces merged into
+/// it ([`cleanup::Soup::absorb`]) with their aliases, through any chain
+/// of merges. Each pass over the merges is charged a unit a merge.
+fn aliases(
+    a: &Mesh,
+    b: &Mesh,
+    faces: &[Face],
+    soup: &cleanup::Soup,
+    work: &mut Work,
+) -> Result<Vec<Vec<FaceKey>>, KernelError> {
+    let na = a.faces().len() as u32;
+    let mut sets: Vec<Vec<FaceKey>> = (0..na)
+        .map(|f| a.face_aliases(f).collect())
+        .chain((0..b.faces().len() as u32).map(|f| b.face_aliases(f).collect()))
+        .collect();
+    let mut merges = soup.absorbed.clone();
+    merges.sort_unstable();
+    merges.dedup();
+    // Until nothing changes: at most a pass a merge, as each pass that
+    // changes something takes one more step along the chains.
+    for _ in 0..=merges.len() {
+        work.spend(merges.len())?;
+        let mut changed = false;
+        for &(from, into) in &merges {
+            let mut add: Vec<FaceKey> = sets[from as usize].clone();
+            add.push(faces[from as usize].name.key());
+            let set = &mut sets[into as usize];
+            let before = set.len();
+            set.extend(add);
+            set.sort_unstable();
+            set.dedup();
+            changed |= set.len() != before;
+        }
+        if !changed {
+            break;
+        }
+    }
+    Ok(sets)
 }
 
 /// Flat operands' pieces, decided with near ties within `tie` taken as
@@ -369,9 +411,13 @@ pub fn touches(
 
 /// The mesh of the cleaned triangles: the vertices and faces no triangle
 /// uses dropped (so chained booleans don't pile up faces long gone), the
-/// rest numbered in order, halfedges paired by vertex id. No triangles
-/// give the empty mesh.
-fn build(soup: cleanup::Soup, faces: Vec<Face>) -> Result<Mesh, KernelError> {
+/// rest numbered in order, each with the `aliases` of its source,
+/// halfedges paired by vertex id. No triangles give the empty mesh.
+fn build(
+    soup: cleanup::Soup,
+    faces: Vec<Face>,
+    aliases: &[Vec<FaceKey>],
+) -> Result<Mesh, KernelError> {
     if soup.tris.is_empty() {
         return Ok(Mesh::default());
     }
@@ -392,7 +438,17 @@ fn build(soup: cleanup::Soup, faces: Vec<Face>) -> Result<Mesh, KernelError> {
     let face_id: Vec<u32> = used_faces
         .iter()
         .zip(faces)
-        .map(|(&used, f)| if used { builder.face(f) } else { u32::MAX })
+        .zip(&soup.sources)
+        .map(|((&used, f), &source)| {
+            if !used {
+                return u32::MAX;
+            }
+            let id = builder.face(f);
+            for &key in &aliases[source as usize] {
+                builder.alias(id, key);
+            }
+            id
+        })
         .collect();
     for (tri, face) in soup.tris.iter().zip(soup.faces) {
         builder.tri(tri.map(|v| id[v as usize]), face_id[face as usize]);

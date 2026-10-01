@@ -70,6 +70,23 @@ pub(super) struct Soup {
     /// Each face's source: itself, or for a copy claiming no surface the
     /// face it copies (the two are one face of the result, not a cut).
     pub(super) sources: Vec<u32>,
+    /// Faces merged into others, as pairs of sources (merged, merged
+    /// into), in the order they merged: see [`Soup::absorb`].
+    pub(super) absorbed: Vec<(u32, u32)>,
+}
+
+impl Soup {
+    /// Records that triangles of face `from` went onto face `into`, both
+    /// on one surface, as the two faces are one there: the key of
+    /// `from`'s name, and its aliases, become aliases of `into`'s source,
+    /// so references to it still find it (see
+    /// [`Mesh::aliases`](crate::mesh::Mesh::aliases)).
+    pub(super) fn absorb(&mut self, from: u32, into: u32) {
+        let (from, into) = (self.sources[from as usize], self.sources[into as usize]);
+        if from != into {
+            self.absorbed.push((from, into));
+        }
+    }
 }
 
 struct Cleaner<'a> {
@@ -862,7 +879,9 @@ impl Cleaner<'_> {
             }
             // `s` is on `t`'s face after this, or on one of the same plane.
             self.rejoin(t, s);
-            let face = self.soup.faces[t as usize].min(self.soup.faces[s as usize]);
+            let (ft, fs) = (self.soup.faces[t as usize], self.soup.faces[s as usize]);
+            let face = ft.min(fs);
+            self.soup.absorb(ft.max(fs), face);
             self.swap(t, s, [u, v], a, b);
             self.soup.faces[t as usize] = face;
             self.soup.faces[s as usize] = face;

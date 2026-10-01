@@ -25,10 +25,7 @@ fn polytope(verts: &[DVec3], tris: &[[u32; 3]]) -> Solid {
         let [p, q, r] = [a, b, c].map(|v| verts[v as usize]);
         let n = (q - p).cross(r - p);
         let f = builder.face(Face {
-            name: FaceName {
-                feature: 2,
-                part: FacePart::Split(i as u32),
-            },
+            name: FaceName::new(2, FacePart::Split(i as u32)),
             surface: Surface::Plane { n, d: n.dot(p) },
         });
         builder.tri([a, b, c], f);

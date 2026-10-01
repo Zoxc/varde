@@ -8,14 +8,15 @@
 //! from its boundary, and strips of triangles join that grid to the
 //! points of its three edges. Normals are the patches' own, shared across
 //! an edge where the two sides agree within [`Display::SMOOTH_DEGREES`]
-//! and split where they don't; face boundaries and splits are the feature
-//! edges drawn with the mesh.
+//! and split where they don't; splits and the boundaries between faces of
+//! different keys ([`FaceName::key`](crate::mesh::FaceName::key)) are the
+//! feature edges drawn with the mesh.
 //!
 //! The rules and reasons are written down in `agents/kernel.md`.
 
 use glam::{DVec3, Vec3};
 
-use crate::mesh::{FaceName, FacePart, Mesh};
+use crate::mesh::Mesh;
 use crate::par::par_map;
 use crate::patch::{Bounds3, Conic3, Patch};
 use crate::{MeshError, RenderMesh, Tolerance};
@@ -178,8 +179,12 @@ pub(crate) fn tessellate_within(
         .map(|&e| {
             let a = first[e as usize];
             let b = mesh.halfedge(a).pair;
-            let face = |h: u32| mesh.faces()[mesh.tris()[h as usize / 3].face as usize].name;
-            !smooth[e as usize] || face_key(face(a)) != face_key(face(b))
+            let key = |h: u32| {
+                mesh.faces()[mesh.tris()[h as usize / 3].face as usize]
+                    .name
+                    .key()
+            };
+            !smooth[e as usize] || key(a) != key(b)
         })
         .collect();
     let feature_segments: u64 = edge_ids
@@ -383,19 +388,6 @@ fn curve(mesh: &Mesh, h: u32) -> Conic3 {
         c: edge.ctrl,
         w: edge.weight,
         p1: mesh.verts()[mesh.end(h) as usize],
-    }
-}
-
-/// What a face's name says about drawing its boundary: the walls of one
-/// profile curve's segments are one surface, so the edges between them
-/// aren't drawn unless the normals split there.
-fn face_key(name: FaceName) -> FaceName {
-    match name.part {
-        FacePart::Side { curve, .. } => FaceName {
-            part: FacePart::Side { curve, segment: 0 },
-            ..name
-        },
-        _ => name,
     }
 }
 

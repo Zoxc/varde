@@ -42,6 +42,7 @@ mod tessellate;
 #[cfg(test)]
 mod test_rng;
 mod tolerance;
+pub mod topology;
 pub mod trig;
 
 pub use aabb::Aabb;
@@ -55,6 +56,7 @@ pub use render_mesh::{MeshError, MeshPart, RenderMesh};
 pub use solid::Solid;
 pub use tessellate::Display;
 pub use tolerance::Tolerance;
+pub use topology::Topology;
 
 /// The largest coordinate or size, in model units, a design may have: its
 /// sketches' coordinates and lengths, and so the solids built from them. A

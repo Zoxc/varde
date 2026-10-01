@@ -6,13 +6,14 @@
 //! curve by construction), triangles of three halfedges, and the
 //! [`Face`]s the triangles belong to. Each triangle is a [`Patch`] whose
 //! corners are its halfedges' start vertices and whose edges are their
-//! `Edge` records.
+//! `Edge` records. Beside the faces, each face's aliases: the keys of
+//! faces merged into it ([`Mesh::aliases`]).
 //!
 //! [`Mesh::check`] is where a mesh becomes trusted. It covers:
 //!
 //! 1. Topology: every halfedge has a pair running the other way, directed
 //!    edges are unique, and every vertex has one fan: a closed, oriented
-//!    2-manifold.
+//!    2-manifold; aliases name faces that exist.
 //! 2. Shared edges: a halfedge and its pair name the same `Edge`, each
 //!    `Edge` is used by exactly one pair, and coordinates and weights are
 //!    within the patch bounds.
@@ -53,7 +54,7 @@ pub use build::{BuildError, MeshBuilder};
 pub use bvh::Bvh;
 pub use check::CheckError;
 pub(crate) use check::{off_surface, samples};
-pub use face::{Face, FaceName, FacePart, Quadric, Surface};
+pub use face::{Face, FaceKey, FaceName, FacePart, PartKey, Quadric, Surface};
 pub(crate) use hull::{apart, flat, straight};
 pub(crate) use refine::{Node, Refiner};
 pub(crate) use repair::MIN_SPLIT;
@@ -75,6 +76,9 @@ pub struct Mesh {
     edges: Vec<Edge>,
     tris: Vec<Tri>,
     faces: Vec<Face>,
+    /// Each face's aliases, by face: sorted, without repeats, none a key
+    /// of the face's own name.
+    aliases: Vec<(u32, FaceKey)>,
 }
 
 /// The middle of an edge curve: its control point and weight, shared by
@@ -139,7 +143,24 @@ impl Mesh {
             edges,
             tris,
             faces,
+            aliases: Vec::new(),
         }
+    }
+
+    /// The mesh with `aliases` as its faces' aliases (see
+    /// [`Mesh::aliases`]): sorted, repeats and a face's own key dropped.
+    /// [`Mesh::check`] refuses one naming a face that doesn't exist.
+    pub fn with_aliases(mut self, mut aliases: Vec<(u32, FaceKey)>) -> Self {
+        let faces = &self.faces;
+        aliases.retain(|&(f, key)| {
+            faces
+                .get(f as usize)
+                .is_none_or(|face| face.name.key() != key)
+        });
+        aliases.sort_unstable();
+        aliases.dedup();
+        self.aliases = aliases;
+        self
     }
 
     pub fn verts(&self) -> &[DVec3] {
@@ -156,6 +177,24 @@ impl Mesh {
 
     pub fn faces(&self) -> &[Face] {
         &self.faces
+    }
+
+    /// The keys of faces merged into each face (by face index, sorted):
+    /// a key absorbed when two faces on one surface became one still
+    /// names the face that took it in, so a reference to it resolves
+    /// there ([`Topology`](crate::topology::Topology)). Operations carry
+    /// them as they carry names.
+    pub fn aliases(&self) -> &[(u32, FaceKey)] {
+        &self.aliases
+    }
+
+    /// The aliases of face `face`: see [`Mesh::aliases`].
+    pub fn face_aliases(&self, face: u32) -> impl Iterator<Item = FaceKey> + '_ {
+        let from = self.aliases.partition_point(|&(f, _)| f < face);
+        self.aliases[from..]
+            .iter()
+            .take_while(move |&&(f, _)| f == face)
+            .map(|&(_, key)| key)
     }
 
     /// Whether the mesh has no triangles: the empty solid.

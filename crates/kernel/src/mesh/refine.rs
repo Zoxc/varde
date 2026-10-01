@@ -43,7 +43,7 @@
 use glam::DVec3;
 
 use super::check::on_surface;
-use super::{CheckError, Edge, Face, LookupMap, Mesh, MeshBuilder, Surface};
+use super::{CheckError, Edge, Face, FaceKey, LookupMap, Mesh, MeshBuilder, Surface};
 use crate::budget::Work;
 use crate::patch::{Conic3, Patch};
 use crate::{KernelError, MAX_PATCHES, MAX_REFINE_DEPTH};
@@ -98,6 +98,8 @@ pub(crate) struct Piece {
 #[derive(Debug)]
 pub(crate) struct Refiner<'a> {
     faces: &'a [Face],
+    /// The input's aliases, which its faces keep.
+    aliases: &'a [(u32, FaceKey)],
     /// The resolution input patches on a [`Surface::Plane`] face are
     /// tested against before they are split as planar.
     resolution: f64,
@@ -133,6 +135,7 @@ impl<'a> Refiner<'a> {
     pub(crate) fn new(mesh: &'a Mesh, resolution: f64, min_size: f64) -> Self {
         let mut refiner = Refiner {
             faces: &mesh.faces,
+            aliases: &mesh.aliases,
             resolution,
             min_size,
             max_leaves: MAX_PATCHES,
@@ -443,7 +446,7 @@ impl<'a> Refiner<'a> {
     }
 
     /// The mesh made of `pieces` (from [`Self::pieces`]), with the input's
-    /// faces and every vertex made.
+    /// faces and their aliases, and every vertex made.
     pub(crate) fn mesh(&self, pieces: &[Piece]) -> Mesh {
         let mut builder = MeshBuilder::new();
         for &v in &self.verts {
@@ -451,6 +454,9 @@ impl<'a> Refiner<'a> {
         }
         for &face in self.faces {
             builder.face(face);
+        }
+        for &(face, key) in self.aliases {
+            builder.alias(face, key);
         }
         for piece in pieces {
             let c = piece.corners;

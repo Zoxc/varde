@@ -18,10 +18,7 @@ pub(crate) const TOL: Tolerance = Tolerance::DEFAULT;
 /// A face named `part` of feature 1 on `surface`.
 pub(crate) fn face(part: u32, surface: Surface) -> Face {
     Face {
-        name: FaceName {
-            feature: 1,
-            part: FacePart::Split(part),
-        },
+        name: FaceName::new(1, FacePart::Split(part)),
         surface,
     }
 }

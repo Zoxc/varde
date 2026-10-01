@@ -1147,6 +1147,7 @@ impl Cutting<'_> {
                 faces,
                 curves,
                 sources,
+                absorbed: Vec::new(),
             },
             out_faces,
         ))

@@ -52,13 +52,13 @@ impl Mesh {
         for k in 0..4 {
             let n = normals[k];
             let face = builder.face(Face {
-                name: FaceName {
+                name: FaceName::new(
                     feature,
-                    part: FacePart::Side {
+                    FacePart::Side {
                         curve: k as u64,
                         segment: 0,
                     },
-                },
+                ),
                 surface: Surface::Plane {
                     n,
                     d: n.dot(rect[k][0]),
@@ -109,13 +109,13 @@ impl Mesh {
             let ctrl = p + q - base;
             let arc = Conic3::new(p, ctrl, FRAC_1_SQRT_2, q)?;
             let face = builder.face(Face {
-                name: FaceName {
+                name: FaceName::new(
                     feature,
-                    part: FacePart::Side {
+                    FacePart::Side {
                         curve: 0,
                         segment: k as u32,
                     },
-                },
+                ),
                 surface: wall,
             });
             let next = (k + 1) % 4;
@@ -132,7 +132,7 @@ impl Mesh {
 /// `z1`, facing `+z`, of `feature`, returning their ids.
 fn caps(builder: &mut MeshBuilder, feature: u64, z0: f64, z1: f64) -> [u32; 2] {
     let cap = |part, n: DVec3, z: f64| Face {
-        name: FaceName { feature, part },
+        name: FaceName::new(feature, part),
         surface: Surface::Plane { n, d: n.z * z },
     };
     [

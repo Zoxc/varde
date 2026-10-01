@@ -185,7 +185,7 @@ fn build(
         builder.vert(p);
     }
     let up = bottom.len() as u32;
-    let name = |part| FaceName { feature, part };
+    let name = |part| FaceName::new(feature, part);
     let start = builder.face(Face {
         name: name(FacePart::StartCap),
         surface: Surface::Plane {

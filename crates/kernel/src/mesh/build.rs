@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use glam::DVec3;
 
-use super::{Edge, Face, Halfedge, LookupMap, Mesh, Tri};
+use super::{Edge, Face, FaceKey, Halfedge, LookupMap, Mesh, Tri};
 use crate::MAX_PATCHES;
 use crate::patch::{Conic3, PatchError, cylinder_strip};
 
@@ -19,6 +19,7 @@ pub struct MeshBuilder {
     faces: Vec<Face>,
     tris: Vec<([u32; 3], u32)>,
     curves: BTreeMap<(u32, u32), Edge>,
+    aliases: Vec<(u32, FaceKey)>,
 }
 
 /// Why [`MeshBuilder::build`] can't pair the triangles up.
@@ -69,6 +70,11 @@ impl MeshBuilder {
     pub fn face(&mut self, face: Face) -> u32 {
         self.faces.push(face);
         (self.faces.len() - 1) as u32
+    }
+
+    /// Gives face `face` the alias `key`: see [`Mesh::aliases`].
+    pub fn alias(&mut self, face: u32, key: FaceKey) {
+        self.aliases.push((face, key));
     }
 
     /// Makes the edge between vertices `a` and `b` (either way round) the
@@ -182,6 +188,6 @@ impl MeshBuilder {
             let &(a, b) = unused.expect("a curve no triangle uses");
             return Err(BuildError::UnusedEdge(a, b));
         }
-        Ok(Mesh::from_parts(self.verts, edges, tris, self.faces))
+        Ok(Mesh::from_parts(self.verts, edges, tris, self.faces).with_aliases(self.aliases))
     }
 }

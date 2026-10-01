@@ -7,6 +7,7 @@ use varde_document::{
     OriginPlane, Plane, Targets,
 };
 use varde_expr::Value;
+use varde_kernel::mesh::FaceKey;
 use varde_kernel::{Frame, Solid, Tolerance};
 use varde_sketch::{Curve, Sketch};
 
@@ -994,6 +995,80 @@ fn faces_are_named_by_the_extrude_and_its_curves() {
         if let varde_kernel::mesh::FacePart::Side { curve, .. } = face.name.part {
             assert!(curves.contains(&curve), "{curve}");
         }
+    }
+}
+
+#[test]
+fn names_resolve_alike_after_dimensions_and_the_tolerance_change() {
+    // The faces, edges and corners of the example plate with a pocket, by
+    // their keys, and each edge resolved by its keys near where it was.
+    let mut editor = Editor::new(Document::example());
+    add_pocket(&mut editor);
+    type Names = (Vec<FaceKey>, Vec<[FaceKey; 2]>, usize);
+    let names = |document: &Document| -> (Names, Solid) {
+        let evaluation = evaluated(document);
+        let solid = only_body(&evaluation).clone();
+        let topology = solid.topology();
+        let key = |r: u32| topology.regions()[r as usize].key;
+        let mut faces: Vec<FaceKey> = topology.regions().iter().map(|r| r.key).collect();
+        faces.sort();
+        let mut edges: Vec<[FaceKey; 2]> = topology
+            .chains()
+            .iter()
+            .map(|c| {
+                let [a, b] = c.regions.map(key);
+                [a.min(b), a.max(b)]
+            })
+            .collect();
+        edges.sort();
+        ((faces, edges, topology.corners().len()), solid)
+    };
+    let (before, solid) = names(editor.document());
+    // The plate's six faces, the hole's wall, the pocket's floor and four
+    // walls (it is cut in from below, inside the plate's outline).
+    assert_eq!(before.0.len(), 12, "{:?}", before.0);
+    let picks: Vec<([FaceKey; 2], glam::DVec3)> = {
+        let topology = solid.topology();
+        topology
+            .chains()
+            .iter()
+            .map(|c| {
+                let h = c.halfedges[0];
+                let keys = c.regions.map(|r| topology.regions()[r as usize].key);
+                let near = solid.mesh().verts()[solid.mesh().halfedge(h).start as usize];
+                (keys, near)
+            })
+            .collect()
+    };
+
+    let feature = editor.document().features()[1].id;
+    let extrude = Extrude {
+        extent: Extent::OneSide(length(editor.document(), "12")),
+        ..example_extrude(editor.document())
+    };
+    editor
+        .apply(Command::SetExtrude {
+            feature,
+            extrude: Box::new(extrude),
+        })
+        .unwrap();
+    let (thicker, _) = names(editor.document());
+    assert_eq!(thicker, before);
+    let coarse = Tolerance::new(Tolerance::MAX_FIT).unwrap();
+    editor.apply(Command::SetTolerance(coarse)).unwrap();
+    let (coarser, solid) = names(editor.document());
+    assert_eq!(coarser, before);
+    // The plate is 2 thicker now: points on its top edges are 2 off.
+    let topology = solid.topology();
+    for (keys, near) in picks {
+        let found = topology.edge(&solid, keys, near).unwrap();
+        let mut found = topology.chains()[found as usize]
+            .regions
+            .map(|r| topology.regions()[r as usize].key);
+        found.sort();
+        let mut keys = keys;
+        keys.sort();
+        assert_eq!(found, keys);
     }
 }
 

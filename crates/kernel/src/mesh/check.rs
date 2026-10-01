@@ -13,7 +13,7 @@ pub enum CheckError {
     /// More than [`MAX_PATCHES`] triangles.
     TooManyPatches(usize),
     /// More vertices than halfedges, a number of edges other than half the
-    /// halfedges, or more than [`MAX_PATCHES`] faces.
+    /// halfedges, or more than [`MAX_PATCHES`] faces or aliases.
     Counts,
     /// Halfedge `h` names a vertex, pair or edge that doesn't exist, or its
     /// triangle a face that doesn't.
@@ -23,6 +23,9 @@ pub enum CheckError {
     Pair(u32),
     /// Halfedge `h` starts and ends at the same vertex.
     Loop(u32),
+    /// Alias `i` of [`Mesh::aliases`] names a face that doesn't exist or
+    /// the face's own key, or isn't after the one before it.
+    Alias(u32),
     /// Halfedge `h` runs between the same vertices, the same way, as
     /// another.
     DirectedEdge(u32),
@@ -66,6 +69,7 @@ impl std::fmt::Display for CheckError {
             CheckError::Index(h) => write!(f, "halfedge {h} names something that doesn't exist"),
             CheckError::Pair(h) => write!(f, "halfedge {h} isn't paired with one running back"),
             CheckError::Loop(h) => write!(f, "halfedge {h} starts and ends at one vertex"),
+            CheckError::Alias(i) => write!(f, "alias {i} names no face or is out of order"),
             CheckError::DirectedEdge(h) => write!(f, "halfedge {h} runs the same way as another"),
             CheckError::Fan(v) => write!(f, "vertex {v} doesn't have exactly one fan"),
             CheckError::SharedEdge(h) => {
@@ -138,7 +142,11 @@ impl Mesh {
             return Err(CheckError::TooManyPatches(nt));
         }
         let nh = 3 * nt;
-        if self.verts.len() > nh || 2 * self.edges.len() != nh || self.faces.len() > MAX_PATCHES {
+        if self.verts.len() > nh
+            || 2 * self.edges.len() != nh
+            || self.faces.len() > MAX_PATCHES
+            || self.aliases.len() > MAX_PATCHES
+        {
             return Err(CheckError::Counts);
         }
         let (nv, ne, nf) = (self.verts.len(), self.edges.len(), self.faces.len());
@@ -151,6 +159,16 @@ impl Mesh {
                 if bad {
                     return Err(CheckError::Index((3 * t + i) as u32));
                 }
+            }
+        }
+        for (i, &(face, key)) in self.aliases.iter().enumerate() {
+            let bad = self
+                .faces
+                .get(face as usize)
+                .is_none_or(|f| f.name.key() == key)
+                || (i > 0 && self.aliases[i - 1] >= (face, key));
+            if bad {
+                return Err(CheckError::Alias(i as u32));
             }
         }
         let nh = nh as u32;

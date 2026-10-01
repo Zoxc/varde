@@ -18,7 +18,9 @@ parallel map (`par`), below, and `Solid`, a checked mesh, with its
 tessellation for drawing (`tessellate`) and its volume and area,
 `extrude`, which sweeps a `Profile` into a solid, and `boolean` and
 `touches` for solids of flat and curved patches (curved cuts exact where
-planes meet planes or quadrics, traced and fitted elsewhere). Documents
+planes meet planes or quadrics, traced and fitted elsewhere), and a
+solid's `Topology` (its faces, edges and corners as users see them, and
+resolving the names references keep to them). Documents
 store no geometry:
 bodies are the outputs of the feature history, which `varde-regen`
 evaluates into solids, extrudes making bodies or joining, cutting and
@@ -392,7 +394,7 @@ platforms either.
 | file | holds |
 |---|---|
 | `mesh.rs` | `Mesh`, `Edge`, `Halfedge`, `Tri`, accessors |
-| `mesh/face.rs` | `Face`, `FaceName`, `FacePart`, `Surface`, `Quadric` |
+| `mesh/face.rs` | `Face`, `FaceName`, `FacePart`, `FaceKey`, `PartKey`, `Surface`, `Quadric` |
 | `mesh/build.rs` | `MeshBuilder`: triangles by vertex id, paired up |
 | `mesh/check.rs` | `Mesh::check`, `Mesh::check_faces`, `CheckError` |
 | `mesh/bvh.rs` | `Bvh`: boxes, queries, self pairs |
@@ -418,9 +420,20 @@ triangle `t` as a `Patch`: corners from the starts, edge `i` from halfedge
 patch well inside.
 
 `faces: Vec<Face>`: `Face { name: FaceName, surface: Surface }`.
-`FaceName { feature: u64, part: FacePart }` is stable across
-regenerations; `FacePart` is `StartCap`, `EndCap`, `Side { curve, segment }`
-or `Split(n)` (a face an operation made). `Surface` is the construction's
+`FaceName { feature: u64, part: FacePart, instance: u64 }` is stable
+across regenerations (see "Topology and names"); `FacePart` is
+`StartCap`, `EndCap`, `Side { curve, segment }`, `Split(n)` (a face an
+operation made), and the parts later features will make (`Blend`,
+`Corner`, `Offset`, `BackSide`, `Swept`, `Lofted`); `instance` is 0 but
+on copies. `FaceName::new(feature, part)` is a name that isn't a copy.
+Beside the faces, `aliases: Vec<(u32, FaceKey)>`: the keys of faces
+merged into each face, sorted by face then key, without repeats or a
+face's own key (`Mesh::with_aliases` puts them so, `Mesh::aliases` and
+`Mesh::face_aliases(f)` read them). They are a table of their own so
+`Face` stays `Copy`; invariant 1 checks that each names a face that
+exists (`CheckError::Alias`), and everything that carries faces carries
+them: `MeshBuilder::alias`, refinement and repair (the same face
+indices), booleans ("Assembly"). `Surface` is the construction's
 claim: `Plane { n, d }` (`n·x = d`, `n` any length), `Quadric`, or `Free`.
 `Quadric { origin, a, b, c }` is `F(x) = y·(a·y) + 2b·y + c` with `y = x −
 origin`: measuring from a point near the surface keeps the rounding of `F`
@@ -1180,11 +1193,11 @@ tessellation too).
   between two split edges are one vertex, with their normals summed and
   normalized; a vertex with no split edge is one vertex.
 - **Feature edges** (`RenderMesh` edges, along the edge's samples): every
-  split edge, and every edge between two faces of different names, where
-  the walls of one profile curve's segments (`Side { curve, .. }` of one
-  feature) count as one name. So a cylinder draws its two rims, not the
-  seams between its four quarter walls, and a box its twelve edges, not
-  the diagonals of its sides.
+  split edge, and every edge between two faces of different keys
+  (`FaceName::key`, which drops the `segment` that numbers one wall's
+  pieces). So a cylinder draws its two rims, not the seams between its
+  four quarter walls, and a box its twelve edges, not the diagonals of
+  its sides; a blend's or a revolve's pieces will draw as one face too.
 - **Limits.** Triangle, vertex and feature-edge counts are worked out
   from the segment counts before any point inside a patch is evaluated,
   and more than `RenderMesh::MAX_*` fails with `MeshError::TooLarge`.
@@ -1573,6 +1586,88 @@ first. The tests hold it to `1e-12` relative on boxes, cylinders and
 extrudes. Patch sums are added sequentially in patch order.
 The Gauss nodes and weights are written out, not computed, so no
 platform's `cos` decides them.
+
+## Topology and names (`src/topology.rs`, `src/topology/`)
+
+`Topology::new(&solid)` (or `Solid::topology()`) is the solid's B-rep as
+users see it, derived from the mesh and never stored:
+
+- **Regions** (`Region { key, aliases, tris }`): connected sets of
+  triangles of one `FaceKey`, joined across mesh edges, numbered by their
+  lowest triangle; `aliases` is the sorted union of their faces'
+  aliases. A region is what users see, pick and name as a face: a
+  circle's four quarter walls are one, a face cut in two by a groove is
+  two of one key. `region_of(tri)` maps triangles to regions.
+- **Chains** (`Chain { regions, halfedges, closed }`): maximal paths of
+  mesh edges with the same two regions either side, the lower region
+  first, its halfedges on that region's triangles end to end in the
+  order they run. A chain runs on through a vertex where exactly its two
+  edges meet, one running in and one out (regions' boundaries are
+  oriented loops, so that is the case wherever only two regions meet,
+  once each); it ends anywhere else (a corner, or two regions meeting
+  twice at one vertex). A closed one starts at its lowest halfedge.
+  Numbered by their lowest halfedge.
+- **Corners** (`Corner { vertex, regions }`): vertices where three or
+  more regions meet, by vertex.
+
+Everything is one sequential pass in index order: the same mesh gives
+the same topology at any thread count; linear in the mesh, like
+tessellating, and not budgeted.
+
+**Names.** `FaceName { feature, part, instance }` is made only from what
+a feature was given (curve ids, references), never from mesh indices or
+positions, so a regenerated solid with other dimensions, another
+tolerance or another triangulation has the same names. `FaceKey {
+feature, part: PartKey, instance }` (`FaceName::key`) drops what numbers
+the pieces of one surface: `segment` (and a sweep's `piece`); a loft's
+`span` stays, since a ruled loft's spans meet at creases. Keys are what
+references store (they derive `serde`; their fields and variants' order
+are fixed). Names derived from other names are the fixed 64-bit
+`topology::mix(parts)`: from the count of parts, each part as `h =
+f((h + γ) ^ part)` with splitmix64's finalizer `f` and constant `γ =
+0x9e37_79b9_7f4a_7c15`, wrapping; a test pins its values, worked out
+apart from the code. `FaceKey::mixed` is the mix of the feature, the
+part's place in `PartKey` and its two fields (0 where it has fewer), and
+the instance; a copy's instance is `mix(parent's instance, feature,
+index)` (`FaceName::copy`), so copies of copies stay unique; a blend's
+`edge` is `blend_edge(faces, ordinal)`, the mix of the two keys' mixes
+(lower first) and the ordinal among the feature's references with that
+pair.
+
+**Aliases.** Where two faces on one surface become one, the merged
+face's key (and its aliases) become aliases of the face that took it in
+(the lower index, so the first operand's name stays), through
+`Soup::absorb`. The clean-up's merge of plane faces joined by mended
+seams does this for whole faces (a boss's top flush with the plate's
+merges into it, and the boss's top key then names only the plate's top,
+through its alias). `unbend` does it too for the triangles it flips onto
+the lower of two faces of one plane, where the higher face may keep
+other triangles under its own key: then the key names both regions, and
+the point picks. Whether `unbend` fires depends on the triangulation, so
+such a partial alias can come and go with the tolerance; it only ever
+adds a candidate in the same plane. Any later pass that moves triangles
+between faces of one surface must call `Soup::absorb` the same way.
+Transforms will carry the table with the faces, as booleans do.
+
+**Resolving.** `Topology::face(solid, key, near)`: the regions named by
+`key` (their key, or an alias); `Topology::edge(solid, [a, b], near)`:
+the chains between regions named by `a` and `b`, either way round;
+`Topology::corner(solid, [a, b, c], near)`: the corners where some
+region is named by each. One is taken whatever `near` says (even NaN);
+of several the nearest to `near`, ties to the lowest index; none is
+`NotFound::{Face, Edge, Corner}` ("face not found", ...). The distance
+(`topology/distance.rs`) is a best-first search over pieces by
+blossoming, the box of a piece's control points (which holds it) the
+lower bound, corners, middles and on patches the foot of the
+perpendicular by Newton's method (second derivatives by central
+differences, Gauss–Newton's step where that isn't a minimum's; plain
+Gauss–Newton doesn't converge off a curved surface by its radius) the
+upper bounds; it stops when no piece can come within a billionth of the
+patch's size of the best, or at 256 pieces a patch or curve. The
+candidates' patches are taken nearest box first and only while their
+box comes nearer than the best so far, across candidates too (a later
+one must come strictly nearer). It only chooses among candidates of one
+name: nothing is decided by distance.
 
 ## Booleans (`src/boolean.rs`, `src/boolean/`)
 
@@ -2809,7 +2904,13 @@ now take 20 ms.
   difference), then the copies claiming no surface, less those no
   triangle is on any more, so chained booleans don't pile up faces;
   halfedges pair up by vertex id in `MeshBuilder`, never by position,
-  and every triangle side with a curve record gets it.
+  and every triangle side with a curve record gets it. Each face keeps
+  the aliases of its source (the operand's face it is, or copies):
+  the operand's own, and, where the clean-up moved triangles of one face
+  onto another of the same surface (`Soup::absorb`, a pair of sources),
+  the moved face's key and aliases, through any chain of such moves
+  (`boolean::aliases`, a pass a unit of work a merge, until nothing
+  changes). A face cut away takes its aliases with it.
 
 ### Triangulating a face's loops (`boolean/triangulate.rs`)
 
@@ -2992,7 +3093,10 @@ seams joined are merged, each set onto its lowest id (the first
 operand's faces come first, so the body's name stays), a face moving
 only if every triangle of it lies in that one's plane and its plane
 faces the same way; copies claiming no surface go with it and take its
-name. Faces of one plane meeting along straight edges, or along no seam
+name; each merged face's key (and its aliases) becomes an alias of the
+face it merged onto, as does the higher face's where `unbend` puts both
+new triangles on the lower (`Soup::absorb`; see "Topology and names").
+Faces of one plane meeting along straight edges, or along no seam
 the clean-up mended, stay apart. Drawn lines go where face names
 differ, so without the merge a straightened rim would show on the flat
 top as a polygon of chords. The pin filling its hole, united with the
@@ -4549,7 +4653,8 @@ parameter, or a split outside the patch bounds),
   points are shared either way.
 - **Walls of one profile curve are one face for feature edges**: the
   segments of a curve (`Side { curve, segment }`) are separate faces, and
-  drawing every face boundary would draw a circle's seams.
+  drawing every face boundary would draw a circle's seams. The rule is
+  now by face key (`FaceName::key`), which is that and more.
 - **`Solid::bounds` is an `Option`** (`None` for the empty solid), and
   `Solid::bounds3` gives the `f64` box. `Display` holds only the fit
   tolerance; the other targets are its constants.
@@ -5027,3 +5132,20 @@ parameter, or a split outside the patch bounds),
   record left from an edge no triangle has where a new side runs
   (`flip`, `unbend` and a collapse moving an edge onto the vertex kept;
   `delaunay` already dropped it).
+- **Topology and names, as built** (the solid-operations plan's names,
+  keys, aliases and resolving): `FaceKey`'s fields are public (they are
+  deserialized from files anyway); `FacePart` keeps its order (`Split`
+  stays fourth) with the new parts after it, and `PartKey` follows it.
+  Resolving lives on `Topology` and takes keys and a point; the
+  document's `FaceRef`/`EdgeRef` (with the body) come with the features
+  that store them. A failed reference is `topology::NotFound`, not a
+  `KernelError`. Candidates are measured by a linear pass over their
+  patches nearest box first, not through the BVH. A corner matches when
+  each of its three keys names some region there (two keys may name one
+  region through an alias). Aliases are recorded by the flush seams' face merge
+  (whole faces) and by `unbend` for the triangles it moves (the moved
+  face may live on elsewhere under its own key: then a key names both,
+  and the point picks); a general merge pass (one surface, one face)
+  isn't built yet and must call `Soup::absorb` the same way.
+  Transforms don't exist yet; the table is on `Mesh`, so they carry it
+  by keeping the faces.
