@@ -404,6 +404,7 @@ impl Tally {
     /// enough of them to tell (not in the few cases of a debug build).
     fn at_least(&self, share: f64, name: &str) {
         let total = self.ok + self.failed;
+        println!("TALLY {name}: {} of {total}", self.ok);
         if total < 40 {
             return;
         }
@@ -443,7 +444,8 @@ fn four(
                 tally.ok += 1;
                 Some(solid)
             }
-            Err(_) => {
+            Err(why) => {
+                println!("REFUSED {name}, {op:?}: {why:?}");
                 tally.failed += 1;
                 None
             }
@@ -797,7 +799,10 @@ fn coaxial_solids_and_pins_in_holes() {
         let name = format!("coaxial r {r} {f}..{t}");
         four(&a, &b, Some(both), &tol, &mut samples, &mut tally, &name);
     }
-    tally.at_least(0.8, "coaxial");
+    // 39 of 40 work. The one left is `pin 1..2`'s union: the pin stands
+    // on the plate touching it only along the hole's rim, which is no
+    // manifold, so it is refused.
+    tally.at_least(0.95, "coaxial");
 }
 
 #[test]

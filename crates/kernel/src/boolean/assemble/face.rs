@@ -392,6 +392,47 @@ pub(super) fn cut_face(
             }
         }
     }
+    // Ends only a rounding apart do too, where the clean-up will collapse
+    // them: a triangle with two corners within its short length (an
+    // eighth of the resolution) of each other, whose side from the third
+    // corner to one of them is inner, takes the curve of a boundary edge
+    // from that third corner to a vertex as near the first (a tie whose
+    // two vertices came by different roundings: a cap's inner edge
+    // crossing at a rim vertex, and a wall's diagonal crossing the cap's
+    // plane, 1e-16 apart).
+    let short = tol.resolution() / 8.0;
+    let near_ends: Vec<(u32, u32)> = tris
+        .iter()
+        .flat_map(|tri| {
+            (0..3).flat_map(move |i| {
+                let (x, y, far) = (tri[i], tri[(i + 1) % 3], tri[(i + 2) % 3]);
+                [(far, x), (far, y)]
+                    .into_iter()
+                    .filter(move |_| pos_of(x).distance(pos_of(y)) <= short)
+            })
+        })
+        .filter(|&(far, near)| !boundary.contains(&key(far, near)))
+        .collect();
+    if !near_ends.is_empty() {
+        let mut at_vertex: BTreeMap<u32, Vec<(u32, u32)>> = BTreeMap::new();
+        for &k in &boundary {
+            at_vertex.entry(k.0).or_default().push(k);
+            at_vertex.entry(k.1).or_default().push(k);
+        }
+        for (far, near) in near_ends {
+            let k = key(far, near);
+            if twinned.contains_key(&k) {
+                continue;
+            }
+            let twin = at_vertex.get(&far).into_iter().flatten().find(|b| {
+                let other = if b.0 == far { b.1 } else { b.0 };
+                other != near && pos_of(other).distance(pos_of(near)) <= short
+            });
+            if let Some(twin) = twin {
+                twinned.insert(k, curves.get(twin).copied());
+            }
+        }
+    }
     if layout != Layout::Curved {
         // Inner edges straight; the patches stay in the plane.
         return Ok(Cutout {

@@ -16,7 +16,7 @@ use super::*;
 use crate::mesh::tests::TOL;
 use crate::mesh::{Quadric, Surface, samples};
 use crate::par::assert_deterministic;
-use crate::profile::tests::{circle, polygon, rect};
+use crate::profile::tests::{arc, circle, polygon, rect};
 use crate::{Frame, Loop, Profile, Segment, extrude};
 
 fn cube(min: [f64; 3], size: [f64; 3]) -> Solid {
@@ -789,6 +789,93 @@ fn flush_rims_take_the_halved_cuts_vertices() {
         union.volume(),
         b.volume()
     );
+}
+
+/// The circle round `c` of radius `r` in `n` arcs, counter-clockwise from
+/// the angle `turn`: one circle with its vertices somewhere else.
+fn turned_circle(c: DVec2, r: f64, curve: u64, turn: f64, n: usize) -> Loop {
+    let at = |i: usize| {
+        let a = turn + 2.0 * PI * i as f64 / n as f64;
+        c + DVec2::new(a.cos(), a.sin()) * r
+    };
+    Loop {
+        segments: (0..n)
+            .map(|i| arc(c, at(i), at((i + 1) % n), curve))
+            .collect(),
+    }
+}
+
+/// `a ∪ b`, `a ∩ b`, `a − b` and `b − a` of two solids on one circular
+/// cylinder of radius 1, whose spans along it meet over `both`: each
+/// checked against the volume π times its span, and the unions (both
+/// orders) of no more than `patches` patches.
+fn coaxial(name: &str, a: &Solid, b: &Solid, both: f64, patches: usize) {
+    let results = all_four(a, b, 1e-12);
+    volumes(name, a, b, &results, PI * both, 1e-9);
+    let other = run(b, a, Op::Union);
+    assert!(
+        (other.volume() - results[0].volume()).abs() <= 1e-9,
+        "{name}: {} {}",
+        other.volume(),
+        results[0].volume()
+    );
+    for union in [&results[0], &other] {
+        let n = union.mesh().tris().len();
+        assert!(n <= patches, "{name}: the union has {n} patches");
+    }
+}
+
+#[test]
+fn coaxial_cylinders_stacked_or_overlapping_unite() {
+    // Two cylinders of one radius on one axis, one standing on the other
+    // or running past its cap: the union's wall has a seam, where the
+    // first's cap rim lies on the second's wall. Grown for the union, the
+    // first left a ring of its cap of zero width between its rim and the
+    // second's wall cut at the cap's plane, whose vertices aren't the
+    // rim's; the rim takes the cut's vertices, as a boss's rim on a
+    // plate's flush cap does. The second circle is drawn as the first,
+    // and from another start in 3 arcs.
+    let c = DVec2::new(0.5, 0.2);
+    let a = extruded(vec![circle(c, 1.0, 0, false)], 0.0, 1.0, 7);
+    let circles = [
+        ("same", circle(c, 1.0, 0, false)),
+        ("turned", turned_circle(c, 1.0, 0, 0.3, 3)),
+    ];
+    for (what, lp) in &circles {
+        for (from, to) in [(1.0, 2.0), (0.5, 2.0), (0.0, 2.0), (-0.5, 0.5)] {
+            let b = extruded(vec![lp.clone()], from, to, 8);
+            let both = (to.min(1.0) - from.max(0.0)).max(0.0);
+            coaxial(&format!("{what} {from}..{to}"), &a, &b, both, 64);
+        }
+    }
+}
+
+#[test]
+fn a_cylinder_inside_one_of_its_radius_flush_at_one_end() {
+    // The second in 3 arcs from the first's start: a tie leaves two
+    // vertices a rounding apart (the first's cap edge crossing at its rim
+    // vertex, the second's wall diagonal crossing the cap's plane), and a
+    // triangle of zero width between them whose sides from the far corner
+    // were two conics on the wall, which the clean-up can't merge. The
+    // inner one takes the boundary edge's curve, as at ties to the bit.
+    let c = DVec2::new(0.5, 0.2);
+    let a = extruded(vec![circle(c, 1.0, 0, false)], 0.0, 1.0, 7);
+    let b = extruded(vec![turned_circle(c, 1.0, 0, 0.0, 3)], 0.0, 2.0, 8);
+    coaxial("inside", &a, &b, 1.0, 64);
+    let union = run(&a, &b, Op::Union);
+    assert!((union.volume() - 2.0 * PI).abs() <= 1e-9);
+}
+
+#[test]
+fn primitive_cylinders_stacked_unite() {
+    // `Solid::cylinder`s of one radius on one axis, overlapping: the
+    // union failed as `Invalid(EdgeNeighbours)`.
+    let a = cylinder([0.0, 0.0, 0.0], 1.0, 1.0);
+    for (base, height) in [(1.0, 1.0), (0.5, 1.5), (0.0, 2.0), (-0.5, 1.0)] {
+        let b = cylinder([0.0, 0.0, base], 1.0, height);
+        let both = ((base + height).min(1.0) - base.max(0.0)).max(0.0);
+        coaxial(&format!("primitive {base}+{height}"), &a, &b, both, 64);
+    }
 }
 
 #[test]

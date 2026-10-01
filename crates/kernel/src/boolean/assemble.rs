@@ -667,11 +667,15 @@ impl Cutting<'_> {
     }
 
     /// Vertices to add on the operands' curved edges that a cut runs
-    /// along, where a plane meets a quadric flush with an edge on both (a
-    /// cap's rim on the other's cap): at the cut's vertices, so the edge
-    /// and the cut come in the same pieces, which lie on each other and
-    /// which the clean-up merges. Halving the pieces' curves as the rounds
-    /// do would never make the two meet.
+    /// along, where a plane meets a quadric flush with an edge on both:
+    /// at the cut's vertices, so the edge and the cut come in the same
+    /// pieces, which lie on each other and which the clean-up merges.
+    /// Halving the pieces' curves as the rounds do would never make the
+    /// two meet. Either way round: the quadric triangle's edge lying in
+    /// the other's plane (a boss's rim on a plate's flush cap), or the
+    /// planar triangle's edge lying on the other's quadric (a cap's rim
+    /// on the wall of a cylinder of its radius on its axis, which stands
+    /// on it or runs past it).
     fn flush_extras(
         &self,
         jobs: &[chain::Job],
@@ -682,41 +686,44 @@ impl Cutting<'_> {
         let resolution = self.tol.resolution();
         for i in which {
             let (arc, job, chain) = (&self.arcs[i], &jobs[i], &chains[i]);
-            let (plane, k) = match job.shapes {
-                [Shape::Plane { n, d }, Shape::Quadric(_)] => ((n, d), 1),
-                [Shape::Quadric(_), Shape::Plane { n, d }] => ((n, d), 0),
+            let (plane, quadric, k) = match job.shapes {
+                [Shape::Plane { n, d }, Shape::Quadric(q)] => ((n, d), q, 1),
+                [Shape::Quadric(q), Shape::Plane { n, d }] => ((n, d), q, 0),
                 _ => continue,
             };
             if !chain.exact {
                 continue;
             }
-            let side = if k == 0 { Side::A } else { Side::B };
-            let (input, _) = self.operand(side);
             let on_plane = |x: DVec3| (plane.0.dot(x) - plane.1).abs() <= resolution;
+            let on_both = |x: DVec3| on_plane(x) && quadric.distance(x) <= resolution;
             let verts: Vec<DVec3> = std::iter::once(job.ends[0])
                 .chain(chain.points.iter().copied())
                 .chain(std::iter::once(job.ends[1]))
                 .collect();
-            for &(e, _) in &input.tri_edges[arc.tris[k] as usize] {
-                if lined(input, e) {
-                    continue;
-                }
-                let conic = input.conic(e);
-                if ![0.25, 0.5, 0.75]
-                    .into_iter()
-                    .all(|t| on_plane(conic.eval(t)))
-                {
-                    continue;
-                }
-                for &x in &verts {
-                    if x == conic.p0 || x == conic.p1 {
+            // The quadric triangle's edges lie on its quadric already;
+            // the planar one's in its plane.
+            let lies: [(usize, &dyn Fn(DVec3) -> bool); 2] = [(k, &on_plane), (1 - k, &on_both)];
+            for (k, lies) in lies {
+                let side = if k == 0 { Side::A } else { Side::B };
+                let (input, _) = self.operand(side);
+                for &(e, _) in &input.tri_edges[arc.tris[k] as usize] {
+                    if lined(input, e) {
                         continue;
                     }
-                    if let Some(t) = param_on(&conic, x, resolution)
-                        && t > 1e-9
-                        && t < 1.0 - 1e-9
-                    {
-                        extras[k].entry(e).or_default().push(t);
+                    let conic = input.conic(e);
+                    if ![0.25, 0.5, 0.75].into_iter().all(|t| lies(conic.eval(t))) {
+                        continue;
+                    }
+                    for &x in &verts {
+                        if x == conic.p0 || x == conic.p1 {
+                            continue;
+                        }
+                        if let Some(t) = param_on(&conic, x, resolution)
+                            && t > 1e-9
+                            && t < 1.0 - 1e-9
+                        {
+                            extras[k].entry(e).or_default().push(t);
+                        }
                     }
                 }
             }

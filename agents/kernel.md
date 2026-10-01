@@ -2411,7 +2411,27 @@ rounds add them), and again at the new vertices of every cut halved in
 a round: the edge and the cut then come in the same pieces, lying on
 each other, which the clean-up merges. (Without the halves' vertices, a
 cylinder inside a larger one sharing its top kept a triangle with three
-corners on the rim, which folds.)
+corners on the rim, which folds.) It works either way round: the quadric
+triangle's curved edges lying in the other's plane (the boss's rim), and
+the planar triangle's curved edges lying on the other's quadric (sampled
+at `¼`, `½` and `¾` within the resolution of both): a cap's rim on the
+wall of a cylinder of its radius on its axis, standing on it or running
+past it. There `A`, grown for a union, keeps a ring of its cap of zero
+width between its rim and `B`'s wall cut in the cap's plane; with only
+the first rule the rim's 4 arcs faced a cut refined to hundreds, the
+ring's triangles fanned across the disc and every same-radius union with
+a seam failed (`Invalid(EdgeNeighbours)`, 0.3 to 2 s each). Each extra
+lands on a cut vertex, so there are no more pieces than the cut has, and
+merging brings the refinement's back: such unions now come out in 20 to
+60 patches in milliseconds. Release, before → after: the seeded suite's
+pins and coaxial cylinders 37 → 39 of 40 (the one left is a pin standing
+on the plate over its hole, touching only along the rim: no manifold),
+related 112 → 113 of 120 (with the twins below), the rest unchanged
+(turned 156/160, chains 203/240, tangent 72/96, bosses 64/64, drilled
+160/160); a sweep of a cylinder of radius 1 over 0..1 against one of radius 1 or
+0.5 in 3, 4 or 6 arcs turned 0, 0.3, 1.1 or 2.9 radians, over 8 spans
+each, all three operations: 47 of 96 rows with a failure → none, every
+volume within `1e-12` of its closed form.
 
 **Exact bands on quadrics** (`face::exact_bands`). A rational quadratic
 triangle lies on a quadric when its three sides are conics on it whose
@@ -2462,7 +2482,19 @@ to merge the two sides of a zero-width triangle, an inner edge whose
 ends lie at the very places a boundary edge's do takes that edge's curve,
 and a diagonal left by cutting an ear with two corners at one place, one
 of its sides curved, takes that curve's tangents (and no flip moves it),
-standing for it in the triangulation.
+standing for it in the triangulation. Ends within the clean-up's short
+length (an eighth of the resolution) count too, where the clean-up will
+collapse them: in a triangle with two corners that near each other, an
+inner side from the third corner to one of them takes the curve of a
+boundary edge from that corner to a vertex as near the first (the
+boundary edges at the corner in key order, the first that fits). Two
+vertices of one tie can come by different roundings, `1e-16` apart (a
+cap's inner edge crossing at a rim vertex, and a wall's diagonal
+crossing the cap's plane): the triangle's two sides from the far corner
+were two different conics on the wall, the clean-up refused to merge
+two cut edges, and the lens folded (a cylinder of radius 1 in 4 arcs
+over 0..1, united with one in 3 arcs over 0..2). Twinned edges are fixed
+for the exact bands, as the bit-equal ones are.
 
 **Merging over-refined patches** (`assemble/merge.rs`). The pair
 decisions split the operands (red–green) wherever they couldn't decide a
@@ -2918,7 +2950,11 @@ analytic ones (or the identities `|A ∪ B| + |A ∩ B| = |A| + |B|`, `|A −
 B| = |A| − |A ∩ B|` where there are none): a cylinder through a box, a
 blind hole, a thin bar within one triangle of each face, and a bar turned
 off every axis through a slab (every patch on its plane or cylinder to
-`1e-12`, no fitted patch); crossing cylinders (volumes against a Simpson
+`1e-12`, no fitted patch); cylinders of one radius on one axis, stacked,
+overlapping and one inside the other flush at an end, the second circle
+drawn as the first or from another start in 3 arcs, and `Solid::cylinder`s
+stacked (all four operations and the unions both ways, volumes to
+`1e-9`, unions in at most 64 patches); crossing cylinders (volumes against a Simpson
 integral within a tenth of the fit tolerance times the area, the cut's
 vertices on both cylinders within a quarter of it, only the bands
 fitted); a pin through a plate's hole wall (upright cylinders meeting in
@@ -3048,8 +3084,11 @@ now and then intersected, each result fed on); solids turned and moved
 at random against boxes and bars; cylinders side by side with gaps and
 overlaps of `1e-9` to `1e-3` at two tolerances; plates drilled hole
 after hole (in rows, or anywhere on a grid); pins in holes of their
-own circle and cylinders of one radius stacked and overlapping; bosses
-flush on plates; the same bits at 1 and 8 threads. In release it runs
+own circle and cylinders of one radius stacked and overlapping (at
+least 95% must work: 39 of 40 do); bosses
+flush on plates; the same bits at 1 and 8 threads. Each test prints its
+tally (`TALLY name: ok of total`) and each refusal (`REFUSED`), seen
+with `--nocapture`. In release it runs
 in about 25 s (37 s one test after another, 83 s on one thread); debug
 builds run one case of each. Unit tests for the step: near ties decided
 as ties (`sign_tied`), crossings at one place put in turn (`alternate`),
