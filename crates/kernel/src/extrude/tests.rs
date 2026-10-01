@@ -612,23 +612,31 @@ fn random_loop(rng: &mut Rng, center: DVec2, scale: f64, curve: u64) -> Loop {
     Loop { segments }
 }
 
+/// 30 random outlines with up to five random holes each, at every
+/// tolerance, with a height to extrude them to.
+fn random_plates() -> Vec<(Profile, Tolerance, f64)> {
+    let mut rng = Rng::new(5);
+    (0..30)
+        .map(|case| {
+            let mut loops = vec![random_loop(&mut rng, DVec2::ZERO, 100.0, 0)];
+            for h in 0..(rng.next_u64() % 6) {
+                let at = DVec2::new(rng.range(-40.0, 40.0), rng.range(-40.0, 40.0));
+                let size = rng.log_range(0.5, 30.0);
+                loops.push(reversed(&random_loop(&mut rng, at, size, 100 * (h + 1))));
+            }
+            let fit = [Tolerance::MIN_FIT, 1e-3, Tolerance::MAX_FIT][case % 3];
+            let h = rng.log_range(0.1, 100.0);
+            (profile(loops), Tolerance::new(fit).unwrap(), h)
+        })
+        .collect()
+}
+
 #[test]
 fn random_plates_with_holes() {
     // Random outlines with random holes, at every tolerance: those whose
     // loops touch or don't nest are refused, the rest have their volumes.
-    let mut rng = Rng::new(5);
     let mut built = 0;
-    for case in 0..30 {
-        let mut loops = vec![random_loop(&mut rng, DVec2::ZERO, 100.0, 0)];
-        for h in 0..(rng.next_u64() % 6) {
-            let at = DVec2::new(rng.range(-40.0, 40.0), rng.range(-40.0, 40.0));
-            let size = rng.log_range(0.5, 30.0);
-            loops.push(reversed(&random_loop(&mut rng, at, size, 100 * (h + 1))));
-        }
-        let p = profile(loops);
-        let fit = [Tolerance::MIN_FIT, 1e-3, Tolerance::MAX_FIT][case % 3];
-        let tol = Tolerance::new(fit).unwrap();
-        let h = rng.log_range(0.1, 100.0);
+    for (case, (p, tol, h)) in random_plates().into_iter().enumerate() {
         match extrude(&p, &Frame::XY, 0.0, h, 1, &tol, &Budget::DEFAULT) {
             Ok(solid) => {
                 let exact = p.area() * h;
@@ -709,6 +717,20 @@ fn cut_circle(rng: &mut Rng, r: f64, min: f64) -> Loop {
     }
 }
 
+/// 120 circles of random radii cut at random angles, at three
+/// tolerances, with their radii.
+fn uneven_circles() -> Vec<(Profile, f64, Tolerance)> {
+    let mut rng = Rng::new(3);
+    (0..120)
+        .map(|case| {
+            let r = rng.log_range(0.1, 1e3);
+            let p = profile(vec![cut_circle(&mut rng, r, 2e-3)]);
+            let tol = Tolerance::new([Tolerance::MIN_FIT, 1e-3, 1e-2][case % 3]).unwrap();
+            (p, r, tol)
+        })
+        .collect()
+}
+
 #[test]
 fn circles_cut_unevenly() {
     // Short arcs among long ones meet the next nearly straight, so the
@@ -716,15 +738,7 @@ fn circles_cut_unevenly() {
     // close to its sides as the ear is flat, and slivers along the loop
     // come within the resolution of the walls. Moving Steiner points in
     // from those corners mends them. The same bits at 1 and 8 threads.
-    let mut rng = Rng::new(3);
-    let cases: Vec<(Profile, f64, Tolerance)> = (0..120)
-        .map(|case| {
-            let r = rng.log_range(0.1, 1e3);
-            let p = profile(vec![cut_circle(&mut rng, r, 2e-3)]);
-            let tol = Tolerance::new([Tolerance::MIN_FIT, 1e-3, 1e-2][case % 3]).unwrap();
-            (p, r, tol)
-        })
-        .collect();
+    let cases = uneven_circles();
     let results = assert_deterministic(|| {
         cases
             .iter()
@@ -856,26 +870,13 @@ fn the_second_try_resumes_where_the_first_found_a_flat_corner() {
     );
     // `circles_cut_unevenly`'s circles and `random_plates_with_holes`'
     // plates.
-    let mut rng = Rng::new(3);
-    let mut forked = 0;
-    for case in 0..120 {
-        let r = rng.log_range(0.1, 1e3);
-        let p = profile(vec![cut_circle(&mut rng, r, 2e-3)]);
-        let tol = Tolerance::new([Tolerance::MIN_FIT, 1e-3, 1e-2][case % 3]).unwrap();
-        forked += usize::from(resumes_as_from_the_start(&p, &tol).is_some());
-    }
+    let forked = uneven_circles()
+        .iter()
+        .filter(|(p, _, tol)| resumes_as_from_the_start(p, tol).is_some())
+        .count();
     assert!((10..110).contains(&forked), "{forked}");
-    let mut rng = Rng::new(5);
-    for case in 0..30 {
-        let mut loops = vec![random_loop(&mut rng, DVec2::ZERO, 100.0, 0)];
-        for h in 0..(rng.next_u64() % 6) {
-            let at = DVec2::new(rng.range(-40.0, 40.0), rng.range(-40.0, 40.0));
-            let size = rng.log_range(0.5, 30.0);
-            loops.push(reversed(&random_loop(&mut rng, at, size, 100 * (h + 1))));
-        }
-        let fit = [Tolerance::MIN_FIT, 1e-3, Tolerance::MAX_FIT][case % 3];
-        let _ = rng.log_range(0.1, 100.0);
-        resumes_as_from_the_start(&profile(loops), &Tolerance::new(fit).unwrap());
+    for (p, tol, _) in random_plates() {
+        resumes_as_from_the_start(&p, &tol);
     }
 }
 
