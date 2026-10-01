@@ -22,6 +22,7 @@ use varde_sketch::{Analysis, Id, Profiles, Rejected, Role, SketchEdit, TooComple
 use varde_view::typed::{DEFAULT_SIDES, Field};
 use varde_view::{ActiveTool, SketchState, Snap, Target, Tool, ToolClick, ValueField, ValueTarget};
 
+use super::extrude::is_sketch;
 use super::{Doc, HOME_TARGET, home_camera};
 pub(crate) use dimension::Focus;
 #[cfg(test)]
@@ -80,13 +81,10 @@ pub(crate) struct SketchSession {
     /// The profiles of the sketch as it's shown, see
     /// [`Doc::refresh_profiles`].
     pub(crate) profiles: Option<Profiled>,
-    /// The editor's [`lineage`](varde_document::Editor::lineage) the ids
-    /// in the selection and the tool are of.
-    lineage: Revision,
 }
 
 impl SketchSession {
-    fn new(feature: FeatureId, lineage: Revision) -> Self {
+    fn new(feature: FeatureId) -> Self {
         Self {
             feature,
             tool: None,
@@ -107,7 +105,6 @@ impl SketchSession {
             snap: None,
             aim: None,
             profiles: None,
-            lineage,
         }
     }
 
@@ -333,14 +330,13 @@ impl Doc {
     /// takes the Timeline's place. It stays selected in the Timeline for
     /// after.
     pub(crate) fn enter_sketch(&mut self, id: FeatureId) {
-        let is_sketch = |feature: &Feature| matches!(feature.kind, FeatureKind::Sketch { .. });
-        if !self.editor.document().feature(id).is_some_and(is_sketch) {
+        if !is_sketch(self.editor.document(), id) {
             return;
         }
         self.picking_plane = false;
         self.extrude = None;
         self.selected_feature = Some(id);
-        self.sketch = Some(SketchSession::new(id, self.editor.lineage()));
+        self.sketch = Some(SketchSession::new(id));
         self.panel = self.panel.for_sketching(true);
         if let Some(to) = self.sketch_camera() {
             self.animate_camera(to);
@@ -518,18 +514,18 @@ impl Doc {
     /// by undo: the feature selected, the sketch being edited, which is
     /// left, and the items selected in it. A document that can't be edited
     /// (any more, after a Save As) has no tool in use and nothing dragged.
-    /// Across a replacement of the whole document (restoring recovered
-    /// changes, or undoing or redoing that), ids may name other things:
-    /// the feature selected is let go of, unless it's the sketch being
-    /// edited, which goes on with the sketch its id names now; and in it
-    /// the selection and the tool's shape are let go of.
-    pub(crate) fn prune(&mut self) {
+    /// Across a replacement of the whole document, `replaced` (restoring
+    /// recovered changes, or undoing or redoing that), ids may name other
+    /// things: the feature selected is let go of, unless it's the sketch
+    /// being edited and its id still names a sketch, which the session
+    /// goes on with; and in it the selection and the tool's shape are let
+    /// go of.
+    pub(crate) fn prune(&mut self, replaced: bool) {
         let editable = self.editable();
-        let lineage = self.editor.lineage();
         let document = self.editor.document();
-        if self.selected_in != lineage {
-            self.selected_in = lineage;
+        if replaced {
             let edited = self.sketch.as_ref().map(|session| session.feature);
+            let edited = edited.filter(|&id| is_sketch(document, id));
             self.selected_feature = self.selected_feature.filter(|&id| Some(id) == edited);
         }
         self.selected_feature = self
@@ -545,8 +541,7 @@ impl Doc {
             session.value = None;
             session.label = None;
         }
-        if session.lineage != lineage {
-            session.lineage = lineage;
+        if replaced {
             session.selection.clear();
             session.drag = None;
             session.value = None;

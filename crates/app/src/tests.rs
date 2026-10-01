@@ -2257,6 +2257,26 @@ fn restoring_recovered_changes_keeps_the_sketch_edited_selected() {
     assert_eq!(document(&varde).selected_feature, Some(theirs));
 }
 
+/// The sketch being edited ends across a replacement where its id names
+/// a feature that isn't a sketch, and that feature isn't selected.
+#[test]
+fn restoring_recovered_changes_lets_go_of_the_sketch_edited_if_not_a_sketch() {
+    let recovered = Document::example();
+    let extrude = recovered.features()[1].id;
+    assert!(matches!(
+        recovered.features()[1].kind,
+        varde_document::FeatureKind::Extrude(_)
+    ));
+    let (mut varde, _) = with_recovered(recovered.clone());
+    let _ = varde.update(Message::Ui(Ui::Edit(Edit::NewSketch(OriginPlane::XY))));
+    assert_eq!(document(&varde).sketch.as_ref().unwrap().feature, extrude);
+
+    let _ = varde.update(Message::Ui(Ui::File(File::RestoreChanges)));
+    assert_eq!(*document(&varde).editor.document(), recovered);
+    assert!(document(&varde).sketch.is_none());
+    assert_eq!(document(&varde).selected_feature, None);
+}
+
 /// Saved as another file, recovered changes not answered yet stay with
 /// the design they're of, which offers them when it's next opened: the
 /// offer goes, rather than answering it for the new file. Saved over the

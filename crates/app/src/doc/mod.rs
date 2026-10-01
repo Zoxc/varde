@@ -68,11 +68,13 @@ pub(crate) struct Doc {
     pub(crate) deleting: Option<Deleting>,
     /// Whether the plane for a new sketch is being picked.
     pub(crate) picking_plane: bool,
+    /// The editor's [`lineage`](varde_document::Editor::lineage) as of
+    /// the last [`Doc::sync`]: the ids held across edits (the feature
+    /// selected, the sessions') name things in it, see [`Doc::prune`] and
+    /// [`Doc::prune_extrude`].
+    lineage: Revision,
     /// The feature selected in the Timeline, if any.
     pub(crate) selected_feature: Option<FeatureId>,
-    /// The editor's [`lineage`](varde_document::Editor::lineage)
-    /// `selected_feature` names a feature in: see [`Doc::prune`].
-    selected_in: Revision,
     /// The sketch being edited, if one is.
     pub(crate) sketch: Option<SketchSession>,
     /// The extrude being set up, if one is: never with a sketch.
@@ -177,8 +179,8 @@ impl Doc {
             file_menu: false,
             deleting: None,
             picking_plane: false,
+            lineage,
             selected_feature: None,
-            selected_in: lineage,
             sketch: None,
             extrude: None,
             sketch_split: GEOMETRY_SHARE,
@@ -189,17 +191,20 @@ impl Doc {
         doc
     }
 
-    /// Lets go of what the document no longer holds, see [`Doc::prune`]
-    /// and [`Doc::prune_extrude`], asks for the model if the document
+    /// Lets go of what the document no longer holds, and of ids that may
+    /// name other things since the document was replaced whole, see
+    /// [`Doc::prune`] and [`Doc::prune_extrude`], asks for the model if the document
     /// changed, or the sketch being edited did, which is left out of it,
     /// or the extrude being set up, and finds the profiles of the sketch
     /// shown if it changed.
     pub(crate) fn sync(&mut self) {
         self.send_proposal();
         self.refresh_waiting();
+        let lineage = self.editor.lineage();
+        let replaced = std::mem::replace(&mut self.lineage, lineage) != lineage;
         self.prune_deleting();
-        self.prune();
-        self.prune_extrude();
+        self.prune(replaced);
+        self.prune_extrude(replaced);
         self.request_analysis();
         self.request_model();
         self.refresh_profiles();

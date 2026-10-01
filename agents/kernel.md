@@ -2735,8 +2735,8 @@ references that aren't found are counted (`missing`, shown in the panel)
 and dropped: `SetExtrude` gets fresh references of what's picked. Editing
 never changes the extrude's sketch, so `SetExtrude` doesn't hide one.
 A replacement of the whole document (restoring recovered changes, or
-undoing or redoing that: `Editor::lineage` changes, and the session keeps
-the lineage it started in) ends the session and its draft, as its ids
+undoing or redoing that: `Editor::lineage` changes from the one `Doc`
+saw at its last sync) ends the session and its draft, as its ids
 (the extrude edited, the source, the excluded bodies) may name other
 things: OK would otherwise write the values read before over whatever
 extrude the id names now. The Timeline's selection, which an extrude

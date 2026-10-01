@@ -698,16 +698,17 @@ Fillet's or Chamfer's corner once its lines no longer make it
 (`shape::still_picked`), a drag started from another generation of the document is put
 back, and a Line chain whose last point is gone (undone) starts afresh.
 Across a replacement of the whole document (restoring recovered changes,
-or undoing or redoing that: `Editor::lineage` changes) ids may name other
+or undoing or redoing that: `Editor::lineage` changes from the one `Doc`
+saw at its last sync, which then tells every prune) ids may name other
 items, so the selection is cleared and the tool starts its shape afresh;
 restoring drops the edits waiting on the solver, and the changes waiting
 behind them. The sketch session only resets, since it reads the sketch its id names now and never
 writes back what it read before; an extrude session holds values read
 before the replacement, so it ends instead (`Doc::prune_extrude`). The
-feature selected in the Timeline is let go of too (`Doc` keeps the
-lineage it was selected in), lest Delete or Extrude act on another
-feature with its id, unless it's the sketch being edited, which stays
-selected with the session. A
+feature selected in the Timeline is let go of too, lest Delete or
+Extrude act on another feature with its id, unless it's the sketch being
+edited and its id still names a sketch, which stays selected with the
+session; an id naming something else now ends the session. A
 document that can't be edited, as a Save As can leave it, has no tool and no drag;
 the Save As answer syncs for that.
 

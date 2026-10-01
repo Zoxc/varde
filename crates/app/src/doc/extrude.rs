@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use varde_document::{
     BodyId, Command, Design, Document, Extent, Extrude, ExtrudeError, FeatureId, FeatureKind,
-    MAX_EXTRUDE_REGIONS, Operation, RegionRef, Revision, Sketch, Targets,
+    MAX_EXTRUDE_REGIONS, Operation, RegionRef, Sketch, Targets,
 };
 use varde_expr::{Unit, Value};
 use varde_sketch::Profiles;
@@ -25,10 +25,6 @@ use super::{Doc, Focus};
 pub(crate) struct ExtrudeSession {
     /// The extrude edited, or `None` for a new one.
     pub(crate) feature: Option<FeatureId>,
-    /// The editor's [`lineage`](varde_document::Editor::lineage) the ids
-    /// (feature, source, excluded bodies) name things in: the session
-    /// ends once it changes.
-    lineage: Revision,
     /// The sketch the extrude takes regions of, once there is one.
     pub(crate) source: Option<FeatureId>,
     /// Whether the source stays when no region is picked: one the
@@ -117,8 +113,8 @@ impl DistanceText {
 impl ExtrudeSession {
     /// A session setting up a new extrude, in `document`'s units, taking
     /// the regions of `source` if given, else of the one the first region
-    /// picked is in; its ids name things in `lineage`.
-    fn new(document: &Document, lineage: Revision, source: Option<FeatureId>) -> Self {
+    /// picked is in.
+    fn new(document: &Document, source: Option<FeatureId>) -> Self {
         let mut distance = DistanceText {
             text: String::new(),
             value: None,
@@ -128,7 +124,6 @@ impl ExtrudeSession {
         distance.input(text, document);
         Self {
             feature: None,
-            lineage,
             source,
             fixed: source.is_some(),
             found: Vec::new(),
@@ -146,15 +141,9 @@ impl ExtrudeSession {
     }
 
     /// A session editing the extrude `feature` of `document`, with its
-    /// values and the regions of its sketch its references find; its ids
-    /// name things in `lineage`.
-    fn editing(
-        document: &Document,
-        lineage: Revision,
-        feature: FeatureId,
-        extrude: &Extrude,
-    ) -> Self {
-        let mut session = Self::new(document, lineage, Some(extrude.sketch));
+    /// values and the regions of its sketch its references find.
+    fn editing(document: &Document, feature: FeatureId, extrude: &Extrude) -> Self {
+        let mut session = Self::new(document, Some(extrude.sketch));
         session.feature = Some(feature);
         session.refresh(document);
         let found = session
@@ -437,7 +426,7 @@ impl Doc {
         self.picking_plane = false;
         let document = self.editor.document();
         let selected = self.selected_feature.filter(|&id| is_sketch(document, id));
-        let mut session = ExtrudeSession::new(document, self.editor.lineage(), selected);
+        let mut session = ExtrudeSession::new(document, selected);
         session.refresh(document);
         self.extrude = Some(session);
         self.focus = Some(Focus::All);
@@ -456,8 +445,7 @@ impl Doc {
         }
         self.picking_plane = false;
         self.selected_feature = Some(id);
-        let lineage = self.editor.lineage();
-        self.extrude = Some(ExtrudeSession::editing(document, lineage, id, extrude));
+        self.extrude = Some(ExtrudeSession::editing(document, id, extrude));
         self.focus = Some(Focus::All);
     }
 
@@ -572,17 +560,16 @@ impl Doc {
 
     /// Ends the extrude session if what it's about is gone, e.g. by undo,
     /// the document can't be changed any more, or the document was
-    /// replaced whole (restoring recovered changes, or undoing or redoing
-    /// that), when its ids may name other things; and finds its sketches'
+    /// replaced whole, `replaced` (restoring recovered changes, or undoing
+    /// or redoing that), when its ids may name other things; and finds its sketches'
     /// regions again if they changed.
     ///
     /// Unlike the sketch session, which only resets across a replacement
     /// and reads the sketch its id names now, an extrude session holds
     /// values read before it, which OK would write over whatever extrude
     /// the id names now.
-    pub(crate) fn prune_extrude(&mut self) {
+    pub(crate) fn prune_extrude(&mut self, replaced: bool) {
         let editable = self.editable();
-        let lineage = self.editor.lineage();
         let document = self.editor.document();
         let Some(session) = &mut self.extrude else {
             return;
@@ -593,7 +580,7 @@ impl Doc {
                 Some(FeatureKind::Extrude(_))
             )
         });
-        if !(editable && session.lineage == lineage && edited && session.refresh(document)) {
+        if !(editable && !replaced && edited && session.refresh(document)) {
             self.extrude = None;
             return;
         }
@@ -687,7 +674,7 @@ impl Doc {
 }
 
 /// Whether `id` is a sketch feature of `document`.
-fn is_sketch(document: &Document, id: FeatureId) -> bool {
+pub(super) fn is_sketch(document: &Document, id: FeatureId) -> bool {
     matches!(
         document.feature(id).map(|feature| &feature.kind),
         Some(FeatureKind::Sketch { .. })
