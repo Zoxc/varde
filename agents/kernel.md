@@ -335,8 +335,8 @@ Refusals (`PatchError`): edges not meeting at the corners to the bit
 (`Mismatch`); a straight bottom for `cone_strip` (a flat strip), an apex
 too close to the diagonal's plane, a zero axis or `a1` on it, tangents
 parallel or `a1'` on the arc itself (`Degenerate`). Poles and apexes (a
-strip with a meridian ending on the axis) aren't covered: no common point
-exists there, they are fitted (to come with revolve's caps).
+strip with a meridian ending on the axis) have no exact strips: no common
+point exists there, so they are fitted caps (below).
 
 Tests (`sweep/tests.rs`), half on axes through the origin (bounds
 relative to the size) and half up to `1e3` out (relative to the
@@ -354,6 +354,165 @@ zones of one to four bands, and a lathe profile of a cone, a cylinder, a
 sphere and an ellipsoid on axes tilted and `3e5` out, with volume (and
 area where it has a closed form) within `1e-10`; the same bits at 1 and 8
 threads.
+
+#### Fitted strips (`sweep/fit.rs`)
+
+Where no strip is exact (a torus, another conic turned about an axis, and
+later sweeps and blends) `fitted_strip(bottom, top, left, right, form)`
+keeps the four given edges, which are exact where the surface allows
+(parallels and meridians are circles on a torus), and fits the
+**diagonal** to the face's `Form`: its homogeneous middle point `(w·c,
+w)`, four numbers, by damped Gauss–Newton (Levenberg–Marquardt) on the
+form's signed distance (`Form::signed`: exact for planes, cylinders,
+cones, spheres and tori, first order for the conic forms, with the unit
+direction it grows along) at a grid of 8 steps a side on both patches
+(the points where the diagonal counts). Each patch point is `(A + k·h)`
+homogeneously with `A` fixed and `k = 2·ui·uj` of the diagonal's
+corners, so the Jacobian rows are `k/D·(n, −n·P)`, everything relative to
+the strip's middle. It starts from the parabola through `a0`, `b1` and
+the form's point nearest the strip's middle (four steps along the
+normal), takes at most 40 steps of up to 12 tries each (the damping
+times 8 after a failed try, a quarter after a good one), and stops once a
+step gains under a millionth: the same input gives the same bits. It
+settles in about five steps. Least squares, not minimax: the worst error
+is what is then measured, and it came out below the planners' minimax
+estimates (see the table below). Where an exact diagonal exists the fit
+finds one (sphere strips within `1e-12` relative); a cone has one in
+every plane through `a0` and `b1`, so the fit lands on some, whose
+patches may fold on wide pieces (cones take their exact strips anyway).
+
+**Measuring** (`deviation(patch, form)`): the largest `Form::distance`
+over the patch, found rather than sampled: a grid of 12 steps a side (91
+points, coordinates whole steps so the ones on an edge are zero exactly),
+then from the four farthest a compass search along the grid's six
+directions, its step starting at a grid step and halved 20 times when no
+move gains (at most 400 steps a climb), staying on the triangle with its
+edges. A fitted patch's error is smooth, zero on its exact edges and with
+a few extrema the size of the patch, so the climbs reach its maxima to
+about `2⁻²⁰` of a grid step: on 40 random torus strips it is never under
+a grid of 300 steps a side (45 451 points) and never over it by more than
+`0.1 %`. (With `1 − a − b` for the third coordinate, a grid point on the
+diagonal had it at `−6e-17`, so the climb could never move along the
+edge where the maximum was, and fell short of it by `0.05 %`.)
+
+#### Lathes, fitted bands and caps (`sweep/lathe.rs`)
+
+A `Lathe` is the stations of a surface of revolution: the line through
+`origin` along a unit `axis`, a full turn or a part (`0 < sweep < 2π`),
+in `pieces` equal pieces of at most 90° (up to `MAX_PIECES` = 4096).
+Station `k` turns the right-hand way about the axis (from `x` towards
+`axis × x`; revolve's frame, turning `x` towards `x × y`, passes `−y`),
+its cosine and sine from `trig`, exact at multiples of a quarter turn.
+`turned(p, k)` is `p` itself at station 0 (and a full turn's last) and
+for a point on the axis; `parallel(p, k)` is the exact arc between two
+stations (`arc_between` about the foot); `meridian(m, k)` turns a
+meridian's ends and control point and keeps its weight, so strips either
+side of a station share it to the bit; `halved()` doubles the pieces.
+
+**Bands** (`fitted_band(lathe, meridian, form, tol, budget)`): the
+meridian (drawn at station 0) in fitted strips within half the fit
+tolerance. A piece is fitted at station 0 first; if it fits, at every
+station (a parallel map), and every strip is measured and must be sound:
+both patches pass the fold check and the edge rule between them at the
+resolution. Otherwise it is halved, whichever way station 0 says gains
+more: the piece (each half then on its own, so only where needed), or
+round the axis, which changes every face of the lathe and so is the
+caller's: `Ok(None)` asks for the band again on `lathe.halved()`. Where
+neither halving gives a sound strip yet, the longer way (the parallel's
+chord against the meridian's). At most 16 halvings of a piece; 256 work
+units a strip (about a hundred microseconds; the `Budget`'s units are
+about half a microsecond).
+
+**Rings stay off turns.** A ring's parallel is the shared edge of the
+strips either side of it, and the edge rule takes the plane through its
+control points, square to the axis: one side must clear it, the other not
+cross it by more than the resolution. Where the meridian's tangent is
+square to the axis (a turn of its height: a torus's top and bottom) the
+surface touches that plane all along the parallel, so a ring there has
+both strips under it and is refused (`EdgeNeighbours`; test
+`a_ring_where_the_surface_touches_its_plane_is_refused`), and a strip over
+the turn whose ends differ in height dips under the plane of its higher
+ring. No plane through a curved edge can do better (both hulls hold the
+edge's three control points), so the bands avoid it: a piece whose
+height turns inside it (the roots in `(1e-6, 1 − 1e-6)` of the
+derivative's numerator, a quadratic with Bernstein coefficients `w·(hc −
+h0)`, `(h1 − h0)/2`, `w·(h1 − hc)`) is first cut where its far side comes
+back to the height of the end nearer the turn's (bisection to the bit),
+so the piece over the turn ends at one height (within a quarter of the
+resolution) and lies on one side of both its rings' planes, while its
+neighbours fall away from the turn and clear them. Halving such a piece
+makes three: the middle one over the turn, from half way to the turn to
+where it comes back to that height. Pieces are made from the meridian's
+blossom between parameters, so neighbours share their end's bits. A
+**ring at a turn is the caller's to avoid**: revolve must split full
+circles off their top and bottom (the tests split tubes at 45°) and can't
+build a profile vertex there (a flat face tangent to a round at its top,
+or two arcs meeting tangentially there): a gap revolve has to close (see
+Deviations, "Rings stay off turns").
+
+**Caps** (`pole_cap(lathe, meridian, pole, form, tol, budget)`): the
+triangles of two meridians from the pole and the parallel between them,
+one per piece of the lathe. Two meridians meeting on the axis have no
+common point on the surface (on a cone the exact rulings would have
+their control points on the apex, a corner the fold check can't pass), so
+the cap is fitted: its meridians are the meridian's own piece turned
+(exact arcs on a sphere; a cone passes a straight `Conic::line`, linear
+rulings), and the piece is halved toward the pole until every triangle
+is within half the fit tolerance, passes the fold check and the edge rule
+with its neighbour. Measured: a sphere cap of angle `δ` in sectors of `φ`
+is about `R·δ²·φ²/64` off (within 25 %, test), a quarter each halving; a
+cone's in proportion to the cap's length, a half each halving, and to the
+ruling's control point's distance from the apex (with it at a fraction
+`λ` of the ruling, `λ·L·f(φ)`; `λ = 0` is exact but fails the fold check).
+So the cap alone fits: caps never ask for more pieces round the axis. The
+rest of the meridian comes back in pieces whose rings are at most 16
+times further out (in its parameter) than the one before, so the strips
+the caller builds on them (exact sphere or cone strips, or fitted) don't
+thin into slivers; the triangles go on a claim-free copy of the face.
+Triangles are `(pole, b1, b0)` for a pole at the meridian's start and
+`(a0, a1, pole)` at its end: the strips' layout with one side collapsed,
+facing the way the strips beside them do.
+
+**Measured tori** (`R` major, `r` minor radius; the lathe starting at 4
+pieces and the tube in four quarters from 45°, halved as above; the error
+is the worst `deviation`):
+
+| torus | fit | round × along | patches | worst | the plan's estimate |
+|---|---|---|---|---|---|
+| `R 20, r 2` | `1e-1` | 16 × 4 | 128 | `1.8e-2` | |
+| | `1e-2` | 32 × 4 | 256 | `3.3e-3` | |
+| | `1e-3` | 64 × 6 | 768 | `3.4e-4` | 32 × 16 strips, 1 024 patches (`3.6e-4`) |
+| | `1e-4` | 128 × 10 | 2 560 | `4.0e-5` | 64 × 32, 4 096 (`3.6e-5`) |
+| | `1e-5` | 512 × 10 | 10 240 | `2.5e-6` | |
+| `R 10, r 3` | `1e-3` | 32 × 10 | 640 | `3.2e-4` | |
+| | `1e-4` | 128 × 10 | 2 560 | `2.1e-5` | |
+| `R 50, r 1` | `1e-3` | 128 × 4 | 1 024 | `4.7e-4` | |
+| | `1e-4` | 256 × 6 | 3 072 | `4.9e-5` | |
+
+On uniform grids this fit is `2.1e-4` off at 32 × 16 and `1.4e-5` at 64
+× 32, against the estimate's `3.6e-4` and `3.6e-5`; halving both ways
+divides the error by about 16 (the fourth power of the size), halving
+one way by 4 to 5. All pass `check` with the volume within the area times
+the worst error of `2π²Rr²` (off by `1e-3` to `6e-2`, the fitted surface
+lying either side). Fitting the `1e-3` torus is a few hundred thousand
+work units.
+
+Tests (`sweep/lathe/tests.rs`, `mesh/form/tests.rs`): stations exact at
+quarter turns, station 0 and points on the axis kept to the bit, part
+turns; bad lathes and fitted strips refused; `deviation` against dense
+grids; fitted strips exact on spheres and cones; signed distances
+against distances and their growth along the normal; the pole error
+falling with the cap (sphere by four, cone by two, the sphere's against
+`R·δ²·φ²/64`); spheres with both poles capped and cones with capped
+apexes (exact strips between, a flat base) at three tolerances, tori
+anywhere, elliptic tori (`Form::Revolved`), and tubes split at any angle
+(the pieces over turns ending at one height) passing `check` with
+volume within the area times half the fit tolerance and area within
+`4·A·fit/2` over the smallest radius of curvature (exact for the volume
+of exact faces), and refused turned inside out; the torus counts above
+at `1e-2`, `1e-3` and `1e-4` pinned, with dense spot checks; a ring at a
+turn refused; caps off the axis and bands past their budget refused; the
+same bits at 1 and 8 threads.
 
 ### Limits and errors
 
@@ -625,7 +784,10 @@ both by it), `Unknown` for a zero or non-finite one. `Form::distance` is
 exact for planes, cylinders, cones (behind the apex, the distance to it),
 spheres and tori, and first order for the conic forms (`|F|/|∇F|` of
 `λ1² − 4w²·λ0·λ2` on the conic's control triangle, along the cylinder or
-in the meridian half-plane), 0 for `Unknown`.
+in the meridian half-plane), 0 for `Unknown`. `Form::signed` gives the
+signed distance with the unit direction it grows along, which fitted
+strips are fitted against (`None` for `Unknown` and where the direction
+isn't defined, on an axis or a tube's centre circle).
 
 Who sets them: the box (planes), the cylinder (planes, `Cylinder` along
 `+z`), extrude (planes for caps and straight walls; a curved wall a
@@ -5368,3 +5530,39 @@ parameter, or a split outside the patch bounds),
   billionth of the solid's size, not only exact ones.
   Transforms don't exist yet; the table is on `Mesh`, so they carry it
   by keeping the faces.
+- **Fitted strips are least squares, halved by what station 0 says.** The
+  plan fitted the diagonal by Gauss–Newton until every sample was within
+  half the fit tolerance, halving either way. Built: Levenberg–Marquardt
+  on the signed distance at a grid of points, then the worst error
+  *measured* by climbing from the worst grid points (`deviation`), and
+  halved along the meridian or round the axis by which gains more at
+  station 0 (round the axis is the caller's: the band asks for a halved
+  lathe). The tori come out with fewer patches than the plan estimated (768
+  at the default tolerance against about 1 000, 2 560 at `1e-4` against 4
+  000).
+- **Rings stay off turns.** Not in the plan, found building tori: where
+  a meridian's tangent is square to the axis the surface touches the
+  parallel's plane all along it, and the edge rule (a plane through the
+  shared curved edge's control points with the two sides on opposite
+  sides of it) can't pass there or across a strip over the turn whose
+  ends differ in height. Bands cut the piece over a turn where it comes
+  back to one height, so no ring lies at a turn. Profile vertices at
+  turns stay a gap for revolve: a full circle must be split off its top
+  and bottom (at 45°, say), and a vertex where the meridian is square to
+  the axis on both sides (a flat face meeting a round tangentially, two
+  arcs tangent at a top) is refused by `check` as built. Closing it needs
+  either a construction that keeps a ring off the turn (no plane face can
+  end there) or a hull rule for tangent edges: with one side in the
+  plane, the other's height polynomial (Bernstein coefficients the
+  heights of its control points) non-positive everywhere and negative
+  at its far corner is under the plane except on the edge.
+- **Caps don't grow the angular split.** The plan raised `k` when a cap
+  wanted an arc halved; halving the cap's meridian toward the pole alone
+  brings it within the tolerance (the error falls as `δ²` on a sphere,
+  as the length on a cone), so caps only halve their meridian, and the
+  rest of the meridian comes back in pieces growing at most 16 times a
+  ring.
+- **Lathe calls take a `Budget` each.** `fitted_band` and `pole_cap` start
+  their own `Work` from the budget; revolve, which makes many of them in
+  one operation, should share one through `fitted_band_with` and
+  `pole_cap_with` (crate-internal, taking `&mut Work`).

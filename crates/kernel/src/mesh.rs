@@ -61,7 +61,7 @@ pub(crate) use check::{off_surface, samples};
 pub use face::{Face, FaceKey, FaceName, FacePart, PartKey, Quadric, Surface};
 pub use form::Form;
 pub(crate) use form::circle_of;
-pub(crate) use hull::{apart, flat, straight};
+pub(crate) use hull::{apart, edge_neighbours_apart, flat, straight};
 pub(crate) use refine::{Node, Refiner};
 pub(crate) use repair::MIN_SPLIT;
 

@@ -550,7 +550,7 @@ fn solid_of_revolution(
 
 /// `mesh` turned inside out: every triangle reversed, plane forms and
 /// tags turned round.
-fn inside_out(mesh: &Mesh) -> Mesh {
+pub(super) fn inside_out(mesh: &Mesh) -> Mesh {
     let mut builder = MeshBuilder::new();
     for &p in mesh.verts() {
         builder.vert(p);

@@ -10,7 +10,9 @@
 //! [`extrude()`] sweeps a [`Profile`], closed loops of conics placed on a
 //! [`Frame`], into an exact solid; [`Solid::volume`] and [`Solid::area`]
 //! measure one. [`sweep`] makes exact strips on cones and quadrics of
-//! revolution, the walls revolved solids are to be made of.
+//! revolution, and fitted ones (tori, other surfaces of revolution, caps
+//! round poles and apexes) within half the fit tolerance: the walls
+//! revolved solids are to be made of.
 //!
 //! [`boolean()`] unites, subtracts and intersects solids the way
 //! [manifold](https://github.com/elalish/manifold) does for flat

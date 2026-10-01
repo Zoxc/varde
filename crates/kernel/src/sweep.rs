@@ -47,10 +47,25 @@
 //! between two parallels and two meridians, its diagonal the conic in that
 //! plane through `a0` and `b1`, tangent to the surface there, through
 //! `a1'`.
+//!
+//! Where no strip is exact (a torus, another conic about an axis, a pole
+//! or an apex), they are **fitted** within half the fit tolerance of the
+//! face's [`Form`](crate::mesh::Form): [`fitted_strip`] keeps the four
+//! given edges (exact parallels and meridians) and fits the diagonal,
+//! [`deviation`] measures how far a patch is from a form, and a [`Lathe`]
+//! (stations about an axis) makes the bands of a surface of revolution in
+//! fitted strips, halved until they fit ([`fitted_band`]), and the caps
+//! round poles and apexes ([`pole_cap`]).
 
 use glam::{DVec3, DVec4};
 
 use crate::patch::{Conic, Conic3, Patch, PatchError, Point};
+
+mod fit;
+mod lathe;
+
+pub use fit::{Fitted, deviation, fitted_strip};
+pub use lathe::{Band, Cap, Lathe, Pole, fitted_band, pole_cap};
 
 /// How far the diagonal's plane must keep from the apex, or two tangents
 /// from parallel, as a sine.

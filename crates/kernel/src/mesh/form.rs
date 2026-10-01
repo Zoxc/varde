@@ -136,6 +136,82 @@ impl Form {
             } => conic_distance(&meridian, polar(x - origin, axis)),
         }
     }
+
+    /// The signed distance from `x` to the surface and the unit direction
+    /// it grows along (the surface's normal near it), what fitted patches
+    /// are fitted against: exact for planes, cylinders, cones (to the
+    /// whole line of the half-angle, either side of the apex), spheres
+    /// and tori, to first order for the conic forms. Which side is
+    /// positive is the form's own (out of a sphere or a torus's tube,
+    /// away from a cylinder's or cone's axis), not the solid's. `None`
+    /// for [`Form::Unknown`], or where it isn't defined (on a cylinder's,
+    /// cone's or torus's axis or tube circle, at a sphere's centre).
+    pub(crate) fn signed(&self, x: DVec3) -> Option<(f64, DVec3)> {
+        let unit = |v: DVec3| {
+            let length = v.length();
+            (length > 0.0 && length.is_finite()).then(|| v / length)
+        };
+        // `y` across `axis` and along it, with the unit direction across.
+        let split = |y: DVec3, axis: DVec3| {
+            let h = y.dot(axis);
+            let across = y - axis * h;
+            let r = across.length();
+            (r, h, (r > 0.0).then(|| across / r))
+        };
+        let found = match *self {
+            Form::Unknown => None,
+            Form::Plane { n, d } => Some((n.dot(x) - d, n)),
+            Form::Cylinder {
+                point,
+                axis,
+                radius,
+            } => {
+                let (r, _, radial) = split(x - point, axis);
+                radial.map(|radial| (r - radius, radial))
+            }
+            Form::ConicCylinder { conic, along } => {
+                conic_cylinder_signed(&conic, along, x).and_then(|(d, g)| Some((d, unit(g)?)))
+            }
+            Form::Cone {
+                apex,
+                axis,
+                cos,
+                sin,
+            } => {
+                let (r, h, radial) = split(x - apex, axis);
+                radial.map(|radial| (r * cos - h * sin, radial * cos - axis * sin))
+            }
+            Form::Sphere { centre, radius } => {
+                let y = x - centre;
+                unit(y).map(|n| (y.length() - radius, n))
+            }
+            Form::Torus {
+                centre,
+                axis,
+                major,
+                minor,
+            } => {
+                let (r, h, radial) = split(x - centre, axis);
+                let tube = hypot(r - major, h);
+                match radial {
+                    Some(radial) if tube > 0.0 => {
+                        Some((tube - minor, (radial * (r - major) + axis * h) / tube))
+                    }
+                    _ => None,
+                }
+            }
+            Form::Revolved {
+                origin,
+                axis,
+                meridian,
+            } => {
+                let (r, h, radial) = split(x - origin, axis);
+                let (d, g) = conic_signed(&meridian, DVec2::new(r, h))?;
+                radial.and_then(|radial| Some((d, unit(radial * g.x + axis * g.y)?)))
+            }
+        };
+        found.filter(|(d, n)| d.is_finite() && n.is_finite())
+    }
 }
 
 #[cfg(test)]
@@ -277,6 +353,12 @@ fn first_order(f: f64, gradient: f64) -> f64 {
 
 /// The distance from `q` to the conic, to first order.
 fn conic_distance(conic: &Conic2, q: DVec2) -> f64 {
+    let (f, gradient) = conic_implicit(conic, q);
+    first_order(f, gradient.length())
+}
+
+/// `F` of the conic at `q` (see [`implicit`]) and its gradient.
+fn conic_implicit(conic: &Conic2, q: DVec2) -> (f64, DVec2) {
     let (e1, e2) = (conic.c - conic.p0, conic.p1 - conic.p0);
     let det = e1.perp_dot(e2);
     let g1 = DVec2::new(e2.y, -e2.x) / det;
@@ -284,13 +366,29 @@ fn conic_distance(conic: &Conic2, q: DVec2) -> f64 {
     let d = q - conic.p0;
     let (l1, l2) = (g1.dot(d), g2.dot(d));
     let (f, [k1, k0, k2]) = implicit(conic.w, [1.0 - l1 - l2, l1, l2]);
-    first_order(f, (g1 * k1 + (-g1 - g2) * k0 + g2 * k2).length())
+    (f, g1 * k1 + (-g1 - g2) * k0 + g2 * k2)
+}
+
+/// `F/|∇F|` at `q` and `∇F`: the signed distance to the conic to first
+/// order, positive on the side its control point is on (outside a
+/// circle), and the direction it grows along. `None` where the gradient
+/// vanishes.
+fn conic_signed(conic: &Conic2, q: DVec2) -> Option<(f64, DVec2)> {
+    let (f, gradient) = conic_implicit(conic, q);
+    let length = gradient.length();
+    (length > 0.0).then(|| (f / length, gradient))
 }
 
 /// The distance from `x` to the cylinder over `conic` along `along`, to
 /// first order: the conic's barycentric coordinates are affine in the
 /// point and don't change along `along`.
 fn conic_cylinder_distance(conic: &Conic3, along: DVec3, x: DVec3) -> f64 {
+    let (f, gradient) = conic_cylinder_implicit(conic, along, x);
+    first_order(f, gradient.length())
+}
+
+/// `F` of the conic at `x`'s place on it along `along`, and its gradient.
+fn conic_cylinder_implicit(conic: &Conic3, along: DVec3, x: DVec3) -> (f64, DVec3) {
     let (e1, e2) = (conic.c - conic.p0, conic.p1 - conic.p0);
     // The rows of the inverse of [e1 e2 along] give each coordinate.
     let inverse = DMat3::from_cols(e1, e2, along).inverse().transpose();
@@ -298,7 +396,14 @@ fn conic_cylinder_distance(conic: &Conic3, along: DVec3, x: DVec3) -> f64 {
     let d = x - conic.p0;
     let (l1, l2) = (g1.dot(d), g2.dot(d));
     let (f, [k1, k0, k2]) = implicit(conic.w, [1.0 - l1 - l2, l1, l2]);
-    first_order(f, (g1 * k1 + (-g1 - g2) * k0 + g2 * k2).length())
+    (f, g1 * k1 + (-g1 - g2) * k0 + g2 * k2)
+}
+
+/// [`conic_signed`] for the cylinder over `conic` along `along`.
+fn conic_cylinder_signed(conic: &Conic3, along: DVec3, x: DVec3) -> Option<(f64, DVec3)> {
+    let (f, gradient) = conic_cylinder_implicit(conic, along, x);
+    let length = gradient.length();
+    (length > 0.0).then(|| (f / length, gradient))
 }
 
 #[cfg(test)]

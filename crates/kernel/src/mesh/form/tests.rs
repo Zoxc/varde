@@ -475,3 +475,78 @@ mod constructed {
         assert!(Solid::new(reformed(wider), &TOL).is_ok());
     }
 }
+
+#[test]
+fn signed_distances_agree_with_distances_and_grow_along_their_normals() {
+    // `|signed|` is `distance` (to first order for the conic forms, near
+    // them), and a small step along the normal grows it by the step.
+    let mut rng = Rng::new(9);
+    for _ in 0..200 {
+        let (o, axis) = (rng.point(1e3), rng.direction());
+        let r = rng.log_range(0.1, 100.0);
+        let a = rng.range(0.1, 1.4);
+        let x = across(axis);
+        let meridian = Conic2::arc(DVec2::new(2.0 * r, 0.0), r, 0.3, 1.0).unwrap();
+        let forms = [
+            Form::plane(rng.direction(), rng.range(-1e3, 1e3)),
+            Form::Cylinder {
+                point: o,
+                axis,
+                radius: r,
+            },
+            Form::Cone {
+                apex: o,
+                axis,
+                cos: a.cos(),
+                sin: a.sin(),
+            },
+            Form::Sphere {
+                centre: o,
+                radius: r,
+            },
+            Form::Torus {
+                centre: o,
+                axis,
+                major: 2.0 * r,
+                minor: r * rng.range(0.1, 0.9),
+            },
+            Form::Revolved {
+                origin: o,
+                axis,
+                meridian,
+            },
+        ];
+        let reach = o.length() + 4.0 * r;
+        for form in forms {
+            // A point a fraction of `r` from the axis's foot out along `x`;
+            // for the meridian's first-order distance, near the meridian.
+            let p = match form {
+                Form::Revolved { .. } => {
+                    let q = meridian.eval(0.5);
+                    o + x * q.x + axis * q.y + rng.direction() * r * 1e-3
+                }
+                _ => o + x * 2.0 * r + axis * r * 0.4 + rng.direction() * r * 0.05,
+            };
+            let (d, n) = form.signed(p).unwrap();
+            assert!((n.length() - 1.0).abs() < 1e-12);
+            let tolerance = match form {
+                Form::Revolved { .. } => 0.2 * d.abs() + 1e-12 * reach,
+                _ => 1e-9 * reach,
+            };
+            assert!((d.abs() - form.distance(p)).abs() <= tolerance, "{form:?}");
+            let step = 1e-6 * r;
+            let (moved, _) = form.signed(p + n * step).unwrap();
+            assert!(
+                (moved - d - step).abs() <= 1e-3 * step + 1e-12 * reach,
+                "{form:?}: {} for {step}",
+                moved - d
+            );
+        }
+    }
+    assert_eq!(Form::Unknown.signed(DVec3::ONE), None);
+    let sphere = Form::Sphere {
+        centre: DVec3::ONE,
+        radius: 1.0,
+    };
+    assert_eq!(sphere.signed(DVec3::ONE), None);
+}
