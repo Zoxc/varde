@@ -342,7 +342,14 @@ pub enum Look {
         dx: f32,
         dy: f32,
     },
-    Zoom(f32),
+    /// Zooms by `factor` towards the point that shows `x` right and `y`
+    /// down of the viewport's middle, in fractions of its height: the
+    /// cursor's, which stays under it.
+    Zoom {
+        factor: f32,
+        x: f32,
+        y: f32,
+    },
     /// Home: turns the camera to the home view and forgets the pivot.
     ResetCamera,
     LookFrom(View),

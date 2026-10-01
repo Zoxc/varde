@@ -2411,7 +2411,10 @@ fn the_wheel_over_the_panel_scrolls_it_not_the_camera_and_keeps_the_focus() {
         .into_iter()
         .flat_map(|event| send(&mut ui, event, scene))
         .collect();
-    assert!(matches!(sent[..], [Ui::Look(Look::Zoom(_))]), "{sent:?}");
+    assert!(
+        matches!(sent[..], [Ui::Look(Look::Zoom { .. })]),
+        "{sent:?}"
+    );
     // Over the panel's body, it scrolls the body and nothing else.
     let before = texts(&mut ui, &varde_view::probe::renderer());
     let (panel, _) = panel_texts(&before);

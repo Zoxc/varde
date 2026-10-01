@@ -236,7 +236,11 @@ fn aim(doc: &mut Doc, yaw: f32, pitch: f32, zoom: f32) {
     doc.look(Look::ResetCamera);
     doc.animation_frame(Instant::now() + 2 * crate::doc::CAMERA_ANIMATION);
     doc.look(Look::Orbit { yaw, pitch });
-    doc.look(Look::Zoom(zoom));
+    doc.look(Look::Zoom {
+        factor: zoom,
+        x: 0.0,
+        y: 0.0,
+    });
 }
 
 /// How far out the camera is zoomed from Home's to frame the example's
@@ -730,7 +734,11 @@ fn look_from(doc: &mut Doc, view: View, projection: Projection, zoom: f32) {
         doc.look(look);
         doc.animation_frame(Instant::now() + 2 * crate::doc::CAMERA_ANIMATION);
     }
-    doc.look(Look::Zoom(zoom));
+    doc.look(Look::Zoom {
+        factor: zoom,
+        x: 0.0,
+        y: 0.0,
+    });
 }
 
 /// Scenario 12, the bug hunt's odd cameras: looking along the handle's

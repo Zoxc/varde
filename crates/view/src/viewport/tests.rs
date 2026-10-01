@@ -396,6 +396,25 @@ fn a_left_drag_in_a_sketch_moves_no_camera() {
     assert!(matches!(state.drag, Some((DragKind::Orbit, _))));
 }
 
+#[test]
+fn the_wheel_zooms_towards_the_cursor() {
+    let wheel = Event::Mouse(mouse::Event::WheelScrolled {
+        delta: mouse::ScrollDelta::Lines { x: 0.0, y: 1.0 },
+    });
+    let mut state = Interaction::default();
+    let message = handle(&mut state, wheel, false).unwrap().into_inner().0;
+    // The cursor is at (10, 10), up and left of the middle.
+    let off = (10.0 - SIZE as f32 / 2.0) / SIZE as f32;
+    assert!(
+        matches!(
+            message,
+            Some(Message::Look(Look::Zoom { factor, x, y }))
+                if factor == ZOOM_PER_LINE && x == off && y == off
+        ),
+        "{message:?}"
+    );
+}
+
 /// The sketch being edited is drawn by the scene, through the widget's
 /// primitive, and its base layer is uploaded again only when it changes.
 #[test]

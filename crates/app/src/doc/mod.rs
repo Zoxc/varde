@@ -518,9 +518,9 @@ impl Doc {
                 self.animation = None;
                 self.camera.pan(dx, dy);
             }
-            Look::Zoom(factor) => {
+            Look::Zoom { factor, x, y } => {
                 self.animation = None;
-                self.camera.zoom(factor);
+                self.camera.zoom_at(factor, x, y);
             }
             // In a sketch, Home faces it. Either way it orbits its target
             // again.

@@ -84,7 +84,12 @@ pointer over an item to select. Drags map to camera moves in
 `DragKind::for_button`, from the button, the modifiers the widget tracks
 from `ModifiersChanged` and whether a sketch is open: middle and `Shift` +
 right orbit, right pans, left orbits outside a sketch; `viewport::hints`
-and `README.md` follow it.
+and `README.md` follow it. The wheel zooms towards the cursor, as the
+mock does: `Look::Zoom` carries the cursor's offset from the viewport's
+middle in fractions of its height, and `Camera::zoom_at` moves the
+target towards the point at the target's depth there by the proportion
+the distance changes, so that point stays under the cursor in either
+projection.
 
 A middle click, the cursor let go within `CLICK_SLOP` (3 px) of where
 it was pressed, picks the point the camera orbits (until the cursor

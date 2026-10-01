@@ -327,6 +327,30 @@ impl Camera {
             self.distance = (self.distance * factor).clamp(Self::MIN_DISTANCE, Self::EXTENT);
         }
     }
+
+    /// Zooms by `factor`, as [`Self::zoom`] does, towards the point at
+    /// the target's depth that shows `x` right and `y` down of the view's
+    /// middle, in fractions of the viewport height like [`Self::pan`]'s:
+    /// it stays where it shows, so the zoom follows the cursor. The target
+    /// stays within [`Self::EXTENT`] of the origin, and a factor or
+    /// offset that isn't finite is ignored.
+    pub fn zoom_at(&mut self, factor: f32, x: f32, y: f32) {
+        if !(factor.is_finite() && x.is_finite() && y.is_finite()) {
+            return;
+        }
+        let at = self.target + (self.right() * x - self.up() * y) * self.view_height();
+        let distance = self.distance;
+        self.zoom(factor);
+        // What the distance was multiplied by, once clamped: the target
+        // moves towards `at` by the same proportion, so the view's scale
+        // about it changes as it does about the target.
+        let scaled = self.distance / distance;
+        let target = at + (self.target - at) * scaled;
+        if target.is_finite() {
+            let extent = Vec3::splat(Self::EXTENT);
+            self.target = target.clamp(-extent, extent);
+        }
+    }
 }
 
 /// How far from vertical, as the length of its horizontal part, a unit

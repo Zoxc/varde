@@ -403,7 +403,7 @@ fn the_other_buttons_and_the_wheel_move_the_camera() {
     let (messages, _) = feed(&viewport, &mut state, from, &[wheel]);
     assert!(matches!(
         messages.as_slice(),
-        [Message::Look(Look::Zoom(_))]
+        [Message::Look(Look::Zoom { .. })]
     ));
     // The left button is the sketch's.
     let (_, captured) = feed(&viewport, &mut state, from, &[press()]);

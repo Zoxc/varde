@@ -422,12 +422,24 @@ impl Program<'_> {
                 Some(Action::publish(message).and_capture())
             }
             mouse::Event::WheelScrolled { delta } => {
-                cursor.position_over(bounds)?;
+                let position = cursor.position_over(bounds)?;
+                // A collapsed viewport has no height to place the cursor by.
+                if bounds.height < 1.0 {
+                    return None;
+                }
                 let factor = match delta {
                     mouse::ScrollDelta::Lines { y, .. } => ZOOM_PER_LINE.powf(y),
                     mouse::ScrollDelta::Pixels { y, .. } => ZOOM_PER_PIXEL.powf(y),
                 };
-                Some(Action::publish(Message::Look(Look::Zoom(factor))).and_capture())
+                let center = bounds.center();
+                Some(
+                    Action::publish(Message::Look(Look::Zoom {
+                        factor,
+                        x: (position.x - center.x) / bounds.height,
+                        y: (position.y - center.y) / bounds.height,
+                    }))
+                    .and_capture(),
+                )
             }
             _ => None,
         }

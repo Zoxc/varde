@@ -248,3 +248,38 @@ fn centering_on_a_point_pans_across_the_view() {
     camera.center_on(Vec3::new(f32::NAN, 0.0, 0.0));
     assert_eq!(camera, before);
 }
+
+#[test]
+fn zooming_at_a_point_keeps_it_where_it_shows() {
+    for projection in [Projection::Orthographic, Projection::Perspective] {
+        let mut camera = Camera::default();
+        camera.set_projection(projection);
+        camera.set_target(Vec3::new(1.0, 2.0, 0.5));
+        // A quarter of the height right and a tenth up of the middle, on
+        // a viewport 1.5 times as wide as it is high.
+        let (x, y) = (0.25, -0.1);
+        let at = camera.target() + (camera.right() * x - camera.up() * y) * camera.view_height();
+        let shows = |camera: &Camera| {
+            let clip = camera.projection_matrix(1.5, 0.1..100.0) * camera.view() * at.extend(1.0);
+            clip.truncate().truncate() / clip.w
+        };
+        let before = shows(&camera);
+        assert!(before.abs_diff_eq(glam::Vec2::new(x * 2.0 / 1.5, -y * 2.0), 1e-5));
+        for factor in [0.5, 3.0] {
+            camera.zoom_at(factor, x, y);
+            assert!(shows(&camera).abs_diff_eq(before, 1e-4), "{projection:?}");
+        }
+        assert!((camera.distance() - Camera::default().distance() * 1.5).abs() < 1e-4);
+    }
+    let mut camera = Camera::default();
+    let before = camera;
+    camera.zoom_at(0.5, f32::NAN, 0.0);
+    camera.zoom_at(f32::INFINITY, 0.0, 0.0);
+    assert_eq!(camera, before);
+    // At the middle, only the distance changes.
+    camera.zoom_at(0.5, 0.0, 0.0);
+    assert!(close(camera.target(), before.target()));
+    // Far off to the side, the target is clamped.
+    camera.zoom_at(1e-30, 1e30, 0.0);
+    assert!(camera.target().abs().max_element() <= Camera::EXTENT);
+}

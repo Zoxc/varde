@@ -935,7 +935,11 @@ fn profiles_are_found_once_per_sketch_shown() {
     // The circle's disc; the line bounds nothing.
     assert_eq!(first.regions.len(), 1);
     // Looking around isn't another sketch.
-    doc.look(Look::Zoom(2.0));
+    doc.look(Look::Zoom {
+        factor: 2.0,
+        x: 0.0,
+        y: 0.0,
+    });
     doc.look(Look::HoverItem(Some(b)));
     doc.look(Look::HoverItem(None));
     assert!(Arc::ptr_eq(&first, &found_profiles(&doc)));
