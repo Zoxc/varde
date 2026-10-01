@@ -1617,7 +1617,13 @@ patch: `ω(v, f)` when `v` is below all its control points, 0 when above;
 otherwise the points of `f` straight above and below `v` are solved for
 (`solve::hits`: the parameter triangle split by blossoming, pieces whose
 control points' shadows' box misses `v` dropped, Newton on the shadow's
-two coordinates in pieces whose normals all lean one way along `UP`),
+two coordinates in pieces whose normals all lean one way along `UP`; a
+point Newton's method finds from one piece in another is kept too, if
+it is in the triangle: on a steep patch every piece's shadow holds the
+vertex's, the search ran out of pieces before it got to the one holding
+the point, and the winding number's point, taken to be above, gave
+every edge at the vertex a crossing through the patch that wasn't
+there),
 their facings made to add up to `ω(v, f)` (a shadow covers a point as
 often as its boundary winds round it, counted by facing) by adding the
 nearest found just outside the triangle or dropping those inside nearest
@@ -1834,8 +1840,36 @@ position in both patches' domains.
   its domain), and arcs that would turn by more than about 45°
   (`MAX_TURN_COS` 0.7), or need a weight under ½, are halved at the
   conic's point on that line (at most 6 times); a plane along a
-  cylinder's rulings gives a straight edge. The arcs are kept only if
-  their middles invert into the quadric patch.
+  cylinder's rulings (both tangents along the chord within `1e-9`)
+  gives a straight edge. The arcs are kept only if their middles invert
+  into the quadric patch.
+- **On an elliptic or circular cylinder** (`surface::elliptic_cylinder`:
+  the matrix's symmetric part `S` takes an axis to 0 and is definite
+  square to it, the linear part square to the axis, both to `1e-12`
+  relative; the centre solves `S·y = −b` square to the axis, as an
+  extruded cylinder's origin is off its axis) **with both ends on it**
+  (to `1e-12` of their distance from the axis or from the quadric's
+  origin), the weight and the control point come from the arc's angle
+  instead (`surface::elliptic_arc`). Seen along the axis a plane section
+  is an affine image of the cross-section, itself one of a circle, and
+  affine maps keep weights and control points: with `r̂` the vectors
+  from the axis to the ends made unit in the cylinder's metric (`±v·S·v`;
+  on a circle, plain lengths square to the axis), `w = cos(Δφ/2) = |r̂x +
+  r̂y| / 2` and `C = M − tan²(Δφ/2)·(Ĉ − M)`, `Ĉ` the plane's point on
+  the axis and `tan²(Δφ/2) = |r̂x − r̂y|² / |r̂x + r̂y|²`: only `+ − × ÷
+  √`, exact in relative terms however straight the arc. `σ` is noise
+  where the arc bulges by a rounding (`1.000135` on an ellipse arc,
+  whose weight is under 1, pulled a sliver beside it `1.7e-6` off the
+  cylinder onto a copy claiming no surface; a box turned a thousandth of
+  a radian across a wall over an ellipse arc came out `5.6e-7` off in
+  volume), and so is where nearly parallel tangents meet. So an arc
+  straight only within the `1e-9` is that arc here, not a straight edge
+  (one was `5.3e-11` off the cylinder), and only ends on one ruling give
+  a straight edge. Ends off the quadric keep `σ`: there it made up for
+  them, and the angle's weight made the bands worse (a vertex `5.6e-4`
+  off a cylinder before crossings went to their roots: 580 patches on
+  copies claiming no surface, unions and intersections `Invalid`).
+  Parabolic and hyperbolic cylinders and other quadrics keep `σ`.
 - **Anything else** (quadric against quadric, `Free` faces): **traced**
   and **fitted** (`chain/trace.rs`). A point where the patches meet solves
   `P(u) = Q(v)` and lies on a given plane: four equations in `u0, u1, v0,
@@ -2416,7 +2450,8 @@ crossings against dense polylines of random curves, straight and curved
 (and the solved crossings' parameters, signs and heights); straight edges'
 exact rays against the numerical ones; the points of random patches above
 a point adding up, by facing, to the winding number of their shadow's
-boundary; edge crossings on both the edge and the patch, and a line
+boundary, and the point below a vertex `1e-3` off a steep wall's patch
+found; edge crossings on both the edge and the patch, and a line
 through a cylinder crossing it once each way where it should to `1e-12`;
 picking crossings to fit a count (those only placed marked so);
 points on random patches certified near them, and the same off them
@@ -2448,8 +2483,14 @@ plate's caps (a tie); a round octahedron cut through its middle and with
 a hidden loop; the saddle above and below its saddle point; tangent
 cylinders (union not a manifold, the rest the operands); a plate drilled,
 joined and drilled again, fed on; merging back a ball and slab refined
-and not cut; the same bits at 1 and 8 threads; 24 random turned bars
-against boxes, each result right or refused; found by fuzzing:
+and not cut; the same bits at 1 and 8 threads; random turned bars
+against boxes, 24 for each of three seeds (200 for each of four in an
+ignored test), each result exact (every patch on its surface to
+`1e-11`, none claiming no surface) or refused, with the volume
+identities to `1e-11`; a hole sketched on a triangular prism's slanted
+wall, upright and turned, cut square to it through the prism and out of
+the base's wall in ellipses, all four exact to `1e-12` with volumes in
+closed form; found by fuzzing:
 cylinders side by side `1e-9` apart at the coarsest tolerance (right or
 refused), a box's face through a bar's refinement midpoints (its plane
 tag true), and a tilted bar's arc crossing a plate's cap where the
@@ -2477,8 +2518,12 @@ before, then refused), all four `Ok` with every new vertex on both
 surfaces; two bars turned through boxes (crossings `5.6e-4` and `2e-4`
 off the bar) and a small cylinder across a 75° wall in three pieces
 (`1.3e-4`, on triangles along no cut), at up to three tolerances, all
-four exact (no patch claiming no surface) with the volume identities to
-`1e-11`, and through a test-only switch (`assemble::LOOSE`: crossings
+four exact (no patch claiming no surface, every patch on its surface
+to `1e-12`) with the volume identities to `1e-11`; a third bar, whose
+nearly straight section arcs' weights came from a rounding's worth of
+bulge (a sliver `1.7e-6` off on a copy claiming no surface), and a box
+turned a thousandth of a radian across a wall over an ellipse arc
+(`5.6e-7` off in volume), the same; and through a test-only switch (`assemble::LOOSE`: crossings
 only placed left where they were and not checked) each result refused
 or its claim-free patches within the tolerance of their walls, the
 union (and `bar − box`) refused as too complex at the finest tolerances,
@@ -2493,9 +2538,11 @@ a ruling placed a third of the edge off, a tangent line (a double
 root), a plane crossed twice (each sign its own root wherever placed),
 the second point of a line on a cylinder and at infinity on a parabolic
 cylinder, tracing crossing cylinders and fitting at two tolerances,
-inverting a point into a patch.
-
-a patch.
+inverting a point into a patch; elliptic and circular cylinders told
+from their quadrics (centre and axis; cones, spheres, paraboloids,
+hyperbolic and parabolic cylinders not), and plane sections of both, from
+`1e-9` to 1 radian off the rulings and a thousandth to three long, with
+weights the eccentric angle's to `1e-15` and middles where it is halved.
 
 Found by fuzzing, with regression tests: random boxes on a half grid
 (flush faces, shared edges and corners everywhere) against the cells
@@ -2600,6 +2647,15 @@ to 72 of its 96 operations and left the others as they were.
   surface), and an exact band tree's root where no ruling frees it, go on
   a copy of the face claiming no surface; a later boolean then traces
   and fits where they are cut again instead of cutting exactly.
+- **Section weights from `σ` off elliptic cylinders**: on parabolic and
+  hyperbolic cylinders and other quadrics a plane section's weight still
+  comes from where the line from the chord's middle to the control point
+  meets the quadric, noise for an arc bulging by a rounding, and an arc
+  within `1e-9` of straight is a straight edge (up to `1e-9` of its
+  length off). On a parabolic cylinder every section's weight is 1 (an
+  affine image of a parabola arc), which isn't used yet. Of 800 random
+  bars through boxes, two (seed 7, case 189; seed 1, case 97) fail their
+  intersection and difference as `Degenerate`, as before.
 - **Fitted chains are dense**: each conic within a quarter of the fit
   tolerance and turning at most 45°, and bands straying past half of it
   halved, so crossing cylinders at the default tolerance come out with
@@ -2629,7 +2685,7 @@ to 72 of its 96 operations and left the others as they were.
   them at checked roots on planes and quadrics won back more than the
   check cost. The seeded suite's tallies didn't move through either
   change (bars 22 of 24 pairs, walls 112 of 120, coaxial 37 of 40,
-  bosses 64 of 64, drilled 160 of 160, tangent 72 of 96, chains 200 of
+  bosses 64 of 64, drilled 160 of 160, tangent 72 of 96, chains 203 of
   240, turned 156 of 160, related 112 of 120), and the five bosses
   joined flush over drilled holes all work again. In a fuzzer of walls
   over arcs, conics and circles cut by boxes and cylinders, alone and
@@ -2638,22 +2694,24 @@ to 72 of its 96 operations and left the others as they were.
   `Inconsistent`), and results off in volume by more than `1e-7` (most
   within the tolerance):
 
-  | run | before the check | with the check | placed at roots |
-  |---|---|---|---|
-  | walls, seed 21 | 101 (6), 47 off | 149 (94), 0 off | 73 (9), 0 off |
-  | walls, seed 5 | 104 (1), 31 off | 136 (83), 0 off | 59 (1), 0 off |
-  | turned, seed 21 | 27 (0), 9 off | 37 (20), 3 off | 17 (0), 3 off |
-  | turned, seed 5 | 18 (0), 3 off | 23 (5), 0 off | 18 (0), 0 off |
+  | run | before the check | with the check | placed at roots | weights by angle |
+  |---|---|---|---|---|
+  | walls, seed 21 | 101 (6), 47 off | 149 (94), 0 off | 73 (9), 0 off | 68 (2), 0 off |
+  | walls, seed 5 | 104 (1), 31 off | 136 (83), 0 off | 59 (1), 0 off | 59 (1), 0 off |
+  | turned, seed 21 | 27 (0), 9 off | 37 (20), 3 off | 17 (0), 3 off | 17 (0), 0 off |
+  | turned, seed 5 | 18 (0), 3 off | 23 (5), 0 off | 18 (0), 0 off | 16 (0), 0 off |
 
   At the finest tolerance (`1e-5`, seed 21) 79 refusals (21
-  `Inconsistent`), none off. The `Inconsistent`s left are fed-on cases
-  (walls over parabolas cut by a box, then by a small cylinder) and
-  ones that failed so before either change. The three off, one turned
-  case (a box turned a thousandth of a radian across a wall over an
-  arc), went from `3.6e-6` to `5.6e-7`: a plane nearly along a
-  cylinder's rulings cuts it in nearly straight arcs whose weights come
-  from a rounding-sized bulge, and the bands beside them stray by up to
-  `1e-7`, at most `1e-10` off in the bars through boxes above.
+  `Inconsistent`), none off. The last column also has the points of a
+  patch above a vertex that Newton's method finds from another piece
+  (see "Curved primitives"): the fed-on `Inconsistent`s (a wall over a
+  parabola cut by a box, then a small cylinder `1e-3` through the wall;
+  a small box on a circle's wall) went with it, refused now by the hull
+  rules (`Invalid(VertexNeighbours)`) where they are refused; the
+  `Inconsistent`s left failed so before either change. The three off,
+  one turned case (a box turned a thousandth of a radian across a wall
+  over an ellipse arc), went from `3.6e-6` to `5.6e-7`, and to `1e-13`
+  with section weights by angle on elliptic cylinders.
 - **Bands past the fit tolerance are refused, not mended**: halving
   can't move bands at a vertex off the surface, and a triangle off its
   quadric with no curved side on the face's boundary has nothing to
@@ -3565,5 +3623,28 @@ parameter, or a split outside the patch bounds),
   which is now taken if it passes the same checks. The test switch that
   skipped the check (`UNCERTIFIED`) became `LOOSE`, which also leaves
   crossings only placed where they were, so the backstops can still be
-  tested. The bars through boxes are exact to `1e-9` of their size, not
-  `1e-12`, until section arcs' weights are taken from the angle.
+  tested. The bars through boxes were exact to `1e-9` of their size, not
+  `1e-12`, until section arcs' weights were taken from the angle; now
+  `1e-12`.
+- **Section weights by angle on elliptic cylinders too, and the control
+  point by angle**: the plan took the weight from the angle on circular
+  cylinders only, keeping the control point where the tangents meet and
+  a plane within `1e-9` of the rulings giving a straight edge. An
+  elliptic cylinder (a wall over an ellipse arc) is an affine image of a
+  circular one, so the same formula in its own metric gives its arcs'
+  weights; without it a box turned a thousandth of a radian across such
+  a wall stayed `5.6e-7` off in volume. The tangents of a nearly
+  straight arc meet only roughly and the straight edge was up to
+  `5.3e-11` off the cylinder (the plan's measured residue), so the
+  control point comes from the angle as well, and on these cylinders an
+  arc is a straight edge only between ends on one ruling. Parabolic and
+  hyperbolic cylinders and other quadrics are as before.
+- **The points of a patch above a vertex keep Newton's method's from any
+  piece**: found while looking at a fuzzing refusal (a small cylinder
+  `1e-3` through a steep wall), not in the plan. The vertex's winding
+  number had a point the search, run out of pieces, didn't find, and
+  guessing it above gave every edge at the vertex a crossing that isn't
+  there, which the check on crossings only placed refused
+  (`Inconsistent`); the operation is still refused, now by the result's
+  hull rules (`Invalid(VertexNeighbours)`), with the decisions
+  consistent.

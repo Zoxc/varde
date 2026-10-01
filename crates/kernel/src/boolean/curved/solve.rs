@@ -79,7 +79,15 @@ pub(crate) fn hits(patch: &Patch, v: DVec3, axes: &Axes) -> Vec<Hit> {
         nodes: 0,
     };
     search.visit(DVec3::AXES, 0);
-    let mut found = search.found;
+    // Newton's method from one piece may end in another: a point of the
+    // patch all the same (in the triangle, within the slack), kept, as
+    // the search may run out of pieces before it gets to that one (a
+    // steep patch, whose pieces' shadows all hold the vertex's).
+    let mut found: Vec<DVec3> = search
+        .found
+        .into_iter()
+        .filter(|&u| in_piece(DVec3::AXES, u))
+        .collect();
     found.sort_by(|a, b| a.to_array().partial_cmp(&b.to_array()).expect("finite"));
     found.dedup_by(|a, b| (*a - *b).abs().max_element() <= 1e-10);
     found
@@ -310,11 +318,11 @@ impl HitSearch<'_> {
         let deep = depth >= MAX_HIT_DEPTH;
         if deep || (depth >= 2 && self.unfolded(d)) {
             let start = (d[0] + d[1] + d[2]) / 3.0;
-            if let Some(u) = self.newton(start)
-                && in_piece(d, u)
-            {
+            if let Some(u) = self.newton(start) {
                 self.found.push(u);
-                return;
+                if in_piece(d, u) {
+                    return;
+                }
             }
             if deep {
                 return;

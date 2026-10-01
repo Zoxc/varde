@@ -16,7 +16,7 @@ use super::*;
 use crate::mesh::tests::TOL;
 use crate::mesh::{Quadric, Surface, samples};
 use crate::par::assert_deterministic;
-use crate::profile::tests::{circle, rect};
+use crate::profile::tests::{circle, polygon, rect};
 use crate::{Frame, Loop, Profile, Segment, extrude};
 
 fn cube(min: [f64; 3], size: [f64; 3]) -> Solid {
@@ -714,12 +714,27 @@ fn curved_booleans_are_deterministic() {
 
 #[test]
 fn random_bars_through_boxes_are_right_or_refused() {
-    // Turned and moved bars against boxes: every result checked and with
-    // its volume, or refused as invalid (a hull or fold repair can't
-    // mend) or too complex; never a wrong solid.
-    let mut rng = crate::test_rng::Rng::new(7);
-    let mut done = 0;
-    for _ in 0..24 {
+    // Turned and moved bars against boxes: every result checked, exact
+    // and with its volume, or refused as invalid (a hull or fold repair
+    // can't mend) or too complex; never a wrong solid. Seeds 1 and 2 had
+    // crossings the search missed left off the cylinder (cases 54 and
+    // 131, see `bands_left_straying_past_the_tolerance_are_refused`) and
+    // a sliver pulled off it by a nearly straight arc's weight (case
+    // 154, see `nearly_straight_arcs_keep_their_bands_on_the_cylinder`):
+    // copies of the wall claiming no surface, identities off by up to
+    // 2.7e-5.
+    for (seed, count, least) in [(7, 24, 20), (1, 24, 20), (2, 24, 20)] {
+        let done = bars_through_boxes(seed, 0..count);
+        // Most go through.
+        assert!(done >= least, "seed {seed}: {done}");
+    }
+}
+
+/// The turned and moved bar through a box that the seeded bars' generator
+/// draws at `seed`, draw `case` (from 0).
+fn bar_and_box(seed: u64, case: usize) -> (Solid, Solid) {
+    let mut rng = crate::test_rng::Rng::new(seed);
+    let mut draw = || {
         let c = rng.point(1.0);
         let r = rng.log_range(0.2, 1.5);
         let q = DQuat::from_rotation_x(rng.range(-1.0, 1.0))
@@ -731,7 +746,25 @@ fn random_bars_through_boxes_are_right_or_refused() {
             rng.range(0.5, 3.0),
             rng.range(0.5, 3.0),
         );
-        let block = Solid::cuboid(min, size, 1, &TOL).unwrap();
+        (bar, Solid::cuboid(min, size, 1, &TOL).unwrap())
+    };
+    for _ in 0..case {
+        draw();
+    }
+    draw()
+}
+
+/// The bars through boxes of `cases` at `seed`, all four operations:
+/// each result exact (every patch on its face's surface to `1e-11` of
+/// the size 4, none claiming no surface) or refused as invalid, too
+/// complex or with loops that can't be triangulated (`Degenerate`: an
+/// intersection and a difference each of seed 7's case 189 and seed 1's
+/// case 97), and where all four go through, the volume identities within
+/// `1e-11`. How many cases went through.
+fn bars_through_boxes(seed: u64, cases: std::ops::Range<usize>) -> usize {
+    let mut done = 0;
+    for case in cases {
+        let (bar, block) = bar_and_box(seed, case);
         let jobs = [
             (&bar, &block, Op::Union),
             (&bar, &block, Op::Intersection),
@@ -740,22 +773,63 @@ fn random_bars_through_boxes_are_right_or_refused() {
         ];
         let got = jobs.map(
             |(x, y, op)| match boolean(x, y, op, &TOL, &Budget::DEFAULT) {
-                Ok(solid) => Some(solid.volume()),
-                Err(KernelError::Invalid(_) | KernelError::TooComplex) => None,
-                Err(e) => panic!("{op:?}: {e:?}"),
+                Ok(solid) => {
+                    exact_to(
+                        &format!("seed {seed}, case {case}, {op:?}"),
+                        &solid,
+                        4.0,
+                        1e-11,
+                    );
+                    Some(solid.volume())
+                }
+                Err(
+                    KernelError::Invalid(_)
+                    | KernelError::TooComplex
+                    | KernelError::Boolean(BooleanError::Degenerate),
+                ) => None,
+                Err(e) => panic!("seed {seed}, case {case}, {op:?}: {e:?}"),
             },
         );
         if let [Some(u), Some(i), Some(d), Some(e)] = got {
             let (va, vb) = (bar.volume(), block.volume());
-            let within = TOL.fit() * (bar.area() + block.area()) / 100.0;
-            assert!((u + i - va - vb).abs() <= within);
-            assert!((d - (va - i)).abs() <= within);
-            assert!((e - (vb - i)).abs() <= within);
+            for (what, off) in [
+                ("A ∪ B + A ∩ B", u + i - va - vb),
+                ("A − B", d - (va - i)),
+                ("B − A", e - (vb - i)),
+            ] {
+                assert!(
+                    off.abs() <= 1e-11,
+                    "seed {seed}, case {case}: {what} off by {off:e}"
+                );
+            }
             done += 1;
         }
     }
-    // Most go through.
-    assert!(done >= 20, "{done}");
+    done
+}
+
+#[test]
+#[ignore = "slow: 200 cases of four seeds; run in release"]
+fn many_bars_through_boxes_are_exact_or_refused() {
+    // 185, 190, 190 and 189 of 200 go through.
+    for seed in [7, 1, 2, 3] {
+        let done = bars_through_boxes(seed, 0..200);
+        assert!(done >= 180, "seed {seed}: {done}");
+    }
+}
+
+#[test]
+fn nearly_straight_arcs_keep_their_bands_on_the_cylinder() {
+    // The seeded bars' generator, seed 1, its 155th draw: a nearly
+    // straight arc of a plane section took its weight from a point where
+    // the line from its chord's middle to its control point meets the
+    // cylinder, a rounding's worth of bulge away: 1.000019, where an
+    // ellipse arc's is under 1. The arc lay on the cylinder, but the
+    // sliver beside it was pulled 1.7e-6 off onto a copy of the wall
+    // claiming no surface, in the union and `bar − box`. The weight is
+    // now the arc's angle about the axis.
+    let (bar, block) = bar_and_box(1, 154);
+    four_exact(&bar, &block, &TOL, 4.0, 1e-12, 1e-11);
 }
 
 /// How far the furthest sample point of `solid`'s claim-free patches is
@@ -1028,9 +1102,7 @@ fn bands_left_straying_past_the_tolerance_are_refused() {
         let bar = Solid::cylinder(DVec3::new(0.0, 0.0, -2.0), r, 4.0, 2, &tol).unwrap();
         let bar = moved_at(&bar, &tol, |p| q * p + c);
         let block = Solid::cuboid(min, size, 1, &tol).unwrap();
-        // Exact but for the weights of nearly straight section arcs,
-        // which come from a rounding-sized bulge (1e-10 off).
-        four_exact(&bar, &block, &tol, 4.0, 1e-9, 1e-11);
+        four_exact(&bar, &block, &tol, 4.0, 1e-12, 1e-11);
         let loose = four_loose(&bar, &block, &walls(&bar), &tol);
         if fit < 1e-3 {
             // The union and `bar − box`, which were kept.
@@ -1072,7 +1144,105 @@ fn a_crossing_the_search_misses_lands_on_the_cylinder() {
         &TOL,
     )
     .unwrap();
-    four_exact(&bar, &block, &TOL, 4.0, 1e-9, 1e-11);
+    four_exact(&bar, &block, &TOL, 4.0, 1e-12, 1e-11);
+}
+
+#[test]
+fn a_hole_from_a_slanted_wall_through_a_prism_is_exact() {
+    // A triangular prism (legs 6 and 4 on its base, 3 tall), and a hole
+    // of radius 0.5 sketched on a frame on its slanted wall, halfway up,
+    // cut square to that wall through the prism: it leaves by the base's
+    // wall at 42° to its axis, in ellipses. The prism upright and turned
+    // and moved every way; every patch of all four results on its
+    // surface, none claiming no surface, and the volumes the analytic
+    // ones (the hole's is its section times its length on the axis).
+    let (a, b, c) = (
+        DVec2::new(0.0, 0.0),
+        DVec2::new(6.0, 0.0),
+        DVec2::new(1.5, 4.0),
+    );
+    let (r, height) = (0.5, 3.0);
+    let turned = DQuat::from_rotation_x(0.4) * DQuat::from_rotation_z(0.3);
+    for base in [
+        Frame::XY,
+        Frame {
+            origin: DVec3::new(0.3, -0.2, 0.1),
+            x: turned * DVec3::X,
+            y: turned * DVec3::Y,
+        },
+    ] {
+        let prism = extruded_on(vec![polygon(&[a, b, c], 0)], base, 0.0, height, 1);
+        // On the wall from `b` to `c`, facing out of the prism.
+        let along = (c - b).normalize();
+        let wall = Frame {
+            origin: base.point((b + c) * 0.5, height / 2.0),
+            x: base.x * along.x + base.y * along.y,
+            y: base.normal(),
+        };
+        let hole = extruded_on(vec![circle(DVec2::ZERO, r, 10, false)], wall, -8.0, 0.5, 2);
+        // Into the prism, square to the wall, from its middle (`y` 2 on
+        // the base) to the base's wall `y = 0`.
+        let inward = DVec2::new(-along.y, along.x);
+        let length = -((b + c) * 0.5).y / inward.y;
+        let both = PI * r * r * length;
+        let results = all_four(&prism, &hole, 1e-12);
+        volumes("slanted", &prism, &hole, &results, both, 1e-11);
+        for solid in &results {
+            exact("slanted", solid, 10.0);
+        }
+    }
+}
+
+#[test]
+fn a_box_turned_a_little_on_an_elliptic_wall_is_exact() {
+    // A wall over an ellipse arc (weight 0.2) and a small box turned by a
+    // thousandth of a radian across it (seen fuzzing turned boxes on
+    // walls over conics, seed 21, case 109): the box's sides nearly along
+    // the rulings cut the wall in nearly straight arcs whose weights came
+    // from a rounding's worth of bulge, and the volumes were 5.6e-7 off.
+    // On elliptic cylinders the weights come from the arcs' angles: all
+    // four exact.
+    let top = Segment {
+        conic: crate::patch::Conic2::new(
+            DVec2::new(10.0, 10.0),
+            DVec2::new(5.400097164621307, 13.24986059045539),
+            0.20018564583233608,
+            DVec2::new(0.0, 10.0),
+        )
+        .unwrap(),
+        curve: 2,
+    };
+    let lp = Loop {
+        segments: vec![
+            Segment::line(DVec2::ZERO, DVec2::new(10.0, 0.0), 0).unwrap(),
+            Segment::line(DVec2::new(10.0, 0.0), DVec2::new(10.0, 10.0), 1).unwrap(),
+            top,
+            Segment::line(DVec2::new(0.0, 10.0), DVec2::ZERO, 3).unwrap(),
+        ],
+    };
+    let frame = Frame {
+        origin: DVec3::ZERO,
+        x: DVec3::NEG_Z,
+        y: DVec3::Y,
+    };
+    let wall = extruded_on(vec![lp], frame, 0.0, 5.0, 9);
+    let size = DVec3::new(0.10543297279619278, 0.1334177726580953, 0.47900062681421013);
+    let q = DQuat::from_xyzw(
+        0.0009735174955277531,
+        -0.000904343589993779,
+        -0.00012403122298213602,
+        0.99999910952091,
+    );
+    let near = DVec3::new(4.169835138127173, 10.18762286849587, -9.508341255174468);
+    let off = DVec3::new(
+        0.024884254504193626,
+        -0.031342430114924796,
+        -0.06721143679136833,
+    );
+    let block = moved(&cube([0.0; 3], size.to_array()), |p| {
+        q * (p - size / 2.0 + off) + near
+    });
+    four_exact(&wall, &block, &TOL, 10.0, 1e-12, 1e-10);
 }
 
 /// A 10 × 10 square whose top side, from (10, 10) to (0, 10), is an arc

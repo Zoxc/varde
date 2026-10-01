@@ -6,10 +6,11 @@
 //! holds exactly: its ends, its control point where the end tangents
 //! meet, and its weight from the point where the line from the chord's
 //! middle to the control point meets the curve (the curve's point at
-//! `½` is `(M + w·C) / (1 + w)`). Only `+ − × ÷ √`, so the bits are the
+//! `½` is `(M + w·C) / (1 + w)`), or on an elliptic cylinder from the
+//! arc's angle about the axis. Only `+ − × ÷ √`, so the bits are the
 //! same everywhere.
 
-use glam::DVec3;
+use glam::{DMat3, DVec3};
 
 use super::curved::bernstein;
 use super::curved::solve::near_patch;
@@ -425,11 +426,29 @@ fn section_into(
         return None;
     }
     let m = (x + y) * 0.5;
+    // On an elliptic cylinder with both ends on it, the control point (as
+    // an offset from `m`) and the weight by the arc's angle.
+    let exact = elliptic_arc(q, n, x, y);
     // Straight: both tangents along the chord (a plane along a
-    // cylinder's rulings).
+    // cylinder's rulings, or nearly).
     let along = |t: DVec3, l: f64| t.cross(chord).length() <= 1e-9 * l * len;
     if along(tx, lx) && along(ty, ly) {
-        return (q.distance(m) <= 1e-9 * len).then(|| out.push(segment(x, y)));
+        let arc = match exact {
+            // Exactly a ruling.
+            Some((mc, _)) if mc == DVec3::ZERO => segment(x, y),
+            // Straight only to a billionth: the arc itself, which needs
+            // no guide (the other arc turns back).
+            Some((mc, w)) => Conic3 {
+                p0: x,
+                c: m + mc,
+                w,
+                p1: y,
+            },
+            None if q.distance(m) <= 1e-9 * len => segment(x, y),
+            None => return None,
+        };
+        out.push(arc);
+        return Some(());
     }
     // Across the chord, in the plane: which side of it the arc is on.
     let across = n.cross(chord);
@@ -462,11 +481,18 @@ fn section_into(
             .find(|&p| wanted(side(p)))?;
         return split(at, out);
     }
-    // Where the tangents meet, in the plane.
-    let c = x + tx * (chord.cross(ty).dot(n) / den);
-    let mc = c - m;
+    // Where the tangents meet, in the plane: by the angle on an elliptic
+    // cylinder (well conditioned however straight the arc), else from
+    // the tangents.
+    let (c, mc, angle) = match exact {
+        Some((mc, w)) => (m + mc, mc, Some(w)),
+        None => {
+            let c = x + tx * (chord.cross(ty).dot(n) / den);
+            (c, c - m, None)
+        }
+    };
     let roots = meets(mc);
-    if !wanted(side(c)) {
+    if !wanted(mc.dot(across)) {
         // The arc on the other side from the control point: split at
         // its point on the line through `m` and `c`, behind `m`.
         let behind = roots
@@ -482,14 +508,127 @@ fn section_into(
     }
     // The curve's middle is where that line meets it between `m` and
     // `c`: `(m + w·c) / (1 + w)`.
-    let sigma = roots.into_iter().find(|&s| s > 0.0 && s < 1.0)?;
-    let w = sigma / (1.0 - sigma);
+    let w = match angle {
+        Some(w) => w,
+        None => {
+            let sigma = roots.into_iter().find(|&s| s > 0.0 && s < 1.0)?;
+            sigma / (1.0 - sigma)
+        }
+    };
+    let sigma = w / (1.0 + w);
     let (a, b) = (c - x, y - c);
     if !(0.5..=W_MAX).contains(&w) || a.dot(b) < MAX_TURN_COS * a.length() * b.length() {
         return split(m + mc * sigma, out);
     }
     out.push(Conic3 { p0: x, c, w, p1: y });
     Some(())
+}
+
+/// The arc from `x` to `y` of the section of `q` by the plane through
+/// them with unit normal `n`, where `q` is an elliptic (or circular)
+/// cylinder and both ends lie on it (to about `1e-12` of its size): the
+/// shorter arc's control point, as its offset from the chord's middle
+/// `m` (zero for a ruling), and its weight. `None` anywhere else, or
+/// where the plane is along the rulings and the ends aren't on one.
+///
+/// Seen along the axis, a plane section is an affine image of the
+/// cylinder's cross-section, itself one of a circle, and affine maps
+/// keep weights and control points: the weight is a circle arc's,
+/// `cos(Δφ/2) = |r̂x + r̂y| / 2` with `r̂` the vectors from the axis to the
+/// ends made unit in the cylinder's own metric (`|v|² = ±v·S·v`, `S` its
+/// matrix's symmetric part: on a circular cylinder, plain lengths
+/// square to the axis), and the control point is `m − tan²(Δφ/2)·(Ĉ −
+/// m)`, `Ĉ` the plane's point on the axis and `tan²(Δφ/2) = |r̂x − r̂y|² /
+/// |r̂x + r̂y|²`. Both exact in relative terms however straight the arc.
+/// The weight from the point where the line from `m` to the control
+/// point meets the quadric was noise where the arc bulges by a rounding
+/// (`1.000135` on an ellipse arc, whose weight is under 1), and pulled
+/// the bands beside it `1e-7` off the cylinder; and the tangents of a
+/// nearly straight arc meet only roughly. Ends off the quadric keep
+/// those: there the old weight had made up for them, and the angle's
+/// made the bands worse.
+fn elliptic_arc(q: &Quadric, n: DVec3, x: DVec3, y: DVec3) -> Option<(DVec3, f64)> {
+    let cylinder = elliptic_cylinder(q)?;
+    let axis = cylinder.axis;
+    let flat = |p: DVec3| {
+        let r = p - cylinder.centre;
+        r - axis * axis.dot(r)
+    };
+    let norm = |v: DVec3| v.dot(cylinder.metric * v).max(0.0).sqrt();
+    let on = |p: DVec3| q.distance(p) <= 1e-12 * flat(p).length().max((p - q.origin).length());
+    if !(on(x) && on(y)) {
+        return None;
+    }
+    let unit = |p: DVec3| {
+        let r = flat(p);
+        let l = norm(r);
+        (l > 0.0 && l.is_finite()).then(|| r / l)
+    };
+    let (rx, ry) = (unit(x)?, unit(y)?);
+    let (sum, diff) = (rx + ry, rx - ry);
+    if diff == DVec3::ZERO {
+        return Some((DVec3::ZERO, 1.0));
+    }
+    let m = (x + y) * 0.5;
+    // `Ĉ − m`: in the plane, square to the axis as `centre − m` is.
+    let to_axis = (cylinder.centre - m) + axis * (n.dot(m - cylinder.centre) / n.dot(axis));
+    let (sum, diff) = (norm(sum), norm(diff));
+    let mc = to_axis * -((diff / sum) * (diff / sum));
+    let w = 0.5 * sum;
+    (mc.is_finite() && w.is_finite()).then_some((mc, w))
+}
+
+/// An elliptic cylinder's axis and metric (see [`elliptic_cylinder`]).
+struct Cylinder {
+    /// A point on the axis.
+    centre: DVec3,
+    /// The unit axis.
+    axis: DVec3,
+    /// The quadric's matrix's symmetric part, its sign made positive
+    /// square to the axis: `v·metric·v` is the square of `v`'s length in
+    /// the cross-section's units, up to a scale.
+    metric: DMat3,
+}
+
+/// `q`'s axis and metric where it is an elliptic (or circular) cylinder:
+/// its matrix's symmetric part `S` takes the axis to 0 and is definite
+/// square to it, and its linear part `b` is square to the axis, to about
+/// `1e-12` relative, `F` of the other sign from `S` on the axis. The
+/// centre solves `S·y = −b` square to the axis: an extruded cylinder's
+/// origin is off its axis (`b ≠ 0`).
+fn elliptic_cylinder(q: &Quadric) -> Option<Cylinder> {
+    let s = (q.a + q.a.transpose()) * 0.5;
+    let rows = [s.row(0), s.row(1), s.row(2)];
+    // The axis spans the null space: the longest cross product of two
+    // rows.
+    let axis = [(0, 1), (1, 2), (2, 0)]
+        .map(|(i, j)| rows[i].cross(rows[j]))
+        .into_iter()
+        .max_by(|u, v| u.length_squared().total_cmp(&v.length_squared()))?
+        .try_normalize()?;
+    let e1 = axis.any_orthonormal_vector();
+    let e2 = axis.cross(e1);
+    let (s11, s12, s22) = (e1.dot(s * e1), e1.dot(s * e2), e2.dot(s * e2));
+    let size = s11.abs() + s22.abs();
+    let det = s11 * s22 - s12 * s12;
+    let along = (s * axis).length();
+    if !(det > 1e-12 * size * size
+        && along <= 1e-12 * size
+        && q.b.dot(axis).abs() <= 1e-12 * q.b.length())
+    {
+        return None;
+    }
+    let sign = s11.signum();
+    // `S·z = −b` in the plane square to the axis.
+    let (b1, b2) = (-e1.dot(q.b), -e2.dot(q.b));
+    let z = e1 * ((b1 * s22 - b2 * s12) / det) + e2 * ((s11 * b2 - s12 * b1) / det);
+    let centre = q.origin + z;
+    let squared = -q.value(centre) * sign;
+    (squared > 0.0 && squared.is_finite() && centre.is_finite()).then(|| Cylinder {
+        centre,
+        axis,
+        metric: s * sign,
+    })
 }
 
 #[cfg(test)]
@@ -499,6 +638,7 @@ fn section_into(
 )]
 mod tests {
     use super::*;
+    use glam::DVec2;
 
     #[test]
     fn a_plane_cuts_a_cylinder_in_exact_ellipse_arcs() {
@@ -531,6 +671,162 @@ mod tests {
             let angle = (mid.y + 0.2).atan2(mid.x - 0.3);
             assert!(angle > a0 - 1e-9 && angle < a1 + 1e-9, "{angle}");
         }
+    }
+
+    /// The elliptic cylinder round the line through `centre` along the
+    /// unit `axis`, of semi-axes `r.0` along `u` and `r.1` along `v` (a
+    /// right-handed frame with the axis), as `k·(((y − y₀)·u / r.0)² +
+    /// ((y − y₀)·v / r.1)² − 1)` about `origin` (`y₀ = centre − origin`
+    /// square to the axis): a scale and an origin off the axis, as
+    /// extruded cylinders have.
+    struct Elliptic {
+        q: Quadric,
+        centre: DVec3,
+        axis: DVec3,
+        u: DVec3,
+        v: DVec3,
+        r: (f64, f64),
+    }
+
+    impl Elliptic {
+        fn new(centre: DVec3, axis: DVec3, r: (f64, f64), origin: DVec3, k: f64) -> Elliptic {
+            let u = axis.any_orthonormal_vector();
+            let v = axis.cross(u);
+            let outer = |d: DVec3| DMat3::from_cols(d * d.x, d * d.y, d * d.z);
+            let a = (outer(u) / (r.0 * r.0) + outer(v) / (r.1 * r.1)) * k;
+            let y0 = centre - origin;
+            let y0 = y0 - axis * axis.dot(y0);
+            let q = Quadric {
+                origin,
+                a,
+                b: -(a * y0),
+                c: y0.dot(a * y0) - k,
+            };
+            Elliptic {
+                q,
+                centre,
+                axis,
+                u,
+                v,
+                r,
+            }
+        }
+
+        /// The point at eccentric angle `phi`, `h` along the axis.
+        fn at(&self, phi: f64, h: f64) -> DVec3 {
+            self.centre
+                + self.u * (self.r.0 * phi.cos())
+                + self.v * (self.r.1 * phi.sin())
+                + self.axis * h
+        }
+
+        /// Where `p` is seen along the axis, on the unit circle's scale.
+        fn seen(&self, p: DVec3) -> DVec2 {
+            let d = p - self.centre;
+            DVec2::new(d.dot(self.u) / self.r.0, d.dot(self.v) / self.r.1)
+        }
+
+        /// The eccentric angle from `p` to `q`.
+        fn angle(&self, p: DVec3, q: DVec3) -> f64 {
+            let (a, b) = (self.seen(p), self.seen(q));
+            a.perp_dot(b).abs().atan2(a.dot(b))
+        }
+    }
+
+    #[test]
+    fn elliptic_cylinders_are_told_with_their_axes() {
+        let axis = DVec3::new(0.3, -0.5, 0.8).normalize();
+        let centre = DVec3::new(1.5, -0.7, 2.0);
+        for r in [(1.3, 1.3), (1.3, 0.4)] {
+            for (origin, k) in [(centre, 1.0), (DVec3::new(3.0, 1.0, -2.0), -2.5)] {
+                let e = Elliptic::new(centre, axis, r, origin, k);
+                let cylinder = elliptic_cylinder(&e.q).unwrap();
+                assert!(cylinder.axis.cross(axis).length() < 1e-15);
+                let off = cylinder.centre - centre;
+                assert!((off - axis * axis.dot(off)).length() < 1e-14, "{off}");
+                // The metric is the cross-section's, up to a scale.
+                let unit = |d: DVec3| d.dot(cylinder.metric * d) * r.0 * r.0;
+                assert!((unit(e.u * r.0) / unit(e.v * r.1) - 1.0).abs() < 1e-14);
+            }
+        }
+        // A cone, a sphere, a paraboloid, hyperbolic and parabolic
+        // cylinders.
+        let quadric = |a: DVec3, b: DVec3| Quadric {
+            origin: centre,
+            a: DMat3::from_diagonal(a),
+            b,
+            c: -1.0,
+        };
+        for q in [
+            quadric(DVec3::new(1.0, 1.0, -1.0), DVec3::ZERO),
+            quadric(DVec3::ONE, DVec3::ZERO),
+            quadric(DVec3::new(1.0, 1.0, 0.0), DVec3::Z),
+            quadric(DVec3::new(1.0, -1.0, 0.0), DVec3::ZERO),
+            quadric(DVec3::new(1.0, 0.0, 0.0), DVec3::Y),
+        ] {
+            assert!(elliptic_cylinder(&q).is_none(), "{q:?}");
+        }
+    }
+
+    #[test]
+    fn nearly_straight_sections_of_cylinders_take_the_angles_weight() {
+        // Planes from 1e-9 to 1 radian off the rulings' direction cut a
+        // tilted circular and elliptic cylinder (each its origin off the
+        // axis, scaled) in ellipses from long and thin to round; arcs of
+        // them a thousandth to three long, from nearly straight to
+        // halved. Each arc's weight is the eccentric angle's, to a
+        // rounding, and its middle is where that angle is halved; from
+        // the point on the line from the chord's middle to the control
+        // point the weight was off by up to 3.3e-3 on the circle, and
+        // arcs within a billionth of straight were straight edges, up
+        // to 2.7e-11 off the cylinder. Along the rulings, a straight
+        // edge.
+        let axis = DVec3::new(0.3, -0.5, 0.8).normalize();
+        let centre = DVec3::new(1.5, -0.7, 2.0);
+        let origin = DVec3::new(3.0, 1.0, -2.0);
+        let (mut worst, mut arcs_seen) = (0.0f64, 0);
+        for r in [(1.3, 1.3), (1.3, 0.4)] {
+            let cyl = Elliptic::new(centre, axis, r, origin, -2.5);
+            let phi0 = 0.7;
+            // Square to the axis, not square to the curve at `phi0`.
+            let e = (cyl.at(phi0 + 0.3, 0.0) - centre).normalize();
+            for delta in [1e-9, 1e-8, 1e-7, 1e-6, 1e-5, 1e-3, 0.1, 1.0] {
+                let n = (e + axis * delta).normalize();
+                // Along the section, `e·(at(φ) − centre) + delta·h` is
+                // constant.
+                let at = |phi: f64| {
+                    let flat = |phi: f64| e.dot(cyl.at(phi, 0.0) - centre);
+                    cyl.at(phi, 0.4 - (flat(phi) - flat(phi0)) / delta)
+                };
+                let slope = e.dot(cyl.u * -(r.0 * phi0.sin()) + cyl.v * (r.1 * phi0.cos())) / delta;
+                for span in [1e-3, 0.05, 0.5, 3.0] {
+                    // About `span` long, or half the ellipse.
+                    let dphi = (span / (slope.abs() + r.0)).min(3.0);
+                    let (x, y) = (at(phi0 - 0.3 * dphi), at(phi0 + 0.7 * dphi));
+                    let arcs = section(&cyl.q, n, x, y, Guide::Near(at(phi0))).unwrap();
+                    for arc in &arcs {
+                        assert_ne!(segment(arc.p0, arc.p1), *arc, "{r:?} {delta} {span}");
+                        let want = (0.5 * cyl.angle(arc.p0, arc.p1)).cos();
+                        worst = worst.max((arc.w - want).abs());
+                        let mid = arc.eval(0.5);
+                        let halves = (cyl.angle(arc.p0, mid) - cyl.angle(mid, arc.p1)).abs();
+                        assert!(halves < 4e-15, "{r:?} {delta} {span}: {halves:e}");
+                        arcs_seen += 1;
+                        for k in 0..=16 {
+                            let p = arc.eval(k as f64 / 16.0);
+                            assert!(cyl.q.distance(p) < 1e-14, "{r:?} {delta} {span}: {p}");
+                        }
+                    }
+                }
+            }
+            // A plane along the rulings, the ends on one.
+            let x = cyl.at(phi0, 0.0);
+            let y = x + axis * 2.0;
+            let arcs = section(&cyl.q, e, x, y, Guide::Near(x)).unwrap();
+            assert_eq!(arcs, vec![segment(x, y)]);
+        }
+        assert!(arcs_seen >= 64, "{arcs_seen}");
+        assert!(worst <= 1e-15, "{worst:e}");
     }
 
     /// A crossing the search solved, of some patch (the checks away from

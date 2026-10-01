@@ -243,6 +243,43 @@ fn points_above_a_vertex_add_up_to_its_winding_number() {
 }
 
 #[test]
+fn points_above_a_steep_patch_are_found() {
+    // A patch of a wall along `Z` (a parabolic cylinder's, 0.31 tall and
+    // 0.64 across), seen from a vertex 1.08e-3 off the wall: the line
+    // along `UP` (7° off `Z`) through it meets the patch 0.0147 below.
+    // Every piece's shadow held the vertex's, and the search ran out of
+    // pieces before it got to the one holding the point, though Newton's
+    // method from the first pieces had ended there: none was found, the
+    // winding number's point was taken to be above (most of the patch
+    // is), and every edge at the vertex was given a crossing through the
+    // patch that wasn't there (seen fuzzing walls over conics, seed 21,
+    // case 172).
+    let patch = Patch::new(
+        [
+            DVec3::new(-10.096793101389732, -9.390041076882708, -0.5000000000000002),
+            DVec3::new(-10.163922332860405, -8.912621158639585, -0.6874999999999996),
+            DVec3::new(-10.183732923230068, -8.760367304147838, -0.8124999999999987),
+        ],
+        [
+            DVec3::new(-10.13226993361693, -9.151228319467872, -0.5937499999999998),
+            DVec3::new(-10.174022328125144, -8.836483764568435, -0.7499999999999993),
+            DVec3::new(-10.143590270971023, -9.075025321379323, -0.6562499999999993),
+        ],
+        [1.0; 3],
+    )
+    .unwrap();
+    let v = DVec3::new(-10.172930452156635, -8.835752607009576, -0.75);
+    let axes = Axes::new();
+    let found = hits(&patch, v, &axes);
+    assert_eq!(found.len(), 1, "{found:?}");
+    let h = found[0];
+    assert!(h.out == 0.0 && h.facing == -1, "{h:?}");
+    assert!((h.dh + 0.014688874576312).abs() < 1e-12, "{}", h.dh);
+    let p = patch.eval(h.u);
+    assert!((p - v - axes.up * h.dh).length() < 1e-12, "{p}");
+}
+
+#[test]
 fn edge_crossings_are_on_both() {
     let mut rng = Rng::new(24);
     let mut seen = 0;
