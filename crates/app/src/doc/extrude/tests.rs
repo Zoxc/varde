@@ -2066,6 +2066,7 @@ fn many_bodies_keep_ok_and_cancel_on_screen() {
         (600.0, 4),
         (600.0, 8),
         (600.0, 30),
+        (800.0, 300),
     ] {
         let (doc, _) = a_cut_listing(bodies - 1);
         assert_eq!(doc.extrude_state().unwrap().targets.len(), bodies);
@@ -2351,4 +2352,242 @@ fn the_through_all_tip_shows_under_it_in_the_scrolled_body() {
         centre > below && centre < below + 35.0,
         "{top}..{bottom} {through:?}"
     );
+}
+
+/// Whether the value field has the focus on `ui`.
+fn value_field_focused(ui: &mut crate::tests::Headless<'_>, renderer: &iced::Renderer) -> bool {
+    use iced::advanced::widget::operation::Focusable;
+    use iced::advanced::widget::{Id, Operation};
+
+    struct Focused(bool);
+    impl Operation for Focused {
+        fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation<()>)) {
+            operate(self);
+        }
+        fn focusable(&mut self, id: Option<&Id>, _: iced::Rectangle, state: &mut dyn Focusable) {
+            if id == Some(&varde_view::VALUE_FIELD) {
+                self.0 |= state.is_focused();
+            }
+        }
+    }
+    let mut focused = Focused(false);
+    ui.operate(renderer, &mut focused);
+    focused.0
+}
+
+/// Where the panel's scrollable body is on `ui`.
+fn panel_body(ui: &mut crate::tests::Headless<'_>, renderer: &iced::Renderer) -> iced::Rectangle {
+    use iced::advanced::widget::operation::Scrollable;
+    use iced::advanced::widget::{Id, Operation};
+
+    struct Body(Option<iced::Rectangle>);
+    impl Operation for Body {
+        fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation<()>)) {
+            operate(self);
+        }
+        fn scrollable(
+            &mut self,
+            id: Option<&Id>,
+            bounds: iced::Rectangle,
+            _: iced::Rectangle,
+            _: iced::Vector,
+            _: &mut dyn Scrollable,
+        ) {
+            if id == Some(&varde_view::PANEL_BODY) {
+                self.0 = Some(bounds);
+            }
+        }
+    }
+    let mut body = Body(None);
+    ui.operate(renderer, &mut body);
+    body.0.expect("the panel's body")
+}
+
+#[test]
+fn unpicking_the_last_region_keeps_the_panel_s_scroll_and_focus() {
+    use crate::tests::{shown, texts};
+    use iced::advanced::widget::operation::focusable;
+    use iced::advanced::widget::operation::scrollable::{AbsoluteOffset, scroll_to};
+    use iced_runtime::user_interface::UserInterface;
+
+    let (mut doc, sketch) = a_cut_listing(29);
+    let size = iced::Size::new(1280.0, 600.0);
+    let mut renderer = varde_view::probe::renderer();
+    let body_1 = |ui: &mut crate::tests::Headless<'_>, renderer: &iced::Renderer| {
+        let shown = texts(ui, renderer);
+        let (panel, _) = panel_texts(&shown);
+        panel
+            .iter()
+            .find(|text| text.text == "Body 1")
+            .unwrap()
+            .bounds
+    };
+    let (cache, scrolled) = {
+        let mut ui = shown(doc.view(false, Mode::Light), size, &mut renderer);
+        let unscrolled = body_1(&mut ui, &renderer);
+        ui.operate(&renderer, &mut focusable::focus(varde_view::VALUE_FIELD));
+        let offset = AbsoluteOffset {
+            x: None,
+            y: Some(100.0),
+        };
+        ui.operate(&renderer, &mut scroll_to(varde_view::PANEL_BODY, offset));
+        let scrolled = body_1(&mut ui, &renderer);
+        assert!(
+            scrolled.y < unscrolled.y - 50.0,
+            "{unscrolled:?} {scrolled:?}"
+        );
+        (ui.into_cache(), scrolled)
+    };
+    // The handle and its knobs go with the last region.
+    extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region: 0 });
+    let state = doc.extrude_state().unwrap();
+    assert!(state.picked.is_empty() && state.handle().is_none());
+    let mut ui = UserInterface::build(doc.view(false, Mode::Light), size, cache, &mut renderer);
+    assert_eq!(body_1(&mut ui, &renderer), scrolled);
+    assert!(value_field_focused(&mut ui, &renderer));
+}
+
+#[test]
+fn a_short_window_lifts_the_panel_to_keep_its_buttons() {
+    use crate::tests::{shown, texts};
+
+    let (doc, _) = a_cut_listing(29);
+    for height in [250.0, 300.0, 400.0] {
+        let size = iced::Size::new(1280.0, height);
+        let status_top = height - varde_view::STATUS_BAR_HEIGHT;
+        let mut renderer = varde_view::probe::renderer();
+        let mut ui = shown(doc.view(false, Mode::Light), size, &mut renderer);
+        let shown = texts(&mut ui, &renderer);
+        let (panel, ok) = panel_texts(&shown);
+        let title = &panel[0];
+        assert!(title.bounds.height >= 14.0, "{height}: {title:?}");
+        for button in ["OK", "Cancel"] {
+            let button = panel.iter().find(|text| text.text == button).unwrap();
+            assert!(button.bounds.height >= 14.0, "{height}: {button:?}");
+            assert!(
+                button.bounds.y + button.bounds.height <= status_top,
+                "{height}: {button:?}"
+            );
+        }
+        // A few rows of the body still show between them.
+        let body = panel_body(&mut ui, &renderer);
+        assert!(body.height >= 40.0, "{height}: {body:?}");
+        assert!(body.y + body.height <= ok.bounds.y, "{height}: {body:?}");
+    }
+}
+
+/// Runs the widget operations of `task` on `ui`, as the runtime does.
+fn run_task(
+    ui: &mut crate::tests::Headless<'_>,
+    renderer: &iced::Renderer,
+    task: iced::Task<crate::Message>,
+) {
+    use iced::advanced::widget::operation::Outcome;
+    use iced::futures::StreamExt;
+    use iced_runtime::Action;
+
+    let Some(stream) = iced_runtime::task::into_stream(task) else {
+        return;
+    };
+    let actions: Vec<_> = iced::futures::executor::block_on(stream.collect());
+    for action in actions {
+        let Action::Widget(mut operation) = action else {
+            continue;
+        };
+        loop {
+            ui.operate(renderer, operation.as_mut());
+            match operation.finish() {
+                Outcome::Chain(next) => operation = next,
+                _ => break,
+            }
+        }
+    }
+}
+
+#[test]
+fn editing_an_extrude_from_a_scrolled_panel_shows_its_field() {
+    use crate::tests::{shown, texts};
+    use iced::advanced::widget::operation::scrollable::{RelativeOffset, snap_to};
+    use iced_runtime::user_interface::UserInterface;
+
+    // Short enough that even a New body extrude's panel scrolls.
+    let (mut doc, _) = a_cut_listing(3);
+    let size = iced::Size::new(1280.0, 300.0);
+    let mut renderer = varde_view::probe::renderer();
+    let cache = {
+        let mut ui = shown(doc.view(false, Mode::Light), size, &mut renderer);
+        let mut end = snap_to(
+            varde_view::PANEL_BODY,
+            RelativeOffset {
+                x: None,
+                y: Some(1.0),
+            },
+        );
+        ui.operate(&renderer, &mut end);
+        ui.into_cache()
+    };
+    // The panel stays, now for the last New body extrude.
+    let id = doc.editor.document().features().last().unwrap().id;
+    doc.look(Look::EditFeature(id));
+    assert_eq!(doc.extrude.as_ref().unwrap().feature, Some(id));
+    let focus = doc.take_focus().expect("the field takes the focus");
+    let mut ui = UserInterface::build(doc.view(false, Mode::Light), size, cache, &mut renderer);
+    run_task(&mut ui, &renderer, crate::focus_field(focus));
+    assert!(value_field_focused(&mut ui, &renderer));
+    // The field's label, beside it, shows whole.
+    let shown = texts(&mut ui, &renderer);
+    let distance = shown
+        .iter()
+        .find(|text| text.text == "Distance")
+        .expect("the distance's label");
+    assert!(distance.whole(), "{distance:?}");
+}
+
+#[test]
+fn dragging_the_panel_s_scrollbar_over_the_scene_only_scrolls() {
+    use crate::tests::{shown, texts};
+    use iced::mouse::{Button, Cursor, Event, ScrollDelta};
+
+    let (doc, _) = a_cut_listing(29);
+    let size = iced::Size::new(1280.0, 600.0);
+    let mut renderer = varde_view::probe::renderer();
+    let mut ui = shown(doc.view(false, Mode::Light), size, &mut renderer);
+    let body_1 = |ui: &mut crate::tests::Headless<'_>, renderer: &iced::Renderer| {
+        let shown = texts(ui, renderer);
+        let (panel, _) = panel_texts(&shown);
+        panel
+            .iter()
+            .find(|text| text.text == "Body 1")
+            .unwrap()
+            .bounds
+    };
+    let before = body_1(&mut ui, &renderer);
+    let body = panel_body(&mut ui, &renderer);
+    let mut sent = Vec::new();
+    let mut send = |ui: &mut crate::tests::Headless<'_>, event: Event, at: iced::Point| {
+        let _ = ui.update(
+            &[iced::Event::Mouse(event)],
+            Cursor::Available(at),
+            &mut renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut sent,
+        );
+    };
+    // The wheel up at the top of the body has nothing to scroll, and
+    // still doesn't zoom.
+    let inside = iced::Point::new(body.center_x(), body.y + 20.0);
+    send(&mut ui, Event::CursorMoved { position: inside }, inside);
+    let up = ScrollDelta::Lines { x: 0.0, y: 3.0 };
+    send(&mut ui, Event::WheelScrolled { delta: up }, inside);
+    // The scroller, at the top of the scrollbar in the body's right
+    // padding, dragged down and out over the scene, let go there.
+    let grab = iced::Point::new(body.x + body.width - 5.0, body.y + 4.0);
+    let scene = iced::Point::new(400.0, body.y + 150.0);
+    send(&mut ui, Event::CursorMoved { position: grab }, grab);
+    send(&mut ui, Event::ButtonPressed(Button::Left), grab);
+    send(&mut ui, Event::CursorMoved { position: scene }, scene);
+    send(&mut ui, Event::ButtonReleased(Button::Left), scene);
+    assert!(sent.is_empty(), "{sent:?}");
+    let after = body_1(&mut ui, &renderer);
+    assert!(after.y < before.y - 100.0, "{before:?} {after:?}");
 }

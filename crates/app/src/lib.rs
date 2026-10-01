@@ -621,15 +621,23 @@ fn unfocused((_, event): (window::Id, window::Event)) -> Option<Message> {
 }
 
 /// Has the value field take the focus, and select its text as `focus`
-/// says: all of it to overtype, or the part a refusal is about.
+/// says: all of it to overtype, or the part a refusal is about. An
+/// operation panel's body, where the field near its top may be, scrolls
+/// back to its top, so the field shows: an extrude edited while another's
+/// panel was scrolled keeps that panel, and so its scroll.
 fn focus_field(focus: Focus) -> Task<Message> {
-    use iced::widget::operation;
+    use iced::widget::operation::{self, RelativeOffset};
 
     let select = match focus {
         Focus::All => operation::select_all(varde_view::VALUE_FIELD),
         Focus::Range(start, end) => operation::select_range(varde_view::VALUE_FIELD, start, end),
     };
-    operation::focus(varde_view::VALUE_FIELD).chain(select)
+    operation::focus(varde_view::VALUE_FIELD)
+        .chain(select)
+        .chain(operation::snap_to(
+            varde_view::PANEL_BODY,
+            RelativeOffset::START,
+        ))
 }
 
 /// Asks the user for a design to open, answering with

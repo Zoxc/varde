@@ -19,7 +19,7 @@ use varde_render::{
 use crate::anchors::Anchors;
 use crate::chrome::{chord_hint, mouse_hint};
 use crate::icons::MouseButton;
-use crate::operation_panel::{PANEL_MARGIN, PANEL_TOP};
+use crate::operation_panel::placed;
 use crate::shortcut::Held;
 use crate::theme::{Palette, SketchColors};
 use crate::{Look, Message, controls};
@@ -64,10 +64,15 @@ pub(crate) fn viewport<'a>(
             fields.beside(sketch::FIELDS_OFFSET).into(),
         ]
     });
-    // The handle's knobs, on its axis.
-    let knobs = extruding
-        .as_ref()
-        .and_then(|extruding| extruding.knobs(camera));
+    // The handle's knobs, on its axis. A layer even without them, so the
+    // panel's layer above keeps its place in the stack, and with it its
+    // widgets' state (the field's focus, the body's scroll), as the last
+    // region is unpicked or the first picked.
+    let knobs = extruding.as_ref().map(|extruding| {
+        extruding
+            .knobs(camera)
+            .unwrap_or_else(|| iced::widget::Space::new().into())
+    });
     let program = program(mesh, sketches, camera, palette, sketching, extruding);
     let scene = iced::widget::shader(program)
         .width(Length::Fill)
@@ -77,20 +82,14 @@ pub(crate) fn viewport<'a>(
         .padding([10, 12]);
     // The layers over the scene take only what's over their widgets, and
     // let the rest through to it.
-    let panel = panel.map(|panel| {
-        // Clear of the viewport's bottom too: the panel's body scrolls
-        // rather than run past it.
-        container(panel).align_right(Length::Fill).padding(
-            iced::Padding::from([0.0, PANEL_MARGIN])
-                .top(PANEL_TOP)
-                .bottom(PANEL_MARGIN),
-        )
-    });
+    // Clear of the viewport's bottom too: the panel's body scrolls rather
+    // than run past it.
+    let panel = panel.map(placed);
     stack![scene]
         .extend(anchors.into_iter().flatten())
         .extend(knobs)
         .push(controls)
-        .extend(panel.map(Element::from))
+        .extend(panel)
         .into()
 }
 

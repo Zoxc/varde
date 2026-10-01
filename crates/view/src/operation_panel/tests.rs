@@ -184,3 +184,50 @@ fn a_long_message_scrolls_above_the_buttons() {
         assert!(button.bounds.y + button.bounds.height <= height);
     }
 }
+
+#[test]
+fn placed_starts_below_the_camera_controls_unless_the_viewport_is_short() {
+    for (height, top) in [
+        (800.0, PANEL_TOP),
+        (PANEL_TOP + PANEL_MARGIN + PANEL_ROOM, PANEL_TOP),
+        (300.0, 300.0 - PANEL_MARGIN - PANEL_ROOM),
+        (150.0, PANEL_MARGIN),
+        (0.0, PANEL_MARGIN),
+    ] {
+        let max = Size::new(800.0, height);
+        let mut laid = Laid::new(placed(panel_of(60)), max);
+        assert_eq!(laid.node.size(), max);
+        let panel = laid.node.children()[0].bounds();
+        assert_eq!(panel.y, top, "{height}");
+        assert_eq!(panel.x + panel.width, 800.0 - PANEL_MARGIN, "{height}");
+        // A long body takes all the height down to the margin.
+        if height >= 300.0 {
+            assert_eq!(panel.y + panel.height, height - PANEL_MARGIN, "{height}");
+            let shown = laid.texts();
+            let ok = find(&shown, "OK");
+            assert!(ok.bounds.height >= 12.0, "{height}: {ok:?}");
+        }
+    }
+    // A short body stays short, at the usual top.
+    let mut laid = Laid::new(placed(panel_of(3)), Size::new(800.0, 800.0));
+    let panel = laid.node.children()[0].bounds();
+    assert_eq!(panel.y, PANEL_TOP);
+    assert!(panel.height < 300.0, "{panel:?}");
+    let _ = laid.texts();
+}
+
+#[test]
+fn without_room_for_the_header_too_the_buttons_keep_theirs() {
+    let height = 70.0;
+    let mut laid = Laid::new(panel_of(60), Size::new(400.0, height));
+    assert_eq!(laid.node.size().height, height);
+    let shown = laid.texts();
+    for button in ["OK", "Cancel"] {
+        let button = find(&shown, button);
+        assert!(button.bounds.height >= 12.0, "{button:?}");
+        assert!(
+            button.bounds.y + button.bounds.height <= height,
+            "{button:?}"
+        );
+    }
+}

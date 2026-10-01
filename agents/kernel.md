@@ -3264,9 +3264,21 @@ drop out, and aren't taken out again when redone: undo gives the ids
 back, so a new edit may give theirs to other bodies); its footer the
 refusal, the draft's error or "Checking the sketch…", then Cancel and OK.
 The Bodies list has no scrollable of its own: the body scrolls as a
-whole, as in `notes/ui-mock.html`, keeping its offset while rows come and
-go (clamped to what's left, so no empty stretch shows), and the wheel
-over it scrolls it rather than the camera. The handle and region picking are in `agents/viewport.md`.
+whole, keeping its offset while rows come and go (clamped to what's left,
+so no empty stretch shows) and while the handle's knobs come and go (the
+knobs' layer stays, empty, so the panel's keeps its place in the
+viewport's stack and its state), and the wheel over it scrolls it rather
+than the camera. Giving the first field the focus (a session started, or
+another extrude edited while a panel is open) also scrolls the body back
+to its top, where the field is. The panel starts 150 px down
+(`PANEL_TOP`, clear of the camera controls) unless the viewport leaves
+it less than 200 px (`PANEL_ROOM`) below that; then it rises, at most to
+12 px from the top, over the controls (`operation_panel::placed`). Where
+even the header and footer don't fit, the footer keeps its height and
+the header gives way. Below about 550 px of window width (the
+side panel's 256, the panel's 264 and its margins) the panel narrows
+with the viewport and its text wraps; in a much narrower window its
+buttons squeeze away, as the window has no minimum size. The handle and region picking are in `agents/viewport.md`.
 Dragging a knob types its distance (one side past the plane flips; a knob
 on the plane changes nothing) as the design's units format it. A knob
 stops where its field would refuse the distance, or where the extrude's

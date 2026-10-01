@@ -30,6 +30,12 @@ pub(crate) const PANEL_TOP: f32 = 150.0;
 /// in pixels.
 pub(crate) const PANEL_MARGIN: f32 = 12.0;
 
+/// How tall the panel may get below its top before it rises above
+/// [`PANEL_TOP`], in pixels: its header and footer and a few rows of its
+/// body. A shorter viewport lifts the panel over the camera controls
+/// rather than squeeze its body to nothing or its buttons away.
+const PANEL_ROOM: f32 = 200.0;
+
 /// The scrollable holding the panel's body.
 pub const PANEL_BODY: iced::widget::Id = iced::widget::Id::new("operation-panel-body");
 
@@ -120,6 +126,160 @@ pub(crate) fn operation_panel(parts: Parts<'_>) -> Element<'_, Message> {
     opaque(container(sections).style(theme::float_panel).clip(true))
 }
 
+/// `panel` placed over a viewport: at its right, [`PANEL_MARGIN`] in from
+/// its right and bottom, and [`PANEL_TOP`] down from its top, or higher,
+/// down to [`PANEL_MARGIN`], where the viewport is too short to leave it
+/// [`PANEL_ROOM`] below that. The layer takes only what's over the panel
+/// and lets the rest through.
+pub(crate) fn placed(panel: Element<'_, Message>) -> Element<'_, Message> {
+    Element::new(Placed { panel })
+}
+
+/// See [`placed`].
+struct Placed<'a> {
+    panel: Element<'a, Message>,
+}
+
+impl Placed<'_> {
+    /// How far below the top of a viewport `height` tall the panel starts.
+    fn top(height: f32) -> f32 {
+        if !height.is_finite() {
+            return PANEL_TOP;
+        }
+        (height - PANEL_MARGIN - PANEL_ROOM).clamp(PANEL_MARGIN, PANEL_TOP)
+    }
+}
+
+impl Widget<Message, iced::Theme, iced::Renderer> for Placed<'_> {
+    fn size(&self) -> Size<Length> {
+        Size::new(Length::Fill, Length::Fill)
+    }
+
+    fn children(&self) -> Vec<Tree> {
+        vec![Tree::new(&self.panel)]
+    }
+
+    fn diff(&self, tree: &mut Tree) {
+        tree.diff_children(std::slice::from_ref(&self.panel));
+    }
+
+    fn layout(
+        &mut self,
+        tree: &mut Tree,
+        renderer: &iced::Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        let size = limits.resolve(Length::Fill, Length::Fill, Size::ZERO);
+        let top = Self::top(size.height);
+        let room = Size::new(
+            (size.width - 2.0 * PANEL_MARGIN).max(0.0),
+            (size.height - top - PANEL_MARGIN).max(0.0),
+        );
+        let panel = self.panel.as_widget_mut().layout(
+            &mut tree.children[0],
+            renderer,
+            &layout::Limits::new(Size::ZERO, room),
+        );
+        let x = (size.width - PANEL_MARGIN - panel.size().width).max(0.0);
+        layout::Node::with_children(size, vec![panel.move_to((x, top))])
+    }
+
+    fn operate(
+        &mut self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        renderer: &iced::Renderer,
+        operation: &mut dyn Operation,
+    ) {
+        let panel = layout.children().next().expect("the panel's layout");
+        self.panel
+            .as_widget_mut()
+            .operate(&mut tree.children[0], panel, renderer, operation);
+    }
+
+    fn update(
+        &mut self,
+        tree: &mut Tree,
+        event: &Event,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        renderer: &iced::Renderer,
+        clipboard: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+        viewport: &Rectangle,
+    ) {
+        let panel = layout.children().next().expect("the panel's layout");
+        self.panel.as_widget_mut().update(
+            &mut tree.children[0],
+            event,
+            panel,
+            cursor,
+            renderer,
+            clipboard,
+            shell,
+            viewport,
+        );
+    }
+
+    fn mouse_interaction(
+        &self,
+        tree: &Tree,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+        renderer: &iced::Renderer,
+    ) -> mouse::Interaction {
+        let panel = layout.children().next().expect("the panel's layout");
+        self.panel.as_widget().mouse_interaction(
+            &tree.children[0],
+            panel,
+            cursor,
+            viewport,
+            renderer,
+        )
+    }
+
+    fn draw(
+        &self,
+        tree: &Tree,
+        renderer: &mut iced::Renderer,
+        theme: &iced::Theme,
+        style: &renderer::Style,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+    ) {
+        let panel = layout.children().next().expect("the panel's layout");
+        self.panel.as_widget().draw(
+            &tree.children[0],
+            renderer,
+            theme,
+            style,
+            panel,
+            cursor,
+            viewport,
+        );
+    }
+
+    fn overlay<'b>(
+        &'b mut self,
+        tree: &'b mut Tree,
+        layout: Layout<'b>,
+        renderer: &iced::Renderer,
+        viewport: &Rectangle,
+        translation: Vector,
+    ) -> Option<overlay::Element<'b, Message, iced::Theme, iced::Renderer>> {
+        let panel = layout.children().next().expect("the panel's layout");
+        self.panel.as_widget_mut().overlay(
+            &mut tree.children[0],
+            panel,
+            renderer,
+            viewport,
+            translation,
+        )
+    }
+}
+
 /// The text of a message in a panel's footer, in `style`, broken within
 /// words where they don't fit, as a message may quote a name.
 pub(crate) fn message_text<'a>(
@@ -171,14 +331,16 @@ impl Widget<Message, iced::Theme, iced::Renderer> for Sections<'_> {
             unreachable!("three parts have three trees");
         };
         let within = |height: f32| layout::Limits::new(Size::ZERO, Size::new(max.width, height));
-        let header = header
-            .as_widget_mut()
-            .layout(header_tree, renderer, &within(max.height));
-        let left = (max.height - header.size().height).max(0.0);
+        // The footer first: where even the header and footer don't fit,
+        // the buttons keep their height and the title gives way.
         let footer = footer
             .as_widget_mut()
-            .layout(footer_tree, renderer, &within(left));
-        let left = (left - footer.size().height).max(0.0);
+            .layout(footer_tree, renderer, &within(max.height));
+        let left = (max.height - footer.size().height).max(0.0);
+        let header = header
+            .as_widget_mut()
+            .layout(header_tree, renderer, &within(left));
+        let left = (left - header.size().height).max(0.0);
         let body = body
             .as_widget_mut()
             .layout(body_tree, renderer, &within(left));
