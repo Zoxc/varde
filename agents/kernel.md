@@ -1078,30 +1078,61 @@ its triangles share, which is topology:
     product), times whole multinomial factors (1, 2, 4 or 8; the quartic
     multinomial is cancelled in the ratio), summed in a fixed order. With
     the shared edge as row 0 (the far corner's exponent 0), row 0 is the
-    edge itself, zero to rounding. The rule asks every ratio `N_γ/W²_γ` in
-    rows 1 to 4 to be past the threshold with one sign on one patch and
-    the other on the other, and row 0's within it; anything not finite,
-    a straight edge or a control triangle flatter than `|n|² ≤
-    1e-24·|e1|²|e2|²` is refused. Then `F`, a positive mean of the ratios,
-    has one sign on each patch except near the edge, so the two meet only
-    there (the plane rule's argument one degree up), and splitting keeps
-    it: a piece's coefficients are convex combinations of its parent's
-    (blossoms), the edge row staying zero. The **threshold** is `margin ·
-    4w² / max(hP, hQ)`, `hP` and `hQ` the far ends' heights above the
-    lines through the other end and `C`: `|∇F|` at the edge's end where it
-    is smaller (`4w²/hQ` at `P`). So the margin bounds the coefficients of
-    `F` against its gradient, about a resolution of distance from the
-    cylinder at the edge, not the distance of control points from a plane
-    as the plane rule's does. Bands and caps (`Lathe::strip`, `pole_cap`)
-    keep the plane rule alone: its failure on a fitted diagonal is what
-    tells them a strip is too coarse. With the cylinder there too, a torus
-    split 0.3 rad off its turns at `1e-1` took 8 pieces round the axis
-    instead of 16, and those strips failed the vertex rule (repaired 96 →
-    832 patches). Measured on random pairs sharing a random conic edge
-    (200 000, 195 parted): `F` evaluated at 465 points of each patch away
-    from the edge always has the coefficients' sign (test). Across the
-    kernel's other tests the rule fires in boolean repair (chains of
-    twenty, related, nicks, turned solids) with the same refusals as
+    edge itself, where `F` vanishes: its coefficients are exactly zero (in
+    floating point too, the edge's own coordinates being exactly `(1, 0,
+    0)`, `(0, w, 0)` and `(0, 0, 1)`), so they aren't computed, and the
+    rule asks instead that both patches hold the same edge, bit for bit,
+    as a mesh's neighbours and refinement's pieces always do (edge
+    records). It asks every ratio `N_γ/W²_γ` in rows 1 to 4 to be past the
+    threshold plus its rounding bound, with one sign on one patch and the
+    other on the other; anything not finite, a straight edge or a control
+    triangle flatter than `|n|² ≤ 1e-24·|e1|²|e2|²` is refused. Then `F`,
+    a positive mean of the ratios, has one sign on each patch but on the
+    edge, so the two meet only there (the plane rule's argument one degree
+    up). Splitting keeps it in exact arithmetic: a half of the edge lies
+    on the same conic, so its `F` is the parent's times a positive
+    constant, and a piece's ratios are weighted means of its parent's
+    (blossoms). The computed bound, and off a circle the threshold, are a
+    piece's own, so pieces are tested again like any other (measured: the
+    refined profiles below pass). The **threshold** is `margin · 4w² /
+    max(hP, hQ)`, `hP` and `hQ` the far ends' heights above the lines
+    through the other end and `C`: `|∇F|` at the edge's end where it is
+    smaller (`4w²/hQ` at `P`), which on a circle is `|∇F|` all along the
+    edge; on other conics it may dip between the ends, so it is a scale,
+    not a bound. So the margin bounds the coefficients of `F` against its
+    gradient, about a resolution of distance from the cylinder at the
+    edge, not the distance of control points from a plane as the plane
+    rule's does. **Rounding** is bounded explicitly, not left to the
+    threshold: on a flat control triangle (a short arc, or a long edge
+    barely curved) the normal `n` is known only to about `ε·κ` of its
+    length (`κ = |e1||e2|/|n| = 1/sin φ`, `φ` the angle at `C`), so a
+    control point far off the edge's plane gets coordinates off by its
+    height over the triangle's times that, and terms of `F` cancel. Each
+    point's coordinates carry an error bound `64·ε·κ·(d·reach + m + ω)`
+    (`d` its distance from `C`, `d·reach` bounding `|λP|, |λQ|`, `m` its
+    largest `|λ|`, `ω` its weight), and each ratio's is `(1 + 4w²)·Σ
+    k·(ex·my + mx·ey + ex·ey + 16·ε·mx·my) / W²_γ` (derivations at
+    `LAMBDA_ROUNDING` and `CYLINDER_ROUNDING`). Without it, a long edge
+    barely curved (5e-8 off a chord 147 long) in a tilted frame with two
+    patches folded up out of its plane, both truly outside the cylinder,
+    passed (test `rounding_does_not_make_up_a_cylinder`). Checked against
+    exact rational arithmetic on f64 inputs (scratch, not a test): over
+    flat triangles (arcs down to `1e-6` rad, long edges barely curved),
+    weights at `W_MIN`/`W_MAX`, frames tilted and up to `1e5` out and far
+    corners off the plane, the true error was at most 0.009 of the bound;
+    on the profiles below every ratio that passes clears the threshold
+    plus the bound at least 5 000 times over. Bands and caps
+    (`Lathe::strip`, `pole_cap`) keep the plane rule alone: its failure on
+    a fitted diagonal is what tells them a strip is too coarse. With the
+    cylinder there too, a torus split 0.3 rad off its turns at `1e-1` took
+    8 pieces round the axis instead of 16, and those strips failed the
+    vertex rule (repaired 96 → 832 patches). Refinement's flat-face
+    splitting doesn't use it either. Measured on random pairs sharing a
+    random conic edge (200 000, 195 parted): `F` evaluated at 465
+    points of each patch away from the edge always has the coefficients'
+    sign (test). Across the kernel's other tests the rule passes 132 pairs
+    in boolean repair (chains of twenty, related, nicks, turned solids),
+    all certified by exact arithmetic too, with the same refusals as
     without it.
 - **One: vertex neighbours.** A plane through the shared vertex `V` with
   the other five control points of each more than the resolution to either
@@ -1539,10 +1570,12 @@ neighbours, triangles on the same corners, and wrong plane and cylinder
 tags. The cylinder rule (`mesh/hull/tests.rs`) parts fitted strips at
 rings at turns (a torus's top, round into flat, flat into a concave
 fillet, an S) where the plane can't, both orders, and refuses them once
-one patch's edge weight is off by `1e-3`; it refuses two rounds folded
-out of a top, a wall lying on the cylinder under a round (which the
-plane parts) and a straight edge, and is sound on 200 000 random pairs
-(`F` at points against the coefficients' signs). GJK is tested against boxes a known gap apart (face to face and
+one patch's edge is off by `1e-3` of its weight or a bit of its weight
+or control point; it refuses two rounds folded out of a top, a wall
+lying on the cylinder under a round (which the plane parts), a straight
+edge, and a long edge barely curved in a tilted frame whose patches
+rounding showed on opposite sides of the cylinder, and is sound on
+200 000 random pairs (`F` at points against the coefficients' signs). GJK is tested against boxes a known gap apart (face to face and
 corner to corner, randomly rotated and moved), point clouds either side of
 a plane, flat, collinear and repeated points, the long thin hulls of a
 611 × 0.066 × 0.187 box's corner in any order and rotation, and a support

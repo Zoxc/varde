@@ -425,14 +425,56 @@ fn rings_at_turns_are_parted_by_the_cylinder() {
         assert!(cylinder_apart(&a, 0, &b, 1, MARGIN), "{name}");
         assert!(cylinder_apart(&b, 1, &a, 0, MARGIN), "{name}");
         assert!(edge_neighbours_parted(&a, 0, &b, 1, MARGIN), "{name}");
-        // The edge row off the conic: the patches no longer share it.
+        // The edge off the conic, by a thousandth of its weight or by a
+        // bit of its weight or control point: the patches no longer share
+        // it.
+        let bit = |x: f64| f64::from_bits(x.to_bits() + 1);
         for scale in [1.0 + 1e-3, 1.0 - 1e-3] {
             let mut off = b;
             off.w[1] *= scale;
             assert!(!cylinder_apart(&a, 0, &off, 1, MARGIN), "{name}");
             assert!(!cylinder_apart(&off, 1, &a, 0, MARGIN), "{name}");
         }
+        let mut off = b;
+        off.w[1] = bit(off.w[1]);
+        assert!(!cylinder_apart(&a, 0, &off, 1, MARGIN), "{name}");
+        let mut off = b;
+        off.c[1].x = bit(off.c[1].x);
+        assert!(!cylinder_apart(&off, 1, &a, 0, MARGIN), "{name}");
     }
+}
+
+/// A long edge barely curved (its control point 5e-8 off a chord 147
+/// long, five resolutions), in a tilted frame, with two patches folded
+/// up out of its plane, both far corners truly outside the cylinder over
+/// it (by exact rational arithmetic on these values). Its control triangle
+/// is so flat that the plane's normal tilts by about `1e-7` rad under
+/// rounding, which moves the far corners' coordinates by more than they
+/// are from the cylinder: without the rounding bound the coefficients
+/// showed the two on opposite sides.
+#[test]
+fn rounding_does_not_make_up_a_cylinder() {
+    let p = DVec3::new(-8.452028400071006, 66.86895641488572, -19.590011613882453);
+    let c = DVec3::new(-19.7162975792843, -2.1354513415981318, 2.868569447024921);
+    let q = DVec3::new(-30.980566659169703, -71.13985911888999, 25.32715049381794);
+    let ra = DVec3::new(-20.00960990664421, -2.5570772890284044, 1.426002896703111);
+    let rb = DVec3::new(-20.05629314429112, -2.624182477776339, 1.1964066302263376);
+    let mid = |x: DVec3, y: DVec3| (x + y) / 2.0;
+    let a = Patch {
+        p: [p, q, ra],
+        c: [c, mid(q, ra), mid(ra, p)],
+        w: [1.0; 3],
+    };
+    let b = Patch {
+        p: [q, p, rb],
+        c: [c, mid(p, rb), mid(rb, q)],
+        w: [1.0; 3],
+    };
+    let margin = 1e-8;
+    assert!(!straight(p, c, q, margin));
+    assert!(!edge_neighbours_apart(&a, 0, &b, 0, margin));
+    assert!(!cylinder_apart(&a, 0, &b, 0, margin));
+    assert!(!cylinder_apart(&b, 0, &a, 0, margin));
 }
 
 #[test]

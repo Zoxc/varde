@@ -175,24 +175,51 @@ pub(crate) fn edge_neighbours_parted(
 /// Bernstein coefficients are sums over pairs of the patch's homogeneous
 /// control points of `F`'s polar form (and of the weights' product),
 /// times whole multinomial factors. With the shared edge as row 0 (the
-/// far corner's exponent 0), row 0 is the edge itself, zero to rounding.
+/// far corner's exponent 0), row 0 is the edge itself, where `F` is zero:
+/// its coefficients vanish exactly, so they aren't computed, but the two
+/// patches must hold the same edge (its bits, as a mesh's neighbours do).
 /// The rule asks every coefficient ratio `N_γ/W²_γ` in rows 1 to 4 to be
-/// past `margin·|∇F|` with one sign on one patch and the other sign on
-/// the other, and row 0's within it. Then `F` (a positive mean of the
-/// ratios) has one sign on each patch but near the edge, so the two meet
-/// only there, as the plane rule promises; splitting keeps it, a piece's
-/// coefficients being convex combinations of its parent's. `|∇F|` is
-/// taken as `4w²` over the larger of the far ends' heights above the
-/// lines through the other end and `C`, its value at the end where it is
-/// smaller. Unlike the plane rule's margin, which is a distance of
-/// control points, this one bounds the coefficients of `F`.
+/// past `margin·|∇F|` and its rounding bound with one sign on one patch
+/// and the other sign on the other. Then `F` (a positive mean of the
+/// ratios) has one sign on each patch but on the edge, so the two meet
+/// only there, as the plane rule promises. Splitting keeps that in exact
+/// arithmetic: a half of the edge lies on the same conic, so its `F` is
+/// the parent's times a positive constant, and a piece's ratios are
+/// weighted means of its parent's. (The rounding bound, and off a circle
+/// the threshold, are each piece's own.)
 ///
-/// A straight edge (its control point within `margin` of its chord) or a
-/// nearly degenerate control triangle is refused, as is anything not
-/// finite.
+/// `|∇F|` is taken as `4w²` over the larger of the far ends' heights
+/// above the lines through the other end and `C`: its value at the end
+/// where it is smaller, which on a circle is its value all along the
+/// edge (on other conics it may dip between the ends). Unlike the plane
+/// rule's margin, which is a distance of control points, this one is a
+/// scale for the coefficients of `F`.
+///
+/// **Rounding.** On a flat control triangle (a short arc, or a long edge
+/// barely curved) the normal `n` is known only to about `ε·κ` of its
+/// length, `κ = |P − C|·|Q − C|/|n| = 1/sin φ` with `φ` the angle at `C`:
+/// a control point far off the edge's plane then gets coordinates off by
+/// its height over the triangle's times that, and terms of `F` in the
+/// hundreds or more may cancel. So each point's coordinates carry a bound
+/// on their error, `e = 64·ε·κ·(d·reach + m + ω)` (`d` its distance from
+/// `C`, `reach` the larger of `|P − C|`, `|Q − C|` over `|n|`, so that
+/// `d·reach` bounds `|λP|` and `|λQ|`; `m` the largest `|λ|` computed, `ω`
+/// the weight), and each ratio one of `(1 + 4w²)·Σ k·(ex·my + mx·ey +
+/// ex·ey + 16·ε·mx·my) / W²_γ` over the pairs that sum to it, `k` their
+/// multinomial factors (derivations at [`LAMBDA_ROUNDING`] and
+/// [`CYLINDER_ROUNDING`]). A
+/// ratio must clear the threshold plus that bound, so a certificate that
+/// rounding made up is refused, not believed: a long edge barely curved
+/// with patches folded far out of its plane, in a tilted frame, passed
+/// without it with both patches truly outside the cylinder.
+///
+/// A straight edge (its control point within `margin` of its chord), a
+/// nearly degenerate control triangle, different edges, and anything not
+/// finite are refused.
 pub(crate) fn cylinder_apart(a: &Patch, ea: usize, b: &Patch, eb: usize, margin: f64) -> bool {
     let (p, c, q, w) = (a.p[ea], a.c[ea], a.p[(ea + 1) % 3], a.w[ea]);
-    if straight(p, c, q, margin) {
+    let same_edge = b.p[eb] == q && b.p[(eb + 1) % 3] == p && b.c[eb] == c && b.w[eb] == w;
+    if !same_edge || straight(p, c, q, margin) {
         return false;
     }
     let (e1, e2) = (p - c, q - c);
@@ -201,38 +228,45 @@ pub(crate) fn cylinder_apart(a: &Patch, ea: usize, b: &Patch, eb: usize, margin:
     if nn.is_nan() || nn <= 1e-24 * e1.length_squared() * e2.length_squared() {
         return false;
     }
+    let root = nn.sqrt();
+    let (l1, l2) = (e1.length(), e2.length());
+    let (kappa, reach) = (l1 * l2 / root, l1.max(l2) / root);
     // Barycentric coordinates (λP, λC, λQ) of a homogeneous point
-    // `(s, ω)`, `s = ω·(x − C)`, projected onto the control triangle.
+    // `(s, ω)`, `s = ω·(x − C)`, projected onto the control triangle, the
+    // largest's size and a bound on their rounding errors.
     let lambda = |s: DVec3, omega: f64| {
         let lp = n.dot(s.cross(e2)) / nn;
         let lq = n.dot(e1.cross(s)) / nn;
-        [lp, omega - lp - lq, lq]
+        let lc = omega - lp - lq;
+        let m = lp.abs().max(lc.abs()).max(lq.abs());
+        let e = LAMBDA_ROUNDING * kappa * (s.length() * reach + m + omega);
+        ([lp, lc, lq], m, e)
     };
     let w2 = w * w;
     // F's polar form, on the points' coordinates.
     let polar =
         |[xp, xc, xq]: [f64; 3], [yp, yc, yq]: [f64; 3]| xc * yc - 2.0 * w2 * (xp * yq + xq * yp);
-    let threshold = {
-        let root = nn.sqrt();
-        let (hq, hp) = (root / e1.length(), root / e2.length());
-        margin * 4.0 * w2 / hq.max(hp)
-    };
+    // `|∇F|` at the end where it is smaller: `4w²/hQ` at `P`, `hQ` the
+    // height of `Q` above the line through `P` and `C`.
+    let threshold = margin * 4.0 * w2 / (root / l1).max(root / l2);
     // The sign of F on the patch, or None.
     let side = |x: &Patch, e: usize| -> Option<f64> {
-        let (e1, e2) = ((e + 1) % 3, (e + 2) % 3);
-        // Each control point's coordinates and weight.
+        let (next, last) = ((e + 1) % 3, (e + 2) % 3);
+        // Each control point's coordinates (with their size and error
+        // bound) and its weight.
         let corner = |i: usize| (lambda(x.p[i] - c, 1.0), 1.0);
         let edge = |i: usize| (lambda((x.c[i] - c) * x.w[i], x.w[i]), x.w[i]);
+        // Row 0's three (the edge's start, its control point, its end)
+        // first, their multi-indices over (the edge's start, its end, the
+        // far corner) alongside.
         let net = [
             corner(e),
             edge(e),
-            corner(e1),
-            edge(e2),
-            edge(e1),
-            corner(e2),
+            corner(next),
+            edge(last),
+            edge(next),
+            corner(last),
         ];
-        // Their multi-indices over (the edge's start, its end, the far
-        // corner).
         let index: [[usize; 3]; 6] = [
             [2, 0, 0],
             [1, 1, 0],
@@ -244,35 +278,31 @@ pub(crate) fn cylinder_apart(a: &Patch, ea: usize, b: &Patch, eb: usize, margin:
         // The quadratic multinomials: 2 for a mixed index, else 1.
         let multi = |g: [usize; 3]| if g.contains(&1) { 2.0 } else { 1.0 };
         // Coefficients scaled by the quartic multinomial, by the first
-        // two exponents.
+        // two exponents, and bounds on their rounding errors (but for the
+        // factor `1 + 4w²`). Pairs within row 0 only add to row 0, which
+        // is skipped.
         let mut num = [[0.0; 5]; 5];
         let mut den = [[0.0; 5]; 5];
+        let mut size = [[0.0; 5]; 5];
         for i in 0..6 {
-            for j in i..6 {
-                let ((xa, wa), (xb, wb)) = (net[i], net[j]);
+            for j in i.max(3)..6 {
+                let (((xa, ma, da), wa), ((xb, mb, db), wb)) = (net[i], net[j]);
                 let (ga, gb) = (index[i], index[j]);
                 // A pair of different points comes twice.
                 let k = multi(ga) * multi(gb) * if i == j { 1.0 } else { 2.0 };
                 let (g0, g1) = (ga[0] + gb[0], ga[1] + gb[1]);
                 num[g0][g1] += k * polar(xa, xb);
                 den[g0][g1] += k * wa * wb;
+                size[g0][g1] += k * (da * mb + ma * db + da * db + CYLINDER_ROUNDING * ma * mb);
             }
         }
         let mut sign = 0.0;
-        for g0 in 0..=4 {
-            for g1 in 0..=4 - g0 {
-                let r = num[g0][g1] / den[g0][g1];
-                if !r.is_finite() || den[g0][g1] <= 0.0 {
-                    return None;
-                }
-                if g0 + g1 == 4 {
-                    // Row 0: on the edge.
-                    if r.abs() > threshold {
-                        return None;
-                    }
-                    continue;
-                }
-                if r.abs() <= threshold || (sign != 0.0 && r.signum() != sign) {
+        for g0 in 0..4 {
+            for g1 in 0..4 - g0 {
+                let (r, d) = (num[g0][g1] / den[g0][g1], den[g0][g1]);
+                let bound = threshold + (1.0 + 4.0 * w2) * size[g0][g1] / d;
+                // NaN fails the comparison.
+                if !(d > 0.0 && r.abs() > bound) || (sign != 0.0 && r.signum() != sign) {
                     return None;
                 }
                 sign = r.signum();
@@ -282,6 +312,23 @@ pub(crate) fn cylinder_apart(a: &Patch, ea: usize, b: &Patch, eb: usize, margin:
     };
     matches!((side(a, ea), side(b, eb)), (Some(sa), Some(sb)) if sa == -sb)
 }
+
+/// A bound on the rounding of [`cylinder_apart`]'s coordinates `λ`,
+/// times `κ·(d·reach + m + ω)` (see there). With `u = ε/2`, rounding the
+/// normal `n` is off by about `7·u·|P − C|·|Q − C| = 7·u·κ·|n|`. In `λP =
+/// n·(s × Q − C)/n²` that moves the numerator by about `7·u·κ·d·reach`
+/// of `n²` (`n` tilting under a point off the plane) and `n²` by about
+/// `14·u·κ` of itself; with the other roundings, `λP` and `λQ` are off by
+/// at most about `u·κ·(18·d·reach + 19·m)`, and `λC = ω − λP − λQ` by
+/// twice that and `2·u·(ω + 2m)`: `64·ε = 128·u` has room.
+const LAMBDA_ROUNDING: f64 = 64.0 * f64::EPSILON;
+
+/// A bound on the rounding in [`cylinder_apart`]'s polar forms and sums,
+/// relative to the sizes of the coordinates multiplied: a polar form's
+/// products and sums round by about `4·u·(1 + 4w²)·mx·my`, adding up to
+/// four terms and dividing by `W²_γ` (itself off by about `5·u`) adds a
+/// few `u` more. `16·ε = 32·u` has room.
+const CYLINDER_ROUNDING: f64 = 16.0 * f64::EPSILON;
 
 /// The unit direction from `p` to `q`, and the part of `x - p` across the
 /// line through them, or `None` if they are the same point.
