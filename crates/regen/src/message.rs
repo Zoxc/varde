@@ -27,26 +27,30 @@ impl Doing {
     }
 }
 
-/// Why sweeping an extrude's regions failed.
-pub(crate) fn extrude(error: KernelError) -> String {
+/// Why sweeping an extrude's regions failed, at the finest tolerance
+/// there is if `finest` (where a finer one can't be suggested).
+pub(crate) fn extrude(error: KernelError, finest: bool) -> String {
     match error {
         // Out of budget or past a limit: a coarser tolerance changes
         // neither, so it isn't offered.
         KernelError::TooComplex => {
             "its regions are too complex to extrude: try fewer or simpler curves".to_owned()
         }
+        KernelError::Invalid(_) if finest => "its regions have parts too thin or too close \
+             together to extrude, even at the finest tolerance"
+            .to_owned(),
         KernelError::Invalid(_) => "its regions have parts too thin or too close together for \
              this tolerance: try a finer tolerance"
             .to_owned(),
         KernelError::Patch(_) => "its regions are too far out or too large to extrude".to_owned(),
-        KernelError::Profile(error) => profile(error),
+        KernelError::Profile(error) => profile(error, finest),
         // An extrude makes no boolean.
         KernelError::Boolean(error) => format!("it couldn't be extruded: {error}"),
     }
 }
 
-/// Why a profile can't be extruded.
-fn profile(error: ProfileError) -> String {
+/// Why a profile can't be extruded, at the finest tolerance if `finest`.
+fn profile(error: ProfileError, finest: bool) -> String {
     match error {
         ProfileError::Touching(_) => {
             "its outline touches or crosses itself, or comes too close to itself".to_owned()
@@ -55,6 +59,9 @@ fn profile(error: ProfileError) -> String {
         ProfileError::Cusp(..) => "its outline turns back on itself in a sharp point".to_owned(),
         ProfileError::Area(_) => "a loop of its outline encloses no area".to_owned(),
         ProfileError::TooManySegments(_) => "its outline has too many curves".to_owned(),
+        ProfileError::TooFine(..) if finest => {
+            "its outline has detail too small to extrude, even at the finest tolerance".to_owned()
+        }
         ProfileError::TooFine(..) => {
             "its outline has detail too small for this tolerance: try a finer tolerance".to_owned()
         }

@@ -291,7 +291,7 @@ impl Run<'_> {
             &self.tolerance,
             &Budget::DEFAULT,
         )
-        .map_err(message::extrude)
+        .map_err(|error| message::extrude(error, self.tolerance.fit() <= Tolerance::MIN_FIT))
     }
 }
 

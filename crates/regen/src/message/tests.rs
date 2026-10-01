@@ -38,11 +38,11 @@ fn boolean_failures_name_the_body_and_what_to_try() {
 fn extrude_failures_speak_of_the_regions() {
     let touching = KernelError::Profile(ProfileError::Touching([(0, 1), (1, 0)]));
     assert_eq!(
-        extrude(touching),
+        extrude(touching, false),
         "its outline touches or crosses itself, or comes too close to itself"
     );
     assert_eq!(
-        extrude(KernelError::Profile(ProfileError::Triangulation)),
+        extrude(KernelError::Profile(ProfileError::Triangulation), false),
         "its end faces couldn't be made"
     );
 }
@@ -80,7 +80,7 @@ fn extrude_failures_name_the_tolerance_only_to_suggest_a_finer_one() {
     // finer one isn't known to help either, the tolerance isn't named.
     let mut naming = 0;
     for error in extrude_errors() {
-        let text = extrude(error);
+        let text = extrude(error, false);
         assert!(!text.contains("coarser"), "{text}");
         assert!(text.starts_with(char::is_lowercase), "{text}");
         if text.contains("tolerance") {
@@ -105,19 +105,19 @@ fn extrude_failures_name_the_tolerance_only_to_suggest_a_finer_one() {
 
 #[test]
 fn detail_too_fine_for_the_tolerance_suggests_a_finer_one() {
-    let text = extrude(KernelError::Profile(ProfileError::TooFine(1, 2)));
+    let text = extrude(KernelError::Profile(ProfileError::TooFine(1, 2)), false);
     assert_eq!(
         text,
         "its outline has detail too small for this tolerance: try a finer tolerance"
     );
-    let text = extrude(KernelError::Invalid(CheckError::Counts));
+    let text = extrude(KernelError::Invalid(CheckError::Counts), false);
     assert_eq!(
         text,
         "its regions have parts too thin or too close together for this tolerance: \
          try a finer tolerance"
     );
     // Out of budget, it's the curves, not the tolerance.
-    let text = extrude(KernelError::TooComplex);
+    let text = extrude(KernelError::TooComplex, false);
     assert_eq!(
         text,
         "its regions are too complex to extrude: try fewer or simpler curves"
@@ -147,7 +147,44 @@ fn every_boolean_failure_starts_in_lower_case() {
             assert!(text.starts_with(doing.name()), "{text}");
             assert!(text.contains("Body 2"), "{text}");
         }
-        let text = extrude(error);
-        assert!(text.starts_with(char::is_lowercase), "{text}");
+        for finest in [false, true] {
+            let text = extrude(error, finest);
+            assert!(text.starts_with(char::is_lowercase), "{text}");
+        }
+    }
+}
+
+#[test]
+fn at_the_finest_tolerance_none_finer_is_suggested() {
+    // A strip 1e-7 wide is too thin even at the finest tolerance (fit
+    // 1e-5, a resolution of 1e-8): there is no finer one to try.
+    let mut naming = 0;
+    for error in extrude_errors() {
+        let text = extrude(error, true);
+        assert!(!text.contains("try a finer"), "{text}");
+        assert!(!text.contains("coarser"), "{text}");
+        if text.contains("tolerance") {
+            assert!(text.ends_with(", even at the finest tolerance"), "{text}");
+            naming += 1;
+        }
+    }
+    assert_eq!(naming, 2);
+    assert_eq!(
+        extrude(KernelError::Invalid(CheckError::Counts), true),
+        "its regions have parts too thin or too close together to extrude, even at the \
+         finest tolerance"
+    );
+    assert_eq!(
+        extrude(KernelError::Profile(ProfileError::TooFine(1, 2)), true),
+        "its outline has detail too small to extrude, even at the finest tolerance"
+    );
+    // The rest read the same at any tolerance.
+    for error in extrude_errors() {
+        if !matches!(
+            error,
+            KernelError::Invalid(_) | KernelError::Profile(ProfileError::TooFine(..))
+        ) {
+            assert_eq!(extrude(error, true), extrude(error, false));
+        }
     }
 }

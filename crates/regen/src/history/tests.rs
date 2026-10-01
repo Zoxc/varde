@@ -775,3 +775,29 @@ fn a_body_that_cant_be_told_is_passed_over_or_listed() {
     assert_eq!(evaluation.touched, [(cut, vec![top])]);
     assert_near(evaluation.bodies[1].solid.volume(), plate(8.0, 3.0));
 }
+
+#[test]
+fn too_thin_at_the_finest_tolerance_suggests_none_finer() {
+    // A strip 1e-7 mm wide: 10 resolutions at the finest tolerance, too
+    // thin for its walls and caps, and there is no finer one to try.
+    let mut editor = Editor::new(Document::default());
+    let finest = Tolerance::new(Tolerance::MIN_FIT).unwrap();
+    editor.apply(Command::SetTolerance(finest)).unwrap();
+    let extent = Extent::OneSide(length(editor.document(), "1"));
+    let strip = add_extrude(
+        &mut editor,
+        rectangle((0.0, 0.0), (10.0, 1e-7)),
+        extent,
+        Operation::NewBody(BodyId::NEW),
+    );
+    let evaluation = evaluated(editor.document());
+    assert_eq!(
+        evaluation.failed,
+        [(
+            strip,
+            "its regions have parts too thin or too close together to extrude, even at \
+             the finest tolerance"
+                .to_owned()
+        )]
+    );
+}

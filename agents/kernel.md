@@ -1254,7 +1254,17 @@ Known gaps:
   (seed 6 case 146; `Invalid` at 0.05 and 0.01, `Ok` at 1e-3). Weights of
   exactly 1 fail too, if less often; nothing fails this way at 1e-3. The
   cases checked extrude at a finer tolerance (seed 2 case 11 at 0.01),
-  which is what the `TooFine` and `Invalid` messages suggest. Quality
+  which is what the `TooFine` and `Invalid` messages suggest; so did
+  every `TooFine` and `Invalid` of 10 800 more cases (seeds 13 to 30),
+  of small holes (0.05 to 1 mm, random loops or circles cut unevenly
+  into arcs, 4 000 cases at 1e-2 and 1 600 at 0.1) and of wavy spline
+  edges fitted at 1e-5 to 0.1, with one exception: a hole of sharply
+  weighted conics whose cap triangulation (the same at every tolerance)
+  holds a sliver that repair splits into pieces meeting at a vertex
+  within the resolution, `Invalid` down to 1e-5. The remaining
+  `TooComplex` at 0.1 (seed 24 case 293; the first try of seed 18 case
+  539 at 0.05) is repair's `MIN_SPLIT` floor again, which
+  a finer tolerance mends although the message names none. Quality
   refinement of the caps (no sliver with a far apex) would mend most.
   One `Invalid` is a real 0.8° notch between two conics whose sides
   pass `apart_at_joint` by a hair: that test isn't monotone under
@@ -2680,8 +2690,11 @@ thin or too close together for this tolerance: try a finer tolerance"
 for `Invalid`, and the profile errors say what's wrong with the outline
 (touching or crossing itself, loops that don't nest, a cusp, a loop of
 no area; for `TooFine`, "its outline has detail too small for this
-tolerance: try a finer tolerance"). A message names the tolerance only
-where a finer one is the remedy: `TooComplex` is the budget or a limit,
+tolerance: try a finer tolerance"). At the finest tolerance there is
+none finer to try, so those two say "…to extrude, even at the finest
+tolerance" instead (a strip 1e-7 wide is 10 resolutions there and fails
+`Invalid`). A message names the tolerance only where a finer one is the
+remedy, or to say there is none: `TooComplex` is the budget or a limit,
 which a coarser tolerance doesn't change, so none suggests a coarser
 one; `Triangulation` ("its end faces couldn't be made") and regen's own
 `ProfileError::Fit` ("a spline couldn't be fitted: it stops or turns
