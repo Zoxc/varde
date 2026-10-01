@@ -15,6 +15,11 @@
   Solid operations (Revolve R, Chamfer C, Combine B, Move M, Pattern P, and
   Shell, Mirror, Circular pattern from the Alt bar or with a body selected)
   open a panel at the viewport's right; click its fields, then the model.
+  The tool rail floats over the view's left edge with a card per tool set
+  (the Alt bar's sets): point at a set, click it or press its number to open
+  its full list beside it, then a letter picks a tool; the first tools of each
+  set sit on the card too, with instant tooltips. The set's number shows in
+  its open list.
   Deep links: #bracket, #bracket/face, #bracket/body, #bracket/sketch,
   #bracket/tools, #bracket/sketchtools, #empty; #bracket/op:<kind> opens an
   operation set up for a screenshot (revolve, combine, move, bmirror,
@@ -25,6 +30,7 @@
 <style>
 :root {
   --side-w: 256px;
+  --rail-w: 56px;
   --title-h: 36px;
   --tool-h: 40px;
   --status-h: 28px;
@@ -283,6 +289,51 @@ kbd {
 .gbtn:hover { background: var(--hl); }
 .gbtn svg.i { width: 24px; height: 24px; stroke-width: 1.45; }
 
+/* ---- tool rail: a card per tool set floating over the view's left edge, its
+   main tools on a recessed strip flush along the card's bottom ---- */
+.rail {
+  /* cards 48 px wide, 6 px from the side panel and from the toolbar; the side
+     padding also keeps the cards' outline inside the rail, which clips */
+  position: absolute; top: calc(var(--title-h) + var(--tool-h)); left: calc(var(--side-w) + 2px); bottom: var(--status-h); width: var(--rail-w); z-index: 8;
+  display: flex; flex-direction: column; gap: 6px; padding: 6px 4px; overflow: hidden;
+  pointer-events: none; /* clicks between the cards reach the view */
+}
+.rail > * { pointer-events: auto; }
+.rcard { flex: none; border-radius: 8px; background: var(--panel); box-shadow: 0 0 0 1px var(--line); overflow: hidden; }
+.rset {
+  /* square, so its hover fills the card's whole white head; the card's rounded clip shapes it */
+  width: 100%; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 7px 2px 5px;
+  border: 0; border-radius: 0; background: none; cursor: pointer;
+}
+.rset:hover { background: var(--hl); }
+/* over a strip, the head runs on under the strip's rounded top corners, so its
+   highlight leaves no white wedges there */
+.rset:not(:last-child) { padding-bottom: 11px; margin-bottom: -6px; }
+.rtools { position: relative; }
+.rset.on { background: var(--hl); } /* open (it opens on hover) looks like hover, as on the tools */
+.rset svg.i { width: 22px; height: 22px; }
+.rtools { display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 2px 0; border-radius: 6px; background: color-mix(in srgb, var(--text) 6%, var(--panel)); } /* opaque: the head's highlight runs on under it */
+.rtool { width: 28px; height: 26px; display: grid; place-items: center; border: 0; border-radius: 6px; background: none; cursor: pointer; }
+.rtool:hover { background: var(--hl); }
+.rtool svg.i { width: 18px; height: 18px; }
+/* instant tooltips for the rail's tools, beside them (outside the rail, which clips) */
+.tip { position: absolute; z-index: 60; display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 6px;
+  background: var(--text); color: var(--vp-top); font-size: 12px; white-space: nowrap; pointer-events: none; transform: translateY(-50%); }
+.tip kbd { background: rgba(255, 255, 255, .15); color: inherit; border-color: transparent; padding: 1px 4px; font-size: 10px; }
+.tip[hidden] { display: none; }
+/* a set's tools, opened from its card: only as tall as it needs, beside the card */
+.rpop {
+  position: absolute; left: calc(var(--side-w) + var(--rail-w) + 12px); z-index: 13; width: 230px; max-height: calc(100% - var(--title-h) - var(--tool-h) - var(--status-h) - 16px);
+  overflow: auto; padding: 8px; border-radius: 10px; border-top: 3px solid var(--rc);
+  background: var(--panel); box-shadow: 0 0 0 1px var(--line), 0 10px 30px rgba(0, 0, 0, .18);
+}
+.rpop .hd { display: flex; align-items: center; gap: 6px; padding: 2px 4px 6px; font-weight: 600; }
+.rpop .hd kbd { margin-left: auto; }
+.rpop .hd kbd.own { margin-left: 0; } /* the set's own key, after its name */
+.rpop button { width: 100%; display: flex; align-items: center; gap: 9px; height: 28px; padding: 0 6px; border: 0; border-radius: 6px; background: none; cursor: pointer; text-align: left; }
+.rpop button:hover { background: var(--hl); }
+.rpop button .k { margin-left: auto; color: var(--faint); font: 500 10.5px ui-monospace, Menlo, monospace; }
+
 /* ---- menu ---- */
 .menu {
   position: absolute; top: calc(100% + 4px); left: 8px; width: 240px; z-index: 30;
@@ -538,7 +589,7 @@ body.dragging .face, body.dragging .hole { pointer-events: none; }
 .still *, .still *::before, .still *::after { animation: none !important; transition: none !important; }
 @media (max-width: 860px) {
   #win { width: 100vw; height: 100vh; border-radius: 0; }
-  .side, .cube-wrap, .ops, .ctx, .hints, .winctl, .titlebar .title, .gbar { display: none; }
+  .side, .rail, .rpop, .cube-wrap, .ops, .ctx, .hints, .winctl, .titlebar .title, .gbar { display: none; }
   .vp { left: 0; }
   .file { width: auto; border-right: 0; }
   .wel-inner { padding: 32px 16px; }
@@ -550,11 +601,23 @@ body.dragging .face, body.dragging .hole { pointer-events: none; }
 <div id="win">
   <div id="app"></div>
   <div class="toast" id="toast"></div>
+  <div class="tip" id="tip" hidden></div>
 </div>
 
 <script>
 // ---------------------------------------------------------------- icons
 const I = {
+  // tool sets (the rail): what each set leaves behind, in line style
+  'cat-sketch': '<path class="r" d="M1.5 21.5l5-10h16l-5 10z"/><path class="a" d="M5.5 19.5h11l1.5-3-4-2.5h-5z"/>',
+  'cat-create': '<path class="r" d="M5 17.5a7 3 0 0 1 14 0" stroke-dasharray="1.6 1.8"/><path d="M5 6.5v11a7 3 0 0 0 14 0v-11"/><ellipse class="a" cx="12" cy="6.5" rx="7" ry="3"/>',
+  'cat-modify': '<path d="M10.5 9H3.5v11h12v-6M3.5 9l5-5h7M20.5 9v6l-5 5M10.5 9l5-5M15.5 14l5-5"/><path class="a" d="M10.5 9a5 5 0 0 1 5 5M15.5 4a5 5 0 0 1 5 5"/>',
+  'cat-transform': '<path class="r" stroke-dasharray="1.6 1.8" d="M7.5 10l4.76 2.75v5.5l-4.76 2.75-4.76-2.75v-5.5z"/><path class="r" stroke-dasharray="1.6 1.8" d="M2.74 12.75l4.76 2.75 4.76-2.75M7.5 15.5v5.5"/><path d="M16.5 3l4.76 2.75v5.5l-4.76 2.75-4.76-2.75v-5.5z"/><path d="M11.74 5.75l4.76 2.75 4.76-2.75M16.5 8.5v5.5"/>',
+  'cat-construct': '<path d="M5.5 3.5l10 3.5v13.5l-10-3.5z"/><path class="a" d="M2.5 14l18-5"/><circle class="af" cx="10.5" cy="11.8" r="1.6"/>',
+  'cat-inspect': '<path d="M12 3l7.8 4.5v9L12 21l-7.8-4.5v-9zM4.2 7.5L12 12l7.8-4.5M12 12v9"/><path class="a" d="M15.1 10.2l-2.7 10.4M18 8.5l-2.8 10.5M19.8 11l-1.4 5.3"/>',
+  'cat-draw': '<path d="M5 20V10a7 7 0 0 1 14 0v10z"/><circle class="af" cx="5" cy="20" r="1.5"/><circle class="af" cx="19" cy="20" r="1.5"/><circle class="af" cx="12" cy="3" r="1.5"/>',
+  'cat-smodify': '<path d="M2.5 9H15v12.5"/><path class="r" d="M19.5 9h2"/><path class="a" d="M17.25 5.5v7"/>',
+  'cat-constrain': '<g transform="rotate(-18 12 12)"><rect x="5" y="6" width="14" height="12" rx=".5"/><path class="a" d="M5 13.5h4.5V18"/><circle class="af" cx="19" cy="6" r="1.5"/></g>',
+  'cat-dim': '<rect x="3.5" y="13" width="17" height="7.5" rx="1"/><path class="r" d="M3.5 4.5v6.5M20.5 4.5v6.5"/><path class="a" d="M4.5 7.5h15M7 5.5l-2.5 2 2.5 2M17 5.5l2.5 2-2.5 2"/>',
   sketch: '<path class="r" d="M4 20h16"/><path class="t" d="M14.5 4.5l5 5L9 20H4v-5z"/><path class="a" d="M6 13l5 5"/>',
   extrude: '<path class="t" d="M4 15l8 4 8-4-8-4z"/><path class="a" d="M12 11V3M9 6l3-3 3 3"/>',
   revolve: '<path d="M20 12a8 8 0 1 1-2.6-5.9"/><path class="a" d="M17.5 2.5v4h4"/><path class="r" d="M12 7v10" stroke-dasharray="2 2"/>',
@@ -623,13 +686,13 @@ const I = {
 // solid/body, construction, inspect.
 const CAT = {};
 for (const [cat, names] of Object.entries({
-  sketch: 'sketch line rect circle arc polygon spline',
-  mod: 'trim extend mirror skoffset pushpull fillet chamfer shell combine offset',
-  cstr: 'constrain coincident parallel perpendicular tangent equal',
-  dim: 'dim',
-  solid: 'extrude revolve hole body paint sweep loft box move bmirror lpattern cpattern',
-  cons: 'plane origin axis point',
-  insp: 'measure section',
+  sketch: 'sketch line rect circle arc polygon spline cat-draw cat-sketch',
+  mod: 'trim extend mirror skoffset pushpull fillet chamfer shell combine offset cat-smodify cat-modify',
+  cstr: 'constrain coincident parallel perpendicular tangent equal cat-constrain',
+  dim: 'dim cat-dim',
+  solid: 'extrude revolve hole body paint sweep loft box move bmirror lpattern cpattern cat-create cat-transform',
+  cons: 'plane origin axis point cat-construct',
+  insp: 'measure section cat-inspect',
 })) for (const n of names.split(' ')) CAT[n] = cat;
 const icon = (n, cls = 'i') => `<svg class="${cls}${CAT[n] ? ' c-' + CAT[n] : ''}" viewBox="0 0 24 24">${I[n] || ''}</svg>`;
 // A folded "V": two slabs meeting at a crease, with a sketch point above.
@@ -846,6 +909,7 @@ const st = {
   sel: null,       // { kind: 'face'|'hole'|'plane'|'feature'|'body', id }
   panel: 'timeline', alt: false, menu: false, help: false,
   gbarPinned: false, prevCam: null,
+  railOpen: null,  // index of the tool set whose list is open from the rail
   op: null,        // solid operation being set up: { kind, pick, editing?, ...its parameters }
 };
 // Faces ('base-top') and bodies ('body:body') the operation being set up highlights.
@@ -987,6 +1051,64 @@ function gbar() {
       <div class="btns">${items.map(o => `<button class="gbtn" data-act="gop:${o.op}" title="${o.label}">${icon(o.icon)}${o.label}</button>`).join('')}</div>
     </div>`).join('')}
   </div>`;
+}
+
+// The tool rail: the same sets as the Alt bar, one card each with the set's
+// icon, its number key and its first tools on a recessed strip. Pointing at a
+// set (or clicking it, or its number key) opens its full list beside the card;
+// letters then pick from it, Esc closes it.
+const SET_STYLE = {
+  model: { Sketch: ['cat-sketch', 'sketch'], Create: ['cat-create', 'solid'], Modify: ['cat-modify', 'mod'], Transform: ['cat-transform', 'solid'], Construct: ['cat-construct', 'cons'], Inspect: ['cat-inspect', 'insp'] },
+  sketch: { Create: ['cat-draw', 'sketch'], Modify: ['cat-smodify', 'mod'], Constraints: ['cat-constrain', 'cstr'], Dimension: ['cat-dim', 'dim'] },
+};
+const RAIL_TOOLS = 3;
+const railSets = () => st.mode === 'sketch' ? SKETCH_GROUPS : MODEL_GROUPS;
+const railStyle = name => SET_STYLE[st.mode === 'sketch' ? 'sketch' : 'model'][name];
+// Shortcut letters inside an open set: the first free letter of each label.
+function railLetters(items) {
+  const used = [];
+  return items.map(o => { const k = [...o.label.toUpperCase()].find(c => /[A-Z]/.test(c) && !used.includes(c)) || ''; used.push(k); return k; });
+}
+// A rail tool's shortcut: the toolbar's key for it in model mode, the sketch tool's key in a sketch.
+const toolKey = o => o.op.startsWith('tool:') ? TOOLS[o.op.slice(5)]?.key || '' : ops().find(x => x.id === o.op)?.key || '';
+function rail() {
+  return `<div class="rail">${railSets().map(([name, items], i) => {
+    const [ic, cat] = railStyle(name);
+    const tools = items.slice(0, RAIL_TOOLS).map(o => `<button class="rtool" data-act="rgop:${o.op}" data-tip="${o.label}" data-key="${toolKey(o)}">${icon(o.icon)}</button>`).join('');
+    return `<div class="rcard"><button class="rset${st.railOpen === i ? ' on' : ''}" data-act="rail:${i}" data-rail="${i}" title="${name} (${i + 1})">${icon(ic, 'i c-' + cat)}</button>${tools ? `<div class="rtools">${tools}</div>` : ''}</div>`;
+  }).join('')}</div>`;
+}
+function railPop() {
+  const set = railSets()[st.railOpen];
+  if (!set) return '';
+  const [name, items] = set, [ic, cat] = railStyle(name), keys = railLetters(items);
+  return `<div class="rpop" id="rpop" style="--rc:var(--i-${cat})">
+    <div class="hd">${icon(ic, 'i c-' + cat)}${name}<kbd class="own">${st.railOpen + 1}</kbd><kbd>Esc</kbd></div>
+    ${items.map((o, i) => `<button data-act="rgop:${o.op}">${icon(o.icon)}${o.label}<span class="k">${keys[i]}</span></button>`).join('')}
+  </div>`;
+}
+// After a render: line the open list up with its card, moved up as far as it
+// must to stay in the window, and drop rail tools evenly if the rail is short
+// (the set showing the most gives up its last one until everything fits).
+function placeRail() {
+  const r = $('.rail');
+  if (!r) return;
+  const strips = [...r.querySelectorAll('.rtools')].map(t => [...t.children]);
+  strips.flat().forEach(b => b.hidden = false);
+  r.querySelectorAll('.rtools').forEach(t => t.hidden = false);
+  for (let guard = 100; r.scrollHeight > r.clientHeight + 1 && guard--;) {
+    let most = null;
+    for (const s of strips) { const v = s.filter(b => !b.hidden); if (v.length && (!most || v.length >= most.length)) most = v; }
+    if (!most) break;
+    most.at(-1).hidden = true;
+    const t = most.at(-1).parentElement;
+    if (![...t.children].some(b => !b.hidden)) t.hidden = true;
+  }
+  const pop = $('#rpop'), card = st.railOpen != null && $(`[data-rail="${st.railOpen}"]`);
+  if (!pop || !card) return;
+  const win = $('#win').getBoundingClientRect(), top = card.getBoundingClientRect().top - win.top - 4;
+  const bottom = win.height - parseFloat(getComputedStyle(root).getPropertyValue('--status-h')) - 8;
+  pop.style.top = Math.max(0, Math.min(top, bottom - pop.offsetHeight)) + 'px';
 }
 
 // Run an operation from the Alt bar. Sketch tools need a sketch first.
@@ -2221,6 +2343,7 @@ function renderApp() {
     ? `<div class="hint-center">Select an origin plane, then <kbd>S</kbd> to sketch</div>` : '';
   app.innerHTML = titlebar() + toolbar() + `
     <div class="side">${side()}</div>
+    ${rail()}${railPop()}
     <div class="vp">
       <svg id="scene" viewBox="${viewBox()}" preserveAspectRatio="xMidYMid meet">${sceneInner()}</svg>
       <div class="cube-wrap">
@@ -2230,6 +2353,7 @@ function renderApp() {
       ${st.op ? opPanel() : ''}
       ${hint}
     </div>` + (st.alt || st.gbarPinned ? gbar() : '') + statusbar() + help;
+  placeRail();
 }
 
 function helpModal() {
@@ -2239,7 +2363,7 @@ function helpModal() {
     <div class="cols">
       <h3>Everywhere</h3>
       ${kv('Ctrl K', 'Command palette')}${kv('?', 'This sheet')}
-      ${kv('Esc', 'Back out one level')}${kv('Alt', 'Hold: other tab + tool bar')}${kv('Alt', 'Tap: keep the tool bar open')}
+      ${kv('Esc', 'Back out one level')}${kv('1 – 9', 'Open a tool set from the rail')}${kv('Alt', 'Hold: other tab + tool bar')}${kv('Alt', 'Tap: keep the tool bar open')}
       <h3>Model</h3>
       ${kv('S', 'Sketch')}${kv('E', 'Extrude')}${kv('R', 'Revolve')}${kv('Q', 'Press pull')}${kv('H', 'Hole')}${kv('F', 'Fillet')}
       ${kv('C', 'Chamfer')}${kv('B', 'Combine')}${kv('M', 'Move')}${kv('P', 'Linear pattern')}${kv('I', 'Measure')}
@@ -2288,6 +2412,7 @@ function openDoc(kind, name, intro = true) {
 // New sketches go in at the marker, like any new feature.
 function enterSketch(id, plane, isNew) {
   const d = st.doc;
+  st.railOpen = null;
   if (isNew) {
     const n = d.timeline.filter(t => t.type === 'sketch').length + 1;
     id = 'n' + Date.now();
@@ -2301,7 +2426,7 @@ function enterSketch(id, plane, isNew) {
 }
 
 function finishSketch() {
-  Object.assign(st, { mode: 'model', sketch: null, tool: null });
+  Object.assign(st, { mode: 'model', sketch: null, tool: null, railOpen: null });
   animateCam(st.prevCam || HOME, 750);
 }
 
@@ -2375,6 +2500,8 @@ function act(a) {
       break;
     }
     case 'gop': altUsed = true; globalOp(v); break;
+    case 'rail': st.railOpen = +v; break;
+    case 'rgop': st.railOpen = null; globalOp(v); break;
     case 'tab': st.panel = v; break;
     case 'tl':
       if (st.mode === 'sketch' || st.op) return;
@@ -2406,8 +2533,36 @@ function act(a) {
 // ---------------------------------------------------------------- input
 let drag = null, justDragged = false, altUsed = false, altDownAt = 0;
 
+// Instant tooltips: a [data-tip] under the pointer shows one beside it, no delay.
+document.addEventListener('mousemove', e => {
+  const t = e.target.closest?.('[data-tip]'), tip = $('#tip');
+  if (!t || drag) { tip.hidden = true; return; }
+  const win = $('#win').getBoundingClientRect(), r = t.getBoundingClientRect();
+  tip.innerHTML = t.dataset.tip + (t.dataset.key ? `<kbd>${t.dataset.key}</kbd>` : '');
+  tip.style.left = (r.right - win.left + 6) + 'px';
+  tip.style.top = (r.top + r.height / 2 - win.top) + 'px';
+  tip.hidden = false;
+});
+document.addEventListener('mousedown', () => { $('#tip').hidden = true; });
+
+// Pointing at a set opens its list. Pointing at a tool on a card closes it at
+// once; anywhere else outside a set and its list closes it after a moment, so
+// the pointer can cross the gap from a card to its list.
+let railClose = 0;
+const closeRail = () => { clearTimeout(railClose); railClose = 0; if (st.railOpen != null) { st.railOpen = null; render(); } };
+document.addEventListener('mouseover', e => {
+  if (drag) return;
+  const set = e.target.closest('[data-rail]');
+  if (set || e.target.closest('.rpop')) { clearTimeout(railClose); railClose = 0; }
+  if (set) { if (st.railOpen !== +set.dataset.rail) { st.railOpen = +set.dataset.rail; render(); } }
+  else if (st.railOpen == null || e.target.closest('.rpop')) return;
+  else if (e.target.closest('.rtool')) closeRail();
+  else if (!railClose) railClose = setTimeout(closeRail, 250);
+});
+
 document.addEventListener('click', e => {
   if (justDragged) return;
+  if (st.railOpen != null && !e.target.closest('.rail, .rpop')) { st.railOpen = null; render(); }
   const el = e.target.closest('[data-act]');
   if (el) {
     if (el.dataset.act !== 'noop') act(el.dataset.act);
@@ -2573,8 +2728,14 @@ document.addEventListener('keydown', e => {
     if (key === 'O') { openDoc('bracket', 'bracket'); render(); }
     return;
   }
+  if (st.railOpen != null) {
+    const items = railSets()[st.railOpen][1], i = railLetters(items).indexOf(key);
+    if (i >= 0) { e.preventDefault(); act('rgop:' + items[i].op); return; }
+  }
+  if (/^[1-9]$/.test(key) && railSets()[+key - 1]) { st.railOpen = st.railOpen === +key - 1 ? null : +key - 1; render(); return; }
   if (e.key === 'Escape') {
-    if (st.menu) st.menu = false;
+    if (st.railOpen != null) st.railOpen = null;
+    else if (st.menu) st.menu = false;
     else if (st.gbarPinned) st.gbarPinned = false;
     else if (st.op) st.op = null;
     else if (st.tool) st.tool = null;
