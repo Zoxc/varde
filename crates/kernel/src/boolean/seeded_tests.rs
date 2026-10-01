@@ -654,12 +654,39 @@ fn turned_and_moved_solids_are_right_or_refused() {
     tally.at_least(0.75, "turned");
 }
 
+/// Whether the tangent test lets operation `k` of [`four`] (union,
+/// intersection, `a − b`, `b − a`) fail at a `gap` between the cylinders,
+/// at resolution `res`, with the second turned by `turn` about its axis.
+/// Everything else must work.
+///
+/// - Unions with `|gap| < res`: the cylinders touch along a line, or
+///   leave a neck or a gap narrower than the resolution, which no
+///   manifold at the kernel's resolution can hold. They may fail; that
+///   they do isn't asserted, so non-manifold results or better ties
+///   don't break the test.
+/// - Intersections and differences at `-res < gap < 0` with both seams on
+///   the tangent line (`turn == 0`): the walls lie on one surface within
+///   the resolution in normal distance (`one_surface`) while the count,
+///   whose ties are heights along `UP`, sees the overlap as a real
+///   crossing (an overlap of about 0.06 to 1 tie on a wall near parallel
+///   to `UP`), so the pair has ends and is `Inconsistent`. The tie gives
+///   the operands unchanged, as gap 0 and the turned placement do; that
+///   waits on a redesign of ties at tangencies.
+fn tangent_may_fail(k: usize, gap: f64, res: f64, turn: f64) -> bool {
+    let within = gap.abs() < res;
+    match k {
+        0 => within,
+        _ => within && gap < 0.0 && turn == 0.0,
+    }
+}
+
 #[test]
 fn near_tangent_cylinders_are_right_or_refused() {
     // Upright cylinders side by side, a gap or an overlap of 1e-9 to 1e-3
     // between them (a tangency, a hair off it), at the coarsest and a
     // middle tolerance, the second shorter, turned about its axis or not.
-    // A gap leaves the operands as they are.
+    // A gap leaves the operands as they are. Each operation must work
+    // unless `tangent_may_fail` lets it fail.
     let mut tally = Tally::default();
     let mut samples = Rng::new(41);
     let gaps = [
@@ -672,24 +699,28 @@ fn near_tangent_cylinders_are_right_or_refused() {
         (1e-2, 1e-9),
         (1e-2, 1e-3),
     ];
+    let ops = ["union", "intersection", "a less b", "b less a"];
+    let mut lost = Vec::new();
     for &(fit, gap) in &gaps[..cases(gaps.len(), 0)] {
         let tol = Tolerance::new(fit).unwrap();
-        {
-            let configs = [(0.5, 1.0, 0.0), (0.0, 2.0, 0.3), (0.5, 0.25, 0.0)];
-            for &(z0, h, turn) in &configs[..cases(configs.len(), 1)] {
-                let a = Solid::cylinder(DVec3::ZERO, 1.0, 2.0, 2, &tol).unwrap();
-                let b = Solid::cylinder(DVec3::ZERO, 1.0, h, 3, &tol).unwrap();
-                let q = DQuat::from_rotation_z(turn);
-                let b = moved(&b, &tol, |p| q * p + DVec3::new(2.0 + gap, 0.0, z0));
-                let both = if gap >= 0.0 { Some(0.0) } else { None };
-                let name = format!("fit {fit}, gap {gap}, z0 {z0}, h {h}");
-                four(&a, &b, both, &tol, &mut samples, &mut tally, &name);
+        let configs = [(0.5, 1.0, 0.0), (0.0, 2.0, 0.3), (0.5, 0.25, 0.0)];
+        for &(z0, h, turn) in &configs[..cases(configs.len(), 1)] {
+            let a = Solid::cylinder(DVec3::ZERO, 1.0, 2.0, 2, &tol).unwrap();
+            let b = Solid::cylinder(DVec3::ZERO, 1.0, h, 3, &tol).unwrap();
+            let q = DQuat::from_rotation_z(turn);
+            let b = moved(&b, &tol, |p| q * p + DVec3::new(2.0 + gap, 0.0, z0));
+            let both = if gap >= 0.0 { Some(0.0) } else { None };
+            let name = format!("fit {fit}, gap {gap}, z0 {z0}, h {h}, turn {turn}");
+            let out = four(&a, &b, both, &tol, &mut samples, &mut tally, &name);
+            for (k, result) in out.iter().enumerate() {
+                if result.is_none() && !tangent_may_fail(k, gap, tol.resolution(), turn) {
+                    lost.push(format!("{name}: {}", ops[k]));
+                }
             }
         }
     }
-    // Their unions touch along a line: no manifold, so refused. The rest
-    // must mostly work.
-    tally.at_least(0.6, "tangent");
+    println!("TALLY tangent: {} of {}", tally.ok, tally.ok + tally.failed);
+    assert!(lost.is_empty(), "failed but must work: {lost:#?}");
 }
 
 /// The frames the coaxial cases are built on: the three sketch planes

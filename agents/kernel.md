@@ -5578,13 +5578,15 @@ wrong, since the union loses what the intersection gains and the
 difference keeps it turned over; the oracle can (a unit test gives it
 hand-built wrong shells). About 180 results of the suite have several
 shells. Failures are counted and each
-test holds a floor on the share that works. Its tests: coaxial, stacked
+test holds a floor on the share that works, but for the near-tangent
+cylinders, which say per operation which may fail (below). Its tests: coaxial, stacked
 flush, nested, crossing and across pairs on random frames, on a grid
 and off it; parts built in chains of twenty (plates, bosses, slots,
 rounded blocks, plates with holes on the sketch planes, joined, cut and
 now and then intersected, each result fed on); solids turned and moved
 at random against boxes and bars; cylinders side by side with gaps and
-overlaps of `1e-9` to `1e-3` at two tolerances; plates drilled hole
+overlaps of `1e-9` to `1e-3` at two tolerances (fits 0.1 and 0.01
+only: at the default fit their tangencies run out of budget); plates drilled hole
 after hole (in rows, or anywhere on a grid); pins in holes of their
 own circle and cylinders of one radius stacked and overlapping, on the
 three sketch planes, a frame turned off every axis and one whose caps
@@ -5632,6 +5634,36 @@ the volume identities, face tags and sampled points, and the same bits
 at 1 and 8 threads. Those counts came before the tie distance was made
 one distance for every predicate, which took the tangent test from 74
 to 72 of its 96 operations and left the others as they were.
+
+**The near-tangent test's refusals.** 8 (fit, gap) settings × 3
+placements × 4 operations; 72 of the 96 work. The test holds each
+operation to a rule (`tangent_may_fail`) instead of a share: any gap
+of at least the resolution must work, and so must every intersection
+and difference but the 6 below; the 24 that fail are of two kinds:
+
+- 18 unions with `|gap|` under the resolution: at gap 0 and ±`1e-9`,
+  ±`1e-6` at fit 0.1 and `1e-9` at fit 0.01 the union touches along a
+  line, or has a neck or parts closer than the resolution, which no
+  manifold at the kernel's resolution holds: `Invalid` (`Hull`,
+  `VertexNeighbours`), `Inconsistent`, and at gap −`1e-9` once
+  `TooComplex` (the tangency's refinement out of budget). Right to
+  refuse; the test allows but doesn't require it, so non-manifold
+  results or better ties won't break it.
+- 6 intersections and differences at gap −`1e-6`, fit 0.1, on the two
+  placements whose seams lie on the tangent line (not the one turned
+  0.3): `Inconsistent` from `pair_decision`'s coincidence shortcut.
+  The pieces there are refined to the floor and planar within the
+  resolution, `one_surface` says the two walls are one surface within
+  the resolution, and yet the pair has ends, because the flat
+  predicates count the overlap by heights along `UP`, which on a wall
+  nearly parallel to `UP` reads 16 times the normal distance (see "Ties
+  are decided to first order", in Known gaps). A wrong refusal: the tie
+  gives the operands unchanged, as gap 0 and the turned placement do.
+  Unreachable in the app at the default fit, where such tangencies run
+  out of budget first; they wait on a redesign of ties at tangencies.
+
+No wrong `Ok` among them: every result passed the volumes, tags and
+sampled points.
 
 ### Known gaps
 
@@ -5769,7 +5801,16 @@ to 72 of its 96 operations and left the others as they were.
   decided again exactly, so they aren't `Inconsistent` (none seen), but refused as
   `Invalid` where the exact result has parts closer than the
   resolution; curved operands still can be (11 of the seeded suite's 96
-  near-tangent operations). Far from the origin the rounding rule's
+  near-tangent operations). Three thresholds meet there with no order
+  between them: pieces are taken as planar within the resolution and
+  `one_surface` holds within it, both in normal distance, while the
+  count's tie is a 64th of the resolution in height along `UP`. On a
+  wall nearly parallel to `UP` a height is the normal distance over
+  `|n̂·ÛP|` (about 0.06), so an overlap of about 0.06 to 1 tie distance
+  passes `one_surface` and still counts as a crossing: the pair has ends
+  and is `Inconsistent` (6 of those 11, measured at fit 0.1 with the
+  seams on the tangent line; turned off it, overlaps up to 10 ties
+  work). Far from the origin the rounding rule's
   share reaches some tens of tie distances in a coefficient of many
   terms: edges stacked along `UP` 10 to 125 tie distances apart, `1e3`
   to `1e6` from the origin, are decided as touching (near it, up to
