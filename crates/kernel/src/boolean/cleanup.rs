@@ -59,7 +59,8 @@ const SLIVER: f64 = 0.02;
 /// A triangle soup being cleaned: positions, triangles on vertex ids,
 /// each triangle's face, and the curves of its edges that aren't
 /// straight (by the vertices they join, the lower first; records of edges
-/// no triangle has any more are left, and ignored).
+/// no triangle has any more are left, and each step making an edge drops
+/// one left where it runs).
 #[derive(Debug, Clone)]
 pub(super) struct Soup {
     pub(super) pos: Vec<DVec3>,
@@ -421,6 +422,13 @@ impl Cleaner<'_> {
         if clash {
             return false;
         }
+        // Edges from `v` to where `u` has none: a record `u` has there is
+        // one left from an edge gone, and gives way to `v`'s (or to none).
+        let fresh: Vec<u32> = self
+            .neighbours(v)
+            .into_iter()
+            .filter(|&w| w != u && self.shared(u, w).is_empty())
+            .collect();
         let mut affected: Vec<u32> = [u, v]
             .into_iter()
             .chain(
@@ -475,6 +483,9 @@ impl Cleaner<'_> {
         }
         // The curves of the edges moved from `v` to `u`; where `u` had
         // that edge already, its own stays, unless the merge chose.
+        for w in fresh {
+            self.soup.curves.remove(&(u.min(w), u.max(w)));
+        }
         for w in affected {
             if let Some(edge) = self.soup.curves.remove(&(v.min(w), v.max(w)))
                 && w != u
@@ -813,16 +824,18 @@ impl Cleaner<'_> {
     /// Flips a curved side of triangle `t` whose neighbour across it lies
     /// in the same plane (two plane faces of one plane meeting along a
     /// curve: a pin filling its hole, united with the plate), if the two
-    /// make a convex quadrilateral whose curved corners stay open: the two
+    /// make a convex quadrilateral whose new triangles are proper (as
+    /// [`Self::straighten`] asks, the fold check included): the two
     /// new triangles cover the same region, whatever the curve between
     /// them, and no curve between two patches in one plane is left (no
     /// plane through it has either patch off it, so the hull rule can't
     /// hold there, and repair split along it down to flat pieces: 100 000
     /// patches for a plate). Tried where making the curve its chord
     /// ([`Self::straighten`]) leaves a triangle that isn't proper. Both new
-    /// triangles go on the lower of the two faces where both are planes
-    /// (and the faces are merged after the rounds), on `t`'s where the one
-    /// across isn't (a wall's remnant at the rim, flat in the plane).
+    /// triangles go on the lower of the two faces where both are the same
+    /// plane (and the faces are merged after the rounds), on `t`'s where
+    /// the one across isn't (a wall's remnant at the rim, flat in the
+    /// plane).
     fn unbend(&mut self, t: u32) -> bool {
         let tri = self.soup.tris[t as usize];
         let Some(plane) = self.own_plane(t) else {
@@ -844,21 +857,12 @@ impl Cleaner<'_> {
             // from an edge gone, and the new side is straight.
             self.soup.curves.remove(&(a.min(b), a.max(b)));
             let (n1, n2) = ([a, u, b], [a, b, v]);
-            let up = plane.0;
-            let proper = |n: [u32; 3]| {
-                let (h, _) = self.height(n);
-                h > self.small && self.normal(n).dot(up) > 0.0
-            };
-            if !(proper(n1) && proper(n2) && self.open(n1) && self.open(n2)) {
+            if !(self.proper_in(n1, plane.0) && self.proper_in(n2, plane.0)) {
                 continue;
             }
+            // `s` is on `t`'s face after this, or on one of the same plane.
             self.rejoin(t, s);
-            let (ft, fs) = (self.soup.faces[t as usize], self.soup.faces[s as usize]);
-            let face = if self.planes[fs as usize].is_some() {
-                ft.min(fs)
-            } else {
-                ft
-            };
+            let face = self.soup.faces[t as usize].min(self.soup.faces[s as usize]);
             self.swap(t, s, [u, v], a, b);
             self.soup.faces[t as usize] = face;
             self.soup.faces[s as usize] = face;
@@ -963,5 +967,68 @@ impl Cleaner<'_> {
                 *alive = false;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_collapse_drops_a_record_left_where_an_edge_moves() {
+        // A double pyramid over a ring of seven, two of the ring's
+        // vertices (`u` = 0 and `v` = 1) a hair apart. Collapsing `v` onto
+        // `u` moves `v`'s edge to vertex 2 onto `u`, which had none there
+        // but a record left from an edge gone: the new edge is straight,
+        // as `v`'s was, not that curve.
+        let mut pos = vec![DVec3::X, DVec3::new(1.0, 1e-12, 0.0)];
+        for i in 2..7 {
+            let a = std::f64::consts::TAU * f64::from(i) / 7.0;
+            let (sin, cos) = trig::sin_cos(a);
+            pos.push(DVec3::new(cos, sin, 0.0));
+        }
+        let (top, bottom) = (7, 8);
+        pos.extend([DVec3::Z, -DVec3::Z]);
+        let mut tris = Vec::new();
+        for i in 0..7 {
+            let j = (i + 1) % 7;
+            tris.push([top, i, j]);
+            tris.push([bottom, j, i]);
+        }
+        let mut curves = Curves::new();
+        curves.insert(
+            (0, 2),
+            Edge {
+                ctrl: DVec3::new(0.0, 0.0, 0.5),
+                weight: 1.0,
+            },
+        );
+        let mut soup = Soup {
+            pos,
+            faces: vec![0; tris.len()],
+            tris,
+            curves,
+            sources: vec![0],
+        };
+        let mut around = vec![Vec::new(); soup.pos.len()];
+        for (t, tri) in soup.tris.iter().enumerate() {
+            for &v in tri {
+                around[v as usize].push(t as u32);
+            }
+        }
+        let mut c = Cleaner {
+            alive: vec![true; soup.tris.len()],
+            soup: &mut soup,
+            around,
+            planar: vec![false],
+            recurved: Vec::new(),
+            planes: vec![None],
+            joined: Vec::new(),
+            small: 1e-9,
+            thin: 1e-9,
+        };
+        assert!(c.collapse(0, 1, false));
+        assert_eq!(c.shared(0, 2).len(), 2);
+        assert!(!c.curved(0, 2));
     }
 }

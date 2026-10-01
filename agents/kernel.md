@@ -2969,11 +2969,13 @@ triangles lie in the plane, so their union stays exactly what it was
 taken only if both stay proper (higher than the short length, facing
 along the plane's normal, curved corners open, the patch passing the
 fold check). Failing that, it is flipped away when the two make a
-convex quadrilateral whose curved corners stay open (`unbend`): the new
+convex quadrilateral whose new triangles are proper the same way
+(`unbend`): the new
 triangles cover the same region whatever the curve between them. A
-neighbour on a face that isn't a plane (the wall's remnant) moves onto
-the triangle's face, whose plane it lies in, rather than keep claiming a
-surface it has left; a plane face across is recorded as joined. After
+neighbour on a face that isn't the same plane (the wall's remnant, or a
+plane it lies in only along a line) moves onto the triangle's face,
+whose plane it lies in, rather than keep claiming a surface it has
+left; a face of the same plane across is recorded as joined. After
 the rounds, each region of triangles in one plane that still holds a
 seam (grown across seams, edges no longer than the short length and any
 side of a triangle no higher than it) is triangulated again from its
@@ -3000,10 +3002,11 @@ a plate's hole 202 and 238, one over its edge 56, a slot of a cylinder
 and a box tangent to it 84 (it folded before), each with its top one
 face. Of 160 random flush unions of bosses, plates and holes (half at
 millimetre scale), 112 had over 20 times their operands' patches (up to
-132 712) and 23 failed (most past the budget); now 2 (1 166 patches)
-and none, intersections and differences as they were. A cluster of four vertices at one place at a slot's arc joint, on
-a turned frame, is the one region triangulated again in these runs (the
-union folded before).
+132 712) and 23 failed (most past the budget); now 2 had (up to 1 166)
+and none failed, intersections and differences as they were. A cluster
+of four vertices at one place at a slot's arc joint, on a turned frame,
+is the one region triangulated again in these runs (the union folded
+before).
 
 Last, **slivers on plane faces** go (`delaunay`, after the rounds above,
 in rounds of its own): a straight side between two triangles of one
@@ -3409,9 +3412,11 @@ curved rims from one sketch plane (plates, drilled or not, or circles,
 rounded squares and slots, against such an outline over the same span,
 sharing one cap's plane, standing through or flush with the top; at
 millimetre and unit scale, on sketch planes and turned frames; all four
-operations both ways round), where a union over 20 times its operands'
-patches counts as failed (59 of the 60 unions work, 210 of the 240
-operations; before the seams were mended 38 and 189); the same bits at
+operations both ways round), where a union over 10 times its operands'
+patches counts as failed (the heaviest that works is under 7 times; 59
+of the 60 unions work, at least 95% must, and 210 of the 240
+operations, at least 86%; before the seams were mended 38 and 189);
+the same bits at
 1 and 8 threads. Each test prints its
 tally (`TALLY name: ok of total`) and each refusal (`REFUSED`), seen
 with `--nocapture`. In release it runs
@@ -5007,8 +5012,9 @@ parameter, or a split outside the patch bounds),
   `curved_tests.rs`, which is long), with patch bounds from the measured
   counts with slack rather than twice the plate-first count; the seeded
   `flush_unions_either_order` holds unions to 95% and all four
-  operations to 85% (what fails there are intersections and
+  operations to 86% (what fails there are intersections and
   differences keeping a cap corner where a straight side runs on into
-  an arc at a tangent, as before). The clean-up's flips no longer keep
-  a record left from an edge no triangle has where a new straight side
-  runs (`flip`, `unbend`; `delaunay` already dropped it).
+  an arc at a tangent, as before). The clean-up no longer keeps a
+  record left from an edge no triangle has where a new side runs
+  (`flip`, `unbend` and a collapse moving an edge onto the vertex kept;
+  `delaunay` already dropped it).

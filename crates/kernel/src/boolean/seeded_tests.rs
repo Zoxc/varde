@@ -898,10 +898,11 @@ fn flush_bosses_on_plates() {
 
 /// The patches a union may have, for operands of `inputs` patches all
 /// told, before it counts as failed: flush caps meeting along curves
-/// once left seams that repair split down to flat pieces, tens of
-/// thousands of patches.
+/// once left seams that repair split down to flat pieces, 1 800 to tens
+/// of thousands of patches. The heaviest union that works is under 7
+/// times its operands.
 fn heavy(inputs: usize) -> usize {
-    20 * inputs
+    10 * inputs
 }
 
 /// Counts `union` of `a` and `b`, if it worked, as failed when it is
@@ -1071,7 +1072,7 @@ fn flush_unions_either_order() {
         }
     }
     unions.at_least(0.95, "flush unions");
-    tally.at_least(0.85, "flush operations");
+    tally.at_least(0.86, "flush operations");
 }
 
 #[test]

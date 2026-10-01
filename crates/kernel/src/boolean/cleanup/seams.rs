@@ -93,7 +93,7 @@ impl Cleaner<'_> {
     /// Whether `tri`, a triangle in a plane of normal `up`, is proper
     /// there: higher than `small`, facing along `up`, its curved corners
     /// open, and its patch free of folds.
-    fn proper_in(&self, tri: [u32; 3], up: DVec3) -> bool {
+    pub(super) fn proper_in(&self, tri: [u32; 3], up: DVec3) -> bool {
         self.height(tri).0 > self.small
             && self.normal(tri).dot(up) > 0.0
             && self.open(tri)
@@ -131,14 +131,22 @@ impl Cleaner<'_> {
         any
     }
 
+    /// Whether face `f` is a plane, the same as `(n, d)` (facing the same
+    /// way, its offset within `small`).
+    fn same_plane(&self, f: u32, (n, d): Plane) -> bool {
+        self.planes[f as usize]
+            .is_some_and(|(m, e)| m.dot(n) > 1.0 - 1e-12 && (e - d).abs() <= self.small)
+    }
+
     /// Triangle `s` lies in the plane of `t`'s face, and a seam between
-    /// them went: a plane face of `s` is recorded as joined to `t`'s (to
-    /// be merged), any other (a remnant of a wall at the rim, of zero
-    /// height in the plane) moves onto `t`'s, whose plane it lies in,
-    /// rather than keep claiming a surface it has left.
+    /// them went: a face of `s` that is the same plane is recorded as
+    /// joined to `t`'s (to be merged), any other (a remnant of a wall at
+    /// the rim, of zero height in the plane) moves onto `t`'s, whose plane
+    /// it lies in, rather than keep claiming a surface it has left.
     pub(super) fn rejoin(&mut self, t: u32, s: u32) {
         let (ft, fs) = (self.soup.faces[t as usize], self.soup.faces[s as usize]);
-        if self.planes[fs as usize].is_none() {
+        let plane = self.planes[ft as usize].expect("`t` is on a plane face");
+        if !self.same_plane(fs, plane) {
             self.soup.faces[s as usize] = ft;
         } else if fs != ft {
             self.joined.push((ft.min(fs), ft.max(fs)));
@@ -237,6 +245,9 @@ impl Cleaner<'_> {
             work.spend(usize::try_from(meter.used() / STEPS_PER_UNIT).unwrap_or(usize::MAX))?;
             if let Some(made) = made {
                 self.replace(&region, made);
+                // A later region may reach the new triangles: they are
+                // done, as seeds go.
+                done.resize(self.soup.tris.len(), true);
                 #[cfg(test)]
                 DISSOLVED.set(DISSOLVED.get() + 1);
             }
@@ -411,13 +422,10 @@ impl Cleaner<'_> {
     fn replace(&mut self, region: &[u32], made: Vec<[u32; 3]>) {
         let seed = region[0];
         let face = self.soup.faces[seed as usize];
-        let (n, d) = self.planes[face as usize].expect("the seed is on a plane face");
+        let plane = self.planes[face as usize].expect("the seed is on a plane face");
         for &t in region {
             let f = self.soup.faces[t as usize];
-            if f != face
-                && self.planes[f as usize]
-                    .is_some_and(|(m, e)| m.dot(n) > 1.0 - 1e-12 && (e - d).abs() <= self.small)
-            {
+            if f != face && self.same_plane(f, plane) {
                 self.joined.push((face.min(f), face.max(f)));
             }
             self.kill(t);
