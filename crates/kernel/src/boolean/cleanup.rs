@@ -14,10 +14,11 @@
 //! flipped, which splits the triangle beyond at the far corner and leaves
 //! the same surface. Components that enclose no volume go. It never
 //! decides that two separate vertices are one: a collapse removes an
-//! edge, keeping the surface a closed manifold. Last, slivers left on
+//! edge, keeping the surface a closed manifold. Then slivers left on
 //! plane faces (each input triangle is cut on its own, and long thin ones
 //! leave slivers) are flipped towards the Delaunay triangulation of their
-//! face.
+//! face, and last the triangles the boolean made on plane faces are
+//! refined for their shapes ([`quality`]).
 //!
 //! Curved edges (those whose record in [`Soup::curves`] bends by more
 //! than the short length) are never collapsed or flipped: the clean-up
@@ -45,6 +46,7 @@ use crate::solid::patch_volume;
 use crate::trig;
 use crate::{KernelError, Tolerance};
 
+mod quality;
 mod seams;
 
 #[cfg(test)]
@@ -73,6 +75,10 @@ pub(super) struct Soup {
     /// Faces merged into others, as pairs of sources (merged, merged
     /// into), in the order they merged: see [`Soup::absorb`].
     pub(super) absorbed: Vec<(u32, u32)>,
+    /// Whether each triangle is one this boolean made (cut, or changed
+    /// since), not an operand's kept as it was: only those are refined
+    /// for their shapes ([`quality`]).
+    pub(super) made: Vec<bool>,
 }
 
 impl Soup {
@@ -210,6 +216,8 @@ pub(super) fn clean(
             break;
         }
     }
+    // Then the triangles made on plane faces refined for their shapes.
+    c.quality(tol.resolution(), work)?;
     c.drop_empty_components();
     c.leave_surfaces(faces, tol)?;
     let Cleaner { alive, soup, .. } = c;
@@ -217,6 +225,8 @@ pub(super) fn clean(
     soup.faces.retain(|_| *keep.next().expect("a flag"));
     let mut keep = alive.iter();
     soup.tris.retain(|_| *keep.next().expect("a flag"));
+    let mut keep = alive.iter();
+    soup.made.retain(|_| *keep.next().expect("a flag"));
     Ok(())
 }
 
@@ -761,6 +771,8 @@ impl Cleaner<'_> {
     fn swap(&mut self, t: u32, s: u32, [u, v]: [u32; 2], a: u32, b: u32) {
         self.soup.tris[t as usize] = [a, u, b];
         self.soup.tris[s as usize] = [a, b, v];
+        self.soup.made[t as usize] = true;
+        self.soup.made[s as usize] = true;
         self.around[u as usize].retain(|&x| x != s);
         self.around[v as usize].retain(|&x| x != t);
         self.around[a as usize].push(s);
@@ -1107,6 +1119,7 @@ mod tests {
             curves,
             sources: vec![0],
             absorbed: Vec::new(),
+            made: vec![true; 14],
         };
         let mut around = vec![Vec::new(); soup.pos.len()];
         for (t, tri) in soup.tris.iter().enumerate() {

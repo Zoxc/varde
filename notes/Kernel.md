@@ -265,8 +265,11 @@ off turns (cheaper), but for turns within 1 % of a piece's end.
    triangle soup: collapse edges of about zero length, flip triangles of
    zero height, drop parts enclosing no volume, straighten and dissolve
    seams where flush caps with curved rims meet in one plane (merging the
-   faces, their names becoming aliases), and flip slivers on plane faces
-   towards Delaunay.
+   faces, their names becoming aliases), flip slivers on plane faces
+   towards Delaunay, and refine the plane faces the boolean cut for their
+   triangles' shapes (no angle under 5°, a Delaunay refinement that may
+   halve a cap's edge in both faces beside it), so the next operation
+   finds no long fans from far corners to rims.
 8. **Repair and check**, then the result is a `Solid`.
 
 **Ties and flush geometry.** CAD makes ties on purpose (flush faces, a
@@ -415,11 +418,13 @@ extrude being set up) are regenerated the same way. See `agents/kernel.md`
   a little apart, or of different conics meeting smoothly, refine until
   they run out of budget.
 - **Cap quality.** Refined caps cost patches (plates with holes 10 to
-  20% more, thin ribs and rings far more); caps past about 65 000
-  segments run out of budget; short curved segments at coarse tolerances
-  can still leave slivers refinement doesn't reach (`Invalid`); and a cap
-  triangle with two curved sides (one concave with weight above 1) can
-  fold when a later boolean splits it.
+  20% more, thin ribs and rings far more), as do the plane faces a boolean
+  cuts, refined in its clean-up; caps past about 65 000 segments run out
+  of budget; short curved segments at coarse tolerances can still leave
+  slivers refinement doesn't reach (`Invalid`); a cap triangle with two
+  curved sides (one concave with weight above 1) can fold when a later
+  boolean splits it; and a cut's own fans fail that same operation where
+  one runs along a rim's tangent (an 8 × 8 grid of holes cut at once).
 - **Fitted bands lose their claim.** Triangles along a fitted cut go on a
   face copy claiming no surface, so later booleans trace and fit there
   instead of cutting exactly.

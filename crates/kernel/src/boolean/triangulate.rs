@@ -1003,7 +1003,7 @@ fn flippable([va, vb, vc, vd]: [Vert; 4], bends: &Bends) -> bool {
 /// (counter-clockwise), in floating point: a flip only improves shapes,
 /// so rounding decides nothing that matters, and the margin keeps
 /// cocircular points from flipping back and forth.
-fn in_circle(a: DVec2, b: DVec2, c: DVec2, d: DVec2) -> bool {
+pub(super) fn in_circle(a: DVec2, b: DVec2, c: DVec2, d: DVec2) -> bool {
     let (a, b, c) = (a - d, b - d, c - d);
     let det = a.length_squared() * b.perp_dot(c) - b.length_squared() * a.perp_dot(c)
         + c.length_squared() * a.perp_dot(b);

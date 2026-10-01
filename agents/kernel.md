@@ -2483,9 +2483,12 @@ Known gaps:
   `a_cap_whose_straight_split_folds_extrudes` (a 3-segment profile, a
   concave hyperbola of `w ≈ 3.53`, a line and a convex hyperbola; the
   cap's straight pieces still fold four levels down, and with a parabola
-  for the concave side none does) and `a_cap_folding_when_refined_is_refused`
+  for the concave side none does) and `a_cap_folding_when_refined_is_right_or_refused`
   (that prism and a cylinder along `x` across its top: every operation
-  `Invalid`, both orders; with the parabola, `Ok`). The mend, not built:
+  was `Invalid`, both orders; the clean-up's quality pass now takes out
+  the folded piece's inner corner in the intersections and `b − a`,
+  which come out right by the identities, the rest still `Invalid`;
+  with the parabola, all `Ok`). The mend, not built:
   where a planar patch with curved sides is made (`cap.rs` `mend`,
   `boolean/triangulate.rs`), also require its four straight children to
   pass the fold check, and give one that fails a Steiner point at its
@@ -3742,7 +3745,9 @@ patch's own pieces. Only on curved layouts: on flat and planar ones the
 same points gave flat cap triangles with an arc side more corners to fan
 to, and two more seeded turned operations failed as folds. Measuring the
 angles in 3D (the layout mapped by the patch's derivatives) was worse
-than in the layout.
+than in the layout. Plane faces are refined as a whole in the clean-up
+instead (see "Clean-up"), where a point near the face's edge can halve
+that edge in both faces beside it, which a face's layout can't.
 
 **Rounds** (`assemble`, at most `SPLIT_ROUNDS` = 6): every face is cut;
 the curves asked for are halved — a chain's curve by `Chain::split` (an
@@ -4253,6 +4258,91 @@ wide, which breaks the vertex rule of the hulls and no split mends. Of
 all do now; drilling a 20 × 20 box in a grid of 60 holes, 12 steps
 failed before and 2 now.
 
+Last, **the plane faces the boolean cut are refined for their
+triangles' shapes** (`cleanup/quality.rs`). The slivers' flips add no
+vertex, so a box's cap cut by a hole stayed fanned from its far corners
+to the rim (triangles 19 mm long, the worst of sine `3.75e-3`), and the
+next hole in line with the first passed along their long sides (see
+Known gaps, "Long cap triangles…"). The pass is a Delaunay refinement
+(Ruppert's) on each plane face as a whole, in 3D, of the triangles this
+boolean made (`Soup::made`: all but the operands' triangles kept whole
+and the refinement's pieces merged back into them; a piece of a made
+triangle is made). A triangle is bad when it is made, on a plane face,
+proper, its sides longer than the short length, its circumradius at
+least `MIN_SPLIT` resolutions, and the sine of a corner under `5°`
+(`QUALITY_SIN`, the bound the points for shapes on curved layouts use),
+a corner along a curve measured from the curve's tangent too (a
+straight side leaving along a curve is narrow however wide the chords
+make it, and a later split of the triangle there closes the corner),
+but not where some corner lies between two constrained sides meeting
+at under 60° (the boundary makes that angle; refining towards it only
+halves, and spreads to the faces beside). A side is free when it is
+straight between two triangles of one face; the others are constrained.
+In order:
+
+- Triangles on plane faces whose curved corner is closed have a free
+  side flipped where both new triangles are proper with their corners
+  open; the curves of those left may leave their triangles, and no new
+  point goes within the box of their control triangles.
+- A vertex inside a plane face (every triangle round it on the face,
+  every edge from it straight) at a bad triangle's corner is taken out
+  where its star triangulated again on its boundary (as the seams'
+  regions are) is better shaped: what is left of a seam inside a cap two
+  flush caps made one, a vertex a tenth of a millimetre off the cap's
+  edge, which the refinement otherwise grades towards with 120 points
+  (a slot of a box and a cylinder tangent to it: 84 patches, 328 with
+  them).
+- The made triangles' free sides are flipped towards Delaunay (the far
+  corner in the circle, with the margin `triangulate::in_circle` uses):
+  the refinement's guarantees assume it, and without it a wall's thin
+  right triangles split into pieces of their own shape without end.
+- Then, worst first (a queue by the sine's bits and the sorted corners;
+  entries whose triangle changed are passed over), a triangle of
+  straight sides takes a point at its circumcentre (worked out in the
+  face's plane and put on it), found by a walk across free sides; a
+  point within `MIN_SPLIT` resolutions of a free side halves that side
+  there; a point beyond a constrained side, or within the diametral
+  circle of a straight constrained side of the triangles it would
+  split, halves that side at its middle instead, where it is longer than
+  twice `MIN_SPLIT` resolutions and the triangle across is on a plane
+  face too (a cap's edge with a wall: both faces get the vertex);
+  curved sides are never split. A triangle with a curved side flips
+  the straight side at a narrow corner on the curve where that makes
+  both triangles better, or, where the narrow corner is across the
+  curve (a fan onto a rim), halves its longest free side, which brings
+  the far corner nearer. After each change the free sides facing the
+  new vertex are flipped towards Delaunay.
+
+Every change keeps the region: a point goes strictly inside a proper
+triangle, a side is halved at a point on it, a flip replaces two
+triangles of one plane by two covering the same quadrilateral, a star
+is triangulated again on its own boundary, and every new triangle is
+proper (higher than the short length, facing along the plane's normal,
+narrowest sine above `1e-6`, its curved corners open and the patch
+passing the fold check), so each curve stays inside its own triangle
+(the argument in "Cutting curved faces"). New points are on the plane
+up to rounding (circumcentres projected onto it, midpoints lerped),
+their ids after all others. It is sequential with total orders, at
+most 4 points per made triangle and 64 more (reaching that only stops
+it), every step charged (a unit per walk, flip and queue step, and the
+stars' triangulations as the seams' regions are).
+
+Results, release: one hole in the 20 × 20 × 1 box, its caps' made
+triangles all at least `5.7°` (`cut_caps_are_well_shaped`; 80 of them,
+32 before); the box drilled twice in line works either way
+(`a_box_drilled_twice_in_line`, `holes_in_line_on_a_large_plate`); the
+60-hole grids drilled one at a time, 1 of 540 steps fails (12 before)
+and 0 of the in-line test's 180 (4 before), see Known gaps.
+Measured bounds on the nine grids: 5° fails none of 540 at 6 388 to
+9 296 patches; 10° fails 1 at 8 284 to 13 414, and lost 5 of the 600
+bosses sunk through drilled plates and 6 flush unions to their patch
+counts; 20° fails 1 at 13 720 to 20 334. (Those runs had neither the
+vertex removal nor the Delaunay flips first, and skipped faces with a
+closed corner; as built, at 5°, 1 of 540 at 5 688 to 8 568.) Every seeded tally is as before or better (turned
+156 → 158 of 160, bosses in drilled plates 148 → 149 of 160) and
+`a_cap_folding_when_refined_is_right_or_refused` now has three of its
+six operations right (see "Profiles and extrude").
+
 Collapsing removes an edge and keeps a closed manifold; it never decides
 that two separate vertices are one. What the clean-up can't mend fails the
 final check.
@@ -4340,6 +4430,16 @@ octahedron, 14 ms; a pin through a plate's hole wall, 20 ms (308
 patches); tangent cylinders, 0.1 s at the coarsest tolerance and 0.8 s at
 the default. 200 random turned bars against boxes, the four operations
 each: 3.7 s all told.
+
+**The quality pass on plane faces** (release, several threads): the 60
+holes drilled one at a time into the 20 × 20 × 1 box, three chains in
+line (`drilled_grids_in_line`, one thread for the test), 40 s before and
+46 s with it, the last body 5 454 → 6 172 patches at pitch 2.4 (5 922 →
+6 566 at 2.2, 6 814 → 6 736 at 2.3); the nine grids 4 272–7 520 →
+5 688–8 568 patches. The 6 × 6 grid of holes cut at once, 2 150 → 3 428
+patches, 0.59 s → 0.53 s. The 150 plates of bosses sunk through
+drilled plates, 117 s → 113 s; the release kernel suite 218 s → 262 s,
+`drilled_grids_in_line` now in it.
 
 **Threads.** Release, one thread and seven (the budget's units in
 brackets): two flat tori of 36 864 patches each united, 0.71 s and
@@ -4899,42 +4999,42 @@ to 72 of its 96 operations and left the others as they were.
   `1e-2` leave slivers that thin whose triangles fail the hull rules
   (`Invalid`) some 5 % of the time.
 - **Long cap triangles and cuts passing close to their sides**: a cap
-  triangulated once (an extrude's, or a cut face's) keeps long thin
-  triangles from far corners to rims. Drilling a second hole of the same
-  size beside the first, in line with it, on a large plate (a 20 × 20
-  box, holes 2.4 apart) leaves a band a few tenths of a millimetre wide
-  between the new rim and such a triangle's side, 16 mm long: the
-  triangles across it reach from the side's far ends to the rim, and
-  those from either end whose line grazes the rim close a corner there
-  that halving the rim never opens (a fold), or, with the rim split at
-  its point nearest the side, are so thin their hulls come within the
-  resolution (2 of 60 steps drilling such a box fail as `Invalid`). A
+  triangulated once keeps long thin triangles from far corners to rims.
+  Drilling a second hole of the same size beside the first, in line with
+  it, on a large plate (a 20 × 20 box, holes 2.4 apart) left a band a
+  few tenths of a millimetre wide between the new rim and such a
+  triangle's side, 16 mm long: the triangles across it reach from the
+  side's far ends to the rim, and those from either end whose line
+  grazes the rim close a corner there that halving the rim never opens
+  (a fold), or, with the rim split at its point nearest the side, are so
+  thin their hulls come within the resolution. One vertex under the rim
+  moved the grazing lines elsewhere, and failed more flush bosses and
+  drilled plates than it mended. The clean-up now refines the plane
+  faces a boolean cuts (see "Clean-up"), so a cut face's fans are gone
+  before the next operation; an extrude's caps aren't refined yet: a
   small box cut at a corner of a plate with 400 holes crosses two long
-  edges from the plate's corner 3 µm apart, with the same result. Mending
-  it needs vertices on the long side, graded along the band (quality
-  refinement of the caps): one vertex under the rim moved the grazing
-  lines elsewhere, and failed more flush bosses and drilled plates than
-  it mended.
-  - Failing tests, `#[ignore]`d until a quality pass on the boolean's
-    plane faces lands (release, default tolerance, measured before it):
+  edges from the plate's corner 3 µm apart, and fails the same way.
+  - Tests (release, default tolerance; before → with the clean-up's
+    pass):
     - `a_box_drilled_twice_in_line` and `holes_in_line_on_a_large_plate`
       (`curved_tests/holes.rs`): the 20 × 20 × 1 box, pins of radius 0.5
       at (1, 1), then (3.4, 1) or (1, 3.4); every step must work, its
       volume `400 − k·π/4` within `1e-9`, the same at 1 and 8 threads.
-      Both second holes fail, `Invalid(Hull)`.
+      Both second holes failed, `Invalid(Hull)`; they work.
     - `cut_caps_are_well_shaped`: after the first hole, the triangles the
       cut made on plane faces (not an operand's as it was) must have no
-      angle under 10°, but where the narrowest corner lies between two
-      constrained sides (curved, or on another face) meeting at under
-      60°, the circumradius is under `MIN_SPLIT` resolutions, or a side
-      is no longer than an eighth of the resolution. Today 24 of the 32
-      are under 10°, the worst of sine `3.75e-3` (fans from the box's far
-      corners to the rim).
+      angle under 5° (the pass's bound), but where the narrowest corner
+      lies between two constrained sides (curved, or on another face)
+      meeting at under 60°, the circumradius is under `MIN_SPLIT`
+      resolutions, or a side is no longer than an eighth of the
+      resolution. 24 of the 32 were under 10°, the worst of sine
+      `3.75e-3` (fans from the box's far corners to the rim); now none
+      of the 80 is under 5.7°.
     - `drilled_grids_in_line` and `boxes_drilled_in_grids`
-      (`seeded_tests.rs`): 60 holes drilled one at a time in rows of 8
-      from (1, 1), a failed step skipped, every step that works checked
-      against `400 − k·π·r²`. Failed steps (0-based) and the last body's
-      patches:
+      (`seeded_tests.rs`, the second `#[ignore]`d as slow): 60 holes
+      drilled one at a time in rows of 8 from (1, 1), a failed step
+      skipped, every step that works checked against `400 − k·π·r²`.
+      Failed steps (0-based) and the last body's patches, before:
 
       | r \ pitch | 2.4 | 2.3 | 2.2 | 1.3 |
       |---|---|---|---|---|
@@ -4942,31 +5042,48 @@ to 72 of its 96 operations and left the others as they were.
       | 0.5 | 1, 8; 5 454 | none; 6 814 | 3, 24; 5 922 | 3, 5, 24, 40; 4 594 |
       | 0.6 | none; 6 032 | – | none; 7 034 | none; 7 520 |
 
-      12 of the nine grids' 540 steps fail (14 when first measured,
-      some kernel changes ago), 4 of the in-line test's 180, all
-      `Invalid(Hull)` or `Invalid(VertexNeighbours)`, all in the first
-      row or column but one (r 0.25, pitch 2.4: step 39 at (17.8, 10.6)),
-      most of them the first or second hole there in line with an
-      earlier one. The in-line test's three chains take 21 s together.
-    - `larger_grids_of_holes_cut_at_once`: a 100 × 100 × 10 plate cut
-      through at once by an `n × n` grid of discs of radius 2 at
-      `100·(k + ½)/n` (one profile, 1.1 past either face, as the app's
-      through-all cut), checked against `100 000 − 40π·n²`: 8 × 8 fails
-      as `Invalid(VertexNeighbours)` (2.9 s), 10 × 10 as `TooComplex`
-      (4.3 s); 6 × 6 works (`a_six_by_six_grid_of_holes_cut_at_once`, 2
-      150 patches).
-    - `a_boss_through_a_drilled_plate_across_a_hole`: the 6 × 4 × 1
-      plate drilled at (−1.1, 1.15) r 0.45 and (1.95, 0.25) r 0.6, a boss
-      of radius 0.65 at (−0.8, 0.6) through it flush with both faces, its
-      wall crossing the first hole's (see "Flush bosses on drilled
-      plates"): all four operations fail (`Invalid(Hull)`,
-      `VertexNeighbours`), checked against the closed-form area of the
-      disc less the hole.
+      and with the pass:
+
+      | r \ pitch | 2.4 | 2.3 | 2.2 | 1.3 |
+      |---|---|---|---|---|
+      | 0.25 | none; 5 954 | – | none; 5 990 | none; 5 688 |
+      | 0.5 | none; 6 172 | none; 6 736 | none; 6 566 | none; 7 592 |
+      | 0.6 | none; 5 918 | – | none; 6 378 | 29; 8 568 |
+
+      12 of the nine grids' 540 steps failed, 4 of the in-line test's
+      180, all `Invalid(Hull)` or `Invalid(VertexNeighbours)`, most of
+      them the first or second hole in line with an earlier one; now 1
+      and none. The one left (r 0.6, pitch 1.3, step 29, its hole 0.1
+      from the last) fails as `Invalid(VertexNeighbours)` between two
+      tiny triangles of the new hole's wall where it meets the plate's
+      bottom at the seam of its arcs, not on a plane face.
+    - `larger_grids_of_holes_cut_at_once` (`#[ignore]`d): a 100 × 100 ×
+      10 plate cut through at once by an `n × n` grid of discs of radius
+      2 at `100·(k + ½)/n` (one profile, 1.1 past either face, as the
+      app's through-all cut), checked against `100 000 − 40π·n²`: 8 × 8
+      fails as `Invalid(VertexNeighbours)` (2.4 s), 10 × 10 as
+      `TooComplex` (2.8 s); 6 × 6 works
+      (`a_six_by_six_grid_of_holes_cut_at_once`, 2 150 patches, 3 428
+      with the pass). The 10 × 10 runs out before the clean-up (and
+      with eight times the budget). The 8 × 8 is the operation's own
+      triangulation: a fan from a rim vertex of one hole to two of
+      another 60 mm away, the side to one of them within `1e-3` radians
+      of that rim's tangent there, so its corner is closed; no flip
+      opens it (every vertex across lies on nearly the same line) and
+      no point inside does.
+    - `a_boss_through_a_drilled_plate_across_a_hole` (`#[ignore]`d): the
+      6 × 4 × 1 plate drilled at (−1.1, 1.15) r 0.45 and (1.95, 0.25) r
+      0.6, a boss of radius 0.65 at (−0.8, 0.6) through it flush with
+      both faces, its wall crossing the first hole's (see "Flush bosses
+      on drilled plates"): all four operations fail (`Invalid(Hull)`,
+      `VertexNeighbours`), with the pass too, checked against the
+      closed-form area of the disc less the hole.
   - Baselines a change to the triangulation of plane faces must not lose
-    (release): the seeded tallies bosses 80 of 80, flush unions 59 of 60,
-    flush operations 210 of 240, coaxial 195 of 200, turned 156 of 160,
-    drilled (`plates_drilled_hole_after_hole`) 160 of 160, bosses in
-    drilled plates 148 of 160, related 113 of 120, chains 200 of 240,
+    (release), before → with the pass: the seeded tallies bosses 80 of
+    80, flush unions 59 of 60, flush operations 210 of 240, coaxial 195
+    of 200, turned 156 → 158 of 160, drilled
+    (`plates_drilled_hole_after_hole`) 160 of 160, bosses in drilled
+    plates 148 → 149 of 160, related 113 of 120, chains 200 of 240,
     tangent 72 of 96; the 150 plates of
     `many_bosses_sunk_through_drilled_plates` 588 of 600 (3 unions, 4
     intersections and 5 differences fail).
@@ -5135,7 +5252,10 @@ to 72 of its 96 operations and left the others as they were.
   the long side at the corner's foot and collapsing the corner onto it
   would mend (a box face `1e-5` off a cylinder's rulings, tangent to its
   wall on a seam between arcs, in
-  `a_box_tangent_on_a_seam_is_exact_or_refused`: a tangency). `thin_triangles_across_two_faces`
+  `a_box_tangent_on_a_seam_is_exact_or_refused`: a tangency). With the
+  clean-up's quality pass on plane faces the same: of 5 792 operations
+  397 fail, 110 with such a triangle (one that worked had one), the same
+  one with its far corner inside a plane. `thin_triangles_across_two_faces`
   (`boolean/tests.rs`): a 10 × 10 × 2 plate of four squares joined, cut
   by a slanted wall 0.2 to 4 resolutions from the vertex where the four
   meet, as a boss and a pocket: all 40 operations fail, 20 with thin
@@ -6667,3 +6787,29 @@ parameter, or a split outside the patch bounds),
   the clean-up's soup, so aliases go straight onto the mesh rather than
   through `Soup::absorb`. The clean-up's seam merge (`merge_joined`)
   stays: the Delaunay flips after it flip only within one face index.
+- **The plane faces' quality pass departs from its plan in five ways.**
+  The bound is 5°, not 10°: measured on the nine 60-hole grids, 5°
+  failed fewer steps (none, against 1 at 10° and at 20°) with a third
+  fewer patches than 10° (half of 20°), and 10° lost bosses sunk
+  through drilled plates and flush unions to their patch counts. The
+  queue takes the worst sine first, not the smallest circumradius, as
+  the points for shapes on curved layouts do. A face where some
+  triangle's curved corner is closed isn't skipped whole (a 64-hole
+  plate's top always has one): its closed corners are flipped open
+  where they can be, and only points near the curves that stay closed
+  are refused. Three steps were added, each for a case that looped or
+  cascaded: inner vertices of plane faces at bad triangles are taken
+  out where their stars triangulate better (seam leftovers a tenth of a
+  millimetre off a cap's edge), the made triangles are flipped towards
+  Delaunay first (thin right triangles otherwise split into copies of
+  themselves), and every point is checked against the diametral circles
+  of the constrained sides of the triangles it splits, a free side's
+  halving point too. And triangles' corners along curves are judged
+  from the curve's tangent: a corner the chords made 23° wide but the
+  tangent 1.85° came out of one boolean and, halved by the next one's
+  refinement, closed (a flush boss on a drilled plate). The shapes
+  points' code in `triangulate.rs` works on one input triangle's layout
+  with its sides fixed; this pass shares its circumcircle and in-circle
+  tests and its bound, and the seams' triangulation of a region, but
+  walks and flips on the soup, where a side between two plane faces can
+  be split in both.

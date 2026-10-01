@@ -2631,14 +2631,18 @@ fn cuts_across_nearly_straight_edges_of_results() {
 }
 
 #[test]
-fn a_cap_folding_when_refined_is_refused() {
+fn a_cap_folding_when_refined_is_right_or_refused() {
     // A horizontal cylinder across the top of a prism whose cap is one
     // triangle with two curved sides, one a concave hyperbola. The pair
     // refinement splits the cap with straight inner edges, and a piece's
     // corner at a curve's midpoint turns inside out: the folded piece goes
-    // into the result, which repair can't mend, and every operation is
-    // refused. Patches made safe to split at construction (their straight
-    // children passing the fold check) would turn these into `Ok`s.
+    // into the result, which repair can't mend, and every operation was
+    // refused. The clean-up's quality pass now takes the folded piece's
+    // inner corner out in the intersections and `b − a`, which come out
+    // right (by the identities with each other); the unions and `a − b`
+    // are still refused. Patches made safe to split at construction
+    // (their straight children passing the fold check) would turn all of
+    // these into `Ok`s.
     let a = extruded(vec![crate::profile::tests::folding_cap(false)], 0.0, 5.0, 9);
     let b = cylinder_x(3.0, 5.2, 0.6, -2.0, 12.0);
     let mut work = Work::new(&Budget::DEFAULT);
@@ -2647,15 +2651,38 @@ fn a_cap_folding_when_refined_is_refused() {
         .filter(|&t| refined.a.patch(t).fold_direction().is_none())
         .count();
     assert!(folded > 0);
+    let (va, vb) = (a.volume(), b.volume());
+    let within = TOL.fit() * (a.area() + b.area()) / 100.0;
+    let mut volumes = Vec::new();
     for op in [Op::Union, Op::Intersection, Op::Difference] {
         for (x, y) in [(&a, &b), (&b, &a)] {
-            let got = boolean(x, y, op, &TOL, &Budget::DEFAULT);
-            assert!(
-                matches!(got, Err(KernelError::Invalid(_))),
-                "{op:?}: {got:?}"
-            );
+            match boolean(x, y, op, &TOL, &Budget::DEFAULT) {
+                Ok(solid) => volumes.push((op, x.volume(), solid.volume())),
+                Err(why) => assert!(matches!(why, KernelError::Invalid(_)), "{op:?}: {why:?}"),
+            }
         }
     }
+    // Every result checked against an intersection that came out, which
+    // `b − a` gives as `vb − (b − a)`.
+    let i = volumes
+        .iter()
+        .find(|v| v.0 == Op::Intersection)
+        .map(|v| v.2);
+    for &(op, vx, v) in &volumes {
+        let i = i.expect("an intersection to check against");
+        let want = match op {
+            Op::Union => va + vb - i,
+            Op::Intersection => i,
+            Op::Difference => vx - i,
+        };
+        assert!((v - want).abs() <= within, "{op:?}: {v} vs {want}");
+    }
+    assert!(
+        volumes
+            .iter()
+            .any(|&(op, vx, _)| op == Op::Difference && vx == vb),
+        "{volumes:?}"
+    );
     // With a parabola for the concave side, all three go through, the
     // identities within the fit tolerance's allowance (the cuts between
     // the walls are fitted; they are off by about 1e-4).

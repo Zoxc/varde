@@ -1,10 +1,13 @@
-//! The shape of triangles in a plane, for the two triangulators that
+//! The shape of triangles in a plane, for the triangulators that
 //! refine plane regions with points at circumcentres: the extrude's caps
-//! (`extrude/cap/quality.rs`) and the boolean's cut faces
-//! (`boolean/triangulate.rs`). Each keeps its own queue, walk and
-//! clearance (the caps insert into a constrained Delaunay triangulation,
-//! the cut faces split and flip their own triangles under curved-corner
-//! rules); the bound and the circumcentre are one.
+//! (`extrude/cap/quality.rs`), the boolean's cut faces
+//! (`boolean/triangulate.rs`) and the plane faces the boolean's clean-up
+//! refines as a whole (`boolean/cleanup/quality.rs`). Each keeps its own
+//! queue, walk and clearance (the caps insert into a constrained Delaunay
+//! triangulation, the cut faces split and flip their own triangles under
+//! curved-corner rules, the clean-up walks and flips on the soup, where a
+//! side between two plane faces can be halved in both); the bound and the
+//! circumcentre are one.
 
 use glam::DVec2;
 

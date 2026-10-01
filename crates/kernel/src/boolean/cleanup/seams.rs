@@ -42,10 +42,10 @@ use crate::mesh::{Face, Surface};
 
 /// How many steps of the triangulation one region may take, past which it
 /// is left as it is (16 steps a unit of work, as the faces' cuts count).
-const REGION_STEPS: u64 = 1 << 20;
+pub(super) const REGION_STEPS: u64 = 1 << 20;
 
 /// Steps of a region's triangulation a unit of work pays for.
-const STEPS_PER_UNIT: u64 = 16;
+pub(super) const STEPS_PER_UNIT: u64 = 16;
 
 #[cfg(test)]
 thread_local! {
@@ -56,7 +56,7 @@ thread_local! {
 }
 
 /// A plane: unit normal and offset.
-type Plane = (DVec3, f64);
+pub(super) type Plane = (DVec3, f64);
 
 impl Cleaner<'_> {
     /// Whether triangle `t` lies in the plane `(n, d)`: its corners and
@@ -301,7 +301,7 @@ impl Cleaner<'_> {
     /// passes (see [`Self::dissolve`]). The records of the region's inner
     /// edges are taken out then (and of any edge no triangle has where a
     /// new one runs), and only then.
-    fn retriangulate(
+    pub(super) fn retriangulate(
         &mut self,
         region: &[u32],
         (n, _): Plane,
@@ -428,7 +428,7 @@ impl Cleaner<'_> {
     /// its first (the seed's), recording the region's other faces in that
     /// plane as joined to it and absorbed by it
     /// ([`Soup::absorb`](super::Soup::absorb)).
-    fn replace(&mut self, region: &[u32], made: Vec<[u32; 3]>) {
+    pub(super) fn replace(&mut self, region: &[u32], made: Vec<[u32; 3]>) {
         let seed = region[0];
         let face = self.soup.faces[seed as usize];
         let plane = self.planes[face as usize].expect("the seed is on a plane face");
@@ -445,6 +445,7 @@ impl Cleaner<'_> {
             self.soup.tris.push(tri);
             self.soup.faces.push(face);
             self.alive.push(true);
+            self.soup.made.push(true);
             for v in tri {
                 self.around[v as usize].push(t);
             }

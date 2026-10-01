@@ -1484,13 +1484,15 @@ fn drilled_grid(r: f64, pitch: f64, count: usize) -> (Vec<usize>, usize) {
 }
 
 #[test]
-#[ignore = "4 of 180 steps fail (Invalid): until the clean-up's quality pass on plane faces"]
 fn drilled_grids_in_line() {
-    // The second hole in line with an earlier one along x or y grazes the
-    // long cap triangles the earlier holes left from the box's far corners.
+    // The second hole in line with an earlier one along x or y grazed the
+    // long cap triangles the earlier holes left from the box's far
+    // corners: 4 of the 180 steps failed (steps 1 and 8 at pitch 2.4, 3
+    // and 24 at 2.2) before the clean-up refined the plane faces a cut
+    // makes. In a debug build, the first nine of each.
     let mut total = 0;
     for pitch in [2.2, 2.3, 2.4] {
-        let (failed, patches) = drilled_grid(0.5, pitch, 60);
+        let (failed, patches) = drilled_grid(0.5, pitch, cases(60, 9));
         println!("pitch {pitch}: failed steps {failed:?}, {patches} patches");
         total += failed.len();
     }
@@ -1498,10 +1500,12 @@ fn drilled_grids_in_line() {
 }
 
 #[test]
-#[ignore = "12 of 540 steps fail (Invalid): until the clean-up's quality pass on plane faces (or plane faces meshed again whole)"]
+#[ignore = "slow, a few minutes; run in release. 1 of 540 steps fails (r 0.6, pitch 1.3, step 29: Invalid on the new hole's wall at the plate's bottom)"]
 fn boxes_drilled_in_grids() {
     // Nine grids of 60 holes (three radii, three pitches); in a debug
-    // build, one row of eight.
+    // build, one row of eight. 12 of the 540 steps failed before the
+    // clean-up refined the plane faces a cut makes, nearly all the first
+    // or second hole in line with an earlier one; 1 does now.
     let configurations: &[(f64, f64)] = if cfg!(debug_assertions) {
         &[(0.5, 2.4)]
     } else {
@@ -1527,7 +1531,7 @@ fn boxes_drilled_in_grids() {
 }
 
 #[test]
-#[ignore = "all four fail (Invalid): until the clean-up's quality pass on plane faces, or the split and collapse of thin triangles across two faces"]
+#[ignore = "all four fail (Invalid), the clean-up's quality pass on plane faces or not: walls crossing in a vertical line"]
 fn a_boss_through_a_drilled_plate_across_a_hole() {
     // A 6 × 4 × 1 plate drilled twice, and a boss through it flush with
     // both its faces whose wall crosses the first hole's wall: thin

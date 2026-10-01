@@ -1,10 +1,12 @@
 //! Holes drilled one after another into a plate in line with each other,
 //! and grids of holes cut at once. A cut face is triangulated inside the
 //! input triangle it came from, on its corners and the cut's vertices
-//! only, so a drilled box keeps long thin triangles from its far corners
+//! only, so a drilled box kept long thin triangles from its far corners
 //! to the rims; the next hole of the same size in line with the first
-//! passes a few tenths of a millimetre from their sides, along them, where
-//! no split mends the band between (see `agents/kernel.md`, Known gaps).
+//! passed a few tenths of a millimetre from their sides, along them, where
+//! no split mends the band between. The clean-up now refines the plane
+//! faces a boolean cuts for their shapes (see `agents/kernel.md`,
+//! "Clean-up" and Known gaps).
 
 use super::*;
 
@@ -72,12 +74,12 @@ fn check_drilled(steps: &[Result<Solid, KernelError>], r: f64, name: &str) -> Ve
 }
 
 #[test]
-#[ignore = "Invalid(Hull) at the second hole: until the clean-up's quality pass on plane faces"]
 fn a_box_drilled_twice_in_line() {
     // A second hole of the same size beside the first, in line with it
     // along x or along y: the band between its rim and the long side of a
-    // cap triangle from the box's far corner to the first rim fails the
-    // hull rules (both today).
+    // cap triangle from the box's far corner to the first rim failed the
+    // hull rules (both, before the clean-up refined the caps the first
+    // hole cut).
     let mut failed = Vec::new();
     for (name, second) in [("along x", (3.4, 1.0)), ("along y", (1.0, 3.4))] {
         let steps = drilled_in_turn(&large_plate(), &[(1.0, 1.0), second], 0.5);
@@ -87,7 +89,6 @@ fn a_box_drilled_twice_in_line() {
 }
 
 #[test]
-#[ignore = "Invalid(Hull) at the second and third holes: until the clean-up's quality pass on plane faces"]
 fn holes_in_line_on_a_large_plate() {
     // Three holes, the second and third each in line with the first.
     let steps = drilled_in_turn(&large_plate(), &[(1.0, 1.0), (3.4, 1.0), (1.0, 3.4)], 0.5);
@@ -172,19 +173,20 @@ fn made_cap_sines(solid: &Solid, operands: &[&Solid]) -> Vec<f64> {
 }
 
 #[test]
-#[ignore = "fans from the box's corners to the rim: until the clean-up's quality pass on plane faces"]
 fn cut_caps_are_well_shaped() {
-    // After one hole, the box's caps are fanned from their far corners to
-    // the rim: every triangle the cut made on a plane face should have no
-    // angle under 10°, but for the exemptions in `made_cap_sines`.
+    // After one hole, the box's caps were fanned from their far corners
+    // to the rim (24 of the 32 triangles the cut made on them under 10°,
+    // the worst of sine 3.75e-3): the clean-up refines them, so none has
+    // an angle under its bound, 5°, but for the exemptions in
+    // `made_cap_sines`.
     let plate = large_plate();
     let hole = pin(1.0, 1.0, 0.5, 10);
     let drilled = boolean(&plate, &hole, Op::Difference, &TOL, &Budget::DEFAULT).unwrap();
     let sines = made_cap_sines(&drilled, &[&plate, &hole]);
-    let bound = (10f64).to_radians().sin();
+    let bound = (5f64).to_radians().sin();
     let bad = sines.iter().filter(|&&s| s < bound).count();
     println!(
-        "{} made cap triangles, {bad} under 10°, the worst sine {:.2e}",
+        "{} made cap triangles, {bad} under 5°, the worst sine {:.2e}",
         sines.len(),
         sines.first().copied().unwrap_or(1.0)
     );
@@ -221,7 +223,7 @@ fn a_six_by_six_grid_of_holes_cut_at_once() {
 }
 
 #[test]
-#[ignore = "8 × 8 Invalid, 10 × 10 TooComplex: until the clean-up's quality pass on plane faces"]
+#[ignore = "8 × 8 Invalid (a fan from a far rim along a rim's tangent, its corner there closed), 10 × 10 TooComplex before the clean-up"]
 fn larger_grids_of_holes_cut_at_once() {
     let mut failed = Vec::new();
     for n in [8, 10] {

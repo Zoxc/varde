@@ -1223,6 +1223,9 @@ impl Cutting<'_> {
         }
         curves.extend(inner);
 
+        // What this boolean made: every triangle but the operands' kept
+        // whole (and the refinement's pieces merged back into them).
+        let mut made: Vec<bool> = whole.iter().map(Option::is_none).collect();
         if let Some(refinement) = refinement {
             let offsets = [0, self.operand(Side::B).1];
             merge::merge(
@@ -1230,6 +1233,7 @@ impl Cutting<'_> {
                 &mut faces,
                 &mut whole,
                 &mut off,
+                &mut made,
                 &mut curves,
                 refinement,
                 offsets,
@@ -1279,6 +1283,7 @@ impl Cutting<'_> {
                 curves,
                 sources,
                 absorbed: Vec::new(),
+                made,
             },
             out_faces,
         ))

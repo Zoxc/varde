@@ -23,13 +23,15 @@ use crate::mesh::Edge;
 /// Replaces the kept whole pieces (`whole`: which refined triangle of
 /// which operand each triangle is) of every refinement patch that can be
 /// restored by that patch: see the [module](self) docs. `offsets` are
-/// where each operand's vertices start.
+/// where each operand's vertices start. `made` (whether this boolean made
+/// each triangle) is kept in step: a restored patch isn't.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn merge(
     tris: &mut Vec<[u32; 3]>,
     faces: &mut Vec<u32>,
     whole: &mut Vec<Option<(Side, u32)>>,
     off: &mut Vec<bool>,
+    made: &mut Vec<bool>,
     curves: &mut Curves,
     refinement: &Refinement,
     offsets: [u32; 2],
@@ -176,6 +178,7 @@ pub(super) fn merge(
         retain(faces, &keep);
         retain(whole, &keep);
         retain(off, &keep);
+        retain(made, &keep);
         for (c, face) in face_of {
             let node = &nodes[c as usize];
             let corners = node.corners.map(|v| v + offsets[k]);
@@ -192,6 +195,7 @@ pub(super) fn merge(
             faces.push(face);
             whole.push(None);
             off.push(false);
+            made.push(false);
         }
     }
     Ok(())
