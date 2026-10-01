@@ -1238,7 +1238,7 @@ function info() {
 // ---------------------------------------------------------------- chrome
 function titlebar() {
   const title = st.screen === 'doc'
-    ? `<b>${st.doc.name}.varde</b>${st.doc.dirty ? ' — Edited' : ''}`
+    ? `<b>${st.doc.name}.vrdp</b>${st.doc.dirty ? ' — Edited' : ''}`
     : 'Welcome';
   return `<div class="titlebar">
     <span class="brand">${LOGO}varde</span>
@@ -1278,7 +1278,7 @@ function toolbar() {
 
   return `<div class="toolbar">
     <div class="file" data-act="menu">
-      <span class="name">${d.name}<span class="ext">.varde</span></span>
+      <span class="name">${d.name}<span class="ext">.vrdp</span></span>
       ${d.dirty ? '<span class="dirty" title="Unsaved changes"></span>' : ''}
       ${icon('chev', 'i chev')}
       ${st.menu ? `
@@ -2642,7 +2642,7 @@ function welcome() {
           ${RECENT.map(r => `
             <button class="rc" data-act="open:${r.name}">
               <div class="th">${thumb(r.thumb)}</div>
-              <div class="meta"><b>${r.name}<span>.varde</span></b><div><span>${r.path}</span><span>${r.when}</span></div></div>
+              <div class="meta"><b>${r.name}<span>.vrdp</span></b><div><span>${r.path}</span><span>${r.when}</span></div></div>
             </button>`).join('')}
         </div>
       </div>
