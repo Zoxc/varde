@@ -218,6 +218,56 @@ fn curved_edge_neighbours() {
 }
 
 #[test]
+fn curved_edge_fins_need_the_margin() {
+    // The cap of `curved_edge_neighbours` against a wall whose lowest far
+    // control point (the opposite corner and the other two edges' control
+    // points) is 1.5 margins off the arc's plane: the cap may lean towards
+    // it only while the wall still clears the cap's highest point by more
+    // than the margin.
+    let arc = Conic3::new(DVec3::X, DVec3::new(1.0, 1.0, 0.0), FRAC_1_SQRT_2, DVec3::Y).unwrap();
+    let cap = Patch::new(
+        [DVec3::ZERO, DVec3::Y, DVec3::X],
+        [DVec3::Y * 0.5, arc.c, DVec3::X * 0.5],
+        [1.0, FRAC_1_SQRT_2, 1.0],
+    )
+    .unwrap();
+    let tilted = |z: f64| {
+        let mut c = cap;
+        c.p[0].z = z;
+        c.c[0].z = z / 2.0;
+        c.c[2].z = z / 2.0;
+        c
+    };
+    // The wall's far points from edge 0 scale with its height: measure
+    // them at height 1 and scale to put the lowest at 1.5 margins.
+    let lowest = |w: &Patch| {
+        [w.p[2].z, w.c[1].z, w.c[2].z]
+            .map(f64::abs)
+            .into_iter()
+            .fold(f64::INFINITY, f64::min)
+    };
+    for (arc, sign) in [(arc, 1.0), (arc.reversed(), -1.0)] {
+        let [unit, _] = cylinder_strip(&arc, DVec3::Z * sign).unwrap();
+        let h = 1.5 * MARGIN / lowest(&unit);
+        let [wall, _] = cylinder_strip(&arc, DVec3::Z * sign * h).unwrap();
+        assert!((lowest(&wall) / MARGIN - 1.5).abs() < 1e-9);
+        for (lean, apart) in [(0.0, true), (0.9, false), (0.4, true)] {
+            let cap = tilted(sign * lean * MARGIN);
+            assert_eq!(
+                edge_neighbours_apart(&wall, 0, &cap, 1, MARGIN),
+                apart,
+                "sign {sign}, lean {lean}"
+            );
+            assert_eq!(
+                edge_neighbours_apart(&cap, 1, &wall, 0, MARGIN),
+                apart,
+                "swapped, sign {sign}, lean {lean}"
+            );
+        }
+    }
+}
+
+#[test]
 fn long_thin_hulls_are_told_apart() {
     // The top of a 611 × 0.066 × 0.187 box and its front side meet at a
     // corner, with the rest of each more than 0.03 clear of any plane

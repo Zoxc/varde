@@ -589,14 +589,29 @@ its triangles share, which is topology:
     distance from the origin to their hull.
   - A **curved** edge fixes the plane through `P`, `C`, `Q`. One patch's
     points must be more than the resolution off it on one side, and the
-    other's no more than the resolution past it on the other side. A point
-    of a patch is a Bernstein-weighted mean of its control points, so the
-    strict patch meets the plane only along the shared edge, and the two
-    can meet only there. The lax side is what lets a flat cap meet a curved
-    wall along a curved edge: the cap lies in the edge's plane. It may
-    cross the plane by up to the resolution, so near the edge the two may
-    overlap by that much: below the resolution, where nothing is told
-    apart anyway, and what rounding of a cap built in the plane needs.
+    other's no more than the resolution past it on the other side, and
+    the strict side must clear the lax side's highest point (or the
+    plane, if higher) by more than the resolution too. A point of a patch
+    is a Bernstein-weighted mean of its control points, so the strict
+    patch meets the plane only along the shared edge. The lax side is
+    what lets a flat cap meet a curved wall along a curved edge: the cap
+    lies in the edge's plane. It may cross the plane by less than the
+    resolution (what rounding of a cap built in the plane needs), and the
+    two may then overlap by that much: below the resolution, where
+    nothing is told apart anyway. That overlap isn't confined to the
+    edge's neighbourhood: a strict side nearly parallel to the plane
+    leaves a band under the resolution across the whole pair. The extra
+    condition keeps the two sides' far control points more than the
+    resolution apart, as for non-neighbours: a lax side leaning in by `c`
+    needs the strict side `resolution + c` off the plane. Without it a
+    lax side leaning in by 0.99 resolutions passed against a strict one
+    1.01 off the plane, a fin a fiftieth of a resolution thick. Caps
+    against walls, the pairs the lax side is for, lean in by at most a
+    hundredth of a resolution (rounding), and their walls clear them by 4
+    or more, as measured over the kernel's tests with the rule
+    instrumented, where the extra condition changed no pair's outcome.
+    On the seeded boolean suites and the random-plate stress it changed
+    no result (measured with the flat fold stop in "Repair").
 - **One: vertex neighbours.** A plane through the shared vertex `V` with
   the other five control points of each more than the resolution to either
   side. With unit normal `n` that is `n·x > margin` for every `x` in
@@ -740,7 +755,23 @@ so the same rule. What fails is split:
   floor (`Patch::degenerate_corner`: its edges leave at 0° or 180°), no
   split mends it, as every piece keeping the corner has the same edge
   directions there, and repair fails at once with `Invalid(Fold(t))`, `t`
-  the input triangle the piece came from.
+  the input triangle the piece came from. So does a piece failing the
+  fold check that is flat within the resolution (`hull::flat`): its red
+  pieces are like it up to that flatness and fail the same way. What
+  fails there is a sliver whose normal coefficients `f64` can't tell
+  apart (see "Slivers" below): a flat triangle 8e7 or 9e7 times longer
+  than wide, its corners not yet degenerate and every pair passing, was
+  split until its pieces failed the vertex rule (9 984 units,
+  `Invalid(VertexNeighbours)`); it now fails in 8 units as `Fold`.
+  Measured with the curved-edge rule's extra condition (see "Control
+  hulls"), release: on the seeded boolean suites no outcome moved between
+  `Ok` and an error (related 112 of 120, chains 203 of 240, turned 156 of
+  160, tangent 72 of 96, coaxial 37 of 40, bosses 64 of 64, drilled 160
+  of 160), and only the related suite's errors changed kind (2 `Hull`, 1
+  `VertexNeighbours` and 1 `EdgeNeighbours` became `Fold`, now 7 `Fold`
+  and 1 `EdgeNeighbours`); 188 s of CPU against 187 s before. The random-plate
+  stress (seeds 1 to 30, 600 cases each, at 0.1, 0.05 and 0.01) gave the
+  same result for every case (`Ok` 8 596, 8 738 and 8 851 of 18 000).
 - A failing pair: the leaves of both, except for **flat** pieces, whose
   edges are all straight within a threshold (`hull::flat`), so that each
   is its own hull up to it. Neighbours (the edge and vertex rules) take
@@ -896,12 +927,20 @@ Parameters are refused with `KernelError::Patch` (every point within
 tolerance can't hold (a box thinner than the resolution) with `Invalid`.
 
 **Slivers.** A flat triangle about `3e7` times longer than it is wide is
-where `check` stops working: GJK runs out of digits on hulls that long and
-that close (the closest point of a simplex rounds relative to its far
+where `check` stops working, as `f64` runs out at about `1/√ε`. It shows
+first in the vertex rule: GJK there works on points up to the triangle's
+length from the shared vertex, and runs out of digits on hulls that long
+and that close (the closest point of a simplex rounds relative to its far
 points, and turning `v` by that much moves `v·w` by more than the margin),
-and from about `7e7` a corner's normal coefficient falls under the fold
-check's floor. A box a hundred resolutions thick passes up to `2e7` times
-as long. Caps and walls should be triangulated well within that.
+failing `VertexNeighbours` from about `3e7` to `7e7`. From about `7.6e7` the
+fold check fails too (a corner's normal coefficient, about the sine of
+its angle, under the floor relative to its terms), and from about `1e8`
+`degenerate_corner` names the corner; repair refuses a flat piece failing
+the fold check at once either way. A box a hundred resolutions thick
+passes up to `2e7` times as long. Only features of a few nm on a 100 mm
+part reach this (a sliver also needs to be a couple of resolutions wide
+to pass the hull rules at all), and the error is immediate. Caps and
+walls should be triangulated well within that.
 
 ### Costs
 

@@ -17,6 +17,10 @@
 //! so it can lie on the plane only where every control point off the
 //! plane has weight zero: on the shared edge, or at the shared vertex.
 //! With one patch strictly off the plane, the two can meet only there.
+//! (A curved edge lets one side cross its plane by less than the margin;
+//! the other then clears that side's highest point by more than the
+//! margin, so they may overlap by less than the margin, anywhere along
+//! the pair.)
 //!
 //! "Apart" always means by more than a margin (the resolution), so a
 //! check doesn't flip under rounding. Every test here is conservative: it
@@ -82,7 +86,14 @@ pub(crate) fn vertex_neighbours_apart(
 /// A curved edge fixes the plane. Then one side must clear it by more than
 /// `margin` and the other must not cross it by more than `margin`, so a
 /// flat cap whose curved edge meets a wall passes: the cap lies in the
-/// plane, and the wall meets the plane only along the edge.
+/// plane, and the wall meets the plane only along the edge. The strict
+/// side must also clear the lax side's highest point (or the plane, if
+/// that is higher) by more than `margin`, so the two sides' far control
+/// points are always more than `margin` apart, as for non-neighbours: a
+/// lax side leaning in by `c` needs the strict side `margin + c` off the
+/// plane. Any overlap is less than `margin` deep, but it isn't confined
+/// to the edge's neighbourhood: a strict side nearly parallel to the
+/// plane leaves a band under the margin across the whole pair.
 pub(crate) fn edge_neighbours_apart(
     a: &Patch,
     ea: usize,
@@ -114,7 +125,10 @@ pub(crate) fn edge_neighbours_apart(
             .iter()
             .map(|&s| sign * s)
             .fold(f64::NEG_INFINITY, f64::max);
-        (a_min > margin && b_max < margin) || (a_min > -margin && b_max < -margin)
+        // One side strict, the other lax, and the strict side clearing
+        // the lax side's highest point by more than the margin too.
+        (a_min > margin && b_max < margin && a_min - b_max.max(0.0) > margin)
+            || (a_min > -margin && b_max < -margin && a_min.min(0.0) - b_max > margin)
     })
 }
 

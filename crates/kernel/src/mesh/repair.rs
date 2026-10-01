@@ -10,7 +10,8 @@
 //! normals, so a mesh whose surface doesn't fold or touch itself passes
 //! after enough splits. One that does fails: with
 //! [`KernelError::Invalid`] at once where no split can mend it (a
-//! degenerate corner, flat pieces breaking a hull rule, or points of two
+//! degenerate corner, a flat piece failing the fold check, flat pieces
+//! breaking a hull rule, or points of two
 //! pieces that share no vertex found within the resolution: see
 //! [`witness_limit`]), with `Invalid` too once a piece to split is too
 //! small to ([`MIN_SPLIT`] resolutions across if flat, else
@@ -155,7 +156,8 @@ impl Mesh {
 /// check, and of pairs with a changed piece that fail the hull rules,
 /// sorted. A failure no split can mend fails the repair, naming the input
 /// triangles the pieces came from: a piece with a degenerate corner
-/// ([`Patch::degenerate_corner`](crate::patch::Patch::degenerate_corner)),
+/// ([`Patch::degenerate_corner`](crate::patch::Patch::degenerate_corner))
+/// or a [`flat`] one (within the margin) failing the fold check,
 /// a failing pair of flat pieces ([`flat`]: within the margin for the
 /// neighbour rules, within [`FLAT_STOP`] of it for non-neighbours), and a
 /// failing pair of non-neighbours whose surfaces are found within the
@@ -184,6 +186,9 @@ fn failures<'p>(
         match patch.fold_direction() {
             Some(_) => Fold::Passes,
             None if patch.degenerate_corner().is_some() => Fold::Never,
+            // A flat piece's red pieces are like it, up to its flatness:
+            // they fail the same way.
+            None if flat(patch, margin) => Fold::Never,
             None => Fold::Split,
         }
     });
@@ -448,7 +453,9 @@ enum Fold {
     /// Fails, and splitting may mend it.
     Split,
     /// Fails at a corner whose edges leave it at 0° or 180°, which every
-    /// piece keeping the corner will.
+    /// piece keeping the corner will; or fails while [`flat`] within the
+    /// margin, when its red pieces are like it and fail the same way (a
+    /// sliver whose normal coefficients `f64` can't tell apart).
     Never,
 }
 

@@ -666,3 +666,61 @@ fn invalid_input_is_refused() {
         )))
     );
 }
+
+/// A tetrahedron whose base is a flat sliver `aspect` times longer than
+/// wide: apex angle about `1/aspect` at the origin, its far side `width`
+/// across, and the fourth corner `width` above that side's middle, so
+/// every edge's rule sees the thin side across, not the long length.
+fn sliver_tetrahedron(aspect: f64, width: f64) -> Mesh {
+    let mut builder = MeshBuilder::new();
+    let f = builder.face(face(0, Surface::Free));
+    let l = aspect * width;
+    let v = [
+        DVec3::ZERO,
+        DVec3::new(l, width / 2.0, 0.0),
+        DVec3::new(l, -width / 2.0, 0.0),
+        DVec3::new(l, 0.0, width),
+    ]
+    .map(|p| builder.vert(p));
+    for [a, b, c] in [[0, 1, 2], [0, 3, 1], [0, 2, 3], [1, 3, 2]] {
+        builder.tri([v[a], v[b], v[c]], f);
+    }
+    builder.build().unwrap()
+}
+
+#[test]
+fn flat_slivers_failing_the_fold_check_fail_at_once() {
+    // Between about 7.6e7 and 9.8e7 times longer than wide, the sliver
+    // fails the fold check with no corner degenerate, while every pair
+    // passes the hull rules. Its red pieces are like it and fail the same
+    // way; splitting them used to go on until their pairs failed the
+    // vertex rule (9 984 units, `Invalid(VertexNeighbours)`).
+    for aspect in [8e7, 9e7] {
+        let mesh = sliver_tetrahedron(aspect, 1e-4);
+        let res = TOL.resolution();
+        for t in 0..4 {
+            let patch = mesh.patch(t);
+            assert!(hull::flat(&patch, res));
+            assert_eq!(patch.degenerate_corner(), None, "{aspect:e}");
+        }
+        assert!(mesh.patch(0).fold_direction().is_none(), "{aspect:e}");
+        for a in 0..4u32 {
+            for b in a + 1..4 {
+                let ids = [a, b];
+                let patches = [a, b].map(|t| mesh.patch(t as usize));
+                let corners = [a, b].map(|t| mesh.corners(t));
+                assert_eq!(
+                    check_pair(ids, [&patches[0], &patches[1]], corners, res),
+                    Ok(()),
+                    "{aspect:e}"
+                );
+            }
+        }
+        let (result, work) = repair_counting(mesh, &TOL);
+        assert_eq!(
+            result.err(),
+            Some(KernelError::Invalid(CheckError::Fold(0)))
+        );
+        assert!(work < 100, "{aspect:e}: {work} units");
+    }
+}
