@@ -330,7 +330,7 @@ impl Doc {
     /// Edits the sketch feature `id`, if the document holds it: the camera
     /// turns to face it, the model fades behind it, and the Sketch tab
     /// takes the Timeline's place. It stays selected in the Timeline for
-    /// after.
+    /// after, and leaving it turns the camera back to the view before.
     pub(crate) fn enter_sketch(&mut self, id: FeatureId) {
         if !is_sketch(self.editor.document(), id) {
             return;
@@ -346,6 +346,11 @@ impl Doc {
             .is_some_and(|&(edited, _)| edited == id)
         {
             self.refused_edit = None;
+        }
+        // The view to come back to, the one being turned to if turning:
+        // from one sketch to another, the one before the first.
+        if self.sketch.is_none() {
+            self.before_sketch = Some(self.animation.as_ref().map_or(self.camera, |a| a.to));
         }
         self.sketch = Some(SketchSession::new(id));
         self.panel = self.panel.for_sketching(true);
@@ -367,8 +372,13 @@ impl Doc {
     }
 
     /// Leaves the sketch without asking for the model again, for
-    /// [`Doc::sync`] to.
+    /// [`Doc::sync`] to, turning the camera back to the view before it in
+    /// the projection it has now.
     fn end_session(&mut self) {
+        if let Some(mut to) = self.before_sketch.take() {
+            to.set_projection(self.camera.projection());
+            self.animate_camera(to);
+        }
         self.sketch = None;
         self.panel = self.panel.for_sketching(false);
         self.rail.close();

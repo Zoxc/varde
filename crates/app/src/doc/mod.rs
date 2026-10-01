@@ -103,6 +103,9 @@ pub(crate) struct Doc {
     /// it: see [`Doc::take_focus`].
     focus: Option<Focus>,
     animation: Option<CameraAnimation>,
+    /// The view the camera had before turning to the sketch being edited,
+    /// which it turns back to on leaving it.
+    before_sketch: Option<Camera>,
     /// The point picked for the camera to orbit, if one was.
     pivot: Option<Pivot>,
     /// Whether the cursor is over the view cube, where the pivot is
@@ -212,6 +215,7 @@ impl Doc {
             sketch_split: GEOMETRY_SHARE,
             focus: None,
             animation: None,
+            before_sketch: None,
             pivot: None,
             cube_hovered: false,
             rail: Rail::default(),

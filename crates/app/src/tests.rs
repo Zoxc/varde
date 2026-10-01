@@ -4611,6 +4611,37 @@ fn undo_and_redo_keys_follow_the_history() {
     ));
 }
 
+/// Leaving a sketch turns the camera back to the view it had before,
+/// in the projection picked meanwhile; one sketch entered from another
+/// comes back to the view before the first.
+#[test]
+fn leaving_a_sketch_turns_the_camera_back() {
+    let (mut doc, feature, _) = with_sketch();
+    doc.look(Look::Orbit {
+        yaw: 0.4,
+        pitch: 0.3,
+    });
+    let before = doc.camera;
+    doc.look(Look::EditFeature(feature));
+    settle_camera(&mut doc);
+    assert_ne!(doc.camera, before);
+    doc.look(Look::SetProjection(varde_render::Projection::Perspective));
+    doc.look(Look::FinishSketch);
+    settle_camera(&mut doc);
+    let mut expected = before;
+    expected.set_projection(varde_render::Projection::Perspective);
+    assert_eq!(doc.camera, expected);
+
+    // Entered while still turning: back to where it was turning to.
+    doc.look(Look::EditFeature(feature));
+    doc.look(Look::FinishSketch);
+    doc.look(Look::EditFeature(feature));
+    settle_camera(&mut doc);
+    doc.look(Look::FinishSketch);
+    settle_camera(&mut doc);
+    assert_eq!(doc.camera, expected);
+}
+
 #[test]
 fn undoing_a_sketch_s_creation_leaves_it() {
     let (mut doc, requests) = deferred();
