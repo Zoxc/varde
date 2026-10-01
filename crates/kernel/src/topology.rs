@@ -183,6 +183,11 @@ impl Topology {
         &self.corners
     }
 
+    /// How many triangles the mesh it was made from has.
+    pub fn triangles(&self) -> usize {
+        self.region_of.len()
+    }
+
     /// The region of triangle `tri`.
     pub fn region_of(&self, tri: u32) -> u32 {
         self.region_of[tri as usize]

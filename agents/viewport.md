@@ -370,8 +370,8 @@ tolerance and its inputs' keys, bounded by bytes (256 MiB natively, 64
 MiB on the web, least recently used out, never what the last request
 used), so an edit or a draft being dragged reruns only what it changes,
 and undo, redo or an option changed and changed back finds what it had.
-It also keeps the joined model mesh by scene (the shown bodies' mesh keys
-in order; the committed model's scene is never evicted, however long a
+It also keeps the joined model mesh by scene (the shown bodies and their
+mesh keys in order; the committed model's scene is never evicted, however long a
 draft is dragged), so an answer whose shown bodies and tolerance didn't change
 carries the same `Arc<RenderMesh>` as before and the renderer, keyed by
 that `Arc`, doesn't upload it again (natively; the web wire still sends
@@ -390,6 +390,28 @@ the model shown has, a preview changed or cancelled, the status bar says
 the Timeline marks those features (see "The extrude UI" in
 `agents/kernel.md`).
 
+An answer carries the model's **picking tables** (`regen::Picking`, with
+the mesh): its faces (`PickFace`: the body, the face key, its aliases,
+sorted, and a `Summary` of its form: a plane's outward unit `n` and `d`,
+a cylinder's point, axis and radius, a cone's, sphere's or torus's
+numbers, else `Other`), its edges (`PickChain`: the two faces either
+side, indices into the faces, and whether it closes on itself), the face
+of each triangle of the mesh and the chain of each of its edges
+(`Picking::NONE` for a crease inside one face). Faces are the kernel
+topology's regions and edges its chains (see "Topology and names" in
+`agents/kernel.md`), so a circle's quarter walls, or flush faces merged
+under one name, are one face, and a face cut in two by a groove is two
+faces of one key; `Picking::chain_keys` gives an edge's two keys sorted,
+as an edge reference stores them. Each body's tables are made with its
+mesh (`Solid::tessellate_picking`) and cached with it, counted in its
+bytes; the scene's are theirs joined in the shown bodies' order, the
+indices moved on (checked). A `Picking` always goes with its mesh (one
+face per triangle, one chain or none per edge, indices within the tables,
+each chain between two different faces of one body, summaries finite,
+within `Picking::MAX_VALUE`, their directions unit vectors): the fields
+are private and `Picking::from_parts` checks parts from elsewhere. The
+app doesn't use them yet; the viewport's picking will.
+
 Natively each open document has a regeneration thread (`regen::lane`),
 started by an iced subscription keyed by the document's id. The
 subscription's stream first hands the app the lane's sender, then yields
@@ -402,15 +424,20 @@ Closing the document ends the subscription and with it the thread.
 On the web the lane is a Web Worker with the same API. It shares no memory
 with the page, so a request is the generation, the postcard-encoded
 document (the encoding `.vrdp` records use) and the sketch to leave out, and
-the answer is a small postcard head (with the failed features, the
-bodies each join, cut or intersect touches, the bodies' boxes and the
-draft's outcome) and the mesh's positions, normals,
-indices and edges and the sketches' line points and ends as raw bytes. Both
+the answer is a postcard head (with the failed features, the
+bodies each join, cut or intersect touches, the bodies' boxes, the
+draft's outcome and the picking tables' faces and edges) and the mesh's
+positions, normals, indices and edges, the sketches' line points and
+ends, and the picking's face per triangle and chain per edge as raw
+bytes. A model whose head would be over its bound (256 MiB) is answered
+as failed. Both
 directions transfer their `ArrayBuffer`s instead of copying them. The page
 checks what comes back before using it (whole elements, a size bound,
 indices and edges within the vertex count, positions and points within
 their bound, line ends splitting the points into polylines of two or more,
-bodies' boxes finite and in order; see `regen::wire`). The worker keeps
+bodies' boxes finite and in order, the picking tables checked by
+`Picking::from_parts` against the mesh and naming only bodies the head
+lists; see `regen::wire`). The worker keeps
 its cache between requests, as the thread does. The worker can't see new messages while it works, so
 the page keeps latest-wins itself: one request is with the worker at a
 time, and newer ones replace each other until it answers. A job that has

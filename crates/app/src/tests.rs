@@ -2515,6 +2515,7 @@ fn failure_marks_of_before_a_replacement_mark_nothing() {
                     exclude,
                     draft,
                     mesh,
+                    picking,
                     sketches,
                     bodies,
                     ..
@@ -2523,6 +2524,7 @@ fn failure_marks_of_before_a_replacement_mark_nothing() {
                     exclude,
                     draft,
                     mesh,
+                    picking,
                     sketches,
                     unsolved: vec![id],
                     failed: vec![(id, "failed".to_owned())],

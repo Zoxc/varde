@@ -19,7 +19,7 @@ use glam::{DVec3, Vec3};
 use crate::mesh::Mesh;
 use crate::par::par_map;
 use crate::patch::{Bounds3, Conic3, Patch};
-use crate::{MeshError, RenderMesh, Tolerance};
+use crate::{MeshError, RenderMesh, Tolerance, Topology};
 
 /// How finely [`Solid::tessellate`](crate::Solid::tessellate) samples:
 /// each edge curve is cut into segments whose chords are at most
@@ -86,10 +86,41 @@ impl Limits {
     };
 }
 
+/// Which face and which edge of a solid's [`Topology`] each part of its
+/// tessellation draws, for picking: the region of each triangle of the
+/// [`RenderMesh`] and the chain of each of its edges, in their order.
+/// Regions are faces as users see them, so the pieces of one face (a
+/// circle's quarter walls, flush faces merged under one name) are one.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Picking {
+    /// One per triangle: the index of its region in
+    /// [`Topology::regions`].
+    pub triangles: Vec<u32>,
+    /// One per edge: the index of its chain in [`Topology::chains`], or
+    /// [`Picking::NONE`] for a crease inside one region, where the
+    /// patches' normals split but no other face begins.
+    pub edges: Vec<u32>,
+}
+
+impl Picking {
+    /// An edge that is on no chain.
+    pub const NONE: u32 = u32::MAX;
+}
+
 /// `mesh`, which must pass [`Mesh::check`], as triangles: see the module
 /// docs.
 pub(crate) fn tessellate(mesh: &Mesh, display: &Display) -> Result<RenderMesh, MeshError> {
     tessellate_within(mesh, display, &Limits::RENDER)
+}
+
+/// [`tessellate`], with which region and chain of `topology` (the
+/// mesh's) each triangle and edge draws.
+pub(crate) fn tessellate_picking(
+    mesh: &Mesh,
+    display: &Display,
+    topology: &Topology,
+) -> Result<(RenderMesh, Picking), MeshError> {
+    draw(mesh, display, &Limits::RENDER, Some(topology))
 }
 
 /// [`tessellate`], failing with [`MeshError::TooLarge`] if the mesh
@@ -100,11 +131,29 @@ pub(crate) fn tessellate_within(
     display: &Display,
     limits: &Limits,
 ) -> Result<RenderMesh, MeshError> {
+    draw(mesh, display, limits, None).map(|(drawn, _)| drawn)
+}
+
+/// [`tessellate_within`], with the [`Picking`] of `topology` if there is
+/// one (otherwise an empty one).
+fn draw(
+    mesh: &Mesh,
+    display: &Display,
+    limits: &Limits,
+    topology: Option<&Topology>,
+) -> Result<(RenderMesh, Picking), MeshError> {
+    if let Some(topology) = topology {
+        assert_eq!(
+            topology.triangles(),
+            mesh.tris().len(),
+            "the topology is the mesh's"
+        );
+    }
     let Some(bounds) = Bounds3::around(mesh.verts()) else {
-        return Ok(RenderMesh::default());
+        return Ok(Default::default());
     };
     if mesh.is_empty() {
-        return Ok(RenderMesh::default());
+        return Ok(Default::default());
     }
     let chord = display.chord((bounds.max - bounds.min).length());
     let halfedges = u32::try_from(mesh.tris().len() * 3).map_err(|_| MeshError::TooLarge)?;
@@ -356,6 +405,17 @@ pub(crate) fn tessellate_within(
         }
         (points, indices)
     });
+    let mut picking = Picking::default();
+    if let Some(topology) = topology {
+        // Each patch's triangles follow the patch's, in order.
+        picking.triangles.reserve(triangles as usize);
+        for (t, level) in levels.iter().enumerate() {
+            let region = topology.region_of(t as u32);
+            picking
+                .triangles
+                .extend((0..level.triangles()).map(|_| region));
+        }
+    }
     let mut indices = Vec::new();
     for (points, tri_indices) in patches {
         for (p, n) in points {
@@ -367,14 +427,38 @@ pub(crate) fn tessellate_within(
     debug_assert_eq!(indices.len() as u64, 3 * triangles);
     debug_assert_eq!(positions.len() as u64, inner_base + inner_total);
 
+    // Each mesh edge's chain. Chains run between different regions, of
+    // different keys, so all their edges are feature edges.
+    let mut chain_of = Vec::new();
+    if let Some(topology) = topology {
+        chain_of = vec![Picking::NONE; mesh.edges().len()];
+        for (c, chain) in topology.chains().iter().enumerate() {
+            for &h in &chain.halfedges {
+                chain_of[mesh.halfedge(h).edge as usize] = c as u32;
+            }
+        }
+        debug_assert!(
+            (edge_ids.iter())
+                .all(|&e| feature[e as usize] || chain_of[e as usize] == Picking::NONE),
+            "every chain's edges are feature edges"
+        );
+    }
     let mut edges = Vec::new();
     for &e in &edge_ids {
         if feature[e as usize] {
             let (h, n) = (first[e as usize], counts[e as usize]);
             edges.extend((0..n).map(|s| [sample_vertex(h, s), sample_vertex(h, s + 1)]));
+            if let Some(&chain) = chain_of.get(e as usize) {
+                picking.edges.extend((0..n).map(|_| chain));
+            }
         }
     }
-    RenderMesh::from_parts(positions, normals, indices, edges)
+    debug_assert!(topology.is_none() || picking.triangles.len() as u64 == triangles);
+    debug_assert!(topology.is_none() || picking.edges.len() == edges.len());
+    Ok((
+        RenderMesh::from_parts(positions, normals, indices, edges)?,
+        picking,
+    ))
 }
 
 /// A render vertex: its position and normal.

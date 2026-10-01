@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use varde_document::{Command, Document, Editor, FeatureKind};
 use varde_kernel::MeshPart;
+use varde_kernel::mesh::{FaceKey, PartKey};
 
 use super::*;
 use crate::tests::sketched;
@@ -16,7 +17,8 @@ fn regenerate(editor: &Editor) -> Request {
     }
 }
 
-/// The head of a regenerated `generation`, whose model is in its parts.
+/// The head of a regenerated `generation`, whose model is in its parts
+/// ([`triangle`]): one body, whose one face is the triangle's.
 fn regenerated(generation: u64) -> Head {
     Head::Regenerated {
         generation: generation.into(),
@@ -26,7 +28,27 @@ fn regenerated(generation: u64) -> Head {
         failed: Vec::new(),
         touched: Vec::new(),
         merged: Vec::new(),
-        bodies: Vec::new(),
+        bodies: vec![(BodyId::NEW, [[0.0; 3], [1.0; 3]])],
+        faces: vec![face()],
+        chains: Vec::new(),
+    }
+}
+
+/// The face of [`triangle`]'s one triangle: a plane's, of the body
+/// [`regenerated`] lists.
+fn face() -> PickFace {
+    PickFace {
+        body: BodyId::NEW,
+        key: FaceKey {
+            feature: 1,
+            part: PartKey::StartCap,
+            instance: 0,
+        },
+        aliases: Vec::new(),
+        summary: crate::Summary::Plane {
+            n: [0.0, 0.0, 1.0],
+            d: 0.0,
+        },
     }
 }
 
@@ -170,6 +192,7 @@ fn regenerated_round_trips() {
     let response = handle(decode_request(&bytes).unwrap());
     let Response::Regenerated {
         mesh: sent,
+        picking: picked,
         bodies: boxes,
         ..
     } = &response
@@ -181,6 +204,7 @@ fn regenerated_round_trips() {
         exclude,
         draft,
         mesh,
+        picking,
         sketches,
         unsolved: marked,
         failed,
@@ -201,6 +225,10 @@ fn regenerated_round_trips() {
     assert_eq!(touched, [(cut, Vec::new())]);
     assert!(merged.is_empty());
     assert_eq!(mesh, *sent);
+    assert_eq!(picking, *picked);
+    // The plate with a hole: top, bottom, four sides and the hole's wall.
+    assert_eq!(picking.faces().len(), 7);
+    assert_eq!(picking.triangles().len(), mesh.triangle_count());
     assert!(mesh.triangle_count() > 0);
     assert!(!mesh.edges().is_empty());
     assert_eq!(bodies, *boxes);
@@ -344,7 +372,7 @@ fn malformed_model_fails_its_generation() {
         panic!("decoded a model without line ends");
     };
     assert_eq!(u64::from(generation), 5);
-    assert_eq!(error, Error::Parts(5).to_string());
+    assert_eq!(error, Error::Parts(7).to_string());
 }
 
 #[test]
@@ -457,11 +485,20 @@ fn triangle() -> Vec<Vec<u8>> {
         vec![3],
     )
     .unwrap();
+    let picking = Picking::from_parts(
+        vec![face()],
+        Vec::new(),
+        vec![0],
+        vec![Picking::NONE; 3],
+        &mesh,
+    )
+    .unwrap();
     let response = Response::Regenerated {
         generation: Generation::from(0),
         exclude: None,
         draft: None,
         mesh: Arc::new(mesh),
+        picking: Arc::new(picking),
         sketches: Arc::new(lines),
         unsolved: Vec::new(),
         failed: Vec::new(),
@@ -477,29 +514,36 @@ fn slices(parts: &[Vec<u8>]) -> Vec<&[u8]> {
     parts.iter().map(Vec::as_slice).collect()
 }
 
+/// [`decode_model`] with the tables of [`regenerated`].
+fn decode_all(parts: &[impl Buffer]) -> Result<(RenderMesh, RenderLines, Picking), Error> {
+    decode_model(parts, vec![face()], Vec::new())
+}
+
 fn decode(parts: &[Vec<u8>]) -> Result<RenderMesh, Error> {
-    decode_model(&slices(parts)).map(|(mesh, _)| mesh)
+    decode_all(&slices(parts)).map(|(mesh, _, _)| mesh)
 }
 
 fn decode_lines(parts: &[Vec<u8>]) -> Result<RenderLines, Error> {
-    decode_model(&slices(parts)).map(|(_, lines)| lines)
+    decode_all(&slices(parts)).map(|(_, lines, _)| lines)
 }
 
 #[test]
 fn triangle_decodes() {
-    let (mesh, lines) = decode_model(&slices(&triangle())).unwrap();
+    let (mesh, lines, picking) = decode_all(&slices(&triangle())).unwrap();
     assert_eq!(mesh.triangle_count(), 1);
     assert_eq!(lines.segment_count(), 2);
+    assert_eq!(picking.triangles(), [0]);
+    assert_eq!(picking.edges(), [Picking::NONE; 3]);
 }
 
 #[test]
 fn wrong_number_of_parts_is_an_error() {
     let mut parts = triangle();
     parts.pop();
-    assert_eq!(decode(&parts), Err(Error::Parts(5)));
+    assert_eq!(decode(&parts), Err(Error::Parts(7)));
     assert_eq!(decode(&[]), Err(Error::Parts(0)));
     parts.extend([Vec::new(), Vec::new()]);
-    assert_eq!(decode(&parts), Err(Error::Parts(7)));
+    assert_eq!(decode(&parts), Err(Error::Parts(9)));
 }
 
 #[test]
@@ -510,6 +554,8 @@ fn partial_elements_are_an_error() {
         (3, Part::RenderMesh(MeshPart::Edges)),
         (4, Part::RenderLines(LinesPart::Points)),
         (5, Part::RenderLines(LinesPart::Ends)),
+        (6, Part::Picking(PickingPart::Triangles)),
+        (7, Part::Picking(PickingPart::Edges)),
     ] {
         let mut parts = triangle();
         parts[part].pop();
@@ -518,7 +564,7 @@ fn partial_elements_are_an_error() {
         }
         let len = parts[part].len();
         assert_eq!(
-            decode_model(&slices(&parts)).map(|_| ()),
+            decode_all(&slices(&parts)).map(|_| ()),
             Err(Error::Partial { part: name, len })
         );
     }
@@ -606,10 +652,13 @@ fn oversized_part_is_an_error() {
     let (indices, edges) = (&parts[2][..], &parts[3][..]);
     let len = RenderMesh::MAX_VERTICES * size_of::<[f32; 3]>() + 1;
     let (points, ends) = (&parts[4][..], &parts[5][..]);
+    let (faces, chains) = (&parts[6][..], &parts[7][..]);
     let huge = Huge(len);
-    let parts: [&dyn Buffer; 6] = [&huge, &huge, &indices, &edges, &points, &ends];
+    let parts: [&dyn Buffer; 8] = [
+        &huge, &huge, &indices, &edges, &points, &ends, &faces, &chains,
+    ];
     assert_eq!(
-        decode_model(&parts).map(|_| ()),
+        decode_all(&parts).map(|_| ()),
         Err(Error::TooLarge {
             part: Part::RenderMesh(MeshPart::Positions),
             len
@@ -623,15 +672,17 @@ fn oversized_line_parts_are_an_error() {
     let slices = slices(&parts);
     let mesh: Vec<&dyn Buffer> = slices[..4].iter().map(|p| p as &dyn Buffer).collect();
     let (points, ends) = (slices[4], slices[5]);
+    let picked: Vec<&dyn Buffer> = slices[6..].iter().map(|p| p as &dyn Buffer).collect();
     let len = RenderLines::MAX_POINTS * size_of::<[f32; 3]>() + 1;
     let huge = Huge(len);
     let parts: Vec<&dyn Buffer> = mesh
         .iter()
         .copied()
         .chain([&huge as &dyn Buffer, &ends])
+        .chain(picked.iter().copied())
         .collect();
     assert_eq!(
-        decode_model(&parts).map(|_| ()),
+        decode_all(&parts).map(|_| ()),
         Err(Error::TooLarge {
             part: Part::RenderLines(LinesPart::Points),
             len
@@ -643,9 +694,10 @@ fn oversized_line_parts_are_an_error() {
         .iter()
         .copied()
         .chain([&points as &dyn Buffer, &huge])
+        .chain(picked.iter().copied())
         .collect();
     assert_eq!(
-        decode_model(&parts).map(|_| ()),
+        decode_all(&parts).map(|_| ()),
         Err(Error::TooLarge {
             part: Part::RenderLines(LinesPart::Ends),
             len
@@ -667,7 +719,7 @@ fn oversized_head_is_an_error() {
 #[test]
 fn errors_display() {
     let error = decode(&[]).unwrap_err();
-    assert_eq!(error.to_string(), "model in 0 parts instead of 6");
+    assert_eq!(error.to_string(), "model in 0 parts instead of 8");
 }
 
 /// A small deterministic generator for the fuzz tests below (xorshift64).
@@ -721,6 +773,17 @@ fn decode_any(head: &[u8], parts: &[Vec<u8>]) {
         let vertices = mesh.positions().len();
         for &index in mesh.indices().iter().chain(mesh.edges().as_flattened()) {
             assert!((index as usize) < vertices);
+        }
+    }
+    if let Ok(Response::Regenerated { mesh, picking, .. }) = decode_reply(head, &slices(parts)) {
+        assert_eq!(picking.triangles().len(), mesh.triangle_count());
+        assert_eq!(picking.edges().len(), mesh.edges().len());
+        let faces = picking.faces().len();
+        assert!(picking.triangles().iter().all(|&f| (f as usize) < faces));
+        let chains = picking.chains().len();
+        assert!((picking.edges().iter()).all(|&c| c == Picking::NONE || (c as usize) < chains));
+        for chain in picking.chains() {
+            assert!(chain.faces.iter().all(|&f| (f as usize) < faces));
         }
     }
 }
@@ -787,4 +850,238 @@ fn huge_lengths_are_refused_without_allocating_them() {
     head.pop();
     head.extend(huge);
     assert!(matches!(Head::decode(&head), Err(Error::Head(_))));
+}
+
+/// The error a reply of `head` and `parts` fails its generation with.
+fn refused(head: &Head, parts: &[Vec<u8>]) -> String {
+    match decode_reply(&head.encode()[..], &slices(parts)).unwrap() {
+        Response::Failed { error, .. } => error,
+        Response::Regenerated { .. } => panic!("a hostile reply was taken"),
+    }
+}
+
+/// `regenerated(1)` with its faces and chains changed by `change`.
+fn tables(change: impl FnOnce(&mut Vec<PickFace>, &mut Vec<PickChain>)) -> Head {
+    let mut head = regenerated(1);
+    if let Head::Regenerated { faces, chains, .. } = &mut head {
+        change(faces, chains);
+    }
+    head
+}
+
+#[test]
+fn picking_indices_must_be_within_their_tables() {
+    let index = Error::Picking(PickingError::Index).to_string();
+    // A triangle's face past the table.
+    let mut parts = triangle();
+    parts[6] = bytemuck::cast_slice(&[1u32]).to_vec();
+    assert_eq!(refused(&regenerated(1), &parts), index);
+    // An edge's chain where there are none, and not `NONE`.
+    for bad in [0u32, u32::MAX - 1] {
+        let mut parts = triangle();
+        parts[7][4..8].copy_from_slice(&bad.to_ne_bytes());
+        assert_eq!(refused(&regenerated(1), &parts), index);
+    }
+}
+
+#[test]
+fn picking_must_have_one_entry_per_triangle_and_edge() {
+    let lengths = Error::Picking(PickingError::Lengths).to_string();
+    for (part, keep) in [(6, 0), (7, 8), (7, 0)] {
+        let mut parts = triangle();
+        parts[part].truncate(keep);
+        assert_eq!(refused(&regenerated(1), &parts), lengths);
+    }
+    let mut parts = triangle();
+    parts[6].extend(0u32.to_ne_bytes());
+    assert_eq!(refused(&regenerated(1), &parts), lengths);
+    // More faces than triangles.
+    let head = tables(|faces, _| faces.push(face()));
+    assert_eq!(
+        refused(&head, &triangle()),
+        Error::Picking(PickingError::Tables).to_string()
+    );
+}
+
+#[test]
+fn oversized_picking_parts_are_an_error() {
+    let parts = triangle();
+    let slices = slices(&parts);
+    let before: Vec<&dyn Buffer> = slices[..6].iter().map(|p| p as &dyn Buffer).collect();
+    let len = RenderMesh::MAX_INDICES / 3 * size_of::<u32>() + 1;
+    let huge = Huge(len);
+    let parts: Vec<&dyn Buffer> = (before.iter().copied())
+        .chain([&huge as &dyn Buffer, &slices[7]])
+        .collect();
+    assert_eq!(
+        decode_all(&parts).map(|_| ()),
+        Err(Error::TooLarge {
+            part: Part::Picking(PickingPart::Triangles),
+            len
+        })
+    );
+    let len = RenderMesh::MAX_EDGES * size_of::<u32>() + 1;
+    let huge = Huge(len);
+    let parts: Vec<&dyn Buffer> = (before.iter().copied())
+        .chain([&slices[6] as &dyn Buffer, &huge])
+        .collect();
+    assert_eq!(
+        decode_all(&parts).map(|_| ()),
+        Err(Error::TooLarge {
+            part: Part::Picking(PickingPart::Edges),
+            len
+        })
+    );
+}
+
+/// A mesh of two triangles side by side, their faces each, and one chain
+/// between them along their shared side.
+fn two_triangles() -> Vec<Vec<u8>> {
+    let mesh = RenderMesh::from_parts(
+        vec![[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0, 0.0]],
+        vec![[0.0, 0.0, 1.0]; 4],
+        vec![0, 1, 2, 1, 3, 2],
+        vec![[1, 2]],
+    )
+    .unwrap();
+    let mut parts = triangle();
+    parts[0] = bytemuck::cast_slice(mesh.positions()).to_vec();
+    parts[1] = bytemuck::cast_slice(mesh.normals()).to_vec();
+    parts[2] = bytemuck::cast_slice(mesh.indices()).to_vec();
+    parts[3] = bytemuck::cast_slice(mesh.edges()).to_vec();
+    parts[6] = bytemuck::cast_slice(&[0u32, 1]).to_vec();
+    parts[7] = bytemuck::cast_slice(&[0u32]).to_vec();
+    parts
+}
+
+#[test]
+fn picked_chains_join_two_faces_of_one_body() {
+    let other = ids()[0];
+    let two = |change: fn(&mut Vec<PickFace>, &mut Vec<PickChain>)| {
+        let mut head = tables(|faces, chains| {
+            let mut second = face();
+            second.key.part = PartKey::EndCap;
+            faces.push(second);
+            chains.push(PickChain {
+                faces: [0, 1],
+                closed: false,
+            });
+            change(faces, chains);
+        });
+        if let Head::Regenerated { bodies, .. } = &mut head {
+            bodies.push((other, [[0.0; 3], [1.0; 3]]));
+        }
+        head
+    };
+    // As made, it's taken.
+    let reply = decode_reply(&two(|_, _| ()).encode()[..], &slices(&two_triangles())).unwrap();
+    let Response::Regenerated { picking, .. } = reply else {
+        panic!("a good chain was refused");
+    };
+    assert_eq!(picking.chain_keys(0)[0].part, PartKey::StartCap);
+    let chain = Error::Picking(PickingError::Chain).to_string();
+    for change in [
+        (|_: &mut Vec<PickFace>, chains: &mut Vec<PickChain>| chains[0].faces = [0, 0])
+            as fn(&mut Vec<PickFace>, &mut Vec<PickChain>),
+        |_, chains| chains[0].faces = [0, 2],
+        |_, chains| chains[0].faces = [u32::MAX, 1],
+    ] {
+        assert_eq!(refused(&two(change), &two_triangles()), chain);
+    }
+    // Faces of two bodies.
+    let head = {
+        let mut head = two(|_, _| ());
+        if let Head::Regenerated { faces, .. } = &mut head {
+            faces[1].body = other;
+        }
+        head
+    };
+    assert_eq!(refused(&head, &two_triangles()), chain);
+}
+
+#[test]
+fn picked_faces_must_hold_sound_summaries_and_aliases() {
+    use crate::Summary;
+    let bad = Error::Picking(PickingError::Face).to_string();
+    let summaries = [
+        Summary::Plane {
+            n: [0.0, 0.0, f64::NAN],
+            d: 0.0,
+        },
+        Summary::Plane {
+            n: [0.0, 0.0, 2.0],
+            d: 0.0,
+        },
+        Summary::Plane {
+            n: [0.0, 0.0, 1.0],
+            d: f64::INFINITY,
+        },
+        Summary::Plane {
+            n: [0.0, 0.0, 1.0],
+            d: 1e300,
+        },
+        Summary::Cylinder {
+            point: [0.0; 3],
+            axis: [0.0, 0.0, 1.0],
+            radius: -1.0,
+        },
+        Summary::Cylinder {
+            point: [f64::NAN; 3],
+            axis: [0.0, 0.0, 1.0],
+            radius: 1.0,
+        },
+        Summary::Cone {
+            apex: [0.0; 3],
+            axis: [1.0, 0.0, 0.0],
+            cos: 0.5,
+            sin: 2.0,
+        },
+        Summary::Sphere {
+            centre: [0.0; 3],
+            radius: 0.0,
+        },
+        Summary::Torus {
+            centre: [0.0; 3],
+            axis: [0.0; 3],
+            major: 2.0,
+            minor: 1.0,
+        },
+    ];
+    for summary in summaries {
+        let head = tables(|faces, _| faces[0].summary = summary);
+        assert_eq!(refused(&head, &triangle()), bad, "{summary:?}");
+    }
+    let alias = |part| FaceKey {
+        feature: 2,
+        part,
+        instance: 0,
+    };
+    for aliases in [
+        vec![alias(PartKey::EndCap), alias(PartKey::StartCap)],
+        vec![alias(PartKey::StartCap), alias(PartKey::StartCap)],
+        vec![face().key],
+    ] {
+        let head = tables(|faces, _| faces[0].aliases = aliases.clone());
+        assert_eq!(refused(&head, &triangle()), bad, "{aliases:?}");
+    }
+    // Sorted, apart from the key: taken.
+    let head = tables(|faces, _| {
+        faces[0].aliases = vec![alias(PartKey::StartCap), alias(PartKey::EndCap)];
+    });
+    assert!(matches!(
+        decode_reply(&head.encode()[..], &slices(&triangle())),
+        Ok(Response::Regenerated { .. })
+    ));
+}
+
+#[test]
+fn picked_faces_must_be_of_listed_bodies() {
+    let mut head = regenerated(1);
+    if let Head::Regenerated { bodies, .. } = &mut head {
+        bodies.clear();
+    }
+    assert_eq!(
+        refused(&head, &triangle()),
+        Error::Picking(PickingError::Face).to_string()
+    );
 }

@@ -24,9 +24,12 @@
 //! the boolean of a body taken out of a cut, which putting it back asks
 //! for.
 //!
-//! The model's mesh, the shown bodies' meshes joined, is one more kind
-//! of result, a scene ([`Cache::scene`]), filed by the shown bodies'
-//! mesh keys: a request whose shown bodies and tolerance didn't change
+//! A body's mesh is kept with its picking tables (its faces' and edges'
+//! keys and summaries, and which of them each triangle and edge draws),
+//! counted with it. The model's mesh and tables, the shown bodies' joined,
+//! are one more kind of result, a scene ([`Cache::scene`]), filed by the
+//! shown bodies and their mesh keys: a request whose shown bodies and
+//! tolerance didn't change
 //! (a sketch edit no body depends on, a sketch hidden or left out, a
 //! draft that fails, or the committed model asked again after a draft)
 //! is answered with the very same `Arc`, so neither the join nor,
@@ -45,6 +48,8 @@ use std::sync::Arc;
 use serde::Serialize;
 use varde_kernel::{KernelError, RenderMesh, Solid};
 use varde_sketch::{Profiles, TooComplex};
+
+use crate::picking::{Drawn, Scene};
 
 /// How many bytes of results a cache holds before it evicts the least
 /// recently used: several requests' worth of a large model natively; less
@@ -127,10 +132,10 @@ enum Entry {
     Touches(Result<bool, KernelError>),
     /// A boolean of two solids.
     Boolean(Result<Arc<Solid>, KernelError>),
-    /// A solid drawn.
-    Mesh(Arc<RenderMesh>),
-    /// The model's mesh: the shown bodies' meshes joined.
-    Scene(Arc<RenderMesh>),
+    /// A solid drawn, with its picking tables.
+    Drawn(Arc<Drawn>),
+    /// The model's mesh and picking tables: the shown bodies' joined.
+    Scene(Scene),
 }
 
 impl Entry {
@@ -149,7 +154,8 @@ impl Entry {
             },
             Entry::Solid(Ok(solid)) | Entry::Boolean(Ok(solid)) => solid_bytes(solid),
             Entry::Solid(Err(error)) => error.len(),
-            Entry::Mesh(mesh) | Entry::Scene(mesh) => mesh_bytes(mesh),
+            Entry::Drawn(drawn) => mesh_bytes(&drawn.mesh).saturating_add(drawn.bytes()),
+            Entry::Scene(scene) => mesh_bytes(&scene.mesh).saturating_add(scene.picking.bytes()),
             Entry::Solves(_) | Entry::Touches(_) | Entry::Boolean(Err(_)) => 0,
         };
         data.saturating_add(OVERHEAD)
@@ -382,48 +388,48 @@ impl Cache {
         }
     }
 
-    /// A mesh, or `make`'s error, which isn't kept.
+    /// A solid drawn, or `make`'s error, which isn't kept.
     pub(crate) fn mesh<E>(
         &mut self,
         key: Key,
-        make: impl FnOnce() -> Result<RenderMesh, E>,
-    ) -> Result<Arc<RenderMesh>, E> {
+        make: impl FnOnce() -> Result<Drawn, E>,
+    ) -> Result<Arc<Drawn>, E> {
         match self.find(key) {
-            Some(Entry::Mesh(mesh)) => Ok(mesh),
+            Some(Entry::Drawn(drawn)) => Ok(drawn),
             Some(_) => unreachable!("keys of different kinds differ"),
             None => {
                 self.misses += 1;
-                let mesh = Arc::new(make()?);
-                self.insert(key, Entry::Mesh(Arc::clone(&mesh)));
-                Ok(mesh)
+                let drawn = Arc::new(make()?);
+                self.insert(key, Entry::Drawn(Arc::clone(&drawn)));
+                Ok(drawn)
             }
         }
     }
 
-    /// The model's mesh filed under the scene key `key`, or `join`'s, or
-    /// its error, which isn't kept. Unless the answer is a draft's
+    /// The model's mesh and picking tables filed under the scene key
+    /// `key`, or `join`'s, or its error, which isn't kept. Unless the answer is a draft's
     /// (`drafted`), its scene becomes the committed one, which is never
     /// evicted. Not counted in [`Cache::counts`].
     pub(crate) fn scene<E>(
         &mut self,
         key: Key,
         drafted: bool,
-        join: impl FnOnce(&mut Cache) -> Result<RenderMesh, E>,
-    ) -> Result<Arc<RenderMesh>, E> {
-        let mesh = match self.touch(key).map(|slot| &slot.entry) {
-            Some(Entry::Scene(mesh)) => Arc::clone(mesh),
+        join: impl FnOnce(&mut Cache) -> Result<Scene, E>,
+    ) -> Result<Scene, E> {
+        let scene = match self.touch(key).map(|slot| &slot.entry) {
+            Some(Entry::Scene(scene)) => scene.clone(),
             Some(_) => unreachable!("keys of different kinds differ"),
             None => {
-                let mesh = Arc::new(join(self)?);
+                let scene = join(self)?;
                 self.joins += 1;
-                self.insert(key, Entry::Scene(Arc::clone(&mesh)));
-                mesh
+                self.insert(key, Entry::Scene(scene.clone()));
+                scene
             }
         };
         if !drafted {
             self.committed = Some(key);
         }
-        Ok(mesh)
+        Ok(scene)
     }
 
     /// How many results were found filed, and how many were worked out,

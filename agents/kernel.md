@@ -1744,6 +1744,13 @@ tessellation too).
   its sides; a blend's or a revolve's pieces will draw as one face too.
   Flush joins draw no line where the two pieces of a plane or cylinder
   meet, since `Mesh::merge_faces` gave them one key ("Structure").
+- **Picking.** `Solid::tessellate_picking(display, &topology)` draws
+  the same mesh and says which region of the solid's `Topology` each
+  triangle draws (a patch's triangles follow it, in order) and which
+  chain each edge draws (`kernel::Picking`). Chains run between regions
+  of different keys, so all their edges are feature edges; a feature
+  edge on no chain (a crease inside one region, where the normals split
+  but no other face begins) is `Picking::NONE`.
 - **Limits.** Triangle, vertex and feature-edge counts are worked out
   from the segment counts before any point inside a patch is evaluated,
   and more than `RenderMesh::MAX_*` fails with `MeshError::TooLarge`.
@@ -1782,7 +1789,13 @@ sizes) are watertight: every triangle side is met by one running the other
 way between the same positions, to the bit; edge counts meet the chord and
 turn by dense sampling and one fewer wouldn't; the strip joins any two
 counts; results are the same at 1 and 8 threads; far positions are
-refused.
+refused. Picking: a box's 12 triangles name its 6 regions two each and its
+12 edges its 12 chains; a cylinder's quarter walls are one region and its
+rims two closed chains; two flush boxes joined are 6 regions and 12
+chains, the top's triangles of both boxes' faces one region; a flat
+torus's creases are on no chain; every triangle's corners lie on its
+region's form and every edge's ends on both of its chain's regions';
+the same at 1 and 8 threads.
 
 ## Profiles and extrude (`src/profile.rs`, `src/extrude.rs`, `src/extrude/`)
 
@@ -5071,9 +5084,12 @@ Vec<(BodyId, Aabb)>` (each body with a solid, shown or not, from
 visible bodies' solids at `Display::new(&document.tolerance())`, joined
 by `RenderMesh::append` into an `Arc<RenderMesh>`; a mesh past
 `RenderMesh`'s limits fails the generation with the `MeshError` (and isn't
-kept). The joined mesh is kept in the cache under a scene key (`"scene"`,
-then each shown body's mesh key in order, which holds the tolerance, then
-the count), as one more kind of entry under the same budget, except that
+kept). Each body is drawn with its picking tables (`Drawn`, made by
+`Solid::tessellate_picking` with the body's `Topology`; see "The
+document mesh" in `agents/viewport.md`), and the answer's `picking` is
+the shown bodies' joined. The joined mesh and tables are kept in the
+cache under a scene key (`"scene"`, then each shown body's id and mesh
+key in order, which holds the tolerance, then the count), as one more kind of entry under the same budget, except that
 the scene the last answer without a draft used (a failing draft's answer
 is one) is never evicted either, so the committed model's scene survives
 any number of draft revisions, even when a revision's scene is an older
@@ -5090,7 +5106,9 @@ mesh would hit again, so it is logged once. On the web the mesh still crosses th
 On the web the reply's head
 carries `draft`, `failed`, `touched`, `merged` and the boxes as corner
 arrays, checked finite and in order on receipt (`wire::Error::Bounds`);
-`MAX_HEAD_BYTES` is 64 MiB. The draft's and each feature's touched bodies
+`MAX_HEAD_BYTES` is 256 MiB (the head carries the picking tables' faces
+and chains too; a model whose head would be larger is answered as
+failed). The draft's and each feature's touched bodies
 cross in the head as marks, unchecked; `merged` is checked to name each
 consumed body once and none as a holder (`wire::Error::Merged`), and is
 otherwise display only. Either failing answers the generation with

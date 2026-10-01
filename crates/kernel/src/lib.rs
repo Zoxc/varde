@@ -58,7 +58,7 @@ pub use profile::{Loop, MAX_PROFILE_SEGMENTS, Profile, ProfileError, Segment};
 pub use render_lines::{LinesError, LinesPart, RenderLines};
 pub use render_mesh::{MeshError, MeshPart, RenderMesh};
 pub use solid::Solid;
-pub use tessellate::Display;
+pub use tessellate::{Display, Picking};
 pub use tolerance::Tolerance;
 pub use topology::Topology;
 

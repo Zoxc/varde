@@ -5,8 +5,8 @@ use crate::mesh::Mesh;
 use crate::par::par_map;
 use crate::patch::{Bounds3, Patch};
 use crate::quadrature::triangle_rule;
-use crate::tessellate::{Display, tessellate};
-use crate::{Aabb, KernelError, MeshError, RenderMesh, Tolerance};
+use crate::tessellate::{Display, Picking, tessellate, tessellate_picking};
+use crate::{Aabb, KernelError, MeshError, RenderMesh, Tolerance, Topology};
 
 /// Units of work per patch whose volume [`Mesh::check`] integrates to
 /// tell which way a shell faces (about 17 µs a patch on one thread, the
@@ -160,6 +160,17 @@ impl Solid {
     /// [`RenderMesh::MAX_POSITION`].
     pub fn tessellate(&self, display: &Display) -> Result<RenderMesh, MeshError> {
         tessellate(&self.mesh, display)
+    }
+
+    /// [`Solid::tessellate`], with which region and chain of `topology`
+    /// each triangle and edge of the mesh draws, for picking. `topology`
+    /// must be this solid's ([`Solid::topology`]).
+    pub fn tessellate_picking(
+        &self,
+        display: &Display,
+        topology: &Topology,
+    ) -> Result<(RenderMesh, Picking), MeshError> {
+        tessellate_picking(&self.mesh, display, topology)
     }
 }
 

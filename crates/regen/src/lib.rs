@@ -21,6 +21,7 @@ mod cache;
 mod history;
 mod message;
 mod newest;
+mod picking;
 mod profile;
 #[cfg(not(target_arch = "wasm32"))]
 mod thread;
@@ -70,9 +71,11 @@ use varde_sketch::{Budget, Goal};
 
 pub use cache::Cache;
 pub use history::{BodySolid, Evaluation, evaluate, note_merge};
+pub use picking::{PickChain, PickFace, Picking, PickingError, Summary};
 pub use profile::{ProfileError, profile};
 
 use cache::Keyer;
+use picking::{Drawn, Scene};
 
 /// Carries [`Request`]s to a lane without waiting for them to be handled;
 /// tests stand in for one with their own and answer with [`handle`].
@@ -192,6 +195,9 @@ pub enum Response {
         /// How the request's draft went, if it had one.
         draft: Option<Drafted>,
         mesh: Arc<RenderMesh>,
+        /// Which face and edge each triangle and edge of `mesh` draws,
+        /// and the faces' and edges' tables, see [`Picking`].
+        picking: Arc<Picking>,
         /// The visible sketches' curves, see [`flatten_sketches`].
         sketches: Arc<RenderLines>,
         /// The sketches that don't solve, see [`unsolved`], in the
@@ -255,7 +261,8 @@ impl Regenerator {
                         generation,
                         exclude,
                         draft: model.draft,
-                        mesh: model.mesh,
+                        mesh: model.scene.mesh,
+                        picking: model.scene.picking,
                         sketches: Arc::new(model.sketches),
                         unsolved: model.unsolved,
                         failed: model.failed,
@@ -335,7 +342,7 @@ impl Regenerator {
         // Only a draft that worked is drawn: one that failed is answered
         // with the committed model.
         let drafted = draft.as_ref().is_some_and(|draft| draft.error.is_none());
-        let mesh = tessellate_scene(document, &evaluation, drafted, &mut self.cache)
+        let scene = tessellate_scene(document, &evaluation, drafted, &mut self.cache)
             .map_err(|error| error.to_string())?;
         let sketches = flatten_sketches(document, exclude).map_err(|error| error.to_string())?;
         let bodies = evaluation
@@ -345,7 +352,7 @@ impl Regenerator {
             .collect();
         Ok(Model {
             draft,
-            mesh,
+            scene,
             sketches,
             unsolved: unsolved(document, &mut self.cache),
             failed: evaluation.failed,
@@ -364,7 +371,7 @@ impl Regenerator {
 /// A [`Response::Regenerated`]'s model.
 struct Model {
     draft: Option<Drafted>,
-    mesh: Arc<RenderMesh>,
+    scene: Scene,
     sketches: RenderLines,
     unsolved: Vec<FeatureId>,
     failed: Vec<(FeatureId, String)>,
@@ -417,27 +424,37 @@ pub fn handle(request: Request) -> Response {
 /// `evaluation` into a single mesh in world space, within the [`Display`]
 /// of the document's tolerance ([`Document::tolerance`]), each drawn once
 /// and kept in `cache`. The joined mesh is kept too, filed by the shown
-/// bodies' mesh keys in order (which hold the tolerance): a scene that
-/// didn't change gives the same `Arc` without joining again (see
-/// [`Cache`]). Fails if it would have more vertices, indices or edges
-/// than a [`RenderMesh`] may hold, which a file with enough bodies in it
-/// can ask for.
+/// bodies and their mesh keys in order (which hold the tolerance): a
+/// scene that didn't change gives the same `Arc` without joining again
+/// (see [`Cache`]). Fails if it would have more vertices, indices or
+/// edges than a [`RenderMesh`] may hold, which a file with enough bodies
+/// in it can ask for.
 pub fn tessellate(
     document: &Document,
     evaluation: &Evaluation,
     cache: &mut Cache,
 ) -> Result<Arc<RenderMesh>, MeshError> {
-    tessellate_scene(document, evaluation, false, cache)
+    tessellate_scene(document, evaluation, false, cache).map(|scene| scene.mesh)
 }
 
-/// [`tessellate`], for a draft's answer if `drafted`, whose scene doesn't
-/// become the committed one the cache never evicts (see [`Cache`]).
+/// [`tessellate`], with the scene's [`Picking`] tables.
+pub fn tessellate_picking(
+    document: &Document,
+    evaluation: &Evaluation,
+    cache: &mut Cache,
+) -> Result<(Arc<RenderMesh>, Arc<Picking>), MeshError> {
+    tessellate_scene(document, evaluation, false, cache).map(|scene| (scene.mesh, scene.picking))
+}
+
+/// [`tessellate_picking`], for a draft's answer if `drafted`, whose scene
+/// doesn't become the committed one the cache never evicts (see
+/// [`Cache`]).
 fn tessellate_scene(
     document: &Document,
     evaluation: &Evaluation,
     drafted: bool,
     cache: &mut Cache,
-) -> Result<Arc<RenderMesh>, MeshError> {
+) -> Result<Scene, MeshError> {
     let fit = document.tolerance().fit().to_bits();
     let shown: Vec<_> = evaluation
         .bodies
@@ -445,21 +462,27 @@ fn tessellate_scene(
         .filter(|made| document.body(made.body).is_some_and(|body| body.visible))
         .map(|made| (made, Keyer::new("mesh").key(made.key).number(fit).finish()))
         .collect();
+    // The bodies too: the picking tables name them.
     let mut scene = Keyer::new("scene");
-    for (_, key) in &shown {
-        scene.key(*key);
+    for (made, key) in &shown {
+        scene.value(&made.body).key(*key);
     }
-    let scene = scene.number(shown.len() as u64).finish();
+    let filed = scene.number(shown.len() as u64).finish();
     let mut found = true;
-    let mesh = cache.scene(scene, drafted, |cache| {
+    let scene = cache.scene(filed, drafted, |cache| {
         found = false;
         let display = Display::new(&document.tolerance());
         let mut mesh = RenderMesh::default();
+        let mut picking = Picking::default();
         for (made, key) in &shown {
-            let drawn = cache.mesh(*key, || made.solid.tessellate(&display))?;
-            mesh.append(&drawn)?;
+            let drawn = cache.mesh(*key, || Drawn::new(&made.solid, &display))?;
+            mesh.append(&drawn.mesh)?;
+            picking.append(made.body, &drawn)?;
         }
-        Ok(mesh)
+        Ok(Scene {
+            mesh: Arc::new(mesh),
+            picking: Arc::new(picking),
+        })
     })?;
     if found {
         // The bodies' meshes stay for the next scene that changes one.
@@ -467,7 +490,7 @@ fn tessellate_scene(
             cache.keep(*key);
         }
     }
-    Ok(mesh)
+    Ok(scene)
 }
 
 /// The non-construction curves of the visible sketches of `document`,

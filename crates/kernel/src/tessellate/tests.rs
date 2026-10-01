@@ -437,3 +437,158 @@ fn a_tiny_solid_far_out_opens_no_cracks() {
         assert!((Vec3::from(*n).length() - 1.0).abs() < 1e-6);
     }
 }
+
+/// Checks `picking` against `solid`'s `topology` and its drawing `drawn`:
+/// one entry per triangle and per edge; every triangle's corners on its
+/// region's surface (its first triangle's face's form: a region's faces
+/// share one surface) and every edge's ends on both of its chain's
+/// regions'; every region and chain drawn. Positions are `f32`, so within
+/// `within`.
+fn assert_picks(
+    solid: &Solid,
+    topology: &Topology,
+    drawn: &RenderMesh,
+    picking: &Picking,
+    within: f64,
+) {
+    let mesh = solid.mesh();
+    let form = |r: u32| {
+        let t = topology.regions()[r as usize].tris[0];
+        mesh.faces()[mesh.tris()[t as usize].face as usize].form
+    };
+    let at = |v: u32| Vec3::from(drawn.positions()[v as usize]).as_dvec3();
+    assert_eq!(picking.triangles.len(), drawn.triangle_count());
+    assert_eq!(picking.edges.len(), drawn.edges().len());
+    for (tri, &r) in drawn.indices().chunks(3).zip(&picking.triangles) {
+        assert!((r as usize) < topology.regions().len());
+        for &v in tri {
+            let d = form(r).distance(at(v));
+            assert!(d <= within, "region {r}: {:?} is {d} off", at(v));
+        }
+    }
+    for (edge, &c) in drawn.edges().iter().zip(&picking.edges) {
+        if c == Picking::NONE {
+            continue;
+        }
+        for r in topology.chains()[c as usize].regions {
+            for &v in edge {
+                let d = form(r).distance(at(v));
+                assert!(d <= within, "chain {c}, region {r}: {:?} is {d} off", at(v));
+            }
+        }
+    }
+    let mut regions = picking.triangles.clone();
+    regions.sort_unstable();
+    regions.dedup();
+    assert_eq!(regions.len(), topology.regions().len());
+    let mut chains: Vec<u32> = (picking.edges.iter().copied())
+        .filter(|&c| c != Picking::NONE)
+        .collect();
+    chains.sort_unstable();
+    chains.dedup();
+    assert_eq!(chains.len(), topology.chains().len());
+}
+
+#[test]
+fn a_box_s_triangles_and_edges_name_its_faces_and_edges() {
+    let solid = Solid::cuboid(DVec3::ZERO, DVec3::new(1.0, 2.0, 3.0), 1, &TOL).unwrap();
+    let topology = solid.topology();
+    let (drawn, picking) = solid
+        .tessellate_picking(&Display::default(), &topology)
+        .unwrap();
+    // The same mesh as without picking.
+    assert_eq!(drawn, solid.tessellate(&Display::default()).unwrap());
+    assert_picks(&solid, &topology, &drawn, &picking, 1e-6);
+    // Two triangles a face, one segment an edge.
+    for r in 0..6 {
+        assert_eq!(picking.triangles.iter().filter(|&&p| p == r).count(), 2);
+    }
+    let mut edges = picking.edges.clone();
+    edges.sort_unstable();
+    assert_eq!(edges, (0..12).collect::<Vec<u32>>());
+}
+
+#[test]
+fn a_cylinder_s_quarter_walls_are_one_face_and_its_rims_two_edges() {
+    let solid = Solid::cylinder(DVec3::ZERO, 2.0, 1.0, 1, &TOL).unwrap();
+    let topology = solid.topology();
+    let (drawn, picking) = solid
+        .tessellate_picking(&Display::default(), &topology)
+        .unwrap();
+    assert_picks(&solid, &topology, &drawn, &picking, 1e-5);
+    assert_eq!(topology.regions().len(), 3);
+    assert_eq!(topology.chains().len(), 2);
+    assert!(topology.chains().iter().all(|c| c.closed));
+    // Each rim is drawn in many segments, all of its one chain.
+    for c in 0..2 {
+        assert!(picking.edges.iter().filter(|&&p| p == c).count() > 8);
+    }
+}
+
+#[test]
+fn flush_faces_merged_under_one_name_are_one_face() {
+    // Two boxes of different features side by side: their tops, bottoms,
+    // fronts and backs meet flush and take one name each, so the union
+    // draws and picks as one box of six faces and twelve edges.
+    let tol = &TOL;
+    let left = Solid::cuboid(DVec3::ZERO, DVec3::new(1.0, 1.0, 1.0), 1, tol).unwrap();
+    let right =
+        Solid::cuboid(DVec3::new(1.0, 0.0, 0.0), DVec3::new(2.0, 1.0, 1.0), 2, tol).unwrap();
+    let solid = crate::boolean(&left, &right, crate::Op::Union, tol, &Budget::DEFAULT).unwrap();
+    let topology = solid.topology();
+    let (drawn, picking) = solid
+        .tessellate_picking(&Display::default(), &topology)
+        .unwrap();
+    assert_picks(&solid, &topology, &drawn, &picking, 1e-6);
+    assert_eq!(topology.regions().len(), 6);
+    assert_eq!(topology.chains().len(), 12);
+    // The top has pieces of both boxes' faces, all one region.
+    let mesh = solid.mesh();
+    let top: Vec<u32> = (drawn.indices().chunks(3).zip(&picking.triangles))
+        .filter(|(tri, _)| tri.iter().all(|&v| drawn.positions()[v as usize][2] == 1.0))
+        .map(|(_, &r)| r)
+        .collect();
+    assert!(top.len() >= 4);
+    assert!(top.iter().all(|&r| r == top[0]));
+    let faces: std::collections::BTreeSet<u32> = (topology.regions()[top[0] as usize].tris)
+        .iter()
+        .map(|&t| mesh.tris()[t as usize].face)
+        .collect();
+    assert!(faces.len() >= 2, "the top's region joins both boxes' faces");
+}
+
+#[test]
+fn a_crease_inside_one_face_is_on_no_chain() {
+    // A torus of flat triangles, one face with no claim: its creases are
+    // drawn but border no other face.
+    let solid = Solid::new(torus(24, 12, 3.0, 1.0), &TOL).unwrap();
+    let topology = solid.topology();
+    let (drawn, picking) = solid
+        .tessellate_picking(&Display::default(), &topology)
+        .unwrap();
+    assert_picks(&solid, &topology, &drawn, &picking, 0.0);
+    assert!(!picking.edges.is_empty());
+    assert!(picking.edges.iter().all(|&c| c == Picking::NONE));
+    assert!(picking.triangles.iter().all(|&r| r == 0));
+}
+
+#[test]
+fn picking_is_deterministic() {
+    let left = Solid::cuboid(DVec3::ZERO, DVec3::new(10.0, 4.0, 2.0), 1, &TOL).unwrap();
+    let hole = Solid::cylinder(DVec3::new(5.0, 2.0, -1.0), 1.0, 4.0, 2, &TOL).unwrap();
+    let solid =
+        crate::boolean(&left, &hole, crate::Op::Difference, &TOL, &Budget::DEFAULT).unwrap();
+    let (_, picking) = assert_deterministic(|| {
+        let topology = solid.topology();
+        solid
+            .tessellate_picking(&Display::default(), &topology)
+            .unwrap()
+    });
+    assert_eq!(
+        picking.triangles.len(),
+        solid
+            .tessellate(&Display::default())
+            .unwrap()
+            .triangle_count()
+    );
+}
