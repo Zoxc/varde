@@ -19,9 +19,14 @@ use crate::test_rng::Rng;
 /// octahedra, of radius `radius` and `radius - thickness`, the inner one
 /// facing in. Their hulls overlap until each side is split finely enough.
 fn shell(radius: f64, thickness: f64) -> Mesh {
+    shell_at(DVec3::ZERO, radius, thickness)
+}
+
+/// [`shell`] centred on `center`.
+fn shell_at(center: DVec3, radius: f64, thickness: f64) -> Mesh {
     let mut builder = MeshBuilder::new();
-    add_round_octahedron(&mut builder, DVec3::ZERO, radius, false);
-    add_round_octahedron(&mut builder, DVec3::ZERO, radius - thickness, true);
+    add_round_octahedron(&mut builder, center, radius, false);
+    add_round_octahedron(&mut builder, center, radius - thickness, true);
     builder.build().unwrap()
 }
 
@@ -50,6 +55,17 @@ fn cylinder_and_box(gap: f64) -> Mesh {
     let corner = DVec3::new(c, s, 0.0) * (1.0 + gap) + DVec3::Z * 0.5;
     let cuboid = Mesh::cuboid(corner, DVec3::splat(0.5), 2, &TOL).unwrap();
     both(&cylinder, &cuboid)
+}
+
+/// Two cylinders of `radius`, as tall as they are wide, side by side with
+/// `gap` between their walls, the second at `angle` degrees round from
+/// `+x`.
+fn cylinders(radius: f64, angle: f64, gap: f64, tol: &Tolerance) -> Mesh {
+    let a = Mesh::cylinder(DVec3::ZERO, radius, 2.0 * radius, 1, tol).unwrap();
+    let (s, c) = angle.to_radians().sin_cos();
+    let base = DVec3::new(c, s, 0.0) * (2.0 * radius + gap);
+    let b = Mesh::cylinder(base, radius, 2.0 * radius, 2, tol).unwrap();
+    both(&a, &b)
 }
 
 /// `a` and `b` as one mesh, `b`'s vertices and triangles after `a`'s.
@@ -122,6 +138,80 @@ fn repair_is_the_same_on_any_thread_count() {
     assert!(repaired.is_ok());
     let repaired = assert_deterministic(|| cylinder_and_box(1e-3).repair(&TOL, &Budget::DEFAULT));
     assert!(repaired.is_ok());
+    // Failing on a witness, and the work it took.
+    let res = TOL.resolution();
+    for mesh in [
+        shell(10.0, 0.5 * res),
+        cylinders(1.0, 30.0, 0.5 * res, &TOL),
+    ] {
+        let (result, _) = assert_deterministic(|| repair_counting(mesh.clone(), &TOL));
+        assert!(matches!(
+            result,
+            Err(KernelError::Invalid(CheckError::Hull(..)))
+        ));
+    }
+}
+
+#[test]
+fn surfaces_just_over_the_resolution_apart_pass() {
+    // Pieces flat within the resolution of a curved surface still have
+    // hulls up to about half a resolution off it. Repair used to stop
+    // splitting such pairs and refuse surfaces up to about 1.3
+    // resolutions apart; now only those within about 1.03.
+    let res = TOL.resolution();
+    for (mesh, most) in [
+        (cylinder_and_box(1.05 * res), 300_000),
+        (cylinders(1.0, 30.0, 1.1 * res, &TOL), 2_000_000),
+    ] {
+        let (result, work) = repair_counting(mesh, &TOL);
+        let repaired = result.unwrap();
+        assert_eq!(repaired.check(&TOL), Ok(()));
+        assert!(work < most, "{work}");
+    }
+}
+
+#[test]
+fn touching_round_surfaces_fail_at_once() {
+    // Points of the two surfaces found within the resolution show that
+    // no split can mend the pair, so repair fails in the first round. It
+    // used to split until the pieces at the touch were flat (67k to 670k
+    // units of work here).
+    let res = TOL.resolution();
+    for mesh in [
+        cylinders(1.0, 30.0, 0.5 * res, &TOL),
+        cylinders(1.0, 17.0, 0.9 * res, &TOL),
+        cylinder_and_box(0.9 * res),
+    ] {
+        let (result, work) = repair_counting(mesh, &TOL);
+        assert!(
+            matches!(result, Err(KernelError::Invalid(CheckError::Hull(..)))),
+            "{result:?}"
+        );
+        assert!(work < 1000, "{work}");
+    }
+}
+
+#[test]
+fn a_shell_thinner_than_the_resolution_fails_at_once() {
+    // Its sides are within the resolution over their whole area, and used
+    // to be split until the budget ran out (`TooComplex`, seconds). At
+    // the origin and far from it.
+    let res = TOL.resolution();
+    for (offset, thickness) in [(0.0, 0.5), (0.0, 0.99), (1e5, 0.5)] {
+        let mesh = shell_at(DVec3::splat(offset), 10.0, thickness * res);
+        let (result, work) = repair_counting(mesh, &TOL);
+        assert!(
+            matches!(result, Err(KernelError::Invalid(CheckError::Hull(..)))),
+            "{offset} {thickness}: {result:?}"
+        );
+        assert!(work < 1000, "{work}");
+    }
+    // A valid shell a few resolutions thick is still split until it fits
+    // the budget or runs out of it.
+    assert_eq!(
+        shell(10.0, 3.0 * res).repair(&TOL, &Budget::new(100_000)),
+        Err(KernelError::TooComplex)
+    );
 }
 
 #[test]
@@ -322,18 +412,23 @@ fn what_splitting_cant_mend_fails() {
     assert_eq!(result, Err(KernelError::Invalid(CheckError::Hull(2, 12))));
     assert!(work < 1000, "{work}");
 
-    // Round surfaces that touch are split until the pieces at the touch
-    // are flat within the resolution, then fail the same way.
+    // Round surfaces that touch fail as soon as points of them are found
+    // within the resolution, small ones too: they used to be split until
+    // the pieces at the touch were flat, and small ones then reached the
+    // smallest piece repair splits (`TooComplex`).
     let (result, work) = repair_counting(two_spheres(1.0, gap), &TOL);
-    assert!(
-        matches!(result, Err(KernelError::Invalid(CheckError::Hull(..)))),
-        "{result:?}"
-    );
-    assert!(work < 100_000, "{work}");
-    // Small ones reach the smallest piece repair splits first.
+    assert_eq!(result, Err(KernelError::Invalid(CheckError::Hull(0, 9))));
+    assert!(work < 1000, "{work}");
     let coarse = Tolerance::new(Tolerance::MAX_FIT).unwrap();
     let spheres = two_spheres(200.0 * coarse.resolution(), 0.5 * coarse.resolution());
     let (result, work) = repair_counting(spheres, &coarse);
+    assert_eq!(result, Err(KernelError::Invalid(CheckError::Hull(0, 9))));
+    assert!(work < 1000, "{work}");
+    // Small surfaces apart, but by too little for pieces as large as the
+    // smallest repair splits, still reach it.
+    let small = 200.0 * coarse.resolution();
+    let gap = 1.5 * coarse.resolution();
+    let (result, work) = repair_counting(cylinders(small, 30.0, gap, &coarse), &coarse);
     assert_eq!(result, Err(KernelError::TooComplex));
     assert!(work < 100_000, "{work}");
 
@@ -342,6 +437,71 @@ fn what_splitting_cant_mend_fails() {
         shell(10.0, 0.05).repair(&TOL, &Budget::new(1000)),
         Err(KernelError::TooComplex)
     );
+}
+
+#[test]
+fn a_witness_needs_the_leaves_apart_and_counts_planar_splits() {
+    // Pieces 0 and 1 are the halves of one leaf, piece 2 shares no vertex
+    // with piece 0 but one with its leaf, piece 3 none with anything.
+    let res = TOL.resolution();
+    let tri = |corners: [u32; 3], leaf: u32, face: u32, z: [f64; 3]| {
+        let p = [0, 1, 2].map(|i| DVec3::new(corners[i] as f64, (corners[i] % 3) as f64, z[i]));
+        Piece {
+            corners,
+            patch: crate::patch::Patch::flat(p).unwrap(),
+            face,
+            leaf,
+            origin: leaf,
+            changed: true,
+        }
+    };
+    let faces = [
+        face(0, Surface::Free),
+        face(
+            1,
+            Surface::Plane {
+                n: DVec3::Z * 1e-3,
+                d: 0.0,
+            },
+        ),
+        face(
+            2,
+            Surface::Plane {
+                n: DVec3::ZERO,
+                d: 0.0,
+            },
+        ),
+    ];
+    let flat = [0.0; 3];
+    let mut pieces = vec![
+        tri([0, 4, 2], 0, 0, flat),
+        tri([4, 1, 2], 0, 0, flat),
+        tri([1, 5, 6], 1, 0, flat),
+        tri([7, 8, 9], 2, 0, flat),
+    ];
+    assert_eq!(witness_limit(&pieces, &faces, [0, 2], res), None);
+    assert_eq!(witness_limit(&pieces, &faces, [2, 0], res), None);
+    let limit = witness_limit(&pieces, &faces, [0, 3], res).unwrap();
+    assert!(limit < res && limit > 0.99 * res, "{limit}");
+    // On a plane, the leaf's control points a third of a resolution apart
+    // along its normal (in the sibling): that much less. A plane that
+    // isn't one leaves nothing.
+    pieces[3].face = 1;
+    let limit = witness_limit(&pieces, &faces, [0, 3], res).unwrap();
+    assert!(limit > 0.99 * res, "{limit}");
+    pieces[0].face = 1;
+    pieces[1] = tri([4, 1, 2], 0, 1, [0.0, res / 3.0, 0.0]);
+    let limit = witness_limit(&pieces, &faces, [0, 3], res).unwrap();
+    assert!(limit < 0.67 * res && limit > 0.66 * res, "{limit}");
+    pieces[3].face = 2;
+    assert_eq!(witness_limit(&pieces, &faces, [0, 3], res), None);
+    // A planar piece that may fold, whose straight pieces needn't cover
+    // it, leaves nothing either.
+    pieces[3].face = 1;
+    assert!(witness_limit(&pieces, &faces, [0, 3], res).is_some());
+    pieces[3].patch.c[0] += DVec3::Y * 10.0;
+    assert_eq!(pieces[3].patch.fold_direction(), None);
+    assert_eq!(witness_limit(&pieces, &faces, [0, 3], res), None);
 }
 
 #[test]

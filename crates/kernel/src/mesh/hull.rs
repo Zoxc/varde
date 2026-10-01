@@ -131,6 +131,12 @@ fn across_line(p: DVec3, q: DVec3) -> Option<(DVec3, impl Fn(DVec3) -> DVec3)> {
 /// Whether every edge's control point is within `margin` of the line
 /// through its ends: the patch is then within `margin` of its flat
 /// triangle, and the hull rules on it are about the triangle itself.
+///
+/// Its hull is not the triangle, though: on a curved surface a piece flat
+/// within the resolution still has a hull up to about half of it off the
+/// surface. So repair stops splitting a failing pair of non-neighbours
+/// only once both are flat within a sixteenth of the resolution
+/// ([`FLAT_STOP`](super::repair::FLAT_STOP)).
 pub(crate) fn flat(patch: &Patch, margin: f64) -> bool {
     (0..3).all(|i| straight(patch.p[i], patch.c[i], patch.p[(i + 1) % 3], margin))
 }

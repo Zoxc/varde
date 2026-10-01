@@ -431,6 +431,25 @@ fn refusals() {
 }
 
 #[test]
+fn a_void_thinner_than_the_resolution_fails_at_once() {
+    // A blind void in a cylinder, its wall half a resolution thick: the
+    // result's round walls are within the resolution of each other over
+    // an area. Repair used to split them until the whole budget was gone
+    // (`TooComplex`, about a second); points of the two found within the
+    // resolution now refuse it at once, well inside a small budget.
+    let half = 0.5 * TOL.resolution();
+    for r in [5.0, 1.0] {
+        let a = Solid::cylinder(DVec3::ZERO, r, 10.0, 1, &TOL).unwrap();
+        let b = Solid::cylinder(DVec3::Z * 2.0, r - half, 6.0, 2, &TOL).unwrap();
+        let result = boolean(&a, &b, Op::Difference, &TOL, &Budget::new(100_000));
+        assert!(
+            matches!(result, Err(KernelError::Invalid(CheckError::Hull(..)))),
+            "{r}: {result:?}"
+        );
+    }
+}
+
+#[test]
 fn chained_results_feed_on() {
     // Each result is the next one's input: steps joined flush, a hole
     // through them all, then half cut away.

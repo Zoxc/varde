@@ -742,14 +742,58 @@ so the same rule. What fails is split:
   directions there, and repair fails at once with `Invalid(Fold(t))`, `t`
   the input triangle the piece came from.
 - A failing pair: the leaves of both, except for **flat** pieces, whose
-  edges are all straight within the resolution (`hull::flat`), so that
-  each is its own hull. If both are flat, repair fails at once with
-  `Invalid` and the pair's error, naming the input triangles the pieces
-  came from: the rules on flat triangles are exact, and their pieces keep
-  the angles at shared corners and edges and the gaps, only smaller next
-  to the margin, so no split mends them. If one is, and they are
-  non-neighbours, only the other is split: splitting a flat piece brings
-  no piece of it further away.
+  edges are all straight within a threshold (`hull::flat`), so that each
+  is its own hull up to it. Neighbours (the edge and vertex rules) take
+  the resolution as the threshold: if both are flat, repair fails at once
+  with `Invalid` and the pair's error, naming the input triangles the
+  pieces came from, as the rules on flat triangles are exact and their
+  pieces keep the angles at shared corners and edges. Splitting halves
+  their clearances while it quarters a flat piece's overshoot, so going
+  deeper gains nothing. Non-neighbours (the hull rule) take
+  `FLAT_STOP` = 1/16 of it: a piece flat within the resolution of a
+  curved surface still has a hull up to about half a resolution off the
+  surface, so stopping there refused surfaces up to about 1.3
+  resolutions apart that a couple more splits pass. Both flat within a
+  sixteenth fails at once the same way; if one is, only the other is
+  split, as splitting a flat piece brings no piece of it further away.
+- A **witness** for a failing non-neighbour pair: points of the two
+  surfaces closer than the resolution (`repair/witness.rs`). Then no
+  split mends the pair and repair fails at once with its `Invalid(Hull)`.
+  The argument: the pieces refinement makes of a leaf cover it (red and
+  green splits are exact), so every later mesh has a piece holding the
+  first point, inside the first piece's leaf and with the point in its
+  hull, and likewise for the second. If the two leaves share no vertex
+  (the pieces are conforming, so leaves that touch share a vertex of
+  their pieces: the halves of a green leaf count all four of its
+  vertices), those later pieces share none either, so they are
+  non-neighbours whose hulls are closer than the resolution at any
+  depth. A leaf on a `Plane` face is split with straight inner edges,
+  which cover it seen along the plane's normal and keep their control
+  points in the hull of its pieces, so a point and the one over it in a
+  later piece differ by at most that hull's thickness along the normal
+  (`thickness`, the piece and its other half): it comes off the limit,
+  as does rounding, `128·ε` times the largest coordinate of the two
+  pieces (`witness::ROUNDING`; a few ulps a split over
+  `MAX_REFINE_DEPTH` splits, evaluation, and GJK). A witness only ever
+  adds an error where no `Ok` was possible; a search that misses only
+  sends the pair back to splitting.
+  The search (`surfaces_within`): the closest pair among the 15 face-tag
+  samples of each piece, then damped Gauss–Newton (Levenberg–Marquardt)
+  on the four barycentric coordinates, kept in the triangles, at most 30
+  steps, each stretched by doubling up to 64 times while that comes
+  closer (at a tangential touch the plain steps fall short by a steady
+  factor, about a third). Pure `f64` with `+ − × ÷`, the same bits on
+  any thread count and on wasm. It runs once a round for each pair of
+  input triangles with failing non-neighbour pieces not both flat: on
+  the pair whose corners' centroids are nearest (the first of equals),
+  and only on pairs before the first failure that can't be mended
+  (which names the error anyway). The choice is made and charged
+  (`WITNESS_WORK` = 8 units a search) in a sequential pass. Searching
+  every such pair instead would charge the 262 144-piece shell below
+  110 504 searches, more than its budget has left (it uses 4 189 136
+  units of 4 194 304): it would run out.
+  Of the pairs, the first in pair order with a failure that can't be
+  mended or a witness names the error.
 
 The rounds end when nothing fails, or with `TooComplex` at
 `MAX_REFINE_DEPTH`, at pieces less than `MIN_SPLIT` (64) resolutions across,
@@ -758,23 +802,43 @@ keep the hull margin from their own neighbours, and splitting them only
 makes more that fail (two tetrahedra touching corner to corner went from 6
 failing pieces a round to thousands at about 8 resolutions); a surface that
 keeps clear of itself passes long before, since a patch of size `s` on a
-curve of radius `R` sags by about `s²/8R`. Round surfaces that touch stop
-sooner, once the pieces at the touch are flat (at `s ≈ √(8R·resolution)`,
-above `MIN_SPLIT` for `R` over about 500 resolutions). Touching flat faces
-fail at once: two boxes face to face, or two cylinders side by side or end
-to end, used to be split to the end of the budget (12 to 27 s) and now fail
-in 2 to 80 ms. Round surfaces overlapping over an area within the
-resolution (a shell thinner than it) still run out the budget, about 15 s.
+curve of radius `R` sags by about `s²/8R`. Touching flat faces fail at
+once: two boxes face to face, or two cylinders side by side or end to end,
+used to be split to the end of the budget (12 to 27 s) and now fail in 2
+to 80 ms. Round surfaces that touch fail on a witness, mostly in the first
+round (measured, release, default tolerance, resolution `m`: two unit
+cylinders side by side at 30° or 17°, 0.5 to 0.99 `m` apart, 570 units of
+work, where splitting until flat took 672k to 764k; a unit cylinder with a
+box corner 0.5 to 0.99 `m` off its wall, 370 against 67k; unit round
+octahedra corner to corner 232 against 6k; small ones at the coarsest
+tolerance 232 against `TooComplex` at `MIN_SPLIT`). A shell thinner than
+the resolution (`shell(10, 0.5 m)` to `0.99 m`) fails after 600 units in
+a few ms, where it ran out the whole budget (`TooComplex`, 1 to 4 s), and
+a blind void with a wall half a resolution thick cut by a boolean in 2 to
+15 ms, where that took about a second. Surfaces just over the resolution
+apart pass from about 1.03 `m` (the box at 1.01 `m`; the cylinders at
+1.05 `m`), where they were refused up to 1.1 to 1.25 `m`; such pairs split
+deeper (the cylinders at 1.05 `m` take 1.2M to 2.7M units, 0.4 to 1.5 s,
+and at 1.01 `m` 2.7M to 3.1M before `Invalid`). Valid shells a few
+resolutions thick still need more pieces than the budget allows
+(`TooComplex`), as before. On the seeded boolean suites the witness and
+`FLAT_STOP` changed no outcome between `Ok` and an error (related 112 of
+120, chains 200 of 240, turned 156 of 160, tangent 72 of 96, coaxial 37
+of 40, bosses 64 of 64, drilled 160 of 160, before and after); only the
+errors' kinds moved: coaxial 2 `EdgeNeighbours` and chains 1 `TooComplex`,
+2 `EdgeNeighbours` and 2 `VertexNeighbours` became `Invalid(Hull)`, and
+the suites took 61.5 s of CPU against 69.4 s.
 In debug builds the result is checked in full, face tags aside: repair
 refuses a wrong `Plane` tag on a patch it splits (see "Refinement"), but
 other tags, and those of patches it doesn't split, are the input's claims,
 which it neither checks nor promises. `Solid::new` checks them.
 
 Work, from the budget: a unit per piece tested for folds, per pair tested,
-per leaf split, and the number of pieces each round (the BVH and the
-pieces). All is counted in sequential passes, so running out doesn't depend
-on the thread count. The fold and pair tests run through `par_map` over
-sorted lists; the splits, the pieces and the BVH are sequential.
+per leaf split, the number of pieces each round (the BVH and the pieces),
+and `WITNESS_WORK` per witness search. All is counted in sequential
+passes, so running out doesn't depend on the thread count. The fold and
+pair tests and the witness searches run through `par_map` over sorted
+lists; the splits, the pieces and the BVH are sequential.
 
 ### Boxes and cylinders (`mesh/primitive.rs`)
 
@@ -819,7 +883,14 @@ release, seven threads, one in brackets): 0.2 thick, 1 024 patches in 4 ms
 pieces and the BVH are sequential, which is why seven threads give about
 2×: of the 0.88 s, splitting takes 0.35 s, and rebuilding the mesh 0.2 s.
 The refiner's and the builder's maps are hashed (`LookupMap`); as
-`BTreeMap`s they made repair half as slow again.
+`BTreeMap`s they made repair half as slow again. That shell's repair
+looks for a witness 224 times over its rounds (one pair per pair of input
+triangles a round), 1 792 units of work; its instruction count (callgrind,
+one thread, both builds with one codegen unit) rose 0.31% with the
+witness, and a passing repair of a 262 144-patch flat torus 0.39% (with
+the default codegen units both read about 1.4%, layout alone). Repair of
+that shell uses 4 190 928 units of the 4 194 304 budget: valid shells
+much finer than it run out.
 
 ### Tests
 
@@ -897,10 +968,29 @@ wall tagged as a wrong cylinder comes through repair (quadric patches are
 split exactly, trusting nothing) and `Solid::new` refuses it, the same at
 1 and 8 threads; a cusp fails at
 once, as do tetrahedra corner to corner and boxes face to face closer than
-the resolution; round octahedra touching fail once the pieces at the touch
-are flat, and small ones once they are too small; a small budget runs out,
-and bad topology and weights are refused; the shell's and the cylinder's
-repairs are the same at 1 and 8 threads.
+the resolution; round octahedra touching, small ones too, cylinders side
+by side at 30° and 17° within the resolution and a cylinder with a box
+corner 0.9 resolutions off fail with `Invalid(Hull)` in under 1 000 units
+of work, as does a shell thinner than the resolution (also moved by
+`1e5`), where small cylinders 1.5 resolutions apart still reach
+`MIN_SPLIT`; the box at 1.05 and the cylinders at 1.1 resolutions pass
+and check; a small budget runs out, and bad topology and weights are
+refused; the shell's and the cylinder's repairs, and failures on a
+witness with their work, are the same at 1 and 8 threads. A witness
+needs the pieces' leaves apart and comes off by a planar leaf's
+thickness (and none for a plane that isn't one). The witness search
+(`repair/witness/tests.rs`): flat triangles half a resolution apart are
+found and 1.01 or 1.5 apart not, at the origin and far from it; the
+cylinders' touch between the samples is found by the steps (the closest
+samples are a thousand resolutions apart), and not at 1.01 or 1.5
+resolutions; round octahedra corner to corner and edge to edge, turned
+and moved within `3e5` (`3e4` at the finest tolerance) and of radius
+`1e-2..1e2`, are found at half the limit repair gives and never at 1.01
+resolutions; degenerate patches (a point, a line) and limits that are
+zero, negative, NaN or infinite give no NaN; the search stays in the
+triangles. A boolean leaving a blind void with a wall half a resolution
+thick (`boolean/tests.rs`) fails with `Invalid(Hull)` within a budget of
+100 000.
 Constructors: 50 random boxes and cylinders (sizes `1e-2..1e3`, moved up to
 `1e5`) pass `check` and lie on their faces within `1e-12`; faces are named
 as an extrude names them; bad parameters are refused, and a box thinner
@@ -3352,6 +3442,7 @@ offered ones' (`tolerance_choices`).
 | `MEND_ROUNDS` (boolean) | 4 | rounds of Steiner points in one face's triangulation |
 | `MAX_WORK` | `1 << 22` | work units in one operation: about two seconds on one thread at most; the heaviest booleans measured take about half of it |
 | `MIN_SPLIT` (repair) | 64 resolutions | the smallest piece repair splits, and the smallest profile segment an extrude halves |
+| `FLAT_STOP` (repair) | 1/16 | how flat, in resolutions, failing non-neighbour pieces must both be for repair to stop splitting them |
 | `MAX_PROFILE_SEGMENTS` | `1 << 16` | segments in a profile |
 | `SIN_MIN` (extrude) | `1e-3` | cusps between segments; the narrowest cap patch corner |
 | `MAX_SPLIT_DEPTH` (extrude) | 24 | how often a profile segment may be halved |
@@ -3424,9 +3515,11 @@ parameter, or a split outside the patch bounds),
   leaf is.
 - **Repair splits both patches of a failing pair**, except a flat
   non-neighbour, and fails at once on a degenerate corner
-  (`Patch::degenerate_corner`, new) and on a failing pair of flat pieces,
-  and on pieces under `MIN_SPLIT` = 64 resolutions as well as at
-  `MAX_REFINE_DEPTH` and the budget.
+  (`Patch::degenerate_corner`, new), on a failing pair of flat pieces
+  (flat within a sixteenth of the resolution for non-neighbours), and on
+  a failing non-neighbour pair whose surfaces it finds within the
+  resolution (a witness), and on pieces under `MIN_SPLIT` = 64
+  resolutions as well as at `MAX_REFINE_DEPTH` and the budget.
 - **`Budget` is a limit and `Work` its counter**: operations take `&Budget`
   as planned and count down a `Work` shared by their steps. `MAX_WORK` is
   `1 << 22` (about 4.2 million units, two seconds on one thread; it was
