@@ -28,15 +28,17 @@
 //!
 //! Everything here is sequential and in index order, so the same mesh
 //! gives the same topology and the same answers on any thread count. The
-//! work is linear in the mesh, as tessellating is, with a cap on the
-//! steps each patch's distance takes.
+//! work is linear in the mesh, as tessellating is (which isn't budgeted
+//! either: the mesh passed `check`, which bounds it), and resolving's
+//! distance searches share a fixed allowance on top of a pass over the
+//! candidates' boxes and corners.
 
 use glam::DVec3;
 
 use crate::Solid;
 use crate::mesh::{FaceKey, Mesh};
 
-mod distance;
+pub(crate) mod distance;
 
 /// The odd constant splitmix64 steps by: `2⁶⁴/φ`.
 const GAMMA: u64 = 0x9e37_79b9_7f4a_7c15;
@@ -192,9 +194,10 @@ impl Topology {
     pub fn face(&self, solid: &Solid, key: &FaceKey, near: DVec3) -> Result<u32, NotFound> {
         let found = (0..self.regions.len() as u32).filter(|&r| self.regions[r as usize].named(key));
         let mesh = solid.mesh();
-        nearest(found, |r, below| {
+        nearest(found, near, |r, below, left| {
             let tris = &self.regions[r as usize].tris;
-            distance::to_patches(near, tris.iter().map(|&t| mesh.patch(t as usize)), below)
+            let patches = tris.iter().map(|&t| mesh.patch(t as usize));
+            distance::to_patches(near, patches, below, left)
         })
         .ok_or(NotFound::Face)
     }
@@ -210,9 +213,9 @@ impl Topology {
                 || (named(r0, &faces[1]) && named(r1, &faces[0]))
         });
         let mesh = solid.mesh();
-        nearest(found, |c, below| {
+        nearest(found, near, |c, below, left| {
             let halfedges = &self.chains[c as usize].halfedges;
-            distance::to_curves(near, halfedges.iter().map(|&h| curve(mesh, h)), below)
+            distance::to_curves(near, halfedges.iter().map(|&h| mesh.curve(h)), below, left)
         })
         .ok_or(NotFound::Edge)
     }
@@ -227,7 +230,7 @@ impl Topology {
                 .all(|key| regions.iter().any(|&r| self.regions[r as usize].named(key)))
         });
         let verts = solid.mesh().verts();
-        nearest(found, |c, _| {
+        nearest(found, near, |c, _, _| {
             verts[self.corners[c as usize].vertex as usize].distance(near)
         })
         .ok_or(NotFound::Corner)
@@ -235,31 +238,29 @@ impl Topology {
 }
 
 /// Of the candidates `found`, in ascending order: the only one, or the
-/// one at the least `distance` (given the least so far, below which it
-/// must come to count; it may stop early above it), the lowest on a tie.
-/// `None` for none.
+/// one at the least `distance` from `near` (given the least so far, below
+/// which it must come to count, it may stop early above it; and the
+/// search allowance all candidates share), the lowest on a tie; the
+/// lowest where `near` isn't finite. `None` for none.
 fn nearest(
     found: impl Iterator<Item = u32>,
-    mut distance: impl FnMut(u32, f64) -> f64,
+    near: DVec3,
+    mut distance: impl FnMut(u32, f64, &mut distance::Allowance) -> f64,
 ) -> Option<u32> {
     let found: Vec<u32> = found.collect();
-    if let [one] = found[..] {
-        return Some(one);
+    if found.len() == 1 || !near.is_finite() {
+        return found.first().copied();
     }
+    let mut left = distance::Allowance::new();
     let mut best: Option<(f64, u32)> = None;
     for i in found {
         let below = best.map_or(f64::INFINITY, |b| b.0);
-        let d = distance(i, below);
+        let d = distance(i, below, &mut left);
         if best.is_none_or(|b| d < b.0) {
             best = Some((d, i));
         }
     }
     best.map(|b| b.1)
-}
-
-/// Halfedge `h`'s curve, from its start to its end.
-fn curve(mesh: &Mesh, h: u32) -> crate::patch::Conic3 {
-    mesh.patch(h as usize / 3).edge(h as usize % 3)
 }
 
 /// The regions, numbered in the order of their lowest triangle, and each

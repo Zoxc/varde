@@ -34,7 +34,7 @@ fn op(a: &Solid, b: &Solid, op: Op, tol: &Tolerance) -> Solid {
 fn reaches(solid: &Solid, topology: &Topology, region: u32, x: DVec3) -> bool {
     let tris = &topology.regions()[region as usize].tris;
     let patches = tris.iter().map(|&t| solid.mesh().patch(t as usize));
-    distance::to_patches(x, patches, f64::INFINITY) <= 1e-9
+    distance::to_patches(x, patches, f64::INFINITY, &mut distance::Allowance::new()) <= 1e-9
 }
 
 /// The keys of chain `c`'s regions, sorted.
@@ -299,8 +299,13 @@ fn several_regions_or_chains_of_one_name_go_by_the_nearest() {
         let curves = topology.chains()[found as usize]
             .halfedges
             .iter()
-            .map(|&h| curve(solid.mesh(), h));
-        let d = distance::to_curves(DVec3::new(x, 0.0, 2.0), curves, f64::INFINITY);
+            .map(|&h| solid.mesh().curve(h));
+        let d = distance::to_curves(
+            DVec3::new(x, 0.0, 2.0),
+            curves,
+            f64::INFINITY,
+            &mut distance::Allowance::new(),
+        );
         assert!(d <= 1e-12, "{near}: {d}");
     }
     let corner = [key(1, TOP), key(1, side(0)), key(1, side(3))];
@@ -362,29 +367,73 @@ fn names_that_aren_t_there_aren_t_found() {
 
 #[test]
 fn a_key_merged_into_another_face_resolves_through_its_alias() {
-    // A wide boss on a pin, flush on top, the pin first: the clean-up
-    // joins the boss's top along the pin's rim onto the pin's top (the
-    // lower index), which takes the boss's top's key as an alias.
-    let pin = Solid::cylinder(DVec3::new(0.0, 0.1, -1.0), 1.0, 2.0, 2, &TOL).unwrap();
-    let boss = Solid::cylinder(DVec3::ZERO, 2.0, 1.0, 1, &TOL).unwrap();
-    let solid = op(&pin, &boss, Op::Union, &TOL);
-    let topology = solid.topology();
-    let pin_top = (0..topology.regions().len() as u32)
-        .find(|&r| topology.regions()[r as usize].key == key(2, TOP))
-        .unwrap();
-    assert_eq!(topology.regions()[pin_top as usize].aliases, [key(1, TOP)]);
-    // The boss's top, picked inside the pin's rim, is the pin's top now;
-    // picked outside it, it is what is there.
-    let inside = DVec3::new(0.0, 0.1, 1.0);
-    assert_eq!(topology.face(&solid, &key(1, TOP), inside), Ok(pin_top));
-    let outside = DVec3::new(1.6, 0.0, 1.0);
-    let found = topology.face(&solid, &key(1, TOP), outside).unwrap();
-    assert!(reaches(&solid, &topology, found, outside));
-    // And edges named by it: the boss's outer rim.
-    let rim = topology
-        .edge(&solid, [key(1, TOP), key(1, side(0))], outside)
-        .unwrap();
-    assert_eq!(topology.chains()[rim as usize].regions.len(), 2);
+    // A boss standing in a plate over one span, its top flush with the
+    // plate's: the clean-up mends the seam along its rim and merges the
+    // two tops onto the first operand's, which takes the other's key as
+    // an alias. Either order.
+    let plate = cuboid([0.0; 3], [10.0, 8.0, 2.0], 1, &TOL);
+    let boss = Solid::cylinder(DVec3::new(5.0, 4.0, -1.0), 2.0, 3.0, 2, &TOL).unwrap();
+    for (first, second, kept, merged) in [
+        (&plate, &boss, key(1, TOP), key(2, TOP)),
+        (&boss, &plate, key(2, TOP), key(1, TOP)),
+    ] {
+        let solid = op(first, second, Op::Union, &TOL);
+        let topology = solid.topology();
+        let regions = topology.regions();
+        assert!(regions.iter().all(|r| r.key != merged));
+        let top = regions.iter().position(|r| r.key == kept).unwrap() as u32;
+        assert_eq!(regions[top as usize].aliases, [merged]);
+        // Wherever it was picked, the merged key finds the one top.
+        for near in [
+            DVec3::new(5.0, 4.0, 2.0),
+            DVec3::new(9.0, 1.0, 2.0),
+            DVec3::new(5.0, 4.0, -1.0),
+        ] {
+            assert_eq!(topology.face(&solid, &merged, near), Ok(top));
+        }
+        // And edges and corners named by it: the top's edge at `-y`, and
+        // its corner at the origin's side.
+        let edge = topology
+            .edge(&solid, [merged, key(1, side(0))], DVec3::new(5.0, 0.0, 2.0))
+            .unwrap();
+        let mut keys = [kept, key(1, side(0))];
+        keys.sort();
+        assert_eq!(chain_keys(&topology, edge), keys);
+        let corner = [merged, key(1, side(0)), key(1, side(3))];
+        let found = topology.corner(&solid, corner, DVec3::ZERO).unwrap();
+        let vertex = topology.corners()[found as usize].vertex;
+        assert_eq!(
+            solid.mesh().verts()[vertex as usize],
+            DVec3::new(0.0, 0.0, 2.0)
+        );
+    }
+}
+
+#[test]
+fn only_a_flush_face_covered_whole_is_an_alias() {
+    // A box inside another: its faces go, and nothing names them.
+    let outer = cuboid([0.0; 3], [2.0; 3], 1, &TOL);
+    let inner = cuboid([0.5; 3], [1.0; 3], 2, &TOL);
+    for (a, b) in [(&outer, &inner), (&inner, &outer)] {
+        let solid = op(a, b, Op::Union, &TOL);
+        assert!(solid.mesh().aliases().is_empty());
+    }
+    // Flush with the top: its top is the outer box's (the first operand
+    // keeps its cap, either way), its sides nothing.
+    let inner = cuboid([0.5; 3], [1.0, 1.0, 1.5], 2, &TOL);
+    for operation in [Op::Union, Op::Intersection] {
+        let solid = op(&outer, &inner, operation, &TOL);
+        let mesh = solid.mesh();
+        let names: Vec<(FaceKey, FaceKey)> = mesh
+            .aliases()
+            .iter()
+            .map(|&(f, alias)| (mesh.faces()[f as usize].name.key(), alias))
+            .collect();
+        assert_eq!(names, [(key(1, TOP), key(2, TOP))], "{operation:?}");
+    }
+    // A difference makes no aliases: the tool's faces are walls of its own.
+    let solid = op(&outer, &inner, Op::Difference, &TOL);
+    assert!(solid.mesh().aliases().is_empty());
 }
 
 #[test]

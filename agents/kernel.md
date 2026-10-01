@@ -1611,8 +1611,8 @@ users see it, derived from the mesh and never stored:
   more regions meet, by vertex.
 
 Everything is one sequential pass in index order: the same mesh gives
-the same topology at any thread count; linear in the mesh, like
-tessellating, and not budgeted.
+the same topology at any thread count; linear in the mesh (a sort for the
+corners), like tessellating, and not budgeted: `check` bounds the mesh.
 
 **Names.** `FaceName { feature, part, instance }` is made only from what
 a feature was given (curve ids, references), never from mesh indices or
@@ -1647,6 +1647,18 @@ the point picks. Whether `unbend` fires depends on the triangulation, so
 such a partial alias can come and go with the tolerance; it only ever
 adds a candidate in the same plane. Any later pass that moves triangles
 between faces of one surface must call `Soup::absorb` the same way.
+Flush caps often never meet as triangles: the perturbation keeps one
+whole and drops the other (a plate first, a boss standing in it flush
+on top: the boss's top is gone, with no seam to mend). So after a union
+or an intersection (`boolean::covered`), an operand's plane face that no
+face or alias of the result names any more, a point of which (its first
+triangle's middle) lies within the short length on a result face of the
+same plane (unit normals within `1e-12`, offsets within the short
+length; the lowest such face), becomes an alias of it, with its own
+aliases. Only names: the geometry is untouched, and a face that was cut
+away or lay inside the other operand gets none. Each face looked for is
+charged a unit a patch of the faces it is measured against. A
+difference makes none (the tool's faces become walls of their own).
 Transforms will carry the table with the faces, as booleans do.
 
 **Resolving.** `Topology::face(solid, key, near)`: the regions named by
@@ -1666,8 +1678,17 @@ upper bounds; it stops when no piece can come within a billionth of the
 patch's size of the best, or at 256 pieces a patch or curve. The
 candidates' patches are taken nearest box first and only while their
 box comes nearer than the best so far, across candidates too (a later
-one must come strictly nearer). It only chooses among candidates of one
-name: nothing is decided by distance.
+one must come strictly nearer). One resolve's searches share a fixed
+allowance of 2²⁰ evaluations (a Newton foot 80, a patch's piece 25, a
+curve's 7); past it, the patches and curves still to look at count by
+their corners and ends alone, an upper bound. So resolving costs a
+bounded search plus a pass over the candidates' boxes and corners, not
+256 pieces a patch: a point at the middle of a sphere cut in pieces is
+as near every patch, and at the patch limit that would be minutes. The
+allowance only runs out where many patches are about equally near,
+where any candidate is as good. A `near` that isn't finite takes the
+lowest candidate without measuring. It only chooses among candidates of
+one name: nothing is decided by distance.
 
 ## Booleans (`src/boolean.rs`, `src/boolean/`)
 
@@ -2910,7 +2931,9 @@ now take 20 ms.
   onto another of the same surface (`Soup::absorb`, a pair of sources),
   the moved face's key and aliases, through any chain of such moves
   (`boolean::aliases`, a pass a unit of work a merge, until nothing
-  changes). A face cut away takes its aliases with it.
+  changes). A face cut away takes its aliases with it, but an operand's
+  plane face dropped whole under the other's flush face is an alias of
+  it (`boolean::covered`; see "Topology and names").
 
 ### Triangulating a face's loops (`boolean/triangulate.rs`)
 
@@ -5140,12 +5163,17 @@ parameter, or a split outside the patch bounds),
   document's `FaceRef`/`EdgeRef` (with the body) come with the features
   that store them. A failed reference is `topology::NotFound`, not a
   `KernelError`. Candidates are measured by a linear pass over their
-  patches nearest box first, not through the BVH. A corner matches when
-  each of its three keys names some region there (two keys may name one
-  region through an alias). Aliases are recorded by the flush seams' face merge
+  patches nearest box first, not through the BVH, with one search
+  allowance shared by the whole resolve. A corner matches when each of
+  its three keys names some region there (two keys may name one region
+  through an alias). Aliases are recorded by the flush seams' face merge
   (whole faces) and by `unbend` for the triangles it moves (the moved
   face may live on elsewhere under its own key: then a key names both,
   and the point picks); a general merge pass (one surface, one face)
-  isn't built yet and must call `Soup::absorb` the same way.
+  isn't built yet and must call `Soup::absorb` the same way. Not in the
+  plan: flush caps one of which the perturbation drops whole (no merge
+  happens, so no pass records it) are aliased after the boolean by a
+  point of the dropped face lying on a result face of its plane
+  (`boolean::covered`); names only, never the geometry.
   Transforms don't exist yet; the table is on `Mesh`, so they carry it
   by keeping the faces.

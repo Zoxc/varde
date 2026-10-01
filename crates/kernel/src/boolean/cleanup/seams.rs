@@ -155,8 +155,10 @@ impl Cleaner<'_> {
 
     /// Merges the plane faces seams joined, each set onto its lowest id:
     /// a face whose triangles all lie in the plane of that lowest one
-    /// moves onto it, with the copies of it claiming no surface (which
-    /// take its name). A face whose triangles don't stays as it is.
+    /// moves onto it, its key an alias of it from then on
+    /// ([`Soup::absorb`](super::Soup::absorb)), with the copies of it
+    /// claiming no surface (which take its name). A face whose triangles
+    /// don't stays as it is.
     pub(super) fn merge_joined(&mut self, faces: &mut [Face]) {
         if self.joined.is_empty() {
             return;
@@ -203,6 +205,8 @@ impl Cleaner<'_> {
             for &t in tris {
                 self.soup.faces[t as usize] = r;
             }
+            // Its key names `r` from now on.
+            self.soup.absorb(f, r);
             // Copies of it claiming no surface go with it.
             for c in 0..faces.len() {
                 if c as u32 != f
@@ -418,7 +422,8 @@ impl Cleaner<'_> {
 
     /// Puts the triangles `made` in place of `region`'s, on the face of
     /// its first (the seed's), recording the region's other faces in that
-    /// plane as joined to it.
+    /// plane as joined to it and absorbed by it
+    /// ([`Soup::absorb`](super::Soup::absorb)).
     fn replace(&mut self, region: &[u32], made: Vec<[u32; 3]>) {
         let seed = region[0];
         let face = self.soup.faces[seed as usize];
@@ -427,6 +432,7 @@ impl Cleaner<'_> {
             let f = self.soup.faces[t as usize];
             if f != face && self.same_plane(f, plane) {
                 self.joined.push((face.min(f), face.max(f)));
+                self.soup.absorb(f, face);
             }
             self.kill(t);
         }

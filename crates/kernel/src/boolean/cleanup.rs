@@ -1028,6 +1028,7 @@ mod tests {
             tris,
             curves,
             sources: vec![0],
+            absorbed: Vec::new(),
         };
         let mut around = vec![Vec::new(); soup.pos.len()];
         for (t, tri) in soup.tris.iter().enumerate() {

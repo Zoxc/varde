@@ -217,6 +217,18 @@ impl Mesh {
         self.halfedge(Self::next(h)).start
     }
 
+    /// The curve of halfedge `h`, from its start to its end.
+    pub fn curve(&self, h: u32) -> Conic3 {
+        let he = self.halfedge(h);
+        let edge = self.edges[he.edge as usize];
+        Conic3 {
+            p0: self.verts[he.start as usize],
+            c: edge.ctrl,
+            w: edge.weight,
+            p1: self.verts[self.end(h) as usize],
+        }
+    }
+
     /// Triangle `tri` as a patch. The indices must be in range.
     pub fn patch(&self, tri: usize) -> Patch {
         let hs = self.tris[tri].halfedges;

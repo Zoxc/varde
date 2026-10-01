@@ -273,7 +273,96 @@ fn unchecked(
         work,
     )?;
     let aliases = aliases(a.mesh(), b.mesh(), &faces, &soup, work)?;
-    build(soup, faces, &aliases)
+    let mesh = build(soup, faces, &aliases)?;
+    if op == Op::Difference {
+        return Ok(mesh);
+    }
+    covered(mesh, [a.mesh(), b.mesh()], short(tol), work)
+}
+
+/// `mesh` with an alias for each operand's plane face that no face or
+/// alias of it names any more because the other operand's face, flush
+/// with it, covered it (the perturbation keeps one of two flush caps
+/// whole and drops the other: a plate first, a boss standing in it
+/// flush on top, and the boss's top is gone). Its key, and its aliases,
+/// become aliases of the face of the same plane (unit normals within
+/// `1e-12`, offsets within `small`) that a point of it lies on, within
+/// `small`: the lowest such face. Only names: the geometry is as it was.
+/// A face nothing covers (cut away, or inside the other operand) gets
+/// none. Each face looked for is charged a unit a patch of the faces it
+/// is measured against.
+fn covered(
+    mesh: Mesh,
+    operands: [&Mesh; 2],
+    small: f64,
+    work: &mut Work,
+) -> Result<Mesh, KernelError> {
+    use crate::mesh::Surface;
+    use crate::topology::distance::{Allowance, to_patches};
+    let unit = |surface: Surface| match surface {
+        Surface::Plane { n, d } => {
+            let len = n.length();
+            (len > 0.0 && len.is_finite()).then(|| (n / len, d / len))
+        }
+        _ => None,
+    };
+    let named: std::collections::BTreeSet<FaceKey> = mesh
+        .faces()
+        .iter()
+        .map(|f| f.name.key())
+        .chain(mesh.aliases().iter().map(|&(_, key)| key))
+        .collect();
+    let mut on: Vec<Vec<u32>> = vec![Vec::new(); mesh.faces().len()];
+    for (t, tri) in mesh.tris().iter().enumerate() {
+        on[tri.face as usize].push(t as u32);
+    }
+    // The result's plane faces by offset, to find those of a plane fast.
+    let mut planes: Vec<(f64, u32, DVec3)> = (0..mesh.faces().len() as u32)
+        .filter_map(|g| unit(mesh.faces()[g as usize].surface).map(|(n, d)| (d, g, n)))
+        .collect();
+    planes.sort_by(|x, y| x.0.total_cmp(&y.0).then(x.1.cmp(&y.1)));
+    let mut added: Vec<(u32, FaceKey)> = Vec::new();
+    for operand in operands {
+        let mut first = vec![u32::MAX; operand.faces().len()];
+        for (t, tri) in operand.tris().iter().enumerate().rev() {
+            first[tri.face as usize] = t as u32;
+        }
+        for (f, face) in operand.faces().iter().enumerate() {
+            let Some((n, d)) = unit(face.surface) else {
+                continue;
+            };
+            let key = face.name.key();
+            if first[f] == u32::MAX || named.contains(&key) {
+                continue;
+            }
+            let point = operand
+                .patch(first[f] as usize)
+                .eval(DVec3::splat(1.0 / 3.0));
+            let from = planes.partition_point(|p| p.0 < d - small);
+            let mut same: Vec<u32> = planes[from..]
+                .iter()
+                .take_while(|p| p.0 <= d + small)
+                .filter(|p| p.2.dot(n) > 1.0 - 1e-12)
+                .map(|p| p.1)
+                .collect();
+            same.sort_unstable();
+            let mut left = Allowance::new();
+            for g in same {
+                work.spend(on[g as usize].len())?;
+                let patches = on[g as usize].iter().map(|&t| mesh.patch(t as usize));
+                if to_patches(point, patches, 2.0 * small, &mut left) <= small {
+                    added.push((g, key));
+                    added.extend(operand.face_aliases(f as u32).map(|alias| (g, alias)));
+                    break;
+                }
+            }
+        }
+    }
+    if added.is_empty() {
+        return Ok(mesh);
+    }
+    added.extend_from_slice(mesh.aliases());
+    Ok(mesh.with_aliases(added))
 }
 
 /// The aliases of each source face of the soup (an operand's face, `A`'s

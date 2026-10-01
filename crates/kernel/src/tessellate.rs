@@ -118,7 +118,7 @@ pub(crate) fn tessellate_within(
             first[e] = h;
         }
     }
-    let curves: Vec<Conic3> = first.iter().map(|&h| curve(mesh, h)).collect();
+    let curves: Vec<Conic3> = first.iter().map(|&h| mesh.curve(h)).collect();
     let counts: Vec<u32> = par_map(&curves, |c| segments(c, chord));
     let n_of = |h: u32| counts[mesh.halfedge(h).edge as usize];
 
@@ -379,17 +379,6 @@ pub(crate) fn tessellate_within(
 
 /// A render vertex: its position and normal.
 type Vertex = ([f32; 3], [f32; 3]);
-
-/// The curve of halfedge `h`, from its start to its end.
-fn curve(mesh: &Mesh, h: u32) -> Conic3 {
-    let edge = mesh.edges()[mesh.halfedge(h).edge as usize];
-    Conic3 {
-        p0: mesh.verts()[mesh.halfedge(h).start as usize],
-        c: edge.ctrl,
-        w: edge.weight,
-        p1: mesh.verts()[mesh.end(h) as usize],
-    }
-}
 
 /// The unit normal of `patch` at `u`. A checked patch's normal doesn't
 /// vanish; should rounding make it, its fold direction stands in.

@@ -69,7 +69,9 @@ impl std::fmt::Display for CheckError {
             CheckError::Index(h) => write!(f, "halfedge {h} names something that doesn't exist"),
             CheckError::Pair(h) => write!(f, "halfedge {h} isn't paired with one running back"),
             CheckError::Loop(h) => write!(f, "halfedge {h} starts and ends at one vertex"),
-            CheckError::Alias(i) => write!(f, "alias {i} names no face or is out of order"),
+            CheckError::Alias(i) => {
+                write!(f, "alias {i} names no face or its own, or is out of order")
+            }
             CheckError::DirectedEdge(h) => write!(f, "halfedge {h} runs the same way as another"),
             CheckError::Fan(v) => write!(f, "vertex {v} doesn't have exactly one fan"),
             CheckError::SharedEdge(h) => {
