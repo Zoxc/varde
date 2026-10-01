@@ -301,8 +301,16 @@ impl Outline {
         let value = match (self, field) {
             (Outline::Line { start, end }, Field::Length) => start.distance(*end),
             (Outline::Line { start, end }, Field::Angle) => {
+                // In [0, 2π): a level line whose rise is -0 has the angle
+                // -0, which would show as "-0°".
                 let angle = to_angle(*end - *start);
-                if angle < 0.0 { angle + TAU } else { angle }
+                if angle < 0.0 {
+                    angle + TAU
+                } else if angle == 0.0 {
+                    0.0
+                } else {
+                    angle
+                }
             }
             (Outline::Circle { radius, .. } | Outline::Polygon { radius, .. }, Field::Diameter) => {
                 2.0 * radius

@@ -519,13 +519,19 @@ impl Doc {
     /// left, and the items selected in it. A document that can't be edited
     /// (any more, after a Save As) has no tool in use and nothing dragged.
     /// Across a replacement of the whole document (restoring recovered
-    /// changes, or undoing or redoing that), the sketch's ids may name
-    /// other items, so the selection and the tool's shape are let go of
-    /// too.
+    /// changes, or undoing or redoing that), ids may name other things:
+    /// the feature selected is let go of, unless it's the sketch being
+    /// edited, which goes on with the sketch its id names now; and in it
+    /// the selection and the tool's shape are let go of.
     pub(crate) fn prune(&mut self) {
         let editable = self.editable();
         let lineage = self.editor.lineage();
         let document = self.editor.document();
+        if self.selected_in != lineage {
+            self.selected_in = lineage;
+            let edited = self.sketch.as_ref().map(|session| session.feature);
+            self.selected_feature = self.selected_feature.filter(|&id| Some(id) == edited);
+        }
         self.selected_feature = self
             .selected_feature
             .filter(|&id| document.feature(id).is_some());

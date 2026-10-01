@@ -2172,6 +2172,91 @@ fn restoring_recovered_changes_ends_the_extrude_session() {
     assert!(document(&varde).extrude.is_none());
 }
 
+/// [`with_a_line`] with a second sketch, holding a point, and that
+/// sketch's id.
+fn with_a_line_and_a_sketch() -> (Document, FeatureId) {
+    let mut editor = Editor::new(with_a_line());
+    editor
+        .apply(
+            editor
+                .document()
+                .add_sketch(varde_document::Plane::Origin(OriginPlane::XY)),
+        )
+        .unwrap();
+    let feature = editor.document().features().last().unwrap().id;
+    let mut sketch = varde_sketch::Sketch::default();
+    sketch.add_point(glam::DVec2::new(5.0, 5.0)).unwrap();
+    editor
+        .apply(Command::SetSketch {
+            feature,
+            sketch: Box::new(sketch),
+        })
+        .unwrap();
+    (editor.document().clone(), feature)
+}
+
+/// The feature selected in the Timeline goes when the document is
+/// replaced whole, by restoring recovered changes or undoing or redoing
+/// that: its id may name another feature there, which Delete would take.
+#[test]
+fn restoring_recovered_changes_lets_go_of_the_selected_feature() {
+    let (recovered, theirs) = with_a_line_and_a_sketch();
+    let (mut varde, _) = with_recovered(recovered.clone());
+    // A sketch added after opening gets the id the recovered one has.
+    let doc = varde.screen.doc_mut().unwrap();
+    doc.apply(
+        doc.editor
+            .document()
+            .add_sketch(varde_document::Plane::Origin(OriginPlane::XY)),
+    );
+    doc.sync();
+    let ours = doc.editor.document().features().last().unwrap().id;
+    assert_eq!(ours, theirs);
+    let _ = varde.update(Message::Ui(Ui::Look(Look::SelectFeature(ours))));
+    assert_eq!(document(&varde).selected_feature, Some(ours));
+
+    let _ = varde.update(Message::Ui(Ui::File(File::RestoreChanges)));
+    assert_eq!(*document(&varde).editor.document(), recovered);
+    assert_eq!(document(&varde).selected_feature, None);
+
+    // Undoing and redoing the restore cross the replacement too.
+    let _ = varde.update(Message::Ui(Ui::Look(Look::SelectFeature(theirs))));
+    let _ = varde.update(Message::Ui(Ui::Edit(Edit::Undo)));
+    assert_ne!(*document(&varde).editor.document(), recovered);
+    assert_eq!(document(&varde).selected_feature, None);
+    let _ = varde.update(Message::Ui(Ui::Look(Look::SelectFeature(ours))));
+    let _ = varde.update(Message::Ui(Ui::Edit(Edit::Redo)));
+    assert_eq!(*document(&varde).editor.document(), recovered);
+    assert_eq!(document(&varde).selected_feature, None);
+
+    // An edit within one line of edits keeps it.
+    let _ = varde.update(Message::Ui(Ui::Look(Look::SelectFeature(theirs))));
+    let doc = varde.screen.doc_mut().unwrap();
+    doc.apply(
+        doc.editor
+            .document()
+            .add_sketch(varde_document::Plane::Origin(OriginPlane::XY)),
+    );
+    doc.sync();
+    assert_eq!(document(&varde).selected_feature, Some(theirs));
+}
+
+/// The sketch being edited goes on across a replacement with the sketch
+/// its id names now, and stays selected in the Timeline.
+#[test]
+fn restoring_recovered_changes_keeps_the_sketch_edited_selected() {
+    let (recovered, theirs) = with_a_line_and_a_sketch();
+    let (mut varde, _) = with_recovered(recovered.clone());
+    let _ = varde.update(Message::Ui(Ui::Edit(Edit::NewSketch(OriginPlane::XY))));
+    assert_eq!(document(&varde).sketch.as_ref().unwrap().feature, theirs);
+    assert_eq!(document(&varde).selected_feature, Some(theirs));
+
+    let _ = varde.update(Message::Ui(Ui::File(File::RestoreChanges)));
+    assert_eq!(*document(&varde).editor.document(), recovered);
+    assert_eq!(document(&varde).sketch.as_ref().unwrap().feature, theirs);
+    assert_eq!(document(&varde).selected_feature, Some(theirs));
+}
+
 /// Saved as another file, recovered changes not answered yet stay with
 /// the design they're of, which offers them when it's next opened: the
 /// offer goes, rather than answering it for the new file. Saved over the

@@ -16,7 +16,7 @@ use iced::Element;
 use varde_document::name::UNTITLED;
 use varde_document::{
     BodyId, Command, Document, EditError, Editor, FeatureId, FeatureKind, LengthUnit, OriginPlane,
-    Removable, Removal, Tolerance,
+    Removable, Removal, Revision, Tolerance,
 };
 use varde_io::{Access, Offer, OpenId};
 use varde_render::{Camera, Projection};
@@ -70,6 +70,9 @@ pub(crate) struct Doc {
     pub(crate) picking_plane: bool,
     /// The feature selected in the Timeline, if any.
     pub(crate) selected_feature: Option<FeatureId>,
+    /// The editor's [`lineage`](varde_document::Editor::lineage)
+    /// `selected_feature` names a feature in: see [`Doc::prune`].
+    selected_in: Revision,
     /// The sketch being edited, if one is.
     pub(crate) sketch: Option<SketchSession>,
     /// The extrude being set up, if one is: never with a sketch.
@@ -152,6 +155,7 @@ impl Doc {
         } = origin;
         let editor = Editor::new(document);
         let revision = editor.revision();
+        let lineage = editor.lineage();
         let mut doc = Self {
             id: DocId::unique(),
             persist: Persist::new(
@@ -174,6 +178,7 @@ impl Doc {
             deleting: None,
             picking_plane: false,
             selected_feature: None,
+            selected_in: lineage,
             sketch: None,
             extrude: None,
             sketch_split: GEOMETRY_SHARE,

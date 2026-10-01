@@ -2739,7 +2739,9 @@ undoing or redoing that: `Editor::lineage` changes, and the session keeps
 the lineage it started in) ends the session and its draft, as its ids
 (the extrude edited, the source, the excluded bodies) may name other
 things: OK would otherwise write the values read before over whatever
-extrude the id names now. A `Replace` equal to the document is no change
+extrude the id names now. The Timeline's selection, which an extrude
+being edited sets to it, is let go of across a replacement as well
+(`Doc::prune`). A `Replace` equal to the document is no change
 and keeps the session.
 
 **The preview** is the session's extrude sent as the request's draft

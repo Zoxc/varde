@@ -140,6 +140,23 @@ fn a_line_s_values_hold_its_end_and_the_cursor_moves_the_rest() {
 }
 
 #[test]
+fn a_level_line_s_angle_is_never_minus_zero() {
+    // A rise of -0 (from -0 to 0) gives atan2 -0 rightwards, which would
+    // show as "-0°", and -π leftwards.
+    let right = Outline::Line {
+        start: at(0.0, 0.0),
+        end: at(2.0, -0.0),
+    };
+    let angle = right.value(Field::Angle).unwrap();
+    assert_eq!(angle.to_bits(), 0.0f64.to_bits());
+    let left = Outline::Line {
+        start: at(2.0, 0.0),
+        end: at(0.0, -0.0),
+    };
+    assert_eq!(left.value(Field::Angle), Some(PI));
+}
+
+#[test]
 fn a_typed_angle_places_the_end_with_libm_s_bits() {
     // The end is saved, so it has to have the same bits natively and on
     // the web: libm's, not the platform's. At 9.2° glibc's sine is an ulp

@@ -703,7 +703,11 @@ items, so the selection is cleared and the tool starts its shape afresh;
 restoring drops the edits waiting on the solver, and the changes waiting
 behind them. The sketch session only resets, since it reads the sketch its id names now and never
 writes back what it read before; an extrude session holds values read
-before the replacement, so it ends instead (`Doc::prune_extrude`). A
+before the replacement, so it ends instead (`Doc::prune_extrude`). The
+feature selected in the Timeline is let go of too (`Doc` keeps the
+lineage it was selected in), lest Delete or Extrude act on another
+feature with its id, unless it's the sketch being edited, which stays
+selected with the session. A
 document that can't be edited, as a Save As can leave it, has no tool and no drag;
 the Save As answer syncs for that.
 
