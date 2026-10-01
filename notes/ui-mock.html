@@ -46,7 +46,7 @@
   --c-cons: #e0861a;
   --c-insp: #13a08f;
   --i-sketch: #0a95ad; --i-mod: #cf3f30; --i-cstr: #8a3fd0; --i-dim: #5f6b80;
-  --i-solid: #c0409a; --i-cons: #c39000; --i-insp: #2f9a47;
+  --i-solid: #c0409a; --i-cons: #c39000; --i-insp: #2f9a47; --i-file: #2f6fd8;
   --ia-sketch: #e88a00; --ia-mod: #2f6fd8; --ia-cstr: #e88a00; --ia-dim: #e88a00;
   --ia-solid: #0d9a88; --ia-cons: #2f6fd8; --ia-insp: #e88a00;
   --logo-a: #5e4a93;
@@ -81,7 +81,7 @@
     --c-cons: #f0a24a;
     --c-insp: #3fcfbd;
     --i-sketch: #3cc3d9; --i-mod: #ff7a66; --i-cstr: #b48cff; --i-dim: #a6b2c6;
-    --i-solid: #ef77c2; --i-cons: #f0c43c; --i-insp: #62cf7c;
+    --i-solid: #ef77c2; --i-cons: #f0c43c; --i-insp: #62cf7c; --i-file: #78aaff;
     --ia-sketch: #ffad33; --ia-mod: #78aaff; --ia-cstr: #ffad33; --ia-dim: #ffad33;
     --ia-solid: #3fd3bf; --ia-cons: #78aaff; --ia-insp: #ffad33;
     --logo-a: #7d6bb3;
@@ -116,7 +116,7 @@
   --c-cons: #f0a24a;
   --c-insp: #3fcfbd;
   --i-sketch: #3cc3d9; --i-mod: #ff7a66; --i-cstr: #b48cff; --i-dim: #a6b2c6;
-  --i-solid: #ef77c2; --i-cons: #f0c43c; --i-insp: #62cf7c;
+  --i-solid: #ef77c2; --i-cons: #f0c43c; --i-insp: #62cf7c; --i-file: #78aaff;
   --ia-sketch: #ffad33; --ia-mod: #78aaff; --ia-cstr: #ffad33; --ia-dim: #ffad33;
   --ia-solid: #3fd3bf; --ia-cons: #78aaff; --ia-insp: #ffad33;
   --logo-a: #7d6bb3;
@@ -167,6 +167,8 @@ svg.c-dim { --cc: color-mix(in srgb, var(--i-dim) 85%, #000); --ca: var(--ia-dim
 svg.c-solid { --cc: var(--i-solid); --ca: var(--ia-solid); }
 svg.c-cons { --cc: color-mix(in srgb, var(--i-cons) 92%, #000); --ca: var(--ia-cons); }
 svg.c-insp { --cc: var(--i-insp); --ca: var(--ia-insp); }
+/* The file's accent is the text's colour: blackish, or whitish in dark mode. */
+svg.c-file { --cc: var(--i-file); --ca: var(--text); }
 svg.i[class*=" c-"] { color: var(--cc); }
 svg.i :is(.a, .af) { stroke: color-mix(in srgb, var(--ca) 60%, var(--cc)); }
 svg.i .af { fill: var(--panel); stroke-width: 1.5; }
@@ -673,8 +675,10 @@ const I = {
   undo: '<path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>',
   redo: '<path d="M15 14l5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
+  // A new design: the plus, coloured as the file's icons are.
+  new: '<path d="M12 5v14M5 12h14"/>',
   folder: '<path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/>',
-  export: '<path d="M12 15V3M8 7l4-4 4 4"/><path d="M4 16v4h16v-4"/>',
+  export: '<path class="a" d="M12 15V3M8 7l4-4 4 4"/><path d="M4 16v4h16v-4"/>',
   chev: '<path d="M7 10l5 5 5-5"/>',
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
   moon: '<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/>',
@@ -688,7 +692,7 @@ const I = {
   more: '<circle cx="5.5" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="18.5" cy="12" r="1.4" fill="currentColor" stroke="none"/>',
   ortho: '<path d="M3 9h12v12H3z"/><path d="M8 4h12v12h-5M3 9l5-5M15 9l5-5M15 21l5-5"/>',
   persp: '<path d="M3 9h12v12H3z"/><path d="M10 4h8v8h-3M3 9l7-5M15 9l3-5M15 21l3-9"/>',
-  save: '<path d="M5 4h11l3 3v13H5z"/><path d="M8 4v5h7V4M8 20v-6h8v6"/>',
+  save: '<path d="M5 4h11l3 3v13H5z"/><path class="a" d="M8 4v5h7V4M8 20v-6h8v6"/>',
   close: '<path d="M6 6l12 12M18 6L6 18"/>',
   min: '<path d="M6 12h12"/>',
   max: '<rect x="6" y="6" width="12" height="12" rx="1.5"/>',
@@ -715,7 +719,7 @@ const I = {
   cpattern: '<circle class="a" cx="12" cy="12" r="7.5" stroke-dasharray="2 2.2"/><rect class="t" x="10" y="2.5" width="4" height="4" rx="1"/><rect x="17.5" y="10" width="4" height="4" rx="1"/><rect x="10" y="17.5" width="4" height="4" rx="1"/><rect x="2.5" y="10" width="4" height="4" rx="1" stroke-dasharray="1.6 1.4"/>',
 };
 // Icon colour by category: sketch drawing, modify, constraints, dimensions,
-// solid/body, construction, inspect.
+// solid/body, construction, inspect, the design's file.
 const CAT = {};
 for (const [cat, names] of Object.entries({
   sketch: 'sketch line rect circle arc polygon spline cat-draw',
@@ -725,6 +729,7 @@ for (const [cat, names] of Object.entries({
   solid: 'extrude revolve hole body paint sweep loft box move bmirror lpattern cpattern cat-create cat-transform',
   cons: 'plane origin axis point cat-construct',
   insp: 'measure section cat-inspect',
+  file: 'new folder save export',
 })) for (const n of names.split(' ')) CAT[n] = cat;
 const icon = (n, cls = 'i') => `<svg class="${cls}${CAT[n] ? ' c-' + CAT[n] : ''}" viewBox="0 0 24 24">${I[n] || ''}</svg>`;
 // A folded "V": two slabs meeting at a crease, with a sketch point above.
@@ -1283,7 +1288,7 @@ function toolbar() {
       ${icon('chev', 'i chev')}
       ${st.menu ? `
         <div class="menu">
-          <button data-act="new">${icon('plus')}New design<span class="k">Ctrl N</span></button>
+          <button data-act="new">${icon('new')}New design<span class="k">Ctrl N</span></button>
           <button data-act="open:bracket">${icon('folder')}Open…<span class="k">Ctrl O</span></button>
           <button data-act="toast:Saved">${icon('save')}Save<span class="k">Ctrl S</span></button>
           <button data-act="toast:Export">${icon('export')}Export…<span class="k">Ctrl E</span></button>
