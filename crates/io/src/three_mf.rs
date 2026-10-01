@@ -244,11 +244,13 @@ impl Zip {
     fn add(&mut self, name: &str, data: &[u8]) -> Result<(), Error> {
         let packed = miniz_oxide::deflate::compress_to_vec(data, 6);
         let crc = crc32fast::hash(data);
-        let size = u32::try_from(data.len()).map_err(|_| Error::TooLarge)?;
-        let packed_size = u32::try_from(packed.len()).map_err(|_| Error::TooLarge)?;
-        let offset = u32::try_from(self.out.len()).map_err(|_| Error::TooLarge)?;
+        let size = field(data.len())?;
+        let packed_size = field(packed.len())?;
+        let offset = field(self.out.len())?;
         let name_len = u16::try_from(name.len()).map_err(|_| Error::TooLarge)?;
-        self.entries = self.entries.checked_add(1).ok_or(Error::TooLarge)?;
+        self.entries = (self.entries.checked_add(1))
+            .filter(|&n| n < u16::MAX)
+            .ok_or(Error::TooLarge)?;
 
         let out = &mut self.out;
         put32(out, 0x0403_4b50);
@@ -289,9 +291,10 @@ impl Zip {
 
     /// The zip: the entries, the central directory and its end record.
     fn finish(mut self) -> Result<Vec<u8>, Error> {
-        let offset = u32::try_from(self.out.len()).map_err(|_| Error::TooLarge)?;
-        let size = u32::try_from(self.central.len()).map_err(|_| Error::TooLarge)?;
-        offset.checked_add(size).ok_or(Error::TooLarge)?;
+        let offset = field(self.out.len())?;
+        let size = field(self.central.len())?;
+        let end = self.out.len().checked_add(self.central.len());
+        field(end.ok_or(Error::TooLarge)?)?;
         self.out.append(&mut self.central);
         let out = &mut self.out;
         put32(out, 0x0605_4b50);
@@ -304,6 +307,15 @@ impl Zip {
         put16(out, 0); // comment
         Ok(self.out)
     }
+}
+
+/// `n` as a size or offset field of a zip without zip64: below
+/// `u32::MAX`, which says the real value is in a zip64 record.
+fn field(n: usize) -> Result<u32, Error> {
+    u32::try_from(n)
+        .ok()
+        .filter(|&n| n < u32::MAX)
+        .ok_or(Error::TooLarge)
 }
 
 fn put16(out: &mut Vec<u8>, x: u16) {

@@ -175,6 +175,17 @@ impl Doc {
         }
     }
 
+    /// The regeneration lane was replaced: an export the old one was
+    /// welding won't be answered, so it fails rather than waiting for
+    /// good. Not asked again: the document may have changed since.
+    pub(crate) fn regen_replaced(&mut self) {
+        if let Some(Exporting::Welding { .. }) = self.export.exporting {
+            self.export.exporting = None;
+            self.export.error =
+                Some("regenerating restarted before the bodies were welded: try again".to_owned());
+        }
+    }
+
     /// The IO lane's answer to the export it was writing.
     pub(crate) fn export_written(&mut self, result: Result<(), String>) {
         if self.export.exporting != Some(Exporting::Writing) {

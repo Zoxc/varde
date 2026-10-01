@@ -221,7 +221,7 @@ fn lock(file: &File, lock: Lock) -> Result<()> {
 /// A path next to `path` that nothing is likely to be at, for writing a
 /// file that then replaces it: `.{file name}.{name}.tmp`, with a
 /// [`unique::name`].
-fn temp_path(path: &Path, name: &str) -> io::Result<PathBuf> {
+pub(crate) fn temp_path(path: &Path, name: &str) -> io::Result<PathBuf> {
     let file_name = path
         .file_name()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "the path has no file name"))?;

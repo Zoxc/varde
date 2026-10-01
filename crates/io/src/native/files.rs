@@ -19,7 +19,7 @@ use crate::{
 mod document_file;
 
 use document_file::DocumentFile;
-pub(crate) use document_file::sync_parent;
+pub(crate) use document_file::{sync_parent, temp_path};
 
 /// The lane's state.
 #[derive(Debug)]

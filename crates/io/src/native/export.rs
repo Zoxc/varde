@@ -6,9 +6,9 @@
 
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use super::files::{display_name, resolved, sync_parent};
+use super::files::{display_name, resolved, sync_parent, temp_path};
 use super::unique;
 use crate::three_mf::{self, Body};
 
@@ -51,7 +51,12 @@ fn replace(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let permissions = std::fs::metadata(path).ok().map(|m| m.permissions());
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
-    let (temp, file) = unique::create(&options, unique::ATTEMPTS, |name| temp_path(path, name))?;
+    // A name that's taken is someone else's, left alone.
+    let taken = |e: &io::Error| e.kind() == io::ErrorKind::AlreadyExists;
+    let (temp, file) = unique::retry(unique::ATTEMPTS, taken, |name| {
+        let temp = temp_path(path, name)?;
+        options.open(&temp).map(|file| (temp, file))
+    })?;
     let written = permissions
         .map_or(Ok(()), |permissions| file.set_permissions(permissions))
         .and_then(|()| finish(file, bytes))
@@ -70,14 +75,6 @@ fn replace(path: &Path, bytes: &[u8]) -> io::Result<()> {
 fn finish(mut file: File, bytes: &[u8]) -> io::Result<()> {
     file.write_all(bytes)?;
     file.sync_all()
-}
-
-/// `.{file name}.{name}.tmp` next to `path`.
-fn temp_path(path: &Path, name: &str) -> PathBuf {
-    let mut temp = std::ffi::OsString::from(".");
-    temp.push(path.file_name().unwrap_or_default());
-    temp.push(format!(".{name}.tmp"));
-    path.with_file_name(temp)
 }
 
 #[cfg(test)]

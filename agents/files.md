@@ -165,7 +165,9 @@ dash in lower case as the save banner's are. An export closed or quit
 before the bodies are welded is dropped: closing doesn't wait for it,
 and bodies welded while quitting aren't sent, since they'd come after
 the flush the window closes on; one already with the IO lane is written
-before the app exits. On the web, see `web-files.md`.
+before the app exits. Should the document's regeneration lane be replaced
+while it welds, the export fails with a message to try again rather than
+waiting for an answer the old lane won't send. On the web, see `web-files.md`.
 
 `varde_regen::export` welds each visible body's solid,
 in the order the history made them, into a `varde_kernel::ManifoldMesh` at
@@ -184,7 +186,8 @@ round-trip form (with an exponent below `1e-4`), so a reader gets the same
 the characters XML 1.0 doesn't allow. The zip is written by hand
 (`miniz_oxide` deflates the parts; no zip64, fixed 1980 timestamps); the
 model's size is bounded from the meshes' counts before anything is built,
-and past what a zip without zip64 holds the export is refused. No bodies
+and past what a zip without zip64 holds the export is refused (no size or
+offset may reach `u32::MAX`, which would say a zip64 record follows). No bodies
 to write is refused too. Choices made where the 3MF spec leaves it open:
 no thumbnail, no colours or materials, no `<components>`, bodies placed
 where they are in the design rather than arranged for a build plate.

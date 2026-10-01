@@ -609,6 +609,7 @@ impl Doc {
     /// lane.
     pub(crate) fn lane_ready(&mut self, lane: varde_regen::lane::Lane) {
         self.feed.connect(lane);
+        self.regen_replaced();
         self.sync();
     }
 

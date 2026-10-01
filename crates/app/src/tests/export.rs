@@ -313,3 +313,29 @@ fn bodies_welded_while_quitting_are_not_written() {
     regenerate(&mut varde, &regen);
     assert!(sent(&io).is_empty());
 }
+
+#[test]
+fn an_export_the_replaced_lane_was_welding_fails() {
+    let (mut varde, io, regen) = with_plate();
+    export_to(&mut varde, Some(Chosen::Path("/d/plate.3mf".into())));
+    let Some(Request::Export { export, .. }) = regen.take().pop() else {
+        panic!("no export asked for");
+    };
+    let doc = varde.screen.doc_mut().unwrap();
+    doc.regen_replaced();
+    assert_eq!(doc.export_state(), None);
+    assert!(doc.export_error().is_some_and(|e| e.ends_with("try again")));
+    assert!(doc.exportable());
+    let id = doc.id;
+    let _ = varde.update(Message::Ui(Ui::Edit(Edit::DismissExportError)));
+    // The old lane's answer, should it still come, is dropped.
+    let _ = varde.update(Message::Doc(
+        id,
+        ForDoc::Computed(Response::Exported {
+            export,
+            result: Ok(Vec::new()),
+        }),
+    ));
+    assert_eq!(document(&varde).export_error(), None);
+    assert!(sent(&io).is_empty());
+}
