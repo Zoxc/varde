@@ -91,8 +91,8 @@ pub enum ProfileError {
     CrossesAxis(usize, usize),
     /// Revolving: the region touches the axis at a single point, where
     /// segment `(loop, segment)` starts (a vertex on the axis with no
-    /// edge along it, in a full turn) or inside that segment (in any
-    /// turn): the solid would pinch to a point there.
+    /// edge along it, in a full turn) or inside that segment, within the
+    /// resolution (in any turn): the solid would pinch to a point there.
     TouchesAxis(usize, usize),
     /// Revolving: a part turn so close to a full one that its two ends
     /// come within the resolution of each other.

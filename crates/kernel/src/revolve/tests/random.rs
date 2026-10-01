@@ -1,7 +1,7 @@
-//! Random profiles revolved: right or refused, never wrong. About a
-//! minute in release (creases neither of `check`'s edge rules parts are
-//! repaired into tens of thousands of patches, see `agents/kernel.md`);
-//! not run in debug builds.
+//! Random profiles revolved: right or refused, never wrong. About 20 s
+//! in release (creases neither of `check`'s edge rules parts are
+//! repaired into tens of thousands of patches, see `agents/kernel.md`;
+//! 103 of the 120 right, 14 `TooComplex`); not run in debug builds.
 #![cfg(not(debug_assertions))]
 
 use super::*;

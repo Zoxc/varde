@@ -86,6 +86,26 @@ fn profiles_touching_the_axis_at_a_point_are_refused_in_a_full_turn() {
             Err(KernelError::Profile(ProfileError::TouchesAxis(0, 3)))
         );
     }
+    // A lens whose arc comes within rounding, or within the resolution,
+    // of the axis half way along: touching it too (it was repaired until
+    // it ran out, `TooComplex`). Its circle drawn round a centre `2 + gap`
+    // out never meets the axis exactly.
+    let res = TOL.resolution();
+    for gap in [0.0, 1e-12, 0.5 * res, 0.9 * res] {
+        let centre = v(2.0 + gap, 0.0);
+        let h = 3f64.sqrt();
+        let (top, bottom) = (centre + v(-1.0, h), centre + v(-1.0, -h));
+        let lens = profile(vec![Loop {
+            segments: vec![arc(centre, top, bottom, 1), line(bottom, top, 2)],
+        }]);
+        for sweep in [Sweep::Full, part(1.0)] {
+            assert_eq!(
+                run(&lens, sweep),
+                Err(KernelError::Profile(ProfileError::TouchesAxis(0, 0))),
+                "{gap:e}"
+            );
+        }
+    }
 }
 
 #[test]

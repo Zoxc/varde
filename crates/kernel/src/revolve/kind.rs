@@ -4,7 +4,7 @@ use glam::DVec2;
 
 use super::Turn;
 use crate::extrude::chain::Side;
-use crate::mesh::{Form, Quadric, Surface, circle_of};
+use crate::mesh::{Form, Quadric, Surface, circle_of, hypot};
 
 /// The face an input segment turns into, with its tag and form.
 #[derive(Debug, Clone, Copy)]
@@ -37,11 +37,14 @@ impl Kind {
     /// Straight segments whose ends are within `margin` of one height
     /// are flat (their faces then within it of their plane, which `check`
     /// holds them to); those whose ends are within `margin` of one radius
-    /// have a cylinder for their form. A circle's arc whose centre is
-    /// within `margin` of the axis is a sphere's (as an extrude takes a
-    /// conic whose control point is within the resolution of its chord
-    /// for a line). Only the face's kind hangs on these; its tag is
-    /// checked.
+    /// have a cylinder for their form. A circle's arc of weight `w` whose
+    /// centre is within `margin·w/4` of the axis is a sphere's (as an
+    /// extrude takes a conic whose control point is within the resolution
+    /// of its chord for a line): its exact strips are then within about
+    /// `δ·(1 + 1/2w)` of the sphere for a centre `δ` off the axis
+    /// (measured; the diagonal of a wide arc's strip strays furthest), so
+    /// within `3/8` of the resolution, which the tag check holds them to.
+    /// Only the face's kind hangs on these; its tag is checked.
     pub(super) fn of(side: &Side, turn: &Turn, margin: f64) -> Kind {
         let c = &side.conic;
         let (axis, origin) = (turn.axis(), turn.origin());
@@ -104,7 +107,7 @@ impl Kind {
             };
         }
         match circle_of(c) {
-            Some((centre, radius)) if centre.x.abs() <= margin => {
+            Some((centre, radius)) if centre.x.abs() <= 0.25 * margin * c.w => {
                 let centre = on_axis(centre.y);
                 Kind::Exact {
                     surface: Surface::Quadric(Quadric::sphere(centre, radius)),
@@ -152,10 +155,4 @@ impl Kind {
 /// different radii) meets it.
 fn apex(p0: DVec2, p1: DVec2) -> f64 {
     (p0.y * p1.x - p1.y * p0.x) / (p1.x - p0.x)
-}
-
-/// `√(a² + b²)` by `+ − × ÷ √` (std's `hypot` isn't the same on every
-/// platform).
-fn hypot(a: f64, b: f64) -> f64 {
-    (a * a + b * b).sqrt()
 }

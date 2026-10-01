@@ -73,13 +73,14 @@ const NESTING_WORK: usize = 8;
 /// The profile must pass [`Profile::check`], and its segments must
 /// neither touch nor cross within `tol`'s resolution, nest as outer loops
 /// and holes and meet at no cusp, as an extrude's. Vertices within the
-/// resolution of the axis are put on it (the one decision by distance);
-/// a region reaching across the axis is
-/// [`ProfileError::CrossesAxis`], one touching it at a point
-/// [`ProfileError::TouchesAxis`] (a vertex in a full turn, the inside of a
-/// segment in any), and a part turn whose ends come within the resolution
-/// of each other [`ProfileError::NearlyFullTurn`]. Segments along the
-/// axis make no face. A part turn's angles are finite, within `8π` of `x`
+/// resolution of the axis are put on it (a decision by distance, as is
+/// a segment coming that close inside); a region reaching across the
+/// axis is [`ProfileError::CrossesAxis`], one touching it at a point
+/// [`ProfileError::TouchesAxis`] (a vertex in a full turn, the inside of
+/// a segment coming within the resolution of it in any), and a part turn
+/// whose ends come within the resolution of each other
+/// [`ProfileError::NearlyFullTurn`]. Segments along the axis make no
+/// face. A part turn's angles are finite, within `8π` of `x`
 /// and `0 < to − from < 2π` ([`PatchError::Parameter`] otherwise).
 ///
 /// A solid too thin or too fine for the resolution fails with
@@ -100,7 +101,7 @@ pub fn revolve(
     let margin = tol.resolution();
     let profile = onto_axis(profile, margin);
     profile.check().map_err(KernelError::Profile)?;
-    axis_rules(&profile, turn.is_full())?;
+    axis_rules(&profile, turn.is_full(), margin)?;
     let mut work = Work::new(budget);
     let mut chain = Chain::new(&profile, margin)?;
     chain.separate(&mut work)?;
@@ -269,7 +270,8 @@ fn unit_turn(angle: f64) -> DVec2 {
 
 /// `profile` with every segment end within `margin` of the axis put on
 /// it, and the control point of a segment with both ends there too if it
-/// is that close: the one decision a revolve takes by distance. Ends
+/// is that close: a decision by distance, with the axis rule on
+/// segments coming that close inside (see [`axis_rules`]). Ends
 /// shared to the bit stay shared.
 fn onto_axis(profile: &Profile, margin: f64) -> Profile {
     let snap = |p: DVec2| {
@@ -310,17 +312,25 @@ fn onto_axis(profile: &Profile, margin: f64) -> Profile {
 }
 
 /// The axis rules on a profile already put onto the axis: no segment
-/// reaching across it ([`ProfileError::CrossesAxis`]), none touching it
-/// inside, and in a full turn no vertex on it alone, without a segment
-/// along the axis on either side ([`ProfileError::TouchesAxis`]).
+/// reaching across it ([`ProfileError::CrossesAxis`]), none with both ends
+/// off it coming within `margin` of it inside, and in a full turn no
+/// vertex on it alone, without a segment along the axis on either side
+/// ([`ProfileError::TouchesAxis`]).
 ///
 /// A segment's distance from the axis is `x(t) = N(t)/D(t)` with `D > 0`
 /// and `N` the quadratic of Bernstein coefficients `x0`, `w·cx`, `x1`, so
 /// exact signs decide: it reaches below 0 where an end does or where the
-/// middle coefficient is negative and its square beats `x0·x1`, and
-/// touches 0 inside where they are equal.
-fn axis_rules(profile: &Profile, full: bool) -> Result<(), ProfileError> {
+/// middle coefficient is negative and its square beats `x0·x1`. It comes
+/// within `margin` where `N − margin·D`, of coefficients `x0 − margin`,
+/// `w·(cx − margin)`, `x1 − margin`, reaches 0 that way: the one place the
+/// rules take a distance, as the ends put onto the axis do (a segment
+/// touching the axis inside comes within rounding of it, never exactly
+/// onto it, and its face would pinch there, far too thin to pass).
+fn axis_rules(profile: &Profile, full: bool, margin: f64) -> Result<(), ProfileError> {
     let along = |c: &Conic2| c.p0.x == 0.0 && c.c.x == 0.0 && c.p1.x == 0.0;
+    // Whether `N` of coefficients `b0, b1, b2`, its ends above 0, reaches
+    // 0 inside.
+    let dips = |b0: f64, b1: f64, b2: f64| b1 < 0.0 && b1 * b1 >= b0 * b2;
     let segments = || {
         profile.loops.iter().enumerate().flat_map(|(l, lp)| {
             lp.segments
@@ -338,8 +348,10 @@ fn axis_rules(profile: &Profile, full: bool) -> Result<(), ProfileError> {
         }
     }
     for (l, s, c) in segments() {
-        let b1 = c.w * c.c.x;
-        if b1 < 0.0 && b1 * b1 == c.p0.x * c.p1.x {
+        // Ends off the axis are beyond `margin`: within it they were put
+        // on it.
+        let off = c.p0.x > 0.0 && c.p1.x > 0.0;
+        if off && dips(c.p0.x - margin, c.w * (c.c.x - margin), c.p1.x - margin) {
             return Err(ProfileError::TouchesAxis(l, s));
         }
         let lp = &profile.loops[l].segments;
@@ -478,7 +490,6 @@ impl Build<'_> {
         flat_found: &mut bool,
         work: &mut Work,
     ) -> Result<Result<Solid, Again>, KernelError> {
-        let margin = self.tol.resolution();
         let count: usize = pieces.iter().map(Vec::len).sum();
         if count.saturating_mul(lathe.pieces()).saturating_mul(2) > MAX_PATCHES {
             return Err(KernelError::TooComplex);
@@ -533,10 +544,7 @@ impl Build<'_> {
         })?;
         work.spend(mesh.tris().len())?;
         // A face per surface: collinear segments' faces are one.
-        let mesh = mesh
-            .repair_within(self.tol, work)?
-            .merge_faces(margin, work)?;
-        Ok(Ok(Solid::new_within(mesh, self.tol, work)?))
+        Ok(Ok(Solid::finished(mesh, self.tol, work)?))
     }
 
     /// The face of `piece` on `lathe`, or `None` if a fitted band wants

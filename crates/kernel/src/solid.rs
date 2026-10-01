@@ -15,6 +15,11 @@ use crate::{
 /// units about half a microsecond): see [`Solid::new_within`].
 pub(crate) const INTEGRATE_WORK: usize = 32;
 
+/// Units of work per patch that checking a result takes (about 2.7 µs a
+/// patch on one thread), not counting the patches it integrates to tell
+/// which way the shells face ([`Solid::new_within`] charges those).
+pub(crate) const CHECK_WORK: usize = 5;
+
 /// A closed solid: a [`Mesh`] of rational quadratic patches that passes
 /// [`Mesh::check`], always. It is never stored; documents keep what builds
 /// it.
@@ -83,6 +88,25 @@ impl Solid {
             }
             Err(e) => Err(e),
         }
+    }
+
+    /// The solid of `mesh`, closed as an operation built it but perhaps
+    /// breaking the fold and hull rules: repaired, faces of one surface
+    /// that meet merged ([`Mesh::merge_faces`]), and checked, the check
+    /// charged [`CHECK_WORK`] a patch and the patches it integrated as
+    /// [`Self::new_within`] charges them: for booleans' and revolves'
+    /// meshes, which often need repair; an extrude's, built to pass,
+    /// takes [`Self::new_repaired_within`].
+    pub(crate) fn finished(
+        mesh: Mesh,
+        tol: &Tolerance,
+        work: &mut Work,
+    ) -> Result<Solid, KernelError> {
+        let mesh = mesh
+            .repair_within(tol, work)?
+            .merge_faces(tol.resolution(), work)?;
+        work.spend(mesh.tris().len().saturating_mul(CHECK_WORK))?;
+        Solid::new_within(mesh, tol, work)
     }
 
     /// The empty solid.

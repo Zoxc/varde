@@ -129,12 +129,6 @@ fn short(tol: &Tolerance) -> f64 {
     tol.resolution() / 8.0
 }
 
-/// Units of work per patch that checking the result takes (about 2.7 µs
-/// a patch on one thread, the units about half a microsecond), not
-/// counting the patches it integrates to tell which way the shells face
-/// ([`Solid::new_within`] charges those).
-const CHECK_WORK: usize = 5;
-
 /// The projection direction every primitive shares: nearly `+z`, tilted
 /// off every axis so that walls along the axes, which CAD models are full
 /// of, don't all project to lines. Its coordinates are small integers, so
@@ -229,13 +223,7 @@ pub fn boolean(
     let mesh = unchecked(a, b, op, tol, &mut work)?;
     // Faces of one surface that meet merge, so a flush join leaves no
     // line between the two operands' pieces of a plane or cylinder.
-    let mesh = mesh
-        .repair_within(tol, &mut work)?
-        .merge_faces(tol.resolution(), &mut work)?;
-    // The check that makes it a solid, a few units a patch, and the
-    // patches it integrated, charged once it has told how many.
-    work.spend(mesh.tris().len().saturating_mul(CHECK_WORK))?;
-    Solid::new_within(mesh, tol, &mut work)
+    Solid::finished(mesh, tol, &mut work)
 }
 
 #[cfg(test)]

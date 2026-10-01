@@ -2258,7 +2258,9 @@ counted (at most its limit plus one); then the patches, then twice
 the patches and the pairs of boxes for the check (and repair's own pass
 too if it fails), a unit a patch for merging the faces, then 32 for each
 patch the check integrated (`INTEGRATE_WORK`; about six for each
-cylinder-like wall). Vertex counts past `MAX_PATCHES / 4` (the segments
+cylinder-like wall), through `Solid::new_repaired_within` (revolves and
+booleans go through `Solid::finished`, which always repairs, then
+charges 5 a patch, `CHECK_WORK`, for the check). Vertex counts past `MAX_PATCHES / 4` (the segments
 and the Steiner points) are `TooComplex`, at a round's start and as a
 run of refinement inserts its points.
 
@@ -2573,17 +2575,22 @@ make none. The steps:
    the lathe's stations), so station 0 is where the sweep starts.
 2. **Onto the axis.** A segment end within the resolution of the axis is
    put on it (`x = 0`), and a control point too if both its segment's ends
-   are on it and it is that close: the one decision a revolve takes by
-   distance, on input, the same for both segments sharing an end, so ends
+   are on it and it is that close: a decision by distance (with the
+   rule on segments coming that close inside, below), on input, the same for both segments sharing an end, so ends
    stay shared to the bit. `Profile::check` again.
 3. **Axis rules**, by exact signs: a segment's distance from the axis is
    `N(t)/D(t)` with `D > 0` and `N` the quadratic of Bernstein
    coefficients `x0`, `w·cx`, `x1`, which reaches below 0 where an end
    does or the middle coefficient is negative with its square over
-   `x0·x1` (`ProfileError::CrossesAxis`, checked for every segment first),
-   and touches 0 inside where the two are equal
-   (`ProfileError::TouchesAxis`, in any turn: the face would pinch to a
-   point mid-segment). In a full turn a vertex on the axis with no segment
+   `x0·x1` (`ProfileError::CrossesAxis`, checked for every segment first).
+   A segment with both ends off the axis that comes within the resolution
+   `m` of it inside is `ProfileError::TouchesAxis` (in any turn: the face
+   would pinch there), decided the same way on `N − m·D`, of coefficients
+   `x0 − m`, `w·(cx − m)`, `x1 − m`: a reach to 0 inside where the middle
+   one is negative and its square at least the ends' product. (Exactly
+   touching, the square equal to `x0·x1`, never happens in floating
+   point: a circle drawn tangent to the axis misses it by a rounding,
+   which repair then split until it ran out.) In a full turn a vertex on the axis with no segment
    along the axis either side is `TouchesAxis` too (the solid would pinch
    to a point there); in a part turn it is a solid (both walls end in
    apex caps at the vertex, which both ends share).
@@ -2609,10 +2616,16 @@ make none. The steps:
      written about the segment's foot on the axis, `ρ² = (ρ0 + s·h)²` with
      `s` the slope (well conditioned up to the cylinder, `s = 0`, where an
      apex would be far out);
-   - **an arc centred within the resolution of the axis**
-     (`circle_of`): a sphere, exact, tagged `Quadric::sphere`;
+   - **an arc centred within `m·w/4` of the axis** (`circle_of`, `w` the
+     arc's weight, `m` the resolution): a sphere, exact, tagged
+     `Quadric::sphere`. Its strips, built on the arc as drawn, stray from
+     the sphere on the axis by about `δ·(1 + 1/2w)` for a centre `δ` off
+     it (measured: the diagonal of a wide arc's strip strays furthest,
+     5.8 times `δ` at 170°), so within `3m/8`, which the tag check holds;
+     taking every centre within `m` refused a 170° band from `m/5` off;
    - **any other circle's arc** with its centre off the axis on the
-     profile's side: `Form::Torus`, fitted, claiming no surface; other
+     profile's side: `Form::Torus` (a spindle torus's where the centre is
+     nearer the axis than the radius), fitted, claiming no surface; other
      conics, and arcs of circles centred across the axis (a lemon):
      `Form::Revolved` with the segment's conic as meridian, fitted.
 
@@ -2670,7 +2683,9 @@ make none. The steps:
    are one face), and `Solid::new_within`. As the extrude, a first try
    without and a second with Steiner points moved in from flat corners,
    the second only where a triangulation found such a corner and the
-   first failed with `Invalid`, `TooComplex` or `TooFine`.
+   first failed with `Invalid`, `TooComplex` or `TooFine`; unlike the
+   extrude's, the second starts over rather than resuming where the first
+   found the corner, since a round triangulates several faces.
 
 The meshes are closed by construction: every strip, cap and flat
 triangle names its corners by ring and station, and the face tags are
@@ -2699,12 +2714,15 @@ collinear lines one face with the second's key an alias, a circle of one
 curve one face, four separate curves four), segment numbers per curve;
 forms (planes, cylinders, the cone's apex and half-angle, the torus, the
 sphere); lemons and spindles (arcs whose circles reach across the axis);
+a 170° band of a sphere drawn round centres a hair off the axis (a
+sphere within `m·w/4`, fitted beyond);
 an ellipse's, a parabola's and a hyperbola's arcs (`Form::Revolved`);
 vertices a hair off the axis put on it; the lathe growing for tori and
 not for cylinders; the same bits at 1 and 8 threads; refusals
 (`revolve/tests/refusals.rs`): across the axis (a side, a bulge, beyond
 the resolution), touching it at a vertex in a full turn and inside a
-segment in any, nearly full turns, bad sweeps and frames, touching and
+segment in any (a parabola exactly, a lens's arc within rounding and
+within the resolution), nearly full turns, bad sweeps and frames, touching and
 badly nested loops, the budget; random profiles of lines and conics, off
 the axis and fanned from it, on random frames and sweeps
 (`revolve/tests/random.rs`, release only): right by Pappus or refused,
@@ -2728,15 +2746,25 @@ Known gaps:
   the resolution, where the plane may turn about them: the triangle at
   `1e-1` comes out right with 14 192 patches (0.2 s), at `1e-2` with 57 200
   (1.8 s); finer, `TooComplex`. Random profiles of lines and conics hit
-  it about half the time (`revolve/tests/random.rs`: 110 of 120 right, 10
-  `TooComplex` or refused for the region, up to 4 s each in release even
-  on an eighth of the budget: repair's charges fall behind its time on
-  meshes this size). Never wrong. The fix is a third certificate in
+  it about half the time (`revolve/tests/random.rs`, on a quarter of the
+  budget: 103 of 120 right, 14 `TooComplex` and 3 refused for the
+  region). These ran up to 4 s each before the check after repair was
+  charged (`CHECK_WORK`, as a boolean's; extrude's and revolve's weren't,
+  and a 57 000-patch result's check took a third of the time): 110 then
+  came out right, the spindle among the shapes with 229 136 patches in
+  20 s. Repair itself is charged a unit a pair tested and a unit a split,
+  which measured (on a loaded machine) about 3 to 5 µs a unit at 57 000
+  patches, against the half microsecond the units stand for: its pair
+  tests near creases cost several units each. Never wrong. The fix is a third certificate in
   `check` and repair: a member of the pencil of the plane and the
   cylinder, `α·F + β·P·W` (`P` the plane's value, `W` the weights' square
   to match `F`'s degree), with one sign on each patch, found by a
   two-variable LP over the Bernstein coefficients (the deviation "Rings
   at turns" anticipated it), with rounding bounded as the cylinder's.
+- **Arcs tangent to the axis at a pole** (a horn torus's piece, in a
+  part turn; a full turn makes them a cusp or a lone vertex): the pole
+  is a zero-angle apex its cap can't be fitted to, `TooComplex`, or
+  `CrossesAxis` where the control point rounds across the axis.
 - **Thin wedges**: a part turn under about `0.06°` (the sine of the
   sector's corner under `SIN_MIN`) can't triangulate a disc's or ring's
   sector: `TooFine` for the flat segment.
@@ -4621,7 +4649,8 @@ units per patch of the result for the check that makes it a solid (about
 2.7 µs a patch; `CHECK_WORK`), spent before it, plus 32 for each patch
 whose volume the check integrated to tell which way the shells face
 (about 17 µs a patch; `INTEGRATE_WORK`), which `Mesh::check_counted`
-reports and `Solid::new_within` spends (`new_repaired_within` for extrude's check), after the
+reports and `Solid::new_within` spends (revolve's check too, through
+`Solid::finished`; `new_repaired_within` for extrude's), after the
 check: a result can pass it and still be `TooComplex`. The operands
 cost nothing for their orientation, which their own check settled. With curved patches also each edge–face search a unit per 2
 pieces it looked at, at least 16: the 16 spent before it runs, the rest
@@ -7084,9 +7113,10 @@ parameter, or a split outside the patch bounds),
   Part { from, to }}`; a part turn's angles must be within `8π` of `x`.
   Faces are flat where a line's ends are within the resolution of one
   height, cylinders (as a form; the strips are the cone's) within it of
-  one radius, spheres where an arc's centre is within it of the axis:
-  choices of a face's kind, its tag checked, like the extrude's
-  straightening. A segment touching the axis inside is refused in part
+  one radius, spheres where an arc's centre is within `m·w/4` of the
+  axis (`m` the resolution, `w` the arc's weight): choices of a face's
+  kind, its tag checked, like the extrude's straightening. A segment
+  coming within the resolution of the axis inside is refused in part
   turns too (the plan refused only a vertex alone, in full turns), and a
   part turn too close to full is `ProfileError::NearlyFullTurn` (new,
   with `CrossesAxis` and `TouchesAxis`). Where the ends' caps want a

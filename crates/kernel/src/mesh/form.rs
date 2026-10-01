@@ -292,7 +292,7 @@ impl Form {
 
 /// `√(a² + b²)` by `+ − × ÷ √` (std's `hypot` isn't the same on every
 /// platform).
-fn hypot(a: f64, b: f64) -> f64 {
+pub(crate) fn hypot(a: f64, b: f64) -> f64 {
     (a * a + b * b).sqrt()
 }
 

@@ -226,8 +226,9 @@ plane.
 
 1. **Checks**: the profile as for extrude (chain, separation, nesting),
    vertices within the resolution of the axis put on it, and the axis
-   rules by exact signs: nothing across the axis, no segment touching it
-   inside, and in a full turn no vertex on it alone (a pinch).
+   rules by exact signs: nothing across the axis, no segment coming
+   within the resolution of it inside, and in a full turn no vertex on it
+   alone (a pinch).
 2. **Faces per segment**: none along the axis; flat rings, discs and
    sectors square to it (triangulated as extrude caps from their rings'
    arcs); exact cones and cylinders for other lines and spheres for arcs

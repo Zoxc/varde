@@ -953,8 +953,9 @@ fn the_result_checks_integrations_are_charged() {
     assert!(integrated > 0);
     assert!((Solid::new(mesh.clone(), &TOL).unwrap().volume() - want).abs() < 1e-9);
     let made = Budget::DEFAULT.work() - work.left();
-    let total =
-        made + (mesh.tris().len() * CHECK_WORK + integrated * crate::solid::INTEGRATE_WORK) as u64;
+    let total = made
+        + (mesh.tris().len() * crate::solid::CHECK_WORK + integrated * crate::solid::INTEGRATE_WORK)
+            as u64;
     let with = |work: u64| boolean(&tube, &notch, Op::Difference, &TOL, &Budget::new(work));
     assert_eq!(with(total).map(|s| s.mesh().clone()), Ok(mesh));
     assert_eq!(with(total - 1), Err(KernelError::TooComplex));
