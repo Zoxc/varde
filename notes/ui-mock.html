@@ -36,6 +36,10 @@
   --c-solid: #8a6fc4;
   --c-cons: #e0861a;
   --c-insp: #13a08f;
+  --i-sketch: #0a95ad; --i-mod: #cf3f30; --i-cstr: #8a3fd0; --i-dim: #5f6b80;
+  --i-solid: #c0409a; --i-cons: #c39000; --i-insp: #2f9a47;
+  --ia-sketch: #e88a00; --ia-mod: #2f6fd8; --ia-cstr: #e88a00; --ia-dim: #e88a00;
+  --ia-solid: #0d9a88; --ia-cons: #2f6fd8; --ia-insp: #e88a00;
   --logo-a: #5e4a93;
   --logo-b: #9a88c8;
   --logo-dot: #5dbf4a;
@@ -69,6 +73,10 @@
     --c-solid: #a896d6;
     --c-cons: #f0a24a;
     --c-insp: #3fcfbd;
+    --i-sketch: #3cc3d9; --i-mod: #ff7a66; --i-cstr: #b48cff; --i-dim: #a6b2c6;
+    --i-solid: #ef77c2; --i-cons: #f0c43c; --i-insp: #62cf7c;
+    --ia-sketch: #ffad33; --ia-mod: #78aaff; --ia-cstr: #ffad33; --ia-dim: #ffad33;
+    --ia-solid: #3fd3bf; --ia-cons: #78aaff; --ia-insp: #ffad33;
     --logo-a: #7d6bb3;
     --logo-b: #b3a6dc;
     --logo-dot: #76d062;
@@ -102,6 +110,10 @@
   --c-solid: #a896d6;
   --c-cons: #f0a24a;
   --c-insp: #3fcfbd;
+  --i-sketch: #3cc3d9; --i-mod: #ff7a66; --i-cstr: #b48cff; --i-dim: #a6b2c6;
+  --i-solid: #ef77c2; --i-cons: #f0c43c; --i-insp: #62cf7c;
+  --ia-sketch: #ffad33; --ia-mod: #78aaff; --ia-cstr: #ffad33; --ia-dim: #ffad33;
+  --ia-solid: #3fd3bf; --ia-cons: #78aaff; --ia-insp: #ffad33;
   --logo-a: #7d6bb3;
   --logo-b: #b3a6dc;
   --logo-dot: #76d062;
@@ -139,10 +151,24 @@ body {
 }
 button { font: inherit; color: inherit; }
 svg.i { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-svg.c-sketch { color: var(--c-sketch); }
-svg.c-solid { color: var(--c-solid); }
-svg.c-cons { color: var(--c-cons); }
-svg.c-insp { color: var(--c-insp); }
+/* Tool icons: notes/ui-mock-icons.html's defaults, the "outline with
+   accents, line only" set in its Distinct colours with purple constraints
+   and the softer accent. A tool is drawn in its category's colour (--cc,
+   darkened for some), its accent marks (.a, hollow dots .af) in the
+   category's accent mixed 60% toward it, and reference geometry (.r) in a
+   grey tinted 8% toward it. */
+svg.c-sketch { --cc: var(--i-sketch); --ca: var(--ia-sketch); }
+svg.c-mod { --cc: color-mix(in srgb, var(--i-mod) 90%, #000); --ca: var(--ia-mod); }
+svg.c-cstr { --cc: color-mix(in srgb, var(--i-cstr) 88%, #000); --ca: var(--ia-cstr); }
+svg.c-dim { --cc: color-mix(in srgb, var(--i-dim) 85%, #000); --ca: var(--ia-dim); }
+svg.c-solid { --cc: var(--i-solid); --ca: var(--ia-solid); }
+svg.c-cons { --cc: color-mix(in srgb, var(--i-cons) 92%, #000); --ca: var(--ia-cons); }
+svg.c-insp { --cc: var(--i-insp); --ca: var(--ia-insp); }
+svg.i[class*=" c-"] { color: var(--cc); }
+svg.i :is(.a, .af) { stroke: color-mix(in srgb, var(--ca) 60%, var(--cc)); }
+svg.i .af { fill: var(--panel); stroke-width: 1.5; }
+svg.i .r { stroke: color-mix(in srgb, color-mix(in srgb, var(--text) 52%, var(--panel)) 92%, var(--cc)); }
+svg.i .tx { fill: var(--cc); stroke: none; }
 kbd {
   font: 500 10.5px/1 ui-monospace, "SF Mono", Menlo, monospace;
   padding: 3px 5px; border-radius: 4px;
@@ -529,23 +555,23 @@ body.dragging .face, body.dragging .hole { pointer-events: none; }
 <script>
 // ---------------------------------------------------------------- icons
 const I = {
-  sketch: '<path d="M4 20h16"/><path d="M14.5 4.5l5 5L9 20H4v-5z"/>',
-  extrude: '<path d="M4 15l8 4 8-4-8-4z"/><path d="M12 11V3M9 6l3-3 3 3"/>',
-  revolve: '<path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M17.5 2.5v4h4"/>',
-  hole: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/>',
-  fillet: '<path d="M5 20V11a6 6 0 0 1 6-6h9"/>',
-  chamfer: '<path d="M5 20V10l5-5h10"/>',
-  combine: '<rect x="3" y="3" width="11" height="11" rx="1.5"/><rect x="10" y="10" width="11" height="11" rx="1.5"/>',
-  measure: '<path d="M3 17L17 3l4 4L7 21z"/><path d="M7 13l2 2M10 10l2 2M13 7l2 2"/>',
-  pushpull: '<rect x="4" y="13" width="16" height="7" rx="1"/><path d="M12 10V3M9 6l3-3 3 3"/>',
-  offset: '<rect x="3" y="3" width="18" height="18" rx="2"/><rect x="8" y="8" width="8" height="8" rx="1"/>',
-  line: '<path d="M6 18L18 6"/><circle cx="5" cy="19" r="1.6"/><circle cx="19" cy="5" r="1.6"/>',
-  rect: '<rect x="4" y="6" width="16" height="12" rx="1"/>',
-  circle: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r=".8" fill="currentColor"/>',
-  arc: '<path d="M4 18A9 9 0 0 1 20 18"/>',
-  trim: '<circle cx="6" cy="7" r="2.5"/><circle cx="6" cy="17" r="2.5"/><path d="M8.2 8.4L20 17M8.2 15.6L20 7"/>',
-  dim: '<path d="M4 7v10M20 7v10M5 12h14"/><path d="M7.5 9.5L5 12l2.5 2.5M16.5 9.5L19 12l-2.5 2.5"/>',
-  constrain: '<rect x="5" y="11" width="14" height="9" rx="1.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+  sketch: '<path class="r" d="M4 20h16"/><path class="t" d="M14.5 4.5l5 5L9 20H4v-5z"/><path class="a" d="M6 13l5 5"/>',
+  extrude: '<path class="t" d="M4 15l8 4 8-4-8-4z"/><path class="a" d="M12 11V3M9 6l3-3 3 3"/>',
+  revolve: '<path d="M20 12a8 8 0 1 1-2.6-5.9"/><path class="a" d="M17.5 2.5v4h4"/><path class="r" d="M12 7v10" stroke-dasharray="2 2"/>',
+  hole: '<circle class="r" cx="12" cy="12" r="8"/><circle class="t" cx="12" cy="12" r="3.5"/><circle class="af" cx="12" cy="12" r="1.2"/>',
+  fillet: '<path d="M4 20v-4M16 4h4"/><path class="r" d="M4 16V4h12" stroke-dasharray="1.6 2"/><path class="a" d="M4 16A12 12 0 0 1 16 4"/>',
+  chamfer: '<path d="M5 20V10M10 5h10"/><path class="r" d="M5 10V5h5" stroke-dasharray="1.6 2"/><path class="a" d="M5 10l5-5"/>',
+  combine: '<rect x="3" y="3" width="11" height="11" rx="1.5"/><rect x="10" y="10" width="11" height="11" rx="1.5"/><path class="ta" stroke="none" d="M10 10h4v4h-4z"/>',
+  measure: '<path class="t" d="M3 17L17 3l4 4L7 21z"/><path class="a" d="M7 13l2 2M10 10l2 2M13 7l2 2"/>',
+  pushpull: '<rect class="t" x="4" y="13" width="16" height="7" rx="1"/><path class="a" d="M12 10V3M9 6l3-3 3 3"/>',
+  offset: '<rect class="t" x="3" y="3" width="18" height="18" rx="2"/><rect class="r" x="8" y="8" width="8" height="8" rx="1"/><path class="a" d="M16.5 12h2.5M17.5 10.5L19 12l-1.5 1.5"/>',
+  line: '<path d="M6 18L18 6"/><circle class="a" cx="5" cy="19" r="1.6"/><circle class="a" cx="19" cy="5" r="1.6"/>',
+  rect: '<rect class="t" x="4" y="6" width="16" height="12" rx="1"/><circle class="af" cx="4" cy="6" r="1.5"/><circle class="af" cx="20" cy="18" r="1.5"/>',
+  circle: '<circle class="t" cx="12" cy="12" r="8"/><path class="r" d="M12 12l5.66-5.66" stroke-dasharray="2 2"/><circle class="af" cx="12" cy="12" r="1.5"/><circle class="af" cx="17.66" cy="6.34" r="1.5"/>',
+  arc: '<path d="M4 18A9 9 0 0 1 20 18"/><circle class="af" cx="4" cy="18" r="1.5"/><circle class="af" cx="12" cy="10" r="1.5"/><circle class="af" cx="20" cy="18" r="1.5"/>',
+  trim: '<circle cx="6" cy="7" r="2.5"/><circle cx="6" cy="17" r="2.5"/><path class="a" d="M8.2 8.4L20 17M8.2 15.6L20 7"/>',
+  dim: '<path class="r" d="M4 7v10M20 7v10"/><path d="M5 12h14"/><path class="a" d="M7.5 9.5L5 12l2.5 2.5M16.5 9.5L19 12l-2.5 2.5"/>',
+  constrain: '<rect class="t" x="5" y="11" width="14" height="9" rx="1.5"/><path class="a" d="M8 11V8a4 4 0 0 1 8 0v3"/>',
   check: '<path d="M5 12.5l4.5 4.5L19 7"/>',
   edit: '<path d="M14.5 4.5l5 5L9 20H4v-5z"/>',
   eye: '<path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z"/><circle cx="12" cy="12" r="2.5"/>',
@@ -562,7 +588,8 @@ const I = {
   moon: '<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/>',
   body: '<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/>',
   origin: '<path d="M5 19V5M5 19h14M5 19l8-8"/>',
-  plane: '<path d="M3 16l5-8h13l-5 8z"/>',
+  skoffset: '<path class="r" d="M4 20c2-7 7-12 16-13"/><path d="M3 13c2-4 6-7 11-7.8"/><path class="a" d="M10.5 14.5L8 11M7.5 13.3L8 11l2.4.2"/>',
+  plane: '<path class="r" d="M3 20l4-5h14l-4 5z"/><path class="t" d="M3 11l4-5h14l-4 5z"/><path class="a" d="M12 17.5V9.5M10 11.5l2-2 2 2"/>',
   search: '<circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/>',
   help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .8-1 1.5V14"/><circle cx="12" cy="17" r=".6" fill="currentColor"/>',
   home: '<path d="M4 11l8-7 8 7"/><path d="M6 9.5V20h12V9.5"/>',
@@ -570,33 +597,37 @@ const I = {
   close: '<path d="M6 6l12 12M18 6L6 18"/>',
   min: '<path d="M6 12h12"/>',
   max: '<rect x="6" y="6" width="12" height="12" rx="1.5"/>',
-  sweep: '<path d="M4 18c4 0 5-12 12-12"/><circle cx="17" cy="6" r="3"/><circle cx="4.5" cy="18" r="1.5"/>',
-  loft: '<rect x="3" y="15" width="10" height="5" rx="1"/><circle cx="16" cy="6" r="3.5"/><path d="M3 15l9.5-9M13 15l6.5-7"/>',
-  box: '<path d="M4 8l8-4 8 4v8l-8 4-8-4z"/><path d="M4 8l8 4 8-4M12 12v8"/>',
-  shell: '<path d="M4 8l8-4 8 4v8l-8 4-8-4z"/><path d="M8 9.5l4-2 4 2v5l-4 2-4-2z"/>',
-  move: '<path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/>',
-  axis: '<path d="M5 19L19 5"/><path d="M15 5h4v4"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/>',
-  point: '<circle cx="12" cy="12" r="2.5" fill="currentColor"/><path d="M12 3v4M12 17v4M3 12h4M17 12h4"/>',
-  section: '<path d="M4 8l8-4 8 4v8l-8 4-8-4z"/><path d="M3 13l18-4" stroke-dasharray="2 2"/>',
-  polygon: '<path d="M12 3.5l8 5.8-3 9.2H7l-3-9.2z"/>',
-  spline: '<path d="M3 17c3-9 6-9 9-5s6 4 9-5"/><circle cx="3" cy="17" r="1.3"/><circle cx="21" cy="7" r="1.3"/>',
-  extend: '<path d="M3 18L13 8"/><path d="M13 8l7-7" stroke-dasharray="2 2.2"/><path d="M15 21V11"/>',
-  mirror: '<path d="M12 3v18" stroke-dasharray="2 2"/><path d="M9 7L3 17h6zM15 7l6 10h-6z"/>',
-  coincident: '<path d="M4 20L20 4M4 4l16 16"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/>',
-  parallel: '<path d="M8 20L14 4M12 20l6-16"/>',
-  perpendicular: '<path d="M4 20h16M12 20V5"/>',
-  tangent: '<circle cx="10" cy="13" r="6"/><path d="M3 7h18"/>',
-  equal: '<path d="M5 9h14M5 15h14"/>',
+  sweep: '<path class="r" d="M4 18c4 0 5-12 12-12"/><circle class="t" cx="17" cy="6" r="3"/><circle class="af" cx="4.5" cy="18" r="1.8"/>',
+  loft: '<rect class="t" x="3" y="15" width="10" height="5" rx="1"/><circle class="t" cx="16" cy="6" r="3.5"/><path class="a" d="M3.5 14.5l9-8.5M13 15l6.3-6.8"/>',
+  box: '<path class="t" d="M4 8l8-4 8 4v8l-8 4-8-4z"/><path d="M4 8l8 4 8-4M12 12v8"/><circle class="af" cx="12" cy="12" r="1.6"/>',
+  shell: '<path class="t" d="M4 8l8-4 8 4v8l-8 4-8-4z"/><path class="a" d="M8 9.5l4-2 4 2v5l-4 2-4-2z"/>',
+  move: '<rect class="t" x="9" y="9" width="6" height="6" rx="1"/><path class="a" d="M12 3v3.5M12 17.5V21M3 12h3.5M17.5 12H21M10 5l2-2 2 2M10 19l2 2 2-2M5 10l-2 2 2 2M19 10l2 2-2 2"/>',
+  axis: '<path d="M4 20L20 4"/><circle class="af" cx="7.5" cy="16.5" r="1.7"/><circle class="af" cx="16.5" cy="7.5" r="1.7"/>',
+  point: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4"/><circle class="af" cx="12" cy="12" r="2.6"/>',
+  section: '<path class="t" d="M4 8l8-4 8 4v8l-8 4-8-4z"/><path class="a" d="M3 13l18-4" stroke-dasharray="2 2"/>',
+  polygon: '<path class="t" d="M12 3.5l8 5.8-3 9.2H7l-3-9.2z"/><path class="r" d="M12 12.2V5.5" stroke-dasharray="2 2"/><circle class="af" cx="12" cy="12.2" r="1.4"/><circle class="af" cx="12" cy="3.5" r="1.4"/>',
+  spline: '<path d="M3 17c3-9 6-9 9-5s6 4 9-5"/><circle class="af" cx="3" cy="17" r="1.4"/><circle class="af" cx="12" cy="12" r="1.4"/><circle class="af" cx="21" cy="7" r="1.4"/>',
+  extend: '<path d="M3 19l7-7"/><path class="a" d="M10 12l6.5-6.5" stroke-dasharray="2 2.2"/><path class="r" d="M13 2l8 8"/><circle class="af" cx="16.5" cy="5.5" r="1.4"/>',
+  mirror: '<path class="r" d="M12 3v18" stroke-dasharray="2 2"/><path class="t" d="M9 9L3 19h6z"/><path d="M15 9l6 10h-6z"/><path class="a" d="M7 6.5C9 3 15 3 17 6.5M17.3 3.8L17 6.5l-2.6-.6"/>',
+  coincident: '<path d="M4 20L20 4M4 4l16 16"/><circle class="af" cx="12" cy="12" r="2.6"/>',
+  parallel: '<path d="M6 20L12 4M13 20l6-16"/><path class="a" d="M9.5 7l2.5-3 1 3.7M16.5 7l2.5-3 1 3.7"/>',
+  perpendicular: '<path d="M4 20h16M12 20V5"/><path class="a" d="M12 15.5h4.5V20"/>',
+  tangent: '<circle cx="10" cy="13" r="6"/><path d="M3 7h18"/><circle class="af" cx="10" cy="7" r="2"/>',
+  equal: '<path d="M5 9h14M5 15h14"/><path class="a" d="M11 6.5l2 5M11 12.5l2 5"/>',
   paint: '<circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 0 0 16z" fill="currentColor"/>',
-  bmirror: '<path d="M12 3v18" stroke-dasharray="2 2"/><path d="M9 7L3.5 9.5v7L9 19zM15 7l5.5 2.5v7L15 19z"/>',
-  lpattern: '<rect x="2.5" y="9" width="5" height="6" rx="1"/><rect x="9.5" y="9" width="5" height="6" rx="1"/><rect x="16.5" y="9" width="5" height="6" rx="1" stroke-dasharray="2 1.6"/>',
-  cpattern: '<circle cx="12" cy="12" r="7.5" stroke-dasharray="2 2.2"/><rect x="10" y="2.5" width="4" height="4" rx="1"/><rect x="17.5" y="10" width="4" height="4" rx="1"/><rect x="10" y="17.5" width="4" height="4" rx="1"/><rect x="2.5" y="10" width="4" height="4" rx="1" stroke-dasharray="1.6 1.4"/>',
+  bmirror: '<path class="r" d="M12 3v18" stroke-dasharray="2 2"/><path class="t" d="M9 8L3.5 10.5v7L9 20z"/><path d="M15 8l5.5 2.5v7L15 20z"/><path class="a" d="M7 5.5C9 2.5 15 2.5 17 5.5M17.4 2.9L17 5.5l-2.6-.5"/>',
+  lpattern: '<rect class="t" x="2.5" y="7" width="5" height="6" rx="1"/><rect x="9.5" y="7" width="5" height="6" rx="1"/><rect x="16.5" y="7" width="5" height="6" rx="1" stroke-dasharray="2 1.6"/><path class="a" d="M4 18h15M17 16l2 2-2 2"/>',
+  cpattern: '<circle class="a" cx="12" cy="12" r="7.5" stroke-dasharray="2 2.2"/><rect class="t" x="10" y="2.5" width="4" height="4" rx="1"/><rect x="17.5" y="10" width="4" height="4" rx="1"/><rect x="10" y="17.5" width="4" height="4" rx="1"/><rect x="2.5" y="10" width="4" height="4" rx="1" stroke-dasharray="1.6 1.4"/>',
 };
-// Icon colour by category: sketch, solid/body, construction, inspect.
+// Icon colour by category: sketch drawing, modify, constraints, dimensions,
+// solid/body, construction, inspect.
 const CAT = {};
 for (const [cat, names] of Object.entries({
-  sketch: 'sketch line rect circle arc trim dim constrain polygon spline extend mirror coincident parallel perpendicular tangent equal',
-  solid: 'extrude revolve hole fillet chamfer combine pushpull offset body paint sweep loft box shell move bmirror lpattern cpattern',
+  sketch: 'sketch line rect circle arc polygon spline',
+  mod: 'trim extend mirror skoffset pushpull fillet chamfer shell combine offset',
+  cstr: 'constrain coincident parallel perpendicular tangent equal',
+  dim: 'dim',
+  solid: 'extrude revolve hole body paint sweep loft box move bmirror lpattern cpattern',
   cons: 'plane origin axis point',
   insp: 'measure section',
 })) for (const n of names.split(' ')) CAT[n] = cat;
@@ -919,7 +950,7 @@ function ops() {
     case 'tool':
       return [
         ...Object.entries(TOOLS).filter(([, t]) => t.key)
-          .map(([id, { label, key }]) => ({ id: 'tool:' + id, label, icon: id, key, on: st.tool === id })),
+          .map(([id, { label, key }]) => ({ id: 'tool:' + id, label, icon: id === 'offset' ? 'skoffset' : id, key, on: st.tool === id })),
         { sep: 1 },
         { id: 'finish', label: 'Finish sketch', icon: 'check', key: 'Esc', primary: true },
       ];
@@ -942,7 +973,7 @@ const MODEL_GROUPS = [
 const SKETCH_GROUPS = [
   G('Create', [['line', 'Line', 'tool:line'], ['rect', 'Rectangle', 'tool:rect'], ['circle', 'Circle', 'tool:circle'], ['arc', 'Arc', 'tool:arc'],
                ['polygon', 'Polygon', 'tool:polygon'], ['spline', 'Spline', 'tool:spline']]),
-  G('Modify', [['trim', 'Trim', 'tool:trim'], ['extend', 'Extend', 'tool:extend'], ['offset', 'Offset', 'tool:offset'], ['mirror', 'Mirror', 'tool:mirror']]),
+  G('Modify', [['trim', 'Trim', 'tool:trim'], ['extend', 'Extend', 'tool:extend'], ['skoffset', 'Offset', 'tool:offset'], ['mirror', 'Mirror', 'tool:mirror']]),
   G('Constraints', [['coincident', 'Coincident', 'tool:constrain'], ['parallel', 'Parallel', 'tool:constrain'], ['perpendicular', 'Perpendicular', 'tool:constrain'],
                     ['tangent', 'Tangent', 'tool:constrain'], ['equal', 'Equal', 'tool:constrain']]),
   G('Dimension', [['dim', 'Dimension', 'tool:dim']]),
