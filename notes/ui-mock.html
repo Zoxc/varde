@@ -217,7 +217,7 @@ kbd {
   white-space: nowrap;
 }
 .file {
-  position: relative; flex: none; width: var(--side-w); height: 100%;
+  position: relative; flex: none; width: calc(var(--side-w) - var(--save-w) - 2px); height: 100%;
   display: flex; align-items: center; gap: 8px; padding: 0 10px 0 12px;
   border-right: 1px solid var(--line); cursor: pointer;
 }
@@ -226,6 +226,10 @@ kbd {
 .file .ext { color: var(--faint); font-weight: 400; }
 .file .dirty { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); flex: none; }
 .file .chev { margin-left: auto; color: var(--muted); }
+/* With the file cell and the toolbar's 2px gap, as wide as the side panel
+   under them. */
+.toolbar { --save-w: 38px; }
+.save-cell { display: flex; align-items: center; justify-content: center; flex: none; width: var(--save-w); height: 100%; border-right: 1px solid var(--line); }
 .ctx { display: flex; align-items: center; gap: 6px; padding: 0 12px; height: 100%; font-weight: 600; border-right: 1px solid var(--line); }
 .wash { display: flex; align-items: center; height: 24px; margin-left: -8px; border-radius: 6px; overflow: hidden; background: var(--accent-soft); }
 .wash > span { display: flex; align-items: center; gap: 6px; padding: 0 8px; }
@@ -1287,6 +1291,7 @@ function toolbar() {
           <button data-act="home">${icon('close')}Close document</button>
         </div>` : ''}
     </div>
+    <div class="save-cell"><button class="op icon" data-act="toast:Saved" title="Save (Ctrl S)">${icon('save')}</button></div>
     <div class="ctx">${ctx}</div>
     <div class="ops${list.length > 8 ? ' many' : ''}${enter ? ' enter' : ''}">${opsHtml}</div>
     <div class="spacer"></div>
