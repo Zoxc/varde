@@ -1866,3 +1866,125 @@ fn an_edit_made_while_a_delete_prompt_is_up_waits_for_its_answer() {
             .any(|p| p.at == glam::DVec2::new(30.0, 30.0))
     );
 }
+
+/// `count` circles round a place left of the example's plate, the
+/// innermost last: from a thousand, a good share of the work one
+/// sketch's profiles may take; three thousand, more than that.
+fn concentric(count: usize) -> varde_sketch::Sketch {
+    let mut drawn = varde_sketch::Sketch::default();
+    let center = drawn.add_point(glam::DVec2::new(-40.0, 0.0)).unwrap();
+    for k in (1..=count).rev() {
+        let radius = k as f64 * 0.01;
+        let circle = varde_sketch::Curve::Circle { center, radius };
+        drawn.add_curve(circle, false).unwrap();
+    }
+    drawn
+}
+
+/// Adds `drawn` to `doc`'s document as a visible sketch.
+fn add_visible(doc: &mut Doc, drawn: varde_sketch::Sketch) -> FeatureId {
+    let plane = varde_document::Plane::Origin(varde_document::OriginPlane::XY);
+    doc.apply(doc.editor.document().add_sketch(plane));
+    let sketch = doc.editor.document().features().last().unwrap().id;
+    doc.apply(Command::SetSketch {
+        feature: sketch,
+        sketch: Box::new(drawn),
+    });
+    doc.apply(Command::SetFeatureVisible(sketch, true));
+    sketch
+}
+
+/// Seconds the UI may take over a hostile sketch's profiles: tens of
+/// milliseconds in a release build, some twenty times that unoptimised,
+/// and more again on a loaded machine; it took seconds released.
+fn ui_bound() -> f64 {
+    if cfg!(debug_assertions) { 30.0 } else { 1.0 }
+}
+
+#[test]
+fn a_sketch_too_complex_is_skipped_quickly_and_once() {
+    let (mut doc, plate, requests) = plate();
+    let hostile = add_visible(&mut doc, concentric(3000));
+    doc.sync();
+    answer(&mut doc, &requests);
+    let started = std::time::Instant::now();
+    doc.look(Look::StartExtrude);
+    let took = started.elapsed().as_secs_f64();
+    assert!(took < ui_bound(), "{took}");
+    let session = doc.extrude.as_ref().unwrap();
+    assert_eq!(session.source, None);
+    let found: Vec<FeatureId> = session.found.iter().map(|found| found.feature).collect();
+    assert_eq!(found, vec![plate]);
+    assert_eq!(session.skipped.len(), 1);
+    assert_eq!(session.skipped[0].0, hostile);
+    assert_eq!(session.worked_out, 2);
+    // Changes to the document elsewhere don't work it out again.
+    let region = plate_region(&doc, plate);
+    extrude(
+        &mut doc,
+        ExtrudeLook::PickRegion {
+            sketch: plate,
+            region,
+        },
+    );
+    extrude(
+        &mut doc,
+        ExtrudeLook::PickRegion {
+            sketch: plate,
+            region,
+        },
+    );
+    let flip = doc.extrude.as_ref().unwrap().flip;
+    doc.apply(Command::SetFeatureVisible(plate, true));
+    doc.sync();
+    let session = doc.extrude.as_ref().unwrap();
+    assert_eq!(session.flip, flip);
+    assert_eq!(session.source, None);
+    assert_eq!(session.skipped.len(), 1);
+    assert_eq!(session.worked_out, 2);
+    // Selected, it's the source, which has no regions to pick.
+    doc.look(Look::StartExtrude);
+    doc.look(Look::SelectFeature(hostile));
+    let started = std::time::Instant::now();
+    doc.look(Look::StartExtrude);
+    let took = started.elapsed().as_secs_f64();
+    assert!(took < ui_bound(), "{took}");
+    let session = doc.extrude.as_ref().unwrap();
+    assert_eq!(session.source, Some(hostile));
+    assert!(session.found.is_empty());
+    assert_eq!(session.skipped.len(), 1);
+}
+
+#[test]
+fn the_visible_sketches_share_the_work() {
+    let (mut doc, plate, requests) = plate();
+    // Each takes a good share of what one may: those past what all may
+    // together have no regions to pick.
+    let drawn = concentric(1000);
+    let mut left = usize::MAX;
+    drawn.profiles_spending(&mut left).unwrap();
+    let each = usize::MAX - left;
+    let fit = REFRESH_WORK / each;
+    assert!((2..=6).contains(&fit), "{each}");
+    let sketches: Vec<FeatureId> = (0..fit + 2)
+        .map(|_| add_visible(&mut doc, drawn.clone()))
+        .collect();
+    doc.sync();
+    answer(&mut doc, &requests);
+    let started = std::time::Instant::now();
+    doc.look(Look::StartExtrude);
+    let took = started.elapsed().as_secs_f64();
+    assert!(took < ui_bound(), "{took}");
+    let session = doc.extrude.as_ref().unwrap();
+    let found: Vec<FeatureId> = session.found.iter().map(|found| found.feature).collect();
+    // The plate's is cheap, but worked out first, so it eats into the
+    // last that would fit.
+    let mut expected = vec![plate];
+    expected.extend(&sketches[..fit - 1]);
+    let skipped: Vec<FeatureId> = session.skipped.iter().map(|(id, _)| *id).collect();
+    if found.len() == fit + 1 {
+        expected.push(sketches[fit - 1]);
+    }
+    assert_eq!(found, expected);
+    assert_eq!(skipped, sketches[found.len() - 1..].to_vec());
+}

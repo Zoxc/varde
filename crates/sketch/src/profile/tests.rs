@@ -539,6 +539,178 @@ fn too_many_crossings_or_too_much_work_is_too_complex() {
     );
 }
 
+/// `count` points round `(0, 0)` at `radius`, wobbling seven times
+/// round by `wobble` of it, turned by `phase`.
+fn ring(count: usize, radius: f64, wobble: f64, phase: f64) -> Vec<(f64, f64)> {
+    (0..count)
+        .map(|i| {
+            let angle = i as f64 / count as f64 * 2.0 * PI;
+            let r = radius * (1.0 + wobble * (7.0 * angle + phase).sin());
+            (r * angle.cos(), r * angle.sin())
+        })
+        .collect()
+}
+
+/// `count` circles round `(0, 0)`, the innermost last.
+fn concentric(count: usize) -> Sketch {
+    let mut sketch = Sketch::default();
+    let center = point(&mut sketch, 0.0, 0.0);
+    for k in (1..=count).rev() {
+        circle(&mut sketch, center, k as f64 * 0.05);
+    }
+    sketch
+}
+
+/// Sketches the work limit is there for, each within what a sketch may
+/// hold: `profiles()` took from a fifth of a second to two seconds on
+/// each (release), counting the costly steps as cheap ones or not at
+/// all, and found regions in two of them.
+fn hostile_sketches() -> Vec<(&'static str, Sketch)> {
+    let mut sketches = Vec::new();
+    // Nested closed splines of 100 points: every pair's segments' boxes
+    // compared, every face wound round.
+    let mut sketch = Sketch::default();
+    for k in (1..=150).rev() {
+        crate::testing::spline(&mut sketch, &ring(100, k as f64, 0.05, 0.0), true);
+    }
+    sketches.push(("nested splines", sketch));
+    // Concentric circles: every pair meets.
+    sketches.push(("concentric circles", concentric(3000)));
+    // Copies of a spline a hair apart, lying along each other.
+    let mut sketch = Sketch::default();
+    for k in 0..30 {
+        let off = k as f64 * 1e-7;
+        let places: Vec<(f64, f64)> = (ring(100, 10.0, 0.05, 0.0).into_iter())
+            .map(|(x, y)| (x + off, y + off))
+            .collect();
+        crate::testing::spline(&mut sketch, &places, true);
+    }
+    sketches.push(("spline copies", sketch));
+    // Lines across wobbling splines, crossing each a few times: roots
+    // halved to.
+    let mut sketch = Sketch::default();
+    for k in 0..10 {
+        crate::testing::spline(&mut sketch, &ring(100, 10.0, 0.2, k as f64 * 0.7), true);
+    }
+    for k in 0..1000 {
+        let y = -12.0 + 24.0 * k as f64 / 1000.0;
+        let (a, b) = (
+            point(&mut sketch, -15.0, y),
+            point(&mut sketch, 15.0, y + 0.3),
+        );
+        line(&mut sketch, a, b);
+    }
+    sketches.push(("lines across splines", sketch));
+    sketches
+}
+
+#[test]
+fn hostile_sketches_are_too_complex_in_bounded_time() {
+    for (name, sketch) in hostile_sketches() {
+        assert_eq!(sketch.check(&crate::testing::DESIGN), Ok(()), "{name}");
+        let started = std::time::Instant::now();
+        assert_eq!(sketch.profiles(), Err(TooComplex), "{name}");
+        let took = started.elapsed();
+        // Tens of milliseconds in a release build, an unoptimised one
+        // some twenty times that, and a loaded machine more again.
+        let bound = if cfg!(debug_assertions) { 30.0 } else { 1.0 };
+        assert!(took.as_secs_f64() < bound, "{name}: {took:?}");
+    }
+}
+
+#[test]
+fn normal_sketches_take_a_fraction_of_the_work() {
+    let mut random = Random(28);
+    let mut sketches = Vec::new();
+    // A plate with 30 × 30 bolt holes.
+    let mut sketch = Sketch::default();
+    rectangle(&mut sketch, 0.0, 0.0, 300.0, 300.0);
+    for i in 0..30 {
+        for j in 0..30 {
+            round(
+                &mut sketch,
+                5.0 + 10.0 * i as f64,
+                5.0 + 10.0 * j as f64,
+                2.0,
+            );
+        }
+    }
+    sketches.push(("plate", sketch, 901));
+    // Ten closed splines of 20 points crossing each other.
+    let mut sketch = Sketch::default();
+    for k in 0..10 {
+        crate::testing::spline(&mut sketch, &ring(20, 10.0, 0.2, k as f64 * 0.7), true);
+    }
+    sketches.push(("crossing splines", sketch, 631));
+    // Fifty circles and fifty lines anywhere.
+    let mut sketch = Sketch::default();
+    for _ in 0..50 {
+        let (x, y, r) = (random.next(), random.next(), random.next());
+        round(&mut sketch, x * 100.0, y * 100.0, 5.0 + r * 20.0);
+    }
+    for _ in 0..50 {
+        let a = point(&mut sketch, random.next() * 100.0, random.next() * 100.0);
+        let b = point(&mut sketch, random.next() * 100.0, random.next() * 100.0);
+        line(&mut sketch, a, b);
+    }
+    let count = profiles(&sketch).regions.len();
+    sketches.push(("circles and lines", sketch, count));
+    let limits = Limits {
+        splits: MAX_SPLITS,
+        work: MAX_WORK / 4,
+    };
+    for (name, sketch, count) in sketches {
+        let found = profiles(&sketch);
+        assert_eq!(found.regions.len(), count, "{name}");
+        assert_eq!(sketch.profiles_within(&limits), Ok(found), "{name}");
+    }
+}
+
+#[test]
+fn nested_rings_are_holes_in_the_ring_round_them() {
+    // Found smallest first: each ring's hole is the one just inside.
+    let mut sketch = Sketch::default();
+    let center = point(&mut sketch, 0.0, 0.0);
+    for k in (1..=50).rev() {
+        circle(&mut sketch, center, k as f64);
+    }
+    let found = profiles(&sketch);
+    assert_eq!(found.regions.len(), 50);
+    let mut areas: Vec<f64> = found.regions.iter().map(|region| region.area).collect();
+    areas.sort_by(f64::total_cmp);
+    // The disc of radius 1, then rings from k - 1 to k: π (2k - 1).
+    let expected: Vec<f64> = (1..=50).map(|k| PI * (2 * k - 1) as f64).collect();
+    about(&areas, &expected);
+    // A thousand, as quickly: each wound round once or twice, not every
+    // ring round it.
+    let found = profiles(&concentric(1000));
+    assert_eq!(found.regions.len(), 1000);
+    let holed = found
+        .regions
+        .iter()
+        .filter(|region| region.holes.len() == 1);
+    assert_eq!(holed.count(), 999);
+}
+
+#[test]
+fn profiles_spending_takes_the_work_from_what_s_left() {
+    let mut sketch = Sketch::default();
+    rectangle(&mut sketch, 0.0, 0.0, 10.0, 10.0);
+    round(&mut sketch, 5.0, 5.0, 2.0);
+    let mut left = 3 * MAX_WORK;
+    assert_eq!(sketch.profiles_spending(&mut left), sketch.profiles());
+    let spent = 3 * MAX_WORK - left;
+    assert!(spent > 0 && spent < MAX_WORK / 1000, "{spent}");
+    // No more than is left, nor more than MAX_WORK.
+    let mut short = spent - 1;
+    assert_eq!(sketch.profiles_spending(&mut short), Err(TooComplex));
+    assert!(short < spent);
+    let hostile = concentric(3000);
+    let mut left = 3 * MAX_WORK;
+    assert_eq!(hostile.profiles_spending(&mut left), Err(TooComplex));
+    assert!(left >= 2 * MAX_WORK, "{left}");
+}
+
 /// A few pseudo-random numbers, the same each run.
 struct Random(u64);
 

@@ -202,11 +202,12 @@ fn winding_and_bulge_add_up_round_loops() {
         (DVec2::new(-5.0, 8.0), 0.0),
     ] {
         // In pieces, either way round.
-        let forward = round.winding(0.0, 1.0, point)
-            + round.winding(1.0, 4.0, point)
-            + round.winding(4.0, TAU, point);
+        let mut work = 0;
+        let forward = round.winding(0.0, 1.0, point, &mut work)
+            + round.winding(1.0, 4.0, point, &mut work)
+            + round.winding(4.0, TAU, point, &mut work);
         assert!((forward - turns * TAU).abs() < 1e-9, "{point}: {forward}");
-        let back = round.winding(TAU, 0.0, point);
+        let back = round.winding(TAU, 0.0, point, &mut work);
         assert!((back + turns * TAU).abs() < 1e-9, "{point}: {back}");
     }
     // A half disc: the arc's bulge over its chord is the whole of it.

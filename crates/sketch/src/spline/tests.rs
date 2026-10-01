@@ -284,8 +284,10 @@ fn span_bounds_and_the_bulge_are_exact() {
     assert!((area - PI * 4.0).abs() < 0.01 * PI * 4.0, "{area}");
     assert!((path.bulge(1.0, 0.0) + area).abs() < 1e-9);
     // Round the other way it winds once, not round a place outside.
-    assert!((path.winding(0.0, 1.0, v(0.3, -0.2)) - TAU).abs() < 1e-9);
-    assert!(path.winding(0.0, 1.0, v(3.0, 0.0)).abs() < 1e-9);
+    let mut work = 0;
+    assert!((path.winding(0.0, 1.0, v(0.3, -0.2), &mut work) - TAU).abs() < 1e-9);
+    assert!(path.winding(0.0, 1.0, v(3.0, 0.0), &mut work).abs() < 1e-9);
+    assert!(work > 0);
     let length = path.length(0.0, 1.0);
     assert!((length - TAU * 2.0).abs() < 0.01 * TAU * 2.0, "{length}");
 }

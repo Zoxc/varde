@@ -8,7 +8,7 @@ use glam::DVec2;
 use super::basis::curvature;
 use crate::CIRCLE_SEGMENTS;
 use crate::angle;
-use crate::intersect::Geom;
+use crate::intersect::{CHORD_COST, Geom};
 
 /// How far a spline's polyline may stray from it, as a share of its size
 /// (the larger side of its control points' box): about what a circle's
@@ -20,6 +20,26 @@ const FLATNESS: f64 = 5e-4;
 /// splines crossing at a few places take; two lying along each other for
 /// a stretch would take ever more, and stop here with what's found.
 pub(crate) const MAX_MEET_STEPS: usize = 50_000;
+
+/// What [`crossings`] and [`self_crossings`] give for a step of
+/// subdivision, in the work a caller counts, whose unit is about a box
+/// compared to another: halving pieces and their boxes, the flatness, and
+/// a chord crossing or Newton's polish now and then. Segments' boxes
+/// compared count one each, without taking a step.
+pub(crate) const STEP_COST: usize = 16;
+
+/// How many times a root of Bernstein coefficients is halved to.
+const BISECTIONS: usize = 64;
+
+/// What a step of halving Bernstein coefficients ([`bernstein_roots`])
+/// costs over a step of subdivision: copying them as it halves them
+/// about doubles it.
+const ROOT_STEP_EXTRA: usize = STEP_COST;
+
+/// The work of halving to a root, in the unit of [`STEP_COST`]: a
+/// polynomial of degree six evaluated (copied) [`BISECTIONS`] times,
+/// each about as much as a step of [`bernstein_roots`].
+const BISECT_COST: usize = (STEP_COST + ROOT_STEP_EXTRA) * BISECTIONS;
 
 /// How many times a piece is halved looking for where it meets another:
 /// a billionth of the sketch's size needs about fifteen.
@@ -373,10 +393,11 @@ impl Path {
     /// winds, in radians, counter-clockwise positive: each part's chord's
     /// angle, once `point` is outside the box of the part's control
     /// points, and so outside the loop of the part and its chord back.
-    pub(crate) fn winding(&self, u0: f64, u1: f64, at: DVec2) -> f64 {
+    /// Adds the work done to `work`, [`CHORD_COST`] a part.
+    pub(crate) fn winding(&self, u0: f64, u1: f64, at: DVec2, work: &mut usize) -> f64 {
         self.span(u0, u1)
             .into_iter()
-            .map(|(s, t0, t1)| wind(&part(&self.segments[s], t0, t1), at, MAX_DEPTH))
+            .map(|(s, t0, t1)| wind(&part(&self.segments[s], t0, t1), at, MAX_DEPTH, work))
             .sum()
     }
 
@@ -441,8 +462,10 @@ fn turns(b: &Bezier) -> impl Iterator<Item = f64> {
 
 /// How far `b` winds round `at` from its start to its end, see
 /// [`Path::winding`]: halved while `at` is in its control points' box, at
-/// most `depth` times, and the chord's angle once it isn't.
-fn wind(b: &Bezier, at: DVec2, depth: u32) -> f64 {
+/// most `depth` times, and the chord's angle once it isn't. Adds
+/// [`CHORD_COST`] a part to `work`.
+fn wind(b: &Bezier, at: DVec2, depth: u32, work: &mut usize) -> f64 {
+    *work = work.saturating_add(CHORD_COST);
     let (min, max) = hull_box(b);
     let inside = at.cmpge(min).all() && at.cmple(max).all();
     if !inside || depth == 0 {
@@ -450,7 +473,7 @@ fn wind(b: &Bezier, at: DVec2, depth: u32) -> f64 {
         return angle::atan2(p.perp_dot(q), p.dot(q));
     }
     let (first, second) = halves(b);
-    wind(&first, at, depth - 1) + wind(&second, at, depth - 1)
+    wind(&first, at, depth - 1, work) + wind(&second, at, depth - 1, work)
 }
 
 /// The parameter of the place on `b` nearest `at`, see [`Path::closest`]:
@@ -524,24 +547,54 @@ fn refine(b: &Bezier, at: DVec2, sample: usize, samples: usize) -> f64 {
     t
 }
 
-/// Work left finding where curves meet, see [`MAX_MEET_STEPS`].
-struct Steps(usize);
+/// Work finding where curves meet: the steps left, see
+/// [`MAX_MEET_STEPS`], and the work besides, which takes none: boxes
+/// compared, roots halved to.
+struct Steps {
+    left: usize,
+    besides: usize,
+}
 
 impl Steps {
+    fn new() -> Steps {
+        Steps {
+            left: MAX_MEET_STEPS,
+            besides: 0,
+        }
+    }
+
     /// Takes a step, if one is left.
     fn take(&mut self) -> bool {
-        self.0 = self.0.saturating_sub(1);
-        self.0 > 0
+        self.left = self.left.saturating_sub(1);
+        self.left > 0
+    }
+
+    /// Counts two boxes compared.
+    fn compare(&mut self) {
+        self.add(1);
+    }
+
+    /// Counts `work` besides the steps, in the unit of [`STEP_COST`].
+    fn add(&mut self, work: usize) {
+        self.besides = self.besides.saturating_add(work);
+    }
+
+    /// The work done, in the unit of [`STEP_COST`].
+    fn work(&self) -> usize {
+        (MAX_MEET_STEPS - self.left)
+            .saturating_mul(STEP_COST)
+            .saturating_add(self.besides)
     }
 }
 
 /// Where `a` and `b`, at least one of them a spline, cross or touch
 /// (within `tolerance`), as pairs of their parameters, pushed onto `out`:
-/// the steps taken, at most about [`MAX_MEET_STEPS`]. What
+/// the work done, see [`Steps::work`], of at most about
+/// [`MAX_MEET_STEPS`] steps. What
 /// [`meet`](crate::intersect::meet) does for splines, but for the ends,
 /// which it finds alike for every curve.
 pub(crate) fn crossings(a: &Geom, b: &Geom, tolerance: f64, out: &mut Vec<(f64, f64)>) -> usize {
-    let mut steps = Steps(MAX_MEET_STEPS);
+    let mut steps = Steps::new();
     match (a, b) {
         (Geom::Spline(a), Geom::Spline(b)) => {
             paths(a, b, tolerance, &mut steps, &mut |ua, ub| {
@@ -560,16 +613,16 @@ pub(crate) fn crossings(a: &Geom, b: &Geom, tolerance: f64, out: &mut Vec<(f64, 
         }
         _ => {}
     }
-    MAX_MEET_STEPS - steps.0
+    steps.work()
 }
 
 /// Where `path` crosses itself, as pairs of its parameters, the lower
-/// first, pushed onto `out`: the steps taken, see [`crossings`]. Its
+/// first, pushed onto `out`: the work done, see [`crossings`]. Its
 /// segments are halved, so that one looping back across itself is found
 /// too, and each half met with those after it, but where two halves
 /// join.
 pub(crate) fn self_crossings(path: &Path, tolerance: f64, out: &mut Vec<(f64, f64)>) -> usize {
-    let mut steps = Steps(MAX_MEET_STEPS);
+    let mut steps = Steps::new();
     let mut halves_of: Vec<(Bezier, f64, f64)> = Vec::with_capacity(2 * path.segments.len());
     for (b, u0, u1) in path.pieces() {
         let (first, second) = halves(b);
@@ -581,11 +634,12 @@ pub(crate) fn self_crossings(path: &Path, tolerance: f64, out: &mut Vec<(f64, f6
     let boxes: Vec<_> = halves_of.iter().map(|(b, ..)| hull_box(b)).collect();
     for i in 0..count {
         for j in i + 1..count {
+            steps.compare();
             if !overlap(boxes[i], boxes[j], tolerance) {
                 continue;
             }
             if !steps.take() {
-                return MAX_MEET_STEPS;
+                return steps.work();
             }
             let (a, a0, a1) = halves_of[i];
             let (b, b0, b1) = halves_of[j];
@@ -610,7 +664,7 @@ pub(crate) fn self_crossings(path: &Path, tolerance: f64, out: &mut Vec<(f64, f6
             });
         }
     }
-    MAX_MEET_STEPS - steps.0
+    steps.work()
 }
 
 /// Where the splines `a` and `b` meet, see [`crossings`]: each pair of
@@ -620,6 +674,7 @@ fn paths(a: &Path, b: &Path, tolerance: f64, steps: &mut Steps, found: &mut dyn 
     for (sa, pa) in a.segments.iter().enumerate() {
         let own = hull_box(pa);
         for (sb, pb) in b.segments.iter().enumerate() {
+            steps.compare();
             if !overlap(own, boxes[sb], tolerance) {
                 continue;
             }
@@ -763,6 +818,7 @@ fn on_other(
 ) {
     let bounds = other.bounds();
     for (s, b) in path.segments.iter().enumerate() {
+        steps.compare();
         if !overlap(hull_box(b), bounds, tolerance) {
             continue;
         }
@@ -835,6 +891,7 @@ fn bernstein_roots(coefficients: &[f64], slack: f64, steps: &mut Steps, roots: &
         if !steps.take() {
             return;
         }
+        steps.add(ROOT_STEP_EXTRA);
         if c.iter().all(|&v| v > slack) || c.iter().all(|&v| v < -slack) {
             continue;
         }
@@ -853,8 +910,9 @@ fn bernstein_roots(coefficients: &[f64], slack: f64, steps: &mut Steps, roots: &
             } else if first.signum() != last.signum() {
                 // Halved to where it changes sign, on the part's own
                 // coefficients.
+                steps.add(BISECT_COST);
                 let (mut low, mut high) = (0.0, 1.0);
-                for _ in 0..64 {
+                for _ in 0..BISECTIONS {
                     let middle = (low + high) / 2.0;
                     if bernstein(&c, middle).signum() == first.signum() {
                         low = middle;

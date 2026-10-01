@@ -886,6 +886,39 @@ fn found_profiles(doc: &Doc) -> Arc<varde_sketch::Profiles> {
 }
 
 #[test]
+fn a_sketch_too_complex_for_profiles_is_shown_quickly() {
+    let (mut doc, feature, _) = sketching();
+    // Circles round one place, the innermost last: every pair meets.
+    let mut sketch = Sketch::default();
+    let center = sketch.add_point(at(0.0, 0.0)).unwrap();
+    for k in (1..=3000).rev() {
+        let radius = k as f64 * 0.01;
+        sketch
+            .add_curve(Curve::Circle { center, radius }, false)
+            .unwrap();
+    }
+    doc.editor
+        .apply(Command::SetSketch {
+            feature,
+            sketch: Box::new(sketch),
+        })
+        .unwrap();
+    let started = std::time::Instant::now();
+    doc.sync();
+    let took = started.elapsed().as_secs_f64();
+    // Tens of milliseconds released, some twenty times that unoptimised
+    // and more on a loaded machine; it took seconds released.
+    let bound = if cfg!(debug_assertions) { 30.0 } else { 1.0 };
+    assert!(took < bound, "{took}");
+    let state = doc.sketch_state().unwrap();
+    assert!(
+        matches!(state.profiles, Some(Err(_))),
+        "{:?}",
+        state.profiles
+    );
+}
+
+#[test]
 fn profiles_are_found_once_per_sketch_shown() {
     let (mut doc, [_, b, ..]) = with_shapes();
     let first = found_profiles(&doc);

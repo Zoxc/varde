@@ -12,7 +12,7 @@ use varde_document::{
     MAX_EXTRUDE_REGIONS, Operation, RegionRef, Sketch, Targets,
 };
 use varde_expr::{Unit, Value};
-use varde_sketch::Profiles;
+use varde_sketch::{MAX_WORK, Profiles};
 use varde_view::{
     Candidate, Distance, DistanceField, ExtentKind, ExtrudeLook, ExtrudeState, ExtrudeTarget,
     OperationKind,
@@ -33,6 +33,14 @@ pub(crate) struct ExtrudeSession {
     /// The profiles of the source, or before there is one of the visible
     /// sketches, those with regions.
     found: Vec<Found>,
+    /// The sketches found to have no regions to pick: too complex, past
+    /// [`REFRESH_WORK`], or but for the source with none. Kept, as those
+    /// found are, and also while not wanted, so as not to work them out
+    /// again on every change to the document until they change.
+    skipped: Vec<(FeatureId, Sketch)>,
+    /// How many times profiles were worked out, for tests.
+    #[cfg(test)]
+    worked_out: usize,
     /// The regions picked, by index into the source's profiles.
     pub(crate) picked: BTreeSet<usize>,
     /// The references to them, in the same order, made as they're picked
@@ -76,6 +84,12 @@ pub(crate) struct DistanceText {
 
 /// The distance a new extrude starts with, in millimetres.
 const DEFAULT_DISTANCE: f64 = 10.0;
+
+/// The most work finding the profiles of the visible sketches may take
+/// in all, in the unit of [`MAX_WORK`], on the UI thread: a file can hold
+/// any number of sketches, each as complex as [`MAX_WORK`] allows.
+/// Those past it have no regions to pick.
+const REFRESH_WORK: usize = 2 * MAX_WORK;
 
 impl DistanceText {
     /// The field holding `value`.
@@ -127,6 +141,9 @@ impl ExtrudeSession {
             source,
             fixed: source.is_some(),
             found: Vec::new(),
+            skipped: Vec::new(),
+            #[cfg(test)]
+            worked_out: 0,
             picked: BTreeSet::new(),
             references: Vec::new(),
             missing: 0,
@@ -232,6 +249,8 @@ impl ExtrudeSession {
     /// Finds the profiles of the sketches of `document` whose regions can
     /// be picked again where their sketch changed, and those picked in
     /// the source again by their references. False if the source is gone.
+    /// The source's within [`MAX_WORK`], or before there is one the
+    /// visible sketches' within [`REFRESH_WORK`] in all.
     fn refresh(&mut self, document: &Document) -> bool {
         let wanted: Vec<FeatureId> = match self.source {
             Some(source) => vec![source],
@@ -243,6 +262,8 @@ impl ExtrudeSession {
                 .collect(),
         };
         let mut old = std::mem::take(&mut self.found);
+        let mut old_skipped = std::mem::take(&mut self.skipped);
+        let mut left = REFRESH_WORK;
         let mut remap = false;
         for id in wanted {
             let Some(FeatureKind::Sketch { sketch, .. }) = document.feature(id).map(|f| &f.kind)
@@ -253,24 +274,46 @@ impl ExtrudeSession {
                 continue;
             };
             let kept = old.iter().position(|found| found.feature == id);
-            match kept {
-                Some(at) if old[at].sketch == *sketch => self.found.push(old.swap_remove(at)),
-                _ => {
-                    remap |= Some(id) == self.source;
-                    // A sketch too complex for its regions to be found has
-                    // none to pick.
-                    if let Ok(profiles) = sketch.profiles()
-                        && (Some(id) == self.source || !profiles.regions.is_empty())
-                    {
-                        self.found.push(Found {
-                            feature: id,
-                            sketch: sketch.clone(),
-                            profiles: Arc::new(profiles),
-                        });
-                    }
+            let is_source = Some(id) == self.source;
+            if let Some(at) = kept.filter(|&at| old[at].sketch == *sketch) {
+                self.found.push(old.swap_remove(at));
+                continue;
+            }
+            let skipped = old_skipped.iter().position(|(feature, _)| *feature == id);
+            if let Some(at) = skipped {
+                let skipped = old_skipped.swap_remove(at);
+                if skipped.1 == *sketch {
+                    self.skipped.push(skipped);
+                    continue;
                 }
             }
+            remap |= is_source;
+            #[cfg(test)]
+            {
+                self.worked_out += 1;
+            }
+            // A sketch too complex for its regions to be found has none
+            // to pick.
+            let found = if is_source {
+                sketch.profiles()
+            } else {
+                sketch.profiles_spending(&mut left)
+            };
+            match found {
+                Ok(profiles) if is_source || !profiles.regions.is_empty() => {
+                    self.found.push(Found {
+                        feature: id,
+                        sketch: sketch.clone(),
+                        profiles: Arc::new(profiles),
+                    });
+                }
+                _ => self.skipped.push((id, sketch.clone())),
+            }
         }
+        // Those not wanted now, while there's a source, may be again
+        // once there isn't.
+        let others = old_skipped.into_iter();
+        (self.skipped).extend(others.filter(|(id, _)| is_sketch(document, *id)));
         if remap {
             let source = self.source.and_then(|source| self.found(source));
             match source.map(|found| found.profiles.resolve(&self.references)) {

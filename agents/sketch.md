@@ -360,8 +360,15 @@ details and the timings.
   along each segment in Bernstein form, another spline (and itself, for
   profiles, its segments halved) by halving pairs of pieces whose boxes
   overlap until both are within the tolerance of their chords, polished
-  by Newton's method. All bounded by `MAX_MEET_STEPS`; `meet` returns the
-  steps, which profiles count as work.
+  by Newton's method. All bounded by `MAX_MEET_STEPS` (subdivision
+  steps; segments' boxes compared don't take one, so the cap and what's
+  found don't depend on them). `meet` returns the work done, which
+  profiles count, in a unit of about one box compared to another (a
+  nanosecond or two): `MEET_COST` (16) for lines, circles and arcs; for
+  a spline every segment box compared (1), `STEP_COST` (16) a
+  subdivision step, twice that a step of halving Bernstein coefficients,
+  and `BISECT_COST` (32 × 64) a root halved to. Winding numbers add
+  `CHORD_COST` (16) per chord, or per part of a spline `wind` takes.
 - **Pieces** (`profile.rs`): curves are cut where they meet, found by
   sweeping their boxes along x; places within the tolerance (10⁻⁹ of the
   sketch's size) are one vertex, found through cells the tolerance wide,
@@ -390,7 +397,10 @@ details and the timings.
   twice: counter-clockwise loops are faces' outer loops, clockwise ones
   holes, or a connected part's boundary from outside, which is a hole in
   the smallest face of another part winding round it (exact, by the
-  pieces and their boxes).
+  pieces and their boxes): the faces whose box holds it are tried
+  smallest first (the first made of equal ones), so the first it's
+  inside is the one, and rings nested a thousand deep take a winding or
+  two each rather than one per ring round them.
 - **Regions** are every face: a plate with bolt holes is the plate, with
   a hole per bolt, and each hole's inside a region of its own, as is an
   island in a hole, so regions never overlap. Slivers, faces or holes,
@@ -450,8 +460,19 @@ details and the timings.
   reaches; `Profiles::near_misses(gap)` pairs those within `gap`, which
   is the view's (a few pixels in sketch units), so profiles don't depend
   on the zoom. Bounded by `MAX_NEAR_MISSES` and `MAX_NEAR_PAIRS`.
-- **Bounds**: more than `MAX_SPLITS` cuts or `MAX_WORK` steps is
-  `TooComplex`, never a long wait.
+- **Bounds**: more than `MAX_SPLITS` cuts or `MAX_WORK` (20 M) steps is
+  `TooComplex`, never a long wait. Steps are weighed by cost (above), so
+  `MAX_WORK` is tens of milliseconds whatever the sketch; besides it
+  only what's linear in the sketch (splines' shapes, at most
+  `MAX_POINTS` fit points, ~40 ms) and in the cuts (~1 µs each, at most
+  `MAX_SPLITS`). Hostile sketches measured (release, loaded machine):
+  nested 100-point splines, 3000 concentric circles, copies of a spline,
+  1000 lines across splines are `TooComplex` in 40–95 ms (they took
+  0.2–2 s before the weights); a 220×220 line grid is found in ~90 ms.
+  Sketches people draw use a few percent of it (a plate with 900 holes,
+  ten splines crossing each other: under a quarter, a test holds).
+  `Sketch::profiles_spending(&mut left)` also stops at what's `left` of
+  a budget shared over several sketches, and takes the work from it.
 - **Where it runs**: in the app, once per sketch shown, not in the solver
   lane (a millisecond or two for sketches people draw), so no wire carries
   profiles. `Doc::refresh_profiles`, run by `Doc::sync` and after every
@@ -461,6 +482,11 @@ details and the timings.
   as `Result<Arc<Profiles>, TooComplex>`, which `SketchState::profiles`
   hands the view. The status bar counts them ("2 profiles") in a sketch
   with curves, or says "Too complex for profiles", and nothing is shaded.
+  So a hostile sketch costs the UI thread at most the bound above per
+  sketch shown (a drag's step included). The extrude session finds the
+  profiles of its source, or before there is one of every visible
+  sketch, on the UI thread too: see "The extrude UI" in
+  `agents/kernel.md` for its cache and shared budget.
 
 ## Edits and proposals (`varde-sketch`, `edit.rs`, `propose.rs`)
 

@@ -45,7 +45,14 @@ pub const MAX_SPLITS: usize = 100_000;
 
 /// The most steps of work finding profiles may take: pairs of curves
 /// whose boxes are compared, places compared to merge them, steps round
-/// faces, and pieces a point is tested against. Tens of milliseconds.
+/// faces, and faces a point is tested against, each one; what costs
+/// more by its share, about the time of one such step (a nanosecond or
+/// two): where two curves meet, a spline's segments' boxes compared and
+/// pieces subdivided, a winding number's chords. Tens of milliseconds,
+/// whatever the sketch; besides it, what's linear in the sketch's size
+/// (its splines' shapes, bounded by
+/// [`MAX_POINTS`](crate::MAX_POINTS)) and in the splits (bounded by
+/// [`MAX_SPLITS`]).
 pub const MAX_WORK: usize = 20_000_000;
 
 /// The most near misses reported: enough to find them, however large the
@@ -236,9 +243,27 @@ impl Sketch {
         self.profiles_within(&LIMITS)
     }
 
+    /// [`Sketch::profiles`] within what's `left` of a budget shared with
+    /// others, as well as [`MAX_WORK`], the work done taken from `left`:
+    /// for a caller finding the profiles of many sketches at once.
+    pub fn profiles_spending(&self, left: &mut usize) -> Result<Profiles, TooComplex> {
+        let limits = Limits {
+            splits: MAX_SPLITS,
+            work: MAX_WORK.min(*left),
+        };
+        let mut work = Work(limits.work);
+        let found = self.profiles_counting(&limits, &mut work);
+        *left = left.saturating_sub(limits.work - work.0);
+        found
+    }
+
     /// [`Sketch::profiles`] within `limits`.
     fn profiles_within(&self, limits: &Limits) -> Result<Profiles, TooComplex> {
-        let mut work = Work(limits.work);
+        self.profiles_counting(limits, &mut Work(limits.work))
+    }
+
+    /// [`Sketch::profiles`] within `limits`, the work spent from `work`.
+    fn profiles_counting(&self, limits: &Limits, work: &mut Work) -> Result<Profiles, TooComplex> {
         let mut curves: Vec<(Id, Geom)> = self
             .curves
             .iter()
@@ -274,13 +299,13 @@ impl Sketch {
             .iter()
             .map(|(id, geom)| cut_back.get(id).copied().unwrap_or([0.0, geom.last()]))
             .collect();
-        let splits = splits(&curves, &kept, tolerance, limits.splits, &mut work)?;
-        let (vertex_of, vertices) = merge(&splits, tolerance, &mut work)?;
-        let edges = edges(&curves, &kept, &splits, &vertex_of, tolerance, &mut work)?;
+        let splits = splits(&curves, &kept, tolerance, limits.splits, work)?;
+        let (vertex_of, vertices) = merge(&splits, tolerance, work)?;
+        let edges = edges(&curves, &kept, &splits, &vertex_of, tolerance, work)?;
         let graph = Graph::new(&curves, vertices, edges, tolerance);
         let open_ends = graph.open_ends();
         let vertices = graph.vertices.clone();
-        let regions = graph.regions(&mut work)?;
+        let regions = graph.regions(work)?;
         Ok(Profiles {
             regions,
             vertices,
@@ -815,16 +840,18 @@ impl<'c> Graph<'c> {
     }
 
     /// How many times `found` winds round `point`, counter-clockwise
-    /// positive.
-    fn winding(&self, found: &[usize], point: DVec2) -> i64 {
+    /// positive, its work spent from `work`.
+    fn winding(&self, found: &[usize], point: DVec2, work: &mut Work) -> Result<i64, TooComplex> {
+        let mut spent = 0;
         let total: f64 = found
             .iter()
             .map(|&h| {
                 let (from, to) = self.params(h);
-                self.geom(h / 2).winding(from, to, point)
+                self.geom(h / 2).winding(from, to, point, &mut spent)
             })
             .sum();
-        (total / TAU).round() as i64
+        work.spend(spent)?;
+        Ok((total / TAU).round() as i64)
     }
 
     /// Each part's boundary seen from outside is inside the smallest face
@@ -867,31 +894,34 @@ impl<'c> Graph<'c> {
             let start = self.ends(boundary[0]).0;
             let point = self.vertices[start];
             let own = part.root(start);
-            // The face and its area.
-            let mut smallest: Option<(usize, f64)> = None;
-            let near = grid.at(point);
-            work.spend(near.len())?;
-            for &f in near {
-                let (Some((_, (min, max))), Some(outer)) = (&solid[f], walks[f].outer) else {
+            // The faces whose box holds it, smallest first (the first
+            // made of those alike), so that the first it's inside is the
+            // one: nested a thousand deep, it's tested against one or two
+            // rather than all of them.
+            let cell = grid.at(point);
+            work.spend(cell.len())?;
+            let mut near: Vec<(f64, usize)> = (cell.iter())
+                .filter_map(|&f| {
+                    let (min, max) = solid[f].as_ref()?.1;
+                    let outer = walks[f].outer?;
+                    let inside = point.cmpge(min).all() && point.cmple(max).all();
+                    inside.then_some((walks[f].areas[outer], f))
+                })
+                .collect();
+            work.spend(near.len().saturating_mul(sort_cost(near.len())))?;
+            near.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+            for (_, f) in near {
+                let Some(outer) = walks[f].outer else {
                     continue;
                 };
-                if point.cmplt(*min).any() || point.cmpgt(*max).any() {
-                    continue;
-                }
-                let area = walks[f].areas[outer];
                 let outer = &walks[f].loops[outer];
-                if part.root(self.ends(outer[0]).0) == own
-                    || smallest.is_some_and(|(_, smallest)| smallest <= area)
-                {
+                if part.root(self.ends(outer[0]).0) == own {
                     continue;
                 }
-                work.spend(outer.len())?;
-                if self.winding(outer, point) != 0 {
-                    smallest = Some((f, area));
+                if self.winding(outer, point, work)? != 0 {
+                    holes_in[f].push(boundary);
+                    break;
                 }
-            }
-            if let Some((face, _)) = smallest {
-                holes_in[face].push(boundary);
             }
         }
         let mut regions = Vec::new();
@@ -955,6 +985,12 @@ impl<'c> Graph<'c> {
         }
         polyline
     }
+}
+
+/// The work of sorting, per item, for `count` of them: about their
+/// logarithm, at least one.
+fn sort_cost(count: usize) -> usize {
+    (usize::BITS - count.leading_zeros()).max(1) as usize
 }
 
 /// A box, its least and greatest corners.

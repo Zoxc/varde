@@ -3111,7 +3111,12 @@ any; the source sketch (the one selected in the Timeline, the edited
 extrude's, or else the one the first region picked is in, which un-picking
 every region lets go of again); the profiles of the source, or before
 there is one of every visible sketch with regions (each found once, and
-again when its sketch changes); the regions picked, as indices and as
+again when its sketch changes; those with none to pick, too complex or
+empty, are kept too, by value, so a change elsewhere doesn't work them
+out again; the visible sketches worked out in one refresh share
+`REFRESH_WORK`, twice `MAX_WORK`, through `Sketch::profiles_spending`,
+and those past it have none to pick, so a file of many hostile sketches
+costs the UI thread a bounded time); the regions picked, as indices and as
 `Profiles::reference`s made as they're picked (a region too thin for a
 reference can't be picked); the extent kind, the two distance fields
 (text, last good `Value`, error, read with `Extent::ask`), flip, the

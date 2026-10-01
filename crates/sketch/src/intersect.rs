@@ -21,6 +21,17 @@ const RELATIVE_TOLERANCE: f64 = 1e-9;
 /// The least size tolerances are relative to, as the solver's.
 const MIN_SIZE: f64 = 1e-3;
 
+/// What [`meet`] gives for two lines, circles or arcs, in the work a
+/// caller counts, whose unit is about a box compared to another (see
+/// [`bezier::STEP_COST`]): their crossings, and each end's nearest place
+/// on the other.
+pub(crate) const MEET_COST: usize = 16;
+
+/// What [`Geom::winding`] adds to its work for each chord's angle it
+/// takes, in the same unit as [`MEET_COST`]: an arctangent, and for an
+/// arc two places on it or for a spline's part its box.
+pub(crate) const CHORD_COST: usize = 16;
+
 /// How near places are to be one, for curves of the shapes `geoms`:
 /// [`RELATIVE_TOLERANCE`] of their size, their largest coordinate or a
 /// circle's reach, at least [`MIN_SIZE`].
@@ -354,15 +365,17 @@ impl Geom {
 
     /// How far round `point` the curve from `u0` to `u1` (either way)
     /// winds, in radians, counter-clockwise positive: summed over a closed
-    /// loop not through `point`, a whole number of turns.
-    pub(crate) fn winding(&self, u0: f64, u1: f64, point: DVec2) -> f64 {
-        let chord = |a: DVec2, b: DVec2| {
+    /// loop not through `point`, a whole number of turns. Adds the work
+    /// done to `work`, [`CHORD_COST`] a chord.
+    pub(crate) fn winding(&self, u0: f64, u1: f64, point: DVec2, work: &mut usize) -> f64 {
+        let mut chord = |a: DVec2, b: DVec2| {
+            *work = work.saturating_add(CHORD_COST);
             let (a, b) = (a - point, b - point);
             angle::atan2(a.perp_dot(b), a.dot(b))
         };
         match *self {
             Geom::Segment { .. } => chord(self.at(u0), self.at(u1)),
-            Geom::Spline(ref path) => path.winding(u0, u1, point),
+            Geom::Spline(ref path) => path.winding(u0, u1, point, work),
             Geom::Round { center, radius, .. } => {
                 // In parts of at most a quarter turn, each its chord's
                 // angle and a whole turn more if `point` is between the
@@ -410,8 +423,9 @@ impl Geom {
 /// lines on one line, or arcs on one circle, start and stop overlapping,
 /// so that both are cut alike where they overlap. Places may repeat; the
 /// caller merges them. A spline meets the rest by subdivision, bounded
-/// ([`bezier::MAX_MEET_STEPS`]): the steps taken are returned, one for
-/// lines, circles and arcs, for a caller that counts its work.
+/// ([`bezier::MAX_MEET_STEPS`]). The work done is returned, for a caller
+/// that counts it: [`MEET_COST`] for lines, circles and arcs, and for a
+/// spline what [`bezier::crossings`] gives.
 pub(crate) fn meet(a: &Geom, b: &Geom, tolerance: f64, out: &mut Vec<(f64, f64)>) -> usize {
     let steps = if let (Geom::Spline(_), _) | (_, Geom::Spline(_)) = (a, b) {
         bezier::crossings(a, b, tolerance, out)
@@ -421,7 +435,7 @@ pub(crate) fn meet(a: &Geom, b: &Geom, tolerance: f64, out: &mut Vec<(f64, f64)>
                 out.push((ua, ub));
             }
         }
-        1
+        MEET_COST
     };
     for (from, to, swap) in [(a, b, false), (b, a, true)] {
         for u in from.cuts() {
