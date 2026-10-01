@@ -1805,6 +1805,26 @@ still skipped. The first order needs no scale of its own (a separate
 `ε¹` tie for `Height` was planned): with the rounding rule above every
 manifold result of the 900 pairs is right but pair 866's.
 
+**Shadows along each other.** Where both ends of `e` are on `g`'s
+shadow to within the tie (`exact::is_tie` on their `Orient`s), where
+the shadows cross and the side `σ` are the perturbation's, and the
+configuration as decided has `e` in the plane through `g` along `UP`:
+`det[g, e, UP]` is zero there, and so is `Height`'s constant term
+`det[a − c, g, e]`, whatever the gap between the edges. `e_above` then
+takes that constant term as a tie (`exact::sign_past_tie`), and the
+perturbation decides by the gap. Taken as it came (the gap times only
+rounding, or times a hair's angle), against a side that wasn't its
+own, it put the edges either way round however far apart, and the
+decisions still fitted together: turned grid boxes, the second moved
+along `UP` off flush so that their flush edges' shadows lie on one line
+(seed 5, 1 000 pairs × 3, also a million from the origin), gave a
+union `1.8e-5` apart `4e-6` short and an intersection `2.8e-4` apart
+`1.4e-5` over: wrong results, from before the rule at every order (the
+retry never saw them). Now none is, and with the retry turned off none
+is `Inconsistent` past the resolution. Edges stacked exactly along
+`UP`, a direction off every axis, are rare in CAD geometry, but not
+impossible.
+
 **Decided again exactly.** Near ties taken as ties can still give
 decisions no one configuration has, mostly where things are about the
 tie distance apart. For flat operands (`boolean::flat_soup`; `touches`
@@ -2841,7 +2861,10 @@ once `Inconsistent` for a first order that was only rounding and one
 whose edges' shadows rounded parallel, all right now; chains of them fed
 on, never `Inconsistent`); the same boxes, one moved by about the tie
 distance, whose near ties don't fit together, decided again exactly
-(right, both tries paid for); a hexagonal prism upright and on six
+(right, both tries paid for); the same boxes, one moved along `UP` by 1
+to `10⁷` tie distances, near the origin and a million from it, every
+result the moved boxes' volume (two were wrong while edges whose
+shadows lie along each other took their height as it came); a hexagonal prism upright and on six
 random turned and moved frames with boxes extruded on a frame on its
 slanted wall, joined flush (also at the wall's ends, sharing the
 prism's edge lines, and in its corner, flush with the top), pocketed
@@ -2857,7 +2880,8 @@ edges' `Height`, also where their shadows round exactly parallel, a
 vertex moving along a face's plane for `Reach`) moved by rounding and
 decided as the exact tie in every draw, real first orders `2¹⁷` from
 the origin (a vertex's direction into a face, an edge `1e-3` above a
-parallel one) still deciding, the curved primitives'
+parallel one) still deciding, edges whose shadows lie along each other
+under the one above wherever they are decided to cross, the curved primitives'
 `first_sign` skipping a motion's first order that is only rounding (a
 motion in a turned plane against its normal), `orient2d` near a line
 and far out,
@@ -3122,7 +3146,11 @@ to 72 of its 96 operations and left the others as they were.
   decided again exactly, so they aren't `Inconsistent` (none seen), but refused as
   `Invalid` where the exact result has parts closer than the
   resolution; curved operands still can be (11 of the seeded suite's 96
-  near-tangent operations).
+  near-tangent operations). Far from the origin the rounding rule's
+  share reaches some tens of tie distances in a coefficient of many
+  terms: edges stacked along `UP` 10 to 125 tie distances apart, `1e3`
+  to `1e6` from the origin, are decided as touching (near it, up to
+  8), still within the resolution.
 - A tangency along a line reads as not touching (`touches` says false for
   two cylinders side by side): no crossing shows it, and the fixed rules
   take no certificate as no loop. Flat solids touching do meet.
@@ -3191,7 +3219,9 @@ to 72 of its 96 operations and left the others as they were.
   A box joined flush in the top corner of a hexagonal prism's slanted
   wall (sharing the prism's vertical edge line and its top), on random
   turned frames, fails the same way as `Invalid(Hull)`, 8 of 60 frames;
-  upright it works.
+  upright it works. Turned grid boxes moved off flush by `1e-4` to
+  `1e-2` leave slivers that thin whose triangles fail the hull rules
+  (`Invalid`) some 5 % of the time.
 - **Long cap triangles and cuts passing close to their sides**: a cap
   triangulated once (an extrude's, or a cut face's) keeps long thin
   triangles from far corners to rims. Drilling a second hole of the same

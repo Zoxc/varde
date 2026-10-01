@@ -112,13 +112,7 @@ impl<'a> Flat<'a> {
     pub(super) fn e_above(&self, e: u32, g: u32, sigma: i8) -> bool {
         let [a, b] = self.edge(Side::A, e);
         let [c, d] = self.edge(Side::B, g);
-        // The point of `e` is `λ` above that of `g` along `UP`, with
-        // `λ = det[a − c, g, e] / det[g, e, UP]`.
-        let h = match self.sign(&Height { a, b, c, d }) {
-            0 => 1,
-            h => h,
-        };
-        h * sigma > 0
+        above([a, b], [c, d], sigma, self.tie)
     }
 
     /// Where along edge `e` of `side` (0 at its start, 1 at its end) the
@@ -184,34 +178,7 @@ impl Primitives for Flat<'_> {
     }
 
     fn s11(&self, e: u32, g: u32) -> Cross11 {
-        let [a, b] = self.edge(Side::A, e);
-        let [c, d] = self.edge(Side::B, g);
-        let oc = self.sign(&Orient { p: a, q: b, r: c });
-        let od = self.sign(&Orient { p: a, q: b, r: d });
-        if oc == od || oc == 0 || od == 0 {
-            return Cross11::default();
-        }
-        let oa = self.sign(&Orient { p: c, q: d, r: a });
-        let ob = self.sign(&Orient { p: c, q: d, r: b });
-        if oa == ob || oa == 0 || ob == 0 {
-            return Cross11::default();
-        }
-        // `det[g, e, UP]` for the directions `g = d − c` and `e = b − a`:
-        // with `a` and `b` on opposite sides of `g`, the sign of `b`'s.
-        let sigma = ob;
-        // `g` crosses `e` from its right to its left where `e` crosses
-        // `g` the other way.
-        if self.e_above(e, g, sigma) {
-            Cross11 {
-                a_under: 0,
-                b_under: -sigma,
-            }
-        } else {
-            Cross11 {
-                a_under: sigma,
-                b_under: 0,
-            }
-        }
+        cross11(self.edge(Side::A, e), self.edge(Side::B, g), self.tie)
     }
 
     fn searches(&self, _: Side, _: u32, _: u32) -> bool {
@@ -239,6 +206,62 @@ impl Primitives for Flat<'_> {
     fn order(&self, side: Side, e: u32, c1: &Crossing, c2: &Crossing) -> Ordering {
         self.order_faces(side, e, c1.face, c2.face)
     }
+}
+
+/// [`Flat::s11`] for edge `ab` of `A` and `cd` of `B`, near ties within
+/// `tie` decided as ties.
+fn cross11([a, b]: [Pt; 2], [c, d]: [Pt; 2], tie: f64) -> Cross11 {
+    let sign = |pred: &Orient| exact::sign_tied(pred, tie);
+    let oc = sign(&Orient { p: a, q: b, r: c });
+    let od = sign(&Orient { p: a, q: b, r: d });
+    if oc == od || oc == 0 || od == 0 {
+        return Cross11::default();
+    }
+    let oa = sign(&Orient { p: c, q: d, r: a });
+    let ob = sign(&Orient { p: c, q: d, r: b });
+    if oa == ob || oa == 0 || ob == 0 {
+        return Cross11::default();
+    }
+    // `det[g, e, UP]` for the directions `g = d − c` and `e = b − a`:
+    // with `a` and `b` on opposite sides of `g`, the sign of `b`'s.
+    let sigma = ob;
+    // `g` crosses `e` from its right to its left where `e` crosses
+    // `g` the other way.
+    if above([a, b], [c, d], sigma, tie) {
+        Cross11 {
+            a_under: 0,
+            b_under: -sigma,
+        }
+    } else {
+        Cross11 {
+            a_under: sigma,
+            b_under: 0,
+        }
+    }
+}
+
+/// [`Flat::e_above`] for edge `ab` of `A` and `cd` of `B`.
+fn above([a, b]: [Pt; 2], [c, d]: [Pt; 2], sigma: i8, tie: f64) -> bool {
+    // The point of `e` is `λ` above that of `g` along `UP`, with
+    // `λ = det[a − c, g, e] / det[g, e, UP]`.
+    let height = Height { a, b, c, d };
+    // Where both of `e`'s ends are on `g`'s shadow to within the tie,
+    // the shadows are decided as on one line: where they cross, and the
+    // side `sigma`, are the perturbation's. `det[g, e, UP]` is zero
+    // there, and so is `det[a − c, g, e]`, whatever the edges' gap
+    // (`a − c`, `g` and `e` are all in the plane through `g` along
+    // `UP`): the constant term is a tie, and the perturbation decides it
+    // too, by the gap. Taken as it came, its rounding (or a hair's
+    // angle) times the gap decided against a side that wasn't its own,
+    // and the edges came out either way round, however far apart.
+    let along = |r: Pt| exact::is_tie(&Orient { p: c, q: d, r }, tie);
+    let h = if along(a) && along(b) {
+        exact::sign_past_tie(&height, tie)
+    } else {
+        exact::sign_tied(&height, tie)
+    };
+    let h = if h == 0 { 1 } else { h };
+    h * sigma > 0
 }
 
 /// `det[q − p, r − p, UP]`: positive when `r` is left of `p → q` seen
@@ -442,6 +465,56 @@ mod tests {
             assert_eq!(exact::sign_tied(&r, tie), want_reach, "reach, draw {draw}");
         }
         assert!(unscaled > 0);
+    }
+
+    #[test]
+    #[allow(clippy::disallowed_methods, reason = "std maths to build inputs")]
+    fn edges_with_shadows_along_each_other_go_by_their_gap() {
+        // Edge `g` of `B` some way above edge `e` of `A` along `UP`, their
+        // shadows on one line to within rounding (the edges parallel, or
+        // at a hair's angle), at the origin and far from it. The ends of
+        // each are then on the other's shadow to within the tie, so where
+        // the shadows cross is the perturbation's, and so is the side
+        // `σ` it reads; wherever they are decided to cross, `e` must be
+        // under `g`, however far past the tie the gap is. The height's
+        // constant term, the gap times the shadows' cross product (only
+        // rounding, or a hair), taken as it came against the
+        // perturbation's side, put `e` above about half the time.
+        let tie = 1e-9;
+        let up = UP.normalize();
+        let mut rng = Rng::new(40);
+        let (mut crossed, mut draws) = (0, 0);
+        for x in [1.0, 1e3, 1e6] {
+            for len in [1e-3, 1.0, 100.0] {
+                for skew in [0.0, 1e-12, 1e-9] {
+                    for _ in 0..20 {
+                        draws += 1;
+                        let dir = up.cross(rng.direction()).normalize();
+                        let side = up.cross(dir).normalize();
+                        let along = (dir + side * skew).normalize();
+                        let p0 = DVec3::splat(x) + rng.point(1.0);
+                        let gap = tie * 10f64.powf(rng.range(3.0, 6.0));
+                        let e = [
+                            a((p0 - dir * len * 0.5).into(), rng.direction().into()),
+                            a((p0 + dir * len * 0.5).into(), rng.direction().into()),
+                        ];
+                        let g = [
+                            b((p0 + up * gap - along * len * 0.5).into()),
+                            b((p0 + up * gap + along * len * 0.5).into()),
+                        ];
+                        let cross = cross11(e, g, tie);
+                        if cross != Cross11::default() {
+                            crossed += 1;
+                            assert!(
+                                cross.a_under != 0 && cross.b_under == 0,
+                                "x {x}, len {len}, skew {skew}, gap {gap}: {cross:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        assert!(crossed > draws / 4, "{crossed} of {draws}");
     }
 
     #[test]

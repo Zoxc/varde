@@ -442,19 +442,59 @@ pub(crate) fn sum_value<P: Pred + Sync>(parts: &[P]) -> f64 {
 /// is then one, and the later orders that are only rounding are still
 /// skipped.
 pub(super) fn sign_tied(pred: &impl Pred, tie: f64) -> i8 {
-    let limit = tie * pred.scale();
-    if limit.is_nan() || tie <= 0.0 {
+    let Some(limit) = limit(pred, tie) else {
+        return sign(pred);
+    };
+    match constant(pred, limit) {
+        Err(sign) => sign,
+        Ok(poly) => past_tie(pred, &poly, tie),
+    }
+}
+
+/// Whether [`sign_tied`] takes `pred`'s constant term as a tie.
+pub(super) fn is_tie(pred: &impl Pred, tie: f64) -> bool {
+    limit(pred, tie).is_some_and(|limit| constant(pred, limit).is_ok())
+}
+
+/// [`sign_tied`] with `pred`'s constant term taken as a tie whatever it
+/// is: for a predicate whose constant term is zero wherever others,
+/// decided as ties, put the configuration (two edges' height where
+/// their shadows were taken as on one line). With `tie` zero, exactly
+/// [`sign`].
+pub(super) fn sign_past_tie(pred: &impl Pred, tie: f64) -> i8 {
+    if limit(pred, tie).is_none() {
         return sign(pred);
     }
+    worked_out();
+    past_tie(pred, &pred.eval::<Poly<Exp>>().0, tie)
+}
+
+/// How far from zero [`sign_tied`] takes `pred`'s constant term as a
+/// tie, or `None` to decide exactly.
+fn limit(pred: &impl Pred, tie: f64) -> Option<f64> {
+    let limit = tie * pred.scale();
+    (!limit.is_nan() && tie > 0.0).then_some(limit)
+}
+
+/// `pred`'s coefficients worked out exactly where its constant term is
+/// within `limit` of zero, a tie, else the constant term's sign.
+fn constant(pred: &impl Pred, limit: f64) -> Result<Vec<Exp>, i8> {
     let approx = pred.eval::<Approx>();
     if approx.v.abs() - approx.err > limit {
-        return if approx.v > 0.0 { 1 } else { -1 };
+        return Err(if approx.v > 0.0 { 1 } else { -1 });
     }
     worked_out();
     let poly = pred.eval::<Poly<Exp>>().0;
-    if !poly.first().is_some_and(|c| c.value().abs() <= limit) {
-        return poly.first().map_or(0, Exp::sign);
+    match poly.first() {
+        Some(c) if c.value().abs() > limit => Err(c.sign()),
+        None => Err(0),
+        _ => Ok(poly),
     }
+}
+
+/// The sign of `pred`, whose coefficients are `poly`, its constant term
+/// a tie: that of the first later coefficient that isn't only rounding.
+fn past_tie(pred: &impl Pred, poly: &[Exp], tie: f64) -> i8 {
     // The constant term is a tie: so is every later order that is only
     // rounding, as it is zero at the exact tie this stands for.
     let moves = pred.eval::<Poly<Moves>>().0;

@@ -957,9 +957,14 @@ fn random_turn(rng: &mut crate::test_rng::Rng) -> (glam::DQuat, DVec3) {
 /// `s` turned by `q` and moved by `shift`, its faces claiming no surface
 /// (turned plane tags would be off by rounding).
 fn turned(s: &Solid, (q, shift): (glam::DQuat, DVec3)) -> Solid {
+    moved_free(s, |p| q * p + shift)
+}
+
+/// `s` with its vertices moved by `f`, its faces claiming no surface.
+fn moved_free(s: &Solid, f: impl Fn(DVec3) -> DVec3) -> Solid {
     let mut builder = MeshBuilder::new();
     for &p in s.mesh().verts() {
-        builder.vert(q * p + shift);
+        builder.vert(f(p));
     }
     for &f in s.mesh().faces() {
         builder.face(Face {
@@ -1182,6 +1187,89 @@ fn turned_grid_boxes_chained_are_never_inconsistent() {
     if chains == 100 {
         assert!(right >= 349, "{right} of {all}");
     }
+}
+
+#[test]
+fn turned_grid_boxes_moved_along_the_projection_are_right_or_refused() {
+    // Turned grid boxes, the second moved along `UP` by 1 to 10⁷ times
+    // the tie distance (far from the origin for every other pair): edges
+    // that were flush now have shadows on one line, one edge above the
+    // other. Where the shadows were decided to cross (each edge's ends
+    // on the other's shadow to within the tie, so the perturbation's),
+    // the height was taken from its constant term, the gap times only
+    // rounding, against the perturbation's side, and the edges came out
+    // either way round however far apart: pair 467's union lost 4e-6 of
+    // volume (the boxes 1.8e-5 apart), pair 556's intersection, a
+    // million from the origin, gained 1.4e-5 (2.8e-4 apart). Every
+    // result must have the boxes' volume, worked out in the grid's frame
+    // (to within the moves of a few ties, where the boxes are that
+    // close), or fail as `Invalid`.
+    let mut rng = crate::test_rng::Rng::new(5);
+    let t = tie(&TOL);
+    let pairs = if cfg!(debug_assertions) {
+        vec![467, 556]
+    } else {
+        (0..300).chain([467, 556]).collect()
+    };
+    let last = *pairs.last().unwrap();
+    let corner = |g: ([i32; 3], [i32; 3])| {
+        let at = |i: i32| -0.5 + 0.5 * f64::from(i);
+        let lo = DVec3::new(at(g.0[0]), at(g.0[1]), at(g.0[2]));
+        (lo, lo + DVec3::from(g.1.map(f64::from)) * 0.5)
+    };
+    let volume = |(lo, hi): (DVec3, DVec3)| {
+        let d = (hi - lo).max(DVec3::ZERO);
+        d.x * d.y * d.z
+    };
+    let area = |(lo, hi): (DVec3, DVec3)| {
+        let d = hi - lo;
+        2.0 * (d.x * d.y + d.y * d.z + d.z * d.x)
+    };
+    let (mut right, mut refused) = (0, 0);
+    for i in 0..=last {
+        let (ga, gb) = (random_grid_corner(&mut rng), random_grid_corner(&mut rng));
+        let (q, shift) = random_turn(&mut rng);
+        let gap = t * 10f64.powf(rng.range(0.0, 7.0));
+        let way = if rng.unit() < 0.5 { 1.0 } else { -1.0 };
+        if !pairs.contains(&i) {
+            continue;
+        }
+        let shift = shift * if i % 2 == 0 { 1e4 } else { 1.0 };
+        // The move in the grid's frame.
+        let v = q.inverse() * UP.normalize() * (gap * way);
+        let (a, b) = (grid_box(ga.0, ga.1).0, grid_box(gb.0, gb.1).0);
+        let a = turned(&a, (q, shift));
+        let b = moved_free(&b, |p| q * (p + v) + shift);
+        let (ba, bb) = (corner(ga), corner(gb));
+        let bb = (bb.0 + v, bb.1 + v);
+        let both = volume((ba.0.max(bb.0), ba.1.min(bb.1)));
+        let (va, vb) = (volume(ba), volume(bb));
+        // Boxes closer than the resolution may come out as touching.
+        let close = if gap <= 64.0 * t { gap } else { 0.0 };
+        let within = (area(ba) + area(bb)) * (close + 4.0 * t) + 1e-9;
+        for (op, want) in [
+            (Op::Union, va + vb - both),
+            (Op::Intersection, both),
+            (Op::Difference, va - both),
+        ] {
+            match run(&a, &b, op) {
+                Ok(s) => {
+                    assert!(
+                        (s.volume() - want).abs() <= within,
+                        "{i} {op:?} (moved {gap:e}): {} not {want}",
+                        s.volume()
+                    );
+                    right += 1;
+                }
+                Err(KernelError::Invalid(_)) => refused += 1,
+                Err(e) => panic!("{i} {op:?} (moved {gap:e}): {e}"),
+            }
+        }
+    }
+    // 740 of the 906 in a release build, the rest `Invalid`: parts
+    // closer than the resolution, and thin slivers whose triangles fail
+    // the hull rules.
+    assert!(right >= refused, "{right}, {refused} refused");
 }
 
 #[test]

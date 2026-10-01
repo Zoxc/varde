@@ -1,6 +1,6 @@
 use iced::advanced::renderer::Headless;
 use iced::keyboard::{self, key};
-use iced::time::Instant;
+use iced::time::{Duration, Instant};
 use iced::{Event, Font, Pixels, Size, mouse};
 use iced_runtime::user_interface::{Cache, UserInterface};
 use varde_expr::LengthUnit;
@@ -553,9 +553,9 @@ fn a_double_click_on_a_label_opens_the_field_on_it_and_its_release_keeps_it() {
 }
 
 /// What the document screen of `doc`, shown headless from `cache`, sends
-/// for a click at `at`, and its cache after, for the next click to be a
-/// double-click.
-fn click_screen(doc: &Doc, at: iced::Point, cache: Cache) -> (Vec<Ui>, Cache) {
+/// for a click at `at`, its cache after, for the next click to be a
+/// double-click, and the times just before and after the click went in.
+fn click_screen(doc: &Doc, at: iced::Point, cache: Cache) -> (Vec<Ui>, Cache, [Instant; 2]) {
     let Some(mut renderer) = iced::futures::executor::block_on(iced::Renderer::new(
         Font::DEFAULT,
         Pixels(13.0),
@@ -572,6 +572,7 @@ fn click_screen(doc: &Doc, at: iced::Point, cache: Cache) -> (Vec<Ui>, Cache) {
         mouse::Event::ButtonReleased(mouse::Button::Left),
     ]
     .map(Event::Mouse);
+    let before = Instant::now();
     ui.update(
         &events,
         mouse::Cursor::Available(at),
@@ -579,8 +580,11 @@ fn click_screen(doc: &Doc, at: iced::Point, cache: Cache) -> (Vec<Ui>, Cache) {
         &mut iced::advanced::clipboard::Null,
         &mut sent,
     );
-    (sent, ui.into_cache())
+    (sent, ui.into_cache(), [before, Instant::now()])
 }
+
+/// How far apart iced's two clicks may be to make a double-click.
+const DOUBLE_CLICK: Duration = Duration::from_millis(300);
 
 /// Whether `sent` has a click on the row of `id`.
 fn clicked_row(sent: &[Ui], id: Id) -> bool {
@@ -622,21 +626,38 @@ fn a_dimension_s_row_double_clicked_opens_the_field_in_it() {
         // The row, in the Sketch tab on the left, rows 28 pixels tall.
         let row = (0..800).step_by(14).find_map(|y| {
             let at = iced::Point::new(60.0, y as f32);
-            let (sent, _) = click_screen(&doc, at, Cache::default());
+            let (sent, ..) = click_screen(&doc, at, Cache::default());
             clicked_row(&sent, id).then_some(at)
         });
         let row = row.expect("the dimension's row");
-        let (sent, cache) = click_screen(&doc, row, Cache::default());
-        assert!(clicked_row(&sent, id), "{sent:?}");
-        doc.look(Look::ClickGeometry {
-            hit: Some(id),
-            add: false,
-        });
-        let (sent, _) = click_screen(&doc, row, cache);
+        // Two clicks further apart than a double-click's time (building
+        // the screen again in between, in a debug build under load, can
+        // take that long) tell nothing: they are clicked again.
+        let mut tries = 0;
+        let sent = loop {
+            doc.look(Look::ClearSelection);
+            if let Some(selected) = selected {
+                doc.look(Look::ClickGeometry {
+                    hit: Some(selected),
+                    add: false,
+                });
+            }
+            let (sent, cache, [first, _]) = click_screen(&doc, row, Cache::default());
+            assert!(clicked_row(&sent, id), "{sent:?}");
+            doc.look(Look::ClickGeometry {
+                hit: Some(id),
+                add: false,
+            });
+            let (sent, _, [_, second]) = click_screen(&doc, row, cache);
+            tries += 1;
+            if second - first <= DOUBLE_CLICK || tries == 20 {
+                break sent;
+            }
+        };
         let edits = sent.iter().any(|message| {
             matches!(message, Ui::Look(Look::EditDimension { id: edited, in_list: true }) if *edited == id)
         });
-        assert!(edits, "{selected:?}: {sent:?}");
+        assert!(edits, "{selected:?}, {tries} tries: {sent:?}");
         doc.look(Look::EditDimension { id, in_list: true });
         assert!(field(&doc).is_some_and(|field| field.in_list));
         doc.look(Look::CancelValue);
