@@ -7,7 +7,8 @@
 <!--
   Interactive mock of the varde shell. Open directly in a browser.
 
-  Try: open a recent file, drag to orbit (right-drag pans, wheel zooms),
+  Try: open a recent file, drag to orbit (right-drag pans, wheel zooms,
+  middle-click the model or grid to orbit about that point),
   click faces, double-click to select the body, hold Alt (swaps
   timeline/objects), drag timeline rows or the rollback marker, double-click
   a sketch in the timeline, S to sketch, Esc to back out, click the view
@@ -442,6 +443,7 @@ body.dragging .face, body.dragging .hole { pointer-events: none; }
 .origin-ring { fill: none; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
 .origin-ring.rim { stroke: #333840; stroke-width: 3.5; }
 .origin-ring.core { stroke: #fff; stroke-width: 1.5; }
+.pivot-ring.core { stroke: var(--accent); }
 
 .sk { fill: none; stroke: var(--accent); stroke-width: 1.8; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
 .sk-pt { fill: var(--halo); stroke: var(--accent); stroke-width: 1.2; vector-effect: non-scaling-stroke; }
@@ -928,7 +930,7 @@ const RECENT = [
 function makeDoc(kind, name) {
   return kind === 'bracket'
     ? { kind, name, dirty: true, T: [40, 25, 32], timeline: BRACKET_TIMELINE.map(t => ({ ...t })), rollback: BRACKET_TIMELINE.length, hidden: new Set(['origin', 's1', 's2', 's3']) }
-    : { kind, name, dirty: false, T: [18, 18, 14], timeline: [], rollback: 0, hidden: new Set() };
+    : { kind, name, dirty: false, T: [0, 0, 0], timeline: [], rollback: 0, hidden: new Set() };
 }
 
 // ---------------------------------------------------------------- state
@@ -1171,7 +1173,7 @@ function hints() {
   const h = list => list.filter(([keys]) => st.mouseHints || !keys.includes('mouse:'))
     .map(([keys, label]) => `<span class="h">${k(keys)}<span>${label}</span></span>`).join('');
   if (st.screen === 'welcome') return h([['N', 'New design'], ['O', 'Open'], ['?', 'Shortcuts']]);
-  const nav = [['mouse:l', 'Drag to orbit'], ['mouse:r', 'Pan'], ['mouse:w', 'Zoom']];
+  const nav = [['mouse:l', 'Drag to orbit'], ['mouse:r', 'Pan'], ['mouse:w', 'Zoom'], ['mouse:m', 'Click to set pivot']];
   switch (context()) {
     case 'none': return h([['mouse:l', 'Select'], ['mouse:l mouse:l', 'Body'], ...nav]);
     case 'pick': return h([['mouse:l', 'Pick plane'], ...nav, ['Esc', 'Cancel']]);
@@ -1505,6 +1507,91 @@ function originMarkerSvg() {
   </g>`;
 }
 
+// The point the camera orbits, picked with a middle click on the model (or
+// in a sketch, its plane): { p, at }, `at` when its marker last showed whole
+// with the pointer off the view cube. As the app's: a ring facing the screen,
+// its radius 10 px, and a dot, each in the accent with a dark rim; shown for
+// 2 s once picked, then faded over 0.4 s, and while the pointer is over the
+// view cube; not where it shows on the origin, whose marker is there. Picking
+// it pans it to the middle of the view. Home forgets it, and so does a middle
+// click off the model and the grid.
+let pivot = null, cubeHover = false, pivotAnim = 0;
+const PIVOT_SHOWN = 2000, PIVOT_FADE = 400;
+// Faces drawn in the scene last, for picking the pivot.
+let sceneFaces = [];
+function pivotOpacity(now = performance.now()) {
+  if (!pivot) return 0;
+  if (cubeHover) return 1;
+  return clamp(1 - (now - pivot.at - PIVOT_SHOWN) / PIVOT_FADE, 0, 1);
+}
+function pivotMarkerSvg() {
+  if (!pivot) return '';
+  const k = unitsPerPixel(), [x, y] = proj.P(...pivot.p), [ox, oy] = proj.P(0, 0, 0);
+  if (Math.hypot(x - ox, y - oy) < 1.5 * k) return '';
+  return `<g id="pivot-mark" style="pointer-events:none" opacity="${pivotOpacity()}">
+    <circle class="origin-ring rim" cx="${x}" cy="${y}" r="${10 * k}"/><circle class="origin-ring core pivot-ring" cx="${x}" cy="${y}" r="${10 * k}"/>
+    <circle cx="${x}" cy="${y}" r="${3.5 * k}" fill="#333840"/><circle cx="${x}" cy="${y}" r="${2.5 * k}" fill="var(--accent)"/>
+  </g>`;
+}
+// Fades the marker frame by frame, until it's gone or the pointer is over the cube.
+function fadePivot() {
+  cancelAnimationFrame(pivotAnim);
+  const step = () => {
+    const o = pivotOpacity();
+    $('#pivot-mark')?.setAttribute('opacity', o);
+    if (o > 0 && !cubeHover) pivotAnim = requestAnimationFrame(step);
+  };
+  step();
+}
+// Picking a pivot pans to bring it to the middle of the view.
+function setPivot(p) {
+  pivot = p && { p, at: performance.now() };
+  redrawScene();
+  fadePivot();
+  if (p) {
+    const [px, py] = proj.P(...p);
+    animateCam({ px, py });
+  }
+}
+// Where the ray through the client position (cx, cy) first meets a face of
+// the model drawn, or else the grid's plane (XY, or the sketch's) where the
+// grid shows, within 6 view heights of the view's middle; or null.
+function pointAt(cx, cy) {
+  const s = $('#scene'), sp = s.createSVGPoint();
+  sp.x = cx; sp.y = cy;
+  const q = sp.matrixTransform(s.getScreenCTM().inverse());
+  const { r, u, d, T, D } = proj;
+  // At the target's depth, which keeps its scale either way.
+  const base = add(T, add(mul(r, q.x), mul(u, -q.y)));
+  const [o, dir] = D === Infinity ? [base, mul(d, -1)] : [add(T, mul(d, D)), sub(base, add(T, mul(d, D)))];
+  const meet = (n, p0) => {
+    const along = dot(n, dir);
+    if (Math.abs(along) < 1e-9) return null;
+    const t = dot(n, sub(p0, o)) / along;
+    return D !== Infinity && t <= 0 ? null : add(o, mul(dir, t));
+  };
+  const inside = ps => {
+    let c = false;
+    for (let i = 0, j = ps.length - 1; i < ps.length; j = i++) {
+      const [xi, yi] = ps[i], [xj, yj] = ps[j];
+      if ((yi > q.y) !== (yj > q.y) && q.x < (xj - xi) * (q.y - yi) / (yj - yi) + xi) c = !c;
+    }
+    return c;
+  };
+  let best = null;
+  for (const f of sceneFaces) {
+    if (f.draft || !proj.facing(f.n, f.p[0]) || !inside(f.p.map(p => proj.P(...p)))) continue;
+    const hit = meet(f.n, f.p[0]);
+    if (hit && (!best || proj.depth(hit) > proj.depth(best))) best = hit;
+  }
+  if (best) return best;
+  const g = gridPlane(), hit = meet(cross(g.x, g.y), g.o);
+  if (!hit) return null;
+  const mid = add(T, sub(mul(r, cam.px), mul(u, cam.py))), off = sub(hit, mid);
+  const height = $('#scene').getBoundingClientRect().height * unitsPerPixel();
+  return Math.hypot(dot(off, g.x), dot(off, g.y)) <= 6 * height ? hit : null;
+}
+
 function sketchGeomSvg(id, planeKey, withDims) {
   const s = SKETCHES[id];
   if (!s) return '';
@@ -1551,6 +1638,7 @@ function sceneInner() {
   const faces = bodies.filter(b => !d.hidden.has(b.id))
     .flatMap(b => b.faces.map(f => ({ ...f, body: b.id, fade: pv?.fade?.has(b.id), tint: pv?.tint?.get(b.id) })));
   faces.push(...(pv?.faces || []));
+  sceneFaces = faces;
   if (faces.length) model += solidSvg(faces, proj, true);
 
   let overlay = '';
@@ -1565,7 +1653,7 @@ function sceneInner() {
   }
   const marker = !d.hidden.has('origin') && !(inSketch && d.kind === 'bracket') ? originMarkerSvg() : '';
   // The marker is over the model and the finished sketches, under the sketch being edited.
-  overlay = inSketch ? marker + overlay : overlay + marker;
+  overlay = inSketch ? marker + pivotMarkerSvg() + overlay : overlay + marker + pivotMarkerSvg();
   return `${gridAxesSvg(plane)}<g class="${inSketch ? 'ghost' : ''}">${model}</g><g style="pointer-events:none">${overlay}</g><g class="opl">${pv?.svg || ''}</g>`;
 }
 
@@ -1691,7 +1779,8 @@ function animateCam(to, ms = 650) {
   if (reduced || ms === 0) { Object.assign(cam, tgt, { yaw: from.yaw + dyaw }); redrawScene(); return; }
   const t0 = performance.now();
   const step = now => {
-    const k = Math.min(1, (now - t0) / ms), e = 1 - Math.pow(1 - k, 3);
+    // A frame's time can be before the call's, when that came from input.
+    const k = clamp((now - t0) / ms, 0, 1), e = 1 - Math.pow(1 - k, 3);
     cam.yaw = from.yaw + dyaw * e;
     for (const p of ['pitch', 'zoom', 'px', 'py']) cam[p] = from[p] + (tgt[p] - from[p]) * e;
     redrawScene();
@@ -2610,8 +2699,9 @@ function helpModal() {
       <h3>Mouse</h3>
       <div class="kv"><span>Select face</span><span>${mouse('l')} click</span></div>
       <div class="kv"><span>Select body</span><span>${mouse('l')} double-click</span></div>
-      <div class="kv"><span>Orbit</span><span>${mouse('l')} drag</span></div>
-      <div class="kv"><span>Pan</span><span>${mouse('r')} / ${mouse('m')} drag</span></div>
+      <div class="kv"><span>Orbit</span><span>${mouse('l')} / ${mouse('m')} drag</span></div>
+      <div class="kv"><span>Orbit about a point</span><span>${mouse('m')} click the model or grid</span></div>
+      <div class="kv"><span>Pan</span><span>${mouse('r')} drag</span></div>
       <div class="kv"><span>Zoom</span><span>${mouse('w')} wheel</span></div>
       <div class="kv"><span>Reorder / roll back</span><span>drag in timeline</span></div>
     </div>
@@ -2636,6 +2726,7 @@ function isDark() {
 
 function openDoc(kind, name, intro = true) {
   Object.assign(st, { screen: 'doc', doc: makeDoc(kind, name), mode: 'model', sketch: null, tool: null, pick: false, sel: null, menu: false });
+  pivot = null;
   if (intro && !reduced) {
     Object.assign(cam, HOME, { yaw: HOME.yaw - 75, pitch: 8, zoom: 1.7 });
     requestAnimationFrame(() => animateCam(HOME, 1100));
@@ -2725,7 +2816,10 @@ function act(a) {
     case 'projmenu': st.projMenu = !st.projMenu; break;
     case 'proj': st.persp = v === 'persp'; break;
     case 'mousehints': st.mouseHints = !st.mouseHints; break;
-    case 'view': animateCam(v === 'home' ? HOME : { ...VIEWS[v], px: 0, py: 0 }); return;
+    case 'view':
+      if (v === 'home') pivot = null;
+      animateCam(v === 'home' ? HOME : { ...VIEWS[v], px: 0, py: 0 });
+      return;
     case 'op': doOp(v); break;
     case 'opf': st.op.pick = v; break;
     case 'opc': { const [n, val] = v.split(':'); st.op[n] = val; break; }
@@ -2901,7 +2995,19 @@ const unitsPerPx = () => {
 document.addEventListener('pointerdown', e => {
   if (!e.target.closest('#scene')) return;
   if (st.alt) altUsed = true;
+  // No autoscroll on a middle press: it orbits, or picks the pivot.
+  if (e.button === 1) e.preventDefault();
   drag = { x: e.clientX, y: e.clientY, b: e.button, moved: false, cam: { ...cam } };
+});
+// The pivot's marker shows while the pointer is over the view cube.
+document.addEventListener('mouseover', e => {
+  const over = !!e.target.closest?.('#cube');
+  if (over === cubeHover) return;
+  cubeHover = over;
+  if (!pivot) return;
+  // Off the cube, it fades from now.
+  if (!over) pivot.at = performance.now() - PIVOT_SHOWN;
+  fadePivot();
 });
 window.addEventListener('pointermove', e => {
   if (!drag) return;
@@ -2912,9 +3018,18 @@ window.addEventListener('pointermove', e => {
     cancelAnimationFrame(camAnim);
     document.body.classList.add('dragging');
   }
-  if (drag.b === 0) {
+  // The left and middle buttons orbit, about the pivot if one was picked:
+  // the pan keeps it where it shows. The right one pans.
+  if (drag.b !== 2) {
     cam.yaw = drag.cam.yaw - dx * 0.4;
     cam.pitch = clamp(drag.cam.pitch + dy * 0.4, -90, 90);
+    if (pivot) {
+      const D = st.persp ? eyeDistance() : Infinity;
+      const [x0, y0] = makeProj(drag.cam.yaw, drag.cam.pitch, st.doc.T, D).P(...pivot.p);
+      const [x1, y1] = makeProj(cam.yaw, cam.pitch, st.doc.T, D).P(...pivot.p);
+      cam.px = drag.cam.px + x1 - x0;
+      cam.py = drag.cam.py + y1 - y0;
+    }
   } else {
     const k = unitsPerPx();
     cam.px = drag.cam.px - dx * k;
@@ -2922,8 +3037,10 @@ window.addEventListener('pointermove', e => {
   }
   queueRedraw();
 });
-window.addEventListener('pointerup', () => {
+window.addEventListener('pointerup', e => {
   if (drag?.moved) { justDragged = true; setTimeout(() => { justDragged = false; }, 0); }
+  // A middle click picks the point to orbit about, or off the model and the grid none.
+  else if (drag?.b === 1 && e.button === 1 && st.screen === 'doc') setPivot(pointAt(e.clientX, e.clientY));
   drag = null;
   document.body.classList.remove('dragging');
 });
