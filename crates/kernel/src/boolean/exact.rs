@@ -10,7 +10,8 @@
 //! bound on its rounding error ([`Approx`]); only when that can't tell
 //! the sign (the value is zero or close to it: a tie, which flush CAD
 //! geometry makes on purpose) is every coefficient worked out exactly,
-//! with floating-point expansions ([`Exp`]). Every operation is a
+//! with floating-point expansions ([`Exp`]). [`sign_tied`] takes near
+//! ties as ties, at every order. Every operation is a
 //! correctly rounded `+ − ×`, so the signs are the same on every platform.
 
 use glam::DVec3;
@@ -424,6 +425,16 @@ pub(crate) fn sum_value<P: Pred + Sync>(parts: &[P]) -> f64 {
 /// coarsest tolerance is on it for all of them, not beside it for the
 /// exact predicates and on it for the numerical ones. With `tie` zero,
 /// exactly [`sign`].
+///
+/// Once the constant term is a tie, each later coefficient that is only
+/// rounding (within [`RHO`] of its size, [`Abs`]) is taken as zero too: at
+/// the exact tie the rounded configuration stands for, the first order is
+/// often zero as well (two collinear edges' `Height`, a vertex whose
+/// direction lies in a face's plane against it), and its rounding's sign
+/// is noise. Each predicate is then decided as that exact tie is, so they
+/// all describe one configuration. The rule is free of scale: a
+/// coefficient is compared with its own terms. With every later order
+/// only rounding, the sign is 0, as for a tie in every power.
 pub(super) fn sign_tied(pred: &impl Pred, tie: f64) -> i8 {
     let limit = tie * pred.scale();
     if limit.is_nan() || limit <= 0.0 {
@@ -435,12 +446,53 @@ pub(super) fn sign_tied(pred: &impl Pred, tie: f64) -> i8 {
     }
     worked_out();
     let poly = pred.eval::<Poly<Exp>>().0;
-    let skip = usize::from(poly.first().is_some_and(|c| c.value().abs() <= limit));
+    if !poly.first().is_some_and(|c| c.value().abs() <= limit) {
+        return poly.first().map_or(0, Exp::sign);
+    }
+    // The constant term is a tie: so is every later order that is only
+    // rounding, as it is zero at the exact tie this stands for.
+    let rounding = |c: &Exp, size: &Abs| size.0.is_finite() && c.value().abs() <= RHO * size.0;
+    let size = pred.eval::<Poly<Abs>>().0;
     poly.iter()
-        .skip(skip)
-        .map(Exp::sign)
-        .find(|&s| s != 0)
-        .unwrap_or(0)
+        .zip(&size)
+        .skip(1)
+        .find(|(c, size)| c.sign() != 0 && !rounding(c, size))
+        .map_or(0, |(c, _)| c.sign())
+}
+
+/// A coefficient of a near tie's later order whose value is within this
+/// share of its size ([`Abs`]) is only rounding, and taken as zero by
+/// [`sign_tied`]. Anything from `1e-13` to `1e-7` decided the same on
+/// turned flush boxes; rounding leaves some `1e-16`.
+const RHO: f64 = 1.0 / (1u64 << 32) as f64;
+
+/// The size of a value: the same expression on its terms' absolute
+/// values, `+` and `−` adding them and `×` multiplying them, in floating
+/// point (the bound needn't be exact, only the same on every platform).
+/// A coefficient much smaller than its size is all cancellation.
+#[derive(Debug, Clone, Copy)]
+struct Abs(f64);
+
+impl Num for Abs {
+    fn lit(x: f64) -> Self {
+        Abs(x.abs())
+    }
+
+    fn perturbed(c: [f64; 4]) -> Self {
+        Self::lit(c[0])
+    }
+
+    fn add(&self, o: &Self) -> Self {
+        Abs(self.0 + o.0)
+    }
+
+    fn sub(&self, o: &Self) -> Self {
+        Abs(self.0 + o.0)
+    }
+
+    fn mul(&self, o: &Self) -> Self {
+        Abs(self.0 * o.0)
+    }
 }
 
 /// `num / den` as `ε → 0⁺`, in floating point, for positions (not

@@ -340,3 +340,95 @@ impl Pred for Between {
             .sub(&num(self.t2).mul(&den(self.t1)))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_rng::Rng;
+
+    /// `x` moved by up to four units in its last place, as rounding
+    /// would; a zero (a unit vector's component) by as much as one near 1.
+    fn rounded(rng: &mut Rng, x: f64) -> f64 {
+        let k = (rng.unit() * 9.0) as i64 - 4;
+        if x == 0.0 {
+            k as f64 * f64::EPSILON / 2.0
+        } else {
+            f64::from_bits(x.to_bits().wrapping_add_signed(k))
+        }
+    }
+
+    fn rounded_pt(rng: &mut Rng, pt: Pt) -> Pt {
+        let mut v = |d: DVec3| DVec3::new(rounded(rng, d.x), rounded(rng, d.y), rounded(rng, d.z));
+        Pt {
+            p: v(pt.p),
+            n: pt.n.map(v),
+        }
+    }
+
+    /// A point of `A`, moved along `n` by the perturbation.
+    fn a(p: [f64; 3], n: [f64; 3]) -> Pt {
+        Pt {
+            p: DVec3::from(p),
+            n: Some(DVec3::from(n).normalize()),
+        }
+    }
+
+    /// A point of `B`.
+    fn b(p: [f64; 3]) -> Pt {
+        Pt {
+            p: DVec3::from(p),
+            n: None,
+        }
+    }
+
+    #[test]
+    fn rounded_ties_go_as_the_exact_ones_at_every_order() {
+        // Exact ties whose first order is zero too, every coordinate and
+        // direction then moved by rounding: each must be decided as the
+        // exact tie, in every draw, not by the rounding left in its first
+        // order.
+        let tie = 1e-9;
+        // Two collinear edges, `A`'s ends moving different ways: both of
+        // `Height`'s first-order terms have parallel columns, the second
+        // order decides.
+        let height = |f: &mut dyn FnMut(Pt) -> Pt| Height {
+            a: f(a([3.25, 1.5, 7.75], [-1.0, 1.0, 2.0])),
+            b: f(a([5.25, 2.5, 8.25], [1.0, 2.0, 1.0])),
+            c: f(b([4.25, 2.0, 8.0])),
+            d: f(b([6.25, 3.0, 8.5])),
+        };
+        // A vertex on a face's plane whose direction lies in it (a vertex
+        // on the edge between a `+x` and a `+y` face, against a `z`
+        // face): `Reach`'s first order is zero, `T2` decides.
+        let reach = |f: &mut dyn FnMut(Pt) -> Pt| Reach {
+            x0: f(a([3.25, 1.5, 7.75], [1.0, 1.0, 0.0])),
+            t: [
+                f(b([2.0, 1.0, 7.75])),
+                f(b([6.0, 1.0, 7.75])),
+                f(b([2.0, 4.5, 7.75])),
+            ],
+        };
+        let want_height = exact::sign(&height(&mut |p| p));
+        let want_reach = exact::sign(&reach(&mut |p| p));
+        assert_ne!(want_height, 0);
+        assert_ne!(want_reach, 0);
+        let mut rng = Rng::new(39);
+        let mut scaled = 0;
+        for draw in 0..2000 {
+            let h = height(&mut |p| rounded_pt(&mut rng, p));
+            let r = reach(&mut |p| rounded_pt(&mut rng, p));
+            // Where rounding leaves the edges' shadows exactly parallel,
+            // `Height` has no scale and is decided exactly: a separate gap.
+            if h.scale() > 0.0 {
+                assert_eq!(
+                    exact::sign_tied(&h, tie),
+                    want_height,
+                    "height, draw {draw}"
+                );
+                scaled += 1;
+            }
+            assert_eq!(exact::sign_tied(&r, tie), want_reach, "reach, draw {draw}");
+        }
+        assert!(scaled > 1900, "{scaled}");
+    }
+}

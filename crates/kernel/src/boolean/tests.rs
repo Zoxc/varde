@@ -667,9 +667,15 @@ fn grid_box(min: [i32; 3], size: [i32; 3]) -> (Solid, Cells) {
 
 /// A random [`grid_box`] inside the grid.
 fn random_grid_box(rng: &mut crate::test_rng::Rng) -> (Solid, Cells) {
+    let (min, size) = random_grid_corner(rng);
+    grid_box(min, size)
+}
+
+/// The corner and sizes of a [`random_grid_box`], without building it.
+fn random_grid_corner(rng: &mut crate::test_rng::Rng) -> ([i32; 3], [i32; 3]) {
     let min: [i32; 3] = std::array::from_fn(|_| (rng.unit() * 6.0) as i32);
     let size = min.map(|m| (1 + (rng.unit() * f64::from(7 - m)) as i32).min(8 - m));
-    grid_box(min, size)
+    (min, size)
 }
 
 /// Cells of the half grid, of 0.5 each way.
@@ -942,6 +948,52 @@ fn crossings_are_where_the_perturbed_edges_cross() {
     }
 }
 
+/// A random turn and move, as the turned grid boxes take them.
+fn random_turn(rng: &mut crate::test_rng::Rng) -> (glam::DQuat, DVec3) {
+    let q = glam::DQuat::from_axis_angle(rng.direction(), rng.range(0.0, 6.0));
+    (q, rng.point(100.0))
+}
+
+/// `s` turned by `q` and moved by `shift`, its faces claiming no surface
+/// (turned plane tags would be off by rounding).
+fn turned(s: &Solid, (q, shift): (glam::DQuat, DVec3)) -> Solid {
+    let mut builder = MeshBuilder::new();
+    for &p in s.mesh().verts() {
+        builder.vert(q * p + shift);
+    }
+    for &f in s.mesh().faces() {
+        builder.face(Face {
+            surface: Surface::Free,
+            ..f
+        });
+    }
+    for t in s.mesh().tris() {
+        builder.tri(t.halfedges.map(|h| h.start), t.face);
+    }
+    Solid::new(builder.build().unwrap(), &TOL).unwrap()
+}
+
+/// Turned grid boxes `a op b`: the cells' volume, or refused. Gives
+/// the result, checked to have the cells' volume if it is one.
+fn turned_against_cells(
+    name: &str,
+    a: &Solid,
+    b: &Solid,
+    op: Op,
+    want: &Cells,
+) -> Result<Solid, KernelError> {
+    let r = run(a, b, op);
+    if let Ok(s) = &r {
+        let want = cells_volume(want);
+        assert!(
+            (s.volume() - want).abs() < 1e-6,
+            "{name} {op:?}: {} not {want}",
+            s.volume()
+        );
+    }
+    r
+}
+
 #[test]
 fn turned_grid_boxes_are_right_or_refused() {
     // Flush boxes turned and moved together: every coordinate rounded, so
@@ -952,47 +1004,88 @@ fn turned_grid_boxes_are_right_or_refused() {
     let mut rng = crate::test_rng::Rng::new(31);
     let mut right = 0;
     for i in 0..=231 {
-        let ((a, ca), (b, cb)) = (random_grid_box(&mut rng), random_grid_box(&mut rng));
-        let q = glam::DQuat::from_axis_angle(rng.direction(), rng.range(0.0, 6.0));
-        let shift = rng.point(100.0);
+        let (ga, gb) = (random_grid_corner(&mut rng), random_grid_corner(&mut rng));
+        let turn = random_turn(&mut rng);
         if i < 200 {
             continue;
         }
-        let turn = |s: &Solid| {
-            // Turned plane tags would be off by rounding: free faces.
-            let mut builder = MeshBuilder::new();
-            for &p in s.mesh().verts() {
-                builder.vert(q * p + shift);
-            }
-            for &f in s.mesh().faces() {
-                builder.face(Face {
-                    surface: Surface::Free,
-                    ..f
-                });
-            }
-            for t in s.mesh().tris() {
-                builder.tri(t.halfedges.map(|h| h.start), t.face);
-            }
-            Solid::new(builder.build().unwrap(), &TOL).unwrap()
-        };
-        let (a, b) = (turn(&a), turn(&b));
+        let ((a, ca), (b, cb)) = (grid_box(ga.0, ga.1), grid_box(gb.0, gb.1));
+        let (a, b) = (turned(&a, turn), turned(&b, turn));
         for op in [Op::Union, Op::Intersection, Op::Difference] {
-            let want = cells_volume(&combine(&ca, &cb, op));
-            match run(&a, &b, op) {
-                Ok(s) => {
-                    assert!(
-                        (s.volume() - want).abs() < 1e-6,
-                        "{i} {op:?}: {} not {want}",
-                        s.volume()
-                    );
-                    right += 1;
-                }
+            match turned_against_cells(&format!("{i}"), &a, &b, op, &combine(&ca, &cb, op)) {
+                Ok(_) => right += 1,
                 Err(KernelError::Invalid(_) | KernelError::Boolean(_)) => {}
                 Err(e) => panic!("{i} {op:?}: {e}"),
             }
         }
     }
     // Near ties within the tie distance are decided as the ties they
-    // stand for: 94 of the 96 work (with exact signs, 71 did).
-    assert!(right >= 90, "{right}");
+    // stand for, at every order: 95 of the 96 work (94 with only the
+    // constant term tied, 71 with exact signs).
+    assert!(right >= 95, "{right}");
+}
+
+#[test]
+fn turned_grid_boxes_tied_at_higher_orders() {
+    // Pairs of the turned grid boxes above whose collinear edges (a
+    // `Height` with a zero first order) or vertices moving along a face
+    // (a `Reach`) were decided by the rounding in their first order, so
+    // the decisions fit no configuration: `Inconsistent`. Decided at
+    // every order as the exact ties, all of them come out right.
+    let mut rng = crate::test_rng::Rng::new(31);
+    for i in 0..=594 {
+        let (ga, gb) = (random_grid_corner(&mut rng), random_grid_corner(&mut rng));
+        let turn = random_turn(&mut rng);
+        if ![117, 130, 239, 452, 509, 561, 573, 594].contains(&i) {
+            continue;
+        }
+        let ((a, ca), (b, cb)) = (grid_box(ga.0, ga.1), grid_box(gb.0, gb.1));
+        let (a, b) = (turned(&a, turn), turned(&b, turn));
+        for op in [Op::Union, Op::Intersection, Op::Difference] {
+            if let Err(e) =
+                turned_against_cells(&format!("{i}"), &a, &b, op, &combine(&ca, &cb, op))
+            {
+                panic!("{i} {op:?}: {e}");
+            }
+        }
+    }
+}
+
+#[test]
+fn turned_grid_boxes_chained_are_never_inconsistent() {
+    // Turned grid boxes, each result fed on: crossings are snapped only
+    // onto faces square to an axis, so chained flush faces stay near
+    // ties, often with a zero first order at the exact tie. 12 of 356
+    // steps were `Inconsistent` with only the constant term tied; now
+    // none are, and 349 of 359 are right (the rest `Invalid`).
+    let mut rng = crate::test_rng::Rng::new(77);
+    let ops = [Op::Union, Op::Intersection, Op::Difference];
+    let chains = if cfg!(debug_assertions) { 5 } else { 100 };
+    let (mut right, mut all) = (0, 0);
+    for i in 0..chains {
+        let turn = random_turn(&mut rng);
+        let (s, mut c) = random_grid_box(&mut rng);
+        let mut s = turned(&s, turn);
+        for step in 0..6 {
+            let (b, cb) = random_grid_box(&mut rng);
+            let b = turned(&b, turn);
+            let op = ops[(rng.unit() * 3.0) as usize];
+            let want = combine(&c, &cb, op);
+            all += 1;
+            match turned_against_cells(&format!("{i}/{step}"), &s, &b, op, &want) {
+                Ok(r) => {
+                    right += 1;
+                    if r.is_empty() {
+                        break;
+                    }
+                    (s, c) = (r, want);
+                }
+                Err(KernelError::Invalid(_)) => {}
+                Err(e) => panic!("{i}/{step} {op:?}: {e}"),
+            }
+        }
+    }
+    if chains == 100 {
+        assert!(right >= 349, "{right} of {all}");
+    }
 }

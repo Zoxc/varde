@@ -1734,7 +1734,7 @@ larger along steep or ray-wise edges). So a configuration within the tie
 distance of a tie is decided as the tie it stands for: faces flush in
 exact arithmetic but turned and moved, every coordinate rounded, merge
 or part cleanly as the unmoved ones do (of 96 random flush grid boxes'
-operations turned and moved, 94 now work, 71 did with exact signs), and
+operations turned and moved, 95 now work, 71 did with exact signs), and
 the exact predicates and the curved primitives, which decide heights
 that close as ties too, see one configuration: a cylinder `1e-9` off a
 box's face was beside it for the exact tests and on it for the
@@ -1742,6 +1742,45 @@ numerical ones, and the winding numbers disagreed (then `InsideOut`,
 now `Inconsistent`). The
 positions (`Across`, `Between`, `crossing`) stay exact. It is used for
 flat operands too.
+
+**At every order.** Once the constant term is taken as a tie, each later
+coefficient that is only rounding is taken as zero too: one whose value
+is within `RHO = 2⁻³²` of its size, the same expression worked out on
+its terms' absolute values (`exact::Abs`: `+` and `−` add magnitudes,
+`×` multiplies them, in floating point, only on that slow path). At the
+exact tie a rounded configuration stands for, the first order is often
+zero as well, and the tie is decided by `T2` or `T3`: two collinear
+edges' `Height` (both first-order terms have parallel columns), a
+vertex whose `n_v` lies in the other face's plane (on the edge between
+a `+x` and a `+y` face, against a `z` face) for `Reach`. Rounded, that
+coefficient is some `1e-16` of its terms, its sign noise, and taking
+it decided each predicate as a different nearby configuration, so the
+counting's ends didn't pair up (`Inconsistent`). Skipped, every
+predicate is decided as the exact tie is: one configuration. The rule
+has no scale (a coefficient against its own terms); anything from
+`1e-13` to `1e-7` decided the same. With every later order only
+rounding the sign is 0, as for a tie in every power. `sign` (tie 0)
+stays exact. Before and after (release; turned grid boxes as in the
+tests, seed 31, and chains of up to six, seed 77, each result fed on;
+unturned grid-box chains, seed 5):
+
+| run | before | at every order |
+|---|---|---|
+| 900 turned pairs × 3: right, `Inconsistent`, `Invalid` | 2 638, 13, 49 | 2 651, 2, 47 |
+| 100 turned chains: right, `Inconsistent`, `Invalid` | 334 of 356, 12, 10 | 349 of 359, 0, 10 |
+| 300 unturned chains of six: right, `Invalid` | 1 754, 46 | 1 754, 46 |
+
+No result was wrong. Of the `Invalid`s, 45 before and 46 after are
+operations whose exact result isn't a manifold (one of the 13
+`Inconsistent`s was too, now `Invalid`). The two `Inconsistent`s left are one pair's intersection and
+difference (seed 31, pair 100), where `Height`'s scale rounds to exactly
+zero and the predicate falls back to exact signs. The seeded suite's
+tallies are as before (tangent 72 of 96 with 15 `Inconsistent`, chains
+202 of 240 with 6, was 203: of its fed-on steps the same inputs give two
+more right and one fewer, `Invalid(VertexNeighbours)`; the rest follow
+from different results fed on), so curved operands, which share
+`sign_tied` through the `Flat` inside `Curved` and the rays' `Beside`
+and `Ahead`, aren't worse.
 
 ### Counting (`boolean/count.rs`)
 
@@ -2619,7 +2658,7 @@ operands intersected, or subtracted the other way, work.
 
 `KernelError::Boolean(BooleanError)`: `Inconsistent` (the decisions
 don't fit together: with near ties taken as ties, flat operands too can,
-rarely; also a winding number out of `0..=1`, see "Counting"; or a
+rarely: 2 of 2 700 turned flush grid-box operations; also a winding number out of `0..=1`, see "Counting"; or a
 crossing the search only placed isn't on the other operand),
 `Degenerate` (a face's loops
 couldn't be triangulated, or the triangles don't pair up). `TooComplex`
@@ -2737,11 +2776,16 @@ vertex, and poking through it; a box turned 45° through another;
 tori of 2 304 patches, one upright through the other's hole crossing its
 tube on both sides, and one through a box, where `|A ∪ B| + |A ∩ B| =
 |A| + |B|` and `|A − B| = |A| − |A ∩ B|`; results fed on as inputs
-(steps joined flush, a hole, a half cut away, filled back in); face names
+(steps joined flush, a hole, a half cut away, filled back in); turned
+flush grid boxes (96 operations, eight pairs once `Inconsistent` for a
+first order that was only rounding, all right now, and chains of them
+fed on, never `Inconsistent`); face names
 of both operands kept, and faces no triangle uses dropped; `touches`; empty operands; refusals (inside
 out, out of budget); the same bits at 1 and 8 threads. Unit
 tests: expansions against known values, the float filter never
-contradicting the exact sign, `orient2d` near a line and far out,
+contradicting the exact sign, ties whose first order is zero (collinear
+edges' `Height`, a vertex moving along a face's plane for `Reach`) moved
+by rounding and decided as the exact tie in every draw, `orient2d` near a line and far out,
 triangulating a square with a hole, a concave loop, a zero-width loop and
 a vertex landing on the domain's side (no diagonal along a side); with
 curved sides, a point added where two arcs of one curve meet, and a curve
@@ -2994,9 +3038,16 @@ to 72 of its 96 operations and left the others as they were.
   flush, coaxial, stacked and tangent cases the suite tries, and where
   they aren't the operation fails (`Inconsistent`), never
   wrong. Near ties at about the tie distance itself (things a 64th of
-  the resolution apart) decide one way or the other by rounding. Flat
-  operands' exact predicates take near ties as ties too, so they can now
-  (rarely) be `Inconsistent`.
+  the resolution apart) decide one way or the other by rounding, but
+  that isn't what made flat operands `Inconsistent`: scaling the tie by
+  1/64 to 4 changed none of them. A first order that is only rounding
+  where the exact tie's is zero did, and is now skipped (see "At every
+  order"). Flat operands' exact predicates take near ties as ties, so
+  they can still (rarely) be `Inconsistent`: where a predicate's scale
+  rounds to exactly zero (two edges' shadows parallel in floating point,
+  `Height`) it falls back to exact signs. The curved primitives' own
+  first orders (`curved::first_sign`) are taken as they come, not
+  skipped when only rounding.
 - A tangency along a line reads as not touching (`touches` says false for
   two cylinders side by side): no crossing shows it, and the fixed rules
   take no certificate as no loop. Flat solids touching do meet.
@@ -3058,8 +3109,10 @@ to 72 of its 96 operations and left the others as they were.
   folded sheet whose two sides don't share their triangles can't be
   collapsed away (seen once in about 3 600 chained grid-box booleans).
 - **Flush faces after rounding**: flat solids flush in exact arithmetic
-  but turned and moved now mostly work (94 of 96 turned grid boxes'
-  operations); a few still fail as `Invalid` or `Inconsistent`.
+  but turned and moved now mostly work (2 651 of 2 700 turned grid boxes'
+  operations, 349 of 359 steps of turned chains); the rest fail as
+  `Invalid` (most where the exact result isn't a manifold) or,
+  twice, `Inconsistent` (a `Height` with no scale, above).
 - **Long cap triangles and cuts passing close to their sides**: a cap
   triangulated once (an extrude's, or a cut face's) keeps long thin
   triangles from far corners to rims. Drilling a second hole of the same
@@ -3868,10 +3921,11 @@ parameter, or a split outside the patch bounds),
   order by order (its first order, then the two translations).
 - **Near ties are ties for the exact predicates too** (`sign_tied`):
   within the same tie distance, a deciding predicate's constant term is
-  taken as zero. The plan has flat operands decided exactly; with
-  rounded coordinates (turned and moved flush solids) exact signs broke
-  the perturbation's intent, and beside curved operands they disagreed
-  with the curved primitives' ties.
+  taken as zero, and then every later coefficient that is only rounding
+  (within `2⁻³²` of its terms' absolute values). The plan has flat
+  operands decided exactly; with rounded coordinates (turned and moved
+  flush solids) exact signs broke the perturbation's intent, and beside
+  curved operands they disagreed with the curved primitives' ties.
 - **Two patches on one quadric, and a plane against a cylinder patch
   whose normals keep within a half-space, are certificates** of no hidden
   loop, beside the plan's normal cones apart.
