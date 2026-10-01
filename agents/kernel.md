@@ -3204,13 +3204,15 @@ cut's (`Band::across`: in the triangle's domain, from its corner opposite
 the side, for the cut's vertices whose weights at the side's ends sum to
 at least ½), first and with every halving, as the flush rim's extras;
 those nearer a crossing already on the side than a quarter of the way to
-the next across or the side's end are left out (the crossing stands for
-them; kept, one came `3e-7` from where the walls of a hole and of the
+the next across or the side's end are left out (`Band::extras`; the
+crossing stands for them; kept, one came `3e-7` from where the walls of a hole and of the
 boss crossed on it, and left a sliver). A cut that is one curve from end
 to end has nothing across, and the band would be one triangle with a
 straight angle where the side is halved (it fails the fold check), so it
 is halved once before the rounds. Every vertex added lies on the side's
-own curve, which both triangles beside it get: no wrong result can come of
+own curve, which both triangles beside it get, and splits a piece of the
+side between two of its crossings, both halves kept or dropped as it
+was: the counting's decisions stand, and no wrong result can come of
 it, at worst more pieces. Release, the seeded drilled plates with a boss
 (below) 567 → 588 of 600 with the end crossings' rule in "Ties"; the
 other seeded tallies didn't move.
@@ -4025,14 +4027,15 @@ bosses on plates drilled twice, standing on them, sunk from their bottom
 up twice their thickness or through them flush with both caps, against
 closed forms of the shared area (the disc less the holes, integrated
 exactly between where the circles meet), a result over 20 times its
-operands' patches counted as failed (588 of 600, at least 97%); the
-same bits at
-1 and 8 threads. Each test prints its
-tally (`TALLY name: ok of total`) and each refusal (`REFUSED`), seen
-with `--nocapture`. In release it runs
-in about 25 s (37 s one test after another, 83 s on one thread) and the
-drilled plates with bosses, 150 cases drilled twice, on top; debug
-builds run one case of each. Unit tests for the step: near ties decided
+operands' patches counted as failed (the first 40 cases, which hold
+every failure of the 150, 148 of 160, at least 92%; all 150 in the
+ignored `many_bosses_sunk_through_drilled_plates`, about 25 s alone in
+release, 588 of 600, at least 97%); the same bits at 1 and 8 threads.
+Each test prints its tally (`TALLY name: ok of total`) and each refusal
+(`REFUSED`), seen with `--nocapture`. In release it runs in about 25 s
+(37 s one test after another, 83 s on one thread) and the 40 drilled
+plates with bosses, about 7 s more, on top; debug builds
+run one case of each. Unit tests for the step: near ties decided
 as ties (`sign_tied`), crossings at one place put in turn (`alternate`),
 shadows along each other told apart, crossings at an edge's end put at
 it, curves and patches keeping the coordinates their control points

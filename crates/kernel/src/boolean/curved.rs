@@ -541,14 +541,8 @@ impl<'a> Curved<'a> {
         if !(h.t > 1e-9 && h.t < 1.0 - 1e-9) {
             return None;
         }
-        let k = (0..3)
-            .min_by(|&i, &j| h.u[i].total_cmp(&h.u[j]))
-            .expect("three coordinates");
-        let [_, pu, pv] = patch.eval_derivs(h.u);
-        // The domain step towards corner `k`, and how far the side is.
-        let w = DVec3::AXES[k] - h.u;
-        let into = pu * w.x + pv * w.y;
-        let away = h.u[k].abs() * into.length();
+        let (k, away, [pu, pv]) = nearest_side(patch, h.u);
+        let away = away.abs();
         if away.is_nan() || away > self.tie {
             return None;
         }
@@ -629,12 +623,7 @@ impl<'a> Curved<'a> {
             return None;
         }
         // Inside the face, away from its sides.
-        let [_, pu, pv] = patch.eval_derivs(h.u);
-        let k = (0..3)
-            .min_by(|&i, &j| h.u[i].total_cmp(&h.u[j]))
-            .expect("three coordinates");
-        let w = DVec3::AXES[k] - h.u;
-        let away = h.u[k] * (pu * w.x + pv * w.y).length();
+        let (_, away, _) = nearest_side(patch, h.u);
         if away.is_nan() || away <= self.tie {
             return None;
         }
@@ -760,6 +749,20 @@ fn sign_changes(poly: &[f64], roots: &[f64], zero: f64) -> Vec<i8> {
 /// `(p1 − p0) / 2`, `w·(p1 − c)`.
 fn hodograph(c: &Conic3) -> [DVec3; 3] {
     [(c.c - c.p0) * c.w, (c.p1 - c.p0) * 0.5, (c.p1 - c.c) * c.w]
+}
+
+/// The side of `patch` nearest its domain point `u`, by the corner `k`
+/// across from it (the least coordinate), and how far it is on the
+/// surface to first order, negative outside: `u_k` times the length of
+/// the domain step towards corner `k`. Also the patch's derivatives at
+/// `u`.
+fn nearest_side(patch: &crate::patch::Patch, u: DVec3) -> (usize, f64, [DVec3; 2]) {
+    let k = (0..3)
+        .min_by(|&i, &j| u[i].total_cmp(&u[j]))
+        .expect("three coordinates");
+    let [_, pu, pv] = patch.eval_derivs(u);
+    let w = DVec3::AXES[k] - u;
+    (k, u[k] * (pu * w.x + pv * w.y).length(), [pu, pv])
 }
 
 fn sign(x: f64) -> i8 {

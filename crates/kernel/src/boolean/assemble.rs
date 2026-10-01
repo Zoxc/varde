@@ -35,7 +35,7 @@ use super::surface::{Crossed, Shape, lerp, on_curve, point, polish, straight};
 use super::triangulate::Meter;
 use super::{Op, Primitives, segment};
 use crate::budget::Work;
-use crate::mesh::{Edge, Face, MIN_SPLIT, Node, Surface};
+use crate::mesh::{Edge, Face, MIN_SPLIT, Node, Quadric, Surface};
 use crate::par::par_map;
 use crate::patch::{Conic3, Point};
 use crate::{KernelError, Tolerance};
@@ -504,7 +504,7 @@ impl Band {
     /// the side (where the barycentric weights of the side's ends sum to
     /// at least ½, so near it). Given these, the band between the cut and
     /// the side is cut into a strip of triangles, each with a corner on
-    /// either; with none, it fanned from its tips into slivers whose
+    /// either; with none, it was fanned from its tips into slivers whose
     /// corners all lie on the plane's conic.
     fn across<'c>(&'c self, chain: &'c Chain) -> impl Iterator<Item = f64> + 'c {
         chain.dom[self.k]
@@ -520,6 +520,27 @@ impl Band {
         let (s, e) = (d[i].max(0.0), d[j].max(0.0));
         let sum = s + e;
         (sum >= 0.5).then(|| e / sum)
+    }
+
+    /// The vertices to add on the side for `chain`: those [`Self::across`]
+    /// from its vertices, but not those near a crossing already on the
+    /// side (`stops`, by id and parameter), which stands for them: nearer
+    /// than a quarter of the way to the next across or the side's end.
+    /// Two vertices that close would leave a sliver between them.
+    fn extras(&self, chain: &Chain, stops: &[(u32, f64)]) -> Vec<f64> {
+        let mut across: Vec<f64> = self.across(chain).collect();
+        across.sort_by(f64::total_cmp);
+        across.dedup();
+        let mut kept = Vec::with_capacity(across.len());
+        for (n, &t) in across.iter().enumerate() {
+            let before = if n == 0 { 0.0 } else { across[n - 1] };
+            let after = across.get(n + 1).copied().unwrap_or(1.0);
+            let gap = (t - before).min(after - t);
+            if stops.iter().all(|&(_, s)| (s - t).abs() >= gap / 4.0) {
+                kept.push(t);
+            }
+        }
+        kept
     }
 
     /// Whether `chain` is one curve from one of the side's ends to the
@@ -749,14 +770,9 @@ impl Cutting<'_> {
         let resolution = self.tol.resolution();
         for i in which {
             let (arc, job, chain) = (&self.arcs[i], &jobs[i], &chains[i]);
-            let (plane, quadric, k) = match job.shapes {
-                [Shape::Plane { n, d }, Shape::Quadric(q)] => ((n, d), q, 1),
-                [Shape::Quadric(q), Shape::Plane { n, d }] => ((n, d), q, 0),
-                _ => continue,
-            };
-            if !chain.exact {
+            let Some((plane, quadric, k)) = plane_cut(job, chain) else {
                 continue;
-            }
+            };
             let on_plane = |x: DVec3| (plane.0.dot(x) - plane.1).abs() <= resolution;
             let on_both = |x: DVec3| on_plane(x) && quadric.distance(x) <= resolution;
             let verts: Vec<DVec3> = std::iter::once(job.ends[0])
@@ -791,21 +807,10 @@ impl Cutting<'_> {
                 }
             }
             for band in self.bands(job, arc, chain) {
-                let mut across: Vec<f64> = band.across(chain).collect();
-                across.sort_by(f64::total_cmp);
-                across.dedup();
-                // Not those near a crossing already on the side, which
-                // stands for them, nearer than a quarter of the way to the
-                // next across or the side's end: two vertices that close
-                // would leave a sliver between them.
                 let (stops, _) = self.along[band.k].of(band.e);
-                for (n, &t) in across.iter().enumerate() {
-                    let before = if n == 0 { 0.0 } else { across[n - 1] };
-                    let after = across.get(n + 1).copied().unwrap_or(1.0);
-                    let gap = (t - before).min(after - t);
-                    if stops.iter().all(|&(_, s)| (s - t).abs() >= gap / 4.0) {
-                        extras[band.k].entry(band.e).or_default().push(t);
-                    }
+                let ts = band.extras(chain, stops);
+                if !ts.is_empty() {
+                    extras[band.k].entry(band.e).or_default().extend(ts);
                 }
             }
         }
@@ -825,14 +830,9 @@ impl Cutting<'_> {
     /// the boss's wall at the middle of its rulings, the plate's face, and
     /// joins those points with curves of the wall that bulge out of it.
     fn bands(&self, job: &chain::Job, arc: &Arc, chain: &Chain) -> Vec<Band> {
-        let (plane, k) = match job.shapes {
-            [Shape::Plane { n, d }, Shape::Quadric(_)] => ((n, d), 1),
-            [Shape::Quadric(_), Shape::Plane { n, d }] => ((n, d), 0),
-            _ => return Vec::new(),
-        };
-        if !chain.exact {
+        let Some((plane, _, k)) = plane_cut(job, chain) else {
             return Vec::new();
-        }
+        };
         let resolution = self.tol.resolution();
         let on_plane = |x: DVec3| (plane.0.dot(x) - plane.1).abs() <= resolution;
         let (input, _) = self.operand(if k == 0 { Side::A } else { Side::B });
@@ -1378,6 +1378,20 @@ fn params(
 /// (as flat solids' edges are): its crossings are placed and its pieces
 /// cut as such. An edge only straight within the resolution (a short arc)
 /// keeps its curve.
+/// For an exact cut of a quadric triangle by a planar one: the plane
+/// `(n, d)` (`n·x = d`), the quadric, and which of the job's two
+/// triangles (0 or 1) is the quadric's.
+fn plane_cut<'j>(job: &'j chain::Job, chain: &Chain) -> Option<((DVec3, f64), &'j Quadric, usize)> {
+    if !chain.exact {
+        return None;
+    }
+    match &job.shapes {
+        [Shape::Plane { n, d }, Shape::Quadric(q)] => Some(((*n, *d), q, 1)),
+        [Shape::Quadric(q), Shape::Plane { n, d }] => Some(((*n, *d), q, 0)),
+        _ => None,
+    }
+}
+
 fn lined(input: &Input, e: u32) -> bool {
     straight(&input.conic(e))
 }

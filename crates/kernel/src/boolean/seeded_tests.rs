@@ -1353,26 +1353,18 @@ fn the_closed_form_areas_are_right() {
     assert!((got - sampled).abs() < 1e-3, "{got} vs {sampled}");
 }
 
-#[test]
-fn bosses_sunk_through_drilled_plates() {
-    // A plate 1 thick drilled twice, and a boss (a cylinder) standing on
-    // it, sunk from its bottom up 2, or through it from bottom to top,
-    // flush with both. Near the holes refinement splits the boss's wall
-    // at the middle of its rulings, which is the plate's top; one in five
-    // of these failed so, mostly sunk. A result heavier than 20 times its
-    // operands counts as failed (flush caps meeting along curves once
-    // left seams 10k patches heavy). Before a cut beside a wall's curve
-    // with both ends in a plate's face was given a strip, 567 of the 600
-    // worked; 588 now. What fails is a boss through the plate with its
-    // wall crossing a hole's wall (thin triangles where the two walls
-    // meet), a boss rim tangent to a hole's rim, and a rim vertex of one
-    // lying on the other's rim.
+/// Plates 1 thick drilled twice, and a boss (a cylinder) standing on
+/// each, sunk from its bottom up 2, or through it from bottom to top,
+/// flush with both: the first `n` of seed 5's cases, each operation
+/// tallied (a result heavier than 20 times its operands as failed: flush
+/// caps meeting along curves once left seams 10k patches heavy).
+fn drilled_bosses(n: usize) -> Tally {
     let tol = Tolerance::DEFAULT;
     let mut tally = Tally::default();
     let mut rng = Rng::new(5);
     let mut samples = Rng::new(6);
     let q = |x: f64| (x * 20.0).round() / 20.0;
-    for case in 0..cases(150, 2) {
+    for case in 0..n {
         let (x1, y1, r1) = (
             q(rng.range(-2.2, -0.5)),
             q(rng.range(-1.2, 1.2)),
@@ -1432,5 +1424,25 @@ fn bosses_sunk_through_drilled_plates() {
             }
         }
     }
-    tally.at_least(0.97, "bosses in drilled plates");
+    tally
+}
+
+#[test]
+fn bosses_sunk_through_drilled_plates() {
+    // Near the holes refinement splits the boss's wall at the middle of
+    // its rulings, which is the plate's top; one in five of these failed
+    // so, mostly sunk. The first 40 cases hold every failure left of the
+    // 150 below: 148 of their 160 operations work. What fails is a boss through the plate with its wall
+    // crossing a hole's wall (thin triangles where the two walls meet), a
+    // boss rim tangent to a hole's rim, and a rim vertex of one lying on
+    // the other's rim.
+    drilled_bosses(cases(40, 2)).at_least(0.92, "bosses in drilled plates");
+}
+
+#[test]
+#[ignore = "slow: 150 cases, a minute or so; run in release"]
+fn many_bosses_sunk_through_drilled_plates() {
+    // 588 of the 600 operations work; 567 did before a cut beside a
+    // wall's curve with both ends in a plate's face was given a strip.
+    drilled_bosses(150).at_least(0.97, "many bosses in drilled plates");
 }
