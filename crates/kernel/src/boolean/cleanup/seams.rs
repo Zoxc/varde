@@ -157,8 +157,8 @@ impl Cleaner<'_> {
     /// a face whose triangles all lie in the plane of that lowest one
     /// moves onto it, its key an alias of it from then on
     /// ([`Soup::absorb`](super::Soup::absorb)), with the copies of it
-    /// claiming no surface (which take its name). A face whose triangles
-    /// don't stays as it is.
+    /// claiming no surface (which take its name and form). A face whose
+    /// triangles don't stays as it is.
     pub(super) fn merge_joined(&mut self, faces: &mut [Face]) {
         if self.joined.is_empty() {
             return;
@@ -215,6 +215,7 @@ impl Cleaner<'_> {
                 {
                     self.soup.sources[c] = r;
                     faces[c].name = faces[r as usize].name;
+                    faces[c].form = faces[r as usize].form;
                 }
             }
         }

@@ -199,7 +199,7 @@ fn grid(n: usize) -> impl Iterator<Item = [f64; 3]> {
 
 /// Grid steps per side of the points [`deviation`] starts from.
 const MEASURE_GRID: usize = 12;
-/// How many of the farthest grid points it climbs from.
+/// How many of the grid's peaks it climbs from.
 const MEASURE_STARTS: usize = 4;
 /// How many times it halves its step.
 const MEASURE_HALVINGS: usize = 20;
@@ -209,14 +209,22 @@ const MEASURE_MOVES: usize = 400;
 /// How far `patch` is from `form`: the largest [`Form::distance`] found
 /// over the patch, NaN counted as infinite. The distance is taken on a
 /// grid of 12 steps a side (91 points, edges included); then from each of
-/// the four farthest a compass search climbs to the local maximum over
-/// the triangle (moving along the six directions of the grid by a step
-/// that starts at one grid step and is halved, 20 times, whenever no move
-/// gains), staying on the triangle, its edges included. A fitted patch's
-/// error is smooth over it, vanishing on its exact edges and with a few
-/// extrema the size of the patch, so the climbs land on its maxima to
-/// about `2⁻²⁰` of a grid step; the tests compare against far denser
-/// grids. The same patch and form give the same bits.
+/// the grid's four farthest peaks (points no grid neighbour beats, so
+/// separate maxima each get a climb rather than four starts round one;
+/// the farthest points fill in where there are fewer peaks) a compass
+/// search climbs to the local maximum over the triangle (moving along the
+/// six directions of the grid by a step that starts at one grid step and
+/// is halved, 20 times, whenever no move gains), staying on the triangle,
+/// its edges included. The same patch and form give the same bits.
+///
+/// It is the maximum found, not a certified bound: a maximum no grid
+/// point leads to would be missed. A fitted patch's error is smooth over
+/// it, vanishing on its exact edges, with a few extrema the size of the
+/// patch, so the climbs land on its maxima to about `2⁻²⁰` of a grid
+/// step (on tori, elliptic tori and caps it was never under grids of 200
+/// steps a side with random points besides); the bands and caps of a
+/// [`Lathe`](super::Lathe) keep a margin under their limit for what is
+/// left.
 pub fn deviation(patch: &Patch, form: &Form) -> f64 {
     let net = patch.net();
     let at = |u: [f64; 3]| {
@@ -229,10 +237,17 @@ pub fn deviation(patch: &Patch, form: &Form) -> f64 {
         let d = form.distance(x.truncate() / x.w);
         if d.is_nan() { f64::INFINITY } else { d }
     };
-    let mut points: Vec<([f64; 3], f64)> = grid(MEASURE_GRID).map(|u| (u, at(u))).collect();
-    // Farthest first; ties in grid order.
-    points.sort_by(|a, b| b.1.total_cmp(&a.1));
-    let mut worst = points[0].1;
+    let points: Vec<([f64; 3], f64)> = grid(MEASURE_GRID).map(|u| (u, at(u))).collect();
+    // Peaks first, then the rest; each farthest first, ties in grid
+    // order.
+    let peak = peaks(&points, MEASURE_GRID);
+    let mut order: Vec<usize> = (0..points.len()).collect();
+    order.sort_by(|&a, &b| {
+        peak[b]
+            .cmp(&peak[a])
+            .then(points[b].1.total_cmp(&points[a].1))
+    });
+    let mut worst = points[order[0]].1;
     if worst == f64::INFINITY {
         return worst;
     }
@@ -244,7 +259,7 @@ pub fn deviation(patch: &Patch, form: &Form) -> f64 {
         [0.0, 1.0, -1.0],
         [0.0, -1.0, 1.0],
     ];
-    for &(start, value) in points.iter().take(MEASURE_STARTS) {
+    for &(start, value) in order.iter().take(MEASURE_STARTS).map(|&i| &points[i]) {
         let (mut u, mut best) = (start, value);
         let mut step = 1.0 / MEASURE_GRID as f64;
         let (mut halvings, mut moves) = (0, 0);
@@ -269,4 +284,66 @@ pub fn deviation(patch: &Patch, form: &Form) -> f64 {
         worst = worst.max(best);
     }
     worst
+}
+
+/// Which points of [`grid`]`(n)` (with their values, in its order) are
+/// peaks: no point a grid step away along one of its six directions is
+/// farther.
+fn peaks(points: &[([f64; 3], f64)], n: usize) -> Vec<bool> {
+    // Row `i` holds `n + 1 − i` points, from `j = 0`.
+    let index = |i: usize, j: usize| i * (n + 1) - i * i.saturating_sub(1) / 2 + j;
+    let mut peak = Vec::with_capacity(points.len());
+    for i in 0..=n {
+        for j in 0..=n - i {
+            let (u, value) = points[index(i, j)];
+            debug_assert_eq!(u[..2], [i as f64 / n as f64, j as f64 / n as f64]);
+            // (i, j) moved by whole steps, staying on the triangle.
+            let steps: [(isize, isize); 6] = [(1, 0), (-1, 0), (0, 1), (0, -1), (1, -1), (-1, 1)];
+            let higher = steps.iter().any(|&(di, dj)| {
+                let (Some(a), Some(b)) = (i.checked_add_signed(di), j.checked_add_signed(dj))
+                else {
+                    return false;
+                };
+                a + b <= n && points[index(a, b)].1 > value
+            });
+            peak.push(!higher);
+        }
+    }
+    peak
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn separate_maxima_are_both_peaks() {
+        // Two bumps: a broad one whose four farthest grid points all lie
+        // round it, and a lower, narrower one across the triangle. Both
+        // tops are peaks, so each gets a climb.
+        let n = MEASURE_GRID;
+        let broad = [9.0, 2.0, 1.0].map(|k| k / n as f64);
+        let bump = |u: [f64; 3], at: [f64; 3], height: f64, width: f64| {
+            let d: f64 = (0..3).map(|i| (u[i] - at[i]) * (u[i] - at[i])).sum();
+            height / (1.0 + d / (width * width))
+        };
+        let points: Vec<([f64; 3], f64)> = grid(n)
+            .map(|u| {
+                let v = bump(u, broad, 1.0, 0.5).max(bump(u, [0.0, 0.5, 0.5], 0.9, 0.05));
+                (u, v)
+            })
+            .collect();
+        let peak = peaks(&points, n);
+        let tops: Vec<[f64; 3]> = points
+            .iter()
+            .zip(&peak)
+            .filter(|(_, p)| **p)
+            .map(|(p, _)| p.0)
+            .collect();
+        assert_eq!(tops, [[0.0, 0.5, 0.5], broad]);
+        // The four farthest points all lie round the broad one.
+        let mut farthest = points.clone();
+        farthest.sort_by(|a, b| b.1.total_cmp(&a.1));
+        assert!(farthest[..4].iter().all(|p| p.0[0] >= 0.5));
+    }
 }

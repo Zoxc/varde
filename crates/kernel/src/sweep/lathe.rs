@@ -8,7 +8,7 @@ use glam::{DVec2, DVec3};
 use super::fit::{deviation, fitted_strip};
 use crate::budget::Work;
 use crate::mesh::{Form, edge_neighbours_apart};
-use crate::patch::{Conic3, Patch, PatchError, Point};
+use crate::patch::{Conic3, Patch, PatchError};
 use crate::{Budget, KernelError, Tolerance, trig};
 
 /// Turns about an axis in equal pieces: the stations of a surface of
@@ -16,8 +16,9 @@ use crate::{Budget, KernelError, Tolerance, trig};
 /// the way the right hand does about `axis` (from `x` towards `axis ×
 /// x`); a full turn's last station is station 0 again.
 ///
-/// Angles go through [`trig`], with exact cosines and sines at multiples
-/// of a quarter turn; station 0 is the point itself, to the bit.
+/// Angles go through [`trig`], with exact cosines and sines at whole
+/// quarter turns (a part turn's within a few roundings of one: its sweep
+/// was meant to be); station 0 is the point itself, to the bit.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Lathe {
     origin: DVec3,
@@ -70,16 +71,26 @@ impl Lathe {
                 } else {
                     total * k as f64 / pieces as f64
                 };
-                let quarters = angle / FRAC_PI_2;
-                if quarters == quarters.round() {
-                    match quarters as i64 % 4 {
-                        0 => DVec2::new(1.0, 0.0),
-                        1 => DVec2::new(0.0, 1.0),
-                        2 => DVec2::new(-1.0, 0.0),
-                        _ => DVec2::new(0.0, -1.0),
+                // Whole quarter turns: for a full turn by counting (`TAU ·
+                // k / pieces` rounds off one for, say, 11 of 44 pieces);
+                // for a part, within the few roundings of the angle, so
+                // a sweep given as 270° has its quarter stations too.
+                let quarters = match sweep {
+                    None => (4 * k).is_multiple_of(pieces).then_some(4 * k / pieces),
+                    Some(_) => {
+                        let q = angle / FRAC_PI_2;
+                        let whole = q.round();
+                        // Never a whole turn: a part stays one.
+                        ((q - whole).abs() <= 8.0 * f64::EPSILON * whole.max(1.0) && whole < 4.0)
+                            .then_some(whole as usize)
                     }
-                } else {
-                    trig::unit(angle)
+                };
+                match quarters.map(|q| q % 4) {
+                    Some(0) => DVec2::new(1.0, 0.0),
+                    Some(1) => DVec2::new(0.0, 1.0),
+                    Some(2) => DVec2::new(-1.0, 0.0),
+                    Some(_) => DVec2::new(0.0, -1.0),
+                    None => trig::unit(angle),
                 }
             })
             .collect();
@@ -280,18 +291,15 @@ impl Lathe {
                 // other side is cut where it reaches it.
                 Ok(Some(if (h0 - top).abs() < (h1 - top).abs() {
                     let t = self.level(piece, turn, 1.0, h0);
-                    vec![piece_of(piece, 0.0, t)?, piece_of(piece, t, 1.0)?]
+                    vec![piece.piece(0.0, t)?, piece.piece(t, 1.0)?]
                 } else {
                     let t = self.level(piece, 0.0, turn, h1);
-                    vec![piece_of(piece, 0.0, t)?, piece_of(piece, t, 1.0)?]
+                    vec![piece.piece(0.0, t)?, piece.piece(t, 1.0)?]
                 }))
             }
             [first, second, ..] => {
                 let t = 0.5 * (first + second);
-                Ok(Some(vec![
-                    piece_of(piece, 0.0, t)?,
-                    piece_of(piece, t, 1.0)?,
-                ]))
+                Ok(Some(vec![piece.piece(0.0, t)?, piece.piece(t, 1.0)?]))
             }
         }
     }
@@ -305,9 +313,9 @@ impl Lathe {
                 let t0 = 0.5 * turn;
                 let t1 = self.level(piece, turn, 1.0, self.height_at(piece, t0));
                 Ok(vec![
-                    piece_of(piece, 0.0, t0)?,
-                    piece_of(piece, t0, t1)?,
-                    piece_of(piece, t1, 1.0)?,
+                    piece.piece(0.0, t0)?,
+                    piece.piece(t0, t1)?,
+                    piece.piece(t1, 1.0)?,
                 ])
             }
             _ => Ok(piece.split_half()?.to_vec()),
@@ -364,9 +372,21 @@ const CAP_UNITS: usize = 96;
 const MAX_BAND_DEPTH: u32 = 16;
 /// How many times a cap's meridian may be halved.
 const MAX_CAP_HALVINGS: u32 = 40;
+/// How far under half the fit tolerance a strip's or cap's measured
+/// error must be, as a part of it: [`deviation`] is the largest error its
+/// climbs found, not a certified bound, and this keeps what they could
+/// leave short of a maximum (on the tests' tori, nothing measurable)
+/// inside half the fit tolerance.
+const MEASURE_MARGIN: f64 = 1.0 / 64.0;
 /// The most a cap's rest grows from one ring to the next, in its
 /// meridian's parameter.
 const REST_RATIO: f64 = 16.0;
+
+/// What a fitted strip's or cap's measured error must not pass: half the
+/// fit tolerance, less [`MEASURE_MARGIN`] of it.
+fn limit(tol: &Tolerance) -> f64 {
+    tol.fit() * 0.5 * (1.0 - MEASURE_MARGIN)
+}
 
 /// A band of a surface of revolution fitted by [`fitted_band`].
 #[derive(Debug, Clone, PartialEq)]
@@ -385,7 +405,7 @@ pub struct Band {
 
 /// The band `meridian` (at station 0) sweeps on the lathe, in fitted
 /// strips (see [`fitted_strip`]) within half `tol`'s fit tolerance of
-/// `form`: a surface of revolution with exact parallels and meridians
+/// `form` (measured by [`deviation`], with a 64th of that to spare): a surface of revolution with exact parallels and meridians
 /// whose strips aren't exact (a torus, another conic about the axis, or
 /// any of them past where its exact strips are made).
 ///
@@ -398,7 +418,8 @@ pub struct Band {
 /// its two patches, or is halved.
 ///
 /// [`KernelError::TooComplex`] past `budget`, or for a meridian halved
-/// more than 16 times.
+/// more than 16 times; a meridian with an end on the axis (a cap's, see
+/// [`pole_cap`]) is a [`KernelError::Patch`].
 pub fn fitted_band(
     lathe: &Lathe,
     meridian: &Conic3,
@@ -417,7 +438,7 @@ pub(crate) fn fitted_band_with(
     tol: &Tolerance,
     work: &mut Work,
 ) -> Result<Option<Band>, KernelError> {
-    let limit = tol.fit() * 0.5;
+    let limit = limit(tol);
     let margin = tol.resolution();
     let mut band = Band {
         pieces: Vec::new(),
@@ -525,7 +546,7 @@ pub struct Cap {
 /// own piece turned (exact on spheres; on a cone pass a straight
 /// meridian, `Conic::line`, whose rulings are then the linear ones), and
 /// the piece is halved toward the pole until each triangle is within half
-/// `tol`'s fit tolerance of `form` and passes the fold check, and the
+/// `tol`'s fit tolerance of `form` (as a band's strips) and passes the fold check, and the
 /// hull rule with its neighbour. Measured errors: a sphere's cap of angle
 /// `δ` in sectors of `φ` (radians) about `R·δ²·φ²/64` off, so each halving
 /// takes a quarter; a cone's in proportion to its length, so a half.
@@ -554,7 +575,7 @@ pub(crate) fn pole_cap_with(
     work: &mut Work,
 ) -> Result<Cap, KernelError> {
     meridian.check()?;
-    let limit = tol.fit() * 0.5;
+    let limit = limit(tol);
     let margin = tol.resolution();
     let tip = match pole {
         Pole::Start => meridian.p0,
@@ -574,7 +595,7 @@ pub(crate) fn pole_cap_with(
         let cap = if size == 1.0 {
             *meridian
         } else {
-            piece_of(meridian, at(0.0), at(size))?
+            meridian.piece(at(0.0), at(size))?
         };
         work.spend(CAP_UNITS.saturating_mul(lathe.pieces()))?;
         let triangles = crate::par::par_map(&stations, |&k| cap_triangle(lathe, &cap, pole, k));
@@ -605,7 +626,7 @@ pub(crate) fn pole_cap_with(
             let mut from = size;
             while from < 1.0 {
                 let to = (from * REST_RATIO).min(1.0);
-                rest.push(piece_of(meridian, at(from), at(to))?);
+                rest.push(meridian.piece(at(from), at(to))?);
                 from = to;
             }
             if pole == Pole::End {
@@ -648,21 +669,6 @@ fn cap_triangle(lathe: &Lathe, cap: &Conic3, pole: Pole, k: usize) -> Result<Pat
             )
         }
     }
-}
-
-/// The piece of `conic` between its parameters `s` and `t` (either
-/// order), from its blossom: its ends are the conic's points there, the
-/// same bits for every piece ending at one parameter, and the coordinates
-/// all of `conic`'s control points share stay exact.
-fn piece_of(conic: &Conic3, s: f64, t: f64) -> Result<Conic3, PatchError> {
-    let (s, t) = (s.min(t), s.max(t));
-    let of = conic.hull();
-    let p = Conic3::from_hom([
-        conic.blossom(s, s),
-        conic.blossom(s, t),
-        conic.blossom(t, t),
-    ])?;
-    Conic3::new(p.p0.shared(&of), p.c.shared(&of), p.w, p.p1.shared(&of))
 }
 
 #[cfg(test)]

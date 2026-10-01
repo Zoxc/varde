@@ -378,6 +378,25 @@ fn stations_are_exact_at_quarter_turns() {
     let back = part.turned(p, 2);
     assert!((back - (frame.at(-3.0, 1.5))).length() < 1e-12 * frame.scale(3.0));
     assert_eq!(part.halved().unwrap().pieces(), 4);
+    // Quarter stations exact whatever the pieces: `TAU · 11 / 44` rounds
+    // off a quarter turn, and so does a part turn's `270° / 3`.
+    let p = DVec3::new(3.0, 0.0, 1.5);
+    let lathe = Frame::Z.lathe(44);
+    let quarters = [11, 22, 33].map(|k| lathe.turned(p, k));
+    assert_eq!(
+        quarters,
+        [
+            DVec3::new(0.0, 3.0, 1.5),
+            DVec3::new(-3.0, 0.0, 1.5),
+            DVec3::new(0.0, -3.0, 1.5)
+        ]
+    );
+    let part = Lathe::new(DVec3::ZERO, DVec3::Z, Some(1.5 * PI), 3).unwrap();
+    let quarters = [1, 2, 3].map(|k| part.turned(p, k));
+    assert_eq!(quarters, [11, 22, 33].map(|k| lathe.turned(p, k)));
+    // A part turn's last station is never station 0.
+    let nearly = Lathe::new(DVec3::ZERO, DVec3::Z, Some(TAU * (1.0 - 1e-16)), 4).unwrap();
+    assert_ne!(nearly.turned(p, 4), p);
 }
 
 #[test]
@@ -527,7 +546,7 @@ fn cap_error(lathe: &Lathe, meridian: &Conic3, size: f64, form: &Form) -> f64 {
     let cap = if size == 1.0 {
         *meridian
     } else {
-        piece_of(meridian, 0.0, size).unwrap()
+        meridian.piece(0.0, size).unwrap()
     };
     let patch = cap_triangle(lathe, &cap, Pole::Start, 0).unwrap();
     assert!(patch.fold_direction().is_some());
@@ -739,6 +758,11 @@ fn caps_are_refused_off_the_axis_and_past_their_budget() {
         Err(KernelError::Patch(PatchError::Parameter(0.0)))
     );
     assert!(pole_cap(&lathe, &arc, Pole::End, &form, &tol, &Budget::DEFAULT).is_ok());
+    // A band can't reach the pole: that is the cap's.
+    assert!(matches!(
+        fitted_band(&lathe, &arc, &form, &tol, &Budget::DEFAULT),
+        Err(KernelError::Patch(_))
+    ));
     assert_eq!(
         pole_cap(&lathe, &arc, Pole::End, &form, &tol, &Budget::new(100)),
         Err(KernelError::TooComplex)

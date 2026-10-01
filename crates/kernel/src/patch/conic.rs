@@ -272,6 +272,18 @@ impl<P: Point> Conic<P> {
         h0 * (s1 * t1) + h1 * (s1 * t + s * t1) + h2 * (s * t)
     }
 
+    /// The piece between the parameters `s` and `t` (either order; it
+    /// runs the way the curve does), from the blossom: its ends are the
+    /// curve's points there, the same bits for every piece ending at one
+    /// parameter, and the coordinates all of this curve's control points
+    /// share stay exact (see [`Point::shared`]).
+    pub fn piece(&self, s: f64, t: f64) -> Result<Self, PatchError> {
+        let (s, t) = (s.min(t), s.max(t));
+        let p = Self::from_hom([self.blossom(s, s), self.blossom(s, t), self.blossom(t, t)])?;
+        let of = self.hull();
+        Self::new(p.p0.shared(&of), p.c.shared(&of), p.w, p.p1.shared(&of))
+    }
+
     /// The homogeneous control points of the two halves split at `t`, by
     /// de Casteljau: `[p0, left control, split point, right control,
     /// p1]`.

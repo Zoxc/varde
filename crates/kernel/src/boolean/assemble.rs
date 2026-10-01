@@ -1293,13 +1293,9 @@ fn piece(conic: &Conic3, s: f64, t: f64) -> Result<Edge, KernelError> {
     if s == 0.0 && t == 1.0 {
         return Ok(Edge::of(conic));
     }
-    let part = Conic3::from_hom([
-        conic.blossom(s, s),
-        conic.blossom(s, t),
-        conic.blossom(t, t),
-    ])?;
+    let part = conic.piece(s, t)?;
     Ok(Edge {
-        ctrl: part.c.shared(&conic.hull()),
+        ctrl: part.c,
         weight: part.w,
     })
 }

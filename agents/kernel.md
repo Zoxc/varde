@@ -384,8 +384,10 @@ patches may fold on wide pieces (cones take their exact strips anyway).
 **Measuring** (`deviation(patch, form)`): the largest `Form::distance`
 over the patch, found rather than sampled: a grid of 12 steps a side (91
 points, coordinates whole steps so the ones on an edge are zero exactly),
-then from the four farthest a compass search along the grid's six
-directions, its step starting at a grid step and halved 20 times when no
+then from the grid's four farthest peaks (points no grid neighbour beats,
+so two separate maxima each get a climb rather than four starts round
+one; the farthest other points fill in where there are fewer) a compass
+search along the grid's six directions, its step starting at a grid step and halved 20 times when no
 move gains (at most 400 steps a climb), staying on the triangle with its
 edges. A fitted patch's error is smooth, zero on its exact edges and with
 a few extrema the size of the patch, so the climbs reach its maxima to
@@ -393,7 +395,17 @@ about `2⁻²⁰` of a grid step: on 40 random torus strips it is never under
 a grid of 300 steps a side (45 451 points) and never over it by more than
 `0.1 %`. (With `1 − a − b` for the third coordinate, a grid point on the
 diagonal had it at `−6e-17`, so the climb could never move along the
-edge where the maximum was, and fell short of it by `0.05 %`.)
+edge where the maximum was, and fell short of it by `0.05 %`.) It is the
+maximum found, not a certified bound (a maximum no grid point leads to
+would be missed; bounding the error between grid points from the
+patch's derivatives is as large as the tolerance unless the grid is
+several times finer), so bands and caps accept a measured error up to
+half the fit tolerance less a 64th of it (`MEASURE_MARGIN`; no torus
+count above changed). Checked on 24 000 patches of fitted tori (five
+proportions, three tolerances), elliptic tori and sphere and cone caps,
+and 1 200 random torus and elliptic strips, against grids of 200 to 400
+steps a side plus 2 000 random points each: the dense maximum was never
+above the measured one.
 
 #### Lathes, fitted bands and caps (`sweep/lathe.rs`)
 
@@ -402,7 +414,10 @@ A `Lathe` is the stations of a surface of revolution: the line through
 in `pieces` equal pieces of at most 90° (up to `MAX_PIECES` = 4096).
 Station `k` turns the right-hand way about the axis (from `x` towards
 `axis × x`; revolve's frame, turning `x` towards `x × y`, passes `−y`),
-its cosine and sine from `trig`, exact at multiples of a quarter turn.
+its cosine and sine from `trig`, exact at whole quarter turns: for a full
+turn where `4k` is a multiple of the pieces (`2π·11/44` rounds off a
+quarter turn), for a part where the angle is within 8 roundings of one
+(so a sweep given as 270° has them), never a whole turn.
 `turned(p, k)` is `p` itself at station 0 (and a full turn's last) and
 for a point on the axis; `parallel(p, k)` is the exact arc between two
 stations (`arc_between` about the foot); `meridian(m, k)` turns a
@@ -443,7 +458,8 @@ resolution) and lies on one side of both its rings' planes, while its
 neighbours fall away from the turn and clear them. Halving such a piece
 makes three: the middle one over the turn, from half way to the turn to
 where it comes back to that height. Pieces are made from the meridian's
-blossom between parameters, so neighbours share their end's bits. A
+blossom between parameters (`Conic::piece`, which the boolean's kept
+edge pieces use too), so neighbours share their end's bits. A
 **ring at a turn is the caller's to avoid**: revolve must split full
 circles off their top and bottom (the tests split tubes at 45°) and can't
 build a profile vertex there (a flat face tangent to a round at its top,
@@ -498,9 +514,10 @@ lying either side). Fitting the `1e-3` torus is a few hundred thousand
 work units.
 
 Tests (`sweep/lathe/tests.rs`, `mesh/form/tests.rs`): stations exact at
-quarter turns, station 0 and points on the axis kept to the bit, part
-turns; bad lathes and fitted strips refused; `deviation` against dense
-grids; fitted strips exact on spheres and cones; signed distances
+quarter turns (in 8 and 44 pieces, and a part turn of 270° in 3),
+station 0 and points on the axis kept to the bit, part turns; bad lathes
+and fitted strips refused, and a band reaching the axis; `deviation`
+against dense grids, two separate maxima both climbed; fitted strips exact on spheres and cones; signed distances
 against distances and their growth along the normal; the pole error
 falling with the cap (sphere by four, cone by two, the sphere's against
 `R·δ²·φ²/64`); spheres with both poles capped and cones with capped
@@ -3454,7 +3471,7 @@ seams joined are merged, each set onto its lowest id (the first
 operand's faces come first, so the body's name stays), a face moving
 only if every triangle of it lies in that one's plane and its plane
 faces the same way; copies claiming no surface go with it and take its
-name; each merged face's key (and its aliases) becomes an alias of the
+name and form; each merged face's key (and its aliases) becomes an alias of the
 face it merged onto, as does the higher face's where `unbend` puts both
 new triangles on the lower (`Soup::absorb`; see "Topology and names").
 Faces of one plane meeting along straight edges, or along no seam
@@ -5534,7 +5551,9 @@ parameter, or a split outside the patch bounds),
   plan fitted the diagonal by Gauss–Newton until every sample was within
   half the fit tolerance, halving either way. Built: Levenberg–Marquardt
   on the signed distance at a grid of points, then the worst error
-  *measured* by climbing from the worst grid points (`deviation`), and
+  *measured* by climbing from the grid's peaks (`deviation`, a found
+  maximum, not a certified bound: accepted up to half the fit tolerance
+  less a 64th of it), and
   halved along the meridian or round the axis by which gains more at
   station 0 (round the axis is the caller's: the band asks for a halved
   lathe). The tori come out with fewer patches than the plan estimated (768
@@ -5555,7 +5574,32 @@ parameter, or a split outside the patch bounds),
   end there) or a hull rule for tangent edges: with one side in the
   plane, the other's height polynomial (Bernstein coefficients the
   heights of its control points) non-positive everywhere and negative
-  at its far corner is under the plane except on the edge.
+  at its far corner is under the plane except on the edge. Reviewed:
+  that rule is sound where one side lies in the plane (a flat face
+  tangent to a round, a fillet tangent to a plane). Every point of a
+  patch is a positive mean of its control points' heights, so with the
+  round side's each at most the margin above the plane and its far
+  corner more than the margin below, the round side lies under the
+  plane but for less than the margin near the edge, and the flat side
+  is in it within the margin: the pair overlaps less than a margin deep,
+  which is what the edge rule promises now, and splitting either patch
+  keeps the condition, so repair and refinement stay within it. Two
+  conditions come with it. The round side's control points next to the
+  edge are in the plane only to rounding, and a fitted diagonal's isn't
+  at all (on a puck's rounded edge, `R 10`, `r 2`, at fit `1e-2` the
+  diagonal's control point was `3e-3` above the plane, 300 resolutions;
+  at `1e-3` and `1e-4` below it), so strips at such a ring must fit their
+  diagonal with its control point held in the surface's tangent plane at
+  the ring's end (one linear constraint on the four numbers fitted). And
+  the vertex neighbours at the ring's stations, whose control points
+  beside the vertex lie in the plane on both sides, must still pass the
+  vertex rule by a plane steep across the ring's tangent (expected, not
+  tried). It does not cover two round sides both under the plane (two
+  arcs tangent at a top, or a ring at a turn inside a band): each lies
+  under the plane, but nothing then shows they miss each other; that
+  needs a second certificate (the sign of `ρ² − ρ²(ring)` over each
+  side, degree-four Bernstein coefficients, `ρ` the distance from the
+  axis) or a refusal.
 - **Caps don't grow the angular split.** The plan raised `k` when a cap
   wanted an arc halved; halving the cap's meridian toward the pole alone
   brings it within the tolerance (the error falls as `δ²` on a sphere,
