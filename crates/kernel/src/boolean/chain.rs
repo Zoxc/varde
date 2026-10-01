@@ -6,12 +6,17 @@
 //! - **Two planar patches** meet in a straight segment: one straight
 //!   edge.
 //! - **A plane and a quadric** (by the faces' tags) meet in a conic: the
-//!   exact arc, halved where it turns far ([`section`]).
-//! - **Anything else** is traced and fitted within the fit tolerance
-//!   ([`trace`]). If tracing fails, the arc falls back to a simpler curve
-//!   between the same ends: the conic along their tangents, or a straight
-//!   edge. Only the geometry suffers, never the topology, which the
-//!   counting has already decided.
+//!   exact arc, halved where it turns far ([`section`]): the one on the
+//!   side of the chord the quadric patch's middle is on, else the other,
+//!   whichever lies on the patch.
+//! - **Anything else**, or a conic that doesn't, is traced and fitted
+//!   within the fit tolerance ([`trace`]). If tracing fails, the arc
+//!   falls back to a simpler curve between the same ends: the conic
+//!   along their tangents, or a straight edge, each kept only if it
+//!   follows the true cut at three points ([`verified`]). Else the
+//!   boolean is refused (`Inconsistent`): the faces' bands along a curve
+//!   in the wrong place can still lie within the fit of their own
+//!   surfaces, and a sliver between the two then loses material.
 //!
 //! Where one patch is planar, a traced chain's conics lie in its plane,
 //! so planar faces stay planar; between two curved patches, in the plane
@@ -21,10 +26,11 @@
 use glam::DVec3;
 
 use super::surface::{Guide, Shape, section};
-use super::{segment, tie};
-use crate::Tolerance;
+use super::{BooleanError, segment, tie};
 use crate::mesh::Quadric;
+use crate::par::par_map;
 use crate::patch::{Conic3, Patch};
+use crate::{KernelError, Tolerance};
 
 pub(crate) mod trace;
 
@@ -145,14 +151,49 @@ impl Chain {
     }
 }
 
-/// The chain of `job`'s arc, within the fit tolerance of the true cut.
+#[cfg(test)]
+thread_local! {
+    /// Tests only: how many chains of a plane against a quadric weren't
+    /// exact, counted on the thread that asks for the chains.
+    pub(super) static NOT_EXACT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Tests only: how many chains were refused, counted the same way.
+    pub(super) static REFUSED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Every job's chain (see [`chain`]), or `Inconsistent` if one of them
+/// can't be found near enough the true cut to trust.
+pub(super) fn chains(jobs: &[Job], tol: &Tolerance) -> Result<Vec<Chain>, KernelError> {
+    let chains = par_map(jobs, |job| chain(job, tol));
+    #[cfg(test)]
+    {
+        NOT_EXACT.set(
+            NOT_EXACT.get()
+                + jobs
+                    .iter()
+                    .zip(&chains)
+                    .filter(|(job, chain)| {
+                        plane_and_quadric(job).is_some() && !chain.as_ref().is_some_and(|c| c.exact)
+                    })
+                    .count(),
+        );
+        REFUSED.set(REFUSED.get() + chains.iter().filter(|c| c.is_none()).count());
+    }
+    chains
+        .into_iter()
+        .collect::<Option<Vec<Chain>>>()
+        .ok_or(KernelError::Boolean(BooleanError::Inconsistent))
+}
+
+/// The chain of `job`'s arc, within the fit tolerance of the true cut:
+/// `None` where neither the exact curve nor tracing gives it and the
+/// fallbacks aren't near enough the true cut ([`verified`]).
 ///
 /// Ends at one place, or within the tie of each other (vertices of one
 /// place by different roundings, as where a cap's corner lies on the
 /// other operand's wall), make a straight edge of about zero length,
 /// which the clean-up collapses: the exact section through two points a
 /// rounding apart may run round the whole conic, outside both patches.
-pub(super) fn chain(job: &Job, tol: &Tolerance) -> Chain {
+pub(super) fn chain(job: &Job, tol: &Tolerance) -> Option<Chain> {
     let fit = tol.fit();
     let [x, y] = job.ends;
     let straight = |exact| Chain {
@@ -165,25 +206,60 @@ pub(super) fn chain(job: &Job, tol: &Tolerance) -> Chain {
         exact,
     };
     if job.planar[0] && job.planar[1] || x.distance(y) <= tie(tol) {
-        return straight(true);
+        return Some(straight(true));
     }
     if let Some(chain) = exact(job) {
-        return chain;
+        return Some(chain);
     }
-    traced(job, fit).unwrap_or_else(|| fallback(job).unwrap_or_else(|| straight(false)))
+    if let Some(chain) = traced(job, fit) {
+        return Some(chain);
+    }
+    // The fallbacks know only the ends (and the conic its middle), not
+    // where the cut runs between them: each is checked against it.
+    fallback(job)
+        .filter(|chain| verified(job, chain, fit))
+        .or_else(|| Some(straight(false)).filter(|chain| verified(job, chain, fit)))
+}
+
+/// Whether a fallback's `chain` follows the true cut: at `¼`, `½` and `¾`
+/// of each of its curves, the curve's point lies within the resolution
+/// (a thousandth of `fit`) of both patches, as the chord of a tie or of
+/// a line contact does (it is the cut), or the patches' cut on the plane
+/// square to the curve there is within half of `fit` of it (by Newton's
+/// method from the domain positions there, interpolated between its
+/// vertices'). Measured only against the faces the chain's bands lie
+/// on, a chord in the wrong place passes wherever the two are within
+/// the fit of each other along it: a plane `1e-4` off a cylinder's
+/// rulings, inside its wall by as much, cuts it in a U 3.4 long whose
+/// chord, a tenth off the cut, lies on the plane and within the fit of
+/// the wall, and the sliver between them lost its tip.
+fn verified(job: &Job, chain: &Chain, fit: f64) -> bool {
+    let pair = job.pair();
+    let resolution = fit * 1e-3;
+    let on = |patch: &Patch, x: DVec3, guess: DVec3| {
+        patch.eval(invert(patch, x, guess)).distance(x) <= resolution
+    };
+    chain.curves.iter().enumerate().all(|(i, curve)| {
+        [0.25, 0.5, 0.75].into_iter().all(|t| {
+            let (x, d) = curve.eval_deriv(t);
+            let [u, v] =
+                [0, 1].map(|side| chain.dom[side][i] * (1.0 - t) + chain.dom[side][i + 1] * t);
+            if on(job.p, x, u) && on(job.q, x, v) {
+                return true;
+            }
+            let Some(tau) = d.try_normalize() else {
+                return false;
+            };
+            pair.solve(u, v, x, tau)
+                .is_some_and(|(y, _, _)| y.distance(x) <= fit / 2.0)
+        })
+    })
 }
 
 /// The exact arcs of a plane against a quadric, if the pair is one and
 /// they stay on its patches.
 fn exact(job: &Job) -> Option<Chain> {
-    let (plane, quadric, k) = match job.shapes {
-        [Shape::Plane { n, .. }, Shape::Quadric(q)] => (n, q, 1),
-        [Shape::Quadric(q), Shape::Plane { n, .. }] => (n, q, 0),
-        _ => return None,
-    };
-    let patches = [job.p, job.q];
-    let patch = patches[k];
-    let [x, y] = job.ends;
+    let (plane, quadric, k) = plane_and_quadric(job)?;
     if let Some(edge) = along_edge(job, plane, &quadric) {
         return Some(Chain {
             points: Vec::new(),
@@ -196,9 +272,24 @@ fn exact(job: &Job) -> Option<Chain> {
         });
     }
     // Near the arc: the quadric patch's point halfway between the ends in
-    // its domain.
+    // its domain. Where the arc turns back within the patch, or the plane
+    // nearly touches the patch along it, that point is on the chord or
+    // nearly, and its side of it a rounding's: then the arc on the other
+    // side. At most one of the two lies on the patch.
+    let patch = [job.p, job.q][k];
     let guide = patch.eval((job.dom[0][k] + job.dom[1][k]) * 0.5);
-    let curves = section(&quadric, plane, x, y, Guide::Near(guide))?;
+    exact_with(job, plane, &quadric, k, Guide::Near(guide))
+        .or_else(|| exact_with(job, plane, &quadric, k, Guide::Away(guide)))
+}
+
+/// The exact arcs of the plane with unit normal `plane` against
+/// `quadric`, on `job`'s patch `k`, between the ends through the point
+/// `guide` picks, if they stay on that patch.
+fn exact_with(job: &Job, plane: DVec3, quadric: &Quadric, k: usize, guide: Guide) -> Option<Chain> {
+    let patches = [job.p, job.q];
+    let patch = patches[k];
+    let [x, y] = job.ends;
+    let curves = section(quadric, plane, x, y, guide)?;
     let points: Vec<DVec3> = curves[1..].iter().map(|c| c.p0).collect();
     let dom = [0, 1].map(|side| {
         let (d0, d1) = (job.dom[0][side], job.dom[1][side]);
@@ -223,6 +314,16 @@ fn exact(job: &Job) -> Option<Chain> {
         curves,
         exact: true,
     })
+}
+
+/// The plane's normal and the quadric of a pair of a planar face and a
+/// quadric's, and which of the two patches is on the quadric.
+fn plane_and_quadric(job: &Job) -> Option<(DVec3, Quadric, usize)> {
+    match job.shapes {
+        [Shape::Plane { n, .. }, Shape::Quadric(q)] => Some((n, q, 1)),
+        [Shape::Quadric(q), Shape::Plane { n, .. }] => Some((n, q, 0)),
+        _ => None,
+    }
 }
 
 /// An edge of either patch from one end of the arc to the other (at

@@ -2318,7 +2318,18 @@ over `0..1` and one over `0..2`, `Invalid(Hull)` too).
   conic's point on that line (at most 6 times); a plane along a
   cylinder's rulings (both tangents along the chord within `1e-9`)
   gives a straight edge. The arcs are kept only if their middles invert
-  into the quadric patch.
+  into the quadric patch. If the guided arc gives none (halving ran
+  out) or isn't kept, the arc on the other side of the chord is tried
+  (`Guide::Away` of the same point), and kept on the same test; at most
+  one of the two lies on the patch, and the guided one goes first. The
+  guide is on the chord, or nearly, where the arc turns back within the
+  patch (a plane nearly along the rulings cuts in the tip of a long
+  ellipse) or where the plane nearly touches the patch along it (the
+  patch's bulge is then square to the plane): its side of the chord is
+  a rounding's. A plane half a radian off a boss's rulings, cutting it
+  at 24 offsets, took the wrong arc near the silhouette in about 40 of
+  48 operations, which were then traced and fitted: right, but not
+  exact.
 - **On an elliptic or circular cylinder** (`surface::elliptic_cylinder`:
   the matrix's symmetric part `S` takes an axis to 0 and is definite
   square to it, the linear part square to the axis, both to `1e-12`
@@ -2366,8 +2377,27 @@ over `0..1` and one over `0..2`, `Invalid(Hull)` too).
   (each projected onto the curve by the same Newton solve), turns by
   under about 45°, and has a weight within `2·W_MIN ..= W_MAX/2`: at most
   16 halvings. If tracing or fitting fails, the arc falls back to one
-  conic along the end tangents, else a straight edge: only the geometry
-  suffers.
+  conic along the end tangents, else a straight edge, each kept only if
+  it follows the true cut (`chain::verified`): at `¼`, `½` and `¾` of
+  the curve its point is within the resolution of both patches (by
+  `invert` and `eval`: a tie's or a line contact's chord, which is the
+  cut), or the patches' cut on the plane square to the curve there
+  (`Pair::solve` from the domain positions interpolated between the
+  ends) is within half the fit tolerance of it; NaN fails. If neither
+  is, the boolean is `Inconsistent` before the rounds of cutting.
+  Nothing else measures where such a curve is: the bands along it are
+  checked only against their own faces, and a chord in the wrong place
+  passes wherever the faces are within the fit of each other along it.
+  A box face `1e-4` off a cylinder's rulings, `1.75e-4` inside its wall
+  at mid-height, cuts it in a U 3.4 long round the tip of a long
+  ellipse; neither arc survived halving (the tip needs about
+  `log2(√(2h/(r·α)))` halvings, `h` the wall's height, `α` the tilt),
+  tracing and the conic along the end tangents (a turn over 45°) both
+  failed, and the chord across the U lay on the plane and within
+  `1.7e-4` of the wall: the intersection, the sliver, came back `Ok`
+  without its tip, 1.69 long and a tenth of its volume. Traced chains
+  are fitted to the trace, and the rounds halve fitted curves at points
+  on the true cut (`Chain::split`), so neither is checked.
 - **The fitted conics' plane.** A conic's control points span its plane,
   and the hull rule between the two patches beside a curved edge wants
   one on either side of it. A planar face's cut lies in its plane (the
@@ -2851,7 +2881,9 @@ operands intersected, or subtracted the other way, work.
 don't fit together: near ties taken as ties, with curved operands; flat
 operands are decided again exactly then, see "Decided again exactly";
 also a winding number out of `0..=1`, see "Counting"; or a
-crossing the search only placed isn't on the other operand),
+crossing the search only placed isn't on the other operand; or a
+cut neither exact nor traced whose fallback curve isn't on the true
+cut, see "Chains"),
 `Degenerate` (a face's loops
 couldn't be triangulated, or the triangles don't pair up). `TooComplex`
 past the budget or `MAX_PATCHES`, or with triangles still off their face
@@ -3101,7 +3133,9 @@ only placed left where they were and not checked, and the crossing
 searches not dropping pieces by their hulls, so they run out of pieces
 on those bars and walls as they used to) each result refused
 or its claim-free patches within the tolerance of their walls, the
-union (and `bar − box`) refused as too complex at the finest tolerances,
+union (and `bar − box`) refused as too complex at the finest tolerances
+(the small cylinder's union at `1e-5` as inconsistent: the cut from the
+crossing off its wall isn't traced, and its fallback is off the cut),
 and all four through at the default one, where the bands are between
 half the tolerance and the tolerance, their volumes right. Tall walls:
 the 60 × 40 plate with its hole of radius 8, 100 to 10 000 tall, drilled
@@ -3119,7 +3153,18 @@ crossing, once `2.5e-11` past the edge's end; a hole's rim arc through
 a pin 1 010 tall and 2 wide crossing it twice, at the circles' meeting
 points to `1e-12`, each search under 200 pieces, and pins across the
 1 000 tall plate's hole, less and joined, to `1e-9` of the closed-form
-lens (`pins_across_a_tall_plates_hole`). Unit tests:
+lens (`pins_across_a_tall_plates_hole`). Plane sections round a tip
+(boxes grazing a cylinder of 5 or 6 arcs, each result right to `1e-9`
+by its closed-form volume, the caps' antiderivative along the height,
+or refused): a face `1e-4` off the rulings `1.75e-4` inside the wall,
+whose cut is a U round an ellipse's tip (the sliver reaching z 4.25
+when `Ok`; its intersection refused by the check on fallback chords,
+seen by a test counter of chains refused), and one `1e-5` off and
+tangent on a seam between two arcs, both ways round, no patch claiming
+no surface; a plane half a radian off a boss's rulings at 24 offsets
+across it, all 48 intersections and differences exact (a test counter
+of plane–quadric chains not exact stays 0) and within `1e-9` of their
+closed-form volumes. Unit tests:
 exact ellipse arcs of a tilted plane through a cylinder, crossings
 solved exactly on a plane and a cylinder, crossings only placed going to
 their root on a tilted cylinder's patch from `1e-3` and `0.05` off (a
@@ -3301,6 +3346,24 @@ to 72 of its 96 operations and left the others as they were.
   affine image of a parabola arc), which isn't used yet. Of 800 random
   bars through boxes, two (seed 7, case 189; seed 1, case 97) fail their
   intersection and difference as `Degenerate`, as before.
+- **Plane sections nearly along a cylinder's rulings trace near the
+  tip, or are refused**: a plane `α` off the rulings cuts a cylinder of
+  radius `r` and height `h` in the tip of an ellipse whose curvature
+  radius there is `r·sin α`; halving an arc at its parametric middle
+  halves the distance to the tip each time, so it takes about
+  `log2(√(2h/(r·α)))` halvings, past the 6 allowed below `α` of about
+  `1e-3`. Those arcs are traced, or, where tracing and the conic along
+  the end tangents fail too, their chord is checked against the cut and
+  the boolean mostly refused (`Inconsistent`). Halving where the tangent
+  bisects the end tangents (a quadratic in the parameter) would make
+  them exact, but needs a floor for tip arcs under the resolution, which
+  fail otherwise (`Degenerate`, `Invalid`, `TooComplex`). And a section
+  end a little off the cylinder (a crossing near a double root, the
+  plane a hair from tangent: one was `1.1e-7` off) takes its weight from
+  `σ`, noise for such flat arcs, so both arcs fail and the chord is
+  checked as well. The app makes such planes only from a sketch line
+  drawn within a milliradian of the axis direction, placed within
+  micrometres of tangent to a boss.
 - **Fitted chains are dense**: each conic within a quarter of the fit
   tolerance and turning at most 45°, and bands straying past half of it
   halved, so crossing cylinders at the default tolerance come out with
@@ -4421,8 +4484,10 @@ parameter, or a split outside the patch bounds),
   wrong. A box tilted `1e-5` or less off the rulings and tangent to the
   wall at its middle leaves slivers a few resolutions thick, whose
   bands (within the fit, claiming no surface) graze the wall: their
-  volume can be off by more than their own, `5e-6` on a `3e-7` sliver,
-  with every point within `1e-4` of the true surface.
+  volume was off by more than their own, `5e-6` on a `3e-7` sliver,
+  with every point within `1e-4` of the true surface: the cut round the
+  section's tip was a straight chord, which the check on fallback
+  chords now refuses (see "Chains").
 - **Crossing searches drop pieces whose control hulls are apart**
   (`hull::apart`), as the plan for tall walls has it, by more than
   `1e-12` in the search's unit frame, as planned, plus `2048 ·
@@ -4456,3 +4521,37 @@ parameter, or a split outside the patch bounds),
   seeded suite unchanged (related 112/120, chains 203/240, turned
   156/160, tangent 72/96, coaxial 37/40, bosses 64/64, drilled
   160/160).
+- **Fallback chains are checked against the true cut, and the other arc
+  of a plane section is tried** (see "Chains"), as planned, with one
+  addition: where the conic along the end tangents fails the check, the
+  straight edge between the ends is checked too and kept if it passes,
+  before the boolean is refused. Before and after, release, default
+  tolerance: grazing planes against cylinders of 3 to 8 arcs (tilts 0
+  to 0.5 radian off the rulings, two thirds of the offsets within a
+  fraction of the radius of tangent; seeds 1 to 4, 200 cases each, 3 200
+  operations), `Ok` 2 200 → 2 180, refused 1 000 → 1 020
+  (`Inconsistent` 65 → 160), `Ok`s off by more than `1e-7` in volume
+  16 → 2. 18 `Ok`s became `Inconsistent`: 14 of those 16 (up to
+  `1.1e-5` off, among them the sliver that lost its tip), and 4 within
+  `1.5e-7` whose chords were up to `1.2e-3` from the cut, or within
+  `2e-6` of both surfaces where they meet at `1e-6` radian (so up to
+  1.9 from the cut, by Newton's method). Trying the other arc turned 6
+  `Ok`s into `Invalid` or `TooComplex` and 4 refusals into `Ok`s (the
+  hull rules seeing exact cuts where they saw fitted ones). The two
+  left off keep the cylinder at a tilt of `1e-6`, within `1e-12` of
+  tangent: `4.9e-7` and `2.4e-7` on volumes of 92 and 65, inside the
+  sliver's depth, unchanged. Walls over arcs (300 cases, seeds 21 and
+  5) unchanged, 65 and 59 refused, none wrong; tools turned across
+  them (200 cases) 17 → 15 and 13 → 13 refused. The seeded suite
+  unchanged (related 112/120, turned 156/160, tangent 72/96, coaxial
+  37/40, bosses 64/64, drilled 160/160, walls 112/120, bars 22 of 24 at
+  each of three seeds) but for parts built in chains, 203 → 201 of 240:
+  three operations refused at two steps, cuts between cylinders
+  crossing at a slant whose tracing failed at a point where the cut
+  touches itself, and whose straight chords were `3.6e-2` and `1.6e-2`
+  off it (36 and 16 times the fit), which the suite's volume checks (a
+  fifth of the fit times the area) let pass; one operation a step later
+  came through, fed on another part.
+  In app-like cuts (a plane half a radian off a boss's rulings, 24
+  offsets) the plane–cylinder chains not exact go from about 40 of 48
+  operations to none.

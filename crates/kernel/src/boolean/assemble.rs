@@ -406,7 +406,7 @@ pub(super) fn assemble(
             })
             .sum(),
     )?;
-    let mut chains: Vec<Chain> = par_map(&chain_jobs, |job| chain::chain(job, tol));
+    let mut chains: Vec<Chain> = chain::chains(&chain_jobs, tol)?;
     work.spend(chains.iter().map(|c| c.curves.len()).sum())?;
 
     // The faces, in rounds: where a triangle along a cut strays from its

@@ -2203,7 +2203,8 @@ fn band_roots_off_their_wall_are_bounded() {
     // to the edge's root on the patch crossed: all four exact at every
     // tolerance. Left where it was (and not checked), the triangles are
     // refused as too complex where they are past the tolerance, and kept
-    // within it at the default one.
+    // within it at the default one; at the finest, the cut from it isn't
+    // traced, and its fallback, off the true cut, is refused first.
     let arch = Arch {
         deg: 75.35906468803832,
         convex: false,
@@ -2230,7 +2231,20 @@ fn band_roots_off_their_wall_are_bounded() {
         let wall = [walls(&a), walls(&b)].concat();
         let loose = four_loose(&a, &b, &wall, &tol);
         if fit < 1e-3 {
-            assert!(matches!(loose[0], Err(KernelError::TooComplex)));
+            eprintln!(
+                "LOOSE {fit} {:?}",
+                loose
+                    .iter()
+                    .map(|r| r
+                        .as_ref()
+                        .map(|&(_, off)| off)
+                        .map_err(|e| format!("{e:?}")))
+                    .collect::<Vec<_>>()
+            );
+            assert!(matches!(
+                loose[0],
+                Err(KernelError::TooComplex | KernelError::Boolean(BooleanError::Inconsistent))
+            ));
         } else {
             assert!(
                 loose
@@ -2459,4 +2473,195 @@ fn a_cap_folding_when_refined_is_refused() {
     // conics flattened to 4 000 points each, the disk's chords in `z`
     // cut at the top): 1.75423, which the result is about 2e-5 under.
     assert!((i - 1.75423).abs() <= within, "{i}");
+}
+
+/// A cylinder of radius `r` on XY from 0 to 5, its circle in `arcs` arcs
+/// from the angle `start`, and a box whose face is the plane `n·(x − c) =
+/// s` through `c` = (0, 0, 2.5), `n` tilted `alpha` up from the
+/// horizontal direction at the angle `phi` (so the plane is `alpha` off
+/// the cylinder's rulings), the box on the side `n·(x − c) ≤ s`; and the
+/// volume of their intersection in closed form.
+fn cylinder_and_tilted_box(
+    r: f64,
+    arcs: usize,
+    start: f64,
+    alpha: f64,
+    phi: f64,
+    s: f64,
+) -> (Solid, Solid, f64) {
+    let points: Vec<DVec2> = (0..arcs)
+        .map(|i| {
+            let t = start + std::f64::consts::TAU * i as f64 / arcs as f64;
+            DVec2::new(t.cos(), t.sin()) * r
+        })
+        .collect();
+    let circle = Loop {
+        segments: (0..arcs)
+            .map(|i| {
+                crate::profile::tests::arc(DVec2::ZERO, points[i], points[(i + 1) % arcs], i as u64)
+            })
+            .collect(),
+    };
+    let a = extruded(vec![circle], 0.0, 5.0, 9);
+    let m = DVec2::new(phi.cos(), phi.sin());
+    let n = DVec3::new(m.x * alpha.cos(), m.y * alpha.cos(), alpha.sin());
+    let e1 = DVec3::new(-m.y, m.x, 0.0);
+    let e2 = n.cross(e1);
+    let c = DVec3::new(0.0, 0.0, 2.5);
+    let (depth, wide) = (2.0 * r + 8.0, r + 8.0);
+    let b = moved(
+        &cube([s - depth, -wide, -wide], [depth, 2.0 * wide, 2.0 * wide]),
+        |p| c + n * p.x + e1 * p.y + e2 * p.z,
+    );
+    // At height `z` the box holds the disk's points `x` with `x·m ≤
+    // u(z)`, which is `cap(−u(z))`.
+    let u = |z: f64| (s - (z - 2.5) * alpha.sin()) / alpha.cos();
+    (a, b, caps_along(r, -u(0.0), -u(5.0), 5.0))
+}
+
+/// `∫ cap(w(z)) dz` over `0..len`, `cap(w)` the area of the part of a
+/// disk of radius `r` past the chord `w` from its centre, `w` going
+/// linearly from `w0` to `w1` (not equal): by the antiderivative of the
+/// cap in `w`, `r²·w·acos(w/r) − r²·√(r² − w²) + (r² − w²)^{3/2}/3`
+/// within the disk (0 past it, `πr²·w` before it), on the side where
+/// the caps are small (the rest is the disk's).
+fn caps_along(r: f64, w0: f64, w1: f64, len: f64) -> f64 {
+    if w0 + w1 < 0.0 {
+        return PI * r * r * len - caps_along(r, -w0, -w1, len);
+    }
+    let f = |w: f64| {
+        if w >= r {
+            0.0
+        } else if w <= -r {
+            PI * r * r * w
+        } else {
+            let s = (r * r - w * w).sqrt();
+            r * r * w * (w / r).acos() - r * r * s + s * s * s / 3.0
+        }
+    };
+    (f(w1) - f(w0)) * len / (w1 - w0)
+}
+
+#[test]
+fn slivers_round_a_section_tip_are_kept_or_refused() {
+    // A box face 1e-4 off a cylinder's rulings, 1.75e-4 inside its wall
+    // at mid-height: the cut is the tip of a long, thin ellipse, a U on
+    // the wall from z 0.75 to 4.25 (seen fuzzing boxes grazing walls).
+    // The arc round the tip turns back inside one patch, so the exact
+    // section, guided by the patch's middle (on the chord), took the
+    // wrong arc and failed, tracing and the conic along the ends'
+    // tangents failed too, and the cut was the straight chord between
+    // the ends, which the bands along it passed (it is on the plane and
+    // within the fit of the wall). The intersection, the sliver, was
+    // `Ok` but ended at z 2.559: a tip 1.69 long and 10 % of its volume
+    // gone.
+    let r = 1.7487237938385212;
+    let (a, b, both) = cylinder_and_tilted_box(
+        r,
+        5,
+        3.4279196762232473,
+        1e-4,
+        4.684556737659165,
+        -r + 1.7487237938396127e-4,
+    );
+    assert!((both - 3.7109669699556e-5).abs() <= 1e-15, "{both}");
+    let (va, vb) = (a.volume(), b.volume());
+    for (x, y, op, want) in [
+        (&a, &b, Op::Intersection, both),
+        (&a, &b, Op::Difference, va - both),
+        (&b, &a, Op::Difference, vb - both),
+        (&a, &b, Op::Union, va + vb - both),
+    ] {
+        if let Ok(result) = boolean(x, y, op, &TOL, &Budget::DEFAULT) {
+            let got = result.volume();
+            assert!((got - want).abs() <= 1e-9, "{op:?}: {got} not {want}");
+            if op == Op::Intersection {
+                let top = result.bounds3().expect("a sliver").max.z;
+                assert!(top >= 4.2, "the sliver ends at z {top}");
+            }
+        }
+    }
+}
+
+#[test]
+fn chords_across_a_section_tip_are_refused() {
+    // The sliver above: its chord across the U is checked against the
+    // true cut and refused, and the operation with it.
+    let r = 1.7487237938385212;
+    let (a, b, _) = cylinder_and_tilted_box(
+        r,
+        5,
+        3.4279196762232473,
+        1e-4,
+        4.684556737659165,
+        -r + 1.7487237938396127e-4,
+    );
+    let before = super::chain::REFUSED.get();
+    let got = boolean(&a, &b, Op::Intersection, &TOL, &Budget::DEFAULT);
+    assert!(
+        matches!(got, Err(KernelError::Boolean(BooleanError::Inconsistent))),
+        "{:?}",
+        got.map(|s| s.volume())
+    );
+    assert!(super::chain::REFUSED.get() > before);
+}
+
+#[test]
+fn a_box_tangent_on_a_seam_is_exact_or_refused() {
+    // A box face 1e-5 off a cylinder's rulings, tangent to its wall at
+    // mid-height, on the seam between two of its six arcs, both ways
+    // round: a sliver 2.5e-5 deep at most, its cut a U 2.5 tall and 0.02
+    // wide. The arc round the tip took the straight chord, as above, and
+    // the results keeping the cylinder had a band claiming no surface,
+    // fanned from the chord to the far corner of its strip (area 2.34),
+    // and were 5.1e-6 off in volume on a sliver of 3.3e-7.
+    let r = 1.8794419898132737;
+    for s in [r, -r] {
+        let (a, b, both) = cylinder_and_tilted_box(r, 6, 0.0, 1e-5, 0.0, s);
+        let (va, vb) = (a.volume(), b.volume());
+        for (x, y, op, want) in [
+            (&a, &b, Op::Intersection, both),
+            (&a, &b, Op::Difference, va - both),
+            (&b, &a, Op::Difference, vb - both),
+            (&a, &b, Op::Union, va + vb - both),
+        ] {
+            if let Ok(result) = boolean(x, y, op, &TOL, &Budget::DEFAULT) {
+                let got = result.volume();
+                assert!((got - want).abs() <= 1e-9, "{s} {op:?}: {got} not {want}");
+                let (_, free) = off_surface(&result);
+                assert_eq!(free, 0, "{s} {op:?}: {free} patches claim no surface");
+            }
+        }
+    }
+}
+
+#[test]
+fn slanted_cuts_round_a_boss_silhouette_are_exact() {
+    // A plane half a radian off a boss's rulings, at 24 offsets across
+    // it: the cut is an ellipse arc wherever it is, and where it turns
+    // round near the silhouette within one patch the arc the patch's
+    // middle picked was the wrong one, which failed to stay on the patch;
+    // the other arc wasn't tried, and the cut was traced and fitted
+    // (about 40 of the 48 operations), right but not exact.
+    let mut done = 0;
+    for k in 0..24 {
+        let s = -1.0 + 2.0 * (k as f64 + 0.5) / 24.0;
+        let (a, b, both) = cylinder_and_tilted_box(1.0, 4, 0.0, 0.5, 0.0, s);
+        for (op, want) in [
+            (Op::Intersection, both),
+            (Op::Difference, a.volume() - both),
+        ] {
+            let before = super::chain::NOT_EXACT.get();
+            let result = run(&a, &b, op);
+            assert_eq!(
+                super::chain::NOT_EXACT.get(),
+                before,
+                "{s} {op:?}: a cut not exact"
+            );
+            let got = result.volume();
+            assert!((got - want).abs() <= 1e-9, "{s} {op:?}: {got} not {want}");
+            done += 1;
+        }
+    }
+    assert_eq!(done, 48);
 }
