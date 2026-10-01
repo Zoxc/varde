@@ -58,6 +58,16 @@ fn cylinder_and_box(gap: f64) -> Mesh {
     both(&cylinder, &cuboid)
 }
 
+/// [`cylinder_and_box`] at `tol`, the cylinder of `radius` standing on
+/// `base` and the box `radius / 2` across.
+fn cylinder_and_box_at(base: DVec3, radius: f64, gap: f64, tol: &Tolerance) -> Mesh {
+    let cylinder = Mesh::cylinder(base, radius, 2.0 * radius, 1, tol).unwrap();
+    let (s, c) = 30f64.to_radians().sin_cos();
+    let corner = base + DVec3::new(c, s, 0.0) * (radius + gap) + DVec3::Z * 0.5 * radius;
+    let cuboid = Mesh::cuboid(corner, DVec3::splat(0.5 * radius), 2, tol).unwrap();
+    both(&cylinder, &cuboid)
+}
+
 /// Two cylinders of `radius`, as tall as they are wide, side by side with
 /// `gap` between their walls, the second at `angle` degrees round from
 /// `+x`.
@@ -185,6 +195,37 @@ fn surfaces_just_over_the_resolution_apart_pass() {
         let repaired = result.unwrap();
         assert_eq!(repaired.check(&TOL), Ok(()));
         assert!(work < most, "{work}");
+    }
+}
+
+#[test]
+fn far_out_at_the_finest_tolerance_surfaces_just_apart_pass() {
+    // At the finest resolution far from the origin the witness can't
+    // claim anything (its rounding allowance is past the resolution),
+    // so only flatness stops touching pairs, and rounding of a ulp there,
+    // about a hundredth of a resolution, widens the window the flat stop
+    // refuses from about 1.02 resolutions to about 1.05.
+    let fine = Tolerance::new(Tolerance::MIN_FIT).unwrap();
+    let res = fine.resolution();
+    let radius = 1e5 * res;
+    for (base, apart, touching) in [
+        (DVec3::ZERO, 1.03, 0.98),
+        (DVec3::new(9e5, -6e5, 3e5), 1.06, 0.98),
+    ] {
+        let (result, work) =
+            repair_counting(cylinder_and_box_at(base, radius, apart * res, &fine), &fine);
+        let repaired = result.unwrap();
+        assert_eq!(repaired.check(&fine), Ok(()));
+        assert!(work < 300_000, "{work}");
+        let (result, work) = repair_counting(
+            cylinder_and_box_at(base, radius, touching * res, &fine),
+            &fine,
+        );
+        assert!(
+            matches!(result, Err(KernelError::Invalid(CheckError::Hull(..)))),
+            "{result:?}"
+        );
+        assert!(work < 300_000, "{work}");
     }
 }
 

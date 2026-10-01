@@ -609,9 +609,14 @@ its triangles share, which is topology:
     against walls, the pairs the lax side is for, lean in by at most a
     hundredth of a resolution (rounding), and their walls clear them by 4
     or more, as measured over the kernel's tests with the rule
-    instrumented, where the extra condition changed no pair's outcome.
-    On the seeded boolean suites and the random-plate stress it changed
-    no result (measured with the flat fold stop in "Repair").
+    instrumented. There the extra condition changed 5 pair tests, all in
+    the chains of twenty: a lax side leaning in by 0.6 to 0.8 resolutions
+    against a strict one 1.1 to 1.6 off the plane, now split rather than
+    passed; no result moved. On the seeded boolean suites and the
+    random-plate stress it changed no result (measured with the flat fold
+    stop in "Repair"). Random pairs (2M, heights within 4 resolutions,
+    random layouts and weights) that the rule passes always have their
+    far control points more than the resolution apart.
 - **One: vertex neighbours.** A plane through the shared vertex `V` with
   the other five control points of each more than the resolution to either
   side. With unit normal `n` that is `n·x > margin` for every `x` in
@@ -913,6 +918,28 @@ of 40, bosses 64 of 64, drilled 160 of 160, before and after); only the
 errors' kinds moved: coaxial 2 `EdgeNeighbours` and chains 1 `TooComplex`,
 2 `EdgeNeighbours` and 2 `VertexNeighbours` became `Invalid(Hull)`, and
 the suites took 61.5 s of CPU against 69.4 s.
+Each stop was then tested against the same repair with it switched off
+(release; 5 900 random meshes: two cylinders, cylinder and box, two
+round octahedra turned at random, thin shells, a lying cylinder over a
+planar cap with arc edges, a cylinder's cap facing a wall, an octahedron
+over a cap, a box tilted over a cap; radii 5 to 10⁶ resolutions, gaps
+0.1 to 50, at both fit limits, near the origin and 9e5 out, turned at
+random, the second body tilted by 1e-7 to 1e-2): no witness, no affine
+fold stop and no curved-edge condition refused a mesh that repairs
+without it, and no `Ok` failed `check`; nor did the affine stop on
+12 000 random slivers (aspects 1e5 to 3e8, some 9e5 out).
+What did refuse such meshes: `FLAT_STOP`, as above, near the origin up
+to about 1.02 resolutions, and at the finest tolerance 9e5 out, where no
+witness can be claimed, up to about 1.05 (a ulp there is about a
+hundredth of a resolution); and the floors: 84 of 1 641 failing cases of
+radius 5 to 1 000 resolutions (and 2 of 10⁴, 1.02 apart) repair with
+floors of 2 and 16 instead.
+Splitting only a pair's leaf that can be split, rather than failing,
+would mend 6 of them, so it isn't done. Where both fail, the curved
+floor costs up to 4 times the work a floor of 64 does (330k units for
+thin shells of 500 resolutions 9e5 out at the finest tolerance; under
+25k near the origin), every case under 0.3 s. Results and work are the
+same on 1 and 8 threads (383 of the meshes, and the seeded suites).
 In debug builds the result is checked in full, face tags aside: repair
 refuses a wrong `Plane` tag on a patch it splits (see "Refinement"), but
 other tags, and those of patches it doesn't split, are the input's claims,
