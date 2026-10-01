@@ -347,6 +347,8 @@ impl Doc {
         }
         self.sketch = Some(SketchSession::new(id));
         self.panel = self.panel.for_sketching(true);
+        // The rail's sets are the sketch's now.
+        self.rail.close();
         if let Some(to) = self.sketch_camera() {
             self.animate_camera(to);
         }
@@ -367,16 +369,19 @@ impl Doc {
     fn end_session(&mut self) {
         self.sketch = None;
         self.panel = self.panel.for_sketching(false);
+        self.rail.close();
     }
 
     /// Backs out of whatever is open, the innermost first: the delete
-    /// prompt, the file menu, the view options menu, picking a plane, the
+    /// prompt, the rail's list, the file menu, the view options menu, picking a plane, the
     /// extrude being set up, the value field, a label grabbed, the drag of
     /// geometry, the shape the tool is drawing (or what the Dimension or
     /// Mirror tool has picked), the tool, the sketch, the feature selected.
     pub(crate) fn escape(&mut self) {
         if self.deleting.is_some() {
             self.deleting = None;
+        } else if self.rail.open.is_some() {
+            self.rail.close();
         } else if self.file_menu {
             self.file_menu = false;
         } else if self.view_menu {

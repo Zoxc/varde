@@ -35,6 +35,26 @@ pub(crate) fn tip<'a>(
     .into()
 }
 
+/// `content` telling `label` and its `key` at once while hovered, right
+/// of it, kept within the window: for a tool on the rail.
+pub(crate) fn side_tip<'a>(
+    content: impl Into<Element<'a, Message>>,
+    label: &'a str,
+    key: impl Into<KeyName>,
+) -> Element<'a, Message> {
+    let tip = row![text(label).size(12), key_chip(key, ChipSize::Small)]
+        .spacing(6)
+        .align_y(Alignment::Center);
+    tooltip(
+        content,
+        container(tip).padding([3, 6]).style(theme::menu),
+        tooltip::Position::Right,
+    )
+    .gap(6)
+    .snap_within_viewport(true)
+    .into()
+}
+
 /// `content` with `status`, the floating status bar's layer
 /// ([`crate::status::status_bar`]), over its bottom right.
 pub fn window<'a>(

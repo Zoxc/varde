@@ -32,6 +32,9 @@ enum Key {
     Escape,
     Space,
     Tab,
+    /// The arrow keys up and down.
+    Up,
+    Down,
 }
 
 impl Shortcut {
@@ -54,6 +57,9 @@ impl Shortcut {
     pub const ESCAPE: Self = Self::named(Key::Escape);
     /// Clears the selection.
     pub const SPACE: Self = Self::named(Key::Space);
+    /// Moves up and down the rail's open list.
+    pub const UP: Self = Self::named(Key::Up);
+    pub const DOWN: Self = Self::named(Key::Down);
     /// Turns geometry between normal and construction.
     pub const CONSTRUCTION: Self = Self::plain('x');
     /// Takes up the Constrain tool.
@@ -68,8 +74,9 @@ impl Shortcut {
     /// Dimension tool's measure, which draws nothing.
     pub const NEXT_FIELD: Self = Self::SWITCH_ROUND;
     /// Switches the Rectangle tool between drawing from a corner and from
-    /// the centre: a letter no tool or constraint has, by the left hand.
-    pub const CENTERED: Self = Self::plain('q');
+    /// the centre: a letter no tool or constraint has, by the left hand,
+    /// under the rail's sets' `Q` to `R`.
+    pub const CENTERED: Self = Self::plain('z');
     /// Switches the Spline tool, or the splines selected, between through
     /// fit points and by control points: the Rectangle tool's switch, as
     /// the two never go together.
@@ -92,6 +99,26 @@ impl Shortcut {
             shift: false,
             command: false,
         }
+    }
+
+    /// A letter on its own, `key` in lower case: picks a tool from the
+    /// rail's open set.
+    pub(crate) fn letter(key: char) -> Self {
+        Self::plain(key)
+    }
+
+    /// Its letter, with or without Shift, if it's a letter without the
+    /// command modifier.
+    pub(crate) fn letter_key(self) -> Option<char> {
+        match self.key {
+            Key::Letter(letter) if !self.command => Some(letter),
+            _ => None,
+        }
+    }
+
+    /// Whether it's a key pressed on its own, with no modifier.
+    pub(crate) fn is_plain(self) -> bool {
+        !self.shift && !self.command
     }
 
     /// The letter with Shift held, where the letter alone is a tool's.
@@ -126,6 +153,8 @@ impl Shortcut {
             Key::Escape => "Esc".into(),
             Key::Space => "Space".into(),
             Key::Tab => "Tab".into(),
+            Key::Up => "↑".into(),
+            Key::Down => "↓".into(),
         };
         format!("{command}{shift}{key}")
     }
@@ -150,7 +179,9 @@ impl Shortcut {
             | (Key::Delete, KeyPress::Named(Named::Delete | Named::Backspace))
             | (Key::Escape, KeyPress::Named(Named::Escape))
             | (Key::Space, KeyPress::Named(Named::Space))
-            | (Key::Tab, KeyPress::Named(Named::Tab)) => true,
+            | (Key::Tab, KeyPress::Named(Named::Tab))
+            | (Key::Up, KeyPress::Named(Named::ArrowUp))
+            | (Key::Down, KeyPress::Named(Named::ArrowDown)) => true,
             (Key::Space, KeyPress::Character(c)) => c == " ",
             _ => false,
         };
@@ -167,14 +198,30 @@ pub struct Binding {
     pub(crate) shortcut: Shortcut,
     message: Message,
     enabled: bool,
+    /// Whether it keeps its key from the bindings after it even while
+    /// disabled: the rail's open set's letters do, so a letter of a tool
+    /// that can't be used there does nothing rather than what it does
+    /// elsewhere.
+    claims: bool,
 }
 
 impl Binding {
-    fn new(shortcut: Shortcut, message: Message, enabled: bool) -> Self {
+    pub(crate) fn new(shortcut: Shortcut, message: Message, enabled: bool) -> Self {
         Self {
             shortcut,
             message,
             enabled,
+            claims: false,
+        }
+    }
+
+    /// The same binding on `shortcut`, keeping its key even while
+    /// disabled, see [`Binding::claims`].
+    pub(crate) fn claiming(self, shortcut: Shortcut) -> Self {
+        Self {
+            shortcut,
+            claims: true,
+            ..self
         }
     }
 
@@ -209,7 +256,8 @@ impl Tool {
             Tool::Circle => Shortcut::plain('c'),
             Tool::Arc => Shortcut::plain('a'),
             Tool::Point => Shortcut::plain('p'),
-            Tool::Rectangle => Shortcut::plain('r'),
+            // A box: `R` opens the rail's fourth set.
+            Tool::Rectangle => Shortcut::plain('b'),
             // Polygon's `G`: its `P` is the Point tool's.
             Tool::Polygon => Shortcut::plain('g'),
             // A letter of its name: `S` is New sketch's, `P` the Point
@@ -217,22 +265,24 @@ impl Tool {
             Tool::Spline => Shortcut::plain('n'),
             Tool::Dimension => Shortcut::plain('d'),
             Tool::Trim => Shortcut::plain('t'),
-            // Free letters: `E` is Equal's, `M` Midpoint's.
+            // A free letter: `E` opens a set of the rail's, `M` is Midpoint's.
             Tool::Extend => Shortcut::plain('j'),
             Tool::Offset => Shortcut::plain('o'),
-            Tool::Mirror => Shortcut::plain('w'),
+            // `W` opens the rail's second set, and `M` is Midpoint's.
+            Tool::Mirror => Shortcut::shifted('m'),
             Tool::Fillet => Shortcut::plain('f'),
-            // Bevel: `C` is the Circle tool's.
-            Tool::Chamfer => Shortcut::plain('b'),
+            // Bevel, with Shift: `C` is the Circle tool's, `B` the
+            // Rectangle tool's.
+            Tool::Chamfer => Shortcut::shifted('b'),
         }
     }
 }
 
 impl ConstraintKind {
     /// The key applying the constraint to the selection: its initial, or
-    /// a letter of its name, or with Shift where a tool has the letter
-    /// (Trim `T`, Fillet `F`, Point `P`, Circle `C`, Rectangle `R`, New
-    /// sketch `S`).
+    /// a letter of its name, or with Shift where a tool or the rail's sets
+    /// have the letter (Trim `T`, Fillet `F`, Point `P`, Circle `C`, New
+    /// sketch `S`, the sets `E` and `R`).
     /// Recorded in `agents/sketch.md` and `README.md`. None for equal
     /// offsets, which only the Offset tool makes.
     pub fn shortcut(self) -> Option<Shortcut> {
@@ -246,7 +296,8 @@ impl ConstraintKind {
             ConstraintKind::Tangent => Shortcut::shifted('t'),
             // `S` is New sketch's.
             ConstraintKind::Smooth => Shortcut::shifted('s'),
-            ConstraintKind::Equal => Shortcut::plain('e'),
+            // `E` opens the rail's third set.
+            ConstraintKind::Equal => Shortcut::shifted('e'),
             ConstraintKind::Concentric => Shortcut::shifted('c'),
             ConstraintKind::Midpoint => Shortcut::plain('m'),
             ConstraintKind::Symmetric => Shortcut::plain('y'),
@@ -301,6 +352,10 @@ pub struct DocumentKeys {
     pub extruding: bool,
     /// Whether the extrude being set up can be committed.
     pub extrude_ready: bool,
+    /// The rail's tool set whose list is open, if one is, and its row the
+    /// keys are on: its letters, the arrows and `Enter` pick its tools,
+    /// before any other key.
+    pub rail: Option<crate::RailOpen>,
 }
 
 impl DocumentKeys {
@@ -356,7 +411,13 @@ impl DocumentKeys {
             extrudable: false,
             extruding: false,
             extrude_ready: false,
+            rail: None,
         }
+    }
+
+    /// The same keys with the rail's set `rail` open, if one is.
+    pub fn with_rail(self, rail: Option<crate::RailOpen>) -> Self {
+        Self { rail, ..self }
     }
 
     /// The same keys where there's a sketch to extrude regions of if
@@ -476,7 +537,7 @@ fn enter_binding(keys: DocumentKeys) -> Binding {
     )
 }
 
-/// `Q`: switching the Rectangle tool between from a corner and from the
+/// `Z`: switching the Rectangle tool between from a corner and from the
 /// centre, the Spline tool between through fit points and by control
 /// points, or without a drawing tool the splines selected, converting
 /// them. Only one of them at a time.
@@ -525,7 +586,8 @@ pub fn comb_binding(keys: DocumentKeys) -> Binding {
 /// being drawn, going on to the Mirror tool's line, switching the
 /// Rectangle tool between from a corner and from the centre (and the
 /// Spline tool and splines between their kinds), handles and the
-/// curvature comb.
+/// curvature comb. The rail's open set's keys come before them all, and
+/// its sets' keys after (see the rail's module).
 pub fn document_bindings(keys: DocumentKeys) -> Vec<Binding> {
     let feature = keys.selected.filter(|_| !keys.sketching && !keys.extruding);
     let feature = feature.into_iter().flat_map(|id| {
@@ -572,8 +634,9 @@ pub fn document_bindings(keys: DocumentKeys) -> Vec<Binding> {
             keys.editable && keys.extrude_ready,
         )
     });
-    file_bindings(keys.editable)
+    crate::rail::letter_bindings(keys)
         .into_iter()
+        .chain(file_bindings(keys.editable))
         .chain([
             sketch_binding(keys),
             Binding::new(Shortcut::SPACE, Message::Look(Look::ClearSelection), true),
@@ -582,11 +645,13 @@ pub fn document_bindings(keys: DocumentKeys) -> Vec<Binding> {
         .chain(commit)
         .chain(feature)
         .chain(sketch.into_iter().flatten())
+        .chain(crate::rail::set_bindings(keys.sketching))
         .collect()
 }
 
 /// The message of the first enabled binding of `bindings` that pressing
-/// `key` with `modifiers` is, if any.
+/// `key` with `modifiers` is, if any, unless a disabled one that
+/// claims the key comes before it (the rail's open set's letters do).
 pub fn pressed(
     bindings: impl IntoIterator<Item = Binding>,
     key: &KeyPress,
@@ -594,8 +659,10 @@ pub fn pressed(
 ) -> Option<Message> {
     bindings
         .into_iter()
-        .find(|binding| binding.enabled && binding.shortcut.matches(key, modifiers))
-        .map(|binding| binding.message)
+        .find(|binding| {
+            (binding.enabled || binding.claims) && binding.shortcut.matches(key, modifiers)
+        })
+        .and_then(|binding| binding.enabled.then_some(binding.message))
 }
 
 /// A modifier held down, rather than a key pressed.
@@ -822,19 +889,23 @@ mod tests {
             sketching: true,
             ..keys(true)
         };
-        let none = Modifiers::empty();
         for tool in Tool::ALL {
-            let letter = tool.shortcut().label().to_lowercase();
+            let label = tool.shortcut().label().to_lowercase();
+            // Mirror and Chamfer take Shift.
+            let (letter, held) = match label.strip_prefix("shift ") {
+                Some(letter) => (letter.to_uppercase(), Modifiers::SHIFT),
+                None => (label, Modifiers::empty()),
+            };
             assert!(matches!(
-                pressed(document_bindings(sketching), &key(&letter), none),
+                pressed(document_bindings(sketching), &key(&letter), held),
                 Some(Message::Look(Look::SelectTool(taken))) if taken == tool
             ));
             let read_only = DocumentKeys {
                 editable: false,
                 ..sketching
             };
-            assert!(pressed(document_bindings(read_only), &key(&letter), none).is_none());
-            assert!(pressed(document_bindings(keys(true)), &key(&letter), none).is_none());
+            assert!(pressed(document_bindings(read_only), &key(&letter), held).is_none());
+            assert!(pressed(document_bindings(keys(true)), &key(&letter), held).is_none());
         }
     }
 
@@ -968,21 +1039,18 @@ mod tests {
             pressed(document_bindings(selected), &key("d"), Modifiers::empty()),
             Some(Message::Look(Look::SelectTool(Tool::Dimension)))
         ));
-        // And T, J, O, W, F and B the shape tools.
+        // And T, J, O, Shift M, F and Shift B the shape tools.
+        let none = Modifiers::empty();
         let shapes = [
-            ("t", Tool::Trim),
-            ("j", Tool::Extend),
-            ("o", Tool::Offset),
-            ("w", Tool::Mirror),
-            ("f", Tool::Fillet),
-            ("b", Tool::Chamfer),
+            ("t", none, Tool::Trim),
+            ("j", none, Tool::Extend),
+            ("o", none, Tool::Offset),
+            ("M", Modifiers::SHIFT, Tool::Mirror),
+            ("f", none, Tool::Fillet),
+            ("B", Modifiers::SHIFT, Tool::Chamfer),
         ];
-        for (letter, tool) in shapes {
-            let sent = pressed(
-                document_bindings(selected),
-                &key(letter),
-                Modifiers::empty(),
-            );
+        for (letter, held, tool) in shapes {
+            let sent = pressed(document_bindings(selected), &key(letter), held);
             assert!(
                 matches!(sent, Some(Message::Look(Look::SelectTool(t))) if t == tool),
                 "{letter}: {sent:?}"
@@ -1039,8 +1107,8 @@ mod tests {
         };
         assert!(pressed(document_bindings(read_only), &tab, none).is_none());
         assert!(pressed(document_bindings(read_only), &enter, none).is_none());
-        // Q switches the Rectangle tool only.
-        let q = key("q");
+        // Z switches the Rectangle tool only.
+        let q = key("z");
         assert!(pressed(document_bindings(sketching), &q, none).is_none());
         let rectangle = DocumentKeys {
             rectangle: true,
@@ -1050,7 +1118,7 @@ mod tests {
             pressed(document_bindings(rectangle), &q, none),
             Some(Message::Look(Look::ToggleCentered))
         ));
-        assert_eq!(Tool::Rectangle.shortcut().label(), "R");
+        assert_eq!(Tool::Rectangle.shortcut().label(), "B");
         assert_eq!(Tool::Polygon.shortcut().label(), "G");
     }
 
@@ -1063,19 +1131,19 @@ mod tests {
         let none = Modifiers::empty();
         let sent =
             |keys, key: &KeyPress, modifiers| pressed(document_bindings(keys), key, modifiers);
-        // N takes up the Spline tool, Q then switches its kind.
+        // N takes up the Spline tool, Z then switches its kind.
         assert!(matches!(
             sent(sketching, &key("n"), none),
             Some(Message::Look(Look::SelectTool(Tool::Spline)))
         ));
-        assert!(sent(sketching, &key("q"), none).is_none());
+        assert!(sent(sketching, &key("z"), none).is_none());
         let drawing = DocumentKeys {
             spline: true,
             drawing: true,
             ..sketching
         };
         assert!(matches!(
-            sent(drawing, &key("q"), none),
+            sent(drawing, &key("z"), none),
             Some(Message::Look(Look::ToggleSplineKind))
         ));
         // Enter ends it once it has enough.
@@ -1089,7 +1157,7 @@ mod tests {
             sent(ends, &enter, none),
             Some(Message::Edit(Edit::PlaceShape))
         ));
-        // Splines selected: Q converts them, Shift H handles them, and U
+        // Splines selected: Z converts them, Shift H handles them, and U
         // shows their comb, which it does in any sketch.
         let selected = DocumentKeys {
             splines_selected: true,
@@ -1097,7 +1165,7 @@ mod tests {
             ..sketching
         };
         assert!(matches!(
-            sent(selected, &key("q"), none),
+            sent(selected, &key("z"), none),
             Some(Message::Edit(Edit::ConvertSplines))
         ));
         assert!(matches!(
@@ -1116,7 +1184,7 @@ mod tests {
             editable: false,
             ..selected
         };
-        assert!(sent(read_only, &key("q"), none).is_none());
+        assert!(sent(read_only, &key("z"), none).is_none());
         assert!(sent(read_only, &key("H"), Modifiers::SHIFT).is_none());
         assert_eq!(Tool::Spline.shortcut().label(), "N");
         assert_eq!(Shortcut::HANDLES.label(), "Shift H");
@@ -1125,7 +1193,7 @@ mod tests {
     #[test]
     fn handles_wait_for_the_drawing_tool() {
         // Fit points selected while the Spline tool (or any drawing
-        // tool) is drawing: Shift H is the tool's, as Q is, not theirs.
+        // tool) is drawing: Shift H is the tool's, as Z is, not theirs.
         let drawing = DocumentKeys {
             sketching: true,
             drawing: true,

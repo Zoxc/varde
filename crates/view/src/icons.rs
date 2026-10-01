@@ -101,6 +101,15 @@ icons! {
     Convert => r#"<path d="M4 8h14l-3-3M20 16H6l3 3"/>"#,
     Handles => r#"<path d="M3 19c3-8 8-12 18-13"/><path d="M4.5 9.5l10 4"/><circle cx="4.5" cy="9.5" r="1.5"/><circle cx="14.5" cy="13.5" r="1.5"/>"#,
     Comb => r#"<path d="M3 18c4-9 14-9 18 0"/><path d="M6.5 13.4L5 9.5M12 11.3V6.5M17.5 13.4L19 9.5"/>"#,
+    // The tool sets on the rail, the mock's `cat-*`: what each leaves
+    // behind.
+    CatCreate => r#"<path class="r" d="M5 17.5a7 3 0 0 1 14 0" stroke-dasharray="1.6 1.8"/><path d="M5 6.5v11a7 3 0 0 0 14 0v-11"/><ellipse class="a" cx="12" cy="6.5" rx="7" ry="3"/>"#,
+    CatDraw => r#"<path d="M5 20V10a7 7 0 0 1 14 0v10z"/><circle class="af" cx="5" cy="20" r="1.5"/><circle class="af" cx="19" cy="20" r="1.5"/><circle class="af" cx="12" cy="3" r="1.5"/>"#,
+    CatSketchModify => r#"<path d="M2.5 9H15v12.5"/><path class="r" d="M19.5 9h2"/><path class="a" d="M17.25 5.5v7"/>"#,
+    // The mock's group turned, each element turned instead, as an icon
+    // is a list of empty tags.
+    CatConstrain => r#"<rect transform="rotate(-18 12 12)" x="5" y="6" width="14" height="12" rx=".5"/><path class="a" transform="rotate(-18 12 12)" d="M5 13.5h4.5V18"/><circle class="af" transform="rotate(-18 12 12)" cx="19" cy="6" r="1.5"/>"#,
+    CatDimension => r#"<rect x="3.5" y="13" width="17" height="7.5" rx="1"/><path class="r" d="M3.5 4.5v6.5M20.5 4.5v6.5"/><path class="a" d="M4.5 7.5h15M7 5.5l-2.5 2 2.5 2M17 5.5l2.5 2-2.5 2"/>"#,
     // Nothing: room for an icon, beside items that have one.
     Blank => "",
 }
@@ -122,8 +131,11 @@ impl Icon {
             | Icon::Chamfer
             | Icon::Convert
             | Icon::Handles
-            | Icon::Comb => IconCategory::Sketch,
-            Icon::Trim | Icon::Extend | Icon::Mirror | Icon::Offset => IconCategory::Modify,
+            | Icon::Comb
+            | Icon::CatDraw => IconCategory::Sketch,
+            Icon::Trim | Icon::Extend | Icon::Mirror | Icon::Offset | Icon::CatSketchModify => {
+                IconCategory::Modify
+            }
             Icon::Constrain
             | Icon::Coincident
             | Icon::Horizontal
@@ -137,9 +149,10 @@ impl Icon {
             | Icon::Midpoint
             | Icon::Symmetric
             | Icon::Fix
-            | Icon::OffsetConstraint => IconCategory::Constraint,
-            Icon::Dimension => IconCategory::Dimension,
-            Icon::Body | Icon::Extrude => IconCategory::Solid,
+            | Icon::OffsetConstraint
+            | Icon::CatConstrain => IconCategory::Constraint,
+            Icon::Dimension | Icon::CatDimension => IconCategory::Dimension,
+            Icon::Body | Icon::Extrude | Icon::CatCreate => IconCategory::Solid,
             Icon::Plane => IconCategory::Construction,
             _ => return None,
         })

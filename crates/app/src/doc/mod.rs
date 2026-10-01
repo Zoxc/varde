@@ -5,6 +5,7 @@ mod camera;
 mod delete;
 mod extrude;
 mod feed;
+mod rail;
 mod save;
 mod sketch;
 
@@ -33,6 +34,7 @@ pub(crate) use camera::{PIVOT_FADE, PIVOT_SHOWN};
 use delete::Deleting;
 pub(crate) use extrude::ExtrudeSession;
 use feed::MeshFeed;
+use rail::Rail;
 use save::Persist;
 #[cfg(test)]
 pub(crate) use save::{AutoSave, Picking};
@@ -103,6 +105,8 @@ pub(crate) struct Doc {
     /// Whether the cursor is over the view cube, where the pivot is
     /// marked.
     cube_hovered: bool,
+    /// The tool rail's open set.
+    pub(crate) rail: Rail,
     /// Saving and leaving it, see [`Persist`].
     persist: Persist,
 }
@@ -206,6 +210,7 @@ impl Doc {
             animation: None,
             pivot: None,
             cube_hovered: false,
+            rail: Rail::default(),
         };
         doc.sync();
         doc
@@ -243,10 +248,10 @@ impl Doc {
         self.feed.request_with(&self.editor, exclude, draft);
     }
 
-    /// Whether the camera is turning to a new view, or the pivot's marker
-    /// fading.
+    /// Whether the camera is turning to a new view, the pivot's marker
+    /// fading, or the rail's list waiting to close.
     pub(crate) fn animating(&self) -> bool {
-        self.animation.is_some() || self.pivot_fading()
+        self.animation.is_some() || self.pivot_fading() || self.rail.closing()
     }
 
     /// Whether the document may be edited, and so saved.
@@ -291,6 +296,10 @@ impl Doc {
             && self.drawing_field().is_some();
         if !(placing || matches!(message, Edit::SubmitValue | Edit::DropLabel)) {
             self.close_value();
+        }
+        // Picked from the rail's list, or not: the list has done its job.
+        if matches!(message, Edit::Constrain(_)) {
+            self.rail.close();
         }
         match message {
             Edit::ToggleFileMenu => self.file_menu = !self.file_menu,
@@ -418,6 +427,17 @@ impl Doc {
         ) {
             self.close_value();
         }
+        // Picking a tool, from the rail's list or not, closes the list.
+        if matches!(
+            message,
+            Look::SelectTool(_)
+                | Look::ToggleConstrain
+                | Look::PickPlane
+                | Look::StartExtrude
+                | Look::EditFeature(_)
+        ) {
+            self.rail.close();
+        }
         match message {
             Look::CloseFileMenu => self.file_menu = false,
             Look::ToggleViewMenu => self.view_menu = !self.view_menu,
@@ -522,6 +542,7 @@ impl Doc {
             }
             Look::SetPivot(at) => self.set_pivot(at, Instant::now()),
             Look::HoverCube(over) => self.hover_cube(over, Instant::now()),
+            Look::Rail(message) => self.rail_look(message, Instant::now()),
             Look::SetProjection(projection) => {
                 self.view_menu = false;
                 self.camera.set_projection(projection);
@@ -569,6 +590,7 @@ impl Doc {
         self.dialog().is_none().then(|| {
             DocumentKeys::new(self.editable(), self.selected_feature, self.sketch_state())
                 .with_extrude(self.extrudable(), self.extrude_state().as_ref())
+                .with_rail(self.rail.state())
         })
     }
 
@@ -659,6 +681,7 @@ impl Doc {
             merged: self.feed.merged_bodies(),
             deleting: self.delete_prompt(),
             proposing: self.proposing(),
+            rail: self.rail.state(),
         })
     }
 }

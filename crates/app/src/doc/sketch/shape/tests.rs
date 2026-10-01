@@ -97,7 +97,7 @@ fn mirror_takes_the_selection_then_the_line() {
         hit: Some(slanted),
         add: false,
     });
-    doc.key(letter("w"));
+    doc.shift_key("m");
     let tool = drawing(&doc).unwrap();
     assert_eq!((tool.tool, tool.about), (Tool::Mirror, true));
     assert_eq!(tool.picked, [slanted]);
@@ -457,7 +457,7 @@ fn chamfer_cuts_as_far_as_typed_along_each_or_at_an_angle() {
         hit: Some(top),
         add: true,
     });
-    doc.key(letter("b"));
+    doc.shift_key("b");
     assert_eq!(
         drawing(&doc).map(|drawing| drawing.tool),
         Some(Tool::Chamfer)

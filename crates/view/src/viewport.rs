@@ -44,8 +44,9 @@ const CLICK_SLOP: f32 = 3.0;
 /// `camera`, with the controls over its top-right corner, and in a sketch
 /// the sketch being edited, with the layer of widgets anchored to it, or
 /// setting up an extrude, its regions and handle, and `panel`, floating
-/// over the viewport's right under the controls. `pivot`, the point the
-/// camera orbits if one was picked, is marked.
+/// over the viewport's right under the controls, and the tool `rail`
+/// over its left. `pivot`, the point the camera orbits if one was picked,
+/// is marked.
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn viewport<'a>(
     mesh: &Arc<RenderMesh>,
@@ -56,6 +57,7 @@ pub(crate) fn viewport<'a>(
     sketching: Option<Sketching<'a>>,
     extruding: Option<Extruding<'a>>,
     panel: Option<Element<'a, Message>>,
+    rail: Element<'a, Message>,
 ) -> Element<'a, Message> {
     // Constraint glyphs, nudged apart; dimensions' labels, where they're
     // put; the value field, in a layer of its own so its state stays its
@@ -100,6 +102,7 @@ pub(crate) fn viewport<'a>(
     stack![scene]
         .extend(anchors.into_iter().flatten())
         .extend(knobs)
+        .push(rail)
         .push(controls)
         .extend(panel)
         .into()

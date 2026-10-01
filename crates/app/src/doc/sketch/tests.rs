@@ -54,6 +54,16 @@ impl Answered {
         key_in(&mut self.doc, key);
         self.lane.answer(&mut self.doc);
     }
+
+    /// Presses the letter `key` with Shift, sending what it sends.
+    pub(super) fn shift_key(&mut self, key: &str) {
+        let press = crate::tests::press(letter(key), keyboard::Modifiers::SHIFT);
+        match crate::keys::document_key((self.doc.keys(), press)) {
+            Some(crate::Message::Ui(varde_view::Message::Edit(edit))) => self.update(edit),
+            Some(crate::Message::Ui(varde_view::Message::Look(look))) => self.look(look),
+            other => panic!("{key}: {other:?}"),
+        }
+    }
 }
 
 /// A document with an empty sketch on XY being edited, whose solver lane

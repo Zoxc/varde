@@ -879,3 +879,60 @@ fn shots_16_pivot() {
         camera.take(&doc, "16-pivot-on-origin", Shot::new());
     });
 }
+
+/// Scenario 17: the tool rail, outside a sketch and in one, its cards
+/// showing as many tools as fit in a tall and a short window, with a
+/// set's list open, a tool's tooltip, and a list taller than a short
+/// window.
+#[test]
+#[ignore = "writes screenshots, see the module"]
+fn shots_17_rail() {
+    shooting(|camera| {
+        let (mut doc, _requests) = example();
+        framed(&mut doc);
+        camera.take(&doc, "17-rail-model", Shot::new());
+        doc.look(Look::Rail(varde_view::RailLook::Open(0)));
+        camera.take(&doc, "17-rail-model-create", Shot::new());
+        camera.take(&doc, "17-rail-model-create-dark", Shot::new().dark());
+
+        let sketch = doc.editor.document().features()[0].id;
+        doc.look(Look::EditFeature(sketch));
+        doc.animation_frame(Instant::now() + crate::doc::CAMERA_ANIMATION);
+        doc.look(Look::SelectTool(varde_view::Tool::Line));
+        camera.take(&doc, "17-rail-sketch", Shot::new());
+        // As many tools as fit, shared evenly between the sets.
+        camera.take(
+            &doc,
+            "17-rail-sketch-tall",
+            Shot::new().size(1280.0, 1100.0),
+        );
+        camera.take(
+            &doc,
+            "17-rail-sketch-short",
+            Shot::new().size(1024.0, 420.0),
+        );
+        // Over the first tool of the first card, Line.
+        let line = Point::new(varde_view::SIDE_PANEL_WIDTH + 6.0 + 24.0, 40.0 + 6.0 + 50.0);
+        camera.take(
+            &doc,
+            "17-rail-sketch-tip",
+            Shot::new().pointer(Pointer::At(line)),
+        );
+        doc.look(Look::Rail(varde_view::RailLook::Open(2)));
+        camera.take(&doc, "17-rail-sketch-constraints", Shot::new());
+        // The keys moved down two rows.
+        doc.look(Look::Rail(varde_view::RailLook::Down));
+        doc.look(Look::Rail(varde_view::RailLook::Down));
+        camera.take(&doc, "17-rail-sketch-constraints-row", Shot::new());
+        camera.take(
+            &doc,
+            "17-rail-sketch-constraints-short",
+            Shot::new().size(1024.0, 420.0),
+        );
+        camera.take(
+            &doc,
+            "17-rail-sketch-constraints-scale2-dark",
+            Shot::new().scale(2.0).dark(),
+        );
+    });
+}

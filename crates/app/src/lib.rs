@@ -161,8 +161,13 @@ impl Varde {
         let task = self.handle(message);
         // A value field opened, or a value refused, has the field take the
         // focus once it shows.
-        match self.screen.doc_mut().and_then(Doc::take_focus) {
+        let task = match self.screen.doc_mut().and_then(Doc::take_focus) {
             Some(focus) => Task::batch([task, focus_field(focus)]),
+            None => task,
+        };
+        // The rail's list scrolled to show the row the keys moved to.
+        match self.screen.doc_mut().and_then(|doc| doc.rail.take_scroll()) {
+            Some(share) => Task::batch([task, scroll_rail(share)]),
             None => task,
         }
     }
@@ -242,6 +247,7 @@ impl Varde {
             Message::AnimationFrame(now) => self.with_doc(|doc, _| {
                 doc.animation_frame(now);
                 doc.tick(now);
+                doc.rail.tick(now);
             }),
         }
         Task::none()
@@ -646,6 +652,17 @@ fn focus_field(focus: Focus) -> Task<Message> {
             varde_view::PANEL_BODY,
             RelativeOffset::START,
         ))
+}
+
+/// Scrolls the rail's open list to `share` of the way to its end.
+fn scroll_rail(share: f32) -> Task<Message> {
+    use iced::widget::operation::{self, RelativeOffset};
+
+    let offset = RelativeOffset {
+        x: None,
+        y: Some(share),
+    };
+    operation::snap_to(varde_view::RAIL_LIST, offset)
 }
 
 /// Asks the user for a design to open, answering with

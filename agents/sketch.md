@@ -887,7 +887,7 @@ bar says why (`EditError::Sketch`).
   revision (`Analyses`). It colours the sketch, gives the status bar
   "Fully constrained", "N degrees of freedom left", "Doesn't solve" or
   "Over-constrained", and marks conflicts red in the lists and viewport.
-- **Tools** (`Tool` in `varde-view`, keys `L`, `R`, `C`, `A`, `G`, `N`,
+- **Tools** (`Tool` in `varde-view`, keys `L`, `B`, `C`, `A`, `G`, `N`,
   `P`, and `D` for the Dimension tool under Dimensions, or the toolbar): the
   viewport sends a `ToolClick` per press, with the sketch point snapped (see Snapping
   below) and what it snapped to (`target`, `inference`), the point or
@@ -902,7 +902,7 @@ bar says why (`EditError::Sketch`).
   - Circle: centre, then a point on it.
   - Arc: start, end, then a point on it; stored counter-clockwise with its
     centre computed (`arc_through`).
-  - Rectangle: two opposite corners, or with `Drawing::centered` (`Q`,
+  - Rectangle: two opposite corners, or with `Drawing::centered` (`Z`,
     `Look::ToggleCentered`, kept while the tool is, shown in the toolbar's
     tag) the centre and a corner. Four lines sharing four corners, with
     `Horizontal`, `Vertical`, `Horizontal`, `Vertical` constraints (real
@@ -927,15 +927,15 @@ bar says why (`EditError::Sketch`).
     it open where it is. The spline is an `Add` of its points placed as
     any shape's (`place`: a point of the sketch's its own, else a new one
     with the snap's `auto` ties) and the curve, by control points with
-    `control_knots` of the places. `Q` (`Look::ToggleSplineKind`,
+    `control_knots` of the places. `Z` (`Look::ToggleSplineKind`,
     `Drawing::control`, kept from one spline to the next, shown in the
     toolbar's tag) switches between through fit points and by control
     points, the points placed kept. The preview (`typed::outline`'s
     `Outline::Spline`) is the spline through the points placed and the
     cursor (`flatten_spline`), straight between them while too few, with
     its control polygon dashed by control points. It has no fields.
-  - Trim (`T`), Extend (`J`), Offset (`O`), Mirror (`W`), Fillet (`F`) and
-    Chamfer (`B`), the shape tools
+  - Trim (`T`), Extend (`J`), Offset (`O`), Mirror (`Shift M`), Fillet
+    (`F`) and Chamfer (`Shift B`), the shape tools
     (`doc/sketch/shape.rs`, `Doc::shape_click`), don't snap (`Tool::draws`
     is false) and click what's under the cursor (`ToolClick::hit`): Trim
     proposes `Trim` of the curve clicked there, Extend `Extend` of the end
@@ -946,8 +946,8 @@ bar says why (`EditError::Sketch`).
     again, and `Enter` (`Look::MirrorAbout`, one binding with `PlaceShape`
     as a drawing tool's fields never go with it) goes on to the line. The
     click on a line or axis proposes `Mirror` and starts it afresh. `Esc`
-    lets go of the picks first. Extend is `J` and Mirror `W`: `E` is
-    Equal's and `M` Midpoint's, and those are free letters. Offset, Fillet
+    lets go of the picks first. Extend is `J` and Mirror `Shift M`: `E` and
+    `W` open the rail's sets and `M` is Midpoint's, and `J` is free. Offset, Fillet
     and Chamfer pick, then place (`Tool::places`): a click picks
     (`Tool::pick`, into `Drawing::picked`), and once picked, a click
     places what they make of it (`Doc::placed`), drawn through the cursor
@@ -975,7 +975,8 @@ bar says why (`EditError::Sketch`).
     `Radius`; the chamfer's `Distance` along its first line, then
     `SecondDistance` or `Angle` (one typed lets go of the other,
     `typed::setback`), less than a pixel being no size meant. It then
-    starts afresh. `B` for Chamfer: `C` is the Circle tool's.
+    starts afresh. `Shift B` for Chamfer (bevel): `C` is the Circle tool's, `B` the
+    Rectangle tool's (a box: `R` opens the rail's fourth set).
 
   The shapes are worked out by `varde_view::typed::outline`, which the
   viewport's preview draws too, so what's shown is what's placed.
@@ -1042,7 +1043,7 @@ bar says why (`EditError::Sketch`).
   step. The snap's glyph shows only what the values typed leave of the
   snap.
 - **Splines** (`doc/sketch/spline.rs`, what's done to them pure in
-  `varde_view::spline`): `Q` with splines selected and no drawing tool
+  `varde_view::spline`): `Z` with splines selected and no drawing tool
   (`Edit::ConvertSplines`, one `switch_binding` with the Rectangle
   tool's and the Spline tool's, as they never go together) proposes a
   `Convert` to the other kind for each (`spline::conversions`), a
@@ -1085,11 +1086,11 @@ bar says why (`EditError::Sketch`).
   from `Sketch::tangent`; nothing naming a curve's own point), proposed as
   one `SketchEdit::constrain`. Keys: Coincident `I`, Horizontal `H`,
   Vertical `V`, Parallel `Shift P`, Perpendicular `Shift R`, Tangent
-  `Shift T`, Smooth `Shift S`, Equal `E`, Concentric `Shift C`, Midpoint
+  `Shift T`, Smooth `Shift S`, Equal `Shift E`, Concentric `Shift C`, Midpoint
   `M`, Symmetric `Y`, Fix `Shift F`, bound only while they fit
-  (`DocumentKeys::constraints`); Shift where a tool has, or will have, the
-  letter (Trim `T`, Fillet `F`, Point `P`, Circle `C`, Rectangle `R`, New
-  sketch `S`). A spline takes a point on it (Coincident), a tangent or a
+  (`DocumentKeys::constraints`); Shift where a tool or the rail's sets
+  have the letter (Trim `T`, Fillet `F`, Point `P`, Circle `C`, New
+  sketch `S`, the sets `E` and `R`). A spline takes a point on it (Coincident), a tangent or a
   smooth join at an end (`Sketch::joint`) and a fix; with a spline
   selected nothing else is offered. The Constrain tool (`K`,
   `SketchSession::constraining`, never with a drawing tool) lists in the
@@ -1098,6 +1099,36 @@ bar says why (`EditError::Sketch`).
   horizontal or vertical, parallel or perpendicular, concentric or not,
   the one the geometry is nearer to; applying one clears the selection.
   `Esc` puts it down.
+- **The tool rail** (`varde-view`'s `rail.rs`, the app's `doc/rail.rs`):
+  the same tools in sets, over the viewport's left (see
+  `agents/viewport.md`). In a sketch: Draw (the drawing tools), Modify
+  (Trim to Chamfer), Constraints (the Constrain tool, then every kind with
+  a key) and Dimension; outside one: Create (Sketch, Extrude); a set
+  with nothing the app has yet isn't shown. An entry sends what the
+  toolbar's button does (its binding, `Entry::binding`), enabled where
+  that is. The top row's letters, `Q`, `W`, `E`, `R`, ... (`rail::SET_KEYS`),
+  open the mode's sets' lists, or close the one open (`RailLook::Toggle`,
+  last in `document_bindings`): no tool has one of them (so the Rectangle
+  tool is `B`, Chamfer `Shift B`, Mirror `Shift M`, Equal `Shift E`, the
+  Rectangle's and Spline's switch `Z`), and outside a sketch, with one
+  set, only `Q` does, so `E` is still Extrude; while one is open
+  (`DocumentKeys::rail`, `Doc::rail`), its letters come before every other
+  binding (`rail::letter_bindings`), and claim their key even while their
+  tool can't be used (`Binding::claiming`), so a constraint that doesn't
+  fit does nothing rather than take up the tool with its letter. A letter
+  is the tool's own key where that's a letter alone (Line is `L` there
+  too), else the first free one of its key's letter (Shift dropped:
+  Parallel is `P`) and its label's, never a set's key, so another set
+  opens from an open list (Equal is `U`), all from `rail::letters`, which
+  the list's letters show. The keys are on a row of the open list (`RailOpen::row`, the
+  first as a set opens): `Up` and `Down` move them, round from one end
+  to the other (`RailLook::Up`, `Down`), and `Enter` picks it, claimed
+  like the letters, so it doesn't edit the feature selected or commit an
+  extrude while the list is open. Picking a tool, from the list or not (`SelectTool`,
+  `ToggleConstrain`, `Constrain`, `PickPlane`, `StartExtrude`,
+  `EditFeature`), closes the list; so does `Esc`, first in the backing-out
+  chain, and entering or leaving a sketch, whose sets differ. A focused
+  field takes letters as text.
 - **Selection**: a click selects what it hits alone, or nothing;
   `Ctrl`-click (`Cmd` on macOS) adds or takes out. A box selects what's
   inside it dragged left to right, what it touches right to left, `Ctrl`

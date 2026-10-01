@@ -148,12 +148,12 @@ fn enter_ends_the_spline_and_its_first_point_closes_it() {
 }
 
 #[test]
-fn q_switches_the_spline_tool_to_control_points() {
+fn z_switches_the_spline_tool_to_control_points() {
     let (mut doc, _, _) = sketching();
     let before = sketch(&doc).clone();
     doc.key(letter("n"));
     click(&mut doc, 0.0, 0.0);
-    doc.key(letter("q"));
+    doc.key(letter("z"));
     assert!(drawing(&doc).unwrap().control);
     assert_eq!(drawing(&doc).unwrap().placed.len(), 1);
     for (x, y) in [(4.0, 6.0), (10.0, 6.0)] {
@@ -175,7 +175,7 @@ fn q_switches_the_spline_tool_to_control_points() {
     // Kept for the next.
     assert!(drawing(&doc).unwrap().control);
     assert_eq!(undo_to(&mut doc, &before), 1);
-    doc.key(letter("q"));
+    doc.key(letter("z"));
     assert!(!drawing(&doc).unwrap().control);
 }
 
@@ -274,18 +274,18 @@ fn a_double_click_on_a_spline_adds_a_point_and_delete_takes_one() {
 }
 
 #[test]
-fn q_converts_the_splines_selected_and_back() {
+fn z_converts_the_splines_selected_and_back() {
     let (mut doc, _, _) = sketching();
     let id = draw_wave(&mut doc);
     let before = sketch(&doc).clone();
-    // Nothing selected, Q does nothing.
-    assert!(crate::tests::press_in(&doc, letter("q")).is_none());
+    // Nothing selected, Z does nothing.
+    assert!(crate::tests::press_in(&doc, letter("z")).is_none());
     select(&mut doc, id);
-    doc.key(letter("q"));
+    doc.key(letter("z"));
     assert_eq!(sketch(&doc).spline(id).unwrap().kind, SplineKind::Control);
     let converted = sketch(&doc).clone();
     select(&mut doc, id);
-    doc.key(letter("q"));
+    doc.key(letter("z"));
     let back = sketch(&doc).clone();
     assert_eq!(back.spline(id).unwrap().kind, SplineKind::Through);
     // Through its places at its knots, the fit points it had.

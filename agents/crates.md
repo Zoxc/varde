@@ -65,6 +65,11 @@ Other icons (file, undo, eye, ...) are from `notes/ui-mock.html` and drawn
 in the text colour. The tools the icon mock lacks (the offset constraint,
 Convert, Handles, Comb) keep their own one-layer drawings, in their
 category's line colour; so does the Body icon.
+The tool rail's sets have category icons (`Icon::Cat*`), the mock's
+`cat-*` drawings ("Line · Results"), in the same three layers and filed
+under their set's category: Create with Solid, the sketch's Modify with
+Modify, and so on; the mock's group turned for Constraints is turned per
+element, as an icon is a list of empty tags.
 
 ## Roadmap by crate
 

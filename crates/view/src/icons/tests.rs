@@ -7,7 +7,7 @@ use crate::toolbar::tool_icon;
 use crate::{ConstraintKind, Message, Mode, Tool};
 
 /// The icons drawn from the icon mock, with accents.
-const FROM_MOCK: [Icon; 30] = [
+const FROM_MOCK: [Icon; 35] = [
     Icon::Sketch,
     Icon::Extrude,
     Icon::Plane,
@@ -38,6 +38,11 @@ const FROM_MOCK: [Icon; 30] = [
     Icon::Offset,
     Icon::Fillet,
     Icon::Chamfer,
+    Icon::CatCreate,
+    Icon::CatDraw,
+    Icon::CatSketchModify,
+    Icon::CatConstrain,
+    Icon::CatDimension,
 ];
 
 #[test]

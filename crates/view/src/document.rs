@@ -100,6 +100,9 @@ pub struct DocumentState<'a> {
     /// Whether edits are waiting on the solver: undo drops the newest
     /// of them, and redo is off.
     pub proposing: bool,
+    /// The rail's tool set whose list is open, if one is, and the row of
+    /// it the keys are on.
+    pub rail: Option<crate::RailOpen>,
 }
 
 impl DocumentState<'_> {
@@ -112,6 +115,7 @@ impl DocumentState<'_> {
     pub(crate) fn keys(&self) -> DocumentKeys {
         DocumentKeys::new(self.editable(), self.selected_feature, self.sketch)
             .with_extrude(self.extrudable, self.extrude.as_ref())
+            .with_rail(self.rail)
     }
 }
 
@@ -513,6 +517,7 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
                             .map(|sketch| viewport::Sketching::new(sketch, editable)),
                         state.extrude.clone().map(viewport::Extruding::new),
                         state.extrude.as_ref().map(crate::extrude::panel),
+                        crate::rail::rail(&state),
                     ),
                     status::status_bar(status(&state)),
                 ],

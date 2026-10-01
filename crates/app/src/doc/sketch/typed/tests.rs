@@ -232,7 +232,7 @@ fn escape_closes_the_field_then_drops_the_values_with_the_shape() {
 #[test]
 fn a_rectangle_comes_with_shared_corners_held_level_and_upright() {
     let (mut doc, _, _) = sketching();
-    doc.key(keyboard::Key::Character("r".into()));
+    doc.key(keyboard::Key::Character("b".into()));
     assert_eq!(drawing(&doc).unwrap().tool, Tool::Rectangle);
     click(&mut doc, 1.0, 1.0);
     // Too flat a rectangle is refused.
@@ -311,7 +311,7 @@ fn a_rectangle_s_width_and_height_typed_are_its_dimensions() {
 fn a_rectangle_from_its_centre_has_the_centre_on_a_construction_diagonal() {
     let (mut doc, _, _) = sketching();
     doc.look(Look::SelectTool(Tool::Rectangle));
-    doc.key(keyboard::Key::Character("q".into()));
+    doc.key(keyboard::Key::Character("z".into()));
     assert!(drawing(&doc).unwrap().centered);
     // Snapped to the origin, the centre is held there.
     click_on(&mut doc, 0.0, 0.0, Some(Id::ORIGIN));
@@ -343,7 +343,7 @@ fn a_rectangle_from_its_centre_has_the_centre_on_a_construction_diagonal() {
             .redundant
             .is_empty()
     );
-    // Still from the centre, until Q again.
+    // Still from the centre, until Z again.
     assert!(drawing(&doc).unwrap().centered);
     doc.look(Look::ToggleCentered);
     assert!(!drawing(&doc).unwrap().centered);

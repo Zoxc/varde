@@ -28,6 +28,7 @@ reopen a recent file, or recover unsaved changes left by a crash.
 | look from a side, or Home   | click a face of the view cube, or the house under it |
 | perspective or orthographic | the `…` at the status bar's right, which also turns the mouse's hints off or on |
 | peek at the other side tab  | hold `Alt` (`Option` on macOS)             |
+| tool rail                   | the cards at the view's left hold the tools in sets; point at a card's top (or click it, or press its key: `Q`, `W`, `E`, `R` from the top) to list its set, then click a tool, press the letter beside it, or move with `↑` `↓` and press `Enter`; `Esc` closes the list. The cards show as many of their tools as fit |
 | new sketch                  | `S`, then pick the XY, XZ or YZ plane      |
 | edit a sketch               | double-click it in the Timeline, or select it and press `Enter` |
 | delete a feature            | select it in the Timeline and press `Delete`; if other features use it, a prompt lists everything that goes with it first (`Esc` cancels) |
@@ -35,19 +36,19 @@ reopen a recent file, or recover unsaved changes left by a crash.
 | extrude                     | `E` (with a sketch selected in the Timeline, its regions), click the regions to extrude (again to take one out), then drag the arrow's knob or type the distance in the panel; `Enter` or OK adds it, `Esc` cancels |
 | join, cut, intersect        | in the extrude panel, under Operation; it works on every body it touches, listed under Bodies, where unticking one leaves it alone (a join touching several bodies merges them into the first made, and the panel says so: "Joined into Body 1"; Objects still lists the others, marked "in Body 1", and they show and hide with it); a cut or intersect that would leave nothing of a body fails, and unticking that body gets past it; only a cut can go Through all |
 | edit an extrude             | double-click it in the Timeline, or select it and press `Enter`; an extrude that fails shows red there, and hovering it says why |
-| draw in a sketch            | `L` line, `R` rectangle, `C` circle, `A` arc, `G` polygon, `N` spline, `P` point, then click; `Esc` stops; clicks snap (see below), hold `Shift` not to; `Tab` to type sizes (see below) |
+| draw in a sketch            | `L` line, `B` rectangle, `C` circle, `A` arc, `G` polygon, `N` spline, `P` point, then click; `Esc` stops; clicks snap (see below), hold `Shift` not to; `Tab` to type sizes (see below) |
 | line tool                   | click point after point; click the first point to close the loop, `Esc` or double-click to end; clicking a point already there joins it |
-| rectangle                   | two opposite corners, or with `Q` the centre and a corner (`Q` again goes back); it comes held level and upright |
+| rectangle                   | two opposite corners, or with `Z` the centre and a corner (`Z` again goes back); it comes held level and upright |
 | circle / arc                | centre, then a point on it / start, end, then a point on it |
 | polygon                     | centre, then a corner; six sides until you type how many (`Tab`); its sides are held equal, its corners on a construction circle |
-| spline                      | click the points it passes through; double-click or `Enter` ends it, clicking its first point closes it; `Q` switches to placing control points, which it's pulled towards (see Splines below) |
+| spline                      | click the points it passes through; double-click or `Enter` ends it, clicking its first point closes it; `Z` switches to placing control points, which it's pulled towards (see Splines below) |
 | select in a sketch          | click, `Ctrl` click to add (`Cmd` on macOS), drag a box: left to right for what's inside, right to left for what it touches |
 | clear the selection         | `Space`                                    |
 | move geometry               | drag it: a point, a line or a spline moves, a circle or arc edge changes its radius, and the rest follows as the constraints demand; `Esc` puts it back |
 | delete / construction       | `Delete` / `X` on the selection (`X` with a tool: its next shapes) |
 | constrain the selection     | its key (below), or `K` for the Constrain tool, which lists what fits |
 | dimension                   | `D`, then click what to measure and click where the label goes; type the value, `Enter` (see below) |
-| trim / extend / offset / mirror / fillet / chamfer | `T` / `J` / `O` / `W` / `F` / `B` (see Changing shapes below) |
+| trim / extend / offset / mirror / fillet / chamfer | `T` / `J` / `O` / `Shift M` / `F` / `Shift B` (see Changing shapes below) |
 | leave a sketch              | `Esc`, or Finish sketch                    |
 | save / save as              | `Ctrl S` / `Ctrl Shift S` (`Cmd` on macOS) |
 | close the file menu         | `Esc`                                      |
@@ -83,9 +84,9 @@ Spline tool (`N`) places a point per click, snapping as other tools do, and
 shows the curve through them to the cursor; a double-click or `Enter` ends
 it, clicking its first point again closes it into a loop (a profile of its
 own), and `Esc` starts it afresh. It draws through the points clicked (fit
-points) until `Q` switches it to control points, which the curve is pulled
+points) until `Z` switches it to control points, which the curve is pulled
 towards without touching, but at its ends: a fairer curve, four points at
-least. `Q` switches back, and the tool keeps the kind for the next spline.
+least. `Z` switches back, and the tool keeps the kind for the next spline.
 
 - **Shaping.** Drag any of its points. Select a spline and dashed handles
   at its ends show which way it leaves them; `Shift H` makes them real
@@ -98,7 +99,7 @@ least. `Q` switches back, and the tool keeps the kind for the next spline.
   fit point there, or by control points one more control point, the curve
   just as it was. `Delete` removes points; the curve stays smooth through
   the rest, and a spline with too few left goes.
-- **Converting.** With splines selected, `Q` switches them between fit
+- **Converting.** With splines selected, `Z` switches them between fit
   points and control points, keeping the shape: exactly to control points,
   through the same places back, straying a little between.
 - **Control points** of a selected spline show as a dashed polygon.
@@ -142,7 +143,7 @@ selected, the most likely first.
 | Perpendicular | `Shift R` | two lines |
 | Tangent       | `Shift T` | a line, circle or arc and a circle or arc, or a spline's end and a line, circle, arc or spline |
 | Smooth        | `Shift S` | a spline's end and a line, circle, arc or spline: tangent, and curving alike |
-| Equal         | `E`       | two or more lines, or two or more circles and arcs |
+| Equal         | `Shift E` | two or more lines, or two or more circles and arcs |
 | Concentric    | `Shift C` | circles and arcs, or a point and a circle or arc |
 | Midpoint      | `M`       | a point and a line |
 | Symmetric     | `Y`       | two points and the line they mirror about |
@@ -242,7 +243,7 @@ label shows the current value, selected: type over it and press `Enter`, or
   as the first by an Offset constraint. An open chain's copy can slide
   along at its two ends. Offsetting a loop inwards past its middle leaves
   nothing, and the status bar says so.
-- **Mirror** (`W`): select what to mirror first, or click it with the tool
+- **Mirror** (`Shift M`): select what to mirror first, or click it with the tool
   (a second click takes it out) and press `Enter`; then click the line to
   mirror about, a sketch line or an axis. The copies are held symmetric to
   the originals, so they follow them; points on the line are shared. A
@@ -252,7 +253,7 @@ label shows the current value, selected: type over it and press `Enter`, or
   middle where you let go, shown as you move. Or press `Tab`, type the
   radius and `Enter`. It's held by a radius dimension you can change
   later.
-- **Chamfer** (`B`): click a corner where two lines meet, then click how
+- **Chamfer** (`Shift B`): click a corner where two lines meet, then click how
   far in the cut goes: a line across it, as far back along both lines.
   Or press `Tab` and type the distance along the line nearer where you
   clicked the corner, then, if the cut isn't as far along both, `Tab` to

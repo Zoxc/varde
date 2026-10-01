@@ -12,6 +12,49 @@ viewport; the cube's `mouse_area` only says when the cursor enters or
 leaves it, `Look::HoverCube`). Neither takes events off its widgets, so
 they reach the scene.
 
+The tool rail (`rail.rs`) floats over the viewport's left edge: a card
+per tool set of the mode (see "The tool rail" in `agents/sketch.md`), 48
+px wide, 6 px in from the viewport's left and top and apart, each a head
+with the set's icon (`theme::rail_head`, highlighted on hover and while
+its set is open) over a recessed strip of its first tools, as many as
+fit (`theme::rail_strip`; behind the strip's rounded top corners the head's
+highlight shows while open, `rail_strip_backing`), each with an instant
+tooltip at its right (`chrome::side_tip`) of its name and key. The open
+set's list (230 px, `theme::rail_list` inside `rail_list_band`, whose
+colour, the set's category's, shows as a 3 px band along its top) is
+6 px right of the cards, its top level with its card's, moved up as far
+as it must to stay clear of the status bar (`STATUS_BAR_ROOM` and 6 px),
+and scrolled if it's taller than the room. Both are one layer of the
+viewport's stack, above the anchored widgets and the knobs and under the
+controls and the operation panel (the tooltips are overlays, over all
+of them), a `Rail` widget that places them like `operation_panel::placed`
+and takes only what's over them: each card and the list are a
+`mouse_area` with the `Idle` interaction, so clicks between and below
+cards reach the scene and those on a card's border or the list's
+padding don't. A press anywhere but on the cards and the list, the side
+panel and toolbar included, sends `RailLook::Close` and goes on to what's
+there. The head's and the list's `mouse_area`s say when the cursor comes
+over or leaves them, and the tools' when it comes over them
+(`RailLook::Hover`); the app (`doc/rail.rs`) opens a head's set as the
+cursor comes over it, closes the list at once over a tool on a card, and
+once the cursor has left the head or the list it was over, closes it
+after `RAIL_CLOSE_DELAY` (250 ms) unless it's over one again by then,
+which the frames subscription runs for (`Doc::animating`). Which spot
+the cursor is over is kept by the spot, so an enter and the leave
+before it can come in either order. The layer is `responsive`: from the
+viewport's height, clear of the status bar like the list, `rail::fitting`
+works out how many tools each card shows, adding them one at a time to
+the set showing the fewest that has more (the first of those) until the
+next doesn't fit, so the room is shared evenly; a set showing all its
+tools leaves the room to the rest. Heads always show: a rail too tall
+even without tools runs past the viewport's bottom. The open list
+highlights the row the keys are on (`theme::rail_row`, as on hover, and
+on a disabled row too); the cursor coming over a row puts the keys there
+(`RailLook::Row`), so one row shows highlighted. Its rows' scrollable is
+`RAIL_LIST`, which the app snaps to the row's share of the list's end
+(`Rail::take_scroll`) as the keys move or a set opens: at that share the
+row always shows, however tall the list shows.
+
 The status bar (`status.rs`) floats over the viewport's bottom right, 12
 px in from its right and 10 px up from its bottom (`STATUS_BAR_ROOM` is
 what it takes of the height), `opaque` so a drag on it doesn't orbit; on
@@ -403,7 +446,7 @@ makes its own wgpu instance, under a lock, so run them one at a time:
 VARDE_SHOTS=$PWD/target/shots cargo test -p varde-app shots_ -- --ignored --test-threads=1
 ```
 
-Scenarios (`shots_01` .. `shots_15`, each at 1280×800, scale 1, light,
+Scenarios (`shots_01` .. `shots_17`, each at 1280×800, scale 1, light,
 the busiest also at scale 2 and dark): `E` with every candidate's regions
 (and one hovered); a region picked before and after its answer; flip,
 symmetric, two sides, a refused distance and a draft the document
@@ -422,11 +465,13 @@ cut left with nothing to work on; two plates a join merged, Objects
 showing the merged one "in Body 1" (hovered, dark) and the join's panel
 saying which body it joins into; the pivot's marker on a corner of the
 plate, panned to the middle and orbited about, whole, half faded and
-on the origin. Shots are for looking (pixels differ by GPU and driver),
-never compared and never committed: a fault a shot finds gets an
-ordinary headless test of the state or layout behind it. A scenario
-answers each regeneration it asks for before its shots, unless the
-shot is of the wait (`-waiting`): an unanswered one shows "Regenerating…" with the last answer's preview and
+on the origin; the tool rail outside a sketch and in one, with a list
+open, a tool's tooltip, and a list scrolled in a short window. Shots
+are for looking (pixels differ by GPU and driver), never compared and
+never committed: a fault a shot finds gets an ordinary headless test of
+the state or layout behind it. A scenario answers each regeneration it
+asks for before its shots, unless the shot is of the wait (`-waiting`):
+an unanswered one shows "Regenerating…" with the last answer's preview and
 Bodies list, which reads like a fault and isn't one.
 
 Reading shots: a finding names the shot, what's wrong and the code
