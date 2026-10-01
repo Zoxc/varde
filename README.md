@@ -17,8 +17,8 @@ sketches and editable features. It runs natively and in the browser.
 >
 > **Unstable file format.** `.vrdp` files may not open in other versions.
 >
-> **Vibe coded.** Nearly all code is written by AI agents, steered and
-> reviewed by a human.
+> **Vibe coded.** Nearly all code is written by AI agents, steered by a
+> human.
 
 ## Features
 
