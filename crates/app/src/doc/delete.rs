@@ -65,9 +65,10 @@ impl Doc {
         }
     }
 
-    /// Drops the delete prompt if the document changed under it (a
-    /// proposal committing, recovery, undo), so it never deletes a set it
-    /// didn't show.
+    /// Drops the delete prompt if the document changed under it
+    /// (recovery, undo), so it never deletes a set it didn't show; a
+    /// sketch edit committing keeps it if the same goes, see
+    /// [`Doc::keep_deleting`].
     pub(crate) fn prune_deleting(&mut self) {
         let generation = self.editor.generation();
         if self
@@ -76,6 +77,22 @@ impl Doc {
             .is_some_and(|deleting| deleting.generation != generation)
         {
             self.deleting = None;
+        }
+    }
+
+    /// Keeps the delete prompt shown at generation `before` across a
+    /// sketch edit committing, if the same still goes: a delete waiting
+    /// behind edits on the solver (see [`Doc::change`]) asks once it's
+    /// made, while those behind it still wait, and their committing
+    /// shouldn't take the question away.
+    pub(crate) fn keep_deleting(&mut self, before: Generation) {
+        let generation = self.editor.generation();
+        let document = self.editor.document();
+        if let Some(deleting) = self.deleting.as_mut()
+            && deleting.generation == before
+            && document.removal(deleting.target) == deleting.removal
+        {
+            deleting.generation = generation;
         }
     }
 

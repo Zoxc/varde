@@ -107,7 +107,7 @@ fn the_prompt_goes_when_the_document_changes_under_it() {
     let (mut doc, sketch, extrude, _) = example();
     doc.update(Edit::RemoveFeature(sketch));
     assert!(doc.deleting.is_some());
-    // Say recovery, or a proposal committing: anything but the prompt.
+    // Say recovery: anything but the prompt or a sketch edit committing.
     doc.apply(Command::SetFeatureVisible(extrude, false));
     doc.sync();
     assert!(doc.deleting.is_none());

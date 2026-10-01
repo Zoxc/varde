@@ -1548,3 +1548,74 @@ fn a_delete_waiting_behind_sketch_edits_asks_once_it_is_made() {
     doc.update(Edit::Undo);
     assert_eq!(circles(&doc), 1);
 }
+
+/// The plate extruded, its sketch edited with the circle deleted and then
+/// a line, and the sketch's deletion asked for between them, all waiting
+/// on the solver (five curves committed): the lane, the sketch and the
+/// extrude.
+fn a_delete_between_sketch_edits() -> (Doc, crate::tests::SolveLane, FeatureId, FeatureId) {
+    let (mut doc, a, _) = plate_extruded("10");
+    let sketch = doc.editor.document().features()[0].id;
+    let mut lane = crate::tests::SolveLane::connect(&mut doc);
+    doc.look(Look::EditFeature(sketch));
+    lane.answer(&mut doc);
+    let find = |doc: &Doc, circle: bool| {
+        drawn(doc, sketch)
+            .curves
+            .iter()
+            .find(|curve| matches!(curve.curve, varde_sketch::Curve::Circle { .. }) == circle)
+            .unwrap()
+            .id
+    };
+    let (circle, line) = (find(&doc, true), find(&doc, false));
+    for id in [circle, line] {
+        doc.look(Look::SelectBox {
+            ids: vec![id],
+            add: false,
+        });
+        doc.update(Edit::DeleteSelection);
+        if id == circle {
+            doc.update(Edit::RemoveFeature(sketch));
+        }
+    }
+    assert!(doc.proposing());
+    assert_eq!(drawn(&doc, sketch).curves.len(), 5);
+    (doc, lane, sketch, a)
+}
+
+#[test]
+fn confirming_the_delete_prompt_while_edits_wait_deletes_after_them() {
+    let (mut doc, mut lane, sketch, a) = a_delete_between_sketch_edits();
+    // The circle's deletion is answered: the delete is made, and asks,
+    // while the line's still waits.
+    lane.answer_first(&mut doc);
+    assert_eq!(drawn(&doc, sketch).curves.len(), 4);
+    assert!(doc.proposing());
+    assert_eq!(doc.delete_prompt().unwrap().features.len(), 2);
+    // Confirmed, it waits behind the line's.
+    doc.update(Edit::ConfirmDelete);
+    assert!(doc.delete_prompt().is_none());
+    assert!(doc.editor.document().feature(sketch).is_some());
+    lane.answer(&mut doc);
+    assert!(!doc.proposing());
+    assert!(doc.editor.document().features().is_empty());
+    // Undone in order: the deletion, the line, the circle.
+    doc.update(Edit::Undo);
+    assert!(doc.editor.document().feature(a).is_some());
+    assert_eq!(drawn(&doc, sketch).curves.len(), 3);
+    doc.update(Edit::Undo);
+    assert_eq!(drawn(&doc, sketch).curves.len(), 4);
+    doc.update(Edit::Undo);
+    assert_eq!(drawn(&doc, sketch).curves.len(), 5);
+}
+
+#[test]
+fn the_delete_prompt_stays_while_the_edits_behind_it_commit() {
+    let (mut doc, mut lane, sketch, _) = a_delete_between_sketch_edits();
+    lane.answer(&mut doc);
+    assert!(!doc.proposing());
+    assert_eq!(drawn(&doc, sketch).curves.len(), 3);
+    assert_eq!(doc.delete_prompt().unwrap().features.len(), 2);
+    doc.update(Edit::ConfirmDelete);
+    assert!(doc.editor.document().features().is_empty());
+}

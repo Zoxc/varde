@@ -2844,9 +2844,14 @@ which prompt is up, the unsaved one first) and Delete
 (`Edit::ConfirmDelete`, danger style, no `Enter`). While it's up
 `Doc::keys` is `None`, so no shortcut acts behind it. Delete applies the
 same command, so exactly the listed set goes, one undo step. The prompt
-is dropped in `sync` once the generation moves (undo, a proposal
-committing, recovery), and a stale one is neither shown nor applied. A
-read-only document asks nothing and deletes nothing.
+is dropped in `sync` once the generation moves (undo, recovery), and a
+stale one is neither shown nor applied; a sketch edit committing keeps it
+if the same set still goes (`Doc::keep_deleting`: a delete asked for
+while edits wait on the solver waits behind them, and asks when made
+while later ones may still wait). Confirmed while edits wait, the delete
+waits behind them too, and is made then if the same set goes, else asks
+again (`Doc::remove_now`). A read-only document asks nothing and deletes
+nothing.
 
 **Tolerance** (`view/src/toolbar.rs`): the file menu has a "Tolerance"
 heading under Units with 0.1 µm, 1 µm and 10 µm, each sending

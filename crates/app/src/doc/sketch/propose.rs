@@ -221,39 +221,37 @@ impl Doc {
     /// whose sketch is gone is dropped.
     pub(crate) fn send_proposal(&mut self) {
         while self.proposals.in_flight.is_none() {
-            match self.proposals.queued.front() {
-                None => break,
-                Some(Pending::Change(_)) => {
-                    if let Some(Pending::Change(change)) = self.proposals.queued.pop_front() {
-                        self.make(change);
-                    }
+            let Some(pending) = self.proposals.queued.pop_front() else {
+                break;
+            };
+            let proposal = match pending {
+                Pending::Change(change) => {
+                    self.make(change);
+                    continue;
                 }
-                Some(Pending::Proposal(_)) => {
-                    let Some(solver) = &mut self.solver else {
-                        break;
-                    };
-                    let Some(Pending::Proposal(proposal)) = self.proposals.queued.pop_front()
-                    else {
-                        break;
-                    };
-                    let revision = self.editor.revision();
-                    let Some(committed) = sketch_of(self.editor.document(), proposal.feature)
-                    else {
-                        continue;
-                    };
-                    let sketch = match &proposal.from {
-                        Some((at, from)) if *at == revision => from.clone(),
-                        _ => Arc::new(committed.clone()),
-                    };
-                    solver.send(Request::Propose {
-                        base: revision,
-                        sketch,
-                        edit: proposal.edit.clone(),
-                        units: self.editor.document().units(),
-                    });
-                    self.proposals.in_flight = Some((revision, proposal));
-                }
-            }
+                Pending::Proposal(proposal) => proposal,
+            };
+            let Some(solver) = &mut self.solver else {
+                self.proposals
+                    .queued
+                    .push_front(Pending::Proposal(proposal));
+                break;
+            };
+            let revision = self.editor.revision();
+            let Some(committed) = sketch_of(self.editor.document(), proposal.feature) else {
+                continue;
+            };
+            let sketch = match &proposal.from {
+                Some((at, from)) if *at == revision => from.clone(),
+                _ => Arc::new(committed.clone()),
+            };
+            solver.send(Request::Propose {
+                base: revision,
+                sketch,
+                edit: proposal.edit.clone(),
+                units: self.editor.document().units(),
+            });
+            self.proposals.in_flight = Some((revision, proposal));
         }
         self.proposals.settle();
     }
@@ -344,10 +342,12 @@ impl Doc {
         let feature = proposal.feature;
         let refusal = match answer {
             Answer::Accepted(sketch, analysis) => {
+                let before = self.editor.generation();
                 self.apply(Command::SetSketch {
                     feature,
                     sketch: Box::new(Arc::unwrap_or_clone(sketch)),
                 });
+                self.keep_deleting(before);
                 // Not committed (read-only since, say), the analysis isn't
                 // of what's committed.
                 let revision = self.editor.revision();

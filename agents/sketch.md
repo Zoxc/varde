@@ -701,8 +701,7 @@ Across a replacement of the whole document (restoring recovered changes,
 or undoing or redoing that: `Editor::lineage` changes) ids may name other
 items, so the selection is cleared and the tool starts its shape afresh;
 restoring drops the edits waiting on the solver, and the changes waiting
-behind them. The sketch
-session only resets, since it reads the sketch its id names now and never
+behind them. The sketch session only resets, since it reads the sketch its id names now and never
 writes back what it read before; an extrude session holds values read
 before the replacement, so it ends instead (`Doc::prune_extrude`). A
 document that can't be edited, as a Save As can leave it, has no tool and no drag;
@@ -740,7 +739,8 @@ bar says why (`EditError::Sketch`).
   sketch, units, tolerance) queues behind it in `Proposals`, in order,
   and is made, on the document as it is then, once those before it are
   answered: toggling twice toggles back, a delete asks then if more goes
-  with it than was confirmed, and edits made after new units are read in
+  with it than was confirmed (and its prompt stays while the edits
+  behind it commit, `Doc::keep_deleting`), and edits made after new units are read in
   them. So what's committed, and so the undo history, keeps the order the
   user made it in. Undo while anything waits takes back the newest
   waiting item (`Doc::drop_newest`), the last one queued or else the
