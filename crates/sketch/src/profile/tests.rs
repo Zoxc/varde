@@ -564,7 +564,7 @@ fn concentric(count: usize) -> Sketch {
 /// Sketches the work limit is there for, each within what a sketch may
 /// hold: `profiles()` took from a fifth of a second to two seconds on
 /// each (release), counting the costly steps as cheap ones or not at
-/// all, and found regions in two of them.
+/// all, and found regions in all of them.
 fn hostile_sketches() -> Vec<(&'static str, Sketch)> {
     let mut sketches = Vec::new();
     // Nested closed splines of 100 points: every pair's segments' boxes
@@ -587,10 +587,10 @@ fn hostile_sketches() -> Vec<(&'static str, Sketch)> {
     }
     sketches.push(("spline copies", sketch));
     // Lines across wobbling splines, crossing each a few times: roots
-    // halved to.
+    // halved to. Not many more lines fit in `MAX_SPLITS`.
     let mut sketch = Sketch::default();
-    for k in 0..10 {
-        crate::testing::spline(&mut sketch, &ring(100, 10.0, 0.2, k as f64 * 0.7), true);
+    for k in 0..20 {
+        crate::testing::spline(&mut sketch, &ring(100, 10.0, 0.2, k as f64 * 0.3), true);
     }
     for k in 0..1000 {
         let y = -12.0 + 24.0 * k as f64 / 1000.0;
@@ -611,13 +611,15 @@ fn hostile_sketches_are_too_complex_in_bounded_time() {
         let started = std::time::Instant::now();
         assert_eq!(sketch.profiles(), Err(TooComplex), "{name}");
         let took = started.elapsed();
-        // Tens of milliseconds in a release build, an unoptimised one
-        // some twenty times that, and a loaded machine more again.
+        // About a tenth of a second in a release build, an unoptimised
+        // one some twenty times that, and a loaded machine more again.
         let bound = if cfg!(debug_assertions) { 30.0 } else { 1.0 };
         assert!(took.as_secs_f64() < bound, "{name}: {took:?}");
     }
 }
 
+/// Dense sketches people draw take at most a third of `MAX_WORK`, so
+/// none is refused as too complex: refusing one costs more than the wait.
 #[test]
 fn normal_sketches_take_a_fraction_of_the_work() {
     let mut random = Random(28);
@@ -636,12 +638,29 @@ fn normal_sketches_take_a_fraction_of_the_work() {
         }
     }
     sketches.push(("plate", sketch, 901));
-    // Ten closed splines of 20 points crossing each other.
+    // Twenty closed splines of 20 points crossing each other.
     let mut sketch = Sketch::default();
-    for k in 0..10 {
-        crate::testing::spline(&mut sketch, &ring(20, 10.0, 0.2, k as f64 * 0.7), true);
+    for k in 0..20 {
+        crate::testing::spline(&mut sketch, &ring(20, 10.0, 0.2, k as f64 * 0.3), true);
     }
-    sketches.push(("crossing splines", sketch, 631));
+    // Each pair crosses 14 times: as many regions and one more.
+    sketches.push(("crossing splines", sketch, 14 * 190 + 1));
+    // Text: 300 letters like an "o", each a closed spline round another,
+    // on a plate.
+    let mut sketch = Sketch::default();
+    rectangle(&mut sketch, -1.0, -1.0, 151.0, 5.0);
+    for letter in 0..300 {
+        let at = DVec2::new((letter % 150) as f64, (letter / 150) as f64 * 2.0 + 1.0);
+        for (count, radius) in [(24, 0.45), (12, 0.2)] {
+            let places: Vec<(f64, f64)> = (ring(count, radius, 0.1, letter as f64).into_iter())
+                .map(|(x, y)| (x + at.x, y + at.y))
+                .collect();
+            crate::testing::spline(&mut sketch, &places, true);
+        }
+    }
+    sketches.push(("text", sketch, 601));
+    // A thousand rings, the innermost drawn last.
+    sketches.push(("concentric circles", concentric(1000), 1000));
     // Fifty circles and fifty lines anywhere.
     let mut sketch = Sketch::default();
     for _ in 0..50 {
@@ -657,12 +676,28 @@ fn normal_sketches_take_a_fraction_of_the_work() {
     sketches.push(("circles and lines", sketch, count));
     let limits = Limits {
         splits: MAX_SPLITS,
-        work: MAX_WORK / 4,
+        work: MAX_WORK / 3,
     };
     for (name, sketch, count) in sketches {
         let found = profiles(&sketch);
         assert_eq!(found.regions.len(), count, "{name}");
         assert_eq!(sketch.profiles_within(&limits), Ok(found), "{name}");
+    }
+}
+
+#[test]
+fn splines_a_hair_apart_are_too_complex_rather_than_torn() {
+    // Rings wobbling alike but for their phases, 0.017 apart past a
+    // whole turn, cross fourteen times at angles so shallow that finding
+    // where takes more than `MAX_MEET_STEPS`. Stopping there missed one,
+    // and eleven rings, the first and last such a pair, gave a region
+    // joining pieces 1.7 apart.
+    for phases in [vec![0.7, 7.0], (0..11).map(|k| k as f64 * 0.7).collect()] {
+        let mut sketch = Sketch::default();
+        for phase in phases {
+            crate::testing::spline(&mut sketch, &ring(20, 10.0, 0.2, phase), true);
+        }
+        assert_eq!(sketch.profiles(), Err(TooComplex));
     }
 }
 

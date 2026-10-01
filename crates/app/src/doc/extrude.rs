@@ -288,6 +288,12 @@ impl ExtrudeSession {
                 }
             }
             remap |= is_source;
+            // Past the budget, not even its splines' shapes are worked
+            // out: a file may hold any number of sketches.
+            if !is_source && left == 0 {
+                self.skipped.push((id, sketch.clone()));
+                continue;
+            }
             #[cfg(test)]
             {
                 self.worked_out += 1;

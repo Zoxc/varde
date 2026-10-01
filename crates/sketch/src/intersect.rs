@@ -425,7 +425,8 @@ impl Geom {
 /// caller merges them. A spline meets the rest by subdivision, bounded
 /// ([`bezier::MAX_MEET_STEPS`]). The work done is returned, for a caller
 /// that counts it: [`MEET_COST`] for lines, circles and arcs, and for a
-/// spline what [`bezier::crossings`] gives.
+/// spline what [`bezier::crossings`] gives (`usize::MAX` where it ran out
+/// of steps) and the search for the ends' nearest places on it.
 pub(crate) fn meet(a: &Geom, b: &Geom, tolerance: f64, out: &mut Vec<(f64, f64)>) -> usize {
     let steps = if let (Geom::Spline(_), _) | (_, Geom::Spline(_)) = (a, b) {
         bezier::crossings(a, b, tolerance, out)
@@ -437,19 +438,47 @@ pub(crate) fn meet(a: &Geom, b: &Geom, tolerance: f64, out: &mut Vec<(f64, f64)>
         }
         MEET_COST
     };
+    let mut work = steps;
     for (from, to, swap) in [(a, b, false), (b, a, true)] {
+        // A spline's nearest place is searched for segment by segment:
+        // not for an end further from its box than the tolerance, which
+        // can't be on it, and counted where it is.
+        let path = match to {
+            Geom::Spline(path) => {
+                work = work.saturating_add(path.segment_count());
+                Some((path, path.bounds()))
+            }
+            _ => None,
+        };
         for u in from.cuts() {
             let end = from.at(u);
-            let near = to.nearest(end);
-            if near.distance(end) > tolerance {
-                continue;
-            }
-            if let Some(v) = to.param(near, tolerance) {
+            let v = match path {
+                Some((path, (min, max))) => {
+                    let outside = (min - end).max(end - max).max(DVec2::ZERO);
+                    if outside.length() > tolerance {
+                        continue;
+                    }
+                    let near = path.at(path.closest_counting(end, &mut work));
+                    if near.distance(end) > tolerance {
+                        continue;
+                    }
+                    let v = path.closest_counting(near, &mut work);
+                    (path.at(v).distance(near) <= tolerance).then_some(v)
+                }
+                None => {
+                    let near = to.nearest(end);
+                    if near.distance(end) > tolerance {
+                        continue;
+                    }
+                    to.param(near, tolerance)
+                }
+            };
+            if let Some(v) = v {
                 out.push(if swap { (v, u) } else { (u, v) });
             }
         }
     }
-    steps
+    work
 }
 
 /// Where the endless lines and whole circles of `a` and `b` cross, one

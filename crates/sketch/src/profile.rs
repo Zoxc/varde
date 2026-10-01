@@ -48,12 +48,14 @@ pub const MAX_SPLITS: usize = 100_000;
 /// faces, and faces a point is tested against, each one; what costs
 /// more by its share, about the time of one such step (a nanosecond or
 /// two): where two curves meet, a spline's segments' boxes compared and
-/// pieces subdivided, a winding number's chords. Tens of milliseconds,
-/// whatever the sketch; besides it, what's linear in the sketch's size
-/// (its splines' shapes, bounded by
-/// [`MAX_POINTS`](crate::MAX_POINTS)) and in the splits (bounded by
-/// [`MAX_SPLITS`]).
-pub const MAX_WORK: usize = 20_000_000;
+/// pieces subdivided, a winding number's chords. About a tenth of a
+/// second, whatever the sketch: a few times what dense sketches people
+/// draw take (hundreds of letters' outlines, a dozen or two splines
+/// crossing each other), as refusing one costs more than a short wait.
+/// Besides it, what's linear in the sketch's size (its splines' shapes,
+/// bounded by [`MAX_POINTS`](crate::MAX_POINTS)) and in the splits
+/// (bounded by [`MAX_SPLITS`]).
+pub const MAX_WORK: usize = 60_000_000;
 
 /// The most near misses reported: enough to find them, however large the
 /// gap asked for is.
@@ -244,8 +246,9 @@ impl Sketch {
     }
 
     /// [`Sketch::profiles`] within what's `left` of a budget shared with
-    /// others, as well as [`MAX_WORK`], the work done taken from `left`:
-    /// for a caller finding the profiles of many sketches at once.
+    /// others, as well as [`MAX_WORK`], the work done taken from `left`
+    /// (all it was allowed, if too complex): for a caller finding the
+    /// profiles of many sketches at once.
     pub fn profiles_spending(&self, left: &mut usize) -> Result<Profiles, TooComplex> {
         let limits = Limits {
             splits: MAX_SPLITS,
@@ -253,7 +256,13 @@ impl Sketch {
         };
         let mut work = Work(limits.work);
         let found = self.profiles_counting(&limits, &mut work);
-        *left = left.saturating_sub(limits.work - work.0);
+        // Too complex, it took all it may have.
+        let spent = if found.is_ok() {
+            limits.work - work.0
+        } else {
+            limits.work
+        };
+        *left = left.saturating_sub(spent);
         found
     }
 
@@ -900,20 +909,17 @@ impl<'c> Graph<'c> {
             // rather than all of them.
             let cell = grid.at(point);
             work.spend(cell.len())?;
-            let mut near: Vec<(f64, usize)> = (cell.iter())
+            let mut near: Vec<(f64, usize, usize)> = (cell.iter())
                 .filter_map(|&f| {
                     let (min, max) = solid[f].as_ref()?.1;
                     let outer = walks[f].outer?;
                     let inside = point.cmpge(min).all() && point.cmple(max).all();
-                    inside.then_some((walks[f].areas[outer], f))
+                    inside.then_some((walks[f].areas[outer], f, outer))
                 })
                 .collect();
             work.spend(near.len().saturating_mul(sort_cost(near.len())))?;
             near.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-            for (_, f) in near {
-                let Some(outer) = walks[f].outer else {
-                    continue;
-                };
+            for (_, f, outer) in near {
                 let outer = &walks[f].loops[outer];
                 if part.root(self.ends(outer[0]).0) == own {
                     continue;

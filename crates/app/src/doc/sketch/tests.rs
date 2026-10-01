@@ -906,8 +906,8 @@ fn a_sketch_too_complex_for_profiles_is_shown_quickly() {
     let started = std::time::Instant::now();
     doc.sync();
     let took = started.elapsed().as_secs_f64();
-    // Tens of milliseconds released, some twenty times that unoptimised
-    // and more on a loaded machine; it took seconds released.
+    // A tenth of a second or so released, some twenty times that
+    // unoptimised and more on a loaded machine; it took seconds released.
     let bound = if cfg!(debug_assertions) { 30.0 } else { 1.0 };
     assert!(took < bound, "{took}");
     let state = doc.sketch_state().unwrap();

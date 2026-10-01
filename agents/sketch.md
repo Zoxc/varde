@@ -362,13 +362,21 @@ details and the timings.
   overlap until both are within the tolerance of their chords, polished
   by Newton's method. All bounded by `MAX_MEET_STEPS` (subdivision
   steps; segments' boxes compared don't take one, so the cap and what's
-  found don't depend on them). `meet` returns the work done, which
-  profiles count, in a unit of about one box compared to another (a
-  nanosecond or two): `MEET_COST` (16) for lines, circles and arcs; for
-  a spline every segment box compared (1), `STEP_COST` (16) a
-  subdivision step, twice that a step of halving Bernstein coefficients,
-  and `BISECT_COST` (32 × 64) a root halved to. Winding numbers add
-  `CHORD_COST` (16) per chord, or per part of a spline `wind` takes.
+  found don't depend on them). Where the steps run out places may be
+  missing, so the work returned is `usize::MAX` and profiles are too
+  complex: a missed crossing would join pieces that don't meet (two
+  wobbling rings a hair out of phase did, before). `meet` returns the
+  work done, which profiles count, in a unit of about one box compared
+  to another (a nanosecond or two): `MEET_COST` (16) for lines, circles
+  and arcs; for a spline every segment box compared (1), `STEP_COST`
+  (16) a subdivision step or a step of halving Bernstein coefficients
+  (kept in fixed arrays, not allocated), `BISECT_COST` (16 × 64) a root
+  halved to, and for each curve's end tested against a spline its
+  segments (1 each) and `CLOSEST_COST` (192) a segment searched for the
+  nearest place (ends further than the tolerance from its box aren't
+  searched). Winding numbers add `CHORD_COST` (16) per chord, or per
+  part of a spline `wind` takes. Measured against time, release, these
+  come to 1–2 ns a unit for each kind of meeting.
 - **Pieces** (`profile.rs`): curves are cut where they meet, found by
   sweeping their boxes along x; places within the tolerance (10⁻⁹ of the
   sketch's size) are one vertex, found through cells the tolerance wide,
@@ -460,19 +468,25 @@ details and the timings.
   reaches; `Profiles::near_misses(gap)` pairs those within `gap`, which
   is the view's (a few pixels in sketch units), so profiles don't depend
   on the zoom. Bounded by `MAX_NEAR_MISSES` and `MAX_NEAR_PAIRS`.
-- **Bounds**: more than `MAX_SPLITS` cuts or `MAX_WORK` (20 M) steps is
+- **Bounds**: more than `MAX_SPLITS` cuts or `MAX_WORK` (60 M) steps is
   `TooComplex`, never a long wait. Steps are weighed by cost (above), so
-  `MAX_WORK` is tens of milliseconds whatever the sketch; besides it
+  `MAX_WORK` is about a tenth of a second whatever the sketch: a few
+  times what dense sketches people draw take, as refusing one costs
+  more than the wait (measured share: 400 letter outlines like an "o"
+  26 %, 30 splines all crossing each other 26 %, 20 of them 11 %, a
+  plate with 900 holes and 1000 concentric circles under a quarter;
+  `normal_sketches_take_a_fraction_of_the_work` holds a third). Besides it
   only what's linear in the sketch (splines' shapes, at most
-  `MAX_POINTS` fit points, ~40 ms) and in the cuts (~1 µs each, at most
-  `MAX_SPLITS`). Hostile sketches measured (release, loaded machine):
-  nested 100-point splines, 3000 concentric circles, copies of a spline,
-  1000 lines across splines are `TooComplex` in 40–95 ms (they took
-  0.2–2 s before the weights); a 220×220 line grid is found in ~90 ms.
-  Sketches people draw use a few percent of it (a plate with 900 holes,
-  ten splines crossing each other: under a quarter, a test holds).
-  `Sketch::profiles_spending(&mut left)` also stops at what's `left` of
-  a budget shared over several sketches, and takes the work from it.
+  `MAX_POINTS` fit points, ~40 ms) and in the cuts (1–3 µs each, more
+  where pieces are of splines, at most `MAX_SPLITS`: up to a few tenths
+  of a second, not counted). Hostile sketches measured (release, loaded
+  machine): nested 100-point splines, 3000 concentric circles, copies
+  of a spline, 1000 lines across 20 splines are `TooComplex` in
+  0.1–0.3 s (they took 0.2–2 s before the weights); 1000 lines across
+  10 splines (22 707 regions) are found in ~0.2–0.3 s, most of it the
+  cuts'. `Sketch::profiles_spending(&mut left)` also stops at what's
+  `left` of a budget shared over several sketches, and takes the work
+  from it (all it was allowed, if too complex).
 - **Where it runs**: in the app, once per sketch shown, not in the solver
   lane (a millisecond or two for sketches people draw), so no wire carries
   profiles. `Doc::refresh_profiles`, run by `Doc::sync` and after every

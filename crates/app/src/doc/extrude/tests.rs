@@ -1868,7 +1868,7 @@ fn an_edit_made_while_a_delete_prompt_is_up_waits_for_its_answer() {
 }
 
 /// `count` circles round a place left of the example's plate, the
-/// innermost last: from a thousand, a good share of the work one
+/// innermost last: fifteen hundred, a good share of the work one
 /// sketch's profiles may take; three thousand, more than that.
 fn concentric(count: usize) -> varde_sketch::Sketch {
     let mut drawn = varde_sketch::Sketch::default();
@@ -1894,9 +1894,10 @@ fn add_visible(doc: &mut Doc, drawn: varde_sketch::Sketch) -> FeatureId {
     sketch
 }
 
-/// Seconds the UI may take over a hostile sketch's profiles: tens of
-/// milliseconds in a release build, some twenty times that unoptimised,
-/// and more again on a loaded machine; it took seconds released.
+/// Seconds the UI may take over a hostile sketch's profiles: a tenth of
+/// a second or so in a release build, some twenty times that
+/// unoptimised, and more again on a loaded machine; it took seconds
+/// released.
 fn ui_bound() -> f64 {
     if cfg!(debug_assertions) { 30.0 } else { 1.0 }
 }
@@ -1960,7 +1961,7 @@ fn the_visible_sketches_share_the_work() {
     let (mut doc, plate, requests) = plate();
     // Each takes a good share of what one may: those past what all may
     // together have no regions to pick.
-    let drawn = concentric(1000);
+    let drawn = concentric(1500);
     let mut left = usize::MAX;
     drawn.profiles_spending(&mut left).unwrap();
     let each = usize::MAX - left;
@@ -1987,4 +1988,7 @@ fn the_visible_sketches_share_the_work() {
     }
     assert_eq!(found, expected);
     assert_eq!(skipped, sketches[found.len() - 1..].to_vec());
+    // The first past it takes all that's left, and those after aren't
+    // worked out at all.
+    assert_eq!(session.worked_out, found.len() + 1);
 }

@@ -16,9 +16,11 @@ use crate::intersect::{CHORD_COST, Geom};
 const FLATNESS: f64 = 5e-4;
 
 /// The most steps finding where a spline meets another curve takes:
-/// segments' boxes compared and pieces subdivided. Well past what two
-/// splines crossing at a few places take; two lying along each other for
-/// a stretch would take ever more, and stop here with what's found.
+/// pairs of segments whose boxes overlap, and pieces subdivided. Well
+/// past what two splines crossing at a few places take; two lying along
+/// each other for a stretch would take ever more, and stop here with
+/// what's found, which may miss places (profiles are then too complex,
+/// see [`crossings`]).
 pub(crate) const MAX_MEET_STEPS: usize = 50_000;
 
 /// What [`crossings`] and [`self_crossings`] give for a step of
@@ -28,18 +30,19 @@ pub(crate) const MAX_MEET_STEPS: usize = 50_000;
 /// compared count one each, without taking a step.
 pub(crate) const STEP_COST: usize = 16;
 
+/// What [`Path::closest_counting`] adds for a segment it searches for
+/// the place nearest a point, in the unit of [`STEP_COST`]: the segment
+/// sampled, and Newton's method from the nearest samples.
+pub(crate) const CLOSEST_COST: usize = 192;
+
 /// How many times a root of Bernstein coefficients is halved to.
 const BISECTIONS: usize = 64;
 
-/// What a step of halving Bernstein coefficients ([`bernstein_roots`])
-/// costs over a step of subdivision: copying them as it halves them
-/// about doubles it.
-const ROOT_STEP_EXTRA: usize = STEP_COST;
-
 /// The work of halving to a root, in the unit of [`STEP_COST`]: a
-/// polynomial of degree six evaluated (copied) [`BISECTIONS`] times,
-/// each about as much as a step of [`bernstein_roots`].
-const BISECT_COST: usize = (STEP_COST + ROOT_STEP_EXTRA) * BISECTIONS;
+/// polynomial of degree three or six evaluated [`BISECTIONS`] times, each
+/// about a step. A step of halving the coefficients themselves
+/// ([`bernstein_roots`]) is about one of subdivision, and counted as one.
+const BISECT_COST: usize = STEP_COST * BISECTIONS;
 
 /// How many times a piece is halved looking for where it meets another:
 /// a billionth of the sketch's size needs about fifteen.
@@ -169,6 +172,11 @@ impl Path {
 
     pub(crate) fn closed(&self) -> bool {
         self.closed
+    }
+
+    /// How many cubic segments it has.
+    pub(crate) fn segment_count(&self) -> usize {
+        self.segments.len()
     }
 
     /// Whether it's finite and has a size: not all at one place, but for
@@ -406,13 +414,21 @@ impl Path {
     /// few places along it, by Newton's method kept within where the
     /// nearest is bracketed, halving the bracket where a step leaves it.
     pub(crate) fn closest(&self, at: DVec2) -> f64 {
+        self.closest_counting(at, &mut 0)
+    }
+
+    /// [`Path::closest`], adding the work done to `work`: one a segment's
+    /// box, [`CLOSEST_COST`] a segment searched.
+    pub(crate) fn closest_counting(&self, at: DVec2, work: &mut usize) -> f64 {
         let mut best = (f64::INFINITY, 0.0);
         for (s, b) in self.segments.iter().enumerate() {
+            *work = work.saturating_add(1);
             let (min, max) = hull_box(b);
             let outside = (min - at).max(at - max).max(DVec2::ZERO);
             if outside.length_squared() > best.0 {
                 continue;
             }
+            *work = work.saturating_add(CLOSEST_COST);
             let t = closest_on(b, at);
             let distance = point(b, t).distance_squared(at);
             if distance < best.0 {
@@ -579,8 +595,14 @@ impl Steps {
         self.besides = self.besides.saturating_add(work);
     }
 
-    /// The work done, in the unit of [`STEP_COST`].
+    /// The work done, in the unit of [`STEP_COST`]; `usize::MAX` if the
+    /// steps ran out, so places may be missing, which no count of work
+    /// can afford: profiles missing a crossing would join pieces that
+    /// don't meet.
     fn work(&self) -> usize {
+        if self.left == 0 {
+            return usize::MAX;
+        }
         (MAX_MEET_STEPS - self.left)
             .saturating_mul(STEP_COST)
             .saturating_add(self.besides)
@@ -590,7 +612,7 @@ impl Steps {
 /// Where `a` and `b`, at least one of them a spline, cross or touch
 /// (within `tolerance`), as pairs of their parameters, pushed onto `out`:
 /// the work done, see [`Steps::work`], of at most about
-/// [`MAX_MEET_STEPS`] steps. What
+/// [`MAX_MEET_STEPS`] steps, or `usize::MAX` where those ran out. What
 /// [`meet`](crate::intersect::meet) does for splines, but for the ends,
 /// which it finds alike for every curve.
 pub(crate) fn crossings(a: &Geom, b: &Geom, tolerance: f64, out: &mut Vec<(f64, f64)>) -> usize {
@@ -830,7 +852,8 @@ fn on_other(
                 let Some(normal) = (end - start).perp().try_normalize() else {
                     continue;
                 };
-                (b.map(|p| normal.dot(p - start)).to_vec(), tolerance)
+                let c = b.map(|p| normal.dot(p - start));
+                (Coefficients::new(&c), tolerance)
             }
             Geom::Round { center, radius, .. } => (
                 distance_squared(b, center, radius),
@@ -851,11 +874,11 @@ fn on_other(
 
 /// The Bernstein coefficients, of degree six, of `|b(t) - center|² -
 /// radius²`.
-fn distance_squared(b: &Bezier, center: DVec2, radius: f64) -> Vec<f64> {
+fn distance_squared(b: &Bezier, center: DVec2, radius: f64) -> Coefficients {
     const CHOOSE_3: [f64; 4] = [1.0, 3.0, 3.0, 1.0];
     const CHOOSE_6: [f64; 7] = [1.0, 6.0, 15.0, 20.0, 15.0, 6.0, 1.0];
     let d = b.map(|p| p - center);
-    let mut coefficients = vec![0.0; 7];
+    let mut coefficients = [0.0; 7];
     for i in 0..4 {
         for j in 0..4 {
             coefficients[i + j] += CHOOSE_3[i] * CHOOSE_3[j] * d[i].dot(d[j]);
@@ -864,13 +887,51 @@ fn distance_squared(b: &Bezier, center: DVec2, radius: f64) -> Vec<f64> {
     for (k, c) in coefficients.iter_mut().enumerate() {
         *c = *c / CHOOSE_6[k] - radius * radius;
     }
-    coefficients
+    Coefficients::new(&coefficients)
+}
+
+/// The most Bernstein coefficients root finding takes: of degree six, a
+/// cubic's distance squared from a circle's centre.
+const MAX_COEFFICIENTS: usize = 7;
+
+/// Bernstein coefficients, at most [`MAX_COEFFICIENTS`], kept in place
+/// rather than allocated, as root finding copies and halves them often.
+#[derive(Clone, Copy)]
+struct Coefficients {
+    values: [f64; MAX_COEFFICIENTS],
+    len: usize,
+}
+
+impl Coefficients {
+    /// `values`, of which there are at most [`MAX_COEFFICIENTS`].
+    fn new(values: &[f64]) -> Coefficients {
+        let mut c = Coefficients {
+            values: [0.0; MAX_COEFFICIENTS],
+            len: values.len(),
+        };
+        c.values[..values.len()].copy_from_slice(values);
+        c
+    }
+}
+
+impl std::ops::Deref for Coefficients {
+    type Target = [f64];
+
+    fn deref(&self) -> &[f64] {
+        &self.values[..self.len]
+    }
+}
+
+impl std::ops::DerefMut for Coefficients {
+    fn deref_mut(&mut self) -> &mut [f64] {
+        &mut self.values[..self.len]
+    }
 }
 
 /// The value at `t` of the polynomial with Bernstein coefficients
 /// `coefficients`, by de Casteljau's algorithm.
 fn bernstein(coefficients: &[f64], t: f64) -> f64 {
-    let mut values = coefficients.to_vec();
+    let mut values = Coefficients::new(coefficients);
     for level in 1..values.len() {
         for i in 0..values.len() - level {
             values[i] = values[i] * (1.0 - t) + values[i + 1] * t;
@@ -886,12 +947,11 @@ fn bernstein(coefficients: &[f64], t: f64) -> f64 {
 /// they only rise or only fall hold at most one, found by halving; the
 /// rest are halved, at most [`MAX_DEPTH`] times.
 fn bernstein_roots(coefficients: &[f64], slack: f64, steps: &mut Steps, roots: &mut Vec<f64>) {
-    let mut stack = vec![(coefficients.to_vec(), 0.0, 1.0, 0u32)];
+    let mut stack = vec![(Coefficients::new(coefficients), 0.0, 1.0, 0u32)];
     while let Some((c, t0, t1, depth)) = stack.pop() {
         if !steps.take() {
             return;
         }
-        steps.add(ROOT_STEP_EXTRA);
         if c.iter().all(|&v| v > slack) || c.iter().all(|&v| v < -slack) {
             continue;
         }
@@ -943,20 +1003,15 @@ fn bernstein_roots(coefficients: &[f64], slack: f64, steps: &mut Steps, roots: &
 
 /// The Bernstein coefficients of a polynomial's halves, by de Casteljau's
 /// algorithm at the middle.
-fn split_bernstein(c: &[f64]) -> (Vec<f64>, Vec<f64>) {
+fn split_bernstein(c: &Coefficients) -> (Coefficients, Coefficients) {
     let n = c.len();
-    let mut values = c.to_vec();
-    let mut left = Vec::with_capacity(n);
-    let mut right = Vec::with_capacity(n);
-    left.push(values[0]);
-    right.push(values[n - 1]);
+    let (mut values, mut left, mut right) = (*c, *c, *c);
     for level in 1..n {
         for i in 0..n - level {
             values[i] = (values[i] + values[i + 1]) / 2.0;
         }
-        left.push(values[0]);
-        right.push(values[n - 1 - level]);
+        left[level] = values[0];
+        right[n - 1 - level] = values[n - 1 - level];
     }
-    right.reverse();
     (left, right)
 }
