@@ -35,6 +35,7 @@ use glam::DVec2;
 
 use super::BooleanError;
 use super::exact::{exact_count, orient2d_towards};
+use crate::mesh::{SIN_SHAPE, circumcentre_from};
 
 /// A vertex of a loop: its id, where it is in the domain, the sides of
 /// the domain triangle it lies on (bit `i` for the side from corner `i`
@@ -385,10 +386,6 @@ fn triangulate_counted(
     Ok(out)
 }
 
-/// The sine of the smallest angle, in the layout, below which a triangle
-/// takes a point for its shape ([`shape`]): sin 5°.
-const SIN_SHAPE: f64 = 0.087_155_742_747_658_17;
-
 /// How many points [`shape`] may add to a face: so many per vertex of its
 /// loops, and so many more.
 const SHAPE_PER_VERTEX: usize = 4;
@@ -420,10 +417,7 @@ fn smallest_sine(tri: [&Vert; 3]) -> Option<f64> {
 
 /// The centre of the circle through `a`, `b` and `c`, and its radius.
 fn circumcircle(a: DVec2, b: DVec2, c: DVec2) -> (DVec2, f64) {
-    let (ba, ca) = (b - a, c - a);
-    let (bb, cc) = (ba.length_squared(), ca.length_squared());
-    let d = 2.0 * ba.perp_dot(ca);
-    let centre = a + DVec2::new(ca.y * bb - ba.y * cc, ba.x * cc - ca.x * bb) / d;
+    let centre = a + circumcentre_from(a, b, c);
     (centre, centre.distance(a))
 }
 
@@ -453,7 +447,7 @@ fn third(tri: [u32; 3], u: u32, w: u32) -> u32 {
 /// corners, far from the cut's short pieces: fans of thin bands, whose
 /// long curved sides fail the check's neighbour rules against the bands
 /// across the cut, and which repair's quartering keeps thin. So the
-/// triangle with the smallest angle under 5° takes a point at its
+/// triangle with the smallest angle under 5° ([`SIN_SHAPE`]) takes a point at its
 /// circumcentre, where that lies inside the domain, at least half the
 /// circumradius from every side of the loops (and diagonal kept as one)
 /// and of the domain and from every vertex, and inside a triangle whose

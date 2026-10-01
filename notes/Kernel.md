@@ -189,13 +189,18 @@ within the fit tolerance, tangent-continuous where the spline is.
 3. **Caps**: a constrained Delaunay triangulation (`spade`) of the chords,
    classified by winding number, with curved boundary edges; rounds of
    Steiner points and halvings until every corner is open and every patch
-   passes the fold check. A second try mends flat corners if the first
-   fails.
+   passes the fold check, and refinement for quality: Steiner points at
+   the circumcentres of triangles with an angle under 5° (Ruppert's way,
+   inserted into the triangulation kept from round to round), chords
+   halved where those would encroach, and caps whose triangles' boxes
+   still crowd each other refined once more. A second try mends flat
+   corners if the first fails, and a last makes the plain, unrefined
+   caps.
 4. **Walls**: two patches per segment from the exact cylinder strip, sharing
    their top and bottom edges with the caps. Faces: `StartCap`, `EndCap`,
    and `Side { curve, segment }` per profile segment, tagged with their
    planes or the cylinder over their conic.
-5. **Repair and check.**
+5. **Check, and repair only if that fails**; faces on one surface merged.
 
 **Swept strips and lathes.** A strip is two patches between a bottom and a
 top curve and two side curves; only its diagonal is new. Cone strips and
@@ -408,10 +413,12 @@ extrude being set up) are regenerated the same way. See `agents/kernel.md`
   along the line converges come out right with many patches. Coaxial walls
   a little apart, or of different conics meeting smoothly, refine until
   they run out of budget.
-- **Cap quality.** Caps have no quality refinement: slivers with far
-  apexes, fine polygons at coarse tolerances and long thin fans can fail as
-  `Invalid` or `TooComplex`, and a cap triangle with two curved sides (one
-  concave with weight above 1) can fold when a later boolean splits it.
+- **Cap quality.** Refined caps cost patches (plates with holes 10 to
+  20% more, thin ribs and rings far more); caps past about 65 000
+  segments run out of budget; short curved segments at coarse tolerances
+  can still leave slivers refinement doesn't reach (`Invalid`); and a cap
+  triangle with two curved sides (one concave with weight above 1) can
+  fold when a later boolean splits it.
 - **Fitted bands lose their claim.** Triangles along a fitted cut go on a
   face copy claiming no surface, so later booleans trace and fit there
   instead of cutting exactly.

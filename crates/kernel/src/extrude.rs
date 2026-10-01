@@ -142,8 +142,9 @@ pub fn extrude(
     // work left, so it couldn't do better) and isn't made. Both refine
     // the caps for quality; refining a sliver of the region thinner than
     // the pieces the chain may be halved into can leave it worse than the
-    // plain caps, so those are the last try, if the first try's refinement
-    // did anything (else they would repeat it).
+    // plain caps, so those are the last try, if the first try did anything
+    // they wouldn't (refinement asked for something, or mending left a
+    // halving to it that they would make): else they would repeat it.
     let retry = |e: &KernelError| {
         matches!(
             e,
@@ -152,14 +153,14 @@ pub fn extrude(
                 | KernelError::Profile(ProfileError::TooFine(..))
         )
     };
-    let (mut fork, mut refined) = (None, false);
+    let (mut fork, mut unlike_plain) = (None, false);
     let start = Rounds::new(chain.clone());
     let caps = cap::triangulate(
         start,
         margin,
         Mode::QUALITY,
         &mut fork,
-        &mut refined,
+        &mut unlike_plain,
         &mut work,
     );
     let first = match solid(caps, &mut work) {
@@ -181,7 +182,7 @@ pub fn extrude(
             result => return result,
         }
     }
-    if !refined {
+    if !unlike_plain {
         return Err(first);
     }
     let caps = cap::triangulate(

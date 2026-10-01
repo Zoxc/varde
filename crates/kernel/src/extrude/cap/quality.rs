@@ -45,15 +45,12 @@ use glam::DVec2;
 use spade::handles::{FixedFaceHandle, InnerTag};
 
 use super::{Live, MIN_CLEAR};
-use crate::KernelError;
 use crate::budget::Work;
 use crate::extrude::chain::{Chain, Seg, chord};
-use crate::mesh::{Bvh, MIN_SPLIT, apart};
+use crate::mesh::{Bvh, MIN_SPLIT, SIN_SHAPE, apart, circumcentre_from};
 use crate::par::par_map;
 use crate::patch::Bounds3;
-
-/// The sine of the narrowest angle a cap triangle keeps: sin 5°.
-const SIN_BOUND: f64 = 0.087_155_742_747_658_17;
+use crate::{KernelError, MAX_PATCHES};
 
 /// A loop corner whose tangents are less than 60° apart, its cosine
 /// above this, exempts the triangle whose narrowest angle it holds.
@@ -71,9 +68,14 @@ pub(super) enum Bound {
     Quality,
     /// For crowded caps: every triangle, no segment halved, and points
     /// kept half their circumradius from every segment's hull. A point
-    /// then makes no side shorter than the shortest there is (at 5° a
-    /// circumradius is over 5.7 times the triangle's shortest side), so
-    /// it ends without the exemptions.
+    /// its triangle sees is at least the circumradius from every vertex
+    /// it is joined to (the circumcircle holds none the triangle sees), so
+    /// it makes no side shorter than the shortest there is (at 5° a
+    /// circumradius is over 5.7 times the triangle's shortest side); one
+    /// across a chord from its triangle (no way in is tested here) keeps
+    /// only [`MIN_CLEAR`] resolutions from the Steiner points there. Every
+    /// point keeps at least that from the others and from the hulls, so a
+    /// run ends without the exemptions, short of the budget.
     Crowded,
 }
 
@@ -404,6 +406,10 @@ impl Caps<'_> {
                 continue;
             }
 
+            // Past this many vertices the next round fails anyway.
+            if base.saturating_add(added.len()) >= MAX_PATCHES / 4 {
+                return Err(KernelError::TooComplex);
+            }
             let v = live.insert(p)?;
             work.spend(super::TRIANGULATION_WORK)?;
             work.spend(kept.push(p))?;
@@ -434,13 +440,10 @@ impl Caps<'_> {
             .expect("three sides");
         let o = (k + 2) % 3;
         let (ea, eb) = (p[k] - p[o], p[(k + 1) % 3] - p[o]);
-        if ea.perp_dot(eb).abs() >= SIN_BOUND * ea.length() * eb.length() {
+        if ea.perp_dot(eb).abs() >= SIN_SHAPE * ea.length() * eb.length() {
             return None;
         }
-        let (d, e) = (p[1] - p[0], p[2] - p[0]);
-        let den = 2.0 * d.perp_dot(e);
-        let (dd, ee) = (d.length_squared(), e.length_squared());
-        let u = DVec2::new(e.y * dd - d.y * ee, d.x * ee - e.x * dd) / den;
+        let u = circumcentre_from(p[0], p[1], p[2]);
         let r = u.length();
         if bound == Bound::Quality {
             if (tri[o] as usize) < self.segs.len() && self.small_input_angle(tri[o]) {

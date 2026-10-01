@@ -201,8 +201,10 @@ impl Rounds {
 /// round `start` holds on, halving segments where a cap patch needs it,
 /// and as `mode` says, refined for quality ([`quality`]) and moving
 /// Steiner points in from loop vertices with flat corners. Returns the
-/// chain as halved, with the caps; `was_refined` is set if a round of
-/// refinement asked for anything.
+/// chain as halved, with the caps; `unlike_plain` is set if the rounds
+/// did anything the plain caps' wouldn't ([`Mode::PLAIN`]): a run of
+/// refinement asked for anything, or mending left a halving to
+/// refinement at [`MAX_MEND_DEPTH`] that the plain caps would make.
 ///
 /// The first round triangulates the chain and the Steiner points; the
 /// rounds after it add what the round before asked for to that
@@ -230,7 +232,7 @@ pub(super) fn triangulate(
     margin: f64,
     mode: Mode,
     fork: &mut Option<Rounds>,
-    was_refined: &mut bool,
+    unlike_plain: &mut bool,
     work: &mut Work,
 ) -> Result<(Chain, Cap), KernelError> {
     let Rounds {
@@ -306,6 +308,14 @@ pub(super) fn triangulate(
                 .collect()
         };
         let left = |s: &Seg| chain.too_small(s) || (mode.quality && s.depth < MAX_CAP_DEPTH);
+        // The plain caps would halve those on to `MAX_CAP_DEPTH`.
+        if mode.quality
+            && split.iter().any(|&s| {
+                !splittable(&s) && chain.splittable(&segs[s as usize], MAX_CAP_DEPTH, false)
+            })
+        {
+            *unlike_plain = true;
+        }
         if split
             .iter()
             .any(|&s| !splittable(&s) && !left(&segs[s as usize]))
@@ -338,7 +348,7 @@ pub(super) fn triangulate(
             let refined = caps.refine(live, Bound::Quality, work)?;
             settled = refined.split.is_empty();
             if !refined.is_empty() {
-                *was_refined = true;
+                *unlike_plain = true;
                 quality += 1;
                 steiner.extend(refined.added);
                 quality::halve(&mut chain, live, refined.split, work)?;

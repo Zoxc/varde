@@ -1026,9 +1026,9 @@ fn the_second_try_resumes_where_the_first_found_a_flat_corner() {
 #[test]
 fn the_second_try_is_charged_only_from_where_it_resumes() {
     // `late_fork` at fit 1e-2: the first try fails, the second, with
-    // flat corners, passes. Starting the second over would take 300 794
-    // units in all; resuming it, 299 452. The same bits at 1 and 8
-    // threads.
+    // flat corners, passes. Starting the second over would take 310 450
+    // units in all; resuming it, 309 108 (9 656 of them naming the faces,
+    // a unit a patch). The same bits at 1 and 8 threads.
     let fine = Tolerance::new(1e-2).unwrap();
     let p = late_fork();
     let run = |units: u64| extrude(&p, &Frame::XY, 0.0, 2.0, 9, &fine, &Budget::new(units));
@@ -1038,8 +1038,8 @@ fn the_second_try_is_charged_only_from_where_it_resumes() {
     assert_eq!(solid.mesh().check_faces(&fine), Ok(()));
     assert_eq!(solid.mesh().tris().len(), 9656);
     // Out of work in the second try, the first try's error stands.
-    assert!(matches!(run(299_451), Err(KernelError::Invalid(_))));
-    assert_eq!(run(299_452), Ok(solid));
+    assert!(matches!(run(309_107), Err(KernelError::Invalid(_))));
+    assert_eq!(run(309_108), Ok(solid));
 }
 
 #[test]

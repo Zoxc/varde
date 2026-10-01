@@ -58,6 +58,7 @@ mod orient;
 mod primitive;
 mod refine;
 mod repair;
+mod shape;
 
 pub use build::{BuildError, MeshBuilder};
 pub use bvh::Bvh;
@@ -69,6 +70,7 @@ pub(crate) use form::circle_of;
 pub(crate) use hull::{apart, edge_neighbours_apart, flat, straight};
 pub(crate) use refine::{Node, Refiner};
 pub(crate) use repair::{MIN_CURVED_SPLIT, MIN_SPLIT};
+pub(crate) use shape::{SIN_SHAPE, circumcentre_from};
 
 /// A hash map with a fixed hasher, for maps only looked up in, never
 /// iterated: nothing can then depend on its order, and lookups by vertex

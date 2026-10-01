@@ -879,9 +879,12 @@ pass over the mesh would be (two units a patch, one a pair of boxes
 within the resolution, counted before they are collected, so crowded
 boxes run out of budget rather than memory), for
 `Solid::new_repaired_within`, which checks a mesh built to pass (an
-extrude's) before repairing it, and repairs and checks it again only if
-the check fails: repair keeps a mesh that passes as it is, so the solid
-is the same, for one pass over the pairs rather than two;
+extrude's) before repairing it, merges its faces (`Mesh::merge_faces`,
+which changes only names, so only `check_topology` runs again), and
+repairs, merges and checks it again only if the check fails: repair
+keeps a mesh that passes as it is, so the solid is the same, for one
+pass over the pairs rather than two (a mesh failing after the fold
+check pays that pass twice, the check's and repair's);
 `check_embedding` (repair's) stops after step 4.
 
 ### Forms (`mesh/form.rs`)
@@ -1882,6 +1885,8 @@ exact. The 3MF writer is in `varde-io`
 | `extrude.rs` | `Frame`, `extrude`, building the mesh, the walls' surfaces |
 | `extrude/chain.rs` | the segments the solid is built on: classifying, cusps, separating |
 | `extrude/cap.rs` | the caps' triangulation and the rounds that mend it |
+| `extrude/cap/quality.rs` | refinement of the caps for quality and for crowding |
+| `mesh/shape.rs` | the angle bound and circumcentre the caps' refinement and the boolean's shape points share |
 | `profile/tests.rs`, `extrude/tests.rs` | profile builders (exact arcs without trig, circles, rectangles), shapes with analytic volumes |
 
 ### Profiles
@@ -2041,10 +2046,13 @@ over another conic, along the normal. The steps:
      halving, a circumcentre inserted only if inside a region face, more
      than half its circumradius (and 4 resolutions) from every hull and
      4 resolutions from every Steiner point; then the round is mended
-     again. A point at least half the circumradius from the hulls and
-     the circumradius from the vertices it sees makes no side shorter
-     than the triangle's shortest (at 5° the circumradius is over 5.7
-     times that), so it ends without the exemptions. Refined caps have
+     again. A point its triangle sees (no way in is tested here) is at
+     least the circumradius from the vertices it is joined to, so it
+     makes no side shorter than the triangle's shortest (at 5° the
+     circumradius is over 5.7 times that); one across a chord from its
+     triangle keeps only 4 resolutions from the Steiner points there.
+     Every point keeps that from the others and from the hulls, so a
+     run ends without the exemptions, short of the budget. Refined caps have
      about 6 pairs a triangle; no cap measured so far but the 65 536-gon
      is crowded.
    The first round triangulates the chain and the Steiner points; the
@@ -2131,7 +2139,8 @@ over another conic, along the normal. The steps:
    integrated are charged; only if the check fails is the mesh repaired
    (`repair_within`), merged and checked again (`Solid::new_within`).
    That gives what repairing, merging and checking did, for one pass
-   over the pairs of patches rather than two. Nearly always the
+   over the pairs of patches rather than two; a mesh that fails after
+   the fold check pays the pass again in repair. Nearly always the
    construction already passes: over 2 400 random plates with holes
    and 2 000 plates with small holes of sharply weighted conics or
    uneven arcs (fits 0.01 and 0.1), 274 tries' meshes failed the check
@@ -2163,7 +2172,9 @@ over another conic, along the normal. The steps:
    thirteen, all of radius under 0.11, whose shortest arcs are under a
    hundred resolutions long. The first two tries refine for quality
    (with the fork's refinement rounds counted on too); if both fail and
-   work is left, and the first's refinement asked for anything, a last
+   work is left, and the first did anything the plain caps wouldn't (its
+   refinement asked for anything, or its mending left a halving at
+   `MAX_MEND_DEPTH` to refinement that they would make), a last
    try makes the plain caps from the separated chain, neither refined
    nor with flat corners: refining a sliver of the region thinner than
    the pieces the chain may be halved into (a closed spline 0.001 high
@@ -2193,10 +2204,12 @@ clearance and those their groups were rebuilt over, and for each point
 inserted 8 plus the faces around it; its halvings the segments once,
 plus the pieces made; the crowding count the triangles plus the pairs
 counted (at most its limit plus one); then the patches, then twice
-the patches and the pairs of boxes for the check (repair's own if it
-runs), then 32 for each patch the check integrated (`INTEGRATE_WORK`; about
-six for each cylinder-like wall). Segment counts past `MAX_PATCHES / 4`
-are `TooComplex`.
+the patches and the pairs of boxes for the check (and repair's own pass
+too if it fails), a unit a patch for merging the faces, then 32 for each
+patch the check integrated (`INTEGRATE_WORK`; about six for each
+cylinder-like wall). Vertex counts past `MAX_PATCHES / 4` (the segments
+and the Steiner points) are `TooComplex`, at a round's start and as a
+run of refinement inserts its points.
 
 Measured (release, load average 20 to 30 on 7 cores, so times are
 rough; the fastest of three): the tests' 80 × 80 plate with 64 round
@@ -3644,7 +3657,8 @@ to 1 000 on a cross hole through a round boss, with long curved sides),
 which fail the check's neighbour rules against the bands across the cut,
 and which repair's red quartering keeps thin until its budget runs out.
 So, worst first, a triangle whose smallest angle in the layout is under
-5° (`SIN_SHAPE`) takes a point at its circumcentre (in the layout), where
+5° (`SIN_SHAPE`, the extrude caps' bound too, with `circumcentre_from`:
+`mesh/shape.rs`) takes a point at its circumcentre (in the layout), where
 that lies inside the domain triangle, at least half the circumradius
 (`SHAPE_CLEAR`) from every side of the loops (diagonals the ear clipping
 fixed and the holes' bridges included), from every vertex and from the
@@ -4999,7 +5013,12 @@ to 72 of its 96 operations and left the others as they were.
   rim (cut vertices inverted into the wall's domain a rounding either
   side of its side); a cap edge passing through a boss's rim a little
   inside it taken as not crossing (the search found one crossing of
-  two).
+  two). With the extrude's caps refined for quality, one such chain on
+  a turned frame (`a_hole_through_a_sunk_ring_on_a_turned_frame`: a
+  two-hole plate, a ring joined −1..3, a slot cut, a hole drilled −1..1)
+  is refused at its last cut (`Invalid(Hull)` where the hole meets the
+  ring's wall), where with the plain caps it came out right: the test
+  takes right or refused.
 - Triangles thinner than the resolution across two faces (a cut passing
   within a resolution or two of a vertex) aren't flipped, and fail the
   hull rules.
@@ -5762,7 +5781,7 @@ offered ones' (`tolerance_choices`).
 | `MAX_NEAR_NODES` (boolean) | 512 | pieces of a patch looked at certifying a crossing only placed, or checking a root of an edge is on it |
 | `MAX_TURN_COS` (boolean) | 0.7 | the most a cut's conic turns (about 45°) |
 | `MEND_ROUNDS` (boolean) | 4 | rounds of Steiner points in one face's triangulation |
-| `SIN_SHAPE` (boolean) | sin 5° | the smallest angle, in a curved patch's layout, under which a cut face's triangle takes a point at its circumcentre; at most 4 per loop vertex and 16 more, none in a triangle whose circumradius is under `MIN_CURVED_SPLIT` resolutions |
+| `SIN_SHAPE` (`mesh/shape.rs`) | sin 5° | the smallest angle under which an extrude cap's triangle is refined (see "Cap quality"), and, in a curved patch's layout, under which a cut face's triangle takes a point at its circumcentre; at most 4 per loop vertex and 16 more, none in a triangle whose circumradius is under `MIN_CURVED_SPLIT` resolutions |
 | `MAX_WORK` | `1 << 22` | work units in one operation: about two seconds on one thread at most; the heaviest booleans measured take about half of it |
 | `MIN_SPLIT` (repair) | 64 resolutions | the smallest flat piece repair splits, and the smallest profile segment an extrude halves |
 | `MIN_CURVED_SPLIT` (repair) | 8 resolutions | the smallest curved piece repair splits; the refiner's floor in repair |
@@ -5771,6 +5790,8 @@ offered ones' (`tolerance_choices`).
 | `SIN_MIN` (extrude) | `1e-3` | cusps between segments; the narrowest cap patch corner |
 | `MAX_SPLIT_DEPTH` (extrude) | 24 | how often a profile segment may be halved |
 | `MAX_ROUNDS`, `MAX_CAP_DEPTH` (caps) | 32, 16 | rounds of mending the caps, and the halvings all told past which the caps halve a segment no more |
+| `MAX_MEND_DEPTH`, `MAX_QUALITY_ROUNDS` (caps) | 6, 64 | the halvings all told past which mending on the tries that refine leaves a corner to refinement, and the runs of refinement that ask for anything |
+| `CROWDED`, `MIN_CROWDED` (caps) | 32, 65 536 | pairs of the caps' triangles' boxes within the resolution, per triangle and at least, past which the caps are refined for crowding |
 
 `Budget` is a limit (`Budget::new(work)`, at most `MAX_WORK`;
 `Budget::DEFAULT`); an operation counts it down in a `Work` its steps share
@@ -5943,11 +5964,26 @@ parameter, or a split outside the patch bounds),
   first try, with fewer patches. Results changed only where a segment
   reached the depth (perforated plates); no case measured was lost.
 - **An extrude's mesh is checked before it is repaired**
-  (`Solid::new_repaired_within`), not repaired and then checked: the
-  construction nearly always passes, repair would keep it as it is, so
-  the result is the same for one pass over the pairs of patches rather
-  than two. The check is charged as repair's first pass was, so budgets
-  run out where they did.
+  (`Solid::new_repaired_within`), not repaired, merged and then checked:
+  the construction nearly always passes, repair would keep it as it is
+  and merging changes only names, so the result is the same for one pass
+  over the pairs of patches rather than two. The check is charged as
+  repair's first pass was, so for meshes that pass budgets run out where
+  they did; one that fails after the fold check (274 of some 4 400 tries
+  over the random plates measured) pays the pass twice, and may run out
+  where it didn't (`TooComplex` for `Invalid`, both errors the next try
+  is made on).
+- **The caps' refinement shares only its bound and circumcentre with
+  the boolean's shape points** (`mesh/shape.rs`: `SIN_SHAPE`,
+  `circumcentre_from`), not the queue, walk, clearance and flips: the
+  caps insert into spade's constrained Delaunay triangulation, which
+  locates, flips and keeps the faces, test region membership by corner
+  triples and clearance by BVHs over control hulls, and may halve
+  chords; the cut faces keep their own triangle list and edge map, walk
+  across sides with exact orientations, test clearance by flooding the
+  triangles within it, flip only under curved-corner rules (`flippable`)
+  and halve nothing. A shared core would be a triangulation abstraction
+  over both with their rules as callbacks, more code than either loop.
 - **The caps' triangulation is kept from round to round**, points
   inserted and halved chords replaced in it, rather than made afresh
   each round: rounds of mending and of refinement each paid 8 units a
