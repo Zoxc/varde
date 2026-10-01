@@ -27,6 +27,7 @@ const COLORS: Colors = Colors {
         Srgb([0.20, 0.45, 0.85]),
     ],
     origin_outline: Srgb([0.2, 0.22, 0.25]),
+    pivot: Srgb([0.04, 0.58, 0.68]),
     sketch: Srgb([1.0, 1.0, 0.0]),
     faded_alpha: 0.3,
 };
@@ -152,6 +153,7 @@ fn a_depth_tested_sketch_is_hidden_by_the_model_on_gl() {
                 base: &base,
                 live: &live,
             }),
+            pivot: None,
             viewport: Viewport {
                 x: 0.0,
                 y: 0.0,

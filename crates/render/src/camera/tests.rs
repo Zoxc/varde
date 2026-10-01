@@ -180,3 +180,71 @@ fn facing_nothing_in_particular_changes_nothing() {
     assert!(close(camera.backward(), Vec3::Z));
     assert_eq!(camera.yaw, Camera::default().yaw);
 }
+
+#[test]
+fn orbiting_about_a_pivot_keeps_it_where_it_shows() {
+    for projection in [Projection::Orthographic, Projection::Perspective] {
+        let mut camera = Camera::default();
+        camera.set_projection(projection);
+        camera.set_target(Vec3::new(1.0, 2.0, 0.5));
+        let pivot = Vec3::new(3.0, -1.0, 2.0);
+        let shows = |camera: &Camera| {
+            let clip =
+                camera.projection_matrix(1.5, 0.1..100.0) * camera.view() * pivot.extend(1.0);
+            clip.truncate().truncate() / clip.w
+        };
+        let before = shows(&camera);
+        let distance = camera.distance();
+        // Past the pole too, where the pitch is clamped.
+        camera.orbit_about(pivot, 0.7, 3.0);
+        assert!(shows(&camera).abs_diff_eq(before, 1e-4), "{projection:?}");
+        assert_eq!(camera.distance(), distance);
+        assert_eq!(camera.pitch, Camera::PITCH_LIMIT);
+    }
+}
+
+#[test]
+fn orbiting_about_the_target_is_orbiting() {
+    let mut about = Camera::default();
+    let mut plain = about;
+    about.orbit_about(about.target(), 0.3, -0.2);
+    plain.orbit(0.3, -0.2);
+    assert!(close(about.target(), plain.target()));
+    assert_eq!((about.yaw, about.pitch), (plain.yaw, plain.pitch));
+}
+
+#[test]
+fn orbiting_about_a_pivot_ignores_what_is_not_finite() {
+    let mut camera = Camera::default();
+    let before = camera;
+    camera.orbit_about(Vec3::new(f32::NAN, 0.0, 0.0), 0.3, 0.2);
+    camera.orbit_about(Vec3::ZERO, f32::INFINITY, 0.2);
+    assert_eq!(camera, before);
+    // A pivot far out swings the target past the extent: it's clamped.
+    camera.orbit_about(Vec3::splat(Camera::EXTENT), std::f32::consts::PI, 0.0);
+    assert!(camera.target().abs().max_element() <= Camera::EXTENT);
+}
+
+#[test]
+fn centering_on_a_point_pans_across_the_view() {
+    for projection in [Projection::Orthographic, Projection::Perspective] {
+        let mut camera = Camera::default();
+        camera.set_projection(projection);
+        let point = Vec3::new(3.0, -1.0, 2.0);
+        let depth = (point - camera.eye()).dot(camera.backward());
+        camera.center_on(point);
+        let clip = camera.projection_matrix(1.5, 0.1..100.0) * camera.view() * point.extend(1.0);
+        let shows = clip.truncate().truncate() / clip.w;
+        assert!(
+            shows.abs_diff_eq(glam::Vec2::ZERO, 1e-5),
+            "{projection:?}: {shows}"
+        );
+        // As far in front of the eye as before.
+        let after = (point - camera.eye()).dot(camera.backward());
+        assert!((after - depth).abs() < 1e-4, "{projection:?}");
+    }
+    let mut camera = Camera::default();
+    let before = camera;
+    camera.center_on(Vec3::new(f32::NAN, 0.0, 0.0));
+    assert_eq!(camera, before);
+}

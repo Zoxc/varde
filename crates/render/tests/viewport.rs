@@ -8,8 +8,8 @@ use std::sync::Arc;
 use glam::{DVec3, Vec3};
 use varde_kernel::{RenderLines, RenderMesh, Solid, Tolerance};
 use varde_render::{
-    Camera, ClipRect, Colors, Frame, GridPlane, LINE_WIDTH, LineStyle, PointStyle, Projection,
-    Renderer, SketchLayer, SketchScene, Space, Srgb, Srgba, View, Viewport, wgpu,
+    Camera, ClipRect, Colors, Frame, GridPlane, LINE_WIDTH, LineStyle, Pivot, PointStyle,
+    Projection, Renderer, SketchLayer, SketchScene, Space, Srgb, Srgba, View, Viewport, wgpu,
 };
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -27,6 +27,7 @@ const COLORS: Colors = Colors {
         Srgb([0.20, 0.45, 0.85]),
     ],
     origin_outline: Srgb([0.2, 0.22, 0.25]),
+    pivot: Srgb([0.04, 0.58, 0.68]),
     // Pure yellow, found by its lack of blue.
     sketch: Srgb([1.0, 1.0, 0.0]),
     faded_alpha: 0.3,
@@ -82,6 +83,7 @@ fn render_to(
             grid: GridPlane::XY,
             faded: false,
             sketch: None,
+            pivot: None,
             viewport,
             target_size: SIZE,
             scale_factor,
@@ -103,6 +105,7 @@ struct Extras {
     live: bool,
     /// Whether the sketch is hidden by the model in front of it.
     depth_tested: bool,
+    pivot: Option<Pivot>,
 }
 
 /// Renders `mesh` and `extras` into [`VIEWPORT`] at a scale factor of 1.
@@ -142,6 +145,7 @@ fn render_scaled(
             grid: extras.grid,
             faded: extras.faded,
             sketch,
+            pivot: extras.pivot,
             viewport,
             target_size: SIZE,
             scale_factor,
@@ -500,6 +504,49 @@ fn origin_marker_is_a_ring_flat_in_the_grid_plane() {
         "{top:?}"
     );
     assert!((9..=12).contains(&front.0) && front.1 <= 4, "{front:?}");
+}
+
+#[test]
+fn pivot_marker_is_a_ring_facing_the_screen() {
+    // From the front, where the origin's ring is a line, the pivot's is
+    // round, in its colour; it isn't drawn at no opacity, nor on the
+    // origin, where the origin's marker is.
+    let teal = |p: [u8; 4]| p[0] < 60 && p[1] > 90 && p[2] > 110 && p[1] < p[2];
+    let mut camera = Camera::default();
+    camera.look_from(View::Front);
+    let at = Vec3::new(2.5, 0.0, 2.0);
+    let (cx, cy) = on_screen(&camera, at);
+    let extent = |pivot| {
+        let extras = Extras {
+            pivot,
+            ..Extras::default()
+        };
+        let pixels = render_with(&camera, &RenderMesh::default(), extras)?;
+        let (mut wide, mut tall, mut any) = (0u32, 0u32, false);
+        for y in CLIP.y..CLIP.y + CLIP.height {
+            for x in CLIP.x..CLIP.x + CLIP.width {
+                if teal(pixel(&pixels, x, y)) {
+                    wide = wide.max(x.abs_diff(cx));
+                    tall = tall.max(y.abs_diff(cy));
+                    any = true;
+                }
+            }
+        }
+        Some(any.then_some((wide, tall)))
+    };
+    let pivot = |at, opacity| Some(Pivot { at, opacity });
+    let Some(shown) = extent(pivot(at, 1.0)) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let shown = shown.expect("the pivot's marker isn't drawn");
+    assert!(
+        (9..=12).contains(&shown.0) && (9..=12).contains(&shown.1),
+        "{shown:?}"
+    );
+    assert_eq!(extent(pivot(at, 0.0)), Some(None));
+    assert_eq!(extent(pivot(Vec3::ZERO, 1.0)), Some(None));
+    assert_eq!(extent(None), Some(None));
 }
 
 #[test]

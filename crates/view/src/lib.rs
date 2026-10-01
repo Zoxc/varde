@@ -330,7 +330,8 @@ pub enum Look {
     ScrollGeometry(f32),
     /// The Constraints list scrolled to this offset, in pixels.
     ScrollConstraints(f32),
-    /// Turns the camera around its target by these angles in radians.
+    /// Turns the camera around the point it orbits by these angles in
+    /// radians: the pivot if one was picked, else its target.
     Orbit {
         yaw: f32,
         pitch: f32,
@@ -340,8 +341,15 @@ pub enum Look {
         dy: f32,
     },
     Zoom(f32),
+    /// Home: turns the camera to the home view and forgets the pivot.
     ResetCamera,
     LookFrom(View),
+    /// A middle click in the viewport: the point picked for the camera to
+    /// orbit, which is marked for a moment, or none, back to its target.
+    SetPivot(Option<glam::Vec3>),
+    /// The cursor over the view cube or off it: the pivot is marked
+    /// while it's over.
+    HoverCube(bool),
     /// Views in `Projection`, from the view options menu, which closes.
     SetProjection(Projection),
 }

@@ -169,7 +169,7 @@ fn the_status_bar_says_what_is_selected_and_under_the_prompt_only_esc() {
     let (mut doc, sketch, extrude, _) = example();
     // Nothing selected, nothing going on: only the hints.
     let bar = status_bar(&doc);
-    assert_eq!(bar, ["Drag to orbit", "Pan", "Zoom"]);
+    assert_eq!(bar, ["Drag to orbit", "Pan", "Zoom", "Click to set pivot"]);
     assert!(status_bar_of(&doc, false).is_empty());
     // The feature selected, in its box, with the key clearing it, then
     // the hints, those of the keys without the mouse's.
@@ -188,7 +188,8 @@ fn the_status_bar_says_what_is_selected_and_under_the_prompt_only_esc() {
             "Delete",
             "Drag to orbit",
             "Pan",
-            "Zoom"
+            "Zoom",
+            "Click to set pivot"
         ],
     );
     let bar = status_bar_of(&doc, false);

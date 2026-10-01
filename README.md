@@ -22,6 +22,7 @@ reopen a recent file, or recover unsaved changes left by a crash.
 | action                      | input                                      |
 |-----------------------------|--------------------------------------------|
 | orbit                       | middle drag, `Shift` right drag, or left drag outside a sketch |
+| orbit about a point         | middle click on the model, or off it on the grid (in a sketch, its plane), which pans it to the middle of the view; its marker shows for 2 seconds, and while the pointer is over the view cube; a middle click on neither, or Home, orbits the view's centre again |
 | pan                         | right drag                                 |
 | zoom                        | mouse wheel                                |
 | look from a side, or Home   | click a face of the view cube, or the house under it |

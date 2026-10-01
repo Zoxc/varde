@@ -305,6 +305,8 @@ const LIGHT: Palette = Palette {
         grid: GRID,
         axes: AXES,
         origin_outline: ORIGIN_OUTLINE,
+        // The accent.
+        pivot: srgb(color!(0x0a95ad)),
         sketch: srgb(LIGHT_SKETCH),
         faded_alpha: FADED_ALPHA,
     },
@@ -361,6 +363,8 @@ const DARK: Palette = Palette {
         grid: GRID,
         axes: AXES,
         origin_outline: ORIGIN_OUTLINE,
+        // The accent.
+        pivot: srgb(color!(0x39b9cf)),
         sketch: srgb(DARK_SKETCH),
         faded_alpha: FADED_ALPHA,
     },

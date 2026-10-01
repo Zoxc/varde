@@ -28,6 +28,7 @@ const COLORS: Colors = Colors {
         Srgb([0.20, 0.45, 0.85]),
     ],
     origin_outline: Srgb([0.2, 0.22, 0.25]),
+    pivot: Srgb([0.04, 0.58, 0.68]),
     sketch: Srgb([0.04, 0.58, 0.68]),
     faded_alpha: 0.3,
 };
@@ -87,6 +88,7 @@ fn mesh_past_the_buffer_limit_is_skipped() {
         grid: GridPlane::XY,
         faded: false,
         sketch: None,
+        pivot: None,
         viewport: Viewport {
             x: 0.0,
             y: 0.0,
@@ -143,6 +145,7 @@ fn lines_past_the_buffer_limit_are_skipped() {
         grid: GridPlane::XY,
         faded: false,
         sketch: None,
+        pivot: None,
         viewport: Viewport {
             x: 0.0,
             y: 0.0,
@@ -217,6 +220,7 @@ fn sketch_layers_past_the_buffer_limit_are_skipped() {
             base,
             live,
         }),
+        pivot: None,
         viewport: Viewport {
             x: 0.0,
             y: 0.0,

@@ -221,6 +221,28 @@ impl Camera {
         self.pitch = (self.pitch + delta_pitch).clamp(-Self::PITCH_LIMIT, Self::PITCH_LIMIT);
     }
 
+    /// Rotates the camera around `pivot` by the given angles in radians,
+    /// as [`Self::orbit`] does around the target: the target turns with
+    /// the view, so `pivot` stays where it shows on screen. The target
+    /// stays within [`Self::EXTENT`] of the origin, and a pivot or angles
+    /// that aren't finite are ignored.
+    pub fn orbit_about(&mut self, pivot: Vec3, delta_yaw: f32, delta_pitch: f32) {
+        if !(pivot.is_finite() && delta_yaw.is_finite() && delta_pitch.is_finite()) {
+            return;
+        }
+        // The target from the pivot, in the view's axes, which the turn
+        // keeps.
+        let offset = self.target - pivot;
+        let along = [self.right(), self.up(), self.backward()].map(|axis| offset.dot(axis));
+        self.orbit(delta_yaw, delta_pitch);
+        let turned = self.right() * along[0] + self.up() * along[1] + self.backward() * along[2];
+        let target = pivot + turned;
+        if target.is_finite() {
+            let extent = Vec3::splat(Self::EXTENT);
+            self.target = target.clamp(-extent, extent);
+        }
+    }
+
     /// Moves the target in the view plane. `delta` is in fractions of the
     /// viewport height, so panning tracks the cursor at the target depth.
     /// The target stays within [`Self::EXTENT`] of the origin, and a pan
@@ -231,6 +253,21 @@ impl Camera {
             // Clamped rather than ignored if the sum overflows.
             let extent = Vec3::splat(Self::EXTENT);
             self.target = (self.target + offset).clamp(-extent, extent);
+        }
+    }
+
+    /// Pans so `point` shows in the middle of the view: the target moves
+    /// across the view, not along it, so the zoom and, in perspective, how
+    /// far the eye is from what it sees stay. The target stays within
+    /// [`Self::EXTENT`] of the origin, and a point that isn't finite is
+    /// ignored.
+    pub fn center_on(&mut self, point: Vec3) {
+        let offset = point - self.target;
+        let across = self.right() * offset.dot(self.right()) + self.up() * offset.dot(self.up());
+        let target = self.target + across;
+        if target.is_finite() {
+            let extent = Vec3::splat(Self::EXTENT);
+            self.target = target.clamp(-extent, extent);
         }
     }
 

@@ -85,6 +85,7 @@ fn shown(state: ExtrudeState<'_>) -> Program<'_> {
         &Arc::default(),
         &Arc::default(),
         &top_camera(),
+        None,
         Mode::Light.palette(),
         None,
         Some(Extruding::new(state)),

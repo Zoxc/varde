@@ -8,7 +8,9 @@ draws the UI on top: in a sketch the layer of widgets anchored to the
 sketch (`anchors.rs`, below), and the camera controls in the viewport's
 top-right corner (`controls.rs`: the view cube, and Home under it at its
 right, wrapped in a `mouse_area` so clicks on it don't reach the
-viewport). Neither takes events off its widgets, so they reach the scene.
+viewport; the cube's `mouse_area` only says when the cursor enters or
+leaves it, `Look::HoverCube`). Neither takes events off its widgets, so
+they reach the scene.
 
 The status bar (`status.rs`) floats over the viewport's bottom right, 12
 px in from its right and 10 px up from its bottom (`STATUS_BAR_ROOM` is
@@ -40,6 +42,29 @@ pointer over an item to select. Drags map to camera moves in
 from `ModifiersChanged` and whether a sketch is open: middle and `Shift` +
 right orbit, right pans, left orbits outside a sketch; `viewport::hints`
 and `README.md` follow it.
+
+A middle click, the cursor let go within `CLICK_SLOP` (3 px) of where
+it was pressed, picks the point the camera orbits (until the cursor
+leaves that, a middle drag doesn't orbit): `viewport/pivot.rs` casts the
+cursor's ray (`Projector::ray`) at the model's mesh, the nearest hit
+winning (in an orthographic view anywhere along the ray, which starts
+at the target's depth), and off the model onto the grid's plane (XY, or
+the sketch's in a sketch) where the grid shows, within
+`GRID_FADE_HEIGHTS` view heights of the target seen on it, so a click
+near the horizon doesn't fly off; it sends `Look::SetPivot` with the
+point, or `None` off them all. The status bar hints it after Zoom, by
+the wheel's icon ("Click to set pivot", `viewport::hints`). The
+app's `Doc` keeps it (`doc/camera.rs`'s `Pivot`), pans to bring it to
+the middle of the view (`Camera::center_on`, across the view only, so
+the zoom stays; animated as the view cube's turns are), and orbits about
+it
+(`Camera::orbit_about`, which turns the target about the pivot with
+the view, so the pivot stays where it shows on screen); `None`, and
+Home, go back to orbiting the target. Panning, zooming and the view
+cube's faces leave it. Its marker (below) shows whole for
+`PIVOT_SHOWN` (2 s) once picked and fades over `PIVOT_FADE` (0.4 s),
+which takes frames, and shows whole while the cursor is over the cube,
+fading from when it leaves.
 
 A banner can sit on top of the viewport, between the toolbar's banners
 and it, over the viewport's column only: a sketch edit the solver
@@ -187,6 +212,13 @@ of it; the dot stays round. It's drawn over the model and the finished
 sketches, since the origin often coincides with model corners, and under
 the sketch being edited. The world axes' directions and names are on the
 view cube instead (below).
+
+The pivot's marker (`Frame::pivot`, a `Pivot` with its point and
+opacity) is the same quad's second instance: the same ring and dot, but
+the ring lies in the screen's plane, so it's always round, its core in
+the accent (`Colors::pivot`) and the whole faded by the opacity. Where
+it shows within 1.5 px of the origin it isn't drawn: the origin's
+marker is there.
 
 The view cube (`view_cube.rs`) is a canvas in the controls, turned with
 the camera: its faces lettered and lit as in the mock, clicking one looks
@@ -388,12 +420,13 @@ key hints; the banner over the viewport for a refused sketch edit, short
 and long in a small window, and the body delete prompt's warning of a
 cut left with nothing to work on; two plates a join merged, Objects
 showing the merged one "in Body 1" (hovered, dark) and the join's panel
-saying which body it joins into. Shots are for
-looking (pixels differ by GPU and driver), never compared and never
-committed: a fault a shot finds gets an ordinary headless test of the
-state or layout behind it. A scenario answers each regeneration it asks
-for before its shots, unless the shot is of the wait (`-waiting`): an
-unanswered one shows "Regenerating…" with the last answer's preview and
+saying which body it joins into; the pivot's marker on a corner of the
+plate, panned to the middle and orbited about, whole, half faded and
+on the origin. Shots are for looking (pixels differ by GPU and driver),
+never compared and never committed: a fault a shot finds gets an
+ordinary headless test of the state or layout behind it. A scenario
+answers each regeneration it asks for before its shots, unless the
+shot is of the wait (`-waiting`): an unanswered one shows "Regenerating…" with the last answer's preview and
 Bodies list, which reads like a fault and isn't one.
 
 Reading shots: a finding names the shot, what's wrong and the code

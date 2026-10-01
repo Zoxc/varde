@@ -389,7 +389,11 @@ pub(crate) fn hidden(mesh: &RenderMesh, camera: &Camera, at: DVec3) -> bool {
 
 /// Where the ray from `origin` along `direction` is inside `bounds`, as
 /// how far along it it goes in and comes out, if it meets it ahead.
-fn through_box(origin: DVec3, direction: DVec3, bounds: varde_kernel::Aabb) -> Option<(f64, f64)> {
+pub(super) fn through_box(
+    origin: DVec3,
+    direction: DVec3,
+    bounds: varde_kernel::Aabb,
+) -> Option<(f64, f64)> {
     let (min, max) = (bounds.min.as_dvec3(), bounds.max.as_dvec3());
     let (mut near, mut far) = (0.0f64, f64::INFINITY);
     for axis in 0..3 {
@@ -410,7 +414,7 @@ fn through_box(origin: DVec3, direction: DVec3, bounds: varde_kernel::Aabb) -> O
 /// How far along the ray from `origin` along the unit `direction` it
 /// meets the triangle `corners`, either side of it, if it does
 /// (Möller–Trumbore).
-fn ray_hits(origin: DVec3, direction: DVec3, [a, b, c]: [DVec3; 3]) -> Option<f64> {
+pub(super) fn ray_hits(origin: DVec3, direction: DVec3, [a, b, c]: [DVec3; 3]) -> Option<f64> {
     let (ab, ac) = (b - a, c - a);
     let p = direction.cross(ac);
     let determinant = ab.dot(p);

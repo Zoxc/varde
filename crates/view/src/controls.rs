@@ -33,8 +33,12 @@ pub fn view_controls(camera: &Camera) -> Element<'_, Message> {
     )
     .style(theme::float_button);
 
-    // The cube is not blocked: dragging from around it still orbits.
-    column![view_cube::view_cube(camera), block_viewport_drag(home)]
+    // The cube is not blocked: dragging from around it still orbits. Over
+    // it, the point the camera orbits is marked.
+    let cube = mouse_area(view_cube::view_cube(camera))
+        .on_enter(Message::Look(Look::HoverCube(true)))
+        .on_exit(Message::Look(Look::HoverCube(false)));
+    column![cube, block_viewport_drag(home)]
         .spacing(GAP)
         .align_x(Alignment::End)
         .into()

@@ -3,17 +3,19 @@
 //! input on it.
 
 mod extrude;
+mod pivot;
 mod sketch;
 
 use std::sync::{Arc, Weak};
 
+use glam::DVec2;
 use iced::widget::shader::{self, Action};
 use iced::widget::{container, stack};
 use iced::{Element, Event, Length, Point, Rectangle, keyboard, mouse};
 use varde_kernel::{RenderLines, RenderMesh};
 use varde_render::{
-    Camera, ClipRect, Colors, Frame, GridPlane, PrepareError, Renderer, SketchLayer, SketchScene,
-    Slot, wgpu,
+    Camera, ClipRect, Colors, Frame, GridPlane, Pivot, PrepareError, Renderer, SketchLayer,
+    SketchScene, Slot, wgpu,
 };
 
 use crate::anchors::Anchors;
@@ -33,16 +35,23 @@ pub(crate) const CONTROLS_TOP: f32 = 10.0;
 const ORBIT_SPEED: f32 = 0.008;
 const ZOOM_PER_LINE: f32 = 0.9;
 const ZOOM_PER_PIXEL: f32 = 0.995;
+/// How far the cursor may move, in pixels, between pressing and letting go
+/// of the middle button for it to be a click, which picks the point the
+/// camera orbits, rather than an orbit.
+const CLICK_SLOP: f32 = 3.0;
 
 /// The 3D viewport showing `mesh` and the finished `sketches` from
 /// `camera`, with the controls over its top-right corner, and in a sketch
 /// the sketch being edited, with the layer of widgets anchored to it, or
 /// setting up an extrude, its regions and handle, and `panel`, floating
-/// over the viewport's right under the controls.
+/// over the viewport's right under the controls. `pivot`, the point the
+/// camera orbits if one was picked, is marked.
+#[expect(clippy::too_many_arguments)]
 pub(crate) fn viewport<'a>(
     mesh: &Arc<RenderMesh>,
     sketches: &Arc<RenderLines>,
     camera: &'a Camera,
+    pivot: Option<Pivot>,
     palette: &Palette,
     sketching: Option<Sketching<'a>>,
     extruding: Option<Extruding<'a>>,
@@ -76,7 +85,7 @@ pub(crate) fn viewport<'a>(
             .knobs(camera, mesh)
             .unwrap_or_else(|| iced::widget::Space::new().into())
     });
-    let program = program(mesh, sketches, camera, palette, sketching, extruding);
+    let program = program(mesh, sketches, camera, pivot, palette, sketching, extruding);
     let scene = iced::widget::shader(program)
         .width(Length::Fill)
         .height(Length::Fill);
@@ -103,6 +112,7 @@ fn program<'a>(
     mesh: &Arc<RenderMesh>,
     sketches: &Arc<RenderLines>,
     camera: &Camera,
+    pivot: Option<Pivot>,
     palette: &Palette,
     sketching: Option<Sketching<'a>>,
     extruding: Option<Extruding<'a>>,
@@ -112,6 +122,7 @@ fn program<'a>(
             mesh: mesh.clone(),
             sketches: sketches.clone(),
             camera: *camera,
+            pivot,
             colors: palette.scene,
             sketch_plane: sketching.as_ref().map(Sketching::grid),
         },
@@ -138,6 +149,8 @@ struct Scene {
     mesh: Arc<RenderMesh>,
     sketches: Arc<RenderLines>,
     camera: Camera,
+    /// The point the camera orbits, marked, if one was picked.
+    pivot: Option<Pivot>,
     colors: Colors,
     /// The plane of the sketch being edited, if one is.
     sketch_plane: Option<GridPlane>,
@@ -172,9 +185,10 @@ impl DragKind {
 }
 
 /// The status bar hints for the viewport's mouse bindings, in a sketch if
-/// `sketching`, see [`DragKind::for_button`]. Orbiting with the middle
-/// button isn't hinted: it's the wheel's icon, which zooms.
-pub fn hints<'a>(sketching: bool) -> [Hint<'a>; 3] {
+/// `sketching`, see [`DragKind::for_button`], and the middle click
+/// picking the point to orbit. Orbiting with the middle button isn't
+/// hinted: it's the wheel's icon, which zooms.
+pub fn hints<'a>(sketching: bool) -> [Hint<'a>; 4] {
     let orbit = if sketching {
         chord_hint(Held::ORBIT, MouseButton::Right, "Orbit")
     } else {
@@ -184,12 +198,17 @@ pub fn hints<'a>(sketching: bool) -> [Hint<'a>; 3] {
         orbit,
         mouse_hint(MouseButton::Right, "Pan"),
         mouse_hint(MouseButton::Wheel, "Zoom"),
+        mouse_hint(MouseButton::Wheel, "Click to set pivot"),
     ]
 }
 
 #[derive(Default)]
 struct Interaction {
     drag: Option<(DragKind, Point)>,
+    /// Where the middle button was pressed, while the cursor hasn't moved
+    /// past [`CLICK_SLOP`] from there: letting go then is a click, which
+    /// picks the point the camera orbits, and until then it doesn't orbit.
+    click: Option<Point>,
     /// The modifiers held, which change what a drag does, and `Ctrl`
     /// (`Cmd`) adds to a sketch's selection.
     modifiers: keyboard::Modifiers,
@@ -350,13 +369,36 @@ impl Program<'_> {
                 let position = cursor.position_over(bounds)?;
                 let kind = DragKind::for_button(button, state.modifiers, self.sketching())?;
                 state.drag = Some((kind, position));
+                state.click = (button == mouse::Button::Middle).then_some(position);
                 Some(Action::capture())
             }
-            mouse::Event::ButtonReleased(_) => {
+            mouse::Event::ButtonReleased(button) => {
                 state.drag.take()?;
-                Some(Action::capture())
+                let click = state
+                    .click
+                    .take()
+                    .filter(|_| button == mouse::Button::Middle);
+                let Some(at) = click else {
+                    return Some(Action::capture());
+                };
+                let at = DVec2::new((at.x - bounds.x).into(), (at.y - bounds.y).into());
+                let pivot = pivot::pick(
+                    &self.scene.mesh,
+                    &self.scene.camera,
+                    [bounds.width, bounds.height],
+                    at,
+                    self.sketching.as_ref().map(Sketching::placement),
+                );
+                Some(Action::publish(Message::Look(Look::SetPivot(pivot))).and_capture())
             }
             mouse::Event::CursorMoved { position } => {
+                // A middle click until the cursor moves far enough.
+                if let Some(at) = state.click {
+                    if at.distance(position) < CLICK_SLOP {
+                        return Some(Action::capture());
+                    }
+                    state.click = None;
+                }
                 // Uses the raw position so drags continue over UI panels.
                 let (kind, last) = state.drag.as_mut()?;
                 let delta = position - *last;
@@ -435,6 +477,7 @@ impl shader::Primitive for Primitive {
                 // fades the model.
                 grid: scene.sketch_plane.unwrap_or(GridPlane::XY),
                 faded: scene.sketch_plane.is_some(),
+                pivot: scene.pivot,
                 sketch: self.sketch.as_ref().map(|sketch| SketchScene {
                     plane: sketch.plane,
                     depth_tested: sketch.depth_tested,

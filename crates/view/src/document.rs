@@ -35,6 +35,9 @@ use crate::{
 pub struct DocumentState<'a> {
     pub editor: &'a Editor,
     pub camera: &'a Camera,
+    /// The point the camera orbits, marked as it's picked and while the
+    /// cursor is over the view cube, if one was picked and it shows.
+    pub pivot: Option<varde_render::Pivot>,
     /// The document's mesh, which the app gets from the regeneration side,
     /// so it may lag behind the document.
     pub mesh: &'a Arc<RenderMesh>,
@@ -503,6 +506,7 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
                         state.mesh,
                         state.sketches,
                         state.camera,
+                        state.pivot,
                         state.mode.palette(),
                         state
                             .sketch

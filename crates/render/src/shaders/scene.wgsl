@@ -16,6 +16,8 @@ struct Uniforms {
     axes: array<vec4<f32>, 3>,
     origin_outline: vec4<f32>,
     sketch: vec4<f32>,
+    pivot: vec4<f32>,
+    pivot_color: vec4<f32>,
     grid_origin: vec4<f32>,
     grid_x: vec4<f32>,
     grid_y: vec4<f32>,
@@ -649,15 +651,22 @@ fn fs_line(in: LineOut) -> @location(0) vec4<f32> {
 // lines run in; the dot is always round. Sizes are in logical pixels,
 // scaled to physical ones by `u.viewport.z`. Always drawn on top, since the
 // origin often coincides with model corners and edges.
+//
+// The second instance marks the point the camera orbits (`u.pivot`) the
+// same way, but with its ring facing the screen, so it's always round, its
+// core in the pivot's colour and faded by its opacity; not drawn where it
+// shows within a pixel or so of the origin, whose marker is there.
 
 struct OriginOut {
     @builtin(position) position: vec4<f32>,
-    // Where the origin shows, in pixels from the viewport's centre.
+    // Where the marker's point shows, in pixels from the viewport's centre.
     @location(0) @interpolate(flat) center: vec2<f32>,
     // The ring's ellipse: the images of the grid's x and y axes, scaled so
     // the ellipse is the unit circle's image, in pixels.
     @location(1) @interpolate(flat) ring_x: vec2<f32>,
     @location(2) @interpolate(flat) ring_y: vec2<f32>,
+    // The core's colour, and how opaque the marker is.
+    @location(3) @interpolate(flat) core: vec4<f32>,
 };
 
 const RING_RADIUS: f32 = 10.0;
@@ -668,6 +677,8 @@ const RIM: f32 = 1.0;
 const DOT_RADIUS: f32 = 2.5;
 // The segments the ring is drawn as.
 const RING_SEGMENTS: u32 = 48u;
+// How near the origin's image, in logical pixels, the pivot's hides.
+const PIVOT_AT_ORIGIN: f32 = 1.5;
 
 fn to_pixels(clip: vec4<f32>) -> vec2<f32> {
     return clip.xy / clip.w * 0.5 * u.viewport.xy;
@@ -686,33 +697,48 @@ fn image_of(direction: vec3<f32>, clip: vec4<f32>) -> vec2<f32> {
 }
 
 @vertex
-fn vs_origin(@builtin(vertex_index) index: u32) -> OriginOut {
+fn vs_origin(
+    @builtin(vertex_index) index: u32,
+    @builtin(instance_index) instance: u32,
+) -> OriginOut {
     var corners = array<vec2<f32>, 6>(
         vec2(-1.0, -1.0), vec2(1.0, -1.0), vec2(1.0, 1.0),
         vec2(-1.0, -1.0), vec2(1.0, 1.0), vec2(-1.0, 1.0),
     );
+    let pivot = instance == 1u;
+    let at = select(vec3<f32>(0.0), u.pivot.xyz, pivot);
+    let clip = u.view_proj * vec4<f32>(at, 1.0);
     let origin = u.view_proj * vec4<f32>(0.0, 0.0, 0.0, 1.0);
     var out: OriginOut;
-    if origin.w <= 0.0 {
-        // Behind the eye: nothing to draw.
+    // Behind the eye, or a pivot that isn't drawn or shows on the origin:
+    // nothing to draw.
+    let s = u.viewport.z;
+    var hidden = clip.w <= 0.0;
+    if pivot && !hidden {
+        let on_origin = origin.w > 0.0
+            && distance(to_pixels(clip), to_pixels(origin)) < PIVOT_AT_ORIGIN * s;
+        hidden = u.pivot.w <= 0.0 || on_origin;
+    }
+    if hidden {
         out.position = vec4<f32>(0.0, 0.0, 0.0, 1.0);
         return out;
     }
-    let s = u.viewport.z;
-    let center = to_pixels(origin);
+    let center = to_pixels(clip);
     // The ellipse's semi-major axis, the larger singular value of the
-    // matrix with columns `ex` and `ey`, scaled to RING_RADIUS.
-    let ex = image_of(u.grid_x.xyz, origin);
-    let ey = image_of(u.grid_y.xyz, origin);
+    // matrix with columns `ex` and `ey`, scaled to RING_RADIUS. The
+    // pivot's lies in the screen's plane.
+    let ex = select(image_of(u.grid_x.xyz, clip), image_of(u.right.xyz, clip), pivot);
+    let ey = select(image_of(u.grid_y.xyz, clip), image_of(u.up.xyz, clip), pivot);
     let sum = dot(ex, ex) + dot(ey, ey);
     let det = ex.x * ey.y - ex.y * ey.x;
     let major = sqrt(0.5 * (sum + sqrt(max(sum * sum - 4.0 * det * det, 0.0))));
     let scale = RING_RADIUS * s / max(major, 1e-30);
     let reach = (RING_RADIUS + RING_CORE + RIM + 1.0) * s;
-    out.position = from_pixels(center + corners[index] * reach, origin);
+    out.position = from_pixels(center + corners[index] * reach, clip);
     out.center = center;
     out.ring_x = ex * scale;
     out.ring_y = ey * scale;
+    out.core = select(vec4<f32>(1.0), vec4<f32>(u.pivot_color.rgb, u.pivot.w), pivot);
     return out;
 }
 
@@ -741,8 +767,8 @@ fn fs_origin(in: OriginOut) -> @location(0) vec4<f32> {
         clamp((RING_CORE + RIM) * s + 0.5 - ring, 0.0, 1.0),
         clamp(RIM * s + 0.5 - dot_distance, 0.0, 1.0),
     );
-    let color = mix(u.origin_outline.rgb, vec3<f32>(1.0), core / max(rim, 1e-6));
-    return output(vec4<f32>(color, rim));
+    let color = mix(u.origin_outline.rgb, in.core.rgb, core / max(rim, 1e-6));
+    return output(vec4<f32>(color, rim * in.core.a));
 }
 
 // --- The sketch being edited: points and fills ---

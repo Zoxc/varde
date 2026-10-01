@@ -851,3 +851,31 @@ fn shots_15_merged_bodies() {
         camera.take(&doc, "15-merged-join-scale2", Shot::new().scale(2.0));
     });
 }
+
+/// Scenario 16: the point the camera orbits, picked on the example's
+/// plate, panned to the middle and orbited about, its marker whole, half
+/// faded, and on the origin, where it isn't drawn.
+#[test]
+#[ignore = "writes screenshots, see the module"]
+fn shots_16_pivot() {
+    shooting(|camera| {
+        let (mut doc, _requests) = example();
+        framed(&mut doc);
+        let corner = doc.feed.mesh().bounds().unwrap().max;
+        let start = Instant::now();
+        doc.set_pivot(Some(corner), start);
+        // Panned to the middle, the marker still whole.
+        doc.animation_frame(start + crate::doc::CAMERA_ANIMATION);
+        doc.look(Look::Orbit {
+            yaw: 0.6,
+            pitch: 0.3,
+        });
+        camera.take(&doc, "16-pivot", Shot::new());
+        camera.take(&doc, "16-pivot-dark-scale2", Shot::new().dark().scale(2.0));
+        doc.animation_frame(start + crate::doc::PIVOT_SHOWN + crate::doc::PIVOT_FADE / 2);
+        camera.take(&doc, "16-pivot-fading", Shot::new());
+        doc.set_pivot(Some(glam::Vec3::ZERO), start);
+        doc.animation_frame(start + crate::doc::CAMERA_ANIMATION);
+        camera.take(&doc, "16-pivot-on-origin", Shot::new());
+    });
+}

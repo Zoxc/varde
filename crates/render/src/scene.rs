@@ -11,7 +11,7 @@ use crate::Camera;
 
 /// How many view heights from the target the grid fades out within. The
 /// renderer passes it to `fs_grid` as a pipeline constant.
-pub(crate) const GRID_FADE_HEIGHTS: f32 = 6.0;
+pub const GRID_FADE_HEIGHTS: f32 = 6.0;
 
 /// A plane in the world with axes in it, which the grid is drawn on: the
 /// XY plane, or the plane of the sketch being edited. The grid's lines

@@ -20,7 +20,10 @@ use varde_solve::{Request as SolveRequest, Response as SolveResponse, Solver};
 use varde_view::{Edit, MeshStatus, Panel, Welcome as WelcomeUi};
 
 use super::*;
-use crate::doc::{AutoSave, CAMERA_ANIMATION, CameraAnimation, Origin, Picking, Refusal, Target};
+use crate::doc::{
+    AutoSave, CAMERA_ANIMATION, CameraAnimation, Origin, PIVOT_FADE, PIVOT_SHOWN, Picking, Refusal,
+    Target,
+};
 
 #[test]
 fn camera_animation_eases_out_and_ends() {
@@ -35,6 +38,90 @@ fn camera_animation_eases_out_and_ends() {
     let mid = animation.at(start + CAMERA_ANIMATION / 2).unwrap();
     assert!((mid.distance() / from.distance() - 8f32.powf(0.875)).abs() < 1e-3);
     assert_eq!(animation.at(start + CAMERA_ANIMATION), None);
+}
+
+#[test]
+fn the_camera_orbits_the_pivot_picked_until_home() {
+    let mut doc = untitled();
+    let pivot = Vec3::new(4.0, -2.0, 3.0);
+    let screen = |camera: &Camera| {
+        let offset = pivot - camera.target();
+        (offset.dot(camera.right()), offset.dot(camera.up()))
+    };
+    doc.look(Look::SetPivot(Some(pivot)));
+    // It pans to bring the pivot to the middle; past the marker's fade.
+    doc.animation_frame(Instant::now() + 10 * PIVOT_SHOWN);
+    assert!(!doc.animating());
+    let before = screen(&doc.camera);
+    assert!(before.0.abs() < 1e-4 && before.1.abs() < 1e-4, "{before:?}");
+    doc.look(Look::Orbit {
+        yaw: 0.4,
+        pitch: -0.3,
+    });
+    let after = screen(&doc.camera);
+    assert!((after.0 - before.0).abs() < 1e-4 && (after.1 - before.1).abs() < 1e-4);
+    // A click off the model orbits the target again, and doesn't pan.
+    let target = doc.camera.target();
+    doc.look(Look::SetPivot(None));
+    assert!(!doc.animating());
+    assert_eq!(doc.camera.target(), target);
+    doc.look(Look::Orbit {
+        yaw: 0.4,
+        pitch: -0.3,
+    });
+    assert_eq!(doc.camera.target(), target);
+    // And so does Home.
+    doc.look(Look::SetPivot(Some(pivot)));
+    doc.look(Look::ResetCamera);
+    assert!(doc.pivot_marker().is_none());
+    settle_camera(&mut doc);
+    let target = doc.camera.target();
+    doc.look(Look::Orbit {
+        yaw: 0.4,
+        pitch: -0.3,
+    });
+    assert_eq!(doc.camera.target(), target);
+}
+
+#[test]
+fn the_pivot_marker_fades_after_it_is_picked_and_shows_over_the_cube() {
+    let mut doc = untitled();
+    assert!(doc.pivot_marker().is_none());
+    let start = Instant::now();
+    doc.set_pivot(Some(Vec3::ONE), start);
+    assert_eq!(doc.pivot_marker().map(|marker| marker.opacity), Some(1.0));
+    assert!(doc.animating());
+    doc.animation_frame(start + PIVOT_SHOWN);
+    assert_eq!(doc.pivot_marker().map(|marker| marker.opacity), Some(1.0));
+    doc.animation_frame(start + PIVOT_SHOWN + PIVOT_FADE / 2);
+    let half = doc.pivot_marker().unwrap().opacity;
+    assert!((half - 0.5).abs() < 0.01, "{half}");
+    doc.animation_frame(start + PIVOT_SHOWN + PIVOT_FADE);
+    assert!(doc.pivot_marker().is_none());
+    assert!(!doc.animating());
+
+    // Over the cube it shows, without frames, for as long as the cursor
+    // is there; off it, it fades at once.
+    let later = start + 10 * PIVOT_SHOWN;
+    doc.hover_cube(true, later);
+    assert_eq!(doc.pivot_marker().map(|marker| marker.opacity), Some(1.0));
+    assert!(!doc.animating());
+    doc.animation_frame(later + 10 * PIVOT_SHOWN);
+    assert_eq!(doc.pivot_marker().map(|marker| marker.opacity), Some(1.0));
+    let off = later + 20 * PIVOT_SHOWN;
+    doc.hover_cube(false, off);
+    assert!(doc.animating());
+    doc.animation_frame(off + PIVOT_FADE / 2);
+    let half = doc.pivot_marker().unwrap().opacity;
+    assert!((half - 0.5).abs() < 0.01, "{half}");
+    doc.animation_frame(off + PIVOT_FADE);
+    assert!(doc.pivot_marker().is_none());
+
+    // With no pivot picked, nothing shows over the cube.
+    doc.set_pivot(None, off);
+    doc.hover_cube(true, off);
+    assert!(doc.pivot_marker().is_none());
+    assert!(!doc.animating());
 }
 
 #[test]
@@ -4766,7 +4853,13 @@ fn a_long_status_leaves_the_key_hints_on_the_screen() {
     let shown = texts(&mut ui, &renderer);
     let status_top = size.height - varde_view::STATUS_BAR_ROOM;
     let in_bar: Vec<_> = shown.iter().filter(|t| t.bounds.y >= status_top).collect();
-    for hint in ["Edit", "Delete", "Drag to orbit", "Zoom"] {
+    for hint in [
+        "Edit",
+        "Delete",
+        "Drag to orbit",
+        "Zoom",
+        "Click to set pivot",
+    ] {
         let text = in_bar
             .iter()
             .find(|t| t.text == hint)

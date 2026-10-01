@@ -11,8 +11,10 @@ use crate::sketch::{FillVertex, LineInstance, PointInstance, SketchLayer, Sketch
 
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
-/// One quad for the origin marker. See `vs_origin`.
+/// A quad per marker, an instance each: the origin's and the pivot's. See
+/// `vs_origin`.
 const ORIGIN_VERTICES: u32 = 6;
+const MARKERS: u32 = 2;
 
 /// A quad per segment of a line, two triangles. See `line_vertex`.
 const LINE_VERTICES: u32 = 6;
@@ -68,6 +70,10 @@ pub struct Frame<'a> {
     /// drawn over everything else, or hidden by the model in front of it
     /// ([`SketchScene::depth_tested`]).
     pub sketch: Option<SketchScene<'a>>,
+    /// The point the camera orbits, if one was picked: marked over
+    /// everything but the sketch being edited, unless it shows where the
+    /// origin does.
+    pub pivot: Option<Pivot>,
     /// Where to draw on the target.
     pub viewport: Viewport,
     /// Size of the whole render target in physical pixels.
@@ -77,6 +83,16 @@ pub struct Frame<'a> {
     pub scale_factor: f32,
     /// Colours from the UI theme.
     pub colors: Colors,
+}
+
+/// The marker of the point the camera orbits: a ring facing the screen
+/// with a dot at the point, like the origin's.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Pivot {
+    pub at: Vec3,
+    /// From 0, not drawn, to 1, as it fades out. Out of range or not
+    /// finite, it isn't drawn.
+    pub opacity: f32,
 }
 
 /// An opaque sRGB-encoded colour, like CSS and UI colours. The renderer
@@ -98,8 +114,10 @@ pub struct Colors {
     pub grid: Srgb,
     /// The X, Y and Z axes, for the grid's axis lines.
     pub axes: [Srgb; 3],
-    /// The rims of the origin marker's ring and dot.
+    /// The rims of the origin marker's ring and dot, and the pivot's.
     pub origin_outline: Srgb,
+    /// The core of the pivot's ring and dot.
+    pub pivot: Srgb,
     /// Finished sketches' curves.
     pub sketch: Srgb,
     /// How opaque the model's faces and edges are when [`Frame::faded`],
@@ -145,6 +163,10 @@ struct Uniforms {
     axes: [[f32; 4]; 3],
     origin_outline: [f32; 4],
     sketch: [f32; 4],
+    /// [`Frame::pivot`]: xyz where it is, w its opacity, 0 if it isn't
+    /// drawn; and its core's colour.
+    pivot: [f32; 4],
+    pivot_color: [f32; 4],
     /// [`Frame::grid`]: xyz its origin, and unit x and y axes; w unused.
     grid_origin: [f32; 4],
     grid_x: [f32; 4],
@@ -731,6 +753,11 @@ impl Renderer {
             axes: colors.axes.map(linear),
             origin_outline: linear(colors.origin_outline),
             sketch: linear(colors.sketch),
+            pivot: frame
+                .pivot
+                .filter(|pivot| pivot.at.is_finite() && (0.0..=1.0).contains(&pivot.opacity))
+                .map_or([0.0; 4], |pivot| pivot.at.extend(pivot.opacity).to_array()),
+            pivot_color: linear(colors.pivot),
             grid_origin: grid.origin().extend(0.0).to_array(),
             grid_x: grid.x().extend(0.0).to_array(),
             grid_y: grid.y().extend(0.0).to_array(),
@@ -826,7 +853,7 @@ impl Renderer {
         }
 
         pass.set_pipeline(&self.origin);
-        pass.draw(0..ORIGIN_VERTICES, 0..1);
+        pass.draw(0..ORIGIN_VERTICES, 0..MARKERS);
 
         // The sketch being edited, over everything, the origin marker
         // included, since its points often lie on it; or depth tested.

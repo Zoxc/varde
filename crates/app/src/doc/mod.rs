@@ -13,6 +13,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use glam::Vec3;
 use iced::Element;
+use iced::time::Instant;
 use varde_document::name::UNTITLED;
 use varde_document::{
     BodyId, Command, Document, EditError, Editor, FeatureId, FeatureKind, LengthUnit, OriginPlane,
@@ -26,6 +27,9 @@ use varde_view::{DocumentKeys, Edit, Look, Message as Ui, Mode, Overlay, Panel, 
 #[cfg(test)]
 pub(crate) use camera::CAMERA_ANIMATION;
 pub(crate) use camera::CameraAnimation;
+use camera::Pivot;
+#[cfg(test)]
+pub(crate) use camera::{PIVOT_FADE, PIVOT_SHOWN};
 use delete::Deleting;
 pub(crate) use extrude::ExtrudeSession;
 use feed::MeshFeed;
@@ -94,6 +98,11 @@ pub(crate) struct Doc {
     /// it: see [`Doc::take_focus`].
     focus: Option<Focus>,
     animation: Option<CameraAnimation>,
+    /// The point picked for the camera to orbit, if one was.
+    pivot: Option<Pivot>,
+    /// Whether the cursor is over the view cube, where the pivot is
+    /// marked.
+    cube_hovered: bool,
     /// Saving and leaving it, see [`Persist`].
     persist: Persist,
 }
@@ -141,9 +150,8 @@ impl Origin {
     }
 }
 
-/// Where Home and the view cube turn the camera to look at: a point just
-/// off the origin, so a part drawn from it is in view.
-const HOME_TARGET: Vec3 = Vec3::splat(1.0);
+/// Where Home and the view cube turn the camera to look at: the origin.
+const HOME_TARGET: Vec3 = Vec3::ZERO;
 
 /// The camera Home turns to, framed on the origin.
 fn home_camera(projection: Projection) -> Camera {
@@ -196,6 +204,8 @@ impl Doc {
             sketch_split: GEOMETRY_SHARE,
             focus: None,
             animation: None,
+            pivot: None,
+            cube_hovered: false,
         };
         doc.sync();
         doc
@@ -233,9 +243,10 @@ impl Doc {
         self.feed.request_with(&self.editor, exclude, draft);
     }
 
-    /// Whether the camera is turning to a new view.
+    /// Whether the camera is turning to a new view, or the pivot's marker
+    /// fading.
     pub(crate) fn animating(&self) -> bool {
-        self.animation.is_some()
+        self.animation.is_some() || self.pivot_fading()
     }
 
     /// Whether the document may be edited, and so saved.
@@ -482,10 +493,7 @@ impl Doc {
                     session.constraint_scroll = offset;
                 }
             }
-            Look::Orbit { yaw, pitch } => {
-                self.animation = None;
-                self.camera.orbit(yaw, pitch);
-            }
+            Look::Orbit { yaw, pitch } => self.orbit(yaw, pitch),
             Look::Pan { dx, dy } => {
                 self.animation = None;
                 self.camera.pan(dx, dy);
@@ -494,8 +502,10 @@ impl Doc {
                 self.animation = None;
                 self.camera.zoom(factor);
             }
-            // In a sketch, Home faces it.
+            // In a sketch, Home faces it. Either way it orbits its target
+            // again.
             Look::ResetCamera => {
+                self.pivot = None;
                 let home = self
                     .sketch_camera()
                     .unwrap_or_else(|| home_camera(self.camera.projection()));
@@ -510,6 +520,8 @@ impl Doc {
                 );
                 self.animate_camera(to);
             }
+            Look::SetPivot(at) => self.set_pivot(at, Instant::now()),
+            Look::HoverCube(over) => self.hover_cube(over, Instant::now()),
             Look::SetProjection(projection) => {
                 self.view_menu = false;
                 self.camera.set_projection(projection);
@@ -613,6 +625,7 @@ impl Doc {
         varde_view::document(varde_view::DocumentState {
             editor: &self.editor,
             camera: &self.camera,
+            pivot: self.pivot_marker(),
             mesh: self.feed.mesh(),
             sketches: self.feed.sketches(),
             mesh_status: self.feed.status(&self.editor),

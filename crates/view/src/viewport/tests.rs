@@ -81,6 +81,7 @@ fn primitive_with(
         mesh,
         sketches,
         &Camera::default(),
+        None,
         crate::theme::Mode::Light.palette(),
         None,
         None,
@@ -358,6 +359,7 @@ fn handle(state: &mut Interaction, event: Event, sketching: bool) -> Option<Acti
         &Arc::default(),
         &Arc::default(),
         &Camera::default(),
+        None,
         crate::theme::Mode::Light.palette(),
         sketching.then(|| Sketching::new(state_of_sketch, true)),
         None,
@@ -420,6 +422,7 @@ fn the_sketch_being_edited_is_drawn_with_the_scene() {
             &Arc::default(),
             &Arc::default(),
             &Camera::default(),
+            None,
             crate::theme::Mode::Light.palette(),
             Some(sketching),
             None,
@@ -473,6 +476,7 @@ fn a_region_with_a_hole_is_shaded_around_it() {
             &Arc::default(),
             &Arc::default(),
             &camera,
+            None,
             crate::theme::Mode::Light.palette(),
             Some(Sketching::new(state, true)),
             None,
@@ -512,4 +516,69 @@ fn a_region_with_a_hole_is_shaded_around_it() {
     let [beside, hovered_hole, _] = at(&shown(true, Some(spots[1])));
     assert_eq!(beside, plate, "the plate isn't");
     assert_ne!(hovered_hole, hole, "the hole is highlighted");
+}
+
+/// The messages the widget over [`cube`] seen from the top sends for
+/// `events`, each with the cursor where it's sent.
+fn middle_button(events: &[(Event, Point)]) -> Vec<Message> {
+    use iced::widget::shader::Program as _;
+
+    let mesh = cube();
+    let program = program(
+        &mesh,
+        &Arc::default(),
+        &crate::projection::top_camera(),
+        None,
+        crate::theme::Mode::Light.palette(),
+        None,
+        None,
+    );
+    let mut state = Interaction::default();
+    let mut messages = Vec::new();
+    for (event, at) in events {
+        let action = program.update(&mut state, event, bounds(), mouse::Cursor::Available(*at));
+        if let Some(action) = action {
+            messages.extend(action.into_inner().0);
+        }
+    }
+    messages
+}
+
+#[test]
+fn a_middle_click_picks_the_point_to_orbit_and_a_drag_orbits() {
+    let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Middle));
+    let release = Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Middle));
+    let moved = |at| (Event::Mouse(mouse::Event::CursorMoved { position: at }), at);
+    // A unit is 3.2 pixels, the origin in the middle: over the box's top.
+    let on = Point::new(35.0, 29.0);
+    let nudged = Point::new(36.0, 30.0);
+    let messages = middle_button(&[
+        (press.clone(), on),
+        moved(nudged),
+        (release.clone(), nudged),
+    ]);
+    let [Message::Look(Look::SetPivot(Some(at)))] = messages.as_slice() else {
+        panic!("{messages:?}");
+    };
+    assert!(
+        at.abs_diff_eq(glam::Vec3::new(0.9375, 0.9375, 2.0), 1e-3),
+        "{at}"
+    );
+    // Off the box, the grid.
+    let off = Point::new(10.0, 10.0);
+    let messages = middle_button(&[(press.clone(), off), (release.clone(), off)]);
+    let [Message::Look(Look::SetPivot(Some(at)))] = messages.as_slice() else {
+        panic!("{messages:?}");
+    };
+    assert!(
+        at.abs_diff_eq(glam::Vec3::new(-6.875, 6.875, 0.0), 1e-3),
+        "{at}"
+    );
+    // A drag orbits, from where it was pressed, and picks nothing.
+    let far = Point::new(45.0, 29.0);
+    let messages = middle_button(&[(press, on), moved(nudged), moved(far), (release, far)]);
+    let [Message::Look(Look::Orbit { yaw, pitch })] = messages.as_slice() else {
+        panic!("{messages:?}");
+    };
+    assert_eq!((*yaw, *pitch), (-10.0 * ORBIT_SPEED, 0.0));
 }
