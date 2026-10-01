@@ -13,8 +13,11 @@
 //!
 //! - straight, if every control point of the run lies within a quarter of
 //!   the tolerance of the chord and between its ends, so by the convex
-//!   hull the whole run does; tried first, so a run that is straight
-//!   within the tolerance is a line, whatever its detail;
+//!   hull the whole run does, and the run leaves and arrives within 45°
+//!   of the chord ([`along`]); tried first, so a run that is straight
+//!   within the tolerance is a line, whatever its detail, unless it ends
+//!   turning (a sliver narrower than the tolerance, whose lines would
+//!   otherwise double back on each other);
 //! - else from its start to its end, its control point where the run's
 //!   end tangents meet, its weight putting the conic's shoulder (its
 //!   point at ½, where it's furthest from its chord) as far from the
@@ -25,17 +28,21 @@
 //!   them; a run is sampled as densely as its segments alone would be.
 //!
 //! Curved conics meet along the same tangent, the spline's at their
-//! joint; a line meets its neighbours with a kink of about the tolerance
-//! over its length at most. A segment no run fits, not even alone, is
-//! fitted on its own ([`fit`]): a line if nearly straight within a
-//! quarter of the tolerance, else the conic as above with its shoulder
-//! at its point at ½; or halved and each half fitted again, at most
+//! joint; a line turns by under 45° where it meets a curved conic and by
+//! under 90° where it meets another, but for the last resort below. A
+//! segment no run fits, not even alone, is fitted on its own ([`fit`]):
+//! a line if nearly straight within a quarter of the tolerance and along
+//! its tangents, else the conic as above with its shoulder at its point
+//! at ½, else a line if nearly straight whatever its tangents (a
+//! sliver's sharp tip); or halved and each half fitted again, at most
 //! [`MAX_DEPTH`] times, if the conic misses by more than half the
 //! tolerance or the tangents don't meet ahead of both ends (an
 //! inflection, or a turn past 90°). How far a cubic is from the conic is
 //! measured by the conic's implicit form over its gradient: in the
 //! barycentric coordinates `λ` of the control triangle `p0, c, p1`, a
 //! conic of weight `w` is `λ1² = 4w²·λ0·λ2`.
+
+use std::f64::consts::FRAC_1_SQRT_2;
 
 use glam::DVec2;
 use varde_kernel::MAX_PROFILE_SEGMENTS;
@@ -168,10 +175,11 @@ fn run(run: &[Bezier], tolerance: f64) -> Option<Conic2> {
     if p0 == p1 {
         return None;
     }
-    if run
-        .iter()
-        .flatten()
-        .all(|&p| off_chord(p0, p1, p) <= tolerance / 4.0)
+    if along(first, last)
+        && run
+            .iter()
+            .flatten()
+            .all(|&p| off_chord(p0, p1, p) <= tolerance / 4.0)
     {
         return Conic2::line(p0, p1).ok();
     }
@@ -192,13 +200,19 @@ fn run(run: &[Bezier], tolerance: f64) -> Option<Conic2> {
 
 /// Adds the conics fitting `bezier` within `tolerance`, halving it as
 /// needed, now halved `depth` times: a line if it's straight within a
-/// quarter of the tolerance, else [`conic`]'s.
+/// quarter of the tolerance and [`along`] its tangents, else
+/// [`conic`]'s, else a line if straight whatever its tangents (halving
+/// a sliver's tip only makes conics too thin to tell apart).
 fn fit(bezier: &Bezier, tolerance: f64, depth: u32, out: &mut Chain) -> Result<(), ProfileError> {
-    if bezier[0] != bezier[3] && flatness(bezier) <= tolerance / 4.0 {
+    let straight = bezier[0] != bezier[3] && flatness(bezier) <= tolerance / 4.0;
+    if straight && along(bezier, bezier) {
         return out.push(Conic2::line(bezier[0], bezier[3])?);
     }
     if let Some(conic) = conic(bezier, tolerance / 2.0) {
         return out.push(conic);
+    }
+    if straight {
+        return out.push(Conic2::line(bezier[0], bezier[3])?);
     }
     if depth >= MAX_DEPTH {
         return Err(ProfileError::Fit);
@@ -225,17 +239,39 @@ fn samples(bezier: &Bezier) -> impl Iterator<Item = DVec2> + '_ {
     (1..=SAMPLES).map(|i| point(bezier, i as f64 / (SAMPLES + 1) as f64))
 }
 
-/// Where the tangent leaving the start of `first` and the one arriving
-/// at the end of `last` (the same segment, or a run's ends) meet, if
-/// ahead of both ends, turning by less than 90°. A tangent is along the
-/// first control point apart from its end.
-fn control(first: &Bezier, last: &Bezier) -> Option<DVec2> {
+/// The unit tangents leaving the start of `first` and arriving at the
+/// end of `last`, each along the first control point apart from its end.
+fn tangents(first: &Bezier, last: &Bezier) -> Option<(DVec2, DVec2)> {
     let (p0, p1) = (first[0], last[3]);
     let t0 = first[1..].iter().find_map(|&p| (p - p0).try_normalize())?;
     let t1 = last[..3]
         .iter()
         .rev()
         .find_map(|&p| (p1 - p).try_normalize())?;
+    Some((t0, t1))
+}
+
+/// Whether the straight segment from `first`'s start to `last`'s end
+/// (apart) leaves and arrives within 45° of their tangents, so that it
+/// turns by less than 45° where it meets a curved conic (which runs
+/// along the spline's tangent there) and by less than 90° where it
+/// meets another such line: a sliver narrower than the tolerance isn't
+/// fitted with runs of lines doubling back on each other.
+fn along(first: &Bezier, last: &Bezier) -> bool {
+    let chord = last[3] - first[0];
+    tangents(first, last).is_some_and(|(t0, t1)| {
+        let limit = chord.length() * FRAC_1_SQRT_2;
+        t0.dot(chord) > limit && t1.dot(chord) > limit
+    })
+}
+
+/// Where the tangent leaving the start of `first` and the one arriving
+/// at the end of `last` (the same segment, or a run's ends) meet, if
+/// ahead of both ends, turning by less than 90°. A tangent is along the
+/// first control point apart from its end.
+fn control(first: &Bezier, last: &Bezier) -> Option<DVec2> {
+    let (p0, p1) = (first[0], last[3]);
+    let (t0, t1) = tangents(first, last)?;
     if t0.dot(t1) <= 0.0 {
         return None;
     }

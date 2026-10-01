@@ -446,6 +446,57 @@ fn dense_wavy_edges_extrude_at_coarse_tolerances() {
     assert!(refused.is_empty(), "{refused:#?}");
 }
 
+/// A closed spline through `n` points on a sliver `2·height` across and
+/// 2 long, bent by `bend` (as a fraction of the height) into an S;
+/// self-crossing, two lobes, if `bend` is 1.
+fn sliver(sketch: &mut Sketch, n: usize, height: f64, bend: f64) {
+    let points: Vec<_> = (0..n)
+        .map(|i| {
+            let a = std::f64::consts::TAU * i as f64 / n as f64;
+            let y = height * (a.sin() + bend * (2.0 * a).sin());
+            sketch.add_point(DVec2::new(a.cos(), y)).unwrap()
+        })
+        .collect();
+    sketch
+        .add_curve(Curve::Spline(Spline::through(points, true)), false)
+        .unwrap();
+}
+
+#[test]
+fn a_sliver_thinner_than_the_tolerance_keeps_its_shape() {
+    // A region narrower than the tolerance is still a region: no run of
+    // it may be a line doubling back on the one before, collapsing the
+    // loop to a cusp or no area at all. Every one of these extrudes
+    // with each span fitted alone. The last has a tip a single span
+    // fits only as a line, sharp but not doubling back.
+    let cases = [
+        (4, 0.001, 0.0),
+        (6, 0.001, 0.0),
+        (6, 0.01, 0.5),
+        (8, 0.01, 1.0),
+        (8, 0.005, 0.0),
+        (12, 0.03, 1.0),
+        (20, 0.01, 0.0),
+        (40, 0.005, 1.0),
+        (20, 0.02, 0.5),
+    ];
+    let fit = 0.1;
+    let mut refused = Vec::new();
+    for (n, height, bend) in cases {
+        let mut sketch = Sketch::default();
+        sliver(&mut sketch, n, height, bend);
+        let profiles = sketch.profiles().unwrap();
+        for region in 0..profiles.regions.len() {
+            let loops = profiles.merge(&[region]).unwrap();
+            let fitted = profile(&sketch, &profiles, &loops, fit).unwrap();
+            if let Err(e) = extrudes(&fitted, fit) {
+                refused.push(format!("{n} {height} {bend} r{region}: {e:?}"));
+            }
+        }
+    }
+    assert!(refused.is_empty(), "{refused:#?}");
+}
+
 #[test]
 fn a_reversed_piece_fits_to_the_same_conics() {
     // A rectangle split by a spline from its left side to its right: the

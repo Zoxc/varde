@@ -2690,7 +2690,14 @@ bit:
   run that fits gives one conic. A run fits:
   - **as a line** first, if every control point of every Bézier in it is
     within a quarter of the fit tolerance of the chord and projects
-    between its ends (rigorous, by the convex hull);
+    between its ends (rigorous, by the convex hull), and the run's end
+    tangents are within 45° of the chord. Without that, a sliver
+    narrower than the tolerance (a closed spline 0.01 across at a fit of
+    0.1) came out as two lines there and back, or a needle triangle:
+    within the tolerance, but no area or a cusp, which fitting span by
+    span never gave. With it, a line turns by under 45° where it meets a
+    curved conic (which leaves along the spline's tangent) and under
+    90° where it meets another line;
   - else **as a conic** along the run's end tangents (from its first and
     last Bézier; they must meet ahead of both ends and turn by under
     90°), its weight `k/(1−k)` putting the conic's shoulder as far from
@@ -2703,12 +2710,17 @@ bit:
 
   A Bézier no run fits, not even alone, is fitted on its own: a line if
   its inner control points are within a quarter of the tolerance of its
-  chord, else one conic as above with its shoulder where the cubic at ½
-  crosses the line from the chord's middle to the control point, else
-  halved (at most 24 times; past that `ProfileError::Fit`). Curved
+  chord and its end tangents within 45° of it, else one conic as above
+  with its shoulder where the cubic at ½ crosses the line from the
+  chord's middle to the control point, else a line if straight within
+  the tolerance whatever its tangents (a sliver's tip, where span by
+  span gave the same line; halving there only makes conics too thin to
+  tell apart), else halved (at most 24 times; past that `ProfileError::Fit`). Curved
   conics meet along the spline's tangent; a line meets its neighbours
-  with a kink of about the tolerance over its length at most (invisible
-  at the tolerance; the profile test bounds it by twice that). A piece
+  with a kink of about the tolerance over its length where the spline's
+  segments there are long (invisible at the tolerance; the profile test
+  of a smooth spline bounds it by twice that), and under 45° (under 90°
+  against another line) in any case, but for the last-resort line. A piece
   of `n` Béziers costs at most about `16·n²` point evaluations (`n` is
   about `MAX_SPLINE_POINTS` = 100 at most): the worst corpus spline fits
   in 1.2 ms, and a hostile sketch of 299 such splines (as many as
@@ -2732,9 +2744,9 @@ bit:
 
   | set | refused at 1e-3 | at 1e-2 | at 1e-1 | segments at 1e-1 |
   |---|---|---|---|---|
-  | wavy | 5 → 5 | 17 → 15 | 52 → 5 | 21 772 → 12 491 |
+  | wavy | 5 → 5 | 17 → 15 | 52 → 5 | 21 772 → 12 510 |
   | control | 0 → 0 | 0 → 0 | 9 → 0 | 2 972 → 1 092 |
-  | blob | 0 → 0 | 0 → 0 | 0 → 0 | 16 602 → 4 332 |
+  | blob | 0 → 0 | 0 → 0 | 0 → 0 | 16 602 → 4 339 |
   | cut | 0 → 0 | 0 → 0 | 0 → 0 | 1 140 → 344 |
   | hole | 0 → 0 | 0 → 0 | 0 → 0 | 2 180 → 590 |
 
@@ -3283,3 +3295,16 @@ parameter, or a split outside the patch bounds),
   largest, so the height is exact for a run that is a conic. On the wavy
   corpus it left 2 sketches that extruded before failing against 4 for
   the projection, with fewer segments.
+- **A fitted line must run along the spline's tangents**: a run, or a
+  single Bézier, becomes a line only if its end tangents are within 45°
+  of its chord as well as within a quarter of the tolerance of it; a
+  single Bézier that fails only the tangents and fits no conic is still
+  a line. Straight within the tolerance alone let two runs of a sliver
+  narrower than the tolerance double back on each other (no area, or a
+  cusp) where span-by-span fitting kept it a region. It changes no
+  refusal on the corpus above (segments at 1e-1: wavy +19, blob +7); of
+  173 slivers 0.002 to 0.2 across at a fit of 0.1, those span by span
+  extruded and runs refused went from 28 to 2 (two lobes about 0.004
+  across, each of their two spans straight within the tolerance and no
+  conic's, so two lines; span by span happened to fit one of them with
+  conics, walking it the other way).
