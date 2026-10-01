@@ -3626,23 +3626,26 @@ body, and the later ones still run.
   tool to each, so they overlap, since bodies are the document's and a
   merged one would leave the other without geometry. Bodies not touched
   or excluded keep their solids. A target whose result is the empty
-  solid (a body cut away whole, or intersected with a tool only flush on
-  a face of it, both of which the kernel gives as `Ok(Solid::empty())`)
+  solid (a body cut away whole, or intersected with a tool that touches
+  it without overlapping it: flush on a face, an edge on a face, a
+  corner; the kernel gives all of these as `Ok(Solid::empty())`)
   **fails the feature**, so no body changes, with "cutting it from Body 1
-  would leave nothing of it: untick it under Bodies to leave it as it
-  is, or remove the body" or "intersecting it with Body 1 leaves
-  nothing: they only meet on a face; move it to overlap"
-  (`message::emptied`). Bodies are the document's, so an emptied one
-  would stay listed in Objects with no geometry, and an edit upstream
-  (the plate made smaller) could empty it with no feature turning red,
-  while later features blamed the wrong one ("doesn't touch any body")
-  or went through all of less. The body is in `touched`, so the panel
-  offers to untick it; deliberately removing a body with a cut takes an
-  untick and a body delete. The empty result stays cached (its key is
-  right; the check is cheap). Hence **no body in an `Evaluation` is
-  empty**: a new body's extrude never is, a union of two non-empty
-  solids isn't, and the rest fail (a `debug_assert` on the targets
-  holds it).
+  would leave nothing of it: untick it under Bodies to keep it as it is,
+  or delete the body" or "intersecting it with Body 1 would leave
+  nothing of it: they touch but don't overlap; flip it or move it to
+  overlap" (`message::emptied`; flipping because the likely slip is a
+  tool drawn on a face and extruded away from the body). Bodies are the
+  document's, so an emptied one would stay listed in Objects with no
+  geometry, and an edit upstream (the plate made smaller) could empty it
+  with no feature turning red, while later features blamed the wrong one
+  ("doesn't touch any body") or went through all of less. The body is in
+  `touched`, so the panel offers to untick it; deliberately removing a
+  body with a cut takes an untick and a body delete. The check follows
+  the cache, so a result found there fails as well; the empty result
+  stays cached (its key is right; the check is cheap). Hence **no body in
+  an `Evaluation` is empty**: a new body's extrude never is, a union of
+  two non-empty solids isn't, and the rest fail (a `debug_assert` at the
+  end of `evaluate` holds it).
 
 **Error texts** (`src/message.rs`). What the Timeline's tooltip and the
 panel show is worded for the user, not the kernel: an extrude's own

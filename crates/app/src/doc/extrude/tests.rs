@@ -561,7 +561,7 @@ fn an_intersect_leaving_nothing_is_marked_failed_and_the_plate_kept() {
     extrude(&mut doc, ExtrudeLook::Operation(OperationKind::Intersect));
     extrude(&mut doc, ExtrudeLook::Flip);
     answer(&mut doc, &requests);
-    let emptied = "intersecting it with Body 1 leaves nothing";
+    let emptied = "intersecting it with Body 1 would leave nothing of it";
     let error = doc.feed.draft_error().unwrap();
     assert!(error.starts_with(emptied), "{error}");
     assert_eq!(doc.feed.mesh().triangle_count(), triangles);

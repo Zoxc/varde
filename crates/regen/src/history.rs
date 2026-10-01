@@ -131,6 +131,12 @@ pub(crate) fn evaluate_within(
             }
         }
     }
+    // A new body's extrude is never empty, a union of two solids that
+    // aren't isn't, and a cut or intersect that would empty one fails.
+    debug_assert!(
+        evaluation.bodies.iter().all(|made| !made.solid.is_empty()),
+        "a body is never empty"
+    );
     evaluation
 }
 
@@ -213,16 +219,14 @@ impl Run<'_> {
             .iter()
             .filter(|m| targets.contains(&m.body))
         {
-            // No feature leaves a body empty, and a new body never is.
-            debug_assert!(!made.solid.is_empty(), "a body is never empty");
             let key = boolean_key(doing, made.key, tool_key);
             let solid = cache
                 .boolean(key, || {
                     varde_kernel::boolean(&made.solid, &tool, op, &self.tolerance, &Budget::DEFAULT)
                 })
                 .map_err(|error| message::boolean(doing, self.body_name(made.body), error))?;
-            // The cached empty result stays: its key is right, and this
-            // is cheap to ask again.
+            // The cached empty result stays: its key is right, and the
+            // check is cheap to make again.
             if solid.is_empty() {
                 return Err(message::emptied(doing, self.body_name(made.body)));
             }

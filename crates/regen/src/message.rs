@@ -107,21 +107,25 @@ pub(crate) fn boolean(doing: Doing, body: &str, error: KernelError) -> String {
 }
 
 /// Why `doing` the extrude and the body named `body` fails though the
-/// kernel worked it out: it leaves nothing of the body. Bodies are the
-/// document's, so an emptied one would stay listed with no geometry.
+/// kernel worked it out: it would leave nothing of the body. Bodies are
+/// the document's, so an emptied one would stay listed with no geometry.
 pub(crate) fn emptied(doing: Doing, body: &str) -> String {
     let name = doing.name();
     match doing {
         Doing::Cutting => format!(
-            "{name} {body} would leave nothing of it: untick it under Bodies to leave it as \
-             it is, or remove the body"
+            "{name} {body} would leave nothing of it: untick it under Bodies to keep it as it \
+             is, or delete the body"
         ),
-        Doing::Intersecting => {
-            format!("{name} {body} leaves nothing: they only meet on a face; move it to overlap")
-        }
+        // The tool touches the body (`touches` counts flush faces, an edge
+        // on a face and a corner) without overlapping it: most likely
+        // drawn on a face and extruded away from the body.
+        Doing::Intersecting => format!(
+            "{name} {body} would leave nothing of it: they touch but don't overlap; flip it \
+             or move it to overlap"
+        ),
         // A union of two solids that aren't empty isn't empty, and
         // finding where they meet makes no solid.
-        Doing::Joining | Doing::Touching => format!("{name} {body} leaves nothing"),
+        Doing::Joining | Doing::Touching => format!("{name} {body} would leave nothing of it"),
     }
 }
 
