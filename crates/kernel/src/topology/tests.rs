@@ -726,8 +726,9 @@ fn a_tie_goes_to_the_lowest() {
 #[test]
 fn corners_where_four_faces_meet_resolve_by_any_three() {
     // A step: a block on the left half of a slab, their fronts in one
-    // plane meeting along a straight edge, so they stay two faces, and
-    // four regions meet where the step's riser meets the front.
+    // plane meeting along a straight edge, so they are one face, the
+    // block's front key an alias of it, and three regions meet where the
+    // step's riser meets the front; by any three keys, aliases too.
     let slab = cuboid([0.0; 3], [4.0, 2.0, 1.0], 1, &TOL);
     let block = cuboid([0.0, 0.0, 0.0], [2.0, 2.0, 2.0], 2, &TOL);
     let solid = op(&slab, &block, Op::Union, &TOL);
@@ -743,7 +744,12 @@ fn corners_where_four_faces_meet_resolve_by_any_three() {
         .iter()
         .map(|&r| topology.regions()[r as usize].key)
         .collect();
-    assert!(keys.len() >= 4, "{keys:?}");
+    assert_eq!(keys.len(), 3, "{keys:?}");
+    // The block's front, merged into the slab's.
+    let front = key(2, side(0));
+    let mut keys = keys;
+    assert!(!keys.contains(&front));
+    keys.push(front);
     for i in 0..keys.len() {
         for j in i + 1..keys.len() {
             for k in j + 1..keys.len() {

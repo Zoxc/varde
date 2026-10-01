@@ -917,9 +917,10 @@ fn the_result_checks_integrations_are_charged() {
     // A tube whose wall is a twentieth thick, notched through the wall:
     // the corner triangles' volume can't tell which way the result
     // faces, so its check integrates some of the patches. The
-    // operation's work is what making the mesh takes, a few units a
-    // patch for the check, and `INTEGRATE_WORK` for each patch it
-    // integrated, charged after: the operation fits that budget exactly.
+    // operation's work is what making the mesh (and naming its faces)
+    // takes, a few units a patch for the check, and `INTEGRATE_WORK` for
+    // each patch it integrated, charged after: the operation fits that
+    // budget exactly.
     let tube = extruded(
         vec![
             circle(DVec2::ZERO, 1.0, 1, false),
@@ -936,7 +937,11 @@ fn the_result_checks_integrations_are_charged() {
     let want = PI * (1.0 - 0.95 * 0.95) - 0.5 * (strip(1.0) - strip(0.95));
     let mut work = Work::new(&Budget::DEFAULT);
     let mesh = unchecked(&tube, &notch, Op::Difference, &TOL, &mut work).unwrap();
-    let mesh = mesh.repair_within(&TOL, &mut work).unwrap();
+    let mesh = mesh
+        .repair_within(&TOL, &mut work)
+        .unwrap()
+        .merge_faces(TOL.resolution(), &mut work)
+        .unwrap();
     let integrated = mesh.check_counted(&TOL).unwrap();
     assert!(integrated > 0);
     assert!((Solid::new(mesh.clone(), &TOL).unwrap().volume() - want).abs() < 1e-9);
@@ -1015,6 +1020,8 @@ fn coaxial(name: &str, a: &Solid, b: &Solid, both: f64, patches: usize) {
     for union in [&results[0], &other] {
         let n = union.mesh().tris().len();
         assert!(n <= patches, "{name}: the union has {n} patches");
+        // One surface, one face.
+        assert_eq!(quadric_faces(union), 1, "{name}");
     }
 }
 
@@ -3007,3 +3014,70 @@ fn a_cross_hole_through_a_round_boss() {
 }
 
 mod flush_seams;
+
+/// How many faces (keys) of `solid` lie on a quadric.
+fn quadric_faces(solid: &Solid) -> usize {
+    let keys: std::collections::BTreeSet<_> = solid
+        .mesh()
+        .faces()
+        .iter()
+        .filter(|f| matches!(f.surface, Surface::Quadric(_)))
+        .map(|f| f.name.key())
+        .collect();
+    keys.len()
+}
+
+/// How many feature edges `solid` draws.
+fn feature_edges(solid: &Solid) -> usize {
+    solid
+        .tessellate(&crate::Display::new(&TOL))
+        .unwrap()
+        .edges()
+        .len()
+}
+
+#[test]
+fn stacked_cylinders_have_one_wall() {
+    // One on the other: the walls are one face, named by the first, drawn
+    // as one cylinder's from 0 to 2 is, and the second's names resolve to
+    // it.
+    let low = Solid::cylinder(DVec3::ZERO, 1.0, 1.0, 1, &TOL).unwrap();
+    let high = Solid::cylinder(DVec3::Z, 1.0, 1.0, 2, &TOL).unwrap();
+    let whole = Solid::cylinder(DVec3::ZERO, 1.0, 2.0, 1, &TOL).unwrap();
+    for (a, b) in [(&low, &high), (&high, &low)] {
+        let r = run(a, b, Op::Union);
+        assert!((r.volume() - 2.0 * PI).abs() < 1e-9, "{}", r.volume());
+        assert_eq!(quadric_faces(&r), 1);
+        assert_eq!(feature_edges(&r), feature_edges(&whole));
+        let wall = r
+            .mesh()
+            .faces()
+            .iter()
+            .find(|f| matches!(f.surface, Surface::Quadric(_)))
+            .unwrap();
+        assert_eq!(wall.name.feature, a.mesh().faces()[0].name.feature);
+        let topology = r.topology();
+        for operand in [a, b] {
+            for face in operand.mesh().faces() {
+                if matches!(face.surface, Surface::Quadric(_)) {
+                    let near = DVec3::new(1.0, 0.0, 0.5);
+                    assert!(topology.face(&r, &face.name.key(), near).is_ok());
+                }
+            }
+        }
+    }
+    assert_deterministic(|| run(&low, &high, Op::Union).into_mesh());
+}
+
+#[test]
+fn stacked_cylinders_a_step_apart_keep_the_step() {
+    // Radii 1 and 1.001: two walls, and the step drawn.
+    let low = Solid::cylinder(DVec3::ZERO, 1.0, 1.0, 1, &TOL).unwrap();
+    let high = Solid::cylinder(DVec3::Z, 1.001, 1.0, 2, &TOL).unwrap();
+    let whole = Solid::cylinder(DVec3::ZERO, 1.0, 2.0, 1, &TOL).unwrap();
+    let r = run(&low, &high, Op::Union);
+    let want = PI * (1.0 + 1.001 * 1.001);
+    assert!((r.volume() - want).abs() < 1e-9, "{}", r.volume());
+    assert_eq!(quadric_faces(&r), 2);
+    assert!(feature_edges(&r) > feature_edges(&whole));
+}

@@ -127,7 +127,12 @@ pub fn extrude(
         let (chain, cap) = cap?;
         let mesh = build(&chain, &cap, frame, from, to, feature)?;
         work.spend(mesh.tris().len())?;
-        Solid::new_within(mesh.repair_within(tol, work)?, tol, work)
+        // A face per surface: collinear segments' walls, and the arcs of
+        // one circle, are one face.
+        let mesh = mesh
+            .repair_within(tol, work)?
+            .merge_faces(tol.resolution(), work)?;
+        Solid::new_within(mesh, tol, work)
     };
     // Caps with slivers along short segments meeting nearly straight fail
     // the hull rules next to the walls. Moving Steiner points in from such

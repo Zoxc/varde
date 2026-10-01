@@ -26,7 +26,8 @@
 //!    and the halfedges pair up by vertex id.
 //! 5. **Clean-up, merge, repair and check**: the degenerate triangles
 //!    flush operands leave are removed, pieces refinement split and
-//!    nothing cut are merged back, and the result is repaired and
+//!    nothing cut are merged back, and the result is repaired, its
+//!    adjacent faces on one surface named alike (`Mesh::merge_faces`), and
 //!    checked.
 //!
 //! The primitives come in two kinds. For **flat patches** (every edge
@@ -226,7 +227,11 @@ pub fn boolean(
         _ => {}
     }
     let mesh = unchecked(a, b, op, tol, &mut work)?;
-    let mesh = mesh.repair_within(tol, &mut work)?;
+    // Faces of one surface that meet merge, so a flush join leaves no
+    // line between the two operands' pieces of a plane or cylinder.
+    let mesh = mesh
+        .repair_within(tol, &mut work)?
+        .merge_faces(tol.resolution(), &mut work)?;
     // The check that makes it a solid, a few units a patch, and the
     // patches it integrated, charged once it has told how many.
     work.spend(mesh.tris().len().saturating_mul(CHECK_WORK))?;

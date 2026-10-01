@@ -24,7 +24,10 @@
 //!   triangles are proper and open, add no point and no edge already
 //!   there, and cover the same area.
 //! - [`Cleaner::merge_joined`]: the plane faces such seams joined become
-//!   one face (the lowest id, so the first operand's name stays), so a
+//!   one face (the lowest id, so the first operand's name stays), so the
+//!   sliver flips after it, which stay within a face, reach across the
+//!   old rim. Naming is left to `Mesh::merge_faces` after repair, which
+//!   names every pair of adjacent faces on one surface alike: a
 //!   straightened rim isn't drawn on the flat top as a polygon of chords.
 
 use std::collections::{BTreeMap, BTreeSet};

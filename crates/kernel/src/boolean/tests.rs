@@ -1385,3 +1385,142 @@ fn boxes_flush_with_a_slanted_wall_on_tilted_frames() {
         }
     }
 }
+
+// One surface, one face.
+
+/// A box of feature `feature`.
+fn box_of(min: [f64; 3], size: [f64; 3], feature: u64) -> Solid {
+    Solid::cuboid(DVec3::from(min), DVec3::from(size), feature, &TOL).unwrap()
+}
+
+/// How many faces (keys) of `solid` lie on a plane facing along `n`.
+fn planes_facing(solid: &Solid, n: DVec3) -> usize {
+    let keys: std::collections::BTreeSet<_> = solid
+        .mesh()
+        .faces()
+        .iter()
+        .filter(|f| match f.surface {
+            Surface::Plane { n: m, .. } => m.normalize().dot(n) > 1.0 - 1e-12,
+            _ => false,
+        })
+        .map(|f| f.name.key())
+        .collect();
+    keys.len()
+}
+
+/// How many faces (keys) `solid` has.
+fn keys(solid: &Solid) -> usize {
+    let keys: std::collections::BTreeSet<_> =
+        solid.mesh().faces().iter().map(|f| f.name.key()).collect();
+    keys.len()
+}
+
+/// The midpoints of `solid`'s drawn feature edges.
+fn feature_middles(solid: &Solid) -> Vec<DVec3> {
+    let render = solid.tessellate(&crate::Display::new(&TOL)).unwrap();
+    let at = |i: u32| DVec3::from(render.positions()[i as usize].map(f64::from));
+    render
+        .edges()
+        .iter()
+        .map(|&[a, b]| (at(a) + at(b)) * 0.5)
+        .collect()
+}
+
+#[test]
+fn stacked_boxes_are_one_box_of_faces() {
+    // A box on another: its sides and the bottom's are four faces, each
+    // named by the first operand, the second's names aliases of them.
+    let a = box_of([0.0; 3], [1.0; 3], 1);
+    let b = box_of([0.0, 0.0, 1.0], [1.0; 3], 2);
+    for (first, second) in [(&a, &b), (&b, &a)] {
+        let r = run(first, second, Op::Union).unwrap();
+        assert!((r.volume() - 2.0).abs() < 1e-12);
+        let mesh = r.mesh();
+        assert_eq!(keys(&r), 6);
+        let lead = first.mesh().faces()[0].name.feature;
+        for face in mesh.faces() {
+            let cap = matches!(face.name.part, FacePart::StartCap | FacePart::EndCap);
+            if !cap {
+                assert_eq!(face.name.feature, lead, "{face:?}");
+            }
+        }
+        // Every key of either operand names a face of the result.
+        let topology = r.topology();
+        let sides = [DVec3::new(0.5, 0.0, 1.5), DVec3::new(1.0, 0.5, 0.5)];
+        for operand in [&a, &b] {
+            for face in operand.mesh().faces() {
+                let cap = matches!(face.name.part, FacePart::StartCap | FacePart::EndCap);
+                if cap {
+                    continue;
+                }
+                for near in sides {
+                    assert!(topology.face(&r, &face.name.key(), near).is_ok());
+                }
+            }
+        }
+        // A box's twelve edges: no line round the middle.
+        assert!(feature_middles(&r).iter().all(|m| (m.z - 1.0).abs() > 1e-9));
+    }
+}
+
+#[test]
+fn an_l_of_two_boxes_has_one_top_and_one_bottom() {
+    let a = box_of([0.0; 3], [2.0, 1.0, 1.0], 1);
+    let b = box_of([0.0, 1.0, 0.0], [1.0, 1.0, 1.0], 2);
+    let r = run(&a, &b, Op::Union).unwrap();
+    assert!((r.volume() - 3.0).abs() < 1e-12);
+    // Six sides (the two at x = 0 one face), a top and a bottom.
+    assert_eq!(keys(&r), 8);
+    assert_eq!(planes_facing(&r, DVec3::Z), 1);
+    assert_eq!(planes_facing(&r, -DVec3::Z), 1);
+    // No line drawn inside the top's or the bottom's outline.
+    let inside = |m: &DVec3| {
+        let e = 1e-6;
+        (m.x > e && m.x < 2.0 - e && m.y > e && m.y < 1.0 - e)
+            || (m.x > e && m.x < 1.0 - e && m.y > e && m.y < 2.0 - e)
+    };
+    for m in feature_middles(&r) {
+        assert!(!inside(&m), "a line across the flat at {m}");
+    }
+}
+
+#[test]
+fn flush_differences_and_intersections_keep_a_face_a_plane() {
+    // Overlapping boxes sharing four planes: each result is a box.
+    let a = box_of([0.0; 3], [2.0; 3], 1);
+    let b = box_of([1.0, 0.0, 0.0], [2.0; 3], 2);
+    for (op, volume) in [
+        (Op::Union, 12.0),
+        (Op::Difference, 4.0),
+        (Op::Intersection, 4.0),
+    ] {
+        let r = run(&a, &b, op).unwrap();
+        assert!((r.volume() - volume).abs() < 1e-12, "{op:?}");
+        assert_eq!(keys(&r), 6, "{op:?}");
+    }
+}
+
+#[test]
+fn tops_a_step_apart_stay_two_faces() {
+    // Side by side, one a thousandth taller: the bottoms and the flush
+    // sides merge, the tops don't, and the step is drawn.
+    let a = box_of([0.0; 3], [1.0; 3], 1);
+    let b = box_of([1.0, 0.0, 0.0], [1.0, 1.0, 1.001], 2);
+    let r = run(&a, &b, Op::Union).unwrap();
+    assert!((r.volume() - 2.001).abs() < 1e-12);
+    assert_eq!(planes_facing(&r, DVec3::Z), 2);
+    assert_eq!(planes_facing(&r, -DVec3::Z), 1);
+    assert_eq!(planes_facing(&r, -DVec3::Y), 1);
+    assert!(
+        feature_middles(&r)
+            .iter()
+            .any(|m| (m.x - 1.0).abs() < 1e-9 && m.z > 0.5)
+    );
+}
+
+#[test]
+fn merged_faces_are_deterministic() {
+    let a = box_of([0.0; 3], [2.0, 1.0, 1.0], 1);
+    let b = box_of([0.0, 1.0, 0.0], [1.0, 1.0, 1.0], 2);
+    assert_deterministic(|| run(&a, &b, Op::Union).map(Solid::into_mesh)).unwrap();
+}

@@ -727,6 +727,38 @@ divided by `n`'s largest coordinate before measuring, so a normal of any
 finite size gives the same distances (its length could overflow, putting
 every point on the plane, or its square underflow).
 
+**One surface, one face** (`mesh/merge.rs`). A face as users see it (a
+key: drawn, picked and referred to) is an edge-connected region of one
+surface: adjacent faces on the same plane or quadric carry one key.
+`Mesh::merge_faces(resolution, work)` makes it so; booleans run it after
+repair, extrude after its repair. Two faces are one where they share an
+edge and both are planes (unit normals' dot above `1 − 1e-12`) or both
+quadrics (the two patches' normals at the edge's middle facing alike),
+each of the two triangles at the edge lying on the other face's surface
+within `small` (`resolution / 8`, `on_surface`: a plane's six control
+points, a quadric's 15 samples). Halfedges are taken in order, sets
+joined by union–find with the lower index as root. Each set is then
+validated once: every patch of every member but the root on the root's
+surface within `small`, or the set isn't merged at all, so a chain of
+near-equal surfaces can't drift. A merged set takes the root's name (a
+member already of its key, another arc of the same circle, keeps its own
+name, which numbers the piece), and every member gets the set's aliases:
+the members' keys and their aliases (`Mesh::with_aliases` drops a face's
+own key). Faces claiming no surface (a boolean's copies) never merge on
+geometry, but a copy whose name was a member's takes the set's name and
+aliases. Only names change: the members stay their own entries of
+`faces`, each with its own surface, and vertices, edges, patches and
+triangles' face indices are untouched. A circle's arcs' walls are
+written in each arc's own coordinates (`conic_cylinder`), best
+conditioned near it; giving the opposite arc the first one's quadric
+moved later booleans' exact paths off (a plate's eight drilled holes
+under a boss's rim came back `Inconsistent`), and the clean-up's rules
+read face indices. So nothing a boolean decides by tags or indices
+changes, and a set is one face wherever keys count. Faces a real step
+apart stay two (box tops `1e-3` apart, radii 1 and 1.001 stacked). A
+unit of work a patch, the patch tests a parallel map over the members'
+triangles in order: deterministic.
+
 The fields are private to `mesh` (its child modules, such as refinement,
 edit them directly). `Mesh::from_parts` takes the four tables unchecked.
 `MeshBuilder` takes vertices, faces, curved edges (`edge(a, b, ctrl, w)`,
@@ -1550,6 +1582,8 @@ tessellation too).
   pieces). So a cylinder draws its two rims, not the seams between its
   four quarter walls, and a box its twelve edges, not the diagonals of
   its sides; a blend's or a revolve's pieces will draw as one face too.
+  Flush joins draw no line where the two pieces of a plane or cylinder
+  meet, since `Mesh::merge_faces` gave them one key ("Structure").
 - **Limits.** Triangle, vertex and feature-edge counts are worked out
   from the segment counts before any point inside a patch is evaluated,
   and more than `RenderMesh::MAX_*` fails with `MeshError::TooLarge`.
@@ -1631,11 +1665,15 @@ within `MAX_COORD`, every corner of the solid within `MAX_COORD` of the
 origin). Faces: `StartCap` (at `from`, facing back), `EndCap`, and
 `Side { curve, segment }` per input segment, `segment` counting the
 segments of that curve in profile order; pieces a segment is split into
-share its face. Caps are tagged with their planes, straight walls with
-theirs, curved walls with the cylinder over their conic (below). Their
-forms are the planes, and for curved walls `Form::Cylinder` over a
-circle's arc (`circle_of`), `Form::ConicCylinder` over another conic,
-along the normal. The steps:
+share its face. Walls on one surface that meet (two collinear lines, a
+circle's arcs) are one face: after repair the extrude runs
+`Mesh::merge_faces` ("Structure"), so the second line's wall takes the
+first's name, its own key an alias, and faces don't depend on whether a
+boolean has touched the body. Caps are tagged with their planes, straight
+walls with theirs, curved walls with the cylinder over their conic
+(below). Their forms are the planes, and for curved walls
+`Form::Cylinder` over a circle's arc (`circle_of`), `Form::ConicCylinder`
+over another conic, along the normal. The steps:
 
 1. **Chain** (`Chain::new`). A segment whose control point is within the
    resolution of its chord (and between its ends) becomes
@@ -1733,6 +1771,7 @@ along the normal. The steps:
    too).
    End cap triangles as triangulated, start cap reversed.
 5. **Repair and check**: `repair_within` with the same work, then
+   `Mesh::merge_faces` (a unit a patch), then
    `Solid::new_within` checks it all (charging the patches the
    orientation step integrated). In every test so far repair finds nothing
    to split: the construction already passes. If steps 3 to 5 fail with
@@ -2001,6 +2040,12 @@ the point picks. Whether `unbend` fires depends on the triangulation, so
 such a partial alias can come and go with the tolerance; it only ever
 adds a candidate in the same plane. Any later pass that moves triangles
 between faces of one surface must call `Soup::absorb` the same way.
+After repair, `Mesh::merge_faces` names adjacent faces of one surface
+(planes and quadrics) alike, each member of a set taking the others'
+keys and aliases as its own aliases ("Structure"): two coaxial walls
+stacked, flush plates side by side, collinear lines' walls in an
+extrude. So a key absorbed anywhere still resolves, to the region it is
+part of now.
 Flush caps often never meet as triangles: the perturbation keeps one
 whole and drops the other (a plate first, a boss standing in it flush
 on top: the boss's top is gone, with no seam to mend). So after a union
@@ -2106,7 +2151,7 @@ elsewhere (see "Cutting curved faces").
 | `boolean/assemble/merge.rs` | merging refinement's pieces that came through whole |
 | `boolean/triangulate.rs` | a face's kept loops in its parameter domain into triangles, curved sides' corners, Steiner points |
 | `boolean/cleanup.rs` | collapsing and flipping the degenerate triangles flush operands leave |
-| `boolean/cleanup/seams.rs` | curved edges between two triangles in one plane: straightened, regions triangulated again, the plane faces they joined merged |
+| `boolean/cleanup/seams.rs` | curved edges between two triangles in one plane: straightened, regions triangulated again, the plane faces they joined merged (for the sliver flips after them) |
 | `boolean/tests.rs` | boxes in every flush, edge-on and vertex-on configuration, tori, determinism |
 | `boolean/curved_tests.rs` | cylinders and boxes (exact), crossing cylinders, a free surface, a saddle, extrudes, chains, merging, random bars, walls over arcs with level ends |
 | `boolean/curved_tests/flush_seams.rs` | flush unions with curved rims in either order: bosses in and on plates, over holes and edges, overlapping, a flange at a shaft's foot, a slot, at millimetre scale and on a turned frame, a chain of flush joins, caps a hair apart, bosses on a rounded corner |
@@ -3595,9 +3640,12 @@ name and form; each merged face's key (and its aliases) becomes an alias of the
 face it merged onto, as does the higher face's where `unbend` puts both
 new triangles on the lower (`Soup::absorb`; see "Topology and names").
 Faces of one plane meeting along straight edges, or along no seam
-the clean-up mended, stay apart. Drawn lines go where face names
-differ, so without the merge a straightened rim would show on the flat
-top as a polygon of chords. The pin filling its hole, united with the
+the clean-up mended, stay apart here; `Mesh::merge_faces` names them
+alike after repair ("Structure"), which covers what this merge does for
+the names. This one stays because it moves the triangles onto one face
+before the Delaunay flips, which flip only within a face. Drawn lines
+go where face keys differ, so without either a straightened rim would
+show on the flat top as a polygon of chords. The pin filling its hole, united with the
 plate, now 36 patches as before; the boss first 52, at millimetre scale
 52, the flange 64, the overlapping bosses 178 to 180, a boss half over
 a plate's hole 202 and 238, one over its edge 56, a slot of a cylinder
@@ -3673,7 +3721,8 @@ ran 16 s before running out, and stops in 1.6 s now), the square of each
 edge's crossings (ordering them), a unit
 per cut face and its triangulation's steps over 16 (the `Meter`, see
 "Triangulating"; an exact orientation 4 units), the soup's size per
-clean-up round, the triangles per round of merging, repair's own, and 5
+clean-up round, the triangles per round of merging, repair's own, a unit a patch
+naming faces of one surface alike (`Mesh::merge_faces`), and 5
 units per patch of the result for the check that makes it a solid (about
 2.7 µs a patch; `CHECK_WORK`), spent before it, plus 32 for each patch
 whose volume the check integrated to tell which way the shells face
@@ -5802,8 +5851,8 @@ parameter, or a split outside the patch bounds),
   through an alias). Aliases are recorded by the flush seams' face merge
   (whole faces) and by `unbend` for the triangles it moves (the moved
   face may live on elsewhere under its own key: then a key names both,
-  and the point picks); a general merge pass (one surface, one face)
-  isn't built yet and must call `Soup::absorb` the same way. Not in the
+  and the point picks); the general merge pass (one surface, one face,
+  `Mesh::merge_faces`) records them on the mesh after repair. Not in the
   plan: flush caps one of which the perturbation drops whole (no merge
   happens, so no pass records it) are aliased after the boolean where a
   triangle middle of the dropped face lies on a result face of its plane
@@ -5875,3 +5924,17 @@ parameter, or a split outside the patch bounds),
   their own `Work` from the budget; revolve, which makes many of them in
   one operation, should share one through `fitted_band_with` and
   `pole_cap_with` (crate-internal, taking `&mut Work`).
+- **One surface, one face names faces, it doesn't merge them.** The plan
+  moved the members' triangles onto the lowest face and dropped the
+  rest, giving them its tag. Done that way, an extruded circle's four
+  arcs claimed the first arc's quadric, written in its coordinates, and
+  a boss on a plate drilled with eight holes round its rim came back
+  `Inconsistent` (`boss_rim_tangent_to_cap_edges_between_holes`). So
+  the pass changes names and aliases only: each member keeps its entry
+  and surface, takes the root's name unless it already has its key, and
+  gets the set's aliases on itself (a later boolean may cut the root
+  away and keep a member). Validation checks the members but not the
+  root, whose tag is its own. The pass runs on the finished mesh, not on
+  the clean-up's soup, so aliases go straight onto the mesh rather than
+  through `Soup::absorb`. The clean-up's seam merge (`merge_joined`)
+  stays: the Delaunay flips after it flip only within one face index.

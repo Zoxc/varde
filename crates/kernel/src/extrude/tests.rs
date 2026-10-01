@@ -884,8 +884,9 @@ fn the_second_try_resumes_where_the_first_found_a_flat_corner() {
 fn the_second_try_is_charged_only_from_where_it_resumes() {
     // A 210 × 30 strip with 40 holes, the bottom row 0.1 from its side:
     // the first try fails, the second, with flat corners, passes. Starting the
-    // second over took 191 858 units in all; resuming it, 149 450. The
-    // same bits at 1 and 8 threads.
+    // second over took 194 846 units in all; resuming it, 152 438 (2 988
+    // of them naming the faces, a unit a patch). The same bits at 1 and 8
+    // threads.
     let p = plate_with_holes(20, 2, 210.0, 30.0);
     let solid = assert_deterministic(|| {
         extrude(&p, &Frame::XY, 0.0, 2.0, 9, &TOL, &Budget::new(170_000)).unwrap()
@@ -895,11 +896,11 @@ fn the_second_try_is_charged_only_from_where_it_resumes() {
     assert_eq!(solid.mesh().check_faces(&TOL), Ok(()));
     assert_eq!(solid.mesh().tris().len(), 2988);
     assert_eq!(
-        extrude(&p, &Frame::XY, 0.0, 2.0, 9, &TOL, &Budget::new(149_449)),
+        extrude(&p, &Frame::XY, 0.0, 2.0, 9, &TOL, &Budget::new(152_437)),
         Err(KernelError::TooComplex)
     );
     assert_eq!(
-        extrude(&p, &Frame::XY, 0.0, 2.0, 9, &TOL, &Budget::new(149_450)),
+        extrude(&p, &Frame::XY, 0.0, 2.0, 9, &TOL, &Budget::new(152_438)),
         Ok(solid)
     );
 }
@@ -1386,4 +1387,75 @@ fn a_cap_whose_straight_split_folds_extrudes() {
             .iter()
             .all(|q| q.patch.fold_direction().is_some())
     );
+}
+
+#[test]
+fn a_circles_wall_is_one_face() {
+    // Four quarter arcs, each written in its own coordinates: one face,
+    // the first's, the others' names its aliases.
+    let p = profile(vec![circle(DVec2::new(0.5, 0.2), 1.0, 4, false)]);
+    let solid = extruded(&p, 0.0, 2.0, 2.0 * PI, 1e-12);
+    assert_eq!(
+        parts(&solid),
+        [
+            FacePart::StartCap,
+            FacePart::EndCap,
+            side(4, 0),
+            side(4, 1),
+            side(4, 2),
+            side(4, 3)
+        ]
+    );
+    // The same key: no aliases to keep.
+    assert!(solid.mesh().aliases().is_empty());
+}
+
+#[test]
+fn collinear_lines_walls_are_one_face() {
+    // A rectangle whose bottom side is drawn as two lines (curves 0 and
+    // 5): their walls are the first's face, which the second's key names
+    // too, and no line is drawn between them.
+    let p = |x: f64, y: f64| DVec2::new(x, y);
+    let lp = Loop {
+        segments: vec![
+            Segment::line(p(0.0, 0.0), p(1.0, 0.0), 0).unwrap(),
+            Segment::line(p(1.0, 0.0), p(3.0, 0.0), 5).unwrap(),
+            Segment::line(p(3.0, 0.0), p(3.0, 2.0), 1).unwrap(),
+            Segment::line(p(3.0, 2.0), p(0.0, 2.0), 2).unwrap(),
+            Segment::line(p(0.0, 2.0), p(0.0, 0.0), 3).unwrap(),
+        ],
+    };
+    let solid = extruded(&profile(vec![lp]), 0.0, 1.0, 10.0, 1e-14);
+    assert_eq!(
+        parts(&solid),
+        [
+            FacePart::StartCap,
+            FacePart::EndCap,
+            side(0, 0),
+            side(0, 0),
+            side(1, 0),
+            side(2, 0),
+            side(3, 0)
+        ]
+    );
+    for f in [2, 3] {
+        let aliases: Vec<_> = solid.mesh().face_aliases(f).collect();
+        assert_eq!(aliases, [FaceName::new(9, side(5, 0)).key()]);
+    }
+    let topology = solid.topology();
+    let near = DVec3::new(2.0, 0.0, 0.5);
+    assert_eq!(
+        topology.face(&solid, &FaceName::new(9, side(5, 0)).key(), near),
+        topology.face(&solid, &FaceName::new(9, side(0, 0)).key(), near)
+    );
+    // A box's twelve edges, none at x = 1 on the front.
+    let render = solid.tessellate(&Display::default()).unwrap();
+    let at = |i: u32| DVec3::from(render.positions()[i as usize].map(f64::from));
+    for &[a, b] in render.edges() {
+        let (a, b) = (at(a), at(b));
+        assert!(
+            !((a.x - 1.0).abs() < 1e-6 && (b.x - 1.0).abs() < 1e-6),
+            "a line at the joint: {a} {b}"
+        );
+    }
 }

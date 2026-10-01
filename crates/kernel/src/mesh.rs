@@ -9,6 +9,10 @@
 //! `Edge` records. Beside the faces, each face's aliases: the keys of
 //! faces merged into it ([`Mesh::aliases`]).
 //!
+//! A face as users see it (a [`FaceKey`]) is an edge-connected region of
+//! one surface: booleans and extrude name adjacent faces on one plane or
+//! quadric alike once they are repaired (`merge_faces`, in `merge.rs`).
+//!
 //! [`Mesh::check`] is where a mesh becomes trusted. It covers:
 //!
 //! 1. Topology: every halfedge has a pair running the other way, directed
@@ -49,6 +53,7 @@ mod check;
 mod face;
 mod form;
 mod hull;
+mod merge;
 mod orient;
 mod primitive;
 mod refine;
