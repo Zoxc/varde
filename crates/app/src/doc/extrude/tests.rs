@@ -2816,9 +2816,9 @@ mod shots;
 
 /// [`crate::tests::merged_plates`] with a cut of a disc about (-20, 10)
 /// through both plates taking Body 2 out, after the join if `after`, else
-/// before it, being edited: the bodies its panel lists, and whether each
-/// is ticked.
-fn cut_excluding_the_lower_plate(after: bool) -> Vec<(String, bool)> {
+/// before it, being edited: the document, its requests, and the bodies
+/// its panel lists, whether each is ticked and the body holding it.
+fn cut_excluding_the_lower_plate(after: bool) -> (Doc, Rc<RefCell<Vec<Request>>>, Listed) {
     let (mut editor, [top, below]) = crate::tests::two_plates();
     if after {
         crate::tests::add_join(&mut editor);
@@ -2837,26 +2837,67 @@ fn cut_excluding_the_lower_plate(after: bool) -> Vec<(String, bool)> {
     assert_eq!(doc.feed.merged_bodies(), [(below, top)]);
     doc.look(Look::EditFeature(cut));
     crate::tests::answer(&mut doc, &requests);
+    let listed = listed_with_holders(&doc);
+    (doc, requests, listed)
+}
+
+/// The bodies a join, cut or intersect being set up lists: each one's
+/// name, whether it's ticked and the body holding it, if it's merged.
+type Listed = Vec<(String, bool, Option<String>)>;
+
+fn listed_with_holders(doc: &Doc) -> Listed {
     let state = doc.extrude_state().unwrap();
     (state.targets.iter())
-        .map(|target| (target.name.to_owned(), target.included))
+        .map(|target| {
+            let holder = target.holder.map(str::to_owned);
+            (target.name.to_owned(), target.included, holder)
+        })
         .collect()
 }
 
+/// After the join, Body 2 is in Body 1. A cut taking it out (as it was
+/// before the join reached it) takes nothing out, but lists it, unticked
+/// and "in Body 1", so that can be seen and undone: ticked, it's no
+/// longer taken out and, once the cut's preview answers, no longer
+/// listed.
 #[test]
-fn a_body_merged_away_before_a_cut_isn_t_listed_to_put_back() {
-    // After the join, Body 2 is in Body 1: the cut can't take it out.
+fn a_body_merged_away_before_a_cut_is_listed_in_its_holder_while_taken_out() {
+    let (mut doc, requests, listed_first) = cut_excluding_the_lower_plate(true);
     assert_eq!(
-        cut_excluding_the_lower_plate(true),
-        [("Body 1".to_owned(), true)]
+        listed_first,
+        [
+            ("Body 1".to_owned(), true, None),
+            ("Body 2".to_owned(), false, Some("Body 1".to_owned()))
+        ]
+    );
+    // The panel's row, after the Objects list's.
+    let texts = crate::tests::screen_texts(&doc);
+    let at = |text: &str| texts.iter().rposition(|shown| shown == text);
+    let note = at("in Body 1").unwrap_or_else(|| panic!("{texts:?}"));
+    assert_eq!(at("Body 2"), Some(note - 1), "{texts:?}");
+    assert_eq!(at("Bodies"), Some(note - 3), "{texts:?}");
+
+    let below = doc.editor.document().bodies()[1].id;
+    doc.look(Look::Extrude(ExtrudeLook::Target(below)));
+    assert_eq!(
+        listed_with_holders(&doc)[1],
+        ("Body 2".to_owned(), true, Some("Body 1".to_owned()))
+    );
+    crate::tests::answer(&mut doc, &requests);
+    assert_eq!(
+        listed_with_holders(&doc),
+        [("Body 1".to_owned(), true, None)]
     );
 }
 
 #[test]
 fn a_body_merged_away_after_a_cut_is_listed_to_put_back() {
     assert_eq!(
-        cut_excluding_the_lower_plate(false),
-        [("Body 1".to_owned(), true), ("Body 2".to_owned(), false)]
+        cut_excluding_the_lower_plate(false).2,
+        [
+            ("Body 1".to_owned(), true, None),
+            ("Body 2".to_owned(), false, None)
+        ]
     );
 }
 
@@ -2913,4 +2954,52 @@ fn objects_show_a_merged_body_in_its_holder() {
     doc.sync();
     crate::tests::answer(&mut doc, &requests);
     assert_eq!(doc.feed.mesh().triangle_count(), 0);
+}
+
+/// The status bar and the Objects list count the bodies there are once
+/// the joins have merged them, as the model shown has them, through
+/// undoing and redoing the join.
+#[test]
+fn bodies_are_counted_as_the_joins_leave_them() {
+    let (editor, _) = crate::tests::two_plates();
+    let (mut doc, requests) = crate::tests::holding(editor.document().clone());
+    doc.look(Look::SelectPanel(varde_view::Panel::Objects));
+    // The Objects group's count, the status bar's info and whether a body
+    // is noted in another.
+    let counted = |doc: &Doc| {
+        let texts = crate::tests::screen_texts(doc);
+        let group = texts.iter().position(|text| text == "Bodies");
+        let group = group.unwrap_or_else(|| panic!("{texts:?}"));
+        let bar = texts.iter().find(|text| text.starts_with("No selection"));
+        let bar = bar.unwrap_or_else(|| panic!("{texts:?}")).clone();
+        let noted = texts.iter().any(|text| text == "in Body 1");
+        (texts[group + 1].clone(), bar, noted)
+    };
+    let apart = (
+        "2".to_owned(),
+        "No selection · 2 bodies · 3 features · mm".to_owned(),
+        false,
+    );
+    assert_eq!(counted(&doc), apart);
+
+    crate::tests::add_join(&mut doc.editor);
+    doc.sync();
+    crate::tests::answer(&mut doc, &requests);
+    let merged = (
+        "1".to_owned(),
+        "No selection · 1 body · 5 features · mm".to_owned(),
+        true,
+    );
+    assert_eq!(counted(&doc), merged);
+
+    // Undone, the join's extrude goes and its sketch stays.
+    doc.update(Edit::Undo);
+    doc.sync();
+    crate::tests::answer(&mut doc, &requests);
+    let undone = (apart.0.clone(), apart.1.replace('3', "4"), false);
+    assert_eq!(counted(&doc), undone);
+    doc.update(Edit::Redo);
+    doc.sync();
+    crate::tests::answer(&mut doc, &requests);
+    assert_eq!(counted(&doc), merged);
 }

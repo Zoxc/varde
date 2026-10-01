@@ -51,7 +51,7 @@ fn a_failure_with_other_bodies_says_to_leave_the_body_out() {
 }
 
 #[test]
-fn merging_failures_name_both_bodies_and_end_as_a_boolean_s() {
+fn merging_failures_name_both_bodies_and_how_to_keep_them_apart() {
     for error in [
         KernelError::TooComplex,
         KernelError::Invalid(CheckError::Counts),
@@ -64,7 +64,8 @@ fn merging_failures_name_both_bodies_and_end_as_a_boolean_s() {
             .strip_prefix("joining it to Body 1")
             .unwrap()
             .to_owned();
-        assert_eq!(text, format!("merging Body 2 into Body 1{tail}"));
+        let keep = "; or untick Body 2 under Bodies to keep it apart";
+        assert_eq!(text, format!("merging Body 2 into Body 1{tail}{keep}"));
     }
     let text = merging("Body 1", "Body 3", KernelError::Invalid(CheckError::Counts));
     assert!(

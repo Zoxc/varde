@@ -187,6 +187,7 @@ fn a_long_name_without_spaces_breaks_inside_the_panel() {
         body: BodyId::NEW,
         name,
         included: true,
+        holder: None,
     };
     let short = Laid::new(
         panel(&ExtrudeState {
@@ -248,6 +249,7 @@ fn flip_is_a_tick_like_the_bodies() {
         body: BodyId::NEW,
         name: "Body 1",
         included: true,
+        holder: None,
     }];
     let shown = texts_of(&state);
     // A checkbox reports its box and label together, from the panel's
@@ -305,6 +307,7 @@ fn a_join_ticked_for_two_bodies_says_which_it_merges_into() {
         body: BodyId::NEW,
         name,
         included,
+        holder: None,
     };
     state.targets = vec![
         target("Body 1", false),
@@ -322,4 +325,14 @@ fn a_join_ticked_for_two_bodies_says_which_it_merges_into() {
     assert_eq!(joined_into(&state), None);
     let shown = texts_of(&state);
     assert!(!shown.iter().any(|shown| shown.text.starts_with("Joined")));
+
+    // A body merged away before, just put back, isn't merged: it's in its
+    // holder already, as its row says.
+    state.operation = OperationKind::Join;
+    state.targets[0].included = false;
+    state.targets[2].holder = Some("Body 1");
+    assert_eq!(joined_into(&state), None);
+    let shown = texts_of(&state);
+    assert!(!shown.iter().any(|shown| shown.text.starts_with("Joined")));
+    found(&shown, "in Body 1");
 }

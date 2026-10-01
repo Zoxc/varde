@@ -731,8 +731,10 @@ impl Doc {
     /// The bodies the session's join, cut or intersect lists: those its
     /// preview touches, those taken out, and those put back since the
     /// touch test last answered, in the order they were made. A body an
-    /// earlier join merged into another isn't one of its own there, so
-    /// it's left out unless it's touched (as the model shown found).
+    /// earlier join merged into another (as the model shown found) is
+    /// never touched, so it's listed only while it's taken out, which
+    /// does nothing then, or just put back: with the body holding it, so
+    /// that it can be seen and put back.
     fn extrude_targets(&self, session: &ExtrudeSession) -> Vec<ExtrudeTarget<'_>> {
         if !session.operation.has_targets() {
             return Vec::new();
@@ -749,13 +751,17 @@ impl Doc {
         (document.bodies().iter())
             .filter(|body| {
                 touched.contains(&body.id)
-                    || (!merged.consumed(body.id)
-                        && (session.excluded.contains(&body.id) || reticked(body.id)))
+                    || session.excluded.contains(&body.id)
+                    || reticked(body.id)
             })
             .map(|body| ExtrudeTarget {
                 body: body.id,
                 name: &body.name,
                 included: session.excluded.binary_search(&body.id).is_err(),
+                holder: (merged.holder(body.id))
+                    .filter(|_| !touched.contains(&body.id))
+                    .and_then(|holder| document.body(holder))
+                    .map(|holder| holder.name.as_str()),
             })
             .collect()
     }

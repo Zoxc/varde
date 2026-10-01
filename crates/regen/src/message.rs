@@ -89,9 +89,12 @@ pub(crate) fn boolean(doing: Doing, body: &str, error: KernelError) -> String {
 
 /// Why merging the body named `other`, which a join touches, into the
 /// body named `into`, which it touches too and which already holds the
-/// extrude, failed.
+/// extrude, failed, and that unticking `other` keeps it apart. Mostly
+/// the two meet along an edge or at a corner the extrude doesn't cover:
+/// joined to each on its own they were fine, merged they're no solid.
 pub(crate) fn merging(into: &str, other: &str, error: KernelError) -> String {
-    failed(&format!("merging {other} into {into}"), error)
+    let why = failed(&format!("merging {other} into {into}"), error);
+    format!("{why}; or untick {other} under Bodies to keep it apart")
 }
 
 /// Why `what` (doing something with two solids) failed.

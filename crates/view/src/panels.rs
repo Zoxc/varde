@@ -323,12 +323,21 @@ fn objects<'a>(
         })
     });
     column(
-        std::iter::once(group("Bodies", document.bodies().len()))
+        std::iter::once(group("Bodies", bodies_after_joins(document, merged)))
             .chain(bodies)
             .chain([group("Sketches", count)])
             .chain(sketches),
     )
     .into()
+}
+
+/// How many bodies `document` has once its joins have merged some
+/// (`merged`, see [`DocumentState::merged`]) into others: a merged body is
+/// one with the body holding it.
+pub(crate) fn bodies_after_joins(document: &Document, merged: &[(BodyId, BodyId)]) -> usize {
+    (document.bodies().iter())
+        .filter(|body| !merged.iter().any(|(consumed, _)| *consumed == body.id))
+        .count()
 }
 
 /// The note of `body` in the Objects list if a join merged it into

@@ -441,9 +441,11 @@ impl Merges {
         varde_regen::note_merge(&mut self.0, touched);
     }
 
-    /// Whether `body` was merged into another.
-    pub(crate) fn consumed(&self, body: BodyId) -> bool {
-        self.0.iter().any(|(consumed, _)| *consumed == body)
+    /// The body `body` was merged into, if it was.
+    pub(crate) fn holder(&self, body: BodyId) -> Option<BodyId> {
+        (self.0.iter())
+            .find(|(consumed, _)| *consumed == body)
+            .map(|&(_, holder)| holder)
     }
 
     /// The bodies merged into `holder`.

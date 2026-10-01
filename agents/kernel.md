@@ -3798,9 +3798,25 @@ and the later ones still run.
     error is given: its first step as a join's with more than one
     target ("joining it to Body 1 …; untick Body 1 under Bodies to leave
     it out"), a later one as `message::merging` ("merging Body 2 into Body 1
-    leaves no clean solid: …", the tails shared with `message::boolean`).
+    leaves no clean solid: …", the tails shared with `message::boolean`,
+    then "; or untick Body 2 under Bodies to keep it apart"). Either way
+    the message has one such hint.
     The failed bodies-first steps stay cached, so the fallback reruns
     only on the tool's changes.
+
+  Merging fails more often than joining each body on its own did, and
+  rightly: blocks that meet each other along an edge or at a corner the
+  tool doesn't cover make a union that isn't a manifold, which no solid
+  holds, though each block joined to the tool alone is fine. A seeded
+  fuzz of 2–4 blocks on a 5 mm grid (flush, corner to corner, apart,
+  overlapping) bridged by a bar (`history/tests/merging.rs`, 24 seeds;
+  300 measured) gave every merge the exact union's volume, and failed
+  exactly where that union isn't a manifold (43 of 300; joined one by
+  one, none failed). With discs among them (450 measured) no volume was
+  wrong either: merging failed in 70, joining one by one in 39 (24 of
+  them both), and the merge failures looked at were such contacts (a
+  disc tangent to a block's side among them); the slowest is the one
+  timed under the gaps below.
 
   With one target the path and keys are as they were before merging
   existed. `touched` still lists every target (consumed ones too).
@@ -3809,7 +3825,10 @@ and the later ones still run.
   orders' steps for the targets plus every excluded body (in made order,
   hashes only), so unticking one body of a merge and ticking it again
   works out at most the merged body's mesh (nothing within the budget).
-  A sketch placed on a consumed
+  A later feature taking out a consumed body takes nothing out (it has
+  no solid; its material is in the holder, which is worked on), as when
+  it was taken out before a join upstream reached it; the panel lists it
+  "in Body 1" so that shows (see the extrude UI). A sketch placed on a consumed
   body's face (once sketches can be placed on faces) is to follow it to
   its holder (`Evaluation::holder`), since the face lives on there.
 - A target whose result is the empty
@@ -4080,6 +4099,13 @@ bodies apart can fail on the merged one. The tool-first fallback can
 meet the flush blow-up the bodies-first order avoids (57,430 patches in
 the case above), and a bodies-first step that runs out of budget before
 the fallback runs about doubles the worst case, once (both are cached).
+Measured: four bodies, two of them overlapping cylinders, all flush on
+top with a disc tool (cylinder caps flush, the boolean's own blow-up):
+bodies first ran 0.9 s to 26,864 patches, then the tool's step 3.6 s to
+`TooComplex`; the tool first then 4.6 s (72,296 patches), 8.3 s in all
+(release, an idle machine) against 3.1 s joining each on its own. A
+join draft dragged there pays the last bodies-first step and the whole
+fallback on each step.
 The merge's keys kept for excluded bodies cover putting back all of
 them at once or the only one: with two taken out, putting back one
 reworks its merge. Merged plates flush on each other keep the line
@@ -4196,20 +4222,24 @@ and those ticked again (the session's `reticked`, each with the newest
 draft revision given out when it was, `MeshFeed::revision`) until a
 touch test of a later draft answers (`MeshFeed::draft_touched_revision`),
 so a body taken out and put back doesn't drop out of the list while its
-answer is on its way; but an excluded or ticked-again body that a join
-before the extrude merged into another isn't listed unless touched: it's
-no body of its own there (`MeshFeed::merged_before`, replaying the
-joins before it that the model shown has working and touching two or
-more, from `touched_features` and `failed_features`, as `feed::Merges`
-by regen's `note_merge`, so the two can't disagree on a prefix;
-the final `merged` won't do, as a join after the extrude may consume a
-body it rightly lists); all in the order they were made; ticked unless excluded;
+answer is on its way; a body that a join before the extrude merged
+into another is never touched, so it's listed only while taken out or
+just ticked again, with "in Body 1" after it (`ExtrudeTarget::holder`,
+faint): taking it out does nothing then (its material is in its
+holder), and the row shows that and lets it be put back, after which
+it drops out once the touch test answers. Which bodies are merged there
+is `MeshFeed::merged_before`, replaying the joins before it that the
+model shown has working and touching two or more, from
+`touched_features` and `failed_features`, as `feed::Merges` by regen's
+`note_merge`, so the two can't disagree on a prefix; the final `merged`
+won't do, as a join after the extrude may consume a body it rightly
+lists; all in the order they were made; ticked unless excluded;
 `ExtrudeLook::Target` toggles, keeping the session's `excluded` sorted and
 only taking bodies made before the extrude edited; bodies undone away
 drop out, and aren't taken out again when redone: undo gives the ids
 back, so a new edit may give theirs to other bodies), and under it, for a
-join ticked for two or more, "Joined into Body 1", the first ticked
-(`extrude::joined_into`), which holds them all once it's committed; its footer the
+join ticked for two or more (not counting one merged away before),
+"Joined into Body 1", the first ticked (`extrude::joined_into`), which holds them all once it's committed; its footer the
 refusal, the draft's error or "Checking the sketch…", then Cancel and OK.
 Errors that stand alone, the field errors, the refusal and the draft's
 error here and a failed feature's tooltip, are shown as sentences,
@@ -4261,7 +4291,9 @@ the mock's) is the feature selected, its icon, name and `feature_info`
 ("Distance 10 mm · New body", "Symmetric 4 mm · Cut", a sketch's
 "4 lines · 1 circle · 5 points · on XY"), or with none `model_info`:
 "No selection · 1 body · 2 features · mm" ("Empty design · mm" without
-features), then regenerating, failures and saving. The info is one line
+features; the bodies counted as the joins leave them, a merged one with
+its holder, `panels::bodies_after_joins`, as the Objects group's count
+is and as the mock counts), then regenerating, failures and saving. The info is one line
 taking what the key hints leave, cut off where they start
 (`chrome::window`), so a long failure never pushes them off the screen.
 

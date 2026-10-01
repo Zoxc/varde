@@ -501,7 +501,7 @@ fn merged_bodies_follow_the_model_shown() {
     assert_eq!(feed.merged_bodies(), [(below, top)]);
     assert!(feed.merges(editor.document(), join));
     let document = editor.document();
-    assert!(feed.merged_before(document, None).consumed(below));
+    assert_eq!(feed.merged_before(document, None).holder(below), Some(top));
     // Before the join, nothing is merged yet.
     assert_eq!(feed.merged_before(document, Some(join)), Merges::default());
 
@@ -524,7 +524,10 @@ fn merged_bodies_follow_the_model_shown() {
     feed.apply(handle(regen.take().pop().unwrap()));
     assert!(feed.generation() > Some(generation));
     assert_eq!(feed.merged_bodies(), []);
-    assert!(!feed.merged_before(editor.document(), None).consumed(below));
+    assert_eq!(
+        feed.merged_before(editor.document(), None).holder(below),
+        None
+    );
 }
 
 #[test]
@@ -550,11 +553,17 @@ fn a_body_merged_into_one_merged_later_moves_on() {
     let mut merges = Merges::default();
     merges.join(&[b, c]);
     merges.join(&[a]);
-    assert!(merges.consumed(c) && !merges.consumed(b) && !merges.consumed(a));
+    assert_eq!(
+        [a, b, c].map(|body| merges.holder(body)),
+        [None, None, Some(b)]
+    );
     assert_eq!(merges.held_by(b).collect::<Vec<_>>(), [c]);
     // `b` merged into `a` takes `c` with it.
     merges.join(&[a, b]);
-    assert!(merges.consumed(b) && merges.consumed(c));
+    assert_eq!(
+        [a, b, c].map(|body| merges.holder(body)),
+        [None, Some(a), Some(a)]
+    );
     assert_eq!(merges.held_by(a).collect::<Vec<_>>(), [c, b]);
     assert_eq!(merges.held_by(b).count(), 0);
 }

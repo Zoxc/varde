@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use glam::{DVec2, DVec3};
 use iced::widget::text::Wrapping;
-use iced::widget::{button, checkbox, column, container, row, text, text_input};
+use iced::widget::{button, checkbox, column, container, row, space, text, text_input};
 use iced::{Alignment, Element, Length};
 use varde_document::{BodyId, ExtrudeError, FeatureId, Operation, Placement, Plane};
 use varde_expr::LengthUnit;
@@ -206,6 +206,10 @@ pub struct ExtrudeTarget<'a> {
     pub name: &'a str,
     /// Whether it's worked on: not taken out.
     pub included: bool,
+    /// The name of the body an earlier join merged it into, if one did:
+    /// it's listed only while it's taken out (or just put back), which
+    /// does nothing then, so that can be seen and undone.
+    pub holder: Option<&'a str>,
 }
 
 /// The extrude being set up, and how it's shown.
@@ -454,7 +458,22 @@ pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
     let targets = (state.operation.has_targets() && !state.targets.is_empty()).then(|| {
         let rows = state.targets.iter().map(|&target| {
             let message = Message::Look(Look::Extrude(ExtrudeLook::Target(target.body)));
-            tick(target.name, target.included, editable.then_some(message))
+            let tick = tick(target.name, target.included, editable.then_some(message));
+            match target.holder {
+                // Faint, as the Objects list notes a merged body.
+                Some(holder) => row![
+                    tick,
+                    space::horizontal(),
+                    text(format!("in {holder}"))
+                        .size(12)
+                        .wrapping(Wrapping::None)
+                        .style(theme::faint_text),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center)
+                .into(),
+                None => tick,
+            }
         });
         let merging = joined_into(state).map(|holder| {
             // The mock's panel note: faint, 12 px.
@@ -508,12 +527,13 @@ pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
 
 /// The body a join merges the bodies it's ticked for into, if it's
 /// ticked for two or more: the first made of them, which then holds them
-/// all.
+/// all. A body merged away before isn't one of them.
 pub(crate) fn joined_into<'a>(state: &ExtrudeState<'a>) -> Option<&'a str> {
     if state.operation != OperationKind::Join {
         return None;
     }
-    let mut included = state.targets.iter().filter(|target| target.included);
+    let mut included =
+        (state.targets.iter()).filter(|target| target.included && target.holder.is_none());
     let first = included.next()?;
     included.next().map(|_| first.name)
 }

@@ -1114,7 +1114,8 @@ fn status<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
         .align_y(Alignment::Center)
         .into();
     }
-    text(format!("{}{}", model_info(document), status_suffix(state)))
+    let info = model_info(document, state.merged);
+    text(format!("{info}{}", status_suffix(state)))
         .size(12)
         .wrapping(Wrapping::None)
         .style(theme::muted_text)
@@ -1123,8 +1124,9 @@ fn status<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
 
 /// The status bar's info on `document` with nothing selected: "No
 /// selection · 2 bodies · 3 features · mm", or "Empty design · mm", in
-/// its units.
-fn model_info(document: &Document) -> String {
+/// its units. The bodies are counted as the joins leave them, `merged`
+/// (see [`DocumentState::merged`]) each one with its holder.
+fn model_info(document: &Document, merged: &[(BodyId, BodyId)]) -> String {
     let units = document.units().symbol();
     let features = document.features().len();
     if features == 0 {
@@ -1132,7 +1134,11 @@ fn model_info(document: &Document) -> String {
     }
     format!(
         "No selection · {} · {} · {units}",
-        counted(document.bodies().len(), "body", "bodies"),
+        counted(
+            panels::bodies_after_joins(document, merged),
+            "body",
+            "bodies"
+        ),
         counted(features, "feature", "features"),
     )
 }
@@ -1438,10 +1444,10 @@ mod tests {
     fn the_status_bar_sums_up_the_model_and_the_feature_selected() {
         use varde_document::{Document, Extent, FeatureKind, Operation};
 
-        assert_eq!(model_info(&Document::default()), "Empty design · mm");
+        assert_eq!(model_info(&Document::default(), &[]), "Empty design · mm");
         let document = Document::example();
         assert_eq!(
-            model_info(&document),
+            model_info(&document, &[]),
             "No selection · 1 body · 2 features · mm"
         );
         let units = document.units();

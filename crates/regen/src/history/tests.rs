@@ -49,8 +49,19 @@ pub(crate) fn add_extrude(
     extent: Extent,
     operation: Operation,
 ) -> FeatureId {
+    add_extrude_on(editor, OriginPlane::XY, draw, extent, operation)
+}
+
+/// [`add_extrude`], the sketch on `plane`.
+pub(crate) fn add_extrude_on(
+    editor: &mut Editor,
+    plane: OriginPlane,
+    draw: impl FnOnce(&mut Sketch),
+    extent: Extent,
+    operation: Operation,
+) -> FeatureId {
     editor
-        .apply(editor.document().add_sketch(Plane::Origin(OriginPlane::XY)))
+        .apply(editor.document().add_sketch(Plane::Origin(plane)))
         .unwrap();
     let feature = editor.document().features().last().unwrap().id;
     let mut sketch = Sketch::default();
@@ -1417,3 +1428,5 @@ fn a_join_tangent_to_a_second_body_fails_until_it_is_unticked() {
     let inside = d.acos() - d * (1.0 - d * d).sqrt();
     assert_near(evaluation.bodies[1].solid.volume(), 24.0 + PI - inside);
 }
+
+mod merging;
