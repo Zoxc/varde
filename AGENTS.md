@@ -79,6 +79,8 @@ there is no adapter. Tests pass temporary directories (or none) to
 The dev profile builds `varde-kernel` at `opt-level = 1` (its tests run about
 8 times slower at 0). To debug it unoptimized, pass
 `--config 'profile.dev.package.varde-kernel.opt-level=0'`.
+Dev builds carry line tables only (dependencies none); for variables in a
+debugger, add `--config 'profile.dev.debug="full"'`.
 
 ## Architecture
 

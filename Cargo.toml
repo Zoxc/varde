@@ -76,8 +76,18 @@ log = "0.4"
 # Embeds the Windows executable icon, in the build script of crates/binary.
 winresource = { version = "0.1", default-features = false }
 
+# Line tables are enough for backtraces and stepping by line; full debug
+# info mostly costs link time and disk. For variables in a debugger, pass
+# `--config 'profile.dev.debug="full"'`.
+[profile.dev]
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
+
+# Dependencies are optimized and never stepped into, so they carry no debug
+# info at all.
 [profile.dev.package."*"]
 opt-level = 2
+debug = false
 
 # The kernel's vector math is glam's inline functions, compiled at the
 # kernel's own opt-level: at 0 its tests run about 8 times slower.
