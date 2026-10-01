@@ -134,8 +134,11 @@ enum Entry {
 }
 
 impl Entry {
-    /// About how many bytes it holds, rather more than less: its data
-    /// and [`OVERHEAD`]. Results shared between entries (a solid both an
+    /// About how many bytes it holds: its data's lengths and
+    /// [`OVERHEAD`]. Capacities aren't counted: a vector grown by pushes
+    /// (a solid's arrays, a scene of several bodies joined) may hold up
+    /// to about twice its length, so what the cache really holds can be
+    /// up to about twice its count. Results shared between entries (a solid both an
     /// extrude's and a boolean's operand) count once in each. Saturating,
     /// since the sizes come from what the user drew.
     fn bytes(&self) -> usize {
@@ -448,6 +451,14 @@ impl Cache {
     /// Whether it holds nothing.
     pub fn is_empty(&self) -> bool {
         self.slots.is_empty()
+    }
+
+    /// The size of the committed scene, which is never evicted, for tests.
+    #[cfg(test)]
+    pub(crate) fn committed_bytes(&self) -> usize {
+        (self.committed)
+            .and_then(|key| self.slots.get(&key))
+            .map_or(0, |slot| slot.bytes)
     }
 
     /// The slots' sizes added up afresh, and what the request before

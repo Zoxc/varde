@@ -743,3 +743,46 @@ fn the_banner_goes_back_into_the_sketch_or_with_it() {
         "{texts:?}"
     );
 }
+
+#[test]
+fn the_banner_goes_with_a_replacement_and_an_undo_taking_the_sketch() {
+    // The document replaced whole: the id may name another sketch now.
+    let (mut t, feature, _) = refused_after_leaving();
+    t.lane.answer(&mut t.doc);
+    assert!(t.refused_edit().is_some());
+    let mut other = Editor::new(t.editor.document().clone());
+    let shown = other.document().feature(feature).unwrap().visible;
+    other
+        .apply(Command::SetFeatureVisible(feature, !shown))
+        .unwrap();
+    t.doc
+        .apply(Command::Replace(Box::new(other.document().clone())));
+    t.doc.sync();
+    assert!(t.editor.document().feature(feature).is_some());
+    assert!(t.doc.refused_edit.is_none());
+
+    // Undone back past the sketch's making, it goes, and doesn't come
+    // back with a redo.
+    let (mut t, feature, _) = refused_after_leaving();
+    t.lane.answer(&mut t.doc);
+    while t.editor.document().feature(feature).is_some() {
+        t.update(Edit::Undo);
+        t.lane.answer(&mut t.doc);
+    }
+    assert!(t.doc.refused_edit.is_none());
+    while t.editor.can_redo() {
+        t.update(Edit::Redo);
+        t.lane.answer(&mut t.doc);
+    }
+    assert!(t.editor.document().feature(feature).is_some());
+    assert!(t.refused_edit().is_none());
+
+    // A read-only document still shows it, and Dismiss still takes it
+    // away: it changes nothing in the document.
+    let (mut t, _, _) = refused_after_leaving();
+    t.lane.answer(&mut t.doc);
+    t.doc.read_only = Some("read-only".to_owned());
+    assert!(t.refused_edit().is_some());
+    t.update(Edit::DismissRefusedEdit);
+    assert!(t.refused_edit().is_none());
+}

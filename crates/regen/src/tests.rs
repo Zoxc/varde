@@ -1460,3 +1460,231 @@ fn the_budget_holds_several_requests() {
     );
     assert!(plate.saturating_mul(8) < cache::BUDGET);
 }
+
+/// Whether `document`'s second feature is an extrude, as the example's
+/// plate is, whose regions drafts are made of.
+fn drafts_from(document: &Document) -> bool {
+    (document.features().get(1)).is_some_and(|f| matches!(f.kind, FeatureKind::Extrude(_)))
+}
+
+/// A small pseudo-random generator, so the churn below is the same on
+/// every run.
+struct Churn(u64);
+
+impl Churn {
+    fn below(&mut self, n: u64) -> u64 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        self.0 % n
+    }
+}
+
+/// Long random runs of drafts, edits, undos and redos, tolerance and
+/// visibility changes, features added (their ids reused after an undo)
+/// and removed, and the document replaced, through regenerators with
+/// small budgets and the default one: every answer is the one a fresh
+/// regenerator gives. Throughout, the cache holds at most its budget
+/// besides what the request before and this one used and the committed
+/// scene the request began with; a request asked
+/// again works out nothing, and the committed model asked again after
+/// drafts joins no scene.
+#[test]
+fn churn_answers_as_a_fresh_cache_would() {
+    use crate::history::tests::{add_extrude, add_pocket, disc, length, rectangle, two_sides};
+    let coarse = Tolerance::new(1e-2).unwrap();
+    for (seed, budget) in [(1, 0), (2, 40_000), (3, 200_000), (4, cache::BUDGET)] {
+        let mut churn = Churn(0x9e37_79b9_7f4a_7c15 ^ seed);
+        let mut regenerator = Regenerator::with_budget(budget);
+        let mut editor = Editor::new(Document::example());
+        let mut revision = 0;
+        let mut last: Option<Request> = None;
+        // The generation of the last request without a draft, if only
+        // drafts of that same document were asked since.
+        let mut committed: Option<varde_document::Generation> = None;
+        for step in 0..120 {
+            let plate = editor.document().features().get(1).map(|f| f.id);
+            let mut repeat = false;
+            let mut draft = None;
+            match churn.below(12) {
+                0 | 1 => {
+                    revision += 1;
+                    let text = ["3", "4", "5", "12"][churn.below(4) as usize];
+                    if drafts_from(editor.document()) {
+                        let mut new = new_body_draft(editor.document(), revision, text);
+                        new.extrude.flip = churn.below(2) == 0;
+                        new.extrude.operation = match churn.below(4) {
+                            0 => Operation::NewBody(BodyId::NEW),
+                            1 => Operation::Join(varde_document::Targets::default()),
+                            2 => Operation::Cut(varde_document::Targets::default()),
+                            _ => Operation::Intersect(varde_document::Targets::default()),
+                        };
+                        if churn.below(3) == 0
+                            && let Some(plate) = plate
+                        {
+                            new.feature = Some(plate);
+                            new.extrude.operation = example_extrude(editor.document()).operation;
+                        }
+                        draft = Some(new);
+                    }
+                }
+                2 => {
+                    if let Some(plate) = plate
+                        && matches!(
+                            editor.document().feature(plate).map(|f| &f.kind),
+                            Some(FeatureKind::Extrude(Extrude {
+                                operation: Operation::NewBody(_),
+                                ..
+                            }))
+                        )
+                    {
+                        let depth = ["6", "8", "10"][churn.below(3) as usize];
+                        set_depth(&mut editor, plate, depth);
+                    }
+                }
+                3 | 4 => editor.undo(),
+                5 => editor.redo(),
+                6 => {
+                    let tolerance = if editor.document().tolerance() == coarse {
+                        Tolerance::DEFAULT
+                    } else {
+                        coarse
+                    };
+                    let _ = editor.apply(Command::SetTolerance(tolerance));
+                }
+                7 => {
+                    if let Some(body) = editor.document().bodies().first() {
+                        let (id, visible) = (body.id, body.visible);
+                        editor.apply(Command::SetVisible(id, !visible)).unwrap();
+                    }
+                }
+                8 => {
+                    if editor.document().bodies().is_empty() {
+                        continue;
+                    }
+                    let kind = churn.below(3);
+                    if kind == 0 {
+                        add_pocket(&mut editor);
+                    } else if kind == 1 && drafts_from(editor.document()) {
+                        // A join taking its only body out: it fails.
+                        crate::history::tests::add_failing(&mut editor);
+                    } else {
+                        let extent = two_sides(editor.document(), "20", "20");
+                        let center = [(10.0, 0.0), (-20.0, 10.0)][churn.below(2) as usize];
+                        add_extrude(
+                            &mut editor,
+                            disc(center, 3.0),
+                            extent,
+                            Operation::Cut(varde_document::Targets::default()),
+                        );
+                    }
+                }
+                9 => {
+                    if let Some(last) = editor.document().features().last() {
+                        let removal = Command::RemoveFeature(last.id);
+                        let _ = editor.apply(removal);
+                    }
+                }
+                10 => {
+                    let replacement = match churn.below(3) {
+                        0 => Document::example(),
+                        1 => with_pocket().0.document().clone(),
+                        _ => {
+                            let mut other = Editor::new(Document::default());
+                            let ten = Extent::OneSide(length(other.document(), "10"));
+                            add_extrude(
+                                &mut other,
+                                rectangle((-30.0, -20.0), (30.0, 20.0)),
+                                ten,
+                                Operation::NewBody(BodyId::NEW),
+                            );
+                            other.document().clone()
+                        }
+                    };
+                    editor
+                        .apply(Command::Replace(Box::new(replacement)))
+                        .unwrap();
+                }
+                _ => repeat = last.is_some(),
+            }
+            let request = match (&last, repeat) {
+                (Some(last), true) => last.clone(),
+                _ => regenerate_with(&editor, draft),
+            };
+            let Request::Regenerate {
+                generation,
+                draft: ref asked,
+                ..
+            } = request;
+            let (_, worked) = regenerator.cache().counts();
+            let joins = regenerator.cache().joins();
+            // What begins the request may not evict: what the request
+            // before used, which is protected below too, and the
+            // committed scene, which this request may replace.
+            let scene = regenerator.cache().committed_bytes();
+            let cached = regenerator.handle(request.clone());
+            let fresh = Regenerator::default().handle(request.clone());
+            assert_eq!(format!("{cached:?}"), format!("{fresh:?}"), "step {step}");
+            let (total, protected) = regenerator.cache().audit();
+            assert_eq!(regenerator.cache().bytes(), total);
+            let bound = budget.saturating_add(protected).saturating_add(scene);
+            assert!(total <= bound, "step {step}: {total} B, budget {budget} B");
+            if repeat {
+                assert_eq!(regenerator.cache().counts().1, worked, "step {step}");
+            }
+            if repeat || (asked.is_none() && committed == Some(generation)) {
+                assert_eq!(regenerator.cache().joins(), joins, "step {step}");
+            }
+            committed = match (asked, committed) {
+                (None, _) => Some(generation),
+                (Some(_), Some(c)) if c == generation => committed,
+                _ => None,
+            };
+            last = Some(request);
+        }
+    }
+}
+
+/// Many bodies, each shown and hidden in turn so that every request
+/// joins a new scene: with no budget the cache holds no more than the
+/// requests it protects, however many go by; with room for a few, it
+/// stays within that room besides them.
+#[test]
+fn many_bodies_stay_within_the_budget() {
+    use crate::history::tests::{add_extrude, disc, length};
+    let mut editor = Editor::new(Document::default());
+    for k in 0..8 {
+        let extent = Extent::OneSide(length(editor.document(), "5"));
+        let center = (20.0 * f64::from(k), 0.0);
+        add_extrude(
+            &mut editor,
+            disc(center, 8.0),
+            extent,
+            Operation::NewBody(BodyId::NEW),
+        );
+    }
+    let bodies: Vec<BodyId> = editor.document().bodies().iter().map(|b| b.id).collect();
+    assert_eq!(bodies.len(), 8);
+    let mut probe = Regenerator::default();
+    answered(probe.handle(regenerate(&editor, None)));
+    let one = probe.cache().bytes();
+    for budget in [0, one / 2, 2 * one] {
+        let mut editor = Editor::new(editor.document().clone());
+        let mut regenerator = Regenerator::with_budget(budget);
+        for (step, body) in bodies.iter().cycle().take(40).enumerate() {
+            let visible = editor.document().body(*body).unwrap().visible;
+            editor.apply(Command::SetVisible(*body, !visible)).unwrap();
+            let scene = regenerator.cache().committed_bytes();
+            let cached = regenerator.handle(regenerate(&editor, None));
+            let fresh = Regenerator::default().handle(regenerate(&editor, None));
+            assert_eq!(format!("{cached:?}"), format!("{fresh:?}"), "step {step}");
+            let (total, protected) = regenerator.cache().audit();
+            assert!(total <= budget + protected + scene, "step {step}");
+            // The protected set is two requests' worth at most.
+            assert!(
+                total <= budget + 3 * one,
+                "step {step}: {total} B, one {one} B"
+            );
+        }
+    }
+}

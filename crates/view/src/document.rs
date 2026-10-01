@@ -935,9 +935,16 @@ fn delete_prompt<'a>(prompt: &DeletePrompt<'a>) -> Element<'a, Message> {
 
 /// What the delete prompt asks, counting what goes besides what was
 /// asked to be deleted: "Delete Sketch 1 with the 1 feature and 1 body
-/// that depend on it?", or for a body, "Delete Body 1 with the 1 feature
-/// that goes with it?", counting the one making it.
+/// that depend on it?", or for a body, "Delete Body 1 with the 2
+/// features that go with it?", counting the one making it; a body going
+/// with only that one names it: "Delete Body 1 and Extrude 1, which
+/// makes it?".
 fn delete_question(prompt: &DeletePrompt<'_>) -> String {
+    if prompt.body
+        && let ([maker], [_]) = (&prompt.features[..], &prompt.bodies[..])
+    {
+        return format!("Delete {} and {}, which makes it?", prompt.name, maker.name);
+    }
     // A body asked for is one of the bodies listed, a feature one of the
     // features.
     let (features, bodies) = if prompt.body {
@@ -1513,11 +1520,15 @@ mod tests {
             delete_question(&prompt("Sketch 1", false, vec![sketch], vec![])),
             "Delete Sketch 1?"
         );
-        // A body goes with the feature making it, counted, and the other
-        // bodies that one makes.
+        // A body goes with the feature making it, named if it's the only
+        // one, else counted, and the other bodies that one makes.
         assert_eq!(
             delete_question(&prompt("Body 1", true, vec![extrude], vec![body])),
-            "Delete Body 1 with the 1 feature that goes with it?"
+            "Delete Body 1 and Extrude 1, which makes it?"
+        );
+        assert_eq!(
+            delete_question(&prompt("Body 1", true, vec![extrude, extrude], vec![body])),
+            "Delete Body 1 with the 2 features that go with it?"
         );
         assert_eq!(
             delete_question(&prompt(

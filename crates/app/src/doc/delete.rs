@@ -2,7 +2,9 @@
 //! or when a join, cut or intersect that stays worked only on bodies that
 //! go: see [`Doc::remove`].
 
-use varde_document::{BodyId, Command, FeatureId, Generation, Removable, Removal};
+use varde_document::{
+    BodyId, Command, FeatureId, FeatureKind, Generation, Operation, Removable, Removal,
+};
 use varde_view::DeletePrompt;
 
 use super::{Change, Doc};
@@ -103,24 +105,46 @@ impl Doc {
     /// and those bodies, each in the document's order. With nothing left
     /// to touch they fail ("it doesn't touch any body"), so the delete
     /// prompt warns about them; one that also touched a body that stays
-    /// goes on working on that. A feature added since the model shown
-    /// isn't known to touch anything yet.
+    /// goes on working on that. One the model shown doesn't know (added
+    /// since, as a cut committed before its model comes back is, or any
+    /// after the document was replaced) is taken to touch every body made
+    /// before it that it doesn't take out: warned of if they all go, as
+    /// then it surely has nothing to work on.
     fn worked(&self, removal: &Removal) -> (Vec<FeatureId>, Vec<BodyId>) {
         let document = self.editor.document();
+        let shown = self.feed.touched_features();
+        let mut features = Vec::new();
         let mut worked_on = Vec::new();
-        let features = (self.feed.touched_features().iter())
-            .filter(|(feature, touched)| {
-                let worked = !touched.is_empty()
-                    && (touched.iter()).all(|body| removal.bodies.binary_search(body).is_ok())
-                    && removal.features.binary_search(feature).is_err()
-                    && document.feature(*feature).is_some();
-                if worked {
-                    worked_on.extend_from_slice(touched);
+        // The bodies made by the features before the one at hand.
+        let mut made: Vec<BodyId> = Vec::new();
+        for feature in document.features() {
+            if let FeatureKind::Extrude(extrude) = &feature.kind
+                && !matches!(extrude.operation, Operation::NewBody(_))
+                && removal.features.binary_search(&feature.id).is_err()
+            {
+                // A checked document's ids go up in its order.
+                let goes = |body: &BodyId| removal.bodies.binary_search(body).is_ok();
+                let touched = match shown.iter().find(|(id, _)| *id == feature.id) {
+                    Some((_, touched)) => touched.clone(),
+                    None => {
+                        let excluded = extrude.operation.excluded();
+                        (made.iter())
+                            .filter(|body| !excluded.contains(body))
+                            .copied()
+                            .collect()
+                    }
+                };
+                if !touched.is_empty() && touched.iter().all(goes) {
+                    features.push(feature.id);
+                    worked_on.extend(touched);
                 }
-                worked
-            })
-            .map(|(feature, _)| *feature)
-            .collect();
+            }
+            made.extend(
+                (document.bodies().iter())
+                    .filter(|body| body.created_by == feature.id)
+                    .map(|body| body.id),
+            );
+        }
         worked_on.sort_unstable();
         // In the bodies' order, as the prompt lists them.
         let worked_on = (document.bodies().iter())

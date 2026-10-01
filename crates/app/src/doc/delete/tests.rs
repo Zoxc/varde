@@ -203,19 +203,69 @@ fn example_and_a_cut() -> (Doc, Rc<RefCell<Vec<Request>>>, FeatureId) {
     (doc, requests, cut)
 }
 
-/// [`example_and_a_cut`], with "Extrude 2" a boss of the circle making
-/// "Body 2" before the cut, "Extrude 3", if `boss`, which then cuts
-/// both bodies.
+/// [`example_and_a_cut`], with "Extrude 2" a boss of a circle of
+/// radius 5 about the same centre, in "Sketch 3", making "Body 2" before
+/// the cut, "Extrude 3", if `boss`, which then cuts both bodies (the
+/// boss to a ring, as a cut leaving nothing of a body fails).
 fn example_and_a_cut_of(boss: bool) -> (Doc, Rc<RefCell<Vec<Request>>>, FeatureId) {
+    let (mut doc, requests, cut) = a_cut(boss);
+    crate::tests::answer(&mut doc, &requests);
+    assert!(doc.feed.failed_features().is_empty());
+    (doc, requests, cut)
+}
+
+/// [`example_and_a_cut_of`], with the cut committed but its model not
+/// answered yet: the model shown doesn't know what it touches.
+fn example_and_an_unanswered_cut(boss: bool) -> (Doc, Rc<RefCell<Vec<Request>>>, FeatureId) {
+    let (doc, requests, cut) = a_cut(boss);
+    requests.take();
+    assert!(
+        (doc.feed.touched_features().iter()).all(|(id, _)| *id != cut),
+        "{:?}",
+        doc.feed.touched_features()
+    );
+    (doc, requests, cut)
+}
+
+/// [`example_and_a_cut_of`] up to the cut committed, its model asked
+/// for.
+fn a_cut(boss: bool) -> (Doc, Rc<RefCell<Vec<Request>>>, FeatureId) {
     let (mut doc, sketch, requests) = crate::tests::example_and_a_hole();
     let extrude = |doc: &mut Doc, look| doc.look(Look::Extrude(look));
     if boss {
-        doc.look(Look::SelectFeature(sketch));
+        let plane = varde_document::Plane::Origin(varde_document::OriginPlane::XY);
+        doc.apply(doc.editor.document().add_sketch(plane));
+        let ring = doc.editor.document().features().last().unwrap().id;
+        let mut drawn = varde_sketch::Sketch::default();
+        let center = drawn.add_point(glam::DVec2::new(-20.0, 10.0)).unwrap();
+        drawn
+            .add_curve(
+                varde_sketch::Curve::Circle {
+                    center,
+                    radius: 5.0,
+                },
+                false,
+            )
+            .unwrap();
+        doc.apply(Command::SetSketch {
+            feature: ring,
+            sketch: Box::new(drawn),
+        });
+        doc.sync();
+        crate::tests::answer(&mut doc, &requests);
+        doc.look(Look::SelectFeature(ring));
         doc.look(Look::StartExtrude);
-        extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region: 0 });
+        extrude(
+            &mut doc,
+            ExtrudeLook::PickRegion {
+                sketch: ring,
+                region: 0,
+            },
+        );
         doc.update(Edit::CommitExtrude);
         assert!(doc.extrude.is_none());
         crate::tests::answer(&mut doc, &requests);
+        assert_eq!(doc.editor.document().bodies().len(), 2);
     }
     doc.look(Look::SelectFeature(sketch));
     doc.look(Look::StartExtrude);
@@ -224,9 +274,8 @@ fn example_and_a_cut_of(boss: bool) -> (Doc, Rc<RefCell<Vec<Request>>>, FeatureI
     extrude(&mut doc, ExtrudeLook::Extent(ExtentKind::ThroughAll));
     doc.update(Edit::CommitExtrude);
     assert!(doc.extrude.is_none());
-    crate::tests::answer(&mut doc, &requests);
+    doc.sync();
     let cut = doc.editor.document().features().last().unwrap().id;
-    assert!(doc.feed.failed_features().is_empty());
     (doc, requests, cut)
 }
 
@@ -262,7 +311,7 @@ fn deleting_a_body_a_cut_worked_on_warns_and_the_cut_then_fails() {
     assert_eq!(listed, ["Body 1"]);
     assert_eq!(warned(&doc), (vec!["Extrude 2"], vec!["Body 1"]));
     let texts = crate::tests::screen_texts(&doc);
-    let question = "Delete Body 1 with the 1 feature that goes with it?";
+    let question = "Delete Body 1 and Extrude 1, which makes it?";
     assert!(texts.iter().any(|text| text == question), "{texts:?}");
     assert!(texts.iter().any(|text| text == CUT_WARNING), "{texts:?}");
 
@@ -358,4 +407,62 @@ fn a_cut_left_a_body_to_work_on_isnt_warned_of() {
         doc.update(Edit::Undo);
         assert_eq!(doc.editor.document().bodies().len(), 2);
     }
+}
+
+/// A cut committed before its model comes back, deleting the only body
+/// before it: it's warned of, as it surely has nothing left to work on.
+#[test]
+fn a_cut_not_answered_yet_is_warned_of_when_every_body_before_it_goes() {
+    let (mut doc, requests, cut) = example_and_an_unanswered_cut(false);
+    let body = doc.editor.document().bodies()[0].id;
+    doc.update(Edit::RemoveBody(body));
+    assert_eq!(doc.dialog(), Some(Dialog::Delete));
+    assert_eq!(warned(&doc), (vec!["Extrude 2"], vec!["Body 1"]));
+    assert!(
+        crate::tests::screen_texts(&doc)
+            .iter()
+            .any(|text| text == CUT_WARNING)
+    );
+    doc.update(Edit::ConfirmDelete);
+    crate::tests::answer(&mut doc, &requests);
+    assert_eq!(
+        doc.feed.failed_features(),
+        [(cut, "there's no body to go through".to_owned())]
+    );
+}
+
+/// With another body before it that stays, a cut not answered yet isn't
+/// warned of: it may work on that one.
+#[test]
+fn a_cut_not_answered_yet_isnt_warned_of_while_a_body_stays() {
+    let (mut doc, _, _) = example_and_an_unanswered_cut(true);
+    let bodies: Vec<_> = (doc.editor.document().bodies().iter())
+        .map(|body| body.id)
+        .collect();
+    assert_eq!(bodies.len(), 2);
+    for body in bodies {
+        doc.update(Edit::RemoveBody(body));
+        assert!(doc.deleting.is_none());
+        doc.update(Edit::Undo);
+        assert_eq!(doc.editor.document().bodies().len(), 2);
+    }
+}
+
+/// Across a replacement, before its model comes back, the cut isn't
+/// known to the model shown; deleting the body still warns of it.
+#[test]
+fn a_cut_is_warned_of_across_a_replacement_before_its_model() {
+    let (mut doc, _, _) = example_and_a_cut();
+    // The same features and bodies, one sketch shown or hidden: a replacement
+    // that changes something.
+    let mut other = varde_document::Editor::new(doc.editor.document().clone());
+    let sketch = &other.document().features()[0];
+    let shown = Command::SetFeatureVisible(sketch.id, !sketch.visible);
+    other.apply(shown).unwrap();
+    doc.apply(Command::Replace(Box::new(other.document().clone())));
+    doc.sync();
+    assert!(doc.feed.touched_features().is_empty());
+    let body = doc.editor.document().bodies()[0].id;
+    doc.update(Edit::RemoveBody(body));
+    assert_eq!(warned(&doc), (vec!["Extrude 2"], vec!["Body 1"]));
 }

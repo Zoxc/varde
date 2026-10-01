@@ -3793,7 +3793,9 @@ by size: each entry records its approximate heap size (`Entry::bytes`: a
 solid's four mesh arrays, a render mesh's four, profiles' regions, pieces,
 outlines, vertices and open ends, an error string's length, plus 128 B
 for the map slot and the `Arc`; saturating sums, since the sizes come
-from what the user drew), the request that last used it and a use
+from what the user drew; lengths, not capacities, so a vector grown by
+pushes, such as a scene of several bodies joined, may really take up to
+about twice its count), the request that last used it and a use
 counter. `Cache::begin` starts a request and, only while the total is
 over the budget (`BUDGET`: 256 MiB natively, 64 MiB on wasm32, per lane
 and so per open document, since a worker's memory never shrinks) or
@@ -3801,7 +3803,8 @@ there are more than `MAX_ENTRIES` (2^16, so tiny entries can't pile up),
 evicts what the request before didn't use, least recently used first by
 the use counter (a total order: eviction never depends on the map's
 order, so counts are the same on every run). What the request before
-used is never evicted, so an unrelated edit, or a draft dragged, reruns
+used is never evicted, nor is the scene of the last answer without a
+draft, so an unrelated edit, or a draft dragged, reruns
 only what changed whatever the budget (that set may exceed the budget on
 its own); within the budget, undo, redo and an option changed and
 changed back (join, cut, join; a distance typed and typed back) find
@@ -4051,7 +4054,10 @@ that go (one that also touched a body that stays goes on working on
 that), as the model shown found (`Response::Regenerated::touched`, the
 history's `Evaluation::touched`, kept by `MeshFeed::touched_features`
 like the failed features, and not given out across a replacement until
-a newer model; one added since isn't known yet), is listed under the
+a newer model; one the model shown doesn't know, such as a cut committed
+before its model comes back, is taken to touch every body made before
+it that it doesn't take out, so it's warned of when they all go, as it
+then surely has nothing to work on), is listed under the
 prompt in the warning colour (the mock's for panel warnings, its construction orange): "Extrude 2 works on Body 1 and stays, so
 it may fail with nothing to work on." (`Doc::worked`, `delete_warning`).
 One that took the body out isn't (excluded bodies aren't asked
@@ -4059,7 +4065,8 @@ about, so it touched none). A removal with
 such a feature asks even if only its own feature goes, so a body's
 prompt shows. For a body the prompt asks
 "Delete *Body N* with the M features and K bodies that go with it?",
-counting its maker and the other bodies that makes. If that's one
+counting its maker and the other bodies that makes, or, when only its
+maker goes with it, "Delete *Body N* and *Extrude M*, which makes it?". If that's one
 feature (a feature and its own bodies, or a body and the feature making
 it) and nothing's warned of, the command applies at once. Otherwise the app keeps a `Deleting` (the target, the `Removal`,
 the editor's generation) and the view shows `DeletePrompt` over the
