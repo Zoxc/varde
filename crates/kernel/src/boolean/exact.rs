@@ -434,10 +434,12 @@ pub(crate) fn sum_value<P: Pred + Sync>(parts: &[P]) -> f64 {
 /// is noise. Each predicate is then decided as that exact tie is, so they
 /// all describe one configuration. The rule is free of scale: a
 /// coefficient is compared with its own terms. With every later order
-/// only rounding, the sign is 0, as for a tie in every power.
+/// only rounding, the sign is 0, as for a tie in every power. A scale of
+/// 0 keeps the tie: only an exact zero is then one, and the later orders
+/// that are only rounding are still skipped.
 pub(super) fn sign_tied(pred: &impl Pred, tie: f64) -> i8 {
     let limit = tie * pred.scale();
-    if limit.is_nan() || limit <= 0.0 {
+    if limit.is_nan() || tie <= 0.0 {
         return sign(pred);
     }
     let approx = pred.eval::<Approx>();
@@ -464,7 +466,7 @@ pub(super) fn sign_tied(pred: &impl Pred, tie: f64) -> i8 {
 /// share of its size ([`Abs`]) is only rounding, and taken as zero by
 /// [`sign_tied`]. Anything from `1e-13` to `1e-7` decided the same on
 /// turned flush boxes; rounding leaves some `1e-16`.
-const RHO: f64 = 1.0 / (1u64 << 32) as f64;
+pub(super) const RHO: f64 = 1.0 / (1u64 << 32) as f64;
 
 /// The size of a value: the same expression on its terms' absolute
 /// values, `+` and `−` adding them and `×` multiplying them, in floating

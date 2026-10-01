@@ -495,10 +495,25 @@ impl<'a> Curved<'a> {
 /// order `delta` (each vertex's own direction, as interpolated there),
 /// else of the two generic translations that follow it, as the exact
 /// predicates take them; 0 if all three are.
+///
+/// `f` is linear (a motion's effect at a tie), and an order whose value
+/// is only rounding, within [`exact::RHO`] of its terms `Σ |d_i·f(e_i)|`
+/// (the motion `d` square to `f`'s gradient but for that), is taken as
+/// zero, as [`exact::sign_tied`] takes the exact predicates' later
+/// orders: at the exact tie it stands for, it is zero.
 pub(super) fn first_sign(delta: DVec3, f: impl Fn(DVec3) -> f64) -> i8 {
+    let gradient = DVec3::AXES.map(&f);
     [delta, exact::T2, exact::T3]
         .into_iter()
-        .map(|d| sign(f(d)))
+        .map(|d| {
+            let value = f(d);
+            let size: f64 = (0..3).map(|i| (d[i] * gradient[i]).abs()).sum();
+            if size.is_finite() && value.abs() <= exact::RHO * size {
+                0
+            } else {
+                sign(value)
+            }
+        })
         .find(|&s| s != 0)
         .unwrap_or(0)
 }

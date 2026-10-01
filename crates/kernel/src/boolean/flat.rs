@@ -17,8 +17,8 @@
 //! as the ties they stand for ([`exact::sign_tied`]), as the curved
 //! primitives decide heights that close: the decisions are then those of
 //! the operands moved by less than that distance, and in the rare case
-//! they don't fit one configuration, the boolean fails rather than
-//! giving a wrong result.
+//! they don't fit one configuration, the boolean decides them again
+//! exactly (`tie` 0), never giving a wrong result.
 
 use std::cmp::Ordering;
 
@@ -283,9 +283,15 @@ impl Pred for Height {
     }
 
     fn scale(&self) -> f64 {
-        // `λ·det[g, e, UP]`, the height `λ·|UP|`.
+        // `λ·det[g, e, UP]`, the height `λ·|UP|`; but never below that
+        // product's own rounding. Where the edges' shadows are parallel to
+        // rounding (collinear edges, turned), `det[g, e, UP]` is only
+        // rounding, down to an exact 0, and so is the constant term
+        // (`Height` is of second order there): taken as it came, the
+        // rounding in it decided.
         let (g, e) = (self.d.p - self.c.p, self.b.p - self.a.p);
-        g.cross(e).dot(UP).abs() / UP.length()
+        let rounding = 4.0 * f64::EPSILON * g.length() * e.length();
+        (g.cross(e).dot(UP).abs() / UP.length()).max(rounding)
     }
 }
 
@@ -413,22 +419,24 @@ mod tests {
         assert_ne!(want_height, 0);
         assert_ne!(want_reach, 0);
         let mut rng = Rng::new(39);
-        let mut scaled = 0;
+        let mut unscaled = 0;
         for draw in 0..2000 {
             let h = height(&mut |p| rounded_pt(&mut rng, p));
             let r = reach(&mut |p| rounded_pt(&mut rng, p));
             // Where rounding leaves the edges' shadows exactly parallel,
-            // `Height` has no scale and is decided exactly: a separate gap.
-            if h.scale() > 0.0 {
-                assert_eq!(
-                    exact::sign_tied(&h, tie),
-                    want_height,
-                    "height, draw {draw}"
-                );
-                scaled += 1;
+            // `det[g, e, UP]` is 0, and `Height`'s scale is that
+            // product's rounding.
+            let (g, e) = (h.d.p - h.c.p, h.b.p - h.a.p);
+            if g.cross(e).dot(UP) == 0.0 {
+                unscaled += 1;
             }
+            assert_eq!(
+                exact::sign_tied(&h, tie),
+                want_height,
+                "height, draw {draw}"
+            );
             assert_eq!(exact::sign_tied(&r, tie), want_reach, "reach, draw {draw}");
         }
-        assert!(scaled > 1900, "{scaled}");
+        assert!(unscaled > 0);
     }
 }

@@ -997,32 +997,126 @@ fn turned_against_cells(
 #[test]
 fn turned_grid_boxes_are_right_or_refused() {
     // Flush boxes turned and moved together: every coordinate rounded, so
-    // flush faces are near ties rather than ties. A few fail, but
-    // whatever comes out must have the right volume: a crossing of an
-    // edge nearly in a face's plane is placed from the exact ratio, not
-    // from two tiny rounded numbers (which put vertices off the result).
+    // flush faces are near ties rather than ties. Whatever comes out must
+    // have the right volume: a crossing of an edge nearly in a face's
+    // plane is placed from the exact ratio, not from two tiny rounded
+    // numbers (which put vertices off the result). Near ties decided as
+    // the ties they stand for at every order, every result whose cells
+    // are a manifold comes out right (of 900 pairs' 2 700 operations,
+    // all but one, pair 866's union, a thin triangle across two faces
+    // that fails the hull rules); the others fail as `Invalid`.
     let mut rng = crate::test_rng::Rng::new(31);
-    let mut right = 0;
-    for i in 0..=231 {
+    let (first, last) = if cfg!(debug_assertions) {
+        (200, 231)
+    } else {
+        (0, 149)
+    };
+    let (mut right, mut refused) = (0, 0);
+    for i in 0..=last {
         let (ga, gb) = (random_grid_corner(&mut rng), random_grid_corner(&mut rng));
         let turn = random_turn(&mut rng);
-        if i < 200 {
+        if i < first {
             continue;
         }
         let ((a, ca), (b, cb)) = (grid_box(ga.0, ga.1), grid_box(gb.0, gb.1));
         let (a, b) = (turned(&a, turn), turned(&b, turn));
         for op in [Op::Union, Op::Intersection, Op::Difference] {
-            match turned_against_cells(&format!("{i}"), &a, &b, op, &combine(&ca, &cb, op)) {
+            let want = combine(&ca, &cb, op);
+            match turned_against_cells(&format!("{i}"), &a, &b, op, &want) {
                 Ok(_) => right += 1,
-                Err(KernelError::Invalid(_) | KernelError::Boolean(_)) => {}
+                Err(e) if cells_manifold(&want) => panic!("{i} {op:?}: {e}"),
+                Err(KernelError::Invalid(_)) => refused += 1,
                 Err(e) => panic!("{i} {op:?}: {e}"),
             }
         }
     }
-    // Near ties within the tie distance are decided as the ties they
-    // stand for, at every order: 95 of the 96 work (94 with only the
-    // constant term tied, 71 with exact signs).
-    assert!(right >= 95, "{right}");
+    // 95 of the 96 in a debug build (71 with exact signs).
+    assert!(
+        right >= 3 * (last - first + 1) * 9 / 10,
+        "{right}, {refused} refused"
+    );
+}
+
+#[test]
+fn turned_grid_boxes_whose_edge_shadows_round_parallel() {
+    // Pair 100 of the turned grid boxes: two collinear edges whose
+    // shadows come out exactly parallel in floating point, so `Height`'s
+    // scale is 0. It fell back to exact signs, which took the constant
+    // term's rounding as it came, and the intersection and difference
+    // were `Inconsistent`. With the tie kept at a zero scale (only an
+    // exact zero is a tie, and the later orders that are only rounding
+    // are skipped), both are right.
+    let mut rng = crate::test_rng::Rng::new(31);
+    for i in 0..=100 {
+        let (ga, gb) = (random_grid_corner(&mut rng), random_grid_corner(&mut rng));
+        let turn = random_turn(&mut rng);
+        if i < 100 {
+            continue;
+        }
+        let ((a, ca), (b, cb)) = (grid_box(ga.0, ga.1), grid_box(gb.0, gb.1));
+        let (a, b) = (turned(&a, turn), turned(&b, turn));
+        for op in [Op::Intersection, Op::Difference] {
+            if let Err(e) = turned_against_cells("100", &a, &b, op, &combine(&ca, &cb, op)) {
+                panic!("{op:?}: {e}");
+            }
+        }
+    }
+}
+
+#[test]
+fn near_ties_that_dont_fit_together_are_decided_again_exactly() {
+    // Turned grid boxes, one moved by about the tie distance: decided
+    // with near ties as ties, these give decisions no one configuration
+    // has (`Inconsistent`), and the boolean decides them again exactly,
+    // from the same budget: right. Of 3 000 such operations (seed 5),
+    // 103 were `Inconsistent`; with the retry 61 of those are right and
+    // the rest `Invalid` (parts closer than the resolution), none
+    // `Inconsistent`.
+    let mut rng = crate::test_rng::Rng::new(5);
+    let t = tie(&TOL);
+    let cases = [
+        (6, Op::Intersection),
+        (68, Op::Union),
+        (141, Op::Difference),
+    ];
+    for i in 0..=141 {
+        let (ga, gb) = (random_grid_corner(&mut rng), random_grid_corner(&mut rng));
+        let turn = random_turn(&mut rng);
+        let nudge = rng.direction() * t * 10f64.powf(rng.range(-1.5, 1.5));
+        let Some(&(_, op)) = cases.iter().find(|c| c.0 == i) else {
+            continue;
+        };
+        let ((a, ca), (b, cb)) = (grid_box(ga.0, ga.1), grid_box(gb.0, gb.1));
+        let (a, b) = (turned(&a, turn), turned(&b, (turn.0, turn.1 + nudge)));
+        let (ia, ib) = (Input::new(a.mesh(), &TOL), Input::new(b.mesh(), &TOL));
+        let spent = |tie: f64, both: bool| {
+            let mut work = Work::new(&Budget::DEFAULT);
+            let soup = if both {
+                flat_soup(op, &ia, &ib, tie, &TOL, &mut work)
+            } else {
+                flat_decided(op, &ia, &ib, tie, &TOL, &mut work)
+            };
+            (soup.map(|_| ()), Budget::DEFAULT.work() - work.left())
+        };
+        let (tied, first) = spent(t, false);
+        assert_eq!(
+            tied,
+            Err(KernelError::Boolean(BooleanError::Inconsistent)),
+            "{i}"
+        );
+        let (exact, second) = spent(0.0, false);
+        assert_eq!(exact, Ok(()), "{i}");
+        // Both tries are paid for.
+        let (retried, both) = spent(t, true);
+        assert_eq!(retried, Ok(()), "{i}");
+        assert_eq!(both, first + second, "{i}");
+        // And the whole operation is right, its volume the cells' within
+        // the move.
+        let r = run(&a, &b, op).unwrap_or_else(|e| panic!("{i} {op:?}: {e}"));
+        let want = cells_volume(&combine(&ca, &cb, op));
+        assert!((r.volume() - want).abs() < 1e-5, "{i}: {}", r.volume());
+        assert_eq!(touches(&a, &b, &TOL, &Budget::DEFAULT), Ok(true), "{i}");
+    }
 }
 
 #[test]
@@ -1087,5 +1181,92 @@ fn turned_grid_boxes_chained_are_never_inconsistent() {
     }
     if chains == 100 {
         assert!(right >= 349, "{right} of {all}");
+    }
+}
+
+#[test]
+fn boxes_flush_with_a_slanted_wall_on_tilted_frames() {
+    // A hexagonal prism (circumradius 3, 4 tall) and boxes extruded on a
+    // frame on one of its slanted walls: joined flush to it (a boss),
+    // cut flush into it (a pocket), straddling it, and at the wall's end
+    // flush with the prism's top too. The prism upright, and on frames
+    // turned about two axes and moved, so the wall's plane and every
+    // flush face are flush only to rounding. Every operation works and
+    // has the analytic volume.
+    use crate::profile::tests::{polygon, rect};
+    use crate::{Frame, Profile, extrude};
+    use glam::{DQuat, DVec2};
+    let extruded = |loops, frame: Frame, from, to, feature| {
+        let profile = Profile { loops: vec![loops] };
+        extrude(&profile, &frame, from, to, feature, &TOL, &Budget::DEFAULT).unwrap()
+    };
+    let (r, height) = (3.0, 4.0);
+    let h = r * 3f64.sqrt() / 2.0;
+    let hexagon = [
+        DVec2::new(r, 0.0),
+        DVec2::new(r / 2.0, h),
+        DVec2::new(-r / 2.0, h),
+        DVec2::new(-r, 0.0),
+        DVec2::new(-r / 2.0, -h),
+        DVec2::new(r / 2.0, -h),
+    ];
+    let prism_volume = 3.0 * r * h * height;
+    let turned = |q: DQuat, origin: DVec3| Frame {
+        origin,
+        x: q * DVec3::X,
+        y: q * DVec3::Y,
+    };
+    let bases = [
+        Frame::XY,
+        turned(
+            DQuat::from_rotation_x(0.4) * DQuat::from_rotation_z(0.3),
+            DVec3::new(0.3, -0.2, 0.1),
+        ),
+        turned(
+            DQuat::from_rotation_y(-1.1) * DQuat::from_rotation_x(2.3),
+            DVec3::new(17.25, -41.5, 63.125),
+        ),
+    ];
+    // Rectangles on the wall's frame (`x` along the wall, 3 long, `y` up
+    // the prism, 4 tall, both from its middle) and the depths they are
+    // extruded between (out of the prism is positive).
+    let boxes = [
+        ("boss", [-0.5, -1.0], [0.75, 1.25], 0.0, 1.0),
+        ("pocket", [-0.5, -1.0], [0.75, 1.25], -1.0, 0.0),
+        ("straddling", [-0.5, -1.0], [0.75, 1.25], -0.5, 0.75),
+        ("boss at the end", [-1.5, 0.0], [0.0, 2.0], 0.0, 1.0),
+        ("pocket at the end", [-1.5, 0.0], [0.0, 2.0], -1.0, 0.0),
+    ];
+    for (k, base) in bases.into_iter().enumerate() {
+        let prism = extruded(polygon(&hexagon, 0), base, 0.0, height, 1);
+        let (b, c) = (hexagon[0], hexagon[1]);
+        let along = (c - b).normalize();
+        let wall = Frame {
+            origin: base.point((b + c) * 0.5, height / 2.0),
+            x: base.x * along.x + base.y * along.y,
+            y: base.normal(),
+        };
+        for (name, min, max, from, to) in boxes {
+            let (min, max) = (DVec2::from(min), DVec2::from(max));
+            let tool = extruded(rect(min, max, 0), wall, from, to, 2);
+            let area = (max.x - min.x) * (max.y - min.y);
+            let inside = area * (-f64::min(from, 0.0));
+            let tool_volume = area * (to - from);
+            let want = volumes(prism_volume, tool_volume, inside);
+            for (op, x, y, want) in [
+                (Op::Union, &prism, &tool, want[0]),
+                (Op::Intersection, &prism, &tool, want[1]),
+                (Op::Difference, &prism, &tool, want[2]),
+                (Op::Difference, &tool, &prism, want[3]),
+            ] {
+                let got = run(x, y, op)
+                    .unwrap_or_else(|e| panic!("frame {k}, {name}, {op:?}: {e}"))
+                    .volume();
+                assert!(
+                    (got - want).abs() < 1e-9,
+                    "frame {k}, {name}, {op:?}: {got} not {want}"
+                );
+            }
+        }
     }
 }

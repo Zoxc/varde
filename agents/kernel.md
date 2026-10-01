@@ -1725,7 +1725,9 @@ three edges.
 take a constant term within the **tie distance** (a 64th of the
 resolution, `boolean::tie`) times the predicate's `scale` (how much it
 changes per unit of distance from its tie: `|UP × (q − p)|` for
-`Orient`, `|det[g, e, UP]| / |UP|` for `Height`, the triangle's normal's
+`Orient`, `|det[g, e, UP]| / |UP|` for `Height` (never below that
+product's own rounding, `4ε·|g|·|e|`: see "At every order"), the
+triangle's normal's
 length for `Reach`, `|RAY|·|(d − c)·ACROSS|` for `Ahead`) as zero, and go
 on to the perturbation's powers. The scales make the tie one distance
 for every predicate, the one the curved primitives use for heights (a
@@ -1764,23 +1766,59 @@ stays exact. Before and after (release; turned grid boxes as in the
 tests, seed 31, and chains of up to six, seed 77, each result fed on;
 unturned grid-box chains, seed 5):
 
-| run | before | at every order |
-|---|---|---|
-| 900 turned pairs × 3: right, `Inconsistent`, `Invalid` | 2 638, 13, 49 | 2 651, 2, 47 |
-| 100 turned chains: right, `Inconsistent`, `Invalid` | 334 of 356, 12, 10 | 349 of 359, 0, 10 |
-| 300 unturned chains of six: right, `Invalid` | 1 754, 46 | 1 754, 46 |
+| run | before | at every order | and parallel shadows |
+|---|---|---|---|
+| 900 turned pairs × 3: right, `Inconsistent`, `Invalid` | 2 638, 13, 49 | 2 651, 2, 47 | 2 653, 0, 47 |
+| 100 turned chains: right, `Inconsistent`, `Invalid` | 334 of 356, 12, 10 | 349 of 359, 0, 10 | 349 of 359, 0, 10 |
+| 300 unturned chains of six: right, `Invalid` | 1 754, 46 | 1 754, 46 | 1 754, 46 |
 
 No result was wrong. Of the `Invalid`s, 45 before and 46 after are
 operations whose exact result isn't a manifold (one of the 13
-`Inconsistent`s was too, now `Invalid`). The two `Inconsistent`s left are one pair's intersection and
-difference (seed 31, pair 100), where `Height`'s scale rounds to exactly
-zero and the predicate falls back to exact signs. The seeded suite's
-tallies are as before (tangent 72 of 96 with 15 `Inconsistent`, chains
-202 of 240 with 6, was 203: of its fed-on steps the same inputs give two
-more right and one fewer, `Invalid(VertexNeighbours)`; the rest follow
-from different results fed on), so curved operands, which share
-`sign_tied` through the `Flat` inside `Curved` and the rays' `Beside`
-and `Ahead`, aren't worse.
+`Inconsistent`s was too, now `Invalid`); the one other is pair 866's
+union, a thin triangle lying across two faces that fails the hull
+rules (a numerical oracle deciding every predicate on the configuration
+moved by a real `ε` fails it too: not a sign).
+
+**Parallel shadows.** `Height` is of second order where two edges are
+collinear: its constant term, `det[g, e, UP]` and every first
+derivative vanish there. Turned and rounded, `det[g, e, UP]` (its
+scale) is only rounding, down to an exact 0, and with a zero scale
+`sign_tied` fell back to exact signs, so the constant term's own
+rounding decided (pair 100 of the turned pairs, its intersection and
+difference `Inconsistent`, the last two above). Now `Height`'s scale
+is never below that product's rounding, `4ε·|g|·|e|` (shadows within
+`1e-15` of parallel, where a height at their crossing means nothing),
+and a zero scale with a positive tie no longer drops the tie: only an
+exact zero is then one, and the later orders that are only rounding are
+still skipped. The first order needs no scale of its own (a separate
+`ε¹` tie for `Height` was planned): with the rounding rule above every
+manifold result of the 900 pairs is right but pair 866's.
+
+**Decided again exactly.** Near ties taken as ties can still give
+decisions no one configuration has, mostly where things are about the
+tie distance apart. For flat operands (`boolean::flat_soup`; `touches`
+the same for its counting) an `Inconsistent` from the counting, the
+pairs' ends or the assembly is decided again with `tie` 0: exact signs
+are those of the perturbed operands, a real configuration, so they fit
+together, and the worst outcome is `Invalid`. The second try spends
+from the same budget, only on that failure. The curved path has no
+retry: the `Flat` inside `Curved` must keep the curved primitives'
+ties. Turned grid boxes with one moved by `10^±1.5` tie distances
+(seed 5, 3 000 operations): 103 `Inconsistent` with the ties, of them
+61 right and 42 `Invalid` (parts closer than the resolution) once
+retried, none `Inconsistent` and none wrong.
+
+The seeded suite's tallies didn't move but for one step: the rule at
+every order took chains from 203 to 202 of 240 (of its fed-on steps
+the same inputs give two more right and one fewer,
+`Invalid(VertexNeighbours)`; the rest follow from different results
+fed on); parallel shadows, the retry and `first_sign`'s rounding rule
+(which skipped 173 orders in the suite) changed none (related 112 of
+120, chains 202 of 240 with 6 `Inconsistent`, turned 156 of 160,
+tangent 72 of 96 with 11, coaxial 37 of 40, bosses 64 of 64, drilled
+160 of 160). So curved operands, which share `sign_tied` through the
+`Flat` inside `Curved` and the rays' `Beside` and `Ahead`, aren't
+worse.
 
 ### Counting (`boolean/count.rs`)
 
@@ -1997,8 +2035,14 @@ shift); where the tangents are parallel (`|m|` within `1e-9` of theirs),
 by `(T × δ)·(T × UP)`, `T` the tangent (the crossing slides along both);
 a point of a patch with normal `n` there rises over a vertex of `A` by
 `−n·δ / n·UP`, and over a vertex of `B` by `n·δ / n·UP` with `δ` the
-patch's corners' interpolated. Where every order is 0, by `δ·UP`, as for
-horizontal surfaces. So flush planar faces between a curved and a flat
+patch's corners' interpolated. Each of these is linear in the motion,
+and an order whose value is only rounding (within `RHO = 2⁻³²` of its
+terms, `Σ |d_i·f(e_i)|`, the motion square to the gradient but for
+that) is taken as zero, as the exact predicates' later orders are (see
+"At every order"): a vertex moving along a turned plane against a patch
+on it gave `δ·n` some `1e-17`, its sign noise (the seeded suite's
+tallies are the same with and without it). Where every order is 0, by
+`δ·UP`, as for horizontal surfaces. So flush planar faces between a curved and a flat
 operand behave as between flat ones. Vertex directions of curved
 patches are their normals at the corner. Beyond heights:
 
@@ -2657,8 +2701,9 @@ operands intersected, or subtracted the other way, work.
 ### Errors and budget
 
 `KernelError::Boolean(BooleanError)`: `Inconsistent` (the decisions
-don't fit together: with near ties taken as ties, flat operands too can,
-rarely: 2 of 2 700 turned flush grid-box operations; also a winding number out of `0..=1`, see "Counting"; or a
+don't fit together: near ties taken as ties, with curved operands; flat
+operands are decided again exactly then, see "Decided again exactly";
+also a winding number out of `0..=1`, see "Counting"; or a
 crossing the search only placed isn't on the other operand),
 `Degenerate` (a face's loops
 couldn't be triangulated, or the triangles don't pair up). `TooComplex`
@@ -2699,7 +2744,9 @@ the faces (each of which counts its ear clipping again), a unit per 4
 pieces of the patch crossed looked at checking a crossing's roots on it
 (see "Crossings on curved edges"), and for each crossing only placed a
 unit per 4 pieces certifying it looked at, and one per 64 of the other
-operand's boxes, where the patch crossed wasn't near enough.
+operand's boxes, where the patch crossed wasn't near enough. Flat
+operands decided again exactly after an `Inconsistent` pay for both
+tries from the one budget.
 
 ### Costs
 
@@ -2777,15 +2824,27 @@ tori of 2 304 patches, one upright through the other's hole crossing its
 tube on both sides, and one through a box, where `|A ∪ B| + |A ∩ B| =
 |A| + |B|` and `|A − B| = |A| − |A ∩ B|`; results fed on as inputs
 (steps joined flush, a hole, a half cut away, filled back in); turned
-flush grid boxes (96 operations, eight pairs once `Inconsistent` for a
-first order that was only rounding, all right now, and chains of them
-fed on, never `Inconsistent`); face names
+flush grid boxes (450 operations in a release build, every one whose
+exact result is a manifold right and the rest `Invalid`; eight pairs
+once `Inconsistent` for a first order that was only rounding and one
+whose edges' shadows rounded parallel, all right now; chains of them fed
+on, never `Inconsistent`); the same boxes, one moved by about the tie
+distance, whose near ties don't fit together, decided again exactly
+(right, both tries paid for); a hexagonal prism upright and on frames
+turned about two axes with boxes extruded on a frame on its slanted
+wall, joined flush (also at the wall's end, flush with the top),
+pocketed flush and straddling it, every operation the analytic volume;
+face names
 of both operands kept, and faces no triangle uses dropped; `touches`; empty operands; refusals (inside
 out, out of budget); the same bits at 1 and 8 threads. Unit
 tests: expansions against known values, the float filter never
 contradicting the exact sign, ties whose first order is zero (collinear
-edges' `Height`, a vertex moving along a face's plane for `Reach`) moved
-by rounding and decided as the exact tie in every draw, `orient2d` near a line and far out,
+edges' `Height`, also where their shadows round exactly parallel, a
+vertex moving along a face's plane for `Reach`) moved by rounding and
+decided as the exact tie in every draw, the curved primitives'
+`first_sign` skipping a motion's first order that is only rounding (a
+motion in a turned plane against its normal), `orient2d` near a line
+and far out,
 triangulating a square with a hole, a concave loop, a zero-width loop and
 a vertex landing on the domain's side (no diagonal along a side); with
 curved sides, a point added where two arcs of one curve meet, and a curve
@@ -3042,12 +3101,12 @@ to 72 of its 96 operations and left the others as they were.
   that isn't what made flat operands `Inconsistent`: scaling the tie by
   1/64 to 4 changed none of them. A first order that is only rounding
   where the exact tie's is zero did, and is now skipped (see "At every
-  order"). Flat operands' exact predicates take near ties as ties, so
-  they can still (rarely) be `Inconsistent`: where a predicate's scale
-  rounds to exactly zero (two edges' shadows parallel in floating point,
-  `Height`) it falls back to exact signs. The curved primitives' own
-  first orders (`curved::first_sign`) are taken as they come, not
-  skipped when only rounding.
+  order"; the curved primitives' `first_sign` skips such orders too).
+  Flat operands decided with near ties that don't fit together are
+  decided again exactly, so they aren't `Inconsistent` (none seen), but refused as
+  `Invalid` where the exact result has parts closer than the
+  resolution; curved operands still can be (11 of the seeded suite's 96
+  near-tangent operations).
 - A tangency along a line reads as not touching (`touches` says false for
   two cylinders side by side): no crossing shows it, and the fixed rules
   take no certificate as no loop. Flat solids touching do meet.
@@ -3109,10 +3168,10 @@ to 72 of its 96 operations and left the others as they were.
   folded sheet whose two sides don't share their triangles can't be
   collapsed away (seen once in about 3 600 chained grid-box booleans).
 - **Flush faces after rounding**: flat solids flush in exact arithmetic
-  but turned and moved now mostly work (2 651 of 2 700 turned grid boxes'
+  but turned and moved work (2 653 of 2 700 turned grid boxes'
   operations, 349 of 359 steps of turned chains); the rest fail as
-  `Invalid` (most where the exact result isn't a manifold) or,
-  twice, `Inconsistent` (a `Height` with no scale, above).
+  `Invalid`, all but one where the exact result isn't a manifold (pair
+  866's union: a thin triangle across two faces fails the hull rules).
 - **Long cap triangles and cuts passing close to their sides**: a cap
   triangulated once (an extrude's, or a cut face's) keeps long thin
   triangles from far corners to rims. Drilling a second hole of the same
@@ -3926,6 +3985,15 @@ parameter, or a split outside the patch bounds),
   operands decided exactly; with rounded coordinates (turned and moved
   flush solids) exact signs broke the perturbation's intent, and beside
   curved operands they disagreed with the curved primitives' ties.
+  Flat operands whose near ties don't fit together are decided again
+  exactly (`Inconsistent` only; `touches` too, which the plan for the
+  retry didn't name). For parallel shadows the plan had a second scale
+  for `Height`'s first order; the rounding rule already decides that
+  order, and what was left was the constant term at a scale that
+  rounded to 0: `Height`'s scale is floored at its own rounding
+  instead. The curved primitives' `first_sign` skips orders that are
+  only rounding as well (relative to `Σ |d_i·f(e_i)|`, not an `Abs`
+  evaluation: `f` is a closure in floating point).
 - **Two patches on one quadric, and a plane against a cylinder patch
   whose normals keep within a half-space, are certificates** of no hidden
   loop, beside the plan's normal cones apart.

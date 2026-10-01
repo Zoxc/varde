@@ -89,7 +89,8 @@ pub enum Op {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BooleanError {
     /// The decisions don't fit together: near ties decided as ties that
-    /// no one configuration has, rarely.
+    /// no one configuration has, rarely, with curved operands (flat ones
+    /// are then decided again exactly).
     Inconsistent,
     /// A cut face's kept part couldn't be triangulated, or the triangles
     /// don't pair up into a closed surface.
@@ -252,10 +253,7 @@ fn unchecked(
             work,
         )?
     } else {
-        let prims = flat::Flat::tied(&ia, &ib, grow, tie(tol));
-        let counts = count::count(&ia, &ib, &prims, tol, work)?;
-        let arcs = pairs::flat(&ia, &ib, &counts)?;
-        assemble::assemble(op, &ia, &ib, &counts, &arcs, &prims, tol, None, work)?
+        flat_soup(op, &ia, &ib, tie(tol), tol, work)?
     };
     let mut faces = faces;
     cleanup::clean(
@@ -267,6 +265,50 @@ fn unchecked(
         work,
     )?;
     build(soup, faces)
+}
+
+/// Flat operands' pieces, decided with near ties within `tie` taken as
+/// ties ([`flat::Flat::tied`]), and where those decisions don't fit
+/// together, again exactly.
+///
+/// Near ties taken as ties can (rarely) give decisions no one
+/// configuration has, which the counting and the assembly catch as
+/// [`BooleanError::Inconsistent`]. Exact decisions (`tie` 0) are those
+/// of the perturbed operands, a real configuration, so they fit
+/// together; at worst the result fails `check`. The second try spends
+/// from the same `work`, and only on that failure. Only flat operands:
+/// the `Flat` inside the curved primitives keeps their ties, which the
+/// numerical primitives share.
+fn flat_soup(
+    op: Op,
+    ia: &Input,
+    ib: &Input,
+    tie: f64,
+    tol: &Tolerance,
+    work: &mut Work,
+) -> Result<(cleanup::Soup, Vec<Face>), KernelError> {
+    match flat_decided(op, ia, ib, tie, tol, work) {
+        Err(KernelError::Boolean(BooleanError::Inconsistent)) if tie > 0.0 => {
+            flat_decided(op, ia, ib, 0.0, tol, work)
+        }
+        soup => soup,
+    }
+}
+
+/// [`flat_soup`]'s one try, near ties within `tie` taken as ties (0:
+/// exactly).
+fn flat_decided(
+    op: Op,
+    ia: &Input,
+    ib: &Input,
+    tie: f64,
+    tol: &Tolerance,
+    work: &mut Work,
+) -> Result<(cleanup::Soup, Vec<Face>), KernelError> {
+    let prims = flat::Flat::tied(ia, ib, op == Op::Union, tie);
+    let counts = count::count(ia, ib, &prims, tol, work)?;
+    let arcs = pairs::flat(ia, ib, &counts)?;
+    assemble::assemble(op, ia, ib, &counts, &arcs, &prims, tol, None, work)
 }
 
 /// Whether `a` and `b` touch or overlap: whether an edge of one crosses a
@@ -295,8 +337,16 @@ pub fn touches(
         let refined = pairs::refined(a.mesh(), b.mesh(), true, tol, &mut work)?;
         return Ok(refined.counts.meet());
     }
-    let prims = flat::Flat::tied(&ia, &ib, true, tie(tol));
-    let counts = count::count(&ia, &ib, &prims, tol, &mut work)?;
+    // Counted again exactly where the near ties don't fit together, as
+    // the operation does ([`flat_soup`]).
+    let counted = |tie: f64, work: &mut Work| {
+        let prims = flat::Flat::tied(&ia, &ib, true, tie);
+        count::count(&ia, &ib, &prims, tol, work)
+    };
+    let counts = match counted(tie(tol), &mut work) {
+        Err(KernelError::Boolean(BooleanError::Inconsistent)) => counted(0.0, &mut work)?,
+        counts => counts?,
+    };
     Ok(counts.meet())
 }
 

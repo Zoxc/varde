@@ -698,3 +698,33 @@ fn points_near_a_patch_are_certified_and_others_not() {
     }
     assert!(most <= 256, "{most}");
 }
+
+#[test]
+#[allow(clippy::disallowed_methods, reason = "std maths to build inputs")]
+fn first_orders_that_are_only_rounding_are_skipped() {
+    // A motion lying in a turned plane, against that plane's normal: at
+    // the exact tie its first order is zero and `T2` decides, but turned
+    // and rounded, `δ·n` is some `1e-17`, its sign noise. Skipped as only
+    // rounding, the sign is `T2`'s in every draw, as the exact
+    // predicates decide such a tie.
+    let mut rng = Rng::new(36);
+    let mut noisy = 0;
+    for draw in 0..2000 {
+        let q = glam::DQuat::from_axis_angle(rng.direction(), rng.range(0.0, 6.0));
+        let n = q * DVec3::Z;
+        let delta = q * DVec3::new(1.0, 1.0, 0.0).normalize();
+        let want = sign(exact::T2.dot(n));
+        if exact::T2.dot(n).abs() < 1e-6 {
+            continue;
+        }
+        if delta.dot(n) != 0.0 {
+            noisy += 1;
+        }
+        assert_eq!(first_sign(delta, |d| n.dot(d)), want, "draw {draw}");
+    }
+    assert!(noisy > 1000, "{noisy}");
+    // A first order that is small but real still decides.
+    let n = DVec3::Z;
+    let delta = DVec3::new(1.0, 1.0, 1e-6).normalize();
+    assert_eq!(first_sign(delta, |d| -n.dot(d)), -1);
+}
