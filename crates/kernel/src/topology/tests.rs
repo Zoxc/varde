@@ -855,3 +855,118 @@ fn a_chain_of_flush_joins_names_alike_at_any_size_and_tolerance() {
     assert_eq!(names(1.37, &TOL), first);
     assert_eq!(names(1.0, &Tolerance::new(1e-4).unwrap()), first);
 }
+
+/// `loops` extruded up `z` from 0 to 1 as feature 1.
+fn prism(loops: Vec<crate::profile::Loop>, tol: &Tolerance) -> Solid {
+    crate::extrude(
+        &crate::Profile { loops },
+        &crate::Frame::XY,
+        0.0,
+        1.0,
+        1,
+        tol,
+        &Budget::DEFAULT,
+    )
+    .unwrap()
+}
+
+/// The tangent chains of `solid` as sets of its chains' keys, each set
+/// and the sets sorted.
+fn tangent_sets(solid: &Solid) -> Vec<Vec<[FaceKey; 2]>> {
+    let topology = solid.topology();
+    let first = topology.tangent_chains(solid);
+    assert_eq!(first.len(), topology.chains().len());
+    let mut sets: std::collections::BTreeMap<u32, Vec<[FaceKey; 2]>> = Default::default();
+    for (c, &f) in first.iter().enumerate() {
+        // The lowest of its set, which is its own first.
+        assert!(f <= c as u32 && first[f as usize] == f);
+        sets.entry(f)
+            .or_default()
+            .push(chain_keys(&topology, c as u32));
+    }
+    let mut sets: Vec<_> = sets.into_values().collect();
+    sets.iter_mut().for_each(|set| set.sort());
+    sets.sort();
+    sets
+}
+
+#[test]
+fn a_rounded_plate_s_rims_are_tangent_chains() {
+    use crate::profile::tests::arc;
+    use crate::profile::{Loop, Segment};
+    let p = glam::DVec2::new;
+    let line = |a, b, curve| Segment::line(a, b, curve).unwrap();
+    // Rounded at each corner, radius 2: lines 0, 2, 4, 6 and arcs 1, 3,
+    // 5, 7.
+    let outline = Loop {
+        segments: vec![
+            line(p(2.0, 0.0), p(8.0, 0.0), 0),
+            arc(p(8.0, 2.0), p(8.0, 0.0), p(10.0, 2.0), 1),
+            line(p(10.0, 2.0), p(10.0, 4.0), 2),
+            arc(p(8.0, 4.0), p(10.0, 4.0), p(8.0, 6.0), 3),
+            line(p(8.0, 6.0), p(2.0, 6.0), 4),
+            arc(p(2.0, 4.0), p(2.0, 6.0), p(0.0, 4.0), 5),
+            line(p(0.0, 4.0), p(0.0, 2.0), 6),
+            arc(p(2.0, 2.0), p(0.0, 2.0), p(2.0, 0.0), 7),
+        ],
+    };
+    for tol in [TOL, Tolerance::new(1e-2).unwrap()] {
+        let solid = prism(vec![outline.clone()], &tol);
+        let sets = tangent_sets(&solid);
+        let rim = |cap: PartKey| {
+            let mut set: Vec<[FaceKey; 2]> = (0..8)
+                .map(|curve| {
+                    let (a, b) = (key(1, cap), key(1, side(curve)));
+                    [a.min(b), a.max(b)]
+                })
+                .collect();
+            set.sort();
+            set
+        };
+        // The two rims, and each upright edge where a wall meets the next
+        // on its own: they run on into nothing.
+        assert_eq!(sets.len(), 2 + 8, "{tol:?}");
+        assert!(sets.contains(&rim(TOP)), "{tol:?}");
+        assert!(sets.contains(&rim(BOTTOM)), "{tol:?}");
+        assert_eq!(sets.iter().filter(|set| set.len() == 1).count(), 8);
+    }
+}
+
+#[test]
+fn edges_turning_by_a_degree_or_more_aren_t_tangent() {
+    use crate::profile::tests::polygon;
+    // A turn of `degrees` at (10, 0): the top's edges along walls 0 and 1
+    // meet there.
+    let turned = |degrees: f64| {
+        let rise = 10.0 * libm::tan(degrees.to_radians());
+        let p = glam::DVec2::new;
+        let points = [
+            p(0.0, 0.0),
+            p(10.0, 0.0),
+            p(20.0, rise),
+            p(20.0, 10.0),
+            p(0.0, 10.0),
+        ];
+        prism(vec![polygon(&points, 0)], &TOL)
+    };
+    let joined = |solid: &Solid| {
+        let pair = |curve| {
+            let (a, b) = (key(1, TOP), key(1, side(curve)));
+            [a.min(b), a.max(b)]
+        };
+        let sets = tangent_sets(solid);
+        sets.iter()
+            .any(|set| set.contains(&pair(0)) && set.contains(&pair(1)))
+    };
+    assert!(joined(&turned(0.5)));
+    assert!(joined(&turned(0.99)));
+    assert!(!joined(&turned(1.01)));
+    assert!(!joined(&turned(2.0)));
+    // A box's edges all meet square.
+    let solid = cuboid([0.0; 3], [1.0, 2.0, 3.0], 1, &TOL);
+    assert!(tangent_sets(&solid).iter().all(|set| set.len() == 1));
+    // A cylinder's rims close on themselves.
+    let solid = Solid::cylinder(DVec3::ZERO, 2.0, 1.0, 4, &TOL).unwrap();
+    let topology = solid.topology();
+    assert_eq!(topology.tangent_chains(&solid), [0, 1]);
+}

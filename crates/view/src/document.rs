@@ -50,6 +50,9 @@ pub struct DocumentState<'a> {
     pub picking: Option<crate::ModelPicking<'a>>,
     /// What's hovered and selected in `mesh`, drawn over it, if anything.
     pub highlight: Option<&'a Arc<varde_render::Highlight>>,
+    /// What's selected in the model: Objects marks the bodies selected,
+    /// and the status bar tells of it.
+    pub model_selection: &'a crate::Selection,
     /// The document name, without extension.
     pub name: &'a str,
     /// Whether there are unsaved changes.
@@ -630,10 +633,29 @@ fn hints<'a>(state: &DocumentState<'a>) -> Vec<Hint<'a>> {
             .into_iter()
             .flatten()
             .collect()
+    } else if state.picking.is_some() {
+        selecting_hints(state.model_selection)
     } else {
         Vec::new()
     };
     keys.into_iter().chain(viewport::hints(sketching)).collect()
+}
+
+/// The status bar's hints for selecting in the model with `selection`:
+/// clicking to select and, once something is, holding [`Held::TOGGLE`] to
+/// add or take out, and double-clicking for the body where that selects
+/// it.
+fn selecting_hints<'a>(selection: &crate::Selection) -> Vec<Hint<'a>> {
+    use crate::SelectionMode;
+
+    let click = if selection.is_empty() {
+        mouse_hint(MouseButton::Left, "Select")
+    } else {
+        chord_hint(Held::TOGGLE, MouseButton::Left, "Add or remove")
+    };
+    let body = (selection.mode() == SelectionMode::Any)
+        .then(|| chrome::double_hint(MouseButton::Left, "Body"));
+    [Some(click), body].into_iter().flatten().collect()
 }
 
 /// The status bar's hints for the left button and the keys in `sketch`,
@@ -1179,7 +1201,9 @@ fn selection<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
         return None;
     }
     let document = state.editor.document();
-    let feature = document.feature(state.selected_feature?)?;
+    let Some(feature) = state.selected_feature.and_then(|id| document.feature(id)) else {
+        return model_selection(state);
+    };
     Some(
         row![
             icons::icon(panels::feature_icon(feature), icons::INLINE),
@@ -1196,6 +1220,92 @@ fn selection<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
         .align_y(Alignment::Center)
         .into(),
     )
+}
+
+/// What's selected in the model, for the status bar's box of the
+/// selection: one face, as "Face", what surface it's on and its body's
+/// name; one edge, as "Edge" and its body's; one body, by name; or how
+/// many, of each kind. Nothing if nothing is, or the cursor doesn't pick
+/// the model.
+fn model_selection<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
+    use crate::{Picked, Selected};
+
+    let selection = state.model_selection;
+    let picking = state.picking.as_ref()?;
+    let document = state.editor.document();
+    let body_name = |body: BodyId| document.body(body).map_or("", |body| body.name.as_str());
+    let items: Vec<&Selected> = selection.items().collect();
+    let (title, info, note): (String, String, &str) = match items[..] {
+        [] => return None,
+        [Selected::Face { body, .. }] => {
+            let fresh = selection.model() == Some(picking.index.model());
+            let summary = selection
+                .targets()
+                .next()
+                .filter(|_| fresh)
+                .and_then(|target| {
+                    let Picked::Face(face) = target else {
+                        return None;
+                    };
+                    picking.index.picking().faces().get(face as usize)
+                });
+            let surface = summary.map_or("", |face| surface_name(&face.summary));
+            ("Face".into(), surface.into(), body_name(*body))
+        }
+        [Selected::Edge { body, .. }] => ("Edge".into(), String::new(), body_name(*body)),
+        [Selected::Body(body)] => (body_name(*body).into(), String::new(), "Body"),
+        _ => {
+            let count =
+                |kind: fn(&Selected) -> bool| items.iter().filter(|item| kind(item)).count();
+            let faces = count(|item| matches!(item, Selected::Face { .. }));
+            let edges = count(|item| matches!(item, Selected::Edge { .. }));
+            let bodies = count(|item| matches!(item, Selected::Body(_)));
+            let parts: Vec<String> = [
+                (faces, "face", "faces"),
+                (edges, "edge", "edges"),
+                (bodies, "body", "bodies"),
+            ]
+            .into_iter()
+            .filter(|&(n, _, _)| n > 0)
+            .map(|(n, one, many)| format!("{n} {}", if n == 1 { one } else { many }))
+            .collect();
+            (format!("{} selected", items.len()), parts.join(" · "), "")
+        }
+    };
+    let info = (!info.is_empty()).then(|| text(info).size(12).wrapping(Wrapping::None));
+    let note = (!note.is_empty()).then(|| {
+        text(note)
+            .size(12)
+            .wrapping(Wrapping::None)
+            .style(theme::muted_text)
+    });
+    Some(
+        row![
+            icons::icon(Icon::Body, icons::INLINE),
+            text(title)
+                .size(12)
+                .wrapping(Wrapping::None)
+                .font(theme::SEMIBOLD),
+            info,
+            note,
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center)
+        .into(),
+    )
+}
+
+/// What a face of `summary` is on, in a word or two.
+fn surface_name(summary: &varde_regen::Summary) -> &'static str {
+    use varde_regen::Summary;
+    match summary {
+        Summary::Plane { .. } => "Plane",
+        Summary::Cylinder { .. } => "Cylinder",
+        Summary::Cone { .. } => "Cone",
+        Summary::Sphere { .. } => "Sphere",
+        Summary::Torus { .. } => "Torus",
+        Summary::ConicCylinder { .. } | Summary::Revolved { .. } | Summary::Other => "Curved",
+    }
 }
 
 /// The status bar's info on the selected `feature`, after its name: a

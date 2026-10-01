@@ -1428,7 +1428,7 @@ fn axis(id: Id) -> Option<[DVec2; 2]> {
 /// Whether a click at `at`, in the viewport's pixels, ends a double-click:
 /// soon after the click `last` holds and near it. `last` then holds this
 /// click, unless it ended one.
-fn double_click(last: &mut Option<(Instant, DVec2)>, at: DVec2) -> bool {
+pub(super) fn double_click(last: &mut Option<(Instant, DVec2)>, at: DVec2) -> bool {
     let now = Instant::now();
     let double = last.take().is_some_and(|(time, from)| {
         now.saturating_duration_since(time) < DOUBLE_CLICK && from.distance(at) < DRAG_DISTANCE

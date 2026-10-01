@@ -253,6 +253,101 @@ impl Topology {
         )
         .ok_or(NotFound::Corner)
     }
+
+    /// Each chain's tangent chain, as the lowest-indexed chain in it: the
+    /// chains joined end to end through the vertices where one runs on
+    /// smoothly into another, their curves' tangents leaving the vertex
+    /// opposite within 1° (a fillet's rim and the straight edges it
+    /// rounds off, an extruded slot's top rim). A chain that runs on into
+    /// none is its own. What the edge sessions select with "tangent
+    /// chain" on. `solid` is the one the topology was made from.
+    ///
+    /// The tangents are the curves' own (towards their control points),
+    /// not the drawn segments', so the answer doesn't depend on the
+    /// tolerance. Decided by `+ − ×` against `cos 1°`, in one pass in
+    /// index order: the same at any thread count. The ends meeting at a
+    /// vertex are compared pairwise, so a vertex where `k` chains end
+    /// costs `k²`.
+    pub fn tangent_chains(&self, solid: &Solid) -> Vec<u32> {
+        let mesh = solid.mesh();
+        // Each open chain's two ends: the vertex, the chain, and the
+        // tangent leaving the vertex along it.
+        let mut ends: Vec<(u32, u32, DVec3)> = Vec::new();
+        for (c, chain) in self.chains.iter().enumerate() {
+            let (Some(&first), Some(&last)) = (chain.halfedges.first(), chain.halfedges.last())
+            else {
+                continue;
+            };
+            if chain.closed {
+                continue;
+            }
+            let c = c as u32;
+            let curve = mesh.curve(first);
+            ends.push((
+                mesh.halfedge(first).start,
+                c,
+                leaving(curve.p0, curve.c, curve.p1),
+            ));
+            let curve = mesh.curve(last);
+            ends.push((mesh.end(last), c, leaving(curve.p1, curve.c, curve.p0)));
+        }
+        ends.sort_by_key(|&(v, c, _)| (v, c));
+        let mut first: Vec<u32> = (0..self.chains.len() as u32).collect();
+        for at in ends.chunk_by(|a, b| a.0 == b.0) {
+            for (i, &(_, a, u)) in at.iter().enumerate() {
+                for &(_, b, v) in &at[i + 1..] {
+                    if smooth(u, v) {
+                        join(&mut first, a, b);
+                    }
+                }
+            }
+        }
+        (0..first.len() as u32)
+            .map(|c| root(&mut first, c))
+            .collect()
+    }
+}
+
+/// `cos 1°`: how near opposite two tangents leaving a vertex must be for
+/// one edge to run on smoothly into the other.
+const SMOOTH: f64 = 0.999_847_695_156_391_2;
+
+/// The direction a curve from `p0` with control point `c` (of positive
+/// weight) and other end `p1` leaves `p0` in: towards `c`, or along the
+/// chord where `c` is on `p0`.
+fn leaving(p0: DVec3, c: DVec3, p1: DVec3) -> DVec3 {
+    if c != p0 { c - p0 } else { p1 - p0 }
+}
+
+/// Whether `u` and `v`, leaving one vertex, are opposite within 1°:
+/// `u·v ≤ −cos 1° |u||v|`, squared to keep it to `+ − ×`.
+fn smooth(u: DVec3, v: DVec3) -> bool {
+    let dot = u.dot(v);
+    dot < 0.0 && dot * dot >= SMOOTH * SMOOTH * u.length_squared() * v.length_squared()
+}
+
+/// The lowest member of `c`'s set in the union-find `first`, each set's
+/// members pointing towards it.
+fn root(first: &mut [u32], c: u32) -> u32 {
+    let mut r = c;
+    while first[r as usize] != r {
+        r = first[r as usize];
+    }
+    // Every member on the way points at it directly.
+    let mut at = c;
+    while first[at as usize] != r {
+        let next = first[at as usize];
+        first[at as usize] = r;
+        at = next;
+    }
+    r
+}
+
+/// Joins the sets of `a` and `b` under the lower of their lowest members.
+fn join(first: &mut [u32], a: u32, b: u32) {
+    let (ra, rb) = (root(first, a), root(first, b));
+    let (low, high) = (ra.min(rb), ra.max(rb));
+    first[high as usize] = low;
 }
 
 /// Of the candidates `found`, in ascending order: the only one, or the

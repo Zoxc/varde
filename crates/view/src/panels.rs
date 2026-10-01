@@ -90,7 +90,13 @@ pub fn side_panel<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
     let editable = state.editable();
     let content = match (shown, state.sketch) {
         (Panel::Sketch, Some(sketch)) => sketch_tab(sketch),
-        (Panel::Objects, _) => scrolled(objects(document, state.merged, editable, state.row_menu)),
+        (Panel::Objects, _) => scrolled(objects(
+            document,
+            state.merged,
+            editable,
+            state.row_menu,
+            state.model_selection,
+        )),
         _ => scrolled(timeline(
             document,
             state.selected_feature,
@@ -343,13 +349,18 @@ fn group<'a>(label: &'a str, count: usize) -> Element<'a, Message> {
 /// (`merged`, see [`DocumentState::merged`]) is listed faint, with the body
 /// holding it as its note: it's drawn as that one is, so it has no eye,
 /// but it can still be removed. Right-clicking a row asks for its context
-/// menu, shown on the one `menu` is on.
+/// menu, shown on the one `menu` is on. Clicking a body's row selects it
+/// where bodies are selected, as `selection`, which marks the rows of the
+/// bodies it holds, says.
 fn objects<'a>(
     document: &'a Document,
     merged: &[(BodyId, BodyId)],
     editable: bool,
     menu: Option<RowMenu>,
+    selection: &crate::Selection,
 ) -> Element<'a, Message> {
+    let selected: Vec<BodyId> = selection.bodies().collect();
+    let takes_bodies = selection.mode().takes_bodies();
     let bodies = document.bodies().iter().map(|body| {
         let note = consumed_note(document, merged, body.id);
         object_row(Object {
@@ -362,6 +373,11 @@ fn objects<'a>(
                 .then_some(Message::Edit(Edit::ToggleVisible(body.id))),
             remove: Some(Message::Edit(Edit::RemoveBody(body.id))),
             note,
+            selected: selected.contains(&body.id),
+            on_press: takes_bodies.then_some(Message::Look(Look::ClickBody {
+                body: body.id,
+                add: false,
+            })),
             menu: ObjectMenu {
                 on: RowMenu::Body(body.id),
                 open: menu == Some(RowMenu::Body(body.id)),
@@ -381,6 +397,8 @@ fn objects<'a>(
             toggle: Some(Message::Edit(Edit::ToggleFeatureVisible(feature.id))),
             remove: None,
             note: None,
+            selected: false,
+            on_press: None,
             menu: ObjectMenu {
                 on: RowMenu::Sketch(feature.id),
                 open: menu == Some(RowMenu::Sketch(feature.id)),
@@ -434,6 +452,10 @@ struct Object<'a> {
     remove: Option<Message>,
     /// Shown faint at its end.
     note: Option<String>,
+    /// Whether it's marked selected.
+    selected: bool,
+    /// What clicking the row sends, if anything.
+    on_press: Option<Message>,
     menu: ObjectMenu,
 }
 
@@ -499,6 +521,8 @@ fn object_row(object: Object<'_>) -> Element<'_, Message> {
         toggle,
         remove,
         note,
+        selected,
+        on_press,
         menu,
     } = object;
     let (on, open) = (menu.on, menu.open);
@@ -543,7 +567,15 @@ fn object_row(object: Object<'_>) -> Element<'_, Message> {
         .padding(Padding::from([0, 2]).left(24))
     };
 
-    let row = hover(content(false), content(true).style(theme::hovered_row));
+    let row: Element<'_, Message> = match on_press {
+        Some(message) => mouse_area(hover(
+            content(false).style(theme::list_row(selected, false)),
+            content(true).style(theme::list_row(selected, true)),
+        ))
+        .on_press(message)
+        .into(),
+        None => hover(content(false), content(true).style(theme::hovered_row)),
+    };
     ContextMenu::new(
         row,
         menu,
@@ -913,7 +945,7 @@ mod tests {
         assert_eq!(consumed_note(document, &[], below), None);
 
         let texts = |merged: &[(BodyId, BodyId)]| -> Vec<String> {
-            let objects = objects(document, merged, true, None);
+            let objects = objects(document, merged, true, None, &Default::default());
             let mut laid = crate::testing::Laid::new(objects, iced::Size::new(300.0, 400.0));
             laid.texts().into_iter().map(|shown| shown.text).collect()
         };
@@ -927,7 +959,7 @@ mod tests {
         // The row hovered is drawn over the plain one, which shows through
         // a translucent highlight: its note is laid out in the same place
         // in both, though the hovered one has its bin.
-        let objects = objects(document, &merged, true, None);
+        let objects = objects(document, &merged, true, None, &Default::default());
         let mut laid = crate::testing::Laid::new(objects, iced::Size::new(300.0, 400.0));
         let notes: Vec<_> = (laid.texts().into_iter())
             .filter(|shown| shown.text == "in Body 1")

@@ -388,7 +388,8 @@ impl Doc {
     /// prompt, the rail's list, the feature's context menu, the file menu, the view options menu, picking a plane, the
     /// extrude being set up, the value field, a label grabbed, the drag of
     /// geometry, the shape the tool is drawing (or what the Dimension or
-    /// Mirror tool has picked), the tool, the sketch, the feature selected.
+    /// Mirror tool has picked), the tool, the sketch, the feature selected
+    /// and what's selected in the model.
     pub(crate) fn escape(&mut self) {
         if self.deleting.is_some() {
             self.deleting = None;
@@ -418,6 +419,7 @@ impl Doc {
             }
         } else {
             self.selected_feature = None;
+            self.clear_model_selection();
         }
     }
 
@@ -488,11 +490,14 @@ impl Doc {
     }
 
     /// Clears the selection: the sketch's in a sketch, else the
-    /// Timeline's.
+    /// Timeline's and the model's.
     pub(crate) fn clear_selection(&mut self) {
         match &mut self.sketch {
             Some(session) => session.selection.clear(),
-            None => self.selected_feature = None,
+            None => {
+                self.selected_feature = None;
+                self.clear_model_selection();
+            }
         }
     }
 

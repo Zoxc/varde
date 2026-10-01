@@ -5,11 +5,11 @@ use varde_render::{Projection, View};
 use super::*;
 
 /// The viewport the tests look through, in logical pixels.
-const SIZE: [f32; 2] = [400.0, 300.0];
+pub(crate) const SIZE: [f32; 2] = [400.0, 300.0];
 
 /// The example's plate, 60 × 40 × 10 mm from z 0 up, with a hole of
 /// radius 8 through its middle, made ready for picking as model 7.
-fn plate() -> PickIndex {
+pub(crate) fn plate() -> PickIndex {
     let document = Document::example();
     let mut cache = Cache::default();
     let evaluation = evaluate(&document, &mut cache);
@@ -19,7 +19,7 @@ fn plate() -> PickIndex {
 
 /// Looking from `view` at the plate's middle, 60 mm across the view's
 /// height: 5 pixels a millimetre at the target, in `projection`.
-fn camera(view: View, projection: Projection) -> Camera {
+pub(crate) fn camera(view: View, projection: Projection) -> Camera {
     let mut camera = Camera::default();
     camera.set_projection(projection);
     camera.look_from(view);
@@ -29,7 +29,7 @@ fn camera(view: View, projection: Projection) -> Camera {
 }
 
 /// Where `camera` shows the world point `at` in [`SIZE`].
-fn shown(camera: &Camera, at: DVec3) -> DVec2 {
+pub(crate) fn shown(camera: &Camera, at: DVec3) -> DVec2 {
     let placement = Plane::Origin(OriginPlane::XY).placement();
     Projector::new(camera, placement, SIZE[0], SIZE[1])
         .unwrap()
@@ -37,7 +37,7 @@ fn shown(camera: &Camera, at: DVec3) -> DVec2 {
 }
 
 /// The plane face `target` is on, as its outward normal and offset.
-fn plane(index: &PickIndex, target: Picked) -> ([f64; 3], f64) {
+pub(crate) fn plane(index: &PickIndex, target: Picked) -> ([f64; 3], f64) {
     let Picked::Face(face) = target else {
         panic!("{target:?} isn't a face");
     };
@@ -62,9 +62,9 @@ fn sides(index: &PickIndex, target: Picked) -> Vec<([f64; 3], f64)> {
     sides
 }
 
-const TOP: ([f64; 3], f64) = ([0.0, 0.0, 1.0], 10.0);
-const BOTTOM: ([f64; 3], f64) = ([0.0, 0.0, -1.0], 0.0);
-const FRONT: ([f64; 3], f64) = ([0.0, -1.0, 0.0], 20.0);
+pub(crate) const TOP: ([f64; 3], f64) = ([0.0, 0.0, 1.0], 10.0);
+pub(crate) const BOTTOM: ([f64; 3], f64) = ([0.0, 0.0, -1.0], 0.0);
+pub(crate) const FRONT: ([f64; 3], f64) = ([0.0, -1.0, 0.0], 20.0);
 const BACK: ([f64; 3], f64) = ([0.0, 1.0, 0.0], 20.0);
 
 #[test]
@@ -74,7 +74,7 @@ fn rays_at_known_pixels_hit_the_plates_faces() {
     for projection in [Projection::Orthographic, Projection::Perspective] {
         let top = camera(View::Top, projection);
         let at = shown(&top, DVec3::new(20.0, 5.0, 10.0));
-        let pick = index.pick(&top, SIZE, at).unwrap();
+        let pick = index.pick(&top, SIZE, at, Picks::FacesAndEdges).unwrap();
         assert_eq!(plane(&index, pick.target), TOP, "{projection:?}");
         assert_eq!((pick.model, pick.body), (7, body));
         assert!(
@@ -84,27 +84,29 @@ fn rays_at_known_pixels_hit_the_plates_faces() {
 
         let bottom = camera(View::Bottom, projection);
         let at = shown(&bottom, DVec3::new(-20.0, 5.0, 0.0));
-        let pick = index.pick(&bottom, SIZE, at).unwrap();
+        let pick = index.pick(&bottom, SIZE, at, Picks::FacesAndEdges).unwrap();
         assert_eq!(plane(&index, pick.target), BOTTOM, "{projection:?}");
 
         let front = camera(View::Front, projection);
         let at = shown(&front, DVec3::new(10.0, -20.0, 5.0));
-        let pick = index.pick(&front, SIZE, at).unwrap();
+        let pick = index.pick(&front, SIZE, at, Picks::FacesAndEdges).unwrap();
         assert_eq!(plane(&index, pick.target), FRONT, "{projection:?}");
 
         // Off the plate.
         let off = shown(&top, DVec3::new(45.0, 0.0, 10.0));
-        assert_eq!(index.pick(&top, SIZE, off), None);
+        assert_eq!(index.pick(&top, SIZE, off, Picks::FacesAndEdges), None);
     }
     // Straight down the hole, far from its rims, nothing.
     let top = camera(View::Top, Projection::Orthographic);
     let middle = shown(&top, DVec3::new(0.0, 0.0, 10.0));
-    assert_eq!(index.pick(&top, SIZE, middle), None);
+    assert_eq!(index.pick(&top, SIZE, middle, Picks::FacesAndEdges), None);
     // The hole's wall, from above and to the side.
     let mut above = camera(View::Front, Projection::Orthographic);
     above.orbit(0.0, 0.9);
     let wall = shown(&above, DVec3::new(0.0, 8.0, 8.0));
-    let pick = index.pick(&above, SIZE, wall).unwrap();
+    let pick = index
+        .pick(&above, SIZE, wall, Picks::FacesAndEdges)
+        .unwrap();
     let Picked::Face(face) = pick.target else {
         panic!("{pick:?}");
     };
@@ -122,7 +124,14 @@ fn an_edge_within_reach_wins_over_the_face() {
         let top = camera(View::Top, projection);
         // 4 pixels in from the top's front edge.
         let edge = shown(&top, DVec3::new(10.0, -20.0, 10.0));
-        let pick = index.pick(&top, SIZE, edge - DVec2::new(0.0, 4.0)).unwrap();
+        let pick = index
+            .pick(
+                &top,
+                SIZE,
+                edge - DVec2::new(0.0, 4.0),
+                Picks::FacesAndEdges,
+            )
+            .unwrap();
         assert_eq!(
             sides(&index, pick.target),
             vec![FRONT, TOP],
@@ -133,10 +142,24 @@ fn an_edge_within_reach_wins_over_the_face() {
             "{pick:?}"
         );
         // 8 pixels in, the top.
-        let pick = index.pick(&top, SIZE, edge - DVec2::new(0.0, 8.0)).unwrap();
+        let pick = index
+            .pick(
+                &top,
+                SIZE,
+                edge - DVec2::new(0.0, 8.0),
+                Picks::FacesAndEdges,
+            )
+            .unwrap();
         assert_eq!(plane(&index, pick.target), TOP, "{projection:?}");
         // And outside, off the plate, the edge.
-        let pick = index.pick(&top, SIZE, edge + DVec2::new(0.0, 5.0)).unwrap();
+        let pick = index
+            .pick(
+                &top,
+                SIZE,
+                edge + DVec2::new(0.0, 5.0),
+                Picks::FacesAndEdges,
+            )
+            .unwrap();
         assert_eq!(
             sides(&index, pick.target),
             vec![FRONT, TOP],
@@ -157,9 +180,13 @@ fn an_edge_behind_the_plate_isnt_picked() {
         let hidden = shown(&camera, DVec3::new(24.0, 20.0, 0.0));
         let back = shown(&camera, DVec3::new(24.0, 20.0, 10.0));
         assert!(hidden.distance(back) > 4.0 * EDGE_REACH, "{hidden} {back}");
-        let pick = index.pick(&camera, SIZE, hidden).unwrap();
+        let pick = index
+            .pick(&camera, SIZE, hidden, Picks::FacesAndEdges)
+            .unwrap();
         assert_eq!(plane(&index, pick.target), TOP, "{projection:?}");
-        let pick = index.pick(&camera, SIZE, back).unwrap();
+        let pick = index
+            .pick(&camera, SIZE, back, Picks::FacesAndEdges)
+            .unwrap();
         assert_eq!(
             sides(&index, pick.target),
             vec![TOP, BACK],
@@ -167,7 +194,9 @@ fn an_edge_behind_the_plate_isnt_picked() {
         );
         // The front's bottom edge shows.
         let front = shown(&camera, DVec3::new(10.0, -20.0, 0.0));
-        let pick = index.pick(&camera, SIZE, front).unwrap();
+        let pick = index
+            .pick(&camera, SIZE, front, Picks::FacesAndEdges)
+            .unwrap();
         assert_eq!(
             sides(&index, pick.target),
             vec![FRONT, BOTTOM],
@@ -181,7 +210,10 @@ fn highlights_hold_a_faces_triangles_and_an_edges_lines() {
     let index = plate();
     let top = camera(View::Top, Projection::Orthographic);
     let at = shown(&top, DVec3::new(20.0, 5.0, 10.0));
-    let face = index.pick(&top, SIZE, at).unwrap().target;
+    let face = index
+        .pick(&top, SIZE, at, Picks::FacesAndEdges)
+        .unwrap()
+        .target;
     let highlight = index.highlight([(face, Emphasis::Hovered)]);
     assert!(!highlight.is_empty());
     assert_eq!(index.highlight([]), Highlight::default());
@@ -228,7 +260,10 @@ fn the_index_is_the_same_built_twice() {
     for x in (0..40).map(|i| f64::from(i) * 10.0) {
         for y in (0..30).map(|i| f64::from(i) * 10.0) {
             let at = DVec2::new(x, y);
-            assert_eq!(a.pick(&camera, SIZE, at), b.pick(&camera, SIZE, at));
+            assert_eq!(
+                a.pick(&camera, SIZE, at, Picks::FacesAndEdges),
+                b.pick(&camera, SIZE, at, Picks::FacesAndEdges)
+            );
         }
     }
     assert_eq!(a.triangles.items, b.triangles.items);
@@ -240,12 +275,28 @@ fn tables_not_of_the_mesh_pick_nothing() {
     let other = PickIndex::new(Arc::default(), index.picking().clone(), 1);
     let top = camera(View::Top, Projection::Orthographic);
     let at = shown(&top, DVec3::new(20.0, 5.0, 10.0));
-    assert_eq!(other.pick(&top, SIZE, at), None);
+    assert_eq!(other.pick(&top, SIZE, at, Picks::FacesAndEdges), None);
     let empty = PickIndex::new(Arc::default(), Arc::default(), 1);
-    assert_eq!(empty.pick(&top, SIZE, at), None);
+    assert_eq!(empty.pick(&top, SIZE, at, Picks::FacesAndEdges), None);
     assert!(
         empty
             .highlight([(Picked::Face(0), Emphasis::Hovered)])
             .is_empty()
     );
+}
+
+#[test]
+fn picking_only_faces_or_only_edges_skips_the_other() {
+    let index = plate();
+    let top = camera(View::Top, Projection::Orthographic);
+    // 4 pixels in from the top's front edge, which wins over the top.
+    let near_edge = shown(&top, DVec3::new(10.0, -20.0, 10.0)) - DVec2::new(0.0, 4.0);
+    let pick = index.pick(&top, SIZE, near_edge, Picks::Faces).unwrap();
+    assert_eq!(plane(&index, pick.target), TOP);
+    let pick = index.pick(&top, SIZE, near_edge, Picks::Edges).unwrap();
+    assert_eq!(sides(&index, pick.target), vec![FRONT, TOP]);
+    // Over the top's middle no edge is within reach.
+    let middle = shown(&top, DVec3::new(20.0, 5.0, 10.0));
+    assert_eq!(index.pick(&top, SIZE, middle, Picks::Edges), None);
+    assert!(index.pick(&top, SIZE, middle, Picks::Faces).is_some());
 }

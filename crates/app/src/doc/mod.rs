@@ -39,7 +39,7 @@ use export::Export;
 pub(crate) use export::Exporting;
 pub(crate) use extrude::ExtrudeSession;
 use feed::MeshFeed;
-use pick::Hover;
+use pick::ModelPick;
 use rail::Rail;
 use save::Persist;
 #[cfg(test)]
@@ -117,8 +117,8 @@ pub(crate) struct Doc {
     /// Whether the cursor is over the view cube, where the pivot is
     /// marked.
     cube_hovered: bool,
-    /// What the cursor is over in the model shown.
-    pub(crate) hover: Hover,
+    /// What the cursor is over and what's selected in the model shown.
+    pub(crate) pick: ModelPick,
     /// The tool rail's open set.
     pub(crate) rail: Rail,
     /// Saving and leaving it, see [`Persist`].
@@ -228,7 +228,7 @@ impl Doc {
             before_sketch: None,
             pivot: None,
             cube_hovered: false,
-            hover: Hover::default(),
+            pick: ModelPick::default(),
             rail: Rail::default(),
             export: Export::default(),
         };
@@ -257,7 +257,7 @@ impl Doc {
         self.request_analysis();
         self.request_model();
         self.refresh_profiles();
-        self.prune_hover();
+        self.prune_picks();
     }
 
     /// Asks for the model if the document changed, the sketch left out of
@@ -416,7 +416,7 @@ impl Doc {
         self.refresh_profiles();
         // The extrude being set up is previewed as it changes.
         self.request_model();
-        self.prune_hover();
+        self.prune_picks();
     }
 
     /// Takes `message`, see [`Doc::look`].
@@ -498,6 +498,7 @@ impl Doc {
             Look::SelectFeature(id) => {
                 if self.editor.document().feature(id).is_some() {
                     self.selected_feature = Some(id);
+                    self.clear_model_selection();
                 }
             }
             Look::OpenMenu(menu) => self.open_menu(menu),
@@ -508,6 +509,8 @@ impl Doc {
             Look::ClickRow(id) => self.click_geometry(Some(id), false),
             Look::HoverItem(id) => self.hover_item(id),
             Look::Hover(pick) => self.hover(pick),
+            Look::ClickModel { pick, add, double } => self.click_model(pick, add, double),
+            Look::ClickBody { body, add } => self.click_body(body, add),
             Look::Snap(snap) => {
                 if let Some(session) = &mut self.sketch {
                     session.snap = snap;
@@ -610,6 +613,7 @@ impl Doc {
         }
         if let RowMenu::Feature(id) = menu {
             self.selected_feature = Some(id);
+            self.clear_model_selection();
         }
         self.row_menu = Some(menu);
     }
@@ -626,7 +630,7 @@ impl Doc {
     /// goes to [`Doc::export_welded`] instead.
     pub(crate) fn computed(&mut self, response: varde_regen::Response) {
         self.feed.apply(response);
-        self.prune_hover();
+        self.prune_picks();
     }
 
     /// Starts sending requests to `lane`, the document's solver lane:
@@ -730,6 +734,7 @@ impl Doc {
             mesh_status: self.feed.status(&self.editor),
             picking: self.model_picking(),
             highlight: self.highlight(),
+            model_selection: &self.pick.selection,
             name: &self.name,
             edited: self.edited(),
             read_only: self.read_only.as_deref(),

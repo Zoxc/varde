@@ -22,7 +22,7 @@ use crate::anchors::Anchors;
 use crate::chrome::{Hint, chord_hint, mouse_hint};
 use crate::icons::MouseButton;
 use crate::operation_panel::placed;
-use crate::pick::{PickIndex, Picked};
+use crate::pick::{Pick, PickIndex, Picked, Picks};
 use crate::shortcut::Held;
 use crate::theme::{Palette, SketchColors};
 use crate::{Look, Message, controls};
@@ -42,8 +42,9 @@ const ZOOM_PER_PIXEL: f32 = 0.995;
 const CLICK_SLOP: f32 = 3.0;
 
 /// Picking the model shown with the cursor, outside sketches and
-/// sessions: the viewport says what's under the cursor as it moves
-/// ([`Look::Hover`]).
+/// sessions: the viewport says what's under the cursor as it moves, or as
+/// the camera or the model changes under it ([`Look::Hover`]), and what a
+/// left click is on ([`Look::ClickModel`]).
 #[derive(Debug, Clone, Copy)]
 pub struct ModelPicking<'a> {
     /// The model shown, ready for picking.
@@ -51,6 +52,8 @@ pub struct ModelPicking<'a> {
     /// What the app holds hovered, of `index`'s model: the viewport says
     /// only when that changes.
     pub hovered: Option<Picked>,
+    /// What the cursor picks.
+    pub picks: Picks,
 }
 
 /// The 3D viewport showing `mesh` and the finished `sketches` from
@@ -234,10 +237,18 @@ pub fn hints<'a>(sketching: bool) -> [Hint<'a>; 4] {
 #[derive(Default)]
 struct Interaction {
     drag: Option<(DragKind, Point)>,
-    /// Where the middle button was pressed, while the cursor hasn't moved
-    /// past [`CLICK_SLOP`] from there: letting go then is a click, which
-    /// picks the point the camera orbits, and until then it doesn't orbit.
+    /// Where the middle button, or the left one while the cursor picks the
+    /// model, was pressed, while the cursor hasn't moved past
+    /// [`CLICK_SLOP`] from there: letting go then is a click, which picks
+    /// the point the camera orbits, or (the left one) selects, and until
+    /// then it doesn't orbit.
     click: Option<Point>,
+    /// The last left click on the model, when and where, to tell a
+    /// double-click by.
+    last_click: Option<(iced::time::Instant, DVec2)>,
+    /// The camera, the model and the cursor position the cursor's pick
+    /// was last worked out for: it's worked out again as any changes.
+    hover_seen: Option<(Camera, u64, Point)>,
     /// The modifiers held, which change what a drag does, and `Ctrl`
     /// (`Cmd`) adds to a sketch's selection.
     modifiers: keyboard::Modifiers,
@@ -293,8 +304,7 @@ impl shader::Program<Message> for Program<'_> {
         }
         if let Some(picking) = &self.picking
             && state.drag.is_none()
-            && let Event::Mouse(event) = event
-            && let Some(action) = self.hover(picking, *event, bounds, cursor)
+            && let Some(action) = self.hover(state, picking, event, bounds, cursor)
         {
             return Some(action);
         }
@@ -380,32 +390,67 @@ impl shader::Program<Message> for Program<'_> {
                     let extruding = self.extruding.as_ref()?;
                     extruding.mouse_interaction(&state.extrude, bounds, cursor)
                 })
+                .or_else(|| {
+                    // Over what a click would select.
+                    let picking = self.picking.as_ref()?;
+                    cursor.position_over(bounds)?;
+                    picking.hovered.map(|_| mouse::Interaction::Pointer)
+                })
                 .unwrap_or_default(),
         }
     }
 }
 
 impl Program<'_> {
-    /// Says what the cursor is over in the model as it moves, if that's
-    /// another face or edge than `picking`'s hovered, and nothing once it
-    /// leaves.
+    /// Says what the cursor is over in the model as it moves, and as the
+    /// camera or the model changes under it (looked at as a frame is
+    /// drawn), if that's another face or edge than `picking`'s hovered,
+    /// and nothing once it leaves.
     fn hover(
         &self,
+        state: &mut Interaction,
         picking: &ModelPicking<'_>,
-        event: mouse::Event,
+        event: &Event,
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> Option<Action<Message>> {
         let pick = match event {
-            mouse::Event::CursorMoved { .. } => cursor.position_over(bounds).and_then(|at| {
-                let at = DVec2::new((at.x - bounds.x).into(), (at.y - bounds.y).into());
-                (picking.index).pick(&self.scene.camera, [bounds.width, bounds.height], at)
-            }),
-            mouse::Event::CursorLeft => None,
+            Event::Mouse(mouse::Event::CursorMoved { .. }) => self.pick_at(picking, bounds, cursor),
+            Event::Window(iced::window::Event::RedrawRequested(_)) => {
+                let at = cursor.position_over(bounds)?;
+                let seen = (self.scene.camera, picking.index.model(), at);
+                if state.hover_seen == Some(seen) {
+                    return None;
+                }
+                state.hover_seen = Some(seen);
+                self.pick_at(picking, bounds, cursor)
+            }
+            Event::Mouse(mouse::Event::CursorLeft) => None,
             _ => return None,
         };
+        if let Some(at) = cursor.position_over(bounds) {
+            state.hover_seen = Some((self.scene.camera, picking.index.model(), at));
+        }
         (pick.map(|pick| pick.target) != picking.hovered)
             .then(|| Action::publish(Message::Look(Look::Hover(pick))))
+    }
+
+    /// What of the model the cursor is over, if it's over the viewport.
+    fn pick_at(
+        &self,
+        picking: &ModelPicking<'_>,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+    ) -> Option<Pick> {
+        let at = cursor.position_over(bounds)?;
+        self.pick_point(picking, bounds, at)
+    }
+
+    /// What of the model shows at `at`, in the window's pixels.
+    fn pick_point(&self, picking: &ModelPicking<'_>, bounds: Rectangle, at: Point) -> Option<Pick> {
+        let at = DVec2::new((at.x - bounds.x).into(), (at.y - bounds.y).into());
+        let size = [bounds.width, bounds.height];
+        (picking.index).pick(&self.scene.camera, size, at, picking.picks)
     }
 
     /// Whether a sketch is being edited, where the left button is for its
@@ -428,11 +473,30 @@ impl Program<'_> {
                 let position = cursor.position_over(bounds)?;
                 let kind = DragKind::for_button(button, state.modifiers, self.sketching())?;
                 state.drag = Some((kind, position));
-                state.click = (button == mouse::Button::Middle).then_some(position);
+                let clicks = match button {
+                    mouse::Button::Middle => true,
+                    mouse::Button::Left => self.picking.is_some(),
+                    _ => false,
+                };
+                state.click = clicks.then_some(position);
                 Some(Action::capture())
             }
             mouse::Event::ButtonReleased(button) => {
                 state.drag.take()?;
+                // A left click on the model selects.
+                if button == mouse::Button::Left
+                    && let Some(picking) = &self.picking
+                {
+                    let Some(at) = state.click.take() else {
+                        return Some(Action::capture());
+                    };
+                    let pick = self.pick_point(picking, bounds, at);
+                    let local = DVec2::new((at.x - bounds.x).into(), (at.y - bounds.y).into());
+                    let double = sketch::double_click(&mut state.last_click, local);
+                    let add = Held::TOGGLE.is_held(state.modifiers);
+                    let message = Look::ClickModel { pick, add, double };
+                    return Some(Action::publish(Message::Look(message)).and_capture());
+                }
                 let click = state
                     .click
                     .take()

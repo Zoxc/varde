@@ -18,7 +18,8 @@ use std::sync::Arc;
 use glam::{DVec2, DVec3, Vec3};
 use varde_document::{BodyId, OriginPlane, Plane};
 use varde_kernel::RenderMesh;
-use varde_regen::Picking;
+use varde_kernel::mesh::FaceKey;
+use varde_regen::{PickFace, Picking};
 use varde_render::{Camera, Emphasis, Highlight};
 
 use crate::projection::Projector;
@@ -38,6 +39,16 @@ const MAX_EDGE_TESTS: usize = 64;
 
 /// The most triangles or edges in a leaf of a hierarchy.
 const LEAF: usize = 4;
+
+/// What the cursor picks in the model: faces and edges (an edge near
+/// the cursor winning), or only one of the two.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Picks {
+    #[default]
+    FacesAndEdges,
+    Faces,
+    Edges,
+}
 
 /// A face or an edge of the model shown: an index into its picking
 /// tables' [`Picking::faces`] or [`Picking::chains`].
@@ -77,6 +88,8 @@ pub struct PickIndex {
     face_triangles: Groups,
     /// Each chain's edges.
     chain_edges: Groups,
+    /// Each tangent chain's chains, by its first.
+    tangent_chains: Groups,
 }
 
 impl PickIndex {
@@ -86,7 +99,7 @@ impl PickIndex {
     pub fn new(mesh: Arc<RenderMesh>, picking: Arc<Picking>, model: u64) -> Self {
         let fits = picking.triangles().len() == mesh.triangle_count()
             && picking.edges().len() == mesh.edges().len();
-        let (triangles, edges, face_triangles, chain_edges) = if fits {
+        let (triangles, edges, face_triangles, chain_edges, tangent_chains) = if fits {
             let corners = |triangle: &[u32; 3]| triangle.map(|i| position(&mesh, i));
             let triangles = mesh.indices().as_chunks::<3>().0;
             let boxes = triangles.iter().map(|t| bounds(&corners(t)));
@@ -104,6 +117,7 @@ impl PickIndex {
                 Bvh::with_items(edge_boxes.collect(), edges),
                 Groups::new(picking.faces().len(), picking.triangles()),
                 Groups::new(picking.chains().len(), picking.edges()),
+                Groups::new(picking.chains().len(), &tangents(&picking)),
             )
         } else {
             Default::default()
@@ -116,6 +130,7 @@ impl PickIndex {
             edges,
             face_triangles,
             chain_edges,
+            tangent_chains,
         }
     }
 
@@ -144,13 +159,18 @@ impl PickIndex {
     /// What's under the screen position `at`, in logical pixels from the
     /// top left of a viewport `size` big seen by `camera`: a feature edge
     /// showing within [`EDGE_REACH`] of it that nothing hides, the
-    /// nearest, or else the face the cursor's ray first meets.
-    pub fn pick(&self, camera: &Camera, size: [f32; 2], at: DVec2) -> Option<Pick> {
+    /// nearest, or else the face the cursor's ray first meets; of those
+    /// only what `picks` takes.
+    pub fn pick(&self, camera: &Camera, size: [f32; 2], at: DVec2, picks: Picks) -> Option<Pick> {
         let placement = Plane::Origin(OriginPlane::XY).placement();
         let projector = Projector::new(camera, placement, size[0], size[1])?;
         let ray = self.ray(camera, &projector, at)?;
-        let face = self.first_hit(&ray, ray.from, f64::INFINITY);
-        let edge = self.edge_near(camera, &projector, &ray, at);
+        let face = (picks != Picks::Edges)
+            .then(|| self.first_hit(&ray, ray.from, f64::INFINITY))
+            .flatten();
+        let edge = (picks != Picks::Faces)
+            .then(|| self.edge_near(camera, &projector, &ray, at))
+            .flatten();
         let (target, at) = match (edge, face) {
             (Some((chain, at)), _) => (Picked::Edge(chain), at),
             (None, Some((t, triangle))) => {
@@ -166,6 +186,118 @@ impl PickIndex {
             at,
         };
         Some(pick)
+    }
+
+    /// The chains of `chain`'s tangent chain, ascending: the edges it runs
+    /// on into smoothly, end to end, and itself. None if there's no such
+    /// chain.
+    pub fn tangent_chain(&self, chain: u32) -> &[u32] {
+        let Some(first) = self.picking.chains().get(chain as usize) else {
+            return &[];
+        };
+        self.tangent_chains.get(first.tangent)
+    }
+
+    /// The faces of `body`, ascending.
+    pub fn body_faces(&self, body: BodyId) -> impl Iterator<Item = u32> + '_ {
+        (self.picking.faces().iter().enumerate())
+            .filter(move |(_, face)| face.body == body)
+            .filter_map(|(face, _)| u32::try_from(face).ok())
+    }
+
+    /// The keys of the faces either side of `chain`, sorted, as an edge
+    /// reference keeps them, if there's such a chain.
+    pub fn chain_keys(&self, chain: u32) -> Option<[FaceKey; 2]> {
+        let faces = self.picking.chains().get(chain as usize)?.faces;
+        let [a, b] = faces.map(|f| self.picking.faces().get(f as usize).map(|face| face.key));
+        let (a, b) = (a?, b?);
+        Some([a.min(b), a.max(b)])
+    }
+
+    /// A point on `chain`: the middle of its first edge in the mesh.
+    pub fn chain_point(&self, chain: u32) -> Option<DVec3> {
+        let &edge = self.chain_edges.get(chain).first()?;
+        let [a, b] = self.mesh.edges().get(edge as usize)?;
+        let (a, b) = (position(&self.mesh, *a), position(&self.mesh, *b));
+        Some(((a + b) / 2.0).as_dvec3())
+    }
+
+    /// The face of `body` that `key` names (its key or an alias), the
+    /// nearest to `near` among several, as the kernel resolves a face
+    /// reference: one is taken wherever `near` is; of several, a later
+    /// one only where it comes nearer by more than a billionth of the
+    /// model's size, so ties go to the lowest. Measured to the mesh as
+    /// drawn, which is all the view has.
+    pub fn find_face(&self, body: BodyId, key: &FaceKey, near: DVec3) -> Option<u32> {
+        let named = |face: &&PickFace| face.key == *key || face.aliases.binary_search(key).is_ok();
+        let found = (self.picking.faces().iter().enumerate())
+            .filter(|(_, face)| face.body == body && named(face))
+            .filter_map(|(face, _)| u32::try_from(face).ok());
+        self.nearest(found, near, |face| {
+            (self.face_triangles.get(face).iter())
+                .filter_map(|&triangle| self.corners(triangle))
+                .map(|corners| {
+                    let corners = corners.map(|i| position(&self.mesh, i).as_dvec3());
+                    triangle_distance(near, corners)
+                })
+                .fold(f64::INFINITY, f64::min)
+        })
+    }
+
+    /// The edge of `body` between faces that `faces` name (either way
+    /// round, by key or alias), the nearest to `near` among several, as
+    /// [`PickIndex::find_face`] finds faces.
+    pub fn find_edge(&self, body: BodyId, faces: [FaceKey; 2], near: DVec3) -> Option<u32> {
+        let named = |face: u32, key: &FaceKey| {
+            (self.picking.faces().get(face as usize)).is_some_and(|face| {
+                face.body == body && (face.key == *key || face.aliases.binary_search(key).is_ok())
+            })
+        };
+        let found = (self.picking.chains().iter().enumerate())
+            .filter(|(_, chain)| {
+                let [a, b] = chain.faces;
+                (named(a, &faces[0]) && named(b, &faces[1]))
+                    || (named(a, &faces[1]) && named(b, &faces[0]))
+            })
+            .filter_map(|(chain, _)| u32::try_from(chain).ok());
+        self.nearest(found, near, |chain| {
+            (self.chain_edges.get(chain).iter())
+                .filter_map(|&edge| self.mesh.edges().get(edge as usize))
+                .map(|&[a, b]| {
+                    let [a, b] = [a, b].map(|i| position(&self.mesh, i).as_dvec3());
+                    segment_distance_3d(near, a, b)
+                })
+                .fold(f64::INFINITY, f64::min)
+        })
+    }
+
+    /// Of `found`, ascending, the only one, or the one at the least
+    /// `distance` from `near`, a later one counting only where it comes
+    /// nearer by more than a billionth of the mesh's size; the first where
+    /// `near` isn't finite.
+    fn nearest(
+        &self,
+        found: impl Iterator<Item = u32>,
+        near: DVec3,
+        distance: impl Fn(u32) -> f64,
+    ) -> Option<u32> {
+        let found: Vec<u32> = found.collect();
+        if found.len() <= 1 || !near.is_finite() {
+            return found.first().copied();
+        }
+        let size = self
+            .mesh
+            .bounds()
+            .map_or(0.0, |bounds| f64::from((bounds.max - bounds.min).length()));
+        let slack = 1e-9 * size;
+        let mut best: Option<(f64, u32)> = None;
+        for item in found {
+            let d = distance(item);
+            if best.is_none_or(|(b, _)| d < b - slack) {
+                best = Some((d, item));
+            }
+        }
+        best.map(|(_, item)| item)
     }
 
     /// The highlight of `items`: each face's triangles and each edge's
@@ -372,6 +504,43 @@ fn position(mesh: &RenderMesh, index: u32) -> Vec3 {
             .copied()
             .unwrap_or_default(),
     )
+}
+
+/// Each chain's tangent chain's first, as `picking` has them.
+fn tangents(picking: &Picking) -> Vec<u32> {
+    picking.chains().iter().map(|chain| chain.tangent).collect()
+}
+
+/// How far `p` is from the segment from `a` to `b`.
+fn segment_distance_3d(p: DVec3, a: DVec3, b: DVec3) -> f64 {
+    let ab = b - a;
+    let length = ab.length_squared();
+    let s = if length > 0.0 {
+        ((p - a).dot(ab) / length).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    p.distance(a + ab * s)
+}
+
+/// How far `p` is from the triangle `[a, b, c]`: from the plane it's
+/// in, where `p` is over it, otherwise from its nearest side.
+fn triangle_distance(p: DVec3, [a, b, c]: [DVec3; 3]) -> f64 {
+    let normal = (b - a).cross(c - a);
+    let area = normal.length_squared();
+    if area > 0.0 {
+        // `p` over the triangle: each side has it on the inside.
+        let inside = [(a, b), (b, c), (c, a)]
+            .iter()
+            .all(|&(u, v)| (v - u).cross(p - u).dot(normal) >= 0.0);
+        if inside {
+            return (p - a).dot(normal).abs() / area.sqrt();
+        }
+    }
+    [(a, b), (b, c), (c, a)]
+        .iter()
+        .map(|&(u, v)| segment_distance_3d(p, u, v))
+        .fold(f64::INFINITY, f64::min)
 }
 
 /// The box around `points`.
@@ -702,4 +871,4 @@ fn build(boxes: &[[Vec3; 2]], order: &mut [usize], offset: usize, nodes: &mut Ve
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

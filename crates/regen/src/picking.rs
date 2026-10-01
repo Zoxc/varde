@@ -191,6 +191,12 @@ pub struct PickChain {
     /// Whether it closes on itself (a hole's rim) rather than running
     /// from one corner to another.
     pub closed: bool,
+    /// Its tangent chain, as the lowest-indexed chain in it, an index
+    /// into [`Picking::chains`]: the edges of its body it runs on into
+    /// smoothly, end to end (see
+    /// [`Topology::tangent_chains`](varde_kernel::Topology::tangent_chains)).
+    /// Itself if none.
+    pub tangent: u32,
 }
 
 /// The picking tables of a model's mesh: its faces and edges, and which
@@ -198,7 +204,9 @@ pub struct PickChain {
 ///
 /// It's always consistent with the mesh it came with: one face per
 /// triangle, one chain (or [`Picking::NONE`]) per edge, every index within
-/// its table, each chain between two different faces of one body, every
+/// its table, each chain between two different faces of one body, its
+/// tangent chain's first a chain of that body no later than it and its
+/// own first, every
 /// summary [`Summary::valid`], each face's aliases sorted and apart from
 /// its key, no more faces than triangles nor chains than edges. The
 /// fields are private so that holds; one from the other side of the web
@@ -252,7 +260,18 @@ impl Picking {
             let [a, b] = chain.faces.map(|f| faces.get(f as usize));
             matches!((a, b), (Some(a), Some(b)) if chain.faces[0] != chain.faces[1] && a.body == b.body)
         };
-        if !chains.iter().all(chain_ok) {
+        // A tangent chain's first is no later than its members, its own
+        // first, and of the same body.
+        let tangent_ok = |(c, chain): (usize, &PickChain)| {
+            let first = chains.get(chain.tangent as usize);
+            let body = |chain: &PickChain| faces.get(chain.faces[0] as usize).map(|f| f.body);
+            first.is_some_and(|first| {
+                chain.tangent as usize <= c
+                    && first.tangent == chain.tangent
+                    && body(first) == body(chain)
+            })
+        };
+        if !chains.iter().all(chain_ok) || !chains.iter().enumerate().all(tangent_ok) {
             return Err(PickingError::Chain);
         }
         let face_ok = |face: &PickFace| {
@@ -339,6 +358,7 @@ impl Picking {
             new_chains.push(PickChain {
                 faces: [moved(a, faces)?, moved(b, faces)?],
                 closed: chain.closed,
+                tangent: moved(chain.tangent, chains)?,
             });
         }
         self.faces
@@ -451,10 +471,12 @@ impl Drawn {
                 (region.key, region.aliases.clone(), Summary::of(&face.form))
             })
             .collect();
-        let chains = (topology.chains().iter())
-            .map(|chain| PickChain {
+        let tangent = topology.tangent_chains(solid);
+        let chains = (topology.chains().iter().zip(tangent))
+            .map(|(chain, tangent)| PickChain {
                 faces: chain.regions,
                 closed: chain.closed,
+                tangent,
             })
             .collect();
         Ok(Drawn {
@@ -495,7 +517,8 @@ pub enum PickingError {
     /// A triangle's face or an edge's chain is past its table.
     Index,
     /// A chain's faces are past the table, the same face, or of two
-    /// bodies.
+    /// bodies, or its tangent chain's first isn't a first chain of its
+    /// body no later than it.
     Chain,
     /// A face's summary isn't valid, or its aliases aren't sorted apart
     /// from its key.
@@ -508,7 +531,9 @@ impl fmt::Display for PickingError {
             PickingError::Lengths => "the picking tables don't match the mesh",
             PickingError::Tables => "the picking tables are larger than the mesh",
             PickingError::Index => "a picking index is past its table",
-            PickingError::Chain => "a picked edge's faces aren't two of one body",
+            PickingError::Chain => {
+                "a picked edge's faces aren't two of one body, or its tangent chain isn't"
+            }
             PickingError::Face => "a picked face's summary or aliases aren't valid",
         })
     }

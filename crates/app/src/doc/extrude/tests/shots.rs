@@ -970,7 +970,7 @@ impl Shooter {
                 doc.look(look);
             }
         }
-        doc.hover.pick().map(|pick| pick.target)
+        doc.pick.hover().map(|pick| pick.target)
     }
 }
 
@@ -1014,5 +1014,55 @@ fn shots_18_hover() {
             "18-hover-below",
             Shot::new().pointer(Pointer::At(below)),
         );
+    });
+}
+
+/// Scenario 19: selecting in the model: the top selected and an edge
+/// hovered, the status bar's box telling of the face; the top and an edge
+/// with Shift; the body double-clicked, marked in Objects too.
+#[test]
+#[ignore = "writes screenshots, see the module"]
+fn shots_19_select() {
+    shooting(|camera| {
+        let (mut doc, _requests) = example();
+        framed(&mut doc);
+        let face = Point::new(WINDOW.width * 0.66, WINDOW.height * 0.5);
+        camera.hover(&mut doc, face);
+        let pick = doc.pick.hover().expect("the top under the cursor");
+        doc.look(Look::ClickModel {
+            pick: Some(pick),
+            add: false,
+            double: false,
+        });
+        // Down from there to the first edge.
+        let edge = (0..300)
+            .map(|dy| Point::new(face.x, face.y + dy as f32))
+            .find(|&at| {
+                matches!(
+                    camera.hover(&mut doc, at),
+                    Some(varde_view::Picked::Edge(_))
+                )
+            })
+            .expect("an edge below");
+        let shot = Shot::new().pointer(Pointer::At(edge));
+        camera.take(&doc, "19-select-face", shot);
+        camera.take(&doc, "19-select-face-dark", shot.dark());
+        let pick = doc.pick.hover().expect("the edge under the cursor");
+        doc.look(Look::ClickModel {
+            pick: Some(pick),
+            add: true,
+            double: false,
+        });
+        camera.take(&doc, "19-select-two", shot);
+        // The body, double-clicked, in Objects too.
+        doc.look(Look::SelectPanel(varde_view::Panel::Objects));
+        doc.look(Look::ClickModel {
+            pick: Some(pick),
+            add: false,
+            double: true,
+        });
+        let away = Shot::new();
+        camera.take(&doc, "19-select-body", away);
+        camera.take(&doc, "19-select-body-dark", away.dark());
     });
 }

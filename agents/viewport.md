@@ -443,18 +443,85 @@ the body (the face's, or the chain's first face's) and the point (the
 ray's hit, or the edge's point).
 
 Outside sketches and the extrude session (`Doc::picks`; they pick what
-they need themselves) the viewport is given `ModelPicking` (the index
-and the target the app holds hovered): on each cursor move while the
-camera isn't dragged it picks, and only when the target differs from
-the app's sends `Look::Hover(pick)`, and `Hover(None)` once the cursor
-leaves the model or the viewport. The app keeps the hover (`doc/pick.rs`)
-and its highlight, built only when the target changes, so moving over
-one face rebuilds and uploads nothing; a hover names nothing else
-(no document change, no request, no selection). A pick of a model no
-longer shown (its count differs) is dropped, and the hover is dropped
-once the model changes or the cursor stops picking (`Doc::prune_hover`,
-after answers, edits and looks). Clicking, selection and tangent chains
-come next; `Doc::hover`'s pick (`Hover::pick`) is what a click takes.
+they need themselves) the viewport is given `ModelPicking` (the index,
+the target the app holds hovered, and what the cursor picks, `Picks`:
+faces and edges, or only one of them, from the selection's mode). It
+picks on each cursor move while the camera isn't dragged, and on each
+frame drawn (`RedrawRequested`) whose camera, model or cursor position
+differs from those it last picked with (`Interaction::hover_seen`), so the
+hover follows an orbit, a pan, a zoom, the camera's animation or a new
+model under a cursor that stays; only when the target differs from the
+app's does it send `Look::Hover(pick)`, and `Hover(None)` once the cursor
+leaves the model or the viewport. The cursor is a pointer while
+something is hovered. A pick of a model no longer shown (its count
+differs) is dropped, and the hover is dropped once the model changes or
+the cursor stops picking (`Doc::prune_picks`, after answers, edits and
+looks); a hover names nothing else (no document change, no request).
+
+**Selecting** (`view/src/select.rs`, `Selection`, kept in `Doc::pick`).
+The left button, which orbits when dragged outside sketches, is a click
+while the cursor stays within `CLICK_SLOP` (3) pixels of where it went
+down, as the middle button's pivot click is: letting go sends
+`Look::ClickModel { pick, add, double }`, the pick worked out where the
+button went down, `add` with `Held::TOGGLE` (Shift, or Ctrl/Cmd as in a
+sketch) and `double` for a second click within 400 ms and 4 pixels
+(the sketch's double-click rule). What a click selects depends on the
+`SelectionMode`: `Any` outside the sessions (the face or edge clicked;
+a double-click its body), `Faces`, `Edges { tangent }` (with the whole
+tangent chain clicked if `tangent`) and `Bodies` (the body of whatever is
+clicked), which the face, edge and body sessions will set. A click alone
+selects what it's on, or nothing (a click off the model clears); with
+`add` it adds that, or takes it out if all of it is selected: a tangent
+chain toggles as one, and a double-click with `add` first undoes its
+first click's toggle, then toggles the body. Objects' body rows select
+too (`Look::ClickBody`, the app filling in `add` from Ctrl/Cmd held,
+where the mode takes bodies), and mark the bodies the selection holds
+as bodies, so a body double-clicked in the viewport shows selected in
+Objects and one clicked there shows all its faces selected in the
+viewport. `Esc` (once nothing else is open) and `Space` clear it with
+the Timeline's feature; selecting a feature in the Timeline clears it,
+and selecting in the model lets go of the feature.
+
+What's selected is kept by name, as a reference would be: a face as its
+body, key and the point it was picked at (`Selected::Face`), an edge as
+its body, the sorted keys of the faces either side and the point
+(`Selected::Edge`), a body by id. Each item also holds its target in the
+model it was last found in (`Selection::model`). When another model
+shows (an edit, an undo, a tolerance), `Selection::resolve` finds each
+again as the kernel resolves references (`PickIndex::find_face`,
+`find_edge`): the faces of that body named by the key (key or alias),
+or the chains between faces so named either way round; one is taken
+wherever the point is, of several the nearest to the point (measured to
+the drawn triangles or segments; a later one counts only where it comes
+nearer by more than a billionth of the mesh's size, so ties go to the
+lowest; the first where the point isn't finite). What isn't found is
+dropped (a hidden body's faces, a face an edit removed) and stays
+dropped; bodies the document no longer holds go too. While a sketch is
+edited or an extrude set up the selection isn't drawn or resolved, so a
+draft's preview doesn't drop it; it's found again once the cursor picks.
+
+Tangent chains come from the kernel: `Topology::tangent_chains` (see
+`agents/kernel.md`) gives each chain its tangent chain's lowest chain,
+regen carries it as `PickChain::tangent` (checked on the page: the
+first of a tangent chain is a chain of the same body, no later than
+its members and its own first), and `PickIndex::tangent_chain` groups
+them. Hovering in `Edges { tangent: true }` highlights the whole chain,
+in `Bodies` the whole body.
+
+The app's highlight (`Doc::highlight`) is `Selection::highlight`: what's
+selected in `Emphasis::Selected` (a body as all of its faces), then
+what's hovered that isn't selected in `Emphasis::Hovered` (a selected
+face hovered keeps its colour, and nothing is drawn twice). It's rebuilt
+only when the model, the target hovered or the selection changes, so
+moving over one face uploads nothing.
+
+The status bar's box tells of the selection when no feature is
+selected: one face as "Face", its surface ("Plane", "Cylinder", "Cone",
+"Sphere", "Torus", "Curved") and its body's name; one edge as "Edge" and
+the body; one body by name and "Body"; several as "N selected" and how
+many faces, edges and bodies. Its hints: "Select" and a double-click
+"Body" with nothing selected, then Shift-click "Add or remove" and
+"Body", before the camera's.
 
 The **highlight** (`render::Highlight`, `Frame::highlight`, keyed by its
 `Arc` and the colours) is the faces' triangles, copied from the mesh
@@ -557,7 +624,7 @@ makes its own wgpu instance, under a lock, so run them one at a time:
 VARDE_SHOTS=$PWD/target/shots cargo test -p varde-app shots_ -- --ignored --test-threads=1
 ```
 
-Scenarios (`shots_01` .. `shots_18`, each at 1280×800, scale 1, light,
+Scenarios (`shots_01` .. `shots_19`, each at 1280×800, scale 1, light,
 the busiest also at scale 2 and dark): `E` with every candidate's regions
 (and one hovered); a region picked before and after its answer; flip,
 symmetric, two sides, a refused distance and a draft the document
@@ -580,7 +647,9 @@ on the origin; the tool rail outside a sketch and in one, with a list
 open, a tool's tooltip, and a list scrolled in a short window; a face
 and an edge of the plate hovered (`shots_18`, light, dark, scale 2, and
 from below; the scenario applies the `Look::Hover` the cursor's move
-sends, `Shooter::hover`). Shots
+sends, `Shooter::hover`); the top selected with an edge hovered, then
+the edge added, then the body double-clicked and marked in Objects
+(`shots_19`, light and dark). Shots
 are for looking (pixels differ by GPU and driver), never compared and
 never committed: a fault a shot finds gets an ordinary headless test of
 the state or layout behind it. A scenario answers each regeneration it

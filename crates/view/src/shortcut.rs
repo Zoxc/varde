@@ -743,6 +743,15 @@ impl Held {
     /// as a reference. The peek key: in the Dimension tool it doesn't peek.
     pub const REFERENCE: Self = Self::PEEK;
 
+    /// Held while clicking the model to add what's clicked to the
+    /// selection or take it out: `Shift`, or `Ctrl` (`Cmd` on macOS) as
+    /// in a sketch.
+    pub const TOGGLE: Self = Self {
+        is_held: |modifiers| modifiers.shift() || modifiers.command(),
+        label: "Shift",
+        mac_label: "Shift",
+    };
+
     /// Held to orbit with the right mouse button, which pans otherwise.
     pub const ORBIT: Self = Self {
         is_held: Modifiers::shift,

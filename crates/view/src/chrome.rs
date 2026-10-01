@@ -167,6 +167,15 @@ pub fn mouse_hint<'a>(button: MouseButton, label: &'a str) -> Hint<'a> {
     hint(icons::mouse(button), label, true)
 }
 
+/// A status bar hint: double-clicking the mouse `button` does `label`.
+pub fn double_hint<'a>(button: MouseButton, label: &'a str) -> Hint<'a> {
+    hint(
+        row![icons::mouse(button), icons::mouse(button)].spacing(1),
+        label,
+        true,
+    )
+}
+
 /// A status bar hint: using the mouse `button` with `key` held does `label`.
 pub fn chord_hint<'a>(key: impl Into<KeyName>, button: MouseButton, label: &'a str) -> Hint<'a> {
     hint(

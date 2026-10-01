@@ -2627,6 +2627,19 @@ into the plate's top, the other standing): it names both, and the
 point picks, which is right for a reference to either boss.
 Transforms will carry the table with the faces, as booleans do.
 
+**Tangent chains.** `Topology::tangent_chains(solid)` gives each chain
+the lowest chain of its tangent chain: chains joined end to end through
+vertices where one runs on smoothly into another, their curves' tangents
+leaving the vertex (towards the control point, or along the chord where
+it's on the end) opposite within 1° (`u·v < 0` and `(u·v)² ≥ cos²1°
+|u|²|v|²`, `cos 1°` a literal). Closed chains have no ends and stay their
+own. The ends at a vertex are compared pairwise (sorted by vertex and
+chain) and joined by a union-find under the lowest index, so it's one
+sequential pass, the same at any thread count, and independent of the
+tolerance (the curves, not the drawn segments). The edge sessions'
+"tangent chain" and the viewport's selection use it through regen's
+`PickChain::tangent`.
+
 **Resolving.** `Topology::face(solid, key, near)`: the regions named by
 `key` (their key, or an alias); `Topology::edge(solid, [a, b], near)`:
 the chains between regions named by `a` and `b`, either way round;

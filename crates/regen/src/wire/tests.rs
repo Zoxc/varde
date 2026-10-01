@@ -977,6 +977,7 @@ fn picked_chains_join_two_faces_of_one_body() {
             chains.push(PickChain {
                 faces: [0, 1],
                 closed: false,
+                tangent: 0,
             });
             change(faces, chains);
         });
@@ -997,6 +998,8 @@ fn picked_chains_join_two_faces_of_one_body() {
             as fn(&mut Vec<PickFace>, &mut Vec<PickChain>),
         |_, chains| chains[0].faces = [0, 2],
         |_, chains| chains[0].faces = [u32::MAX, 1],
+        // A tangent chain past the table.
+        |_, chains| chains[0].tangent = 1,
     ] {
         assert_eq!(refused(&two(change), &two_triangles()), chain);
     }
@@ -1229,6 +1232,7 @@ fn too_many_faces_chains_or_aliases_are_refused_as_the_head_is_decoded() {
         chains.push(PickChain {
             faces: [0, 0],
             closed: false,
+            tangent: 0,
         });
     })
     .encode();
@@ -1236,6 +1240,7 @@ fn too_many_faces_chains_or_aliases_are_refused_as_the_head_is_decoded() {
     let chain = postcard::to_stdvec(&PickChain {
         faces: [0, 0],
         closed: false,
+        tangent: 0,
     })
     .unwrap();
     let Head::Regenerated { faces, .. } = Head::decode(&head).unwrap() else {
@@ -1424,4 +1429,48 @@ fn an_export_round_trips_with_its_meshes_checked() {
             .unwrap()
             .is_empty()
     );
+}
+
+/// A tangent chain's first is a first, of the same body, no later than
+/// its members: anything else is refused.
+#[test]
+fn tangent_chains_must_hang_together() {
+    // Four triangles drawing faces 0 to 3, and two edges drawing two
+    // chains: between faces 0 and 1, and between faces 2 and 3, which
+    // are of another body or not.
+    let mesh = RenderMesh::from_parts(
+        vec![[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0, 0.0]],
+        vec![[0.0, 0.0, 1.0]; 4],
+        vec![0, 1, 2, 1, 3, 2, 0, 1, 2, 1, 3, 2],
+        vec![[1, 2], [0, 1]],
+    )
+    .unwrap();
+    let [a, b, _] = ids();
+    let parts = |tangents: [u32; 2], other: BodyId| {
+        let faces: Vec<PickFace> = [(a, PartKey::StartCap), (a, PartKey::EndCap)]
+            .into_iter()
+            .chain([(other, PartKey::StartCap), (other, PartKey::EndCap)])
+            .map(|(body, part)| {
+                let mut face = face();
+                face.body = body;
+                face.key.part = part;
+                face
+            })
+            .collect();
+        let chain = |faces, tangent| PickChain {
+            faces,
+            closed: false,
+            tangent,
+        };
+        let chains = vec![chain([0, 1], tangents[0]), chain([2, 3], tangents[1])];
+        Picking::from_parts(faces, chains, vec![0, 1, 2, 3], vec![0, 1], &mesh)
+    };
+    assert!(parts([0, 1], a).is_ok());
+    assert!(parts([0, 0], a).is_ok());
+    for tangents in [[1, 1], [1, 0], [0, 2], [2, 2]] {
+        assert_eq!(parts(tangents, a), Err(PickingError::Chain), "{tangents:?}");
+    }
+    assert!(parts([0, 1], b).is_ok());
+    // A tangent chain across two bodies.
+    assert_eq!(parts([0, 0], b), Err(PickingError::Chain));
 }

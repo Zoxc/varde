@@ -232,6 +232,10 @@ impl Varde {
                         id,
                         add: self.command,
                     },
+                    Look::ClickBody { body, .. } => Look::ClickBody {
+                        body,
+                        add: self.command,
+                    },
                     message => message,
                 };
                 // The delete prompt cancelled may free what waited for it.

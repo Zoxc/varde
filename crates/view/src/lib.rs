@@ -26,6 +26,7 @@ mod pick;
 pub mod probe;
 mod projection;
 mod rail;
+mod select;
 mod shortcut;
 mod snap;
 pub mod spline;
@@ -59,8 +60,9 @@ pub use extrude::{
 };
 pub use icons::LOGO_SVG;
 pub use operation_panel::PANEL_BODY;
-pub use pick::{EDGE_REACH, Pick, PickIndex, Picked};
+pub use pick::{EDGE_REACH, Pick, PickIndex, Picked, Picks};
 pub use rail::{RAIL_LIST, RailLook, RailOpen, RailSpot, rail_rows, rail_sets};
+pub use select::{Selected, Selection, SelectionMode};
 pub use shortcut::{Binding, DocumentKeys, Held, document_bindings, pressed, welcome_bindings};
 pub use snap::{Inference, Level, SNAP_TOLERANCE, Snap, Target};
 pub use status::{STATUS_BAR_HEIGHT, STATUS_BAR_ROOM};
@@ -267,10 +269,29 @@ pub enum Look {
     /// ties together.
     HoverItem(Option<Id>),
     /// What the cursor is over in the model shown, outside sketches and
-    /// sessions, or nothing: sent as it changes, see [`PickIndex::pick`].
-    /// The viewport highlights it.
+    /// sessions, or nothing: sent as it changes, and as the camera or the
+    /// model does under a cursor that stays, see [`PickIndex::pick`]. The
+    /// viewport highlights it.
     Hover(Option<Pick>),
-    /// Clears the selection: the sketch's in a sketch, else the Timeline's.
+    /// A click on the model, outside sketches and the extrude being set
+    /// up, on `pick` or on nothing: selects it, or with `add` (`Shift`
+    /// or `Ctrl` held, see [`Held::TOGGLE`]) adds it or takes it out;
+    /// `double` is the second click of a double-click, which selects the
+    /// body. See [`Selection::click`].
+    ClickModel {
+        pick: Option<Pick>,
+        add: bool,
+        double: bool,
+    },
+    /// A body's row in Objects clicked: selects the body alone, or with
+    /// `Ctrl` (`Cmd` on macOS) held, which the app knows, adds it or takes
+    /// it out. See [`Selection::click_body`].
+    ClickBody {
+        body: BodyId,
+        add: bool,
+    },
+    /// Clears the selection: the sketch's in a sketch, else the
+    /// Timeline's and the model's.
     ClearSelection,
     /// Where the drawing tool's next click would snap to, and what to,
     /// with the cursor where it is, or none: the glyph shown by the

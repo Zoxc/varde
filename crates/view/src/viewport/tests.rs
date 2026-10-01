@@ -601,3 +601,216 @@ fn a_middle_click_picks_the_point_to_orbit_and_a_drag_orbits() {
     };
     assert_eq!((*yaw, *pitch), (-10.0 * ORBIT_SPEED, 0.0));
 }
+
+/// The example's plate seen from the top in a viewport of the pick
+/// tests' size, `hovered` held hovered: picking its model.
+struct Plate {
+    index: crate::pick::PickIndex,
+    camera: Camera,
+}
+
+impl Plate {
+    fn new() -> Self {
+        use crate::pick::tests::{camera, plate};
+        Plate {
+            index: plate(),
+            camera: camera(
+                varde_render::View::Top,
+                varde_render::Projection::Orthographic,
+            ),
+        }
+    }
+
+    fn bounds() -> Rectangle {
+        let [width, height] = crate::pick::tests::SIZE;
+        Rectangle::new(Point::ORIGIN, iced::Size::new(width, height))
+    }
+
+    /// Where the world point `at` shows.
+    fn at(&self, at: glam::DVec3) -> Point {
+        let p = crate::pick::tests::shown(&self.camera, at);
+        Point::new(p.x as f32, p.y as f32)
+    }
+
+    /// The widget's program, picking with `hovered` held hovered.
+    fn program(&self, camera: &Camera, hovered: Option<Picked>) -> Program<'_> {
+        let mesh = self.index.mesh().clone();
+        let mut program = program(
+            &mesh,
+            &Arc::default(),
+            camera,
+            None,
+            crate::theme::Mode::Light.palette(),
+            None,
+            None,
+        );
+        program.picking = Some(ModelPicking {
+            index: &self.index,
+            hovered,
+            picks: Picks::FacesAndEdges,
+        });
+        program
+    }
+
+    /// The messages the widget with `state` sends for `events` with the
+    /// cursor at `cursor`.
+    fn send(
+        &self,
+        state: &mut Interaction,
+        camera: &Camera,
+        hovered: Option<Picked>,
+        events: &[Event],
+        cursor: Point,
+    ) -> Vec<Message> {
+        use iced::widget::shader::Program as _;
+        let program = self.program(camera, hovered);
+        let cursor = mouse::Cursor::Available(cursor);
+        events
+            .iter()
+            .filter_map(|event| program.update(state, event, Self::bounds(), cursor))
+            .filter_map(|action| action.into_inner().0)
+            .collect()
+    }
+}
+
+fn left(pressed: bool) -> Event {
+    Event::Mouse(if pressed {
+        mouse::Event::ButtonPressed(mouse::Button::Left)
+    } else {
+        mouse::Event::ButtonReleased(mouse::Button::Left)
+    })
+}
+
+fn redraw() -> Event {
+    Event::Window(iced::window::Event::RedrawRequested(
+        iced::time::Instant::now(),
+    ))
+}
+
+#[test]
+fn a_left_click_on_the_model_selects_and_a_drag_still_orbits() {
+    let plate = Plate::new();
+    let at = plate.at(glam::DVec3::new(20.0, 5.0, 10.0));
+    let mut state = Interaction::default();
+    let camera = plate.camera;
+    let sent = plate.send(&mut state, &camera, None, &[left(true), left(false)], at);
+    let [
+        Message::Look(Look::ClickModel {
+            pick: Some(pick),
+            add: false,
+            double: false,
+        }),
+    ] = sent[..]
+    else {
+        panic!("{sent:?}");
+    };
+    assert!(matches!(pick.target, Picked::Face(_)));
+    // Soon after, there again: a double-click.
+    let sent = plate.send(&mut state, &camera, None, &[left(true), left(false)], at);
+    assert!(
+        matches!(
+            sent[..],
+            [Message::Look(Look::ClickModel { double: true, .. })]
+        ),
+        "{sent:?}"
+    );
+    // With Shift or Ctrl held, it adds or takes out.
+    for modifiers in [keyboard::Modifiers::SHIFT, keyboard::Modifiers::CTRL] {
+        let held = Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers));
+        let mut state = Interaction::default();
+        let sent = plate.send(
+            &mut state,
+            &camera,
+            None,
+            &[held, left(true), left(false)],
+            at,
+        );
+        assert!(
+            matches!(
+                sent[..],
+                [Message::Look(Look::ClickModel { add: true, .. })]
+            ),
+            "{sent:?}"
+        );
+    }
+    // Off the model: a click on nothing.
+    let off = plate.at(glam::DVec3::new(0.0, 26.0, 10.0));
+    let sent = plate.send(&mut state, &camera, None, &[left(true), left(false)], off);
+    assert!(
+        matches!(
+            sent[..],
+            [Message::Look(Look::ClickModel { pick: None, .. })]
+        ),
+        "{sent:?}"
+    );
+    // Dragged past the slop, it orbits and selects nothing.
+    let mut state = Interaction::default();
+    let moved = Event::Mouse(mouse::Event::CursorMoved {
+        position: Point::new(at.x + 20.0, at.y),
+    });
+    let sent = plate.send(
+        &mut state,
+        &camera,
+        None,
+        &[left(true), moved, left(false)],
+        at,
+    );
+    assert!(
+        matches!(sent[..], [Message::Look(Look::Orbit { .. })]),
+        "{sent:?}"
+    );
+}
+
+#[test]
+fn the_hover_is_worked_out_again_as_the_camera_moves() {
+    let plate = Plate::new();
+    let at = plate.at(glam::DVec3::new(20.0, 5.0, 10.0));
+    let mut state = Interaction::default();
+    let camera = plate.camera;
+    let sent = plate.send(&mut state, &camera, None, &[redraw()], at);
+    let [Message::Look(Look::Hover(Some(pick)))] = sent[..] else {
+        panic!("{sent:?}");
+    };
+    // Held hovered, a frame with nothing changed says nothing, nor does
+    // one with the cursor elsewhere on the same face.
+    let hovered = Some(pick.target);
+    let sent = plate.send(&mut state, &camera, hovered, &[redraw(), redraw()], at);
+    assert!(sent.is_empty(), "{sent:?}");
+    // The camera panned away under the cursor: nothing there now.
+    let mut panned = camera;
+    panned.pan(0.0, 2.0);
+    let sent = plate.send(&mut state, &panned, hovered, &[redraw()], at);
+    assert!(
+        matches!(sent[..], [Message::Look(Look::Hover(None))]),
+        "{sent:?}"
+    );
+    let sent = plate.send(&mut state, &panned, None, &[redraw()], at);
+    assert!(sent.is_empty(), "{sent:?}");
+    // While the camera's dragged, nothing.
+    let mut state = Interaction::default();
+    let press = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right));
+    let sent = plate.send(&mut state, &camera, None, &[press, redraw()], at);
+    assert!(sent.is_empty(), "{sent:?}");
+}
+
+#[test]
+fn the_cursor_points_over_what_a_click_selects() {
+    use iced::widget::shader::Program as _;
+    let plate = Plate::new();
+    let at = plate.at(glam::DVec3::new(20.0, 5.0, 10.0));
+    let state = Interaction::default();
+    let cursor = mouse::Cursor::Available(at);
+    let hovered = Some(Picked::Face(0));
+    let interaction = |hovered| {
+        let program = plate.program(&plate.camera, hovered);
+        program.mouse_interaction(&state, Plate::bounds(), cursor)
+    };
+    assert_eq!(interaction(hovered), mouse::Interaction::Pointer);
+    assert_eq!(interaction(None), mouse::Interaction::default());
+    let program = plate.program(&plate.camera, hovered);
+    let outside = mouse::Cursor::Available(Point::new(-5.0, -5.0));
+    assert_eq!(
+        program.mouse_interaction(&state, Plate::bounds(), outside),
+        mouse::Interaction::default()
+    );
+}

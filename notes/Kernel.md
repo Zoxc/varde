@@ -356,7 +356,8 @@ faces merge (flush caps joined, or a face dropped as flush in a union or
 intersection), their keys become **aliases** of the face that took them
 in. `Topology::face`, `edge` and `corner` resolve keys to regions, chains
 and corners, choosing among several candidates of one name by distance to
-a point.
+a point. `Topology::tangent_chains` groups the chains that run on into
+each other smoothly (tangents within 1°), what "tangent chain" selects.
 
 ## Determinism
 
