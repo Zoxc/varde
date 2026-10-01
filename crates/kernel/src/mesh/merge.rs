@@ -7,9 +7,10 @@
 //! draws a line where they meet. An extrude makes a face per profile
 //! segment, so two collinear lines are two faces of one plane, and a
 //! circle's arcs four of one cylinder (one key already). [`Mesh::merge_faces`]
-//! joins them: faces are one where they share an edge and each one's
-//! patches there lie on the other's surface within `small`, an eighth of
-//! the resolution.
+//! joins them: faces are one where they share an edge and the patches
+//! there lie on each other's surface within `small`, an eighth of the
+//! resolution (planes both ways; quadrics one way, since a short arc's
+//! quadric rounds off across a long arc, see below).
 //!
 //! Only names change. Each set takes the name of its lowest face (a
 //! member already of its key, such as another arc of the same circle,
@@ -22,9 +23,18 @@
 //! changes and nothing a boolean decides by tags or face indices does.
 //! Faces are drawn, picked and referred to by key, so a set is one face
 //! for all of those; several entries can carry one name, so faces are
-//! counted by key or region, never by entry. A set merges only if every
-//! patch of every member lies on the lowest one's surface within
-//! `small`, so a chain of near-equal surfaces can't drift.
+//! counted by key or region, never by entry.
+//!
+//! Each set is validated once against one member's surface: every patch
+//! of every other member must lie on it within `small`, so a chain of
+//! near-equal surfaces can't drift. That member is the widest (its
+//! triangles' box), not the lowest: a quadric is written in its own
+//! face's coordinates, and a short arc's (an angle of a few thousandths)
+//! met across the circle rounds off by many times `small` on a large
+//! circle or at a fine tolerance, which left a circle drawn as separate
+//! arcs as many faces. A member that fails is left as it was, and the
+//! rest join again across the edges between them, so faces that met
+//! only through it stay apart.
 
 use glam::DVec3;
 
@@ -45,21 +55,14 @@ impl Mesh {
     /// [module](self) docs), `small` being `resolution / 8`. Faces
     /// claiming no surface never merge on geometry: a copy claiming none
     /// of a face that merged (the copies a boolean makes) takes the set's
-    /// name and aliases too. Charged a unit a patch.
+    /// name and aliases too. Charged a unit a patch, and another where a
+    /// member is left out and the rest join again.
     ///
     /// Only names and aliases change: a checked mesh stays one.
     pub(crate) fn merge_faces(self, resolution: f64, work: &mut Work) -> Result<Mesh, KernelError> {
         work.spend(self.tris.len())?;
         let small = resolution / 8.0;
         let n = self.faces.len();
-        let mut root: Vec<u32> = (0..n as u32).collect();
-        fn find(root: &mut [u32], mut f: u32) -> u32 {
-            while root[f as usize] != f {
-                root[f as usize] = root[root[f as usize] as usize];
-                f = root[f as usize];
-            }
-            f
-        }
         let unit = self
             .faces
             .iter()
@@ -69,74 +72,141 @@ impl Mesh {
             })
             .collect::<Vec<_>>();
         // Candidates, edge by edge in halfedge order.
-        for h in 0..(self.tris.len() * 3) as u32 {
-            let p = self.halfedge(h).pair;
-            if p < h {
-                continue;
-            }
-            let (t, s) = (h / 3, p / 3);
-            let (f, g) = (self.tris[t as usize].face, self.tris[s as usize].face);
-            let (rf, rg) = (find(&mut root, f), find(&mut root, g));
-            if rf == rg || !self.same_surface(h, p, &unit, small) {
-                continue;
-            }
-            root[rf.max(rg) as usize] = rf.min(rg);
-        }
-        let root: Vec<u32> = (0..n as u32).map(|f| find(&mut root, f)).collect();
+        let all = vec![true; n];
+        let root = self.join(&all, None, &unit, small);
         if root.iter().enumerate().all(|(f, &r)| f as u32 == r) {
             return Ok(self);
         }
-        // Each set validated once: every patch of every other member on
-        // the root's surface.
-        let moved: Vec<u32> = (0..self.tris.len() as u32)
+        // Each set validated once: every patch of every member but one on
+        // that one's surface. Not the root's but the widest member's: a
+        // quadric is written in its own face's coordinates (an arc's wall
+        // in the arc's), and met far from them it rounds off by more than
+        // `small` (a short arc's, met across the circle).
+        let mut boxes = vec![(DVec3::INFINITY, DVec3::NEG_INFINITY); n];
+        for tri in &self.tris {
+            let (lo, hi) = &mut boxes[tri.face as usize];
+            for h in tri.halfedges {
+                let x = self.verts[h.start as usize];
+                *lo = lo.min(x);
+                *hi = hi.max(x);
+            }
+        }
+        let wide = |f: usize| {
+            let (lo, hi) = boxes[f];
+            if lo.cmple(hi).all() {
+                (hi - lo).length()
+            } else {
+                0.0
+            }
+        };
+        let mut reference: Vec<u32> = (0..n as u32).collect();
+        for (f, &r) in root.iter().enumerate() {
+            if wide(f) > wide(reference[r as usize] as usize) {
+                reference[r as usize] = f as u32;
+            }
+        }
+        let checked: Vec<u32> = (0..self.tris.len() as u32)
             .filter(|&t| {
                 let f = self.tris[t as usize].face;
-                root[f as usize] != f
+                reference[root[f as usize] as usize] != f
             })
             .collect();
-        let on = par_map(&moved, |&t| {
+        let on = par_map(&checked, |&t| {
             let r = root[self.tris[t as usize].face as usize];
             on_surface(
                 &self.patch(t as usize),
-                &self.faces[r as usize].surface,
+                &self.faces[reference[r as usize] as usize].surface,
                 small,
             )
         });
+        // A member off it stays as it is; the rest join again, so those
+        // joined only through it stay apart.
         let mut holds = vec![true; n];
-        for (&t, on) in moved.iter().zip(on) {
+        for (&t, on) in checked.iter().zip(on) {
             if !on {
-                holds[root[self.tris[t as usize].face as usize] as usize] = false;
+                holds[self.tris[t as usize].face as usize] = false;
             }
         }
-        let into: Vec<u32> = (0..n)
-            .map(|f| {
-                let r = root[f];
-                if holds[r as usize] { r } else { f as u32 }
-            })
-            .collect();
+        let into = if holds.iter().all(|&h| h) {
+            root
+        } else {
+            work.spend(self.tris.len())?;
+            self.join(&holds, Some(&root), &unit, small)
+        };
         if into.iter().enumerate().all(|(f, &r)| f as u32 == r) {
             return Ok(self);
         }
         Ok(self.rename(&into))
     }
 
+    /// The faces joined into sets across the edges between faces on one
+    /// surface ([`Self::same_surface`]), each face mapped to its set's
+    /// lowest face: only faces with `with[f]`, and, given `within`, only
+    /// faces it maps to the same set. Halfedges in order, union–find with
+    /// the lower index as root.
+    fn join(
+        &self,
+        with: &[bool],
+        within: Option<&[u32]>,
+        unit: &[Option<DVec3>],
+        small: f64,
+    ) -> Vec<u32> {
+        fn find(root: &mut [u32], mut f: u32) -> u32 {
+            while root[f as usize] != f {
+                root[f as usize] = root[root[f as usize] as usize];
+                f = root[f as usize];
+            }
+            f
+        }
+        let mut root: Vec<u32> = (0..with.len() as u32).collect();
+        for h in 0..(self.tris.len() * 3) as u32 {
+            let p = self.halfedge(h).pair;
+            if p < h {
+                continue;
+            }
+            let (f, g) = (
+                self.tris[h as usize / 3].face,
+                self.tris[p as usize / 3].face,
+            );
+            if !with[f as usize]
+                || !with[g as usize]
+                || within.is_some_and(|set| set[f as usize] != set[g as usize])
+            {
+                continue;
+            }
+            let (rf, rg) = (find(&mut root, f), find(&mut root, g));
+            if rf == rg || !self.same_surface(h, p, unit, small) {
+                continue;
+            }
+            root[rf.max(rg) as usize] = rf.min(rg);
+        }
+        (0..with.len() as u32).map(|f| find(&mut root, f)).collect()
+    }
+
     /// Whether the faces either side of halfedge `h` (its pair `p`) are
-    /// on one surface there: both planes, their unit normals (`unit`)
-    /// alike and each triangle on the other's plane, or both quadrics,
-    /// the two patches facing alike at the edge's middle and each on the
-    /// other's quadric; within `small`.
+    /// on one surface there, within `small`: both planes, their unit
+    /// normals (`unit`) alike and each triangle on the other's plane, or
+    /// both quadrics, the two patches facing alike at the edge's middle
+    /// and one of them on the other's quadric. One is enough there (the
+    /// set is validated after): a quadric is written in its own face's
+    /// coordinates, and a short arc's, met across the long arc next to
+    /// it, rounds off by more than `small`, while the long arc's holds
+    /// the short one's triangle.
     fn same_surface(&self, h: u32, p: u32, unit: &[Option<DVec3>], small: f64) -> bool {
         let (t, s) = (h as usize / 3, p as usize / 3);
         let (f, g) = (self.tris[t].face as usize, self.tris[s].face as usize);
         let (sf, sg) = (self.faces[f].surface, self.faces[g].surface);
         let (pt, ps) = (self.patch(t), self.patch(s));
-        let crossed = || on_surface(&pt, &sg, small) && on_surface(&ps, &sf, small);
+        let (on_g, on_f) = (
+            || on_surface(&pt, &sg, small),
+            || on_surface(&ps, &sf, small),
+        );
         match (sf, sg) {
             (Surface::Plane { .. }, Surface::Plane { .. }) => {
                 let (Some(nf), Some(ng)) = (unit[f], unit[g]) else {
                     return false;
                 };
-                nf.dot(ng) > SAME_NORMAL && crossed()
+                nf.dot(ng) > SAME_NORMAL && on_g() && on_f()
             }
             (Surface::Quadric(_), Surface::Quadric(_)) => {
                 // The middle of edge `h % 3` of `t`, and of `p % 3` of `s`.
@@ -148,7 +218,7 @@ impl Mesh {
                 };
                 let nt = pt.normal(middle(h as usize % 3));
                 let ns = ps.normal(middle(p as usize % 3));
-                nt.dot(ns) > 0.0 && crossed()
+                nt.dot(ns) > 0.0 && (on_g() || on_f())
             }
             _ => false,
         }

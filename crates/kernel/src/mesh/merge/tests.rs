@@ -151,17 +151,18 @@ fn planes_two_bars_apart_stay_apart() {
 }
 
 #[test]
-fn a_chain_drifting_off_the_first_surface_is_not_merged() {
+fn a_chain_drifting_off_the_first_surface_merges_only_what_stays_on_it() {
     // Each span's tag lies within the bar of the next one's patches, so
     // neighbours pass, but the third span's patches are 1.5 bars off the
-    // first one's plane: none of the three merge. Two spans of the ramp
-    // do.
+    // first one's plane (the spans are alike, so the first is the one
+    // measured against): the first two merge, the third stays apart.
     let h = 0.6 * small();
     let tags = [0.5 * h, 1.5 * h, 2.5 * h];
     let mesh = ramp(&[0.0, h, 2.0 * h, 3.0 * h], &tags, split(2));
-    assert_eq!(merged(mesh.clone()), mesh);
-    let two = ramp(&[0.0, h, 2.0 * h], &tags[..2], split(2));
-    assert_eq!(named(&merged(two), split(10)).len(), 2);
+    let after = merged(mesh);
+    assert_eq!(named(&after, split(10)).len(), 2);
+    assert_eq!(named(&after, split(12)).len(), 1);
+    assert_eq!(after.face_aliases(named(&after, split(12))[0]).count(), 0);
 }
 
 #[test]

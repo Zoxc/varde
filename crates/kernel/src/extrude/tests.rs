@@ -1459,3 +1459,52 @@ fn collinear_lines_walls_are_one_face() {
         );
     }
 }
+
+#[test]
+fn a_circle_of_separate_arcs_is_one_face_at_any_size() {
+    // A circle drawn as separate arcs (each its own curve), the first one
+    // short. Each arc's wall is written in the arc's own coordinates, so
+    // the short one's quadric, met far from its arc, rounds off by more
+    // than the merge's bar: measured against it, the circle's walls stayed
+    // apart. Measured against the largest arc's, they are one face, at
+    // the finest tolerance and on a large circle too.
+    for (r, fit) in [(1.0, 1e-3), (300.0, Tolerance::MIN_FIT), (1e3, 1e-3)] {
+        let tol = Tolerance::new(fit).unwrap();
+        let angles = [0.0, 2e-3, 1.0, 2.5, 4.0, 5.2];
+        let at = |a: f64| DVec2::new(a.cos(), a.sin()) * r;
+        let n = angles.len();
+        let lp = Loop {
+            segments: (0..n)
+                .map(|i| {
+                    arc(
+                        DVec2::ZERO,
+                        at(angles[i]),
+                        at(angles[(i + 1) % n]),
+                        i as u64,
+                    )
+                })
+                .collect(),
+        };
+        let solid = extrude(
+            &profile(vec![lp]),
+            &Frame::XY,
+            0.0,
+            r,
+            9,
+            &tol,
+            &Budget::DEFAULT,
+        )
+        .unwrap();
+        let walls: std::collections::BTreeSet<_> = solid
+            .mesh()
+            .faces()
+            .iter()
+            .filter(|f| matches!(f.name.part, FacePart::Side { .. }))
+            .map(|f| f.name.key())
+            .collect();
+        assert_eq!(walls.len(), 1, "radius {r}, fit {fit}: {walls:?}");
+        for f in 2..solid.mesh().faces().len() as u32 {
+            assert_eq!(solid.mesh().face_aliases(f).count(), n - 1, "radius {r}");
+        }
+    }
+}

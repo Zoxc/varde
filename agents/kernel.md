@@ -679,6 +679,7 @@ platforms either.
 | `mesh/orient.rs` | invariant 5: shells, their volume signs, their nesting by rays |
 | `mesh/refine.rs` | red–green refinement: leaves, pieces, the split rules |
 | `mesh/repair.rs` | `Mesh::repair`: test, split what fails, test again |
+| `mesh/merge.rs` | `Mesh::merge_faces`: adjacent faces on one plane or quadric named as one, their aliases |
 | `mesh/primitive.rs` | `Mesh::cuboid`, `Mesh::cylinder` |
 | `mesh/tests.rs` and `mesh/*/tests.rs` | hand-built solids, one bad mesh per rule, determinism |
 
@@ -734,13 +735,23 @@ surface: adjacent faces on the same plane or quadric carry one key.
 repair, extrude after its repair. Two faces are one where they share an
 edge and both are planes (unit normals' dot above `1 − 1e-12`) or both
 quadrics (the two patches' normals at the edge's middle facing alike),
-each of the two triangles at the edge lying on the other face's surface
-within `small` (`resolution / 8`, `on_surface`: a plane's six control
-points, a quadric's 15 samples). Halfedges are taken in order, sets
-joined by union–find with the lower index as root. Each set is then
-validated once: every patch of every member but the root on the root's
-surface within `small`, or the set isn't merged at all, so a chain of
-near-equal surfaces can't drift. A merged set takes the root's name (a
+the triangles at the edge lying on the other face's surface within
+`small` (`resolution / 8`, `on_surface`: a plane's six control points, a
+quadric's 15 samples): for planes each on the other's, for quadrics one
+on the other's. Halfedges are taken in order, sets joined by union–find
+with the lower index as root. Each set is then validated once: every
+patch of every member but one on that one's surface within `small`, so
+a chain of near-equal surfaces can't drift. That one is the widest
+member (its vertices' box), not the root: a quadric is written in its
+own face's coordinates (`conic_cylinder` round the arc), and a short
+arc's, met across the circle, rounds off by many times `small` (a circle
+of radius 300 drawn as separate arcs, one of them 2e-3 of a turn, at the
+finest tolerance: `3e-8` off at a bar of `1.25e-9`), which also fails
+the pair test the other way round, so a circle of separate arcs stayed
+as many faces. A member off the widest one's surface stays as it was,
+and the rest join again (a second unit a patch) across the edges between
+them, so faces that met only through it stay apart. A merged set takes
+the root's name (a
 member already of its key, another arc of the same circle, keeps its own
 name, which numbers the piece), and every member gets the set's aliases:
 the members' keys and their aliases (`Mesh::with_aliases` drops a face's
@@ -758,9 +769,13 @@ changes, and a set is one face wherever keys count. Several entries of
 `faces` can so carry one name: whatever counts faces (tessellation,
 topology's regions, picking) counts keys or regions, never entries.
 Faces a real step
-apart stay two (box tops `1e-3` apart, radii 1 and 1.001 stacked). A
-unit of work a patch, the patch tests a parallel map over the members'
-triangles in order: deterministic.
+apart stay two (box tops `1e-3` apart, radii 1 and 1.001 stacked; tops
+meeting at a crease of `2e-7` a unit, which leaves them `2e-7` apart
+across a unit face, draw the crease's line). Faces meeting only at a
+vertex don't merge (a U's two prongs' tops), and flush stacks on turned
+frames `3e4` from the origin merge as upright ones do. A unit of work a
+patch, the patch tests a parallel map over the members' triangles in
+order: deterministic.
 
 The fields are private to `mesh` (its child modules, such as refinement,
 edit them directly). `Mesh::from_parts` takes the four tables unchecked.
@@ -2158,6 +2173,7 @@ elsewhere (see "Cutting curved faces").
 | `boolean/tests.rs` | boxes in every flush, edge-on and vertex-on configuration, tori, determinism |
 | `boolean/curved_tests.rs` | cylinders and boxes (exact), crossing cylinders, a free surface, a saddle, extrudes, chains, merging, random bars, walls over arcs with level ends |
 | `boolean/curved_tests/flush_seams.rs` | flush unions with curved rims in either order: bosses in and on plates, over holes and edges, overlapping, a flange at a shaft's foot, a slot, at millimetre scale and on a turned frame, a chain of flush joins, caps a hair apart, bosses on a rounded corner |
+| `boolean/curved_tests/one_face.rs` | faces on one surface after booleans: tops at a crease either side of the bar, flush stacks on turned frames far from the origin, chains of joins and cuts with every operand's names resolving, faces meeting only at a corner |
 | `boolean/seeded_tests.rs` | the seeded random suite: related pairs, parts built in chains of twenty, turned solids, near tangencies, pins and coaxial cylinders, flush bosses, bosses sunk through drilled plates |
 
 ### The primitives
@@ -5936,8 +5952,9 @@ parameter, or a split outside the patch bounds),
   the pass changes names and aliases only: each member keeps its entry
   and surface, takes the root's name unless it already has its key, and
   gets the set's aliases on itself (a later boolean may cut the root
-  away and keep a member). Validation checks the members but not the
-  root, whose tag is its own. The pass runs on the finished mesh, not on
+  away and keep a member). Validation measures against the widest
+  member's surface, not the root's, and leaves out only the members off
+  it, not the whole set (see "Structure"). The pass runs on the finished mesh, not on
   the clean-up's soup, so aliases go straight onto the mesh rather than
   through `Soup::absorb`. The clean-up's seam merge (`merge_joined`)
   stays: the Delaunay flips after it flip only within one face index.
