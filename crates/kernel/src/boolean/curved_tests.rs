@@ -2465,6 +2465,24 @@ fn a_cap_folding_when_refined_is_refused() {
     assert!((i - 1.75423).abs() <= within, "{i}");
 }
 
+/// The circle round `center` of radius `r` in `arcs` arcs, the first
+/// from the angle `start`.
+fn arcs_circle(center: DVec2, r: f64, arcs: usize, start: f64) -> Loop {
+    let points: Vec<DVec2> = (0..arcs)
+        .map(|i| {
+            let t = start + std::f64::consts::TAU * i as f64 / arcs as f64;
+            center + DVec2::new(t.cos(), t.sin()) * r
+        })
+        .collect();
+    Loop {
+        segments: (0..arcs)
+            .map(|i| {
+                crate::profile::tests::arc(center, points[i], points[(i + 1) % arcs], i as u64)
+            })
+            .collect(),
+    }
+}
+
 /// A cylinder of radius `r` on XY from 0 to 5, its circle in `arcs` arcs
 /// from the angle `start`, and a box whose face is the plane `n·(x − c) =
 /// s` through `c` = (0, 0, 2.5), `n` tilted `alpha` up from the
@@ -2479,20 +2497,7 @@ fn cylinder_and_tilted_box(
     phi: f64,
     s: f64,
 ) -> (Solid, Solid, f64) {
-    let points: Vec<DVec2> = (0..arcs)
-        .map(|i| {
-            let t = start + std::f64::consts::TAU * i as f64 / arcs as f64;
-            DVec2::new(t.cos(), t.sin()) * r
-        })
-        .collect();
-    let circle = Loop {
-        segments: (0..arcs)
-            .map(|i| {
-                crate::profile::tests::arc(DVec2::ZERO, points[i], points[(i + 1) % arcs], i as u64)
-            })
-            .collect(),
-    };
-    let a = extruded(vec![circle], 0.0, 5.0, 9);
+    let a = extruded(vec![arcs_circle(DVec2::ZERO, r, arcs, start)], 0.0, 5.0, 9);
     let m = DVec2::new(phi.cos(), phi.sin());
     let n = DVec3::new(m.x * alpha.cos(), m.y * alpha.cos(), alpha.sin());
     let e1 = DVec3::new(-m.y, m.x, 0.0);
@@ -2654,4 +2659,111 @@ fn slanted_cuts_round_a_boss_silhouette_are_exact() {
         }
     }
     assert_eq!(done, 48);
+}
+
+#[test]
+fn nicks_by_a_crossing_cylinder_keep_their_checked_fallbacks() {
+    // An upright cylinder (z 0..5) nicked by a level one whose axis passes
+    // a few `1e-5` short of touching it: the cut is a small loop round
+    // the near-contact, between two curved faces. In the differences,
+    // where the second operand's faces are turned over, fitting the
+    // traced cut fails on short arcs of it, and they fall back to the
+    // conic along their end tangents, checked against the true cut. These
+    // pass (on both surfaces within the resolution at each sample), and
+    // the results are right to `1e-9` by the closed-form volume, the
+    // integral across of the two cylinders' chords. Seen fuzzing crossing
+    // cylinders near tangency: no fallback the check kept was more than
+    // half the fit tolerance off the true cut, either way.
+    // (radius, arcs, start; radius, arcs, start; axis offset, height,
+    // turn about z)
+    let cases = [
+        (
+            2.9353162683929117,
+            3,
+            0.0,
+            1.4612062815086588,
+            3,
+            0.07775758968323955,
+            4.396493196738887,
+            2.026010514718798,
+            0.0,
+        ),
+        (
+            2.576506370630734,
+            5,
+            5.809234706107411,
+            2.281975447942656,
+            5,
+            2.2764929082702388,
+            4.858456053509683,
+            2.5564323366386157,
+            5.877674653880665,
+        ),
+        (
+            0.8209315858225135,
+            6,
+            0.0,
+            1.2262911563217929,
+            8,
+            0.0,
+            2.0471406489857245,
+            2.5254436350503964,
+            3.8358433064912223,
+        ),
+    ];
+    let mut ok = 0;
+    for (big, na, start, rho, nb, sb, c, zc, turn) in cases {
+        let a = extruded(vec![arcs_circle(DVec2::ZERO, big, na, start)], 0.0, 5.0, 9);
+        let frame = Frame {
+            origin: DVec3::ZERO,
+            x: DQuat::from_rotation_z(turn) * DVec3::Y,
+            y: DVec3::Z,
+        };
+        let len = big + 5.0;
+        let b = extruded_on(
+            vec![arcs_circle(DVec2::new(c, zc), rho, nb, sb)],
+            frame,
+            -len,
+            len,
+            30,
+        );
+        // Across the level cylinder's axis, at `y` from the upright one's
+        // axis, the two chords' lengths multiply; by `y = lo + (hi −
+        // lo)(1 − cos t)/2`, which takes the square roots at the ends, and
+        // Simpson's rule.
+        let (lo, hi) = ((c - rho).max(-big), (c + rho).min(big));
+        let f = |t: f64| {
+            let y = lo + (hi - lo) * (1.0 - t.cos()) / 2.0;
+            let chords = 4.0
+                * (big * big - y * y).max(0.0).sqrt()
+                * (rho * rho - (y - c) * (y - c)).max(0.0).sqrt();
+            chords * (hi - lo) * t.sin() / 2.0
+        };
+        let panels = 20000;
+        let h = PI / panels as f64;
+        let both: f64 = (0..panels)
+            .map(|k| {
+                let t = k as f64 * h;
+                h / 6.0 * (f(t) + 4.0 * f(t + h / 2.0) + f(t + h))
+            })
+            .sum();
+        let (va, vb) = (a.volume(), b.volume());
+        for (x, y, want) in [(&a, &b, va - both), (&b, &a, vb - both)] {
+            let before = super::chain::REFUSED.get();
+            let got = boolean(x, y, Op::Difference, &TOL, &Budget::DEFAULT);
+            assert_eq!(
+                super::chain::REFUSED.get(),
+                before,
+                "{big}: a chain refused"
+            );
+            if let Ok(result) = got {
+                let got = result.volume();
+                assert!((got - want).abs() <= 1e-9, "{big}: {got} not {want}");
+                ok += 1;
+            }
+        }
+    }
+    // Four of the six go through today, the others are refused later on
+    // (`Invalid`), their chains kept.
+    assert!(ok >= 4, "{ok}");
 }

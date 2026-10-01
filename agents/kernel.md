@@ -2747,7 +2747,9 @@ a cut along the domain's side whose inner vertices lie on it, moved
 inwards alike, and one of whose ends lies on the next side a few ulps
 in, gave the diagonal from that end, then a triangle with all three
 corners on the cut in the patch, of curved sides no flip takes away,
-which folds: stacked coaxial cylinders on turned frames),
+which folds: stacked coaxial cylinders on turned frames; only with
+curved sides, since among straight ones the clean-up flips the pocket
+away and the rule cost chained turned grid boxes a step),
 a zero-area ear with no vertex on it, then any (with curved sides a
 proper ear whose curved corners aren't open ranks between the proper
 and the zero-area ones: see "Cutting curved faces"). No diagonal joins
@@ -3174,7 +3176,13 @@ tangent on a seam between two arcs, both ways round, no patch claiming
 no surface; a plane half a radian off a boss's rulings at 24 offsets
 across it, all 48 intersections and differences exact (a test counter
 of plane–quadric chains not exact stays 0) and within `1e-9` of their
-closed-form volumes. Unit tests:
+closed-form volumes. An upright cylinder nicked by a level one a few
+`1e-5` short of touching it: in the differences the short arcs of the
+cut loop fall back to the conic along their end tangents (fitting fails
+there with the second operand's faces turned over), which the check
+keeps (none refused, by the test counter), each result through within
+`1e-9` of the closed-form volume (the two chords' product integrated
+across) or refused later. Unit tests:
 exact ellipse arcs of a tilted plane through a cylinder, crossings
 solved exactly on a plane and a cylinder, crossings only placed going to
 their root on a tilted cylinder's patch from `1e-3` and `0.05` off (a
@@ -4565,3 +4573,27 @@ parameter, or a split outside the patch bounds),
   In app-like cuts (a plane half a radian off a boss's rulings, 24
   offsets) the plane–cylinder chains not exact go from about 40 of 48
   operations to none.
+  Bug hunt, release: grazing planes, seeds 1 to 8 at fits `1e-3`,
+  `1e-4` and `1e-5` (6 400 operations at each), checked by volume, by the
+  identities and by the result's extent along the axis against the true
+  sliver's (sampled along every patch side): none wrong. Against the
+  kernel before the change, at `1e-3` seeds 5 to 8 and `1e-4` seeds 1 to
+  4, 26 and 34 `Ok`s became `Inconsistent` (volume errors before from
+  `1e-12` to `1.1e-5`), among them both of the old kernel's wrong `Ok`s
+  there (a sliver's tip dropped, its extent short by 0.5 and 2.2). Every
+  plane–cylinder chain was measured against the true section both ways
+  (where the plane is at least `1e-5` off the rulings): exact arcs,
+  either guide, within half the fit. The other arc can lie partly off
+  the patch (its middle within the `−0.25` the test allows, its end
+  `0.36` out), seen only where a plane touches along a ruling and the
+  arc's end itself is off the patch, the operation refused. Crossing
+  cylinders near tangency (square axes, the gap or overlap `0` to
+  `1e-3` of the radius, at fits `1e-3` and `1e-4`, 900 cases, the half
+  not moved measured): each chain kept from a fallback was within half
+  the fit of the true cut loop, both ways; all of them were in
+  differences. Boxes nearly parallel to the caps: none wrong but slivers under
+  the resolution, as before. 1 and 8 threads give the same bits on all
+  three. Parts built in chains (seed 5, 15 chains): 10 of 1 200
+  operations refused that were right before (their first chords between
+  cylinders `3e-3` to `3e-2` off the cut, which the rounds used to halve
+  onto it).

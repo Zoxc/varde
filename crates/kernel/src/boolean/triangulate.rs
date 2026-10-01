@@ -8,8 +8,8 @@
 //! always completes whenever the loops can be triangulated at all: it
 //! first cuts off ears with two corners at one position (so loops of zero
 //! width come apart into triangles of zero width), then proper triangles
-//! with nothing in or on them (nor a rounding off the diagonal they
-//! leave), then ears of zero area, then any ear, and
+//! with nothing in or on them (nor, with curved sides, a rounding off
+//! the diagonal they leave), then ears of zero area, then any ear, and
 //! leaves degenerate triangles to the clean-up after it. It never adds a
 //! diagonal between two vertices on one side of the domain triangle (they
 //! would lie along it, and the patch beside that side could add the same
@@ -757,8 +757,9 @@ fn clip(
 
 /// How good the ear at a vertex is: level 0 one with two corners at one
 /// position (cutting it off takes out a zero-length side, as flush faces
-/// make them), 1 a proper triangle with no other vertex in or on it or a
-/// rounding off its diagonal (the distance [`thin`] takes as none), 2 a
+/// make them), 1 a proper triangle with no other vertex in or on it or,
+/// with curved sides, a rounding off its diagonal (the distance [`thin`]
+/// takes as none), 2 a
 /// proper one whose corners along a curved side aren't open (the curve
 /// is split and the face cut again), 3 one of zero area with no other
 /// vertex on it (the clean-up flips it away, which a curve beside it can
@@ -831,6 +832,10 @@ fn ear(ring: &[Vert], i: usize, edges: &BTreeSet<(u32, u32)>, bends: &Bends) -> 
         // curves (a cut along the domain's side, its vertices on it
         // moved inwards alike, one of its ends on the next side a few
         // ulps in: three corners on the cut in the patch, of zero area).
+        // Only with curved sides: among straight ones the clean-up flips
+        // such a pocket away, and refusing the ear there costs flat faces
+        // a better triangulation (turned grid boxes chained: one more
+        // step refused as a fold).
         let grazed = || {
             let d = q.at - p.at;
             let length = d.length_squared();
@@ -851,7 +856,7 @@ fn ear(ring: &[Vert], i: usize, edges: &BTreeSet<(u32, u32)>, bends: &Bends) -> 
         // across a curve) is as bad as a zero-area ear.
         let rest = [&q, &ring[(i + 2) % n], &p];
         let flat_rest = !bends.is_empty() && thin(rest);
-        if blocked || grazed() {
+        if blocked || !bends.is_empty() && grazed() {
             4
         } else if n == 4 && flat_rest || !bends.is_empty() && thin([&p, &c, &q]) {
             3
