@@ -8,8 +8,9 @@ use varde_render::Camera;
 
 use super::Doc;
 
-/// How long the camera takes to turn to a new view, like the UI mock.
-pub(crate) const CAMERA_ANIMATION: Duration = Duration::from_millis(650);
+/// How long the camera takes to turn to a new view, every turn alike, as
+/// the UI mock's `CAM_MS`.
+pub(crate) const CAMERA_ANIMATION: Duration = Duration::from_millis(325);
 
 /// How long the pivot's marker shows once picked before it fades, and how
 /// long it takes to fade, then and when the cursor leaves the view cube.

@@ -1786,15 +1786,17 @@ let redrawQueued = 0;
 const queueRedraw = () => { redrawQueued ||= requestAnimationFrame(() => { redrawQueued = 0; redrawScene(); }); };
 
 let camAnim = 0;
-function animateCam(to, ms = 650) {
+// How long every turn of the camera takes, in ms.
+const CAM_MS = 325;
+function animateCam(to) {
   const from = { ...cam }, tgt = { ...cam, ...to };
   const dyaw = ((tgt.yaw - from.yaw) % 360 + 540) % 360 - 180;
   cancelAnimationFrame(camAnim);
-  if (reduced || ms === 0) { Object.assign(cam, tgt, { yaw: from.yaw + dyaw }); redrawScene(); return; }
+  if (reduced) { Object.assign(cam, tgt, { yaw: from.yaw + dyaw }); redrawScene(); return; }
   const t0 = performance.now();
   const step = now => {
     // A frame's time can be before the call's, when that came from input.
-    const k = clamp((now - t0) / ms, 0, 1), e = 1 - Math.pow(1 - k, 3);
+    const k = clamp((now - t0) / CAM_MS, 0, 1), e = 1 - Math.pow(1 - k, 3);
     cam.yaw = from.yaw + dyaw * e;
     for (const p of ['pitch', 'zoom', 'px', 'py']) cam[p] = from[p] + (tgt[p] - from[p]) * e;
     redrawScene();
@@ -2743,7 +2745,7 @@ function openDoc(kind, name, intro = true) {
   pivot = null;
   if (intro && !reduced) {
     Object.assign(cam, HOME, { yaw: HOME.yaw - 75, pitch: 8, zoom: 1.7 });
-    requestAnimationFrame(() => animateCam(HOME, 1100));
+    requestAnimationFrame(() => animateCam(HOME));
   } else {
     Object.assign(cam, HOME);
   }
@@ -2762,12 +2764,12 @@ function enterSketch(id, plane, isNew) {
   }
   st.prevCam = { ...cam };
   Object.assign(st, { mode: 'sketch', sketch: { id, plane }, tool: null, pick: false, sel: null });
-  animateCam(sketchCam(plane), 750);
+  animateCam(sketchCam(plane));
 }
 
 function finishSketch() {
   Object.assign(st, { mode: 'model', sketch: null, tool: null, railOpen: null });
-  animateCam(st.prevCam || HOME, 750);
+  animateCam(st.prevCam || HOME);
 }
 
 function doOp(id) {
