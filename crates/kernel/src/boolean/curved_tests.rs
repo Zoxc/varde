@@ -2772,4 +2772,49 @@ fn nicks_by_a_crossing_cylinder_keep_their_checked_fallbacks() {
     assert!(ok >= 4, "{ok}");
 }
 
+#[test]
+fn a_cross_hole_through_a_round_boss() {
+    // The app's way: a circle of radius 10 extruded on XY 10 tall, cut
+    // through by a small circle sketched on YZ and extruded across it.
+    // The hole lies inside one of the wall's strip triangles, whose
+    // corners its rim was joined to in thin fans; repair ran out of
+    // budget on them before the cut faces took points for their shapes.
+    // Radius, centre across (`y`) and height.
+    let cases = [
+        (0.31256995285820194, 5.964459210246115, 3.9767549202973522),
+        (0.3035026029895933, -2.3024810212792435, 3.18835851057847),
+        (0.8884143554800221, -7.26102927247244, 3.9467772697627765),
+        (1.0604441575349153, -1.2265091824143948, 4.416762355501527),
+        (0.460251704955262, 5.126249626072438, 1.829180504957189),
+        (0.5352456799963462, 2.5048105870136936, 4.511384144216814),
+        (0.9788495762708371, -0.1612215448299814, 5.779121451610788),
+    ];
+    let big = 10.0;
+    let boss = extruded(vec![circle(DVec2::ZERO, big, 1, false)], 0.0, 10.0, 1);
+    let yz = Frame {
+        origin: DVec3::ZERO,
+        x: DVec3::Y,
+        y: DVec3::Z,
+    };
+    for (r, s, z) in cases {
+        let hole = extruded_on(
+            vec![circle(DVec2::new(s, z), r, 5, false)],
+            yz,
+            -15.0,
+            15.0,
+            2,
+        );
+        // The cut faces' points are placed the same at 1 and 8 threads.
+        let got = assert_deterministic(|| run(&boss, &hole, Op::Difference));
+        // The hole's part inside the boss, scaled from the unit boss's.
+        let want = PI * big * big * 10.0 - big.powi(3) * crossed(r / big, s / big);
+        let within = TOL.fit() * (boss.area() + hole.area()) / 5.0;
+        assert!(
+            (got.volume() - want).abs() <= within,
+            "r {r} at {s}, {z}: {} not {want}",
+            got.volume()
+        );
+    }
+}
+
 mod flush_seams;

@@ -3056,6 +3056,38 @@ left vertices at one place) aren't judged. A loop of two vertices (a lens
 between two curves) asks for its curves to be split and is left out
 until they are.
 
+Before those rounds, a face laid out in a curved patch's parameter
+domain takes points for its triangles' **shapes** (`triangulate::shape`).
+A cut inside one of the patch's triangles is joined to that triangle's
+corners, far from the cut's short pieces: fans of thin bands (aspect 300
+to 1 000 on a cross hole through a round boss, with long curved sides),
+which fail the check's neighbour rules against the bands across the cut,
+and which repair's red quartering keeps thin until its budget runs out.
+So, worst first, a triangle whose smallest angle in the layout is under
+5° (`SIN_SHAPE`) takes a point at its circumcentre (in the layout), where
+that lies inside the domain triangle, at least half the circumradius
+(`SHAPE_CLEAR`) from every side of the loops (diagonals the ear clipping
+fixed and the holes' bridges included), from every vertex and from the
+domain's sides, and strictly inside a triangle whose three pieces have
+their curved corners open; the triangle holding it is split there, and
+the sides facing the point are flipped by `improve`'s rules
+(`flippable`) as long as they improve, as in an incremental Delaunay
+insertion. A point refused leaves its triangle as it is. The worst comes
+from a priority queue (entries whose triangle changed are passed over),
+the triangle holding the point by a walk from the thin one that never
+crosses a side of the loops (one that would, or ends on a side, refuses
+the point), and the clearance by looking at the triangles that come
+within it, from the holder across their sides within it (a side of the
+loops within it refuses the point; a vertex within it is a corner of one
+of those triangles): all local, each step counted by the meter, at most
+four points per vertex of the loops and 16 more. The points are placed on
+the patch, as the mending's are, so the triangles round them are the
+patch's own pieces. Only on curved layouts: on flat and planar ones the
+same points gave flat cap triangles with an arc side more corners to fan
+to, and two more seeded turned operations failed as folds. Measuring the
+angles in 3D (the layout mapped by the patch's derivatives) was worse
+than in the layout.
+
 **Rounds** (`assemble`, at most `SPLIT_ROUNDS` = 6): every face is cut;
 the curves asked for are halved — a chain's curve by `Chain::split` (an
 exact curve by `split_half`, still exact; a fitted one at the curve's
@@ -3354,15 +3386,18 @@ zero-length side then made that triangle's curve, two arcs of one
 smooth curve meeting at a corner of a proper triangle, which folds: a
 rounded rectangle over `0.5..2` intersected with itself over `0..1` on a
 turned frame), which removes the
-thin triangles greedy ear cutting leaves. With curved sides, Steiner
-points follow (see "Cutting curved faces"), in no triangle of zero width
+thin triangles greedy ear cutting leaves. On a curved patch's layout,
+points for the triangles' shapes follow, and with curved sides, Steiner
+points at corners (both in "Cutting curved faces"), in no triangle of zero width
 (corners on a line: a band between two curves lying on each other, which
 no point or split mends; asking for splits there doubled the curves
 every round).
 
 The faces of a round are triangulated in parallel and count their
 steps together (`triangulate::Meter`: a vertex tested against an ear, a
-triangle looked at by the flips and mending, the sides looked at
+triangle looked at by the flips and mending, a triangle queued, walked
+through or looked at for clearance and a side looked at by the points
+for shapes, the sides looked at
 bridging a hole, and 64 for each orientation floating point can't tell,
 worked out exactly: some hundred times the work), up to what the budget
 has left (16 steps a unit), past which every triangulation stops and the
@@ -4185,10 +4220,13 @@ to 72 of its 96 operations and left the others as they were.
   it mended.
 - **Cross holes through round bosses**: a round boss (an r10 circle
   extruded on XY, 10 tall) cut through by a circle sketched on YZ and
-  extruded across it (radius 0.3 to 4, placed at random, 30 cases) fails
-  7 of the 30 differences: `TooComplex` once repair runs out of budget,
-  1.0 to 1.6 s each on one thread. The unions and intersections, and a
-  60 × 8 plate drilled the same way, all work; none came out wrong.
+  extruded across it (radius 0.3 to 4, placed at random, 30 cases)
+  failed 7 of the 30 differences: `TooComplex` once repair ran out of
+  budget, 1.0 to 1.6 s each on one thread. The unions and intersections,
+  and a 60 × 8 plate drilled the same way, all worked; none came out
+  wrong. The points for shapes in cut faces on curved patches (see
+  "Cutting curved faces") mend all seven
+  (`a_cross_hole_through_a_round_boss`).
   - Why: a cut face is triangulated on its input triangle's corners and
     the cut's vertices only (see "Triangulating a face's loops"), so a
     hole inside one of the wall's strip triangles (7.65 wide, 10 tall)
@@ -4201,70 +4239,61 @@ to 72 of its 96 operations and left the others as they were.
     the edge-neighbour rule (3 pairs in the first round of the case
     looked at). In a union the drill's wall kept is outside the boss,
     and the same boss bands pass the check at once. Red splits keep the
-    bands' shapes, so repair quarters them round after round (about 500
+    bands' shapes, so repair quartered them round after round (about 500
     pieces to 6 000 to 10 000, over 16 to 49 rounds) until the budget
-    runs out.
-  - Measured in a spike (scratch prototypes, release, default tolerance):
-    two candidates, against the same app sweep (90 operations on each
-    part), the horizontal drills through walls 10 tall (a box, an r10
-    cylinder and arches, 90 operations each), boxes turned across walls
-    (750 operations), the walls fuzzer (420), the seeded suites and the
-    longer walls and turned fuzzers (seeds 21 and 5: 2 070 and 1 000
-    operations each).
+    ran out.
+  - Measured (release, default tolerance): the app sweep (90 operations
+    on each part), the horizontal drills through walls 10 tall (a box,
+    an r10 cylinder and arches, 90 operations each), boxes turned across
+    walls (750 operations), the walls fuzzer (420), the seeded suites
+    and the longer walls and turned fuzzers (seeds 21 and 5: 2 070 and
+    1 000 operations each). The first rows are a spike's scratch
+    prototypes.
 
     | | boss differences | drills: cylinder, arch | turned | walls |
     |---|---|---|---|---|
-    | as built | 7 | 7, 3 | 8 | 2 |
+    | before | 7 | 7, 3 | 8 | 2 |
     | bisecting thin pieces in repair | 6 | 4, 4 | 7 | 3 |
-    | Steiner points, under 5° | 0 | 2, 0 | 8 | 2 |
-    | Steiner points, under 10° | 0 | 2, 0 | 8 | 2 |
+    | prototype points, under 10° | 0 | 2, 0 | 8 | 2 |
+    | prototype points, under 5° | 0 | 2, 0 | 8 | 2 |
+    | as built (5°) | 0 | 2, 0 | 8 | 2 |
 
-  - Bisecting in repair: each failing piece more than 8 times longer
-    than high halved across its longest side, its neighbour across that
-    side first if that is the neighbour's longest (Rivara), before the
-    red–green rounds. Such bisection keeps a band's smallest angle (at
-    best halves it), so the fans stay fans. The propagation also leaves
-    cap slivers along the fan's rays, three corners nearly in line, 13
-    resolutions high, which fail the hull rules as flat pieces at once
-    (`Invalid(Hull)`, `VertexNeighbours`). In the case looked at, it took
-    37 rounds and 470 → 4 154 pieces before the red–green rounds.
-  - Steiner points: after the ear clipping and the flips, the
-    circumcentre (in the layout) of the triangle with the smallest
-    angle under a threshold, if it lies inside the domain triangle, at
-    least half the circumradius from every loop side, domain side and
-    vertex; the triangle holding it is split there and flipped again; at
-    most four points per loop vertex and 16 more per face; positions on
-    the patch, as the mending's centroids are. The boss differences all
-    work, with fewer patches at 5° (1 053 per result, against 1 206 for
-    the operations that worked before; 1 231 at 10°, 1 612 at 20°).
-    Their volumes keep the identities (union and intersection, difference
-    and intersection) within 2 % of the bound `fit · area / 5`.
-    - The app sweep on one thread takes 14.3 s at 5° and 18.6 s at 10°,
-      against 23.0 s (most of it the seven failures).
-    - The seeded suites take 75.6 s of CPU at 5° and 79.6 s at 10°,
-      against 74.9 s.
-    - Bosses 1 000 tall: 10 of 90 fail as built, 6 at 5° or 10°, with
-      990 and 1 147 patches per result against 831, and 22.6 s against
-      18.5 s on one thread.
-    - Unchanged at both thresholds: the seeded tallies (coaxial 195 of
-      200, bosses 64 of 64, tangent 72 of 96, chains 200 of 240, drilled
-      160 of 160, related 113 of 120, turned 156 of 160); at 10° also
-      the long-slot and scale sweeps through tall plates and the longer
-      fuzzers (walls 62 and 54 refused, turned 15 and 13).
-    - Only on faces laid out on a curved patch. On planar faces too, two
-      more seeded turned operations fail (156 → 154, both `Fold`): the
-      points give flat cap triangles with an arc side more corners to fan
-      to (the gap under "Curved cuts near arcs").
-    - Measuring angles in 3D instead (the layout mapped by the patch's
-      derivatives at the loops' middle) is worse: 3 of the 7 boss
-      differences still fail, 2 with graded rings of points round the
-      cut; and 13 turned boxes and 4 wall cases fail, 9 and 4 drills.
-  - Steiner points under 5° to 10°, on curved layouts, is the fix to
-    build. The prototype looks for the worst triangle and the one holding
-    each point by scanning the face: quadratic, which a real version must
-    avoid (and charge to the meter). Left after it: 2 of the 90 cylinder
-    drills (one `Invalid`, one `TooComplex`) and 6 of the 90 bosses 1 000
-    tall.
+    - As built: 1 053 patches per boss result, against 1 206 for the
+      operations that worked before (1 231 at 10°, 1 612 at 20° in the
+      prototype); the volumes keep the identities (union and
+      intersection, difference and intersection) within 2 % of the bound
+      `fit · area / 5`. The plate's results are unchanged (74 patches
+      against 73). The app sweep takes about half the time it did (the
+      seven failures took most of it).
+    - Unchanged: the seeded tallies (coaxial 195 of 200, bosses 64 of
+      64, tangent 72 of 96, chains 200 of 240, drilled 160 of 160,
+      related 113 of 120, turned 156 of 160), the long-slot and scale
+      sweeps through tall plates (slots refused 6, 3 and 1 of 120 at 10,
+      300 and 3 000 tall), and the longer fuzzers (walls 62 and 54
+      refused, turned 15 and 13, none wrong; the prototype at 10° and
+      at 5° alike).
+    - Bosses 1 000 tall: 10 of 90 failed before, 6 now, with 989
+      patches per result against 831.
+  - Bisecting in repair (not built): each failing piece more than 8
+    times longer than high halved across its longest side, its neighbour
+    across that side first if that is the neighbour's longest (Rivara),
+    before the red–green rounds. Such bisection keeps a band's smallest
+    angle (at best halves it), so the fans stay fans. The propagation
+    also leaves cap slivers along the fan's rays, three corners nearly in
+    line, 13 resolutions high, which fail the hull rules as flat pieces
+    at once (`Invalid(Hull)`, `VertexNeighbours`). In the case looked at,
+    it took 37 rounds and 470 → 4 154 pieces before the red–green rounds.
+  - The prototype scanned the face for the worst triangle and for the one
+    holding each point, and flipped the whole face after each: quadratic.
+    As built, the queue, the walk and the clearance search are local,
+    and the flips only round the new point; it refuses a point the walk
+    can't reach without crossing a side of the loops (the prototype took
+    any triangle holding it), and one whose pieces would have a closed
+    curved corner. The counts above are the prototype's all the same.
+  - Left: 2 of the 90 cylinder drills (one `Invalid`, one `TooComplex`)
+    and 6 of the 90 bosses 1 000 tall (the height-driven fans, where a
+    face's far corners are hundreds of times further than the hole is
+    wide).
 - **Flush bosses on drilled plates**: of 150 random plates with two holes
   and a boss, each of the four operations, 15, 6, 5 and 13 fail (18, 7,
   10 and 13 before the fixes below), mostly where the boss is flush
@@ -5031,6 +5060,7 @@ offered ones' (`tolerance_choices`).
 | `MAX_NEAR_NODES` (boolean) | 512 | pieces of a patch looked at certifying a crossing only placed, or checking a root of an edge is on it |
 | `MAX_TURN_COS` (boolean) | 0.7 | the most a cut's conic turns (about 45°) |
 | `MEND_ROUNDS` (boolean) | 4 | rounds of Steiner points in one face's triangulation |
+| `SIN_SHAPE` (boolean) | sin 5° | the smallest angle, in a curved patch's layout, under which a cut face's triangle takes a point at its circumcentre; at most 4 per loop vertex and 16 more |
 | `MAX_WORK` | `1 << 22` | work units in one operation: about two seconds on one thread at most; the heaviest booleans measured take about half of it |
 | `MIN_SPLIT` (repair) | 64 resolutions | the smallest flat piece repair splits, and the smallest profile segment an extrude halves |
 | `MIN_CURVED_SPLIT` (repair) | 8 resolutions | the smallest curved piece repair splits; the refiner's floor in repair |

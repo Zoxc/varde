@@ -28,6 +28,7 @@
 //! clipping is too slow.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::f64::consts::FRAC_1_SQRT_2;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use glam::DVec2;
@@ -243,16 +244,21 @@ pub(super) struct Triangulation {
 /// corner with a straight one isn't open (the curve leaves the triangle
 /// there, bulging past its other side), no point in the triangle mends
 /// it: the curved side is returned, to be split.
+///
+/// With `shapes` (a face laid out in a curved patch's parameter domain),
+/// points are first added for the triangles' shapes (see [`shape`]),
+/// numbered the same way, before those for the corners.
 pub(super) fn triangulate(
     loops: Vec<Vec<Vert>>,
     bends: &Bends,
     first_steiner: u32,
+    shapes: bool,
     meter: &Meter,
 ) -> Result<Triangulation, BooleanError> {
     // Only this face's exact orientations are counted from here, and
     // what they took is counted at the end too.
     exact_steps();
-    let out = triangulate_counted(loops, bends, first_steiner, meter);
+    let out = triangulate_counted(loops, bends, first_steiner, shapes, meter);
     if !meter.take(exact_steps()) {
         return Err(BooleanError::Degenerate);
     }
@@ -264,6 +270,7 @@ fn triangulate_counted(
     loops: Vec<Vec<Vert>>,
     bends: &Bends,
     first_steiner: u32,
+    shapes: bool,
     meter: &Meter,
 ) -> Result<Triangulation, BooleanError> {
     // A loop of two vertices (two curves between the same two points)
@@ -299,6 +306,9 @@ fn triangulate_counted(
         steiner: Vec::new(),
         split: lens_sides,
     };
+    if shapes {
+        shape(&mut out, &mut all, &fixed, bends, first_steiner, meter)?;
+    }
     if bends.is_empty() {
         return Ok(out);
     }
@@ -364,6 +374,312 @@ fn triangulate_counted(
     out.split.sort_unstable();
     out.split.dedup();
     Ok(out)
+}
+
+/// The sine of the smallest angle, in the layout, below which a triangle
+/// takes a point for its shape ([`shape`]): sin 5°.
+const SIN_SHAPE: f64 = 0.087_155_742_747_658_17;
+
+/// How many points [`shape`] may add to a face: so many per vertex of its
+/// loops, and so many more.
+const SHAPE_PER_VERTEX: usize = 4;
+const SHAPE_MORE: usize = 16;
+
+/// How far a point [`shape`] adds keeps from the loops' sides and
+/// vertices and from the domain's sides: this times its triangle's
+/// circumradius.
+const SHAPE_CLEAR: f64 = 0.5;
+
+/// The sine of the triangle's smallest angle in the layout, where it is
+/// judged: not where a side is about zero long or the triangle about flat
+/// ([`thin`]), as where operands are flush or tie.
+fn smallest_sine(tri: [&Vert; 3]) -> Option<f64> {
+    let [a, b, c] = tri.map(|v| v.at);
+    let (e0, e1, e2) = (b - a, c - b, a - c);
+    let (l0, l1, l2) = (e0.length(), e1.length(), e2.length());
+    if l0 <= SHORT || l1 <= SHORT || l2 <= SHORT || thin(tri) {
+        return None;
+    }
+    // Twice the area over the two sides at each corner.
+    let twice = e0.perp_dot(-e2).abs();
+    Some(
+        (twice / (l0 * l2))
+            .min(twice / (l0 * l1))
+            .min(twice / (l1 * l2)),
+    )
+}
+
+/// The centre of the circle through `a`, `b` and `c`, and its radius.
+fn circumcircle(a: DVec2, b: DVec2, c: DVec2) -> (DVec2, f64) {
+    let (ba, ca) = (b - a, c - a);
+    let (bb, cc) = (ba.length_squared(), ca.length_squared());
+    let d = 2.0 * ba.perp_dot(ca);
+    let centre = a + DVec2::new(ca.y * bb - ba.y * cc, ba.x * cc - ca.x * bb) / d;
+    (centre, centre.distance(a))
+}
+
+/// The distance from `p` to the segment from `a` to `b`.
+fn segment_distance(p: DVec2, a: DVec2, b: DVec2) -> f64 {
+    let d = b - a;
+    let l = d.length_squared();
+    let t = if l > 0.0 {
+        ((p - a).dot(d) / l).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    p.distance(a + d * t)
+}
+
+/// The corner of `tri` other than `u` and `w`.
+fn third(tri: [u32; 3], u: u32, w: u32) -> u32 {
+    tri.into_iter()
+        .find(|&x| x != u && x != w)
+        .unwrap_or(tri[0])
+}
+
+/// Points added inside a face laid out in a curved patch's parameter
+/// domain for its triangles' shapes, after the ear clipping and flips.
+///
+/// A cut inside one of the patch's triangles is joined to the triangle's
+/// corners, far from the cut's short pieces: fans of thin bands, whose
+/// long curved sides fail the check's neighbour rules against the bands
+/// across the cut, and which repair's quartering keeps thin. So the
+/// triangle with the smallest angle under 5° takes a point at its
+/// circumcentre, where that lies inside the domain, at least half the
+/// circumradius from every side of the loops (and diagonal kept as one)
+/// and of the domain and from every vertex, and inside a triangle whose
+/// pieces all have their curved corners open; then the diagonals round
+/// it are flipped as [`improve`] does, and the next worst is taken. The
+/// worst comes from a queue, the triangle holding the point by a walk
+/// from the thin one, and the clearance by looking at the triangles
+/// within it, all counted by `meter`; at most four points per vertex of
+/// the loops and 16 more.
+///
+/// The points are placed on the patch, as the mending's are, so the
+/// triangles round them are its own pieces.
+fn shape(
+    out: &mut Triangulation,
+    all: &mut Vec<Vert>,
+    fixed: &BTreeSet<(u32, u32)>,
+    bends: &Bends,
+    first_steiner: u32,
+    meter: &Meter,
+) -> Result<(), BooleanError> {
+    use std::cmp::Reverse;
+    use std::collections::BinaryHeap;
+
+    let key = |a: u32, b: u32| (a.min(b), a.max(b));
+    all.sort_by_key(|v| v.id);
+    let most = all
+        .len()
+        .saturating_mul(SHAPE_PER_VERTEX)
+        .saturating_add(SHAPE_MORE);
+    let mut tris = std::mem::take(&mut out.tris);
+    // Directed edge → its triangle.
+    let mut owner: BTreeMap<(u32, u32), usize> = BTreeMap::new();
+    for (t, tri) in tris.iter().enumerate() {
+        for i in 0..3 {
+            owner.insert((tri[i], tri[(i + 1) % 3]), t);
+        }
+    }
+    // The triangles to look at, the worst first: by the bits of their
+    // smallest angle's sine (positive, so ordered as the sines are), then
+    // where they are and their corners. Entries whose triangle changed
+    // since are passed over.
+    type Entry = Reverse<(u64, usize, [u32; 3])>;
+    let mut queue: BinaryHeap<Entry> = BinaryHeap::new();
+    let judge = |queue: &mut BinaryHeap<Entry>, all: &[Vert], tris: &[[u32; 3]], t: usize| {
+        let at = |id: u32| &all[all.binary_search_by_key(&id, |v| v.id).expect("a vertex")];
+        if let Some(sine) = smallest_sine(tris[t].map(at))
+            && sine < SIN_SHAPE
+        {
+            queue.push(Reverse((sine.to_bits(), t, tris[t])));
+        }
+    };
+    for t in 0..tris.len() {
+        judge(&mut queue, all, &tris, t);
+    }
+    let mut steps = tris.len();
+    let mut flips = FLIPS.saturating_mul(tris.len());
+    let mut added = 0;
+    while added < most {
+        if !meter.take(std::mem::take(&mut steps).saturating_add(exact_steps())) {
+            out.tris = tris;
+            return Err(BooleanError::Degenerate);
+        }
+        let Some(Reverse((_, bad, tri))) = queue.pop() else {
+            break;
+        };
+        steps += 1;
+        if tris[bad] != tri {
+            continue;
+        }
+        let at = |id: u32| all[all.binary_search_by_key(&id, |v| v.id).expect("a vertex")];
+        let [a, b, c] = tri.map(|id| at(id).at);
+        let (centre, r) = circumcircle(a, b, c);
+        let clear = SHAPE_CLEAR * r;
+        if !(centre.is_finite() && r.is_finite())
+            || centre
+                .x
+                .min(centre.y)
+                .min((1.0 - centre.x - centre.y) * FRAC_1_SQRT_2)
+                <= clear
+        {
+            continue;
+        }
+        let Some(id) = u32::try_from(out.steiner.len())
+            .ok()
+            .and_then(|n| first_steiner.checked_add(n))
+        else {
+            break;
+        };
+        let point = Vert {
+            id,
+            at: centre,
+            sides: 0,
+            cuts: [NO_CUT; 2],
+        };
+        // The triangle holding it: a walk from the thin one, across the
+        // first side it lies beyond, never across a side of the loops.
+        let mut holder = None;
+        let mut t = bad;
+        for _ in 0..tris.len() {
+            steps += 1;
+            let corners = tris[t];
+            let v = corners.map(at);
+            let beyond = (0..3).find(|&i| orient(&v[i], &v[(i + 1) % 3], &point) < 0);
+            let Some(i) = beyond else {
+                // On a side or at a corner, it would leave a triangle of
+                // zero area.
+                if (0..3).all(|i| orient(&v[i], &v[(i + 1) % 3], &point) > 0) {
+                    holder = Some(t);
+                }
+                break;
+            };
+            let (u, w) = (corners[i], corners[(i + 1) % 3]);
+            match owner.get(&(w, u)) {
+                Some(&next) if !fixed.contains(&key(u, w)) => t = next,
+                _ => break,
+            }
+        }
+        let Some(holder) = holder else {
+            continue;
+        };
+        // Nothing of the loops within the clearance: the triangles it
+        // meets, from the holder, across their sides within it.
+        let mut seen = BTreeSet::from([holder]);
+        let mut near = vec![holder];
+        let mut clear_of_all = true;
+        'look: while let Some(t) = near.pop() {
+            steps += 1;
+            let corners = tris[t];
+            for i in 0..3 {
+                let (u, w) = (corners[i], corners[(i + 1) % 3]);
+                let (pu, pw) = (at(u).at, at(w).at);
+                if pu.distance(centre) <= clear {
+                    clear_of_all = false;
+                    break 'look;
+                }
+                if segment_distance(centre, pu, pw) > clear {
+                    continue;
+                }
+                match owner.get(&(w, u)) {
+                    Some(&next) if !fixed.contains(&key(u, w)) => {
+                        if seen.insert(next) {
+                            near.push(next);
+                        }
+                    }
+                    _ => {
+                        clear_of_all = false;
+                        break 'look;
+                    }
+                }
+            }
+        }
+        let [x, y, z] = tris[holder];
+        let pieces = [[id, x, y], [id, y, z], [id, z, x]];
+        if !clear_of_all
+            || !pieces
+                .iter()
+                .all(|p| corners_open([&point, &at(p[1]), &at(p[2])], bends))
+        {
+            continue;
+        }
+        // Split the holder at the point.
+        for i in 0..3 {
+            owner.remove(&(tris[holder][i], tris[holder][(i + 1) % 3]));
+        }
+        let first_new = tris.len();
+        tris[holder] = pieces[0];
+        tris.extend_from_slice(&pieces[1..]);
+        for (t, tri) in [
+            (holder, pieces[0]),
+            (first_new, pieces[1]),
+            (first_new + 1, pieces[2]),
+        ] {
+            for i in 0..3 {
+                owner.insert((tri[i], tri[(i + 1) % 3]), t);
+            }
+        }
+        let place = all.partition_point(|v| v.id < id);
+        all.insert(place, point);
+        out.steiner.push(point);
+        added += 1;
+        flips = flips.saturating_add(2 * FLIPS);
+        // Flip the sides facing it, as long as they improve.
+        let mut changed = vec![holder, first_new, first_new + 1];
+        let mut facing = vec![(x, y), (y, z), (z, x)];
+        while let Some((u, w)) = facing.pop() {
+            steps += 1;
+            if flips == 0 {
+                break;
+            }
+            if fixed.contains(&key(u, w)) {
+                continue;
+            }
+            let (Some(&t), Some(&s)) = (owner.get(&(u, w)), owner.get(&(w, u))) else {
+                continue;
+            };
+            let d = third(tris[s], w, u);
+            if third(tris[t], u, w) != id
+                || owner.contains_key(&(id, d))
+                || owner.contains_key(&(d, id))
+            {
+                continue;
+            }
+            let at = |id: u32| all[all.binary_search_by_key(&id, |v| v.id).expect("a vertex")];
+            if !flippable([at(u), at(w), at(id), at(d)], bends) {
+                continue;
+            }
+            for tri in [tris[t], tris[s]] {
+                for j in 0..3 {
+                    owner.remove(&(tri[j], tri[(j + 1) % 3]));
+                }
+            }
+            tris[t] = [id, u, d];
+            tris[s] = [id, d, w];
+            for k in [t, s] {
+                let tri = tris[k];
+                for j in 0..3 {
+                    owner.insert((tri[j], tri[(j + 1) % 3]), k);
+                }
+            }
+            flips -= 1;
+            changed.extend([t, s]);
+            facing.extend([(u, d), (d, w)]);
+        }
+        changed.sort_unstable();
+        changed.dedup();
+        steps = steps.saturating_add(changed.len());
+        for t in changed {
+            judge(&mut queue, all, &tris, t);
+        }
+    }
+    out.tris = tris;
+    if !meter.take(steps.saturating_add(exact_steps())) {
+        return Err(BooleanError::Degenerate);
+    }
+    Ok(())
 }
 
 /// [`triangulate`] without the mending.
@@ -602,28 +918,11 @@ fn improve(
                 let Some(d) = other.iter().copied().find(|&w| w != a && w != b) else {
                     continue;
                 };
-                let (va, vb, vc, vd) = (at(a), at(b), at(c), at(d));
-                // Two corners at one place: a triangle of zero width, whose
-                // short side the clean-up collapses, merging its two other
-                // sides; flipped, the side it shares with a proper triangle
-                // became a straight diagonal there that the collapse then
-                // made the zero-width triangle's curve, two curved sides
-                // meeting along one smooth curve, which folds.
-                let quad = [&va, &vb, &vc, &vd];
-                let coincident = (0..4).any(|i| (i + 1..4).any(|j| quad[i].same(quad[j])));
                 if s == t
                     || c == d
-                    || coincident
-                    || vc.along_one(&vd)
                     || owner.contains_key(&(c, d))
                     || owner.contains_key(&(d, c))
-                    || orient(&va, &vb, &vc) <= 0
-                    || orient(&vb, &va, &vd) <= 0
-                    || orient(&vc, &va, &vd) <= 0
-                    || orient(&vc, &vd, &vb) <= 0
-                    || !in_circle(va.at, vb.at, vc.at, vd.at)
-                    || !corners_open([&vc, &va, &vd], bends)
-                    || !corners_open([&vc, &vd, &vb], bends)
+                    || !flippable([at(a), at(b), at(c), at(d)], bends)
                 {
                     continue;
                 }
@@ -649,6 +948,33 @@ fn improve(
             }
         }
     }
+}
+
+/// Whether the diagonal from `a` to `b` between the triangles `a b c` and
+/// `b a d` (counter-clockwise) may be flipped to the one from `c` to `d`,
+/// as [`improve`] does: the quadrilateral convex, `d` inside the circle
+/// through `a`, `b`, `c`, no two corners at one place, the new diagonal
+/// allowed and the new triangles' curved corners open. The diagonal not
+/// being one of the loops' sides, and the new one not already an edge,
+/// are the caller's.
+fn flippable([va, vb, vc, vd]: [Vert; 4], bends: &Bends) -> bool {
+    // Two corners at one place: a triangle of zero width, whose short
+    // side the clean-up collapses, merging its two other sides; flipped,
+    // the side it shares with a proper triangle became a straight
+    // diagonal there that the collapse then made the zero-width
+    // triangle's curve, two curved sides meeting along one smooth curve,
+    // which folds.
+    let quad = [&va, &vb, &vc, &vd];
+    let coincident = (0..4).any(|i| (i + 1..4).any(|j| quad[i].same(quad[j])));
+    !coincident
+        && !vc.along_one(&vd)
+        && orient(&va, &vb, &vc) > 0
+        && orient(&vb, &va, &vd) > 0
+        && orient(&vc, &va, &vd) > 0
+        && orient(&vc, &vd, &vb) > 0
+        && in_circle(va.at, vb.at, vc.at, vd.at)
+        && corners_open([&vc, &va, &vd], bends)
+        && corners_open([&vc, &vd, &vb], bends)
 }
 
 /// Whether `d` lies clearly inside the circle through `a`, `b`, `c`
@@ -911,9 +1237,15 @@ mod tests {
         let outer = loop_of(&[(0.0, 0.0), (4.0, 0.0), (4.0, 4.0), (0.0, 4.0)], 0);
         let hole = loop_of(&[(1.0, 1.0), (1.0, 3.0), (3.0, 3.0), (3.0, 1.0)], 4);
         let all: Vec<Vert> = outer.iter().chain(&hole).copied().collect();
-        let tris = triangulate(vec![outer, hole], &Bends::new(), 100, &Meter::new(u64::MAX))
-            .unwrap()
-            .tris;
+        let tris = triangulate(
+            vec![outer, hole],
+            &Bends::new(),
+            100,
+            false,
+            &Meter::new(u64::MAX),
+        )
+        .unwrap()
+        .tris;
         assert_eq!(tris.len(), 8);
         let at = |id: u32| all[id as usize].at;
         assert_eq!(total_area(&tris, at), 12.0);
@@ -941,7 +1273,7 @@ mod tests {
             .collect();
         let used = |points: &[(f64, f64)]| {
             let meter = Meter::new(u64::MAX);
-            triangulate(vec![loop_of(points, 0)], &Bends::new(), 100, &meter).unwrap();
+            triangulate(vec![loop_of(points, 0)], &Bends::new(), 100, false, &meter).unwrap();
             meter.used()
         };
         let (band, round) = (used(&band), used(&round));
@@ -965,7 +1297,7 @@ mod tests {
             0,
         );
         let all = l.clone();
-        let tris = triangulate(vec![l], &Bends::new(), 100, &Meter::new(u64::MAX))
+        let tris = triangulate(vec![l], &Bends::new(), 100, false, &Meter::new(u64::MAX))
             .unwrap()
             .tris;
         let at = |id: u32| all[id as usize].at;
@@ -990,7 +1322,7 @@ mod tests {
             ],
             0,
         );
-        let tris = triangulate(vec![l], &Bends::new(), 100, &Meter::new(u64::MAX))
+        let tris = triangulate(vec![l], &Bends::new(), 100, false, &Meter::new(u64::MAX))
             .unwrap()
             .tris;
         assert_eq!(tris.len(), 4);
@@ -1007,7 +1339,7 @@ mod tests {
         bends.insert((1, 2), [DVec2::new(0.0, 1.0), -d]);
         bends.insert((2, 0), [d, DVec2::new(-0.2, 1.0)]);
         let all = l.clone();
-        let out = triangulate(vec![l], &bends, 100, &Meter::new(u64::MAX)).unwrap();
+        let out = triangulate(vec![l], &bends, 100, false, &Meter::new(u64::MAX)).unwrap();
         assert_eq!(out.steiner.len(), 1, "{out:?}");
         assert!(out.split.is_empty(), "{out:?}");
         assert_eq!(out.tris.len(), 3, "{out:?}");
@@ -1019,6 +1351,84 @@ mod tests {
             assert!(orient2d(a, b, c) > 0, "{out:?}");
             assert!(corners_open(tri.map(vert).each_ref(), &bends), "{out:?}");
         }
+    }
+
+    #[test]
+    fn thin_fans_take_points_for_their_shapes() {
+        // A small hole in the domain, a polygon of 24 sides, joined to the
+        // domain's far corners: thin fans, which points at circumcentres
+        // break up, inside the domain and clear of the hole.
+        let corner = |id, x, y, sides| Vert {
+            id,
+            at: DVec2::new(x, y),
+            sides,
+            cuts: [NO_CUT; 2],
+        };
+        let outer = vec![
+            corner(0, 0.0, 0.0, 0b101),
+            corner(1, 1.0, 0.0, 0b011),
+            corner(2, 0.0, 1.0, 0b110),
+        ];
+        let (centre, r, n) = (DVec2::new(0.3, 0.3), 0.01, 24);
+        let ring: Vec<(f64, f64)> = (0..n)
+            .rev()
+            .map(|i| {
+                let a = std::f64::consts::TAU * f64::from(i) / f64::from(n);
+                (centre.x + r * a.cos(), centre.y + r * a.sin())
+            })
+            .collect();
+        let hole = loop_of(&ring, 3);
+        let all: Vec<Vert> = outer.iter().chain(&hole).copied().collect();
+        let smallest = |out: &Triangulation| {
+            out.tris
+                .iter()
+                .map(|tri| smallest_sine(tri.map(|id| out_vert(&all, out, id)).each_ref()).unwrap())
+                .fold(1.0, f64::min)
+        };
+        let loops = vec![outer.clone(), hole.clone()];
+        let plain = triangulate(
+            loops.clone(),
+            &Bends::new(),
+            100,
+            false,
+            &Meter::new(u64::MAX),
+        );
+        let plain = plain.unwrap();
+        assert!(plain.steiner.is_empty());
+        let meter = Meter::new(u64::MAX);
+        let out = triangulate(loops.clone(), &Bends::new(), 100, true, &meter).unwrap();
+        assert!(!out.steiner.is_empty(), "{out:?}");
+        assert!(out.steiner.len() <= all.len() * SHAPE_PER_VERTEX + SHAPE_MORE);
+        assert!(smallest(&plain) < SIN_SHAPE / 4.0, "{}", smallest(&plain));
+        assert!(
+            smallest(&out) > 2.0 * smallest(&plain),
+            "{}",
+            smallest(&out)
+        );
+        // The same region, every triangle turning the right way.
+        let at = |id: u32| out_vert(&all, &out, id).at;
+        let hole_area = -area(&hole) / 2.0;
+        assert!((total_area(&out.tris, at) - (0.5 - hole_area)).abs() < 1e-15);
+        for &[a, b, c] in &out.tris {
+            assert!(orient2d(at(a), at(b), at(c)) > 0, "{out:?}");
+        }
+        // Each point clear of the domain's sides and the hole.
+        for s in &out.steiner {
+            let p = s.at;
+            assert!(p.x > 0.0 && p.y > 0.0 && p.x + p.y < 1.0, "{p}");
+            assert!(p.distance(centre) > r, "{p}");
+        }
+        // The work is counted, and the same input gives the same bits.
+        assert!(meter.used() > Meter::new(u64::MAX).used());
+        let again = triangulate(loops, &Bends::new(), 100, true, &Meter::new(u64::MAX)).unwrap();
+        assert_eq!(again.tris, out.tris);
+        let bits = |out: &Triangulation| -> Vec<[u64; 2]> {
+            out.steiner
+                .iter()
+                .map(|s| s.at.to_array().map(f64::to_bits))
+                .collect()
+        };
+        assert_eq!(bits(&again), bits(&out));
     }
 
     /// Vertex `id` of the loops `all` or the points `out` added.
@@ -1038,7 +1448,7 @@ mod tests {
         let l = loop_of(&[(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)], 0);
         let mut bends = Bends::new();
         bends.insert((1, 2), [DVec2::new(-1.0, 1e-6), DVec2::new(0.0, -1.0)]);
-        let out = triangulate(vec![l], &bends, 100, &Meter::new(u64::MAX)).unwrap();
+        let out = triangulate(vec![l], &bends, 100, false, &Meter::new(u64::MAX)).unwrap();
         assert_eq!(out.tris.len(), 2, "{out:?}");
         assert!(out.steiner.is_empty(), "{out:?}");
         assert_eq!(out.split, vec![(1, 2)]);
@@ -1062,7 +1472,7 @@ mod tests {
             v(4, 0.0, 0.5, 0b100),
         ];
         let all = l.clone();
-        let tris = triangulate(vec![l], &Bends::new(), 100, &Meter::new(u64::MAX))
+        let tris = triangulate(vec![l], &Bends::new(), 100, false, &Meter::new(u64::MAX))
             .unwrap()
             .tris;
         let at = |id: u32| all[id as usize].at;

@@ -336,7 +336,13 @@ pub(super) fn cut_face(
             ],
         );
     }
-    let triangulation = triangulate(loops, &bends, FIRST_STEINER, meter)?;
+    let triangulation = triangulate(
+        loops,
+        &bends,
+        FIRST_STEINER,
+        layout == Layout::Curved,
+        meter,
+    )?;
     let tris = triangulation.tris;
     // Curves the triangulation wants split for its corners.
     let wanted: Vec<(u32, u32)> = triangulation
