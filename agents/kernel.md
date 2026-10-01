@@ -3641,8 +3641,10 @@ body, and the later ones still run.
   ("doesn't touch any body") or went through all of less. The body is in
   `touched`, so the panel offers to untick it; deliberately removing a
   body with a cut takes an untick and a body delete. The check follows
-  the cache, so a result found there fails as well; the empty result
-  stays cached (its key is right; the check is cheap). Hence **no body in
+  the cache, so a result found there fails as well (a draft dragged
+  across the point where the body goes, an undo bringing back the edit
+  that emptied it); the empty result stays cached (its key is right; the
+  check is cheap). Hence **no body in
   an `Evaluation` is empty**: a new body's extrude never is, a union of
   two non-empty solids isn't, and the rest fail (a `debug_assert` at the
   end of `evaluate` holds it).

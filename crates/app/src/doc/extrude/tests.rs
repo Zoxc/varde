@@ -579,6 +579,132 @@ fn an_intersect_leaving_nothing_is_marked_failed_and_the_plate_kept() {
     let _ = doc.view(false, Mode::default());
 }
 
+/// Adds to `doc`'s document a sketch of a rectangle from `min` to `max`
+/// and a cut of it through all, the cut's id.
+fn add_cut(doc: &mut Doc, min: (f64, f64), max: (f64, f64)) -> FeatureId {
+    let plane = varde_document::Plane::Origin(varde_document::OriginPlane::XY);
+    doc.apply(doc.editor.document().add_sketch(plane));
+    let sketch = doc.editor.document().features().last().unwrap().id;
+    let mut drawn = varde_sketch::Sketch::default();
+    let corners = [
+        (min.0, min.1),
+        (max.0, min.1),
+        (max.0, max.1),
+        (min.0, max.1),
+    ]
+    .map(|(x, y)| drawn.add_point(glam::DVec2::new(x, y)).unwrap());
+    for (k, &start) in corners.iter().enumerate() {
+        let end = corners[(k + 1) % corners.len()];
+        let line = varde_sketch::Curve::Line { start, end };
+        drawn.add_curve(line, false).unwrap();
+    }
+    let region = drawn.profiles().unwrap().reference(0).unwrap();
+    doc.apply(Command::SetSketch {
+        feature: sketch,
+        sketch: Box::new(drawn),
+    });
+    doc.apply(doc.editor.document().add_extrude(varde_document::Extrude {
+        sketch,
+        regions: vec![region],
+        extent: varde_document::Extent::ThroughAll,
+        flip: false,
+        operation: Operation::Cut(varde_document::Targets::default()),
+    }));
+    doc.editor.document().features().last().unwrap().id
+}
+
+/// A cut that would take the whole plate, the plate made big enough for
+/// it, and that undone and redone: the cut is marked failed, then not,
+/// then failed again, with the plate drawn each time. A document replacing it isn't marked by the
+/// old answer, and one with the same cut is marked once answered.
+#[test]
+fn a_cut_emptying_the_plate_fails_again_once_the_edit_saving_it_is_undone() {
+    let (mut doc, requests) = example();
+    let cut = add_cut(&mut doc, (-40.0, -30.0), (40.0, 30.0));
+    doc.sync();
+    answer(&mut doc, &requests);
+    let emptied = "cutting it from Body 1 would leave nothing of it";
+    let fails = |doc: &Doc| {
+        let failed = doc.feed.failed_features();
+        assert_eq!(failed.len(), 1, "{failed:?}");
+        assert_eq!(failed[0].0, cut);
+        assert!(failed[0].1.starts_with(emptied), "{}", failed[0].1);
+        assert!(doc.feed.mesh().triangle_count() > 0);
+    };
+    fails(&doc);
+    doc.look(Look::SelectPanel(varde_view::Panel::Timeline));
+    let _ = doc.view(false, Mode::default());
+
+    // The plate 100 × 80 round the cut's 80 × 60.
+    let plate = doc.editor.document().features()[0].id;
+    let mut drawn = drawn(&doc, plate).clone();
+    for point in drawn.points.iter_mut().filter(|p| p.at.x.abs() == 30.0) {
+        point.at = glam::DVec2::new(point.at.x.signum() * 50.0, point.at.y.signum() * 40.0);
+    }
+    doc.apply(Command::SetSketch {
+        feature: plate,
+        sketch: Box::new(drawn),
+    });
+    doc.sync();
+    answer(&mut doc, &requests);
+    assert!(doc.feed.failed_features().is_empty());
+    assert!(doc.feed.mesh().triangle_count() > 0);
+    for _ in 0..2 {
+        doc.update(Edit::Undo);
+        doc.sync();
+        answer(&mut doc, &requests);
+        fails(&doc);
+        doc.update(Edit::Redo);
+        doc.sync();
+        answer(&mut doc, &requests);
+        assert!(doc.feed.failed_features().is_empty());
+    }
+    doc.update(Edit::Undo);
+    doc.sync();
+    answer(&mut doc, &requests);
+    fails(&doc);
+
+    let failing = doc.editor.document().clone();
+    doc.apply(Command::Replace(Box::new(Document::example())));
+    doc.sync();
+    assert!(doc.feed.failed_features().is_empty());
+    answer(&mut doc, &requests);
+    assert!(doc.feed.failed_features().is_empty());
+    doc.apply(Command::Replace(Box::new(failing)));
+    doc.sync();
+    assert!(doc.feed.failed_features().is_empty());
+    answer(&mut doc, &requests);
+    fails(&doc);
+}
+
+/// An intersect's draft flipped below the plate and back: the panel says
+/// why it fails, as a sentence, only while it's below.
+#[test]
+fn an_intersect_flipped_to_leave_nothing_and_back_says_so_each_time() {
+    use crate::tests::{shown, texts};
+    let (mut doc, sketch, requests) = example_and_a_hole();
+    doc.look(Look::StartExtrude);
+    extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region: 0 });
+    extrude(&mut doc, ExtrudeLook::Operation(OperationKind::Intersect));
+    answer(&mut doc, &requests);
+    let said = "Intersecting it with Body 1 would leave nothing of it";
+    for flipped in [true, false, true, false] {
+        extrude(&mut doc, ExtrudeLook::Flip);
+        answer(&mut doc, &requests);
+        assert_eq!(doc.feed.draft_error().is_some(), flipped);
+        assert!(doc.feed.failed_features().is_empty());
+        let mut renderer = varde_view::probe::renderer();
+        let mut ui = shown(
+            doc.view(false, Mode::Light),
+            iced::Size::new(1280.0, 800.0),
+            &mut renderer,
+        );
+        let (panel, _) = panel_texts(&texts(&mut ui, &renderer));
+        let says = panel.iter().any(|text| text.text.starts_with(said));
+        assert_eq!(says, flipped, "{panel:?}");
+    }
+}
+
 #[test]
 fn undoing_the_sketch_away_ends_the_session() {
     let (mut doc, sketch, _) = plate();

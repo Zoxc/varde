@@ -628,6 +628,92 @@ fn a_cut_failing_after_an_upstream_edit_empties_nothing() {
     assert_near(after.bodies[0].solid.volume(), (400.0 - PI * 64.0) * 10.0);
 }
 
+/// The plate made big enough for a cut that empties it, then the edit
+/// undone and redone: the cut fails, cuts and fails again, the plate
+/// kept whole each time it fails, also with the results found in the
+/// cache.
+#[test]
+fn undoing_the_edit_that_saved_a_body_empties_nothing() {
+    let mut editor = Editor::new(Document::example());
+    let cut = add_extrude(
+        &mut editor,
+        rectangle((-40.0, -30.0), (40.0, 30.0)),
+        Extent::ThroughAll,
+        Operation::Cut(Targets::default()),
+    );
+    let failing = [(cut, message::emptied(Doing::Cutting, "Body 1"))];
+    let mut cache = Cache::default();
+    let check = |cache: &mut Cache, editor: &Editor, fails: bool| {
+        cache.begin();
+        let evaluation = evaluate(editor.document(), cache);
+        if fails {
+            assert_eq!(evaluation.failed, failing);
+            assert_near(evaluation.bodies[0].solid.volume(), plate(8.0, 10.0));
+        } else {
+            // A frame 100 × 80 round the cut's 80 × 60.
+            assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
+            assert_near(
+                evaluation.bodies[0].solid.volume(),
+                (100.0 * 80.0 - 80.0 * 60.0) * 10.0,
+            );
+        }
+    };
+    check(&mut cache, &editor, true);
+    edit_sketch(&mut editor, |sketch| {
+        for point in sketch.points.iter_mut().filter(|p| p.at.x.abs() == 30.0) {
+            point.at = DVec2::new(point.at.x.signum() * 50.0, point.at.y.signum() * 40.0);
+        }
+    });
+    check(&mut cache, &editor, false);
+    for _ in 0..2 {
+        editor.undo();
+        check(&mut cache, &editor, true);
+        editor.redo();
+        check(&mut cache, &editor, false);
+    }
+}
+
+/// An intersect with every body taken out of it fails as touching none
+/// left in, not as leaving one empty, and changes none.
+#[test]
+fn an_intersect_with_every_body_taken_out_changes_none() {
+    let mut editor = Editor::new(Document::example());
+    let top = editor.document().bodies()[0].id;
+    let below = plate_below(&mut editor);
+    let extent = two_sides(editor.document(), "5", "1");
+    let intersect = add_extrude(
+        &mut editor,
+        disc((20.0, 0.0), 5.0),
+        extent,
+        Operation::Intersect(Targets {
+            excluded: vec![top, below],
+        }),
+    );
+    let evaluation = evaluated(editor.document());
+    assert_eq!(
+        evaluation.failed,
+        [(
+            intersect,
+            "it doesn't touch any body not taken out of it".to_owned()
+        )]
+    );
+    assert_eq!(evaluation.touched, [(intersect, vec![])]);
+    assert_near(evaluation.bodies[0].solid.volume(), plate(8.0, 10.0));
+    assert_near(evaluation.bodies[1].solid.volume(), plate(8.0, 3.0));
+
+    // Only the lower plate put back: the disc 1 mm into it leaves a
+    // disc 1 mm thick.
+    set_extrude(&mut editor, intersect, |extrude| {
+        extrude.operation = Operation::Intersect(Targets {
+            excluded: vec![top],
+        });
+    });
+    let evaluation = evaluated(editor.document());
+    assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
+    assert_near(evaluation.bodies[0].solid.volume(), plate(8.0, 10.0));
+    assert_near(evaluation.bodies[1].solid.volume(), PI * 25.0);
+}
+
 #[test]
 fn a_join_touching_no_body_fails() {
     let mut editor = Editor::new(Document::example());
