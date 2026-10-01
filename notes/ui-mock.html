@@ -25,7 +25,7 @@
   operation set up for a screenshot (revolve, combine, move, bmirror,
   lpattern, cpattern, fillet, chamfer, shell); append /still to disable
   animations, /dark or /light to force the theme, /v-top (any view cube
-  view) to set the camera.
+  view) to set the camera, /persp for a perspective view.
 -->
 <style>
 :root {
@@ -63,8 +63,6 @@
   --edge: #34303f;
   --wall: #4a4556;
   --through: #e3e5e9;
-  --grid: rgba(40, 40, 60, .08);
-  --grid-major: rgba(40, 40, 60, .17);
   --ok: #3d9b35;
   --halo: #f4f4f7;
   --danger: #cf4330;
@@ -100,8 +98,6 @@
     --edge: #0e0d12;
     --wall: #221f29;
     --through: #1f2024;
-    --grid: rgba(255, 255, 255, .05);
-    --grid-major: rgba(255, 255, 255, .11);
     --ok: #5cc052;
     --halo: #24252b;
     --danger: #f07563;
@@ -137,8 +133,6 @@
   --edge: #0e0d12;
   --wall: #221f29;
   --through: #1f2024;
-  --grid: rgba(255, 255, 255, .05);
-  --grid-major: rgba(255, 255, 255, .11);
   --ok: #5cc052;
   --halo: #24252b;
   --danger: #f07563;
@@ -397,11 +391,10 @@ kbd {
   position: absolute; top: calc(var(--title-h) + var(--tool-h)); left: var(--side-w); right: 0; bottom: var(--status-h);
   background: linear-gradient(180deg, var(--vp-top), var(--vp-bot));
 }
-#scene { width: 100%; height: 100%; display: block; }
+#scene { position: relative; width: 100%; height: 100%; display: block; }
 body.dragging #scene { cursor: grabbing; }
 body.dragging .face, body.dragging .hole { pointer-events: none; }
-.grid line { stroke: var(--grid); vector-effect: non-scaling-stroke; }
-.grid line.major { stroke: var(--grid-major); }
+#grid { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 
 .face, .tf, .wall {
   stroke: var(--edge); stroke-width: 1; stroke-linejoin: round;
@@ -422,11 +415,11 @@ body.dragging .face, body.dragging .hole { pointer-events: none; }
 .oplane:hover { fill: var(--hl-line); fill-opacity: .35; }
 .oplane.sel { fill: var(--accent); fill-opacity: .25; stroke: var(--accent); stroke-opacity: 1; }
 .oplane-label { font: 600 4px system-ui, sans-serif; fill: var(--c-cons); pointer-events: none; text-anchor: middle; }
-.axis { stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.axis { stroke-width: 1.75; vector-effect: non-scaling-stroke; }
+.origin-ring { fill: none; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.origin-ring.rim { stroke: #333840; stroke-width: 3.5; }
+.origin-ring.core { stroke: #fff; stroke-width: 1.5; }
 
-.sk-plane { fill: var(--accent); fill-opacity: .05; stroke: none; }
-.sk-grid { stroke: var(--accent); stroke-opacity: .12; vector-effect: non-scaling-stroke; }
-.sk-grid.major { stroke-opacity: .24; }
 .sk { fill: none; stroke: var(--accent); stroke-width: 1.8; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
 .sk-pt { fill: var(--halo); stroke: var(--accent); stroke-width: 1.2; vector-effect: non-scaling-stroke; }
 .sk-dim { stroke: var(--text); stroke-opacity: .55; vector-effect: non-scaling-stroke; }
@@ -461,11 +454,19 @@ body.dragging .face, body.dragging .hole { pointer-events: none; }
 .pplane { fill: var(--accent); fill-opacity: .08; stroke: var(--accent); stroke-opacity: .7; stroke-dasharray: 5 3; vector-effect: non-scaling-stroke; pointer-events: none; }
 
 .cube-wrap { position: absolute; top: 10px; right: 12px; display: flex; align-items: flex-start; gap: 2px; }
-.cube { width: 96px; height: 96px; }
+.cube-btns { margin-top: 6px; display: flex; align-items: flex-start; gap: 6px; }
+.projs { display: flex; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); }
+.projs button { height: 22px; padding: 0 8px; border: 0; border-radius: 6px; background: none; color: var(--text); font: inherit; font-size: 12px; cursor: pointer; }
+.projs button:hover { background: var(--hl); }
+.projs button.on { background: var(--accent-soft); color: var(--accent); }
+.cube { width: 116px; height: 116px; }
+.cube .ax { fill: none; stroke: var(--ax); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+.cube .ax.head { fill: var(--ax); stroke: none; }
+.cube .ax.letter { stroke-width: 1.6; }
 .cube polygon { fill: var(--f); stroke: var(--edge); stroke-opacity: .45; stroke-width: .6; cursor: pointer; }
 .cube polygon:hover { fill: var(--hl-line); }
 .cube text { font: 700 17px system-ui, sans-serif; fill: var(--text); fill-opacity: .7; text-anchor: middle; dominant-baseline: central; pointer-events: none; }
-.home-btn { margin-top: 6px; width: 26px; height: 26px; border-radius: 7px; border: 1px solid var(--line); background: var(--panel); color: var(--muted); cursor: pointer; display: grid; place-items: center; }
+.home-btn { width: 26px; height: 26px; border-radius: 7px; border: 1px solid var(--line); background: var(--panel); color: var(--muted); cursor: pointer; display: grid; place-items: center; }
 .home-btn:hover { background: var(--hl); color: var(--text); }
 .hint-center {
   position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%);
@@ -474,7 +475,7 @@ body.dragging .face, body.dragging .hole { pointer-events: none; }
 
 /* ---- operation panel: floats at the viewport's right, under the view cube ---- */
 .opp {
-  position: absolute; top: 116px; right: 12px; width: 256px; max-height: calc(100% - 128px); z-index: 4;
+  position: absolute; top: 150px; right: 12px; width: 256px; max-height: calc(100% - 162px); z-index: 4;
   display: flex; flex-direction: column; overflow: hidden;
   background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
   box-shadow: 0 1px 3px rgba(0,0,0,.08), 0 12px 32px rgba(0,0,0,.16);
@@ -720,13 +721,20 @@ const rad = d => d * Math.PI / 180;
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-// Orthographic camera orbiting target T. yaw around +Z, pitch above the XY plane.
-function makeProj(yaw, pitch, T) {
+// Camera orbiting target T. yaw around +Z, pitch above the XY plane. Orthographic,
+// or in perspective with the eye D from T: the target's depth keeps its scale,
+// nearer is larger.
+function makeProj(yaw, pitch, T, D = Infinity) {
   const cy = Math.cos(rad(yaw)), sy = Math.sin(rad(yaw)), cp = Math.cos(rad(pitch)), sp = Math.sin(rad(pitch));
   const d = [cp * cy, cp * sy, sp], r = [-sy, cy, 0], u = [-sp * cy, -sp * sy, cp];
   const light = norm([0, 1, 2].map(i => -0.45 * r[i] + 0.7 * u[i] + 0.6 * d[i]));
-  const P = (x, y, z) => { const q = [x - T[0], y - T[1], z - T[2]]; return [dot(q, r), -dot(q, u)]; };
-  return { P, d, r, u, light, depth: p => dot(sub(p, T), d) };
+  const P = (x, y, z) => {
+    const q = [x - T[0], y - T[1], z - T[2]], k = D === Infinity ? 1 : D / Math.max(D - dot(q, d), 1e-3);
+    return [dot(q, r) * k, -dot(q, u) * k];
+  };
+  // Whether a face with normal n through point p is turned towards the eye.
+  const facing = (n, p, eps = 1e-4) => D === Infinity ? dot(n, d) > eps : dot(n, sub(add(T, mul(d, D)), p)) > eps;
+  return { P, d, r, u, T, D, light, facing, depth: p => dot(sub(p, T), d) };
 }
 let proj;
 const pts = (a, pr = proj) => a.map(p => pr.P(...p).map(n => n.toFixed(2)).join(',')).join(' ');
@@ -765,7 +773,7 @@ let uid = 0;
 // carry its body (`body`), a colour variant (`tint`), `draft` (a preview,
 // never picked), `fade` and a shell's `opening`.
 function solidSvg(faces, pr, interactive) {
-  const vis = faces.filter(f => dot(f.n, pr.d) > 1e-4)
+  const vis = faces.filter(f => pr.facing(f.n, f.p[0]))
     .map(f => ({ f, z: depthOf(f.p, pr) }))
     .sort((a, b) => a.z - b.z);
   const bodySel = interactive && st.sel?.kind === 'body';
@@ -825,6 +833,8 @@ const VIEWS = {
   right: { yaw: 0, pitch: 0 }, left: { yaw: 180, pitch: 0 },
 };
 const HOME = { ...VIEWS.home, zoom: 0.8, px: 0, py: 0 };
+// The app's 45° vertical field of view: the eye's distance for the view's height.
+const eyeDistance = () => 250 * cam.zoom / (2 * Math.tan(rad(22.5)));
 
 // Planes that can hold a sketch: map (u, v) in the plane to model space.
 const PLANES = {
@@ -910,6 +920,7 @@ const st = {
   panel: 'timeline', alt: false, menu: false, help: false,
   gbarPinned: false, prevCam: null,
   railOpen: null,  // index of the tool set whose list is open from the rail
+  persp: false,    // perspective, else orthographic
   op: null,        // solid operation being set up: { kind, pick, editing?, ...its parameters }
 };
 // Faces ('base-top') and bodies ('body:body') the operation being set up highlights.
@@ -1318,16 +1329,82 @@ function objects() {
 }
 
 // ---------------------------------------------------------------- viewport
-function gridSvg(cx, cy) {
-  let g = '';
-  for (let x = -80; x <= 160; x += 10) g += lineP([x, -90, 0], [x, 140, 0], x % 50 ? '' : 'major');
-  for (let y = -90; y <= 140; y += 10) g += lineP([-80, y, 0], [160, y, 0], y % 50 ? '' : 'major');
-  return `<defs>
-      <radialGradient id="gridfade" gradientUnits="userSpaceOnUse" cx="${cx}" cy="${cy}" r="150">
-        <stop offset="0" stop-color="#fff"/><stop offset=".5" stop-color="#fff" stop-opacity=".7"/><stop offset="1" stop-color="#fff" stop-opacity="0"/>
-      </radialGradient>
-      <mask id="gridmask"><rect x="-2000" y="-2000" width="4000" height="4000" fill="url(#gridfade)"/></mask>
-    </defs><g class="grid" mask="url(#gridmask)">${g}</g>`;
+// The grid's plane: the XY plane, or the sketch's being edited, as an origin
+// and unit x and y axes.
+function gridPlane() {
+  if (st.mode !== 'sketch') return { o: [0, 0, 0], x: [1, 0, 0], y: [0, 1, 0] };
+  const f = PLANES[st.sketch.plane].f, o = f(0, 0);
+  return { o, x: norm(sub(f(1, 0), o)), y: norm(sub(f(0, 1), o)) };
+}
+
+// The app's grid (`fs_grid` in crates/render/src/shaders/scene.wgsl), ported
+// per pixel onto a canvas under the scene: unbounded on its plane, its spacing
+// a power of ten keeping the finest lines at least 16 px apart where each
+// pixel looks, each level fading into the next as it gets denser, faded out
+// from 1.5 to 6 view heights of the target and at grazing angles.
+const GRID_COLOR = '#737d8a';
+function drawGrid() {
+  const svg = $('#scene'), cv = $('#grid');
+  if (!svg || !cv) return;
+  const W = svg.clientWidth, H = svg.clientHeight;
+  if (!W || !H) return;
+  if (cv.width !== W || cv.height !== H) Object.assign(cv, { width: W, height: H });
+  // Canvas pixel to scene units: the scene's viewBox, fitted as "meet".
+  const vb = svg.viewBox.baseVal, k = Math.max(vb.width / W, vb.height / H);
+  const x0 = vb.x + vb.width / 2 - W * k / 2, y0 = vb.y + vb.height / 2 - H * k / 2;
+  const g = gridPlane(), n = cross(g.x, g.y), { T, d, r, u, D } = proj, persp = D !== Infinity;
+  const to = sub(T, g.o), D_ = persp ? D : 0;
+  // Linear forms in the screen point (sx, sy) of the point q on the view
+  // plane at the target, and of the ray's direction, along n, x and y.
+  const lin = v => [dot(to, v), dot(r, v), -dot(u, v), dot(d, v)];
+  const [N, X, Y] = [lin(n), lin(g.x), lin(g.y)];
+  // Plane coordinates of the pixel's ray, with how squarely it meets the
+  // plane, or null if it doesn't ahead of the eye.
+  const px = new Float32Array((W + 1) * (H + 1)), py = new Float32Array(px.length), ok = new Uint8Array(px.length);
+  const cosA = new Float32Array(px.length);
+  for (let j = 0; j <= H; j++) {
+    const sy = y0 + (j + 0.5) * k;
+    for (let i = 0; i <= W; i++) {
+      const sx = x0 + (i + 0.5) * k, at = j * (W + 1) + i;
+      const qn = N[0] + N[1] * sx + N[2] * sy, qx = X[0] + X[1] * sx + X[2] * sy, qy = Y[0] + Y[1] * sx + Y[2] * sy;
+      const dn = persp ? -D_ * N[3] + N[1] * sx + N[2] * sy : -N[3];
+      const dx = persp ? -D_ * X[3] + X[1] * sx + X[2] * sy : -X[3];
+      const dy = persp ? -D_ * Y[3] + Y[1] * sx + Y[2] * sy : -Y[3];
+      if (Math.abs(dn) < 1e-12) continue;
+      const t = -qn / dn;
+      if (persp && t <= -1) continue;
+      px[at] = qx + t * dx; py[at] = qy + t * dy; ok[at] = 1;
+      cosA[at] = Math.abs(dn) / (persp ? Math.hypot(D_, sx, sy) : 1);
+    }
+  }
+  const fc = add(T, sub(mul(r, cam.px), mul(u, cam.py))), fx = dot(sub(fc, g.o), g.x), fy = dot(sub(fc, g.o), g.y);
+  const extent = H * k;
+  const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+  const weight = x => clamp((x + 1) * 0.25, 0, 0.6);
+  const lines = (cx, cy, wx, wy, s) => {
+    const lx = Math.abs(((cx / s - 0.5) % 1 + 1) % 1 - 0.5) / Math.max(wx / s, 1e-6);
+    const ly = Math.abs(((cy / s - 0.5) % 1 + 1) % 1 - 0.5) / Math.max(wy / s, 1e-6);
+    return 1 - Math.min(lx, ly, 1);
+  };
+  const ctx = cv.getContext('2d'), img = ctx.createImageData(W, H), out = img.data;
+  const [cr, cg, cb] = [1, 3, 5].map(i => parseInt(GRID_COLOR.slice(i, i + 2), 16));
+  for (let j = 0; j < H; j++) {
+    for (let i = 0; i < W; i++) {
+      const at = j * (W + 1) + i, ar = at + 1, dn = at + W + 1;
+      if (!ok[at] || !ok[ar] || !ok[dn]) continue;
+      const cx = px[at], cy = py[at];
+      // fwidth: the change over a pixel across and down.
+      const wx = Math.abs(px[ar] - cx) + Math.abs(px[dn] - cx), wy = Math.abs(py[ar] - cy) + Math.abs(py[dn] - cy);
+      const level = Math.log10(Math.max(Math.hypot(wx, wy), 1e-6) * 16), s = 10 ** Math.floor(level), f = level - Math.floor(level);
+      const l = Math.max(lines(cx, cy, wx, wy, s) * weight(-f), lines(cx, cy, wx, wy, s * 10) * weight(1 - f), lines(cx, cy, wx, wy, s * 100) * weight(2 - f));
+      const fade = (1 - smooth(extent * 1.5, extent * 6, Math.hypot(cx - fx, cy - fy))) * smooth(0.02, 0.15, cosA[at]);
+      const a = l * fade;
+      if (a <= 0) continue;
+      const o = (j * W + i) * 4;
+      out[o] = cr; out[o + 1] = cg; out[o + 2] = cb; out[o + 3] = Math.round(a * 255);
+    }
+  }
+  ctx.putImageData(img, 0, 0);
 }
 
 function originSvg() {
@@ -1341,8 +1418,51 @@ function originSvg() {
     const [lx, ly] = proj.P(...p.lp);
     out += `<polygon class="oplane${st.sel?.id === p.id ? ' sel' : ''}" data-face="${p.id}" points="${pts(p.p)}"/><text class="oplane-label" x="${lx}" y="${ly}">${p.lab}</text>`;
   }
-  const axis = (to, c) => lineP([0, 0, 0], to, 'axis').replace('class="axis"', `class="axis" stroke="${c}"`);
-  return out + `<g style="pointer-events:none">${axis([55, 0, 0], '#d9412b')}${axis([0, 55, 0], '#3d9b35')}${axis([0, 0, 55], '#1f6fd1')}</g>`;
+  return out;
+}
+
+// The X, Y and Z axes' colours, the app's (`AXES` in crates/view/src/theme.rs).
+const AXIS_COLORS = ['#c24740', '#59a14f', '#4073c4'];
+
+// The grid's x and y axis lines, as the app's: through its origin, on to
+// the horizon, not faded, over the grid but under the model, each in the
+// colour of the world axis it lies along, or the grid's.
+function gridAxesSvg(g) {
+  let out = '';
+  for (const a of [g.x, g.y]) {
+    // Each way from the origin, short of the eye in perspective.
+    const reach = s => {
+      const dd = s * dot(a, proj.d), d0 = proj.depth(g.o);
+      return proj.D === Infinity || dd <= 0 ? 1e5 : Math.min(1e5, (0.98 * proj.D - d0) / dd);
+    };
+    const world = [0, 1, 2].find(i => Math.abs(a[i]) > 1 - 1e-6);
+    const line = lineP(add(g.o, mul(a, -reach(-1))), add(g.o, mul(a, reach(1))), 'axis');
+    out += line.replace('class="axis"', `class="axis" stroke="${world === undefined ? GRID_COLOR : AXIS_COLORS[world]}"`);
+  }
+  return `<g style="pointer-events:none">${out}</g>`;
+}
+
+// Scene units per screen pixel, for things sized in pixels.
+function unitsPerPixel() {
+  const s = $('#scene'), w = 380 * cam.zoom, h = 250 * cam.zoom;
+  const r = s?.getBoundingClientRect();
+  return r?.width && r.height ? Math.max(w / r.width, h / r.height) : h / 600;
+}
+
+// The app's origin marker: a ring lying in the XY plane, its widest 10 px
+// on screen at any zoom, and a dot at the origin, each white with a dark rim.
+function originMarkerSvg() {
+  const k = unitsPerPixel(), h = 1e-3, [ox, oy] = proj.P(0, 0, 0);
+  const img = v => { const [x, y] = proj.P(...mul(v, h)); return [(x - ox) / h, (y - oy) / h]; };
+  const ex = img([1, 0, 0]), ey = img([0, 1, 0]);
+  const at = t => [Math.cos(t) * ex[0] + Math.sin(t) * ey[0], Math.cos(t) * ex[1] + Math.sin(t) * ey[1]];
+  const ts = Array.from({ length: 48 }, (_, i) => i * Math.PI / 24);
+  const widest = Math.max(...ts.map(t => Math.hypot(...at(t))), 1e-9), sc = 10 * k / widest;
+  const ring = ts.map(t => at(t).map((c, j) => ((j ? oy : ox) + c * sc).toFixed(3)).join(',')).join(' ');
+  return `<g style="pointer-events:none">
+    <polygon class="origin-ring rim" points="${ring}"/><polygon class="origin-ring core" points="${ring}"/>
+    <circle cx="${ox}" cy="${oy}" r="${3.5 * k}" fill="#333840"/><circle cx="${ox}" cy="${oy}" r="${2.5 * k}" fill="#fff"/>
+  </g>`;
 }
 
 function sketchGeomSvg(id, planeKey, withDims) {
@@ -1373,23 +1493,14 @@ function sketchGeomSvg(id, planeKey, withDims) {
   return out;
 }
 
-function sketchPlaneSvg(planeKey) {
-  const { f, b } = PLANES[planeKey];
-  const m = 15, [u0, u1, v0, v1] = [b[0] - m, b[1] + m, b[2] - m, b[3] + m];
-  let out = `<polygon class="sk-plane" points="${pts([f(u0, v0), f(u1, v0), f(u1, v1), f(u0, v1)])}"/>`;
-  for (let u = Math.ceil(u0 / 5) * 5; u <= u1; u += 5) out += lineP(f(u, v0), f(u, v1), 'sk-grid' + (u % 10 ? '' : ' major'));
-  for (let v = Math.ceil(v0 / 5) * 5; v <= v1; v += 5) out += lineP(f(u0, v), f(u1, v), 'sk-grid' + (v % 10 ? '' : ' major'));
-  return out;
-}
-
 const viewBox = () => { const w = 380 * cam.zoom, h = 250 * cam.zoom; return `${cam.px - w / 2} ${cam.py - h / 2} ${w} ${h}`; };
 
 function sceneInner() {
   const d = st.doc;
-  proj = makeProj(cam.yaw, cam.pitch, d.T);
+  proj = makeProj(cam.yaw, cam.pitch, d.T, st.persp ? eyeDistance() : Infinity);
   const inSketch = st.mode === 'sketch';
   const active = activeFeatures();
-  const [gx, gy] = proj.P(d.T[0], d.T[1], 0);
+  const plane = gridPlane();
   const bodies = bodiesAt(active);
   // An operation being set up adds its preview, highlights and pick targets.
   const pv = st.op ? opPreview(ctxOf(bodies, active)) : null;
@@ -1404,7 +1515,7 @@ function sceneInner() {
 
   let overlay = '';
   if (inSketch) {
-    overlay += sketchPlaneSvg(st.sketch.plane) + sketchGeomSvg(st.sketch.id, st.sketch.plane, true);
+    overlay += sketchGeomSvg(st.sketch.id, st.sketch.plane, true);
   } else if (d.kind === 'bracket') {
     // Sketches show when made visible, or when nothing has consumed them yet.
     for (const id of Object.keys(SKETCHES)) {
@@ -1412,12 +1523,21 @@ function sceneInner() {
       if (active.has(id) && (!d.hidden.has(id) || unconsumed)) overlay += sketchGeomSvg(id, SKETCHES[id].plane, false);
     }
   }
-  return `${gridSvg(gx, gy)}<g class="${inSketch ? 'ghost' : ''}">${model}</g><g style="pointer-events:none">${overlay}</g><g class="opl">${pv?.svg || ''}</g>`;
+  const marker = !d.hidden.has('origin') && !(inSketch && d.kind === 'bracket') ? originMarkerSvg() : '';
+  // The marker is over the model and the finished sketches, under the sketch being edited.
+  overlay = inSketch ? marker + overlay : overlay + marker;
+  return `${gridAxesSvg(plane)}<g class="${inSketch ? 'ghost' : ''}">${model}</g><g style="pointer-events:none">${overlay}</g><g class="opl">${pv?.svg || ''}</g>`;
 }
 
+// The view cube, as the app's (crates/view/src/view_cube.rs): 116 px, room
+// around the cube for the X, Y and Z axes, each along an edge of the cube in
+// sight and on past it to an arrowhead and its letter.
+const CUBE = 116, CUBE_HALF = 25;
 function cubeInner() {
   const pr = makeProj(cam.yaw, cam.pitch, [0, 0, 0]);
-  const s = 25, L = v => [dot(v, pr.r), -dot(v, pr.u)], dark = isDark();
+  const s = CUBE_HALF, m = CUBE / 2, dark = isDark();
+  const L = v => [dot(v, pr.r), -dot(v, pr.u)];
+  const W = v => L(v).map(x => x + m);
   const faces = [
     { n: [0, 0, 1], k: 'T', name: 'Top', u: [1, 0, 0], v: [0, -1, 0], view: 'top' },
     { n: [0, 0, -1], k: 'U', name: 'Under', u: [1, 0, 0], v: [0, 1, 0], view: 'bottom' },
@@ -1426,25 +1546,102 @@ function cubeInner() {
     { n: [1, 0, 0], k: 'R', name: 'Right', u: [0, 1, 0], v: [0, 0, -1], view: 'right' },
     { n: [-1, 0, 0], k: 'L', name: 'Left', u: [0, -1, 0], v: [0, 0, -1], view: 'left' },
   ].filter(f => dot(f.n, pr.d) > 1e-3);
-  let out = '';
+  const axes = cubeAxes(pr, W);
+  let out = cubeAxesSvg(axes, false);
   for (const f of faces) {
     const c = f.n.map(x => x * s);
-    const corner = (a, b) => L([0, 1, 2].map(i => c[i] + (a * f.u[i] + b * f.v[i]) * s)).map(x => (x + 48).toFixed(2)).join(',');
+    const corner = (a, b) => W([0, 1, 2].map(i => c[i] + (a * f.u[i] + b * f.v[i]) * s)).map(x => x.toFixed(2)).join(',');
     const i = Math.max(0, dot(f.n, pr.light));
     const fill = dark ? `hsl(258 8% ${(30 + 20 * i).toFixed(1)}%)` : `hsl(258 10% ${(80 + 16 * i).toFixed(1)}%)`;
-    const [cx, cy] = L(c).map(x => x + 48), [a, b] = L(f.u), [cc, dd] = L(f.v);
+    const [cx, cy] = W(c), [a, b] = L(f.u), [cc, dd] = L(f.v);
     out += `<polygon style="--f:${fill}" data-act="view:${f.view}" points="${[corner(-1, -1), corner(1, -1), corner(1, 1), corner(-1, 1)].join(' ')}"><title>${f.name}</title></polygon>
       <text transform="matrix(${a} ${b} ${cc} ${dd} ${cx} ${cy})">${f.k}</text>`;
   }
+  return out + cubeAxesSvg(axes, true);
+}
+
+// The axes on the cube: of the four edges along each, those on a face turned
+// to the camera; of those, one whose part past the cube nothing of the cube
+// hides if any, then the lowest and furthest left on screen, so they gather
+// at the cube's bottom left like a triad. None for an axis seen end on.
+function cubeAxes(pr, W) {
+  const s = CUBE_HALF, facing = n => dot(n, pr.d) > 1e-3;
+  // Whether the cube hides p, a point on or outside it.
+  const hidden = p => {
+    const inside = s * (1 - 1e-3);
+    let near = 1e-3, far = Infinity;
+    for (let i = 0; i < 3; i++) {
+      const o = p[i], d = pr.d[i];
+      if (Math.abs(d) < 1e-9) { if (Math.abs(o) >= inside) return false; continue; }
+      const a = (-inside - o) / d, b = (inside - o) / d;
+      near = Math.max(near, Math.min(a, b));
+      far = Math.min(far, Math.max(a, b));
+    }
+    return near < far;
+  };
+  const E = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+  return E.map((along, index) => {
+    const [px, py] = [dot(along, pr.r), -dot(along, pr.u)], len = Math.hypot(px, py);
+    if (len < 0.05) return null;
+    const dir = [px / len, py / len], u = E[(index + 1) % 3], v = E[(index + 2) % 3];
+    let best = null, bestScore = null;
+    for (const [a, b] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+      if (!facing(mul(u, a)) && !facing(mul(v, b))) continue;
+      const start = mul(sub(add(mul(u, a), mul(v, b)), along), s), end = add(start, mul(along, 2 * s)), tip = add(end, mul(along, 12));
+      let tipShown = true;
+      for (let i = 1; i <= 8; i++) if (hidden(add(end, mul(sub(tip, end), i / 8)))) tipShown = false;
+      const [S, Ee, T] = [W(start), W(end), W(tip)];
+      const letter = [0, 1].map(j => clamp(T[j] + dir[j] * 8, 6, CUBE - 6));
+      const score = [tipShown ? 1 : 0, (S[1] + Ee[1]) / 2 - (S[0] + Ee[0]) / 2];
+      if (!best || score[0] > bestScore[0] || (score[0] === bestScore[0] && score[1] > bestScore[1])) {
+        best = { index, start: S, end: Ee, tip: T, dir, letter, tipShown };
+        bestScore = score;
+      }
+    }
+    return best;
+  }).filter(Boolean);
+}
+
+// The axes' parts drawn over the faces if `over`, else those under them.
+// Their edges are always over: each runs along a face turned to the camera.
+function cubeAxesSvg(axes, over) {
+  const f = p => p.map(x => x.toFixed(2)).join(',');
+  const LETTERS = [
+    [[[-0.38, -0.5], [0.38, 0.5]], [[0.38, -0.5], [-0.38, 0.5]]],
+    [[[-0.38, -0.5], [0, 0], [0.38, -0.5]], [[0, 0], [0, 0.5]]],
+    [[[-0.38, -0.5], [0.38, -0.5], [-0.38, 0.5], [0.38, 0.5]]],
+  ];
+  let out = '';
+  for (const a of axes) {
+    let g = over ? `<polyline class="ax" points="${f(a.start)} ${f(a.end)}"/>` : '';
+    if (a.tipShown === over) {
+      const base = [0, 1].map(j => a.tip[j] - a.dir[j] * 6);
+      const room = Math.hypot(a.tip[0] - a.end[0], a.tip[1] - a.end[1]) > 6;
+      g += `<polyline class="ax" points="${f(a.end)} ${f(room ? base : a.tip)}"/>`;
+      if (room) {
+        const side = [-a.dir[1] * 3, a.dir[0] * 3];
+        g += `<polygon class="ax head" points="${f(a.tip)} ${f([base[0] + side[0], base[1] + side[1]])} ${f([base[0] - side[0], base[1] - side[1]])}"/>`;
+      }
+      for (const stroke of LETTERS[a.index]) {
+        g += `<polyline class="ax letter" points="${stroke.map(([x, y]) => f([a.letter[0] + x * 8, a.letter[1] + y * 8])).join(' ')}"/>`;
+      }
+    }
+    if (g) out += `<g style="--ax:${AXIS_COLORS[a.index]}">${g}</g>`;
+  }
   return out;
 }
+
+const projsInner = () => [['persp', true, 'Perspective'], ['ortho', false, 'Orthographic']]
+  .map(([k, on, label]) => `<button class="${st.persp === on ? 'on' : ''}" data-act="proj:${k}">${label}</button>`).join('');
 
 function redrawScene() {
   const s = $('#scene');
   if (!s) return;
   s.setAttribute('viewBox', viewBox());
   s.innerHTML = sceneInner();
+  drawGrid();
   $('#cube').innerHTML = cubeInner();
+  $('.projs').innerHTML = projsInner();
 }
 // Orbit, pan and zoom input can fire many times per frame; redraw once per frame.
 let redrawQueued = 0;
@@ -1557,7 +1754,7 @@ const opCtx = () => { const active = activeFeatures(); return ctxOf(bodiesAt(act
 const ready = r => !r.error && !r.need && !Object.keys(r.errs).length;
 
 const ORIGIN_AXES = { 'axis-x': [1, 0, 0], 'axis-y': [0, 1, 0], 'axis-z': [0, 0, 1] };
-const AXIS_COLOR = { 'axis-x': '#d9412b', 'axis-y': '#3d9b35', 'axis-z': '#1f6fd1' };
+const AXIS_COLOR = { 'axis-x': AXIS_COLORS[0], 'axis-y': AXIS_COLORS[1], 'axis-z': AXIS_COLORS[2] };
 const ORIGIN_PLANES = { 'plane-xy': [0, 0, 1], 'plane-xz': [0, 1, 0], 'plane-yz': [1, 0, 0] };
 const FACE_NAME = {
   'side': 'Front face', 'side-b': 'Rear face', 'bottom': 'Underside', 'back': 'Back face',
@@ -1695,7 +1892,7 @@ function edgesSvg(edges, picked, straightOnly = false) {
   for (const e of edges.values()) {
     if (straightOnly && e.rim) continue;
     const on = picked.includes(e.id);
-    if (!on && !e.sides.some(s => dot(s.f.n, proj.d) > 1e-4)) continue;
+    if (!on && !e.sides.some(s => proj.facing(s.f.n, s.f.p[0]))) continue;
     const shape = cls => e.rim ? `<polygon class="${cls}" points="${pts(e.rim)}"/>` : lineP(e.a, e.b, cls);
     out += `<g class="edc${on ? ' on' : ''}" data-pick="edge:${e.id}"><title>${e.label}</title>${shape('hit')}${shape('vis')}</g>`;
   }
@@ -2325,6 +2522,7 @@ function render() {
   const a = document.activeElement, field = a?.dataset?.field, caret = field && [a.selectionStart, a.selectionEnd];
   const scroll = $('.opp-body')?.scrollTop;
   renderApp();
+  drawGrid();
   const body = $('.opp-body');
   if (body && scroll) body.scrollTop = scroll;
   const el = field ? $(`.opp [data-field="${field}"]`) : st.op?.focus ? $('.opp input') : null;
@@ -2345,10 +2543,14 @@ function renderApp() {
     <div class="side">${side()}</div>
     ${rail()}${railPop()}
     <div class="vp">
+      <canvas id="grid"></canvas>
       <svg id="scene" viewBox="${viewBox()}" preserveAspectRatio="xMidYMid meet">${sceneInner()}</svg>
       <div class="cube-wrap">
-        <button class="home-btn" data-act="view:home" title="Home view">${icon('home')}</button>
-        <svg id="cube" class="cube" viewBox="0 0 96 96">${cubeInner()}</svg>
+        <div class="cube-btns">
+          <div class="projs">${projsInner()}</div>
+          <button class="home-btn" data-act="view:home" title="Home view">${icon('home')}</button>
+        </div>
+        <svg id="cube" class="cube" viewBox="0 0 116 116">${cubeInner()}</svg>
       </div>
       ${st.op ? opPanel() : ''}
       ${hint}
@@ -2486,6 +2688,7 @@ function act(a) {
     case 'theme': root.dataset.theme = isDark() ? 'light' : 'dark'; break;
     case 'help': st.help = !st.help; break;
     case 'toast': toast(v); return;
+    case 'proj': st.persp = v === 'persp'; redrawScene(); return;
     case 'view': animateCam(v === 'home' ? HOME : { ...VIEWS[v], px: 0, py: 0 }); return;
     case 'op': doOp(v); break;
     case 'opf': st.op.pick = v; break;
@@ -2688,6 +2891,7 @@ window.addEventListener('pointerup', () => {
   drag = null;
   document.body.classList.remove('dragging');
 });
+addEventListener('resize', () => queueRedraw());
 document.addEventListener('contextmenu', e => { if (e.target.closest('#scene')) e.preventDefault(); });
 document.addEventListener('wheel', e => {
   const s = e.target.closest('#scene');
@@ -2785,6 +2989,7 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change', render);
   if (view === 'tools' || view === 'sketchtools') st.gbarPinned = true;
   if (location.hash.includes('/dark')) root.dataset.theme = 'dark';
   if (location.hash.includes('/light')) root.dataset.theme = 'light';
+  if (location.hash.includes('/persp')) st.persp = true;
   for (const v of Object.keys(VIEWS)) if (location.hash.includes('/v-' + v)) Object.assign(cam, VIEWS[v]);
   const kind = doc === 'bracket' && view?.startsWith('op:') && view.slice(3);
   if (OPS[kind]) {

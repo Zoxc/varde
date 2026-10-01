@@ -120,9 +120,9 @@ pub struct SketchColors {
 
 // Scene colours the same in both palettes.
 const AXES: [Srgb; 3] = [
-    Srgb([0.85, 0.25, 0.22]),
-    Srgb([0.30, 0.65, 0.25]),
-    Srgb([0.20, 0.45, 0.85]),
+    Srgb([0.76, 0.28, 0.25]),
+    Srgb([0.35, 0.63, 0.31]),
+    Srgb([0.25, 0.45, 0.77]),
 ];
 const FEATURE_EDGE: Srgb = Srgb([0.12, 0.13, 0.15]);
 const GRID: Srgb = Srgb([0.45, 0.49, 0.54]);

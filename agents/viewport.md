@@ -177,8 +177,7 @@ the camera: its faces lettered and lit as in the mock, clicking one looks
 from that side. The X, Y and Z axes are drawn on it, in the scene's axis
 colours: each along one of the four cube edges parallel to it and on past
 the cube, with an arrowhead and its letter past the tip (kept inside the
-widget, 116 px against the mock's 96, which is larger than the cube for
-them). Of the edges on a face turned to the camera, an axis takes one
+widget, 116 px, which is larger than the cube for them). Of the edges on a face turned to the camera, an axis takes one
 whose part past the cube nothing of the cube hides, if any, and of those
 the lowest and furthest left on screen, so in most views the axes gather
 at the cube's bottom left like a triad; a fixed corner can't do that,
