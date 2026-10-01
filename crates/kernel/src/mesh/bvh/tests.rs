@@ -126,3 +126,32 @@ fn pairs_within_a_budget() {
         Err(KernelError::TooComplex)
     );
 }
+
+#[test]
+fn pairs_counted_up_to_a_limit() {
+    let bvh = Bvh::new(random_boxes(&mut Rng::new(9), 1000));
+    let all = bvh.self_pairs(4.0).len();
+    assert!(all > 300, "{all}");
+    let ids: Vec<u32> = (0..1000).collect();
+    let count = |most: usize| bvh.count_pairs_up_to(&ids, 4.0, |i, j| j > i, most);
+    // At or above the count: the count; below it, one past the limit.
+    assert_eq!(count(all), all);
+    assert_eq!(count(usize::MAX), all);
+    assert_eq!(count(all - 1), all);
+    assert_eq!(count(10), 11);
+    assert_eq!(count(0), 1);
+    // The same at 1 and 8 threads.
+    assert_deterministic(|| count(all / 2));
+    // A thousand boxes all overlapping: half a million pairs, counted
+    // no further than the limit.
+    let unit = Bounds3 {
+        min: glam::DVec3::ZERO,
+        max: glam::DVec3::ONE,
+    };
+    let bvh = Bvh::new(vec![unit; 1000]);
+    assert_eq!(
+        bvh.count_pairs_up_to(&ids, 0.0, |i, j| j > i, 1 << 30),
+        1000 * 999 / 2
+    );
+    assert_eq!(bvh.count_pairs_up_to(&ids, 0.0, |i, j| j > i, 5000), 5001);
+}

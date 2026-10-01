@@ -53,7 +53,8 @@ impl Seg {
         [c.p0, c.c, c.p1].map(|p| p.extend(0.0))
     }
 
-    fn halves(&self) -> Result<[Seg; 2], KernelError> {
+    /// Its two halves, at the curve's parameter ½.
+    pub fn halves(&self) -> Result<[Seg; 2], KernelError> {
         let [a, b] = self.conic.split_half()?;
         let depth = self.depth + 1;
         let piece = |conic| Seg {
@@ -196,6 +197,20 @@ impl Chain {
         straight: bool,
         refused: impl FnOnce(&Self, &[Seg]) -> KernelError,
     ) -> Result<(), KernelError> {
+        let pieces = self.halved(ids, max_depth, straight, refused)?;
+        self.replace(&pieces);
+        Ok(())
+    }
+
+    /// The halves of the segments `ids`, as [`Self::split`] would make
+    /// them, each with its id, for [`Self::replace`]: halving none.
+    pub fn halved(
+        &self,
+        ids: &[u32],
+        max_depth: u8,
+        straight: bool,
+        refused: impl FnOnce(&Self, &[Seg]) -> KernelError,
+    ) -> Result<Vec<(u32, Vec<Seg>)>, KernelError> {
         let (segs, _) = self.flat();
         let unsplittable: Vec<Seg> = ids
             .iter()
@@ -205,21 +220,28 @@ impl Chain {
         if !unsplittable.is_empty() {
             return Err(refused(self, &unsplittable));
         }
-        let mut ids = ids.iter().copied().peekable();
+        ids.iter()
+            .map(|&i| Ok((i, segs[i as usize].halves()?.to_vec())))
+            .collect()
+    }
+
+    /// Puts each of `pieces`' lists of segments (by ids into
+    /// [`Self::flat`], sorted) in the place of the segment it names: its
+    /// pieces, running from its start to its end.
+    pub fn replace(&mut self, pieces: &[(u32, Vec<Seg>)]) {
+        let mut pieces = pieces.iter().peekable();
         let mut i = 0u32;
         for lp in &mut self.loops {
             let mut out = Vec::with_capacity(lp.len());
             for seg in lp.iter() {
-                if ids.next_if_eq(&i).is_some() {
-                    out.extend(seg.halves()?);
-                } else {
-                    out.push(*seg);
+                match pieces.next_if(|(s, _)| *s == i) {
+                    Some((_, these)) => out.extend_from_slice(these),
+                    None => out.push(*seg),
                 }
                 i += 1;
             }
             *lp = out;
         }
-        Ok(())
     }
 
     /// Halves curved segments until every two are apart: the control

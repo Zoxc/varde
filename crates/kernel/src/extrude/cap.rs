@@ -27,21 +27,31 @@
 //!   the vertex's corner instead. A flat ear gets this point rather than
 //!   its centroid, which lies as close to its sides as the ear is flat.
 //!
-//! - When nothing else is left to mend, a round of refinement for
+//! - When nothing else is left to mend, a run of refinement for
 //!   quality ([`quality`]): Steiner points at the circumcentres of
-//!   triangles with an angle under 5°, chords (straight ones too) halved
-//!   where those would encroach on them. Fine polygons' fans and ears,
-//!   and a plate's fans out of a corner to holes on a common tangent,
-//!   become triangles a later cut, or the walls, can't come too close to.
+//!   triangles with an angle under 5°, inserted one by one, chords
+//!   (straight ones too) halved where those would encroach on them. Fine
+//!   polygons' fans and ears, and a plate's fans out of a corner to holes
+//!   on a common tangent, become triangles a later cut, or the walls,
+//!   can't come too close to.
+//! - Last, caps whose triangles' boxes still crowd each other (a fan the
+//!   exemptions left, as of a polygon whose sides are too short to
+//!   refine at, or the plain caps of the last try) are refined once more
+//!   for that, without exemptions or halving ([`crowded`]): repair would
+//!   count every pair of those boxes first and run out of budget.
 //!
 //! A Steiner point inside the hull of a segment bulging into the region
 //! could end up outside the region once that segment is halved, so that
-//! segment is halved instead. Each round triangulates afresh; the rounds
-//! stop when nothing changes, or fail after [`MAX_ROUNDS`] rounds of
-//! mending (rounds of refinement count apart, up to
-//! [`MAX_QUALITY_ROUNDS`], after which the caps stand as they are). A
-//! segment to halve that already spans less than
-//! [`MIN_SPLIT`](crate::mesh::MIN_SPLIT) resolutions is left to
+//! segment is halved instead. The first round triangulates the chain;
+//! each round after adds what the one before asked for to that
+//! triangulation ([`Live`]), points inserted and halved segments' chords
+//! replaced, so a round costs what it changes and the region's flood
+//! rather than a triangulation made afresh; caps under [`FRESH`] vertices
+//! are triangulated afresh all the same. The rounds stop when nothing
+//! changes, or fail after [`MAX_ROUNDS`] rounds of mending (runs of
+//! refinement count apart, up to [`MAX_QUALITY_ROUNDS`], after which the
+//! caps stand as they are). A segment to halve that already spans less
+//! than [`MIN_SPLIT`](crate::mesh::MIN_SPLIT) resolutions is left to
 //! refinement, whose points can take its corner apart; if they don't,
 //! it fails the profile with [`ProfileError::TooFine`]: detail too small
 //! for the resolution, which a finer tolerance mends. One halved
@@ -51,15 +61,19 @@
 //! Flat corners are the only thing the two tries do differently, and up
 //! to the first round that finds one they do the same, work counted
 //! included. So the first try keeps the state that round started from
-//! (a [`Rounds`], its fork) and the second try resumes from it rather
-//! than from the start; with no fork it would repeat the first try and
-//! isn't made.
+//! (a [`Rounds`], its fork, with a copy of the triangulation: one made
+//! afresh from the same points can differ where four lie on a circle)
+//! and the second try resumes from it rather than from the start; with
+//! no fork it would repeat the first try and isn't made.
 
 use std::collections::VecDeque;
 
 use glam::DVec2;
-use spade::handles::FixedVertexHandle;
-use spade::{ConstrainedDelaunayTriangulation, HierarchyHintGenerator, Point2, Triangulation};
+use spade::handles::{FixedFaceHandle, FixedVertexHandle, InnerTag};
+use spade::{
+    ConstrainedDelaunayTriangulation, HierarchyHintGenerator, Point2, PositionInTriangulation,
+    Triangulation,
+};
 
 use super::chain::{Chain, SIN_MIN, Seg, chord, next_in_loop};
 use crate::budget::Work;
@@ -71,7 +85,7 @@ use crate::{KernelError, MAX_PATCHES};
 
 mod quality;
 
-use quality::MAX_QUALITY_ROUNDS;
+use quality::{Bound, MAX_QUALITY_ROUNDS};
 
 /// The most rounds of triangulating and mending.
 const MAX_ROUNDS: usize = 32;
@@ -83,7 +97,7 @@ pub(super) const MAX_CAP_DEPTH: u8 = 16;
 
 /// Work units per vertex for one triangulation: inserting a vertex walks
 /// and flips a few edges.
-const TRIANGULATION_WORK: usize = 8;
+pub(super) const TRIANGULATION_WORK: usize = 8;
 
 /// A cap triangle's corner at a loop vertex is flat when it is obtuse and
 /// the vertex lies within this many resolutions of the opposite side.
@@ -135,15 +149,20 @@ impl Mode {
 }
 
 /// Where the rounds start from: the chain as halved so far, the Steiner
-/// points so far, the round's number, counting towards [`MAX_ROUNDS`]
-/// from the first try's start, and the rounds of refinement so far,
-/// towards [`MAX_QUALITY_ROUNDS`].
+/// points so far, their triangulation ([`Live`], none before the first
+/// round), the round's number, counting towards [`MAX_ROUNDS`] from the
+/// first try's start, the rounds of refinement so far, towards
+/// [`MAX_QUALITY_ROUNDS`], whether refinement has nothing more to add to
+/// that triangulation, and whether the caps were looked at for crowding.
 #[derive(Debug, Clone)]
 pub(super) struct Rounds {
     chain: Chain,
     steiner: Vec<DVec2>,
+    live: Option<Live>,
     round: usize,
     quality: usize,
+    settled: bool,
+    gated: bool,
 }
 
 impl Rounds {
@@ -152,8 +171,11 @@ impl Rounds {
         Rounds {
             chain,
             steiner: Vec::new(),
+            live: None,
             round: 0,
             quality: 0,
+            settled: false,
+            gated: false,
         }
     }
 
@@ -171,12 +193,20 @@ impl Rounds {
 /// chain as halved, with the caps; `was_refined` is set if a round of
 /// refinement asked for anything.
 ///
+/// The first round triangulates the chain and the Steiner points; the
+/// rounds after it add what the round before asked for to that
+/// triangulation ([`Live`]): Steiner points inserted, segments halved
+/// with their chords replaced.
+///
 /// A round with nothing to halve and no flat corners to mend is a round
 /// of refinement, if refinement asks for anything, and then places no
 /// ears' centroids. Halvings the chain refuses as too small don't count:
 /// refinement's points can take those corners apart, and when it has
 /// nothing more to add and such halvings are left, they fail the caps as
-/// [`refused`] says; a segment halved too often fails them at once.
+/// [`refused`] says; a segment halved too often fails them at once. When
+/// nothing is left to do, caps whose triangles' boxes crowd each other
+/// ([`crowded`]) are refined once more for that, every narrow triangle
+/// alike, and mended again.
 ///
 /// Without flat corners, `fork` is set to the state of the first round
 /// that found a flat corner, taken before the round changed anything:
@@ -194,8 +224,11 @@ pub(super) fn triangulate(
     let Rounds {
         mut chain,
         mut steiner,
+        live: mut kept,
         mut round,
         mut quality,
+        mut settled,
+        mut gated,
     } = start;
     loop {
         if round >= MAX_ROUNDS {
@@ -203,11 +236,21 @@ pub(super) fn triangulate(
         }
         let (segs, starts) = chain.flat();
         let n = segs.len();
-        if n.saturating_add(steiner.len()) > MAX_PATCHES / 4 {
+        let vertices = n.saturating_add(steiner.len());
+        if vertices > MAX_PATCHES / 4 {
             return Err(KernelError::TooComplex);
         }
-        work.spend((n + steiner.len()).saturating_mul(TRIANGULATION_WORK))?;
-        let tris = region(&segs, &starts, &steiner)?;
+        // Small caps are triangulated afresh whenever a round changed
+        // them, as cheaply as kept.
+        let fresh = vertices < FRESH;
+        let live = match &mut kept {
+            Some(live) => live,
+            None => {
+                work.spend(vertices.saturating_mul(TRIANGULATION_WORK))?;
+                kept.insert(Live::new(&segs, &starts, &steiner)?)
+            }
+        };
+        let (tris, faces) = live.region(&segs, &starts)?;
         work.spend(tris.len())?;
         let at = |v: u32| {
             let v = v as usize;
@@ -223,8 +266,11 @@ pub(super) fn triangulate(
                 *fork = Some(Rounds {
                     chain: chain.clone(),
                     steiner: steiner.clone(),
+                    live: Some(live.clone()),
                     round,
                     quality,
+                    settled,
+                    gated,
                 });
             }
             flat.clear();
@@ -247,32 +293,42 @@ pub(super) fn triangulate(
         {
             return Err(refused(&chain, &stuck(&split)));
         }
+        let caps = quality::Caps {
+            chain: &chain,
+            segs: &segs,
+            starts: &starts,
+            tris: &tris,
+            faces: &faces,
+            steiner: &steiner,
+            margin,
+        };
         // With nothing to halve and no flat corners, refinement goes before
         // the ears' centroids: its points break up ears too (a fine
         // circle's ears all share one circumcircle, whose centre takes
         // them all), where a centroid, as close to the loop as the ear is
         // thin, would make every triangle at it thin, and refinement then
-        // halve the chords near it over and over.
+        // halve the chords near it over and over. Once it has run to the
+        // end with nothing to halve, it has nothing more to add until a
+        // round of mending changes the triangles.
         if mode.quality
             && !split.iter().any(splittable)
             && flat.is_empty()
+            && !settled
             && quality < MAX_QUALITY_ROUNDS
         {
-            let caps = quality::Caps {
-                chain: &chain,
-                segs: &segs,
-                starts: &starts,
-                at: &at,
-                tris: &tris,
-                steiner: &steiner,
-                margin,
-            };
-            let refined = caps.refine(work)?;
+            let refined = caps.refine(live, Bound::Quality, work)?;
+            settled = refined.split.is_empty();
             if !refined.is_empty() {
                 *was_refined = true;
                 quality += 1;
-                quality::halve(&mut chain, refined.split, work)?;
                 steiner.extend(refined.added);
+                quality::halve(&mut chain, live, refined.split, work)?;
+                if fresh {
+                    // Made afresh, the triangles may differ from those
+                    // refinement settled.
+                    kept = None;
+                    settled = false;
+                }
                 continue;
             }
         }
@@ -293,13 +349,118 @@ pub(super) fn triangulate(
             if !stuck.is_empty() {
                 return Err(refused(&chain, &stuck));
             }
+            if !gated {
+                gated = true;
+                if crowded(&tris, &at, margin, work)? {
+                    let refined = caps.refine(live, Bound::Crowded, work)?;
+                    if !refined.added.is_empty() {
+                        steiner.extend(refined.added);
+                        if fresh {
+                            kept = None;
+                        }
+                        continue;
+                    }
+                }
+            }
             return Ok((chain, Cap { steiner, tris }));
         }
-        // Only segments that may be halved are left.
-        chain.split(&split, MAX_CAP_DEPTH, false, refused)?;
+        for &p in &added {
+            live.insert(p)?;
+        }
+        work.spend(added.len().saturating_mul(TRIANGULATION_WORK))?;
         steiner.extend(added);
+        // Only segments that may be halved are left.
+        let pieces = chain.halved(&split, MAX_CAP_DEPTH, false, refused)?;
+        replace(&mut chain, live, &starts, &pieces, work)?;
+        if fresh {
+            kept = None;
+        }
+        settled = false;
         round += 1;
     }
+}
+
+/// Caps are crowded when their triangles' boxes come within the
+/// resolution of each other in more pairs than this many times the
+/// triangles, and than [`MIN_CROWDED`]: a fan of long thin triangles out
+/// of one vertex, every two of whose boxes overlap, or a strip of them
+/// between two fine outlines. Repair counts every such pair (of both caps,
+/// and more with the walls) before anything else; refined, caps have a
+/// few per triangle.
+const CROWDED: usize = 32;
+
+/// The fewest pairs of boxes that make caps [`CROWDED`].
+const MIN_CROWDED: usize = 1 << 16;
+
+/// Whether the triangles `tris`, with their vertices `at` their points,
+/// are [`CROWDED`]: their boxes' pairs within `margin` counted, and
+/// spent, up to the limit, along with the boxes.
+fn crowded(
+    tris: &[[u32; 3]],
+    at: &(impl Fn(u32) -> DVec2 + Sync),
+    margin: f64,
+    work: &mut Work,
+) -> Result<bool, KernelError> {
+    work.spend(tris.len())?;
+    let bvh = Bvh::new(
+        tris.iter()
+            .map(|t| Bounds3::around(&t.map(|v| at(v).extend(0.0))).expect("three points"))
+            .collect(),
+    );
+    let most = tris.len().saturating_mul(CROWDED).max(MIN_CROWDED);
+    let ids: Vec<u32> = (0..tris.len() as u32).collect();
+    let pairs = bvh.count_pairs_up_to(&ids, margin, |i, j| j > i, most);
+    work.spend(pairs)?;
+    Ok(pairs > most)
+}
+
+/// Caps with fewer vertices than this at a round's start are
+/// triangulated afresh in the next round if the round changed them,
+/// rather than kept ([`Live`]): it costs at most 512 units a round, and
+/// their triangulations stay the ones made afresh in a fixed order, even
+/// where four points lie on a circle (a rectangle, a circle's arcs), so
+/// the patches of small solids, and the booleans on them, are as they
+/// were when every round triangulated afresh.
+const FRESH: usize = 64;
+
+/// Puts `pieces` (as [`Chain::halved`] gives them) in the place of the
+/// segments they name, in the chain and in the triangulation, whose
+/// chords run between `starts`' loops (the chain's before), spending
+/// [`TRIANGULATION_WORK`] for each vertex they add.
+fn replace(
+    chain: &mut Chain,
+    live: &mut Live,
+    starts: &[u32],
+    pieces: &[(u32, Vec<Seg>)],
+    work: &mut Work,
+) -> Result<(), KernelError> {
+    let added = pieces
+        .iter()
+        .map(|(_, these)| these.len().saturating_sub(1))
+        .fold(0, usize::saturating_add);
+    work.spend(added.saturating_mul(TRIANGULATION_WORK))?;
+    live.replace(starts, pieces)?;
+    chain.replace(pieces);
+    Ok(())
+}
+
+/// The region's triangles of the triangulation made afresh from
+/// `chain`'s chords and `cap`'s Steiner points, and `cap`'s own, each
+/// starting at its lowest corner, sorted: the same unless four of the
+/// points lie on a circle.
+#[cfg(test)]
+pub(super) fn afresh(chain: &Chain, cap: &Cap) -> Result<[Vec<[u32; 3]>; 2], KernelError> {
+    let (segs, starts) = chain.flat();
+    let live = Live::new(&segs, &starts, &cap.steiner)?;
+    let (fresh, _) = live.region(&segs, &starts)?;
+    Ok([fresh, cap.tris.clone()].map(|mut tris| {
+        for t in &mut tris {
+            let k = (0..3).min_by_key(|&k| t[k]).expect("three corners");
+            t.rotate_left(k);
+        }
+        tris.sort_unstable();
+        tris
+    }))
 }
 
 /// Why the caps can't halve the curved segments `unsplittable` (in the
@@ -353,117 +514,272 @@ fn point(p: DVec2) -> Point2<f64> {
     Point2::new(flush(p.x), flush(p.y))
 }
 
-/// The triangles of the region: the constrained Delaunay triangulation of
-/// the chords and the Steiner points, the triangles where the loops wind
-/// once. Loops that wind anywhere other than 0 or 1 times don't nest.
-fn region(segs: &[Seg], starts: &[u32], steiner: &[DVec2]) -> Result<Vec<[u32; 3]>, KernelError> {
-    let triangulation = || KernelError::Profile(ProfileError::Triangulation);
-    let mut cdt = Cdt::new();
-    let points: Vec<DVec2> = segs
-        .iter()
-        .map(|s| s.conic.p0)
-        .chain(steiner.iter().copied())
-        .collect();
-    // Spade numbers its vertices as they come: `ours` maps them back.
-    let mut handles = vec![FixedVertexHandle::from_index(0); points.len()];
-    let mut ours = vec![u32::MAX; points.len()];
-    for i in insertion_order(points.len()) {
-        let handle = cdt
-            .insert(point(points[i as usize]))
-            .map_err(|_| triangulation())?;
-        // A repeated point comes back as the vertex already there.
-        match ours.get_mut(handle.index()) {
-            Some(slot) if *slot == u32::MAX => *slot = i,
-            _ => return Err(triangulation()),
-        }
-        handles[i as usize] = handle;
-    }
-    let next = next_in_loop(starts);
-    let v = |i: u32| handles[i as usize];
-    for i in 0..segs.len() as u32 {
-        if cdt.try_add_constraint(v(i), v(next(i))).is_empty() {
-            return Err(triangulation());
-        }
-    }
-    // A point exactly on a chord would have split it.
-    for i in 0..segs.len() as u32 {
-        if !cdt.exists_constraint(v(i), v(next(i))) {
-            return Err(triangulation());
-        }
-    }
-    let ours = |v: FixedVertexHandle| ours[v.index()];
+/// The constrained Delaunay triangulation of a round's chords and Steiner
+/// points, kept from round to round: the points a round adds are
+/// inserted, and a segment it halves has its chord's constraint removed,
+/// the new vertices inserted and the pieces' chords made constraints.
+/// Without points on four circles that is the triangulation made afresh;
+/// with them, as on fine regular polygons, it is one of theirs. Spade's
+/// vertices are mapped to ours both ways.
+#[derive(Clone)]
+pub(super) struct Live {
+    cdt: Cdt,
+    /// Spade's vertex for each of ours: the chain's, in [`Chain::flat`]'s
+    /// order, then the Steiner points.
+    handles: Vec<FixedVertexHandle>,
+    /// Ours for each of spade's.
+    ours: Vec<u32>,
+}
 
-    // Each inner face's corners and, per side, the face across it and
-    // the side's ends, counter-clockwise.
-    let outer = cdt.outer_face().fix().index();
-    let nf = cdt.num_all_faces();
-    let mut corners = vec![None; nf];
-    let mut across = vec![[(0usize, 0u32, 0u32); 3]; nf];
-    for face in cdt.inner_faces() {
-        let f = face.fix().index();
-        corners[f] = Some(face.vertices().map(|v| ours(v.fix())));
-        for (k, e) in face.adjacent_edges().into_iter().enumerate() {
-            let (a, b) = (ours(e.from().fix()), ours(e.to().fix()));
-            across[f][k] = (e.rev().face().fix().index(), a, b);
-        }
+impl std::fmt::Debug for Live {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Live({} vertices)", self.handles.len())
     }
+}
 
-    // How the winding number changes from the right of the side `a → b`
-    // to its left: by one across a chord run forwards, back by one across
-    // a chord run backwards.
-    let step = |a: u32, b: u32| -> i32 {
-        match chord(starts, a, b) {
-            Some((_, true)) => 1,
-            Some((_, false)) => -1,
-            None => 0,
-        }
-    };
-    let nesting = || KernelError::Profile(ProfileError::Nesting);
-    let mut winding: Vec<Option<i32>> = vec![None; nf];
-    let mut queue = VecDeque::new();
-    let set = |winding: &mut [Option<i32>], queue: &mut VecDeque<usize>, f: usize, value| {
-        match winding[f] {
-            None => {
-                winding[f] = Some(value);
-                queue.push_back(f);
-                Ok(())
+/// Spade couldn't make the triangulation asked for.
+fn triangulation() -> KernelError {
+    KernelError::Profile(ProfileError::Triangulation)
+}
+
+impl Live {
+    /// The triangulation of the chords of `segs` (in loops from `starts`)
+    /// and the `steiner` points.
+    fn new(segs: &[Seg], starts: &[u32], steiner: &[DVec2]) -> Result<Live, KernelError> {
+        let mut cdt = Cdt::new();
+        let points: Vec<DVec2> = segs
+            .iter()
+            .map(|s| s.conic.p0)
+            .chain(steiner.iter().copied())
+            .collect();
+        // Spade numbers its vertices as they come: `ours` maps them back.
+        let mut handles = vec![FixedVertexHandle::from_index(0); points.len()];
+        let mut ours = vec![u32::MAX; points.len()];
+        for i in insertion_order(points.len()) {
+            let handle = cdt
+                .insert(point(points[i as usize]))
+                .map_err(|_| triangulation())?;
+            // A repeated point comes back as the vertex already there.
+            match ours.get_mut(handle.index()) {
+                Some(slot) if *slot == u32::MAX => *slot = i,
+                _ => return Err(triangulation()),
             }
-            Some(w) if w == value => Ok(()),
-            Some(_) => Err(nesting()),
+            handles[i as usize] = handle;
         }
-    };
-    // The outer face, around the hull, winds 0 times.
-    for f in 0..nf {
-        if corners[f].is_some() {
-            for &(g, a, b) in &across[f] {
-                if g == outer {
-                    set(&mut winding, &mut queue, f, step(a, b))?;
+        let mut live = Live { cdt, handles, ours };
+        let next = next_in_loop(starts);
+        for i in 0..segs.len() as u32 {
+            let (a, b) = (live.handles[i as usize], live.handles[next(i) as usize]);
+            live.constrain(a, b)?;
+        }
+        Ok(live)
+    }
+
+    /// Makes the side `a`–`b` a constraint. A point exactly on it would
+    /// split it; one crossing a constraint isn't added.
+    fn constrain(&mut self, a: FixedVertexHandle, b: FixedVertexHandle) -> Result<(), KernelError> {
+        if self.cdt.try_add_constraint(a, b).is_empty() || !self.cdt.exists_constraint(a, b) {
+            return Err(triangulation());
+        }
+        Ok(())
+    }
+
+    /// Inserts `p` as a Steiner point, our next vertex, whose number it
+    /// returns. It must lie in a triangle of the region, clear of every
+    /// chord.
+    pub(super) fn insert(&mut self, p: DVec2) -> Result<u32, KernelError> {
+        let next = self.cdt.num_vertices();
+        let handle = self.cdt.insert(point(p)).map_err(|_| triangulation())?;
+        // A repeated point comes back as the vertex already there.
+        if handle.index() != next {
+            return Err(triangulation());
+        }
+        let ours = u32::try_from(self.handles.len()).map_err(|_| KernelError::TooComplex)?;
+        self.handles.push(handle);
+        self.ours.push(ours);
+        Ok(ours)
+    }
+
+    /// Puts `pieces` (as [`Chain::halved`] gives them) in the place of the
+    /// segments they name, whose chords run between `starts`' loops: each
+    /// chord's constraint removed, the vertices between its pieces
+    /// inserted, the pieces' chords made constraints, and ours renumbered
+    /// as the chain will be. The pieces lie in their segment's control
+    /// hull, which every other segment and every Steiner point keeps clear
+    /// of, so their chords cross nothing.
+    fn replace(&mut self, starts: &[u32], pieces: &[(u32, Vec<Seg>)]) -> Result<(), KernelError> {
+        let n = *starts.last().expect("the end") as usize;
+        let next = next_in_loop(starts);
+        let mut middles = Vec::with_capacity(pieces.len());
+        for (s, these) in pieces {
+            let (a, b) = (self.handles[*s as usize], self.handles[next(*s) as usize]);
+            let edge = self
+                .cdt
+                .get_edge_from_neighbors(a, b)
+                .ok_or_else(triangulation)?
+                .fix()
+                .as_undirected();
+            if !self.cdt.remove_constraint_edge(edge) {
+                return Err(triangulation());
+            }
+            let mut chord = vec![a];
+            for piece in &these[1..] {
+                let next = self.cdt.num_vertices();
+                let handle = self
+                    .cdt
+                    .insert_with_hint(point(piece.conic.p0), a)
+                    .map_err(|_| triangulation())?;
+                if handle.index() != next {
+                    return Err(triangulation());
+                }
+                chord.push(handle);
+            }
+            chord.push(b);
+            for side in chord.windows(2) {
+                self.constrain(side[0], side[1])?;
+            }
+            middles.push(chord[1..chord.len() - 1].to_vec());
+        }
+        let mut handles = Vec::with_capacity(self.cdt.num_vertices());
+        let mut middles = pieces.iter().map(|&(s, _)| s).zip(middles).peekable();
+        for (i, &handle) in self.handles[..n].iter().enumerate() {
+            handles.push(handle);
+            if let Some((_, these)) = middles.next_if(|&(s, _)| s as usize == i) {
+                handles.extend(these);
+            }
+        }
+        handles.extend_from_slice(&self.handles[n..]);
+        self.handles = handles;
+        self.ours = vec![u32::MAX; self.cdt.num_vertices()];
+        for (i, handle) in self.handles.iter().enumerate() {
+            self.ours[handle.index()] = i as u32;
+        }
+        Ok(())
+    }
+
+    /// Face `face`'s corners, counter-clockwise, as our vertices.
+    fn corners(&self, face: FixedFaceHandle<InnerTag>) -> [u32; 3] {
+        self.cdt
+            .face(face)
+            .vertices()
+            .map(|v| self.ours[v.fix().index()])
+    }
+
+    /// Whether `face` is still the triangle `tri`: a face spade changes
+    /// gets a new corner.
+    pub(super) fn is(&self, face: FixedFaceHandle<InnerTag>, tri: [u32; 3]) -> bool {
+        let corners = self.corners(face);
+        (0..3).any(|k| corners == [tri[k], tri[(k + 1) % 3], tri[(k + 2) % 3]])
+    }
+
+    /// The faces around our vertex `v`, with their corners.
+    pub(super) fn around(&self, v: u32) -> Vec<(FixedFaceHandle<InnerTag>, [u32; 3])> {
+        self.cdt
+            .vertex(self.handles[v as usize])
+            .out_edges()
+            .filter_map(|e| e.face().as_inner())
+            .map(|f| (f.fix(), self.corners(f.fix())))
+            .collect()
+    }
+
+    /// The corners of the face `p` lies inside, if it lies inside one
+    /// rather than on an edge or a vertex.
+    pub(super) fn locate(&self, p: DVec2) -> Option<[u32; 3]> {
+        match self.cdt.locate(point(p)) {
+            PositionInTriangulation::OnFace(face) => Some(self.corners(face)),
+            _ => None,
+        }
+    }
+
+    /// The triangles of the region, the faces where the loops of `segs`
+    /// (from `starts`) wind once, with spade's faces. Loops that wind
+    /// anywhere other than 0 or 1 times don't nest.
+    #[allow(clippy::type_complexity)]
+    fn region(
+        &self,
+        segs: &[Seg],
+        starts: &[u32],
+    ) -> Result<(Vec<[u32; 3]>, Vec<FixedFaceHandle<InnerTag>>), KernelError> {
+        let cdt = &self.cdt;
+        let ours = |v: FixedVertexHandle| self.ours[v.index()];
+        debug_assert_eq!(self.handles.len(), cdt.num_vertices());
+        debug_assert!(segs.len() <= self.handles.len());
+
+        // Each inner face's corners and, per side, the face across it and
+        // the side's ends, counter-clockwise.
+        let outer = cdt.outer_face().fix().index();
+        let nf = cdt.num_all_faces();
+        let mut corners = vec![None; nf];
+        let mut across = vec![[(0usize, 0u32, 0u32); 3]; nf];
+        for face in cdt.inner_faces() {
+            let f = face.fix().index();
+            corners[f] = Some((face.fix(), face.vertices().map(|v| ours(v.fix()))));
+            for (k, e) in face.adjacent_edges().into_iter().enumerate() {
+                let (a, b) = (ours(e.from().fix()), ours(e.to().fix()));
+                across[f][k] = (e.rev().face().fix().index(), a, b);
+            }
+        }
+
+        // How the winding number changes from the right of the side `a → b`
+        // to its left: by one across a chord run forwards, back by one across
+        // a chord run backwards.
+        let step = |a: u32, b: u32| -> i32 {
+            match chord(starts, a, b) {
+                Some((_, true)) => 1,
+                Some((_, false)) => -1,
+                None => 0,
+            }
+        };
+        let nesting = || KernelError::Profile(ProfileError::Nesting);
+        let mut winding: Vec<Option<i32>> = vec![None; nf];
+        let mut queue = VecDeque::new();
+        let set = |winding: &mut [Option<i32>], queue: &mut VecDeque<usize>, f: usize, value| {
+            match winding[f] {
+                None => {
+                    winding[f] = Some(value);
+                    queue.push_back(f);
+                    Ok(())
+                }
+                Some(w) if w == value => Ok(()),
+                Some(_) => Err(nesting()),
+            }
+        };
+        // The outer face, around the hull, winds 0 times.
+        for f in 0..nf {
+            if corners[f].is_some() {
+                for &(g, a, b) in &across[f] {
+                    if g == outer {
+                        set(&mut winding, &mut queue, f, step(a, b))?;
+                    }
                 }
             }
         }
-    }
-    while let Some(f) = queue.pop_front() {
-        let w = winding[f].expect("queued faces have a winding");
-        for &(g, a, b) in &across[f] {
-            if g != outer {
-                set(&mut winding, &mut queue, g, w - step(a, b))?;
+        while let Some(f) = queue.pop_front() {
+            let w = winding[f].expect("queued faces have a winding");
+            for &(g, a, b) in &across[f] {
+                if g != outer {
+                    set(&mut winding, &mut queue, g, w - step(a, b))?;
+                }
             }
         }
-    }
-    let mut tris = Vec::new();
-    for (f, corners) in corners.iter().enumerate() {
-        if let Some(corners) = corners {
-            match winding[f] {
-                Some(0) => {}
-                Some(1) => tris.push(*corners),
-                _ => return Err(nesting()),
+        let (mut tris, mut faces) = (Vec::new(), Vec::new());
+        for (f, corners) in corners.iter().enumerate() {
+            if let Some((face, corners)) = corners {
+                match winding[f] {
+                    Some(0) => {}
+                    Some(1) => {
+                        tris.push(*corners);
+                        faces.push(*face);
+                    }
+                    _ => return Err(nesting()),
+                }
             }
         }
+        if tris.is_empty() {
+            return Err(nesting());
+        }
+        Ok((tris, faces))
     }
-    if tris.is_empty() {
-        return Err(nesting());
-    }
-    Ok(tris)
 }
 
 /// What the triangles need mended: the segments to halve, the triangles

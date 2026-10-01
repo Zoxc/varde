@@ -846,6 +846,55 @@ fn resumes_as_from_the_start(p: &Profile, tol: &Tolerance) -> Option<usize> {
     round
 }
 
+#[test]
+fn kept_triangulations_are_those_made_afresh() {
+    // The rounds insert points into the triangulation they keep and
+    // replace halved segments' chords in it: where no four points lie on
+    // a circle, that is the triangulation of the last round's chords and
+    // points made afresh. Outlines of 100 to 300 uneven straight sides
+    // and arcs of conics round random holes, at fits 1e-3 and 1e-1, on
+    // every try; most get Steiner points or halved segments.
+    let mut rng = Rng::new(41);
+    let (mut compared, mut changed) = (0, 0);
+    for case in 0..12 {
+        let n = 100 + (rng.next_u64() % 200) as usize;
+        let phase = rng.range(0.0, 6.0);
+        let mut points = Vec::with_capacity(n);
+        for i in 0..n {
+            let angle = (i as f64 + rng.range(-0.4, 0.4)) / n as f64 * std::f64::consts::TAU;
+            let r = 30.0 * (1.0 + 0.3 * (3.0 * angle + phase).sin()) * rng.range(0.98, 1.0);
+            points.push(DVec2::new(angle.cos(), angle.sin()) * r);
+        }
+        let mut loops = vec![polygon(&points, 0)];
+        for h in 0..1 + rng.next_u64() % 3 {
+            let at = DVec2::new(-10.0 + 10.0 * h as f64, rng.range(-3.0, 3.0));
+            loops.push(reversed(&random_loop(&mut rng, at, 4.0, 1000 * (h + 1))));
+        }
+        let p = profile(loops);
+        let tol = Tolerance::new([1e-3, 0.1][case % 2]).unwrap();
+        let margin = tol.resolution();
+        let mut work = Work::new(&Budget::DEFAULT);
+        let Ok(mut chain) = Chain::new(&p, margin) else {
+            continue;
+        };
+        if chain.separate(&mut work).is_err() {
+            continue;
+        }
+        for mode in [Mode::QUALITY, Mode::FLAT_CORNERS, Mode::PLAIN] {
+            let start = Rounds::new(chain.clone());
+            let mut work = Work::new(&Budget::DEFAULT);
+            let caps = cap::triangulate(start, margin, mode, &mut None, &mut false, &mut work);
+            if let Ok((halved, cap)) = caps {
+                let [fresh, kept] = cap::afresh(&halved, &cap).unwrap();
+                assert_eq!(fresh, kept, "case {case} {mode:?}");
+                compared += 1;
+                changed += usize::from(!cap.steiner.is_empty() || halved.len() > chain.len());
+            }
+        }
+    }
+    assert!(compared >= 30 && changed >= 25, "{compared} {changed}");
+}
+
 /// A `w` × `h` plate with `cols` × `rows` round holes 10 apart, radii 4
 /// and 4.9 by turns, the first centred at (5, 5).
 pub(super) fn plate_with_holes(cols: usize, rows: usize, w: f64, h: f64) -> Profile {
@@ -897,22 +946,22 @@ fn the_second_try_resumes_where_the_first_found_a_flat_corner() {
 fn the_second_try_is_charged_only_from_where_it_resumes() {
     // A 210 × 30 strip with 40 holes, the bottom row 0.1 from its side:
     // the first try fails, the second, with flat corners, passes. Starting the
-    // second over would take 368 222 units in all; resuming it, 325 814.
+    // second over would take 132 138 units in all; resuming it, 121 362.
     // The same bits at 1 and 8 threads.
     let p = plate_with_holes(20, 2, 210.0, 30.0);
     let solid = assert_deterministic(|| {
-        extrude(&p, &Frame::XY, 0.0, 2.0, 9, &TOL, &Budget::new(350_000)).unwrap()
+        extrude(&p, &Frame::XY, 0.0, 2.0, 9, &TOL, &Budget::new(150_000)).unwrap()
     });
     let exact = p.area() * 2.0;
     assert!((solid.volume() - exact).abs() < 1e-12 * exact);
     assert_eq!(solid.mesh().check_faces(&TOL), Ok(()));
-    assert_eq!(solid.mesh().tris().len(), 3736);
+    assert_eq!(solid.mesh().tris().len(), 3696);
     assert_eq!(
-        extrude(&p, &Frame::XY, 0.0, 2.0, 9, &TOL, &Budget::new(325_813)),
+        extrude(&p, &Frame::XY, 0.0, 2.0, 9, &TOL, &Budget::new(121_361)),
         Err(KernelError::TooComplex)
     );
     assert_eq!(
-        extrude(&p, &Frame::XY, 0.0, 2.0, 9, &TOL, &Budget::new(325_814)),
+        extrude(&p, &Frame::XY, 0.0, 2.0, 9, &TOL, &Budget::new(121_362)),
         Ok(solid)
     );
 }

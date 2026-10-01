@@ -4,14 +4,10 @@
 //! under 5°, chords halved where those encroach, on the first try)
 //! mends, and the patch counts of caps refined.
 //!
-//! The tests that still fail are ignored, each with what it fails with
-//! and which part of the refinement is to mend it:
-//!
-//! - "crowding": the same refinement started before the first repair
-//!   when the caps' boxes overlap by the thousand, inserting points into
-//!   the triangulation as it goes rather than rebuilding it;
-//! - "thin": circumcentres of triangles thinner than a few resolutions,
-//!   wherever an angle bound leaves some (chords too short to halve).
+//! The test that still fails is ignored, with what it fails with: a
+//! hole of sharply weighted conics, "thin": circumcentres of triangles
+//! thinner than a few resolutions, wherever an angle bound leaves some
+//! (chords too short to halve).
 //!
 //! In release builds these take a few minutes all told, most of it the
 //! corner cuts and the cut circles at many seeds; debug builds run a
@@ -220,11 +216,11 @@ fn a_fine_polygon_past_the_budget_runs_out_in_time() {
     // neighbours' chord at fit 0.1: more patches than the budget pays
     // for, refined or not. With the plain caps it ran out only after 16 s
     // (release, on a machine loaded seven times over), in the second
-    // try's repair. Refined, the first try's caps run out in under 6 s
-    // there, over half of it repair counting the box pairs of the fan its
-    // caps keep from their centre (its chords, under twice `MIN_SPLIT`
-    // resolutions, exempt the fan's triangles), and with no work left no
-    // second try is made.
+    // try's repair. Refined, the caps keep a fan from their centre (its
+    // chords, under twice `MIN_SPLIT` resolutions, exempt the fan's
+    // triangles); counting its box pairs finds it crowded, and refining
+    // it for that runs out of budget in about a second, with no work left
+    // for a second try.
     let p = profile(vec![ngon(65_536, 100.0)]);
     let start = Instant::now();
     let result = run(&p, &Tolerance::new(0.1).unwrap(), 1.0);
@@ -237,11 +233,11 @@ fn a_fine_polygon_past_the_budget_runs_out_in_time() {
 // overlap by the thousand. Repair counts every pair of boxes before
 // anything else and runs out of budget (`TooComplex`), and a budget run
 // out leaves no second try, so only caps refined before the first repair
-// pass. Refined on the first try, all but the fan of 16 384 do; it runs
-// out refining, as each round triangulates afresh.
+// pass. Refined on the first try, with the points inserted into the
+// triangulation one by one rather than rebuilding it every round, they
+// do.
 
 #[test]
-#[ignore = "TooComplex at 16 384 until crowding"]
 fn fans_of_thin_triangles() {
     let mut refused = Refused::default();
     for n in sized(vec![4096, 16_384], vec![4096]) {
@@ -266,6 +262,19 @@ fn strips_between_fine_rings() {
         assert!(patches < 12 * 2 * n, "{what}: {patches} patches");
     }
     refused.none();
+    if cfg!(debug_assertions) {
+        return;
+    }
+    // Two 16 384-gons fit the budget too, with some 157 000 patches,
+    // whose volumes add up to the rings' within `1e-11` relative (the
+    // rounding of that many terms).
+    let n = 16_384;
+    let p = profile(vec![ngon(n, 100.0), reversed(&ngon(n, 50.0))]);
+    let solid = run(&p, &TOL, 1.0).unwrap();
+    assert_eq!(solid.mesh().check_faces(&TOL), Ok(()));
+    let exact = p.area();
+    assert!((solid.volume() - exact).abs() <= 1e-11 * exact);
+    assert!(solid.mesh().tris().len() < 12 * 2 * n);
 }
 
 #[test]
@@ -280,7 +289,7 @@ fn crowded_caps_are_deterministic() {
 #[test]
 fn crowded_caps_run_out_of_budget_quickly() {
     // Plain, the fan's box pairs ran out of the budget at once; refined,
-    // its triangles do, as soon.
+    // its first triangulation and refinement do, as soon.
     let p = fan(16_384, 100.0);
     let start = Instant::now();
     let result = extrude(&p, &Frame::XY, 0.0, 1.0, 1, &TOL, &Budget::new(1 << 18));
@@ -645,7 +654,7 @@ fn refined_caps_patches() {
     assert_eq!(patches(&rib), 100);
     // 16 384 sides of radius 100.
     if !cfg!(debug_assertions) {
-        assert_eq!(patches(&profile(vec![ngon(16_384, 100.0)])), 94_096);
+        assert_eq!(patches(&profile(vec![ngon(16_384, 100.0)])), 78_560);
     }
 }
 
@@ -658,11 +667,39 @@ fn uneven_circles_and_random_plates_patches() {
         .iter()
         .map(|(p, r, tol)| run(p, tol, *r).unwrap().mesh().tris().len())
         .sum();
-    assert_eq!(circles, 30_952);
+    assert_eq!(circles, 30_092);
     let plates: usize = super::tests::random_plates()
         .iter()
         .filter_map(|(p, tol, h)| run(p, tol, *h).ok())
         .map(|solid| solid.mesh().tris().len())
         .sum();
-    assert_eq!(plates, 1832);
+    assert_eq!(plates, 1636);
+}
+
+#[test]
+fn crowded_plain_caps_are_refined() {
+    // The plain caps of the fan of 4 096 (the last try's), every two of
+    // whose boxes overlap: counted crowded, they are refined without
+    // exemptions or halving, and the solid passes within the budget.
+    let p = fan(4096, 100.0);
+    let margin = TOL.resolution();
+    let mut work = Work::new(&Budget::DEFAULT);
+    let mut chain = Chain::new(&p, margin).unwrap();
+    chain.separate(&mut work).unwrap();
+    let start = Rounds::new(chain);
+    let (chain, cap) =
+        cap::triangulate(start, margin, Mode::PLAIN, &mut None, &mut false, &mut work).unwrap();
+    assert!(cap.steiner.len() > 500, "{}", cap.steiner.len());
+    let mesh = build(&chain, &cap, &Frame::XY, 0.0, 1.0, 1).unwrap();
+    let solid = Solid::new_within(
+        mesh.repair_within(&TOL, &mut work).unwrap(),
+        &TOL,
+        &mut work,
+    );
+    let mut refused = Refused::default();
+    if let Some(solid) = refused.solid(&p, &TOL, 1.0, solid, "plain fan of 4096") {
+        let patches = solid.mesh().tris().len();
+        assert!(patches < 12 * 4098, "{patches} patches");
+    }
+    refused.none();
 }

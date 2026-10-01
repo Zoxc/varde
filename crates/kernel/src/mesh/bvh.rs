@@ -217,17 +217,8 @@ impl Bvh {
     ) -> Result<Vec<[u32; 2]>, KernelError> {
         let mut pairs = Vec::new();
         for chunk in ids.chunks(CHUNK) {
-            // More than this many, from any one box, is already too many.
             let most = usize::try_from(work.left()).unwrap_or(usize::MAX);
-            let counts = par_map(chunk, |&i| {
-                let mut count = 0usize;
-                self.visit(&query(i), margin, |j| {
-                    count += usize::from(keep(i, j));
-                    count <= most
-                });
-                count
-            });
-            work.spend(counts.into_iter().fold(0, usize::saturating_add))?;
+            work.spend(self.count_hits(chunk, &query, margin, &keep, most))?;
             let found = par_map(chunk, |&i| {
                 let mut near = Vec::new();
                 self.query(&query(i), margin, &mut near);
@@ -239,6 +230,57 @@ impl Bvh {
             }
         }
         Ok(pairs)
+    }
+}
+
+impl Bvh {
+    /// How many pairs `[i, j]` of boxes within `margin` of each other
+    /// along every axis there are, for each box `i` of `ids`, that
+    /// `keep(i, j)` takes, if they number at most `most`; if more, `most
+    /// + 1`. Nothing is collected and nothing fails: counted a chunk of
+    /// `ids` at a time, each box's count stopping past `most`, until the
+    /// count passes `most`, so the answer doesn't depend on the threads.
+    /// The boxes it looked at number at most the answer plus a chunk's
+    /// worth of `most`.
+    pub(crate) fn count_pairs_up_to(
+        &self,
+        ids: &[u32],
+        margin: f64,
+        keep: impl Fn(u32, u32) -> bool + Sync,
+        most: usize,
+    ) -> usize {
+        let query = |i: u32| self.boxes[i as usize];
+        let mut count = 0usize;
+        for chunk in ids.chunks(CHUNK) {
+            count = count.saturating_add(self.count_hits(chunk, &query, margin, &keep, most));
+            if count > most {
+                return most.saturating_add(1);
+            }
+        }
+        count
+    }
+
+    /// For each id `i` of `ids`, how many boxes `j` within `margin` of
+    /// `query(i)` along every axis `keep(i, j)` takes, all told: each id's
+    /// count stops past `most`, more than which, from any one, is already
+    /// too many.
+    fn count_hits(
+        &self,
+        ids: &[u32],
+        query: &(impl Fn(u32) -> Bounds3 + Sync),
+        margin: f64,
+        keep: &(impl Fn(u32, u32) -> bool + Sync),
+        most: usize,
+    ) -> usize {
+        let counts = par_map(ids, |&i| {
+            let mut count = 0usize;
+            self.visit(&query(i), margin, |j| {
+                count += usize::from(keep(i, j));
+                count <= most
+            });
+            count
+        });
+        counts.into_iter().fold(0, usize::saturating_add)
     }
 }
 
