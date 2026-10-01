@@ -24,16 +24,23 @@
 //!   faces. After each change the sides facing the new vertex are
 //!   flipped towards Delaunay.
 //!
+//! Where no triangle is bad, nothing but the closed corners' flips
+//! (below) changes.
+//!
 //! Every change keeps the region: a point goes strictly inside a proper
 //! triangle, a side is halved at a point on it, a flip replaces two
 //! triangles of one plane by two covering the same quadrilateral, a star
 //! is triangulated again on its own boundary, and each new triangle is
 //! proper (higher than the short length, facing along its plane's normal,
-//! not folded) with its curved corners open. A curve whose corner is
-//! closed may leave its triangle, bulging over those beyond: no point
-//! goes near one. It is sequential, in a total order, and stops after a
-//! number of points set by the triangles made: prevention for the next
-//! operation, not a condition of this one.
+//! not folded) with its curved corners open and its curves in the plane.
+//! A curve whose corner is closed may leave its triangle, bulging over
+//! those beyond: no point goes near one. A curve off the plane (a fitted
+//! cut's, which a collapse put on the face) never goes to a triangle the
+//! pass makes: the clean-up moves the triangles holding such curves to a
+//! copy of the face claiming no surface by their ids. It
+//! is sequential, in a total order, and stops after a number of points
+//! set by the triangles made: prevention for the next operation, not a
+//! condition of this one.
 
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -109,9 +116,9 @@ enum Spot {
     Nowhere,
 }
 
-/// An entry in the queue of bad triangles: its sine's bits (positive,
-/// so ordered as the sines are), its corners sorted, the triangle and its
-/// corners as they were. The worst first.
+/// An entry in the queue of bad triangles: its sine's bits (zero for a
+/// sine of zero or less, so ordered as the sines are), its corners sorted,
+/// the triangle and its corners as they were. The worst first.
 type Entry = Reverse<(u64, [u32; 3], u32, [u32; 3])>;
 
 impl Cleaner<'_> {
@@ -154,6 +161,11 @@ impl Cleaner<'_> {
             .filter(|&t| self.bad(t, least).is_some())
             .flat_map(|t| self.soup.tris[t as usize])
             .collect();
+        // Nothing bad, nothing more changes: the Delaunay flips below would
+        // move the triangles of faces that need no point.
+        if inner.is_empty() {
+            return Ok(());
+        }
         inner.sort_unstable();
         inner.dedup();
         for v in inner {
@@ -210,7 +222,10 @@ impl Cleaner<'_> {
             let tri = self.soup.tris[t as usize];
             let mut sorted = tri;
             sorted.sort_unstable();
-            queue.push(Reverse((sine.to_bits(), sorted, t, tri)));
+            // A closed corner along a curve gives a sine of zero or less:
+            // the worst of all, and a negative one's bits would sort last.
+            let key = if sine > 0.0 { sine.to_bits() } else { 0 };
+            queue.push(Reverse((key, sorted, t, tri)));
         }
     }
 
@@ -276,6 +291,11 @@ impl Cleaner<'_> {
         let Some(plane) = self.planes[face as usize] else {
             return Ok(false);
         };
+        // A curve off the plane (a fitted cut's, which a collapse put on
+        // the face) stays on the triangle it is on (see `proper_on`).
+        if !star.iter().all(|&t| self.in_plane(t, plane)) {
+            return Ok(false);
+        }
         let before = star
             .iter()
             .map(|&t| self.narrowest(self.soup.tris[t as usize]))
@@ -301,7 +321,7 @@ impl Cleaner<'_> {
             .iter()
             .map(|&tri| self.narrowest(tri))
             .fold(f64::INFINITY, f64::min);
-        if after.is_nan() || before.is_nan() || after <= before {
+        if after.is_nan() || before.is_nan() || after <= before.max(MIN_SINE) {
             self.soup.curves.extend(saved);
             return Ok(false);
         }
@@ -361,12 +381,24 @@ impl Cleaner<'_> {
 
     /// Whether `tri` is proper on face `face`: higher than the short
     /// length, facing along its plane's normal, no narrower than
-    /// [`MIN_SINE`], its curved corners open.
+    /// [`MIN_SINE`], its curved corners open and its curves in the plane
+    /// (their control points within the short length of it): a curve off
+    /// the plane, a fitted cut's a collapse put on the face, stays on the
+    /// triangle that has it, whose id the clean-up looks at when it moves
+    /// such triangles off the face (`leave_surfaces`).
     fn proper_on(&self, tri: [u32; 3], face: u32) -> bool {
-        let Some((up, _)) = self.planes[face as usize] else {
+        let Some((up, d)) = self.planes[face as usize] else {
             return false;
         };
-        self.normal(tri).dot(up) > 0.0
+        let in_plane = (0..3).all(|k| {
+            let (u, v) = (tri[k], tri[(k + 1) % 3]);
+            self.soup
+                .curves
+                .get(&(u.min(v), u.max(v)))
+                .is_none_or(|e| (e.ctrl.dot(up) - d).abs() <= self.small)
+        });
+        in_plane
+            && self.normal(tri).dot(up) > 0.0
             && self.height(tri).0 > self.small
             && self.narrowest(tri) > MIN_SINE
             && self.open(tri)
@@ -874,4 +906,86 @@ impl Cleaner<'_> {
 fn frame(up: DVec3) -> (DVec3, DVec3) {
     let e1 = up.any_orthonormal_vector();
     (e1, up.cross(e1))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::{Curves, Soup};
+    use super::*;
+    use crate::budget::Budget;
+    use crate::mesh::Edge;
+
+    /// Runs the pass on `tris` over `pos`, every triangle made and on
+    /// face 0, the plane z = 0 facing up, at resolution `1e-3`. Gives the
+    /// triangles after and whether each is alive.
+    fn refined(pos: Vec<DVec3>, tris: Vec<[u32; 3]>, curves: Curves) -> (Vec<[u32; 3]>, Vec<bool>) {
+        let n = tris.len();
+        let mut soup = Soup {
+            pos,
+            faces: vec![0; n],
+            tris,
+            curves,
+            sources: vec![0],
+            absorbed: Vec::new(),
+            made: vec![true; n],
+        };
+        let mut around = vec![Vec::new(); soup.pos.len()];
+        for (t, tri) in soup.tris.iter().enumerate() {
+            for &v in tri {
+                around[v as usize].push(t as u32);
+            }
+        }
+        let mut c = Cleaner {
+            alive: vec![true; n],
+            soup: &mut soup,
+            around,
+            planar: vec![true],
+            recurved: Vec::new(),
+            planes: vec![Some((DVec3::Z, 0.0))],
+            joined: Vec::new(),
+            small: 1e-3 / 8.0,
+            thin: 4e-3,
+        };
+        let mut work = Work::new(&Budget::DEFAULT);
+        c.quality(1e-3, &mut work).unwrap();
+        let alive = c.alive.clone();
+        (soup.tris, alive)
+    }
+
+    #[test]
+    fn nothing_changes_where_nothing_is_bad() {
+        // Two triangles across the long diagonal of a rhombus, every angle
+        // over 14°: the Delaunay flip would take the short one, but no
+        // triangle is bad, so the pass leaves them as they are.
+        let pos = [(0.0, 0.0), (4.0, -1.0), (8.0, 0.0), (4.0, 1.0)]
+            .map(|(x, y)| DVec3::new(x, y, 0.0))
+            .to_vec();
+        let tris = vec![[0, 1, 2], [0, 2, 3]];
+        let (after, alive) = refined(pos, tris.clone(), Curves::new());
+        assert_eq!(after, tris);
+        assert_eq!(alive, [true, true]);
+    }
+
+    #[test]
+    fn a_curve_off_the_plane_stays_on_its_triangle() {
+        // Two thin triangles across a long side, both bad. The side from
+        // 1 to 3 is a curve off the plane (as a fitted cut's a collapse
+        // put on the face): flipping the long side or taking out a corner
+        // would move it onto another triangle, which the clean-up then
+        // wouldn't move off the face. Triangle 0 must keep it.
+        let pos = [(0.0, 0.0), (10.0, 0.0), (5.0, -0.3), (5.0, 0.3)]
+            .map(|(x, y)| DVec3::new(x, y, 0.0))
+            .to_vec();
+        let mut curves = Curves::new();
+        curves.insert(
+            (1, 3),
+            Edge {
+                ctrl: DVec3::new(7.5, 0.2, 0.01),
+                weight: 1.0,
+            },
+        );
+        let (after, alive) = refined(pos, vec![[0, 1, 3], [1, 0, 2]], curves);
+        assert!(alive[0], "{after:?}");
+        assert!(after[0].contains(&1) && after[0].contains(&3), "{after:?}");
+    }
 }

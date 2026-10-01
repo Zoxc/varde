@@ -4278,7 +4278,8 @@ but not where some corner lies between two constrained sides meeting
 at under 60° (the boundary makes that angle; refining towards it only
 halves, and spreads to the faces beside). A side is free when it is
 straight between two triangles of one face; the others are constrained.
-In order:
+Where no triangle is bad, nothing past the first step changes. In
+order:
 
 - Triangles on plane faces whose curved corner is closed have a free
   side flipped where both new triangles are proper with their corners
@@ -4296,8 +4297,9 @@ In order:
   corner in the circle, with the margin `triangulate::in_circle` uses):
   the refinement's guarantees assume it, and without it a wall's thin
   right triangles split into pieces of their own shape without end.
-- Then, worst first (a queue by the sine's bits and the sorted corners;
-  entries whose triangle changed are passed over), a triangle of
+- Then, worst first (a queue by the sine's bits, a closed corner's sine
+  of zero or less counted as zero, and the sorted corners; entries whose
+  triangle changed are passed over), a triangle of
   straight sides takes a point at its circumcentre (worked out in the
   face's plane and put on it), found by a walk across free sides; a
   point within `MIN_SPLIT` resolutions of a free side halves that side
@@ -4320,12 +4322,25 @@ is triangulated again on its own boundary, and every new triangle is
 proper (higher than the short length, facing along the plane's normal,
 narrowest sine above `1e-6`, its curved corners open and the patch
 passing the fold check), so each curve stays inside its own triangle
-(the argument in "Cutting curved faces"). New points are on the plane
+(the argument in "Cutting curved faces"). Its curves must lie in the
+plane too (their control points within the short length): a fitted
+cut's curve a collapse put on the face stays on the triangle that has
+it, the one the clean-up moves to the face's copy claiming no surface
+(by id, `leave_surfaces`), and a star holding one isn't taken out. A
+halving on a cap's edge keeps each piece on the face of the triangle
+it came from, the new vertex on both planes (a lerp between two points
+on both). New points are on the plane
 up to rounding (circumcentres projected onto it, midpoints lerped),
 their ids after all others. It is sequential with total orders, at
 most 4 points per made triangle and 64 more (reaching that only stops
 it), every step charged (a unit per walk, flip and queue step, and the
-stars' triangulations as the seams' regions are).
+stars' triangulations as the seams' regions are). Between points it
+ends too: the flips after a point are at most 256 and Delaunay ones
+(which never undo each other), a flip at a curve's narrow corner widens
+the pair's narrowest corner strictly (so no set of triangles comes
+back), and the closed corners' flips, which have no such test, are each
+tried once before the refinement and once after it; no flip makes a
+closed corner, so none undoes one of those.
 
 Results, release: one hole in the 20 × 20 × 1 box, its caps' made
 triangles all at least `5.7°` (`cut_caps_are_well_shaped`; 80 of them,
