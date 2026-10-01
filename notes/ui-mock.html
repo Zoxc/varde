@@ -25,7 +25,8 @@
   operation set up for a screenshot (revolve, combine, move, bmirror,
   lpattern, cpattern, fillet, chamfer, shell); append /still to disable
   animations, /dark or /light to force the theme, /v-top (any view cube
-  view) to set the camera, /persp for a perspective view.
+  view) to set the camera, /persp for a perspective view, /projmenu to
+  open the status bar's menu, /nomouse to hide the mouse hints.
 -->
 <style>
 :root {
@@ -33,7 +34,8 @@
   --rail-w: 56px;
   --title-h: 36px;
   --tool-h: 40px;
-  --status-h: 28px;
+  --status-h: 0px;   /* the status bar floats over the view rather than take a strip */
+  --status-float: 30px;
   --accent: #0a95ad;
   --accent-soft: rgba(10, 149, 173, .13);
   --hl: #e3f5da;
@@ -247,13 +249,34 @@ kbd {
 @media (max-width: 1380px) { .ops .op:not(.primary) .lbl, .ops .op .k { display: none; } .ops .op { padding: 0 7px; } }
 @media (max-width: 1660px) { .ops.many .op:not(.primary) .lbl, .ops.many .op .k { display: none; } .ops.many .op { padding: 0 7px; } }
 
-.statusbar {
-  position: absolute; bottom: 0; left: 0; right: 0; height: var(--status-h); z-index: 11;
-  display: flex; align-items: center; gap: 12px; padding: 0 12px;
-  background: var(--title-bg); border-top: 1px solid var(--line);
+.sbar {
+  position: absolute; bottom: 10px; right: 12px; z-index: 11;
+  max-width: calc(100% - var(--side-w) - var(--rail-w) - 36px);
+  display: flex; align-items: center; gap: 8px;
+}
+.statusbar, .selbox {
+  height: var(--status-float); min-width: 0;
+  display: flex; align-items: center; gap: 12px; padding: 0 10px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 7px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.08);
   font-size: 12px; color: var(--muted); white-space: nowrap;
 }
-.info { display: flex; align-items: center; gap: 8px; color: var(--text); }
+.selbox .h { flex: none; }
+.statusbar .sep, .selbox .sep { flex: none; width: 1px; height: 16px; background: var(--line); }
+.info { display: flex; align-items: center; gap: 8px; color: var(--text); min-width: 0; overflow: hidden; }
+.projdd { position: relative; flex: none; }
+.sb-btn { flex: none; height: 24px; min-width: 24px; display: flex; align-items: center; justify-content: center; gap: 1px; padding: 0 4px; border: 0; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; }
+.sb-btn:hover, .projdd.open > .sb-btn { background: var(--hl); color: var(--text); }
+.sb-btn svg.i { width: 16px; height: 16px; }
+.sb-btn svg.chev { width: 11px; height: 11px; }
+.statusbar > .projdd:last-child { margin-right: -7px; }
+.statusbar > .projdd:first-child { margin-left: -7px; }
+.projdd .menu { top: auto; bottom: calc(100% + 6px); left: auto; right: -7px; width: 180px; }
+.projdd .menu button { color: var(--text); font: inherit; }
+.projdd .menu svg.i { width: 16px; height: 16px; color: var(--muted); }
+.projdd .menu svg.tick { margin-left: auto; color: var(--accent); visibility: hidden; }
+.projdd .menu .on svg.tick { visibility: visible; }
+.projdd .menu .mi { width: 16px; display: flex; justify-content: center; }
 .info .muted { color: var(--muted); }
 .info .accent { color: var(--accent); font-weight: 600; }
 .info .dotok { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
@@ -453,12 +476,10 @@ body.dragging .face, body.dragging .hole { pointer-events: none; }
 .band.ring { fill: none; }
 .pplane { fill: var(--accent); fill-opacity: .08; stroke: var(--accent); stroke-opacity: .7; stroke-dasharray: 5 3; vector-effect: non-scaling-stroke; pointer-events: none; }
 
-.cube-wrap { position: absolute; top: 10px; right: 12px; display: flex; align-items: flex-start; gap: 2px; }
-.cube-btns { margin-top: 6px; display: flex; align-items: flex-start; gap: 6px; }
-.projs { display: flex; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); }
-.projs button { height: 22px; padding: 0 8px; border: 0; border-radius: 6px; background: none; color: var(--text); font: inherit; font-size: 12px; cursor: pointer; }
-.projs button:hover { background: var(--hl); }
-.projs button.on { background: var(--accent-soft); color: var(--accent); }
+.cube-wrap { position: absolute; top: 10px; right: 12px; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.home-btn { width: 26px; height: 26px; border-radius: 7px; border: 1px solid var(--line); background: var(--panel); color: var(--muted); cursor: pointer; display: grid; place-items: center; }
+.home-btn:hover { background: var(--hl); color: var(--text); }
+.home-btn svg.i { width: 16px; height: 16px; }
 .cube { width: 116px; height: 116px; }
 .cube .ax { fill: none; stroke: var(--ax); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
 .cube .ax.head { fill: var(--ax); stroke: none; }
@@ -466,16 +487,14 @@ body.dragging .face, body.dragging .hole { pointer-events: none; }
 .cube polygon { fill: var(--f); stroke: var(--edge); stroke-opacity: .45; stroke-width: .6; cursor: pointer; }
 .cube polygon:hover { fill: var(--hl-line); }
 .cube text { font: 700 17px system-ui, sans-serif; fill: var(--text); fill-opacity: .7; text-anchor: middle; dominant-baseline: central; pointer-events: none; }
-.home-btn { width: 26px; height: 26px; border-radius: 7px; border: 1px solid var(--line); background: var(--panel); color: var(--muted); cursor: pointer; display: grid; place-items: center; }
-.home-btn:hover { background: var(--hl); color: var(--text); }
 .hint-center {
   position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%);
   color: var(--muted); display: flex; align-items: center; gap: 6px; pointer-events: none;
 }
 
-/* ---- operation panel: floats at the viewport's right, under the view cube ---- */
+/* ---- operation panel: floats at the viewport's right, under the view cube and Home ---- */
 .opp {
-  position: absolute; top: 150px; right: 12px; width: 256px; max-height: calc(100% - 162px); z-index: 4;
+  position: absolute; top: 166px; right: 12px; width: 256px; max-height: calc(100% - 178px - var(--status-float) - 10px); z-index: 4;
   display: flex; flex-direction: column; overflow: hidden;
   background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
   box-shadow: 0 1px 3px rgba(0,0,0,.08), 0 12px 32px rgba(0,0,0,.16);
@@ -568,7 +587,7 @@ body.dragging .face, body.dragging .hole { pointer-events: none; }
 
 /* ---- overlays ---- */
 .toast {
-  position: absolute; left: 50%; bottom: calc(var(--status-h) + 14px); transform: translate(-50%, 8px); z-index: 40;
+  position: absolute; left: 50%; bottom: calc(var(--status-float) + 24px); transform: translate(-50%, 8px); z-index: 40;
   padding: 7px 12px; border-radius: 8px; background: var(--text); color: var(--vp-top);
   opacity: 0; transition: opacity .15s, transform .15s; pointer-events: none;
 }
@@ -657,6 +676,9 @@ const I = {
   search: '<circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/>',
   help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .8-1 1.5V14"/><circle cx="12" cy="17" r=".6" fill="currentColor"/>',
   home: '<path d="M4 11l8-7 8 7"/><path d="M6 9.5V20h12V9.5"/>',
+  more: '<circle cx="5.5" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="18.5" cy="12" r="1.4" fill="currentColor" stroke="none"/>',
+  ortho: '<path d="M3 9h12v12H3z"/><path d="M8 4h12v12h-5M3 9l5-5M15 9l5-5M15 21l5-5"/>',
+  persp: '<path d="M3 9h12v12H3z"/><path d="M10 4h8v8h-3M3 9l7-5M15 9l3-5M15 21l3-9"/>',
   save: '<path d="M5 4h11l3 3v13H5z"/><path d="M8 4v5h7V4M8 20v-6h8v6"/>',
   close: '<path d="M6 6l12 12M18 6L6 18"/>',
   min: '<path d="M6 12h12"/>',
@@ -921,6 +943,8 @@ const st = {
   gbarPinned: false, prevCam: null,
   railOpen: null,  // index of the tool set whose list is open from the rail
   persp: false,    // perspective, else orthographic
+  projMenu: false, // the status bar's menu open: the projection, mouse hints
+  mouseHints: true, // the status bar shows the mouse's actions
   op: null,        // solid operation being set up: { kind, pick, editing?, ...its parameters }
 };
 // Faces ('base-top') and bodies ('body:body') the operation being set up highlights.
@@ -1143,16 +1167,18 @@ const TOOLS = {
 
 function hints() {
   const k = s => s.split(' ').map(x => x.startsWith('mouse:') ? mouse(x.slice(6)) : `<kbd>${x}</kbd>`).join('');
-  const h = list => list.map(([keys, label]) => `<span class="h">${k(keys)}<span>${label}</span></span>`).join('');
+  // Without mouse hints, only those for keys.
+  const h = list => list.filter(([keys]) => st.mouseHints || !keys.includes('mouse:'))
+    .map(([keys, label]) => `<span class="h">${k(keys)}<span>${label}</span></span>`).join('');
   if (st.screen === 'welcome') return h([['N', 'New design'], ['O', 'Open'], ['?', 'Shortcuts']]);
   const nav = [['mouse:l', 'Drag to orbit'], ['mouse:r', 'Pan'], ['mouse:w', 'Zoom']];
   switch (context()) {
-    case 'none': return h([['mouse:l', 'Select'], ['mouse:l mouse:l', 'Body'], ...nav, ['Alt', 'Objects + tools']]);
+    case 'none': return h([['mouse:l', 'Select'], ['mouse:l mouse:l', 'Body'], ...nav]);
     case 'pick': return h([['mouse:l', 'Pick plane'], ...nav, ['Esc', 'Cancel']]);
-    case 'face': case 'plane': return h([['S', 'Sketch'], ['Q', 'Press pull'], ['mouse:l mouse:l', 'Body'], ['Esc', 'Clear']]);
-    case 'hole': return h([['F', 'Fillet'], ['Enter', 'Edit hole'], ['mouse:l mouse:l', 'Body'], ['Esc', 'Clear']]);
-    case 'feature': return h([['Enter', 'Edit'], ['Del', 'Delete'], ['mouse:l', 'Drag to reorder'], ['Esc', 'Clear']]);
-    case 'body': return h([['M', 'Move'], ['P', 'Pattern'], ['V', 'Hide'], ['Esc', 'Clear']]);
+    case 'face': case 'plane': return h([['S', 'Sketch'], ['Q', 'Press pull'], ['mouse:l mouse:l', 'Body']]);
+    case 'hole': return h([['F', 'Fillet'], ['Enter', 'Edit hole'], ['mouse:l mouse:l', 'Body']]);
+    case 'feature': return h([['Enter', 'Edit'], ['Del', 'Delete'], ['mouse:l', 'Drag to reorder']]);
+    case 'body': return h([['M', 'Move'], ['P', 'Pattern'], ['V', 'Hide']]);
     case 'op': {
       const p = OPS[st.op.kind].picks[st.op.pick];
       return h([['mouse:l', p ? 'Pick ' + p.what : 'Pick'], ...nav, ['Enter', 'OK'], ['Esc', 'Cancel']]);
@@ -1164,7 +1190,7 @@ function hints() {
 }
 
 function info() {
-  if (st.screen === 'welcome') return `<span class="muted">No document open</span>`;
+  if (st.screen === 'welcome') return '';
   const c = context();
   if (c === 'pick') return `<span class="accent">Select a plane or planar face for the new sketch</span>`;
   if (c === 'op') {
@@ -1180,12 +1206,7 @@ function info() {
       ? `<span class="dotok"></span><b>${name}</b><span class="muted">Fully constrained · ${s.summary}</span>`
       : `<b>${name}</b><span class="muted">Empty · on ${FACE_INFO[st.sketch.plane]?.[1] || 'face'}</span>`;
   }
-  if (c === 'none') {
-    const d = st.doc, rolled = d.timeline.length - d.rollback;
-    if (d.kind !== 'bracket') return `<span class="muted">Empty design · mm</span>`;
-    const nb = bodiesAt(activeFeatures()).length;
-    return `<span class="muted">No selection · ${plural(nb, 'body', 'bodies')} · ${d.timeline.length} features${rolled ? ` (${rolled} rolled back)` : ''} · mm</span>`;
-  }
+  if (c === 'none') return '';
   if (c === 'face' || c === 'hole' || c === 'plane') {
     const [t, d, f] = FACE_INFO[st.sel.id];
     return `${icon(c === 'plane' ? 'plane' : 'body')}<b>${t}</b><span>${d}</span><span class="muted">${f}</span>`;
@@ -1270,7 +1291,26 @@ function toolbar() {
   </div>`;
 }
 
-const statusbar = () => `<div class="statusbar"><div class="info">${info()}</div><div class="spacer"></div><div class="hints">${hints()}</div></div>`;
+// Floating at the view's bottom right: the selection in a box of its own,
+// with the key clearing it, then the status bar: what's going on, the mouse
+// and key hints, and with a design open a menu of view options (the
+// projection, whether to show the mouse hints).
+const SELECTION = new Set(['face', 'hole', 'plane', 'body', 'feature']);
+const statusbar = () => {
+  const i = info(), h = hints(), sel = st.screen === 'doc' && SELECTION.has(context());
+  const parts = [!sel && i && `<div class="info">${i}</div>`, h && `<div class="hints">${h}</div>`, st.screen === 'doc' && projDropdown()];
+  const box = sel ? `<div class="selbox"><div class="info">${i}</div><span class="sep"></span><span class="h"><kbd>Space</kbd><span>Clear</span></span></div>` : '';
+  return `<div class="sbar">${box}<div class="statusbar">${parts.filter(Boolean).join('<span class="sep"></span>')}</div></div>`;
+};
+const PROJECTIONS = [[false, 'ortho', 'Orthographic'], [true, 'persp', 'Perspective']];
+const projDropdown = () => {
+  return `<div class="projdd${st.projMenu ? ' open' : ''}">
+    <button class="sb-btn" data-act="projmenu" title="View options">${icon('more')}</button>
+    ${st.projMenu ? `<div class="menu">${PROJECTIONS.map(([p, ic, label]) =>
+      `<button class="${st.persp === p ? 'on' : ''}" data-act="proj:${ic}">${icon(ic)}${label}${icon('check', 'i tick')}</button>`).join('')}
+      <hr><button class="${st.mouseHints ? 'on' : ''}" data-act="mousehints"><span class="mi">${mouse('l')}</span>Mouse hints${icon('check', 'i tick')}</button></div>` : ''}
+  </div>`;
+};
 
 // ---------------------------------------------------------------- side panel
 function side() {
@@ -1631,9 +1671,6 @@ function cubeAxesSvg(axes, over) {
   return out;
 }
 
-const projsInner = () => [['persp', true, 'Perspective'], ['ortho', false, 'Orthographic']]
-  .map(([k, on, label]) => `<button class="${st.persp === on ? 'on' : ''}" data-act="proj:${k}">${label}</button>`).join('');
-
 function redrawScene() {
   const s = $('#scene');
   if (!s) return;
@@ -1641,7 +1678,6 @@ function redrawScene() {
   s.innerHTML = sceneInner();
   drawGrid();
   $('#cube').innerHTML = cubeInner();
-  $('.projs').innerHTML = projsInner();
 }
 // Orbit, pan and zoom input can fire many times per frame; redraw once per frame.
 let redrawQueued = 0;
@@ -2546,11 +2582,8 @@ function renderApp() {
       <canvas id="grid"></canvas>
       <svg id="scene" viewBox="${viewBox()}" preserveAspectRatio="xMidYMid meet">${sceneInner()}</svg>
       <div class="cube-wrap">
-        <div class="cube-btns">
-          <div class="projs">${projsInner()}</div>
-          <button class="home-btn" data-act="view:home" title="Home view">${icon('home')}</button>
-        </div>
         <svg id="cube" class="cube" viewBox="0 0 116 116">${cubeInner()}</svg>
+        <button class="home-btn" data-act="view:home" title="Home view">${icon('home')}</button>
       </div>
       ${st.op ? opPanel() : ''}
       ${hint}
@@ -2565,7 +2598,7 @@ function helpModal() {
     <div class="cols">
       <h3>Everywhere</h3>
       ${kv('Ctrl K', 'Command palette')}${kv('?', 'This sheet')}
-      ${kv('Esc', 'Back out one level')}${kv('1 – 9', 'Open a tool set from the rail')}${kv('Alt', 'Hold: other tab + tool bar')}${kv('Alt', 'Tap: keep the tool bar open')}
+      ${kv('Esc', 'Back out one level')}${kv('Space', 'Clear the selection')}${kv('1 – 9', 'Open a tool set from the rail')}${kv('Alt', 'Hold: other tab + tool bar')}${kv('Alt', 'Tap: keep the tool bar open')}
       <h3>Model</h3>
       ${kv('S', 'Sketch')}${kv('E', 'Extrude')}${kv('R', 'Revolve')}${kv('Q', 'Press pull')}${kv('H', 'Hole')}${kv('F', 'Fillet')}
       ${kv('C', 'Chamfer')}${kv('B', 'Combine')}${kv('M', 'Move')}${kv('P', 'Linear pattern')}${kv('I', 'Measure')}
@@ -2680,6 +2713,7 @@ function act(a) {
   const [k, ...rest] = a.split(':');
   const v = rest.join(':');
   if (k !== 'menu') st.menu = false;
+  if (k !== 'projmenu') st.projMenu = false;
   switch (k) {
     case 'new': openDoc('empty', 'Untitled'); break;
     case 'open': openDoc('bracket', v); break;
@@ -2688,7 +2722,9 @@ function act(a) {
     case 'theme': root.dataset.theme = isDark() ? 'light' : 'dark'; break;
     case 'help': st.help = !st.help; break;
     case 'toast': toast(v); return;
-    case 'proj': st.persp = v === 'persp'; redrawScene(); return;
+    case 'projmenu': st.projMenu = !st.projMenu; break;
+    case 'proj': st.persp = v === 'persp'; break;
+    case 'mousehints': st.mouseHints = !st.mouseHints; break;
     case 'view': animateCam(v === 'home' ? HOME : { ...VIEWS[v], px: 0, py: 0 }); return;
     case 'op': doOp(v); break;
     case 'opf': st.op.pick = v; break;
@@ -2786,9 +2822,9 @@ document.addEventListener('click', e => {
   if (e.target.closest('#scene') && st.screen === 'doc') {
     if (st.mode === 'sketch' && st.tool) toast(TOOLS[st.tool].hint + ' — drawing not in mock');
     else st.sel = null;
-    st.menu = false;
+    st.menu = st.projMenu = false;
     render();
-  } else if (st.menu && !e.target.closest('.file')) { st.menu = false; render(); }
+  } else if ((st.menu || st.projMenu) && !e.target.closest('.file, .projdd')) { st.menu = st.projMenu = false; render(); }
 });
 
 document.addEventListener('dblclick', e => {
@@ -2940,6 +2976,7 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     if (st.railOpen != null) st.railOpen = null;
     else if (st.menu) st.menu = false;
+    else if (st.projMenu) st.projMenu = false;
     else if (st.gbarPinned) st.gbarPinned = false;
     else if (st.op) st.op = null;
     else if (st.tool) st.tool = null;
@@ -2949,6 +2986,7 @@ document.addEventListener('keydown', e => {
     render();
     return;
   }
+  if (e.key === ' ' && st.sel && !st.op) { e.preventDefault(); st.sel = null; render(); return; }
   const o = ops().find(o => o.key === key);
   if (o) { e.preventDefault(); doOp(o.id); render(); }
 });
@@ -2990,6 +3028,8 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change', render);
   if (location.hash.includes('/dark')) root.dataset.theme = 'dark';
   if (location.hash.includes('/light')) root.dataset.theme = 'light';
   if (location.hash.includes('/persp')) st.persp = true;
+  if (location.hash.includes('/projmenu')) st.projMenu = true;
+  if (location.hash.includes('/nomouse')) st.mouseHints = false;
   for (const v of Object.keys(VIEWS)) if (location.hash.includes('/v-' + v)) Object.assign(cam, VIEWS[v]);
   const kind = doc === 'bracket' && view?.startsWith('op:') && view.slice(3);
   if (OPS[kind]) {
