@@ -786,3 +786,119 @@ fn tops_are_where_they_are_asked_to_be() {
         assert!(zs.iter().all(|&z| z == from || z == to), "{from} {to}");
     }
 }
+
+/// The caps of `p` at `tol`: those the second try makes, resuming from
+/// the first try's fork, are the caps and the halved chain that
+/// triangulating with flat corners from the start makes, for no more
+/// work; with no fork, the first try's are. Returns the fork's round, or
+/// `None` for a profile refused before its caps or with no fork.
+fn resumes_as_from_the_start(p: &Profile, tol: &Tolerance) -> Option<usize> {
+    let margin = tol.resolution();
+    let mut work = Work::new(&Budget::DEFAULT);
+    let mut chain = Chain::new(p, margin).ok()?;
+    chain.separate(&mut work).ok()?;
+    let spent = |work: &Work| Budget::DEFAULT.work() - work.left();
+    let caps = |start: Rounds, flat_corners: bool, fork: &mut Option<Rounds>| {
+        let mut work = Work::new(&Budget::DEFAULT);
+        let caps = cap::triangulate(start, margin, flat_corners, fork, &mut work);
+        (format!("{caps:?}"), spent(&work))
+    };
+    let mut fork = None;
+    let first = caps(Rounds::new(chain.clone()), false, &mut fork);
+    let (fresh, fresh_work) = caps(Rounds::new(chain), true, &mut None);
+    let round = fork.as_ref().map(Rounds::round);
+    match fork {
+        Some(fork) => {
+            let (resumed, resumed_work) = caps(fork, true, &mut None);
+            assert_eq!(resumed, fresh);
+            assert!(resumed_work <= fresh_work, "{resumed_work} > {fresh_work}");
+        }
+        // With no flat corner the flag changes nothing, work included.
+        None => assert_eq!(first, (fresh, fresh_work)),
+    }
+    round
+}
+
+/// A `w` × `h` plate with `cols` × `rows` round holes 10 apart, radii 4
+/// and 4.9 by turns, the first centred at (5, 5).
+fn plate_with_holes(cols: usize, rows: usize, w: f64, h: f64) -> Profile {
+    let mut loops = vec![rect(DVec2::ZERO, DVec2::new(w, h), 0)];
+    for i in 0..cols {
+        for j in 0..rows {
+            let at = DVec2::new(5.0 + 10.0 * i as f64, 5.0 + 10.0 * j as f64);
+            let r = if (i + j) % 2 == 0 { 4.0 } else { 4.9 };
+            loops.push(circle(at, r, 10 + (cols * j + i) as u64, true));
+        }
+    }
+    profile(loops)
+}
+
+#[test]
+fn the_second_try_resumes_where_the_first_found_a_flat_corner() {
+    // The two tries differ only in the flat corners, so up to the first
+    // round that finds one they are the same: the second resumes there
+    // and makes the caps it would have made from the start.
+    let strip = plate_with_holes(20, 2, 210.0, 30.0);
+    assert_eq!(resumes_as_from_the_start(&strip, &TOL), Some(9));
+    let small = plate_with_holes(4, 4, 50.0, 50.0);
+    assert_eq!(resumes_as_from_the_start(&small, &TOL), None);
+    // A fine polygon at a coarse tolerance is flat at once.
+    let points: Vec<DVec2> = (0..1024)
+        .map(|i| {
+            let angle = i as f64 / 1024.0 * std::f64::consts::TAU;
+            DVec2::new(angle.cos(), angle.sin()) * 10.0
+        })
+        .collect();
+    let coarse = Tolerance::new(0.1).unwrap();
+    assert_eq!(
+        resumes_as_from_the_start(&profile(vec![polygon(&points, 0)]), &coarse),
+        Some(0)
+    );
+    // `circles_cut_unevenly`'s circles and `random_plates_with_holes`'
+    // plates.
+    let mut rng = Rng::new(3);
+    let mut forked = 0;
+    for case in 0..120 {
+        let r = rng.log_range(0.1, 1e3);
+        let p = profile(vec![cut_circle(&mut rng, r, 2e-3)]);
+        let tol = Tolerance::new([Tolerance::MIN_FIT, 1e-3, 1e-2][case % 3]).unwrap();
+        forked += usize::from(resumes_as_from_the_start(&p, &tol).is_some());
+    }
+    assert!((10..110).contains(&forked), "{forked}");
+    let mut rng = Rng::new(5);
+    for case in 0..30 {
+        let mut loops = vec![random_loop(&mut rng, DVec2::ZERO, 100.0, 0)];
+        for h in 0..(rng.next_u64() % 6) {
+            let at = DVec2::new(rng.range(-40.0, 40.0), rng.range(-40.0, 40.0));
+            let size = rng.log_range(0.5, 30.0);
+            loops.push(reversed(&random_loop(&mut rng, at, size, 100 * (h + 1))));
+        }
+        let fit = [Tolerance::MIN_FIT, 1e-3, Tolerance::MAX_FIT][case % 3];
+        let _ = rng.log_range(0.1, 100.0);
+        resumes_as_from_the_start(&profile(loops), &Tolerance::new(fit).unwrap());
+    }
+}
+
+#[test]
+fn the_second_try_is_charged_only_from_where_it_resumes() {
+    // A 210 × 30 strip with 40 holes, the bottom row 0.1 from its side:
+    // the first try fails, the second, with flat corners, passes. Starting the
+    // second over took 191 858 units in all; resuming it, 149 450. The
+    // same bits at 1 and 8 threads.
+    let p = plate_with_holes(20, 2, 210.0, 30.0);
+    let solid = assert_deterministic(|| {
+        extrude(&p, &Frame::XY, 0.0, 2.0, 9, &TOL, &Budget::new(170_000)).unwrap()
+    });
+    let exact = p.area() * 2.0;
+    assert!((solid.volume() - exact).abs() < 1e-12 * exact);
+    assert_eq!(solid.mesh().check_faces(&TOL), Ok(()));
+    assert_eq!(solid.mesh().tris().len(), 2988);
+    assert_eq!(
+        extrude(&p, &Frame::XY, 0.0, 2.0, 9, &TOL, &Budget::new(149_449)),
+        Err(KernelError::TooComplex)
+    );
+    assert_eq!(
+        extrude(&p, &Frame::XY, 0.0, 2.0, 9, &TOL, &Budget::new(149_450)),
+        Ok(solid)
+    );
+}

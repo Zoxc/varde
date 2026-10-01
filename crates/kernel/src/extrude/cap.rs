@@ -31,6 +31,13 @@
 //! could end up outside the region once that segment is halved, so that
 //! segment is halved instead. Each round triangulates afresh; the rounds
 //! stop when nothing changes, or fail after [`MAX_ROUNDS`].
+//!
+//! Flat corners are the only thing the two tries do differently, and up
+//! to the first round that finds one they do the same, work counted
+//! included. So the first try keeps the state that round started from
+//! (a [`Rounds`], its fork) and the second try resumes from it rather
+//! than from the start; with no fork it would repeat the first try and
+//! isn't made.
 
 use std::collections::VecDeque;
 
@@ -80,17 +87,56 @@ pub(super) struct Cap {
     pub tris: Vec<[u32; 3]>,
 }
 
-/// The region of `chain` (separated) as triangles, halving segments of
-/// `chain` where a cap patch needs it, and with `flat_corners`, moving
-/// Steiner points in from loop vertices with flat corners.
+/// Where the rounds start from: the chain as halved so far, the Steiner
+/// points so far and the round's number, counting towards
+/// [`MAX_ROUNDS`] from the first try's start.
+#[derive(Debug, Clone)]
+pub(super) struct Rounds {
+    chain: Chain,
+    steiner: Vec<DVec2>,
+    round: usize,
+}
+
+impl Rounds {
+    /// The first round, on `chain` (separated).
+    pub(super) fn new(chain: Chain) -> Rounds {
+        Rounds {
+            chain,
+            steiner: Vec::new(),
+            round: 0,
+        }
+    }
+
+    /// The round these start.
+    #[cfg(test)]
+    pub(super) fn round(&self) -> usize {
+        self.round
+    }
+}
+
+/// The region of the chain of `start` (separated) as triangles, from the
+/// round `start` holds on, halving segments where a cap patch needs it,
+/// and with `flat_corners`, moving Steiner points in from loop vertices
+/// with flat corners. Returns the chain as halved, with the caps.
+///
+/// Without `flat_corners`, `fork` is set to the state of the first round
+/// that found a flat corner, taken before the round changed anything:
+/// running from there with `flat_corners` gives what running from
+/// `start` with it would, as no round before differs. That holds only as
+/// long as the flat corners found are all the flag changes in a round.
 pub(super) fn triangulate(
-    chain: &mut Chain,
+    start: Rounds,
     margin: f64,
     flat_corners: bool,
+    fork: &mut Option<Rounds>,
     work: &mut Work,
-) -> Result<Cap, KernelError> {
-    let mut steiner: Vec<DVec2> = Vec::new();
-    for _ in 0..MAX_ROUNDS {
+) -> Result<(Chain, Cap), KernelError> {
+    let Rounds {
+        mut chain,
+        mut steiner,
+        round: first,
+    } = start;
+    for round in first..MAX_ROUNDS {
         let (segs, starts) = chain.flat();
         let n = segs.len();
         if n.saturating_add(steiner.len()) > MAX_PATCHES / 4 {
@@ -107,8 +153,17 @@ pub(super) fn triangulate(
                 steiner[v - n]
             }
         };
-        let flat_margin = if flat_corners { margin } else { 0.0 };
-        let (mut split, ears, flat) = mend(&segs, &starts, &at, &tris, flat_margin);
+        let (mut split, ears, mut flat) = mend(&segs, &starts, &at, &tris, margin);
+        if !flat_corners && !flat.is_empty() {
+            if fork.is_none() {
+                *fork = Some(Rounds {
+                    chain: chain.clone(),
+                    steiner: steiner.clone(),
+                    round,
+                });
+            }
+            flat.clear();
+        }
         let places = Places {
             segs: &segs,
             starts: &starts,
@@ -119,7 +174,7 @@ pub(super) fn triangulate(
         };
         let added = places.place(&ears, flat, &mut split, work)?;
         if split.is_empty() && added.is_empty() {
-            return Ok(Cap { steiner, tris });
+            return Ok((chain, Cap { steiner, tris }));
         }
         split.sort_unstable();
         split.dedup();
@@ -279,14 +334,14 @@ fn region(segs: &[Seg], starts: &[u32], steiner: &[DVec2]) -> Result<Vec<[u32; 3
 
 /// What the triangles need mended: the segments to halve, the triangles
 /// (by index) to put a Steiner point in, and the loop vertices with a
-/// flat corner, where a Steiner point is moved in from the vertex: flat
-/// for a resolution of `flat_margin`, so none for 0.
+/// flat corner, where a Steiner point can be moved in from the vertex:
+/// flat for a resolution of `margin`. Only the last depends on `margin`.
 fn mend(
     segs: &[Seg],
     starts: &[u32],
     at: &impl Fn(u32) -> DVec2,
     tris: &[[u32; 3]],
-    flat_margin: f64,
+    margin: f64,
 ) -> (Vec<u32>, Vec<usize>, Vec<u32>) {
     let curved = |e: Option<(u32, bool)>| e.is_some_and(|(s, _)| segs[s as usize].curved);
     let mut split = Vec::new();
@@ -303,7 +358,7 @@ fn mend(
             // Obtuse at `v`, whose distance from the side `a–b` is the
             // cross product over that side's length.
             let (ea, eb) = (a - o, b - o);
-            if ea.dot(eb) < 0.0 && ea.perp_dot(eb).abs() < FLAT * flat_margin * (b - a).length() {
+            if ea.dot(eb) < 0.0 && ea.perp_dot(eb).abs() < FLAT * margin * (b - a).length() {
                 flat.push(v);
             }
         }

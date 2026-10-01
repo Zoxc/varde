@@ -1140,7 +1140,21 @@ steps:
    separated chain with flat corners mended (step 3); if that fails too,
    the first error stands. Moving points in from every flat corner can
    line them up into slivers of their own (along a fine polygon), so it
-   isn't the first try: the second only adds solids. A circle of radius
+   isn't the first try: the second only adds solids. Flat corners are
+   all the two tries do differently (the first finds them too, with the
+   same margin, and drops them; with none, placing points spends nothing
+   and every ear gets its centroid as usual), so up to the first round
+   that finds one they are the same, work included. The first try keeps
+   the state that round starts from (`cap::Rounds`: the chain as halved,
+   with its segments' halving depths, the Steiner points and the round's
+   number), cloned before the round changes anything, and the second
+   resumes there, counting rounds on towards `MAX_ROUNDS`: the same caps
+   as starting over, for less work. With no flat corner found the second
+   try would repeat the first with less work left, which can only fail
+   the same way or run out, so it isn't made. Results are the same as
+   starting over except where that ran out of budget. Anything else made
+   to depend on the flag in a round would break this; a test compares
+   the resumed caps with those made from the start. A circle of radius
    0.01 to 1 000 cut at random angles into arcs of 0.06° to 86° failed
    at the default tolerance one time in three before, and now one in
    thirteen, all of radius under 0.11, whose shortest arcs are under a
@@ -1166,10 +1180,17 @@ the patches, then repair, then 32 for each patch the check integrated
 
 Measured (release): the tests' 80 × 80 plate with 64 round holes 1.1
 apart (260 segments) comes out with 940 vertices a cap and 4 012
-patches; a 210 × 210 plate with 400 such holes, 22 620 patches in
-0.47 s, on the second try (holes pass 0.1 from the plate's sides, which
-have no vertices: the edges between the holes along a side keep leaving
-their arcs along the tangent, and halving those arcs never ends); a
+patches; a 210 × 210 plate with 400 such holes, 22 620 patches on the
+second try (holes pass 0.1 from the plate's sides, which have no
+vertices: the edges between the holes along a side keep leaving their
+arcs along the tangent, and halving those arcs never ends; the first
+try's caps give up at `MAX_CAP_DEPTH` after 17 rounds, and flat corners
+first show up in the tenth): 1 131 948 units and 0.54 s on one thread
+resuming the second try, against 1 493 190 units and 0.77 to 0.81 s
+starting it over (best of 7, release, load average 14 on 7 cores);
+square plates of `k × k` such holes now fit the budget past `k = 33`.
+Profiles that find flat corners in round 0 and fail anyway (fine
+polygons at coarse tolerances) still pay for both tries; a
 plate with four holes splits nothing (20 segments, 92 patches). A ring
 of radius 10, 0.001 wide, needs 1 024 segments. 600 random plates with
 holes and weights from 0.05 to 20, most refused as touching: the slowest
@@ -1195,7 +1216,11 @@ on its face; every refusal (extents, frames, overlapping, touching and
 crossing loops, bad nesting, cusps, segments running back, too thin, out
 of budget) with its error; the same bits at 1 and 8 threads. Circles cut
 into uneven arcs at three tolerances (the second try, at 1 and 8
-threads too); a star of 65 535 long chords refused within its budget
+threads too); the second try's caps resumed from the first's fork the
+same as made from the start (a 210 × 30 strip with 40 holes, a row 0.1 from its side,
+forking in round 9; a fine polygon, in round 0; the cut circles and
+random plates), and that strip within the budget only resuming takes;
+a star of 65 535 long chords refused within its budget
 rather than collecting two billion pairs; two circles of 16 384 sides
 triangulated in about a second unoptimized (over a minute in the loops'
 order).
@@ -2995,7 +3020,9 @@ parameter, or a split outside the patch bounds),
 - **Flat corners are mended on a second try** of the caps, when the
   first fails, rather than always: moved-in points can line up into
   slivers of their own, so doing it first lost some solids the plain
-  caps give.
+  caps give. The second try resumes from the first round of the first
+  that found a flat corner, and isn't made when there was none: the
+  same results as starting over, for less work.
 - **`extrude` takes a `Frame`** (origin and axes) and the extent as
   `from < to` along its normal; flipping and sides are the caller's.
 - **`KernelError::Profile(ProfileError)`** carries a profile's own

@@ -30,7 +30,7 @@ use crate::{KernelError, MAX_COORD, Solid, Tolerance, in_range};
 mod cap;
 mod chain;
 
-use cap::Cap;
+use cap::{Cap, Rounds};
 use chain::Chain;
 
 /// Where a profile lies in space: its origin and the unit axes its `x`
@@ -121,8 +121,8 @@ pub fn extrude(
     let mut work = Work::new(budget);
     let mut chain = Chain::new(profile, margin)?;
     chain.separate(&mut work)?;
-    let solid = |mut chain: Chain, flat_corners, work: &mut Work| {
-        let cap = cap::triangulate(&mut chain, margin, flat_corners, work)?;
+    let solid = |cap: Result<(Chain, Cap), KernelError>, work: &mut Work| {
+        let (chain, cap) = cap?;
         let mesh = build(&chain, &cap, frame, from, to, feature)?;
         work.spend(mesh.tris().len())?;
         Solid::new_within(mesh.repair_within(tol, work)?, tol, work)
@@ -130,10 +130,19 @@ pub fn extrude(
     // Caps with slivers along short segments meeting nearly straight fail
     // the hull rules next to the walls. Moving Steiner points in from such
     // corners mends most, but can line the points up into slivers of
-    // their own, so it is the second try.
-    match solid(chain.clone(), false, &mut work) {
+    // their own, so it is the second try. It resumes from the first
+    // round of the first try that found such a corner: until then the two
+    // are the same. With none, it would repeat the first try (with less
+    // work left, so it couldn't do better) and isn't made.
+    let mut fork = None;
+    let first = cap::triangulate(Rounds::new(chain), margin, false, &mut fork, &mut work);
+    match solid(first, &mut work) {
         Err(first @ (KernelError::Invalid(_) | KernelError::TooComplex)) if work.left() > 0 => {
-            solid(chain, true, &mut work).map_err(|_| first)
+            let Some(fork) = fork else {
+                return Err(first);
+            };
+            let second = cap::triangulate(fork, margin, true, &mut None, &mut work);
+            solid(second, &mut work).map_err(|_| first)
         }
         result => result,
     }
