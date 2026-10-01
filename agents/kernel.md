@@ -3078,13 +3078,19 @@ is under `MIN_CURVED_SPLIT` resolutions take one (in the layout, over
 the patch's longest side): repair splits nothing that small, and there
 the points only stepped towards a loop side a tie long, each halving
 the last one's circumradius (eight in one face of a seeded chain, down
-to `1e-7` in the layout). Why a point can't land outside the face: the
-holder is a straight triangle reached without crossing a side of the
-loops; a curved side of the loops whose corners in its triangle are
-open bulges only into that triangle (the curve's control triangle lies
-beyond the triangle's straight sides), the pieces holding a curved side
-are only made with those corners open, and a triangle whose corners
-aren't asks for its curve to be split (in the mending below). The
+to `1e-7` in the layout). Nor does a face with any triangle whose
+corners aren't all open take any: there a curved side leaves its
+triangle, bulging over the triangles beyond, and a point in one of
+those could land between the side's chord and its curve, outside the
+face (a fuzz of random bent loops found such points; the face is
+mended or asks for splits instead, and the last round's faces go to
+repair as they are). Why a point can't land outside the face
+otherwise: the holder is a straight triangle reached without crossing
+a side of the loops; a curved side of the loops whose corners in its
+triangle are open lies in that triangle (the curve's control triangle
+does: its tangents at both ends point into it), the pieces holding a
+curved side and the flips' triangles are only made with those corners
+open, so every curved side stays in its own triangle. The
 clearance search finds every side and vertex within the clearance, as
 the disc is convex: a segment from the centre to any point of it
 crosses only sides within it. The worst comes
@@ -4313,6 +4319,19 @@ to 72 of its 96 operations and left the others as they were.
     and 6 of the 90 bosses 1 000 tall (the height-driven fans, where a
     face's far corners are hundreds of times further than the hole is
     wide).
+  - Checked against closed forms (release, about 3 300 operations): the
+    app's way on round bosses of radius 2 to 60 and 0.3 to 4 times as
+    tall (extruded circles and the cylinder primitive, the boss turned
+    about its axis or the pair moved anywhere, scaled by 0.02 to 100),
+    drills grazing the wall, floor or top from `1e-9` to `3e-2` either
+    side, through stacked and boss-on-plate unions across their seams,
+    through arches, and chains of ten in a boss at separate heights or
+    crossing. Every result's volume within 3 % of the bound of the true
+    one (the hole's part by a one-dimensional integral), points round the
+    drills inside exactly when they should be, and the results the same
+    at 1 and 8 threads: none wrong. Against main the app's way failed 23
+    of 180 → 11, chains 20 and 28 of 48 → 14 and 15, scaled by 100 43 of
+    90 → 18; tangent drills 61 → 59 of 180.
 - **Flush bosses on drilled plates**: of 150 random plates with two holes
   and a boss, each of the four operations, 15, 6, 5 and 13 fail (18, 7,
   10 and 13 before the fixes below), mostly where the boss is flush

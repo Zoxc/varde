@@ -480,6 +480,21 @@ fn shape(
 
     let key = |a: u32, b: u32| (a.min(b), a.max(b));
     all.sort_by_key(|v| v.id);
+    // Only where every curved side lies in its own triangle (its corners
+    // there open): one that leaves it bulges over the triangles beyond,
+    // where a point could land outside the face, between the side's chord
+    // and its curve. Such a face is mended or asks for splits instead.
+    let vert = |id: u32| &all[all.binary_search_by_key(&id, |v| v.id).expect("a vertex")];
+    if !meter.take(out.tris.len()) {
+        return Err(BooleanError::Degenerate);
+    }
+    if out
+        .tris
+        .iter()
+        .any(|tri| !corners_open(tri.map(vert), bends))
+    {
+        return Ok(());
+    }
     let most = all
         .len()
         .saturating_mul(SHAPE_PER_VERTEX)
@@ -1452,6 +1467,63 @@ mod tests {
                 .collect()
         };
         assert_eq!(bits(&again), bits(&out));
+    }
+
+    #[test]
+    fn no_points_for_shapes_where_a_curved_side_leaves_its_triangle() {
+        // The domain cut off by a curve bulging far into it, from about
+        // (0.07, 0.25) to (0.27, 0) round (0.40, 0.31), which leaves the
+        // triangle it is a side of, and a small hole the far corners fan
+        // to: a point for a thin fan's shape landed between the curve
+        // and its chord, outside the face (found by a fuzz, reduced).
+        let corner = |id, x, y, sides| Vert {
+            id,
+            at: DVec2::new(x, y),
+            sides,
+            cuts: [NO_CUT; 2],
+        };
+        let outer = vec![
+            corner(0, 0.26709934320421663, 0.0, 0b001),
+            corner(1, 1.0, 0.0, 0b011),
+            corner(2, 0.0, 1.0, 0b110),
+            corner(3, 0.0, 0.5524207679297148, 0b100),
+            corner(4, 0.07043445902244003, 0.24569373288129645, 0),
+        ];
+        let hole = loop_of(
+            &[
+                (0.48698886518823453, 0.1772039183684691),
+                (0.4872667328907177, 0.17879167341701196),
+                (0.5062390924413577, 0.1772587297067125),
+            ],
+            5,
+        );
+        let (a, b) = (outer[4].at, outer[0].at);
+        let ctrl = a + DVec2::new(0.33411211630752435, 0.0658823362884852);
+        let mut bends = Bends::new();
+        bends.insert((4, 0), [ctrl - a, ctrl - b]);
+        let loops = vec![outer, hole];
+        let out = triangulate(loops, &bends, 100, Some(0.0), &Meter::new(u64::MAX)).unwrap();
+        // The face's side of the curve: outside the region between it
+        // and its chord.
+        let lens: Vec<DVec2> = (0..=64)
+            .map(|k| {
+                let t = f64::from(k) / 64.0;
+                let s = 1.0 - t;
+                a * (s * s) + ctrl * (2.0 * s * t) + b * (t * t)
+            })
+            .collect();
+        let in_lens = |p: DVec2| {
+            let mut wind = 0.0;
+            for i in 0..lens.len() {
+                let (u, v) = (lens[i] - p, lens[(i + 1) % lens.len()] - p);
+                wind += u.perp_dot(v).atan2(u.dot(v));
+            }
+            wind.abs() > 1.0
+        };
+        assert!(in_lens((a + b) / 2.0 + DVec2::new(0.05, 0.05)));
+        for s in &out.steiner {
+            assert!(!in_lens(s.at), "{s:?} between the curve and its chord");
+        }
     }
 
     /// Vertex `id` of the loops `all` or the points `out` added.
