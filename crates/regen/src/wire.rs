@@ -62,9 +62,7 @@ use varde_document::{BodyId, DecodeError, FeatureId, Generation, codec};
 use varde_kernel::{Aabb, LinesError, LinesPart, MeshError, MeshPart, RenderLines, RenderMesh};
 use varde_lane::bytes::Buffer;
 
-use crate::{
-    Drafted, ExportedBody, PickChain, PickFace, Picking, PickingError, Request, Response,
-};
+use crate::{Drafted, ExportedBody, PickChain, PickFace, Picking, PickingError, Request, Response};
 
 /// The most bytes a reply's head may have. A head is a generation, a few
 /// feature ids, the failed features' messages, the bodies each join, cut

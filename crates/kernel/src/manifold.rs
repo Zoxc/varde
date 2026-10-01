@@ -4,7 +4,10 @@
 //! The triangles come from the tessellation, welded by the patch mesh's
 //! own vertices and shared edges (never by distance), and the mesh is
 //! checked before anyone gets it: [`ManifoldMesh::new`] is the only way
-//! to make one, deserializing included.
+//! to make one, deserializing included. Its positions are
+//! single-precision values about a whole-numbered origin, since that's
+//! how readers of mesh files keep them: the mesh checked is the mesh they
+//! read.
 
 use glam::DVec3;
 use serde::{Deserialize, Serialize};
@@ -14,13 +17,17 @@ use crate::patch::Bounds3;
 use crate::{MAX_COORD, RenderMesh};
 
 /// A closed, oriented 2-manifold of triangles, as file formats such as
-/// 3MF want it: vertices shared by index, and always, as
-/// [`ManifoldMesh::new`] checks,
+/// 3MF want it: vertices shared by index, positions about an
+/// [`origin`](ManifoldMesh::origin), and always, as [`ManifoldMesh::new`]
+/// checks,
 ///
 /// - at least one triangle, at most [`ManifoldMesh::MAX_VERTICES`]
 ///   vertices and [`ManifoldMesh::MAX_TRIANGLES`] triangles, every index
-///   in range and every coordinate finite and within
-///   [`ManifoldMesh::MAX_POSITION`];
+///   in range;
+/// - the origin's coordinates whole numbers within
+///   [`ManifoldMesh::MAX_POSITION`], and every position's coordinates
+///   finite, within it and `f32` values, as readers that keep positions
+///   in single precision (most do) read them exactly;
 /// - no triangle with a vertex twice, or whose corners lie on a line
 ///   (exactly, in `f64`), and no two vertices at the same position;
 /// - every edge used by exactly two triangles, running it opposite ways;
@@ -30,6 +37,7 @@ use crate::{MAX_COORD, RenderMesh};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "Unchecked")]
 pub struct ManifoldMesh {
+    origin: [f64; 3],
     positions: Vec<[f64; 3]>,
     triangles: Vec<[u32; 3]>,
 }
@@ -37,6 +45,7 @@ pub struct ManifoldMesh {
 /// A [`ManifoldMesh`] as it is serialized, checked on the way in.
 #[derive(Deserialize)]
 struct Unchecked {
+    origin: [f64; 3],
     positions: Vec<[f64; 3]>,
     triangles: Vec<[u32; 3]>,
 }
@@ -45,7 +54,7 @@ impl TryFrom<Unchecked> for ManifoldMesh {
     type Error = ManifoldError;
 
     fn try_from(parts: Unchecked) -> Result<Self, Self::Error> {
-        ManifoldMesh::new(parts.positions, parts.triangles)
+        ManifoldMesh::new(parts.origin, parts.positions, parts.triangles)
     }
 }
 
@@ -54,18 +63,20 @@ impl ManifoldMesh {
     pub const MAX_VERTICES: usize = RenderMesh::MAX_VERTICES;
     /// The most triangles a mesh may have: as many as a [`RenderMesh`].
     pub const MAX_TRIANGLES: usize = RenderMesh::MAX_INDICES / 3;
-    /// The largest coordinate a position may have, as for a
-    /// [`RenderMesh`].
+    /// The largest coordinate the origin or a position may have, as for
+    /// a [`RenderMesh`].
     pub const MAX_POSITION: f64 = 2.0 * MAX_COORD as f64;
 
     /// The mesh of these parts, if it is one: see [`ManifoldMesh`] for
     /// what is checked, in that order, the first failure (by the lowest
     /// triangle, vertex or edge) given.
     pub fn new(
+        origin: [f64; 3],
         positions: Vec<[f64; 3]>,
         triangles: Vec<[u32; 3]>,
     ) -> Result<ManifoldMesh, ManifoldError> {
         let mesh = ManifoldMesh {
+            origin,
             positions,
             triangles,
         };
@@ -73,6 +84,13 @@ impl ManifoldMesh {
         Ok(mesh)
     }
 
+    /// Where the positions are measured from: a point with whole-numbered
+    /// coordinates near the middle of the mesh.
+    pub fn origin(&self) -> [f64; 3] {
+        self.origin
+    }
+
+    /// The vertices' positions, about [`ManifoldMesh::origin`].
     pub fn positions(&self) -> &[[f64; 3]] {
         &self.positions
     }
@@ -100,10 +118,15 @@ impl ManifoldMesh {
         if triangles.is_empty() {
             return Err(ManifoldError::Empty);
         }
+        if !(self.origin.iter()).all(|x| x.abs() <= Self::MAX_POSITION && x.fract() == 0.0) {
+            return Err(ManifoldError::Origin);
+        }
         let vertices = positions.len();
-        if let Some(v) =
-            (positions.iter()).position(|p| !p.iter().all(|x| x.abs() <= Self::MAX_POSITION))
-        {
+        let single = |x: f64| f64::from(x as f32) == x;
+        if let Some(v) = (positions.iter()).position(|p| {
+            !p.iter()
+                .all(|&x| x.abs() <= Self::MAX_POSITION && single(x))
+        }) {
             return Err(ManifoldError::Position(v as u32));
         }
         for (t, tri) in triangles.iter().enumerate() {
@@ -256,8 +279,11 @@ pub enum ManifoldError {
     TooLarge,
     /// No triangles: the empty solid.
     Empty,
-    /// This vertex isn't finite or is past
-    /// [`ManifoldMesh::MAX_POSITION`].
+    /// The origin isn't whole-numbered within
+    /// [`ManifoldMesh::MAX_POSITION`]: the solid is too far out.
+    Origin,
+    /// This vertex isn't finite, is past [`ManifoldMesh::MAX_POSITION`]
+    /// or isn't an `f32` value.
     Position(u32),
     /// This triangle names a vertex past the last.
     Index(u32),
@@ -288,6 +314,7 @@ impl std::fmt::Display for ManifoldError {
                 f.write_str("the mesh would have more vertices or triangles than allowed")
             }
             ManifoldError::Empty => f.write_str("the mesh has no triangles"),
+            ManifoldError::Origin => f.write_str("the mesh is too far from the origin"),
             ManifoldError::Position(v) => write!(f, "vertex {v} is out of range"),
             ManifoldError::Index(t) => write!(f, "triangle {t} names a vertex that doesn't exist"),
             ManifoldError::RepeatedVertex(t) => write!(f, "triangle {t} names a vertex twice"),

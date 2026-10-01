@@ -6,6 +6,9 @@
 //! per body, its mesh's vertices and triangles, and a build item placing
 //! each. The meshes are [`ManifoldMesh`]es, checked to be closed, oriented
 //! manifolds, as the 3MF core specification asks of a model object.
+//! Vertices are about the mesh's whole-numbered origin, which the build
+//! item's transform moves them by, and are `f32` values, so readers that
+//! keep single precision (most do) read the mesh that was checked.
 //! Coordinates are written so they read back as the same `f64`s.
 //!
 //! The zip is written here (its parts deflated by `miniz_oxide`): local
@@ -104,7 +107,8 @@ const VERTEX: u64 = 32;
 /// The most bytes of one triangle line: three indices of up to 10 digits.
 const TRIANGLE: u64 = 40 + 3 * 10;
 /// The most bytes of one object's lines other than its vertices and
-/// triangles, and of its build item, without its name.
+/// triangles, and of its build item, without its name and the numbers of
+/// its transform.
 const OBJECT: u64 = 256;
 /// The most bytes of the model's lines outside the objects, without the
 /// title.
@@ -141,6 +145,7 @@ fn model_bound(title: &str, objects: &[Object<'_>]) -> Option<u64> {
         let triangles = (object.mesh.triangles().len() as u64).checked_mul(TRIANGLE)?;
         total = total
             .checked_add(OBJECT)?
+            .checked_add(3 * MAX_NUMBER)?
             .checked_add(text(object.name)?)?
             .checked_add(vertices)?
             .checked_add(triangles)?;
@@ -184,8 +189,18 @@ fn model(title: &str, objects: &[Object<'_>]) -> String {
         out.push_str("    </triangles>\n   </mesh>\n  </object>\n");
     }
     out.push_str(" </resources>\n <build>\n");
-    for i in 0..objects.len() {
-        let _ = writeln!(out, "  <item objectid=\"{}\"/>", i + 1);
+    for (i, object) in objects.iter().enumerate() {
+        let _ = write!(out, "  <item objectid=\"{}\"", i + 1);
+        let origin = object.mesh.origin();
+        if origin != [0.0; 3] {
+            out.push_str(" transform=\"1 0 0 0 1 0 0 0 1");
+            for x in origin {
+                out.push(' ');
+                number(&mut out, x);
+            }
+            out.push('"');
+        }
+        out.push_str("/>\n");
     }
     out.push_str(" </build>\n</model>\n");
     out

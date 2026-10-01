@@ -180,9 +180,14 @@ design's name as its title. The package is an OPC zip:
 model, in the 3MF core namespace with `unit="millimeter"` (model units
 are millimetres), `Title` and `Application` metadata, one `<object
 type="model">` per body named after it, ids from 1, and a build item for
-each with no transform. Coordinates are written in Rust's shortest
-round-trip form (with an exponent below `1e-4`), so a reader gets the same
-`f64`s and the mesh it reads is the manifold that was checked. Names lose
+each. A mesh's vertices are about its origin, the middle of the body's
+box rounded to whole millimetres, and are `f32` values (readers such as
+lib3mf and the slicers keep single precision): the build item's
+`transform` is the identity moved by the origin, left out at zero, so a
+body far from the origin keeps its detail, and a reader keeping `f32`s or
+`f64`s reads exactly the mesh that was checked. Coordinates are written in
+Rust's shortest round-trip `f64` form (with an exponent below `1e-4`). A
+body whose samples would still round together is refused, not written. Names lose
 the characters XML 1.0 doesn't allow. The zip is written by hand
 (`miniz_oxide` deflates the parts; no zip64, fixed 1980 timestamps); the
 model's size is bounded from the meshes' counts before anything is built,

@@ -177,13 +177,15 @@ impl Solid {
 
     /// The solid as a closed, oriented manifold of triangles for export,
     /// within `display`'s targets: the samples and triangles of
-    /// [`Solid::tessellate`] in `f64`, each point once, welded by the
-    /// patches' shared vertices and edges, never by distance, then
-    /// checked ([`ManifoldMesh::new`]). Fails with
+    /// [`Solid::tessellate`], each point once, welded by the patches'
+    /// shared vertices and edges, never by distance, about the middle of
+    /// the solid's box rounded to whole numbers and rounded to `f32` there,
+    /// then checked ([`ManifoldMesh::new`]). Fails with
     /// [`ManifoldError::Empty`] for the empty solid,
-    /// [`ManifoldError::TooLarge`] past the mesh's limits, and with the
-    /// check's failure should the triangles not make a manifold (two
-    /// samples rounding to one point on a tiny curved edge, say).
+    /// [`ManifoldError::TooLarge`] past the mesh's limits,
+    /// [`ManifoldError::Origin`] too far out, and with the check's failure
+    /// should the triangles not make a manifold (two samples rounding to
+    /// one `f32` point on a tiny curved edge, say).
     pub fn manifold_mesh(&self, display: &Display) -> Result<ManifoldMesh, ManifoldError> {
         self.manifold_mesh_within(display, &Limits::EXPORT)
     }
@@ -194,8 +196,8 @@ impl Solid {
         display: &Display,
         limits: &Limits,
     ) -> Result<ManifoldMesh, ManifoldError> {
-        let (positions, triangles) = weld(&self.mesh, display, limits)?;
-        ManifoldMesh::new(positions, triangles)
+        let (origin, positions, triangles) = weld(&self.mesh, display, limits)?;
+        ManifoldMesh::new(origin, positions, triangles)
     }
 }
 

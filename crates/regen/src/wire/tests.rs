@@ -866,7 +866,9 @@ fn huge_lengths_are_refused_without_allocating_them() {
 fn refused(head: &Head, parts: &[Vec<u8>]) -> String {
     match decode_reply(&head.encode()[..], &slices(parts)).unwrap() {
         Response::Failed { error, .. } => error,
-        Response::Regenerated { .. } | Response::Exported { .. } => panic!("a hostile reply was taken"),
+        Response::Regenerated { .. } | Response::Exported { .. } => {
+            panic!("a hostile reply was taken")
+        }
     }
 }
 
@@ -1178,7 +1180,9 @@ fn cut_short_picking_parts_are_refused() {
             short[part].truncate(len);
             match decode_reply(&head[..], &slices(&short)).unwrap() {
                 Response::Failed { .. } => {}
-                Response::Regenerated { .. } | Response::Exported { .. } => panic!("part {part} cut by {cut} was taken"),
+                Response::Regenerated { .. } | Response::Exported { .. } => {
+                    panic!("part {part} cut by {cut} was taken")
+                }
             }
         }
         // Or with more in it.
@@ -1324,7 +1328,9 @@ fn a_model_with_too_many_faces_is_answered_as_failed() {
     ));
     match round_trip(&response(MAX_FACES + 1)) {
         Response::Failed { generation, .. } => assert_eq!(generation, 4.into()),
-        Response::Regenerated { .. } | Response::Exported { .. } => panic!("too many faces were sent"),
+        Response::Regenerated { .. } | Response::Exported { .. } => {
+            panic!("too many faces were sent")
+        }
     }
 }
 
@@ -1370,6 +1376,7 @@ fn an_export_round_trips_with_its_meshes_checked() {
     triangles.swap_remove(0);
     #[derive(serde::Serialize)]
     struct Unchecked<'a> {
+        origin: [f64; 3],
         positions: &'a [[f64; 3]],
         triangles: &'a [[u32; 3]],
     }
@@ -1383,6 +1390,7 @@ fn an_export_round_trips_with_its_meshes_checked() {
         body: bodies[0].body,
         name: &bodies[0].name,
         mesh: Unchecked {
+            origin: mesh.origin(),
             positions: mesh.positions(),
             triangles: &triangles,
         },

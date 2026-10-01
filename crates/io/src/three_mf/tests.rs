@@ -57,8 +57,8 @@ struct Read {
 /// The package read back and checked against the 3MF core rules that
 /// matter here: its content types and relationship, the model's
 /// namespace and unit, objects of type model with meshes that are
-/// manifolds facing out, and a build item for each. Returns the title and
-/// the objects.
+/// manifolds facing out, and a build item for each, moving it by its
+/// origin and not turning it. Returns the title and the objects.
 fn read(zip: &[u8]) -> (String, Vec<Read>) {
     let parts = unzip(zip);
     let names: Vec<&str> = parts.iter().map(|(name, _)| name.as_str()).collect();
@@ -104,7 +104,7 @@ fn read(zip: &[u8]) -> (String, Vec<Read>) {
         .and_then(|n| n.text())
         .unwrap_or_default()
         .to_owned();
-    let mut objects = Vec::new();
+    let mut parts = Vec::new();
     let mut ids = Vec::new();
     for object in child(root, "resources")
         .children()
@@ -125,16 +125,27 @@ fn read(zip: &[u8]) -> (String, Vec<Read>) {
             .filter(|n| n.is_element())
             .map(|t| ["v1", "v2", "v3"].map(|v| t.attribute(v).unwrap().parse().unwrap()))
             .collect();
-        objects.push(Read {
-            name: object.attribute("name").unwrap().to_owned(),
-            mesh: ManifoldMesh::new(positions, triangles).unwrap(),
-        });
+        let name = object.attribute("name").unwrap().to_owned();
+        parts.push((name, positions, triangles));
     }
-    let items: Vec<String> = (child(root, "build").children())
+    let items: Vec<(String, [f64; 3])> = (child(root, "build").children())
         .filter(|n| n.is_element())
-        .map(|n| n.attribute("objectid").unwrap().to_owned())
+        .map(|n| {
+            let origin = n.attribute("transform").map_or([0.0; 3], |m| {
+                let m: Vec<f64> = m.split(' ').map(|x| x.parse().unwrap()).collect();
+                assert_eq!(m[..9], [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]);
+                [m[9], m[10], m[11]]
+            });
+            (n.attribute("objectid").unwrap().to_owned(), origin)
+        })
         .collect();
-    assert_eq!(items, ids);
+    assert!(items.iter().map(|i| &i.0).eq(&ids));
+    let objects = (parts.into_iter().zip(items))
+        .map(|((name, positions, triangles), (_, origin))| Read {
+            name,
+            mesh: ManifoldMesh::new(origin, positions, triangles).unwrap(),
+        })
+        .collect();
     (title, objects)
 }
 
@@ -265,6 +276,44 @@ fn meshes_are_checked_when_deserialized() {
     // The same parts with one triangle turned round.
     let mut triangles = mesh.triangles().to_vec();
     triangles[0].swap(1, 2);
-    let bytes = postcard::to_stdvec(&(mesh.positions(), &triangles)).unwrap();
+    let bytes = postcard::to_stdvec(&(mesh.origin(), mesh.positions(), &triangles)).unwrap();
     assert!(postcard::from_bytes::<ManifoldMesh>(&bytes).is_err());
+}
+
+#[test]
+fn a_body_is_placed_by_its_origin() {
+    let display = Display::new(&TOL);
+    let far = Solid::cylinder(DVec3::new(9e5, -4e5, 2e5), 3.0, 4.0, 1, &TOL).unwrap();
+    let centred = Solid::cuboid(DVec3::splat(-1.0), DVec3::splat(2.0), 2, &TOL).unwrap();
+    let meshes = [&far, &centred].map(|s| s.manifold_mesh(&display).unwrap());
+    assert_eq!(meshes[0].origin(), [9e5, -4e5, 2e5 + 2.0]);
+    assert_eq!(meshes[1].origin(), [0.0; 3]);
+    let objects = [
+        Object {
+            name: "far",
+            mesh: &meshes[0],
+        },
+        Object {
+            name: "centred",
+            mesh: &meshes[1],
+        },
+    ];
+    let text = model("t", &objects);
+    assert!(
+        text.contains(
+            "<item objectid=\"1\" transform=\"1 0 0 0 1 0 0 0 1 900000 -400000 200002\"/>"
+        )
+    );
+    assert!(text.contains("<item objectid=\"2\"/>"));
+    let (_, read) = read(&write("t", &objects).unwrap());
+    assert_eq!(read[0].mesh, meshes[0]);
+    assert_eq!(read[1].mesh, meshes[1]);
+    // Its vertices are near zero, where `f32`s are fine.
+    assert!(
+        meshes[0]
+            .positions()
+            .iter()
+            .flatten()
+            .all(|x| x.abs() <= 3.0)
+    );
 }

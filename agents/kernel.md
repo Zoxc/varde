@@ -1800,13 +1800,24 @@ the same at 1 and 8 threads.
 ### Manifold meshes for export (`src/manifold.rs`, `tessellate::weld`)
 
 `Solid::manifold_mesh(&Display)` gives a `ManifoldMesh`, an indexed
-triangle mesh in `f64` that is a closed, oriented 2-manifold, for files
-such as 3MF. Both tessellations work from one plan (`tessellate::Plan`:
+triangle mesh that is a closed, oriented 2-manifold, for files such as
+3MF. Its positions are `f32` values (held as `f64`) about an origin with
+whole-numbered coordinates, the middle of the patch mesh's box rounded:
+file readers keep single precision, so the mesh checked is the one they
+read, and measuring from the middle keeps a body far out as precise as
+one at the origin. Each sample is the `f64` point less the origin,
+rounded to the nearest `f32`. Drawing (with picking or without, one
+`tessellate::draw`) and welding work from one plan (`tessellate::Plan`:
 the edges' first halfedges, curves and segment counts, the patches'
 levels and inner offsets, the counts and the limit check) and one
 triangulation of a patch (`Plan::patch_triangles`), so they have the
 same samples and triangles; only the stitching's choice of diagonals
-reads the `f64` points here where drawing reads its `f32` ones. The
+reads the points about the origin here where drawing reads its `f32`
+ones about zero. A test holds the three together on boxes, cylinders,
+curved and flat-patched solids and a joined plate at two tolerances:
+the drawn mesh the same with picking, a picking entry per drawn
+triangle and edge, and the welded triangles the drawn ones in order,
+corner for corner within the rounding. The
 welding is by identity, never by distance: a mesh vertex is one vertex
 (numbered as in the patch mesh, every one used, whatever its normals),
 an edge's inner samples are numbered once along its first halfedge and
@@ -1818,8 +1829,9 @@ triangles), counted before sampling (`TooLarge`).
 `ManifoldMesh::new` is the only way to make one (deserializing goes
 through it too) and checks, in this order, giving the first failure by
 the lowest triangle, vertex or edge: at least one triangle (`Empty`), the
-sizes, every coordinate finite and within `MAX_POSITION` (`2 ×
-MAX_COORD`; `Position`), indices in range, no vertex twice in a triangle,
+sizes, the origin whole-numbered within `MAX_POSITION` (`2 × MAX_COORD`;
+`Origin`), every coordinate finite, within `MAX_POSITION` and an `f32`
+value (`Position`), indices in range, no vertex twice in a triangle,
 no triangle whose corners are collinear, exactly, by the boolean's exact
 sign of each component of `(b − a) × (c − a)` (`Degenerate`), no two
 vertices at the same position (`Coincident`, by sorting their bits), every
@@ -1830,8 +1842,9 @@ volume about the middle of its box (`InsideOut`). A shell bounding a void
 faces in, so the volume is checked in total, not per shell; the solid's
 own check already made every shell face the right way. A checked solid
 gives a mesh that passes unless sampling breaks it: two samples rounding
-to one point on a tiny curved edge would be `Coincident`, refused rather
-than written.
+to one `f32` point (a tiny curved edge, or a thin pin far from the middle
+of the body it's part of) are `Coincident` or make a `Degenerate`
+triangle, refused rather than written.
 
 Tests: the check's failures one by one on a tetrahedron; a box welds to
 its 8 corners and 12 triangles, volume 24; a cylinder's rim point is one
@@ -1841,8 +1854,11 @@ and crossed cylinders united, subtracted and intersected (traced cuts),
 each at the default and a fine tolerance: as many triangles as drawn,
 every drawn position a welded one rounded, the volume within the chord
 times the area of the solid's and equal to the drawn mesh's to `f32`
-rounding, the same at 1 and 8 threads; positions far out and the empty
-solid refused; limits exact. The 3MF writer is in `varde-io`
+rounding, the same at 1 and 8 threads; plates with a hole 10^5 and 10^6
+out weld about their own middle; a 0.01 pin 10^5 from its block is
+refused (its samples round together); an origin past `MAX_POSITION`, a
+position that isn't an `f32` value and the empty solid refused; limits
+exact. The 3MF writer is in `varde-io`
 (`agents/files.md`).
 
 ## Profiles and extrude (`src/profile.rs`, `src/extrude.rs`, `src/extrude/`)

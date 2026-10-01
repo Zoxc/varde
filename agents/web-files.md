@@ -46,7 +46,9 @@ saving over the other.
 Elsewhere (Firefox, Safari) Open is a hidden file input: the design opens
 as a copy, an untitled design with the file's name, since the file can't be
 written back. Save and Save As download the design as `<name>.vrdp`
-(encoded on the page, one snappy pass over the postcard it makes for
+(`document::name::download_name`, which the save pickers suggest too:
+characters file systems refuse become `_`, cut to 255 bytes, and an `_`
+after a name Windows keeps for a device such as `CON`; encoded on the page, one snappy pass over the postcard it makes for
 every auto-save anyway), after which it counts as saved: the browser has it.
 Whether the user kept the download, rather than cancelling the browser's
 save dialog, isn't something a page is told, though. So instead of being

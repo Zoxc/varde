@@ -2480,7 +2480,10 @@ fn a_body_that_cannot_be_exported_is_named() {
     assert_eq!(error.name, body.name);
     assert_eq!(
         error.to_string(),
-        format!("{} can't be exported: vertex 0 is out of range", body.name)
+        format!(
+            "{} can't be exported: the mesh is too far from the origin",
+            body.name
+        )
     );
 }
 

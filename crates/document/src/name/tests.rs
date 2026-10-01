@@ -71,3 +71,30 @@ fn an_export_is_named_with_its_own_extension() {
         (PathBuf::from("/d/a.vrdp.3mf"), false)
     );
 }
+
+#[test]
+fn a_download_name_is_no_device_on_windows() {
+    assert_eq!(download_name("CON"), "CON_.vrdp");
+    assert_eq!(download_name("con.tar"), "con.tar_.vrdp");
+    assert_eq!(download_name("Nul.vrdp"), "Nul_.vrdp");
+    assert_eq!(download_name_with("lpt9 ", "3mf"), "lpt9_.3mf");
+    assert_eq!(download_name_with("COM¹", "3mf"), "COM¹_.3mf");
+    assert_eq!(download_name("conveyor"), "conveyor.vrdp");
+    assert_eq!(download_name("COM10"), "COM10.vrdp");
+    assert_eq!(download_name("my con"), "my con.vrdp");
+}
+
+#[test]
+fn a_long_download_name_is_cut_to_fit() {
+    let long = "é".repeat(200);
+    for name in [download_name(&long), download_name_with(&long, "3mf")] {
+        assert!(name.len() <= 255, "{}", name.len());
+        assert!(name.starts_with("éé"));
+    }
+    assert_eq!(download_name_with(&long, "3mf").len(), 250 + 4);
+    // Its own extension kept, a cut that ends in a dot trimmed.
+    let dotted = format!("{}.{}.VRDP", "a".repeat(249), "b".repeat(20));
+    let name = download_name(&dotted);
+    assert_eq!(name, format!("{}.VRDP", "a".repeat(249)));
+    assert_eq!(download_name(&"x".repeat(300)).len(), 255);
+}

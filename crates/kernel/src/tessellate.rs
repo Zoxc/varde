@@ -574,8 +574,9 @@ fn draw(
     ))
 }
 
-/// A welded tessellation's positions and triangles, unchecked.
-pub(crate) type Welded = (Vec<[f64; 3]>, Vec<[u32; 3]>);
+/// A welded tessellation's origin, positions about it and triangles,
+/// unchecked.
+pub(crate) type Welded = ([f64; 3], Vec<[f64; 3]>, Vec<[u32; 3]>);
 
 /// `mesh`, which must pass [`Mesh::check`], as an indexed triangle mesh
 /// for export, with the samples and triangles of [`tessellate`] (the
@@ -583,7 +584,11 @@ pub(crate) type Welded = (Vec<[f64; 3]>, Vec<[u32; 3]>);
 /// once: a mesh vertex is one vertex whatever its normals, an edge's
 /// inner samples are numbered once for both sides, and the triangles name
 /// them by those numbers, so the welding follows the patch mesh's own
-/// edges and vertices, never a distance. Positions are the `f64` samples.
+/// edges and vertices, never a distance. The origin is the middle of the
+/// mesh vertices' box rounded to whole numbers, and each position is the
+/// `f64` sample less the origin, rounded to the nearest `f32`: what
+/// readers keep, so the check sees what they will (two samples that round
+/// together are refused, not written).
 /// Unchecked: [`ManifoldMesh::new`] checks it. Fails with
 /// [`ManifoldError::TooLarge`] past `limits` (within
 /// [`ManifoldMesh::MAX_VERTICES`] and [`ManifoldMesh::MAX_TRIANGLES`]),
@@ -609,10 +614,15 @@ pub(crate) fn weld(
         ..
     } = &plan;
 
+    // A checked mesh that isn't empty has vertices.
+    let bounds = Bounds3::around(mesh.verts()).ok_or(ManifoldError::Empty)?;
+    let origin = ((bounds.min + bounds.max) * 0.5).round();
+    let about = |p: DVec3| (p - origin).as_vec3().as_dvec3().to_array();
+
     // Mesh vertices first, by their own numbers (a checked mesh uses every
     // one), then each edge's inner samples along its first halfedge, then
     // each patch's inner points.
-    let mut positions: Vec<[f64; 3]> = mesh.verts().iter().map(|v| v.to_array()).collect();
+    let mut positions: Vec<[f64; 3]> = mesh.verts().iter().map(|&v| about(v)).collect();
     let edge_points: Vec<Vec<DVec3>> = par_map(edge_ids, |&e| {
         let n = counts[e as usize];
         let curve = &curves[e as usize];
@@ -623,7 +633,7 @@ pub(crate) fn weld(
     let mut edge_base = Vec::with_capacity(edge_points.len());
     for points in &edge_points {
         edge_base.push(positions.len() as u64);
-        positions.extend(points.iter().map(|p| p.to_array()));
+        positions.extend(points.iter().map(|&p| about(p)));
     }
     // Within the limits, checked above.
     let inner_base = positions.len() as u64;
@@ -644,7 +654,7 @@ pub(crate) fn weld(
     let patches: Vec<(Vec<DVec3>, Vec<u32>)> = par_map(tri_ids, |&t| {
         let patch = mesh.patch(t as usize);
         let points: Vec<DVec3> = (plan.inner_params(t).into_iter())
-            .map(|u| patch.eval(u))
+            .map(|u| DVec3::from_array(about(patch.eval(u))))
             .collect();
         let base = (inner_base + inner[t as usize]) as u32;
         let indices = plan.patch_triangles(t, base, &points, |h, r| {
@@ -660,7 +670,7 @@ pub(crate) fn weld(
     }
     debug_assert_eq!(triangles.len() as u64, plan.triangles);
     debug_assert_eq!(positions.len() as u64, plan.least_vertices());
-    Ok((positions, triangles))
+    Ok((origin.to_array(), positions, triangles))
 }
 
 /// A render vertex: its position and normal.

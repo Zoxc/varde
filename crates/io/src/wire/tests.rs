@@ -34,7 +34,7 @@ fn tetrahedron() -> varde_kernel::ManifoldMesh {
         [0.0, 0.0, 1.0],
     ];
     let triangles = vec![[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]];
-    varde_kernel::ManifoldMesh::new(positions, triangles).unwrap()
+    varde_kernel::ManifoldMesh::new([0.0; 3], positions, triangles).unwrap()
 }
 
 /// Every request, one of each kind.
