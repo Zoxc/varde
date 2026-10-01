@@ -1655,7 +1655,20 @@ parameters, and one just past the patch's side or the edge's end (a
 hit the count may want, see below) lies that far outside the hulls at
 the weights' bounds; with `1e-12` alone, a crossing a twentieth of a
 nanometre past a cylinder patch's side was found without the hulls and
-lost with them. Newton on `E(t) = P(u)`; once it finds a crossing in a
+lost with them. The boxes and the slab are apart by more than the same
+(each holds the hull, so a point that near the hull is that near them
+too, and the slab's margin is far under a curved piece's bulge until
+pieces are a few millionths across): with `1e-12` alone, a crossing just
+past a side square to the axes (a wall's level rim) was lost where the
+edge's range was split between the rim's height and the crossing, or
+where the edge ended just short of the wall, the edge's piece beyond the
+rim parted from the patch's by its box, or by the slab. A patch's piece
+more than 8 times longer than high across its longest side is halved
+across that side rather than quartered (`MAX_ASPECT`): quartering a pin's
+wall 1 000 tall and under 2 wide split it across its width as often as
+along its height, and a hole's rim arc through it, whose control hull
+holds the wall's width near the rim's height, had every piece of that row
+to look at (965 pieces against under 200 halving). Newton on `E(t) = P(u)`; once it finds a crossing in a
 piece, the rest of the edge's piece either side of it, less a thousandth
 of it round the crossing, is searched again: an edge running through a
 wall a little inside its rim, in and out within one small piece, lost
@@ -2571,7 +2584,13 @@ document), and a cap edge across a drill 1 010 tall crossing it twice,
 each search looking at no more than 100 pieces, at the closed-form
 parameters to `1e-12`, and a crossing `5e-11` past a cylinder patch's
 side (off the axes, so the boxes don't part the pieces) found with the
-hulls as without them. Unit tests:
+hulls as without them, and one `5e-11` above a wall's level top rim,
+once with the edge's range split between the rim's height and the
+crossing, once `2.5e-11` past the edge's end; a hole's rim arc through
+a pin 1 010 tall and 2 wide crossing it twice, at the circles' meeting
+points to `1e-12`, each search under 200 pieces, and pins across the
+1 000 tall plate's hole, less and joined, to `1e-9` of the closed-form
+lens (`pins_across_a_tall_plates_hole`). Unit tests:
 exact ellipse arcs of a tilted plane through a cylinder, crossings
 solved exactly on a plane and a cylinder, crossings only placed going to
 their root on a tilted cylinder's patch from `1e-3` and `0.05` off (a
@@ -2718,8 +2737,10 @@ to 72 of its 96 operations and left the others as they were.
 - Each refinement round counts both operands again from scratch, and a
   search stops at 1 024 pieces (placing a crossing it didn't find where
   it found the two meeting, else where they came closest; since pieces
-  whose hulls are apart are dropped, tall and long patches no longer
-  reach it, only edges running along a surface): pairs a
+  whose hulls are apart are dropped and long pieces halved, tall and
+  long patches seldom reach it, mostly edges running along a surface,
+  as a tool's straight edge a hair from a tall wall and parallel to its
+  rulings): pairs a
   certificate can't settle (two cylinders tangent or crossing at a
   slant) refine for many rounds, and
   parts built in long chains occasionally run out of budget there.
@@ -3732,7 +3753,13 @@ parameter, or a split outside the patch bounds),
   `1e-12` in the search's unit frame, as planned, plus `2048 ·
   PIECE_SLACK` of the pieces' sizes, which the plan didn't have (so a
   solution Newton would count just past the patch's side or the edge's
-  end is never dropped; see "Crossings"), and the charge went from 4
+  end is never dropped; see "Crossings"; the boxes and the slab are
+  given the same margin, which they didn't have before either; and,
+  which the plan left as an option for searches still at their cap
+  after the hulls, patch pieces more than 8 times longer than high are
+  halved across their longest side, not quartered: curved edges whose
+  control hulls hold a tall wall's width, a rim arc through a pin or a
+  tool's rim along a tall wall, still ran to the cap), and the charge went from 4
   pieces a unit to 2 (a piece measured twice as dear where every piece's hulls
   touch; single thread, release: random edges and patches 0.3 → 1.0 µs
   a piece but 5 times fewer pieces, 0.2 s → 0.13 s for 20 000

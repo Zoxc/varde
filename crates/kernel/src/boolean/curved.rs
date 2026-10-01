@@ -107,8 +107,9 @@ pub(super) struct Curved<'a> {
     tie: f64,
     resolution: f64,
     /// Whether the crossing searches drop pieces whose control hulls are
-    /// apart: always, but for tests under `assemble::LOOSE`.
-    hulls: bool,
+    /// apart and halve long patch pieces: always, but for tests under
+    /// `assemble::LOOSE`.
+    tall_walls: bool,
 }
 
 impl<'a> Curved<'a> {
@@ -128,9 +129,9 @@ impl<'a> Curved<'a> {
             tie,
             resolution: tol.resolution(),
             #[cfg(test)]
-            hulls: !super::assemble::LOOSE.get(),
+            tall_walls: !super::assemble::LOOSE.get(),
             #[cfg(not(test))]
-            hulls: true,
+            tall_walls: true,
         }
     }
 
@@ -639,7 +640,7 @@ impl Primitives for Curved<'_> {
         }
         let edge = self.curve(side, e);
         let patch = &self.input(side.other()).patches[f as usize];
-        let (mut found, closest, nodes) = solve::edge_patch_with(&edge, patch, self.hulls);
+        let (mut found, closest, nodes) = solve::edge_patch_with(&edge, patch, self.tall_walls);
         // Crossings on the patch's side, within a tie of it (an edge of one
         // operand lying on the other's where a face is flush with it):
         // there or not as the perturbation moves the edge across the side.

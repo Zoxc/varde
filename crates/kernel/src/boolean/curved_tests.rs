@@ -683,6 +683,43 @@ fn drilling_a_tall_plate() {
 }
 
 #[test]
+fn pins_across_a_tall_plates_hole() {
+    // A pin of radius 1 standing on the rim of the tall plate's hole: the
+    // rim's quarter arcs at the caps cross the pin's wall, 1 010 tall and
+    // under 2 wide, and the arcs' control hulls hold its width there.
+    // The plate less the pin, and the two joined, to the closed-form
+    // lens of the two circles.
+    let h = 1000.0;
+    let plate = tall_plate(h);
+    let lens = {
+        // Circles of radius 8 and 1 with centres 8 apart.
+        let (r, s, d): (f64, f64, f64) = (8.0, 1.0, 8.0);
+        let a = ((d * d + r * r - s * s) / (2.0 * d * r)).acos();
+        let b = ((d * d + s * s - r * r) / (2.0 * d * s)).acos();
+        r * r * (a - a.sin() * a.cos()) + s * s * (b - b.sin() * b.cos())
+    };
+    let pinned = PI - lens;
+    for angle in [0.3f64, 2.0, 4.0] {
+        let centre = DVec2::new(angle.cos(), angle.sin()) * 8.0;
+        let pin = cylinder([centre.x, centre.y, -5.0], 1.0, h + 10.0);
+        let less = run(&plate, &pin, Op::Difference);
+        let want = (2400.0 - 64.0 * PI - pinned) * h;
+        assert!(
+            (less.volume() - want).abs() <= 1e-9 * want,
+            "at {angle}: volume {}, not {want}",
+            less.volume()
+        );
+        let joined = run(&plate, &pin, Op::Union);
+        let want = (2400.0 - 64.0 * PI + lens) * h + PI * 10.0;
+        assert!(
+            (joined.volume() - want).abs() <= 1e-9 * want,
+            "at {angle}: volume {}, not {want}",
+            joined.volume()
+        );
+    }
+}
+
+#[test]
 fn the_result_checks_integrations_are_charged() {
     // A tube whose wall is a twentieth thick, notched through the wall:
     // the corner triangles' volume can't tell which way the result

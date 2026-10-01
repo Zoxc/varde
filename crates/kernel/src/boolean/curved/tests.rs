@@ -436,6 +436,49 @@ fn an_edge_across_a_tall_wall_is_found_cheaply() {
 }
 
 #[test]
+fn an_arc_across_a_tall_thin_wall_is_found_cheaply() {
+    // A hole's rim, a quarter circle of radius 8, through a pin of
+    // radius 1 standing 1 010 tall on it: the arc's control hull holds
+    // the pin's whole width near the rim's height, so quartered pieces of
+    // the pin's wall were split across its width as often as along its
+    // height and none was dropped, and the search ran out of pieces.
+    // Long pieces are halved across their long side instead.
+    let tol = crate::Tolerance::DEFAULT;
+    for angle in [0.3f64, 0.785, 1.2] {
+        let (sin, cos) = crate::trig::sin_cos(angle);
+        let centre = DVec3::new(8.0 * cos, 8.0 * sin, 0.0);
+        let pin = crate::Solid::cylinder(centre - 5.0 * DVec3::Z, 1.0, 1010.0, 1, &tol).unwrap();
+        let mesh = pin.mesh();
+        let rim =
+            crate::patch::Conic2::arc_between(DVec2::ZERO, 8.0, DVec2::X * 8.0, DVec2::Y * 8.0)
+                .unwrap();
+        let edge = Conic3 {
+            p0: rim.p0.extend(0.0),
+            c: rim.c.extend(0.0),
+            w: rim.w,
+            p1: rim.p1.extend(0.0),
+        };
+        let mut crossings = Vec::new();
+        for t in 0..mesh.tris().len() {
+            let (found, _, nodes) = edge_patch(&edge, &mesh.patch(t));
+            assert!(nodes <= 200, "at {angle}, patch {t}: {nodes} pieces");
+            for h in found.iter().filter(|h| h.out == 0.0) {
+                crossings.push((h.x, edge.eval(h.t)));
+            }
+        }
+        // In and out where the circles of radius 8 and 1 meet.
+        assert_eq!(crossings.len(), 2, "at {angle}: {crossings:?}");
+        let mut signs: Vec<i8> = crossings.iter().map(|c| c.0).collect();
+        signs.sort();
+        assert_eq!(signs, [-1, 1], "at {angle}: {crossings:?}");
+        for (_, x) in &crossings {
+            assert!((x.length() - 8.0).abs() < 1e-12, "at {angle}: {x}");
+            assert!((x.distance(centre) - 1.0).abs() < 1e-12, "at {angle}: {x}");
+        }
+    }
+}
+
+#[test]
 fn a_crossing_just_past_a_patch_side_is_found_with_the_hulls() {
     // A radial edge through a cylinder's wall a hair past a patch's
     // straight side, the wall turned off the axes so the boxes don't
@@ -478,6 +521,51 @@ fn a_crossing_just_past_a_patch_side_is_found_with_the_hulls() {
             let h = &found[0];
             assert!(h.out > 0.0 && h.out < 1e-9, "patch {t}: {h:?}");
             assert!((h.t - 0.37).abs() < 1e-9, "patch {t}: {h:?}");
+        }
+        seen += 1;
+    }
+    assert!(seen >= 4, "{seen}");
+}
+
+#[test]
+fn a_crossing_just_past_a_rim_at_a_split_or_an_end_is_found() {
+    // An edge through a cylinder's wall a twentieth of a nanometre above
+    // the wall's top rim (a side straight across the axes), where
+    // Newton's method counts the crossing as the piece's. Once with the
+    // edge's range split between the rim's height and the crossing, once
+    // with the edge ending there, the crossing just past its end: the
+    // edge's piece beyond the rim's height kept by its box as by its hull.
+    let tol = crate::Tolerance::DEFAULT;
+    let cyl = crate::Solid::cylinder(DVec3::ZERO, 3.0, 10.0, 1, &tol).unwrap();
+    let mesh = cyl.mesh();
+    let mut seen = 0;
+    for t in 0..mesh.tris().len() {
+        let patch = mesh.patch(t);
+        let top: Vec<DVec3> = patch.p.into_iter().filter(|p| p.z == 10.0).collect();
+        if top.len() != 2 || patch.p.iter().all(|p| p.z == 10.0) {
+            continue;
+        }
+        let mid = (top[0] + top[1]).truncate().normalize();
+        let at = |r: f64, z: f64| (mid * r).extend(z);
+        // Out radially, rising a tenth over the edge: at its split (½)
+        // 5e-11 above the rim, through the wall 5e-10 further along.
+        let rising = segment(at(1.0 - 2e-9, 9.95 + 5e-11), at(5.0 - 2e-9, 10.05 + 5e-11));
+        // Out radially, falling 4 over the edge: ends 5e-11 above the
+        // rim, 1e-10 short of the wall, and would cross it 2.5e-11 on.
+        let ending = segment(
+            at(-1.0 - 1e-10, 14.0 + 5e-11),
+            at(3.0 - 1e-10, 10.0 + 5e-11),
+        );
+        for (edge, want, out) in [
+            (&rising, 0.5 + 5e-10, false),
+            (&ending, 1.0 + 2.5e-11, true),
+        ] {
+            let (found, _, _) = edge_patch(edge, &patch);
+            assert_eq!(found.len(), 1, "patch {t}, ending {out}: {found:?}");
+            let h = &found[0];
+            assert!(h.out > 0.0 && h.out < 1e-9, "patch {t}: {h:?}");
+            assert!((h.t - want).abs() < 1e-12, "patch {t}: {h:?}, not {want}");
+            assert_eq!(h.t > 1.0, out, "patch {t}: {h:?}");
         }
         seen += 1;
     }

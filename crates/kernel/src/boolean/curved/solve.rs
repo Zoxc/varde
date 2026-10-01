@@ -70,7 +70,18 @@ const PIECE_SLACK: f64 = 1e-9;
 /// at most `64` over `1/2` along an edge and over `1/3` in a patch,
 /// twice that at a patch's corner, outside two sides. That is under
 /// `1 400·ε` of the patch's piece's size and `450·ε` of the edge's.
+/// The pieces' boxes and the slab along the patch's piece hold its hull,
+/// so they are tested with the same margin.
 const HULL_SLACK: f64 = 2048.0 * PIECE_SLACK;
+
+/// How elongated a patch's piece may be, its longest side over its
+/// height across that side, and still be quartered in a crossing search:
+/// one more so is halved across its longest side instead. Quartering a
+/// wall 1 000 tall and a few wide split it across its width as often as
+/// along its height, and a curved edge (whose control hull holds the
+/// width of the wall near its height) had every piece of that row to
+/// look at: searches ran out of pieces and a crossing was found or not.
+const MAX_ASPECT: f64 = 8.0;
 
 /// Once Newton's method finds a crossing in a piece, the rest of the
 /// edge's piece either side of it is searched again, but for this share
@@ -167,7 +178,8 @@ pub(crate) struct EdgeHit {
     pub(crate) out: f64,
 }
 
-/// [`edge_patch_with`] dropping pieces by their hulls, as the booleans do.
+/// [`edge_patch_with`] dropping pieces by their hulls and halving long
+/// ones, as the booleans do.
 #[cfg(test)]
 pub(crate) fn edge_patch(edge: &Conic3, patch: &Patch) -> (Vec<EdgeHit>, f64, usize) {
     edge_patch_with(edge, patch, true)
@@ -177,13 +189,14 @@ pub(crate) fn edge_patch(edge: &Conic3, patch: &Patch) -> (Vec<EdgeHit>, f64, us
 /// parameter along the edge where the two came closest, for a crossing
 /// the count has and the search didn't find, and how many pieces the
 /// search looked at (at most a little over [`MAX_NODES`]). Pieces whose
-/// control hulls are apart are dropped only if `hulls`: tests turn it
-/// off to see what the rest makes of a search that runs out of pieces,
-/// as it did on tall walls without it.
+/// control hulls are apart are dropped, and long patch pieces halved
+/// rather than quartered, only if `tall_walls`: tests turn it off to see
+/// what the rest makes of a search that runs out of pieces, as it did on
+/// tall walls without them.
 pub(crate) fn edge_patch_with(
     edge: &Conic3,
     patch: &Patch,
-    hulls: bool,
+    tall_walls: bool,
 ) -> (Vec<EdgeHit>, f64, usize) {
     let bounds = edge.bounds().union(patch.bounds());
     let origin = (bounds.min + bounds.max) * 0.5;
@@ -204,7 +217,7 @@ pub(crate) fn edge_patch_with(
         found: Vec::new(),
         nodes: 0,
         closest: (f64::INFINITY, u32::MAX, 0.5),
-        hulls,
+        tall_walls,
     };
     search.visit([0.0, 1.0], DVec3::AXES, 0);
     let mut found = search.found;
@@ -337,6 +350,29 @@ fn quarters(d: [DVec3; 3]) -> [[DVec3; 3]; 4] {
     ]
 }
 
+/// The two halves of the barycentric triangle `d`, split at the middle
+/// of its longest side, where the piece over it, with control `points`
+/// (corners first), is more than [`MAX_ASPECT`] times longer than high
+/// across that side; else `None`, to be quartered.
+fn halves(d: [DVec3; 3], points: &[DVec3; 6]) -> Option<[[DVec3; 3]; 2]> {
+    let c = [points[0], points[1], points[2]];
+    let side = [0, 1, 2].map(|i| (c[(i + 1) % 3] - c[i]).length_squared());
+    let i = if side[0] >= side[1] && side[0] >= side[2] {
+        0
+    } else if side[1] >= side[2] {
+        1
+    } else {
+        2
+    };
+    // The longest side `l` over the height `2A / l` on it: `l² / 2A`.
+    let twice_area = (c[1] - c[0]).cross(c[2] - c[0]).length();
+    (side[i] > MAX_ASPECT * twice_area).then(|| {
+        let (a, b, o) = (d[i], d[(i + 1) % 3], d[(i + 2) % 3]);
+        let m = (a + b) * 0.5;
+        [[a, m, o], [m, b, o]]
+    })
+}
+
 /// Whether the barycentric point `u` lies in the barycentric triangle
 /// `d`, within [`PIECE_SLACK`] of the piece's own coordinates.
 fn in_piece(d: [DVec3; 3], u: DVec3) -> bool {
@@ -355,9 +391,10 @@ fn in_piece(d: [DVec3; 3], u: DVec3) -> bool {
 
 /// Whether the edge's piece with control points `edge` and the patch's
 /// piece with control `points` (corners first) lie on either side of a
-/// slab along the piece's corners' normal: a finer test than the boxes
-/// where the edge runs close along the patch, as at a tangency.
-fn slab_apart(edge: &[DVec3; 3], points: &[DVec3; 6]) -> bool {
+/// slab along the piece's corners' normal, more than `margin` from it: a
+/// finer test than the boxes where the edge runs close along the patch,
+/// as at a tangency.
+fn slab_apart(edge: &[DVec3; 3], points: &[DVec3; 6], margin: f64) -> bool {
     let Some(n) = (points[1] - points[0])
         .cross(points[2] - points[0])
         .try_normalize()
@@ -372,7 +409,7 @@ fn slab_apart(edge: &[DVec3; 3], points: &[DVec3; 6]) -> bool {
     let o = points[0];
     let (plo, phi) = range(&mut points.iter().map(|&p| (p - o).dot(n)));
     let (elo, ehi) = range(&mut edge.iter().map(|&p| (p - o).dot(n)));
-    elo > phi + 1e-12 || ehi < plo - 1e-12
+    elo > phi + margin || ehi < plo - margin
 }
 
 struct HitSearch<'a> {
@@ -473,8 +510,9 @@ struct CrossSearch<'a> {
     /// meet), `u32::MAX` less their depth, and the middle of the edge's
     /// piece.
     closest: (f64, u32, f64),
-    /// Whether pieces whose control hulls are apart are dropped.
-    hulls: bool,
+    /// Whether pieces whose control hulls are apart are dropped and long
+    /// patch pieces halved.
+    tall_walls: bool,
 }
 
 impl CrossSearch<'_> {
@@ -509,12 +547,17 @@ impl CrossSearch<'_> {
         }
         let size = |b: &Bounds3| (b.max - b.min).max_element();
         let (se, sp) = (size(&edge_box), size(&patch_box));
+        // Apart by more than a solution Newton's method counts as the
+        // pieces' can lie outside them: one just past the patch's side or
+        // the edge's end (or a split of its range) is just outside their
+        // boxes and slab as it is their hulls.
+        let slack = 1e-12 + HULL_SLACK * (se + sp);
         // The hulls: a tall or long patch's pieces all lie in a fat
         // edge's box across the patch's width, and splitting them on (in
         // both directions) ran the search out of pieces.
-        if gap > 1e-12
-            || slab_apart(&edge_points, &points)
-            || (self.hulls && apart(&edge_points, &points, 1e-12 + HULL_SLACK * (se + sp)))
+        if gap > slack
+            || slab_apart(&edge_points, &points, slack)
+            || (self.tall_walls && apart(&edge_points, &points, slack))
         {
             return;
         }
@@ -549,6 +592,10 @@ impl CrossSearch<'_> {
         if se >= sp {
             self.visit([t[0], mid], d, depth + 1);
             self.visit([mid, t[1]], d, depth + 1);
+        } else if let Some(halves) = halves(d, &points).filter(|_| self.tall_walls) {
+            for h in halves {
+                self.visit(t, h, depth + 1);
+            }
         } else {
             for q in quarters(d) {
                 self.visit(t, q, depth + 1);
