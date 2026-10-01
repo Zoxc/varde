@@ -20,7 +20,7 @@ use varde_solve::{Request as SolveRequest, Response as SolveResponse, Solver};
 use varde_view::{Edit, MeshStatus, Panel, Welcome as WelcomeUi};
 
 use super::*;
-use crate::doc::{AutoSave, CAMERA_ANIMATION, CameraAnimation, Origin, Picking, Target};
+use crate::doc::{AutoSave, CAMERA_ANIMATION, CameraAnimation, Origin, Picking, Refusal, Target};
 
 #[test]
 fn camera_animation_eases_out_and_ends() {
@@ -2275,6 +2275,111 @@ fn restoring_recovered_changes_lets_go_of_the_sketch_edited_if_not_a_sketch() {
     assert_eq!(*document(&varde).editor.document(), recovered);
     assert!(document(&varde).sketch.is_none());
     assert_eq!(document(&varde).selected_feature, None);
+}
+
+/// The failure markers of a model of the document from before it was
+/// replaced whole name features by ids that may name others now: none
+/// show until a model of the document as it is arrives, not even from a
+/// model of before arriving late, and none across undoing the
+/// replacement.
+#[test]
+fn failure_marks_of_before_a_replacement_mark_nothing() {
+    let (mut doc, requests) = deferred();
+    // Answers marking `id` unsolved and failed, as if the model found so.
+    let answer_marking = |doc: &mut Doc, requests: Vec<Request>, id: FeatureId| {
+        for request in requests {
+            let response = match handle(request) {
+                Response::Regenerated {
+                    generation,
+                    exclude,
+                    draft,
+                    mesh,
+                    sketches,
+                    bodies,
+                    ..
+                } => Response::Regenerated {
+                    generation,
+                    exclude,
+                    draft,
+                    mesh,
+                    sketches,
+                    unsolved: vec![id],
+                    failed: vec![(id, "failed".to_owned())],
+                    bodies,
+                },
+                failed => failed,
+            };
+            doc.computed(response);
+        }
+    };
+    let add_sketch = |doc: &mut Doc| {
+        doc.apply(
+            doc.editor
+                .document()
+                .add_sketch(varde_document::Plane::Origin(OriginPlane::XY)),
+        );
+        doc.sync();
+    };
+    add_sketch(&mut doc);
+    let ours = doc.editor.document().features()[0].id;
+    answer_marking(&mut doc, requests.take(), ours);
+    assert_eq!(doc.feed.unsolved(), [ours]);
+    assert_eq!(doc.feed.failed_features().len(), 1);
+
+    // A change whose model is late.
+    add_sketch(&mut doc);
+    let late = requests.take();
+    assert_eq!(late.len(), 1);
+
+    // Replaced by a design whose first feature has the same id.
+    let theirs = Document::example();
+    assert_eq!(theirs.features()[0].id, ours);
+    doc.apply(Command::Replace(Box::new(theirs)));
+    doc.sync();
+    assert!(doc.feed.unsolved().is_empty());
+    assert!(doc.feed.failed_features().is_empty());
+    answer_marking(&mut doc, late, ours);
+    assert!(doc.feed.unsolved().is_empty());
+    assert!(doc.feed.failed_features().is_empty());
+
+    // The model of the design as it is marks what it finds.
+    answer_marking(&mut doc, requests.take(), ours);
+    assert_eq!(doc.feed.unsolved(), [ours]);
+    assert_eq!(doc.feed.failed_features().len(), 1);
+
+    // Undoing the replacement crosses it too.
+    doc.update(Edit::Undo);
+    assert!(doc.feed.unsolved().is_empty());
+    assert!(doc.feed.failed_features().is_empty());
+    answer_marking(&mut doc, requests.take(), ours);
+    assert_eq!(doc.feed.unsolved(), [ours]);
+}
+
+/// Restoring recovered changes while the sketch is edited lets go of
+/// why the solver refused the last edit and the item hovered: their ids
+/// are of the sketch replaced.
+#[test]
+fn restoring_recovered_changes_lets_go_of_the_refusal_and_hover() {
+    let (recovered, theirs) = with_a_line_and_a_sketch();
+    let (mut varde, _) = with_recovered(recovered.clone());
+    let _ = varde.update(Message::Ui(Ui::Edit(Edit::NewSketch(OriginPlane::XY))));
+    // An item of the sketch recovered, with the id of none edited yet.
+    let varde_document::FeatureKind::Sketch { sketch, .. } =
+        &recovered.feature(theirs).unwrap().kind
+    else {
+        panic!("a sketch");
+    };
+    let point = sketch.points[0].id;
+    let session = varde.screen.doc_mut().unwrap().sketch.as_mut().unwrap();
+    assert_eq!(session.feature, theirs);
+    session.hovered = Some(point);
+    session.refusal = Some(Refusal::Failed("worker".to_owned()));
+
+    let _ = varde.update(Message::Ui(Ui::File(File::RestoreChanges)));
+    assert_eq!(*document(&varde).editor.document(), recovered);
+    let session = document(&varde).sketch.as_ref().unwrap();
+    assert_eq!(session.hovered, None);
+    assert!(session.refusal.is_none());
 }
 
 /// Saved as another file, recovered changes not answered yet stay with

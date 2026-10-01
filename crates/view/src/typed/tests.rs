@@ -157,6 +157,33 @@ fn a_level_line_s_angle_is_never_minus_zero() {
 }
 
 #[test]
+fn a_line_s_angle_is_below_a_full_turn() {
+    // atan2(-1e-17, 1) + 2π rounds to 2π, which would show as "360°".
+    for (x, rise) in [(1.0, -1e-17), (1e6, -1e-12), (1.0, -f64::MIN_POSITIVE)] {
+        let line = Outline::Line {
+            start: at(0.0, 0.0),
+            end: at(x, rise),
+        };
+        let angle = line.value(Field::Angle).unwrap();
+        assert!((0.0..TAU).contains(&angle), "{rise}: {angle}");
+        assert_eq!(angle.to_bits(), 0.0f64.to_bits(), "{rise}");
+    }
+    // Just far enough below level to stay below a full turn.
+    let below = Outline::Line {
+        start: at(0.0, 0.0),
+        end: at(1.0, -1e-15),
+    };
+    let angle = below.value(Field::Angle).unwrap();
+    assert!(angle < TAU && angle > TAU - 1e-14, "{angle}");
+    // An end that isn't a number has no angle.
+    let lost = Outline::Line {
+        start: at(0.0, 0.0),
+        end: at(f64::NAN, 0.0),
+    };
+    assert_eq!(lost.value(Field::Angle), None);
+}
+
+#[test]
 fn a_typed_angle_places_the_end_with_libm_s_bits() {
     // The end is saved, so it has to have the same bits natively and on
     // the web: libm's, not the platform's. At 9.2° glibc's sine is an ulp

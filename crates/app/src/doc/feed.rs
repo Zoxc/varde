@@ -27,6 +27,11 @@ pub(crate) struct MeshFeed {
     /// The features that failed and why, of the same generation as
     /// `mesh`, in the document's order.
     failed_features: Vec<(FeatureId, String)>,
+    /// The generation the document was last replaced whole by, if it was,
+    /// see [`MeshFeed::replaced`]: the ids in `unsolved` and
+    /// `failed_features` of an older answer may name other features now,
+    /// so they aren't given out.
+    replaced: Option<Generation>,
     /// How the draft of the model shown went, if it had one.
     drafted: Option<Drafted>,
     /// The bodies the newest draft answered that ran the touch test
@@ -304,15 +309,39 @@ impl MeshFeed {
         &self.sketches
     }
 
-    /// The sketches that don't solve, as the model shown found.
+    /// Notes that the document was replaced whole (restoring recovered
+    /// changes, or undoing or redoing that) as of `generation`, the
+    /// editor's: the features of models shown from before name features by
+    /// the ids of the document replaced, which may name others now, so
+    /// none are marked until a model of `generation` or newer is shown.
+    pub(crate) fn replaced(&mut self, generation: Generation) {
+        self.replaced = Some(generation);
+    }
+
+    /// Whether the features the model shown found name features of the
+    /// document as it is, see [`MeshFeed::replaced`].
+    fn marks(&self) -> bool {
+        match (self.shown, self.replaced) {
+            (Some(shown), Some(replaced)) => shown.generation >= replaced,
+            (shown, _) => shown.is_some(),
+        }
+    }
+
+    /// The sketches that don't solve, as the model shown found, unless
+    /// the document was replaced since.
     pub(crate) fn unsolved(&self) -> &[FeatureId] {
-        &self.unsolved
+        if self.marks() { &self.unsolved } else { &[] }
     }
 
     /// The features that failed and why, as the model shown found: with
-    /// a draft, those of the document with the draft applied.
+    /// a draft, those of the document with the draft applied. None if the
+    /// document was replaced since.
     pub(crate) fn failed_features(&self) -> &[(FeatureId, String)] {
-        &self.failed_features
+        if self.marks() {
+            &self.failed_features
+        } else {
+            &[]
+        }
     }
 }
 

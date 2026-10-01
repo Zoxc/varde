@@ -2826,7 +2826,9 @@ icon and its distances as the note, in the design's units
 all"). A feature in the answer's `failed` (which `MeshFeed` keeps with
 the model shown, `failed_features`) has its name in the danger colour
 and tells why in a tooltip; a sketch that doesn't solve is marked as
-before. Double-clicking an extrude opens its session.
+before. Neither is given out from a model of before a replacement of
+the whole document (`MeshFeed::replaced`), whose ids may name other
+features. Double-clicking an extrude opens its session.
 
 **Deleting** (`app/src/doc/delete.rs`): `Edit::RemoveFeature` (`Delete`
 on the Timeline's selection) and `Edit::RemoveBody` (Objects' bin) ask

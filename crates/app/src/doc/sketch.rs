@@ -518,8 +518,8 @@ impl Doc {
     /// recovered changes, or undoing or redoing that), ids may name other
     /// things: the feature selected is let go of, unless it's the sketch
     /// being edited and its id still names a sketch, which the session
-    /// goes on with; and in it the selection and the tool's shape are let
-    /// go of.
+    /// goes on with; and in it the selection, the item hovered, why the
+    /// solver refused the last edit and the tool's shape are let go of.
     pub(crate) fn prune(&mut self, replaced: bool) {
         let editable = self.editable();
         let document = self.editor.document();
@@ -543,6 +543,9 @@ impl Doc {
         }
         if replaced {
             session.selection.clear();
+            session.hovered = None;
+            // What the solver ran into are items of the sketch replaced.
+            session.refusal = None;
             session.drag = None;
             session.value = None;
             session.label = None;

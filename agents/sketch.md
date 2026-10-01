@@ -679,7 +679,11 @@ has the details.
   started (`regen::unsolved`, a settle within the default iterations) and
   names those that don't solve with its model (`Regenerated::unsolved`,
   on the wire in the head). The Timeline marks them "Doesn't solve"; the
-  status bar says so in a sketch until its analysis comes.
+  status bar says so in a sketch until its analysis comes. Across a
+  replacement of the whole document (see Editing) the ids of a model of
+  before may name other features, so `MeshFeed::replaced` (from
+  `Doc::sync`) has it give out no unsolved or failed features until a
+  model of that generation or newer is shown.
 
 ## Editing
 
@@ -700,7 +704,8 @@ back, and a Line chain whose last point is gone (undone) starts afresh.
 Across a replacement of the whole document (restoring recovered changes,
 or undoing or redoing that: `Editor::lineage` changes from the one `Doc`
 saw at its last sync, which then tells every prune) ids may name other
-items, so the selection is cleared and the tool starts its shape afresh;
+items, so the selection, the hover and the last refusal (what the solver
+ran into) are cleared and the tool starts its shape afresh;
 restoring drops the edits waiting on the solver, and the changes waiting
 behind them. The sketch session only resets, since it reads the sketch its id names now and never
 writes back what it read before; an extrude session holds values read

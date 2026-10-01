@@ -302,11 +302,12 @@ impl Outline {
             (Outline::Line { start, end }, Field::Length) => start.distance(*end),
             (Outline::Line { start, end }, Field::Angle) => {
                 // In [0, 2π): a level line whose rise is -0 has the angle
-                // -0, which would show as "-0°".
+                // -0, which would show as "-0°", and one a hair below level
+                // (atan2(-1e-17, 1)) comes to 2π once 2π is added, which
+                // would show as "360°".
                 let angle = to_angle(*end - *start);
-                if angle < 0.0 {
-                    angle + TAU
-                } else if angle == 0.0 {
+                let angle = if angle < 0.0 { angle + TAU } else { angle };
+                if angle == 0.0 || angle >= TAU {
                     0.0
                 } else {
                     angle

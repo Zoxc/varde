@@ -34,6 +34,8 @@ use save::Persist;
 pub(crate) use save::{AutoSave, Picking};
 pub(crate) use save::{Downloader, Downloads, Leave, Target};
 use sketch::GEOMETRY_SHARE;
+#[cfg(test)]
+pub(crate) use sketch::Refusal;
 pub(crate) use sketch::{Focus, Proposals, SketchSession};
 
 use crate::{Files, ForDoc, Next};
@@ -193,7 +195,8 @@ impl Doc {
 
     /// Lets go of what the document no longer holds, and of ids that may
     /// name other things since the document was replaced whole, see
-    /// [`Doc::prune`] and [`Doc::prune_extrude`], asks for the model if the document
+    /// [`Doc::prune`], [`Doc::prune_extrude`] and [`MeshFeed::replaced`],
+    /// asks for the model if the document
     /// changed, or the sketch being edited did, which is left out of it,
     /// or the extrude being set up, and finds the profiles of the sketch
     /// shown if it changed.
@@ -202,6 +205,9 @@ impl Doc {
         self.refresh_waiting();
         let lineage = self.editor.lineage();
         let replaced = std::mem::replace(&mut self.lineage, lineage) != lineage;
+        if replaced {
+            self.feed.replaced(self.editor.generation());
+        }
         self.prune_deleting();
         self.prune(replaced);
         self.prune_extrude(replaced);
