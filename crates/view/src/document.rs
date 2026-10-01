@@ -50,6 +50,9 @@ pub struct DocumentState<'a> {
     pub read_only: Option<&'a str>,
     /// Why the last edit was refused, if it was.
     pub edit_error: Option<&'a EditError>,
+    /// A sketch edit the solver refused after its sketch was left, if
+    /// there's one not dismissed: a banner over the viewport says so.
+    pub refused_edit: Option<RefusedEdit<'a>>,
     /// Whether a save is in flight.
     pub saving: bool,
     /// Why the last save or auto-save failed, if it did. Shown with Save
@@ -405,6 +408,25 @@ pub struct DeletePrompt<'a> {
     pub features: Vec<&'a Feature>,
     /// The bodies those make, which go with them.
     pub bodies: Vec<&'a Body>,
+    /// The joins, cuts and intersects that stay but worked on bodies that
+    /// go, in the Timeline's order: they may fail without them.
+    pub worked: Vec<&'a Feature>,
+    /// The bodies that go that those worked on, in the bodies' order.
+    pub worked_on: Vec<&'a Body>,
+}
+
+/// A sketch edit the solver refused after its sketch was left, which
+/// nothing else would show: the edit is gone.
+#[derive(Debug, Clone, Copy)]
+pub struct RefusedEdit<'a> {
+    /// The sketch feature's name.
+    pub name: &'a str,
+    /// The sketch as committed, without the edit.
+    pub sketch: &'a Sketch,
+    /// Why the solver refused it, or else
+    pub why: Option<&'a Rejected>,
+    /// how it failed to answer.
+    pub error: Option<&'a str>,
 }
 
 /// A layer over the whole document screen.
@@ -457,6 +479,8 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
         )
     });
 
+    let refused = state.refused_edit.map(refused_banner);
+
     let content = column![
         toolbar::toolbar(&state),
         read_only,
@@ -464,17 +488,20 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
         save_error,
         row![
             panels::side_panel(&state),
-            viewport::viewport(
-                state.mesh,
-                state.sketches,
-                state.camera,
-                state.mode.palette(),
-                state
-                    .sketch
-                    .map(|sketch| viewport::Sketching::new(sketch, editable)),
-                state.extrude.clone().map(viewport::Extruding::new),
-                state.extrude.as_ref().map(crate::extrude::panel),
-            ),
+            column![
+                refused,
+                viewport::viewport(
+                    state.mesh,
+                    state.sketches,
+                    state.camera,
+                    state.mode.palette(),
+                    state
+                        .sketch
+                        .map(|sketch| viewport::Sketching::new(sketch, editable)),
+                    state.extrude.clone().map(viewport::Extruding::new),
+                    state.extrude.as_ref().map(crate::extrude::panel),
+                ),
+            ],
         ]
         .height(Length::Fill),
     ];
@@ -732,8 +759,34 @@ fn reference_hint(sketch: &SketchState<'_>) -> Option<&'static str> {
     })
 }
 
-/// A strip under the toolbar telling something about the whole document:
-/// `title`, then `detail`, then any `actions` at the right.
+/// The banner over the viewport saying a sketch edit was refused after
+/// its sketch was left, and why, with Dismiss: "An edit of Sketch 1
+/// wasn't kept — Would over-constrain the sketch".
+fn refused_banner(refused: RefusedEdit<'_>) -> Element<'_, Message> {
+    let dismiss = small_button("Dismiss", Emphasis::Secondary)
+        .on_press(Message::Edit(Edit::DismissRefusedEdit));
+    banner(
+        text(format!("An edit of {} wasn't kept", refused.name))
+            .font(theme::SEMIBOLD)
+            .style(theme::warning_text),
+        &refused_detail(&refused),
+        Some(dismiss.into()),
+    )
+}
+
+/// Why the solver refused the edit `refused` is of, as its banner says,
+/// as the status bar would have in the sketch.
+fn refused_detail(refused: &RefusedEdit<'_>) -> String {
+    match (refused.why, refused.error) {
+        (Some(why), _) => refusal_text(why, refused.sketch).into_owned(),
+        (None, Some(error)) => format!("Couldn't check the edit: {error}"),
+        (None, None) => "The solver refused it".to_owned(),
+    }
+}
+
+/// A strip under the toolbar, or over the viewport, telling something
+/// about the whole document: `title`, then `detail`, then any `actions`
+/// at the right.
 fn banner<'a>(
     title: impl Into<Element<'a, Message>>,
     detail: &str,
@@ -814,11 +867,13 @@ fn dialog_button<'a>(
 /// Asks whether to delete what `prompt` lists, as a dialog over the
 /// whole screen like [`unsaved_prompt`]: [`delete_question`], then the
 /// features, in the Timeline's order, and the bodies, scrolling past
-/// about ten rows, and Cancel and Delete.
+/// about ten rows, [`delete_warning`] if there's one, and Cancel and
+/// Delete.
 fn delete_prompt<'a>(prompt: &DeletePrompt<'a>) -> Element<'a, Message> {
     /// The rows shown before the list scrolls.
     const ROWS: f32 = 10.5;
     let question = delete_question(prompt);
+    let warning = delete_warning(prompt).map(|warning| text(warning).style(theme::warning_text));
     let item = |icon, name: &'a str| {
         row![icons::icon(icon, icons::INLINE), text(name)]
             .spacing(8)
@@ -854,6 +909,7 @@ fn delete_prompt<'a>(prompt: &DeletePrompt<'a>) -> Element<'a, Message> {
         column![
             text(question).size(14).font(theme::SEMIBOLD),
             list,
+            warning,
             Space::new().height(4),
             row![space::horizontal(), cancel, delete].spacing(8),
         ]
@@ -896,6 +952,38 @@ fn delete_question(prompt: &DeletePrompt<'_>) -> String {
         prompt.name,
         parts.join(" and ")
     )
+}
+
+/// What the delete prompt warns of, if a join, cut or intersect that
+/// stays worked on a body that goes: "Extrude 2 works on Body 1 and
+/// stays, so it may fail with nothing to work on."
+fn delete_warning(prompt: &DeletePrompt<'_>) -> Option<String> {
+    if prompt.worked.is_empty() {
+        return None;
+    }
+    let features = listed(prompt.worked.iter().map(|feature| feature.name.as_str()));
+    let bodies = listed(prompt.worked_on.iter().map(|body| body.name.as_str()));
+    let (works, stays, it) = if prompt.worked.len() == 1 {
+        ("works", "stays", "it")
+    } else {
+        ("work", "stay", "they")
+    };
+    Some(format!(
+        "{features} {works} on {bodies} and {stays}, so {it} may fail with nothing to work on."
+    ))
+}
+
+/// `names` as a list in a sentence: "A", "A and B", "A, B and C".
+fn listed<'a>(names: impl ExactSizeIterator<Item = &'a str>) -> String {
+    let count = names.len();
+    let mut list = String::new();
+    for (at, name) in names.enumerate() {
+        if at > 0 {
+            list.push_str(if at + 1 == count { " and " } else { ", " });
+        }
+        list.push_str(name);
+    }
+    list
 }
 
 /// The status bar's info on the document: what's asked of the user while
@@ -1382,6 +1470,8 @@ mod tests {
                 body,
                 features,
                 bodies,
+                worked: Vec::new(),
+                worked_on: Vec::new(),
             }
         }
         let document = varde_document::Document::example();
@@ -1427,6 +1517,49 @@ mod tests {
                 vec![body, body]
             )),
             "Delete Body 1 with the 2 features and 1 body that go with it?"
+        );
+    }
+
+    #[test]
+    fn the_delete_prompt_warns_of_the_joins_and_cuts_that_stay() {
+        let document = varde_document::Document::example();
+        let extrude = document.features()[1].clone();
+        let body = document.bodies()[0].clone();
+        let named = |name: &str| varde_document::Feature {
+            name: name.to_owned(),
+            ..extrude.clone()
+        };
+        let [cut, join, other] = ["Extrude 2", "Extrude 3", "Extrude 4"].map(named);
+        let second = varde_document::Body {
+            name: "Body 2".to_owned(),
+            ..body.clone()
+        };
+        let prompt = |worked, worked_on| DeletePrompt {
+            name: "Body 1",
+            body: true,
+            features: vec![&extrude],
+            bodies: vec![&body],
+            worked,
+            worked_on,
+        };
+        assert_eq!(delete_warning(&prompt(vec![], vec![])), None);
+        assert_eq!(
+            delete_warning(&prompt(vec![&cut], vec![&body])).as_deref(),
+            Some("Extrude 2 works on Body 1 and stays, so it may fail with nothing to work on.")
+        );
+        assert_eq!(
+            delete_warning(&prompt(vec![&cut, &join], vec![&body, &second])).as_deref(),
+            Some(
+                "Extrude 2 and Extrude 3 work on Body 1 and Body 2 and stay, so they may fail \
+                 with nothing to work on."
+            )
+        );
+        assert_eq!(
+            delete_warning(&prompt(vec![&cut, &join, &other], vec![&body])).as_deref(),
+            Some(
+                "Extrude 2, Extrude 3 and Extrude 4 work on Body 1 and stay, so they may fail \
+                 with nothing to work on."
+            )
         );
     }
 

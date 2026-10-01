@@ -200,6 +200,10 @@ pub enum Response {
         /// The features that failed and why, in the document's order,
         /// see [`evaluate`].
         failed: Vec<(FeatureId, String)>,
+        /// Each join, cut or intersect that got as far as its tool, with
+        /// the bodies it touches, see [`Evaluation::touched`]: with a
+        /// draft that goes, as the document with it applied found.
+        touched: Vec<(FeatureId, Vec<BodyId>)>,
         /// The box around each body that has a solid, shown or not, in
         /// the order they were made.
         bodies: Vec<(BodyId, Aabb)>,
@@ -251,6 +255,7 @@ impl Regenerator {
                         sketches: Arc::new(model.sketches),
                         unsolved: model.unsolved,
                         failed: model.failed,
+                        touched: model.touched,
                         bodies: model.bodies,
                     },
                     Err(error) => Response::Failed {
@@ -339,6 +344,7 @@ impl Regenerator {
             sketches,
             unsolved: unsolved(document, &mut self.cache),
             failed: evaluation.failed,
+            touched: evaluation.touched,
             bodies,
         })
     }
@@ -356,6 +362,7 @@ struct Model {
     sketches: RenderLines,
     unsolved: Vec<FeatureId>,
     failed: Vec<(FeatureId, String)>,
+    touched: Vec<(FeatureId, Vec<BodyId>)>,
     bodies: Vec<(BodyId, Aabb)>,
 }
 

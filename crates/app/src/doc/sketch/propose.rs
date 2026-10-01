@@ -9,7 +9,8 @@
 //! answered, the sketch is shown, and drawn on, with them applied
 //! ([`Waiting`]). An accepted proposal commits its sketch, solved, as one
 //! [`Command::SetSketch`]; a rejected one changes nothing and says why
-//! until the next action. Other changes to the document made meanwhile
+//! until the next action, or, if its sketch was left meanwhile, in a
+//! banner over the viewport until dismissed. Other changes to the document made meanwhile
 //! wait behind them, in order, so what's committed keeps the order the
 //! user made it in, and undo takes back the newest of what waits, dropping
 //! it. A proposal answered for a revision no longer the document's
@@ -25,6 +26,7 @@ use varde_document::{Command, Document, FeatureId, FeatureKind, Revision, Sketch
 use varde_expr::LengthUnit;
 use varde_sketch::{Analysis, Design, Id, Rejected, SketchEdit};
 use varde_solve::{Request, Response, Tag};
+use varde_view::RefusedEdit;
 
 use super::{Refusal, Waiting};
 use crate::doc::{Change, Doc};
@@ -423,12 +425,33 @@ impl Doc {
             Answer::Rejected(why) => Some(Refusal::Rejected(why)),
             Answer::Failed(error) => Some(Refusal::Failed(error)),
         };
-        if let Some(refusal) = refusal
-            && let Some(session) = self.sketch.as_mut().filter(|s| s.feature == feature)
-        {
-            session.refusal = Some(refusal);
+        if let Some(refusal) = refusal {
+            match self.sketch.as_mut().filter(|s| s.feature == feature) {
+                Some(session) => session.refusal = Some(refusal),
+                // Its sketch was left, so its status bar doesn't say: the
+                // banner does, or the edit would go without a word.
+                None => self.refused_edit = Some((feature, refusal)),
+            }
         }
         self.send_proposal();
+    }
+
+    /// The sketch edit the solver refused after its sketch was left, for
+    /// the banner over the viewport, while its sketch is there.
+    pub(crate) fn refused_edit(&self) -> Option<RefusedEdit<'_>> {
+        let (feature, refusal) = self.refused_edit.as_ref()?;
+        let name = &self.editor.document().feature(*feature)?.name;
+        let sketch = sketch_of(self.editor.document(), *feature)?;
+        let (why, error) = match refusal {
+            Refusal::Rejected(why) => (Some(why), None),
+            Refusal::Failed(error) => (None, Some(error.as_str())),
+        };
+        Some(RefusedEdit {
+            name,
+            sketch,
+            why,
+            error,
+        })
     }
 
     /// Asks the lane to analyse the sketch being edited as committed, if

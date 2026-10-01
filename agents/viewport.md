@@ -25,6 +25,12 @@ from `ModifiersChanged` and whether a sketch is open: middle and `Shift` +
 right orbit, right pans, left orbits outside a sketch; `viewport::hints`
 and `README.md` follow it.
 
+A banner can sit on top of the viewport, between the toolbar's banners
+and it, over the viewport's column only: a sketch edit the solver
+refused after its sketch was left ("An edit of Sketch 1 wasn't kept",
+in the warning colour, with Dismiss; see `agents/sketch.md`). It takes
+height from the viewport rather than covering the scene.
+
 The anchored layer is an `Anchors` widget: widgets each centred where a
 sketch point shows (the `Projector` hit testing uses, sized at layout), and
 only those whose point shows inside the viewport are laid out, drawn and
@@ -299,7 +305,8 @@ On the web the lane is a Web Worker with the same API. It shares no memory
 with the page, so a request is the generation, the postcard-encoded
 document (the encoding `.vrdp` records use) and the sketch to leave out, and
 the answer is a small postcard head (with the failed features, the
-bodies' boxes and the draft's outcome) and the mesh's positions, normals,
+bodies each join, cut or intersect touches, the bodies' boxes and the
+draft's outcome) and the mesh's positions, normals,
 indices and edges and the sketches' line points and ends as raw bytes. Both
 directions transfer their `ArrayBuffer`s instead of copying them. The page
 checks what comes back before using it (whole elements, a size bound,

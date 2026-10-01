@@ -24,6 +24,7 @@ fn regenerated(generation: u64) -> Head {
         draft: None,
         unsolved: Vec::new(),
         failed: Vec::new(),
+        touched: Vec::new(),
         bodies: Vec::new(),
     }
 }
@@ -182,6 +183,7 @@ fn regenerated_round_trips() {
         sketches,
         unsolved: marked,
         failed,
+        touched,
         bodies,
     } = round_trip(&response)
     else {
@@ -193,6 +195,8 @@ fn regenerated_round_trips() {
     assert_eq!(marked, [unsolved]);
     assert_eq!(failed.len(), 1);
     assert_eq!(failed[0].0, cut);
+    // The join takes out the one body there is, so touches none.
+    assert_eq!(touched, [(cut, Vec::new())]);
     assert_eq!(mesh, *sent);
     assert!(mesh.triangle_count() > 0);
     assert!(!mesh.edges().is_empty());
@@ -397,6 +401,7 @@ fn triangle() -> Vec<Vec<u8>> {
         sketches: Arc::new(lines),
         unsolved: Vec::new(),
         failed: Vec::new(),
+        touched: Vec::new(),
         bodies: Vec::new(),
     };
     let (_, mesh) = encode_reply(&response);

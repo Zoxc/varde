@@ -62,6 +62,10 @@ pub(crate) struct Doc {
     pub(crate) read_only: Option<String>,
     /// Why the last edit was refused, if it was.
     pub(crate) edit_error: Option<EditError>,
+    /// A sketch edit the solver refused after its sketch was left, which
+    /// sketch it was of and why: shown in a banner over the viewport
+    /// until dismissed, see [`Doc::refused_edit`].
+    pub(crate) refused_edit: Option<(FeatureId, sketch::Refusal)>,
     /// Shown to the user in place of a path.
     pub(crate) name: String,
     pub(crate) panel: Panel,
@@ -176,6 +180,7 @@ impl Doc {
             proposals: Proposals::default(),
             read_only: read_only(access),
             edit_error: None,
+            refused_edit: None,
             name,
             panel: Panel::default(),
             file_menu: false,
@@ -276,6 +281,7 @@ impl Doc {
         match message {
             Edit::ToggleFileMenu => self.file_menu = !self.file_menu,
             Edit::DismissSaveError => self.dismiss_save_error(),
+            Edit::DismissRefusedEdit => self.refused_edit = None,
             Edit::RemoveBody(id) => self.remove(Removable::Body(id)),
             Edit::ToggleVisible(id) => self.change(Change::ToggleVisible(id)),
             // Not another plane picked while the new sketch waits.
@@ -607,6 +613,7 @@ impl Doc {
             edited: self.edited(),
             read_only: self.read_only.as_deref(),
             edit_error: self.edit_error.as_ref(),
+            refused_edit: self.refused_edit(),
             saving: self.saving(),
             save_error: self.banner_error(),
             recovered: self.recovered().map(|offer| varde_view::RecoveredChanges {

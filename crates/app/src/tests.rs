@@ -2305,6 +2305,7 @@ fn failure_marks_of_before_a_replacement_mark_nothing() {
                     sketches,
                     unsolved: vec![id],
                     failed: vec![(id, "failed".to_owned())],
+                    touched: vec![(id, Vec::new())],
                     bodies,
                 },
                 failed => failed,

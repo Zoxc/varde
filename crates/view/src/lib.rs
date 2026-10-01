@@ -47,8 +47,8 @@ use varde_sketch::{Id, Sketch};
 pub use chrome::STATUS_BAR_HEIGHT;
 pub use constrain::{ConstraintKind, ConstraintSet};
 pub use document::{
-    ActiveTool, DeletePrompt, DocumentState, MeshStatus, Overlay, RecoveredChanges, SketchState,
-    ValueField, ValueTarget, document,
+    ActiveTool, DeletePrompt, DocumentState, MeshStatus, Overlay, RecoveredChanges, RefusedEdit,
+    SketchState, ValueField, ValueTarget, document,
 };
 pub use extrude::{
     Candidate, Distance, DistanceField, ExtentKind, ExtrudeLook, ExtrudeState, ExtrudeTarget,
@@ -113,6 +113,9 @@ pub enum File {
 pub enum Edit {
     /// Hides why the last save failed.
     DismissSaveError,
+    /// Hides the sketch edit the solver refused after its sketch was
+    /// left.
+    DismissRefusedEdit,
     ToggleFileMenu,
     /// Removes the body and the feature making it, as one undo step, at
     /// once if nothing else goes with them, or else asking first (see

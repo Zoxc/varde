@@ -821,7 +821,14 @@ bar says why (`EditError::Sketch`).
   (`Refusal`): the status bar says why ("Would over-constrain the
   sketch") and the constraints involved, with what they tie together, are
   red, until the next action (an edit, a click, a tool, `Esc`). A lane
-  that fails on one (`Failed`) says so the same way. An answer for a
+  that fails on one (`Failed`) says so the same way. One refused after
+  its sketch was left (`Esc` before the answer) has no status bar to say
+  so: `Doc::refused_edit` keeps the sketch and the refusal, and a warning
+  banner over the viewport says "An edit of *Sketch 1* wasn't kept —
+  *why*" (`RefusedEdit`, `refused_banner`; the same text as the status
+  bar's, or "Couldn't check the edit: …") until Dismiss
+  (`Edit::DismissRefusedEdit`), going back into that sketch, the sketch
+  going, or the document being replaced whole. An answer for a
   revision that's no longer the document's (something else was committed
   meanwhile) is proposed again; nothing the user does commits meanwhile
   (below), so that's a safeguard. After ~100 ms of waiting (`CHECKING`,

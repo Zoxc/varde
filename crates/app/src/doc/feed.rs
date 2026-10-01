@@ -27,10 +27,14 @@ pub(crate) struct MeshFeed {
     /// The features that failed and why, of the same generation as
     /// `mesh`, in the document's order.
     failed_features: Vec<(FeatureId, String)>,
+    /// Each join, cut or intersect that got as far as its tool, with the
+    /// bodies it touches, of the same generation as `mesh`, in the
+    /// document's order.
+    touched_features: Vec<(FeatureId, Vec<BodyId>)>,
     /// The generation the document was last replaced whole by, if it was,
-    /// see [`MeshFeed::replaced`]: the ids in `unsolved` and
-    /// `failed_features` of an older answer may name other features now,
-    /// so they aren't given out.
+    /// see [`MeshFeed::replaced`]: the ids in `unsolved`,
+    /// `failed_features` and `touched_features` of an older answer may
+    /// name other features now, so they aren't given out.
     replaced: Option<Generation>,
     /// How the draft of the model shown went, if it had one.
     drafted: Option<Drafted>,
@@ -171,6 +175,7 @@ impl MeshFeed {
                 sketches,
                 unsolved,
                 failed,
+                touched,
                 draft,
                 ..
             } => {
@@ -178,6 +183,7 @@ impl MeshFeed {
                 self.sketches = sketches;
                 self.unsolved = unsolved;
                 self.failed_features = failed;
+                self.touched_features = touched;
                 if let Some(Drafted {
                     revision,
                     touched: Some(touched),
@@ -354,6 +360,18 @@ impl MeshFeed {
     pub(crate) fn failed_features(&self) -> &[(FeatureId, String)] {
         if self.marks() {
             &self.failed_features
+        } else {
+            &[]
+        }
+    }
+
+    /// Each join, cut or intersect that got as far as its tool, with the
+    /// bodies it touches, as the model shown found: with a draft, those
+    /// of the document with the draft applied. None if the document was
+    /// replaced since.
+    pub(crate) fn touched_features(&self) -> &[(FeatureId, Vec<BodyId>)] {
+        if self.marks() {
+            &self.touched_features
         } else {
             &[]
         }

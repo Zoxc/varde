@@ -1,7 +1,8 @@
-//! Deleting a feature or a body, and asking first when more goes with it:
+//! Deleting a feature or a body, and asking first when more goes with it,
+//! or when a join, cut or intersect that stays worked on a body that goes:
 //! see [`Doc::remove`].
 
-use varde_document::{Command, Generation, Removable, Removal};
+use varde_document::{BodyId, Command, FeatureId, Generation, Removable, Removal};
 use varde_view::DeletePrompt;
 
 use super::{Change, Doc};
@@ -18,8 +19,10 @@ pub(crate) struct Deleting {
 impl Doc {
     /// Removes `target` and what depends on it, as one undo step: at once
     /// if no other feature goes with it (a feature's own bodies, or a
-    /// body's own feature, go without asking), or else asks first,
-    /// listing everything that would go. Nothing in a read-only
+    /// body's own feature, go without asking) and no join, cut or
+    /// intersect that stays worked on a body that goes ([`Doc::worked`]),
+    /// or else asks first, listing everything that would go and warning
+    /// about those that may then fail. Nothing in a read-only
     /// document. While edits wait on the solver it waits behind them, see
     /// [`Doc::change`], and asks once it's made.
     pub(crate) fn remove(&mut self, target: Removable) {
@@ -67,7 +70,8 @@ impl Doc {
             return;
         }
         let removal = self.editor.document().removal(target);
-        if removal.features.len() <= 1 || confirmed.as_ref() == Some(&removal) {
+        let quiet = removal.features.len() <= 1 && self.worked(&removal).0.is_empty();
+        if quiet || confirmed.as_ref() == Some(&removal) {
             self.apply(command(target));
         } else {
             self.file_menu = false;
@@ -93,6 +97,39 @@ impl Doc {
         }
     }
 
+    /// The joins, cuts and intersects `removal` leaves that worked on a
+    /// body it takes, as the model shown found them touch bodies, and
+    /// those bodies, each in the document's order. With no body left to
+    /// touch they fail ("it doesn't touch any body"), so the delete prompt
+    /// warns about them. A feature added since the model shown isn't
+    /// known to touch anything yet.
+    fn worked(&self, removal: &Removal) -> (Vec<FeatureId>, Vec<BodyId>) {
+        let document = self.editor.document();
+        let mut worked_on = Vec::new();
+        let features = (self.feed.touched_features().iter())
+            .filter(|(feature, touched)| {
+                let mut gone = touched
+                    .iter()
+                    .filter(|body| removal.bodies.binary_search(body).is_ok())
+                    .peekable();
+                let worked = gone.peek().is_some()
+                    && removal.features.binary_search(feature).is_err()
+                    && document.feature(*feature).is_some();
+                if worked {
+                    worked_on.extend(gone);
+                }
+                worked
+            })
+            .map(|(feature, _)| *feature)
+            .collect();
+        // In the bodies' order, as the prompt lists them.
+        let worked_on = (document.bodies().iter())
+            .map(|body| body.id)
+            .filter(|body| worked_on.contains(body))
+            .collect();
+        (features, worked_on)
+    }
+
     /// The delete prompt, if the user is being asked.
     pub(crate) fn delete_prompt(&self) -> Option<DeletePrompt<'_>> {
         let deleting = self.deleting.as_ref()?;
@@ -104,6 +141,7 @@ impl Doc {
             Removable::Feature(id) => &document.feature(id)?.name,
             Removable::Body(id) => &document.body(id)?.name,
         };
+        let (worked, worked_on) = self.worked(&deleting.removal);
         Some(DeletePrompt {
             name,
             body: matches!(deleting.target, Removable::Body(_)),
@@ -111,6 +149,14 @@ impl Doc {
                 .filter_map(|&id| document.feature(id))
                 .collect(),
             bodies: (deleting.removal.bodies.iter())
+                .filter_map(|&id| document.body(id))
+                .collect(),
+            worked: worked
+                .iter()
+                .filter_map(|&id| document.feature(id))
+                .collect(),
+            worked_on: worked_on
+                .iter()
                 .filter_map(|&id| document.body(id))
                 .collect(),
         })

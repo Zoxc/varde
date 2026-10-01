@@ -65,6 +65,7 @@ fn regenerate_tessellates_the_snapshot() {
         sketches,
         unsolved,
         failed,
+        touched,
         bodies,
     } = handle(regenerate(&editor, None))
     else {
@@ -83,6 +84,7 @@ fn regenerate_tessellates_the_snapshot() {
     assert_eq!(sketches.ends().len(), 2);
     assert!(unsolved.is_empty());
     assert!(failed.is_empty());
+    assert!(touched.is_empty());
     assert!(bodies.is_empty());
 }
 

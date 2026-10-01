@@ -1065,6 +1065,13 @@ pub fn danger_text(theme: &Theme) -> text::Style {
     }
 }
 
+/// The warning colour, for what may go wrong but isn't wrong yet.
+pub fn warning_text(theme: &Theme) -> text::Style {
+    text::Style {
+        color: Some(palette(theme).warning),
+    }
+}
+
 pub fn separator(theme: &Theme) -> rule::Style {
     rule::Style {
         color: palette(theme).line,

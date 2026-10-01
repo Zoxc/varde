@@ -336,6 +336,15 @@ impl Doc {
         self.picking_plane = false;
         self.extrude = None;
         self.selected_feature = Some(id);
+        // Back in the sketch, the edit refused after it was left is seen
+        // to be missing.
+        if self
+            .refused_edit
+            .as_ref()
+            .is_some_and(|&(edited, _)| edited == id)
+        {
+            self.refused_edit = None;
+        }
         self.sketch = Some(SketchSession::new(id));
         self.panel = self.panel.for_sketching(true);
         if let Some(to) = self.sketch_camera() {
@@ -518,7 +527,8 @@ impl Doc {
     /// recovered changes, or undoing or redoing that), ids may name other
     /// things: the feature selected is let go of, unless it's the sketch
     /// being edited and its id still names a sketch, which the session
-    /// goes on with; and in it the selection, the item hovered, why the
+    /// goes on with, and so is an edit refused after its sketch was left
+    /// (as it is once its sketch is gone); and in it the selection, the item hovered, why the
     /// solver refused the last edit and the tool's shape are let go of.
     pub(crate) fn prune(&mut self, replaced: bool) {
         let editable = self.editable();
@@ -531,6 +541,12 @@ impl Doc {
         self.selected_feature = self
             .selected_feature
             .filter(|&id| document.feature(id).is_some());
+        // An edit refused after its sketch was left goes with the sketch,
+        // and across a replacement its id may name another.
+        if replaced || (self.refused_edit.as_ref()).is_some_and(|&(id, _)| !is_sketch(document, id))
+        {
+            self.refused_edit = None;
+        }
         let Some(session) = &mut self.sketch else {
             return;
         };

@@ -4044,11 +4044,21 @@ on the Timeline's selection) and `Edit::RemoveBody` (Objects' bin) ask
 `Document::removal` what goes. Joins, cuts and intersects don't depend on
 the bodies they touch (they're found again when regenerating), so a
 body's removal takes only its maker (and what uses that); a later join
-left touching nothing fails in the Timeline. For a body the prompt asks
+left touching nothing fails in the Timeline. So the prompt warns of
+them: every join, cut or intersect that stays and touched a body that
+goes, as the model shown found (`Response::Regenerated::touched`, the
+history's `Evaluation::touched`, kept by `MeshFeed::touched_features`
+like the failed features, and not given out across a replacement until
+a newer model; one added since isn't known yet), is listed under the
+prompt in the warning colour: "Extrude 2 works on Body 1 and stays, so
+it may fail with nothing to work on." (`Doc::worked`, `delete_warning`).
+One that only touched bodies taken out of it isn't. A removal with
+such a feature asks even if only its own feature goes, so a body's
+prompt shows. For a body the prompt asks
 "Delete *Body N* with the M features and K bodies that go with it?",
-counting its maker and the other bodies that makes. If that's one feature (a feature and its
-own bodies, or a body and the feature making it) the command applies at
-once. Otherwise the app keeps a `Deleting` (the target, the `Removal`,
+counting its maker and the other bodies that makes. If that's one
+feature (a feature and its own bodies, or a body and the feature making
+it) and nothing's warned of, the command applies at once. Otherwise the app keeps a `Deleting` (the target, the `Removal`,
 the editor's generation) and the view shows `DeletePrompt` over the
 whole screen, on the unsaved-changes prompt's scrim: "Delete *name* with
 the N features and K bodies that depend on it?" (`delete_question`,

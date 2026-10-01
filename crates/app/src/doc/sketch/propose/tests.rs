@@ -4,7 +4,7 @@ use glam::DVec2;
 use iced::keyboard;
 use varde_document::{Document, Editor, OriginPlane, Plane};
 use varde_sketch::{Constraint, Curve};
-use varde_view::{ConstraintKind, Edit, Look, Tool};
+use varde_view::{ConstraintKind, Edit, Look, Mode, Tool};
 
 use super::*;
 use crate::doc::sketch::tests::{
@@ -632,4 +632,124 @@ fn undo_and_redo_storms_while_edits_wait_keep_the_order() {
     assert_eq!(points, [at(1.0, 1.0), at(4.0, 4.0)]);
     assert!(t.editor.document().feature(feature).unwrap().visible);
     assert!(!t.editor.can_redo());
+}
+
+/// The texts `doc`'s screen shows at 1280 × 800.
+fn screen_texts(doc: &Doc) -> Vec<String> {
+    let mut renderer = varde_view::probe::renderer();
+    let size = iced::Size::new(1280.0, 800.0);
+    let mut ui = crate::tests::shown(doc.view(false, Mode::Light), size, &mut renderer);
+    (crate::tests::texts(&mut ui, &renderer).into_iter())
+        .map(|text| text.text)
+        .collect()
+}
+
+/// [`with_shapes`] with its line made horizontal, then made horizontal
+/// again, which the solver refuses, left with the solver, and the sketch
+/// left: the sketch's id and the sketch as committed.
+fn refused_after_leaving() -> (Answered, FeatureId, varde_document::Sketch) {
+    let (mut t, [_, _, line, ..]) = with_shapes();
+    let feature = t.sketch.as_ref().unwrap().feature;
+    select(&mut t, &[line]);
+    t.update(Edit::Constrain(ConstraintKind::Horizontal));
+    let committed = sketch(&t).clone();
+    select(&mut t.doc, &[line]);
+    t.doc.update(Edit::Constrain(ConstraintKind::Horizontal));
+    assert!(t.proposing());
+    t.doc.look(Look::FinishSketch);
+    assert!(t.sketch.is_none());
+    assert!(t.refused_edit().is_none());
+    (t, feature, committed)
+}
+
+#[test]
+fn an_edit_refused_after_the_sketch_was_left_shows_a_banner_until_dismissed() {
+    let (mut t, feature, committed) = refused_after_leaving();
+    let revision = t.editor.revision();
+    t.lane.answer(&mut t.doc);
+    assert_eq!(t.editor.revision(), revision);
+    assert!(t.edited_sketch().is_none());
+    let Some(FeatureKind::Sketch { sketch, .. }) =
+        t.editor.document().feature(feature).map(|f| &f.kind)
+    else {
+        panic!("no sketch");
+    };
+    assert_eq!(*sketch, committed);
+    let refused = t.refused_edit().expect("a banner says so");
+    assert_eq!(refused.name, "Sketch 1");
+    assert!(matches!(refused.why, Some(Rejected::Redundant { .. })));
+    assert_eq!(refused.error, None);
+    let texts = screen_texts(&t);
+    assert!(
+        texts.contains(&"An edit of Sketch 1 wasn't kept".to_owned()),
+        "{texts:?}"
+    );
+    assert!(
+        texts.contains(&"— Would over-constrain the sketch".to_owned()),
+        "{texts:?}"
+    );
+    assert!(texts.contains(&"Dismiss".to_owned()), "{texts:?}");
+
+    // It stays through other actions, and goes when dismissed.
+    t.update(Edit::ToggleFeatureVisible(feature));
+    t.look(Look::SelectFeature(feature));
+    assert!(t.refused_edit().is_some());
+    t.update(Edit::DismissRefusedEdit);
+    assert!(t.refused_edit().is_none());
+    let texts = screen_texts(&t);
+    assert!(
+        !texts.iter().any(|text| text.contains("wasn't kept")),
+        "{texts:?}"
+    );
+}
+
+#[test]
+fn an_edit_refused_in_the_sketch_shows_no_banner() {
+    let (mut t, [_, _, line, ..]) = with_shapes();
+    select(&mut t, &[line]);
+    t.update(Edit::Constrain(ConstraintKind::Horizontal));
+    select(&mut t, &[line]);
+    t.update(Edit::Constrain(ConstraintKind::Horizontal));
+    assert!(t.sketch_state().unwrap().refusal.is_some());
+    assert!(t.refused_edit().is_none());
+    // Nor once the sketch is left: the status bar said so.
+    t.look(Look::FinishSketch);
+    assert!(t.refused_edit().is_none());
+}
+
+#[test]
+fn the_banner_goes_back_into_the_sketch_or_with_it() {
+    // Back into the sketch, the edit is seen to be missing.
+    let (mut t, feature, _) = refused_after_leaving();
+    t.lane.answer(&mut t.doc);
+    assert!(t.refused_edit().is_some());
+    t.look(Look::EditFeature(feature));
+    assert!(t.refused_edit().is_none());
+
+    // Deleting the sketch takes it along.
+    let (mut t, feature, _) = refused_after_leaving();
+    t.lane.answer(&mut t.doc);
+    t.update(Edit::RemoveFeature(feature));
+    assert!(t.editor.document().feature(feature).is_none());
+    assert!(t.refused_edit().is_none());
+    assert!(t.doc.refused_edit.is_none());
+
+    // A solver that fails to answer is said to have, and how.
+    let (mut t, _, _) = refused_after_leaving();
+    let Some(Request::Propose { base, .. }) = t.lane.waiting().first().cloned() else {
+        panic!("a proposal waits");
+    };
+    let _ = t.lane.respond();
+    t.doc.solved(varde_solve::Response::Failed {
+        tag: Tag::Propose(base),
+        error: "worker stopped".to_owned(),
+    });
+    let refused = t.refused_edit().expect("a banner says so");
+    assert!(refused.why.is_none());
+    assert_eq!(refused.error, Some("worker stopped"));
+    let texts = screen_texts(&t);
+    assert!(
+        texts.contains(&"— Couldn't check the edit: worker stopped".to_owned()),
+        "{texts:?}"
+    );
 }

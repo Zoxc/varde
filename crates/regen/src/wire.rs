@@ -26,8 +26,8 @@
 //! make a [`RenderMesh`] by [`RenderMesh::from_parts`] and [`RenderLines`]
 //! by [`RenderLines::from_parts`]; the bodies' boxes in the head are
 //! finite with their corners in order. The failed features' ids, the
-//! sketches that don't solve and the bodies a draft touches are only
-//! marks, so they aren't checked against a document. Malformed bytes are
+//! sketches that don't solve and the bodies a draft or a feature touches
+//! are only marks, so they aren't checked against a document. Malformed bytes are
 //! refused, never a panic; see [`decode_request`] and [`decode_reply`]. A
 //! request's draft isn't checked as it's decoded: applying it goes through
 //! the document's checks.
@@ -85,6 +85,9 @@ pub enum Head {
         unsolved: Vec<FeatureId>,
         /// The features that failed, likewise only marks.
         failed: Vec<(FeatureId, String)>,
+        /// The bodies each join, cut or intersect touches, likewise only
+        /// marks.
+        touched: Vec<(FeatureId, Vec<BodyId>)>,
         /// Each body's box, its least and greatest corner, checked to be
         /// finite and in order ([`Error::Bounds`]).
         bodies: Vec<(BodyId, [[f32; 3]; 2])>,
@@ -126,6 +129,7 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Option<[&[u8]; MODEL_PARTS
             sketches,
             unsolved,
             failed,
+            touched,
             bodies,
         } => (
             Head::Regenerated {
@@ -134,6 +138,7 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Option<[&[u8]; MODEL_PARTS
                 draft: draft.clone(),
                 unsolved: unsolved.clone(),
                 failed: failed.clone(),
+                touched: touched.clone(),
                 bodies: bodies
                     .iter()
                     .map(|(body, aabb)| (*body, [aabb.min.to_array(), aabb.max.to_array()]))
@@ -183,6 +188,7 @@ pub fn decode_reply(
             draft,
             unsolved,
             failed,
+            touched,
             bodies,
         } => {
             let model =
@@ -196,6 +202,7 @@ pub fn decode_reply(
                     sketches: Arc::new(sketches),
                     unsolved,
                     failed,
+                    touched,
                     bodies,
                 },
                 Err(error) => Response::Failed {
