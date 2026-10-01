@@ -116,6 +116,13 @@ fn tie(tol: &Tolerance) -> f64 {
     tol.resolution() / 64.0
 }
 
+/// The clean-up's short length, an eighth of the resolution: shorter
+/// straight edges collapse, and nearer ends make inner edges twins of
+/// boundary ones (`assemble::face::cut_face`), in step with it.
+fn short(tol: &Tolerance) -> f64 {
+    tol.resolution() / 8.0
+}
+
 /// Units of work per patch that checking the result takes (about 2.7 µs
 /// a patch on one thread, the units about half a microsecond), not
 /// counting the patches it integrates to tell which way the shells face
@@ -259,7 +266,7 @@ fn unchecked(
     cleanup::clean(
         &mut soup,
         &mut faces,
-        tol.resolution() / 8.0,
+        short(tol),
         4.0 * tol.resolution(),
         tol,
         work,

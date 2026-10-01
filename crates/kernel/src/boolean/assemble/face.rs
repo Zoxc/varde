@@ -400,7 +400,7 @@ pub(super) fn cut_face(
     // two vertices came by different roundings: a cap's inner edge
     // crossing at a rim vertex, and a wall's diagonal crossing the cap's
     // plane, 1e-16 apart).
-    let short = tol.resolution() / 8.0;
+    let short = super::super::short(tol);
     let near_ends: Vec<(u32, u32)> = tris
         .iter()
         .flat_map(|tri| {

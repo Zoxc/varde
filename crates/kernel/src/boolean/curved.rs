@@ -376,17 +376,18 @@ impl<'a> Curved<'a> {
         let roots = bernstein::roots(&poly);
         let (mut a_under, mut b_under, mut found) = (0i32, 0i32, 0i32);
         // Where a crossing at an end of the stretch is, if there is one:
-        // a root within the tie of it, or the end itself where the
-        // polynomial is zero there (to rounding, so a root may be just
-        // outside, and not found).
+        // a root within the tie of it (on either side: rounding may put
+        // one just outside), or the end itself where the polynomial is
+        // zero there to rounding (its root may be further out, or not
+        // found at all).
         let mut at_end = None;
         for (i, &t) in roots.iter().enumerate() {
-            if t <= lo || t >= hi {
-                continue;
-            }
             let at = ce.eval(t);
             if at.distance(end_lo) <= self.tie || at.distance(end_hi) <= self.tie {
                 at_end.get_or_insert(t);
+                continue;
+            }
+            if t <= lo || t >= hi {
                 continue;
             }
             let next = roots.get(i + 1).copied().unwrap_or(1.0);

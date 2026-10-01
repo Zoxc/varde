@@ -2103,7 +2103,8 @@ patches are their normals at the corner. Beyond heights:
   above or below by its own rise (the parallel rule above); zero to
   rounding (every coefficient within `1e-12` of its terms' size), `T2`
   and then `T3` take `δ`'s place. Roots within the tie of the stretch's
-  ends are left to the count (as crossings at an end), and whatever the
+  ends (either side: rounding may put one just outside) are left to the
+  count (as crossings at an end), and whatever the
   count has beyond those found goes by the rise at the first such root,
   or at an end of the stretch where the cubic is zero to rounding (a
   root there may come out just outside and not be found), else the old
@@ -2111,8 +2112,8 @@ patches are their normals at the corner. Beyond heights:
   gives on YZ: a rim vertex's `δ` lies in the upright plane of the
   tangent there to the bit, and the old way, the height a sixteenth
   along, split those crossings wrongly (identical cylinders failed as
-  before). The old way is for
-  every crossing the ray tests count to go the same way, by the heights
+  before). The old way is for every crossing the ray tests count to go
+  the same way, by the heights
   where the two come nearest or, tied there, the parallel rule: still
   so where the curves are apart in height (a top rim seen along the
   axis over a bottom one). On XY a rim's perturbed shadow never crosses
@@ -2545,7 +2546,10 @@ crossing the cap's plane): the triangle's two sides from the far corner
 were two different conics on the wall, the clean-up refused to merge
 two cut edges, and the lens folded (a cylinder of radius 1 in 4 arcs
 over 0..1, united with one in 3 arcs over 0..2). Twinned edges are fixed
-for the exact bands, as the bit-equal ones are.
+for the exact bands, as the bit-equal ones are. Only an inner edge's
+curve changes (to a boundary curve from its far end to within the short
+length of its near end): the counting decided the topology already, and
+the rule joins nothing that wasn't joined.
 
 **Merging over-refined patches** (`assemble/merge.rs`). The pair
 decisions split the operands (red–green) wherever they couldn't decide a
