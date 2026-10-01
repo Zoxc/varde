@@ -13,7 +13,7 @@ use crate::chrome::{Edge, edged, hrule, icon_button, key_label, vrule};
 use crate::icons::{self, Icon};
 use crate::shortcut::{
     Binding, Shortcut, comb_binding, constrain_binding, constraint_binding, extrude_binding,
-    file_bindings, handles_binding, sketch_binding, switch_binding, tool_binding,
+    file_bindings, handles_binding, history_bindings, sketch_binding, switch_binding, tool_binding,
 };
 use crate::theme::{self, Emphasis, SEMIBOLD, SIDE_PANEL_INNER_WIDTH, Tone};
 use crate::{ActiveTool, ConstraintKind, DocumentState, Edit, File, Look, Message, Overlay, Tool};
@@ -22,9 +22,6 @@ use crate::{ActiveTool, ConstraintKind, DocumentState, Edit, File, Look, Message
 const TOOLBAR_HEIGHT: f32 = 40.0;
 
 pub fn toolbar<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
-    let editor = state.editor;
-
-    let editable = state.editable();
     let (context, tag): (Element<'a, Message>, _) = match &state.sketch {
         Some(sketch) => (
             sketch_pill(sketch.name),
@@ -53,6 +50,7 @@ pub fn toolbar<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
             .style(theme::tag)
     });
 
+    let [undo, redo, _] = history_bindings(state.keys());
     let bar = row![
         file_cell(
             state.name,
@@ -70,19 +68,8 @@ pub fn toolbar<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
             .padding([0, 6])
             .align_y(Alignment::Center),
         space::horizontal(),
-        icon_button(
-            Icon::Undo,
-            Tone::Muted,
-            (editable && (editor.can_undo() || state.proposing))
-                .then_some(Message::Edit(Edit::Undo))
-        ),
-        icon_button(
-            Icon::Redo,
-            Tone::Muted,
-            // Not while edits wait on the solver, which come after.
-            (editable && editor.can_redo() && !state.proposing)
-                .then_some(Message::Edit(Edit::Redo))
-        ),
+        history_button(Icon::Undo, "Undo", undo),
+        history_button(Icon::Redo, "Redo", redo),
         container(vrule()).height(18).padding([0, 4]),
         // TODO: open the command palette.
         icon_button(Icon::Search, Tone::Muted, None),
@@ -415,6 +402,14 @@ pub(crate) fn menu_separator<'a>() -> Container<'a, Message> {
 /// The icon left of a menu item that's a choice: a tick while `on`.
 pub(crate) fn ticked(on: bool) -> Icon {
     if on { Icon::Check } else { Icon::Blank }
+}
+
+/// Undo's or Redo's button, telling its `label` and key while hovered.
+fn history_button<'a>(icon: Icon, label: &str, binding: Binding) -> Element<'a, Message> {
+    crate::chrome::tip(
+        icon_button(icon, Tone::Muted, binding.sends()),
+        text(format!("{label} ({})", binding.shortcut.label())),
+    )
 }
 
 /// The file menu, as a layer over the whole screen. Clicking outside the

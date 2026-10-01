@@ -51,6 +51,7 @@ reopen a recent file, or recover unsaved changes left by a crash.
 | trim / extend / offset / mirror / fillet / chamfer | `T` / `J` / `O` / `Shift M` / `F` / `Shift B` (see Changing shapes below) |
 | leave a sketch              | `Esc`, or the check by the sketch's name |
 | save / save as              | `Ctrl S` / `Ctrl Shift S` (`Cmd` on macOS) |
+| undo / redo                 | `Ctrl Z` / `Ctrl Shift Z` or `Ctrl Y` (`Cmd` on macOS), or the arrows at the toolbar's right |
 | close the file menu         | `Esc`                                      |
 | design units                | the file menu: millimetres or inches       |
 | design tolerance            | the file menu: 0.1 µm, 1 µm (the default) or 10 µm, how closely curved shapes are fitted |

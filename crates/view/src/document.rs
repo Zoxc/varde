@@ -118,6 +118,11 @@ impl DocumentState<'_> {
         DocumentKeys::new(self.editable(), self.selected_feature, self.sketch)
             .with_extrude(self.extrudable, self.extrude.as_ref())
             .with_rail(self.rail)
+            .with_history(
+                self.editor.can_undo() || self.proposing,
+                // Not while edits wait on the solver, which come after.
+                self.editor.can_redo() && !self.proposing,
+            )
     }
 }
 

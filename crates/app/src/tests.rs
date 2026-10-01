@@ -4587,6 +4587,30 @@ fn a_right_click_on_a_body_opens_its_menu() {
     assert!(shown.iter().any(|t| t.text == "Delete"));
 }
 
+/// `Ctrl Z` and `Ctrl Shift Z` undo and redo while there's something to.
+#[test]
+fn undo_and_redo_keys_follow_the_history() {
+    let command = keyboard::Modifiers::COMMAND;
+    let z = keyboard::Key::Character("z".into());
+    let (mut doc, _, _) = with_sketch();
+    let pressed = |doc: &Doc, modifiers| {
+        varde_view::pressed(
+            varde_view::document_bindings(doc.keys().unwrap()),
+            &z,
+            modifiers,
+        )
+    };
+    assert!(matches!(pressed(&doc, command), Some(Ui::Edit(Edit::Undo))));
+    assert!(pressed(&doc, command | keyboard::Modifiers::SHIFT).is_none());
+    doc.update(Edit::Undo);
+    assert!(sketches(&doc).is_empty());
+    assert!(pressed(&doc, command).is_none());
+    assert!(matches!(
+        pressed(&doc, command | keyboard::Modifiers::SHIFT),
+        Some(Ui::Edit(Edit::Redo))
+    ));
+}
+
 #[test]
 fn undoing_a_sketch_s_creation_leaves_it() {
     let (mut doc, requests) = deferred();

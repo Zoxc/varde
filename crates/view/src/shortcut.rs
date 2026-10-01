@@ -45,6 +45,13 @@ impl Shortcut {
         shift: true,
         ..Self::SAVE
     };
+    pub const UNDO: Self = Self::command('z');
+    pub const REDO: Self = Self {
+        shift: true,
+        ..Self::UNDO
+    };
+    /// Redo as Windows and Linux apps also have it.
+    pub const REDO_Y: Self = Self::command('y');
     /// Starts a new sketch.
     pub const SKETCH: Self = Self::plain('s');
     /// Starts a new extrude: outside sketches, where `E` is Equal's.
@@ -352,6 +359,10 @@ pub struct DocumentKeys {
     pub extruding: bool,
     /// Whether the extrude being set up can be committed.
     pub extrude_ready: bool,
+    /// Whether undo can take anything back.
+    pub undo: bool,
+    /// Whether redo can bring anything back.
+    pub redo: bool,
     /// The rail's tool set whose list is open, if one is, and its row the
     /// keys are on: its letters, the arrows and `Enter` pick its tools,
     /// before any other key.
@@ -411,6 +422,8 @@ impl DocumentKeys {
             extrudable: false,
             extruding: false,
             extrude_ready: false,
+            undo: false,
+            redo: false,
             rail: None,
         }
     }
@@ -418,6 +431,12 @@ impl DocumentKeys {
     /// The same keys with the rail's set `rail` open, if one is.
     pub fn with_rail(self, rail: Option<crate::RailOpen>) -> Self {
         Self { rail, ..self }
+    }
+
+    /// The same keys where undo can take something back if `undo`, and
+    /// redo bring something back if `redo`.
+    pub fn with_history(self, undo: bool, redo: bool) -> Self {
+        Self { undo, redo, ..self }
     }
 
     /// The same keys where there's a sketch to extrude regions of if
@@ -430,6 +449,28 @@ impl DocumentKeys {
             ..self
         }
     }
+}
+
+/// Undo and Redo, in that order, then Redo's other key: while there's
+/// something to take back or bring back, in a document that can be
+/// changed.
+pub fn history_bindings(keys: DocumentKeys) -> [Binding; 3] {
+    let redo = |shortcut| {
+        Binding::new(
+            shortcut,
+            Message::Edit(Edit::Redo),
+            keys.editable && keys.redo,
+        )
+    };
+    [
+        Binding::new(
+            Shortcut::UNDO,
+            Message::Edit(Edit::Undo),
+            keys.editable && keys.undo,
+        ),
+        redo(Shortcut::REDO),
+        redo(Shortcut::REDO_Y),
+    ]
 }
 
 /// Starting a new sketch, which asks for its plane first. Disabled in a
@@ -577,7 +618,8 @@ pub fn comb_binding(keys: DocumentKeys) -> Binding {
     )
 }
 
-/// The document screen's shortcuts: the file's (Save, Save As), starting a
+/// The document screen's shortcuts: the file's (Save, Save As), undo and
+/// redo, starting a
 /// sketch, clearing the selection, outside a sketch editing and deleting
 /// the feature selected in the Timeline, if there is one, and in a sketch
 /// its tools, deleting what's selected, construction, the Constrain tool,
@@ -637,6 +679,7 @@ pub fn document_bindings(keys: DocumentKeys) -> Vec<Binding> {
     crate::rail::letter_bindings(keys)
         .into_iter()
         .chain(file_bindings(keys.editable))
+        .chain(history_bindings(keys))
         .chain([
             sketch_binding(keys),
             Binding::new(Shortcut::SPACE, Message::Look(Look::ClearSelection), true),
@@ -815,6 +858,35 @@ mod tests {
             editable,
             ..DocumentKeys::default()
         }
+    }
+
+    #[test]
+    fn undo_and_redo_have_keys_while_there_s_something_to_do() {
+        let command = Modifiers::COMMAND;
+        let shift = command | Modifiers::SHIFT;
+        let history = |undo, redo| keys(true).with_history(undo, redo);
+        let undo = |keys| pressed(document_bindings(keys), &key("z"), command);
+        assert!(matches!(
+            undo(history(true, false)),
+            Some(Message::Edit(Edit::Undo))
+        ));
+        assert!(undo(history(false, true)).is_none());
+        assert!(undo(keys(false).with_history(true, true)).is_none());
+        for (letter, modifiers) in [("Z", shift), ("y", command)] {
+            let redo = |keys| pressed(document_bindings(keys), &key(letter), modifiers);
+            assert!(matches!(
+                redo(history(false, true)),
+                Some(Message::Edit(Edit::Redo))
+            ));
+            assert!(redo(history(true, false)).is_none());
+        }
+        // `Z` alone is the Rectangle tool's switch, not undo.
+        let plain = pressed(
+            document_bindings(history(true, true)),
+            &key("z"),
+            Modifiers::empty(),
+        );
+        assert!(!matches!(plain, Some(Message::Edit(Edit::Undo))));
     }
 
     #[test]
