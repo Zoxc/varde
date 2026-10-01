@@ -1395,3 +1395,175 @@ fn angles_on_the_wrap_and_the_axes_give_whole_regions() {
         }
     }
 }
+
+/// `Profiles::resolve` as it was, scanning every region for each
+/// reference: the oracle the sorted lookup must agree with.
+fn resolve_by_scan(profiles: &Profiles, references: &[RegionRef]) -> Vec<Option<usize>> {
+    let lists = |pieces: &[Piece]| {
+        let ids: BTreeSet<Id> = pieces.iter().map(|piece| piece.curve).collect();
+        ids.into_iter().collect::<Vec<Id>>()
+    };
+    let ids: Vec<(Vec<Id>, Vec<Vec<Id>>)> = profiles
+        .regions
+        .iter()
+        .map(|region| {
+            let mut holes: Vec<Vec<Id>> = region.holes.iter().map(|hole| lists(hole)).collect();
+            holes.sort();
+            (lists(&region.outer), holes)
+        })
+        .collect();
+    references
+        .iter()
+        .map(|reference| {
+            let same = |(curves, holes): &(Vec<Id>, Vec<Vec<Id>>)| {
+                *curves == reference.curves && *holes == reference.holes
+            };
+            let found: Vec<usize> = (0..ids.len()).filter(|&i| same(&ids[i])).collect();
+            match found[..] {
+                [index] => Some(index),
+                [] => profiles.region_at(reference.inside),
+                _ => profiles
+                    .region_at(reference.inside)
+                    .filter(|&index| same(&ids[index])),
+            }
+        })
+        .collect()
+}
+
+/// References for `profiles`, and their resolution checked against the
+/// scan: each region's own, and each with its point moved (to random
+/// places, other regions' points, the outline), its curves another
+/// region's, cut short, or naming nothing, its holes dropped.
+fn resolves_as_the_scan(
+    random: &mut Random,
+    named: &Profiles,
+    profiles: &Profiles,
+    bogus: Id,
+) -> usize {
+    let own: Vec<RegionRef> = (0..named.regions.len())
+        .filter_map(|index| named.reference(index))
+        .collect();
+    let mut references = own.clone();
+    let (min, max) = profiles.regions.iter().fold(
+        (DVec2::splat(-1.0), DVec2::splat(1.0)),
+        |(min, max), region| (min.min(region.bounds.0), max.max(region.bounds.1)),
+    );
+    let outline: Vec<DVec2> = profiles
+        .regions
+        .iter()
+        .flat_map(|region| region.outline.iter().flatten().copied())
+        .collect();
+    for (k, reference) in own.iter().enumerate() {
+        let point = |random: &mut Random| {
+            let mut moved = reference.clone();
+            moved.inside = min + (max - min) * DVec2::new(random.next(), random.next());
+            moved
+        };
+        references.push(point(random));
+        references.push(point(random));
+        let other = &own[random.below(own.len())];
+        let mut moved = reference.clone();
+        moved.inside = other.inside;
+        references.push(moved);
+        let mut theirs = other.clone();
+        theirs.inside = reference.inside;
+        references.push(theirs);
+        // On the outline: a vertex, and an edge's middle.
+        if !outline.is_empty() {
+            let at = random.below(outline.len());
+            let mut on = reference.clone();
+            on.inside = outline[at];
+            references.push(on.clone());
+            on.inside = (outline[at] + outline[(at + 1) % outline.len()]) / 2.0;
+            references.push(on);
+        }
+        let mut short = reference.clone();
+        if short.curves.len() > 1 {
+            short.curves.remove(random.below(short.curves.len()));
+            references.push(short.clone());
+        }
+        short.holes.clear();
+        references.push(short);
+        let mut nothing = reference.clone();
+        nothing.curves = vec![bogus];
+        references.push(nothing.clone());
+        nothing.holes = vec![vec![bogus]; 1 + k % 3];
+        references.push(nothing);
+    }
+    let found = profiles.resolve(&references);
+    assert_eq!(found, resolve_by_scan(profiles, &references));
+    assert_eq!(found.len(), references.len());
+    references.len()
+}
+
+#[test]
+fn resolve_agrees_with_a_scan() {
+    let mut random = Random(28);
+    let bogus = Id(u32::MAX);
+    let mut references = 0;
+    let mut check = |random: &mut Random, sketch: &Sketch| {
+        let profiles = profiles(sketch);
+        references += resolves_as_the_scan(random, &profiles, &profiles, bogus);
+    };
+
+    // Regions of one key: a circle cut by a line, and the lens and two
+    // crescents of crossing circles.
+    let mut sketch = Sketch::default();
+    round(&mut sketch, 0.0, 0.0, 2.0);
+    let a = point(&mut sketch, -3.0, 0.5);
+    let b = point(&mut sketch, 3.0, -0.5);
+    line(&mut sketch, a, b);
+    round(&mut sketch, 10.0, 0.0, 2.0);
+    round(&mut sketch, 11.0, 0.0, 2.0);
+    assert_eq!(profiles(&sketch).regions.len(), 5);
+    check(&mut random, &sketch);
+
+    // A 20 by 20 grid of lines.
+    let mut sketch = Sketch::default();
+    for k in 0..21 {
+        let x = k as f64;
+        let (a, b) = (point(&mut sketch, x, -0.5), point(&mut sketch, x, 20.5));
+        line(&mut sketch, a, b);
+        let (a, b) = (point(&mut sketch, -0.5, x), point(&mut sketch, 20.5, x));
+        line(&mut sketch, a, b);
+    }
+    assert_eq!(profiles(&sketch).regions.len(), 400);
+    check(&mut random, &sketch);
+
+    // Nested circles, and nested circles each cut by a line through the
+    // middle: rings of one key in pairs.
+    for cut in [false, true] {
+        let mut sketch = Sketch::default();
+        let center = point(&mut sketch, 0.0, 0.0);
+        for k in 1..=12 {
+            circle(&mut sketch, center, k as f64);
+        }
+        if cut {
+            let (a, b) = (
+                point(&mut sketch, -13.0, 0.1),
+                point(&mut sketch, 13.0, -0.1),
+            );
+            line(&mut sketch, a, b);
+        }
+        check(&mut random, &sketch);
+    }
+
+    // Random sketches, each resolving its own references, and those of
+    // the sketch it grew from (the same curves, fewer of them) and of
+    // the sketch it grows into.
+    for round in 0..200 {
+        let snap = round % 2 == 0;
+        let seed = random.0;
+        let count = 1 + round % 30;
+        let sketch = random_sketch(&mut Random(seed), count, snap);
+        let fewer = random_sketch(&mut Random(seed), count.div_ceil(2), snap);
+        let more = random_sketch(&mut Random(seed), count + 5, snap);
+        let [sketch, fewer, more] =
+            [&sketch, &fewer, &more].map(|sketch| sketch.profiles().unwrap());
+        references += resolves_as_the_scan(&mut random, &sketch, &sketch, bogus);
+        references += resolves_as_the_scan(&mut random, &fewer, &sketch, bogus);
+        references += resolves_as_the_scan(&mut random, &more, &sketch, bogus);
+        random.next();
+    }
+    assert!(references > 10_000, "{references}");
+}

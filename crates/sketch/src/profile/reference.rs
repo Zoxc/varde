@@ -196,22 +196,30 @@ impl Profiles {
     /// region's gone. With several, a point in another region names none:
     /// it's a region of those curves that was meant, and one of other
     /// curves would be extruded without a word.
+    ///
+    /// The regions' curve lists are sorted once and each reference's
+    /// looked up by bisection, O((regions + references) log regions)
+    /// comparisons, not a scan of every region per reference; one matching
+    /// none or several still costs a [`Profiles::region_at`].
     pub fn resolve(&self, references: &[RegionRef]) -> Vec<Option<usize>> {
         let ids: Vec<(Vec<Id>, Vec<Vec<Id>>)> =
             self.regions.iter().map(Region::curve_ids).collect();
+        let key = |index: usize| (ids[index].0.as_slice(), ids[index].1.as_slice());
+        // Stable, so regions of one key stay in ascending order.
+        let mut order: Vec<usize> = (0..ids.len()).collect();
+        order.sort_by(|&a, &b| key(a).cmp(&key(b)));
         references
             .iter()
             .map(|reference| {
-                let same = |(curves, holes): &(Vec<Id>, Vec<Vec<Id>>)| {
-                    *curves == reference.curves && *holes == reference.holes
-                };
-                let mut found = ids.iter().enumerate().filter(|(_, ids)| same(ids));
-                match (found.next(), found.next()) {
-                    (Some((index, _)), None) => Some(index),
-                    (None, _) => self.region_at(reference.inside),
-                    (Some(_), Some(_)) => self
+                let wanted = (reference.curves.as_slice(), reference.holes.as_slice());
+                let start = order.partition_point(|&index| key(index) < wanted);
+                let end = start + order[start..].partition_point(|&index| key(index) == wanted);
+                match &order[start..end] {
+                    &[index] => Some(index),
+                    [] => self.region_at(reference.inside),
+                    _ => self
                         .region_at(reference.inside)
-                        .filter(|&index| same(&ids[index])),
+                        .filter(|&index| key(index) == wanted),
                 }
             })
             .collect()

@@ -433,7 +433,17 @@ details and the timings.
   with "region not found"). With several, a point in a region of other
   curves finds none rather than extruding that region unannounced. So a region survives
   curves added elsewhere and dimensions changed, and a region split in
-  two resolves to the half its point is in. `RegionRef::check(max)` holds
+  two resolves to the half its point is in. The regions' curve lists are
+  sorted once (stably, by index within a list) and each reference found
+  by bisection, not a scan of all regions per reference; only none or
+  several matching costs a `region_at` scan. Measured (release, loaded
+  machine), 256 references each naming a region: 200×200 line grid
+  (39 601 regions) 11.7 → 1.8 ms, 100×100 grid 3.0 → 0.9 ms; 256 naming
+  none, so all `region_at`: 22 → 14 ms and 4.6 → 3.5 ms; 1000 nested
+  circles, unmatched, ~33 ms either way (`region_at` over long
+  outlines). All well under the `profiles()` that precedes it (grid 200:
+  ~80 ms). `profile/tests.rs` checks it against the old scan on fixed
+  and random sketches. `RegionRef::check(max)` holds
   what a file could get wrong: at most `MAX_REGION_CURVES` ids, lists not
   empty and sorted without repeats, `inside` finite and within `max`.
 - **Near misses**: `Profiles::open_ends` are the ends only one piece
