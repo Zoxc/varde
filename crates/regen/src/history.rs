@@ -15,6 +15,9 @@
 //! ([`varde_kernel::boolean`], the body first), one at a time: bodies
 //! never merge. A through-all extent's
 //! span is worked out from the bodies made before it ([`through_all`]).
+//! A join, cut or intersect that would leave nothing of a body fails
+//! (bodies are the document's, so an emptied one would stay listed with
+//! no geometry): no body in an [`Evaluation`] is empty.
 //! A feature that fails records why, in words for the Timeline
 //! (`src/message.rs`), and changes no body; the later ones
 //! still run.
@@ -41,6 +44,7 @@ use crate::profile::profile;
 #[derive(Debug, Clone, Default)]
 pub struct Evaluation {
     /// Each body that has a solid, in the order the features made them.
+    /// None is empty: a feature that would empty one fails.
     pub bodies: Vec<BodySolid>,
     /// The features that failed and why, in the document's order.
     pub failed: Vec<(FeatureId, String)>,
@@ -209,12 +213,19 @@ impl Run<'_> {
             .iter()
             .filter(|m| targets.contains(&m.body))
         {
+            // No feature leaves a body empty, and a new body never is.
+            debug_assert!(!made.solid.is_empty(), "a body is never empty");
             let key = boolean_key(doing, made.key, tool_key);
             let solid = cache
                 .boolean(key, || {
                     varde_kernel::boolean(&made.solid, &tool, op, &self.tolerance, &Budget::DEFAULT)
                 })
                 .map_err(|error| message::boolean(doing, self.body_name(made.body), error))?;
+            // The cached empty result stays: its key is right, and this
+            // is cheap to ask again.
+            if solid.is_empty() {
+                return Err(message::emptied(doing, self.body_name(made.body)));
+            }
             changed.push(BodySolid {
                 body: made.body,
                 solid,

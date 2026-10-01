@@ -578,6 +578,44 @@ fn a_failing_draft_leaves_the_model_as_it_was() {
     }
 }
 
+/// An intersect draft of the example's regions, below the plate (flush
+/// on its bottom face, leaving nothing) and then above it (leaving its
+/// lower half): the error comes and goes, also when answered from the
+/// cache, and the failing drafts leave the plate as it was.
+#[test]
+fn a_draft_leaving_nothing_fails_each_time_it_is_dragged_there() {
+    let editor = Editor::new(Document::example());
+    let body = editor.document().bodies()[0].id;
+    let mut regenerator = Regenerator::default();
+    let committed = answered(regenerator.handle(regenerate(&editor, None)));
+    let intersect = |revision, flip| {
+        let mut draft = new_body_draft(editor.document(), revision, "5");
+        draft.extrude.operation = Operation::Intersect(varde_document::Targets::default());
+        draft.extrude.flip = flip;
+        draft
+    };
+    let emptied = crate::message::emptied(crate::message::Doing::Intersecting, "Body 1");
+    for (revision, flip) in [(1, true), (2, false), (3, true), (4, false)] {
+        let answer =
+            answered(regenerator.handle(regenerate_with(&editor, Some(intersect(revision, flip)))));
+        let drafted = answer.draft.unwrap();
+        assert_eq!(drafted.revision, revision);
+        assert_eq!(drafted.touched, Some(vec![body]));
+        assert!(answer.failed.is_empty(), "{:?}", answer.failed);
+        let [(_, bounds)] = answer.bodies[..] else {
+            panic!("one body");
+        };
+        if flip {
+            assert_eq!(drafted.error.as_ref(), Some(&emptied));
+            assert_eq!(answer.bodies, committed.bodies);
+            assert_eq!(answer.mesh, committed.mesh);
+        } else {
+            assert_eq!(drafted.error, None);
+            assert_eq!((bounds.min.z, bounds.max.z), (0.0, 5.0));
+        }
+    }
+}
+
 #[test]
 fn dragging_a_draft_reruns_only_the_draft() {
     let editor = Editor::new(Document::example());

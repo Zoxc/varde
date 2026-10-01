@@ -409,6 +409,22 @@ fn empty_operands() {
     assert!(run(&a, &e, Op::Intersection).unwrap().is_empty());
 }
 
+/// What regen relies on to fail a feature that would empty a body: a
+/// tool that takes the body whole, flush on its top and bottom, or only
+/// flush on a face of it, touches it, and the difference or intersection
+/// is the empty solid, not an error.
+#[test]
+fn a_body_taken_whole_or_met_flush_gives_the_empty_solid() {
+    let body = cube([0.0; 3], [2.0; 3]);
+    let tol = TOL;
+    let whole = cube([-1.0, -1.0, 0.0], [4.0, 4.0, 2.0]);
+    assert!(touches(&body, &whole, &tol, &Budget::DEFAULT).unwrap());
+    assert!(run(&body, &whole, Op::Difference).unwrap().is_empty());
+    let flush = cube([0.5, 0.5, -1.0], [1.0, 1.0, 1.0]);
+    assert!(touches(&body, &flush, &tol, &Budget::DEFAULT).unwrap());
+    assert!(run(&body, &flush, Op::Intersection).unwrap().is_empty());
+}
+
 #[test]
 fn refusals() {
     let a = cube([0.0; 3], [2.0; 3]);

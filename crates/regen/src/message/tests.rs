@@ -188,3 +188,21 @@ fn at_the_finest_tolerance_none_finer_is_suggested() {
         }
     }
 }
+
+#[test]
+fn emptied_names_the_body_and_the_way_past_it() {
+    let text = emptied(Doing::Cutting, "Body 1");
+    assert!(
+        text.starts_with("cutting it from Body 1 would leave nothing of it"),
+        "{text}"
+    );
+    assert!(text.contains("untick it under Bodies"), "{text}");
+    let text = emptied(Doing::Intersecting, "Body 2");
+    assert!(
+        text.starts_with("intersecting it with Body 2 leaves nothing"),
+        "{text}"
+    );
+    assert!(text.contains("move it to overlap"), "{text}");
+    let text = emptied(Doing::Joining, "Body 3");
+    assert_eq!(text, "joining it to Body 3 leaves nothing");
+}

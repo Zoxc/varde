@@ -503,17 +503,19 @@ fn a_join_touching_two_bodies_is_added_to_each() {
     );
 }
 
+/// A cut that would take the whole plate fails and leaves it as it was,
+/// so a join after it still finds the plate.
 #[test]
-fn a_body_cut_away_whole_is_left_empty() {
+fn a_cut_leaving_nothing_of_a_body_fails() {
     let mut editor = Editor::new(Document::example());
-    add_extrude(
+    let body = editor.document().bodies()[0].id;
+    let cut = add_extrude(
         &mut editor,
         rectangle((-40.0, -30.0), (40.0, 30.0)),
         Extent::ThroughAll,
         Operation::Cut(Targets::default()),
     );
-    // A join after it has nothing left to touch.
-    let extent = Extent::OneSide(length(editor.document(), "5"));
+    let extent = Extent::OneSide(length(editor.document(), "15"));
     let join = add_extrude(
         &mut editor,
         disc((20.0, 0.0), 5.0),
@@ -523,9 +525,107 @@ fn a_body_cut_away_whole_is_left_empty() {
     let evaluation = evaluated(editor.document());
     assert_eq!(
         evaluation.failed,
-        [(join, "it doesn't touch any body".to_owned())]
+        [(cut, message::emptied(Doing::Cutting, "Body 1"))]
     );
-    assert!(evaluation.bodies[0].solid.is_empty());
+    assert!(evaluation.failed[0].1.starts_with("cutting it from Body 1"));
+    // Listed, so the panel offers to untick it.
+    assert_eq!(evaluation.touched, [(cut, vec![body]), (join, vec![body])]);
+    assert_near(
+        evaluation.bodies[0].solid.volume(),
+        plate(8.0, 10.0) + PI * 25.0 * 5.0,
+    );
+}
+
+/// A disc below the plate, flush on its bottom face only: the
+/// intersection is empty, which fails.
+#[test]
+fn an_intersect_only_flush_with_a_body_fails() {
+    let mut editor = Editor::new(Document::example());
+    let extent = Extent::OneSide(length(editor.document(), "5"));
+    let intersect = add_extrude(
+        &mut editor,
+        disc((20.0, 0.0), 5.0),
+        extent,
+        Operation::Intersect(Targets::default()),
+    );
+    set_extrude(&mut editor, intersect, |extrude| extrude.flip = true);
+    // The kernel gives the empty solid, not `Invalid`, which would read
+    // "leaves no clean solid".
+    let evaluation = evaluated(editor.document());
+    assert_eq!(
+        evaluation.failed,
+        [(intersect, message::emptied(Doing::Intersecting, "Body 1"))]
+    );
+    assert_near(evaluation.bodies[0].solid.volume(), plate(8.0, 10.0));
+}
+
+/// A cut that would empty one body and cut another changes neither;
+/// with the first unticked, it cuts the other.
+#[test]
+fn a_feature_leaving_one_target_empty_changes_none() {
+    let mut editor = Editor::new(Document::example());
+    let top = editor.document().bodies()[0].id;
+    let below = plate_below(&mut editor);
+    let extent = two_sides(editor.document(), "10", "1");
+    let cut = add_extrude(
+        &mut editor,
+        rectangle((-40.0, -30.0), (40.0, 30.0)),
+        extent,
+        Operation::Cut(Targets::default()),
+    );
+    let evaluation = evaluated(editor.document());
+    assert_eq!(
+        evaluation.failed,
+        [(cut, message::emptied(Doing::Cutting, "Body 1"))]
+    );
+    assert_eq!(evaluation.touched, [(cut, vec![top, below])]);
+    assert_near(evaluation.bodies[0].solid.volume(), plate(8.0, 10.0));
+    assert_near(evaluation.bodies[1].solid.volume(), plate(8.0, 3.0));
+
+    set_extrude(&mut editor, cut, |extrude| {
+        extrude.operation = Operation::Cut(Targets {
+            excluded: vec![top],
+        });
+    });
+    let evaluation = evaluated(editor.document());
+    assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
+    assert_near(evaluation.bodies[0].solid.volume(), plate(8.0, 10.0));
+    assert_near(
+        evaluation.bodies[1].solid.volume(),
+        plate(8.0, 3.0) * 2.0 / 3.0,
+    );
+}
+
+/// The parametric case: the plate made smaller than a cut after it, the
+/// cut goes from cutting the plate to failing, and the plate is kept.
+#[test]
+fn a_cut_failing_after_an_upstream_edit_empties_nothing() {
+    let mut editor = Editor::new(Document::example());
+    let cut = add_extrude(
+        &mut editor,
+        disc((0.0, 0.0), 15.0),
+        Extent::ThroughAll,
+        Operation::Cut(Targets::default()),
+    );
+    let mut cache = Cache::default();
+    let before = evaluate(editor.document(), &mut cache);
+    assert!(before.failed.is_empty(), "{:?}", before.failed);
+    assert_near(
+        before.bodies[0].solid.volume(),
+        (60.0 * 40.0 - PI * 225.0) * 10.0,
+    );
+    // The plate's rectangle 20 × 20, inside the disc.
+    edit_sketch(&mut editor, |sketch| {
+        for point in sketch.points.iter_mut().filter(|p| p.at.x.abs() == 30.0) {
+            point.at = point.at.signum() * 10.0;
+        }
+    });
+    let after = evaluate(editor.document(), &mut cache);
+    assert_eq!(
+        after.failed,
+        [(cut, message::emptied(Doing::Cutting, "Body 1"))]
+    );
+    assert_near(after.bodies[0].solid.volume(), (400.0 - PI * 64.0) * 10.0);
 }
 
 #[test]

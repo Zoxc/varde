@@ -548,6 +548,37 @@ fn a_cut_lists_the_bodies_it_touches_and_goes_through_all() {
     assert!(doc.feed.mesh().triangle_count() > 0);
 }
 
+/// An intersect that would leave nothing of the plate: the draft says
+/// why, and committed it's marked failed in the Timeline while the plate
+/// stays drawn, rather than an empty body and an empty mesh.
+#[test]
+fn an_intersect_leaving_nothing_is_marked_failed_and_the_plate_kept() {
+    let (mut doc, sketch, requests) = example_and_a_hole();
+    let triangles = doc.feed.mesh().triangle_count();
+    assert!(triangles > 0);
+    doc.look(Look::StartExtrude);
+    extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region: 0 });
+    extrude(&mut doc, ExtrudeLook::Operation(OperationKind::Intersect));
+    extrude(&mut doc, ExtrudeLook::Flip);
+    answer(&mut doc, &requests);
+    let emptied = "intersecting it with Body 1 leaves nothing";
+    let error = doc.feed.draft_error().unwrap();
+    assert!(error.starts_with(emptied), "{error}");
+    assert_eq!(doc.feed.mesh().triangle_count(), triangles);
+    let _ = doc.view(false, Mode::default());
+
+    doc.update(Edit::CommitExtrude);
+    answer(&mut doc, &requests);
+    let feature = doc.editor.document().features().last().unwrap().id;
+    let failed = doc.feed.failed_features();
+    assert_eq!(failed.len(), 1);
+    assert_eq!(failed[0].0, feature);
+    assert!(failed[0].1.starts_with(emptied), "{}", failed[0].1);
+    assert_eq!(doc.feed.mesh().triangle_count(), triangles);
+    doc.look(Look::SelectPanel(varde_view::Panel::Timeline));
+    let _ = doc.view(false, Mode::default());
+}
+
 #[test]
 fn undoing_the_sketch_away_ends_the_session() {
     let (mut doc, sketch, _) = plate();

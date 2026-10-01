@@ -3625,10 +3625,24 @@ body, and the later ones still run.
   none. **Bodies never merge**: a join touching two bodies adds the
   tool to each, so they overlap, since bodies are the document's and a
   merged one would leave the other without geometry. Bodies not touched
-  or excluded keep their solids; a body cut away whole, or intersected
-  with only a flush face, is left with the empty solid (drawn as nothing,
-  no box, touching nothing after), without an error: it's what was
-  asked for, and the body stays listed in Objects.
+  or excluded keep their solids. A target whose result is the empty
+  solid (a body cut away whole, or intersected with a tool only flush on
+  a face of it, both of which the kernel gives as `Ok(Solid::empty())`)
+  **fails the feature**, so no body changes, with "cutting it from Body 1
+  would leave nothing of it: untick it under Bodies to leave it as it
+  is, or remove the body" or "intersecting it with Body 1 leaves
+  nothing: they only meet on a face; move it to overlap"
+  (`message::emptied`). Bodies are the document's, so an emptied one
+  would stay listed in Objects with no geometry, and an edit upstream
+  (the plate made smaller) could empty it with no feature turning red,
+  while later features blamed the wrong one ("doesn't touch any body")
+  or went through all of less. The body is in `touched`, so the panel
+  offers to untick it; deliberately removing a body with a cut takes an
+  untick and a body delete. The empty result stays cached (its key is
+  right; the check is cheap). Hence **no body in an `Evaluation` is
+  empty**: a new body's extrude never is, a union of two non-empty
+  solids isn't, and the rest fail (a `debug_assert` on the targets
+  holds it).
 
 **Error texts** (`src/message.rs`). What the Timeline's tooltip and the
 panel show is worded for the user, not the kernel: an extrude's own
@@ -3657,7 +3671,8 @@ cause is hedged and no tolerance is offered; an error
 of its own for edge and point contacts would let it be said outright;
 "… can't be worked out: they meet on faces too nearly flush or tangent
 to tell apart; move it a little" for `Inconsistent`; "… is too complex
-to work out…" for `TooComplex`). Every message starts in lower case,
+to work out…" for `TooComplex`; for a result that's empty, the
+`emptied` texts above). Every message starts in lower case,
 the Timeline putting it after the feature's name. Body names are looked up when the message is
 made, not kept in the cache.
 
