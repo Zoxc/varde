@@ -28,8 +28,10 @@ both. Varde ports Manifold's structure; it doesn't link it.
   a `Frame` swept into an exact solid.
 - **Swept strips and lathes** (`sweep`): exact strips on cones and quadrics
   of revolution, fitted strips, bands and pole caps for other surfaces of
-  revolution (tori and the like). These are the walls revolve will be built
-  from; revolve itself isn't a feature yet.
+  revolution (tori and the like): the walls revolve builds.
+- **Revolve** (`revolve`): a `Profile` turned about an axis in its plane,
+  all the way round or through a part turn, into a solid. It isn't a
+  feature in the app yet.
 - **Booleans** (`boolean`, `touches`): union, difference and intersection of
   solids of flat and curved patches, and whether two solids meet.
 - **Topology** (`Topology`): a solid's faces, edges and corners as users see
@@ -214,7 +216,29 @@ is within half the fit tolerance and sound, and closes poles and apexes with
 fitted caps. At a turn of the meridian's height no plane through the
 parallel separates the strips beside it, but the cylinder over it does,
 so profile vertices may sit at turns; bands still keep their own rings
-off turns (cheaper), but for turns within 1 % of a piece's end.
+off turns (cheaper), but for turns within 1 % of a piece's end. A strip
+ending at a turn has its fitted diagonal held in the ring's plane, as an
+exact one would be, so a wall beyond the plane is parted from it by the
+plane.
+
+**Revolve** turns a profile drawn on a frame (`y` the axis, the profile at
+`x ≥ 0`) about the axis, fully or from one angle to another:
+
+1. **Checks**: the profile as for extrude (chain, separation, nesting),
+   vertices within the resolution of the axis put on it, and the axis
+   rules by exact signs: nothing across the axis, no segment touching it
+   inside, and in a full turn no vertex on it alone (a pinch).
+2. **Faces per segment**: none along the axis; flat rings, discs and
+   sectors square to it (triangulated as extrude caps from their rings'
+   arcs); exact cones and cylinders for other lines and spheres for arcs
+   centred on the axis (exact strips); fitted bands for other arcs (tori)
+   and conics; fitted caps where a face meets the axis.
+3. **One angular split** for the whole solid, four quarters (or a part
+   turn's quarters) halved until every band fits and every flat face's
+   caps take the rings' arcs; a part turn's two ends are the profile's
+   region triangulated as extrude caps on the walls' meridians, halving
+   profile pieces where they need it.
+4. **Repair, the merge pass and check**, as extrude.
 
 ## The boolean pipeline
 
@@ -417,6 +441,13 @@ extrude being set up) are regenerated the same way. See `agents/kernel.md`
   along the line converges come out right with many patches. Coaxial walls
   a little apart, or of different conics meeting smoothly, refine until
   they run out of budget.
+- **Revolved creases.** Where two revolved faces meet at a ring and both
+  leave it on one side of its plane and of the cylinder over it (an acute
+  corner against a wall, both edges into one quadrant), neither edge
+  rule of `check` parts them, and repair splits the ring until its arcs
+  are straight to the resolution: tens of thousands of patches, or
+  `TooComplex` at fine tolerances. Right or refused; a rule from the
+  pencil of the plane and the cylinder would part them.
 - **Cap quality.** Refined caps cost patches (plates with holes 10 to
   20% more, thin ribs and rings far more), as do the plane faces a boolean
   cuts, refined in its clean-up; caps past about 65 000 segments run out
@@ -425,6 +456,7 @@ extrude being set up) are regenerated the same way. See `agents/kernel.md`
   curved sides (one concave with weight above 1) can fold when a later
   boolean splits it; and a cut's own fans fail that same operation where
   one runs along a rim's tangent (an 8 × 8 grid of holes cut at once).
+  Revolve's flat faces and part-turn ends use the plain caps, unrefined.
 - **Fitted bands lose their claim.** Triangles along a fitted cut go on a
   face copy claiming no surface, so later booleans trace and fit there
   instead of cutting exactly.
@@ -436,8 +468,8 @@ extrude being set up) are regenerated the same way. See `agents/kernel.md`
   50 000 to 200 000 patches can take no boolean within the budget. A
   failing operation runs for seconds, and on the web the regen worker is
   single-threaded and a running operation isn't interrupted.
-- **Not built yet**: revolve as a feature (the strips and lathes are
-  ready), taper, sketches on faces, fillets and other features the reserved
+- **Not built yet**: revolve as a feature (the kernel's `revolve` is
+  built), taper, sketches on faces, fillets and other features the reserved
   face parts are for, picking by face, a batch boolean of many operands,
   GPU patch evaluation, and wasm threads (which would need cross-origin
   isolation; results would be identical either way).

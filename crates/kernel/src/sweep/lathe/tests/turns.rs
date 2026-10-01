@@ -437,15 +437,16 @@ fn profiles_with_rings_at_turns_are_solids_coarse() {
 fn profiles_with_rings_at_turns_are_solids_by_default() {
     let counts = sweep(1e-3, 84);
     // The puck's, and the torus split at its turns (as many patches as
-    // one split off them).
+    // one split off them; its diagonals leaving the turns' rings in their
+    // planes fit in half the pieces round the axis, twice as many along).
     assert_eq!(counts[0], (16, 192));
-    assert_eq!(counts[2], (128, 1024));
+    assert_eq!(counts[2], (64, 1024));
 }
 
 #[test]
 fn profiles_with_rings_at_turns_are_solids_fine() {
     let counts = sweep(1e-4, 85);
-    assert_eq!(counts[2], (256, 2048));
+    assert_eq!(counts[2], (128, 2048));
 }
 
 /// One to six seconds a profile in release; not run in debug builds.

@@ -12,8 +12,9 @@
 //! [`Frame`], into an exact solid; [`Solid::volume`] and [`Solid::area`]
 //! measure one. [`sweep`] makes exact strips on cones and quadrics of
 //! revolution, and fitted ones (tori, other surfaces of revolution, caps
-//! round poles and apexes) within half the fit tolerance: the walls
-//! revolved solids are to be made of.
+//! round poles and apexes) within half the fit tolerance, of which
+//! [`revolve()`] makes a [`Profile`] turned about an axis in its plane,
+//! all the way round or through a part turn.
 //!
 //! [`boolean()`] unites, subtracts and intersects solids the way
 //! [manifold](https://github.com/elalish/manifold) does for flat
@@ -42,6 +43,7 @@ mod profile;
 mod quadrature;
 mod render_lines;
 mod render_mesh;
+mod revolve;
 mod solid;
 pub mod sweep;
 mod tessellate;
@@ -60,6 +62,7 @@ pub use manifold::{ManifoldError, ManifoldMesh};
 pub use profile::{Loop, MAX_PROFILE_SEGMENTS, Profile, ProfileError, Segment};
 pub use render_lines::{LinesError, LinesPart, RenderLines};
 pub use render_mesh::{MeshError, MeshPart, RenderMesh};
+pub use revolve::{Sweep, revolve};
 pub use solid::Solid;
 pub use tessellate::{Display, Picking};
 pub use tolerance::Tolerance;

@@ -74,6 +74,14 @@ fn profile(error: ProfileError, finest: bool) -> String {
         // end, so spade or the builder refusing isn't something a finer
         // tolerance is known to mend: none is named.
         ProfileError::Triangulation => "its end faces couldn't be made".to_owned(),
+        // Only a revolve refuses these.
+        ProfileError::CrossesAxis(..) => "its outline crosses the axis".to_owned(),
+        ProfileError::TouchesAxis(..) => {
+            "its outline touches the axis at a single point".to_owned()
+        }
+        ProfileError::NearlyFullTurn => {
+            "its turn is so nearly full that its ends touch: make it a full turn".to_owned()
+        }
         ProfileError::Empty
         | ProfileError::Short(_)
         | ProfileError::Segment(..)

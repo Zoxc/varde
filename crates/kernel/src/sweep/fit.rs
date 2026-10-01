@@ -41,6 +41,25 @@ pub fn fitted_strip(
     right: &Conic3,
     form: &Form,
 ) -> Result<Fitted, PatchError> {
+    fitted_strip_touching(bottom, top, left, right, form, None)
+}
+
+/// [`fitted_strip`] with the diagonal, if `touch` is given, leaving its
+/// end `a0` (`true`) or `b1` (`false`) square to the unit `n`: in the
+/// plane through that end square to `n` (its control point is fitted in
+/// that plane). A ring at a turn of a surface of revolution's meridian
+/// is where the surface touches the ring's plane, and an exact diagonal
+/// leaves it in that plane; so must a fitted one, or its control point
+/// dips under the plane, which the hull rule between the strip and a
+/// face on the plane's other side refuses.
+pub(crate) fn fitted_strip_touching(
+    bottom: &Conic3,
+    top: &Conic3,
+    left: &Conic3,
+    right: &Conic3,
+    form: &Form,
+    touch: Option<(bool, DVec3)>,
+) -> Result<Fitted, PatchError> {
     for edge in [bottom, top, left, right] {
         edge.check()?;
     }
@@ -48,7 +67,8 @@ pub fn fitted_strip(
     if left.p0 != a0 || left.p1 != b0 || right.p0 != a1 || right.p1 != b1 {
         return Err(PatchError::Mismatch);
     }
-    let diagonal = fit_diagonal(bottom, top, left, right, form)?;
+    let touch = touch.map(|(start, n)| (if start { a0 } else { b1 }, n));
+    let diagonal = fit_diagonal(bottom, top, left, right, form, touch)?;
     let patches = strip(bottom, top, left, right, &diagonal)?;
     let error = deviation(&patches[0], form).max(deviation(&patches[1], form));
     Ok(Fitted { patches, error })
@@ -61,13 +81,15 @@ const FIT_STEPS: usize = 40;
 /// Most tries of one step with growing damping.
 const FIT_TRIES: usize = 12;
 
-/// The fitted diagonal (see [`fitted_strip`]).
+/// The fitted diagonal (see [`fitted_strip`]), its control point in the
+/// plane through `touch`'s point square to its unit normal if given.
 fn fit_diagonal(
     bottom: &Conic3,
     top: &Conic3,
     left: &Conic3,
     right: &Conic3,
     form: &Form,
+    touch: Option<(DVec3, DVec3)>,
 ) -> Result<Conic3, PatchError> {
     let (a0, a1, b0, b1) = (bottom.p0, bottom.p1, top.p0, top.p1);
     // Everything relative to the strip's middle, so rounding is relative
@@ -76,7 +98,14 @@ fn fit_diagonal(
     let middle = nearest(form, origin).ok_or(PatchError::Degenerate)?;
     // The parabola (weight 1) through `a0`, `b1` and `middle` at its
     // half: `(a0 + 2c + b1)/4 = middle`.
-    let start = Conic3::new(a0, middle * 2.0 - (a0 + b1) * 0.5, 1.0, b1)?;
+    // In the plane `(c − p)·n = 0`: homogeneously `g·h = 0` with `g =
+    // (n, −(p − origin)·n)`, which the start and every step keep.
+    let onto = |c: DVec3| match touch {
+        Some((p, n)) => c - n * (c - p).dot(n),
+        None => c,
+    };
+    let g = touch.map(|(p, n)| n.extend(-(p - origin).dot(n)));
+    let start = Conic3::new(a0, onto(middle * 2.0 - (a0 + b1) * 0.5), 1.0, b1)?;
     let patches = strip(bottom, top, left, right, &start)?;
     // Each patch's point at `u` is `(A + k·h)` homogeneously, `h` the
     // diagonal's middle homogeneous point and `k = 2·ui·uj` of the
@@ -148,7 +177,14 @@ fn fit_diagonal(
         let mut moved = false;
         for _ in 0..FIT_TRIES {
             let damped = normal + DMat4::from_diagonal(diagonal * damping);
-            let step = damped.inverse() * rhs;
+            let inverse = damped.inverse();
+            let mut step = inverse * rhs;
+            // The least step in the constraint's plane (a Lagrange
+            // multiplier on `g·step = 0`).
+            if let Some(g) = g {
+                let across = inverse * g;
+                step -= across * (g.dot(step) / g.dot(across));
+            }
             if !step.is_finite() {
                 damping *= 8.0;
                 continue;
@@ -172,7 +208,7 @@ fn fit_diagonal(
             break;
         }
     }
-    Conic3::new(a0, origin + h.truncate() / h.w, h.w, b1)
+    Conic3::new(a0, onto(origin + h.truncate() / h.w), h.w, b1)
 }
 
 /// `a·bᵀ`.

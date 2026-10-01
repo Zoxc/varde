@@ -97,7 +97,7 @@ const MAX_ROUNDS: usize = 32;
 /// How many times a segment may have been halved, all told, before the
 /// caps give up halving it: mending that doesn't converge would otherwise
 /// double the segments it can't mend every round.
-pub(super) const MAX_CAP_DEPTH: u8 = 16;
+pub(crate) const MAX_CAP_DEPTH: u8 = 16;
 
 /// How many times, all told, a segment may have been halved before the
 /// caps, refining for quality, leave a corner it makes too narrow to
@@ -127,7 +127,7 @@ const MIN_CLEAR: f64 = 4.0;
 
 /// The caps' triangles.
 #[derive(Debug, Clone, PartialEq)]
-pub(super) struct Cap {
+pub(crate) struct Cap {
     /// Points added inside the region. Vertex ids run through the chain's
     /// vertices, then these.
     pub steiner: Vec<DVec2>,
@@ -137,7 +137,7 @@ pub(super) struct Cap {
 
 /// What a try of the caps does besides the mending every try does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct Mode {
+pub(crate) struct Mode {
     /// Refine for quality ([`quality`]).
     pub quality: bool,
     /// Move Steiner points in from loop vertices with flat corners.
@@ -174,7 +174,7 @@ impl Mode {
 /// [`MAX_QUALITY_ROUNDS`], whether refinement has nothing more to add to
 /// that triangulation, and whether the caps were looked at for crowding.
 #[derive(Debug, Clone)]
-pub(super) struct Rounds {
+pub(crate) struct Rounds {
     chain: Chain,
     steiner: Vec<DVec2>,
     live: Option<Live>,
@@ -186,7 +186,7 @@ pub(super) struct Rounds {
 
 impl Rounds {
     /// The first round, on `chain` (separated).
-    pub(super) fn new(chain: Chain) -> Rounds {
+    pub(crate) fn new(chain: Chain) -> Rounds {
         Rounds {
             chain,
             steiner: Vec::new(),
@@ -200,7 +200,7 @@ impl Rounds {
 
     /// The round these start.
     #[cfg(test)]
-    pub(super) fn round(&self) -> usize {
+    pub(crate) fn round(&self) -> usize {
         self.round
     }
 }
@@ -236,7 +236,7 @@ impl Rounds {
 /// running from there with flat corners gives what running from `start`
 /// with them would, as no round before differs. That holds only as long
 /// as the flat corners found are all the flag changes in a round.
-pub(super) fn triangulate(
+pub(crate) fn triangulate(
     start: Rounds,
     margin: f64,
     mode: Mode,
@@ -501,13 +501,20 @@ pub(super) fn afresh(chain: &Chain, cap: &Cap) -> Result<[Vec<[u32; 3]>; 2], Ker
     }))
 }
 
+/// Whether the loops of `segs` (from `starts`) nest as outer loops and
+/// holes: the caps' winding rule, on the chords alone.
+pub(crate) fn nests(segs: &[Seg], starts: &[u32]) -> Result<(), KernelError> {
+    Live::new(segs, starts, &[])?.region(segs, starts)?;
+    Ok(())
+}
+
 /// Why the caps can't halve the curved segments `unsplittable` (in the
 /// chain's order): [`ProfileError::TooFine`] naming the input segment of
 /// the first that is [`too_small`](Chain::too_small), detail too small
 /// for the resolution, or [`KernelError::TooComplex`] if each was halved
 /// [`MAX_CAP_DEPTH`] times, mending that doesn't converge. A small one
 /// wins wherever it comes among them.
-pub(super) fn refused(chain: &Chain, unsplittable: &[Seg]) -> KernelError {
+pub(crate) fn refused(chain: &Chain, unsplittable: &[Seg]) -> KernelError {
     match unsplittable.iter().find(|s| chain.too_small(s)) {
         Some(s) => {
             let (l, s) = chain.sides[s.side as usize].at;

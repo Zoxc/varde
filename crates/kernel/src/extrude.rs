@@ -28,8 +28,8 @@ use crate::patch::{Conic2, Conic3, PatchError};
 use crate::profile::{Profile, ProfileError};
 use crate::{KernelError, MAX_COORD, Solid, Tolerance, in_range};
 
-mod cap;
-mod chain;
+pub(crate) mod cap;
+pub(crate) mod chain;
 
 use cap::{Cap, Mode, Rounds};
 use chain::Chain;
@@ -69,7 +69,7 @@ impl Frame {
 
     /// The origin finite and within [`MAX_COORD`], the axes unit and
     /// square within [`Self::SLACK`].
-    fn check(&self) -> Result<(), KernelError> {
+    pub(crate) fn check(&self) -> Result<(), KernelError> {
         in_range(self.origin)?;
         let unit = |v: DVec3| (v.length() - 1.0).abs() <= Self::SLACK;
         if !(unit(self.x) && unit(self.y) && self.x.dot(self.y).abs() <= Self::SLACK) {

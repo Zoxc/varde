@@ -14,14 +14,14 @@ use crate::{KernelError, MAX_PATCHES};
 
 /// Corners sharper than this, as the sine of the angle between the
 /// segments' tangents, are cusps; cap patch corners must be wider.
-pub(super) const SIN_MIN: f64 = 1e-3;
+pub(crate) const SIN_MIN: f64 = 1e-3;
 
 /// How many times a segment of the profile may be halved.
-pub(super) const MAX_SPLIT_DEPTH: u8 = 24;
+pub(crate) const MAX_SPLIT_DEPTH: u8 = 24;
 
 /// A piece of a loop.
 #[derive(Debug, Clone, Copy)]
-pub(super) struct Seg {
+pub(crate) struct Seg {
     pub conic: Conic2,
     /// Whether its control point is off its chord by more than the
     /// resolution. A straight one is [`Conic2::line`].
@@ -68,7 +68,7 @@ impl Seg {
 
 /// An input segment: the wall it sweeps is one face.
 #[derive(Debug, Clone, Copy)]
-pub(super) struct Side {
+pub(crate) struct Side {
     pub curve: u64,
     /// Its number among the segments of `curve`, in profile order.
     pub segment: u32,
@@ -82,7 +82,7 @@ pub(super) struct Side {
 /// The loops as segments. Vertex `i` is the start of segment `i`,
 /// counted through the loops in order.
 #[derive(Debug, Clone)]
-pub(super) struct Chain {
+pub(crate) struct Chain {
     pub loops: Vec<Vec<Seg>>,
     pub sides: Vec<Side>,
     /// The resolution: the margin segments keep from each other.
@@ -320,7 +320,7 @@ impl Chain {
 
 /// The segment after segment `i` in its loop, for the loops starting at
 /// `starts` (and the end last, as [`Chain::flat`] gives them).
-pub(super) fn next_in_loop(starts: &[u32]) -> impl Fn(u32) -> u32 + '_ {
+pub(crate) fn next_in_loop(starts: &[u32]) -> impl Fn(u32) -> u32 + '_ {
     move |i| {
         let l = starts.partition_point(|&s| s <= i) - 1;
         if i + 1 == starts[l + 1] {
@@ -334,7 +334,7 @@ pub(super) fn next_in_loop(starts: &[u32]) -> impl Fn(u32) -> u32 + '_ {
 /// The segment running between vertices `a` and `b` (either way round),
 /// for the loops starting at `starts`, and whether it starts at `a`;
 /// `None` for an inner edge.
-pub(super) fn chord(starts: &[u32], a: u32, b: u32) -> Option<(u32, bool)> {
+pub(crate) fn chord(starts: &[u32], a: u32, b: u32) -> Option<(u32, bool)> {
     let n = *starts.last().expect("the end");
     if a >= n || b >= n {
         return None;

@@ -51,8 +51,8 @@ impl Segment {
     }
 }
 
-/// Why a profile can't be extruded. Loops and segments are named by their
-/// indices in the profile as given.
+/// Why a profile can't be extruded or revolved. Loops and segments are
+/// named by their indices in the profile as given.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ProfileError {
     /// No loops.
@@ -87,6 +87,16 @@ pub enum ProfileError {
     /// below the size the resolution allows: detail too small for the
     /// tolerance.
     TooFine(usize, usize),
+    /// Revolving: segment `(loop, segment)` reaches across the axis.
+    CrossesAxis(usize, usize),
+    /// Revolving: the region touches the axis at a single point, where
+    /// segment `(loop, segment)` starts (a vertex on the axis with no
+    /// edge along it, in a full turn) or inside that segment (in any
+    /// turn): the solid would pinch to a point there.
+    TouchesAxis(usize, usize),
+    /// Revolving: a part turn so close to a full one that its two ends
+    /// come within the resolution of each other.
+    NearlyFullTurn,
 }
 
 impl std::fmt::Display for ProfileError {
@@ -120,6 +130,15 @@ impl std::fmt::Display for ProfileError {
                 f,
                 "segment {s} of loop {l} is too small or sharply bent for the resolution"
             ),
+            ProfileError::CrossesAxis(l, s) => {
+                write!(f, "segment {s} of loop {l} crosses the axis")
+            }
+            ProfileError::TouchesAxis(l, s) => {
+                write!(f, "loop {l} touches the axis at a point at segment {s}")
+            }
+            ProfileError::NearlyFullTurn => {
+                f.write_str("the turn is so nearly full that its ends touch")
+            }
         }
     }
 }

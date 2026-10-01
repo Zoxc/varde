@@ -5,7 +5,9 @@ use std::f64::consts::{FRAC_PI_2, TAU};
 
 use glam::{DVec2, DVec3};
 
-use super::fit::{deviation, fitted_strip};
+#[cfg(test)]
+use super::fit::fitted_strip;
+use super::fit::{deviation, fitted_strip_touching};
 use crate::budget::Work;
 use crate::mesh::{Form, edge_neighbours_apart};
 use crate::patch::{Conic3, Patch, PatchError};
@@ -140,19 +142,18 @@ impl Lathe {
     }
 
     /// `p` turned to station `k` (`0..=pieces`, panicking past it).
-    /// Station 0, a full turn's last, and a point on the axis are `p`
-    /// itself, to the bit.
+    /// Station 0, a full turn's last, and a point on the axis (as
+    /// [`Self::on_axis`] has it: a pole put there by the axis's frame,
+    /// which every meridian ending there must keep) are `p` itself, to
+    /// the bit.
     pub fn turned(&self, p: DVec3, k: usize) -> DVec3 {
         let turn = self.turns[k];
-        if (turn.x == 1.0 && turn.y == 0.0) || k == 0 {
+        if (turn.x == 1.0 && turn.y == 0.0) || k == 0 || self.on_axis(p) {
             return p;
         }
         let v = p - self.origin;
         let along = self.axis * v.dot(self.axis);
         let across = v - along;
-        if across == DVec3::ZERO {
-            return p;
-        }
         self.origin + along + across * turn.x + self.axis.cross(across) * turn.y
     }
 
@@ -198,7 +199,7 @@ impl Lathe {
     }
 
     /// How far `p` is from the axis.
-    fn radius(&self, p: DVec3) -> f64 {
+    pub(crate) fn radius(&self, p: DVec3) -> f64 {
         let v = p - self.origin;
         (v - self.axis * v.dot(self.axis)).length()
     }
@@ -351,7 +352,7 @@ impl Lathe {
 
     /// The strip of `meridian` (from `a0` to `b0` at station 0) from
     /// station `k` to `k + 1`, its diagonal fitted to `form` (see
-    /// [`fitted_strip`]), if it is sound, with its error: `None` if no
+    /// [`fitted_strip`](super::fitted_strip)), if it is sound, with its error: `None` if no
     /// diagonal could be fitted, a patch folds, or the two come within
     /// `margin` of each other off their diagonal, all of which halving
     /// may cure.
@@ -372,7 +373,9 @@ impl Lathe {
         let top = self.parallel(meridian.p1, k)?;
         let left = self.meridian(meridian, k)?;
         let right = self.meridian(meridian, k + 1)?;
-        let Ok(fitted) = fitted_strip(&bottom, &top, &left, &right, form) else {
+        let Ok(fitted) =
+            fitted_strip_touching(&bottom, &top, &left, &right, form, self.touch(meridian))
+        else {
             return Ok(None);
         };
         let [first, second] = &fitted.patches;
@@ -380,6 +383,23 @@ impl Lathe {
             && second.fold_direction().is_some()
             && edge_neighbours_apart(first, 2, second, 0, margin);
         Ok(sound.then_some((fitted.patches, fitted.error)))
+    }
+
+    /// Which end of `piece`, if one, is at a turn of its height (its
+    /// tangent square to the axis, to `1e-9` of its length: rounding),
+    /// with the axis: its strips' fitted diagonals must leave that ring
+    /// in its plane (see `fitted_strip_touching`). Not both: no conic
+    /// turns at both ends.
+    fn touch(&self, piece: &Conic3) -> Option<(bool, DVec3)> {
+        let flat = |p: DVec3| {
+            let d = piece.c - p;
+            d.dot(self.axis).abs() <= 1e-9 * d.length()
+        };
+        match (flat(piece.p0), flat(piece.p1)) {
+            (true, false) => Some((true, self.axis)),
+            (false, true) => Some((false, self.axis)),
+            _ => None,
+        }
     }
 
     /// The error of [`Self::strip`], infinite for one that isn't sound.
@@ -447,7 +467,7 @@ pub struct Band {
 }
 
 /// The band `meridian` (at station 0) sweeps on the lathe, in fitted
-/// strips (see [`fitted_strip`]) within half `tol`'s fit tolerance of
+/// strips (see [`fitted_strip`](super::fitted_strip)) within half `tol`'s fit tolerance of
 /// `form` (measured by [`deviation`], with a 64th of that to spare): a surface of revolution with exact parallels and meridians
 /// whose strips aren't exact (a torus, another conic about the axis, or
 /// any of them past where its exact strips are made).

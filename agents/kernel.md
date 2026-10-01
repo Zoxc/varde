@@ -17,8 +17,9 @@ tolerances (`Tolerance`), the limits, `Budget` and `KernelError`, and the
 parallel map (`par`), below, and `Solid`, a checked mesh, with its
 tessellation for drawing (`tessellate`) and its volume and area,
 `extrude`, which sweeps a `Profile` into a solid, the swept strips
-(`sweep`: exact patches on cones and quadrics of revolution, for revolve
-to come), and `boolean` and
+(`sweep`: exact patches on cones and quadrics of revolution, fitted
+bands and caps), `revolve`, which turns a `Profile` about an axis into a
+solid (not yet a feature), and `boolean` and
 `touches` for solids of flat and curved patches (curved cuts exact where
 planes meet planes or quadrics, traced and fitted elsewhere), and a
 solid's `Topology` (its faces, edges and corners as users see them, and
@@ -381,6 +382,25 @@ finds one (sphere strips within `1e-12` relative); a cone has one in
 every plane through `a0` and `b1`, so the fit lands on some, whose
 patches may fold on wide pieces (cones take their exact strips anyway).
 
+**At a turn** (`fitted_strip_touching`, crate-internal): bands fit a
+strip whose piece ends at a turn of its height (the meridian's tangent
+square to the axis there, to `1e-9` of its length: `Lathe::touch`) with
+the diagonal's control point in the ring's plane, so the diagonal leaves
+that ring in it, as an exact one does (the surface touches the plane all
+along the ring). The constraint is linear in the homogeneous middle
+point, `g·h = 0` with `g = (n, −(p − o)·n)`: the start is projected onto
+it and each damped step is the least one in it (a Lagrange multiplier,
+`s − M⁻¹g·(g·s)/(g·M⁻¹g)`), and the final control point projected again
+against rounding. Unconstrained, the fitted control point dipped under
+the plane by up to the fit error, so the band was no lax side of the
+plane rule against a face beyond the plane, and a face that the cylinder
+can't part from it either (a wall straight down from a concave round's
+bottom, on the cylinder over the ring) was repaired until the band's
+pieces were within the resolution of the plane: a revolved groove at
+`1e-2` came out with 55 040 patches, now 320. On tori split at their turns
+the strips fit in half the pieces round the axis and twice as many
+along, the same patches all told.
+
 **Measuring** (`deviation(patch, form)`): the largest `Form::distance`
 over the patch, found rather than sampled: a grid of 12 steps a side (91
 points, coordinates whole steps so the ones on an edge are zero exactly),
@@ -472,7 +492,9 @@ Measured on a tube split, a puck's round going over its top and an S
 whose joint is past its turn, by `3e-7` to `0.1` rad, at fits `1e-2` to
 `1e-4` on three frames up to `1e4` out: 55 of 495 refused before,
 none after, volumes within the slack; `1e-3` passed them too, `1e-4`
-not. Caps keep `1e-6` for the turns that bound them. Pieces are made from the meridian's
+not. Caps keep `1e-6` for the turns that bound them. A piece ending at
+a turn fits its diagonal leaving the ring in its plane (see "At a turn"
+under "Fitted strips"). Pieces are made from the meridian's
 blossom between parameters (`Conic::piece`, which the boolean's kept
 edge pieces use too), so neighbours share their end's bits. Revolve may
 build profile vertices at turns (a flat face tangent to a round at its
@@ -497,8 +519,9 @@ inside out; every triangle split once at `1e-2` still passes; the same
 bits at 1 and 8 threads. Turns just past rings
 (`rings_just_past_turns_are_solids`): the tube, puck and S above `1e-5`,
 `1e-4` and `1e-3` rad past them, at `1e-2` and `1e-3` on two frames. Counts: the puck at `1e-3` 16 pieces round the
-axis and 192 patches; the torus `R 20, r 2` at its turns 128 and 1 024 at
-`1e-3`, 256 and 2 048 at `1e-4` (an ordinary torus's counts). The thin
+axis and 192 patches; the torus `R 20, r 2` at its turns 64 and 1 024 at
+`1e-3`, 128 and 2 048 at `1e-4` (an ordinary torus's patches; the
+diagonals held in the turns' planes take half the pieces round). The thin
 round's random frames stop at `1e-4`: at `1e-5` its disc's 2 048 sectors,
 50 long and 0.15 wide, fail the hull rule against the wall far out (the
 plane through a ring arc of bulge `1.2e-4` tilts by about `1e-9` rad by
@@ -2525,6 +2548,201 @@ Known gaps:
   run fitting (see "Pieces to conics") removed the sub-tolerance cases;
   the caps refined for quality, with such corners left to refinement,
   take the steep set the regen tests hold. Not fuzzed further.
+
+## Revolve (`src/revolve.rs`, `src/revolve/`)
+
+| file | holds |
+|---|---|
+| `revolve.rs` | `Sweep`, `revolve`, the frame (`Turn`), the axis rules, the rounds, flat faces and ends, the assembly |
+| `revolve/kind.rs` | what face each profile segment turns into: its tag and form |
+| `revolve/tests.rs`, `revolve/tests/` | shapes against Pappus, names and forms, part turns, refusals, random profiles |
+
+`revolve(profile, frame, sweep, feature, tol, budget)`: the profile on
+`Frame { origin, x, y }` with `y` along the axis and `x` towards the
+profile (its points have `x ≥ 0`), turned about the axis `Full` or
+`Part { from, to }` (radians, turning `x` towards `x × y`, `0` at `x`;
+finite, within `8π` of `x`, `0 < to − from < 2π`, `PatchError::Parameter`
+otherwise). Faces: `Side { curve, segment }` per input segment (numbered
+per curve in profile order, as the extrude's walls), a part turn's
+`StartCap` (at `from`, facing back) and `EndCap`; segments along the axis
+make none. The steps:
+
+1. **Checks.** `Profile::check`, `Frame::check`, the sweep. The frame is
+   made square to the bit (`y` normalized, `x` made square to it), and
+   `x` turned by `from` (cosine and sine exact at whole quarter turns, as
+   the lathe's stations), so station 0 is where the sweep starts.
+2. **Onto the axis.** A segment end within the resolution of the axis is
+   put on it (`x = 0`), and a control point too if both its segment's ends
+   are on it and it is that close: the one decision a revolve takes by
+   distance, on input, the same for both segments sharing an end, so ends
+   stay shared to the bit. `Profile::check` again.
+3. **Axis rules**, by exact signs: a segment's distance from the axis is
+   `N(t)/D(t)` with `D > 0` and `N` the quadratic of Bernstein
+   coefficients `x0`, `w·cx`, `x1`, which reaches below 0 where an end
+   does or the middle coefficient is negative with its square over
+   `x0·x1` (`ProfileError::CrossesAxis`, checked for every segment first),
+   and touches 0 inside where the two are equal
+   (`ProfileError::TouchesAxis`, in any turn: the face would pinch to a
+   point mid-segment). In a full turn a vertex on the axis with no segment
+   along the axis either side is `TouchesAxis` too (the solid would pinch
+   to a point there); in a part turn it is a solid (both walls end in
+   apex caps at the vertex, which both ends share).
+4. **The region**: the extrude's `Chain::new` and `Chain::separate` (so
+   a region valid in the open half-plane revolves into an embedded
+   solid), and the caps' winding rule (`cap::nests`, on the chords) for
+   the nesting, which a full turn would otherwise never run. A part turn
+   whose ends come within the resolution of each other at the profile's
+   farthest control point (`2·ρmax·sin((2π − θ)/2)`) is
+   `ProfileError::NearlyFullTurn`.
+5. **Kinds** (`revolve/kind.rs`), per input segment, from its chain side
+   (straightened within the resolution, as the extrude's):
+   - **along the axis** (straight, both ends at `x = 0`): no face;
+   - **flat**: straight with its ends' heights within the resolution: a
+     plane square to the axis facing out (`−y` where the segment runs out
+     from the axis, the region being on its left), tagged with it;
+   - **straight** otherwise: a cone, exact. Its form is `Cone` (apex where
+     the line meets the axis, the axis into the nappe, the half-angle's
+     cosine and sine from the segment), or `Cylinder` (the mean radius)
+     where the ends' radii are within the resolution; its tag is
+     `Quadric::cone` about the apex where the segment is at least as wide
+     as it is tall (the apex is then near), else `Quadric::revolution`
+     written about the segment's foot on the axis, `ρ² = (ρ0 + s·h)²` with
+     `s` the slope (well conditioned up to the cylinder, `s = 0`, where an
+     apex would be far out);
+   - **an arc centred within the resolution of the axis**
+     (`circle_of`): a sphere, exact, tagged `Quadric::sphere`;
+   - **any other circle's arc** with its centre off the axis on the
+     profile's side: `Form::Torus`, fitted, claiming no surface; other
+     conics, and arcs of circles centred across the axis (a lemon):
+     `Form::Revolved` with the segment's conic as meridian, fitted.
+
+   Ellipse and other conic arcs symmetric about the axis would be exact
+   quadrics of revolution (`revolution_strip` makes them), but no sketch
+   curve gives one, and telling them is left until one does.
+6. **Rounds.** One lathe for the whole solid (`Lathe` about `−y`, so its
+   stations turn `x` towards `x × y`), in 4 pieces for a full turn and
+   `⌈θ/90°⌉` for a part. Each round builds every face on it:
+   - **Walls.** Each profile piece's meridian is the piece run backwards
+     (the lathe's `(ρ, h)` has `h` along `−y`, so the profile's
+     counter-clockwise loops run clockwise there; backwards, the strips
+     face out). A meridian ending on the axis gets a fitted cap round the
+     pole (`pole_cap_with`, on the face's copy claiming no surface; a
+     cone's with a straight `Conic::line` meridian, whose linear rulings
+     the cap is fitted with, since the exact ones would have their control
+     points on the apex), halved first if both its ends are on the axis.
+     The rest of the meridian (the cap's `rest`, or the whole) is exact
+     strips (`revolution_strip`: a sphere's arc pieces; a cone's straight
+     pieces with their control point at the geometric mean, written
+     `(p0·√ρ1 + p1·√ρ0)/(√ρ0 + √ρ1)` from the ends' radii: the same point
+     as `cone_ruling`'s with no apex to round on, the midpoint for equal
+     radii), or fitted bands (`fitted_band_with`) for fitted kinds. A band
+     asking for more pieces round the axis halves the lathe, and the round
+     starts again.
+   - **Flat faces**: the region between their two rings in their plane
+     (the outer ring's arcs counter-clockwise, the inner ring's clockwise,
+     or none for a disc, whose centre then isn't a vertex), and in a part
+     turn the sector closed by the piece at both ends (a disc's sector
+     through its centre on the axis), triangulated by the extrude's caps
+     (`Chain`, separation, `cap::triangulate`) in coordinates along `x`
+     and `x × y`. If the caps want a ring's arc halved, the lathe is
+     halved (all arcs are alike): the plan's growing `k`. Their own
+     errors are `ProfileError::TooFine` naming the flat segment.
+   - **Ends** of a part turn: the profile's region again, its boundary the
+     walls' meridian pieces at station 0 (caps' meridians, bands' pieces,
+     exact rows, axis and flat pieces) taken back into `(x, y)`,
+     triangulated by the extrude's caps; the end at the last station is
+     the same triangles turned. Where the caps want a piece halved, that
+     piece of the profile is halved the same way (the halving tree, from
+     the depths the caps' chain gives each piece, at `½` as theirs) and
+     the round runs again. Profile errors name the input segment the
+     piece came from.
+
+   At most 64 rounds, and `Lathe::MAX_PIECES` (4 096) pieces round the
+   axis; past either `TooComplex`. Every piece's strips are counted
+   against `MAX_PATCHES` and charged before they are made.
+7. **Assembly.** Rings are found by the bits of their point at station 0,
+   so faces built apart share them; a point on the axis is one vertex at
+   every station (`Lathe::turned` keeps a point `on_axis` as it is, so
+   meridians ending there keep it to the bit). Edges are the strips',
+   caps' and parallels' curves (flat faces and ends share the walls'
+   records; axis segments and flat pieces are straight). Then repair, the
+   merge pass (two collinear lines, or one cone drawn as two segments,
+   are one face), and `Solid::new_within`. As the extrude, a first try
+   without and a second with Steiner points moved in from flat corners,
+   the second only where a triangulation found such a corner and the
+   first failed with `Invalid`, `TooComplex` or `TooFine`.
+
+The meshes are closed by construction: every strip, cap and flat
+triangle names its corners by ring and station, and the face tags are
+checked as an extrude's. Measured (release, the tests' shapes on the
+`z` axis at `1e-3`, a full turn and 270°): disc 20 and 16 patches, washer
+64 and 52, cylinder 20 and 16, cone 34 and 32, hollow frustum 64 and 52,
+sphere 40 and 44, hollow ball 240 and 208, torus `R 10, r 2` 512 and 412,
+the lathe profile 298 and 242, the groove 384 and 296, the ring with a
+round hole 1 024 and 784; 1 to 55 ms each. The plan estimated 160
+patches plus caps for a lathe profile of 20 segments without tori.
+
+Tests (`revolve/tests.rs`): a disc, a washer, a cylinder, a cone, a
+hollow frustum, a sphere, a hollow ball, a torus, a lathe profile of
+lines and arcs (a chamfer, a round, a ball end), a groove (a concave
+round from its turn down a wall), a ring with a round hole (a toroidal
+void), a double cone hollowed out between two axis segments, and a
+diamond touching the axis at a vertex (part turns only), each turned
+fully, through 30°, 90° and 270°, and from −45° to 60°, on the `z` axis
+and on random frames up to `1e3` out at `1e-2` to `1e-4`: `check` with
+face tags, volume by Pappus within `1e-10` relative (plus the area times
+half the fit tolerance with fitted faces), area within `1e-10` relative
+(or `4·A·fit/2` over the smallest radius), refused turned inside out,
+drawn; exact shapes with no face claiming no surface; ends in the planes
+at `from` and `to`, facing out; faces named per curve (the axis none,
+collinear lines one face with the second's key an alias, a circle of one
+curve one face, four separate curves four), segment numbers per curve;
+forms (planes, cylinders, the cone's apex and half-angle, the torus, the
+sphere); lemons and spindles (arcs whose circles reach across the axis);
+an ellipse's, a parabola's and a hyperbola's arcs (`Form::Revolved`);
+vertices a hair off the axis put on it; the lathe growing for tori and
+not for cylinders; the same bits at 1 and 8 threads; refusals
+(`revolve/tests/refusals.rs`): across the axis (a side, a bulge, beyond
+the resolution), touching it at a vertex in a full turn and inside a
+segment in any, nearly full turns, bad sweeps and frames, touching and
+badly nested loops, the budget; random profiles of lines and conics, off
+the axis and fanned from it, on random frames and sweeps
+(`revolve/tests/random.rs`, release only): right by Pappus or refused,
+never wrong; a triangle's creases repaired at great cost (the first gap
+below).
+
+Known gaps:
+
+- **Creases neither edge rule parts.** At a ring where two faces meet
+  (a profile vertex), `check` parts their patches by the plane through
+  the ring (one face beyond it, the other in it or beyond on the other
+  side) or by the cylinder over the ring (one leaving it inwards, the
+  other outwards). A crease where both faces leave on one side of the
+  plane and one side of the cylinder, or one along it, gets neither: an
+  acute corner against a wall (the inner corners of a triangle `(2, 0)`,
+  `(5, 1)`, `(2, 2)`, both faces above or below and the wall on the
+  cylinder), two lines or arcs leaving a corner into one quadrant of
+  `(ρ, h)`, a D (an arc from the bottom of its circle out and up, a wall
+  up from there), a round just past its turn against a wall straight
+  down. Repair then splits the ring's arcs until they are straight to
+  the resolution, where the plane may turn about them: the triangle at
+  `1e-1` comes out right with 14 192 patches (0.2 s), at `1e-2` with 57 200
+  (1.8 s); finer, `TooComplex`. Random profiles of lines and conics hit
+  it about half the time (`revolve/tests/random.rs`: 110 of 120 right, 10
+  `TooComplex` or refused for the region, up to 4 s each in release even
+  on an eighth of the budget: repair's charges fall behind its time on
+  meshes this size). Never wrong. The fix is a third certificate in
+  `check` and repair: a member of the pencil of the plane and the
+  cylinder, `α·F + β·P·W` (`P` the plane's value, `W` the weights' square
+  to match `F`'s degree), with one sign on each patch, found by a
+  two-variable LP over the Bernstein coefficients (the deviation "Rings
+  at turns" anticipated it), with rounding bounded as the cylinder's.
+- **Thin wedges**: a part turn under about `0.06°` (the sine of the
+  sector's corner under `SIN_MIN`) can't triangulate a disc's or ring's
+  sector: `TooFine` for the flat segment.
+- **Quadrics of revolution other than spheres and cones** (an ellipse
+  arc centred on the axis with an axis along it) are fitted, not exact
+  (above).
 
 ## Volume and area (`Solid::volume`, `Solid::area`, `src/quadrature.rs`)
 
@@ -6790,7 +7008,12 @@ parameter, or a split outside the patch bounds),
   "Control hulls"). A reviewed alternative, one side in the plane and the
   other's control points under it with the fitted diagonal held in the
   tangent plane, covers only a flat side against a round (not two rounds,
-  an S or a concave fillet) and needs a constrained fit; rejected. A
+  an S or a concave fillet) and needs a constrained fit: not instead of
+  the cylinder, but revolve found it needed beside it (a wall straight
+  down from a concave round's bottom stands on the cylinder, so only the
+  plane can part them, and only with the band's diagonal in the plane),
+  so bands now hold the diagonal there where a piece ends at a turn
+  ("At a turn" under "Fitted strips"). A
   pencil of the plane and the cylinder (`α·F + β·plane·W`, a two-variable
   LP) would cover creases where both sides leave the edge the same way
   at different angles; nothing needs it yet. Bands and caps keep the
@@ -6856,3 +7079,23 @@ parameter, or a split outside the patch bounds),
   refinement), and the seams' triangulation of a region, but
   walks and flips on the soup, where a side between two plane faces can
   be split in both.
+- **Revolve as built.** `revolve(profile, frame, sweep, feature, tol,
+  budget)` takes the extrude's `Frame` (`y` the axis) and `Sweep::{Full,
+  Part { from, to }}`; a part turn's angles must be within `8π` of `x`.
+  Faces are flat where a line's ends are within the resolution of one
+  height, cylinders (as a form; the strips are the cone's) within it of
+  one radius, spheres where an arc's centre is within it of the axis:
+  choices of a face's kind, its tag checked, like the extrude's
+  straightening. A segment touching the axis inside is refused in part
+  turns too (the plan refused only a vertex alone, in full turns), and a
+  part turn too close to full is `ProfileError::NearlyFullTurn` (new,
+  with `CrossesAxis` and `TouchesAxis`). Where the ends' caps want a
+  profile piece halved, that piece is halved and the round runs again
+  (the plan grew `k`, which halves only round the axis); flat faces'
+  caps wanting a ring's arc halved grow `k` as planned. `Lathe::turned`
+  keeps points on the axis (as `on_axis` has them) where they are, so
+  meridians ending at a pole keep it to the bit at every station. Bands
+  hold a fitted diagonal in a turn's plane where a piece ends at a turn
+  ("At a turn"), which the groove needed. The faces' and ends' caps
+  are the plain caps (`Mode::PLAIN`, then `Mode::FLAT_CORNERS_PLAIN`),
+  without the extrude's quality refinement.
