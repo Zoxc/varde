@@ -76,7 +76,9 @@ distance is the point of the axis nearest the cursor's ray
 design's units at least 6 pixels long (`snap_step`), and nothing while
 looking along the axis; letting go sends `DropHandle`. The floating
 panel is the viewport's last layer, at its right under the camera
-controls, `opaque` so clicks on it don't reach the scene.
+controls and 12 px clear of the viewport's bottom (its body scrolls
+rather than run past it), `opaque` so clicks and the wheel on it don't
+reach the scene.
 
 The renderer draws, in order: the background; the model's faces, or with
 `Frame::faded` its depth and then only its nearest faces blended at

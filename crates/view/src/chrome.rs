@@ -31,8 +31,9 @@ pub(crate) fn tip<'a>(
     .into()
 }
 
-/// Includes the 1 px border.
-const STATUS_BAR_HEIGHT: f32 = 28.0;
+/// How tall the status bar under a screen is, in pixels, its 1 px border
+/// included.
+pub const STATUS_BAR_HEIGHT: f32 = 28.0;
 
 /// Puts a status bar under a screen's `content`, showing `info` on the left
 /// and `hints` on the right.

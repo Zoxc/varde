@@ -596,8 +596,13 @@ impl Doc {
     /// The document screen, showing the other panel tab if `peek`, unless
     /// the Dimension tool is in use, where the peek key places references.
     pub(crate) fn view(&self, peek: bool, mode: Mode) -> Element<'_, Ui> {
+        varde_view::document(self.state(peek, mode))
+    }
+
+    /// What the document screen shows of it, see [`Doc::view`].
+    pub(crate) fn state(&self, peek: bool, mode: Mode) -> varde_view::DocumentState<'_> {
         let peek = self.peeks(peek);
-        varde_view::document(varde_view::DocumentState {
+        varde_view::DocumentState {
             editor: &self.editor,
             camera: &self.camera,
             mesh: self.feed.mesh(),
@@ -629,7 +634,7 @@ impl Doc {
             failed: self.feed.failed_features(),
             deleting: self.delete_prompt(),
             proposing: self.proposing(),
-        })
+        }
     }
 }
 

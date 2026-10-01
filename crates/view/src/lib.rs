@@ -18,6 +18,7 @@ mod escape;
 mod extrude;
 mod hit;
 mod icons;
+mod operation_panel;
 mod panels;
 mod projection;
 mod shortcut;
@@ -41,6 +42,7 @@ use varde_expr::LengthUnit;
 use varde_render::{Projection, View};
 use varde_sketch::{Id, Sketch};
 
+pub use chrome::STATUS_BAR_HEIGHT;
 pub use constrain::{ConstraintKind, ConstraintSet};
 pub use document::{
     ActiveTool, DeletePrompt, DocumentState, MeshStatus, Overlay, RecoveredChanges, SketchState,
@@ -51,6 +53,7 @@ pub use extrude::{
     Handle, OperationKind, snap_step,
 };
 pub use icons::LOGO_SVG;
+pub use operation_panel::PANEL_BODY;
 pub use shortcut::{Binding, DocumentKeys, Held, document_bindings, pressed, welcome_bindings};
 pub use snap::{Inference, Level, SNAP_TOLERANCE, Snap, Target};
 pub use theme::{Mode, theme as iced_theme};

@@ -2008,3 +2008,141 @@ fn the_visible_sketches_share_the_work() {
     let session = doc.extrude.as_ref().unwrap();
     assert!(session.skipped.is_empty());
 }
+
+/// [`example_and_a_hole`] with `more` New body extrudes of the plate
+/// added, a cut of the hole set up, and every body taken out of it, so
+/// the panel lists them all without asking the regeneration lane.
+fn a_cut_listing(more: usize) -> (Doc, FeatureId) {
+    let (mut doc, sketch, _) = example_and_a_hole();
+    let FeatureKind::Extrude(plate) = doc.editor.document().features()[1].kind.clone() else {
+        panic!("the example's second feature is its extrude");
+    };
+    for _ in 0..more {
+        let mut extrude = plate.clone();
+        extrude.operation = Operation::NewBody(varde_document::BodyId::NEW);
+        doc.apply(doc.editor.document().add_extrude(extrude));
+    }
+    doc.sync();
+    doc.look(Look::SelectFeature(sketch));
+    doc.look(Look::StartExtrude);
+    extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region: 0 });
+    extrude(&mut doc, ExtrudeLook::Operation(OperationKind::Cut));
+    let bodies: Vec<_> = doc
+        .editor
+        .document()
+        .bodies()
+        .iter()
+        .map(|b| b.id)
+        .collect();
+    for body in bodies {
+        extrude(&mut doc, ExtrudeLook::Target(body));
+    }
+    (doc, sketch)
+}
+
+/// The texts of the extrude panel, from its title to its `OK`, in the
+/// order the screen reports them, and the `OK`.
+fn panel_texts(texts: &[crate::tests::Text]) -> (Vec<crate::tests::Text>, crate::tests::Text) {
+    let title = texts.iter().position(|text| text.text == "New extrude");
+    let title = title.expect("the panel's title");
+    let ok = texts[title..].iter().position(|text| text.text == "OK");
+    let panel = texts[title..=title + ok.expect("the panel's OK")].to_vec();
+    let ok = panel.last().unwrap().clone();
+    (panel, ok)
+}
+
+#[test]
+fn many_bodies_keep_ok_and_cancel_on_screen() {
+    use crate::tests::{clicked, headless, shown, texts};
+    use iced::advanced::widget::operation::scrollable::{RelativeOffset, snap_to};
+    use varde_view::Message as Ui;
+
+    for (height, bodies) in [
+        (800.0, 15),
+        (800.0, 30),
+        (600.0, 4),
+        (600.0, 8),
+        (600.0, 30),
+    ] {
+        let (doc, _) = a_cut_listing(bodies - 1);
+        assert_eq!(doc.extrude_state().unwrap().targets.len(), bodies);
+        let size = iced::Size::new(1280.0, height);
+        let status_top = height - varde_view::STATUS_BAR_HEIGHT;
+        let mut renderer = headless();
+        let mut ui = shown(doc.view(false, Mode::Light), size, &mut renderer);
+        let check = |texts: &[crate::tests::Text], last: &str| {
+            let (panel, ok) = panel_texts(texts);
+            let at = format!("{bodies} bodies at {height}");
+            for button in ["OK", "Cancel"] {
+                let button = panel.iter().find(|text| text.text == button).unwrap();
+                // Whole, and above the status bar.
+                assert!(button.bounds.height >= 14.0, "{at}: {button:?}");
+                assert!(button.visible.is_none(), "{at}: {button:?}");
+                assert!(
+                    button.bounds.y + button.bounds.height <= status_top,
+                    "{at}: {button:?}"
+                );
+            }
+            // Nothing of the panel shows over the status bar, nor over the
+            // buttons.
+            for text in panel.iter().filter(|text| text.seen().height > 0.0) {
+                let seen = text.seen();
+                assert!(seen.y + seen.height <= status_top, "{at}: {text:?}");
+                if text.text.starts_with("Body ") {
+                    assert!(seen.y + seen.height <= ok.bounds.y, "{at}: {text:?}");
+                }
+            }
+            // The last body, whole once scrolled to.
+            let last = panel.iter().find(|text| text.text == last).unwrap();
+            last.whole()
+        };
+        let last = format!("Body {bodies}");
+        let texts_now = texts(&mut ui, &renderer);
+        let _ = check(&texts_now, &last);
+        let mut snap = snap_to(
+            varde_view::PANEL_BODY,
+            RelativeOffset {
+                x: None,
+                y: Some(1.0),
+            },
+        );
+        ui.operate(&renderer, &mut snap);
+        let texts_now = texts(&mut ui, &renderer);
+        assert!(
+            check(&texts_now, &last),
+            "{bodies} bodies at {height}, scrolled"
+        );
+
+        // Cancel takes the click.
+        let (panel, _) = panel_texts(&texts_now);
+        let cancel = panel.iter().find(|text| text.text == "Cancel").unwrap();
+        let cancel = cancel.bounds.center();
+        let sent = clicked(&mut ui, &mut renderer, cancel);
+        assert!(
+            matches!(sent[..], [Ui::Look(Look::Extrude(ExtrudeLook::Cancel))]),
+            "{sent:?}"
+        );
+    }
+}
+
+#[test]
+fn a_click_on_a_body_s_label_toggles_it() {
+    use crate::tests::{clicked, headless, shown, texts};
+    use varde_view::Message as Ui;
+
+    let (doc, _) = a_cut_listing(2);
+    let body = doc.editor.document().bodies()[0].id;
+    let size = iced::Size::new(1280.0, 800.0);
+    let mut renderer = headless();
+    let mut ui = shown(doc.view(false, Mode::Light), size, &mut renderer);
+    let texts_now = texts(&mut ui, &renderer);
+    let (panel, _) = panel_texts(&texts_now);
+    let label = panel.iter().find(|text| text.text == "Body 1").unwrap();
+    // Right of the box, on the label.
+    let at = iced::Point::new(label.bounds.x + 40.0, label.bounds.center_y());
+    let sent = clicked(&mut ui, &mut renderer, at);
+    assert!(
+        matches!(&sent[..], [Ui::Look(Look::Extrude(ExtrudeLook::Target(b)))] if *b == body),
+        "{sent:?}"
+    );
+}

@@ -8,29 +8,22 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use glam::{DVec2, DVec3};
-use iced::widget::{
-    Space, button, checkbox, column, container, opaque, row, space, text, text_input,
-};
+use iced::widget::text::Wrapping;
+use iced::widget::{button, checkbox, column, row, text, text_input};
 use iced::{Alignment, Element, Length};
 use varde_document::{BodyId, ExtrudeError, FeatureId, Placement, Plane};
 use varde_expr::LengthUnit;
 use varde_sketch::{Profiles, Region, angle};
 
-use crate::chrome::{hrule, small_button, tip};
+use crate::chrome::{hrule, tip};
 use crate::escape::OnEscape;
-use crate::theme::{self, Emphasis, SEMIBOLD};
+use crate::operation_panel::{Parts, message_text, operation_panel};
+use crate::theme::{self, SEMIBOLD};
 use crate::{Edit, Look, Message, VALUE_FIELD};
 
 /// The field of an extrude's second distance, for two sides. The first
 /// is [`VALUE_FIELD`], which takes the focus as the session opens.
 const SECOND_FIELD: iced::widget::Id = iced::widget::Id::new("extrude-second");
-
-/// How wide the panel is, in pixels.
-const PANEL_WIDTH: f32 = 264.0;
-
-/// How far below the viewport's top the panel starts, clear of the
-/// camera controls and the view cube, in pixels.
-pub(crate) const PANEL_TOP: f32 = 150.0;
 
 /// How far the handle's snapping steps are apart at least, in pixels at
 /// the target: a step is the roundest length in the design's units at
@@ -385,9 +378,6 @@ pub fn snap_step(pixel: f64, units: LengthUnit) -> Option<f64> {
 
 /// The floating panel of the extrude being set up.
 pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
-    let title = text(state.editing.unwrap_or("New extrude"))
-        .size(13)
-        .font(SEMIBOLD);
     let regions = match state.picked.len() {
         0 if state
             .candidates
@@ -446,6 +436,8 @@ pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
                 .label(target.name)
                 .size(14)
                 .text_size(12)
+                // A name with no spaces breaks where the panel ends.
+                .text_wrapping(Wrapping::WordOrGlyph)
                 .on_toggle_maybe(editable.then_some(move |_| {
                     Message::Look(Look::Extrude(ExtrudeLook::Target(target.body)))
                 }))
@@ -455,33 +447,16 @@ pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
     });
     // Why OK can't be pressed, or the preview failed, or that OK waits
     // on the solver.
-    let error = match (state.refused, state.error) {
-        (Some(refused), _) => Some(text(refused.to_string()).size(12).style(theme::danger_text)),
-        (None, Some(error)) => Some(text(error).size(12).style(theme::danger_text)),
-        (None, None) => state.checking.then(|| {
-            text("Checking the sketch…")
-                .size(12)
-                .style(theme::muted_text)
-        }),
+    let message = match (state.refused, state.error) {
+        (Some(refused), _) => Some(message_text(refused.to_string(), theme::danger_text)),
+        (None, Some(error)) => Some(message_text(error, theme::danger_text)),
+        (None, None) => state
+            .checking
+            .then(|| message_text("Checking the sketch…", theme::muted_text)),
     };
-    let buttons = row![
-        space::horizontal(),
-        small_button("Cancel", Emphasis::Secondary)
-            .on_press(Message::Look(Look::Extrude(ExtrudeLook::Cancel))),
-        small_button("OK", Emphasis::Primary)
-            .on_press_maybe(state.ready.then_some(Message::Edit(Edit::CommitExtrude))),
-    ]
-    .spacing(6);
 
-    let content = column![
-        row![
-            title,
-            space::horizontal(),
-            text(regions).size(12).style(theme::muted_text)
-        ]
-        .align_y(Alignment::Center),
+    let body = column![
         missing,
-        hrule(),
         heading("Extent"),
         grid(extents),
         column(fields).spacing(4),
@@ -490,13 +465,22 @@ pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
         heading("Operation"),
         grid(operations),
         targets,
-        error,
-        Space::new().height(2),
-        buttons,
     ]
-    .spacing(6)
-    .width(PANEL_WIDTH);
-    opaque(container(content).padding(10).style(theme::float_panel))
+    .spacing(6);
+    operation_panel(Parts {
+        title: state.editing.unwrap_or("New extrude"),
+        summary: Some(
+            text(regions)
+                .size(12)
+                .wrapping(Wrapping::None)
+                .style(theme::muted_text)
+                .into(),
+        ),
+        body: body.into(),
+        message,
+        ok: state.ready.then_some(Message::Edit(Edit::CommitExtrude)),
+        cancel: Message::Look(Look::Extrude(ExtrudeLook::Cancel)),
+    })
 }
 
 /// A small heading in the panel.
@@ -559,9 +543,12 @@ fn distance_field<'a>(
         input
     };
     let input = OnEscape::new(input, Message::Look(Look::Extrude(ExtrudeLook::Cancel)));
-    let error = field
-        .error
-        .map(|error| text(error.to_string()).size(11.5).style(theme::danger_text));
+    let error = field.error.map(|error| {
+        text(error.to_string())
+            .size(11.5)
+            .wrapping(Wrapping::WordOrGlyph)
+            .style(theme::danger_text)
+    });
     column![
         row![text(label).size(12).width(64), input].align_y(Alignment::Center),
         error,

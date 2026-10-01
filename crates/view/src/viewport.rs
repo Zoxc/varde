@@ -19,6 +19,7 @@ use varde_render::{
 use crate::anchors::Anchors;
 use crate::chrome::{chord_hint, mouse_hint};
 use crate::icons::MouseButton;
+use crate::operation_panel::{PANEL_MARGIN, PANEL_TOP};
 use crate::shortcut::Held;
 use crate::theme::{Palette, SketchColors};
 use crate::{Look, Message, controls};
@@ -77,9 +78,13 @@ pub(crate) fn viewport<'a>(
     // The layers over the scene take only what's over their widgets, and
     // let the rest through to it.
     let panel = panel.map(|panel| {
-        container(panel)
-            .align_right(Length::Fill)
-            .padding(iced::Padding::from([0, 12]).top(crate::extrude::PANEL_TOP))
+        // Clear of the viewport's bottom too: the panel's body scrolls
+        // rather than run past it.
+        container(panel).align_right(Length::Fill).padding(
+            iced::Padding::from([0.0, PANEL_MARGIN])
+                .top(PANEL_TOP)
+                .bottom(PANEL_MARGIN),
+        )
     });
     stack![scene]
         .extend(anchors.into_iter().flatten())

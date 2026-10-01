@@ -2,6 +2,7 @@ use varde_document::OriginPlane;
 use varde_sketch::{Curve, Sketch};
 
 use super::*;
+use crate::operation_panel::PANEL_WIDTH;
 
 /// A sketch of a 4 × 2 rectangle from the origin with a unit square hole
 /// from (1, 0.5), and its profiles.
@@ -169,4 +170,53 @@ fn a_snap_step_is_the_decimal_it_names() {
     assert_eq!(snap_step(f64::MAX / 6.0, LengthUnit::Mm), None);
     // 6 pixels come to 5.6e305 ft, up to 1e306 ft: 3e308 mm.
     assert_eq!(snap_step(2.8e307, LengthUnit::Ft), None);
+}
+
+#[test]
+fn a_long_name_without_spaces_stays_in_the_panel() {
+    use crate::testing::Laid;
+    let profiles = plate();
+    let picked = BTreeSet::from([0]);
+    let long = "x".repeat(200);
+    let body = BodyId::NEW;
+    let mut state = state_of(&profiles, &picked);
+    state.operation = OperationKind::Cut;
+    let size = iced::Size::new(400, 600);
+    let max = iced::Size::new(size.width as f32, size.height as f32);
+    let short = Laid::new(
+        panel(&ExtrudeState {
+            targets: vec![ExtrudeTarget {
+                body,
+                name: "Body 1",
+                included: true,
+            }],
+            ..state.clone()
+        }),
+        max,
+    )
+    .pixels(size);
+    state.editing = Some(&long);
+    state.targets = vec![ExtrudeTarget {
+        body,
+        name: &long,
+        included: true,
+    }];
+    let mut laid = Laid::new(panel(&state), max);
+    assert_eq!(laid.node.size().width, PANEL_WIDTH);
+    for shown in laid.texts() {
+        assert!(
+            shown.bounds.x + shown.bounds.width <= PANEL_WIDTH,
+            "{shown:?}"
+        );
+    }
+    // Nothing is drawn right of the panel that the short name doesn't
+    // draw there.
+    let pixels = laid.pixels(size);
+    let columns = PANEL_WIDTH as usize + 1..size.width as usize;
+    for y in 0..size.height as usize {
+        for x in columns.clone() {
+            let at = (y * size.width as usize + x) * 4;
+            assert_eq!(pixels[at..at + 4], short[at..at + 4], "at ({x}, {y})");
+        }
+    }
 }
