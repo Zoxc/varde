@@ -3705,7 +3705,17 @@ body, and the later ones still run.
   body it can't tell that isn't excluded fails the feature and is listed
   last, so the panel offers to take it out. No target is "it doesn't
   touch any body", or "it doesn't touch any body not taken out of it"
-  when it excludes some. The excluded bodies' touch and boolean results
+  when it excludes some. A tool touching a body only along a line (a
+  boss tangent to a round boss) touches it, so that body is a target
+  and its boolean decides: a join fails naming the body, as the union
+  of solids meeting along a line isn't a manifold ("joining it to Body
+  1 leaves no clean solid…" at the coarsest tolerance, "…is too
+  complex to work out…" where refining the line contact runs out); a
+  tangent cut is the body unchanged where the kernel works it out (the
+  line on the circles' seam at the coarsest tolerance) and otherwise
+  fails naming the body ("cutting it from Body 1 can't be worked
+  out…", "…leaves a face that can't be made…", "…is too complex…"),
+  changing nothing. The excluded bodies' touch and boolean results
   are marked used (`Cache::keep`), so the budget evicts them last, for
   putting them back. Each target is replaced by
   `kernel::boolean(body, tool, op)` with `Union`, `Difference` or
@@ -3955,8 +3965,16 @@ whose boxes are apart are answered at once).
 A boss tangent to a body only along a line touches it now, so the
 join reaches the union, which refuses a line contact or runs out
 refining it (the union's own gap); before, `touches` called it "it
-doesn't touch any body". An operation that runs
-out of budget takes about 2–3.5 s on one native thread and holds the
+doesn't touch any body". Measured, release, a loaded machine, a disc
+of radius 1 cut or joined 1 mm tall beside a round body of radius 1
+along a line at three angles: `touches` 0.8 to 4.3 ms at every
+tolerance from `1e-1` to `1e-4`; the whole regen 0.2 to 0.45 s at
+`1e-1` (refused or a no-op), 1.1 to 2.4 s at `1e-2` (a no-op, or
+refused for a face too thin), 1.4 to 4.1 s at the default and 4.9 to
+7.6 s at `1e-4`, there the boolean running out (`TooComplex`). So the
+time moved from `touches` (3.6 to 11 s to `false`, `TooComplex` or
+`Inconsistent`) to the boolean, whose answer is cached. An operation
+that runs out of budget takes about 2–3.5 s on one native thread and holds the
 single-threaded web worker longer, with drafts queued behind it (latest
 wins, so only the newest waits). The cache's sizes are estimates
 (shared `Arc`s count once per entry holding them), and eviction is plain
