@@ -5106,9 +5106,12 @@ mesh would hit again, so it is logged once. On the web the mesh still crosses th
 On the web the reply's head
 carries `draft`, `failed`, `touched`, `merged` and the boxes as corner
 arrays, checked finite and in order on receipt (`wire::Error::Bounds`);
-`MAX_HEAD_BYTES` is 256 MiB (the head carries the picking tables' faces
-and chains too; a model whose head would be larger is answered as
-failed). The draft's and each feature's touched bodies
+`MAX_HEAD_BYTES` is 64 MiB (the head carries the picking tables' faces
+and chains too, at most `MAX_FACES` 2²⁰ faces, `Picking::MAX_ALIASES` 2²⁰
+aliases among them and `MAX_CHAINS` 2²² chains, each refused as soon as
+it's past its bound, since a face is some 130 bytes on the page and as
+few as 6 in the head; a model whose head would be larger or whose
+tables are past those is answered as failed). The draft's and each feature's touched bodies
 cross in the head as marks, unchecked; `merged` is checked to name each
 consumed body once and none as a holder (`wire::Error::Merged`), and is
 otherwise display only. Either failing answers the generation with

@@ -430,8 +430,10 @@ bodies each join, cut or intersect touches, the bodies' boxes, the
 draft's outcome and the picking tables' faces and edges) and the mesh's
 positions, normals, indices and edges, the sketches' line points and
 ends, and the picking's face per triangle and chain per edge as raw
-bytes. A model whose head would be over its bound (256 MiB) is answered
-as failed. Both
+bytes. A model whose head would be over its bound (64 MiB), or with
+more faces, chains or aliases than a reply may carry (2²⁰, 2²² and 2²⁰
+all faces' together, decoded within those bounds so a short head can't
+make the page build more), is answered as failed. Both
 directions transfer their `ArrayBuffer`s instead of copying them. The page
 checks what comes back before using it (whole elements, a size bound,
 indices and edges within the vertex count, positions and points within

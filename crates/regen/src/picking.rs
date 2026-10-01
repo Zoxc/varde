@@ -176,6 +176,8 @@ pub struct PickFace {
     /// Its name, which references store.
     pub key: FaceKey,
     /// The keys merged into it, which name it too, sorted, without `key`.
+    /// At most [`Picking::MAX_ALIASES`] are decoded.
+    #[serde(deserialize_with = "bounded::aliases")]
     pub aliases: Vec<FaceKey>,
     pub summary: Summary,
 }
@@ -218,6 +220,11 @@ impl Picking {
     /// How far from 1 a summary's direction's length may be: a unit
     /// vector rounded is far nearer.
     pub const UNIT: f64 = 1e-9;
+    /// The most aliases all of the faces in a reply from the web worker
+    /// may have together, and so one face's (a key is 32 bytes on the
+    /// page and as few as 3 in the reply). A model with more is answered
+    /// as failed.
+    pub const MAX_ALIASES: usize = 1 << 20;
 
     /// The tables of `mesh` of these parts, if they make them; see
     /// [`Picking`] for what is checked.
@@ -345,6 +352,73 @@ impl Picking {
         self.triangles.extend(triangles);
         self.edges.extend(edges);
         Ok(())
+    }
+}
+
+/// Decoding sequences no longer than a bound, refused as soon as they
+/// pass it, so a short message can't claim (or hold) more elements than
+/// the page should build. Postcard says a sequence's length up front, so
+/// most are refused before any element is read.
+pub(crate) mod bounded {
+    use std::fmt;
+    use std::marker::PhantomData;
+
+    use serde::Deserializer;
+    use serde::de::{Deserialize, Error, SeqAccess, Visitor};
+    use varde_kernel::mesh::FaceKey;
+
+    use super::Picking;
+
+    /// At most `max` elements, and at most `budget` of what `weigh`
+    /// gives them, all together.
+    struct Seq<T, F> {
+        max: usize,
+        weigh: F,
+        budget: usize,
+        element: PhantomData<T>,
+    }
+
+    impl<'de, T: Deserialize<'de>, F: Fn(&T) -> usize> Visitor<'de> for Seq<T, F> {
+        type Value = Vec<T>;
+
+        fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "at most {} elements", self.max)
+        }
+
+        fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Vec<T>, A::Error> {
+            if let Some(len) = seq.size_hint().filter(|&len| len > self.max) {
+                return Err(A::Error::invalid_length(len, &self));
+            }
+            let mut out = Vec::new();
+            let mut weight = 0usize;
+            while let Some(element) = seq.next_element::<T>()? {
+                weight = weight.saturating_add((self.weigh)(&element));
+                if out.len() >= self.max || weight > self.budget {
+                    return Err(A::Error::invalid_length(out.len().saturating_add(1), &self));
+                }
+                out.push(element);
+            }
+            Ok(out)
+        }
+    }
+
+    pub(crate) fn seq<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
+        deserializer: D,
+        max: usize,
+        weigh: impl Fn(&T) -> usize,
+        budget: usize,
+    ) -> Result<Vec<T>, D::Error> {
+        deserializer.deserialize_seq(Seq {
+            max,
+            weigh,
+            budget,
+            element: PhantomData,
+        })
+    }
+
+    /// One face's aliases: at most [`Picking::MAX_ALIASES`].
+    pub(crate) fn aliases<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<FaceKey>, D::Error> {
+        seq(d, Picking::MAX_ALIASES, |_| 0, 0)
     }
 }
 

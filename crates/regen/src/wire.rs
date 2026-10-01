@@ -60,8 +60,46 @@ use crate::{Drafted, PickChain, PickFace, Picking, PickingError, Request, Respon
 /// or intersect touches, a box per body and the picking tables (some 60
 /// bytes a face and 10 an edge), or an error message, so this is far more
 /// than any real one needs. A model whose head would be larger is
-/// answered as failed ([`encode_reply`]).
-pub const MAX_HEAD_BYTES: usize = 1 << 28;
+/// answered as failed ([`encode_reply`]). It's no larger because a few
+/// bytes of a head can stand for many more on the page (a feature id is
+/// 8 bytes there and as few as 1 here).
+pub const MAX_HEAD_BYTES: usize = 1 << 26;
+
+/// The most faces a reply's picking tables may have: past any real
+/// model's, and few enough that decoding them can't take the page's
+/// memory (a face is about 130 bytes there and as few as 6 in the head).
+/// A model with more is answered as failed ([`encode_reply`]).
+pub const MAX_FACES: usize = 1 << 20;
+
+/// The most chains a reply's picking tables may have (12 bytes each on
+/// the page, as few as 3 in the head).
+pub const MAX_CHAINS: usize = 1 << 22;
+
+/// The bounded decoding of a head's picking tables: refused as soon as
+/// they're past their bounds, mostly before any element is read.
+mod bounded {
+    use serde::Deserializer;
+
+    use super::{MAX_CHAINS, MAX_FACES};
+    use crate::picking::bounded::seq;
+    use crate::{PickChain, PickFace, Picking};
+
+    /// At most [`MAX_FACES`] faces with at most [`Picking::MAX_ALIASES`] aliases
+    /// together.
+    pub(super) fn faces<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<PickFace>, D::Error> {
+        seq(
+            d,
+            MAX_FACES,
+            |face: &PickFace| face.aliases.len(),
+            Picking::MAX_ALIASES,
+        )
+    }
+
+    /// At most [`MAX_CHAINS`] chains.
+    pub(super) fn chains<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<PickChain>, D::Error> {
+        seq(d, MAX_CHAINS, |_| 0, 0)
+    }
+}
 
 /// The most bytes a request may have. Documents are far smaller; the
 /// bound keeps a broken request from being copied without end.
@@ -107,9 +145,12 @@ pub enum Head {
         /// finite and in order ([`Error::Bounds`]).
         bodies: Vec<(BodyId, [[f32; 3]; 2])>,
         /// The picking tables' faces, each of a body in `bodies`
-        /// ([`Error::Picking`]).
+        /// ([`Error::Picking`]), at most [`MAX_FACES`] with at most
+        /// [`Picking::MAX_ALIASES`] aliases together, refused as they're decoded.
+        #[serde(deserialize_with = "bounded::faces")]
         faces: Vec<PickFace>,
-        /// The picking tables' edges.
+        /// The picking tables' edges, at most [`MAX_CHAINS`].
+        #[serde(deserialize_with = "bounded::chains")]
         chains: Vec<PickChain>,
     },
     /// A [`Response::Failed`].
@@ -139,9 +180,10 @@ pub const MODEL_PARTS: usize = 8;
 
 /// The reply answering `response`, the mirror of [`decode_reply`]: its
 /// encoded head, and its model's parts as bytes if it has one, see
-/// [`MODEL_PARTS`]. A model whose head would be over [`MAX_HEAD_BYTES`]
-/// is answered as failed, which the page would otherwise refuse with no
-/// generation to answer.
+/// [`MODEL_PARTS`]. A model whose head would be over [`MAX_HEAD_BYTES`],
+/// or whose picking tables are past [`MAX_FACES`], [`MAX_CHAINS`] or
+/// [`Picking::MAX_ALIASES`], is answered as failed, which the page would otherwise
+/// refuse with no generation to answer.
 pub fn encode_reply(response: &Response) -> (Vec<u8>, Option<[&[u8]; MODEL_PARTS]>) {
     match response {
         Response::Regenerated {
@@ -173,7 +215,13 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Option<[&[u8]; MODEL_PARTS
                 chains: picking.chains().to_vec(),
             }
             .encode();
-            if head.len() > MAX_HEAD_BYTES {
+            let aliases = (picking.faces().iter())
+                .fold(0usize, |sum, face| sum.saturating_add(face.aliases.len()));
+            if head.len() > MAX_HEAD_BYTES
+                || picking.faces().len() > MAX_FACES
+                || picking.chains().len() > MAX_CHAINS
+                || aliases > Picking::MAX_ALIASES
+            {
                 let failed = Head::Failed {
                     generation: *generation,
                     exclude: *exclude,

@@ -4,7 +4,7 @@ use varde_kernel::{Solid, Tolerance};
 use varde_sketch::{CIRCLE_SEGMENTS, Constraint, Curve};
 
 use super::*;
-use crate::history::tests::example_extrude;
+use crate::history::tests::{example_extrude, plate_below};
 
 fn regenerate(editor: &Editor, exclude: Option<FeatureId>) -> Request {
     Request::Regenerate {
@@ -1959,6 +1959,15 @@ fn assert_picks_match(mesh: &RenderMesh, picking: &Picking) {
             let off = off_surface(&faces[f as usize].summary, at(v));
             assert!(off < 1e-4, "{:?} is {off} off face {f}", at(v));
         }
+        // A plane's normal points out, as the triangle's winding does.
+        if let Summary::Plane { n, .. } = faces[f as usize].summary {
+            let [a, b, c] = [tri[0], tri[1], tri[2]].map(at);
+            let normal = (b - a).cross(c - a);
+            assert!(
+                normal.dot(n.into()) > 0.5 * normal.length(),
+                "face {f} faces {n:?}, its triangle {normal:?}"
+            );
+        }
     }
     for (edge, &c) in mesh.edges().iter().zip(picking.edges()) {
         if c == Picking::NONE {
@@ -2133,4 +2142,267 @@ fn the_cache_counts_the_picking_tables() {
     assert!(regenerator.cache().bytes() >= 2 * (mesh_bytes + index_bytes + table_bytes));
     let (total, _) = regenerator.cache().audit();
     assert_eq!(regenerator.cache().bytes(), total);
+}
+
+/// The tables of a regeneration that worked, checked against its mesh.
+fn picked(response: Response) -> (Arc<RenderMesh>, Arc<Picking>, Vec<BodyId>) {
+    let Response::Regenerated {
+        mesh,
+        picking,
+        bodies,
+        failed,
+        ..
+    } = response
+    else {
+        panic!("regeneration failed: {response:?}");
+    };
+    assert!(failed.is_empty(), "{failed:?}");
+    assert_picks_match(&mesh, &picking);
+    // Every face of a body the answer lists, every chain within one body.
+    let listed: Vec<BodyId> = bodies.iter().map(|&(body, _)| body).collect();
+    assert!(picking.faces().iter().all(|f| listed.contains(&f.body)));
+    for chain in picking.chains() {
+        let [a, b] = chain.faces.map(|f| picking.faces()[f as usize].body);
+        assert_eq!(a, b);
+    }
+    (mesh, picking, listed)
+}
+
+/// The bodies `picking`'s faces are of, in order, each once.
+fn bodies_picked(picking: &Picking) -> Vec<BodyId> {
+    let mut bodies: Vec<BodyId> = picking.faces().iter().map(|f| f.body).collect();
+    bodies.dedup();
+    bodies
+}
+
+/// Hiding and showing bodies changes the tables with the mesh: a hidden
+/// body's faces are gone, the other's indices start at 0, and showing it
+/// again gives the first tables back.
+#[test]
+fn picking_tables_follow_the_bodies_shown() {
+    let mut editor = Editor::new(Document::example());
+    let top = editor.document().bodies()[0].id;
+    let below = plate_below(&mut editor);
+    let mut regenerator = Regenerator::default();
+    let (_, both, _) = picked(regenerator.handle(regenerate(&editor, None)));
+    assert_eq!(bodies_picked(&both), [top, below]);
+
+    editor.apply(Command::SetVisible(top, false)).unwrap();
+    let (mesh, picking, listed) = picked(regenerator.handle(regenerate(&editor, None)));
+    assert_eq!(listed, [top, below], "hidden bodies keep their boxes");
+    assert_eq!(bodies_picked(&picking), [below]);
+    assert_eq!(picking.faces().len(), 7);
+    assert_eq!(picking.faces(), &both.faces()[7..]);
+    // Below the top plate, which is gone.
+    assert!(mesh.positions().iter().all(|p| p[2] <= 0.0));
+
+    editor.apply(Command::SetVisible(below, false)).unwrap();
+    let (mesh, picking, _) = picked(regenerator.handle(regenerate(&editor, None)));
+    assert_eq!(mesh.triangle_count(), 0);
+    assert_eq!(*picking, Picking::default());
+
+    editor.apply(Command::SetVisible(top, true)).unwrap();
+    let (_, picking, _) = picked(regenerator.handle(regenerate(&editor, None)));
+    assert_eq!(picking.faces(), &both.faces()[..7]);
+    editor.apply(Command::SetVisible(below, true)).unwrap();
+    let (_, picking, _) = picked(regenerator.handle(regenerate(&editor, None)));
+    assert_eq!(picking, both);
+}
+
+/// The same shown bodies in another order: a scene filed by mesh keys
+/// alone would hand back the other order's tables.
+#[test]
+fn picking_tables_name_each_body_even_when_their_solids_match() {
+    // Two bodies of the same extrude settings on the same sketch: equal
+    // solids, so equal mesh keys if the key held only the solid.
+    let mut editor = Editor::new(Document::example());
+    let top = editor.document().bodies()[0].id;
+    let extrude = example_extrude(editor.document());
+    editor
+        .apply(editor.document().add_extrude(extrude))
+        .unwrap();
+    let twin = editor.document().bodies().last().unwrap().id;
+    let mut regenerator = Regenerator::default();
+    let (_, both, _) = picked(regenerator.handle(regenerate(&editor, None)));
+    let shown = bodies_picked(&both);
+    assert!(shown.contains(&top));
+    for (hidden, kept) in [(top, twin), (twin, top)] {
+        let mut one = editor.clone();
+        one.apply(Command::SetVisible(hidden, false)).unwrap();
+        let (_, picking, _) = picked(regenerator.handle(regenerate(&one, None)));
+        assert_eq!(bodies_picked(&picking), [kept], "{hidden:?} hidden");
+    }
+}
+
+/// A join merging two plates: the merged body's faces are all the
+/// holder's, none the consumed body's, in the committed answer and in a
+/// draft's; and the tables follow an edit that changes a face's plane.
+#[test]
+fn picking_tables_follow_merges_drafts_and_edits() {
+    use crate::history::tests::{add_extrude, disc, set_extrude, two_sides};
+    use varde_document::Targets;
+    let mut editor = Editor::new(Document::example());
+    let top = editor.document().bodies()[0].id;
+    let below = plate_below(&mut editor);
+    let mut regenerator = Regenerator::default();
+    let (_, apart, _) = picked(regenerator.handle(regenerate(&editor, None)));
+    assert_eq!(bodies_picked(&apart), [top, below]);
+
+    // The join as a draft first.
+    let mut probe = editor.clone();
+    let extent = two_sides(editor.document(), "15", "5");
+    let join = add_extrude(
+        &mut probe,
+        disc((20.0, 0.0), 5.0),
+        extent,
+        Operation::Join(Targets::default()),
+    );
+    let FeatureKind::Extrude(extrude) = &probe.document().feature(join).unwrap().kind else {
+        unreachable!()
+    };
+    let mut sketched = probe.clone();
+    sketched.undo();
+    let draft = Draft {
+        revision: 1,
+        feature: None,
+        extrude: extrude.clone(),
+    };
+    let response = regenerator.handle(regenerate_with(&sketched, Some(draft)));
+    let Response::Regenerated { draft, merged, .. } = &response else {
+        panic!("regeneration failed");
+    };
+    assert_eq!(draft.as_ref().unwrap().error, None);
+    assert_eq!(merged.len(), 1);
+    let (consumed, holder) = merged[0];
+    let (mesh, drafted, listed) = picked(response);
+    assert!(!listed.contains(&consumed));
+    assert_eq!(bodies_picked(&drafted), [holder]);
+    assert_eq!(drafted.triangles().len(), mesh.triangle_count());
+
+    // Committed: the same tables.
+    let (_, joined, _) = picked(regenerator.handle(regenerate(&probe, None)));
+    assert_eq!(joined.faces(), drafted.faces());
+    assert_eq!(bodies_picked(&joined), [holder]);
+    assert!([top, below].contains(&holder) && holder != consumed);
+
+    // The top plate made thicker: its top face's plane follows, in the
+    // answer after the scene before was cached.
+    let plate = editor.document().features()[1].id;
+    let twelve = crate::history::tests::length(probe.document(), "12");
+    set_extrude(&mut probe, plate, |extrude| {
+        extrude.extent = Extent::OneSide(twelve);
+    });
+    let (_, thicker, _) = picked(regenerator.handle(regenerate(&probe, None)));
+    let plane = |d: f64| Summary::Plane {
+        n: [0.0, 0.0, 1.0],
+        d,
+    };
+    assert!(joined.faces().iter().any(|f| f.summary == plane(10.0)));
+    assert!(!thicker.faces().iter().any(|f| f.summary == plane(10.0)));
+    assert!(thicker.faces().iter().any(|f| f.summary == plane(12.0)));
+}
+
+/// The ellipse of half-axes `a` along x and `b` along y about `centre`,
+/// counterclockwise in four quarter arcs, as curve `curve`.
+fn ellipse_loop(centre: DVec2, a: f64, b: f64, curve: u64) -> varde_kernel::Loop {
+    use varde_kernel::patch::Conic2;
+    let w = std::f64::consts::FRAC_1_SQRT_2;
+    let at = |x: f64, y: f64| centre + DVec2::new(a * x, b * y);
+    let quarters = [
+        (at(1.0, 0.0), at(1.0, 1.0), at(0.0, 1.0)),
+        (at(0.0, 1.0), at(-1.0, 1.0), at(-1.0, 0.0)),
+        (at(-1.0, 0.0), at(-1.0, -1.0), at(0.0, -1.0)),
+        (at(0.0, -1.0), at(1.0, -1.0), at(1.0, 0.0)),
+    ];
+    varde_kernel::Loop {
+        segments: quarters
+            .map(|(p0, c, p1)| varde_kernel::Segment {
+                conic: Conic2::new(p0, c, w, p1).unwrap(),
+                curve,
+            })
+            .to_vec(),
+    }
+}
+
+/// An extrude on a tilted, moved plane: its caps' summaries are the
+/// planes they lie on, facing out, a circle's wall a cylinder along the
+/// plane's normal through the circle's centre, an ellipse's a conic
+/// cylinder along it; every triangle lies on its face's surface.
+#[test]
+fn summaries_of_an_extrude_on_a_tilted_plane() {
+    use glam::DVec3;
+    use varde_kernel::{Budget, Frame, Profile, extrude};
+    let frame = Frame {
+        origin: DVec3::new(5.0, -3.0, 2.0),
+        x: DVec3::new(0.6, 0.0, 0.8),
+        y: DVec3::Y,
+    };
+    let normal = frame.normal();
+    assert_eq!(normal, DVec3::new(-0.8, 0.0, 0.6));
+    let body = Document::example().bodies()[0].id;
+    let tol = Tolerance::default();
+    for (ellipse, b) in [(false, 2.0), (true, 1.0)] {
+        let centre = DVec2::new(1.0, -2.0);
+        let profile = Profile {
+            loops: vec![ellipse_loop(centre, 2.0, b, 7)],
+        };
+        let solid = extrude(&profile, &frame, 1.0, 4.0, 3, &tol, &Budget::DEFAULT).unwrap();
+        let drawn = Drawn::new(&solid, &Display::new(&tol)).unwrap();
+        let mut picking = Picking::default();
+        picking.append(body, &drawn).unwrap();
+        assert_picks_match(&drawn.mesh, &picking);
+        let faces = picking.faces();
+        assert_eq!(faces.len(), 3, "{faces:?}");
+        let near = |a: [f64; 3], b: DVec3| (DVec3::from(a) - b).length() < 1e-12;
+        let plane = |n: DVec3, d: f64| {
+            faces.iter().any(|f| match f.summary {
+                Summary::Plane { n: m, d: e } => near(m, n) && (e - d).abs() < 1e-12,
+                _ => false,
+            })
+        };
+        let at = normal.dot(frame.origin);
+        assert!(plane(normal, at + 4.0), "{faces:?}");
+        assert!(plane(-normal, -(at + 1.0)), "{faces:?}");
+        let axis = frame.point(centre, 0.0);
+        let wall = faces
+            .iter()
+            .find(|f| !matches!(f.summary, Summary::Plane { .. }));
+        match wall.unwrap().summary {
+            Summary::Cylinder {
+                point,
+                axis: along,
+                radius,
+            } if !ellipse => {
+                assert!(near(along, normal) || near(along, -normal), "{along:?}");
+                let off = DVec3::from(point) - axis;
+                assert!(off.cross(normal).length() < 1e-12, "{point:?}");
+                assert!((radius - 2.0).abs() < 1e-12);
+            }
+            Summary::ConicCylinder { along } if ellipse => {
+                assert!(near(along, normal) || near(along, -normal), "{along:?}");
+            }
+            summary => panic!("the wall is {summary:?}"),
+        }
+        // The wall's three chains: two rims, closed.
+        assert_eq!(picking.chains().len(), 2);
+        assert!(picking.chains().iter().all(|c| c.closed));
+    }
+}
+
+/// A pocket cut into the plate's bottom: its ceiling faces down into the
+/// pocket, its walls out of the plate into it, as the plane summaries
+/// say (a cut's faces are the tool's turned round).
+#[test]
+fn a_cut_s_faces_face_out_of_the_solid() {
+    let mut editor = Editor::new(Document::example());
+    crate::history::tests::add_pocket(&mut editor);
+    let (_, picking, _) = picked(handle(regenerate(&editor, None)));
+    let faces = picking.faces();
+    // The plate's seven and the pocket's ceiling and four walls.
+    assert_eq!(faces.len(), 12, "{faces:?}");
+    let ceiling = Summary::Plane {
+        n: [0.0, 0.0, -1.0],
+        d: -4.0,
+    };
+    assert_eq!(faces.iter().filter(|f| f.summary == ceiling).count(), 1);
 }

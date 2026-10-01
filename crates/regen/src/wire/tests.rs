@@ -1092,3 +1092,228 @@ fn picked_faces_must_be_of_listed_bodies() {
         Error::Picking(PickingError::Face).to_string()
     );
 }
+
+/// Checks what an accepted reply's picking tables promise beyond their
+/// indices: each chain between two faces of one body, every summary
+/// sound, every face of a listed body.
+fn assert_sound_tables(head: &[u8], parts: &[Vec<u8>]) {
+    if let Ok(Response::Regenerated {
+        picking, bodies, ..
+    }) = decode_reply(head, &slices(parts))
+    {
+        let faces = picking.faces();
+        for chain in picking.chains() {
+            let [a, b] = chain.faces;
+            assert_ne!(a, b);
+            assert_eq!(faces[a as usize].body, faces[b as usize].body);
+        }
+        for face in faces {
+            assert!(face.summary.valid(), "{face:?}");
+            assert!(face.aliases.windows(2).all(|w| w[0] < w[1]));
+            assert!(!face.aliases.contains(&face.key));
+            assert!(bodies.iter().any(|&(body, _)| body == face.body));
+        }
+    }
+}
+
+/// The reply to two plates, one above the other: real tables of two
+/// bodies, fourteen faces and their summaries.
+fn two_plates() -> (Vec<u8>, Vec<Vec<u8>>) {
+    let mut editor = Editor::new(Document::example());
+    crate::history::tests::plate_below(&mut editor);
+    let response = handle(decode_request(&encode_request(&regenerate(&editor))).unwrap());
+    let (head, parts) = encode_reply(&response);
+    let parts = parts.unwrap().map(<[u8]>::to_vec).to_vec();
+    // It round-trips as it is.
+    let Response::Regenerated { picking, .. } = decode_reply(&head[..], &slices(&parts)).unwrap()
+    else {
+        panic!("the plates were refused");
+    };
+    assert_eq!(picking.faces().len(), 14);
+    (head, parts)
+}
+
+#[test]
+fn damaged_picking_tables_never_panic() {
+    let (head, parts) = two_plates();
+    let mut rng = Rng(0xfeed);
+    for _ in 0..3000 {
+        let damaged_head = rng.mutate(&head);
+        let mut damaged = parts.clone();
+        // Mostly the picking's own parts.
+        let part = if rng.below(2) == 0 {
+            6 + rng.below(2)
+        } else {
+            rng.below(damaged.len())
+        };
+        damaged[part] = rng.mutate(&damaged[part]);
+        for (head, parts) in [
+            (&damaged_head, &parts),
+            (&head, &damaged),
+            (&damaged_head, &damaged),
+        ] {
+            decode_any(head, parts);
+            assert_sound_tables(head, parts);
+        }
+    }
+}
+
+#[test]
+fn cut_short_picking_parts_are_refused() {
+    let (head, parts) = two_plates();
+    for part in [6, 7] {
+        for cut in [1, 3, 4, 5, parts[part].len()] {
+            let mut short = parts.clone();
+            let len = short[part].len() - cut;
+            short[part].truncate(len);
+            match decode_reply(&head[..], &slices(&short)).unwrap() {
+                Response::Failed { .. } => {}
+                Response::Regenerated { .. } => panic!("part {part} cut by {cut} was taken"),
+            }
+        }
+        // Or with more in it.
+        let mut long = parts.clone();
+        long[part].extend([0; 4]);
+        assert!(matches!(
+            decode_reply(&head[..], &slices(&long)).unwrap(),
+            Response::Failed { .. }
+        ));
+    }
+}
+
+/// Sequences decoded within bounds take at most so many elements, and
+/// at most so much of their weight together, and are refused past
+/// either.
+#[test]
+fn bounded_sequences_are_refused_past_their_bounds() {
+    use crate::picking::bounded::seq;
+    let decode = |value: &Vec<Vec<u8>>, max: usize, budget: usize| {
+        let bytes = postcard::to_stdvec(value).unwrap();
+        let mut de = postcard::Deserializer::from_bytes(&bytes);
+        seq(&mut de, max, |v: &Vec<u8>| v.len(), budget)
+    };
+    let three = vec![vec![1], vec![2, 3], vec![]];
+    assert_eq!(decode(&three, 3, 3).unwrap(), three);
+    assert!(decode(&three, 2, 3).is_err());
+    assert!(decode(&three, 3, 2).is_err());
+    assert_eq!(decode(&Vec::new(), 0, 0).unwrap(), Vec::<Vec<u8>>::new());
+}
+
+/// A head claiming more faces, chains or aliases than a reply may have
+/// is refused as it's decoded, before any of them is built: each costs
+/// the page far more memory than its bytes in the head.
+#[test]
+fn too_many_faces_chains_or_aliases_are_refused_as_the_head_is_decoded() {
+    // One face with one alias and one chain, then each count claimed
+    // larger: the bytes for the claim, at the count's place.
+    let head = tables(|faces, chains| {
+        faces[0].aliases.push(FaceKey {
+            feature: 2,
+            part: PartKey::StartCap,
+            instance: 0,
+        });
+        chains.push(PickChain {
+            faces: [0, 0],
+            closed: false,
+        });
+    })
+    .encode();
+    assert!(Head::decode(&head).is_ok());
+    let chain = postcard::to_stdvec(&PickChain {
+        faces: [0, 0],
+        closed: false,
+    })
+    .unwrap();
+    let Head::Regenerated { faces, .. } = Head::decode(&head).unwrap() else {
+        unreachable!()
+    };
+    let face = postcard::to_stdvec(&faces[0]).unwrap();
+    let summary = postcard::to_stdvec(&faces[0].summary).unwrap();
+    let alias = postcard::to_stdvec(&faces[0].aliases[0]).unwrap();
+    // [.. faces: 1, face [.., aliases: 1, alias, summary], chains: 1, chain]
+    let chains_at = head.len() - chain.len() - 1;
+    let faces_at = chains_at - face.len() - 1;
+    let aliases_at = chains_at - summary.len() - alias.len() - 1;
+    for (at, max) in [
+        (faces_at, MAX_FACES),
+        (aliases_at, Picking::MAX_ALIASES),
+        (chains_at, MAX_CHAINS),
+    ] {
+        assert_eq!(head[at], 1);
+        for claim in [max as u64 + 1, u64::MAX] {
+            let mut claimed = head[..at].to_vec();
+            claimed.extend(postcard::to_stdvec(&claim).unwrap());
+            claimed.extend(&head[at + 1..]);
+            assert!(Head::decode(&claimed).is_err(), "{claim} at {at}");
+        }
+    }
+    // All faces' aliases together: two faces of half as many and one
+    // more.
+    let aliased = |aliases: usize| {
+        tables(|faces, _| {
+            faces[0].aliases = (0..aliases as u64)
+                .map(|instance| FaceKey {
+                    feature: 2,
+                    part: PartKey::StartCap,
+                    instance,
+                })
+                .collect();
+            faces.push(faces[0].clone());
+        })
+        .encode()
+    };
+    assert!(Head::decode(&aliased(Picking::MAX_ALIASES / 2)).is_ok());
+    assert!(Head::decode(&aliased(Picking::MAX_ALIASES / 2 + 1)).is_err());
+}
+
+/// A model with more faces than a reply may carry is answered as failed
+/// for its generation, not sent for the page to refuse.
+#[test]
+fn a_model_with_too_many_faces_is_answered_as_failed() {
+    let response = |faces: usize| {
+        // As many triangles, all on the one vertex triple, a face each.
+        let mesh = RenderMesh::from_parts(
+            vec![[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            vec![[0.0, 0.0, 1.0]; 3],
+            [0, 1, 2].repeat(faces),
+            Vec::new(),
+        )
+        .unwrap();
+        let triangles = (0..faces as u32).collect();
+        let picking = Picking::from_parts(
+            vec![face(); faces],
+            Vec::new(),
+            triangles,
+            Vec::new(),
+            &mesh,
+        )
+        .unwrap();
+        Response::Regenerated {
+            generation: 4.into(),
+            exclude: None,
+            draft: None,
+            mesh: Arc::new(mesh),
+            picking: Arc::new(picking),
+            sketches: Arc::new(RenderLines::default()),
+            unsolved: Vec::new(),
+            failed: Vec::new(),
+            touched: Vec::new(),
+            merged: Vec::new(),
+            bodies: vec![(
+                BodyId::NEW,
+                Aabb {
+                    min: Vec3::ZERO,
+                    max: Vec3::ONE,
+                },
+            )],
+        }
+    };
+    assert!(matches!(
+        round_trip(&response(3)),
+        Response::Regenerated { .. }
+    ));
+    match round_trip(&response(MAX_FACES + 1)) {
+        Response::Failed { generation, .. } => assert_eq!(generation, 4.into()),
+        Response::Regenerated { .. } => panic!("too many faces were sent"),
+    }
+}
