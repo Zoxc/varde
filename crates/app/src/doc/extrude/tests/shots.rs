@@ -137,7 +137,7 @@ impl Shooter {
         use iced::theme::Base;
 
         let renderer = &mut self.renderer;
-        let mut ui: Headless<'_> = shown(doc.view(false, shot.mode), shot.size, renderer);
+        let mut ui: Headless<'_> = shown(doc.view(false, shot.mode, true), shot.size, renderer);
         if shot.scrolled {
             let end = RelativeOffset {
                 x: None,

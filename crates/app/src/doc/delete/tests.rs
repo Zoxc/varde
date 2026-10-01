@@ -53,7 +53,7 @@ fn deleting_a_sketch_an_extrude_uses_asks_first() {
     assert_eq!(listed, ["Sketch 1", "Extrude 1"]);
     let listed: Vec<_> = prompt.bodies.iter().map(|b| b.name.as_str()).collect();
     assert_eq!(listed, ["Body 1"]);
-    let _ = doc.view(false, Mode::default());
+    let _ = doc.view(false, Mode::default(), true);
     // No shortcut acts behind it, `Enter` included.
     assert!(doc.keys().is_none());
     assert!(press_in(&doc, enter_key()).is_none());
@@ -136,19 +136,30 @@ fn a_read_only_document_asks_nothing() {
     assert_eq!(names(&doc).0, ["Sketch 1", "Extrude 1"]);
 }
 
-/// The texts of `doc`'s status bar, left to right, at 1280 × 800.
-fn status_bar(doc: &Doc) -> Vec<String> {
+/// The texts of `doc`'s status bar, left to right, at 1280 × 800, with
+/// its hints of the mouse if `mouse_hints`.
+fn status_bar_of(doc: &Doc, mouse_hints: bool) -> Vec<String> {
     use crate::tests::{shown, texts};
     let size = iced::Size::new(1280.0, 800.0);
-    let top = size.height - varde_view::STATUS_BAR_HEIGHT;
+    let top = size.height - varde_view::STATUS_BAR_ROOM;
     let mut renderer = varde_view::probe::renderer();
-    let mut ui = shown(doc.view(false, Mode::Light), size, &mut renderer);
+    let mut ui = shown(
+        doc.view(false, Mode::Light, mouse_hints),
+        size,
+        &mut renderer,
+    );
+    // It floats over the viewport, right of the side panel.
     let mut bar: Vec<_> = texts(&mut ui, &renderer)
         .into_iter()
-        .filter(|text| text.bounds.y >= top)
+        .filter(|text| text.bounds.y >= top && text.bounds.x >= varde_view::SIDE_PANEL_WIDTH)
         .collect();
     bar.sort_by(|a, b| a.bounds.x.total_cmp(&b.bounds.x));
     bar.into_iter().map(|text| text.text).collect()
+}
+
+/// [`status_bar_of`] with the hints of the mouse.
+fn status_bar(doc: &Doc) -> Vec<String> {
+    status_bar_of(doc, true)
 }
 
 #[test]
@@ -156,20 +167,32 @@ fn the_status_bar_says_what_is_selected_and_under_the_prompt_only_esc() {
     use crate::tests::{shown, texts};
 
     let (mut doc, sketch, extrude, _) = example();
+    // Nothing selected, nothing going on: only the hints.
     let bar = status_bar(&doc);
-    assert_eq!(bar[0], "No selection · 1 body · 2 features · mm", "{bar:?}");
-    assert!(
-        !bar.iter().any(|text| text.contains("triangles")),
-        "{bar:?}"
-    );
+    assert_eq!(bar, ["Drag to orbit", "Pan", "Zoom"]);
+    assert!(status_bar_of(&doc, false).is_empty());
+    // The feature selected, in its box, with the key clearing it, then
+    // the hints, those of the keys without the mouse's.
     doc.look(Look::SelectFeature(extrude));
     let bar = status_bar(&doc);
     assert_eq!(
-        bar[..2],
-        ["Extrude 1", "Distance 10 mm · New body"],
-        "{bar:?}"
+        bar,
+        [
+            "Extrude 1",
+            "Distance 10 mm · New body",
+            "Space",
+            "Clear",
+            "Enter",
+            "Edit",
+            "Del",
+            "Delete",
+            "Drag to orbit",
+            "Pan",
+            "Zoom"
+        ],
     );
-    assert!(bar.contains(&"Edit".to_owned()), "{bar:?}");
+    let bar = status_bar_of(&doc, false);
+    assert_eq!(bar[bar.len() - 4..], ["Enter", "Edit", "Del", "Delete"]);
 
     // Under the delete prompt, which counts the body too, only `Esc`
     // does anything.
@@ -183,7 +206,7 @@ fn the_status_bar_says_what_is_selected_and_under_the_prompt_only_esc() {
     assert!(!bar.contains(&"Pan".to_owned()), "{bar:?}");
     let size = iced::Size::new(1280.0, 800.0);
     let mut renderer = varde_view::probe::renderer();
-    let mut ui = shown(doc.view(false, Mode::Light), size, &mut renderer);
+    let mut ui = shown(doc.view(false, Mode::Light, true), size, &mut renderer);
     let question = "Delete Sketch 1 with the 1 feature and 1 body that depend on it?";
     assert!(
         texts(&mut ui, &renderer)

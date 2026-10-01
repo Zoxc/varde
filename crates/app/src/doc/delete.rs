@@ -79,6 +79,7 @@ impl Doc {
             self.apply(command(target));
         } else {
             self.file_menu = false;
+            self.view_menu = false;
             self.deleting = Some(Deleting {
                 target,
                 removal,

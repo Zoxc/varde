@@ -35,6 +35,9 @@ use crate::welcome::Welcome;
 pub(crate) struct Varde {
     screen: Screen,
     mode: Mode,
+    /// Whether the status bar shows the hints of the mouse: the view
+    /// options menu's Mouse hints.
+    mouse_hints: bool,
     /// Whether the peek key is held, see [`Held::PEEK`].
     peeking: bool,
     /// Whether the command modifier (`Ctrl`, or `Cmd` on macOS) is held,
@@ -146,6 +149,7 @@ impl Varde {
         Self {
             screen: Screen::Welcome(Welcome::default()),
             mode: Mode::default(),
+            mouse_hints: true,
             peeking: false,
             command: false,
             files,
@@ -229,6 +233,10 @@ impl Varde {
                 });
             }
             Message::Ui(Ui::ToggleTheme) => self.mode = self.mode.toggled(),
+            Message::Ui(Ui::ToggleMouseHints) => {
+                self.mouse_hints = !self.mouse_hints;
+                self.with_doc(|doc, _| doc.view_menu = false);
+            }
             Message::PeekPanel(peeking) => self.peeking = peeking,
             Message::CommandHeld(held) => self.command = held,
             Message::AnimationFrame(now) => self.with_doc(|doc, _| {
@@ -399,7 +407,7 @@ impl Varde {
     pub(crate) fn view(&self) -> Element<'_, Message> {
         let view = match &self.screen {
             Screen::Welcome(welcome) => welcome.view(&self.files, self.mode),
-            Screen::Document(doc) => doc.view(self.peeking, self.mode),
+            Screen::Document(doc) => doc.view(self.peeking, self.mode, self.mouse_hints),
         };
         view.map(Message::Ui)
     }
@@ -552,7 +560,7 @@ fn while_quitting(message: &Message) -> bool {
             | Message::AnimationFrame(_)
             | Message::PeekPanel(_)
             | Message::CommandHeld(_)
-            | Message::Ui(Ui::Look(_) | Ui::ToggleTheme)
+            | Message::Ui(Ui::Look(_) | Ui::ToggleTheme | Ui::ToggleMouseHints)
     )
 }
 

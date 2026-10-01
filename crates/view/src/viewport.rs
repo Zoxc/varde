@@ -17,7 +17,7 @@ use varde_render::{
 };
 
 use crate::anchors::Anchors;
-use crate::chrome::{chord_hint, mouse_hint};
+use crate::chrome::{Hint, chord_hint, mouse_hint};
 use crate::icons::MouseButton;
 use crate::operation_panel::placed;
 use crate::shortcut::Held;
@@ -26,6 +26,9 @@ use crate::{Look, Message, controls};
 
 pub(crate) use extrude::Extruding;
 pub(crate) use sketch::Sketching;
+
+/// How far below the viewport's top the camera controls are, in pixels.
+pub(crate) const CONTROLS_TOP: f32 = 10.0;
 
 const ORBIT_SPEED: f32 = 0.008;
 const ZOOM_PER_LINE: f32 = 0.9;
@@ -79,7 +82,7 @@ pub(crate) fn viewport<'a>(
         .height(Length::Fill);
     let controls = container(controls::view_controls(camera))
         .align_right(Length::Fill)
-        .padding([10, 12]);
+        .padding(iced::Padding::from([CONTROLS_TOP, 12.0]));
     // The layers over the scene take only what's over their widgets, and
     // let the rest through to it.
     // Clear of the viewport's bottom too: the panel's body scrolls rather
@@ -171,7 +174,7 @@ impl DragKind {
 /// The status bar hints for the viewport's mouse bindings, in a sketch if
 /// `sketching`, see [`DragKind::for_button`]. Orbiting with the middle
 /// button isn't hinted: it's the wheel's icon, which zooms.
-pub fn hints<'a>(sketching: bool) -> [Element<'a, Message>; 3] {
+pub fn hints<'a>(sketching: bool) -> [Hint<'a>; 3] {
     let orbit = if sketching {
         chord_hint(Held::ORBIT, MouseButton::Right, "Orbit")
     } else {

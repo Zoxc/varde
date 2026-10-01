@@ -1,6 +1,6 @@
-//! Window chrome shared by every screen: the status bar, the theme and help
-//! buttons, and the small widgets the screens share: icon buttons and key
-//! chips.
+//! Window chrome shared by every screen: the floating status bar over it
+//! (`crate::status`), the theme and help buttons, and the small widgets the
+//! screens share: icon buttons, key chips and the status bar's hints.
 //!
 //! The OS draws the title bar; the app sets its text in `Varde::title`.
 
@@ -9,7 +9,7 @@ use std::borrow::Cow;
 use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::{
     Button, Container, Rule, Scrollable, Text, button, column, container, row, rule, scrollable,
-    text, tooltip,
+    stack, text, tooltip,
 };
 use iced::{Alignment, Element, Font, Length};
 
@@ -35,48 +35,17 @@ pub(crate) fn tip<'a>(
     .into()
 }
 
-/// How tall the status bar under a screen is, in pixels, its 1 px border
-/// included.
-pub const STATUS_BAR_HEIGHT: f32 = 28.0;
-
-/// Puts a status bar under a screen's `content`, showing `info` on the left
-/// and `hints` on the right.
+/// `content` with `status`, the floating status bar's layer
+/// ([`crate::status::status_bar`]), over its bottom right.
 pub fn window<'a>(
     content: impl Into<Element<'a, Message>>,
-    info: impl Into<Element<'a, Message>>,
-    hints: impl IntoIterator<Item = Element<'a, Message>>,
+    status: Element<'a, Message>,
 ) -> Element<'a, Message> {
-    column![
+    stack![
         container(content).width(Length::Fill).height(Length::Fill),
-        status_bar(info.into(), hints),
+        status
     ]
     .into()
-}
-
-/// The status bar: `info` on the left, cut off where `hints`, on the
-/// right, start.
-fn status_bar<'a>(
-    info: Element<'a, Message>,
-    hints: impl IntoIterator<Item = Element<'a, Message>>,
-) -> Element<'a, Message> {
-    // The info takes what the hints leave, cut off past it: on a short
-    // line, so its texts don't wrap.
-    let bar = row![
-        container(info).width(Length::Fill).clip(true),
-        row(hints).spacing(14).align_y(Alignment::Center),
-    ]
-    .spacing(12)
-    .align_y(Alignment::Center);
-
-    edged(
-        container(bar)
-            .width(Length::Fill)
-            .padding([0, 12])
-            .align_y(Alignment::Center)
-            .style(theme::status_bar),
-        Edge::Top,
-        STATUS_BAR_HEIGHT,
-    )
 }
 
 /// A 1 px horizontal separator.
@@ -109,7 +78,6 @@ pub fn vrule<'a>() -> Rule<'a> {
 /// The side of a bar or panel that [`edged`] puts a separator along.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Edge {
-    Top,
     Bottom,
     Right,
 }
@@ -119,7 +87,6 @@ pub enum Edge {
 pub fn edged<'a>(content: Container<'a, Message>, edge: Edge, total: f32) -> Element<'a, Message> {
     let inner = total - 1.0;
     match edge {
-        Edge::Top => column![hrule(), content.height(inner)].into(),
         Edge::Bottom => column![content.height(inner), hrule()].into(),
         Edge::Right => row![content.width(inner), vrule()].into(),
     }
@@ -163,35 +130,42 @@ pub fn small_button(label: &str, emphasis: Emphasis) -> Button<'_, Message> {
         .style(emphasis.button_style())
 }
 
+/// A status bar hint, and whether it's of the mouse, which the status bar
+/// leaves out with its mouse hints turned off.
+pub struct Hint<'a> {
+    pub(crate) element: Element<'a, Message>,
+    pub(crate) mouse: bool,
+}
+
 /// A status bar hint: `key` does `label`.
-pub fn key_hint<'a>(key: impl Into<KeyName>, label: &'a str) -> Element<'a, Message> {
-    hint(key_chip(key, ChipSize::Normal), label)
+pub fn key_hint<'a>(key: impl Into<KeyName>, label: &'a str) -> Hint<'a> {
+    hint(key_chip(key, ChipSize::Normal), label, false)
 }
 
 /// A status bar hint: using the mouse `button` does `label`.
-pub fn mouse_hint<'a>(button: MouseButton, label: &'a str) -> Element<'a, Message> {
-    hint(icons::mouse(button), label)
+pub fn mouse_hint<'a>(button: MouseButton, label: &'a str) -> Hint<'a> {
+    hint(icons::mouse(button), label, true)
 }
 
 /// A status bar hint: using the mouse `button` with `key` held does `label`.
-pub fn chord_hint<'a>(
-    key: impl Into<KeyName>,
-    button: MouseButton,
-    label: &'a str,
-) -> Element<'a, Message> {
+pub fn chord_hint<'a>(key: impl Into<KeyName>, button: MouseButton, label: &'a str) -> Hint<'a> {
     hint(
         row![key_chip(key, ChipSize::Normal), icons::mouse(button)]
             .spacing(3)
             .align_y(Alignment::Center),
         label,
+        true,
     )
 }
 
-fn hint<'a>(input: impl Into<Element<'a, Message>>, label: &'a str) -> Element<'a, Message> {
-    row![input.into(), text(label).size(12)]
-        .spacing(5)
-        .align_y(Alignment::Center)
-        .into()
+fn hint<'a>(input: impl Into<Element<'a, Message>>, label: &'a str, mouse: bool) -> Hint<'a> {
+    Hint {
+        element: row![input.into(), text(label).size(12)]
+            .spacing(5)
+            .align_y(Alignment::Center)
+            .into(),
+        mouse,
+    }
 }
 
 /// The size of a [`key_chip`].

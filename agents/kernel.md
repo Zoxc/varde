@@ -4364,16 +4364,15 @@ and tells why in a tooltip; a sketch that doesn't solve is marked as
 before. Neither is given out from a model of before a replacement of
 the whole document (`MeshFeed::replaced`), whose ids may name other
 features. Double-clicking an extrude opens its session. Outside a
-sketch or a session the status bar's info (`view/src/document.rs`, as
-the mock's) is the feature selected, its icon, name and `feature_info`
-("Distance 10 mm · New body", "Symmetric 4 mm · Cut", a sketch's
-"4 lines · 1 circle · 5 points · on XY"), or with none `model_info`:
-"No selection · 1 body · 2 features · mm" ("Empty design · mm" without
-features; the bodies counted as the joins leave them, a merged one with
-its holder, `panels::bodies_after_joins`, as the Objects group's count
-is and as the mock counts), then regenerating, failures and saving. The info is one line
-taking what the key hints leave, cut off where they start
-(`chrome::window`), so a long failure never pushes them off the screen.
+sketch or a session the floating status bar (`view/src/status.rs`, as
+the mock's; see `agents/viewport.md`) shows the feature selected in a
+box of its own, its icon, name and `feature_info` (`view/src/document.rs`:
+"Distance 10 mm · New body", "Symmetric 4 mm · Cut", a sketch's
+"4 lines · 1 circle · 5 points · on XY"), and nothing of the model with
+none; then regenerating, failures and saving, cut short before the
+hints, so a long failure never pushes them off the screen. The bodies
+are counted as the joins leave them, a merged one with its holder, in
+the Objects group's count (`panels::bodies_after_joins`).
 
 **Deleting** (`app/src/doc/delete.rs`): `Edit::RemoveFeature` (`Delete`
 on the Timeline's selection) and `Edit::RemoveBody` (Objects' bin) ask

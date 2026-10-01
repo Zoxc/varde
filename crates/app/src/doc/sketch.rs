@@ -370,15 +370,17 @@ impl Doc {
     }
 
     /// Backs out of whatever is open, the innermost first: the delete
-    /// prompt, the file menu, picking a plane, the extrude being set up,
-    /// the value field, a label grabbed, the drag of geometry, the shape
-    /// the tool is drawing (or what the Dimension or Mirror tool has
-    /// picked), the tool, the sketch, the feature selected.
+    /// prompt, the file menu, the view options menu, picking a plane, the
+    /// extrude being set up, the value field, a label grabbed, the drag of
+    /// geometry, the shape the tool is drawing (or what the Dimension or
+    /// Mirror tool has picked), the tool, the sketch, the feature selected.
     pub(crate) fn escape(&mut self) {
         if self.deleting.is_some() {
             self.deleting = None;
         } else if self.file_menu {
             self.file_menu = false;
+        } else if self.view_menu {
+            self.view_menu = false;
         } else if self.picking_plane {
             self.picking_plane = false;
         } else if self.extrude.is_some() {

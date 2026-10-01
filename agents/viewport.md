@@ -6,8 +6,24 @@ primitive calls `varde_render::Renderer`, which opens its own render pass with
 a depth buffer and composites onto iced's frame (`LoadOp::Load`). iced then
 draws the UI on top: in a sketch the layer of widgets anchored to the
 sketch (`anchors.rs`, below), and the camera controls in the viewport's
-corner, wrapped in a `mouse_area` so clicks on them don't reach the
-viewport. Neither takes events off its widgets, so they reach the scene.
+top-right corner (`controls.rs`: the view cube, and Home under it at its
+right, wrapped in a `mouse_area` so clicks on it don't reach the
+viewport). Neither takes events off its widgets, so they reach the scene.
+
+The status bar (`status.rs`) floats over the viewport's bottom right, 12
+px in from its right and 10 px up from its bottom (`STATUS_BAR_ROOM` is
+what it takes of the height), `opaque` so a drag on it doesn't orbit; on
+the welcome screen it floats over the window's. The feature selected in
+the Timeline is in a box of its own, with the key clearing it (`Space`);
+then a bar with what's going on (picking a plane, the sketch's or the
+extrude's status, regenerating, a failed edit, saving: nothing with
+nothing selected), the hints, and the button of the view options menu,
+which opens above it: Orthographic or Perspective, and Mouse hints,
+which the app keeps (`Varde::mouse_hints`) and without which the bar
+leaves out the hints of the mouse. The hints and the button show whole:
+the bar's widget (`Bar`, which draws the boxes and the lines between
+their parts itself) lays them out first, then the selection, then the
+status, each in what's left, cut short, so the status gives way first.
 
 In a sketch the viewport's `Program` is given the sketch (`Sketching`, in
 `viewport/sketch.rs`): the model is drawn faded, the grid on the sketch's
@@ -98,8 +114,8 @@ design's units at least 6 pixels long (`snap_step`), and nothing while
 looking along the axis; letting go sends `DropHandle`. The floating
 panel is the viewport's last layer, at its right under the camera
 controls (over them in a short viewport, `operation_panel::placed`) and
-12 px clear of the viewport's bottom (its body scrolls rather than run
-past it), `opaque` so clicks and the wheel on it don't reach the scene;
+12 px clear of the status bar (its body scrolls rather than run past
+it), `opaque` so clicks and the wheel on it don't reach the scene;
 the knobs' layer under it stays, empty, without knobs, so the panel's
 widget state survives the handle coming and going.
 

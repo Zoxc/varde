@@ -208,7 +208,7 @@ pub(crate) fn add_disc(
 pub(crate) fn screen_texts(doc: &Doc) -> Vec<String> {
     let mut renderer = varde_view::probe::renderer();
     let size = iced::Size::new(1280.0, 800.0);
-    let mut ui = shown(doc.view(false, Mode::Light), size, &mut renderer);
+    let mut ui = shown(doc.view(false, Mode::Light, true), size, &mut renderer);
     (texts(&mut ui, &renderer).into_iter())
         .map(|text| text.text)
         .collect()
@@ -4587,7 +4587,7 @@ pub(crate) fn pressed(doc: &Doc, keys: &[iced::Event], focused: bool) -> (Vec<Ui
     use iced_runtime::user_interface::{Cache, UserInterface};
 
     let mut renderer = varde_view::probe::renderer();
-    let view = doc.view(false, Mode::Light);
+    let view = doc.view(false, Mode::Light, true);
     let mut ui = UserInterface::build(
         view,
         iced::Size::new(1280.0, 800.0),
@@ -4656,6 +4656,86 @@ fn closing_waits_for_a_delete_behind_sketch_edits_to_be_asked_and_answered() {
 }
 
 #[test]
+fn the_view_options_menu_picks_the_projection_and_the_mouse_hints() {
+    fn view(varde: &Varde) -> iced::Element<'_, Ui> {
+        document(varde).view(false, Mode::Light, varde.mouse_hints)
+    }
+
+    use varde_render::Projection;
+
+    let size = iced::Size::new(1280.0, 800.0);
+    let mut renderer = varde_view::probe::renderer();
+    let mut varde = Varde::new();
+    let _ = varde.update(Message::Ui(Ui::Welcome(WelcomeUi::NewDesign)));
+    let shown = |varde: &Varde, renderer: &mut iced::Renderer| {
+        let mut ui = shown(view(varde), size, renderer);
+        texts(&mut ui, renderer)
+    };
+    let menu = ["Orthographic", "Perspective", "Mouse hints"];
+    let has = |shown: &[varde_view::probe::Shown], text: &str| shown.iter().any(|t| t.text == text);
+    assert!(!has(&shown(&varde, &mut renderer), menu[0]));
+
+    // Its button opens it, at the right above the status bar.
+    let _ = varde.update(Message::Ui(Ui::Look(Look::ToggleViewMenu)));
+    let open = shown(&varde, &mut renderer);
+    for item in menu {
+        let item = open.iter().find(|t| t.text == item).unwrap();
+        assert!(item.bounds.x > size.width / 2.0, "{item:?}");
+        assert!(
+            item.bounds.y + item.bounds.height < size.height - varde_view::STATUS_BAR_ROOM,
+            "{item:?}"
+        );
+    }
+    assert!(has(&open, "Drag to orbit"));
+
+    // A projection picked closes it.
+    let perspective = open.iter().find(|t| t.text == "Perspective").unwrap();
+    let mut ui = iced_runtime::user_interface::UserInterface::build(
+        view(&varde),
+        size,
+        Default::default(),
+        &mut renderer,
+    );
+    let sent = clicked(&mut ui, &mut renderer, perspective.bounds.center());
+    drop(ui);
+    let [Ui::Look(Look::SetProjection(Projection::Perspective))] = sent[..] else {
+        panic!("{sent:?}");
+    };
+    let _ = varde.update(Message::Ui(Ui::Look(Look::SetProjection(
+        Projection::Perspective,
+    ))));
+    assert!(!document(&varde).view_menu);
+    assert_eq!(
+        document(&varde).camera.projection(),
+        Projection::Perspective
+    );
+
+    // Mouse hints, off, leave the hints of the keys, and close it too.
+    let _ = varde.update(Message::Ui(Ui::Look(Look::ToggleViewMenu)));
+    let _ = varde.update(Message::Ui(Ui::ToggleMouseHints));
+    assert!(!document(&varde).view_menu);
+    let off = shown(&varde, &mut renderer);
+    assert!(!has(&off, "Drag to orbit") && !has(&off, "Zoom"), "{off:?}");
+
+    // `Esc` closes it, and a click off it.
+    let _ = varde.update(Message::Ui(Ui::Look(Look::ToggleViewMenu)));
+    let _ = varde.update(Message::Ui(Ui::Look(Look::Escape)));
+    assert!(!document(&varde).view_menu);
+    let _ = varde.update(Message::Ui(Ui::Look(Look::ToggleViewMenu)));
+    let mut ui = iced_runtime::user_interface::UserInterface::build(
+        view(&varde),
+        size,
+        Default::default(),
+        &mut renderer,
+    );
+    let sent = clicked(&mut ui, &mut renderer, iced::Point::new(640.0, 300.0));
+    assert!(
+        matches!(sent[..], [Ui::Look(Look::CloseViewMenu)]),
+        "{sent:?}"
+    );
+}
+
+#[test]
 fn a_long_status_leaves_the_key_hints_on_the_screen() {
     // A feature selected and the model failing with a long message, in a
     // small window: the status is cut where the hints start, which all
@@ -4679,12 +4759,12 @@ fn a_long_status_leaves_the_key_hints_on_the_screen() {
     let size = iced::Size::new(1024.0, 600.0);
     let mut renderer = varde_view::probe::renderer();
     let mut ui = shown(
-        doc.view(false, varde_view::Mode::Light),
+        doc.view(false, varde_view::Mode::Light, true),
         size,
         &mut renderer,
     );
     let shown = texts(&mut ui, &renderer);
-    let status_top = size.height - varde_view::STATUS_BAR_HEIGHT;
+    let status_top = size.height - varde_view::STATUS_BAR_ROOM;
     let in_bar: Vec<_> = shown.iter().filter(|t| t.bounds.y >= status_top).collect();
     for hint in ["Edit", "Delete", "Drag to orbit", "Zoom"] {
         let text = in_bar

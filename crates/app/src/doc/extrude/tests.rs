@@ -319,7 +319,7 @@ fn two_sides_over_the_limit_block_ok() {
     assert!(state.fields.iter().all(|field| field.error.is_none()));
     assert!(!state.ready);
     assert_eq!(state.refused, Some(varde_document::ExtrudeError::Length));
-    let _ = doc.view(false, Mode::default());
+    let _ = doc.view(false, Mode::default(), true);
     assert!(press_in(&doc, enter()).is_none());
     doc.update(Edit::CommitExtrude);
     assert!(doc.extrude.is_some());
@@ -489,7 +489,7 @@ fn a_cut_lists_the_bodies_it_touches_and_goes_through_all() {
             .collect::<Vec<_>>()
     };
     assert_eq!(listed(&doc), [(body, "Body 1".to_owned(), true)]);
-    let _ = doc.view(false, Mode::default());
+    let _ = doc.view(false, Mode::default(), true);
 
     // Taken out, it stays listed, and the cut has nothing to cut.
     extrude(&mut doc, ExtrudeLook::Target(body));
@@ -537,7 +537,7 @@ fn an_intersect_leaving_nothing_is_marked_failed_and_the_plate_kept() {
     let error = doc.feed.draft_error().unwrap();
     assert!(error.starts_with(emptied), "{error}");
     assert_eq!(doc.feed.mesh().triangle_count(), triangles);
-    let _ = doc.view(false, Mode::default());
+    let _ = doc.view(false, Mode::default(), true);
 
     doc.update(Edit::CommitExtrude);
     answer(&mut doc, &requests);
@@ -548,7 +548,7 @@ fn an_intersect_leaving_nothing_is_marked_failed_and_the_plate_kept() {
     assert!(failed[0].1.starts_with(emptied), "{}", failed[0].1);
     assert_eq!(doc.feed.mesh().triangle_count(), triangles);
     doc.look(Look::SelectPanel(varde_view::Panel::Timeline));
-    let _ = doc.view(false, Mode::default());
+    let _ = doc.view(false, Mode::default(), true);
 }
 
 /// Adds to `doc`'s document a sketch of a rectangle from `min` to `max`
@@ -605,7 +605,7 @@ fn a_cut_emptying_the_plate_fails_again_once_the_edit_saving_it_is_undone() {
     };
     fails(&doc);
     doc.look(Look::SelectPanel(varde_view::Panel::Timeline));
-    let _ = doc.view(false, Mode::default());
+    let _ = doc.view(false, Mode::default(), true);
 
     // The plate 100 × 80 round the cut's 80 × 60.
     let plate = doc.editor.document().features()[0].id;
@@ -667,7 +667,7 @@ fn an_intersect_flipped_to_leave_nothing_and_back_says_so_each_time() {
         assert!(doc.feed.failed_features().is_empty());
         let mut renderer = varde_view::probe::renderer();
         let mut ui = shown(
-            doc.view(false, Mode::Light),
+            doc.view(false, Mode::Light, true),
             iced::Size::new(1280.0, 800.0),
             &mut renderer,
         );
@@ -811,7 +811,7 @@ fn a_failing_extrude_is_marked_in_the_timeline() {
     assert_eq!(failed[0].1, "it doesn't touch any body");
     assert_eq!(doc.feed.mesh().triangle_count(), 0);
     doc.look(Look::SelectPanel(varde_view::Panel::Timeline));
-    let _ = doc.view(false, Mode::default());
+    let _ = doc.view(false, Mode::default(), true);
 
     // Undone, it goes again.
     doc.update(Edit::Undo);
@@ -823,14 +823,14 @@ fn a_failing_extrude_is_marked_in_the_timeline() {
 fn the_tolerance_is_set_from_the_file_menu() {
     let (mut doc, _) = example();
     doc.update(Edit::ToggleFileMenu);
-    let _ = doc.view(false, Mode::default());
+    let _ = doc.view(false, Mode::default(), true);
     let coarse = Tolerance::new(1e-2).unwrap();
     doc.update(Edit::SetTolerance(coarse));
     assert_eq!(doc.editor.document().tolerance(), coarse);
     // A value the menu doesn't offer shows too.
     doc.update(Edit::SetTolerance(Tolerance::new(5e-5).unwrap()));
     doc.update(Edit::ToggleFileMenu);
-    let _ = doc.view(false, Mode::default());
+    let _ = doc.view(false, Mode::default(), true);
     doc.update(Edit::Undo);
     doc.update(Edit::Undo);
     assert_eq!(doc.editor.document().tolerance(), Tolerance::DEFAULT);
@@ -947,7 +947,7 @@ fn a_slow_solver_says_checking_in_the_extrude_panel() {
     let state = doc.extrude_state().unwrap();
     assert!(state.checking);
     assert!(!state.ready);
-    let _ = doc.view(false, Mode::default());
+    let _ = doc.view(false, Mode::default(), true);
     lane.answer(&mut doc);
     let state = doc.extrude_state().unwrap();
     assert!(!state.checking);
@@ -2289,9 +2289,9 @@ fn many_bodies_keep_ok_and_cancel_on_screen() {
         let (doc, _) = a_cut_listing(bodies - 1);
         assert_eq!(doc.extrude_state().unwrap().targets.len(), bodies);
         let size = iced::Size::new(1280.0, height);
-        let status_top = height - varde_view::STATUS_BAR_HEIGHT;
+        let status_top = height - varde_view::STATUS_BAR_ROOM;
         let mut renderer = headless();
-        let mut ui = shown(doc.view(false, Mode::Light), size, &mut renderer);
+        let mut ui = shown(doc.view(false, Mode::Light, true), size, &mut renderer);
         let check = |texts: &[varde_view::probe::Shown], last: &str| {
             let (panel, ok) = panel_texts(texts);
             let at = format!("{bodies} bodies at {height}");
@@ -2357,7 +2357,7 @@ fn a_click_on_a_body_s_label_toggles_it() {
     let body = doc.editor.document().bodies()[0].id;
     let size = iced::Size::new(1280.0, 800.0);
     let mut renderer = headless();
-    let mut ui = shown(doc.view(false, Mode::Light), size, &mut renderer);
+    let mut ui = shown(doc.view(false, Mode::Light, true), size, &mut renderer);
     let texts_now = texts(&mut ui, &renderer);
     let (panel, _) = panel_texts(&texts_now);
     let label = panel.iter().find(|text| text.text == "Body 1").unwrap();
@@ -2380,7 +2380,7 @@ fn the_wheel_over_the_panel_scrolls_it_not_the_camera_and_keeps_the_focus() {
     let (doc, _) = a_cut_listing(29);
     let size = iced::Size::new(1280.0, 600.0);
     let mut renderer = varde_view::probe::renderer();
-    let mut ui = shown(doc.view(false, Mode::Light), size, &mut renderer);
+    let mut ui = shown(doc.view(false, Mode::Light, true), size, &mut renderer);
     ui.operate(&renderer, &mut focusable::focus(varde_view::VALUE_FIELD));
     ui.operate(
         &renderer,
@@ -2460,9 +2460,9 @@ fn two_sides_with_errors_keep_ok_on_a_short_screen() {
         extrude(&mut doc, ExtrudeLook::Input { distance, text });
     }
     let size = iced::Size::new(1024.0, 600.0);
-    let status_top = size.height - varde_view::STATUS_BAR_HEIGHT;
+    let status_top = size.height - varde_view::STATUS_BAR_ROOM;
     let mut renderer = varde_view::probe::renderer();
-    let mut ui = shown(doc.view(false, Mode::Light), size, &mut renderer);
+    let mut ui = shown(doc.view(false, Mode::Light, true), size, &mut renderer);
     let mut snap = snap_to(
         varde_view::PANEL_BODY,
         RelativeOffset {
@@ -2514,7 +2514,7 @@ fn the_through_all_tip_shows_under_it_in_the_scrolled_body() {
     extrude(&mut doc, ExtrudeLook::Operation(OperationKind::Join));
     let size = iced::Size::new(1280.0, 600.0);
     let mut renderer = varde_view::probe::renderer();
-    let mut ui = shown(doc.view(false, Mode::Light), size, &mut renderer);
+    let mut ui = shown(doc.view(false, Mode::Light, true), size, &mut renderer);
     let offset = AbsoluteOffset {
         x: None,
         y: Some(40.0),
@@ -2641,7 +2641,7 @@ fn unpicking_the_last_region_keeps_the_panel_s_scroll_and_focus() {
             .bounds
     };
     let (cache, scrolled) = {
-        let mut ui = shown(doc.view(false, Mode::Light), size, &mut renderer);
+        let mut ui = shown(doc.view(false, Mode::Light, true), size, &mut renderer);
         let unscrolled = body_1(&mut ui, &renderer);
         ui.operate(&renderer, &mut focusable::focus(varde_view::VALUE_FIELD));
         let offset = AbsoluteOffset {
@@ -2660,7 +2660,12 @@ fn unpicking_the_last_region_keeps_the_panel_s_scroll_and_focus() {
     extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region: 0 });
     let state = doc.extrude_state().unwrap();
     assert!(state.picked.is_empty() && state.handle().is_none());
-    let mut ui = UserInterface::build(doc.view(false, Mode::Light), size, cache, &mut renderer);
+    let mut ui = UserInterface::build(
+        doc.view(false, Mode::Light, true),
+        size,
+        cache,
+        &mut renderer,
+    );
     assert_eq!(body_1(&mut ui, &renderer), scrolled);
     assert!(value_field_focused(&mut ui, &renderer));
 }
@@ -2672,9 +2677,9 @@ fn a_short_window_lifts_the_panel_to_keep_its_buttons() {
     let (doc, _) = a_cut_listing(29);
     for height in [250.0, 300.0, 400.0] {
         let size = iced::Size::new(1280.0, height);
-        let status_top = height - varde_view::STATUS_BAR_HEIGHT;
+        let status_top = height - varde_view::STATUS_BAR_ROOM;
         let mut renderer = varde_view::probe::renderer();
-        let mut ui = shown(doc.view(false, Mode::Light), size, &mut renderer);
+        let mut ui = shown(doc.view(false, Mode::Light, true), size, &mut renderer);
         let shown = texts(&mut ui, &renderer);
         let (panel, ok) = panel_texts(&shown);
         let title = &panel[0];
@@ -2733,7 +2738,7 @@ fn editing_an_extrude_from_a_scrolled_panel_shows_its_field() {
     let size = iced::Size::new(1280.0, 300.0);
     let mut renderer = varde_view::probe::renderer();
     let cache = {
-        let mut ui = shown(doc.view(false, Mode::Light), size, &mut renderer);
+        let mut ui = shown(doc.view(false, Mode::Light, true), size, &mut renderer);
         let mut end = snap_to(
             varde_view::PANEL_BODY,
             RelativeOffset {
@@ -2749,7 +2754,12 @@ fn editing_an_extrude_from_a_scrolled_panel_shows_its_field() {
     doc.look(Look::EditFeature(id));
     assert_eq!(doc.extrude.as_ref().unwrap().feature, Some(id));
     let focus = doc.take_focus().expect("the field takes the focus");
-    let mut ui = UserInterface::build(doc.view(false, Mode::Light), size, cache, &mut renderer);
+    let mut ui = UserInterface::build(
+        doc.view(false, Mode::Light, true),
+        size,
+        cache,
+        &mut renderer,
+    );
     run_task(&mut ui, &renderer, crate::focus_field(focus));
     assert!(value_field_focused(&mut ui, &renderer));
     // The field's label, beside it, shows whole.
@@ -2769,7 +2779,7 @@ fn dragging_the_panel_s_scrollbar_over_the_scene_only_scrolls() {
     let (doc, _) = a_cut_listing(29);
     let size = iced::Size::new(1280.0, 600.0);
     let mut renderer = varde_view::probe::renderer();
-    let mut ui = shown(doc.view(false, Mode::Light), size, &mut renderer);
+    let mut ui = shown(doc.view(false, Mode::Light, true), size, &mut renderer);
     let body_1 = |ui: &mut crate::tests::Headless<'_>, renderer: &iced::Renderer| {
         let shown = texts(ui, renderer);
         let (panel, _) = panel_texts(&shown);
@@ -2956,48 +2966,36 @@ fn objects_show_a_merged_body_in_its_holder() {
     assert_eq!(doc.feed.mesh().triangle_count(), 0);
 }
 
-/// The status bar and the Objects list count the bodies there are once
-/// the joins have merged them, as the model shown has them, through
-/// undoing and redoing the join.
+/// The Objects list counts the bodies there are once the joins have
+/// merged them, as the model shown has them, through undoing and redoing
+/// the join.
 #[test]
 fn bodies_are_counted_as_the_joins_leave_them() {
     let (editor, _) = crate::tests::two_plates();
     let (mut doc, requests) = crate::tests::holding(editor.document().clone());
     doc.look(Look::SelectPanel(varde_view::Panel::Objects));
-    // The Objects group's count, the status bar's info and whether a body
-    // is noted in another.
+    // The Objects group's count and whether a body is noted in another.
     let counted = |doc: &Doc| {
         let texts = crate::tests::screen_texts(doc);
         let group = texts.iter().position(|text| text == "Bodies");
         let group = group.unwrap_or_else(|| panic!("{texts:?}"));
-        let bar = texts.iter().find(|text| text.starts_with("No selection"));
-        let bar = bar.unwrap_or_else(|| panic!("{texts:?}")).clone();
         let noted = texts.iter().any(|text| text == "in Body 1");
-        (texts[group + 1].clone(), bar, noted)
+        (texts[group + 1].clone(), noted)
     };
-    let apart = (
-        "2".to_owned(),
-        "No selection · 2 bodies · 3 features · mm".to_owned(),
-        false,
-    );
+    let apart = ("2".to_owned(), false);
     assert_eq!(counted(&doc), apart);
 
     crate::tests::add_join(&mut doc.editor);
     doc.sync();
     crate::tests::answer(&mut doc, &requests);
-    let merged = (
-        "1".to_owned(),
-        "No selection · 1 body · 5 features · mm".to_owned(),
-        true,
-    );
+    let merged = ("1".to_owned(), true);
     assert_eq!(counted(&doc), merged);
 
     // Undone, the join's extrude goes and its sketch stays.
     doc.update(Edit::Undo);
     doc.sync();
     crate::tests::answer(&mut doc, &requests);
-    let undone = (apart.0.clone(), apart.1.replace('3', "4"), false);
-    assert_eq!(counted(&doc), undone);
+    assert_eq!(counted(&doc), apart);
     doc.update(Edit::Redo);
     doc.sync();
     crate::tests::answer(&mut doc, &requests);

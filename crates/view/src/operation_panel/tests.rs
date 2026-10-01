@@ -189,8 +189,8 @@ fn a_long_message_scrolls_above_the_buttons() {
 fn placed_starts_below_the_camera_controls_unless_the_viewport_is_short() {
     for (height, top) in [
         (800.0, PANEL_TOP),
-        (PANEL_TOP + PANEL_MARGIN + PANEL_ROOM, PANEL_TOP),
-        (300.0, 300.0 - PANEL_MARGIN - PANEL_ROOM),
+        (PANEL_TOP + PANEL_BOTTOM + PANEL_ROOM, PANEL_TOP),
+        (300.0, 300.0 - PANEL_BOTTOM - PANEL_ROOM),
         (150.0, PANEL_MARGIN),
         (0.0, PANEL_MARGIN),
     ] {
@@ -200,9 +200,9 @@ fn placed_starts_below_the_camera_controls_unless_the_viewport_is_short() {
         let panel = laid.node.children()[0].bounds();
         assert_eq!(panel.y, top, "{height}");
         assert_eq!(panel.x + panel.width, 800.0 - PANEL_MARGIN, "{height}");
-        // A long body takes all the height down to the margin.
+        // A long body takes all the height down to the status bar's room.
         if height >= 300.0 {
-            assert_eq!(panel.y + panel.height, height - PANEL_MARGIN, "{height}");
+            assert_eq!(panel.y + panel.height, height - PANEL_BOTTOM, "{height}");
             let shown = laid.texts();
             let ok = find(&shown, "OK");
             assert!(ok.bounds.height >= 12.0, "{height}: {ok:?}");

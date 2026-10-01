@@ -507,12 +507,6 @@ pub fn banner(theme: &Theme) -> container::Style {
     filled(p.accent_soft, p.text)
 }
 
-/// The status bar along the bottom of the window.
-pub fn status_bar(theme: &Theme) -> container::Style {
-    let p = palette(theme);
-    filled(p.title_bg, p.muted)
-}
-
 /// The strip holding the side panel's [`tab`]s.
 pub fn tab_strip(theme: &Theme) -> container::Style {
     let p = palette(theme);

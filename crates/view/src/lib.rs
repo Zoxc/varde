@@ -27,6 +27,7 @@ mod shortcut;
 mod snap;
 pub mod spline;
 mod split;
+mod status;
 #[cfg(test)]
 mod testing;
 mod theme;
@@ -44,7 +45,6 @@ use varde_expr::LengthUnit;
 use varde_render::{Projection, View};
 use varde_sketch::{Id, Sketch};
 
-pub use chrome::STATUS_BAR_HEIGHT;
 pub use constrain::{ConstraintKind, ConstraintSet};
 pub use document::{
     ActiveTool, DeletePrompt, DocumentState, MeshStatus, Overlay, RecoveredChanges, RefusedEdit,
@@ -58,7 +58,8 @@ pub use icons::LOGO_SVG;
 pub use operation_panel::PANEL_BODY;
 pub use shortcut::{Binding, DocumentKeys, Held, document_bindings, pressed, welcome_bindings};
 pub use snap::{Inference, Level, SNAP_TOLERANCE, Snap, Target};
-pub use theme::{Mode, theme as iced_theme};
+pub use status::{STATUS_BAR_HEIGHT, STATUS_BAR_ROOM};
+pub use theme::{Mode, SIDE_PANEL_WIDTH, theme as iced_theme};
 pub use welcome::{RecentCard, StoredDesign, WelcomeState, welcome};
 
 /// The text field a dimension's value is typed in, placing it or editing
@@ -75,6 +76,9 @@ pub enum Message {
     Edit(Edit),
     Look(Look),
     ToggleTheme,
+    /// Shows the status bar's hints for the mouse, or hides them: the
+    /// view options menu's Mouse hints.
+    ToggleMouseHints,
 }
 
 /// What the user asks for on the welcome screen.
@@ -193,13 +197,18 @@ pub enum Edit {
 #[derive(Debug, Clone)]
 pub enum Look {
     CloseFileMenu,
+    /// Opens the view options menu, from the status bar's button, or
+    /// closes it.
+    ToggleViewMenu,
+    CloseViewMenu,
     /// Closes the delete prompt, deleting nothing: its Cancel button, or
     /// `Esc`.
     CancelDelete,
     /// Backs out of whatever is open, the innermost first: the delete
-    /// prompt, the file menu, picking a plane, the extrude being set up,
-    /// dragging geometry, the shape the sketch's tool is drawing, the tool
-    /// (or the Constrain tool), the sketch, the selection.
+    /// prompt, the file menu, the view options menu, picking a plane, the
+    /// extrude being set up, dragging geometry, the shape the sketch's tool
+    /// is drawing, the tool (or the Constrain tool), the sketch, the
+    /// selection.
     Escape,
     SelectPanel(Panel),
     /// Starts picking the plane for a new sketch, or backs out of it.
@@ -333,6 +342,7 @@ pub enum Look {
     Zoom(f32),
     ResetCamera,
     LookFrom(View),
+    /// Views in `Projection`, from the view options menu, which closes.
     SetProjection(Projection),
 }
 

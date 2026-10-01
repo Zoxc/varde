@@ -1,5 +1,5 @@
 //! The document screen: its layout, the banners over it, the prompt about
-//! unsaved changes and the status bar's info.
+//! unsaved changes and what the status bar says.
 
 use std::borrow::Cow;
 use std::collections::BTreeSet;
@@ -11,8 +11,7 @@ use iced::widget::{Space, button, column, container, opaque, row, space, stack, 
 use iced::{Alignment, Element, Length};
 use varde_document::EXTENSION;
 use varde_document::{
-    APP_NAME, Body, BodyId, Document, EditError, Editor, Extent, Feature, FeatureId, FeatureKind,
-    Plane,
+    APP_NAME, Body, BodyId, EditError, Editor, Extent, Feature, FeatureId, FeatureKind, Plane,
 };
 use varde_expr::LengthUnit;
 use varde_kernel::{RenderLines, RenderMesh};
@@ -21,9 +20,10 @@ use varde_sketch::{
     Analysis, Failure, Id, Kind, Measure, Profiles, Rejected, Side, Sketch, TooComplex,
 };
 
-use crate::chrome::{self, chord_hint, key_hint, mouse_hint, small_button};
+use crate::chrome::{self, Hint, chord_hint, key_hint, mouse_hint, small_button};
 use crate::icons::{self, Icon, MouseButton};
 use crate::shortcut::{DocumentKeys, Held, Shortcut};
+use crate::status::{self, Status};
 use crate::theme::Emphasis;
 use crate::typed::Field;
 use crate::{
@@ -69,6 +69,8 @@ pub struct DocumentState<'a> {
     /// Whether the peek key is held, showing the other tab.
     pub peek: bool,
     pub mode: theme::Mode,
+    /// Whether the status bar shows the hints of the mouse.
+    pub mouse_hints: bool,
     /// Whether the plane for a new sketch is being picked.
     pub picking_plane: bool,
     /// The feature selected in the Timeline, if any.
@@ -275,11 +277,6 @@ impl SketchState<'_> {
         let tied = conflicts.iter().flat_map(|&id| tied_items(self.sketch, id));
         tied.chain(conflicts.iter().copied()).collect()
     }
-
-    /// Whether the Dimension tool is in use.
-    pub(crate) fn dimensioning(&self) -> bool {
-        self.tool.is_some_and(|tool| tool.tool == Tool::Dimension)
-    }
 }
 
 /// The points and curves the constraint or dimension `id` of `sketch`
@@ -440,6 +437,8 @@ pub enum Overlay {
     /// Asks what to do about unsaved changes.
     UnsavedPrompt,
     FileMenu,
+    /// The view options menu, from the status bar.
+    ViewMenu,
 }
 
 /// The document screen: toolbar on top, side panel on the left and the 3D
@@ -498,24 +497,28 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
             panels::side_panel(&state),
             column![
                 refused,
-                viewport::viewport(
-                    state.mesh,
-                    state.sketches,
-                    state.camera,
-                    state.mode.palette(),
-                    state
-                        .sketch
-                        .map(|sketch| viewport::Sketching::new(sketch, editable)),
-                    state.extrude.clone().map(viewport::Extruding::new),
-                    state.extrude.as_ref().map(crate::extrude::panel),
-                ),
+                // The status bar floats over the viewport's bottom right.
+                stack![
+                    viewport::viewport(
+                        state.mesh,
+                        state.sketches,
+                        state.camera,
+                        state.mode.palette(),
+                        state
+                            .sketch
+                            .map(|sketch| viewport::Sketching::new(sketch, editable)),
+                        state.extrude.clone().map(viewport::Extruding::new),
+                        state.extrude.as_ref().map(crate::extrude::panel),
+                    ),
+                    status::status_bar(status(&state)),
+                ],
             ],
         ]
         .height(Length::Fill),
     ];
     // The prompt about unsaved changes shows over the delete prompt,
-    // which shows over the file menu.
-    let content = match (state.overlay, &state.deleting) {
+    // which shows over the menus.
+    match (state.overlay, &state.deleting) {
         (Some(Overlay::UnsavedPrompt), _) => {
             Element::from(stack![content, unsaved_prompt(state.name)])
         }
@@ -525,16 +528,30 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
             let menu = toolbar::file_menu(editable, document.units(), document.tolerance());
             Element::from(stack![content, menu])
         }
+        (Some(Overlay::ViewMenu), None) => {
+            let menu = status::view_menu(state.camera.projection(), state.mouse_hints);
+            Element::from(stack![content, menu])
+        }
         (None, None) => content.into(),
-    };
-
-    chrome::window(content, status(&state), hints(&state))
+    }
 }
 
-/// The status bar's hints: what the keys do for what's going on, the
-/// viewport's mouse bindings, and peeking; under the delete prompt only
-/// that `Esc` cancels it.
-fn hints<'a>(state: &DocumentState<'a>) -> Vec<Element<'a, Message>> {
+/// What the status bar shows: the feature selected, what's going on, the
+/// hints, and the view options menu's button.
+fn status<'a>(state: &DocumentState<'a>) -> Status<'a> {
+    Status {
+        selection: selection(state),
+        info: info(state),
+        hints: hints(state),
+        mouse_hints: state.mouse_hints,
+        view_menu: Some(state.overlay == Some(Overlay::ViewMenu)),
+    }
+}
+
+/// The status bar's hints: what the keys do for what's going on and the
+/// viewport's mouse bindings; under the delete prompt only that `Esc`
+/// cancels it.
+fn hints<'a>(state: &DocumentState<'a>) -> Vec<Hint<'a>> {
     // The delete prompt takes every key but `Esc`, and the viewport
     // behind it nothing.
     if state.deleting.is_some() {
@@ -565,20 +582,14 @@ fn hints<'a>(state: &DocumentState<'a>) -> Vec<Element<'a, Message>> {
     } else {
         Vec::new()
     };
-    // In the Dimension tool the peek key places references instead.
-    let peek = !state.sketch.is_some_and(|sketch| sketch.dimensioning());
-    let peek = peek.then(|| key_hint(Held::PEEK, state.panel.other(sketching).label()));
-    keys.into_iter()
-        .chain(viewport::hints(sketching))
-        .chain(peek)
-        .collect()
+    keys.into_iter().chain(viewport::hints(sketching)).collect()
 }
 
 /// The status bar's hints for the left button and the keys in `sketch`,
 /// which can be changed if `editable`: what the tool asks for, placing
 /// without snapping, typing values and how to stop it, or selecting, what
 /// can be done with the selection and how to leave.
-fn sketch_hints<'a>(sketch: &SketchState<'a>, editable: bool) -> Vec<Element<'a, Message>> {
+fn sketch_hints<'a>(sketch: &SketchState<'a>, editable: bool) -> Vec<Hint<'a>> {
     if let Some(field) = sketch.value {
         let enter = match field.target {
             ValueTarget::New { .. } | ValueTarget::Field(_) => "Place",
@@ -726,7 +737,7 @@ fn sketch_hints<'a>(sketch: &SketchState<'a>, editable: bool) -> Vec<Element<'a,
 
 /// The status bar's hints in the Dimension tool: what it asks for, the
 /// radius or diameter to switch to, placing a reference and stopping.
-fn dimension_hints<'a>(sketch: &Sketch, tool: &ActiveTool<'a>) -> Vec<Element<'a, Message>> {
+fn dimension_hints<'a>(sketch: &Sketch, tool: &ActiveTool<'a>) -> Vec<Hint<'a>> {
     let placing = crate::dimension::measure(sketch, tool.picked, DVec2::ZERO, tool.switched);
     let switch = match placing {
         Some((Measure::Radius(_), _)) => Some("Diameter"),
@@ -1014,21 +1025,23 @@ fn listed<'a>(names: impl ExactSizeIterator<Item = &'a str>) -> String {
     list
 }
 
-/// The status bar's info on the document: what's asked of the user while
-/// picking a plane, what the sketch being edited holds, the extrude being
-/// set up, the feature selected ([`feature_info`]) or the model
-/// ([`model_info`]). Whether its mesh is still being regenerated, or why it
-/// couldn't be built, if it couldn't. Then why the last edit was refused,
-/// if it was, and whether a save is in flight. On one line, cut where
-/// the hints start if it's longer (`chrome::window`).
-fn status<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
+/// What the status bar says is going on: what's asked of the user while
+/// picking a plane, what the sketch being edited holds or the extrude being
+/// set up. Whether the mesh is still being regenerated, or why it couldn't
+/// be built, if it couldn't; why the last edit was refused, if it was, and
+/// whether a save is in flight. Nothing, with nothing of that, so with
+/// nothing selected the bar has only its hints. On one line, cut short
+/// where the bar doesn't fit (`status::status_bar`).
+fn info<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
     if state.picking_plane {
-        return text("Pick a plane for the new sketch")
-            .size(12)
-            .wrapping(Wrapping::None)
-            .font(theme::SEMIBOLD)
-            .style(theme::accent_text)
-            .into();
+        return Some(
+            text("Pick a plane for the new sketch")
+                .size(12)
+                .wrapping(Wrapping::None)
+                .font(theme::SEMIBOLD)
+                .style(theme::accent_text)
+                .into(),
+        );
     }
     if let Some(sketch) = &state.sketch {
         let standing = standing(sketch).map(|(standing, trouble)| {
@@ -1053,93 +1066,84 @@ fn status<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
                 .wrapping(Wrapping::None)
                 .style(theme::muted_text)
         });
-        return row![
-            text(sketch.name)
+        return Some(
+            row![
+                text(sketch.name)
+                    .size(12)
+                    .wrapping(Wrapping::None)
+                    .font(theme::SEMIBOLD),
+                standing,
+                text(format!(
+                    "{}{} · on {}{}",
+                    sketch_summary(sketch.sketch),
+                    profile_count(sketch).map_or_else(String::new, |count| format!(" · {count}")),
+                    sketch.plane.name(),
+                    status_suffix(state)
+                ))
                 .size(12)
                 .wrapping(Wrapping::None)
-                .font(theme::SEMIBOLD),
-            standing,
-            text(format!(
-                "{}{} · on {}{}",
-                sketch_summary(sketch.sketch),
-                profile_count(sketch).map_or_else(String::new, |count| format!(" · {count}")),
-                sketch.plane.name(),
-                status_suffix(state)
-            ))
-            .size(12)
-            .wrapping(Wrapping::None)
-            .style(theme::muted_text),
-            refusal,
-            checking,
-        ]
-        .spacing(4)
-        .into();
+                .style(theme::muted_text),
+                refusal,
+                checking,
+            ]
+            .spacing(4)
+            .into(),
+        );
     }
     if let Some(extrude) = &state.extrude {
         let regions = match extrude.picked.len() {
             0 => "pick the regions to extrude".to_owned(),
             n => format!("{} picked", counted(n, "region", "regions")),
         };
-        return row![
-            text(extrude.editing.unwrap_or("New extrude"))
-                .size(12)
-                .wrapping(Wrapping::None)
-                .font(theme::SEMIBOLD),
-            text(format!("· {regions}{}", status_suffix(state)))
-                .size(12)
-                .wrapping(Wrapping::None)
-                .style(theme::muted_text),
-        ]
-        .spacing(4)
-        .into();
+        return Some(
+            row![
+                text(extrude.editing.unwrap_or("New extrude"))
+                    .size(12)
+                    .wrapping(Wrapping::None)
+                    .font(theme::SEMIBOLD),
+                text(format!("· {regions}{}", status_suffix(state)))
+                    .size(12)
+                    .wrapping(Wrapping::None)
+                    .style(theme::muted_text),
+            ]
+            .spacing(4)
+            .into(),
+        );
+    }
+    let notes = status_notes(state);
+    (!notes.is_empty()).then(|| {
+        text(notes.join(" · "))
+            .size(12)
+            .wrapping(Wrapping::None)
+            .style(theme::muted_text)
+            .into()
+    })
+}
+
+/// The feature selected in the Timeline, for the status bar's box of the
+/// selection: its icon, its name and [`feature_info`]. Nothing in a sketch,
+/// setting up an extrude or picking a plane, which the bar tells of instead.
+fn selection<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
+    if state.picking_plane || state.sketch.is_some() || state.extrude.is_some() {
+        return None;
     }
     let document = state.editor.document();
-    if let Some(feature) = state.selected_feature.and_then(|id| document.feature(id)) {
-        return row![
+    let feature = document.feature(state.selected_feature?)?;
+    Some(
+        row![
             icons::icon(panels::feature_icon(feature), icons::INLINE),
             text(feature.name.as_str())
                 .size(12)
                 .wrapping(Wrapping::None)
                 .font(theme::SEMIBOLD),
-            text(format!(
-                "{}{}",
-                feature_info(feature, document.units()),
-                status_suffix(state)
-            ))
-            .size(12)
-            .wrapping(Wrapping::None)
-            .style(theme::muted_text),
+            text(feature_info(feature, document.units()))
+                .size(12)
+                .wrapping(Wrapping::None)
+                .style(theme::muted_text),
         ]
         .spacing(6)
         .align_y(Alignment::Center)
-        .into();
-    }
-    let info = model_info(document, state.merged);
-    text(format!("{info}{}", status_suffix(state)))
-        .size(12)
-        .wrapping(Wrapping::None)
-        .style(theme::muted_text)
-        .into()
-}
-
-/// The status bar's info on `document` with nothing selected: "No
-/// selection · 2 bodies · 3 features · mm", or "Empty design · mm", in
-/// its units. The bodies are counted as the joins leave them, `merged`
-/// (see [`DocumentState::merged`]) each one with its holder.
-fn model_info(document: &Document, merged: &[(BodyId, BodyId)]) -> String {
-    let units = document.units().symbol();
-    let features = document.features().len();
-    if features == 0 {
-        return format!("Empty design · {units}");
-    }
-    format!(
-        "No selection · {} · {} · {units}",
-        counted(
-            panels::bodies_after_joins(document, merged),
-            "body",
-            "bodies"
-        ),
-        counted(features, "feature", "features"),
+        .into(),
     )
 }
 
@@ -1264,19 +1268,31 @@ pub(crate) fn counted(n: usize, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
 }
 
-/// The end of the status bar's info, after what it says of the model or
-/// the sketch: regenerating, why the last edit failed, saving.
-fn status_suffix(state: &DocumentState<'_>) -> String {
+/// What the status bar tells of the model and the file, whatever else
+/// it says: regenerating, why the last edit failed, saving.
+fn status_notes(state: &DocumentState<'_>) -> Vec<String> {
     let regenerating = match state.mesh_status {
-        MeshStatus::Current => String::new(),
-        MeshStatus::Regenerating => " · Regenerating…".to_owned(),
-        MeshStatus::Failed(error) => format!(" · Couldn't regenerate: {error}"),
+        MeshStatus::Current => None,
+        MeshStatus::Regenerating => Some("Regenerating…".to_owned()),
+        MeshStatus::Failed(error) => Some(format!("Couldn't regenerate: {error}")),
     };
     let edit_error = state
         .edit_error
-        .map_or_else(String::new, |error| format!(" · Couldn't edit: {error}"));
-    let saving = if state.saving { " · Saving…" } else { "" };
-    format!("{regenerating}{edit_error}{saving}")
+        .map(|error| format!("Couldn't edit: {error}"));
+    let saving = state.saving.then(|| "Saving…".to_owned());
+    [regenerating, edit_error, saving]
+        .into_iter()
+        .flatten()
+        .collect()
+}
+
+/// [`status_notes`] after what the status bar says of the sketch or the
+/// extrude.
+fn status_suffix(state: &DocumentState<'_>) -> String {
+    status_notes(state)
+        .iter()
+        .map(|note| format!(" · {note}"))
+        .collect()
 }
 
 #[cfg(test)]
@@ -1441,15 +1457,10 @@ mod tests {
     }
 
     #[test]
-    fn the_status_bar_sums_up_the_model_and_the_feature_selected() {
+    fn the_status_bar_sums_up_the_feature_selected() {
         use varde_document::{Document, Extent, FeatureKind, Operation};
 
-        assert_eq!(model_info(&Document::default(), &[]), "Empty design · mm");
         let document = Document::example();
-        assert_eq!(
-            model_info(&document, &[]),
-            "No selection · 1 body · 2 features · mm"
-        );
         let units = document.units();
         let [sketch, extrude] = [0, 1].map(|k| &document.features()[k]);
         assert_eq!(

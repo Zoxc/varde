@@ -16,7 +16,7 @@ use crate::{Look, Message};
 
 /// Width and height of the widget: the cube, and room around it for the
 /// axes' tips and letters.
-const SIZE: f32 = 116.0;
+pub(crate) const SIZE: f32 = 116.0;
 /// Half the cube's edge length.
 const HALF: f32 = 25.0;
 const LETTER_SIZE: f32 = 17.0;

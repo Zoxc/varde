@@ -10,6 +10,7 @@ use varde_document::APP_NAME;
 use crate::chrome::{self, ChipSize, key_hint};
 use crate::icons::{self, Icon};
 use crate::shortcut::{Binding, welcome_bindings};
+use crate::status::{Status, status_bar};
 use crate::theme::{self, Emphasis};
 use crate::{Message, Welcome};
 
@@ -130,11 +131,14 @@ pub fn welcome<'a>(state: WelcomeState<'a>) -> Element<'a, Message> {
             .align_right(Length::Fill)
             .padding(8),
     ];
-    chrome::window(
-        page,
-        text("No document open").size(12).style(theme::muted_text),
-        hints,
-    )
+    let status = status_bar(Status {
+        selection: None,
+        info: None,
+        hints: hints.into(),
+        mouse_hints: true,
+        view_menu: None,
+    });
+    chrome::window(page, status)
 }
 
 /// The widest a recent file card gets.

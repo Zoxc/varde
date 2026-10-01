@@ -2,7 +2,9 @@
 
 use std::borrow::Cow;
 
-use iced::widget::{Space, button, column, container, mouse_area, opaque, row, space, text};
+use iced::widget::{
+    Button, Container, Space, button, column, container, mouse_area, opaque, row, space, text,
+};
 use iced::{Alignment, Element, Length, Padding, mouse};
 use varde_document::{EXTENSION, OriginPlane, Tolerance};
 use varde_expr::LengthUnit;
@@ -356,6 +358,46 @@ fn tolerance_choices(tolerance: Tolerance) -> Vec<(f64, String, bool)> {
     offered.into_iter().chain(other).collect()
 }
 
+/// A menu's item: `icon`, `label` and the `key` that does the same if
+/// any, sending `message`; disabled without one.
+pub(crate) fn menu_item(
+    icon: Icon,
+    label: Cow<'static, str>,
+    key: Option<Shortcut>,
+    message: Option<Message>,
+) -> Button<'static, Message> {
+    let enabled = message.is_some();
+    let key = key.map(|key| container(key_label(key)).align_right(Length::Fill));
+    button(
+        row![
+            // Text-toned, so hovering doesn't change it.
+            icons::tinted(icon, icons::INLINE, move |p| {
+                theme::flat_content(p, Tone::Text, enabled, false)
+            }),
+            text(label),
+            key,
+        ]
+        .spacing(10)
+        .height(Length::Fill)
+        .align_y(Alignment::Center),
+    )
+    .width(Length::Fill)
+    .height(28)
+    .padding([0, 8])
+    .style(theme::flat_button(false))
+    .on_press_maybe(message)
+}
+
+/// A line between a menu's groups of items.
+pub(crate) fn menu_separator<'a>() -> Container<'a, Message> {
+    container(hrule()).padding([4, 2])
+}
+
+/// The icon left of a menu item that's a choice: a tick while `on`.
+pub(crate) fn ticked(on: bool) -> Icon {
+    if on { Icon::Check } else { Icon::Blank }
+}
+
 /// The file menu, as a layer over the whole screen. Clicking outside the
 /// menu closes it. Save, and changing the design's `units` or its
 /// `tolerance`, are disabled unless the document is `editable`. A
@@ -365,29 +407,8 @@ pub fn file_menu(
     units: LengthUnit,
     tolerance: Tolerance,
 ) -> Element<'static, Message> {
-    let item = |icon, label: Cow<'static, str>, key: Option<Shortcut>, message: Option<Message>| {
-        let enabled = message.is_some();
-        let key = key.map(|key| container(key_label(key)).align_right(Length::Fill));
-        button(
-            row![
-                // Text-toned, so hovering doesn't change it.
-                icons::tinted(icon, icons::INLINE, move |p| {
-                    theme::flat_content(p, Tone::Text, enabled, false)
-                }),
-                text(label),
-                key,
-            ]
-            .spacing(10)
-            .height(Length::Fill)
-            .align_y(Alignment::Center),
-        )
-        .width(Length::Fill)
-        .height(28)
-        .padding([0, 8])
-        .style(theme::flat_button(false))
-        .on_press_maybe(message)
-    };
-    let separator = || container(hrule()).padding([4, 2]);
+    let item = menu_item;
+    let separator = menu_separator;
 
     let bound = |icon, label: &'static str, binding: Binding| {
         let message = binding.sends();
@@ -412,7 +433,6 @@ pub fn file_menu(
         )
         .padding([4, 8])
     };
-    let ticked = |on| if on { Icon::Check } else { Icon::Blank };
     let choices = UNITS.map(|(unit, label)| {
         let message = editable.then_some(Message::Edit(Edit::SetUnits(unit)));
         item(ticked(unit == units), label.into(), None, message).into()

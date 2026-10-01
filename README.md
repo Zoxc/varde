@@ -24,6 +24,8 @@ reopen a recent file, or recover unsaved changes left by a crash.
 | orbit                       | middle drag, `Shift` right drag, or left drag outside a sketch |
 | pan                         | right drag                                 |
 | zoom                        | mouse wheel                                |
+| look from a side, or Home   | click a face of the view cube, or the house under it |
+| perspective or orthographic | the `…` at the status bar's right, which also turns the mouse's hints off or on |
 | peek at the other side tab  | hold `Alt` (`Option` on macOS)             |
 | new sketch                  | `S`, then pick the XY, XZ or YZ plane      |
 | edit a sketch               | double-click it in the Timeline, or select it and press `Enter` |

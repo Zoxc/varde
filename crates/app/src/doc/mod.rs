@@ -70,6 +70,8 @@ pub(crate) struct Doc {
     pub(crate) name: String,
     pub(crate) panel: Panel,
     pub(crate) file_menu: bool,
+    /// Whether the view options menu, from the status bar, is open.
+    pub(crate) view_menu: bool,
     /// The removal the user is asked about, if one is: see [`Doc::remove`].
     pub(crate) deleting: Option<Deleting>,
     /// Whether the plane for a new sketch is being picked.
@@ -184,6 +186,7 @@ impl Doc {
             name,
             panel: Panel::default(),
             file_menu: false,
+            view_menu: false,
             deleting: None,
             picking_plane: false,
             lineage,
@@ -406,6 +409,8 @@ impl Doc {
         }
         match message {
             Look::CloseFileMenu => self.file_menu = false,
+            Look::ToggleViewMenu => self.view_menu = !self.view_menu,
+            Look::CloseViewMenu => self.view_menu = false,
             Look::CancelDelete => self.deleting = None,
             Look::Escape => self.escape(),
             // Only the tabs showing can be picked, but a message sent before
@@ -506,6 +511,7 @@ impl Doc {
                 self.animate_camera(to);
             }
             Look::SetProjection(projection) => {
+                self.view_menu = false;
                 self.camera.set_projection(projection);
                 if let Some(animation) = &mut self.animation {
                     animation.to.set_projection(projection);
@@ -600,8 +606,9 @@ impl Doc {
     }
 
     /// The document screen, showing the other panel tab if `peek`, unless
-    /// the Dimension tool is in use, where the peek key places references.
-    pub(crate) fn view(&self, peek: bool, mode: Mode) -> Element<'_, Ui> {
+    /// the Dimension tool is in use, where the peek key places references,
+    /// and the status bar's hints of the mouse if `mouse_hints`.
+    pub(crate) fn view(&self, peek: bool, mode: Mode, mouse_hints: bool) -> Element<'_, Ui> {
         let peek = self.peeks(peek);
         varde_view::document(varde_view::DocumentState {
             editor: &self.editor,
@@ -619,14 +626,16 @@ impl Doc {
             recovered: self.recovered().map(|offer| varde_view::RecoveredChanges {
                 design_changed: offer.design_changed,
             }),
-            // The prompt shows over the file menu.
+            // The prompt shows over the menus.
             overlay: self
                 .prompt()
                 .map(|_| Overlay::UnsavedPrompt)
-                .or(self.file_menu.then_some(Overlay::FileMenu)),
+                .or(self.file_menu.then_some(Overlay::FileMenu))
+                .or(self.view_menu.then_some(Overlay::ViewMenu)),
             panel: self.panel,
             peek,
             mode,
+            mouse_hints,
             picking_plane: self.picking_plane,
             selected_feature: self.selected_feature,
             sketch: self.sketch_state(),

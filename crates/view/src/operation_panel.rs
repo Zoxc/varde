@@ -16,18 +16,25 @@ use iced::{Alignment, Element, Event, Length, Rectangle, Size, Vector};
 
 use crate::Message;
 use crate::chrome::{hrule, scrolled, small_button};
+use crate::controls::CONTROLS_HEIGHT;
+use crate::status::STATUS_BAR_ROOM;
 use crate::theme::{self, Emphasis, SEMIBOLD};
+use crate::viewport::CONTROLS_TOP;
 
 /// How wide the panel is, in pixels.
 pub(crate) const PANEL_WIDTH: f32 = 264.0;
 
 /// How far below the viewport's top the panel starts, clear of the
-/// camera controls and the view cube, in pixels.
-pub(crate) const PANEL_TOP: f32 = 150.0;
+/// camera controls (the view cube and Home), in pixels.
+pub(crate) const PANEL_TOP: f32 = CONTROLS_TOP + CONTROLS_HEIGHT + PANEL_MARGIN;
 
-/// How far from the viewport's right and bottom the panel stays at least,
-/// in pixels.
+/// How far from the viewport's right the panel stays at least, and from
+/// its top where it rises over the controls, in pixels.
 pub(crate) const PANEL_MARGIN: f32 = 12.0;
+
+/// How far from the viewport's bottom the panel stays at least: clear of
+/// the floating status bar, in pixels.
+pub(crate) const PANEL_BOTTOM: f32 = STATUS_BAR_ROOM + PANEL_MARGIN;
 
 /// How tall the panel may get below its top before it rises above
 /// [`PANEL_TOP`], in pixels: its header and footer and a few rows of its
@@ -123,9 +130,9 @@ pub(crate) fn operation_panel(parts: Parts<'_>) -> Element<'_, Message> {
 }
 
 /// `panel` placed over a viewport: at its right, [`PANEL_MARGIN`] in from
-/// its right and bottom, and [`PANEL_TOP`] down from its top, or higher,
-/// down to [`PANEL_MARGIN`], where the viewport is too short to leave it
-/// [`PANEL_ROOM`] below that. The layer takes only what's over the panel
+/// its right and [`PANEL_BOTTOM`] up from its bottom, and [`PANEL_TOP`]
+/// down from its top, or higher, down to [`PANEL_MARGIN`], where the
+/// viewport is too short to leave it [`PANEL_ROOM`] below that. The layer takes only what's over the panel
 /// and lets the rest through.
 pub(crate) fn placed(panel: Element<'_, Message>) -> Element<'_, Message> {
     Element::new(Placed { panel })
@@ -142,7 +149,7 @@ impl Placed<'_> {
         if !height.is_finite() {
             return PANEL_TOP;
         }
-        (height - PANEL_MARGIN - PANEL_ROOM).clamp(PANEL_MARGIN, PANEL_TOP)
+        (height - PANEL_BOTTOM - PANEL_ROOM).clamp(PANEL_MARGIN, PANEL_TOP)
     }
 }
 
@@ -169,7 +176,7 @@ impl Widget<Message, iced::Theme, iced::Renderer> for Placed<'_> {
         let top = Self::top(size.height);
         let room = Size::new(
             (size.width - 2.0 * PANEL_MARGIN).max(0.0),
-            (size.height - top - PANEL_MARGIN).max(0.0),
+            (size.height - top - PANEL_BOTTOM).max(0.0),
         );
         let panel = self.panel.as_widget_mut().layout(
             &mut tree.children[0],
