@@ -34,11 +34,14 @@
 //!   polygons' fans and ears, and a plate's fans out of a corner to holes
 //!   on a common tangent, become triangles a later cut, or the walls,
 //!   can't come too close to.
-//! - Last, caps whose triangles' boxes still crowd each other (a fan the
-//!   exemptions left, as of a polygon whose sides are too short to
-//!   refine at, or the plain caps of the last try) are refined once more
-//!   for that, without exemptions or halving ([`crowded`]): repair would
-//!   count every pair of those boxes first and run out of budget.
+//! - Last, on the tries that refine, caps whose triangles' boxes still
+//!   crowd each other (a fan the exemptions left, as of a polygon whose
+//!   sides are too short to refine at) are refined once more for that,
+//!   without exemptions or halving ([`crowded`]): repair would count
+//!   every pair of those boxes first and run out of budget. The plain
+//!   caps are left as they are, so their tries make what they made
+//!   before the caps were refined; refined for crowding, some of them
+//!   failed where repair had mended them.
 //!
 //! A Steiner point inside the hull of a segment bulging into the region
 //! could end up outside the region once that segment is halved, so that
@@ -152,10 +155,15 @@ impl Mode {
         quality: true,
         flat_corners: true,
     };
-    /// The last: neither.
+    /// The plain caps' first try: neither.
     pub const PLAIN: Mode = Mode {
         quality: false,
         flat_corners: false,
+    };
+    /// The plain caps' second try: flat corners only.
+    pub const FLAT_CORNERS_PLAIN: Mode = Mode {
+        quality: false,
+        flat_corners: true,
     };
 }
 
@@ -202,9 +210,10 @@ impl Rounds {
 /// and as `mode` says, refined for quality ([`quality`]) and moving
 /// Steiner points in from loop vertices with flat corners. Returns the
 /// chain as halved, with the caps; `unlike_plain` is set if the rounds
-/// did anything the plain caps' wouldn't ([`Mode::PLAIN`]): a run of
-/// refinement asked for anything, or mending left a halving to
-/// refinement at [`MAX_MEND_DEPTH`] that the plain caps would make.
+/// did anything they wouldn't unrefined (`mode` without `quality`, as
+/// [`Mode::PLAIN`]): a run of refinement asked for anything, or mending
+/// left a halving to refinement at [`MAX_MEND_DEPTH`] that the plain
+/// caps would make.
 ///
 /// The first round triangulates the chain and the Steiner points; the
 /// rounds after it add what the round before asked for to that
@@ -218,9 +227,9 @@ impl Rounds {
 /// refinement's points can take those corners apart, and when it has
 /// nothing more to add and such halvings are left, they fail the caps as
 /// [`refused`] says; a segment halved too often fails them at once. When
-/// nothing is left to do, caps whose triangles' boxes crowd each other
-/// ([`crowded`]) are refined once more for that, every narrow triangle
-/// alike, and mended again.
+/// nothing is left to do, caps refined for quality whose triangles'
+/// boxes crowd each other ([`crowded`]) are refined once more for that,
+/// every narrow triangle alike, and mended again.
 ///
 /// Without flat corners, `fork` is set to the state of the first round
 /// that found a flat corner, taken before the round changed anything:
@@ -378,7 +387,7 @@ pub(super) fn triangulate(
             if !stuck.is_empty() {
                 return Err(refused(&chain, &stuck));
             }
-            if !gated {
+            if !gated && mode.quality {
                 gated = true;
                 if crowded(&tris, &at, margin, work)? {
                     let refined = caps.refine(live, Bound::Crowded, work)?;

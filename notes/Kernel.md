@@ -194,8 +194,8 @@ within the fit tolerance, tangent-continuous where the spline is.
    inserted into the triangulation kept from round to round), chords
    halved where those would encroach, and caps whose triangles' boxes
    still crowd each other refined once more. A second try mends flat
-   corners if the first fails, and a last makes the plain, unrefined
-   caps.
+   corners if the first fails, and the last two are the plain, unrefined
+   caps' own two tries.
 4. **Walls**: two patches per segment from the exact cylinder strip, sharing
    their top and bottom edges with the caps. Faces: `StartCap`, `EndCap`,
    and `Side { curve, segment }` per profile segment, tagged with their

@@ -677,29 +677,202 @@ fn uneven_circles_and_random_plates_patches() {
 }
 
 #[test]
-fn crowded_plain_caps_are_refined() {
-    // The plain caps of the fan of 4 096 (the last try's), every two of
-    // whose boxes overlap: counted crowded, they are refined without
-    // exemptions or halving, and the solid passes within the budget.
+fn plain_caps_are_not_refined_for_crowding() {
+    // The fan of 4 096, every two of whose boxes overlap: the plain caps
+    // (the last tries') are the fan as triangulated, as before the caps
+    // were refined, not refined for crowding as the first try's are.
     let p = fan(4096, 100.0);
     let margin = TOL.resolution();
     let mut work = Work::new(&Budget::DEFAULT);
     let mut chain = Chain::new(&p, margin).unwrap();
     chain.separate(&mut work).unwrap();
-    let start = Rounds::new(chain);
-    let (chain, cap) =
-        cap::triangulate(start, margin, Mode::PLAIN, &mut None, &mut false, &mut work).unwrap();
-    assert!(cap.steiner.len() > 500, "{}", cap.steiner.len());
-    let mesh = build(&chain, &cap, &Frame::XY, 0.0, 1.0, 1).unwrap();
-    let solid = Solid::new_within(
-        mesh.repair_within(&TOL, &mut work).unwrap(),
-        &TOL,
-        &mut work,
-    );
-    let mut refused = Refused::default();
-    if let Some(solid) = refused.solid(&p, &TOL, 1.0, solid, "plain fan of 4096") {
-        let patches = solid.mesh().tris().len();
-        assert!(patches < 12 * 4098, "{patches} patches");
+    for (mode, refined) in [(Mode::PLAIN, false), (Mode::QUALITY, true)] {
+        let mut work = Work::new(&Budget::DEFAULT);
+        let start = Rounds::new(chain.clone());
+        let (_, cap) =
+            cap::triangulate(start, margin, mode, &mut None, &mut false, &mut work).unwrap();
+        assert_eq!(cap.steiner.len() > 500, refined, "{mode:?}");
+        if !refined {
+            assert_eq!(cap.tris.len(), 4096);
+        }
     }
+}
+
+/// One of `xs`, at random.
+fn pick<T: Copy>(rng: &mut Rng, xs: &[T]) -> T {
+    xs[(rng.next_u64() % xs.len() as u64) as usize]
+}
+
+/// A wavy closed curve round `c`, its radius `r·(1 + amp·sin(k·θ + φ))`
+/// with the phase `φ` at random, as `n` conics through its points at even
+/// angles, each through the curve's point at its middle angle too, with
+/// weights at random (log-uniform) in `weights`: a fitted spline's
+/// pieces, sharply weighted.
+fn wavy_spline(
+    rng: &mut Rng,
+    c: DVec2,
+    r: f64,
+    n: usize,
+    [amp, k]: [f64; 2],
+    curve: u64,
+    weights: (f64, f64),
+) -> Loop {
+    let phase = rng.range(0.0, TAU);
+    let at = |t: f64| c + DVec2::new(t.cos(), t.sin()) * (r * (1.0 + amp * (k * t + phase).sin()));
+    let segments = (0..n)
+        .map(|i| {
+            let [t0, t1] = [i, i + 1].map(|j| j as f64 / n as f64 * TAU);
+            let (p0, p1) = (at(t0), if i + 1 == n { at(0.0) } else { at(t1) });
+            let w = rng.log_range(weights.0, weights.1);
+            // The conic's point at its middle, (p0 + 2w·c + p1) / (2 + 2w),
+            // on the curve.
+            let mid = at(0.5 * (t0 + t1));
+            let control = (mid * (2.0 + 2.0 * w) - p0 - p1) / (2.0 * w);
+            Segment {
+                conic: Conic2::new(p0, control, w, p1).unwrap(),
+                curve: curve + i as u64,
+            }
+        })
+        .collect();
+    Loop { segments }
+}
+
+#[test]
+fn the_plain_caps_second_try_is_made() {
+    // A spline of 64 sharply weighted pieces (weights 1/64 to 64) round
+    // two holes like it, at fit 1e-5: refined, the caps run out of budget
+    // (their mending halving the pieces to `MAX_MEND_DEPTH` at once, and
+    // refinement after), and so do the plain caps, with no flat corners
+    // on the refined try to fork a second try from; the plain caps'
+    // second try, from their first try's fork, passes, as it did before
+    // the caps were refined.
+    let mut rng = Rng::new(701_441);
+    let tol = Tolerance::new(pick(&mut rng, &[1e-5, 1e-4, 1e-3, 1e-2, 1e-1])).unwrap();
+    let r = rng.log_range(0.1, 500.0);
+    let n = pick(&mut rng, &[64, 128, 256]);
+    let wave = [
+        pick(&mut rng, &[0.02, 0.2, 0.5]),
+        pick(&mut rng, &[3.0, 5.0, 11.0, 40.0]),
+    ];
+    let weights = pick(&mut rng, &[(1.0, 1.0), (0.5, 2.0), (1.0 / 64.0, 64.0)]);
+    assert_eq!(
+        (tol.fit(), n, wave, weights),
+        (1e-5, 64, [0.5, 3.0], (1.0 / 64.0, 64.0))
+    );
+    let mut loops = vec![wavy_spline(&mut rng, DVec2::ZERO, r, n, wave, 0, weights)];
+    for h in 0..rng.next_u64() % 3 {
+        let size = r * rng.log_range(0.01, 0.15);
+        let at = DVec2::new(rng.range(-0.3, 0.3), rng.range(-0.3, 0.3)) * r;
+        let n = pick(&mut rng, &[8, 64, 500]);
+        let hole = wavy_spline(&mut rng, at, size, n, [0.1, 3.0], 1000 * (h + 1), weights);
+        loops.push(reversed(&hole));
+    }
+    let h = rng.log_range(0.01, 100.0);
+    let p = profile(loops);
+
+    // The refined caps and the plain caps' first try fail.
+    let margin = tol.resolution();
+    let mut work = Work::new(&Budget::DEFAULT);
+    let mut chain = Chain::new(&p, margin).unwrap();
+    chain.separate(&mut work).unwrap();
+    for (mode, fork) in [(Mode::QUALITY, false), (Mode::PLAIN, true)] {
+        let mut work = Work::new(&Budget::DEFAULT);
+        let mut forked = None;
+        let caps = cap::triangulate(
+            Rounds::new(chain.clone()),
+            margin,
+            mode,
+            &mut forked,
+            &mut false,
+            &mut work,
+        );
+        let solid = caps.and_then(|(chain, cap)| {
+            let mesh = build(&chain, &cap, &Frame::XY, 0.0, h, 1)?;
+            Solid::new_repaired_within(mesh, &tol, &mut work)
+        });
+        assert!(solid.is_err(), "{mode:?}");
+        assert_eq!(forked.is_some(), fork, "{mode:?}");
+    }
+    let mut refused = Refused::default();
+    refused.solid(&p, &tol, h, run(&p, &tol, h), "spline round two holes");
+    refused.none();
+}
+
+/// A circle of radius `r` round `c` cut at random angles (steps from
+/// `min` to 1.5 radians, log-uniform) into arcs, curves `curve..`.
+fn cut_at_random(rng: &mut Rng, c: DVec2, r: f64, min: f64, curve: u64) -> Loop {
+    let mut angles = vec![0.0];
+    loop {
+        let next = angles.last().unwrap() + rng.log_range(min, 1.5);
+        if next >= TAU - min {
+            break;
+        }
+        angles.push(next);
+    }
+    let points: Vec<DVec2> = angles
+        .iter()
+        .map(|&a: &f64| c + DVec2::new(a.cos(), a.sin()) * r)
+        .collect();
+    let n = points.len();
+    let segments = (0..n)
+        .map(|i| arc(c, points[i], points[(i + 1) % n], curve + i as u64))
+        .collect();
+    Loop { segments }
+}
+
+#[test]
+fn a_run_of_fine_pieces_in_a_cut_circle_extrudes() {
+    // A circle of radius 4.3 cut at random into arcs, one of which is
+    // 1 000 straight pieces of its chord, round two holes cut so, at fit
+    // 1e-3: the refined first try fails, and the plain caps' first try
+    // passes after repair. Its caps' boxes crowd each other (some 500 000
+    // pairs); refined for that, they failed instead.
+    let mut rng = Rng::new(300_291);
+    let tol = Tolerance::new(pick(&mut rng, &[1e-5, 1e-4, 1e-3, 1e-2, 1e-1])).unwrap();
+    let r = rng.log_range(0.1, 1000.0);
+    let mut outline = cut_at_random(&mut rng, DVec2::ZERO, r, 2e-3, 0);
+    let n = outline.segments.len() as u64;
+    let i = (rng.next_u64() % n) as usize;
+    let (a, b) = (outline.segments[i].conic.p0, outline.segments[i].conic.p1);
+    let at = |j: usize| a.lerp(b, j as f64 / 1000.0);
+    let pieces = (0..1000).map(|j| Segment::line(at(j), at(j + 1), 9000 + j as u64).unwrap());
+    outline.segments.splice(i..=i, pieces);
+    let mut loops = vec![outline];
+    for h in 0..rng.next_u64() % 3 {
+        let size = r * rng.log_range(0.01, 0.2);
+        let at = DVec2::new(rng.range(-0.4, 0.4), rng.range(-0.4, 0.4)) * r;
+        loops.push(reversed(&cut_at_random(
+            &mut rng,
+            at,
+            size,
+            2e-3,
+            1000 * (h + 1),
+        )));
+    }
+    let h = rng.log_range(0.01, 100.0);
+    let p = profile(loops);
+    assert_eq!(
+        (
+            tol.fit(),
+            p.loops.iter().map(|l| l.segments.len()).collect::<Vec<_>>()
+        ),
+        (1e-3, vec![1036, 18, 32])
+    );
+    let margin = tol.resolution();
+    let mut work = Work::new(&Budget::DEFAULT);
+    let mut chain = Chain::new(&p, margin).unwrap();
+    chain.separate(&mut work).unwrap();
+    for (mode, passes) in [(Mode::QUALITY, false), (Mode::PLAIN, true)] {
+        let mut work = Work::new(&Budget::DEFAULT);
+        let start = Rounds::new(chain.clone());
+        let caps = cap::triangulate(start, margin, mode, &mut None, &mut false, &mut work);
+        let solid = caps.and_then(|(chain, cap)| {
+            let mesh = build(&chain, &cap, &Frame::XY, 0.0, h, 1)?;
+            Solid::new_repaired_within(mesh, &tol, &mut work)
+        });
+        assert_eq!(solid.is_ok(), passes, "{mode:?}");
+    }
+    let mut refused = Refused::default();
+    refused.solid(&p, &tol, h, run(&p, &tol, h), "a run of fine pieces");
     refused.none();
 }

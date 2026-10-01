@@ -142,9 +142,13 @@ pub fn extrude(
     // work left, so it couldn't do better) and isn't made. Both refine
     // the caps for quality; refining a sliver of the region thinner than
     // the pieces the chain may be halved into can leave it worse than the
-    // plain caps, so those are the last try, if the first try did anything
-    // they wouldn't (refinement asked for something, or mending left a
-    // halving to it that they would make): else they would repeat it.
+    // plain caps, so the last tries are the plain caps' two, made as the
+    // two above are, so what those mended they mend still, work allowing:
+    // the plain first try if the first try did anything it wouldn't
+    // (refinement asked for something, or mending left a halving to it
+    // that the plain caps would make), else it would repeat it; then the
+    // plain second try from its fork, if the refined second try did
+    // anything it wouldn't.
     let retry = |e: &KernelError| {
         matches!(
             e,
@@ -153,47 +157,54 @@ pub fn extrude(
                 | KernelError::Profile(ProfileError::TooFine(..))
         )
     };
+    let mut attempt = |start, mode, fork: &mut Option<Rounds>, unlike: &mut bool| {
+        let caps = cap::triangulate(start, margin, mode, fork, unlike, &mut work);
+        let result = solid(caps, &mut work);
+        (result, work.left() > 0)
+    };
     let (mut fork, mut unlike_plain) = (None, false);
-    let start = Rounds::new(chain.clone());
-    let caps = cap::triangulate(
-        start,
-        margin,
+    let first = match attempt(
+        Rounds::new(chain.clone()),
         Mode::QUALITY,
         &mut fork,
         &mut unlike_plain,
-        &mut work,
-    );
-    let first = match solid(caps, &mut work) {
-        Err(e) if retry(&e) && work.left() > 0 => e,
-        result => return result,
+    ) {
+        (Err(e), true) if retry(&e) => e,
+        (result, _) => return result,
     };
-    if let Some(fork) = fork {
-        let caps = cap::triangulate(
-            fork,
-            margin,
+    // Whether the refined second try did anything the plain one wouldn't.
+    let mut second_unlike = false;
+    if let Some(fork) = &fork {
+        match attempt(
+            fork.clone(),
             Mode::FLAT_CORNERS,
             &mut None,
-            &mut false,
-            &mut work,
-        );
-        match solid(caps, &mut work) {
-            Err(_) if work.left() > 0 => {}
-            Err(_) => return Err(first),
-            result => return result,
+            &mut second_unlike,
+        ) {
+            (Err(_), true) => {}
+            (Err(_), false) => return Err(first),
+            (result, _) => return result,
         }
     }
-    if !unlike_plain {
+    let plain_fork = if unlike_plain {
+        let mut plain_fork = None;
+        match attempt(Rounds::new(chain), Mode::PLAIN, &mut plain_fork, &mut false) {
+            (Err(_), true) => {}
+            (Err(_), false) => return Err(first),
+            (result, _) => return result,
+        }
+        plain_fork
+    } else if second_unlike {
+        // The first try was the plain one, fork and all.
+        fork
+    } else {
+        None
+    };
+    let Some(plain_fork) = plain_fork else {
         return Err(first);
-    }
-    let caps = cap::triangulate(
-        Rounds::new(chain),
-        margin,
-        Mode::PLAIN,
-        &mut None,
-        &mut false,
-        &mut work,
-    );
-    solid(caps, &mut work).map_err(|_| first)
+    };
+    let (result, _) = attempt(plain_fork, Mode::FLAT_CORNERS_PLAIN, &mut None, &mut false);
+    result.map_err(|_| first)
 }
 
 /// The closed mesh: the chain's vertices and the Steiner points at `from`,

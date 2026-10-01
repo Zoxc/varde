@@ -2033,15 +2033,24 @@ over another conic, along the normal. The steps:
      caps stand as they are. Fine polygons' fans and ears and a plate's
      fans out of a corner to its holes' common tangent points become
      graded triangles, which the walls and later cuts keep clear of.
-   - **Crowded caps** (`crowded`), once a try, when nothing is left to
-     mend: the region's triangles' boxes are counted in pairs within the
-     resolution, up to `max(32·triangles, 65 536)`, through
+   - **Crowded caps** (`crowded`), once a try that refines for
+     quality, when nothing is left to mend: the region's triangles'
+     boxes are counted in pairs within the resolution, up to
+     `max(32·triangles, 65 536)`, through
      `Bvh::count_pairs_up_to` (nothing collected, nothing failing), and
      spent. Past that the caps are crowded, a fan or strip of long thin
      triangles whose pairs repair would count first and run out of
      budget on, with no second try after: a fan the exemptions leave
-     (the chords of a 65 536-gon at fit 0.1 are too short to refine at)
-     or the last try's plain caps. Crowded caps get a run of
+     (the chords of a 65 536-gon at fit 0.1 are too short to refine at).
+     The plain caps' tries aren't counted: they make the caps they made
+     before refinement. Refined for crowding, 6 of the 5 500 fuzzed
+     profiles of step 5 (cut circles with a run of 1 000 fine straight
+     pieces, as `a_run_of_fine_pieces_in_a_cut_circle_extrudes`, and
+     sharply weighted splines) failed there that repair had mended
+     unrefined, while 3 splines of 6 000 sharply weighted pieces that
+     the plain caps ran out of budget on passed; counting the pairs at
+     all would spend work the plain caps' own check needs. Crowded caps
+     get a run of
      refinement with every triangle under 5° bad, no exemptions and no
      halving, a circumcentre inserted only if inside a region face, more
      than half its circumradius (and 4 resolutions) from every hull and
@@ -2172,14 +2181,33 @@ over another conic, along the normal. The steps:
    thirteen, all of radius under 0.11, whose shortest arcs are under a
    hundred resolutions long. The first two tries refine for quality
    (with the fork's refinement rounds counted on too); if both fail and
-   work is left, and the first did anything the plain caps wouldn't (its
-   refinement asked for anything, or its mending left a halving at
-   `MAX_MEND_DEPTH` to refinement that they would make), a last
-   try makes the plain caps from the separated chain, neither refined
-   nor with flat corners: refining a sliver of the region thinner than
-   the pieces the chain may be halved into (a closed spline 0.001 high
-   at fit 0.1) halved its sides into pieces that failed where the plain
-   caps passed. Again the first error stands.
+   work is left, the last two are the plain caps' own two tries, neither
+   refined, made the same way: refining a sliver of the region thinner
+   than the pieces the chain may be halved into (a closed spline 0.001
+   high at fit 0.1) halved its sides into pieces that failed where the
+   plain caps passed, and a spline of sharply weighted pieces (weights
+   1/64 to 64) round two holes, at fit 1e-5, ran out of budget refined
+   and plain but passed with the plain caps' flat corners
+   (`the_plain_caps_second_try_is_made`). The plain first try is made
+   from the separated chain if the first try did anything it wouldn't
+   (its refinement asked for anything, or its mending left a halving at
+   `MAX_MEND_DEPTH` to refinement that it would make), and keeps its own
+   fork; without that the first try was the plain one, fork included.
+   The plain second try resumes from that fork, if there is one and the
+   refined second try did anything the plain one wouldn't: else it would
+   repeat it. Again the first error stands. A profile that fails every
+   try pays for up to four: 500 plates of small holes at fit 0.1 (74
+   refused) took 20 s rather than 13 s with three tries, and none more
+   passed there. Over 5 500 fuzzed profiles at fits 1e-5 to 0.1
+   (jittered fine polygons and outlines, conics of weights 1/64 to 64,
+   tiny notches and holes in outlines up to 1e5, fine splines of
+   sharply weighted pieces, cut circles beside runs of fine straight
+   pieces, rows of holes near a plate's side; some on turned frames)
+   the four tries refuse one profile the plain caps alone extruded (a
+   spline of 6 000 sharply weighted pieces at fit 1e-5, out of budget
+   on the refined first try) and extrude 478 they refused; each `Ok`
+   passed `check_faces` with the straightened area's volume, and 790
+   profiles came out the same at 1 and 8 threads.
 
 A curved wall's surface is the cylinder over its conic: with `λ` the
 barycentric coordinates of a point's projection on the conic's control
@@ -2295,8 +2323,8 @@ are refined for quality, with what it failed with plain:
   (radii 100 and 50), and in release two 16 384-gons (volume within
   `1e-11`): `TooComplex`, repair's box pairs; the 4 096 fan at 1 and 8
   threads; the 16 384 fan at a budget of `2^18` `TooComplex` quickly;
-  the 4 096 fan's plain caps (the last try's) counted crowded and
-  refined for it, the solid right;
+  the 4 096 fan's plain caps (the plain tries') left as they are, a fan
+  with no Steiner points;
 - regular 64-, 256- and 1 024-gons whose vertices are 1, 2 or 3
   resolutions off their neighbours' chord, at fits 1e-3 and 0.1: all 18
   `Invalid`;
@@ -2384,7 +2412,7 @@ and 459. Those are the short curved segments at coarse tolerances of
 the known gaps, whose chords, under twice `MIN_SPLIT` resolutions,
 refinement leaves alone, where a point moved in from a flat corner
 takes the sliver apart. So it stays, resumed from the first try's
-fork, with the plain caps as the third try.
+fork, with the plain caps' two tries as the last two.
 
 The seeded boolean suite's tallies are those of the plain caps but
 for one more of the chains (201 of 240). 5° was taken: 10° moved a
@@ -2482,7 +2510,7 @@ Known gaps:
   straight side with no vertices near (a row of holes 0.1 from a plate's
   side) keeps coming back as the arcs are halved. Past `MAX_MEND_DEPTH`
   such corners are left to refinement, which mends the cases seen on
-  the first try; the plain caps of the last try still halve on to
+  the first try; the plain caps of the last tries still halve on to
   `MAX_CAP_DEPTH`.
 - **Fitted spline chains with real detail near the tolerance** (a dense
   zigzag through 100 fit points whose wiggles are about the fit across)
@@ -5018,7 +5046,14 @@ to 72 of its 96 operations and left the others as they were.
   two-hole plate, a ring joined −1..3, a slot cut, a hole drilled −1..1)
   is refused at its last cut (`Invalid(Hull)` where the hole meets the
   ring's wall), where with the plain caps it came out right: the test
-  takes right or refused.
+  takes right or refused. The refined plate has its bottom side halved
+  (vertices at x = 0 and 0.75), so its top cap's triangle under the
+  drill differs; the drill's pair refinement then leaves a vertex of
+  the plate's top 2.7e-3 outside the drill's circle, beside an arc of
+  it (chord 0.13, sag 3.8e-3, bulging past the vertex), and the cut
+  face's triangle there, that vertex and the arc's ends, folds
+  (`Fold` before repair, `Hull` after). A boolean weakness (a cut arc
+  passing within its sag of an operand's vertex), not the caps'.
 - Triangles thinner than the resolution across two faces (a cut passing
   within a resolution or two of a vertex) aren't flipped, and fail the
   hull rules.
@@ -5944,11 +5979,15 @@ parameter, or a split outside the patch bounds),
   thin triangles (a plate's fans out of a corner to holes on a common
   tangent) that a later cut along them fails on, so every cap triangle
   with an angle under 5° is refined, at the cost of patches (see "Cap
-  quality"). Both tries refine. Refinement goes before the ears'
-  centroids when nothing is to be halved, halves an encroached chord
-  again while the asking point still encroaches on a half, keeps its
-  points in rounds that halve, and a mending halving refused as too
-  small is left to refinement rather than failing the round: each found
+  quality"). Both tries refine; the plain caps' own two tries come
+  after them, the second from the plain first try's fork, unrefined
+  for crowding too (extrude step 5), so what they extruded still
+  extrudes unless refinement spent the budget first. Refinement goes
+  before the ears' centroids when nothing is to be halved, halves an
+  encroached chord again while the asking point still encroaches on a
+  half, keeps its points in rounds that halve, and a mending halving
+  refused as too small is left to refinement rather than failing the
+  round: each found
   needed on fine circles of arcs, perforated plates or spline chains.
   The flat-corner second try stays: measured against refined caps
   then plain ones alone, it still mends 9 and 14 of 500 plates of small
@@ -6002,7 +6041,8 @@ parameter, or a split outside the patch bounds),
   for the queue to empty. The crowding gate (the plan's count after the
   first triangulation, before any refinement) runs once a try when
   nothing is left to mend, since refinement for quality runs on every
-  try now and leaves only the fans its exemptions keep crowded; it
+  try now and leaves only the fans its exemptions keep crowded, and
+  not on the plain caps' tries, which make what they made before; it
   refines with the same 5° bound (radius-edge ratio about 5.7, the
   plan's `B` between 3 and 5 being about 6° to 10°) and `c` = ½.
 - **`extrude` takes a `Frame`** (origin and axes) and the extent as
