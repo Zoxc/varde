@@ -989,6 +989,84 @@ impl Cleaner<'_> {
     }
 }
 
+/// The thin triangles left across two faces in a cleaned `soup`: a
+/// triangle higher than `small` but no higher than `thin` over its longest
+/// side, the triangle across that side on another face (by source). The
+/// first count is all of them; the second only those with straight sides
+/// whose far corner lies inside a plane (every triangle round it on a
+/// plane face, the planes one within `small`, every edge from it
+/// straight), which splitting the long side at the corner's foot and
+/// collapsing the corner onto it would take away without moving the
+/// surface. For measuring only.
+#[cfg(test)]
+pub(super) fn thin_across(soup: &Soup, faces: &[Face], small: f64, thin: f64) -> (usize, usize) {
+    let p = |v: u32| soup.pos[v as usize];
+    let mut across = BTreeMap::new();
+    let mut around = vec![Vec::new(); soup.pos.len()];
+    for (t, tri) in soup.tris.iter().enumerate() {
+        for i in 0..3 {
+            across.insert((tri[i], tri[(i + 1) % 3]), t);
+            around[tri[i] as usize].push(t);
+        }
+    }
+    let curved = |u: u32, v: u32| {
+        soup.curves
+            .get(&(u.min(v), u.max(v)))
+            .is_some_and(|edge| !straight(p(u), edge.ctrl, p(v), small))
+    };
+    let plane = |t: usize| match faces[soup.faces[t] as usize].surface {
+        Surface::Plane { n, d } => {
+            let len = n.length();
+            (len > 0.0 && len.is_finite()).then(|| (n / len, d / len))
+        }
+        _ => None,
+    };
+    let inside_plane = |c: u32| {
+        let round = &around[c as usize];
+        let Some(first) = round.first().and_then(|&t| plane(t)) else {
+            return false;
+        };
+        round.iter().all(|&t| {
+            plane(t)
+                .is_some_and(|(n, d)| n.dot(first.0) >= 1.0 - 1e-12 && (d - first.1).abs() <= small)
+        }) && round
+            .iter()
+            .flat_map(|&t| soup.tris[t])
+            .all(|w| w == c || !curved(c, w))
+    };
+    let (mut all, mut mendable) = (0, 0);
+    for (t, &tri) in soup.tris.iter().enumerate() {
+        let lengths = [0, 1, 2].map(|i| p(tri[(i + 1) % 3]).distance(p(tri[i])));
+        let i = (0..3)
+            .max_by(|&i, &j| lengths[i].total_cmp(&lengths[j]).then(j.cmp(&i)))
+            .expect("three sides");
+        let area = (p(tri[1]) - p(tri[0]))
+            .cross(p(tri[2]) - p(tri[0]))
+            .length();
+        let h = if lengths[i] > 0.0 {
+            area / lengths[i]
+        } else {
+            0.0
+        };
+        if h <= small || h > thin {
+            continue;
+        }
+        let (a, b, c) = (tri[i], tri[(i + 1) % 3], tri[(i + 2) % 3]);
+        let Some(&s) = across.get(&(b, a)) else {
+            continue;
+        };
+        let source = |t: usize| soup.sources[soup.faces[t] as usize];
+        if source(s) == source(t) {
+            continue;
+        }
+        all += 1;
+        if !curved(a, b) && !curved(b, c) && !curved(c, a) && inside_plane(c) {
+            mendable += 1;
+        }
+    }
+    (all, mendable)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

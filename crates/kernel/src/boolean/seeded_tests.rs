@@ -1446,3 +1446,129 @@ fn many_bosses_sunk_through_drilled_plates() {
     // wall's curve with both ends in a plate's face was given a strip.
     drilled_bosses(150).at_least(0.97, "many bosses in drilled plates");
 }
+
+/// A 20 × 20 × 1 box drilled with `count` holes of radius `r` one after
+/// another, as a user places them one feature at a time: rows of 8 from
+/// (1, 1), `pitch` apart both ways. A failed step is skipped and the
+/// chain goes on. Each step that works is checked against the volume
+/// `400 − k·π·r²` after `k` holes. Gives the failed steps (0-based) and
+/// the last body's patch count.
+fn drilled_grid(r: f64, pitch: f64, count: usize) -> (Vec<usize>, usize) {
+    let tol = Tolerance::DEFAULT;
+    let mut current = Solid::cuboid(DVec3::ZERO, DVec3::new(20.0, 20.0, 1.0), 1, &tol).unwrap();
+    let (mut failed, mut holes) = (Vec::new(), 0);
+    for step in 0..count {
+        let (x, y) = (
+            1.0 + (step % 8) as f64 * pitch,
+            1.0 + (step / 8) as f64 * pitch,
+        );
+        let pin = Solid::cylinder(DVec3::new(x, y, -1.0), r, 3.0, 100 + step as u64, &tol).unwrap();
+        match boolean(&current, &pin, Op::Difference, &tol, &Budget::DEFAULT) {
+            Ok(next) => {
+                holes += 1;
+                let want = 400.0 - holes as f64 * PI * r * r;
+                let got = next.volume();
+                assert!(
+                    (got - want).abs() < 1e-8,
+                    "r {r}, pitch {pitch}, step {step}: {got} vs {want}"
+                );
+                current = next;
+            }
+            Err(why) => {
+                println!("REFUSED r {r}, pitch {pitch}, step {step} at ({x}, {y}): {why:?}");
+                failed.push(step);
+            }
+        }
+    }
+    (failed, current.mesh().tris().len())
+}
+
+#[test]
+#[ignore = "4 of 180 steps fail (Invalid): until the clean-up's quality pass on plane faces"]
+fn drilled_grids_in_line() {
+    // The second hole in line with an earlier one along x or y grazes the
+    // long cap triangles the earlier holes left from the box's far corners.
+    let mut total = 0;
+    for pitch in [2.2, 2.3, 2.4] {
+        let (failed, patches) = drilled_grid(0.5, pitch, 60);
+        println!("pitch {pitch}: failed steps {failed:?}, {patches} patches");
+        total += failed.len();
+    }
+    assert_eq!(total, 0);
+}
+
+#[test]
+#[ignore = "12 of 540 steps fail (Invalid): until the clean-up's quality pass on plane faces (or plane faces meshed again whole)"]
+fn boxes_drilled_in_grids() {
+    // Nine grids of 60 holes (three radii, three pitches); in a debug
+    // build, one row of eight.
+    let configurations: &[(f64, f64)] = if cfg!(debug_assertions) {
+        &[(0.5, 2.4)]
+    } else {
+        &[
+            (0.25, 2.4),
+            (0.5, 2.4),
+            (0.6, 2.4),
+            (0.25, 2.2),
+            (0.5, 2.2),
+            (0.6, 2.2),
+            (0.25, 1.3),
+            (0.5, 1.3),
+            (0.6, 1.3),
+        ]
+    };
+    let mut total = 0;
+    for &(r, pitch) in configurations {
+        let (failed, patches) = drilled_grid(r, pitch, cases(60, 8));
+        println!("r {r}, pitch {pitch}: failed steps {failed:?}, {patches} patches");
+        total += failed.len();
+    }
+    assert_eq!(total, 0);
+}
+
+#[test]
+#[ignore = "all four fail (Invalid): until the clean-up's quality pass on plane faces, or the split and collapse of thin triangles across two faces"]
+fn a_boss_through_a_drilled_plate_across_a_hole() {
+    // A 6 × 4 × 1 plate drilled twice, and a boss through it flush with
+    // both its faces whose wall crosses the first hole's wall: thin
+    // triangles where the two walls meet in a vertical line.
+    let tol = Tolerance::DEFAULT;
+    let slab = Solid::cuboid(
+        DVec3::new(-3.0, -2.0, 0.0),
+        DVec3::new(6.0, 4.0, 1.0),
+        1,
+        &tol,
+    )
+    .unwrap();
+    let drill = |x: f64, y: f64, r: f64, feature: u64| {
+        Solid::cylinder(DVec3::new(x, y, -1.0), r, 4.0, feature, &tol).unwrap()
+    };
+    let difference = |a: &Solid, b: &Solid| boolean(a, b, Op::Difference, &tol, &Budget::DEFAULT);
+    let (h1, h2) = (
+        (DVec2::new(-1.1, 1.15), 0.45),
+        (DVec2::new(1.95, 0.25), 0.6),
+    );
+    let plate = difference(&slab, &drill(h1.0.x, h1.0.y, h1.1, 2))
+        .and_then(|p| difference(&p, &drill(h2.0.x, h2.0.y, h2.1, 3)))
+        .unwrap();
+    let want = 24.0 - PI * (h1.1 * h1.1 + h2.1 * h2.1);
+    assert!((plate.volume() - want).abs() < 1e-9, "{}", plate.volume());
+    let (c, r) = (DVec2::new(-0.8, 0.6), 0.65);
+    let boss = Solid::cylinder(DVec3::new(c.x, c.y, 0.0), r, 1.0, 4, &tol).unwrap();
+    // The boss misses the second hole and crosses the first.
+    assert!(c.distance(h2.0) > r + h2.1);
+    let both = disc_less_discs(c, r, 2.0, &[h1, h2]);
+    let mut tally = Tally::default();
+    let mut samples = Rng::new(6);
+    four(
+        &plate,
+        &boss,
+        Some(both),
+        &tol,
+        &mut samples,
+        &mut tally,
+        "boss across a hole",
+    );
+    println!("worked {} of 4", tally.ok);
+    assert_eq!(tally.failed, 0);
+}

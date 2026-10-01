@@ -238,6 +238,14 @@ pub fn boolean(
     Solid::new_within(mesh, tol, &mut work)
 }
 
+#[cfg(test)]
+thread_local! {
+    /// What [`cleanup::thin_across`] found in the last operation's cleaned
+    /// soup on this thread, `(0, 0)` if it didn't get that far: for tests
+    /// measuring thin triangles across two faces.
+    static THIN_ACROSS: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+}
+
 /// The result's mesh, before repair and the check.
 fn unchecked(
     a: &Solid,
@@ -246,6 +254,8 @@ fn unchecked(
     tol: &Tolerance,
     work: &mut Work,
 ) -> Result<Mesh, KernelError> {
+    #[cfg(test)]
+    THIN_ACROSS.set((0, 0));
     let (ia, ib) = (Input::new(a.mesh(), tol), Input::new(b.mesh(), tol));
     let grow = op == Op::Union;
     let (mut soup, faces) = if ia.curved || ib.curved {
@@ -281,6 +291,13 @@ fn unchecked(
         tol,
         work,
     )?;
+    #[cfg(test)]
+    THIN_ACROSS.set(cleanup::thin_across(
+        &soup,
+        &faces,
+        short(tol),
+        4.0 * tol.resolution(),
+    ));
     let aliases = aliases(a.mesh(), b.mesh(), &faces, &soup, work)?;
     let mesh = build(soup, faces, &aliases)?;
     if op == Op::Difference {

@@ -1524,3 +1524,109 @@ fn merged_faces_are_deterministic() {
     let b = box_of([0.0, 1.0, 0.0], [1.0, 1.0, 1.0], 2);
     assert_deterministic(|| run(&a, &b, Op::Union).map(Solid::into_mesh)).unwrap();
 }
+
+#[test]
+fn thin_triangles_across_two_faces() {
+    // A 10 × 10 × 2 plate of four 5 × 5 squares joined, so four coplanar
+    // faces meet at the vertex (5, 5) of its top, cut by a slanted wall
+    // `2x + y = 15 − e` passing `k` resolutions from that vertex, as a
+    // boss (1.1 to 4.3) and a pocket (1.1 to 3.3). Each operation is right
+    // (volumes from the area `5(c − 10) + 25` of the square on the near
+    // side of `2x + y = c`) or fails; counted: the failures whose cleaned
+    // result had a thin triangle across two faces, and of those, ones
+    // whose far corner lies inside a plane (`cleanup::thin_across`).
+    // All 40 fail today, 20 of them with such triangles, but none with the
+    // far corner inside a plane: there the thin triangle's far corner is a
+    // cut vertex and its long side lies along the seam of two of the top's
+    // faces, so splitting that side and collapsing the corner onto it
+    // wouldn't apply. The operations fail on the thin triangles round the
+    // cut's few vertices near (5, 5) all the same.
+    use crate::profile::tests::polygon;
+    use crate::{Frame, Profile, extrude};
+    let prism = |points: &[(f64, f64)], from: f64, to: f64, feature: u64| {
+        let points: Vec<_> = points
+            .iter()
+            .map(|&(x, y)| glam::DVec2::new(x, y))
+            .collect();
+        let profile = Profile {
+            loops: vec![polygon(&points, feature * 10)],
+        };
+        extrude(
+            &profile,
+            &Frame::XY,
+            from,
+            to,
+            feature,
+            &TOL,
+            &Budget::DEFAULT,
+        )
+        .unwrap()
+    };
+    let square = |x: f64, y: f64, feature: u64| {
+        prism(
+            &[(x, y), (x + 5.0, y), (x + 5.0, y + 5.0), (x, y + 5.0)],
+            0.0,
+            2.0,
+            feature,
+        )
+    };
+    let mut plate = square(0.0, 0.0, 1);
+    for (i, (x, y)) in [(5.0, 0.0), (0.0, 5.0), (5.0, 5.0)].into_iter().enumerate() {
+        plate = boolean(
+            &plate,
+            &square(x, y, 2 + i as u64),
+            Op::Union,
+            &TOL,
+            &Budget::DEFAULT,
+        )
+        .unwrap();
+    }
+    assert!((plate.volume() - 200.0).abs() < 1e-9);
+    let res = TOL.resolution();
+    let (mut operations, mut failed, mut thin, mut mendable) = (0, 0, 0, 0);
+    for k in [0.2, 0.5, 1.0, 2.0, 4.0] {
+        let e = k * res * 5f64.sqrt();
+        let c = 15.0 - e;
+        for (name, lo, hi) in [("boss", 1.1, 4.3), ("pocket", 1.1, 3.3)] {
+            let tool = prism(
+                &[(-5.0, -5.0), (10.0 - e / 2.0, -5.0), (-5.0, 25.0 - e)],
+                lo,
+                hi,
+                9,
+            );
+            let shared = (5.0 * (c - 10.0) + 25.0) * (2.0f64.min(hi) - lo);
+            let (vp, vt) = (plate.volume(), tool.volume());
+            let jobs = [
+                (&plate, &tool, Op::Union, vp + vt - shared),
+                (&plate, &tool, Op::Intersection, shared),
+                (&plate, &tool, Op::Difference, vp - shared),
+                (&tool, &plate, Op::Difference, vt - shared),
+            ];
+            for (a, b, op, want) in jobs {
+                operations += 1;
+                match boolean(a, b, op, &TOL, &Budget::DEFAULT) {
+                    Ok(solid) => {
+                        let got = solid.volume();
+                        assert!(
+                            (got - want).abs() < 1e-8,
+                            "k {k}, {name}, {op:?}: {got} vs {want}"
+                        );
+                    }
+                    Err(why) => {
+                        failed += 1;
+                        let (all, inside) = THIN_ACROSS.get();
+                        println!(
+                            "k {k}, {name}, {op:?}: {why:?}, thin across {all}, inside a plane {inside}"
+                        );
+                        thin += usize::from(all > 0);
+                        mendable += usize::from(inside > 0);
+                    }
+                }
+            }
+        }
+    }
+    println!(
+        "{failed} of {operations} failed, {thin} with thin triangles across two faces, {mendable} of them with the far corner inside a plane"
+    );
+    assert_eq!(mendable, 0);
+}

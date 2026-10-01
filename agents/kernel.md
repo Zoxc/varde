@@ -4915,6 +4915,61 @@ to 72 of its 96 operations and left the others as they were.
   refinement of the caps): one vertex under the rim moved the grazing
   lines elsewhere, and failed more flush bosses and drilled plates than
   it mended.
+  - Failing tests, `#[ignore]`d until a quality pass on the boolean's
+    plane faces lands (release, default tolerance, measured before it):
+    - `a_box_drilled_twice_in_line` and `holes_in_line_on_a_large_plate`
+      (`curved_tests/holes.rs`): the 20 × 20 × 1 box, pins of radius 0.5
+      at (1, 1), then (3.4, 1) or (1, 3.4); every step must work, its
+      volume `400 − k·π/4` within `1e-9`, the same at 1 and 8 threads.
+      Both second holes fail, `Invalid(Hull)`.
+    - `cut_caps_are_well_shaped`: after the first hole, the triangles the
+      cut made on plane faces (not an operand's as it was) must have no
+      angle under 10°, but where the narrowest corner lies between two
+      constrained sides (curved, or on another face) meeting at under
+      60°, the circumradius is under `MIN_SPLIT` resolutions, or a side
+      is no longer than an eighth of the resolution. Today 24 of the 32
+      are under 10°, the worst of sine `3.75e-3` (fans from the box's far
+      corners to the rim).
+    - `drilled_grids_in_line` and `boxes_drilled_in_grids`
+      (`seeded_tests.rs`): 60 holes drilled one at a time in rows of 8
+      from (1, 1), a failed step skipped, every step that works checked
+      against `400 − k·π·r²`. Failed steps (0-based) and the last body's
+      patches:
+
+      | r \ pitch | 2.4 | 2.3 | 2.2 | 1.3 |
+      |---|---|---|---|---|
+      | 0.25 | 39; 4 806 | – | 3, 24, 48; 4 272 | none; 4 844 |
+      | 0.5 | 1, 8; 5 454 | none; 6 814 | 3, 24; 5 922 | 3, 5, 24, 40; 4 594 |
+      | 0.6 | none; 6 032 | – | none; 7 034 | none; 7 520 |
+
+      12 of the nine grids' 540 steps fail (14 when first measured,
+      some kernel changes ago), 4 of the in-line test's 180, all
+      `Invalid(Hull)` or `Invalid(VertexNeighbours)`, all in the first
+      row or column but one (r 0.25, pitch 2.4: step 39 at (17.8, 10.6)),
+      most of them the first or second hole there in line with an
+      earlier one. The in-line test's three chains take 21 s together.
+    - `larger_grids_of_holes_cut_at_once`: a 100 × 100 × 10 plate cut
+      through at once by an `n × n` grid of discs of radius 2 at
+      `100·(k + ½)/n` (one profile, 1.1 past either face, as the app's
+      through-all cut), checked against `100 000 − 40π·n²`: 8 × 8 fails
+      as `Invalid(VertexNeighbours)` (2.9 s), 10 × 10 as `TooComplex`
+      (4.3 s); 6 × 6 works (`a_six_by_six_grid_of_holes_cut_at_once`, 2
+      150 patches).
+    - `a_boss_through_a_drilled_plate_across_a_hole`: the 6 × 4 × 1
+      plate drilled at (−1.1, 1.15) r 0.45 and (1.95, 0.25) r 0.6, a boss
+      of radius 0.65 at (−0.8, 0.6) through it flush with both faces, its
+      wall crossing the first hole's (see "Flush bosses on drilled
+      plates"): all four operations fail (`Invalid(Hull)`,
+      `VertexNeighbours`), checked against the closed-form area of the
+      disc less the hole.
+  - Baselines a change to the triangulation of plane faces must not lose
+    (release): the seeded tallies bosses 80 of 80, flush unions 59 of 60,
+    flush operations 210 of 240, coaxial 195 of 200, turned 156 of 160,
+    drilled (`plates_drilled_hole_after_hole`) 160 of 160, bosses in
+    drilled plates 148 of 160, related 113 of 120, chains 200 of 240,
+    tangent 72 of 96; the 150 plates of
+    `many_bosses_sunk_through_drilled_plates` 588 of 600 (3 unions, 4
+    intersections and 5 differences fail).
 - **Cross holes through round bosses**: a round boss (an r10 circle
   extruded on XY, 10 tall) cut through by a circle sketched on YZ and
   extruded across it (radius 0.3 to 4, placed at random, 30 cases)
@@ -5069,7 +5124,24 @@ to 72 of its 96 operations and left the others as they were.
   passing within its sag of an operand's vertex), not the caps'.
 - Triangles thinner than the resolution across two faces (a cut passing
   within a resolution or two of a vertex) aren't flipped, and fail the
-  hull rules.
+  hull rules. Counted after the clean-up (`cleanup::thin_across`, tests
+  only: higher than an eighth of the resolution, no higher than 4
+  resolutions, the triangle across the longest side on another face by
+  source), over the release `boolean::` suite without the test below:
+  of about 5 700 operations about 400 fail, 109 of those with such a triangle
+  (one operation that worked had one too), and of those only one with
+  straight sides and its far corner inside a plane (every triangle round
+  it on one plane, every edge from it straight), the one case splitting
+  the long side at the corner's foot and collapsing the corner onto it
+  would mend (a box face `1e-5` off a cylinder's rulings, tangent to its
+  wall on a seam between arcs, in
+  `a_box_tangent_on_a_seam_is_exact_or_refused`: a tangency). `thin_triangles_across_two_faces`
+  (`boolean/tests.rs`): a 10 × 10 × 2 plate of four squares joined, cut
+  by a slanted wall 0.2 to 4 resolutions from the vertex where the four
+  meet, as a boss and a pocket: all 40 operations fail, 20 with thin
+  triangles across two faces, none with the far corner inside a plane
+  (the far corner is a cut vertex, the long side on the seam between two
+  of the top's faces); the test holds that count at zero.
 - Ear clipping is quadratic to cubic in a face's cut vertices; faces cut
   by thousands of edges run out of budget, now counted as they go.
 - **Failing operations run past two seconds on one thread**: a unit of
