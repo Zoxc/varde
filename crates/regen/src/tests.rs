@@ -975,3 +975,115 @@ fn a_dragged_draft_leaves_the_committed_scene_held() {
     assert_eq!(*undone, *committed);
     assert_eq!(regenerator.cache().joins(), 7);
 }
+
+/// A draft whose scene is the older of the two held (here the plate
+/// alone, after the second body was shown) doesn't make that one the
+/// scene the next draft revision keeps: the committed model's scene stays
+/// held however the draft is dragged, and putting it away finds it.
+#[test]
+fn a_draft_finding_the_older_scene_leaves_the_committed_one_held() {
+    let document = with_bodies(false);
+    let body = document.bodies()[0].id;
+    let solid = |k: u64, min: f64| BodySolid {
+        body,
+        solid: Arc::new(cuboid(min, 1.0)),
+        key: Keyer::new("test").number(k).finish(),
+    };
+    let scene = |bodies: Vec<BodySolid>| Evaluation {
+        bodies,
+        ..Evaluation::default()
+    };
+    let older = scene(vec![solid(0, 0.0)]);
+    let committed = scene(vec![solid(0, 0.0), solid(1, 3.0)]);
+    let mut cache = Cache::default();
+    let mut ask = |evaluation: &Evaluation, drafted: bool| {
+        cache.begin();
+        tessellate_scene(&document, evaluation, drafted, &mut cache).unwrap()
+    };
+    ask(&older, false);
+    let held = ask(&committed, false);
+    // A draft that happens to give the older scene, then two revisions
+    // with scenes of their own.
+    ask(&older, true);
+    ask(&scene(vec![solid(2, 6.0)]), true);
+    ask(&scene(vec![solid(3, 9.0)]), true);
+    assert!(Arc::ptr_eq(&ask(&committed, false), &held));
+}
+
+/// A join that fails (a mesh past `RenderMesh`'s limits) isn't kept and
+/// leaves the scenes held as they were; the same scene asked again is
+/// joined again.
+#[test]
+fn a_failed_join_is_not_kept() {
+    let key = |k: u64| Keyer::new("test").number(k).finish();
+    let mut cache = Cache::default();
+    let mesh = |cache: &mut Cache, k: u64, drafted: bool| {
+        cache
+            .scene(key(k), drafted, |_| Ok::<_, ()>(RenderMesh::default()))
+            .unwrap()
+    };
+    let a = mesh(&mut cache, 0, false);
+    let b = mesh(&mut cache, 1, true);
+    for drafted in [false, true] {
+        let mut tried = false;
+        let failed = cache.scene(key(2), drafted, |_| {
+            tried = true;
+            Err::<RenderMesh, _>("too large")
+        });
+        assert_eq!(failed.err(), Some("too large"));
+        assert!(tried);
+    }
+    assert_eq!(cache.joins(), 2);
+    assert!(Arc::ptr_eq(&mesh(&mut cache, 0, false), &a));
+    assert!(Arc::ptr_eq(&mesh(&mut cache, 1, true), &b));
+    let mut tried = false;
+    let _ = cache.scene(key(2), false, |_| {
+        tried = true;
+        Ok::<_, ()>(RenderMesh::default())
+    });
+    assert!(tried);
+    assert_eq!(cache.joins(), 3);
+}
+
+/// A body removed, the removal undone and redone, and the document
+/// replaced, each answered with the mesh of the bodies then shown.
+#[test]
+fn removed_bodies_undo_and_replace_draw_what_is_shown() {
+    let mut editor = Editor::new(Document::example());
+    let extrude = Extrude {
+        operation: Operation::NewBody(BodyId::NEW),
+        ..new_body_draft(editor.document(), 0, "3").extrude
+    };
+    editor
+        .apply(editor.document().add_extrude(extrude))
+        .unwrap();
+    let two = editor.document().clone();
+    let mut regenerator = Regenerator::default();
+    let mut ask = |editor: &Editor| answered(regenerator.handle(regenerate(editor, None))).mesh;
+    let drawn = |document: &Document| {
+        let display = Display::new(&document.tolerance());
+        let mut mesh = RenderMesh::default();
+        for made in &evaluate(document, &mut Cache::default()).bodies {
+            mesh.append(&made.solid.tessellate(&display).unwrap())
+                .unwrap();
+        }
+        mesh
+    };
+    let both = ask(&editor);
+    assert_eq!(*both, drawn(&two));
+    let second = editor.document().bodies()[1].id;
+    editor.apply(Command::RemoveBody(second)).unwrap();
+    let one = ask(&editor);
+    assert_eq!(*one, drawn(editor.document()));
+    assert_ne!(*one, *both);
+    editor.undo();
+    assert!(Arc::ptr_eq(&ask(&editor), &both));
+    editor.redo();
+    assert!(Arc::ptr_eq(&ask(&editor), &one));
+    editor.apply(Command::Replace(Box::default())).unwrap();
+    assert_eq!(*ask(&editor), RenderMesh::default());
+    editor
+        .apply(Command::Replace(Box::new(two.clone())))
+        .unwrap();
+    assert_eq!(*ask(&editor), drawn(&two));
+}

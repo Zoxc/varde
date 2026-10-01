@@ -2801,10 +2801,10 @@ by `RenderMesh::append` into an `Arc<RenderMesh>`; a mesh past
 kept). The joined mesh is kept in the cache under a scene key (`"scene"`,
 then each shown body's mesh key in order, which holds the tolerance, then
 the count), in a slot of its own for two scenes: least recently used
-out, except that a working draft's scene takes the place of the previous
-draft's scene if one is held, so the committed model's scene survives
-any number of draft revisions (a scene found by an answer without a
-draft stops being a draft's). The slot isn't aged by `Cache::begin` and
+out, except that a working draft's scene never pushes out the scene the
+last answer without a draft used (a failing draft's answer is one), so
+the committed model's scene survives any number of draft revisions,
+even when a revision's scene is the other one held. The slot isn't aged by `Cache::begin` and
 isn't in `counts` (those count features; `Cache::joins` counts joins,
 for tests). A request whose scene didn't change (a sketch edit no body
 depends on, a sketch hidden or left out, a failing draft, the committed
@@ -3331,8 +3331,8 @@ parameter, or a split outside the patch bounds),
   conic's, so two lines; span by span happened to fit one of them with
   conics, walking it the other way).
 - **The regen lane's scene slot holds two scenes**, least recently used
-  out except that a working draft's scene replaces the previous draft's,
-  not the scenes of the last two requests aged by `Cache::begin` like the
+  out except that a working draft's scene never replaces the scene of the
+  last answer without a draft, not the scenes of the last two requests aged by `Cache::begin` like the
   per-feature results. Aged by requests it would hold one scene at a time
   (each request uses one), so the committed model asked again after a
   draft would be joined again; plain least recently used would lose the

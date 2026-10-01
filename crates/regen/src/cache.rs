@@ -20,10 +20,10 @@
 //! renderer's upload (which keys its buffers by the `Arc`) is done
 //! again. The slot holds two scenes whatever the requests were, rather
 //! than ageing with [`Cache::begin`], the least recently used going
-//! first, except that a draft's scene takes the place of the draft's
-//! scene before it, if one is held: however long a draft is dragged,
-//! the committed model's scene stays, and putting the draft away finds
-//! it; without drafts, a body hidden and shown again finds the scene
+//! first, except that a draft's scene never pushes out the scene of the
+//! last answer without a draft: however long a draft is dragged, the
+//! committed model's scene stays, and putting the draft away finds it;
+//! without drafts, a body hidden and shown again finds the scene
 //! before. It never holds more than two joined meshes. It's its own slot
 //! only so the per-feature counts ([`Cache::counts`]) stay counts of
 //! features; a size-bounded cache replacing the two-request policy can
@@ -119,10 +119,14 @@ pub struct Cache {
 }
 
 /// Two joined model meshes, filed by their scene keys, the most recently
-/// used first, and how many were joined, for tests.
+/// used first, the scene of the last answer without a draft, and how
+/// many were joined, for tests.
 #[derive(Default)]
 struct Scenes {
     held: [Option<Scene>; 2],
+    /// The scene the last answer without a draft used: a draft's scene
+    /// doesn't push it out.
+    committed: Option<Key>,
     joins: usize,
 }
 
@@ -130,9 +134,6 @@ struct Scenes {
 struct Scene {
     key: Key,
     mesh: Arc<RenderMesh>,
-    /// Whether only drafts' answers used it: the next draft's scene takes
-    /// its place.
-    drafted: bool,
 }
 
 impl Cache {
@@ -248,42 +249,42 @@ impl Cache {
     /// The model's mesh filed under the scene key `key`, if one of the
     /// two scenes held has it; otherwise `join`'s, or its error, which
     /// isn't kept. A scene joined for a draft's answer (`drafted`) takes
-    /// the place of a draft's scene held, any other the least recently
-    /// used one's; a scene found by an answer without a draft is no
-    /// longer a draft's. Not counted in [`Cache::counts`].
+    /// the place of the least recently used scene unless that is the
+    /// scene of the last answer without a draft, any other always the
+    /// least recently used one's. Not counted in [`Cache::counts`].
     pub(crate) fn scene<E>(
         &mut self,
         key: Key,
         drafted: bool,
         join: impl FnOnce(&mut Cache) -> Result<RenderMesh, E>,
     ) -> Result<Arc<RenderMesh>, E> {
-        let held = &mut self.scenes.held;
-        let found = held
-            .iter()
+        let found = (self.scenes.held.iter())
             .position(|scene| scene.as_ref().is_some_and(|scene| scene.key == key));
-        if let Some(i) = found {
-            held[..=i].rotate_right(1);
-            let scene = held[0].as_mut().expect("a scene was found");
-            scene.drafted &= drafted;
-            return Ok(Arc::clone(&scene.mesh));
-        }
-        let mesh = Arc::new(join(self)?);
-        let scenes = &mut self.scenes;
-        scenes.joins += 1;
-        let held = &mut scenes.held;
-        let gone = match held
-            .iter()
-            .position(|scene| scene.as_ref().is_some_and(|scene| scene.drafted))
-        {
-            Some(i) if drafted => i,
-            _ => held.len() - 1,
+        let mesh = match found {
+            Some(i) => {
+                let held = &mut self.scenes.held;
+                held[..=i].rotate_right(1);
+                Arc::clone(&held[0].as_ref().expect("a scene was found").mesh)
+            }
+            None => {
+                let mesh = Arc::new(join(self)?);
+                let scenes = &mut self.scenes;
+                scenes.joins += 1;
+                let last = scenes.held.len() - 1;
+                let committed = (scenes.held[last].as_ref())
+                    .is_some_and(|scene| Some(scene.key) == scenes.committed);
+                let gone = if drafted && committed { last - 1 } else { last };
+                scenes.held[..=gone].rotate_right(1);
+                scenes.held[0] = Some(Scene {
+                    key,
+                    mesh: Arc::clone(&mesh),
+                });
+                mesh
+            }
         };
-        held[..=gone].rotate_right(1);
-        held[0] = Some(Scene {
-            key,
-            mesh: Arc::clone(&mesh),
-            drafted,
-        });
+        if !drafted {
+            self.scenes.committed = Some(key);
+        }
         Ok(mesh)
     }
 
