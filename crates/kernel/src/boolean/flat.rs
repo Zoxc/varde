@@ -288,7 +288,11 @@ impl Pred for Height {
         // rounding (collinear edges, turned), `det[g, e, UP]` is only
         // rounding, down to an exact 0, and so is the constant term
         // (`Height` is of second order there): taken as it came, the
-        // rounding in it decided.
+        // rounding in it decided. The floor swallows no real height:
+        // the value is the lines' distance times `|g × e|`, so a value
+        // within `tie·4ε·|g|·|e|` is lines within the tie of each other,
+        // or edges parallel to rounding in space too, whose constant term
+        // is zero at the exact parallel tie, whatever their distance.
         let (g, e) = (self.d.p - self.c.p, self.b.p - self.a.p);
         let rounding = 4.0 * f64::EPSILON * g.length() * e.length();
         (g.cross(e).dot(UP).abs() / UP.length()).max(rounding)
@@ -438,5 +442,49 @@ mod tests {
             assert_eq!(exact::sign_tied(&r, tie), want_reach, "reach, draw {draw}");
         }
         assert!(unscaled > 0);
+    }
+
+    #[test]
+    fn real_first_orders_decide_far_from_the_origin() {
+        // A vertex exactly on a face's plane, its direction well into the
+        // face, `2¹⁷` from the origin: its first order is real (the vertex
+        // moves off the face) and decides, though it is far below its
+        // terms' absolute values (`|x|²`), which measured against them
+        // took it as rounding and let `T2` decide the other way. What
+        // rounding there moves it by is some `|x|·1e-16`.
+        let x = f64::from(1 << 17);
+        let z = x + 0.75;
+        let reach = Reach {
+            x0: a([x + 0.25, x + 0.25, z], [0.3, 0.0, -0.95]),
+            t: [b([x, x, z]), b([x + 1.0, x, z]), b([x, x + 1.0, z])],
+        };
+        assert_eq!(exact::sign(&reach), 1);
+        for tie in [1e-8, 1e-10, 1e-12] {
+            assert_eq!(exact::sign_tied(&reach, tie), 1, "{tie}");
+        }
+        // And two edges one above the other, their shadows collinear:
+        // `Height`'s first order (with the gap `D`) is real, the second
+        // order doesn't know which is above.
+        for gap in [1e-3, 1e-6] {
+            let up = UP.normalize();
+            let height = Height {
+                a: a([x, x, z], [1.0, 2.0, -1.0]),
+                b: a([x + 1.0, x, z], [-1.0, 1.0, 2.0]),
+                c: b((DVec3::new(x, x, z) + up * gap).into()),
+                d: b((DVec3::new(x + 1.0, x, z) + up * gap).into()),
+            };
+            let want = exact::sign(&height);
+            assert_ne!(want, 0);
+            let flipped = Height {
+                c: b((DVec3::new(x, x, z) - up * gap).into()),
+                d: b((DVec3::new(x + 1.0, x, z) - up * gap).into()),
+                ..height
+            };
+            assert_eq!(exact::sign(&flipped), -want, "{gap}");
+            for tie in [1e-8, 1e-10] {
+                assert_eq!(exact::sign_tied(&height, tie), want, "{gap} {tie}");
+                assert_eq!(exact::sign_tied(&flipped, tie), -want, "{gap} {tie}");
+            }
+        }
     }
 }

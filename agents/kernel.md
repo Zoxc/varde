@@ -1746,10 +1746,7 @@ positions (`Across`, `Between`, `crossing`) stay exact. It is used for
 flat operands too.
 
 **At every order.** Once the constant term is taken as a tie, each later
-coefficient that is only rounding is taken as zero too: one whose value
-is within `RHO = 2⁻³²` of its size, the same expression worked out on
-its terms' absolute values (`exact::Abs`: `+` and `−` add magnitudes,
-`×` multiplies them, in floating point, only on that slow path). At the
+coefficient that is only rounding is taken as zero too. At the
 exact tie a rounded configuration stands for, the first order is often
 zero as well, and the tie is decided by `T2` or `T3`: two collinear
 edges' `Height` (both first-order terms have parallel columns), a
@@ -1758,9 +1755,23 @@ a `+x` and a `+y` face, against a `z` face) for `Reach`. Rounded, that
 coefficient is some `1e-16` of its terms, its sign noise, and taking
 it decided each predicate as a different nearby configuration, so the
 counting's ends didn't pair up (`Inconsistent`). Skipped, every
-predicate is decided as the exact tie is: one configuration. The rule
-has no scale (a coefficient against its own terms); anything from
-`1e-13` to `1e-7` decided the same. With every later order only
+predicate is decided as the exact tie is: one configuration. Only
+rounding means within what moving every number the coefficient is worked
+out from by a share of itself can make of a zero: `exact::Moves`
+evaluates `Σ |∂c/∂x|·|x|` over those numbers to first order (each
+product's other factor weighed by its value, in floating point, only on
+that slow path), and the share is `RHO = 2⁻³²` but at most the tie
+distance over the largest of them, so no number moves by more than the
+tie distance and the decision is still that of operands moved by less
+than it, also far from the origin. (A first measure, the expression on
+its terms' absolute values, grew as `|x|²` where the coefficient grows
+as `|x|·L`: `2¹⁷` from the origin it took a vertex's direction 70° into
+a face, or an edge `1e-3` above a parallel one, as rounding, and the
+second order decided them the other way, and of the turned pairs below
+moved by up to `1e5` or `1e6` it refused some 390 of 2 700; with
+`Moves`, they come out as moved by up to 100, and its tallies here and
+the seeded suite's are the same as the first measure's. `2⁻⁴⁶` decided
+the same as `2⁻³²`.) With every later order only
 rounding the sign is 0, as for a tie in every power. `sign` (tie 0)
 stays exact. Before and after (release; turned grid boxes as in the
 tests, seed 31, and chains of up to six, seed 77, each result fed on;
@@ -2830,10 +2841,13 @@ once `Inconsistent` for a first order that was only rounding and one
 whose edges' shadows rounded parallel, all right now; chains of them fed
 on, never `Inconsistent`); the same boxes, one moved by about the tie
 distance, whose near ties don't fit together, decided again exactly
-(right, both tries paid for); a hexagonal prism upright and on frames
-turned about two axes with boxes extruded on a frame on its slanted
-wall, joined flush (also at the wall's end, flush with the top),
-pocketed flush and straddling it, every operation the analytic volume;
+(right, both tries paid for); a hexagonal prism upright and on six
+random turned and moved frames with boxes extruded on a frame on its
+slanted wall, joined flush (also at the wall's ends, sharing the
+prism's edge lines, and in its corner, flush with the top), pocketed
+flush, a slot the wall's height and straddling it, every operation the
+analytic volume (with only the constant term tied, 5 of the turned
+frames' 216 were `Inconsistent`);
 face names
 of both operands kept, and faces no triangle uses dropped; `touches`; empty operands; refusals (inside
 out, out of budget); the same bits at 1 and 8 threads. Unit
@@ -2841,7 +2855,9 @@ tests: expansions against known values, the float filter never
 contradicting the exact sign, ties whose first order is zero (collinear
 edges' `Height`, also where their shadows round exactly parallel, a
 vertex moving along a face's plane for `Reach`) moved by rounding and
-decided as the exact tie in every draw, the curved primitives'
+decided as the exact tie in every draw, real first orders `2¹⁷` from
+the origin (a vertex's direction into a face, an edge `1e-3` above a
+parallel one) still deciding, the curved primitives'
 `first_sign` skipping a motion's first order that is only rounding (a
 motion in a turned plane against its normal), `orient2d` near a line
 and far out,
@@ -3172,6 +3188,10 @@ to 72 of its 96 operations and left the others as they were.
   operations, 349 of 359 steps of turned chains); the rest fail as
   `Invalid`, all but one where the exact result isn't a manifold (pair
   866's union: a thin triangle across two faces fails the hull rules).
+  A box joined flush in the top corner of a hexagonal prism's slanted
+  wall (sharing the prism's vertical edge line and its top), on random
+  turned frames, fails the same way as `Invalid(Hull)`, 8 of 60 frames;
+  upright it works.
 - **Long cap triangles and cuts passing close to their sides**: a cap
   triangulated once (an extrude's, or a cut face's) keeps long thin
   triangles from far corners to rims. Drilling a second hole of the same
@@ -3981,7 +4001,12 @@ parameter, or a split outside the patch bounds),
 - **Near ties are ties for the exact predicates too** (`sign_tied`):
   within the same tie distance, a deciding predicate's constant term is
   taken as zero, and then every later coefficient that is only rounding
-  (within `2⁻³²` of its terms' absolute values). The plan has flat
+  (within what moving every number it is worked out from by `2⁻³²` of
+  itself, but by no more than the tie distance, makes of a zero:
+  `exact::Moves`; the plan's measure, the coefficient on its terms'
+  absolute values, grew as `|x|²` and far from the origin skipped real
+  orders, refusing 390 of 2 700 turned pairs moved by up to `1e5`, none
+  now). The plan has flat
   operands decided exactly; with rounded coordinates (turned and moved
   flush solids) exact signs broke the perturbation's intent, and beside
   curved operands they disagreed with the curved primitives' ties.
@@ -3992,8 +4017,9 @@ parameter, or a split outside the patch bounds),
   order, and what was left was the constant term at a scale that
   rounded to 0: `Height`'s scale is floored at its own rounding
   instead. The curved primitives' `first_sign` skips orders that are
-  only rounding as well (relative to `Σ |d_i·f(e_i)|`, not an `Abs`
-  evaluation: `f` is a closure in floating point).
+  only rounding as well (relative to `Σ |d_i·f(e_i)|`, not a `Moves`
+  evaluation: `f` is a closure in floating point, and linear in a
+  motion, a direction, so with no tie distance to cap).
 - **Two patches on one quadric, and a plane against a cylinder patch
   whose normals keep within a half-space, are certificates** of no hidden
   loop, beside the plan's normal cones apart.

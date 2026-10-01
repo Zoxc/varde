@@ -1188,11 +1188,15 @@ fn turned_grid_boxes_chained_are_never_inconsistent() {
 fn boxes_flush_with_a_slanted_wall_on_tilted_frames() {
     // A hexagonal prism (circumradius 3, 4 tall) and boxes extruded on a
     // frame on one of its slanted walls: joined flush to it (a boss),
-    // cut flush into it (a pocket), straddling it, and at the wall's end
-    // flush with the prism's top too. The prism upright, and on frames
-    // turned about two axes and moved, so the wall's plane and every
-    // flush face are flush only to rounding. Every operation works and
-    // has the analytic volume.
+    // cut flush into it (a pocket), straddling it, at the wall's ends
+    // (sharing the prism's edge lines), flush with the prism's top too,
+    // and a slot the wall's height. The prism upright, and on random
+    // frames, turned and moved, so the wall's plane and every flush face
+    // are flush only to rounding. Every operation works and has the
+    // analytic volume. With only the constant term tied, 5 of the 6
+    // turned frames' 216 operations were `Inconsistent` and one
+    // `Invalid` (of 60 such frames' 2 160, 97 and 6; now 8 fail, all the
+    // union with the boss in the corner, as `Invalid(Hull)`).
     use crate::profile::tests::{polygon, rect};
     use crate::{Frame, Profile, extrude};
     use glam::{DQuat, DVec2};
@@ -1211,22 +1215,16 @@ fn boxes_flush_with_a_slanted_wall_on_tilted_frames() {
         DVec2::new(r / 2.0, -h),
     ];
     let prism_volume = 3.0 * r * h * height;
-    let turned = |q: DQuat, origin: DVec3| Frame {
-        origin,
-        x: q * DVec3::X,
-        y: q * DVec3::Y,
-    };
-    let bases = [
-        Frame::XY,
-        turned(
-            DQuat::from_rotation_x(0.4) * DQuat::from_rotation_z(0.3),
-            DVec3::new(0.3, -0.2, 0.1),
-        ),
-        turned(
-            DQuat::from_rotation_y(-1.1) * DQuat::from_rotation_x(2.3),
-            DVec3::new(17.25, -41.5, 63.125),
-        ),
-    ];
+    // The prism upright, then on frames turned and moved at random.
+    let mut rng = crate::test_rng::Rng::new(40);
+    let bases = std::iter::once(Frame::XY).chain((0..6).map(|_| {
+        let q = DQuat::from_axis_angle(rng.direction(), rng.range(0.0, 6.0));
+        Frame {
+            origin: rng.point(100.0),
+            x: q * DVec3::X,
+            y: q * DVec3::Y,
+        }
+    }));
     // Rectangles on the wall's frame (`x` along the wall, 3 long, `y` up
     // the prism, 4 tall, both from its middle) and the depths they are
     // extruded between (out of the prism is positive).
@@ -1236,8 +1234,12 @@ fn boxes_flush_with_a_slanted_wall_on_tilted_frames() {
         ("straddling", [-0.5, -1.0], [0.75, 1.25], -0.5, 0.75),
         ("boss at the end", [-1.5, 0.0], [0.0, 2.0], 0.0, 1.0),
         ("pocket at the end", [-1.5, 0.0], [0.0, 2.0], -1.0, 0.0),
+        ("boss at the other end", [1.0, 0.5], [1.5, 1.25], 0.0, 1.0),
+        ("boss in the corner", [1.25, 1.75], [1.5, 2.0], 0.0, 1.0),
+        ("slot", [-0.25, -2.0], [0.25, 2.0], -1.0, 0.0),
+        ("pocket at the top", [-1.0, 1.25], [0.25, 2.0], -1.0, 0.0),
     ];
-    for (k, base) in bases.into_iter().enumerate() {
+    for (k, base) in bases.enumerate() {
         let prism = extruded(polygon(&hexagon, 0), base, 0.0, height, 1);
         let (b, c) = (hexagon[0], hexagon[1]);
         let along = (c - b).normalize();

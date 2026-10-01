@@ -427,16 +427,20 @@ pub(crate) fn sum_value<P: Pred + Sync>(parts: &[P]) -> f64 {
 /// exactly [`sign`].
 ///
 /// Once the constant term is a tie, each later coefficient that is only
-/// rounding (within [`RHO`] of its size, [`Abs`]) is taken as zero too: at
-/// the exact tie the rounded configuration stands for, the first order is
-/// often zero as well (two collinear edges' `Height`, a vertex whose
-/// direction lies in a face's plane against it), and its rounding's sign
-/// is noise. Each predicate is then decided as that exact tie is, so they
-/// all describe one configuration. The rule is free of scale: a
-/// coefficient is compared with its own terms. With every later order
-/// only rounding, the sign is 0, as for a tie in every power. A scale of
-/// 0 keeps the tie: only an exact zero is then one, and the later orders
-/// that are only rounding are still skipped.
+/// rounding is taken as zero too: at the exact tie the rounded
+/// configuration stands for, the first order is often zero as well (two
+/// collinear edges' `Height`, a vertex whose direction lies in a face's
+/// plane against it), and its rounding's sign is noise. Each predicate is
+/// then decided as that exact tie is, so they all describe one
+/// configuration. Only rounding means within what the coefficient moves
+/// by ([`Moves`]) when each number it is worked out from moves by
+/// [`RHO`] of itself, but by no more than `tie`: so the decision is still
+/// that of the operands moved by less than the tie distance, wherever
+/// they are (far from the origin, rounding is larger, and the share
+/// smaller). With every later order only rounding, the sign is 0, as for
+/// a tie in every power. A scale of 0 keeps the tie: only an exact zero
+/// is then one, and the later orders that are only rounding are still
+/// skipped.
 pub(super) fn sign_tied(pred: &impl Pred, tie: f64) -> i8 {
     let limit = tie * pred.scale();
     if limit.is_nan() || tie <= 0.0 {
@@ -453,31 +457,48 @@ pub(super) fn sign_tied(pred: &impl Pred, tie: f64) -> i8 {
     }
     // The constant term is a tie: so is every later order that is only
     // rounding, as it is zero at the exact tie this stands for.
-    let rounding = |c: &Exp, size: &Abs| size.0.is_finite() && c.value().abs() <= RHO * size.0;
-    let size = pred.eval::<Poly<Abs>>().0;
+    let moves = pred.eval::<Poly<Moves>>().0;
+    let largest = moves.iter().fold(0.0, |m, c| c.largest.max(m));
+    let share = RHO.min(tie / largest);
+    let rounding = |c: &Exp, m: &Moves| m.moves.is_finite() && c.value().abs() <= share * m.moves;
     poly.iter()
-        .zip(&size)
+        .zip(&moves)
         .skip(1)
-        .find(|(c, size)| c.sign() != 0 && !rounding(c, size))
+        .find(|(c, m)| c.sign() != 0 && !rounding(c, m))
         .map_or(0, |(c, _)| c.sign())
 }
 
-/// A coefficient of a near tie's later order whose value is within this
-/// share of its size ([`Abs`]) is only rounding, and taken as zero by
-/// [`sign_tied`]. Anything from `1e-13` to `1e-7` decided the same on
-/// turned flush boxes; rounding leaves some `1e-16`.
+/// How far, as a share of itself, [`sign_tied`] lets each number a near
+/// tie's later coefficient is worked out from move for that coefficient
+/// to be only rounding (and no more than the tie distance): about a
+/// million times a double's rounding, room for coordinates that went
+/// through a few operations (turned, moved, crossings placed). `2⁻⁴⁶`
+/// decided the same on turned flush boxes; their rounding is some
+/// `1e-16`. The curved primitives' `first_sign` takes it as the share of
+/// its terms.
 pub(super) const RHO: f64 = 1.0 / (1u64 << 32) as f64;
 
-/// The size of a value: the same expression on its terms' absolute
-/// values, `+` and `−` adding them and `×` multiplying them, in floating
-/// point (the bound needn't be exact, only the same on every platform).
-/// A coefficient much smaller than its size is all cancellation.
+/// What a value moves by, to first order, when every number it is worked
+/// out from moves by its own size: `Σ |∂v/∂x|·|x|` over them, each
+/// product's other factor weighed by its value. A coefficient within a
+/// small share of that is what moving those numbers by that share (their
+/// rounding) can make of a zero. `largest` is the largest of the numbers,
+/// coordinates and directions alike. In floating point: the bound needn't
+/// be exact, only the same on every platform.
 #[derive(Debug, Clone, Copy)]
-struct Abs(f64);
+struct Moves {
+    value: f64,
+    moves: f64,
+    largest: f64,
+}
 
-impl Num for Abs {
+impl Num for Moves {
     fn lit(x: f64) -> Self {
-        Abs(x.abs())
+        Moves {
+            value: x,
+            moves: x.abs(),
+            largest: x.abs(),
+        }
     }
 
     fn perturbed(c: [f64; 4]) -> Self {
@@ -485,15 +506,27 @@ impl Num for Abs {
     }
 
     fn add(&self, o: &Self) -> Self {
-        Abs(self.0 + o.0)
+        Moves {
+            value: self.value + o.value,
+            moves: self.moves + o.moves,
+            largest: self.largest.max(o.largest),
+        }
     }
 
     fn sub(&self, o: &Self) -> Self {
-        Abs(self.0 + o.0)
+        Moves {
+            value: self.value - o.value,
+            moves: self.moves + o.moves,
+            largest: self.largest.max(o.largest),
+        }
     }
 
     fn mul(&self, o: &Self) -> Self {
-        Abs(self.0 * o.0)
+        Moves {
+            value: self.value * o.value,
+            moves: self.value.abs() * o.moves + o.value.abs() * self.moves,
+            largest: self.largest.max(o.largest),
+        }
     }
 }
 
