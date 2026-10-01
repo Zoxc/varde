@@ -280,6 +280,69 @@ fn points_above_a_steep_patch_are_found() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods, reason = "std maths to build inputs")]
+fn points_above_a_wall_seen_nearly_along_it_are_found_once() {
+    // Strips of a cylinder whose axis is 1e-4 off `UP`, seen from vertices
+    // above and below points near its silhouette: the search runs out of
+    // pieces, and Newton's method from each piece it got to ended at
+    // another point of the stretch where the line along `UP` grazes the
+    // wall (its shadow within the residual of the vertex's), 1e-9 apart:
+    // up to ten points facing one way where the line meets the strip
+    // once, which the winding number's fit then has to drop. Each point
+    // is found at most once, and at most as many as the line's roots on
+    // the strip (by the quadratic).
+    let axes = Axes::new();
+    let up = axes.up;
+    let mut rng = Rng::new(1);
+    let (mut seen, mut once) = (0, 0);
+    for draw in 0..400 {
+        let tilt = rng.direction();
+        let a = (up + (tilt - up * up.dot(tilt)).normalize() * 1e-4).normalize();
+        let (x, y) = (
+            a.any_orthonormal_vector(),
+            a.cross(a.any_orthonormal_vector()),
+        );
+        let (start, sweep, h) = (
+            rng.range(0.0, std::f64::consts::TAU),
+            rng.range(0.1, 1.5),
+            rng.log_range(0.05, 4.0),
+        );
+        let bottom = Conic3::arc(DVec3::ZERO, x, y, 1.0, start, sweep).unwrap();
+        let patch = crate::patch::cylinder_strip(&bottom, a * h).unwrap()[draw % 2];
+        // Near the silhouette, where the wall's normal is square to `UP`.
+        let d = up - a * a.dot(up);
+        let side = a.cross(d).normalize() * if rng.unit() < 0.5 { 1.0 } else { -1.0 };
+        let phi = rng.range(-0.05, 0.05);
+        let radial = side * phi.cos() + d.normalize() * phi.sin();
+        let v = radial + a * rng.range(0.0, h) + up * (rng.range(-1.0, 1.0) * h);
+        // |w + s·d|² = 1 on the cylinder, along the line `v + s·UP`.
+        let w = v - a * a.dot(v);
+        let (qa, qb, qc) = (d.length_squared(), 2.0 * w.dot(d), w.length_squared() - 1.0);
+        let disc = qb * qb - 4.0 * qa * qc;
+        if disc < 1e-6 * qb * qb {
+            continue;
+        }
+        let (mut on, mut doubt) = (0, false);
+        for s in [-1.0, 1.0].map(|k| (-qb + k * disc.sqrt()) / (2.0 * qa)) {
+            let tight = near_patch(v + up * s, &patch, 1e-9).0.is_some();
+            on += usize::from(tight);
+            doubt |= tight != near_patch(v + up * s, &patch, 1e-5).0.is_some();
+        }
+        if doubt {
+            continue;
+        }
+        seen += 1;
+        let found: Vec<_> = hits(&patch, v, &axes)
+            .into_iter()
+            .filter(|h| h.out == 0.0)
+            .collect();
+        assert!(found.len() <= on, "draw {draw}: {on} roots, {found:?}");
+        once += usize::from(found.len() == on);
+    }
+    assert!(seen > 300 && once > seen * 9 / 10, "{seen} {once}");
+}
+
+#[test]
 fn edge_crossings_are_on_both() {
     let mut rng = Rng::new(24);
     let mut seen = 0;

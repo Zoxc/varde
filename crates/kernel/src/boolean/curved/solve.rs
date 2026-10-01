@@ -36,6 +36,11 @@ const MAX_NEWTON: usize = 40;
 /// A Newton step this small (in parameters) ends the iteration.
 const STEP: f64 = 1e-13;
 
+/// How near (in the patch's parameters) a point Newton's method found
+/// from a piece it isn't in may be to one already found, facing the same
+/// way, and be taken for it (see [`hits`]).
+const ELSEWHERE_SAME: f64 = 1e-4;
+
 /// How far from solving it (relative to the size of what is solved) the
 /// point Newton's method ends at may be and still count as a solution.
 const RESIDUAL: f64 = 1e-9;
@@ -90,16 +95,29 @@ pub(crate) fn hits(patch: &Patch, v: DVec3, axes: &Axes) -> Vec<Hit> {
     // where Newton's method converges loosely, further off than the
     // dedup below) would count it twice.
     let mut found = search.found;
-    if search.nodes > MAX_NODES {
-        found.extend(
-            search
-                .elsewhere
-                .into_iter()
-                .filter(|&u| in_piece(DVec3::AXES, u)),
-        );
-    }
     found.sort_by(|a, b| a.to_array().partial_cmp(&b.to_array()).expect("finite"));
     found.dedup_by(|a, b| (*a - *b).abs().max_element() <= 1e-10);
+    if search.nodes > MAX_NODES {
+        // Each piece Newton's method started from ends somewhere else
+        // along the stretch where the line along `UP` grazes the patch
+        // (its shadow there within `RESIDUAL` of the vertex's): one point
+        // per stretch, facing one way, not one per piece. Ten finds of a
+        // point on a wall seen 1e-4 off its axis, 1e-9 apart, were ten
+        // points.
+        let mut elsewhere = search.elsewhere;
+        elsewhere.retain(|&u| in_piece(DVec3::AXES, u));
+        elsewhere.sort_by(|a, b| a.to_array().partial_cmp(&b.to_array()).expect("finite"));
+        let facing = |u: DVec3| sign(local.normal(u).dot(axes.up));
+        for u in elsewhere {
+            let twin = found
+                .iter()
+                .any(|&k| (k - u).abs().max_element() <= ELSEWHERE_SAME && facing(k) == facing(u));
+            if !twin {
+                found.push(u);
+            }
+        }
+        found.sort_by(|a, b| a.to_array().partial_cmp(&b.to_array()).expect("finite"));
+    }
     found
         .into_iter()
         .filter_map(|u| {

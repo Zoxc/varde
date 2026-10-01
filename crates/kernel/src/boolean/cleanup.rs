@@ -38,6 +38,7 @@ use super::parts;
 use crate::budget::Work;
 use crate::mesh::{Edge, Face, Surface, off_surface, straight};
 use crate::patch::Patch;
+use crate::solid::patch_volume;
 use crate::trig;
 use crate::{KernelError, Tolerance};
 
@@ -878,8 +879,36 @@ impl Cleaner<'_> {
         })
     }
 
+    /// The patch of triangle `tri` with its sides' curves, where some side
+    /// is curved and the patch can be built.
+    fn curved_patch(&self, tri: [u32; 3]) -> Option<Patch> {
+        let sides = [0, 1, 2].map(|i| {
+            let (u, v) = (tri[i], tri[(i + 1) % 3]);
+            self.soup.curves.get(&(u.min(v), u.max(v))).copied()
+        });
+        if sides.iter().all(Option::is_none) {
+            return None;
+        }
+        let side = |i: usize| {
+            sides[i].map_or_else(
+                || ((self.p(tri[i]) + self.p(tri[(i + 1) % 3])) * 0.5, 1.0),
+                |e| (e.ctrl, e.weight),
+            )
+        };
+        let sides = [side(0), side(1), side(2)];
+        Patch::new(
+            tri.map(|v| self.p(v)),
+            sides.map(|s| s.0),
+            sides.map(|s| s.1),
+        )
+        .ok()
+    }
+
     /// Removes the connected components that enclose no volume: no more
-    /// than `small` times their area.
+    /// than `small` times their area. The volume counts the triangles'
+    /// curved sides: a sliver cut off a wall along its rulings has every
+    /// corner on the cutting plane, and by its corners alone encloses
+    /// nothing.
     fn drop_empty_components(&mut self) {
         let n = self.soup.pos.len();
         let living = || {
@@ -897,7 +926,10 @@ impl Cleaner<'_> {
             let root = part[tri[0] as usize];
             let o = self.soup.pos[root as usize];
             let [a, b, c] = tri.map(|v| self.soup.pos[v as usize] - o);
-            volume[root as usize] += a.dot(b.cross(c)) / 6.0;
+            volume[root as usize] += self.curved_patch(tri).map_or_else(
+                || a.dot(b.cross(c)) / 6.0,
+                |patch| patch_volume(&patch, o).0,
+            );
             area[root as usize] += (b - a).cross(c - a).length() / 2.0;
         }
         for (tri, alive) in self.soup.tris.iter().zip(&mut self.alive) {

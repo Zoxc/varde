@@ -247,10 +247,26 @@ fn roots(conic: &Conic3, shape: &Shape) -> Vec<f64> {
                 .collect()
         }
         Shape::Quadric(q) => {
-            let mut found: Vec<f64> = bernstein::roots(&quartic(conic, &q))
+            let f = quartic(conic, &q);
+            let mut found: Vec<f64> = bernstein::roots(&f)
                 .into_iter()
                 .map(|s| newton(conic, &q, s))
                 .collect();
+            // A double root (the edge touching the quadric), which the
+            // isolation gives as none or two as rounding has it: where
+            // the quartic levels out (a root of its derivative) on the
+            // quadric to a rounding of the edge's size, as
+            // [`touching_roots`] takes a discriminant a rounding below 0.
+            let slope: Vec<f64> = f.windows(2).map(|c| c[1] - c[0]).collect();
+            let size = (conic.c - conic.p0)
+                .length()
+                .max((conic.p1 - conic.p0).length())
+                .max((conic.p0 - q.origin).length());
+            found.extend(
+                bernstein::roots(&slope)
+                    .into_iter()
+                    .filter(|&s| q.distance(point(conic, s)) <= 1e-12 * size),
+            );
             // A root at or a rounding past an end (a crossing at the
             // edge's end, a vertex on the quadric), which the isolation,
             // on the open interval, doesn't give.
@@ -1068,6 +1084,44 @@ mod tests {
         for x in [1, -1] {
             let (t, _) = polish(&line, root + 1e-4, &shape, &placed(&w.patch, x));
             assert!(point(&line, t).distance(w.p) < 1e-7, "{t}");
+        }
+    }
+
+    #[test]
+    fn a_conic_touching_a_cylinder_crosses_at_the_touching_point() {
+        // Circle arcs inside a cylinder (axis `Z`, radius 1), touching it
+        // at `(1, 0, ½)`: in its cross-section (a double root of the
+        // quartic, which the isolation gives as none or two as rounding
+        // has it), tilted (an ellipse touching it, same point), and
+        // shifted a rounding out. A crossing placed near the touching
+        // point goes to it, whichever sign the count gave it.
+        let q = Quadric::cylinder(DVec3::ZERO, DVec3::Z, 1.0).unwrap();
+        let bottom = Conic3::arc(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, -0.5, 1.0).unwrap();
+        let strip = crate::patch::cylinder_strip(&bottom, DVec3::Z * 2.0).unwrap();
+        let touch = DVec3::new(1.0, 0.0, 0.5);
+        let patch = strip
+            .into_iter()
+            .find(|patch| near_patch(touch, patch, 1e-9).0.is_some())
+            .unwrap();
+        for (r, tilt) in [(0.5, 0.0f64), (0.3, 0.0), (0.5, 0.7), (0.9, 1.2)] {
+            for shift in [0.0, 1e-17, 3e-16] {
+                let centre = touch - DVec3::X * (r - shift);
+                let y = DVec3::new(0.0, tilt.cos(), tilt.sin());
+                let arc = Conic3::arc(centre, DVec3::X, y, r, -0.9, 1.4).unwrap();
+                let root = at(&arc, touch);
+                assert!(arc.eval(root).distance(touch) < 1e-12);
+                for x in [1, -1] {
+                    for off in [-0.02, 0.01] {
+                        let (t, _) =
+                            polish(&arc, root + off, &Shape::Quadric(q), &placed(&patch, x));
+                        let p = point(&arc, t);
+                        assert!(
+                            p.distance(touch) < 1e-6,
+                            "{r} {tilt} {shift} {x} {off}: {p}"
+                        );
+                    }
+                }
+            }
         }
     }
 

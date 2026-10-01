@@ -1625,7 +1625,12 @@ before it got to the one holding the point, and the winding number's
 point, taken to be above, gave every edge at the vertex a crossing
 through the patch that wasn't there; where the search didn't run out,
 that piece finds its own, and a second find near a fold, where Newton's
-method converges loosely, would count it twice),
+method converges loosely, would count it twice; and of those found from
+other pieces, one facing a way is kept per point, those within `1e-4`
+of the parameters of one already kept, facing the same way, merged:
+seen nearly along a wall, the line along `UP` grazes it over a stretch
+where the shadow is within Newton's residual of the vertex's, and each
+piece's start ended somewhere else along it, ten finds `1e-9` apart),
 their facings made to add up to `ω(v, f)` (a shadow covers a point as
 often as its boundary winds round it, counted by facing) by adding the
 nearest found just outside the triangle or dropping those inside nearest
@@ -1780,7 +1785,11 @@ a double root: a touching edge touches), else a quartic, `F(C(t))` times
 the square of the conic's denominator, in Bernstein form (the
 homogeneous control points put in the quadric's 4 × 4 form about the
 edge's first end), its roots isolated by `curved/bernstein.rs` and each
-given up to two Newton steps that bring `F` nearer 0. Which root:
+given up to two Newton steps that bring `F` nearer 0, and with them the
+quartic's levels (roots of its derivative) on the quadric to `1e-12` of
+the edge's size: a curved edge touching the quadric is a double root,
+which the isolation gives as none or two as rounding has it. Which
+root:
 
 - Solved by the search: the nearest on a plane (however far: the search
   found a point of the patch, which is the plane; where the search
@@ -2248,6 +2257,10 @@ before the mesh is built, at most 64 rounds:
   across exactly.
 - **Drop** connected parts enclosing no volume (at most an eighth of the
   resolution times their area): what is left of flush faces meeting.
+  The volume counts the triangles' curved sides (each triangle with one
+  integrated as a patch): a sliver cut off a wall along its rulings has
+  every corner on the cutting plane, so by its corners it enclosed
+  nothing, and a box cutting a cylinder `3e-3` deep gave an empty `Ok`.
 - A face and its copy claiming no surface (see "Exact bands on
   quadrics") are one face here (`Soup::sources`): a cut is only between
   two faces of different sources.
@@ -2684,8 +2697,9 @@ to 72 of its 96 operations and left the others as they were.
   on the patch crossed, a crossing the search only placed is checked
   and refused if it isn't on the other operand (`Inconsistent`). A
   curved edge touching a quadric is a double root of the quartic, which
-  the isolation gives as rounding has it (none, or two close together),
-  so such a crossing may find no root and be refused. Placing
+  the isolation gives as rounding has it (none, or two close together);
+  the quartic's levels on the quadric are candidates too, so such a
+  crossing goes to the touching point. Placing
   them at checked roots on planes and quadrics won back more than the
   check cost. The seeded suite's tallies didn't move through either
   change (bars 22 of 24 pairs, walls 112 of 120, coaxial 37 of 40,
@@ -3656,3 +3670,19 @@ parameter, or a split outside the patch bounds),
   another piece near a fold (Newton's method converging loosely, two
   finds further apart than they are merged) would have counted it
   twice.
+  Finds from other pieces are themselves merged, one per point and
+  facing: on a strip of a cylinder seen `1e-4` off its axis they were
+  up to ten finds of one point, which the winding number's fit had to
+  drop.
+- **Empty components by their curved volume**: not in the plan, found
+  fuzzing boxes against cylinders. A face along a wall's rulings
+  cutting off a sliver thicker than the fit tolerance gave an empty
+  `Ok` (`a − b`) or lost the sliver (`a ∩ b`), since the clean-up
+  measured components by their triangles' corners, all on the cutting
+  plane. The fix turns two of the sliver test's 32 operations into
+  `Invalid(Fold)` refusals (slivers on turned boxes); before, they were
+  wrong. A box tilted `1e-5` or less off the rulings and tangent to the
+  wall at its middle leaves slivers a few resolutions thick, whose
+  bands (within the fit, claiming no surface) graze the wall: their
+  volume can be off by more than their own, `5e-6` on a `3e-7` sliver,
+  with every point within `1e-4` of the true surface.

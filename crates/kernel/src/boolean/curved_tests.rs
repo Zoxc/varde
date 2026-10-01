@@ -906,6 +906,58 @@ fn off_both(result: &Solid, a: &Solid, b: &Solid) -> f64 {
 }
 
 #[test]
+fn slivers_cut_off_a_wall_along_its_rulings_are_kept() {
+    // A box face along a cylinder's rulings, cutting a sliver 1.5e-3 to
+    // 0.1 deep off its wall (seen fuzzing boxes grazing walls, at a
+    // fit of 1e-3): the sliver's wall triangles have every corner on the
+    // box face, so by its triangles' corners it enclosed nothing, and the
+    // clean-up dropped it as a component of no volume: `a − b` was `Ok`
+    // and empty, and `b − a` and `a ∪ b` had a slot where it was.
+    // Volumes against the segment's closed form, by its angle.
+    let a = cylinder([0.0, 0.0, 0.0], 1.0, 5.0);
+    let va = a.volume();
+    let mut done = 0;
+    for (depth, turn) in [
+        (1.5e-3, 0.0),
+        (3e-3, 0.0),
+        (2e-2, 0.0),
+        (0.1, 0.0),
+        (1.5e-3, PI / 4.0),
+        (3e-3, 0.4),
+        (2e-2, 2.0),
+        (0.1, 0.4),
+    ] {
+        let (s, c) = turn.sin_cos();
+        let to = |p: DVec3| DVec3::new(c * p.x - s * p.y, s * p.x + c * p.y, p.z);
+        // `x ≥ 1 − depth` in the turned frame, past the cylinder.
+        let b = moved(
+            &cube([1.0 - depth, -2.0, -1.0], [2.0 + depth, 4.0, 7.0]),
+            to,
+        );
+        let half = (1.0 - depth).acos();
+        let sliver = 5.0 * (half - half.sin() * half.cos());
+        let vb = b.volume();
+        for (x, y, op, want) in [
+            (&a, &b, Op::Difference, va - sliver),
+            (&a, &b, Op::Intersection, sliver),
+            (&b, &a, Op::Difference, vb - sliver),
+            (&a, &b, Op::Union, va + vb - sliver),
+        ] {
+            if let Ok(r) = boolean(x, y, op, &TOL, &Budget::DEFAULT) {
+                let got = r.volume();
+                assert!(
+                    (got - want).abs() < 1e-9,
+                    "{depth} {turn} {op:?}: {got} not {want}"
+                );
+                done += 1;
+            }
+        }
+    }
+    // Two slivers' intersections and `b − a` are refused (a fold).
+    assert!(done >= 28, "{done}");
+}
+
+#[test]
 fn crossings_the_search_only_placed_go_onto_both_surfaces() {
     // A cylinder's curved rim edge against a crossing cylinder's wall
     // (found fuzzing related solids, seed 1, case 19): the search stopped
