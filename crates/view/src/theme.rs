@@ -60,6 +60,8 @@ pub struct Palette {
     pub danger: Color,
     /// The fill of a [`danger_button`], under white text.
     pub danger_fill: Color,
+    /// Warning text, for what may go wrong but isn't wrong yet: the
+    /// mock's construction colour, as its panels' warnings.
     pub warning: Color,
     /// Dims the screen behind a dialog.
     pub scrim: Color,
@@ -287,7 +289,7 @@ const LIGHT: Palette = Palette {
     ok: color!(0x3d9b35),
     danger: color!(0xe0564b),
     danger_fill: color!(0xe0564b),
-    warning: color!(0xe8a317),
+    warning: LIGHT_CONSTRUCTION,
     scrim: color!(0x000000, 0.25),
 
     title_bg: color!(0xe9ebef),
@@ -344,7 +346,7 @@ const DARK: Palette = Palette {
     // Lighter than the light palette's, to read on the dark panel.
     danger: color!(0xf07563),
     danger_fill: color!(0xe0564b),
-    warning: color!(0xe8a317),
+    warning: DARK_CONSTRUCTION,
     scrim: color!(0x000000, 0.45),
 
     title_bg: color!(0x17181d),

@@ -80,6 +80,44 @@ pub(crate) fn example() -> (Doc, Rc<RefCell<Vec<Request>>>) {
     (doc, requests)
 }
 
+/// The example, and a sketch on XY after it holding a circle of radius 3
+/// about (-20, 10), on the plate, selected: its id.
+pub(crate) fn example_and_a_hole() -> (Doc, FeatureId, Rc<RefCell<Vec<Request>>>) {
+    let (mut doc, requests) = example();
+    let plane = varde_document::Plane::Origin(varde_document::OriginPlane::XY);
+    doc.apply(doc.editor.document().add_sketch(plane));
+    let sketch = doc.editor.document().features().last().unwrap().id;
+    let mut drawn = varde_sketch::Sketch::default();
+    let center = drawn.add_point(glam::DVec2::new(-20.0, 10.0)).unwrap();
+    drawn
+        .add_curve(
+            varde_sketch::Curve::Circle {
+                center,
+                radius: 3.0,
+            },
+            false,
+        )
+        .unwrap();
+    doc.apply(varde_document::Command::SetSketch {
+        feature: sketch,
+        sketch: Box::new(drawn),
+    });
+    doc.sync();
+    answer(&mut doc, &requests);
+    doc.look(Look::SelectFeature(sketch));
+    (doc, sketch, requests)
+}
+
+/// The texts `doc`'s screen shows at 1280 × 800, light.
+pub(crate) fn screen_texts(doc: &Doc) -> Vec<String> {
+    let mut renderer = varde_view::probe::renderer();
+    let size = iced::Size::new(1280.0, 800.0);
+    let mut ui = shown(doc.view(false, Mode::Light), size, &mut renderer);
+    (texts(&mut ui, &renderer).into_iter())
+        .map(|text| text.text)
+        .collect()
+}
+
 /// Answers the requests waiting, as the lane's messages would.
 pub(crate) fn answer(doc: &mut Doc, requests: &RefCell<Vec<Request>>) {
     for request in requests.take() {

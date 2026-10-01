@@ -3851,9 +3851,10 @@ renderer doesn't try an upload of the same `Arc` again after it failed;
 the only failure is a part past the device's buffer limit, which the same
 mesh would hit again, so it is logged once. On the web the mesh still crosses the wire whole each time.
 On the web the reply's head
-carries `draft`, `failed` and the boxes as corner arrays, checked finite
+carries `draft`, `failed`, `touched` and the boxes as corner arrays, checked finite
 and in order on receipt (`wire::Error::Bounds`); `MAX_HEAD_BYTES` is 64
-MiB. The draft's touched bodies cross in the head as marks, unchecked.
+MiB. The draft's and each feature's touched bodies cross in the head as
+marks, unchecked.
 
 **Gaps.** Every join, cut or intersect asks `touches` of every body
 before it on each edit that changes the tool (cached otherwise; bodies
@@ -4045,14 +4046,16 @@ on the Timeline's selection) and `Edit::RemoveBody` (Objects' bin) ask
 the bodies they touch (they're found again when regenerating), so a
 body's removal takes only its maker (and what uses that); a later join
 left touching nothing fails in the Timeline. So the prompt warns of
-them: every join, cut or intersect that stays and touched a body that
-goes, as the model shown found (`Response::Regenerated::touched`, the
+them: every join, cut or intersect that stays and touched only bodies
+that go (one that also touched a body that stays goes on working on
+that), as the model shown found (`Response::Regenerated::touched`, the
 history's `Evaluation::touched`, kept by `MeshFeed::touched_features`
 like the failed features, and not given out across a replacement until
 a newer model; one added since isn't known yet), is listed under the
-prompt in the warning colour: "Extrude 2 works on Body 1 and stays, so
+prompt in the warning colour (the mock's for panel warnings, its construction orange): "Extrude 2 works on Body 1 and stays, so
 it may fail with nothing to work on." (`Doc::worked`, `delete_warning`).
-One that only touched bodies taken out of it isn't. A removal with
+One that took the body out isn't (excluded bodies aren't asked
+about, so it touched none). A removal with
 such a feature asks even if only its own feature goes, so a body's
 prompt shows. For a body the prompt asks
 "Delete *Body N* with the M features and K bodies that go with it?",

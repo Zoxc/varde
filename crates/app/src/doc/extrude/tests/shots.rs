@@ -627,9 +627,9 @@ fn shots_10_delete_prompts() {
         );
 
         // A body goes with the feature making it, which no later feature
-        // uses (extrudes use sketches only), so deleting one never asks:
-        // the body prompt can't be reached. The short prompt instead: the
-        // example's sketch, its extrude and body.
+        // uses (extrudes use sketches only), so deleting one asks only to
+        // warn of a cut left with nothing to work on: scenario 14. The
+        // short prompt instead: the example's sketch, its extrude and body.
         let (mut doc, _) = example();
         framed(&mut doc);
         let body = doc.editor.document().bodies()[0].id;
@@ -645,6 +645,59 @@ fn shots_10_delete_prompts() {
         camera.take(
             &doc,
             "10-delete-short-dark-scale2",
+            Shot::new().dark().scale(2.0),
+        );
+    });
+}
+
+/// Scenario 14: the banner over the viewport saying a sketch edit was
+/// refused after its sketch was left, a short reason and a long one in a
+/// small window; and the body prompt warning of a cut left with nothing
+/// to work on.
+#[test]
+#[ignore = "writes screenshots, see the module"]
+fn shots_14_refused_edit_and_delete_warning() {
+    use crate::doc::sketch::Refusal;
+
+    shooting(|camera| {
+        let (mut doc, hole, requests) = example_and_a_hole();
+        framed(&mut doc);
+        extruded(&mut doc, &requests, hole, 0, |doc| {
+            extrude(doc, ExtrudeLook::Operation(OperationKind::Cut));
+            extrude(doc, ExtrudeLook::Extent(ExtentKind::ThroughAll));
+        });
+        let plate = doc.editor.document().features()[0].id;
+        let redundant = varde_sketch::Rejected::Redundant {
+            involved: Default::default(),
+        };
+        doc.refused_edit = Some((plate, Refusal::Rejected(redundant)));
+        let texts = crate::tests::screen_texts(&doc);
+        assert!(
+            texts
+                .iter()
+                .any(|text| text == "An edit of Sketch 1 wasn't kept"),
+            "{texts:?}"
+        );
+        camera.take(&doc, "14-refused-edit", Shot::new());
+        camera.take(&doc, "14-refused-edit-dark", Shot::new().dark());
+        let failed = "the solver's worker stopped while it was checking the edit, and \
+                      was started again";
+        doc.refused_edit = Some((plate, Refusal::Failed(failed.to_owned())));
+        camera.take(
+            &doc,
+            "14-refused-edit-long-small",
+            Shot::new().size(1024.0, 600.0),
+        );
+
+        doc.update(Edit::DismissRefusedEdit);
+        let body = doc.editor.document().bodies()[0].id;
+        doc.update(Edit::RemoveBody(body));
+        let prompt = doc.delete_prompt().expect("the prompt shows");
+        assert_eq!(prompt.worked.len(), 1);
+        camera.take(&doc, "14-delete-body-warning", Shot::new());
+        camera.take(
+            &doc,
+            "14-delete-body-warning-dark-scale2",
             Shot::new().dark().scale(2.0),
         );
     });

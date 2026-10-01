@@ -197,26 +197,28 @@ fn the_status_bar_says_what_is_selected_and_under_the_prompt_only_esc() {
 /// Body 1, answered by the regeneration lane; the regeneration requests,
 /// which wait for the test, and the cut's id.
 fn example_and_a_cut() -> (Doc, Rc<RefCell<Vec<Request>>>, FeatureId) {
-    let (mut doc, requests) = crate::tests::example();
-    let plane = varde_document::Plane::Origin(varde_document::OriginPlane::XY);
-    doc.apply(doc.editor.document().add_sketch(plane));
-    let sketch = doc.editor.document().features().last().unwrap().id;
-    let mut drawn = varde_sketch::Sketch::default();
-    let center = drawn.add_point(glam::DVec2::new(-20.0, 10.0)).unwrap();
-    let circle = varde_sketch::Curve::Circle {
-        center,
-        radius: 3.0,
-    };
-    drawn.add_curve(circle, false).unwrap();
-    doc.apply(Command::SetSketch {
-        feature: sketch,
-        sketch: Box::new(drawn),
-    });
-    doc.sync();
-    crate::tests::answer(&mut doc, &requests);
+    let (doc, requests, cut) = example_and_a_cut_of(false);
+    let body = doc.editor.document().bodies()[0].id;
+    assert_eq!(doc.feed.touched_features(), [(cut, vec![body])]);
+    (doc, requests, cut)
+}
+
+/// [`example_and_a_cut`], with "Extrude 2" a boss of the circle making
+/// "Body 2" before the cut, "Extrude 3", if `boss`, which then cuts
+/// both bodies.
+fn example_and_a_cut_of(boss: bool) -> (Doc, Rc<RefCell<Vec<Request>>>, FeatureId) {
+    let (mut doc, sketch, requests) = crate::tests::example_and_a_hole();
+    let extrude = |doc: &mut Doc, look| doc.look(Look::Extrude(look));
+    if boss {
+        doc.look(Look::SelectFeature(sketch));
+        doc.look(Look::StartExtrude);
+        extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region: 0 });
+        doc.update(Edit::CommitExtrude);
+        assert!(doc.extrude.is_none());
+        crate::tests::answer(&mut doc, &requests);
+    }
     doc.look(Look::SelectFeature(sketch));
     doc.look(Look::StartExtrude);
-    let extrude = |doc: &mut Doc, look| doc.look(Look::Extrude(look));
     extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region: 0 });
     extrude(&mut doc, ExtrudeLook::Operation(OperationKind::Cut));
     extrude(&mut doc, ExtrudeLook::Extent(ExtentKind::ThroughAll));
@@ -224,23 +226,8 @@ fn example_and_a_cut() -> (Doc, Rc<RefCell<Vec<Request>>>, FeatureId) {
     assert!(doc.extrude.is_none());
     crate::tests::answer(&mut doc, &requests);
     let cut = doc.editor.document().features().last().unwrap().id;
-    assert_eq!(
-        doc.feed.touched_features(),
-        [(cut, vec![doc.editor.document().bodies()[0].id])]
-    );
     assert!(doc.feed.failed_features().is_empty());
     (doc, requests, cut)
-}
-
-/// The texts `doc`'s screen shows at 1280 × 800.
-fn screen_texts(doc: &Doc) -> Vec<String> {
-    use crate::tests::{shown, texts};
-    let size = iced::Size::new(1280.0, 800.0);
-    let mut renderer = varde_view::probe::renderer();
-    let mut ui = shown(doc.view(false, Mode::Light), size, &mut renderer);
-    (texts(&mut ui, &renderer).into_iter())
-        .map(|text| text.text)
-        .collect()
 }
 
 /// The names of what the delete prompt warns of: the features that may
@@ -274,7 +261,7 @@ fn deleting_a_body_a_cut_worked_on_warns_and_the_cut_then_fails() {
     let listed: Vec<_> = prompt.bodies.iter().map(|b| b.name.as_str()).collect();
     assert_eq!(listed, ["Body 1"]);
     assert_eq!(warned(&doc), (vec!["Extrude 2"], vec!["Body 1"]));
-    let texts = screen_texts(&doc);
+    let texts = crate::tests::screen_texts(&doc);
     let question = "Delete Body 1 with the 1 feature that goes with it?";
     assert!(texts.iter().any(|text| text == question), "{texts:?}");
     assert!(texts.iter().any(|text| text == CUT_WARNING), "{texts:?}");
@@ -306,7 +293,11 @@ fn deleting_the_sketch_under_a_body_a_cut_worked_on_warns_too() {
         .collect();
     assert_eq!(listed, ["Sketch 1", "Extrude 1"]);
     assert_eq!(warned(&doc), (vec!["Extrude 2"], vec!["Body 1"]));
-    assert!(screen_texts(&doc).iter().any(|text| text == CUT_WARNING));
+    assert!(
+        crate::tests::screen_texts(&doc)
+            .iter()
+            .any(|text| text == CUT_WARNING)
+    );
 
     // Not when the cut goes too, with its sketch: deleting the cut's
     // sketch warns of nothing, and goes without asking but for the cut.
@@ -315,7 +306,7 @@ fn deleting_the_sketch_under_a_body_a_cut_worked_on_warns_too() {
     doc.update(Edit::RemoveFeature(second));
     assert_eq!(warned(&doc), (vec![], vec![]));
     assert!(
-        !screen_texts(&doc)
+        !crate::tests::screen_texts(&doc)
             .iter()
             .any(|text| text.contains("may fail"))
     );
@@ -349,4 +340,22 @@ fn a_cut_that_took_the_body_out_isnt_warned_of() {
         names(&doc),
         (vec!["Sketch 1", "Sketch 2", "Extrude 2"], vec![])
     );
+}
+
+#[test]
+fn a_cut_left_a_body_to_work_on_isnt_warned_of() {
+    let (mut doc, _, cut) = example_and_a_cut_of(true);
+    let bodies: Vec<_> = (doc.editor.document().bodies().iter())
+        .map(|body| body.id)
+        .collect();
+    assert_eq!(doc.feed.touched_features(), [(cut, bodies.clone())]);
+    // Either body goes with its extrude without asking: the cut still
+    // has the other to work on.
+    for body in bodies {
+        doc.update(Edit::RemoveBody(body));
+        assert!(doc.deleting.is_none());
+        assert_eq!(doc.editor.document().bodies().len(), 1);
+        doc.update(Edit::Undo);
+        assert_eq!(doc.editor.document().bodies().len(), 2);
+    }
 }

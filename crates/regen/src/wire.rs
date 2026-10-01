@@ -27,8 +27,8 @@
 //! by [`RenderLines::from_parts`]; the bodies' boxes in the head are
 //! finite with their corners in order. The failed features' ids, the
 //! sketches that don't solve and the bodies a draft or a feature touches
-//! are only marks, so they aren't checked against a document. Malformed bytes are
-//! refused, never a panic; see [`decode_request`] and [`decode_reply`]. A
+//! are only marks, so they aren't checked against a document. Malformed
+//! bytes are refused, never a panic; see [`decode_request`] and [`decode_reply`]. A
 //! request's draft isn't checked as it's decoded: applying it goes through
 //! the document's checks.
 //!
@@ -48,8 +48,9 @@ use varde_lane::bytes::Buffer;
 use crate::{Drafted, Request, Response};
 
 /// The most bytes a reply's head may have. A head is a generation, a few
-/// feature ids, the failed features' messages and a box per body, or an
-/// error message, so this is far more than any real one needs.
+/// feature ids, the failed features' messages, the bodies each join, cut
+/// or intersect touches and a box per body, or an error message, so this
+/// is far more than any real one needs.
 pub const MAX_HEAD_BYTES: usize = 1 << 26;
 
 /// The most bytes a request may have. Documents are far smaller; the

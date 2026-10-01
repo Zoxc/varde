@@ -1,6 +1,6 @@
 //! Deleting a feature or a body, and asking first when more goes with it,
-//! or when a join, cut or intersect that stays worked on a body that goes:
-//! see [`Doc::remove`].
+//! or when a join, cut or intersect that stays worked only on bodies that
+//! go: see [`Doc::remove`].
 
 use varde_document::{BodyId, Command, FeatureId, Generation, Removable, Removal};
 use varde_view::DeletePrompt;
@@ -20,7 +20,8 @@ impl Doc {
     /// Removes `target` and what depends on it, as one undo step: at once
     /// if no other feature goes with it (a feature's own bodies, or a
     /// body's own feature, go without asking) and no join, cut or
-    /// intersect that stays worked on a body that goes ([`Doc::worked`]),
+    /// intersect that stays worked only on bodies that go
+    /// ([`Doc::worked`]),
     /// or else asks first, listing everything that would go and warning
     /// about those that may then fail. Nothing in a read-only
     /// document. While edits wait on the solver it waits behind them, see
@@ -97,35 +98,34 @@ impl Doc {
         }
     }
 
-    /// The joins, cuts and intersects `removal` leaves that worked on a
-    /// body it takes, as the model shown found them touch bodies, and
-    /// those bodies, each in the document's order. With no body left to
-    /// touch they fail ("it doesn't touch any body"), so the delete prompt
-    /// warns about them. A feature added since the model shown isn't
-    /// known to touch anything yet.
+    /// The joins, cuts and intersects `removal` leaves whose every body
+    /// it touched it takes, as the model shown found them touch bodies,
+    /// and those bodies, each in the document's order. With nothing left
+    /// to touch they fail ("it doesn't touch any body"), so the delete
+    /// prompt warns about them; one that also touched a body that stays
+    /// goes on working on that. A feature added since the model shown
+    /// isn't known to touch anything yet.
     fn worked(&self, removal: &Removal) -> (Vec<FeatureId>, Vec<BodyId>) {
         let document = self.editor.document();
         let mut worked_on = Vec::new();
         let features = (self.feed.touched_features().iter())
             .filter(|(feature, touched)| {
-                let mut gone = touched
-                    .iter()
-                    .filter(|body| removal.bodies.binary_search(body).is_ok())
-                    .peekable();
-                let worked = gone.peek().is_some()
+                let worked = !touched.is_empty()
+                    && (touched.iter()).all(|body| removal.bodies.binary_search(body).is_ok())
                     && removal.features.binary_search(feature).is_err()
                     && document.feature(*feature).is_some();
                 if worked {
-                    worked_on.extend(gone);
+                    worked_on.extend_from_slice(touched);
                 }
                 worked
             })
             .map(|(feature, _)| *feature)
             .collect();
+        worked_on.sort_unstable();
         // In the bodies' order, as the prompt lists them.
         let worked_on = (document.bodies().iter())
             .map(|body| body.id)
-            .filter(|body| worked_on.contains(body))
+            .filter(|body| worked_on.binary_search(body).is_ok())
             .collect();
         (features, worked_on)
     }

@@ -408,8 +408,8 @@ pub struct DeletePrompt<'a> {
     pub features: Vec<&'a Feature>,
     /// The bodies those make, which go with them.
     pub bodies: Vec<&'a Body>,
-    /// The joins, cuts and intersects that stay but worked on bodies that
-    /// go, in the Timeline's order: they may fail without them.
+    /// The joins, cuts and intersects that stay but worked only on bodies
+    /// that go, in the Timeline's order: they may fail without them.
     pub worked: Vec<&'a Feature>,
     /// The bodies that go that those worked on, in the bodies' order.
     pub worked_on: Vec<&'a Body>,
@@ -479,7 +479,10 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
         )
     });
 
-    let refused = state.refused_edit.map(refused_banner);
+    // On the panel's colour, as the banners under the toolbar are on the
+    // window's: the banner's own is translucent.
+    let refused = (state.refused_edit)
+        .map(|refused| container(refused_banner(refused)).style(theme::toolbar));
 
     let content = column![
         toolbar::toolbar(&state),
@@ -768,6 +771,7 @@ fn refused_banner(refused: RefusedEdit<'_>) -> Element<'_, Message> {
     banner(
         text(format!("An edit of {} wasn't kept", refused.name))
             .font(theme::SEMIBOLD)
+            .wrapping(Wrapping::None)
             .style(theme::warning_text),
         &refused_detail(&refused),
         Some(dismiss.into()),
@@ -777,11 +781,20 @@ fn refused_banner(refused: RefusedEdit<'_>) -> Element<'_, Message> {
 /// Why the solver refused the edit `refused` is of, as its banner says,
 /// as the status bar would have in the sketch.
 fn refused_detail(refused: &RefusedEdit<'_>) -> String {
-    match (refused.why, refused.error) {
-        (Some(why), _) => refusal_text(why, refused.sketch).into_owned(),
-        (None, Some(error)) => format!("Couldn't check the edit: {error}"),
-        (None, None) => "The solver refused it".to_owned(),
-    }
+    edit_refused(refused.why, refused.error, refused.sketch)
+        .map_or_else(|| "The solver refused it".to_owned(), Cow::into_owned)
+}
+
+/// Why the solver refused an edit of `sketch`, `why` or else how it
+/// failed to answer (`error`), as the status bar and the banner over the
+/// viewport say it.
+fn edit_refused(
+    why: Option<&Rejected>,
+    error: Option<&str>,
+    sketch: &Sketch,
+) -> Option<Cow<'static, str>> {
+    why.map(|why| refusal_text(why, sketch))
+        .or_else(|| error.map(|error| format!("Couldn't check the edit: {error}").into()))
 }
 
 /// A strip under the toolbar, or over the viewport, telling something
@@ -794,10 +807,13 @@ fn banner<'a>(
 ) -> Element<'a, Message> {
     column![
         container(
+            // The detail takes what's left and wraps, so a long one
+            // doesn't push the actions off a small window.
             row![
                 title.into(),
-                text(format!("— {detail}")).style(theme::muted_text),
-                space::horizontal(),
+                text(format!("— {detail}"))
+                    .style(theme::muted_text)
+                    .width(Length::Fill),
                 actions,
             ]
             .spacing(8)
@@ -955,7 +971,7 @@ fn delete_question(prompt: &DeletePrompt<'_>) -> String {
 }
 
 /// What the delete prompt warns of, if a join, cut or intersect that
-/// stays worked on a body that goes: "Extrude 2 works on Body 1 and
+/// stays worked only on bodies that go: "Extrude 2 works on Body 1 and
 /// stays, so it may fail with nothing to work on."
 fn delete_warning(prompt: &DeletePrompt<'_>) -> Option<String> {
     if prompt.worked.is_empty() {
@@ -1013,18 +1029,12 @@ fn status<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
                     theme::muted_text
                 })
         });
-        let refusal = sketch
-            .refusal
-            .map(|why| refusal_text(why, sketch.sketch))
-            .or(sketch
-                .solver_error
-                .map(|error| format!("Couldn't check the edit: {error}").into()))
-            .map(|why| {
-                text(format!("· {why}"))
-                    .size(12)
-                    .wrapping(Wrapping::None)
-                    .style(theme::danger_text)
-            });
+        let refusal = edit_refused(sketch.refusal, sketch.solver_error, sketch.sketch).map(|why| {
+            text(format!("· {why}"))
+                .size(12)
+                .wrapping(Wrapping::None)
+                .style(theme::danger_text)
+        });
         let checking = sketch.checking.then(|| {
             text("· Checking…")
                 .size(12)

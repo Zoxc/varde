@@ -4,7 +4,7 @@ use glam::DVec2;
 use iced::keyboard;
 use varde_document::{Document, Editor, OriginPlane, Plane};
 use varde_sketch::{Constraint, Curve};
-use varde_view::{ConstraintKind, Edit, Look, Mode, Tool};
+use varde_view::{ConstraintKind, Edit, Look, Tool};
 
 use super::*;
 use crate::doc::sketch::tests::{
@@ -634,16 +634,6 @@ fn undo_and_redo_storms_while_edits_wait_keep_the_order() {
     assert!(!t.editor.can_redo());
 }
 
-/// The texts `doc`'s screen shows at 1280 × 800.
-fn screen_texts(doc: &Doc) -> Vec<String> {
-    let mut renderer = varde_view::probe::renderer();
-    let size = iced::Size::new(1280.0, 800.0);
-    let mut ui = crate::tests::shown(doc.view(false, Mode::Light), size, &mut renderer);
-    (crate::tests::texts(&mut ui, &renderer).into_iter())
-        .map(|text| text.text)
-        .collect()
-}
-
 /// [`with_shapes`] with its line made horizontal, then made horizontal
 /// again, which the solver refuses, left with the solver, and the sketch
 /// left: the sketch's id and the sketch as committed.
@@ -679,7 +669,7 @@ fn an_edit_refused_after_the_sketch_was_left_shows_a_banner_until_dismissed() {
     assert_eq!(refused.name, "Sketch 1");
     assert!(matches!(refused.why, Some(Rejected::Redundant { .. })));
     assert_eq!(refused.error, None);
-    let texts = screen_texts(&t);
+    let texts = crate::tests::screen_texts(&t);
     assert!(
         texts.contains(&"An edit of Sketch 1 wasn't kept".to_owned()),
         "{texts:?}"
@@ -696,7 +686,7 @@ fn an_edit_refused_after_the_sketch_was_left_shows_a_banner_until_dismissed() {
     assert!(t.refused_edit().is_some());
     t.update(Edit::DismissRefusedEdit);
     assert!(t.refused_edit().is_none());
-    let texts = screen_texts(&t);
+    let texts = crate::tests::screen_texts(&t);
     assert!(
         !texts.iter().any(|text| text.contains("wasn't kept")),
         "{texts:?}"
@@ -747,7 +737,7 @@ fn the_banner_goes_back_into_the_sketch_or_with_it() {
     let refused = t.refused_edit().expect("a banner says so");
     assert!(refused.why.is_none());
     assert_eq!(refused.error, Some("worker stopped"));
-    let texts = screen_texts(&t);
+    let texts = crate::tests::screen_texts(&t);
     assert!(
         texts.contains(&"— Couldn't check the edit: worker stopped".to_owned()),
         "{texts:?}"

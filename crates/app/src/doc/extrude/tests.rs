@@ -8,7 +8,7 @@ use varde_view::{Distance, Edit, ExtentKind, ExtrudeLook, Look, Mode, OperationK
 
 use super::*;
 use crate::doc::sketch::CHECKING;
-use crate::tests::{answer, deferred, example, key_in, press_in};
+use crate::tests::{answer, deferred, example, example_and_a_hole, key_in, press_in};
 
 type Requests = Rc<RefCell<Vec<Request>>>;
 
@@ -466,34 +466,6 @@ fn two_sides_at_the_limit_stay_ready_when_the_units_change() {
     doc.update(Edit::CommitExtrude);
     assert_eq!(doc.edit_error, None);
     assert_eq!(extrudes(&doc)[0].span(), Some((-400000.0, 600000.0)));
-}
-
-/// The example, and a sketch on XY after it holding a circle of radius 3
-/// about (-20, 10), on the plate, selected: its id.
-fn example_and_a_hole() -> (Doc, FeatureId, Requests) {
-    let (mut doc, requests) = example();
-    let plane = varde_document::Plane::Origin(varde_document::OriginPlane::XY);
-    doc.apply(doc.editor.document().add_sketch(plane));
-    let sketch = doc.editor.document().features().last().unwrap().id;
-    let mut drawn = varde_sketch::Sketch::default();
-    let center = drawn.add_point(glam::DVec2::new(-20.0, 10.0)).unwrap();
-    drawn
-        .add_curve(
-            varde_sketch::Curve::Circle {
-                center,
-                radius: 3.0,
-            },
-            false,
-        )
-        .unwrap();
-    doc.apply(Command::SetSketch {
-        feature: sketch,
-        sketch: Box::new(drawn),
-    });
-    doc.sync();
-    answer(&mut doc, &requests);
-    doc.look(Look::SelectFeature(sketch));
-    (doc, sketch, requests)
 }
 
 #[test]

@@ -29,7 +29,10 @@ A banner can sit on top of the viewport, between the toolbar's banners
 and it, over the viewport's column only: a sketch edit the solver
 refused after its sketch was left ("An edit of Sketch 1 wasn't kept",
 in the warning colour, with Dismiss; see `agents/sketch.md`). It takes
-height from the viewport rather than covering the scene.
+height from the viewport rather than covering the scene, and sits on the
+panel's colour, as the toolbar's banners sit on the window's. A banner's
+detail fills what's left of its row and wraps, so its actions stay on a
+small window.
 
 The anchored layer is an `Anchors` widget: widgets each centred where a
 sketch point shows (the `Projector` hit testing uses, sized at layout), and
@@ -353,7 +356,7 @@ makes its own wgpu instance, under a lock, so run them one at a time:
 VARDE_SHOTS=$PWD/target/shots cargo test -p varde-app shots_ -- --ignored --test-threads=1
 ```
 
-Scenarios (`shots_01` .. `shots_13`, each at 1280×800, scale 1, light,
+Scenarios (`shots_01` .. `shots_14`, each at 1280×800, scale 1, light,
 the busiest also at scale 2 and dark): `E` with every candidate's regions
 (and one hovered); a region picked before and after its answer; flip,
 symmetric, two sides, a refused distance and a draft the document
@@ -366,7 +369,9 @@ prompt, long and short; the file menu and its tolerances; odd cameras
 (along the handle's axis, perspective with the handle behind the eye,
 grazing, the knob off the screen, a 100 m extrude, a knob dragged past
 the limit, one `Doc` at three window sizes); a long status beside the
-key hints. Shots are for
+key hints; the banner over the viewport for a refused sketch edit, short
+and long in a small window, and the body delete prompt's warning of a
+cut left with nothing to work on. Shots are for
 looking (pixels differ by GPU and driver), never compared and never
 committed: a fault a shot finds gets an ordinary headless test of the
 state or layout behind it. A scenario answers each regeneration it asks
