@@ -2384,7 +2384,17 @@ over `0..1` and one over `0..2`, `Invalid(Hull)` too).
   cut), or the patches' cut on the plane square to the curve there
   (`Pair::solve` from the domain positions interpolated between the
   ends) is within half the fit tolerance of it; NaN fails. If neither
-  is, the boolean is `Inconsistent` before the rounds of cutting.
+  is, the boolean is `Inconsistent` before the rounds of cutting. The
+  first test needs no Newton step: where the faces meet at a small
+  angle `θ` a point within the resolution of both may be about
+  `resolution/θ` from the cut (Newton's method lands anywhere along
+  that band, or nowhere at a line contact), but the material between
+  it and the cut is only a few resolutions thick. On planes and
+  quadrics the implicit value along a chord is a quadratic in its
+  parameter, along a conic a quartic over the weight's square, both 0
+  at the ends, so the three samples bound it along the whole curve; a
+  chord skips about the resolution times the area between it and the
+  cut.
   Nothing else measures where such a curve is: the bands along it are
   checked only against their own faces, and a chord in the wrong place
   passes wherever the faces are within the fit of each other along it.

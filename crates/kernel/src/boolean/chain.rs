@@ -194,7 +194,6 @@ pub(super) fn chains(jobs: &[Job], tol: &Tolerance) -> Result<Vec<Chain>, Kernel
 /// which the clean-up collapses: the exact section through two points a
 /// rounding apart may run round the whole conic, outside both patches.
 pub(super) fn chain(job: &Job, tol: &Tolerance) -> Option<Chain> {
-    let fit = tol.fit();
     let [x, y] = job.ends;
     let straight = |exact| Chain {
         points: Vec::new(),
@@ -211,31 +210,42 @@ pub(super) fn chain(job: &Job, tol: &Tolerance) -> Option<Chain> {
     if let Some(chain) = exact(job) {
         return Some(chain);
     }
-    if let Some(chain) = traced(job, fit) {
+    if let Some(chain) = traced(job, tol.fit()) {
         return Some(chain);
     }
     // The fallbacks know only the ends (and the conic its middle), not
     // where the cut runs between them: each is checked against it.
     fallback(job)
-        .filter(|chain| verified(job, chain, fit))
-        .or_else(|| Some(straight(false)).filter(|chain| verified(job, chain, fit)))
+        .filter(|chain| verified(job, chain, tol))
+        .or_else(|| Some(straight(false)).filter(|chain| verified(job, chain, tol)))
 }
 
 /// Whether a fallback's `chain` follows the true cut: at `¼`, `½` and `¾`
 /// of each of its curves, the curve's point lies within the resolution
-/// (a thousandth of `fit`) of both patches, as the chord of a tie or of
-/// a line contact does (it is the cut), or the patches' cut on the plane
-/// square to the curve there is within half of `fit` of it (by Newton's
-/// method from the domain positions there, interpolated between its
-/// vertices'). Measured only against the faces the chain's bands lie
-/// on, a chord in the wrong place passes wherever the two are within
-/// the fit of each other along it: a plane `1e-4` off a cylinder's
-/// rulings, inside its wall by as much, cuts it in a U 3.4 long whose
-/// chord, a tenth off the cut, lies on the plane and within the fit of
-/// the wall, and the sliver between them lost its tip.
-fn verified(job: &Job, chain: &Chain, fit: f64) -> bool {
+/// of both patches, as the chord of a tie or of a line contact does (it
+/// is the cut), or the patches' cut on the plane square to the curve
+/// there is within half the fit tolerance of it (by Newton's method from
+/// the domain positions there, interpolated between its vertices').
+/// Measured only against the faces the chain's bands lie on, a chord in
+/// the wrong place passes wherever the two are within the fit of each
+/// other along it: a plane `1e-4` off a cylinder's rulings, inside its
+/// wall by as much, cuts it in a U 3.4 long whose chord, a tenth off the
+/// cut, lies on the plane and within the fit of the wall, and the sliver
+/// between them lost its tip.
+///
+/// A point within the resolution of both patches passes without Newton's
+/// method: where the faces meet at a small angle `θ` it may be up to
+/// about `resolution / θ` from the cut (Newton's method lands anywhere
+/// along that band, or not at all at a line contact), but what lies
+/// between it and the cut is thinner than a few resolutions. On a plane
+/// or a quadric, the implicit value along a chord is a quadratic in its
+/// parameter, along a conic a quartic over the weight's square; both
+/// vanish at the ends, so the three samples bound them along the whole
+/// curve, and the material a chord skips there is about the resolution
+/// times the area between it and the cut.
+fn verified(job: &Job, chain: &Chain, tol: &Tolerance) -> bool {
     let pair = job.pair();
-    let resolution = fit * 1e-3;
+    let (resolution, fit) = (tol.resolution(), tol.fit());
     let on = |patch: &Patch, x: DVec3, guess: DVec3| {
         patch.eval(invert(patch, x, guess)).distance(x) <= resolution
     };

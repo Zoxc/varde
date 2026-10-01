@@ -2231,16 +2231,6 @@ fn band_roots_off_their_wall_are_bounded() {
         let wall = [walls(&a), walls(&b)].concat();
         let loose = four_loose(&a, &b, &wall, &tol);
         if fit < 1e-3 {
-            eprintln!(
-                "LOOSE {fit} {:?}",
-                loose
-                    .iter()
-                    .map(|r| r
-                        .as_ref()
-                        .map(|&(_, off)| off)
-                        .map_err(|e| format!("{e:?}")))
-                    .collect::<Vec<_>>()
-            );
             assert!(matches!(
                 loose[0],
                 Err(KernelError::TooComplex | KernelError::Boolean(BooleanError::Inconsistent))
