@@ -12,8 +12,15 @@
   timeline/objects), drag timeline rows or the rollback marker, double-click
   a sketch in the timeline, S to sketch, Esc to back out, click the view
   cube, ? for shortcuts.
+  Solid operations (Revolve R, Chamfer C, Combine B, Move M, Pattern P, and
+  Shell, Mirror, Circular pattern from the Alt bar or with a body selected)
+  open a panel at the viewport's right; click its fields, then the model.
   Deep links: #bracket, #bracket/face, #bracket/body, #bracket/sketch,
-  #bracket/tools, #bracket/sketchtools, #empty; append /still to disable animations.
+  #bracket/tools, #bracket/sketchtools, #empty; #bracket/op:<kind> opens an
+  operation set up for a screenshot (revolve, combine, move, bmirror,
+  lpattern, cpattern, fillet, chamfer, shell); append /still to disable
+  animations, /dark or /light to force the theme, /v-top (any view cube
+  view) to set the camera.
 -->
 <style>
 :root {
@@ -50,6 +57,7 @@
   --grid-major: rgba(40, 40, 60, .17);
   --ok: #3d9b35;
   --halo: #f4f4f7;
+  --danger: #cf4330;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -82,6 +90,7 @@
     --grid-major: rgba(255, 255, 255, .11);
     --ok: #5cc052;
     --halo: #24252b;
+    --danger: #f07563;
   }
 }
 :root[data-theme="dark"] {
@@ -114,6 +123,7 @@
   --grid-major: rgba(255, 255, 255, .11);
   --ok: #5cc052;
   --halo: #24252b;
+  --danger: #f07563;
 }
 
 * { box-sizing: border-box; }
@@ -351,6 +361,28 @@ body.dragging .face, body.dragging .hole { pointer-events: none; }
 }
 .sk-visible { stroke-width: 1.2; opacity: .8; }
 
+/* what a solid operation being set up picks and previews */
+.face.fade { opacity: .3; }
+.face.smooth { stroke: var(--f); }
+.face.smooth:hover { stroke: var(--fh); }
+.face.smooth.sel { stroke: var(--fs); }
+.tf.draft { opacity: .88; pointer-events: none; }
+.rgn { fill: var(--accent); fill-opacity: .1; stroke: var(--accent); stroke-opacity: .55; stroke-width: 1.2; vector-effect: non-scaling-stroke; cursor: pointer; }
+.rgn:hover { fill-opacity: .28; }
+.rgn.on { fill-opacity: .38; stroke-opacity: 1; stroke-width: 1.8; }
+.opl .hit { stroke: transparent; stroke-width: 11; fill: none; vector-effect: non-scaling-stroke; pointer-events: stroke; cursor: pointer; }
+.opl .vis { fill: none; vector-effect: non-scaling-stroke; pointer-events: none; }
+.edc .vis { stroke: var(--hl-line); stroke-width: 3; stroke-opacity: 0; stroke-linecap: round; }
+.edc:hover .vis { stroke-opacity: 1; }
+.edc.on .vis { stroke: var(--accent); stroke-opacity: 1; }
+.axc .vis { stroke: var(--ax); stroke-width: 1.4; stroke-dasharray: 5 3; opacity: .7; }
+.axc:hover .vis { stroke-width: 2.6; opacity: 1; }
+.axc.on .vis { stroke-width: 2.6; stroke-dasharray: none; opacity: 1; }
+.axc text { font: 700 5px system-ui, sans-serif; fill: var(--ax); text-anchor: middle; dominant-baseline: central; pointer-events: none; }
+.band { fill: var(--accent); fill-opacity: .22; stroke: var(--accent); stroke-width: 1.2; stroke-dasharray: 3 2; vector-effect: non-scaling-stroke; pointer-events: none; }
+.band.ring { fill: none; }
+.pplane { fill: var(--accent); fill-opacity: .08; stroke: var(--accent); stroke-opacity: .7; stroke-dasharray: 5 3; vector-effect: non-scaling-stroke; pointer-events: none; }
+
 .cube-wrap { position: absolute; top: 10px; right: 12px; display: flex; align-items: flex-start; gap: 2px; }
 .cube { width: 96px; height: 96px; }
 .cube polygon { fill: var(--f); stroke: var(--edge); stroke-opacity: .45; stroke-width: .6; cursor: pointer; }
@@ -362,6 +394,72 @@ body.dragging .face, body.dragging .hole { pointer-events: none; }
   position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%);
   color: var(--muted); display: flex; align-items: center; gap: 6px; pointer-events: none;
 }
+
+/* ---- operation panel: floats at the viewport's right, under the view cube ---- */
+.opp {
+  position: absolute; top: 116px; right: 12px; width: 256px; max-height: calc(100% - 128px); z-index: 4;
+  display: flex; flex-direction: column; overflow: hidden;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.08), 0 12px 32px rgba(0,0,0,.16);
+}
+.opp-head { flex: none; display: flex; align-items: center; gap: 8px; padding: 9px 10px; border-bottom: 1px solid var(--line); }
+.opp-head b { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.opp-head .sum { margin-left: auto; color: var(--muted); font-size: 12px; white-space: nowrap; }
+/* The body scrolls, so a long panel never runs off the bottom. */
+.opp-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 4px 10px 10px; scrollbar-width: thin; scrollbar-color: var(--faint) transparent; }
+.opp-foot { flex: none; display: flex; flex-direction: column; gap: 6px; padding: 8px 10px 10px; border-top: 1px solid var(--line); }
+.opp h4 { margin: 11px 0 5px; font-size: 11.5px; font-weight: 600; color: var(--muted); }
+.chs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+.chs .ch:last-child:nth-child(odd) { grid-column: 1 / -1; }
+.ch { height: 24px; padding: 0 6px; border: 1px solid var(--line); border-radius: 6px; background: none; cursor: pointer; font-size: 12px; white-space: nowrap; }
+.ch:hover { background: var(--hl); }
+.ch.on { background: var(--accent-soft); border-color: transparent; color: var(--accent); font-weight: 600; }
+.fld { display: flex; align-items: center; gap: 6px; margin: 5px 0; }
+.fld.top { align-items: flex-start; }
+.fld > label { width: 62px; flex: none; font-size: 12px; }
+.fld.top > label { padding-top: 5px; }
+.fld input {
+  flex: 1; min-width: 0; height: 24px; padding: 0 7px;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--vp-top); color: var(--text);
+  font: inherit; font-size: 12px; user-select: text;
+}
+.fld input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.fld input.bad, .fld input.bad:focus { border-color: var(--danger); }
+.ferr { margin: -2px 0 5px 68px; color: var(--danger); font-size: 11.5px; }
+.pf {
+  flex: 1; min-width: 0; min-height: 26px; padding: 2px; display: flex; flex-wrap: wrap; align-items: center; gap: 2px;
+  border: 1px solid var(--line); border-radius: 6px; cursor: pointer;
+}
+.pf:hover { background: var(--hl); }
+.pf.on { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.pf.list { flex-direction: column; flex-wrap: nowrap; align-items: stretch; }
+.pf .ph { padding: 2px 5px; color: var(--faint); font-size: 12px; }
+.pf.on .ph { color: var(--accent); }
+.chip { display: flex; align-items: center; gap: 4px; min-width: 0; height: 20px; padding: 0 2px 0 7px; border-radius: 4px; background: var(--chip); font-size: 12px; }
+.chip .nm { margin-right: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip .meta { color: var(--faint); font-size: 11px; white-space: nowrap; }
+.chip .x { flex: none; display: flex; padding: 2px; border: 0; border-radius: 4px; background: none; color: var(--faint); cursor: pointer; }
+.pf:not(.list) .chip { flex: 1; }
+.chip .x:hover { background: var(--hl); color: var(--text); }
+.chip .x svg.i { width: 11px; height: 11px; stroke-width: 2; }
+.cb { display: flex; align-items: flex-start; gap: 7px; padding: 4px 0; font-size: 12px; cursor: pointer; }
+.cb .box { width: 15px; height: 15px; flex: none; display: grid; place-items: center; border: 1px solid var(--faint); border-radius: 4px; color: transparent; }
+.cb:hover .box { border-color: var(--accent); }
+.cb.on .box { background: var(--accent); border-color: var(--accent); color: #fff; }
+.cb .box svg.i { width: 11px; height: 11px; stroke-width: 2.6; }
+.cb .sub { display: block; color: var(--faint); font-size: 11px; }
+.pnote { color: var(--faint); font-size: 12px; padding: 2px 0; }
+.pmsg { font-size: 12px; line-height: 1.4; }
+.pmsg.err { color: var(--danger); }
+.pmsg.warn { color: var(--c-cons); }
+.pmsg.need { color: var(--muted); }
+.pbtns { display: flex; justify-content: flex-end; gap: 6px; }
+.pbtn { height: 26px; padding: 0 14px; border: 1px solid var(--line); border-radius: 6px; background: none; cursor: pointer; font-size: 12px; font-weight: 600; }
+.pbtn:hover { background: var(--hl); }
+.pbtn.primary { background: var(--accent); border-color: transparent; color: #fff; }
+.pbtn.primary:hover { filter: brightness(1.08); }
+.pbtn:disabled { opacity: .45; cursor: default; filter: none; }
+.info .bad { color: var(--danger); }
 
 /* ---- welcome ---- */
 .welcome { position: absolute; top: var(--title-h); left: 0; right: 0; bottom: var(--status-h); overflow: auto; background: var(--vp-top); }
@@ -490,12 +588,15 @@ const I = {
   tangent: '<circle cx="10" cy="13" r="6"/><path d="M3 7h18"/>',
   equal: '<path d="M5 9h14M5 15h14"/>',
   paint: '<circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 0 0 16z" fill="currentColor"/>',
+  bmirror: '<path d="M12 3v18" stroke-dasharray="2 2"/><path d="M9 7L3.5 9.5v7L9 19zM15 7l5.5 2.5v7L15 19z"/>',
+  lpattern: '<rect x="2.5" y="9" width="5" height="6" rx="1"/><rect x="9.5" y="9" width="5" height="6" rx="1"/><rect x="16.5" y="9" width="5" height="6" rx="1" stroke-dasharray="2 1.6"/>',
+  cpattern: '<circle cx="12" cy="12" r="7.5" stroke-dasharray="2 2.2"/><rect x="10" y="2.5" width="4" height="4" rx="1"/><rect x="17.5" y="10" width="4" height="4" rx="1"/><rect x="10" y="17.5" width="4" height="4" rx="1"/><rect x="2.5" y="10" width="4" height="4" rx="1" stroke-dasharray="1.6 1.4"/>',
 };
 // Icon colour by category: sketch, solid/body, construction, inspect.
 const CAT = {};
 for (const [cat, names] of Object.entries({
   sketch: 'sketch line rect circle arc trim dim constrain polygon spline extend mirror coincident parallel perpendicular tangent equal',
-  solid: 'extrude revolve hole fillet chamfer combine pushpull offset body paint sweep loft box shell move',
+  solid: 'extrude revolve hole fillet chamfer combine pushpull offset body paint sweep loft box shell move bmirror lpattern cpattern',
   cons: 'plane origin axis point',
   insp: 'measure section',
 })) for (const n of names.split(' ')) CAT[n] = cat;
@@ -557,15 +658,18 @@ function shade(n, pr, dark) {
   const i = Math.max(0, dot(n, pr.light));
   const L = dark ? 30 + 32 * i : 54 + 33 * i;
   const l = (h, s, dl = 0) => `hsl(${h} ${s}% ${(L + dl).toFixed(1)}%)`;
+  // x and a tint what a cut or an intersect being set up takes away or keeps.
   return dark
-    ? { f: l(258, 9), s: l(188, 42, 2), h: l(110, 26, 2) }
-    : { f: l(258, 11), s: l(188, 52, -2), h: l(110, 34, 0) };
+    ? { f: l(258, 9), s: l(188, 42, 2), h: l(110, 26, 2), x: l(6, 46, 2), a: l(36, 52, 2) }
+    : { f: l(258, 11), s: l(188, 52, -2), h: l(110, 34, 0), x: l(6, 62, -4), a: l(36, 72, -4) };
 }
 
 let uid = 0;
 // Faces are planar polygons with outward normals; back faces are culled and
 // the rest painted far-to-near. Holes are drawn on their face: the near rim is
-// the wall, the far rim clipped to it is where you see through.
+// the wall, the far rim clipped to it is where you see through. A face can
+// carry its body (`body`), a colour variant (`tint`), `draft` (a preview,
+// never picked), `fade` and a shell's `opening`.
 function solidSvg(faces, pr, interactive) {
   const vis = faces.filter(f => dot(f.n, pr.d) > 1e-4)
     .map(f => ({ f, z: depthOf(f.p, pr) }))
@@ -574,18 +678,22 @@ function solidSvg(faces, pr, interactive) {
   const dark = isDark();
   let out = '';
   for (const { f } of vis) {
-    const c = shade(f.n, pr, dark), p = pts(f.p, pr);
-    if (interactive) {
-      const sel = bodySel || st.sel?.id === f.id;
-      out += `<polygon class="face${sel ? ' sel' : ''}" data-face="${f.id}" style="--f:${c.f};--fs:${c.s};--fh:${c.h}" points="${p}"/>`;
+    const c = shade(f.n, pr, dark), p = pts(f.p, pr), fill = c[f.tint || 'f'];
+    const live = interactive && !f.draft, body = f.body || 'body';
+    const inBody = live && ((bodySel && st.sel.id === body) || opMarks.has('body:' + body));
+    if (live) {
+      const sel = inBody || (f.id && (st.sel?.id === f.id || opMarks.has(f.id)));
+      const cls = 'face' + (sel ? ' sel' : '') + (f.fade ? ' fade' : '') + (f.smooth ? ' smooth' : '');
+      out += `<polygon class="${cls}"${f.id ? ` data-face="${f.id}"` : ''} data-body="${body}" style="--f:${fill};--fs:${c.s};--fh:${c.h}" points="${p}"/>`;
     } else {
-      out += `<polygon class="tf" style="fill:${c.f}${f.smooth ? ';stroke:' + c.f : ''}" points="${p}"/>`;
+      out += `<polygon class="tf${f.draft ? ' draft' : ''}" style="fill:${fill}${f.smooth ? ';stroke:' + fill : ''}" points="${p}"/>`;
     }
+    if (f.opening) out += `<polygon class="wall" points="${pts(f.opening, pr)}"/>`;
     for (const [a, b] of f.tangents || []) out += lineP(a, b, 'tangent', pr);
     for (const h of f.holes || []) {
       const id = 'c' + (uid++);
-      const sel = bodySel || st.sel?.id === h.id;
-      const attrs = interactive ? ` class="hole${sel ? ' sel' : ''}" data-face="${h.id}"` : '';
+      const sel = inBody || st.sel?.id === h.id;
+      const attrs = live && h.id ? ` class="hole${sel ? ' sel' : ''}" data-face="${h.id}" data-body="${body}"` : '';
       const near = pts(h.near, pr);
       out += `<g${attrs}><clipPath id="${id}"><polygon points="${near}"/></clipPath>
         <polygon class="wall" points="${near}"/>
@@ -609,10 +717,11 @@ const BRACKET = [
   { id: 'up-x', n: [1, 0, 0], p: [[10, 0, 10], [10, 50, 10], [10, 50, 70], [10, 0, 70]], holes: [{ id: 'hole-b', feat: 'h2', near: HB1, far: HB0 }], tangents: [[[10, 0, 12], [10, 50, 12]]] },
   { id: 'up-top', n: [0, 0, 1], p: [[0, 0, 70], [10, 0, 70], [10, 50, 70], [0, 50, 70]] },
 ];
+// Fillet 1's tangent lines come from replaying it (see bodiesAt), like any fillet.
 const bracketAt = active => BRACKET.map(f => ({
   ...f,
   holes: (f.holes || []).filter(h => active.has(h.feat)),
-  tangents: active.has('f1') ? f.tangents : [],
+  tangents: [],
 }));
 
 const VIEWS = {
@@ -680,7 +789,7 @@ const BRACKET_TIMELINE = [
   { id: 'h1', type: 'hole', name: 'Hole 1', meta: 'Ø16 thru', info: 'Simple · Ø16 mm · Through all' },
   { id: 's3', type: 'sketch', name: 'Sketch 3', meta: 'Face' },
   { id: 'h2', type: 'hole', name: 'Hole 2', meta: 'Ø14 thru', info: 'Simple · Ø14 mm · Through all' },
-  { id: 'f1', type: 'fillet', name: 'Fillet 1', meta: 'R2', info: '1 edge · R2 mm · Tangent chain' },
+  { id: 'f1', type: 'fillet', name: 'Fillet 1', meta: 'R2', info: '1 edge · R2 mm · Tangent chain', params: { edges: ['base-top|up-x'], radius: '2 mm', chain: true } },
 ];
 const RECENT = [
   { name: 'bracket', path: '~/parts', when: '2 h ago', thumb: 'bracket' },
@@ -706,7 +815,10 @@ const st = {
   sel: null,       // { kind: 'face'|'hole'|'plane'|'feature'|'body', id }
   panel: 'timeline', alt: false, menu: false, help: false,
   gbarPinned: false, prevCam: null,
+  op: null,        // solid operation being set up: { kind, pick, editing?, ...its parameters }
 };
+// Faces ('base-top') and bodies ('body:body') the operation being set up highlights.
+let opMarks = new Set();
 const cam = { ...HOME };
 const root = document.documentElement;
 const $ = s => document.querySelector(s);
@@ -715,14 +827,15 @@ const $ = s => document.querySelector(s);
 // the sketch being edited, since editing rolls the model back to it.
 function activeFeatures() {
   const tl = st.doc.timeline;
-  const n = st.mode === 'sketch' ? tl.findIndex(t => t.id === st.sketch.id) : st.doc.rollback;
+  const n = st.mode === 'sketch' ? tl.findIndex(t => t.id === st.sketch.id)
+    : st.op?.editing ? tl.findIndex(t => t.id === st.op.editing) : st.doc.rollback;
   return new Set(tl.slice(0, n).map(t => t.id));
 }
-const hasBody = () => st.doc.kind === 'bracket' && activeFeatures().has('e1');
 
 // ---------------------------------------------------------------- operations per context
 function context() {
   if (st.mode === 'sketch') return st.tool ? 'tool' : 'sketch';
+  if (st.op) return 'op';
   if (st.pick) return 'pick';
   return st.sel ? st.sel.kind : 'none';
 }
@@ -736,10 +849,14 @@ function ops() {
       return [
         { id: 'sketch', label: 'Sketch', icon: 'sketch', key: 'S', on: c === 'pick' },
         { id: 'extrude', label: 'Extrude', icon: 'extrude', key: 'E' },
-        { id: 'revolve', label: 'Revolve', icon: 'revolve' },
+        { id: 'revolve', label: 'Revolve', icon: 'revolve', key: 'R' },
         { id: 'hole', label: 'Hole', icon: 'hole', key: 'H' },
         { id: 'fillet', label: 'Fillet', icon: 'fillet', key: 'F' },
-        { id: 'combine', label: 'Combine', icon: 'combine' },
+        { id: 'chamfer', label: 'Chamfer', icon: 'chamfer', key: 'C' },
+        { id: 'shell', label: 'Shell', icon: 'shell' },
+        { id: 'combine', label: 'Combine', icon: 'combine', key: 'B' },
+        { id: 'move', label: 'Move', icon: 'move', key: 'M' },
+        { id: 'lpattern', label: 'Pattern', icon: 'lpattern', key: 'P' },
         ...measure,
       ];
     case 'face':
@@ -749,13 +866,14 @@ function ops() {
         { id: 'extrude', label: 'Extrude', icon: 'extrude', key: 'E' },
         { id: 'hole', label: 'Hole', icon: 'hole', key: 'H' },
         { id: 'offset', label: 'Offset face', icon: 'offset' },
+        { id: 'shell', label: 'Shell from here', icon: 'shell' },
         ...measure,
       ];
     case 'hole':
       return [
         { id: 'pushpull', label: 'Press pull', icon: 'pushpull', key: 'Q' },
         { id: 'fillet', label: 'Fillet edges', icon: 'fillet', key: 'F' },
-        { id: 'chamfer', label: 'Chamfer edges', icon: 'chamfer' },
+        { id: 'chamfer', label: 'Chamfer edges', icon: 'chamfer', key: 'C' },
         { id: 'edit-feature', label: 'Edit ' + FACE_INFO[st.sel.id][2], icon: 'edit', key: 'Enter' },
         ...measure,
       ];
@@ -767,6 +885,12 @@ function ops() {
       ];
     case 'body':
       return [
+        { id: 'move', label: 'Move', icon: 'move', key: 'M' },
+        { id: 'bmirror', label: 'Mirror', icon: 'bmirror' },
+        { id: 'lpattern', label: 'Pattern', icon: 'lpattern', key: 'P' },
+        { id: 'cpattern', label: 'Circular pattern', icon: 'cpattern' },
+        { id: 'combine', label: 'Combine', icon: 'combine', key: 'B' },
+        { sep: 1 },
         { id: 'appearance', label: 'Appearance', icon: 'paint', key: 'A' },
         { id: 'material', label: 'Material', icon: 'body' },
         { id: 'hide', label: 'Hide', icon: 'eyeoff', key: 'V' },
@@ -786,6 +910,11 @@ function ops() {
         { id: 'delete', label: 'Delete', icon: 'trash', key: 'Del' },
       ];
     }
+    case 'op':
+      return [
+        { id: 'op-cancel', label: 'Cancel', icon: 'close', key: 'Esc' },
+        { id: 'op-ok', label: 'OK', icon: 'check', key: 'Enter', primary: true },
+      ];
     case 'sketch':
     case 'tool':
       return [
@@ -805,7 +934,8 @@ const G = (name, items) => [name, items.map(([icon, label, op = icon]) => ({ ico
 const MODEL_GROUPS = [
   G('Sketch', [['sketch', 'Sketch']]),
   G('Create', [['extrude', 'Extrude'], ['revolve', 'Revolve'], ['sweep', 'Sweep'], ['loft', 'Loft'], ['hole', 'Hole'], ['box', 'Box']]),
-  G('Modify', [['pushpull', 'Press pull'], ['fillet', 'Fillet'], ['chamfer', 'Chamfer'], ['shell', 'Shell'], ['combine', 'Combine'], ['move', 'Move']]),
+  G('Modify', [['pushpull', 'Press pull'], ['fillet', 'Fillet'], ['chamfer', 'Chamfer'], ['shell', 'Shell'], ['combine', 'Combine']]),
+  G('Transform', [['move', 'Move'], ['bmirror', 'Mirror'], ['lpattern', 'Linear pattern'], ['cpattern', 'Circular pattern']]),
   G('Construct', [['plane', 'Plane', 'offset-plane'], ['axis', 'Axis'], ['point', 'Point']]),
   G('Inspect', [['measure', 'Measure'], ['section', 'Section']]),
 ];
@@ -832,6 +962,7 @@ function gbar() {
 function globalOp(op) {
   if (op.startsWith('tool:') && st.mode !== 'sketch') { st.pick = true; st.sel = null; toast('Pick a plane to sketch on first'); return; }
   if (op === 'sketch' && st.mode === 'sketch') { toast('Already in a sketch'); return; }
+  if (st.op && !OPS[op]) st.op = null;
   doOp(op);
 }
 
@@ -857,7 +988,11 @@ function hints() {
     case 'face': case 'plane': return h([['S', 'Sketch'], ['Q', 'Press pull'], ['mouse:l mouse:l', 'Body'], ['Esc', 'Clear']]);
     case 'hole': return h([['F', 'Fillet'], ['Enter', 'Edit hole'], ['mouse:l mouse:l', 'Body'], ['Esc', 'Clear']]);
     case 'feature': return h([['Enter', 'Edit'], ['Del', 'Delete'], ['mouse:l', 'Drag to reorder'], ['Esc', 'Clear']]);
-    case 'body': return h([['V', 'Hide'], ['A', 'Appearance'], ['Esc', 'Clear']]);
+    case 'body': return h([['M', 'Move'], ['P', 'Pattern'], ['V', 'Hide'], ['Esc', 'Clear']]);
+    case 'op': {
+      const p = OPS[st.op.kind].picks[st.op.pick];
+      return h([['mouse:l', p ? 'Pick ' + p.what : 'Pick'], ...nav, ['Enter', 'OK'], ['Esc', 'Cancel']]);
+    }
     case 'sketch': return h([['L', 'Line'], ['R', 'Rect'], ['C', 'Circle'], ['D', 'Dimension'], ['Esc', 'Finish']]);
     case 'tool': return h([['mouse:l', TOOLS[st.tool].hint], ['Shift', 'No snap'], ['Tab', 'Type value'], ['Esc', 'Stop tool']]);
   }
@@ -868,6 +1003,12 @@ function info() {
   if (st.screen === 'welcome') return `<span class="muted">No document open</span>`;
   const c = context();
   if (c === 'pick') return `<span class="accent">Select a plane or planar face for the new sketch</span>`;
+  if (c === 'op') {
+    const o = st.op, def = OPS[o.kind], r = def.check(o, opCtx()), p = def.picks[o.pick];
+    const bad = r.error || Object.values(r.errs)[0];
+    const msg = bad || r.need || (ready(r) ? 'Ready: Enter or OK adds it' : '') + (p ? ` · ${p.hint}` : '');
+    return `${icon(def.icon)}<b>${o.editing ? o.name : def.label}</b><span class="${bad ? 'bad' : 'muted'}">${msg}</span>`;
+  }
   if (c === 'sketch' || c === 'tool') {
     const s = SKETCHES[st.sketch.id];
     const name = st.doc.timeline.find(t => t.id === st.sketch.id).name;
@@ -878,13 +1019,19 @@ function info() {
   if (c === 'none') {
     const d = st.doc, rolled = d.timeline.length - d.rollback;
     if (d.kind !== 'bracket') return `<span class="muted">Empty design · mm</span>`;
-    return `<span class="muted">No selection · ${hasBody() ? 1 : 0} body · ${d.timeline.length} features${rolled ? ` (${rolled} rolled back)` : ''} · mm</span>`;
+    const nb = bodiesAt(activeFeatures()).length;
+    return `<span class="muted">No selection · ${plural(nb, 'body', 'bodies')} · ${d.timeline.length} features${rolled ? ` (${rolled} rolled back)` : ''} · mm</span>`;
   }
   if (c === 'face' || c === 'hole' || c === 'plane') {
     const [t, d, f] = FACE_INFO[st.sel.id];
     return `${icon(c === 'plane' ? 'plane' : 'body')}<b>${t}</b><span>${d}</span><span class="muted">${f}</span>`;
   }
-  if (c === 'body') return `${icon('body')}<b>Bracket</b><span>84.3 cm³</span><span class="muted">228 g · Aluminium 6061</span>`;
+  if (c === 'body') {
+    if (st.sel.id === 'body') return `${icon('body')}<b>Bracket</b><span>84.3 cm³</span><span class="muted">228 g · Aluminium 6061</span>`;
+    const b = bodiesAt(activeFeatures()).find(b => b.id === st.sel.id);
+    const by = st.doc.timeline.find(t => t.id === st.sel.id.split(':')[0]);
+    return `${icon('body')}<b>${b?.name || 'Body'}</b><span class="muted">made by ${by?.name || 'a feature'}</span>`;
+  }
   if (c === 'feature') {
     const f = st.doc.timeline.find(t => t.id === st.sel.id);
     const extra = f.type === 'sketch' ? (SKETCHES[f.id]?.summary || 'Empty') : f.info;
@@ -920,7 +1067,8 @@ function toolbar() {
     const name = d.timeline.find(t => t.id === st.sketch.id).name;
     ctx = `${name}<span class="tag">${st.tool ? TOOLS[st.tool].label : 'Editing sketch'}</span>`;
   } else {
-    ctx = `Model${st.pick ? '<span class="tag">New sketch</span>' : ''}`;
+    const tag = st.op ? (st.op.editing ? 'Editing ' + st.op.name : OPS[st.op.kind].label) : st.pick ? 'New sketch' : '';
+    ctx = `Model${tag ? `<span class="tag">${tag}</span>` : ''}`;
   }
 
   const list = ops();
@@ -977,14 +1125,16 @@ function side() {
 function timeline() {
   const d = st.doc, tl = d.timeline;
   if (!tl.length) return `<div class="empty-note">No features yet.<br>Pick an origin plane and press <kbd>S</kbd> to start a sketch.</div>`;
-  const editing = st.mode === 'sketch';
-  const cut = editing ? tl.findIndex(t => t.id === st.sketch.id) + 1 : d.rollback;
+  // Editing a sketch or a solid operation rolls the model back to it.
+  const editing = st.mode === 'sketch', opEdit = st.op?.editing;
+  const cut = editing ? tl.findIndex(t => t.id === st.sketch.id) + 1
+    : opEdit ? tl.findIndex(t => t.id === opEdit) + 1 : d.rollback;
   const seq = [...tl.slice(0, cut), { marker: true }, ...tl.slice(cut)];
-  const drag = editing ? '' : ' draggable="true"';
+  const drag = editing || opEdit ? '' : ' draggable="true"';
   return seq.map((t, i) => {
-    if (t.marker) return `<div class="marker tl-item" data-idx="${i}" data-drag="marker"${drag} title="Drag to roll back">${editing ? 'Rolled back' : ''}</div>`;
+    if (t.marker) return `<div class="marker tl-item" data-idx="${i}" data-drag="marker"${drag} title="Drag to roll back">${editing || opEdit ? 'Rolled back' : ''}</div>`;
     const cls = ['row', 'tl-item'];
-    if (editing && t.id === st.sketch.id) cls.push('editing');
+    if ((editing && t.id === st.sketch.id) || st.op?.editing === t.id) cls.push('editing');
     else if (i > cut) cls.push('rolled');
     if (st.sel?.kind === 'feature' && st.sel.id === t.id) cls.push('sel');
     return `<div class="${cls.join(' ')}" data-idx="${i}" data-drag="row" data-id="${t.id}"${drag} data-act="tl:${t.id}">
@@ -1006,9 +1156,9 @@ function objects() {
   if (!hid.has('origin')) {
     for (const p of ['xy', 'xz', 'yz']) out += row('plane-' + p, p.toUpperCase() + ' plane', 'plane', 1, { sel: st.sel?.id === 'plane-' + p, eye: false });
   }
-  const body = hasBody();
-  out += row('bodies', `Bodies <span class="meta">${body ? 1 : 0}</span>`, '', 0, { group: true, eye: false });
-  if (body) out += row('body', 'Bracket', 'body', 1, { sel: st.sel?.kind === 'body' });
+  const bodies = bodiesAt(activeFeatures());
+  out += row('bodies', `Bodies <span class="meta">${bodies.length}</span>`, '', 0, { group: true, eye: false });
+  for (const b of bodies) out += row(b.id, b.name, 'body', 1, { sel: st.sel?.kind === 'body' && st.sel.id === b.id });
   out += row('sketches', `Sketches <span class="meta">${sketches.length}</span>`, '', 0, { group: true, eye: false });
   for (const s of sketches) out += row(s.id, s.name, 'sketch', 1, { sel: st.sel?.id === s.id });
   return out;
@@ -1087,10 +1237,17 @@ function sceneInner() {
   const inSketch = st.mode === 'sketch';
   const active = activeFeatures();
   const [gx, gy] = proj.P(d.T[0], d.T[1], 0);
+  const bodies = bodiesAt(active);
+  // An operation being set up adds its preview, highlights and pick targets.
+  const pv = st.op ? opPreview(ctxOf(bodies, active)) : null;
+  opMarks = pv?.marks || new Set();
 
   let model = '';
-  if (!d.hidden.has('origin') && !(inSketch && d.kind === 'bracket')) model += originSvg();
-  if (d.kind === 'bracket' && active.has('e1') && !d.hidden.has('body')) model += solidSvg(bracketAt(active), proj, true);
+  if ((!d.hidden.has('origin') || pv?.planes) && !(inSketch && d.kind === 'bracket')) model += originSvg();
+  const faces = bodies.filter(b => !d.hidden.has(b.id))
+    .flatMap(b => b.faces.map(f => ({ ...f, body: b.id, fade: pv?.fade?.has(b.id), tint: pv?.tint?.get(b.id) })));
+  faces.push(...(pv?.faces || []));
+  if (faces.length) model += solidSvg(faces, proj, true);
 
   let overlay = '';
   if (inSketch) {
@@ -1102,7 +1259,7 @@ function sceneInner() {
       if (active.has(id) && (!d.hidden.has(id) || unconsumed)) overlay += sketchGeomSvg(id, SKETCHES[id].plane, false);
     }
   }
-  return `${gridSvg(gx, gy)}<g class="${inSketch ? 'ghost' : ''}">${model}</g><g style="pointer-events:none">${overlay}</g>`;
+  return `${gridSvg(gx, gy)}<g class="${inSketch ? 'ghost' : ''}">${model}</g><g style="pointer-events:none">${overlay}</g><g class="opl">${pv?.svg || ''}</g>`;
 }
 
 function cubeInner() {
@@ -1162,6 +1319,777 @@ function sketchCam(planeKey) {
   const { f, b, view } = PLANES[planeKey];
   const [px, py] = makeProj(view.yaw, view.pitch, st.doc.T).P(...f((b[0] + b[1]) / 2, (b[2] + b[3]) / 2));
   return { ...view, px, py, zoom: 0.8 };
+}
+
+// ---------------------------------------------------------------- solid operations
+// Revolve, combine, move, mirror, the patterns, fillet, chamfer and shell. Each
+// is set up in a floating panel at the viewport's right, like the app's
+// extrude: pick fields filled by clicks in the view (the outlined one takes
+// them), values checked as they're typed, OK once it all reads. Committed,
+// it's a timeline row keeping its parameters, which bodiesAt replays.
+const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+const mul = (a, k) => [a[0] * k, a[1] * k, a[2] * k];
+const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const len = a => Math.hypot(...a);
+// Normal of a planar loop from its winding: the loop turns anticlockwise about it.
+const newell = ps => norm(ps.reduce((n, p, i) => {
+  const q = ps[(i + 1) % ps.length];
+  return [n[0] + (p[1] - q[1]) * (p[2] + q[2]), n[1] + (p[2] - q[2]) * (p[0] + q[0]), n[2] + (p[0] - q[0]) * (p[1] + q[1])];
+}, [0, 0, 0]));
+const fmt = v => String(+v.toFixed(2));
+const plural = (n, one, many = one + 's') => `${n} ${n === 1 ? one : many}`;
+const esc = s => String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+const labelOf = (list, v) => list.find(([k]) => k === v)?.[1];
+const boxesMeet = (a, b) => a.every(([lo, hi], i) => lo <= b[i][1] + 1e-6 && b[i][0] <= hi + 1e-6);
+
+// Reads a typed value, a number with or without its unit, in mm or degrees.
+// Anything out of bounds is refused with a note in errs, so nothing typed
+// reaches the geometry unchecked.
+const UNITS = { mm: { '': 1, mm: 1, cm: 10, m: 1000, in: 25.4 }, deg: { '': 1, '°': 1, deg: 1 }, count: { '': 1, x: 1, '×': 1 } };
+function readVal(o, name, errs, { unit = 'mm', min = 0, max = 10000, signed = false, int = false } = {}) {
+  const s = String(o[name] ?? '').trim(), m = /^([-+]?(?:\d+\.?\d*|\.\d+))\s*([a-z°×]*)$/i.exec(s);
+  const u = unit === 'mm' ? ' mm' : unit === 'deg' ? '°' : '';
+  let bad = !s ? 'Enter a value' : !m ? 'Not a number' : !(m[2].toLowerCase() in UNITS[unit]) ? `Unknown unit “${m[2]}”` : null;
+  const v = bad ? 0 : +m[1] * UNITS[unit][m[2].toLowerCase()];
+  if (!bad) {
+    if (int && !Number.isInteger(v)) bad = 'A whole number';
+    else if (signed ? Math.abs(v) > max : v > max) bad = signed ? `Within ±${max}${u}` : `At most ${max}${u}`;
+    else if (!signed && (int ? v < min : v <= min)) bad = int ? `At least ${min}` : `More than ${min}${u}`;
+  }
+  if (bad) { errs[name] = bad; return null; }
+  return v;
+}
+
+// Rigid transforms of points (p) and normals (n).
+const XF = {
+  id: { p: p => p, n: n => n },
+  move: v => ({ p: p => add(p, v), n: n => n }),
+  // Rodrigues' rotation about the line through a along unit d.
+  turn: (a, d, deg) => {
+    const c = Math.cos(rad(deg)), s = Math.sin(rad(deg));
+    const r = v => add(add(mul(v, c), mul(cross(d, v), s)), mul(d, dot(d, v) * (1 - c)));
+    return { p: p => add(a, r(sub(p, a))), n: r };
+  },
+  mirror: (a, n) => ({ p: p => sub(p, mul(n, 2 * dot(sub(p, a), n))), n: v => sub(v, mul(n, 2 * dot(v, n))) }),
+  then: (x, y) => ({ p: p => y.p(x.p(p)), n: v => y.n(x.n(v)) }),
+};
+// Copies drop the face ids, so only the original's faces can be picked by id.
+function xformFaces(faces, x, keepIds = false) {
+  const P = ps => ps.map(x.p), id = v => keepIds ? v : undefined;
+  return faces.map(f => ({
+    ...f, id: id(f.id), n: x.n(f.n), p: P(f.p),
+    holes: (f.holes || []).map(h => ({ ...h, id: id(h.id), near: P(h.near), far: P(h.far) })),
+    tangents: (f.tangents || []).map(t => t.map(x.p)),
+    opening: f.opening && P(f.opening),
+  }));
+}
+
+// The bodies the applied features make: the bracket's own, then each solid
+// operation replayed on them in timeline order. What a cut, an intersect or a
+// boolean does to a target's shape isn't modelled; the rest is.
+function bodiesAt(active) {
+  const d = st.doc, bodies = [];
+  if (d.kind === 'bracket' && active.has('e1')) bodies.push({ id: 'body', name: 'Bracket', faces: bracketAt(active) });
+  for (const t of d.timeline) {
+    const def = OPS[t.type];
+    if (!def || !t.params || !active.has(t.id)) continue;
+    const r = def.check(t.params, ctxOf(bodies, active));
+    if (ready(r)) def.apply(t.params, bodies, t, r);
+  }
+  return bodies;
+}
+const newBody = (bodies, id, faces) => bodies.push({ id, name: 'Body ' + (bodies.made = (bodies.made ?? bodies.length) + 1), faces });
+const ctxOf = (bodies, active) => ({ bodies, regions: regionsAt(active), edges: bracketEdges(bodies), br: bodies.find(b => b.id === 'body') });
+const opCtx = () => { const active = activeFeatures(); return ctxOf(bodiesAt(active), active); };
+const ready = r => !r.error && !r.need && !Object.keys(r.errs).length;
+
+const ORIGIN_AXES = { 'axis-x': [1, 0, 0], 'axis-y': [0, 1, 0], 'axis-z': [0, 0, 1] };
+const AXIS_COLOR = { 'axis-x': '#d9412b', 'axis-y': '#3d9b35', 'axis-z': '#1f6fd1' };
+const ORIGIN_PLANES = { 'plane-xy': [0, 0, 1], 'plane-xz': [0, 1, 0], 'plane-yz': [1, 0, 0] };
+const FACE_NAME = {
+  'side': 'Front face', 'side-b': 'Rear face', 'bottom': 'Underside', 'back': 'Back face',
+  'base-x': 'Base end', 'base-top': 'Base top', 'up-x': 'Upright face', 'up-top': 'Upright top',
+};
+const RIM_SIDE = { 'bottom': 'under', 'base-top': 'top', 'back': 'back', 'up-x': 'front' };
+
+// A sketch's closed regions and its lines, in model space.
+const sketchName = sk => st.doc.timeline.find(t => t.id === sk)?.name || sk;
+function sketchRegions(sk) {
+  const s = SKETCHES[sk], f = PLANES[s.plane].f, o = f(0, 0), n = norm(cross(sub(f(1, 0), o), sub(f(0, 1), o)));
+  const loops = [...(s.closed ? [s.closed.map(p => f(...p))] : []), ...(s.circles || []).map(c => circ(f, c.c[0], c.c[1], c.r))];
+  return loops.map((pts, i) => ({ id: `${sk}:${i}`, sketch: sk, o, n, pts, label: `${sketchName(sk)} · region ${i + 1}` }));
+}
+function sketchLines(sk) {
+  const s = SKETCHES[sk];
+  if (!s?.closed) return [];
+  const f = PLANES[s.plane].f, c = s.closed;
+  return c.map((p, i) => ({ id: `${sk}:l${i}`, sketch: sk, a: f(...p), b: f(...c[(i + 1) % c.length]), label: `Line ${i + 1} · ${sketchName(sk)}` }));
+}
+const regionsAt = active => st.doc.kind === 'bracket' ? Object.keys(SKETCHES).filter(sk => active.has(sk)).flatMap(sketchRegions) : [];
+
+// The bracket's edges, keyed by the two faces meeting there (or rim:hole:face
+// for a hole's rim), each side with the unit vector running into its face.
+function edgesOf(faces) {
+  const m = new Map(), key = p => p.map(x => x.toFixed(3)).join();
+  for (const f of faces) {
+    if (!f.id) continue;
+    const N = newell(f.p);
+    f.p.forEach((a, i) => {
+      const b = f.p[(i + 1) % f.p.length], k = [key(a), key(b)].sort().join('/');
+      if (!m.has(k)) m.set(k, { a, b, sides: [] });
+      m.get(k).sides.push({ f, w: norm(cross(N, sub(b, a))) });
+    });
+  }
+  const out = new Map();
+  for (const e of m.values()) {
+    if (e.sides.length !== 2) continue;
+    const id = e.sides.map(s => s.f.id).sort().join('|');
+    out.set(id, { ...e, id, label: 'Edge ' + (EDGE_NUM[id] || '?'), meta: fmt(len(sub(e.b, e.a))) + ' mm' });
+  }
+  for (const f of faces) for (const h of f.holes || []) {
+    if (!f.id || !h.id) continue;
+    const id = `rim:${h.id}:${f.id}`, c = mul(h.near.reduce(add), 1 / h.near.length), r = len(sub(h.near[0], c));
+    out.set(id, { id, rim: h.near, c, r, sides: [{ f }], label: `${FACE_INFO[h.id][2]} rim, ${RIM_SIDE[f.id]}`, meta: 'Ø' + fmt(2 * r) });
+  }
+  return out;
+}
+const EDGE_NUM = {};
+[...edgesOf(BRACKET).keys()].filter(k => !k.startsWith('rim:')).forEach((k, i) => { EDGE_NUM[k] = i + 1; });
+const bracketEdges = bodies => { const b = bodies.find(b => b.id === 'body'); return b ? edgesOf(b.faces) : new Map(); };
+// How far a face reaches from an edge into it: what a fillet or chamfer there has room for.
+const widthIn = (side, a) => Math.max(...side.f.p.map(v => dot(sub(v, a), side.w)));
+const edgeCap = e => e.rim ? Math.min(e.r, 10) : Math.min(...e.sides.map(s => widthIn(s, e.a)));
+
+// Axes: an origin axis, a sketch line or a straight edge of the bracket.
+function axisOf(id, bodies) {
+  if (!id) return null;
+  if (ORIGIN_AXES[id]) return { p: [0, 0, 0], d: ORIGIN_AXES[id], label: id[5].toUpperCase() + ' axis' };
+  if (/:l\d+$/.test(id)) {
+    const l = sketchLines(id.split(':')[0]).find(l => l.id === id);
+    return l ? { p: l.a, d: norm(sub(l.b, l.a)), label: l.label } : null;
+  }
+  const e = bracketEdges(bodies).get(id);
+  return e && !e.rim ? { p: e.a, d: norm(sub(e.b, e.a)), label: e.label } : null;
+}
+// Planes: an origin plane or a planar face of the bracket.
+function planeOf(id, bodies) {
+  if (!id) return null;
+  if (ORIGIN_PLANES[id]) return { p: [0, 0, 0], n: ORIGIN_PLANES[id], label: FACE_INFO[id][1] + ' plane', short: FACE_INFO[id][1] };
+  const f = bodies.find(b => b.id === 'body')?.faces.find(f => f.id === id);
+  return f ? { p: f.p[0], n: f.n, label: FACE_NAME[id], short: FACE_NAME[id] } : null;
+}
+
+// A closed loop swept about axis A from span[0] to span[1] degrees, faceted.
+// The loop lies in a plane holding the axis, all on one side of it.
+function revolveFaces(loop, A, span) {
+  const D = A.d, n = newell(loop);
+  let U = norm(cross(n, D));
+  if (loop.reduce((s, p) => s + dot(sub(p, A.p), U), 0) < 0) U = mul(U, -1);
+  const V = cross(D, U);
+  const ar = loop.map(p => [dot(sub(p, A.p), D), Math.max(0, dot(sub(p, A.p), U))]);
+  const area = ar.reduce((s, [a, r], i) => { const [a2, r2] = ar[(i + 1) % ar.length]; return s + a * r2 - a2 * r; }, 0);
+  const [t0, t1] = span.map(rad), steps = Math.max(3, Math.ceil(48 * (t1 - t0) / (2 * Math.PI)));
+  const round = t => add(mul(U, Math.cos(t)), mul(V, Math.sin(t)));
+  const at = ([a, r], t) => add(add(A.p, mul(D, a)), mul(round(t), r));
+  const faces = [];
+  ar.forEach((p, i) => {
+    const q = ar[(i + 1) % ar.length];
+    if (p[1] < 1e-6 && q[1] < 1e-6) return;
+    const da = q[0] - p[0], dr = q[1] - p[1], [na, nr] = area > 0 ? [dr, -da] : [-dr, da];
+    for (let k = 0; k < steps; k++) {
+      const ta = t0 + (t1 - t0) * k / steps, tb = t0 + (t1 - t0) * (k + 1) / steps;
+      faces.push({ smooth: true, n: norm(add(mul(D, na), mul(round((ta + tb) / 2), nr))), p: [at(p, ta), at(q, ta), at(q, tb), at(p, tb)] });
+    }
+  });
+  if (t1 - t0 < 2 * Math.PI - 1e-9) {
+    const along = t => add(mul(U, -Math.sin(t)), mul(V, Math.cos(t)));
+    faces.push({ n: mul(along(t0), -1), p: ar.map(p => at(p, t0)) }, { n: along(t1), p: ar.map(p => at(p, t1)) });
+  }
+  return faces;
+}
+
+// A face's outline moved in by t (out, for t < 0), mitred at the corners.
+function inset(ps, t) {
+  const N = newell(ps), k = ps.length;
+  const ins = ps.map((p, i) => norm(cross(N, sub(ps[(i + 1) % k], p))));
+  return ps.map((p, i) => { const a = ins[(i + k - 1) % k], b = ins[i]; return add(p, mul(add(a, b), t / (1 + dot(a, b)))); });
+}
+
+// Where a fillet or chamfer meets the faces either side of an edge.
+function bandLines(e, d1, d2) {
+  if (e.rim) {
+    const ring = e.rim.map(p => add(e.c, mul(sub(p, e.c), (e.r + d1) / e.r)));
+    return [[e.sides[0], ring.map((p, i) => [p, ring[(i + 1) % ring.length]])]];
+  }
+  const [A, B] = e.sides;
+  return [[A, [[add(e.a, mul(A.w, d1)), add(e.b, mul(A.w, d1))]]], [B, [[add(e.a, mul(B.w, d2)), add(e.b, mul(B.w, d2))]]]];
+}
+function bandSvg(e, d1, d2) {
+  const ls = bandLines(e, d1, d2);
+  if (e.rim) return `<polygon class="band ring" points="${pts(ls[0][1].map(([p]) => p))}"/>`;
+  const [[, [[a1, b1]]], [, [[a2, b2]]]] = ls;
+  return `<polygon class="band" points="${pts([a1, b1, b2, a2])}"/>`;
+}
+
+// ---- pick targets drawn over the model
+function regionsSvg(o, m) {
+  const sk = o.regions[0]?.split(':')[0];
+  return m.regions.filter(g => !sk || g.sketch === sk).map(g =>
+    `<polygon class="rgn${o.regions.includes(g.id) ? ' on' : ''}" data-pick="region:${g.id}" points="${pts(g.pts)}"><title>${g.label}</title></polygon>`).join('');
+}
+function edgesSvg(edges, picked, straightOnly = false) {
+  let out = '';
+  for (const e of edges.values()) {
+    if (straightOnly && e.rim) continue;
+    const on = picked.includes(e.id);
+    if (!on && !e.sides.some(s => dot(s.f.n, proj.d) > 1e-4)) continue;
+    const shape = cls => e.rim ? `<polygon class="${cls}" points="${pts(e.rim)}"/>` : lineP(e.a, e.b, cls);
+    out += `<g class="edc${on ? ' on' : ''}" data-pick="edge:${e.id}"><title>${e.label}</title>${shape('hit')}${shape('vis')}</g>`;
+  }
+  return out;
+}
+function axesSvg(picked, lines) {
+  const g = (id, a, b, col, title, extra = '') => `<g class="axc${picked === id ? ' on' : ''}" data-pick="${ORIGIN_AXES[id] ? 'axis' : 'line'}:${id}" style="--ax:${col}">
+    <title>${title}</title>${lineP(a, b, 'hit')}${lineP(a, b, 'vis')}${extra}</g>`;
+  let out = '';
+  for (const [id, d] of Object.entries(ORIGIN_AXES)) {
+    const [x, y] = proj.P(...mul(d, 102)), L = id[5].toUpperCase();
+    out += g(id, mul(d, -40), mul(d, 95), AXIS_COLOR[id], L + ' axis', `<text x="${x.toFixed(2)}" y="${y.toFixed(2)}">${L}</text>`);
+  }
+  for (const l of lines) out += g(l.id, l.a, l.b, 'var(--accent)', l.label);
+  return out;
+}
+// An axis field's targets while it's the one picking, else just its axis.
+function axisPickSvg(o, name, ax, lines, m) {
+  if (o.pick === name) return axesSvg(o[name], lines) + (OPS[o.kind].picks[name].edges ? edgesSvg(m.edges, [o[name]], true) : '');
+  if (!ax) return '';
+  return `<g class="axc on" style="--ax:${AXIS_COLOR[o[name]] || 'var(--accent)'}">${lineP(add(ax.p, mul(ax.d, -40)), add(ax.p, mul(ax.d, 130)), 'vis')}</g>`;
+}
+function planeSvg(pl, faces) {
+  const n = pl.n, t = norm(cross(n, Math.abs(n[2]) < .9 ? [0, 0, 1] : [1, 0, 0])), s = cross(n, t);
+  const ps = faces.flatMap(f => f.p).map(p => sub(p, pl.p)), us = ps.map(p => dot(p, t)), vs = ps.map(p => dot(p, s));
+  const [u0, u1, v0, v1] = [Math.min(...us) - 10, Math.max(...us) + 10, Math.min(...vs) - 10, Math.max(...vs) + 10];
+  const P = (u, v) => add(pl.p, add(mul(t, u), mul(s, v)));
+  return `<polygon class="pplane" points="${pts([P(u0, v0), P(u1, v0), P(u1, v1), P(u0, v1)])}"/>`;
+}
+
+// ---- panel parts
+function pickList(o, name, label, list, ph) {
+  const on = o.pick === name;
+  return `<div class="fld top"><label>${label}</label><div class="pf list${on ? ' on' : ''}" data-act="opf:${name}">
+    ${list.map(it => `<span class="chip"><span class="nm">${it.label}</span>${it.meta ? `<span class="meta">${it.meta}</span>` : ''}<button class="x" data-act="opx:${name}:${it.id}" title="Remove">${icon('close')}</button></span>`).join('')}
+    ${on || !list.length ? `<span class="ph">${list.length ? '+ ' : ''}${ph}</span>` : ''}
+  </div></div>`;
+}
+function pickOne(o, name, label, text, ph) {
+  const v = o[name];
+  return `<div class="fld"><label>${label}</label><div class="pf${o.pick === name ? ' on' : ''}" data-act="opf:${name}">
+    ${v ? `<span class="chip"><span class="nm">${text || 'Missing'}</span><button class="x" data-act="opx:${name}:${v}" title="Clear">${icon('close')}</button></span>` : `<span class="ph">${ph}</span>`}
+  </div></div>`;
+}
+const choices = (o, name, list) => `<div class="chs">${list.map(([v, l]) =>
+  `<button class="ch${o[name] === v ? ' on' : ''}" data-act="opc:${name}:${v}">${l}</button>`).join('')}</div>`;
+function numField(o, name, label, r) {
+  const err = r.errs[name];
+  return `<div class="fld"><label for="f-${name}">${label}</label><input id="f-${name}" data-field="${name}" value="${esc(o[name])}"${err ? ' class="bad"' : ''} spellcheck="false" autocomplete="off"></div>${err ? `<div class="ferr">${err}</div>` : ''}`;
+}
+const tick = (o, name, label, sub) =>
+  `<div class="cb${o[name] ? ' on' : ''}" data-act="opt:${name}"><span class="box">${icon('check')}</span><span>${label}${sub ? `<span class="sub">${sub}</span>` : ''}</span></div>`;
+const bodyTicks = (o, m) => `<h4>Bodies</h4>${m.bodies.map(b =>
+  `<div class="cb${o.excl.includes(b.id) ? '' : ' on'}" data-act="opt:excl:${b.id}"><span class="box">${icon('check')}</span>${b.name}</div>`).join('') || '<div class="pnote">No bodies yet</div>'}`;
+const bodyItems = (ids, m) => ids.map(id => ({ id, label: m.bodies.find(b => b.id === id)?.name || 'Missing body' }));
+const bodyNames = (ids, m) => ids.map(id => m.bodies.find(b => b.id === id)?.name).join(', ');
+const facesOf = (ids, m) => ids.flatMap(id => m.bodies.find(b => b.id === id)?.faces || []);
+const goneBodies = (ids, m) => ids.some(id => !m.bodies.some(b => b.id === id));
+const selBodies = m => st.sel?.kind === 'body' ? [st.sel.id] : m.bodies.length === 1 ? [m.bodies[0].id] : [];
+const holeRims = m => st.sel?.kind === 'hole' ? [...m.edges.keys()].filter(k => k.startsWith(`rim:${st.sel.id}:`)) : [];
+const edgeItems = (ids, m) => ids.map(id => { const e = m.edges.get(id); return { id, label: e?.label || 'Missing edge', meta: e?.meta }; });
+const bodiesSum = o => o.bodies.length ? plural(o.bodies.length, 'body', 'bodies') : '';
+const Pick = (type, what, hint, more = {}) => ({ type, what, hint, ...more });
+
+// Transforms shown as a draft over the model; moved bodies fade where they were.
+function copiesPreview(o, m, r, xs, fade) {
+  if (!ready(r)) return { marks: new Set(o.bodies.map(id => 'body:' + id)) };
+  const src = facesOf(o.bodies, m);
+  return { faces: xs.flatMap(x => xformFaces(src, x)).map(f => ({ ...f, draft: true, tint: 's' })), fade: new Set(fade ? o.bodies : []) };
+}
+function copiesApply(o, bodies, t, xs, join, move) {
+  o.bodies.forEach((id, i) => {
+    const b = bodies.find(b => b.id === id);
+    if (!b) return;
+    if (move) { b.faces = xformFaces(b.faces, xs[0], true); return; }
+    const copies = xs.map(x => xformFaces(b.faces, x));
+    if (join) b.faces = [...b.faces, ...copies.flat()];
+    else copies.forEach((faces, k) => newBody(bodies, `${t.id}:${i}:${k}`, faces));
+  });
+}
+function edgeCheck(o, m, verb) {
+  const r = { errs: {} }, es = o.edges.map(id => m.edges.get(id));
+  r.sum = o.edges.length ? plural(o.edges.length, 'edge') : 'Click edges';
+  if (!m.br) r.error = 'No body to ' + verb;
+  else if (es.some(e => !e)) r.error = 'A picked edge is gone';
+  else if (!es.length) r.need = `Click edges to ${verb}`;
+  else r.es = es;
+  return r;
+}
+const edgePreview = (o, m, r) => ({ svg: (ready(r) ? r.es.map(e => bandSvg(e, ...r.d)).join('') : '') + edgesSvg(m.edges, o.edges) });
+function edgeApply(o, bodies, t, r) {
+  for (const e of r.es) for (const [side, lines] of bandLines(e, ...r.d)) side.f.tangents = [...(side.f.tangents || []), ...lines];
+}
+
+const BOOLS = [['new', 'New body'], ['join', 'Join'], ['cut', 'Cut'], ['int', 'Intersect']];
+const BOOL_TINT = { new: 's', join: 's', cut: 'x', int: 'a' };
+const REV_EXTENTS = [['full', 'Full 360°'], ['one', 'One side'], ['sym', 'Symmetric'], ['two', 'Two sides']];
+const COMBINES = [['union', 'Union'], ['sub', 'Subtract'], ['int', 'Intersect']];
+const CIRC_MODES = [['full', 'Full 360°'], ['spacing', 'Spacing'], ['total', 'Total']];
+const CHAMFERS = [['equal', 'Equal distance'], ['two', 'Two distances'], ['angle', 'Distance and angle']];
+
+// Each operation: its picks (fields the view fills), init from the selection,
+// the panel body, check (field errors, a blocking error or what's still
+// needed, a warning), the preview, apply (replaying it on bodies) and its
+// timeline row. `needs` refuses to start without a body (or the bracket,
+// whose edges and faces are the ones the mock can pick).
+const OPS = {
+  revolve: {
+    label: 'Revolve', icon: 'revolve',
+    picks: {
+      regions: Pick('region', 'regions', 'Click regions to revolve', { multi: true }),
+      axis: Pick('axis', 'an axis', 'Click a sketch line or an origin axis to revolve about'),
+    },
+    init: m => {
+      const sk = st.sel?.kind === 'feature' && SKETCHES[st.sel.id] ? st.sel.id : null;
+      const regions = m.regions.filter(g => g.sketch === sk).map(g => g.id);
+      return { regions, axis: null, extent: 'full', a1: '180°', a2: '90°', flip: false, op: 'new', excl: [], pick: regions.length ? 'axis' : 'regions' };
+    },
+    body: (o, m, r) => `
+      ${pickList(o, 'regions', 'Profile', o.regions.map(id => ({ id, label: m.regions.find(g => g.id === id)?.label || 'Missing region' })), 'Click regions')}
+      ${pickOne(o, 'axis', 'Axis', r.axis?.label, 'Click a line or axis')}
+      <h4>Extent</h4>
+      ${choices(o, 'extent', REV_EXTENTS)}
+      ${o.extent === 'one' || o.extent === 'sym' ? numField(o, 'a1', 'Angle', r) : ''}
+      ${o.extent === 'two' ? numField(o, 'a1', 'Side 1', r) + numField(o, 'a2', 'Side 2', r) : ''}
+      ${o.extent === 'one' || o.extent === 'two' ? tick(o, 'flip', 'Flip') : ''}
+      <h4>Operation</h4>
+      ${choices(o, 'op', BOOLS)}
+      ${o.op === 'new' ? '' : bodyTicks(o, m)}`,
+    check(o, m) {
+      const r = { errs: {} }, e = r.errs, ang = k => readVal(o, k, e, { unit: 'deg', max: 360 });
+      r.rs = o.regions.map(id => m.regions.find(g => g.id === id));
+      r.sum = !m.regions.length ? 'No regions' : o.regions.length ? plural(o.regions.length, 'region') : 'Click regions';
+      if (o.extent === 'full') r.span = [0, 360];
+      else if (o.extent === 'one') { const a = ang('a1'); if (a != null) r.span = o.flip ? [-a, 0] : [0, a]; }
+      else if (o.extent === 'sym') { const a = ang('a1'); if (a != null) r.span = [-a / 2, a / 2]; }
+      else {
+        const a = ang('a1'), b = ang('a2');
+        if (a != null && b != null) {
+          if (a + b > 360) e.a2 = 'The sides overlap: together at most 360°';
+          else r.span = o.flip ? [-a, b] : [-b, a];
+        }
+      }
+      r.axis = axisOf(o.axis, m.bodies);
+      if (!m.regions.length) r.error = 'No closed regions to revolve: draw a sketch first';
+      else if (r.rs.some(g => !g)) r.error = 'A picked region is gone';
+      else if (!r.rs.length) r.need = 'Click regions to revolve';
+      else if (!o.axis) r.need = 'Pick an axis: a sketch line or an origin axis';
+      else if (!r.axis) r.error = 'The axis is gone: pick another';
+      else {
+        for (const g of r.rs) {
+          if (Math.abs(dot(sub(r.axis.p, g.o), g.n)) > 1e-6 || Math.abs(dot(r.axis.d, g.n)) > 1e-6) {
+            r.error = `The axis isn’t in ${sketchName(g.sketch)}’s plane`;
+            break;
+          }
+          const side = g.pts.map(p => dot(sub(p, r.axis.p), cross(r.axis.d, g.n)));
+          if (Math.min(...side) < -1e-6 && Math.max(...side) > 1e-6) { r.error = 'The axis crosses the region: it would revolve through itself'; break; }
+        }
+      }
+      if (!r.error && !r.need && o.op !== 'new' && !m.bodies.some(b => !o.excl.includes(b.id))) {
+        r.error = m.bodies.length ? 'Every body is unticked: tick one under Bodies' : `No body to ${labelOf(BOOLS, o.op).toLowerCase()}`;
+      }
+      return r;
+    },
+    preview: (o, m, r) => ({
+      faces: ready(r) ? r.rs.flatMap(g => revolveFaces(g.pts, r.axis, r.span)).map(f => ({ ...f, draft: true, tint: BOOL_TINT[o.op] })) : [],
+      svg: regionsSvg(o, m) + axisPickSvg(o, 'axis', r.axis, [...new Set((o.regions.length ? o.regions : m.regions.map(g => g.id)).map(id => id.split(':')[0]))].flatMap(sketchLines), m),
+    }),
+    apply(o, bodies, t, r) {
+      const faces = r.rs.flatMap(g => revolveFaces(g.pts, r.axis, r.span));
+      if (o.op === 'new') newBody(bodies, t.id, faces);
+      else if (o.op === 'join') { const b = bodies.find(b => !o.excl.includes(b.id)); if (b) b.faces = [...b.faces, ...faces]; }
+    },
+    row: (o, r) => {
+      const tot = fmt(r.span[1] - r.span[0]) + '°';
+      return { meta: tot, info: `${labelOf(REV_EXTENTS, o.extent)}${o.extent === 'full' ? '' : ' · ' + tot} · about ${r.axis.label} · ${labelOf(BOOLS, o.op)}` };
+    },
+  },
+
+  combine: {
+    label: 'Combine', icon: 'combine', needs: 'body',
+    picks: {
+      target: Pick('body', 'the target', 'Click the body to combine into', { accept: (o, v) => { o.tools = o.tools.filter(id => id !== v); } }),
+      tools: Pick('body', 'tool bodies', 'Click the bodies to combine with the target', { multi: true, accept: (o, v) => v === o.target ? 'That’s the target: pick other bodies as tools' : null }),
+    },
+    init: m => ({ target: st.sel?.kind === 'body' ? st.sel.id : m.bodies[0].id, tools: [], op: 'union', keep: false, pick: 'tools' }),
+    body: (o, m) => `
+      ${pickOne(o, 'target', 'Target', o.target && bodyItems([o.target], m)[0].label, 'Click a body')}
+      ${pickList(o, 'tools', 'Tools', bodyItems(o.tools, m), 'Click bodies')}
+      <h4>Operation</h4>
+      ${choices(o, 'op', COMBINES)}
+      ${tick(o, 'keep', 'Keep tool bodies', 'Otherwise the tools are used up')}`,
+    check(o, m) {
+      const r = { errs: {} };
+      r.sum = o.tools.length ? plural(o.tools.length, 'tool') : '';
+      if (m.bodies.length < 2) r.error = 'There’s only one body: make another to combine with';
+      else if (!o.target) r.need = 'Pick the target body';
+      else if (goneBodies([o.target, ...o.tools], m)) r.error = 'A picked body is gone';
+      else if (!o.tools.length) r.need = 'Pick the tool bodies';
+      else {
+        const box = id => bounds(facesOf([id], m).flatMap(f => f.p));
+        const apart = o.tools.filter(id => !boxesMeet(box(o.target), box(id)));
+        if (apart.length) {
+          const who = bodyNames(apart, m) + (apart.length === 1 ? ' doesn’t' : ' don’t') + ' touch the target';
+          if (o.op === 'int') r.error = who + ': nothing would be left';
+          else if (o.op === 'sub') r.warn = who + ': nothing to subtract';
+          else r.warn = who + ': the union will be in pieces';
+        }
+      }
+      return r;
+    },
+    preview: o => ({
+      marks: new Set(o.target ? ['body:' + o.target] : []),
+      tint: new Map(o.tools.map(id => [id, { union: 'h', sub: 'x', int: 'a' }[o.op]])),
+    }),
+    apply(o, bodies) {
+      const target = bodies.find(b => b.id === o.target), tools = bodies.filter(b => o.tools.includes(b.id));
+      if (!target || o.keep) return;
+      if (o.op === 'union') target.faces = [...target.faces, ...tools.flatMap(b => xformFaces(b.faces, XF.id))];
+      for (const b of tools) bodies.splice(bodies.indexOf(b), 1);
+    },
+    row: (o, r, m) => ({ meta: labelOf(COMBINES, o.op), info: `${bodyNames([o.target], m)} with ${bodyNames(o.tools, m)} · ${labelOf(COMBINES, o.op)}${o.keep ? ' · tools kept' : ''}` }),
+  },
+
+  move: {
+    label: 'Move', icon: 'move', needs: 'body',
+    picks: {
+      bodies: Pick('body', 'bodies', 'Click the bodies to move', { multi: true }),
+      axis: Pick('axis', 'an axis', 'Click an origin axis or a straight edge to rotate about', { edges: true }),
+    },
+    init: m => ({ bodies: selBodies(m), dx: '0 mm', dy: '0 mm', dz: '0 mm', axis: 'axis-z', angle: '0°', copy: false, pick: 'bodies' }),
+    body: (o, m, r) => `
+      ${pickList(o, 'bodies', 'Bodies', bodyItems(o.bodies, m), 'Click bodies')}
+      <h4>Translate</h4>
+      ${numField(o, 'dx', 'X', r)}${numField(o, 'dy', 'Y', r)}${numField(o, 'dz', 'Z', r)}
+      <h4>Rotate</h4>
+      ${pickOne(o, 'axis', 'Axis', r.axis?.label, 'Click an axis or edge')}
+      ${numField(o, 'angle', 'Angle', r)}
+      ${tick(o, 'copy', 'Copy', 'Leave the original where it is')}`,
+    check(o, m) {
+      const r = { errs: {} }, e = r.errs;
+      const v = ['dx', 'dy', 'dz'].map(k => readVal(o, k, e, { signed: true }));
+      const a = readVal(o, 'angle', e, { unit: 'deg', signed: true, max: 360 });
+      r.axis = axisOf(o.axis, m.bodies);
+      r.sum = bodiesSum(o);
+      if (!o.bodies.length) r.need = 'Pick the bodies to move';
+      else if (goneBodies(o.bodies, m)) r.error = 'A picked body is gone';
+      else if (a && o.axis && !r.axis) r.error = 'The axis is gone: pick another';
+      else if (a && !r.axis) r.need = 'Pick an axis to rotate about';
+      else if (!Object.keys(e).length && !a && v.every(x => x === 0)) r.need = 'Enter a distance or an angle';
+      if (!Object.keys(e).length && (!a || r.axis)) {
+        r.v = v; r.a = a;
+        r.x = XF.then(a ? XF.turn(r.axis.p, r.axis.d, a) : XF.id, XF.move(v));
+      }
+      return r;
+    },
+    preview: (o, m, r) => ({ ...copiesPreview(o, m, r, [r.x], !o.copy), svg: r.a || o.pick === 'axis' ? axisPickSvg(o, 'axis', r.axis, [], m) : '' }),
+    apply: (o, bodies, t, r) => copiesApply(o, bodies, t, [r.x], false, !o.copy),
+    row: (o, r, m) => {
+      const moved = r.v.some(x => x), parts = [];
+      if (moved) parts.push(`by ${r.v.map(fmt).join(', ')} mm`);
+      if (r.a) parts.push(`${fmt(r.a)}° about ${r.axis.label}`);
+      return { meta: [moved && fmt(len(r.v)) + ' mm', r.a && fmt(r.a) + '°'].filter(Boolean).join(' '), info: `${bodyNames(o.bodies, m)} ${parts.join(', ')}${o.copy ? ' · copy' : ''}` };
+    },
+  },
+
+  bmirror: {
+    label: 'Mirror', icon: 'bmirror', needs: 'body',
+    picks: {
+      bodies: Pick('body', 'bodies', 'Click the bodies to mirror', { multi: true }),
+      plane: Pick('plane', 'a plane', 'Click an origin plane or a planar face to mirror across'),
+    },
+    init: m => { const b = selBodies(m); return { bodies: b, plane: null, copy: true, pick: b.length ? 'plane' : 'bodies' }; },
+    body: (o, m, r) => `
+      ${pickList(o, 'bodies', 'Bodies', bodyItems(o.bodies, m), 'Click bodies')}
+      ${pickOne(o, 'plane', 'Plane', r.plane?.label, 'Click a plane or face')}
+      ${tick(o, 'copy', 'Copy', 'Keep the original too')}`,
+    check(o, m) {
+      const r = { errs: {} };
+      r.plane = planeOf(o.plane, m.bodies);
+      r.sum = bodiesSum(o);
+      if (!o.bodies.length) r.need = 'Pick the bodies to mirror';
+      else if (goneBodies(o.bodies, m)) r.error = 'A picked body is gone';
+      else if (!o.plane) r.need = 'Pick a plane: an origin plane or a planar face';
+      else if (!r.plane) r.error = 'The plane is gone: pick another';
+      else r.x = XF.mirror(r.plane.p, r.plane.n);
+      return r;
+    },
+    preview: (o, m, r) => {
+      const pv = copiesPreview(o, m, r, [r.x], !o.copy);
+      return { ...pv, planes: o.pick === 'plane', svg: r.plane ? planeSvg(r.plane, [...facesOf(o.bodies, m), ...(pv.faces || [])]) : '' };
+    },
+    apply: (o, bodies, t, r) => copiesApply(o, bodies, t, [r.x], false, !o.copy),
+    row: (o, r, m) => ({ meta: r.plane.short, info: `${bodyNames(o.bodies, m)} across ${r.plane.label}${o.copy ? ' · copy' : ''}` }),
+  },
+
+  lpattern: {
+    label: 'Linear pattern', icon: 'lpattern', needs: 'body',
+    picks: {
+      bodies: Pick('body', 'bodies', 'Click the bodies to pattern', { multi: true }),
+      dir: Pick('axis', 'a direction', 'Click an origin axis or a straight edge for the direction', { edges: true }),
+    },
+    init: m => ({ bodies: selBodies(m), dir: 'axis-x', flip: false, count: '3', mode: 'spacing', dist: '100 mm', join: false, pick: 'bodies' }),
+    body: (o, m, r) => `
+      ${pickList(o, 'bodies', 'Bodies', bodyItems(o.bodies, m), 'Click bodies')}
+      ${pickOne(o, 'dir', 'Direction', r.axis?.label, 'Click an axis or edge')}
+      ${tick(o, 'flip', 'Flip direction')}
+      <h4>Copies</h4>
+      ${numField(o, 'count', 'Count', r)}
+      ${choices(o, 'mode', [['spacing', 'Spacing'], ['total', 'Total']])}
+      ${numField(o, 'dist', o.mode === 'spacing' ? 'Spacing' : 'Total', r)}
+      ${tick(o, 'join', 'Join to original', 'One body; otherwise each copy is its own')}`,
+    check(o, m) {
+      const r = { errs: {} }, e = r.errs;
+      const n = readVal(o, 'count', e, { unit: 'count', int: true, min: 2, max: 100 }), dist = readVal(o, 'dist', e);
+      r.axis = axisOf(o.dir, m.bodies);
+      r.sum = n ? `${n} in all` : '';
+      if (!o.bodies.length) r.need = 'Pick the bodies to pattern';
+      else if (goneBodies(o.bodies, m)) r.error = 'A picked body is gone';
+      else if (!o.dir) r.need = 'Pick a direction: an origin axis or a straight edge';
+      else if (!r.axis) r.error = 'The direction is gone: pick another';
+      if (n != null && dist != null && r.axis) {
+        r.n = n; r.step = o.mode === 'spacing' ? dist : dist / (n - 1);
+        const d = o.flip ? mul(r.axis.d, -1) : r.axis.d;
+        if (r.step * (n - 1) > 10000) e.dist = 'The pattern runs past 10 000 mm';
+        r.xs = Array.from({ length: n - 1 }, (_, k) => XF.move(mul(d, r.step * (k + 1))));
+        if (!r.error && !r.need && !o.join) {
+          const along = facesOf(o.bodies, m).flatMap(f => f.p).map(p => dot(p, d)), ext = Math.max(...along) - Math.min(...along);
+          if (r.step < ext - 1e-6) r.warn = `The copies overlap (${fmt(ext)} mm long this way): tick Join to original to merge them`;
+        }
+      }
+      return r;
+    },
+    preview: (o, m, r) => ({ ...copiesPreview(o, m, r, r.xs || [], false), svg: axisPickSvg(o, 'dir', r.axis, [], m) }),
+    apply: (o, bodies, t, r) => copiesApply(o, bodies, t, r.xs, o.join),
+    row: (o, r) => ({ meta: '×' + r.n, info: `${r.n} × ${fmt(r.step)} mm along ${r.axis.label}${o.flip ? ', flipped' : ''}${o.join ? ' · joined' : ''}` }),
+  },
+
+  cpattern: {
+    label: 'Circular pattern', icon: 'cpattern', needs: 'body',
+    picks: {
+      bodies: Pick('body', 'bodies', 'Click the bodies to pattern', { multi: true }),
+      axis: Pick('axis', 'an axis', 'Click an origin axis or a straight edge to pattern about', { edges: true }),
+    },
+    init: m => ({ bodies: selBodies(m), axis: 'axis-z', count: '4', mode: 'full', angle: '90°', join: false, pick: 'bodies' }),
+    body: (o, m, r) => `
+      ${pickList(o, 'bodies', 'Bodies', bodyItems(o.bodies, m), 'Click bodies')}
+      ${pickOne(o, 'axis', 'Axis', r.axis?.label, 'Click an axis or edge')}
+      <h4>Copies</h4>
+      ${numField(o, 'count', 'Count', r)}
+      ${choices(o, 'mode', CIRC_MODES)}
+      ${o.mode === 'full' ? '' : numField(o, 'angle', o.mode === 'spacing' ? 'Spacing' : 'Total', r)}
+      ${tick(o, 'join', 'Join to original', 'One body; otherwise each copy is its own')}`,
+    check(o, m) {
+      const r = { errs: {} }, e = r.errs;
+      const n = readVal(o, 'count', e, { unit: 'count', int: true, min: 2, max: 100 });
+      const a = o.mode === 'full' ? 360 : readVal(o, 'angle', e, { unit: 'deg', max: 360 });
+      r.axis = axisOf(o.axis, m.bodies);
+      r.sum = n ? `${n} in all` : '';
+      if (!o.bodies.length) r.need = 'Pick the bodies to pattern';
+      else if (goneBodies(o.bodies, m)) r.error = 'A picked body is gone';
+      else if (!o.axis) r.need = 'Pick an axis: an origin axis or a straight edge';
+      else if (!r.axis) r.error = 'The axis is gone: pick another';
+      if (n != null && a != null) {
+        r.n = n; r.step = o.mode === 'full' ? 360 / n : o.mode === 'spacing' ? a : a / (n - 1);
+        if (o.mode === 'spacing' && r.step * (n - 1) >= 360) e.angle = `${n} copies ${fmt(r.step)}° apart go past a full turn`;
+        else if (o.mode === 'total' && a >= 360) e.angle = 'A whole turn puts the last copy on the first: use Full 360°';
+        if (r.axis) r.xs = Array.from({ length: n - 1 }, (_, k) => XF.turn(r.axis.p, r.axis.d, r.step * (k + 1)));
+      }
+      return r;
+    },
+    preview: (o, m, r) => ({ ...copiesPreview(o, m, r, r.xs || [], false), svg: axisPickSvg(o, 'axis', r.axis, [], m) }),
+    apply: (o, bodies, t, r) => copiesApply(o, bodies, t, r.xs, o.join),
+    row: (o, r) => ({ meta: '×' + r.n, info: `${r.n} × ${fmt(r.step)}° about ${r.axis.label}${o.join ? ' · joined' : ''}` }),
+  },
+
+  fillet: {
+    label: 'Fillet', icon: 'fillet', needs: 'bracket',
+    picks: { edges: Pick('edge', 'edges', 'Click edges to fillet', { multi: true }) },
+    init: m => ({ edges: holeRims(m), radius: '2 mm', chain: true, pick: 'edges' }),
+    body: (o, m, r) => `
+      ${pickList(o, 'edges', 'Edges', edgeItems(o.edges, m), 'Click edges')}
+      ${numField(o, 'radius', 'Radius', r)}
+      ${tick(o, 'chain', 'Tangent chain', 'Take in edges that run on smoothly')}`,
+    check(o, m) {
+      const r = edgeCheck(o, m, 'fillet'), v = readVal(o, 'radius', r.errs, { max: 1000 });
+      const bad = v != null && r.es?.find(e => v >= edgeCap(e));
+      if (bad) r.errs.radius = `Too big for ${bad.label}: under ${fmt(edgeCap(bad))} mm`;
+      r.d = [v, v];
+      return r;
+    },
+    preview: edgePreview,
+    apply: edgeApply,
+    row: (o, r) => ({ meta: 'R' + fmt(r.d[0]), info: `${plural(o.edges.length, 'edge')} · R${fmt(r.d[0])} mm${o.chain ? ' · Tangent chain' : ''}` }),
+  },
+
+  chamfer: {
+    label: 'Chamfer', icon: 'chamfer', needs: 'bracket',
+    picks: { edges: Pick('edge', 'edges', 'Click edges to chamfer', { multi: true }) },
+    init: m => ({ edges: holeRims(m), type: 'equal', d1: '1 mm', d2: '2 mm', angle: '45°', flip: false, pick: 'edges' }),
+    body: (o, m, r) => `
+      ${pickList(o, 'edges', 'Edges', edgeItems(o.edges, m), 'Click edges')}
+      <h4>Type</h4>
+      ${choices(o, 'type', CHAMFERS)}
+      ${numField(o, 'd1', o.type === 'two' ? 'Distance 1' : 'Distance', r)}
+      ${o.type === 'two' ? numField(o, 'd2', 'Distance 2', r) : ''}
+      ${o.type === 'angle' ? numField(o, 'angle', 'Angle', r) : ''}
+      ${o.type === 'equal' ? '' : tick(o, 'flip', 'Flip sides')}`,
+    check(o, m) {
+      const r = edgeCheck(o, m, 'chamfer'), e = r.errs;
+      const d1 = readVal(o, 'd1', e, { max: 1000 });
+      let d2 = d1;
+      if (o.type === 'two') d2 = readVal(o, 'd2', e, { max: 1000 });
+      if (o.type === 'angle') {
+        r.a = readVal(o, 'angle', e, { unit: 'deg', max: 90 });
+        if (r.a === 90) { e.angle = 'Under 90°'; r.a = null; }
+        d2 = r.a != null && d1 != null ? d1 * Math.tan(rad(r.a)) : null;
+      }
+      if (d1 != null && d2 != null) {
+        r.d = o.type !== 'equal' && o.flip ? [d2, d1] : [d1, d2];
+        const bad = r.es?.find(ed => ed.rim ? r.d[0] >= edgeCap(ed) : ed.sides.some((s, i) => r.d[i] >= widthIn(s, ed.a)));
+        if (bad) e[o.type === 'angle' && d2 > d1 ? 'angle' : 'd1'] = `Too big for ${bad.label}: it has under ${fmt(edgeCap(bad))} mm of room`;
+      }
+      return r;
+    },
+    preview: edgePreview,
+    apply: edgeApply,
+    row: (o, r) => ({
+      meta: o.type === 'equal' ? fmt(r.d[0]) + ' mm' : o.type === 'two' ? `${fmt(r.d[0])} × ${fmt(r.d[1])}` : `${fmt(parseFloat(o.d1))} mm ${fmt(r.a)}°`,
+      info: `${plural(o.edges.length, 'edge')} · ${labelOf(CHAMFERS, o.type)} · ${o.type === 'angle' ? `${fmt(parseFloat(o.d1))} mm at ${fmt(r.a)}°` : r.d.map(fmt).join(' × ') + ' mm'}`,
+    }),
+  },
+
+  shell: {
+    label: 'Shell', icon: 'shell', needs: 'bracket',
+    picks: { faces: Pick('face', 'faces to remove', 'Click faces to remove, or none for a closed hollow body', { multi: true }) },
+    init: () => ({ faces: st.sel?.kind === 'face' ? [st.sel.id] : [], thick: '2 mm', dir: 'in', pick: 'faces' }),
+    body: (o, m, r) => `
+      ${pickList(o, 'faces', 'Remove', o.faces.map(id => ({ id, label: FACE_NAME[id] || 'Missing face', meta: FACE_INFO[id]?.[1] })), 'Click faces')}
+      ${numField(o, 'thick', 'Thickness', r)}
+      <h4>Direction</h4>
+      ${choices(o, 'dir', [['in', 'Inward'], ['out', 'Outward']])}`,
+    check(o, m) {
+      const r = { errs: {} };
+      r.t = readVal(o, 'thick', r.errs, { max: 100 });
+      if (r.t != null && o.dir === 'in' && r.t >= 5) r.errs.thick = 'Too thick: the 10 mm walls need under 5 mm inward';
+      r.sum = 'Bracket';
+      r.fs = o.faces.map(id => m.br?.faces.find(f => f.id === id));
+      if (!m.br) r.error = 'No body to shell';
+      else if (r.fs.some(f => !f)) r.error = 'A picked face is gone';
+      else if (!o.faces.length) r.warn = 'No faces removed: the body becomes closed and hollow';
+      return r;
+    },
+    preview: (o, m, r) => ({
+      marks: new Set(o.faces),
+      svg: ready(r) ? r.fs.map(f => `<polygon class="band" points="${pts(inset(f.p, o.dir === 'in' ? r.t : -r.t))}"/>`).join('') : '',
+    }),
+    apply(o, bodies, t, r) { for (const f of r.fs) f.opening = o.dir === 'in' ? inset(f.p, r.t) : f.p; },
+    row: (o, r) => ({ meta: fmt(r.t) + ' mm', info: `${o.faces.length ? plural(o.faces.length, 'face') + ' removed' : 'Closed'} · ${fmt(r.t)} mm ${o.dir === 'in' ? 'inward' : 'outward'}` }),
+  },
+};
+
+function opPreview(m) {
+  const o = st.op, def = OPS[o.kind];
+  return def.preview(o, m, def.check(o, m));
+}
+
+function opPanel() {
+  const o = st.op, def = OPS[o.kind], m = opCtx(), r = def.check(o, m);
+  const msg = r.error ? `<div class="pmsg err">${r.error}</div>` : r.need ? `<div class="pmsg need">${r.need}</div>` : '';
+  return `<div class="opp">
+    <div class="opp-head">${icon(def.icon)}<b>${o.editing ? o.name : 'New ' + def.label.toLowerCase()}</b><span class="sum">${r.sum || ''}</span></div>
+    <div class="opp-body">${def.body(o, m, r)}</div>
+    <div class="opp-foot">
+      ${msg}${r.warn ? `<div class="pmsg warn">${r.warn}</div>` : ''}
+      <div class="pbtns">
+        <button class="pbtn" data-act="op:op-cancel">Cancel</button>
+        <button class="pbtn primary"${ready(r) ? ' data-act="op:op-ok"' : ' disabled'}>OK</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+// Starts setting up an operation, or editing one (the model rolls back to it).
+function openOp(kind, editId) {
+  if (st.mode === 'sketch') { toast('Finish the sketch first'); return; }
+  const def = OPS[kind], t = editId && st.doc.timeline.find(t => t.id === editId);
+  st.op = { kind, editing: t?.id };
+  const m = opCtx();
+  if ((def.needs === 'body' && !m.bodies.length) || (def.needs === 'bracket' && !m.br)) {
+    st.op = null;
+    toast(`${def.label} needs a body: extrude a sketch first`);
+    return;
+  }
+  Object.assign(st.op, t ? { ...structuredClone(t.params), name: t.name, pick: Object.keys(def.picks)[0] } : def.init(m), { focus: true });
+  Object.assign(st, { pick: false, sel: null });
+}
+
+// What a click in the view means for the panel's field of `type`, or null.
+function pickValue(type, el) {
+  const [kind, ...rest] = (el.dataset.pick || '').split(':'), v = rest.join(':'), face = el.dataset.face;
+  switch (type) {
+    case 'region': return kind === 'region' ? v : null;
+    case 'axis': return kind === 'axis' || kind === 'line' || (kind === 'edge' && !v.startsWith('rim:')) ? v : null;
+    case 'edge': return kind === 'edge' ? v : null;
+    case 'body': return el.dataset.body || null;
+    case 'plane': return face && (ORIGIN_PLANES[face] || FACE_NAME[face]) ? face : null;
+    case 'face': return face && FACE_NAME[face] ? face : null;
+  }
+  return null;
+}
+
+// A click goes to the field picking; failing that, to another field that
+// takes what was clicked (bodies only when their field is picking, so a
+// stray click on the model never drops a body).
+function opPick(el) {
+  const o = st.op, def = OPS[o.kind];
+  const names = [o.pick, ...Object.keys(def.picks).filter(k => k !== o.pick && def.picks[k].type !== 'body')].filter(Boolean);
+  for (const name of names) {
+    const p = def.picks[name], v = pickValue(p.type, el);
+    if (v == null) continue;
+    const refused = p.accept?.(o, v);
+    if (typeof refused === 'string') { toast(refused); return; }
+    if (p.multi) o[name] = o[name].includes(v) ? o[name].filter(x => x !== v) : [...o[name], v];
+    else o[name] = v;
+    // A single field, once filled, hands the clicks to the next empty one.
+    o.pick = p.multi ? name : Object.keys(def.picks).find(k => def.picks[k].multi ? !o[k].length : o[k] == null) || null;
+    return;
+  }
+  toast(def.picks[o.pick]?.hint || 'Click a field in the panel to pick into it');
+}
+
+function commitOp() {
+  const o = st.op, def = OPS[o.kind], m = opCtx(), r = def.check(o, m);
+  if (!ready(r)) { toast(r.error || Object.values(r.errs)[0] || r.need); return; }
+  const { kind, editing, name, pick, focus, ...params } = o;
+  const d = st.doc, row = { type: kind, params: structuredClone(params), ...def.row(params, r, m) };
+  let id = editing;
+  if (editing) Object.assign(d.timeline.find(t => t.id === editing), row);
+  else {
+    id = kind + Date.now();
+    d.timeline.splice(d.rollback, 0, { id, name: `${def.label} ${d.timeline.filter(t => t.type === kind).length + 1}`, ...row });
+    d.rollback++;
+  }
+  d.dirty = true;
+  st.sel = { kind: 'feature', id };
+  st.op = null;
 }
 
 // ---------------------------------------------------------------- welcome
@@ -1238,7 +2166,20 @@ function welcome() {
 }
 
 // ---------------------------------------------------------------- render
+// Everything is rebuilt on each change, so the focused panel field, its caret
+// and the panel's scroll are carried over.
 function render() {
+  const a = document.activeElement, field = a?.dataset?.field, caret = field && [a.selectionStart, a.selectionEnd];
+  const scroll = $('.opp-body')?.scrollTop;
+  renderApp();
+  const body = $('.opp-body');
+  if (body && scroll) body.scrollTop = scroll;
+  const el = field ? $(`.opp [data-field="${field}"]`) : st.op?.focus ? $('.opp input') : null;
+  if (el) { el.focus(); if (field) el.setSelectionRange(...caret); else el.select(); }
+  if (st.op) st.op.focus = false;
+}
+
+function renderApp() {
   const app = $('#app');
   const help = st.help ? helpModal() : '';
   if (st.screen === 'welcome') {
@@ -1255,6 +2196,7 @@ function render() {
         <button class="home-btn" data-act="view:home" title="Home view">${icon('home')}</button>
         <svg id="cube" class="cube" viewBox="0 0 96 96">${cubeInner()}</svg>
       </div>
+      ${st.op ? opPanel() : ''}
       ${hint}
     </div>` + (st.alt || st.gbarPinned ? gbar() : '') + statusbar() + help;
 }
@@ -1268,7 +2210,11 @@ function helpModal() {
       ${kv('Ctrl K', 'Command palette')}${kv('?', 'This sheet')}
       ${kv('Esc', 'Back out one level')}${kv('Alt', 'Hold: other tab + tool bar')}${kv('Alt', 'Tap: keep the tool bar open')}
       <h3>Model</h3>
-      ${kv('S', 'Sketch')}${kv('E', 'Extrude')}${kv('Q', 'Press pull')}${kv('H', 'Hole')}${kv('F', 'Fillet')}${kv('I', 'Measure')}
+      ${kv('S', 'Sketch')}${kv('E', 'Extrude')}${kv('R', 'Revolve')}${kv('Q', 'Press pull')}${kv('H', 'Hole')}${kv('F', 'Fillet')}
+      ${kv('C', 'Chamfer')}${kv('B', 'Combine')}${kv('M', 'Move')}${kv('P', 'Linear pattern')}${kv('I', 'Measure')}
+      <h3>Operation panel</h3>
+      ${kv('Enter', 'OK')}${kv('Esc', 'Cancel')}
+      <div class="kv"><span>Pick into a field</span><span>click the field, then ${mouse('l')} in the view</span></div>
       <h3>Sketch</h3>
       ${kv('L', 'Line')}${kv('R', 'Rectangle')}${kv('C', 'Circle')}${kv('A', 'Arc')}${kv('T', 'Trim')}${kv('D', 'Dimension')}
       <h3>Mouse</h3>
@@ -1330,6 +2276,9 @@ function finishSketch() {
 
 function doOp(id) {
   if (id.startsWith('tool:')) { const t = id.slice(5); st.tool = st.tool === t ? null : t; return; }
+  if (OPS[id]) { openOp(id); return; }
+  if (id === 'op-ok') { commitOp(); return; }
+  if (id === 'op-cancel') { st.op = null; return; }
   const d = st.doc;
   switch (id) {
     case 'sketch':
@@ -1338,7 +2287,12 @@ function doOp(id) {
       return;
     case 'finish': finishSketch(); return;
     case 'edit-sketch': enterSketch(st.sel.id, SKETCHES[st.sel.id]?.plane || 'plane-xy'); return;
-    case 'hide': d.hidden.add('body'); st.sel = null; return;
+    case 'hide': d.hidden.add(st.sel.id); st.sel = null; return;
+    case 'edit-feature': {
+      const t = d.timeline.find(t => t.id === st.sel.id);
+      if (t?.params && OPS[t.type]) { openOp(t.type, t.id); return; }
+      break;
+    }
     case 'rollback': d.rollback = d.timeline.findIndex(t => t.id === st.sel.id) + 1; st.sel = null; return;
     case 'delete': {
       const i = d.timeline.findIndex(t => t.id === st.sel.id);
@@ -1378,10 +2332,21 @@ function act(a) {
     case 'toast': toast(v); return;
     case 'view': animateCam(v === 'home' ? HOME : { ...VIEWS[v], px: 0, py: 0 }); return;
     case 'op': doOp(v); break;
+    case 'opf': st.op.pick = v; break;
+    case 'opc': { const [n, val] = v.split(':'); st.op[n] = val; break; }
+    case 'opx': case 'opt': {
+      // name, or name:id for one item of a list (edge ids have colons too).
+      const i = v.indexOf(':'), n = i < 0 ? v : v.slice(0, i), id = v.slice(i + 1), o = st.op;
+      if (i < 0) o[n] = !o[n];
+      else if (Array.isArray(o[n])) o[n] = o[n].includes(id) ? o[n].filter(x => x !== id) : k === 'opt' ? [...o[n], id] : o[n];
+      else o[n] = null;
+      if (k === 'opx') o.pick = n;
+      break;
+    }
     case 'gop': altUsed = true; globalOp(v); break;
     case 'tab': st.panel = v; break;
     case 'tl':
-      if (st.mode === 'sketch') return;
+      if (st.mode === 'sketch' || st.op) return;
       st.pick = false;
       st.sel = st.sel?.id === v ? null : { kind: 'feature', id: v };
       break;
@@ -1391,7 +2356,13 @@ function act(a) {
       break;
     }
     case 'obj':
-      if (v === 'body') st.sel = { kind: 'body', id: 'body' };
+      if (st.op) {
+        // Bodies and origin planes in the list can be picked into the panel too.
+        const isBody = bodiesAt(activeFeatures()).some(b => b.id === v);
+        if (isBody || v.startsWith('plane-')) opPick({ dataset: isBody ? { body: v } : { face: v } });
+        break;
+      }
+      if (bodiesAt(activeFeatures()).some(b => b.id === v)) st.sel = { kind: 'body', id: v };
       else if (v.startsWith('plane-')) st.sel = { kind: 'plane', id: v };
       else if (st.doc.timeline.some(t => t.id === v)) st.sel = { kind: 'feature', id: v };
       else return;
@@ -1411,8 +2382,18 @@ document.addEventListener('click', e => {
     if (el.dataset.act !== 'noop') act(el.dataset.act);
     return;
   }
+  if (st.op && e.target.closest('#scene')) {
+    // While an operation is set up, clicks in the view feed its panel.
+    const p = e.target.closest('[data-pick], [data-face], [data-body]');
+    st.menu = false;
+    if (p) opPick(p);
+    render();
+    return;
+  }
   const f = e.target.closest('[data-face]');
   if (f) { st.menu = false; faceClick(f.dataset.face); render(); return; }
+  const b = e.target.closest('[data-body]');
+  if (b && st.mode === 'model' && !st.pick) { st.menu = false; st.sel = { kind: 'body', id: b.dataset.body }; render(); return; }
   if (e.target.closest('#scene') && st.screen === 'doc') {
     if (st.mode === 'sketch' && st.tool) toast(TOOLS[st.tool].hint + ' — drawing not in mock');
     else st.sel = null;
@@ -1422,16 +2403,17 @@ document.addEventListener('click', e => {
 });
 
 document.addEventListener('dblclick', e => {
-  if (st.screen !== 'doc' || st.mode === 'sketch') return;
+  if (st.screen !== 'doc' || st.mode === 'sketch' || st.op) return;
   // Double-clicking the model selects the whole body.
   const f = e.target.closest('.face, .hole');
-  if (f) { st.sel = { kind: 'body', id: 'body' }; render(); return; }
+  if (f) { st.sel = { kind: 'body', id: f.dataset.body || 'body' }; render(); return; }
   const r = e.target.closest('[data-act^="tl:"], [data-act^="obj:"]');
   if (!r) return;
   const id = r.dataset.act.split(':')[1];
   const t = st.doc.timeline.find(t => t.id === id);
   if (!t) return;
   if (t.type === 'sketch') enterSketch(t.id, SKETCHES[t.id]?.plane || 'plane-xy');
+  else if (t.params && OPS[t.type]) openOp(t.type, t.id);
   else toast('Edit ' + t.name + ' — not wired up in the mock');
   render();
 });
@@ -1543,6 +2525,12 @@ document.addEventListener('keydown', e => {
     if (!e.repeat && st.screen === 'doc') { st.alt = true; altUsed = false; altDownAt = performance.now(); render(); }
     return;
   }
+  if (e.target.matches?.('.opp input')) {
+    // Typing in a panel field: Enter is OK, Esc Cancel, the rest is text.
+    if (e.key === 'Enter') { e.preventDefault(); commitOp(); render(); }
+    else if (e.key === 'Escape') { st.op = null; render(); }
+    return;
+  }
   if (e.altKey) altUsed = true;
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   if (e.key === '?') { st.help = !st.help; render(); return; }
@@ -1557,6 +2545,7 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     if (st.menu) st.menu = false;
     else if (st.gbarPinned) st.gbarPinned = false;
+    else if (st.op) st.op = null;
     else if (st.tool) st.tool = null;
     else if (st.pick) st.pick = false;
     else if (st.sel) st.sel = null;
@@ -1566,6 +2555,13 @@ document.addEventListener('keydown', e => {
   }
   const o = ops().find(o => o.key === key);
   if (o) { e.preventDefault(); doOp(o.id); render(); }
+});
+
+document.addEventListener('input', e => {
+  const f = e.target.dataset?.field;
+  if (!f || !st.op) return;
+  st.op[f] = e.target.value;
+  render();
 });
 
 document.addEventListener('keyup', e => {
@@ -1595,6 +2591,31 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change', render);
     }
   }
   if (view === 'tools' || view === 'sketchtools') st.gbarPinned = true;
+  if (location.hash.includes('/dark')) root.dataset.theme = 'dark';
+  if (location.hash.includes('/light')) root.dataset.theme = 'light';
+  for (const v of Object.keys(VIEWS)) if (location.hash.includes('/v-' + v)) Object.assign(cam, VIEWS[v]);
+  const kind = doc === 'bracket' && view?.startsWith('op:') && view.slice(3);
+  if (OPS[kind]) {
+    const E = (a, b) => [a, b].sort().join('|');
+    if (kind === 'combine') {
+      // A mirrored copy to combine with.
+      const d = st.doc;
+      d.timeline.push({ id: 'dm', type: 'bmirror', name: 'Mirror 1', meta: 'Base end', info: 'Bracket across Base end · copy', params: { bodies: ['body'], plane: 'base-x', copy: true } });
+      d.rollback++;
+      Object.assign(cam, { zoom: 1.1, px: 40 });
+    }
+    if (kind === 'lpattern' || kind === 'cpattern') Object.assign(cam, { zoom: 1.6, px: kind === 'lpattern' ? 60 : 0 });
+    openOp(kind);
+    Object.assign(st.op, {
+      revolve: { regions: ['s1:0'], axis: 's1:l5', extent: 'one', a1: '270°', flip: true, pick: null, ...(location.hash.includes('/join') && { op: 'join' }) },
+      combine: { tools: ['dm:0:0'] },
+      move: { dx: '-20 mm', dy: '-80 mm', angle: '30°' },
+      bmirror: { plane: 'plane-yz', pick: null },
+      fillet: { edges: [E('base-x', 'base-top'), E('base-top', 'side'), E('up-top', 'up-x'), 'rim:hole-a:base-top', E('back', 'up-top'), E('side', 'up-top')], radius: '3 mm' },
+      chamfer: { edges: [E('base-x', 'base-top'), E('base-x', 'side')], type: 'angle', d1: '3 mm', angle: '30°' },
+      shell: { faces: ['up-top', 'base-x'] },
+    }[kind] || {}, { focus: false });
+  }
 }
 render();
 </script>
