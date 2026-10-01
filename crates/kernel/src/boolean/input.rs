@@ -212,7 +212,7 @@ impl<'a> Input<'a> {
 
 /// Whether `patch`'s control points all lie within `margin` of the plane
 /// through its corners (which aren't on one line).
-fn planar(patch: &Patch, margin: f64) -> bool {
+pub(super) fn planar(patch: &Patch, margin: f64) -> bool {
     let [p0, p1, p2] = patch.p;
     let Some(n) = (p1 - p0).cross(p2 - p0).try_normalize() else {
         return false;

@@ -145,8 +145,7 @@ pub(super) fn refined(
         let split = {
             let ia = Input::new(&meshes[0], tol);
             let ib = Input::new(&meshes[1], tol);
-            let prims = Curved::new(&ia, &ib, grow, tol);
-            let counts = count::count(&ia, &ib, &prims, tol, work)?;
+            let counts = counted(&ia, &ib, grow, tol, work)?;
             match decide(&ia, &ib, &counts, floor, tol.resolution(), work)? {
                 Decision::Arcs(arcs) => Err((counts, arcs)),
                 Decision::Split(split) => Ok(split),
@@ -183,6 +182,19 @@ pub(super) fn refined(
         }
     }
     Err(KernelError::TooComplex)
+}
+
+/// One round's counting of operands with curved patches: [`refined`]
+/// counts so every round, and [`touches`](super::touches) once, so its
+/// counts are `refined`'s first round's, bit for bit.
+pub(super) fn counted(
+    a: &Input,
+    b: &Input,
+    grow: bool,
+    tol: &Tolerance,
+    work: &mut Work,
+) -> Result<Counts, KernelError> {
+    count::count(a, b, &Curved::new(a, b, grow, tol), tol, work)
 }
 
 /// What a round of decisions comes to: every pair's arcs, or the

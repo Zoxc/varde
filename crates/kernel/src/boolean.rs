@@ -67,6 +67,7 @@ mod curved;
 pub(crate) mod exact;
 mod flat;
 mod input;
+pub(crate) mod near;
 mod pairs;
 mod surface;
 mod triangulate;
@@ -321,10 +322,20 @@ fn flat_decided(
 /// Whether `a` and `b` touch or overlap: whether an edge of one crosses a
 /// face of the other or a vertex of one is inside the other, with solids
 /// that only touch (flush faces, an edge on a face) counted as touching.
-/// Only the broad phase and the counting run (with curved patches, also
-/// the refinement that finds loops no edge crossing shows), and not even
-/// those for solids whose boxes (the control points', which hold them)
-/// are more than the resolution apart.
+/// Only the broad phase and one counting run, and not even those for
+/// solids whose boxes (the control points', which hold them) are more
+/// than the resolution apart.
+///
+/// With curved patches, a counting that shows no crossing and no vertex
+/// inside is followed by a search for surfaces within the resolution
+/// (`near::near`): that finds what no edge crossing shows, a tangency
+/// along a line (cylinders side by side, a pin against a hole's wall) or
+/// a loop cut inside one patch. So curved solids within about the
+/// resolution of each other touch (within about twice it: the search
+/// keeps a pair while two flat pieces' hulls come within it), where flat
+/// ones touch only within the tie distance; the difference is below
+/// anything a user can place. It only picks what an operation works on:
+/// every [`boolean`] decides for itself.
 pub fn touches(
     a: &Solid,
     b: &Solid,
@@ -341,8 +352,11 @@ pub fn touches(
     let mut work = Work::new(budget);
     let (ia, ib) = (Input::new(a.mesh(), tol), Input::new(b.mesh(), tol));
     if ia.curved || ib.curved {
-        let refined = pairs::refined(a.mesh(), b.mesh(), true, tol, &mut work)?;
-        return Ok(refined.counts.meet());
+        let counts = pairs::counted(&ia, &ib, true, tol, &mut work)?;
+        if counts.meet() {
+            return Ok(true);
+        }
+        return near::near(&ia, &ib, &counts.pairs, gap, &mut work);
     }
     // Counted again exactly where the near ties don't fit together, as
     // the operation does ([`flat_soup`]).

@@ -361,11 +361,13 @@ fn tangent_cylinders_are_decided() {
 }
 
 #[test]
-fn tangent_cylinders_touch_or_not() {
-    // Whether a tangency touches is a tie no crossing shows; the fixed
-    // rules take it as not meeting (flat solids touching do meet).
+fn tangent_cylinders_touch() {
+    // No crossing shows a tangency along a line, and the fixed rules
+    // would take it as not meeting; the search for surfaces within the
+    // resolution after the counting finds it.
     let (a, b, tol) = tangent_cylinders();
-    touches(&a, &b, &tol, &Budget::DEFAULT).unwrap();
+    assert_eq!(touches(&a, &b, &tol, &Budget::DEFAULT), Ok(true));
+    assert_eq!(touches(&b, &a, &tol, &Budget::DEFAULT), Ok(true));
 }
 
 #[test]

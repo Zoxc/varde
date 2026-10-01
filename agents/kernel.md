@@ -1579,9 +1579,10 @@ platform's `cos` decides them.
 `boolean(a, b, op, tol, budget)` gives `a ∪ b`, `a − b` or `a ∩ b`
 (`Op::{Union, Difference, Intersection}`) as a `Solid`, and `touches(a,
 b, tol, budget)` whether two solids meet, running only the broad phase
-and the counting (and nothing, answering false, for solids whose boxes
-are more than the resolution apart, so asking it of far bodies is
-cheap). They follow Manifold's `boolean3.cpp` and
+and one counting, with curved patches followed by a search for surfaces
+within the resolution where the counting shows nothing (see "Touches"),
+and nothing, answering false, for solids whose boxes are more than the
+resolution apart, so asking it of far bodies is cheap. They follow Manifold's `boolean3.cpp` and
 `boolean_result.cpp`: every topological fact comes from a few
 primitives, each worked out once and stored by the pair it is about,
 through identities that hold whatever values the primitives take, so the
@@ -1608,6 +1609,7 @@ elsewhere (see "Cutting curved faces").
 | `boolean/curved/solve.rs` | points of a patch above a vertex, an edge's crossings through a patch, and a certified distance to a patch: subdivision and Newton |
 | `boolean/curved/bernstein.rs` | Bernstein polynomials: products, evaluation, root isolation |
 | `boolean/pairs.rs` | each pair of faces' ends and arcs; for curved operands the certificates, the refinement loop (`refined`) and the fixed rules |
+| `boolean/near.rs` | `touches`' search for surfaces within the resolution: pairs of patch pieces split depth first until their hulls are apart or both are flat (`search`, `settled`, `near`) |
 | `boolean/exact.rs` | exact signs: `Approx` (float with an error bound), `Exp` (expansions), `Poly` in `ε`, `Pred`, `sign`, `orient2d` |
 | `boolean/flat.rs` | `Flat`, the primitives of flat operands, with the symbolic perturbation |
 | `boolean/count.rs` | broad phase, the stored primitives, `x12`/`x21`, winding numbers |
@@ -2225,6 +2227,76 @@ red splits (`mesh::Node`: corners, patch, parent) and each refined
 triangle's leaf in it, the counts and every pair's arcs (`Arc { tris,
 plus, minus }`, by end vertex id): what cutting the curved faces starts
 from.
+
+### Touches (`boolean.rs`, `boolean/near.rs`)
+
+`touches` on flat operands is one counting (tied as a union would be,
+counted again exactly where the ties don't fit together) and its
+`meet()`: an edge through a face or a vertex inside. With curved patches
+it is one counting, `pairs::counted`, the very call `refined` makes each
+round, so it is `refined`'s first round to the bit, and `true` on
+`meet()`; otherwise a search for surfaces within the resolution `r`
+over the broad phase's pairs (`near::near`), whose answer it gives. No
+refinement, no Newton and no fallback.
+
+Refinement isn't needed to tell whether two solids meet: it joins
+crossing ends into arcs and finds loops no edge crossing shows, and a
+loop no crossing shows is still a place where the surfaces come within
+`r`, which the search finds. Before, `touches` ran the boolean's whole
+refinement and read its last counting, which answered false for a
+tangency along a line (cylinders side by side, a pin against a hole's
+wall, a boss against a rounded corner: no edge crosses, no vertex is
+inside, and the fixed rules take a pair with no certificate as no loop)
+after running most of the budget, or out of it: 3.6 to 11 s at the
+default tolerance, `false`, `TooComplex` or `Inconsistent` by where the
+tangent line fell on the seams. A plane against a cylinder was already
+certified. Stopping `touches` at the first round whose counting shows
+a meeting (proposed on its own against a failing touch test costing a
+whole budget on every draft change) is part of this: a meeting the
+counting shows is `true` at once, and only that round is counted.
+
+The search (`near::search`) runs depth first over pairs of pieces, a
+stack per broad-phase pair in pair order, each pair's pieces visited in
+a fixed order (the first's four `split4` pieces, each against the
+second's), sequentially, so the answer and the work spent are the same
+at any thread count and on wasm (no trig). A visit drops the pair, stops
+the search or splits one piece or both. `near`'s visit drops a pair
+whose control hulls are more than `r` apart (`mesh::apart`, GJK), stops
+on a pair both `settled` (flat within `r/4`: control points within
+`r/4` of the corners' plane and each edge's control point within `r/4`
+of its chord; or no larger than `MIN_SPLIT·r` across), and splits the
+pieces that aren't.
+
+Why it holds: a patch and its pieces lie in their control hulls
+(positive weights), so surfaces within `r` are never dropped, and
+`false` means they are more than `r` apart everywhere; with the counting
+showing no crossing and no vertex inside, neither solid is inside the
+other, so they don't meet. A `true` means two flat pieces' hulls come
+within `r`, and a flat piece's hull is within about `r/2` of the piece
+(the piece covers its corners' triangle give or take `r/4`), so the
+surfaces come within about `2r`; floor pieces only happen on surfaces
+curving tighter than some hundreds of `r`. So curved solids within
+about the resolution touch, where flat ones touch only within the tie
+distance (`r/64`), which is below anything a user can place. `touches`
+only picks what an operation works on (regen's targets), and every
+boolean decides for itself, so a `true` within `2r` can't make a wrong
+solid; at worst a body that grazes the tool is a target whose boolean
+fails or is a no-op.
+
+The search is written for a minimum distance to reuse: the same stack
+of pairs, with a visit that drops the pairs whose hulls are further
+apart than the closest points found so far (`apart` with that margin)
+and settles the rest. Cost: a unit per visit (`NEAR_WORK`, measured 0.24
+to 0.44 µs a visit, release, one thread), spent each 256 visits and at
+the end; a piece `split4` can't split is `TooComplex`. Measured,
+release, one thread, the counting included: tangencies 1.5 to 4 ms (up
+to about 1 100 visits); near misses (gap `1.5r` to `10r`) at the default
+tolerance 10 to 20 ms for cylinders side by side (30 000 to 45 000
+visits, the same for 2 and 100 long ones), 12 to 45 ms for a pin off a
+hole's wall (51 000 to 174 000), and under 6 ms at the coarsest
+tolerance. The near-miss band (surfaces just over `r` apart along a
+long line) is the dear case, bounded by the line's length over
+`√(2Rr)` pieces, and charged: a hostile one runs out.
 
 ### Cutting curved faces (`boolean/chain.rs`, `boolean/surface.rs`, `boolean/assemble/`)
 
@@ -2937,7 +3009,8 @@ pieces of the patch crossed looked at checking a crossing's roots on it
 unit per 4 pieces certifying it looked at, and one per 64 of the other
 operand's boxes, where the patch crossed wasn't near enough. Flat
 operands decided again exactly after an `Inconsistent` pay for both
-tries from the one budget.
+tries from the one budget. `touches` with curved patches: the one
+counting, then a unit per pair of pieces its search visits.
 
 ### Costs
 
@@ -3069,8 +3142,22 @@ loop the counting alone can't see (a face cutting a small cap off a
 round-octahedron patch: found by refinement, one curve on the plane), a
 saddle cut above and below its saddle point (the four ends on its patch
 joined by the side of the saddle point they are on, which the ends alone
-don't say), tangent cylinders (decided, deterministic), `touches`, the
+don't say), tangent cylinders (decided, deterministic; they touch), `touches`, the
 budget, joining ends round a pair, and the same bits at 1 and 8 threads.
+
+`touches`' search (`near/tests.rs`), each within a budget of 200 000
+units (less than the old refinement took on any of them) and both ways
+round, at the default and the coarsest tolerance: cylinders side by
+side on the seams and off them, as tall and shorter, rods of radii 1
+and 0.7 along a direction off every axis, a pin against a hole's wall
+through the plate and inside it, and a boss beside a plate past both
+its faces tangent to its rounded corner or a flat side, each touching
+at gaps of 0 and half a resolution and not at three; a tool tangent to
+a hole from outside (seen by the counting at once); a box corner in a
+cylinder's control hull 0.13 off its wall (not touching); the round
+octahedron's cap cut 1e-4 deep inside one patch (touching); the same
+answer and work at 1 and 8 threads on a tangency and a near miss; and
+a near miss one unit short of its work `TooComplex`.
 
 Curved booleans (`curved_tests.rs`), all four operations both ways where
 it matters, every result checked with its face tags, volumes against
@@ -3406,9 +3493,12 @@ to 72 of its 96 operations and left the others as they were.
   terms: edges stacked along `UP` 10 to 125 tie distances apart, `1e3`
   to `1e6` from the origin, are decided as touching (near it, up to
   8), still within the resolution.
-- A tangency along a line reads as not touching (`touches` says false for
-  two cylinders side by side): no crossing shows it, and the fixed rules
-  take no certificate as no loop. Flat solids touching do meet.
+- `touches` takes curved solids within about the resolution (up to about
+  twice it) as touching, flat ones within the tie distance. A tangency
+  along a line now touches, and the boolean it leads to is where line
+  contacts are decided (a union touching along a line isn't a manifold
+  and is refused; parallel walls with no certificate still refine,
+  slowly, see "Failing operations").
 - Each refinement round counts both operands again from scratch, and a
   search stops at 1 024 pieces (placing a crossing it didn't find where
   it found the two meeting, else where they came closest; since pieces
@@ -3862,8 +3952,10 @@ marks, unchecked.
 **Gaps.** Every join, cut or intersect asks `touches` of every body
 before it on each edit that changes the tool (cached otherwise; bodies
 whose boxes are apart are answered at once).
-`touches` says false for a tangency along a line, so a boss tangent to a
-body only there is "it doesn't touch any body". An operation that runs
+A boss tangent to a body only along a line touches it now, so the
+join reaches the union, which refuses a line contact or runs out
+refining it (the union's own gap); before, `touches` called it "it
+doesn't touch any body". An operation that runs
 out of budget takes about 2–3.5 s on one native thread and holds the
 single-threaded web worker longer, with drafts queued behind it (latest
 wins, so only the newest waits). The cache's sizes are estimates
@@ -4394,8 +4486,6 @@ parameter, or a split outside the patch bounds),
   curved edge between two triangles in one plane is flipped away), and
   moves triangles a collapse gives an off-surface curve to their face's
   copy claiming no surface.
-- **`touches` on curved solids runs the pair decisions too**, so a
-  loop no edge crossing shows still counts.
 - **Fitted cut conics lie in the plane bisecting the result's crease**
   (spanned by the cut's tangent and the sum of the result's outward
   normals), not the curve's osculating plane, and take the weight of the
@@ -4654,3 +4744,13 @@ parameter, or a split outside the patch bounds),
   operations refused that were right before (their first chords between
   cylinders `3e-3` to `3e-2` off the cut, which the rounds used to halve
   onto it).
+- **`touches` doesn't refine.** On curved operands it counts once and,
+  where that shows no meeting, searches for surfaces within the
+  resolution (`boolean/near.rs`, "Touches") instead of running the
+  boolean's refinement to the end. Its charge is a unit per visit (the
+  plan guessed one to two, measured 0.24 to 0.44 µs a visit). This also
+  covers the plan of stopping `touches` at the first round whose
+  counting shows a meeting: it counts only that round. A loop no edge
+  crossing shows still counts, found by the search (it used to run the
+  pair decisions for that). The search is `pub(crate)` with a visitor,
+  for the minimum distances to bound.
