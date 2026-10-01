@@ -2667,6 +2667,11 @@ patches are their normals at the corner. Beyond heights:
   top, between two wall vertices at its height joined by a curve dipping
   into the plate, ran in the triangle below the curve instead of the one
   above (`Invalid(Fold)`), and drilling a plate twice sometimes failed.
+  It also came out wrong where the check couldn't see it: on a turned
+  frame, a hole drilled through a ring sunk in a plate (its wall split at
+  the plate's faces) took `1.8e-6` too little, a sliver left where the
+  ring's wall meets the plate's bottom
+  (`a_hole_through_a_sunk_ring_on_a_turned_frame`).
 - **Edges in the surface.** An edge lying in the surface a patch's face
   claims (sampled within the resolution) isn't searched with a count of
   0: the perturbation takes it off to one side, and the search found
@@ -4403,9 +4408,25 @@ to 72 of its 96 operations and left the others as they were.
   has the curve's piece from the vertex across from the band's end to its
   far end as one long side, and the band's end next to it, so ear
   clipping leaves a sliver there (leaving that vertex out moves the
-  sliver, failing as many). Fuzzed app chains (random extrudes on the origin
-  planes, joined, cut and intersected) fail as before, about one
-  operation in six, mostly at tangencies. Earlier fixes here: a boss
+  sliver, failing as many). On a frame tilted a degree or so, such a band
+  ending at a hole's wall fails the hull rules at the curve's end instead:
+  the wall triangle above the curve and the one below the cut share only
+  that corner, with the band's last triangle a narrow wedge between
+  them. And where a boss's span puts the split of its wall a hair below
+  the plate's face (`1e-10`, inside the tie), the face's cut is put in the
+  triangle below the split's curve, outside it; the vertex across from it
+  then leaves a fold there, where without it the cut was pulled onto the
+  curve. These fail a few operations the bands' rule had not (2 to 4 of
+  600 a scan) against 5 to 11 it mends. A boss whose bottom or split is
+  `1e-7` off the plate's face (under the resolution) comes out flush with
+  it, the volume within the gap's, as before; from `1e-10` to `1e-6` off,
+  a third of such operations fail (as before, a few less). Fuzzed app chains (random extrudes
+  on the origin planes, joined, cut and intersected) fail as before, about
+  one operation in six, mostly at tangencies; the same chains made body
+  first on six frames (the origin planes, turned, tilted, far from the
+  origin) over drilled plates and round plates, with bosses, rings and
+  slots sunk, through or standing, fail 12 to 16% (main 18 to 21%), none
+  wrong against exact volumes. Earlier fixes here: a boss
   whose rim runs along a cap edge between symmetric holes, tangent to it
   at a vertex both have (`Inconsistent`: crossings a micrometre apart in
   the wrong order, then zero-width triangles at the rim); a boss's wall

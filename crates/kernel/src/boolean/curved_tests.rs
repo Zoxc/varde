@@ -747,6 +747,69 @@ fn a_boss_sunk_through_a_drilled_plate_is_the_same_on_any_thread_count() {
     }
 }
 
+#[test]
+fn a_hole_through_a_sunk_ring_on_a_turned_frame() {
+    // Made as the app makes it, on a turned frame: a plate 1 thick with
+    // two holes, a ring joined from -1 to 3 (its wall split at the
+    // plate's faces), a slot cut from -1 to 1, then a hole from -1 to 1
+    // through the plate and the ring's wall below it. The result came out
+    // 1.8e-6 too big, a sliver left where the ring's wall meets the
+    // plate's bottom, until crossings at an edge's end in a plane went by
+    // the perturbation.
+    let turn = DQuat::from_rotation_x(0.37) * DQuat::from_rotation_y(-0.61);
+    let frame = Frame {
+        origin: DVec3::new(0.3, -0.2, 0.7),
+        x: turn * DVec3::X,
+        y: turn * DVec3::Y,
+    };
+    let plate = extruded_on(
+        vec![
+            rect(DVec2::new(-3.0, -2.0), DVec2::new(3.0, 2.0), 0),
+            circle(DVec2::new(1.7, 0.95), 0.35, 10, true),
+            circle(DVec2::new(-1.55, 1.1), 0.65, 20, true),
+        ],
+        frame,
+        0.0,
+        1.0,
+        1,
+    );
+    let (c, o) = (DVec2::new(0.1, 0.15), DVec2::new(0.15, -0.05));
+    let ring = extruded_on(
+        vec![circle(c, 1.15, 0, false), circle(c + o, 0.4, 10, true)],
+        frame,
+        -1.0,
+        3.0,
+        10,
+    );
+    let body = run(&plate, &ring, Op::Union);
+    let (c, half, r) = (DVec2::new(-0.45, 1.0), 0.9, 0.55);
+    let p = |x: f64, y: f64| c + DVec2::new(x, y);
+    let slot = Loop {
+        segments: vec![
+            Segment::line(p(-half, -r), p(half, -r), 0).unwrap(),
+            arc(p(half, 0.0), p(half, -r), p(half + r, 0.0), 1),
+            arc(p(half, 0.0), p(half + r, 0.0), p(half, r), 1),
+            Segment::line(p(half, r), p(-half, r), 2).unwrap(),
+            arc(p(-half, 0.0), p(-half, r), p(-half - r, 0.0), 3),
+            arc(p(-half, 0.0), p(-half - r, 0.0), p(-half, -r), 3),
+        ],
+    };
+    let body = run(
+        &body,
+        &extruded_on(vec![slot], frame, -1.0, 1.0, 12),
+        Op::Difference,
+    );
+    let hole = (DVec2::new(0.05, -0.95), 0.55);
+    let drill = extruded_on(vec![circle(hole.0, hole.1, 0, false)], frame, -1.0, 1.0, 13);
+    // The hole takes the plate's full disc (clear of its holes and the
+    // slot) and, below it, where it overlaps the ring's outer disc (clear
+    // of its hole).
+    let taken = PI * hole.1 * hole.1 + lens(hole, (DVec2::new(0.1, 0.15), 1.15));
+    let got = run(&body, &drill, Op::Difference).volume();
+    let want = body.volume() - taken;
+    assert!((got - want).abs() < 1e-9, "{got} not {want}");
+}
+
 /// The 60 × 40 plate with a hole of radius 8 in its middle, extruded
 /// from 0 to `h`, its hole's loop as regeneration builds it: clockwise
 /// from (8, 0), in four quarters.
