@@ -35,6 +35,9 @@ override ENCODE_SRGB: bool;
 override GRID_FADE_HEIGHTS: f32;
 // How wide sketch lines are, in logical pixels.
 override LINE_WIDTH: f32;
+// Set for the pipelines drawing the sketch's layers depth tested: they're
+// given their depth, pulled towards the camera, rather than drawn on top.
+override SKETCH_DEPTH: bool = false;
 
 // The visible height at the target in world units.
 fn view_height() -> f32 {
@@ -316,10 +319,12 @@ fn fs_edge() -> @location(0) vec4<f32> {
 
 // Flags of a segment of the sketch being edited, as in sketch.rs: whether
 // it has a neighbour before and after it, and whether it's in logical
-// pixels from the viewport's top left rather than sketch coordinates.
+// pixels from the viewport's top left, or in the world (x and y with z
+// apart), rather than sketch coordinates.
 const HAS_PREV: u32 = 1u;
 const HAS_NEXT: u32 = 2u;
 const SCREEN: u32 = 4u;
+const WORLD: u32 = 8u;
 
 struct LineOut {
     @builtin(position) position: vec4<f32>,
@@ -515,13 +520,39 @@ fn from_screen(logical: vec2<f32>) -> vec4<f32> {
     return vec4<f32>(vec2<f32>(pixels.x, -pixels.y) / (0.5 * u.viewport.xy), 0.0, 1.0);
 }
 
-// The clip position of `at`, a sketch point, or with SCREEN in `flags`
-// logical pixels on the screen.
-fn sketch_clip(at: vec2<f32>, flags: u32) -> vec4<f32> {
+// Where `at`, a sketch point, is in the world, or with WORLD in `flags`
+// the world point `at` with `z`.
+fn sketch_world(at: vec2<f32>, z: f32, flags: u32) -> vec3<f32> {
+    if (flags & WORLD) != 0u {
+        return vec3<f32>(at, z);
+    }
+    return on_plane(at);
+}
+
+// The clip position of `at`, a sketch point, or a world point with WORLD
+// in `flags` and `z`, or with SCREEN logical pixels on the screen.
+fn sketch_clip(at: vec2<f32>, z: f32, flags: u32) -> vec4<f32> {
     if (flags & SCREEN) != 0u {
         return from_screen(at);
     }
-    return u.view_proj * vec4<f32>(on_plane(at), 1.0);
+    return u.view_proj * vec4<f32>(sketch_world(at, z, flags), 1.0);
+}
+
+// Pull of the sketch's depth tested layers towards the camera, in view
+// heights, like the edges' (`pulled`), so a face they lie on doesn't hide
+// them while one in front does.
+const OVERLAY_PULL: f32 = 0.002;
+
+// The normalized depth of the world point `world`, in front of the near
+// plane, for the sketch's depth tested layers: pulled towards the camera
+// by OVERLAY_PULL view heights and at least EDGE_DEPTH_BIAS, kept from 0
+// to 1 so nothing is cut at the far plane.
+fn overlay_depth(world: vec3<f32>) -> f32 {
+    let clip = u.view_proj * vec4<f32>(world, 1.0);
+    let toward = u.view_proj * vec4<f32>(world + u.backward.xyz * view_height() * OVERLAY_PULL, 1.0);
+    // Pulled past the eye, it's as near as can be.
+    let pulled = select(0.0, toward.z / toward.w, toward.w > 0.0);
+    return clamp(min(pulled, clip.z / clip.w - EDGE_DEPTH_BIAS), 0.0, 1.0);
 }
 
 @vertex
@@ -529,30 +560,40 @@ fn vs_sketch_line(
     @builtin(vertex_index) index: u32,
     @location(0) ends: vec4<f32>,
     @location(1) neighbours: vec4<f32>,
-    @location(2) color: vec4<f32>,
-    @location(3) style: vec4<f32>,
-    @location(4) along: vec2<f32>,
-    @location(5) flags: u32,
+    @location(2) z: vec4<f32>,
+    @location(3) color: vec4<f32>,
+    @location(4) style: vec4<f32>,
+    @location(5) along: vec2<f32>,
+    @location(6) flags: u32,
 ) -> LineOut {
-    let ca = sketch_clip(ends.xy, flags);
-    let cb = sketch_clip(ends.zw, flags);
+    let ca = sketch_clip(ends.xy, z.x, flags);
+    let cb = sketch_clip(ends.zw, z.y, flags);
     let half = style.x * 0.5 * u.viewport.z;
     let margin = half + 2.0;
     let cut = (flags & SCREEN) == 0u;
     // Each segment is cut the way its neighbours cut it as theirs.
     var prev = none();
     if (flags & HAS_PREV) != 0u {
-        prev = shown(sketch_clip(neighbours.xy, flags), ca, cut, margin);
+        prev = shown(sketch_clip(neighbours.xy, z.z, flags), ca, cut, margin);
     }
     var next = none();
     if (flags & HAS_NEXT) != 0u {
-        next = shown(cb, sketch_clip(neighbours.zw, flags), cut, margin);
+        next = shown(cb, sketch_clip(neighbours.zw, z.w, flags), cut, margin);
+    }
+    let own = shown(ca, cb, cut, margin);
+    // On top, or depth tested where its ends show: clip space is linear in
+    // the world, so they're as far along in both.
+    var depth = vec2<f32>(0.0);
+    if SKETCH_DEPTH && cut && own.t.x <= own.t.y {
+        let a = sketch_world(ends.xy, z.x, flags);
+        let b = sketch_world(ends.zw, z.y, flags);
+        depth = vec2<f32>(overlay_depth(mix(a, b, own.t.x)), overlay_depth(mix(a, b, own.t.y)));
     }
     // Dashes are in logical pixels, and run along the polyline by its
     // length on the screen: in logical pixels, or in sketch units at the
     // scale of the target, a sketch being looked at straight on.
     let scale = select(u.viewport.y / view_height(), u.viewport.z, (flags & SCREEN) != 0u);
-    return line_vertex(index, shown(ca, cb, cut, margin), prev, next, flags, vec2<f32>(0.0), half,
+    return line_vertex(index, own, prev, next, flags, depth, half,
         color, style.yz * u.viewport.z, along * scale);
 }
 
@@ -707,7 +748,8 @@ fn fs_origin(in: OriginOut) -> @location(0) vec4<f32> {
 // --- The sketch being edited: points and fills ---
 //
 // Drawn over everything, with its lines (`vs_sketch_line`): fills first,
-// then lines, then points.
+// then lines, then points. With SKETCH_DEPTH, what isn't on the screen is
+// given its depth instead (`overlay_depth`), so the model hides it.
 
 struct PointOut {
     @builtin(position) position: vec4<f32>,
@@ -745,7 +787,11 @@ fn vs_point(
         vec2(-1.0, -1.0), vec2(1.0, 1.0), vec2(-1.0, 1.0),
     );
     let pixels = center + corners[index] * reach;
-    out.position = vec4<f32>(pixels / (0.5 * u.viewport.xy), 0.0, 1.0);
+    var z = 0.0;
+    if SKETCH_DEPTH {
+        z = overlay_depth(on_plane(at));
+    }
+    out.position = vec4<f32>(pixels / (0.5 * u.viewport.xy), z, 1.0);
     out.center = center;
     out.size = vec2<f32>(radius, size.y * u.viewport.z);
     out.rim = rim;
@@ -769,18 +815,25 @@ struct FillOut {
 
 // A corner of a fill's triangle. In sketch coordinates in perspective, its
 // depth is only kept within range, so the triangle is cut at the near
-// plane and never at the far one; the fill isn't depth tested.
+// plane and never at the far one, where the fill isn't depth tested. Depth
+// tested, it's `overlay_depth` in front of the near plane, and as it is
+// behind it, where it's cut.
 @vertex
 fn vs_fill(
     @location(0) at: vec2<f32>,
     @location(1) flags: u32,
     @location(2) color: vec4<f32>,
+    @location(3) world_z: f32,
 ) -> FillOut {
     var out: FillOut;
-    let clip = sketch_clip(at, flags);
+    let clip = sketch_clip(at, world_z, flags);
     var z = 0.0;
-    if (flags & SCREEN) == 0u && perspective() {
-        z = 0.5 * (clip.w - near());
+    if (flags & SCREEN) == 0u {
+        if SKETCH_DEPTH {
+            z = select(overlay_depth(sketch_world(at, world_z, flags)) * clip.w, clip.z, clip.z < 0.0);
+        } else if perspective() {
+            z = 0.5 * (clip.w - near());
+        }
     }
     out.position = vec4<f32>(clip.xy, z, clip.w);
     out.color = color;

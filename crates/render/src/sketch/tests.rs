@@ -175,3 +175,36 @@ fn a_triangle_is_filled_as_it_is() {
     );
     assert_eq!(layer.fills.len(), 3);
 }
+
+#[test]
+fn on_another_plane_the_world_points_are_kept() {
+    // A plane standing up through (1, 2, 3): its x along the world's z,
+    // its y along the world's x.
+    let plane = GridPlane::new(Vec3::new(1.0, 2.0, 3.0), Vec3::Z, Vec3::X).unwrap();
+    let mut layer = SketchLayer::default();
+    layer.polyline(Space::On(plane), &[at(0.0, 0.0), at(4.0, 1.0)], STYLE);
+    let corners = [at(0.0, 0.0), at(1.0, 0.0), at(0.0, 1.0)];
+    layer.triangle(Space::On(plane), corners, STYLE.color);
+    let line = layer.lines[0];
+    assert_eq!(line.flags, WORLD);
+    assert_eq!(line.ends, [1.0, 2.0, 2.0, 2.0]);
+    assert_eq!(line.z[..2], [3.0, 7.0]);
+    let zs: Vec<_> = layer.fills.iter().map(|f| (f.at, f.z, f.flags)).collect();
+    assert_eq!(
+        zs,
+        [
+            ([1.0, 2.0], 3.0, WORLD),
+            ([1.0, 2.0], 4.0, WORLD),
+            ([2.0, 2.0], 3.0, WORLD)
+        ]
+    );
+    // Wherever the scene's plane is, and nothing on the screen.
+    layer.polyline(Space::Screen, &[at(-500.0, 0.0), at(500.0, 0.0)], STYLE);
+    let bounds = layer.bounds(&GridPlane::XY).unwrap();
+    assert_eq!(bounds.min, Vec3::new(1.0, 2.0, 3.0));
+    assert_eq!(bounds.max, Vec3::new(2.0, 2.0, 7.0));
+    // A point too far out for `f32` isn't added.
+    let mut far = SketchLayer::default();
+    far.polyline(Space::On(plane), &[at(0.0, 0.0), at(1e300, 0.0)], STYLE);
+    assert!(far.is_empty());
+}

@@ -9,6 +9,7 @@ use crate::projection::top_camera;
 use crate::testing;
 use crate::theme::Mode;
 use crate::viewport::{Interaction, Program, program};
+use varde_document::ExtrudeError;
 
 /// The viewport's side, in pixels: through [`top_camera`], a unit is 10
 /// pixels, the origin in the middle.
@@ -228,7 +229,7 @@ fn the_regions_and_the_shaft_are_drawn() {
     let input = Interaction::default();
     let draw = |viewport: &Program<'_>| viewport.draw(&input, mouse::Cursor::Unavailable, bounds());
 
-    // Before a source, every candidate's regions on the screen.
+    // Before a source, every candidate's regions, each on its plane.
     let viewport = shown(state(
         &profiles,
         feature,
@@ -240,8 +241,10 @@ fn the_regions_and_the_shaft_are_drawn() {
     let frame = draw(&viewport).sketch.expect("drawn");
     assert!(frame.base.is_empty());
     assert!(!frame.live.is_empty());
+    // Hidden by the model in front of it.
+    assert!(frame.depth_tested);
 
-    // Once picked, on the plane, and the handle's shaft on the screen.
+    // Once picked, on the plane, and the handle's shaft along its axis.
     let picked = BTreeSet::from([ring(&profiles)]);
     let viewport = shown(state(
         &profiles,
@@ -257,4 +260,83 @@ fn the_regions_and_the_shaft_are_drawn() {
     // The base layer is kept while nothing it shows changes.
     let again = draw(&viewport).sketch.unwrap();
     assert!(Arc::ptr_eq(&frame.base, &again.base));
+}
+
+#[test]
+fn an_extrude_its_own_check_refuses_draws_no_shaft() {
+    // Two sides together over the limit: no preview for the shaft to
+    // stand on, which would be a line on its own.
+    let (profiles, feature) = plate();
+    let picked = BTreeSet::from([ring(&profiles)]);
+    let input = Interaction::default();
+    let mut state = state(&profiles, feature, OriginPlane::XY, true, &picked, None);
+    let shaft = |state: ExtrudeState<'_>| {
+        let viewport = shown(state);
+        let frame = viewport.draw(&input, mouse::Cursor::Unavailable, bounds());
+        !frame.sketch.expect("drawn").live.is_empty()
+    };
+    assert!(shaft(state.clone()));
+    state.refused = Some(ExtrudeError::Length);
+    assert!(!shaft(state));
+}
+
+/// A box from the origin to (2, 2, 2), tessellated.
+fn cube() -> RenderMesh {
+    let tol = varde_kernel::Tolerance::DEFAULT;
+    let solid = varde_kernel::Solid::cuboid(DVec3::ZERO, DVec3::splat(2.0), 0, &tol);
+    let display = varde_kernel::Display::new(&tol);
+    solid.unwrap().tessellate(&display).unwrap()
+}
+
+#[test]
+fn a_knob_the_model_is_in_front_of_is_hidden() {
+    // From the top, over a box from the origin to (2, 2, 2): beneath it,
+    // inside it, on its top face, above it and beside it.
+    let mesh = cube();
+    let mut perspective = top_camera();
+    perspective.set_projection(Projection::Perspective);
+    for camera in [top_camera(), perspective] {
+        for (z, behind) in [(-1.0, true), (1.0, true), (2.0, false), (3.0, false)] {
+            let at = DVec3::new(1.0, 1.5, z);
+            assert_eq!(hidden(&mesh, &camera, at), behind, "{camera:?} at {at}");
+        }
+        assert!(!hidden(&mesh, &camera, DVec3::new(5.0, 1.0, -1.0)));
+        assert!(!hidden(
+            &RenderMesh::default(),
+            &camera,
+            DVec3::new(1.0, 1.0, -1.0)
+        ));
+    }
+    // From below, the other way round.
+    let mut camera = top_camera();
+    camera.look_from(varde_render::View::Bottom);
+    assert!(hidden(&mesh, &camera, DVec3::new(1.0, 1.0, 3.0)));
+    assert!(!hidden(&mesh, &camera, DVec3::new(1.0, 1.0, 0.0)));
+}
+
+#[test]
+fn knobs_the_model_hides_are_left_out() {
+    // One side, 10 mm up from the plate's ring on XY: a box around the
+    // plate up to 20 mm hides the knob from the top.
+    let (profiles, feature) = plate();
+    let picked = BTreeSet::from([ring(&profiles)]);
+    let extruding = Extruding::new(state(
+        &profiles,
+        feature,
+        OriginPlane::XY,
+        true,
+        &picked,
+        None,
+    ));
+    let tol = varde_kernel::Tolerance::DEFAULT;
+    let solid = varde_kernel::Solid::cuboid(DVec3::splat(-20.0), DVec3::splat(40.0), 0, &tol);
+    let display = varde_kernel::Display::new(&tol);
+    let mesh = solid.unwrap().tessellate(&display).unwrap();
+    let knob = extruding.handle.as_ref().unwrap();
+    let at = knob.origin + knob.normal * knob.knobs[0].1;
+    assert!(hidden(&mesh, &top_camera(), at));
+    assert!(!hidden(&RenderMesh::default(), &top_camera(), at));
+    let shown = |mesh: &RenderMesh| extruding.shown_knobs(&top_camera(), mesh).count();
+    assert_eq!(shown(&RenderMesh::default()), 1);
+    assert_eq!(shown(&mesh), 0);
 }

@@ -64,7 +64,9 @@ pub struct Frame<'a> {
     /// Whether the model is drawn faded, as it is behind a sketch being
     /// edited: see [`Colors::faded_alpha`].
     pub faded: bool,
-    /// The sketch being edited, if one is, drawn over everything else.
+    /// The sketch being edited, or the extrude being set up, if one is:
+    /// drawn over everything else, or hidden by the model in front of it
+    /// ([`SketchScene::depth_tested`]).
     pub sketch: Option<SketchScene<'a>>,
     /// Where to draw on the target.
     pub viewport: Viewport,
@@ -214,6 +216,9 @@ struct Pass<'a> {
     write_mask: wgpu::ColorWrites,
     topology: wgpu::PrimitiveTopology,
     cull_mode: Option<wgpu::Face>,
+    /// Sets the shader's `SKETCH_DEPTH`: the sketch's layers are given
+    /// their depth, pulled towards the camera, rather than drawn on top.
+    sketch_depth: bool,
 }
 
 impl<'a> Pass<'a> {
@@ -231,6 +236,22 @@ impl<'a> Pass<'a> {
             write_mask: wgpu::ColorWrites::ALL,
             topology: wgpu::PrimitiveTopology::TriangleList,
             cull_mode: None,
+            sketch_depth: false,
+        }
+    }
+
+    /// Like [`Self::on_top`], hidden by what's nearer, its depth from
+    /// the shader with `SKETCH_DEPTH` set.
+    const fn depth_tested(
+        label: &'a str,
+        vs: &'a str,
+        fs: &'a str,
+        buffers: &'a [wgpu::VertexBufferLayout<'a>],
+    ) -> Self {
+        Pass {
+            buffers,
+            sketch_depth: true,
+            ..Pass::overlay(label, vs, fs)
         }
     }
 
@@ -300,10 +321,11 @@ pub struct Renderer {
     edges: wgpu::RenderPipeline,
     lines: wgpu::RenderPipeline,
     origin: wgpu::RenderPipeline,
-    /// The sketch being edited: its fills, lines and points.
-    sketch_fills: wgpu::RenderPipeline,
-    sketch_lines: wgpu::RenderPipeline,
-    sketch_points: wgpu::RenderPipeline,
+    /// The sketch being edited: its fills, lines and points, drawn over
+    /// everything, and the same hidden by the model in front of them
+    /// ([`SketchScene::depth_tested`]).
+    sketch_on_top: SketchPipelines,
+    sketch_depth_tested: SketchPipelines,
     bind_group_layout: wgpu::BindGroupLayout,
 }
 
@@ -329,8 +351,10 @@ pub struct Slot {
     sketch_base: SketchBuffers,
     sketch_source: Weak<SketchLayer>,
     sketch_live: SketchBuffers,
-    /// Whether the frame has a sketch to draw.
+    /// Whether the frame has a sketch to draw, and whether it's depth
+    /// tested.
     sketching: bool,
+    sketch_depth: bool,
     depth: Option<DepthTarget>,
     viewport: Viewport,
     faded: bool,
@@ -366,17 +390,22 @@ impl Renderer {
         // Overrides in the scene shader. `ENCODE_SRGB` is set if the target
         // stores what the shader writes as is, so the shader must sRGB-encode
         // its linear output.
-        let constants = [
-            ("GRID_FADE_HEIGHTS", f64::from(GRID_FADE_HEIGHTS)),
-            ("LINE_WIDTH", f64::from(LINE_WIDTH)),
-            ("ENCODE_SRGB", if format.is_srgb() { 0.0 } else { 1.0 }),
-        ];
-        let compilation_options = wgpu::PipelineCompilationOptions {
-            constants: &constants,
-            ..Default::default()
+        // `SKETCH_DEPTH` is set for the sketch's depth tested layers.
+        let constants = |sketch_depth: bool| {
+            [
+                ("GRID_FADE_HEIGHTS", f64::from(GRID_FADE_HEIGHTS)),
+                ("LINE_WIDTH", f64::from(LINE_WIDTH)),
+                ("ENCODE_SRGB", if format.is_srgb() { 0.0 } else { 1.0 }),
+                ("SKETCH_DEPTH", if sketch_depth { 1.0 } else { 0.0 }),
+            ]
         };
 
         let pipeline = |pass: Pass<'_>| {
+            let constants = constants(pass.sketch_depth);
+            let compilation_options = wgpu::PipelineCompilationOptions {
+                constants: &constants,
+                ..Default::default()
+            };
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(pass.label),
                 layout: Some(&layout),
@@ -439,7 +468,7 @@ impl Renderer {
             step_mode: wgpu::VertexStepMode::Instance,
             attributes: &wgpu::vertex_attr_array![
                 0 => Float32x4, 1 => Float32x4, 2 => Float32x4, 3 => Float32x4,
-                4 => Float32x2, 5 => Uint32,
+                4 => Float32x4, 5 => Float32x2, 6 => Uint32,
             ],
         };
         let sketch_points = wgpu::VertexBufferLayout {
@@ -452,7 +481,9 @@ impl Renderer {
         let sketch_fills = wgpu::VertexBufferLayout {
             array_stride: size_of::<FillVertex>() as u64,
             step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Uint32, 2 => Float32x4],
+            attributes: &wgpu::vertex_attr_array![
+                0 => Float32x2, 1 => Uint32, 2 => Float32x4, 3 => Float32,
+            ],
         };
         let mesh = Pass {
             label: "varde mesh",
@@ -465,6 +496,7 @@ impl Renderer {
             write_mask: wgpu::ColorWrites::ALL,
             topology: wgpu::PrimitiveTopology::TriangleList,
             cull_mode: Some(wgpu::Face::Back),
+            sketch_depth: false,
         };
 
         Self {
@@ -495,24 +527,46 @@ impl Renderer {
                 ..Pass::overlay("varde sketch lines", "vs_line", "fs_line")
             }),
             origin: pipeline(Pass::overlay("varde origin", "vs_origin", "fs_origin")),
-            sketch_fills: pipeline(Pass::on_top(
-                "varde sketch fills",
-                "vs_fill",
-                "fs_fill",
-                &[sketch_fills],
-            )),
-            sketch_lines: pipeline(Pass::on_top(
-                "varde sketch being edited",
-                "vs_sketch_line",
-                "fs_line",
-                &[sketch_lines],
-            )),
-            sketch_points: pipeline(Pass::on_top(
-                "varde sketch points",
-                "vs_point",
-                "fs_point",
-                &[sketch_points],
-            )),
+            sketch_on_top: SketchPipelines {
+                fills: pipeline(Pass::on_top(
+                    "varde sketch fills",
+                    "vs_fill",
+                    "fs_fill",
+                    std::slice::from_ref(&sketch_fills),
+                )),
+                lines: pipeline(Pass::on_top(
+                    "varde sketch being edited",
+                    "vs_sketch_line",
+                    "fs_line",
+                    std::slice::from_ref(&sketch_lines),
+                )),
+                points: pipeline(Pass::on_top(
+                    "varde sketch points",
+                    "vs_point",
+                    "fs_point",
+                    std::slice::from_ref(&sketch_points),
+                )),
+            },
+            sketch_depth_tested: SketchPipelines {
+                fills: pipeline(Pass::depth_tested(
+                    "varde sketch fills, depth tested",
+                    "vs_fill",
+                    "fs_fill",
+                    &[sketch_fills],
+                )),
+                lines: pipeline(Pass::depth_tested(
+                    "varde sketch lines, depth tested",
+                    "vs_sketch_line",
+                    "fs_line",
+                    &[sketch_lines],
+                )),
+                points: pipeline(Pass::depth_tested(
+                    "varde sketch points, depth tested",
+                    "vs_point",
+                    "fs_point",
+                    &[sketch_points],
+                )),
+            },
             bind_group_layout,
         }
     }
@@ -544,6 +598,7 @@ impl Renderer {
             sketch_source: Weak::new(),
             sketch_live: SketchBuffers::default(),
             sketching: false,
+            sketch_depth: false,
             depth: None,
             viewport: Viewport::default(),
             faded: false,
@@ -593,6 +648,7 @@ impl Renderer {
         }
 
         slot.sketching = frame.sketch.is_some();
+        slot.sketch_depth = frame.sketch.is_some_and(|sketch| sketch.depth_tested);
         if let Some(sketch) = &frame.sketch {
             let mut sketch_result = Ok(());
             if !std::ptr::eq(slot.sketch_source.as_ptr(), Arc::as_ptr(sketch.base)) {
@@ -607,10 +663,23 @@ impl Renderer {
             result = result.and(sketch_result);
         }
 
+        // A depth tested sketch is hidden by what's in front of it, and
+        // so needs the depth range to cover it.
+        let sketch_bounds = frame
+            .sketch
+            .filter(|sketch| sketch.depth_tested)
+            .map(|sketch| {
+                [
+                    sketch.base.bounds(&sketch.plane),
+                    sketch.live.bounds(&sketch.plane),
+                ]
+            });
         let bounds = [
             slot.mesh.as_ref().and_then(|m| m.bounds),
             slot.lines.as_ref().and_then(|l| l.bounds),
-        ];
+        ]
+        .into_iter()
+        .chain(sketch_bounds.into_iter().flatten());
         let (camera, colors, grid) = (frame.camera, frame.colors, &frame.grid);
         let sketch_plane = frame.sketch.map_or(*grid, |sketch| sketch.plane);
         let aspect = frame.viewport.aspect();
@@ -626,7 +695,7 @@ impl Renderer {
             [r, g, b, alpha]
         };
         let uniforms = Uniforms {
-            view_proj: scene::view_projection(camera, aspect, grid, bounds.into_iter().flatten())
+            view_proj: scene::view_projection(camera, aspect, grid, bounds.flatten())
                 .to_cols_array_2d(),
             eye: camera.eye_homogeneous().to_array(),
             right: camera.right().extend(half.x).to_array(),
@@ -746,29 +815,44 @@ impl Renderer {
         pass.draw(0..ORIGIN_VERTICES, 0..1);
 
         // The sketch being edited, over everything, the origin marker
-        // included, since its points often lie on it.
+        // included, since its points often lie on it; or depth tested.
         if slot.sketching {
+            let pipelines = if slot.sketch_depth {
+                &self.sketch_depth_tested
+            } else {
+                &self.sketch_on_top
+            };
             for layer in [&slot.sketch_base, &slot.sketch_live] {
-                self.draw_sketch(&mut pass, layer);
+                pipelines.draw(&mut pass, layer);
             }
         }
     }
+}
 
-    /// Records drawing a layer of the sketch being edited: its fills, then
-    /// its lines, then its points.
-    fn draw_sketch(&self, pass: &mut wgpu::RenderPass<'_>, layer: &SketchBuffers) {
+/// The pipelines drawing the sketch's layers, one way or the other: see
+/// [`SketchScene::depth_tested`].
+struct SketchPipelines {
+    fills: wgpu::RenderPipeline,
+    lines: wgpu::RenderPipeline,
+    points: wgpu::RenderPipeline,
+}
+
+impl SketchPipelines {
+    /// Records drawing a layer of the sketch: its fills, then its lines,
+    /// then its points.
+    fn draw(&self, pass: &mut wgpu::RenderPass<'_>, layer: &SketchBuffers) {
         if let Some(buffer) = layer.fills.drawn() {
-            pass.set_pipeline(&self.sketch_fills);
+            pass.set_pipeline(&self.fills);
             pass.set_vertex_buffer(0, buffer);
             pass.draw(0..layer.fills.count, 0..1);
         }
         if let Some(buffer) = layer.lines.drawn() {
-            pass.set_pipeline(&self.sketch_lines);
+            pass.set_pipeline(&self.lines);
             pass.set_vertex_buffer(0, buffer);
             pass.draw(0..LINE_VERTICES, 0..layer.lines.count);
         }
         if let Some(buffer) = layer.points.drawn() {
-            pass.set_pipeline(&self.sketch_points);
+            pass.set_pipeline(&self.points);
             pass.set_vertex_buffer(0, buffer);
             pass.draw(0..POINT_VERTICES, 0..layer.points.count);
         }

@@ -64,13 +64,13 @@ pub(crate) fn viewport<'a>(
             fields.beside(sketch::FIELDS_OFFSET).into(),
         ]
     });
-    // The handle's knobs, on its axis. A layer even without them, so the
-    // panel's layer above keeps its place in the stack, and with it its
-    // widgets' state (the field's focus, the body's scroll), as the last
-    // region is unpicked or the first picked.
+    // The handle's knobs, on its axis, those the model doesn't hide. A
+    // layer even without them, so the panel's layer above keeps its place
+    // in the stack, and with it its widgets' state (the field's focus, the
+    // body's scroll), as the last region is unpicked or the first picked.
     let knobs = extruding.as_ref().map(|extruding| {
         extruding
-            .knobs(camera)
+            .knobs(camera, mesh)
             .unwrap_or_else(|| iced::widget::Space::new().into())
     });
     let program = program(mesh, sketches, camera, palette, sketching, extruding);
@@ -270,15 +270,13 @@ impl shader::Program<Message> for Program<'_> {
     }
 
     fn draw(&self, state: &Interaction, _cursor: mouse::Cursor, bounds: Rectangle) -> Primitive {
+        // The model isn't faded behind an extrude, and hides what's
+        // behind it of the extrude's regions and handle.
         let extrude = self.extruding.as_ref().map(|extruding| {
-            let (base, live) = extruding.layers(
-                &state.extrude,
-                &self.scene.camera,
-                bounds,
-                self.sketch_colors,
-            );
+            let (base, live) = extruding.layers(&state.extrude, self.sketch_colors);
             SketchFrame {
                 plane: extruding.plane(),
+                depth_tested: true,
                 base,
                 live,
             }
@@ -294,6 +292,7 @@ impl shader::Program<Message> for Program<'_> {
             );
             SketchFrame {
                 plane: sketching.grid(),
+                depth_tested: false,
                 base,
                 live,
             }
@@ -401,6 +400,7 @@ struct Primitive {
 #[derive(Debug, Clone)]
 struct SketchFrame {
     plane: GridPlane,
+    depth_tested: bool,
     base: Arc<SketchLayer>,
     live: SketchLayer,
 }
@@ -434,6 +434,7 @@ impl shader::Primitive for Primitive {
                 faded: scene.sketch_plane.is_some(),
                 sketch: self.sketch.as_ref().map(|sketch| SketchScene {
                     plane: sketch.plane,
+                    depth_tested: sketch.depth_tested,
                     base: &sketch.base,
                     live: &sketch.live,
                 }),

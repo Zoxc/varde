@@ -1701,8 +1701,13 @@ fn ring(color: Color) -> PointStyle {
 
 /// Fills `region` on `layer` in `color`, by its outline, holes left out.
 pub(super) fn fill_region(layer: &mut SketchLayer, region: &Region, color: Color) {
+    fill_region_in(layer, Space::Sketch, region, color);
+}
+
+/// Like [`fill_region`], with the region's coordinates in `space`.
+pub(super) fn fill_region_in(layer: &mut SketchLayer, space: Space, region: &Region, color: Color) {
     let outline = region.outline.iter().map(Vec::as_slice);
-    layer.fill(Space::Sketch, outline, srgba(color));
+    layer.fill(space, outline, srgba(color));
 }
 
 /// `color` for the renderer.

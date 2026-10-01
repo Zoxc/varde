@@ -177,7 +177,7 @@ fn lines_past_the_buffer_limit_are_skipped() {
 
 #[test]
 fn sketch_layers_past_the_buffer_limit_are_skipped() {
-    // Segments take 80 bytes each: 6 fit in 512 bytes, 7 take 560.
+    // Segments take 96 bytes each: 5 fit in 512 bytes, 6 take 576.
     let Some((device, queue)) = device() else {
         eprintln!("no GPU adapter, skipping");
         return;
@@ -195,9 +195,9 @@ fn sketch_layers_past_the_buffer_limit_are_skipped() {
         layer.polyline(Space::Sketch, &points, style);
         layer
     };
-    let (fits, too_large) = (Arc::new(layer(6)), Arc::new(layer(7)));
+    let (fits, too_large) = (Arc::new(layer(5)), Arc::new(layer(6)));
     let error = PrepareError::SketchTooLarge {
-        bytes: 560,
+        bytes: 576,
         limit: 512,
     };
 
@@ -213,6 +213,7 @@ fn sketch_layers_past_the_buffer_limit_are_skipped() {
         faded: false,
         sketch: Some(SketchScene {
             plane: GridPlane::XY,
+            depth_tested: false,
             base,
             live,
         }),

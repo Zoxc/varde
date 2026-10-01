@@ -101,6 +101,8 @@ struct Extras {
     /// live layer if `live`, else as its base layer.
     sketch: Option<(GridPlane, SketchLayer)>,
     live: bool,
+    /// Whether the sketch is hidden by the model in front of it.
+    depth_tested: bool,
 }
 
 /// Renders `mesh` and `extras` into [`VIEWPORT`] at a scale factor of 1.
@@ -127,6 +129,7 @@ fn render_scaled(
     });
     let sketch = layers.as_ref().map(|(plane, base, live)| SketchScene {
         plane: *plane,
+        depth_tested: extras.depth_tested,
         base,
         live,
     });
@@ -170,7 +173,7 @@ fn draw(format: wgpu::TextureFormat, frame: &Frame<'_>, clip: ClipRect) -> Optio
     });
     let view = texture.create_view(&Default::default());
 
-    let renderer = Renderer::new(&device, format);
+    let renderer = renderer(&device, format);
     let mut slot = renderer.slot(&device);
     renderer.prepare(&mut slot, &device, &queue, frame).unwrap();
 
@@ -218,6 +221,20 @@ fn draw(format: wgpu::TextureFormat, frame: &Frame<'_>, clip: ClipRect) -> Optio
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
     let data = buffer.slice(..).get_mapped_range();
     Some(bytemuck_pixels(&data))
+}
+
+/// The renderer for `format` on the shared `device`, made once: building
+/// its pipelines is most of what drawing a test's frame takes.
+fn renderer(device: &wgpu::Device, format: wgpu::TextureFormat) -> Arc<Renderer> {
+    static RENDERERS: std::sync::Mutex<Vec<(wgpu::TextureFormat, Arc<Renderer>)>> =
+        std::sync::Mutex::new(Vec::new());
+    let mut renderers = RENDERERS.lock().unwrap();
+    if let Some((_, renderer)) = renderers.iter().find(|(f, _)| *f == format) {
+        return renderer.clone();
+    }
+    let renderer = Arc::new(Renderer::new(device, format));
+    renderers.push((format, renderer.clone()));
+    renderer
 }
 
 fn bytemuck_pixels(data: &[u8]) -> Vec<[u8; 4]> {
@@ -1295,4 +1312,194 @@ fn grid_axes_are_anti_aliased() {
         partial > SIZE[0] as usize / 2,
         "only {partial} partly covered pixels"
     );
+}
+
+/// Whether a pixel is mostly `color`'s pure red, green or blue: index 0,
+/// 1 or 2.
+fn mostly(pixel: [u8; 4], color: usize) -> bool {
+    let others = (0..3).filter(|&i| i != color).map(|i| pixel[i]);
+    pixel[color] > 150 && others.max().unwrap_or(0) < 100
+}
+
+/// A square of `size` around `center` on its plane.
+fn square(center: (f64, f64), size: f64) -> [glam::DVec2; 4] {
+    let (x, y, h) = (center.0, center.1, size / 2.0);
+    [(-h, -h), (h, -h), (h, h), (-h, h)].map(|(dx, dy)| glam::DVec2::new(x + dx, y + dy))
+}
+
+/// Where `world` shows through `camera` in [`SKETCH_VIEW`] at a scale
+/// factor of 1, in whole pixels.
+fn sketch_view_pixel(camera: &Camera, world: Vec3) -> (u32, u32) {
+    let [width, height] = SKETCH_VIEW;
+    let from = world - camera.eye();
+    let depth = -from.dot(camera.backward());
+    let scale = height / camera.view_height()
+        * match camera.projection() {
+            Projection::Perspective => camera.distance() / depth,
+            Projection::Orthographic => 1.0,
+        };
+    let x = width / 2.0 + from.dot(camera.right()) * scale;
+    let y = height / 2.0 - from.dot(camera.up()) * scale;
+    (x as u32, y as u32)
+}
+
+#[test]
+fn a_depth_tested_sketch_is_hidden_by_the_model_in_front_of_it() {
+    // From the top, a cube from (0, 0, 0) to (2, 2, 2), with the black
+    // background left of x = 0. A square, a line and a point across its
+    // edge, on the sketch's plane or another, one at a time.
+    let cube = cube(2.0, Vec3::ZERO);
+    let plane = |z: f32| GridPlane::new(Vec3::new(0.0, 0.0, z), Vec3::X, Vec3::Y).unwrap();
+    let style = LineStyle {
+        color: YELLOW,
+        width: 3.0,
+        dash: None,
+    };
+    let point = PointStyle {
+        radius: 4.0,
+        rim_width: 1.0,
+        rim: RED,
+        fill: RED,
+        fixed: false,
+    };
+    let at = glam::DVec2::new;
+    type Item = (&'static str, fn([u8; 4]) -> bool);
+    let items: [Item; 3] = [
+        ("square", |p| mostly(p, 1)),
+        ("line", yellow),
+        ("point", |p| mostly(p, 0)),
+    ];
+    let mut perspective = top_camera();
+    perspective.set_projection(Projection::Perspective);
+    for camera in [top_camera(), perspective] {
+        // On the plane of the cube's bottom, its middle, its top, above
+        // it and beneath it.
+        for (z, hidden) in [
+            (0.0, true),
+            (1.0, true),
+            (2.0, false),
+            (3.0, false),
+            (-1.0, true),
+        ] {
+            for (other, depth_tested, live) in [
+                (false, true, false),
+                (false, true, true),
+                (true, true, false),
+                (false, false, false),
+            ] {
+                for (name, shows_in) in items {
+                    // On the sketch's plane, or on another with the
+                    // sketch's on XY.
+                    let (space, sketch_plane) = if other {
+                        (Space::On(plane(z)), GridPlane::XY)
+                    } else {
+                        (Space::Sketch, plane(z))
+                    };
+                    let mut layer = SketchLayer::default();
+                    match name {
+                        "square" => layer.fill(space, [&square((0.0, 1.0), 1.6)[..]], GREEN),
+                        "line" => layer.polyline(space, &[at(-1.0, 1.0), at(1.0, 1.0)], style),
+                        _ if other => continue,
+                        _ => {
+                            layer.point(at(-0.7, 1.0), point);
+                            layer.point(at(0.7, 1.0), point);
+                        }
+                    }
+                    let extras = Extras {
+                        sketch: Some((sketch_plane, layer)),
+                        depth_tested,
+                        live,
+                        ..Extras::default()
+                    };
+                    let Some(pixels) = render_sketch(&camera, &cube, extras, 1.0) else {
+                        eprintln!("no GPU adapter, skipping");
+                        return;
+                    };
+                    let on = |x: f32| {
+                        let (x, y) = sketch_view_pixel(&camera, Vec3::new(x, 1.0, z));
+                        shows_in(pixel(&pixels, x, y))
+                    };
+                    let case = format!(
+                        "{:?} {name} at z {z} on another plane {other} tested {depth_tested} \
+                         live {live}",
+                        camera.projection()
+                    );
+                    // Off the cube it shows; over it, if it's behind it,
+                    // only if it isn't depth tested.
+                    assert!(on(-0.7), "{case}: off the cube");
+                    assert_eq!(on(0.7), !(hidden && depth_tested), "{case}: over the cube");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn a_depth_tested_sketch_far_from_the_model_still_shows() {
+    // Far below the grid and the cube, past the depth range the scene
+    // would have without it.
+    let mut camera = top_camera();
+    let far = GridPlane::new(Vec3::new(0.0, 0.0, -500.0), Vec3::X, Vec3::Y).unwrap();
+    // Not depth tested, it shows over the cube too.
+    for (projection, depth_tested) in [
+        (Projection::Orthographic, true),
+        (Projection::Perspective, true),
+        (Projection::Orthographic, false),
+        (Projection::Perspective, false),
+    ] {
+        camera.set_projection(projection);
+        let mut layer = SketchLayer::default();
+        layer.fill(Space::On(far), [&square((0.0, 0.0), 4000.0)[..]], GREEN);
+        let extras = Extras {
+            sketch: Some((GridPlane::XY, layer)),
+            depth_tested,
+            ..Extras::default()
+        };
+        let Some(pixels) = render_sketch(&camera, &cube(2.0, Vec3::ZERO), extras, 1.0) else {
+            eprintln!("no GPU adapter, skipping");
+            return;
+        };
+        let case = format!("{projection:?} tested {depth_tested}");
+        let (x, y) = sketch_pixel(-3.0, -3.0, 1.0);
+        assert!(mostly(pixel(&pixels, x as u32, y as u32), 1), "{case}");
+        let (x, y) = sketch_pixel(1.0, 1.0, 1.0);
+        let over = mostly(pixel(&pixels, x as u32, y as u32), 1);
+        assert_eq!(over, !depth_tested, "{case}");
+    }
+}
+
+#[test]
+fn a_depth_tested_line_inside_the_model_is_hidden_from_any_side() {
+    // A line up the middle of a cube from (0, 0, 0) to (2, 2, 2), as an
+    // extrude's shaft is, seen from above at an angle.
+    let cube = cube(2.0, Vec3::ZERO);
+    let axis = GridPlane::new(Vec3::new(1.0, 1.0, 0.0), Vec3::Z, Vec3::X).unwrap();
+    let style = LineStyle {
+        color: YELLOW,
+        width: 3.0,
+        dash: None,
+    };
+    let mut camera = top_camera();
+    camera.set_target(Vec3::ONE);
+    camera.orbit(0.6, -0.9);
+    for projection in [Projection::Orthographic, Projection::Perspective] {
+        camera.set_projection(projection);
+        for depth_tested in [true, false] {
+            let mut layer = SketchLayer::default();
+            let ends = [glam::DVec2::new(0.2, 0.0), glam::DVec2::new(1.8, 0.0)];
+            layer.polyline(Space::On(axis), &ends, style);
+            let extras = Extras {
+                sketch: Some((GridPlane::XY, layer)),
+                depth_tested,
+                live: true,
+                ..Extras::default()
+            };
+            let Some(pixels) = render_sketch(&camera, &cube, extras, 1.0) else {
+                eprintln!("no GPU adapter, skipping");
+                return;
+            };
+            let shown = pixels.iter().filter(|&&p| yellow(p)).count();
+            assert_eq!(shown > 0, !depth_tested, "{projection:?}: {shown} pixels");
+        }
+    }
 }

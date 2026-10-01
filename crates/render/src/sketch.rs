@@ -4,20 +4,28 @@
 use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
-use glam::DVec2;
+use glam::{DVec2, Vec3};
 use tess2_rust::{ElementType, Tessellator, WindingRule};
+use varde_kernel::{Aabb, RenderLines};
 
 use crate::GridPlane;
 use crate::renderer::srgb_to_linear;
 
-/// The sketch being edited, drawn over the scene without a depth test, so
-/// the faded model never hides it: [`Self::base`] first, then
-/// [`Self::live`], each its fills, then its lines, then its points.
+/// The sketch being edited, or the extrude being set up, drawn over the
+/// scene: [`Self::base`] first, then [`Self::live`], each its fills, then
+/// its lines, then its points.
 #[derive(Debug, Clone, Copy)]
 pub struct SketchScene<'a> {
     /// The sketch's plane: the sketch point (x, y) is at its origin plus x
     /// along its x axis and y along its y axis.
     pub plane: GridPlane,
+    /// Whether the model hides what's behind it, as it does an extrude's
+    /// regions and handle: depth tested, pulled towards the camera like
+    /// the edges so a face it lies on doesn't hide it. Otherwise drawn
+    /// over everything, so the faded model behind a sketch being edited
+    /// never hides it. What's in [`Space::Screen`] is over everything
+    /// either way.
+    pub depth_tested: bool,
     /// What changes with the sketch, the selection or the theme. Only
     /// re-uploaded when it's another `Arc` than the last one prepared, so
     /// moving the camera, which only changes uniforms, uploads nothing.
@@ -40,22 +48,44 @@ impl Srgba {
 }
 
 /// Where a layer's coordinates are.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Space {
     /// Sketch coordinates, on [`SketchScene::plane`], projected by the
     /// camera.
     Sketch,
     /// Logical pixels from the viewport's top left, y down.
     Screen,
+    /// Coordinates on another plane than the scene's, as [`Space::Sketch`]
+    /// is on its plane: placed in the world as they're added, so a layer
+    /// can draw on several planes. Not for points.
+    On(GridPlane),
 }
 
 impl Space {
-    /// The flag saying so to the shader: [`SCREEN`], or none.
+    /// The flag saying so to the shader: [`SCREEN`], [`WORLD`], or none.
     fn flags(self) -> u32 {
         match self {
             Space::Sketch => 0,
             Space::Screen => SCREEN,
+            Space::On(_) => WORLD,
         }
+    }
+
+    /// Where `at` goes in the GPU's coordinates: as it is, but for
+    /// [`Space::On`] the world point, its z apart. `None` if that isn't
+    /// finite in `f32`.
+    fn place(self, at: DVec2) -> Option<(DVec2, f32)> {
+        let (xy, z) = match self {
+            Space::Sketch | Space::Screen => (at, 0.0),
+            Space::On(plane) => {
+                let world = plane.origin().as_dvec3()
+                    + plane.x().as_dvec3() * at.x
+                    + plane.y().as_dvec3() * at.y;
+                (world.truncate(), world.z)
+            }
+        };
+        let gpu = xy.as_vec2().extend(z as f32);
+        gpu.is_finite().then_some((xy, z as f32))
     }
 }
 
@@ -108,6 +138,10 @@ pub(crate) struct LineInstance {
     /// The point before the start and the one after the end, where
     /// [`Self::flags`] say there are.
     pub(crate) neighbours: [f32; 4],
+    /// With [`WORLD`], the world z of the start, the end and the points
+    /// before and after them, whose x and y are in [`Self::ends`] and
+    /// [`Self::neighbours`]; otherwise nothing.
+    pub(crate) z: [f32; 4],
     /// Linear, straight alpha.
     pub(crate) color: [f32; 4],
     /// The width, then a dash's and a gap's lengths (0 for a solid line),
@@ -116,7 +150,7 @@ pub(crate) struct LineInstance {
     /// How far along the polyline its start and end are, in the units of
     /// its [`Space`].
     pub(crate) along: [f32; 2],
-    /// [`HAS_PREV`], [`HAS_NEXT`], [`SCREEN`].
+    /// [`HAS_PREV`], [`HAS_NEXT`], [`SCREEN`], [`WORLD`].
     pub(crate) flags: u32,
     _pad: u32,
 }
@@ -138,31 +172,35 @@ pub(crate) struct PointInstance {
 #[derive(Debug, Clone, Copy, PartialEq, Pod, Zeroable)]
 pub(crate) struct FillVertex {
     pub(crate) at: [f32; 2],
-    /// [`SCREEN`], or nothing.
+    /// [`SCREEN`], [`WORLD`], or nothing.
     pub(crate) flags: u32,
     pub(crate) color: [f32; 4],
-    _pad: u32,
+    /// With [`WORLD`], the world z, whose x and y are [`Self::at`].
+    pub(crate) z: f32,
 }
 
 impl FillVertex {
-    /// A corner at `x`, `y` in the space `flags` says, in the linear
-    /// `color`.
-    fn new(x: f64, y: f64, flags: u32, color: [f32; 4]) -> FillVertex {
-        FillVertex {
-            at: [x as f32, y as f32],
-            flags,
+    /// A corner at `at` in `space`, in the linear `color`, unless it isn't
+    /// finite there.
+    fn new(space: Space, at: DVec2, color: [f32; 4]) -> Option<FillVertex> {
+        let (xy, z) = space.place(at)?;
+        Some(FillVertex {
+            at: xy.as_vec2().to_array(),
+            flags: space.flags(),
             color,
-            _pad: 0,
-        }
+            z,
+        })
     }
 }
 
 /// Flags of a [`LineInstance`] and a [`FillVertex`], as in the scene
 /// shader: whether the segment has a neighbour before and after it, and
-/// whether its coordinates are [`Space::Screen`]'s.
+/// whether its coordinates are [`Space::Screen`]'s or the world's
+/// ([`Space::On`]).
 pub(crate) const HAS_PREV: u32 = 1;
 pub(crate) const HAS_NEXT: u32 = 2;
 pub(crate) const SCREEN: u32 = 4;
+pub(crate) const WORLD: u32 = 8;
 
 impl SketchLayer {
     pub fn is_empty(&self) -> bool {
@@ -184,6 +222,13 @@ impl SketchLayer {
         if points.len() < 2 {
             return;
         }
+        let Some(placed) = points
+            .iter()
+            .map(|&p| space.place(p))
+            .collect::<Option<Vec<_>>>()
+        else {
+            return;
+        };
         let closed = points.len() > 3 && points.first() == points.last();
         let last = points.len() - 2;
         let color = style.color.linear();
@@ -197,23 +242,27 @@ impl SketchLayer {
         let mut along = 0.0f64;
         for (i, pair) in points.windows(2).enumerate() {
             let (start, end) = (pair[0], pair[1]);
+            // By index into `points` and `placed`.
             let prev = match i {
-                0 if closed => Some(points[last]),
+                0 if closed => Some(last),
                 0 => None,
-                i => Some(points[i - 1]),
+                i => Some(i - 1),
             };
-            let next = match points.get(i + 2) {
-                Some(&next) => Some(next),
-                None if closed => Some(points[1]),
-                None => None,
+            let next = match i + 2 {
+                next if next < points.len() => Some(next),
+                _ if closed => Some(1),
+                _ => None,
             };
             let length = start.distance(end);
-            let flag = |neighbour: Option<DVec2>, flag| neighbour.map_or(0, |_| flag);
+            let flag = |neighbour: Option<usize>, flag| neighbour.map_or(0, |_| flag);
             let flags = space | flag(prev, HAS_PREV) | flag(next, HAS_NEXT);
+            let [a, b] = [i, i + 1].map(|i| placed[i]);
+            let [p, n] = [prev.map_or(a, |i| placed[i]), next.map_or(b, |i| placed[i])];
             let pair = |a: DVec2, b: DVec2| [a.x as f32, a.y as f32, b.x as f32, b.y as f32];
             self.lines.push(LineInstance {
-                ends: pair(start, end),
-                neighbours: pair(prev.unwrap_or(start), next.unwrap_or(end)),
+                ends: pair(a.0, b.0),
+                neighbours: pair(p.0, n.0),
+                z: [a.1, b.1, p.1, n.1],
                 color,
                 style: [style.width, dash[0], dash[1], 0.0],
                 along: [along as f32, (along + length) as f32],
@@ -263,12 +312,11 @@ impl SketchLayer {
             return;
         }
         let vertices = tessellator.vertices();
-        let flags = space.flags();
         let color = color.linear();
         let corner = |index: u32| {
             let i = usize::try_from(index).ok()?.checked_mul(2)?;
             let at = vertices.get(i..i.checked_add(2)?)?;
-            Some(FillVertex::new(at[0], at[1], flags, color))
+            FillVertex::new(space, DVec2::new(at[0], at[1]), color)
         };
         for triangle in tessellator.elements().as_chunks::<3>().0 {
             // Polygons of fewer corners pad with an index past the end.
@@ -286,10 +334,56 @@ impl SketchLayer {
         if !corners.iter().all(|corner| corner.is_finite()) {
             return;
         }
-        let flags = space.flags();
         let color = color.linear();
-        self.fills
-            .extend(corners.map(|at| FillVertex::new(at.x, at.y, flags, color)));
+        if let [Some(a), Some(b), Some(c)] = corners.map(|at| FillVertex::new(space, at, color)) {
+            self.fills.extend([a, b, c]);
+        }
+    }
+
+    /// The box around what it draws in the world with its sketch on
+    /// `plane`, leaving out what's on the screen and what's past
+    /// [`RenderLines::MAX_POSITION`]: for the depth range to cover it
+    /// when it's depth tested.
+    pub(crate) fn bounds(&self, plane: &GridPlane) -> Option<Aabb> {
+        let on_plane = |x: f32, y: f32| {
+            let at = plane.origin().as_dvec3()
+                + plane.x().as_dvec3() * f64::from(x)
+                + plane.y().as_dvec3() * f64::from(y);
+            at.as_vec3()
+        };
+        let world = |x: f32, y: f32, z: f32, flags: u32| {
+            if flags & SCREEN != 0 {
+                None
+            } else if flags & WORLD != 0 {
+                Some(Vec3::new(x, y, z))
+            } else {
+                Some(on_plane(x, y))
+            }
+        };
+        let lines = self.lines.iter().flat_map(|line| {
+            let [ax, ay, bx, by] = line.ends;
+            [
+                world(ax, ay, line.z[0], line.flags),
+                world(bx, by, line.z[1], line.flags),
+            ]
+        });
+        let points = self.points.iter().map(|p| Some(on_plane(p.at[0], p.at[1])));
+        let fills = self
+            .fills
+            .iter()
+            .map(|f| world(f.at[0], f.at[1], f.z, f.flags));
+        let limit = Vec3::splat(RenderLines::MAX_POSITION);
+        lines
+            .chain(points)
+            .chain(fills)
+            .flatten()
+            .filter(|p| p.abs().cmple(limit).all())
+            .fold(None, |bounds: Option<Aabb>, p| {
+                Some(bounds.map_or(Aabb { min: p, max: p }, |b| Aabb {
+                    min: b.min.min(p),
+                    max: b.max.max(p),
+                }))
+            })
     }
 }
 

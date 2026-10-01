@@ -4,20 +4,23 @@
 //! (`crate::extrude`) that the viewport follows while one is dragged.
 //! Picking casts the cursor's ray onto each sketch's plane and asks
 //! [`Profiles::region_at`] there, the nearest hit winning; no GPU picking.
+//! The model hides what's behind it: the renderer depth tests the regions
+//! and the shaft, and a knob the model's mesh is in front of isn't shown.
 
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use glam::DVec2;
+use glam::{DVec2, DVec3};
 use iced::widget::shader::Action;
 use iced::widget::{Space, container, mouse_area};
 use iced::{Element, Point, Rectangle, mouse};
-use varde_document::{FeatureId, MAX_COORD};
-use varde_render::{Camera, GridPlane, SketchLayer, Space as LayerSpace};
-use varde_sketch::{Profiles, Region};
+use varde_document::{FeatureId, MAX_COORD, Placement};
+use varde_kernel::RenderMesh;
+use varde_render::{Camera, GridPlane, Projection, SketchLayer, Space as LayerSpace};
+use varde_sketch::Profiles;
 
-use super::sketch::{fill_region, line, srgba};
+use super::sketch::{fill_region, fill_region_in, line};
 use crate::anchors::Anchors;
 use crate::extrude::{Distance, ExtrudeLook, ExtrudeState, Handle, snap_step};
 use crate::projection::Projector;
@@ -36,6 +39,14 @@ const KNOB: f32 = 14.0;
 /// drag it, as a share of the ray's length squared: nearer, where the
 /// cursor is along it says next to nothing.
 const ALONG_AXIS: f64 = 1e-6;
+/// How near in front of a knob, in view heights, the model may be and
+/// not hide it: as far as the renderer pulls the regions and the shaft
+/// towards the camera, so a knob on a face shows like a region on it.
+const KNOB_PULL: f64 = 0.002;
+/// The most triangles the model is looked through for what hides a knob;
+/// with more, the knobs show wherever they are, rather than slow every
+/// frame down.
+const MAX_HIDING_TRIANGLES: usize = 1 << 18;
 
 /// The extrude being set up, as the viewport shows it.
 #[derive(Debug, Clone)]
@@ -70,31 +81,37 @@ impl<'a> Extruding<'a> {
     }
 
     /// Where its layers are drawn: on the source sketch's plane, or XY
-    /// before there is one, when all is drawn on the screen.
+    /// before there is one, when each candidate is drawn on its own.
     pub(crate) fn plane(&self) -> GridPlane {
         self.state
             .source()
-            .and_then(|source| {
-                let placement = source.plane.placement();
-                GridPlane::new(
-                    placement.origin.as_vec3(),
-                    placement.x.as_vec3(),
-                    placement.y.as_vec3(),
-                )
-            })
+            .and_then(|source| grid_plane(source.plane.placement()))
             .unwrap_or(GridPlane::XY)
     }
 
     /// The handle's knobs, anchored over the viewport seen by `camera`
-    /// on its axis, if there's a handle.
-    pub(crate) fn knobs(&self, camera: &Camera) -> Option<Element<'a, Message>> {
+    /// on its axis, if there's a handle: those `mesh`, the model shown,
+    /// doesn't hide ([`hidden`]).
+    pub(crate) fn knobs(&self, camera: &Camera, mesh: &RenderMesh) -> Option<Element<'a, Message>> {
         let handle = self.handle.as_ref()?;
         let editable = self.state.editable;
-        let knobs = handle
-            .knobs
-            .iter()
-            .map(|&(distance, at)| (DVec2::new(at, 0.0), knob(distance, editable)));
+        let knobs = self
+            .shown_knobs(camera, mesh)
+            .map(|(distance, at)| (DVec2::new(at, 0.0), knob(distance, editable)));
         Some(Anchors::new(*camera, handle.placement(), knobs).into())
+    }
+
+    /// The handle's knobs `mesh` doesn't hide from `camera`.
+    fn shown_knobs(
+        &self,
+        camera: &Camera,
+        mesh: &RenderMesh,
+    ) -> impl Iterator<Item = (Distance, f64)> {
+        let handle = self.handle.as_ref();
+        let knobs = handle.map_or(&[][..], |handle| &handle.knobs);
+        knobs.iter().copied().filter(move |&(_, at)| {
+            handle.is_some_and(|h| !hidden(mesh, camera, h.origin + h.normal * at))
+        })
     }
 
     /// Takes the mouse `event` with the `cursor` over `bounds` seen by
@@ -208,16 +225,16 @@ impl<'a> Extruding<'a> {
         (t.is_finite() && t.abs() <= f64::from(MAX_COORD)).then_some(t)
     }
 
-    /// What the renderer draws of the extrude with `input` as it is, in a
-    /// viewport of `bounds` seen by `camera`: the base layer, the source
-    /// sketch's regions shaded and those picked marked, built again only
-    /// when they change; and the live layer, the region hovered, before
-    /// there's a source every candidate's regions, and the handle's shaft.
+    /// What the renderer draws of the extrude with `input` as it is, all
+    /// of it hidden by the model in front of it: the base layer, the
+    /// source sketch's regions shaded and those picked marked, built again
+    /// only when they change; and the live layer, the region hovered,
+    /// before there's a source every candidate's regions, each on its own
+    /// plane, and the handle's shaft, unless the extrude's own check
+    /// refuses it, when there's no preview for it to stand on.
     pub(crate) fn layers(
         &self,
         input: &Input,
-        camera: &Camera,
-        bounds: Rectangle,
         colors: SketchColors,
     ) -> (Arc<SketchLayer>, SketchLayer) {
         let base = self.base_layer(input, colors);
@@ -234,32 +251,27 @@ impl<'a> Extruding<'a> {
                 }
                 continue;
             }
-            // Each candidate is on its own plane, so they're drawn where
-            // they show.
-            let placement = candidate.plane.placement();
-            let Some(projector) = Projector::new(camera, placement, bounds.width, bounds.height)
-            else {
+            let Some(plane) = grid_plane(candidate.plane.placement()) else {
                 continue;
             };
+            let space = LayerSpace::On(plane);
             for region in &candidate.profiles.regions {
-                fill_on_screen(&mut live, &projector, region, colors.region);
+                fill_region_in(&mut live, space, region, colors.region);
             }
             if let Some(region) = hovered {
-                fill_on_screen(&mut live, &projector, region, colors.region_hovered);
+                fill_region_in(&mut live, space, region, colors.region_hovered);
             }
         }
         if let Some(handle) = &self.handle
-            && let Some(projector) =
-                Projector::new(camera, handle.placement(), bounds.width, bounds.height)
+            && self.state.refused.is_none()
+            && let Some(plane) = grid_plane(handle.placement())
         {
             for &(_, at) in &handle.knobs {
-                if let Some((a, b)) = projector.segment(DVec2::ZERO, DVec2::new(at, 0.0)) {
-                    live.polyline(
-                        LayerSpace::Screen,
-                        &[a, b],
-                        line(colors.selected, SHAFT_WIDTH, false),
-                    );
-                }
+                live.polyline(
+                    LayerSpace::On(plane),
+                    &[DVec2::ZERO, DVec2::new(at, 0.0)],
+                    line(colors.selected, SHAFT_WIDTH, false),
+                );
             }
         }
         (base, live)
@@ -309,26 +321,95 @@ impl<'a> Extruding<'a> {
     }
 }
 
-/// Fills `region`, on the plane `projector` is of, on `layer` where it
-/// shows, in `color`: nothing if any of it is behind the eye.
-fn fill_on_screen(
-    layer: &mut SketchLayer,
-    projector: &Projector,
-    region: &Region,
-    color: iced::Color,
-) {
-    let projected: Option<Vec<Vec<DVec2>>> = region
-        .outline
-        .iter()
-        .map(|polyline| polyline.iter().map(|&at| projector.project(at)).collect())
-        .collect();
-    if let Some(outline) = projected {
-        layer.fill(
-            LayerSpace::Screen,
-            outline.iter().map(Vec::as_slice),
-            srgba(color),
-        );
+/// The renderer's plane of `placement`, unless it's too far out for it.
+fn grid_plane(placement: Placement) -> Option<GridPlane> {
+    GridPlane::new(
+        placement.origin.as_vec3(),
+        placement.x.as_vec3(),
+        placement.y.as_vec3(),
+    )
+}
+
+/// Whether `mesh` hides the world point `at` from `camera`: a triangle
+/// of it is in front of `at`, more than [`KNOB_PULL`] view heights nearer
+/// the eye, so one `at` lies on doesn't. Never with more than
+/// [`MAX_HIDING_TRIANGLES`].
+pub(crate) fn hidden(mesh: &RenderMesh, camera: &Camera, at: DVec3) -> bool {
+    if mesh.triangle_count() > MAX_HIDING_TRIANGLES || !at.is_finite() {
+        return false;
     }
+    let Some(bounds) = mesh.bounds() else {
+        return false;
+    };
+    // Towards the eye, as far as it in perspective, without end in an
+    // orthographic view, which sees what's behind its eye too.
+    let pull = KNOB_PULL * f64::from(camera.view_height());
+    let (direction, end) = match camera.projection() {
+        Projection::Perspective => {
+            let to_eye = camera.eye().as_dvec3() - at;
+            let length = to_eye.length();
+            if length.is_nan() || length <= pull {
+                return false;
+            }
+            (to_eye / length, length)
+        }
+        Projection::Orthographic => (camera.backward().as_dvec3(), f64::INFINITY),
+    };
+    let Some((near, far)) = through_box(at, direction, bounds) else {
+        return false;
+    };
+    if far <= pull || near >= end {
+        return false;
+    }
+    let corner = |index: &u32| {
+        let p = mesh.positions().get(usize::try_from(*index).ok()?)?;
+        Some(glam::Vec3::from(*p).as_dvec3())
+    };
+    mesh.indices().as_chunks::<3>().0.iter().any(|triangle| {
+        let [Some(a), Some(b), Some(c)] = triangle.each_ref().map(corner) else {
+            return false;
+        };
+        ray_hits(at, direction, [a, b, c]).is_some_and(|t| t > pull && t < end)
+    })
+}
+
+/// Where the ray from `origin` along `direction` is inside `bounds`, as
+/// how far along it it goes in and comes out, if it meets it ahead.
+fn through_box(origin: DVec3, direction: DVec3, bounds: varde_kernel::Aabb) -> Option<(f64, f64)> {
+    let (min, max) = (bounds.min.as_dvec3(), bounds.max.as_dvec3());
+    let (mut near, mut far) = (0.0f64, f64::INFINITY);
+    for axis in 0..3 {
+        let (o, d) = (origin[axis], direction[axis]);
+        if d == 0.0 {
+            if o < min[axis] || o > max[axis] {
+                return None;
+            }
+            continue;
+        }
+        let (t0, t1) = ((min[axis] - o) / d, (max[axis] - o) / d);
+        near = near.max(t0.min(t1));
+        far = far.min(t0.max(t1));
+    }
+    (near <= far).then_some((near, far))
+}
+
+/// How far along the ray from `origin` along the unit `direction` it
+/// meets the triangle `corners`, either side of it, if it does
+/// (Möller–Trumbore).
+fn ray_hits(origin: DVec3, direction: DVec3, [a, b, c]: [DVec3; 3]) -> Option<f64> {
+    let (ab, ac) = (b - a, c - a);
+    let p = direction.cross(ac);
+    let determinant = ab.dot(p);
+    if determinant.abs() <= f64::EPSILON * ab.length() * ac.length() {
+        return None;
+    }
+    let s = origin - a;
+    let u = s.dot(p) / determinant;
+    let q = s.cross(ab);
+    let v = direction.dot(q) / determinant;
+    let inside = (0.0..=1.0).contains(&u) && v >= 0.0 && u + v <= 1.0;
+    let t = ac.dot(q) / determinant;
+    (inside && t.is_finite()).then_some(t)
 }
 
 /// The knob of `distance`, grabbed by pressing it if `editable`.

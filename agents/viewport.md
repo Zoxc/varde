@@ -51,10 +51,12 @@ drag and the release.
 Setting up an extrude (`viewport/extrude.rs`, `crate::extrude`, the
 app's `doc/extrude.rs`), the `Program` is given the session
 (`Extruding`) in place of a sketch: the model isn't faded and the grid
-stays on XY, and the renderer's sketch layers carry the extrude. Before
+stays on XY, and the renderer's sketch layers carry the extrude, depth
+tested (`SketchScene::depth_tested`), so the model, the preview body
+included, hides what's behind it of them. Before
 the source sketch is chosen, every candidate's regions (the visible
-sketches with any, each on its own plane) are filled in the live layer
-in screen space, projected every frame; after, the source's regions are
+sketches with any, each on its own plane, `Space::On`) are filled in the
+live layer; after, the source's regions are
 the base layer on its plane, those picked filled stronger and outlined,
 kept until the profiles (by pointer), the picked set or the colours
 change. The region hovered is filled over them. Picking casts the
@@ -64,11 +66,19 @@ cursor's ray onto each candidate's plane (`Projector::cursor`), asks
 anywhere else the left button orbits as outside a sketch, and the camera
 keeps the other buttons. The handle is an arrow from the picked regions'
 area-weighted centre (holes taking theirs away) along the plane's
-normal: its shaft is drawn in screen space in the live layer, and each
+normal: its shaft is drawn in the live layer on the plane of that
+placement (`Space::On`), and each
 knob is a widget in an `Anchors` layer whose placement has the axis as
 its x axis, so the knob at `t` mm is the "sketch point" `(t, 0)`. One
 side has a knob at its distance (negative when flipped), symmetric at
-half of it, two sides one per side. Pressing a knob sends
+half of it, two sides one per side. A knob the model's mesh hides isn't
+laid out (`viewport/extrude.rs`'s `hidden`: a ray from the knob towards
+the eye meets a triangle more than 0.002 view heights in front of it, as
+far as the renderer pulls the layers, so a knob on the cap it ends on
+shows; past 2¹⁸ triangles the knobs always show, rather than slow every
+frame). An extrude its own check refuses (`ExtrudeState::refused`, two
+sides over the limit) has no preview, and draws no shaft, which would
+be a line on its own; its knobs stay. Pressing a knob sends
 `GrabHandle`; while the app says one is grabbed the `Program` follows
 the cursor (the raw position, over the rest of the window too): the
 distance is the point of the axis nearest the cursor's ray
@@ -93,7 +103,17 @@ logical pixels wide, cut at the near plane, depth tested and pulled
 towards the camera like the edges, so bodies in front hide them but a face
 they lie on doesn't; the origin marker; and on top of it all the sketch
 being edited (`Frame::sketch`, a `SketchScene`), not depth tested, so the
-faded model never hides it.
+faded model never hides it. Setting up an extrude, the same layers are
+depth tested instead (`SketchScene::depth_tested`, the shader's
+`SKETCH_DEPTH` override on a second set of pipelines): what isn't in
+screen space gets its depth pulled towards the camera like the edges
+(`overlay_depth`: 0.002 view heights, at least `EDGE_DEPTH_BIAS`), so a
+region on a body's face or cap shows and one behind a face doesn't, and
+the depth range is fitted to the layers' bounds too
+(`SketchLayer::bounds`), so nothing of them is cut at the far plane.
+Screen-space items are on top either way. An outline lying on a side
+face (a region in the middle of a two-sided body) shows on it, as a
+finished sketch's line would.
 
 The grid's axis lines are drawn in the grid's pass (`axis_line`) but not
 faded: they run on at full strength to the horizon, and show when the
@@ -158,7 +178,10 @@ The sketch being edited comes as two `SketchLayer`s the view builds, each
 with fills (triangles, tessellated even-odd by tess2-rust, holes left out),
 lines and points (a disc with a rim, filled with the rim's colour if
 fixed), drawn in that order, in sketch coordinates on `SketchScene::plane`
-projected on the GPU, or in logical pixels on the screen (`Space`). The
+projected on the GPU, in logical pixels on the screen, or (lines and
+fills) in coordinates on a plane of their own, placed in the world as
+they're added (`Space::On`, flagged `WORLD` to the shader, x and y with
+z apart), so a layer can draw on several planes. The
 base layer, with the profiles' regions shaded under the rest and
 splines' handles (a selected one's also where its bare ends' would be)
 and a selected one's control polygon, is
