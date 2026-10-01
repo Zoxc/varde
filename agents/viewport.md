@@ -311,4 +311,17 @@ gone; the Timeline with each extent and a failed row's tip; the delete
 prompt, long and short; the file menu and its tolerances. Shots are for
 looking (pixels differ by GPU and driver), never compared and never
 committed: a fault a shot finds gets an ordinary headless test of the
-state or layout behind it.
+state or layout behind it. A scenario answers each regeneration it asks
+for before its shots, unless the shot is of the wait (`-waiting`): an
+unanswered one shows "Regenerating…" with the last answer's preview and
+Bodies list, which reads like a fault and isn't one.
+
+Reading shots: a finding names the shot, what's wrong and the code
+behind it. First drop what the harness made (an unanswered request, a
+scenario that left nothing to see, shading that differs by adapter);
+then compare with `notes/ui-mock.html`, the design the screen follows.
+What's wrong or misleading, or differs from the mock where the mock is
+the design, and is cheap to change, is fixed, in stages of related
+changes, each with its failing headless test first; what needs a
+product decision or a large change (the renderer, a new feature) goes
+to the user with its shot; the rest stays as it is.

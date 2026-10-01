@@ -418,8 +418,9 @@ fn shots_05_join_intersect() {
 }
 
 /// The example, a hole, `more` bodies made like the plate's, `E` on the
-/// hole, a cut of every body, answered.
-fn a_cut_of_many(more: usize) -> Doc {
+/// hole, a cut of every body, answered: every shot of a session is taken
+/// with its answers in, unless it's of the wait for one.
+fn a_cut_of_many(more: usize) -> (Doc, Requests) {
     let (mut doc, sketch, requests) = example_and_a_hole();
     framed(&mut doc);
     let FeatureKind::Extrude(plate) = doc.editor.document().features()[1].kind.clone() else {
@@ -438,7 +439,17 @@ fn a_cut_of_many(more: usize) -> Doc {
     extrude(&mut doc, ExtrudeLook::Operation(OperationKind::Cut));
     answer(&mut doc, &requests);
     assert_eq!(doc.extrude_state().unwrap().targets.len(), more + 1);
-    doc
+    (doc, requests)
+}
+
+/// Takes every body in or out of the extrude being set up.
+fn toggle_every_body(doc: &mut Doc) {
+    let bodies: Vec<_> = (doc.editor.document().bodies().iter())
+        .map(|body| body.id)
+        .collect();
+    for body in bodies {
+        extrude(doc, ExtrudeLook::Target(body));
+    }
 }
 
 /// Scenario 6, with #34's 3.4: 20 and 30 bodies a cut touches: the
@@ -447,21 +458,17 @@ fn a_cut_of_many(more: usize) -> Doc {
 #[ignore = "writes screenshots, see the module"]
 fn shots_06_many_bodies() {
     shooting(|camera| {
-        let (mut doc, _) = a_cut_listing(19);
-        framed(&mut doc);
-        camera.take(&doc, "06-20-bodies-untick", Shot::new());
-        // All ticked again, before the answer: entry 23's blink.
-        let bodies: Vec<_> = (doc.editor.document().bodies().iter())
-            .map(|body| body.id)
-            .collect();
-        for body in bodies {
-            extrude(&mut doc, ExtrudeLook::Target(body));
-        }
-        camera.take(&doc, "06-20-bodies-retick-waiting", Shot::new());
-        let doc = a_cut_of_many(19);
+        let (mut doc, requests) = a_cut_of_many(19);
         camera.take(&doc, "06-20-bodies", Shot::new());
         camera.take(&doc, "06-20-bodies-scrolled", Shot::new().scrolled());
-        let doc = a_cut_of_many(29);
+        toggle_every_body(&mut doc);
+        answer(&mut doc, &requests);
+        camera.take(&doc, "06-20-bodies-untick", Shot::new());
+        // All ticked again, before the answer: what the list shows while
+        // the touch test of the new targets is on its way.
+        toggle_every_body(&mut doc);
+        camera.take(&doc, "06-20-bodies-retick-waiting", Shot::new());
+        let (doc, _) = a_cut_of_many(29);
         camera.take(&doc, "06-30-bodies", Shot::new());
         camera.take(&doc, "06-30-bodies-scrolled", Shot::new().scrolled());
         camera.take(
@@ -485,9 +492,9 @@ fn shots_07_small_window() {
         framed(&mut doc);
         let small = Shot::new().size(1024.0, 600.0);
         camera.take(&doc, "07-small", small);
-        let (mut doc, _) = a_cut_listing(5);
-        framed(&mut doc);
+        let (mut doc, requests) = a_cut_of_many(5);
         extrude(&mut doc, ExtrudeLook::Extent(ExtentKind::TwoSides));
+        answer(&mut doc, &requests);
         type_in(&mut doc, Distance::First, "12 parsecs");
         type_in(&mut doc, Distance::Second, "12 parsecs");
         camera.take(&doc, "07-small-errors", small);
@@ -574,19 +581,15 @@ fn shots_09_timeline() {
             extrude(doc, ExtrudeLook::Operation(OperationKind::Cut));
             extrude(doc, ExtrudeLook::Extent(ExtentKind::ThroughAll));
         });
-        extruded(&mut doc, &requests, hole, 0, |doc| {
+        // Of the plate's region, so something is left of the bodies to
+        // see: the hole's would empty them, the hole being cut through.
+        extruded(&mut doc, &requests, plate, region, |doc| {
             extrude(doc, ExtrudeLook::Operation(OperationKind::Intersect));
-            extrude(doc, ExtrudeLook::Flip);
         });
         // A cut of nothing: every body taken out.
         extruded(&mut doc, &requests, hole, 0, |doc| {
             extrude(doc, ExtrudeLook::Operation(OperationKind::Cut));
-            let bodies: Vec<_> = (doc.editor.document().bodies().iter())
-                .map(|body| body.id)
-                .collect();
-            for body in bodies {
-                extrude(doc, ExtrudeLook::Target(body));
-            }
+            toggle_every_body(doc);
         });
         assert!(!doc.feed.failed_features().is_empty());
         doc.look(Look::SelectPanel(varde_view::Panel::Timeline));
@@ -607,10 +610,10 @@ fn shots_09_timeline() {
 #[ignore = "writes screenshots, see the module"]
 fn shots_10_delete_prompts() {
     shooting(|camera| {
-        let (mut doc, _) = a_cut_listing(11);
+        let (mut doc, requests) = a_cut_of_many(11);
         doc.look(Look::Escape);
         assert!(doc.extrude.is_none());
-        framed(&mut doc);
+        answer(&mut doc, &requests);
         let plate = doc.editor.document().features()[0].id;
         doc.update(Edit::RemoveFeature(plate));
         assert!(doc.delete_prompt().is_some());
