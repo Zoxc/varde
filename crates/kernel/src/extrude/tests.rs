@@ -903,3 +903,47 @@ fn the_second_try_is_charged_only_from_where_it_resumes() {
         Ok(solid)
     );
 }
+
+#[test]
+fn a_first_try_out_of_work_in_its_fork_round_has_no_second() {
+    // The least budget with which the strip's first try gets as far as
+    // the round it forks in runs out within that round, after the fork:
+    // with no work left there is no second try, just as one less unit
+    // runs out before the fork.
+    let p = plate_with_holes(20, 2, 210.0, 30.0);
+    let margin = TOL.resolution();
+    let mut work = Work::new(&Budget::DEFAULT);
+    let mut chain = Chain::new(&p, margin).unwrap();
+    chain.separate(&mut work).unwrap();
+    let separated = Budget::DEFAULT.work() - work.left();
+    let first = |units: u64| {
+        let mut fork = None;
+        let caps = cap::triangulate(
+            Rounds::new(chain.clone()),
+            margin,
+            false,
+            &mut fork,
+            &mut Work::new(&Budget::new(units)),
+        );
+        (caps.map(|_| ()), fork.as_ref().map(Rounds::round))
+    };
+    let (mut lo, mut hi) = (0, Budget::DEFAULT.work());
+    assert_eq!(first(hi).1, Some(9));
+    while hi - lo > 1 {
+        let mid = lo + (hi - lo) / 2;
+        if first(mid).1.is_some() {
+            hi = mid
+        } else {
+            lo = mid
+        }
+    }
+    assert_eq!(first(hi), (Err(KernelError::TooComplex), Some(9)));
+    assert_eq!(first(lo), (Err(KernelError::TooComplex), None));
+    for units in [lo, hi] {
+        let budget = Budget::new(separated + units);
+        assert_eq!(
+            extrude(&p, &Frame::XY, 0.0, 2.0, 9, &TOL, &budget),
+            Err(KernelError::TooComplex)
+        );
+    }
+}

@@ -1188,7 +1188,8 @@ try's caps give up at `MAX_CAP_DEPTH` after 17 rounds, and flat corners
 first show up in the tenth): 1 131 948 units and 0.54 s on one thread
 resuming the second try, against 1 493 190 units and 0.77 to 0.81 s
 starting it over (best of 7, release, load average 14 on 7 cores);
-square plates of `k × k` such holes now fit the budget past `k = 33`.
+square plates of `k × k` such holes fit the budget up to `k = 38`
+(starting over ran out from `k = 33`).
 Profiles that find flat corners in round 0 and fail anyway (fine
 polygons at coarse tolerances) still pay for both tries; a
 plate with four holes splits nothing (20 segments, 92 patches). A ring
@@ -1219,7 +1220,8 @@ into uneven arcs at three tolerances (the second try, at 1 and 8
 threads too); the second try's caps resumed from the first's fork the
 same as made from the start (a 210 × 30 strip with 40 holes, a row 0.1 from its side,
 forking in round 9; a fine polygon, in round 0; the cut circles and
-random plates), and that strip within the budget only resuming takes;
+random plates), and that strip within the budget only resuming takes,
+and with no second try when its first runs out within the fork round;
 a star of 65 535 long chords refused within its budget
 rather than collecting two billion pairs; two circles of 16 384 sides
 triangulated in about a second unoptimized (over a minute in the loops'
