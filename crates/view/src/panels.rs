@@ -190,7 +190,10 @@ fn feature_row<'a>(
         .view(Message::Look(Look::SelectFeature(feature.id)))
         .on_double_click(Message::Look(Look::EditFeature(feature.id)));
     match failed {
-        Some(why) => crate::chrome::tip(row, text(why).style(theme::danger_text)),
+        Some(why) => crate::chrome::tip(
+            row,
+            text(crate::chrome::sentence(why)).style(theme::danger_text),
+        ),
         None => row.into(),
     }
 }
@@ -198,13 +201,18 @@ fn feature_row<'a>(
 /// How far an extrude goes, for its Timeline row, in `units`: "10 mm",
 /// "10 mm symmetric", "10 mm + 5 mm", "Through all".
 pub(crate) fn extent_note(extent: &Extent, units: LengthUnit) -> String {
-    let length = |value: &varde_expr::Value| varde_expr::format(value.value, Some(units.into()));
+    let length = |value| length_note(value, units);
     match extent {
         Extent::OneSide(d) => length(d),
         Extent::Symmetric(d) => format!("{} symmetric", length(d)),
         Extent::TwoSides(a, b) => format!("{} + {}", length(a), length(b)),
         Extent::ThroughAll => "Through all".to_owned(),
     }
+}
+
+/// A distance of an extrude in `units`: "10 mm".
+pub(crate) fn length_note(value: &varde_expr::Value, units: LengthUnit) -> String {
+    varde_expr::format(value.value, Some(units.into()))
 }
 
 /// A row of a list that's selected by clicking it: an icon, a name, and a
@@ -620,7 +628,9 @@ fn dimension_row<'a>(
         .filter(|field| field.in_list && *field.target == ValueTarget::Dimension(id));
     if let Some(field) = editing {
         let after: Element<'_, Message> = match field.error {
-            Some(error) => text(error.to_string()).style(theme::danger_text).into(),
+            Some(error) => text(crate::chrome::sentence(&error.to_string()).into_owned())
+                .style(theme::danger_text)
+                .into(),
             None => text(tied).style(theme::faint_text).into(),
         };
         return container(

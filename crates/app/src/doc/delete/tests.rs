@@ -131,3 +131,59 @@ fn a_read_only_document_asks_nothing() {
     assert!(doc.deleting.is_none());
     assert_eq!(names(&doc).0, ["Sketch 1", "Extrude 1"]);
 }
+
+/// The texts of `doc`'s status bar, left to right, at 1280 × 800.
+fn status_bar(doc: &Doc) -> Vec<String> {
+    use crate::tests::{shown, texts};
+    let size = iced::Size::new(1280.0, 800.0);
+    let top = size.height - varde_view::STATUS_BAR_HEIGHT;
+    let mut renderer = varde_view::probe::renderer();
+    let mut ui = shown(doc.view(false, Mode::Light), size, &mut renderer);
+    let mut bar: Vec<_> = texts(&mut ui, &renderer)
+        .into_iter()
+        .filter(|text| text.bounds.y >= top)
+        .collect();
+    bar.sort_by(|a, b| a.bounds.x.total_cmp(&b.bounds.x));
+    bar.into_iter().map(|text| text.text).collect()
+}
+
+#[test]
+fn the_status_bar_says_what_is_selected_and_under_the_prompt_only_esc() {
+    use crate::tests::{shown, texts};
+
+    let (mut doc, sketch, extrude, _) = example();
+    let bar = status_bar(&doc);
+    assert_eq!(bar[0], "No selection · 1 body · 2 features · mm", "{bar:?}");
+    assert!(
+        !bar.iter().any(|text| text.contains("triangles")),
+        "{bar:?}"
+    );
+    doc.look(Look::SelectFeature(extrude));
+    let bar = status_bar(&doc);
+    assert_eq!(
+        bar[..2],
+        ["Extrude 1", "Distance 10 mm · New body"],
+        "{bar:?}"
+    );
+    assert!(bar.contains(&"Edit".to_owned()), "{bar:?}");
+
+    // Under the delete prompt, which counts the body too, only `Esc`
+    // does anything.
+    doc.look(Look::SelectFeature(sketch));
+    doc.update(Edit::RemoveFeature(sketch));
+    assert!(doc.delete_prompt().is_some());
+    let bar = status_bar(&doc);
+    assert_eq!(bar[0], "Sketch 1", "{bar:?}");
+    assert_eq!(bar[bar.len() - 2..], ["Esc", "Cancel"], "{bar:?}");
+    assert!(!bar.contains(&"Delete".to_owned()), "{bar:?}");
+    assert!(!bar.contains(&"Pan".to_owned()), "{bar:?}");
+    let size = iced::Size::new(1280.0, 800.0);
+    let mut renderer = varde_view::probe::renderer();
+    let mut ui = shown(doc.view(false, Mode::Light), size, &mut renderer);
+    let question = "Delete Sketch 1 with the 1 feature and 1 body that depend on it?";
+    assert!(
+        texts(&mut ui, &renderer)
+            .iter()
+            .any(|text| text.text == question)
+    );
+}

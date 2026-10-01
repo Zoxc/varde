@@ -1659,7 +1659,7 @@ fn placed(tool: &ActiveTool<'_>, sketch: &Sketch, at: DVec2) -> Vec<Vec<DVec2>> 
 /// Why the value typed in `field` was refused, under it, if it was.
 fn field_error<'a>(field: ValueField<'_>) -> Option<Element<'a, Message>> {
     field.error.map(|error| {
-        text(error.to_string())
+        text(crate::chrome::sentence(&error.to_string()).into_owned())
             .size(11)
             .style(theme::danger_text)
             .into()

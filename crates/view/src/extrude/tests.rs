@@ -178,7 +178,7 @@ fn a_long_name_without_spaces_breaks_inside_the_panel() {
     let profiles = plate();
     let picked = BTreeSet::from([0]);
     let long = "x".repeat(200);
-    let error = format!("feature 3: {long} doesn't touch it");
+    let error = format!("Feature 3: {long} doesn't touch it");
     let mut state = state_of(&profiles, &picked);
     state.operation = OperationKind::Cut;
     let size = iced::Size::new(400, 600);
@@ -268,7 +268,29 @@ fn a_field_s_error_lines_up_under_its_input() {
     state.fields[0].error = Some(&error);
     let shown = texts_of(&state);
     let label = found(&shown, "Distance");
-    let error = found(&shown, &error.to_string());
+    let error = found(&shown, "Enter a value");
     assert_eq!(error.bounds.x - label.bounds.x, FIELD_INDENT);
     assert_eq!(FIELD_INDENT, 68.0);
+}
+
+#[test]
+fn the_panel_s_errors_read_as_sentences() {
+    let profiles = plate();
+    let picked = BTreeSet::from([0]);
+    let mut state = state_of(&profiles, &picked);
+    let error = varde_expr::Error {
+        kind: varde_expr::ErrorKind::UnknownUnit("parsecs".to_owned()),
+        span: varde_expr::Span::new(3, 10),
+    };
+    state.fields[0].error = Some(&error);
+    state.error = Some("joining it to Body 1 leaves no clean solid");
+    let shown = texts_of(&state);
+    found(&shown, "Unknown unit 'parsecs'");
+    found(&shown, "Joining it to Body 1 leaves no clean solid");
+
+    // The extrude's own check refusing it shows in place of the preview's
+    // error, as a sentence too.
+    state.refused = Some(ExtrudeError::ThroughAll);
+    let shown = texts_of(&state);
+    found(&shown, "Only a cut can go through all");
 }

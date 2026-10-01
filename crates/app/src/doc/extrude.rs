@@ -60,6 +60,12 @@ pub(crate) struct ExtrudeSession {
     /// The bodies a join, cut or intersect leaves out, sorted: the
     /// edited extrude's to start with.
     pub(crate) excluded: Vec<BodyId>,
+    /// The bodies put back after being taken out, each with the newest
+    /// draft revision before it was: listed until a touch test of a later
+    /// draft answers, which they were part of, so a body ticked again
+    /// doesn't drop out of the list while that answer is on its way.
+    /// One entry per body, so no longer than the document's bodies.
+    reticked: Vec<(BodyId, u64)>,
     /// The handle's knob being dragged, if one is.
     pub(crate) grabbed: Option<Distance>,
     /// The design as the fields' texts were last read, whose units bare
@@ -159,6 +165,7 @@ impl ExtrudeSession {
             flip: false,
             operation: OperationKind::NewBody,
             excluded: Vec::new(),
+            reticked: Vec::new(),
             grabbed: None,
             design: document.design(),
         }
@@ -192,12 +199,7 @@ impl ExtrudeSession {
             session.fields[1] = DistanceText::of(second, document);
         }
         session.flip = extrude.flip;
-        session.operation = match &extrude.operation {
-            Operation::NewBody(_) => OperationKind::NewBody,
-            Operation::Join(_) => OperationKind::Join,
-            Operation::Cut(_) => OperationKind::Cut,
-            Operation::Intersect(_) => OperationKind::Intersect,
-        };
+        session.operation = OperationKind::of(&extrude.operation);
         session.excluded = extrude.operation.excluded().to_vec();
         session
     }
@@ -406,10 +408,14 @@ impl ExtrudeSession {
 
     /// Takes `body` out of the join, cut or intersect, or puts it back,
     /// if it's one of `document`'s made before the extrude edited.
-    fn toggle_target(&mut self, body: BodyId, document: &Document) {
+    /// `revision` is the newest draft revision given out: a body put back
+    /// is listed until a touch test of a later one answers.
+    fn toggle_target(&mut self, body: BodyId, document: &Document, revision: u64) {
         match self.excluded.binary_search(&body) {
             Ok(at) => {
                 self.excluded.remove(at);
+                self.reticked.retain(|(reticked, _)| *reticked != body);
+                self.reticked.push((body, revision));
             }
             Err(at) => {
                 let made_before = document.body(body).is_some_and(|made| {
@@ -560,7 +566,9 @@ impl Doc {
                     session.extent = ExtentKind::OneSide;
                 }
             }
-            ExtrudeLook::Target(body) => session.toggle_target(body, document),
+            ExtrudeLook::Target(body) => {
+                session.toggle_target(body, document, self.feed.revision());
+            }
             ExtrudeLook::GrabHandle(distance) => session.grabbed = Some(distance),
             ExtrudeLook::DragHandle { distance, to } => {
                 if session.grabbed == Some(distance) {
@@ -718,14 +726,25 @@ impl Doc {
 
 impl Doc {
     /// The bodies the session's join, cut or intersect lists: those its
-    /// preview touches and those taken out, in the order they were made.
+    /// preview touches, those taken out, and those put back since the
+    /// touch test last answered, in the order they were made.
     fn extrude_targets(&self, session: &ExtrudeSession) -> Vec<ExtrudeTarget<'_>> {
         if !session.operation.has_targets() {
             return Vec::new();
         }
         let touched = self.feed.draft_touched();
+        let answered = self.feed.draft_touched_revision();
+        let reticked = |body: BodyId| {
+            session.reticked.iter().any(|&(reticked, since)| {
+                reticked == body && answered.is_none_or(|answered| answered <= since)
+            })
+        };
         (self.editor.document().bodies().iter())
-            .filter(|body| touched.contains(&body.id) || session.excluded.contains(&body.id))
+            .filter(|body| {
+                touched.contains(&body.id)
+                    || session.excluded.contains(&body.id)
+                    || reticked(body.id)
+            })
             .map(|body| ExtrudeTarget {
                 body: body.id,
                 name: &body.name,

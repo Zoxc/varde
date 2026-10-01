@@ -4,6 +4,8 @@
 //!
 //! The OS draws the title bar; the app sets its text in `Varde::title`.
 
+use std::borrow::Cow;
+
 use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::{
     Button, Container, Rule, Scrollable, Text, button, column, container, row, rule, scrollable,
@@ -216,4 +218,20 @@ pub fn key_chip<'a>(key: impl Into<KeyName>, size: ChipSize) -> Container<'a, Me
 /// A menu item's shortcut, as plain faint text.
 pub fn key_label<'a>(key: impl Into<KeyName>) -> Text<'a> {
     text(key.into().label()).size(11).style(theme::faint_text)
+}
+
+/// `message` as a sentence on its own: its first letter capitalised.
+/// Error messages start in lower case, to follow a colon ("Couldn't
+/// regenerate: its regions are too complex"); where one stands alone,
+/// in a panel or a tooltip, it's shown through this.
+pub fn sentence(message: &str) -> Cow<'_, str> {
+    let mut chars = message.chars();
+    match chars.next() {
+        Some(first) if first.is_lowercase() => {
+            let mut sentence: String = first.to_uppercase().collect();
+            sentence.push_str(chars.as_str());
+            Cow::Owned(sentence)
+        }
+        _ => Cow::Borrowed(message),
+    }
 }

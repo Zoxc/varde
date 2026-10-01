@@ -257,6 +257,21 @@ impl MeshFeed {
         }
     }
 
+    /// The draft revision whose answer [`MeshFeed::draft_touched`] gives,
+    /// if it gives one.
+    pub(crate) fn draft_touched_revision(&self) -> Option<u64> {
+        match (&self.draft, &self.touched) {
+            (Some(_), Some((revision, _))) if *revision >= self.run => Some(*revision),
+            _ => None,
+        }
+    }
+
+    /// The revision the newest draft was given: every later draft gets a
+    /// higher one.
+    pub(crate) fn revision(&self) -> u64 {
+        self.revision
+    }
+
     /// How the mesh shown stands against the editor's document. A failure
     /// of an older generation than the editor's isn't reported: that document
     /// is gone, and the current one is still being built. Nor is the model

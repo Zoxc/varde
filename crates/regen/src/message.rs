@@ -1,7 +1,8 @@
 //! Why a feature failed, in words for the Timeline's tooltip and the
 //! extrude panel: what the user did and what to try, rather than the
-//! kernel's terms. Messages start in lower case, as the Timeline shows
-//! them after the feature's name.
+//! kernel's terms. Messages start in lower case, to follow a colon; the
+//! view capitalises them where they stand alone, in the Timeline's
+//! tooltip and the panel (`varde_view`'s `chrome::sentence`).
 
 use varde_kernel::{BooleanError, KernelError, ProfileError};
 

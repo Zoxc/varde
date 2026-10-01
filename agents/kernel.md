@@ -3859,12 +3859,21 @@ changed draft is on its way, and while one fails before its tool exists
 or makes a new body; a run starts when a draft is asked for after none,
 or for another feature, and lists nothing until its first such answer,
 so a new session never shows another's bodies; then the excluded ones,
-in the order they were made; ticked unless excluded;
+and those ticked again (the session's `reticked`, each with the newest
+draft revision given out when it was, `MeshFeed::revision`) until a
+touch test of a later draft answers (`MeshFeed::draft_touched_revision`),
+so a body taken out and put back doesn't drop out of the list while its
+answer is on its way; all in the order they were made; ticked unless excluded;
 `ExtrudeLook::Target` toggles, keeping the session's `excluded` sorted and
 only taking bodies made before the extrude edited; bodies undone away
 drop out, and aren't taken out again when redone: undo gives the ids
 back, so a new edit may give theirs to other bodies); its footer the
 refusal, the draft's error or "Checking the sketch…", then Cancel and OK.
+Errors that stand alone, the field errors, the refusal and the draft's
+error here and a failed feature's tooltip, are shown as sentences,
+capitalised by the view (`chrome::sentence`): the messages themselves
+(`varde_expr`'s, `ExtrudeError`'s, `regen::message`'s) start in lower
+case to follow a colon, as in the status bar's "Couldn't regenerate: …".
 The Bodies list has no scrollable of its own: the body scrolls as a
 whole, keeping its offset while rows come and go (clamped to what's left,
 so no empty stretch shows) and while the handle's knobs come and go (the
@@ -3904,7 +3913,13 @@ the model shown, `failed_features`) has its name in the danger colour
 and tells why in a tooltip; a sketch that doesn't solve is marked as
 before. Neither is given out from a model of before a replacement of
 the whole document (`MeshFeed::replaced`), whose ids may name other
-features. Double-clicking an extrude opens its session.
+features. Double-clicking an extrude opens its session. Outside a
+sketch or a session the status bar's info (`view/src/document.rs`, as
+the mock's) is the feature selected, its icon, name and `feature_info`
+("Distance 10 mm · New body", "Symmetric 4 mm · Cut", a sketch's
+"4 lines · 1 circle · 5 points · on XY"), or with none `model_info`:
+"No selection · 1 body · 2 features · mm" ("Empty design · mm" without
+features), then regenerating, failures and saving.
 
 **Deleting** (`app/src/doc/delete.rs`): `Edit::RemoveFeature` (`Delete`
 on the Timeline's selection) and `Edit::RemoveBody` (Objects' bin) ask
@@ -3912,17 +3927,20 @@ on the Timeline's selection) and `Edit::RemoveBody` (Objects' bin) ask
 the bodies they touch (they're found again when regenerating), so a
 body's removal takes only its maker (and what uses that); a later join
 left touching nothing fails in the Timeline. For a body the prompt asks
-"Delete *Body N* and M features with it?", counting its maker. If that's one feature (a feature and its
+"Delete *Body N* with the M features and K bodies that go with it?",
+counting its maker and the other bodies that makes. If that's one feature (a feature and its
 own bodies, or a body and the feature making it) the command applies at
 once. Otherwise the app keeps a `Deleting` (the target, the `Removal`,
 the editor's generation) and the view shows `DeletePrompt` over the
-whole screen, on the unsaved-changes prompt's scrim: "Delete *name* and
-N features that depend on it?", the features in timeline order with
+whole screen, on the unsaved-changes prompt's scrim: "Delete *name* with
+the N features and K bodies that depend on it?" (`delete_question`,
+leaving out a count of none), the features in timeline order with
 their icons, then the bodies, scrolling past about ten rows, Cancel
 (`Look::CancelDelete`, also `Esc`: `Doc::dialog` tells the escape key
 which prompt is up, the unsaved one first) and Delete
 (`Edit::ConfirmDelete`, danger style, no `Enter`). While it's up
-`Doc::keys` is `None`, so no shortcut acts behind it. Delete applies the
+`Doc::keys` is `None`, so no shortcut acts behind it, and the status
+bar's hints are only "Esc Cancel". Delete applies the
 same command, so exactly the listed set goes, one undo step. The prompt
 is dropped in `sync` once the generation moves (undo, recovery), and a
 stale one is neither shown nor applied. A delete asked for while edits

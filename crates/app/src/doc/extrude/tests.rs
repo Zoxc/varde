@@ -1264,6 +1264,65 @@ fn a_draft_the_document_refuses_keeps_the_bodies_listed() {
     assert_eq!(listed(&doc), [body]);
 }
 
+#[test]
+fn a_body_ticked_again_stays_listed_until_the_answer() {
+    let (mut doc, sketch, requests) = example_and_a_hole();
+    let body = doc.editor.document().bodies()[0].id;
+    start_a_cut(&mut doc, sketch);
+    answer(&mut doc, &requests);
+    assert_eq!(listed(&doc), [body]);
+
+    // Taken out and answered: the touch test found nothing to touch.
+    extrude(&mut doc, ExtrudeLook::Target(body));
+    answer(&mut doc, &requests);
+    assert_eq!(doc.feed.draft_touched(), []);
+    assert_eq!(listed(&doc), [body]);
+
+    // Ticked again: still listed while its touch test is on its way,
+    // and after it, which finds it touched.
+    extrude(&mut doc, ExtrudeLook::Target(body));
+    assert!(doc.extrude.as_ref().unwrap().excluded.is_empty());
+    assert_eq!(listed(&doc), [body]);
+    assert!(doc.extrude_state().unwrap().targets[0].included);
+    answer(&mut doc, &requests);
+    assert_eq!(listed(&doc), [body]);
+
+    // Out and in again before any answer: listed throughout.
+    extrude(&mut doc, ExtrudeLook::Target(body));
+    answer(&mut doc, &requests);
+    extrude(&mut doc, ExtrudeLook::Target(body));
+    extrude(&mut doc, ExtrudeLook::Target(body));
+    extrude(&mut doc, ExtrudeLook::Target(body));
+    assert_eq!(listed(&doc), [body]);
+    answer(&mut doc, &requests);
+    assert_eq!(listed(&doc), [body]);
+}
+
+#[test]
+fn a_body_ticked_again_that_isn_t_touched_goes_with_the_answer() {
+    let (mut doc, sketch, requests) = example_and_a_hole();
+    let body = doc.editor.document().bodies()[0].id;
+    start_a_cut(&mut doc, sketch);
+    answer(&mut doc, &requests);
+    extrude(&mut doc, ExtrudeLook::Target(body));
+    answer(&mut doc, &requests);
+    // The circle moved clear of the body and the body ticked again:
+    // listed until the answer says it isn't touched.
+    let mut drawn = drawn(&doc, sketch).clone();
+    drawn.points[0].at = glam::DVec2::new(-500.0, 10.0);
+    doc.apply(Command::SetSketch {
+        feature: sketch,
+        sketch: Box::new(drawn),
+    });
+    doc.sync();
+    assert_eq!(doc.extrude.as_ref().unwrap().picked.len(), 1);
+    extrude(&mut doc, ExtrudeLook::Target(body));
+    assert_eq!(listed(&doc), [body]);
+    answer(&mut doc, &requests);
+    assert_eq!(doc.feed.draft_touched(), []);
+    assert_eq!(listed(&doc), []);
+}
+
 /// The plate extruded 10 as extrude A, and then replaced whole by a
 /// document from the same base whose extrude, 30, took A's id: as
 /// restoring recovered changes does. And A's id.
@@ -2271,7 +2330,7 @@ fn two_sides_with_errors_keep_ok_on_a_short_screen() {
         }
         let errors: Vec<_> = panel
             .iter()
-            .filter(|text| text.text.starts_with("unknown unit"))
+            .filter(|text| text.text.starts_with("Unknown unit"))
             .collect();
         assert_eq!(errors.len(), 2, "{panel:?}");
         // Unscrolled, both sides' errors show; scrolled to the end, the

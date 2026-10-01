@@ -9,7 +9,9 @@ use glam::DVec2;
 use iced::widget::{Space, button, column, container, opaque, row, space, stack, text};
 use iced::{Alignment, Element, Length};
 use varde_document::EXTENSION;
-use varde_document::{APP_NAME, Body, EditError, Editor, Feature, FeatureId, Plane};
+use varde_document::{
+    APP_NAME, Body, Document, EditError, Editor, Extent, Feature, FeatureId, FeatureKind, Plane,
+};
 use varde_expr::LengthUnit;
 use varde_kernel::{RenderLines, RenderMesh};
 use varde_render::Camera;
@@ -23,8 +25,8 @@ use crate::shortcut::{DocumentKeys, Held, Shortcut};
 use crate::theme::Emphasis;
 use crate::typed::Field;
 use crate::{
-    ConstraintKind, Edit, ExtrudeState, File, Look, Message, Panel, Snap, Target, Tool, Unsaved,
-    panels, theme, toolbar, viewport,
+    ConstraintKind, Edit, ExtrudeState, File, Look, Message, OperationKind, Panel, Snap, Target,
+    Tool, Unsaved, panels, theme, toolbar, viewport,
 };
 
 /// Borrowed state needed to build the document screen.
@@ -494,8 +496,14 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
 }
 
 /// The status bar's hints: what the keys do for what's going on, the
-/// viewport's mouse bindings, and peeking.
+/// viewport's mouse bindings, and peeking; under the delete prompt only
+/// that `Esc` cancels it.
 fn hints<'a>(state: &DocumentState<'a>) -> Vec<Element<'a, Message>> {
+    // The delete prompt takes every key but `Esc`, and the viewport
+    // behind it nothing.
+    if state.deleting.is_some() {
+        return vec![key_hint(Shortcut::ESCAPE, "Cancel")];
+    }
     let sketching = state.sketch.is_some();
     let keys: Vec<_> = if state.picking_plane {
         vec![key_hint(Shortcut::ESCAPE, "Cancel")]
@@ -803,29 +811,13 @@ fn dialog_button<'a>(
 }
 
 /// Asks whether to delete what `prompt` lists, as a dialog over the
-/// whole screen like [`unsaved_prompt`]: "Delete Sketch 1 and 2 features
-/// that depend on it?" (for a body, "Delete Body 1 and 3 features with
-/// it?", counting the one making it), then the features, in the
-/// Timeline's order, and the bodies, scrolling past about ten rows, and
-/// Cancel and Delete.
+/// whole screen like [`unsaved_prompt`]: [`delete_question`], then the
+/// features, in the Timeline's order, and the bodies, scrolling past
+/// about ten rows, and Cancel and Delete.
 fn delete_prompt<'a>(prompt: &DeletePrompt<'a>) -> Element<'a, Message> {
     /// The rows shown before the list scrolls.
     const ROWS: f32 = 10.5;
-    let question = if prompt.body {
-        format!(
-            "Delete {} and {} with it?",
-            prompt.name,
-            counted(prompt.features.len(), "feature", "features")
-        )
-    } else {
-        let others = prompt.features.len().saturating_sub(1);
-        let depend = if others == 1 { "depends" } else { "depend" };
-        format!(
-            "Delete {} and {} that {depend} on it?",
-            prompt.name,
-            counted(others, "feature", "features")
-        )
-    };
+    let question = delete_question(prompt);
     let item = |icon, name: &'a str| {
         row![icons::icon(icon, icons::INLINE), text(name)]
             .spacing(8)
@@ -868,9 +860,47 @@ fn delete_prompt<'a>(prompt: &DeletePrompt<'a>) -> Element<'a, Message> {
     )
 }
 
+/// What the delete prompt asks, counting what goes besides what was
+/// asked to be deleted: "Delete Sketch 1 with the 1 feature and 1 body
+/// that depend on it?", or for a body, "Delete Body 1 with the 1 feature
+/// that goes with it?", counting the one making it.
+fn delete_question(prompt: &DeletePrompt<'_>) -> String {
+    // A body asked for is one of the bodies listed, a feature one of the
+    // features.
+    let (features, bodies) = if prompt.body {
+        (prompt.features.len(), prompt.bodies.len().saturating_sub(1))
+    } else {
+        (prompt.features.len().saturating_sub(1), prompt.bodies.len())
+    };
+    let parts: Vec<_> = [
+        (features, "feature", "features"),
+        (bodies, "body", "bodies"),
+    ]
+    .into_iter()
+    .filter(|(n, ..)| *n > 0)
+    .map(|(n, one, many)| counted(n, one, many))
+    .collect();
+    if parts.is_empty() {
+        return format!("Delete {}?", prompt.name);
+    }
+    let one = features.saturating_add(bodies) == 1;
+    let tie = match (prompt.body, one) {
+        (true, true) => "goes with",
+        (true, false) => "go with",
+        (false, true) => "depends on",
+        (false, false) => "depend on",
+    };
+    format!(
+        "Delete {} with the {} that {tie} it?",
+        prompt.name,
+        parts.join(" and ")
+    )
+}
+
 /// The status bar's info on the document: what's asked of the user while
-/// picking a plane, what the sketch being edited holds, or how big the
-/// model is. Whether its mesh is still being regenerated, or why it
+/// picking a plane, what the sketch being edited holds, the extrude being
+/// set up, the feature selected ([`feature_info`]) or the model
+/// ([`model_info`]). Whether its mesh is still being regenerated, or why it
 /// couldn't be built, if it couldn't. Then why the last edit was refused,
 /// if it was, and whether a save is in flight.
 fn status<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
@@ -933,16 +963,66 @@ fn status<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
         .spacing(4)
         .into();
     }
-    let bodies = state.editor.document().bodies().len();
-    let triangles = state.mesh.triangle_count();
-    text(format!(
-        "{} · {triangles} triangles{}",
-        counted(bodies, "body", "bodies"),
-        status_suffix(state)
-    ))
-    .size(12)
-    .style(theme::muted_text)
-    .into()
+    let document = state.editor.document();
+    if let Some(feature) = state.selected_feature.and_then(|id| document.feature(id)) {
+        return row![
+            icons::icon(panels::feature_icon(feature), icons::INLINE),
+            text(feature.name.as_str()).size(12).font(theme::SEMIBOLD),
+            text(format!(
+                "{}{}",
+                feature_info(feature, document.units()),
+                status_suffix(state)
+            ))
+            .size(12)
+            .style(theme::muted_text),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center)
+        .into();
+    }
+    text(format!("{}{}", model_info(document), status_suffix(state)))
+        .size(12)
+        .style(theme::muted_text)
+        .into()
+}
+
+/// The status bar's info on `document` with nothing selected: "No
+/// selection · 2 bodies · 3 features · mm", or "Empty design · mm", in
+/// its units.
+fn model_info(document: &Document) -> String {
+    let units = document.units().symbol();
+    let features = document.features().len();
+    if features == 0 {
+        return format!("Empty design · {units}");
+    }
+    format!(
+        "No selection · {} · {} · {units}",
+        counted(document.bodies().len(), "body", "bodies"),
+        counted(features, "feature", "features"),
+    )
+}
+
+/// The status bar's info on the selected `feature`, after its name: a
+/// sketch's curves and plane, "4 lines · 1 circle · 5 points · on XY", or
+/// an extrude's extent in `units` and operation, "Distance 10 mm · New
+/// body".
+fn feature_info(feature: &Feature, units: LengthUnit) -> String {
+    match &feature.kind {
+        FeatureKind::Sketch { plane, sketch } => {
+            format!("{} · on {}", sketch_summary(sketch), plane.name())
+        }
+        FeatureKind::Extrude(extrude) => {
+            let note = panels::extent_note(&extrude.extent, units);
+            let extent = match &extrude.extent {
+                Extent::OneSide(d) => format!("Distance {}", panels::length_note(d, units)),
+                Extent::Symmetric(d) => format!("Symmetric {}", panels::length_note(d, units)),
+                Extent::TwoSides(..) => format!("Two sides {note}"),
+                Extent::ThroughAll => note,
+            };
+            let operation = OperationKind::of(&extrude.operation).label();
+            format!("{extent} · {operation}")
+        }
+    }
 }
 
 /// Where `sketch` stands, for the status bar, once that's known, and
@@ -1217,5 +1297,119 @@ mod tests {
             count(&sketch, Some(&Err(TooComplex))),
             Some("Too complex for profiles".to_owned())
         );
+    }
+
+    #[test]
+    fn the_status_bar_sums_up_the_model_and_the_feature_selected() {
+        use varde_document::{Document, Extent, FeatureKind, Operation};
+
+        assert_eq!(model_info(&Document::default()), "Empty design · mm");
+        let document = Document::example();
+        assert_eq!(
+            model_info(&document),
+            "No selection · 1 body · 2 features · mm"
+        );
+        let units = document.units();
+        let [sketch, extrude] = [0, 1].map(|k| &document.features()[k]);
+        assert_eq!(
+            feature_info(sketch, units),
+            "4 lines · 1 circle · 5 points · on XY"
+        );
+        assert_eq!(feature_info(extrude, units), "Distance 10 mm · New body");
+
+        let FeatureKind::Extrude(mut changed) = extrude.kind.clone() else {
+            panic!("the example's second feature is its extrude");
+        };
+        let Extent::OneSide(distance) = changed.extent.clone() else {
+            panic!("the example's extrude goes one side");
+        };
+        let mut info = |extent: Extent, operation: Operation| {
+            changed.extent = extent;
+            changed.operation = operation;
+            let feature = Feature {
+                kind: FeatureKind::Extrude(changed.clone()),
+                ..extrude.clone()
+            };
+            feature_info(&feature, units)
+        };
+        let cut = Operation::Cut(Default::default());
+        assert_eq!(
+            info(Extent::Symmetric(distance.clone()), cut.clone()),
+            "Symmetric 10 mm · Cut"
+        );
+        assert_eq!(
+            info(Extent::TwoSides(distance.clone(), distance), cut.clone()),
+            "Two sides 10 mm + 10 mm · Cut"
+        );
+        assert_eq!(info(Extent::ThroughAll, cut), "Through all · Cut");
+    }
+
+    #[test]
+    fn the_delete_prompt_counts_the_features_and_the_bodies() {
+        fn prompt<'a>(
+            name: &'a str,
+            body: bool,
+            features: Vec<&'a Feature>,
+            bodies: Vec<&'a Body>,
+        ) -> DeletePrompt<'a> {
+            DeletePrompt {
+                name,
+                body,
+                features,
+                bodies,
+            }
+        }
+        let document = varde_document::Document::example();
+        let [sketch, extrude] = [0, 1].map(|k| &document.features()[k]);
+        let body = &document.bodies()[0];
+        assert_eq!(
+            delete_question(&prompt(
+                "Sketch 1",
+                false,
+                vec![sketch, extrude],
+                vec![body]
+            )),
+            "Delete Sketch 1 with the 1 feature and 1 body that depend on it?"
+        );
+        assert_eq!(
+            delete_question(&prompt("Extrude 1", false, vec![extrude], vec![body])),
+            "Delete Extrude 1 with the 1 body that depends on it?"
+        );
+        assert_eq!(
+            delete_question(&prompt(
+                "Sketch 1",
+                false,
+                vec![sketch, extrude, extrude],
+                vec![]
+            )),
+            "Delete Sketch 1 with the 2 features that depend on it?"
+        );
+        assert_eq!(
+            delete_question(&prompt("Sketch 1", false, vec![sketch], vec![])),
+            "Delete Sketch 1?"
+        );
+        // A body goes with the feature making it, counted, and the other
+        // bodies that one makes.
+        assert_eq!(
+            delete_question(&prompt("Body 1", true, vec![extrude], vec![body])),
+            "Delete Body 1 with the 1 feature that goes with it?"
+        );
+        assert_eq!(
+            delete_question(&prompt(
+                "Body 1",
+                true,
+                vec![extrude, extrude],
+                vec![body, body]
+            )),
+            "Delete Body 1 with the 2 features and 1 body that go with it?"
+        );
+    }
+
+    #[test]
+    fn an_error_reads_as_a_sentence() {
+        assert_eq!(chrome::sentence("unknown unit 'yd'"), "Unknown unit 'yd'");
+        assert_eq!(chrome::sentence("Already"), "Already");
+        assert_eq!(chrome::sentence(""), "");
+        assert_eq!(chrome::sentence("über"), "Über");
     }
 }

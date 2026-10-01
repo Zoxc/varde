@@ -11,11 +11,11 @@ use glam::{DVec2, DVec3};
 use iced::widget::text::Wrapping;
 use iced::widget::{button, checkbox, column, container, row, text, text_input};
 use iced::{Alignment, Element, Length};
-use varde_document::{BodyId, ExtrudeError, FeatureId, Placement, Plane};
+use varde_document::{BodyId, ExtrudeError, FeatureId, Operation, Placement, Plane};
 use varde_expr::LengthUnit;
 use varde_sketch::{Profiles, Region, angle};
 
-use crate::chrome::{hrule, tip};
+use crate::chrome::{hrule, sentence, tip};
 use crate::escape::OnEscape;
 use crate::operation_panel::{Parts, message_text, operation_panel};
 use crate::theme::{self, SEMIBOLD};
@@ -98,7 +98,17 @@ impl OperationKind {
         OperationKind::Intersect,
     ];
 
-    fn label(self) -> &'static str {
+    /// The kind of `operation`.
+    pub fn of(operation: &Operation) -> Self {
+        match operation {
+            Operation::NewBody(_) => OperationKind::NewBody,
+            Operation::Join(_) => OperationKind::Join,
+            Operation::Cut(_) => OperationKind::Cut,
+            Operation::Intersect(_) => OperationKind::Intersect,
+        }
+    }
+
+    pub(crate) fn label(self) -> &'static str {
         match self {
             OperationKind::NewBody => "New body",
             OperationKind::Join => "Join",
@@ -451,8 +461,11 @@ pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
     // Why OK can't be pressed, or the preview failed, or that OK waits
     // on the solver.
     let message = match (state.refused, state.error) {
-        (Some(refused), _) => Some(message_text(refused.to_string(), theme::danger_text)),
-        (None, Some(error)) => Some(message_text(error, theme::danger_text)),
+        (Some(refused), _) => Some(message_text(
+            sentence(&refused.to_string()).into_owned(),
+            theme::danger_text,
+        )),
+        (None, Some(error)) => Some(message_text(sentence(error), theme::danger_text)),
         (None, None) => state
             .checking
             .then(|| message_text("Checking the sketch…", theme::muted_text)),
@@ -565,7 +578,7 @@ fn distance_field<'a>(
     let input = OnEscape::new(input, Message::Look(Look::Extrude(ExtrudeLook::Cancel)));
     let error = field.error.map(|error| {
         container(
-            text(error.to_string())
+            text(sentence(&error.to_string()).into_owned())
                 .size(11.5)
                 .wrapping(Wrapping::WordOrGlyph)
                 .style(theme::danger_text),
