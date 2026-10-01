@@ -1803,6 +1803,125 @@ fn a_join_draft_merging_two_bodies(regenerator: &mut Regenerator, remeshed: usiz
     assert_eq!(regenerator.cache().counts().1, worked + remeshed);
 }
 
+#[test]
+fn every_form_has_its_summary_and_bad_numbers_none() {
+    use glam::DVec3;
+    use varde_kernel::mesh::Form;
+    use varde_kernel::patch::{Conic2, Conic3};
+    let (z, origin) = (DVec3::Z, DVec3::new(1.0, 2.0, 3.0));
+    let ellipse = Conic3::new(DVec3::X, DVec3::new(1.0, 2.0, 0.0), 0.5, DVec3::Y).unwrap();
+    let meridian = Conic2::line(DVec2::new(1.0, 0.0), DVec2::new(2.0, 1.0)).unwrap();
+    let cases = [
+        (Form::Unknown, Summary::Other),
+        (
+            Form::Plane { n: z, d: 4.0 },
+            Summary::Plane {
+                n: [0.0, 0.0, 1.0],
+                d: 4.0,
+            },
+        ),
+        (
+            Form::Cylinder {
+                point: origin,
+                axis: z,
+                radius: 8.0,
+            },
+            Summary::Cylinder {
+                point: [1.0, 2.0, 3.0],
+                axis: [0.0, 0.0, 1.0],
+                radius: 8.0,
+            },
+        ),
+        (
+            Form::Cone {
+                apex: origin,
+                axis: z,
+                cos: 0.8,
+                sin: 0.6,
+            },
+            Summary::Cone {
+                apex: [1.0, 2.0, 3.0],
+                axis: [0.0, 0.0, 1.0],
+                cos: 0.8,
+                sin: 0.6,
+            },
+        ),
+        (
+            Form::Sphere {
+                centre: origin,
+                radius: 2.0,
+            },
+            Summary::Sphere {
+                centre: [1.0, 2.0, 3.0],
+                radius: 2.0,
+            },
+        ),
+        (
+            Form::Torus {
+                centre: origin,
+                axis: z,
+                major: 5.0,
+                minor: 1.0,
+            },
+            Summary::Torus {
+                centre: [1.0, 2.0, 3.0],
+                axis: [0.0, 0.0, 1.0],
+                major: 5.0,
+                minor: 1.0,
+            },
+        ),
+        (
+            Form::ConicCylinder {
+                conic: ellipse,
+                along: z,
+            },
+            Summary::ConicCylinder {
+                along: [0.0, 0.0, 1.0],
+            },
+        ),
+        (
+            Form::Revolved {
+                origin,
+                axis: z,
+                meridian,
+            },
+            Summary::Revolved {
+                origin: [1.0, 2.0, 3.0],
+                axis: [0.0, 0.0, 1.0],
+            },
+        ),
+        // Numbers a summary can't hold.
+        (Form::Plane { n: z, d: f64::NAN }, Summary::Other),
+        (
+            Form::Cylinder {
+                point: DVec3::splat(1e9),
+                axis: z,
+                radius: 8.0,
+            },
+            Summary::Other,
+        ),
+        (
+            Form::ConicCylinder {
+                conic: ellipse,
+                along: 2.0 * z,
+            },
+            Summary::Other,
+        ),
+        (
+            Form::Revolved {
+                origin: DVec3::splat(f64::INFINITY),
+                axis: z,
+                meridian,
+            },
+            Summary::Other,
+        ),
+    ];
+    for (form, summary) in cases {
+        assert_eq!(Summary::of(&form), summary, "{form:?}");
+        assert!(summary.valid());
+    }
+}
+
 /// How far `p` is from the surface `summary` names (0 for
 /// [`Summary::Other`]).
 fn off_surface(summary: &Summary, p: glam::DVec3) -> f64 {
@@ -1818,7 +1937,11 @@ fn off_surface(summary: &Summary, p: glam::DVec3) -> f64 {
             (v - DVec3::from(axis) * v.dot(DVec3::from(axis))).length() - radius
         }
         Summary::Sphere { centre, radius } => (p - DVec3::from(centre)).length() - radius,
-        Summary::Cone { .. } | Summary::Torus { .. } | Summary::Other => 0.0,
+        Summary::Cone { .. }
+        | Summary::Torus { .. }
+        | Summary::ConicCylinder { .. }
+        | Summary::Revolved { .. }
+        | Summary::Other => 0.0,
     }
     .abs()
 }

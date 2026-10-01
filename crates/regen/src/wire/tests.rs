@@ -1046,6 +1046,13 @@ fn picked_faces_must_hold_sound_summaries_and_aliases() {
             major: 2.0,
             minor: 1.0,
         },
+        Summary::ConicCylinder {
+            along: [0.0, 0.5, 0.0],
+        },
+        Summary::Revolved {
+            origin: [f64::NAN; 3],
+            axis: [0.0, 0.0, 1.0],
+        },
     ];
     for summary in summaries {
         let head = tables(|faces, _| faces[0].summary = summary);

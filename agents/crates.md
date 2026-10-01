@@ -76,6 +76,6 @@ element, as an icon is a list of empty tags.
 - **kernel**: revolve, taper, sketches on faces and GPU evaluation of the patches next; the booleans' open weak spots (tangencies, cap quality refinement) are in `agents/kernel.md`.
 - **sketch**: the shape tools' geometry (trim, offset, fillet).
 - **document**: sketches on faces, then command-based undo instead of snapshots.
-- **render**: picking (ID buffer), selection highlight, silhouette lines, MSAA for the model's faces, anti-aliased feature edges, view cube, a camera that can roll (for sketches on faces).
+- **render**: the hover and selection highlight (picking itself is on the CPU, against the picking tables regen sends with the mesh), silhouette lines, MSAA for the model's faces, anti-aliased feature edges, view cube, a camera that can roll (for sketches on faces).
 - **solve**: cancelling a running solve; a cheaper analysis for large sketches.
 - **view**: property panel, the Alt bar, keyboard shortcuts.

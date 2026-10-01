@@ -25,8 +25,10 @@ use varde_kernel::{Display, MeshError, RenderMesh, Solid};
 /// What a face is, as far as the viewport needs to know: a plane's
 /// outward unit normal `n` and offset `d` (the plane `n·x = d`), from
 /// which a sketch's placement on it is worked out; a round face's axis
-/// and size. Faces of other forms, or with numbers past
-/// [`Picking::MAX_VALUE`], are [`Summary::Other`].
+/// and size; for the other known surfaces (a conic cylinder, a revolved
+/// conic) which they are and their direction or axis. Faces of no known
+/// form, or with numbers past [`Picking::MAX_VALUE`], are
+/// [`Summary::Other`].
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum Summary {
     Plane {
@@ -59,6 +61,18 @@ pub enum Summary {
         major: f64,
         minor: f64,
     },
+    /// A cylinder over a conic that isn't a circle (an ellipse, parabola
+    /// or hyperbola arc), along the unit `along`.
+    ConicCylinder {
+        along: [f64; 3],
+    },
+    /// A conic turned about the line through `origin` along the unit
+    /// `axis`.
+    Revolved {
+        origin: [f64; 3],
+        axis: [f64; 3],
+    },
+    /// No known surface.
     Other,
 }
 
@@ -105,7 +119,12 @@ impl Summary {
                 major,
                 minor,
             },
-            Form::Unknown | Form::ConicCylinder { .. } | Form::Revolved { .. } => Summary::Other,
+            Form::ConicCylinder { along, .. } => Summary::ConicCylinder { along: a(&along) },
+            Form::Revolved { origin, axis, .. } => Summary::Revolved {
+                origin: a(&origin),
+                axis: a(&axis),
+            },
+            Form::Unknown => Summary::Other,
         };
         if summary.valid() {
             summary
@@ -143,6 +162,8 @@ impl Summary {
                 major,
                 minor,
             } => point(centre) && unit(axis) && size(major) && size(minor),
+            Summary::ConicCylinder { along } => unit(along),
+            Summary::Revolved { origin, axis } => point(origin) && unit(axis),
             Summary::Other => true,
         }
     }

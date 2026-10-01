@@ -394,7 +394,8 @@ An answer carries the model's **picking tables** (`regen::Picking`, with
 the mesh): its faces (`PickFace`: the body, the face key, its aliases,
 sorted, and a `Summary` of its form: a plane's outward unit `n` and `d`,
 a cylinder's point, axis and radius, a cone's, sphere's or torus's
-numbers, else `Other`), its edges (`PickChain`: the two faces either
+numbers, a conic cylinder's direction, a revolved conic's axis, else
+`Other`: no known form, or numbers past the bound), its edges (`PickChain`: the two faces either
 side, indices into the faces, and whether it closes on itself), the face
 of each triangle of the mesh and the chain of each of its edges
 (`Picking::NONE` for a crease inside one face). Faces are the kernel

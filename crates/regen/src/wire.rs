@@ -20,7 +20,6 @@
 //! vectors and the [`Picking`]'s two index arrays as they are in memory
 //! (little endian on wasm). The picking tables' faces and chains ride in
 //! the head.
-
 //!
 //! A request is copied out of its buffer only if it's within
 //! `MAX_REQUEST_BYTES`. Replies are checked on receipt: the head is within
@@ -240,8 +239,10 @@ pub fn decode_reply(
             let model = check_merged(&merged)
                 .and_then(|()| decode_bodies(&bodies))
                 .and_then(|bodies| {
-                    let listed = |body: BodyId| bodies.iter().any(|&(b, _)| b == body);
-                    if !faces.iter().all(|face| listed(face.body)) {
+                    let mut listed: Vec<BodyId> = bodies.iter().map(|&(body, _)| body).collect();
+                    listed.sort_unstable();
+                    let listed = |body: &BodyId| listed.binary_search(body).is_ok();
+                    if !faces.iter().all(|face| listed(&face.body)) {
                         return Err(Error::Picking(PickingError::Face));
                     }
                     Ok((bodies, decode_model(parts, faces, chains)?))
