@@ -11,12 +11,14 @@ use varde_expr::LengthUnit;
 use varde_sketch::{ConstraintEntry, Curve, DimensionEntry, Id, Sketch};
 
 use crate::chrome::{self, ChipSize, Edge, edged, icon_button, key_chip};
+use crate::context_menu::ContextMenu;
 use crate::escape::OnEscape;
 use crate::icons::{self, Icon};
 use crate::shortcut::{Held, Shortcut};
 use crate::theme::{self, SEMIBOLD, SIDE_PANEL_WIDTH, TAB_HEIGHT, TabLook, Tone};
+use crate::toolbar::{menu_item, menu_separator};
 use crate::{
-    ConstraintKind, DocumentState, Edit, Look, Message, Panel, SketchState, VALUE_FIELD,
+    ConstraintKind, DocumentState, Edit, Look, Message, Panel, RowMenu, SketchState, VALUE_FIELD,
     ValueTarget, dimension, split,
 };
 
@@ -88,10 +90,12 @@ pub fn side_panel<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
     let editable = state.editable();
     let content = match (shown, state.sketch) {
         (Panel::Sketch, Some(sketch)) => sketch_tab(sketch),
-        (Panel::Objects, _) => scrolled(objects(document, state.merged, editable)),
+        (Panel::Objects, _) => scrolled(objects(document, state.merged, editable, state.row_menu)),
         _ => scrolled(timeline(
             document,
             state.selected_feature,
+            state.row_menu,
+            editable,
             state.unsolved,
             state.failed,
         )),
@@ -122,10 +126,15 @@ fn empty_note<'a>(note: impl text::IntoFragment<'a>) -> Element<'a, Message> {
 }
 
 /// The features in the order they were added, the `selected` one
-/// highlighted, those `unsolved` or `failed` marked.
+/// highlighted, the one `menu` is on with its context menu open, which
+/// right-clicking a feature asks for, those `unsolved` or
+/// `failed` marked. Features can only be deleted if the document is
+/// `editable`.
 fn timeline<'a>(
     document: &'a Document,
     selected: Option<FeatureId>,
+    menu: Option<RowMenu>,
+    editable: bool,
     unsolved: &[FeatureId],
     failed: &'a [(FeatureId, String)],
 ) -> Element<'a, Message> {
@@ -142,13 +151,17 @@ fn timeline<'a>(
             .iter()
             .find(|(id, _)| *id == feature.id)
             .map(|(_, why)| why.as_str());
-        feature_row(
-            feature,
-            units,
-            selected == Some(feature.id),
-            unsolved,
-            failed,
+        let selected = selected == Some(feature.id);
+        let row = feature_row(feature, units, selected, unsolved, failed);
+        let on = RowMenu::Feature(feature.id);
+        let menu = (selected && menu == Some(on)).then(|| feature_menu(feature, editable));
+        ContextMenu::new(
+            row,
+            menu,
+            Message::Look(Look::OpenMenu(on)),
+            Message::Look(Look::CloseMenu),
         )
+        .into()
     }))
     .into()
 }
@@ -196,6 +209,46 @@ fn feature_row<'a>(
         ),
         None => row.into(),
     }
+}
+
+/// The context menu of `feature` in the Timeline: edit it, or delete it
+/// if the document is `editable`, by the keys that do the same to the
+/// feature selected.
+fn feature_menu<'a>(feature: &Feature, editable: bool) -> Element<'a, Message> {
+    let id = feature.id;
+    row_menu(vec![
+        menu_item(
+            feature_icon(feature),
+            edit_label(feature).into(),
+            Some(Shortcut::ENTER),
+            Some(Message::Look(Look::EditFeature(id))),
+        )
+        .into(),
+        menu_separator().into(),
+        menu_item(
+            Icon::Trash,
+            "Delete".into(),
+            Some(Shortcut::DELETE),
+            editable.then_some(Message::Edit(Edit::RemoveFeature(id))),
+        )
+        .into(),
+    ])
+}
+
+/// What editing `feature` is called in its context menu.
+fn edit_label(feature: &Feature) -> &'static str {
+    match feature.kind {
+        FeatureKind::Sketch { .. } => "Edit sketch",
+        FeatureKind::Extrude(_) => "Edit extrude",
+    }
+}
+
+/// A row's context menu holding `items`.
+fn row_menu<'a>(items: Vec<Element<'a, Message>>) -> Element<'a, Message> {
+    container(column(items).width(180))
+        .padding(4)
+        .style(theme::menu)
+        .into()
 }
 
 /// How far an extrude goes, for its Timeline row, in `units`: "10 mm",
@@ -289,11 +342,13 @@ fn group<'a>(label: &'a str, count: usize) -> Element<'a, Message> {
 /// The bodies, then the sketches. A body a join merged into another
 /// (`merged`, see [`DocumentState::merged`]) is listed faint, with the body
 /// holding it as its note: it's drawn as that one is, so it has no eye,
-/// but it can still be removed.
+/// but it can still be removed. Right-clicking a row asks for its context
+/// menu, shown on the one `menu` is on.
 fn objects<'a>(
     document: &'a Document,
     merged: &[(BodyId, BodyId)],
     editable: bool,
+    menu: Option<RowMenu>,
 ) -> Element<'a, Message> {
     let bodies = document.bodies().iter().map(|body| {
         let note = consumed_note(document, merged, body.id);
@@ -307,6 +362,12 @@ fn objects<'a>(
                 .then_some(Message::Edit(Edit::ToggleVisible(body.id))),
             remove: Some(Message::Edit(Edit::RemoveBody(body.id))),
             note,
+            menu: ObjectMenu {
+                on: RowMenu::Body(body.id),
+                open: menu == Some(RowMenu::Body(body.id)),
+                edit: None,
+                delete: Message::Edit(Edit::RemoveBody(body.id)),
+            },
         })
     });
     let is_sketch = |feature: &&Feature| matches!(feature.kind, FeatureKind::Sketch { .. });
@@ -320,6 +381,15 @@ fn objects<'a>(
             toggle: Some(Message::Edit(Edit::ToggleFeatureVisible(feature.id))),
             remove: None,
             note: None,
+            menu: ObjectMenu {
+                on: RowMenu::Sketch(feature.id),
+                open: menu == Some(RowMenu::Sketch(feature.id)),
+                edit: Some((
+                    edit_label(feature),
+                    Message::Look(Look::EditFeature(feature.id)),
+                )),
+                delete: Message::Edit(Edit::RemoveFeature(feature.id)),
+            },
         })
     });
     column(
@@ -364,6 +434,55 @@ struct Object<'a> {
     remove: Option<Message>,
     /// Shown faint at its end.
     note: Option<String>,
+    menu: ObjectMenu,
+}
+
+/// The context menu of an object in the Objects list.
+struct ObjectMenu {
+    /// The row it's on.
+    on: RowMenu,
+    open: bool,
+    /// What editing the object is called and sends, if it can be edited.
+    edit: Option<(&'static str, Message)>,
+    /// What deleting it sends.
+    delete: Message,
+}
+
+impl ObjectMenu {
+    /// The menu, for an object `visible` or not, whose eye sends
+    /// `toggle` if it has one: editing it, showing or hiding it and
+    /// deleting it, the last two only if the document is `editable`. No
+    /// keys are given, as the keys act on the Timeline's selection.
+    fn view<'a>(
+        self,
+        icon: Icon,
+        visible: bool,
+        toggle: Option<Message>,
+        editable: bool,
+    ) -> Element<'a, Message> {
+        let edit = (self.edit)
+            .map(|(label, message)| menu_item(icon, label.into(), None, Some(message)).into());
+        let toggle = toggle.map(|toggle| {
+            let (eye, label) = if visible {
+                (Icon::EyeOff, "Hide")
+            } else {
+                (Icon::Eye, "Show")
+            };
+            menu_item(eye, label.into(), None, editable.then_some(toggle)).into()
+        });
+        let delete = menu_item(
+            Icon::Trash,
+            "Delete".into(),
+            None,
+            editable.then_some(self.delete),
+        );
+        row_menu(
+            edit.into_iter()
+                .chain(toggle)
+                .chain([menu_separator().into(), delete.into()])
+                .collect(),
+        )
+    }
 }
 
 /// An object's row in the Objects list. The eye, sending `toggle`, and the
@@ -380,7 +499,10 @@ fn object_row(object: Object<'_>) -> Element<'_, Message> {
         toggle,
         remove,
         note,
+        menu,
     } = object;
+    let (on, open) = (menu.on, menu.open);
+    let menu = open.then(|| menu.view(icon, visible, toggle.clone(), editable));
     // A button that shows only on hover keeps its room while it's hidden,
     // as the mock's do, so the note doesn't move: the hovered row is drawn
     // over the plain one, which shows through a translucent highlight.
@@ -421,7 +543,14 @@ fn object_row(object: Object<'_>) -> Element<'_, Message> {
         .padding(Padding::from([0, 2]).left(24))
     };
 
-    hover(content(false), content(true).style(theme::hovered_row))
+    let row = hover(content(false), content(true).style(theme::hovered_row));
+    ContextMenu::new(
+        row,
+        menu,
+        Message::Look(Look::OpenMenu(on)),
+        Message::Look(Look::CloseMenu),
+    )
+    .into()
 }
 
 /// The sketch being edited: the Geometry list over the Constraints list,
@@ -784,7 +913,7 @@ mod tests {
         assert_eq!(consumed_note(document, &[], below), None);
 
         let texts = |merged: &[(BodyId, BodyId)]| -> Vec<String> {
-            let objects = objects(document, merged, true);
+            let objects = objects(document, merged, true, None);
             let mut laid = crate::testing::Laid::new(objects, iced::Size::new(300.0, 400.0));
             laid.texts().into_iter().map(|shown| shown.text).collect()
         };
@@ -798,7 +927,7 @@ mod tests {
         // The row hovered is drawn over the plain one, which shows through
         // a translucent highlight: its note is laid out in the same place
         // in both, though the hovered one has its bin.
-        let objects = objects(document, &merged, true);
+        let objects = objects(document, &merged, true, None);
         let mut laid = crate::testing::Laid::new(objects, iced::Size::new(300.0, 400.0));
         let notes: Vec<_> = (laid.texts().into_iter())
             .filter(|shown| shown.text == "in Body 1")

@@ -20,7 +20,9 @@ use varde_expr::Value;
 use varde_render::{Camera, Projection};
 use varde_sketch::{Analysis, Id, Profiles, Rejected, Role, SketchEdit, TooComplex};
 use varde_view::typed::{DEFAULT_SIDES, Field};
-use varde_view::{ActiveTool, SketchState, Snap, Target, Tool, ToolClick, ValueField, ValueTarget};
+use varde_view::{
+    ActiveTool, RowMenu, SketchState, Snap, Target, Tool, ToolClick, ValueField, ValueTarget,
+};
 
 use super::extrude::is_sketch;
 use super::{Doc, HOME_TARGET, home_camera};
@@ -373,7 +375,7 @@ impl Doc {
     }
 
     /// Backs out of whatever is open, the innermost first: the delete
-    /// prompt, the rail's list, the file menu, the view options menu, picking a plane, the
+    /// prompt, the rail's list, the feature's context menu, the file menu, the view options menu, picking a plane, the
     /// extrude being set up, the value field, a label grabbed, the drag of
     /// geometry, the shape the tool is drawing (or what the Dimension or
     /// Mirror tool has picked), the tool, the sketch, the feature selected.
@@ -382,6 +384,7 @@ impl Doc {
             self.deleting = None;
         } else if self.rail.open.is_some() {
             self.rail.close();
+        } else if self.row_menu.take().is_some() {
         } else if self.file_menu {
             self.file_menu = false;
         } else if self.view_menu {
@@ -548,6 +551,13 @@ impl Doc {
         self.selected_feature = self
             .selected_feature
             .filter(|&id| document.feature(id).is_some());
+        // A row's menu goes with what the row lists, a feature of the
+        // Timeline's with its selection.
+        self.row_menu = self.row_menu.filter(|menu| match *menu {
+            RowMenu::Feature(id) => self.selected_feature == Some(id),
+            RowMenu::Sketch(id) => !replaced && document.feature(id).is_some(),
+            RowMenu::Body(id) => !replaced && document.body(id).is_some(),
+        });
         // An edit refused after its sketch was left goes with the sketch,
         // and across a replacement its id may name another.
         if replaced || (self.refused_edit.as_ref()).is_some_and(|&(id, _)| !is_sketch(document, id))

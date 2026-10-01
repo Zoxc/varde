@@ -23,7 +23,7 @@ use varde_document::{
 use varde_io::{Access, Offer, OpenId};
 use varde_render::{Camera, Projection};
 use varde_solve::{Request as SolveRequest, Transport};
-use varde_view::{DocumentKeys, Edit, Look, Message as Ui, Mode, Overlay, Panel, Snap};
+use varde_view::{DocumentKeys, Edit, Look, Message as Ui, Mode, Overlay, Panel, RowMenu, Snap};
 
 #[cfg(test)]
 pub(crate) use camera::CAMERA_ANIMATION;
@@ -89,6 +89,9 @@ pub(crate) struct Doc {
     lineage: Revision,
     /// The feature selected in the Timeline, if any.
     pub(crate) selected_feature: Option<FeatureId>,
+    /// The row of the side panel whose context menu is open, if one is:
+    /// a feature of the Timeline's only while it's selected.
+    pub(crate) row_menu: Option<RowMenu>,
     /// The sketch being edited, if one is.
     pub(crate) sketch: Option<SketchSession>,
     /// The extrude being set up, if one is: never with a sketch.
@@ -203,6 +206,7 @@ impl Doc {
             picking_plane: false,
             lineage,
             selected_feature: None,
+            row_menu: None,
             sketch: None,
             extrude: None,
             sketch_split: GEOMETRY_SHARE,
@@ -287,6 +291,7 @@ impl Doc {
     /// the solver last refused shows until then.
     pub(crate) fn update(&mut self, message: Edit) {
         self.end_refusal();
+        self.row_menu = None;
         // Any other edit, a click of the Dimension tool included, leaves
         // the value field; placing one opens another. Not a label let go
         // of: the release of a double-click opening the field on it. Nor
@@ -427,6 +432,21 @@ impl Doc {
         ) {
             self.close_value();
         }
+        // A row's context menu does its job or is left by anything else
+        // done: `Esc` closes it alone.
+        if !matches!(
+            message,
+            Look::OpenMenu(_)
+                | Look::Escape
+                | Look::HoverItem(_)
+                | Look::HoverCube(_)
+                | Look::Snap(_)
+                | Look::Aim(_)
+                | Look::ScrollGeometry(_)
+                | Look::ScrollConstraints(_)
+        ) {
+            self.row_menu = None;
+        }
         // Picking a tool, from the rail's list or not, closes the list.
         if matches!(
             message,
@@ -460,6 +480,8 @@ impl Doc {
                     self.selected_feature = Some(id);
                 }
             }
+            Look::OpenMenu(menu) => self.open_menu(menu),
+            Look::CloseMenu => {}
             Look::ClickGeometry { hit, add } => self.click_geometry(hit, add),
             // The app turns this into a `ClickGeometry`, knowing the keys
             // held; alone, it selects.
@@ -551,6 +573,24 @@ impl Doc {
                 }
             }
         }
+    }
+
+    /// Opens the context menu of the side panel's row `menu` is on,
+    /// selecting a feature of the Timeline's, unless in a sketch, where
+    /// neither list's rows show.
+    fn open_menu(&mut self, menu: RowMenu) {
+        let document = self.editor.document();
+        let exists = match menu {
+            RowMenu::Feature(id) | RowMenu::Sketch(id) => document.feature(id).is_some(),
+            RowMenu::Body(id) => document.body(id).is_some(),
+        };
+        if self.sketch.is_some() || !exists {
+            return;
+        }
+        if let RowMenu::Feature(id) = menu {
+            self.selected_feature = Some(id);
+        }
+        self.row_menu = Some(menu);
     }
 
     /// Starts sending requests to `lane`, the document's regeneration
@@ -673,6 +713,7 @@ impl Doc {
             mouse_hints,
             picking_plane: self.picking_plane,
             selected_feature: self.selected_feature,
+            row_menu: self.row_menu,
             sketch: self.sketch_state(),
             extrude: self.extrude_state(),
             extrudable: self.extrudable(),

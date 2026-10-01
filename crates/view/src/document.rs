@@ -27,8 +27,8 @@ use crate::status::{self, Status};
 use crate::theme::Emphasis;
 use crate::typed::Field;
 use crate::{
-    ConstraintKind, Edit, ExtrudeState, File, Look, Message, OperationKind, Panel, Snap, Target,
-    Tool, Unsaved, panels, theme, toolbar, viewport,
+    ConstraintKind, Edit, ExtrudeState, File, Look, Message, OperationKind, Panel, RowMenu, Snap,
+    Target, Tool, Unsaved, panels, theme, toolbar, viewport,
 };
 
 /// Borrowed state needed to build the document screen.
@@ -78,6 +78,8 @@ pub struct DocumentState<'a> {
     pub picking_plane: bool,
     /// The feature selected in the Timeline, if any.
     pub selected_feature: Option<FeatureId>,
+    /// The row of the side panel whose context menu is open, if one is.
+    pub row_menu: Option<RowMenu>,
     /// The sketch being edited, if one is.
     pub sketch: Option<SketchState<'a>>,
     /// The extrude being set up, if one is: never with a sketch.

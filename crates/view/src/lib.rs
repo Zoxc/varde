@@ -11,6 +11,7 @@
 mod anchors;
 mod chrome;
 mod constrain;
+mod context_menu;
 mod controls;
 pub mod dimension;
 mod document;
@@ -207,10 +208,10 @@ pub enum Look {
     /// `Esc`.
     CancelDelete,
     /// Backs out of whatever is open, the innermost first: the delete
-    /// prompt, the rail's list, the file menu, the view options menu, picking a plane, the
-    /// extrude being set up, dragging geometry, the shape the sketch's tool
-    /// is drawing, the tool (or the Constrain tool), the sketch, the
-    /// selection.
+    /// prompt, the rail's list, the feature's context menu, the file menu,
+    /// the view options menu, picking a plane, the extrude being set up,
+    /// dragging geometry, the shape the sketch's tool is drawing, the tool
+    /// (or the Constrain tool), the sketch, the selection.
     Escape,
     SelectPanel(Panel),
     /// Starts picking the plane for a new sketch, or backs out of it.
@@ -228,6 +229,11 @@ pub enum Look {
     FinishSketch,
     /// Selects a feature in the Timeline.
     SelectFeature(FeatureId),
+    /// Opens the context menu of a row of the side panel: right-clicking
+    /// it. A feature in the Timeline is selected too.
+    OpenMenu(RowMenu),
+    /// Closes the row's context menu: a press off it.
+    CloseMenu,
     /// A click in the sketch being edited without a tool, or on a row of
     /// its Geometry list, on `hit` if anything: selects it alone, or
     /// nothing, or with `add` (`Ctrl`, or `Cmd` on macOS) adds it to the
@@ -559,6 +565,17 @@ pub enum Unsaved {
     Discard,
     /// Stay.
     Cancel,
+}
+
+/// A row of the side panel whose context menu is open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RowMenu {
+    /// A feature in the Timeline, which is selected with it.
+    Feature(FeatureId),
+    /// A body in Objects.
+    Body(BodyId),
+    /// A sketch in Objects.
+    Sketch(FeatureId),
 }
 
 /// A tab of the side panel. Two show at a time: Timeline and Objects, or

@@ -4860,7 +4860,16 @@ the model shown, `failed_features`) has its name in the danger colour
 and tells why in a tooltip; a sketch that doesn't solve is marked as
 before. Neither is given out from a model of before a replacement of
 the whole document (`MeshFeed::replaced`), whose ids may name other
-features. Double-clicking an extrude opens its session. Outside a
+features. Double-clicking an extrude opens its session. Right-clicking
+a row selects its feature and opens its context menu (`Look::OpenMenu`
+with `RowMenu::Feature`, `Doc::row_menu`; the widget is
+`view/src/context_menu.rs`, an overlay at the click, the scrolled list's
+offset allowed for): Edit sketch or Edit extrude, and Delete if the
+document is editable. The rows of Objects have one too, selecting
+nothing (`RowMenu::Body`, `RowMenu::Sketch`): Edit sketch for a sketch,
+Hide or Show where the row has an eye, and Delete. `Esc` or a press off
+a menu closes it alone; any other message closes it too, and it goes
+with what its row lists. Outside a
 sketch or a session the floating status bar (`view/src/status.rs`, as
 the mock's; see `agents/viewport.md`) shows the feature selected in a
 box of its own, its icon, name and `feature_info` (`view/src/document.rs`:

@@ -30,12 +30,12 @@ reopen a recent file, or recover unsaved changes left by a crash.
 | peek at the other side tab  | hold `Alt` (`Option` on macOS)             |
 | tool rail                   | the cards at the view's left hold the tools in sets; point at a card's top (or click it, or press its key: `Q`, `W`, `E`, `R` from the top) to list its set, then click a tool, press the letter beside it, or move with `↑` `↓` and press `Enter`; `Esc` closes the list. The cards show as many of their tools as fit |
 | new sketch                  | `S`, then pick the XY, XZ or YZ plane      |
-| edit a sketch               | double-click it in the Timeline, or select it and press `Enter` |
-| delete a feature            | select it in the Timeline and press `Delete`; if other features use it, a prompt lists everything that goes with it first (`Esc` cancels) |
-| delete a body               | the bin by it in Objects, which deletes the extrude making it too |
+| edit a sketch               | double-click it in the Timeline, right-click it there for Edit sketch, or select it and press `Enter` |
+| delete a feature            | select it in the Timeline and press `Delete`, or right-click it there for Delete; if other features use it, a prompt lists everything that goes with it first (`Esc` cancels) |
+| delete a body               | the bin by it in Objects, or right-click it there for Delete, which deletes the extrude making it too |
 | extrude                     | `E` (with a sketch selected in the Timeline, its regions), click the regions to extrude (again to take one out), then drag the arrow's knob or type the distance in the panel; `Enter` or OK adds it, `Esc` cancels |
 | join, cut, intersect        | in the extrude panel, under Operation; it works on every body it touches, listed under Bodies, where unticking one leaves it alone (a join touching several bodies merges them into the first made, and the panel says so: "Joined into Body 1"; Objects still lists the others, marked "in Body 1", and they show and hide with it); a cut or intersect that would leave nothing of a body fails, and unticking that body gets past it; only a cut can go Through all |
-| edit an extrude             | double-click it in the Timeline, or select it and press `Enter`; an extrude that fails shows red there, and hovering it says why |
+| edit an extrude             | double-click it in the Timeline, right-click it there for Edit extrude, or select it and press `Enter`; an extrude that fails shows red there, and hovering it says why |
 | draw in a sketch            | `L` line, `B` rectangle, `C` circle, `A` arc, `G` polygon, `N` spline, `P` point, then click; `Esc` stops; clicks snap (see below), hold `Shift` not to; `Tab` to type sizes (see below) |
 | line tool                   | click point after point; click the first point to close the loop, `Esc` or double-click to end; clicking a point already there joins it |
 | rectangle                   | two opposite corners, or with `Z` the centre and a corner (`Z` again goes back); it comes held level and upright |

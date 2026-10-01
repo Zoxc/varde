@@ -17,7 +17,7 @@ use varde_io::{
 use varde_regen::{Request, Response, Transport, handle, lane};
 use varde_render::Camera;
 use varde_solve::{Request as SolveRequest, Response as SolveResponse, Solver};
-use varde_view::{Edit, MeshStatus, Panel, Welcome as WelcomeUi};
+use varde_view::{Edit, MeshStatus, Panel, RowMenu, Welcome as WelcomeUi};
 
 use super::*;
 use crate::doc::{
@@ -4398,6 +4398,193 @@ fn escape_backs_out_of_one_thing_at_a_time() {
     assert_eq!(doc.selected_feature, Some(feature));
     doc.look(Look::Escape);
     assert_eq!(doc.selected_feature, None);
+}
+
+/// Right-clicking a feature in the Timeline selects it and opens its
+/// context menu, which `Esc` or a press off it closes alone, and which
+/// edits or deletes the feature.
+#[test]
+fn a_feature_s_context_menu_edits_or_deletes_it() {
+    let (mut doc, feature, _) = with_sketch();
+    doc.look(Look::SelectPanel(Panel::Timeline));
+    doc.look(Look::OpenMenu(RowMenu::Feature(feature)));
+    assert_eq!(doc.row_menu, Some(RowMenu::Feature(feature)));
+    assert_eq!(doc.selected_feature, Some(feature));
+    doc.look(Look::Escape);
+    assert_eq!(doc.row_menu, None);
+    assert_eq!(doc.selected_feature, Some(feature));
+    doc.look(Look::OpenMenu(RowMenu::Feature(feature)));
+    doc.look(Look::CloseMenu);
+    assert_eq!(doc.row_menu, None);
+    assert_eq!(doc.selected_feature, Some(feature));
+
+    doc.look(Look::OpenMenu(RowMenu::Feature(feature)));
+    doc.look(Look::EditFeature(feature));
+    assert_eq!(doc.row_menu, None);
+    assert_eq!(edited(&doc), Some(feature));
+    // Not opened in a sketch, where the Timeline isn't.
+    doc.look(Look::OpenMenu(RowMenu::Feature(feature)));
+    assert_eq!(doc.row_menu, None);
+    doc.look(Look::FinishSketch);
+
+    doc.look(Look::OpenMenu(RowMenu::Feature(feature)));
+    doc.update(Edit::RemoveFeature(feature));
+    assert_eq!(doc.row_menu, None);
+    assert!(sketches(&doc).is_empty());
+    assert_eq!(doc.selected_feature, None);
+}
+
+/// The context menu, headless: right-clicking the sketch's row opens it
+/// where it was clicked, and its Delete deletes the sketch.
+#[test]
+fn a_right_click_on_a_timeline_row_opens_its_menu_there() {
+    use iced::mouse::{Button, Cursor, Event};
+    use iced_runtime::user_interface::UserInterface;
+    let (mut doc, feature, _) = with_sketch();
+    doc.look(Look::SelectPanel(Panel::Timeline));
+    let name = doc.editor.document().feature(feature).unwrap().name.clone();
+    let size = iced::Size::new(1280.0, 800.0);
+    let mut renderer = varde_view::probe::renderer();
+
+    let mut ui = shown(doc.view(false, Mode::Light, true), size, &mut renderer);
+    let row = texts(&mut ui, &renderer);
+    let row = row.iter().find(|t| t.text == name).unwrap();
+    let at = row.seen().center();
+    let mut sent = Vec::new();
+    for event in [
+        Event::CursorMoved { position: at },
+        Event::ButtonPressed(Button::Right),
+    ] {
+        let _ = ui.update(
+            &[iced::Event::Mouse(event)],
+            Cursor::Available(at),
+            &mut renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut sent,
+        );
+    }
+    let cache = ui.into_cache();
+    let [Ui::Look(Look::OpenMenu(menu))] = sent[..] else {
+        panic!("{sent:?}");
+    };
+    assert_eq!(menu, RowMenu::Feature(feature));
+    doc.look(Look::OpenMenu(menu));
+
+    let mut ui = UserInterface::build(
+        doc.view(false, Mode::Light, true),
+        size,
+        cache,
+        &mut renderer,
+    );
+    let shown = texts(&mut ui, &renderer);
+    let edit = shown.iter().find(|t| t.text == "Edit sketch").unwrap();
+    // The menu's top left is at the click: the item's text is right of
+    // its padding and icon, and a little down.
+    let (dx, dy) = (edit.bounds.x - at.x, edit.bounds.y - at.y);
+    assert!(
+        (0.0..50.0).contains(&dx) && (0.0..20.0).contains(&dy),
+        "{edit:?} {at:?}"
+    );
+    let delete = (shown.iter())
+        .find(|t| t.text == "Delete" && t.bounds.x == edit.bounds.x)
+        .unwrap();
+    let sent = clicked(&mut ui, &mut renderer, delete.bounds.center());
+    drop(ui);
+    let [Ui::Edit(Edit::RemoveFeature(id))] = sent[..] else {
+        panic!("{sent:?}");
+    };
+    doc.update(Edit::RemoveFeature(id));
+    assert!(sketches(&doc).is_empty());
+    assert_eq!(doc.row_menu, None);
+}
+
+/// A body's and a sketch's context menus in Objects: Hide, then Show,
+/// leave the menu closed, and an undo that takes the body away takes its
+/// menu too.
+#[test]
+fn objects_have_context_menus() {
+    let (mut doc, _) = example();
+    doc.look(Look::SelectPanel(Panel::Objects));
+    let body = doc.editor.document().bodies()[0].id;
+    let sketch = doc.editor.document().features()[0].id;
+
+    doc.look(Look::OpenMenu(RowMenu::Body(body)));
+    assert_eq!(doc.row_menu, Some(RowMenu::Body(body)));
+    // Not selected in the Timeline: the Objects' rows aren't.
+    assert_eq!(doc.selected_feature, None);
+    doc.update(Edit::ToggleVisible(body));
+    assert_eq!(doc.row_menu, None);
+    assert!(!doc.editor.document().body(body).unwrap().visible);
+
+    doc.look(Look::OpenMenu(RowMenu::Sketch(sketch)));
+    doc.look(Look::Escape);
+    assert_eq!(doc.row_menu, None);
+    doc.look(Look::OpenMenu(RowMenu::Sketch(sketch)));
+    doc.look(Look::EditFeature(sketch));
+    assert_eq!(doc.row_menu, None);
+    assert_eq!(edited(&doc), Some(sketch));
+    doc.look(Look::FinishSketch);
+
+    // Gone with the body.
+    doc.update(Edit::RemoveBody(body));
+    doc.look(Look::OpenMenu(RowMenu::Body(body)));
+    assert_eq!(doc.row_menu, None);
+}
+
+/// Headless: right-clicking a body in Objects asks for its menu, which
+/// offers hiding and deleting it.
+#[test]
+fn a_right_click_on_a_body_opens_its_menu() {
+    use iced::mouse::{Button, Cursor, Event};
+    use iced_runtime::user_interface::UserInterface;
+    let (mut doc, _) = example();
+    doc.look(Look::SelectPanel(Panel::Objects));
+    let body = doc.editor.document().bodies()[0].clone();
+    let size = iced::Size::new(1280.0, 800.0);
+    let mut renderer = varde_view::probe::renderer();
+
+    let mut ui = shown(doc.view(false, Mode::Light, true), size, &mut renderer);
+    let row = texts(&mut ui, &renderer);
+    let at = row
+        .iter()
+        .find(|t| t.text == body.name)
+        .unwrap()
+        .seen()
+        .center();
+    let mut sent = Vec::new();
+    for event in [
+        Event::CursorMoved { position: at },
+        Event::ButtonPressed(Button::Right),
+    ] {
+        let _ = ui.update(
+            &[iced::Event::Mouse(event)],
+            Cursor::Available(at),
+            &mut renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut sent,
+        );
+    }
+    let cache = ui.into_cache();
+    let [Ui::Look(Look::OpenMenu(menu))] = sent[..] else {
+        panic!("{sent:?}");
+    };
+    assert_eq!(menu, RowMenu::Body(body.id));
+    doc.look(Look::OpenMenu(menu));
+
+    let view = doc.view(false, Mode::Light, true);
+    let mut ui = UserInterface::build(view, size, cache, &mut renderer);
+    let shown = texts(&mut ui, &renderer);
+    assert!(
+        !shown.iter().any(|t| t.text.starts_with("Edit")),
+        "{shown:?}"
+    );
+    let hide = shown.iter().find(|t| t.text == "Hide").unwrap();
+    let sent = clicked(&mut ui, &mut renderer, hide.bounds.center());
+    let [Ui::Edit(Edit::ToggleVisible(id))] = sent[..] else {
+        panic!("{sent:?}");
+    };
+    assert_eq!(id, body.id);
+    assert!(shown.iter().any(|t| t.text == "Delete"));
 }
 
 #[test]
