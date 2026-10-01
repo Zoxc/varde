@@ -245,14 +245,15 @@ pub(super) struct Triangulation {
 /// there, bulging past its other side), no point in the triangle mends
 /// it: the curved side is returned, to be split.
 ///
-/// With `shapes` (a face laid out in a curved patch's parameter domain),
-/// points are first added for the triangles' shapes (see [`shape`]),
-/// numbered the same way, before those for the corners.
+/// With `shapes` (a face laid out in a curved patch's parameter domain:
+/// the smallest circumradius, in the layout, of a triangle that may take
+/// one), points are first added for the triangles' shapes (see
+/// [`shape`]), numbered the same way, before those for the corners.
 pub(super) fn triangulate(
     loops: Vec<Vec<Vert>>,
     bends: &Bends,
     first_steiner: u32,
-    shapes: bool,
+    shapes: Option<f64>,
     meter: &Meter,
 ) -> Result<Triangulation, BooleanError> {
     // Only this face's exact orientations are counted from here, and
@@ -270,7 +271,7 @@ fn triangulate_counted(
     loops: Vec<Vec<Vert>>,
     bends: &Bends,
     first_steiner: u32,
-    shapes: bool,
+    shapes: Option<f64>,
     meter: &Meter,
 ) -> Result<Triangulation, BooleanError> {
     // A loop of two vertices (two curves between the same two points)
@@ -306,8 +307,16 @@ fn triangulate_counted(
         steiner: Vec::new(),
         split: lens_sides,
     };
-    if shapes {
-        shape(&mut out, &mut all, &fixed, bends, first_steiner, meter)?;
+    if let Some(least) = shapes {
+        shape(
+            &mut out,
+            &mut all,
+            &fixed,
+            bends,
+            first_steiner,
+            least,
+            meter,
+        )?;
     }
     if bends.is_empty() {
         return Ok(out);
@@ -463,6 +472,7 @@ fn shape(
     fixed: &BTreeSet<(u32, u32)>,
     bends: &Bends,
     first_steiner: u32,
+    least: f64,
     meter: &Meter,
 ) -> Result<(), BooleanError> {
     use std::cmp::Reverse;
@@ -518,7 +528,10 @@ fn shape(
         let [a, b, c] = tri.map(|id| at(id).at);
         let (centre, r) = circumcircle(a, b, c);
         let clear = SHAPE_CLEAR * r;
+        // Below `least` a point mends nothing repair would split, and
+        // only steps towards a loop side about a tie long, halving.
         if !(centre.is_finite() && r.is_finite())
+            || r < least
             || centre
                 .x
                 .min(centre.y)
@@ -1241,7 +1254,7 @@ mod tests {
             vec![outer, hole],
             &Bends::new(),
             100,
-            false,
+            None,
             &Meter::new(u64::MAX),
         )
         .unwrap()
@@ -1273,7 +1286,7 @@ mod tests {
             .collect();
         let used = |points: &[(f64, f64)]| {
             let meter = Meter::new(u64::MAX);
-            triangulate(vec![loop_of(points, 0)], &Bends::new(), 100, false, &meter).unwrap();
+            triangulate(vec![loop_of(points, 0)], &Bends::new(), 100, None, &meter).unwrap();
             meter.used()
         };
         let (band, round) = (used(&band), used(&round));
@@ -1297,7 +1310,7 @@ mod tests {
             0,
         );
         let all = l.clone();
-        let tris = triangulate(vec![l], &Bends::new(), 100, false, &Meter::new(u64::MAX))
+        let tris = triangulate(vec![l], &Bends::new(), 100, None, &Meter::new(u64::MAX))
             .unwrap()
             .tris;
         let at = |id: u32| all[id as usize].at;
@@ -1322,7 +1335,7 @@ mod tests {
             ],
             0,
         );
-        let tris = triangulate(vec![l], &Bends::new(), 100, false, &Meter::new(u64::MAX))
+        let tris = triangulate(vec![l], &Bends::new(), 100, None, &Meter::new(u64::MAX))
             .unwrap()
             .tris;
         assert_eq!(tris.len(), 4);
@@ -1339,7 +1352,7 @@ mod tests {
         bends.insert((1, 2), [DVec2::new(0.0, 1.0), -d]);
         bends.insert((2, 0), [d, DVec2::new(-0.2, 1.0)]);
         let all = l.clone();
-        let out = triangulate(vec![l], &bends, 100, false, &Meter::new(u64::MAX)).unwrap();
+        let out = triangulate(vec![l], &bends, 100, None, &Meter::new(u64::MAX)).unwrap();
         assert_eq!(out.steiner.len(), 1, "{out:?}");
         assert!(out.split.is_empty(), "{out:?}");
         assert_eq!(out.tris.len(), 3, "{out:?}");
@@ -1390,13 +1403,13 @@ mod tests {
             loops.clone(),
             &Bends::new(),
             100,
-            false,
+            None,
             &Meter::new(u64::MAX),
         );
         let plain = plain.unwrap();
         assert!(plain.steiner.is_empty());
         let meter = Meter::new(u64::MAX);
-        let out = triangulate(loops.clone(), &Bends::new(), 100, true, &meter).unwrap();
+        let out = triangulate(loops.clone(), &Bends::new(), 100, Some(0.0), &meter).unwrap();
         assert!(!out.steiner.is_empty(), "{out:?}");
         assert!(out.steiner.len() <= all.len() * SHAPE_PER_VERTEX + SHAPE_MORE);
         assert!(smallest(&plain) < SIN_SHAPE / 4.0, "{}", smallest(&plain));
@@ -1418,9 +1431,19 @@ mod tests {
             assert!(p.x > 0.0 && p.y > 0.0 && p.x + p.y < 1.0, "{p}");
             assert!(p.distance(centre) > r, "{p}");
         }
+        // None in triangles under the smallest circumradius.
+        let none = triangulate(
+            loops.clone(),
+            &Bends::new(),
+            100,
+            Some(1.0),
+            &Meter::new(u64::MAX),
+        );
+        assert!(none.unwrap().steiner.is_empty());
         // The work is counted, and the same input gives the same bits.
         assert!(meter.used() > Meter::new(u64::MAX).used());
-        let again = triangulate(loops, &Bends::new(), 100, true, &Meter::new(u64::MAX)).unwrap();
+        let again =
+            triangulate(loops, &Bends::new(), 100, Some(0.0), &Meter::new(u64::MAX)).unwrap();
         assert_eq!(again.tris, out.tris);
         let bits = |out: &Triangulation| -> Vec<[u64; 2]> {
             out.steiner
@@ -1448,7 +1471,7 @@ mod tests {
         let l = loop_of(&[(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)], 0);
         let mut bends = Bends::new();
         bends.insert((1, 2), [DVec2::new(-1.0, 1e-6), DVec2::new(0.0, -1.0)]);
-        let out = triangulate(vec![l], &bends, 100, false, &Meter::new(u64::MAX)).unwrap();
+        let out = triangulate(vec![l], &bends, 100, None, &Meter::new(u64::MAX)).unwrap();
         assert_eq!(out.tris.len(), 2, "{out:?}");
         assert!(out.steiner.is_empty(), "{out:?}");
         assert_eq!(out.split, vec![(1, 2)]);
@@ -1472,7 +1495,7 @@ mod tests {
             v(4, 0.0, 0.5, 0b100),
         ];
         let all = l.clone();
-        let tris = triangulate(vec![l], &Bends::new(), 100, false, &Meter::new(u64::MAX))
+        let tris = triangulate(vec![l], &Bends::new(), 100, None, &Meter::new(u64::MAX))
             .unwrap()
             .tris;
         let at = |id: u32| all[id as usize].at;

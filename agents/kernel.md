@@ -3072,7 +3072,22 @@ domain's sides, and strictly inside a triangle whose three pieces have
 their curved corners open; the triangle holding it is split there, and
 the sides facing the point are flipped by `improve`'s rules
 (`flippable`) as long as they improve, as in an incremental Delaunay
-insertion. A point refused leaves its triangle as it is. The worst comes
+insertion. A point refused leaves its triangle as it is, and the
+triangle isn't looked at again. Nor does a triangle whose circumradius
+is under `MIN_CURVED_SPLIT` resolutions take one (in the layout, over
+the patch's longest side): repair splits nothing that small, and there
+the points only stepped towards a loop side a tie long, each halving
+the last one's circumradius (eight in one face of a seeded chain, down
+to `1e-7` in the layout). Why a point can't land outside the face: the
+holder is a straight triangle reached without crossing a side of the
+loops; a curved side of the loops whose corners in its triangle are
+open bulges only into that triangle (the curve's control triangle lies
+beyond the triangle's straight sides), the pieces holding a curved side
+are only made with those corners open, and a triangle whose corners
+aren't asks for its curve to be split (in the mending below). The
+clearance search finds every side and vertex within the clearance, as
+the disc is convex: a segment from the centre to any point of it
+crosses only sides within it. The worst comes
 from a priority queue (entries whose triangle changed are passed over),
 the triangle holding the point by a walk from the thin one that never
 crosses a side of the loops (one that would, or ends on a side, refuses
@@ -4274,6 +4289,10 @@ to 72 of its 96 operations and left the others as they were.
       at 5° alike).
     - Bosses 1 000 tall: 10 of 90 failed before, 6 now, with 989
       patches per result against 831.
+    - With the circumradius floor (none under `MIN_CURVED_SPLIT`
+      resolutions) every sweep above comes out the same, patch counts
+      too, and the longer walls fuzzers refuse 55 and 52 (with the
+      clean-up's coplanar seams, which came in between).
   - Bisecting in repair (not built): each failing piece more than 8
     times longer than high halved across its longest side, its neighbour
     across that side first if that is the neighbour's longest (Rivara),
@@ -5060,7 +5079,7 @@ offered ones' (`tolerance_choices`).
 | `MAX_NEAR_NODES` (boolean) | 512 | pieces of a patch looked at certifying a crossing only placed, or checking a root of an edge is on it |
 | `MAX_TURN_COS` (boolean) | 0.7 | the most a cut's conic turns (about 45°) |
 | `MEND_ROUNDS` (boolean) | 4 | rounds of Steiner points in one face's triangulation |
-| `SIN_SHAPE` (boolean) | sin 5° | the smallest angle, in a curved patch's layout, under which a cut face's triangle takes a point at its circumcentre; at most 4 per loop vertex and 16 more |
+| `SIN_SHAPE` (boolean) | sin 5° | the smallest angle, in a curved patch's layout, under which a cut face's triangle takes a point at its circumcentre; at most 4 per loop vertex and 16 more, none in a triangle whose circumradius is under `MIN_CURVED_SPLIT` resolutions |
 | `MAX_WORK` | `1 << 22` | work units in one operation: about two seconds on one thread at most; the heaviest booleans measured take about half of it |
 | `MIN_SPLIT` (repair) | 64 resolutions | the smallest flat piece repair splits, and the smallest profile segment an extrude halves |
 | `MIN_CURVED_SPLIT` (repair) | 8 resolutions | the smallest curved piece repair splits; the refiner's floor in repair |

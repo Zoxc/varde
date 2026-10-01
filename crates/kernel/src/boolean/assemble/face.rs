@@ -29,7 +29,7 @@ use super::super::surface::{Guide, Shape, second_point, section};
 use super::super::triangulate::{Bends, Meter, NO_CUT, Vert, triangulate};
 use super::{Along, Curves, key};
 use crate::Tolerance;
-use crate::mesh::{Edge, Quadric, Surface, off_surface, samples, straight};
+use crate::mesh::{Edge, MIN_CURVED_SPLIT, Quadric, Surface, off_surface, samples, straight};
 use crate::patch::{Conic3, Patch};
 
 /// How a face is laid out for triangulating: see the [module](self) docs.
@@ -336,13 +336,16 @@ pub(super) fn cut_face(
             ],
         );
     }
-    let triangulation = triangulate(
-        loops,
-        &bends,
-        FIRST_STEINER,
-        layout == Layout::Curved,
-        meter,
-    )?;
+    // Points for the triangles' shapes on a curved patch, in triangles no
+    // smaller than repair splits: a circumradius of `MIN_CURVED_SPLIT`
+    // resolutions over the patch's longest side, in the layout (about 1
+    // across).
+    let shapes = (layout == Layout::Curved).then(|| {
+        let [p0, p1, p2] = corner_pos;
+        let across = p0.distance(p1).max(p1.distance(p2)).max(p2.distance(p0));
+        MIN_CURVED_SPLIT * tol.resolution() / across
+    });
+    let triangulation = triangulate(loops, &bends, FIRST_STEINER, shapes, meter)?;
     let tris = triangulation.tris;
     // Curves the triangulation wants split for its corners.
     let wanted: Vec<(u32, u32)> = triangulation

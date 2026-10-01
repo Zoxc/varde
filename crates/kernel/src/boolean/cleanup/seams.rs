@@ -375,7 +375,7 @@ impl Cleaner<'_> {
             }
         }
         let first = u32::try_from(self.soup.pos.len()).ok()?;
-        let made = triangulate(loops, &bends, first, meter).ok()?;
+        let made = triangulate(loops, &bends, first, None, meter).ok()?;
         if meter.over() || !made.split.is_empty() || !made.steiner.is_empty() {
             return None;
         }

@@ -63,7 +63,7 @@ pub use form::Form;
 pub(crate) use form::circle_of;
 pub(crate) use hull::{apart, edge_neighbours_apart, flat, straight};
 pub(crate) use refine::{Node, Refiner};
-pub(crate) use repair::MIN_SPLIT;
+pub(crate) use repair::{MIN_CURVED_SPLIT, MIN_SPLIT};
 
 /// A hash map with a fixed hasher, for maps only looked up in, never
 /// iterated: nothing can then depend on its order, and lookups by vertex
