@@ -90,8 +90,10 @@ const SEARCH_WORK: usize = 16;
 
 /// How many pieces a search for an edge's crossings looks at for a unit
 /// of the budget: one that runs to its cap (as where two surfaces lie
-/// along each other) is 256 units, not the least, 16.
-const NODES_PER_UNIT: usize = 4;
+/// along each other) is 512 units, not the least, 16. Testing each
+/// piece's control hulls for a gap made a piece about twice as dear
+/// there (some 2.3 µs), so it is 2, not 4.
+const NODES_PER_UNIT: usize = 2;
 
 /// The primitives of two operands, one of them with curved patches.
 pub(super) struct Curved<'a> {
@@ -104,6 +106,9 @@ pub(super) struct Curved<'a> {
     /// Heights closer than this are ties.
     tie: f64,
     resolution: f64,
+    /// Whether the crossing searches drop pieces whose control hulls are
+    /// apart: always, but for tests under `assemble::LOOSE`.
+    hulls: bool,
 }
 
 impl<'a> Curved<'a> {
@@ -122,6 +127,10 @@ impl<'a> Curved<'a> {
             axes: Axes::new(),
             tie,
             resolution: tol.resolution(),
+            #[cfg(test)]
+            hulls: !super::assemble::LOOSE.get(),
+            #[cfg(not(test))]
+            hulls: true,
         }
     }
 
@@ -630,7 +639,7 @@ impl Primitives for Curved<'_> {
         }
         let edge = self.curve(side, e);
         let patch = &self.input(side.other()).patches[f as usize];
-        let (mut found, closest, nodes) = solve::edge_patch(&edge, patch);
+        let (mut found, closest, nodes) = solve::edge_patch_with(&edge, patch, self.hulls);
         // Crossings on the patch's side, within a tie of it (an edge of one
         // operand lying on the other's where a face is flush with it):
         // there or not as the perturbation moves the edge across the side.

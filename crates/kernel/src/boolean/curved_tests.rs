@@ -617,6 +617,71 @@ fn flush_bosses_joined_on_drilled_plates() {
     }
 }
 
+/// The 60 × 40 plate with a hole of radius 8 in its middle, extruded
+/// from 0 to `h`, its hole's loop as regeneration builds it: clockwise
+/// from (8, 0), in four quarters.
+fn tall_plate(h: f64) -> Solid {
+    let ends = [DVec2::X, DVec2::NEG_Y, DVec2::NEG_X, DVec2::Y, DVec2::X].map(|d| d * 8.0);
+    let hole = Loop {
+        segments: (0..4)
+            .map(|k| Segment {
+                conic: crate::patch::Conic2::arc_between(DVec2::ZERO, 8.0, ends[k], ends[k + 1])
+                    .unwrap(),
+                curve: 5,
+            })
+            .collect(),
+    };
+    extruded(
+        vec![
+            rect(DVec2::new(-30.0, -20.0), DVec2::new(30.0, 20.0), 1),
+            hole,
+        ],
+        0.0,
+        h,
+        1,
+    )
+}
+
+#[test]
+fn drilling_a_tall_plate() {
+    // A drill of radius 3 through the plate, 10 longer than it: the
+    // cap's long edges cross the drill's wall, two patches per quarter
+    // that tall and 4.2 wide, and the search for the crossings ran out
+    // of pieces splitting the wall across its width, from about 100 tall.
+    // Each of these failed so (`Invalid`, the clean-up left with folds).
+    let drills = [
+        DVec2::new(-20.0, 10.0),
+        DVec2::new(-23.15, 10.0),
+        DVec2::new(-17.27, 5.21),
+        DVec2::new(13.61, 1.26),
+    ];
+    for h in [100.0, 300.0, 1000.0, 10000.0] {
+        let plate = tall_plate(h);
+        let want = (2400.0 - 64.0 * PI - 9.0 * PI) * h;
+        for d in drills {
+            let drill = cylinder([d.x, d.y, -5.0], 3.0, h + 10.0);
+            let drilled = boolean(&plate, &drill, Op::Difference, &TOL, &Budget::DEFAULT)
+                .unwrap_or_else(|e| panic!("{h} tall, drilled at {d}: {e:?}"));
+            let got = drilled.volume();
+            assert!(
+                (got - want).abs() <= 1e-9 * want,
+                "{h} tall, drilled at {d}: volume {got}, not {want}"
+            );
+        }
+    }
+    // A plain box drilled where its cap's diagonal crosses the drill.
+    for h in [300.0, 1000.0] {
+        let slab = cube([-30.0, -20.0, 0.0], [60.0, 40.0, h]);
+        let drill = cylinder([20.0, 13.0, -5.0], 3.0, h + 10.0);
+        let drilled = run(&slab, &drill, Op::Difference);
+        let want = (2400.0 - 9.0 * PI) * h;
+        assert!(
+            (drilled.volume() - want).abs() <= 1e-9 * want,
+            "{h} tall box"
+        );
+    }
+}
+
 #[test]
 fn the_result_checks_integrations_are_charged() {
     // A tube whose wall is a twentieth thick, notched through the wall:

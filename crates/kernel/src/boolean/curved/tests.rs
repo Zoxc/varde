@@ -394,6 +394,48 @@ fn an_edge_through_a_cylinder_is_found_where_it_is() {
 }
 
 #[test]
+fn an_edge_across_a_tall_wall_is_found_cheaply() {
+    // A plate's cap edge across a drill 1010 tall and 6 wide: the edge's
+    // box holds the wall's whole width, so only the height pruned pieces
+    // by their boxes, and the row of pieces at the edge's height was split
+    // across the width into more than the search's cap, one patch's
+    // crossing not found. Pieces whose control hulls are apart are
+    // dropped too.
+    let tol = crate::Tolerance::DEFAULT;
+    let centre = DVec3::new(-20.0, 10.0, 0.0);
+    let r = 3.0;
+    let drill = crate::Solid::cylinder(centre - 5.0 * DVec3::Z, r, 1010.0, 1, &tol).unwrap();
+    let mesh = drill.mesh();
+    let (a, b) = (DVec3::new(-30.0, 20.0, 0.0), DVec3::new(-8.0, 0.0, 0.0));
+    let edge = segment(a, b);
+    let mut crossings = Vec::new();
+    for t in 0..mesh.tris().len() {
+        let (found, _, nodes) = edge_patch(&edge, &mesh.patch(t));
+        assert!(nodes <= 100, "patch {t}: {nodes} pieces");
+        for h in found.iter().filter(|h| h.out == 0.0) {
+            crossings.push((h.x, h.t));
+        }
+    }
+    crossings.sort_by(|p, q| p.1.total_cmp(&q.1));
+    // Along the edge from `a`: the foot of the perpendicular from the
+    // axis at `s0`, the axis `d` from the edge.
+    let along = b - a;
+    let length = along.length();
+    let s0 = (centre - a).dot(along) / length;
+    let d = (centre - a).cross(along).length() / length;
+    let half = (r * r - d * d).sqrt();
+    let want = [(1, (s0 - half) / length), (-1, (s0 + half) / length)];
+    assert_eq!(crossings.len(), 2, "{crossings:?}");
+    for (got, want) in crossings.iter().zip(want) {
+        assert_eq!(got.0, want.0, "{crossings:?}");
+        assert!(
+            (got.1 - want.1).abs() <= 1e-12,
+            "{crossings:?}, not {want:?}"
+        );
+    }
+}
+
+#[test]
 fn an_edge_grazing_a_cylinder_is_found_twice() {
     // A plate's cap edge running through a boss's rim a little inside it,
     // on the wall's bottom side: it passes in and out of the wall 0.068

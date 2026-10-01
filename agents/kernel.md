@@ -1639,8 +1639,15 @@ its sides, and those above counted.
 **Crossings.** A straight edge through a planar patch: at most one, at
 `Flat`'s exact position on the corners' plane. Otherwise solved for
 (`solve::edge_patch`: edge and triangle split together, pieces dropped by
-their boxes and by a slab along the patch piece's normal, which a
-tangency needs; Newton on `E(t) = P(u)`; once it finds a crossing in a
+their boxes, by a slab along the patch piece's normal, which a
+tangency needs, and where their control points' hulls are more than
+`1e-12` apart (`hull::apart`, GJK, in the search's frame scaled to the
+unit box; the edge's and the patch's pieces lie in their control
+points' hulls, the weights being positive), which a tall or long patch
+needs: a cap edge's box held the whole width of a drill's wall 1 000
+tall and 4 wide, so only the height pruned pieces, and the row of
+pieces at the edge's height was split across the width until the
+search ran out of pieces, more than 1 024 against 23 to 33 now; Newton on `E(t) = P(u)`; once it finds a crossing in a
 piece, the rest of the edge's piece either side of it, less a thousandth
 of it round the crossing, is searched again: an edge running through a
 wall a little inside its rim, in and out within one small piece, lost
@@ -2360,11 +2367,13 @@ whose volume the check integrated to tell which way the shells face
 (about 17 µs a patch; `INTEGRATE_WORK`), which `Mesh::check_counted`
 reports and `Solid::new_within` spends (extrude's check too), after the
 check: a result can pass it and still be `TooComplex`. The operands
-cost nothing for their orientation, which their own check settled. With curved patches also each edge–face search a unit per 4
+cost nothing for their orientation, which their own check settled. With curved patches also each edge–face search a unit per 2
 pieces it looked at, at least 16: the 16 spent before it runs, the rest
 after each chunk of 1 024 searches (a search running to its cap of
-1 024 pieces, as where two surfaces lie along each other, is 256; at
-about 300 pieces a search took some 70 µs), a
+1 024 pieces, as where two surfaces lie along each other, is 512; a
+piece is about 1 µs, 2.3 µs where the edge runs along the patch and
+every piece's hulls touch, twice what it was before the hulls were
+tested, hence 2 pieces a unit, not 4), a
 unit per pair decided, and per refinement split and piece, every round;
 `MAX_TRACE_STEPS / 64` per arc not between two planar patches, a unit per
 curve of the chains, a unit per curve halved in the rounds of cutting
@@ -2538,11 +2547,21 @@ nearly straight section arcs' weights came from a rounding's worth of
 bulge (a sliver `1.7e-6` off on a copy claiming no surface), and a box
 turned a thousandth of a radian across a wall over an ellipse arc
 (`5.6e-7` off in volume), the same; and through a test-only switch (`assemble::LOOSE`: crossings
-only placed left where they were and not checked) each result refused
+only placed left where they were and not checked, and the crossing
+searches not dropping pieces by their hulls, so they run out of pieces
+on those bars and walls as they used to) each result refused
 or its claim-free patches within the tolerance of their walls, the
 union (and `bar − box`) refused as too complex at the finest tolerances,
 and all four through at the default one, where the bands are between
-half the tolerance and the tolerance, their volumes right. Unit tests:
+half the tolerance and the tolerance, their volumes right. Tall walls:
+the 60 × 40 plate with its hole of radius 8, 100 to 10 000 tall, drilled
+through by a cylinder of radius 3 at four places, and a box drilled
+where its cap's diagonal crosses the drill, 300 and 1 000 tall, each to
+`1e-9` of the closed-form volume (`drilling_a_tall_plate`; regen's
+`a_tall_plate_is_drilled_through_all` the same through the example
+document), and a cap edge across a drill 1 010 tall crossing it twice,
+each search looking at no more than 100 pieces, at the closed-form
+parameters to `1e-12`. Unit tests:
 exact ellipse arcs of a tilted plane through a cylinder, crossings
 solved exactly on a plane and a cylinder, crossings only placed going to
 their root on a tilted cylinder's patch from `1e-3` and `0.05` off (a
@@ -2688,7 +2707,9 @@ to 72 of its 96 operations and left the others as they were.
   take no certificate as no loop. Flat solids touching do meet.
 - Each refinement round counts both operands again from scratch, and a
   search stops at 1 024 pieces (placing a crossing it didn't find where
-  it found the two meeting, else where they came closest): pairs a
+  it found the two meeting, else where they came closest; since pieces
+  whose hulls are apart are dropped, tall and long patches no longer
+  reach it, only edges running along a surface): pairs a
   certificate can't settle (two cylinders tangent or crossing at a
   slant) refine for many rounds, and
   parts built in long chains occasionally run out of budget there.
@@ -2916,9 +2937,9 @@ boolean's error names the body and what was being done
 ("joining it to Body 2 leaves no clean solid: they may meet only along
 an edge, at a point, or on tangent faces; if so, move it to overlap
 more or to clear it" for `Invalid`, which is what edge-touching unions
-and tangent contacts give, but not only: a tall plate cut through by a
-cylinder fails `Invalid(Hull)` at every tolerance though they overlap
-properly, so the cause is hedged and no tolerance is offered; an error
+and tangent contacts give, but not only: thin cap triangles left next
+to a hole's rim fail too though the solids overlap properly, so the
+cause is hedged and no tolerance is offered; an error
 of its own for edge and point contacts would let it be said outright;
 "… can't be worked out: they meet on faces too nearly flush or tangent
 to tell apart; move it a little" for `Inconsistent`; "… is too complex
@@ -3696,3 +3717,27 @@ parameter, or a split outside the patch bounds),
   bands (within the fit, claiming no surface) graze the wall: their
   volume can be off by more than their own, `5e-6` on a `3e-7` sliver,
   with every point within `1e-4` of the true surface.
+- **Crossing searches drop pieces whose control hulls are apart**
+  (`hull::apart`, margin `1e-12` in the search's unit frame), as the
+  plan for tall walls has it, and the charge went from 4 pieces a unit
+  to 2 (a piece measured twice as dear where every piece's hulls
+  touch; single thread, release: random edges and patches 0.3 → 1.0 µs
+  a piece but 5 times fewer pieces, 0.2 s → 0.13 s for 20 000
+  searches; a cap edge across a drill 1 010 tall 1 047 → under 100
+  pieces). The test switch `assemble::LOOSE` also turns the hull test
+  off, so the backstop tests (two bars through boxes, a cylinder across
+  a 75° wall) still see their searches run out of pieces and their
+  crossings placed off the surface: with the hulls the searches find
+  those crossings and the loose results came back `Ok` and exact.
+  Before and after, release (after the exact roots on quadrics and the
+  certification of crossings only placed had already won back most of
+  them): the drilled 60 × 40 plate, 47 drill positions at 7 heights
+  from 10 to 10 000, 44, 45, 45, 45, 45 of 47 from 100 tall up (errors
+  `Invalid`) → all 329 (and the box drilled the same, 329 both), 7.2 s
+  → 3.5 to 4.4 s of user time; a box notched into a tall cylinder's
+  side, 60 of 60 both; the arc fuzzers (walls 300 cases, seeds 21 and
+  5; turned tools 200, seeds 21 and 5): walls unchanged (65 and 59
+  refused, none wrong), turned 17 → 17 and 16 → 13 refused; the
+  seeded suite unchanged (related 112/120, chains 203/240, turned
+  156/160, tangent 72/96, coaxial 37/40, bosses 64/64, drilled
+  160/160).

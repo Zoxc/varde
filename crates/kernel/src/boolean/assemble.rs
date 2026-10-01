@@ -482,8 +482,10 @@ thread_local! {
     /// placed are placed as they were before they went to a root on the
     /// patch crossed (on a plane its nearest root, on a quadric one within
     /// `1e-6`, else where the search put them; see [`params`]) and
-    /// [`Cutting::certify`] is skipped, to see what the rest makes of
-    /// crossings off the surface.
+    /// [`Cutting::certify`] is skipped, and the crossing searches of the
+    /// counting made on this thread don't drop pieces by their control
+    /// hulls (so they run out of pieces where they used to), to see what
+    /// the rest makes of crossings off the surface.
     pub(super) static LOOSE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 

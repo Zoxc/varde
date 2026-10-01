@@ -390,6 +390,41 @@ fn through_all_cuts_through_the_bodies() {
 }
 
 #[test]
+fn a_tall_plate_is_drilled_through_all() {
+    // The example plate a metre tall: the plate's cap edges cross the
+    // drill's wall, 1 m tall and a few mm wide, and the search for those
+    // crossings ran out of pieces splitting the wall across its width.
+    for center in [(-20.0, 10.0), (-17.27, 5.21), (13.61, 1.26)] {
+        let mut editor = Editor::new(Document::example());
+        let feature = editor.document().features()[1].id;
+        let extrude = Extrude {
+            extent: Extent::OneSide(length(editor.document(), "1000")),
+            ..example_extrude(editor.document())
+        };
+        editor
+            .apply(Command::SetExtrude {
+                feature,
+                extrude: Box::new(extrude),
+            })
+            .unwrap();
+        add_extrude(
+            &mut editor,
+            disc(center, 3.0),
+            Extent::ThroughAll,
+            Operation::Cut(Targets::default()),
+        );
+        let evaluation = evaluated(editor.document());
+        assert!(
+            evaluation.failed.is_empty(),
+            "{center:?}: {:?}",
+            evaluation.failed
+        );
+        let solid = only_body(&evaluation);
+        assert_near(solid.volume(), plate(8.0, 1000.0) - PI * 9.0 * 1000.0);
+    }
+}
+
+#[test]
 fn bodies_taken_out_are_left_as_they_are() {
     let mut editor = Editor::new(Document::example());
     let top = editor.document().bodies()[0].id;

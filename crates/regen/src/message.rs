@@ -85,8 +85,8 @@ pub(crate) fn boolean(doing: Doing, body: &str, error: KernelError) -> String {
             "{doing} {body} is too complex to work out: they may meet on faces that are \
              tangent or nearly flush"
         ),
-        // Hedged: not every boolean `Invalid` is such a contact (a tall
-        // part cut through can fail at every tolerance), so the cause is
+        // Hedged: not every boolean `Invalid` is such a contact (thin cap
+        // triangles left next to a hole's rim fail too), so the cause is
         // a guess and moving it a suggestion. No tolerance is offered: a
         // finer one doesn't mend those either.
         KernelError::Invalid(_) => format!(

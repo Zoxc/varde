@@ -3,8 +3,10 @@
 //!
 //! Both split the patch's parameter triangle (and the edge's parameter
 //! range) into pieces, exactly by blossoming, and drop the pieces whose
-//! control points' box can't hold a solution; a piece small or simple
-//! enough is handed to Newton's method, started at its middle, and a
+//! control points' box can't hold a solution (crossings: also those on
+//! either side of a slab, or whose control hulls are apart); a piece
+//! small or simple enough is handed to Newton's method, started at its
+//! middle, and a
 //! solution it finds counts if it lies in that piece (so each is found
 //! once, and the next piece finds its own; above a vertex, one found from
 //! another piece counts too where the search ran out of pieces before
@@ -16,6 +18,7 @@ use glam::{DVec2, DVec3};
 
 use super::super::chain::trace::invert;
 use super::Axes;
+use crate::mesh::apart;
 use crate::patch::{Bounds3, Conic3, Patch};
 
 /// How deep the parameter triangle is split looking for points above a
@@ -144,11 +147,24 @@ pub(crate) struct EdgeHit {
     pub(crate) out: f64,
 }
 
+/// [`edge_patch_with`] dropping pieces by their hulls, as the booleans do.
+#[cfg(test)]
+pub(crate) fn edge_patch(edge: &Conic3, patch: &Patch) -> (Vec<EdgeHit>, f64, usize) {
+    edge_patch_with(edge, patch, true)
+}
+
 /// Where `edge` passes through `patch`, in order along the edge, the
 /// parameter along the edge where the two came closest, for a crossing
 /// the count has and the search didn't find, and how many pieces the
-/// search looked at (at most a little over [`MAX_NODES`]).
-pub(crate) fn edge_patch(edge: &Conic3, patch: &Patch) -> (Vec<EdgeHit>, f64, usize) {
+/// search looked at (at most a little over [`MAX_NODES`]). Pieces whose
+/// control hulls are apart are dropped only if `hulls`: tests turn it
+/// off to see what the rest makes of a search that runs out of pieces,
+/// as it did on tall walls without it.
+pub(crate) fn edge_patch_with(
+    edge: &Conic3,
+    patch: &Patch,
+    hulls: bool,
+) -> (Vec<EdgeHit>, f64, usize) {
     let bounds = edge.bounds().union(patch.bounds());
     let origin = (bounds.min + bounds.max) * 0.5;
     let scale = (bounds.max - bounds.min).max_element();
@@ -168,6 +184,7 @@ pub(crate) fn edge_patch(edge: &Conic3, patch: &Patch) -> (Vec<EdgeHit>, f64, us
         found: Vec::new(),
         nodes: 0,
         closest: (f64::INFINITY, u32::MAX, 0.5),
+        hulls,
     };
     search.visit([0.0, 1.0], DVec3::AXES, 0);
     let mut found = search.found;
@@ -316,6 +333,28 @@ fn in_piece(d: [DVec3; 3], u: DVec3) -> bool {
     l0 >= -PIECE_SLACK && l1 >= -PIECE_SLACK && l2 >= -PIECE_SLACK
 }
 
+/// Whether the edge's piece with control points `edge` and the patch's
+/// piece with control `points` (corners first) lie on either side of a
+/// slab along the piece's corners' normal: a finer test than the boxes
+/// where the edge runs close along the patch, as at a tangency.
+fn slab_apart(edge: &[DVec3; 3], points: &[DVec3; 6]) -> bool {
+    let Some(n) = (points[1] - points[0])
+        .cross(points[2] - points[0])
+        .try_normalize()
+    else {
+        return false;
+    };
+    let range = |xs: &mut dyn Iterator<Item = f64>| {
+        xs.fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), x| {
+            (lo.min(x), hi.max(x))
+        })
+    };
+    let o = points[0];
+    let (plo, phi) = range(&mut points.iter().map(|&p| (p - o).dot(n)));
+    let (elo, ehi) = range(&mut edge.iter().map(|&p| (p - o).dot(n)));
+    elo > phi + 1e-12 || ehi < plo - 1e-12
+}
+
 struct HitSearch<'a> {
     /// The patch moved so the vertex is at the origin, and scaled.
     patch: &'a Patch,
@@ -414,6 +453,8 @@ struct CrossSearch<'a> {
     /// meet), `u32::MAX` less their depth, and the middle of the edge's
     /// piece.
     closest: (f64, u32, f64),
+    /// Whether pieces whose control hulls are apart are dropped.
+    hulls: bool,
 }
 
 impl CrossSearch<'_> {
@@ -422,15 +463,18 @@ impl CrossSearch<'_> {
         if self.nodes > MAX_NODES {
             return;
         }
-        let edge_box = {
+        // The edge's piece's control points (its weights are positive, so
+        // the piece lies in their hull).
+        let edge_points = {
             let point = |a: f64, b: f64| {
                 let h = self.edge.blossom(a, b);
                 h.truncate() / h.w
             };
-            Bounds3::point(point(t[0], t[0]))
-                .include(point(t[0], t[1]))
-                .include(point(t[1], t[1]))
+            [point(t[0], t[0]), point(t[0], t[1]), point(t[1], t[1])]
         };
+        let edge_box = Bounds3::point(edge_points[0])
+            .include(edge_points[1])
+            .include(edge_points[2]);
         let points = piece_points(self.patch, d);
         let patch_box = Bounds3::around(&points).expect("six points");
         let gap = (edge_box.min - patch_box.max)
@@ -443,7 +487,13 @@ impl CrossSearch<'_> {
         if near < (self.closest.0, self.closest.1) {
             self.closest = (near.0, near.1, mid);
         }
-        if gap > 1e-12 || self.slab_apart(t, &points) {
+        // The hulls: a tall or long patch's pieces all lie in a fat
+        // edge's box across the patch's width, and splitting them on (in
+        // both directions) ran the search out of pieces.
+        if gap > 1e-12
+            || slab_apart(&edge_points, &points)
+            || (self.hulls && apart(&edge_points, &points, 1e-12))
+        {
             return;
         }
         let size = |b: &Bounds3| (b.max - b.min).max_element();
@@ -484,33 +534,6 @@ impl CrossSearch<'_> {
                 self.visit(t, q, depth + 1);
             }
         }
-    }
-
-    /// Whether the edge's piece over `t` and the patch's piece with
-    /// control `points` (corners first) lie on either side of a slab
-    /// along the piece's corners' normal: a finer test than the boxes
-    /// where the edge runs close along the patch, as at a tangency.
-    fn slab_apart(&self, t: [f64; 2], points: &[DVec3; 6]) -> bool {
-        let Some(n) = (points[1] - points[0])
-            .cross(points[2] - points[0])
-            .try_normalize()
-        else {
-            return false;
-        };
-        let range = |xs: &mut dyn Iterator<Item = f64>| {
-            xs.fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), x| {
-                (lo.min(x), hi.max(x))
-            })
-        };
-        let o = points[0];
-        let (plo, phi) = range(&mut points.iter().map(|&p| (p - o).dot(n)));
-        let point = |a: f64, b: f64| {
-            let h = self.edge.blossom(a, b);
-            h.truncate() / h.w
-        };
-        let edge = [point(t[0], t[0]), point(t[0], t[1]), point(t[1], t[1])];
-        let (elo, ehi) = range(&mut edge.iter().map(|&p| (p - o).dot(n)));
-        elo > phi + 1e-12 || ehi < plo - 1e-12
     }
 
     /// The crossing near `start`, by Newton's method on `E(t) = P(u)`.
