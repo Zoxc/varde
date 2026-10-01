@@ -6,6 +6,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use glam::DVec2;
+use iced::widget::text::Wrapping;
 use iced::widget::{Space, button, column, container, opaque, row, space, stack, text};
 use iced::{Alignment, Element, Length};
 use varde_document::EXTENSION;
@@ -902,22 +903,27 @@ fn delete_question(prompt: &DeletePrompt<'_>) -> String {
 /// set up, the feature selected ([`feature_info`]) or the model
 /// ([`model_info`]). Whether its mesh is still being regenerated, or why it
 /// couldn't be built, if it couldn't. Then why the last edit was refused,
-/// if it was, and whether a save is in flight.
+/// if it was, and whether a save is in flight. On one line, cut where
+/// the hints start if it's longer (`chrome::window`).
 fn status<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
     if state.picking_plane {
         return text("Pick a plane for the new sketch")
             .size(12)
+            .wrapping(Wrapping::None)
             .font(theme::SEMIBOLD)
             .style(theme::accent_text)
             .into();
     }
     if let Some(sketch) = &state.sketch {
         let standing = standing(sketch).map(|(standing, trouble)| {
-            text(format!("{standing} ·")).size(12).style(if trouble {
-                theme::danger_text
-            } else {
-                theme::muted_text
-            })
+            text(format!("{standing} ·"))
+                .size(12)
+                .wrapping(Wrapping::None)
+                .style(if trouble {
+                    theme::danger_text
+                } else {
+                    theme::muted_text
+                })
         });
         let refusal = sketch
             .refusal
@@ -925,12 +931,23 @@ fn status<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
             .or(sketch
                 .solver_error
                 .map(|error| format!("Couldn't check the edit: {error}").into()))
-            .map(|why| text(format!("· {why}")).size(12).style(theme::danger_text));
-        let checking = sketch
-            .checking
-            .then(|| text("· Checking…").size(12).style(theme::muted_text));
+            .map(|why| {
+                text(format!("· {why}"))
+                    .size(12)
+                    .wrapping(Wrapping::None)
+                    .style(theme::danger_text)
+            });
+        let checking = sketch.checking.then(|| {
+            text("· Checking…")
+                .size(12)
+                .wrapping(Wrapping::None)
+                .style(theme::muted_text)
+        });
         return row![
-            text(sketch.name).size(12).font(theme::SEMIBOLD),
+            text(sketch.name)
+                .size(12)
+                .wrapping(Wrapping::None)
+                .font(theme::SEMIBOLD),
             standing,
             text(format!(
                 "{}{} · on {}{}",
@@ -940,6 +957,7 @@ fn status<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
                 status_suffix(state)
             ))
             .size(12)
+            .wrapping(Wrapping::None)
             .style(theme::muted_text),
             refusal,
             checking,
@@ -955,9 +973,11 @@ fn status<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
         return row![
             text(extrude.editing.unwrap_or("New extrude"))
                 .size(12)
+                .wrapping(Wrapping::None)
                 .font(theme::SEMIBOLD),
             text(format!("· {regions}{}", status_suffix(state)))
                 .size(12)
+                .wrapping(Wrapping::None)
                 .style(theme::muted_text),
         ]
         .spacing(4)
@@ -967,13 +987,17 @@ fn status<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
     if let Some(feature) = state.selected_feature.and_then(|id| document.feature(id)) {
         return row![
             icons::icon(panels::feature_icon(feature), icons::INLINE),
-            text(feature.name.as_str()).size(12).font(theme::SEMIBOLD),
+            text(feature.name.as_str())
+                .size(12)
+                .wrapping(Wrapping::None)
+                .font(theme::SEMIBOLD),
             text(format!(
                 "{}{}",
                 feature_info(feature, document.units()),
                 status_suffix(state)
             ))
             .size(12)
+            .wrapping(Wrapping::None)
             .style(theme::muted_text),
         ]
         .spacing(6)
@@ -982,6 +1006,7 @@ fn status<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
     }
     text(format!("{}{}", model_info(document), status_suffix(state)))
         .size(12)
+        .wrapping(Wrapping::None)
         .style(theme::muted_text)
         .into()
 }
@@ -1411,5 +1436,10 @@ mod tests {
         assert_eq!(chrome::sentence("Already"), "Already");
         assert_eq!(chrome::sentence(""), "");
         assert_eq!(chrome::sentence("über"), "Über");
+        // Title case, not upper case, where they differ.
+        assert_eq!(chrome::sentence("ßtraße"), "Sstraße");
+        assert_eq!(chrome::sentence("ﬁnd"), "Find");
+        assert_eq!(chrome::sentence(" leading"), " leading");
+        assert_eq!(chrome::sentence("1 mm"), "1 mm");
     }
 }

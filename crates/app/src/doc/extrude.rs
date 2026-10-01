@@ -655,10 +655,13 @@ impl Doc {
             return;
         }
         session.follow_units(document);
-        // Bodies gone (by undo, say) can't be taken out.
+        // Bodies gone (by undo, say) can't be taken out, nor put back.
         session
             .excluded
             .retain(|&body| document.body(body).is_some());
+        session
+            .reticked
+            .retain(|&(body, _)| document.body(body).is_some());
     }
 
     /// The extrude being set up as the regeneration lane previews it, and

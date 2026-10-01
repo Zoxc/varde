@@ -1503,3 +1503,73 @@ fn a_depth_tested_line_inside_the_model_is_hidden_from_any_side() {
         }
     }
 }
+
+#[test]
+fn a_depth_tested_sketch_on_a_face_shows_at_any_scale_and_angle() {
+    // A cube `size` on a side, framed, looked at from barely above its
+    // top up to nearly straight down. A square on its top face, or on a
+    // side face, shows where the face is seen, however steeply; one on a
+    // plane through its middle never does.
+    let mut failures = Vec::new();
+    for size in [1e-2f32, 1.0, 1e3, 1e5] {
+        let cube = cube(size, Vec3::ZERO);
+        let s = f64::from(size);
+        for elevation in [89.0f32, 80.0, 20.0, 3.0, 1.0] {
+            for projection in [Projection::Orthographic, Projection::Perspective] {
+                let mut camera = top_camera();
+                camera.set_projection(projection);
+                camera.set_target(Vec3::splat(size / 2.0));
+                camera.zoom(size * 3.0 / camera.view_height());
+                camera.orbit(0.4, elevation.to_radians() - Camera::PITCH_LIMIT);
+                let plane = |origin: Vec3, x: Vec3, y: Vec3| GridPlane::new(origin, x, y).unwrap();
+                // The faces facing +Z, +X and -X, and the middle.
+                let planes = [
+                    ("top", plane(Vec3::Z * size, Vec3::X, Vec3::Y), true),
+                    ("+x side", plane(Vec3::X * size, Vec3::Y, Vec3::Z), true),
+                    ("-x side", plane(Vec3::ZERO, Vec3::Z, Vec3::Y), true),
+                    (
+                        "middle",
+                        plane(Vec3::Z * size / 2.0, Vec3::X, Vec3::Y),
+                        false,
+                    ),
+                ];
+                for (name, plane, face) in planes {
+                    let center = plane.origin() + (plane.x() + plane.y()) * (size / 2.0);
+                    // How steeply the face is seen at its centre: the sine
+                    // of the angle between the face and the eye's ray.
+                    let towards_eye = match projection {
+                        Projection::Orthographic => camera.backward(),
+                        Projection::Perspective => (camera.eye() - center).normalize(),
+                    };
+                    let steepness = towards_eye.dot(plane.normal());
+                    if face && steepness.abs() < 0.01 {
+                        continue;
+                    }
+                    let shows = face && steepness > 0.0;
+                    let mut layer = SketchLayer::default();
+                    let square = square((s / 2.0, s / 2.0), s * 0.8);
+                    layer.fill(Space::On(plane), [&square[..]], GREEN);
+                    let extras = Extras {
+                        sketch: Some((GridPlane::XY, layer)),
+                        depth_tested: true,
+                        live: true,
+                        ..Extras::default()
+                    };
+                    let Some(pixels) = render_sketch(&camera, &cube, extras, 1.0) else {
+                        eprintln!("no GPU adapter, skipping");
+                        return;
+                    };
+                    let (x, y) = sketch_view_pixel(&camera, center);
+                    let p = pixel(&pixels, x, y);
+                    if mostly(p, 1) != shows {
+                        failures.push(format!(
+                            "{name} of {size} at {elevation}° {projection:?}, seen at \
+                             {steepness}: {p:?}"
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+}

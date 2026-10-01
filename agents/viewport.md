@@ -75,8 +75,10 @@ half of it, two sides one per side. A knob the model's mesh hides isn't
 laid out (`viewport/extrude.rs`'s `hidden`: a ray from the knob towards
 the eye meets a triangle more than 0.002 view heights in front of it, as
 far as the renderer pulls the layers, so a knob on the cap it ends on
-shows; past 2¹⁸ triangles the knobs always show, rather than slow every
-frame). An extrude its own check refuses (`ExtrudeState::refused`, two
+shows; a triangle whose plane passes within the mesh's `f32` rounding of
+the knob doesn't count either, or far from the origin, seen at a grazing
+angle, the cap's rounded corners would hide its own knob; past 2¹⁸
+triangles the knobs always show, rather than slow every frame). An extrude its own check refuses (`ExtrudeState::refused`, two
 sides over the limit) has no preview, and draws no shaft, which would
 be a line on its own; its knobs stay. Pressing a knob sends
 `GrabHandle`; while the app says one is grabbed the `Program` follows
@@ -123,7 +125,9 @@ they lie on doesn't; the origin marker; and on top of it all the sketch
 being edited (`Frame::sketch`, a `SketchScene`), not depth tested, so the
 faded model never hides it. Setting up an extrude, the same layers are
 depth tested instead (`SketchScene::depth_tested`, the shader's
-`SKETCH_DEPTH` override on a second set of pipelines): what isn't in
+`SKETCH_DEPTH` override on a second set of pipelines, made from a shader
+module of their own, since wgpu's GL backend caches programs by module
+and entry point, not by overrides, see `notes/upstream/wgpu.md`): what isn't in
 screen space gets its depth pulled towards the camera like the edges
 (`overlay_depth`: 0.002 view heights, at least `EDGE_DEPTH_BIAS`), so a
 region on a body's face or cap shows and one behind a face doesn't, and
@@ -340,7 +344,7 @@ makes its own wgpu instance, under a lock, so run them one at a time:
 VARDE_SHOTS=$PWD/target/shots cargo test -p varde-app shots_ -- --ignored --test-threads=1
 ```
 
-Scenarios (`shots_01` .. `shots_11`, each at 1280×800, scale 1, light,
+Scenarios (`shots_01` .. `shots_13`, each at 1280×800, scale 1, light,
 the busiest also at scale 2 and dark): `E` with every candidate's regions
 (and one hovered); a region picked before and after its answer; flip,
 symmetric, two sides, a refused distance and a draft the document
@@ -349,7 +353,11 @@ taken out; join and intersect, also from below the plate, and the
 "Through all" tip; 20 and 30 bodies, scrolled, also at 1024×600; the
 panel in a small window with errors; editing an extrude whose region is
 gone; the Timeline with each extent and a failed row's tip; the delete
-prompt, long and short; the file menu and its tolerances. Shots are for
+prompt, long and short; the file menu and its tolerances; odd cameras
+(along the handle's axis, perspective with the handle behind the eye,
+grazing, the knob off the screen, a 100 m extrude, a knob dragged past
+the limit, one `Doc` at three window sizes); a long status beside the
+key hints. Shots are for
 looking (pixels differ by GPU and driver), never compared and never
 committed: a fault a shot finds gets an ordinary headless test of the
 state or layout behind it. A scenario answers each regeneration it asks

@@ -4518,3 +4518,54 @@ fn closing_waits_for_a_delete_behind_sketch_edits_to_be_asked_and_answered() {
     let _ = varde.update(Message::Ui(Ui::File(File::Unsaved(Unsaved::Discard))));
     assert!(is_welcome(&varde));
 }
+
+#[test]
+fn a_long_status_leaves_the_key_hints_on_the_screen() {
+    // A feature selected and the model failing with a long message, in a
+    // small window: the status is cut where the hints start, which all
+    // show whole.
+    let (mut doc, requests) = example();
+    let extrude = doc.editor.document().features()[1].id;
+    doc.look(varde_view::Look::SelectFeature(extrude));
+    doc.update(Edit::SetTolerance(
+        varde_document::Tolerance::new(1e-2).unwrap(),
+    ));
+    for request in requests.take() {
+        doc.computed(Response::Failed {
+            draft: None,
+            generation: request.generation(),
+            exclude: request.exclude(),
+            error: "the kernel ran out of room splitting the faces of a body with very \
+                    many curved faces; try a coarser tolerance"
+                .to_owned(),
+        });
+    }
+    let size = iced::Size::new(1024.0, 600.0);
+    let mut renderer = varde_view::probe::renderer();
+    let mut ui = shown(
+        doc.view(false, varde_view::Mode::Light),
+        size,
+        &mut renderer,
+    );
+    let shown = texts(&mut ui, &renderer);
+    let status_top = size.height - varde_view::STATUS_BAR_HEIGHT;
+    let in_bar: Vec<_> = shown.iter().filter(|t| t.bounds.y >= status_top).collect();
+    for hint in ["Edit", "Delete", "Drag to orbit", "Zoom"] {
+        let text = in_bar
+            .iter()
+            .find(|t| t.text == hint)
+            .unwrap_or_else(|| panic!("no {hint:?} in {in_bar:?}"));
+        let seen = text.seen();
+        assert!(
+            seen.x >= 0.0 && seen.x + seen.width <= size.width,
+            "{text:?}"
+        );
+        assert!(seen.y + seen.height <= size.height, "{text:?}");
+    }
+    // The status is on one line, within the bar.
+    let status = in_bar
+        .iter()
+        .find(|t| t.text.contains("Couldn't regenerate"))
+        .expect("the status");
+    assert!(status.bounds.height < 20.0, "{status:?}");
+}

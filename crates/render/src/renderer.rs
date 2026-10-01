@@ -362,10 +362,19 @@ pub struct Slot {
 
 impl Renderer {
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("varde scene"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/scene.wgsl").into()),
-        });
+        let module = |label| {
+            device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some(label),
+                source: wgpu::ShaderSource::Wgsl(include_str!("shaders/scene.wgsl").into()),
+            })
+        };
+        let shader = module("varde scene");
+        // The same for the sketch's depth tested pipelines, which differ
+        // from the others only by `SKETCH_DEPTH`: wgpu's GL backend (the
+        // browser's WebGL2) caches a program by its module and entry
+        // points, not its pipeline constants, so on one module they'd get
+        // the on-top program.
+        let depth_shader = module("varde scene, sketch depth tested");
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("varde uniforms"),
@@ -402,6 +411,11 @@ impl Renderer {
 
         let pipeline = |pass: Pass<'_>| {
             let constants = constants(pass.sketch_depth);
+            let shader = if pass.sketch_depth {
+                &depth_shader
+            } else {
+                &shader
+            };
             let compilation_options = wgpu::PipelineCompilationOptions {
                 constants: &constants,
                 ..Default::default()
@@ -410,13 +424,13 @@ impl Renderer {
                 label: Some(pass.label),
                 layout: Some(&layout),
                 vertex: wgpu::VertexState {
-                    module: &shader,
+                    module: shader,
                     entry_point: Some(pass.vs),
                     buffers: pass.buffers,
                     compilation_options: compilation_options.clone(),
                 },
                 fragment: Some(wgpu::FragmentState {
-                    module: &shader,
+                    module: shader,
                     entry_point: Some(pass.fs),
                     targets: &[Some(wgpu::ColorTargetState {
                         format,

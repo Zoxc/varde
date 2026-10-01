@@ -340,3 +340,39 @@ fn knobs_the_model_hides_are_left_out() {
     assert_eq!(shown(&RenderMesh::default()), 1);
     assert_eq!(shown(&mesh), 0);
 }
+
+#[test]
+fn a_knob_on_a_face_far_out_shows_from_any_angle() {
+    // A box 2 on a side far from the origin, where its mesh's `f32`
+    // corners are thousandths off the `f64` ones: a knob on its top face,
+    // looked at closely from nearly straight down to barely above it,
+    // shows; one inside it doesn't.
+    let tol = varde_kernel::Tolerance::DEFAULT;
+    let display = varde_kernel::Display::new(&tol);
+    // Rounded up and down to `f32`, by a few steps of 0.0007.
+    for step in 0..6 {
+        let corner = DVec3::new(
+            123_456.789,
+            -98_765.432_1,
+            54_321.123 + f64::from(step) * 7e-4,
+        );
+        let solid = varde_kernel::Solid::cuboid(corner, DVec3::splat(2.0), 0, &tol);
+        let mesh = solid.unwrap().tessellate(&display).unwrap();
+        let on_top = corner + DVec3::new(0.6, 1.3, 2.0);
+        let inside = corner + DVec3::new(0.6, 1.3, 1.0);
+        for view_height in [0.5f32, 12.8] {
+            for elevation in [89.0f32, 20.0, 3.0, 1.0] {
+                for projection in [Projection::Orthographic, Projection::Perspective] {
+                    let mut camera = top_camera();
+                    camera.set_projection(projection);
+                    camera.set_target(on_top.as_vec3());
+                    camera.zoom(view_height / camera.view_height());
+                    camera.orbit(0.4, elevation.to_radians() - Camera::PITCH_LIMIT);
+                    let case = format!("{step}: {view_height} high at {elevation}° {projection:?}");
+                    assert!(!hidden(&mesh, &camera, on_top), "on top, {case}");
+                    assert!(hidden(&mesh, &camera, inside), "inside, {case}");
+                }
+            }
+        }
+    }
+}

@@ -9,7 +9,7 @@ use std::borrow::Cow;
 use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::{
     Button, Container, Rule, Scrollable, Text, button, column, container, row, rule, scrollable,
-    space, text, tooltip,
+    text, tooltip,
 };
 use iced::{Alignment, Element, Font, Length};
 
@@ -53,13 +53,16 @@ pub fn window<'a>(
     .into()
 }
 
+/// The status bar: `info` on the left, cut off where `hints`, on the
+/// right, start.
 fn status_bar<'a>(
     info: Element<'a, Message>,
     hints: impl IntoIterator<Item = Element<'a, Message>>,
 ) -> Element<'a, Message> {
+    // The info takes what the hints leave, cut off past it: on a short
+    // line, so its texts don't wrap.
     let bar = row![
-        info,
-        space::horizontal(),
+        container(info).width(Length::Fill).clip(true),
         row(hints).spacing(14).align_y(Alignment::Center),
     ]
     .spacing(12)
@@ -223,12 +226,16 @@ pub fn key_label<'a>(key: impl Into<KeyName>) -> Text<'a> {
 /// `message` as a sentence on its own: its first letter capitalised.
 /// Error messages start in lower case, to follow a colon ("Couldn't
 /// regenerate: its regions are too complex"); where one stands alone,
-/// in a panel or a tooltip, it's shown through this.
+/// in a panel or a tooltip, it's shown through this. A letter whose
+/// capital is two ("ß", "ﬁ") gets the first in upper case and the rest
+/// in lower, as title case has it ("Ss", "Fi").
 pub fn sentence(message: &str) -> Cow<'_, str> {
     let mut chars = message.chars();
     match chars.next() {
         Some(first) if first.is_lowercase() => {
-            let mut sentence: String = first.to_uppercase().collect();
+            let mut upper = first.to_uppercase();
+            let mut sentence: String = upper.next().into_iter().collect();
+            sentence.extend(upper.flat_map(char::to_lowercase));
             sentence.push_str(chars.as_str());
             Cow::Owned(sentence)
         }

@@ -77,3 +77,32 @@ could go back to their own devices, but sharing one is cheaper anyway.
 calling a device-level function while another instance is torn down wasn't
 settled; a reduced reproduction (two threads creating instances and naming
 objects) would tell, and is what a report needs.
+
+## GL caches programs without their pipeline constants
+
+**Version:** wgpu 27.0.1 / wgpu-hal 27.0.4, pulled in by iced 0.14.
+
+**What was hit.** In the browser (WebGL2), the extrude's regions and handle
+showed through the preview body, though they're drawn depth tested there:
+the depth tested pipelines drew exactly as the on-top ones.
+
+**Cause.** wgpu-hal's GLES device keeps a program cache keyed by each
+stage's shader module, entry point and workgroup-memory flag, and the bind
+group slots (`gles::ProgramCacheKey`), but not the pipeline constants
+(overrides), which it bakes into the GLSL. The sketch's on-top and depth
+tested pipelines use the same module and entry points and differ only in
+the `SKETCH_DEPTH` override, so the second got the first's program.
+
+**Why it's not ours.**
+- Natively on Vulkan the same pipelines are depth tested
+  (`crates/render/tests/viewport.rs`).
+- On wgpu's native GL backend they aren't, the same as in the browser
+  (`crates/render/tests/gl.rs` fails without the workaround).
+- `ProgramCacheKey` in `wgpu-hal/src/gles/mod.rs` has no field for them.
+
+**Cost here.** The renderer makes a second shader module from the same
+source for the depth tested pipelines (`Renderer::new`), whose own module
+id keys them apart. Any later pair of pipelines that differ only by an
+override needs the same, until upstream keys the cache by the constants.
+
+**Upstream status.** Not reported, not checked against a newer wgpu.

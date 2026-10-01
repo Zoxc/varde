@@ -332,8 +332,12 @@ fn grid_plane(placement: Placement) -> Option<GridPlane> {
 
 /// Whether `mesh` hides the world point `at` from `camera`: a triangle
 /// of it is in front of `at`, more than [`KNOB_PULL`] view heights nearer
-/// the eye, so one `at` lies on doesn't. Never with more than
-/// [`MAX_HIDING_TRIANGLES`].
+/// the eye, so one `at` lies on doesn't. Nor does one whose plane passes
+/// within the mesh's `f32` rounding of `at` (a few units in the last
+/// place of the largest coordinate), which seen at a grazing angle can
+/// be far along the ray: a knob on the cap it ends on, far from the
+/// origin, would be hidden by the cap's rounded corners. Never with more
+/// than [`MAX_HIDING_TRIANGLES`].
 pub(crate) fn hidden(mesh: &RenderMesh, camera: &Camera, at: DVec3) -> bool {
     if mesh.triangle_count() > MAX_HIDING_TRIANGLES || !at.is_finite() {
         return false;
@@ -361,6 +365,12 @@ pub(crate) fn hidden(mesh: &RenderMesh, camera: &Camera, at: DVec3) -> bool {
     if far <= pull || near >= end {
         return false;
     }
+    // The rounding of the mesh's corners to `f32`, at the scale of `at`
+    // and the mesh's.
+    let scale = at.abs().max_element().max(f64::from(
+        bounds.min.abs().max(bounds.max.abs()).max_element(),
+    ));
+    let slack = 4.0 * f64::from(f32::EPSILON) * scale;
     let corner = |index: &u32| {
         let p = mesh.positions().get(usize::try_from(*index).ok()?)?;
         Some(glam::Vec3::from(*p).as_dvec3())
@@ -369,7 +379,11 @@ pub(crate) fn hidden(mesh: &RenderMesh, camera: &Camera, at: DVec3) -> bool {
         let [Some(a), Some(b), Some(c)] = triangle.each_ref().map(corner) else {
             return false;
         };
-        ray_hits(at, direction, [a, b, c]).is_some_and(|t| t > pull && t < end)
+        let off_its_plane = || {
+            let normal = (b - a).cross(c - a).normalize_or_zero();
+            (at - a).dot(normal).abs() > slack
+        };
+        ray_hits(at, direction, [a, b, c]).is_some_and(|t| t > pull && t < end) && off_its_plane()
     })
 }
 

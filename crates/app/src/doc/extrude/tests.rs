@@ -1476,6 +1476,35 @@ fn undo_and_redo_mid_session_keep_the_bodies_listed() {
 }
 
 #[test]
+fn a_body_ticked_again_and_undone_away_is_forgotten() {
+    let (mut doc, sketch, requests) = example_and_a_hole();
+    // A second body, a peg through the hole's circle, as the newest edit.
+    doc.look(Look::StartExtrude);
+    extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region: 0 });
+    extrude(&mut doc, ExtrudeLook::Extent(ExtentKind::Symmetric));
+    doc.update(Edit::CommitExtrude);
+    assert_eq!(doc.edit_error, None);
+    let peg = doc.editor.document().bodies()[1].id;
+    answer(&mut doc, &requests);
+
+    // Taken out of a cut and put back, then undone away: it's forgotten
+    // with the bodies taken out, so the session holds no more entries
+    // than the document has bodies.
+    doc.look(Look::SelectFeature(sketch));
+    start_a_cut(&mut doc, sketch);
+    answer(&mut doc, &requests);
+    extrude(&mut doc, ExtrudeLook::Target(peg));
+    answer(&mut doc, &requests);
+    extrude(&mut doc, ExtrudeLook::Target(peg));
+    assert_eq!(doc.extrude.as_ref().unwrap().reticked.len(), 1);
+    doc.update(Edit::Undo);
+    assert!(doc.editor.document().body(peg).is_none());
+    let session = doc.extrude.as_ref().unwrap();
+    assert_eq!(session.excluded, []);
+    assert_eq!(session.reticked, []);
+}
+
+#[test]
 fn a_body_taken_out_and_undone_away_leaves_the_draft_whole() {
     let (mut doc, sketch, requests) = example_and_a_hole();
     let body = doc.editor.document().bodies()[0].id;

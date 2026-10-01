@@ -3919,7 +3919,9 @@ the mock's) is the feature selected, its icon, name and `feature_info`
 ("Distance 10 mm · New body", "Symmetric 4 mm · Cut", a sketch's
 "4 lines · 1 circle · 5 points · on XY"), or with none `model_info`:
 "No selection · 1 body · 2 features · mm" ("Empty design · mm" without
-features), then regenerating, failures and saving.
+features), then regenerating, failures and saving. The info is one line
+taking what the key hints leave, cut off where they start
+(`chrome::window`), so a long failure never pushes them off the screen.
 
 **Deleting** (`app/src/doc/delete.rs`): `Edit::RemoveFeature` (`Delete`
 on the Timeline's selection) and `Edit::RemoveBody` (Objects' bin) ask

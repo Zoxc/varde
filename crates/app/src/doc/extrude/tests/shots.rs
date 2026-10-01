@@ -13,6 +13,7 @@ use iced::advanced::renderer::Headless as _;
 use iced::advanced::widget::operation::scrollable::{RelativeOffset, snap_to};
 use iced::time::Instant;
 use iced::{Point, Size};
+use varde_render::{Projection, View};
 
 use super::*;
 use crate::tests::{Headless, shown, texts};
@@ -666,5 +667,111 @@ fn shots_11_file_menu() {
             doc.update(Edit::ToggleFileMenu);
         }
         camera.take(&doc, "11-file-menu-odd-tolerance", Shot::new());
+    });
+}
+
+/// Looks from `view` in `projection`, the turn finished, zoomed by `zoom`.
+fn look_from(doc: &mut Doc, view: View, projection: Projection, zoom: f32) {
+    doc.look(Look::SetProjection(projection));
+    for look in [Look::ResetCamera, Look::LookFrom(view)] {
+        doc.look(look);
+        doc.animation_frame(Instant::now() + 2 * crate::doc::CAMERA_ANIMATION);
+    }
+    doc.look(Look::Zoom(zoom));
+}
+
+/// Scenario 12, the bug hunt's odd cameras: looking along the handle's
+/// axis (no shaft), perspective close up with the handle behind the eye,
+/// grazing the plate, the knob panned off the screen, a 100 m extrude at
+/// the plate's zoom, a knob dragged while the draft fails, and one `Doc`
+/// drawn at several window sizes in turn.
+#[test]
+#[ignore = "writes screenshots, see the module"]
+fn shots_12_odd_cameras() {
+    shooting(|camera| {
+        let (mut doc, _, requests) = plate_picked();
+        look_from(&mut doc, View::Top, Projection::Orthographic, PLATE_ZOOM);
+        camera.take(&doc, "12-along-the-axis", Shot::new());
+        look_from(&mut doc, View::Top, Projection::Perspective, PLATE_ZOOM);
+        camera.take(&doc, "12-along-the-axis-perspective", Shot::new());
+        // Close up from the top in perspective: the knob 10 mm up, the
+        // eye a little above it.
+        look_from(&mut doc, View::Top, Projection::Perspective, 0.3);
+        camera.take(&doc, "12-close-perspective", Shot::new());
+        // Grazing the plate's top from the front.
+        look_from(&mut doc, View::Front, Projection::Perspective, PLATE_ZOOM);
+        doc.look(Look::Orbit {
+            yaw: 0.3,
+            pitch: 0.05,
+        });
+        camera.take(&doc, "12-grazing-perspective", Shot::new());
+        doc.look(Look::SetProjection(Projection::Orthographic));
+        camera.take(&doc, "12-grazing", Shot::new());
+        // Panned until the knob is off the screen.
+        framed(&mut doc);
+        doc.look(Look::Pan { dx: 0.9, dy: 0.0 });
+        camera.take(&doc, "12-knob-off-screen", Shot::new());
+        // 100 m up, at the plate's zoom, and zoomed out to see it.
+        framed(&mut doc);
+        type_in(&mut doc, Distance::First, "100000");
+        answer(&mut doc, &requests);
+        camera.take(&doc, "12-huge", Shot::new());
+        aim(&mut doc, 0.0, 0.0, PLATE_ZOOM * 2000.0);
+        camera.take(&doc, "12-huge-zoomed-out", Shot::new());
+        // Two sides, the knob dragged past what the document takes.
+        framed(&mut doc);
+        extrude(&mut doc, ExtrudeLook::Extent(ExtentKind::TwoSides));
+        type_in(&mut doc, Distance::First, "20");
+        type_in(&mut doc, Distance::Second, "8");
+        answer(&mut doc, &requests);
+        extrude(&mut doc, ExtrudeLook::GrabHandle(Distance::First));
+        let to = 1_500_000.0;
+        let first = Distance::First;
+        extrude(
+            &mut doc,
+            ExtrudeLook::DragHandle {
+                distance: first,
+                to,
+            },
+        );
+        answer(&mut doc, &requests);
+        camera.take(&doc, "12-dragged-too-far", Shot::new());
+        extrude(&mut doc, ExtrudeLook::DropHandle);
+        // One `Doc`, resized between shots.
+        type_in(&mut doc, Distance::First, "20");
+        answer(&mut doc, &requests);
+        camera.take(&doc, "12-resized-1280", Shot::new());
+        camera.take(&doc, "12-resized-800", Shot::new().size(800.0, 500.0));
+        camera.take(&doc, "12-resized-1600", Shot::new().size(1600.0, 1000.0));
+    });
+}
+
+/// Scenario 13: the status bar with a feature selected and the model
+/// failing with a long message, in the default and a small window.
+#[test]
+#[ignore = "writes screenshots, see the module"]
+fn shots_13_status_bar() {
+    shooting(|camera| {
+        let (mut doc, requests) = example();
+        framed(&mut doc);
+        let extrude = doc.editor.document().features()[1].id;
+        doc.look(Look::SelectFeature(extrude));
+        doc.update(Edit::SetTolerance(Tolerance::new(1e-2).unwrap()));
+        for request in requests.take() {
+            doc.computed(varde_regen::Response::Failed {
+                draft: None,
+                generation: request.generation(),
+                exclude: request.exclude(),
+                error: "the kernel ran out of room splitting the faces of a body with \
+                        very many curved faces; try a coarser tolerance"
+                    .to_owned(),
+            });
+        }
+        camera.take(&doc, "13-status-failed", Shot::new());
+        camera.take(
+            &doc,
+            "13-status-failed-small",
+            Shot::new().size(1024.0, 600.0),
+        );
     });
 }
