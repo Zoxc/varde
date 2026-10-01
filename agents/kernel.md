@@ -1625,7 +1625,7 @@ elsewhere (see "Cutting curved faces").
 | `boolean/cleanup/seams.rs` | curved edges between two triangles in one plane: straightened, regions triangulated again, the plane faces they joined merged |
 | `boolean/tests.rs` | boxes in every flush, edge-on and vertex-on configuration, tori, determinism |
 | `boolean/curved_tests.rs` | cylinders and boxes (exact), crossing cylinders, a free surface, a saddle, extrudes, chains, merging, random bars, walls over arcs with level ends |
-| `boolean/curved_tests/flush_seams.rs` | flush unions with curved rims in either order: bosses in and on plates, over holes and edges, overlapping, a flange at a shaft's foot, a slot, at millimetre scale and on a turned frame |
+| `boolean/curved_tests/flush_seams.rs` | flush unions with curved rims in either order: bosses in and on plates, over holes and edges, overlapping, a flange at a shaft's foot, a slot, at millimetre scale and on a turned frame, a chain of flush joins, caps a hair apart, bosses on a rounded corner |
 | `boolean/seeded_tests.rs` | the seeded random suite: related pairs, parts built in chains of twenty, turned solids, near tangencies, pins and coaxial cylinders, flush bosses |
 
 ### The primitives
@@ -3006,7 +3006,17 @@ millimetre scale), 112 had over 20 times their operands' patches (up to
 and none failed, intersections and differences as they were. A cluster
 of four vertices at one place at a slot's arc joint, on a turned frame,
 is the one region triangulated again in these runs (the union folded
-before).
+before). The fallback also takes caps a hair apart, closer than the
+short length (a boss whose top is 2e-8 above a plate's): the two are
+one plane to the clean-up, and the rim's clusters between them are
+triangulated again, moving the surface by no more than that hair
+(always under an eighth of the resolution, so the face tags hold).
+Caps further apart than the short length but within a few resolutions,
+or tilted off each other by 1e-9 rad and more, mostly fail as `Invalid`,
+as they did before. Chains of flush joins (a drilled plate, a boss
+through it filling a hole, one flush with both caps, one standing on
+it, one through it flush with the last) come out exact at every step,
+their caps one face each.
 
 Last, **slivers on plane faces** go (`delaunay`, after the rounds above,
 in rounds of its own): a straight side between two triangles of one

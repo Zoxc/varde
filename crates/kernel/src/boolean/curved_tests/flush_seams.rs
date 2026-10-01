@@ -269,6 +269,134 @@ fn a_pin_filling_its_hole_stays_light() {
     flush_union("pin", &plate(), &pin, 24.0, 37);
 }
 
+#[test]
+fn a_chain_of_flush_joins() {
+    // Joins as the app makes them, the body first, every boss from the one
+    // sketch plane: a drilled plate, a boss through it filling one hole
+    // (its bottom flush), one flush with both its caps, one standing on
+    // it, and one through it whose top is flush with the last one's. Each
+    // step's volume exactly, the plate's caps one face each, the two
+    // flush tops one between them.
+    let (r1, c1) = (8.0, DVec2::new(-15.0, 0.0));
+    let (r2, c2) = (6.0, DVec2::new(-5.0, 2.0));
+    let (r3, c3) = (5.0, DVec2::new(4.0, -1.0));
+    let (r4, c4) = (4.0, DVec2::new(11.0, 0.0));
+    let (filled, open) = ((DVec2::new(-15.0, 1.0), 3.0), (DVec2::new(20.0, 12.0), 3.0));
+    let plate_layer = 10.0 * (2400.0 - PI * open.1 * open.1);
+    let steps = [
+        plate_layer + 10.0 * PI * r1 * r1,
+        plate_layer + 10.0 * PI * r1 * r1,
+        plate_layer + 10.0 * PI * (r1 * r1 + r3 * r3),
+        plate_layer + 10.0 * (PI * (r1 * r1 + r3 * r3 + r4 * r4) - lens(r3, r4, c3.distance(c4))),
+    ];
+    for frame in [Frame::XY, turned()] {
+        let plate = extruded_on(
+            vec![
+                rect(DVec2::new(-30.0, -20.0), DVec2::new(30.0, 20.0), 0),
+                circle(filled.0, filled.1, 4, true),
+                circle(open.0, open.1, 5, true),
+            ],
+            frame,
+            0.0,
+            10.0,
+            1,
+        );
+        let bosses = [
+            extruded_on(vec![circle(c1, r1, 0, false)], frame, 0.0, 20.0, 2),
+            extruded_on(vec![circle(c2, r2, 0, false)], frame, 0.0, 10.0, 3),
+            extruded_on(vec![circle(c3, r3, 0, false)], frame, 10.0, 20.0, 4),
+            extruded_on(vec![circle(c4, r4, 0, false)], frame, 0.0, 20.0, 5),
+        ];
+        let mut body = plate;
+        for (k, (boss, want)) in bosses.iter().zip(steps).enumerate() {
+            let name = format!("step {k} on {:?}", frame.origin);
+            body = if k == 3 {
+                assert_deterministic(|| flush_union(&name, &body, boss, want, 400))
+            } else {
+                flush_union(&name, &body, boss, want, 400)
+            };
+            for z in [0.0, 10.0] {
+                assert_eq!(names_in(&body, &frame, z).len(), 1, "{name} at {z}");
+            }
+        }
+        // The first boss's top and the merged tops of the last two.
+        assert_eq!(names_in(&body, &frame, 20.0).len(), 2);
+    }
+}
+
+#[test]
+fn caps_a_hair_apart_take_the_region_fallback() {
+    // A boss whose top is a hair above the plate's (closer than the
+    // clean-up's short length, an eighth of the resolution): the clean-up
+    // takes the two caps as one plane, and the region fallback
+    // triangulates the rim's clusters again. Right within that hair times
+    // the plate's top, in either order and on a turned frame.
+    let hair = 2e-8;
+    for frame in [Frame::XY, turned()] {
+        let plate = extruded_on(
+            vec![rect(DVec2::splat(-1.25), DVec2::splat(1.25), 0)],
+            frame,
+            -0.25,
+            0.25,
+            1,
+        );
+        let boss = extruded_on(
+            vec![circle(DVec2::new(0.25, 0.0), 0.5, 0, false)],
+            frame,
+            -0.25,
+            0.25 + hair,
+            2,
+        );
+        let want = 3.125 + PI * 0.25 * hair;
+        for (a, b) in [(&boss, &plate), (&plate, &boss)] {
+            let before = super::super::cleanup::DISSOLVED.get();
+            let union = run(a, b, Op::Union);
+            assert!(super::super::cleanup::DISSOLVED.get() > before);
+            assert!(union.mesh().tris().len() < 100);
+            let got = union.volume();
+            assert!((got - want).abs() <= 6.25 * hair, "{got} not {want}");
+            exact_to("hair", &union, size(&union), hair);
+        }
+        assert_deterministic(|| run(&boss, &plate, Op::Union));
+    }
+}
+
+#[test]
+fn bosses_on_a_rounded_corner() {
+    // A boss over a rounded rectangle's corner arc, inside it, or round
+    // the arc's centre: all four operations either way round, by their
+    // identities (and exact values where the boss lies inside).
+    let h = 0.5;
+    let block = extruded(
+        vec![super::super::seeded_tests::rounded(
+            DVec2::new(-1.0, -0.5),
+            DVec2::new(0.0, 0.5),
+            0.2,
+            0,
+        )],
+        0.0,
+        h,
+        1,
+    );
+    let vb = (1.0 - (4.0 - PI) * 0.04) * h;
+    for (c, r, inside) in [
+        (DVec2::new(0.0, 0.5), 0.3, false),
+        (DVec2::new(-0.1, 0.4), 0.25, false),
+        (DVec2::new(-0.2, 0.3), 0.1, true),
+    ] {
+        let boss = extruded(vec![circle(c, r, 7, false)], 0.0, h, 2);
+        let disc = PI * r * r * h;
+        let results = all_four(&block, &boss, 1e-12);
+        let both = results[1].volume();
+        if inside {
+            assert!((both - disc).abs() <= 1e-12);
+        }
+        volumes("rounded corner", &block, &boss, &results, both, 1e-12);
+        let swapped = run(&boss, &block, Op::Union);
+        assert!((swapped.volume() - (vb + disc - both)).abs() <= 1e-12);
+    }
+}
+
 /// A conic of a profile: `p0`, its control point, its weight and `p1`
 /// (as `x, y` each), and its curve.
 type Piece = (f64, f64, f64, f64, f64, f64, f64, u64);
