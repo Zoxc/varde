@@ -755,14 +755,29 @@ so the same rule. What fails is split:
   floor (`Patch::degenerate_corner`: its edges leave at 0° or 180°), no
   split mends it, as every piece keeping the corner has the same edge
   directions there, and repair fails at once with `Invalid(Fold(t))`, `t`
-  the input triangle the piece came from. So does a piece failing the
-  fold check that is flat within the resolution (`hull::flat`): its red
-  pieces are like it up to that flatness and fail the same way. What
-  fails there is a sliver whose normal coefficients `f64` can't tell
-  apart (see "Slivers" below): a flat triangle 8e7 or 9e7 times longer
-  than wide, its corners not yet degenerate and every pair passing, was
-  split until its pieces failed the vertex rule (9 984 units,
-  `Invalid(VertexNeighbours)`); it now fails in 8 units as `Fold`.
+  the input triangle the piece came from. So does a whole leaf (not a
+  green half) failing the fold check that is an affine triangle (`affine`:
+  each edge's control point at its middle and its weight 1, within
+  `1e-12` relative): its red pieces are similar to it and the check
+  doesn't see scale, so they fail as it does, up to rounding, and of the
+  leaves its splits make, those at the deepest level made in the middle
+  of their parent have only their siblings as neighbours, so are whole
+  pieces and fail at any depth. What fails there is a sliver whose
+  normal coefficients `f64` can't tell apart (see "Slivers" below): a
+  flat triangle 8e7 or 9e7 times longer than wide, its corners not yet
+  degenerate and every pair passing, was split until its pieces failed
+  the vertex rule (9 984 units, `Invalid(VertexNeighbours)`); it now
+  fails in 8 units as `Fold`. Being flat within the resolution
+  (`hull::flat`) isn't enough: a sliver a few resolutions wide whose
+  control points sit off its edges' middles by a good part of its width
+  (or whose edges are weighted) gets straighter for its size with each
+  split, and of 65 889 random such slivers (64 to 400 resolutions long,
+  0.5 to 6 wide) failing the fold check with no corner degenerate, 15 781
+  had red pieces that all passed it, and 2 166 more after a second split.
+  Nor is a green half enough: its leaf, of another shape, may pass where
+  it fails, and so then do the leaf's red pieces. (Narrowed to affine
+  whole leaves from any flat piece, the stop moved no outcome or error
+  kind in the seeded boolean suites; one `Fold` names another triangle.)
   Measured with the curved-edge rule's extra condition (see "Control
   hulls"), release: on the seeded boolean suites no outcome moved between
   `Ok` and an error (related 112 of 120, chains 203 of 240, turned 156 of
@@ -799,12 +814,18 @@ so the same rule. What fails is split:
   vertices), those later pieces share none either, so they are
   non-neighbours whose hulls are closer than the resolution at any
   depth. A leaf on a `Plane` face is split with straight inner edges,
-  which cover it seen along the plane's normal and keep their control
-  points in the hull of its pieces, so a point and the one over it in a
-  later piece differ by at most that hull's thickness along the normal
-  (`thickness`, the piece and its other half): it comes off the limit,
+  which keep its boundary and their control points in the hull of its
+  pieces. If its pieces face one way along the plane's normal (every
+  normal coefficient leaning on it, or every one away, by more than the
+  fold check's margin, both halves alike), seen along the normal they are
+  one-to-one locally and the same way round, so each point inside the
+  view of the boundary is covered as often as the boundary winds round
+  it, by the later pieces too, which have the same boundary. So a point
+  and the one over it in a later piece differ by at most that hull's
+  thickness along the normal (`thickness`, the piece and its other half;
+  infinite for pieces that don't face one way): it comes off the limit,
   as does rounding, `128·ε` times the largest coordinate of the two
-  pieces (`witness::ROUNDING`; a few ulps a split over
+  leaves' pieces (`witness::ROUNDING`; a few ulps a split over
   `MAX_REFINE_DEPTH` splits, evaluation, and GJK). A witness only ever
   adds an error where no `Ok` was possible; a search that misses only
   sends the pair back to splitting.
@@ -935,8 +956,8 @@ points, and turning `v` by that much moves `v·w` by more than the margin),
 failing `VertexNeighbours` from about `3e7` to `7e7`. From about `7.6e7` the
 fold check fails too (a corner's normal coefficient, about the sine of
 its angle, under the floor relative to its terms), and from about `1e8`
-`degenerate_corner` names the corner; repair refuses a flat piece failing
-the fold check at once either way. A box a hundred resolutions thick
+`degenerate_corner` names the corner; repair refuses such an affine
+triangle failing the fold check at once either way. A box a hundred resolutions thick
 passes up to `2e7` times as long. Only features of a few nm on a 100 mm
 part reach this (a sliver also needs to be a couple of resolutions wide
 to pass the hull rules at all), and the error is immediate. Caps and
@@ -3590,7 +3611,9 @@ parameter, or a split outside the patch bounds),
   leaf is.
 - **Repair splits both patches of a failing pair**, except a flat
   non-neighbour, and fails at once on a degenerate corner
-  (`Patch::degenerate_corner`, new), on a failing pair of flat pieces
+  (`Patch::degenerate_corner`, new), on a whole leaf that is an affine
+  triangle failing the fold check (planned for any piece flat within the
+  resolution, which splitting can mend), on a failing pair of flat pieces
   (flat within a sixteenth of the resolution for non-neighbours), and on
   a failing non-neighbour pair whose surfaces it finds within the
   resolution (a witness), all with `Invalid`; with `Invalid` too, of the

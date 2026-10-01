@@ -618,7 +618,7 @@ fn a_witness_needs_the_leaves_apart_and_counts_planar_splits() {
     let flat = [0.0; 3];
     let mut pieces = vec![
         tri([0, 4, 2], 0, 0, flat),
-        tri([4, 1, 2], 0, 0, flat),
+        tri([1, 4, 2], 0, 0, flat),
         tri([1, 5, 6], 1, 0, flat),
         tri([7, 8, 9], 2, 0, flat),
     ];
@@ -633,7 +633,7 @@ fn a_witness_needs_the_leaves_apart_and_counts_planar_splits() {
     let limit = witness_limit(&pieces, &faces, [0, 3], res).unwrap();
     assert!(limit > 0.99 * res, "{limit}");
     pieces[0].face = 1;
-    pieces[1] = tri([4, 1, 2], 0, 1, [0.0, res / 3.0, 0.0]);
+    pieces[1] = tri([1, 4, 2], 0, 1, [0.0, res / 3.0, 0.0]);
     let limit = witness_limit(&pieces, &faces, [0, 3], res).unwrap();
     assert!(limit < 0.67 * res && limit > 0.66 * res, "{limit}");
     pieces[3].face = 2;
@@ -645,6 +645,15 @@ fn a_witness_needs_the_leaves_apart_and_counts_planar_splits() {
     pieces[3].patch.c[0] += DVec3::Y * 10.0;
     assert_eq!(pieces[3].patch.fold_direction(), None);
     assert_eq!(witness_limit(&pieces, &faces, [0, 3], res), None);
+    // Nor do halves that pass it but face opposite ways along the normal,
+    // folded over each other, though they lie in the plane.
+    pieces[3] = tri([7, 8, 9], 2, 0, flat);
+    assert!(witness_limit(&pieces, &faces, [0, 3], res).is_some());
+    let [a, b, c] = pieces[1].patch.p;
+    pieces[1].patch = crate::patch::Patch::flat([a, c, b]).unwrap();
+    assert!(pieces[1].patch.fold_direction().is_some());
+    assert_eq!(witness_limit(&pieces, &faces, [0, 3], res), None);
+    assert_eq!(witness_limit(&pieces, &faces, [1, 3], res), None);
 }
 
 #[test]
@@ -723,4 +732,90 @@ fn flat_slivers_failing_the_fold_check_fail_at_once() {
         );
         assert!(work < 100, "{aspect:e}: {work} units");
     }
+}
+
+#[test]
+fn only_affine_whole_leaves_failing_the_fold_check_fail_at_once() {
+    let res = TOL.resolution();
+    let faces = [face(0, Surface::Free)];
+    let piece = |patch: Patch, leaf: u32, corners: [u32; 3]| Piece {
+        corners,
+        patch,
+        face: 0,
+        leaf,
+        origin: leaf,
+        changed: true,
+    };
+    let run = |pieces: &[Piece]| {
+        let mut work = Work::new(&Budget::DEFAULT);
+        failures(
+            pieces,
+            |t| &pieces[t as usize].patch,
+            &faces,
+            &TOL,
+            &mut work,
+        )
+    };
+    // A sliver 1.3 resolutions wide and 84 long, flat within the
+    // resolution, whose control points sit off its edges' middles (one
+    // edge weighted 7): it fails the fold check with no corner degenerate,
+    // but each of its red pieces passes. So it is split.
+    let sliver = Patch::new(
+        [
+            DVec3::ZERO,
+            DVec3::new(8.318400314376304e-5, 0.0, 0.0),
+            DVec3::new(0.00011430863617174811, 1.2758873352597488e-6, 0.0),
+        ],
+        [
+            DVec3::new(
+                7.385575459372186e-5,
+                -8.813299798056541e-7,
+                -3.155804839965728e-7,
+            ),
+            DVec3::new(
+                8.501320431512118e-5,
+                1.0346155606943339e-7,
+                8.219087101315864e-8,
+            ),
+            DVec3::new(
+                2.4727440750598842e-5,
+                -4.3043062918168886e-7,
+                6.177306275150514e-7,
+            ),
+        ],
+        [1.0, 6.966971185462435, 1.0],
+    )
+    .unwrap();
+    assert!(hull::flat(&sliver, res));
+    assert_eq!(sliver.fold_direction(), None);
+    assert_eq!(sliver.degenerate_corner(), None);
+    assert!(
+        sliver
+            .split4()
+            .unwrap()
+            .iter()
+            .all(|k| k.fold_direction().is_some())
+    );
+    assert_eq!(run(&[piece(sliver, 0, [0, 1, 2])]), Ok(vec![0]));
+
+    // An affine sliver failing it fails at once as a whole leaf. As one
+    // half of a green leaf it is split: the leaf, of another shape, may
+    // pass.
+    let affine = sliver_tetrahedron(9e7, 1e-4).patch(0);
+    assert_eq!(affine.fold_direction(), None);
+    assert_eq!(affine.degenerate_corner(), None);
+    assert_eq!(
+        run(&[piece(affine, 0, [0, 1, 2])]),
+        Err(KernelError::Invalid(CheckError::Fold(0)))
+    );
+    let far = Patch::flat([
+        DVec3::splat(1e3),
+        DVec3::new(1e3 + 1.0, 1e3, 1e3),
+        DVec3::new(1e3, 1e3 + 1.0, 1e3),
+    ])
+    .unwrap();
+    assert_eq!(
+        run(&[piece(affine, 0, [0, 1, 2]), piece(far, 0, [3, 4, 5])]),
+        Ok(vec![0])
+    );
 }

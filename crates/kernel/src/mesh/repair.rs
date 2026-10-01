@@ -10,8 +10,8 @@
 //! normals, so a mesh whose surface doesn't fold or touch itself passes
 //! after enough splits. One that does fails: with
 //! [`KernelError::Invalid`] at once where no split can mend it (a
-//! degenerate corner, a flat piece failing the fold check, flat pieces
-//! breaking a hull rule, or points of two
+//! degenerate corner, an affine triangle failing the fold check, flat
+//! pieces breaking a hull rule, or points of two
 //! pieces that share no vertex found within the resolution: see
 //! [`witness_limit`]), with `Invalid` too once a piece to split is too
 //! small to ([`MIN_SPLIT`] resolutions across if flat, else
@@ -32,7 +32,7 @@ use super::refine::{Piece, Refiner};
 use super::{Bvh, CheckError, Face, LookupMap, Mesh, Surface};
 use crate::budget::{Budget, Work};
 use crate::par::par_map;
-use crate::patch::Patch;
+use crate::patch::{FOLD_MARGIN, Patch};
 use crate::{KernelError, MAX_PATCHES, Tolerance};
 use witness::{ROUNDING, surfaces_within};
 
@@ -157,7 +157,7 @@ impl Mesh {
 /// sorted. A failure no split can mend fails the repair, naming the input
 /// triangles the pieces came from: a piece with a degenerate corner
 /// ([`Patch::degenerate_corner`](crate::patch::Patch::degenerate_corner))
-/// or a [`flat`] one (within the margin) failing the fold check,
+/// or a whole leaf that is an [`affine`] triangle failing the fold check,
 /// a failing pair of flat pieces ([`flat`]: within the margin for the
 /// neighbour rules, within [`FLAT_STOP`] of it for non-neighbours), and a
 /// failing pair of non-neighbours whose surfaces are found within the
@@ -186,9 +186,9 @@ fn failures<'p>(
         match patch.fold_direction() {
             Some(_) => Fold::Passes,
             None if patch.degenerate_corner().is_some() => Fold::Never,
-            // A flat piece's red pieces are like it, up to its flatness:
-            // they fail the same way.
-            None if flat(patch, margin) => Fold::Never,
+            // A whole leaf that is an affine triangle has red pieces like
+            // it, which fail the same way (see `Fold::Never`).
+            None if affine(patch) && sibling(pieces, p as usize).is_none() => Fold::Never,
             None => Fold::Split,
         }
     });
@@ -276,6 +276,31 @@ fn failures<'p>(
         return Err(KernelError::Invalid(error));
     }
     Ok(leaves.into_iter().map(|(t, _)| t).collect())
+}
+
+/// Whether `patch` is an affine triangle up to rounding: each edge's
+/// control point at its middle, within [`AFFINE`] of its length, and its
+/// weight within `AFFINE` of 1. A deviation that small moves the fold
+/// check's ratios by about as much, nowhere near its floor
+/// ([`FOLD_FLOOR`](crate::patch::FOLD_FLOOR)) or its margin.
+fn affine(patch: &Patch) -> bool {
+    (0..3).all(|i| {
+        let (p, q) = (patch.p[i], patch.p[(i + 1) % 3]);
+        let off = patch.c[i] - (p + q) * 0.5;
+        off.length() <= AFFINE * p.distance(q) && (patch.w[i] - 1.0).abs() <= AFFINE
+    })
+}
+
+/// How far off an affine triangle [`affine`] allows, relative.
+const AFFINE: f64 = 1e-12;
+
+/// The other half of piece `x`, if it is one of the two green pieces of
+/// its leaf: pieces come leaf by leaf, so it is next to it.
+fn sibling(pieces: &[Piece], x: usize) -> Option<usize> {
+    let leaf = pieces[x].leaf;
+    [x.wrapping_sub(1), x + 1]
+        .into_iter()
+        .find(|&s| s < pieces.len() && pieces[s].leaf == leaf)
 }
 
 /// Whether repair may split a leaf with `patch`: whether it is at least
@@ -381,22 +406,18 @@ impl Split {
 /// So repair could never pass.
 ///
 /// A leaf on a [`Surface::Plane`] face is split with straight inner edges
-/// instead, whose pieces cover what it covers seen along the plane's
-/// normal (if it doesn't fold: so its pieces must pass the fold check)
-/// and keep their control points in the hull of the leaf's pieces now. A
-/// point of the piece and the point of a later piece over it then differ
-/// by no more than that hull's thickness along the normal, which comes off
-/// the limit.
+/// instead, which keep its pieces' control points in the hull of the
+/// leaf's pieces now, and its boundary as it is. Seen along the plane's
+/// normal, the later pieces then cover what its pieces cover, if those
+/// face one way along it (every normal leaning the same way, so the view
+/// is one-to-one locally and the same way round: each point inside the
+/// view of the boundary is covered as many times as that boundary winds
+/// round it, by any surface with that boundary). A point of the piece and
+/// the point of a later piece over it then differ by no more than that
+/// hull's thickness along the normal, which comes off the limit.
 fn witness_limit(pieces: &[Piece], faces: &[Face], [p, q]: [u32; 2], margin: f64) -> Option<f64> {
     let [p, q] = [p as usize, q as usize];
-    let leaf = |x: usize| {
-        let piece = &pieces[x];
-        // The other half of a green piece: pieces are leaf by leaf.
-        let sibling = [x.wrapping_sub(1), x + 1]
-            .into_iter()
-            .find(|&s| s < pieces.len() && pieces[s].leaf == piece.leaf);
-        (piece, sibling.map(|s| &pieces[s]))
-    };
+    let leaf = |x: usize| (&pieces[x], sibling(pieces, x).map(|s| &pieces[s]));
     let (a, a2) = leaf(p);
     let (b, b2) = leaf(q);
     let corners = |x: &Piece, x2: Option<&Piece>| {
@@ -409,8 +430,9 @@ fn witness_limit(pieces: &[Piece], faces: &[Face], [p, q]: [u32; 2], margin: f64
     if shared {
         return None;
     }
-    let scale = [a, b]
+    let scale = [Some(a), a2, Some(b), b2]
         .into_iter()
+        .flatten()
         .flat_map(|x| x.patch.hull())
         .fold(0.0, |m: f64, x| m.max(x.abs().max_element()));
     let limit = margin - ROUNDING * scale - thickness(faces, a, a2) - thickness(faces, b, b2);
@@ -420,15 +442,11 @@ fn witness_limit(pieces: &[Piece], faces: &[Face], [p, q]: [u32; 2], margin: f64
 /// How far apart along the normal of the plane its face is tagged with
 /// the control points of `piece` and its other half `sibling` lie; 0 off
 /// a plane, and infinite for a plane that isn't well defined or for
-/// pieces that fail the fold check.
+/// pieces that don't both face one way along its normal.
 fn thickness(faces: &[Face], piece: &Piece, sibling: Option<&Piece>) -> f64 {
     let Surface::Plane { n, .. } = faces[piece.face as usize].surface else {
         return 0.0;
     };
-    let folds = |x: &Piece| x.patch.fold_direction().is_none();
-    if folds(piece) || sibling.is_some_and(folds) {
-        return f64::INFINITY;
-    }
     // Scaled as `Surface::distance` scales it, so any finite size works.
     let scale = n.abs().max_element();
     if !(scale > 0.0 && scale.is_finite()) {
@@ -436,6 +454,28 @@ fn thickness(faces: &[Face], piece: &Piece, sibling: Option<&Piece>) -> f64 {
     }
     let n = n / scale;
     let n = n / n.length();
+    // Every normal is a positive combination of the normal coefficients,
+    // whose directions are good to well within the fold check's margin
+    // once it passes: each leaning on `n` (or each on `-n`) by more than
+    // that margin, every normal does.
+    let leans = |x: &Piece| {
+        x.patch.fold_direction()?;
+        let dots = x
+            .patch
+            .normal_coeffs()
+            .map(|c| (n.dot(c), FOLD_MARGIN * c.length()));
+        if dots.iter().all(|&(d, m)| d > m) {
+            Some(1)
+        } else if dots.iter().all(|&(d, m)| -d > m) {
+            Some(-1)
+        } else {
+            None
+        }
+    };
+    let side = leans(piece);
+    if side.is_none() || sibling.is_some_and(|s| leans(s) != side) {
+        return f64::INFINITY;
+    }
     let origin = piece.patch.p[0];
     let (lo, hi) = piece
         .patch
@@ -453,9 +493,19 @@ enum Fold {
     /// Fails, and splitting may mend it.
     Split,
     /// Fails at a corner whose edges leave it at 0° or 180°, which every
-    /// piece keeping the corner will; or fails while [`flat`] within the
-    /// margin, when its red pieces are like it and fail the same way (a
-    /// sliver whose normal coefficients `f64` can't tell apart).
+    /// piece keeping the corner will; or fails as a whole leaf that is
+    /// [`affine`] (a sliver whose normal coefficients `f64` can't tell
+    /// apart). An affine triangle's red pieces are similar to it, and
+    /// the fold check doesn't see scale, so they fail as it does, up to
+    /// rounding: of the leaves its splits make, those at the deepest
+    /// level made in the middle of their parent have only their siblings
+    /// as neighbours, so are whole pieces and fail, at any depth.
+    ///
+    /// Only so: a piece merely [`flat`] within the margin may be a sliver
+    /// a few margins wide whose control points sit off its edges' middles
+    /// by a good part of its width, and its pieces, straighter for their
+    /// size each split, can pass where it fails. A green half's leaf may
+    /// pass where the half fails, and then so do the leaf's red pieces.
     Never,
 }
 

@@ -125,10 +125,12 @@ pub(crate) fn edge_neighbours_apart(
             .iter()
             .map(|&s| sign * s)
             .fold(f64::NEG_INFINITY, f64::max);
-        // One side strict, the other lax, and the strict side clearing
-        // the lax side's highest point by more than the margin too.
-        (a_min > margin && b_max < margin && a_min - b_max.max(0.0) > margin)
-            || (a_min > -margin && b_max < -margin && a_min.min(0.0) - b_max > margin)
+        // One side lax (not past the plane by the margin), the other
+        // strict: clearing the plane and the lax side's highest point by
+        // more than the margin, which is clearing the plane by more than
+        // it when the lax side doesn't lean in.
+        (b_max < margin && a_min - b_max.max(0.0) > margin)
+            || (a_min > -margin && a_min.min(0.0) - b_max > margin)
     })
 }
 

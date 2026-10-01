@@ -26,7 +26,7 @@ const MAX_STRETCH: f64 = 64.0;
 const MIN_DAMPING: f64 = 1e-6;
 
 /// Rounding the witness allows for, relative to the largest coordinate of
-/// the two patches: in evaluating the points, in the pieces refinement
+/// the two patches (repair takes the pieces of their leaves): in evaluating the points, in the pieces refinement
 /// makes of the patches (each split rounds its new points by a few ulps,
 /// over up to [`MAX_REFINE_DEPTH`](crate::MAX_REFINE_DEPTH) splits), and
 /// in the GJK test those pieces later face. Too much only sends a pair
