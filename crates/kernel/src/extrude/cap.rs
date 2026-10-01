@@ -30,7 +30,12 @@
 //! A Steiner point inside the hull of a segment bulging into the region
 //! could end up outside the region once that segment is halved, so that
 //! segment is halved instead. Each round triangulates afresh; the rounds
-//! stop when nothing changes, or fail after [`MAX_ROUNDS`].
+//! stop when nothing changes, or fail after [`MAX_ROUNDS`]. A segment to
+//! halve that already spans less than
+//! [`MIN_SPLIT`](crate::mesh::MIN_SPLIT) resolutions fails the profile
+//! with [`ProfileError::TooFine`]: detail too small for the resolution,
+//! which a finer tolerance mends. One halved [`MAX_CAP_DEPTH`] times
+//! fails with [`KernelError::TooComplex`].
 //!
 //! Flat corners are the only thing the two tries do differently, and up
 //! to the first round that finds one they do the same, work counted
@@ -59,7 +64,7 @@ const MAX_ROUNDS: usize = 32;
 /// How many times a segment may have been halved, all told, before the
 /// caps give up halving it: mending that doesn't converge would otherwise
 /// double the segments it can't mend every round.
-const MAX_CAP_DEPTH: u8 = 16;
+pub(super) const MAX_CAP_DEPTH: u8 = 16;
 
 /// Work units per vertex for one triangulation: inserting a vertex walks
 /// and flips a few edges.
@@ -178,10 +183,26 @@ pub(super) fn triangulate(
         }
         split.sort_unstable();
         split.dedup();
-        chain.split(&split, MAX_CAP_DEPTH, KernelError::TooComplex)?;
+        chain.split(&split, MAX_CAP_DEPTH, refused)?;
         steiner.extend(added);
     }
     Err(KernelError::TooComplex)
+}
+
+/// Why the caps can't halve the curved segments `unsplittable` (in the
+/// chain's order): [`ProfileError::TooFine`] naming the input segment of
+/// the first that is [`too_small`](Chain::too_small), detail too small
+/// for the resolution, or [`KernelError::TooComplex`] if each was halved
+/// [`MAX_CAP_DEPTH`] times, mending that doesn't converge. A small one
+/// wins wherever it comes among them.
+pub(super) fn refused(chain: &Chain, unsplittable: &[Seg]) -> KernelError {
+    match unsplittable.iter().find(|s| chain.too_small(s)) {
+        Some(s) => {
+            let (l, s) = chain.sides[s.side as usize].at;
+            ProfileError::TooFine(l, s).into()
+        }
+        None => KernelError::TooComplex,
+    }
 }
 
 /// The triangulation: its point location walks down a hierarchy of

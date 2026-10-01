@@ -545,10 +545,10 @@ fn bad_input_is_refused() {
         Err(KernelError::Profile(ProfileError::Degenerate(0, 0)))
     );
 
-    // Too thin for the resolution.
+    // Too thin for the resolution: a scale limit, never `TooComplex`.
     assert!(matches!(
         run(&ok, &Frame::XY, 0.0, 1e-7),
-        Err(KernelError::Invalid(_) | KernelError::TooComplex)
+        Err(KernelError::Invalid(_))
     ));
     // Out of budget.
     let plate = profile(vec![
@@ -946,4 +946,124 @@ fn a_first_try_out_of_work_in_its_fork_round_has_no_second() {
             Err(KernelError::TooComplex)
         );
     }
+}
+
+#[test]
+fn detail_too_small_for_the_resolution_is_too_fine() {
+    // A small hole of sharply weighted conics (from a stress of random
+    // plates, weights 0.05 to 20, seed 2 case 11): at a fit of 0.1 the
+    // caps ask to halve its segment 3 where it is already under
+    // `MIN_SPLIT` resolutions. That is detail too small for the
+    // tolerance, which a finer one mends, not `TooComplex`, whose message
+    // offered a coarser one.
+    let p = |x: f64, y: f64| DVec2::new(x, y);
+    let hole = [
+        (
+            p(27.110264020465635, 8.18980829207795),
+            p(27.148755275236258, 7.991223208848414),
+            1.0,
+        ),
+        (
+            p(27.18724653000688, 7.792638125618878),
+            p(27.066044759988173, 7.973079939121326),
+            2.8902795371770957,
+        ),
+        (
+            p(26.676456450726537, 7.746392274582473),
+            p(26.429914500587888, 7.564404189159178),
+            15.05158637397626,
+        ),
+        (
+            p(26.32171598677136, 7.615822300683291),
+            p(26.169215237129592, 7.778501927912703),
+            0.06813088567924576,
+        ),
+        (
+            p(26.37399226527523, 8.066824927126845),
+            p(26.16303627989656, 8.093882770486916),
+            1.0,
+        ),
+        (
+            p(25.952080294517884, 8.120940613846987),
+            p(25.803339626316774, 8.354883426245971),
+            1.2203509743841443,
+        ),
+        (
+            p(26.01562562551988, 8.62243755266067),
+            p(26.193990851661308, 8.661359876731547),
+            1.0,
+        ),
+        (
+            p(26.372356077802735, 8.700282200802423),
+            p(26.65233702997371, 8.62690992632961),
+            0.16402529749735703,
+        ),
+        (
+            p(26.762384791989902, 8.511615327972974),
+            p(26.97729243684653, 8.584905265736102),
+            18.60916956030496,
+        ),
+        (
+            p(27.094576940059348, 8.691482610706228),
+            p(27.204834913312506, 8.448184784080313),
+            0.4307463967631604,
+        ),
+    ];
+    let n = hole.len();
+    let hole = Loop {
+        segments: (0..n)
+            .map(|i| {
+                let (a, c, w) = hole[i];
+                Segment {
+                    conic: Conic2::new(a, c, w, hole[(i + 1) % n].0).unwrap(),
+                    curve: 100 + i as u64,
+                }
+            })
+            .collect(),
+    };
+    let plate = profile(vec![rect(p(20.0, 0.0), p(35.0, 15.0), 0), hole]);
+    let at = |fit: f64| {
+        let tol = Tolerance::new(fit).unwrap();
+        extrude(&plate, &Frame::XY, 0.0, 1.0, 1, &tol, &Budget::DEFAULT)
+    };
+    let too_fine = Err(KernelError::Profile(ProfileError::TooFine(1, 3)));
+    assert_eq!(at(Tolerance::MAX_FIT), too_fine);
+    assert_eq!(at(0.05), too_fine);
+    let solid = at(0.01).unwrap();
+    let exact = straightened(&plate, &Tolerance::new(0.01).unwrap()).area();
+    assert!((solid.volume() - exact).abs() < 1e-9, "{}", solid.volume());
+}
+
+#[test]
+fn a_refused_halving_names_detail_too_small_wherever_it_comes() {
+    // At a resolution of 1e-3 a piece must span 0.064 to be halved: the
+    // big circle's quarters may be (until halved too often), the small
+    // hole's may not.
+    let p = profile(vec![
+        circle(DVec2::ZERO, 1.0, 0, false),
+        circle(DVec2::ZERO, 0.02, 1, true),
+    ]);
+    let fresh = || chain::Chain::new(&p, 1e-3).unwrap();
+    let mut chain = fresh();
+    chain.loops[0][1].depth = cap::MAX_CAP_DEPTH;
+    // Halved too often: mending that doesn't converge.
+    assert_eq!(
+        chain.split(&[1], cap::MAX_CAP_DEPTH, cap::refused),
+        Err(KernelError::TooComplex)
+    );
+    // A small one among them, even after one halved too often: the
+    // detail is too fine, and it names the input segment.
+    assert_eq!(
+        chain.split(&[0, 1, 6], cap::MAX_CAP_DEPTH, cap::refused),
+        Err(KernelError::Profile(ProfileError::TooFine(1, 2)))
+    );
+    // Refusing halves none.
+    assert_eq!(chain.len(), 8);
+    // The ones that may be halved are.
+    let mut chain = fresh();
+    assert_eq!(
+        chain.split(&[0, 3], cap::MAX_CAP_DEPTH, cap::refused),
+        Ok(())
+    );
+    assert_eq!(chain.len(), 10);
 }

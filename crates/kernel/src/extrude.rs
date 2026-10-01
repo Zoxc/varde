@@ -92,10 +92,10 @@ impl Frame {
 /// [`Profile::check`], and its segments must neither touch nor cross
 /// within `tol`'s resolution ([`ProfileError::Touching`]), nest as outer
 /// loops and holes ([`ProfileError::Nesting`]) and meet at no cusp.
-/// Running out of `budget` fails with [`KernelError::TooComplex`], and a
-/// solid too thin or too fine for the resolution with
-/// [`KernelError::Invalid`] or `TooComplex`; it never gives an invalid
-/// solid.
+/// A solid too thin or too fine for the resolution fails with
+/// [`KernelError::Invalid`] or [`ProfileError::TooFine`], and running out
+/// of `budget` or past a limit with [`KernelError::TooComplex`]; it never
+/// gives an invalid solid.
 pub fn extrude(
     profile: &Profile,
     frame: &Frame,
@@ -137,7 +137,11 @@ pub fn extrude(
     let mut fork = None;
     let first = cap::triangulate(Rounds::new(chain), margin, false, &mut fork, &mut work);
     match solid(first, &mut work) {
-        Err(first @ (KernelError::Invalid(_) | KernelError::TooComplex)) if work.left() > 0 => {
+        Err(
+            first @ (KernelError::Invalid(_)
+            | KernelError::TooComplex
+            | KernelError::Profile(ProfileError::TooFine(..))),
+        ) if work.left() > 0 => {
             let Some(fork) = fork else {
                 return Err(first);
             };

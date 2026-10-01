@@ -30,12 +30,13 @@ impl Doing {
 /// Why sweeping an extrude's regions failed.
 pub(crate) fn extrude(error: KernelError) -> String {
     match error {
+        // Out of budget or past a limit: a coarser tolerance changes
+        // neither, so it isn't offered.
         KernelError::TooComplex => {
-            "its regions are too complex to extrude: try a coarser tolerance or fewer curves"
-                .to_owned()
+            "its regions are too complex to extrude: try fewer or simpler curves".to_owned()
         }
-        KernelError::Invalid(_) => "its regions have parts too thin or too close together to \
-             extrude at this tolerance, as where curves touch tangentially"
+        KernelError::Invalid(_) => "its regions have parts too thin or too close together for \
+             this tolerance: try a finer tolerance"
             .to_owned(),
         KernelError::Patch(_) => "its regions are too far out or too large to extrude".to_owned(),
         KernelError::Profile(error) => profile(error),
@@ -54,6 +55,9 @@ fn profile(error: ProfileError) -> String {
         ProfileError::Cusp(..) => "its outline turns back on itself in a sharp point".to_owned(),
         ProfileError::Area(_) => "a loop of its outline encloses no area".to_owned(),
         ProfileError::TooManySegments(_) => "its outline has too many curves".to_owned(),
+        ProfileError::TooFine(..) => {
+            "its outline has detail too small for this tolerance: try a finer tolerance".to_owned()
+        }
         ProfileError::Triangulation => {
             "its end faces couldn't be made: parts are too thin at this tolerance".to_owned()
         }
@@ -73,9 +77,13 @@ pub(crate) fn boolean(doing: Doing, body: &str, error: KernelError) -> String {
             "{doing} {body} is too complex to work out: they may meet on faces that are \
              tangent or nearly flush"
         ),
+        // Hedged: not every boolean `Invalid` is such a contact (a tall
+        // part cut through can fail at every tolerance), so the cause is
+        // a guess and moving it a suggestion. No tolerance is offered: a
+        // finer one doesn't mend those either.
         KernelError::Invalid(_) => format!(
-            "{doing} {body} leaves no clean solid: they meet only along an edge, at a point, \
-             or on tangent faces; move it to overlap more or to clear it"
+            "{doing} {body} leaves no clean solid: they may meet only along an edge, at a \
+             point, or on tangent faces; if so, move it to overlap more or to clear it"
         ),
         KernelError::Boolean(BooleanError::Inconsistent) => format!(
             "{doing} {body} can't be worked out: they meet on faces too nearly flush or \

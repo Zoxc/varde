@@ -9,7 +9,10 @@ use crate::profile::ProfileError;
 pub enum KernelError {
     /// The operation ran out of its [`Budget`](crate::Budget), or needed
     /// more than [`MAX_PATCHES`](crate::MAX_PATCHES) patches or deeper
-    /// refinement than [`MAX_REFINE_DEPTH`](crate::MAX_REFINE_DEPTH).
+    /// refinement than [`MAX_REFINE_DEPTH`](crate::MAX_REFINE_DEPTH), or
+    /// past another limit that keeps it from running on. Never for detail
+    /// too small for the tolerance: that is [`Invalid`](Self::Invalid) or
+    /// [`ProfileError::TooFine`].
     TooComplex,
     /// The input breaks an invariant the operation can't restore, such
     /// as its topology, or comes out invalid for the tolerance (a solid

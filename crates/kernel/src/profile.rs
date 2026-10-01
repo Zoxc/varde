@@ -83,6 +83,10 @@ pub enum ProfileError {
     Nesting,
     /// The region's caps couldn't be triangulated.
     Triangulation,
+    /// A curved segment `(loop, segment)` needs halving for the caps
+    /// below the size the resolution allows: detail too small for the
+    /// tolerance.
+    TooFine(usize, usize),
 }
 
 impl std::fmt::Display for ProfileError {
@@ -112,6 +116,10 @@ impl std::fmt::Display for ProfileError {
             ),
             ProfileError::Nesting => f.write_str("the loops don't nest as outer loops and holes"),
             ProfileError::Triangulation => f.write_str("the profile couldn't be triangulated"),
+            ProfileError::TooFine(l, s) => write!(
+                f,
+                "segment {s} of loop {l} is too small or sharply bent for the resolution"
+            ),
         }
     }
 }

@@ -166,32 +166,38 @@ impl Chain {
     }
 
     /// Whether `seg` may be halved: it is curved, was halved fewer than
-    /// `max_depth` times, and its control points span at least
-    /// [`MIN_SPLIT`] resolutions, as repair splits no smaller piece:
-    /// pieces a few resolutions long can't keep the margin from their own
-    /// neighbours, so halving them only makes more that fail.
+    /// `max_depth` times, and isn't [`too_small`](Self::too_small).
     pub fn splittable(&self, seg: &Seg, max_depth: u8) -> bool {
+        seg.curved && seg.depth < max_depth && !self.too_small(seg)
+    }
+
+    /// Whether `seg`'s control points span less than [`MIN_SPLIT`]
+    /// resolutions, as repair splits no smaller piece: pieces a few
+    /// resolutions long can't keep the margin from their own neighbours,
+    /// so halving them only makes more that fail.
+    pub fn too_small(&self, seg: &Seg) -> bool {
         let b = Bounds3::around(&seg.hull()).expect("three points");
-        seg.curved
-            && seg.depth < max_depth
-            && (b.max - b.min).max_element() >= MIN_SPLIT * self.margin
+        (b.max - b.min).max_element() < MIN_SPLIT * self.margin
     }
 
     /// Halves the segments `ids` (indices into [`Self::flat`], sorted),
-    /// or fails with `refused` if one isn't
-    /// [`splittable`](Self::splittable) within `max_depth`.
+    /// or, if some aren't [`splittable`](Self::splittable) within
+    /// `max_depth`, fails with what `refused` makes of those, in order,
+    /// halving none.
     pub fn split(
         &mut self,
         ids: &[u32],
         max_depth: u8,
-        refused: KernelError,
+        refused: impl FnOnce(&Self, &[Seg]) -> KernelError,
     ) -> Result<(), KernelError> {
         let (segs, _) = self.flat();
-        if ids
+        let unsplittable: Vec<Seg> = ids
             .iter()
-            .any(|&i| !self.splittable(&segs[i as usize], max_depth))
-        {
-            return Err(refused);
+            .map(|&i| segs[i as usize])
+            .filter(|s| !self.splittable(s, max_depth))
+            .collect();
+        if !unsplittable.is_empty() {
+            return Err(refused(self, &unsplittable));
         }
         let mut ids = ids.iter().copied().peekable();
         let mut i = 0u32;
@@ -270,7 +276,9 @@ impl Chain {
             }
             split.sort_unstable();
             split.dedup();
-            self.split(&split, MAX_SPLIT_DEPTH, KernelError::TooComplex)?;
+            // `split` holds only splittable segments, so this can't
+            // refuse; were it to, a limit would be what it hit.
+            self.split(&split, MAX_SPLIT_DEPTH, |_, _| KernelError::TooComplex)?;
         }
     }
 

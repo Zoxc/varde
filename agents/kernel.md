@@ -1096,8 +1096,15 @@ steps:
      would leave the region once that segment is halved, so the segment is
      halved instead.
    Each round triangulates afresh (at most 32 rounds, segments halved at
-   most 16 times all told here, and never below `MIN_SPLIT`; past these,
-   `TooComplex`). Coordinates below `1e-30` are flushed to 0 for spade,
+   most 16 times all told here, and never below `MIN_SPLIT`). A segment
+   to halve that is already under `MIN_SPLIT` resolutions fails the
+   profile with `ProfileError::TooFine` naming its input segment: detail
+   too small for the tolerance, which a finer one mends. Past the rounds
+   or the depth it is `TooComplex`, the limits against mending that
+   doesn't converge. `Chain::split` hands the pieces it refuses, all of
+   them in order, to the caller, so a small one is `TooFine` wherever it
+   comes among them; separation's own call halves only splittable pieces
+   and can't refuse. Coordinates below `1e-30` are flushed to 0 for spade,
    which refuses tiny non-zero ones: its exact predicates then decide only
    which triangles there are, and moving points by that little changes
    only triangles with corners that close to a line, slivers along the
@@ -1137,7 +1144,8 @@ steps:
    `Solid::new_within` checks it all (charging the patches the
    orientation step integrated). In every test so far repair finds nothing
    to split: the construction already passes. If steps 3 to 5 fail with
-   `Invalid` or `TooComplex` and work is left, they run again from the
+   `Invalid`, `TooComplex` or `ProfileError::TooFine` and work is left,
+   they run again from the
    separated chain with flat corners mended (step 3); if that fails too,
    the first error stands. Moving points in from every flat corner can
    line them up into slivers of their own (along a fine polygon), so it
@@ -1216,7 +1224,11 @@ cusped; a tilted frame far out, also with axes a little off square;
 faces named per curve in profile order, the pieces of a halved segment
 on its face; every refusal (extents, frames, overlapping, touching and
 crossing loops, bad nesting, cusps, segments running back, too thin, out
-of budget) with its error; the same bits at 1 and 8 threads. Circles cut
+of budget) with its error; a small hole of sharply weighted conics
+`TooFine` at fits 0.1 and 0.05 and extruded at 0.01, and the caps'
+refused halvings `TooFine` for a small piece wherever it comes among
+them, `TooComplex` for one halved too often, halving none; the same
+bits at 1 and 8 threads. Circles cut
 into uneven arcs at three tolerances (the second try, at 1 and 8
 threads too); the second try's caps resumed from the first's fork the
 same as made from the start (a 210 × 30 strip with 40 holes, a row 0.1 from its side,
@@ -1230,10 +1242,24 @@ order).
 
 Known gaps:
 
-- **Sharp or crowded curves at coarse tolerances** can come out
-  `Invalid` from repair (a flat cap piece and a wall piece a vertex apart
-  within the resolution) instead of `Touching`: seen only with conic
-  weights far from 1 (0.05 to 20) meeting at narrow angles.
+- **Short curved segments at coarse tolerances** fail although the
+  profile doesn't touch itself: small holes (0.5 mm and up) whose
+  segments get halved down to pieces of 30 to 70 resolutions. Random
+  plates with holes and weights from 0.05 to 20 (2 400 cases at fit
+  0.1): 32 `TooFine`, the caps asking to halve a piece already under
+  `MIN_SPLIT` at a narrow corner, mostly next to a sliver from the short
+  chord to an apex 0.5 to 1.6 mm away; 19 `Invalid`, repair finding two
+  flat pieces (thin cap triangles meeting, or one against a wall piece)
+  within the resolution; 1 `TooComplex`, repair's own `MIN_SPLIT` floor
+  (seed 6 case 146; `Invalid` at 0.05 and 0.01, `Ok` at 1e-3). Weights of
+  exactly 1 fail too, if less often; nothing fails this way at 1e-3. The
+  cases checked extrude at a finer tolerance (seed 2 case 11 at 0.01),
+  which is what the `TooFine` and `Invalid` messages suggest. Quality
+  refinement of the caps (no sliver with a far apex) would mend most.
+  One `Invalid` is a real 0.8° notch between two conics whose sides
+  pass `apart_at_joint` by a hair: that test isn't monotone under
+  halving (a halved piece at the joint moves its hull towards it), so
+  "halving only shrinks hulls" holds for pairs that aren't joints.
 - **Repair of a cap patch along a concave curve**, should it ever be
   needed, splits with straight inner edges; a piece whose corner at the
   curve's midpoint turns inside out then fails with `TooComplex`. The
@@ -2648,19 +2674,27 @@ body, and the later ones still run.
 
 **Error texts** (`src/message.rs`). What the Timeline's tooltip and the
 panel show is worded for the user, not the kernel: an extrude's own
-`KernelError` becomes "its regions are too complex to extrude…" for
-`TooComplex`, "its regions have parts too thin or too close together to
-extrude at this tolerance, as where curves touch tangentially" for
-`Invalid`, and the profile errors say what's wrong with the outline
+`KernelError` becomes "its regions are too complex to extrude: try
+fewer or simpler curves" for `TooComplex`, "its regions have parts too
+thin or too close together for this tolerance: try a finer tolerance"
+for `Invalid`, and the profile errors say what's wrong with the outline
 (touching or crossing itself, loops that don't nest, a cusp, a loop of
-no area); a boolean's error names the body and what was being done
-("joining it to Body 2 leaves no clean solid: they meet only along an
-edge, at a point, or on tangent faces; move it to overlap more or to
-clear it" for `Invalid`, which is what edge-touching unions and tangent
-contacts give; "… can't be worked out: they meet on faces too nearly
-flush or tangent to tell apart; move it a little" for `Inconsistent`;
-"… is too complex to work out…" for `TooComplex`). Every message starts in lower case, the Timeline putting it
-after the feature's name. Body names are looked up when the message is
+no area; for `TooFine`, "its outline has detail too small for this
+tolerance: try a finer tolerance"). A message names the tolerance only
+where a finer one is the remedy: `TooComplex` is the budget or a limit,
+which a coarser tolerance doesn't change, so none suggests a coarser
+one. A boolean's error names the body and what was being done
+("joining it to Body 2 leaves no clean solid: they may meet only along
+an edge, at a point, or on tangent faces; if so, move it to overlap
+more or to clear it" for `Invalid`, which is what edge-touching unions
+and tangent contacts give, but not only: a tall plate cut through by a
+cylinder fails `Invalid(Hull)` at every tolerance though they overlap
+properly, so the cause is hedged and no tolerance is offered; an error
+of its own for edge and point contacts would let it be said outright;
+"… can't be worked out: they meet on faces too nearly flush or tangent
+to tell apart; move it a little" for `Inconsistent`; "… is too complex
+to work out…" for `TooComplex`). Every message starts in lower case,
+the Timeline putting it after the feature's name. Body names are looked up when the message is
 made, not kept in the cache.
 
 **Pieces to conics** (`src/profile.rs`, `profile(sketch, profiles, loops,
@@ -3012,8 +3046,12 @@ offered ones' (`tolerance_choices`).
 (`repair_within` takes one), and running out is `TooComplex`. A unit is
 about a patch or a pair of patches tested or split: repair measured about
 0.5 µs a unit on one thread and 0.3 µs on seven. `KernelError` is
-`TooComplex`, `Invalid(CheckError)` (the input breaks an invariant the
-operation can't restore, or the result would), `Patch(PatchError)` (a
+`TooComplex` (the budget, or a limit such as `MAX_PATCHES`,
+`MAX_REFINE_DEPTH` or a cap of rounds: never detail too small for the
+tolerance, except repair's `MIN_SPLIT` floor, which still gives it),
+`Invalid(CheckError)` (the input breaks an invariant the operation
+can't restore, or the result would, as for a solid too thin for its
+resolution), `Patch(PatchError)` (a
 parameter, or a split outside the patch bounds),
 `Profile(ProfileError)` (a profile that can't be extruded), and
 `Boolean(BooleanError)` (see "Booleans").
@@ -3127,7 +3165,9 @@ parameter, or a split outside the patch bounds),
   `from < to` along its normal; flipping and sides are the caller's.
 - **`KernelError::Profile(ProfileError)`** carries a profile's own
   errors: `Empty`, `TooManySegments`, `Short`, `Segment`, `Degenerate`,
-  `Open`, `Area`, `Cusp`, `Touching`, `Nesting`, `Triangulation`.
+  `Open`, `Area`, `Cusp`, `Touching`, `Nesting`, `Triangulation`,
+  `TooFine` (a curved segment the caps need halved below `MIN_SPLIT`
+  resolutions: detail too small for the tolerance).
 - **Curved walls are tagged with the conic's own cylinder**
   (`λ1² = 4w²λ0λ2`), not `Quadric::cylinder`: it holds for every conic
   weight, and for arcs it is the circular cylinder up to scale.

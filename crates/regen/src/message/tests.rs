@@ -11,6 +11,11 @@ fn boolean_failures_name_the_body_and_what_to_try() {
         "{text}"
     );
     assert!(text.contains("tangent"), "{text}");
+    // Not every boolean `Invalid` is such a contact: a guess, not a fact,
+    // and no tolerance to try.
+    assert!(text.contains("they may meet"), "{text}");
+    assert!(text.contains("if so, move it"), "{text}");
+    assert!(!text.contains("tolerance"), "{text}");
     let text = boolean(
         Doing::Cutting,
         "Body 1",
@@ -41,6 +46,64 @@ fn extrude_failures_speak_of_the_regions() {
     assert!(text.contains("too thin or too close"), "{text}");
 }
 
+/// Every way an extrude can fail, kernel errors and profile ones.
+fn extrude_errors() -> Vec<KernelError> {
+    let profile = [
+        ProfileError::Empty,
+        ProfileError::TooManySegments(70_000),
+        ProfileError::Short(0),
+        ProfileError::Segment(0, 1, varde_kernel::patch::PatchError::Mismatch),
+        ProfileError::Degenerate(0, 1),
+        ProfileError::Open(0, 1),
+        ProfileError::Area(0),
+        ProfileError::Cusp(0, 1),
+        ProfileError::Touching([(0, 1), (1, 0)]),
+        ProfileError::Nesting,
+        ProfileError::Triangulation,
+        ProfileError::TooFine(1, 2),
+    ];
+    let mut errors = vec![
+        KernelError::TooComplex,
+        KernelError::Invalid(CheckError::Counts),
+        KernelError::Patch(varde_kernel::patch::PatchError::Mismatch),
+        KernelError::Boolean(BooleanError::Inconsistent),
+    ];
+    errors.extend(profile.map(KernelError::Profile));
+    errors
+}
+
+#[test]
+fn extrude_failures_never_suggest_a_coarser_tolerance() {
+    // A coarser tolerance mends none of them: the budget and the limits
+    // don't depend on it, and detail too small for it gets worse.
+    for error in extrude_errors() {
+        let text = extrude(error);
+        assert!(!text.contains("coarser"), "{text}");
+        assert!(text.starts_with(char::is_lowercase), "{text}");
+    }
+}
+
+#[test]
+fn detail_too_fine_for_the_tolerance_suggests_a_finer_one() {
+    let text = extrude(KernelError::Profile(ProfileError::TooFine(1, 2)));
+    assert_eq!(
+        text,
+        "its outline has detail too small for this tolerance: try a finer tolerance"
+    );
+    let text = extrude(KernelError::Invalid(CheckError::Counts));
+    assert_eq!(
+        text,
+        "its regions have parts too thin or too close together for this tolerance: \
+         try a finer tolerance"
+    );
+    // Out of budget, it's the curves, not the tolerance.
+    let text = extrude(KernelError::TooComplex);
+    assert_eq!(
+        text,
+        "its regions are too complex to extrude: try fewer or simpler curves"
+    );
+}
+
 #[test]
 fn every_boolean_failure_starts_in_lower_case() {
     let errors = [
@@ -48,6 +111,7 @@ fn every_boolean_failure_starts_in_lower_case() {
         KernelError::Invalid(CheckError::Counts),
         KernelError::Patch(varde_kernel::patch::PatchError::Mismatch),
         KernelError::Profile(ProfileError::Nesting),
+        KernelError::Profile(ProfileError::TooFine(0, 3)),
         KernelError::Boolean(BooleanError::Inconsistent),
         KernelError::Boolean(BooleanError::Degenerate),
     ];
