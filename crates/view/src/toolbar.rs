@@ -21,6 +21,12 @@ use crate::{ActiveTool, ConstraintKind, DocumentState, Edit, File, Look, Message
 /// Includes the 1 px border.
 const TOOLBAR_HEIGHT: f32 = 40.0;
 
+/// The width of the Save button's cell, right of the file cell.
+const SAVE_CELL_WIDTH: f32 = 34.0;
+
+/// The bar's spacing between its items.
+const BAR_SPACING: f32 = 2.0;
+
 pub fn toolbar<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
     let (context, tag): (Element<'a, Message>, _) = match &state.sketch {
         Some(sketch) => (
@@ -58,6 +64,8 @@ pub fn toolbar<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
             state.overlay == Some(Overlay::FileMenu),
         ),
         vrule(),
+        save_cell(state.editable()),
+        vrule(),
         container(row![context, tag].spacing(6).align_y(Alignment::Center))
             // The sketch's pill starts left of where the text would, so its
             // name lines up with "Model".
@@ -76,7 +84,7 @@ pub fn toolbar<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
         crate::chrome::app_buttons(state.mode),
         Space::new().width(8),
     ]
-    .spacing(2)
+    .spacing(BAR_SPACING)
     .height(Length::Fill)
     .align_y(Alignment::Center);
 
@@ -140,6 +148,21 @@ fn tool_tag(tool: &ActiveTool<'_>) -> String {
         .join(" · ")
 }
 
+/// The Save button, telling its key while hovered: disabled unless the
+/// document is `editable`, as the file menu's Save is.
+fn save_cell<'a>(editable: bool) -> Element<'a, Message> {
+    let [save, _] = file_bindings(editable);
+    let button = crate::chrome::tip(
+        icon_button(Icon::Save, Tone::Muted, save.sends()),
+        text(format!("Save ({})", save.shortcut.label())),
+    );
+    container(button)
+        .center_x(SAVE_CELL_WIDTH)
+        .height(Length::Fill)
+        .align_y(Alignment::Center)
+        .into()
+}
+
 /// The document name with a dirty dot and a chevron, opening the file menu.
 fn file_cell<'a>(name: &'a str, edited: bool, open: bool) -> Element<'a, Message> {
     let dirty = edited.then(|| container(Space::new().width(6).height(6)).style(theme::dirty_dot));
@@ -157,8 +180,11 @@ fn file_cell<'a>(name: &'a str, edited: bool, open: bool) -> Element<'a, Message
     .height(Length::Fill)
     .align_y(Alignment::Center);
 
+    // With the rule after it and the Save cell, as wide as the side panel
+    // under them, so the rule after the Save cell is in line with the
+    // panel's edge.
     button(content)
-        .width(SIDE_PANEL_INNER_WIDTH)
+        .width(SIDE_PANEL_INNER_WIDTH - SAVE_CELL_WIDTH - 1.0 - 2.0 * BAR_SPACING)
         .height(Length::Fill)
         .padding(Padding::from([0, 10]).left(12))
         .style(theme::file_cell(open))

@@ -943,9 +943,9 @@ pub fn menu(theme: &Theme) -> container::Style {
     container::Style {
         border: outline(p.line, MENU_RADIUS),
         shadow: Shadow {
-            color: Color::from_rgba(0.0, 0.0, 0.0, 0.18),
-            offset: Vector::new(0.0, 8.0),
-            blur_radius: 30.0,
+            color: Color::from_rgba(0.0, 0.0, 0.0, 0.08),
+            offset: Vector::new(0.0, 3.0),
+            blur_radius: 10.0,
         },
         ..filled(p.panel, p.text)
     }
