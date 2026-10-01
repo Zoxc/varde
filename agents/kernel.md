@@ -489,6 +489,21 @@ Triangles are `(pole, b1, b0)` for a pole at the meridian's start and
 `(a0, a1, pole)` at its end: the strips' layout with one side collapsed,
 facing the way the strips beside them do.
 
+A cap never reaches past half way to where the meridian's height first
+turns (an apple's meridian dips below its pole before it widens; a
+spindle torus's too): a cap over the turn lies on both sides of its
+rim's plane and the strips beyond it on one, and the edge rule between
+them was refused at coarse tolerances. Its rest's rings stay at or
+below that point, and one last piece runs over the turn to the
+meridian's end for the band to balance (test
+`caps_stop_short_of_a_turn`). A cap whose rim has come within the
+resolution of the axis stops with `TooComplex` (no triangles that small
+pass the hull rules, and the parallel of a point on the axis is no arc:
+`Lathe::parallel` refuses it). Part turns close with flat ends through
+the axis, the spheres' caps and both ends meeting at the poles (test
+`part_turns_are_closed_by_flat_ends`, with `Mesh::repair` where the
+coarse caps' hulls cross the ends').
+
 **Measured tori** (`R` major, `r` minor radius; the lathe starting at 4
 pieces and the tube in four quarters from 45°, halved as above; the error
 is the worst `deviation`):

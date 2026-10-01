@@ -179,6 +179,9 @@ impl Lathe {
         let v = p - self.origin;
         let foot = self.origin + self.axis * v.dot(self.axis);
         let radius = (p - foot).length();
+        if radius.is_nan() || radius <= 0.0 {
+            return Err(PatchError::Parameter(radius));
+        }
         Conic3::arc_between(foot, radius, self.turned(p, k), self.turned(p, k + 1))
     }
 
@@ -192,6 +195,12 @@ impl Lathe {
             meridian.w,
             self.turned(meridian.p1, k),
         )
+    }
+
+    /// How far `p` is from the axis.
+    fn radius(&self, p: DVec3) -> f64 {
+        let v = p - self.origin;
+        (v - self.axis * v.dot(self.axis)).length()
     }
 
     /// The height of `p` along the axis.
@@ -524,8 +533,10 @@ pub struct Cap {
     /// The rest of the meridian, in its direction, in pieces whose rings
     /// lie at their ends: each at most 16 times as long (in the
     /// meridian's parameter) as the one nearer the pole, so the strips
-    /// the caller makes of them don't thin out. Empty if the cap is the
-    /// whole meridian.
+    /// the caller makes of them don't thin out, up to half way to where
+    /// the meridian's height first turns, and then one piece to its end
+    /// (over the turn: a band's to balance, see [`fitted_band`]). Empty
+    /// if the cap is the whole meridian.
     pub rest: Vec<Conic3>,
     /// The cap's triangles, one per piece of the lathe: the strips of the
     /// [module](super) with the pole's side collapsed, `(pole, b1, b0)`
@@ -546,14 +557,22 @@ pub struct Cap {
 /// own piece turned (exact on spheres; on a cone pass a straight
 /// meridian, `Conic::line`, whose rulings are then the linear ones), and
 /// the piece is halved toward the pole until each triangle is within half
-/// `tol`'s fit tolerance of `form` (as a band's strips) and passes the fold check, and the
-/// hull rule with its neighbour. Measured errors: a sphere's cap of angle
-/// `δ` in sectors of `φ` (radians) about `R·δ²·φ²/64` off, so each halving
-/// takes a quarter; a cone's in proportion to its length, so a half.
+/// `tol`'s fit tolerance of `form` (as a band's strips) and passes the
+/// fold check, and the hull rule with its neighbour. Measured errors: a
+/// sphere's cap of angle `δ` in sectors of `φ` (radians) about
+/// `R·δ²·φ²/64` off, so each halving takes a quarter; a cone's in
+/// proportion to its length, so a half.
 ///
-/// [`KernelError::TooComplex`] past `budget` or after 40 halvings; the
-/// pole off the axis or a meridian that can't be split is a
-/// [`KernelError::Patch`].
+/// The cap starts no further than half way to where the meridian's
+/// height first turns (its tangent square to the axis, as an apple's
+/// below its dimple): a cap over the turn would lie on both sides of
+/// its rim's plane with the strips beyond it on one, which the hull rule
+/// between them refuses.
+///
+/// [`KernelError::TooComplex`] past `budget`, after 40 halvings, or once
+/// the rim comes within the resolution of the axis (no triangles that
+/// small pass the hull rules); the pole off the axis or a meridian that
+/// can't be split is a [`KernelError::Patch`].
 pub fn pole_cap(
     lathe: &Lathe,
     meridian: &Conic3,
@@ -590,13 +609,35 @@ pub(crate) fn pole_cap_with(
         Pole::End => 1.0 - t,
     };
     let stations: Vec<usize> = (0..lathe.pieces()).collect();
-    let mut size = 1.0;
+    // A cap whose height turns between the pole and its rim lies on
+    // both sides of its rim's plane, and the strips beyond it on one, so
+    // the hull rule between them can't pass: the cap stops half way to
+    // the first turn, and the rest, over it, is a band's to balance.
+    // The rest's rings stay at or below that size too (a ring at the turn
+    // would touch its plane), and the piece beyond it goes up to the
+    // meridian's end.
+    let reach = match (pole, &lathe.turns(meridian)[..]) {
+        (_, []) => 1.0,
+        (Pole::Start, [first, ..]) => 0.5 * first,
+        (Pole::End, [.., last]) => 0.5 * (1.0 - last),
+    };
+    let mut size = reach;
     for _ in 0..=MAX_CAP_HALVINGS {
         let cap = if size == 1.0 {
             *meridian
         } else {
             meridian.piece(at(0.0), at(size))?
         };
+        // A rim within the resolution of the axis makes triangles no
+        // hull rule can pass (and its parallel no arc): halving further
+        // can't help.
+        let rim = match pole {
+            Pole::Start => cap.p1,
+            Pole::End => cap.p0,
+        };
+        if lathe.radius(rim) <= margin {
+            return Err(KernelError::TooComplex);
+        }
         work.spend(CAP_UNITS.saturating_mul(lathe.pieces()))?;
         let triangles = crate::par::par_map(&stations, |&k| cap_triangle(lathe, &cap, pole, k));
         let patches = triangles.into_iter().collect::<Result<Vec<_>, _>>()?;
@@ -625,7 +666,11 @@ pub(crate) fn pole_cap_with(
             let mut rest = Vec::new();
             let mut from = size;
             while from < 1.0 {
-                let to = (from * REST_RATIO).min(1.0);
+                let to = if from < reach {
+                    (from * REST_RATIO).min(reach)
+                } else {
+                    1.0
+                };
                 rest.push(meridian.piece(at(from), at(to))?);
                 from = to;
             }

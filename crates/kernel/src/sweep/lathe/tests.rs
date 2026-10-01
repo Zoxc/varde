@@ -58,9 +58,9 @@ impl Frame {
     }
 }
 
-/// Builds a closed solid of revolution on a lathe of a full turn: rings
-/// found by the bits of their point at station 0, so faces built apart
-/// share them.
+/// Builds a closed solid of revolution on a lathe: rings found by the
+/// bits of their point at station 0, so faces built apart share them (a
+/// point on the axis is one vertex at every station).
 struct Assembly<'a> {
     lathe: &'a Lathe,
     builder: MeshBuilder,
@@ -70,7 +70,6 @@ struct Assembly<'a> {
 
 impl<'a> Assembly<'a> {
     fn new(lathe: &'a Lathe) -> Self {
-        assert!(lathe.is_full());
         Assembly {
             lathe,
             builder: MeshBuilder::new(),
@@ -84,12 +83,15 @@ impl<'a> Assembly<'a> {
         if let Some(ring) = self.rings.get(&key) {
             return ring.clone();
         }
-        let ring: Vec<u32> = self
-            .lathe
-            .ring(p)
-            .into_iter()
-            .map(|q| self.builder.vert(q))
-            .collect();
+        let ring: Vec<u32> = if self.lathe.on_axis(p) {
+            vec![self.builder.vert(p); self.lathe.stations()]
+        } else {
+            self.lathe
+                .ring(p)
+                .into_iter()
+                .map(|q| self.builder.vert(q))
+                .collect()
+        };
         self.rings.insert(key, ring.clone());
         ring
     }
@@ -119,10 +121,10 @@ impl<'a> Assembly<'a> {
 
     fn strips(&mut self, piece: &Conic3, strips: &[[Patch; 2]], face: u32) {
         let (a, b) = (self.ring(piece.p0), self.ring(piece.p1));
-        let n = a.len();
-        assert_eq!(strips.len(), n);
+        assert_eq!(strips.len(), self.lathe.pieces());
         for (k, patches) in strips.iter().enumerate() {
-            let next = (k + 1) % n;
+            // A full turn's last strip ends at station 0.
+            let next = (k + 1) % a.len();
             self.builder
                 .strip([a[k], a[next]], [b[k], b[next]], patches, face);
         }
@@ -162,7 +164,7 @@ impl<'a> Assembly<'a> {
             Pole::Start => (cap.meridian.p0, cap.meridian.p1),
             Pole::End => (cap.meridian.p1, cap.meridian.p0),
         };
-        let tip = self.builder.vert(tip);
+        let tip = self.ring(tip)[0];
         let rim = self.ring(rim);
         let n = rim.len();
         for (k, patch) in cap.patches.iter().enumerate() {
@@ -182,6 +184,7 @@ impl<'a> Assembly<'a> {
     /// The flat disc in `rim`'s parallel, its normal along the axis if
     /// `up`.
     fn disc(&mut self, rim: DVec3, up: bool) {
+        assert!(self.lathe.is_full());
         let axis = self.lathe.axis();
         let n = if up { axis } else { -axis };
         let d = n.dot(rim);
@@ -209,6 +212,53 @@ impl<'a> Assembly<'a> {
             } else {
                 [centre, ring[next], ring[k]]
             };
+            self.builder.tri(corners, face);
+        }
+    }
+
+    /// The flat end of a part turn at `station` (0 or the last), facing
+    /// back at station 0 and on at the last: a fan from `centre` (at
+    /// station 0) over `chain`, the meridian's pieces in order round it,
+    /// counter-clockwise in `(ρ, h)`.
+    fn end(&mut self, station: usize, centre: DVec3, chain: &[Conic3]) {
+        let lathe = self.lathe;
+        assert!(!lathe.is_full());
+        let back = station == 0;
+        // The end's plane holds the axis and the station's half-plane.
+        let off = chain
+            .iter()
+            .map(|c| c.p1)
+            .find(|&p| !lathe.on_axis(p))
+            .unwrap();
+        let point = lathe.turned(off, station);
+        let foot = lathe.origin() + lathe.axis() * (point - lathe.origin()).dot(lathe.axis());
+        let mut n = lathe.axis().cross(point - foot).normalize();
+        if back {
+            n = -n;
+        }
+        let d = n.dot(lathe.origin());
+        let face = self.builder.face(Face {
+            name: FaceName::new(
+                1,
+                if back {
+                    FacePart::StartCap
+                } else {
+                    FacePart::EndCap
+                },
+            ),
+            surface: Surface::Plane { n, d },
+            form: Form::plane(n, d),
+        });
+        let centre = if lathe.on_axis(centre) {
+            self.ring(centre)[0]
+        } else {
+            self.builder.vert(lathe.turned(centre, station))
+        };
+        for piece in chain {
+            let (a, b) = (self.ring(piece.p0)[station], self.ring(piece.p1)[station]);
+            let curve = lathe.meridian(piece, station).unwrap();
+            self.builder.edge(a, b, curve.c, curve.w);
+            let corners = if back { [centre, a, b] } else { [centre, b, a] };
             self.builder.tri(corners, face);
         }
     }
@@ -1038,4 +1088,281 @@ fn a_ring_where_the_surface_touches_its_plane_is_refused() {
         Solid::new(assembly.build(), &tol),
         Err(KernelError::Invalid(CheckError::EdgeNeighbours(..)))
     ));
+}
+
+/// `π·∫ρ² dh` along a meridian in `(ρ, h)`, by the trapezoid rule on
+/// `ρ²` over 100 000 steps of its parameter: the volume it sweeps, signed.
+fn swept_volume(meridian: &Conic2) -> f64 {
+    let at = |t: f64| {
+        let h = meridian.blossom(t, t);
+        DVec2::new(h.x, h.y) / h.z
+    };
+    let steps = 100_000;
+    let mut last = at(0.0);
+    let mut volume = 0.0;
+    for k in 1..=steps {
+        let p = at(k as f64 / steps as f64);
+        volume += PI * (p.x * p.x + p.x * last.x + last.x * last.x) / 3.0 * (p.y - last.y);
+        last = p;
+    }
+    volume
+}
+
+/// A solid of revolution of `meridians` (in `(ρ, h)`, end to end, each
+/// its own face of the revolved conic), from a pole to a pole: capped
+/// at both, fitted bands between, the lathe halved until every band
+/// fits. Gives the mesh, the lathe and the caps.
+fn revolved(
+    frame: &Frame,
+    meridians: &[Conic2],
+    tol: &Tolerance,
+) -> Result<(Mesh, Lathe, [Cap; 2]), KernelError> {
+    let place = |v: DVec2| frame.at(v.x, v.y);
+    let curves: Vec<Conic3> = meridians
+        .iter()
+        .map(|m| Conic3::new(place(m.p0), place(m.c), m.w, place(m.p1)))
+        .collect::<Result<_, _>>()?;
+    let forms: Vec<Form> = meridians
+        .iter()
+        .map(|&meridian| Form::Revolved {
+            origin: frame.origin,
+            axis: frame.axis,
+            meridian,
+        })
+        .collect();
+    let last = curves.len() - 1;
+    let mut lathe = frame.lathe(4);
+    'lathe: loop {
+        let budget = Budget::DEFAULT;
+        let caps = [
+            pole_cap(&lathe, &curves[0], Pole::Start, &forms[0], tol, &budget)?,
+            pole_cap(&lathe, &curves[last], Pole::End, &forms[last], tol, &budget)?,
+        ];
+        let mut assembly = Assembly::new(&lathe);
+        for (i, (curve, form)) in curves.iter().zip(&forms).enumerate() {
+            let (_, free) = assembly.face(Surface::Free, *form);
+            let mut pieces = vec![*curve];
+            if i == 0 {
+                assembly.cap(&caps[0], Pole::Start, free);
+                pieces = caps[0].rest.clone();
+            }
+            if i == last {
+                // Both caps on one meridian would need it split.
+                assert!(last > 0);
+                assembly.cap(&caps[1], Pole::End, free);
+                pieces = caps[1].rest.clone();
+            }
+            for piece in &pieces {
+                match fitted_band(&lathe, piece, form, tol, &budget)? {
+                    Some(band) => assembly.band(&band, free),
+                    None => {
+                        lathe = lathe.halved()?;
+                        continue 'lathe;
+                    }
+                }
+            }
+        }
+        return Ok((assembly.build(), lathe, caps));
+    }
+}
+
+/// The meridian of an apple: the ellipse about `(c, 0)` of semi-axes `a`
+/// across the axis and `b` along it (`c < a`), from where it crosses the
+/// axis below round the outside to where it crosses above, in three
+/// conics. Its height turns at its bottom and top, between its poles and
+/// its widest point.
+fn apple(c: f64, a: f64, b: f64) -> [Conic2; 3] {
+    let r = FRAC_1_SQRT_2;
+    let x = -c / a;
+    let y = (1.0 - x * x).sqrt();
+    let unit = [
+        DVec2::new(x, -y),
+        DVec2::new(r, -r),
+        DVec2::new(r, r),
+        DVec2::new(x, y),
+    ];
+    let map = |p: DVec2| DVec2::new(c + a * p.x, b * p.y);
+    [0, 1, 2].map(|k| {
+        let arc = Conic2::arc_between(DVec2::ZERO, 1.0, unit[k], unit[k + 1]).unwrap();
+        Conic2::new(map(arc.p0), map(arc.c), arc.w, map(arc.p1)).unwrap()
+    })
+}
+
+#[test]
+fn caps_stop_short_of_a_turn() {
+    // An apple's meridian dips below its poles before it widens: its
+    // height turns between the pole and the widest point. A cap over the
+    // turn lies on both sides of its rim's plane, with the strips beyond
+    // it on one, and was refused (`EdgeNeighbours`) at coarse
+    // tolerances; caps now stop half way to the turn and the bands
+    // balance the rest over it.
+    let mut rng = Rng::new(30);
+    for i in 0..8 {
+        let frame = if i == 0 {
+            Frame::Z
+        } else {
+            Frame::random(&mut rng, 1e3)
+        };
+        let (c, a, b) = [
+            (0.5, 1.0, 1.0),
+            (0.9, 1.0, 2.0),
+            (0.99, 1.0, 1.0),
+            (0.2, 3.0, 0.5),
+        ][i % 4];
+        let size = rng.log_range(0.5, 20.0);
+        let meridians =
+            apple(c, a, b).map(|m| Conic2::new(m.p0 * size, m.c * size, m.w, m.p1 * size).unwrap());
+        let tol = Tolerance::new([1e-1, 1e-2][i % 2]).unwrap();
+        let (mesh, lathe, caps) = revolved(&frame, &meridians, &tol).unwrap();
+        for cap in &caps {
+            assert!(lathe.turns(&cap.meridian).is_empty());
+            assert!(cap.error <= tol.fit() / 2.0);
+        }
+        let volume: f64 = meridians.iter().map(swept_volume).sum();
+        let solid = Solid::new(mesh.clone(), &tol).unwrap();
+        let floor = 1e-9 * frame.scale(size).powi(3);
+        measure(
+            mesh,
+            &tol,
+            volume,
+            solid.area() * tol.fit() / 2.0 + floor,
+            None,
+        );
+    }
+}
+
+#[test]
+fn caps_whose_rim_reaches_the_axis_are_too_complex() {
+    // A sphere's cap 4.5e-5 across at `1e3` out, at a resolution of
+    // `1e-4`: no pair of its triangles passes the hull rule, and halving
+    // brought the rim to the axis, whose parallel is no arc (a NaN
+    // control point). Now it stops there.
+    let frame = Frame::random(&mut Rng::new(77), 1e3);
+    let radius = 0.01;
+    let z = -0.99999 * radius;
+    let lathe = frame.lathe(4);
+    let south = frame.at(0.0, -radius);
+    let rim = frame.at((radius * radius - z * z).sqrt(), z);
+    let meridian = Conic3::arc_between(frame.origin, radius, south, rim).unwrap();
+    let form = Form::Sphere {
+        centre: frame.origin,
+        radius,
+    };
+    let tol = Tolerance::new(1e-1).unwrap();
+    assert_eq!(
+        pole_cap(
+            &lathe,
+            &meridian,
+            Pole::Start,
+            &form,
+            &tol,
+            &Budget::DEFAULT
+        ),
+        Err(KernelError::TooComplex)
+    );
+    // A point on the axis has no parallel.
+    assert_eq!(
+        Frame::Z.lathe(4).parallel(DVec3::Z, 0),
+        Err(PatchError::Parameter(0.0))
+    );
+}
+
+#[test]
+fn part_turns_are_closed_by_flat_ends() {
+    // Tori and spheres over part turns, closed by flat ends through the
+    // axis: the fitted or exact surfaces meet the flat ends along curved
+    // edges, the spheres' caps and both ends meeting at the poles. Their
+    // volumes by Pappus, and each refused turned inside out.
+    let mut rng = Rng::new(32);
+    for i in 0..6 {
+        let frame = if i == 0 {
+            Frame::Z
+        } else {
+            Frame::random(&mut rng, 1e3)
+        };
+        let sweep = [0.3, PI / 2.0, 2.5, PI, 270f64.to_radians(), 6.0][i];
+        let pieces = (sweep / FRAC_PI_2).ceil() as usize;
+        let tol = Tolerance::new([1e-2, 1e-3][i % 2]).unwrap();
+        let floor = 1e-9 * frame.scale(50.0).powi(3);
+        // A tube in quarters from 45°, the lathe halved until it fits.
+        let (major, minor) = (rng.log_range(2.0, 40.0), 0.0);
+        let minor = minor + major * rng.range(0.1, 0.5);
+        let centre = frame.at(major, 0.0);
+        let q = quarters(&frame, major, minor, 1);
+        let arcs: Vec<Conic3> = (0..4)
+            .map(|k| Conic3::arc_between(centre, minor, q[k], q[(k + 1) % 4]).unwrap())
+            .collect();
+        let form = Form::Torus {
+            centre: frame.origin,
+            axis: frame.axis,
+            major,
+            minor,
+        };
+        let part = Lathe::new(frame.origin, frame.axis, Some(sweep), pieces).unwrap();
+        let (lathe, bands) = fit_all(part, &arcs, &form, &tol).unwrap();
+        let mut assembly = Assembly::new(&lathe);
+        let (_, free) = assembly.face(Surface::Free, form);
+        for band in &bands {
+            assembly.band(band, free);
+        }
+        let chain: Vec<Conic3> = bands.iter().flat_map(|b| b.pieces.clone()).collect();
+        assembly.end(0, centre, &chain);
+        assembly.end(lathe.pieces(), centre, &chain);
+        let mesh = assembly.build();
+        let area = Solid::new(mesh.clone(), &tol).unwrap().area();
+        let volume = sweep * major * PI * minor * minor;
+        measure(mesh, &tol, volume, area * tol.fit() / 2.0 + floor, None);
+        // An orange's wedge: both poles capped, exact strips between,
+        // the two ends meeting along the axis.
+        let radius = rng.log_range(0.5, 50.0);
+        let lathe = Lathe::new(frame.origin, frame.axis, Some(sweep), 2 * pieces).unwrap();
+        let [south, equator, north] =
+            [-radius, 0.0, radius].map(|h| frame.at(if h == 0.0 { radius } else { 0.0 }, h));
+        let form = Form::Sphere {
+            centre: frame.origin,
+            radius,
+        };
+        let budget = Budget::DEFAULT;
+        let caps = [
+            Conic3::arc_between(frame.origin, radius, south, equator)
+                .map(|m| pole_cap(&lathe, &m, Pole::Start, &form, &tol, &budget)),
+            Conic3::arc_between(frame.origin, radius, equator, north)
+                .map(|m| pole_cap(&lathe, &m, Pole::End, &form, &tol, &budget)),
+        ]
+        .map(|cap| cap.unwrap().unwrap());
+        let mut assembly = Assembly::new(&lathe);
+        let (face, free) = assembly.face(
+            Surface::Quadric(Quadric::sphere(frame.origin, radius)),
+            form,
+        );
+        let mut chain = vec![caps[0].meridian];
+        chain.extend(caps.iter().flat_map(|c| c.rest.clone()));
+        chain.push(caps[1].meridian);
+        for piece in &chain[1..chain.len() - 1] {
+            assembly.exact(piece, face, |b, t, l, r| {
+                revolution_strip(b, t, l, r, frame.origin, frame.axis).unwrap()
+            });
+        }
+        assembly.cap(&caps[0], Pole::Start, free);
+        assembly.cap(&caps[1], Pole::End, free);
+        assembly.end(0, frame.origin, &chain);
+        assembly.end(lathe.pieces(), frame.origin, &chain);
+        // The coarse caps' hulls cross the ends' near the poles: refined
+        // until they don't, exactly.
+        let mesh = assembly.build().repair(&tol, &budget).unwrap();
+        let area = Solid::new(mesh.clone(), &tol).unwrap().area();
+        let volume = 2.0 / 3.0 * sweep * radius.powi(3);
+        measure(mesh, &tol, volume, area * tol.fit() / 2.0 + floor, None);
+    }
+}
+
+#[test]
+fn caps_and_part_turns_are_the_same_on_any_thread_count() {
+    let frame = Frame::random(&mut Rng::new(33), 1e3);
+    let tol = Tolerance::new(1e-2).unwrap();
+    assert_deterministic(|| {
+        let (mesh, ..) = revolved(&frame, &apple(0.9, 1.0, 2.0), &tol).unwrap();
+        let solid = Solid::new(mesh, &tol).unwrap();
+        (solid.volume(), solid)
+    });
 }
