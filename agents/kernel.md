@@ -1513,7 +1513,12 @@ Known gaps:
   for small curves, reach the split floor first (`Invalid` of the failure
   that asked for the split) or run out of budget (`TooComplex`).
   Never a wrong `Ok`: the folded pieces overlap their neighbours, so
-  `check` can't pass them. Rare: about 0.2% of end-cap patches with two
+  `check` can't pass them. Checked on variants of the pinned profile
+  (concave weights 1 to 5, the other curved side convex or concave,
+  cylinders across the cap and through the walls, on three frames, two
+  tilted): 1 311 of 1 440 operations went through, each right by its
+  volume against numerical integration, the rest refused, alike on every
+  frame. Rare: about 0.2% of end-cap patches with two
   or more curved sides of random 3-segment profiles with one concave
   side of weight `1.2..4` fold after one split. Pinned by
   `a_cap_whose_straight_split_folds_extrudes` (a 3-segment profile, a

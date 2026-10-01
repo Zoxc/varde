@@ -2052,5 +2052,8 @@ fn a_cap_folding_when_refined_is_refused() {
         [Op::Union, Op::Intersection, Op::Difference].map(|op| run(&a, &b, op).volume());
     assert!((u + i - va - vb).abs() <= within, "{u} + {i}");
     assert!((d + i - va).abs() <= within, "{d} + {i}");
-    assert!(i > 1.0);
+    // The intersection by numerical integration over the profile (the
+    // conics flattened to 4 000 points each, the disk's chords in `z`
+    // cut at the top): 1.75423, which the result is about 2e-5 under.
+    assert!((i - 1.75423).abs() <= within, "{i}");
 }
