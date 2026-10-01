@@ -1,15 +1,18 @@
-//! Stroke icons, and the logo for the window icon, from the `I`, `CAT` and `LOGO` tables in
-//! `notes/ui-mock.html`.
+//! Stroke icons, and the logo for the window icon.
 //!
-//! Icons are 24×24 single-colour stroke drawings, tinted through
-//! [`svg::Style`].
+//! The tools' icons are the default set of `notes/ui-mock-icons.html`, its
+//! "outline with accents, line only" drawings, and the others the `I` table
+//! of `notes/ui-mock.html`. Icons are 24×24 stroke drawings. A tool's icon
+//! has up to three layers, its own geometry, its accent marks and the
+//! reference geometry it works from, each tinted through [`svg::Style`] in
+//! its [`IconCategory`]'s [`IconTone`]; the others are drawn in one colour.
 
 use std::sync::LazyLock;
 
 use iced::widget::{Svg, stack, svg};
 use iced::{Color, Element, Theme};
 
-use crate::theme::{self, Palette};
+use crate::theme::{self, IconCategory, IconTone, Palette};
 
 /// The logo: a folded "V" with a sketch point above it.
 ///
@@ -17,8 +20,8 @@ use crate::theme::{self, Palette};
 /// Windows `.ico`.
 pub const LOGO_SVG: &str = include_str!("../../../assets/logo.svg");
 
-/// Declares [`Icon`] and its SVG paths from one list, so each icon is named
-/// once and [`Icon::ALL`] follows the declaration order.
+/// Declares [`Icon`] and its SVG elements from one list, so each icon is
+/// named once and [`Icon::ALL`] follows the declaration order.
 macro_rules! icons {
     ($($name:ident => $paths:expr,)*) => {
         #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,9 +31,10 @@ macro_rules! icons {
 
         impl Icon {
             /// Every icon, in declaration order, so `ALL[icon as usize] == icon`.
-            const ALL: [Icon; [$(Icon::$name),*].len()] = [$(Icon::$name),*];
+            pub(crate) const ALL: [Icon; [$(Icon::$name),*].len()] = [$(Icon::$name),*];
 
-            /// The SVG elements, drawn in black.
+            /// The SVG elements, drawn in black. A tool's carry the icon
+            /// mock's classes, which [`Layers::of`] sorts them by.
             fn paths(self) -> &'static str {
                 match self {
                     $(Icon::$name => $paths,)*
@@ -58,39 +62,41 @@ icons! {
     Trash => r#"<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>"#,
     Rollback => r#"<path d="M4 4v16"/><path d="M20 12H8M12 8l-4 4 4 4"/>"#,
     Save => r#"<path d="M5 4h11l3 3v13H5z"/><path d="M8 4v5h7V4M8 20v-6h8v6"/>"#,
-    Sketch => r#"<path d="M4 20h16"/><path d="M14.5 4.5l5 5L9 20H4v-5z"/>"#,
-    Extrude => r#"<path d="M4 15l8 4 8-4-8-4z"/><path d="M12 11V3M9 6l3-3 3 3"/>"#,
     Check => r#"<path d="M5 12.5l4.5 4.5L19 7"/>"#,
-    Plane => r#"<path d="M3 16l5-8h13l-5 8z"/>"#,
-    Line => r#"<path d="M6 18L18 6"/><circle cx="5" cy="19" r="1.6"/><circle cx="19" cy="5" r="1.6"/>"#,
-    Circle => r##"<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r=".8" fill="#000"/>"##,
-    Arc => r#"<path d="M4 18A9 9 0 0 1 20 18"/>"#,
-    Rectangle => r#"<rect x="4" y="6" width="16" height="12"/>"#,
-    Polygon => r#"<path d="M8 4.5h8l4 7.5-4 7.5H8L4 12z"/>"#,
-    Spline => r#"<path d="M3 17c3-9 6-9 9-5s6 4 9-5"/><circle cx="3" cy="17" r="1.3"/><circle cx="21" cy="7" r="1.3"/>"#,
-    Point => r##"<circle cx="12" cy="12" r="2.5" fill="#000"/><path d="M12 3v4M12 17v4M3 12h4M17 12h4"/>"##,
-    Constrain => r#"<rect x="5" y="11" width="14" height="9" rx="1.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>"#,
-    Coincident => r##"<path d="M4 20L20 4M4 4l16 16"/><circle cx="12" cy="12" r="2.5" fill="#000"/>"##,
-    Horizontal => r#"<path d="M4 12h16M4 8v8M20 8v8"/>"#,
-    Vertical => r#"<path d="M12 4v16M8 4h8M8 20h8"/>"#,
-    Parallel => r#"<path d="M8 20L14 4M12 20l6-16"/>"#,
-    Perpendicular => r#"<path d="M4 20h16M12 20V5"/>"#,
-    Tangent => r#"<circle cx="10" cy="13" r="6"/><path d="M3 7h18"/>"#,
-    Smooth => r##"<path d="M3 17h7c5 0 7-3 11-11"/><circle cx="10" cy="17" r="1.6" fill="#000"/>"##,
-    Equal => r#"<path d="M5 9h14M5 15h14"/>"#,
-    Concentric => r#"<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.5"/>"#,
-    Midpoint => r##"<path d="M4 18L20 6"/><circle cx="12" cy="12" r="2.5" fill="#000"/>"##,
-    Symmetric => r#"<path d="M12 3v18" stroke-dasharray="2 2.2"/><circle cx="6" cy="12" r="2.2"/><circle cx="18" cy="12" r="2.2"/>"#,
-    Fix => r#"<path d="M9 4h6l-1 6 3 3H7l3-3z"/><path d="M12 13v7"/>"#,
-    Dimension => r#"<path d="M4 6v12M20 6v12M4 12h16M7.5 9L4 12l3.5 3M16.5 9l3.5 3-3.5 3"/>"#,
-    Trim => r#"<circle cx="6" cy="7" r="2.5"/><circle cx="6" cy="17" r="2.5"/><path d="M8.2 8.4L20 17M8.2 15.6L20 7"/>"#,
-    Extend => r#"<path d="M3 18L13 8"/><path d="M13 8l7-7" stroke-dasharray="2 2.2"/><path d="M15 21V11"/>"#,
-    Mirror => r#"<path d="M12 3v18" stroke-dasharray="2 2"/><path d="M9 7L3 17h6zM15 7l6 10h-6z"/>"#,
-    Offset => r#"<rect x="3" y="3" width="18" height="18" rx="2"/><rect x="8" y="8" width="8" height="8" rx="1"/>"#,
-    Fillet => r#"<path d="M5 20V11a6 6 0 0 1 6-6h9"/>"#,
-    Chamfer => r#"<path d="M5 20V10l5-5h10"/>"#,
-    // Not in the mock: arrows each way, a handle on a curve, a comb's
-    // teeth over one.
+    // The tools, from the icon mock.
+    Sketch => r#"<path class="r" d="M4 20h16"/><path class="t" d="M14.5 4.5l5 5L9 20H4v-5z"/><path class="a" d="M6 13l5 5"/>"#,
+    Extrude => r#"<path class="t" d="M4 15l8 4 8-4-8-4z"/><path class="a" d="M12 11V3M9 6l3-3 3 3"/>"#,
+    Plane => r#"<path class="r" d="M3 20l4-5h14l-4 5z"/><path class="t" d="M3 11l4-5h14l-4 5z"/><path class="a" d="M12 17.5V9.5M10 11.5l2-2 2 2"/>"#,
+    Line => r#"<path d="M6 18L18 6"/><circle class="a" cx="5" cy="19" r="1.6"/><circle class="a" cx="19" cy="5" r="1.6"/>"#,
+    Circle => r#"<circle class="t" cx="12" cy="12" r="8"/><path class="r" d="M12 12l5.66-5.66" stroke-dasharray="2 2"/><circle class="af" cx="12" cy="12" r="1.5"/><circle class="af" cx="17.66" cy="6.34" r="1.5"/>"#,
+    Arc => r#"<path d="M4 18A9 9 0 0 1 20 18"/><circle class="af" cx="4" cy="18" r="1.5"/><circle class="af" cx="12" cy="10" r="1.5"/><circle class="af" cx="20" cy="18" r="1.5"/>"#,
+    Rectangle => r#"<rect class="t" x="4" y="6" width="16" height="12" rx="1"/><circle class="af" cx="4" cy="6" r="1.5"/><circle class="af" cx="20" cy="18" r="1.5"/>"#,
+    Polygon => r#"<path class="t" d="M12 3.5l8 5.8-3 9.2H7l-3-9.2z"/><path class="r" d="M12 12.2V5.5" stroke-dasharray="2 2"/><circle class="af" cx="12" cy="12.2" r="1.4"/><circle class="af" cx="12" cy="3.5" r="1.4"/>"#,
+    Spline => r#"<path d="M3 17c3-9 6-9 9-5s6 4 9-5"/><circle class="af" cx="3" cy="17" r="1.4"/><circle class="af" cx="12" cy="12" r="1.4"/><circle class="af" cx="21" cy="7" r="1.4"/>"#,
+    Point => r#"<path d="M7 7l3 3M17 7l-3 3M7 17l3-3M17 17l-3-3"/><circle class="af" cx="12" cy="12" r="2"/>"#,
+    Constrain => r#"<rect class="t" x="5" y="11" width="14" height="9" rx="1.5"/><path class="a" d="M8 11V8a4 4 0 0 1 8 0v3"/>"#,
+    Coincident => r#"<path d="M4 20L20 4M4 4l16 16"/><circle class="af" cx="12" cy="12" r="2.6"/>"#,
+    Horizontal => r#"<path d="M7 5v14M17 5v14"/><path class="a" d="M7 12h10"/>"#,
+    Vertical => r#"<path d="M5 5l7 14 7-14"/><path class="a" d="M12 4v9"/>"#,
+    Parallel => r#"<path d="M6 20L12 4M13 20l6-16"/><path class="a" d="M9.5 7l2.5-3 1 3.7M16.5 7l2.5-3 1 3.7"/>"#,
+    Perpendicular => r#"<path d="M4 20h16M12 20V5"/><path class="a" d="M12 15.5h4.5V20"/>"#,
+    Tangent => r#"<circle cx="10" cy="13" r="6"/><path d="M3 7h18"/><circle class="af" cx="10" cy="7" r="2"/>"#,
+    Smooth => r#"<path d="M3 18c6 0 9-12 18-12"/><path class="a" d="M7 17l-1.2-3M11 14l-2.4-2.2M15 10l-1.8-3"/>"#,
+    Equal => r#"<path d="M5 9h14M5 15h14"/><path class="a" d="M11 6.5l2 5M11 12.5l2 5"/>"#,
+    Concentric => r#"<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle class="af" cx="12" cy="12" r="1.6"/>"#,
+    Midpoint => r#"<path d="M3 17h18"/><path class="a ta" d="M12 16.5l-3.5-6h7z"/>"#,
+    Symmetric => r#"<path class="r" d="M12 3v18" stroke-dasharray="2 2"/><circle cx="5.5" cy="12" r="2"/><circle cx="18.5" cy="12" r="2"/><path class="a" d="M8 9.5l1.5 2.5L8 14.5M16 9.5L14.5 12l1.5 2.5"/>"#,
+    Fix => r#"<circle class="a ta" cx="12" cy="7" r="2.6"/><path d="M12 9.6V15M5 15h14"/><path class="r" d="M7.5 15l-2 4M11 15l-2 4M14.5 15l-2 4M18 15l-2 4"/>"#,
+    Dimension => r#"<path class="r" d="M4 7v10M20 7v10"/><path d="M5 12h14"/><path class="a" d="M7.5 9.5L5 12l2.5 2.5M16.5 9.5L19 12l-2.5 2.5"/>"#,
+    Trim => r#"<circle cx="6" cy="7" r="2.5"/><circle cx="6" cy="17" r="2.5"/><path class="a" d="M8.2 8.4L20 17M8.2 15.6L20 7"/>"#,
+    Extend => r#"<path d="M3 19l7-7"/><path class="a" d="M10 12l6.5-6.5" stroke-dasharray="2 2.2"/><path class="r" d="M13 2l8 8"/><circle class="af" cx="16.5" cy="5.5" r="1.4"/>"#,
+    Mirror => r#"<path class="r" d="M12 3v18" stroke-dasharray="2 2"/><path class="t" d="M9 9L3 19h6z"/><path d="M15 9l6 10h-6z"/><path class="a" d="M7 6.5C9 3 15 3 17 6.5M17.3 3.8L17 6.5l-2.6-.6"/>"#,
+    Offset => r#"<path class="r" d="M4 20c2-7 7-12 16-13"/><path d="M3 13c2-4 6-7 11-7.8"/><path class="a" d="M10.5 14.5L8 11M7.5 13.3L8 11l2.4.2"/>"#,
+    Fillet => r#"<path d="M5 20v-8M12 5h7"/><path class="r" d="M5 12V5h7" stroke-dasharray="1.6 2"/><path class="a" d="M5 12a7 7 0 0 1 7-7"/>"#,
+    Chamfer => r#"<path d="M5 20v-9M13 5h6"/><path class="r" d="M5 11V5h8" stroke-dasharray="1.6 2"/><path class="a" d="M5 11l8-6"/>"#,
+    // Not in the icon mock: the offset constraint's nested squares, arrows
+    // each way, a handle on a curve, a comb's teeth over one.
+    OffsetConstraint => r#"<rect x="3" y="3" width="18" height="18" rx="2"/><rect x="8" y="8" width="8" height="8" rx="1"/>"#,
     Convert => r#"<path d="M4 8h14l-3-3M20 16H6l3 3"/>"#,
     Handles => r#"<path d="M3 19c3-8 8-12 18-13"/><path d="M4.5 9.5l10 4"/><circle cx="4.5" cy="9.5" r="1.5"/><circle cx="14.5" cy="13.5" r="1.5"/>"#,
     Comb => r#"<path d="M3 18c4-9 14-9 18 0"/><path d="M6.5 13.4L5 9.5M12 11.3V6.5M17.5 13.4L19 9.5"/>"#,
@@ -99,13 +105,10 @@ icons! {
 }
 
 impl Icon {
-    /// The icon's colour, by what it stands for as in the mock: the solid
-    /// colour for solids and bodies, the sketch colour for sketches and
-    /// their curves, the construction colour for planes and points, and
-    /// otherwise the text colour.
-    pub fn tint(self, palette: &Palette) -> Color {
-        match self {
-            Icon::Body | Icon::Extrude => palette.solid,
+    /// What the icon stands for, as the icon mock files it, if it's a
+    /// tool's or an object's; the rest are drawn in the text colour.
+    pub fn category(self) -> Option<IconCategory> {
+        Some(match self {
             Icon::Sketch
             | Icon::Line
             | Icon::Circle
@@ -113,10 +116,14 @@ impl Icon {
             | Icon::Rectangle
             | Icon::Polygon
             | Icon::Spline
+            | Icon::Point
+            | Icon::Fillet
+            | Icon::Chamfer
             | Icon::Convert
             | Icon::Handles
-            | Icon::Comb
-            | Icon::Constrain
+            | Icon::Comb => IconCategory::Sketch,
+            Icon::Trim | Icon::Extend | Icon::Mirror | Icon::Offset => IconCategory::Modify,
+            Icon::Constrain
             | Icon::Coincident
             | Icon::Horizontal
             | Icon::Vertical
@@ -129,44 +136,167 @@ impl Icon {
             | Icon::Midpoint
             | Icon::Symmetric
             | Icon::Fix
-            | Icon::Dimension
-            | Icon::Trim
-            | Icon::Extend
-            | Icon::Mirror
-            | Icon::Offset
-            | Icon::Fillet
-            | Icon::Chamfer => palette.sketch,
-            Icon::Plane | Icon::Point => palette.construction,
-            _ => palette.text,
+            | Icon::OffsetConstraint => IconCategory::Constraint,
+            Icon::Dimension => IconCategory::Dimension,
+            Icon::Body | Icon::Extrude => IconCategory::Solid,
+            Icon::Plane => IconCategory::Construction,
+            _ => return None,
+        })
+    }
+
+    /// The icon's colours: its category's, or the text colour throughout.
+    pub fn tone(self, palette: &Palette) -> IconTone {
+        match self.category() {
+            Some(category) => palette.icons.tone(category),
+            None => IconTone {
+                line: palette.text,
+                accent: palette.text,
+                reference: palette.text,
+            },
         }
     }
 
-    fn handle(self, frame: Frame) -> svg::Handle {
-        static HANDLES: LazyLock<[[svg::Handle; Icon::ALL.len()]; 2]> =
-            LazyLock::new(|| [handles(0.0), handles(BUTTON_MARGIN)]);
+    /// The icon's colour, drawn in one: its geometry's.
+    pub fn tint(self, palette: &Palette) -> Color {
+        self.tone(palette).line
+    }
+
+    fn handle(self, frame: Frame, layer: Layer) -> svg::Handle {
+        static HANDLES: LazyLock<Vec<svg::Handle>> = LazyLock::new(|| {
+            let mut handles = Vec::new();
+            for margin in [0.0, BUTTON_MARGIN] {
+                for layer in Layer::ALL {
+                    for icon in Icon::ALL {
+                        handles.push(svg::Handle::from_memory(
+                            Layers::of(icon.paths()).svg(layer, margin).into_bytes(),
+                        ));
+                    }
+                }
+            }
+            handles
+        });
         let frame = match frame {
             Frame::None => 0,
             Frame::Button => 1,
         };
-        HANDLES[frame][self as usize].clone()
+        HANDLES[(frame * Layer::ALL.len() + layer as usize) * Icon::ALL.len() + self as usize]
+            .clone()
+    }
+
+    /// Whether the icon draws anything in `layer`.
+    fn draws(self, layer: Layer) -> bool {
+        static DRAWS: LazyLock<Vec<[bool; Layer::ALL.len()]>> = LazyLock::new(|| {
+            Icon::ALL
+                .iter()
+                .map(|icon| Layer::ALL.map(|layer| Layers::of(icon.paths()).draws(layer)))
+                .collect()
+        });
+        DRAWS[self as usize][layer as usize]
     }
 }
 
-/// Every icon's handle, in [`Icon::ALL`] order, drawn with `margin` icon
-/// units of space around it.
-fn handles(margin: f32) -> [svg::Handle; Icon::ALL.len()] {
-    let side = 24.0 + 2.0 * margin;
-    Icon::ALL.map(|icon| {
-        svg::Handle::from_memory(
+/// A part of an icon drawn in one colour.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Layer {
+    /// All of it, for an icon drawn in one colour.
+    All,
+    /// The tool's own geometry: unclassed elements.
+    Line,
+    /// Its accent marks: the mock's `a` (strokes) and `af` (dots, drawn
+    /// hollow).
+    Accent,
+    /// The geometry it works from: the mock's `r`.
+    Reference,
+}
+
+impl Layer {
+    const ALL: [Layer; 4] = [Layer::All, Layer::Line, Layer::Accent, Layer::Reference];
+}
+
+/// An icon's SVG elements sorted into [`Layer`]s.
+#[derive(Debug, Default, PartialEq)]
+struct Layers {
+    line: String,
+    accent: String,
+    reference: String,
+    /// The accent dots, outlined.
+    dots: String,
+    /// The dots' insides, which hide what's drawn under them as the mock's
+    /// fill in the panel colour does, so the dots stay hollow on any
+    /// background.
+    holes: String,
+}
+
+impl Layers {
+    /// `paths` sorted by class. The elements must each be one empty tag
+    /// (`<path .../>`), which the icon tests check.
+    fn of(paths: &str) -> Layers {
+        let mut layers = Layers::default();
+        for element in paths.split_inclusive("/>") {
+            let element = element.trim();
+            assert!(
+                element.starts_with('<') && element.ends_with("/>") && !element[1..].contains('<'),
+                "not one empty tag: {element:?}"
+            );
+            let (classes, element) = match element.split_once(r#" class=""#) {
+                Some((before, rest)) => {
+                    let (classes, after) = rest.split_once('"').expect("a closed class");
+                    (classes, format!("{before}{after}"))
+                }
+                None => ("", element.to_owned()),
+            };
+            let has = |class| classes.split_whitespace().any(|c| c == class);
+            let open = &element[..element.len() - 2];
+            if has("af") {
+                layers.dots += &format!(r#"{open} stroke-width="1.5"/>"#);
+                layers.holes += &format!(r##"{open} fill="#000" stroke="none"/>"##);
+            } else if has("a") {
+                layers.accent += &element;
+            } else if has("r") {
+                layers.reference += &element;
+            } else {
+                layers.line += &element;
+            }
+        }
+        layers
+    }
+
+    /// Whether anything is drawn in `layer`.
+    fn draws(&self, layer: Layer) -> bool {
+        match layer {
+            Layer::All => true,
+            Layer::Line => !self.line.is_empty(),
+            Layer::Accent => !self.accent.is_empty() || !self.dots.is_empty(),
+            Layer::Reference => !self.reference.is_empty(),
+        }
+    }
+
+    /// The SVG document for `layer`, with `margin` icon units of space
+    /// around the icon.
+    fn svg(&self, layer: Layer, margin: f32) -> String {
+        let (masked, dots) = match layer {
+            Layer::All => (
+                format!("{}{}{}", self.reference, self.line, self.accent),
+                self.dots.as_str(),
+            ),
+            Layer::Line => (self.line.clone(), ""),
+            Layer::Accent => (self.accent.clone(), self.dots.as_str()),
+            Layer::Reference => (self.reference.clone(), ""),
+        };
+        let body = if self.holes.is_empty() || masked.is_empty() {
+            masked
+        } else {
             format!(
-                r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="{} {} {side} {side}" fill="none" stroke="#000" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">{}</svg>"##,
-                -margin,
-                -margin,
-                icon.paths()
+                r##"<mask id="holes" maskUnits="userSpaceOnUse" x="-24" y="-24" width="72" height="72"><rect x="-24" y="-24" width="72" height="72" fill="#fff" stroke="none"/>{}</mask><g mask="url(#holes)">{masked}</g>"##,
+                self.holes
             )
-            .into_bytes(),
+        };
+        let side = 24.0 + 2.0 * margin;
+        format!(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="{} {} {side} {side}" fill="none" stroke="#000" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">{body}{dots}</svg>"##,
+            -margin, -margin,
         )
-    })
+    }
 }
 
 /// Empty space drawn around an icon, so the [`Svg`] can fill a button and
@@ -187,18 +317,39 @@ pub const INLINE: f32 = 16.0;
 /// The margin in icon units (24 per icon).
 const BUTTON_MARGIN: f32 = (BUTTON_SIZE - INLINE) / 2.0 * 24.0 / INLINE;
 
-/// An icon `size` pixels square, in its [`Icon::tint`].
-pub fn icon(icon: Icon, size: f32) -> Svg<'static> {
-    tinted(icon, size, move |palette| icon.tint(palette))
+/// An icon `size` pixels square in its own colours: a tool's geometry,
+/// accents and reference geometry each in its [`Icon::tone`].
+pub fn icon<'a, Message: 'a>(icon: Icon, size: f32) -> Element<'a, Message> {
+    if !icon.draws(Layer::Accent) && !icon.draws(Layer::Reference) {
+        return tinted(icon, size, move |palette| icon.tint(palette)).into();
+    }
+    let layer = |layer: Layer, color: fn(IconTone) -> Color| {
+        icon.draws(layer).then(|| {
+            Svg::new(icon.handle(Frame::None, layer))
+                .width(size)
+                .height(size)
+                .style(move |theme: &Theme, _| svg::Style {
+                    color: Some(color(icon.tone(theme::palette(theme)))),
+                })
+        })
+    };
+    // The accents over the rest, as the mock draws them last.
+    stack![
+        layer(Layer::Reference, |tone| tone.reference),
+        layer(Layer::Line, |tone| tone.line),
+        layer(Layer::Accent, |tone| tone.accent),
+    ]
+    .into()
 }
 
-/// An icon `size` pixels square, in the colour `color` picks from the palette.
+/// An icon `size` pixels square in one colour, which `color` picks from
+/// the palette.
 pub fn tinted(icon: Icon, size: f32, color: impl Fn(&Palette) -> Color + 'static) -> Svg<'static> {
     framed(icon, Frame::None, size, move |palette, _| color(palette))
 }
 
 /// The content of an icon-only button [`BUTTON_SIZE`] square, with no
-/// padding. `color` gets whether the button is hovered.
+/// padding, in one colour. `color` gets whether the button is hovered.
 pub fn button_icon(icon: Icon, color: impl Fn(&Palette, bool) -> Color + 'static) -> Svg<'static> {
     framed(icon, Frame::Button, BUTTON_SIZE, color)
 }
@@ -209,7 +360,7 @@ fn framed(
     size: f32,
     color: impl Fn(&Palette, bool) -> Color + 'static,
 ) -> Svg<'static> {
-    Svg::new(icon.handle(frame))
+    Svg::new(icon.handle(frame, Layer::All))
         .width(size)
         .height(size)
         .style(move |theme: &Theme, status| svg::Style {
@@ -273,3 +424,6 @@ fn mouse_handle(content: &str) -> svg::Handle {
             .into_bytes(),
     )
 }
+
+#[cfg(test)]
+mod tests;

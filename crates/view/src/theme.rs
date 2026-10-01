@@ -68,12 +68,8 @@ pub struct Palette {
     pub tabstrip: Color,
     /// The viewport's scene, as the renderer draws it.
     pub scene: Colors,
-    /// Icons for solids and bodies.
-    pub solid: Color,
-    /// Icons for sketches and their curves.
-    pub sketch: Color,
-    /// Icons for construction: planes, points.
-    pub construction: Color,
+    /// The tools' icons, by category.
+    pub icons: IconColors,
     /// View cube faces, turned away from the light and facing it.
     pub cube_shade: Color,
     pub cube_lit: Color,
@@ -139,8 +135,136 @@ const fn alpha(color: Color, a: f32) -> Color {
     Color { a, ..color }
 }
 
+/// What an icon stands for, which picks its colours: the categories of
+/// `notes/ui-mock-icons.html`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IconCategory {
+    /// Sketches and drawing their curves.
+    Sketch,
+    /// Changing curves: trim, extend, offset, mirror.
+    Modify,
+    /// Constraints.
+    Constraint,
+    Dimension,
+    /// Solids and bodies.
+    Solid,
+    /// Construction geometry: planes.
+    Construction,
+}
+
+/// The colours of one category's icons.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct IconTone {
+    /// The tool's own geometry.
+    pub line: Color,
+    /// What it does to it: arrows, picked points, the relation it makes.
+    pub accent: Color,
+    /// The geometry it works from or against, faint.
+    pub reference: Color,
+}
+
+/// The icons' colours by [`IconCategory`]: the icon mock's defaults, its
+/// "Distinct, purple constraints" colours with the softer accent.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct IconColors {
+    pub sketch: IconTone,
+    pub modify: IconTone,
+    pub constraint: IconTone,
+    pub dimension: IconTone,
+    pub solid: IconTone,
+    pub construction: IconTone,
+}
+
+impl IconColors {
+    pub fn tone(&self, category: IconCategory) -> IconTone {
+        match category {
+            IconCategory::Sketch => self.sketch,
+            IconCategory::Modify => self.modify,
+            IconCategory::Constraint => self.constraint,
+            IconCategory::Dimension => self.dimension,
+            IconCategory::Solid => self.solid,
+            IconCategory::Construction => self.construction,
+        }
+    }
+}
+
+/// `a` mixed with `share` of it into `b`, opaque, as CSS `color-mix` in
+/// sRGB does.
+const fn mix(a: Color, b: Color, share: f32) -> Color {
+    Color {
+        r: a.r * share + b.r * (1.0 - share),
+        g: a.g * share + b.g * (1.0 - share),
+        b: a.b * share + b.b * (1.0 - share),
+        a: 1.0,
+    }
+}
+
+/// A category's icon colours from its colour, as the icon mock derives
+/// them: the line is the colour with `darken` of black mixed in, the
+/// accent is the category's `accent` mixed 60% into the line (the softer
+/// accent), and reference geometry is a grey halfway from `panel` to
+/// `text`, mixed 92% into the line.
+const fn icon_tone(
+    color: Color,
+    darken: f32,
+    accent: Color,
+    text: Color,
+    panel: Color,
+) -> IconTone {
+    let line = mix(color, Color::BLACK, 1.0 - darken);
+    IconTone {
+        line,
+        accent: mix(accent, line, 0.6),
+        reference: mix(mix(text, panel, 0.52), line, 0.92),
+    }
+}
+
+// Each category's accent stands out from its colour: orange, unless the
+// category is itself red to yellow (then blue) or pink to magenta (then
+// teal).
+const LIGHT_ORANGE: Color = color!(0xe88a00);
+const LIGHT_BLUE: Color = color!(0x2f6fd8);
+const LIGHT_TEAL: Color = color!(0x0d9a88);
+const DARK_ORANGE: Color = color!(0xffad33);
+const DARK_BLUE: Color = color!(0x78aaff);
+const DARK_TEAL: Color = color!(0x3fd3bf);
+
+const LIGHT_TEXT: Color = color!(0x2b3036);
+// Also the web page's background until the first frame, crates/web/index.html.
+const LIGHT_PANEL: Color = color!(0xfafafb);
+const DARK_TEXT: Color = color!(0xe4e7ea);
+const DARK_PANEL: Color = color!(0x212228);
+
+const LIGHT_ICONS: IconColors = {
+    const fn tone(color: Color, darken: f32, accent: Color) -> IconTone {
+        icon_tone(color, darken, accent, LIGHT_TEXT, LIGHT_PANEL)
+    }
+    IconColors {
+        sketch: tone(color!(0x0a95ad), 0.0, LIGHT_ORANGE),
+        modify: tone(color!(0xcf3f30), 0.1, LIGHT_BLUE),
+        constraint: tone(color!(0x8a3fd0), 0.12, LIGHT_ORANGE),
+        dimension: tone(color!(0x5f6b80), 0.15, LIGHT_ORANGE),
+        solid: tone(color!(0xc0409a), 0.0, LIGHT_TEAL),
+        construction: tone(color!(0xc39000), 0.08, LIGHT_BLUE),
+    }
+};
+
+const DARK_ICONS: IconColors = {
+    const fn tone(color: Color, darken: f32, accent: Color) -> IconTone {
+        icon_tone(color, darken, accent, DARK_TEXT, DARK_PANEL)
+    }
+    IconColors {
+        sketch: tone(color!(0x3cc3d9), 0.0, DARK_ORANGE),
+        modify: tone(color!(0xff7a66), 0.1, DARK_BLUE),
+        constraint: tone(color!(0xb48cff), 0.12, DARK_ORANGE),
+        dimension: tone(color!(0xa6b2c6), 0.15, DARK_ORANGE),
+        solid: tone(color!(0xef77c2), 0.0, DARK_TEAL),
+        construction: tone(color!(0xf0c43c), 0.08, DARK_BLUE),
+    }
+};
+
 // The mock's colours for sketches and for construction, used by the
-// renderer, the icons and the sketch being edited alike.
+// renderer and the sketch being edited alike.
 const LIGHT_SKETCH: Color = color!(0x0a95ad);
 const LIGHT_CONSTRUCTION: Color = color!(0xe0861a);
 const DARK_SKETCH: Color = color!(0x39b9cf);
@@ -151,7 +275,7 @@ const LIGHT: Palette = Palette {
     accent_soft: color!(0x0a95ad, 0.13),
     hl: color!(0xe3f5da),
     hl_line: color!(0x9dd488),
-    text: color!(0x2b3036),
+    text: LIGHT_TEXT,
     muted: color!(0x6c747d),
     faint: color!(0x9aa2ab),
     line: color!(0x141e28, 0.11),
@@ -163,8 +287,7 @@ const LIGHT: Palette = Palette {
     scrim: color!(0x000000, 0.25),
 
     title_bg: color!(0xe9ebef),
-    // Also the web page's background until the first frame, crates/web/index.html.
-    panel: color!(0xfafafb),
+    panel: LIGHT_PANEL,
     tabstrip: color!(0xeef0f3),
     scene: Colors {
         background_top: srgb(color!(0xf7f7f9)),
@@ -179,9 +302,7 @@ const LIGHT: Palette = Palette {
         sketch: srgb(LIGHT_SKETCH),
         faded_alpha: FADED_ALPHA,
     },
-    solid: color!(0x8a6fc4),
-    sketch: LIGHT_SKETCH,
-    construction: LIGHT_CONSTRUCTION,
+    icons: LIGHT_ICONS,
     // hsl(258 10% 80%) to hsl(258 10% 96%).
     cube_shade: color!(0xcac7d1),
     cube_lit: color!(0xf4f4f6),
@@ -209,7 +330,7 @@ const DARK: Palette = Palette {
     accent_soft: color!(0x39b9cf, 0.16),
     hl: color!(0x76cc60, 0.15),
     hl_line: color!(0x76cc60, 0.5),
-    text: color!(0xe4e7ea),
+    text: DARK_TEXT,
     muted: color!(0x9aa3ac),
     faint: color!(0x69727c),
     line: color!(0xffffff, 0.08),
@@ -221,7 +342,7 @@ const DARK: Palette = Palette {
     scrim: color!(0x000000, 0.45),
 
     title_bg: color!(0x17181d),
-    panel: color!(0x212228),
+    panel: DARK_PANEL,
     tabstrip: color!(0x1b1c21),
     scene: Colors {
         background_top: srgb(color!(0x2b2c32)),
@@ -235,9 +356,7 @@ const DARK: Palette = Palette {
         sketch: srgb(DARK_SKETCH),
         faded_alpha: FADED_ALPHA,
     },
-    solid: color!(0xa896d6),
-    sketch: DARK_SKETCH,
-    construction: DARK_CONSTRUCTION,
+    icons: DARK_ICONS,
     // hsl(258 8% 30%) to hsl(258 8% 50%).
     cube_shade: color!(0x4a4653),
     cube_lit: color!(0x7b758a),

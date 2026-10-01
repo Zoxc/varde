@@ -170,9 +170,14 @@ impl<'a> Laid<'a> {
 
     /// The RGBA pixels of it drawn in light mode on a `size` window.
     pub(crate) fn pixels(&mut self, size: iced::Size<u32>) -> Vec<u8> {
+        self.pixels_in(size, crate::Mode::Light)
+    }
+
+    /// The RGBA pixels of it drawn in `mode` on a `size` window.
+    pub(crate) fn pixels_in(&mut self, size: iced::Size<u32>, mode: crate::Mode) -> Vec<u8> {
         use iced::advanced::renderer::Headless;
         use iced::theme::Base;
-        let theme = crate::iced_theme(crate::Mode::Light);
+        let theme = crate::iced_theme(mode);
         let base = theme.base();
         let viewport =
             iced::Rectangle::with_size(iced::Size::new(size.width as f32, size.height as f32));

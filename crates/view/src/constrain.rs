@@ -84,7 +84,7 @@ impl ConstraintKind {
             ConstraintKind::Midpoint => Icon::Midpoint,
             ConstraintKind::Symmetric => Icon::Symmetric,
             ConstraintKind::Fix => Icon::Fix,
-            ConstraintKind::Offset => Icon::Offset,
+            ConstraintKind::Offset => Icon::OffsetConstraint,
         }
     }
 

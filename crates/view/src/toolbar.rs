@@ -144,6 +144,26 @@ fn file_cell<'a>(name: &'a str, edited: bool, open: bool) -> Element<'a, Message
         .into()
 }
 
+/// The icon of the drawing tool `tool`.
+pub(crate) fn tool_icon(tool: Tool) -> Icon {
+    match tool {
+        Tool::Line => Icon::Line,
+        Tool::Circle => Icon::Circle,
+        Tool::Arc => Icon::Arc,
+        Tool::Point => Icon::Point,
+        Tool::Rectangle => Icon::Rectangle,
+        Tool::Polygon => Icon::Polygon,
+        Tool::Spline => Icon::Spline,
+        Tool::Dimension => Icon::Dimension,
+        Tool::Trim => Icon::Trim,
+        Tool::Extend => Icon::Extend,
+        Tool::Mirror => Icon::Mirror,
+        Tool::Offset => Icon::Offset,
+        Tool::Fillet => Icon::Fillet,
+        Tool::Chamfer => Icon::Chamfer,
+    }
+}
+
 /// The operations for what's going on: modelling, picking the plane for a
 /// new sketch, or editing a sketch.
 fn ops<'a>(state: &DocumentState<'a>) -> Vec<Element<'a, Message>> {
@@ -152,22 +172,7 @@ fn ops<'a>(state: &DocumentState<'a>) -> Vec<Element<'a, Message>> {
     if let Some(sketch) = &state.sketch {
         let active = sketch.tool.map(|tool| tool.tool);
         let tools = Tool::ALL.map(|tool| {
-            let icon = match tool {
-                Tool::Line => Icon::Line,
-                Tool::Circle => Icon::Circle,
-                Tool::Arc => Icon::Arc,
-                Tool::Point => Icon::Point,
-                Tool::Rectangle => Icon::Rectangle,
-                Tool::Polygon => Icon::Polygon,
-                Tool::Spline => Icon::Spline,
-                Tool::Dimension => Icon::Dimension,
-                Tool::Trim => Icon::Trim,
-                Tool::Extend => Icon::Extend,
-                Tool::Mirror => Icon::Mirror,
-                Tool::Offset => Icon::Offset,
-                Tool::Fillet => Icon::Fillet,
-                Tool::Chamfer => Icon::Chamfer,
-            };
+            let icon = tool_icon(tool);
             bound_op(
                 icon,
                 tool.label(),
