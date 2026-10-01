@@ -60,6 +60,12 @@ spade = { version = "2.15", default-features = false, features = ["std"] }
 # give the same bits everywhere. The platform's maths library would not.
 libm = "0.2.16"
 crc32fast = "1"
+# Deflates the parts of 3MF packages (crates/io). Pure Rust, builds for
+# wasm; the version png already pulls in.
+miniz_oxide = "0.8"
+# Parses the 3MF packages' XML in crates/io's tests. The version usvg
+# already pulls in.
+roxmltree = "0.20"
 toml = "1"
 directories = "6"
 # Channels for the regeneration and IO lanes; already built for iced.

@@ -7,12 +7,15 @@ license.workspace = true
 
 [dependencies]
 varde-document.workspace = true
+varde-kernel.workspace = true
 varde-lane.workspace = true
 serde.workspace = true
 # The .vrdp format, src/vrdp.rs, and the wire format, src/wire.rs.
 postcard.workspace = true
 snap.workspace = true
 crc32fast.workspace = true
+# The 3MF packages' zip, src/three_mf.rs.
+miniz_oxide.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 directories.workspace = true
@@ -64,3 +67,6 @@ web-sys = { workspace = true, features = [
 varde-lane = { workspace = true, features = ["testing"] }
 # Polling the native lane's responses.
 futures.workspace = true
+# Reading back the 3MF packages' XML, and the solids written.
+roxmltree.workspace = true
+glam.workspace = true

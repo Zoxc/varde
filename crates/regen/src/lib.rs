@@ -66,7 +66,9 @@ use serde::{Deserialize, Serialize};
 use varde_document::{
     BodyId, Command, Document, Editor, Extrude, FeatureId, FeatureKind, Generation, Snapshot,
 };
-use varde_kernel::{Aabb, Display, LinesError, MeshError, RenderLines, RenderMesh};
+use varde_kernel::{
+    Aabb, Display, LinesError, ManifoldError, ManifoldMesh, MeshError, RenderLines, RenderMesh,
+};
 use varde_sketch::{Budget, Goal};
 
 pub use cache::Cache;
@@ -491,6 +493,63 @@ fn tessellate_scene(
         }
     }
     Ok(scene)
+}
+
+/// A visible body welded for export: see [`export`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExportedBody {
+    pub body: BodyId,
+    /// The body's name in the document.
+    pub name: String,
+    pub mesh: ManifoldMesh,
+}
+
+/// Why the visible bodies can't be exported: the first body, in the
+/// order the history made them, whose solid gives no [`ManifoldMesh`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExportError {
+    pub body: BodyId,
+    pub name: String,
+    /// What [`ManifoldError`] the mesh failed with, in words.
+    pub error: String,
+}
+
+impl std::fmt::Display for ExportError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} can't be exported: {}", self.name, self.error)
+    }
+}
+
+impl std::error::Error for ExportError {}
+
+/// The solids of the visible bodies of `document` in `evaluation`, in the
+/// order the history made them, each welded into a closed, oriented
+/// [`ManifoldMesh`] at the [`Display`] of the document's tolerance (the
+/// samples it is drawn with, see [`varde_kernel::Solid::manifold_mesh`]),
+/// for a file such as 3MF. None visible gives none. Fails with the first
+/// body whose mesh fails its check or is too large: a body is never
+/// written as something that isn't a manifold.
+pub fn export(
+    document: &Document,
+    evaluation: &Evaluation,
+) -> Result<Vec<ExportedBody>, ExportError> {
+    let display = Display::new(&document.tolerance());
+    let shown = (evaluation.bodies.iter())
+        .filter_map(|made| Some((made, document.body(made.body).filter(|body| body.visible)?)));
+    let mut out = Vec::new();
+    for (made, body) in shown {
+        let failed = |error: ManifoldError| ExportError {
+            body: body.id,
+            name: body.name.clone(),
+            error: error.to_string(),
+        };
+        out.push(ExportedBody {
+            body: body.id,
+            name: body.name.clone(),
+            mesh: made.solid.manifold_mesh(&display).map_err(failed)?,
+        });
+    }
+    Ok(out)
 }
 
 /// The non-construction curves of the visible sketches of `document`,

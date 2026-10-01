@@ -141,3 +141,27 @@ hold up closing: closing comes after them in the lane's queue and deletes
 what they wrote. The recent files list is written to a temporary file of
 its own name and renamed over the list, so two instances writing at once
 don't mix, and an entry of it that doesn't parse loses only itself.
+
+**Exporting 3MF.** The visible bodies are written as a 3MF package, for
+printing. Built so far (the lane request, the pickers and the File menu
+item are to come): `varde_regen::export` welds each visible body's solid,
+in the order the history made them, into a `varde_kernel::ManifoldMesh` at
+the document's tolerance (see "Solids and tessellation" in
+`agents/kernel.md`), failing with the first body that doesn't give one, by
+name; `varde_io::three_mf::write` makes the package's bytes from them, the
+design's name as its title. The package is an OPC zip:
+`[Content_Types].xml` (defaults for `rels` and `model`), `_rels/.rels`
+(one relationship to `/3D/3dmodel.model` of the 3MF model type) and the
+model, in the 3MF core namespace with `unit="millimeter"` (model units
+are millimetres), `Title` and `Application` metadata, one `<object
+type="model">` per body named after it, ids from 1, and a build item for
+each with no transform. Coordinates are written in Rust's shortest
+round-trip form (with an exponent below `1e-4`), so a reader gets the same
+`f64`s and the mesh it reads is the manifold that was checked. Names lose
+the characters XML 1.0 doesn't allow. The zip is written by hand
+(`miniz_oxide` deflates the parts; no zip64, fixed 1980 timestamps); the
+model's size is bounded from the meshes' counts before anything is built,
+and past what a zip without zip64 holds the export is refused. No bodies
+to write is refused too. Choices made where the 3MF spec leaves it open:
+no thumbnail, no colours or materials, no `<components>`, bodies placed
+where they are in the design rather than arranged for a build plate.

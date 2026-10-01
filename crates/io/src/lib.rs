@@ -32,6 +32,8 @@
 //! requests and responses cross to it as bytes (see `src/wire.rs`). Both
 //! are [`lane`]. Files of the user's are picked on the web by the page,
 //! see [`pick`], and handed to the worker as a [`Picked`].
+//!
+//! [`three_mf`] writes bodies' meshes as a 3MF package, for printing.
 
 // Modules at the root are compiled for both targets. What only native
 // builds have, with a path based file system, is under `native`; what only
@@ -50,6 +52,7 @@ pub mod pick;
 mod queue;
 pub mod recent;
 mod store;
+pub mod three_mf;
 pub mod vrdp;
 #[cfg(target_arch = "wasm32")]
 mod web;

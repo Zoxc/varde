@@ -89,7 +89,7 @@ debugger, add `--config 'profile.dev.debug="full"'`.
 Crates in `crates/`, dependencies only pointing down:
 `binary`/`web` → `app` → `view` → `render` → `kernel`; `document` → `kernel`,
 `sketch`; `regen`, `solve` and `io` → `document` + `lane` (`solve` also
-`sketch`). `kernel`, `sketch`, `document`, `lane`, `regen`, `solve`, `io` have
+`sketch`, `io` also `kernel` for 3MF export). `kernel`, `sketch`, `document`, `lane`, `regen`, `solve`, `io` have
 no UI code; `render` has no iced dependency.
 
 - **State and update**: all app state lives in `varde-app` and is mutated only

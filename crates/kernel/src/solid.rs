@@ -5,8 +5,10 @@ use crate::mesh::Mesh;
 use crate::par::par_map;
 use crate::patch::{Bounds3, Patch};
 use crate::quadrature::triangle_rule;
-use crate::tessellate::{Display, Picking, tessellate, tessellate_picking};
-use crate::{Aabb, KernelError, MeshError, RenderMesh, Tolerance, Topology};
+use crate::tessellate::{Display, Limits, Picking, tessellate, tessellate_picking, weld};
+use crate::{
+    Aabb, KernelError, ManifoldError, ManifoldMesh, MeshError, RenderMesh, Tolerance, Topology,
+};
 
 /// Units of work per patch whose volume [`Mesh::check`] integrates to
 /// tell which way a shell faces (about 17 µs a patch on one thread, the
@@ -171,6 +173,29 @@ impl Solid {
         topology: &Topology,
     ) -> Result<(RenderMesh, Picking), MeshError> {
         tessellate_picking(&self.mesh, display, topology)
+    }
+
+    /// The solid as a closed, oriented manifold of triangles for export,
+    /// within `display`'s targets: the samples and triangles of
+    /// [`Solid::tessellate`] in `f64`, each point once, welded by the
+    /// patches' shared vertices and edges, never by distance, then
+    /// checked ([`ManifoldMesh::new`]). Fails with
+    /// [`ManifoldError::Empty`] for the empty solid,
+    /// [`ManifoldError::TooLarge`] past the mesh's limits, and with the
+    /// check's failure should the triangles not make a manifold (two
+    /// samples rounding to one point on a tiny curved edge, say).
+    pub fn manifold_mesh(&self, display: &Display) -> Result<ManifoldMesh, ManifoldError> {
+        self.manifold_mesh_within(display, &Limits::EXPORT)
+    }
+
+    /// [`Solid::manifold_mesh`] within `limits`, which tests make small.
+    pub(crate) fn manifold_mesh_within(
+        &self,
+        display: &Display,
+        limits: &Limits,
+    ) -> Result<ManifoldMesh, ManifoldError> {
+        let (positions, triangles) = weld(&self.mesh, display, limits)?;
+        ManifoldMesh::new(positions, triangles)
     }
 }
 

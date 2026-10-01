@@ -3,7 +3,8 @@
 //! A [`Solid`] is a closed mesh of rational quadratic triangles that
 //! passes the mesh's checks, and never stored; a [`RenderMesh`] is a solid
 //! tessellated for drawing ([`Solid::tessellate`], within a [`Display`]'s
-//! targets). Curves drawn with the model, such as sketches, are
+//! targets); a [`ManifoldMesh`] is one welded into a closed, oriented
+//! manifold of triangles for export ([`Solid::manifold_mesh`]). Curves drawn with the model, such as sketches, are
 //! [`RenderLines`]. Documents store no solids: they store the features
 //! that build them.
 //!
@@ -33,6 +34,7 @@ mod boolean;
 mod budget;
 mod error;
 mod extrude;
+mod manifold;
 pub mod mesh;
 mod par;
 pub mod patch;
@@ -54,6 +56,7 @@ pub use boolean::{BooleanError, Op, boolean, touches};
 pub use budget::Budget;
 pub use error::KernelError;
 pub use extrude::{Frame, extrude};
+pub use manifold::{ManifoldError, ManifoldMesh};
 pub use profile::{Loop, MAX_PROFILE_SEGMENTS, Profile, ProfileError, Segment};
 pub use render_lines::{LinesError, LinesPart, RenderLines};
 pub use render_mesh::{MeshError, MeshPart, RenderMesh};

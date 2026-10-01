@@ -1797,6 +1797,54 @@ torus's creases are on no chain; every triangle's corners lie on its
 region's form and every edge's ends on both of its chain's regions';
 the same at 1 and 8 threads.
 
+### Manifold meshes for export (`src/manifold.rs`, `tessellate::weld`)
+
+`Solid::manifold_mesh(&Display)` gives a `ManifoldMesh`, an indexed
+triangle mesh in `f64` that is a closed, oriented 2-manifold, for files
+such as 3MF. Both tessellations work from one plan (`tessellate::Plan`:
+the edges' first halfedges, curves and segment counts, the patches'
+levels and inner offsets, the counts and the limit check) and one
+triangulation of a patch (`Plan::patch_triangles`), so they have the
+same samples and triangles; only the stitching's choice of diagonals
+reads the `f64` points here where drawing reads its `f32` ones. The
+welding is by identity, never by distance: a mesh vertex is one vertex
+(numbered as in the patch mesh, every one used, whatever its normals),
+an edge's inner samples are numbered once along its first halfedge and
+read by both patches beside it, and each patch's inner points follow,
+so the vertex count is exactly the drawn tessellation's lower bound.
+Limits are the `RenderMesh`'s (`Limits::EXPORT`: `2^24` vertices and
+triangles), counted before sampling (`TooLarge`).
+
+`ManifoldMesh::new` is the only way to make one (deserializing goes
+through it too) and checks, in this order, giving the first failure by
+the lowest triangle, vertex or edge: at least one triangle (`Empty`), the
+sizes, every coordinate finite and within `MAX_POSITION` (`2 ×
+MAX_COORD`; `Position`), indices in range, no vertex twice in a triangle,
+no triangle whose corners are collinear, exactly, by the boolean's exact
+sign of each component of `(b − a) × (c − a)` (`Degenerate`), no two
+vertices at the same position (`Coincident`, by sorting their bits), every
+undirected edge used by exactly two triangles (`EdgeUse`) running it
+opposite ways (`Orientation`), the triangles round each vertex one cycle
+(`Fan`) and every vertex in one (`UnusedVertex`), and a positive signed
+volume about the middle of its box (`InsideOut`). A shell bounding a void
+faces in, so the volume is checked in total, not per shell; the solid's
+own check already made every shell face the right way. A checked solid
+gives a mesh that passes unless sampling breaks it: two samples rounding
+to one point on a tiny curved edge would be `Coincident`, refused rather
+than written.
+
+Tests: the check's failures one by one on a tetrahedron; a box welds to
+its 8 corners and 12 triangles, volume 24; a cylinder's rim point is one
+vertex; round octahedra (one far out), half cylinders, a torus, a repaired
+thin shell round a void, a plate with holes, the plate joined to a boss,
+and crossed cylinders united, subtracted and intersected (traced cuts),
+each at the default and a fine tolerance: as many triangles as drawn,
+every drawn position a welded one rounded, the volume within the chord
+times the area of the solid's and equal to the drawn mesh's to `f32`
+rounding, the same at 1 and 8 threads; positions far out and the empty
+solid refused; limits exact. The 3MF writer is in `varde-io`
+(`agents/files.md`).
+
 ## Profiles and extrude (`src/profile.rs`, `src/extrude.rs`, `src/extrude/`)
 
 | file | holds |

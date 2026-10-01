@@ -16,6 +16,7 @@
 
 use glam::{DVec3, Vec3};
 
+use crate::manifold::{ManifoldError, ManifoldMesh};
 use crate::mesh::Mesh;
 use crate::par::par_map;
 use crate::patch::{Bounds3, Conic3, Patch};
@@ -78,6 +79,14 @@ pub(crate) struct Limits {
 }
 
 impl Limits {
+    /// [`ManifoldMesh::MAX_VERTICES`] and three indices per
+    /// [`ManifoldMesh::MAX_TRIANGLES`]; no edges are drawn.
+    pub(crate) const EXPORT: Limits = Limits {
+        vertices: ManifoldMesh::MAX_VERTICES as u64,
+        indices: 3 * ManifoldMesh::MAX_TRIANGLES as u64,
+        edges: 0,
+    };
+
     /// [`RenderMesh::MAX_VERTICES`] and the others.
     pub(crate) const RENDER: Limits = Limits {
         vertices: RenderMesh::MAX_VERTICES as u64,
@@ -123,6 +132,163 @@ pub(crate) fn tessellate_picking(
     draw(mesh, display, &Limits::RENDER, Some(topology))
 }
 
+/// What a tessellation of a mesh is made of, worked out from the edges'
+/// segment counts before any point inside a patch is evaluated: the
+/// drawn ([`tessellate`]) and the welded ([`weld`]) tessellations share
+/// it, so they have the same samples and triangles.
+struct Plan<'a> {
+    mesh: &'a Mesh,
+    halfedges: u32,
+    /// Each edge's first halfedge (the lowest), the canonical direction
+    /// its samples run in.
+    first: Vec<u32>,
+    /// Each edge's curve along its first halfedge.
+    curves: Vec<Conic3>,
+    /// Each edge's segment count.
+    counts: Vec<u32>,
+    tri_ids: Vec<u32>,
+    edge_ids: Vec<u32>,
+    levels: Vec<Level>,
+    /// Where each patch's inner points start among all of them.
+    inner: Vec<u64>,
+    inner_total: u64,
+    triangles: u64,
+}
+
+impl<'a> Plan<'a> {
+    /// The plan for `mesh`, which must pass [`Mesh::check`], or `None` for
+    /// the empty mesh.
+    fn new(mesh: &'a Mesh, display: &Display) -> Result<Option<Plan<'a>>, MeshError> {
+        let Some(bounds) = Bounds3::around(mesh.verts()) else {
+            return Ok(None);
+        };
+        if mesh.is_empty() {
+            return Ok(None);
+        }
+        let chord = display.chord((bounds.max - bounds.min).length());
+        let halfedges = u32::try_from(mesh.tris().len() * 3).map_err(|_| MeshError::TooLarge)?;
+
+        // A checked mesh uses every edge twice.
+        let mut first = vec![u32::MAX; mesh.edges().len()];
+        for h in 0..halfedges {
+            let e = mesh.halfedge(h).edge as usize;
+            if first[e] == u32::MAX {
+                first[e] = h;
+            }
+        }
+        let curves: Vec<Conic3> = first.iter().map(|&h| mesh.curve(h)).collect();
+        let counts: Vec<u32> = par_map(&curves, |c| segments(c, chord));
+        let n_of = |h: u32| counts[mesh.halfedge(h).edge as usize];
+
+        let tri_ids: Vec<u32> = (0..halfedges / 3).collect();
+        let levels: Vec<Level> = tri_ids
+            .iter()
+            .map(|&t| Level::new([0, 1, 2].map(|i| n_of(3 * t + i))))
+            .collect();
+        let mut triangles = 0u64;
+        let mut inner = Vec::with_capacity(levels.len());
+        let mut inner_total = 0u64;
+        for level in &levels {
+            triangles = triangles.saturating_add(level.triangles());
+            inner.push(inner_total);
+            inner_total = inner_total.saturating_add(level.inner_points());
+        }
+        let edge_ids = (0..mesh.edges().len() as u32).collect();
+        Ok(Some(Plan {
+            mesh,
+            halfedges,
+            first,
+            curves,
+            counts,
+            tri_ids,
+            edge_ids,
+            levels,
+            inner,
+            inner_total,
+            triangles,
+        }))
+    }
+
+    /// Halfedge `h`'s segment count.
+    fn n_of(&self, h: u32) -> u32 {
+        self.counts[self.mesh.halfedge(h).edge as usize]
+    }
+
+    /// The fewest vertices the tessellation has: one per mesh vertex, per
+    /// inner sample of an edge and per inner point of a patch. The welded
+    /// one has exactly these.
+    fn least_vertices(&self) -> u64 {
+        let edge_points: u64 = self.counts.iter().map(|&n| u64::from(n - 1)).sum();
+        (self.mesh.verts().len() as u64)
+            .saturating_add(edge_points)
+            .saturating_add(self.inner_total)
+    }
+
+    /// Whether the triangles and the fewest vertices fit `limits`.
+    fn fits(&self, limits: &Limits) -> bool {
+        self.triangles.saturating_mul(3) <= limits.indices
+            && self.least_vertices() <= limits.vertices
+    }
+
+    /// The barycentric parameters of patch `t`'s inner points, in the
+    /// order [`Level::index`] numbers them, or none for a single
+    /// triangle.
+    fn inner_params(&self, t: u32) -> Vec<DVec3> {
+        let Some(l) = self.levels[t as usize].inner else {
+            return Vec::new();
+        };
+        let m = f64::from(l + 3);
+        let mut params = Vec::new();
+        for k in 0..=l {
+            for j in 0..=l - k {
+                let i = l - j - k;
+                params.push(DVec3::new(f64::from(i + 1), f64::from(j + 1), f64::from(k + 1)) / m);
+            }
+        }
+        params
+    }
+
+    /// Patch `t`'s triangles, as vertex ids: its inner points are `base`
+    /// on, at `inner` (as [`Plan::inner_params`] orders them), and
+    /// `outer(h, r)` is the id and position of halfedge `h`'s sample `r`.
+    fn patch_triangles(
+        &self,
+        t: u32,
+        base: u32,
+        inner: &[DVec3],
+        outer: impl Fn(u32, u32) -> (u32, DVec3),
+    ) -> Vec<u32> {
+        let hs = [0, 1, 2].map(|i| 3 * t + i);
+        let Some(l) = self.levels[t as usize].inner else {
+            return hs.map(|h| outer(h, 0).0).to_vec();
+        };
+        let idx = |j: u32, k: u32| base + Level::index(l, j, k);
+        let inner_at = |j: u32, k: u32| {
+            let i = Level::index(l, j, k);
+            (base + i, inner[i as usize])
+        };
+        let mut indices = Vec::new();
+        for k in 0..l {
+            for j in 0..l - k {
+                indices.extend([idx(j, k), idx(j + 1, k), idx(j, k + 1)]);
+                if j + k + 2 <= l {
+                    indices.extend([idx(j + 1, k), idx(j + 1, k + 1), idx(j, k + 1)]);
+                }
+            }
+        }
+        let sides: [Vec<(u32, DVec3)>; 3] = [
+            (0..=l).map(|s| inner_at(s, 0)).collect(),
+            (0..=l).map(|s| inner_at(l - s, s)).collect(),
+            (0..=l).map(|s| inner_at(0, l - s)).collect(),
+        ];
+        for (h, inner) in hs.iter().zip(&sides) {
+            let outer: Vec<(u32, DVec3)> = (0..=self.n_of(*h)).map(|r| outer(*h, r)).collect();
+            stitch(&mut indices, &outer, inner);
+        }
+        indices
+    }
+}
+
 /// [`tessellate`], failing with [`MeshError::TooLarge`] if the mesh
 /// would have more of a part than `limits` allow, which must be within
 /// [`Limits::RENDER`]. Each part is counted before it's made.
@@ -149,53 +315,31 @@ fn draw(
             "the topology is the mesh's"
         );
     }
-    let Some(bounds) = Bounds3::around(mesh.verts()) else {
+    let Some(plan) = Plan::new(mesh, display)? else {
         return Ok(Default::default());
     };
-    if mesh.is_empty() {
-        return Ok(Default::default());
-    }
-    let chord = display.chord((bounds.max - bounds.min).length());
-    let halfedges = u32::try_from(mesh.tris().len() * 3).map_err(|_| MeshError::TooLarge)?;
-
-    // Each edge along its first halfedge, the canonical direction its
-    // samples run in. A checked mesh uses every edge twice.
-    let mut first = vec![u32::MAX; mesh.edges().len()];
-    for h in 0..halfedges {
-        let e = mesh.halfedge(h).edge as usize;
-        if first[e] == u32::MAX {
-            first[e] = h;
-        }
-    }
-    let curves: Vec<Conic3> = first.iter().map(|&h| mesh.curve(h)).collect();
-    let counts: Vec<u32> = par_map(&curves, |c| segments(c, chord));
-    let n_of = |h: u32| counts[mesh.halfedge(h).edge as usize];
-
-    // What each patch makes, and whether it all fits, before sampling.
-    let tri_ids: Vec<u32> = (0..halfedges / 3).collect();
-    let levels: Vec<Level> = tri_ids
-        .iter()
-        .map(|&t| Level::new([0, 1, 2].map(|i| n_of(3 * t + i))))
-        .collect();
-    let mut triangles = 0u64;
-    let mut inner = Vec::with_capacity(levels.len());
-    let mut inner_total = 0u64;
-    for level in &levels {
-        triangles = triangles.saturating_add(level.triangles());
-        inner.push(inner_total);
-        inner_total = inner_total.saturating_add(level.inner_points());
-    }
-    let edge_points: u64 = counts.iter().map(|&n| u64::from(n - 1)).sum();
-    let at_least = (mesh.verts().len() as u64)
-        .saturating_add(edge_points)
-        .saturating_add(inner_total);
-    if triangles.saturating_mul(3) > limits.indices || at_least > limits.vertices {
+    if !plan.fits(limits) {
         return Err(MeshError::TooLarge);
     }
+    let Plan {
+        halfedges,
+        first,
+        curves,
+        counts,
+        tri_ids,
+        edge_ids,
+        levels,
+        inner,
+        inner_total,
+        triangles,
+        ..
+    } = &plan;
+    let (halfedges, inner_total, triangles) = (*halfedges, *inner_total, *triangles);
+    let n_of = |h: u32| plan.n_of(h);
 
     // Unit normals along each halfedge of each patch, at its edge's
     // sample points in the halfedge's own direction.
-    let boundary: Vec<Vec<DVec3>> = par_map(&tri_ids, |&t| {
+    let boundary: Vec<Vec<DVec3>> = par_map(tri_ids, |&t| {
         let patch = mesh.patch(t as usize);
         let mut normals = Vec::new();
         for i in 0..3 {
@@ -217,8 +361,7 @@ fn draw(
         boundary[t as usize][(skip + r) as usize]
     };
 
-    let edge_ids: Vec<u32> = (0..mesh.edges().len() as u32).collect();
-    let smooth: Vec<bool> = par_map(&edge_ids, |&e| {
+    let smooth: Vec<bool> = par_map(edge_ids, |&e| {
         let (a, n) = (first[e as usize], counts[e as usize]);
         let b = mesh.halfedge(a).pair;
         (0..=n).all(|s| normal_at(a, s).dot(normal_at(b, n - s)) >= COS_SMOOTH)
@@ -298,7 +441,7 @@ fn draw(
 
     // The inner sample points of each edge: once if it's smooth, with the
     // two sides' mean normal, else once for each side.
-    let edge_vertices: Vec<Vec<Vertex>> = par_map(&edge_ids, |&e| {
+    let edge_vertices: Vec<Vec<Vertex>> = par_map(edge_ids, |&e| {
         let (a, n) = (first[e as usize], counts[e as usize]);
         let b = mesh.halfedge(a).pair;
         let curve = &curves[e as usize];
@@ -354,55 +497,25 @@ fn draw(
         (edge_base[e] + u64::from(side + s - 1)) as u32
     };
 
-    let patches: Vec<(Vec<Vertex>, Vec<u32>)> = par_map(&tri_ids, |&t| {
-        let level = levels[t as usize];
-        let hs = [0, 1, 2].map(|i| 3 * t + i);
-        let Some(l) = level.inner else {
-            return (Vec::new(), hs.map(|h| corner_vertex[h as usize]).to_vec());
-        };
+    let patches: Vec<(Vec<Vertex>, Vec<u32>)> = par_map(tri_ids, |&t| {
         let patch = mesh.patch(t as usize);
-        let base = (inner_base + inner[t as usize]) as u32;
-        let m = f64::from(l + 3);
-        let mut points = Vec::new();
-        for k in 0..=l {
-            for j in 0..=l - k {
-                let i = l - j - k;
-                let u = DVec3::new(f64::from(i + 1), f64::from(j + 1), f64::from(k + 1)) / m;
-                let p = patch.eval(u);
-                points.push((
-                    p.as_vec3().to_array(),
+        let points: Vec<Vertex> = (plan.inner_params(t).into_iter())
+            .map(|u| {
+                (
+                    patch.eval(u).as_vec3().to_array(),
                     unit_normal(&patch, u).as_vec3().to_array(),
-                ));
-            }
-        }
-        let idx = |j: u32, k: u32| base + Level::index(l, j, k);
-        let inner_at = |j: u32, k: u32| {
-            let i = Level::index(l, j, k);
-            (base + i, Vec3::from(points[i as usize].0).as_dvec3())
-        };
-        let mut indices = Vec::new();
-        for k in 0..l {
-            for j in 0..l - k {
-                indices.extend([idx(j, k), idx(j + 1, k), idx(j, k + 1)]);
-                if j + k + 2 <= l {
-                    indices.extend([idx(j + 1, k), idx(j + 1, k + 1), idx(j, k + 1)]);
-                }
-            }
-        }
-        let sides: [Vec<(u32, DVec3)>; 3] = [
-            (0..=l).map(|s| inner_at(s, 0)).collect(),
-            (0..=l).map(|s| inner_at(l - s, s)).collect(),
-            (0..=l).map(|s| inner_at(0, l - s)).collect(),
-        ];
-        for (h, inner) in hs.iter().zip(&sides) {
-            let outer: Vec<(u32, DVec3)> = (0..=n_of(*h))
-                .map(|r| {
-                    let v = sample_vertex(*h, r);
-                    (v, Vec3::from(positions[v as usize]).as_dvec3())
-                })
-                .collect();
-            stitch(&mut indices, &outer, inner);
-        }
+                )
+            })
+            .collect();
+        // The stitching sees the positions drawn.
+        let inner_points: Vec<DVec3> = (points.iter())
+            .map(|(p, _)| Vec3::from(*p).as_dvec3())
+            .collect();
+        let base = (inner_base + inner[t as usize]) as u32;
+        let indices = plan.patch_triangles(t, base, &inner_points, |h, r| {
+            let v = sample_vertex(h, r);
+            (v, Vec3::from(positions[v as usize]).as_dvec3())
+        });
         (points, indices)
     });
     let mut picking = Picking::default();
@@ -444,7 +557,7 @@ fn draw(
         );
     }
     let mut edges = Vec::new();
-    for &e in &edge_ids {
+    for &e in edge_ids {
         if feature[e as usize] {
             let (h, n) = (first[e as usize], counts[e as usize]);
             edges.extend((0..n).map(|s| [sample_vertex(h, s), sample_vertex(h, s + 1)]));
@@ -459,6 +572,95 @@ fn draw(
         RenderMesh::from_parts(positions, normals, indices, edges)?,
         picking,
     ))
+}
+
+/// A welded tessellation's positions and triangles, unchecked.
+pub(crate) type Welded = (Vec<[f64; 3]>, Vec<[u32; 3]>);
+
+/// `mesh`, which must pass [`Mesh::check`], as an indexed triangle mesh
+/// for export, with the samples and triangles of [`tessellate`] (the
+/// strips choosing their diagonals from the `f64` points) but each point
+/// once: a mesh vertex is one vertex whatever its normals, an edge's
+/// inner samples are numbered once for both sides, and the triangles name
+/// them by those numbers, so the welding follows the patch mesh's own
+/// edges and vertices, never a distance. Positions are the `f64` samples.
+/// Unchecked: [`ManifoldMesh::new`] checks it. Fails with
+/// [`ManifoldError::TooLarge`] past `limits` (within
+/// [`ManifoldMesh::MAX_VERTICES`] and [`ManifoldMesh::MAX_TRIANGLES`]),
+/// and with [`ManifoldError::Empty`] for the empty mesh.
+pub(crate) fn weld(
+    mesh: &Mesh,
+    display: &Display,
+    limits: &Limits,
+) -> Result<Welded, ManifoldError> {
+    let plan = Plan::new(mesh, display)
+        .map_err(|_| ManifoldError::TooLarge)?
+        .ok_or(ManifoldError::Empty)?;
+    if !plan.fits(limits) {
+        return Err(ManifoldError::TooLarge);
+    }
+    let Plan {
+        first,
+        curves,
+        counts,
+        tri_ids,
+        edge_ids,
+        inner,
+        ..
+    } = &plan;
+
+    // Mesh vertices first, by their own numbers (a checked mesh uses every
+    // one), then each edge's inner samples along its first halfedge, then
+    // each patch's inner points.
+    let mut positions: Vec<[f64; 3]> = mesh.verts().iter().map(|v| v.to_array()).collect();
+    let edge_points: Vec<Vec<DVec3>> = par_map(edge_ids, |&e| {
+        let n = counts[e as usize];
+        let curve = &curves[e as usize];
+        (1..n)
+            .map(|s| curve.eval(f64::from(s) / f64::from(n)))
+            .collect()
+    });
+    let mut edge_base = Vec::with_capacity(edge_points.len());
+    for points in &edge_points {
+        edge_base.push(positions.len() as u64);
+        positions.extend(points.iter().map(|p| p.to_array()));
+    }
+    // Within the limits, checked above.
+    let inner_base = positions.len() as u64;
+    let point = |v: u32| DVec3::from_array(positions[v as usize]);
+    let sample_vertex = |h: u32, r: u32| -> u32 {
+        let n = plan.n_of(h);
+        if r == 0 {
+            return mesh.halfedge(h).start;
+        }
+        if r == n {
+            return mesh.end(h);
+        }
+        let e = mesh.halfedge(h).edge as usize;
+        let s = if first[e] == h { r } else { n - r };
+        (edge_base[e] + u64::from(s - 1)) as u32
+    };
+
+    let patches: Vec<(Vec<DVec3>, Vec<u32>)> = par_map(tri_ids, |&t| {
+        let patch = mesh.patch(t as usize);
+        let points: Vec<DVec3> = (plan.inner_params(t).into_iter())
+            .map(|u| patch.eval(u))
+            .collect();
+        let base = (inner_base + inner[t as usize]) as u32;
+        let indices = plan.patch_triangles(t, base, &points, |h, r| {
+            let v = sample_vertex(h, r);
+            (v, point(v))
+        });
+        (points, indices)
+    });
+    let mut triangles = Vec::with_capacity(plan.triangles as usize);
+    for (points, indices) in patches {
+        positions.extend(points.iter().map(|p| p.to_array()));
+        triangles.extend_from_slice(indices.as_chunks::<3>().0);
+    }
+    debug_assert_eq!(triangles.len() as u64, plan.triangles);
+    debug_assert_eq!(positions.len() as u64, plan.least_vertices());
+    Ok((positions, triangles))
 }
 
 /// A render vertex: its position and normal.

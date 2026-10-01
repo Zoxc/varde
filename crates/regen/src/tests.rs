@@ -2406,3 +2406,76 @@ fn a_cut_s_faces_face_out_of_the_solid() {
     };
     assert_eq!(faces.iter().filter(|f| f.summary == ceiling).count(), 1);
 }
+
+#[test]
+fn shown_bodies_are_exported_as_manifolds() {
+    let document = with_bodies(true);
+    let [shown, hidden] = [0, 1].map(|i| document.bodies()[i].id);
+    let cylinder = Solid::cylinder(glam::DVec3::ZERO, 10.0, 1.0, 0, &Tolerance::DEFAULT).unwrap();
+    let solids = made([(shown, cylinder.clone()), (hidden, cuboid(3.0, 2.0))]);
+    let exported = export(&document, &solids).unwrap();
+    assert_eq!(exported.len(), 1);
+    assert_eq!(exported[0].body, shown);
+    assert_eq!(exported[0].name, document.bodies()[0].name);
+    let display = Display::new(&document.tolerance());
+    assert_eq!(exported[0].mesh, cylinder.manifold_mesh(&display).unwrap());
+    // The example plate, from its history: one body, as much as it holds.
+    let evaluation = evaluate(&document, &mut Cache::default());
+    let exported = export(&document, &evaluation).unwrap();
+    assert_eq!(exported.len(), 1);
+    let solid = &evaluation.bodies[0].solid;
+    let bounds = solid.bounds3().unwrap();
+    let chord = display.chord((bounds.max - bounds.min).length());
+    let volume = exported[0].mesh.volume();
+    assert!((volume - solid.volume()).abs() <= chord * solid.area());
+    // To the document's tolerance: a coarser one, fewer triangles.
+    let mut editor = Editor::new(document.clone());
+    let coarse = Tolerance::new(Tolerance::MAX_FIT).unwrap();
+    editor.apply(Command::SetTolerance(coarse)).unwrap();
+    let solids = made([(shown, cylinder)]);
+    let fine = export(&document, &solids).unwrap();
+    let rough = export(editor.document(), &solids).unwrap();
+    assert!(rough[0].mesh.triangles().len() < fine[0].mesh.triangles().len());
+    // None shown, none exported.
+    assert_eq!(
+        export(&document, &made([(hidden, cuboid(0.0, 1.0))])),
+        Ok(vec![])
+    );
+}
+
+/// A tetrahedron with its corners 3e6 out: a solid, as the kernel's
+/// check takes it, but past the positions a mesh may have.
+fn far_tetrahedron() -> Solid {
+    use varde_kernel::mesh::{Face, FaceName, FacePart, Form, MeshBuilder, Surface};
+    let mut builder = MeshBuilder::new();
+    let face = builder.face(Face {
+        name: FaceName::new(1, FacePart::Split(0)),
+        surface: Surface::Free,
+        form: Form::Unknown,
+    });
+    let at = glam::DVec3::splat(3e6);
+    let v = [
+        glam::DVec3::ZERO,
+        glam::DVec3::X,
+        glam::DVec3::Y,
+        glam::DVec3::Z,
+    ]
+    .map(|p| builder.vert(at + p * 100.0));
+    for [a, b, c] in [[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]] {
+        builder.tri([v[a], v[b], v[c]], face);
+    }
+    Solid::new(builder.build().unwrap(), &Tolerance::DEFAULT).unwrap()
+}
+
+#[test]
+fn a_body_that_cannot_be_exported_is_named() {
+    let document = with_bodies(false);
+    let body = &document.bodies()[0];
+    let error = export(&document, &made([(body.id, far_tetrahedron())])).unwrap_err();
+    assert_eq!(error.body, body.id);
+    assert_eq!(error.name, body.name);
+    assert_eq!(
+        error.to_string(),
+        format!("{} can't be exported: vertex 0 is out of range", body.name)
+    );
+}
