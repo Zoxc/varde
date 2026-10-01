@@ -13,14 +13,14 @@
   timeline/objects), drag timeline rows or the rollback marker, double-click
   a sketch in the timeline, S to sketch, Esc to back out, click the view
   cube, ? for shortcuts.
-  Solid operations (Revolve R, Chamfer C, Combine B, Move M, Pattern P, and
+  Solid operations (Revolve O, Chamfer C, Combine B, Move M, Pattern P, and
   Shell, Mirror, Circular pattern from the Alt bar or with a body selected)
   open a panel at the viewport's right; click its fields, then the model.
   The tool rail floats over the view's left edge with a card per tool set
-  (the Alt bar's sets): point at a set, click it or press its number to open
-  its full list beside it, then a letter picks a tool; the first tools of each
-  set sit on the card too, with instant tooltips. The set's number shows in
-  its open list.
+  (the Alt bar's sets): point at a set, click it or press its key (Q, W,
+  E, ... from the top) to open its full list beside it, then a letter
+  picks a tool; the first tools of each set sit on the card too, with
+  instant tooltips. The set's key shows in its open list.
   Deep links: #bracket, #bracket/face, #bracket/body, #bracket/sketch,
   #bracket/tools, #bracket/sketchtools, #empty; #bracket/op:<kind> opens an
   operation set up for a screenshot (revolve, combine, move, bmirror,
@@ -630,7 +630,6 @@ body.dragging .face, body.dragging .hole { pointer-events: none; }
 // ---------------------------------------------------------------- icons
 const I = {
   // tool sets (the rail): what each set leaves behind, in line style
-  'cat-sketch': '<path class="r" d="M1.5 21.5l5-10h16l-5 10z"/><path class="a" d="M5.5 19.5h11l1.5-3-4-2.5h-5z"/>',
   'cat-create': '<path class="r" d="M5 17.5a7 3 0 0 1 14 0" stroke-dasharray="1.6 1.8"/><path d="M5 6.5v11a7 3 0 0 0 14 0v-11"/><ellipse class="a" cx="12" cy="6.5" rx="7" ry="3"/>',
   'cat-modify': '<path d="M10.5 9H3.5v11h12v-6M3.5 9l5-5h7M20.5 9v6l-5 5M10.5 9l5-5M15.5 14l5-5"/><path class="a" d="M10.5 9a5 5 0 0 1 5 5M15.5 4a5 5 0 0 1 5 5"/>',
   'cat-transform': '<path class="r" stroke-dasharray="1.6 1.8" d="M7.5 10l4.76 2.75v5.5l-4.76 2.75-4.76-2.75v-5.5z"/><path class="r" stroke-dasharray="1.6 1.8" d="M2.74 12.75l4.76 2.75 4.76-2.75M7.5 15.5v5.5"/><path d="M16.5 3l4.76 2.75v5.5l-4.76 2.75-4.76-2.75v-5.5z"/><path d="M11.74 5.75l4.76 2.75 4.76-2.75M16.5 8.5v5.5"/>',
@@ -711,7 +710,7 @@ const I = {
 // solid/body, construction, inspect.
 const CAT = {};
 for (const [cat, names] of Object.entries({
-  sketch: 'sketch line rect circle arc polygon spline cat-draw cat-sketch',
+  sketch: 'sketch line rect circle arc polygon spline cat-draw',
   mod: 'trim extend mirror skoffset pushpull fillet chamfer shell combine offset cat-smodify cat-modify',
   cstr: 'constrain coincident parallel perpendicular tangent equal cat-constrain',
   dim: 'dim cat-dim',
@@ -980,8 +979,8 @@ function ops() {
     case 'pick':
       return [
         { id: 'sketch', label: 'Sketch', icon: 'sketch', key: 'S', on: c === 'pick' },
-        { id: 'extrude', label: 'Extrude', icon: 'extrude', key: 'E' },
-        { id: 'revolve', label: 'Revolve', icon: 'revolve', key: 'R' },
+        { id: 'extrude', label: 'Extrude', icon: 'extrude', key: 'X' },
+        { id: 'revolve', label: 'Revolve', icon: 'revolve', key: 'O' },
         { id: 'hole', label: 'Hole', icon: 'hole', key: 'H' },
         { id: 'fillet', label: 'Fillet', icon: 'fillet', key: 'F' },
         { id: 'chamfer', label: 'Chamfer', icon: 'chamfer', key: 'C' },
@@ -994,8 +993,8 @@ function ops() {
     case 'face':
       return [
         { id: 'sketch', label: 'Sketch on face', icon: 'sketch', key: 'S' },
-        { id: 'pushpull', label: 'Press pull', icon: 'pushpull', key: 'Q' },
-        { id: 'extrude', label: 'Extrude', icon: 'extrude', key: 'E' },
+        { id: 'pushpull', label: 'Press pull', icon: 'pushpull', key: 'U' },
+        { id: 'extrude', label: 'Extrude', icon: 'extrude', key: 'X' },
         { id: 'hole', label: 'Hole', icon: 'hole', key: 'H' },
         { id: 'offset', label: 'Offset face', icon: 'offset' },
         { id: 'shell', label: 'Shell from here', icon: 'shell' },
@@ -1003,7 +1002,7 @@ function ops() {
       ];
     case 'hole':
       return [
-        { id: 'pushpull', label: 'Press pull', icon: 'pushpull', key: 'Q' },
+        { id: 'pushpull', label: 'Press pull', icon: 'pushpull', key: 'U' },
         { id: 'fillet', label: 'Fillet edges', icon: 'fillet', key: 'F' },
         { id: 'chamfer', label: 'Chamfer edges', icon: 'chamfer', key: 'C' },
         { id: 'edit-feature', label: 'Edit ' + FACE_INFO[st.sel.id][2], icon: 'edit', key: 'Enter' },
@@ -1064,8 +1063,7 @@ function ops() {
 // Items are [icon, label, op]; op defaults to the icon name.
 const G = (name, items) => [name, items.map(([icon, label, op = icon]) => ({ icon, label, op }))];
 const MODEL_GROUPS = [
-  G('Sketch', [['sketch', 'Sketch']]),
-  G('Create', [['extrude', 'Extrude'], ['revolve', 'Revolve'], ['sweep', 'Sweep'], ['loft', 'Loft'], ['hole', 'Hole'], ['box', 'Box']]),
+  G('Create', [['sketch', 'Sketch'], ['extrude', 'Extrude'], ['revolve', 'Revolve'], ['sweep', 'Sweep'], ['loft', 'Loft'], ['hole', 'Hole'], ['box', 'Box']]),
   G('Modify', [['pushpull', 'Press pull'], ['fillet', 'Fillet'], ['chamfer', 'Chamfer'], ['shell', 'Shell'], ['combine', 'Combine']]),
   G('Transform', [['move', 'Move'], ['bmirror', 'Mirror'], ['lpattern', 'Linear pattern'], ['cpattern', 'Circular pattern']]),
   G('Construct', [['plane', 'Plane', 'offset-plane'], ['axis', 'Axis'], ['point', 'Point']]),
@@ -1095,15 +1093,19 @@ function gbar() {
 // set (or clicking it, or its number key) opens its full list beside the card;
 // letters then pick from it, Esc closes it.
 const SET_STYLE = {
-  model: { Sketch: ['cat-sketch', 'sketch'], Create: ['cat-create', 'solid'], Modify: ['cat-modify', 'mod'], Transform: ['cat-transform', 'solid'], Construct: ['cat-construct', 'cons'], Inspect: ['cat-inspect', 'insp'] },
+  model: { Create: ['cat-create', 'solid'], Modify: ['cat-modify', 'mod'], Transform: ['cat-transform', 'solid'], Construct: ['cat-construct', 'cons'], Inspect: ['cat-inspect', 'insp'] },
   sketch: { Create: ['cat-draw', 'sketch'], Modify: ['cat-smodify', 'mod'], Constraints: ['cat-constrain', 'cstr'], Dimension: ['cat-dim', 'dim'] },
 };
 const RAIL_TOOLS = 3;
 const railSets = () => st.mode === 'sketch' ? SKETCH_GROUPS : MODEL_GROUPS;
 const railStyle = name => SET_STYLE[st.mode === 'sketch' ? 'sketch' : 'model'][name];
-// Shortcut letters inside an open set: the first free letter of each label.
+// The keys opening the rail's sets, in order: the top row from the left.
+// No tool's key is one of them.
+const RAIL_SET_KEYS = 'QWERTYUIO';
+// Shortcut letters inside an open set: the first free letter of each label,
+// never a set's key, so another set opens from an open list.
 function railLetters(items) {
-  const used = [];
+  const used = [...RAIL_SET_KEYS.slice(0, railSets().length)];
   return items.map(o => { const k = [...o.label.toUpperCase()].find(c => /[A-Z]/.test(c) && !used.includes(c)) || ''; used.push(k); return k; });
 }
 // A rail tool's shortcut: the toolbar's key for it in model mode, the sketch tool's key in a sketch.
@@ -1112,7 +1114,7 @@ function rail() {
   return `<div class="rail">${railSets().map(([name, items], i) => {
     const [ic, cat] = railStyle(name);
     const tools = items.slice(0, RAIL_TOOLS).map(o => `<button class="rtool" data-act="rgop:${o.op}" data-tip="${o.label}" data-key="${toolKey(o)}">${icon(o.icon)}</button>`).join('');
-    return `<div class="rcard"><button class="rset${st.railOpen === i ? ' on' : ''}" data-act="rail:${i}" data-rail="${i}" title="${name} (${i + 1})">${icon(ic, 'i c-' + cat)}</button>${tools ? `<div class="rtools">${tools}</div>` : ''}</div>`;
+    return `<div class="rcard"><button class="rset${st.railOpen === i ? ' on' : ''}" data-act="rail:${i}" data-rail="${i}" title="${name} (${RAIL_SET_KEYS[i]})">${icon(ic, 'i c-' + cat)}</button>${tools ? `<div class="rtools">${tools}</div>` : ''}</div>`;
   }).join('')}</div>`;
 }
 function railPop() {
@@ -1120,7 +1122,7 @@ function railPop() {
   if (!set) return '';
   const [name, items] = set, [ic, cat] = railStyle(name), keys = railLetters(items);
   return `<div class="rpop" id="rpop" style="--rc:var(--i-${cat})">
-    <div class="hd">${icon(ic, 'i c-' + cat)}${name}<kbd class="own">${st.railOpen + 1}</kbd><kbd>Esc</kbd></div>
+    <div class="hd">${icon(ic, 'i c-' + cat)}${name}<kbd class="own">${RAIL_SET_KEYS[st.railOpen]}</kbd><kbd>Esc</kbd></div>
     ${items.map((o, i) => `<button data-act="rgop:${o.op}">${icon(o.icon)}${o.label}<span class="k">${keys[i]}</span></button>`).join('')}
   </div>`;
 }
@@ -1159,7 +1161,7 @@ function globalOp(op) {
 // Sketch tools. The ones with a key are listed in the sketch toolbar, in this order.
 const Tool = (label, key, hint) => ({ label, key, hint });
 const TOOLS = {
-  line: Tool('Line', 'L', 'Click start point'), rect: Tool('Rectangle', 'R', 'Click first corner'),
+  line: Tool('Line', 'L', 'Click start point'), rect: Tool('Rectangle', 'B', 'Click first corner'),
   circle: Tool('Circle', 'C', 'Click center point'), arc: Tool('Arc', 'A', 'Click start point'),
   trim: Tool('Trim', 'T', 'Click a segment to trim'), offset: Tool('Offset', 'O', 'Select a loop to offset'),
   dim: Tool('Dimension', 'D', 'Select geometry to dimension'), constrain: Tool('Constrain', 'K', 'Select entities to constrain'),
@@ -1177,7 +1179,7 @@ function hints() {
   switch (context()) {
     case 'none': return h([['mouse:l', 'Select'], ['mouse:l mouse:l', 'Body'], ...nav]);
     case 'pick': return h([['mouse:l', 'Pick plane'], ...nav, ['Esc', 'Cancel']]);
-    case 'face': case 'plane': return h([['S', 'Sketch'], ['Q', 'Press pull'], ['mouse:l mouse:l', 'Body']]);
+    case 'face': case 'plane': return h([['S', 'Sketch'], ['U', 'Press pull'], ['mouse:l mouse:l', 'Body']]);
     case 'hole': return h([['F', 'Fillet'], ['Enter', 'Edit hole'], ['mouse:l mouse:l', 'Body']]);
     case 'feature': return h([['Enter', 'Edit'], ['Del', 'Delete'], ['mouse:l', 'Drag to reorder']]);
     case 'body': return h([['M', 'Move'], ['P', 'Pattern'], ['V', 'Hide']]);
@@ -1185,7 +1187,7 @@ function hints() {
       const p = OPS[st.op.kind].picks[st.op.pick];
       return h([['mouse:l', p ? 'Pick ' + p.what : 'Pick'], ...nav, ['Enter', 'OK'], ['Esc', 'Cancel']]);
     }
-    case 'sketch': return h([['L', 'Line'], ['R', 'Rect'], ['C', 'Circle'], ['D', 'Dimension'], ['Esc', 'Finish']]);
+    case 'sketch': return h([['L', 'Line'], ['B', 'Rect'], ['C', 'Circle'], ['D', 'Dimension'], ['Esc', 'Finish']]);
     case 'tool': return h([['mouse:l', TOOLS[st.tool].hint], ['Shift', 'No snap'], ['Tab', 'Type value'], ['Esc', 'Stop tool']]);
   }
   return '';
@@ -2687,15 +2689,15 @@ function helpModal() {
     <div class="cols">
       <h3>Everywhere</h3>
       ${kv('Ctrl K', 'Command palette')}${kv('?', 'This sheet')}
-      ${kv('Esc', 'Back out one level')}${kv('Space', 'Clear the selection')}${kv('1 – 9', 'Open a tool set from the rail')}${kv('Alt', 'Hold: other tab + tool bar')}${kv('Alt', 'Tap: keep the tool bar open')}
+      ${kv('Esc', 'Back out one level')}${kv('Space', 'Clear the selection')}${kv('Q W E R T', 'Open a tool set from the rail')}${kv('Alt', 'Hold: other tab + tool bar')}${kv('Alt', 'Tap: keep the tool bar open')}
       <h3>Model</h3>
-      ${kv('S', 'Sketch')}${kv('E', 'Extrude')}${kv('R', 'Revolve')}${kv('Q', 'Press pull')}${kv('H', 'Hole')}${kv('F', 'Fillet')}
+      ${kv('S', 'Sketch')}${kv('X', 'Extrude')}${kv('O', 'Revolve')}${kv('U', 'Press pull')}${kv('H', 'Hole')}${kv('F', 'Fillet')}
       ${kv('C', 'Chamfer')}${kv('B', 'Combine')}${kv('M', 'Move')}${kv('P', 'Linear pattern')}${kv('I', 'Measure')}
       <h3>Operation panel</h3>
       ${kv('Enter', 'OK')}${kv('Esc', 'Cancel')}
       <div class="kv"><span>Pick into a field</span><span>click the field, then ${mouse('l')} in the view</span></div>
       <h3>Sketch</h3>
-      ${kv('L', 'Line')}${kv('R', 'Rectangle')}${kv('C', 'Circle')}${kv('A', 'Arc')}${kv('T', 'Trim')}${kv('D', 'Dimension')}
+      ${kv('L', 'Line')}${kv('B', 'Rectangle')}${kv('C', 'Circle')}${kv('A', 'Arc')}${kv('T', 'Trim')}${kv('D', 'Dimension')}
       <h3>Mouse</h3>
       <div class="kv"><span>Select face</span><span>${mouse('l')} click</span></div>
       <div class="kv"><span>Select body</span><span>${mouse('l')} double-click</span></div>
@@ -3089,7 +3091,8 @@ document.addEventListener('keydown', e => {
     const items = railSets()[st.railOpen][1], i = railLetters(items).indexOf(key);
     if (i >= 0) { e.preventDefault(); act('rgop:' + items[i].op); return; }
   }
-  if (/^[1-9]$/.test(key) && railSets()[+key - 1]) { st.railOpen = st.railOpen === +key - 1 ? null : +key - 1; render(); return; }
+  const set = key.length === 1 ? RAIL_SET_KEYS.indexOf(key) : -1;
+  if (set >= 0 && railSets()[set]) { st.railOpen = st.railOpen === set ? null : set; render(); return; }
   if (e.key === 'Escape') {
     if (st.railOpen != null) st.railOpen = null;
     else if (st.menu) st.menu = false;
