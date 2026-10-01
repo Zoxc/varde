@@ -6,6 +6,7 @@ mod delete;
 mod export;
 mod extrude;
 mod feed;
+mod pick;
 mod rail;
 mod save;
 mod sketch;
@@ -38,6 +39,7 @@ use export::Export;
 pub(crate) use export::Exporting;
 pub(crate) use extrude::ExtrudeSession;
 use feed::MeshFeed;
+use pick::Hover;
 use rail::Rail;
 use save::Persist;
 #[cfg(test)]
@@ -115,6 +117,8 @@ pub(crate) struct Doc {
     /// Whether the cursor is over the view cube, where the pivot is
     /// marked.
     cube_hovered: bool,
+    /// What the cursor is over in the model shown.
+    pub(crate) hover: Hover,
     /// The tool rail's open set.
     pub(crate) rail: Rail,
     /// Saving and leaving it, see [`Persist`].
@@ -224,6 +228,7 @@ impl Doc {
             before_sketch: None,
             pivot: None,
             cube_hovered: false,
+            hover: Hover::default(),
             rail: Rail::default(),
             export: Export::default(),
         };
@@ -252,6 +257,7 @@ impl Doc {
         self.request_analysis();
         self.request_model();
         self.refresh_profiles();
+        self.prune_hover();
     }
 
     /// Asks for the model if the document changed, the sketch left out of
@@ -410,6 +416,7 @@ impl Doc {
         self.refresh_profiles();
         // The extrude being set up is previewed as it changes.
         self.request_model();
+        self.prune_hover();
     }
 
     /// Takes `message`, see [`Doc::look`].
@@ -451,6 +458,7 @@ impl Doc {
             Look::OpenMenu(_)
                 | Look::Escape
                 | Look::HoverItem(_)
+                | Look::Hover(_)
                 | Look::HoverCube(_)
                 | Look::Snap(_)
                 | Look::Aim(_)
@@ -499,6 +507,7 @@ impl Doc {
             // held; alone, it selects.
             Look::ClickRow(id) => self.click_geometry(Some(id), false),
             Look::HoverItem(id) => self.hover_item(id),
+            Look::Hover(pick) => self.hover(pick),
             Look::Snap(snap) => {
                 if let Some(session) = &mut self.sketch {
                     session.snap = snap;
@@ -617,6 +626,7 @@ impl Doc {
     /// goes to [`Doc::export_welded`] instead.
     pub(crate) fn computed(&mut self, response: varde_regen::Response) {
         self.feed.apply(response);
+        self.prune_hover();
     }
 
     /// Starts sending requests to `lane`, the document's solver lane:
@@ -718,6 +728,8 @@ impl Doc {
             mesh: self.feed.mesh(),
             sketches: self.feed.sketches(),
             mesh_status: self.feed.status(&self.editor),
+            picking: self.model_picking(),
+            highlight: self.highlight(),
             name: &self.name,
             edited: self.edited(),
             read_only: self.read_only.as_deref(),

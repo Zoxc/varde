@@ -23,6 +23,7 @@ use varde_sketch::Profiles;
 use super::sketch::{fill_region, fill_region_in, line};
 use crate::anchors::Anchors;
 use crate::extrude::{Distance, ExtrudeLook, ExtrudeState, Handle, snap_step};
+use crate::pick::ray_hits;
 use crate::projection::Projector;
 use crate::theme::{self, SketchColors};
 use crate::{Look, Message};
@@ -409,25 +410,6 @@ pub(super) fn through_box(
         far = far.min(t0.max(t1));
     }
     (near <= far).then_some((near, far))
-}
-
-/// How far along the ray from `origin` along the unit `direction` it
-/// meets the triangle `corners`, either side of it, if it does
-/// (Möller–Trumbore).
-pub(super) fn ray_hits(origin: DVec3, direction: DVec3, [a, b, c]: [DVec3; 3]) -> Option<f64> {
-    let (ab, ac) = (b - a, c - a);
-    let p = direction.cross(ac);
-    let determinant = ab.dot(p);
-    if determinant.abs() <= f64::EPSILON * ab.length() * ac.length() {
-        return None;
-    }
-    let s = origin - a;
-    let u = s.dot(p) / determinant;
-    let q = s.cross(ab);
-    let v = direction.dot(q) / determinant;
-    let inside = (0.0..=1.0).contains(&u) && v >= 0.0 && u + v <= 1.0;
-    let t = ac.dot(q) / determinant;
-    (inside && t.is_finite()).then_some(t)
 }
 
 /// The knob of `distance`, grabbed by pressing it if `editable`.

@@ -8,8 +8,9 @@ use std::sync::Arc;
 use glam::{DVec3, Vec3};
 use varde_kernel::{RenderLines, RenderMesh, Solid, Tolerance};
 use varde_render::{
-    Camera, ClipRect, Colors, Frame, GridPlane, LINE_WIDTH, LineStyle, Pivot, PointStyle,
-    Projection, Renderer, SketchLayer, SketchScene, Space, Srgb, Srgba, View, Viewport, wgpu,
+    Camera, ClipRect, Colors, Emphasis, Frame, GridPlane, Highlight, LINE_WIDTH, LineStyle, Pivot,
+    PointStyle, Projection, Renderer, SketchLayer, SketchScene, Space, Srgb, Srgba, View, Viewport,
+    wgpu,
 };
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -31,6 +32,11 @@ const COLORS: Colors = Colors {
     // Pure yellow, found by its lack of blue.
     sketch: Srgb([1.0, 1.0, 0.0]),
     faded_alpha: 0.3,
+    // Pure green and pure blue faces, pure red and pure cyan edges.
+    hovered_face: Srgb([0.0, 1.0, 0.0]),
+    selected_face: Srgb([0.0, 0.0, 1.0]),
+    hovered_edge: Srgba([1.0, 0.0, 0.0, 1.0]),
+    selected_edge: Srgba([0.0, 1.0, 1.0, 1.0]),
 };
 const SIZE: [u32; 2] = [512, 256];
 const SENTINEL: [u8; 4] = [255, 0, 255, 255];
@@ -84,6 +90,7 @@ fn render_to(
             faded: false,
             sketch: None,
             pivot: None,
+            highlight: None,
             viewport,
             target_size: SIZE,
             scale_factor,
@@ -106,6 +113,8 @@ struct Extras {
     /// Whether the sketch is hidden by the model in front of it.
     depth_tested: bool,
     pivot: Option<Pivot>,
+    /// The faces and edges hovered and selected.
+    highlight: Option<Highlight>,
 }
 
 /// Renders `mesh` and `extras` into [`VIEWPORT`] at a scale factor of 1.
@@ -130,6 +139,7 @@ fn render_scaled(
         };
         (plane, Arc::new(base), live)
     });
+    let highlight = extras.highlight.map(Arc::new);
     let sketch = layers.as_ref().map(|(plane, base, live)| SketchScene {
         plane: *plane,
         depth_tested: extras.depth_tested,
@@ -146,6 +156,7 @@ fn render_scaled(
             faded: extras.faded,
             sketch,
             pivot: extras.pivot,
+            highlight: highlight.as_ref(),
             viewport,
             target_size: SIZE,
             scale_factor,
@@ -628,6 +639,85 @@ fn cube(size: f32, at: Vec3) -> RenderMesh {
     let mut moved = RenderMesh::default();
     moved.append_at(&mesh.unwrap(), at).unwrap();
     moved
+}
+
+/// The triangles of `mesh` facing along `normal`, as a highlight's.
+fn face(mesh: &RenderMesh, normal: Vec3, emphasis: Emphasis) -> Highlight {
+    let mut highlight = Highlight::default();
+    for triangle in mesh.indices().as_chunks::<3>().0 {
+        let corner = |i: usize| Vec3::from(mesh.positions()[triangle[i] as usize]);
+        let normals = [0, 1, 2].map(|i| Vec3::from(mesh.normals()[triangle[i] as usize]));
+        if normals.iter().all(|n| n.dot(normal) > 0.9) {
+            highlight.triangle(emphasis, [0, 1, 2].map(corner), normals);
+        }
+    }
+    highlight
+}
+
+#[test]
+fn highlight_shows_faces_and_edges_in_front_only() {
+    // From the top, a cube 2 on a side from (2, -1, 0), clear of the
+    // origin's marker: its top shows, its bottom doesn't, and a line
+    // across either face likewise.
+    let mut camera = Camera::default();
+    camera.look_from(View::Top);
+    let mesh = cube(2.0, Vec3::new(2.0, -1.0, 0.0));
+    let render = |highlight| {
+        let extras = Extras {
+            highlight,
+            ..Extras::default()
+        };
+        render_with(&camera, &mesh, extras)
+    };
+    let Some(plain) = render(None) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let (x, y) = on_screen(&camera, Vec3::new(3.0, -0.5, 2.0));
+    let shade = pixel(&plain, x, y);
+    assert!(shade[0].abs_diff(shade[1]) < 8, "{shade:?}");
+
+    let top = render(Some(face(&mesh, Vec3::Z, Emphasis::Hovered))).unwrap();
+    let [r, g, b, _] = pixel(&top, x, y);
+    assert!(
+        g > r.saturating_add(60) && g > b.saturating_add(60),
+        "{r} {g} {b}"
+    );
+    let selected = render(Some(face(&mesh, Vec3::Z, Emphasis::Selected))).unwrap();
+    let [r, g, b, _] = pixel(&selected, x, y);
+    assert!(
+        b > r.saturating_add(60) && b > g.saturating_add(60),
+        "{r} {g} {b}"
+    );
+    // The model's edges still draw over it, where they did: dark pixels
+    // around the cube, the background black.
+    let (left, top_row) = on_screen(&camera, Vec3::new(1.5, 1.5, 2.0));
+    let (right, bottom_row) = on_screen(&camera, Vec3::new(4.5, -1.5, 2.0));
+    let edges = |pixels: &[[u8; 4]]| {
+        let dark = |p: [u8; 4]| (15..80).contains(&p[0]) && p[1] < 80 && p[2] < 80;
+        (left..right)
+            .flat_map(|x| (top_row..bottom_row).map(move |y| (x, y)))
+            .filter(|&(x, y)| dark(pixel(pixels, x, y)))
+            .collect::<Vec<_>>()
+    };
+    assert!(!edges(&plain).is_empty());
+    assert_eq!(edges(&top), edges(&plain));
+    let bottom = render(Some(face(&mesh, -Vec3::Z, Emphasis::Hovered))).unwrap();
+    assert_eq!(pixel(&bottom, x, y), shade);
+
+    for (z, shows) in [(2.0, true), (0.0, false)] {
+        let mut highlight = Highlight::default();
+        let line = vec![Vec3::new(2.0, 0.0, z), Vec3::new(4.0, 0.0, z)];
+        highlight.edge(Emphasis::Hovered, line);
+        let pixels = render(Some(highlight)).unwrap();
+        let (x, y) = on_screen(&camera, Vec3::new(3.0, 0.0, z));
+        let [r, g, b, _] = pixel(&pixels, x, y);
+        let red = r > g.saturating_add(100) && r > b.saturating_add(100);
+        assert_eq!(red, shows, "z {z}: {r} {g} {b}");
+        if !shows {
+            assert_eq!(pixel(&pixels, x, y), pixel(&plain, x, y));
+        }
+    }
 }
 
 #[test]

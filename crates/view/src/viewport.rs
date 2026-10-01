@@ -14,14 +14,15 @@ use iced::widget::{container, stack};
 use iced::{Element, Event, Length, Point, Rectangle, keyboard, mouse};
 use varde_kernel::{RenderLines, RenderMesh};
 use varde_render::{
-    Camera, ClipRect, Colors, Frame, GridPlane, Pivot, PrepareError, Renderer, SketchLayer,
-    SketchScene, Slot, wgpu,
+    Camera, ClipRect, Colors, Frame, GridPlane, Highlight, Pivot, PrepareError, Renderer,
+    SketchLayer, SketchScene, Slot, wgpu,
 };
 
 use crate::anchors::Anchors;
 use crate::chrome::{Hint, chord_hint, mouse_hint};
 use crate::icons::MouseButton;
 use crate::operation_panel::placed;
+use crate::pick::{PickIndex, Picked};
 use crate::shortcut::Held;
 use crate::theme::{Palette, SketchColors};
 use crate::{Look, Message, controls};
@@ -40,19 +41,34 @@ const ZOOM_PER_PIXEL: f32 = 0.995;
 /// camera orbits, rather than an orbit.
 const CLICK_SLOP: f32 = 3.0;
 
+/// Picking the model shown with the cursor, outside sketches and
+/// sessions: the viewport says what's under the cursor as it moves
+/// ([`Look::Hover`]).
+#[derive(Debug, Clone, Copy)]
+pub struct ModelPicking<'a> {
+    /// The model shown, ready for picking.
+    pub index: &'a PickIndex,
+    /// What the app holds hovered, of `index`'s model: the viewport says
+    /// only when that changes.
+    pub hovered: Option<Picked>,
+}
+
 /// The 3D viewport showing `mesh` and the finished `sketches` from
 /// `camera`, with the controls over its top-right corner, and in a sketch
 /// the sketch being edited, with the layer of widgets anchored to it, or
 /// setting up an extrude, its regions and handle, and `panel`, floating
 /// over the viewport's right under the controls, and the tool `rail`
 /// over its left. `pivot`, the point the camera orbits if one was picked,
-/// is marked.
+/// is marked, and `highlight` drawn over the model. With `picking`, the
+/// cursor picks the model.
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn viewport<'a>(
     mesh: &Arc<RenderMesh>,
     sketches: &Arc<RenderLines>,
     camera: &'a Camera,
     pivot: Option<Pivot>,
+    picking: Option<ModelPicking<'a>>,
+    highlight: Option<&Arc<Highlight>>,
     palette: &Palette,
     sketching: Option<Sketching<'a>>,
     extruding: Option<Extruding<'a>>,
@@ -87,7 +103,11 @@ pub(crate) fn viewport<'a>(
             .knobs(camera, mesh)
             .unwrap_or_else(|| iced::widget::Space::new().into())
     });
-    let program = program(mesh, sketches, camera, pivot, palette, sketching, extruding);
+    let program = Program {
+        picking,
+        highlight: highlight.cloned(),
+        ..program(mesh, sketches, camera, pivot, palette, sketching, extruding)
+    };
     let scene = iced::widget::shader(program)
         .width(Length::Fill)
         .height(Length::Fill);
@@ -131,6 +151,8 @@ fn program<'a>(
         },
         sketching,
         extruding,
+        picking: None,
+        highlight: None,
         sketch_colors: palette.sketching,
     }
 }
@@ -143,6 +165,10 @@ struct Program<'a> {
     sketching: Option<Sketching<'a>>,
     /// The extrude being set up, if one is: never with a sketch.
     extruding: Option<Extruding<'a>>,
+    /// Picking the model, if the cursor does.
+    picking: Option<ModelPicking<'a>>,
+    /// Drawn over the model.
+    highlight: Option<Arc<Highlight>>,
     sketch_colors: SketchColors,
 }
 
@@ -265,6 +291,13 @@ impl shader::Program<Message> for Program<'_> {
         {
             return Some(action);
         }
+        if let Some(picking) = &self.picking
+            && state.drag.is_none()
+            && let Event::Mouse(event) = event
+            && let Some(action) = self.hover(picking, *event, bounds, cursor)
+        {
+            return Some(action);
+        }
         let camera = match event {
             // The left button is the sketch's in a sketch, and moving the
             // cursor while the camera isn't dragged.
@@ -325,6 +358,7 @@ impl shader::Program<Message> for Program<'_> {
         Primitive {
             scene: self.scene.clone(),
             sketch: sketch.or(extrude),
+            highlight: self.highlight.clone(),
             slot: state.slot.clone(),
         }
     }
@@ -352,6 +386,28 @@ impl shader::Program<Message> for Program<'_> {
 }
 
 impl Program<'_> {
+    /// Says what the cursor is over in the model as it moves, if that's
+    /// another face or edge than `picking`'s hovered, and nothing once it
+    /// leaves.
+    fn hover(
+        &self,
+        picking: &ModelPicking<'_>,
+        event: mouse::Event,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+    ) -> Option<Action<Message>> {
+        let pick = match event {
+            mouse::Event::CursorMoved { .. } => cursor.position_over(bounds).and_then(|at| {
+                let at = DVec2::new((at.x - bounds.x).into(), (at.y - bounds.y).into());
+                (picking.index).pick(&self.scene.camera, [bounds.width, bounds.height], at)
+            }),
+            mouse::Event::CursorLeft => None,
+            _ => return None,
+        };
+        (pick.map(|pick| pick.target) != picking.hovered)
+            .then(|| Action::publish(Message::Look(Look::Hover(pick))))
+    }
+
     /// Whether a sketch is being edited, where the left button is for its
     /// geometry.
     fn sketching(&self) -> bool {
@@ -452,6 +508,8 @@ struct Primitive {
     scene: Scene,
     /// The sketch being edited, if one is.
     sketch: Option<SketchFrame>,
+    /// Drawn over the model.
+    highlight: Option<Arc<Highlight>>,
     /// The widget's key to its slot in the [`Pipeline`].
     slot: Arc<SlotKey>,
 }
@@ -493,6 +551,7 @@ impl shader::Primitive for Primitive {
                 grid: scene.sketch_plane.unwrap_or(GridPlane::XY),
                 faded: scene.sketch_plane.is_some(),
                 pivot: scene.pivot,
+                highlight: self.highlight.as_ref(),
                 sketch: self.sketch.as_ref().map(|sketch| SketchScene {
                     plane: sketch.plane,
                     depth_tested: sketch.depth_tested,

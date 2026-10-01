@@ -6,8 +6,9 @@ use varde_kernel::{Aabb, RenderLines, RenderMesh};
 use wgpu::util::DeviceExt;
 
 use crate::Camera;
+use crate::highlight::{Highlight, HighlightVertex};
 use crate::scene::{self, GRID_FADE_HEIGHTS, GridPlane};
-use crate::sketch::{FillVertex, LineInstance, PointInstance, SketchLayer, SketchScene};
+use crate::sketch::{FillVertex, LineInstance, PointInstance, SketchLayer, SketchScene, Srgba};
 
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
@@ -74,6 +75,10 @@ pub struct Frame<'a> {
     /// everything but the sketch being edited, unless it shows where the
     /// origin does.
     pub pivot: Option<Pivot>,
+    /// The faces and edges of the model hovered and selected, drawn over
+    /// it, hidden by what's in front of them. Only re-uploaded when it's
+    /// another `Arc` than the last one prepared, or the colours change.
+    pub highlight: Option<&'a Arc<Highlight>>,
     /// Where to draw on the target.
     pub viewport: Viewport,
     /// Size of the whole render target in physical pixels.
@@ -120,6 +125,14 @@ pub struct Colors {
     pub pivot: Srgb,
     /// Finished sketches' curves.
     pub sketch: Srgb,
+    /// The base colours of a hovered and a selected face of
+    /// [`Frame::highlight`], lit as [`Colors::model`] is: the model's
+    /// lightness in another hue, so they still read as 3D.
+    pub hovered_face: Srgb,
+    pub selected_face: Srgb,
+    /// A hovered and a selected edge of [`Frame::highlight`].
+    pub hovered_edge: Srgba,
+    pub selected_edge: Srgba,
     /// How opaque the model's faces and edges are when [`Frame::faded`],
     /// from 0 to 1. Only its nearest faces are drawn, and they still hide
     /// what's behind them from the grid and the sketches.
@@ -341,6 +354,9 @@ pub struct Renderer {
     mesh_depth: wgpu::RenderPipeline,
     mesh_faded: wgpu::RenderPipeline,
     edges: wgpu::RenderPipeline,
+    /// The faces of [`Frame::highlight`]; its edges are drawn as the
+    /// sketch's depth tested lines.
+    highlight: wgpu::RenderPipeline,
     lines: wgpu::RenderPipeline,
     origin: wgpu::RenderPipeline,
     /// The sketch being edited: its fills, lines and points, drawn over
@@ -373,6 +389,12 @@ pub struct Slot {
     sketch_base: SketchBuffers,
     sketch_source: Weak<SketchLayer>,
     sketch_live: SketchBuffers,
+    /// [`Frame::highlight`]'s faces and edges, the `Arc` they were
+    /// uploaded from like `source`, and the colours they were uploaded in.
+    highlight_faces: Instances,
+    highlight_lines: SketchBuffers,
+    highlight_source: Weak<Highlight>,
+    highlight_colors: Option<Colors>,
     /// Whether the frame has a sketch to draw, and whether it's depth
     /// tested.
     sketching: bool,
@@ -521,6 +543,11 @@ impl Renderer {
                 0 => Float32x2, 1 => Uint32, 2 => Float32x4, 3 => Float32,
             ],
         };
+        let highlight_vertices = wgpu::VertexBufferLayout {
+            array_stride: size_of::<HighlightVertex>() as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x4],
+        };
         let mesh = Pass {
             label: "varde mesh",
             vs: "vs_mesh",
@@ -557,6 +584,13 @@ impl Renderer {
                 buffers: &[positions],
                 topology: wgpu::PrimitiveTopology::LineList,
                 ..Pass::overlay("varde edges", "vs_edge", "fs_edge")
+            }),
+            // Over the faces they lie on, pulled towards the camera like
+            // the edges, culled like the model.
+            highlight: pipeline(Pass {
+                buffers: std::slice::from_ref(&highlight_vertices),
+                cull_mode: Some(wgpu::Face::Back),
+                ..Pass::overlay("varde highlight faces", "vs_highlight", "fs_highlight")
             }),
             lines: pipeline(Pass {
                 buffers: &[segments],
@@ -633,6 +667,10 @@ impl Renderer {
             sketch_base: SketchBuffers::default(),
             sketch_source: Weak::new(),
             sketch_live: SketchBuffers::default(),
+            highlight_faces: Instances::default(),
+            highlight_lines: SketchBuffers::default(),
+            highlight_source: Weak::new(),
+            highlight_colors: None,
             sketching: false,
             sketch_depth: false,
             depth: None,
@@ -698,6 +736,8 @@ impl Renderer {
             }
             result = result.and(sketch_result);
         }
+
+        result = result.and(slot.prepare_highlight(device, queue, frame));
 
         // A depth tested sketch is hidden by what's in front of it, and
         // so needs the depth range to cover it.
@@ -833,10 +873,27 @@ impl Renderer {
             }
             pass.draw_indexed(0..mesh.index_count, 0, 0..1);
 
+            // The highlighted faces over the model's, under its edges,
+            // which are pulled as far towards the camera.
+            if let Some(buffer) = slot.highlight_faces.drawn() {
+                pass.set_pipeline(&self.highlight);
+                pass.set_vertex_buffer(0, buffer);
+                pass.draw(0..slot.highlight_faces.count, 0..1);
+            }
+
             if mesh.edge_count > 0 {
                 pass.set_pipeline(&self.edges);
+                // The highlight's faces took slot 0.
+                pass.set_vertex_buffer(0, mesh.positions.slice(..));
                 pass.set_index_buffer(mesh.edges.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..mesh.edge_count, 0, 0..1);
+            }
+
+            // The highlighted edges over the model's.
+            if let Some(buffer) = slot.highlight_lines.lines.drawn() {
+                pass.set_pipeline(&self.sketch_depth_tested.lines);
+                pass.set_vertex_buffer(0, buffer);
+                pass.draw(0..LINE_VERTICES, 0..slot.highlight_lines.lines.count);
             }
         }
 
@@ -867,6 +924,46 @@ impl Renderer {
                 pipelines.draw(&mut pass, layer);
             }
         }
+    }
+}
+
+impl Slot {
+    /// Uploads `frame`'s highlight if it's another than the one uploaded,
+    /// or its colours changed. On failing, holds none.
+    fn prepare_highlight(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        frame: &Frame<'_>,
+    ) -> Result<(), PrepareError> {
+        let Some(highlight) = frame.highlight.filter(|highlight| !highlight.is_empty()) else {
+            self.highlight_source = Weak::new();
+            self.highlight_colors = None;
+            self.highlight_faces.count = 0;
+            self.highlight_lines.lines.count = 0;
+            return Ok(());
+        };
+        let current = std::ptr::eq(self.highlight_source.as_ptr(), Arc::as_ptr(highlight))
+            && self.highlight_colors == Some(frame.colors);
+        if current {
+            return Ok(());
+        }
+        self.highlight_source = Arc::downgrade(highlight);
+        self.highlight_colors = Some(frame.colors);
+        let colors = &frame.colors;
+        let written = (self.highlight_faces)
+            .write(
+                device,
+                queue,
+                "varde highlight faces",
+                &highlight.vertices(colors),
+            )
+            .and_then(|()| (self.highlight_lines).write(device, queue, &highlight.lines(colors)));
+        if written.is_err() {
+            self.highlight_faces.count = 0;
+            self.highlight_lines = SketchBuffers::default();
+        }
+        written
     }
 }
 

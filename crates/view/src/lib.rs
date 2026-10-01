@@ -21,6 +21,7 @@ mod hit;
 mod icons;
 mod operation_panel;
 mod panels;
+mod pick;
 #[cfg(any(test, feature = "probe"))]
 pub mod probe;
 mod projection;
@@ -58,11 +59,13 @@ pub use extrude::{
 };
 pub use icons::LOGO_SVG;
 pub use operation_panel::PANEL_BODY;
+pub use pick::{EDGE_REACH, Pick, PickIndex, Picked};
 pub use rail::{RAIL_LIST, RailLook, RailOpen, RailSpot, rail_rows, rail_sets};
 pub use shortcut::{Binding, DocumentKeys, Held, document_bindings, pressed, welcome_bindings};
 pub use snap::{Inference, Level, SNAP_TOLERANCE, Snap, Target};
 pub use status::{STATUS_BAR_HEIGHT, STATUS_BAR_ROOM};
 pub use theme::{Mode, SIDE_PANEL_WIDTH, theme as iced_theme};
+pub use viewport::ModelPicking;
 pub use welcome::{RecentCard, StoredDesign, WelcomeState, welcome};
 
 /// The text field a dimension's value is typed in, placing it or editing
@@ -263,6 +266,10 @@ pub enum Look {
     /// glyph, or none: the viewport highlights it, or what a constraint
     /// ties together.
     HoverItem(Option<Id>),
+    /// What the cursor is over in the model shown, outside sketches and
+    /// sessions, or nothing: sent as it changes, see [`PickIndex::pick`].
+    /// The viewport highlights it.
+    Hover(Option<Pick>),
     /// Clears the selection: the sketch's in a sketch, else the Timeline's.
     ClearSelection,
     /// Where the drawing tool's next click would snap to, and what to,

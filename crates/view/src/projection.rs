@@ -95,7 +95,14 @@ impl Projector {
     /// passes behind the near plane of a perspective view, unless it's
     /// wholly behind it.
     pub(crate) fn segment(&self, a: DVec2, b: DVec2) -> Option<(DVec2, DVec2)> {
-        let (mut a, mut b) = (self.placement.to_world(a), self.placement.to_world(b));
+        let (a, b) = self.in_front(self.placement.to_world(a), self.placement.to_world(b))?;
+        Some((self.show(a), self.show(b)))
+    }
+
+    /// The part of the world segment from `a` to `b` in front of the near
+    /// plane of a perspective view, all of it in an orthographic one,
+    /// unless it's wholly behind it.
+    pub(crate) fn in_front(&self, mut a: DVec3, mut b: DVec3) -> Option<(DVec3, DVec3)> {
         if self.perspective {
             let (da, db) = (self.view(a).1, self.view(b).1);
             let near = self.near;
@@ -109,11 +116,45 @@ impl Projector {
                 b += (a - b) * ((near - db) / (da - db));
             }
         }
-        let screen = |p| {
-            let (lateral, depth) = self.view(p);
-            self.screen(lateral, depth.max(self.near))
-        };
-        Some((screen(a), screen(b)))
+        Some((a, b))
+    }
+
+    /// Where the world point `p` shows, as if on the near plane of a
+    /// perspective view if it's nearer.
+    pub(crate) fn show(&self, p: DVec3) -> DVec2 {
+        let (lateral, depth) = self.view(p);
+        self.screen(lateral, depth.max(self.near))
+    }
+
+    /// How far in front of the eye the world point `p` is, or of the
+    /// target in an orthographic view: nearer is smaller.
+    pub(crate) fn world_depth(&self, p: DVec3) -> f64 {
+        self.view(p).1
+    }
+
+    /// A pixel's size at `depth` ([`Self::world_depth`]), in world units:
+    /// the same at any depth in an orthographic view.
+    pub(crate) fn pixel_at(&self, depth: f64) -> f64 {
+        if self.perspective {
+            depth.max(self.near) / (self.distance * self.scale)
+        } else {
+            1.0 / self.scale
+        }
+    }
+
+    /// Whether it's a perspective view.
+    pub(crate) fn perspective(&self) -> bool {
+        self.perspective
+    }
+
+    /// How far in front of the eye a perspective view starts.
+    pub(crate) fn near(&self) -> f64 {
+        self.near
+    }
+
+    /// The eye, and the unit vector towards it from the target.
+    pub(crate) fn eye(&self) -> (DVec3, DVec3) {
+        (self.eye, self.backward)
     }
 
     /// The sketch point under the screen position `pixel`, and a pixel's

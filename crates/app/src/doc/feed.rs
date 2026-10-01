@@ -1,14 +1,15 @@
 //! The model shown for a document, its mesh and its finished sketches' lines,
 //! fed by the regeneration side.
 
+use std::cell::OnceCell;
 use std::sync::Arc;
 
 use varde_document::{
     BodyId, Document, Editor, Extrude, FeatureId, FeatureKind, Generation, Operation,
 };
 use varde_kernel::{RenderLines, RenderMesh};
-use varde_regen::{Draft, Drafted, Request, Response, Transport};
-use varde_view::MeshStatus;
+use varde_regen::{Draft, Drafted, Picking, Request, Response, Transport};
+use varde_view::{MeshStatus, PickIndex};
 
 /// The mesh and sketch lines shown for the document. They're built by the
 /// regeneration side, so they may lag behind the editor: the last ones stay
@@ -22,6 +23,13 @@ pub(crate) struct MeshFeed {
     /// [`Varde::regen_lane`]: crate::Varde::regen_lane
     regen: Option<Box<dyn Transport<Request>>>,
     mesh: Arc<RenderMesh>,
+    /// Which face and edge each triangle and edge of `mesh` draws.
+    picking: Arc<Picking>,
+    /// Counts the models shown, up as `mesh` or `picking` changes: what
+    /// picks name the model by ([`varde_view::Pick::model`]).
+    model: u64,
+    /// `mesh` and `picking` made ready for picking, once it's asked for.
+    index: OnceCell<PickIndex>,
     /// The visible sketches' curves, of the same generation as `mesh`.
     sketches: Arc<RenderLines>,
     /// The sketches that don't solve, of the same generation as `mesh`.
@@ -203,6 +211,7 @@ impl MeshFeed {
         match response {
             Response::Regenerated {
                 mesh,
+                picking,
                 sketches,
                 unsolved,
                 failed,
@@ -212,8 +221,15 @@ impl MeshFeed {
                 bodies,
                 ..
             } => {
+                // The lane hands an unchanged model back as the same
+                // `Arc`s, natively: its index stays.
+                if !(Arc::ptr_eq(&self.mesh, &mesh) && Arc::ptr_eq(&self.picking, &picking)) {
+                    self.model = self.model.wrapping_add(1);
+                    self.index = OnceCell::new();
+                }
                 self.mesh = mesh;
                 self.solid_bodies = bodies.into_iter().map(|(body, _)| body).collect();
+                self.picking = picking;
                 self.sketches = sketches;
                 self.unsolved = unsolved;
                 self.failed_features = failed;
@@ -365,6 +381,18 @@ impl MeshFeed {
 
     pub(crate) fn mesh(&self) -> &Arc<RenderMesh> {
         &self.mesh
+    }
+
+    /// Counts the models shown: see [`varde_view::Pick::model`].
+    pub(crate) fn model(&self) -> u64 {
+        self.model
+    }
+
+    /// The model shown made ready for picking, built the first time it's
+    /// asked for.
+    pub(crate) fn pick_index(&self) -> &PickIndex {
+        self.index
+            .get_or_init(|| PickIndex::new(self.mesh.clone(), self.picking.clone(), self.model))
     }
 
     pub(crate) fn sketches(&self) -> &Arc<RenderLines> {

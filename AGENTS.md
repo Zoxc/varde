@@ -89,8 +89,9 @@ debugger, add `--config 'profile.dev.debug="full"'`.
 Crates in `crates/`, dependencies only pointing down:
 `binary`/`web` → `app` → `view` → `render` → `kernel`; `document` → `kernel`,
 `sketch`; `regen`, `solve` and `io` → `document` + `lane` (`solve` also
-`sketch`, `io` also `kernel` for 3MF export). `kernel`, `sketch`, `document`, `lane`, `regen`, `solve`, `io` have
-no UI code; `render` has no iced dependency.
+`sketch`, `io` also `kernel` for 3MF export); `view` also → `regen`, for the
+picking tables. `kernel`, `sketch`, `document`, `lane`, `regen`, `solve`, `io`
+have no UI code; `render` has no iced dependency.
 
 - **State and update**: all app state lives in `varde-app` and is mutated only
   in iced's `update` on the UI thread. `document::Editor` applies `Command`s and

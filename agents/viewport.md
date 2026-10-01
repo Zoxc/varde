@@ -410,8 +410,67 @@ indices moved on (checked). A `Picking` always goes with its mesh (one
 face per triangle, one chain or none per edge, indices within the tables,
 each chain between two different faces of one body, summaries finite,
 within `Picking::MAX_VALUE`, their directions unit vectors): the fields
-are private and `Picking::from_parts` checks parts from elsewhere. The
-app doesn't use them yet; the viewport's picking will.
+are private and `Picking::from_parts` checks parts from elsewhere.
+
+**Picking the model** (`view/src/pick.rs`, the app's `doc/pick.rs`) is on
+the CPU, against the mesh drawn and its tables; no GPU id buffer (WebGL2
+readback stalls or is a frame late). The feed keeps the answer's
+`Picking` with its mesh and counts the models shown (`MeshFeed::model`,
+up whenever the mesh's or the tables' `Arc` changes; natively an
+unchanged scene comes back as the same `Arc`s and keeps its index). A
+`PickIndex` (the mesh, the tables, the model's count, a bounding volume
+hierarchy over the triangles and one over the edges on a chain, each
+face's triangles and each chain's edges) is built the first time it's
+asked for (`MeshFeed::pick_index`, a `OnceCell`), sequentially (median
+splits along the longest side, ties by index, so the same mesh gives
+the same tree), and dropped with the model. Tables that don't go with
+the mesh pick nothing. `PickIndex::pick(camera, size, at)` casts the
+cursor's ray (`Projector::ray`; in an orthographic view from far enough
+back that the whole mesh is ahead, in perspective from the near plane):
+the nearest triangle names the face. A feature edge wins over it if a
+segment of it shows within `EDGE_REACH` (6) pixels of the cursor and
+isn't hidden: the candidates, found through the edge tree with each
+node's box grown by 6 pixels at its deepest, are cut at the near plane,
+measured on screen, sorted by distance, depth and index, and the first
+of at most 64 whose point showing nearest the cursor (found back in the
+world with the perspective divide undone) no triangle hides wins:
+hidden means the ray from the eye to it meets a triangle nearer by more
+than 0.002 view heights (what the renderer pulls edges by) and the
+mesh's `f32` rounding. So an edge either side of a face shows, and one
+behind the plate isn't picked. The `Pick` carries the model's count,
+the target (`Picked::Face` or `Picked::Edge`, indices into the tables),
+the body (the face's, or the chain's first face's) and the point (the
+ray's hit, or the edge's point).
+
+Outside sketches and the extrude session (`Doc::picks`; they pick what
+they need themselves) the viewport is given `ModelPicking` (the index
+and the target the app holds hovered): on each cursor move while the
+camera isn't dragged it picks, and only when the target differs from
+the app's sends `Look::Hover(pick)`, and `Hover(None)` once the cursor
+leaves the model or the viewport. The app keeps the hover (`doc/pick.rs`)
+and its highlight, built only when the target changes, so moving over
+one face rebuilds and uploads nothing; a hover names nothing else
+(no document change, no request, no selection). A pick of a model no
+longer shown (its count differs) is dropped, and the hover is dropped
+once the model changes or the cursor stops picking (`Doc::prune_hover`,
+after answers, edits and looks). Clicking, selection and tangent chains
+come next; `Doc::hover`'s pick (`Hover::pick`) is what a click takes.
+
+The **highlight** (`render::Highlight`, `Frame::highlight`, keyed by its
+`Arc` and the colours) is the faces' triangles, copied from the mesh
+with their normals by `PickIndex::highlight`, and the chains' segments
+joined end to end by their ends' bits into polylines, each with an
+`Emphasis`, hovered or selected. Faces are drawn after the model and
+before its edges, lit as the model is but in `Colors::hovered_face` or
+`selected_face` (the mock's hues, hsl 110 and 188, at the model's
+lightness: light #cde4c8 and #b9e3e9, dark #8ab582 and #72bac5), culled
+like the model, their depth pulled towards the camera as the sketch's
+depth tested layers are (`overlay_depth`), so the face they lie on
+doesn't hide them and what's in front does. Edges are drawn after the
+model's edges as the sketch's depth tested lines in the world
+(`SketchLayer::world_polyline`), `HIGHLIGHT_WIDTH` (3) pixels wide, in
+`hovered_edge` (the mock's highlight line: light #9dd488, dark #76cc60 at
+half opacity) or `selected_edge` (the accent).
 
 Natively each open document has a regeneration thread (`regen::lane`),
 started by an iced subscription keyed by the document's id. The
@@ -498,7 +557,7 @@ makes its own wgpu instance, under a lock, so run them one at a time:
 VARDE_SHOTS=$PWD/target/shots cargo test -p varde-app shots_ -- --ignored --test-threads=1
 ```
 
-Scenarios (`shots_01` .. `shots_17`, each at 1280×800, scale 1, light,
+Scenarios (`shots_01` .. `shots_18`, each at 1280×800, scale 1, light,
 the busiest also at scale 2 and dark): `E` with every candidate's regions
 (and one hovered); a region picked before and after its answer; flip,
 symmetric, two sides, a refused distance and a draft the document
@@ -518,7 +577,10 @@ showing the merged one "in Body 1" (hovered, dark) and the join's panel
 saying which body it joins into; the pivot's marker on a corner of the
 plate, panned to the middle and orbited about, whole, half faded and
 on the origin; the tool rail outside a sketch and in one, with a list
-open, a tool's tooltip, and a list scrolled in a short window. Shots
+open, a tool's tooltip, and a list scrolled in a short window; a face
+and an edge of the plate hovered (`shots_18`, light, dark, scale 2, and
+from below; the scenario applies the `Look::Hover` the cursor's move
+sends, `Shooter::hover`). Shots
 are for looking (pixels differ by GPU and driver), never compared and
 never committed: a fault a shot finds gets an ordinary headless test of
 the state or layout behind it. A scenario answers each regeneration it

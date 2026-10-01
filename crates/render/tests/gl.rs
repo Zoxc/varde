@@ -30,6 +30,11 @@ const COLORS: Colors = Colors {
     pivot: Srgb([0.04, 0.58, 0.68]),
     sketch: Srgb([1.0, 1.0, 0.0]),
     faded_alpha: 0.3,
+    // Pure green and pure blue faces, pure red and pure cyan edges.
+    hovered_face: Srgb([0.0, 1.0, 0.0]),
+    selected_face: Srgb([0.0, 0.0, 1.0]),
+    hovered_edge: Srgba([1.0, 0.0, 0.0, 1.0]),
+    selected_edge: Srgba([0.0, 1.0, 1.0, 1.0]),
 };
 
 /// A device on the GL backend, if there's an adapter for it.
@@ -154,6 +159,7 @@ fn a_depth_tested_sketch_is_hidden_by_the_model_on_gl() {
                 live: &live,
             }),
             pivot: None,
+            highlight: None,
             viewport: Viewport {
                 x: 0.0,
                 y: 0.0,

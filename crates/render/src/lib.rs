@@ -6,11 +6,13 @@
 //! or a headless test.
 
 mod camera;
+mod highlight;
 mod renderer;
 mod scene;
 mod sketch;
 
 pub use camera::{Camera, Projection, View};
+pub use highlight::{Emphasis, HIGHLIGHT_WIDTH, Highlight};
 pub use renderer::{
     ClipRect, Colors, Frame, LINE_WIDTH, Pivot, PrepareError, Renderer, Slot, Srgb, Viewport,
 };

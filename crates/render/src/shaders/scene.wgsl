@@ -257,20 +257,57 @@ fn vs_mesh(in: MeshIn) -> MeshOut {
     return out;
 }
 
-@fragment
-fn fs_mesh(in: MeshOut) -> @location(0) vec4<f32> {
-    let n = normalize(in.normal);
+// `base` lit where the surface's normal is `normal`: bright, low contrast
+// shading.
+fn lit(base: vec3<f32>, normal: vec3<f32>) -> vec3<f32> {
+    let n = normalize(normal);
     let view = u.backward.xyz;
     let key = normalize(vec3<f32>(0.4, -0.6, 1.0));
 
-    // Bright, low contrast shading.
-    let base = u.model.rgb;
     let ambient = mix(vec3<f32>(0.42, 0.42, 0.44), vec3<f32>(0.55, 0.57, 0.60), n.z * 0.5 + 0.5);
     let diffuse = max(dot(n, key), 0.0) * 0.30 + max(dot(n, view), 0.0) * 0.25;
     let spec = pow(max(dot(n, normalize(key + view)), 0.0), 32.0) * 0.15;
+    return base * (ambient + diffuse) + spec;
+}
 
+@fragment
+fn fs_mesh(in: MeshOut) -> @location(0) vec4<f32> {
     // Less than opaque when faded, blended over the background.
-    return output(vec4<f32>(base * (ambient + diffuse) + spec, u.model.a));
+    return output(vec4<f32>(lit(u.model.rgb, in.normal), u.model.a));
+}
+
+// --- Highlight ---
+//
+// The hovered and selected faces: the model's triangles again, lit the
+// same in another colour, their depth pulled towards the camera like the
+// sketch's depth tested layers, so the face they lie on doesn't hide them
+// and what's in front of it does. Their edges are drawn as the sketch's
+// depth tested lines, in the world.
+
+struct HighlightOut {
+    @builtin(position) position: vec4<f32>,
+    @location(0) normal: vec3<f32>,
+    @location(1) color: vec4<f32>,
+};
+
+@vertex
+fn vs_highlight(
+    @location(0) position: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) color: vec4<f32>,
+) -> HighlightOut {
+    var out: HighlightOut;
+    let clip = u.view_proj * vec4<f32>(position, 1.0);
+    // Behind the eye it's clipped whatever its depth.
+    out.position = vec4<f32>(clip.xy, overlay_depth(position) * clip.w, clip.w);
+    out.normal = normal;
+    out.color = color;
+    return out;
+}
+
+@fragment
+fn fs_highlight(in: HighlightOut) -> @location(0) vec4<f32> {
+    return output(vec4<f32>(lit(in.color.rgb, in.normal), in.color.a));
 }
 
 // --- Feature edges ---

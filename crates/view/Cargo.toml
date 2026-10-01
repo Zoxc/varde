@@ -11,6 +11,8 @@ varde-sketch.workspace = true
 varde-expr.workspace = true
 varde-render.workspace = true
 varde-kernel.workspace = true
+# The picking tables of the model shown, which the viewport picks with.
+varde-regen.workspace = true
 iced.workspace = true
 glam.workspace = true
 log.workspace = true

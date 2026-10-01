@@ -45,6 +45,11 @@ pub struct DocumentState<'a> {
     pub sketches: &'a Arc<RenderLines>,
     /// How `mesh` and `sketches` stand against the document.
     pub mesh_status: MeshStatus<'a>,
+    /// Picking `mesh` with the cursor, if the cursor does: outside
+    /// sketches and sessions.
+    pub picking: Option<crate::ModelPicking<'a>>,
+    /// What's hovered and selected in `mesh`, drawn over it, if anything.
+    pub highlight: Option<&'a Arc<varde_render::Highlight>>,
     /// The document name, without extension.
     pub name: &'a str,
     /// Whether there are unsaved changes.
@@ -540,6 +545,8 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
                         state.sketches,
                         state.camera,
                         state.pivot,
+                        state.picking,
+                        state.highlight,
                         state.mode.palette(),
                         state
                             .sketch

@@ -10,7 +10,7 @@ use iced::widget::{button, checkbox, container, rule, scrollable, text};
 use iced::{
     Background, Border, Color, Font, Gradient, Radians, Shadow, Theme, Vector, border, color, font,
 };
-use varde_render::{Colors, Srgb};
+use varde_render::{Colors, Srgb, Srgba};
 
 /// Whether the UI is light or dark.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -133,6 +133,11 @@ const FADED_ALPHA: f32 = 0.3;
 /// `color` for the renderer, which takes no alpha.
 const fn srgb(color: Color) -> Srgb {
     Srgb([color.r, color.g, color.b])
+}
+
+/// `color` with its alpha, for the renderer.
+const fn srgba(color: Color) -> Srgba {
+    Srgba([color.r, color.g, color.b, color.a])
 }
 
 /// `color` with the opacity `a`.
@@ -314,6 +319,13 @@ const LIGHT: Palette = Palette {
         // The accent.
         pivot: srgb(color!(0x0a95ad)),
         sketch: srgb(LIGHT_SKETCH),
+        // The mock's hover and selection hues, hsl(110 34% 84%) and
+        // hsl(188 52% 82%), at the model's lightness; edges in the
+        // highlight's line and the accent.
+        hovered_face: srgb(color!(0xcde4c8)),
+        selected_face: srgb(color!(0xb9e3e9)),
+        hovered_edge: srgba(color!(0x9dd488)),
+        selected_edge: srgba(color!(0x0a95ad)),
         faded_alpha: FADED_ALPHA,
     },
     icons: LIGHT_ICONS,
@@ -372,6 +384,11 @@ const DARK: Palette = Palette {
         // The accent.
         pivot: srgb(color!(0x39b9cf)),
         sketch: srgb(DARK_SKETCH),
+        // hsl(110 26% 61%) and hsl(188 42% 61%), as in the light palette.
+        hovered_face: srgb(color!(0x8ab582)),
+        selected_face: srgb(color!(0x72bac5)),
+        hovered_edge: srgba(color!(0x76cc60, 0.5)),
+        selected_edge: srgba(color!(0x39b9cf)),
         faded_alpha: FADED_ALPHA,
     },
     icons: DARK_ICONS,

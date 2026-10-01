@@ -944,3 +944,75 @@ fn shots_17_rail() {
         );
     });
 }
+
+impl Shooter {
+    /// Moves the cursor to `at` over `doc`'s screen in the app's window,
+    /// and takes what the viewport says it hovers: the target hovered, if
+    /// anything.
+    fn hover(&mut self, doc: &mut Doc, at: Point) -> Option<varde_view::Picked> {
+        use iced::mouse::{Cursor, Event};
+        let mut ui: Headless<'_> = shown(
+            doc.view(false, Mode::Light, true),
+            WINDOW,
+            &mut self.renderer,
+        );
+        let mut sent = Vec::new();
+        let _ = ui.update(
+            &[iced::Event::Mouse(Event::CursorMoved { position: at })],
+            Cursor::Available(at),
+            &mut self.renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut sent,
+        );
+        drop(ui);
+        for message in sent {
+            if let varde_view::Message::Look(look @ Look::Hover(_)) = message {
+                doc.look(look);
+            }
+        }
+        doc.hover.pick().map(|pick| pick.target)
+    }
+}
+
+/// Scenario 18: picking the model, a face hovered and an edge hovered,
+/// light and dark.
+#[test]
+#[ignore = "writes screenshots, see the module"]
+fn shots_18_hover() {
+    shooting(|camera| {
+        let (mut doc, _requests) = example();
+        framed(&mut doc);
+        let face = Point::new(WINDOW.width * 0.66, WINDOW.height * 0.5);
+        let hovered = camera.hover(&mut doc, face);
+        assert!(
+            matches!(hovered, Some(varde_view::Picked::Face(_))),
+            "{hovered:?}"
+        );
+        let shot = Shot::new().pointer(Pointer::At(face));
+        camera.take(&doc, "18-hover-face", shot);
+        camera.take(&doc, "18-hover-face-dark", shot.dark());
+        camera.take(&doc, "18-hover-face-scale2", shot.scale(2.0));
+        // Down from there to the first edge.
+        let edge = (0..300)
+            .map(|dy| Point::new(face.x, face.y + dy as f32))
+            .find(|&at| {
+                matches!(
+                    camera.hover(&mut doc, at),
+                    Some(varde_view::Picked::Edge(_))
+                )
+            })
+            .expect("an edge below");
+        let shot = Shot::new().pointer(Pointer::At(edge));
+        camera.take(&doc, "18-hover-edge", shot);
+        camera.take(&doc, "18-hover-edge-dark", shot.dark());
+        // From below, the bottom face.
+        from_below(&mut doc);
+        let below = Point::new(WINDOW.width * 0.6, WINDOW.height * 0.45);
+        camera.hover(&mut doc, below);
+        camera.take(
+            &doc,
+            "18-hover-below",
+            Shot::new().pointer(Pointer::At(below)),
+        );
+    });
+}

@@ -31,6 +31,11 @@ const COLORS: Colors = Colors {
     pivot: Srgb([0.04, 0.58, 0.68]),
     sketch: Srgb([0.04, 0.58, 0.68]),
     faded_alpha: 0.3,
+    // Pure green and pure blue faces, pure red and pure cyan edges.
+    hovered_face: Srgb([0.0, 1.0, 0.0]),
+    selected_face: Srgb([0.0, 0.0, 1.0]),
+    hovered_edge: Srgba([1.0, 0.0, 0.0, 1.0]),
+    selected_edge: Srgba([0.0, 1.0, 1.0, 1.0]),
 };
 
 /// The device the tests share, whose buffers hold at most 512 bytes, if
@@ -89,6 +94,7 @@ fn mesh_past_the_buffer_limit_is_skipped() {
         faded: false,
         sketch: None,
         pivot: None,
+        highlight: None,
         viewport: Viewport {
             x: 0.0,
             y: 0.0,
@@ -146,6 +152,7 @@ fn lines_past_the_buffer_limit_are_skipped() {
         faded: false,
         sketch: None,
         pivot: None,
+        highlight: None,
         viewport: Viewport {
             x: 0.0,
             y: 0.0,
@@ -221,6 +228,7 @@ fn sketch_layers_past_the_buffer_limit_are_skipped() {
             live,
         }),
         pivot: None,
+        highlight: None,
         viewport: Viewport {
             x: 0.0,
             y: 0.0,

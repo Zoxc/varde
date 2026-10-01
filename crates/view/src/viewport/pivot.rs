@@ -8,7 +8,8 @@ use varde_document::{OriginPlane, Placement, Plane};
 use varde_kernel::RenderMesh;
 use varde_render::{Camera, GRID_FADE_HEIGHTS, Projection};
 
-use super::extrude::{ray_hits, through_box};
+use super::extrude::through_box;
+use crate::pick::ray_hits;
 use crate::projection::Projector;
 
 /// What a middle click at `at`, in logical pixels from the top left of a
