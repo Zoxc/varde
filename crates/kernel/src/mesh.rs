@@ -54,7 +54,7 @@ pub use bvh::Bvh;
 pub use check::CheckError;
 pub(crate) use check::{off_surface, samples};
 pub use face::{Face, FaceName, FacePart, Quadric, Surface};
-pub(crate) use hull::{apart, straight};
+pub(crate) use hull::{apart, flat, straight};
 pub(crate) use refine::{Node, Refiner};
 pub(crate) use repair::MIN_SPLIT;
 

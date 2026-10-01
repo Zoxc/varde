@@ -1,7 +1,8 @@
 //! Whether two operands' surfaces come within a distance of each other:
 //! their patches split until each pair's control hulls are apart, or both
 //! pieces are flat. What [`touches`](super::touches) asks of curved
-//! operands whose counting shows no crossing and no vertex inside.
+//! operands whose counting shows no crossing and no vertex inside
+//! ([`touching`]).
 //!
 //! The search ([`search`]) runs depth first over pairs of pieces, from
 //! the broad phase's pairs of patches in order, and a visit decides each
@@ -17,27 +18,33 @@
 //! control points (its weights are positive, which `check` sees to), and
 //! so does each of its pieces. So surfaces within the distance `d` are
 //! never dropped, and a `false` means every point of one is more than `d`
-//! from every point of the other. A `true` means two pieces' hulls come
-//! within `d`, and each piece is flat within `d/4`: its control points
-//! within `d/4` of its corners' plane and its edges' control points
-//! within `d/4` of their chords, so every point of its hull is within
-//! about `d/2` of the piece (the piece covers its corners' triangle, give
-//! or take `d/4`, and the hull holds little more where the edges' control
-//! points lie between their ends, as on pieces of smooth patches). So the
-//! surfaces come within about `2d`. Pieces stop at a size floor too
-//! ([`MIN_SPLIT`] times `d` across), where the bound is the floor piece's
-//! sag instead: that takes surfaces curving tighter than some hundreds of
-//! `d`. A `true` further than `2d` is only ever a pair kept that needn't
-//! have been, never a contact missed.
+//! from every point of the other, up to the splits' rounding (a few ulps
+//! of the coordinates a split, which nears `d` only at the finest
+//! tolerance some `1e5` from the origin). A `true` means two pieces'
+//! hulls come within `d`, and each piece is flat within `d/4`: its
+//! control points within `d/4` of its corners' plane and its edges'
+//! control points within `d/4` of their chords. Then every point of its
+//! hull is within `d/√2` of the piece: within `d/2` along the plane's
+//! normal (both lie within `d/4` of the plane), and within `d/2` across
+//! it, as the piece covers its corners' triangle but for a band `d/4`
+//! wide along its sides, whose curves lie within `d/4` of them (where
+//! the edges' control points lie between their ends, as on pieces of
+//! smooth patches). So the surfaces come within `(1 + √2)·d`, about
+//! `2.4d`. Pieces stop at a size floor too ([`MIN_SPLIT`] times `d`
+//! across), where the bound is the floor piece's sag instead: that takes
+//! surfaces curving tighter than some hundreds of `d`. A `true` further
+//! than `d` is only ever a pair kept that needn't have been, never a
+//! contact missed.
 //!
 //! Every visit is charged ([`NEAR_WORK`]), sequentially, so the answer
 //! and the work spent are the same at any thread count. No trig.
 
 use super::input::{Input, planar};
-use crate::KernelError;
+use super::pairs;
 use crate::budget::Work;
-use crate::mesh::{MIN_SPLIT, apart, straight};
+use crate::mesh::{MIN_SPLIT, apart, flat};
 use crate::patch::Patch;
+use crate::{KernelError, Tolerance};
 
 /// The work of one visit, in units of about half a microsecond: a GJK
 /// test of two six-point hulls, two flatness tests and a share of the
@@ -133,15 +140,32 @@ pub(crate) fn settled(patch: &Patch, within: f64, floor: f64) -> bool {
     if (b.max - b.min).max_element() <= floor {
         return true;
     }
-    let margin = within / 4.0;
-    planar(patch, margin)
-        && (0..3).all(|i| straight(patch.p[i], patch.c[i], patch.p[(i + 1) % 3], margin))
+    planar(patch, within / 4.0) && flat(patch, within / 4.0)
+}
+
+/// Whether `a` and `b`, one of them with curved patches, touch or
+/// overlap, for [`touches`](super::touches): one counting
+/// ([`pairs::counted`], what [`pairs::refined`] counts first), `true`
+/// where it shows an edge through a face or a vertex inside, else
+/// whether their surfaces come within the resolution ([`near`]) in the
+/// broad phase's pairs, whose margin is the resolution too.
+pub(super) fn touching(
+    a: &Input,
+    b: &Input,
+    tol: &Tolerance,
+    work: &mut Work,
+) -> Result<bool, KernelError> {
+    let counts = pairs::counted(a, b, true, tol, work)?;
+    if counts.meet() {
+        return Ok(true);
+    }
+    near(a, b, &counts.pairs, tol.resolution(), work)
 }
 
 /// Whether the surfaces of `a` and `b` come within `within` of each other
 /// anywhere in the pairs of triangles `pairs` (the broad phase's, whose
 /// boxes come within `within`): `false` only if they don't, `true` only
-/// if they come within about twice it (see the [module](self) docs).
+/// if they come within about 2.4 times it (see the [module](self) docs).
 /// Pieces stop at [`MIN_SPLIT`] times `within` across.
 pub(super) fn near(
     a: &Input,

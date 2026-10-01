@@ -1582,7 +1582,8 @@ b, tol, budget)` whether two solids meet, running only the broad phase
 and one counting, with curved patches followed by a search for surfaces
 within the resolution where the counting shows nothing (see "Touches"),
 and nothing, answering false, for solids whose boxes are more than the
-resolution apart, so asking it of far bodies is cheap. They follow Manifold's `boolean3.cpp` and
+resolution apart, so asking it of far bodies is cheap. They follow
+Manifold's `boolean3.cpp` and
 `boolean_result.cpp`: every topological fact comes from a few
 primitives, each worked out once and stored by the pair it is about,
 through identities that hold whatever values the primitives take, so the
@@ -2236,8 +2237,9 @@ counted again exactly where the ties don't fit together) and its
 it is one counting, `pairs::counted`, the very call `refined` makes each
 round, so it is `refined`'s first round to the bit, and `true` on
 `meet()`; otherwise a search for surfaces within the resolution `r`
-over the broad phase's pairs (`near::near`), whose answer it gives. No
-refinement, no Newton and no fallback.
+over the broad phase's pairs, whose margin is `r` too (`near::near`),
+whose answer it gives (both in `near::touching`). No refinement, no
+Newton and no fallback.
 
 Refinement isn't needed to tell whether two solids meet: it joins
 crossing ends into arcs and finds loops no edge crossing shows, and a
@@ -2263,25 +2265,29 @@ at any thread count and on wasm (no trig). A visit drops the pair, stops
 the search or splits one piece or both. `near`'s visit drops a pair
 whose control hulls are more than `r` apart (`mesh::apart`, GJK), stops
 on a pair both `settled` (flat within `r/4`: control points within
-`r/4` of the corners' plane and each edge's control point within `r/4`
-of its chord; or no larger than `MIN_SPLIT·r` across), and splits the
-pieces that aren't.
+`r/4` of the corners' plane, `input::planar`, and each edge's control
+point within `r/4` of its chord, `mesh::flat`; or no larger than
+`MIN_SPLIT·r` across), and splits the pieces that aren't.
 
 Why it holds: a patch and its pieces lie in their control hulls
 (positive weights), so surfaces within `r` are never dropped, and
-`false` means they are more than `r` apart everywhere; with the counting
+`false` means they are more than `r` apart everywhere (up to the splits'
+rounding, a few ulps of the coordinates a split, which nears `r` only at
+the finest tolerance some `1e5` from the origin); with the counting
 showing no crossing and no vertex inside, neither solid is inside the
 other, so they don't meet. A `true` means two flat pieces' hulls come
-within `r`, and a flat piece's hull is within about `r/2` of the piece
-(the piece covers its corners' triangle give or take `r/4`), so the
-surfaces come within about `2r`; floor pieces only happen on surfaces
-curving tighter than some hundreds of `r`. So curved solids within
-about the resolution touch, where flat ones touch only within the tie
-distance (`r/64`), which is below anything a user can place. `touches`
-only picks what an operation works on (regen's targets), and every
-boolean decides for itself, so a `true` within `2r` can't make a wrong
-solid; at worst a body that grazes the tool is a target whose boolean
-fails or is a no-op.
+within `r`, and a flat piece's hull is within `r/√2` of the piece
+(`r/2` along the normal, both within `r/4` of the corners' plane, and
+`r/2` across it, the piece covering its corners' triangle but for a
+band `r/4` wide along its sides), so the surfaces come within
+`(1 + √2)·r`, about `2.4r`; floor pieces only happen on surfaces
+curving tighter than some hundreds of `r`. So curved solids within the
+resolution touch, and up to about `2.4r` apart may, where flat ones
+touch only within the tie distance (`r/64`), which is below anything a
+user can place. `touches` only picks what an operation works on
+(regen's targets), and every boolean decides for itself, so a `true`
+can't make a wrong solid; at worst a body that grazes the tool is a
+target whose boolean fails or is a no-op.
 
 The search is written for a minimum distance to reuse: the same stack
 of pairs, with a visit that drops the pairs whose hulls are further
@@ -2296,7 +2302,13 @@ visits, the same for 2 and 100 long ones), 12 to 45 ms for a pin off a
 hole's wall (51 000 to 174 000), and under 6 ms at the coarsest
 tolerance. The near-miss band (surfaces just over `r` apart along a
 long line) is the dear case, bounded by the line's length over
-`√(2Rr)` pieces, and charged: a hostile one runs out.
+`√(2Rr)` pieces, and charged: a hostile one runs out. At the finest
+tolerance cylinders of radius 1 side by side cost 341 000 visits (about
+0.13 s) at gaps of `2.3r` and more, and up to 2.6 million (about 1 s,
+over half the default budget) at `1.2r`, where every pair must split
+until its hulls clear `r`; the pin off a hole's wall 0.9 to 2.2
+million. Such gaps can't come from rounding a tangency (far below
+`r`), only from placing the tool `1e-8` off.
 
 ### Cutting curved faces (`boolean/chain.rs`, `boolean/surface.rs`, `boolean/assemble/`)
 
@@ -3493,8 +3505,8 @@ to 72 of its 96 operations and left the others as they were.
   terms: edges stacked along `UP` 10 to 125 tie distances apart, `1e3`
   to `1e6` from the origin, are decided as touching (near it, up to
   8), still within the resolution.
-- `touches` takes curved solids within about the resolution (up to about
-  twice it) as touching, flat ones within the tie distance. A tangency
+- `touches` takes curved solids within the resolution (and up to about
+  2.4 times it) as touching, flat ones within the tie distance. A tangency
   along a line now touches, and the boolean it leads to is where line
   contacts are decided (a union touching along a line isn't a manifold
   and is refused; parallel walls with no certificate still refine,
@@ -3715,7 +3727,9 @@ body, and the later ones still run.
   line on the circles' seam at the coarsest tolerance) and otherwise
   fails naming the body ("cutting it from Body 1 can't be worked
   out…", "…leaves a face that can't be made…", "…is too complex…"),
-  changing nothing. The excluded bodies' touch and boolean results
+  changing nothing. So a tool that meets one body and grazes another
+  along a line fails as a whole (it used to skip the grazed body) until
+  that body is taken out. The excluded bodies' touch and boolean results
   are marked used (`Cache::keep`), so the budget evicts them last, for
   putting them back. Each target is replaced by
   `kernel::boolean(body, tool, op)` with `Union`, `Difference` or

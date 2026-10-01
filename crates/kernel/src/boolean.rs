@@ -328,14 +328,14 @@ fn flat_decided(
 ///
 /// With curved patches, a counting that shows no crossing and no vertex
 /// inside is followed by a search for surfaces within the resolution
-/// (`near::near`): that finds what no edge crossing shows, a tangency
-/// along a line (cylinders side by side, a pin against a hole's wall) or
-/// a loop cut inside one patch. So curved solids within about the
-/// resolution of each other touch (within about twice it: the search
-/// keeps a pair while two flat pieces' hulls come within it), where flat
-/// ones touch only within the tie distance; the difference is below
-/// anything a user can place. It only picks what an operation works on:
-/// every [`boolean`] decides for itself.
+/// (`near::touching`): that finds what no edge crossing shows, a
+/// tangency along a line (cylinders side by side, a pin against a hole's
+/// wall) or a loop cut inside one patch. So curved solids within the
+/// resolution of each other touch, and those up to about 2.4 times it
+/// apart may (the search stops on two flat pieces whose hulls come
+/// within it), where flat ones touch only within the tie distance; the
+/// difference is below anything a user can place. It only picks what an
+/// operation works on: every [`boolean`] decides for itself.
 pub fn touches(
     a: &Solid,
     b: &Solid,
@@ -352,11 +352,7 @@ pub fn touches(
     let mut work = Work::new(budget);
     let (ia, ib) = (Input::new(a.mesh(), tol), Input::new(b.mesh(), tol));
     if ia.curved || ib.curved {
-        let counts = pairs::counted(&ia, &ib, true, tol, &mut work)?;
-        if counts.meet() {
-            return Ok(true);
-        }
-        return near::near(&ia, &ib, &counts.pairs, gap, &mut work);
+        return near::touching(&ia, &ib, tol, &mut work);
     }
     // Counted again exactly where the near ties don't fit together, as
     // the operation does ([`flat_soup`]).

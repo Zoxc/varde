@@ -6,7 +6,7 @@
 use glam::{DVec2, DVec3};
 
 use super::*;
-use crate::boolean::pairs::{self, tests::poke, tests::reach};
+use crate::boolean::pairs::tests::{poke, reach};
 use crate::budget::Budget;
 use crate::mesh::tests::TOL;
 use crate::par::assert_deterministic;
@@ -58,8 +58,15 @@ fn both(a: &Solid, b: &Solid, tol: &Tolerance) -> bool {
 }
 
 /// The gaps tried, in resolutions, and whether they touch: within the
-/// resolution they do, and three resolutions apart they don't.
-const GAPS: [(f64, bool); 3] = [(0.0, true), (0.5, true), (3.0, false)];
+/// resolution they do, and past `1 + √2` resolutions (where the search
+/// may still keep a pair of flat pieces) they don't.
+const GAPS: [(f64, bool); 5] = [
+    (0.0, true),
+    (0.5, true),
+    (0.99, true),
+    (2.5, false),
+    (3.0, false),
+];
 
 #[test]
 fn cylinders_side_by_side_touch_along_a_ruling() {
@@ -205,14 +212,7 @@ fn a_loop_inside_one_patch_touches() {
 fn spent(a: &Solid, b: &Solid, tol: &Tolerance) -> (Result<bool, KernelError>, u64) {
     let mut work = Work::new(&Budget::new(BUDGET));
     let (ia, ib) = (Input::new(a.mesh(), tol), Input::new(b.mesh(), tol));
-    let mut run = || {
-        let counts = pairs::counted(&ia, &ib, true, tol, &mut work)?;
-        if counts.meet() {
-            return Ok(true);
-        }
-        near(&ia, &ib, &counts.pairs, tol.resolution(), &mut work)
-    };
-    let answer = run();
+    let answer = touching(&ia, &ib, tol, &mut work);
     (answer, work.left())
 }
 
