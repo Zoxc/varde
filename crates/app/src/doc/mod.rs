@@ -634,6 +634,7 @@ impl Doc {
             extrudable: self.extrudable(),
             unsolved: self.feed.unsolved(),
             failed: self.feed.failed_features(),
+            merged: self.feed.merged_bodies(),
             deleting: self.delete_prompt(),
             proposing: self.proposing(),
         })

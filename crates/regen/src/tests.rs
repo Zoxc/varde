@@ -66,6 +66,7 @@ fn regenerate_tessellates_the_snapshot() {
         unsolved,
         failed,
         touched,
+        merged,
         bodies,
     } = handle(regenerate(&editor, None))
     else {
@@ -85,6 +86,7 @@ fn regenerate_tessellates_the_snapshot() {
     assert!(unsolved.is_empty());
     assert!(failed.is_empty());
     assert!(touched.is_empty());
+    assert!(merged.is_empty());
     assert!(bodies.is_empty());
 }
 

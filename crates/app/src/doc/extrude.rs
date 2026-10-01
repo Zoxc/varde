@@ -730,11 +730,15 @@ impl Doc {
 impl Doc {
     /// The bodies the session's join, cut or intersect lists: those its
     /// preview touches, those taken out, and those put back since the
-    /// touch test last answered, in the order they were made.
+    /// touch test last answered, in the order they were made. A body an
+    /// earlier join merged into another isn't one of its own there, so
+    /// it's left out unless it's touched (as the model shown found).
     fn extrude_targets(&self, session: &ExtrudeSession) -> Vec<ExtrudeTarget<'_>> {
         if !session.operation.has_targets() {
             return Vec::new();
         }
+        let document = self.editor.document();
+        let merged = self.feed.merged_before(document, session.feature);
         let touched = self.feed.draft_touched();
         let answered = self.feed.draft_touched_revision();
         let reticked = |body: BodyId| {
@@ -742,11 +746,11 @@ impl Doc {
                 reticked == body && answered.is_none_or(|answered| answered <= since)
             })
         };
-        (self.editor.document().bodies().iter())
+        (document.bodies().iter())
             .filter(|body| {
                 touched.contains(&body.id)
-                    || session.excluded.contains(&body.id)
-                    || reticked(body.id)
+                    || (!merged.consumed(body.id)
+                        && (session.excluded.contains(&body.id) || reticked(body.id)))
             })
             .map(|body| ExtrudeTarget {
                 body: body.id,

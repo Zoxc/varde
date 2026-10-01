@@ -2813,3 +2813,104 @@ fn dragging_the_panel_s_scrollbar_over_the_scene_only_scrolls() {
 /// Screenshots of the extrude session and the screens around it, to look
 /// at: `#[ignore]`d, and written only where `VARDE_SHOTS` says.
 mod shots;
+
+/// [`crate::tests::merged_plates`] with a cut of a disc about (-20, 10)
+/// through both plates taking Body 2 out, after the join if `after`, else
+/// before it, being edited: the bodies its panel lists, and whether each
+/// is ticked.
+fn cut_excluding_the_lower_plate(after: bool) -> Vec<(String, bool)> {
+    let (mut editor, [top, below]) = crate::tests::two_plates();
+    if after {
+        crate::tests::add_join(&mut editor);
+    }
+    let through = crate::tests::two_sides(editor.document(), "20", "10");
+    let excluded = varde_document::Targets {
+        excluded: vec![below],
+    };
+    let cut = varde_document::Operation::Cut(excluded);
+    let cut = crate::tests::add_disc(&mut editor, (-20.0, 10.0), through, cut);
+    if !after {
+        crate::tests::add_join(&mut editor);
+    }
+    let (mut doc, requests) = crate::tests::holding(editor.document().clone());
+    assert!(doc.feed.failed_features().is_empty());
+    assert_eq!(doc.feed.merged_bodies(), [(below, top)]);
+    doc.look(Look::EditFeature(cut));
+    crate::tests::answer(&mut doc, &requests);
+    let state = doc.extrude_state().unwrap();
+    (state.targets.iter())
+        .map(|target| (target.name.to_owned(), target.included))
+        .collect()
+}
+
+#[test]
+fn a_body_merged_away_before_a_cut_isn_t_listed_to_put_back() {
+    // After the join, Body 2 is in Body 1: the cut can't take it out.
+    assert_eq!(
+        cut_excluding_the_lower_plate(true),
+        [("Body 1".to_owned(), true)]
+    );
+}
+
+#[test]
+fn a_body_merged_away_after_a_cut_is_listed_to_put_back() {
+    assert_eq!(
+        cut_excluding_the_lower_plate(false),
+        [("Body 1".to_owned(), true), ("Body 2".to_owned(), false)]
+    );
+}
+
+#[test]
+fn a_join_merging_the_plates_lists_both_and_says_into_which() {
+    let (mut editor, _) = crate::tests::two_plates();
+    let join = crate::tests::add_join(&mut editor);
+    let (mut doc, requests) = crate::tests::holding(editor.document().clone());
+    doc.look(Look::EditFeature(join));
+    crate::tests::answer(&mut doc, &requests);
+    let state = doc.extrude_state().unwrap();
+    let listed: Vec<_> = (state.targets.iter())
+        .map(|target| (target.name, target.included))
+        .collect();
+    assert_eq!(listed, [("Body 1", true), ("Body 2", true)]);
+    let texts = crate::tests::screen_texts(&doc);
+    assert!(
+        texts.iter().any(|text| text == "Joined into Body 1"),
+        "{texts:?}"
+    );
+
+    // Body 2 taken out: nothing merges.
+    let below = doc.editor.document().bodies()[1].id;
+    doc.look(Look::Extrude(ExtrudeLook::Target(below)));
+    crate::tests::answer(&mut doc, &requests);
+    assert_eq!(doc.feed.merged_bodies(), []);
+    let texts = crate::tests::screen_texts(&doc);
+    assert!(
+        !texts.iter().any(|text| text.starts_with("Joined")),
+        "{texts:?}"
+    );
+}
+
+#[test]
+fn objects_show_a_merged_body_in_its_holder() {
+    let (editor, [top, below], _) = crate::tests::merged_plates();
+    let (mut doc, requests) = crate::tests::holding(editor.document().clone());
+    doc.look(Look::SelectPanel(varde_view::Panel::Objects));
+    let texts = crate::tests::screen_texts(&doc);
+    let at = |text: &str| texts.iter().position(|shown| shown == text);
+    let note = at("in Body 1").unwrap_or_else(|| panic!("{texts:?}"));
+    assert_eq!(at("Body 2"), Some(note - 1), "{texts:?}");
+    assert_eq!(doc.feed.merged_bodies(), [(below, top)]);
+
+    // The merged body's own flag does nothing while it's merged; hiding
+    // the holder hides what's merged into it.
+    let shown = doc.feed.mesh().triangle_count();
+    assert!(shown > 0);
+    doc.apply(Command::SetVisible(below, false));
+    doc.sync();
+    crate::tests::answer(&mut doc, &requests);
+    assert_eq!(doc.feed.mesh().triangle_count(), shown);
+    doc.apply(Command::SetVisible(top, false));
+    doc.sync();
+    crate::tests::answer(&mut doc, &requests);
+    assert_eq!(doc.feed.mesh().triangle_count(), 0);
+}

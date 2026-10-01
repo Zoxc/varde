@@ -108,6 +108,102 @@ pub(crate) fn example_and_a_hole() -> (Doc, FeatureId, Rc<RefCell<Vec<Request>>>
     (doc, sketch, requests)
 }
 
+/// A document holding `document`, answered by the regeneration lane,
+/// whose requests wait for the test, and the list they wait in.
+pub(crate) fn holding(document: Document) -> (Doc, Rc<RefCell<Vec<Request>>>) {
+    let (mut doc, requests) = deferred();
+    doc.apply(Command::Replace(Box::new(document)));
+    doc.sync();
+    answer(&mut doc, &requests);
+    (doc, requests)
+}
+
+/// The example's plate, "Body 1", and a 3 mm plate of the same sketch
+/// under it, "Body 2" of "Extrude 2": the editor and the two bodies.
+pub(crate) fn two_plates() -> (Editor, [varde_document::BodyId; 2]) {
+    let mut editor = Editor::new(Document::example());
+    let top = editor.document().bodies()[0].id;
+    let varde_document::FeatureKind::Extrude(plate) = &editor.document().features()[1].kind else {
+        panic!("the example's second feature is its extrude");
+    };
+    let below = varde_document::Extrude {
+        flip: true,
+        extent: varde_document::Extent::OneSide(length(editor.document(), "3")),
+        ..plate.clone()
+    };
+    editor.apply(editor.document().add_extrude(below)).unwrap();
+    let below = editor.document().bodies()[1].id;
+    (editor, [top, below])
+}
+
+/// The plates of [`two_plates`], then a sketch with a disc of radius 5
+/// about (20, 0) joined 15 mm up and 5 mm down through both, which merges
+/// Body 2 into Body 1: the editor, the two bodies and the join.
+pub(crate) fn merged_plates() -> (Editor, [varde_document::BodyId; 2], FeatureId) {
+    let (mut editor, bodies) = two_plates();
+    let join = add_join(&mut editor);
+    (editor, bodies, join)
+}
+
+/// Adds [`merged_plates`]'s join.
+pub(crate) fn add_join(editor: &mut Editor) -> FeatureId {
+    let up_and_down = two_sides(editor.document(), "15", "5");
+    let join = varde_document::Operation::Join(varde_document::Targets::default());
+    add_disc(editor, (20.0, 0.0), up_and_down, join)
+}
+
+/// `a` and `b` in `document`'s units, as the extent of two sides.
+pub(crate) fn two_sides(document: &Document, a: &str, b: &str) -> varde_document::Extent {
+    varde_document::Extent::TwoSides(length(document, a), length(document, b))
+}
+
+/// A length of `text` in `document`'s units.
+fn length(document: &Document, text: &str) -> varde_expr::Value {
+    let ask = varde_document::Extent::ask(&document.design());
+    varde_expr::Value::new(text, &ask).unwrap()
+}
+
+/// Adds a sketch on XY holding a disc of radius 5 about `center`, and an
+/// extrude of it over `extent` with `operation`. The extrude's id.
+pub(crate) fn add_disc(
+    editor: &mut Editor,
+    center: (f64, f64),
+    extent: varde_document::Extent,
+    operation: varde_document::Operation,
+) -> FeatureId {
+    let plane = Plane::Origin(OriginPlane::XY);
+    editor.apply(editor.document().add_sketch(plane)).unwrap();
+    let feature = editor.document().features().last().unwrap().id;
+    let mut sketch = varde_sketch::Sketch::default();
+    let center = (sketch.add_point(glam::DVec2::new(center.0, center.1))).unwrap();
+    let circle = varde_sketch::Curve::Circle {
+        center,
+        radius: 5.0,
+    };
+    sketch.add_curve(circle, false).unwrap();
+    let profiles = sketch.profiles().unwrap();
+    let regions = (0..profiles.regions.len())
+        .map(|index| profiles.reference(index).unwrap())
+        .collect();
+    editor
+        .apply(Command::SetSketch {
+            feature,
+            sketch: Box::new(sketch),
+        })
+        .unwrap();
+    let extrude = varde_document::Extrude {
+        sketch: feature,
+        regions,
+        extent,
+        flip: false,
+        operation,
+    };
+    editor
+        .apply(editor.document().add_extrude(extrude))
+        .unwrap();
+    editor.document().features().last().unwrap().id
+}
+
 /// The texts `doc`'s screen shows at 1280 × 800, light.
 pub(crate) fn screen_texts(doc: &Doc) -> Vec<String> {
     let mut renderer = varde_view::probe::renderer();
@@ -2344,6 +2440,7 @@ fn failure_marks_of_before_a_replacement_mark_nothing() {
                     unsolved: vec![id],
                     failed: vec![(id, "failed".to_owned())],
                     touched: vec![(id, Vec::new())],
+                    merged: Vec::new(),
                     bodies,
                 },
                 failed => failed,

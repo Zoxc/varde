@@ -294,3 +294,32 @@ fn the_panel_s_errors_read_as_sentences() {
     let shown = texts_of(&state);
     found(&shown, "Only a cut can go through all");
 }
+
+#[test]
+fn a_join_ticked_for_two_bodies_says_which_it_merges_into() {
+    let profiles = plate();
+    let picked = BTreeSet::from([0]);
+    let mut state = state_of(&profiles, &picked);
+    state.operation = OperationKind::Join;
+    let target = |name, included| ExtrudeTarget {
+        body: BodyId::NEW,
+        name,
+        included,
+    };
+    state.targets = vec![
+        target("Body 1", false),
+        target("Body 2", true),
+        target("Body 3", true),
+    ];
+    assert_eq!(joined_into(&state), Some("Body 2"));
+    found(&texts_of(&state), "Joined into Body 2");
+
+    // One ticked merges nothing, nor does a cut.
+    state.targets[2].included = false;
+    assert_eq!(joined_into(&state), None);
+    state.targets[2].included = true;
+    state.operation = OperationKind::Cut;
+    assert_eq!(joined_into(&state), None);
+    let shown = texts_of(&state);
+    assert!(!shown.iter().any(|shown| shown.text.starts_with("Joined")));
+}

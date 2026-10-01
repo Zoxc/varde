@@ -828,3 +828,26 @@ fn shots_13_status_bar() {
         );
     });
 }
+
+/// Scenario 15: two plates merged by a join bridging them: the Objects
+/// list with the merged body in its holder (hovered: no eye, the bin
+/// stays), and the join edited, its panel saying which body it joins
+/// into.
+#[test]
+#[ignore = "writes screenshots, see the module"]
+fn shots_15_merged_bodies() {
+    shooting(|camera| {
+        let (editor, _, join) = crate::tests::merged_plates();
+        let (mut doc, requests) = crate::tests::holding(editor.document().clone());
+        framed(&mut doc);
+        doc.look(Look::SelectPanel(varde_view::Panel::Objects));
+        camera.take(&doc, "15-merged-objects", Shot::new());
+        let hovered = Shot::new().pointer(Pointer::Over("in Body 1"));
+        camera.take(&doc, "15-merged-objects-hovered", hovered);
+        camera.take(&doc, "15-merged-objects-dark", hovered.dark());
+        doc.look(Look::EditFeature(join));
+        answer(&mut doc, &requests);
+        camera.take(&doc, "15-merged-join", Shot::new());
+        camera.take(&doc, "15-merged-join-scale2", Shot::new().scale(2.0));
+    });
+}

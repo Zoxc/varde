@@ -3,7 +3,9 @@
 
 use std::sync::Arc;
 
-use varde_document::{BodyId, Editor, Extrude, FeatureId, Generation};
+use varde_document::{
+    BodyId, Document, Editor, Extrude, FeatureId, FeatureKind, Generation, Operation,
+};
 use varde_kernel::{RenderLines, RenderMesh};
 use varde_regen::{Draft, Drafted, Request, Response, Transport};
 use varde_view::MeshStatus;
@@ -31,10 +33,14 @@ pub(crate) struct MeshFeed {
     /// bodies it touches, of the same generation as `mesh`, in the
     /// document's order.
     touched_features: Vec<(FeatureId, Vec<BodyId>)>,
+    /// Each body a join merged into another, and the body holding it, of
+    /// the same generation as `mesh`, in the document's order.
+    merged_bodies: Vec<(BodyId, BodyId)>,
     /// The generation the document was last replaced whole by, if it was,
     /// see [`MeshFeed::replaced`]: the ids in `unsolved`,
-    /// `failed_features` and `touched_features` of an older answer may
-    /// name other features now, so they aren't given out.
+    /// `failed_features`, `touched_features` and `merged_bodies` of an
+    /// older answer may name other features or bodies now, so they aren't
+    /// given out.
     replaced: Option<Generation>,
     /// How the draft of the model shown went, if it had one.
     drafted: Option<Drafted>,
@@ -176,6 +182,7 @@ impl MeshFeed {
                 unsolved,
                 failed,
                 touched,
+                merged,
                 draft,
                 ..
             } => {
@@ -184,6 +191,7 @@ impl MeshFeed {
                 self.unsolved = unsolved;
                 self.failed_features = failed;
                 self.touched_features = touched;
+                self.merged_bodies = merged;
                 if let Some(Drafted {
                     revision,
                     touched: Some(touched),
@@ -375,6 +383,81 @@ impl MeshFeed {
         } else {
             &[]
         }
+    }
+
+    /// Each body a join merged into another (*consumed*), with the body
+    /// holding it now, as the model shown found: with a draft, as the
+    /// document with the draft applied merges them. None if the document
+    /// was replaced since.
+    pub(crate) fn merged_bodies(&self) -> &[(BodyId, BodyId)] {
+        if self.marks() {
+            &self.merged_bodies
+        } else {
+            &[]
+        }
+    }
+    /// The bodies the joins of `document` before `until` (all of them
+    /// without one) merged into others, as the model shown found them
+    /// touch bodies: what [`MeshFeed::merged_bodies`] would be with the
+    /// history stopped there. A join merges only if it touched two or
+    /// more bodies and didn't fail; one the model shown doesn't know
+    /// (added since, or a new extrude's draft) merges nothing.
+    pub(crate) fn merged_before(&self, document: &Document, until: Option<FeatureId>) -> Merges {
+        let mut merges = Merges::default();
+        for (feature, touched) in self.touched_features() {
+            if Some(*feature) == until {
+                break;
+            }
+            if self.merges(document, *feature) {
+                merges.join(touched);
+            }
+        }
+        merges
+    }
+
+    /// Whether `feature` of `document` is a join the model shown has
+    /// working: one that merges the bodies it touches.
+    pub(crate) fn merges(&self, document: &Document, feature: FeatureId) -> bool {
+        let join = document.feature(feature).is_some_and(|feature| {
+            matches!(&feature.kind, FeatureKind::Extrude(extrude)
+                if matches!(extrude.operation, Operation::Join(_)))
+        });
+        join && !(self.failed_features().iter()).any(|(failed, _)| *failed == feature)
+    }
+}
+
+/// Which bodies joins merged into which, replayed from the bodies each
+/// join touched in the document's order: a join touching two or more
+/// merges them into the first made (the *holder*), and a body merged into
+/// one that's merged later moves on to the later holder.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(crate) struct Merges(Vec<(BodyId, BodyId)>);
+
+impl Merges {
+    /// Notes a working join that touched `touched`, in the order they
+    /// were made.
+    pub(crate) fn join(&mut self, touched: &[BodyId]) {
+        let Some((&holder, consumed)) = touched.split_first() else {
+            return;
+        };
+        for (_, held_in) in &mut self.0 {
+            if consumed.contains(held_in) {
+                *held_in = holder;
+            }
+        }
+        self.0.extend(consumed.iter().map(|&body| (body, holder)));
+    }
+
+    /// Whether `body` was merged into another.
+    pub(crate) fn consumed(&self, body: BodyId) -> bool {
+        self.0.iter().any(|(consumed, _)| *consumed == body)
+    }
+
+    /// The bodies merged into `holder`.
+    pub(crate) fn held_by(&self, holder: BodyId) -> impl Iterator<Item = BodyId> + '_ {
+        (self.0.iter())
+            .filter(move |(_, held_in)| *held_in == holder)
+            .map(|(consumed, _)| *consumed)
     }
 }
 

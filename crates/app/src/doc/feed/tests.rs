@@ -491,3 +491,70 @@ fn touched_bodies_are_kept_within_a_run_of_drafts_only() {
     feed.request_with(&editor, None, Some((Some(plate), join)));
     assert_eq!(feed.draft_touched(), []);
 }
+
+#[test]
+fn merged_bodies_follow_the_model_shown() {
+    let (mut editor, [top, below], join) = crate::tests::merged_plates();
+    let (mut feed, regen) = connected();
+    feed.request(&editor, None);
+    feed.apply(handle(regen.take().pop().unwrap()));
+    assert_eq!(feed.merged_bodies(), [(below, top)]);
+    assert!(feed.merges(editor.document(), join));
+    let document = editor.document();
+    assert!(feed.merged_before(document, None).consumed(below));
+    // Before the join, nothing is merged yet.
+    assert_eq!(feed.merged_before(document, Some(join)), Merges::default());
+
+    // A failed answer keeps the model shown, and so its merge.
+    editor.apply(Command::SetVisible(top, false)).unwrap();
+    feed.request(&editor, None);
+    regen.take();
+    feed.apply(Response::Failed {
+        generation: editor.generation(),
+        exclude: None,
+        draft: None,
+        error: "failed".to_owned(),
+    });
+    assert_eq!(feed.merged_bodies(), [(below, top)]);
+
+    // The next model has the merge it found: none once the join is gone.
+    let generation = editor.generation();
+    editor.apply(Command::RemoveFeature(join)).unwrap();
+    feed.request(&editor, None);
+    feed.apply(handle(regen.take().pop().unwrap()));
+    assert!(feed.generation() > Some(generation));
+    assert_eq!(feed.merged_bodies(), []);
+    assert!(!feed.merged_before(editor.document(), None).consumed(below));
+}
+
+#[test]
+fn merged_bodies_aren_t_given_out_across_a_replacement() {
+    let (editor, [top, below], _) = crate::tests::merged_plates();
+    let (mut feed, regen) = connected();
+    feed.request(&editor, None);
+    feed.apply(handle(regen.take().pop().unwrap()));
+    assert_eq!(feed.merged_bodies(), [(below, top)]);
+    feed.replaced(Generation::from(u64::from(editor.generation()) + 1));
+    assert_eq!(feed.merged_bodies(), []);
+}
+
+#[test]
+fn a_body_merged_into_one_merged_later_moves_on() {
+    // Three bodies' ids: the plates and a disc of its own.
+    let (mut editor, [a, b], _) = crate::tests::merged_plates();
+    let extent = crate::tests::two_sides(editor.document(), "1", "1");
+    let new = varde_document::Operation::NewBody(varde_document::BodyId::NEW);
+    crate::tests::add_disc(&mut editor, (100.0, 0.0), extent, new);
+    let c = editor.document().bodies()[2].id;
+
+    let mut merges = Merges::default();
+    merges.join(&[b, c]);
+    merges.join(&[a]);
+    assert!(merges.consumed(c) && !merges.consumed(b) && !merges.consumed(a));
+    assert_eq!(merges.held_by(b).collect::<Vec<_>>(), [c]);
+    // `b` merged into `a` takes `c` with it.
+    merges.join(&[a, b]);
+    assert!(merges.consumed(b) && merges.consumed(c));
+    assert_eq!(merges.held_by(a).collect::<Vec<_>>(), [c, b]);
+    assert_eq!(merges.held_by(b).count(), 0);
+}

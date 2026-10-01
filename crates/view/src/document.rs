@@ -11,7 +11,8 @@ use iced::widget::{Space, button, column, container, opaque, row, space, stack, 
 use iced::{Alignment, Element, Length};
 use varde_document::EXTENSION;
 use varde_document::{
-    APP_NAME, Body, Document, EditError, Editor, Extent, Feature, FeatureId, FeatureKind, Plane,
+    APP_NAME, Body, BodyId, Document, EditError, Editor, Extent, Feature, FeatureId, FeatureKind,
+    Plane,
 };
 use varde_expr::LengthUnit;
 use varde_kernel::{RenderLines, RenderMesh};
@@ -84,6 +85,10 @@ pub struct DocumentState<'a> {
     /// The features that failed and why, as regenerating found, in the
     /// document's order.
     pub failed: &'a [(FeatureId, String)],
+    /// Each body a join merged into another (*consumed*), and the body
+    /// holding it now, as regenerating found, in the document's order:
+    /// Objects shows a consumed body in its holder.
+    pub merged: &'a [(BodyId, BodyId)],
     /// What deleting a feature or body would take with it, asked about
     /// before it's deleted, if it's being asked.
     pub deleting: Option<DeletePrompt<'a>>,

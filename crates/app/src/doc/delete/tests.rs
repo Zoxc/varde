@@ -466,3 +466,47 @@ fn a_cut_is_warned_of_across_a_replacement_before_its_model() {
     doc.update(Edit::RemoveBody(body));
     assert_eq!(warned(&doc), (vec!["Extrude 2"], vec!["Body 1"]));
 }
+
+/// [`crate::tests::merged_plates`] with "Extrude 4" after the join
+/// cutting a disc about (-20, 10) through both plates, which touches only
+/// Body 1, the merged body; the document and the cut.
+fn merged_and_cut() -> (Doc, Rc<RefCell<Vec<Request>>>, FeatureId) {
+    let (mut editor, [top, below], _) = crate::tests::merged_plates();
+    let through = crate::tests::two_sides(editor.document(), "20", "10");
+    let cut = varde_document::Operation::Cut(varde_document::Targets::default());
+    let cut = crate::tests::add_disc(&mut editor, (-20.0, 10.0), through, cut);
+    let (doc, requests) = crate::tests::holding(editor.document().clone());
+    assert!(doc.feed.failed_features().is_empty());
+    assert_eq!(doc.feed.merged_bodies(), [(below, top)]);
+    assert!(doc.feed.touched_features().contains(&(cut, vec![top])));
+    (doc, requests, cut)
+}
+
+#[test]
+fn a_cut_of_a_merged_body_isn_t_warned_of_while_a_body_merged_into_it_stays() {
+    let (mut doc, requests, cut) = merged_and_cut();
+    let top = doc.editor.document().bodies()[0].id;
+    doc.update(Edit::RemoveBody(top));
+    // Body 2 then holds the join and the cut: nothing to warn of, so
+    // it's deleted at once.
+    assert_eq!(doc.dialog(), None);
+    assert_eq!(names(&doc).1, ["Body 2"]);
+    crate::tests::answer(&mut doc, &requests);
+    assert!(doc.feed.failed_features().is_empty());
+    let below = doc.editor.document().bodies()[0].id;
+    assert!(doc.feed.touched_features().contains(&(cut, vec![below])));
+}
+
+#[test]
+fn a_cut_of_a_merged_body_is_warned_of_when_every_body_in_it_goes() {
+    let (mut doc, _, _) = merged_and_cut();
+    let sketch = doc.editor.document().features()[0].id;
+    doc.update(Edit::RemoveFeature(sketch));
+    // Both plates are of Sketch 1: the join and the cut stay with
+    // nothing to work on.
+    assert_eq!(doc.dialog(), Some(Dialog::Delete));
+    assert_eq!(
+        warned(&doc),
+        (vec!["Extrude 3", "Extrude 4"], vec!["Body 1", "Body 2"])
+    );
+}

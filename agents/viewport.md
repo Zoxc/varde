@@ -356,7 +356,7 @@ makes its own wgpu instance, under a lock, so run them one at a time:
 VARDE_SHOTS=$PWD/target/shots cargo test -p varde-app shots_ -- --ignored --test-threads=1
 ```
 
-Scenarios (`shots_01` .. `shots_14`, each at 1280×800, scale 1, light,
+Scenarios (`shots_01` .. `shots_15`, each at 1280×800, scale 1, light,
 the busiest also at scale 2 and dark): `E` with every candidate's regions
 (and one hovered); a region picked before and after its answer; flip,
 symmetric, two sides, a refused distance and a draft the document
@@ -371,7 +371,9 @@ grazing, the knob off the screen, a 100 m extrude, a knob dragged past
 the limit, one `Doc` at three window sizes); a long status beside the
 key hints; the banner over the viewport for a refused sketch edit, short
 and long in a small window, and the body delete prompt's warning of a
-cut left with nothing to work on. Shots are for
+cut left with nothing to work on; two plates a join merged, Objects
+showing the merged one "in Body 1" (hovered, dark) and the join's panel
+saying which body it joins into. Shots are for
 looking (pixels differ by GPU and driver), never compared and never
 committed: a fault a shot finds gets an ordinary headless test of the
 state or layout behind it. A scenario answers each regeneration it asks

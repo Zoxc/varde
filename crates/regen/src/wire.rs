@@ -25,7 +25,8 @@
 //! so a broken reply doesn't allocate without bound, and together the parts
 //! make a [`RenderMesh`] by [`RenderMesh::from_parts`] and [`RenderLines`]
 //! by [`RenderLines::from_parts`]; the bodies' boxes in the head are
-//! finite with their corners in order. The failed features' ids, the
+//! finite with their corners in order, and the merged bodies name each
+//! consumed body once, never as a holder. The failed features' ids, the
 //! sketches that don't solve and the bodies a draft or a feature touches
 //! are only marks, so they aren't checked against a document. Malformed
 //! bytes are refused, never a panic; see [`decode_request`] and [`decode_reply`]. A
@@ -89,6 +90,10 @@ pub enum Head {
         /// The bodies each join, cut or intersect touches, likewise only
         /// marks.
         touched: Vec<(FeatureId, Vec<BodyId>)>,
+        /// Each consumed body and its holder, checked to name each
+        /// consumed body once and none as a holder ([`Error::Merged`]);
+        /// otherwise only marks.
+        merged: Vec<(BodyId, BodyId)>,
         /// Each body's box, its least and greatest corner, checked to be
         /// finite and in order ([`Error::Bounds`]).
         bodies: Vec<(BodyId, [[f32; 3]; 2])>,
@@ -131,6 +136,7 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Option<[&[u8]; MODEL_PARTS
             unsolved,
             failed,
             touched,
+            merged,
             bodies,
         } => (
             Head::Regenerated {
@@ -140,6 +146,7 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Option<[&[u8]; MODEL_PARTS
                 unsolved: unsolved.clone(),
                 failed: failed.clone(),
                 touched: touched.clone(),
+                merged: merged.clone(),
                 bodies: bodies
                     .iter()
                     .map(|(body, aabb)| (*body, [aabb.min.to_array(), aabb.max.to_array()]))
@@ -190,10 +197,12 @@ pub fn decode_reply(
             unsolved,
             failed,
             touched,
+            merged,
             bodies,
         } => {
-            let model =
-                decode_bodies(&bodies).and_then(|bodies| Ok((bodies, decode_model(parts)?)));
+            let model = check_merged(&merged)
+                .and_then(|()| decode_bodies(&bodies))
+                .and_then(|bodies| Ok((bodies, decode_model(parts)?)));
             match model {
                 Ok((bodies, (mesh, sketches))) => Response::Regenerated {
                     generation,
@@ -204,6 +213,7 @@ pub fn decode_reply(
                     unsolved,
                     failed,
                     touched,
+                    merged,
                     bodies,
                 },
                 Err(error) => Response::Failed {
@@ -226,6 +236,21 @@ pub fn decode_reply(
             error,
         },
     })
+}
+
+/// Checks the merged bodies of a [`Head::Regenerated`]: each consumed
+/// body is listed once, and none holds another (a holder has a solid, a
+/// consumed body none).
+fn check_merged(merged: &[(BodyId, BodyId)]) -> Result<(), Error> {
+    let mut consumed: Vec<BodyId> = merged.iter().map(|&(consumed, _)| consumed).collect();
+    consumed.sort_unstable();
+    let repeated = consumed.windows(2).any(|pair| pair[0] == pair[1]);
+    let held = (merged.iter()).any(|(_, holder)| consumed.binary_search(holder).is_ok());
+    if repeated || held {
+        Err(Error::Merged)
+    } else {
+        Ok(())
+    }
 }
 
 /// The bodies' boxes of a [`Head::Regenerated`], each checked to be
@@ -364,6 +389,8 @@ pub enum Error {
     RenderLines(LinesError),
     /// A body's box isn't finite, or its corners are out of order.
     Bounds,
+    /// A consumed body is listed twice, or as a holder.
+    Merged,
 }
 
 impl fmt::Display for Error {
@@ -379,6 +406,7 @@ impl fmt::Display for Error {
             Error::RenderMesh(e) => e.fmt(f),
             Error::RenderLines(e) => e.fmt(f),
             Error::Bounds => f.write_str("a body's box isn't one"),
+            Error::Merged => f.write_str("a merged body is listed twice or holds another"),
         }
     }
 }
@@ -392,7 +420,8 @@ impl std::error::Error for Error {
             | Error::Partial { .. }
             | Error::RenderMesh(_)
             | Error::RenderLines(_)
-            | Error::Bounds => None,
+            | Error::Bounds
+            | Error::Merged => None,
         }
     }
 }

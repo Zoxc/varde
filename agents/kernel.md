@@ -3764,7 +3764,13 @@ and the later ones still run.
   moves the entries naming it on to the new holder, so every entry names
   a body in `bodies` (a `debug_assert` at the end of `evaluate` holds
   it); `Evaluation::holder(body)` follows one. The bodies stay the
-  document's (Objects lists them); only their geometry moved. Cuts and
+  document's (Objects lists them); only their geometry moved. Objects
+  shows a consumed body faint with its holder as its note ("in Body 1",
+  `panels::consumed_note`, from `MeshFeed::merged_bodies`: the model
+  shown's, with a draft as the draft merges them, none across a
+  replacement) and no eye, since it's drawn as its holder is and the
+  holder's flag decides; its bin removes it and its maker as for any
+  body. Cuts and
   intersects stay per body, as other CAD systems keep bodies apart for
   those, and an excluded body isn't merged (unticking it is how to join
   to fewer bodies). The union is worked out in steps, each one
@@ -3798,7 +3804,8 @@ and the later ones still run.
   Excluded bodies keep, besides their touch and boolean, the keys of both
   orders' steps for the targets plus every excluded body (in made order,
   hashes only), so unticking one body of a merge and ticking it again
-  works out at most the merged body's mesh (nothing within the budget). A sketch placed on a consumed
+  works out at most the merged body's mesh (nothing within the budget).
+  A sketch placed on a consumed
   body's face (once sketches can be placed on faces) is to follow it to
   its holder (`Evaluation::holder`), since the face lives on there.
 - A target whose result is the empty
@@ -4009,9 +4016,10 @@ finding them, with the body `touches` couldn't tell last, so the panel
 can list a body to take out that makes it fail. `Response::Failed` carries
 the draft's revision too.
 
-**The answer.** `Response::Regenerated` adds `failed` and `bodies:
+**The answer.** `Response::Regenerated` adds `failed`, `merged` (the
+evaluation's, (consumed, holder) pairs) and `bodies:
 Vec<(BodyId, Aabb)>` (each body with a solid, shown or not, from
-`Solid::bounds`). `tessellate(document, evaluation, cache)` draws the
+`Solid::bounds`; a consumed body has none). `tessellate(document, evaluation, cache)` draws the
 visible bodies' solids at `Display::new(&document.tolerance())`, joined
 by `RenderMesh::append` into an `Arc<RenderMesh>`; a mesh past
 `RenderMesh`'s limits fails the generation with the `MeshError` (and isn't
@@ -4032,10 +4040,13 @@ renderer doesn't try an upload of the same `Arc` again after it failed;
 the only failure is a part past the device's buffer limit, which the same
 mesh would hit again, so it is logged once. On the web the mesh still crosses the wire whole each time.
 On the web the reply's head
-carries `draft`, `failed`, `touched` and the boxes as corner arrays, checked finite
-and in order on receipt (`wire::Error::Bounds`); `MAX_HEAD_BYTES` is 64
-MiB. The draft's and each feature's touched bodies cross in the head as
-marks, unchecked.
+carries `draft`, `failed`, `touched`, `merged` and the boxes as corner
+arrays, checked finite and in order on receipt (`wire::Error::Bounds`);
+`MAX_HEAD_BYTES` is 64 MiB. The draft's and each feature's touched bodies
+cross in the head as marks, unchecked; `merged` is checked to name each
+consumed body once and none as a holder (`wire::Error::Merged`), and is
+otherwise display only. Either failing answers the generation with
+`Response::Failed`.
 
 **Gaps.** Every join, cut or intersect asks `touches` of every body
 before it on each edit that changes the tool (cached otherwise; bodies
@@ -4067,9 +4078,9 @@ the case above), and a bodies-first step that runs out of budget before
 the fallback runs about doubles the worst case, once (both are cached).
 The merge's keys kept for excluded bodies cover putting back all of
 them at once or the only one: with two taken out, putting back one
-reworks its merge. `merged` isn't on the regen answer or the wire yet,
-so Objects doesn't mark consumed bodies, and a consumed body's eye does
-nothing (the holder's decides).
+reworks its merge. Merged plates flush on each other keep the line
+where they met on their sides: the union doesn't merge the two plates'
+coplanar side faces.
 
 ## The extrude UI (`crates/view`, `crates/app`)
 
@@ -4181,11 +4192,19 @@ and those ticked again (the session's `reticked`, each with the newest
 draft revision given out when it was, `MeshFeed::revision`) until a
 touch test of a later draft answers (`MeshFeed::draft_touched_revision`),
 so a body taken out and put back doesn't drop out of the list while its
-answer is on its way; all in the order they were made; ticked unless excluded;
+answer is on its way; but an excluded or ticked-again body that a join
+before the extrude merged into another isn't listed unless touched: it's
+no body of its own there (`MeshFeed::merged_before`, replaying the
+joins before it that the model shown has working and touching two or
+more, from `touched_features` and `failed_features`, as `feed::Merges`;
+the final `merged` won't do, as a join after the extrude may consume a
+body it rightly lists); all in the order they were made; ticked unless excluded;
 `ExtrudeLook::Target` toggles, keeping the session's `excluded` sorted and
 only taking bodies made before the extrude edited; bodies undone away
 drop out, and aren't taken out again when redone: undo gives the ids
-back, so a new edit may give theirs to other bodies); its footer the
+back, so a new edit may give theirs to other bodies), and under it, for a
+join ticked for two or more, "Joined into Body 1", the first ticked
+(`extrude::joined_into`), which holds them all once it's committed; its footer the
 refusal, the draft's error or "Checking the sketch…", then Cancel and OK.
 Errors that stand alone, the field errors, the refusal and the draft's
 error here and a failed feature's tooltip, are shown as sentences,
@@ -4255,7 +4274,11 @@ like the failed features, and not given out across a replacement until
 a newer model; one the model shown doesn't know, such as a cut committed
 before its model comes back, is taken to touch every body made before
 it that it doesn't take out, so it's warned of when they all go, as it
-then surely has nothing to work on), is listed under the
+then surely has nothing to work on; a body that holds bodies joins
+before the feature merged into it counts as those too, replayed as for
+the Bodies list, since one of them staying takes its place: deleting
+Body 1 that Body 2 was merged into leaves a later cut of Body 1 working
+on Body 2), is listed under the
 prompt in the warning colour (the mock's for panel warnings, its construction orange): "Extrude 2 works on Body 1 and stays, so
 it may fail with nothing to work on." (`Doc::worked`, `delete_warning`).
 One that took the body out isn't (excluded bodies aren't asked
@@ -4483,9 +4506,10 @@ parameter, or a split outside the patch bounds),
   on each target body on its own.** Consuming a body is worked out at
   regeneration, not stored in the document: targets are found by
   `touches` there, so a stored consumption would go stale on any edit
-  upstream. A consumed body stays in the document and in Objects; regen
-  says where its geometry went (`Evaluation::merged`). Unticking all
-  but one body joins to that one alone.
+  upstream. A consumed body stays in the document and in Objects, marked
+  "in Body 1" there; regen says where its geometry went
+  (`Evaluation::merged`, on the answer and the wire). Unticking all but
+  one body joins to that one alone.
 - **Through all spans every earlier body**, excluded ones too, so taking
   one out or putting it back doesn't change the tool.
 - **A join, cut or intersect that touches no target fails** ("it doesn't

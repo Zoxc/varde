@@ -7,6 +7,7 @@ use varde_document::{
 };
 use varde_view::DeletePrompt;
 
+use super::feed::Merges;
 use super::{Change, Doc};
 
 /// A removal the user is asked about before it's applied: what was asked
@@ -109,12 +110,16 @@ impl Doc {
     /// since, as a cut committed before its model comes back is, or any
     /// after the document was replaced) is taken to touch every body made
     /// before it that it doesn't take out: warned of if they all go, as
-    /// then it surely has nothing to work on.
+    /// then it surely has nothing to work on. A body that holds bodies
+    /// earlier joins merged into it counts as those too: one of them
+    /// staying takes its place once it goes.
     fn worked(&self, removal: &Removal) -> (Vec<FeatureId>, Vec<BodyId>) {
         let document = self.editor.document();
         let shown = self.feed.touched_features();
         let mut features = Vec::new();
         let mut worked_on = Vec::new();
+        // The bodies merged into others by the joins before.
+        let mut merges = Merges::default();
         // The bodies made by the features before the one at hand.
         let mut made: Vec<BodyId> = Vec::new();
         for feature in document.features() {
@@ -125,7 +130,14 @@ impl Doc {
                 // A checked document's ids go up in its order.
                 let goes = |body: &BodyId| removal.bodies.binary_search(body).is_ok();
                 let touched = match shown.iter().find(|(id, _)| *id == feature.id) {
-                    Some((_, touched)) => touched.clone(),
+                    Some((_, touched)) => {
+                        let held = (touched.iter()).flat_map(|&holder| merges.held_by(holder));
+                        let worked: Vec<BodyId> = touched.iter().copied().chain(held).collect();
+                        if self.feed.merges(document, feature.id) {
+                            merges.join(touched);
+                        }
+                        worked
+                    }
                     None => {
                         let excluded = extrude.operation.excluded();
                         (made.iter())

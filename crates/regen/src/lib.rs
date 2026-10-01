@@ -204,6 +204,10 @@ pub enum Response {
         /// the bodies it touches, see [`Evaluation::touched`]: with a
         /// draft that goes, as the document with it applied found.
         touched: Vec<(FeatureId, Vec<BodyId>)>,
+        /// Each body a join merged into another and the body holding it
+        /// now, see [`Evaluation::merged`]: a consumed body has no solid
+        /// and isn't in `bodies`.
+        merged: Vec<(BodyId, BodyId)>,
         /// The box around each body that has a solid, shown or not, in
         /// the order they were made.
         bodies: Vec<(BodyId, Aabb)>,
@@ -256,6 +260,7 @@ impl Regenerator {
                         unsolved: model.unsolved,
                         failed: model.failed,
                         touched: model.touched,
+                        merged: model.merged,
                         bodies: model.bodies,
                     },
                     Err(error) => Response::Failed {
@@ -345,6 +350,7 @@ impl Regenerator {
             unsolved: unsolved(document, &mut self.cache),
             failed: evaluation.failed,
             touched: evaluation.touched,
+            merged: evaluation.merged,
             bodies,
         })
     }
@@ -363,6 +369,7 @@ struct Model {
     unsolved: Vec<FeatureId>,
     failed: Vec<(FeatureId, String)>,
     touched: Vec<(FeatureId, Vec<BodyId>)>,
+    merged: Vec<(BodyId, BodyId)>,
     bodies: Vec<(BodyId, Aabb)>,
 }
 

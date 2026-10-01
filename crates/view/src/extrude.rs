@@ -456,7 +456,13 @@ pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
             let message = Message::Look(Look::Extrude(ExtrudeLook::Target(target.body)));
             tick(target.name, target.included, editable.then_some(message))
         });
-        column![heading("Bodies"), column(rows).spacing(4)].spacing(6)
+        let merging = joined_into(state).map(|holder| {
+            text(format!("Joined into {holder}"))
+                .size(12)
+                .wrapping(Wrapping::WordOrGlyph)
+                .style(theme::muted_text)
+        });
+        column![heading("Bodies"), column(rows).spacing(4), merging].spacing(6)
     });
     // Why OK can't be pressed, or the preview failed, or that OK waits
     // on the solver.
@@ -497,6 +503,18 @@ pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
         ok: state.ready.then_some(Message::Edit(Edit::CommitExtrude)),
         cancel: Message::Look(Look::Extrude(ExtrudeLook::Cancel)),
     })
+}
+
+/// The body a join merges the bodies it's ticked for into, if it's
+/// ticked for two or more: the first made of them, which then holds them
+/// all.
+pub(crate) fn joined_into<'a>(state: &ExtrudeState<'a>) -> Option<&'a str> {
+    if state.operation != OperationKind::Join {
+        return None;
+    }
+    let mut included = state.targets.iter().filter(|target| target.included);
+    let first = included.next()?;
+    included.next().map(|_| first.name)
 }
 
 /// A small heading in the panel.

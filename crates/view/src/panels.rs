@@ -6,7 +6,7 @@ use iced::widget::{
     text_input,
 };
 use iced::{Alignment, Element, Font, Length, Padding};
-use varde_document::{Document, Extent, Feature, FeatureId, FeatureKind};
+use varde_document::{BodyId, Document, Extent, Feature, FeatureId, FeatureKind};
 use varde_expr::LengthUnit;
 use varde_sketch::{ConstraintEntry, Curve, DimensionEntry, Id, Sketch};
 
@@ -88,7 +88,7 @@ pub fn side_panel<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
     let editable = state.editable();
     let content = match (shown, state.sketch) {
         (Panel::Sketch, Some(sketch)) => sketch_tab(sketch),
-        (Panel::Objects, _) => scrolled(objects(document, editable)),
+        (Panel::Objects, _) => scrolled(objects(document, state.merged, editable)),
         _ => scrolled(timeline(
             document,
             state.selected_feature,
@@ -286,29 +286,41 @@ fn group<'a>(label: &'a str, count: usize) -> Element<'a, Message> {
     .into()
 }
 
-/// The bodies, then the sketches.
-fn objects(document: &Document, editable: bool) -> Element<'_, Message> {
+/// The bodies, then the sketches. A body a join merged into another
+/// (`merged`, see [`DocumentState::merged`]) is listed faint, with the body
+/// holding it as its note: it's drawn as that one is, so it has no eye,
+/// but it can still be removed.
+fn objects<'a>(
+    document: &'a Document,
+    merged: &[(BodyId, BodyId)],
+    editable: bool,
+) -> Element<'a, Message> {
     let bodies = document.bodies().iter().map(|body| {
-        object_row(
-            Icon::Body,
-            &body.name,
-            body.visible,
+        let note = consumed_note(document, merged, body.id);
+        object_row(Object {
+            icon: Icon::Body,
+            label: &body.name,
+            visible: body.visible && note.is_none(),
             editable,
-            Message::Edit(Edit::ToggleVisible(body.id)),
-            Some(Message::Edit(Edit::RemoveBody(body.id))),
-        )
+            toggle: note
+                .is_none()
+                .then_some(Message::Edit(Edit::ToggleVisible(body.id))),
+            remove: Some(Message::Edit(Edit::RemoveBody(body.id))),
+            note,
+        })
     });
     let is_sketch = |feature: &&Feature| matches!(feature.kind, FeatureKind::Sketch { .. });
     let count = document.features().iter().filter(is_sketch).count();
     let sketches = document.features().iter().filter(is_sketch).map(|feature| {
-        object_row(
-            Icon::Sketch,
-            &feature.name,
-            feature.visible,
+        object_row(Object {
+            icon: Icon::Sketch,
+            label: &feature.name,
+            visible: feature.visible,
             editable,
-            Message::Edit(Edit::ToggleFeatureVisible(feature.id)),
-            None,
-        )
+            toggle: Some(Message::Edit(Edit::ToggleFeatureVisible(feature.id))),
+            remove: None,
+            note: None,
+        })
     });
     column(
         std::iter::once(group("Bodies", document.bodies().len()))
@@ -319,35 +331,69 @@ fn objects(document: &Document, editable: bool) -> Element<'_, Message> {
     .into()
 }
 
-/// An object in the Objects list. The eye, sending `toggle`, and the
+/// The note of `body` in the Objects list if a join merged it into
+/// another (see [`DocumentState::merged`]): "in" the holder's name.
+pub(crate) fn consumed_note(
+    document: &Document,
+    merged: &[(BodyId, BodyId)],
+    body: BodyId,
+) -> Option<String> {
+    let (_, holder) = merged.iter().find(|(consumed, _)| *consumed == body)?;
+    Some(format!("in {}", document.body(*holder)?.name))
+}
+
+/// An object in the Objects list.
+struct Object<'a> {
+    icon: Icon,
+    label: &'a str,
+    /// Whether it's drawn: shown faint if not.
+    visible: bool,
+    editable: bool,
+    /// What its eye sends, if it has one.
+    toggle: Option<Message>,
+    /// What its remove button sends, if it has one.
+    remove: Option<Message>,
+    /// Shown faint at its end.
+    note: Option<String>,
+}
+
+/// An object's row in the Objects list. The eye, sending `toggle`, and the
 /// remove button, sending `remove` if there is one, show on hover; the eye
 /// also shows while the object is hidden. Unless the document is
 /// `editable`, only the eye of a hidden object shows, and does nothing.
-fn object_row<'a>(
-    icon: Icon,
-    label: &'a str,
-    visible: bool,
-    editable: bool,
-    toggle: Message,
-    remove: Option<Message>,
-) -> Element<'a, Message> {
+/// Without a `toggle` there's no eye.
+fn object_row(object: Object<'_>) -> Element<'_, Message> {
+    let Object {
+        icon,
+        label,
+        visible,
+        editable,
+        toggle,
+        remove,
+        note,
+    } = object;
     let content = move |hovered: bool| {
-        let eye = ((hovered && editable) || !visible).then(|| {
-            icon_button(
-                if visible { Icon::Eye } else { Icon::EyeOff },
-                Tone::Faint,
-                editable.then(|| toggle.clone()),
-            )
-        });
+        let eye = toggle
+            .clone()
+            .filter(|_| (hovered && editable) || !visible)
+            .map(|toggle| {
+                icon_button(
+                    if visible { Icon::Eye } else { Icon::EyeOff },
+                    Tone::Faint,
+                    editable.then_some(toggle),
+                )
+            });
         let remove = remove
             .clone()
             .filter(|_| hovered && editable)
             .map(|message| icon_button(Icon::Trash, Tone::Faint, Some(message)));
+        let note = (note.clone()).map(|note| text(note).size(11.5).style(theme::faint_text));
         container(
             row![
                 icons::icon(icon, icons::INLINE),
                 name(label, visible),
                 space::horizontal(),
+                note,
                 eye,
                 remove,
             ]
@@ -699,6 +745,38 @@ mod tests {
             "10 mm + 2.5 mm"
         );
         assert_eq!(extent_note(&Extent::ThroughAll, mm), "Through all");
+    }
+
+    #[test]
+    fn a_merged_body_is_noted_in_its_holder() {
+        use varde_document::Editor;
+        let mut editor = Editor::new(Document::example());
+        let FeatureKind::Extrude(extrude) = &editor.document().features()[1].kind else {
+            panic!("the example's second feature is its extrude");
+        };
+        let command = editor.document().add_extrude(extrude.clone());
+        editor.apply(command).unwrap();
+        let [top, below] = [0, 1].map(|k| editor.document().bodies()[k].id);
+        let merged = [(below, top)];
+        let document = editor.document();
+        assert_eq!(consumed_note(document, &merged, top), None);
+        assert_eq!(
+            consumed_note(document, &merged, below).as_deref(),
+            Some("in Body 1")
+        );
+        assert_eq!(consumed_note(document, &[], below), None);
+
+        let texts = |merged: &[(BodyId, BodyId)]| -> Vec<String> {
+            let objects = objects(document, merged, true);
+            let mut laid = crate::testing::Laid::new(objects, iced::Size::new(300.0, 400.0));
+            laid.texts().into_iter().map(|shown| shown.text).collect()
+        };
+        let shown = texts(&merged);
+        let at = |text: &str| shown.iter().position(|shown| shown == text);
+        // The note is on Body 2's row, after its name.
+        let note = at("in Body 1").unwrap_or_else(|| panic!("{shown:?}"));
+        assert_eq!(at("Body 2"), Some(note - 1), "{shown:?}");
+        assert!(!texts(&[]).iter().any(|text| text.starts_with("in ")));
     }
 
     #[test]

@@ -25,6 +25,7 @@ fn regenerated(generation: u64) -> Head {
         unsolved: Vec::new(),
         failed: Vec::new(),
         touched: Vec::new(),
+        merged: Vec::new(),
         bodies: Vec::new(),
     }
 }
@@ -184,6 +185,7 @@ fn regenerated_round_trips() {
         unsolved: marked,
         failed,
         touched,
+        merged,
         bodies,
     } = round_trip(&response)
     else {
@@ -197,6 +199,7 @@ fn regenerated_round_trips() {
     assert_eq!(failed[0].0, cut);
     // The join takes out the one body there is, so touches none.
     assert_eq!(touched, [(cut, Vec::new())]);
+    assert!(merged.is_empty());
     assert_eq!(mesh, *sent);
     assert!(mesh.triangle_count() > 0);
     assert!(!mesh.edges().is_empty());
@@ -230,6 +233,67 @@ fn bodies_boxes_must_be_boxes() {
         assert_eq!(u64::from(generation), 4);
         assert_eq!(error, Error::Bounds.to_string());
     }
+}
+
+#[test]
+fn merged_bodies_round_trip() {
+    use crate::history::tests::{add_extrude, disc, plate_below, two_sides};
+    use varde_document::{Operation, Targets};
+    // A disc joined through the example plate and a plate under it.
+    let mut editor = Editor::new(Document::example());
+    let top = editor.document().bodies()[0].id;
+    let below = plate_below(&mut editor);
+    let extent = two_sides(editor.document(), "15", "5");
+    let join = Operation::Join(Targets::default());
+    add_extrude(&mut editor, disc((20.0, 0.0), 5.0), extent, join);
+    let bytes = encode_request(&regenerate(&editor));
+    let Response::Regenerated { merged, bodies, .. } =
+        round_trip(&handle(decode_request(&bytes).unwrap()))
+    else {
+        panic!("regeneration failed");
+    };
+    assert_eq!(merged, [(below, top)]);
+    assert_eq!(bodies.len(), 1);
+    assert_eq!(bodies[0].0, top);
+}
+
+#[test]
+fn merged_bodies_are_each_consumed_once_and_hold_none() {
+    let [a, b, c] = ids();
+    for bad in [vec![(a, b), (a, c)], vec![(a, b), (b, c)], vec![(a, a)]] {
+        let mut head = regenerated(5);
+        if let Head::Regenerated { merged, .. } = &mut head {
+            *merged = bad;
+        }
+        let Response::Failed {
+            generation, error, ..
+        } = decode_reply(&head.encode()[..], &slices(&triangle())).unwrap()
+        else {
+            panic!("bad merged bodies were taken");
+        };
+        assert_eq!(u64::from(generation), 5);
+        assert_eq!(error, Error::Merged.to_string());
+    }
+    // Two consumed into one holder is fine.
+    let mut head = regenerated(6);
+    if let Head::Regenerated { merged, .. } = &mut head {
+        *merged = vec![(b, a), (c, a)];
+    }
+    let reply = decode_reply(&head.encode()[..], &slices(&triangle())).unwrap();
+    let Response::Regenerated { merged, .. } = reply else {
+        panic!("good merged bodies were refused");
+    };
+    assert_eq!(merged, [(b, a), (c, a)]);
+}
+
+/// Three bodies' ids, from a document holding three.
+fn ids() -> [BodyId; 3] {
+    use crate::history::tests::plate_below;
+    let mut editor = Editor::new(Document::example());
+    let a = editor.document().bodies()[0].id;
+    let b = plate_below(&mut editor);
+    let c = plate_below(&mut editor);
+    [a, b, c]
 }
 
 #[test]
@@ -402,6 +466,7 @@ fn triangle() -> Vec<Vec<u8>> {
         unsolved: Vec::new(),
         failed: Vec::new(),
         touched: Vec::new(),
+        merged: Vec::new(),
         bodies: Vec::new(),
     };
     let (_, mesh) = encode_reply(&response);
