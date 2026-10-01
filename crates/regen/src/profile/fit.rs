@@ -18,9 +18,11 @@
 //! - else from its start to its end, its control point where the run's
 //!   end tangents meet, its weight putting the conic's shoulder (its
 //!   point at ½, where it's furthest from its chord) as far from the
-//!   chord as the run's furthest sample, which about halves the error of
-//!   a parabola, or else weight 1 (a parabola), within half the tolerance at [`SAMPLES`]
-//!   points of each segment and each segment's end.
+//!   chord as the run's furthest sample, or else weight 1 (a parabola);
+//!   it fits if within half the tolerance at [`SAMPLES`] points of each
+//!   segment and at each segment's end. Like the conic of a single
+//!   segment before runs, this is checked at samples, not proven between
+//!   them; a run is sampled as densely as its segments alone would be.
 //!
 //! Curved conics meet along the same tangent, the spline's at their
 //! joint; a line meets its neighbours with a kink of about the tolerance
@@ -173,20 +175,10 @@ fn run(run: &[Bezier], tolerance: f64) -> Option<Conic2> {
     {
         return Conic2::line(p0, p1).ok();
     }
-    let t0 = [first[1], first[2], first[3]]
-        .into_iter()
-        .find_map(|p| (p - p0).try_normalize())?;
-    let t1 = [last[2], last[1], last[0]]
-        .into_iter()
-        .find_map(|p| (p1 - p).try_normalize())?;
-    let c = control(p0, t0, t1, p1)?;
+    let c = control(first, last)?;
     let samples: Vec<DVec2> = run
         .iter()
-        .flat_map(|bezier| {
-            (1..=SAMPLES)
-                .map(|i| point(bezier, i as f64 / (SAMPLES + 1) as f64))
-                .chain([bezier[3]])
-        })
+        .flat_map(|bezier| samples(bezier).chain([bezier[3]]))
         .collect();
     // A conic is furthest from its chord at its shoulder.
     let chord = p1 - p0;
@@ -220,25 +212,30 @@ fn fit(bezier: &Bezier, tolerance: f64, depth: u32, out: &mut Chain) -> Result<(
 /// through its shoulder, if it's within `tolerance` of the cubic.
 fn conic(bezier: &Bezier, tolerance: f64) -> Option<Conic2> {
     let [p0, .., p1] = *bezier;
-    let t0 = [bezier[1], bezier[2], p1]
-        .into_iter()
-        .find_map(|p| (p - p0).try_normalize())?;
-    let t1 = [bezier[2], bezier[1], p0]
-        .into_iter()
-        .find_map(|p| (p1 - p).try_normalize())?;
-    let c = control(p0, t0, t1, p1)?;
+    let c = control(bezier, bezier)?;
     let middle = p0.midpoint(p1);
     let towards = c - middle;
     let k = (point(bezier, 0.5) - middle).dot(towards) / towards.length_squared();
-    let samples: Vec<DVec2> = (1..=SAMPLES)
-        .map(|i| point(bezier, i as f64 / (SAMPLES + 1) as f64))
-        .collect();
+    let samples: Vec<DVec2> = samples(bezier).collect();
     weighted(p0, c, p1, k, &samples, tolerance)
 }
 
-/// Where the tangent `t0` leaving `p0` and the tangent `t1` arriving at
-/// `p1` meet, if ahead of both ends, turning by less than 90°.
-fn control(p0: DVec2, t0: DVec2, t1: DVec2, p1: DVec2) -> Option<DVec2> {
+/// The [`SAMPLES`] points measured along `bezier`, its ends left out.
+fn samples(bezier: &Bezier) -> impl Iterator<Item = DVec2> + '_ {
+    (1..=SAMPLES).map(|i| point(bezier, i as f64 / (SAMPLES + 1) as f64))
+}
+
+/// Where the tangent leaving the start of `first` and the one arriving
+/// at the end of `last` (the same segment, or a run's ends) meet, if
+/// ahead of both ends, turning by less than 90°. A tangent is along the
+/// first control point apart from its end.
+fn control(first: &Bezier, last: &Bezier) -> Option<DVec2> {
+    let (p0, p1) = (first[0], last[3]);
+    let t0 = first[1..].iter().find_map(|&p| (p - p0).try_normalize())?;
+    let t1 = last[..3]
+        .iter()
+        .rev()
+        .find_map(|&p| (p1 - p).try_normalize())?;
     if t0.dot(t1) <= 0.0 {
         return None;
     }

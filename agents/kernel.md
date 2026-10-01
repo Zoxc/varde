@@ -2711,7 +2711,9 @@ bit:
   at the tolerance; the profile test bounds it by twice that). A piece
   of `n` Béziers costs at most about `16·n²` point evaluations (`n` is
   about `MAX_SPLINE_POINTS` = 100 at most): the worst corpus spline fits
-  in 1.2 ms. At most `MAX_PROFILE_SEGMENTS` segments are made
+  in 1.2 ms, and a hostile sketch of 299 such splines (as many as
+  `MAX_POINTS` allows), each a 60° arc one conic fits whole, the worst
+  case for runs, profiles in 0.7 s at most (release). At most `MAX_PROFILE_SEGMENTS` segments are made
   (`TooManySegments`), counted as the piece is fitted. Measured on a
   closed spline through five points about 10 across: 5, 29 and 78
   segments at fits of 0.1, 1e-3 and 1e-5 mm (no run takes more than one
