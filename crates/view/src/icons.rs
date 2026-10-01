@@ -61,7 +61,7 @@ icons! {
     EyeOff => r#"<path d="M3 3l18 18"/><path d="M10.6 6.1A9 9 0 0 1 12 6c6 0 9.5 6 9.5 6a16 16 0 0 1-2.7 3.3M6.6 7.6C4 9.3 2.5 12 2.5 12s3.5 6 9.5 6a9 9 0 0 0 3.4-.7"/>"#,
     Trash => r#"<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>"#,
     Rollback => r#"<path d="M4 4v16"/><path d="M20 12H8M12 8l-4 4 4 4"/>"#,
-    Save => r#"<path d="M5 4h11l3 3v13H5z"/><path d="M8 4v5h7V4M8 20v-6h8v6"/>"#,
+    Save => r#"<path d="M5 4h11l3 3v13H5z"/><path class="a" d="M8 4v5h7V4M8 20v-6h8v6"/>"#,
     Check => r#"<path d="M5 12.5l4.5 4.5L19 7"/>"#,
     More => r##"<circle cx="5.5" cy="12" r=".9" fill="#000"/><circle cx="12" cy="12" r=".9" fill="#000"/><circle cx="18.5" cy="12" r=".9" fill="#000"/>"##,
     // The tools, from the icon mock.
@@ -154,6 +154,7 @@ impl Icon {
             Icon::Dimension | Icon::CatDimension => IconCategory::Dimension,
             Icon::Body | Icon::Extrude | Icon::CatCreate => IconCategory::Solid,
             Icon::Plane => IconCategory::Construction,
+            Icon::Folder | Icon::Save => IconCategory::File,
             _ => return None,
         })
     }
@@ -360,6 +361,27 @@ pub fn icon<'a, Message: 'a>(icon: Icon, size: f32) -> Element<'a, Message> {
 /// the palette.
 pub fn tinted(icon: Icon, size: f32, color: impl Fn(&Palette) -> Color + 'static) -> Svg<'static> {
     framed(icon, Frame::None, size, move |palette, _| color(palette))
+}
+
+/// The content of an icon-only button [`BUTTON_SIZE`] square, with no
+/// padding, in its own colours (see [`icon`]) if `enabled` and it has a
+/// [`Icon::category`], else in the faint colour if disabled or `color`'s.
+pub fn button_content<'a, Message: 'a>(
+    icon: Icon,
+    enabled: bool,
+    color: impl Fn(&Palette, bool) -> Color + 'static,
+) -> Element<'a, Message> {
+    if enabled && icon.category().is_some() {
+        iced::widget::container(self::icon(icon, INLINE))
+            .center(BUTTON_SIZE)
+            .into()
+    } else {
+        button_icon(
+            icon,
+            move |p, hovered| if enabled { color(p, hovered) } else { p.faint },
+        )
+        .into()
+    }
 }
 
 /// The content of an icon-only button [`BUTTON_SIZE`] square, with no

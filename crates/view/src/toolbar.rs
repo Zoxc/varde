@@ -152,8 +152,15 @@ fn tool_tag(tool: &ActiveTool<'_>) -> String {
 /// document is `editable` and `edited`, as the file menu's Save is.
 fn save_cell<'a>(editable: bool, edited: bool) -> Element<'a, Message> {
     let [save, _] = file_bindings(editable, edited);
+    let message = save.sends();
+    let content = icons::button_content(Icon::Save, message.is_some(), |p, hovered| {
+        theme::flat_content(p, Tone::Muted, true, hovered)
+    });
     let button = crate::chrome::tip(
-        icon_button(Icon::Save, Tone::Muted, save.sends()),
+        button(content)
+            .padding(0)
+            .style(theme::flat_button(false))
+            .on_press_maybe(message),
         text(format!("Save ({})", save.shortcut.label())),
     );
     container(button)
@@ -402,10 +409,16 @@ pub(crate) fn menu_item(
     let key = key.map(|key| container(key_label(key)).align_right(Length::Fill));
     button(
         row![
-            // Text-toned, so hovering doesn't change it.
-            icons::tinted(icon, icons::INLINE, move |p| {
-                theme::flat_content(p, Tone::Text, enabled, false)
-            }),
+            // In its own colours, or text-toned, so hovering doesn't change
+            // it; faint while disabled.
+            if enabled && icon.category().is_some() {
+                icons::icon(icon, icons::INLINE)
+            } else {
+                icons::tinted(icon, icons::INLINE, move |p| {
+                    theme::flat_content(p, Tone::Text, enabled, false)
+                })
+                .into()
+            },
             text(label),
             key,
         ]

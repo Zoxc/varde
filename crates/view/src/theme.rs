@@ -155,6 +155,8 @@ pub enum IconCategory {
     Solid,
     /// Construction geometry: planes.
     Construction,
+    /// The design's file: opening and saving it.
+    File,
 }
 
 /// The colours of one category's icons.
@@ -178,6 +180,7 @@ pub struct IconColors {
     pub dimension: IconTone,
     pub solid: IconTone,
     pub construction: IconTone,
+    pub file: IconTone,
 }
 
 impl IconColors {
@@ -189,6 +192,7 @@ impl IconColors {
             IconCategory::Dimension => self.dimension,
             IconCategory::Solid => self.solid,
             IconCategory::Construction => self.construction,
+            IconCategory::File => self.file,
         }
     }
 }
@@ -226,7 +230,7 @@ const fn icon_tone(
 
 // Each category's accent stands out from its colour: orange, unless the
 // category is itself red to yellow (then blue) or pink to magenta (then
-// teal).
+// teal). The file's is the text's, as orange looked odd on Save.
 const LIGHT_ORANGE: Color = color!(0xe88a00);
 const LIGHT_BLUE: Color = color!(0x2f6fd8);
 const LIGHT_TEAL: Color = color!(0x0d9a88);
@@ -251,6 +255,7 @@ const LIGHT_ICONS: IconColors = {
         dimension: tone(color!(0x5f6b80), 0.15, LIGHT_ORANGE),
         solid: tone(color!(0xc0409a), 0.0, LIGHT_TEAL),
         construction: tone(color!(0xc39000), 0.08, LIGHT_BLUE),
+        file: tone(LIGHT_BLUE, 0.0, LIGHT_TEXT),
     }
 };
 
@@ -265,6 +270,7 @@ const DARK_ICONS: IconColors = {
         dimension: tone(color!(0xa6b2c6), 0.15, DARK_ORANGE),
         solid: tone(color!(0xef77c2), 0.0, DARK_TEAL),
         construction: tone(color!(0xf0c43c), 0.08, DARK_BLUE),
+        file: tone(DARK_BLUE, 0.0, DARK_TEXT),
     }
 };
 

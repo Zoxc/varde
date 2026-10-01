@@ -174,7 +174,12 @@ fn welcome_button<'a>(
     emphasis: Emphasis,
 ) -> Element<'a, Message> {
     let content = row![
-        icons::tinted(icon, icons::INLINE, move |p| emphasis.content(p)),
+        // On the primary colour in its content's, else in its own.
+        if emphasis == Emphasis::Secondary {
+            icons::icon(icon, icons::INLINE)
+        } else {
+            icons::tinted(icon, icons::INLINE, move |p| emphasis.content(p)).into()
+        },
         text(label).font(theme::SEMIBOLD),
         container(chrome::key_chip(binding.shortcut, ChipSize::Normal).style(emphasis.key_chip()))
             .padding(Padding::ZERO.left(4)),
