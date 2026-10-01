@@ -101,7 +101,7 @@ fn slot(c: DVec2, half: f64, r: f64, curve: u64) -> Loop {
 }
 
 /// A rectangle from `min` to `max` with its corners rounded to `r`.
-fn rounded(min: DVec2, max: DVec2, r: f64, curve: u64) -> Loop {
+pub(super) fn rounded(min: DVec2, max: DVec2, r: f64, curve: u64) -> Loop {
     let p = |x: f64, y: f64| DVec2::new(x, y);
     let (x0, y0, x1, y1) = (min.x, min.y, max.x, max.y);
     Loop {
@@ -837,12 +837,10 @@ fn coaxial_solids_and_pins_in_holes() {
             four(&a, &b, Some(both), &tol, &mut samples, &mut tally, &name);
         }
     }
-    // 191 of 200 work. Left: `pin 1..2`'s union on every frame, the pin
+    // 195 of 200 work. Left: `pin 1..2`'s union on every frame, the pin
     // standing on the plate touching it only along the hole's rim (no
-    // manifold, refused); on the tilted frame the unions of `pin -1..2`,
-    // `r 1 0..2` and `r 0.5 1..2` and `r 1 0..2`'s difference fail as
-    // `Invalid` (a fold or a hull, refused).
-    tally.at_least(0.95, "coaxial");
+    // manifold, refused).
+    tally.at_least(0.97, "coaxial");
 }
 
 #[test]

@@ -820,3 +820,53 @@ fn coincident_edges_cross_where_the_perturbation_parts_them() {
     assert!(checked >= 40, "{checked}");
     assert!(both_ways > 0);
 }
+
+/// The Bernstein coefficients of `(t − r0)(t − r1)(t − r2)`: from its
+/// power coefficients `a`, `b_k = Σ_{i ≤ k} C(k, i) / C(3, i)·a_i`.
+fn cubic([r0, r1, r2]: [f64; 3]) -> [f64; 4] {
+    let a = [
+        -r0 * r1 * r2,
+        r0 * r1 + r0 * r2 + r1 * r2,
+        -(r0 + r1 + r2),
+        1.0,
+    ];
+    [
+        a[0],
+        a[0] + a[1] / 3.0,
+        a[0] + 2.0 * a[1] / 3.0 + a[2] / 3.0,
+        a[0] + a[1] + a[2] + a[3],
+    ]
+}
+
+#[test]
+fn a_double_root_found_twice_is_no_crossing() {
+    // `σ`'s cubic touching zero at ¼ (a tangency, no crossing) and
+    // crossing at ¾. Root isolation may give the double root as two
+    // roots a rounding apart, or twice at one place, with the sign
+    // between them zero; each root's sign change must be the one across
+    // the whole cluster, not the sign after it alone (which counted a
+    // crossing at the tangency).
+    let (r, s) = (0.25, 0.75);
+    let poly = cubic([r, r, s]);
+    for t in [0.1, 0.25, 0.5, 0.75, 0.9] {
+        let want = (t - r) * (t - r) * (t - s);
+        assert!((bernstein::eval(&poly, t) - want).abs() < 1e-15, "{t}");
+    }
+    // At the double root itself the value is rounding, of either sign.
+    assert!(bernstein::eval(&poly, r).abs() < 1e-17);
+    let zero = 1e-15;
+    assert_eq!(sign_changes(&poly, &[r, r, s], zero), vec![0, 0, 1]);
+    assert_eq!(sign_changes(&poly, &[r, s], zero), vec![0, 1]);
+    // A pair a rounding apart, the sign between them noise.
+    for gap in [1e-17, 1e-16, 1e-12, 1e-9] {
+        let pair = [r - gap, r + 3.0 * gap, s];
+        assert_eq!(sign_changes(&poly, &pair, zero), vec![0, 0, 1], "{gap}");
+    }
+    // Simple roots alternate, and a real pair close together counts both.
+    for rs in [[0.2, 0.5, 0.8], [0.4, 0.4 + 1e-6, 0.9]] {
+        let poly = cubic(rs);
+        let roots = bernstein::roots(&poly);
+        assert_eq!(roots.len(), 3, "{roots:?}");
+        assert_eq!(sign_changes(&poly, &roots, zero), vec![1, -1, 1], "{rs:?}");
+    }
+}

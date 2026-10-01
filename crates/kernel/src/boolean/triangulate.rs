@@ -8,7 +8,8 @@
 //! always completes whenever the loops can be triangulated at all: it
 //! first cuts off ears with two corners at one position (so loops of zero
 //! width come apart into triangles of zero width), then proper triangles
-//! with nothing in or on them, then ears of zero area, then any ear, and
+//! with nothing in or on them (nor a rounding off the diagonal they
+//! leave), then ears of zero area, then any ear, and
 //! leaves degenerate triangles to the clean-up after it. It never adds a
 //! diagonal between two vertices on one side of the domain triangle (they
 //! would lie along it, and the patch beside that side could add the same
@@ -559,8 +560,9 @@ const FLIPS: usize = 8;
 /// one, which has no thin triangles the polygon doesn't force: a diagonal
 /// whose quadrilateral is convex is flipped when the far corner lies
 /// inside the circle through the near triangle's corners. Only proper
-/// triangles are touched, the new diagonal must be allowed as the ear
-/// clipping's are, and the number of flips is bounded.
+/// triangles are touched (none with two corners at one place), the new
+/// diagonal must be allowed as the ear clipping's are, and the number of
+/// flips is bounded.
 fn improve(
     tris: &mut [[u32; 3]],
     verts: &[Vert],
@@ -601,8 +603,17 @@ fn improve(
                     continue;
                 };
                 let (va, vb, vc, vd) = (at(a), at(b), at(c), at(d));
+                // Two corners at one place: a triangle of zero width, whose
+                // short side the clean-up collapses, merging its two other
+                // sides; flipped, the side it shares with a proper triangle
+                // became a straight diagonal there that the collapse then
+                // made the zero-width triangle's curve, two curved sides
+                // meeting along one smooth curve, which folds.
+                let quad = [&va, &vb, &vc, &vd];
+                let coincident = (0..4).any(|i| (i + 1..4).any(|j| quad[i].same(quad[j])));
                 if s == t
                     || c == d
+                    || coincident
                     || vc.along_one(&vd)
                     || owner.contains_key(&(c, d))
                     || owner.contains_key(&(d, c))
@@ -746,7 +757,8 @@ fn clip(
 
 /// How good the ear at a vertex is: level 0 one with two corners at one
 /// position (cutting it off takes out a zero-length side, as flush faces
-/// make them), 1 a proper triangle with no other vertex in or on it, 2 a
+/// make them), 1 a proper triangle with no other vertex in or on it or a
+/// rounding off its diagonal (the distance [`thin`] takes as none), 2 a
 /// proper one whose corners along a curved side aren't open (the curve
 /// is split and the face cut again), 3 one of zero area with no other
 /// vertex on it (the clean-up flips it away, which a curve beside it can
@@ -813,13 +825,33 @@ fn ear(ring: &[Vert], i: usize, edges: &BTreeSet<(u32, u32)>, bends: &Bends) -> 
                     && orient(&k, &after, w) >= 0
             })
         });
+        // Nor any a rounding off its diagonal, outside it: cut off, it
+        // leaves a pocket of zero width between the diagonal and them,
+        // whose triangles can't be flipped away where its sides are
+        // curves (a cut along the domain's side, its vertices on it
+        // moved inwards alike, one of its ends on the next side a few
+        // ulps in: three corners on the cut in the patch, of zero area).
+        let grazed = || {
+            let d = q.at - p.at;
+            let length = d.length_squared();
+            ring.iter().any(|v| {
+                let w = v.at - p.at;
+                let along = w.dot(d);
+                !ids.contains(&v.id)
+                    && !v.same(&p)
+                    && !v.same(&q)
+                    && along > 0.0
+                    && along < length
+                    && d.perp_dot(w).abs() <= 1e-9 * length
+            })
+        };
         // With four left, the triangle cutting this ear leaves is taken as
         // it is: its corners count too, and among curves, a remaining
         // triangle of zero area (which the clean-up would have to flip
         // across a curve) is as bad as a zero-area ear.
         let rest = [&q, &ring[(i + 2) % n], &p];
         let flat_rest = !bends.is_empty() && thin(rest);
-        if blocked {
+        if blocked || grazed() {
             4
         } else if n == 4 && flat_rest || !bends.is_empty() && thin([&p, &c, &q]) {
             3

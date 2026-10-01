@@ -374,6 +374,7 @@ impl<'a> Curved<'a> {
         });
         let (poly, zero) = poly?;
         let roots = bernstein::roots(&poly);
+        let changes = sign_changes(&poly, &roots, zero);
         let (mut a_under, mut b_under, mut found) = (0i32, 0i32, 0i32);
         // Where a crossing at an end of the stretch is, if there is one:
         // a root within the tie of it (on either side: rounding may put
@@ -387,11 +388,10 @@ impl<'a> Curved<'a> {
                 at_end.get_or_insert(t);
                 continue;
             }
-            if t <= lo || t >= hi {
+            let sigma = i32::from(changes[i]);
+            if t <= lo || t >= hi || sigma == 0 {
                 continue;
             }
-            let next = roots.get(i + 1).copied().unwrap_or(1.0);
-            let sigma = i32::from(sign(bernstein::eval(&poly, (t + next) * 0.5)));
             if self.parallel_above(e, t) {
                 b_under -= sigma;
             } else {
@@ -655,6 +655,42 @@ pub(super) fn first_sign(delta: DVec3, f: impl Fn(DVec3) -> f64) -> i8 {
         })
         .find(|&s| s != 0)
         .unwrap_or(0)
+}
+
+/// How the sign of the polynomial `poly` (Bernstein coefficients)
+/// changes across each of its `roots` (ascending): `+1` from negative to
+/// positive, `−1` the other way, 0 for no change, from its signs at the
+/// midpoints between the roots, values within `zero` (rounding) taken as
+/// no sign. Where one between two roots is that (a near-double root found
+/// as two roots a rounding apart, or twice at one place), the change
+/// across both goes to the later one: none across a tangency, rather than
+/// the sign after one of them alone, which counted it as a crossing.
+fn sign_changes(poly: &[f64], roots: &[f64], zero: f64) -> Vec<i8> {
+    let side = |t: f64| {
+        let v = bernstein::eval(poly, t);
+        if v.abs() <= zero { 0 } else { sign(v) }
+    };
+    let mut before = roots.first().map_or(0, |&t| side(t * 0.5));
+    roots
+        .iter()
+        .enumerate()
+        .map(|(i, &t)| {
+            let next = roots.get(i + 1).copied().unwrap_or(1.0);
+            let after = side((t + next) * 0.5);
+            if after == 0 {
+                return 0;
+            }
+            let change = if before == 0 {
+                // Nothing to tell before the first root but rounding:
+                // it changes to the sign after it.
+                after
+            } else {
+                (after - before) / 2
+            };
+            before = after;
+            change
+        })
+        .collect()
 }
 
 /// The Bernstein coefficients of a positive multiple of `c`'s tangent,

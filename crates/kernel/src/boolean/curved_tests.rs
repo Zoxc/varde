@@ -16,7 +16,7 @@ use super::*;
 use crate::mesh::tests::TOL;
 use crate::mesh::{Quadric, Surface, samples};
 use crate::par::assert_deterministic;
-use crate::profile::tests::{arc, circle, polygon, rect};
+use crate::profile::tests::{arc, circle, polygon, rect, reversed};
 use crate::{Frame, Loop, Profile, Segment, extrude};
 
 fn cube(min: [f64; 3], size: [f64; 3]) -> Solid {
@@ -990,6 +990,184 @@ fn coaxial_stacks_and_flush_pins_on_turned_frames() {
 }
 
 #[test]
+fn coaxial_seams_on_turned_frames_leave_no_slivers() {
+    // Unions whose wall keeps a seam, on frames off the axes, which
+    // rounding broke two ways. The second circle in 3 arcs from 0.7 rad,
+    // stacked: its wall's cut along the seam runs along the patch's
+    // domain side, with one end on the next side a few ulps in, and the
+    // triangulation took the diagonal from that end past the cut's
+    // vertices, leaving a triangle of zero width with all three corners
+    // on the seam (`Invalid(Fold)`). A pin through a plate's hole, and
+    // circles through exact axis points over 0..2: a cut whose two ends
+    // are a rounding apart was traced round the circle the long way,
+    // outside both triangles (`Invalid(Fold)`, `Invalid(Hull)`).
+    let rot = |axis: DVec3, angle: f64, origin: DVec3| {
+        let q = DQuat::from_axis_angle(axis.normalize(), angle);
+        Frame {
+            origin,
+            x: q * DVec3::X,
+            y: q * DVec3::Y,
+        }
+    };
+    let general = rot(DVec3::new(1.0, 2.0, 3.0), 1.1, DVec3::new(2.5, -1.25, 7.0));
+    let far = rot(
+        DVec3::new(-0.3, 0.9, 0.2),
+        2.3,
+        DVec3::new(-40.0, 13.0, 5.5),
+    );
+    let upright = Frame {
+        origin: DVec3::new(0.3, -0.7, 0.2),
+        x: DVec3::new(0.6, 0.8, 0.0),
+        y: DVec3::Z,
+    };
+    let c = DVec2::new(0.5, 0.2);
+    let stacks = [
+        ("upright", upright, 1.0, 2.0),
+        ("upright", upright, -1.0, 0.0),
+        ("general", general, -1.0, 0.0),
+        ("far", far, -1.0, 0.0),
+    ];
+    for (name, frame, from, to) in stacks {
+        let a = extruded_on(vec![circle(c, 1.0, 0, false)], frame, 0.0, 1.0, 7);
+        let b = extruded_on(vec![turned_circle(c, 1.0, 0, 0.7, 3)], frame, from, to, 8);
+        coaxial(&format!("{name} {from}..{to}"), &a, &b, 0.0, 128);
+    }
+    let a = extruded_on(vec![circle(c, 1.0, 0, false)], general, 0.0, 1.0, 7);
+    let b = extruded_on(vec![circle(c, 1.0, 0, false)], general, 0.0, 2.0, 8);
+    coaxial("general 0..2", &a, &b, 1.0, 128);
+    // The pin and the hole drawn from cosines and sines, as a sketch's
+    // circle is.
+    let plate = extruded_on(
+        vec![
+            rect(DVec2::new(-3.0, -2.0), DVec2::new(3.0, 2.0), 0),
+            reversed(&turned_circle(c, 1.0, 4, 0.0, 4)),
+        ],
+        general,
+        0.0,
+        1.0,
+        5,
+    );
+    let pin = extruded_on(
+        vec![turned_circle(c, 1.0, 0, 0.0, 4)],
+        general,
+        -1.0,
+        2.0,
+        7,
+    );
+    let results = all_four(&plate, &pin, 1e-12);
+    volumes("pin -1..2", &plate, &pin, &results, 0.0, 1e-9);
+    let other = run(&pin, &plate, Op::Union);
+    assert!((other.volume() - results[0].volume()).abs() <= 1e-9);
+    // A rounded rectangle over 0..1 and 0.5..2: the second's cap cut
+    // along the first's rim arcs, one piece a tie long, whose zero-width
+    // triangle a flip took a side from (`Invalid(Fold)` intersected).
+    let corners = (c - DVec2::new(1.0, 0.7), c + DVec2::new(1.0, 0.7));
+    let rounded = || super::seeded_tests::rounded(corners.0, corners.1, 0.4, 4);
+    let a = extruded_on(vec![rounded()], general, 0.0, 1.0, 9);
+    let b = extruded_on(vec![rounded()], general, 0.5, 2.0, 10);
+    let area = a.volume();
+    let results = all_four(&a, &b, 1e-12);
+    volumes("rounded 0.5..2", &a, &b, &results, area * 0.5, 1e-9);
+}
+
+#[test]
+fn a_profile_joined_again_over_a_longer_span() {
+    // "Make it taller": a profile extruded over 0..10 and the same loops
+    // again over a longer span, flush at one cap or past both, or
+    // overlapping. Grown for the union, the first leaves a ring of its
+    // cap of zero width between its rim and the second's wall cut at the
+    // cap's plane, round every curved wall (the hole's too); the rim
+    // takes the cut's vertices either way round, so the clean-up merges
+    // the two. On the XZ and YZ planes the walls' rims and diagonals lie
+    // on each other with shadows on one thin ellipse, whose crossings are
+    // decided one by one. All five operations, against area × span.
+    let plate = vec![
+        rect(DVec2::new(-30.0, -20.0), DVec2::new(30.0, 20.0), 0),
+        circle(DVec2::ZERO, 8.0, 4, true),
+    ];
+    let rounded = vec![super::seeded_tests::rounded(
+        DVec2::new(-30.0, -20.0),
+        DVec2::new(30.0, 20.0),
+        5.0,
+        0,
+    )];
+    // Straight bottom and left, an elliptic right side and a parabolic
+    // top.
+    let p = [
+        DVec2::new(-20.0, -10.0),
+        DVec2::new(20.0, -10.0),
+        DVec2::new(20.0, 10.0),
+        DVec2::new(-20.0, 10.0),
+    ];
+    let conic = |c: DVec2, w: f64, a: DVec2, b: DVec2, curve: u64| Segment {
+        conic: crate::patch::Conic2::new(a, c, w, b).unwrap(),
+        curve,
+    };
+    let outline = vec![Loop {
+        segments: vec![
+            Segment::line(p[0], p[1], 0).unwrap(),
+            conic(DVec2::new(30.0, 0.0), 0.6, p[1], p[2], 1),
+            conic(DVec2::new(0.0, 20.0), 1.0, p[2], p[3], 2),
+            Segment::line(p[3], p[0], 3).unwrap(),
+        ],
+    }];
+    let frames = [
+        Frame::XY,
+        Frame {
+            origin: DVec3::ZERO,
+            x: DVec3::X,
+            y: DVec3::Z,
+        },
+        Frame {
+            origin: DVec3::ZERO,
+            x: DVec3::Y,
+            y: DVec3::Z,
+        },
+    ];
+    // Every span on XY; on the side planes the two the app's repro has
+    // (Two sides 12 + 3, One side 12), which there failed for a shared
+    // cap plane, as every operation did.
+    let spans = [
+        (-3.0, 12.0),
+        (0.0, 12.0),
+        (-15.0, 15.0),
+        (5.0, 15.0),
+        (-3.0, 10.0),
+    ];
+    for (name, loops) in [("plate", plate), ("rounded", rounded), ("outline", outline)] {
+        for (k, &frame) in frames.iter().enumerate() {
+            let a = extruded_on(loops.clone(), frame, 0.0, 10.0, 1);
+            let area = a.volume() / 10.0;
+            for &(from, to) in &spans[..if k == 0 { 5 } else { 2 }] {
+                let b = extruded_on(loops.clone(), frame, from, to, 2);
+                let both = area * (to.min(10.0) - from.max(0.0)).max(0.0);
+                let (va, vb) = (a.volume(), b.volume());
+                let cases = [
+                    (&a, &b, Op::Union, va + vb - both),
+                    (&b, &a, Op::Union, va + vb - both),
+                    (&a, &b, Op::Difference, va - both),
+                    (&b, &a, Op::Difference, vb - both),
+                    (&a, &b, Op::Intersection, both),
+                ];
+                for (x, y, op, want) in cases {
+                    let got = run(x, y, op);
+                    let at = format!("{name} on frame {k}, {from}..{to}, {op:?}");
+                    assert!(
+                        (got.volume() - want).abs() <= 1e-9 * want.max(area),
+                        "{at}: volume {}, not {want}",
+                        got.volume()
+                    );
+                    if op == Op::Union {
+                        let (n, most) = (got.mesh().tris().len(), b.mesh().tris().len());
+                        assert!(n <= 4 * most + 16, "{at}: {n} patches, B has {most}");
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn primitive_cylinders_stacked_unite() {
     // `Solid::cylinder`s of one radius on one axis, overlapping: the
     // union failed as `Invalid(EdgeNeighbours)`.
@@ -1022,6 +1200,21 @@ fn curved_booleans_are_deterministic() {
     let slab = cube([-2.0, -2.0, 0.0], [4.0, 4.0, 2.0]);
     let bar = cylinder([0.3, -0.2, 1.0], 0.7, 2.0);
     assert_deterministic(|| run(&slab, &bar, Op::Difference));
+    // Coaxial walls of one circle: rims taking the cut's vertices, near
+    // twins, crossings of edges lying on each other decided one by one
+    // (YZ), and the cut grazing its own vertices (an upright frame).
+    let c = DVec2::new(0.5, 0.2);
+    let (_, side) = SIDE_PLANES[1];
+    let upright = Frame {
+        origin: DVec3::new(0.3, -0.7, 0.2),
+        x: DVec3::new(0.6, 0.8, 0.0),
+        y: DVec3::Z,
+    };
+    for (frame, from, to) in [(side, 0.0, 2.0), (upright, 1.0, 2.0)] {
+        let a = extruded_on(vec![circle(c, 1.0, 0, false)], frame, 0.0, 1.0, 7);
+        let b = extruded_on(vec![turned_circle(c, 1.0, 0, 0.7, 3)], frame, from, to, 8);
+        assert_deterministic(|| run(&a, &b, Op::Union));
+    }
 }
 
 #[test]

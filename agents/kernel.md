@@ -2100,7 +2100,13 @@ patches are their normals at the corner. Beyond heights:
   Bernstein form: `w·(c − p0)`, `(p1 − p0)/2`, `w·(p1 − c)`) turned by
   `o = sign(e'·g')` for `g'`, `o·δ·(UP × h)` is a cubic (`δ` linear
   along the edge), whose roots in the stretch are the crossings, each
-  above or below by its own rise (the parallel rule above); zero to
+  above or below by its own rise (the parallel rule above), its `σ`
+  the change of sign across it, from the signs at the midpoints
+  between the roots; where one of those is zero to rounding (a
+  near-double root found as two roots a rounding apart, or twice at
+  one place), the change across both goes to the later root, none
+  across a tangency (the sign after a root alone had counted a
+  tangency as a crossing, and its pair the other way); zero to
   rounding (every coefficient within `1e-12` of its terms' size), `T2`
   and then `T3` take `δ`'s place. Roots within the tie of the stretch's
   ends (either side: rounding may put one just outside) are left to the
@@ -2285,7 +2291,14 @@ parameter put a vertex `2e-3` along it from the plane it crossed.
 
 **Chains** (`chain::chain`, per arc, through `par_map`): the cut from an
 arc's `+` end to its `−` end as vertices and curves, and every vertex's
-position in both patches' domains.
+position in both patches' domains. Ends at one place, or within the tie
+of each other (one place by different roundings), give one straight
+edge of about zero length, which the clean-up collapses: the exact
+section through two points `1e-16` apart (a plate's cap corner on its
+hole's rim, against the wall of a pin in the hole) ran round the
+circle the long way, outside both triangles, and the union failed
+(`Invalid(Fold)`; with circles through exact axis points, a cylinder
+over `0..1` and one over `0..2`, `Invalid(Hull)` too).
 
 - **Two planar patches**: one straight edge, exact.
 - **A plane and a quadric** (a planar patch, its face's `Plane` tag or
@@ -2468,7 +2481,10 @@ triangle's curved edges lying in the other's plane (the boss's rim), and
 the planar triangle's curved edges lying on the other's quadric (sampled
 at `¼`, `½` and `¾` within the resolution of both): a cap's rim on the
 wall of a cylinder of its radius on its axis, standing on it or running
-past it. There `A`, grown for a union, keeps a ring of its cap of zero
+past it, or a profile extruded again as a join over a longer span (a
+plate's outline and its hole, rounded corners, elliptic and parabolic
+sides: "make it taller", the hole's wall concave). There `A`, grown for
+a union, keeps a ring of its cap of zero
 width between its rim and `B`'s wall cut in the cap's plane; with only
 the first rule the rim's 4 arcs faced a cut refined to hundreds, the
 ring's triangles fanned across the disc and every same-radius union with
@@ -2684,7 +2700,14 @@ the side it lies on; so zero-width loops come apart into zero-width
 triangles along zero-length sides), a proper triangle with no other vertex in or on it (the best
 shaped one, for polygons up to 64 vertices; the first found beyond; a
 vertex at one of its corners' positions, such as a bridge's other end,
-only blocks it if one of its sides leaves into it or along its sides),
+only blocks it if one of its sides leaves into it or along its sides;
+nor one within `1e-9` of its diagonal's length off that diagonal,
+outside it, which would leave a pocket of zero width between the two:
+a cut along the domain's side whose inner vertices lie on it, moved
+inwards alike, and one of whose ends lies on the next side a few ulps
+in, gave the diagonal from that end, then a triangle with all three
+corners on the cut in the patch, of curved sides no flip takes away,
+which folds: stacked coaxial cylinders on turned frames),
 a zero-area ear with no vertex on it, then any (with curved sides a
 proper ear whose curved corners aren't open ranks between the proper
 and the zero-area ones: see "Cutting curved faces"). No diagonal joins
@@ -2692,8 +2715,14 @@ two vertices on one side of the domain (it would lie along the side, and
 the patch across could add the same one), in a face of `B` two vertices
 of one cut, or repeats an edge. Then diagonals are flipped towards the
 Delaunay triangulation (the far corner inside the near triangle's
-circle, the quadrilateral convex, the new diagonal allowed and the
-curved corners open; at most 8 flips per triangle), which removes the
+circle, the quadrilateral convex, no two of its corners at one place,
+the new diagonal allowed and the curved corners open; at most 8 flips
+per triangle: a flip out of a triangle with two corners at one place
+made a straight diagonal there, which the clean-up's collapse of the
+zero-length side then made that triangle's curve, two arcs of one
+smooth curve meeting at a corner of a proper triangle, which folds: a
+rounded rectangle over `0.5..2` intersected with itself over `0..1` on a
+turned frame), which removes the
 thin triangles greedy ear cutting leaves. With curved sides, Steiner
 points follow (see "Cutting curved faces"), in no triangle of zero width
 (corners on a line: a band between two curves lying on each other, which
@@ -3009,7 +3038,15 @@ off every axis through a slab (every patch on its plane or cylinder to
 overlapping and one inside the other flush at an end, the second circle
 drawn as the first or from another start in 3 arcs, and `Solid::cylinder`s
 stacked (all four operations and the unions both ways, volumes to
-`1e-9`, unions in at most 64 patches); crossing cylinders (volumes against a Simpson
+`1e-9`, unions in at most 64 patches), on the side planes and on turned
+and upright frames too (stacks of the circle in 3 arcs turned, a pin
+through a plate's hole, circles from cosines and sines and through
+exact axis points); a profile extruded again over longer and
+overlapping spans (a plate with a hole, a rounded rectangle, an outline
+with elliptic and parabolic sides; on XY, XZ and YZ; all five
+operations against area × span, unions in at most four times the
+second's patches and 16), and the app's example plate joined again
+taller in the regen tests; crossing cylinders (volumes against a Simpson
 integral within a tenth of the fit tolerance times the area, the cut's
 vertices on both cylinders within a quarter of it, only the bands
 fitted); a pin through a plate's hole wall (upright cylinders meeting in
@@ -3141,7 +3178,7 @@ overlaps of `1e-9` to `1e-3` at two tolerances; plates drilled hole
 after hole (in rows, or anywhere on a grid); pins in holes of their
 own circle and cylinders of one radius stacked and overlapping, on the
 three sketch planes, a frame turned off every axis and one whose caps
-are upright off the axes (at least 95% must work: 191 of 200 do); bosses
+are upright off the axes (at least 97% must work: 195 of 200 do, the pin standing on the plate over its hole refused on each); bosses
 flush on plates; the same bits at 1 and 8 threads. Each test prints its
 tally (`TALLY name: ok of total`) and each refusal (`REFUSED`), seen
 with `--nocapture`. In release it runs
@@ -3176,13 +3213,43 @@ to 72 of its 96 operations and left the others as they were.
   34 `Inconsistent`, all square prisms flush on an XY frame moved off
   the origin or turned about `z` (flat near ties: the exact predicates'
   `Height` and the order after a tied constant, not the curved
-  primitives); 10 unions and one difference on turned or upright frames
-  failing as `Invalid` (a fold or a hull: stacks `1..2` and `−1..0` of
-  the circle in 3 arcs turned, `0..2`, a pin `−1..2`), present with
-  or without the per-crossing rule (supposed, not checked: the flush
-  rims' extras and near twins meeting rounded rim points there); and a
-  pin standing on a plate over its hole, touching only along the rim
-  (no manifold), on every frame.
+  primitives); and a pin standing on a plate over its hole, touching
+  only along the rim (no manifold), on every frame. The 10 unions and
+  one difference on turned or upright frames that failed as `Invalid`
+  (stacks `1..2` and `−1..0` of the circle in 3 arcs turned, `0..2`, a
+  pin `−1..2`) weren't the flush rims' extras or near twins: a diagonal
+  grazing a cut's vertices and a chain through ends a rounding apart
+  (see "Triangulating a face's loops" and "Chains"); all go through
+  now: the sweep 44 → 37 failures, 46 → 37 with exact axis points, all
+  37 the square prisms; the seeded coaxial tally 191 → 195 of 200. A
+  wider sweep (ellipses of half axes 1.6 and 1 in 4 arcs against 3
+  turned, over 7 spans; a rounded rectangle as a pin in its hole and
+  stacked; a union fed on to a cross hole through the seam and a flat
+  cut across it; 9 frames, 1 170 operations) fails none, against 8
+  before (the same folds, and the rounded rectangle's flipped zero-width
+  triangle).
+- **Coaxial walls of a smooth chain of conics.** A profile whose curved
+  segments are different conics meeting smoothly (a spline's fit; here
+  nine conics through `r = 1 + 0.08 cos 3θ`) extruded twice on one axis
+  (stacked, a pin in its own hole, joined taller) runs out of budget
+  (`TooComplex` after 3 to 20 s, `Inconsistent` on YZ): where two
+  segments meet, one operand's wall is tangent to
+  the other's next wall along the ruling there, two quadrics touching
+  along a line. With a corner at each joint instead it works, in 500 to
+  1 000 patches; a chain of circular arcs (one quadric) in some 60.
+- **Coaxial walls a little apart.** Cylinders on one axis whose radii
+  differ by `1e-5` (ten times the resolution) refine their walls' pairs
+  until the hulls part and run out of budget (`TooComplex` after 6 to
+  25 s each); by `1e-7`, under the resolution, they fail as
+  `TooComplex`, `Invalid` or `Inconsistent` (on YZ), or come out with the
+  two walls as one, volumes within the gap's.
+- **A cross hole across a joined body's wall seam** can fold: where the
+  hole's circle passes through a wall triangle's diagonal at one of its
+  own vertices, the piece of the diagonal inside the circle is a chord;
+  the clean-up collapses the tie beside it and gives the chord the arc's
+  curve, two arcs of one circle meeting at a corner of the triangle
+  below (`Invalid(Fold)`; a plate with a slot joined over `−3..12`, then
+  intersected with a hole of radius 1 at `(3, 10.5)` across it).
 - **Tangencies leave cusps.** Where a plane or a cylinder touches a
   cylinder along a line (a boss tangent to a plate's edge, a slot's side
   on a hole), the exact result's faces meet in a corner of zero angle,

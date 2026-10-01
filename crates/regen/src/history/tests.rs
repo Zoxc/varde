@@ -341,6 +341,35 @@ fn a_pocket_is_cut_into_the_plate() {
 }
 
 #[test]
+fn the_plate_joined_again_taller_is_one_body() {
+    // The example's plate region extruded again as a join over a longer
+    // span ("make it taller"): the two walls of every curve (the hole's
+    // too) lie on each other past the first's caps. Refused before as
+    // leaving no clean solid.
+    for (text, height) in [("two sides", 15.0), ("one side", 12.0), ("symmetric", 30.0)] {
+        let mut editor = Editor::new(Document::example());
+        let d = editor.document();
+        let extent = match text {
+            "two sides" => Extent::TwoSides(length(d, "12"), length(d, "3")),
+            "one side" => Extent::OneSide(length(d, "12")),
+            _ => Extent::Symmetric(length(d, "30")),
+        };
+        let extrude = Extrude {
+            extent,
+            flip: false,
+            operation: Operation::Join(Targets::default()),
+            ..example_extrude(d)
+        };
+        editor
+            .apply(editor.document().add_extrude(extrude))
+            .unwrap();
+        let evaluation = evaluated(editor.document());
+        let solid = only_body(&evaluation);
+        assert_near(solid.volume(), plate(8.0, height));
+    }
+}
+
+#[test]
 fn a_boss_is_joined_to_the_plate() {
     let mut editor = Editor::new(Document::example());
     let extent = Extent::OneSide(length(editor.document(), "15"));

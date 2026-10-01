@@ -20,8 +20,9 @@
 
 use glam::DVec3;
 
-use super::segment;
 use super::surface::{Guide, Shape, section};
+use super::{segment, tie};
+use crate::Tolerance;
 use crate::mesh::Quadric;
 use crate::patch::{Conic3, Patch};
 
@@ -144,8 +145,15 @@ impl Chain {
     }
 }
 
-/// The chain of `job`'s arc, within `fit` of the true cut.
-pub(super) fn chain(job: &Job, fit: f64) -> Chain {
+/// The chain of `job`'s arc, within the fit tolerance of the true cut.
+///
+/// Ends at one place, or within the tie of each other (vertices of one
+/// place by different roundings, as where a cap's corner lies on the
+/// other operand's wall), make a straight edge of about zero length,
+/// which the clean-up collapses: the exact section through two points a
+/// rounding apart may run round the whole conic, outside both patches.
+pub(super) fn chain(job: &Job, tol: &Tolerance) -> Chain {
+    let fit = tol.fit();
     let [x, y] = job.ends;
     let straight = |exact| Chain {
         points: Vec::new(),
@@ -156,7 +164,7 @@ pub(super) fn chain(job: &Job, fit: f64) -> Chain {
         curves: vec![segment(x, y)],
         exact,
     };
-    if job.planar[0] && job.planar[1] || x == y {
+    if job.planar[0] && job.planar[1] || x.distance(y) <= tie(tol) {
         return straight(true);
     }
     if let Some(chain) = exact(job) {
