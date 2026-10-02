@@ -1,7 +1,9 @@
 //! Tessellating a checked patch mesh into a [`RenderMesh`].
 //!
 //! Every [`Edge`](crate::mesh::Edge) record gets a number of segments from
-//! its own curve alone, and its sample points are worked out once, along
+//! its own curve, evened out along the rulings of cylinders and cones
+//! (the two curved edges of a patch with a straight one get the same),
+//! and its sample points are worked out once, along
 //! the curve's first halfedge, and read by both patches beside it, so
 //! neighbours share their boundary points to the bit and the mesh has no
 //! cracks. Each patch is sampled on a regular grid inside, one step in
@@ -224,6 +226,7 @@ impl<'a> Plan<'a> {
         }
         let curves: Vec<Conic3> = first.iter().map(|&h| mesh.curve(h)).collect();
         let counts: Vec<u32> = par_map(&curves, |c| segments(c, chord));
+        let counts = along_rulings(mesh, &curves, counts);
         let n_of = |h: u32| counts[mesh.halfedge(h).edge as usize];
 
         let tri_ids: Vec<u32> = (0..halfedges / 3).collect();
@@ -977,6 +980,63 @@ pub(crate) fn segments(curve: &Conic3, chord: f64) -> u32 {
         };
         n = grow.max(n + 1).min(max);
     }
+}
+
+/// `counts` with the two curved edges of each patch of a cylinder or cone
+/// whose third edge is straight (a ruling) given the larger of their
+/// counts, through every chain of such edges: a wall's bottom, its
+/// patches' diagonals and its top. Their samples then lie on the same
+/// rulings (a diagonal is the bottom sheared along the wall, with the
+/// same parameters), as do the inner grid's points, and the triangles
+/// run between neighbouring rulings. Counted from its own curve, a tall
+/// wall's diagonal bends little and gets fewer segments than the arc,
+/// and the triangles near it cross the rulings: a crease winding round
+/// the wall where a reader shades by the faces. The counts only grow,
+/// each to the most in its chain, whatever the order.
+fn along_rulings(mesh: &Mesh, curves: &[Conic3], mut counts: Vec<u32>) -> Vec<u32> {
+    let straight = |c: &Conic3| {
+        let span = c.p1 - c.p0;
+        distance_to_line(c.c, c.p0, c.p1) <= 1e-12 * span.length()
+    };
+    let straight: Vec<bool> = curves.iter().map(straight).collect();
+    // Union–find over the edges, each root holding its chain's most.
+    let mut parent: Vec<u32> = (0..curves.len() as u32).collect();
+    fn root(parent: &mut [u32], mut e: u32) -> u32 {
+        while parent[e as usize] != e {
+            let up = parent[parent[e as usize] as usize];
+            parent[e as usize] = up;
+            e = up;
+        }
+        e
+    }
+    for (t, tri) in mesh.tris().iter().enumerate() {
+        let ruled = matches!(
+            mesh.faces()[tri.face as usize].form,
+            Form::Cylinder { .. } | Form::ConicCylinder { .. } | Form::Cone { .. }
+        );
+        if !ruled {
+            continue;
+        }
+        let edges = [0, 1, 2].map(|i| mesh.halfedge(3 * t as u32 + i).edge);
+        let curved: Vec<u32> = edges
+            .into_iter()
+            .filter(|&e| !straight[e as usize])
+            .collect();
+        if let [a, b] = curved[..] {
+            let (a, b) = (root(&mut parent, a), root(&mut parent, b));
+            if a != b {
+                let most = counts[a as usize].max(counts[b as usize]);
+                let (low, high) = (a.min(b), a.max(b));
+                parent[high as usize] = low;
+                counts[low as usize] = most;
+            }
+        }
+    }
+    for e in 0..curves.len() as u32 {
+        let r = root(&mut parent, e);
+        counts[e as usize] = counts[r as usize];
+    }
+    counts
 }
 
 /// `x` rounded up to a segment count within `1..=MAX_SEGMENTS` (NaN to

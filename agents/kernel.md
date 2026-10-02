@@ -1955,6 +1955,26 @@ tessellation too).
   10° in radians, an underestimate) and grows by the square root of the
   chord error's ratio, at least one step at a time. Only `+ − × ÷ √`, so
   the counts are the same everywhere. A straight edge is one step.
+- **Along rulings** (`along_rulings`). On a patch of a cylinder or cone
+  (`Form::Cylinder`, `ConicCylinder`, `Cone`) with exactly one straight
+  edge (its control point on the line through its ends, within `1e-12`
+  of its span), that edge is a ruling and the other two curved edges get
+  the larger of their counts, through every chain of such edges (a
+  union–find over the edges, each chain at its most; the counts only
+  grow, whatever the order): an extruded wall's bottom, its patches'
+  diagonals and its top. A diagonal is the bottom sheared along the wall
+  with the same parameters, so with the bottom's count its samples lie
+  on the bottom's rulings, and so do the inner grid's points (the
+  patch's rulings are its parameters' lines parallel to the ruling
+  edge): the triangles run between neighbouring rulings, and the welded
+  wall is a prism, creased only along them. Counted from its own curve,
+  a tall wall's diagonal bends little and got fewer segments than the
+  arc (3 to the arc's 9 on a 5 × 200 cylinder, 1 on a 0.5 × 200 needle):
+  the triangles near it crossed the rulings, creases of up to 30°
+  winding round the wall, which a 3MF reader shading by the faces shows
+  as a twisted line, and on the needle triangles folded over the
+  diagonal, facing inwards. A cylinder wall gains a few triangles (1344
+  to 1384 on a 5 × 100 one).
 - **Shared samples.** Each edge's points are evaluated once, along its
   first halfedge (the lowest), from its conic (`Conic3::eval`), and both
   patches beside it use those vertices, so neighbours share their boundary
@@ -2111,14 +2131,9 @@ them near the chord: on the test cylinder the worst triangle's middle
 is 0.77 chords off the surface (1.85 when the strips chose by length
 and the corners weren't flipped), densely sampled 0.86 (about 3 before);
 on 5 × 50 to 5 × 200 cylinders within the chord densely sampled (4
-before). The flips don't reach the round patches' refinement, which is
-still driven by the ring's corners: their levels and counts are as
-before. A patch's diagonal edge is counted from its own curve, so a
-tall wall's diagonals get few segments (3 on a 5 × 200 cylinder) and
-the triangles along them turn about 30°; on a needle (0.5 × 200) the
-diagonal is one segment and the triangles beside it fold over it,
-within the chord but facing inwards, so the mesh pass culls them.
-Shading uses the vertex normals, so slivers whose face normals are far
+before), their faces within 8° of their vertex normals. The flips
+don't reach the round patches' refinement, which is still driven by
+the ring's corners: their levels and counts are as before. Shading uses the vertex normals, so slivers whose face normals are far
 from them don't show; a wall a fortieth of its arc high (20 × 0.5) no
 longer makes them (its faces within 4° of their vertex normals, 84°
 before). Choosing the diagonals against the patch takes two patch
@@ -2138,7 +2153,9 @@ caps, it encloses slightly less than `πr²h`, its triangles' middles are
 within the chord, the skewed corners too, only its rims are feature
 edges, and a rim point is two vertices (wall and cap); the walls of tall
 cylinders (5 × 50 to 5 × 200) are within the chord densely sampled, their
-faces within about 30° of their vertex normals; round octahedra,
+faces within 8° of their vertex normals, and welded, cylinders from 10 ×
+20 to a 0.5 × 200 needle crease only along their rulings and rims;
+round octahedra,
 half cylinders, a torus, a box, and a repaired thin shell (pieces of mixed
 sizes) are watertight: every triangle side is met by one running the other
 way between the same positions, to the bit; edge counts meet the chord and

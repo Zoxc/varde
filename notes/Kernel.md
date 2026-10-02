@@ -380,9 +380,11 @@ either way.
 
 - Each edge record gets a number of equal parameter steps from its own curve
   (chord error within the fit tolerance or a thousandth of the solid's
-  diagonal, whichever is larger; at most 10° of turn a step; at most 64), and
-  its samples are evaluated once, so neighbours share boundary points to the
-  bit: no cracks.
+  diagonal, whichever is larger; at most 10° of turn a step; at most 64),
+  evened out on cylinders and cones so a wall's arcs and diagonals have one
+  count and every sample lies on a ruling through the arc's; and its samples
+  are evaluated once, so neighbours share boundary points to the bit: no
+  cracks.
 - Patch interiors are a regular barycentric grid stitched to the edges,
   as fine as the finest edge, finer on patches curved both ways (spheres,
   ellipsoids, tori, revolved conics) until their triangles are within the chord too.

@@ -1215,9 +1215,7 @@ fn a_tall_cylinder_s_walls_follow_the_surface() {
     // On a tall wall the heights of a strip's inner points differ by more
     // than a step round the arc, and choosing the shorter diagonals
     // paired points steps apart: slivers near the caps up to 4 chords
-    // inside the surface, their faces 43° off their vertex normals. At
-    // 200 the patches' diagonals are 3 segments each (their own curve's
-    // count), and the triangles along them turn about 30°.
+    // inside the surface, their faces 43° off their vertex normals.
     for height in [50.0, 100.0, 200.0] {
         let radius = 5.0;
         let solid = Solid::cylinder(DVec3::ZERO, radius, height, 7, &TOL).unwrap();
@@ -1244,8 +1242,49 @@ fn a_tall_cylinder_s_walls_follow_the_surface() {
             }
             let face = (x[1] - x[0]).cross(x[2] - x[0]).normalize();
             for v in t {
-                assert!(face.dot(n(*v)) > 0.85, "{height}: {face} against {}", n(*v));
+                assert!(face.dot(n(*v)) > 0.99, "{height}: {face} against {}", n(*v));
             }
+        }
+    }
+}
+
+#[test]
+fn a_cylinder_s_walls_weld_into_a_prism() {
+    // The wall's edges all get the arc's count, so every sample is on a
+    // ruling through one of the arc's and the triangles run between
+    // neighbouring rulings: the welded wall creases only along them.
+    // Counted from its own curve, a tall wall's diagonal got fewer
+    // segments, and the triangles near it crossed the rulings: creases
+    // of up to 30° winding round the wall, which readers shading by the
+    // faces show.
+    for (radius, height) in [
+        (10.0, 20.0),
+        (10.0, 50.0),
+        (5.0, 100.0),
+        (5.0, 200.0),
+        (0.5, 200.0),
+    ] {
+        let solid = Solid::cylinder(DVec3::ZERO, radius, height, 7, &TOL).unwrap();
+        let welded = solid.manifold_mesh(&Display::default()).unwrap();
+        let origin = DVec3::from(welded.origin());
+        let p = |i: u32| DVec3::from(welded.positions()[i as usize]) + origin;
+        let mut faces: BTreeMap<(u32, u32), Vec<DVec3>> = BTreeMap::new();
+        for t in welded.triangles() {
+            let x = t.map(p);
+            let face = (x[1] - x[0]).cross(x[2] - x[0]).normalize();
+            for i in 0..3 {
+                let (a, b) = (t[i], t[(i + 1) % 3]);
+                faces.entry((a.min(b), a.max(b))).or_default().push(face);
+            }
+        }
+        for ((a, b), f) in &faces {
+            let crease = f[0].dot(f[1]);
+            let rim = crease.abs() < 0.5;
+            let ruling = (p(*a) - p(*b)).truncate().length() < 1e-9;
+            assert!(
+                rim || ruling || crease > 1.0 - 1e-9,
+                "{radius} × {height}: {crease}"
+            );
         }
     }
 }
