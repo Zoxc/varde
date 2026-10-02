@@ -77,7 +77,7 @@ pub use select::{Selected, Selection, SelectionMode};
 pub use shortcut::{Binding, DocumentKeys, Held, document_bindings, pressed, welcome_bindings};
 pub use snap::{Inference, Level, SNAP_TOLERANCE, Snap, Target};
 pub use status::{STATUS_BAR_HEIGHT, STATUS_BAR_ROOM};
-pub use theme::{Mode, SIDE_PANEL_WIDTH, theme as iced_theme};
+pub use theme::{Mode, SIDE_PANEL_WIDTH, ThemeChoice, theme as iced_theme};
 pub use viewport::ModelPicking;
 pub use welcome::{RecentCard, StoredDesign, WelcomeState, welcome};
 
@@ -94,7 +94,8 @@ pub enum Message {
     File(File),
     Edit(Edit),
     Look(Look),
-    ToggleTheme,
+    /// Goes on to the next [`ThemeChoice`].
+    CycleTheme,
     /// Shows the status bar's hints for the mouse, or hides them: the
     /// view options menu's Mouse hints.
     ToggleMouseHints,
@@ -106,14 +107,16 @@ pub enum Message {
     Copy(String),
 }
 
-/// What the view options menu turns on and off, kept by the app for every
-/// document. All on by default.
+/// What the view options menu turns on and off, and the theme button
+/// picks, kept by the app for every document. All on by default, and the
+/// theme the system's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ViewOptions {
     /// Whether the status bar shows the hints of the mouse.
     pub mouse_hints: bool,
     /// Whether the viewport shows the edges the model hides, dashed.
     pub hidden_edges: bool,
+    pub theme: ThemeChoice,
 }
 
 impl Default for ViewOptions {
@@ -121,6 +124,7 @@ impl Default for ViewOptions {
         ViewOptions {
             mouse_hints: true,
             hidden_edges: true,
+            theme: ThemeChoice::default(),
         }
     }
 }

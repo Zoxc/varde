@@ -145,7 +145,7 @@ mod tests {
         let divider = Divider {
             above: 100.0,
             room: 400.0,
-            on_resize: |_| Message::ToggleTheme,
+            on_resize: |_| Message::CycleTheme,
         };
         // The divider sits at y 150, so the split starts at 50.
         let bounds = Rectangle::new(Point::new(0.0, 150.0), Size::new(200.0, DIVIDER));

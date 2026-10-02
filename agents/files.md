@@ -8,8 +8,8 @@ first hands the app the lane's sender and then yields each response as a
 message.
 Requests sent before it has started wait in the app. Unlike the regeneration
 lanes it's an ordered queue, since writes to one file must land in order;
-only a write of the recent files list still waiting is replaced by a newer
-one, a save by a newer save of the same file (see "Saving"), and an
+only a write of the recent files list or the settings still waiting is
+replaced by a newer one, a save by a newer save of the same file (see "Saving"), and an
 auto-save likewise, never across anything else asked of that file or a
 flush. On the web the lane is a Web Worker, see `web-files.md`.
 
@@ -19,7 +19,13 @@ or none, so they never touch the user's.
 
 The lane owns the open `DocumentFile`s, the app refers to them by a
 `FileId`. At startup it reads the recent files list, and the welcome screen
-shows an empty list until it arrives. Each open is tagged, and only the
+shows an empty list until it arrives, and the settings
+(`varde_io::settings`, `settings.toml` next to `recent.toml`; on the web at
+the root of OPFS). They hold the theme: Auto (iced's system theme, light
+when the system doesn't say), Light or Dark, cycled by the theme button and
+written as chosen, though not before the stored settings have arrived; a
+theme chosen before then wins over them. Each key is read on its own, so
+one gone bad gets its default and costs no other. Each open is tagged, and only the
 answer to the open the welcome screen is waiting for is shown. When the
 user starts a new design or opens another file instead, the app tells the
 lane it gave up on the open before sending anything else, so the file is
@@ -140,7 +146,10 @@ files list, before the window closes and the app exits. Auto-saves never
 hold up closing: closing comes after them in the lane's queue and deletes
 what they wrote. The recent files list is written to a temporary file of
 its own name and renamed over the list, so two instances writing at once
-don't mix, and an entry of it that doesn't parse loses only itself.
+don't mix, and an entry of it that doesn't parse loses only itself. The
+settings are written the same way (`io/src/native/config.rs`); on the web
+through the file's sync access handle. A theme chosen while quitting is
+ignored, as it would be written after the flush.
 
 **Exporting 3MF.** The visible bodies are written as a 3MF package, for
 printing, from the File menu's Export 3MF… (under Save As; no key and no

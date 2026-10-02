@@ -85,7 +85,10 @@ listed on the welcome screen by its name, and opens as a copy by that name:
 the handle went with the tab. Should the entry not be made, say with the
 site's data blocked, a file of the user's still opens and saves, only
 without auto-saves, which the banner says. Recent files would need the
-handles kept in IndexedDB, and aren't there yet.
+handles kept in IndexedDB, and aren't there yet. The settings are
+`settings.toml` at the root of OPFS, read through `getFile` (no handle
+taken, so another tab writing them doesn't block it) and written through a
+sync access handle, which every browser with OPFS has in workers.
 
 The page and the worker share no memory. Each message is postcard bytes in
 a transferred `ArrayBuffer` (with a picked file's handle or `File` cloned

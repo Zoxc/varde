@@ -14,6 +14,7 @@ use web_sys::{FileSystemDirectoryHandle, FileSystemFileHandle};
 
 use super::disk::{self, Handed};
 use super::opfs::{self, Handle, file, modified, names};
+use super::settings;
 use crate::autosave::{AutoSaved, Ending, Held, Origin, to_open};
 use crate::open::OpenFiles;
 use crate::opfs::{lost_to_another_tab, new_name};
@@ -25,7 +26,7 @@ use crate::vrdp::{
 use crate::web::js::call;
 use crate::{
     Access, Chosen, Closing, FileId, OpenId, Opened, Picked, PickedFrom, ReadOnly, Recovered,
-    Request, Response, SaveError, SaveTo, SavedAs,
+    Request, Response, SaveError, SaveTo, SavedAs, Stores,
 };
 
 /// What the web build answers requests for files at a path with: it only
@@ -40,6 +41,8 @@ pub(crate) struct Files {
     named: u64,
     /// Where new designs are kept, if anywhere, see [`Stores::designs`](crate::Stores::designs).
     designs: Option<PathBuf>,
+    /// Where the settings are kept, if anywhere, see [`Stores::settings`](crate::Stores::settings).
+    settings: Option<PathBuf>,
     /// The directory `designs` names, once found.
     dir: Option<FileSystemDirectoryHandle>,
 }
@@ -90,12 +93,14 @@ impl Open {
 }
 
 impl Files {
-    /// No designs open, and new ones kept in `designs`, if anywhere.
-    pub(crate) fn new(designs: Option<PathBuf>) -> Self {
+    /// No designs open, and new ones and the settings kept where `stores`
+    /// says, if anywhere. The web has no recent files list.
+    pub(crate) fn new(stores: Stores) -> Self {
         Self {
             open: OpenFiles::new(),
             named: 0,
-            designs,
+            designs: stores.designs,
+            settings: stores.settings,
             dir: None,
         }
     }
@@ -207,6 +212,20 @@ impl Files {
             Request::DiscardRecovered { path } => Response::RecoveredDiscarded {
                 result: self.discard(&path).await,
                 path,
+            },
+            Request::LoadSettings => Response::SettingsLoaded {
+                settings: match &self.settings {
+                    Some(store) => settings::load(store).await,
+                    None => Default::default(),
+                },
+            },
+            Request::WriteSettings { settings } => Response::SettingsWritten {
+                result: match &self.settings {
+                    Some(store) => settings::write(store, &settings)
+                        .await
+                        .map_err(|e| e.to_string()),
+                    None => Ok(()),
+                },
             },
             Request::Flush => Response::Flushed,
         }

@@ -289,3 +289,38 @@ fn a_waiting_auto_save_of_a_download_is_kept() {
         [(1, false), (1, true), (3, false), (3, true), (4, true)]
     );
 }
+
+/// Settings writes replace each other, not the recent files list's, and a
+/// load keeps a write behind it from replacing one before it.
+#[test]
+fn settings_writes_replace_only_their_own() {
+    use crate::Settings;
+    use crate::settings::Theme;
+
+    let settings = |theme| Request::WriteSettings {
+        settings: Settings { theme },
+    };
+    let mut queue = Queue::default();
+    assert!(queue.push(settings(Theme::Light)).is_none());
+    assert!(queue.push(write(1)).is_none());
+    assert!(matches!(
+        queue.push(settings(Theme::Dark)),
+        Some(Request::WriteSettings {
+            settings: Settings {
+                theme: Theme::Light
+            }
+        })
+    ));
+    assert!(queue.push(Request::LoadSettings).is_none());
+    assert!(queue.push(settings(Theme::Auto)).is_none());
+
+    assert_eq!(queue.pop().as_ref().and_then(opened), Some(1));
+    assert!(
+        matches!(queue.pop(), Some(Request::WriteSettings { settings }) if settings.theme == Theme::Dark)
+    );
+    assert!(matches!(queue.pop(), Some(Request::LoadSettings)));
+    assert!(
+        matches!(queue.pop(), Some(Request::WriteSettings { settings }) if settings.theme == Theme::Auto)
+    );
+    assert!(queue.pop().is_none());
+}

@@ -27,6 +27,8 @@ pub struct WelcomeState<'a> {
     /// in case the download didn't finish, which the page isn't told.
     pub downloaded: Vec<StoredDesign<'a>>,
     pub mode: theme::Mode,
+    /// The theme chosen, which the theme button shows.
+    pub theme: theme::ThemeChoice,
 }
 
 /// A card in the welcome screen's recent files.
@@ -127,7 +129,7 @@ pub fn welcome<'a>(state: WelcomeState<'a>) -> Element<'a, Message> {
         .width(Length::Fill)
         .height(Length::Fill)
         .style(theme::welcome),
-        container(chrome::app_buttons(state.mode))
+        container(chrome::app_buttons(state.theme))
             .align_right(Length::Fill)
             .padding(8),
     ];

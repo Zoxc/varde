@@ -19,19 +19,19 @@ use crate::opfs::{dir_names, done};
 use crate::vrdp::{ReadAt, Storage};
 use crate::web::js::{call, js_error};
 
+/// The root of the Origin Private File System.
+async fn root() -> io::Result<FileSystemDirectoryHandle> {
+    let scope: WorkerGlobalScope = js_sys::global().unchecked_into();
+    Ok(call(scope.navigator().storage().get_directory())
+        .await?
+        .unchecked_into())
+}
+
 /// The directory at `designs`, from the root of the Origin Private File
 /// System, made if needed.
 pub(crate) async fn dir(designs: &Path) -> io::Result<FileSystemDirectoryHandle> {
-    let names = dir_names(designs).ok_or_else(|| {
-        io::Error::other(format!(
-            "{} isn't a place in the Origin Private File System",
-            designs.display()
-        ))
-    })?;
-    let scope: WorkerGlobalScope = js_sys::global().unchecked_into();
-    let mut dir: FileSystemDirectoryHandle = call(scope.navigator().storage().get_directory())
-        .await?
-        .unchecked_into();
+    let names = dir_names(designs).ok_or_else(|| not_a_place(designs))?;
+    let mut dir = root().await?;
     let options = FileSystemGetDirectoryOptions::new();
     options.set_create(true);
     for name in names {
@@ -40,6 +40,27 @@ pub(crate) async fn dir(designs: &Path) -> io::Result<FileSystemDirectoryHandle>
             .unchecked_into();
     }
     Ok(dir)
+}
+
+/// The file at `path`, from the root of the Origin Private File System,
+/// made if `create`, along with the directories it's in.
+pub(crate) async fn file_at(path: &Path, create: bool) -> io::Result<FileSystemFileHandle> {
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| not_a_place(path))?;
+    let dir = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => dir(parent).await?,
+        _ => root().await?,
+    };
+    file(&dir, name, create).await
+}
+
+fn not_a_place(path: &Path) -> io::Error {
+    io::Error::other(format!(
+        "{} isn't a place in the Origin Private File System",
+        path.display()
+    ))
 }
 
 /// The names in `dir`.

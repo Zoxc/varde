@@ -45,9 +45,9 @@ impl<T> IntoIterator for Queue<T> {
 }
 
 impl<T: Queued> Pending<T> for Queue<T> {
-    /// Queues `request`. A `Save`, `AutoSave` or `WriteRecent` replaces
-    /// the last one queued of its kind and target, if nothing else for that
-    /// target is queued after it. Never across a `Flush`, which is answered
+    /// Queues `request`. A `Save`, `AutoSave`, `WriteRecent` or
+    /// `WriteSettings` replaces the last one queued of its kind and target,
+    /// if nothing else for that target is queued after it. Never across a `Flush`, which is answered
     /// once everything sent before it is done, nor a `KeepDownload`, which
     /// a clean close may go back to, see [`Request::Close`], and which
     /// nothing replaces. The replaced request is returned for the caller to
@@ -85,6 +85,7 @@ impl<T: Queued> Pending<T> for Queue<T> {
 enum Target {
     File(FileId),
     Recent,
+    Settings,
 }
 
 impl Request {
@@ -93,13 +94,17 @@ impl Request {
     fn replaces(&self) -> bool {
         matches!(
             self,
-            Request::Save { .. } | Request::AutoSave { .. } | Request::WriteRecent { .. }
+            Request::Save { .. }
+                | Request::AutoSave { .. }
+                | Request::WriteRecent { .. }
+                | Request::WriteSettings { .. }
         )
     }
 
     /// What the request reads or writes, if it's something requests
-    /// replacing queued ones go by: an open file, or the recent files list.
-    /// A request that only reads its target, like `LoadRecent`, is never
+    /// replacing queued ones go by: an open file, the recent files list or
+    /// the settings. A request that only reads its target, like
+    /// `LoadRecent`, is never
     /// replaced but keeps a write behind it from replacing one before it.
     fn target(&self) -> Option<Target> {
         match self {
@@ -112,6 +117,7 @@ impl Request {
                 file: Some(file), ..
             } => Some(Target::File(*file)),
             Request::WriteRecent { .. } | Request::LoadRecent => Some(Target::Recent),
+            Request::WriteSettings { .. } | Request::LoadSettings => Some(Target::Settings),
             Request::SaveAs { file: None, .. }
             | Request::Open { .. }
             | Request::New { .. }

@@ -7,13 +7,13 @@ use std::path::{Path, PathBuf};
 use varde_document::{Document, Snapshot};
 
 use super::sidecar::{self, LockFile};
-use super::{recent, store};
+use super::{recent, settings, store};
 use crate::autosave::{Ending, Origin, to_open};
 use crate::open::OpenFiles;
 use crate::store::{NO_RECOVERED, NO_STORE, entry_in};
 use crate::{
     Access, Chosen, Closing, FileId, Offer, OpenId, Opened, ReadOnly, RecentFile, Request,
-    Response, SaveError, SaveTo, SavedAs, Stores,
+    Response, SaveError, SaveTo, SavedAs, Settings, Stores,
 };
 
 mod document_file;
@@ -25,7 +25,8 @@ pub(crate) use document_file::{sync_parent, temp_path};
 #[derive(Debug)]
 pub(crate) struct Files {
     open: OpenFiles<Kind>,
-    /// Where the recent files list and new designs are kept, if anywhere.
+    /// Where the recent files list, the settings and new designs are kept,
+    /// if anywhere.
     stores: Stores,
 }
 
@@ -312,6 +313,17 @@ impl Files {
             Request::WriteRecent { entries } => Response::RecentWritten {
                 result: self.write_recent(&entries),
             },
+            Request::LoadSettings => Response::SettingsLoaded {
+                settings: self
+                    .stores
+                    .settings
+                    .as_deref()
+                    .map(settings::load)
+                    .unwrap_or_default(),
+            },
+            Request::WriteSettings { settings } => Response::SettingsWritten {
+                result: self.write_settings(&settings),
+            },
             Request::ListRecovered => Response::RecoveredListed {
                 designs: self
                     .stores
@@ -582,6 +594,13 @@ impl Files {
     fn write_recent(&self, entries: &[RecentFile]) -> Result<(), String> {
         match &self.stores.recent {
             Some(store) => recent::write(store, entries).map_err(|e| e.to_string()),
+            None => Ok(()),
+        }
+    }
+
+    fn write_settings(&self, written: &Settings) -> Result<(), String> {
+        match &self.stores.settings {
+            Some(store) => settings::write(store, written).map_err(|e| e.to_string()),
             None => Ok(()),
         }
     }

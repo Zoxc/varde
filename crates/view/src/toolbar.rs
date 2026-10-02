@@ -94,7 +94,7 @@ pub fn toolbar<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
         container(vrule()).height(18).padding([0, 4]),
         // TODO: open the command palette.
         icon_button(Icon::Search, Tone::Muted, None),
-        crate::chrome::app_buttons(state.mode),
+        crate::chrome::app_buttons(state.options.theme),
         Space::new().width(8),
     ]
     .spacing(BAR_SPACING)

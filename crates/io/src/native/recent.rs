@@ -1,13 +1,12 @@
 //! Reading and writing the recent files list, `recent.toml`, see
 //! `src/recent.rs`.
 
-use std::fs::{File, OpenOptions};
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use super::{files, unique};
+use super::config;
 use crate::recent::{Listed, MAX, RecentFile};
 
 /// The on-disk layout, read one entry at a time, so a bad one loses only
@@ -53,41 +52,9 @@ pub(crate) fn listed(entries: Vec<RecentFile>) -> Vec<Listed> {
         .collect()
 }
 
-/// Writes `entries` to `store`. Writes a temporary file first and renames
-/// it over the store, so a failed write never leaves a truncated list, and
-/// syncs the directory so the rename lasts. The temporary file's name is
-/// this write's own, so another instance writing at the same time can't
-/// write into it.
+/// Writes `entries` to `store`, see [`config::replace`].
 pub(crate) fn write(store: &Path, entries: &[RecentFile]) -> io::Result<()> {
-    if let Some(dir) = store.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let (temporary, file) = temporary(store)?;
-    // Closed before it's renamed, which Windows needs.
-    let written = {
-        let mut file = file;
-        file.write_all(serialize(entries).as_bytes())
-            .and_then(|()| file.sync_all())
-    };
-    let result = written.and_then(|()| std::fs::rename(&temporary, store));
-    if result.is_err() {
-        let _ = std::fs::remove_file(&temporary);
-        return result;
-    }
-    // Best effort, like a design file's replace: the list is written, and
-    // failing here only risks a crash bringing the old one back.
-    let _ = files::sync_parent(store);
-    Ok(())
-}
-
-/// Creates a new temporary file next to `store`:
-/// `recent.toml.{name}.tmp`, with a [`unique::name`].
-fn temporary(store: &Path) -> io::Result<(PathBuf, File)> {
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    unique::create(&options, unique::ATTEMPTS, |name| {
-        store.with_extension(format!("toml.{name}.tmp"))
-    })
+    config::replace(store, &serialize(entries))
 }
 
 /// The entries of `toml`, leaving out the ones that don't parse.

@@ -25,7 +25,9 @@
 //!
 //! Designs opened from files of the user's get an entry too, which their
 //! auto-saves go to along with the file's name, see `src/pick.rs`. The
-//! recent files list has no place on the web, and files at a path neither.
+//! settings are kept beside the store, in `settings.toml` at the root (see
+//! `src/settings.rs`). The recent files list has no place on the web, and
+//! files at a path neither.
 //!
 //! What's here is plain Rust: the checks on paths and names,
 //! and on the numbers reads and writes hand JS and get back, which are

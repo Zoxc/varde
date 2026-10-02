@@ -576,7 +576,11 @@ fn recent_files_are_loaded_first() {
     let (_varde, requests) = with_files();
     assert!(matches!(
         requests.borrow()[..],
-        [IoRequest::LoadRecent, IoRequest::ListRecovered]
+        [
+            IoRequest::LoadRecent,
+            IoRequest::ListRecovered,
+            IoRequest::LoadSettings
+        ]
     ));
 }
 
@@ -701,6 +705,7 @@ fn an_open_given_up_on_is_abandoned_before_the_next() {
         [
             "LoadRecent",
             "ListRecovered",
+            "LoadSettings",
             "open 0 /d/a.vrdp",
             "abandon 0",
             "open 1 /d/b.vrdp",
@@ -778,6 +783,7 @@ fn requests_before_the_lane_starts_wait_for_it() {
         [
             IoRequest::LoadRecent,
             IoRequest::ListRecovered,
+            IoRequest::LoadSettings,
             IoRequest::Open { .. }
         ]
     ));
@@ -818,6 +824,48 @@ fn recent_files_are_not_written_before_they_are_loaded() {
     assert_eq!(written.len(), 1);
     assert_eq!(written[0][0].path, path);
     assert_eq!(written[0][1], stored);
+}
+
+/// The stored theme is taken once it arrives, and one chosen after is
+/// stored; Auto follows the system, light when it doesn't say.
+#[test]
+fn the_theme_is_stored_and_auto_follows_the_system() {
+    use varde_io::settings::{Settings as Stored, Theme};
+    use varde_view::ThemeChoice;
+
+    let (mut varde, requests) = with_files();
+    let _ = sent(&requests);
+    assert_eq!(varde.options.theme, ThemeChoice::Auto);
+    assert_eq!(varde.mode(), Mode::Light);
+    let _ = varde.update(Message::SystemTheme(iced::theme::Mode::Dark));
+    assert_eq!(varde.mode(), Mode::Dark);
+
+    let _ = varde.update(Message::Io(IoResponse::SettingsLoaded {
+        settings: Stored {
+            theme: Theme::Light,
+        },
+    }));
+    assert_eq!(varde.options.theme, ThemeChoice::Light);
+    assert_eq!(varde.mode(), Mode::Light);
+    assert!(
+        sent(&requests).is_empty(),
+        "the stored theme isn't written back"
+    );
+
+    let _ = varde.update(Message::Ui(Ui::CycleTheme));
+    assert_eq!(varde.mode(), Mode::Dark);
+    let _ = varde.update(Message::Ui(Ui::CycleTheme));
+    assert_eq!(varde.options.theme, ThemeChoice::Auto);
+    let _ = varde.update(Message::SystemTheme(iced::theme::Mode::None));
+    assert_eq!(varde.mode(), Mode::Light);
+    let themes: Vec<_> = sent(&requests)
+        .into_iter()
+        .map(|request| match request {
+            IoRequest::WriteSettings { settings } => settings.theme,
+            request => panic!("not a settings write: {request:?}"),
+        })
+        .collect();
+    assert_eq!(themes, [Theme::Dark, Theme::Auto]);
 }
 
 #[test]
@@ -3192,6 +3240,7 @@ impl Session {
     fn new(dir: &Path) -> Self {
         let (lane, responses) = varde_io::lane::spawn_at(varde_io::Stores {
             recent: None,
+            settings: None,
             designs: Some(dir.join("designs")),
         });
         let mut varde = Varde::new();
@@ -3905,6 +3954,7 @@ fn with_picked_file(picked: Picked) -> (Varde, Rc<RefCell<Vec<IoRequest>>>) {
     let [
         IoRequest::LoadRecent,
         IoRequest::ListRecovered,
+        IoRequest::LoadSettings,
         IoRequest::Open {
             id,
             from: Chosen::File(asked),

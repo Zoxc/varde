@@ -8,6 +8,7 @@ mod keys;
 mod message;
 mod platform;
 mod recent;
+mod settings;
 mod welcome;
 mod when;
 
@@ -30,13 +31,18 @@ use crate::io::Io;
 use crate::keys::{document_key, welcome_key};
 use crate::message::{ForDoc, Message};
 use crate::recent::Recent;
+use crate::settings::Settings;
 use crate::welcome::Welcome;
 
 pub(crate) struct Varde {
     screen: Screen,
-    mode: Mode,
-    /// What the view options menu turns on and off.
+    /// The mode the system prefers, if it says: the theme's when the user
+    /// chose [`ThemeChoice::Auto`](varde_view::ThemeChoice::Auto).
+    system: Option<Mode>,
+    /// What the view options menu turns on and off, and the theme chosen.
     options: ViewOptions,
+    /// What's stored of `options`.
+    settings: Settings,
     /// Whether the peek key is held, see [`Held::PEEK`].
     peeking: bool,
     /// Whether the command modifier (`Ctrl`, or `Cmd` on macOS) is held,
@@ -148,15 +154,24 @@ impl Varde {
         // The welcome screen shows the lists once they have arrived.
         files.io.send(IoRequest::LoadRecent);
         files.io.send(IoRequest::ListRecovered);
+        // The theme is the system's until the stored one arrives.
+        files.io.send(IoRequest::LoadSettings);
         Self {
             screen: Screen::Welcome(Welcome::default()),
-            mode: Mode::default(),
+            system: None,
             options: ViewOptions::default(),
+            settings: Settings::default(),
             peeking: false,
             command: false,
             files,
             quitting: None,
         }
+    }
+
+    /// The app as it starts, and the task asking for the mode the system
+    /// prefers, which [`Varde::subscription`] hears of changes to after.
+    fn boot() -> (Self, Task<Message>) {
+        (Self::new(), iced::system::theme().map(Message::SystemTheme))
     }
 
     pub(crate) fn update(&mut self, message: Message) -> Task<Message> {
@@ -243,7 +258,19 @@ impl Varde {
                     doc.proposals_settled(cx)
                 });
             }
-            Message::Ui(Ui::ToggleTheme) => self.mode = self.mode.toggled(),
+            Message::Ui(Ui::CycleTheme) => {
+                self.options.theme = self.options.theme.cycled();
+                if let Some(write) = self.settings.chose(self.options.theme) {
+                    self.files.io.send(write);
+                }
+            }
+            Message::SystemTheme(mode) => {
+                self.system = match mode {
+                    iced::theme::Mode::Light => Some(Mode::Light),
+                    iced::theme::Mode::Dark => Some(Mode::Dark),
+                    iced::theme::Mode::None => None,
+                };
+            }
             Message::Ui(Ui::Copy(text)) => return platform::copy(text),
             Message::Ui(Ui::ToggleMouseHints) => {
                 self.options.mouse_hints = !self.options.mouse_hints;
@@ -385,6 +412,16 @@ impl Varde {
             IoResponse::RecentWritten { result } => {
                 report_failure("save the recent files", result);
             }
+            IoResponse::SettingsLoaded { settings } => {
+                let (theme, write) = self.settings.loaded(settings, self.options.theme);
+                self.options.theme = theme;
+                if let Some(write) = write {
+                    self.files.io.send(write);
+                }
+            }
+            IoResponse::SettingsWritten { result } => {
+                report_failure("save the settings", result);
+            }
             IoResponse::Saved {
                 file,
                 revision,
@@ -431,8 +468,8 @@ impl Varde {
 
     pub(crate) fn view(&self) -> Element<'_, Message> {
         let view = match &self.screen {
-            Screen::Welcome(welcome) => welcome.view(&self.files, self.mode),
-            Screen::Document(doc) => doc.view(self.peeking, self.mode, self.options),
+            Screen::Welcome(welcome) => welcome.view(&self.files, self.mode(), self.options.theme),
+            Screen::Document(doc) => doc.view(self.peeking, self.mode(), self.options),
         };
         view.map(Message::Ui)
     }
@@ -478,6 +515,7 @@ impl Varde {
                 doc.is_some_and(|doc| doc.animating() || doc.timing()),
                 || window::frames().map(Message::AnimationFrame),
             ),
+            iced::system::theme_changes().map(Message::SystemTheme),
             self.regen_lane(),
             self.solve_lane(),
             Self::io_lane(),
@@ -541,8 +579,14 @@ impl Varde {
         }
     }
 
+    /// Whether the UI is light or dark: as chosen, or as the system
+    /// prefers.
+    fn mode(&self) -> Mode {
+        self.options.theme.mode(self.system)
+    }
+
     pub(crate) fn theme(&self) -> iced::Theme {
-        varde_view::iced_theme(self.mode)
+        varde_view::iced_theme(self.mode())
     }
 }
 
@@ -570,7 +614,8 @@ fn doc_lane<L, S: Stream>(
 /// Whether `message` still acts while the window waits for the IO lane to
 /// flush: the lane's own and those that only change the view, none of which
 /// can send the lane more work, see `Varde::quit`. Not an export's welded
-/// bodies, which would be sent to be written.
+/// bodies, which would be sent to be written, nor a theme chosen, which
+/// would be stored.
 fn while_quitting(message: &Message) -> bool {
     matches!(
         message,
@@ -589,13 +634,8 @@ fn while_quitting(message: &Message) -> bool {
             | Message::AnimationFrame(_)
             | Message::PeekPanel(_)
             | Message::CommandHeld(_)
-            | Message::Ui(
-                Ui::Look(_)
-                    | Ui::ToggleTheme
-                    | Ui::ToggleMouseHints
-                    | Ui::ToggleHiddenEdges
-                    | Ui::Copy(_)
-            )
+            | Message::SystemTheme(_)
+            | Message::Ui(Ui::Look(_) | Ui::ToggleMouseHints | Ui::ToggleHiddenEdges | Ui::Copy(_))
     )
 }
 
@@ -735,7 +775,7 @@ fn ask_writable(id: DocId, picked: Picked) -> Task<Message> {
 pub type Result<T = (), E = iced::Error> = std::result::Result<T, E>;
 
 pub fn run() -> Result {
-    iced::application(Varde::new, Varde::update, Varde::view)
+    iced::application(Varde::boot, Varde::update, Varde::view)
         .title(Varde::title)
         .subscription(Varde::subscription)
         .theme(Varde::theme)

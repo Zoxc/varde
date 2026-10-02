@@ -129,6 +129,7 @@ fn recent_files_round_trip_through_the_store() {
     let dir = TempDir::new("files-recent");
     let mut files = Files::new(Stores {
         recent: Some(dir.0.join("recent.toml")),
+        settings: None,
         designs: None,
     });
     let entries = vec![RecentFile {
@@ -168,6 +169,46 @@ fn recent_files_without_a_store_are_empty() {
     assert!(matches!(
         files.handle(Request::LoadRecent),
         Response::RecentLoaded { entries, .. } if entries.is_empty()
+    ));
+}
+
+#[test]
+fn settings_round_trip_through_the_store() {
+    let dir = TempDir::new("files-settings");
+    let mut files = Files::new(Stores {
+        settings: Some(dir.0.join("settings.toml")),
+        ..Stores::default()
+    });
+    assert!(matches!(
+        files.handle(Request::LoadSettings),
+        Response::SettingsLoaded { settings } if settings == Settings::default()
+    ));
+    let settings = Settings {
+        theme: crate::settings::Theme::Light,
+    };
+    assert!(matches!(
+        files.handle(Request::WriteSettings { settings }),
+        Response::SettingsWritten { result: Ok(()) }
+    ));
+    assert!(matches!(
+        files.handle(Request::LoadSettings),
+        Response::SettingsLoaded { settings: loaded } if loaded == settings
+    ));
+}
+
+#[test]
+fn settings_without_a_store_are_the_defaults() {
+    let mut files = Files::new(Stores::default());
+    let settings = Settings {
+        theme: crate::settings::Theme::Dark,
+    };
+    assert!(matches!(
+        files.handle(Request::WriteSettings { settings }),
+        Response::SettingsWritten { result: Ok(()) }
+    ));
+    assert!(matches!(
+        files.handle(Request::LoadSettings),
+        Response::SettingsLoaded { settings } if settings == Settings::default()
     ));
 }
 
@@ -513,6 +554,7 @@ fn save_as_gets_past_a_conflict() {
 fn with_store(dir: &TempDir) -> Files {
     Files::new(Stores {
         recent: None,
+        settings: None,
         designs: Some(dir.0.join("designs")),
     })
 }

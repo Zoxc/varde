@@ -1,7 +1,8 @@
 //! Fresh file names, for files only one write or editor may have: store
 //! entries (`src/native/store.rs`), and the temporary files that design files
-//! (`src/native/files/document_file.rs`) and the recent files list
-//! (`src/native/recent.rs`) are written to before being renamed over the old one.
+//! (`src/native/files/document_file.rs`), the recent files list and the
+//! settings (`src/native/config.rs`) are written to before being renamed
+//! over the old one.
 
 use std::fs::{File, OpenOptions};
 use std::io;

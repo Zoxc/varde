@@ -26,11 +26,34 @@ impl Mode {
             Mode::Dark => &DARK,
         }
     }
+}
 
-    pub fn toggled(self) -> Self {
+/// The theme the user chose: a [`Mode`], or the one the system prefers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ThemeChoice {
+    #[default]
+    Auto,
+    Light,
+    Dark,
+}
+
+impl ThemeChoice {
+    /// The next choice, as the theme button goes through them.
+    pub fn cycled(self) -> Self {
         match self {
-            Mode::Light => Mode::Dark,
-            Mode::Dark => Mode::Light,
+            ThemeChoice::Auto => ThemeChoice::Light,
+            ThemeChoice::Light => ThemeChoice::Dark,
+            ThemeChoice::Dark => ThemeChoice::Auto,
+        }
+    }
+
+    /// The mode chosen, `system`'s if it's [`ThemeChoice::Auto`]: light
+    /// when the system doesn't say.
+    pub fn mode(self, system: Option<Mode>) -> Mode {
+        match self {
+            ThemeChoice::Auto => system.unwrap_or_default(),
+            ThemeChoice::Light => Mode::Light,
+            ThemeChoice::Dark => Mode::Dark,
         }
     }
 }

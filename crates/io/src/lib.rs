@@ -4,8 +4,9 @@
 //! later as a message. Unlike the regeneration lane (`varde-regen`), requests
 //! are handled in the order they were sent, since writes to one file must
 //! land in order. The one exception is coalescing per target: natively, a
-//! [`Request::WriteRecent`] still waiting replaces an older one (the web
-//! has no recent files store to write), and a [`Request::Save`] replaces
+//! [`Request::WriteRecent`] or [`Request::WriteSettings`] still waiting
+//! replaces an older one (the web has no recent files store to write),
+//! and a [`Request::Save`] replaces
 //! one of the same file still waiting behind it, unless something else is
 //! to happen to that file in between, and so does a [`Request::AutoSave`].
 //! None of them crosses a [`Request::Flush`].
@@ -51,6 +52,7 @@ mod opfs;
 pub mod pick;
 mod queue;
 pub mod recent;
+pub mod settings;
 mod store;
 pub mod three_mf;
 pub mod vrdp;
@@ -101,6 +103,7 @@ use varde_document::{Document, Revision, Snapshot};
 use crate::vrdp::Error as FileError;
 
 pub use crate::recent::RecentFile;
+pub use crate::settings::Settings;
 pub use crate::store::Recovered;
 /// Carries [`Request`]s to the lane without waiting for them to be handled.
 pub use varde_lane::Transport;
@@ -113,19 +116,23 @@ pub use varde_lane::Transport;
 pub struct Stores {
     /// The recent files list, `recent.toml`.
     pub recent: Option<PathBuf>,
+    /// The settings, `settings.toml`.
+    pub settings: Option<PathBuf>,
     /// The directory holding new designs until they're first saved.
     pub designs: Option<PathBuf>,
 }
 
 impl Stores {
-    /// The user's: the recent files list in the platform config directory
-    /// and new designs in the data directory, e.g. `~/.config/varde-cad` and
-    /// `~/.local/share/varde-cad/designs`. On the web there's no recent files
-    /// list, and new designs are kept in `designs` in the Origin Private
-    /// File System.
+    /// The user's: the recent files list and the settings in the platform
+    /// config directory and new designs in the data directory, e.g.
+    /// `~/.config/varde-cad` and `~/.local/share/varde-cad/designs`. On the
+    /// web there's no recent files list, and the settings and new designs
+    /// are kept in `settings.toml` and `designs` in the Origin Private File
+    /// System.
     pub fn user() -> Self {
         Self {
             recent: recent::store(),
+            settings: settings::store(),
             designs: store::designs(),
         }
     }
@@ -250,6 +257,11 @@ pub enum Request {
     /// Does nothing, answered once everything sent before it is done, e.g.
     /// before quitting.
     Flush,
+    /// Reads the settings.
+    LoadSettings,
+    /// Replaces the stored settings. Replaces a `WriteSettings` still
+    /// waiting in the queue, unless a `LoadSettings` is queued after it.
+    WriteSettings { settings: Settings },
 }
 
 /// The answer to a [`Request`]. Errors are the messages to show.
@@ -333,6 +345,13 @@ pub enum Response {
         result: Result<(), String>,
     },
     Flushed,
+    /// The settings, defaulted where they couldn't be read.
+    SettingsLoaded {
+        settings: Settings,
+    },
+    SettingsWritten {
+        result: Result<(), String>,
+    },
 }
 
 impl Request {
@@ -402,6 +421,10 @@ impl Request {
                 result: Err(error),
             },
             Request::Flush => Response::Flushed,
+            Request::LoadSettings => Response::SettingsLoaded {
+                settings: Settings::default(),
+            },
+            Request::WriteSettings { .. } => Response::SettingsWritten { result: Err(error) },
         }
     }
 

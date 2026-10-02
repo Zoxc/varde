@@ -5,3 +5,4 @@ mod disk;
 mod files;
 mod opfs;
 pub(crate) mod serve;
+mod settings;

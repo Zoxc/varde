@@ -57,7 +57,7 @@ pub fn serve() {
 /// Handles the requests posted, in order, as they come: each waits in the
 /// queue, which replaces waiting saves, while the one before is handled.
 async fn run(mut woken: UnboundedReceiver<Numbered>) {
-    let mut files = Files::new(Stores::user().designs);
+    let mut files = Files::new(Stores::user());
     let mut queue = Queue::default();
     while let Some(first) = woken.next().await {
         queue.push(first);

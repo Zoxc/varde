@@ -37,6 +37,8 @@ pub(crate) enum Message {
     /// The command modifier (`Ctrl`, or `Cmd` on macOS) pressed or
     /// released: clicking a list's row adds to the selection while held.
     CommandHeld(bool),
+    /// The mode the system prefers, as it starts and whenever it changes.
+    SystemTheme(iced::theme::Mode),
     /// The user asked to close the window: the app decides when it does.
     CloseRequested(window::Id),
     /// On the web, the page may be going away (the tab closing or

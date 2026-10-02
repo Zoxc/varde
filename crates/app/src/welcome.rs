@@ -9,7 +9,7 @@ use varde_document::name::UNTITLED;
 use varde_io::{
     Access, Chosen, OpenId, Opened, PickedFrom, Recovered, Request as IoRequest, UnixSeconds,
 };
-use varde_view::{Message as Ui, Mode, Welcome as WelcomeUi};
+use varde_view::{Message as Ui, Mode, ThemeChoice, Welcome as WelcomeUi};
 
 use crate::doc::{Doc, Leave, Origin, Target, design_name};
 use crate::{Files, Next, when};
@@ -253,7 +253,12 @@ impl Welcome {
 
     /// The welcome screen, listing the recent files and the recovered
     /// designs of `files`.
-    pub(crate) fn view<'a>(&'a self, files: &'a Files, mode: Mode) -> Element<'a, Ui> {
+    pub(crate) fn view<'a>(
+        &'a self,
+        files: &'a Files,
+        mode: Mode,
+        theme: ThemeChoice,
+    ) -> Element<'a, Ui> {
         let now = when::now();
         let recent = RECENT_FILES.then(|| {
             files
@@ -294,6 +299,7 @@ impl Welcome {
             recovered,
             downloaded,
             mode,
+            theme,
         })
     }
 }

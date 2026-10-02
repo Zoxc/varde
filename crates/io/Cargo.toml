@@ -18,12 +18,12 @@ snap.workspace = true
 crc32fast.workspace = true
 # The 3MF packages' zip, src/three_mf.rs.
 miniz_oxide.workspace = true
+# recent.toml and settings.toml.
+toml.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 directories.workspace = true
 rfd.workspace = true
-# recent.toml; the web has no recent files list.
-toml.workspace = true
 
 # The IO Web Worker, the Origin Private File System and the page's file
 # pickers and downloads.

@@ -13,6 +13,7 @@ fn answers_in_order_and_closes_files_when_dropped() {
     let design = dir.design();
     let (mut lane, mut responses) = spawn_at(Stores {
         recent: Some(dir.0.join("recent.toml")),
+        settings: None,
         designs: None,
     });
 

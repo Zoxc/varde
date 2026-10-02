@@ -16,7 +16,7 @@ use iced::{Alignment, Element, Font, Length};
 use crate::Message;
 use crate::icons::{self, Icon, MouseButton};
 use crate::shortcut::KeyName;
-use crate::theme::{self, Emphasis, Mode, Tone};
+use crate::theme::{self, Emphasis, ThemeChoice, Tone};
 
 /// `content` telling `tip` below it while hovered, in a small box no
 /// wider than about one and a half side panels.
@@ -120,15 +120,17 @@ pub fn edged<'a>(content: Container<'a, Message>, edge: Edge, total: f32) -> Ele
     }
 }
 
-/// The theme toggle and the help button, for the top-right of a screen.
-pub fn app_buttons<'a>(mode: Mode) -> Element<'a, Message> {
-    let theme_toggle = icon_button(
-        match mode {
-            Mode::Light => Icon::Moon,
-            Mode::Dark => Icon::Sun,
-        },
-        Tone::Muted,
-        Some(Message::ToggleTheme),
+/// The theme button, showing the `theme` chosen and going on to the next,
+/// and the help button, for the top-right of a screen.
+pub fn app_buttons<'a>(theme: ThemeChoice) -> Element<'a, Message> {
+    let (icon, label) = match theme {
+        ThemeChoice::Auto => (Icon::Contrast, "Theme: as the system's"),
+        ThemeChoice::Light => (Icon::Sun, "Theme: light"),
+        ThemeChoice::Dark => (Icon::Moon, "Theme: dark"),
+    };
+    let theme_toggle = tip(
+        icon_button(icon, Tone::Muted, Some(Message::CycleTheme)),
+        text(label),
     );
     // TODO: open the shortcut sheet.
     let help = icon_button(Icon::Help, Tone::Muted, None);

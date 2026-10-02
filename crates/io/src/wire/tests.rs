@@ -6,7 +6,7 @@ use varde_document::{Command, Document, Editor, Revision};
 use super::*;
 use crate::{
     Access, Chosen, Closing, FileId, Offer, OpenId, Opened, Picked, PickedFrom, ReadOnly,
-    RecentFile, Recovered, SaveError, SaveTo, SavedAs,
+    RecentFile, Recovered, SaveError, SaveTo, SavedAs, Settings, settings::Theme,
 };
 
 fn round_trip<T: Serialize + for<'a> Deserialize<'a>>(message: &T) -> T {
@@ -86,6 +86,10 @@ fn requests() -> Vec<Request> {
         },
         Request::Abandon { id: OpenId(10) },
         Request::LoadRecent,
+        Request::LoadSettings,
+        Request::WriteSettings {
+            settings: Settings { theme: Theme::Dark },
+        },
         Request::ListRecovered,
         Request::OpenRecovered {
             id: OpenId(11),
@@ -249,6 +253,14 @@ fn responses() -> Vec<Response> {
             home: Some(PathBuf::from("/home/me")),
         },
         Response::RecentWritten { result: Ok(()) },
+        Response::SettingsLoaded {
+            settings: Settings {
+                theme: Theme::Light,
+            },
+        },
+        Response::SettingsWritten {
+            result: Err("full".to_owned()),
+        },
         Response::RecoveredListed {
             designs: vec![
                 Recovered {
