@@ -490,6 +490,129 @@ fn picks_naming_nothing_are_answered_not_found() {
     assert_eq!(inspected.first, Err("edge not found".to_owned()));
 }
 
+/// A slot cut through the plate at `15 ≤ x ≤ 17` leaves its top in two
+/// pieces under the one key: the point picked says which, and its place
+/// in the tables is that piece's.
+#[test]
+fn of_several_faces_of_the_same_key_the_nearest_is_measured() {
+    let mut editor = Editor::new(Document::example());
+    let body = editor.document().bodies()[0].id;
+    let before = tables(&editor);
+    let top_key = before.faces()[top(&before, body) as usize].key;
+    let extent = crate::history::tests::two_sides(editor.document(), "20", "20");
+    crate::history::tests::add_extrude(
+        &mut editor,
+        crate::history::tests::rectangle((15.0, -30.0), (17.0, 30.0)),
+        extent,
+        varde_document::Operation::Cut(varde_document::Targets::default()),
+    );
+    let picking = tables(&editor);
+    let tops: Vec<u32> = (0..picking.faces().len() as u32)
+        .filter(|&f| picking.faces()[f as usize].key == top_key)
+        .collect();
+    assert_eq!(tops.len(), 2, "the top is in two pieces");
+    let pick = |near: [f64; 3]| InspectPick {
+        body,
+        entity: Entity::Face(top_key),
+        near,
+    };
+    let (_, inspected) = ask(
+        &mut Regenerator::default(),
+        &editor,
+        two(1, pick([25.0, 0.0, 10.0]), pick([-20.0, 0.0, 10.0])),
+    );
+    let area = |probed: &Result<Probed, String>| match measured(probed) {
+        Measure::Face { area, .. } => area,
+        other => panic!("a face: {other:?}"),
+    };
+    assert_near(area(&inspected.first), 13.0 * 40.0);
+    assert_near(
+        area(&inspected.second.clone().unwrap()),
+        45.0 * 40.0 - PI * 64.0,
+    );
+    let place = |probed: &Result<Probed, String>| match probed.as_ref().unwrap().at {
+        Some(At::Face(f)) => f,
+        other => panic!("a face's place: {other:?}"),
+    };
+    let (right, left) = (
+        place(&inspected.first),
+        place(inspected.second.as_ref().unwrap()),
+    );
+    assert_ne!(right, left);
+    assert!(tops.contains(&right) && tops.contains(&left));
+    // The right piece's place is the one drawn at the right: one of its
+    // triangles has a vertex past the slot.
+    let Response::Regenerated { mesh, .. } = crate::handle(Request::Regenerate {
+        generation: editor.generation(),
+        document: editor.snapshot(),
+        exclude: None,
+        draft: None,
+        inspect: None,
+    }) else {
+        panic!("regeneration failed");
+    };
+    let positions = mesh.positions();
+    let indices = mesh.face_indices(right as usize).unwrap();
+    let xs = mesh.indices()[indices]
+        .iter()
+        .map(|&v| positions[v as usize][0]);
+    assert!(xs.into_iter().all(|x| x >= 17.0));
+    assert_near(gap(&inspected).distance, 2.0);
+}
+
+/// Keys that name nothing for sure are refused, not resolved to some
+/// entity: a corner by a face's key twice, by a key and its own face's
+/// again, and any pick without a finite point.
+#[test]
+fn picks_naming_nothing_for_sure_are_refused() {
+    let editor = Editor::new(Document::example());
+    let body = editor.document().bodies()[0].id;
+    let picking = tables(&editor);
+    let c = corner(&picking, [30.0, 20.0, 10.0]);
+    let good = corner_pick(&picking, c);
+    let Entity::Corner([a, b, _]) = good.entity else {
+        unreachable!()
+    };
+    let mut answers = Vec::new();
+    for keys in [[a, a, b], [a, b, b], [a; 3]] {
+        let pick = InspectPick {
+            entity: Entity::Corner(keys),
+            ..good
+        };
+        let (_, inspected) = ask(&mut Regenerator::default(), &editor, one(1, pick));
+        answers.push(inspected.first);
+    }
+    assert!(
+        answers
+            .iter()
+            .all(|a| a == &Err("corner not found".to_owned())),
+        "{answers:?}"
+    );
+    let top = face_pick(&picking, top(&picking, body), [20.0, 10.0, 10.0]);
+    for near in [f64::NAN, f64::INFINITY] {
+        for pick in [
+            InspectPick {
+                near: [near, 0.0, 0.0],
+                ..top
+            },
+            InspectPick {
+                near: [0.0, 0.0, near],
+                ..good
+            },
+        ] {
+            let (_, inspected) = ask(&mut Regenerator::default(), &editor, one(2, pick));
+            assert_eq!(inspected.first, Err("the pick has no point".to_owned()));
+        }
+    }
+    // A body needs no point.
+    let pick = InspectPick {
+        near: [f64::NAN; 3],
+        ..body_pick(body)
+    };
+    let (_, inspected) = ask(&mut Regenerator::default(), &editor, one(3, pick));
+    assert!(inspected.first.is_ok());
+}
+
 #[test]
 fn a_hidden_body_is_measured_but_not_in_the_tables() {
     let mut editor = Editor::new(Document::example());
@@ -602,7 +725,7 @@ fn good(picking: &Tables) -> Inspected {
     Inspected {
         revision: 1,
         first: Ok(Probed {
-            at: Some(At::Face(0)),
+            at: Some(At::Edge(0)),
             measure: Ok(Measure::Edge {
                 length: 1.0,
                 closed: false,
@@ -619,7 +742,7 @@ fn good(picking: &Tables) -> Inspected {
         })),
         between: Some(Between {
             distance: Ok(Gap {
-                distance: 2.0,
+                distance: 3f64.sqrt(),
                 points: [[0.0; 3], [1.0; 3]],
             }),
             angle: Some(1.0),
@@ -633,7 +756,7 @@ fn broken_answers_are_checked_into_errors() {
     let picking = tables(&editor);
     let good = good(&picking);
     assert_eq!(good.clone().checked(&picking.mesh, &picking.picking), good);
-    let breaks: [fn(&mut Inspected); 12] = [
+    let breaks: [fn(&mut Inspected); 17] = [
         |i| i.revision = i.revision.wrapping_add(0), // unchanged: stays good
         |i| i.first.as_mut().unwrap().at = Some(At::Face(1000)),
         |i| i.first.as_mut().unwrap().at = Some(At::Edge(1000)),
@@ -647,6 +770,7 @@ fn broken_answers_are_checked_into_errors() {
                 Ok(Measure::Point([2e8, 0.0, 0.0]))
         },
         |i| {
+            i.first.as_mut().unwrap().at = Some(At::Face(0));
             i.first.as_mut().unwrap().measure = Ok(Measure::Face {
                 area: -1.0,
                 summary: Summary::Other,
@@ -665,6 +789,7 @@ fn broken_answers_are_checked_into_errors() {
             })
         },
         |i| {
+            i.first.as_mut().unwrap().at = None;
             i.first.as_mut().unwrap().measure = Ok(Measure::Body {
                 volume: 1.0,
                 area: f64::INFINITY,
@@ -673,6 +798,7 @@ fn broken_answers_are_checked_into_errors() {
             })
         },
         |i| {
+            i.first.as_mut().unwrap().at = None;
             i.first.as_mut().unwrap().measure = Ok(Measure::Body {
                 volume: 1.0,
                 area: 1.0,
@@ -682,6 +808,23 @@ fn broken_answers_are_checked_into_errors() {
         },
         |i| i.between.as_mut().unwrap().angle = Some(4.0),
         |i| i.second = None,
+        // Places of another kind than their measures.
+        |i| i.first.as_mut().unwrap().at = Some(At::Face(0)),
+        |i| i.first.as_mut().unwrap().at = Some(At::Corner(0)),
+        |i| i.second.as_mut().unwrap().as_mut().unwrap().at = Some(At::Face(0)),
+        |i| {
+            i.first.as_mut().unwrap().measure = Ok(Measure::Body {
+                volume: 1.0,
+                area: 1.0,
+                centre: None,
+                bounds: None,
+            })
+        },
+        // A distance that isn't its points'.
+        |i| {
+            let gap = i.between.as_mut().unwrap().distance.as_mut().unwrap();
+            gap.distance = 1.0;
+        },
     ];
     for (k, change) in breaks.iter().enumerate() {
         let mut broken = good.clone();
@@ -748,6 +891,65 @@ fn the_corners_table_holds_the_example_s_corners() {
                 .zip([30.0, 20.0, 10.0])
                 .filter(|(x, side)| x.abs() == *side || (*side == 10.0 && **x == 0.0));
             assert_eq!(ends.count(), 2, "{snap:?}");
+        }
+    }
+}
+
+/// Places are checked against what the tables hold there: tables of
+/// another model than the topology's (the plate before a slot cut it,
+/// the slotted plate's topology) give a place only where the entry is
+/// the same region, chain or corner, never another's.
+#[test]
+fn places_in_tables_that_don_t_line_up_are_none() {
+    let mut editor = Editor::new(Document::example());
+    let body = editor.document().bodies()[0].id;
+    let before = tables(&editor);
+    let extent = crate::history::tests::two_sides(editor.document(), "20", "20");
+    crate::history::tests::add_extrude(
+        &mut editor,
+        crate::history::tests::rectangle((15.0, -30.0), (17.0, 30.0)),
+        extent,
+        varde_document::Operation::Cut(varde_document::Targets::default()),
+    );
+    let mut cache = Cache::default();
+    let evaluation = crate::evaluate(editor.document(), &mut cache);
+    let made = &evaluation.bodies[0];
+    let topology = topology(made, &mut cache);
+    let places = Places::of(&before.mesh, &before, body, &topology, &made.solid);
+    let mut placed = 0;
+    for r in 0..topology.regions().len() as u32 {
+        if let Some(At::Face(f)) = places.face(r) {
+            assert_eq!(
+                before.faces()[f as usize].key,
+                topology.regions()[r as usize].key
+            );
+            placed += 1;
+        }
+    }
+    assert!(placed < topology.regions().len());
+    // The slotted plate's own tables place every region, chain and
+    // corner.
+    let own = tables(&editor);
+    let places = Places::of(&own.mesh, &own, body, &topology, &made.solid);
+    assert!((0..topology.regions().len() as u32).all(|r| places.face(r).is_some()));
+    assert!((0..topology.chains().len() as u32).all(|c| places.chain(c).is_some()));
+    assert!((0..topology.corners().len() as u32).all(|c| places.corner(c).is_some()));
+    let places = Places::of(&before.mesh, &before, body, &topology, &made.solid);
+    for c in 0..topology.chains().len() as u32 {
+        if let Some(At::Edge(i)) = places.chain(c) {
+            let keys = topology.chains()[c as usize]
+                .regions
+                .map(|r| topology.regions()[r as usize].key);
+            let mut keys = keys;
+            keys.sort_unstable();
+            assert_eq!(before.edge_keys(&before.mesh, i), Some(keys));
+        }
+    }
+    for c in 0..topology.corners().len() as u32 {
+        if let Some(At::Corner(i)) = places.corner(c) {
+            let vertex = topology.corners()[c as usize].vertex;
+            let point = made.solid.mesh().verts()[vertex as usize].to_array();
+            assert_eq!(before.corners()[i as usize].point, point);
         }
     }
 }

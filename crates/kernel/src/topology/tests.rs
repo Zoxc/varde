@@ -363,6 +363,15 @@ fn names_that_aren_t_there_aren_t_found() {
     assert_eq!(topology.edge(&solid, apart, near), Err(NotFound::Edge));
     let corner = [key(1, TOP), key(1, BOTTOM), key(1, side(0))];
     assert_eq!(topology.corner(&solid, corner, near), Err(NotFound::Corner));
+    // A key twice, or three times: every corner of the top has it, but
+    // it names one face of the three.
+    for corner in [
+        [key(1, TOP), key(1, TOP), key(1, side(0))],
+        [key(1, side(0)), key(1, TOP), key(1, TOP)],
+        [key(1, TOP); 3],
+    ] {
+        assert_eq!(topology.corner(&solid, corner, near), Err(NotFound::Corner));
+    }
 }
 
 #[test]

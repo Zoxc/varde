@@ -8,9 +8,11 @@
 //! references are ([`Topology::face`], [`Topology::edge`],
 //! [`Topology::corner`]: by key or alias, the nearest to the point among
 //! several), on the model the answer draws, so the same picks sent after
-//! an edit measure what they name now. The answer says where each pick
-//! is in its own picking tables ([`At`]), for the viewport to highlight,
-//! or why it wasn't found.
+//! an edit measure what they name now. A pick that names nothing (keys
+//! no entity has, a corner's keys not all different, no finite
+//! point) is answered not found, never with another entity. The answer
+//! says where each pick is in its own picking tables ([`At`]), for the
+//! viewport to highlight, or why it wasn't found.
 //!
 //! The measures are the kernel's ([`varde_kernel::measure`]), each within
 //! [`Budget::DEFAULT`], the most an operation may do: coaxial curved faces
@@ -24,10 +26,12 @@
 //! What an answer carries is checked ([`Inspected::checked`]) where it's
 //! made and again on the page, as it comes from the web worker: numbers
 //! finite, lengths, areas and volumes not negative, points within
-//! [`Picking::MAX_VALUE`], directions unit vectors, each pick's place
-//! within its table. One that fails is answered as an error, the model
-//! with it as usual.
+//! [`Picking::MAX_VALUE`], directions unit vectors, a distance its
+//! points', each pick's place within its table and of the kind it
+//! measures. One that fails is answered as an error, the model with it
+//! as usual.
 
+use std::ops::Range;
 use std::sync::Arc;
 
 use glam::DVec3;
@@ -38,7 +42,7 @@ use varde_kernel::mesh::FaceKey;
 use varde_kernel::{Budget, RenderMesh, Solid, Topology};
 
 use crate::cache::{Cache, Keyer};
-use crate::{Evaluation, Picking, Summary};
+use crate::{BodySolid, Evaluation, PickCorner, Picking, Summary};
 
 /// A measure being taken, sent with a regeneration
 /// ([`Request::Regenerate`](crate::Request::Regenerate)): one pick or two.
@@ -76,8 +80,8 @@ pub enum Entity {
     /// An edge's point (a straight edge's middle, a round one's centre:
     /// [`Picking::snaps`]), by the edge's keys.
     EdgePoint([FaceKey; 2]),
-    /// A corner, by three of the faces meeting there
-    /// ([`Picking::corner_keys`]).
+    /// A corner, by three of the faces meeting there, three different
+    /// keys ([`Picking::corner_keys`]).
     Corner([FaceKey; 3]),
 }
 
@@ -199,10 +203,10 @@ const BROKEN: &str = "the measure came back broken";
 impl Inspected {
     /// It as it is if it holds (numbers finite, lengths, areas and
     /// volumes not negative, points within [`Picking::MAX_VALUE`],
-    /// directions unit vectors, angles within their range, each pick's
-    /// place within its table of `mesh` and `picking`, the answer's mesh
-    /// and tables, an edge a chain), else
-    /// every pick's outcome an error.
+    /// directions unit vectors, angles within their range, a distance
+    /// its points', each pick's place within its table of `mesh` and
+    /// `picking`, the answer's mesh and tables, an edge a chain, and of
+    /// the kind it measures), else every pick's outcome an error.
     pub fn checked(self, mesh: &RenderMesh, picking: &Picking) -> Inspected {
         let probed = |probed: &Result<Probed, String>| match probed {
             Ok(probed) => probed.valid(mesh, picking),
@@ -258,7 +262,15 @@ impl Probed {
             Some(At::Edge(e)) => (mesh.edge_faces().get(e as usize)).is_some_and(|[a, b]| a != b),
             Some(At::Corner(c)) => (c as usize) < picking.corners().len(),
         };
-        at && self.measure.as_ref().map_or(true, Measure::valid)
+        // What's found there is what was measured: a face a face, a
+        // chain an edge or its point, a corner a point, a body nowhere.
+        let kind = match (self.at, &self.measure) {
+            (_, Err(_)) | (None, _) => true,
+            (Some(At::Face(_)), Ok(m)) => matches!(m, Measure::Face { .. }),
+            (Some(At::Edge(_)), Ok(m)) => matches!(m, Measure::Edge { .. } | Measure::Point(_)),
+            (Some(At::Corner(_)), Ok(m)) => matches!(m, Measure::Point(_)),
+        };
+        at && kind && self.measure.as_ref().map_or(true, Measure::valid)
     }
 }
 
@@ -345,8 +357,13 @@ impl EdgeForm {
 }
 
 impl Gap {
+    /// Its parts within bounds, and its distance its points' (to
+    /// rounding: the kernel's is `|q − p|` as computed).
     fn valid(&self) -> bool {
-        size(self.distance) && self.points.into_iter().all(point)
+        let [p, q] = self.points.map(DVec3::from);
+        size(self.distance)
+            && self.points.into_iter().all(point)
+            && (p.distance(q) - self.distance).abs() <= Picking::UNIT * (1.0 + self.distance)
     }
 }
 
@@ -517,44 +534,32 @@ fn resolve<'a>(
         .find(|made| made.body == pick.body)
         .ok_or("body not found")?;
     let solid = &*made.solid;
-    let topology = cache.topology(Keyer::new("topology").key(made.key).finish(), || {
-        solid.topology()
-    });
+    let topology = topology(made, cache);
     let near = DVec3::from(pick.near);
+    // Among several of the same keys the point decides, so a pick without
+    // one names nothing for sure.
+    if pick.entity != Entity::Body && !near.is_finite() {
+        return Err("the pick has no point".to_owned());
+    }
     let found = |e: varde_kernel::topology::NotFound| e.to_string();
-    let offsets = Offsets::of(mesh, picking, pick.body);
+    let places = Places::of(mesh, picking, pick.body, &topology, solid);
     let (pick, at) = match pick.entity {
         Entity::Body => (Pick::Body, None),
         Entity::Face(key) => {
             let r = topology.face(solid, &key, near).map_err(found)?;
-            (
-                Pick::Face(r),
-                offsets.face.and_then(|o| o.checked_add(r)).map(At::Face),
-            )
+            (Pick::Face(r), places.face(r))
         }
         Entity::Edge(keys) => {
             let c = topology.edge(solid, keys, near).map_err(found)?;
-            (
-                Pick::Edge(c),
-                offsets.chain.and_then(|o| o.checked_add(c)).map(At::Edge),
-            )
+            (Pick::Edge(c), places.chain(c))
         }
         Entity::EdgePoint(keys) => {
             let c = topology.edge(solid, keys, near).map_err(found)?;
-            (
-                Pick::EdgePoint(c),
-                offsets.chain.and_then(|o| o.checked_add(c)).map(At::Edge),
-            )
+            (Pick::EdgePoint(c), places.chain(c))
         }
         Entity::Corner(keys) => {
             let c = topology.corner(solid, keys, near).map_err(found)?;
-            (
-                Pick::Corner(c),
-                offsets
-                    .corner
-                    .and_then(|o| o.checked_add(c))
-                    .map(At::Corner),
-            )
+            (Pick::Corner(c), places.corner(c))
         }
     };
     Ok(Resolved {
@@ -566,37 +571,105 @@ fn resolve<'a>(
     })
 }
 
-/// Where a body's entries start in each of the picking tables, if it's
-/// shown and has some: the mesh's faces and first edges are each shown
-/// body's topology's regions and chains in order, one part after another,
-/// and the corners table its corners.
-struct Offsets {
-    face: Option<u32>,
-    chain: Option<u32>,
-    corner: Option<u32>,
+/// The topology of `made`'s solid, from `cache` or made and kept there:
+/// made once for drawing the solid and resolving picks on it.
+pub(crate) fn topology(made: &BodySolid, cache: &mut Cache) -> Arc<Topology> {
+    let key = Keyer::new("topology").key(made.key).finish();
+    cache.topology(key, || made.solid.topology())
 }
 
-impl Offsets {
-    fn of(mesh: &RenderMesh, picking: &Picking, body: BodyId) -> Offsets {
-        let Some(part) = (picking.bodies().iter())
+/// Where a body's regions, chains and corners are in the mesh and the
+/// picking tables, if it's shown: the mesh's faces and first edges in
+/// each part are its body's topology's regions and chains in order, and
+/// the corners table holds each shown body's corners, one body after
+/// another. Each place is checked against the entry found there (its
+/// key, its faces, a corner's point), so a table that doesn't line up
+/// gives no place rather than another entity's.
+struct Places<'a> {
+    mesh: &'a RenderMesh,
+    picking: &'a Picking,
+    topology: &'a Topology,
+    solid: &'a Solid,
+    /// The body's part's faces, edges and its run of corners.
+    faces: Range<usize>,
+    edges: Range<usize>,
+    corners: Range<usize>,
+}
+
+impl<'a> Places<'a> {
+    fn of(
+        mesh: &'a RenderMesh,
+        picking: &'a Picking,
+        body: BodyId,
+        topology: &'a Topology,
+        solid: &'a Solid,
+    ) -> Places<'a> {
+        let part = (picking.bodies().iter())
             .position(|&b| b == body)
-            .and_then(|p| mesh.parts().nth(p))
-        else {
-            return Offsets {
-                face: None,
-                chain: None,
-                corner: None,
-            };
-        };
-        let first = |found: Option<usize>| found.and_then(|i| u32::try_from(i).ok());
-        let faces = part.faces.clone();
-        Offsets {
-            face: first((!part.faces.is_empty()).then_some(part.faces.start)),
-            chain: first((!part.edges.is_empty()).then_some(part.edges.start)),
-            corner: first(
-                (picking.corners().iter()).position(|c| faces.contains(&(c.faces[0] as usize))),
-            ),
+            .and_then(|p| mesh.parts().nth(p));
+        let (faces, edges) = part.map_or((0..0, 0..0), |part| (part.faces, part.edges));
+        let of = |c: &PickCorner| faces.contains(&(c.faces[0] as usize));
+        let corners = picking.corners();
+        let start = corners.iter().position(of).unwrap_or(corners.len());
+        let end = start + corners[start..].iter().take_while(|c| of(c)).count();
+        Places {
+            mesh,
+            picking,
+            topology,
+            solid,
+            faces,
+            edges,
+            corners: start..end,
         }
+    }
+
+    /// Region `r`'s face id in the mesh.
+    fn face_index(&self, r: u32) -> Option<u32> {
+        let f = self.faces.start.checked_add(r as usize)?;
+        let face = self
+            .picking
+            .faces()
+            .get(f)
+            .filter(|_| self.faces.contains(&f))?;
+        let region = self.topology.regions().get(r as usize)?;
+        (face.key == region.key).then_some(f as u32)
+    }
+
+    fn face(&self, r: u32) -> Option<At> {
+        self.face_index(r).map(At::Face)
+    }
+
+    fn chain(&self, c: u32) -> Option<At> {
+        let e = self.edges.start.checked_add(c as usize)?;
+        let faces = self
+            .mesh
+            .edge_faces()
+            .get(e)
+            .filter(|_| self.edges.contains(&e))?;
+        let regions = self.topology.chains().get(c as usize)?.regions;
+        let [a, b] = regions.map(|r| self.face_index(r));
+        let (a, b) = (a?, b?);
+        (*faces == [a, b] || *faces == [b, a]).then_some(At::Edge(e as u32))
+    }
+
+    fn corner(&self, c: u32) -> Option<At> {
+        let corner = self.topology.corners().get(c as usize)?;
+        let point = self
+            .solid
+            .mesh()
+            .verts()
+            .get(corner.vertex as usize)?
+            .to_array();
+        let mut faces = [0; 3];
+        for (face, &r) in faces.iter_mut().zip(corner.regions.get(..3)?) {
+            *face = self.face_index(r)?;
+        }
+        // The table leaves out corners past the bound, so it's searched
+        // by the corner's faces and point rather than indexed.
+        let found = self.picking.corners()[self.corners.clone()]
+            .iter()
+            .position(|entry| entry.faces == faces && entry.point == point)?;
+        Some(At::Corner((self.corners.start + found) as u32))
     }
 }
 

@@ -559,11 +559,16 @@ nearest to `near` among several) on the model the answer draws (a draft
 applied if it worked), so the same picks sent after an edit measure what
 they name now, and answers `Response::Regenerated.inspected:
 Option<Inspected { revision, first, second, between }>`: per pick
-`Err("face not found")` (or edge, corner, "body not found"), else
-`Probed { at, measure }`, `at` its entry in the answer's own tables
-(`At::Face` a face id, `Edge` an edge id for an edge or its point,
-`Corner` an index into the corners; `None` for a
-body or a hidden body's entity), `measure` a `Measure` (`Body` volume,
+`Err("face not found")` (or edge, corner, "body not found", "the pick
+has no point" for a face, edge or corner whose `near` isn't finite: of
+several of one name it would take the lowest, maybe not the one
+picked), else `Probed { at, measure }`, `at` its entry in the answer's
+own mesh and tables (`At::Face` a face id, `Edge` an edge id for an
+edge or its point, `Corner` an index into the corners; `None` for a
+body or a hidden body's entity; the entry found from the body's part
+(its faces and edges, its run of corners) and checked to be the
+region's key, the chain's faces, the corner's faces and point, else
+`None`), `measure` a `Measure` (`Body` volume,
 area, centre, tight box; `Face` area, its form's `Summary`, a cone's
 half-angle; `Edge` length, closed, `EdgeForm` line/circle/ellipse;
 `Point`) or "too complex to measure"; `between` (both found) the
@@ -582,7 +587,12 @@ picks, so a request it replaces had only an answer the panel would drop,
 and a measure is always of the model the same answer draws (its `at`
 indices name that model's tables). The app must count the revision into
 what it compares to tell a new request is needed and an answer is the
-one asked for last, as it does a draft's.
+one asked for last, as it does a draft's. The cost of that choice: a
+measure running (up to the full budget, as coaxial curved faces can
+take) holds the slot, so an edit's model waits behind it, and
+while a draft is dragged with picks on the drafted body each step
+measures again (the solid is new each step). The session can leave the
+picks out of requests while a draft is dragged if that shows.
 
 **Picking the model** (`view/src/pick.rs`, the app's `doc/pick.rs`) is on
 the CPU, against the mesh drawn and its tables; no GPU id buffer (WebGL2
@@ -851,9 +861,10 @@ a short head can't make the page build more), is answered as failed. A
 measure's answer is checked against the decoded mesh and tables
 (`Inspected::checked`, also run where it's made: numbers finite, sizes
 not negative, points within `Picking::MAX_VALUE`, directions unit,
-`at` within its table, an edge a chain, angles within range); one that
-fails becomes errors ("the measure came back broken") with the model
-taken as usual. Both
+`at` within its table, an edge a chain, and of the measure's kind (a
+face's, an edge's or its point's, a corner's point, none for a body),
+angles within range, a distance its points'); one that fails becomes
+errors ("the measure came back broken") with the model taken as usual. Both
 directions transfer their `ArrayBuffer`s instead of copying them. The page
 checks what comes back before using it (whole elements, a size bound,
 the mesh through `RenderMesh::from_parts`, points within their bound,

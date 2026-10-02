@@ -3356,7 +3356,10 @@ tolerance (the curves, not the drawn segments). The edge sessions'
 `key` (their key, or an alias); `Topology::edge(solid, [a, b], near)`:
 the chains between regions named by `a` and `b`, either way round;
 `Topology::corner(solid, [a, b, c], near)`: the corners where some
-region is named by each. One is taken whatever `near` says (even NaN);
+region is named by each, the three keys all different (a key twice
+would let any corner of its face answer; a key and its alias may still
+name one region, as a reference stored before two faces merged does,
+and the point decides). One is taken whatever `near` says (even NaN);
 of several the nearest to `near`, a later one counting only where it
 comes nearer by more than a billionth of the solid's size (about what
 the searches are accurate to), so ties go to the lowest index whatever

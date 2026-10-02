@@ -1938,8 +1938,10 @@ fn a_broken_measure_is_answered_as_an_error() {
         between: None,
     };
     for (good, sent) in [
-        (true, measure(crate::Measure::Point([1.0, 2.0, 3.0]))),
-        (false, measure(crate::Measure::Point([f64::NAN, 2.0, 3.0]))),
+        (true, measure(face_measure(1.0))),
+        (false, measure(face_measure(f64::NAN))),
+        // A point isn't what a face measures.
+        (false, measure(crate::Measure::Point([1.0, 2.0, 3.0]))),
         (
             false,
             crate::Inspected {
@@ -1979,6 +1981,15 @@ fn a_broken_measure_is_answered_as_an_error() {
         } else {
             assert!(inspected.first.is_err(), "{inspected:?}");
         }
+    }
+}
+
+/// What [`face`] measures, of `area`.
+fn face_measure(area: f64) -> crate::Measure {
+    crate::Measure::Face {
+        area,
+        summary: face().summary,
+        half_angle: None,
     }
 }
 
@@ -2149,4 +2160,243 @@ fn too_many_corners_are_refused_as_the_head_is_decoded() {
         claimed.extend(&head[at + 1..]);
         assert!(Head::decode(&claimed).is_err(), "{claim}");
     }
+}
+
+/// Checks, apart from [`Inspected::checked`], what an accepted measure
+/// promises the panel and the viewport: numbers finite and in range,
+/// places within the tables and of the kind measured, a distance only
+/// between two found picks and its points'.
+fn assert_sound_measure(inspected: &Inspected, mesh: &RenderMesh, picking: &Picking) {
+    let value = |x: f64| assert!(x.is_finite() && x.abs() <= Picking::MAX_VALUE, "{x}");
+    let size = |x: f64| {
+        value(x);
+        assert!(x >= 0.0, "{x}");
+    };
+    let point = |p: [f64; 3]| p.into_iter().for_each(value);
+    let unit = |v: [f64; 3]| {
+        let length = glam::DVec3::from(v).length();
+        assert!((length - 1.0).abs() <= Picking::UNIT, "{v:?}");
+    };
+    let probed = |probed: &crate::Probed| {
+        match probed.at {
+            None => {}
+            Some(crate::At::Face(f)) => assert!((f as usize) < picking.faces().len()),
+            Some(crate::At::Edge(e)) => {
+                let [a, b] = mesh.edge_faces()[e as usize];
+                assert_ne!(a, b, "a chain");
+            }
+            Some(crate::At::Corner(c)) => assert!((c as usize) < picking.corners().len()),
+        }
+        let Ok(measure) = &probed.measure else {
+            return;
+        };
+        match (*measure, probed.at) {
+            (
+                crate::Measure::Body {
+                    volume,
+                    area,
+                    centre,
+                    bounds,
+                },
+                None,
+            ) => {
+                size(volume);
+                size(area);
+                centre.into_iter().for_each(point);
+                if let Some([min, max]) = bounds {
+                    point(min);
+                    point(max);
+                    assert!((0..3).all(|i| min[i] <= max[i]));
+                }
+            }
+            (
+                crate::Measure::Face {
+                    area,
+                    summary,
+                    half_angle,
+                },
+                None | Some(crate::At::Face(_)),
+            ) => {
+                size(area);
+                assert!(summary.valid());
+                if let Some(a) = half_angle {
+                    assert!((0.0..=std::f64::consts::FRAC_PI_2).contains(&a));
+                }
+            }
+            (crate::Measure::Edge { length, shape, .. }, None | Some(crate::At::Edge(_))) => {
+                size(length);
+                match shape {
+                    crate::EdgeForm::Line { from, to } => {
+                        point(from);
+                        point(to);
+                    }
+                    crate::EdgeForm::Circle {
+                        centre,
+                        axis,
+                        radius,
+                    } => {
+                        point(centre);
+                        unit(axis);
+                        size(radius);
+                        assert!(radius > 0.0);
+                    }
+                    crate::EdgeForm::Ellipse {
+                        centre,
+                        axis,
+                        major,
+                        minor,
+                    } => {
+                        point(centre);
+                        unit(axis);
+                        size(major);
+                        assert!(minor > 0.0 && minor <= major);
+                    }
+                    crate::EdgeForm::Other => {}
+                }
+            }
+            (crate::Measure::Point(p), None | Some(crate::At::Edge(_) | crate::At::Corner(_))) => {
+                point(p)
+            }
+            (measure, at) => panic!("{measure:?} at {at:?}"),
+        }
+    };
+    if let Ok(first) = &inspected.first {
+        probed(first);
+    }
+    if let Some(Ok(second)) = &inspected.second {
+        probed(second);
+    }
+    if let Some(between) = &inspected.between {
+        assert!(inspected.first.is_ok() && matches!(inspected.second, Some(Ok(_))));
+        if let Some(angle) = between.angle {
+            assert!((0.0..=std::f64::consts::PI).contains(&angle));
+        }
+        if let Ok(gap) = &between.distance {
+            size(gap.distance);
+            gap.points.into_iter().for_each(point);
+            let [p, q] = gap.points.map(glam::DVec3::from);
+            assert!((p.distance(q) - gap.distance).abs() <= 1e-6);
+        }
+    }
+}
+
+/// The example's reply to measures of every kind: a rim and the body, a
+/// corner and the top, the rim's centre and the hole's wall.
+fn measured_replies() -> Vec<(Vec<u8>, Vec<Vec<u8>>)> {
+    let editor = Editor::new(Document::example());
+    let body = editor.document().bodies()[0].id;
+    let Response::Regenerated { mesh, picking, .. } = handle(regenerate(&editor)) else {
+        panic!("regeneration failed");
+    };
+    let faces = picking.faces();
+    let face = |f: usize| crate::InspectPick {
+        body,
+        entity: crate::Entity::Face(faces[f].key),
+        near: [0.0, 8.0, 5.0],
+    };
+    let wall = (faces.iter())
+        .position(|f| matches!(f.summary, crate::Summary::Cylinder { .. }))
+        .unwrap();
+    let top = (faces.iter())
+        .position(|f| matches!(f.summary, crate::Summary::Plane { n, .. } if n[2] == 1.0))
+        .unwrap();
+    let rim = picking.closed().iter().position(|&c| c).unwrap() as u32;
+    let edge = crate::InspectPick {
+        body,
+        entity: crate::Entity::Edge(picking.edge_keys(&mesh, rim).unwrap()),
+        near: [8.0, 0.0, 10.0],
+    };
+    let centre = crate::InspectPick {
+        entity: crate::Entity::EdgePoint(picking.edge_keys(&mesh, rim).unwrap()),
+        ..edge
+    };
+    let corner = crate::InspectPick {
+        body,
+        entity: crate::Entity::Corner(picking.corner_keys(0)),
+        near: picking.corners()[0].point,
+    };
+    let whole = crate::InspectPick {
+        body,
+        entity: crate::Entity::Body,
+        near: [0.0; 3],
+    };
+    let mut near_top = face(top);
+    near_top.near = [20.0, 10.0, 10.0];
+    [(edge, whole), (corner, near_top), (centre, face(wall))]
+        .into_iter()
+        .enumerate()
+        .map(|(k, (first, second))| {
+            let mut request = regenerate(&editor);
+            if let Request::Regenerate { inspect, .. } = &mut request {
+                *inspect = Some(Box::new(crate::Inspect {
+                    revision: k as u64,
+                    first,
+                    second: Some(second),
+                }));
+            }
+            let response = handle(request);
+            let Response::Regenerated {
+                inspected: Some(inspected),
+                ..
+            } = &response
+            else {
+                panic!("regeneration failed");
+            };
+            assert!(inspected.first.as_ref().is_ok_and(|p| p.measure.is_ok()));
+            let second = inspected.second.as_ref().unwrap();
+            assert!(second.as_ref().is_ok_and(|p| p.measure.is_ok()));
+            assert!(inspected.between.as_ref().unwrap().distance.is_ok());
+            let (head, parts) = encode_reply(&response);
+            (head, parts.iter().map(|part| part.to_vec()).collect())
+        })
+        .collect()
+}
+
+/// Hostile bytes where a measure's answer is: in the head of a real reply
+/// and as an [`Inspected`] of its own. Never a panic, and whatever is
+/// taken holds.
+#[test]
+fn damaged_measures_never_panic_and_what_is_taken_holds() {
+    let mut rng = Rng(0x1235);
+    let mut taken = 0;
+    for (head, parts) in measured_replies() {
+        let Ok(Response::Regenerated {
+            inspected: Some(sent),
+            mesh,
+            picking,
+            ..
+        }) = decode_reply(&head[..], &slices(&parts))
+        else {
+            panic!("the reply was refused");
+        };
+        assert_sound_measure(&sent, &mesh, &picking);
+        let bytes = postcard::to_stdvec(&*sent).unwrap();
+        // The measure is at the end of the head.
+        assert!(head.ends_with(&bytes));
+        let at = head.len() - bytes.len();
+        for _ in 0..3000 {
+            // Damage only the measure's bytes, so most heads still
+            // decode: the measure's checks are what's tried.
+            let mut damaged = head[..at].to_vec();
+            damaged.extend(rng.mutate(&bytes));
+            if let Ok(Response::Regenerated {
+                inspected: Some(inspected),
+                mesh,
+                picking,
+                ..
+            }) = decode_reply(&damaged[..], &slices(&parts))
+            {
+                assert_sound_measure(&inspected, &mesh, &picking);
+                taken += 1;
+            }
+            decode_any(&rng.mutate(&head), &parts);
+            if let Ok(inspected) = postcard::from_bytes::<Inspected>(&rng.mutate(&bytes)) {
+                assert_sound_measure(&inspected.checked(&mesh, &picking), &mesh, &picking);
+            }
+            if let Ok(inspected) = postcard::from_bytes::<Inspected>(&rng.bytes(96)) {
+                assert_sound_measure(&inspected.checked(&mesh, &picking), &mesh, &picking);
+            }
+        }
+    }
+    assert!(taken > 1000, "{taken}");
 }

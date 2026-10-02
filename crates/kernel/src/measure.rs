@@ -169,12 +169,7 @@ impl<'a> Target<'a> {
     /// round one's centre, if it has one of those shapes.
     pub(crate) fn edge_point(&self, c: u32) -> Result<DVec3, MeasureError> {
         let chain = self.chain(c)?;
-        let edge = EdgeMeasure {
-            length: 0.0,
-            closed: chain.closed,
-            shape: edge_shape(self.solid, chain),
-        };
-        edge.point().ok_or(MeasureError::NotFound(NotFound::Edge))
+        (edge_shape(self.solid, chain).point()).ok_or(MeasureError::NotFound(NotFound::Edge))
     }
 
     /// The point of corner `c` of the topology, if it has one whose
@@ -357,6 +352,17 @@ pub enum EdgeShape {
     Other,
 }
 
+impl EdgeShape {
+    /// A straight edge's middle, a round edge's centre.
+    pub fn point(&self) -> Option<DVec3> {
+        match *self {
+            EdgeShape::Line { from, to } => Some((from + to) * 0.5),
+            EdgeShape::Circle { centre, .. } | EdgeShape::Ellipse { centre, .. } => Some(centre),
+            EdgeShape::Other => None,
+        }
+    }
+}
+
 /// An edge's measures.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct EdgeMeasure {
@@ -367,13 +373,10 @@ pub struct EdgeMeasure {
 }
 
 impl EdgeMeasure {
-    /// A straight edge's middle, a round edge's centre.
+    /// A straight edge's middle, a round edge's centre
+    /// ([`EdgeShape::point`]).
     pub fn point(&self) -> Option<DVec3> {
-        match self.shape {
-            EdgeShape::Line { from, to } => Some((from + to) * 0.5),
-            EdgeShape::Circle { centre, .. } | EdgeShape::Ellipse { centre, .. } => Some(centre),
-            EdgeShape::Other => None,
-        }
+        self.shape.point()
     }
 
     /// A straight edge's line, a round edge's axis.

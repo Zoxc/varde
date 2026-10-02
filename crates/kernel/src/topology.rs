@@ -240,8 +240,16 @@ impl Topology {
     }
 
     /// The corner where regions named by each of `faces` (by name or
-    /// alias) meet, the nearest to `near` among several.
+    /// alias) meet, the nearest to `near` among several. Three keys that
+    /// aren't all different name no corner: a key twice would let any
+    /// corner of its face answer. (Different keys may still name one
+    /// region, a key and its alias, as a reference stored before two
+    /// faces merged does: the point then decides.)
     pub fn corner(&self, solid: &Solid, faces: [FaceKey; 3], near: DVec3) -> Result<u32, NotFound> {
+        let [a, b, c] = &faces;
+        if a == b || b == c || a == c {
+            return Err(NotFound::Corner);
+        }
         let found = (0..self.corners.len() as u32).filter(|&c| {
             let regions = &self.corners[c as usize].regions;
             faces

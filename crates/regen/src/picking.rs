@@ -24,7 +24,7 @@ use std::sync::Arc;
 use glam::DVec3;
 use serde::{Deserialize, Serialize};
 use varde_document::BodyId;
-use varde_kernel::measure::{EdgeShape, edge_shape};
+use varde_kernel::measure::edge_shape;
 use varde_kernel::mesh::{FaceKey, Form};
 use varde_kernel::topology::Region;
 use varde_kernel::{Display, MeshError, RenderMesh, Solid, Topology};
@@ -579,13 +579,7 @@ impl Drawn {
         let within = |p: DVec3| p.abs().max_element() <= Picking::MAX_VALUE;
         let snaps = (0..mesh.edge_count())
             .map(|e| {
-                let snap = match edge_shape(solid, chains.get(e)?) {
-                    EdgeShape::Line { from, to } => Some((from + to) * 0.5),
-                    EdgeShape::Circle { centre, .. } | EdgeShape::Ellipse { centre, .. } => {
-                        Some(centre)
-                    }
-                    EdgeShape::Other => None,
-                };
+                let snap = edge_shape(solid, chains.get(e)?).point();
                 snap.filter(|&p| within(p)).map(|p| p.to_array())
             })
             .collect();

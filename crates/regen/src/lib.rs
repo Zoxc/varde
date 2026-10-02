@@ -612,10 +612,7 @@ fn tessellate_scene(
         let mut picking = Picking::default();
         for (made, key) in &shown {
             // The topology is kept too, for the measure tool's picks.
-            let topology = (!cache.holds(*key)).then(|| {
-                let topology = Keyer::new("topology").key(made.key).finish();
-                cache.topology(topology, || made.solid.topology())
-            });
+            let topology = (!cache.holds(*key)).then(|| inspect::topology(made, cache));
             let drawn = cache.mesh(*key, || match &topology {
                 Some(topology) => Drawn::new(&made.solid, topology, &display),
                 None => Drawn::new(&made.solid, &made.solid.topology(), &display),
