@@ -2,13 +2,14 @@
 //! design, and the recovered, downloaded and recent designs.
 
 use std::path::Path;
+use std::sync::LazyLock;
 
-use iced::widget::{Space, button, column, container, grid, hover, row, stack, text};
+use iced::widget::{Space, button, column, container, grid, hover, row, stack, svg, text};
 use iced::{Alignment, Element, Length, Padding};
 use varde_document::APP_NAME;
 
 use crate::chrome::{self, ChipSize, key_hint};
-use crate::icons::{self, Icon};
+use crate::icons::{self, Icon, LOGO_SVG};
 use crate::shortcut::{Binding, welcome_bindings};
 use crate::status::{Status, status_bar};
 use crate::theme::{self, Emphasis};
@@ -111,7 +112,10 @@ pub fn welcome<'a>(state: WelcomeState<'a>) -> Element<'a, Message> {
     let recent = state
         .recent
         .map(|recent| section("Recent", [recent_grid(recent)]));
-    let content = column![section_label("Start"), start,]
+    let content = column![]
+        .push(heading())
+        .push(section_label("Start"))
+        .push(start)
         .push(recovered)
         .push(downloaded)
         .push(recent)
@@ -141,6 +145,26 @@ pub fn welcome<'a>(state: WelcomeState<'a>) -> Element<'a, Message> {
         view_menu: None,
     });
     chrome::window(page, status)
+}
+
+/// The logo and the app's name over the page, on the web only: there the
+/// browser tab is the only other place showing them, where natively the
+/// window's title bar does.
+fn heading<'a>() -> Option<Element<'a, Message>> {
+    cfg!(target_arch = "wasm32").then(|| {
+        static LOGO: LazyLock<svg::Handle> =
+            LazyLock::new(|| svg::Handle::from_memory(LOGO_SVG.as_bytes()));
+        column![
+            row![
+                svg(LOGO.clone()).width(40).height(40),
+                text(APP_NAME).size(30).font(theme::SEMIBOLD),
+            ]
+            .spacing(12)
+            .align_y(Alignment::Center),
+            Space::new().height(36 - 12),
+        ]
+        .into()
+    })
 }
 
 /// The widest a recent file card gets.
