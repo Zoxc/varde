@@ -14,7 +14,8 @@ mod sketch;
 pub use camera::{Camera, Projection, View};
 pub use highlight::{Emphasis, HIGHLIGHT_WIDTH, Highlight};
 pub use renderer::{
-    ClipRect, Colors, Frame, LINE_WIDTH, Pivot, PrepareError, Renderer, Slot, Srgb, Viewport,
+    ClipRect, Colors, EDGE_WIDTH, Frame, HIDDEN_DASH, HIDDEN_EDGE_WIDTH, LINE_WIDTH, Pivot,
+    PrepareError, Renderer, Slot, Srgb, Viewport,
 };
 pub use scene::{GRID_FADE_HEIGHTS, GridPlane};
 pub use sketch::{LineStyle, PointStyle, SketchLayer, SketchScene, Space, Srgba};

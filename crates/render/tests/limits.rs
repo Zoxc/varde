@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use glam::{DVec3, Vec3};
-use varde_kernel::{RenderLines, RenderMesh, Solid, Tolerance};
+use varde_kernel::{MeshParts, RenderLines, RenderMesh, Solid, Tolerance};
 use varde_render::{
     Camera, Colors, Frame, GridPlane, LineStyle, PrepareError, Renderer, SketchLayer, SketchScene,
     Space, Srgb, Srgba, Viewport, wgpu,
@@ -36,6 +36,7 @@ const COLORS: Colors = Colors {
     selected_face: Srgb([0.0, 0.0, 1.0]),
     hovered_edge: Srgba([1.0, 0.0, 0.0, 1.0]),
     selected_edge: Srgba([0.0, 1.0, 1.0, 1.0]),
+    hidden_edge_alpha: 0.45,
 };
 
 /// The device the tests share, whose buffers hold at most 512 bytes, if
@@ -62,36 +63,19 @@ fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
         .clone()
 }
 
-/// Two cubes' positions on a device taking 512-byte buffers.
-const TOO_LARGE: PrepareError = PrepareError::MeshTooLarge {
-    bytes: 576,
-    limit: 512,
-};
-
-#[test]
-fn mesh_past_the_buffer_limit_is_skipped() {
-    // Two cubes' 48 positions take 576 bytes.
-    let Some((device, queue)) = device() else {
-        eprintln!("no GPU adapter, skipping");
-        return;
-    };
-    assert_eq!(device.limits().max_buffer_size, 512);
-    let cube = Solid::cuboid(DVec3::ZERO, DVec3::ONE, 0, &Tolerance::DEFAULT)
-        .unwrap()
-        .tessellate(&varde_kernel::Display::default())
-        .unwrap();
-    let mut mesh = cube.clone();
-    mesh.append_at(&cube, Vec3::X * 2.0).unwrap();
-    let mesh = Arc::new(mesh);
-
-    let renderer = Renderer::new(&device, FORMAT);
-    let mut slot = renderer.slot(&device);
-    let frame = Frame {
-        camera: &Camera::default(),
-        mesh: &mesh,
-        sketches: &Arc::default(),
+/// A frame of `mesh` and `sketches` on a 64 by 64 target.
+fn frame<'a>(
+    camera: &'a Camera,
+    mesh: &'a Arc<RenderMesh>,
+    sketches: &'a Arc<RenderLines>,
+) -> Frame<'a> {
+    Frame {
+        camera,
+        mesh,
+        sketches,
         grid: GridPlane::XY,
         faded: false,
+        hidden_edges: true,
         sketch: None,
         pivot: None,
         highlight: None,
@@ -104,7 +88,35 @@ fn mesh_past_the_buffer_limit_is_skipped() {
         target_size: [64, 64],
         scale_factor: 1.0,
         colors: COLORS,
+    }
+}
+
+/// A cube's edges on a device taking 512-byte buffers: its 12 edges' 24
+/// points and the stream's two ends, 20 bytes each.
+const TOO_LARGE: PrepareError = PrepareError::MeshTooLarge {
+    bytes: 520,
+    limit: 512,
+};
+
+#[test]
+fn mesh_past_the_buffer_limit_is_skipped() {
+    // The cube's 24 positions take 288 bytes, which fit; its edges don't.
+    let Some((device, queue)) = device() else {
+        eprintln!("no GPU adapter, skipping");
+        return;
     };
+    assert_eq!(device.limits().max_buffer_size, 512);
+    let mesh = Solid::cuboid(DVec3::ZERO, DVec3::ONE, 0, &Tolerance::DEFAULT)
+        .unwrap()
+        .tessellate(&varde_kernel::Display::default())
+        .unwrap();
+    assert_eq!(mesh.positions().len(), 24);
+    let mesh = Arc::new(mesh);
+
+    let renderer = Renderer::new(&device, FORMAT);
+    let mut slot = renderer.slot(&device);
+    let (camera, sketches) = (Camera::default(), Arc::default());
+    let frame = frame(&camera, &mesh, &sketches);
     assert_eq!(
         renderer.prepare(&mut slot, &device, &queue, &frame),
         Err(TOO_LARGE)
@@ -125,6 +137,122 @@ fn mesh_past_the_buffer_limit_is_skipped() {
         ),
         Err(TOO_LARGE)
     );
+
+    // Without edges, 48 positions take 576 bytes.
+    let positions = Arc::new(
+        RenderMesh::from_parts(MeshParts {
+            positions: vec![[0.0; 3]; 48],
+            normals: vec![[0.0, 0.0, 1.0]; 48],
+            indices: vec![0, 1, 2],
+            face_ends: vec![3],
+            part_ends: vec![[1, 0, 0]],
+            ..MeshParts::default()
+        })
+        .unwrap(),
+    );
+    assert_eq!(
+        renderer.prepare(
+            &mut slot,
+            &device,
+            &queue,
+            &Frame {
+                mesh: &positions,
+                ..frame
+            }
+        ),
+        Err(PrepareError::MeshTooLarge {
+            bytes: 576,
+            limit: 512
+        })
+    );
+}
+
+#[test]
+fn edges_fit_up_to_the_buffer_limit() {
+    // An edge of 23 points and the stream's two ends take 500 bytes, which
+    // fit; one of 24 points takes 520.
+    let Some((device, queue)) = device() else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let edge = |points: u32| {
+        let positions: Vec<[f32; 3]> = (0..points).map(|i| [i as f32, 0.0, 0.0]).collect();
+        let last = positions[positions.len() - 1];
+        Arc::new(
+            RenderMesh::from_parts(MeshParts {
+                normals: vec![[0.0, 0.0, 1.0]; positions.len()],
+                positions,
+                indices: vec![0, 1, 2],
+                face_ends: vec![3],
+                edge_vertices: (0..points).collect(),
+                edge_ends: vec![points],
+                edge_faces: vec![[0, 0]],
+                corners: vec![[0.0; 3], last],
+                edge_corners: vec![[0, 1]],
+                part_ends: vec![[1, 1, 2]],
+            })
+            .unwrap(),
+        )
+    };
+    let renderer = Renderer::new(&device, FORMAT);
+    let mut slot = renderer.slot(&device);
+    let (camera, sketches) = (Camera::default(), Arc::default());
+    let mut prepare =
+        |mesh| renderer.prepare(&mut slot, &device, &queue, &frame(&camera, mesh, &sketches));
+    let (fits, too_large) = (edge(23), edge(24));
+    assert_eq!(prepare(&fits), Ok(()));
+    assert_eq!(
+        prepare(&too_large),
+        Err(PrepareError::MeshTooLarge {
+            bytes: 520,
+            limit: 512
+        })
+    );
+}
+
+#[test]
+fn closed_edges_fit_up_to_the_buffer_limit() {
+    // An edge of 20 points and its first again, closed, takes them, a
+    // point either side where it closes and the stream's two ends: 500
+    // bytes, which fit; one of 21 points and its first takes 520.
+    let Some((device, queue)) = device() else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let edge = |points: u32| {
+        let positions: Vec<[f32; 3]> = (0..points)
+            .map(|i| [i as f32, (i % 2) as f32, 0.0])
+            .collect();
+        Arc::new(
+            RenderMesh::from_parts(MeshParts {
+                normals: vec![[0.0, 0.0, 1.0]; positions.len()],
+                corners: vec![positions[0]],
+                positions,
+                indices: vec![0, 1, 2],
+                face_ends: vec![3],
+                edge_vertices: (0..points).chain([0]).collect(),
+                edge_ends: vec![points + 1],
+                edge_faces: vec![[0, 0]],
+                edge_corners: vec![[0, 0]],
+                part_ends: vec![[1, 1, 1]],
+            })
+            .unwrap(),
+        )
+    };
+    let renderer = Renderer::new(&device, FORMAT);
+    let mut slot = renderer.slot(&device);
+    let (camera, sketches) = (Camera::default(), Arc::default());
+    let mut prepare =
+        |mesh| renderer.prepare(&mut slot, &device, &queue, &frame(&camera, mesh, &sketches));
+    let (fits, too_large) = (edge(20), edge(21));
+    assert_eq!(prepare(&fits), Ok(()));
+    assert_eq!(
+        prepare(&too_large),
+        Err(PrepareError::MeshTooLarge {
+            bytes: 520,
+            limit: 512
+        })
+    );
 }
 
 #[test]
@@ -144,25 +272,8 @@ fn lines_past_the_buffer_limit_are_skipped() {
 
     let renderer = Renderer::new(&device, FORMAT);
     let mut slot = renderer.slot(&device);
-    let frame = Frame {
-        camera: &Camera::default(),
-        mesh: &Arc::default(),
-        sketches: &lines,
-        grid: GridPlane::XY,
-        faded: false,
-        sketch: None,
-        pivot: None,
-        highlight: None,
-        viewport: Viewport {
-            x: 0.0,
-            y: 0.0,
-            width: 64.0,
-            height: 64.0,
-        },
-        target_size: [64, 64],
-        scale_factor: 1.0,
-        colors: COLORS,
-    };
+    let (camera, mesh) = (Camera::default(), Arc::default());
+    let frame = frame(&camera, &mesh, &lines);
     assert_eq!(
         renderer.prepare(&mut slot, &device, &queue, &frame),
         Err(too_large.clone())
@@ -216,28 +327,13 @@ fn sketch_layers_past_the_buffer_limit_are_skipped() {
     let empty = SketchLayer::default();
     let (camera, mesh, sketches) = (Camera::default(), Arc::default(), Arc::default());
     let frame = |base, live| Frame {
-        camera: &camera,
-        mesh: &mesh,
-        sketches: &sketches,
-        grid: GridPlane::XY,
-        faded: false,
         sketch: Some(SketchScene {
             plane: GridPlane::XY,
             depth_tested: false,
             base,
             live,
         }),
-        pivot: None,
-        highlight: None,
-        viewport: Viewport {
-            x: 0.0,
-            y: 0.0,
-            width: 64.0,
-            height: 64.0,
-        },
-        target_size: [64, 64],
-        scale_factor: 1.0,
-        colors: COLORS,
+        ..frame(&camera, &mesh, &sketches)
     };
     let mut prepare = |frame| renderer.prepare(&mut slot, &device, &queue, &frame);
     // As large as fits, in a buffer no larger than the device allows.

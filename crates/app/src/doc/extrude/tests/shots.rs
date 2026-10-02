@@ -137,7 +137,7 @@ impl Shooter {
         use iced::theme::Base;
 
         let renderer = &mut self.renderer;
-        let mut ui: Headless<'_> = shown(doc.view(false, shot.mode, true), shot.size, renderer);
+        let mut ui: Headless<'_> = shown(doc.view_in(shot.mode), shot.size, renderer);
         if shot.scrolled {
             let end = RelativeOffset {
                 x: None,
@@ -952,7 +952,7 @@ impl Shooter {
     fn hover(&mut self, doc: &mut Doc, at: Point) -> Option<varde_view::Picked> {
         use iced::mouse::{Cursor, Event};
         let mut ui: Headless<'_> = shown(
-            doc.view(false, Mode::Light, true),
+            doc.view(false, Mode::Light, varde_view::ViewOptions::default()),
             WINDOW,
             &mut self.renderer,
         );

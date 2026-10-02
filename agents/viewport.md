@@ -63,9 +63,12 @@ the Timeline is in a box of its own, with the key clearing it (`Space`);
 then a bar with what's going on (picking a plane, the sketch's or the
 extrude's status, regenerating, a failed edit, saving: nothing with
 nothing selected), the hints, and the button of the view options menu,
-which opens above it: Orthographic or Perspective, and Mouse hints,
-which the app keeps (`Varde::mouse_hints`) and without which the bar
-leaves out the hints of the mouse. The hints and the button show whole:
+which opens above it: Orthographic or Perspective, then Mouse hints,
+without which the bar leaves out the hints of the mouse, and Hidden
+edges, without which the viewport leaves out the edges the model hides
+(`Frame::hidden_edges`). The app keeps those two for every document
+(`Varde::options`, a `ViewOptions`, both on to start with, not saved),
+and either closes the menu. The hints and the button show whole:
 the bar's widget (`Bar`, which draws the boxes and the lines between
 their parts itself) lays them out first, then the selection, then the
 status, each in what's left, cut short, so the status gives way first.
@@ -216,14 +219,17 @@ dark danger text is #f07563, the Delete button keeps #e0564b
 
 The renderer draws, in order: the background; the model's faces, or with
 `Frame::faded` its depth and then only its nearest faces blended at
-`Colors::faded_alpha` (depth still written); its feature edges; the grid,
+`Colors::faded_alpha` (depth still written); its feature edges, `EDGE_WIDTH`
+logical pixels wide, depth tested and pulled towards the camera, so the
+faces they bound don't hide them, at `faded_alpha` too when faded; the grid,
 ray traced per pixel on `Frame::grid`, a `GridPlane` (the XY plane, or a
 sketch's plane), faded out a few view heights from the target and at
 grazing angles, with its two axis lines over it, coloured by the world
 axis they lie along; the finished sketches (`Frame::sketches`, `RenderLines`), `LINE_WIDTH`
 logical pixels wide, cut at the near plane, depth tested and pulled
 towards the camera like the edges, so bodies in front hide them but a face
-they lie on doesn't; the origin marker; and on top of it all the sketch
+they lie on doesn't; the edges again where the model hides them, if
+`Frame::hidden_edges` and not faded (below); the origin marker; and on top of it all the sketch
 being edited (`Frame::sketch`, a `SketchScene`), not depth tested, so the
 faded model never hides it. Setting up an extrude, the same layers are
 depth tested instead (`SketchScene::depth_tested`, the shader's
@@ -288,21 +294,72 @@ hide what's behind. The letters are stroked paths rather than text, which
 a canvas draws over all its shapes, so faces can hide them too. An axis
 seen end on (head-on views) has no edge in sight and isn't drawn.
 
-Lines, the finished sketches' and the sketch being edited's, are one
-shader (`line_vertex`, `fs_line`): a quad per segment a pixel wider than
-the line, cut at the near plane in perspective and to the viewport and a
-margin (so pixel coordinates stay exact in `f32`), divided through so
-fragments see pixel positions, and the fragment shader turns the distance
-from the segment into coverage: anti-aliased at any zoom and display scale
-without MSAA, with round ends and joins. A segment of the sketch being
-edited knows its neighbours, and where two overlap at a join a pixel is
-drawn only by the nearer, so translucent lines don't darken there; the
-finished sketches' segments come alone, as they're uploaded, and overlap
-at joins, which only thickens the fringe of an opaque line. Dashes run
-along a polyline by its length (in sketch units at the target's scale, or
-logical pixels on the screen), faded at their ends. The model's feature
-edges are still hardware lines: as quads they'd need a buffer of every
-edge's ends, past the 256 MiB buffer bound for `RenderMesh::MAX_EDGES`.
+Lines, the model's feature edges, the finished sketches' and the sketch
+being edited's, are one shader (`line_vertex`, `fs_line`): a quad per
+segment a pixel wider than the line, cut at the near plane in perspective
+and to the viewport and a margin (so pixel coordinates stay exact in
+`f32`), divided through so fragments see pixel positions, and the fragment
+shader turns the distance from the segment into coverage: anti-aliased at
+any zoom and display scale without MSAA, with round ends and joins. A
+segment of an edge or of the sketch being edited knows its neighbours, and
+where two overlap at a join a pixel is drawn only by the nearer, so
+translucent lines don't darken there; the finished sketches' segments come
+alone, as they're uploaded, and overlap at joins, which only thickens the
+fringe of an opaque line. Dashes run along a polyline by its length (in
+sketch units at the target's scale, or logical pixels on the screen),
+averaged over what a pixel spans along the line (a box filter, from how
+much longer the segment is measured than it shows), so their ends fade
+over a pixel on the screen, and dashes shorter than a pixel there, on an
+edge seen nearly end on or far behind the target in perspective, blur to
+their average rather than beating into dashes of their own.
+
+The edges are uploaded as a stream of points (`EdgePoint`: position, how
+far along its polyline in world units, and which polyline), polyline after
+polyline, a point again in a row left out, with a point of no edge at each
+end of the stream. An edge that closes on itself, round three segments or
+more, has its last but one point before it and its second after it, marked
+neighbours only (`NEIGHBOUR_ONLY`, the edge's top bit), so its first and
+last segments join like any others. That's 20 bytes a point, at most one
+and a half points per edge vertex, so `RenderMesh::MAX_EDGE_POINTS` fits a
+256 MiB buffer. The same buffer is bound to four vertex buffer slots a
+point apart, step mode instance, so instance `i` sees points `i` to `i + 3`
+as the point before, the segment's start and end, and the point after
+(`EdgeIn`, `edge_segment`): the segment is drawn if its ends are of the
+same edge, and joined to the points either side that are of it too,
+marked or not.
+That's 4 of WebGL2's 8 vertex buffers and 9 of its 16 attributes, and no
+storage buffers. Each segment and its neighbours are cut at the near plane
+before pulling (`pulled_segment`, which the finished sketches' lines use
+too), so they agree on where they meet. Pulling (`pulled`) only changes
+the depth: the line shows where it is, not where the pulled point would in
+perspective, off its faces' boundary near the eye. Where two edges meet at
+a corner their fringes overlap, and so do a polyline's segments where
+they're shorter on the screen than the line is wide, since a segment only
+knows the two either side of it.
+
+The edges the model hides are the same stream drawn again
+(`vs_hidden_edge`, its own entry point, since the GL backend keys
+programs by them) with `depth_compare: Greater` against the model's
+depth, which nothing drawn after the faces writes: the same quads (both
+`EDGE_WIDTH` wide, the hidden pass narrowing only the coverage, and the
+position `@invariant`), so the visible pass and this one split the
+pixels between them, and a visible stretch and a hidden one of the same
+edge meet without a gap or a pixel of both. They're `HIDDEN_EDGE_WIDTH`
+(1) logical pixel wide, in the edge colour at `Colors::hidden_edge_alpha`
+(0.45 in both themes), dashed (`HIDDEN_DASH`, 4 on and 3 off) along the
+edge by its length at the target's scale, as the sketch's dashes are. The
+dashes' phase is worked out a segment at a time: where the segment
+starts along its edge, in pixels, modulo a dash and a gap, then on by
+its own length from its ends, then again modulo the period from where
+it's cut to the viewport, so the numbers the fragment shader mixes stay
+within a period and what shows of the segment. Zoomed far into a long
+edge, where how far along it a pixel is, in pixels, is past what `f32`
+holds, only the phase where a segment starts or is cut is off by the
+rounding, not the dashes along it. An edge's fringe within a pixel of a
+silhouette is depth tested at the edge's depth, so a back edge there
+leaks a little of it past the silhouette. Not drawn faded: in a sketch
+the model already reads as see-through. Setting up an extrude, they're
+drawn.
 
 The sketch being edited comes as two `SketchLayer`s the view builds, each
 with fills (triangles, tessellated even-odd by tess2-rust, holes left out),

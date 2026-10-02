@@ -27,7 +27,9 @@ use varde_document::{
 use varde_io::{Access, Offer, OpenId};
 use varde_render::{Camera, Projection};
 use varde_solve::{Request as SolveRequest, Transport};
-use varde_view::{DocumentKeys, Edit, Look, Message as Ui, Mode, Overlay, Panel, RowMenu, Snap};
+use varde_view::{
+    DocumentKeys, Edit, Look, Message as Ui, Mode, Overlay, Panel, RowMenu, Snap, ViewOptions,
+};
 
 #[cfg(test)]
 pub(crate) use camera::CAMERA_ANIMATION;
@@ -742,8 +744,8 @@ impl Doc {
 
     /// The document screen, showing the other panel tab if `peek`, unless
     /// the Dimension tool is in use, where the peek key places references,
-    /// and the status bar's hints of the mouse if `mouse_hints`.
-    pub(crate) fn view(&self, peek: bool, mode: Mode, mouse_hints: bool) -> Element<'_, Ui> {
+    /// with the view `options`.
+    pub(crate) fn view(&self, peek: bool, mode: Mode, options: ViewOptions) -> Element<'_, Ui> {
         let peek = self.peeks(peek);
         varde_view::document(varde_view::DocumentState {
             editor: &self.editor,
@@ -777,7 +779,7 @@ impl Doc {
             panel: self.panel,
             peek,
             mode,
-            mouse_hints,
+            options,
             picking_plane: self.picking_plane,
             selected_feature: self.selected_feature,
             row_menu: self.row_menu,
@@ -792,6 +794,13 @@ impl Doc {
             proposing: self.proposing(),
             rail: self.rail.state(),
         })
+    }
+
+    /// The document screen in `mode` as the app first shows it: not
+    /// peeking, the view options at their defaults.
+    #[cfg(test)]
+    pub(crate) fn view_in(&self, mode: Mode) -> Element<'_, Ui> {
+        self.view(false, mode, ViewOptions::default())
     }
 }
 

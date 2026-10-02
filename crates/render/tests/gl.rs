@@ -5,10 +5,10 @@
 use std::sync::Arc;
 
 use glam::{DVec2, DVec3, Vec3};
-use varde_kernel::{RenderLines, Solid, Tolerance};
+use varde_kernel::{RenderLines, RenderMesh, Solid, Tolerance};
 use varde_render::{
-    Camera, ClipRect, Colors, Frame, GridPlane, Renderer, SketchLayer, SketchScene, Space, Srgb,
-    Srgba, View, Viewport, wgpu,
+    Camera, ClipRect, Colors, Frame, GridPlane, Projection, Renderer, SketchLayer, SketchScene,
+    Space, Srgb, Srgba, View, Viewport, wgpu,
 };
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -35,6 +35,7 @@ const COLORS: Colors = Colors {
     selected_face: Srgb([0.0, 0.0, 1.0]),
     hovered_edge: Srgba([1.0, 0.0, 0.0, 1.0]),
     selected_edge: Srgba([0.0, 1.0, 1.0, 1.0]),
+    hidden_edge_alpha: 0.45,
 };
 
 /// A device on the GL backend, if there's an adapter for it.
@@ -45,6 +46,53 @@ fn gl_device() -> Option<(wgpu::Device, wgpu::Queue)> {
     });
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).ok()?;
     pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()
+}
+
+/// From the top, a cube from (-2, -2, 0) to (2, 2, 4) over the whole
+/// middle of a view 12 high.
+fn cube_from_top() -> (Camera, Arc<RenderMesh>) {
+    let mesh = Solid::cuboid(
+        DVec3::new(-2.0, -2.0, 0.0),
+        DVec3::splat(4.0),
+        0,
+        &Tolerance::DEFAULT,
+    )
+    .unwrap()
+    .tessellate(&varde_kernel::Display::default())
+    .unwrap();
+    let mut camera = Camera::default();
+    camera.look_from(View::Top);
+    camera.zoom(12.0 / camera.view_height());
+    (camera, Arc::new(mesh))
+}
+
+/// A frame of `mesh` and `sketches` filling a target of [`SIZE`].
+fn frame<'a>(
+    camera: &'a Camera,
+    mesh: &'a Arc<RenderMesh>,
+    sketches: &'a Arc<RenderLines>,
+) -> Frame<'a> {
+    let [width, height] = SIZE.map(|s| s as f32);
+    Frame {
+        camera,
+        mesh,
+        sketches,
+        grid: GridPlane::XY,
+        faded: false,
+        hidden_edges: true,
+        sketch: None,
+        pivot: None,
+        highlight: None,
+        viewport: Viewport {
+            x: 0.0,
+            y: 0.0,
+            width,
+            height,
+        },
+        target_size: SIZE,
+        scale_factor: 1.0,
+        colors: COLORS,
+    }
 }
 
 /// Draws `frame` on `renderer` into a target of [`SIZE`] and returns its
@@ -120,55 +168,23 @@ fn a_depth_tested_sketch_is_hidden_by_the_model_on_gl() {
         eprintln!("no GL adapter, skipping");
         return;
     };
-    let solid = Solid::cuboid(
-        DVec3::new(-2.0, -2.0, 0.0),
-        DVec3::splat(4.0),
-        0,
-        &Tolerance::DEFAULT,
-    );
-    let mesh = solid
-        .unwrap()
-        .tessellate(&varde_kernel::Display::default())
-        .unwrap();
-    let mut camera = Camera::default();
-    camera.look_from(View::Top);
-    camera.zoom(12.0 / camera.view_height());
+    let (camera, mesh) = cube_from_top();
     let plane = GridPlane::new(Vec3::new(0.0, 0.0, 2.0), Vec3::X, Vec3::Y).unwrap();
     let mut live = SketchLayer::default();
     let square =
         [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)].map(|(x, y)| DVec2::new(x, y));
     live.fill(Space::On(plane), [&square[..]], Srgba([0.0, 1.0, 0.0, 1.0]));
     let renderer = Renderer::new(&device, FORMAT);
-    let (mesh, sketches, base) = (
-        Arc::new(mesh),
-        Arc::new(RenderLines::default()),
-        Arc::new(SketchLayer::default()),
-    );
-    let [width, height] = SIZE.map(|s| s as f32);
+    let (sketches, base) = (Arc::default(), Arc::new(SketchLayer::default()));
     for depth_tested in [false, true] {
         let frame = Frame {
-            camera: &camera,
-            mesh: &mesh,
-            sketches: &sketches,
-            grid: GridPlane::XY,
-            faded: false,
             sketch: Some(SketchScene {
                 plane: GridPlane::XY,
                 depth_tested,
                 base: &base,
                 live: &live,
             }),
-            pivot: None,
-            highlight: None,
-            viewport: Viewport {
-                x: 0.0,
-                y: 0.0,
-                width,
-                height,
-            },
-            target_size: SIZE,
-            scale_factor: 1.0,
-            colors: COLORS,
+            ..frame(&camera, &mesh, &sketches)
         };
         let pixels = draw(&device, &queue, &renderer, &frame);
         let [r, g, b, _] = pixels[(SIZE[1] / 2 * SIZE[0] + SIZE[0] / 2) as usize];
@@ -178,4 +194,131 @@ fn a_depth_tested_sketch_is_hidden_by_the_model_on_gl() {
             "depth tested {depth_tested}: {r} {g} {b}"
         );
     }
+}
+
+#[test]
+fn edges_are_drawn_on_gl() {
+    // From the top, a cube from (-2, -2, 0) to (2, 2, 4), its edges
+    // yellow: the edge stream bound at offsets of a point and more, which
+    // GL takes as attribute offsets.
+    let Some((device, queue)) = gl_device() else {
+        eprintln!("no GL adapter, skipping");
+        return;
+    };
+    let (camera, mesh) = cube_from_top();
+    let renderer = Renderer::new(&device, FORMAT);
+    let sketches = Arc::default();
+    let frame = Frame {
+        colors: Colors {
+            edge: Srgb([1.0, 1.0, 0.0]),
+            ..COLORS
+        },
+        ..frame(&camera, &mesh, &sketches)
+    };
+    let pixels = draw(&device, &queue, &renderer, &frame);
+    // The edge at x = 2, 2 / 12 of the view's height right of its middle,
+    // looked for in a row above the origin marker.
+    let column = SIZE[0] / 2 + 2 * SIZE[1] / 12;
+    let yellow = (column - 2..=column + 2).any(|x| {
+        let [r, g, b, _] = pixels[(50 * SIZE[0] + x) as usize];
+        r > 150 && g > 150 && b < 100
+    });
+    assert!(yellow, "no edge near column {column}");
+}
+
+#[test]
+fn a_closed_edge_is_joined_where_it_closes_on_gl() {
+    // From the top in perspective, the circle round a cylinder's top, one
+    // edge closing on itself, the one round its bottom smaller within it
+    // and hidden. Faded, a pixel drawn twice would be more opaque than the
+    // faded colour over what's drawn opaque. The points either side of
+    // where it closes are marked in their edge's top bit, which GL takes
+    // as an integer attribute.
+    let Some((device, queue)) = gl_device() else {
+        eprintln!("no GL adapter, skipping");
+        return;
+    };
+    let mesh = Solid::cylinder(DVec3::ZERO, 3.0, 2.0, 0, &Tolerance::DEFAULT)
+        .unwrap()
+        .tessellate(&varde_kernel::Display::default())
+        .unwrap();
+    let mesh = Arc::new(mesh);
+    let mut camera = Camera::default();
+    camera.set_projection(Projection::Perspective);
+    camera.look_from(View::Top);
+    camera.zoom(12.0 / camera.view_height());
+    let renderer = Renderer::new(&device, FORMAT);
+    let sketches = Arc::default();
+    let render = |faded| {
+        let frame = Frame {
+            faded,
+            // The bottom's circle, hidden, isn't drawn faded.
+            hidden_edges: false,
+            // Its plane seen edge on, so the grid doesn't show.
+            grid: GridPlane::new(Vec3::new(0.0, 1000.0, 0.0), Vec3::X, Vec3::Z).unwrap(),
+            colors: Colors {
+                edge: Srgb([1.0, 1.0, 0.0]),
+                ..COLORS
+            },
+            ..frame(&camera, &mesh, &sketches)
+        };
+        draw(&device, &queue, &renderer, &frame)
+    };
+    let (faded, opaque) = (render(true), render(false));
+    // How much yellow covers a pixel: over the grey faces, red and green
+    // gain on blue as much as it does.
+    let yellowness = |[r, g, b, _]: [u8; 4]| f32::from(r.min(g).saturating_sub(b)) / 255.0;
+    let alpha = COLORS.faded_alpha;
+    let mut drawn = 0;
+    for (i, (faded, opaque)) in faded.iter().zip(&opaque).enumerate() {
+        let (faded, opaque) = (yellowness(*faded), yellowness(*opaque));
+        let [x, y] = [i as u32 % SIZE[0], i as u32 / SIZE[0]];
+        assert!(
+            (faded - opaque * alpha).abs() < 0.03,
+            "{faded} for {opaque} at ({x}, {y})"
+        );
+        drawn += u32::from(opaque > 0.5);
+    }
+    assert!(drawn > 100, "{drawn} pixels of edge");
+}
+
+#[test]
+fn hidden_edges_are_drawn_on_gl() {
+    // From the top in perspective, the cube's bottom square shows within
+    // its top face, hidden by it: drawn dashed with the option on, by a
+    // pipeline of its own entry point, which GL keys programs by; nothing
+    // with it off.
+    let Some((device, queue)) = gl_device() else {
+        eprintln!("no GL adapter, skipping");
+        return;
+    };
+    let (mut camera, mesh) = cube_from_top();
+    camera.set_projection(Projection::Perspective);
+    let renderer = Renderer::new(&device, FORMAT);
+    let sketches = Arc::default();
+    let yellow = |hidden_edges| {
+        let frame = Frame {
+            hidden_edges,
+            grid: GridPlane::new(Vec3::new(0.0, 1000.0, 0.0), Vec3::X, Vec3::Z).unwrap(),
+            colors: Colors {
+                edge: Srgb([1.0, 1.0, 0.0]),
+                ..COLORS
+            },
+            ..frame(&camera, &mesh, &sketches)
+        };
+        let pixels = draw(&device, &queue, &renderer, &frame);
+        // Within the top face, clear of its outline.
+        let middle = SIZE.map(|s| s / 2);
+        let mut yellow = 0;
+        for y in middle[1] - 25..middle[1] + 25 {
+            for x in middle[0] - 25..middle[0] + 25 {
+                let [r, g, b, _] = pixels[(y * SIZE[0] + x) as usize];
+                yellow += u32::from(r.min(g).saturating_sub(b) > 40);
+            }
+        }
+        yellow
+    };
+    let (on, off) = (yellow(true), yellow(false));
+    assert!(on > 40, "{on} pixels of hidden edges");
+    assert_eq!(off, 0);
 }

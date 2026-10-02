@@ -75,7 +75,8 @@ pub struct ModelPicking<'a> {
 /// over the viewport's right under the controls, and the tool `rail`
 /// over its left. `pivot`, the point the camera orbits if one was picked,
 /// is marked, and `highlight` drawn over the model. With `picking`, the
-/// cursor picks the model.
+/// cursor picks the model. The edges the model hides are drawn dashed if
+/// `hidden_edges`, outside a sketch.
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn viewport<'a>(
     mesh: &Arc<RenderMesh>,
@@ -84,6 +85,7 @@ pub(crate) fn viewport<'a>(
     pivot: Option<Pivot>,
     picking: Option<ModelPicking<'a>>,
     highlight: Option<&Arc<Highlight>>,
+    hidden_edges: bool,
     palette: &Palette,
     sketching: Option<Sketching<'a>>,
     operating: Option<Operating<'a>>,
@@ -121,11 +123,12 @@ pub(crate) fn viewport<'a>(
         };
         knobs.unwrap_or_else(|| iced::widget::Space::new().into())
     });
-    let program = Program {
+    let mut program = Program {
         picking,
         highlight: highlight.cloned(),
         ..program(mesh, sketches, camera, pivot, palette, sketching, operating)
     };
+    program.scene.hidden_edges = hidden_edges;
     let scene = iced::widget::shader(program)
         .width(Length::Fill)
         .height(Length::Fill);
@@ -148,7 +151,7 @@ pub(crate) fn viewport<'a>(
 
 /// The shader program drawing `mesh` and `sketches` from `camera` in
 /// `palette`'s colors, in `sketching`'s sketch if there is one, or
-/// setting up `operating`'s operation.
+/// setting up `operating`'s operation, with the edges the model hides.
 fn program<'a>(
     mesh: &Arc<RenderMesh>,
     sketches: &Arc<RenderLines>,
@@ -166,6 +169,7 @@ fn program<'a>(
             pivot,
             colors: palette.scene,
             sketch_plane: sketching.as_ref().map(Sketching::grid),
+            hidden_edges: true,
         },
         sketching,
         operating,
@@ -201,6 +205,10 @@ struct Scene {
     colors: Colors,
     /// The plane of the sketch being edited, if one is.
     sketch_plane: Option<GridPlane>,
+    /// Whether the edges the model hides are drawn, dashed: the view
+    /// option, which the renderer ignores in a sketch, where the model is
+    /// faded.
+    hidden_edges: bool,
 }
 
 /// What dragging in the viewport does.
@@ -661,6 +669,7 @@ impl shader::Primitive for Primitive {
                 // fades the model.
                 grid: scene.sketch_plane.unwrap_or(GridPlane::XY),
                 faded: scene.sketch_plane.is_some(),
+                hidden_edges: scene.hidden_edges,
                 pivot: scene.pivot,
                 highlight: self.highlight.as_ref(),
                 sketch: self.sketch.as_ref().map(|sketch| SketchScene {

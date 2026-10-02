@@ -132,7 +132,11 @@ fn moving_the_cursor_over_the_model_says_what_it_hovers() {
     // Over the middle of the viewport, the plate shows from Home.
     let at = iced::Point::new(780.0, 450.0);
     let mut moved = |doc: &Doc, at: iced::Point| {
-        let mut ui = shown(doc.view(false, Mode::Light, true), size, &mut renderer);
+        let mut ui = shown(
+            doc.view(false, Mode::Light, varde_view::ViewOptions::default()),
+            size,
+            &mut renderer,
+        );
         let mut sent = Vec::new();
         let _ = ui.update(
             &[iced::Event::Mouse(Event::CursorMoved { position: at })],
@@ -160,7 +164,11 @@ fn status_bar(doc: &Doc) -> Vec<String> {
     let size = iced::Size::new(1280.0, 800.0);
     let top = size.height - varde_view::STATUS_BAR_ROOM;
     let mut renderer = varde_view::probe::renderer();
-    let mut ui = shown(doc.view(false, Mode::Light, true), size, &mut renderer);
+    let mut ui = shown(
+        doc.view(false, Mode::Light, varde_view::ViewOptions::default()),
+        size,
+        &mut renderer,
+    );
     let mut bar: Vec<_> = texts(&mut ui, &renderer)
         .into_iter()
         .filter(|text| text.bounds.y >= top && text.bounds.x >= varde_view::SIDE_PANEL_WIDTH)
@@ -175,7 +183,11 @@ fn click(doc: &Doc, at: iced::Point, modifiers: iced::keyboard::Modifiers) -> Ve
     use iced::mouse::Button;
     let size = iced::Size::new(1280.0, 800.0);
     let mut renderer = varde_view::probe::renderer();
-    let mut ui = shown(doc.view(false, Mode::Light, true), size, &mut renderer);
+    let mut ui = shown(
+        doc.view(false, Mode::Light, varde_view::ViewOptions::default()),
+        size,
+        &mut renderer,
+    );
     let mut sent = Vec::new();
     for event in [
         iced::Event::Keyboard(iced::keyboard::Event::ModifiersChanged(modifiers)),
@@ -287,7 +299,11 @@ fn objects_and_the_viewport_select_bodies_alike() {
     // Body 1's row, clicked, says so.
     let size = iced::Size::new(1280.0, 800.0);
     let mut renderer = varde_view::probe::renderer();
-    let mut ui = shown(doc.view(false, Mode::Light, true), size, &mut renderer);
+    let mut ui = shown(
+        doc.view(false, Mode::Light, varde_view::ViewOptions::default()),
+        size,
+        &mut renderer,
+    );
     let row = crate::tests::texts(&mut ui, &renderer)
         .into_iter()
         .find(|text| text.text == "Body 1")

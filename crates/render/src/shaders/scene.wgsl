@@ -25,6 +25,7 @@ struct Uniforms {
     sketch_origin: vec4<f32>,
     sketch_x: vec4<f32>,
     sketch_y: vec4<f32>,
+    hidden_edge: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -37,6 +38,13 @@ override ENCODE_SRGB: bool;
 override GRID_FADE_HEIGHTS: f32;
 // How wide sketch lines are, in logical pixels.
 override LINE_WIDTH: f32;
+// How wide feature edges are, in logical pixels.
+override EDGE_WIDTH: f32;
+// How wide the edges hidden by the model are, and their dashes' and gaps'
+// lengths along them, in logical pixels.
+override HIDDEN_EDGE_WIDTH: f32;
+override HIDDEN_DASH: f32;
+override HIDDEN_GAP: f32;
 // Set for the pipelines drawing the sketch's layers depth tested: they're
 // given their depth, pulled towards the camera, rather than drawn on top.
 override SKETCH_DEPTH: bool = false;
@@ -314,30 +322,22 @@ fn fs_highlight(in: HighlightOut) -> @location(0) vec4<f32> {
 
 // Least normalized depth that edges are pulled in by, well clear of
 // Depth32Float precision. The depth range is fitted to the scene, so zooming
-// into a large one shrinks the pull by view height below that. WebGPU forbids
-// pipeline depth bias on lines.
+// into a large one shrinks the pull by view height below that.
 const EDGE_DEPTH_BIAS: f32 = 1e-5;
 
-// `position` in clip space, pulled towards the camera so that edges and
-// lines win the depth test against the faces they lie on. Never before the
-// near plane, which a pull from just behind it would clip.
+// `position` in clip space, its depth pulled towards the camera so that
+// edges and lines win the depth test against the faces they lie on, rather
+// than by a pipeline's depth bias, which is in units of the depth buffer
+// and of the faces' slope. Where it shows stays put: in perspective, the
+// pulled point would show farther from the middle of the view, the more
+// the nearer the eye. Never before the near plane, which a pull from just
+// behind it would clip. Edges are drawn as lines, by `vs_edge` below.
 fn pulled(position: vec3<f32>) -> vec4<f32> {
     let offset = u.backward.xyz * view_height() * 0.002;
     let clip = u.view_proj * vec4<f32>(position + offset, 1.0);
     let unpulled = u.view_proj * vec4<f32>(position, 1.0);
     let depth = max(min(clip.z / clip.w, unpulled.z / unpulled.w - EDGE_DEPTH_BIAS), 0.0);
-    return vec4<f32>(clip.xy, depth * clip.w, clip.w);
-}
-
-@vertex
-fn vs_edge(@location(0) position: vec3<f32>) -> @builtin(position) vec4<f32> {
-    return pulled(position);
-}
-
-@fragment
-fn fs_edge() -> @location(0) vec4<f32> {
-    // Fainter with the faces when faded.
-    return output(vec4<f32>(u.edge.rgb, 0.9 * u.edge.a));
+    return vec4<f32>(unpulled.xy, depth * unpulled.w, unpulled.w);
 }
 
 // --- Lines ---
@@ -351,10 +351,14 @@ fn fs_edge() -> @location(0) vec4<f32> {
 // ends. Everything is in physical pixels from the viewport's centre, y up
 // (see `to_pixels`).
 //
-// Finished sketches' lines (`vs_line`) are depth tested and pulled like
-// feature edges, so a line on a face shows while bodies in front of it hide
-// it; they come a segment at a time, without neighbours. The sketch being
-// edited (`vs_sketch_line`) is drawn over everything.
+// Feature edges (`vs_edge`) are depth tested and pulled, so an edge shows
+// on the faces it bounds while bodies in front of it hide it, and drawn
+// again dashed where they hide it (`vs_hidden_edge`); they come from a
+// stream of points, a segment per instance that sees the points either
+// side of it. Finished sketches' lines (`vs_line`) are depth tested
+// and pulled the same way; they come a segment at a time, without
+// neighbours. The sketch being edited (`vs_sketch_line`) is drawn over
+// everything.
 
 // Flags of a segment of the sketch being edited, as in sketch.rs: whether
 // it has a neighbour before and after it, and whether it's in logical
@@ -366,7 +370,9 @@ const SCREEN: u32 = 4u;
 const WORLD: u32 = 8u;
 
 struct LineOut {
-    @builtin(position) position: vec4<f32>,
+    // Invariant, so the hidden edges' pass, from another entry point, puts
+    // a pixel at exactly the depth the visible edges' did.
+    @builtin(position) @invariant position: vec4<f32>,
     // The segment's start and end.
     @location(0) @interpolate(flat) ends: vec4<f32>,
     // The segments before and after it, where `flags` say there are.
@@ -508,10 +514,62 @@ fn line_vertex(
     return out;
 }
 
+// `x` modulo `period`, from 0 up to `period`.
+fn wrapped(x: f32, period: f32) -> f32 {
+    return x - floor(x / period) * period;
+}
+
 // Nothing: for a neighbour there isn't.
 fn none() -> Shown {
     var out: Shown;
     out.t = vec2<f32>(1.0, 0.0);
+    return out;
+}
+
+// A segment of the world as it's drawn pulled (see `pulled`): what shows
+// of it, its `t` fractions of the whole segment, and the normalized depth
+// where its ends show.
+struct Pulled {
+    shown: Shown,
+    depth: vec2<f32>,
+};
+
+// The segment from `start` to `end` in the world, pulled, as it's drawn
+// within `margin` pixels of the viewport. It's cut to the near plane, where
+// clip space z is 0, before pulling, which needs the depth of a point in
+// front of the eye. Clip space is linear in world space, so the cut is
+// where the ends' z mix to 0. Segments that meet compute their neighbours
+// with this too, so they agree on where they are.
+fn pulled_segment(start: vec3<f32>, end: vec3<f32>, margin: f32) -> Pulled {
+    var out: Pulled;
+    out.shown = none();
+    let za = (u.view_proj * vec4<f32>(start, 1.0)).z;
+    let zb = (u.view_proj * vec4<f32>(end, 1.0)).z;
+    if za < 0.0 && zb < 0.0 {
+        return out;
+    }
+    var a = start;
+    var b = end;
+    var cut = vec2<f32>(0.0, 1.0);
+    if za < 0.0 {
+        cut.x = za / (za - zb);
+        a = mix(start, end, cut.x);
+    } else if zb < 0.0 {
+        let back = zb / (zb - za);
+        cut.y = 1.0 - back;
+        b = mix(end, start, back);
+    }
+
+    let ca = pulled(a);
+    let cb = pulled(b);
+    // Already cut, before pulling.
+    let own = shown(ca, cb, false, margin);
+    if own.t.x > own.t.y {
+        return out;
+    }
+    out.depth = mix(vec2<f32>(ca.z / ca.w), vec2<f32>(cb.z / cb.w), own.t);
+    out.shown = own;
+    out.shown.t = mix(vec2<f32>(cut.x), vec2<f32>(cut.y), own.t);
     return out;
 }
 
@@ -521,31 +579,107 @@ fn vs_line(
     @location(0) start: vec3<f32>,
     @location(1) end: vec3<f32>,
 ) -> LineOut {
-    // Cut to the near plane, where clip space z is 0, before pulling, which
-    // needs the depth of a point in front of the eye. Clip space is linear
-    // in world space, so the cut is where the ends' z mix to 0.
-    let za = (u.view_proj * vec4<f32>(start, 1.0)).z;
-    let zb = (u.view_proj * vec4<f32>(end, 1.0)).z;
-    if za < 0.0 && zb < 0.0 {
-        return line_vertex(index, none(), none(), none(), 0u, vec2<f32>(0.0), 0.0,
+    let half = LINE_WIDTH * 0.5 * u.viewport.z;
+    let own = pulled_segment(start, end, half + 2.0);
+    return line_vertex(index, own.shown, none(), none(), 0u, own.depth, half,
+        vec4<f32>(u.sketch.rgb, 1.0), vec2<f32>(0.0), vec2<f32>(0.0));
+}
+
+// Set in an edge point's edge where it's only a neighbour of its edge's
+// segments, as in renderer.rs: where a closed polyline joins itself.
+const NEIGHBOUR_ONLY: u32 = 0x80000000u;
+
+// A feature edge's segment's instance: see `edge_segment`.
+struct EdgeIn {
+    @builtin(vertex_index) index: u32,
+    @location(0) prev: vec3<f32>,
+    @location(1) prev_edge: u32,
+    @location(2) start: vec3<f32>,
+    // How far along its edge the start is, in world units.
+    @location(3) start_along: f32,
+    @location(4) start_edge: u32,
+    @location(5) end: vec3<f32>,
+    @location(6) end_edge: u32,
+    @location(7) next: vec3<f32>,
+    @location(8) next_edge: u32,
+};
+
+// A segment of a feature edge, from the stream of the edges' points (see
+// `EdgePoint` in renderer.rs): the instance sees the point before it, its
+// start and end, and the point after it. It's drawn if its start and end
+// are of the same edge, and joined to the points either side that are of
+// that edge too, marked NEIGHBOUR_ONLY or not, so a polyline's joins are
+// drawn once, a closed one's where it closes too. The quad is EDGE_WIDTH
+// wide either way, so the visible and hidden passes put the same pixels at
+// the same depth and split them between them; `half`, `color`, `dash` and
+// `along` are the line's as in `line_vertex`.
+fn edge_segment(
+    in: EdgeIn,
+    half: f32,
+    color: vec4<f32>,
+    dash: vec2<f32>,
+    along: vec2<f32>,
+) -> LineOut {
+    if in.start_edge != in.end_edge || (in.start_edge & NEIGHBOUR_ONLY) != 0u {
+        // Between two edges, or from or to a point only a neighbour.
+        return line_vertex(in.index, none(), none(), none(), 0u, vec2<f32>(0.0), 0.0,
             vec4<f32>(0.0), vec2<f32>(0.0), vec2<f32>(0.0));
     }
-    var a = start;
-    var b = end;
-    if za < 0.0 {
-        a = mix(start, end, za / (za - zb));
-    } else if zb < 0.0 {
-        b = mix(end, start, zb / (zb - za));
+    let quad = EDGE_WIDTH * 0.5 * u.viewport.z;
+    let margin = quad + 2.0;
+    var flags = 0u;
+    var before = none();
+    if (in.prev_edge & ~NEIGHBOUR_ONLY) == in.start_edge {
+        before = pulled_segment(in.prev, in.start, margin).shown;
+        flags |= HAS_PREV;
     }
+    var after = none();
+    if (in.next_edge & ~NEIGHBOUR_ONLY) == in.end_edge {
+        after = pulled_segment(in.end, in.next, margin).shown;
+        flags |= HAS_NEXT;
+    }
+    let own = pulled_segment(in.start, in.end, margin);
+    var out = line_vertex(in.index, own.shown, before, after, flags, own.depth, quad, color,
+        dash, along);
+    out.style.x = half;
+    return out;
+}
 
-    let ca = pulled(a);
-    let cb = pulled(b);
-    let half = LINE_WIDTH * 0.5 * u.viewport.z;
-    // Already cut, before pulling.
-    let own = shown(ca, cb, false, half + 2.0);
-    let depth = mix(vec2<f32>(ca.z / ca.w), vec2<f32>(cb.z / cb.w), own.t);
-    return line_vertex(index, own, none(), none(), 0u, depth, half,
-        vec4<f32>(u.sketch.rgb, 1.0), vec2<f32>(0.0), vec2<f32>(0.0));
+// The feature edges where the model doesn't hide them, depth tested
+// LessEqual. Their colour's alpha is how opaque the model is, fainter when
+// faded.
+@vertex
+fn vs_edge(in: EdgeIn) -> LineOut {
+    return edge_segment(in, EDGE_WIDTH * 0.5 * u.viewport.z, u.edge, vec2<f32>(0.0),
+        vec2<f32>(0.0));
+}
+
+// The feature edges where the model hides them, depth tested Greater, so
+// exactly the pixels `vs_edge` didn't draw: HIDDEN_EDGE_WIDTH wide, dashed
+// along the edge by its length at the scale of the target, as the sketch's
+// dashes are, in `u.hidden_edge`.
+//
+// The dashes' phase is worked out a segment at a time, so it keeps its
+// precision zoomed far into a long edge, where how far along the edge a
+// pixel is, in pixels, is past what `f32` holds to a pixel: the phase at
+// the segment's start, how far along the edge it is modulo a dash and a
+// gap, and on from there by the segment's own length from its ends; and
+// again from where the segment is cut to the viewport. Only the phase
+// where a segment starts or is cut can be off by the rounding then, never
+// the dashes along what shows of it.
+@vertex
+fn vs_hidden_edge(in: EdgeIn) -> LineOut {
+    let s = u.viewport.z;
+    let dash = vec2<f32>(HIDDEN_DASH, HIDDEN_GAP) * s;
+    let period = dash.x + dash.y;
+    // Physical pixels per world unit at the target.
+    let scale = u.viewport.y / view_height();
+    let phase = wrapped(in.start_along * scale, period);
+    let length = distance(in.start, in.end) * scale;
+    var out = edge_segment(in, HIDDEN_EDGE_WIDTH * 0.5 * s, u.hidden_edge, dash,
+        vec2<f32>(phase, phase + length));
+    out.along -= vec2<f32>(floor(out.along.x / period) * period);
+    return out;
 }
 
 // Where the sketch point `at` is in the world.
@@ -652,6 +786,13 @@ fn fragment_pixels(position: vec4<f32>) -> vec2<f32> {
     return vec2<f32>(p.x, -p.y);
 }
 
+// How much of the way from 0 to `x` along a line is in its dashes, `on`
+// long every `period`, from 0.
+fn dashed_to(x: f32, on: f32, period: f32) -> f32 {
+    let periods = floor(x / period);
+    return periods * on + min(x - periods * period, on);
+}
+
 @fragment
 fn fs_line(in: LineOut) -> @location(0) vec4<f32> {
     let p = fragment_pixels(in.position);
@@ -668,12 +809,22 @@ fn fs_line(in: LineOut) -> @location(0) vec4<f32> {
     let on = in.style.y;
     if on > 0.0 {
         let period = on + in.style.z;
-        let s = mix(in.along.x, in.along.y, own.y);
-        let phase = s - floor(s / period) * period;
-        // How far inside the dash it is, or outside it, negative, counting
-        // the next one's start.
-        let inside = max(min(phase, on - phase), phase - period);
-        coverage *= clamp(inside + 0.5, 0.0, 1.0);
+        let phase = wrapped(mix(in.along.x, in.along.y, own.y), period);
+        // How far along the line a pixel on the screen is: 1 for a line
+        // seen as long as it's measured, more where it's foreshortened
+        // (an edge running away from the eye), less where it's nearer the
+        // eye than the target in perspective; seen end on, all of it is
+        // in one pixel. Kept off 0 for the division below.
+        let shown = max(distance(in.ends.xy, in.ends.zw), 1e-6);
+        let step = abs(in.along.y - in.along.x) / shown;
+        let footprint = max(step, period * 1e-4);
+        // The dashes averaged over the pixel's footprint along the line:
+        // a box filter, so their ends fade over a pixel on the screen
+        // however long they show, and dashes shorter than a pixel blur
+        // to their average rather than beating into dashes of their own.
+        let half = 0.5 * footprint;
+        coverage *= (dashed_to(phase + half, on, period) - dashed_to(phase - half, on, period))
+            / footprint;
     }
     return output(vec4<f32>(in.color.rgb, in.color.a * coverage));
 }

@@ -26,6 +26,17 @@ const POINT_VERTICES: u32 = 6;
 /// How wide [`Frame::sketches`] are drawn, in logical pixels.
 pub const LINE_WIDTH: f32 = 1.5;
 
+/// How wide the model's feature edges are drawn, in logical pixels.
+pub const EDGE_WIDTH: f32 = 1.5;
+
+/// How wide the edges the model hides are drawn, in logical pixels: see
+/// [`Frame::hidden_edges`].
+pub const HIDDEN_EDGE_WIDTH: f32 = 1.0;
+
+/// The dashes of the edges the model hides: how long a dash and a gap are
+/// along the edge, in logical pixels at the target.
+pub const HIDDEN_DASH: [f32; 2] = [4.0, 3.0];
+
 /// A rectangle on the render target, in physical pixels.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Viewport {
@@ -67,6 +78,10 @@ pub struct Frame<'a> {
     /// Whether the model is drawn faded, as it is behind a sketch being
     /// edited: see [`Colors::faded_alpha`].
     pub faded: bool,
+    /// Whether the feature edges the model hides are drawn too, dashed
+    /// ([`HIDDEN_DASH`]), [`HIDDEN_EDGE_WIDTH`] wide, at
+    /// [`Colors::hidden_edge_alpha`]. Never while [`Self::faded`].
+    pub hidden_edges: bool,
     /// The sketch being edited, or the extrude being set up, if one is:
     /// drawn over everything else, or hidden by the model in front of it
     /// ([`SketchScene::depth_tested`]).
@@ -113,7 +128,7 @@ pub struct Colors {
     pub background_bottom: Srgb,
     /// Base colour of model faces, before lighting.
     pub model: Srgb,
-    /// Feature edges, drawn over the faces.
+    /// Feature edges, drawn over the faces [`EDGE_WIDTH`] wide.
     pub edge: Srgb,
     /// Grid lines.
     pub grid: Srgb,
@@ -137,6 +152,9 @@ pub struct Colors {
     /// from 0 to 1. Only its nearest faces are drawn, and they still hide
     /// what's behind them from the grid and the sketches.
     pub faded_alpha: f32,
+    /// How opaque the edges the model hides are drawn, from 0 to 1, of
+    /// [`Self::edge`]: see [`Frame::hidden_edges`].
+    pub hidden_edge_alpha: f32,
 }
 
 /// The scene shader's uniforms. `Uniforms` in `scene.wgsl` mirrors this
@@ -192,6 +210,9 @@ struct Uniforms {
     sketch_origin: [f32; 4],
     sketch_x: [f32; 4],
     sketch_y: [f32; 4],
+    /// [`Colors::edge`] with w [`Colors::hidden_edge_alpha`], for the
+    /// edges the model hides.
+    hidden_edge: [f32; 4],
 }
 
 // WGSL lays out uniform structs in 16-byte steps.
@@ -203,24 +224,67 @@ const _: () = assert!(size_of::<Uniforms>().is_multiple_of(16));
 const MAX_BUFFER_BYTES: usize = 256 << 20;
 
 // Every mesh the kernel allows fits, one buffer per part: positions and
-// normals are uploaded as they are, and indices too. Edges are uploaded a
-// pair of vertex indices per segment, fewer than edge points.
+// normals are uploaded as they are, and indices too. Edges are uploaded an
+// `EdgePoint` per edge vertex at most, two more for each closed polyline of
+// four points or more, so half as many again at most, and one more at each
+// end.
 const _: () = assert!(size_of::<[f32; 3]>() * RenderMesh::MAX_VERTICES <= MAX_BUFFER_BYTES);
 const _: () = assert!(size_of::<u32>() * RenderMesh::MAX_INDICES <= MAX_BUFFER_BYTES);
-const _: () = assert!(size_of::<[u32; 2]>() * RenderMesh::MAX_EDGE_POINTS <= MAX_BUFFER_BYTES);
+const _: () =
+    assert!(size_of::<EdgePoint>() * (RenderMesh::MAX_EDGE_POINTS / 2 * 3 + 2) <= MAX_BUFFER_BYTES);
 // Lines are uploaded a segment of two points each, fewer than points.
 const _: () = assert!(size_of::<Segment>() * RenderLines::MAX_POINTS <= MAX_BUFFER_BYTES);
 
 /// A segment of a line as the GPU takes it: its two ends.
 type Segment = [[f32; 3]; 2];
 
+/// A point of the stream the feature edges are drawn from: polyline after
+/// polyline, a point again in a row left out (a polyline left with one
+/// point has it twice, a dot), with a point of no edge ([`NO_EDGE`]) at
+/// each end of the stream. A polyline ending where it starts, of four
+/// points or more, has its last but one point before it and its second
+/// after it, marked [`NEIGHBOUR_ONLY`], so its first and last segments
+/// join. The stream is bound to [`EDGE_SLOTS`] vertex buffer slots a point
+/// apart, so the instance drawing the segment from point `i + 1` to
+/// `i + 2` sees the points before and after it too: the segment is drawn
+/// if its ends are of the same edge, and joined to the points either side
+/// that are of it too, marked or not. See `edge_segment` in the shader.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+struct EdgePoint {
+    position: [f32; 3],
+    /// How far along its polyline it is, in world units.
+    along: f32,
+    /// Which polyline it's on.
+    edge: u32,
+}
+
+/// The edge of the points at the ends of the stream, which no polyline is,
+/// marked or not.
+const NO_EDGE: u32 = u32::MAX;
+
+/// Set in [`EdgePoint::edge`] for a point that is only a neighbour of its
+/// edge's segments, where a closed polyline joins itself, not an end of
+/// one. As `NEIGHBOUR_ONLY` in the shader.
+const NEIGHBOUR_ONLY: u32 = 1 << 31;
+const _: () = assert!(RenderMesh::MAX_EDGE_POLYLINES <= NEIGHBOUR_ONLY as usize);
+
+/// How many slots the edge stream is bound to: previous, start, end and
+/// next point.
+const EDGE_SLOTS: u32 = 4;
+
+// Vertex buffer offsets are multiples of 4 bytes, and wgpu's GL backend
+// (the browser's WebGL2) allows strides up to 255.
+const _: () = assert!(size_of::<EdgePoint>() == 20);
+
 struct GpuMesh {
     positions: wgpu::Buffer,
     normals: wgpu::Buffer,
     indices: wgpu::Buffer,
     index_count: u32,
-    edges: wgpu::Buffer,
-    edge_count: u32,
+    /// The [`EdgePoint`] stream, if there are any edges, and how many
+    /// instances draw it: one per point, but for the last three.
+    edges: Option<(wgpu::Buffer, u32)>,
     /// To fit the depth range to.
     bounds: Option<Aabb>,
 }
@@ -358,6 +422,8 @@ pub struct Renderer {
     /// The faces of [`Frame::highlight`]; its edges are drawn as the
     /// sketch's depth tested lines.
     highlight: wgpu::RenderPipeline,
+    /// The edges again where the model hides them, dashed.
+    hidden_edges: wgpu::RenderPipeline,
     lines: wgpu::RenderPipeline,
     origin: wgpu::RenderPipeline,
     /// The sketch being edited: its fills, lines and points, drawn over
@@ -403,6 +469,9 @@ pub struct Slot {
     depth: Option<DepthTarget>,
     viewport: Viewport,
     faded: bool,
+    /// Whether the edges the model hides are drawn: [`Frame::hidden_edges`]
+    /// and not [`Frame::faded`].
+    hidden_edges: bool,
 }
 
 impl Renderer {
@@ -449,6 +518,10 @@ impl Renderer {
             [
                 ("GRID_FADE_HEIGHTS", f64::from(GRID_FADE_HEIGHTS)),
                 ("LINE_WIDTH", f64::from(LINE_WIDTH)),
+                ("EDGE_WIDTH", f64::from(EDGE_WIDTH)),
+                ("HIDDEN_EDGE_WIDTH", f64::from(HIDDEN_EDGE_WIDTH)),
+                ("HIDDEN_DASH", f64::from(HIDDEN_DASH[0])),
+                ("HIDDEN_GAP", f64::from(HIDDEN_DASH[1])),
                 ("ENCODE_SRGB", if format.is_srgb() { 0.0 } else { 1.0 }),
                 ("SKETCH_DEPTH", if sketch_depth { 1.0 } else { 0.0 }),
             ]
@@ -503,8 +576,7 @@ impl Renderer {
         };
 
         // Positions in slot 0 and normals in slot 1, each a buffer of its
-        // own. Edges only need positions. Lines take a segment per
-        // instance, its ends in slots 0 and 1.
+        // own. Lines take a segment per instance, its ends in slots 0 and 1.
         let positions = wgpu::VertexBufferLayout {
             array_stride: size_of::<[f32; 3]>() as u64,
             step_mode: wgpu::VertexStepMode::Vertex,
@@ -549,11 +621,54 @@ impl Renderer {
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x4],
         };
+        // The feature edges: the `EdgePoint` stream in slots 0 to 3, a
+        // point apart, an instance per segment: the points before, at its
+        // start, at its end and after it. Its neighbours' positions and
+        // edges are all it needs of them, and the start's distance along
+        // its edge, for the hidden edges' dashes. 9 attributes and 4 slots,
+        // within WebGL2's 16 and 8.
+        let attribute = |format, offset: usize, shader_location| wgpu::VertexAttribute {
+            format,
+            offset: offset as u64,
+            shader_location,
+        };
+        let position = |location| {
+            attribute(
+                wgpu::VertexFormat::Float32x3,
+                std::mem::offset_of!(EdgePoint, position),
+                location,
+            )
+        };
+        let along = |location| {
+            attribute(
+                wgpu::VertexFormat::Float32,
+                std::mem::offset_of!(EdgePoint, along),
+                location,
+            )
+        };
+        let edge = |location| {
+            attribute(
+                wgpu::VertexFormat::Uint32,
+                std::mem::offset_of!(EdgePoint, edge),
+                location,
+            )
+        };
+        let edge_attributes: [&[_]; EDGE_SLOTS as usize] = [
+            &[position(0), edge(1)],
+            &[position(2), along(3), edge(4)],
+            &[position(5), edge(6)],
+            &[position(7), edge(8)],
+        ];
+        let edge_points = edge_attributes.map(|attributes| wgpu::VertexBufferLayout {
+            array_stride: size_of::<EdgePoint>() as u64,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes,
+        });
         let mesh = Pass {
             label: "varde mesh",
             vs: "vs_mesh",
             fs: "fs_mesh",
-            buffers: &[positions.clone(), normals],
+            buffers: &[positions, normals],
             depth_write: true,
             depth_compare: wgpu::CompareFunction::LessEqual,
             blend: wgpu::BlendState::REPLACE,
@@ -582,9 +697,8 @@ impl Renderer {
             }),
             mesh: pipeline(mesh),
             edges: pipeline(Pass {
-                buffers: &[positions],
-                topology: wgpu::PrimitiveTopology::LineList,
-                ..Pass::overlay("varde edges", "vs_edge", "fs_edge")
+                buffers: &edge_points,
+                ..Pass::overlay("varde edges", "vs_edge", "fs_line")
             }),
             // Over the faces they lie on, pulled towards the camera like
             // the edges, culled like the model.
@@ -592,6 +706,14 @@ impl Renderer {
                 buffers: std::slice::from_ref(&highlight_vertices),
                 cull_mode: Some(wgpu::Face::Back),
                 ..Pass::overlay("varde highlight faces", "vs_highlight", "fs_highlight")
+            }),
+            // Exactly the pixels the visible edges didn't draw: the same
+            // quads at the same depth, tested the other way round. Its own
+            // entry point, which wgpu's GL backend keys programs by.
+            hidden_edges: pipeline(Pass {
+                buffers: &edge_points,
+                depth_compare: wgpu::CompareFunction::Greater,
+                ..Pass::overlay("varde hidden edges", "vs_hidden_edge", "fs_line")
             }),
             lines: pipeline(Pass {
                 buffers: &[segments],
@@ -677,6 +799,7 @@ impl Renderer {
             depth: None,
             viewport: Viewport::default(),
             faded: false,
+            hidden_edges: false,
         }
     }
 
@@ -701,6 +824,7 @@ impl Renderer {
     ) -> Result<(), PrepareError> {
         slot.viewport = frame.viewport;
         slot.faded = frame.faded;
+        slot.hidden_edges = frame.hidden_edges && !frame.faded;
 
         let mut result = Ok(());
         if !std::ptr::eq(slot.lines_source.as_ptr(), Arc::as_ptr(frame.sketches)) {
@@ -767,9 +891,16 @@ impl Renderer {
         } else {
             1.0
         };
-        let faded = |color| {
+        let with_alpha = |color, alpha| {
             let [r, g, b, _] = linear(color);
             [r, g, b, alpha]
+        };
+        let faded = |color| with_alpha(color, alpha);
+        // Out of range, as faint as can be rather than solid.
+        let hidden_alpha = if (0.0..=1.0).contains(&colors.hidden_edge_alpha) {
+            colors.hidden_edge_alpha
+        } else {
+            0.0
         };
         let uniforms = Uniforms {
             view_proj: scene::view_projection(camera, aspect, grid, bounds.flatten())
@@ -806,6 +937,7 @@ impl Renderer {
             sketch_origin: sketch_plane.origin().extend(0.0).to_array(),
             sketch_x: sketch_plane.x().extend(0.0).to_array(),
             sketch_y: sketch_plane.y().extend(0.0).to_array(),
+            hidden_edge: with_alpha(colors.edge, hidden_alpha),
         };
         queue.write_buffer(&slot.uniforms, 0, bytemuck::bytes_of(&uniforms));
 
@@ -882,12 +1014,8 @@ impl Renderer {
                 pass.draw(0..slot.highlight_faces.count, 0..1);
             }
 
-            if mesh.edge_count > 0 {
-                pass.set_pipeline(&self.edges);
-                // The highlight's faces took slot 0.
-                pass.set_vertex_buffer(0, mesh.positions.slice(..));
-                pass.set_index_buffer(mesh.edges.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..mesh.edge_count, 0, 0..1);
+            if let Some(edges) = &mesh.edges {
+                draw_edges(&mut pass, &self.edges, edges);
             }
 
             // The highlighted edges over the model's.
@@ -908,6 +1036,14 @@ impl Renderer {
             pass.set_pipeline(&self.lines);
             pass.set_vertex_buffer(0, lines.segments.slice(..));
             pass.draw(0..LINE_VERTICES, 0..lines.segment_count);
+        }
+
+        // The edges the model hides, against its depth alone: nothing
+        // above writes depth after it.
+        if slot.hidden_edges
+            && let Some(edges) = slot.mesh.as_ref().and_then(|mesh| mesh.edges.as_ref())
+        {
+            draw_edges(&mut pass, &self.hidden_edges, edges);
         }
 
         pass.set_pipeline(&self.origin);
@@ -966,6 +1102,21 @@ impl Slot {
         }
         written
     }
+}
+
+/// Records drawing the feature edges' stream `edges`, with how many
+/// instances draw it, with `pipeline`.
+fn draw_edges(
+    pass: &mut wgpu::RenderPass<'_>,
+    pipeline: &wgpu::RenderPipeline,
+    (edges, instances): &(wgpu::Buffer, u32),
+) {
+    pass.set_pipeline(pipeline);
+    let stride = size_of::<EdgePoint>() as u64;
+    for slot in 0..EDGE_SLOTS {
+        pass.set_vertex_buffer(slot, edges.slice(u64::from(slot) * stride..));
+    }
+    pass.draw(0..LINE_VERTICES, 0..*instances);
 }
 
 /// The pipelines drawing the sketch's layers, one way or the other: see
@@ -1033,16 +1184,14 @@ fn upload_mesh(device: &wgpu::Device, mesh: &RenderMesh) -> Result<Option<GpuMes
     // The kernel's limits keep every part within `MAX_BUFFER_BYTES`, so
     // this doesn't saturate.
     let bytes = |len: usize, size: usize| len.saturating_mul(size) as u64;
-    // Each edge's polyline as segments, a pair of vertex indices each, for
-    // the `LineList` pipeline.
-    let edges: Vec<[u32; 2]> = mesh
-        .polylines()
-        .flat_map(|polyline| polyline.windows(2).map(|pair| [pair[0], pair[1]]))
-        .collect();
+    let edge_points = (!mesh.edge_vertices().is_empty()).then(|| edge_stream(mesh));
     let largest = [
         bytes(mesh.positions().len(), size_of::<[f32; 3]>()),
         bytes(mesh.indices().len(), size_of::<u32>()),
-        bytes(edges.len(), size_of::<[u32; 2]>()),
+        bytes(
+            edge_points.as_ref().map_or(0, Vec::len),
+            size_of::<EdgePoint>(),
+        ),
     ]
     .into_iter()
     .max()
@@ -1055,11 +1204,16 @@ fn upload_mesh(device: &wgpu::Device, mesh: &RenderMesh) -> Result<Option<GpuMes
     }
     // The kernel's limits keep these well within `u32`.
     let index_count = u32::try_from(mesh.indices().len()).expect("kernel bounds indices");
-    let edge_count = edges
-        .len()
-        .checked_mul(2)
-        .and_then(|n| u32::try_from(n).ok())
-        .expect("kernel bounds edges");
+    let edges = edge_points.map(|points| {
+        // Every polyline has two points or more, so there are four or more.
+        let instances = u32::try_from(points.len() - 3).expect("kernel bounds edges");
+        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("varde mesh edges"),
+            contents: bytemuck::cast_slice(&points),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        (buffer, instances)
+    });
 
     Ok(Some(GpuMesh {
         positions: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -1079,14 +1233,73 @@ fn upload_mesh(device: &wgpu::Device, mesh: &RenderMesh) -> Result<Option<GpuMes
             usage: wgpu::BufferUsages::INDEX,
         }),
         index_count,
-        edges: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("varde mesh edges"),
-            contents: bytemuck::cast_slice(&edges),
-            usage: wgpu::BufferUsages::INDEX,
-        }),
-        edge_count,
+        edges,
         bounds: mesh.bounds(),
     }))
+}
+
+/// The [`EdgePoint`] stream of `mesh`'s feature edges.
+fn edge_stream(mesh: &RenderMesh) -> Vec<EdgePoint> {
+    let none = EdgePoint {
+        position: [0.0; 3],
+        along: 0.0,
+        edge: NO_EDGE,
+    };
+    let mut points = Vec::with_capacity(mesh.edge_vertices().len().saturating_add(2));
+    points.push(none);
+    let positions = mesh.positions();
+    // A polyline's points, a point again in a row left out: a segment of
+    // no length between two others would keep them from seeing each
+    // other, and both would draw where they overlap at the join.
+    let mut kept: Vec<[f32; 3]> = Vec::new();
+    // The kernel bounds the polylines well within `u32`, below
+    // `NEIGHBOUR_ONLY`.
+    for (edge, polyline) in (0..).zip(mesh.polylines()) {
+        kept.clear();
+        for &vertex in polyline {
+            let position = positions[vertex as usize];
+            if kept.last() != Some(&position) {
+                kept.push(position);
+            }
+        }
+        let neighbour = |position| EdgePoint {
+            position,
+            along: 0.0,
+            edge: edge | NEIGHBOUR_ONLY,
+        };
+        // Closed, round three segments or more; two would be one there and
+        // back, joined at its turns already.
+        let closed = kept.len() >= 4 && kept.first() == kept.last();
+        if closed {
+            points.push(neighbour(kept[kept.len() - 2]));
+        }
+        // Summed in `f64`, so a long polyline of short segments doesn't
+        // drift. Positions are bounded, so it stays finite.
+        let mut along = 0.0f64;
+        for (i, &position) in kept.iter().enumerate() {
+            if let Some(&last) = i.checked_sub(1).and_then(|i| kept.get(i)) {
+                along += f64::from(Vec3::from(position).distance(Vec3::from(last)));
+            }
+            points.push(EdgePoint {
+                position,
+                along: along as f32,
+                edge,
+            });
+        }
+        if closed {
+            points.push(neighbour(kept[1]));
+        }
+        // One left of the polyline, all its points the same, is a dot.
+        if let [point] = kept[..] {
+            points.push(EdgePoint {
+                position: point,
+                along: 0.0,
+                edge,
+            });
+        }
+    }
+    points.push(none);
+    points
 }
 
 /// Uploads `lines` a segment each, or nothing if there are none. See

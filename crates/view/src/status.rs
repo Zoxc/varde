@@ -14,7 +14,7 @@ use crate::icons::Icon;
 use crate::shortcut::Shortcut;
 use crate::theme::{self, Tone};
 use crate::toolbar::{menu_item, menu_separator, ticked};
-use crate::{Look, Message};
+use crate::{Look, Message, ViewOptions};
 
 /// How tall the status bar is, its border included, in pixels.
 pub const STATUS_BAR_HEIGHT: f32 = 30.0;
@@ -130,10 +130,11 @@ fn clipped<'a>(content: Element<'a, Message>) -> Element<'a, Message> {
 }
 
 /// The view options menu, open above the status bar's button at the
-/// screen's bottom right: the projection, `projection` ticked, and whether
-/// the status bar shows the mouse's hints. A press anywhere off the menu
-/// closes it.
-pub fn view_menu<'a>(projection: Projection, mouse_hints: bool) -> Element<'a, Message> {
+/// screen's bottom right: the projection, `projection` ticked, and the
+/// `options`: whether the status bar shows the mouse's hints, and whether
+/// the viewport shows the edges the model hides. A press anywhere off the
+/// menu closes it.
+pub fn view_menu<'a>(projection: Projection, options: ViewOptions) -> Element<'a, Message> {
     let choice = |label, choice| {
         menu_item(
             ticked(projection == choice),
@@ -148,10 +149,16 @@ pub fn view_menu<'a>(projection: Projection, mouse_hints: bool) -> Element<'a, M
             choice("Perspective".into(), Projection::Perspective),
             menu_separator(),
             menu_item(
-                ticked(mouse_hints),
+                ticked(options.mouse_hints),
                 "Mouse hints".into(),
                 None,
                 Some(Message::ToggleMouseHints)
+            ),
+            menu_item(
+                ticked(options.hidden_edges),
+                "Hidden edges".into(),
+                None,
+                Some(Message::ToggleHiddenEdges)
             ),
         ]
         .width(180),

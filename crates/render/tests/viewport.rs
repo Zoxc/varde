@@ -6,11 +6,11 @@
 use std::sync::Arc;
 
 use glam::{DVec3, Vec3};
-use varde_kernel::{RenderLines, RenderMesh, Solid, Tolerance};
+use varde_kernel::{MeshParts, RenderLines, RenderMesh, Solid, Tolerance};
 use varde_render::{
-    Camera, ClipRect, Colors, Emphasis, Frame, GridPlane, Highlight, LINE_WIDTH, LineStyle, Pivot,
-    PointStyle, Projection, Renderer, SketchLayer, SketchScene, Space, Srgb, Srgba, View, Viewport,
-    wgpu,
+    Camera, ClipRect, Colors, EDGE_WIDTH, Emphasis, Frame, GridPlane, HIDDEN_DASH, Highlight,
+    LINE_WIDTH, LineStyle, Pivot, PointStyle, Projection, Renderer, SketchLayer, SketchScene,
+    Space, Srgb, Srgba, View, Viewport, wgpu,
 };
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -37,6 +37,7 @@ const COLORS: Colors = Colors {
     selected_face: Srgb([0.0, 0.0, 1.0]),
     hovered_edge: Srgba([1.0, 0.0, 0.0, 1.0]),
     selected_edge: Srgba([0.0, 1.0, 1.0, 1.0]),
+    hidden_edge_alpha: 0.45,
 };
 const SIZE: [u32; 2] = [512, 256];
 const SENTINEL: [u8; 4] = [255, 0, 255, 255];
@@ -88,6 +89,7 @@ fn render_to(
             sketches: &Arc::default(),
             grid: GridPlane::XY,
             faded: false,
+            hidden_edges: true,
             sketch: None,
             pivot: None,
             highlight: None,
@@ -106,6 +108,8 @@ struct Extras {
     sketches: RenderLines,
     grid: GridPlane,
     faded: bool,
+    /// Whether the edges the model hides are drawn.
+    hidden_edges: bool,
     /// The sketch being edited: its plane and a layer of it, drawn as its
     /// live layer if `live`, else as its base layer.
     sketch: Option<(GridPlane, SketchLayer)>,
@@ -115,6 +119,8 @@ struct Extras {
     pivot: Option<Pivot>,
     /// The faces and edges hovered and selected.
     highlight: Option<Highlight>,
+    /// Colours other than [`COLORS`].
+    colors: Option<Colors>,
 }
 
 /// Renders `mesh` and `extras` into [`VIEWPORT`] at a scale factor of 1.
@@ -154,13 +160,14 @@ fn render_scaled(
             sketches: &Arc::new(extras.sketches),
             grid: extras.grid,
             faded: extras.faded,
+            hidden_edges: extras.hidden_edges,
             sketch,
             pivot: extras.pivot,
             highlight: highlight.as_ref(),
             viewport,
             target_size: SIZE,
             scale_factor,
-            colors: COLORS,
+            colors: extras.colors.unwrap_or(COLORS),
         },
         clip,
     )
@@ -1709,4 +1716,455 @@ fn a_depth_tested_sketch_on_a_face_shows_at_any_scale_and_angle() {
         }
     }
     assert!(failures.is_empty(), "{failures:#?}");
+}
+
+/// A mesh of only the edges along `polylines`, with one triangle of no
+/// area for its face, which draws nothing. A polyline ending where it
+/// starts closes on one corner.
+fn edges(polylines: &[&[Vec3]]) -> RenderMesh {
+    let mut parts = MeshParts {
+        indices: vec![0, 0, 0],
+        face_ends: vec![3],
+        ..MeshParts::default()
+    };
+    for polyline in polylines {
+        let first = parts.positions.len() as u32;
+        parts
+            .positions
+            .extend(polyline.iter().map(|point| point.to_array()));
+        parts
+            .edge_vertices
+            .extend(first..parts.positions.len() as u32);
+        parts.edge_ends.push(parts.edge_vertices.len() as u32);
+        parts.edge_faces.push([0, 0]);
+        let (start, end) = (polyline[0], polyline[polyline.len() - 1]);
+        let corner = parts.corners.len() as u32;
+        parts.corners.push(start.to_array());
+        if end == start {
+            parts.edge_corners.push([corner, corner]);
+        } else {
+            parts.corners.push(end.to_array());
+            parts.edge_corners.push([corner, corner + 1]);
+        }
+    }
+    parts.normals = vec![[0.0, 0.0, 1.0]; parts.positions.len()];
+    parts.part_ends = vec![[1, parts.edge_ends.len() as u32, parts.corners.len() as u32]];
+    RenderMesh::from_parts(parts).unwrap()
+}
+
+/// What draws `mesh`'s edges yellow, optionally faded, over a grid that
+/// doesn't show: its plane is seen edge on from the top, and its axes are
+/// off the screen or seen end on.
+fn yellow_edges(faded: bool) -> Extras {
+    Extras {
+        grid: GridPlane::new(Vec3::new(0.0, 1000.0, 0.0), Vec3::X, Vec3::Z).unwrap(),
+        faded,
+        colors: Some(Colors {
+            edge: Srgb([1.0, 1.0, 0.0]),
+            ..COLORS
+        }),
+        ..Extras::default()
+    }
+}
+
+#[test]
+fn edges_are_anti_aliased_at_their_sides() {
+    // Along the middle of a row: 1.5 pixels wide, the row covered and
+    // a quarter of each row either side.
+    let y = -3.35;
+    let mesh = edges(&[&[Vec3::new(-100.0, y, 0.0), Vec3::new(100.0, y, 0.0)]]);
+    let Some(pixels) = render_sketch(&top_camera(), &mesh, yellow_edges(false), 1.0) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let (_, row) = sketch_pixel(0.0, y, 1.0);
+    let row = row as u32;
+    for x in [40, 75, 200] {
+        let covered = |y| yellowness(pixel(&pixels, x, y));
+        assert!(covered(row) > 0.95, "row {row} is {} covered", covered(row));
+        for y in [row - 1, row + 1] {
+            assert!(
+                (0.15..0.35).contains(&covered(y)),
+                "row {y} is {} covered",
+                covered(y)
+            );
+        }
+        for y in [row - 2, row + 2] {
+            assert_eq!(covered(y), 0.0, "row {y}");
+        }
+    }
+}
+
+#[test]
+fn edges_keep_their_width_at_any_scale_and_zoom() {
+    let measure = |scale: f32, zoom: f32, projection| {
+        let mut camera = top_camera();
+        camera.set_projection(projection);
+        camera.zoom(zoom);
+        // A quarter of the view below the middle, measured left of it,
+        // clear of the origin marker.
+        let height = camera.view_height();
+        let (y, x) = (-0.25 * height, 100.0 * height);
+        let mesh = edges(&[&[Vec3::new(-x, y, 0.0), Vec3::new(x, y, 0.0)]]);
+        let pixels = render_sketch(&camera, &mesh, yellow_edges(false), scale)?;
+        let [width, rows] = SKETCH_VIEW.map(|s| (s * scale) as u32);
+        Some(yellow_down(&pixels, width / 4, rows / 2 + 4..rows))
+    };
+    use Projection::{Orthographic, Perspective};
+    let (Some(one), Some(two), Some(zoomed), Some(perspective)) = (
+        measure(1.0, 1.0, Orthographic),
+        measure(2.0, 1.0, Orthographic),
+        measure(1.0, 1e-3, Orthographic),
+        measure(1.0, 50.0, Perspective),
+    ) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    assert!(
+        (EDGE_WIDTH - 0.1..EDGE_WIDTH + 0.1).contains(&one),
+        "{one} pixels wide"
+    );
+    assert!((1.9..2.1).contains(&(two / one)), "grew {}x", two / one);
+    assert!((zoomed - one).abs() < 0.1, "{zoomed} zoomed in, {one} not");
+    assert!(
+        (perspective - one).abs() < 0.1,
+        "{perspective} in perspective"
+    );
+}
+
+#[test]
+fn edge_joins_are_no_more_opaque_than_their_middles() {
+    // Faded, so a pixel drawn twice would be more opaque: a polyline with
+    // sharp turns, the same point twice, and three quarters of a circle in
+    // short segments over the top from the left, then straight down; clear
+    // of the origin marker.
+    let mut curve = vec![
+        Vec3::new(-12.0, -5.0, 0.0),
+        Vec3::new(-10.0, 1.0, 0.0),
+        Vec3::new(-10.0, 1.0, 0.0),
+    ];
+    curve.extend((1..=48).map(|i| {
+        let angle = std::f32::consts::PI * (1.0 - 1.5 * i as f32 / 48.0);
+        Vec3::new(-6.0 + 4.0 * angle.cos(), 1.0 + 4.0 * angle.sin(), 0.0)
+    }));
+    curve.push(Vec3::new(-6.0, -6.0, 0.0));
+    let mesh = edges(&[&curve]);
+    let (Some(faded), Some(opaque)) = (
+        render_sketch(&top_camera(), &mesh, yellow_edges(true), 1.0),
+        render_sketch(&top_camera(), &mesh, yellow_edges(false), 1.0),
+    ) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let alpha = COLORS.faded_alpha;
+    let most = faded.iter().map(|&p| yellowness(p)).fold(0.0, f32::max);
+    assert!(
+        (alpha - 0.02..alpha + 0.02).contains(&most),
+        "{most} at most"
+    );
+    // Faded where it's drawn opaque.
+    for (faded, opaque) in faded.iter().zip(&opaque) {
+        let (faded, opaque) = (yellowness(*faded), yellowness(*opaque));
+        assert!(
+            (faded - opaque * alpha).abs() < 0.02,
+            "{faded} for {opaque}"
+        );
+    }
+}
+
+#[test]
+fn edges_crossing_the_near_plane_are_cut_there() {
+    // As `sketch_lines_crossing_the_near_plane_are_cut_there`, an edge
+    // of several segments, some cut, some wholly behind the eye.
+    let mut camera = Camera::default();
+    camera.set_projection(Projection::Perspective);
+    camera.look_from(View::Front);
+    let points: Vec<_> = (0..=7)
+        .map(|i| Vec3::new(1.0, 5.0 - 5.0 * i as f32, 1.0))
+        .collect();
+    let mesh = edges(&[&points]);
+    let Some(pixels) = render_with(&camera, &mesh, yellow_edges(false)) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let (cx, cy) = CENTER;
+    let mut drawn = 0;
+    for y in CLIP.y..CLIP.y + CLIP.height {
+        for x in CLIP.x..CLIP.x + CLIP.width {
+            if yellow(pixel(&pixels, x, y)) {
+                assert!(x >= cx && y <= cy, "edge at ({x}, {y})");
+                drawn += 1;
+            }
+        }
+    }
+    assert!(drawn > 10, "only {drawn} pixels of edge");
+}
+
+#[test]
+fn a_closed_edge_is_joined_where_it_closes() {
+    // Faded, so a pixel drawn twice would be more opaque: a square ending
+    // where it starts, at a corner, which its first and last segments
+    // join at like any other; along the middles of pixels, so they're
+    // covered, and clear of the origin marker.
+    let corners = [
+        Vec3::new(-12.05, -4.95, 0.0),
+        Vec3::new(-4.05, -4.95, 0.0),
+        Vec3::new(-4.05, 3.05, 0.0),
+        Vec3::new(-12.05, 3.05, 0.0),
+        Vec3::new(-12.05, -4.95, 0.0),
+    ];
+    let mesh = edges(&[&corners]);
+    let Some(faded) = render_sketch(&top_camera(), &mesh, yellow_edges(true), 1.0) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let alpha = COLORS.faded_alpha;
+    let most = faded.iter().map(|&p| yellowness(p)).fold(0.0, f32::max);
+    assert!(
+        (alpha - 0.02..alpha + 0.02).contains(&most),
+        "{most} at most"
+    );
+}
+
+#[test]
+fn edges_near_the_eye_show_where_they_are_in_perspective() {
+    // Looking down in perspective, an edge across the view a twentieth of
+    // the way from the eye to the target, 40.5 pixels below the middle:
+    // along the middle of a row, which it covers evenly either side.
+    // Pulled towards the camera for depth, it isn't moved on the screen.
+    let mut camera = top_camera();
+    camera.set_projection(Projection::Perspective);
+    let (distance, height) = (camera.distance(), camera.view_height());
+    let depth = 0.05 * distance;
+    let rows = SKETCH_VIEW[1];
+    // A pixel is this many world units at that depth.
+    let unit = depth * height / (distance * rows);
+    let (y, z) = (-40.5 * unit, distance - depth);
+    let mesh = edges(&[&[Vec3::new(-height, y, z), Vec3::new(height, y, z)]]);
+    let Some(pixels) = render_sketch(&camera, &mesh, yellow_edges(false), 1.0) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let x = SKETCH_VIEW[0] as u32 / 4;
+    let (mut sum, mut weight) = (0.0, 0.0);
+    for row in rows as u32 / 2 + 4..rows as u32 {
+        let covered = yellowness(pixel(&pixels, x, row));
+        sum += covered * (row as f32 + 0.5);
+        weight += covered;
+    }
+    let centre = sum / weight;
+    let expected = rows / 2.0 + 40.5;
+    assert!(
+        (centre - expected).abs() < 0.2,
+        "at {centre}, not {expected}"
+    );
+}
+
+/// A box from `at`, `size` on each side, tessellated, like [`cube`].
+fn block(at: Vec3, size: Vec3) -> RenderMesh {
+    let solid = Solid::cuboid(DVec3::ZERO, size.as_dvec3(), 0, &Tolerance::DEFAULT);
+    let mesh = solid.unwrap().tessellate(&varde_kernel::Display::default());
+    let mut moved = RenderMesh::default();
+    moved.append_at(&mesh.unwrap(), at).unwrap();
+    moved
+}
+
+/// How much of each pixel of row `y` from `x` yellow covers, in [`FULL`].
+fn yellow_along_full(pixels: &[[u8; 4]], y: u32, x: std::ops::Range<u32>) -> Vec<f32> {
+    x.map(|x| yellowness(pixels[(y * SIZE[0] + x) as usize]))
+        .collect()
+}
+
+/// Whether `along` is dashed by [`HIDDEN_DASH`] at `alpha`: as opaque
+/// as that at most and reaching it, clear between, repeating every dash
+/// and gap.
+fn dashed(along: &[f32], alpha: f32) {
+    let period = (HIDDEN_DASH[0] + HIDDEN_DASH[1]) as usize;
+    let most = along.iter().copied().fold(0.0, f32::max);
+    assert!((alpha - 0.05..alpha + 0.05).contains(&most), "{along:?}");
+    assert!(along.iter().any(|&c| c < 0.02), "{along:?}");
+    for (x, pair) in along.iter().zip(&along[period..]).enumerate() {
+        assert!((pair.0 - pair.1).abs() < 0.08, "{x}: {along:?}");
+    }
+}
+
+#[test]
+fn an_edge_of_a_cube_behind_another_body_is_dashed_where_its_hidden() {
+    // From the top in perspective, a cube whose top face is level with
+    // the target, its near edge along a row, and a thin plate over its
+    // middle, nearer the eye: the edge is solid either side of the plate
+    // and dashed under it. Not with the option off, nor faded.
+    let mut camera = top_camera();
+    camera.set_projection(Projection::Perspective);
+    let y = -2.025;
+    let mut mesh = cube(6.0, Vec3::new(-3.0, y, -6.0));
+    mesh.append(&block(
+        Vec3::new(-1.0, -3.0, 1.0),
+        Vec3::new(2.0, 2.0, 0.05),
+    ))
+    .unwrap();
+    let render = |hidden_edges, faded| {
+        let extras = Extras {
+            hidden_edges,
+            ..yellow_edges(faded)
+        };
+        render_scaled(&camera, &mesh, extras, FULL, FULL_CLIP, 1.0)
+    };
+    let (Some(on), Some(off), Some(faded)) = (
+        render(true, false),
+        render(false, false),
+        render(true, true),
+    ) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let edge = in_perspective(&camera, Vec3::new(0.0, y, 0.0));
+    let row = edge.y as u32;
+    let plate = [-1.0, 1.0].map(|x| in_perspective(&camera, Vec3::new(x, y, 1.05)).x as u32);
+    let ends = [-3.0, 3.0].map(|x| in_perspective(&camera, Vec3::new(x, y, 0.0)).x as u32);
+    // Clear of the corners and the plate's own edges.
+    let hidden = plate[0] + 4..plate[1] - 4;
+    let shown = [ends[0] + 4..plate[0] - 4, plate[1] + 4..ends[1] - 4];
+    assert!(hidden.len() > 25, "{hidden:?}");
+    dashed(
+        &yellow_along_full(&on, row, hidden.clone()),
+        COLORS.hidden_edge_alpha,
+    );
+    for pixels in [&on, &off] {
+        for span in shown.clone() {
+            let along = yellow_along_full(pixels, row, span);
+            assert!(along.iter().all(|&c| c > 0.95), "{along:?}");
+        }
+    }
+    for pixels in [&off, &faded] {
+        let along = yellow_along_full(pixels, row, hidden.clone());
+        assert!(along.iter().all(|&c| c < 0.02), "{along:?}");
+    }
+}
+
+#[test]
+fn an_edge_is_dashed_from_where_it_goes_behind_a_face_without_a_gap() {
+    // From the top, an edge rising through a cube's top face: under it
+    // to the left, dashed, and solid from where it comes out, which is
+    // between two pixels' middles (taking the edges' pull towards the
+    // eye into account). Its dashes are laid so the pixel left of there
+    // is in the middle of one: the two stretches meet with neither a gap
+    // nor a pixel of both.
+    let pull = 0.002 * top_camera().view_height();
+    let (rise, through) = (0.5, 2.0 * pull);
+    let z = |x: f32| 5.0 + rise * (x - through);
+    // How far along the edge a unit across is, in pixels.
+    let per_unit = 10.0 * (1.0 + rise * rise).sqrt();
+    // The pixel left of where it comes out, 0.05 left of it, in the
+    // middle of a dash.
+    let at = -0.05;
+    let period = HIDDEN_DASH[0] + HIDDEN_DASH[1];
+    let start = at - (19.0 * period + HIDDEN_DASH[0] / 2.0) / per_unit;
+    let y = -3.35;
+    let mut mesh = edges(&[&[Vec3::new(start, y, z(start)), Vec3::new(12.0, y, z(12.0))]]);
+    mesh.append(&cube(5.0, Vec3::new(-2.5, -6.0, 0.0))).unwrap();
+    let extras = Extras {
+        hidden_edges: true,
+        ..yellow_edges(false)
+    };
+    let Some(pixels) = render_sketch(&top_camera(), &mesh, extras, 1.0) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let (_, row) = sketch_pixel(0.0, y, 1.0);
+    let (left, _) = sketch_pixel(at, y, 1.0);
+    let (row, left) = (row as u32, left as u32);
+    // That pixel and the one before it are in the dash.
+    let along = yellow_along(&pixels, row, left - 1..left + 3);
+    let alpha = COLORS.hidden_edge_alpha;
+    for &hidden in &along[..2] {
+        assert!((alpha - 0.05..alpha + 0.05).contains(&hidden), "{along:?}");
+    }
+    for &shown in &along[2..] {
+        assert!(shown > 0.95, "{along:?}");
+    }
+    // Dashed under the face, clear of the cube's own edges: its dashes
+    // are shorter across the screen than along it, which rises.
+    let (face, _) = sketch_pixel(-2.5, y, 1.0);
+    let under = yellow_along(&pixels, row, face as u32 + 3..left - 2);
+    assert!(under.iter().all(|&c| c < alpha + 0.05), "{under:?}");
+    assert!(
+        under.iter().filter(|&&c| c > alpha - 0.05).count() > 4,
+        "{under:?}"
+    );
+    assert!(under.iter().filter(|&&c| c < 0.02).count() > 4, "{under:?}");
+}
+
+#[test]
+fn hidden_dashes_keep_their_length_zoomed_far_into_a_long_edge() {
+    // A 2000 long edge of two segments, under a plate, looked at from
+    // the top 1500 along it, 0.005 across the view's height: 25600 pixels
+    // a unit, so how far along the edge a pixel is, in pixels, is past
+    // what `f32` holds to a pixel.
+    let mut camera = top_camera();
+    camera.set_target(Vec3::new(500.0, 0.0, 0.0));
+    camera.zoom(0.005 / camera.view_height());
+    let height = camera.view_height();
+    // On the middle of the row 32 below the view's middle.
+    let y = -32.5 * height / SKETCH_VIEW[1];
+    let mut mesh = edges(&[&[
+        Vec3::new(-1000.0, y, 0.0),
+        Vec3::new(0.0, y, 0.0),
+        Vec3::new(1000.0, y, 0.0),
+    ]]);
+    mesh.append(&block(
+        Vec3::new(400.0, -100.0, 1.0),
+        Vec3::new(200.0, 200.0, 1.0),
+    ))
+    .unwrap();
+    let extras = Extras {
+        hidden_edges: true,
+        ..yellow_edges(false)
+    };
+    let Some(pixels) = render_sketch(&camera, &mesh, extras, 1.0) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let row = SKETCH_VIEW[1] as u32 / 2 + 32;
+    dashed(
+        &yellow_along(&pixels, row, 10..SKETCH_VIEW[0] as u32 - 10),
+        COLORS.hidden_edge_alpha,
+    );
+}
+
+#[test]
+fn hidden_dashes_shorter_than_a_pixel_on_the_screen_blur_to_their_average() {
+    // From the top, an edge plunging through a block, 7.5 times as long
+    // as it shows: a dash and a gap, 7 pixels along it, take less than a
+    // pixel on the screen. Every pixel along it is then as opaque as the
+    // dashes are on average, rather than each showing wherever its middle
+    // falls in a dash or a gap, which beats into dashes of their own.
+    let ratio = 7.5f32;
+    let steep = (ratio * ratio - 1.0).sqrt();
+    let y = -3.35;
+    let z = |x: f32| -70.0 + steep * x;
+    let mut mesh = edges(&[&[Vec3::new(-8.0, y, z(-8.0)), Vec3::new(8.0, y, z(8.0))]]);
+    mesh.append(&block(
+        Vec3::new(-10.0, -5.0, -200.0),
+        Vec3::new(20.0, 10.0, 200.0),
+    ))
+    .unwrap();
+    let extras = Extras {
+        hidden_edges: true,
+        ..yellow_edges(false)
+    };
+    let Some(pixels) = render_sketch(&top_camera(), &mesh, extras, 1.0) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let (_, row) = sketch_pixel(0.0, y, 1.0);
+    let ends = [-7.0, 7.0].map(|x| sketch_pixel(x, y, 1.0).0 as u32);
+    let along = yellow_along(&pixels, row as u32, ends[0]..ends[1]);
+    let average = COLORS.hidden_edge_alpha * HIDDEN_DASH[0] / (HIDDEN_DASH[0] + HIDDEN_DASH[1]);
+    for &c in &along {
+        assert!(
+            (c - average).abs() < 0.03,
+            "{average} on average: {along:?}"
+        );
+    }
 }

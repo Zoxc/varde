@@ -53,7 +53,7 @@ fn deleting_a_sketch_an_extrude_uses_asks_first() {
     assert_eq!(listed, ["Sketch 1", "Extrude 1"]);
     let listed: Vec<_> = prompt.bodies.iter().map(|b| b.name.as_str()).collect();
     assert_eq!(listed, ["Body 1"]);
-    let _ = doc.view(false, Mode::default(), true);
+    let _ = doc.view_in(Mode::default());
     // No shortcut acts behind it, `Enter` included.
     assert!(doc.keys().is_none());
     assert!(press_in(&doc, enter_key()).is_none());
@@ -144,7 +144,14 @@ fn status_bar_of(doc: &Doc, mouse_hints: bool) -> Vec<String> {
     let top = size.height - varde_view::STATUS_BAR_ROOM;
     let mut renderer = varde_view::probe::renderer();
     let mut ui = shown(
-        doc.view(false, Mode::Light, mouse_hints),
+        doc.view(
+            false,
+            Mode::Light,
+            varde_view::ViewOptions {
+                mouse_hints,
+                ..Default::default()
+            },
+        ),
         size,
         &mut renderer,
     );
@@ -217,7 +224,7 @@ fn the_status_bar_says_what_is_selected_and_under_the_prompt_only_esc() {
     assert!(!bar.contains(&"Pan".to_owned()), "{bar:?}");
     let size = iced::Size::new(1280.0, 800.0);
     let mut renderer = varde_view::probe::renderer();
-    let mut ui = shown(doc.view(false, Mode::Light, true), size, &mut renderer);
+    let mut ui = shown(doc.view_in(Mode::Light), size, &mut renderer);
     let question = "Delete Sketch 1 with the 1 feature and 1 body that depend on it?";
     assert!(
         texts(&mut ui, &renderer)

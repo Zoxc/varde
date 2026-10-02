@@ -129,6 +129,8 @@ const GRID: Srgb = Srgb([0.45, 0.49, 0.54]);
 const ORIGIN_OUTLINE: Srgb = Srgb([0.2, 0.22, 0.25]);
 /// The model behind a sketch being edited: the mock's ghosted model.
 const FADED_ALPHA: f32 = 0.3;
+/// The edges the model hides, dashed over it.
+const HIDDEN_EDGE_ALPHA: f32 = 0.45;
 
 /// `color` for the renderer, which takes no alpha.
 const fn srgb(color: Color) -> Srgb {
@@ -327,6 +329,7 @@ const LIGHT: Palette = Palette {
         hovered_edge: srgba(color!(0x9dd488)),
         selected_edge: srgba(color!(0x0a95ad)),
         faded_alpha: FADED_ALPHA,
+        hidden_edge_alpha: HIDDEN_EDGE_ALPHA,
     },
     icons: LIGHT_ICONS,
     // hsl(258 10% 80%) to hsl(258 10% 96%).
@@ -390,6 +393,7 @@ const DARK: Palette = Palette {
         hovered_edge: srgba(color!(0x76cc60, 0.5)),
         selected_edge: srgba(color!(0x39b9cf)),
         faded_alpha: FADED_ALPHA,
+        hidden_edge_alpha: HIDDEN_EDGE_ALPHA,
     },
     icons: DARK_ICONS,
     // hsl(258 8% 30%) to hsl(258 8% 50%).

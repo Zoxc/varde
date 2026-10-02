@@ -236,6 +236,28 @@ fn viewports_in_one_frame_show_their_own_mesh() {
     assert!(draw(&device, &queue, &pipeline, &b) == alone(&empty));
 }
 
+/// The cube's edges behind it show dashed unless the view options turn
+/// them off; they're on unless told otherwise.
+#[test]
+fn hidden_edges_show_unless_turned_off() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let cube = cube();
+    let state = Interaction::default();
+    assert!(primitive(&state, &cube).scene.hidden_edges);
+    let mut pipeline = Pipeline::new(&device, &queue, FORMAT);
+    let mut drawn = |hidden_edges| {
+        let mut primitive = primitive(&state, &cube);
+        primitive.scene.hidden_edges = hidden_edges;
+        prepare(&device, &queue, &mut pipeline, &primitive);
+        draw(&device, &queue, &pipeline, &primitive)
+    };
+    let (on, off) = (drawn(true), drawn(false));
+    assert!(on != off, "the hidden edges don't show");
+}
+
 /// A viewport's slot goes once its widget and what it drew are gone.
 #[test]
 fn trim_drops_the_slots_of_gone_viewports() {

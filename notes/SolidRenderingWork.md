@@ -40,23 +40,23 @@ the mesh", "Bodies in the mesh"; steps list item 1.
 
 Plan section: "Edge drawing on the GPU"; steps list item 2.
 
-- [ ] Implement: the `EdgePoint` stream and its four-slot binding, an
+- [x] Implement: the `EdgePoint` stream and its four-slot binding, an
   edge entry point on `line_vertex`/`fs_line` with the `pulled` depth,
   `EDGE_WIDTH` 1.5 logical px, drop the `LineList` pipeline, update the
   "still hardware lines" paragraph in `agents/viewport.md`. GPU tests.
-- [ ] Review
-- [ ] Bugs
+- [x] Review
+- [x] Bugs
 
 ## Step 3: Hidden edges, striped
 
 Plan section: "Hidden edges, striped"; steps list item 3.
 
-- [ ] Implement: the `Greater` pass with dashes along `along`,
+- [x] Implement: the `Greater` pass with dashes along `along`,
   `hidden_edge_alpha` in `Colors` and both themes, not while faded, the
   "Hidden edges" View option (on by default) kept like `mouse_hints`.
   GPU and app tests.
-- [ ] Review
-- [ ] Bugs
+- [x] Review
+- [x] Bugs
 
 ## Step 4: Body opacity
 

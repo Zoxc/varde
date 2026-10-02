@@ -89,8 +89,8 @@ pub struct DocumentState<'a> {
     /// Whether the peek key is held, showing the other tab.
     pub peek: bool,
     pub mode: theme::Mode,
-    /// Whether the status bar shows the hints of the mouse.
-    pub mouse_hints: bool,
+    /// What the view options menu turns on and off.
+    pub options: crate::ViewOptions,
     /// Whether the plane for a new sketch is being picked.
     pub picking_plane: bool,
     /// The feature selected in the Timeline, if any.
@@ -555,6 +555,7 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
                         state.pivot,
                         state.picking,
                         state.highlight,
+                        state.options.hidden_edges,
                         state.mode.palette(),
                         state
                             .sketch
@@ -589,7 +590,7 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
             Element::from(stack![content, menu])
         }
         (Some(Overlay::ViewMenu), None) => {
-            let menu = status::view_menu(state.camera.projection(), state.mouse_hints);
+            let menu = status::view_menu(state.camera.projection(), state.options);
             Element::from(stack![content, menu])
         }
         (None, None) => content.into(),
@@ -611,7 +612,7 @@ fn status<'a>(state: &DocumentState<'a>) -> Status<'a> {
         selection: selection(state),
         info: info(state),
         hints: hints(state),
-        mouse_hints: state.mouse_hints,
+        mouse_hints: state.options.mouse_hints,
         view_menu: Some(state.overlay == Some(Overlay::ViewMenu)),
     }
 }

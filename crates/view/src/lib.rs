@@ -86,6 +86,28 @@ pub enum Message {
     /// Shows the status bar's hints for the mouse, or hides them: the
     /// view options menu's Mouse hints.
     ToggleMouseHints,
+    /// Shows the edges the model hides, dashed, or hides them: the view
+    /// options menu's Hidden edges.
+    ToggleHiddenEdges,
+}
+
+/// What the view options menu turns on and off, which the app keeps for
+/// every document. All on by default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ViewOptions {
+    /// Whether the status bar shows the hints of the mouse.
+    pub mouse_hints: bool,
+    /// Whether the viewport shows the edges the model hides, dashed.
+    pub hidden_edges: bool,
+}
+
+impl Default for ViewOptions {
+    fn default() -> Self {
+        ViewOptions {
+            mouse_hints: true,
+            hidden_edges: true,
+        }
+    }
 }
 
 /// What the user asks for on the welcome screen.

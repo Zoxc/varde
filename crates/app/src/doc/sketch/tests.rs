@@ -786,7 +786,7 @@ fn the_view_shows_the_tool_and_what_it_has_placed() {
     assert_eq!((tool.tool, tool.placed), (Tool::Arc, &[at(1.0, 2.0)][..]));
     assert_eq!(state.selection, &BTreeSet::new());
     assert!(doc.keys().unwrap().drawing);
-    let _ = doc.view(false, varde_view::Mode::Dark, true);
+    let _ = doc.view_in(varde_view::Mode::Dark);
 }
 
 #[test]

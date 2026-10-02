@@ -563,7 +563,7 @@ fn click_screen(doc: &Doc, at: iced::Point, cache: Cache) -> (Vec<Ui>, Cache, [I
     )) else {
         panic!("no headless renderer");
     };
-    let view = doc.view(false, Mode::Light, true);
+    let view = doc.view_in(Mode::Light);
     let mut ui = UserInterface::build(view, Size::new(1280.0, 800.0), cache, &mut renderer);
     let mut sent = Vec::new();
     let events = [

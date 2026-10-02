@@ -297,7 +297,7 @@ pub(crate) fn add_disc(
 pub(crate) fn screen_texts(doc: &Doc) -> Vec<String> {
     let mut renderer = varde_view::probe::renderer();
     let size = iced::Size::new(1280.0, 800.0);
-    let mut ui = shown(doc.view(false, Mode::Light, true), size, &mut renderer);
+    let mut ui = shown(doc.view_in(Mode::Light), size, &mut renderer);
     (texts(&mut ui, &renderer).into_iter())
         .map(|text| text.text)
         .collect()
@@ -4446,7 +4446,7 @@ fn a_right_click_on_a_timeline_row_opens_its_menu_there() {
     let size = iced::Size::new(1280.0, 800.0);
     let mut renderer = varde_view::probe::renderer();
 
-    let mut ui = shown(doc.view(false, Mode::Light, true), size, &mut renderer);
+    let mut ui = shown(doc.view_in(Mode::Light), size, &mut renderer);
     let row = texts(&mut ui, &renderer);
     let row = row.iter().find(|t| t.text == name).unwrap();
     let at = row.seen().center();
@@ -4470,12 +4470,7 @@ fn a_right_click_on_a_timeline_row_opens_its_menu_there() {
     assert_eq!(menu, RowMenu::Feature(feature));
     doc.look(Look::OpenMenu(menu));
 
-    let mut ui = UserInterface::build(
-        doc.view(false, Mode::Light, true),
-        size,
-        cache,
-        &mut renderer,
-    );
+    let mut ui = UserInterface::build(doc.view_in(Mode::Light), size, cache, &mut renderer);
     let shown = texts(&mut ui, &renderer);
     let edit = shown.iter().find(|t| t.text == "Edit sketch").unwrap();
     // The menu's top left is at the click: the item's text is right of
@@ -4543,7 +4538,7 @@ fn a_right_click_on_a_body_opens_its_menu() {
     let size = iced::Size::new(1280.0, 800.0);
     let mut renderer = varde_view::probe::renderer();
 
-    let mut ui = shown(doc.view(false, Mode::Light, true), size, &mut renderer);
+    let mut ui = shown(doc.view_in(Mode::Light), size, &mut renderer);
     let row = texts(&mut ui, &renderer);
     let at = row
         .iter()
@@ -4571,7 +4566,7 @@ fn a_right_click_on_a_body_opens_its_menu() {
     assert_eq!(menu, RowMenu::Body(body.id));
     doc.look(Look::OpenMenu(menu));
 
-    let view = doc.view(false, Mode::Light, true);
+    let view = doc.view_in(Mode::Light);
     let mut ui = UserInterface::build(view, size, cache, &mut renderer);
     let shown = texts(&mut ui, &renderer);
     assert!(
@@ -4916,7 +4911,7 @@ pub(crate) fn pressed(doc: &Doc, keys: &[iced::Event], focused: bool) -> (Vec<Ui
     use iced_runtime::user_interface::{Cache, UserInterface};
 
     let mut renderer = varde_view::probe::renderer();
-    let view = doc.view(false, Mode::Light, true);
+    let view = doc.view_in(Mode::Light);
     let mut ui = UserInterface::build(
         view,
         iced::Size::new(1280.0, 800.0),
@@ -4987,7 +4982,7 @@ fn closing_waits_for_a_delete_behind_sketch_edits_to_be_asked_and_answered() {
 #[test]
 fn the_view_options_menu_picks_the_projection_and_the_mouse_hints() {
     fn view(varde: &Varde) -> iced::Element<'_, Ui> {
-        document(varde).view(false, Mode::Light, varde.mouse_hints)
+        document(varde).view(false, Mode::Light, varde.options)
     }
 
     use varde_render::Projection;
@@ -5000,7 +4995,7 @@ fn the_view_options_menu_picks_the_projection_and_the_mouse_hints() {
         let mut ui = shown(view(varde), size, renderer);
         texts(&mut ui, renderer)
     };
-    let menu = ["Orthographic", "Perspective", "Mouse hints"];
+    let menu = ["Orthographic", "Perspective", "Mouse hints", "Hidden edges"];
     let has = |shown: &[varde_view::probe::Shown], text: &str| shown.iter().any(|t| t.text == text);
     assert!(!has(&shown(&varde, &mut renderer), menu[0]));
 
@@ -5065,6 +5060,38 @@ fn the_view_options_menu_picks_the_projection_and_the_mouse_hints() {
 }
 
 #[test]
+fn the_view_options_menu_turns_the_hidden_edges_off_and_on() {
+    let size = iced::Size::new(1280.0, 800.0);
+    let mut renderer = varde_view::probe::renderer();
+    let mut varde = Varde::new();
+    let _ = varde.update(Message::Ui(Ui::Welcome(WelcomeUi::NewDesign)));
+    // On by default.
+    assert!(varde.options.hidden_edges);
+
+    // The menu has it, and clicking it asks to turn them off.
+    let _ = varde.update(Message::Ui(Ui::Look(Look::ToggleViewMenu)));
+    let view = document(&varde).view(false, Mode::Light, varde.options);
+    let mut ui = shown(view, size, &mut renderer);
+    let item = texts(&mut ui, &renderer)
+        .into_iter()
+        .find(|t| t.text == "Hidden edges")
+        .unwrap();
+    let sent = clicked(&mut ui, &mut renderer, item.bounds.center());
+    drop(ui);
+    let [Ui::ToggleHiddenEdges] = sent[..] else {
+        panic!("{sent:?}");
+    };
+    let _ = varde.update(Message::Ui(Ui::ToggleHiddenEdges));
+    assert!(!varde.options.hidden_edges);
+    // Closing the menu, and leaving the mouse's hints be.
+    assert!(!document(&varde).view_menu);
+    assert!(varde.options.mouse_hints);
+
+    let _ = varde.update(Message::Ui(Ui::ToggleHiddenEdges));
+    assert!(varde.options.hidden_edges);
+}
+
+#[test]
 fn a_long_status_leaves_the_key_hints_on_the_screen() {
     // A feature selected and the model failing with a long message, in a
     // small window: the status is cut where the hints start, which all
@@ -5087,11 +5114,7 @@ fn a_long_status_leaves_the_key_hints_on_the_screen() {
     }
     let size = iced::Size::new(1024.0, 600.0);
     let mut renderer = varde_view::probe::renderer();
-    let mut ui = shown(
-        doc.view(false, varde_view::Mode::Light, true),
-        size,
-        &mut renderer,
-    );
+    let mut ui = shown(doc.view_in(varde_view::Mode::Light), size, &mut renderer);
     let shown = texts(&mut ui, &renderer);
     let status_top = size.height - varde_view::STATUS_BAR_ROOM;
     let in_bar: Vec<_> = shown.iter().filter(|t| t.bounds.y >= status_top).collect();

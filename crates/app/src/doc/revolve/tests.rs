@@ -596,7 +596,7 @@ fn clicking_text(doc: &Doc, text: &str) -> Vec<Vec<varde_view::Message>> {
     let size = iced::Size::new(1280.0, 800.0);
     let mut renderer = varde_view::probe::renderer();
     let mut ui = shown(
-        doc.view(false, varde_view::Mode::Light, true),
+        doc.view_in(varde_view::Mode::Light),
         size,
         &mut renderer,
     );
@@ -609,7 +609,7 @@ fn clicking_text(doc: &Doc, text: &str) -> Vec<Vec<varde_view::Message>> {
     found
         .iter()
         .map(|shown| {
-            let view = doc.view(false, varde_view::Mode::Light, true);
+            let view = doc.view_in(varde_view::Mode::Light);
             let mut ui = crate::tests::shown(view, size, &mut renderer);
             clicked(&mut ui, &mut renderer, shown.bounds.center())
         })
@@ -695,7 +695,7 @@ fn a_revolve_s_timeline_row_shows_its_turn_and_a_double_click_edits_it() {
     let size = iced::Size::new(1280.0, 800.0);
     let mut renderer = varde_view::probe::renderer();
     let mut ui = shown(
-        lathe.doc.view(false, varde_view::Mode::Light, true),
+        lathe.doc.view_in(varde_view::Mode::Light),
         size,
         &mut renderer,
     );
@@ -739,7 +739,7 @@ fn a_revolve_s_timeline_row_shows_its_turn_and_a_double_click_edits_it() {
     lathe.revolve(RevolveLook::Cancel);
     lathe.doc.look(Look::SelectFeature(feature));
     let mut ui = shown(
-        lathe.doc.view(false, varde_view::Mode::Light, true),
+        lathe.doc.view_in(varde_view::Mode::Light),
         size,
         &mut renderer,
     );

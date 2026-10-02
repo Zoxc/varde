@@ -403,7 +403,7 @@ fn run(seed: u64, steps: usize) {
                 let (w, h) = *rng.pick(&sizes);
                 let mode = *rng.pick(&[Mode::Light, Mode::Dark]);
                 let ui = crate::tests::shown(
-                    lathe.doc.view(false, mode, true),
+                    lathe.doc.view_in(mode),
                     iced::Size::new(w, h),
                     &mut renderer,
                 );

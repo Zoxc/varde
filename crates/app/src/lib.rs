@@ -23,7 +23,7 @@ use varde_io::{
     Chosen, FileId, OpenId, Picked, Recovered, Request as IoRequest, Response as IoResponse,
     SaveError,
 };
-use varde_view::{File, Held, Look, Message as Ui, Mode, Unsaved};
+use varde_view::{File, Held, Look, Message as Ui, Mode, Unsaved, ViewOptions};
 
 use crate::doc::{Dialog, Doc, DocId, Downloader, Downloads, Focus, Leave};
 use crate::io::Io;
@@ -35,9 +35,10 @@ use crate::welcome::Welcome;
 pub(crate) struct Varde {
     screen: Screen,
     mode: Mode,
-    /// Whether the status bar shows the hints of the mouse: the view
-    /// options menu's Mouse hints.
-    mouse_hints: bool,
+    /// What the view options menu turns on and off: whether the status
+    /// bar shows the hints of the mouse, and whether the viewport shows
+    /// the edges the model hides.
+    options: ViewOptions,
     /// Whether the peek key is held, see [`Held::PEEK`].
     peeking: bool,
     /// Whether the command modifier (`Ctrl`, or `Cmd` on macOS) is held,
@@ -152,7 +153,7 @@ impl Varde {
         Self {
             screen: Screen::Welcome(Welcome::default()),
             mode: Mode::default(),
-            mouse_hints: true,
+            options: ViewOptions::default(),
             peeking: false,
             command: false,
             files,
@@ -246,7 +247,11 @@ impl Varde {
             }
             Message::Ui(Ui::ToggleTheme) => self.mode = self.mode.toggled(),
             Message::Ui(Ui::ToggleMouseHints) => {
-                self.mouse_hints = !self.mouse_hints;
+                self.options.mouse_hints = !self.options.mouse_hints;
+                self.with_doc(|doc, _| doc.view_menu = false);
+            }
+            Message::Ui(Ui::ToggleHiddenEdges) => {
+                self.options.hidden_edges = !self.options.hidden_edges;
                 self.with_doc(|doc, _| doc.view_menu = false);
             }
             Message::PeekPanel(peeking) => self.peeking = peeking,
@@ -428,7 +433,7 @@ impl Varde {
     pub(crate) fn view(&self) -> Element<'_, Message> {
         let view = match &self.screen {
             Screen::Welcome(welcome) => welcome.view(&self.files, self.mode),
-            Screen::Document(doc) => doc.view(self.peeking, self.mode, self.mouse_hints),
+            Screen::Document(doc) => doc.view(self.peeking, self.mode, self.options),
         };
         view.map(Message::Ui)
     }
@@ -585,7 +590,9 @@ fn while_quitting(message: &Message) -> bool {
             | Message::AnimationFrame(_)
             | Message::PeekPanel(_)
             | Message::CommandHeld(_)
-            | Message::Ui(Ui::Look(_) | Ui::ToggleTheme | Ui::ToggleMouseHints)
+            | Message::Ui(
+                Ui::Look(_) | Ui::ToggleTheme | Ui::ToggleMouseHints | Ui::ToggleHiddenEdges
+            )
     )
 }
 
