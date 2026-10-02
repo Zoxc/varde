@@ -88,9 +88,11 @@ pub struct FaceRef { pub body: BodyId, pub key: FaceKey, pub near: DVec3 }
   (`FaceRef::check_own`, `PlaneError::Near`); the body, if it's there,
   made by a feature before the sketch (`Body`); the key's feature, if
   it's there, before the sketch (`Maker`; the sketch itself isn't). A
-  body or feature that isn't there is allowed: the reference fails to
-  resolve, as a region can. Ids never come back, so one that isn't there
-  can't later name something after the sketch.
+  body or feature that isn't there is allowed (the reference fails to
+  resolve, as a region can), but only with an id below `next_id`: ids
+  never come back, so it can't later name something after the sketch.
+  One at or past `next_id` (only a file can hold one) is refused, as the
+  edit that hands that id out would otherwise be, again and again.
 - **Commands**: `AddSketch { name, plane }` takes either kind;
   `SetSketchPlane { feature, plane }` puts a sketch on another plane, one
   undo step, keeping its drawing in its own coordinates. Not a sketch,
@@ -133,7 +135,13 @@ Caches: a sketch's profiles are keyed by the sketch alone (not the
 plane: they're 2D, so the same drawing on another plane finds them);
 the placement by the face's solid's key, the face's key and `near`'s
 bits (`Entry::Placement`, the result or its message), so the topology is
-worked out again only when that solid changes; an extrude's or
+worked out again only when that solid changes. That's all it depends
+on: a solid's key holds everything the solid was made from, so the same
+key is the same solid to the bit, the same topology, and the same region
+for the same name and point (an upstream edit that leaves the solid's
+key alone can't move the face, and one that moves it changes the key);
+the body's id isn't in it, as the placement doesn't depend on which body
+holds the solid; an extrude's or
 revolve's tool key adds the placement's twelve numbers' bits
 (`Keyer::placement`) to the sketch's key. An edit upstream changes the
 body's key, which re-places the sketch, which changes the tool keys

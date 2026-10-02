@@ -5,10 +5,11 @@
 //! or, for a sketch on a face, the placement of the face's plane
 //! ([`Placement::on_plane`]) on the body as the features before the
 //! sketch leave it (see [`place_on_face`]); one that isn't placed fails,
-//! and so does every extrude or revolve made from it. An extrude or a revolve finds its regions
-//! again in its sketch's profiles ([`Profiles::resolve`]; one that's gone
-//! is "region not found"), merges them ([`Profiles::merge`]) and turns
-//! the loops into a kernel profile ([`profile`]). An extrude sweeps it
+//! and so does every extrude or revolve made from it. An extrude or a
+//! revolve finds its regions again in its sketch's profiles
+//! ([`Profiles::resolve`]; one that's gone is "region not found"), merges
+//! them ([`Profiles::merge`]) and turns the loops into a kernel profile
+//! ([`profile`]). An extrude sweeps it
 //! with [`varde_kernel::extrude`] on the sketch's plane, over
 //! [`Extrude::span`]; a revolve finds its axis in the sketch
 //! ([`axis_line`]; a line that's gone is "axis not found"), moves the

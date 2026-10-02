@@ -53,7 +53,8 @@ above zero and at most a turn (two sides together too; a revolve's axis
 line isn't required to exist, as a region isn't: regeneration reports
 it), excluded bodies sorted and made by earlier features, a sketch's face
 point finite and within the coordinate limit, its body (if there) made
-and its key's feature (if there) placed before the sketch,
+and its key's feature (if there) placed before the sketch, and either
+id, if nothing has it, below the next id,
 the tolerance within its range, names, coordinates, radii
 and labels within bounds, a sketch's item counts bounded, every reference
 naming an item of the right kind, every fillet and chamfer on a corner

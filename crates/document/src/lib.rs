@@ -257,10 +257,10 @@ impl Document {
     /// against [`MAX_COORD`] and the document's units
     /// ([`Document::design`]), so every dimension's expression gives its
     /// value in them, and every sketch on a face names what comes before
-    /// it, as [`PlaneError`] lists; and every extrude and revolve uses a sketch feature
-    /// before it, has regions, distances or angles and an operation as
-    /// [`Extrude`] and [`Revolve`] describe, and excludes only bodies
-    /// features before it make. A revolve's axis line isn't checked
+    /// it, as [`PlaneError`] lists; and every extrude and revolve uses a
+    /// sketch feature before it, has regions, distances or angles and an
+    /// operation as [`Extrude`] and [`Revolve`] describe, and excludes
+    /// only bodies features before it make. A revolve's axis line isn't checked
     /// against its sketch here (see [`Revolve::check_axis`]).
     pub fn check(&self) -> Result<(), CheckError> {
         // Orders first: features and bodies are found by binary search.
@@ -328,21 +328,26 @@ impl Document {
     /// Checks `plane`, the plane of sketch feature `index`: a face's point
     /// in bounds, its body, if it's there, made by a feature before the
     /// sketch, and the feature its key names, if it's there, before the
-    /// sketch. A body or a feature that isn't there is allowed: removing
+    /// sketch. A body or a feature that isn't there is allowed (removing
     /// the body's maker leaves the sketch, which regenerating then fails,
-    /// to be put on another plane.
+    /// to be put on another plane), but only with an id below `next_id`,
+    /// one no body or feature made later can take: otherwise the edit
+    /// that made it would be refused, and every one after it, the ids
+    /// being handed out again.
     fn check_plane(&self, index: usize, plane: &Plane) -> Result<(), PlaneError> {
         let Some(face) = plane.face() else {
             return Ok(());
         };
         face.check_own()?;
-        let before = |feature: FeatureId| {
-            self.feature_index(feature)
-                .is_none_or(|maker| maker < index)
+        let before = |feature: FeatureId| match self.feature_index(feature) {
+            Some(maker) => maker < index,
+            None => feature.0 < self.next_id,
         };
-        if let Some(body) = self.body(face.body)
-            && !before(body.created_by)
-        {
+        let body_before = match self.body(face.body) {
+            Some(body) => before(body.created_by),
+            None => face.body.0 < self.next_id,
+        };
+        if !body_before {
             return Err(PlaneError::Body(face.body));
         }
         if !before(face.maker()) {

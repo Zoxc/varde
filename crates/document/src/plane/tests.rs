@@ -435,6 +435,11 @@ fn refused(editor: &mut Editor, feature: FeatureId, plane: Plane) -> PlaneError 
 #[test]
 fn a_face_plane_names_only_what_comes_before_its_sketch() {
     let (mut editor, id) = sketched_on_top();
+    // A sketch added and removed leaves an id nothing will take again.
+    let xy = Plane::Origin(OriginPlane::XY);
+    editor.apply(editor.document().add_sketch(xy)).unwrap();
+    let removed = editor.document().features().last().unwrap().id;
+    editor.apply(Command::RemoveFeature(removed)).unwrap();
     let document = editor.document().clone();
     let first = document.features()[0].id;
     let top = top_of(&document, DVec3::new(20.0, 0.0, 10.0));
@@ -446,7 +451,11 @@ fn a_face_plane_names_only_what_comes_before_its_sketch() {
     );
     // Nor on a face whose key names a later feature, or itself, whatever
     // the body.
-    let gone = BodyId(900);
+    // An id below the next that isn't used, the removed sketch's.
+    let unused = (0..document.next_id)
+        .find(|&n| document.feature(FeatureId(n)).is_none() && document.body(BodyId(n)).is_none())
+        .expect("an id below the next that isn't used");
+    let gone = BodyId(unused);
     for maker in [document.features()[1].id, first] {
         let face = FaceRef {
             body: gone,
@@ -482,12 +491,12 @@ fn a_face_plane_names_only_what_comes_before_its_sketch() {
             PlaneError::Near(_)
         ));
     }
-    // A body or a key's feature that isn't there is allowed: it fails to
-    // resolve, as a region can.
+    // A body or a key's feature that isn't there is allowed, with an id no
+    // later one can take: it fails to resolve, as a region can.
     let nowhere = FaceRef {
         body: gone,
         key: FaceKey {
-            feature: 950,
+            feature: unused,
             ..top.key
         },
         ..top
@@ -501,6 +510,29 @@ fn a_face_plane_names_only_what_comes_before_its_sketch() {
             .unwrap();
         assert_eq!(plane_of(editor.document(), id), plane);
     }
+    // One a later body or feature would take is refused: the edit making
+    // it would be, and every one after it, its id handed out again.
+    let next = editor.document().next_id;
+    let later_body = FaceRef {
+        body: BodyId(next + 1),
+        ..top
+    };
+    assert_eq!(
+        refused(&mut editor, id, Plane::Face(later_body)),
+        PlaneError::Body(BodyId(next + 1))
+    );
+    let later_maker = FaceRef {
+        body: gone,
+        key: FaceKey {
+            feature: next,
+            ..top.key
+        },
+        ..top
+    };
+    assert_eq!(
+        refused(&mut editor, id, Plane::Face(later_maker)),
+        PlaneError::Maker(FeatureId(next))
+    );
     // The same is checked of a document as read: an earlier sketch moved
     // onto a later body's face.
     let mut moved = document.clone();

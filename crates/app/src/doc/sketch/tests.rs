@@ -1021,20 +1021,32 @@ fn a_sketch_too_complex_for_profiles_says_so() {
 /// the app doesn't read yet: it isn't opened for editing.
 #[test]
 fn a_sketch_on_a_face_is_not_edited_yet() {
-    let (mut doc, feature, _requests) = with_sketch();
+    let (mut doc, _requests) = crate::tests::example();
+    let xy = varde_document::Plane::Origin(OriginPlane::XY);
+    doc.apply(doc.editor.document().add_sketch(xy));
+    let document = doc.editor.document();
+    let feature = document.features().last().unwrap().id;
+    // The plate's top.
     let face = varde_document::FaceRef {
-        body: varde_document::BodyId::NEW,
+        body: document.bodies()[0].id,
         key: varde_document::FaceKey {
-            feature: 99,
+            feature: document.features()[1].id.get(),
             part: varde_document::PartKey::EndCap,
             instance: 0,
         },
-        near: glam::DVec3::ZERO,
+        near: glam::DVec3::new(20.0, 0.0, 10.0),
     };
     doc.apply(Command::SetSketchPlane {
         feature,
         plane: varde_document::Plane::Face(face),
     });
+    assert!(matches!(
+        doc.editor.document().feature(feature).unwrap().kind,
+        FeatureKind::Sketch {
+            plane: varde_document::Plane::Face(_),
+            ..
+        }
+    ));
     doc.look(Look::EditFeature(feature));
     assert!(doc.sketch.is_none());
     assert!(doc.sketch_state().is_none());

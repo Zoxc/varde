@@ -87,10 +87,12 @@ impl FaceRef {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PlaneError {
     /// Its face's body, this one, is made by the sketch or a feature
-    /// after it.
+    /// after it, or isn't there and has an id a body made later could
+    /// take.
     Body(BodyId),
     /// Its face's key names this feature, which is the sketch or comes
-    /// after it.
+    /// after it, or isn't there and has an id a feature made later could
+    /// take.
     Maker(FeatureId),
     /// Its face's point isn't finite, or is further from zero than
     /// [`MAX_COORD`].

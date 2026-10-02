@@ -406,6 +406,44 @@ fn sketches_on_a_tilted_face_build_square_to_it() {
     );
 }
 
+/// The app places a sketch on a face it picks itself, before any answer,
+/// from the face's summary in the picking tables, as the page gets them
+/// from the worker: [`Placement::on_plane`] on those bits gives the bits
+/// regenerating then places the sketch at, on the tilted slope as on the
+/// plate's top.
+#[test]
+fn a_picked_face_s_summary_places_a_sketch_as_regenerating_does() {
+    let (mut editor, _, slope) = sloped();
+    let top = top(editor.document());
+    let on_slope = add_sketch(&mut editor, Plane::Face(slope), |_| {});
+    let on_top = add_sketch(&mut editor, Plane::Face(top), |_| {});
+    let response = crate::handle(regenerate_with(&editor, None));
+    let (head, parts) = crate::wire::encode_reply(&response);
+    let parts: Vec<&[u8]> = parts.iter().map(|part| &**part).collect();
+    let crate::Response::Regenerated {
+        mesh,
+        picking,
+        placements,
+        ..
+    } = crate::wire::decode_reply(&head[..], &parts).unwrap()
+    else {
+        panic!("regeneration failed");
+    };
+    for (sketch, face) in [(on_slope, slope), (on_top, top)] {
+        let (_, picked) = (picking.faces().iter().enumerate())
+            .find(|&(i, picked)| {
+                picking.face_body(&mesh, i as u32) == Some(face.body) && picked.key == face.key
+            })
+            .unwrap_or_else(|| panic!("{face:?} is drawn"));
+        let crate::picking::Summary::Plane { n, d } = picked.summary else {
+            panic!("{face:?} is flat");
+        };
+        let from_pick = Placement::on_plane(n.into(), d).unwrap();
+        let answered = (placements.iter()).find(|(id, _)| *id == sketch).unwrap();
+        assert_eq!(bits(&from_pick), bits(&answered.1));
+    }
+}
+
 /// A sketch on the top end of a revolved cylinder (the face its
 /// rectangle's top line turns into) is placed there, and a boss joined
 /// from it stands on it.
