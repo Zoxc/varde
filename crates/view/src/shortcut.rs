@@ -59,6 +59,9 @@ impl Shortcut {
     /// Starts a new revolve: outside sketches, where `O` takes up the
     /// Offset tool.
     pub const REVOLVE: Self = Self::plain('o');
+    /// Starts the measure tool, or leaves it: outside sketches, where
+    /// `I` is Coincident's.
+    pub const MEASURE: Self = Self::plain('i');
     pub const ENTER: Self = Self::named(Key::Enter);
     pub const DELETE: Self = Self::named(Key::Delete);
     /// Only labels the key: the app matches it itself, with any
@@ -372,6 +375,8 @@ pub struct DocumentKeys {
     pub revolving: bool,
     /// Whether the revolve being set up can be committed.
     pub revolve_ready: bool,
+    /// Whether the measure tool is in use.
+    pub measuring: bool,
     /// Whether the document has changes not saved.
     pub edited: bool,
     /// Whether undo can take anything back.
@@ -439,6 +444,7 @@ impl DocumentKeys {
             extrude_ready: false,
             revolving: false,
             revolve_ready: false,
+            measuring: false,
             edited: false,
             undo: false,
             redo: false,
@@ -483,6 +489,11 @@ impl DocumentKeys {
             revolve_ready: revolve.is_some_and(|revolve| revolve.ready),
             ..self
         }
+    }
+
+    /// The same keys with the measure tool in use if `measuring`.
+    pub fn with_measure(self, measuring: bool) -> Self {
+        Self { measuring, ..self }
     }
 
     /// Whether an operation is being set up: an extrude or a revolve.
@@ -543,6 +554,17 @@ pub fn revolve_binding(keys: DocumentKeys) -> Binding {
         Shortcut::REVOLVE,
         Message::Look(Look::StartRevolve),
         keys.editable && !keys.sketching && !keys.extruding && (keys.extrudable || keys.revolving),
+    )
+}
+
+/// Starting the measure tool, or leaving it: outside a sketch and the
+/// operations being set up. Measuring changes nothing, so a read-only
+/// document is measured too.
+pub fn measure_binding(keys: DocumentKeys) -> Binding {
+    Binding::new(
+        Shortcut::MEASURE,
+        Message::Look(Look::StartMeasure),
+        !keys.sketching && !keys.operating(),
     )
 }
 
@@ -721,8 +743,15 @@ pub fn document_bindings(keys: DocumentKeys) -> Vec<Binding> {
                     .filter_map(move |kind| constraint_binding(kind, keys)),
             )
     });
-    // Outside a sketch, where `E` is Equal's and `O` Offset's.
-    let extrude = (!keys.sketching).then(|| [extrude_binding(keys), revolve_binding(keys)]);
+    // Outside a sketch, where `E` is Equal's, `O` Offset's and `I`
+    // Coincident's.
+    let extrude = (!keys.sketching).then(|| {
+        [
+            extrude_binding(keys),
+            revolve_binding(keys),
+            measure_binding(keys),
+        ]
+    });
     let commit = keys.extruding.then(|| {
         Binding::new(
             Shortcut::ENTER,

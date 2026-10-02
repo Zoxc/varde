@@ -38,6 +38,7 @@ const COLORS: Colors = Colors {
     selected: Srgb([0.04, 0.58, 0.68]),
     selected_tint: 0.6,
     selected_edge_shade: 0.0,
+    second: Srgb([1.0, 0.5, 0.0]),
 };
 const SIZE: [u32; 2] = [512, 256];
 const SENTINEL: [u8; 4] = [255, 0, 255, 255];
@@ -93,6 +94,7 @@ fn render_to(
             hidden_edges: true,
             hovered_faces: &[],
             selected_faces: &[],
+            second_faces: &[],
             highlights: &Arc::default(),
             sketch: None,
             pivot: None,
@@ -124,10 +126,11 @@ struct Extras {
     colors: Option<Colors>,
     /// How opaque each part of the mesh is, opaque past its end.
     opacity: Vec<f32>,
-    /// The faces hovered, the faces selected, and the edges and vertices
-    /// hovered and selected.
+    /// The faces hovered, the faces selected, those in the second colour,
+    /// and the edges and vertices hovered and selected.
     hovered_faces: Vec<u32>,
     selected_faces: Vec<u32>,
+    second_faces: Vec<u32>,
     highlights: Highlights,
 }
 
@@ -171,6 +174,7 @@ fn render_scaled(
             hidden_edges: extras.hidden_edges,
             hovered_faces: &extras.hovered_faces,
             selected_faces: &extras.selected_faces,
+            second_faces: &extras.second_faces,
             highlights: &Arc::new(extras.highlights),
             sketch,
             pivot: extras.pivot,
@@ -2753,6 +2757,7 @@ fn hover_and_selection_are_not_drawn_faded() {
                 Highlights {
                     outlined: vec![edge],
                     selected_edges: vec![edge],
+                    second_edges: vec![],
                     vertices: vec![Vertex {
                         corner: 0,
                         hovered: true,
@@ -2770,4 +2775,50 @@ fn hover_and_selection_are_not_drawn_faded() {
         return;
     };
     assert!(picked == plain);
+}
+
+#[test]
+fn faces_and_edges_in_the_second_colour_are_drawn_in_it() {
+    // The cube's front face in the second colour (orange in the tests'
+    // colours) is tinted towards it, over a selection of it too; the
+    // box's edge in it is drawn in it, apart from a selected one.
+    let (camera, near, _) = cube_behind_cube();
+    let front = face_facing(&near, -Vec3::Y);
+    let faces = |selected: Vec<u32>, second: Vec<u32>| Extras {
+        selected_faces: selected,
+        second_faces: second,
+        ..Extras::default()
+    };
+    let (Some(plain), Some(second), Some(over)) = (
+        render_with(&camera, &near, faces(vec![], vec![])),
+        render_with(&camera, &near, faces(vec![], vec![front])),
+        render_with(&camera, &near, faces(vec![front], vec![front])),
+    ) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let (cx, cy) = CENTER;
+    let [plain, second, over] = [&plain, &second, &over].map(|p| pixel(p, cx, cy));
+    assert!(tint(plain).abs() < 4, "{plain:?}");
+    assert!(tint(second) < -40, "{second:?}");
+    assert!(tint(over) < -20, "{over:?} over the selection");
+
+    let (mesh, edge) = box_under_top_camera();
+    let edges = |highlights| render_sketch(&top_camera(), &mesh, highlighted(highlights), 1.0);
+    let (Some(second), Some(selected)) = (
+        edges(Highlights {
+            second_edges: vec![edge],
+            ..Highlights::default()
+        }),
+        edges(Highlights {
+            selected_edges: vec![edge],
+            ..Highlights::default()
+        }),
+    ) else {
+        return;
+    };
+    for x in [90, 150, 180] {
+        let (b, a) = (pixel(&second, x, 84), pixel(&selected, x, 84));
+        assert!(tint(b) < -60 && tint(a) > 60, "{b:?} and {a:?} at {x}");
+    }
 }

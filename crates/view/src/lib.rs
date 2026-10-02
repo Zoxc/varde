@@ -19,6 +19,7 @@ mod escape;
 mod extrude;
 mod hit;
 mod icons;
+mod measure;
 mod mouse_only;
 mod operation_panel;
 mod panels;
@@ -58,8 +59,14 @@ pub use document::{
 };
 pub use extrude::{Distance, ExtentKind, ExtrudeLook, ExtrudeState, Handle, snap_step};
 pub use icons::LOGO_SVG;
+pub use measure::{
+    MeasureLook, MeasureSlot, MeasureState, Outcome, Picked as MeasuredPick, Value as MeasureValue,
+    between_values, face_kind, values as measure_values,
+};
 pub use operation_panel::{BodyTarget, Candidate, OperationKind, PANEL_BODY, TypedField};
-pub use pick::{EDGE_REACH, ModelHighlight, Pick, PickIndex, Picked, Picks, VERTEX_REACH};
+pub use pick::{
+    EDGE_REACH, ModelHighlight, Pick, PickIndex, Picked, Picks, SNAP_REACH, Snapped, VERTEX_REACH,
+};
 pub use rail::{RAIL_LIST, RailLook, RailOpen, RailSpot, rail_rows, rail_sets};
 pub use revolve::{Angle, RevolveLook, RevolvePick, RevolveState, TurnKind};
 pub use select::{Selected, Selection, SelectionMode};
@@ -90,6 +97,9 @@ pub enum Message {
     /// Shows the edges the model hides, dashed, or hides them: the view
     /// options menu's Hidden edges.
     ToggleHiddenEdges,
+    /// Puts the text on the clipboard: a measured value with its unit,
+    /// from its copy button.
+    Copy(String),
 }
 
 /// What the view options menu turns on and off, kept by the app for every
@@ -249,9 +259,9 @@ pub enum Look {
     /// Backs out of whatever is open, the innermost first: the delete
     /// prompt, a drag of a body's Opacity slider with its menu, the rail's
     /// list, a row's context menu, the file menu, the view options menu,
-    /// picking a plane, the extrude or revolve being set up, dragging
-    /// geometry, the shape the sketch's tool is drawing, the tool (or the
-    /// Constrain tool), the sketch, the selection.
+    /// picking a plane, the extrude or revolve being set up, the measure
+    /// tool, dragging geometry, the shape the sketch's tool is drawing, the
+    /// tool (or the Constrain tool), the sketch, the selection.
     Escape,
     SelectPanel(Panel),
     /// Starts picking the plane for a new sketch, or backs out of it.
@@ -272,6 +282,11 @@ pub enum Look {
     /// Changes the revolve being set up, see [`RevolveLook`]: it isn't in
     /// the document until [`Edit::CommitRevolve`].
     Revolve(RevolveLook),
+    /// Starts the measure tool, outside sketches and operations being
+    /// set up, or leaves it.
+    StartMeasure,
+    /// Changes the measure tool, see [`MeasureLook`].
+    Measure(MeasureLook),
     /// Leaves the sketch being edited.
     FinishSketch,
     /// Selects a feature in the Timeline.

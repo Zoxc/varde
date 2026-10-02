@@ -24,12 +24,12 @@ use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use native::{auto_save_ticks, guard, leaving, window_icon};
+pub(crate) use native::{auto_save_ticks, copy, guard, leaving, window_icon};
 
 #[cfg(target_arch = "wasm32")]
 mod web;
 #[cfg(target_arch = "wasm32")]
-pub(crate) use web::{auto_save_ticks, guard, leaving, window_icon};
+pub(crate) use web::{auto_save_ticks, copy, guard, leaving, window_icon};
 
 /// How often [`auto_save_ticks`] ticks.
 const TICK: Duration = Duration::from_secs(1);

@@ -158,6 +158,8 @@ pub enum IconCategory {
     Solid,
     /// Construction geometry: planes.
     Construction,
+    /// Looking into the model: measuring.
+    Inspect,
     /// The design's file: opening and saving it.
     File,
 }
@@ -183,6 +185,7 @@ pub struct IconColors {
     pub dimension: IconTone,
     pub solid: IconTone,
     pub construction: IconTone,
+    pub inspect: IconTone,
     pub file: IconTone,
 }
 
@@ -195,6 +198,7 @@ impl IconColors {
             IconCategory::Dimension => self.dimension,
             IconCategory::Solid => self.solid,
             IconCategory::Construction => self.construction,
+            IconCategory::Inspect => self.inspect,
             IconCategory::File => self.file,
         }
     }
@@ -258,6 +262,7 @@ const LIGHT_ICONS: IconColors = {
         dimension: tone(color!(0x5f6b80), 0.15, LIGHT_ORANGE),
         solid: tone(color!(0xc0409a), 0.0, LIGHT_TEAL),
         construction: tone(color!(0xc39000), 0.08, LIGHT_BLUE),
+        inspect: tone(color!(0x2f9a47), 0.0, LIGHT_ORANGE),
         file: tone(LIGHT_BLUE, 0.0, LIGHT_TEXT),
     }
 };
@@ -273,6 +278,7 @@ const DARK_ICONS: IconColors = {
         dimension: tone(color!(0xa6b2c6), 0.15, DARK_ORANGE),
         solid: tone(color!(0xef77c2), 0.0, DARK_TEAL),
         construction: tone(color!(0xf0c43c), 0.08, DARK_BLUE),
+        inspect: tone(color!(0x62cf7c), 0.0, DARK_ORANGE),
         file: tone(DARK_BLUE, 0.0, DARK_TEXT),
     }
 };
@@ -330,6 +336,9 @@ const LIGHT: Palette = Palette {
         // darker, show on it and apart from the near black edges.
         selected_tint: 0.3,
         selected_edge_shade: -0.3,
+        // The construction colour: the measure tool's B, apart from A in
+        // the accent.
+        second: srgb(LIGHT_CONSTRUCTION),
     },
     icons: LIGHT_ICONS,
     // hsl(258 10% 80%) to hsl(258 10% 96%).
@@ -397,6 +406,7 @@ const DARK: Palette = Palette {
         selected_tint: 0.6,
         // Lighter than a selected face's tint, to show on it.
         selected_edge_shade: 0.85,
+        second: srgb(DARK_CONSTRUCTION),
     },
     icons: DARK_ICONS,
     // hsl(258 8% 30%) to hsl(258 8% 50%).
@@ -1298,6 +1308,47 @@ fn brighten(color: Color, factor: f32) -> Color {
     }
 }
 
+/// The tag naming one of the measure tool's two picks, "A" or "B" (the
+/// `second`): in the colour its highlight is drawn in, the scene's
+/// selection or second colour, with white text where it reads (3:1, as
+/// for bold text: the light palette's accent), else dark (the dark
+/// palette's accent and both construction colours are too light for
+/// white).
+pub fn pick_tag(second: bool) -> impl Fn(&Theme) -> container::Style {
+    move |theme| {
+        let scene = palette(theme).scene;
+        let [r, g, b] = if second { scene.second } else { scene.selected }.0;
+        let fill = Color::from_rgb(r, g, b);
+        container::Style {
+            border: border::rounded(4),
+            ..filled(fill, tag_text(fill))
+        }
+    }
+}
+
+/// White text on `fill` if it has a contrast of 3:1 or more there, else
+/// dark.
+fn tag_text(fill: Color) -> Color {
+    let white = (1.05) / (relative_luminance(fill) + 0.05);
+    if white >= 3.0 {
+        Color::WHITE
+    } else {
+        LIGHT_TEXT
+    }
+}
+
+/// The WCAG relative luminance of an opaque sRGB colour.
+fn relative_luminance(color: Color) -> f32 {
+    let linear = |c: f32| {
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * linear(color.r) + 0.7152 * linear(color.g) + 0.0722 * linear(color.b)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1309,16 +1360,30 @@ mod tests {
         }
     }
 
-    /// The WCAG relative luminance of an opaque sRGB colour.
     fn luminance(color: Color) -> f32 {
-        let linear = |c: f32| {
-            if c <= 0.04045 {
-                c / 12.92
-            } else {
-                ((c + 0.055) / 1.055).powf(2.4)
+        relative_luminance(color)
+    }
+
+    #[test]
+    fn pick_tags_read_in_both_modes() {
+        // WCAG AA for bold text, 3:1, for A and B on light and dark; the
+        // dark palette's A, its light accent, with dark text.
+        for mode in [Mode::Light, Mode::Dark] {
+            let theme = theme(mode);
+            for second in [false, true] {
+                let style = pick_tag(second)(&theme);
+                let Some(Background::Color(fill)) = style.background else {
+                    panic!("a filled tag");
+                };
+                let text = style.text_color.unwrap();
+                let (a, b) = (luminance(text), luminance(fill));
+                let ratio = (a.max(b) + 0.05) / (a.min(b) + 0.05);
+                assert!(ratio >= 3.0, "{mode:?} {second}: {ratio}");
+                if mode == Mode::Dark {
+                    assert_eq!(text, LIGHT_TEXT);
+                }
             }
-        };
-        0.2126 * linear(color.r) + 0.7152 * linear(color.g) + 0.0722 * linear(color.b)
+        }
     }
 
     #[test]

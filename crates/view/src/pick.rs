@@ -34,6 +34,10 @@ pub const EDGE_REACH: f64 = 6.0;
 /// vertex within it wins over the edges it ends.
 pub const VERTEX_REACH: f64 = 6.0;
 
+/// How near the cursor a snap point of what it's over must show for the
+/// cursor to take it, in pixels: as sketch snapping's reach.
+pub const SNAP_REACH: f64 = 10.0;
+
 /// How much nearer the eye than an edge's point, in view heights, what's
 /// in front of it must be to hide it: as far as the renderer pulls the
 /// edges towards the camera, so an edge the faces either side of it
@@ -76,6 +80,16 @@ pub enum Picked {
     Vertex(u32),
 }
 
+/// A point of the model shown that the cursor snaps to (the measure
+/// tool's points): a corner, an index into [`Picking::corners`], or an
+/// edge's point ([`Picking::snaps`]: a straight edge's middle, a round
+/// edge's centre), by the edge's id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Snapped {
+    Corner(u32),
+    EdgePoint(u32),
+}
+
 /// What's under the cursor in the model shown.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Pick {
@@ -89,6 +103,9 @@ pub struct Pick {
     /// point that shows nearest the cursor, or the vertex. In world
     /// coordinates, as the mesh is drawn.
     pub at: DVec3,
+    /// The snap point of `target` the cursor takes, where it's asked for
+    /// and one shows within [`SNAP_REACH`] (see [`PickIndex::snap`]).
+    pub snap: Option<Snapped>,
 }
 
 /// What the viewport draws of what's hovered and selected over the model
@@ -101,6 +118,9 @@ pub struct Pick {
 pub struct ModelHighlight {
     pub hovered_faces: Vec<u32>,
     pub selected_faces: Vec<u32>,
+    /// The faces in the second colour: the measure tool's B, where A is
+    /// drawn as selected.
+    pub second_faces: Vec<u32>,
     pub highlights: Arc<Highlights>,
 }
 
@@ -110,12 +130,15 @@ impl ModelHighlight {
         let Highlights {
             outlined,
             selected_edges,
+            second_edges,
             vertices,
         } = &*self.highlights;
         self.hovered_faces.is_empty()
             && self.selected_faces.is_empty()
+            && self.second_faces.is_empty()
             && outlined.is_empty()
             && selected_edges.is_empty()
+            && second_edges.is_empty()
             && vertices.is_empty()
     }
 }
@@ -277,8 +300,94 @@ impl PickIndex {
             target,
             body: self.body(target)?,
             at,
+            snap: None,
         };
         Some(pick)
+    }
+
+    /// The snap points of `target`, where the measure tool picks points:
+    /// a face's corners (those naming it among their three faces), an
+    /// edge's ends (the corners naming both its faces) and its own point,
+    /// if it has one, a vertex's corner (the one at it whose faces meet
+    /// there); each with where it is. None for what isn't in the tables.
+    pub fn snaps(&self, target: Picked) -> Vec<(Snapped, DVec3)> {
+        let corners = self.picking.corners().iter().enumerate();
+        let corner = |(i, corner): (usize, &varde_regen::PickCorner)| {
+            Some((
+                Snapped::Corner(u32::try_from(i).ok()?),
+                DVec3::from(corner.point),
+            ))
+        };
+        match target {
+            Picked::Face(face) => corners
+                .filter(|(_, corner)| corner.faces.contains(&face))
+                .filter_map(corner)
+                .collect(),
+            Picked::Edge(edge) => {
+                let Some([a, b]) = self.edge_faces(edge) else {
+                    return Vec::new();
+                };
+                let ends = corners
+                    .filter(|(_, corner)| corner.faces.contains(&a) && corner.faces.contains(&b))
+                    .filter_map(corner);
+                let own = (self.picking.snaps().get(edge as usize).copied().flatten())
+                    .map(|point| (Snapped::EdgePoint(edge), DVec3::from(point)));
+                ends.chain(own).collect()
+            }
+            Picked::Vertex(vertex) => {
+                let Some(at) = corner_position(&self.mesh, vertex) else {
+                    return Vec::new();
+                };
+                let faces = self.corner_faces(vertex);
+                let meets = |f: &u32| faces.iter().any(|&(_, face)| face == *f);
+                // The mesh's corner is the solid's vertex rounded to f32.
+                corners
+                    .filter(|(_, corner)| {
+                        corner.faces.iter().all(meets) && DVec3::from(corner.point).as_vec3() == at
+                    })
+                    .filter_map(corner)
+                    .collect()
+            }
+        }
+    }
+
+    /// Where the snap point `snapped` is, if it's in the tables.
+    pub fn snap_point(&self, snapped: Snapped) -> Option<DVec3> {
+        match snapped {
+            Snapped::Corner(corner) => {
+                let corner = self.picking.corners().get(corner as usize)?;
+                Some(DVec3::from(corner.point))
+            }
+            Snapped::EdgePoint(edge) => {
+                Some(DVec3::from((*self.picking.snaps().get(edge as usize)?)?))
+            }
+        }
+    }
+
+    /// Of `target`'s snap points ([`PickIndex::snaps`]), the one showing
+    /// nearest the screen position `at` (as [`PickIndex::pick`] takes it)
+    /// within [`SNAP_REACH`], if any: ties go to the first. A point
+    /// behind the near plane of a perspective view doesn't show.
+    pub fn snap(
+        &self,
+        camera: &Camera,
+        size: [f32; 2],
+        at: DVec2,
+        target: Picked,
+    ) -> Option<(Snapped, DVec3)> {
+        let placement = OriginPlane::XY.placement();
+        let projector = Projector::new(camera, placement, size[0], size[1])?;
+        let mut best: Option<(f64, Snapped, DVec3)> = None;
+        for (snapped, point) in self.snaps(target) {
+            if projector.perspective() && projector.world_depth(point) < projector.near() {
+                continue;
+            }
+            let distance = projector.show(point).distance(at);
+            if distance <= SNAP_REACH && best.is_none_or(|(b, ..)| distance < b) {
+                best = Some((distance, snapped, point));
+            }
+        }
+        best.map(|(_, snapped, point)| (snapped, point))
     }
 
     /// The edges of `chain`'s tangent chain, ascending: the edges it runs
@@ -436,6 +545,19 @@ impl PickIndex {
     /// selection's colour; a vertex hovered or selected as a disc, the
     /// hovered one last. What the mesh hasn't is left out.
     pub fn highlight(&self, hovered: &[Picked], selected: &[Picked]) -> ModelHighlight {
+        self.highlight_with(hovered, selected, &[])
+    }
+
+    /// [`PickIndex::highlight`], with the faces and edges of `second` in
+    /// the second colour, as the measure tool draws its B (its A as
+    /// selected). A vertex there is left out: the measure tool draws its
+    /// points itself.
+    pub fn highlight_with(
+        &self,
+        hovered: &[Picked],
+        selected: &[Picked],
+        second: &[Picked],
+    ) -> ModelHighlight {
         let has = |target: &&Picked| {
             let (id, count) = match **target {
                 Picked::Face(face) => (face, self.mesh.face_count()),
@@ -446,6 +568,7 @@ impl PickIndex {
         };
         let hovered: Vec<Picked> = hovered.iter().filter(has).copied().collect();
         let selected: Vec<Picked> = selected.iter().filter(has).copied().collect();
+        let second = second.iter().filter(has).copied();
         let mut highlight = ModelHighlight::default();
         let mut highlights = Highlights::default();
         for &target in &hovered {
@@ -476,6 +599,13 @@ impl PickIndex {
                     hovered: hovered.contains(&target),
                     selected: true,
                 }),
+            }
+        }
+        for target in second {
+            match target {
+                Picked::Face(face) => highlight.second_faces.push(face),
+                Picked::Edge(edge) => highlights.second_edges.push(edge),
+                Picked::Vertex(_) => {}
             }
         }
         // The hovered vertices last, over the others.

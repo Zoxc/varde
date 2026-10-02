@@ -57,7 +57,8 @@ pub enum Space {
     Screen,
     /// Coordinates on another plane than the scene's, as [`Space::Sketch`]
     /// is on its plane: placed in the world as they're added, so a layer
-    /// can draw on several planes. Not for points.
+    /// can draw on several planes. Not for points: a point in the world
+    /// is added by [`SketchLayer::world_point`].
     On(GridPlane),
 }
 
@@ -164,6 +165,10 @@ pub(crate) struct PointInstance {
     pub(crate) size: [f32; 2],
     pub(crate) rim: [f32; 4],
     pub(crate) fill: [f32; 4],
+    /// With [`WORLD`], the world z, whose x and y are [`Self::at`].
+    pub(crate) z: f32,
+    /// [`WORLD`], or nothing for a sketch point.
+    pub(crate) flags: u32,
 }
 
 /// A corner of a fill's triangle as the GPU takes it: `vs_fill` in the
@@ -230,7 +235,43 @@ impl SketchLayer {
             return;
         };
         let closed = points.len() > 3 && points.first() == points.last();
-        let last = points.len() - 2;
+        let lengths = points.windows(2).map(|pair| pair[0].distance(pair[1]));
+        self.push_lines(space.flags(), &placed, lengths, closed, style);
+    }
+
+    /// Adds the polyline through the world `points`, as [`Self::polyline`]
+    /// adds one in [`Space::On`]: for what's drawn on the model in
+    /// the world, such as a measured distance.
+    pub fn world_polyline(&mut self, points: &[Vec3], style: LineStyle) {
+        if !(visible(style.width) && points.iter().all(|p| p.is_finite())) {
+            return;
+        }
+        let mut points = points.to_vec();
+        points.dedup();
+        if points.len() < 2 {
+            return;
+        }
+        let placed: Vec<_> = (points.iter())
+            .map(|p| (p.truncate().as_dvec2(), p.z))
+            .collect();
+        let closed = points.len() > 3 && points.first() == points.last();
+        let lengths = (points.windows(2)).map(|pair| f64::from(pair[0].distance(pair[1])));
+        self.push_lines(WORLD, &placed, lengths, closed, style);
+    }
+
+    /// Adds the segments between the `placed` points, as the GPU takes
+    /// them, flagged `space`, each as long as `lengths` says in turn,
+    /// joined at the ends if `closed`: two or more points, the last the
+    /// first again if `closed`.
+    fn push_lines(
+        &mut self,
+        space: u32,
+        placed: &[(DVec2, f32)],
+        lengths: impl Iterator<Item = f64>,
+        closed: bool,
+        style: LineStyle,
+    ) {
+        let last = placed.len() - 2;
         let color = style.color.linear();
         let [on, off] = style.dash.unwrap_or([0.0; 2]);
         let dash = if on > 0.0 && off > 0.0 {
@@ -238,22 +279,19 @@ impl SketchLayer {
         } else {
             [0.0; 2]
         };
-        let space = space.flags();
         let mut along = 0.0f64;
-        for (i, pair) in points.windows(2).enumerate() {
-            let (start, end) = (pair[0], pair[1]);
-            // By index into `points` and `placed`.
+        for (i, length) in lengths.enumerate().take(placed.len() - 1) {
+            // By index into `placed`.
             let prev = match i {
                 0 if closed => Some(last),
                 0 => None,
                 i => Some(i - 1),
             };
             let next = match i + 2 {
-                next if next < points.len() => Some(next),
+                next if next < placed.len() => Some(next),
                 _ if closed => Some(1),
                 _ => None,
             };
-            let length = start.distance(end);
             let flag = |neighbour: Option<usize>, flag| neighbour.map_or(0, |_| flag);
             let flags = space | flag(prev, HAS_PREV) | flag(next, HAS_NEXT);
             let [a, b] = [i, i + 1].map(|i| placed[i]);
@@ -285,6 +323,26 @@ impl SketchLayer {
             size: [style.radius, style.rim_width],
             rim: style.rim.linear(),
             fill: fill.linear(),
+            z: 0.0,
+            flags: 0,
+        });
+    }
+
+    /// Adds a point at the world point `at`, as [`Self::point`] adds one
+    /// at a sketch point: for points on the model, such as the measure
+    /// tool's. Nothing is added where `at` isn't finite in `f32`.
+    pub fn world_point(&mut self, at: Vec3, style: PointStyle) {
+        if !(visible(style.radius) && at.is_finite()) {
+            return;
+        }
+        let fill = if style.fixed { style.rim } else { style.fill };
+        self.points.push(PointInstance {
+            at: at.truncate().to_array(),
+            size: [style.radius, style.rim_width],
+            rim: style.rim.linear(),
+            fill: fill.linear(),
+            z: at.z,
+            flags: WORLD,
         });
     }
 
@@ -367,7 +425,7 @@ impl SketchLayer {
                 world(bx, by, line.z[1], line.flags),
             ]
         });
-        let points = self.points.iter().map(|p| Some(on_plane(p.at[0], p.at[1])));
+        let points = (self.points.iter()).map(|p| world(p.at[0], p.at[1], p.z, p.flags));
         let fills = self
             .fills
             .iter()

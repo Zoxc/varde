@@ -3,6 +3,7 @@
 //! input on it.
 
 mod extrude;
+mod measure;
 mod pivot;
 mod regions;
 mod revolve;
@@ -24,12 +25,13 @@ use crate::anchors::Anchors;
 use crate::chrome::{Hint, chord_hint, mouse_hint};
 use crate::icons::MouseButton;
 use crate::operation_panel::placed;
-use crate::pick::{ModelHighlight, Pick, PickIndex, Picked, Picks};
+use crate::pick::{ModelHighlight, Pick, PickIndex, Picked, Picks, Snapped};
 use crate::shortcut::Held;
 use crate::theme::{Palette, SketchColors};
 use crate::{Look, Message, controls};
 
 pub(crate) use extrude::Extruding;
+pub(crate) use measure::Measuring;
 pub(crate) use revolve::Revolving;
 pub(crate) use sketch::Sketching;
 
@@ -39,6 +41,9 @@ pub(crate) use sketch::Sketching;
 pub(crate) enum Operating<'a> {
     Extrude(Extruding<'a>),
     Revolve(Revolving<'a>),
+    /// The measure tool: not an operation, but drawn over the model as
+    /// one is, while the cursor picks the model as outside the sessions.
+    Measure(Measuring<'a>),
 }
 
 /// How far below the viewport's top the camera controls are, in pixels.
@@ -63,8 +68,15 @@ pub struct ModelPicking<'a> {
     /// What the app holds hovered, of `index`'s model: the viewport says
     /// only when that changes.
     pub hovered: Option<Picked>,
+    /// The snap point the app holds hovered with it, if any.
+    pub hovered_snap: Option<Snapped>,
     /// What the cursor picks.
     pub picks: Picks,
+    /// Whether the cursor snaps to the points of what it's over (the
+    /// measure tool's), see [`PickIndex::snap`], and of what's held
+    /// hovered while it's within reach of one of them, so it can leave a
+    /// round edge to reach its centre.
+    pub snaps: bool,
 }
 
 /// The 3D viewport showing `mesh` and the finished `sketches` from
@@ -122,6 +134,8 @@ pub(crate) fn viewport<'a>(
         let knobs = match operating {
             Operating::Extrude(extruding) => extruding.knobs(camera, mesh, &opacity),
             Operating::Revolve(_) => None,
+            // The distance's label, in the knobs' place.
+            Operating::Measure(measuring) => measuring.label(camera),
         };
         knobs.unwrap_or_else(|| iced::widget::Space::new().into())
     });
@@ -337,6 +351,8 @@ impl shader::Program<Message> for Program<'_> {
                 Operating::Revolve(revolving) => {
                     revolving.mouse(&mut state.revolve, *event, bounds, cursor, camera)
                 }
+                // The cursor picks the model as outside the sessions.
+                Operating::Measure(_) => None,
             };
             if action.is_some() {
                 return action;
@@ -403,10 +419,16 @@ impl shader::Program<Message> for Program<'_> {
                     revolving.plane(),
                     revolving.layers(&state.revolve, colors, &self.scene.camera, bounds),
                 ),
+                Operating::Measure(measuring) => {
+                    (GridPlane::XY, measuring.layers(&self.scene.colors, colors))
+                }
             };
+            // What the measure tool draws is on top: a distance through
+            // the model, or a point behind it, still shows.
+            let depth_tested = !matches!(operating, Operating::Measure(_));
             SketchFrame {
                 plane,
-                depth_tested: true,
+                depth_tested,
                 base,
                 live,
             }
@@ -455,6 +477,7 @@ impl shader::Program<Message> for Program<'_> {
                     Operating::Revolve(revolving) => {
                         revolving.mouse_interaction(&state.revolve, bounds, cursor)
                     }
+                    Operating::Measure(_) => None,
                 })
                 .or_else(|| {
                     // Over what a click would select.
@@ -497,8 +520,9 @@ impl Program<'_> {
         if let Some(at) = cursor.position_over(bounds) {
             state.hover_seen = Some((self.scene.camera, picking.index.model(), at));
         }
-        (pick.map(|pick| pick.target) != picking.hovered)
-            .then(|| Action::publish(Message::Look(Look::Hover(pick))))
+        let seen = |pick: Option<Pick>| pick.map(|pick| (pick.target, pick.snap));
+        let held = picking.hovered.map(|target| (target, picking.hovered_snap));
+        (seen(pick) != held).then(|| Action::publish(Message::Look(Look::Hover(pick))))
     }
 
     /// What of the model the cursor is over, if it's over the viewport.
@@ -516,7 +540,34 @@ impl Program<'_> {
     fn pick_point(&self, picking: &ModelPicking<'_>, bounds: Rectangle, at: Point) -> Option<Pick> {
         let at = DVec2::new((at.x - bounds.x).into(), (at.y - bounds.y).into());
         let size = [bounds.width, bounds.height];
-        (picking.index).pick(&self.scene.camera, size, at, picking.picks)
+        let camera = &self.scene.camera;
+        let index = picking.index;
+        let pick = index.pick(camera, size, at, picking.picks);
+        if !picking.snaps {
+            return pick;
+        }
+        let snap = |target| index.snap(camera, size, at, target);
+        if let Some(mut pick) = pick
+            && let Some((snapped, _)) = snap(pick.target)
+        {
+            pick.snap = Some(snapped);
+            return Some(pick);
+        }
+        // The dots of what's held hovered stay to be taken, though the
+        // cursor has left it to reach one: a round edge's centre is off
+        // the edge, often over nothing.
+        if let Some(held) = picking.hovered
+            && let Some((snapped, point)) = snap(held)
+        {
+            return Some(Pick {
+                model: index.model(),
+                target: held,
+                body: index.body(held)?,
+                at: point,
+                snap: Some(snapped),
+            });
+        }
+        pick
     }
 
     /// Whether a sketch is being edited, where the left button is for its
@@ -685,6 +736,7 @@ impl shader::Primitive for Primitive {
                 pivot: scene.pivot,
                 hovered_faces: &self.highlight.hovered_faces,
                 selected_faces: &self.highlight.selected_faces,
+                second_faces: &self.highlight.second_faces,
                 highlights: &self.highlight.highlights,
                 sketch: self.sketch.as_ref().map(|sketch| SketchScene {
                     plane: sketch.plane,

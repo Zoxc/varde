@@ -6,7 +6,8 @@
 //! there are or however short the window is.
 //!
 //! The extrude (`extrude::panel`) and the revolve (`revolve::panel`) are
-//! set up in it, from the parts here they share: what a session hands the
+//! set up in it, and the measure tool shows its values in it
+//! (`measure::panel`, with only Close), from the parts here they share: what a session hands the
 //! view of the sketches whose regions it picks, the choices, ticks and
 //! typed fields, the Bodies list of a join, cut or intersect, and the
 //! footer's message. The other operations are to set themselves up in it
@@ -169,6 +170,10 @@ pub(crate) struct Parts<'a> {
     pub ok: Option<Message>,
     /// What Cancel sends.
     pub cancel: Message,
+    /// Whether the footer has only a Close button, sending `cancel`, in
+    /// place of Cancel and OK: for a tool that changes nothing, as the
+    /// measure tool.
+    pub close: bool,
 }
 
 /// The panel showing `parts`. It's `opaque`: clicks and the wheel over it
@@ -181,6 +186,7 @@ pub(crate) fn operation_panel(parts: Parts<'_>) -> Element<'_, Message> {
         message,
         ok,
         cancel,
+        close,
     } = parts;
     let title = container(text(title).size(13).font(SEMIBOLD).wrapping(Wrapping::None))
         .width(Length::Fill)
@@ -209,11 +215,18 @@ pub(crate) fn operation_panel(parts: Parts<'_>) -> Element<'_, Message> {
         )
         .max_height(MESSAGE_HEIGHT)
     });
-    let buttons = row![
-        space::horizontal(),
-        small_button("Cancel", Emphasis::Secondary).on_press(cancel),
-        small_button("OK", Emphasis::Primary).on_press_maybe(ok),
-    ]
+    let buttons = if close {
+        row![
+            space::horizontal(),
+            small_button("Close", Emphasis::Secondary).on_press(cancel),
+        ]
+    } else {
+        row![
+            space::horizontal(),
+            small_button("Cancel", Emphasis::Secondary).on_press(cancel),
+            small_button("OK", Emphasis::Primary).on_press_maybe(ok),
+        ]
+    }
     .spacing(6);
     let footer = column![
         hrule(),

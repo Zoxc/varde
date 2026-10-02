@@ -28,6 +28,9 @@ pub struct Highlights {
     /// [`SELECTED_EDGE_WIDTH`](crate::SELECTED_EDGE_WIDTH) wide, over the
     /// outline.
     pub selected_edges: Vec<u32>,
+    /// The edges in the second colour (the measure tool's B): drawn as
+    /// the selected are, in [`Colors::second`](crate::Colors::second).
+    pub second_edges: Vec<u32>,
     /// The vertices, drawn as discs of radius
     /// [`VERTEX_RADIUS`](crate::VERTEX_RADIUS) within a rim if hovered or
     /// selected.
@@ -68,6 +71,7 @@ pub(crate) struct Built {
     pub(crate) edges: Vec<EdgePoint>,
     pub(crate) outlined: Range<u32>,
     pub(crate) selected: Range<u32>,
+    pub(crate) second: Range<u32>,
     pub(crate) vertices: Vec<VertexInstance>,
 }
 
@@ -91,6 +95,17 @@ impl Highlights {
             }
         }
         let selected = start..stream.len();
+        // Apart from the selected, if there are any.
+        if !self.second_edges.is_empty() {
+            stream.separate();
+        }
+        let start = stream.len();
+        for &edge in &self.second_edges {
+            if let Some(polyline) = mesh.polyline(edge as usize) {
+                stream.push(edge, mesh.positions(), polyline);
+            }
+        }
+        let second = start..stream.len();
         let vertices = self
             .vertices
             .iter()
@@ -106,6 +121,7 @@ impl Highlights {
             edges: stream.finish(),
             outlined,
             selected,
+            second,
             vertices,
         }
     }

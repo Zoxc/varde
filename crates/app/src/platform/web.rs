@@ -21,3 +21,15 @@ pub(crate) fn auto_save_ticks() -> Subscription<Message> {
 pub(crate) fn window_icon() -> Option<window::Icon> {
     None
 }
+
+/// Puts `text` on the clipboard through the browser's Clipboard API, at
+/// once, while the click on the copy button still counts as the user's
+/// (iced's clipboard does nothing on the web). Where it's refused (no
+/// secure context, no permission), the value isn't copied and the
+/// browser's console says why: the promise isn't waited on.
+pub(crate) fn copy(text: String) -> iced::Task<Message> {
+    if let Some(window) = web_sys::window() {
+        let _ = window.navigator().clipboard().write_text(&text);
+    }
+    iced::Task::none()
+}

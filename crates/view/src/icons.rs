@@ -64,6 +64,8 @@ icons! {
     Save => r#"<path d="M5 4h11l3 3v13H5z"/><path class="a" d="M8 4v5h7V4M8 20v-6h8v6"/>"#,
     Export => r#"<path class="a" d="M12 15V3M8 7l4-4 4 4"/><path d="M4 16v4h16v-4"/>"#,
     Check => r#"<path d="M5 12.5l4.5 4.5L19 7"/>"#,
+    // Not in the mocks: two sheets, for copying a value.
+    Copy => r#"<rect x="8.5" y="8.5" width="11" height="11" rx="1.5"/><path d="M15.5 8.5V5.5a1 1 0 0 0-1-1h-9a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h3"/>"#,
     More => r##"<circle cx="5.5" cy="12" r=".9" fill="#000"/><circle cx="12" cy="12" r=".9" fill="#000"/><circle cx="18.5" cy="12" r=".9" fill="#000"/>"##,
     // The tools, from the icon mock.
     Sketch => r#"<path class="r" d="M4 20h16"/><path class="t" d="M14.5 4.5l5 5L9 20H4v-5z"/><path class="a" d="M6 13l5 5"/>"#,
@@ -97,6 +99,7 @@ icons! {
     Offset => r#"<path class="r" d="M4 20c2-7 7-12 16-13"/><path d="M3 13c2-4 6-7 11-7.8"/><path class="a" d="M10.5 14.5L8 11M7.5 13.3L8 11l2.4.2"/>"#,
     Fillet => r#"<path d="M5 20v-8M12 5h7"/><path class="r" d="M5 12V5h7" stroke-dasharray="1.6 2"/><path class="a" d="M5 12a7 7 0 0 1 7-7"/>"#,
     Chamfer => r#"<path d="M5 20v-9M13 5h6"/><path class="r" d="M5 11V5h8" stroke-dasharray="1.6 2"/><path class="a" d="M5 11l8-6"/>"#,
+    Measure => r#"<path class="t" d="M3 17L17 3l4 4L7 21z"/><path class="a" d="M7 13l2 2M10 10l2 2M13 7l2 2"/>"#,
     // Not in the icon mock: the offset constraint's nested squares, arrows
     // each way, a handle on a curve, a comb's teeth over one.
     OffsetConstraint => r#"<rect x="3" y="3" width="18" height="18" rx="2"/><rect x="8" y="8" width="8" height="8" rx="1"/>"#,
@@ -111,6 +114,7 @@ icons! {
     // The mock's group turned, each element turned instead, as an icon
     // is a list of empty tags.
     CatConstrain => r#"<rect transform="rotate(-18 12 12)" x="5" y="6" width="14" height="12" rx=".5"/><path class="a" transform="rotate(-18 12 12)" d="M5 13.5h4.5V18"/><circle class="af" transform="rotate(-18 12 12)" cx="19" cy="6" r="1.5"/>"#,
+    CatInspect => r#"<path d="M12 3l7.8 4.5v9L12 21l-7.8-4.5v-9zM4.2 7.5L12 12l7.8-4.5M12 12v9"/><path class="a" d="M15.1 10.2l-2.7 10.4M18 8.5l-2.8 10.5M19.8 11l-1.4 5.3"/>"#,
     CatDimension => r#"<rect x="3.5" y="13" width="17" height="7.5" rx="1"/><path class="r" d="M3.5 4.5v6.5M20.5 4.5v6.5"/><path class="a" d="M4.5 7.5h15M7 5.5l-2.5 2 2.5 2M17 5.5l2.5 2-2.5 2"/>"#,
     // Nothing: room for an icon, beside items that have one.
     Blank => "",
@@ -156,6 +160,7 @@ impl Icon {
             Icon::Dimension | Icon::CatDimension => IconCategory::Dimension,
             Icon::Body | Icon::Extrude | Icon::Revolve | Icon::CatCreate => IconCategory::Solid,
             Icon::Plane => IconCategory::Construction,
+            Icon::Measure | Icon::CatInspect => IconCategory::Inspect,
             Icon::Folder | Icon::Save | Icon::Export => IconCategory::File,
             _ => return None,
         })

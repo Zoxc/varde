@@ -27,14 +27,17 @@ png.workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 resvg.workspace = true
 
-# Asks before the page goes with unsaved changes, see `src/platform/web/page.rs`.
+# Asks before the page goes with unsaved changes, see `src/platform/web/page.rs`,
+# and copies measures to the clipboard.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen.workspace = true
 web-sys = { workspace = true, features = [
     "BeforeUnloadEvent",
+    "Clipboard",
     "Document",
     "Event",
     "EventTarget",
+    "Navigator",
     "VisibilityState",
     "Window",
 ] }

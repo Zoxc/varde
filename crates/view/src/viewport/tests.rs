@@ -668,7 +668,9 @@ impl Plate {
         program.picking = Some(ModelPicking {
             index: &self.index,
             hovered,
+            hovered_snap: None,
             picks: Picks::All,
+            snaps: false,
         });
         program
     }
@@ -873,4 +875,110 @@ fn the_cursor_points_over_what_a_click_selects() {
         program.mouse_interaction(&state, Plate::bounds(), outside),
         mouse::Interaction::default()
     );
+}
+
+#[test]
+fn measuring_the_cursor_takes_snap_points_and_says_when_they_change() {
+    let plate = Plate::new();
+    let camera = plate.camera;
+    let corner = plate.at(glam::DVec3::new(30.0, 20.0, 10.0));
+    let near = Point::new(corner.x - 6.0, corner.y + 6.0);
+    let mut program = plate.program(&camera, None);
+    let picking = program.picking.as_mut().unwrap();
+    picking.snaps = true;
+    let moved = Event::Mouse(mouse::Event::CursorMoved { position: near });
+    let mut state = Interaction::default();
+    let action = {
+        use iced::widget::shader::Program as _;
+        program.update(
+            &mut state,
+            &moved,
+            Plate::bounds(),
+            mouse::Cursor::Available(near),
+        )
+    };
+    let sent = action.and_then(|action| action.into_inner().0);
+    let Some(Message::Look(Look::Hover(Some(pick)))) = sent else {
+        panic!("{sent:?}");
+    };
+    let snapped = pick.snap.expect("the corner is within reach");
+    assert_eq!(
+        plate.index.snap_point(snapped),
+        Some(glam::DVec3::new(30.0, 20.0, 10.0))
+    );
+    // Held hovered with its snap, a move nearby says nothing; held
+    // without it, it says.
+    let mut program = plate.program(&camera, Some(pick.target));
+    let picking = program.picking.as_mut().unwrap();
+    picking.snaps = true;
+    picking.hovered_snap = Some(snapped);
+    let nudged = Point::new(near.x + 1.0, near.y);
+    let moved = Event::Mouse(mouse::Event::CursorMoved { position: nudged });
+    let action = {
+        use iced::widget::shader::Program as _;
+        program.update(
+            &mut state,
+            &moved,
+            Plate::bounds(),
+            mouse::Cursor::Available(nudged),
+        )
+    };
+    assert!(action.is_none());
+    program.picking.as_mut().unwrap().hovered_snap = None;
+    let action = {
+        use iced::widget::shader::Program as _;
+        program.update(
+            &mut state,
+            &moved,
+            Plate::bounds(),
+            mouse::Cursor::Available(nudged),
+        )
+    };
+    assert!(action.is_some());
+}
+
+#[test]
+fn measuring_the_dots_of_what_s_hovered_stay_to_be_taken_off_it() {
+    let plate = Plate::new();
+    let camera = plate.camera;
+    // The hole's rim on top, then its centre, over the hole: nothing
+    // under the cursor but the rim's dot.
+    let rim_at = plate.at(glam::DVec3::new(8.0, 0.0, 10.0));
+    let rim = (plate.index)
+        .pick(
+            &camera,
+            crate::pick::tests::SIZE,
+            glam::DVec2::new(rim_at.x.into(), rim_at.y.into()),
+            Picks::Edges,
+        )
+        .unwrap();
+    let centre = plate.at(glam::DVec3::new(0.0, 0.0, 10.0));
+    let near = Point::new(centre.x + 4.0, centre.y);
+    let mut state = Interaction::default();
+    let moved = Event::Mouse(mouse::Event::CursorMoved { position: near });
+    for (held, snapped) in [(None, false), (Some(rim.target), true)] {
+        let mut program = plate.program(&camera, held);
+        program.picking.as_mut().unwrap().snaps = true;
+        let action = {
+            use iced::widget::shader::Program as _;
+            program.update(
+                &mut state,
+                &moved,
+                Plate::bounds(),
+                mouse::Cursor::Available(near),
+            )
+        };
+        let sent = action.and_then(|action| action.into_inner().0);
+        match (sent, snapped) {
+            (None, false) => {}
+            (Some(Message::Look(Look::Hover(Some(pick)))), true) => {
+                assert_eq!(pick.target, rim.target);
+                assert!(matches!(
+                    pick.snap,
+                    Some(crate::pick::Snapped::EdgePoint(_))
+                ));
+            }
+            (sent, _) => panic!("{sent:?}"),
+        }
+    }
 }

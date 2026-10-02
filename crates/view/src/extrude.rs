@@ -406,6 +406,7 @@ pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
         message,
         ok: state.ready.then_some(Message::Edit(Edit::CommitExtrude)),
         cancel: Message::Look(Look::Extrude(ExtrudeLook::Cancel)),
+        close: false,
     })
 }
 

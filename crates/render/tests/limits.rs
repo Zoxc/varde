@@ -40,6 +40,7 @@ const COLORS: Colors = Colors {
     selected: Srgb([0.04, 0.58, 0.68]),
     selected_tint: 0.6,
     selected_edge_shade: 0.0,
+    second: Srgb([1.0, 0.5, 0.0]),
 };
 
 /// The device the tests share, whose buffers hold at most 512 bytes, if
@@ -82,6 +83,7 @@ fn frame<'a>(
         hidden_edges: true,
         hovered_faces: &[],
         selected_faces: &[],
+        second_faces: &[],
         highlights: &NO_HIGHLIGHTS,
         sketch: None,
         pivot: None,

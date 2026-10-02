@@ -595,3 +595,86 @@ fn edges_seen_end_on_and_faces_seen_edge_on_pick_what_shows() {
         }
     }
 }
+
+#[test]
+fn snap_points_are_a_faces_corners_and_an_edges_ends_and_middle_or_centre() {
+    let index = plate();
+    let top = camera(View::Top, Projection::Orthographic);
+    let face = index
+        .pick(
+            &top,
+            SIZE,
+            shown(&top, DVec3::new(20.0, 5.0, 10.0)),
+            Picks::Faces,
+        )
+        .unwrap();
+    assert_eq!(plane(&index, face.target), TOP);
+    let mut corners: Vec<DVec3> = (index.snaps(face.target).into_iter())
+        .map(|(snapped, at)| {
+            assert!(matches!(snapped, Snapped::Corner(_)), "{snapped:?}");
+            assert_eq!(index.snap_point(snapped), Some(at));
+            at
+        })
+        .collect();
+    corners.sort_by(|a, b| a.to_array().partial_cmp(&b.to_array()).unwrap());
+    let corner = |x, y| DVec3::new(x, y, 10.0);
+    assert_eq!(
+        corners,
+        [
+            corner(-30.0, -20.0),
+            corner(-30.0, 20.0),
+            corner(30.0, -20.0),
+            corner(30.0, 20.0)
+        ]
+    );
+    // The top's front edge: its two ends and its middle.
+    let edge_at = shown(&top, DVec3::new(10.0, -20.0, 10.0));
+    let edge = index.pick(&top, SIZE, edge_at, Picks::Edges).unwrap();
+    let snaps = index.snaps(edge.target);
+    let Picked::Edge(chain) = edge.target else {
+        panic!("{edge:?}");
+    };
+    assert_eq!(snaps.len(), 3, "{snaps:?}");
+    assert!(snaps.contains(&(Snapped::EdgePoint(chain), DVec3::new(0.0, -20.0, 10.0))));
+    // The hole's rim on top: its centre only, as it has no ends.
+    let rim_at = shown(&top, DVec3::new(8.0, 0.0, 10.0));
+    let rim = index.pick(&top, SIZE, rim_at, Picks::Edges).unwrap();
+    let Picked::Edge(rim_chain) = rim.target else {
+        panic!("{rim:?}");
+    };
+    let [(snapped, centre)] = index.snaps(rim.target)[..] else {
+        panic!("{:?}", index.snaps(rim.target));
+    };
+    assert_eq!(snapped, Snapped::EdgePoint(rim_chain));
+    // From the circle's conic: to rounding.
+    assert!(
+        centre.distance(DVec3::new(0.0, 0.0, 10.0)) < 1e-12,
+        "{centre}"
+    );
+}
+
+#[test]
+fn the_cursor_takes_the_nearest_snap_point_within_reach() {
+    let index = plate();
+    for projection in [Projection::Orthographic, Projection::Perspective] {
+        let top = camera(View::Top, projection);
+        let corner = DVec3::new(30.0, 20.0, 10.0);
+        let at = shown(&top, corner);
+        let face = index
+            .pick(&top, SIZE, at - DVec2::new(20.0, -20.0), Picks::Faces)
+            .unwrap();
+        // 8 pixels off the corner: taken.
+        let (snapped, point) = index
+            .snap(&top, SIZE, at - DVec2::new(8.0, 0.0), face.target)
+            .unwrap();
+        assert!(matches!(snapped, Snapped::Corner(_)), "{projection:?}");
+        assert_eq!(point, corner);
+        // 12 pixels off: not.
+        let off = at - DVec2::new(12.0, 0.0);
+        assert_eq!(
+            index.snap(&top, SIZE, off, face.target),
+            None,
+            "{projection:?}"
+        );
+    }
+}

@@ -6,6 +6,7 @@ mod delete;
 mod export;
 mod extrude;
 mod feed;
+mod measure;
 mod pick;
 mod rail;
 mod regions;
@@ -43,6 +44,7 @@ use export::Export;
 pub(crate) use export::Exporting;
 pub(crate) use extrude::ExtrudeSession;
 use feed::MeshFeed;
+pub(crate) use measure::MeasureSession;
 use pick::ModelPick;
 use rail::Rail;
 pub(crate) use revolve::RevolveSession;
@@ -113,6 +115,9 @@ pub(crate) struct Doc {
     /// The revolve being set up, if one is: never with a sketch or an
     /// extrude.
     pub(crate) revolve: Option<RevolveSession>,
+    /// The measure tool, while it's in use: never with a sketch or an
+    /// operation being set up.
+    pub(crate) measure: Option<MeasureSession>,
     /// The share of the Sketch tab's height the Geometry list takes, kept
     /// from one sketch to the next.
     pub(crate) sketch_split: f32,
@@ -235,6 +240,7 @@ impl Doc {
             sketch: None,
             extrude: None,
             revolve: None,
+            measure: None,
             sketch_split: GEOMETRY_SHARE,
             focus: None,
             animation: None,
@@ -269,6 +275,7 @@ impl Doc {
         self.prune(replaced);
         self.prune_extrude(replaced);
         self.prune_revolve(replaced);
+        self.prune_measure(replaced);
         self.request_analysis();
         self.request_model();
         self.refresh_profiles();
@@ -278,11 +285,16 @@ impl Doc {
 
     /// Asks for the model if the document changed, the sketch left out of
     /// it (the one being edited) or the extrude or revolve being set up
-    /// did, which is previewed as a draft.
+    /// did, which is previewed as a draft, or the measure tool's picks,
+    /// measured on it. The measure tool is never in use with a draft, so
+    /// no request carries both: a draft dragged never measures again at
+    /// each step.
     fn request_model(&mut self) {
         let exclude = self.sketch.as_ref().map(|session| session.feature);
         let draft = self.extrude_draft().or_else(|| self.revolve_draft());
-        self.feed.request_with(&self.editor, exclude, draft);
+        let inspect = self.measure.as_ref().and_then(MeasureSession::inspect);
+        self.feed
+            .request_with(&self.editor, exclude, draft, inspect);
     }
 
     /// Whether an operation is being set up: an extrude or a revolve.
@@ -509,9 +521,17 @@ impl Doc {
                 | Look::PickPlane
                 | Look::StartExtrude
                 | Look::StartRevolve
+                | Look::StartMeasure
                 | Look::EditFeature(_)
         ) {
             self.rail.close();
+        }
+        // Another tool leaves the measure tool.
+        if matches!(
+            message,
+            Look::PickPlane | Look::StartExtrude | Look::StartRevolve | Look::EditFeature(_)
+        ) {
+            self.measure = None;
         }
         match message {
             Look::CloseFileMenu => self.file_menu = false,
@@ -532,6 +552,8 @@ impl Doc {
             Look::Extrude(message) => self.extrude_look(message),
             Look::StartRevolve => self.start_revolve(),
             Look::Revolve(message) => self.revolve_look(message),
+            Look::StartMeasure => self.start_measure(),
+            Look::Measure(message) => self.measure_look(message),
             Look::FinishSketch => self.finish_sketch(),
             Look::SelectFeature(id) => {
                 if self.editor.document().feature(id).is_some() {
@@ -548,7 +570,11 @@ impl Doc {
             Look::ClickRow(id) => self.click_geometry(Some(id), false),
             Look::HoverItem(id) => self.hover_item(id),
             Look::Hover(pick) => self.hover(pick),
+            Look::ClickModel { pick, add, double } if self.measure.is_some() => {
+                self.measure_click(pick, add, double);
+            }
             Look::ClickModel { pick, add, double } => self.click_model(pick, add, double),
+            Look::ClickBody { body, add } if self.measure.is_some() => self.measure_body(body, add),
             Look::ClickBody { body, add } => self.click_body(body, add),
             Look::Snap(snap) => {
                 if let Some(session) = &mut self.sketch {
@@ -716,6 +742,7 @@ impl Doc {
             DocumentKeys::new(self.editable(), self.selected_feature, self.sketch_state())
                 .with_extrude(self.extrudable(), self.extrude_state().as_ref())
                 .with_revolve(self.revolve_state().as_ref())
+                .with_measure(self.measure.is_some())
                 .with_rail(self.rail.state())
                 .with_edited(self.edited())
                 .with_history(
@@ -836,6 +863,7 @@ impl Doc {
             sketch: self.sketch_state(),
             extrude: self.extrude_state(),
             revolve: self.revolve_state(),
+            measure: self.measure_state(),
             extrudable: self.extrudable(),
             unsolved: self.feed.unsolved(),
             failed: self.feed.failed_features(),

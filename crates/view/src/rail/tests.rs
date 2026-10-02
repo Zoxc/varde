@@ -85,7 +85,17 @@ fn the_sets_hold_every_tool_the_app_has_and_only_those() {
     }
     assert!(sketch.contains(&Entry::Constrain));
     let model: Vec<Entry> = MODEL.iter().flat_map(|set| set.entries).copied().collect();
-    assert_eq!(model, [Entry::Sketch, Entry::Extrude, Entry::Revolve]);
+    assert_eq!(
+        model,
+        [
+            Entry::Sketch,
+            Entry::Extrude,
+            Entry::Revolve,
+            Entry::Measure
+        ]
+    );
+    // I is Measure's own, in the Inspect set.
+    assert_eq!(letters(MODEL[1].entries, false), [Some('i')]);
     for set in SKETCH.iter().chain(&MODEL) {
         // No set without tools, and a card shows its first ones.
         assert!(!set.entries.is_empty(), "{}", set.name);

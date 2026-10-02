@@ -415,6 +415,8 @@ impl Doc {
             self.extrude = None;
         } else if self.revolve.is_some() {
             self.revolve = None;
+        } else if self.measure.is_some() {
+            self.measure = None;
         } else if let Some(session) = &mut self.sketch {
             if session.value.take().is_some()
                 || session.label.take().is_some()

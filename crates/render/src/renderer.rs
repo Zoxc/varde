@@ -131,6 +131,10 @@ pub struct Frame<'a> {
     /// The faces selected, by their ids likewise: drawn again over
     /// themselves, tinted with [`Colors::selected`], over the hover.
     pub selected_faces: &'a [u32],
+    /// The faces in the second colour (the measure tool's B), by their
+    /// ids likewise: tinted with [`Colors::second`] as the selected are
+    /// with theirs, over them.
+    pub second_faces: &'a [u32],
     /// The edges and vertices hovered and selected, drawn over the model.
     /// Only re-uploaded when it's another `Arc` than the last one
     /// prepared, or the mesh is. Not drawn while [`Self::faded`].
@@ -214,6 +218,11 @@ pub struct Colors {
     /// black, through 0, the accent itself, to 1, white, of the way in
     /// linear light. Out of range or NaN is 0.
     pub selected_edge_shade: f32,
+    /// The second colour, for the second of two picks (the measure
+    /// tool's B), where the first is in [`Self::selected`]: faces tinted
+    /// with it and edges drawn in it as the selected are with theirs. See
+    /// [`Frame::second_faces`] and [`Highlights::second_edges`].
+    pub second: Srgb,
 }
 
 /// The scene shader's uniforms. `Uniforms` in `scene.wgsl` mirrors this
@@ -264,8 +273,8 @@ struct Uniforms {
     grid_origin: [f32; 4],
     grid_x: [f32; 4],
     grid_y: [f32; 4],
-    /// [`SketchScene::plane`]: xyz its origin, and unit x and y axes; w
-    /// unused.
+    /// [`SketchScene::plane`]: xyz its origin, and unit x and y axes; the
+    /// w's [`Colors::second`]'s red, green and blue.
     sketch_origin: [f32; 4],
     sketch_x: [f32; 4],
     sketch_y: [f32; 4],
@@ -466,8 +475,17 @@ struct FaceDraw {
     indices: Range<u32>,
     /// Its part's alpha's step, see [`Alphas`].
     step: u32,
-    /// Tinted as selected, else brightened as hovered.
-    selected: bool,
+    /// Brightened as hovered, or tinted as selected or in the second
+    /// colour.
+    tint: Tint,
+}
+
+/// How a [`FaceDraw`] is drawn again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Tint {
+    Hovered,
+    Selected,
+    Second,
 }
 
 /// What the renderer keeps of a part of the mesh to draw it on its own.
@@ -685,12 +703,16 @@ pub struct Renderer {
     /// Faces drawn again over themselves (`Equal`), hovered and selected.
     hover_face: wgpu::RenderPipeline,
     selected_face: wgpu::RenderPipeline,
+    second_face: wgpu::RenderPipeline,
     /// The rim of the hovered edges' outline, the hovered edges within
     /// it, the selected edges, and the hovered and selected vertices.
     outline: wgpu::RenderPipeline,
     hovered_edges: wgpu::RenderPipeline,
     selected_outline: wgpu::RenderPipeline,
     selected_edges: wgpu::RenderPipeline,
+    /// The edges in the second colour, with their rim.
+    second_outline: wgpu::RenderPipeline,
+    second_edges: wgpu::RenderPipeline,
     vertices: wgpu::RenderPipeline,
     lines: wgpu::RenderPipeline,
     origin: wgpu::RenderPipeline,
@@ -895,6 +917,7 @@ impl Renderer {
             step_mode: wgpu::VertexStepMode::Instance,
             attributes: &wgpu::vertex_attr_array![
                 0 => Float32x2, 1 => Float32x2, 2 => Float32x4, 3 => Float32x4,
+                4 => Float32, 5 => Uint32,
             ],
         };
         let sketch_fills = wgpu::VertexBufferLayout {
@@ -1049,6 +1072,7 @@ impl Renderer {
             }),
             hover_face: redrawn("varde hovered face", "fs_hover_face"),
             selected_face: redrawn("varde selected face", "fs_selected_face"),
+            second_face: redrawn("varde second face", "fs_second_face"),
             mesh: pipeline(mesh),
             // Entry points of their own, which wgpu's GL backend keys
             // programs by.
@@ -1059,6 +1083,8 @@ impl Renderer {
                 "vs_selected_outline",
             )),
             selected_edges: pipeline(highlight_pass("varde selected edges", "vs_selected_edge")),
+            second_outline: pipeline(highlight_pass("varde second outline", "vs_second_outline")),
+            second_edges: pipeline(highlight_pass("varde second edges", "vs_second_edge")),
             vertices: pipeline(Pass {
                 buffers: std::slice::from_ref(&vertices),
                 ..Pass::overlay("varde vertices", "vs_vertex", "fs_highlight_point")
@@ -1234,14 +1260,19 @@ impl Renderer {
         if !frame.faded
             && let Some(gpu) = &slot.mesh
         {
-            let hovered = frame.hovered_faces.iter().map(|&face| (face, false));
-            let selected = frame.selected_faces.iter().map(|&face| (face, true));
-            for (face, selected) in hovered.into_iter().chain(selected) {
+            let tinted = [
+                (frame.hovered_faces, Tint::Hovered),
+                (frame.selected_faces, Tint::Selected),
+                (frame.second_faces, Tint::Second),
+            ];
+            let faces = (tinted.into_iter())
+                .flat_map(|(faces, tint)| faces.iter().map(move |&face| (face, tint)));
+            for (face, tint) in faces {
                 if let Some((indices, part)) = gpu.face(frame.mesh, face) {
                     slot.faces.push(FaceDraw {
                         indices,
                         step: self.alphas.step(opacity.get(part).copied()),
-                        selected,
+                        tint,
                     });
                 }
             }
@@ -1311,6 +1342,7 @@ impl Renderer {
         } else {
             0.0
         };
+        let second = linear(colors.second);
         let uniforms = Uniforms {
             view_proj: scene::view_projection(camera, aspect, grid, bounds.flatten())
                 .to_cols_array_2d(),
@@ -1342,9 +1374,9 @@ impl Renderer {
             grid_origin: grid.origin().extend(0.0).to_array(),
             grid_x: grid.x().extend(axis_index(grid.x())).to_array(),
             grid_y: grid.y().extend(axis_index(grid.y())).to_array(),
-            sketch_origin: sketch_plane.origin().extend(0.0).to_array(),
-            sketch_x: sketch_plane.x().extend(0.0).to_array(),
-            sketch_y: sketch_plane.y().extend(0.0).to_array(),
+            sketch_origin: sketch_plane.origin().extend(second[0]).to_array(),
+            sketch_x: sketch_plane.x().extend(second[1]).to_array(),
+            sketch_y: sketch_plane.y().extend(second[2]).to_array(),
             hover_face: with_alpha(colors.hover_face, selected_tint),
             hover_outline: linear(colors.hover_outline),
             selected: with_alpha(colors.selected, selected_edge_shade),
@@ -1536,10 +1568,10 @@ impl Renderer {
             if (face.step < self.alphas.opaque) != transparent || face.indices.is_empty() {
                 continue;
             }
-            let pipeline = if face.selected {
-                &self.selected_face
-            } else {
-                &self.hover_face
+            let pipeline = match face.tint {
+                Tint::Hovered => &self.hover_face,
+                Tint::Selected => &self.selected_face,
+                Tint::Second => &self.second_face,
             };
             pass.set_pipeline(pipeline);
             self.alphas.set(pass, face.step);
@@ -1559,6 +1591,9 @@ impl Renderer {
             let selected = highlights.selected.clone();
             draw_stream(pass, &self.selected_outline, edges, selected.clone());
             draw_stream(pass, &self.selected_edges, edges, selected);
+            let second = highlights.second.clone();
+            draw_stream(pass, &self.second_outline, edges, second.clone());
+            draw_stream(pass, &self.second_edges, edges, second);
         }
         if let Some(vertices) = highlights.vertices.drawn() {
             pass.set_pipeline(&self.vertices);
@@ -2083,6 +2118,7 @@ struct HighlightBuffers {
     edges: Instances,
     outlined: Range<u32>,
     selected: Range<u32>,
+    second: Range<u32>,
     vertices: Instances,
 }
 
@@ -2108,6 +2144,7 @@ impl HighlightBuffers {
             Ok(()) => HighlightBuffers {
                 outlined: built.outlined,
                 selected: built.selected,
+                second: built.second,
                 ..std::mem::take(self)
             },
             Err(_) => HighlightBuffers::default(),

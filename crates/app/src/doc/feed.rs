@@ -6,7 +6,9 @@ use std::sync::Arc;
 
 use varde_document::{BodyId, Document, Editor, FeatureId, FeatureKind, Generation, Operation};
 use varde_kernel::{RenderLines, RenderMesh};
-use varde_regen::{Draft, Drafted, Picking, Request, Response, Transport};
+use varde_regen::{
+    Draft, Drafted, Inspect, InspectPick, Inspected, Picking, Request, Response, Transport,
+};
 use varde_view::{MeshStatus, PickIndex};
 
 /// The mesh and sketch lines shown for the document. They're built by the
@@ -79,16 +81,27 @@ pub(crate) struct MeshFeed {
     /// What was asked for, at least as new as `shown`, whose model
     /// couldn't be built, and why.
     failed: Option<(Asked, String)>,
+    /// The measure asked for last, if any: other picks are given the next
+    /// revision.
+    inspect: Option<Inspect>,
+    /// The revision the last measure was given, counted up across the
+    /// document's life as drafts' are.
+    inspect_revision: u64,
+    /// What the measure asked with the model shown came to, if it had
+    /// one: its places name entries of `picking`.
+    inspected: Option<Inspected>,
 }
 
 /// What a request asks for, and so what its answer is of: a generation
-/// of the document, the sketch left out of the lines, and the revision
-/// of the draft applied, if any.
+/// of the document, the sketch left out of the lines, the revision of the
+/// draft applied, if any, and the revision of the measure taken on it, if
+/// any.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Asked {
     generation: Generation,
     exclude: Option<FeatureId>,
     draft: Option<u64>,
+    inspect: Option<u64>,
 }
 
 impl Asked {
@@ -98,6 +111,7 @@ impl Asked {
             generation: response.generation()?,
             exclude: response.exclude(),
             draft: response.draft(),
+            inspect: response.inspect(),
         })
     }
 }
@@ -123,7 +137,7 @@ impl MeshFeed {
     /// [`MeshFeed::request_with`] without a draft.
     #[cfg(test)]
     pub(crate) fn request(&mut self, editor: &Editor, exclude: Option<FeatureId>) {
-        self.request_with(editor, exclude, None);
+        self.request_with(editor, exclude, None, None);
     }
 
     /// Asks the lane for the document's mesh, leaving the sketch `exclude`
@@ -133,7 +147,10 @@ impl MeshFeed {
     /// out changed, as it does on entering or leaving one, or the draft
     /// did. A draft differing
     /// from the one asked for last is given the next revision; without
-    /// one, the model is asked for again without the last. Nothing, not
+    /// one, the model is asked for again without the last. Likewise
+    /// `inspect`, the measure tool's picks, measured on the model
+    /// answered: other picks than those asked for last are given the next
+    /// revision, and none ask again without a measure. Nothing, not
     /// even remembering it, before the lane has started: then the first
     /// request asks for the editor's newest.
     pub(crate) fn request_with(
@@ -141,6 +158,7 @@ impl MeshFeed {
         editor: &Editor,
         exclude: Option<FeatureId>,
         draft: Option<(Option<FeatureId>, FeatureKind)>,
+        inspect: Option<(InspectPick, Option<InspectPick>)>,
     ) {
         let Some(regen) = &mut self.regen else {
             return;
@@ -160,12 +178,26 @@ impl MeshFeed {
                 }
             }
         });
+        let inspect = inspect.map(|(first, second)| match &self.inspect {
+            Some(last) if last.first == first && last.second == second => last.clone(),
+            _ => {
+                // One per change of the picks: a u64 won't run out.
+                self.inspect_revision += 1;
+                Inspect {
+                    revision: self.inspect_revision,
+                    first,
+                    second,
+                }
+            }
+        });
         let asked = Asked {
             generation: editor.generation(),
             exclude,
             draft: draft.as_ref().map(|draft| draft.revision),
+            inspect: inspect.as_ref().map(|inspect| inspect.revision),
         };
         self.draft = draft.clone();
+        self.inspect = inspect.clone();
         if self.requested.is_none_or(|requested| {
             requested.generation < asked.generation
                 || (requested.generation == asked.generation && requested != asked)
@@ -176,7 +208,7 @@ impl MeshFeed {
                 document: editor.snapshot(),
                 exclude,
                 draft: draft.map(Box::new),
-                inspect: None,
+                inspect: inspect.map(Box::new),
             });
         }
     }
@@ -220,6 +252,7 @@ impl MeshFeed {
                 merged,
                 draft,
                 bodies,
+                inspected,
                 ..
             } => {
                 // The lane hands an unchanged model back as the same
@@ -255,6 +288,7 @@ impl MeshFeed {
                     self.touched = Some((*revision, touched.clone()));
                 }
                 self.drafted = draft;
+                self.inspected = inspected.map(|inspected| *inspected);
                 self.shown = Some(asked);
                 self.failed = None;
             }
@@ -283,7 +317,8 @@ impl MeshFeed {
             .as_ref()
             .is_some_and(|(failed, _)| *failed == asked);
         self.requested.is_some_and(|requested| {
-            (requested.exclude, requested.draft) == (asked.exclude, asked.draft)
+            (requested.exclude, requested.draft, requested.inspect)
+                == (asked.exclude, asked.draft, asked.inspect)
         }) && self.shown != Some(asked)
             && !failed
     }
@@ -328,6 +363,15 @@ impl MeshFeed {
             (Some(_), Some((revision, _))) if *revision >= self.run => Some(*revision),
             _ => None,
         }
+    }
+
+    /// What the measure asked for last came to on the model shown, once
+    /// an answer for those picks is shown: none while it's on its way
+    /// (after an edit, the same picks' answer on the model before shows
+    /// until the new one comes, as the model does), or without a measure.
+    pub(crate) fn inspected(&self) -> Option<&Inspected> {
+        let revision = self.inspect.as_ref()?.revision;
+        (self.inspected.as_ref()).filter(|inspected| inspected.revision == revision)
     }
 
     /// The revision the newest draft was given: every later draft gets a

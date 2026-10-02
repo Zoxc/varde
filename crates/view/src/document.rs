@@ -110,6 +110,9 @@ pub struct DocumentState<'a> {
     /// The revolve being set up, if one is: never with a sketch or an
     /// extrude.
     pub revolve: Option<RevolveState<'a>>,
+    /// The measure tool, while it's in use: never with a sketch or an
+    /// operation being set up.
+    pub measure: Option<crate::MeasureState<'a>>,
     /// Whether there's a sketch to extrude or revolve regions of: the
     /// Extrude and Revolve tools work outside sketches then.
     pub extrudable: bool,
@@ -150,6 +153,7 @@ impl DocumentState<'_> {
         DocumentKeys::new(self.editable(), self.selected_feature, self.sketch)
             .with_extrude(self.extrudable, self.extrude.as_ref())
             .with_revolve(self.revolve.as_ref())
+            .with_measure(self.measure.is_some())
             .with_rail(self.rail)
             .with_edited(self.edited)
             .with_history(
@@ -578,7 +582,8 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
                             .map(|sketch| viewport::Sketching::new(sketch, editable)),
                         operating(&state),
                         (state.extrude.as_ref().map(crate::extrude::panel))
-                            .or_else(|| state.revolve.as_ref().map(crate::revolve::panel)),
+                            .or_else(|| state.revolve.as_ref().map(crate::revolve::panel))
+                            .or_else(|| state.measure.as_ref().map(crate::measure::panel)),
                         crate::rail::rail(&state),
                     ),
                     status::status_bar(status(&state)),
@@ -617,8 +622,10 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
 fn operating<'a>(state: &DocumentState<'a>) -> Option<viewport::Operating<'a>> {
     let extruding = state.extrude.clone().map(viewport::Extruding::new);
     let revolving = state.revolve.clone().map(viewport::Revolving::new);
+    let measuring = state.measure.clone().map(viewport::Measuring::new);
     (extruding.map(viewport::Operating::Extrude))
         .or_else(|| revolving.map(viewport::Operating::Revolve))
+        .or_else(|| measuring.map(viewport::Operating::Measure))
 }
 
 /// How opaque each part of the mesh is drawn, the parts being of `parts`'
@@ -690,6 +697,8 @@ fn hints<'a>(state: &DocumentState<'a>) -> Vec<Hint<'a>> {
             .into_iter()
             .flatten()
             .collect()
+    } else if let Some(measure) = &state.measure {
+        measure_hints(measure)
     } else if let Some(sketch) = state.sketch {
         sketch_hints(&sketch, state.editable())
     } else if state.selected_feature.is_some() {
@@ -706,6 +715,22 @@ fn hints<'a>(state: &DocumentState<'a>) -> Vec<Hint<'a>> {
         Vec::new()
     };
     keys.into_iter().chain(viewport::hints(sketching)).collect()
+}
+
+/// The status bar's hints for the measure tool: a click picks A, then B,
+/// then A again; `Shift` with it replaces B; a double-click picks the
+/// body; `Esc` leaves.
+fn measure_hints<'a>(measure: &crate::MeasureState<'a>) -> Vec<Hint<'a>> {
+    let click = match measure.picks {
+        [Some(_), None] => "Pick B",
+        _ => "Pick A",
+    };
+    vec![
+        mouse_hint(MouseButton::Left, click),
+        chord_hint(Held::TOGGLE, MouseButton::Left, "Replace B"),
+        chrome::double_hint(MouseButton::Left, "Body"),
+        key_hint(Shortcut::ESCAPE, "Done"),
+    ]
 }
 
 /// The status bar's hints for selecting in the model with `selection`:
@@ -1293,6 +1318,7 @@ fn selection<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
         || state.sketch.is_some()
         || state.extrude.is_some()
         || state.revolve.is_some()
+        || state.measure.is_some()
     {
         return None;
     }

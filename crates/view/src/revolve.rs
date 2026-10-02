@@ -361,6 +361,7 @@ pub(crate) fn panel<'a>(state: &RevolveState<'a>) -> Element<'a, Message> {
         message,
         ok: state.ready.then_some(Message::Edit(Edit::CommitRevolve)),
         cancel: Message::Look(Look::Revolve(RevolveLook::Cancel)),
+        close: false,
     })
 }
 

@@ -591,8 +591,108 @@ one asked for last, as it does a draft's. The cost of that choice: a
 measure running (up to the full budget, as coaxial curved faces can
 take) holds the slot, so an edit's model waits behind it, and
 while a draft is dragged with picks on the drafted body each step
-measures again (the solid is new each step). The session can leave the
-picks out of requests while a draft is dragged if that shows.
+would measure again (the solid is new each step). It doesn't arise: the
+measure tool and the operations being set up never run together (one
+starting ends the other), so no request carries both a draft and picks.
+
+**The measure tool** (`app/src/doc/measure.rs`, `Doc::measure`, a
+`MeasureSession`; `view/src/measure.rs`; `view/src/viewport/measure.rs`)
+writes nothing to the document, has no undo and leaves the selection as
+it was. `I` (`Shortcut::MEASURE`, outside sketches, where `I` is
+Coincident's), the toolbar's Measure button (after a separator, as the
+mock has it) and the rail's Inspect set (the model rail's second, `W`;
+its list's letter `I`) send `Look::StartMeasure` through
+`shortcut::measure_binding`: enabled outside sketches and the operations
+being set up, read-only documents included; again, `Esc` or the panel's
+Close (`MeasureLook::Close`) leave it, and starting a sketch, an extrude
+or a revolve, editing a feature, or replacing the document whole end it
+(`Doc::prune_measure`). While it's in use the cursor picks the model as
+outside the sessions (`Doc::picks`), faces, edges and vertices whatever
+the selection's mode, and with `ModelPicking::snaps` the snap points of
+what it's over (`PickIndex::snaps`: a face's corners, the corners naming
+it among their three faces; an edge's ends, the corners naming both its
+faces, and its own point, `Picking::snaps`; a vertex's corner, the one
+of its faces at its point): the nearest showing within
+`SNAP_REACH` (10) pixels is taken (`PickIndex::snap`, `Pick::snap` a
+`Snapped::Corner` or `EdgePoint`), and while the cursor is within reach
+of a dot of what's held hovered it keeps that hovered and takes the dot
+though it has left it, so a round edge's centre, off the edge and often
+over nothing, can be reached from the edge. `Look::Hover` is sent when
+the target or its snap changes. Clicks (`Look::ClickModel`) go to the
+session (`MeasureSession::click`): the first picks A, the second B, a
+third A again without B; with `Shift` (or `Ctrl`, `Held::TOGGLE`) it
+picks B (A while there's none); the second click of a double-click makes
+what the first picked its body; a click off the model lets go of both;
+a body's row in Objects picks the body (B with `Ctrl`). A pick is an
+`InspectPick` by name: a snapped corner by its three keys
+(`Picking::corner_keys`) at its exact point, an edge's point by the
+edge's keys at the point on the edge picked, a face by its key, an edge
+by its sorted keys, each at the point picked, a body by id; a vertex
+with no corner taken (past the table's bound) picks nothing. The session
+sends A and B with every request (`MeshFeed::request_with`'s `inspect`):
+the feed gives picks differing from the last the next revision (counted
+over the document's life, as drafts are), asks again when they change,
+and counts the revision into `Asked`, so an answer of the same
+generation is taken only for the picks asked last and an older one is
+dropped; `MeshFeed::inspected` gives the measure of the model shown only
+while it's for the picks asked last (after an edit, the old model's
+answer for the same picks shows until the new one comes, as the model
+does). After an edit regen resolves the same picks in the new model; one
+it doesn't find shows its reason under its row ("Face not found") and is
+kept, so an undo finds it again.
+
+The highlight while measuring is the session's own (the selection's
+isn't drawn and stays as it was), a `ModelHighlight` as the
+selection's is (`PickIndex::highlight_with`): what's hovered, drawn as
+it is outside the tool, A drawn as selected (the accent: faces tinted,
+edges in it) and B in the second colour (`Colors::second`, the
+construction colour: `ModelHighlight::second_faces` tinted as selected
+faces are, `Highlights::second_edges` drawn as selected edges are, both
+over the selection's; the renderer keeps its red, green and blue in the
+sketch plane's unused uniform w's, the uniforms being full), built only
+from the newest answer's `Probed::at` (a face's, an edge's; a body's
+faces from the body id
+once its measure came back), so it always names entries of the model
+shown; a point is drawn as a dot instead. On top of the model (not depth
+tested, so a distance through the plate or a point behind it shows) the
+viewport (`Measuring`, one of `viewport::Operating`) draws in its live
+layer the hovered target's snap dots (the one taken bigger and filled),
+A's and B's points as dots in their colours, and the minimum distance
+between its two points, dashed, with its ends (none for picks that
+touch, at 0); the distance's label is a widget anchored at the
+segment's middle, in the knobs' layer. World points are
+`SketchLayer::world_point` (a `PointInstance` flagged `WORLD` with its
+z, as lines and fills are).
+
+The panel (`measure::panel`, the operation panel with only Close,
+`Parts::close`) has a row per pick with its tag ("A" in the accent, "B"
+in the second colour, `theme::pick_tag`, its letter white where that
+reads at 3:1, else dark: dark on the dark palette's light accent and on
+both construction colours) and its name ("Planar face of
+Body 1", "Circular edge of Body 1", "Point of Body 1", "Body 1"; the
+kind from the measure's form once it's back) or what to click. With one
+pick its values follow; with two, what's between them (Distance and its
+ΔX, ΔY, ΔZ from A's point to B's, Angle where both have a direction),
+then each pick's own values under a header folding them away
+(`MeasureLook::Fold`), folded to start with. Values
+(`measure::values`, `between_values`): a point's X, Y, Z; an edge's
+length and a line's direction, a circle's radius, diameter and centre,
+an ellipse's semi-axes and centre; a face's area, a plane's normal, a
+cylinder's or sphere's radius and diameter, a torus's radii, a cone's
+half-angle; a body's volume, area, centre and box (from, to, size).
+Lengths, areas and volumes are in the design's units, squared and
+cubed (`varde_expr::format_power`: 3 decimals in mm, 4 in inches, as
+lengths show), angles in degrees; "Measuring…" while the answer is on
+its way, the kernel's refusal ("Too complex to measure") in red. Each
+value has a copy button sending `Message::Copy` with it at full
+precision and its unit (`varde_expr::full`, `full_power`: the shortest
+decimal that reads back as the same `f64` in that unit, "12.7 mm",
+"0.3937007874015748 in", "1 in²"); natively the app hands it to iced's
+clipboard (`platform::copy`), on the web straight to the browser's
+Clipboard API while the click still counts as the user's (iced's does
+nothing there). The status bar hints "Pick A" or "Pick B", `Shift`-click
+"Replace B", a double-click "Body" and `Esc` "Done"; the toolbar's tag
+says "Measure".
 
 **Picking the model** (`view/src/pick.rs`, the app's `doc/pick.rs`) is on
 the CPU, against the mesh drawn and its tables; no GPU id buffer (WebGL2
@@ -805,6 +905,11 @@ own. Selection is in the accent (`Colors::selected`). In a sketch
   `selected_edge`), over the outline, within a hollow rim `SELECTED_RIM`
   (1 logical pixel) wide either side in white at half alpha
   (`vs_selected_outline`), for contrast with what's behind it.
+- Edges in the second colour (`Highlights::second_edges`, the measure
+  tool's B): a third range after the selected, drawn as those are in
+  `Colors::second`, shaded alike (`vs_second_outline`,
+  `vs_second_edge`); its faces (`Frame::second_faces`) are tinted as
+  selected faces are, in it (`fs_second_face`), after them.
 - Vertices: only those hovered or selected, an instance each
   (`VertexInstance`: position and flags), drawn as a sketch point is
   (`vs_vertex` into `fs_highlight_point`): a disc of `VERTEX_RADIUS`
@@ -914,7 +1019,7 @@ makes its own wgpu instance, under a lock, so run them one at a time:
 VARDE_SHOTS=$PWD/target/shots cargo test -p varde-app shots_ -- --ignored --test-threads=1
 ```
 
-Scenarios (`shots_01` .. `shots_21`, each at 1280×800, scale 1, light,
+Scenarios (`shots_01` .. `shots_22`, each at 1280×800, scale 1, light,
 the busiest also at scale 2 and dark): `E` with every candidate's regions
 (and one hovered); a region picked before and after its answer; flip,
 symmetric, two sides, a refused distance and a draft the document
@@ -944,7 +1049,12 @@ lathe's regions, the axis asked for, a full turn about the construction
 line, one side of 270° flipped, two sides (also scale 2, dark), then its
 Timeline row selected and the rail's Create list; a ball and a torus
 turned about one line (`shots_21`, also scale 2, and close up from
-above, dark), for their silhouettes. Shots
+above, dark), for their silhouettes; the measure tool
+(`shots_22`): `I`, a corner of the top hovered with its face's or edge's
+dots, the corner picked and the hole's rim's centre reached from the
+rim, the distance between them with its segment and label (light,
+dark), the top and the rim highlighted in the two colours with the
+rim's values unfolded, and the body double-clicked in inches. Shots
 are for looking (pixels differ by GPU and driver), never compared and
 never committed: a fault a shot finds gets an ordinary headless test of
 the state or layout behind it. A scenario answers each regeneration it

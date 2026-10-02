@@ -22,6 +22,7 @@ fn panel_saying(rows: usize, message: &'static str) -> Element<'static, Message>
             crate::ExtrudeLook::Cancel,
         ))),
         cancel: Message::Look(crate::Look::Extrude(crate::ExtrudeLook::Cancel)),
+        close: false,
     })
 }
 

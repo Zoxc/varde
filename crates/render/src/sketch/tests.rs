@@ -208,3 +208,22 @@ fn on_another_plane_the_world_points_are_kept() {
     far.polyline(Space::On(plane), &[at(0.0, 0.0), at(1e300, 0.0)], STYLE);
     assert!(far.is_empty());
 }
+
+#[test]
+fn world_points_keep_their_z_and_count_in_the_bounds() {
+    let style = PointStyle {
+        radius: 3.0,
+        rim_width: 1.0,
+        rim: Srgba([1.0; 4]),
+        fill: Srgba([0.0, 0.0, 0.0, 1.0]),
+        fixed: false,
+    };
+    let mut layer = SketchLayer::default();
+    layer.world_point(Vec3::new(1.0, 2.0, 30.0), style);
+    layer.world_point(Vec3::new(f32::NAN, 0.0, 0.0), style);
+    assert_eq!(layer.points.len(), 1);
+    let point = layer.points[0];
+    assert_eq!((point.at, point.z, point.flags), ([1.0, 2.0], 30.0, WORLD));
+    let bounds = layer.bounds(&GridPlane::XY).unwrap();
+    assert_eq!(bounds.max, Vec3::new(1.0, 2.0, 30.0));
+}

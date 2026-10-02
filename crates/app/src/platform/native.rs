@@ -69,3 +69,8 @@ pub(crate) fn window_icon() -> Option<window::Icon> {
         .collect();
     window::icon::from_rgba(rgba, SIZE, SIZE).ok()
 }
+
+/// Puts `text` on the clipboard, through iced's.
+pub(crate) fn copy(text: String) -> iced::Task<Message> {
+    iced::clipboard::write(text)
+}

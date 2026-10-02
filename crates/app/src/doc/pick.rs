@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use varde_document::BodyId;
-use varde_view::{ModelHighlight, ModelPicking, Pick, Picked, Selection};
+use varde_view::{ModelHighlight, ModelPicking, Pick, Picked, Picks, Selection};
 
 use super::Doc;
 
@@ -135,6 +135,11 @@ impl Doc {
         if !self.picks() {
             return;
         }
+        // The measure tool's own, leaving the selection's as it was.
+        if self.measure.is_some() {
+            self.refresh_measure_highlight();
+            return;
+        }
         let key = (
             self.feed.model(),
             self.pick.hover.map(|pick| pick.target),
@@ -153,18 +158,31 @@ impl Doc {
         self.pick.built = Some(key);
     }
 
-    /// Picking for the viewport, if the cursor picks the model.
+    /// Picking for the viewport, if the cursor picks the model: faces
+    /// and edges and the snap points of what it's over while measuring,
+    /// else what the selection's mode takes.
     pub(crate) fn model_picking(&self) -> Option<ModelPicking<'_>> {
+        let measuring = self.measure.is_some();
         self.picks().then(|| ModelPicking {
             index: self.feed.pick_index(),
             hovered: self.pick.hover().map(|pick| pick.target),
-            picks: self.pick.selection.mode().picks(),
+            hovered_snap: self.pick.hover().and_then(|pick| pick.snap),
+            picks: if measuring {
+                Picks::All
+            } else {
+                self.pick.selection.mode().picks()
+            },
+            snaps: measuring,
         })
     }
 
     /// What the viewport draws over the model, if anything: nothing while
     /// the cursor doesn't pick it.
     pub(crate) fn highlight(&self) -> Option<&Arc<ModelHighlight>> {
+        // While measuring, the measure tool's, and not the selection's.
+        if self.measure.is_some() {
+            return self.measure_highlight().filter(|_| self.picks());
+        }
         // Only of the model shown: one built for an earlier model would be
         // drawn over another.
         let current = (self.pick.built.as_ref()).is_some_and(|built| built.0 == self.feed.model());

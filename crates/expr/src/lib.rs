@@ -363,6 +363,91 @@ pub fn format(value: f64, unit: Option<Unit>) -> String {
     }
 }
 
+/// What power of a length a value is: a length, an area or a volume,
+/// shown in the length unit's square or cube.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Power {
+    Length,
+    Area,
+    Volume,
+}
+
+impl Power {
+    /// Model units (millimetres, square or cubic) in one of `unit`'s.
+    fn factor(self, unit: LengthUnit) -> f64 {
+        let mm = unit.mm();
+        match self {
+            Power::Length => mm,
+            Power::Area => mm * mm,
+            Power::Volume => mm * mm * mm,
+        }
+    }
+
+    /// `unit`'s symbol raised to it: "mm", "mm²", "mm³".
+    fn symbol(self, unit: LengthUnit) -> String {
+        let power = match self {
+            Power::Length => "",
+            Power::Area => "²",
+            Power::Volume => "³",
+        };
+        format!("{}{power}", unit.symbol())
+    }
+}
+
+/// `value`, in model units (millimetres, square or cubic, as `power`
+/// says), shown in `unit`'s `power` with its symbol, to the unit's
+/// decimals as [`format()`] shows lengths, without trailing zeros:
+/// `12.5 mm²`, `0.5 in³`.
+pub fn format_power(value: f64, unit: LengthUnit, power: Power) -> String {
+    let text = number(value / power.factor(unit), Some(unit.into()));
+    format!("{text} {}", power.symbol(unit))
+}
+
+/// `value`, in model units, in `unit` with its symbol at full precision:
+/// the shortest decimal that reads back as the same `f64` once divided
+/// into `unit`, such as `12.700000000000001 mm` or `33.333333333333336°`.
+/// What copying a measure gives. Without a unit, the number alone.
+pub fn full(value: f64, unit: Option<Unit>) -> String {
+    let Some(unit) = unit else {
+        return shortest(value);
+    };
+    let text = shortest(value / unit.factor());
+    match unit {
+        Unit::Angle(AngleUnit::Deg) => format!("{text}°"),
+        unit => format!("{text} {}", unit.symbol()),
+    }
+}
+
+/// [`full`] for a length, an area or a volume, as [`format_power`] shows
+/// one: `1.0e2 mm²` as `100 mm²`.
+pub fn full_power(value: f64, unit: LengthUnit, power: Power) -> String {
+    let text = shortest(value / power.factor(unit));
+    format!("{text} {}", power.symbol(unit))
+}
+
+/// `value`, in model units, as a number of `unit` without its symbol,
+/// as [`format()`] shows it: for the parts of a point or a vector, shown
+/// with the symbol once after them all.
+pub fn format_number(value: f64, unit: Option<Unit>) -> String {
+    match unit {
+        Some(unit) => number(value / unit.factor(), Some(unit)),
+        None => number(value, None),
+    }
+}
+
+/// `value`, in model units, as a number of `unit` without its symbol, as
+/// [`full`] gives it.
+pub fn full_number(value: f64, unit: Option<Unit>) -> String {
+    shortest(unit.map_or(value, |unit| value / unit.factor()))
+}
+
+/// `value`'s shortest decimal that reads back as it, never `-0`.
+fn shortest(value: f64) -> String {
+    // `Display` gives the shortest round-tripping digits.
+    let value = if value == 0.0 { 0.0 } else { value };
+    format!("{value}")
+}
+
 /// `value`, already in `unit`, to the unit's decimals.
 fn number(value: f64, unit: Option<Unit>) -> String {
     let decimals = match unit {

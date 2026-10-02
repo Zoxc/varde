@@ -1,6 +1,6 @@
 //! Screenshots of the document screen, to look at: the extrude and
-//! revolve sessions, their panels and the extrude's handle, the Timeline, the delete prompt and the file
-//! menu, drawn offscreen by iced's headless wgpu renderer, which draws the
+//! revolve sessions, their panels and the extrude's handle, the measure
+//! tool, the Timeline, the delete prompt and the file menu, drawn offscreen by iced's headless wgpu renderer, which draws the
 //! viewport's scene too. Every test is `#[ignore]`d and writes nothing
 //! unless `VARDE_SHOTS` names the directory for the PNGs, see
 //! `agents/viewport.md`. Pixels differ by GPU and driver, so nothing is
@@ -1197,5 +1197,130 @@ fn shots_21_round_solids() {
         camera.take(&doc, "21-round-solids-scale2", Shot::new().scale(2.0));
         aim(&mut doc, 0.6, 0.5, 5.0);
         camera.take(&doc, "21-round-solids-close-dark", Shot::new().dark());
+    });
+}
+
+/// The window's pixels, every 2 of the viewport (the window right of the
+/// side panel and under the toolbar), where `accept` takes what `doc`'s
+/// pick index picks there, as the viewport picks: the index, the pick,
+/// and the viewport's size and the pixel in it.
+fn scan(
+    doc: &Doc,
+    accept: impl Fn(&varde_view::PickIndex, varde_view::Pick, [f32; 2], glam::DVec2) -> bool,
+) -> Vec<Point> {
+    use varde_view::Picks;
+    let origin = Point::new(varde_view::SIDE_PANEL_WIDTH, 40.0);
+    let size = [WINDOW.width - origin.x, WINDOW.height - origin.y];
+    let index = doc.feed.pick_index();
+    let mut found = Vec::new();
+    for y in (0..size[1] as u32).step_by(2) {
+        for x in (0..size[0] as u32).step_by(2) {
+            let at = glam::DVec2::new(f64::from(x), f64::from(y));
+            let Some(pick) = index.pick(&doc.camera, size, at, Picks::All) else {
+                continue;
+            };
+            if accept(index, pick, size, at) {
+                found.push(Point::new(origin.x + x as f32, origin.y + y as f32));
+            }
+        }
+    }
+    found
+}
+
+/// Where in the window the cursor over what the model shows there takes
+/// the snap point at `point` (to within a micrometre) of it, or of `held`
+/// hovered if given: the middle of the pixels that do.
+fn snapping_to(doc: &Doc, point: glam::DVec3, held: Option<varde_view::Picked>) -> Point {
+    let camera = doc.camera;
+    let found = scan(doc, |index, pick, size, at| {
+        let target = held.unwrap_or(pick.target);
+        let snap = index.snap(&camera, size, at, target);
+        snap.is_some_and(|(_, at)| at.distance(point) < 1e-6)
+    });
+    assert!(!found.is_empty(), "nothing snaps to {point}");
+    let (x, y) = found
+        .iter()
+        .fold((0.0, 0.0), |(x, y), p| (x + p.x, y + p.y));
+    let n = found.len() as f32;
+    Point::new(x / n, y / n)
+}
+
+/// A pixel of the window over the edge whose point is `point`.
+fn over_edge_of(doc: &Doc, point: glam::DVec3) -> Point {
+    let found = scan(doc, |index, pick, _, _| {
+        matches!(pick.target, varde_view::Picked::Edge(_))
+            && (index.snaps(pick.target).iter()).any(|&(snapped, at)| {
+                matches!(snapped, varde_view::Snapped::EdgePoint(_)) && at.distance(point) < 1e-6
+            })
+    });
+    *found.get(found.len() / 2).expect("the edge shows")
+}
+
+/// Scenario 22: the measure tool: `I`, the top hovered by its front right
+/// corner, its corners' dots shown and the corner taken; the corner
+/// picked and the hole's rim hovered by its centre; the distance from
+/// the corner to the centre, its segment and label, in light and dark;
+/// the top and the rim, both highlighted, the rim in the second colour;
+/// the body double-clicked, in inches.
+#[test]
+#[ignore = "writes screenshots, see the module"]
+fn shots_22_measure() {
+    shooting(|camera| {
+        let (mut doc, requests) = example();
+        framed(&mut doc);
+        key_in(&mut doc, key("i"));
+        camera.take(&doc, "22-measure-start", Shot::new());
+        let corner = glam::DVec3::new(30.0, -20.0, 10.0);
+        let at = snapping_to(&doc, corner, None);
+        camera.hover(&mut doc, at);
+        let hovered = doc.pick.hover().expect("the corner under the cursor");
+        assert!(hovered.snap.is_some(), "{hovered:?}");
+        let shot = Shot::new().pointer(Pointer::At(at));
+        camera.take(&doc, "22-measure-hover-corner", shot);
+        let click = |doc: &mut Doc, add: bool, double: bool| {
+            let pick = doc.pick.hover();
+            doc.look(Look::ClickModel { pick, add, double });
+        };
+        click(&mut doc, false, false);
+        answer(&mut doc, &requests);
+        // Over the rim first, then off it to its centre.
+        let centre = glam::DVec3::new(0.0, 0.0, 10.0);
+        let over_rim = over_edge_of(&doc, centre);
+        camera.hover(&mut doc, over_rim);
+        let rim_target = doc.pick.hover().expect("the rim").target;
+        let at = snapping_to(&doc, centre, Some(rim_target));
+        camera.hover(&mut doc, at);
+        assert!(doc.pick.hover().is_some_and(|pick| pick.snap.is_some()));
+        let shot = Shot::new().pointer(Pointer::At(at));
+        camera.take(&doc, "22-measure-hover-centre", shot);
+        click(&mut doc, false, false);
+        answer(&mut doc, &requests);
+        camera.take(&doc, "22-measure-corner-centre", Shot::new());
+        camera.take(&doc, "22-measure-corner-centre-dark", Shot::new().dark());
+        // The top, then the rim: faces and edges highlighted.
+        let top = Point::new(WINDOW.width * 0.66, WINDOW.height * 0.5);
+        camera.hover(&mut doc, top);
+        click(&mut doc, false, false);
+        let rim = over_rim;
+        camera.hover(&mut doc, rim);
+        click(&mut doc, false, false);
+        answer(&mut doc, &requests);
+        doc.look(Look::Measure(varde_view::MeasureLook::Fold(
+            varde_view::MeasureSlot::B,
+        )));
+        camera.take(
+            &doc,
+            "22-measure-top-rim",
+            Shot::new().pointer(Pointer::At(rim)),
+        );
+        camera.take(&doc, "22-measure-top-rim-dark", Shot::new().dark());
+        // The body, double-clicked, in inches.
+        doc.update(Edit::SetUnits(varde_document::LengthUnit::In));
+        answer(&mut doc, &requests);
+        camera.hover(&mut doc, top);
+        click(&mut doc, false, false);
+        click(&mut doc, false, true);
+        answer(&mut doc, &requests);
+        camera.take(&doc, "22-measure-body-in", Shot::new());
     });
 }

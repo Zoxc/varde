@@ -244,6 +244,7 @@ impl Varde {
                 });
             }
             Message::Ui(Ui::ToggleTheme) => self.mode = self.mode.toggled(),
+            Message::Ui(Ui::Copy(text)) => return platform::copy(text),
             Message::Ui(Ui::ToggleMouseHints) => {
                 self.options.mouse_hints = !self.options.mouse_hints;
                 self.with_doc(|doc, _| doc.view_menu = false);
@@ -589,7 +590,11 @@ fn while_quitting(message: &Message) -> bool {
             | Message::PeekPanel(_)
             | Message::CommandHeld(_)
             | Message::Ui(
-                Ui::Look(_) | Ui::ToggleTheme | Ui::ToggleMouseHints | Ui::ToggleHiddenEdges
+                Ui::Look(_)
+                    | Ui::ToggleTheme
+                    | Ui::ToggleMouseHints
+                    | Ui::ToggleHiddenEdges
+                    | Ui::Copy(_)
             )
     )
 }

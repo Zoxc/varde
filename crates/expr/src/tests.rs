@@ -193,3 +193,50 @@ fn arbitrary_tokens_never_panic() {
         exercise(&text, &asks);
     }
 }
+
+#[test]
+fn areas_and_volumes_show_in_the_units_square_and_cube() {
+    assert_eq!(format_power(12.5, LengthUnit::Mm, Power::Length), "12.5 mm");
+    assert_eq!(
+        format_power(1200.0, LengthUnit::Mm, Power::Area),
+        "1200 mm²"
+    );
+    assert_eq!(
+        format_power(1.0 / 3.0, LengthUnit::Mm, Power::Volume),
+        "0.333 mm³"
+    );
+    assert_eq!(format_power(645.16, LengthUnit::In, Power::Area), "1 in²");
+    assert_eq!(
+        format_power(25.4f64.powi(3) * 2.5, LengthUnit::In, Power::Volume),
+        "2.5 in³"
+    );
+    assert_eq!(format_power(-0.0001, LengthUnit::Mm, Power::Area), "0 mm²");
+}
+
+#[test]
+fn full_precision_reads_back_the_same_number() {
+    let mm = Some(LengthUnit::Mm.into());
+    assert_eq!(full(12.5, mm), "12.5 mm");
+    assert_eq!(full(1.0 / 3.0, mm), "0.3333333333333333 mm");
+    assert_eq!(full(-0.0, mm), "0 mm");
+    let inch = Some(LengthUnit::In.into());
+    let text = full(10.0, inch);
+    let number: f64 = text.strip_suffix(" in").unwrap().parse().unwrap();
+    assert_eq!(number, 10.0 / 25.4);
+    assert_eq!(full(PI / 2.0, Some(AngleUnit::Deg.into())), "90°");
+    assert_eq!(full(1.0, None), "1");
+    assert_eq!(full_power(645.16, LengthUnit::In, Power::Area), "1 in²");
+    assert_eq!(full_power(2.0, LengthUnit::Mm, Power::Volume), "2 mm³");
+    // What's copied reads back as a value, where it's a length or angle.
+    let ask = Ask::length(LengthUnit::Mm, 1e9);
+    assert_eq!(evaluate(&full(1.0 / 3.0, mm), &ask), Ok(1.0 / 3.0));
+}
+
+#[test]
+fn numbers_without_their_symbol() {
+    let inch = Some(LengthUnit::In.into());
+    assert_eq!(format_number(12.7, inch), "0.5");
+    assert_eq!(format_number(0.123_456_7, None), "0.123457");
+    assert_eq!(full_number(12.7, inch), "0.5");
+    assert_eq!(full_number(-0.0, None), "0");
+}

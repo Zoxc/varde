@@ -13,8 +13,8 @@ use crate::chrome::{Edge, edged, hrule, icon_button, key_label, vrule};
 use crate::icons::{self, Icon};
 use crate::shortcut::{
     Binding, Shortcut, comb_binding, constrain_binding, constraint_binding, extrude_binding,
-    file_bindings, handles_binding, history_bindings, revolve_binding, sketch_binding,
-    switch_binding, tool_binding,
+    file_bindings, handles_binding, history_bindings, measure_binding, revolve_binding,
+    sketch_binding, switch_binding, tool_binding,
 };
 use crate::theme::{self, Emphasis, SEMIBOLD, SIDE_PANEL_INNER_WIDTH, Tone};
 use crate::{ActiveTool, ConstraintKind, DocumentState, Edit, File, Look, Message, Overlay, Tool};
@@ -52,6 +52,7 @@ pub fn toolbar<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
                         let revolve = state.revolve.as_ref()?;
                         Some(editing(revolve.editing, "Revolve"))
                     })
+                    .or_else(|| state.measure.as_ref().map(|_| "Measure".to_owned()))
             },
         ),
     };
@@ -314,7 +315,14 @@ fn ops<'a>(state: &DocumentState<'a>) -> Vec<Element<'a, Message>> {
             .chain(planes)
             .collect();
     }
-    vec![sketch, extrude, revolve]
+    // Measure after a separator, as the mock has it.
+    let measure = bound_op(
+        Icon::Measure,
+        "Measure",
+        measure_binding(keys),
+        state.measure.is_some(),
+    );
+    vec![sketch, extrude, revolve, separator(), measure]
 }
 
 /// The label of the button making a sketch on `plane`.

@@ -25,21 +25,26 @@ fn mesh() -> RenderMesh {
 }
 
 #[test]
-fn outlined_and_selected_edges_are_apart_in_the_stream() {
-    // The second edge both outlined and selected: its points twice, with a
-    // point of no edge between, and one at either end.
+fn outlined_selected_and_second_edges_are_apart_in_the_stream() {
+    // The second edge both outlined and selected and the first also in
+    // the second colour: their points again, with a point of no edge
+    // between each run, and one at either end.
     let highlights = Highlights {
         outlined: vec![0, 1],
         selected_edges: vec![1],
+        second_edges: vec![0],
         vertices: Vec::new(),
     };
     let built = highlights.build(&mesh());
     assert_eq!(built.outlined, 1..6);
     assert_eq!(built.selected, 7..9);
-    assert_eq!(built.edges.len(), 10);
+    assert_eq!(built.second, 10..13);
     let edges: Vec<u32> = built.edges.iter().map(|point| point.edge).collect();
     let none = u32::MAX;
-    assert_eq!(edges, [none, 0, 0, 0, 1, 1, none, 1, 1, none]);
+    assert_eq!(
+        edges,
+        [none, 0, 0, 0, 1, 1, none, 1, 1, none, 0, 0, 0, none]
+    );
 }
 
 #[test]
@@ -47,6 +52,7 @@ fn ids_the_mesh_has_not_and_plain_vertices_are_left_out() {
     let highlights = Highlights {
         outlined: vec![2, u32::MAX],
         selected_edges: vec![0],
+        second_edges: vec![u32::MAX],
         vertices: vec![
             Vertex {
                 corner: 4,

@@ -330,6 +330,18 @@ fn fs_selected_face(in: MeshOut, @builtin(front_facing) front: bool) -> @locatio
     return output(vec4<f32>(shaded(in, front, u.selected.rgb), u.hover_face.w * part.alpha.x));
 }
 
+// The second colour (the measure tool's B), kept in the sketch plane's
+// unused w's: the uniforms have no room for another vector.
+fn second_color() -> vec3<f32> {
+    return vec3<f32>(u.sketch_origin.w, u.sketch_x.w, u.sketch_y.w);
+}
+
+// A face in the second colour, tinted as a selected face is.
+@fragment
+fn fs_second_face(in: MeshOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    return output(vec4<f32>(shaded(in, front, second_color()), u.hover_face.w * part.alpha.x));
+}
+
 // --- Feature edges ---
 
 // Least normalized depth that edges are pulled in by, well clear of the
@@ -767,6 +779,16 @@ fn vs_selected_outline(in: EdgeIn) -> LineOut {
     return out;
 }
 
+// The rim around the edges in the second colour, as the selected edges'.
+@vertex
+fn vs_second_outline(in: EdgeIn) -> LineOut {
+    let core = SELECTED_EDGE_WIDTH * 0.5 * u.viewport.z;
+    let half = core + SELECTED_RIM * u.viewport.z;
+    var out = highlight_segment(in, half, vec4<f32>(1.0, 1.0, 1.0, SELECTED_RIM_ALPHA));
+    out.style.w = core;
+    return out;
+}
+
 // The hovered edges, HOVERED_EDGE_WIDTH wide in the edges' colour, within
 // their rim.
 @vertex
@@ -790,6 +812,16 @@ fn selected_edge() -> vec4<f32> {
 fn vs_selected_edge(in: EdgeIn) -> LineOut {
     let half = SELECTED_EDGE_WIDTH * 0.5 * u.viewport.z;
     return highlight_segment(in, half, selected_edge());
+}
+
+// The edges in the second colour, as the selected edges are in theirs,
+// shaded alike.
+@vertex
+fn vs_second_edge(in: EdgeIn) -> LineOut {
+    let half = SELECTED_EDGE_WIDTH * 0.5 * u.viewport.z;
+    let shade = u.selected.w;
+    let towards = select(vec3<f32>(0.0), vec3<f32>(1.0), shade > 0.0);
+    return highlight_segment(in, half, vec4<f32>(mix(second_color(), towards, abs(shade)), 1.0));
 }
 
 // Where the sketch point `at` is in the world.
@@ -1112,7 +1144,8 @@ fn disc_corner(index: u32, center: vec2<f32>, reach: f32, z: f32) -> vec4<f32> {
 }
 
 // A point of the sketch as a disc with a rim, a pixel wider for
-// anti-aliasing, the same size on screen at any zoom.
+// anti-aliasing, the same size on screen at any zoom. With WORLD in
+// `flags`, a world point whose x and y are `at` and z `world_z`.
 @vertex
 fn vs_point(
     @builtin(vertex_index) index: u32,
@@ -1120,9 +1153,12 @@ fn vs_point(
     @location(1) size: vec2<f32>,
     @location(2) rim: vec4<f32>,
     @location(3) fill: vec4<f32>,
+    @location(4) world_z: f32,
+    @location(5) flags: u32,
 ) -> PointOut {
     var out: PointOut;
-    let clip = u.view_proj * vec4<f32>(on_plane(at), 1.0);
+    let world = sketch_world(at, world_z, flags & WORLD);
+    let clip = u.view_proj * vec4<f32>(world, 1.0);
     let center = to_pixels(clip);
     let radius = size.x * u.viewport.z;
     let reach = radius + 1.0;
@@ -1132,7 +1168,7 @@ fn vs_point(
     }
     var z = 0.0;
     if SKETCH_DEPTH {
-        z = overlay_depth(on_plane(at));
+        z = overlay_depth(world);
     }
     out.position = disc_corner(index, center, reach, z);
     out.center = center;

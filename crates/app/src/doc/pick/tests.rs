@@ -463,6 +463,7 @@ fn a_draft_still_shown_after_the_extrude_doesnt_drop_the_selection() {
         target: Picked::Face(face),
         body,
         at: glam::DVec3::ZERO,
+        snap: None,
     };
     doc.look(Look::ClickModel {
         pick: Some(pick),
@@ -615,6 +616,7 @@ fn a_join_merging_a_body_keeps_its_faces_selected_in_the_holder() {
         target: Picked::Face(bottom),
         body: below,
         at: glam::DVec3::new(-20.0, -10.0, -3.0),
+        snap: None,
     };
     doc.look(Look::ClickModel {
         pick: Some(pick),
@@ -709,6 +711,7 @@ fn objects_and_the_viewport_agree_on_many_bodies() {
         target: Picked::Face(face),
         body: bodies[4],
         at: glam::DVec3::new(24.0, 30.0, 15.0),
+        snap: None,
     };
     doc.look(Look::ClickModel {
         pick: Some(pick),
