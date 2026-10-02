@@ -4400,15 +4400,24 @@ before the mesh is built, at most 64 rounds:
   a round and only where nothing else in it changed. A sheet folded onto
   a flush face at a saddle has one side from each operand, each
   triangulated on its own, so no collapse makes two of its triangles the
-  same and cancels them: its vertices have every triangle round them of
-  straight sides and within an eighth of the resolution of one of at most
-  three planes through the vertex (each the normal of its largest proper
-  triangle, one plane, or two or three on a crease), with proper
-  triangles in some plane facing both ways. Moving such a vertex onto a
-  neighbour lying in every plane of its star keeps each plane's signed
-  area (a fan's signed area is its link polygon's; on a crease the vertex
-  moves along the line bounding each plane's part), so the oriented
-  surface and the volume stay as they were and the folded part cancels.
+  same and cancels them: its vertices have every triangle round them on
+  a plane face, of straight sides and within an eighth of the resolution
+  of one of at most three planes through the vertex (each the normal of
+  its largest proper triangle, one plane, or two or three on a crease),
+  with proper triangles in some plane facing both ways (two triangles
+  round it whose normals point apart are looked for first, which turns
+  away nearly every vertex before its curves are looked up). Moving such
+  a vertex `v` onto a neighbour `w` lying in every plane of its star
+  moves each triangle `v a b` through the tetrahedron `v w a b`, whose
+  corners lie within the short length of one plane, so the winding
+  numbers change only in that thin slab over the star, whatever order
+  the planes take round `v`: the oriented surface and the volume stay as
+  they were and the folded part cancels. Curved faces are left out: a
+  triangle of one with straight sides lies in a plane only where it is
+  thin, and moving its corner along the plane would take it off its
+  surface (before they were left out, the rule fired on such stars in
+  two seeded refusals, a flush boss and a related pair, changing only
+  how they failed).
   The candidates go by the unsigned area left round the vertex, then id,
   and one is taken only if that area is less than before by more than
   the short length squared (turned triangles cover theirs twice over, so
@@ -4421,8 +4430,11 @@ before the mesh is built, at most 64 rounds:
   or that now faces against its plane face's normal, goes on the face of
   the star's largest proper triangle in its plane facing its way, and if
   there is none the collapse isn't made, so plane tags stay true for
-  repair. The scan goes over the vertices in id order and is charged the
-  soup's size, as a round is. Chained grid boxes (random half-grid
+  repair; nor is it where a triangle ends further off its face's plane
+  than it was (or than the short length), as one could on a face a hair
+  off the star's plane. The scan goes over the vertices in id order and
+  is charged the soup's size, as a round is (on a plate with 64 square
+  pockets, 8 flush bars and 8 holes it took under 1 % of the clean-up). Chained grid boxes (random half-grid
   boxes, chains of five, as `grid_boxes_chained`; seeds 1 and 3–29,
   140 000 steps): 11 failed on a manifold result before, 1 now (a hull
   failure, not a fold: see Known gaps), none new and no wrong volume;

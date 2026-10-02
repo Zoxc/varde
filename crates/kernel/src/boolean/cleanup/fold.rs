@@ -12,19 +12,26 @@
 //!
 //! If every triangle round `v` lies within `small` of one of the star's
 //! planes and the neighbour `w` lies in all of them, moving `v` to `w`
-//! leaves each plane's signed area as it was: a fan's signed area is its
-//! link polygon's, and on a crease `v` moves along the line bounding each
-//! plane's part. So the oriented surface, its winding numbers and the
-//! volume stay the same, and the folded part cancels. It is the argument
-//! of the collapse inside a plane face, for stars facing both ways and on
-//! a crease. Triangles may turn over doing it, which the other collapses
-//! refuse, so the rule is a last resort (only in a round where nothing
-//! else changed) and has to leave less unsigned area round `v` than there
-//! was (turned triangles cover theirs twice over): without that, a first
-//! try onto any neighbour made a turned triangle overlapping others
+//! moves each triangle `v a b` through the tetrahedron `v w a b`, whose
+//! four corners are within `small` of one plane: the winding numbers
+//! change only within `small` of the star's planes, over the star, so the
+//! oriented surface and the volume stay as they were (to that), and the
+//! folded part cancels. This holds whatever order the planes take round
+//! `v` (on a crease, `v` moves along the line where they meet). It is the
+//! argument of the collapse inside a plane face, for stars facing both
+//! ways and on a crease. Only plane faces take part: a triangle of a
+//! curved face with straight sides lies in a plane only where it is thin,
+//! and moving its corner along that plane would take it off its surface.
+//! Triangles may turn over doing it, which the other collapses refuse, so
+//! the rule is a last resort (only in a round where nothing else changed)
+//! and has to leave less unsigned area round `v` than there was (turned
+//! triangles cover theirs twice over): without that, a first try onto any
+//! neighbour made a turned triangle overlapping others
 //! outside the star, and broke a chain that worked before.
 
 use std::cmp::Ordering;
+
+use glam::DVec3;
 
 use super::seams::Plane;
 use super::{Cleaner, Turn};
@@ -48,23 +55,38 @@ pub(super) struct Star {
 const PLANES: usize = 3;
 
 impl Cleaner<'_> {
-    /// The star of `v` if it is folded: every triangle round it has
-    /// straight sides and lies within `small` of one of at most
-    /// [`PLANES`] planes through `v` (each a proper triangle's, largest
+    /// The star of `v` if it is folded: every triangle round it is on a
+    /// plane face, has straight sides and lies within `small` of one of at
+    /// most [`PLANES`] planes through `v` (each a proper triangle's, largest
     /// first), and in some plane proper triangles face both ways.
     pub(super) fn folded(&self, v: u32) -> Option<Star> {
         let around = &self.around[v as usize];
-        if around.is_empty()
+        if around
+            .iter()
+            .any(|&t| self.planes[self.soup.faces[t as usize] as usize].is_none())
+        {
+            return None;
+        }
+        let normals: Vec<(DVec3, u32)> = around
+            .iter()
+            .map(|&t| (self.normal(self.soup.tris[t as usize]), t))
+            .collect();
+        // Triangles facing both ways in one plane have normals pointing
+        // apart: most vertices are turned away here, before their curves
+        // are looked up.
+        let apart = normals
+            .iter()
+            .enumerate()
+            .any(|(i, a)| normals[i + 1..].iter().any(|b| a.0.dot(b.0) < 0.0));
+        if !apart
             || around
                 .iter()
                 .any(|&t| !self.straight_sides(self.soup.tris[t as usize]))
         {
             return None;
         }
-        let mut order: Vec<(f64, u32)> = around
-            .iter()
-            .map(|&t| (self.normal(self.soup.tris[t as usize]).length(), t))
-            .collect();
+        let mut order: Vec<(f64, u32)> =
+            normals.into_iter().map(|(n, t)| (n.length(), t)).collect();
         order.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
         let p = self.p(v);
         let mut star = Star {
@@ -96,7 +118,7 @@ impl Cleaner<'_> {
                 ways[i][k] = true;
                 let face = self.soup.faces[t as usize];
                 let agrees =
-                    self.planes[face as usize].is_none_or(|(m, _)| (m.dot(n) > 0.0) == way);
+                    self.planes[face as usize].is_some_and(|(m, _)| (m.dot(n) > 0.0) == way);
                 if agrees && star.faces[i][k].is_none() {
                     star.faces[i][k] = Some(face);
                 }
@@ -113,31 +135,45 @@ impl Cleaner<'_> {
     /// The face triangle `t` of `star`, `old` before its vertex moved,
     /// goes on: its own, or where it turned over, or now faces against
     /// its face's plane, a face of the star in its plane facing its way.
-    /// `None` where it turned over in a plane that isn't folded, or no
-    /// face of the star faces its way: the collapse isn't made. A triangle
-    /// of zero height keeps its face for the rounds to take out.
+    /// `None` where it turned over in a plane that isn't folded, no face
+    /// of the star faces its way, or it ends further off its face's plane
+    /// than it was (or than `small`, if more): the collapse isn't made. A
+    /// triangle of zero height keeps its face for the rounds to take out.
     pub(super) fn retag(&self, star: &Star, t: u32, old: [u32; 3]) -> Option<u32> {
         let face = self.soup.faces[t as usize];
         let new = self.soup.tris[t as usize];
-        let Ok(k) = star.of.binary_search_by_key(&t, |x| x.0) else {
-            return Some(face);
+        let i = match star.of.binary_search_by_key(&t, |x| x.0) {
+            Ok(k) => star.of[k].1,
+            Err(_) => return Some(face),
         };
-        let i = star.of[k].1;
-        if self.height(new).0 <= self.small {
-            return Some(face);
-        }
-        let n = star.planes[i].0;
-        let way = self.normal(new).dot(n) > 0.0;
-        let over = self.height(old).0 > self.small && self.normal(old).dot(self.normal(new)) <= 0.0;
-        if over && !star.folded[i] {
-            return None;
-        }
-        let against = self.planes[face as usize].is_some_and(|(m, _)| (m.dot(n) > 0.0) != way);
-        if over || against {
-            star.faces[i][usize::from(!way)]
+        let to = if self.height(new).0 <= self.small {
+            face
         } else {
-            Some(face)
-        }
+            let n = star.planes[i].0;
+            let way = self.normal(new).dot(n) > 0.0;
+            let over =
+                self.height(old).0 > self.small && self.normal(old).dot(self.normal(new)) <= 0.0;
+            if over && !star.folded[i] {
+                return None;
+            }
+            let against = self.planes[face as usize].is_some_and(|(m, _)| (m.dot(n) > 0.0) != way);
+            if over || against {
+                star.faces[i][usize::from(!way)]?
+            } else {
+                face
+            }
+        };
+        (self.off_face(new, to) <= self.off_face(old, face).max(self.small)).then_some(to)
+    }
+
+    /// How far the furthest corner of `tri` is off the plane of `face`
+    /// (every face of a folded star is a plane).
+    fn off_face(&self, tri: [u32; 3], face: u32) -> f64 {
+        self.planes[face as usize].map_or(0.0, |(n, d)| {
+            tri.iter()
+                .map(|&v| (n.dot(self.p(v)) - d).abs())
+                .fold(0.0, f64::max)
+        })
     }
 
     /// Collapses each folded star's vertex (in id order) onto the
