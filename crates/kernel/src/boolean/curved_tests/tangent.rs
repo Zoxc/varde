@@ -483,3 +483,118 @@ fn tangent_contacts_at_rounded_edges_are_right_or_refused() {
         right_or_refused(case, &tol, 1e-5, &budget);
     }
 }
+
+/// The sphere of radius `r` round `c`, revolved about the line along
+/// `axis` through it.
+fn sphere(c: DVec3, axis: DVec3, r: f64) -> Solid {
+    let v = DVec2::new;
+    let half = Loop {
+        segments: vec![
+            arc(v(0.0, 0.0), v(0.0, -r), v(r, 0.0), 0),
+            arc(v(0.0, 0.0), v(r, 0.0), v(0.0, r), 0),
+            Segment::line(v(0.0, r), v(0.0, -r), 1).unwrap(),
+        ],
+    };
+    let frame = Frame {
+        origin: c,
+        x: axis.any_orthonormal_vector(),
+        y: axis,
+    };
+    let profile = Profile { loops: vec![half] };
+    crate::revolve(
+        &profile,
+        &frame,
+        crate::Sweep::Full,
+        2,
+        &TOL,
+        &Budget::DEFAULT,
+    )
+    .unwrap()
+}
+
+#[test]
+fn spheres_touching_faces_at_a_point_are_right_or_refused() {
+    // A sphere resting on a plate's top or touching it from inside, on a
+    // frame turned off the axes, and a cylinder beside a sphere: the
+    // results with a point contact on the skin from outside (unions) or
+    // a void touching it from inside (the plate less the sphere) touch
+    // themselves and are refused as such; the others work and keep the
+    // operands' volumes.
+    let q = DQuat::from_rotation_x(0.3) * DQuat::from_rotation_z(0.2);
+    let frame = Frame {
+        origin: DVec3::new(0.1, -0.3, 0.2),
+        x: q * DVec3::X,
+        y: q * DVec3::Y,
+    };
+    let up = frame.normal();
+    let plate = |from: f64, to: f64| {
+        let loops = vec![rect(DVec2::new(-2.0, -2.0), DVec2::new(2.0, 2.0), 0)];
+        let profile = Profile { loops };
+        extrude(&profile, &frame, from, to, 1, &TOL, &Budget::DEFAULT).unwrap()
+    };
+    let at = |height: f64| frame.point(DVec2::new(0.3, -0.2), height);
+    let (yes, no) = (true, false);
+    let cases = [
+        (
+            "on the top",
+            plate(0.0, 1.0),
+            sphere(at(1.5), up, 0.5),
+            false,
+            [no, yes, yes, yes],
+        ),
+        (
+            "under the top",
+            plate(-1.0, 1.0),
+            sphere(at(0.5), up, 0.5),
+            true,
+            [yes, yes, no, yes],
+        ),
+        (
+            "between top and bottom",
+            plate(0.0, 1.0),
+            sphere(at(0.5), up, 0.5),
+            true,
+            [yes, yes, no, yes],
+        ),
+        (
+            "beside a cylinder",
+            extruded(
+                vec![circle(DVec2::new(0.75, 0.0), 0.25, 0, false)],
+                -1.0,
+                1.0,
+                1,
+            ),
+            sphere(DVec3::ZERO, DVec3::Y, 0.5),
+            false,
+            [no, yes, yes, yes],
+        ),
+    ];
+    for (name, a, b, inside, works) in cases {
+        let both = if inside { b.volume() } else { 0.0 };
+        let case = Case {
+            name,
+            a,
+            b,
+            both,
+            works,
+        };
+        let worked = right_or_refused(&case, &TOL, 1e-9, &Budget::DEFAULT);
+        assert_eq!(worked, works, "{name}");
+        let jobs = [
+            (&case.a, &case.b, Op::Union),
+            (&case.a, &case.b, Op::Intersection),
+            (&case.a, &case.b, Op::Difference),
+            (&case.b, &case.a, Op::Difference),
+        ];
+        for (k, (x, y, op)) in jobs.into_iter().enumerate() {
+            if !works[k] {
+                let e = boolean(x, y, op, &TOL, &Budget::DEFAULT).unwrap_err();
+                assert_eq!(
+                    e,
+                    KernelError::Boolean(BooleanError::NotManifold),
+                    "{name}, {k}"
+                );
+            }
+        }
+    }
+}

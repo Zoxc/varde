@@ -5255,7 +5255,14 @@ before the mesh is built, at most 64 rounds:
   corner along a curve that was open may close, and where a gone
   triangle's two sides from its far corner are both inner edges of one
   face (two arcs of the wall to the two crossings, as far apart as they
-  are), the kept end's curve stays. In millimetres at the default
+  are), the kept end's curve stays, but only where the two are one curve
+  but for those ends (both straight, or control points within twice four
+  resolutions and weights alike): else the triangle beyond the moved
+  end's would take a curve far from its own, such as a long arc's chord,
+  which a face claiming no surface wouldn't show. Whether the kept end
+  lies on the moved one's surfaces is asked again before each collapse,
+  since one before it may have moved another vertex's triangles onto
+  it. In millimetres at the default
   tolerance the intersections of a cylinder inside a plate touching its
   side (the cylinder, or cut to the plate's height), of a slot beside a
   hole tangent to it, and the plate less a slot across a hole tangent

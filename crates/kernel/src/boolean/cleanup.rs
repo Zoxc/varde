@@ -210,8 +210,10 @@ pub(super) fn clean(
                 changed = true;
             }
         }
+        // Asked again before each collapse: an earlier one may have moved
+        // another vertex's triangles, on other faces, onto `v`.
         for [u, v] in c.tangent_edges() {
-            if c.collapse(u, v, Turn::Closing) {
+            if c.on_surfaces_of(u, v) && c.collapse(u, v, Turn::Closing) {
                 changed = true;
             }
         }
@@ -578,8 +580,15 @@ impl Cleaner<'_> {
                 // Closing a corner, neither a cut: two curves of one face
                 // from the edge's ends, as far apart as those are (two
                 // arcs of a wall to the crossings a tangency left), and
-                // the kept end's stays as it was.
-                (false, false) if matches!(turn, Turn::Closing) => merged.push((w, ru)),
+                // the kept end's stays as it was. Only where they are
+                // one curve but for the moved end (both straight, or
+                // control points within twice `thin` and weights alike):
+                // else the triangle beyond `v`'s would take a curve far
+                // from its own, as a long arc's chord, which a face
+                // claiming no surface wouldn't show.
+                (false, false) if matches!(turn, Turn::Closing) && self.alike(u, v, w) => {
+                    merged.push((w, ru))
+                }
                 _ => {
                     return false;
                 }
@@ -774,6 +783,21 @@ impl Cleaner<'_> {
             (Some(a), Some(b)) => {
                 a.ctrl.distance(b.ctrl) <= self.small && (a.weight - b.weight).abs() <= 1e-6
             }
+        }
+    }
+
+    /// Whether the edges from `u` and from `v` to `w` are one curve but
+    /// for their ends at `u` and `v`, no farther apart than `thin`: both
+    /// straight, or both curved with control points within `2·thin` and
+    /// weights within `1e-6` (see [`Cleaner::collapse`]'s closing).
+    fn alike(&self, u: u32, v: u32, w: u32) -> bool {
+        let record = |a: u32| self.soup.curves.get(&(a.min(w), a.max(w))).copied();
+        match (self.curved(u, w), self.curved(v, w), record(u), record(v)) {
+            (false, false, ..) => true,
+            (true, true, Some(a), Some(b)) => {
+                a.ctrl.distance(b.ctrl) <= 2.0 * self.thin && (a.weight - b.weight).abs() <= 1e-6
+            }
+            _ => false,
         }
     }
 
@@ -1310,5 +1334,79 @@ mod tests {
         assert!(c.collapse(0, 1, Turn::Proper));
         assert_eq!(c.shared(0, 2).len(), 2);
         assert!(!c.curved(0, 2));
+    }
+
+    #[test]
+    fn closing_a_corner_keeps_a_long_curve_beyond_it() {
+        // A pyramid over a plane face z = 0 of four triangles round `u` =
+        // 0, `v` = 1 a hair from it: (v, u, w) and (u, v, x) with `w` = 2
+        // above and `x` = 3 below, two more to `e` = 4; its sides meet at
+        // `y` = 5 under it. `v`'s edge to `w` is a long arc bulging to −x,
+        // the side of the pyramid's (v, w, y) on a face claiming no
+        // surface; `u`'s is straight. Collapsing `v` onto `u` to close a
+        // corner must not leave that triangle the straight side, 0.3 off
+        // its arc.
+        let pos = vec![
+            DVec3::ZERO,
+            DVec3::new(-1e-8, 0.0, 0.0),
+            DVec3::new(0.5, 1.0, 0.0),
+            DVec3::new(0.0, -1.0, 0.0),
+            DVec3::new(1.0, 0.0, 0.0),
+            DVec3::new(0.1, 0.0, -1.0),
+        ];
+        let tris = vec![
+            [1, 0, 2],
+            [0, 1, 3],
+            [0, 4, 2],
+            [0, 3, 4],
+            [1, 2, 5],
+            [3, 1, 5],
+            [4, 3, 5],
+            [2, 4, 5],
+        ];
+        let mut curves = Curves::new();
+        curves.insert(
+            (1, 2),
+            Edge {
+                ctrl: DVec3::new(-0.4, 0.8, 0.0),
+                weight: 0.8,
+            },
+        );
+        let mut soup = Soup {
+            pos,
+            faces: vec![0, 0, 0, 0, 1, 1, 1, 1],
+            tris,
+            curves,
+            sources: vec![0, 0],
+            absorbed: Vec::new(),
+            made: vec![true; 8],
+        };
+        let mut around = vec![Vec::new(); soup.pos.len()];
+        for (t, tri) in soup.tris.iter().enumerate() {
+            for &v in tri {
+                around[v as usize].push(t as u32);
+            }
+        }
+        let mut c = Cleaner {
+            alive: vec![true; soup.tris.len()],
+            soup: &mut soup,
+            around,
+            planar: vec![true, false],
+            recurved: Vec::new(),
+            planes: vec![Some((DVec3::Z, 0.0)), None],
+            surfaces: vec![
+                Surface::Plane {
+                    n: DVec3::Z,
+                    d: 0.0,
+                },
+                Surface::Free,
+            ],
+            joined: Vec::new(),
+            small: 1e-9,
+            thin: 4e-8,
+        };
+        if c.collapse(0, 1, Turn::Closing) {
+            assert!(c.curved(0, 2), "the arc became its chord");
+        }
     }
 }
