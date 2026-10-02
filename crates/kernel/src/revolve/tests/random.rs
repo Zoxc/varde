@@ -98,6 +98,20 @@ fn random_profiles_are_right_or_refused() {
                     "case {i}: volume {sv} for {volume} ({:e} over {slack:e})",
                     (sv - volume).abs()
                 );
+                // Fitted faces within half the fit tolerance of curves
+                // bent no tighter than about the shortest segment.
+                let shortest = p.loops[0]
+                    .segments
+                    .iter()
+                    .map(|s| (s.conic.p1 - s.conic.p0).length())
+                    .fold(f64::INFINITY, f64::min);
+                let sa = solid.area();
+                let area_slack = 2.0 * tol.fit() / shortest * area + 1e-10 * area;
+                assert!(
+                    (sa - area).abs() <= area_slack,
+                    "case {i}: area {sa} for {area} ({:e} over {area_slack:e})",
+                    (sa - area).abs()
+                );
                 solid.mesh().check(&tol).unwrap();
                 ok += 1;
             }

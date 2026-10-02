@@ -1,6 +1,6 @@
 //! What face each profile segment turns into.
 
-use glam::DVec2;
+use glam::{DVec2, DVec3};
 
 use super::Turn;
 use crate::extrude::chain::Side;
@@ -100,8 +100,15 @@ impl Kind {
                 let s = dr / dh;
                 Quadric::revolution(on_axis(p0.y), axis, p0.x * p0.x, 2.0 * p0.x * s, s * s)
             };
+            // A cone too nearly flat for its quadric to be evaluated to
+            // the resolution claims none (its strips are still exact).
+            let ends = [turn.place(p0), turn.place(p1)];
+            let surface = match quadric {
+                Some(q) if held(&q, ends, margin) => Surface::Quadric(q),
+                _ => Surface::Free,
+            };
             return Kind::Exact {
-                surface: quadric.map_or(Surface::Free, Surface::Quadric),
+                surface,
                 form,
                 straight: true,
             };
@@ -149,6 +156,28 @@ impl Kind {
             Kind::Axis => Form::Unknown,
         }
     }
+}
+
+/// Whether the face check can measure points of the straight segment
+/// from `a` to `b`, turned about the axis, against `quadric` (written
+/// about a point on the axis) to well within `margin`: its first-order
+/// distance `|F|/|∇F|` is off by about `ε·(|y|²·Σ|aᵢⱼ| + 2·|b|·|y| + |c|)/|∇F|`
+/// from rounding `F` (`y` from the quadric's origin), which grows along
+/// the segment (it is convex there and the same all round each ring), so
+/// is largest at an end; four times that must stay under a quarter of
+/// `margin`. A cone nearly flat on a tilted axis fails it: `F` sums
+/// terms of `|y|²` to a value whose gradient, `2·|y|·cos·sin`, vanishes
+/// with the cone's slope (a cone a few resolutions short of flat, 250
+/// across at a fit of `1e-4`, was refused by the tag check).
+fn held(quadric: &Quadric, [a, b]: [DVec3; 2], margin: f64) -> bool {
+    let size: f64 = quadric.a.to_cols_array().iter().map(|x| x.abs()).sum();
+    [a, b].iter().all(|&x| {
+        let y = (x - quadric.origin).length();
+        let rounding =
+            4.0 * f64::EPSILON * (y * y * size + 2.0 * quadric.b.length() * y + quadric.c.abs());
+        // At an apex both vanish: nothing to round.
+        rounding == 0.0 || rounding <= 0.25 * margin * quadric.gradient(x).length()
+    })
 }
 
 /// The height along the axis where the line through `p0` and `p1` (at

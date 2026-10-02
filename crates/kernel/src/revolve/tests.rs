@@ -653,6 +653,62 @@ fn conics_other_than_circles_are_fitted() {
 }
 
 #[test]
+fn cones_nearly_flat_claim_no_quadric() {
+    // A ring's top sloping a few hundred-millionths: a cone whose quadric,
+    // on a tilted axis, rounds to a first-order distance far past the
+    // resolution (its gradient vanishes with the slope), which the tag
+    // check refused. It claims no surface; its form is still the cone.
+    let tol = Tolerance::new(1e-4).unwrap();
+    let mut rng = Rng::new(53);
+    for i in 0..4 {
+        let rise = [3e-6, -3e-6, 1e-5, -1e-5][i];
+        let shape = Shape {
+            name: "nearly flat top",
+            profile: profile(vec![polygon(
+                &[
+                    v(100.0, 0.0),
+                    v(200.0, 0.0),
+                    v(200.0, 50.0 + rise),
+                    v(100.0, 50.0),
+                ],
+                1,
+            )]),
+            fitted: None,
+            part_only: false,
+        };
+        let frame = random_frame(&mut rng, 1e3);
+        for sweep in [Sweep::Full, sweeps()[4]] {
+            let solid = revolved(&shape, &frame, sweep, &tol);
+            let top = solid
+                .mesh()
+                .faces()
+                .iter()
+                .find(|f| {
+                    f.name.part
+                        == FacePart::Side {
+                            curve: 3,
+                            segment: 0,
+                        }
+                })
+                .unwrap();
+            assert!(matches!(top.form, Form::Cone { .. }), "{:?}", top.form);
+            assert_eq!(top.surface, Surface::Free);
+        }
+    }
+    // Steeper, a cone keeps its quadric.
+    let p = profile(vec![polygon(
+        &[v(0.0, 0.0), v(200.0, 0.0), v(0.0, 150.0)],
+        1,
+    )]);
+    let frame = random_frame(&mut rng, 1e3);
+    let solid = revolve(&p, &frame, Sweep::Full, 7, &tol, &Budget::DEFAULT).unwrap();
+    assert!(solid.mesh().faces().iter().any(|f| matches!(
+        (f.name.part, f.surface),
+        (FacePart::Side { curve: 2, .. }, Surface::Quadric(_))
+    )));
+}
+
+#[test]
 fn vertices_near_the_axis_are_put_on_it() {
     // A cylinder whose axis side is drawn a hair off the axis, either
     // way: within the resolution it is on it.

@@ -2615,7 +2615,15 @@ make none. The steps:
      as it is tall (the apex is then near), else `Quadric::revolution`
      written about the segment's foot on the axis, `ρ² = (ρ0 + s·h)²` with
      `s` the slope (well conditioned up to the cylinder, `s = 0`, where an
-     apex would be far out);
+     apex would be far out). A cone too nearly flat for its quadric
+     claims no surface (`held`): on a tilted axis `F` sums terms of `|y|²`
+     (`y` from the quadric's origin) to a value whose gradient,
+     `2·|y|·cos·sin`, vanishes with the slope, so its first-order distance
+     rounds to about `ε·(|y|²·Σ|aᵢⱼ| + 2·|b|·|y| + |c|)/|∇F|`, largest at
+     an end of the segment; four times that must stay under a quarter of
+     the resolution (a ring's top a few hundred-millionths off flat, 250
+     across at a fit of `1e-4`, was refused by the tag check). Its strips
+     are still exact and its form the cone;
    - **an arc centred within `m·w/4` of the axis** (`circle_of`, `w` the
      arc's weight, `m` the resolution): a sphere, exact, tagged
      `Quadric::sphere`. Its strips, built on the arc as drawn, stray from
@@ -2717,7 +2725,8 @@ sphere); lemons and spindles (arcs whose circles reach across the axis);
 a 170° band of a sphere drawn round centres a hair off the axis (a
 sphere within `m·w/4`, fitted beyond);
 an ellipse's, a parabola's and a hyperbola's arcs (`Form::Revolved`);
-vertices a hair off the axis put on it; the lathe growing for tori and
+vertices a hair off the axis put on it; cones a few hundred-millionths
+off flat on tilted frames claiming no quadric; the lathe growing for tori and
 not for cylinders; the same bits at 1 and 8 threads; refusals
 (`revolve/tests/refusals.rs`): across the axis (a side, a bulge, beyond
 the resolution), touching it at a vertex in a full turn and inside a
@@ -2725,7 +2734,8 @@ segment in any (a parabola exactly, a lens's arc within rounding and
 within the resolution), nearly full turns, bad sweeps and frames, touching and
 badly nested loops, the budget; random profiles of lines and conics, off
 the axis and fanned from it, on random frames and sweeps
-(`revolve/tests/random.rs`, release only): right by Pappus or refused,
+(`revolve/tests/random.rs`, release only): right by Pappus, volume and
+area, or refused,
 never wrong; a triangle's creases repaired at great cost (the first gap
 below).
 
@@ -2768,6 +2778,16 @@ Known gaps:
 - **Thin wedges**: a part turn under about `0.06°` (the sine of the
   sector's corner under `SIN_MIN`) can't triangulate a disc's or ring's
   sector: `TooFine` for the flat segment.
+- **A pole next to a turn**: an arc ending on the axis whose height turns
+  within about twice the resolution of it (a ball drawn round a centre
+  `0.1` to `2` resolutions off the axis, at fits of `1e-1` and `1e-2`)
+  leaves its cap no room before the turn (the cap stops half way to it):
+  `TooComplex`. Further off it is a spindle's, fitted, and passes.
+- **Necks a hair off the axis**: a vertex just beyond the resolution of
+  the axis (not put on it) makes a neck or a hole that thin; its cone
+  strips' weights pass the patch bounds (`PatchError::Weight`) or caps
+  can't take it (`TooFine`): refused, with a message about the patch
+  rather than the profile.
 - **Quadrics of revolution other than spheres and cones** (an ellipse
   arc centred on the axis with an axis along it) are fitted, not exact
   (above).

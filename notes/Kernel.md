@@ -232,8 +232,10 @@ plane.
 2. **Faces per segment**: none along the axis; flat rings, discs and
    sectors square to it (triangulated as extrude caps from their rings'
    arcs); exact cones and cylinders for other lines and spheres for arcs
-   centred on the axis (exact strips); fitted bands for other arcs (tori)
-   and conics; fitted caps where a face meets the axis.
+   centred on the axis (exact strips; a cone too nearly flat for its
+   quadric to be measured to the resolution claims none); fitted bands
+   for other arcs (tori) and conics; fitted caps where a face meets the
+   axis.
 3. **One angular split** for the whole solid, four quarters (or a part
    turn's quarters) halved until every band fits and every flat face's
    caps take the rings' arcs; a part turn's two ends are the profile's
