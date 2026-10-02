@@ -342,6 +342,13 @@ mod tests {
             soup,
             around,
             recurved: Vec::new(),
+            surfaces: planes
+                .iter()
+                .map(|p| match p {
+                    Some((n, d)) => crate::mesh::Surface::Plane { n: *n, d: *d },
+                    None => crate::mesh::Surface::Free,
+                })
+                .collect(),
             planes,
             joined: Vec::new(),
             small: SMALL,

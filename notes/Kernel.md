@@ -352,9 +352,11 @@ intersect works on.
 **Results that aren't manifolds** (boxes sharing only an edge, united) are
 refused, never held: the error is `BooleanError::NotManifold` where the
 failed result has two vertices nearer than the clean-up's short length
-(the zero-width neck the perturbation leaves), named only once the
-operation has failed; the same operands intersected or subtracted the
-other way work.
+(the zero-width neck the perturbation leaves) or two separate shells
+too close, named only once the operation has failed, and at once, by
+the pairs' decisions, for a union of walls touching along a line from
+either side; the same operands intersected or subtracted the other way
+work.
 
 ## Exact and fitted
 
@@ -497,14 +499,18 @@ extrude being set up) are regenerated the same way. See `agents/kernel.md`
 ## Limits and open areas
 
 - **Tangencies.** Surfaces touching along a line leave corners of zero
-  angle that no patch holds, and unions of solids meeting only along a line
-  aren't manifolds: such operations fail (`Invalid`), or where refinement
-  along the line converges come out right with many patches. Walls along
-  one direction are certified or joined line by line, but a union of walls
-  tangent within the tie distance, and walls overlapping by under a
-  quarter of the resolution, still refine until they run out of budget
-  (seconds); refusing such a union at once waits on an error kind for
-  results that aren't manifolds. Coaxial walls
+  angle that no patch holds (a boss standing in a plate tangent to its
+  side, united), and unions of solids meeting only along a line aren't
+  manifolds: such operations fail (`Invalid`, `NotManifold`), or where
+  refinement along the line converges come out right with many patches.
+  The pair of crossings a tangency leaves (a double root, solved a hair
+  apart) is collapsed by the clean-up up to four resolutions apart;
+  further apart (parts larger than about `5e5` times the fit tolerance)
+  it still fails. Walls along one direction are certified or joined
+  line by line, and a union of walls touching along a line is refused
+  at once, but differences and intersections of walls overlapping by
+  under a quarter of the resolution, or touching from inside, still
+  refine until they run out of budget (seconds). Coaxial walls
   a little apart, or of different conics meeting smoothly, refine until
   they run out of budget.
 - **Revolved creases.** Creases into one quadrant of the meridian plane

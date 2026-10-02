@@ -942,6 +942,10 @@ mod tests {
             planar: vec![true],
             recurved: Vec::new(),
             planes: vec![Some((DVec3::Z, 0.0))],
+            surfaces: vec![crate::mesh::Surface::Plane {
+                n: DVec3::Z,
+                d: 0.0,
+            }],
             joined: Vec::new(),
             small: 1e-3 / 8.0,
             thin: 4e-3,

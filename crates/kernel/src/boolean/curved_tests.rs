@@ -3462,6 +3462,7 @@ fn a_cross_hole_through_a_round_boss() {
 mod flush_seams;
 mod holes;
 mod one_face;
+mod tangent;
 
 /// How many faces (keys) of `solid` lie on a quadric.
 fn quadric_faces(solid: &Solid) -> usize {

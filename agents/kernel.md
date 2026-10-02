@@ -3604,6 +3604,7 @@ elsewhere (see "Cutting curved faces").
 | `boolean/curved_tests.rs` | cylinders and boxes (exact), crossing cylinders, a free surface, a saddle, extrudes, chains, merging, random bars, walls over arcs with level ends |
 | `boolean/curved_tests/flush_seams.rs` | flush unions with curved rims in either order: bosses in and on plates, over holes and edges, overlapping, a flange at a shaft's foot, a slot, at millimetre scale and on a turned frame, a chain of flush joins, caps a hair apart, bosses on a rounded corner |
 | `boolean/curved_tests/one_face.rs` | faces on one surface after booleans: tops at a crease either side of the bar, flush stacks on turned frames far from the origin, chains of joins and cuts with every operand's names resolving, faces meeting only at a corner |
+| `boolean/curved_tests/tangent.rs` | tangent contacts: cylinders against a plate's side from outside and inside, standing on it or through its top, slots ending in, beside and across a hole, a cylinder on a cylinder (in millimetres at the default tolerance, and at unit size at the finest), unions touching along a line refused at once, and solids tangent to a rounded edge or the faces it runs into |
 | `boolean/seeded_tests.rs` | the seeded random suite: related pairs, parts built in chains of twenty, turned solids, near tangencies, pins and coaxial cylinders, flush bosses, bosses sunk through drilled plates |
 
 ### The primitives
@@ -5230,6 +5231,39 @@ before the mesh is built, at most 64 rounds:
   crossing a tie left a micrometre along a cap edge from where the cut
   passes (a cap edge tangent to a boss's rim) left a triangle of zero
   width there whose corner at the rim was closed.
+- **Collapse what a tangency leaves** (`tangent_edges`). A wall tangent
+  to a face along a line, or to a face's straight edge at a point, is
+  solved to cross it twice where the exact result has one place: the
+  root is double, so the two crossings land about `1e-8` of the part's
+  size apart (`7e-9` at unit size, `2e-7` at 30 mm). Within an eighth of
+  the resolution they collapse as above; past it (a fine tolerance, a
+  part in millimetres) they left a piece of the face's edge between two
+  arcs of the wall's one smooth curve, so a triangle on the face with a
+  corner of 180° (`Fold`), and, along a line contact, a strip of the
+  touched face as wide as the pairs are apart between the wall's two
+  halves, which the hull rules refuse. So a straight edge longer than
+  the short length and no longer than four resolutions is collapsed
+  where, in a triangle on a plane face, a curved side leaves one end
+  back the way the edge came (that end moved onto the other), or where
+  it is the shortest side of a triangle of straight sides whose two
+  other sides both border other faces (either end, the higher id
+  first) — but only onto a point within the short length of the
+  surface of every face round the moved vertex, so no vertex leaves a
+  surface it claims (the pair's two crossings both lie on the line
+  where the faces meet, and the vertex moves along the curve's own
+  tangent). The collapse is the short edges' one with two changes: no
+  corner along a curve that was open may close, and where a gone
+  triangle's two sides from its far corner are both inner edges of one
+  face (two arcs of the wall to the two crossings, as far apart as they
+  are), the kept end's curve stays. In millimetres at the default
+  tolerance the intersections of a cylinder inside a plate touching its
+  side (the cylinder, or cut to the plate's height), of a slot beside a
+  hole tangent to it, and the plate less a slot across a hole tangent
+  to both its sides, now work; at unit size the same at the finest
+  tolerance. Moving such a vertex moves the triangles round it by up to
+  four resolutions along the surfaces. Past about `5e5` times the fit
+  tolerance in size (5 units at the finest, 500 at the default) the
+  pairs can lie further apart than that, and those still fail.
 - **Flip** the longest side of a triangle whose height over it is no more
   than an eighth of the resolution, or no more than four resolutions when
   the triangle across is on the same face (so every triangle stays on its
@@ -5592,15 +5626,55 @@ a near pair alone proves nothing. It names parts closer than the
 resolution (curved operands overlapping by less) too, which is the same
 thing at the kernel's resolution and mended the same way; and rarely a
 manifold result that fails for another reason with two vertices that
-near (rounding residue on flush faces): wording only. The decisions may
-give `NotManifold` before any mesh is built where they show a pinch
-(see "Tangent unions and thin overlaps run out").
+near (rounding residue on flush faces): wording only.
+
+The decisions give `NotManifold` before any mesh is built for unions of
+walls along one direction that touch along a line from either side
+(`pinched_line` in `boolean/pairs.rs`). Walls tangent within the tie
+distance, `A` grown by the perturbation, cross in two lines infinitely
+close, whose ends (two or four to a pair, as the patches' edges fall)
+aren't clear (see "Ends along one direction"), so no join takes them,
+and refinement split the pairs along the line until the budget ran out.
+So in a union (`grow`), a pair on walls along one direction
+(`parallel_generators`) whose ends aren't joined fails the operation as
+`NotManifold` where at every end the walls aren't clear of each other
+(`θ² < 2·LENS·resolution·κ`: tangent, or crossing so near tangent that
+the sliver between is under a quarter of the resolution) and face
+opposite ways: each wall's normal there, the quadric's gradient, turned
+the way its patch faces at its middle (within 60° of it, else the rule
+doesn't apply), with a negative dot. Solids touching along a line from
+either side unite into no manifold, and walls overlapping by under a
+quarter of the resolution leave a neck thinner than that; both are what
+the error names. Walls facing the same way (a solid inside another,
+touching its skin from inside) unite into the outer one, a manifold,
+and are refined as before (a cylinder inside another touching it,
+united either way round, is never named so). An error
+from the decisions comes before any line is joined, so the operation
+returns it without the second try. Only ends of a first try (joining
+lines) are looked at, and only unions: differences and intersections
+whose walls touch from inside (a cylinder less one inside it touching
+its wall, which isn't a manifold either) still refine as before.
+
+Measured: on the default-tolerance probe
+(`near_tangent_cylinders_at_the_default_tolerance`) the 13 unions at
+gaps `0`, `±1e-12`, `±1e-9` and `−1e-7` (both placements) fail as
+`NotManifold` in 2 400 to 4 200 units, where 11 ran out after 2.7 to
+4.2 million and two were refused after 2.7 to 3.3 million; the probe's
+work 84.7 → 42.6 million units, those over a million 23 → 12 (the thin
+overlaps' differences and intersections), every result as before
+otherwise. The regen's tangent discs join as "the result would touch
+itself" at every fit and angle in 20 to 830 ms (was "too complex" at
+fit `1e-4` and on the seam at `1e-3`, 1.5 to 6.4 s). On the seeded
+suites every tally is as before; four refusals change kind (three
+`Inconsistent` unions and one `TooComplex`, gaps of `±1e-9` and
+`±1e-6` at fits 0.1 and 0.01, become `NotManifold`).
 
 Measured on the release kernel suites (the default ones, and the slow
 bosses-in-drilled-plates, bars-through-boxes and drilled-grid ones):
 every tally the same as before, as it must be. Of the 117 refusals the
-seeded suites print, 95 were `Invalid`; 38 of those are `NotManifold`
-now (34 by the near pair, 4 more by separate shells): tangent and
+seeded suites print, 95 were `Invalid`; 38 of those were `NotManifold`
+when this naming came (34 by the near pair, 4 more by separate shells;
+42 refusals are now, with the decisions' rule above): tangent and
 near-tangent cylinder unions at gaps 0, ±1e-9 and −1e-6, pins against a
 hole's wall, chained app-like steps. The flat touching cases (boxes on
 an edge or a corner, the diamond and octahedron differences) are all
@@ -6659,13 +6733,14 @@ sampled points.
   units), and 23 spend over a million units. Unit cylinders and pins
   overlapping by 0.02 to 30 resolutions at fits 0.1 to 0.001 (768
   operations, two sweeps): 107 → 431 work, operations over a million
-  units 536 → 221, work 1.8 G → 0.75 G, no result lost. What still runs
-  out: unions at a tie (the walls tangent within the tie distance: 11
-  of the probe's 23, every regen join at `1e-4`, and the regen joins
-  with the line on a seam at `1e-3`), since `A` grown is two lines
-  infinitely close, a group of four; overlaps under a quarter of the
-  resolution (`1e-9`, `1e-7` at the default tolerance: the probe's
-  other 12), left to refinement (both in "Tangent unions and thin
+  units 536 → 221, work 1.8 G → 0.75 G, no result lost. Unions at a
+  tie (the walls tangent within the tie distance, `A` grown two lines
+  infinitely close) ran out too: 11 of the probe's 23, every regen join
+  at `1e-4` and those with the line on a seam at `1e-3`; they now fail
+  at once as `NotManifold` (see "Results that aren't manifolds"). What
+  still runs out: differences and intersections of walls overlapping by
+  under a quarter of the resolution (`1e-9`, `1e-7` at the default
+  tolerance: the probe's other 12), left to refinement (in "Thin
   overlaps run out", below, with repros); and coaxial walls `64` resolutions to a few
   thousandths apart over a millimetre or more (refined until their
   hulls part, as before: radii 1 and 1.0001 or 1.001 over 1 mm run out,
@@ -6702,42 +6777,13 @@ sampled points.
   twice its work, at least 150 000 units more.
 - Merging restores only whole nodes of the refinement tree with no finer
   neighbour: pieces next to a cut stay as refined.
-- **Tangent unions and thin overlaps run out**: what joining ends
-  along one direction leaves refining to the budget (release, a loaded
-  machine, the default tolerance unless said):
-  - *Unions at a tie.* Walls tangent within the tie distance: `A` grown
-    by the perturbation and `B` are two lines infinitely close, so each
-    pair along the line has a group of four ends, which is never joined,
-    and the pairs refine until the budget runs out, though the exact
-    union touches along a line and is never a manifold. Unions of walls
-    overlapping by under a quarter of the resolution have two lines, but
-    not clear ones (see "Ends along one direction"), and refine alike.
-    On the probe `near_tangent_cylinders_at_the_default_tolerance` (unit
-    cylinders side by side, the placement with the seams on the line,
-    `z0` 0.5, and the one turned 0.3): the unions at gaps 0, `1e-12`
-    and `−1e-12` on both placements, `1e-9` on the seam placement and
-    `−1e-9` on both (9, at a tie), and `−1e-7` on both (2), each 2.7 to
-    4.2 million units, 1.8 to 6.6 s, `TooComplex` or, where repair gets
-    the refused union in time, `Invalid` (`Hull`, `EdgeNeighbours`). In
-    the regen (`tangent_discs` in `regen/src/history/tests.rs`: a disc
-    of radius 1 joined 1 mm tall beside a round body of radius 1):
-    every join at fit `1e-4` (angles 0, 0.3 and 0.7, 3.3 to 4.3 s) and
-    at `1e-3` the join with the line on the seam (angle 0, 2.4 s), "too
-    complex". The error kind for results that aren't manifolds exists
-    now (`BooleanError::NotManifold`, given today only where a built
-    mesh fails with a pinch, see "Results that aren't manifolds"; these
-    run out before any mesh is built), so the fix left is:
-    `refined` would return `KernelError::Boolean(NotManifold)` for a
-    union (`grow`) one of whose pairs on walls along one direction has a
-    group of four ends within the tie distance, instead of splitting it,
-    the message already worded (an error from `refined` comes before
-    `joined` is set, so `boolean_within` returns it without the retry
-    that refines without joining). Measure it first: it must turn no `Ok` of the seeded suite
-    into an error, and the 9 unions at a tie and the regen joins should
-    then fail within thousands of units (the 2 at `−1e-7`, if they have
-    no such group, stay with the overlaps below). The near-tangent test
-    allows every union within the resolution to fail, so it holds
-    either way.
+- **Thin overlaps run out**: what joining ends along one direction
+  leaves refining to the budget (release, a loaded machine, the default
+  tolerance unless said). Unions at a tie (walls tangent within the tie
+  distance, and overlapping by under a quarter of the resolution) did
+  too, 2.7 to 4.2 million units each on the probe below and 1.5 to 6.4 s
+  in the regen's tangent discs; they now fail at once as `NotManifold`
+  (see "Results that aren't manifolds"). What is left:
   - *Overlaps under a quarter of the resolution.* Differences and
     intersections of walls overlapping by less than a clear line needs
     (`1e-9` and `1e-7` at the default tolerance) have ends that aren't
@@ -6747,8 +6793,17 @@ sampled points.
     `Inconsistent` on the turned one after 2.9 million units); at
     `−1e-7` five work after 2.7 to 3.7 million units (1.2 to 3.9 s,
     volumes right) and `a less b` on the seam placement runs out. Not
-    covered by the union's fix (the operands do overlap); they wait on
+    covered by the union's rule (the operands do overlap); they wait on
     a redesign of ties at tangencies.
+  - *A cylinder inside another, touching its wall.* Radius 0.5 inside
+    radius 1, the line on both seams, at fits `1e-3` and `1e-5`: the
+    intersection (the inner one) and the outer less the inner (not a
+    manifold) run out after 7 to 10 s; `A` shrunk crosses `B` in two
+    lines infinitely close, as a union at a tie does, but the union's
+    rule takes only walls facing opposite ways in a union. At fit 0.1
+    both are refused after 2 to 3.5 s. Naming the difference
+    `NotManifold` the same way (walls facing the same way, `A` the
+    outer) would need the operation, not just `grow`, in the decisions.
   - *A hole drilled tangent to a hole from outside, on the seam*: the
     example plate (60 × 40 × 10, a hole of radius 8 at the origin) cut
     through by a disc of radius 3 centred 11 from the origin at angle 0
@@ -7249,11 +7304,13 @@ join with the line on the seam (`Inconsistent` at `1e-1` and `1e-2`,
 `TooComplex` from the default) and every join at `1e-4` (1.5 to 2.8
 s, `TooComplex`) are as before: the pairs along the line have ends
 there, and joining them line by line leaves those of a union at a tie
-alone (see "Tangent unions and thin overlaps run out" in the
-booleans' known gaps; measured since, on a loaded machine: the seam
-joins "can't be worked out" in 0.2 to 0.55 s at `1e-1` and `1e-2`,
-run out in 2.4 s at `1e-3`, and every join at `1e-4` runs out in 3.3 to
-4.3 s, the cuts no-ops in 7 to 490 ms). Holes drilled tangent to the
+alone (measured since, on a loaded machine: the seam joins "can't be
+worked out" in 0.2 to 0.55 s at `1e-1` and `1e-2`, run out in 2.4 s at
+`1e-3`, and every join at `1e-4` runs out in 3.3 to 4.3 s, the cuts
+no-ops in 7 to 490 ms). Since the decisions name a union touching
+along a line (see "Results that aren't manifolds" in the booleans),
+every one of these joins is refused as "the result would touch
+itself" in 20 to 830 ms, at every fit and angle. Holes drilled tangent to the
 example plate's hole (radius 8; a disc of radius 3 through it, at
 angles 0, 0.3 and 0.7, release): from inside, no-ops in 0.06 to 2 s;
 from outside, refused as "no clean solid" in 0.3 to 0.6 s off the
@@ -8527,3 +8584,28 @@ parameter, or a split outside the patch bounds),
   budget, the plan would give `TooComplex`; the error stays `Invalid`
   instead, equally bounded, so out-of-budget classification never
   changes which kind of failure the measurements count.
+- **Corners of 180° at tangencies are mended by collapsing the pair of
+  crossings, not by flips or Steiner points.** The plan blamed the
+  clean-up's collapse of a zero-length side for leaving two arcs of one
+  smooth curve at a corner, and proposed judging corners across such
+  sides when triangulating, or flipping or adding a point with straight
+  inner edges on plane faces after the clean-up. Measured, the cases it
+  named (a cylinder inside a plate touching its side, intersected) work
+  at unit size and the default tolerance already; they fail where the
+  two crossings the double root leaves are further apart than the short
+  length (at the finest tolerance, or in millimetres), and then a strip
+  of the touched face between the wall's two halves fails the hull rules
+  too, which no flip or point on the top mends. So the clean-up
+  collapses such an edge up to four resolutions long where it leaves
+  that corner or that strip, moving a vertex only onto a point on all
+  its faces' surfaces ("Collapse what a tangency leaves").
+- **Unions touching along a line are named by the decisions for any
+  ends whose walls aren't clear and face opposite ways**, not for a
+  group of four ends within the tie distance. Where the line falls on
+  the patches' edges (on the seams, the probe's placement at `z0` 0.5)
+  a pair holds two ends, and the four-end rule named one of the probe's
+  13 runaway unions; a union of walls overlapping by under a quarter of
+  the resolution, whose lines aren't clear either, ran out the same way.
+  So the test is the joins' own clearness at every end, with the faces'
+  directions telling solids touching from either side (no manifold)
+  from one inside the other (a manifold union, refined as before).

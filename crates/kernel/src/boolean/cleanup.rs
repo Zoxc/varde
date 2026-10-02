@@ -12,6 +12,11 @@
 //! together) and turns no proper triangle over; a triangle of zero height
 //! whose edges aren't short has its longest edge flipped, which splits
 //! the triangle beyond at the far corner and leaves the same surface.
+//! A straight edge up to four resolutions long that a tangency left (the
+//! two crossings of a wall tangent to a face, solved a hair apart) is
+//! collapsed the same way where it leaves a corner of 180° along a curve
+//! or a strip of the touched face between two others, moving a vertex
+//! only onto a point on all its faces' surfaces.
 //! Where nothing else changes, a vertex at which a folded sheet's two
 //! sides are triangulated differently is moved within its star's planes
 //! ([`fold`]). Components that enclose no volume go. It never decides
@@ -106,6 +111,9 @@ enum Turn<'a> {
     /// No triangle at all, and their corners along curves stay open: a
     /// vertex inside a plane face.
     Strict,
+    /// No proper triangle, and no corner along a curve that was open
+    /// closed: an edge a tangency left (see [`Cleaner::tangent_edges`]).
+    Closing,
     /// Proper triangles only in a plane of the folded star where they
     /// face both ways, each then on a face facing its way: see
     /// [`fold`].
@@ -126,6 +134,8 @@ struct Cleaner<'a> {
     recurved: Vec<u32>,
     /// Each face's plane, if it is one: its unit normal and offset.
     planes: Vec<Option<(DVec3, f64)>>,
+    /// Each face's surface.
+    surfaces: Vec<Surface>,
     /// Pairs of plane faces (the lower first) a seam joined, to be merged:
     /// see [`seams`].
     joined: Vec<(u32, u32)>,
@@ -179,6 +189,7 @@ pub(super) fn clean(
         planar,
         recurved: Vec::new(),
         planes,
+        surfaces: faces.iter().map(|f| f.surface).collect(),
         joined: Vec::new(),
         small,
         thin,
@@ -196,6 +207,11 @@ pub(super) fn clean(
         }
         for [u, v] in c.plane_edges() {
             if c.inside_plane(v) && c.collapse(u, v, Turn::Strict) {
+                changed = true;
+            }
+        }
+        for [u, v] in c.tangent_edges() {
+            if c.collapse(u, v, Turn::Closing) {
                 changed = true;
             }
         }
@@ -394,6 +410,113 @@ impl Cleaner<'_> {
         out
     }
 
+    /// The straight edges of living triangles longer than `small` and no
+    /// longer than `thin` (four resolutions) that a tangency left: as `[u, v]`, `v` the end
+    /// to be moved onto `u`, which lies on the surface of every face
+    /// round `v` (within `small`), so no vertex leaves a surface it
+    /// claims. A wall tangent to a face along a line, or to an edge at a
+    /// point, is solved to cross it twice, about `1e-8` of the part's
+    /// size apart (the root is double), where the exact result has one
+    /// place; shorter than `small` those pairs collapse as any short edge
+    /// does, longer (a fine tolerance, a large part) they leave:
+    /// - a corner of 180° along a curve on a plane face, which no patch
+    ///   holds: in a triangle there, a curved side leaving one end of the
+    ///   edge back the way the edge came (the piece of a face's straight
+    ///   edge between two arcs of the wall's one smooth curve), that end
+    ///   moved;
+    /// - a strip of the face the wall touches, as wide as the pairs are
+    ///   apart, between two faces whose triangles it leaves closer than
+    ///   their hulls may come (the wall's two halves either side of the
+    ///   line): a triangle of straight sides whose two other sides both
+    ///   border faces other than its own, the edge its shortest, either
+    ///   end moved (the higher id first).
+    fn tangent_edges(&self) -> Vec<[u32; 2]> {
+        let mut out = Vec::new();
+        for (t, tri) in self.soup.tris.iter().enumerate() {
+            if !self.alive[t] {
+                continue;
+            }
+            let face = self.soup.faces[t];
+            let up = self.planes[face as usize].map(|(up, _)| up);
+            let length = |a: u32, b: u32| self.p(a).distance(self.p(b));
+            let fits = |a: u32, b: u32| {
+                let l = length(a, b);
+                l > self.small && l <= self.thin && !self.curved(a, b)
+            };
+            // A closed corner of 180° along a curve, on a plane.
+            for i in 0..3 {
+                let Some(up) = up else {
+                    break;
+                };
+                let (v, next, prev) = (tri[i], tri[(i + 1) % 3], tri[(i + 2) % 3]);
+                let (out_curved, back_curved) = (self.curved(v, next), self.curved(prev, v));
+                // The straight side's far end `u`, and the curve's `w`.
+                let (u, w) = match (out_curved, back_curved) {
+                    (false, true) => (next, prev),
+                    (true, false) => (prev, next),
+                    _ => continue,
+                };
+                if !fits(u, v) {
+                    continue;
+                }
+                let p = self.p(v);
+                let edge = self.p(u) - p;
+                let tangent = self.soup.curves[&(v.min(w), v.max(w))].ctrl - p;
+                // The corner from the side leaving `v` to the one coming
+                // back, counter-clockwise about the plane's normal.
+                let (leave, back) = if out_curved {
+                    (tangent, edge)
+                } else {
+                    (edge, tangent)
+                };
+                let open = leave.cross(back).dot(up) > 1e-3 * leave.length() * back.length();
+                if !open && tangent.dot(edge) < 0.0 {
+                    out.push([u, v]);
+                }
+            }
+            // A strip: straight sides, the shortest fitting, the other two
+            // bordering other faces.
+            if !self.straight_sides(*tri) {
+                continue;
+            }
+            let k = (0..3)
+                .min_by(|&i, &j| {
+                    let (li, lj) = (
+                        length(tri[i], tri[(i + 1) % 3]),
+                        length(tri[j], tri[(j + 1) % 3]),
+                    );
+                    li.total_cmp(&lj).then(i.cmp(&j))
+                })
+                .expect("three sides");
+            let (a, b, c) = (tri[k], tri[(k + 1) % 3], tri[(k + 2) % 3]);
+            let borders = |x: u32, y: u32| {
+                self.across(t as u32, x, y)
+                    .is_some_and(|s| self.soup.faces[s as usize] != face)
+            };
+            if fits(a, b) && borders(b, c) && borders(c, a) {
+                let (low, high) = (a.min(b), a.max(b));
+                out.push([low, high]);
+                out.push([high, low]);
+            }
+        }
+        out.retain(|&[u, v]| self.on_surfaces_of(u, v));
+        // The strips' higher ends first, as `[low, high]` sorts.
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
+    /// Whether `u` lies within `small` of the surface of every face with a
+    /// living triangle round `v` (a face claiming none has no surface to
+    /// leave).
+    fn on_surfaces_of(&self, u: u32, v: u32) -> bool {
+        let p = self.p(u);
+        self.around[v as usize].iter().all(|&t| {
+            let face = self.soup.faces[t as usize] as usize;
+            self.surfaces[face].distance(p) <= self.small
+        })
+    }
+
     /// The living triangles with both `u` and `v` as corners.
     fn shared(&self, u: u32, v: u32) -> Vec<u32> {
         self.around[u as usize]
@@ -451,6 +574,11 @@ impl Cleaner<'_> {
             match (between(u), between(v)) {
                 (true, false) => merged.push((w, ru)),
                 (false, true) => merged.push((w, rv)),
+                // Closing a corner, neither a cut: two curves of one face
+                // from the edge's ends, as far apart as those are (two
+                // arcs of a wall to the crossings a tangency left), and
+                // the kept end's stays as it was.
+                (false, false) if matches!(turn, Turn::Closing) => merged.push((w, ru)),
                 _ => {
                     return false;
                 }
@@ -564,6 +692,9 @@ impl Cleaner<'_> {
         match turn {
             Turn::Proper => self.height(old).0 > self.small && over,
             Turn::Strict => over || !(self.height(new).0 > self.small && self.open(new)),
+            Turn::Closing => {
+                (self.height(old).0 > self.small && over) || (self.open(old) && !self.open(new))
+            }
             Turn::Fold(star) => self.retag(star, t, old).is_none(),
         }
     }
@@ -1170,6 +1301,7 @@ mod tests {
             planar: vec![false],
             recurved: Vec::new(),
             planes: vec![None],
+            surfaces: vec![Surface::Free],
             joined: Vec::new(),
             small: 1e-9,
             thin: 1e-9,

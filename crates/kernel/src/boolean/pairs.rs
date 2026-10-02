@@ -16,7 +16,10 @@
 //! two ends are one arc; the ends of two planar patches, on the line
 //! their planes meet in, join in order along it. On walls along one
 //! direction, ends join line by line where the walls cross clearly
-//! (`along_generators`).
+//! (`along_generators`); in a union, where they don't but touch facing
+//! opposite ways (solids touching along a line from either side), the
+//! operation fails at once as [`BooleanError::NotManifold`]
+//! (`pinched_line`).
 //!
 //! Any other pair is **refined**: both patches are split exactly
 //! (red–green, so the neighbours across split edges are split too, see
@@ -169,7 +172,7 @@ pub(super) fn refined_with(
             let ia = Input::new(&meshes[0], tol);
             let ib = Input::new(&meshes[1], tol);
             let counts = counted(&ia, &ib, grow, tol, work)?;
-            match decide(&ia, &ib, &counts, floor, tol.resolution(), join, work)? {
+            match decide(&ia, &ib, &counts, floor, tol.resolution(), join, grow, work)? {
                 Decision::Arcs(arcs, joined) => Err((counts, arcs, joined)),
                 Decision::Split(split) => Ok(split),
             }
@@ -248,7 +251,11 @@ struct End {
 
 /// Decides every pair of faces that may meet: see the [module](self)
 /// docs. Pieces no larger than `floor` across aren't split; ends along
-/// walls' common direction are joined only if `join`.
+/// walls' common direction are joined only if `join`. `grow` is whether
+/// `A` grows (a union): then walls touching along a line from either
+/// side fail the operation as [`BooleanError::NotManifold`] (see
+/// [`pinched_line`]).
+#[allow(clippy::too_many_arguments)]
 fn decide(
     a: &Input,
     b: &Input,
@@ -256,6 +263,7 @@ fn decide(
     floor: f64,
     resolution: f64,
     join: bool,
+    grow: bool,
     work: &mut Work,
 ) -> Result<Decision, KernelError> {
     // Where each crossing is.
@@ -328,6 +336,7 @@ fn decide(
             floor,
             resolution,
             join,
+            grow,
         )
     });
     let mut arcs = Vec::new();
@@ -371,6 +380,7 @@ fn pair_decision(
     floor: f64,
     resolution: f64,
     join: bool,
+    grow: bool,
 ) -> Result<PairDecision, BooleanError> {
     let (pa, pb) = (&a.patches[p as usize], &b.patches[q as usize]);
     let planar = a.planar[p as usize] && b.planar[q as usize];
@@ -422,9 +432,13 @@ fn pair_decision(
     if join
         && !ends.is_empty()
         && let Some(d) = parallel_generators(a, p, b, q, resolution)
-        && let Some(lines) = along_generators(a, p, b, q, ends, d, resolution)
     {
-        return Ok(PairDecision::Joined(joined(lines)));
+        if let Some(lines) = along_generators(a, p, b, q, ends, d, resolution) {
+            return Ok(PairDecision::Joined(joined(lines)));
+        }
+        if grow && pinched_line(a, p, b, q, ends, d, resolution) {
+            return Err(BooleanError::NotManifold);
+        }
     }
     let size = |b: crate::patch::Bounds3| (b.max - b.min).max_element();
     let (split_a, split_b) = (size(pa.bounds()) > floor, size(pb.bounds()) > floor);
@@ -585,23 +599,14 @@ fn along_generators(
     if !ends.len().is_multiple_of(2) {
         return None;
     }
-    // The curvature of a wall's cross-section at `x`: `tᵀ·H·t / |∇F|`,
-    // `t` the unit tangent there square to `d`.
-    let curvature = |quadric: &crate::mesh::Quadric, x: DVec3| {
-        let gradient = quadric.gradient(x);
-        let t = d.cross(gradient).try_normalize()?;
-        let hessian = quadric.a + quadric.a.transpose();
-        Some((t.dot(hessian * t).abs() / gradient.length(), gradient))
-    };
     let (mut bend, mut least) = (0.0f64, f64::INFINITY);
     for e in ends {
-        let (ka, ga) = curvature(&qa, e.at)?;
-        let (kb, gb) = curvature(&qb, e.at)?;
+        let (ka, ga) = section(&qa, e.at, d)?;
+        let (kb, gb) = section(&qb, e.at, d)?;
         let kappa = ka + kb;
         let sine = ga.normalize().cross(gb.normalize()).length();
         // Not clear also where any of it isn't finite.
-        let clear = (sine * sine).partial_cmp(&(2.0 * LENS * resolution * kappa));
-        if !matches!(clear, Some(Ordering::Greater | Ordering::Equal)) {
+        if !clear(sine, kappa, resolution) {
             return None;
         }
         bend = bend.max(kappa);
@@ -642,6 +647,96 @@ fn along_generators(
         joined.push((x, y));
     }
     Some(joined)
+}
+
+/// The curvature of a wall's cross-section square to `d` at `x`,
+/// `tᵀ·H·t / |∇F|` with `t` the unit tangent there square to `d`, and
+/// the quadric's gradient there.
+fn section(quadric: &crate::mesh::Quadric, x: DVec3, d: DVec3) -> Option<(f64, DVec3)> {
+    let gradient = quadric.gradient(x);
+    let t = d.cross(gradient).try_normalize()?;
+    let hessian = quadric.a + quadric.a.transpose();
+    Some((t.dot(hessian * t).abs() / gradient.length(), gradient))
+}
+
+/// Whether walls crossing at an angle of sine `sine`, their
+/// cross-sections' curvatures adding up to `kappa`, bound a sliver at
+/// least [`LENS`] resolutions thick (see [`along_generators`]); not where
+/// any of it isn't finite.
+fn clear(sine: f64, kappa: f64, resolution: f64) -> bool {
+    let clear = (sine * sine).partial_cmp(&(2.0 * LENS * resolution * kappa));
+    matches!(clear, Some(Ordering::Greater | Ordering::Equal))
+}
+
+/// Whether triangle `p` of `A` and `q` of `B`, on walls along `d`
+/// ([`parallel_generators`]), touch along a line from either side, for a
+/// union: it has ends, and at every one the walls aren't clear of each
+/// other (see [`along_generators`]: tangent, or crossing so near tangent
+/// that the sliver between is thinner than [`LENS`] resolutions) and
+/// face opposite ways (each wall's normal there, the quadric's gradient,
+/// turned the way its patch faces at its middle).
+///
+/// Walls tangent within the tie distance, `A` grown by the perturbation,
+/// cross in two lines infinitely close, whose ends (two or four to a
+/// pair, as the patches' edges fall) no join takes, and refinement split
+/// the pairs along the line until the budget ran out (seconds). The exact union of solids touching along a
+/// line from either side isn't a manifold, and one overlapping by less
+/// than a quarter of the resolution has a neck thinner than that: either
+/// way the result touches itself at the kernel's resolution, so the
+/// union fails as such at once. Walls facing the same way (one solid
+/// inside the other, touching its skin from inside) give a manifold
+/// union, the outer solid there, and are refined as before.
+fn pinched_line(
+    a: &Input,
+    p: u32,
+    b: &Input,
+    q: u32,
+    ends: &[End],
+    d: DVec3,
+    resolution: f64,
+) -> bool {
+    let quadric = |input: &Input, t: u32| match input.mesh.faces()[input.face(t) as usize].surface {
+        Surface::Quadric(quadric) => Some(quadric),
+        _ => None,
+    };
+    let (Some(qa), Some(qb)) = (quadric(a, p), quadric(b, q)) else {
+        return false;
+    };
+    if ends.is_empty() {
+        return false;
+    }
+    let middle = DVec3::splat(1.0 / 3.0);
+    let (na, nb) = (
+        a.patches[p as usize].normal(middle),
+        b.patches[q as usize].normal(middle),
+    );
+    // A gradient turned the way `n` faces; `None` where the two are within
+    // 60° of square (a patch so bent that its middle tells nothing), or
+    // not finite.
+    let outward = |g: DVec3, n: DVec3| {
+        let along = g.dot(n);
+        let half = 0.5 * g.length() * n.length();
+        if along > half {
+            Some(g)
+        } else if -along > half {
+            Some(-g)
+        } else {
+            None
+        }
+    };
+    ends.iter().all(|e| {
+        let (Some((ka, ga)), Some((kb, gb))) = (section(&qa, e.at, d), section(&qb, e.at, d))
+        else {
+            return false;
+        };
+        let (Some(ga), Some(gb)) = (outward(ga, na), outward(gb, nb)) else {
+            return false;
+        };
+        let (ua, ub) = (ga.normalize(), gb.normalize());
+        let sine = ua.cross(ub).length();
+        let kappa = ka + kb;
+        sine.is_finite() && kappa.is_finite() && !clear(sine, kappa, resolution) && ua.dot(ub) < 0.0
+    })
 }
 
 /// The direction a quadric doesn't change along, if it is a cylinder: a
