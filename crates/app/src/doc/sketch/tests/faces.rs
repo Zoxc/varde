@@ -206,9 +206,9 @@ fn s_then_a_click_on_the_plates_top_starts_a_sketch_there() {
     };
     assert_eq!(placement, expected);
     assert_eq!(doc.placement(id), Some(expected));
-    assert_eq!(doc.feed.placement(id), None);
+    assert_eq!(doc.feed.placement(id, &plane(&doc, id)), None);
     answer(&mut doc, &requests);
-    assert_eq!(doc.feed.placement(id), Some(expected));
+    assert_eq!(doc.feed.placement(id, &plane(&doc, id)), Some(expected));
     assert_eq!(doc.placement(id), Some(expected));
 
     // The camera faces it, its y up on screen.
@@ -273,6 +273,8 @@ fn a_curved_face_isnt_highlighted_or_sketched_on() {
     assert_eq!(doc.editor.revision(), revision);
     assert_eq!(edited(&doc), None);
     assert_eq!(doc.notice.as_deref(), Some(varde_view::CURVED_FACE));
+    assert!(doc.picking_plane.is_some(), "picking goes on");
+    doc.look(Look::Escape);
 
     // Selected, `S` says so too.
     doc.look(Look::ClickModel {
@@ -483,7 +485,11 @@ fn a_sketch_on_a_tilted_face_is_placed_up_and_extruded() {
     assert!(placement.y.z > 0.7 && placement.y.x < -0.7, "{placement:?}");
     assert!(placement.x.abs_diff_eq(DVec3::Y, 1e-12), "{placement:?}");
     answer(&mut doc, &requests);
-    assert_eq!(doc.feed.placement(id), Some(placement), "the same bits");
+    assert_eq!(
+        doc.feed.placement(id, &plane(&doc, id)),
+        Some(placement),
+        "the same bits"
+    );
     settle_camera(&mut doc);
     assert!(
         (doc.camera.backward().as_dvec3()).abs_diff_eq(placement.normal, 1e-5),
@@ -578,6 +584,27 @@ fn a_sketch_whose_face_is_gone_fails_and_entering_it_asks_for_a_plane() {
     doc.update(Edit::Undo);
     assert_eq!(doc.editor.revision(), revision);
     assert!(matches!(plane(&doc, id), Plane::Face(_)));
+
+    // Asking for a plane, the plate's extrude undone back: once its
+    // model shows the sketch placed, the reason goes.
+    answer(&mut doc, &requests);
+    doc.look(Look::EditFeature(id));
+    assert!(
+        doc.picking_plane
+            .as_ref()
+            .is_some_and(|p| p.pick.failed.is_some())
+    );
+    doc.update(Edit::Undo);
+    assert!(doc.editor.document().feature(extrude).is_some());
+    answer(&mut doc, &requests);
+    let picking = doc.picking_plane.as_ref().expect("still picking");
+    assert_eq!(picking.pick.failed, None);
+    let bar = status_bar(&doc);
+    assert!(
+        bar.iter()
+            .any(|t| t == "Pick a plane or a flat face for Sketch 2"),
+        "{bar:?}"
+    );
 }
 
 /// The sketch feature `id`'s drawing.
@@ -609,3 +636,26 @@ fn text_at(doc: &Doc, label: &str) -> iced::Point {
 }
 
 mod change;
+
+#[test]
+fn a_face_of_a_feature_removed_since_the_model_shown_takes_no_sketch() {
+    let (mut doc, _requests) = example();
+    let top = face_on(&doc, DVec3::Z, 10.0);
+    // The plate's extrude removed, its answer not in yet: the plate still
+    // shows, but its faces aren't the document's.
+    let extrude = doc.editor.document().features()[1].id;
+    doc.apply(Command::RemoveFeature(extrude));
+    doc.sync();
+    let revision = doc.editor.revision();
+    key_in(&mut doc, letter("s"));
+    assert!(doc.picking_plane.is_some());
+    let sent = click_screen(&doc, OVER_TOP);
+    assert!(
+        !(sent.iter()).any(|m| matches!(m, Ui::Edit(Edit::FacePicked(_)))),
+        "{sent:?}"
+    );
+    doc.update(Edit::FacePicked(top));
+    assert_eq!(doc.editor.revision(), revision);
+    assert_eq!(doc.notice.as_deref(), Some("That face isn't in the model"));
+    assert!(doc.picking_plane.is_some(), "picking goes on");
+}

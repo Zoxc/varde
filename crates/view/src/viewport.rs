@@ -627,12 +627,12 @@ impl Program<'_> {
                         return Some(Action::capture());
                     };
                     let pick = self.pick_point(picking, bounds, at);
-                    if picking.planes.is_some() {
+                    if let Some(planes) = picking.planes {
                         // A face that can take the sketch is picked;
                         // anything else nothing.
                         let face = pick.and_then(|pick| match pick.target {
-                            Picked::Face(face) if picking.takes(pick.target) => {
-                                picking.index.face_ref(face, pick.at)
+                            Picked::Face(face) if planes.takes(picking.index, face) => {
+                                planes.face_ref(picking.index, face, pick.at)
                             }
                             _ => None,
                         });

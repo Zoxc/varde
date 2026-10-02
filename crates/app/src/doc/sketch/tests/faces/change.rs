@@ -77,7 +77,11 @@ fn changing_the_plane_from_the_timeline_moves_the_drawing() {
     assert_eq!(placement.x, DVec3::X);
     assert_eq!(placement.y, -DVec3::Y);
     answer(&mut doc, &requests);
-    assert_eq!(doc.feed.placement(id), Some(placement), "the same bits");
+    assert_eq!(
+        doc.feed.placement(id, &plane(&doc, id)),
+        Some(placement),
+        "the same bits"
+    );
     let points = drawn_points(&doc);
     assert!(!points.is_empty());
     for p in &points {
@@ -284,4 +288,85 @@ fn picking_a_plane_and_measuring_leave_each_other() {
         doc.look(Look::StartMeasure);
         assert!(doc.measure.is_none() && doc.picking_plane.is_none());
     }
+}
+
+#[test]
+fn an_undo_in_the_sketch_puts_it_back_on_its_face_and_turns_to_it() {
+    let (mut doc, id, requests) = circle_on_the_top();
+    doc.look(Look::EditFeature(id));
+    doc.look(Look::ChangePlane(id));
+    let bottom = face_on(&doc, -DVec3::Z, 0.0);
+    doc.update(Edit::FacePicked(bottom));
+    assert_eq!(edited(&doc), Some(id));
+    answer(&mut doc, &requests);
+    let on_bottom = doc.placement(id).unwrap();
+    assert_eq!(on_bottom.normal, -DVec3::Z);
+    settle_camera(&mut doc);
+    assert!(doc.camera.backward().abs_diff_eq(-Vec3::Z, 1e-5));
+
+    doc.update(Edit::Undo);
+    assert_eq!(edited(&doc), Some(id));
+    assert!(matches!(plane(&doc, id), Plane::Face(f) if f.near.z == 10.0));
+    // The model shown has it on the bottom, where it no longer is: no
+    // placement until a model of it on the top shows, the session kept
+    // as it was meanwhile.
+    assert_eq!(doc.placement(id), None);
+    assert_eq!(doc.sketch_state().unwrap().placement, on_bottom);
+    answer(&mut doc, &requests);
+    let on_top = doc.placement(id).unwrap();
+    assert_eq!(on_top.origin, DVec3::new(0.0, 0.0, 10.0));
+    assert_eq!(doc.sketch_state().unwrap().placement, on_top);
+    settle_camera(&mut doc);
+    assert!(doc.camera.backward().abs_diff_eq(Vec3::Z, 1e-5));
+}
+
+#[test]
+fn a_replaced_document_forgets_the_placement_worked_out_at_a_pick() {
+    let (mut doc, _requests) = example();
+    doc.look(Look::PickPlane);
+    let top = face_on(&doc, DVec3::Z, 10.0);
+    doc.update(Edit::FacePicked(top));
+    let id = edited(&doc).expect("entered");
+    assert!(doc.placement(id).is_some());
+    doc.look(Look::FinishSketch);
+    // The document again in other units: its sketch has the same id and
+    // plane, but nothing places it until a model of it shows.
+    let mut other = Editor::new(doc.editor.document().clone());
+    other
+        .apply(Command::SetUnits(varde_document::LengthUnit::In))
+        .unwrap();
+    doc.apply(Command::Replace(Box::new(other.document().clone())));
+    doc.sync();
+    assert_eq!(doc.placement(id), None);
+}
+
+#[test]
+fn a_face_of_a_body_merged_after_the_sketch_is_named_by_its_own_body() {
+    // Two plates, a sketch, then a join merging Body 2 into Body 1: Body
+    // 2's bottom shows as Body 1's, but at the sketch Body 1 hasn't it.
+    let (mut editor, [top, below]) = crate::tests::two_plates();
+    let xy = Plane::Origin(OriginPlane::XY);
+    editor.apply(editor.document().add_sketch(xy)).unwrap();
+    let id = editor.document().features().last().unwrap().id;
+    crate::tests::add_join(&mut editor);
+    let (mut doc, requests) = crate::tests::holding(editor.document().clone());
+    assert_eq!(doc.feed.merged_bodies(), [(below, top)]);
+    doc.look(Look::ChangePlane(id));
+    let bottom = face_on(&doc, -DVec3::Z, 3.0);
+    assert_eq!(bottom.body, top, "shown on the holder");
+    doc.update(Edit::FacePicked(bottom));
+    assert!(doc.picking_plane.is_none());
+    let Plane::Face(face) = plane(&doc, id) else {
+        panic!("on a face");
+    };
+    assert_eq!(face.body, below, "named by the body made with it");
+    let picked = doc.placement(id).unwrap();
+    assert_eq!(picked.origin, DVec3::new(0.0, 0.0, -3.0));
+    answer(&mut doc, &requests);
+    assert!(
+        doc.feed.failed_features().is_empty(),
+        "{:?}",
+        doc.feed.failed_features()
+    );
+    assert_eq!(doc.feed.placement(id, &plane(&doc, id)), Some(picked));
 }

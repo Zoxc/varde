@@ -280,6 +280,8 @@ impl Doc {
         if replaced {
             self.feed.replaced(self.editor.generation());
             self.forget_picks();
+            // Its feature id may name another sketch now.
+            self.placed = None;
         }
         self.prune_deleting();
         self.prune(replaced);
@@ -754,6 +756,8 @@ impl Doc {
     /// goes to [`Doc::export_welded`] instead.
     pub(crate) fn computed(&mut self, response: varde_regen::Response) {
         self.feed.apply(response);
+        // Which bodies are merged, which faces show as whose, may change.
+        self.prune_plane_pick(false);
         self.prune_picks();
         self.follow_placement();
     }

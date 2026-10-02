@@ -822,10 +822,14 @@ one too far out is refused with the reason in the status bar
 (`Doc::notice`), and nothing is added; else one `AddSketch` with
 `Plane::Face`, one undo step, and the sketch is entered, the camera
 facing the face with its `y` up (for a side face, world Z projected).
-A sketch is entered only once it's placed (`Doc::enter_sketch`); the
-session keeps its placement (`SketchSession::placement`), which moves
-with its face as answers come (`Doc::follow_placement`) and stays as it
-was while none is known.
+A face refused (curved, not the document's: a model shown from before
+an edit removed its feature, or too far out) keeps picking, the reason
+in the status bar. A sketch is entered only once it's placed
+(`Doc::enter_sketch`); the session keeps its placement
+(`SketchSession::placement`), which moves with its face as answers come
+(`Doc::follow_placement`) and stays as it was while none is known; an
+undo or redo in the sketch that puts it on another plane turns the
+camera to face it once its placement is known.
 
 **Change plane** (`Look::ChangePlane(feature)`): from a sketch's
 Timeline row menu, or the Sketch tab's row naming the plane ("on XY",
@@ -838,7 +842,9 @@ would break), so `PlanePick::refusal` says "Sketch 1 can only go on a
 face made before it" for the others, which aren't highlighted nor
 clickable; the toolbar's tag reads "Sketch 2's plane". The plane
 picked is one `SetSketchPlane` (`Change::SetPlane`, waiting behind
-edits on the solver like any change), the drawing kept in its own
+edits on the solver like any change; a face as `PlanePick::face_ref`
+names it, by the body made with it if a later join merged that into
+another), the drawing kept in its own
 coordinates; a face's placement is worked out at the pick and kept as
 `Doc::placed` (with the plane, so an undo that takes it off drops it) as
 for a new sketch. A face refused at the pick keeps picking, the reason
@@ -846,7 +852,9 @@ in the status bar. `Esc` (or `S`) backs out leaving the document as it
 was, and enters the sketch again if it was left for it. The picking is
 kept in step with the document (`Doc::prune_plane_pick`): which faces
 take the sketch is worked out again after every edit, and it ends if
-the sketch goes or the document is replaced.
+the sketch goes or the document is replaced; after every answer too,
+which may merge bodies, and the reason a failed sketch is asked about
+goes once the model shown places it.
 
 **A sketch whose face is gone** (regen failed to place it: its face
 wasn't found, isn't flat, its body is gone) is red in the Timeline with

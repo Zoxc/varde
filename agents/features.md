@@ -177,9 +177,14 @@ the rest of the request.
 origin plane's, or a face sketch's from the model shown (`MeshFeed`
 keeps the answer's `placements`, given out as `MeshFeed::placement`
 only while the model shown is of the document as it is, as the failed
-features are). Right after a face is picked, before any answer places
+features are, and only for a sketch on the plane it had in the document
+that model is of: `MeshFeed` keeps the snapshots it asked about until
+their answers can no longer come, at most 64, so after an undo or redo
+of a change of plane the old face's placement isn't used while the
+answer is on its way). Right after a face is picked, before any answer places
 the new sketch, the app works the placement out itself: the face is
-found in the model shown (`PickIndex::find_face`), its picking summary
+found in the model shown (`PickIndex::find_face`, a merged body's face
+on the body holding it), its picking summary
 must be `Summary::Plane { n, d }`, and `Placement::on_plane(n, d)` on
 those bits (`PickIndex::face_placement`) is what regen will get, so
 nothing jumps when the answer comes; it's kept as `Doc::placed` (the
@@ -199,6 +204,25 @@ plane, `agents/sketch.md`), which `SetSketchPlane` puts it on, a face's
 placement worked out at the pick as for a new sketch. Before the first
 answer, or read-only, it isn't entered: the status bar says "Can't edit
 Sketch 2: <reason>" (`Doc::notice`, until the next thing asked).
+
+`PickIndex::find_face` resolves a `FaceRef` as `Topology::face` does:
+among the faces named by the key or an alias, the only one, or the
+nearest to `near`, a later one only where it's nearer by more than a
+billionth of the model's size, the faces numbered alike (the picking
+tables list a body's faces in its topology's region order). It measures
+to the drawn triangles (`f32`) rather than the exact patches; for a flat
+face, the only kind sketched on, those lie in its plane, so the two
+differ only by `f32` rounding, which can change the answer only where
+the point picked is within that rounding of two faces with the same
+key, and the answer's placement replaces the app's anyway. What does
+differ for Change plane is the model: the app finds the face in the
+final model, regen at the sketch's place in the history. A face a later
+feature removed can't be picked, and one moved by a later feature would
+be placed at the pick where it ends up and then where it was; faces of
+a body a later join merged into another are named by their own body
+(`PlanePick::face_ref`: the body the feature naming the face made, if
+that's merged into the one shown), which regen follows on to the holder
+wherever the join is, so they're found before the join too.
 
 ## Revolve
 

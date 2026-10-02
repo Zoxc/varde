@@ -2,10 +2,12 @@
 //! fed by the regeneration side.
 
 use std::cell::OnceCell;
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 use varde_document::{
-    BodyId, Document, Editor, FeatureId, FeatureKind, Generation, Operation, Placement,
+    BodyId, Document, Editor, FeatureId, FeatureKind, Generation, Operation, Placement, Plane,
+    Snapshot,
 };
 use varde_kernel::{RenderLines, RenderMesh};
 use varde_regen::{
@@ -54,6 +56,15 @@ pub(crate) struct MeshFeed {
     /// generation as `mesh`, in the document's order: those that failed
     /// aren't listed.
     placements: Vec<(FeatureId, Placement)>,
+    /// The document `mesh` is of, if it's known (see `asked`): a
+    /// placement is given out only for a sketch on the plane it had
+    /// there, so one an undo has put on another face since isn't drawn
+    /// or edited at the old face's place.
+    shown_document: Option<Snapshot>,
+    /// The documents asked about whose models may yet come, oldest first,
+    /// at most [`MAX_ASKED`]: an answer whose document has been let go of
+    /// gives out no placements.
+    asked: VecDeque<(Generation, Snapshot)>,
     /// Tags the next [`Request::Export`].
     next_export: u64,
     /// The generation the document was last replaced whole by, if it was,
@@ -97,6 +108,12 @@ pub(crate) struct MeshFeed {
     /// one: its places name entries of `picking`.
     inspected: Option<Inspected>,
 }
+
+/// How many of the documents asked about [`MeshFeed`] keeps for their
+/// answers: the lane answers the one it's working on and the newest, so
+/// more pile up only while it's slower than the edits, and an answer
+/// that old gives out no placements.
+const MAX_ASKED: usize = 64;
 
 /// What a request asks for, and so what its answer is of: a generation
 /// of the document, the sketch left out of the lines, the revision of the
@@ -209,9 +226,16 @@ impl MeshFeed {
                 || (requested.generation == asked.generation && requested != asked)
         }) {
             self.requested = Some(asked);
+            let document = editor.snapshot();
+            if (self.asked.back()).is_none_or(|&(newest, _)| newest < asked.generation) {
+                if self.asked.len() == MAX_ASKED {
+                    self.asked.pop_front();
+                }
+                self.asked.push_back((asked.generation, document.clone()));
+            }
             regen.send(Request::Regenerate {
                 generation: asked.generation,
-                document: editor.snapshot(),
+                document,
                 exclude,
                 draft: draft.map(Box::new),
                 inspect: inspect.map(Box::new),
@@ -283,6 +307,11 @@ impl MeshFeed {
                 self.touched_features = touched;
                 self.merged_bodies = merged;
                 self.placements = placements;
+                // Older documents' models won't be shown any more.
+                (self.asked).retain(|&(generation, _)| generation >= asked.generation);
+                self.shown_document = (self.asked.front())
+                    .filter(|&&(generation, _)| generation == asked.generation)
+                    .map(|(_, document)| document.clone());
                 if let Some(Drafted {
                     revision,
                     touched: Some(touched),
@@ -500,12 +529,18 @@ impl MeshFeed {
         }
     }
 
-    /// Where the sketch on a face `feature` is, as the model shown placed
-    /// it: with a draft, as the document with the draft applied did.
-    /// None if it wasn't placed, the model shown doesn't know it, or the
+    /// Where the sketch on a face `feature`, now on `plane`, is, as the
+    /// model shown placed it: with a draft, as the document with the
+    /// draft applied did. None if it wasn't placed, the model shown
+    /// doesn't know it, had it on another plane (an undo or redo of a
+    /// change of plane since) or its document isn't known, or the
     /// document was replaced since.
-    pub(crate) fn placement(&self, feature: FeatureId) -> Option<Placement> {
-        let placements = if self.marks() {
+    pub(crate) fn placement(&self, feature: FeatureId, plane: &Plane) -> Option<Placement> {
+        let on_plane = self.shown_document.as_ref().is_some_and(|document| {
+            matches!(document.feature(feature).map(|feature| &feature.kind),
+                Some(FeatureKind::Sketch { plane: shown, .. }) if shown == plane)
+        });
+        let placements = if self.marks() && on_plane {
             &self.placements[..]
         } else {
             &[]

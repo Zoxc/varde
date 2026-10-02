@@ -169,13 +169,8 @@ impl Doc {
     /// status bar says why another isn't): flat, and for a sketch whose
     /// plane is changed, of a body made before it.
     fn shown_hover(&self) -> Option<Pick> {
-        let index = || self.feed.pick_index();
-        let picking = self.picking_plane.as_ref();
-        (self.pick.hover).filter(|pick| match (picking, pick.target) {
-            (None, _) => true,
-            (Some(picking), Picked::Face(face)) => picking.pick.takes(index(), face),
-            (Some(_), _) => false,
-        })
+        let picking = self.model_picking()?;
+        (self.pick.hover).filter(|pick| picking.takes(pick.target))
     }
 
     /// Picking for the viewport, if the cursor picks the model: faces
