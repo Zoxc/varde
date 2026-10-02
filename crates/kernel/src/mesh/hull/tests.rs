@@ -13,6 +13,22 @@ use crate::test_rng::Rng;
 
 const MARGIN: f64 = 1e-6;
 
+/// The cylinder rule on patches sharing edge `ea` of `a`, edge `eb` of `b`.
+fn cylinder_apart(a: &Patch, ea: usize, b: &Patch, eb: usize, margin: f64) -> bool {
+    CurvedPair::new(a, ea, b, eb, margin).is_some_and(|pair| super::cylinder_apart(&pair, margin))
+}
+
+/// The pencil rule's member on patches sharing edge `ea` of `a`, edge `eb`
+/// of `b`.
+fn pencil_member(a: &Patch, ea: usize, b: &Patch, eb: usize, margin: f64) -> Option<(f64, f64)> {
+    super::pencil_member(&CurvedPair::new(a, ea, b, eb, margin)?, margin)
+}
+
+/// Whether the pencil rule parts them.
+fn pencil_apart(a: &Patch, ea: usize, b: &Patch, eb: usize, margin: f64) -> bool {
+    pencil_member(a, ea, b, eb, margin).is_some()
+}
+
 /// A random rotation.
 fn rotation(rng: &mut Rng) -> DMat3 {
     let x = rng.direction();
@@ -704,6 +720,53 @@ fn creases_are_parted_by_the_pencil() {
     }
 }
 
+/// The pencil's search on made-up coefficients where its points are
+/// degenerate: all on one line, all the same, one at the origin, not
+/// finite. It finds the member where there is one and never divides by
+/// a zero length.
+#[test]
+fn the_pencil_search_takes_degenerate_points() {
+    use Piece::Line;
+    let (a, b) = ring_pair(&Line([2.0, 2.0], [2.0, 0.0]), &Line([2.0, 0.0], [5.0, 1.0]));
+    let pair = CurvedPair::new(&a, 0, &b, 1, MARGIN).unwrap();
+    let g = 4.0 * pair.edge.w2 / pair.edge.height();
+    let k = |f: f64, p: f64| Coefficient {
+        f: f * g,
+        ef: 0.0,
+        p,
+        ep: 0.0,
+    };
+    let member = |a: [Coefficient; 10], b: [Coefficient; 10]| {
+        let pair = CurvedPair {
+            edge: pair.edge,
+            a,
+            b,
+        };
+        super::pencil_member(&pair, MARGIN)
+    };
+    let spread = |i: usize| (i as f64 - 4.5) / 10.0;
+    // `F` alone parts them, `P` varying either way: the points lie on a
+    // line square to the `F` axis, and the member found is `F`'s.
+    let (alpha, beta) = member(
+        std::array::from_fn(|i| k(1.0, spread(i))),
+        std::array::from_fn(|i| k(-1.0, spread(i))),
+    )
+    .unwrap();
+    assert!(alpha > 0.0 && beta == 0.0, "{alpha} {beta}");
+    // Every point the same: one direction, segments of no length.
+    let (alpha, beta) = member([k(1.0, 1.0); 10], [k(-1.0, -1.0); 10]).unwrap();
+    assert!(alpha > 0.0 && beta > 0.0 && (alpha * g - beta).abs() <= 1e-12 * beta);
+    // Either side of the origin on one line: no member.
+    assert_eq!(member([k(1.0, 0.0); 10], [k(1.0, 0.0); 10]), None);
+    // A coefficient on the zero set, or not finite.
+    for bad in [k(0.0, 0.0), k(f64::NAN, 1.0), k(1.0, f64::INFINITY)] {
+        let (mut ka, kb) = ([k(1.0, 1.0); 10], [k(-1.0, -1.0); 10]);
+        ka[3] = bad;
+        assert_eq!(member(ka, kb), None);
+        assert_eq!(member(kb, ka), None);
+    }
+}
+
 #[test]
 fn the_pencil_refuses_folds() {
     use Piece::{Arc, Line};
@@ -842,6 +905,13 @@ fn the_pencil_rule_is_sound_on_random_pairs() {
             continue;
         }
         tried += 1;
+        // The shared pass gives the rules' answer.
+        assert_eq!(
+            edge_neighbours_parted(&a, 0, &b, 0, margin),
+            edge_neighbours_apart(&a, 0, &b, 0, margin)
+                || cylinder_apart(&a, 0, &b, 0, margin)
+                || pencil_apart(&a, 0, &b, 0, margin)
+        );
         let Some((alpha, beta)) = pencil_member(&a, 0, &b, 0, margin) else {
             continue;
         };

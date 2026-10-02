@@ -14,7 +14,7 @@
 //!   parts them where the surface touches the edge's plane all along it;
 //!   or, at a crease where both leave the edge on one side of its plane
 //!   and of that cylinder, opposite sides of a quadric from the pencil of
-//!   the two ([`pencil_apart`]).
+//!   the two ([`pencil_member`]).
 //! - **Vertex neighbours** (sharing one vertex only): a plane through the
 //!   vertex has the other five control points of each on opposite sides
 //!   ([`vertex_neighbours_apart`]).
@@ -142,8 +142,9 @@ pub(crate) fn edge_neighbours_apart(
 
 /// Two patches sharing edge `ea` of `a`, which is edge `eb` of `b`: the
 /// plane rule ([`edge_neighbours_apart`]), else the cylinder rule
-/// ([`cylinder_apart`]), else the pencil rule ([`pencil_apart`]). What
-/// `check` and repair ask of edge neighbours.
+/// ([`cylinder_apart`]), else the pencil rule ([`pencil_member`]), the
+/// last two on one pass over each patch's coefficients ([`CurvedPair`]).
+/// What `check` and repair ask of edge neighbours.
 ///
 /// Bands and caps (`sweep/lathe.rs`) grade their strips by the plane rule
 /// alone: its failure on a fitted diagonal is what tells them a strip is
@@ -157,14 +158,14 @@ pub(crate) fn edge_neighbours_parted(
     margin: f64,
 ) -> bool {
     edge_neighbours_apart(a, ea, b, eb, margin)
-        || cylinder_apart(a, ea, b, eb, margin)
-        || pencil_apart(a, ea, b, eb, margin)
+        || CurvedPair::new(a, ea, b, eb, margin).is_some_and(|pair| {
+            cylinder_apart(&pair, margin) || pencil_member(&pair, margin).is_some()
+        })
 }
 
-/// Two patches sharing the curved edge `ea` of `a`, which is edge `eb` of
-/// `b`: they lie on opposite sides of the cylinder over the edge's conic
-/// (through it, square to its plane), each clear of it but along the
-/// edge.
+/// Two patches sharing a curved edge (`pair`): they lie on opposite sides
+/// of the cylinder over the edge's conic (through it, square to its
+/// plane), each clear of it but along the edge.
 ///
 /// Where the surface touches the edge's plane all along the edge (a ring
 /// at a turn of a solid of revolution: a torus's top, a flat face meeting
@@ -222,17 +223,14 @@ pub(crate) fn edge_neighbours_parted(
 /// A straight edge (its control point within `margin` of its chord), a
 /// nearly degenerate control triangle, different edges, and anything not
 /// finite are refused.
-pub(crate) fn cylinder_apart(a: &Patch, ea: usize, b: &Patch, eb: usize, margin: f64) -> bool {
-    let Some(edge) = CurvedEdge::new(a, ea, b, eb, margin) else {
-        return false;
-    };
-    // `|∇F|` at the end where it is smaller: `4w²/hQ` at `P`, `hQ` the
-    // height of `Q` above the line through `P` and `C`.
-    let threshold = margin * edge.gradient();
+fn cylinder_apart(pair: &CurvedPair, margin: f64) -> bool {
+    let edge = &pair.edge;
+    // `margin·|∇F|`, `|∇F|` at the end where it is smaller.
+    let threshold = margin * 4.0 * edge.w2 / edge.height();
     // The sign of F on the patch, or None.
-    let side = |x: &Patch, e: usize| -> Option<f64> {
+    let side = |coefficients: &[Coefficient; 10]| -> Option<f64> {
         let mut sign = 0.0;
-        for k in edge.coefficients(x, e)? {
+        for k in coefficients {
             // NaN fails the comparison.
             let clear = k.f.abs() > threshold + k.ef;
             if !clear || (sign != 0.0 && k.f.signum() != sign) {
@@ -242,21 +240,15 @@ pub(crate) fn cylinder_apart(a: &Patch, ea: usize, b: &Patch, eb: usize, margin:
         }
         Some(sign)
     };
-    matches!((side(a, ea), side(b, eb)), (Some(sa), Some(sb)) if sa == -sb)
+    matches!((side(&pair.a), side(&pair.b)), (Some(sa), Some(sb)) if sa == -sb)
 }
 
-/// Two patches sharing the curved edge `ea` of `a`, which is edge `eb` of
-/// `b`: some member `G = α·F + β·P` of the pencil of the cylinder over
-/// the edge's conic (`F`, as in [`cylinder_apart`]) and the edge's plane
-/// (`P`, the signed distance from it) has one sign on `a` and the other
-/// on `b`, each clear of `G = 0` but along the edge. See
-/// [`pencil_member`].
-pub(crate) fn pencil_apart(a: &Patch, ea: usize, b: &Patch, eb: usize, margin: f64) -> bool {
-    pencil_member(a, ea, b, eb, margin).is_some()
-}
-
-/// The member `(α, β)` of the pencil `G = α·F + β·P` that parts `a`
-/// (where `G > 0`) from `b` (where `G < 0`), if [`pencil_apart`] finds one.
+/// Two patches sharing a curved edge (`pair`, first `a` then `b`): the
+/// member `(α, β)` of the pencil `G = α·F + β·P` of the cylinder over the
+/// edge's conic (`F`, as in [`cylinder_apart`]) and the edge's plane (`P`,
+/// the signed distance from it) that has one sign on `a` (`G > 0`) and
+/// the other on `b`, each clear of `G = 0` but along the edge, if one is
+/// found.
 ///
 /// At a crease (two faces meeting at an angle along a curved edge) both
 /// faces may leave the edge on one side of its plane and on one side of
@@ -292,9 +284,13 @@ pub(crate) fn pencil_apart(a: &Patch, ea: usize, b: &Patch, eb: usize, margin: f
 /// have `u·p_γ > 1`: the distance from the origin to their convex hull
 /// must be more than 1, as for the plane rule's straight edge in two
 /// dimensions. The best `u` points at the hull's closest point, a vertex
-/// or the foot on a segment, so every vertex direction and both normals
-/// of every segment are tried (400 directions against 20 points, in a
-/// fixed order) and the best kept. No trigonometry.
+/// or the foot on a segment, so every vertex direction and the outer
+/// normal of every segment are tried (210 directions against 20 points,
+/// in a fixed order) and the best kept. No trigonometry. A point within 1
+/// of the origin refuses at once, a direction whose own point can't beat
+/// the best so far is dropped before it is normalised, and one is dropped
+/// at its first point under the best: a pair costs a few times the
+/// cylinder's test, whose coefficients it shares.
 ///
 /// **The check.** The chosen member is then checked with its own bounds,
 /// so nothing rests on the search: every `s_γ·r_γ > margin + |α'|·eF_γ/g +
@@ -325,22 +321,20 @@ pub(crate) fn pencil_apart(a: &Patch, ea: usize, b: &Patch, eb: usize, margin: f
 /// The cylinder rule's refusals come first (a straight edge, a nearly
 /// degenerate control triangle, different edges); anything not finite is
 /// refused too.
-fn pencil_member(a: &Patch, ea: usize, b: &Patch, eb: usize, margin: f64) -> Option<(f64, f64)> {
-    let edge = CurvedEdge::new(a, ea, b, eb, margin)?;
-    let g = edge.gradient();
+fn pencil_member(pair: &CurvedPair, margin: f64) -> Option<(f64, f64)> {
+    let g = 4.0 * pair.edge.w2 / pair.edge.height();
     let finite = |k: &Coefficient| {
         k.f.is_finite() && k.ef.is_finite() && k.p.is_finite() && k.ep.is_finite()
     };
-    let (ka, kb) = (edge.coefficients(a, ea)?, edge.coefficients(b, eb)?);
-    if !(g.is_finite() && g > 0.0 && ka.iter().chain(&kb).all(finite)) {
+    if !(g.is_finite() && g > 0.0 && pair.a.iter().chain(&pair.b).all(finite)) {
         return None;
     }
     // Each coefficient with its side's sign: `(s, F/g, eF/g, P, eP)`.
     let signed = |i: usize| {
         let (s, k) = if i < 10 {
-            (1.0, ka[i])
+            (1.0, pair.a[i])
         } else {
-            (-1.0, kb[i - 10])
+            (-1.0, pair.b[i - 10])
         };
         (s, k.f / g, k.ef / g, k.p, k.ep)
     };
@@ -350,40 +344,57 @@ fn pencil_member(a: &Patch, ea: usize, b: &Patch, eb: usize, margin: f64) -> Opt
         let m = margin + ef + ep;
         *point = (s * f / m, s * p / m);
     }
-    // The least of `u·p` over the points, for a unit `u`.
-    let score = |u: (f64, f64)| {
-        points
-            .iter()
-            .map(|p| u.0 * p.0 + u.1 * p.1)
-            .fold(f64::INFINITY, f64::min)
-    };
-    let mut best = (f64::NEG_INFINITY, (0.0, 0.0));
-    let mut consider = |u: (f64, f64)| {
-        let length = (u.0 * u.0 + u.1 * u.1).sqrt();
-        // Also skips NaN.
-        if !(length > 0.0 && length.is_finite()) {
-            return;
-        }
-        let u = (u.0 / length, u.1 / length);
-        let s = score(u);
-        if s > best.0 {
-            best = (s, u);
-        }
-    };
-    for i in 0..20 {
-        consider(points[i]);
-        for j in i + 1..20 {
-            let d = (points[j].0 - points[i].0, points[j].1 - points[i].1);
-            consider((-d.1, d.0));
-            consider((d.1, -d.0));
-        }
-    }
-    let (score, (alpha, beta)) = best;
-    // NaN fails the comparison.
-    let found = score > 1.0;
-    if !found {
+    // No unit `u` has `u·p > 1` for a point within 1 of the origin
+    // (NaN refused too).
+    if !points.iter().all(|p| p.0 * p.0 + p.1 * p.1 > 1.0) {
         return None;
     }
+    // The least `u·p` over the points, for a unit `u`, if it is more
+    // than `floor`: it stops at the first point under it.
+    let score = |u: (f64, f64), floor: f64| {
+        let mut least = f64::INFINITY;
+        for p in &points {
+            let d = u.0 * p.0 + u.1 * p.1;
+            // NaN fails the comparison.
+            let over = d > floor;
+            if !over {
+                return None;
+            }
+            least = least.min(d);
+        }
+        Some(least)
+    };
+    // The best direction with a score over 1 (the first of equals).
+    let mut best = (1.0, None);
+    // A direction `v`, not of unit length, with `v·p = c` at the point
+    // it was made from: its score is at most `c/|v|`, so it is
+    // dropped unless that beats the best (NaN dropped too).
+    let mut consider = |v: (f64, f64), c: f64| {
+        let vv = v.0 * v.0 + v.1 * v.1;
+        if !(c > 0.0 && c * c > best.0 * best.0 * vv) {
+            return;
+        }
+        let length = vv.sqrt();
+        let u = (v.0 / length, v.1 / length);
+        if let Some(s) = score(u, best.0) {
+            best = (s, Some(u));
+        }
+    };
+    for (i, &p) in points.iter().enumerate() {
+        consider(p, p.0 * p.0 + p.1 * p.1);
+        for q in &points[i + 1..] {
+            // The segment's normal on the far side from the origin:
+            // the other one has a score of at most 0.
+            let d = (q.0 - p.0, q.1 - p.1);
+            let c = d.0 * p.1 - d.1 * p.0;
+            if c >= 0.0 {
+                consider((-d.1, d.0), c);
+            } else {
+                consider((d.1, -d.0), -c);
+            }
+        }
+    }
+    let (alpha, beta) = best.1?;
     // The member checked with its own bounds.
     let parts = (0..20).all(|i| {
         let (s, f, ef, p, ep) = signed(i);
@@ -397,9 +408,29 @@ fn pencil_member(a: &Patch, ea: usize, b: &Patch, eb: usize, margin: f64) -> Opt
     parts.then_some((alpha / g, beta))
 }
 
+/// Two patches sharing a curved edge as the cylinder and pencil rules see
+/// them: the edge and the coefficients of `F` and `P` on each, `a` first.
+struct CurvedPair {
+    edge: CurvedEdge,
+    a: [Coefficient; 10],
+    b: [Coefficient; 10],
+}
+
+impl CurvedPair {
+    /// The edge `ea` of `a`, shared with `b` as its edge `eb`
+    /// ([`CurvedEdge::new`]), and both patches' coefficients
+    /// ([`CurvedEdge::coefficients`]).
+    fn new(a: &Patch, ea: usize, b: &Patch, eb: usize, margin: f64) -> Option<Self> {
+        let edge = CurvedEdge::new(a, ea, b, eb, margin)?;
+        let (ka, kb) = (edge.coefficients(a, ea)?, edge.coefficients(b, eb)?);
+        Some(CurvedPair { edge, a: ka, b: kb })
+    }
+}
+
 /// What the cylinder and pencil rules know about a curved edge `P, C, Q`
 /// of weight `w` shared by two patches: its control triangle's edges from
 /// `C`, their normal `n` and the sizes the rounding bounds use.
+#[derive(Debug, Clone, Copy)]
 struct CurvedEdge {
     c: DVec3,
     w2: f64,
@@ -458,11 +489,12 @@ impl CurvedEdge {
         })
     }
 
-    /// `|∇F|` taken as `4w²` over the larger of the far ends' heights above
-    /// the lines through the other end and `C`: `4w²/hQ` at `P`, `hQ` the
-    /// height of `Q` above the line through `P` and `C`.
-    fn gradient(&self) -> f64 {
-        4.0 * self.w2 / (self.root / self.l1).max(self.root / self.l2)
+    /// The larger of the far ends' heights above the lines through the
+    /// other end and `C` (`hQ`, the height of `Q` above the line through
+    /// `P` and `C`, or `hP`): `|∇F|` is `4w²` over it, its value at the end
+    /// where it is smaller.
+    fn height(&self) -> f64 {
+        (self.root / self.l1).max(self.root / self.l2)
     }
 
     /// The coefficients of `F` and `P` on patch `x`, whose edge `e` is

@@ -905,17 +905,24 @@ fn creases_are_parted_by_the_pencil() {
             }
         }
     }
+    // Repair runs on the full turns (the stations' vertex pairs, the
+    // thin tips): the same bits at 1 and 8 threads.
     let shapes = crease_shapes();
     assert_deterministic(|| {
-        let solid = revolve(
-            &shapes[0].0.profile,
-            &frame,
-            Sweep::Full,
-            7,
-            &TOL,
-            &Budget::DEFAULT,
-        )
-        .unwrap();
-        (solid.volume(), solid)
+        shapes
+            .iter()
+            .map(|(shape, _)| {
+                let solid = revolve(
+                    &shape.profile,
+                    &frame,
+                    Sweep::Full,
+                    7,
+                    &TOL,
+                    &Budget::DEFAULT,
+                )
+                .unwrap();
+                (solid.volume(), solid)
+            })
+            .collect::<Vec<_>>()
     });
 }

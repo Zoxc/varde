@@ -1206,7 +1206,7 @@ its triangles share, which is topology:
     rule too, pieces near the edge are closer to it): repair splits on; booleans of the profiles below with boxes and
     cylinders through their rounds match Pappus volumes of the clipped
     profile and the identities, deterministic at 1 and 8 threads.
-  - **The pencil** (`hull::pencil_apart`), for a curved edge both the
+  - **The pencil** (`hull::pencil_member`), for a curved edge both the
     plane and the cylinder fail on, in `check` and repair (third in
     `edge_neighbours_parted`). At a **crease** (two faces meeting at an
     angle along a curved edge, a revolved profile's corner) both faces
@@ -1231,7 +1231,9 @@ its triangles share, which is topology:
     cylinder's `λ`s), so `P·W²`'s polar form is `(ν(X)·ω(Y) +
     ν(Y)·ω(X))/2`, summed over the same pairs in the same pass
     (`CurvedEdge::coefficients`, shared with the cylinder rule, whose
-    test is unchanged bit for bit). Row 0 is exactly zero for both (the
+    test is unchanged bit for bit: its threshold keeps the old order of
+    operations, `margin·4·w²/h`, and its answers match the rule before
+    the pencil on a million adversarial pairs). Row 0 is exactly zero for both (the
     edge's control points lie on the cylinder and in the plane), so the
     20 ratios `rF_γ`, `rP_γ` of rows 1 to 4 of both patches decide.
     **Search**: `F` scaled by `g` (the cylinder's `|∇F|`) so `F/g` and `P`
@@ -1241,9 +1243,15 @@ its triangles share, which is topology:
     which is the distance from the origin to the hull of the points
     `s_γ·(rF_γ/g, rP_γ)/m_γ` exceeding 1 (the straight-edge plane test in
     two dimensions). The best `u` points at a vertex or a segment's foot,
-    so the 20 vertex directions and both normals of the 190 segments are
-    tried in a fixed order (400 directions against 20 points, no
-    trigonometry).
+    so the 20 vertex directions and the outer normals of the 190 segments
+    are tried in a fixed order (210 directions against 20 points, no
+    trigonometry; the other normal scores at most 0). It refuses at once
+    if a point lies within 1 of the origin, drops a direction whose own
+    point can't beat the best before normalising it and stops scoring one
+    at its first point under the best, so a pair costs a few microseconds
+    (on a loaded machine about two and a half times the cylinder's test,
+    over 100 000 adversarial pairs); `edge_neighbours_parted` computes the
+    coefficients once for the cylinder and the pencil (`CurvedPair`).
     **Check**: the chosen member is checked with its own bounds, every
     `s_γ·r_γ > margin + |α'|·eF_γ/g + |β|·eP_γ + 4ε·(|α'·rF_γ/g| +
     |β·rP_γ|)`, so nothing rests on the search. **Soundness**: the
@@ -1278,7 +1286,15 @@ its triangles share, which is topology:
     most 0.037 of the bound, the exact `G` clearing the margin times
     `|∇G|` on every pair; either order of a pair gives the same answer
     but where the straight-edge test itself flips with the order (its
-    threshold, as for the other rules). Pieces of 34 658 pencil-only
+    threshold, as for the other rules). The review hunted 1.1 million more
+    in five other layouts (patches up to `1e6` times the edge's size,
+    the edge `1e-4` of it and `1e8` out; control triangles flat to `κ`
+    about `1e11` with the margin just under the bulge; margins down to
+    `1e-18` of the size; axis-aligned frames with corners exactly in the
+    plane or on the cylinder; every far control point a hair, `1e-14` to
+    `1e-6` of the size, off one member's zero set): 243 770 passes, all
+    true in exact arithmetic, the error at most 0.036 of the bound.
+    Pieces of 34 658 pencil-only
     pairs split down their edge (`split4`, three levels) fail about one
     in a thousand for other conics and one or two in 100 000 for
     circles; repair splits on. Revolved creases (eight crease profiles and a dovetail control,
