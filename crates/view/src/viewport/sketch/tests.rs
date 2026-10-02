@@ -466,12 +466,13 @@ fn the_cursor_shows_what_the_left_button_does() {
 fn builtins(colors: SketchColors) -> SketchLayer {
     let mut layer = SketchLayer::default();
     for id in [Id::X_AXIS, Id::Y_AXIS] {
-        let axis = axis(id).unwrap();
-        layer.polyline(
-            Space::Sketch,
-            &axis,
-            line_style(colors.axis, AXIS_WIDTH, false),
-        );
+        for half in axis(id).unwrap() {
+            layer.axis_polyline(
+                Space::Sketch,
+                &half,
+                line_style(colors.axis, AXIS_WIDTH, false),
+            );
+        }
     }
     let mut origin = dot(POINT_RADIUS, colors.point_fill, colors.axis);
     origin.fixed = true;

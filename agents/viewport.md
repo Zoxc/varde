@@ -316,8 +316,12 @@ opaque) go:
    where they're in front of the glass.
 
 The grid's axis lines are drawn in the grid's pass (`axis_line`) but not
-faded: they run on at full strength to the horizon, and show when the
-plane is seen edge on. Each pixel's coverage comes from its distance to
+faded with distance: they run on at full strength to the horizon, and
+show when the plane is seen edge on. Each fades out on its own as it
+turns to point at the camera (`AXIS_FADE`, by the sine of its angle to
+the view direction, `facing`), where its image shrinks to a point; a
+sketch's axes, drawn over them as `SketchLayer::axis_polyline`s (the
+`FADES` flag), fade with them. Each pixel's coverage comes from its distance to
 the line's image on screen, the homogeneous line through the images of a
 point of the axis (the one nearest the target, so clip coordinates stay
 small) and of its direction, exact at any distance, zoom and display
@@ -328,8 +332,9 @@ so past the far plane they still show), and where that point is behind
 the near plane the pixel isn't drawn, which also drops the part of the
 image that's behind the eye. So bodies in front hide them like the grid.
 
-The origin marker is flat: a ring lying in the grid's plane around the
-world origin, and a dot at the origin itself, each a white core with a
+The origin marker is flat: a ring lying in the grid's plane around its
+origin (the world's, or that of the sketch being edited, where its axis
+lines cross), and a dot at the origin itself, each a white core with a
 dark rim (`Colors::origin_outline`) so it reads on both themes'
 backgrounds. It's one screen-space quad: the ring is the image of a circle
 in the plane, scaled so its widest is `RING_RADIUS` logical pixels at any
@@ -368,7 +373,9 @@ Lines, the model's feature edges, the finished sketches' and the sketch
 being edited's, are one shader (`line_vertex`, `fs_line`): a quad per
 segment a pixel wider than the line, cut at the near plane in perspective
 and to the viewport and a margin (so pixel coordinates stay exact in
-`f32`), divided through so fragments see pixel positions, and the fragment
+`f32`; `shown` works out the cuts from the end nearer the middle of the
+view, since mixing from an end far off, like a sketch axis's, lands
+pixels off), divided through so fragments see pixel positions, and the fragment
 shader turns the distance from the segment into coverage: anti-aliased at
 any zoom and display scale without MSAA, with round ends and joins. A
 segment of an edge or of the sketch being edited knows its neighbours, and

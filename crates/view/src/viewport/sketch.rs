@@ -895,9 +895,9 @@ impl<'a> Sketching<'a> {
         };
         // The axes under the rest, and the origin under the points.
         for id in [Id::X_AXIS, Id::Y_AXIS] {
-            if let Some(axis) = axis(id) {
+            for half in axis(id).into_iter().flatten() {
                 let style = line(builtin_color(id), AXIS_WIDTH, false);
-                layer.polyline(Space::Sketch, &axis, style);
+                layer.axis_polyline(Space::Sketch, &half, style);
             }
         }
         // The ends of lines fillets and chamfers cut off are dashed.
@@ -1450,7 +1450,9 @@ impl<'a> Sketching<'a> {
     /// cursor, into `layer`: the origin and axes too.
     fn highlight(&self, layer: &mut SketchLayer, id: Id, color: Color) {
         if let Some(axis) = axis(id) {
-            layer.polyline(Space::Sketch, &axis, line(color, HOVERED_WIDTH, false));
+            for half in axis {
+                layer.axis_polyline(Space::Sketch, &half, line(color, HOVERED_WIDTH, false));
+            }
         } else if let Some(point) = self.sketch.point(id) {
             let style = dot(HOVERED_POINT_RADIUS, color, color);
             layer.point(point.at, style);
@@ -1464,15 +1466,19 @@ impl<'a> Sketching<'a> {
 }
 
 /// The axis `id` names, if it names one, as drawn: as far as a sketch
-/// reaches either way.
-fn axis(id: Id) -> Option<[DVec2; 2]> {
+/// reaches either way, as two segments out from the origin. The renderer
+/// cuts a segment to the near plane and the viewport by mixing its ends,
+/// which is only as exact as its start is near the part that shows: one
+/// starting that far away lands pixels off the grid's axis line, more as
+/// it's zoomed in and in perspective.
+fn axis(id: Id) -> Option<[[DVec2; 2]; 2]> {
     let reach = f64::from(MAX_COORD);
     let along = match id {
         Id::X_AXIS => DVec2::X,
         Id::Y_AXIS => DVec2::Y,
         _ => return None,
     };
-    Some([-along * reach, along * reach])
+    Some([[DVec2::ZERO, -along * reach], [DVec2::ZERO, along * reach]])
 }
 
 /// Whether a click at `at`, in the viewport's pixels, ends a double-click:

@@ -1334,8 +1334,11 @@ failures show").
 - The **base** layer, the sketch and its selection (under it the regions
   of its profiles, each filled on its own in `SketchColors::region`, since
   a hole's inside is a region too and one even-odd fill of them all would
-  leave it out; the origin's axes, as far as a sketch reaches, and the
-  origin, fixed, in `SketchColors::axis`, or selected or in a conflict),
+  leave it out; the origin's axes, as far as a sketch reaches, each two
+  axis polylines (fading out pointing at the camera, as the grid's axis
+  lines do) out from the origin (a segment with both ends that far away
+  is cut to the near plane and viewport too inexactly, and lands pixels
+  off the grid's axis line), and the origin, fixed, in `SketchColors::axis`, or selected or in a conflict),
   is built only when the sketch, the selection, the states or the colours
   change (compared by value with what it was built from, kept in
   `Input`), or the profiles (compared by `Arc`, as the app finds them

@@ -424,6 +424,45 @@ fn edges_stay_in_front_of_faces_zoomed_into_a_large_scene() {
 }
 
 #[test]
+fn an_axis_pointing_at_the_camera_fades_out_alone() {
+    // From the front the Y axis points at the camera: its line is gone,
+    // nearly so too, while the X axis's stays. Tilted further, it's back.
+    let red = |[r, g, _, _]: [u8; 4]| r > 128 && g < 128;
+    let green = |[r, g, _, _]: [u8; 4]| g > 128 && r < 128;
+    let counts = |pitch: f32, projection| {
+        let mut camera = Camera::default();
+        camera.set_projection(projection);
+        camera.look_from(View::Front);
+        camera.orbit(0.0, pitch);
+        let pixels = render(&camera, &RenderMesh::default(), VIEWPORT, CLIP, 1.0)?;
+        let (mut reds, mut greens) = (0, 0);
+        for y in CLIP.y..CLIP.y + CLIP.height {
+            for x in CLIP.x..CLIP.x + CLIP.width {
+                let p = pixel(&pixels, x, y);
+                reds += u32::from(red(p));
+                greens += u32::from(green(p));
+            }
+        }
+        Some((reds, greens))
+    };
+    for projection in [Projection::Orthographic, Projection::Perspective] {
+        for pitch in [0.0, 0.02] {
+            let Some((reds, greens)) = counts(pitch, projection) else {
+                eprintln!("no GPU adapter, skipping");
+                return;
+            };
+            assert!(reds > 100, "{projection:?} at {pitch}: {reds} red");
+            assert_eq!(greens, 0, "{projection:?} at {pitch}");
+        }
+        let (reds, greens) = counts(0.3, projection).unwrap();
+        assert!(
+            reds > 100 && greens > 30,
+            "{projection:?}: {reds} red, {greens} green"
+        );
+    }
+}
+
+#[test]
 fn axes_stay_put_zoomed_into_a_large_scene() {
     // Zoomed far into the origin, with a cube at the edge of the document
     // limit stretching the depth range, so unprojecting the near and far planes
@@ -556,6 +595,41 @@ fn origin_marker_is_a_ring_flat_in_the_grid_plane() {
 }
 
 #[test]
+fn origin_marker_is_on_the_sketch_origin() {
+    // Editing a sketch on a plane away from the world origin, the marker
+    // is on the sketch's origin, where its axis lines cross, in either
+    // projection.
+    let plane = GridPlane::new(Vec3::new(2.0, 1.0, 1.5), Vec3::X, Vec3::Y).unwrap();
+    for projection in [Projection::Orthographic, Projection::Perspective] {
+        let mut camera = Camera::default();
+        camera.set_projection(projection);
+        let extras = Extras {
+            grid: plane,
+            sketch: Some((plane, SketchLayer::default())),
+            ..Extras::default()
+        };
+        let Some(pixels) = render_with(&camera, &RenderMesh::default(), extras) else {
+            eprintln!("no GPU adapter, skipping");
+            return;
+        };
+        // The middle of the marker's white pixels.
+        let (mut sum, mut white) = (glam::Vec2::ZERO, 0);
+        for y in CLIP.y..CLIP.y + CLIP.height {
+            for x in CLIP.x..CLIP.x + CLIP.width {
+                if pixel(&pixels, x, y)[..3].iter().all(|&c| c > 200) {
+                    sum += glam::Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
+                    white += 1;
+                }
+            }
+        }
+        assert!(white > 0, "{projection:?}: no marker");
+        let (ox, oy) = on_screen(&camera, plane.origin());
+        let off = (sum / white as f32).distance(glam::Vec2::new(ox as f32, oy as f32));
+        assert!(off < 2.0, "{projection:?}: marker {off} pixels off");
+    }
+}
+
+#[test]
 fn pivot_marker_is_a_ring_facing_the_screen() {
     // From the front, where the origin's ring is a line, the pivot's is
     // round, in its colour; it isn't drawn at no opacity, nor on the
@@ -640,10 +714,14 @@ fn yellow([r, g, b, _]: [u8; 4]) -> bool {
 /// The centre of [`VIEWPORT`], in whole pixels.
 const CENTER: (u32, u32) = (CLIP.x + CLIP.width / 2, CLIP.y + CLIP.height / 2);
 
-/// Where `world` is drawn in [`VIEWPORT`] by `camera`, orthographic.
+/// Where `world` is drawn in [`VIEWPORT`] by `camera`.
 fn on_screen(camera: &Camera, world: Vec3) -> (u32, u32) {
-    let pixels = VIEWPORT.height / camera.view_height();
-    let offset = world - camera.target();
+    let offset = world - camera.eye();
+    let pixels = VIEWPORT.height / camera.view_height()
+        * match camera.projection() {
+            Projection::Perspective => camera.distance() / -offset.dot(camera.backward()),
+            Projection::Orthographic => 1.0,
+        };
     let x = VIEWPORT.x + VIEWPORT.width / 2.0 + offset.dot(camera.right()) * pixels;
     let y = VIEWPORT.y + VIEWPORT.height / 2.0 - offset.dot(camera.up()) * pixels;
     (x as u32, y as u32)
@@ -2974,6 +3052,133 @@ fn a_preview_is_the_model_alone_on_nothing() {
         assert!(
             (width - margin - 2..width).any(|x| at(x, row)[3] > 0),
             "{format:?}"
+        );
+    }
+}
+
+#[test]
+fn a_sketch_axis_through_the_origin_lies_on_the_grid_axis() {
+    // The sketch's X axis drawn as the view crate draws it, as far as a
+    // sketch reaches either way in two segments out from its origin, lies
+    // on the grid's axis line zoomed in, either side of the origin, in
+    // either projection. A segment starting that far away was pixels off.
+    let plane = GridPlane::new(Vec3::new(40.0, 25.0, 30.0), Vec3::X, Vec3::Y).unwrap();
+    let reach = f64::from(varde_kernel::MAX_COORD);
+    let halves = [-reach, reach].map(|end| [glam::DVec2::ZERO, glam::DVec2::new(end, 0.0)]);
+    // The whole target, large enough for the error to show.
+    let [width, height] = SIZE;
+    let viewport = Viewport {
+        x: 0.0,
+        y: 0.0,
+        width: width as f32,
+        height: height as f32,
+    };
+    let clip = ClipRect {
+        x: 0,
+        y: 0,
+        width,
+        height,
+    };
+    // The mean row of the pixels `matches` picks in each column.
+    let rows = |pixels: &[[u8; 4]], matches: fn([u8; 4]) -> bool| -> Vec<Option<f32>> {
+        (0..width)
+            .map(|x| {
+                let ys: Vec<u32> = (0..height)
+                    .filter(|&y| matches(pixel(pixels, x, y)))
+                    .collect();
+                (!ys.is_empty()).then(|| ys.iter().sum::<u32>() as f32 / ys.len() as f32)
+            })
+            .collect()
+    };
+    for projection in [Projection::Orthographic, Projection::Perspective] {
+        let mut camera = Camera::default();
+        camera.set_projection(projection);
+        camera.set_target(plane.origin());
+        camera.zoom(1.0 / camera.view_height());
+        let mut layer = SketchLayer::default();
+        let style = LineStyle {
+            color: YELLOW,
+            width: 1.0,
+            dash: None,
+        };
+        for half in &halves {
+            layer.polyline(Space::Sketch, half, style);
+        }
+        let extras = |layer| Extras {
+            grid: plane,
+            sketch: Some((plane, layer)),
+            ..Extras::default()
+        };
+        let mesh = RenderMesh::default();
+        let render = |layer| render_scaled(&camera, &mesh, extras(layer), viewport, clip, 1.0);
+        let (Some(grid), Some(sketch)) = (render(SketchLayer::default()), render(layer)) else {
+            eprintln!("no GPU adapter, skipping");
+            return;
+        };
+        let red = rows(&grid, |[r, g, _, _]| r > 128 && g < 100);
+        let drawn = rows(&sketch, yellow);
+        let offs: Vec<f32> = red
+            .iter()
+            .zip(&drawn)
+            .filter_map(|(r, d)| Some((r.as_ref()? - d.as_ref()?).abs()))
+            .collect();
+        assert!(offs.len() > 200, "{projection:?}: {} columns", offs.len());
+        let worst = offs.iter().copied().fold(0.0, f32::max);
+        assert!(worst <= 1.0, "{projection:?}: {worst} pixels off");
+    }
+}
+
+#[test]
+fn a_sketch_axis_fades_with_the_grid_axis_it_lies_on() {
+    // A sketch's axes drawn as axis polylines, from the front with the
+    // sketch on XY: its Y axis points at the camera and is gone, nearly
+    // so too, its X axis stays. Tilted further, the Y axis is back.
+    let reach = f64::from(varde_kernel::MAX_COORD);
+    let mut layer = SketchLayer::default();
+    for (along, color) in [(glam::DVec2::X, YELLOW), (glam::DVec2::Y, BLUE)] {
+        let style = LineStyle {
+            color,
+            width: 2.0,
+            dash: None,
+        };
+        for end in [-reach, reach] {
+            layer.axis_polyline(Space::Sketch, &[glam::DVec2::ZERO, along * end], style);
+        }
+    }
+    let blue = |[r, g, b, _]: [u8; 4]| b > 150 && r < 100 && g < 100;
+    let counts = |pitch: f32, projection| {
+        let mut camera = Camera::default();
+        camera.set_projection(projection);
+        camera.look_from(View::Front);
+        camera.orbit(0.0, pitch);
+        let extras = Extras {
+            sketch: Some((GridPlane::XY, layer.clone())),
+            ..Extras::default()
+        };
+        let pixels = render_with(&camera, &RenderMesh::default(), extras)?;
+        let (mut yellows, mut blues) = (0, 0);
+        for y in CLIP.y..CLIP.y + CLIP.height {
+            for x in CLIP.x..CLIP.x + CLIP.width {
+                let p = pixel(&pixels, x, y);
+                yellows += u32::from(yellow(p));
+                blues += u32::from(blue(p));
+            }
+        }
+        Some((yellows, blues))
+    };
+    for projection in [Projection::Orthographic, Projection::Perspective] {
+        for pitch in [0.0, 0.02] {
+            let Some((yellows, blues)) = counts(pitch, projection) else {
+                eprintln!("no GPU adapter, skipping");
+                return;
+            };
+            assert!(yellows > 100, "{projection:?} at {pitch}: {yellows} yellow");
+            assert_eq!(blues, 0, "{projection:?} at {pitch}");
+        }
+        let (yellows, blues) = counts(0.3, projection).unwrap();
+        assert!(
+            yellows > 100 && blues > 30,
+            "{projection:?}: {yellows} yellow, {blues} blue"
         );
     }
 }

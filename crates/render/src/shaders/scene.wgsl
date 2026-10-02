@@ -241,17 +241,29 @@ fn axis_color(index: f32) -> vec3<f32> {
 
 // How wide the grid's axis lines are, in logical pixels.
 const AXIS_WIDTH: f32 = 1.75;
+// The sines of the angles between an axis and the view direction over
+// which its line fades in: gone within about 3 degrees, whole past 11.
+const AXIS_FADE: vec2<f32> = vec2<f32>(0.05, 0.2);
+
+// How much of an axis along the unit `axis` shows: none pointing at the
+// camera, where its image shrinks to a point, all of it once turned
+// AXIS_FADE away. Each axis fades on its own, and a sketch's with the
+// grid's it lies on.
+fn facing(axis: vec3<f32>) -> f32 {
+    return smoothstep(AXIS_FADE.x, AXIS_FADE.y, length(cross(axis, u.backward.xyz)));
+}
 
 // The grid's axis line along `axis` (a unit vector in the grid's plane,
 // through its origin) at the pixel `p` (from `fragment_pixels`), whose ray
 // runs from `origin` along `dir`: its coverage there and its depth. The
-// line is infinite and not faded: the coverage is from the pixel's
-// distance to the line's image on screen, the homogeneous line through the
-// images of a point on it and of its direction, exact at any distance and
-// zoom in either projection, so it's anti-aliased without MSAA. The depth
-// is the axis's point nearest the ray's, and the line is cut where that
-// point is behind the near plane, so the part of the image that's behind
-// the eye isn't drawn.
+// line is infinite and not faded with distance: the coverage is from the
+// pixel's distance to the line's image on screen, the homogeneous line
+// through the images of a point on it and of its direction, exact at any
+// distance and zoom in either projection, so it's anti-aliased without
+// MSAA. It fades out as the axis turns to point at the camera
+// (`AXIS_FADE`). The depth is the axis's point nearest the ray's, and the
+// line is cut where that point is behind the near plane, so the part of
+// the image that's behind the eye isn't drawn.
 fn axis_line(p: vec2<f32>, origin: vec3<f32>, dir: vec3<f32>, axis: vec3<f32>) -> vec2<f32> {
     // The axis's point nearest the target, so clip coordinates stay small.
     let base = u.grid_origin.xyz + axis * dot(u.focus.xyz - u.grid_origin.xyz, axis);
@@ -276,7 +288,8 @@ fn axis_line(p: vec2<f32>, origin: vec3<f32>, dir: vec3<f32>, axis: vec3<f32>) -
     let in_front = denom > 1e-12 * c && q.w > 0.0 && q.z >= 0.0;
 
     let half_width = 0.5 * AXIS_WIDTH * u.viewport.z;
-    let coverage = clamp(half_width + 0.5 - distance, 0.0, 1.0) * f32(seen && in_front);
+    let coverage = clamp(half_width + 0.5 - distance, 0.0, 1.0) * f32(seen && in_front)
+        * facing(axis);
     return vec2<f32>(coverage, clamp(q.z / max(q.w, 1e-30), 0.0, 1.0));
 }
 
@@ -401,6 +414,7 @@ const HAS_PREV: u32 = 1u;
 const HAS_NEXT: u32 = 2u;
 const SCREEN: u32 = 4u;
 const WORLD: u32 = 8u;
+const FADES: u32 = 16u;
 
 struct LineOut {
     // Invariant, so the hidden edges' pass, from another entry point, puts
@@ -471,7 +485,30 @@ fn slab(t: vec2<f32>, a: f32, d: f32, limit: f32) -> vec2<f32> {
 // small enough to be exact where it's drawn. Neighbouring segments cut each
 // other's ends the same way, so they meet where the same pixels are
 // compared.
+//
+// Worked out from the end nearer the middle of the view: the cuts mix the
+// ends by fractions of the way from the start, which are only as exact as
+// the start is near where they fall. From an end far off, as a sketch's
+// axes reach, the part that shows was pixels off.
 fn shown(a: vec4<f32>, b: vec4<f32>, cut: bool, margin: f32) -> Shown {
+    if !(off_centre(b) < off_centre(a)) {
+        return shown_from(a, b, cut, margin);
+    }
+    var out = shown_from(b, a, cut, margin);
+    out.ends = out.ends.zwxy;
+    out.t = 1.0 - out.t.yx;
+    return out;
+}
+
+// How far the clip position `c` is from the middle of the view, for
+// `shown` to start from the nearer end: in the view's half sizes, or, at
+// or behind the eye, as far as can be.
+fn off_centre(c: vec4<f32>) -> f32 {
+    return select(1e30, max(abs(c.x), abs(c.y)) / c.w, c.w > 0.0);
+}
+
+// `shown`, worked out from `a`.
+fn shown_from(a: vec4<f32>, b: vec4<f32>, cut: bool, margin: f32) -> Shown {
     var out: Shown;
     var front = vec2<f32>(0.0, 1.0);
     if cut {
@@ -934,12 +971,18 @@ fn vs_sketch_line(
         let b = sketch_world(ends.zw, z.y, flags);
         depth = vec2<f32>(overlay_depth(mix(a, b, own.t.x)), overlay_depth(mix(a, b, own.t.y)));
     }
+    // A sketch's axis fades out pointing at the camera, as the grid's do.
+    var faded = color;
+    if (flags & FADES) != 0u && cut {
+        let along_axis = sketch_world(ends.zw, z.y, flags) - sketch_world(ends.xy, z.x, flags);
+        faded.a *= facing(normalize(along_axis));
+    }
     // Dashes are in logical pixels, and run along the polyline by its
     // length on the screen: in logical pixels, or in sketch units at the
     // scale of the target, a sketch being looked at straight on.
     let scale = select(u.viewport.y / view_height(), u.viewport.z, (flags & SCREEN) != 0u);
     return line_vertex(index, own, prev, next, flags, depth, half,
-        color, style.yz * u.viewport.z, along * scale);
+        faded, style.yz * u.viewport.z, along * scale);
 }
 
 // How far `p` is from the segment from `a` to `b`, and where along it the
@@ -1008,9 +1051,9 @@ fn line_color(in: LineOut, own: vec2<f32>) -> vec4<f32> {
 
 // --- Origin marker ---
 //
-// A ring lying flat in the grid's plane around the world origin, with a dot
-// at the origin itself, each a light core with a dark rim so it reads on
-// any background. One screen-space quad: the ring keeps its size on screen
+// A ring lying flat in the grid's plane around its origin (the world's, or
+// that of the sketch being edited), with a dot at the origin itself, each a
+// light core with a dark rim so it reads on any background. One screen-space quad: the ring keeps its size on screen
 // at any zoom, its widest RING_RADIUS logical pixels, and turns into an
 // ellipse as the plane tilts away, so it shows the plane the grid's axis
 // lines run in; the dot is always round. Sizes are in logical pixels,
@@ -1076,9 +1119,9 @@ fn vs_origin(
     @builtin(instance_index) instance: u32,
 ) -> OriginOut {
     let pivot = instance == 1u;
-    let at = select(vec3<f32>(0.0), u.pivot.xyz, pivot);
+    let at = select(u.grid_origin.xyz, u.pivot.xyz, pivot);
     let clip = u.view_proj * vec4<f32>(at, 1.0);
-    let origin = u.view_proj * vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    let origin = u.view_proj * vec4<f32>(u.grid_origin.xyz, 1.0);
     var out: OriginOut;
     // Behind the eye, or a pivot that isn't drawn or shows on the origin:
     // nothing to draw.

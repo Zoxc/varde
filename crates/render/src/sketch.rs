@@ -199,13 +199,15 @@ impl FillVertex {
 }
 
 /// Flags of a [`LineInstance`] and a [`FillVertex`], as in the scene
-/// shader: whether the segment has a neighbour before and after it, and
+/// shader: whether the segment has a neighbour before and after it,
 /// whether its coordinates are [`Space::Screen`]'s or the world's
-/// ([`Space::On`]).
+/// ([`Space::On`]), and whether it fades out pointing at the camera
+/// ([`SketchLayer::axis_polyline`]).
 pub(crate) const HAS_PREV: u32 = 1;
 pub(crate) const HAS_NEXT: u32 = 2;
 pub(crate) const SCREEN: u32 = 4;
 pub(crate) const WORLD: u32 = 8;
+pub(crate) const FADES: u32 = 16;
 
 impl SketchLayer {
     pub fn is_empty(&self) -> bool {
@@ -219,6 +221,20 @@ impl SketchLayer {
     /// is added for a polyline with a point that isn't finite, or of fewer
     /// than two distinct points.
     pub fn polyline(&mut self, space: Space, points: &[DVec2], style: LineStyle) {
+        self.polyline_flagged(space, 0, points, style);
+    }
+
+    /// Adds the polyline through `points` in `space`, as
+    /// [`Self::polyline`] does, fading out each segment as it turns to
+    /// point at the camera, as the grid's axis lines do: for a sketch's
+    /// axes, which lie on them. Not for [`Space::Screen`], where it's
+    /// added as [`Self::polyline`] adds it.
+    pub fn axis_polyline(&mut self, space: Space, points: &[DVec2], style: LineStyle) {
+        self.polyline_flagged(space, FADES, points, style);
+    }
+
+    /// [`Self::polyline`] with `flags` too.
+    fn polyline_flagged(&mut self, space: Space, flags: u32, points: &[DVec2], style: LineStyle) {
         if !(visible(style.width) && points.iter().all(|p| p.is_finite())) {
             return;
         }
@@ -236,7 +252,7 @@ impl SketchLayer {
         };
         let closed = points.len() > 3 && points.first() == points.last();
         let lengths = points.windows(2).map(|pair| pair[0].distance(pair[1]));
-        self.push_lines(space.flags(), &placed, lengths, closed, style);
+        self.push_lines(space.flags() | flags, &placed, lengths, closed, style);
     }
 
     /// Adds the polyline through the world `points`, as [`Self::polyline`]
