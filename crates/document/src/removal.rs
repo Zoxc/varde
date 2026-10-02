@@ -28,12 +28,15 @@ impl Document {
     /// What removing `target` takes with it, changing nothing: a feature
     /// goes with every later feature that uses it ([`FeatureKind::uses`]),
     /// directly or through others, and the bodies those make; a body goes
-    /// with the feature that makes it, and so the same. Bodies other
+    /// with the feature that makes it, and so the same. A sketch on a face
+    /// of a body that goes stays ([`Plane::Face`]), naming a body that
+    /// isn't there. Bodies other
     /// features only exclude don't hold them back: they're dropped from
     /// the lists ([`Command::RemoveFeature`] and [`Command::RemoveBody`]
     /// apply exactly this).
     ///
     /// [`FeatureKind::uses`]: crate::FeatureKind::uses
+    /// [`Plane::Face`]: crate::Plane::Face
     /// [`Command::RemoveFeature`]: crate::Command::RemoveFeature
     /// [`Command::RemoveBody`]: crate::Command::RemoveBody
     pub fn removal(&self, target: Removable) -> Removal {

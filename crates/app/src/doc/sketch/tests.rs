@@ -1016,3 +1016,37 @@ fn a_sketch_too_complex_for_profiles_says_so() {
         Some(Err(varde_sketch::TooComplex))
     ));
 }
+
+/// A sketch on a face isn't placed until regenerating places it, which
+/// the app doesn't read yet: it isn't opened for editing.
+#[test]
+fn a_sketch_on_a_face_is_not_edited_yet() {
+    let (mut doc, feature, _requests) = with_sketch();
+    let face = varde_document::FaceRef {
+        body: varde_document::BodyId::NEW,
+        key: varde_document::FaceKey {
+            feature: 99,
+            part: varde_document::PartKey::EndCap,
+            instance: 0,
+        },
+        near: glam::DVec3::ZERO,
+    };
+    doc.apply(Command::SetSketchPlane {
+        feature,
+        plane: varde_document::Plane::Face(face),
+    });
+    doc.look(Look::EditFeature(feature));
+    assert!(doc.sketch.is_none());
+    assert!(doc.sketch_state().is_none());
+
+    doc.apply(Command::SetSketchPlane {
+        feature,
+        plane: varde_document::Plane::Origin(OriginPlane::XZ),
+    });
+    doc.look(Look::EditFeature(feature));
+    assert!(doc.sketch.is_some());
+    assert_eq!(
+        doc.sketch_state().unwrap().placement,
+        OriginPlane::XZ.placement()
+    );
+}

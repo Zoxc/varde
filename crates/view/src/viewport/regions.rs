@@ -67,7 +67,7 @@ impl<'s, 'a> Regions<'s, 'a> {
     /// before there is one, when each candidate is drawn on its own.
     pub(crate) fn plane(&self) -> GridPlane {
         self.source()
-            .and_then(|source| grid_plane(source.plane.placement()))
+            .and_then(|source| grid_plane(source.placement))
             .unwrap_or(GridPlane::XY)
     }
 
@@ -81,7 +81,7 @@ impl<'s, 'a> Regions<'s, 'a> {
     ) -> Option<(FeatureId, usize)> {
         let mut nearest: Option<(f64, FeatureId, usize)> = None;
         for candidate in self.candidates {
-            let placement = candidate.plane.placement();
+            let placement = candidate.placement;
             let Some(projector) = Projector::new(camera, placement, bounds.width, bounds.height)
             else {
                 continue;
@@ -119,7 +119,7 @@ impl<'s, 'a> Regions<'s, 'a> {
                 }
                 continue;
             }
-            let Some(plane) = grid_plane(candidate.plane.placement()) else {
+            let Some(plane) = grid_plane(candidate.placement) else {
                 continue;
             };
             let space = LayerSpace::On(plane);

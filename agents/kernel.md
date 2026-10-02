@@ -6571,7 +6571,8 @@ and the later ones still run.
 - An **extrude** resolves its regions (`Profiles::resolve`; one gone is
   "region not found"), merges them (`Profiles::merge`), turns the loops
   into a kernel `Profile` (below), and calls `kernel::extrude` on the
-  sketch plane's `Frame` (from `Plane::placement`), over `Extrude::span()`,
+  sketch plane's `Frame` (from `Plane::placement`; a sketch on a face,
+  not placed yet, fails it, see `agents/features.md`), over `Extrude::span()`,
   with the document's tolerance and `Budget::DEFAULT`, faces named by
   `FeatureId::get()`: the tool solid. A `NewBody` body gets it. Through
   all's span is worked out first (`through_all`): the extent along the

@@ -102,7 +102,7 @@ fn the_grid_is_picked_only_where_it_shows() {
 
 #[test]
 fn in_a_sketch_a_click_off_the_model_picks_its_plane() {
-    let placement = Plane::Origin(OriginPlane::XY).placement();
+    let placement = OriginPlane::XY.placement();
     let hit = pick(
         &RenderMesh::default(),
         &top_camera(),

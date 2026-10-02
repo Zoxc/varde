@@ -6,6 +6,13 @@
 
 use varde_kernel::{BooleanError, KernelError, ProfileError};
 
+/// Why a sketch on a face isn't drawn or used: placing sketches on faces
+/// isn't done yet.
+pub(crate) const FACE_NOT_PLACED: &str = "sketches on faces can't be placed yet";
+
+/// Why a feature made from a sketch that isn't placed fails.
+pub(crate) const SKETCH_NOT_PLACED: &str = "its sketch isn't placed";
+
 /// What a feature was doing with a body when the kernel gave up.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Doing {

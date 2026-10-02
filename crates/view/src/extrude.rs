@@ -214,7 +214,7 @@ impl ExtrudeState<'_> {
             .iter()
             .filter_map(|&index| source.profiles.regions.get(index));
         let centre = centroid(regions)?;
-        let placement = source.plane.placement();
+        let placement = source.placement;
         let value = |distance: Distance| self.fields[distance.index()].value;
         let sign = if self.flip && self.extent.flips() {
             -1.0

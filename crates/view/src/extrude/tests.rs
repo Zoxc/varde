@@ -40,7 +40,7 @@ fn state_of<'a>(profiles: &'a Arc<Profiles>, picked: &'a BTreeSet<usize>) -> Ext
         editing: None,
         candidates: vec![Candidate {
             feature,
-            plane: Plane::Origin(OriginPlane::XZ),
+            placement: OriginPlane::XZ.placement(),
             sketch: Box::leak(Box::default()),
             profiles,
         }],

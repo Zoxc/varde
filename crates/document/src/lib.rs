@@ -11,6 +11,7 @@ mod extrude;
 mod feature;
 pub mod name;
 mod opacity;
+mod plane;
 mod removal;
 mod revolve;
 #[cfg(test)]
@@ -19,8 +20,9 @@ mod testing;
 pub use codec::DecodeError;
 pub use editor::{Command, Editor, Generation, Revision};
 pub use extrude::{Extent, Extrude, ExtrudeError, MAX_EXTRUDE_REGIONS, Operation, Targets};
-pub use feature::{Feature, FeatureId, FeatureKind, OriginPlane, Placement, Plane};
+pub use feature::{Feature, FeatureId, FeatureKind};
 pub use opacity::Opacity;
+pub use plane::{FaceRef, OriginPlane, Placement, Plane, PlaneError};
 pub use removal::{Removable, Removal};
 pub use revolve::{AxisLine, MAX_REVOLVE_REGIONS, Revolve, RevolveError, Turn};
 
@@ -31,6 +33,7 @@ use serde::{Deserialize, Serialize};
 // The types and limits the model's API names, so that clients editing a
 // document need only this crate.
 pub use varde_expr::LengthUnit;
+pub use varde_kernel::mesh::{FaceKey, PartKey};
 pub use varde_kernel::{MAX_COORD, Tolerance};
 pub use varde_sketch::{Design, Id, RegionRef, Sketch, SketchError};
 
@@ -253,7 +256,8 @@ impl Document {
     /// every such body is there; every sketch passes [`Sketch::check`]
     /// against [`MAX_COORD`] and the document's units
     /// ([`Document::design`]), so every dimension's expression gives its
-    /// value in them; and every extrude and revolve uses a sketch feature
+    /// value in them, and every sketch on a face names what comes before
+    /// it, as [`PlaneError`] lists; and every extrude and revolve uses a sketch feature
     /// before it, has regions, distances or angles and an operation as
     /// [`Extrude`] and [`Revolve`] describe, and excludes only bodies
     /// features before it make. A revolve's axis line isn't checked
@@ -295,9 +299,13 @@ impl Document {
                 return Err(CheckError::FeatureNameLength(id, feature.name.len()));
             }
             match &feature.kind {
-                FeatureKind::Sketch { plane: _, sketch } => sketch
-                    .check(&design)
-                    .map_err(|why| CheckError::Sketch(id, why))?,
+                FeatureKind::Sketch { plane, sketch } => {
+                    sketch
+                        .check(&design)
+                        .map_err(|why| CheckError::Sketch(id, why))?;
+                    self.check_plane(index, plane)
+                        .map_err(|why| CheckError::SketchPlane(id, why))?;
+                }
                 FeatureKind::Extrude(extrude) => self
                     .check_extrude(index, extrude)
                     .map_err(|why| CheckError::Extrude(id, why))?,
@@ -315,6 +323,32 @@ impl Document {
             Some(last) if last.id.0 >= self.next_id => Err(CheckError::FeatureNextId(last.id)),
             _ => Ok(()),
         }
+    }
+
+    /// Checks `plane`, the plane of sketch feature `index`: a face's point
+    /// in bounds, its body, if it's there, made by a feature before the
+    /// sketch, and the feature its key names, if it's there, before the
+    /// sketch. A body or a feature that isn't there is allowed: removing
+    /// the body's maker leaves the sketch, which regenerating then fails,
+    /// to be put on another plane.
+    fn check_plane(&self, index: usize, plane: &Plane) -> Result<(), PlaneError> {
+        let Some(face) = plane.face() else {
+            return Ok(());
+        };
+        face.check_own()?;
+        let before = |feature: FeatureId| {
+            self.feature_index(feature)
+                .is_none_or(|maker| maker < index)
+        };
+        if let Some(body) = self.body(face.body)
+            && !before(body.created_by)
+        {
+            return Err(PlaneError::Body(face.body));
+        }
+        if !before(face.maker()) {
+            return Err(PlaneError::Maker(face.maker()));
+        }
+        Ok(())
     }
 
     /// Checks `extrude`, feature `index`, see [`Document::check`].
@@ -424,6 +458,8 @@ pub enum CheckError {
     FeatureNameLength(FeatureId, usize),
     /// A sketch feature's sketch fails [`Sketch::check`].
     Sketch(FeatureId, SketchError),
+    /// A sketch feature's plane is wrong, see [`PlaneError`].
+    SketchPlane(FeatureId, PlaneError),
     /// An extrude feature is wrong, see [`ExtrudeError`].
     Extrude(FeatureId, ExtrudeError),
     /// A revolve feature is wrong, see [`RevolveError`].
@@ -468,6 +504,7 @@ impl fmt::Display for CheckError {
                 id.0
             ),
             CheckError::Sketch(id, why) => write!(f, "feature {}: {why}", id.0),
+            CheckError::SketchPlane(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::Extrude(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::Revolve(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::Tolerance(fit) => write!(
@@ -490,6 +527,7 @@ impl std::error::Error for CheckError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             CheckError::Sketch(_, why) => Some(why),
+            CheckError::SketchPlane(_, why) => Some(why),
             CheckError::Extrude(_, why) => Some(why),
             CheckError::Revolve(_, why) => Some(why),
             _ => None,

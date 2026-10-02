@@ -330,7 +330,13 @@ impl Doc {
     /// takes the Timeline's place. It stays selected in the Timeline for
     /// after, and leaving it turns the camera back to the view before.
     pub(crate) fn enter_sketch(&mut self, id: FeatureId) {
-        if !is_sketch(self.editor.document(), id) {
+        // A sketch on a face is placed by regenerating, which the app
+        // doesn't read yet: it isn't edited until then.
+        let placed = matches!(
+            self.editor.document().feature(id).map(|feature| &feature.kind),
+            Some(FeatureKind::Sketch { plane, .. }) if plane.placement().is_some()
+        );
+        if !placed {
             return;
         }
         self.picking_plane = false;
@@ -712,6 +718,7 @@ impl Doc {
         Some(SketchState {
             name: &feature.name,
             plane: *plane,
+            placement: plane.placement()?,
             sketch: self.shown_sketch()?,
             pending: waiting.map_or(&NONE, |waiting| &waiting.added),
             selection: &session.selection,
@@ -828,7 +835,7 @@ impl Doc {
     /// framing it: what Home turns to in a sketch.
     pub(crate) fn sketch_camera(&self) -> Option<Camera> {
         let (plane, sketch) = self.edited_sketch()?;
-        Some(facing(self.camera.projection(), plane.placement(), sketch))
+        Some(facing(self.camera.projection(), plane.placement()?, sketch))
     }
 }
 

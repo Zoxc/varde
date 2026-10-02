@@ -23,8 +23,11 @@ with the bodies taken out of its targets; or a revolve,
 operation as an extrude's, the axis (a line of the sketch by curve id,
 or the sketch's x or y axis) and the turn (full, one side, symmetric or
 two sides, each angle a typed expression and its value in radians). A
-sketch is an origin plane,
-XY, XZ or YZ, and the `varde_sketch::Sketch`, whose points, lines, circles, arcs
+sketch is a plane, `crates/document/src/plane.rs` (an origin plane,
+XY, XZ or YZ, or a face of a body: the body's id, the face's key, the
+kernel's `FaceKey` and `PartKey` with serde, whose fields and order are
+then part of the format, and a picked point; never a placement, which
+regenerating finds), and the `varde_sketch::Sketch`, whose points, lines, circles, arcs
 (a fillet an arc and a chamfer a line with a `Corner`: the two lines and
 the point they meet at), splines (through fit points or by control
 points, open or closed, their points and handle tips by id, by control
@@ -48,7 +51,9 @@ document's units from 1 µm to the coordinate limit (two sides together
 too), through all only for a cut, revolve angles their expressions give
 above zero and at most a turn (two sides together too; a revolve's axis
 line isn't required to exist, as a region isn't: regeneration reports
-it), excluded bodies sorted and made by earlier features,
+it), excluded bodies sorted and made by earlier features, a sketch's face
+point finite and within the coordinate limit, its body (if there) made
+and its key's feature (if there) placed before the sketch,
 the tolerance within its range, names, coordinates, radii
 and labels within bounds, a sketch's item counts bounded, every reference
 naming an item of the right kind, every fillet and chamfer on a corner

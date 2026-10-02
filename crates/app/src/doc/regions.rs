@@ -283,7 +283,7 @@ impl RegionPick {
                 };
                 Some(Candidate {
                     feature: found.feature,
-                    plane: *plane,
+                    placement: plane.placement()?,
                     sketch: &found.sketch,
                     profiles: &found.profiles,
                 })

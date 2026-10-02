@@ -19,7 +19,8 @@ pub enum Command {
     RemoveBody(BodyId),
     SetVisible(BodyId, bool),
     SetOpacity(BodyId, Opacity),
-    /// Adds a feature holding an empty sketch on `plane`.
+    /// Adds a feature holding an empty sketch on `plane`, an origin plane
+    /// or a face of a body ([`Plane::Face`]).
     AddSketch {
         name: String,
         plane: Plane,
@@ -29,6 +30,13 @@ pub enum Command {
     SetSketch {
         feature: FeatureId,
         sketch: Box<Sketch>,
+    },
+    /// Puts a sketch feature on another plane, an origin plane or a face,
+    /// keeping its drawing as it is in its own coordinates. Not a sketch,
+    /// or the plane it's on already, changes nothing.
+    SetSketchPlane {
+        feature: FeatureId,
+        plane: Plane,
     },
     /// Adds a feature of any kind but a sketch's ([`Command::AddSketch`]
     /// adds those), hiding the sketch whose regions it takes
@@ -354,6 +362,22 @@ impl Editor {
                 let mut next = Document::clone(document);
                 if let FeatureKind::Sketch { sketch: old, .. } = &mut next.features[index].kind {
                     *old = *sketch;
+                }
+                next
+            }
+            Command::SetSketchPlane { feature, plane } => {
+                let Some(index) = document
+                    .feature_index(feature)
+                    .filter(|&index| match &document.features[index].kind {
+                        FeatureKind::Sketch { plane: old, .. } => *old != plane,
+                        FeatureKind::Extrude(_) | FeatureKind::Revolve(_) => false,
+                    })
+                else {
+                    return Ok(());
+                };
+                let mut next = Document::clone(document);
+                if let FeatureKind::Sketch { plane: old, .. } = &mut next.features[index].kind {
+                    *old = plane;
                 }
                 next
             }

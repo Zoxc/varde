@@ -12,7 +12,7 @@ use iced::{Alignment, Element, Length};
 use varde_document::EXTENSION;
 use varde_document::{
     APP_NAME, Body, BodyId, Document, EditError, Editor, Extent, Feature, FeatureId, FeatureKind,
-    Opacity, Plane,
+    Opacity, Placement, Plane,
 };
 use varde_expr::LengthUnit;
 use varde_kernel::{RenderLines, RenderMesh};
@@ -166,6 +166,8 @@ pub struct SketchState<'a> {
     /// The sketch feature's name.
     pub name: &'a str,
     pub plane: Plane,
+    /// Where its plane is.
+    pub placement: Placement,
     /// The sketch as it's shown: as committed, with the edits waiting on
     /// the solver applied, or as it's dragged.
     pub sketch: &'a Sketch,
@@ -273,6 +275,7 @@ impl<'a> SketchState<'a> {
         SketchState {
             name: "Sketch",
             plane: Plane::Origin(varde_document::OriginPlane::XY),
+            placement: varde_document::OriginPlane::XY.placement(),
             sketch,
             pending: &NONE,
             selection,

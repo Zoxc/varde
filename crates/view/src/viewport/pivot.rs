@@ -4,7 +4,7 @@
 //! picking.
 
 use glam::{DVec2, DVec3, Vec3};
-use varde_document::{OriginPlane, Placement, Plane};
+use varde_document::{OriginPlane, Placement};
 use varde_kernel::RenderMesh;
 use varde_render::{Camera, GRID_FADE_HEIGHTS, Projection};
 
@@ -24,7 +24,7 @@ pub(super) fn pick(
     at: DVec2,
     sketch: Option<Placement>,
 ) -> Option<Vec3> {
-    let placement = sketch.unwrap_or(Plane::Origin(OriginPlane::XY).placement());
+    let placement = sketch.unwrap_or(OriginPlane::XY.placement());
     let projector = Projector::new(camera, placement, size[0], size[1])?;
     let (origin, direction) = projector.ray(at)?;
     let hit = on_mesh(mesh, camera, origin, direction)

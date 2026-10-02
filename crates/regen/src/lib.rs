@@ -85,6 +85,10 @@ use picking::{Drawn, Scene};
 pub use varde_lane::Transport;
 
 /// Work for the regeneration side.
+// A draft's kind holds a sketch plane, which a face reference makes
+// larger than an export; one request goes per edit, so the size doesn't
+// matter.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Request {
     /// Builds the mesh and the sketch lines of the committed document as
@@ -618,7 +622,8 @@ pub fn export(
 /// The non-construction curves of the visible sketches of `document`,
 /// except `exclude`, flattened (see [`Sketch::flatten`]), lines without
 /// the ends fillets and chamfers cut off ([`Sketch::cut_back`]), and placed on
-/// their planes in world space, a polyline each. Fails if there would be
+/// their planes in world space, a polyline each (a sketch on a face, not
+/// placed yet, isn't drawn). Fails if there would be
 /// more points than [`RenderLines`] may hold, which a file with enough
 /// sketches in it can ask for.
 ///
@@ -637,7 +642,10 @@ pub fn flatten_sketches(
         let FeatureKind::Sketch { plane, sketch } = &feature.kind else {
             continue;
         };
-        let placement = plane.placement();
+        // A sketch on a face isn't placed yet, so it's drawn nowhere.
+        let Some(placement) = plane.placement() else {
+            continue;
+        };
         let cut_back = sketch.cut_back();
         for entry in sketch.curves.iter().filter(|entry| !entry.construction) {
             // A checked sketch's curves name its own points.

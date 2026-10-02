@@ -19,7 +19,7 @@ use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, r
 use iced::widget::text::Wrapping;
 use iced::widget::{button, checkbox, column, container, opaque, row, space, text, text_input};
 use iced::{Alignment, Element, Event, Length, Rectangle, Size, Vector};
-use varde_document::{BodyId, FeatureId, Plane};
+use varde_document::{BodyId, FeatureId, Placement};
 use varde_sketch::{Profiles, Sketch};
 
 use crate::Message;
@@ -76,7 +76,8 @@ const FIELD_GAP: f32 = 6.0;
 #[derive(Debug, Clone, Copy)]
 pub struct Candidate<'a> {
     pub feature: FeatureId,
-    pub plane: Plane,
+    /// Where its plane is: a sketch that isn't placed isn't a candidate.
+    pub placement: Placement,
     /// The sketch, whose lines a revolve's axis is picked from.
     pub sketch: &'a Sketch,
     pub profiles: &'a Arc<Profiles>,

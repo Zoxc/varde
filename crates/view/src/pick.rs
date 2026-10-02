@@ -19,7 +19,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use glam::{DVec2, DVec3, Vec3};
-use varde_document::{BodyId, OriginPlane, Plane};
+use varde_document::{BodyId, OriginPlane};
 use varde_kernel::RenderMesh;
 use varde_kernel::mesh::FaceKey;
 use varde_regen::Picking;
@@ -250,7 +250,7 @@ impl PickIndex {
     /// face the cursor's ray first meets the front of; of those only what
     /// `picks` takes.
     pub fn pick(&self, camera: &Camera, size: [f32; 2], at: DVec2, picks: Picks) -> Option<Pick> {
-        let placement = Plane::Origin(OriginPlane::XY).placement();
+        let placement = OriginPlane::XY.placement();
         let projector = Projector::new(camera, placement, size[0], size[1])?;
         let ray = self.ray(camera, &projector, at)?;
         let vertex = || {

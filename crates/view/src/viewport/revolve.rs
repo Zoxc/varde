@@ -151,7 +151,7 @@ impl<'a> Revolving<'a> {
     ) -> Option<(FeatureId, AxisLine)> {
         let mut nearest: Option<(f64, FeatureId, AxisLine)> = None;
         for candidate in self.axis_candidates() {
-            let placement = candidate.plane.placement();
+            let placement = candidate.placement;
             let Some(projector) = Projector::new(camera, placement, bounds.width, bounds.height)
             else {
                 continue;
@@ -206,7 +206,7 @@ impl<'a> Revolving<'a> {
         let mut live = SketchLayer::default();
         regions.live(input.regions.hover, colors, &mut live);
         for candidate in self.axis_candidates() {
-            let Some(plane) = grid_plane(candidate.plane.placement()) else {
+            let Some(plane) = grid_plane(candidate.placement) else {
                 continue;
             };
             let space = LayerSpace::On(plane);
@@ -218,16 +218,11 @@ impl<'a> Revolving<'a> {
             }
         }
         if let Some((source, [from, to])) = self.pointed()
-            && let Some(plane) = grid_plane(source.plane.placement())
+            && let Some(plane) = grid_plane(source.placement)
         {
             let space = LayerSpace::On(plane);
             live.polyline(space, &[from, to], line(colors.selected, AXIS_WIDTH, false));
-            let projector = Projector::new(
-                camera,
-                source.plane.placement(),
-                bounds.width,
-                bounds.height,
-            );
+            let projector = Projector::new(camera, source.placement, bounds.width, bounds.height);
             if let Some((a, b)) = projector.and_then(|projector| projector.segment(from, to)) {
                 arrow(&mut live, a, b, colors);
             }

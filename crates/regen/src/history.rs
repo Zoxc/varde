@@ -41,7 +41,7 @@ use std::sync::Arc;
 use glam::DVec2;
 use varde_document::{
     AxisLine, BodyId, Document, Extrude, Feature, FeatureId, FeatureKind, MAX_COORD, Operation,
-    Placement, Plane, Revolve, Sketch,
+    Placement, Revolve, Sketch,
 };
 use varde_kernel::patch::Conic2;
 use varde_kernel::{
@@ -121,13 +121,14 @@ pub struct BodySolid {
     pub(crate) key: Key,
 }
 
-/// A sketch evaluated: the sketch, its profiles, where it is, and its
+/// A sketch evaluated: the sketch, its profiles, where it is (`None` for
+/// one that isn't placed: on a face, which isn't resolved yet), and its
 /// key.
 struct SketchOutput<'a> {
     id: FeatureId,
     sketch: &'a Sketch,
     profiles: Arc<Result<Profiles, TooComplex>>,
-    plane: Plane,
+    placement: Option<Placement>,
     key: Key,
 }
 
@@ -156,11 +157,20 @@ pub(crate) fn evaluate_within(
             FeatureKind::Sketch { plane, sketch } => {
                 let key = Keyer::new("sketch").value(plane).value(sketch).finish();
                 let profiles = cache.profiles(key, || sketch.profiles());
+                // Sketches on faces aren't resolved yet: such a sketch
+                // fails, and so does whatever is made from it, rather
+                // than being put anywhere.
+                let placement = plane.placement();
+                if placement.is_none() {
+                    evaluation
+                        .failed
+                        .push((feature.id, message::FACE_NOT_PLACED.to_owned()));
+                }
                 sketches.push(SketchOutput {
                     id: feature.id,
                     sketch,
                     profiles,
-                    plane: *plane,
+                    placement,
                     key,
                 });
             }
@@ -504,7 +514,7 @@ impl Run<'_> {
         evaluation: &Evaluation,
         cache: &mut Cache,
     ) -> Result<(Arc<Solid>, Key), String> {
-        let placement = self.sketch.plane.placement();
+        let placement = self.placement()?;
         let frame = Frame {
             origin: placement.origin,
             x: placement.x,
@@ -543,6 +553,7 @@ impl Run<'_> {
     /// turned about its axis over its span (see [`axis_frame`]).
     fn revolved(&self, revolve: &Revolve, cache: &mut Cache) -> Result<(Arc<Solid>, Key), String> {
         let span = revolve.span();
+        let placement = self.placement()?;
         // The axis is the sketch's, so its key holds where the axis line
         // is.
         let key = Keyer::new("revolve")
@@ -556,8 +567,7 @@ impl Run<'_> {
         let solid = cache.solid(key, || {
             let profile = self.profile()?;
             let axis = axis_line(self.sketch.sketch, revolve.axis)?;
-            let (profile, frame, same_way) =
-                axis_frame(&profile, &axis, &self.sketch.plane.placement())?;
+            let (profile, frame, same_way) = axis_frame(&profile, &axis, &placement)?;
             let sweep = match span {
                 None => Sweep::Full,
                 Some((from, to)) if same_way => Sweep::Part { from, to },
@@ -581,6 +591,13 @@ impl Run<'_> {
 
     /// The kernel profile of the regions, merged, in the sketch's
     /// coordinates.
+    /// Where its sketch is, or why it isn't anywhere.
+    fn placement(&self) -> Result<Placement, String> {
+        self.sketch
+            .placement
+            .ok_or_else(|| message::SKETCH_NOT_PLACED.to_owned())
+    }
+
     fn profile(&self) -> Result<Profile, String> {
         let profiles = match &*self.sketch.profiles {
             Ok(profiles) => profiles,

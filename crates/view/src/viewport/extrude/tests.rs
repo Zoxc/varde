@@ -62,7 +62,7 @@ fn state<'a>(
         editing: None,
         candidates: vec![crate::Candidate {
             feature,
-            plane: Plane::Origin(plane),
+            placement: plane.placement(),
             sketch: Box::leak(Box::default()),
             profiles,
         }],

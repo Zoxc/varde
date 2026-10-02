@@ -463,7 +463,9 @@ only if it left out the sketch asked for last and the answer applied
 didn't. So a failure holds back only the request that failed, not asking
 again with another `exclude`. Sketch curves are flattened by
 `Sketch::flatten` (lines exact, circles into `CIRCLE_SEGMENTS`, arcs their
-share) and placed with the document's `Plane::placement`.
+share) and placed with the document's `Plane::placement` (an origin
+plane's; a sketch on a face isn't placed yet, so it isn't drawn: see
+`agents/features.md`).
 
 An answer also carries the features that failed and why (`failed`, an
 extrude whose region is gone, whose profile the kernel refuses, or whose

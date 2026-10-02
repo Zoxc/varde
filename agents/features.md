@@ -1,7 +1,7 @@
 # Features
 
-The features after sketches and extrudes: their document types, checks and
-commands, how regeneration evaluates them, and their UI. Extrudes are
+The features after sketches and extrudes, and sketches' planes on faces:
+their document types, checks and commands, how regeneration evaluates them, and their UI. Extrudes are
 described in `agents/kernel.md` ("The extrude feature" and "The extrude UI"); what
 they share with the newer kinds is here. The kernel math of each is in
 `agents/kernel.md`.
@@ -44,6 +44,75 @@ they share with the newer kinds is here. The kernel math of each is in
   the units, so only lengths inside an angle's expression change).
 - Kinds are **appended** to `FeatureKind` (`Sketch` 0, `Extrude` 1,
   `Revolve` 2): the variant index is what files store.
+
+## Sketch planes on faces
+
+`crates/document/src/plane.rs`.
+
+```rust
+pub enum Plane { Origin(OriginPlane), Face(FaceRef) }      // Face appended
+pub struct FaceRef { pub body: BodyId, pub key: FaceKey, pub near: DVec3 }
+```
+
+- **The reference**: the body, the face's key (the kernel's `FaceKey`,
+  re-exported with `PartKey`; its `feature` is the number of the feature
+  that made the face, `FaceRef::maker`) and the picked point, which
+  chooses among several regions with the key, as the kernel's
+  `Topology::face` resolves it. The document stores the reference, never
+  a placement.
+- `Plane::placement() -> Option<Placement>`: an origin plane's; `None`
+  for a face, whose placement only regeneration finds. `Plane::name()`
+  is "XY" ... or "a face"; `Plane::face()` the reference.
+- **The placement rule**, `Placement::on_plane(n, d) -> Option<Placement>`
+  for a flat face's form `n·p = d` with `n` out of the solid, one pure
+  function regen and the app both call on the same bits:
+  - normal `n̂ = n / |n|` (seen from outside; an extrude's positive side
+    grows the body), origin `n̂ d / |n|` (the plane's point nearest the
+    world origin, so thickening a plate moves the drawing only along the
+    normal and a face's size moves nothing);
+  - horizontal (`n̂x² + n̂y² ≤ 1e-18`, `HORIZONTAL`, a stated decision):
+    `x` is world X less its part along `n̂`, normalized, `y = n̂ × x`;
+    otherwise `y` is world Z less its part along `n̂` (its z as
+    `n̂x² + n̂y²`, which doesn't cancel), normalized, `x = y × n̂` ("up
+    stays up", what the Z-up camera shows facing the plane); the stored
+    `normal` is `x × y`;
+  - signed zeros made positive (`+ 0.0`), so a face parallel to an origin
+    plane and facing its way gets that plane's axes to the bit (whatever
+    `|n|`), and the bottom face `x` = X, `y` = −Y; axes don't depend on
+    `d` (a moved face keeps them to the bit);
+  - only `+ − × ÷ √` and one comparison; `None` for a zero or non-finite
+    `n` (one whose length overflows or whose square underflows), a
+    non-finite `d` or result.
+- **Checks** (`Document::check`, `CheckError::SketchPlane(id,
+  PlaneError)`): the point finite and within `MAX_COORD`
+  (`FaceRef::check_own`, `PlaneError::Near`); the body, if it's there,
+  made by a feature before the sketch (`Body`); the key's feature, if
+  it's there, before the sketch (`Maker`; the sketch itself isn't). A
+  body or feature that isn't there is allowed: the reference fails to
+  resolve, as a region can. Ids never come back, so one that isn't there
+  can't later name something after the sketch.
+- **Commands**: `AddSketch { name, plane }` takes either kind;
+  `SetSketchPlane { feature, plane }` puts a sketch on another plane, one
+  undo step, keeping its drawing in its own coordinates. Not a sketch,
+  not there, or the plane it's on already: no change (no new revision).
+- **No removal cascade**: `FeatureKind::uses` doesn't list the face
+  body's maker, so removing that feature or the body (or setting its
+  extrude to stop making the body) leaves the sketch, naming a body
+  that's gone, for regeneration to fail ("its face's body is gone") until
+  it's put on another plane. Removing the sketch still takes what was
+  made from it.
+- `SetUnits` leaves planes alone (no values in them).
+
+**Regeneration, for now**: a sketch with no placement (on a face) fails
+with "sketches on faces can't be placed yet", is drawn nowhere
+(`flatten_sketches` skips it) and every extrude or revolve made from it
+fails with "its sketch isn't placed" (`SketchOutput::placement` is
+`None`). Its profiles are still worked out. Placements resolved in
+history order come next.
+
+**The app, for now**: a sketch with no placement isn't an extrude
+candidate (`Candidate` carries the `Placement`) and isn't opened for
+editing (`Doc::enter_sketch`); `SketchState` carries the `Placement`.
 
 ## Revolve
 

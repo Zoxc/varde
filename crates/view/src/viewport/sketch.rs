@@ -18,7 +18,7 @@ use iced::time::{Duration, Instant};
 use iced::widget::shader::Action;
 use iced::widget::{MouseArea, column, container, mouse_area, row, text};
 use iced::{Alignment, Color, Element, Event, Padding, Point, Rectangle, Vector};
-use varde_document::{MAX_COORD, Placement, Plane};
+use varde_document::{MAX_COORD, Placement};
 use varde_expr::LengthUnit;
 use varde_render::{Camera, GridPlane, LineStyle, PointStyle, SketchLayer, Space, Srgba};
 use varde_sketch::{
@@ -109,7 +109,7 @@ const COMB_LENGTH: f64 = 48.0;
 #[derive(Debug, Clone)]
 pub(crate) struct Sketching<'a> {
     sketch: &'a Sketch,
-    plane: Plane,
+    placement: Placement,
     selection: &'a BTreeSet<Id>,
     /// The tool in use, if the sketch is editable and one is.
     tool: Option<ActiveTool<'a>>,
@@ -291,7 +291,7 @@ impl<'a> Sketching<'a> {
         };
         Self {
             sketch: sketch.sketch,
-            plane: sketch.plane,
+            placement: sketch.placement,
             selection: sketch.selection,
             tool: sketch.tool.filter(|_| editable),
             editable,
@@ -309,7 +309,7 @@ impl<'a> Sketching<'a> {
     }
 
     pub(crate) fn placement(&self) -> Placement {
-        self.plane.placement()
+        self.placement
     }
 
     /// Where the grid and the sketch are drawn: on the sketch's plane.

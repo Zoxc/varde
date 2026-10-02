@@ -60,7 +60,7 @@ fn state<'a>(
         editing: None,
         candidates: vec![Candidate {
             feature,
-            plane: Plane::Origin(OriginPlane::XY),
+            placement: OriginPlane::XY.placement(),
             sketch,
             profiles,
         }],
