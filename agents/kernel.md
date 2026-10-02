@@ -2041,8 +2041,14 @@ milliseconds for these, release); a 400-hole plate is unchanged.
   on a chain, the chain's halfedges either side may have their own
   vertices at the same position (the corner groups split at the crease):
   the polyline keeps the first, and an edge ending at its start ends on
-  its first vertex. A solid's mesh is one part (`part_ends`), even
-  empty; `RenderMesh::append` adds a part per mesh. `Solid::tessellate`
+  its first vertex.
+- **Wires** (`RenderMesh::wire_vertices`, `wire_ends`, `wires`): every
+  other edge record, along its first halfedge's samples, one polyline
+  each in the records' order, for a wireframe. They're left out (none,
+  the mesh otherwise the same) if they'd take the feature edges' points
+  past the limit, which bounds the two together.
+- **Parts.** A solid's mesh is one part (`part_ends`: one past its last
+  face, edge, corner and wire), even empty; `RenderMesh::append` adds a part per mesh. `Solid::tessellate`
   works out the topology itself; `Solid::tessellate_with(display,
   &topology)` takes one already made.
 - **Limits.** Triangle, vertex and feature-edge point counts are worked out

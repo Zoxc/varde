@@ -413,7 +413,8 @@ fn aliased() -> PickIndex {
         edge_faces: vec![[0, 1], [1, 2], [2, 2]],
         corners,
         edge_corners: vec![[0, 1], [2, 3], [4, 5]],
-        part_ends: vec![[3, 3, 6]],
+        part_ends: vec![[3, 3, 6, 0]],
+        ..MeshParts::default()
     })
     .unwrap();
     let face = |part: PartKey, aliases: Vec<FaceKey>| PickFace {

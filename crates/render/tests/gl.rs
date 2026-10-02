@@ -94,6 +94,7 @@ fn frame<'a>(
         sketches,
         grid: GridPlane::XY,
         faded: false,
+        wireframe: false,
         hidden_edges: true,
         hovered_faces: &[],
         selected_faces: &[],

@@ -362,6 +362,9 @@ fn a_flat_torus_splits_its_normals() {
     assert_eq!(mesh.positions().len(), 24 * 12 * 4);
     assert_eq!(mesh.triangle_count(), 24 * 12 * 2);
     assert_eq!(edge_segments(&mesh), 24 * 12 * 2);
+    // The diagonals are the wires.
+    assert_eq!(mesh.wires().len(), 24 * 12);
+    assert!(mesh.wires().all(|wire| wire.len() == 2));
     assert_faces_and_edges(&mesh);
 }
 
@@ -401,7 +404,16 @@ fn a_box_has_six_faces_twelve_edges_and_eight_corners() {
         .collect();
     expected.sort_unstable();
     assert_eq!(corners, expected);
-    assert_eq!(mesh.part_ends(), [[6, 12, 8]]);
+    // The sides' diagonals are the wires, a segment each, across a side.
+    assert_eq!(mesh.part_ends(), [[6, 12, 8, 6]]);
+    for wire in mesh.wires() {
+        let [a, b] = wire else { panic!("{wire:?}") };
+        let [a, b] = [a, b].map(|&v| Vec3::from(mesh.positions()[v as usize]));
+        assert_eq!(
+            (a - b).abs().cmpgt(Vec3::splat(0.5)).bitmask().count_ones(),
+            2
+        );
+    }
 }
 
 #[test]
@@ -482,16 +494,34 @@ fn a_mesh_past_any_limit_is_too_large() {
         refined,
     ] {
         let full = tessellate(&mesh, &display).unwrap();
+        let edge_points = full.edge_vertices().len() as u64;
         let exact = Limits {
             vertices: full.positions().len() as u64,
             indices: full.indices().len() as u64,
-            edge_points: full.edge_vertices().len() as u64,
+            edge_points: edge_points + full.wire_vertices().len() as u64,
         };
-        assert!(exact.edge_points > 0);
+        assert!(edge_points > 0 && exact.edge_points > edge_points);
         assert_eq!(
             tessellate_within(&mesh, &display, &exact).as_ref(),
             Ok(&full)
         );
+        // Short of the wires' points, the mesh is drawn without them.
+        let parts = full.clone().into_parts();
+        let [f, e, c, _] = parts.part_ends[0];
+        let bare = RenderMesh::from_parts(MeshParts {
+            wire_vertices: Vec::new(),
+            wire_ends: Vec::new(),
+            part_ends: vec![[f, e, c, 0]],
+            ..parts
+        })
+        .unwrap();
+        for edge_points in [edge_points, exact.edge_points - 1] {
+            let short = Limits {
+                edge_points,
+                ..exact
+            };
+            assert_eq!(tessellate_within(&mesh, &display, &short), Ok(bare.clone()));
+        }
         for tight in [
             Limits {
                 vertices: exact.vertices - 1,
@@ -502,7 +532,7 @@ fn a_mesh_past_any_limit_is_too_large() {
                 ..exact
             },
             Limits {
-                edge_points: exact.edge_points - 1,
+                edge_points: edge_points - 1,
                 ..exact
             },
         ] {

@@ -389,7 +389,8 @@ either way.
 - Normals are the patches' analytic ones, shared across an edge where the
   two sides agree within 1°, split otherwise.
 - Feature edges are split edges and edges between faces of different keys,
-  so a cylinder draws its rims, not its quarter-wall seams.
+  so a cylinder draws its rims, not its quarter-wall seams. The other
+  patch edges come along as wires, drawn only in a wireframe.
 - Counts are worked out before any vertex is made (round patches'
   grids measured first, in rounds bounded by the limits), and meshes past
   `RenderMesh`'s limits fail rather than allocate.

@@ -663,14 +663,14 @@ fn malformed_model_fails_its_generation() {
         panic!("decoded a model without line ends");
     };
     assert_eq!(u64::from(generation), 5);
-    assert_eq!(error, Error::Parts(11).to_string());
+    assert_eq!(error, Error::Parts(MODEL_PARTS - 1).to_string());
 }
 
 #[test]
 fn unbounded_line_points_fail_their_generation() {
     for bad in [f32::INFINITY, -1e38] {
         let mut parts = triangle();
-        parts[10][8..12].copy_from_slice(&bad.to_ne_bytes());
+        parts[12][8..12].copy_from_slice(&bad.to_ne_bytes());
         let head = regenerated(5).encode();
         let Response::Failed {
             generation, error, ..
@@ -761,8 +761,8 @@ fn bytes_after_the_head_are_an_error() {
     );
 }
 
-/// A mesh of one part: one triangle, its one face, and its outline as
-/// one edge closed on a corner at the first vertex.
+/// A mesh of one part: one triangle, its one face, its outline as one
+/// edge closed on a corner at the first vertex, and a wire along a side.
 fn triangle_mesh() -> RenderMesh {
     RenderMesh::from_parts(MeshParts {
         positions: vec![[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
@@ -774,7 +774,9 @@ fn triangle_mesh() -> RenderMesh {
         edge_faces: vec![[0, 0]],
         corners: vec![[0.0; 3]],
         edge_corners: vec![[0, 0]],
-        part_ends: vec![[1, 1, 1]],
+        wire_vertices: vec![1, 2],
+        wire_ends: vec![2],
+        part_ends: vec![[1, 1, 1, 1]],
     })
     .unwrap()
 }
@@ -845,14 +847,14 @@ fn a_mesh_of_parts_round_trips_with_their_bodies() {
     let mut mesh = triangle_mesh();
     mesh.append(
         &RenderMesh::from_parts(MeshParts {
-            part_ends: vec![[0, 0, 0]],
+            part_ends: vec![[0, 0, 0, 0]],
             ..MeshParts::default()
         })
         .unwrap(),
     )
     .unwrap();
     mesh.append_at(&triangle_mesh(), glam::Vec3::X).unwrap();
-    assert_eq!(mesh.part_ends(), [[1, 1, 1], [1, 1, 1], [2, 2, 2]]);
+    assert_eq!(mesh.part_ends(), [[1, 1, 1, 1], [1, 1, 1, 1], [2, 2, 2, 2]]);
     let response = answer(mesh.clone(), vec![a, b, c]);
     let Response::Regenerated {
         mesh: back,
@@ -891,11 +893,11 @@ fn triangle_decodes() {
 fn wrong_number_of_parts_is_an_error() {
     let mut parts = triangle();
     parts.pop();
-    assert_eq!(decode(&parts), Err(Error::Parts(11)));
+    assert_eq!(decode(&parts), Err(Error::Parts(MODEL_PARTS - 1)));
     assert_eq!(decode(&[]), Err(Error::Parts(0)));
     assert_eq!(decode(&parts[..1]), Err(Error::Parts(1)));
     parts.extend([Vec::new(), Vec::new()]);
-    assert_eq!(decode(&parts), Err(Error::Parts(13)));
+    assert_eq!(decode(&parts), Err(Error::Parts(MODEL_PARTS + 1)));
 }
 
 #[test]
@@ -909,9 +911,11 @@ fn partial_elements_are_an_error() {
         (6, Part::RenderMesh(MeshPart::EdgeFaces)),
         (7, Part::RenderMesh(MeshPart::Corners)),
         (8, Part::RenderMesh(MeshPart::EdgeCorners)),
-        (9, Part::RenderMesh(MeshPart::PartEnds)),
-        (10, Part::RenderLines(LinesPart::Points)),
-        (11, Part::RenderLines(LinesPart::Ends)),
+        (9, Part::RenderMesh(MeshPart::WireVertices)),
+        (10, Part::RenderMesh(MeshPart::WireEnds)),
+        (11, Part::RenderMesh(MeshPart::PartEnds)),
+        (12, Part::RenderLines(LinesPart::Points)),
+        (13, Part::RenderLines(LinesPart::Ends)),
     ] {
         let mut parts = triangle();
         parts[part].pop();
@@ -931,7 +935,7 @@ fn line_ends_must_make_polylines() {
     // Ends past the points, and polylines of one point.
     for ends in [&[4u32][..], &[1, 3], &[]] {
         let mut parts = triangle();
-        parts[11] = bytemuck::cast_slice(ends).to_vec();
+        parts[13] = bytemuck::cast_slice(ends).to_vec();
         assert_eq!(
             decode_lines(&parts),
             Err(Error::RenderLines(LinesError::Ends)),
@@ -986,6 +990,17 @@ fn indices_and_edges_must_refer_to_vertices() {
             vertices: 3
         }))
     );
+
+    let mut parts = triangle();
+    parts[9][4..8].copy_from_slice(&3u32.to_ne_bytes());
+    assert_eq!(
+        decode(&parts),
+        Err(Error::RenderMesh(MeshError::OutOfRange {
+            part: MeshPart::WireVertices,
+            index: 3,
+            vertices: 3
+        }))
+    );
 }
 
 /// Claims a length without the bytes, to test the bound without
@@ -1017,14 +1032,16 @@ fn oversized_parts_are_an_error() {
         (6, mesh(MeshPart::EdgeFaces), M::MAX_EDGE_POLYLINES * 8),
         (7, mesh(MeshPart::Corners), M::MAX_CORNERS * 12),
         (8, mesh(MeshPart::EdgeCorners), M::MAX_EDGE_POLYLINES * 8),
-        (9, mesh(MeshPart::PartEnds), M::MAX_PARTS * 12),
+        (9, mesh(MeshPart::WireVertices), M::MAX_EDGE_POINTS * 4),
+        (10, mesh(MeshPart::WireEnds), M::MAX_EDGE_POLYLINES * 4),
+        (11, mesh(MeshPart::PartEnds), M::MAX_PARTS * 16),
         (
-            10,
+            12,
             Part::RenderLines(LinesPart::Points),
             RenderLines::MAX_POINTS * 12,
         ),
         (
-            11,
+            13,
             Part::RenderLines(LinesPart::Ends),
             RenderLines::MAX_POLYLINES * 4,
         ),
@@ -1057,7 +1074,7 @@ fn oversized_head_is_an_error() {
 #[test]
 fn errors_display() {
     let error = decode(&[]).unwrap_err();
-    assert_eq!(error.to_string(), "model in 0 parts instead of 12");
+    assert_eq!(error.to_string(), "model in 0 parts instead of 14");
 }
 
 /// A small deterministic generator for the fuzz tests below (xorshift64).
@@ -1289,7 +1306,8 @@ fn two_triangles(closed: bool) -> Vec<Vec<u8>> {
         edge_faces: vec![[0, 1]],
         corners,
         edge_corners,
-        part_ends: vec![[2, 1, if closed { 1 } else { 2 }]],
+        part_ends: vec![[2, 1, if closed { 1 } else { 2 }, 0]],
+        ..MeshParts::default()
     })
     .unwrap();
     model_parts(&answer(mesh, vec![BodyId::NEW]))
@@ -1605,7 +1623,7 @@ fn a_model_with_too_many_faces_is_answered_as_failed() {
             normals: vec![[0.0, 0.0, 1.0]; 3],
             indices: [0, 1, 2].repeat(faces),
             face_ends: (1..=faces as u32).map(|f| 3 * f).collect(),
-            part_ends: vec![[faces as u32, 0, 0]],
+            part_ends: vec![[faces as u32, 0, 0, 0]],
             ..MeshParts::default()
         })
         .unwrap();
@@ -1766,10 +1784,11 @@ fn tangent_chains_must_hang_together() {
             corners: vec![p(1), p(2), p(0), p(1)],
             edge_corners: vec![[0, 1], [2, 3]],
             part_ends: if parts == 1 {
-                vec![[4, 2, 4]]
+                vec![[4, 2, 4, 0]]
             } else {
-                vec![[2, 1, 2], [4, 2, 4]]
+                vec![[2, 1, 2, 0], [4, 2, 4, 0]]
             },
+            ..MeshParts::default()
         })
         .unwrap()
     };
@@ -2092,9 +2111,9 @@ fn fan(split: bool) -> (Head, Vec<Vec<u8>>) {
         indices: vec![0, 1, 2, 0, 2, 3, 0, 3, 1],
         face_ends: vec![3, 6, 9],
         part_ends: if split {
-            vec![[2, 0, 0], [3, 0, 0]]
+            vec![[2, 0, 0, 0], [3, 0, 0, 0]]
         } else {
-            vec![[3, 0, 0]]
+            vec![[3, 0, 0, 0]]
         },
         ..MeshParts::default()
     })

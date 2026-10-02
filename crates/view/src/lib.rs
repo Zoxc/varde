@@ -104,20 +104,26 @@ pub enum Message {
     /// Shows the edges the model hides, dashed, or hides them: the view
     /// options menu's Hidden edges.
     ToggleHiddenEdges,
+    /// Draws every patch's edges, or only the feature edges: the view
+    /// options menu's Wireframe.
+    ToggleWireframe,
     /// Puts the text on the clipboard: a measured value with its unit,
     /// from its copy button.
     Copy(String),
 }
 
 /// What the view options menu turns on and off, and the theme button
-/// picks, kept by the app for every document. All on by default, and the
-/// theme the system's.
+/// picks, kept by the app for every document. All on by default but the
+/// wireframe, and the theme the system's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ViewOptions {
     /// Whether the status bar shows the hints of the mouse.
     pub mouse_hints: bool,
     /// Whether the viewport shows the edges the model hides, dashed.
     pub hidden_edges: bool,
+    /// Whether the viewport draws the edges of every patch of the model,
+    /// faint, besides its feature edges.
+    pub wireframe: bool,
     pub theme: ThemeChoice,
 }
 
@@ -126,6 +132,7 @@ impl Default for ViewOptions {
         ViewOptions {
             mouse_hints: true,
             hidden_edges: true,
+            wireframe: false,
             theme: ThemeChoice::default(),
         }
     }

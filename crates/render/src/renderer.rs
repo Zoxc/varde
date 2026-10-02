@@ -42,6 +42,15 @@ pub const LINE_WIDTH: f32 = 1.5;
 /// How wide the model's feature edges are drawn, in logical pixels.
 pub const EDGE_WIDTH: f32 = 1.5;
 
+/// How wide creases are drawn, in logical pixels: feature edges inside one
+/// face (see [`RenderMesh::edge_faces`]), where its patches' normals part.
+pub const CREASE_WIDTH: f32 = 1.0;
+
+/// How opaque creases are drawn, from 0 to 1, of what the feature edges
+/// are, seen and hidden alike: they're how a face was cut into patches,
+/// not where it ends.
+pub const CREASE_ALPHA: f32 = 0.35;
+
 /// How wide the edges the model hides are drawn, in logical pixels: see
 /// [`Frame::hidden_edges`].
 pub const HIDDEN_EDGE_WIDTH: f32 = 1.0;
@@ -118,6 +127,10 @@ pub struct Frame<'a> {
     /// Whether the model is drawn faded, as it is behind a sketch being
     /// edited: see [`Colors::faded_alpha`].
     pub faded: bool,
+    /// Whether the mesh's wires ([`RenderMesh::wires`]) are drawn with its
+    /// edges, as creases are: [`CREASE_WIDTH`] wide at [`CREASE_ALPHA`].
+    /// Changing it re-uploads nothing.
+    pub wireframe: bool,
     /// Whether the feature edges the model hides are drawn too, dashed
     /// ([`HIDDEN_DASH`]), [`HIDDEN_EDGE_WIDTH`] wide, at
     /// [`Colors::hidden_edge_alpha`]. Never while [`Self::faded`].
@@ -335,7 +348,11 @@ const NO_EDGE: u32 = u32::MAX;
 /// edge's segments, where a closed polyline joins itself. As
 /// `NEIGHBOUR_ONLY` in the shader.
 const NEIGHBOUR_ONLY: u32 = 1 << 31;
-const _: () = assert!(RenderMesh::MAX_EDGE_POLYLINES <= NEIGHBOUR_ONLY as usize);
+
+/// Set in [`EdgePoint::edge`] for a crease's points: an edge with one face
+/// on both sides. As `CREASE` in the shader.
+const CREASE: u32 = 1 << 30;
+const _: () = assert!(RenderMesh::MAX_EDGE_POLYLINES <= CREASE as usize);
 
 /// How many slots the edge stream is bound to: previous, start, end and
 /// next point.
@@ -447,8 +464,10 @@ struct GpuMesh {
     positions: wgpu::Buffer,
     normals: wgpu::Buffer,
     indices: wgpu::Buffer,
-    /// The [`EdgePoint`] stream, if there are any edges.
+    /// The [`EdgePoint`] stream, if there are any edges or wires.
     edges: Option<wgpu::Buffer>,
+    /// Whether the wires are drawn with the edges: [`Frame::wireframe`].
+    wireframe: bool,
     /// The mesh's parts, as [`RenderMesh::parts`] gives them; one for the
     /// whole mesh if it has none.
     parts: Vec<GpuPart>,
@@ -498,8 +517,10 @@ struct GpuPart {
     indices: Range<u32>,
     /// Its edges' points in the [`EdgePoint`] stream, neighbour only ones
     /// included. The parts' follow one another from the stream's second
-    /// point.
+    /// point, and all the parts' wires follow them.
     points: Range<u32>,
+    /// Its wires' points in the stream, likewise.
+    wires: Range<u32>,
     /// Its triangles' bounds, to sort parts less than opaque by.
     bounds: Option<Aabb>,
 }
@@ -828,6 +849,8 @@ impl Renderer {
                 ("LINE_WIDTH", f64::from(LINE_WIDTH)),
                 ("EDGE_WIDTH", f64::from(EDGE_WIDTH)),
                 ("HIDDEN_EDGE_WIDTH", f64::from(HIDDEN_EDGE_WIDTH)),
+                ("CREASE_WIDTH", f64::from(CREASE_WIDTH)),
+                ("CREASE_ALPHA", f64::from(CREASE_ALPHA)),
                 ("HIDDEN_DASH", f64::from(HIDDEN_DASH[0])),
                 ("HIDDEN_GAP", f64::from(HIDDEN_DASH[1])),
                 ("HOVERED_EDGE_WIDTH", f64::from(HOVERED_EDGE_WIDTH)),
@@ -1248,6 +1271,9 @@ impl Renderer {
         }
         // Faded, every part is drawn alike.
         let opacity = if frame.faded { &[] } else { frame.opacity };
+        if let Some(mesh) = &mut slot.mesh {
+            mesh.wireframe = frame.wireframe;
+        }
         let parts = slot.mesh.as_ref().map_or(&[][..], |mesh| &mesh.parts);
         slot.draws = PartDraws::new(parts, opacity, &self.alphas, frame.camera);
 
@@ -1711,7 +1737,8 @@ fn draw_faces(pass: &mut wgpu::RenderPass<'_>, mesh: &GpuMesh, parts: Range<usiz
 
 /// Records drawing the feature edges of `mesh`'s `parts`, which follow one
 /// another, with `pipeline`: their points follow one another in the
-/// stream, so [`draw_stream`] draws them at once.
+/// stream, so [`draw_stream`] draws them at once; and their wires likewise
+/// in a wireframe.
 fn draw_edges(
     pass: &mut wgpu::RenderPass<'_>,
     pipeline: &wgpu::RenderPipeline,
@@ -1719,12 +1746,11 @@ fn draw_edges(
     parts: Range<usize>,
 ) {
     let Some(edges) = &mesh.edges else { return };
-    draw_stream(
-        pass,
-        pipeline,
-        edges,
-        span(mesh, parts, |part| &part.points),
-    );
+    let points = span(mesh, parts.clone(), |part| &part.points);
+    draw_stream(pass, pipeline, edges, points);
+    if mesh.wireframe {
+        draw_stream(pass, pipeline, edges, span(mesh, parts, |part| &part.wires));
+    }
 }
 
 /// Records drawing the polylines of the [`EdgePoint`] stream in `edges`
@@ -1815,12 +1841,13 @@ fn upload_mesh(device: &wgpu::Device, mesh: &RenderMesh) -> Result<Option<GpuMes
     // The kernel's limits keep every part within `MAX_BUFFER_BYTES`, so
     // this doesn't saturate.
     let bytes = |len: usize, size: usize| len.saturating_mul(size) as u64;
-    let (edge_points, polyline_ends) = if mesh.edge_vertices().is_empty() {
-        (None, Vec::new())
-    } else {
-        let (points, ends) = edge_stream(mesh);
-        (Some(points), ends)
-    };
+    let (edge_points, part_points) =
+        if mesh.edge_vertices().is_empty() && mesh.wire_vertices().is_empty() {
+            (None, Vec::new())
+        } else {
+            let (points, parts) = edge_stream(mesh);
+            (Some(points), parts)
+        };
     let largest = [
         bytes(mesh.positions().len(), size_of::<[f32; 3]>()),
         bytes(mesh.indices().len(), size_of::<u32>()),
@@ -1845,30 +1872,27 @@ fn upload_mesh(device: &wgpu::Device, mesh: &RenderMesh) -> Result<Option<GpuMes
             usage: wgpu::BufferUsages::VERTEX,
         })
     });
-    // Where a part's edges' points start in the stream: after the
-    // stream's first point, and after the edges before it.
-    let point = |edge: usize| {
-        edge.checked_sub(1)
-            .map_or(1, |before| polyline_ends[before])
-    };
     // The kernel's limits keep these well within `u32`.
     let to_u32 = |range: Range<usize>| {
         let at = |n| u32::try_from(n).expect("kernel bounds indices");
         at(range.start)..at(range.end)
     };
-    let part = |faces: Range<usize>, indices: Range<usize>, edges: Range<usize>| GpuPart {
-        bounds: bounds_of(mesh.positions(), &mesh.indices()[indices.clone()]),
-        faces: to_u32(faces),
-        indices: to_u32(indices),
-        points: point(edges.start)..point(edges.end),
-    };
-    let mut parts: Vec<GpuPart> = mesh
-        .parts()
-        .map(|part_of| part(part_of.faces, part_of.indices, part_of.edges))
+    let part =
+        |faces: Range<usize>, indices: Range<usize>, [points, wires]: [Range<u32>; 2]| GpuPart {
+            bounds: bounds_of(mesh.positions(), &mesh.indices()[indices.clone()]),
+            faces: to_u32(faces),
+            indices: to_u32(indices),
+            points,
+            wires,
+        };
+    // With no edges or wires, none of the parts has points.
+    let points = |i: usize| part_points.get(i).cloned().unwrap_or([1..1, 1..1]);
+    let mut parts: Vec<GpuPart> = (mesh.parts().enumerate())
+        .map(|(i, part_of)| part(part_of.faces, part_of.indices, points(i)))
         .collect();
     if parts.is_empty() {
         let (faces, indices) = (0..mesh.face_count(), 0..mesh.indices().len());
-        parts.push(part(faces, indices, 0..mesh.edge_count()));
+        parts.push(part(faces, indices, [1..1, 1..1]));
     }
 
     Ok(Some(GpuMesh {
@@ -1889,6 +1913,7 @@ fn upload_mesh(device: &wgpu::Device, mesh: &RenderMesh) -> Result<Option<GpuMes
             usage: wgpu::BufferUsages::INDEX,
         }),
         edges,
+        wireframe: false,
         parts,
         bounds: mesh.bounds(),
     }))
@@ -1903,18 +1928,41 @@ fn bounds_of(positions: &[[f32; 3]], indices: &[u32]) -> Option<Aabb> {
     Some(Aabb { min, max })
 }
 
-/// The [`EdgePoint`] stream of `mesh`'s feature edges, and where each
-/// polyline's points end in it, one past its last.
-fn edge_stream(mesh: &RenderMesh) -> (Vec<EdgePoint>, Vec<u32>) {
-    let mut stream = EdgeStream::with_capacity(mesh.edge_vertices().len());
-    let mut ends = Vec::with_capacity(mesh.edge_count());
-    // The kernel bounds the polylines well within `u32`, below
-    // `NEIGHBOUR_ONLY`.
-    for (edge, polyline) in (0..).zip(mesh.polylines()) {
-        stream.push(edge, mesh.positions(), polyline);
-        ends.push(stream.len());
+/// The [`EdgePoint`] stream of `mesh`'s feature edges, then its wires,
+/// and where each part's edges' and wires' points are in it. Creases and
+/// wires are marked [`CREASE`]; a wire is numbered after every edge.
+fn edge_stream(mesh: &RenderMesh) -> (Vec<EdgePoint>, Vec<[Range<u32>; 2]>) {
+    let points = (mesh.edge_vertices().len()).saturating_add(mesh.wire_vertices().len());
+    let mut stream = EdgeStream::with_capacity(points);
+    // The kernel bounds the edges and wires together well within `u32`,
+    // below `CREASE`.
+    let to_u32 = |n: usize| u32::try_from(n).expect("kernel bounds edges");
+    let mut edge_points = Vec::with_capacity(mesh.part_ends().len());
+    let mut polylines = mesh.polylines().zip(mesh.edge_faces());
+    for part in mesh.parts() {
+        let start = stream.len();
+        for (edge, (polyline, [a, b])) in part.edges.zip(polylines.by_ref()) {
+            let id = if a == b {
+                to_u32(edge) | CREASE
+            } else {
+                to_u32(edge)
+            };
+            stream.push(id, mesh.positions(), polyline);
+        }
+        edge_points.push(start..stream.len());
     }
-    (stream.finish(), ends)
+    let edges = to_u32(mesh.edge_count());
+    let mut wires = mesh.wires();
+    let parts = (mesh.parts().zip(edge_points))
+        .map(|(part, edge_points)| {
+            let start = stream.len();
+            for (wire, polyline) in part.wires.zip(wires.by_ref()) {
+                stream.push((edges + to_u32(wire)) | CREASE, mesh.positions(), polyline);
+            }
+            [edge_points, start..stream.len()]
+        })
+        .collect();
+    (stream.finish(), parts)
 }
 
 /// An [`EdgePoint`] stream being built: polylines one after another, from

@@ -297,6 +297,10 @@ impl Varde {
                 self.options.hidden_edges = !self.options.hidden_edges;
                 self.with_doc(|doc, _| doc.view_menu = false);
             }
+            Message::Ui(Ui::ToggleWireframe) => {
+                self.options.wireframe = !self.options.wireframe;
+                self.with_doc(|doc, _| doc.view_menu = false);
+            }
             Message::PeekPanel(peeking) => self.peeking = peeking,
             Message::CommandHeld(held) => self.command = held,
             Message::AnimationFrame(now) => self.with_doc(|doc, _| {
@@ -683,7 +687,13 @@ fn while_quitting(message: &Message) -> bool {
             | Message::PeekPanel(_)
             | Message::CommandHeld(_)
             | Message::SystemTheme(_)
-            | Message::Ui(Ui::Look(_) | Ui::ToggleMouseHints | Ui::ToggleHiddenEdges | Ui::Copy(_))
+            | Message::Ui(
+                Ui::Look(_)
+                    | Ui::ToggleMouseHints
+                    | Ui::ToggleHiddenEdges
+                    | Ui::ToggleWireframe
+                    | Ui::Copy(_)
+            )
     )
 }
 

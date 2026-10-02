@@ -19,7 +19,8 @@ fn mesh() -> RenderMesh {
         edge_faces: vec![[0, 0]; 2],
         corners: vec![[0.0; 3], [1.0; 3], [0.0, 0.0, 2.0], [0.0, 0.0, 3.0]],
         edge_corners: vec![[0, 1], [2, 3]],
-        part_ends: vec![[1, 2, 4]],
+        part_ends: vec![[1, 2, 4, 0]],
+        ..MeshParts::default()
     })
     .unwrap()
 }
@@ -110,7 +111,8 @@ fn outlined_edges_that_meet_are_joined_either_way_round() {
             [6.0, 0.0, 0.0],
         ],
         edge_corners: vec![[0, 1], [2, 1], [2, 3], [0, 3], [4, 5]],
-        part_ends: vec![[1, 5, 6]],
+        part_ends: vec![[1, 5, 6, 0]],
+        ..MeshParts::default()
     })
     .unwrap();
     let highlights = Highlights {

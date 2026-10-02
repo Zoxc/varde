@@ -228,6 +228,8 @@ fn mesh_bytes(mesh: &RenderMesh) -> usize {
         .saturating_add(size_of_val(mesh.edge_faces()))
         .saturating_add(size_of_val(mesh.corners()))
         .saturating_add(size_of_val(mesh.edge_corners()))
+        .saturating_add(size_of_val(mesh.wire_vertices()))
+        .saturating_add(size_of_val(mesh.wire_ends()))
         .saturating_add(size_of_val(mesh.part_ends()))
         .saturating_add(size_of_val(mesh))
 }

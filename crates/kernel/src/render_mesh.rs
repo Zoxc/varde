@@ -7,7 +7,8 @@ use crate::{Aabb, MAX_COORD};
 /// A solid tessellated for drawing: an indexed triangle mesh with
 /// per-vertex normals, its triangles grouped by face, and the feature
 /// edges to outline as polylines between the faces either side, ending at
-/// corners.
+/// corners; and the rest of the patches' edges, the wires, as polylines
+/// too, for a wireframe.
 ///
 /// Vertices are duplicated where normals split (along sharp edges), and
 /// shared where the surface is smooth.
@@ -17,8 +18,8 @@ use crate::{Aabb, MAX_COORD};
 ///
 /// A mesh is always drawable: there is a normal for every position, the
 /// indices make whole triangles, each face is one or more of them, each
-/// edge two or more vertices, the parts take up every face, edge and
-/// corner in order, indices and edge vertices refer to vertices that exist
+/// edge and wire two or more vertices, the parts take up every face, edge,
+/// corner and wire in order, indices and edge and wire vertices refer to vertices that exist
 /// and edges to faces and corners of their own part, every corner is where
 /// the edges it ends end, every vector is within
 /// [`RenderMesh::MAX_VERTICES`] and the others, every normal is finite and
@@ -37,7 +38,9 @@ pub struct RenderMesh {
     edge_faces: Vec<[u32; 2]>,
     corners: Vec<[f32; 3]>,
     edge_corners: Vec<[u32; 2]>,
-    part_ends: Vec<[u32; 3]>,
+    wire_vertices: Vec<u32>,
+    wire_ends: Vec<u32>,
+    part_ends: Vec<[u32; 4]>,
 }
 
 /// What a [`RenderMesh`] is made of, as [`RenderMesh::from_parts`] takes
@@ -54,7 +57,9 @@ pub struct MeshParts {
     pub edge_faces: Vec<[u32; 2]>,
     pub corners: Vec<[f32; 3]>,
     pub edge_corners: Vec<[u32; 2]>,
-    pub part_ends: Vec<[u32; 3]>,
+    pub wire_vertices: Vec<u32>,
+    pub wire_ends: Vec<u32>,
+    pub part_ends: Vec<[u32; 4]>,
 }
 
 /// One appended mesh's share of a [`RenderMesh`], as ranges of each of its
@@ -71,6 +76,10 @@ pub struct RenderPart {
     pub edge_vertices: Range<usize>,
     /// Its corners' ids.
     pub corners: Range<usize>,
+    /// Its wires' ids.
+    pub wires: Range<usize>,
+    /// Its wires' vertices, in [`RenderMesh::wire_vertices`].
+    pub wire_vertices: Range<usize>,
 }
 
 impl RenderMesh {
@@ -83,10 +92,12 @@ impl RenderMesh {
     pub const MAX_INDICES: usize = 3 << 24;
     /// The most faces a mesh may have: each has a triangle or more.
     pub const MAX_FACES: usize = Self::MAX_INDICES / 3;
-    /// The most vertices the edges may have together, about 8 million, so
-    /// that the renderer's stream of edge points fits one GPU buffer.
+    /// The most vertices the edges and the wires may have together, about
+    /// 8 million, so that the renderer's stream of their points fits one
+    /// GPU buffer.
     pub const MAX_EDGE_POINTS: usize = 1 << 23;
-    /// The most edges a mesh may have: each has two vertices or more.
+    /// The most edges, or wires, a mesh may have: each has two vertices or
+    /// more.
     pub const MAX_EDGE_POLYLINES: usize = Self::MAX_EDGE_POINTS / 2;
     /// The most corners a mesh may have: each ends an edge, and an edge
     /// has two ends.
@@ -112,13 +123,16 @@ impl RenderMesh {
             edge_faces,
             corners,
             edge_corners,
+            wire_vertices,
+            wire_ends,
             part_ends,
         } = parts;
         if positions.len() > Self::MAX_VERTICES
             || indices.len() > Self::MAX_INDICES
             || face_ends.len() > Self::MAX_FACES
-            || edge_vertices.len() > Self::MAX_EDGE_POINTS
+            || (edge_vertices.len()).saturating_add(wire_vertices.len()) > Self::MAX_EDGE_POINTS
             || edge_ends.len() > Self::MAX_EDGE_POLYLINES
+            || wire_ends.len() > Self::MAX_EDGE_POLYLINES
             || edge_faces.len() > Self::MAX_EDGE_POLYLINES
             || corners.len() > Self::MAX_CORNERS
             || edge_corners.len() > Self::MAX_EDGE_POLYLINES
@@ -143,6 +157,9 @@ impl RenderMesh {
         if !splits(&edge_ends, edge_vertices.len(), |len| len >= 2) {
             return Err(MeshError::Ends(MeshPart::EdgeEnds));
         }
+        if !splits(&wire_ends, wire_vertices.len(), |len| len >= 2) {
+            return Err(MeshError::Ends(MeshPart::WireEnds));
+        }
         for (part, len) in [
             (MeshPart::EdgeFaces, edge_faces.len()),
             (MeshPart::EdgeCorners, edge_corners.len()),
@@ -157,10 +174,16 @@ impl RenderMesh {
         }
         part_runs(
             &part_ends,
-            [face_ends.len(), edge_ends.len(), corners.len()],
+            [
+                face_ends.len(),
+                edge_ends.len(),
+                corners.len(),
+                wire_ends.len(),
+            ],
         )?;
         in_range(MeshPart::Indices, &indices, positions.len())?;
         in_range(MeshPart::EdgeVertices, &edge_vertices, positions.len())?;
+        in_range(MeshPart::WireVertices, &wire_vertices, positions.len())?;
         in_parts(&part_ends, &edge_faces, &edge_corners)?;
         if !within(&positions, Self::MAX_POSITION) {
             return Err(MeshError::Values(MeshPart::Positions));
@@ -178,6 +201,8 @@ impl RenderMesh {
             edge_faces,
             corners,
             edge_corners,
+            wire_vertices,
+            wire_ends,
             part_ends,
         };
         mesh.check_corners()?;
@@ -197,6 +222,8 @@ impl RenderMesh {
             edge_faces: self.edge_faces,
             corners: self.corners,
             edge_corners: self.edge_corners,
+            wire_vertices: self.wire_vertices,
+            wire_ends: self.wire_ends,
             part_ends: self.part_ends,
         }
     }
@@ -279,8 +306,23 @@ impl RenderMesh {
         &self.edge_corners
     }
 
-    /// One past each part's last face, edge and corner, in that order.
-    pub fn part_ends(&self) -> &[[u32; 3]] {
+    /// The wires' vertex indices, polyline after polyline: the patches'
+    /// edges that aren't feature edges, each from one patch corner to the
+    /// next, drawn only in a wireframe.
+    pub fn wire_vertices(&self) -> &[u32] {
+        &self.wire_vertices
+    }
+
+    /// One past each wire's last vertex in
+    /// [`wire_vertices`](Self::wire_vertices), in increasing order, the
+    /// last one the number of wire vertices.
+    pub fn wire_ends(&self) -> &[u32] {
+        &self.wire_ends
+    }
+
+    /// One past each part's last face, edge, corner and wire, in that
+    /// order.
+    pub fn part_ends(&self) -> &[[u32; 4]] {
         &self.part_ends
     }
 
@@ -306,6 +348,11 @@ impl RenderMesh {
         split(&self.edge_vertices, &self.edge_ends)
     }
 
+    /// Each wire's vertex indices.
+    pub fn wires(&self) -> impl ExactSizeIterator<Item = &[u32]> {
+        split(&self.wire_vertices, &self.wire_ends)
+    }
+
     /// Where face `face`'s indices are in [`indices`](Self::indices), if
     /// the mesh has it.
     pub fn face_indices(&self, face: usize) -> Option<Range<usize>> {
@@ -325,16 +372,18 @@ impl RenderMesh {
 
     /// Each part's ranges, in the order they were appended.
     pub fn parts(&self) -> impl ExactSizeIterator<Item = RenderPart> {
-        let mut from = [0usize; 3];
+        let mut from = [0usize; 4];
         self.part_ends.iter().map(move |to| {
             let to = to.map(|n| n as usize);
-            let (faces, edges) = (&self.face_ends, &self.edge_ends);
+            let (faces, edges, wires) = (&self.face_ends, &self.edge_ends, &self.wire_ends);
             let part = RenderPart {
                 faces: from[0]..to[0],
                 indices: run_start(faces, from[0])..run_start(faces, to[0]),
                 edges: from[1]..to[1],
                 edge_vertices: run_start(edges, from[1])..run_start(edges, to[1]),
                 corners: from[2]..to[2],
+                wires: from[3]..to[3],
+                wire_vertices: run_start(wires, from[3])..run_start(wires, to[3]),
             };
             from = to;
             part
@@ -367,9 +416,14 @@ impl RenderMesh {
             (self.indices.len(), other.indices.len(), Self::MAX_INDICES),
             (self.face_ends.len(), other.face_ends.len(), Self::MAX_FACES),
             (
-                self.edge_vertices.len(),
-                other.edge_vertices.len(),
+                (self.edge_vertices.len()).saturating_add(self.wire_vertices.len()),
+                (other.edge_vertices.len()).saturating_add(other.wire_vertices.len()),
                 Self::MAX_EDGE_POINTS,
+            ),
+            (
+                self.wire_ends.len(),
+                other.wire_ends.len(),
+                Self::MAX_EDGE_POLYLINES,
             ),
             (
                 self.edge_ends.len(),
@@ -405,6 +459,8 @@ impl RenderMesh {
         let edge_points = base(self.edge_vertices.len())?;
         let edges = base(self.edge_ends.len())?;
         let corners = base(self.corners.len())?;
+        let wire_points = base(self.wire_vertices.len())?;
+        let wires = base(self.wire_ends.len())?;
 
         // Corners move as their positions do, so they stay equal.
         let moved = |p: &[f32; 3]| (Vec3::from(*p) + offset).to_array();
@@ -424,11 +480,15 @@ impl RenderMesh {
         self.corners.extend(other.corners.iter().map(moved));
         self.edge_corners
             .extend(other.edge_corners.iter().map(|c| c.map(|c| corners + c)));
+        self.wire_vertices
+            .extend(other.wire_vertices.iter().map(|v| vertices + v));
+        self.wire_ends
+            .extend(other.wire_ends.iter().map(|end| wire_points + end));
         self.part_ends.extend(
             other
                 .part_ends
                 .iter()
-                .map(|&[f, e, c]| [faces + f, edges + e, corners + c]),
+                .map(|&[f, e, c, w]| [faces + f, edges + e, corners + c, wires + w]),
         );
         Ok(())
     }
@@ -486,10 +546,11 @@ pub(crate) fn split<'a, T>(
     })
 }
 
-/// Checks that the parts' ends of faces, edges and corners each never
-/// fall, and that the last are `totals` (none if there are no parts).
-fn part_runs(part_ends: &[[u32; 3]], totals: [usize; 3]) -> Result<(), MeshError> {
-    let mut start = [0usize; 3];
+/// Checks that the parts' ends of faces, edges, corners and wires each
+/// never fall, and that the last are `totals` (none if there are no
+/// parts).
+fn part_runs(part_ends: &[[u32; 4]], totals: [usize; 4]) -> Result<(), MeshError> {
+    let mut start = [0usize; 4];
     for ends in part_ends {
         for (start, &end) in start.iter_mut().zip(ends) {
             let end = usize::try_from(end).map_err(|_| MeshError::Ends(MeshPart::PartEnds))?;
@@ -508,11 +569,11 @@ fn part_runs(part_ends: &[[u32; 3]], totals: [usize; 3]) -> Result<(), MeshError
 /// Checks that each edge's faces and corners are of its own part. The
 /// parts must take up every face, edge and corner.
 fn in_parts(
-    part_ends: &[[u32; 3]],
+    part_ends: &[[u32; 4]],
     edge_faces: &[[u32; 2]],
     edge_corners: &[[u32; 2]],
 ) -> Result<(), MeshError> {
-    let mut from = [0u32; 3];
+    let mut from = [0u32; 4];
     for &to in part_ends {
         for edge in from[1] as usize..to[1] as usize {
             for (part, ids, range) in [
@@ -563,6 +624,8 @@ pub enum MeshPart {
     EdgeFaces,
     Corners,
     EdgeCorners,
+    WireVertices,
+    WireEnds,
     PartEnds,
 }
 
@@ -578,6 +641,8 @@ impl std::fmt::Display for MeshPart {
             MeshPart::EdgeFaces => "edge faces",
             MeshPart::Corners => "corners",
             MeshPart::EdgeCorners => "edge corners",
+            MeshPart::WireVertices => "wire vertices",
+            MeshPart::WireEnds => "wire ends",
             MeshPart::PartEnds => "part ends",
         })
     }
@@ -593,8 +658,8 @@ pub enum MeshError {
     Normals { positions: usize, normals: usize },
     /// This many indices don't make whole triangles.
     Triangles(usize),
-    /// These ends ([`MeshPart::FaceEnds`], [`MeshPart::EdgeEnds`] or
-    /// [`MeshPart::PartEnds`]) fall, don't end at the last of what they
+    /// These ends ([`MeshPart::FaceEnds`], [`MeshPart::EdgeEnds`],
+    /// [`MeshPart::WireEnds`] or [`MeshPart::PartEnds`]) fall, don't end at the last of what they
     /// split, or leave a face without a whole triangle or an edge without
     /// two vertices.
     Ends(MeshPart),
@@ -605,7 +670,7 @@ pub enum MeshError {
         len: usize,
         edges: usize,
     },
-    /// An index or edge vertex refers to a vertex past the last.
+    /// An index, edge vertex or wire vertex refers to a vertex past the last.
     OutOfRange {
         part: MeshPart,
         index: u32,

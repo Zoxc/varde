@@ -8,9 +8,10 @@ use std::sync::Arc;
 use glam::{DVec3, Vec3};
 use varde_kernel::{MeshParts, RenderLines, RenderMesh, Solid, Tolerance};
 use varde_render::{
-    Camera, ClipRect, Colors, EDGE_WIDTH, Frame, GridPlane, HIDDEN_DASH, HOVER_RIM,
-    HOVERED_EDGE_WIDTH, Highlights, LINE_WIDTH, LineStyle, Pivot, PointStyle, Projection, Renderer,
-    SketchLayer, SketchScene, Space, Srgb, Srgba, VERTEX_RADIUS, Vertex, View, Viewport, wgpu,
+    CREASE_ALPHA, CREASE_WIDTH, Camera, ClipRect, Colors, EDGE_WIDTH, Frame, GridPlane,
+    HIDDEN_DASH, HOVER_RIM, HOVERED_EDGE_WIDTH, Highlights, LINE_WIDTH, LineStyle, Pivot,
+    PointStyle, Projection, Renderer, SketchLayer, SketchScene, Space, Srgb, Srgba, VERTEX_RADIUS,
+    Vertex, View, Viewport, wgpu,
 };
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -91,6 +92,7 @@ fn render_to(
             sketches: &Arc::default(),
             grid: GridPlane::XY,
             faded: false,
+            wireframe: false,
             hidden_edges: true,
             hovered_faces: &[],
             selected_faces: &[],
@@ -113,6 +115,8 @@ struct Extras {
     sketches: RenderLines,
     grid: GridPlane,
     faded: bool,
+    /// Whether the mesh's wires are drawn.
+    wireframe: bool,
     /// Whether the edges the model hides are drawn.
     hidden_edges: bool,
     /// The sketch being edited: its plane and a layer of it, drawn as its
@@ -171,6 +175,7 @@ fn render_scaled(
             sketches: &Arc::new(extras.sketches),
             grid: extras.grid,
             faded: extras.faded,
+            wireframe: extras.wireframe,
             hidden_edges: extras.hidden_edges,
             hovered_faces: &extras.hovered_faces,
             selected_faces: &extras.selected_faces,
@@ -1653,13 +1658,13 @@ fn a_depth_tested_sketch_on_a_face_shows_at_any_scale_and_angle() {
     assert!(failures.is_empty(), "{failures:#?}");
 }
 
-/// A mesh of only the edges along `polylines`, with one triangle of no
-/// area for its face, which draws nothing. A polyline ending where it
-/// starts closes on one corner.
+/// A mesh of only the edges along `polylines`, each between two faces (so
+/// none is a crease) of one triangle of no area each, which draw nothing.
+/// A polyline ending where it starts closes on one corner.
 fn edges(polylines: &[&[Vec3]]) -> RenderMesh {
     let mut parts = MeshParts {
-        indices: vec![0, 0, 0],
-        face_ends: vec![3],
+        indices: vec![0; 6],
+        face_ends: vec![3, 6],
         ..MeshParts::default()
     };
     for polyline in polylines {
@@ -1671,7 +1676,7 @@ fn edges(polylines: &[&[Vec3]]) -> RenderMesh {
             .edge_vertices
             .extend(first..parts.positions.len() as u32);
         parts.edge_ends.push(parts.edge_vertices.len() as u32);
-        parts.edge_faces.push([0, 0]);
+        parts.edge_faces.push([0, 1]);
         let (start, end) = (polyline[0], polyline[polyline.len() - 1]);
         let corner = parts.corners.len() as u32;
         parts.corners.push(start.to_array());
@@ -1683,7 +1688,12 @@ fn edges(polylines: &[&[Vec3]]) -> RenderMesh {
         }
     }
     parts.normals = vec![[0.0, 0.0, 1.0]; parts.positions.len()];
-    parts.part_ends = vec![[1, parts.edge_ends.len() as u32, parts.corners.len() as u32]];
+    parts.part_ends = vec![[
+        2,
+        parts.edge_ends.len() as u32,
+        parts.corners.len() as u32,
+        0,
+    ]];
     RenderMesh::from_parts(parts).unwrap()
 }
 
@@ -1733,6 +1743,51 @@ fn edges_are_anti_aliased_at_their_sides() {
             assert_eq!(covered(y), 0.0, "row {y}");
         }
     }
+}
+
+/// A mesh of an edge along `edge`, a crease along `crease` and a wire
+/// along `wire`, each a segment.
+fn edge_crease_and_wire(edge: [Vec3; 2], crease: [Vec3; 2], wire: [Vec3; 2]) -> RenderMesh {
+    let mut parts = edges(&[&edge, &crease]).into_parts();
+    parts.edge_faces[1] = [0, 0];
+    let first = parts.positions.len() as u32;
+    parts.positions.extend(wire.map(|p| p.to_array()));
+    parts.normals.extend([[0.0, 0.0, 1.0]; 2]);
+    parts.wire_vertices = vec![first, first + 1];
+    parts.wire_ends = vec![2];
+    parts.part_ends[0][3] = 1;
+    RenderMesh::from_parts(parts).unwrap()
+}
+
+#[test]
+fn creases_are_thinner_and_fainter_and_wires_only_in_a_wireframe() {
+    // Ten rows apart, each along the middle of a row.
+    let ys = [-1.35, -2.35, -3.35];
+    let [edge, crease, wire] = ys.map(|y| [Vec3::new(-100.0, y, 0.0), Vec3::new(100.0, y, 0.0)]);
+    let mesh = edge_crease_and_wire(edge, crease, wire);
+    let render = |wireframe| {
+        let extras = Extras {
+            wireframe,
+            ..yellow_edges(false)
+        };
+        let pixels = render_sketch(&top_camera(), &mesh, extras, 1.0)?;
+        // How much yellow covers down a column within 4 rows of each line.
+        Some(ys.map(|y| {
+            let (_, row) = sketch_pixel(0.0, y, 1.0);
+            let row = row as u32;
+            yellow_down(&pixels, 75, row - 4..row + 5)
+        }))
+    };
+    let (Some(plain), Some(wired)) = (render(false), render(true)) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let faint = CREASE_WIDTH * CREASE_ALPHA;
+    assert!((plain[0] - EDGE_WIDTH).abs() < 0.1, "{plain:?}");
+    assert!((plain[1] - faint).abs() < 0.1, "{plain:?}");
+    assert_eq!(plain[2], 0.0, "{plain:?}");
+    assert_eq!(wired[..2], plain[..2]);
+    assert!((wired[2] - faint).abs() < 0.1, "{wired:?}");
 }
 
 #[test]

@@ -257,6 +257,27 @@ fn hidden_edges_show_unless_turned_off() {
     assert!(on != off, "the hidden edges don't show");
 }
 
+/// The cube's wires, its sides' diagonals, show only in a wireframe.
+#[test]
+fn wires_show_only_in_a_wireframe() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let cube = cube();
+    let state = Interaction::default();
+    assert!(!primitive(&state, &cube).scene.wireframe);
+    let mut pipeline = Pipeline::new(&device, &queue, FORMAT);
+    let mut drawn = |wireframe| {
+        let mut primitive = primitive(&state, &cube);
+        primitive.scene.wireframe = wireframe;
+        prepare(&device, &queue, &mut pipeline, &primitive);
+        draw(&device, &queue, &pipeline, &primitive)
+    };
+    let (on, off) = (drawn(true), drawn(false));
+    assert!(on != off, "the wires don't show");
+}
+
 /// A viewport's slot goes once its widget and what it drew are gone.
 #[test]
 fn trim_drops_the_slots_of_gone_viewports() {

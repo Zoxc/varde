@@ -52,6 +52,10 @@ override EDGE_WIDTH: f32;
 // How wide the edges hidden by the model are, and their dashes' and gaps'
 // lengths along them, in logical pixels.
 override HIDDEN_EDGE_WIDTH: f32;
+// How wide creases are, in logical pixels, and how opaque, of what the
+// feature edges are, seen or hidden.
+override CREASE_WIDTH: f32;
+override CREASE_ALPHA: f32;
 override HIDDEN_DASH: f32;
 override HIDDEN_GAP: f32;
 // How wide the hovered edges are, the rim around them and the hovered
@@ -615,6 +619,15 @@ fn vs_line(
 // Set in an edge point's edge where it's only a neighbour of its edge's
 // segments, as in renderer.rs: where a closed polyline joins itself.
 const NEIGHBOUR_ONLY: u32 = 0x80000000u;
+// Set in a crease's points' edge, as in renderer.rs: a feature edge inside
+// one face.
+const CREASE: u32 = 0x40000000u;
+
+// How opaque an edge of `in` is drawn, of the feature edges: CREASE_ALPHA
+// for a crease.
+fn crease_alpha(in: EdgeIn) -> f32 {
+    return select(1.0, CREASE_ALPHA, (in.start_edge & CREASE) != 0u);
+}
 
 // A feature edge's segment's instance: see `edge_segment`.
 struct EdgeIn {
@@ -671,19 +684,23 @@ fn edge_segment(
 }
 
 // The feature edges where the model doesn't hide them, as opaque as the
-// model (faded or not) and their part.
+// model (faded or not) and their part; creases CREASE_WIDTH wide and fainter,
+// within the same quads.
 @vertex
 fn vs_edge(in: EdgeIn) -> LineOut {
-    let color = vec4<f32>(u.edge.rgb, u.model.a * part.alpha.x);
-    let half = EDGE_WIDTH * 0.5 * u.viewport.z;
-    return edge_segment(in, half, half, color, vec2<f32>(0.0), vec2<f32>(0.0));
+    let color = vec4<f32>(u.edge.rgb, u.model.a * part.alpha.x * crease_alpha(in));
+    let s = u.viewport.z;
+    let width = select(EDGE_WIDTH, CREASE_WIDTH, (in.start_edge & CREASE) != 0u);
+    return edge_segment(in, EDGE_WIDTH * 0.5 * s, width * 0.5 * s, color, vec2<f32>(0.0),
+        vec2<f32>(0.0));
 }
 
 // The feature edges where the model hides them (depth tested Greater, so
 // exactly the pixels `vs_edge` didn't draw): HIDDEN_EDGE_WIDTH wide, dashed
-// at the target's scale, at `u.edge.a` times their part's alpha. The
-// phase is wrapped a segment at a time, at its start and again where it's
-// cut, so it keeps its precision zoomed far into a long edge.
+// at the target's scale, at `u.edge.a` times their part's alpha (and
+// CREASE_ALPHA for creases). The phase is wrapped a segment at a time, at
+// its start and again where it's cut, so it keeps its precision zoomed far
+// into a long edge.
 @vertex
 fn vs_hidden_edge(in: EdgeIn) -> LineOut {
     let s = u.viewport.z;
@@ -693,7 +710,7 @@ fn vs_hidden_edge(in: EdgeIn) -> LineOut {
     let scale = u.viewport.y / view_height();
     let phase = wrapped(in.start_along * scale, period);
     let length = distance(in.start, in.end) * scale;
-    let color = vec4<f32>(u.edge.rgb, u.edge.a * part.alpha.x);
+    let color = vec4<f32>(u.edge.rgb, u.edge.a * part.alpha.x * crease_alpha(in));
     var out = edge_segment(in, EDGE_WIDTH * 0.5 * s, HIDDEN_EDGE_WIDTH * 0.5 * s, color, dash,
         vec2<f32>(phase, phase + length));
     out.along -= vec2<f32>(floor(out.along.x / period) * period);

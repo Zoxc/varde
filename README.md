@@ -37,7 +37,8 @@ sketches and editable features. It runs natively and in the browser.
 - A body's opacity, set in its context menu in the side panel, to see
   what's behind it.
 - Edges hidden behind bodies shown dashed; "Hidden edges" in the view
-  options turns them off.
+  options turns them off. "Wireframe" there draws every patch's edges
+  too, faint.
 - Solids of rational quadratic triangle patches: closed meshes to allow for
   robust booleans, but with conic edges, so planes, arcs, cylinders and
   cones are exact. Other shapes, such as splines, tori and curved-on-curved

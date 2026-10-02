@@ -160,6 +160,7 @@ pub fn render_preview(
         sketches: &Arc::new(RenderLines::default()),
         grid: GridPlane::XY,
         faded: false,
+        wireframe: false,
         hidden_edges: false,
         hovered_faces: &[],
         selected_faces: &[],

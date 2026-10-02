@@ -425,11 +425,11 @@ impl PickIndex {
 
     /// The faces of `body`, ascending.
     pub fn body_faces(&self, body: BodyId) -> impl Iterator<Item = u32> + '_ {
-        let starts = std::iter::once(0).chain(self.mesh.part_ends().iter().map(|&[f, _, _]| f));
+        let starts = std::iter::once(0).chain(self.mesh.part_ends().iter().map(|&[f, _, _, _]| f));
         (self.picking.bodies().iter())
             .zip(starts.zip(self.mesh.part_ends()))
             .filter(move |(part, _)| **part == body)
-            .flat_map(|(_, (start, &[end, _, _]))| start..end)
+            .flat_map(|(_, (start, &[end, _, _, _]))| start..end)
     }
 
     /// The keys of the faces either side of `chain`, sorted, as an edge

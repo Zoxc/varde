@@ -80,6 +80,7 @@ fn frame<'a>(
         sketches,
         grid: GridPlane::XY,
         faded: false,
+        wireframe: false,
         hidden_edges: true,
         hovered_faces: &[],
         selected_faces: &[],
@@ -100,9 +101,10 @@ fn frame<'a>(
 }
 
 /// A cube's edges on a device taking 512-byte buffers: its 12 edges' 24
-/// points and the stream's two ends, 20 bytes each.
+/// points, its 6 wires' 12 (the sides' diagonals) and the stream's two
+/// ends, 20 bytes each.
 const TOO_LARGE: PrepareError = PrepareError::MeshTooLarge {
-    bytes: 520,
+    bytes: 760,
     limit: 512,
 };
 
@@ -153,7 +155,7 @@ fn mesh_past_the_buffer_limit_is_skipped() {
             normals: vec![[0.0, 0.0, 1.0]; 48],
             indices: vec![0, 1, 2],
             face_ends: vec![3],
-            part_ends: vec![[1, 0, 0]],
+            part_ends: vec![[1, 0, 0, 0]],
             ..MeshParts::default()
         })
         .unwrap(),
@@ -206,7 +208,8 @@ fn edges_fit_up_to_the_buffer_limit() {
                 edge_faces: vec![[0, 0]],
                 corners,
                 edge_corners: vec![edge_corners],
-                part_ends: vec![[1, 1, corner_count]],
+                part_ends: vec![[1, 1, corner_count, 0]],
+                ..MeshParts::default()
             })
             .unwrap(),
         )

@@ -158,6 +158,12 @@ pub fn view_menu<'a>(projection: Projection, options: ViewOptions) -> Element<'a
                 None,
                 Some(Message::ToggleHiddenEdges)
             ),
+            menu_item(
+                ticked(options.wireframe),
+                "Wireframe".into(),
+                None,
+                Some(Message::ToggleWireframe)
+            ),
         ]
         .width(180),
     )

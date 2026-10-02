@@ -18,7 +18,8 @@
 //! drawn with the mesh. The triangles go face by face, a face being a
 //! region of the solid's [`Topology`], and the feature edges are
 //! polylines from corner to corner: first the topology's chains, then the
-//! creases inside one region.
+//! creases inside one region. The other edges are the wires, drawn only
+//! in a wireframe, if they fit within the edges' points beside them.
 //!
 //! The rules and reasons are written down in `agents/kernel.md`.
 
@@ -337,7 +338,7 @@ fn draw(
     );
     let Some(plan) = Plan::new(mesh, display, limits)? else {
         return RenderMesh::from_parts(MeshParts {
-            part_ends: vec![[0; 3]],
+            part_ends: vec![[0; 4]],
             ..MeshParts::default()
         });
     };
@@ -594,17 +595,36 @@ fn draw(
         edge_ends.push(edge_vertices.len() as u32);
     }
     debug_assert_eq!(edge_vertices.len() as u64, feature_points);
+
+    // The wires, an edge record each, along its first halfedge: none if
+    // they'd take the edges' points past the limit, as the model is drawn
+    // without them but for a wireframe.
+    let wire_points = (edge_ids.iter())
+        .filter(|&&e| !feature[e as usize])
+        .map(|&e| u64::from(counts[e as usize]) + 1)
+        .sum::<u64>();
+    let mut wire_vertices = Vec::new();
+    let mut wire_ends = Vec::new();
+    if feature_points.saturating_add(wire_points) <= limits.edge_points {
+        for &e in edge_ids.iter().filter(|&&e| !feature[e as usize]) {
+            let h = first[e as usize];
+            wire_vertices.extend((0..=n_of(h)).map(|r| sample_vertex(h, r)));
+            // Within `MAX_EDGE_POINTS`, checked above.
+            wire_ends.push(wire_vertices.len() as u32);
+        }
+    }
     let corners = (chains.corners.iter())
         .map(|&v| mesh.verts()[v as usize].as_vec3().to_array())
         .collect();
 
     // Within `MAX_FACES`, `MAX_EDGE_POLYLINES` and `MAX_CORNERS`, as
-    // there are fewer faces than triangles, edges than half their points
-    // and corners than edges' ends.
+    // there are fewer faces than triangles, edges and wires than half
+    // their points and corners than edges' ends.
     let part_ends = vec![[
         face_ends.len() as u32,
         edge_ends.len() as u32,
         chains.corners.len() as u32,
+        wire_ends.len() as u32,
     ]];
     RenderMesh::from_parts(MeshParts {
         positions,
@@ -616,6 +636,8 @@ fn draw(
         edge_faces: chains.faces,
         corners,
         edge_corners: chains.edge_corners,
+        wire_vertices,
+        wire_ends,
         part_ends,
     })
 }

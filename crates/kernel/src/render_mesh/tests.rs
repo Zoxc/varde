@@ -44,8 +44,17 @@ fn append_offsets_ids_and_records_parts() {
     assert!(mesh.edge_corners[12..].iter().copied().eq(corners));
     let moved = (cylinder.corners.iter()).map(|&c| (Vec3::from(c) + offset).to_array());
     assert!(mesh.corners[8..].iter().copied().eq(moved));
-    let [f, e, c] = cylinder.part_ends[0];
-    assert_eq!(mesh.part_ends, [[6, 12, 8], [6 + f, 12 + e, 8 + c]]);
+    let wire_points = cube.wire_vertices.len() as u32;
+    assert_eq!(
+        mesh.wire_vertices[cube.wire_vertices.len()..],
+        plus(&cylinder.wire_vertices, base)
+    );
+    assert_eq!(mesh.wire_ends[6..], plus(&cylinder.wire_ends, wire_points));
+    let [f, e, c, w] = cylinder.part_ends[0];
+    assert_eq!(
+        mesh.part_ends,
+        [[6, 12, 8, 6], [6 + f, 12 + e, 8 + c, 6 + w]]
+    );
 
     let parts: Vec<RenderPart> = mesh.parts().collect();
     assert_eq!(parts[0], cube.parts().next().unwrap());
@@ -57,6 +66,8 @@ fn append_offsets_ids_and_records_parts() {
             edges: 12..mesh.edge_count(),
             edge_vertices: cube.edge_vertices.len()..mesh.edge_vertices.len(),
             corners: 8..mesh.corners.len(),
+            wires: 6..mesh.wire_ends.len(),
+            wire_vertices: cube.wire_vertices.len()..mesh.wire_vertices.len(),
         }
     );
     // Still a mesh, and appending an empty one adds nothing.
@@ -97,7 +108,7 @@ fn append_refuses_more_than_the_limits() {
     assert_eq!(mesh.append_at(&cube, Vec3::ZERO), Err(MeshError::TooLarge));
 
     let mut mesh = RenderMesh {
-        part_ends: vec![[0; 3]; RenderMesh::MAX_PARTS],
+        part_ends: vec![[0; 4]; RenderMesh::MAX_PARTS],
         ..RenderMesh::default()
     };
     assert_eq!(mesh.append_at(&cube, Vec3::ZERO), Err(MeshError::TooLarge));
@@ -140,8 +151,8 @@ fn append_at_refuses_positions_past_the_limit() {
     }
 }
 
-/// A mesh with one triangle, one face, and its sides as two edges with
-/// two corners, its fields to break.
+/// A mesh with one triangle, one face, its sides as two edges with two
+/// corners, and a wire across it, its fields to break.
 fn triangle() -> RenderMesh {
     RenderMesh {
         positions: vec![[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
@@ -153,7 +164,9 @@ fn triangle() -> RenderMesh {
         edge_faces: vec![[0, 0]; 2],
         corners: vec![[0.0; 3], [1.0, 0.0, 0.0]],
         edge_corners: vec![[0, 1], [1, 0]],
-        part_ends: vec![[1, 2, 2]],
+        wire_vertices: vec![1, 2],
+        wire_ends: vec![2],
+        part_ends: vec![[1, 2, 2, 1]],
     }
 }
 
@@ -210,6 +223,17 @@ fn from_parts_needs_indices_and_edge_vertices_to_refer_to_vertices() {
         Err(MeshError::OutOfRange {
             part: MeshPart::EdgeVertices,
             index: u32::MAX,
+            vertices: 3
+        })
+    );
+
+    let mut mesh = triangle();
+    mesh.wire_vertices[1] = 3;
+    assert_eq!(
+        rebuild(mesh),
+        Err(MeshError::OutOfRange {
+            part: MeshPart::WireVertices,
+            index: 3,
             vertices: 3
         })
     );
@@ -273,6 +297,16 @@ fn from_parts_refuses_more_than_the_limits() {
             edge_ends: vec![0; RenderMesh::MAX_EDGE_POLYLINES + 1],
             ..MeshParts::default()
         },
+        // The edges' and wires' points together.
+        MeshParts {
+            edge_vertices: vec![0; RenderMesh::MAX_EDGE_POINTS / 2 + 1],
+            wire_vertices: vec![0; RenderMesh::MAX_EDGE_POINTS / 2],
+            ..MeshParts::default()
+        },
+        MeshParts {
+            wire_ends: vec![0; RenderMesh::MAX_EDGE_POLYLINES + 1],
+            ..MeshParts::default()
+        },
         MeshParts {
             edge_faces: vec![[0; 2]; RenderMesh::MAX_EDGE_POLYLINES + 1],
             ..MeshParts::default()
@@ -286,7 +320,7 @@ fn from_parts_refuses_more_than_the_limits() {
             ..MeshParts::default()
         },
         MeshParts {
-            part_ends: vec![[0; 3]; RenderMesh::MAX_PARTS + 1],
+            part_ends: vec![[0; 4]; RenderMesh::MAX_PARTS + 1],
             ..MeshParts::default()
         },
     ];
@@ -328,6 +362,22 @@ fn from_parts_needs_edges_of_two_vertices_or_more() {
 }
 
 #[test]
+fn from_parts_needs_wires_of_two_vertices_or_more() {
+    let wire_ends: [&[u32]; 3] = [&[1], &[1, 2], &[3]];
+    for ends in wire_ends {
+        let mesh = RenderMesh {
+            wire_ends: ends.to_vec(),
+            ..triangle()
+        };
+        assert_eq!(
+            rebuild(mesh),
+            Err(MeshError::Ends(MeshPart::WireEnds)),
+            "{ends:?}"
+        );
+    }
+}
+
+#[test]
 fn from_parts_needs_faces_and_corners_for_every_edge() {
     let mut mesh = triangle();
     mesh.edge_faces.pop();
@@ -353,12 +403,14 @@ fn from_parts_needs_faces_and_corners_for_every_edge() {
 
 #[test]
 fn from_parts_needs_parts_to_take_up_the_mesh() {
-    let part_ends: [&[[u32; 3]]; 5] = [
+    let part_ends: [&[[u32; 4]]; 7] = [
         &[],
-        &[[1, 2, 1]],
-        &[[1, 2, 2], [1, 2, 3]],
-        &[[1, 2, 2], [1, 1, 2]],
-        &[[1, 2, 2], [0, 2, 2]],
+        &[[1, 2, 1, 1]],
+        &[[1, 2, 2, 0]],
+        &[[1, 2, 2, 1], [1, 2, 3, 1]],
+        &[[1, 2, 2, 1], [1, 1, 2, 1]],
+        &[[1, 2, 2, 1], [0, 2, 2, 1]],
+        &[[1, 2, 2, 1], [1, 2, 2, 0]],
     ];
     for ends in part_ends {
         let mesh = RenderMesh {
@@ -374,7 +426,7 @@ fn from_parts_needs_parts_to_take_up_the_mesh() {
     // Parts may be empty, and a mesh of no faces, edges or corners needs
     // none.
     let mesh = RenderMesh {
-        part_ends: vec![[0, 0, 0], [1, 2, 2], [1, 2, 2]],
+        part_ends: vec![[0, 0, 0, 0], [1, 2, 2, 1], [1, 2, 2, 1]],
         ..triangle()
     };
     assert!(rebuild(mesh).is_ok());
@@ -458,6 +510,6 @@ fn from_parts_needs_corners_where_their_edges_end() {
     mesh.edge_faces = vec![[0, 0]];
     mesh.corners.pop();
     mesh.edge_corners = vec![[0, 0]];
-    mesh.part_ends = vec![[1, 1, 1]];
+    mesh.part_ends = vec![[1, 1, 1, 1]];
     assert!(rebuild(mesh).is_ok());
 }

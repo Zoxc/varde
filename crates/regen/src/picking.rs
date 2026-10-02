@@ -282,7 +282,7 @@ impl Picking {
         // Each part's first edge, by edge.
         let mut part_start = 0;
         let mut part_ends = mesh.part_ends().iter();
-        let mut part_end = part_ends.next().map_or(0, |&[_, edges, _]| edges);
+        let mut part_end = part_ends.next().map_or(0, |&[_, edges, _, _]| edges);
         let chain = |e: u32| {
             let [a, b] = mesh.edge_faces()[e as usize];
             a != b
@@ -291,7 +291,7 @@ impl Picking {
             let e = e as u32;
             while e >= part_end {
                 part_start = part_end;
-                part_end = part_ends.next().map_or(u32::MAX, |&[_, edges, _]| edges);
+                part_end = part_ends.next().map_or(u32::MAX, |&[_, edges, _, _]| edges);
             }
             let ok = if chain(e) {
                 (part_start..=e).contains(&first)
@@ -313,7 +313,7 @@ impl Picking {
         }
         let part = |f: u32| {
             (f < faces.len() as u32)
-                .then(|| (mesh.part_ends()).partition_point(|&[faces, _, _]| faces <= f))
+                .then(|| (mesh.part_ends()).partition_point(|&[faces, _, _, _]| faces <= f))
         };
         let corner_ok = |corner: &PickCorner| {
             let [a, b, c] = corner.faces;
@@ -381,7 +381,7 @@ impl Picking {
     /// The body face `face` of `mesh`, the mesh these tables came with,
     /// is of, if there's such a face.
     pub fn face_body(&self, mesh: &RenderMesh, face: u32) -> Option<BodyId> {
-        let part = (mesh.part_ends()).partition_point(|&[faces, _, _]| faces <= face);
+        let part = (mesh.part_ends()).partition_point(|&[faces, _, _, _]| faces <= face);
         self.bodies.get(part).copied()
     }
 

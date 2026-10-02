@@ -65,11 +65,13 @@ then a bar with what's going on (picking a plane, the sketch's or the
 extrude's status, regenerating, a failed edit, saving: nothing with
 nothing selected), the hints, and the button of the view options menu,
 which opens above it: Orthographic or Perspective, then Mouse hints,
-without which the bar leaves out the hints of the mouse, and Hidden
+without which the bar leaves out the hints of the mouse, Hidden
 edges, without which the viewport leaves out the edges the model hides
-(`Frame::hidden_edges`). The app keeps those two for every document
-(`Varde::options`, a `ViewOptions`, both on to start with, not saved),
-and either closes the menu. The hints and the button show whole:
+(`Frame::hidden_edges`), and Wireframe, with which it draws the mesh's
+wires too, every patch's edges that aren't feature edges
+(`Frame::wireframe`). The app keeps those three for every document
+(`Varde::options`, a `ViewOptions`, all but Wireframe on to start with,
+not saved), and any of them closes the menu. The hints and the button show whole:
 the bar's widget (`Bar`, which draws the boxes and the lines between
 their parts itself) lays them out first, then the selection, then the
 status, each in what's left, cut short, so the status gives way first.
@@ -381,11 +383,21 @@ to their average rather than beating.
 The edges are uploaded as a stream of points (`EdgePoint`, 20 bytes:
 position, how far along its polyline in world units, and which polyline),
 polyline after polyline, a point repeated in a row left out, with a point
-of no edge at each end. A closed edge of three segments or more has its
-last but one point before it and its second after it, marked neighbours
-only (`NEIGHBOUR_ONLY`, the edge's top bit), so its ends join like any
-other. That's at most one and a half points per edge vertex, so
-`RenderMesh::MAX_EDGE_POINTS` fits a 256 MiB buffer. The buffer is bound
+of no edge at each end: every part's edges, then every part's wires
+(numbered after the edges), so a run of parts' edges, or their wires, is
+one draw (`GpuPart::points`, `wires`); the wires are drawn only in a
+wireframe, a second draw after the edges'. A closed edge of three
+segments or more has its last but one point before it and its second
+after it, marked neighbours only (`NEIGHBOUR_ONLY`, the edge's top bit),
+so its ends join like any other. That's at most one and a half points
+per edge or wire vertex, so `RenderMesh::MAX_EDGE_POINTS`, which bounds
+the two together, fits a 256 MiB buffer. Creases (an edge with one face
+both sides, see `agents/kernel.md`: patches whose normals part inside a
+face, as where a boolean's cut leaves fitted patches on a cylinder) and
+wires are marked `CREASE` (the next bit) and drawn `CREASE_WIDTH` (1)
+logical pixel wide at `CREASE_ALPHA` (0.35) of the edges' opacity, seen
+and hidden, in the same quads, so they read as how a face was cut into
+patches rather than where it ends. The buffer is bound
 to four vertex buffer slots a point apart, step mode instance, so
 instance `i` sees points `i` to `i + 3` as the point before, the
 segment's ends and the point after (`EdgeIn`, `edge_segment`): the

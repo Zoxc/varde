@@ -78,7 +78,7 @@ fn the_empty_solid_draws_nothing() {
     assert_eq!(
         solid.tessellate(&Display::default()).unwrap().into_parts(),
         crate::MeshParts {
-            part_ends: vec![[0; 3]],
+            part_ends: vec![[0; 4]],
             ..crate::MeshParts::default()
         }
     );

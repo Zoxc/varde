@@ -115,7 +115,8 @@ impl ModelPicking<'_> {
 /// over its left. `pivot`, the point the camera orbits if one was picked,
 /// is marked, and `highlight` drawn over the model. With `picking`, the
 /// cursor picks the model. The edges the model hides are drawn dashed if
-/// `hidden_edges`, outside a sketch. Each of the mesh's parts is drawn as
+/// `hidden_edges`, outside a sketch, and every patch's edges faint if
+/// `wireframe`. Each of the mesh's parts is drawn as
 /// opaque as `opacity` says, see [`Frame::opacity`].
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn viewport<'a>(
@@ -127,6 +128,7 @@ pub(crate) fn viewport<'a>(
     picking: Option<ModelPicking<'a>>,
     highlight: Option<&Arc<ModelHighlight>>,
     hidden_edges: bool,
+    wireframe: bool,
     palette: &Palette,
     sketching: Option<Sketching<'a>>,
     operating: Option<Operating<'a>>,
@@ -173,6 +175,7 @@ pub(crate) fn viewport<'a>(
         ..program(mesh, sketches, camera, pivot, palette, sketching, operating)
     };
     program.scene.hidden_edges = hidden_edges;
+    program.scene.wireframe = wireframe;
     program.scene.opacity = opacity;
     program.scene.thumbnail = thumbnail.cloned();
     let scene = iced::widget::shader(program)
@@ -218,6 +221,7 @@ fn program<'a>(
             colors: palette.scene,
             sketch_plane: sketching.as_ref().map(Sketching::grid),
             hidden_edges: true,
+            wireframe: false,
             thumbnail: None,
         },
         sketching,
@@ -264,6 +268,8 @@ struct Scene {
     /// Whether the edges the model hides are drawn, dashed (the renderer
     /// ignores it in a sketch).
     hidden_edges: bool,
+    /// Whether the mesh's wires are drawn, every patch's edges.
+    wireframe: bool,
     /// A thumbnail to render offscreen beside the frame, if one is asked
     /// for: once, by the first frame prepared with it.
     thumbnail: Option<Arc<ThumbnailRequest>>,
@@ -786,6 +792,7 @@ impl shader::Primitive for Primitive {
                 grid: scene.sketch_plane.unwrap_or(GridPlane::XY),
                 faded: scene.sketch_plane.is_some(),
                 hidden_edges: scene.hidden_edges,
+                wireframe: scene.wireframe,
                 pivot: scene.pivot,
                 hovered_faces: &self.highlight.hovered_faces,
                 selected_faces: &self.highlight.selected_faces,

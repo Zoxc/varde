@@ -8,7 +8,8 @@
 //! request = postcard(Request)
 //! reply   = postcard(Head) | positions | normals | indices | face ends
 //!                           | edge vertices | edge ends | edge faces
-//!                           | corners | edge corners | part ends
+//!                           | corners | edge corners | wire vertices
+//!                           | wire ends | part ends
 //!                           | line points | line ends
 //!         | postcard(Head) | postcard(Vec<ExportedBody>)
 //!         | postcard(Head)
@@ -251,9 +252,9 @@ impl Head {
     }
 }
 
-/// How many parts follow a [`Head::Regenerated`]: the mesh's ten
+/// How many parts follow a [`Head::Regenerated`]: the mesh's twelve
 /// ([`MeshParts`]' fields, in order), and the sketches' points and ends.
-pub const MODEL_PARTS: usize = 12;
+pub const MODEL_PARTS: usize = 14;
 
 /// The reply answering `response`, the mirror of [`decode_reply`]: its
 /// encoded head, and the parts following it: its model's as bytes if it
@@ -335,6 +336,8 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Vec<Cow<'_, [u8]>>) {
                     bytemuck::cast_slice(mesh.edge_faces()),
                     bytemuck::cast_slice(mesh.corners()),
                     bytemuck::cast_slice(mesh.edge_corners()),
+                    bytemuck::cast_slice(mesh.wire_vertices()),
+                    bytemuck::cast_slice(mesh.wire_ends()),
                     bytemuck::cast_slice(mesh.part_ends()),
                     bytemuck::cast_slice(sketches.points()),
                     bytemuck::cast_slice(sketches.ends()),
@@ -559,6 +562,8 @@ fn decode_mesh<B: Buffer>(
         edge_faces,
         corners,
         edge_corners,
+        wire_vertices,
+        wire_ends,
         part_ends,
     ]: &[B; MODEL_PARTS - 2],
 ) -> Result<RenderMesh, Error> {
@@ -582,6 +587,12 @@ fn decode_mesh<B: Buffer>(
             edge_corners,
             M::MAX_EDGE_POLYLINES,
         )?,
+        wire_vertices: copy(
+            part(MeshPart::WireVertices),
+            wire_vertices,
+            M::MAX_EDGE_POINTS,
+        )?,
+        wire_ends: copy(part(MeshPart::WireEnds), wire_ends, M::MAX_EDGE_POLYLINES)?,
         part_ends: copy(part(MeshPart::PartEnds), part_ends, M::MAX_PARTS)?,
     })
     .map_err(Error::RenderMesh)

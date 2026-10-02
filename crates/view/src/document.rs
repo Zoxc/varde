@@ -647,6 +647,7 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
                         state.picking,
                         state.highlight,
                         state.options.hidden_edges,
+                        state.options.wireframe,
                         state.mode.palette(),
                         state
                             .sketch

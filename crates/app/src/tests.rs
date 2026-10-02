@@ -5290,7 +5290,13 @@ fn the_view_options_menu_picks_the_projection_and_the_options() {
         let mut ui = shown(view(varde), size, renderer);
         texts(&mut ui, renderer)
     };
-    let menu = ["Orthographic", "Perspective", "Mouse hints", "Hidden edges"];
+    let menu = [
+        "Orthographic",
+        "Perspective",
+        "Mouse hints",
+        "Hidden edges",
+        "Wireframe",
+    ];
     let has = |shown: &[varde_view::probe::Shown], text: &str| shown.iter().any(|t| t.text == text);
     assert!(!has(&shown(&varde, &mut renderer), menu[0]));
 
@@ -5355,6 +5361,26 @@ fn the_view_options_menu_picks_the_projection_and_the_options() {
     };
     let _ = varde.update(Message::Ui(Ui::ToggleHiddenEdges));
     assert!(!varde.options.hidden_edges && !varde.options.mouse_hints);
+    assert!(!document(&varde).view_menu);
+
+    // Wireframe, off by default, clicked, turns on, and closes it too.
+    assert!(!varde.options.wireframe);
+    let _ = varde.update(Message::Ui(Ui::Look(Look::ToggleViewMenu)));
+    let open = shown(&varde, &mut renderer);
+    let wireframe = open.iter().find(|t| t.text == "Wireframe").unwrap();
+    let mut ui = iced_runtime::user_interface::UserInterface::build(
+        view(&varde),
+        size,
+        Default::default(),
+        &mut renderer,
+    );
+    let sent = clicked(&mut ui, &mut renderer, wireframe.bounds.center());
+    drop(ui);
+    let [Ui::ToggleWireframe] = sent[..] else {
+        panic!("{sent:?}");
+    };
+    let _ = varde.update(Message::Ui(Ui::ToggleWireframe));
+    assert!(varde.options.wireframe && !varde.options.hidden_edges);
     assert!(!document(&varde).view_menu);
 
     // `Esc` closes it, and a click off it.
