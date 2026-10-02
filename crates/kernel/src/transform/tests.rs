@@ -202,6 +202,40 @@ fn mirrors_reverse_triangles_and_face_out() {
 }
 
 #[test]
+fn mirrors_in_planes_square_to_an_axis_are_exact_for_any_normal_length() {
+    // Normals of any length along an axis: the coordinate along it
+    // negated, about the plane's (exact for 0 and halves of powers of
+    // two, so `x ↦ 2·p − x` takes one rounding at most, none here).
+    let (solid, volume) = part();
+    for (scale, along) in [(3.0, 2), (0.1, 0), (-7.0, 1), (1e-300, 2), (1e300, 0)] {
+        let mut normal = DVec3::ZERO;
+        normal[along] = scale;
+        let mirror = Motion::mirror(DVec3::ZERO, normal).unwrap();
+        let image = transformed(&solid, &mirror, None);
+        assert!(close(image.volume(), volume, 1e-12));
+        for (a, b) in solid.mesh().verts().iter().zip(image.mesh().verts()) {
+            let mut want = *a;
+            want[along] = -want[along];
+            assert_eq!(*b, want, "{scale} along {along}");
+        }
+        let through = Motion::mirror(DVec3::splat(2.0), normal).unwrap();
+        for p in solid.mesh().verts() {
+            let mut want = *p;
+            want[along] = 4.0 - want[along];
+            assert_eq!(through.point(*p), want);
+        }
+    }
+    // A slanted normal of any length is the same mirror, to rounding.
+    let unit = Motion::mirror(DVec3::X, DVec3::new(1.0, 2.0, -0.5)).unwrap();
+    for scale in [1e-300, 3.0, 1e300] {
+        let mirror = Motion::mirror(DVec3::X, DVec3::new(1.0, 2.0, -0.5) * scale).unwrap();
+        for p in solid.mesh().verts() {
+            assert!((mirror.point(*p) - unit.point(*p)).length() < 1e-14 * 8.0);
+        }
+    }
+}
+
+#[test]
 fn copies_are_named_by_instance() {
     let (solid, _) = part();
     let copy = Instance {
@@ -388,6 +422,46 @@ fn a_part_inside_another_is_unioned() {
 }
 
 #[test]
+fn a_part_in_a_void_closed_by_other_parts_is_put_beside_them() {
+    // Six plates, flush along their edges, close a box of 4 round a void
+    // of 2; a cube of 1 floats in the void, in no plate's box, its hulls
+    // clear of theirs. The plates are unioned into a hollow box and the
+    // cube put beside it: a shell in the void faces out, which is right,
+    // and the check confirms it.
+    let plate = |min: [f64; 3], size: [f64; 3], feature: u64| {
+        Solid::cuboid(DVec3::from(min), DVec3::from(size), feature, &TOL).unwrap()
+    };
+    let cube = plate([1.5; 3], [1.0; 3], 7);
+    let parts = [
+        plate([0.0, 0.0, 0.0], [4.0, 4.0, 1.0], 1),
+        cube.clone(),
+        plate([0.0, 0.0, 3.0], [4.0, 4.0, 1.0], 2),
+        plate([0.0, 0.0, 1.0], [1.0, 4.0, 2.0], 3),
+        plate([3.0, 0.0, 1.0], [1.0, 4.0, 2.0], 4),
+        plate([1.0, 0.0, 1.0], [2.0, 1.0, 2.0], 5),
+        plate([1.0, 3.0, 1.0], [2.0, 1.0, 2.0], 6),
+    ];
+    let all = assemble(&parts, &TOL, &Budget::DEFAULT).unwrap();
+    assert!(
+        close(all.volume(), 64.0 - 8.0 + 1.0, 1e-12),
+        "{}",
+        all.volume()
+    );
+    // The cube is there as it was, beside the hollow box's two shells.
+    let cube_tris = cube.mesh().tris().len();
+    let tris = all.mesh().tris().len();
+    assert_eq!(
+        &all.mesh().verts()[all.mesh().verts().len() - cube.mesh().verts().len()..],
+        cube.mesh().verts()
+    );
+    assert!(tris > cube_tris);
+    // The cube moved into a wall: unioned with it, not beside it.
+    let parts = [parts[3].clone(), plate([0.5, 1.5, 1.5], [1.0; 3], 7)];
+    let joined = assemble(&parts, &TOL, &Budget::DEFAULT).unwrap();
+    assert!(close(joined.volume(), 8.0 + 0.5, 1e-12));
+}
+
+#[test]
 fn spokes_overlapping_at_the_hub_are_unioned() {
     // Six bars through the axis, turned by 30° each: all overlap about
     // the axis, so all are unioned.
@@ -448,7 +522,11 @@ fn points_past_the_bounds_are_refused() {
     assert_eq!(Motion::turn(DVec3::splat(f64::NAN), DVec3::Z, 1.0), None);
     assert_eq!(Motion::turn(DVec3::ZERO, DVec3::splat(f64::MAX), 1.0), None);
     assert_eq!(Motion::mirror(DVec3::ZERO, DVec3::ZERO), None);
-    assert_eq!(Motion::mirror(DVec3::ZERO, DVec3::splat(1e300)), None);
+    assert_eq!(
+        Motion::mirror(DVec3::ZERO, DVec3::splat(f64::INFINITY)),
+        None
+    );
+    assert_eq!(Motion::mirror(DVec3::splat(f64::NAN), DVec3::Z), None);
     assert_eq!(Motion::pattern_step(DVec3::X, f64::MAX, u32::MAX), None);
     assert_eq!(
         Motion::pattern_turn(DVec3::ZERO, DVec3::Z, 360.0, 1, 0),

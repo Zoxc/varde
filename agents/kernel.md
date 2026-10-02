@@ -2975,8 +2975,10 @@ The constructors are the only way to make one:
   coordinates to the bit. Other angles go through `trig::sin_cos` of
   the reduced angle in radians.
 - `mirror(point, normal)`: `I − 2·n·nᵀ/|n|²` (symmetric and
-  orthogonal, its own `N`), offset `2·(n·point)/|n|²·n`; exact in planes
-  square to a coordinate axis whatever the normal's length.
+  orthogonal, its own `N`), offset `2·(n·point)/|n|²·n`, `n` the normal
+  divided by its largest coordinate first (so `|n|²` can't overflow or
+  underflow, and a normal along an axis is that axis exactly): exact in
+  planes square to a coordinate axis whatever the normal's length.
 - `scale(centre, factors)`: `x ↦ c + S·(x − c)`, `S = diag(factors)`
   along the world axes (`DVec3::splat(f)` for a uniform one), `N =
   S⁻¹`, offset `c − S·c`. Each factor within `1/MAX_SCALE ..=
@@ -3032,20 +3034,24 @@ come within the resolution (a BVH over the parts' boxes, a unit a pair)
 are linked unless they can go side by side: no vertex of either within
 the other's box (grown by the resolution), and every pair of their
 patches whose boxes come that close has hulls more than the resolution
-apart (GJK, as `check`'s non-neighbours; a unit a vertex and a pair). The
-vertex rule is what keeps nested parts from being put side by side: a
-part inside another, or in its void, has its surface apart from the
+apart (GJK, as `check`'s non-neighbours; a unit a vertex, a patch and a
+pair). The vertex rule is what keeps nested parts from being put side by
+side: a part inside another's material has its surface apart from the
 other's and every vertex in its box. Each connected group of linked
 parts is unioned pairwise in a balanced tree by index (`0 ∪ 1`, `2 ∪ 3`,
 …, then those results), each `boolean` with `budget`; the groups'
 results, in the order of their lowest parts, are concatenated (vertices,
 edges, triangles, faces and aliases numbered on, more than `MAX_PATCHES`
 patches `TooComplex`) and checked within `budget` (5 units a patch and
-the integration). One result is returned as it is. A part nested in a
-void that only several others close, with none of their boxes holding
-its vertices, would go side by side and fail the check's orientation:
-an error, never a wrong solid. Spaced copies cost a pass over their
-vertices and the check: linear.
+the integration). One result is returned as it is. Side by side can't
+be wrong: a part in the material of several others has each vertex in
+the material, so the box, of one of them, and is linked; a part in a void
+that only several others close (in none of their boxes) goes beside
+them, which is right, its shell facing out where nothing is solid. The
+check confirms it (orientation, and hulls apart after the unions, whose
+fitted pieces could stray by the fit), so a mistake is an error, never a
+wrong solid. Spaced copies cost a pass over their vertices and patches
+and the check: linear.
 
 Tests (`transform/tests.rs`), on an L-shaped extrude with a round hole
 and a half-ellipse top (planes, a cylinder, a conic cylinder): moves
@@ -3055,12 +3061,16 @@ z)` about z) and the sine and cosine of multiples of 90° either side of a
 turn; turns about tilted lines keeping volume and area to `1e-12`, tags
 and forms, and turning back to `1e-13`; mirrors facing out (volume
 positive, plane forms and tags along the patches' normals), twice the
-same triangles; two mirrors a half turn to the bit; copies' names and
+same triangles; two mirrors a half turn to the bit; mirrors in planes
+square to an axis exact for normals of any length (`1e-300` to
+`1e300`), slanted ones the same mirror to rounding; copies' names and
 aliases renamed and resolving; a mirrored copy apart (side by side, the
 two meshes as they were), flush and overlapping its source with analytic
 volumes; 100 copies of a pin within a budget linear in the patches; a
 row of touching cubes one box of six faces; a cube inside another and a
-ring of pins by quarter turns; spokes overlapping at a hub against the
+ring of pins by quarter turns; a cube floating in the void that six
+flush plates close (the plates unioned, the cube beside them, volume
+57); spokes overlapping at a hub against the
 unions chained; out of bounds refused (and non-finite motions not made);
 the budget; determinism at 1 and 8 threads. Revolved cones and spheres
 moved, turned and mirrored (volume, area, tags, the forms' apex, axis,
@@ -3075,7 +3085,11 @@ powers of two exact to the bit (points, weights, plane and quadric
 tags) and back; a torus scaled × 25.4 (slack 25.4, the debug form check
 failing without it, slacks multiplying and kept on scales down; per axis
 `Unknown`); scales down under the resolution refused; factors and
-bounds; determinism.
+bounds; determinism; per-axis and uniform scales composed with turns and
+slanted mirrors over the L, a cone, a sphere, a torus and a spheroid
+(revolved half-ellipse): volumes `|det|` times, tags, plane forms out,
+slack times the stretch, kinds kept by the uniform ones, nothing left
+round by the others.
 
 ## Booleans (`src/boolean.rs`, `src/boolean/`)
 

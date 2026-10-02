@@ -133,15 +133,20 @@ impl Motion {
     }
 
     /// The mirror in the plane through `point` square to `normal`
-    /// (`x ↦ x − 2·(n·(x − point))·n/|n|²`); exact in planes square to a
-    /// coordinate axis. `None` for a point that isn't finite or a zero or
-    /// non-finite normal.
+    /// (`x ↦ x − 2·(n·(x − point))·n/|n|²`, `normal` of any length); exact
+    /// in planes square to a coordinate axis. `None` for a point that
+    /// isn't finite or a zero or non-finite normal.
     pub fn mirror(point: DVec3, normal: DVec3) -> Option<Motion> {
-        let n = normal;
-        let nn = n.length_squared();
-        if !point.is_finite() || !(nn > 0.0 && nn.is_finite()) {
+        let largest = normal.abs().max_element();
+        if !point.is_finite() || !normal.is_finite() || largest == 0.0 {
             return None;
         }
+        // Divided by its largest coordinate, so its square neither
+        // overflows nor underflows, and a normal along an axis is that
+        // axis exactly: its matrix's entries are then 0 and ±1, and the
+        // offset twice the point's coordinate along it.
+        let n = normal / largest;
+        let nn = n.length_squared();
         // I − 2·n·nᵀ/|n|², symmetric and orthogonal: its own inverse
         // transpose.
         let linear = DMat3::IDENTITY - outer(n, n * (2.0 / nn));
@@ -625,23 +630,28 @@ fn reversed((t, tri): (usize, &Tri)) -> Tri {
 /// more) each, with no boolean: those whose boxes are more than the
 /// resolution apart, and those whose boxes come closer but whose patches'
 /// hulls are all more than the resolution apart with no vertex of either
-/// in the other's box (a part inside another, or in its void, would have
-/// all its vertices in that one's box). The others are unioned, each
-/// connected group of them pairwise in a balanced tree by index (`0 ∪ 1`,
-/// `2 ∪ 3`, … then those results the same way), each union within
-/// `budget`. The groups' results are then put side by side in index order
-/// of their lowest parts and checked, with `budget` for that and the
-/// grouping, so a part nested where no box shows it (in a void that only
-/// several other parts close) fails the check
-/// ([`KernelError::Invalid`]) rather than give a wrong solid.
+/// in the other's box. The others are unioned, each connected group of
+/// them pairwise in a balanced tree by index (`0 ∪ 1`, `2 ∪ 3`, … then
+/// those results the same way), each union within `budget`. The groups'
+/// results are then put side by side in index order of their lowest parts
+/// and checked, with `budget` for that and the grouping.
+///
+/// Side by side is right for shells apart unless one lies in another's
+/// material, and that never passes the vertex rule: each vertex of it
+/// would lie in some part's material, so in that part's box. A part in a
+/// void, even one that only several other parts close, is right beside
+/// them (its shell faces out where nothing else is solid). The check
+/// confirms both (orientation, and hulls apart after the unions), so a
+/// mistake there is [`KernelError::Invalid`], never a wrong solid.
 ///
 /// The work is linear in the patches when the parts' boxes are apart,
 /// as a pattern's spaced copies are. No parts, or only empty ones, give
 /// the empty solid; one gives itself.
 pub fn assemble(parts: &[Solid], tol: &Tolerance, budget: &Budget) -> Result<Solid, KernelError> {
     let mut work = Work::new(budget);
-    let solids: Vec<&Solid> = parts.iter().filter(|s| !s.is_empty()).collect();
-    let boxes: Vec<Bounds3> = solids.iter().filter_map(|s| s.bounds3()).collect();
+    // The non-empty parts (those with a box) and their boxes, in step.
+    let (solids, boxes): (Vec<&Solid>, Vec<Bounds3>) =
+        parts.iter().filter_map(|s| Some((s, s.bounds3()?))).unzip();
     let margin = tol.resolution();
     let tree = crate::mesh::Bvh::new(boxes.clone());
     let mut links = Vec::new();
@@ -693,7 +703,8 @@ pub fn assemble(parts: &[Solid], tol: &Tolerance, budget: &Budget) -> Result<Sol
 /// Whether `a` and `b`, with boxes `ba` and `bb` within `margin` of each
 /// other, can go side by side in one mesh: no vertex of either in the
 /// other's box, and every two of their patches' hulls more than `margin`
-/// apart. One unit of `work` a vertex and a patch pair looked at.
+/// apart. One unit of `work` a vertex, a patch and a patch pair looked
+/// at.
 fn apart(
     a: &Solid,
     b: &Solid,
@@ -704,12 +715,8 @@ fn apart(
 ) -> Result<bool, KernelError> {
     let inside =
         |p: &DVec3, bx: &Bounds3| p.cmpge(bx.min - margin).all() && p.cmple(bx.max + margin).all();
-    work.spend(
-        a.mesh()
-            .verts()
-            .len()
-            .saturating_add(b.mesh().verts().len()),
-    )?;
+    let size = |s: &Solid| s.mesh().verts().len().saturating_add(s.mesh().tris().len());
+    work.spend(size(a).saturating_add(size(b)))?;
     if a.mesh().verts().iter().any(|p| inside(p, bb))
         || b.mesh().verts().iter().any(|p| inside(p, ba))
     {

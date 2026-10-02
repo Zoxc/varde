@@ -508,3 +508,77 @@ fn cones_and_spheres_move_turn_and_mirror() {
         }
     }
 }
+
+#[test]
+fn scales_compose_with_turns_and_mirrors() {
+    // A spheroid: a half-ellipse of semi-axes 3 across and 2 along the
+    // axis turned about it, a surface of revolution of no named kind.
+    let quarter = |a: DVec2, c: DVec2, b: DVec2| Segment {
+        conic: crate::patch::Conic2::new(a, c, std::f64::consts::FRAC_1_SQRT_2, b).unwrap(),
+        curve: 3,
+    };
+    let spheroid = revolved(
+        vec![Loop {
+            segments: vec![
+                quarter(v(0.0, -2.0), v(3.0, -2.0), v(3.0, 0.0)),
+                quarter(v(3.0, 0.0), v(3.0, 2.0), v(0.0, 2.0)),
+                Segment::line(v(0.0, 2.0), v(0.0, -2.0), 4).unwrap(),
+            ],
+        }],
+        DVec3::new(1.0, 0.0, -1.0),
+    );
+    // Fitted: within its area times the fit tolerance.
+    let want = 4.0 / 3.0 * PI * 9.0 * 2.0;
+    assert!((spheroid.volume() - want).abs() <= spheroid.area() * TOL.fit());
+    assert!(kinds(&spheroid).contains(&"revolved"));
+    let solids = [
+        part().0,
+        cone(DVec3::new(1.0, -2.0, 3.0)),
+        sphere(DVec3::new(-3.0, 0.5, 1.0)),
+        torus(DVec3::new(1.0, 2.0, 3.0)),
+        spheroid,
+    ];
+    let factors = DVec3::new(1.5, 0.75, 2.0);
+    let scale = Motion::scale(DVec3::new(0.5, 1.0, -2.0), factors).unwrap();
+    let uniform = Motion::scale(DVec3::new(1.0, 2.0, 3.0), DVec3::splat(1.75)).unwrap();
+    let mirror = Motion::mirror(DVec3::Y, DVec3::new(1.0, 2.0, -0.5)).unwrap();
+    let turn = Motion::turn(DVec3::X, DVec3::new(0.3, 0.1, 1.0), 33.0).unwrap();
+    let stretched = factors.x * factors.y * factors.z;
+    for (motion, volume, keeps_kinds) in [
+        (scale.then(&mirror), stretched, false),
+        (mirror.then(&scale), stretched, false),
+        (turn.then(&scale).then(&mirror), stretched, false),
+        (uniform.then(&mirror), 1.75 * 1.75 * 1.75, true),
+        (mirror.then(&turn).then(&uniform), 1.75 * 1.75 * 1.75, true),
+    ] {
+        assert!(motion.mirrors());
+        for solid in &solids {
+            // Its planes face out and its tags hold; the debug check of
+            // the forms, with the slack, ran in `transformed`.
+            let image = transformed(solid, &motion, None);
+            let want = solid.volume() * volume;
+            assert!(
+                close(image.volume(), want, 1e-12),
+                "{} for {want}",
+                image.volume()
+            );
+            image.mesh().check_faces(&TOL).unwrap();
+            forms_face_out(&image);
+            for (a, b) in solid.mesh().faces().iter().zip(image.mesh().faces()) {
+                assert_eq!(b.slack, a.slack * motion.stretch());
+            }
+            if keeps_kinds {
+                assert_eq!(kinds(&image), kinds(solid));
+            } else {
+                // Nothing stays round: a slanted mirror after or before
+                // the scale keeps no circle a circle.
+                for kind in kinds(&image) {
+                    assert!(
+                        ["plane", "conic cylinder", "quadric", "unknown"].contains(&kind),
+                        "{kind}"
+                    );
+                }
+            }
+        }
+    }
+}

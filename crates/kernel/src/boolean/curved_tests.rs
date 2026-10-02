@@ -56,8 +56,8 @@ fn moved(solid: &Solid, f: impl Fn(DVec3) -> DVec3) -> Solid {
     moved_at(solid, &TOL, f)
 }
 
-/// [`moved`], checked at `tol`.
-fn moved_at(solid: &Solid, tol: &Tolerance, f: impl Fn(DVec3) -> DVec3) -> Solid {
+/// [`moved`], checked at `tol` (the seeded tests' `moved` too).
+pub(super) fn moved_at(solid: &Solid, tol: &Tolerance, f: impl Fn(DVec3) -> DVec3) -> Solid {
     let mesh = solid.mesh();
     let origin = f(DVec3::ZERO);
     let turn = |d: DVec3| f(d) - origin;

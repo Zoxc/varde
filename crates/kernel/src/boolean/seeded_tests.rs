@@ -26,10 +26,10 @@
 
 use std::f64::consts::PI;
 
-use glam::{DMat3, DQuat, DVec2, DVec3, Vec3};
+use glam::{DQuat, DVec2, DVec3, Vec3};
 
+use super::curved_tests::moved_at as moved;
 use super::*;
-use crate::mesh::{Quadric, Surface};
 use crate::par::assert_deterministic;
 use crate::profile::tests::{arc, circle, rect};
 use crate::test_rng::Rng;
@@ -42,50 +42,6 @@ fn cases(release: usize, debug: usize) -> usize {
     } else {
         release
     }
-}
-
-/// `solid` moved by the rigid motion `f`, its face tags too.
-fn moved(solid: &Solid, tol: &Tolerance, f: impl Fn(DVec3) -> DVec3) -> Solid {
-    let mesh = solid.mesh();
-    let origin = f(DVec3::ZERO);
-    let turn = |d: DVec3| f(d) - origin;
-    let r = DMat3::from_cols(turn(DVec3::X), turn(DVec3::Y), turn(DVec3::Z));
-    let mut builder = crate::mesh::MeshBuilder::new();
-    for &p in mesh.verts() {
-        builder.vert(f(p));
-    }
-    for &face in mesh.faces() {
-        let surface = match face.surface {
-            Surface::Plane { n, d } => {
-                let n = r * n;
-                Surface::Plane {
-                    n,
-                    d: d + n.dot(origin),
-                }
-            }
-            Surface::Quadric(q) => Surface::Quadric(Quadric {
-                origin: f(q.origin),
-                a: r * q.a * r.transpose(),
-                b: r * q.b,
-                c: q.c,
-            }),
-            Surface::Free => Surface::Free,
-        };
-        builder.face(crate::mesh::Face {
-            surface,
-            form: face.form.moved(&f),
-            ..face
-        });
-    }
-    for (t, tri) in mesh.tris().iter().enumerate() {
-        let corners = tri.halfedges.map(|h| h.start);
-        let patch = mesh.patch(t);
-        for i in 0..3 {
-            builder.edge(corners[i], corners[(i + 1) % 3], f(patch.c[i]), patch.w[i]);
-        }
-        builder.tri(corners, tri.face);
-    }
-    Solid::new(builder.build().unwrap(), tol).unwrap()
 }
 
 /// A stadium along `x` round `c`: straight sides `half` either way of
