@@ -187,6 +187,8 @@ pub(crate) fn feature_icon(feature: &Feature) -> Icon {
         FeatureKind::Sketch { .. } => Icon::Sketch,
         FeatureKind::Extrude(_) => Icon::Extrude,
         FeatureKind::Revolve(_) => Icon::Revolve,
+        // Until the combine's own icon comes with its tool.
+        FeatureKind::Combine(_) => Icon::Body,
     }
 }
 
@@ -208,6 +210,7 @@ fn feature_row<'a>(
         FeatureKind::Sketch { plane, .. } => crate::plane_note(document, plane).into(),
         FeatureKind::Extrude(extrude) => extent_note(&extrude.extent, units).into(),
         FeatureKind::Revolve(revolve) => turn_note(&revolve.extent).into(),
+        FeatureKind::Combine(combine) => combine.op.label().into(),
     };
     let row = SelectableRow {
         icon: feature_icon(feature),
@@ -280,6 +283,7 @@ fn edit_label(feature: &Feature) -> &'static str {
         FeatureKind::Sketch { .. } => "Edit sketch",
         FeatureKind::Extrude(_) => "Edit extrude",
         FeatureKind::Revolve(_) => "Edit revolve",
+        FeatureKind::Combine(_) => "Edit combine",
     }
 }
 

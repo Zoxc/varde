@@ -1,6 +1,6 @@
 # Features
 
-The features after sketches and extrudes, and sketches' planes on faces:
+The features after sketches and extrudes (revolves, combines), and sketches' planes on faces:
 their document types, checks and commands, how regeneration evaluates them, and their UI. Extrudes are
 described in `agents/kernel.md` ("The extrude feature" and "The extrude UI"); what
 they share with the newer kinds is here. The kernel math of each is in
@@ -43,7 +43,8 @@ they share with the newer kinds is here. The kernel math of each is in
   distances by `Extent::ask` (angles' bare numbers are degrees whatever
   the units, so only lengths inside an angle's expression change).
 - Kinds are **appended** to `FeatureKind` (`Sketch` 0, `Extrude` 1,
-  `Revolve` 2): the variant index is what files store.
+  `Revolve` 2, `Combine` 3): files store a kind by its variant name, and
+  the variant index is what the workers' postcard holds.
 
 ## Sketch planes on faces
 
@@ -497,3 +498,103 @@ out while its sketch doesn't have it). Double-click, `Enter` or Edit revolve reo
 
 Not yet: a handle dragging the angle; Extrude's key following the mock's
 `X`.
+
+## Combine
+
+`crates/document/src/combine.rs`.
+
+```rust
+pub struct Combine {
+    pub target: BodyId,         // made by a feature before it
+    pub tools: Vec<BodyId>,     // 1..=MAX_FEATURE_BODIES (256), sorted, no repeats, not the target
+    pub op: BodyOp,             // Union, Subtract, Intersect
+    pub keep_tools: bool,       // off: the tools are consumed into the target
+}
+```
+
+- **What it is**: a timeline step working on bodies already made, not
+  on a sketch: `FeatureKind::Combine` (stored by name in files; the
+  workers' postcard has it as the fourth variant). It makes no body
+  (`operation()`, `new_body()` and `sketch()` are `None`), takes no
+  regions and hides nothing when added. `BodyOp::label` gives the
+  panel's and Timeline's words ("Union", "Subtract", "Intersect", the UI
+  mock's).
+- **Checks** (`Document::check`, `CheckError::Combine(id,
+  CombineError)`): `Combine::check_own` (cheap, for a panel on every
+  view) wants 1 to 256 tools (`Tools(n)`), sorted without repeats
+  (`ToolOrder`) and the target not among them (`TargetIsTool`); then
+  every body named must be there and made by a feature before the
+  combine (`Body(id)`). Unlike a sketch's face, a body that isn't there
+  is refused: removing a body or its maker removes the combine with it
+  (below), and `SetFeature` making the maker stop making the body (an
+  extrude turned from a new body into a join) is refused while a combine
+  names it (`EditError::Invalid(Combine(.., Body))`), rather than
+  deleting the combine behind the user's back. `MAX_FEATURE_BODIES` is
+  shared with the later body features (move, mirror, pattern).
+- **Removal**: `FeatureKind::bodies()` lists the bodies a feature names
+  (a combine's target, then tools); `Document::removal` takes a later
+  feature that names a body made by a feature it's removing, as it
+  takes one that uses a removed sketch (`uses()` stays features only:
+  finding a body's maker takes the document). So removing a tool or the
+  target (or its maker, or that maker's sketch) removes the combine, and
+  the delete prompt lists it; removing the combine takes nothing else.
+- `SetUnits` leaves it alone (no values). Commands are the shared
+  `AddFeature` ("Combine N") and `SetFeature`.
+
+### Regeneration
+
+`crates/regen/src/history/combine.rs`, run in order as every feature
+is, so it sees the bodies as the features before it leave them:
+
+- **Bodies with no solid of their own fail it**: a target or tool an
+  earlier join or combine consumed, "Body 3 is in Body 2 now: a feature
+  before this one merged it in" (the user named the body as it was, not
+  the one it went into: a combine doesn't follow a consumed body to its
+  holder, as a face sketch does), or one whose maker failed, "Body 2 has
+  no solid: the feature making it failed".
+- **The steps**: the target's solid, then each tool's in the order the
+  tools were made (the bodies' order), `kernel::boolean(running, tool,
+  op)` cached under `boolean_key(doing, running key, tool key)` as the
+  merge chain's steps are; a union step uses `Doing::Merging` (two
+  bodies united), so a combine and a join merging the same bodies share
+  it, a subtract `Doing::Cutting`, an intersect `Doing::Intersecting`.
+  Toggling Keep tools changes no key: nothing is worked out again.
+- **A union's order** (as a join's merge tries a second order): a step
+  that fails is put aside and the rest go on; the ones put aside are
+  tried once more at the end, in order, if any step worked after them
+  (otherwise they'd be the cached failures again). That covers a tool
+  meeting the target only along an edge or at a point (no clean solid
+  alone) once a later tool has bridged them. A subtract or intersect
+  step that fails fails the combine.
+- **Messages** are worded as an extrude's booleans, the tool named in
+  place of "it": "joining Body 2 to Body 1 leaves no clean solid: ...",
+  "cutting Body 2 from Body 1 ...", "intersecting Body 1 with Body 3
+  ..." (`message::combining`). A step that would leave nothing of the
+  target fails it, nothing written back (no body is ever empty): a
+  subtract "cutting Body 2 from Body 1 would leave nothing of Body 1:
+  take Body 2 out of the tools, or delete Body 1", an intersect
+  "intersecting Body 1 with Body 3 would leave nothing of Body 1: they
+  don't overlap" (`message::combine_emptied`). A tool clear of the
+  target is no error: a subtract takes nothing, a union is in pieces.
+- **The result**: the target gets the last step's solid and key. Unless
+  `keep_tools`, the tools are consumed exactly as a join's merged bodies
+  are (`note_merge(merged, [target, tools...])`, removed from
+  `Evaluation::bodies`, listed in `Evaluation::merged` as (tool,
+  target), whatever the operation: a subtracted tool is "in Body 1" as a
+  united one is), so later features find them in the target: a sketch
+  on a consumed tool's face is placed on the target's solid
+  (`Evaluation::holder`), a join over where it was touches the target,
+  and the app's Objects shows it faint "in Body 1". With `keep_tools`
+  they stay as they were, each its own body.
+- A combine touches nothing an extrude's panel lists: it isn't in
+  `Evaluation::touched`, and a combine draft's `Drafted::touched` is
+  `None`. Drafts need nothing new (`Draft::kind` is any kind); the wire
+  carries the kind in the document's postcard and `merged` as before.
+
+### The app, for now
+
+There's no combine session yet (`B`, the panel, picking bodies, the
+preview): `Look::EditFeature` on a combine does nothing. The Timeline
+shows its row with `Icon::Body` and its operation as the note, and the
+status bar's `feature_info` "Body 1 with Body 2, Body 3 · Union · tools
+kept" (the mock's row info).

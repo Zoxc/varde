@@ -5,6 +5,7 @@
 //! checks their results and records history for undo/redo.
 
 pub mod codec;
+mod combine;
 mod editor;
 mod example;
 mod extrude;
@@ -18,6 +19,7 @@ mod revolve;
 mod testing;
 
 pub use codec::DecodeError;
+pub use combine::{BodyOp, Combine, CombineError, MAX_FEATURE_BODIES};
 pub use editor::{Command, Editor, Generation, Revision};
 pub use extrude::{Extent, Extrude, ExtrudeError, MAX_EXTRUDE_REGIONS, Operation, Targets};
 pub use feature::{Feature, FeatureId, FeatureKind};
@@ -265,7 +267,9 @@ impl Document {
     /// it, as [`PlaneError`] lists; and every extrude and revolve uses a
     /// sketch feature before it, has regions, distances or angles and an
     /// operation as [`Extrude`] and [`Revolve`] describe, and excludes
-    /// only bodies features before it make. A revolve's axis line isn't checked
+    /// only bodies features before it make; and every combine's target
+    /// and tools are bodies features before it make, its tools as
+    /// [`Combine::check_own`] wants them. A revolve's axis line isn't checked
     /// against its sketch here (see [`Revolve::check_axis`]).
     pub fn check(&self) -> Result<(), CheckError> {
         // Orders first: features and bodies are found by binary search.
@@ -317,6 +321,9 @@ impl Document {
                 FeatureKind::Revolve(revolve) => self
                     .check_revolve(index, revolve)
                     .map_err(|why| CheckError::Revolve(id, why))?,
+                FeatureKind::Combine(combine) => self
+                    .check_combine(index, combine)
+                    .map_err(|why| CheckError::Combine(id, why))?,
             }
         }
         if let Some(last) = self.bodies.last()
@@ -391,6 +398,31 @@ impl Document {
             })
     }
 
+    /// Checks `combine`, feature `index`, see [`Document::check`]: its own
+    /// parts, and every body it names there and made by a feature before
+    /// it. A body that isn't there is refused, unlike a sketch's face's:
+    /// removing a body's maker removes the combine too
+    /// ([`Document::removal`]), and an edit that would leave it naming a
+    /// body that's gone otherwise (setting the maker to stop making it)
+    /// is refused.
+    fn check_combine(&self, index: usize, combine: &Combine) -> Result<(), CombineError> {
+        combine.check_own()?;
+        for body in combine.bodies() {
+            if !self.made_before(index, body) {
+                return Err(CombineError::Body(body));
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether `body` is there and made by a feature before feature
+    /// `index`.
+    fn made_before(&self, index: usize, body: BodyId) -> bool {
+        self.body(body)
+            .and_then(|body| self.feature_index(body.created_by))
+            .is_some_and(|maker| maker < index)
+    }
+
     /// The sketch feature before feature `index` whose id is `sketch`.
     pub(crate) fn sketch_before(&self, index: usize, sketch: FeatureId) -> Option<&Sketch> {
         let before = &self.features[..index];
@@ -427,11 +459,7 @@ impl Document {
             return Err(Uses::ExcludedOrder);
         }
         for &body in excluded {
-            let earlier = self
-                .body(body)
-                .and_then(|body| self.feature_index(body.created_by))
-                .is_some_and(|maker| maker < index);
-            if !earlier {
+            if !self.made_before(index, body) {
                 return Err(Uses::Excluded(body));
             }
         }
@@ -474,6 +502,8 @@ pub enum CheckError {
     Extrude(FeatureId, ExtrudeError),
     /// A revolve feature is wrong, see [`RevolveError`].
     Revolve(FeatureId, RevolveError),
+    /// A combine feature is wrong, see [`CombineError`].
+    Combine(FeatureId, CombineError),
     /// The fit tolerance, in millimetres, isn't one [`Tolerance::new`]
     /// takes.
     Tolerance(f64),
@@ -517,6 +547,7 @@ impl fmt::Display for CheckError {
             CheckError::SketchPlane(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::Extrude(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::Revolve(id, why) => write!(f, "feature {}: {why}", id.0),
+            CheckError::Combine(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::Tolerance(fit) => write!(
                 f,
                 "the tolerance {fit} mm isn't from {} to {} mm",
@@ -540,6 +571,7 @@ impl std::error::Error for CheckError {
             CheckError::SketchPlane(_, why) => Some(why),
             CheckError::Extrude(_, why) => Some(why),
             CheckError::Revolve(_, why) => Some(why),
+            CheckError::Combine(_, why) => Some(why),
             _ => None,
         }
     }

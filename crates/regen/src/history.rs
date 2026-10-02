@@ -28,7 +28,12 @@
 //! [`Evaluation::bodies`] and listed in [`Evaluation::merged`] (see
 //! `Run::merge` for the order). A through-all extent's
 //! span is worked out from the bodies made before it ([`through_all`]).
-//! A join, cut or intersect that would leave nothing of a body fails
+//! A combine works on the bodies as the features before it leave it: the
+//! target's solid united with, less or intersected with each tool's, the
+//! tools then consumed into the target as a join's merged bodies are,
+//! unless it keeps them (see `combine::evaluate`); one naming a body with
+//! no solid of its own (consumed before, or its maker failed) fails.
+//! A join, cut, intersect or combine that would leave nothing of a body fails
 //! (bodies are the document's, so an emptied one would stay listed with
 //! no geometry): no body in an [`Evaluation`] is empty.
 //! A feature that fails records why, in words for the Timeline
@@ -60,18 +65,22 @@ use crate::message::{self, Doing, Making};
 use crate::picking::region_form;
 use crate::profile::profile;
 
+mod combine;
+
 /// What the history gives: the solids of the bodies, and the features
 /// that failed.
 #[derive(Debug, Clone, Default)]
 pub struct Evaluation {
     /// Each body that has a solid, in the order the features made them.
     /// None is empty: a feature that would empty one fails. A body a
-    /// join merged into another isn't here (see [`Evaluation::merged`]).
+    /// join merged into another, or a combine used as a tool without
+    /// keeping it, isn't here (see [`Evaluation::merged`]).
     pub bodies: Vec<BodySolid>,
-    /// Each body a join merged into another (*consumed*), and the body in
+    /// Each body a join merged into another or a combine consumed as a
+    /// tool into its target (*consumed*), and the body in
     /// [`Evaluation::bodies`] that now holds it, in the document's order
     /// of the consumed bodies. A body merged into one that a later join
-    /// merged in turn names the later one, so every entry names a body
+    /// or combine consumed in turn names the later one, so every entry names a body
     /// in `bodies`, and no consumed body is in `bodies`.
     pub merged: Vec<(BodyId, BodyId)>,
     /// The features that failed and why, in the document's order.
@@ -202,7 +211,9 @@ pub(crate) fn evaluate_within(
                     FeatureKind::Revolve(revolve) => {
                         (revolve.sketch, Shape::Revolve(revolve), &revolve.operation)
                     }
-                    FeatureKind::Sketch { .. } => unreachable!("matched above"),
+                    FeatureKind::Sketch { .. } | FeatureKind::Combine(_) => {
+                        unreachable!("matched apart")
+                    }
                 };
                 // A checked document's extrude or revolve names a sketch
                 // before it.
@@ -222,6 +233,13 @@ pub(crate) fn evaluate_within(
                     touching,
                 };
                 if let Err(error) = run.evaluate(&mut evaluation, cache) {
+                    evaluation.failed.push((feature.id, error));
+                }
+            }
+            FeatureKind::Combine(combine) => {
+                if let Err(error) =
+                    combine::evaluate(document, combine, &tolerance, &mut evaluation, cache)
+                {
                     evaluation.failed.push((feature.id, error));
                 }
             }

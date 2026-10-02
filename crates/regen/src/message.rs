@@ -183,6 +183,57 @@ fn failed(what: &str, error: KernelError) -> String {
     }
 }
 
+/// Why a combine `doing` its tool named `tool` to its target named
+/// `target` failed: "cutting Body 2 from Body 1 leaves no clean solid
+/// ...", as an extrude's [`boolean`] with the tool body named in place of
+/// "it".
+pub(crate) fn combining(doing: Doing, target: &str, tool: &str, error: KernelError) -> String {
+    failed(&combine_step(doing, target, tool), error)
+}
+
+/// What a combine step does, in words: "joining Body 2 to Body 1",
+/// "cutting Body 2 from Body 1", "intersecting Body 1 with Body 2".
+fn combine_step(doing: Doing, target: &str, tool: &str) -> String {
+    match doing {
+        Doing::Cutting => format!("cutting {tool} from {target}"),
+        Doing::Intersecting => format!("intersecting {target} with {tool}"),
+        Doing::Joining | Doing::Merging | Doing::Touching => format!("joining {tool} to {target}"),
+    }
+}
+
+/// Why a combine fails though the kernel worked out `doing` its tool
+/// named `tool` to its target named `target`: it would leave nothing of
+/// the target, as an extrude's [`emptied`].
+pub(crate) fn combine_emptied(doing: Doing, target: &str, tool: &str) -> String {
+    let step = combine_step(doing, target, tool);
+    match doing {
+        Doing::Cutting => format!(
+            "{step} would leave nothing of {target}: take {tool} out of the tools, or delete \
+             {target}"
+        ),
+        Doing::Intersecting => {
+            format!("{step} would leave nothing of {target}: they don't overlap")
+        }
+        // A union of solids that aren't empty isn't.
+        Doing::Joining | Doing::Merging | Doing::Touching => {
+            format!("{step} would leave nothing of {target}")
+        }
+    }
+}
+
+/// Why a combine naming the body named `body` fails when an earlier join
+/// or combine consumed it into the body named `holder`: it has no solid
+/// of its own any more.
+pub(crate) fn consumed(body: &str, holder: &str) -> String {
+    format!("{body} is in {holder} now: a feature before this one merged it in")
+}
+
+/// Why a combine naming the body named `body` fails when that body has
+/// no solid: the feature making it failed.
+pub(crate) fn no_solid(body: &str) -> String {
+    format!("{body} has no solid: the feature making it failed")
+}
+
 /// `message`, why a feature failed with the body named `body`, with
 /// the way past it when the feature works on other bodies too: leaving
 /// that one out (unticked, it stays as it is and the others are still

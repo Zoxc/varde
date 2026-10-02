@@ -594,6 +594,8 @@ impl Doc {
             Look::EditFeature(id) => match self.editor.document().feature(id).map(|f| &f.kind) {
                 Some(FeatureKind::Extrude(_)) => self.edit_extrude(id),
                 Some(FeatureKind::Revolve(_)) => self.edit_revolve(id),
+                // No combine session yet.
+                Some(FeatureKind::Combine(_)) => {}
                 _ => self.enter_sketch(id),
             },
             Look::StartExtrude => self.start_extrude(),

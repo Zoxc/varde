@@ -57,7 +57,9 @@ pub enum Command {
     /// (`varde_sketch::Profiles::reference`), not the old ones. One that
     /// made a new body and still does keeps the body; one that stops
     /// making it removes it, dropping it from the other features'
-    /// excluded lists; one that starts making one adds it, as
+    /// excluded lists (but refused while a combine names it, as a target
+    /// or a tool: removing it would leave the combine naming a body that
+    /// isn't there); one that starts making one adds it, as
     /// [`Command::AddFeature`] does. A revolve's axis must be a line of
     /// its sketch, as for [`Command::AddFeature`].
     SetFeature {
@@ -354,7 +356,7 @@ impl Editor {
                     .feature_index(feature)
                     .filter(|&index| match &document.features[index].kind {
                         FeatureKind::Sketch { sketch: old, .. } => *old != *sketch,
-                        FeatureKind::Extrude(_) | FeatureKind::Revolve(_) => false,
+                        _ => false,
                     })
                 else {
                     return Ok(());
@@ -370,7 +372,7 @@ impl Editor {
                     .feature_index(feature)
                     .filter(|&index| match &document.features[index].kind {
                         FeatureKind::Sketch { plane: old, .. } => *old != plane,
-                        FeatureKind::Extrude(_) | FeatureKind::Revolve(_) => false,
+                        _ => false,
                     })
                 else {
                     return Ok(());
@@ -479,6 +481,8 @@ impl Editor {
                                 value.pin_units(&angle);
                             }
                         }
+                        // No values.
+                        FeatureKind::Combine(_) => {}
                     }
                 }
                 next.units = units;

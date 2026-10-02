@@ -506,6 +506,73 @@ fn merged_bodies_round_trip() {
     assert_eq!(bodies[0].0, top);
 }
 
+/// A combine and a combine drafted cross the wire as they went, and the
+/// tools it consumes come back merged into its target.
+#[test]
+fn a_combine_and_its_draft_round_trip() {
+    use varde_document::{BodyOp, Combine};
+    let mut editor = Editor::new(Document::example());
+    let top = editor.document().bodies()[0].id;
+    let below = crate::history::tests::plate_below(&mut editor);
+    let combine = Combine {
+        target: top,
+        tools: vec![below],
+        op: BodyOp::Union,
+        keep_tools: false,
+    };
+    editor
+        .apply(editor.document().add_feature(combine.clone().into()))
+        .unwrap();
+    let draft = Draft {
+        revision: 2,
+        feature: editor.document().features().last().map(|f| f.id),
+        kind: Combine {
+            op: BodyOp::Subtract,
+            keep_tools: true,
+            ..combine
+        }
+        .into(),
+    };
+    let request = Request::Regenerate {
+        generation: editor.generation(),
+        document: editor.snapshot(),
+        exclude: None,
+        draft: Some(Box::new(draft.clone())),
+        inspect: None,
+    };
+    let decoded = decode_request(&encode_request(&request)).unwrap();
+    let Request::Regenerate {
+        document,
+        draft: back,
+        ..
+    } = &decoded
+    else {
+        panic!("not a regeneration");
+    };
+    assert_eq!(**document, *editor.document());
+    assert_eq!(back, &Some(Box::new(draft)));
+    // The draft keeps its tool, so nothing is merged.
+    let Response::Regenerated {
+        draft,
+        merged,
+        bodies,
+        ..
+    } = round_trip(&handle(decoded))
+    else {
+        panic!("regeneration failed");
+    };
+    assert_eq!(draft.unwrap().error, None);
+    assert!(merged.is_empty());
+    assert_eq!(bodies.len(), 2);
+    // Committed, the union consumes it.
+    let Response::Regenerated { merged, bodies, .. } = round_trip(&handle(regenerate(&editor)))
+    else {
+        panic!("regeneration failed");
+    };
+    assert_eq!(merged, [(below, top)]);
+    assert_eq!(bodies.len(), 1);
+}
+
 #[test]
 fn merged_bodies_are_each_consumed_once_and_hold_none() {
     let [a, b, c] = ids();

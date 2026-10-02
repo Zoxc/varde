@@ -101,6 +101,40 @@ fn opacity_round_trips() {
     assert_eq!(&read, document);
 }
 
+/// A combine is kept through a file.
+#[test]
+fn a_combine_round_trips() {
+    use varde_document::{BodyId, BodyOp, Combine, Extrude, FeatureKind, Operation};
+    let mut editor = Editor::new(Document::example());
+    let FeatureKind::Extrude(extrude) = &editor.document().features()[1].kind else {
+        panic!("the example's extrude");
+    };
+    let again = Extrude {
+        operation: Operation::NewBody(BodyId::NEW),
+        flip: true,
+        ..extrude.clone()
+    };
+    editor
+        .apply(editor.document().add_feature(again.into()))
+        .unwrap();
+    let [first, second] = [0, 1].map(|k| editor.document().bodies()[k].id);
+    let combine = Combine {
+        target: second,
+        tools: vec![first],
+        op: BodyOp::Intersect,
+        keep_tools: true,
+    };
+    editor
+        .apply(editor.document().add_feature(combine.clone().into()))
+        .unwrap();
+    let document = editor.document();
+    let (bytes, _) = to_bytes(document).unwrap();
+    let (read, _) = from_bytes(&bytes).unwrap();
+    assert_eq!(&read, document);
+    let last = &read.features().last().unwrap().kind;
+    assert_eq!(*last, FeatureKind::Combine(combine));
+}
+
 #[test]
 fn concurrent_save_conflicts() {
     let dir = TempDir::new("conflict");

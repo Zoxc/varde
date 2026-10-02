@@ -26,9 +26,10 @@ impl Removal {
 
 impl Document {
     /// What removing `target` takes with it, changing nothing: a feature
-    /// goes with every later feature that uses it ([`FeatureKind::uses`]),
-    /// directly or through others, and the bodies those make; a body goes
-    /// with the feature that makes it, and so the same. A sketch on a face
+    /// goes with every later feature that uses it ([`FeatureKind::uses`])
+    /// or names a body it makes ([`FeatureKind::bodies`]: a combine's
+    /// target or tool), directly or through others, and the bodies those
+    /// make; a body goes with the feature that makes it, and so the same. A sketch on a face
     /// of a body that goes stays ([`Plane::Face`]), naming a body that
     /// isn't there. Bodies other
     /// features only exclude don't hold them back: they're dropped from
@@ -36,6 +37,7 @@ impl Document {
     /// apply exactly this).
     ///
     /// [`FeatureKind::uses`]: crate::FeatureKind::uses
+    /// [`FeatureKind::bodies`]: crate::FeatureKind::bodies
     /// [`Plane::Face`]: crate::Plane::Face
     /// [`Command::RemoveFeature`]: crate::Command::RemoveFeature
     /// [`Command::RemoveBody`]: crate::Command::RemoveBody
@@ -53,13 +55,13 @@ impl Document {
         // Features only use earlier ones, so one pass in order finds them
         // all, and the list stays sorted by id for searching.
         let mut features = vec![feature];
+        let going = |features: &[FeatureId], used: &FeatureId| features.binary_search(used).is_ok();
         for later in &self.features[first + 1..] {
-            if later
-                .kind
-                .uses()
-                .iter()
-                .any(|used| features.binary_search(used).is_ok())
-            {
+            let uses = later.kind.uses().iter().any(|used| going(&features, used));
+            let names = (later.kind.bodies().into_iter())
+                .filter_map(|body| self.body(body))
+                .any(|body| going(&features, &body.created_by));
+            if uses || names {
                 features.push(later.id);
             }
         }

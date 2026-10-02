@@ -34,7 +34,10 @@ with the bodies taken out of its targets; or a revolve,
 `crates/document/src/revolve.rs`: the sketch, regions, flip and
 operation as an extrude's, the axis (a line of the sketch by curve id,
 or the sketch's x or y axis) and the turn (full, one side, symmetric or
-two sides, each angle a typed expression and its value in radians). A
+two sides, each angle a typed expression and its value in radians); or a
+combine, `crates/document/src/combine.rs`: the target body's id, the
+tool bodies' ids (sorted), the operation (union, subtract or intersect)
+and whether the tools are kept. A
 sketch is a plane, `crates/document/src/plane.rs` (an origin plane,
 XY, XZ or YZ, or a face of a body: the body's id, the face's key, the
 kernel's `FaceKey` and `PartKey` with serde, whose fields and order are

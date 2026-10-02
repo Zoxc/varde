@@ -6846,7 +6846,9 @@ and the later ones still run.
   highlight. Cuts and
   intersects stay per body, as other CAD systems keep bodies apart for
   those, and an excluded body isn't merged (unticking it is how to join
-  to fewer bodies). The union is worked out in steps, each one
+  to fewer bodies). A combine consumes its tools into its target by
+  the same rule unless it keeps them (`agents/features.md`, "Combine").
+  The union is worked out in steps, each one
   `kernel::boolean(running, next, Union)` cached under
   `boolean_key(op, running key, next key)`, all or nothing (nothing is
   written back until the last step works):

@@ -1506,6 +1506,25 @@ fn feature_info(feature: &Feature, document: &Document) -> String {
                 None => format!("{turn} · {operation}"),
             }
         }
+        FeatureKind::Combine(combine) => {
+            let name = |body| {
+                document
+                    .body(body)
+                    .map_or("a body", |body| body.name.as_str())
+            };
+            let tools: Vec<&str> = combine.tools.iter().map(|&tool| name(tool)).collect();
+            let kept = if combine.keep_tools {
+                " · tools kept"
+            } else {
+                ""
+            };
+            format!(
+                "{} with {} · {}{kept}",
+                name(combine.target),
+                tools.join(", "),
+                combine.op.label()
+            )
+        }
     }
 }
 

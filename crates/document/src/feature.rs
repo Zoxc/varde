@@ -1,10 +1,10 @@
-//! Features: the steps a design is built from, sketches, extrudes and
-//! revolves.
+//! Features: the steps a design is built from, sketches, extrudes,
+//! revolves and combines.
 
 use serde::{Deserialize, Serialize};
 use varde_sketch::Sketch;
 
-use crate::{Extrude, Operation, Plane, Revolve};
+use crate::{BodyId, Combine, Extrude, Operation, Plane, Revolve};
 
 /// A feature's handle in one document. It's opaque: ids come from the
 /// document's features, not from literals. Features and bodies take their
@@ -39,6 +39,7 @@ pub enum FeatureKind {
     Sketch { plane: Plane, sketch: Sketch },
     Extrude(Extrude),
     Revolve(Revolve),
+    Combine(Combine),
 }
 
 impl FeatureKind {
@@ -49,12 +50,16 @@ impl FeatureKind {
             FeatureKind::Sketch { .. } => "Sketch",
             FeatureKind::Extrude(_) => "Extrude",
             FeatureKind::Revolve(_) => "Revolve",
+            FeatureKind::Combine(_) => "Combine",
         }
     }
 
     /// The features it builds on, which come before it: an extrude's or a
     /// revolve's sketch. Removing one of them removes this too. Sorted,
-    /// without repeats. Not the maker of the body under a sketch's face
+    /// without repeats. The makers of the bodies it names
+    /// ([`FeatureKind::bodies`]) aren't listed, as finding them takes the
+    /// document, but [`Document::removal`](crate::Document::removal)
+    /// follows them too. Not the maker of the body under a sketch's face
     /// plane ([`Plane::Face`]): removing it leaves the sketch, which then
     /// doesn't regenerate until it's put on another plane.
     pub fn uses(&self) -> Vec<FeatureId> {
@@ -64,21 +69,35 @@ impl FeatureKind {
         }
     }
 
+    /// The bodies it names, which features before it make, and which it
+    /// depends on: a combine's target and tools. Removing one of them, or
+    /// its maker, removes this too. Not the bodies an extrude or revolve
+    /// takes out of its targets, which are dropped from its list instead,
+    /// nor the body under a sketch's face plane.
+    pub fn bodies(&self) -> Vec<BodyId> {
+        match self {
+            FeatureKind::Combine(combine) => combine.bodies().collect(),
+            FeatureKind::Sketch { .. } | FeatureKind::Extrude(_) | FeatureKind::Revolve(_) => {
+                Vec::new()
+            }
+        }
+    }
+
     /// The sketch whose regions it takes: an extrude's or a revolve's,
     /// which adding it hides.
     pub fn sketch(&self) -> Option<FeatureId> {
         match self {
-            FeatureKind::Sketch { .. } => None,
+            FeatureKind::Sketch { .. } | FeatureKind::Combine(_) => None,
             FeatureKind::Extrude(extrude) => Some(extrude.sketch),
             FeatureKind::Revolve(revolve) => Some(revolve.sketch),
         }
     }
 
     /// What it does with the solid it makes: an extrude's or a revolve's
-    /// operation.
+    /// operation. A combine has none: it makes no solid of its own.
     pub fn operation(&self) -> Option<&Operation> {
         match self {
-            FeatureKind::Sketch { .. } => None,
+            FeatureKind::Sketch { .. } | FeatureKind::Combine(_) => None,
             FeatureKind::Extrude(extrude) => Some(&extrude.operation),
             FeatureKind::Revolve(revolve) => Some(&revolve.operation),
         }
@@ -87,14 +106,14 @@ impl FeatureKind {
     /// The same, to change.
     pub(crate) fn operation_mut(&mut self) -> Option<&mut Operation> {
         match self {
-            FeatureKind::Sketch { .. } => None,
+            FeatureKind::Sketch { .. } | FeatureKind::Combine(_) => None,
             FeatureKind::Extrude(extrude) => Some(&mut extrude.operation),
             FeatureKind::Revolve(revolve) => Some(&mut revolve.operation),
         }
     }
 
     /// The body it makes, for an [`Operation::NewBody`].
-    pub fn new_body(&self) -> Option<crate::BodyId> {
+    pub fn new_body(&self) -> Option<BodyId> {
         self.operation().and_then(Operation::new_body)
     }
 }
@@ -108,5 +127,11 @@ impl From<Extrude> for FeatureKind {
 impl From<Revolve> for FeatureKind {
     fn from(revolve: Revolve) -> Self {
         FeatureKind::Revolve(revolve)
+    }
+}
+
+impl From<Combine> for FeatureKind {
+    fn from(combine: Combine) -> Self {
+        FeatureKind::Combine(combine)
     }
 }
