@@ -830,3 +830,251 @@ fn a_revolve_from_a_sketch_on_a_face_turns_where_the_face_is() {
     assert!((bounds.min.z - 7.0).abs() < 1e-6 && (bounds.max.z - 13.0).abs() < 1e-6);
     assert!(bounds.min.y.abs() < 1e-9 && (bounds.max.y - 2.0).abs() < 1e-9);
 }
+
+/// Draws the closed polygon through `corners`.
+fn polygon(corners: Vec<(f64, f64)>) -> impl FnOnce(&mut Sketch) {
+    move |sketch| {
+        let ids: Vec<_> = (corners.iter())
+            .map(|&(x, y)| sketch.add_point(DVec2::new(x, y)).unwrap())
+            .collect();
+        for (k, &start) in ids.iter().enumerate() {
+            let end = ids[(k + 1) % ids.len()];
+            sketch.add_curve(Curve::Line { start, end }, false).unwrap();
+        }
+    }
+}
+
+/// A block far out whose wall facing `(1, 0.3, 0)` is within the
+/// coordinate limit, but whose plane's point nearest the origin isn't:
+/// the sketch on it fails, "its face is too far out to sketch on", and so
+/// does its extrude. Put on the block's top, it's placed and builds.
+#[test]
+fn a_sketch_on_a_face_whose_plane_passes_the_limit_fails() {
+    let mut editor = Editor::new(Document::default());
+    let n = DVec2::new(1.0, 0.3).normalize();
+    let along = n.perp();
+    let at = DVec2::new(9.9e5, 9.9e5);
+    let corner = |a: f64, b: f64| {
+        let p = at + along * a - n * b;
+        (p.x, p.y)
+    };
+    // A 10 × 10 block with a wall along `along` through `at`.
+    let block = polygon(vec![
+        corner(-5.0, 0.0),
+        corner(5.0, 0.0),
+        corner(5.0, 10.0),
+        corner(-5.0, 10.0),
+    ]);
+    add_body(&mut editor, block, "10");
+    let evaluation = evaluated(editor.document());
+    let solid = only_body(&evaluation);
+    let wall = FaceRef {
+        body: editor.document().bodies()[0].id,
+        key: key_where(solid, |form| plane_along(form, n.extend(0.0))),
+        near: at.extend(5.0),
+    };
+    let sketch = add_sketch(&mut editor, Plane::Face(wall), disc((0.0, 0.0), 1.0));
+    let boss = add_extrude_of(&mut editor, sketch, one_side("2"), join());
+    let evaluation = evaluated(editor.document());
+    assert_eq!(
+        evaluation.failed,
+        [
+            (sketch, "its face is too far out to sketch on".to_owned()),
+            (boss, "its sketch isn't placed".to_owned()),
+        ]
+    );
+    assert!(evaluation.placements.is_empty());
+    // The rule's origin, n̂ (n̂·p), is past the limit along x.
+    let origin = n * n.dot(at);
+    assert!(origin.x > f64::from(varde_kernel::MAX_COORD), "{origin}");
+
+    // Put on the block's top instead, it's placed and builds.
+    let top = FaceRef {
+        key: key_where(only_body(&evaluated(&prefix(editor.document()))), |form| {
+            plane_along(form, DVec3::Z)
+        }),
+        near: at.extend(10.0),
+        ..wall
+    };
+    editor
+        .apply(Command::SetSketchPlane {
+            feature: sketch,
+            plane: Plane::Face(top),
+        })
+        .unwrap();
+    let mut drawn = Sketch::default();
+    disc((at.x - n.x * 5.0, at.y - n.y * 5.0), 1.0)(&mut drawn);
+    editor
+        .apply(Command::SetSketch {
+            feature: sketch,
+            sketch: Box::new(drawn),
+        })
+        .unwrap();
+    let evaluation = evaluated(editor.document());
+    assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
+    assert_close(only_body(&evaluation).volume(), 100.0 * 10.0 + PI * 2.0);
+}
+
+/// The document with only its first two features (the block).
+fn prefix(document: &Document) -> Document {
+    let mut editor = Editor::new(document.clone());
+    while editor.document().features().len() > 2 {
+        let last = editor.document().features().last().unwrap().id;
+        editor.apply(Command::RemoveFeature(last)).unwrap();
+    }
+    editor.document().clone()
+}
+
+/// A chain of sketches on faces, far out on a wall tilted in XZ: a boss
+/// joined square to the wall and a hole cut into the boss's end from a
+/// sketch on it. Widening and lengthening the prism moves the wall, and
+/// the boss and hole with it; undoing and redoing moves them back and
+/// forth; the volumes stay analytic and a warm cache answers as a cold
+/// one does, to the bit.
+#[test]
+fn a_chain_of_sketches_on_a_far_tilted_wall_follows_its_edits() {
+    let centre = DVec2::new(-2.0e5, 3.0e5);
+    let turn = 10f64.to_radians();
+    let hexagon = |radius: f64| {
+        polygon(
+            (0..6)
+                .map(|k| {
+                    let angle = turn + f64::from(k) * PI / 3.0;
+                    let at = centre + DVec2::new(angle.cos(), angle.sin()) * radius;
+                    (at.x, at.y)
+                })
+                .collect(),
+        )
+    };
+    let mut editor = Editor::new(Document::default());
+    let base = add_sketch(&mut editor, Plane::Origin(OriginPlane::XZ), hexagon(20.0));
+    let new_body = Operation::NewBody(BodyId::NEW);
+    let prism = add_extrude_of(&mut editor, base, one_side("30"), new_body);
+    let body = editor.document().bodies()[0].id;
+    // The wall between the first two corners faces 40° round from X in
+    // XZ; the prism runs along −Y.
+    let facing = (turn + PI / 6.0).sin_cos();
+    let n = DVec3::new(facing.1, 0.0, facing.0);
+    let middle = |radius: f64| {
+        let apothem = radius * (PI / 6.0).cos();
+        DVec3::new(centre.x, -15.0, centre.y) + n * apothem
+    };
+    let solid = only_body(&evaluated(editor.document())).clone();
+    let wall = FaceRef {
+        body,
+        key: key_where(&solid, |form| plane_along(form, n)),
+        near: middle(20.0),
+    };
+    let on_wall = add_sketch(&mut editor, Plane::Face(wall), |_| {});
+    let placement = placed(&evaluated(editor.document()), on_wall);
+    let at = local(&placement, middle(20.0));
+    let mut drawn = Sketch::default();
+    disc(at, 3.0)(&mut drawn);
+    editor
+        .apply(Command::SetSketch {
+            feature: on_wall,
+            sketch: Box::new(drawn),
+        })
+        .unwrap();
+    let boss = add_extrude_of(&mut editor, on_wall, one_side("5"), join());
+    let end = FaceRef {
+        body,
+        key: FaceKey {
+            feature: boss.get(),
+            part: PartKey::EndCap,
+            instance: 0,
+        },
+        near: middle(20.0) + n * 5.0,
+    };
+    let on_end = add_sketch(&mut editor, Plane::Face(end), disc(at, 1.5));
+    let hole = add_extrude_of(&mut editor, on_end, one_side("2"), cut());
+    let mut flipped = match &editor.document().feature(hole).unwrap().kind {
+        FeatureKind::Extrude(extrude) => extrude.clone(),
+        _ => unreachable!(),
+    };
+    flipped.flip = true;
+    editor
+        .apply(Command::SetFeature {
+            feature: hole,
+            kind: Box::new(flipped.into()),
+        })
+        .unwrap();
+
+    let mut cache = Cache::default();
+    let mut check = |editor: &Editor, radius: f64, height: f64| {
+        let warm = evaluate(editor.document(), &mut cache);
+        let cold = evaluated(editor.document());
+        assert_eq!(warm.failed, cold.failed);
+        assert_eq!(
+            warm.placements
+                .iter()
+                .map(|(id, p)| (*id, bits(p)))
+                .collect::<Vec<_>>(),
+            cold.placements
+                .iter()
+                .map(|(id, p)| (*id, bits(p)))
+                .collect::<Vec<_>>(),
+        );
+        let volume = only_body(&warm).volume();
+        assert_eq!(volume.to_bits(), only_body(&cold).volume().to_bits());
+        let hexagon = 3.0 * 3f64.sqrt() / 2.0 * radius * radius * height;
+        let expected = hexagon + PI * 9.0 * 5.0 - PI * 2.25 * 2.0;
+        assert!(
+            (volume - expected).abs() < 1e-6 * expected,
+            "{volume} vs {expected}"
+        );
+        // The wall's sketch on the wall's plane, the end's 5 out from it,
+        // both square to it.
+        let wall = placed(&warm, on_wall);
+        let end = placed(&warm, on_end);
+        let offset = |p: &Placement, d: f64| (middle(radius) + n * d - p.origin).dot(p.normal);
+        // Within the rounding of corners 3e5 out.
+        assert!(offset(&wall, 0.0).abs() < 1e-9, "{wall:?}");
+        assert!(offset(&end, 5.0).abs() < 1e-9, "{end:?}");
+        for p in [wall, end] {
+            assert!((p.normal - n).length() < 1e-10, "{p:?}");
+            assert!(p.valid());
+        }
+    };
+    check(&editor, 20.0, 30.0);
+
+    // Wider (its corners moved, its curves kept) and longer.
+    let FeatureKind::Sketch { sketch: drawn, .. } = &editor.document().feature(base).unwrap().kind
+    else {
+        unreachable!()
+    };
+    let mut wider = drawn.clone();
+    let mut fresh = Sketch::default();
+    hexagon(24.0)(&mut fresh);
+    for (point, moved) in wider.points.iter_mut().zip(&fresh.points) {
+        point.at = moved.at;
+    }
+    editor
+        .apply(Command::SetSketch {
+            feature: base,
+            sketch: Box::new(wider),
+        })
+        .unwrap();
+    let extrude = match &editor.document().feature(prism).unwrap().kind {
+        FeatureKind::Extrude(extrude) => Extrude {
+            extent: one_side("36"),
+            ..extrude.clone()
+        },
+        _ => unreachable!(),
+    };
+    editor
+        .apply(Command::SetFeature {
+            feature: prism,
+            kind: Box::new(extrude.into()),
+        })
+        .unwrap();
+    // The wall's middle stays 15 along the prism's length; the prism
+    // is longer, so the boss is off its middle but on it.
+    check(&editor, 24.0, 36.0);
+    editor.undo();
+    editor.undo();
+    check(&editor, 20.0, 30.0);
+    editor.redo();
+    editor.redo();
+    check(&editor, 24.0, 36.0);
+}

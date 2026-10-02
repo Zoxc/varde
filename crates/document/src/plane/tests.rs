@@ -676,3 +676,48 @@ fn bad_face_planes_in_bytes_are_refused() {
     bytes[14] = 2;
     assert!(Document::from_postcard(&bytes).is_err());
 }
+
+/// Bytes of a document with a sketch on a face, a bit flipped anywhere:
+/// what decodes passes the check, and is never stuck: a sketch can be
+/// added, and every sketch on a face put back on XY.
+#[test]
+fn flipped_bytes_decode_to_documents_that_can_be_edited() {
+    let (editor, _) = sketched_on_top();
+    let bytes = editor.document().to_postcard();
+    let mut decoded = 0;
+    for bit in 0..bytes.len() * 8 {
+        let mut flipped = bytes.clone();
+        flipped[bit / 8] ^= 1 << (bit % 8);
+        let Ok(document) = Document::from_postcard(&flipped) else {
+            continue;
+        };
+        decoded += 1;
+        document.check().unwrap();
+        let mut editor = Editor::new(document);
+        let xy = Plane::Origin(OriginPlane::XY);
+        editor.apply(editor.document().add_sketch(xy)).unwrap();
+        let faces: Vec<FeatureId> = (editor.document().features().iter())
+            .filter(|feature| {
+                matches!(
+                    feature.kind,
+                    FeatureKind::Sketch {
+                        plane: Plane::Face(_),
+                        ..
+                    }
+                )
+            })
+            .map(|feature| feature.id)
+            .collect();
+        for feature in faces {
+            editor
+                .apply(Command::SetSketchPlane { feature, plane: xy })
+                .unwrap();
+        }
+    }
+    // Most flips land in numbers, which still decode.
+    assert!(
+        decoded > bytes.len(),
+        "{decoded} of {} bits",
+        bytes.len() * 8
+    );
+}

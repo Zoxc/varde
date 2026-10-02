@@ -131,6 +131,19 @@ frame; a failed one is drawn nowhere, its profiles are still worked out,
 and every extrude or revolve made from it fails with "its sketch isn't
 placed". No last plane is kept.
 
+Limits, seen fuzzing whole histories: a tool built on a tilted face is
+flush with it only to rounding (its frame is the face form's normal
+renormalized, an ulp or so off the frame the face came from), so a
+boss joined or a hole cut flush with a tilted face, or on the end of a
+boss built on one, now and then fails in the kernel's boolean ("leaves
+no clean solid": 12 of 200 random prisms, each with a wall boss or hole,
+a second one on its end and three edits); square faces are exact and
+don't. An error, never a wrong solid. And the origin
+rule (the plane's point nearest the world origin) can put a far tilted
+face's points more than `MAX_COORD` from the origin in the sketch's own
+coordinates, where no point can be drawn; the face is placed, but only
+its nearer part can be drawn on.
+
 Caches: a sketch's profiles are keyed by the sketch alone (not the
 plane: they're 2D, so the same drawing on another plane finds them);
 the placement by the face's solid's key, the face's key and `near`'s
