@@ -765,6 +765,26 @@ fn nearest_side(patch: &crate::patch::Patch, u: DVec3) -> (usize, f64, [DVec3; 2
     (k, u[k] * (pu * w.x + pv * w.y).length(), [pu, pv])
 }
 
+/// The end of `edge` (its parameter, 0 or 1) within `margin` of the
+/// triangle with `corners`, if just one end is.
+fn end_on_triangle(edge: &Conic3, corners: [DVec3; 3], margin: f64) -> Option<f64> {
+    let [a, b, c] = corners;
+    let n = (b - a).cross(c - a).try_normalize()?;
+    let on = |p: DVec3| {
+        (p - a).dot(n).abs() <= margin
+            && [(a, b), (b, c), (c, a)].iter().all(|&(u, v)| {
+                let side = v - u;
+                // NaN fails.
+                side.cross(p - u).dot(n) >= -margin * side.length()
+            })
+    };
+    match (on(edge.p0), on(edge.p1)) {
+        (true, false) => Some(0.0),
+        (false, true) => Some(1.0),
+        _ => None,
+    }
+}
+
 fn sign(x: f64) -> i8 {
     if x > 0.0 {
         1
@@ -930,6 +950,17 @@ impl Primitives for Curved<'_> {
                 }
             }
         }
+        // A crossing the count has and the search didn't find, where just
+        // one end of the edge lies on a planar patch (an edge leaving a
+        // vertex within a tie of the other's face, the cylinder's seam on
+        // a box's side): at that end, not where the search's closest
+        // pieces were, up to a hundredth of the edge along it (thousands
+        // of resolutions), the cut through the vertex there with it.
+        let closest = if self.input(side.other()).planar[f as usize] {
+            end_on_triangle(&edge, patch.p, self.resolution).unwrap_or(closest)
+        } else {
+            closest
+        };
         let cost = SEARCH_WORK.max(nodes.div_ceil(NODES_PER_UNIT));
         Ok((pick(&found, x, closest), cost))
     }

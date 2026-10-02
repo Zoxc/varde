@@ -637,6 +637,221 @@ fn walls_of_different_conics_are_cut_along_their_lines() {
     }
 }
 
+/// Whether every triangle of `solid` on a face with a plane form faces
+/// the way the form does.
+fn faces_its_plane_forms(solid: &Solid) -> bool {
+    let mesh = solid.mesh();
+    (0..mesh.tris().len()).all(|t| match mesh.faces()[mesh.tris()[t].face as usize].form {
+        crate::mesh::Form::Plane { n, .. } => {
+            mesh.patch(t).normal(DVec3::splat(1.0 / 3.0)).dot(n) > 0.0
+        }
+        _ => true,
+    })
+}
+
+#[test]
+#[cfg_attr(
+    debug_assertions,
+    ignore = "debug builds' check of the forms stops on a wrong name first"
+)]
+fn caps_a_tie_apart_keep_their_names_or_are_refused() {
+    // Caps within a tie of each other: the triangles of one, flush with
+    // the other's, came out named after the other and facing against
+    // its form (release builds only check the forms' surfaces). A unit
+    // cylinder less one tangent to it along the line on both seams,
+    // whose top is a tie over its own, on a frame turned and far from
+    // the origin; and a unit cylinder with the half y < s of it above
+    // z = 1.2 cut away (s a tie), less a cylinder 100 resolutions into
+    // its wall round the x axis, a tie under its top, the walls' lines
+    // joined (almost half the first's top named after the second's).
+    let q = DQuat::from_axis_angle(DVec3::new(-2.0, 0.5, 1.0).normalize(), 2.1);
+    let far = Frame {
+        origin: DVec3::new(3e3, -2e3, 1e3),
+        x: q * DVec3::X,
+        y: q * DVec3::Y,
+    };
+    let make = |loops, frame: &Frame, from, to, feature, tol: &Tolerance| {
+        let profile = Profile { loops };
+        extrude(&profile, frame, from, to, feature, tol, &Budget::DEFAULT).unwrap()
+    };
+    let tol = Tolerance::new(0.1).unwrap();
+    let tie = tol.resolution() / 64.0;
+    let a = make(
+        vec![circle(DVec2::ZERO, 1.0, 1, false)],
+        &far,
+        0.0,
+        2.0,
+        1,
+        &tol,
+    );
+    let b = make(
+        vec![circle(DVec2::new(2.0, 0.0), 1.0, 2, false)],
+        &far,
+        0.5,
+        2.0 + tie,
+        2,
+        &tol,
+    );
+    if let Ok(got) = boolean(&b, &a, Op::Difference, &tol, &Budget::DEFAULT) {
+        assert!(faces_its_plane_forms(&got));
+    }
+    let tol = Tolerance::new(1e-3).unwrap();
+    let (res, tie) = (tol.resolution(), tol.resolution() / 64.0);
+    let whole = make(
+        vec![circle(DVec2::ZERO, 1.0, 1, false)],
+        &Frame::XY,
+        0.0,
+        2.0,
+        1,
+        &tol,
+    );
+    let corner = DVec2::new(2.0, tie);
+    let notch = make(
+        vec![rect(-corner.with_y(2.0), corner, 3)],
+        &Frame::XY,
+        1.2,
+        3.0,
+        3,
+        &tol,
+    );
+    let a = boolean(&whole, &notch, Op::Difference, &tol, &Budget::DEFAULT).unwrap();
+    let c = DVec2::new(2.0 - 100.0 * res, 0.0);
+    let b = make(
+        vec![circle(c, 1.0, 2, false)],
+        &Frame::XY,
+        1.2 + tie,
+        2.0 - tie,
+        2,
+        &tol,
+    );
+    if let Ok(got) = boolean(&a, &b, Op::Difference, &tol, &Budget::DEFAULT) {
+        assert!(faces_its_plane_forms(&got));
+    }
+}
+
+#[test]
+fn walls_joined_too_early_are_refined_as_before() {
+    // An ellipse's tip (half-axes 3 and 0.3, curvature 33 there) poking
+    // 0.1 into a unit circle's wall at fit 0.1. Its lines joined in the
+    // first round, the pieces beside them are the walls' quarters, and
+    // the circle less the ellipse failed the hull rules from them; it is
+    // refined as before (which got it) after the first try fails.
+    let tol = Tolerance::new(0.1).unwrap();
+    let make = |loops, from, to, feature| {
+        let profile = Profile { loops };
+        extrude(
+            &profile,
+            &Frame::XY,
+            from,
+            to,
+            feature,
+            &tol,
+            &Budget::DEFAULT,
+        )
+        .unwrap()
+    };
+    let a = make(vec![ellipse(3.0, 0.3, 0)], 0.0, 2.0, 1);
+    let c = 3.9;
+    let b = make(
+        vec![circle(DVec2::new(c, 0.0), 1.0, 10, false)],
+        0.5,
+        1.5,
+        2,
+    );
+    let lens = tip_lens(3.0, 0.3, c);
+    let (va, vb) = (a.volume(), b.volume());
+    for (x, y, op, want) in [
+        (&a, &b, Op::Union, va + vb - lens),
+        (&a, &b, Op::Intersection, lens),
+        (&a, &b, Op::Difference, va - lens),
+        (&b, &a, Op::Difference, vb - lens),
+    ] {
+        match boolean(x, y, op, &tol, &Budget::DEFAULT) {
+            Ok(got) => assert!(
+                (got.volume() - want).abs() < 1e-12,
+                "{op:?}: {} vs {want}",
+                got.volume()
+            ),
+            Err(e) => println!("REFUSED {op:?}: {e:?}"),
+        }
+    }
+    let got =
+        assert_deterministic(|| boolean(&b, &a, Op::Difference, &tol, &Budget::DEFAULT)).unwrap();
+    assert!((got.volume() - (vb - lens)).abs() < 1e-12);
+}
+
+#[test]
+fn a_seam_a_hair_off_a_plane_is_cut_through_its_vertex() {
+    // A cylinder of radius 0.3 round (0.21, s) less a box below y = 0:
+    // the cylinder's seam edge, at (0.51, s), lies a fraction of a tie
+    // off the box's side, and its rims and the diagonal of its wall
+    // leave its ends there. The count has those crossings, the search
+    // finds nothing inside the edges, and they were put where its
+    // closest pieces were, up to a 128th of a quarter arc along the
+    // edge (thousands of resolutions at fit 0.001): the cut ran through
+    // them, the result some 40 resolutions times the cut's area too
+    // small. At the edges' ends, it is what is left above y = 0, or
+    // refused.
+    let (r, c) = (0.3, 0.21);
+    let mut worked = 0;
+    for fit in [0.1, 0.01, 1e-3] {
+        let tol = Tolerance::new(fit).unwrap();
+        let res = tol.resolution();
+        for s in [0.2, 0.9].map(|k| k * res / 64.0) {
+            for x0 in [-1.0, 0.3] {
+                let make = |loops, from, to, feature| {
+                    let profile = Profile { loops };
+                    extrude(
+                        &profile,
+                        &Frame::XY,
+                        from,
+                        to,
+                        feature,
+                        &tol,
+                        &Budget::DEFAULT,
+                    )
+                    .unwrap()
+                };
+                let pin = make(vec![circle(DVec2::new(c, s), r, 2, false)], 0.5, 1.5, 2);
+                let corner = DVec2::new(x0, -1.0);
+                let block = make(vec![rect(corner, DVec2::new(1.0, 0.0), 0)], 0.0, 2.0, 1);
+                // The circle's part above y = 0, a chord `s` below its
+                // centre, over the pin's height 1; with the block from
+                // x = 0.3, its part below y = 0 left of x = 0.3 too.
+                let above = PI * r * r / 2.0 + r * r * (s / r).asin() + s * (r * r - s * s).sqrt();
+                let left = if x0 < 0.0 {
+                    0.0
+                } else {
+                    // Between the circle's left side and x = 0.3 below
+                    // y = 0 (s is far below what this measures).
+                    let h = x0 - (c - r);
+                    let half =
+                        r * r * ((r - h) / r).acos() - (r - h) * (2.0 * r * h - h * h).sqrt();
+                    half / 2.0
+                };
+                let got = match boolean(&pin, &block, Op::Difference, &tol, &Budget::DEFAULT) {
+                    Ok(got) => got,
+                    Err(e) => {
+                        // The vertex's crossings, all at it, leave
+                        // vertices a hair apart that the clean-up doesn't
+                        // always take out.
+                        println!("REFUSED {fit} {s} {x0}: {e:?}");
+                        continue;
+                    }
+                };
+                worked += 1;
+                let want = above + left;
+                assert!(
+                    (got.volume() - want).abs() <= res,
+                    "{fit} {s} {x0}: {} vs {want}",
+                    got.volume()
+                );
+            }
+        }
+    }
+    assert!(worked >= 4, "{worked} of 12 worked");
+}
+
 #[test]
 fn a_bar_cut_at_its_refinement_midpoints_keeps_its_planes() {
     // A box's face through the middle of a bar's wall, where refinement
@@ -1130,9 +1345,10 @@ fn the_result_checks_integrations_are_charged() {
     assert!(integrated > 0);
     assert!((Solid::new(mesh.clone(), &TOL).unwrap().volume() - want).abs() < 1e-9);
     let made = Budget::DEFAULT.work() - work.left();
+    // And a unit a triangle for the boolean's look at the plane forms.
     let total = made
-        + (mesh.tris().len() * crate::solid::CHECK_WORK + integrated * crate::solid::INTEGRATE_WORK)
-            as u64;
+        + (mesh.tris().len() * (crate::solid::CHECK_WORK + 1)
+            + integrated * crate::solid::INTEGRATE_WORK) as u64;
     let with = |work: u64| boolean(&tube, &notch, Op::Difference, &TOL, &Budget::new(work));
     assert_eq!(with(total).map(|s| s.mesh().clone()), Ok(mesh));
     assert_eq!(with(total - 1), Err(KernelError::TooComplex));

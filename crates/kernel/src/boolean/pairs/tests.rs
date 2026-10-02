@@ -445,7 +445,7 @@ fn parallel_walls_with_no_ends_are_certified() {
     let counts = counted(&ia, &ib, false, &TOL, &mut work).unwrap();
     assert!(counts.x12.is_empty() && counts.x21.is_empty());
     let floor = MIN_SPLIT * TOL.resolution();
-    let decision = decide(&ia, &ib, &counts, floor, TOL.resolution(), &mut work).unwrap();
+    let decision = decide(&ia, &ib, &counts, floor, TOL.resolution(), true, &mut work).unwrap();
     assert!(matches!(decision, Decision::Split(_)));
     for grow in [false, true] {
         let mut work = Work::new(&Budget::new(50_000));

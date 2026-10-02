@@ -217,7 +217,7 @@ pub(crate) fn apart_along(
 
 /// Whether `a` and `b`, one of them with curved patches, touch or
 /// overlap, for [`touches`](super::touches): one counting
-/// ([`pairs::counted`], what [`pairs::refined`] counts first), `true`
+/// ([`pairs::counted`], what [`pairs::refined_with`] counts first), `true`
 /// where it shows an edge through a face or a vertex inside, else
 /// whether their surfaces come within the resolution ([`near`]) in the
 /// broad phase's pairs, whose margin is the resolution too.

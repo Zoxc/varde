@@ -59,7 +59,7 @@ use std::collections::btree_map::Entry;
 use glam::DVec3;
 
 use crate::budget::{Budget, Work};
-use crate::mesh::{BuildError, Bvh, Face, FaceKey, Mesh, MeshBuilder, Surface};
+use crate::mesh::{BuildError, Bvh, CheckError, Face, FaceKey, Form, Mesh, MeshBuilder, Surface};
 use crate::patch::Bounds3;
 use crate::topology::distance::{Allowance, to_patches};
 use crate::{KernelError, Solid, Tolerance};
@@ -205,7 +205,9 @@ type Found = (Vec<(i8, f64, bool)>, usize);
 /// [`KernelError::TooComplex`] past the budget; and with
 /// [`KernelError::Invalid`] when the result can't pass `check` with `tol`,
 /// such as two solids touching along an edge or at a point, where the
-/// exact result isn't a manifold, or parts closer than the resolution.
+/// exact result isn't a manifold, or parts closer than the resolution,
+/// or faces within a tie of each other that would leave a triangle
+/// facing against its face's plane form.
 pub fn boolean(
     a: &Solid,
     b: &Solid,
@@ -215,6 +217,12 @@ pub fn boolean(
 ) -> Result<Solid, KernelError> {
     boolean_within(a, b, op, tol, &mut Work::new(budget))
 }
+
+/// The least work [`boolean`] gives its second try, without joining ends
+/// along walls' common direction, after the first failed with them: a
+/// first try that failed fast (folding on a sliver under the resolution
+/// in a few thousand units) took up to 150 000 to refine as before.
+const AGAIN: u64 = 150_000;
 
 /// [`boolean`], charging `work`.
 fn boolean_within(
@@ -230,7 +238,98 @@ fn boolean_within(
         (true, _, _) | (_, true, _) => return Ok(Solid::empty()),
         _ => {}
     }
-    let (soup, faces) = assembled(a, b, op, tol, work)?;
+    let start = work.left();
+    let mut joined = false;
+    let first = checked_with(a, b, op, true, &mut joined, tol, work);
+    let e = match first {
+        Err(e) if joined && e != KernelError::TooComplex => e,
+        result => return result,
+    };
+    // Lines along walls' common direction joined in an early round leave
+    // the pieces beside them as large as they were, and some results that
+    // refinement gets right fail the hull, neighbour or fold rules from
+    // them: then the result is the one refined as before, if that passes
+    // within as much work again as the first try took, or `AGAIN` if
+    // more (and what is left of the budget), else the first try's error.
+    // Unbounded, the second try ran most refusals on to the budget, for a
+    // result in one of fifteen.
+    let spent = start.saturating_sub(work.left());
+    let cap = spent.max(AGAIN).min(work.left());
+    let mut again = Work::new(&Budget::new(cap));
+    let second = checked_with(a, b, op, false, &mut joined, tol, &mut again);
+    // What the second try took, charged to the operation's budget.
+    work.spend(usize::try_from(cap - again.left()).unwrap_or(usize::MAX))?;
+    match second {
+        Err(KernelError::TooComplex) if work.left() == 0 => Err(KernelError::TooComplex),
+        Err(_) => Err(e),
+        result => result,
+    }
+}
+
+/// `solid` if every triangle on a face with a plane form faces the way
+/// the form's normal does at its middle, else [`KernelError::Invalid`]
+/// ([`CheckError::Face`]). Faces within a tie of each other (caps one a
+/// tie under the other, boxes moved a tie along the counting's `UP` on a
+/// frame turned and far from the origin) have given results whose
+/// triangles of one, flush with the other's, carried the other's name and
+/// faced against its form: wrong names, which debug builds' check of the
+/// forms stops on. A unit of work a triangle.
+fn facing(solid: Solid, work: &mut Work) -> Result<Solid, KernelError> {
+    let mesh = solid.mesh();
+    work.spend(mesh.tris().len())?;
+    let middle = DVec3::splat(1.0 / 3.0);
+    let against = (0..mesh.tris().len() as u32).find(|&t| {
+        match mesh.faces()[mesh.tris()[t as usize].face as usize].form {
+            // NaN is against.
+            Form::Plane { n, .. } => {
+                let along = mesh.patch(t as usize).normal(middle).dot(n);
+                along.partial_cmp(&0.0) != Some(Ordering::Greater)
+            }
+            _ => false,
+        }
+    });
+    match against {
+        Some(t) => Err(KernelError::Invalid(CheckError::Face(t))),
+        None => Ok(solid),
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// What [`cleanup::thin_across`] found in the last operation's cleaned
+    /// soup on this thread, `(0, 0)` if it didn't get that far: for tests
+    /// measuring thin triangles across two faces.
+    static THIN_ACROSS: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+}
+
+/// The result's mesh, before repair and the check, joining ends along
+/// walls' common direction.
+#[cfg(test)]
+fn unchecked(
+    a: &Solid,
+    b: &Solid,
+    op: Op,
+    tol: &Tolerance,
+    work: &mut Work,
+) -> Result<Mesh, KernelError> {
+    let (soup, faces) = assembled(a, b, op, true, &mut false, tol, work)?;
+    cleaned(a, b, op, soup, faces, true, &mut false, tol, work)
+}
+
+/// The result, joining ends along walls' common direction only if `join`
+/// (see [`pairs::refined_with`]), and setting `joined` if some were:
+/// assembled, cleaned, repaired and checked.
+#[allow(clippy::too_many_arguments)]
+fn checked_with(
+    a: &Solid,
+    b: &Solid,
+    op: Op,
+    join: bool,
+    joined: &mut bool,
+    tol: &Tolerance,
+    work: &mut Work,
+) -> Result<Solid, KernelError> {
+    let (soup, faces) = assembled(a, b, op, join, joined, tol, work)?;
     // The clean-up's last resort, unfolding sheets folded onto a flush
     // face, can leave a soup that fails where the clean-up without it
     // would have mended it by other means (Delaunay flips on a face a
@@ -250,7 +349,7 @@ fn boolean_within(
 
 /// The result of the assembled `soup` and `faces`, cleaned (unfolding
 /// folded sheets if `unfold`, and setting `unfolded` if it did),
-/// repaired and checked.
+/// repaired and checked, [`facing`] included.
 #[allow(clippy::too_many_arguments)]
 fn checked(
     a: &Solid,
@@ -266,35 +365,19 @@ fn checked(
     let mesh = cleaned(a, b, op, soup, faces, unfold, unfolded, tol, work)?;
     // Faces of one surface that meet merge, so a flush join leaves no
     // line between the two operands' pieces of a plane or cylinder.
-    Solid::finished(mesh, tol, work)
+    let solid = Solid::finished(mesh, tol, work)?;
+    facing(solid, work)
 }
 
-#[cfg(test)]
-thread_local! {
-    /// What [`cleanup::thin_across`] found in the last operation's cleaned
-    /// soup on this thread, `(0, 0)` if it didn't get that far: for tests
-    /// measuring thin triangles across two faces.
-    static THIN_ACROSS: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
-}
-
-/// The result's mesh, before repair and the check.
-#[cfg(test)]
-fn unchecked(
-    a: &Solid,
-    b: &Solid,
-    op: Op,
-    tol: &Tolerance,
-    work: &mut Work,
-) -> Result<Mesh, KernelError> {
-    let (soup, faces) = assembled(a, b, op, tol, work)?;
-    cleaned(a, b, op, soup, faces, true, &mut false, tol, work)
-}
-
-/// The result's triangles and faces, before the clean-up.
+/// The result's triangles and faces, before the clean-up, joining ends
+/// along walls' common direction only if `join` (see
+/// [`pairs::refined_with`]), and setting `joined` if some were.
 fn assembled(
     a: &Solid,
     b: &Solid,
     op: Op,
+    join: bool,
+    joined: &mut bool,
     tol: &Tolerance,
     work: &mut Work,
 ) -> Result<(cleanup::Soup, Vec<Face>), KernelError> {
@@ -305,7 +388,8 @@ fn assembled(
     let (soup, faces) = if ia.curved || ib.curved {
         // Counted and decided pair by pair, the operands refined where a
         // pair needs it.
-        let refined = pairs::refined(a.mesh(), b.mesh(), grow, tol, work)?;
+        let refined = pairs::refined_with(a.mesh(), b.mesh(), grow, join, tol, work)?;
+        *joined = refined.joined;
         let (ra, rb) = (Input::new(&refined.a, tol), Input::new(&refined.b, tol));
         let prims = curved::Curved::new(&ra, &rb, grow, tol);
         let refinement = assemble::Refinement {

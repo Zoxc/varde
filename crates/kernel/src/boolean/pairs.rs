@@ -118,16 +118,33 @@ pub(super) struct Refined {
     pub(super) leaf: [Vec<u32>; 2],
     pub(super) counts: Counts,
     pub(super) arcs: Vec<Arc>,
+    /// Whether some pair's ends were joined along walls' common direction
+    /// (`along_generators`).
+    pub(super) joined: bool,
+}
+
+/// [`refined_with`], joining ends along walls' common direction.
+#[cfg(test)]
+pub(super) fn refined(
+    a: &Mesh,
+    b: &Mesh,
+    grow: bool,
+    tol: &Tolerance,
+    work: &mut Work,
+) -> Result<Refined, KernelError> {
+    refined_with(a, b, grow, true, tol, work)
 }
 
 /// Counts `a` against `b` (whose meshes pass `check`, one of them with
 /// curved patches) and decides every pair of faces, refining both until
 /// it can: see the [module](self) docs. `grow` is whether `A` grows (a
-/// union) or shrinks, for ties.
-pub(super) fn refined(
+/// union) or shrinks, for ties; ends along walls' common direction are
+/// joined only if `join` (else such pairs are split as any other).
+pub(super) fn refined_with(
     a: &Mesh,
     b: &Mesh,
     grow: bool,
+    join: bool,
     tol: &Tolerance,
     work: &mut Work,
 ) -> Result<Refined, KernelError> {
@@ -152,14 +169,14 @@ pub(super) fn refined(
             let ia = Input::new(&meshes[0], tol);
             let ib = Input::new(&meshes[1], tol);
             let counts = counted(&ia, &ib, grow, tol, work)?;
-            match decide(&ia, &ib, &counts, floor, tol.resolution(), work)? {
-                Decision::Arcs(arcs) => Err((counts, arcs)),
+            match decide(&ia, &ib, &counts, floor, tol.resolution(), join, work)? {
+                Decision::Arcs(arcs, joined) => Err((counts, arcs, joined)),
                 Decision::Split(split) => Ok(split),
             }
         };
         let split = match split {
             Ok(split) => split,
-            Err((counts, arcs)) => {
+            Err((counts, arcs, joined)) => {
                 let [a, b] = meshes;
                 let [ra, rb] = &refiners;
                 return Ok(Refined {
@@ -169,6 +186,7 @@ pub(super) fn refined(
                     leaf: leaves,
                     counts,
                     arcs,
+                    joined,
                 });
             }
         };
@@ -190,9 +208,9 @@ pub(super) fn refined(
     Err(KernelError::TooComplex)
 }
 
-/// One round's counting of operands with curved patches: [`refined`]
+/// One round's counting of operands with curved patches: [`refined_with`]
 /// counts so every round, and [`touches`](super::touches) once, so its
-/// counts are `refined`'s first round's, bit for bit.
+/// counts are its first round's, bit for bit.
 pub(super) fn counted(
     a: &Input,
     b: &Input,
@@ -203,16 +221,19 @@ pub(super) fn counted(
     count::count(a, b, &Curved::new(a, b, grow, tol), tol, work)
 }
 
-/// What a round of decisions comes to: every pair's arcs, or the
-/// triangles of each operand to split first.
+/// What a round of decisions comes to: every pair's arcs (and whether
+/// some were joined along walls' common direction), or the triangles of
+/// each operand to split first.
 enum Decision {
-    Arcs(Vec<Arc>),
+    Arcs(Vec<Arc>, bool),
     Split([Vec<u32>; 2]),
 }
 
-/// What one pair comes to.
+/// What one pair comes to: its arcs, those joined along walls' common
+/// direction, or a split.
 enum PairDecision {
     Arcs(Vec<Arc>),
+    Joined(Vec<Arc>),
     Split { a: bool, b: bool },
 }
 
@@ -226,13 +247,15 @@ struct End {
 }
 
 /// Decides every pair of faces that may meet: see the [module](self)
-/// docs. Pieces no larger than `floor` across aren't split.
+/// docs. Pieces no larger than `floor` across aren't split; ends along
+/// walls' common direction are joined only if `join`.
 fn decide(
     a: &Input,
     b: &Input,
     counts: &Counts,
     floor: f64,
     resolution: f64,
+    join: bool,
     work: &mut Work,
 ) -> Result<Decision, KernelError> {
     // Where each crossing is.
@@ -296,13 +319,27 @@ fn decide(
     };
     let (cones_a, cones_b) = (cones(a, 0), cones(b, 1));
     let decided = par_map(&jobs, |(pair, ends)| {
-        pair_decision(a, b, *pair, ends, [&cones_a, &cones_b], floor, resolution)
+        pair_decision(
+            a,
+            b,
+            *pair,
+            ends,
+            [&cones_a, &cones_b],
+            floor,
+            resolution,
+            join,
+        )
     });
     let mut arcs = Vec::new();
+    let mut joined = false;
     let mut split = [Vec::new(), Vec::new()];
     for (&(pair, _), d) in jobs.iter().zip(decided) {
         match d.map_err(KernelError::Boolean)? {
             PairDecision::Arcs(mut here) => arcs.append(&mut here),
+            PairDecision::Joined(mut here) => {
+                joined = true;
+                arcs.append(&mut here);
+            }
             PairDecision::Split { a, b } => {
                 if a {
                     split[0].push(pair[0]);
@@ -320,10 +357,11 @@ fn decide(
         }
         return Ok(Decision::Split(split));
     }
-    Ok(Decision::Arcs(arcs))
+    Ok(Decision::Arcs(arcs, joined))
 }
 
 /// Decides the pair of triangle `p` of `A` and `q` of `B` with `ends`.
+#[allow(clippy::too_many_arguments)]
 fn pair_decision(
     a: &Input,
     b: &Input,
@@ -332,24 +370,24 @@ fn pair_decision(
     cones: [&[NormalCone]; 2],
     floor: f64,
     resolution: f64,
+    join: bool,
 ) -> Result<PairDecision, BooleanError> {
     let (pa, pb) = (&a.patches[p as usize], &b.patches[q as usize]);
     let planar = a.planar[p as usize] && b.planar[q as usize];
-    let arcs = |pairs: Vec<(End, End)>| {
-        PairDecision::Arcs(
-            pairs
-                .into_iter()
-                .map(|(x, y)| {
-                    let (plus, minus) = if x.sign > 0 { (x, y) } else { (y, x) };
-                    Arc {
-                        tris: [p, q],
-                        plus: plus.id,
-                        minus: minus.id,
-                    }
-                })
-                .collect(),
-        )
+    let joined = |pairs: Vec<(End, End)>| -> Vec<Arc> {
+        pairs
+            .into_iter()
+            .map(|(x, y)| {
+                let (plus, minus) = if x.sign > 0 { (x, y) } else { (y, x) };
+                Arc {
+                    tris: [p, q],
+                    plus: plus.id,
+                    minus: minus.id,
+                }
+            })
+            .collect()
     };
+    let arcs = |pairs: Vec<(End, End)>| PairDecision::Arcs(joined(pairs));
     if one_surface(a, p, b, q, resolution) {
         // The perturbation moves `A` off the surface both lie on, so
         // they don't meet: no loop, and no ends either.
@@ -381,11 +419,12 @@ fn pair_decision(
             _ => {}
         }
     }
-    if !ends.is_empty()
+    if join
+        && !ends.is_empty()
         && let Some(d) = parallel_generators(a, p, b, q, resolution)
-        && let Some(joined) = along_generators(a, p, b, q, ends, d, resolution)
+        && let Some(lines) = along_generators(a, p, b, q, ends, d, resolution)
     {
-        return Ok(arcs(joined));
+        return Ok(PairDecision::Joined(joined(lines)));
     }
     let size = |b: crate::patch::Bounds3| (b.max - b.min).max_element();
     let (split_a, split_b) = (size(pa.bounds()) > floor, size(pb.bounds()) > floor);

@@ -983,6 +983,22 @@ keeping forms and a difference turning the tools' round; a form the
 patches are off, and a plane form facing in, panicking in debug builds,
 and one within the fit passing.
 
+A boolean also refuses, in every build, a result with a triangle on a
+face with a plane form that faces against the form's normal at its
+middle (`boolean::facing`, `Invalid(Face)`): faces within a tie of each
+other gave such results in release builds, the triangles of one cap
+flush with the other's carrying the other's name (a unit cylinder less
+a tangent one whose top is a tie over its own, on a frame turned and
+some 3 700 from the origin; a cylinder with half its upper part cut
+away by a plane a tie off its axis, less a cylinder 100 resolutions
+into its wall across that plane and a tie under its top, where walls joined along their
+lines: almost half the top named after the other's cap; boxes on a grid turned off the axes,
+moved a tie along the counting's `UP`, one less the other). An
+operation that joined lines and so fails is tried again without them,
+as for any other failure. The refusal is part of each try's check
+(`boolean::checked`), so a result refused by it after the fold rule
+fired is also made again without the rule ("Unfold").
+
 ### Orientation (`mesh/orient.rs`)
 
 Topology makes each connected shell consistently oriented, so what is
@@ -2635,7 +2651,7 @@ Known gaps:
   with straight inner edges into pieces that fold for good (see "Flat
   faces" under Refinement). The extrude itself passes `check` without
   repair, so it never splits such a cap; but repair after a boolean, and
-  a boolean's pair refinement (`pairs::refined`, the same `Refiner`),
+  a boolean's pair refinement (`pairs::refined_with`, the same `Refiner`),
   do, whenever a cap piece meets a patch it has no certificate against
   (a horizontal cylinder across the cap). The folded piece goes into the
   result, and repair keeps splitting it until its pieces are flat and
@@ -3892,9 +3908,21 @@ the second crossing, the count 0 dropped the first, and the edge was
 taken for not crossing at all), and made to add up to the count the same
 way; ones the search didn't find go where it found the two meeting but
 kept no crossing (a hit the count overrules, as where the edge leaves a
-vertex on the patch's corner: nearest the patch), else where they came
+vertex on the patch's corner: nearest the patch), else, on a planar
+patch with just one end of the edge within the resolution of its
+corners' triangle, at that end (`end_on_triangle`), else where they came
 closest (the middle of the smallest pieces the search looked at, which
-had put such a crossing a sixteenth of the edge from the vertex).
+had put such a crossing a sixteenth of the edge from the vertex). The
+end: a cylinder's seam edge a fraction of a tie off a box's side has its
+rims and its wall's diagonal leave its ends on the side's plane, the
+count crosses them there, and the search, its roots a rounding past the
+ends, finds nothing; put where its closest pieces were, up to a 128th of
+a quarter arc along the edge (thousands of resolutions at fit 0.001,
+and the later root finding, its roots outside the edge, kept them
+there), the cut ran through those points, and the result was some 40
+resolutions times the cut's area off (a pin less a box, or, with walls
+along one direction joined, a pin poking into a quarter tube's corner
+at the tube's end).
 Those are marked as not solved (`Crossing::solved`, from `pick`): on a
 plane or a quadric they go to the edge's root on the patch crossed once
 placed (see "Cutting curved faces"), and they must lie on the other
@@ -4160,8 +4188,8 @@ other move a result by up to a resolution times their area, as without
 the joins. Against no joins: ellipses 405 → 578 work (545 M → 114 M
 units), the spans 207 → 511 (932 M → 123 M), the tilted walls 4 and 4,
 the pins 258 against at most 94; but some results that refinement
-got are lost (see "Joining lines on large pieces loses some results"
-in Known gaps). The grouping
+got failed, so an operation that fails (but for running out) after
+joining some lines is tried again without the joins (below). The grouping
 holds by construction: lines along `d` cross the cross-section at
 points at least `2θ/κ` apart, a line's two ends lie on one of them (up
 to where the counting put them), so groups within `θ/κ` are the
@@ -4172,6 +4200,31 @@ quarter of the grouping distance across) refused it and lost the
 results the join got right, so ends aren't checked. Leaving steep
 crossings to refinement (`sin θ` over 1/8 to 3/4) won back as many
 results as it lost, so every clear line is joined.
+
+**Tried again without the joins** (`boolean_within`): a pair's lines
+joined in an early round leave the pieces beside them as large as they
+were, and some results that refinement got right failed the hull,
+neighbour or fold rules from them (16 of the 864 ellipse operations
+above, against 189 won; 17 of the 1 080 spans, against 323). So when an
+operation that joined some lines fails, except by running out of the
+budget, it is tried again without joining any
+(`checked_with(.., join: false, ..)`, the pairs split as before),
+within as much work again as the first try took, but at least `AGAIN`
+= 150 000 units (and what is left of the budget). The second try's
+result if it passes, else the first try's error (or `TooComplex` where
+the budget, not the bound, stopped it). Unbounded, the second try ran
+most of the refusals on to the budget for one result in fifteen
+(ellipses 114 M → 322 M units, for 15); bounded by the first try's
+work alone it lost the spans' fast folds (a sliver under the resolution,
+folding in a few thousand units and refined in 50 000 to 850 000).
+Measured (ellipses and spans as above, against the build with walls
+along one direction neither certified nor joined): ellipses 591 work
+(578 without the second try, 405 with neither), lost 3 against 16,
+151 M units (114 M, 546 M); spans 537 (522, 216), lost 2 against 17,
+189 M (124 M, 930 M). The three left need over a million units
+refined. Results stay the same at 1 and 8 threads and on budget
+ladders (a budget under what the result took gives `TooComplex`, never
+another result).
 
 Two patches on **one surface** (their faces claim quadrics and points
 sampled on each lie on the other's within the resolution: a pin in a
@@ -4300,7 +4353,7 @@ million. Such gaps can't come from rounding a tangency (far below
 
 ### Cutting curved faces (`boolean/chain.rs`, `boolean/surface.rs`, `boolean/assemble/`)
 
-With curved operands, `boolean` takes `pairs::refined`'s operands,
+With curved operands, `boolean` takes `pairs::refined_with`'s operands,
 counts and arcs, builds the operands' tables again and `Curved`'s
 primitives (for `order`), and assembles as for flat operands, with these
 additions.
@@ -6355,24 +6408,19 @@ sampled points.
   of a wall by 10 to 30 resolutions fold in unions and differences.
   These failed before too (out of budget, or the same refusals after
   millions of units).
-- **Joining lines on large pieces loses some results**: joined in an
+- **Joining lines on large pieces loses a few results**: joined in an
   early round, a pair's lines leave the pieces beside them as large as
-  they were, and some results that refinement got right now fail the
-  hull or neighbour rules (`Hull`, `VertexNeighbours`, `EdgeNeighbours`)
-  or fold. Probed (see "Ends along one direction"): 16 of 864 ellipse
-  operations, mostly overlaps of a thousand resolutions (an ellipse
-  of half-axes 3 × 0.3 whose tip pokes 0.1 into a unit circle's wall at
-  fit 0.1: union and `B − A`; the same ellipses' sides at fit 0.01 and
-  0.001), and 17 of 1 080 on spans, all walls overlapping by 0.3
-  resolutions (just over `LENS`: a cylinder turned off the axes over
-  the middle of another at fit 0.1, `A − B` folds; the second's span
-  overlapping the first's top by `1e-5` at fits 0.01 and 0.001), and 1
-  of 1 152 on pins (radius 0.9 poking 0.1 out of its hole at fit 0.1,
-  the union), against 189, 321 and at least 165 won. Neither a larger
-  `LENS` (17 lost at 0.3 resolutions against 83 won) nor leaving steep
-  crossings to refinement wins more than it loses. Repro: the second operand a unit
-  circle round `(4 − 0.1, 0)` from 0.5 to 1.5, the first the ellipse
-  of half-axes 3 and 0.3 round the origin from 0 to 2, at fit 0.1.
+  they were, and some results that refinement gets right fail the hull
+  or neighbour rules or fold; the operation is then tried again without
+  the joins within a bound (see "Tried again without the joins"), which
+  wins back all but those that need more than that: of the probe's
+  ellipses 3 of 864 (an ellipse of half-axes 2 × 0.5 whose tip pokes 100
+  resolutions into a unit circle's wall at fit 0.001: union and `A − B`,
+  1.3 to 1.4 million units refined; 3 × 0.3 poking 1 000 resolutions in,
+  the intersection), of the spans 2 of 1 080 (a cylinder turned off the
+  axes over the middle of another, overlapping by 0.3 resolutions at fit
+  0.1, `A − B`: 850 000 units). A refusal that joined lines takes up to
+  twice its work, at least 150 000 units more.
 - Merging restores only whole nodes of the refinement tree with no finer
   neighbour: pieces next to a cut stay as refined.
 - **Tangent unions and thin overlaps run out**: what joining ends
@@ -8037,7 +8085,10 @@ parameter, or a split outside the patch bounds),
   result the clean-up without it gave (1 in about 440 000 steps of
   chains on such frames), so a result that fails the check after the
   rule fired is made again without it ("Unfold"). The soup is copied
-  before every clean-up for it.
+  before every clean-up for it. This fallback is inside each of the
+  booleans' tries (`checked_with`), the one joining walls' lines and the
+  one without the joins ("Tried again without the joins"), so a try's
+  error is the one its clean-up with the rule gave.
 - **Scales as built.** `Motion::scale` takes factors within
   `1/MAX_SCALE ..= MAX_SCALE` (`1e6`), a kernel bound beside the
   feature's `1e-3 ..= 1e3`. Where the plan made every circular cylinder
@@ -8119,6 +8170,17 @@ parameter, or a split outside the patch bounds),
   turned one). The tangent tally holds from 8 down to 1/32 and every
   tally at 2 and 1/4; at 1/2000 the tangent tally fell from 72 to 70,
   as with the plan's 64-resolution prototype. `LENS` is 1/4. On wider
-  probes it does turn some results into errors ("Joining lines on large
-  pieces loses some results", in the booleans' known gaps), far fewer
-  than it wins.
+  probes it does turn some results into errors, far fewer than it
+  wins, and most of those come back from a second try without the
+  joins.
+- **An operation that joined lines and fails is tried again without
+  them.** Not in the plan, which joined or split each pair once. The
+  second try is bounded by the first's work (at least 150 000 units),
+  so a refusal takes at most about twice as long; it wins back all but
+  a few of the results joining lost ("Tried again without the joins").
+  The rules tried before (a larger `LENS`, steep crossings left
+  to refinement) lost as many results as it won back.
+- **Booleans refuse results with a triangle facing against its face's
+  plane form** in every build, where only debug builds checked forms:
+  caps a tie apart gave such results (see "Forms"), one of them only
+  with walls' lines joined.

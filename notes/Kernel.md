@@ -286,7 +286,9 @@ a balanced tree.
    one surface have no cut. On walls along one direction the ends join
    line by line (grouped by where they lie in the cross-section) where
    the walls cross clearly, at an angle that leaves no sliver under a
-   quarter of the resolution thick. Any other pair is **refined**: both operands
+   quarter of the resolution thick; an operation that then fails is tried
+   once more without those joins, within as much work again as the first
+   try took (at least 150 000 units). Any other pair is **refined**: both operands
    are split red–green where the pair is, and everything is counted again;
    pairs at the size floor are decided by fixed rules (no certificate means
    no loop; ends joined in order round their middle).
