@@ -154,7 +154,8 @@ body {
 }
 button { font: inherit; color: inherit; }
 svg.i { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-/* Tool icons: notes/ui-mock-icons.html's defaults, the "outline with
+/* Tool icons: notes/ui-mock-icons.html's defaults (fillet and chamfer
+   from notes/ui-mock-fillet-chamfer.html instead), the "outline with
    accents, line only" set in its Distinct colours with purple constraints
    and the softer accent. A tool is drawn in its category's colour (--cc,
    darkened for some), its accent marks (.a, hollow dots .af) in the
@@ -653,8 +654,13 @@ const I = {
   extrude: '<path class="t" d="M4 15l8 4 8-4-8-4z"/><path class="a" d="M12 11V3M9 6l3-3 3 3"/>',
   revolve: '<path d="M20 12a8 8 0 1 1-2.6-5.9"/><path class="a" d="M17.5 2.5v4h4"/><path class="r" d="M12 7v10" stroke-dasharray="2 2"/>',
   hole: '<circle class="r" cx="12" cy="12" r="8"/><circle class="t" cx="12" cy="12" r="3.5"/><circle class="af" cx="12" cy="12" r="1.2"/>',
-  fillet: '<path d="M4 20v-4M16 4h4"/><path class="r" d="M4 16V4h12" stroke-dasharray="1.6 2"/><path class="a" d="M4 16A12 12 0 0 1 16 4"/>',
-  chamfer: '<path d="M5 20V10M10 5h10"/><path class="r" d="M5 10V5h5" stroke-dasharray="1.6 2"/><path class="a" d="M5 10l5-5"/>',
+  // Fillet and chamfer: the model's are a block with its edge rounded (lines
+  // along the round) or cut, the sketch's a corner with the fillet's centre
+  // and radii or the chamfer's cut-off corner hatched (notes/ui-mock-fillet-chamfer.html, B).
+  fillet: '<path d="M7.67 10L3.34 7.5v9L12 21.5v-4M3.34 7.5L12 2.5l4.33 2.5M12 21.5l8.66-5v-4"/><path class="a" d="M7.67 10C10.06 11.38 12 14.74 12 17.5M16.33 5C18.72 6.38 20.66 9.74 20.66 12.5M16.33 5L7.67 10M20.66 12.5L12 17.5"/><path class="a" stroke-width="1" opacity=".75" d="M18.49 6.92L9.84 11.92M20.08 9.67L11.42 14.67"/>',
+  chamfer: '<path d="M7.67 10L3.34 7.5v9L12 21.5v-4M3.34 7.5L12 2.5l4.33 2.5M12 21.5l8.66-5v-4"/><path class="a" d="M7.67 10L12 17.5M16.33 5l4.33 7.5M16.33 5L7.67 10M20.66 12.5L12 17.5"/>',
+  sfillet: '<path d="M4 20v-6M14 4h6"/><path class="r" d="M14 14H4M14 14V4" stroke-dasharray="1.6 2"/><path class="a" d="M4 14A10 10 0 0 1 14 4"/><circle class="af" cx="4" cy="14" r="1.5"/><circle class="af" cx="14" cy="4" r="1.5"/><circle class="af" cx="14" cy="14" r="1.3"/>',
+  schamfer: '<path d="M4 20v-6M14 4h6"/><path class="r" d="M4 14V4h10" stroke-dasharray="1.6 2"/><path class="r" stroke-width=".9" d="M4 10l6-6M4 6l2-2"/><path class="a" d="M4 14L14 4"/><circle class="af" cx="4" cy="14" r="1.5"/><circle class="af" cx="14" cy="4" r="1.5"/>',
   combine: '<rect x="3" y="3" width="11" height="11" rx="1.5"/><rect x="10" y="10" width="11" height="11" rx="1.5"/><path class="ta" stroke="none" d="M10 10h4v4h-4z"/>',
   measure: '<path class="t" d="M3 17L17 3l4 4L7 21z"/><path class="a" d="M7 13l2 2M10 10l2 2M13 7l2 2"/>',
   pushpull: '<rect class="t" x="4" y="13" width="16" height="7" rx="1"/><path class="a" d="M12 10V3M9 6l3-3 3 3"/>',
@@ -723,7 +729,7 @@ const I = {
 const CAT = {};
 for (const [cat, names] of Object.entries({
   sketch: 'sketch line rect circle arc polygon spline cat-draw',
-  mod: 'trim extend mirror skoffset pushpull fillet chamfer shell combine offset cat-smodify cat-modify',
+  mod: 'trim extend mirror skoffset sfillet schamfer pushpull fillet chamfer shell combine offset cat-smodify cat-modify',
   cstr: 'constrain coincident parallel perpendicular tangent equal cat-constrain',
   dim: 'dim cat-dim',
   solid: 'extrude revolve hole body paint sweep loft box move bmirror lpattern cpattern cat-create cat-transform',
@@ -1083,7 +1089,8 @@ const MODEL_GROUPS = [
 const SKETCH_GROUPS = [
   G('Create', [['line', 'Line', 'tool:line'], ['rect', 'Rectangle', 'tool:rect'], ['circle', 'Circle', 'tool:circle'], ['arc', 'Arc', 'tool:arc'],
                ['polygon', 'Polygon', 'tool:polygon'], ['spline', 'Spline', 'tool:spline']]),
-  G('Modify', [['trim', 'Trim', 'tool:trim'], ['extend', 'Extend', 'tool:extend'], ['skoffset', 'Offset', 'tool:offset'], ['mirror', 'Mirror', 'tool:mirror']]),
+  G('Modify', [['trim', 'Trim', 'tool:trim'], ['extend', 'Extend', 'tool:extend'], ['skoffset', 'Offset', 'tool:offset'], ['mirror', 'Mirror', 'tool:mirror'],
+               ['sfillet', 'Fillet', 'tool:fillet'], ['schamfer', 'Chamfer', 'tool:chamfer']]),
   G('Constraints', [['coincident', 'Coincident', 'tool:constrain'], ['parallel', 'Parallel', 'tool:constrain'], ['perpendicular', 'Perpendicular', 'tool:constrain'],
                     ['tangent', 'Tangent', 'tool:constrain'], ['equal', 'Equal', 'tool:constrain']]),
   G('Dimension', [['dim', 'Dimension', 'tool:dim']]),
@@ -1178,6 +1185,7 @@ const TOOLS = {
   dim: Tool('Dimension', 'D', 'Select geometry to dimension'), constrain: Tool('Constrain', 'K', 'Select entities to constrain'),
   polygon: Tool('Polygon', '', 'Click center point'), spline: Tool('Spline', '', 'Click first fit point'),
   extend: Tool('Extend', '', 'Click a segment to extend'), mirror: Tool('Mirror', '', 'Select entities to mirror'),
+  fillet: Tool('Fillet', '', 'Click a corner to fillet'), chamfer: Tool('Chamfer', '', 'Click a corner to chamfer'),
 };
 
 function hints() {

@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fillet Chamfer Icons</title>
+<!--
+  Alternatives for the fillet and chamfer icons, model and sketch, in the
+  default style of notes/ui-mock.html (outline with accents, line only, the
+  Distinct palette's modify colours). "Before" is what the mock has now; the
+  options aim to tell fillet from chamfer and model from sketch at a glance.
+  Each is shown light and dark, at four sizes, and in a toolbar beside its
+  neighbours.
+-->
+<style>
+:root {
+  --text: #2b3036; --muted: #6c747d; --faint: #9aa2ab;
+  --desk: #d3d8e1; --panel: #fafafb; --line: rgba(20, 30, 40, .11); --hl: #e3f5da;
+}
+.pane[data-theme="light"] {
+  --text: #2b3036; --muted: #6c747d; --faint: #9aa2ab; --panel: #fafafb; --line: rgba(20, 30, 40, .11); --hl: #e3f5da;
+  --i-sketch: #0a95ad; --i-mod: #cf3f30; --ia-sketch: #e88a00; --ia-mod: #2f6fd8;
+}
+.pane[data-theme="dark"] {
+  --text: #e4e7ea; --muted: #9aa3ac; --faint: #69727c; --panel: #212228; --line: rgba(255, 255, 255, .08); --hl: rgba(118, 204, 96, .15);
+  --i-sketch: #3cc3d9; --i-mod: #ff7a66; --ia-sketch: #ffad33; --ia-mod: #78aaff;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --text: #e4e7ea; --muted: #9aa3ac; --desk: #101216; --panel: #212228; --line: rgba(255, 255, 255, .08); }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--desk); color: var(--text); font: 12.5px/1.4 system-ui, "Inter", "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
+
+header { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+header h1 { margin: 0; font-size: 15px; }
+header label { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+header p { margin: 0; color: var(--muted); }
+
+main { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 16px; align-items: start; }
+@media (max-width: 1100px) { main { grid-template-columns: 1fr; } }
+.pane { min-width: 0; display: flex; flex-direction: column; gap: 12px; color: var(--text); }
+.card { background: var(--panel); border-radius: 10px; padding: 12px 14px 14px; box-shadow: 0 0 0 1px rgba(0,0,0,.12), 0 8px 28px rgba(20, 15, 40, .16); }
+.card.before { box-shadow: 0 0 0 1px rgba(0,0,0,.12), inset 4px 0 0 var(--faint), 0 8px 28px rgba(20, 15, 40, .16); }
+.card h2 { margin: 0; font-size: 13px; }
+.card h2 .k { display: inline-grid; place-items: center; width: 20px; height: 20px; margin-right: 6px; border-radius: 5px; background: var(--hl); font-size: 11.5px; }
+.card .d { margin: 3px 0 10px; color: var(--muted); }
+
+.quad { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.cell { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px 4px 6px; border-radius: 8px; border: 1px solid var(--line); min-width: 0; }
+.cell .l { font-size: 10.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.cell .sizes { display: flex; align-items: flex-end; gap: 8px; }
+.strips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.strip { display: flex; align-items: center; gap: 2px; padding: 3px 6px; border-radius: 8px; border: 1px solid var(--line); }
+.strip .n { margin-right: 6px; color: var(--faint); font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
+.strip .tb { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 6px; }
+.strip .tb.hit { background: var(--hl); }
+
+/* Icons: the mock's "outline with accents, line only" style. */
+svg.i { flex: none; fill: none; stroke: var(--cc); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+svg.c-mod { --cc: color-mix(in srgb, var(--i-mod) 90%, #000); --ca: var(--ia-mod); }
+svg.c-sketch { --cc: var(--i-sketch); --ca: var(--ia-sketch); }
+svg.i :is(.a, .af) { stroke: color-mix(in srgb, var(--ca) 60%, var(--cc)); }
+svg.i .af { fill: var(--panel); }
+svg.i .r { stroke: color-mix(in srgb, color-mix(in srgb, var(--text) 52%, var(--panel)) 92%, var(--cc)); }
+svg.i :is(.t, .ta) { fill: none; }
+svg.i .thin { stroke-width: 1; opacity: .75; }
+svg.i .hatch { stroke-width: .9; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Fillet and chamfer icons</h1>
+  <label><input type="checkbox" id="skc">Sketch fillet and chamfer in the sketch colour</label>
+  <p>Left light, right dark. Sizes 40, 24, 19 (toolbar) and 16 (menus).</p>
+</header>
+<main>
+  <section class="pane" data-theme="light"></section>
+  <section class="pane" data-theme="dark"></section>
+</main>
+<script>
+// ---------------------------------------------------------------- helpers
+const f = n => String(+n.toFixed(2));
+const pl = pts => 'M' + pts.map(p => f(p[0]) + ' ' + f(p[1])).join('L');
+const P = (d, cls = '', extra = '') => `<path${cls ? ` class="${cls}"` : ''} d="${d}"${extra}/>`;
+const dot = (x, y, r = 1.5) => `<circle class="af" cx="${f(x)}" cy="${f(y)}" r="${r}"/>`;
+const DASH = ' stroke-dasharray="1.6 2"';
+
+// A corner's cut in (u, v), v up, the corner at (W, H): points from the top
+// tangent (W - r, H) to the side's (W, H - r).
+function corner(kind, W, H, r, n = 12) {
+  const pts = [];
+  for (let i = 0; i <= n; i++) {
+    const t = i / n, a = t * Math.PI / 2;
+    pts.push(kind === 'fillet' ? [W - r + r * Math.sin(a), H - r + r * Math.cos(a)] : [W - r + r * t, H - r * t]);
+  }
+  return pts;
+}
+
+// An isometric block whose top right edge is filleted or chamfered; the new
+// face in the accent. `stripes` adds lines along the round so it reads curved.
+function isoBlock(kind, { stripes = false, r = .5 } = {}) {
+  const W = 1, D = 1, H = .9, s = 10;
+  const p = ([x, y, z]) => [12 + (x - y) * .866 * s, 11.5 + (x + y) * .5 * s - z * s];
+  const L = pts => pl(pts.map(p));
+  const cut = corner(kind, W, H, r), at = y => cut.map(([x, z]) => [x, y, z]);
+  let o = P(L([[W - r, D, H], [0, D, H], [0, D, 0], [W, D, 0], [W, D, H - r]])
+    + L([[0, D, H], [0, 0, H], [W - r, 0, H]]) + L([[W, D, 0], [W, 0, 0], [W, 0, H - r]]));
+  o += P(L(at(D)) + L(at(0)) + L([[W - r, 0, H], [W - r, D, H]]) + L([[W, 0, H - r], [W, D, H - r]]), 'a');
+  if (stripes && kind === 'fillet')
+    o += P([4, 8].map(i => L([[...cut[i]].toSpliced(1, 0, 0), [...cut[i]].toSpliced(1, 0, D)])).join(''), 'a thin');
+  return o;
+}
+
+// A profile with its top right corner cut, extruded back obliquely.
+function obliqueBlock(kind) {
+  const r = 6, ox = 6, oy = -6;
+  const cut = corner(kind, 15, -9, r).map(([u, v]) => [u, -v]); // (9,9) to (15,15)
+  const back = pts => pts.map(([x, y]) => [x + ox, y + oy]);
+  let o = P(pl([[9, 9], [3, 9], [3, 21], [15, 21], [15, 15]]) + pl(back([[3, 9], [9, 9]])) + pl(back([[15, 15], [15, 21]]))
+    + pl([[3, 9], [9, 3]]) + pl([[15, 21], [21, 15]]));
+  o += P(pl(cut) + pl(back(cut)) + pl([[9, 9], [15, 3]]) + pl([[15, 15], [21, 9]]), 'a');
+  return o;
+}
+
+// A square with every corner cut, as segments [p, q, accent], counterclockwise
+// in (x, y) with y away from the viewer; `sharp` marks vertices that are creases.
+function cutSquare(kind, r) {
+  const C = [[0, 0], [1, 0], [1, 1], [0, 1]], segs = [];
+  const pts = [];
+  C.forEach((c, i) => {
+    const pv = C[(i + 3) % 4], nx = C[(i + 1) % 4];
+    const dIn = [c[0] - pv[0], c[1] - pv[1]], dOut = [nx[0] - c[0], nx[1] - c[1]];
+    const a = [c[0] - dIn[0] * r, c[1] - dIn[1] * r], b = [c[0] + dOut[0] * r, c[1] + dOut[1] * r];
+    const ctr = [a[0] + dOut[0] * r, a[1] + dOut[1] * r];
+    const arc = [];
+    for (let k = 0; k <= 12; k++) {
+      const t = k / 12, th = t * Math.PI / 2;
+      arc.push(kind === 'fillet'
+        ? [ctr[0] - dOut[0] * r * Math.cos(th) + dIn[0] * r * Math.sin(th), ctr[1] - dOut[1] * r * Math.cos(th) + dIn[1] * r * Math.sin(th)]
+        : [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
+    }
+    pts.push({ p: arc[0], sharp: kind === 'chamfer', acc: true });
+    for (let k = 1; k < 12; k++) pts.push({ p: arc[k], sharp: false, acc: true });
+    pts.push({ p: arc[12], sharp: kind === 'chamfer', acc: false });
+  });
+  for (let i = 0; i < pts.length; i++) segs.push({ p: pts[i].p, q: pts[(i + 1) % pts.length].p, acc: pts[i].acc, sharp: pts[(i + 1) % pts.length].sharp });
+  return segs;
+}
+// Merges segments into polylines by accent: { cc: d, a: d }.
+function strokes(segs, proj) {
+  const d = { cc: '', a: '' };
+  let run = null, cls = null;
+  const flush = () => { if (run) d[cls] += pl(run.map(proj)); run = null; };
+  for (const s of segs) {
+    const c = s.acc ? 'a' : 'cc';
+    if (run && c === cls && run[run.length - 1] === s.p) run.push(s.q);
+    else { flush(); run = [s.p, s.q]; cls = c; }
+  }
+  flush();
+  return d;
+}
+
+// The cut square as a slab seen isometrically.
+function slab(kind) {
+  const r = kind === 'fillet' ? .24 : .26, h = .32, s = 11, cy = 12 - (s - h * s) / 2;
+  const p = z => ([x, y]) => [12 + (x - y) * .866 * s, cy + (x + y) * .5 * s - z * s];
+  const segs = cutSquare(kind, r);
+  const vis = s => { const n = [s.q[1] - s.p[1], -(s.q[0] - s.p[0])]; return n[0] + n[1] > 1e-6; };
+  const top = strokes(segs, p(h)), bot = strokes(segs.filter(vis), p(0));
+  let vc = '', va = '';
+  segs.forEach((s, i) => {
+    const nx = segs[(i + 1) % segs.length], v1 = vis(s), v2 = vis(nx);
+    if (v1 !== v2 || (s.sharp && v1 && v2)) {
+      const d = pl([p(h)(s.q), p(0)(s.q)]);
+      if (s.acc && nx.acc) va += d; else vc += d;
+    }
+  });
+  return P(top.cc + bot.cc + vc) + P(top.a + bot.a + va, 'a');
+}
+// The cut square flat, as drawn in a sketch, with the picked corner's ends.
+function flatSquare(kind) {
+  const r = .3, p = ([x, y]) => [4 + x * 16, 4 + y * 16];
+  const d = strokes(cutSquare(kind, r), p);
+  return P(d.cc) + P(d.a, 'a') + dot(20 - r * 16, 4) + dot(20, 4 + r * 16);
+}
+
+// Hatched material clipped to a shape: a section through the solid.
+let clipN = 0;
+function hatched(shape) {
+  const id = 'hc' + ++clipN;
+  let h = '';
+  for (let c = -24; c <= 24; c += 3.2) h += `M${f(c)} 0L${f(c + 24)} 24`;
+  return `<clipPath id="${id}"><path d="${shape}"/></clipPath><path class="r hatch" clip-path="url(#${id})" d="${h}"/>`;
+}
+
+// ---------------------------------------------------------------- options
+// Each: model fillet, model chamfer, sketch fillet, sketch chamfer.
+const OPTIONS = [
+  {
+    key: '–', name: 'Before', before: true,
+    desc: 'The mock’s icons now: the same L corner four times, only the cut and its size differ.',
+    mf: () => '<path d="M4 20v-4M16 4h4"/><path class="r" d="M4 16V4h12" stroke-dasharray="1.6 2"/><path class="a" d="M4 16A12 12 0 0 1 16 4"/>',
+    mc: () => '<path d="M5 20V10M10 5h10"/><path class="r" d="M5 10V5h5" stroke-dasharray="1.6 2"/><path class="a" d="M5 10l5-5"/>',
+    sf: () => '<path d="M5 20v-8M12 5h7"/><path class="r" d="M5 12V5h7" stroke-dasharray="1.6 2"/><path class="a" d="M5 12a7 7 0 0 1 7-7"/>',
+    sc: () => '<path d="M5 20v-9M13 5h6"/><path class="r" d="M5 11V5h8" stroke-dasharray="1.6 2"/><path class="a" d="M5 11l8-6"/>',
+  },
+  {
+    key: 'A', name: 'Block edge, sketch corner',
+    desc: 'Model: an isometric block with its top edge rounded or cut, the new face in the accent. Sketch: a large flat corner with the sketch’s hollow end points.',
+    mf: () => isoBlock('fillet'),
+    mc: () => isoBlock('chamfer'),
+    sf: () => P('M4 20v-7M13 4h7') + P('M4 13V4h9', 'r', DASH) + P('M4 13a9 9 0 0 1 9-9', 'a') + dot(4, 13) + dot(13, 4),
+    sc: () => P('M4 20v-7M13 4h7') + P('M4 13V4h9', 'r', DASH) + P('M4 13l9-9', 'a') + dot(4, 13) + dot(13, 4),
+  },
+  {
+    key: 'B', name: 'Curved stripes, radius and cut-off',
+    desc: 'Model as A, with lines along the round so it reads curved against the chamfer’s flat face. Sketch: the fillet shows its centre and radii, the chamfer hatches the corner it removes.',
+    mf: () => isoBlock('fillet', { stripes: true }),
+    mc: () => isoBlock('chamfer'),
+    sf: () => P('M4 20v-6M14 4h6') + P('M14 14H4M14 14V4', 'r', DASH) + P('M4 14a10 10 0 0 1 10-10', 'a') + dot(4, 14) + dot(14, 4) + dot(14, 14, 1.3),
+    sc: () => P('M4 20v-6M14 4h6') + P('M4 14V4h10', 'r', DASH) + P('M4 10l6-6M4 6l2-2', 'r hatch') + P('M4 14l10-10', 'a') + dot(4, 14) + dot(14, 4),
+  },
+  {
+    key: 'C', name: 'Profile and its extrusion',
+    desc: 'Sketch: a closed rectangle with one corner rounded or cut. Model: the same shape extruded, its front face showing the profile.',
+    mf: () => obliqueBlock('fillet'),
+    mc: () => obliqueBlock('chamfer'),
+    sf: () => P('M13 6H4v13h16v-6') + P('M13 6a7 7 0 0 1 7 7', 'a') + dot(13, 6) + dot(20, 13),
+    sc: () => P('M13 6H4v13h16v-6') + P('M13 6l7 7', 'a') + dot(13, 6) + dot(20, 13),
+  },
+  {
+    key: 'D', name: 'Rounded square, clipped square',
+    desc: 'Every corner cut, so the outline itself tells them apart: a rounded square against an octagon. Model: the shape as a slab.',
+    mf: () => slab('fillet'),
+    mc: () => slab('chamfer'),
+    sf: () => flatSquare('fillet'),
+    sc: () => flatSquare('chamfer'),
+  },
+  {
+    key: 'E', name: 'Rolling ball, equal legs, section',
+    desc: 'Sketch: the fillet as the ball rolled into an inside corner, the chamfer with equal-length ticks on its legs. Model: a section through the solid, its material hatched.',
+    mf: () => { const s = 'M3 21V5H13A8 8 0 0 1 21 13V21Z'; return hatched(s) + P('M13 5H3V21H21V13') + P('M13 5a8 8 0 0 1 8 8', 'a'); },
+    mc: () => { const s = 'M3 21V5H13L21 13V21Z'; return hatched(s) + P('M13 5H3V21H21V13') + P('M13 5l8 8', 'a'); },
+    sf: () => P('M4 3v9M12 20h9') + '<circle class="r" cx="12" cy="12" r="8"' + DASH + '/>' + P('M4 12a8 8 0 0 0 8 8', 'a') + dot(4, 12) + dot(12, 20) + dot(12, 12, 1.3),
+    sc: () => P('M4 3v9M12 20h9') + P('M4 12v8h8', 'r thin') + P('M2.5 16h3M8 18.5v3', 'a') + P('M4 12l8 8', 'a') + dot(4, 12) + dot(12, 20),
+  },
+];
+
+// Neighbours in the toolbars, from notes/ui-mock.html.
+const NB = {
+  pushpull: '<rect class="t" x="4" y="13" width="16" height="7" rx="1"/><path class="a" d="M12 10V3M9 6l3-3 3 3"/>',
+  shell: '<path class="t" d="M4 8l8-4 8 4v8l-8 4-8-4z"/><path class="a" d="M8 9.5l4-2 4 2v5l-4 2-4-2z"/>',
+  combine: '<rect x="3" y="3" width="11" height="11" rx="1.5"/><rect x="10" y="10" width="11" height="11" rx="1.5"/>',
+  trim: '<circle cx="6" cy="7" r="2.5"/><circle cx="6" cy="17" r="2.5"/><path class="a" d="M8.2 8.4L20 17M8.2 15.6L20 7"/>',
+  extend: '<path d="M3 19l7-7"/><path class="a" d="M10 12l6.5-6.5" stroke-dasharray="2 2.2"/><path class="r" d="M13 2l8 8"/><circle class="af" cx="16.5" cy="5.5" r="1.4"/>',
+  skoffset: '<path class="r" d="M4 20c2-7 7-12 16-13"/><path d="M3 13c2-4 6-7 11-7.8"/><path class="a" d="M10.5 14.5L8 11M7.5 13.3L8 11l2.4.2"/>',
+  mirror: '<path class="r" d="M12 3v18" stroke-dasharray="2 2"/><path class="t" d="M9 9L3 19h6z"/><path d="M15 9l6 10h-6z"/><path class="a" d="M7 6.5C9 3 15 3 17 6.5M17.3 3.8L17 6.5l-2.6-.6"/>',
+};
+
+// ---------------------------------------------------------------- page
+const svg = (body, cat, px) => `<svg class="i c-${cat}" viewBox="0 0 24 24" width="${px}" height="${px}">${body}</svg>`;
+const SIZES = [40, 24, 19, 16];
+const CELLS = [['mf', 'Fillet', 'model'], ['mc', 'Chamfer', 'model'], ['sf', 'Sketch fillet', 'sketch'], ['sc', 'Sketch chamfer', 'sketch']];
+
+function render() {
+  const sk = document.getElementById('skc').checked ? 'sketch' : 'mod';
+  const catOf = m => m === 'sketch' ? sk : 'mod';
+  const card = o => {
+    const cell = ([id, label, m]) => `<div class="cell">
+      <div class="sizes">${SIZES.map(px => svg(o[id](), catOf(m), px)).join('')}</div>
+      <div class="l">${label}</div></div>`;
+    const tb = (body, cat, hit) => `<span class="tb${hit ? ' hit' : ''}">${svg(body, cat, 19)}</span>`;
+    const model = [tb(NB.pushpull, 'mod'), tb(o.mf(), 'mod', 1), tb(o.mc(), 'mod', 1), tb(NB.shell, 'mod'), tb(NB.combine, 'mod')];
+    const sketch = [tb(NB.trim, 'mod'), tb(NB.extend, 'mod'), tb(o.sf(), sk, 1), tb(o.sc(), sk, 1), tb(NB.skoffset, 'mod'), tb(NB.mirror, 'mod')];
+    return `<div class="card${o.before ? ' before' : ''}">
+      <h2><span class="k">${o.key}</span>${o.name}</h2>
+      <p class="d">${o.desc}</p>
+      <div class="quad">${CELLS.map(cell).join('')}</div>
+      <div class="strips">
+        <div class="strip"><span class="n">Model</span>${model.join('')}</div>
+        <div class="strip"><span class="n">Sketch</span>${sketch.join('')}</div>
+      </div></div>`;
+  };
+  for (const pane of document.querySelectorAll('.pane')) pane.innerHTML = OPTIONS.map(card).join('');
+}
+document.getElementById('skc').addEventListener('change', render);
+render();
+</script>
+</body>
+</html>
