@@ -7384,7 +7384,9 @@ coplanar side faces.
 
 **The session** (`app/src/doc/extrude.rs`, `Doc::extrude`, an
 `ExtrudeSession`) is started by the Extrude tool (`X`, `Look::StartExtrude`,
-outside sketches, where `X` turns geometry into construction; again, or `Esc`, cancels it) or by
+outside sketches, where `X` turns geometry into construction; with no
+sketch yet too, the panel waiting for one; a revolve or combine set up
+is dropped for it; again, or `Esc`, cancels it) or by
 editing an extrude (`Look::EditFeature` on one: a double-click in the
 Timeline, or `Enter` with it selected). It never runs with a sketch
 session, nor in a read-only document. It holds: the extrude edited, if

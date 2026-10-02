@@ -125,9 +125,6 @@ pub struct DocumentState<'a> {
     /// The measure tool, while it's in use: never with a sketch or an
     /// operation being set up.
     pub measure: Option<crate::MeasureState<'a>>,
-    /// Whether there's a sketch to extrude or revolve regions of: the
-    /// Extrude and Revolve tools work outside sketches then.
-    pub extrudable: bool,
     /// The sketches that don't solve, as regenerating found.
     pub unsolved: &'a [FeatureId],
     /// The features that failed and why, as regenerating found, in the
@@ -173,7 +170,7 @@ impl DocumentState<'_> {
     pub(crate) fn keys(&self) -> DocumentKeys {
         DocumentKeys::new(self.editable(), self.selected_feature, self.sketch)
             .with_face_selected(self.face_selected())
-            .with_extrude(self.extrudable, self.extrude.as_ref())
+            .with_extrude(self.extrude.as_ref())
             .with_revolve(self.revolve.as_ref())
             .with_combine(self.combinable, self.combine.as_ref())
             .with_measure(self.measure.is_some())

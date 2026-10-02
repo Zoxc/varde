@@ -129,14 +129,10 @@ fn b_starts_it_the_viewport_and_objects_pick_and_enter_commits_one_undo_step() {
     assert_eq!(session.target, None);
     assert_eq!(session.picking, CombinePick::Target);
     assert!(plates.last_draft().is_none());
-    // The cursor picks the model for it, and no other tool starts.
+    // The cursor picks the model for it, and the measure tool doesn't
+    // start (Sketch, Extrude and Revolve would take its place).
     assert!(plates.doc.picks());
-    for pressed in ["x", "o", "s", "i"] {
-        assert!(
-            press_in(&plates.doc, character(pressed)).is_none(),
-            "{pressed}"
-        );
-    }
+    assert!(press_in(&plates.doc, character("i")).is_none());
 
     // A click in the viewport picks the target, the clicks go on to the
     // tools, and Objects' rows pick them.
@@ -465,12 +461,24 @@ fn other_tools_end_it_and_it_ends_them() {
     plates.doc.look(Look::StartCombine);
     assert!(plates.doc.measure.is_none());
     assert!(plates.doc.combine.is_some());
-    // Not with an extrude, nor a revolve.
-    plates.doc.look(Look::StartExtrude);
-    plates.doc.look(Look::StartRevolve);
+    // Not with the measure tool; an extrude or a revolve takes its place,
+    // and a new sketch.
     plates.doc.look(Look::StartMeasure);
-    assert!(plates.doc.extrude.is_none() && plates.doc.revolve.is_none());
-    assert!(plates.doc.measure.is_none());
+    assert!(plates.doc.measure.is_none() && plates.doc.combine.is_some());
+    plates.doc.look(Look::StartExtrude);
+    assert!(plates.doc.combine.is_none() && plates.doc.extrude.is_some());
+    plates.doc.look(Look::StartCombine);
+    assert!(plates.doc.combine.is_none(), "not over an extrude");
+    plates.doc.look(Look::Escape);
+    plates.doc.look(Look::StartCombine);
+    plates.doc.look(Look::StartRevolve);
+    assert!(plates.doc.combine.is_none() && plates.doc.revolve.is_some());
+    plates.doc.look(Look::Escape);
+    plates.doc.look(Look::StartCombine);
+    plates.doc.look(Look::PickPlane);
+    assert!(plates.doc.combine.is_none() && plates.doc.picking_plane.is_some());
+    plates.doc.look(Look::Escape);
+    plates.doc.look(Look::StartCombine);
     // Editing an extrude drops it, and it drops an extrude.
     let extrude = plates.doc.editor.document().features()[1].id;
     plates.doc.look(Look::EditFeature(extrude));

@@ -222,8 +222,10 @@ fn run(seed: u64, steps: usize) {
         let roll = rng.below(59);
         let mut escaped = false;
         let mut committed = false;
-        // While revolving, `X` and `Delete` don't act.
+        // While revolving, `Delete` doesn't act, and `X` swaps it for an
+        // extrude.
         let mut quiet = false;
+        let mut swapped = false;
         let what = format!("roll {roll}");
         match roll {
             0 => lathe.doc.look(Look::StartRevolve),
@@ -352,7 +354,8 @@ fn run(seed: u64, steps: usize) {
                     c => keyboard::Key::Character(c.into()),
                 };
                 escaped = pressed == "Escape" && lathe.doc.operating();
-                quiet = lathe.doc.revolve.is_some() && matches!(pressed, "x" | "Delete");
+                quiet = lathe.doc.revolve.is_some() && pressed == "Delete";
+                swapped = lathe.doc.revolve.is_some() && pressed == "x";
                 committed = pressed == "Enter";
                 // `Esc` is the app's, not a binding's.
                 if pressed == "Escape" {
@@ -479,6 +482,11 @@ fn run(seed: u64, steps: usize) {
             assert_eq!(*after, document, "step {step}: a key acted");
             let revolving = lathe.doc.revolve.is_some() && lathe.doc.extrude.is_none();
             assert!(revolving, "step {step}: {what}");
+        }
+        if swapped {
+            assert_eq!(*after, document, "step {step}: X changed the document");
+            let extruding = lathe.doc.extrude.is_some() && lathe.doc.revolve.is_none();
+            assert!(extruding, "step {step}: {what}");
         }
         if committed && lathe.doc.editor.revision() != revision {
             // One undo step, and redo puts it back.

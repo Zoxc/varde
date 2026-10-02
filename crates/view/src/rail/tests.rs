@@ -140,7 +140,6 @@ fn the_top_row_s_letters_open_the_mode_s_sets() {
     // is X.
     let keys = DocumentKeys {
         editable: true,
-        extrudable: true,
         ..DocumentKeys::default()
     };
     assert!(matches!(
@@ -199,7 +198,6 @@ fn a_set_index_past_the_mode_s_sets_has_no_letters() {
     let keys = DocumentKeys {
         rail: Some(RailOpen { set: 0, row: 0 }),
         editable: true,
-        extrudable: true,
         ..DocumentKeys::default()
     };
     assert!(matches!(

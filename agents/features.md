@@ -197,8 +197,7 @@ kept as it was while `Doc::placement` knows none), so the viewport's
 hit testing, snapping, grid and anchors, Home and the camera facing it,
 reads it from there; the extrude and revolve sessions' candidates
 (`RegionPick::candidates`, given `Doc::placement`, which their regions,
-handle and axis are drawn on) leave out a sketch with none, and
-`Doc::extrudable` counts only placed sketches. A sketch on a face that
+handle and axis are drawn on) leave out a sketch with none. A sketch on a face that
 failed to be placed is still listed in the Timeline, red with its
 reason, and isn't drawn; entering it asks for another plane first (Change
 plane, `agents/sketch.md`), which `SetSketchPlane` puts it on, a face's
@@ -367,13 +366,14 @@ when the sketch changes, the edited feature's missing ones counted),
 Bodies list shows them, `Doc::body_targets`) and `TypedText` (a typed
 value's text, last value and error, read for an `Ask`, pinned to the
 design's units when they change). It's started by `Look::StartRevolve`
-(see "Starting it" below; again, or `Esc`, cancels it; outside sketches and an extrude, in a
+(see "Starting it" below; again, or `Esc`, cancels it; outside sketches, in a
 document that can be changed; the sketch selected in the Timeline is
 the source) or by editing a revolve (`Look::EditFeature`, a
 double-click or `Enter` on its row, or Edit revolve in its menu), and
-never runs with a sketch session or an extrude session: editing an
-extrude drops it, editing a revolve drops an extrude's, entering a
-sketch drops either. A new one starts with a full turn, "180°" in the
+never runs with a sketch session or another operation: starting or
+editing an extrude or combine drops it, starting or editing a revolve
+drops theirs, and entering a sketch or picking a new one's plane drops
+any. A new one starts with a full turn, "180°" in the
 first angle's field and "90°" in the second, a new body.
 
 - **Picking** (`RevolveSession::picking`, `RevolvePick`): clicks pick
@@ -469,24 +469,26 @@ The status bar says "New revolve · 1 region picked · about Line 3"
 (or "pick the regions to revolve", "pick the axis"), with the hints
 "Pick regions" or "Pick the axis", `Enter` OK and `Esc` Cancel; the
 toolbar's tag "Revolve" or "Editing Revolve 1". While a revolve is set
-up `S`, `X`, `B` and the selected feature's `Enter` and `Delete` don't act,
-and the cursor doesn't pick the model.
+up `B` and the selected feature's `Enter` and `Delete` don't act, `S`
+and `X` drop it for a new sketch or an extrude, and the cursor doesn't
+pick the model.
 
 **Starting it**: the toolbar's Revolve button after Extrude, the rail's
 Create set (Sketch, Extrude, Revolve; its list's letter `O`) and the key
 `O` all send `Look::StartRevolve` through one binding
 (`shortcut::revolve_binding`, `Shortcut::REVOLVE`): enabled outside a
-sketch and an extrude session, with a sketch to take regions of (the
-extrude's `extrudable`: a visible sketch or the selected one) or a
-revolve being set up, in a document that can be changed. The button and
+sketch, in a document that can be changed, as Sketch and Extrude are:
+with no sketch yet too (the panel waits for one, "Click regions"), and
+while another operation is set up, which it drops. The button and
 the rail's entry are highlighted while a revolve is set up. `O` is the
 UI mock's key: its model rail's sets open with `Q` .. `T` (five sets),
 so `R` would open its fourth and Revolve takes `O`, Extrude `X` (the
 app's model rail has three sets since Combine's Modify set, so `E` opens
 the third and Extrude is `X` too). In a sketch `O` is the Offset tool's
 and `X` construction's; outside one they're free, and the rail's set
-keys reach `O` only with a ninth set. `X` is disabled while a revolve
-is set up and `O` while an extrude is, and both while a combine is.
+keys reach `O` only with a ninth set. `X` while a revolve is set up,
+`O` while an extrude is, and both and `S` while a combine is, swap it
+for theirs.
 
 **The Timeline** shows a revolve with its own icon (`Icon::Revolve`,
 the icon mock's: an open circle with an arrowhead about a dashed axis)
@@ -705,8 +707,8 @@ toolbar's tag "Combine" or "Editing Combine 1". `B` (`Shortcut::COMBINE`,
 sketch) is enabled outside a sketch and the other operations, with two
 bodies or more (`Doc::combinable`, `DocumentKeys::combinable`) or a
 combine being set up, in a document that can be changed. While it's set
-up `S`, `X`, `O`, `I` and the selected feature's `Enter` and `Delete`
-don't act.
+up `I` and the selected feature's `Enter` and `Delete` don't act; `S`,
+`X` and `O` drop it for theirs.
 
 **The Timeline** shows a combine with its own icon (`Icon::Combine`,
 the mock's two overlapping boxes, in the Modify colours; the mock's

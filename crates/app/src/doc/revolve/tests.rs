@@ -560,7 +560,7 @@ fn the_axis_keeps_its_sketch_and_waits_for_its_line_through_undo() {
 }
 
 #[test]
-fn while_revolving_other_tools_wait() {
+fn while_revolving_other_tools_swap_it() {
     let mut lathe = lathe();
     lathe.doc.look(Look::SelectFeature(lathe.sketch));
     lathe.doc.look(Look::StartRevolve);
@@ -569,17 +569,22 @@ fn while_revolving_other_tools_wait() {
         lathe.doc.revolve.as_ref().unwrap().regions.source,
         Some(lathe.sketch)
     );
-    // No extrude, new sketch, or edit of the selected feature.
-    let key = |c: &str| keyboard::Key::Character(c.into());
-    for pressed in ["x", "s"] {
-        assert!(press_in(&lathe.doc, key(pressed)).is_none(), "{pressed}");
-    }
-    lathe.doc.look(Look::StartExtrude);
-    assert!(lathe.doc.extrude.is_none());
-    assert!(lathe.doc.revolve.is_some());
+    // No edit of the selected feature, nor does the cursor pick the
+    // model.
     assert!(press_in(&lathe.doc, enter()).is_none());
-    // Nor does the cursor pick the model.
     assert!(!lathe.doc.picks());
+    // An extrude or a new sketch takes its place, leaving no trace.
+    let before = lathe.doc.editor.document().clone();
+    let key = |c: &str| keyboard::Key::Character(c.into());
+    key_in(&mut lathe.doc, key("x"));
+    assert!(lathe.doc.extrude.is_some() && lathe.doc.revolve.is_none());
+    lathe.doc.look(Look::StartRevolve);
+    assert!(lathe.doc.extrude.is_none() && lathe.doc.revolve.is_some());
+    key_in(&mut lathe.doc, key("s"));
+    assert!(!lathe.doc.operating() && lathe.doc.picking_plane.is_some());
+    assert_eq!(*lathe.doc.editor.document(), before);
+    lathe.doc.look(Look::Escape);
+    lathe.doc.look(Look::StartRevolve);
     // A read-only document has no session.
     lathe.doc.read_only = Some("read-only".to_owned());
     lathe.doc.sync();
@@ -636,10 +641,12 @@ fn the_toolbar_s_revolve_button_starts_a_session_and_backs_out() {
     );
     lathe.doc.look(Look::StartRevolve);
     assert!(lathe.doc.revolve.is_none());
-    // An extrude being set up leaves it disabled.
+    // An extrude being set up leaves it enabled, swapping the two.
     lathe.doc.look(Look::StartExtrude);
     let sent = clicking_text(&lathe.doc, "Revolve");
-    assert!(!sent.iter().any(start), "{sent:?}");
+    assert!(sent.iter().any(start), "{sent:?}");
+    lathe.doc.look(Look::StartRevolve);
+    assert!(lathe.doc.extrude.is_none() && lathe.doc.revolve.is_some());
 }
 
 #[test]

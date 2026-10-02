@@ -358,7 +358,6 @@ fn an_extrude_from_the_top_previews_joined_and_follows_the_plate() {
     let (mut doc, id, requests) = on_the_top();
     doc.look(Look::FinishSketch);
     circle_in(&mut doc, &requests, id, DVec2::new(20.0, 10.0), 4.0);
-    assert!(doc.extrudable());
 
     doc.look(Look::SelectFeature(id));
     doc.look(Look::StartExtrude);
@@ -539,7 +538,10 @@ fn a_sketch_whose_face_is_gone_fails_and_entering_it_asks_for_a_plane() {
     let why = why.clone();
     // Not drawn, and nothing to extrude.
     assert!(doc.feed.sketches().points().is_empty());
-    assert!(!doc.extrudable());
+    doc.look(Look::StartExtrude);
+    assert!(doc.extrude_state().unwrap().candidates.is_empty());
+    doc.look(Look::StartExtrude);
+    assert!(doc.extrude.is_none());
 
     // Listed in the Timeline, failing, its note naming the face as it
     // can: its maker and body are gone.

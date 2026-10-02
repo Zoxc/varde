@@ -342,12 +342,15 @@ const TURNED: f64 = 1.0 - 1e-9;
 
 impl Doc {
     /// Starts picking the plane for a new sketch, or backs out of
-    /// picking a plane. Only outside a sketch and an operation, in a
-    /// document that can be edited.
+    /// picking a plane. Only outside a sketch, in a document that can be
+    /// edited; an operation being set up is dropped.
     pub(crate) fn pick_plane(&mut self) {
         if self.picking_plane.is_some() {
             self.stop_picking_plane();
-        } else if self.editable() && self.sketch.is_none() && !self.operating() {
+        } else if self.editable() && self.sketch.is_none() {
+            self.extrude = None;
+            self.revolve = None;
+            self.combine = None;
             self.picking_plane = Some(PickingPlane {
                 pick: self.new_sketch_pick(),
                 enter: false,

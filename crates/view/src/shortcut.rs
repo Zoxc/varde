@@ -373,9 +373,6 @@ pub struct DocumentKeys {
     /// sketches, operations and picking a plane: a new sketch goes on it
     /// (if it's flat).
     pub face_selected: bool,
-    /// Whether there's a sketch to extrude or revolve regions of,
-    /// outside a sketch.
-    pub extrudable: bool,
     /// Whether an extrude is being set up.
     pub extruding: bool,
     /// Whether the extrude being set up can be committed.
@@ -455,7 +452,6 @@ impl DocumentKeys {
                     .collect()
             }),
             face_selected: false,
-            extrudable: false,
             extruding: false,
             extrude_ready: false,
             revolving: false,
@@ -497,11 +493,9 @@ impl DocumentKeys {
         Self { undo, redo, ..self }
     }
 
-    /// The same keys where there's a sketch to extrude regions of if
-    /// `extrudable`, with `extrude` being set up, if one is.
-    pub fn with_extrude(self, extrudable: bool, extrude: Option<&ExtrudeState<'_>>) -> Self {
+    /// The same keys with `extrude` being set up, if one is.
+    pub fn with_extrude(self, extrude: Option<&ExtrudeState<'_>>) -> Self {
         Self {
-            extrudable,
             extruding: extrude.is_some(),
             extrude_ready: extrude.is_some_and(|extrude| extrude.ready),
             ..self
@@ -566,48 +560,36 @@ pub fn history_bindings(keys: DocumentKeys) -> [Binding; 3] {
 
 /// Starting a new sketch: on the face selected in the model if a face
 /// alone is, else asking for its plane first (or backing out of that).
-/// Disabled in a sketch or an operation being set up, and unless the
-/// document can be changed.
+/// Disabled in a sketch, and unless the document can be changed; an
+/// operation being set up is dropped for it.
 pub fn sketch_binding(keys: DocumentKeys) -> Binding {
     let message = if keys.face_selected {
         Message::Edit(Edit::SketchOnSelection)
     } else {
         Message::Look(Look::PickPlane)
     };
-    Binding::new(
-        Shortcut::SKETCH,
-        message,
-        keys.editable && !keys.sketching && !keys.operating(),
-    )
+    Binding::new(Shortcut::SKETCH, message, keys.editable && !keys.sketching)
 }
 
 /// Starting a new extrude, or backing out of the one being set up:
-/// outside a sketch and the other operations being set up, while there's
-/// a sketch to extrude, in a document that can be changed.
+/// outside a sketch, in a document that can be changed. Another operation
+/// being set up is dropped for it, and with no sketch yet the panel waits
+/// for one.
 pub fn extrude_binding(keys: DocumentKeys) -> Binding {
     Binding::new(
         Shortcut::EXTRUDE,
         Message::Look(Look::StartExtrude),
-        keys.editable
-            && !keys.sketching
-            && !keys.revolving
-            && !keys.combining
-            && (keys.extrudable || keys.extruding),
+        keys.editable && !keys.sketching,
     )
 }
 
-/// Starting a new revolve, or backing out of the one being set up:
-/// outside a sketch and the other operations being set up, while there's
-/// a sketch to revolve regions of, in a document that can be changed.
+/// Starting a new revolve, or backing out of the one being set up, as
+/// [`extrude_binding`] does an extrude.
 pub fn revolve_binding(keys: DocumentKeys) -> Binding {
     Binding::new(
         Shortcut::REVOLVE,
         Message::Look(Look::StartRevolve),
-        keys.editable
-            && !keys.sketching
-            && !keys.extruding
-            && !keys.combining
-            && (keys.extrudable || keys.revolving),
+        keys.editable && !keys.sketching,
     )
 }
 
@@ -1169,7 +1151,12 @@ mod tests {
                 ..sketching
             };
             assert!(pressed(document_bindings(read_only), &key(&letter), held).is_none());
-            assert!(pressed(document_bindings(keys(true)), &key(&letter), held).is_none());
+            // Outside a sketch, a letter Extrude or Revolve shares is
+            // theirs.
+            assert!(!matches!(
+                pressed(document_bindings(keys(true)), &key(&letter), held),
+                Some(Message::Look(Look::SelectTool(_)))
+            ));
         }
     }
 
@@ -1485,11 +1472,8 @@ mod tests {
             let enter = KeyPress::Named(Named::Enter);
             pressed(document_bindings(keys), &enter, none)
         };
-        assert!(e(keys(true)).is_none());
-        let extrudable = DocumentKeys {
-            extrudable: true,
-            ..keys(true)
-        };
+        // With no sketch yet too: the panel waits for one.
+        let extrudable = keys(true);
         assert!(matches!(
             e(extrudable),
             Some(Message::Look(Look::StartExtrude))
@@ -1510,7 +1494,7 @@ mod tests {
         ));
 
         // While setting one up, Enter is OK once it's ready, not editing
-        // the feature selected, and S starts no sketch.
+        // the feature selected, and S drops it for a new sketch.
         let id = {
             let mut editor = varde_document::Editor::new(Default::default());
             let plane = varde_document::Plane::Origin(varde_document::OriginPlane::XY);
@@ -1523,7 +1507,10 @@ mod tests {
             ..extrudable
         };
         assert!(enter(extruding).is_none());
-        assert!(pressed(document_bindings(extruding), &key("s"), none).is_none());
+        assert!(matches!(
+            pressed(document_bindings(extruding), &key("s"), none),
+            Some(Message::Look(Look::PickPlane))
+        ));
         let ready = DocumentKeys {
             extrude_ready: true,
             ..extruding
@@ -1545,11 +1532,8 @@ mod tests {
             let enter = KeyPress::Named(Named::Enter);
             pressed(document_bindings(keys), &enter, none)
         };
-        assert!(press(keys(true), "o").is_none());
-        let revolvable = DocumentKeys {
-            extrudable: true,
-            ..keys(true)
-        };
+        // With no sketch yet too.
+        let revolvable = keys(true);
         assert!(matches!(
             press(revolvable, "o"),
             Some(Message::Look(Look::StartRevolve))
@@ -1568,22 +1552,31 @@ mod tests {
             press(sketching, "o"),
             Some(Message::Look(Look::SelectTool(Tool::Offset)))
         ));
-        // While an extrude is set up, O does nothing, nor X while a
-        // revolve is.
+        // While an extrude is set up, O drops it for a revolve, and X a
+        // revolve for an extrude.
         let extruding = DocumentKeys {
             extruding: true,
             ..revolvable
         };
-        assert!(press(extruding, "o").is_none());
+        assert!(matches!(
+            press(extruding, "o"),
+            Some(Message::Look(Look::StartRevolve))
+        ));
         let revolving = DocumentKeys {
             revolving: true,
             ..revolvable
         };
-        assert!(press(revolving, "x").is_none());
-        // Setting one up, Enter is OK once it's ready, S starts no sketch,
-        // and O again backs out.
+        assert!(matches!(
+            press(revolving, "x"),
+            Some(Message::Look(Look::StartExtrude))
+        ));
+        // Setting one up, Enter is OK once it's ready, S drops it for a
+        // new sketch, and O again backs out.
         assert!(enter(revolving).is_none());
-        assert!(press(revolving, "s").is_none());
+        assert!(matches!(
+            press(revolving, "s"),
+            Some(Message::Look(Look::PickPlane))
+        ));
         let ready = DocumentKeys {
             revolve_ready: true,
             ..revolving
@@ -1631,20 +1624,20 @@ mod tests {
             press(sketching, "b"),
             Some(Message::Look(Look::SelectTool(Tool::Rectangle)))
         ));
-        // Not while another operation is set up, nor they while it is.
+        // Not while another operation is set up, nor the measure tool
+        // while it is; Sketch, Extrude and Revolve drop it.
         let extruding = DocumentKeys {
             extruding: true,
-            extrudable: true,
             ..combinable
         };
         assert!(press(extruding, "b").is_none());
         let combining = DocumentKeys {
             combining: true,
-            extrudable: true,
             ..combinable
         };
-        for other in ["x", "o", "s", "i"] {
-            assert!(press(combining, other).is_none(), "{other}");
+        assert!(press(combining, "i").is_none());
+        for other in ["x", "o", "s"] {
+            assert!(press(combining, other).is_some(), "{other}");
         }
         assert!(enter(combining).is_none());
         let ready = DocumentKeys {

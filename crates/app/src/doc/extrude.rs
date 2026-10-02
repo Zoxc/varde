@@ -205,19 +205,17 @@ impl ExtrudeSession {
 
 impl Doc {
     /// Starts setting up a new extrude, in a document that can be changed
-    /// and outside a sketch and the other operations, taking the regions of the sketch selected in
-    /// the Timeline if one is; or cancels the one being set up. The first
+    /// and outside a sketch, taking the regions of the sketch selected in
+    /// the Timeline if one is; or cancels the one being set up. A revolve
+    /// or combine being set up is dropped. The first
     /// distance's field takes the focus.
     pub(crate) fn start_extrude(&mut self) {
-        if self.extrude.take().is_some()
-            || !self.editable()
-            || self.sketch.is_some()
-            || self.revolve.is_some()
-            || self.combine.is_some()
-        {
+        if self.extrude.take().is_some() || !self.editable() || self.sketch.is_some() {
             return;
         }
         self.picking_plane = None;
+        self.revolve = None;
+        self.combine = None;
         let document = self.editor.document();
         let selected = self.selected_feature.filter(|&id| is_sketch(document, id));
         let mut session = ExtrudeSession::new(document, selected);
@@ -362,19 +360,6 @@ impl Doc {
     pub(crate) fn extrude_draft(&self) -> Option<(Option<FeatureId>, FeatureKind)> {
         let session = self.extrude.as_ref()?;
         Some((session.feature, session.extrude()?.into()))
-    }
-
-    /// Whether there's a sketch to extrude regions of: a visible one, or
-    /// the one selected in the Timeline, that's placed (not one on a face
-    /// that failed). Whether it has regions is found once the session
-    /// starts.
-    pub(crate) fn extrudable(&self) -> bool {
-        let document = self.editor.document();
-        document.features().iter().any(|feature| {
-            matches!(feature.kind, FeatureKind::Sketch { .. })
-                && (feature.visible || self.selected_feature == Some(feature.id))
-                && self.placement(feature.id).is_some()
-        })
     }
 
     /// The extrude being set up, for the view.

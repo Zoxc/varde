@@ -804,8 +804,9 @@ session; an id naming something else now ends the session. A
 document that can't be edited, as a Save As can leave it, has no tool and no drag;
 the Save As answer syncs for that.
 
-**A new sketch** (`S`, the toolbar's or the rail's Sketch) first asks
-for its plane (`Look::PickPlane`, `Doc::picking_plane` holding a
+**A new sketch** (`S`, the toolbar's or the rail's Sketch, enabled
+outside a sketch in a document that can be changed, an operation being
+set up dropped for it) first asks for its plane (`Look::PickPlane`, `Doc::picking_plane` holding a
 `PlanePick`): the toolbar offers XY, XZ and YZ (`Edit::PlanePicked`),
 and the viewport picks flat
 faces (only faces, `ModelPicking::planes`): a flat face hovered is

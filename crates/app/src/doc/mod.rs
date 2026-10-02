@@ -818,7 +818,7 @@ impl Doc {
         (self.dialog().is_none() && !dragging).then(|| {
             DocumentKeys::new(self.editable(), self.selected_feature, self.sketch_state())
                 .with_face_selected(self.selected_face().is_some())
-                .with_extrude(self.extrudable(), self.extrude_state().as_ref())
+                .with_extrude(self.extrude_state().as_ref())
                 .with_revolve(self.revolve_state().as_ref())
                 .with_combine(self.combinable(), self.combine_state().as_ref())
                 .with_measure(self.measure.is_some())
@@ -946,7 +946,6 @@ impl Doc {
             combine: self.combine_state(),
             combinable: self.combinable(),
             measure: self.measure_state(),
-            extrudable: self.extrudable(),
             unsolved: self.feed.unsolved(),
             failed: self.feed.failed_features(),
             merged: self.feed.merged_bodies(),
