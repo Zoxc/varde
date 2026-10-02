@@ -138,6 +138,11 @@ impl<'a> Flat<'a> {
     /// one configuration has them (`Reach` measures the tie square to the
     /// plane, `Height` along [`UP`], so on a plane steep to `UP` a gap can
     /// be a tie for one and not the other).
+    ///
+    /// So is one with one end decided as on the plane and the other
+    /// within the resolution of it (nearly along the plane, so rounding
+    /// still moves the crossing far along it), if some part of the edge
+    /// is inside; if none is, its crossing is where rounding has it.
     pub(super) fn crossing(&self, side: Side, e: u32, f: u32) -> Option<f64> {
         let [x0, x1] = self.edge(side, e);
         let t = self.tri(side.other(), f);
@@ -147,15 +152,29 @@ impl<'a> Flat<'a> {
         } else {
             0.5
         };
-        if self.tie == 0.0
-            || !self.input(side.other()).flat[f as usize]
-            || !exact::is_tie(&Reach { x0, t }, self.tie)
-            || !exact::is_tie(&Reach { x0: x1, t }, self.tie)
-        {
+        if self.tie == 0.0 || !self.input(side.other()).flat[f as usize] {
+            return Some(at);
+        }
+        let within = |x: Pt, tie: f64| exact::is_tie(&Reach { x0: x, t }, tie);
+        let tied = [within(x0, self.tie), within(x1, self.tie)];
+        let near = || {
+            let resolution = self.tie * super::TIES;
+            within(x0, resolution) && within(x1, resolution)
+        };
+        if tied == [false, false] || (tied != [true, true] && !near()) {
             return Some(at);
         }
         let [lo, hi] = self.inside([x0.p, x1.p], t.map(|t| t.p));
-        (lo <= hi).then(|| at.clamp(lo, hi))
+        if lo <= hi {
+            Some(at.clamp(lo, hi))
+        } else if tied == [true, true] {
+            None
+        } else {
+            // One end on the plane and no part of the edge inside: where
+            // rounding has it. Refusing would lose results on the curved
+            // path, which has no exact retry, and none was seen wrong.
+            Some(at)
+        }
     }
 
     /// The interval of parameters along the segment `p0 → p1` (within
@@ -247,7 +266,15 @@ impl Primitives for Flat<'_> {
     }
 
     fn margin(&self) -> f64 {
-        0.0
+        // Exact (`tie` 0): boxes that meet. With near ties decided as
+        // ties, the resolution, as the curved primitives': a vertex an
+        // ulp inside a face's plane, decided as on it and by the
+        // perturbation beyond it, has edges crossing that face from
+        // triangles whose boxes stop an ulp short of it, and pairing none
+        // of them put whole operands on the wrong side of each other.
+        // `Reach` and `Height` ties reach a tie distance; a shadow's,
+        // along `UP` on a face steep to it, further.
+        self.tie * super::TIES
     }
 
     fn crossings(&self, side: Side, e: u32, f: u32, x: i32) -> Result<Found, BooleanError> {

@@ -115,12 +115,16 @@ impl std::fmt::Display for BooleanError {
 impl std::error::Error for BooleanError {}
 
 /// How near two things must be for the primitives to decide them as a
-/// tie, by the perturbation: a 64th of the resolution. Exact ties (flush
-/// faces, a vertex on a face) and those rounding leaves (the same faces
-/// turned and moved, every coordinate rounded) then decide alike.
+/// tie, by the perturbation: a 64th ([`TIES`]) of the resolution. Exact
+/// ties (flush faces, a vertex on a face) and those rounding leaves (the
+/// same faces turned and moved, every coordinate rounded) then decide
+/// alike.
 fn tie(tol: &Tolerance) -> f64 {
-    tol.resolution() / 64.0
+    tol.resolution() / TIES
 }
+
+/// How many tie distances ([`tie`]) make the resolution.
+const TIES: f64 = 64.0;
 
 /// The clean-up's short length, an eighth of the resolution: shorter
 /// straight edges collapse, and nearer ends make inner edges twins of
@@ -167,11 +171,12 @@ trait Primitives: Sync {
     /// the budget: what is spent before it is asked.
     fn search_work(&self) -> usize;
     /// How near two triangles' boxes must come for the broad phase to
-    /// pair them: 0 for exact primitives; for numerical ones, as far as
-    /// what they decide as a tie or take as flat reaches, so every pair a
-    /// tie decides is counted too (a vertex a hair from a face, decided
-    /// as on it, whose edges nothing then paired with that face, put a
-    /// whole operand inside the other).
+    /// pair them: 0 for exact primitives; for those deciding near ties
+    /// as ties or numerical ones, as far as what they decide as a tie or
+    /// take as flat reaches, so every pair a tie decides is counted too
+    /// (a vertex a hair from a face, decided as on it, whose edges
+    /// nothing then paired with that face, put a whole operand inside the
+    /// other).
     fn margin(&self) -> f64;
     /// The crossings of edge `e` of `side` through face `f` of the other,
     /// whose signed number is `x` (+1 entering the other solid, −1

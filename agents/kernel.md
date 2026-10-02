@@ -3818,10 +3818,12 @@ together, and the worst outcome is `Invalid`. The second try spends
 from the same budget, only on that failure. The curved path has no
 retry: the `Flat` inside `Curved` must keep the curved primitives'
 ties. Turned grid boxes with one moved by `10^±1.5` tie distances
-(seed 5, 3 000 operations): 74 `Inconsistent` with the ties (100 before
-in-plane crossings, below), of them 38 right and 36 `Invalid` (parts
-closer than the resolution) once retried, none `Inconsistent` and none
-wrong; 2 623 of the 3 000 right (2 617 before).
+(seed 5, 3 000 operations): 60 `Inconsistent` with the ties (100 before
+in-plane crossings, below, 74 before the flat broad phase's margin and
+crossings of edges with one end in the plane), of them 34 right and 26
+`Invalid` (parts closer than the resolution) once retried, none
+`Inconsistent` and none wrong; 2 624 of the 3 000 right (2 617 before
+in-plane crossings).
 
 **In-plane crossings.** The tie is one distance, but not measured the
 same way everywhere: `Reach` measures it square to the face's plane,
@@ -3871,6 +3873,23 @@ window between some pair of predicates whatever is chosen; the release
 check's facing test (step 6 of `check`) backs this up wherever else a
 plane patch faces against its tag.
 
+An edge with one end decided as on the plane (its `Reach` tied) and
+the other within the resolution of it is nearly along the plane too, so
+rounding still moves its crossing far along it: polygons on hair frames
+gave a crossing 0.17 outside its triangle that way (the other end
+`2.1e-8` off a plane, the tie `1.56e-8`), and the tool's side, touching
+the target from outside, came out on the target's side facing against
+its tag (refused by the check). Its crossing is kept inside the triangle
+as well, where some part of the edge is; where none is, it stays where
+rounding has it rather than fail (the curved path has no retry). On hair
+frames (with the flat broad phase's margin, see "Counting") that won
+back 30 more `Ok`s over 11 runs (grid boxes +3 to +7 a seed of 1 000
+chains, polygons +1 to +6 of 600, mixed +6, cylinders −1), refused none
+for facing against a tag, and changed nothing on turned frames.
+Putting the crossing at the tied end instead (the decided
+configuration's place for it) did as well on mixed and polygon runs and
+worse on grid boxes.
+
 The seeded suite's tallies didn't move but for one step: the rule at
 every order took chains from 203 to 202 of 240 (of its fed-on steps
 the same inputs give two more right and one fewer,
@@ -3889,15 +3908,26 @@ worse.
    (triangle of `A`, triangle of `B`) whose boxes meet (`≤`, so touching
    boxes count: `A`'s boxes looked up in `B`'s BVH), counted against the
    budget before they are collected (`Bvh::hits_within`). The margin is
-   the primitives' (`Primitives::margin`): 0 for exact ones, the
-   resolution for curved ones, which take edges and patches as straight
-   or planar within it and decide heights within a 64th of it as ties.
+   the primitives' (`Primitives::margin`): 0 for exact ones (the flat
+   primitives deciding again exactly, `tie` 0), the resolution for
+   curved ones, which take edges and patches as straight or planar
+   within it and decide heights within a 64th of it as ties, and the
+   resolution for the flat ones deciding near ties as ties too.
    So every pair such a decision touches is counted: with margin 0, a
    cylinder's seam vertex `1e-9` from another's wall (at the coarsest
    tolerance) was decided as on it by its ray, no pair of triangles met
    to carry a crossing out, and the whole cylinder came out inside the
-   other. From the pairs the candidate edge–face pairs of each operand,
-   sorted.
+   other. The flat primitives had margin 0 after they took near ties as
+   ties, and boxes at a hundredth of the grid's size off the origin,
+   chained, left vertices of one an ulp inside the plane of the other's
+   side through its middle: decided as on it and, by the perturbation,
+   beyond it, their edges crossed that side, but the triangles on its
+   near side had boxes an ulp short of it, so nothing counted a crossing,
+   and the intersection came out empty and the difference whole, both
+   `Ok`. A tie of `Reach` or `Height` is a tie distance at most, but a
+   shadow's along `UP`, on a face steep to it, reaches further, so the
+   margin is the resolution, as for curved ones. From the pairs the
+   candidate edge–face pairs of each operand, sorted.
 2. **Layer counts** for each end of a candidate edge against the face,
    and for the first and last vertex of each connected part of an
    operand against every face of the other that a ray up from it may
@@ -5689,7 +5719,13 @@ distance, whose near ties don't fit together, decided again exactly
 apart whose in-plane crossings landed outside their triangles (a union
 and difference chain once leaving the tool's side on the target's flush
 face facing against its tag, and a difference whose in-plane edge
-misses its triangle, decided again exactly, once `Invalid(Fold)`); the
+misses its triangle, decided again exactly, once `Invalid(Fold)`); a
+box and a prism a hair apart less a box touching them from outside,
+whose edge with one end in its flush plane crossed it outside the
+triangle (once `Invalid(FacesAgainst)`); grid boxes at a hundredth of
+the size, chained, whose vertices an ulp inside a side's plane had no
+triangle paired with it by the flat broad phase (the intersection once
+empty and the difference whole, both `Ok`); the
 turned grid boxes, one moved along `UP` by 1
 to `10⁷` tie distances, near the origin and a million from it, every
 result the moved boxes' volume (two were wrong while edges whose
@@ -6235,10 +6271,12 @@ sampled points.
   out with a triangle facing against its plane tag (an in-plane crossing
   placed outside its triangle, see "In-plane crossings"); none does now,
   and `check` refuses any that would. What is left of the window: edges
-  near a face's plane but not within the tie of it, decided by the same
-  mismatch of `Reach` and `Height`, still have crossings placed up to
-  well beyond the resolution outside their triangles (some 850 per
-  12 600 hair-frame steps; none gave a false tag in the hunt), planar
+  near a face's plane with neither end within the tie of it, decided by
+  the same mismatch of `Reach` and `Height`, still have crossings placed
+  up to well beyond the resolution outside their triangles (some 850 per
+  12 600 hair-frame steps before edges with one end in the plane were
+  kept in; none gave a false tag in the hunts), so do edges with one end
+  in it and no part inside the triangle, planar
   patches with curved sides aren't `Input::flat` and are left alone, and
   on the curved path an edge missing its triangle fails as
   `Inconsistent` with no exact retry. Unit cylinders tangent along a
@@ -8393,3 +8431,16 @@ parameter, or a split outside the patch bounds),
   their plane; faces claiming no surface (copies of faces with triangles
   off their plane, inputs moved without their tags) keep the plane form,
   which only a test of forms sees.
+- **In-plane crossings also for edges with one end in the plane.** The
+  plan kept only crossings of edges with both ends within the tie of a
+  flat face's plane inside its triangle. An edge with one end tied and
+  the other within the resolution is kept inside as well, where some
+  part of it is inside, and left where rounding has it where none is
+  (never `Inconsistent`, so the curved path loses nothing): such an
+  edge, nearly along the plane, gave the one result the hunts still
+  refused for facing against its tag ("In-plane crossings").
+- **The flat primitives' broad phase pairs boxes within the
+  resolution** when they decide near ties as ties (0 when exact). Their
+  margin stayed 0 from before they took near ties as ties, and chained
+  small boxes gave a wrong empty intersection and a whole difference
+  ("Counting").

@@ -1244,6 +1244,160 @@ fn grid_boxes_a_hair_off_each_other_keep_their_faces() {
     faces_face_out(&ab);
 }
 
+#[test]
+fn vertices_an_ulp_inside_a_face_pair_their_triangles_with_it() {
+    // Grid boxes at a hundredth of the size, moved off the origin, chained
+    // as random chains have them: the first two intersections leave
+    // vertices across the middle of the two-cell box, an ulp inside the
+    // plane of the last box's side through it. Decided as on it (a tie),
+    // and by the perturbation on its far side, those vertices' edges
+    // crossed that side, but the triangles they belong to on the near
+    // side had boxes an ulp short of it, and the exact broad phase
+    // (margin 0) paired none of them with it: no crossing was counted,
+    // the whole box was outside the other, and the intersection came out
+    // empty and the difference whole, both `Ok`. Ties reach as far as the
+    // resolution for the flat primitives as for the curved ones.
+    use crate::{Frame, Profile, Segment, extrude};
+    use glam::DVec2;
+    let shift = DVec3::new(
+        -0.04547329606056105,
+        -0.3390715991830786,
+        0.3179193587904965,
+    );
+    let frame = Frame {
+        origin: shift,
+        x: DVec3::X,
+        y: DVec3::Y,
+    };
+    let small = |min: [i32; 3], size: [i32; 3], feature: u64| {
+        let at = |i: i32| (-0.5 + 0.5 * f64::from(i)) * 0.01;
+        let (lo, hi) = (
+            DVec2::new(at(min[0]), at(min[1])),
+            DVec2::new(at(min[0] + size[0]), at(min[1] + size[1])),
+        );
+        let p = [lo, DVec2::new(hi.x, lo.y), hi, DVec2::new(lo.x, hi.y)];
+        let segments = (0..4)
+            .map(|i| Segment::line(p[i], p[(i + 1) % 4], i as u64).unwrap())
+            .collect();
+        let profile = Profile {
+            loops: vec![crate::Loop { segments }],
+        };
+        let solid = extrude(
+            &profile,
+            &frame,
+            at(min[2]),
+            at(min[2] + size[2]),
+            feature,
+            &TOL,
+            &Budget::DEFAULT,
+        )
+        .unwrap();
+        (solid, grid_box(min, size).1)
+    };
+    let (a, ca) = small([2, 0, 0], [2, 3, 4], 1);
+    let (b, cb) = small([2, 1, 2], [2, 5, 3], 2);
+    let (c, cc) = small([2, 2, 3], [2, 2, 2], 3);
+    let (d, cd) = small([2, 0, 1], [1, 6, 3], 4);
+    let cells = combine(&ca, &cb, Op::Intersection);
+    let ab = run(&a, &b, Op::Intersection).unwrap();
+    let cells = combine(&cells, &cc, Op::Intersection);
+    let abc = run(&ab, &c, Op::Intersection).unwrap();
+    assert!((abc.volume() - cells_volume(&cells) * 1e-6).abs() < 1e-15);
+    for op in [Op::Intersection, Op::Difference, Op::Union] {
+        let want = cells_volume(&combine(&cells, &cd, op)) * 1e-6;
+        let got = run(&abc, &d, op).unwrap();
+        assert!(
+            (got.volume() - want).abs() < 1e-15,
+            "{op:?}: {} not {want}",
+            got.volume()
+        );
+        faces_face_out(&got);
+    }
+}
+
+#[test]
+fn edges_with_one_end_in_a_flush_plane_cross_it_inside_their_triangle() {
+    // A box and a prism on frames a hair apart, and a box touching the
+    // first along a side from outside, its own side beside the first's
+    // other side in one plane a hair apart. An edge of the first's side
+    // with one end within the tie of the tool's side and the other a bit
+    // further crossed it, as the counting had it, but as rounding placed
+    // it, nearly parallel to the plane, half a unit outside the triangle
+    // it crossed: the tool's side was left on the target's flush side,
+    // facing against its tag (`Invalid(FacesAgainst)`, before that an
+    // `Invalid(Face)` from the booleans' look at the forms). The tool
+    // takes nothing away.
+    use crate::profile::tests::polygon;
+    use crate::{Frame, Profile, extrude};
+    use glam::DVec2;
+    let (a, _) = framed_grid_box(
+        [4, 2, 2],
+        [3, 1, 2],
+        [
+            [90.7976943597779, -68.56024080319376, 42.71813372607313],
+            [
+                0.9999990797439315,
+                0.001063986363890537,
+                0.0008416913376111664,
+            ],
+            [
+                -0.0010645111850754786,
+                0.9999992391377956,
+                0.0006233295813199928,
+            ],
+        ],
+        1,
+    );
+    let prism = Profile {
+        loops: vec![polygon(
+            &[
+                DVec2::new(0.5, 2.75),
+                DVec2::new(2.25, 2.25),
+                DVec2::new(3.25, 3.25),
+                DVec2::new(0.75, 3.25),
+            ],
+            0,
+        )],
+    };
+    let frame = Frame {
+        origin: DVec3::new(90.79769435856642, -68.56024080260039, 42.718133724806144),
+        x: DVec3::new(
+            0.9999990797426671,
+            0.0010639872650841894,
+            0.0008416917006606851,
+        ),
+        y: DVec3::new(
+            -0.001064512086299837,
+            0.9999992391369816,
+            0.0006233293481978193,
+        ),
+    };
+    let p = extrude(&prism, &frame, 1.5, 3.5, 2, &TOL, &Budget::DEFAULT).unwrap();
+    let (c, _) = framed_grid_box(
+        [4, 3, 1],
+        [2, 2, 4],
+        [
+            [90.79769435863315, -68.56024080128681, 42.7181337244894],
+            [
+                0.9999990797503366,
+                0.0010639639275988714,
+                0.0008417120889127035,
+            ],
+            [
+                -0.0010644887351945824,
+                0.9999992391813621,
+                0.00062329802649558,
+            ],
+        ],
+        3,
+    );
+    let ap = run(&a, &p, Op::Union).unwrap();
+    assert!((ap.volume() - 4.25).abs() < 1e-9, "{}", ap.volume());
+    let cut = run(&ap, &c, Op::Difference).unwrap();
+    assert!((cut.volume() - 4.25).abs() < 1e-5, "{}", cut.volume());
+    faces_face_out(&cut);
+}
+
 /// The tetrahedron on four points, facing out.
 fn tetrahedron(p: [DVec3; 4]) -> Solid {
     let n = (p[1] - p[0]).cross(p[2] - p[0]);
@@ -1498,7 +1652,7 @@ fn near_ties_that_dont_fit_together_are_decided_again_exactly() {
     // with near ties as ties, these give decisions no one configuration
     // has (`Inconsistent`), and the boolean decides them again exactly,
     // from the same budget: right. Of 3 000 such operations (seed 5),
-    // 74 are `Inconsistent`; with the retry 38 of those are right and
+    // 60 are `Inconsistent`; with the retry 34 of those are right and
     // the rest `Invalid` (parts closer than the resolution), none
     // `Inconsistent`. (100 were before crossings of edges decided to lie
     // in a face's plane were kept inside the triangle; the cases once

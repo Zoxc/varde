@@ -268,7 +268,10 @@ a balanced tree.
 `boolean_result.cpp`. Both operands are solids, so their invariants hold.
 
 1. **Broad phase.** BVHs over each operand's patch boxes give candidate
-   pairs, counted against the budget before they are collected.
+   pairs, counted against the budget before they are collected. Boxes
+   within the resolution pair wherever near ties are decided as ties
+   (curved operands, and flat ones but on the exact retry), so every
+   pair a tie decision touches is counted.
 2. **Primitives, each computed once**, along one fixed projection direction
    `UP = (2, 3, 32)`, tilted off every axis:
    - `s02(v, f)`: the signed number of layers of face `f` above vertex `v`
