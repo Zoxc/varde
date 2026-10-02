@@ -776,6 +776,67 @@ fn bodies_far_apart_or_far_out_cost_little() {
     assert!((at(o) - at(DVec3::ZERO)).abs() < 64.0 * f64::EPSILON * 9000.0);
 }
 
+#[test]
+fn a_pin_off_centre_in_a_tube_near_the_coordinate_limit() {
+    // A tube (radii 5 and 3) and a pin (radius 2) a quarter off its axis,
+    // along a tilted axis a millionth short of the coordinate limit, at
+    // the finest fit: the pin's wall is nearest the tube's walls along a
+    // line, 0.75 from the bore and 2.75 from the outside. The rounds
+    // show the pieces off that line apart only if their rounding goes by
+    // the pieces' reach from the axis, not by the coordinates (which, at
+    // `64 ε` of them, is more than the resolution here: too complex).
+    use crate::profile::tests::circle;
+    let tol = Tolerance::new(Tolerance::MIN_FIT).unwrap();
+    let y = DVec3::new(0.5, -0.4, -0.7).normalize();
+    let frame = Frame {
+        origin: DVec3::new(999_000.0, -999_000.0, 999_000.0),
+        x: y.any_orthonormal_vector(),
+        y,
+    };
+    let make = |loops: Vec<Loop>, from: f64, to: f64, feature: u64| {
+        Picked::new(
+            extrude(
+                &Profile { loops },
+                &frame,
+                from,
+                to,
+                feature,
+                &tol,
+                &Budget::DEFAULT,
+            )
+            .unwrap(),
+        )
+    };
+    let tube = make(
+        vec![
+            circle(DVec2::ZERO, 5.0, 1, false),
+            circle(DVec2::ZERO, 3.0, 2, true),
+        ],
+        0.0,
+        15.0,
+        1,
+    );
+    let pin = make(
+        vec![circle(DVec2::new(0.25, 0.0), 2.0, 1, false)],
+        -5.0,
+        20.0,
+        2,
+    );
+    let rounding = 64.0 * f64::EPSILON * 1e6;
+    for (outer, want) in [(3.0, 0.75), (5.0, 2.75)] {
+        let (a, b) = (wall(&tube, outer), wall(&pin, 2.0));
+        for (a, b) in [(&a, &b), (&b, &a)] {
+            let d = distance(a, b, &tol, &Budget::DEFAULT).unwrap();
+            assert!(
+                (d.distance - want).abs() <= tol.resolution() + rounding,
+                "{outer}: {d:?}"
+            );
+        }
+        let units = spent_at(&a, &b, &tol);
+        assert!(units < 200_000, "{outer}: {units}");
+    }
+}
+
 /// A ball of `radius` round `centre`, turned fully about the axis `y`
 /// (unit) through it.
 fn ball(centre: DVec3, y: DVec3, radius: f64) -> Picked {

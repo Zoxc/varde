@@ -427,6 +427,101 @@ fn a_tilted_box_is_as_tight_as_its_corners_and_a_tilted_cylinder_tighter() {
     ));
 }
 
+/// A profile found by fuzzing: an edge's extreme along one axis is a
+/// point whose other coordinates round past the control points' box (by
+/// an ulp at its top), which the tight box is kept within.
+#[test]
+fn a_tight_box_stays_within_the_control_box() {
+    let v = DVec2::new;
+    let conic = |p0, c, w, p1, curve| Segment {
+        conic: Conic2::new(p0, c, w, p1).unwrap(),
+        curve,
+    };
+    let outer = [
+        (
+            v(0.8164223504290418, -0.16688045924911196),
+            v(0.7882091133940908, 0.20320169661813792),
+            1.0,
+        ),
+        (
+            v(0.7599958763591399, 0.5732838524853878),
+            v(0.3446876574940163, 0.6744462724383856),
+            1.0,
+        ),
+        (
+            v(-0.07062056137110725, 0.7756086923913834),
+            v(-0.35659072821745563, 0.7038960394111767),
+            0.4036247096447438,
+        ),
+        (
+            v(-0.5020363480439499, 0.4474448499094029),
+            v(-0.7249321562117232, 0.21990543234497453),
+            1.0,
+        ),
+        (
+            v(-0.9478279643794966, -0.007633985219453867),
+            v(-0.6876717237690533, -0.3359729856545366),
+            0.5900266600493325,
+        ),
+        (
+            v(-0.2927054628816018, -0.4755775038330462),
+            v(-0.057610202663157015, -0.6218276102940975),
+            1.0,
+        ),
+        (
+            v(0.1774850575552878, -0.7680777167551488),
+            v(0.3947963986501038, -0.820591277244312),
+            0.4111168742864647,
+        ),
+        (
+            v(0.5114236834757286, -0.6298559385210459),
+            v(0.6639230169523852, -0.39836819888507896),
+            1.0,
+        ),
+    ];
+    let segments = (0..outer.len())
+        .map(|i| {
+            let (p0, c, w) = outer[i];
+            conic(p0, c, w, outer[(i + 1) % outer.len()].0, i as u64)
+        })
+        .collect();
+    let hole = crate::profile::tests::circle(
+        v(0.09554524947756522, -0.019494623261327265),
+        0.17621333749542267,
+        100,
+        true,
+    );
+    let tol = Tolerance::new(0.1).unwrap();
+    let frame = Frame {
+        origin: DVec3::ZERO,
+        x: DVec3::X,
+        y: DVec3::Y,
+    };
+    let solid = extrude(
+        &Profile {
+            loops: vec![Loop { segments }, hole],
+        },
+        &frame,
+        0.4073937769251319,
+        0.5006299069909078,
+        1,
+        &tol,
+        &Budget::DEFAULT,
+    )
+    .unwrap();
+    let tight = solid.tight_bounds(&tol, &Budget::DEFAULT).unwrap().unwrap();
+    let control = solid.bounds3().unwrap();
+    assert!(
+        control.min.cmple(tight.min).all() && tight.max.cmple(control.max).all(),
+        "{tight:?} beyond {control:?}"
+    );
+    // Flat top and bottom: the box reaches them exactly.
+    assert_eq!(
+        (tight.min.z, tight.max.z),
+        (0.4073937769251319, 0.5006299069909078)
+    );
+}
+
 /// A sphere of radius `radius` about the origin between the heights
 /// `lo` and `hi` along `axis` (unit), in bands at `heights`, `pieces`
 /// round.

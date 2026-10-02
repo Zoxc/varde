@@ -431,23 +431,32 @@ impl Round {
 }
 
 /// Whether one of the rounds `rounds` shows the pieces `x` and `y` (in
-/// the boxes `bounds`) more than `margin` apart: the ranges of its
-/// distance over them more than that apart, less the rounding of the
-/// coordinates. That rounding is relative to the points' and the
-/// centre's coordinates, not only to their distance across the axis: a
-/// piece far along a cylinder from the point its axis is given by rounds
-/// by that much more in [`Round::across`].
+/// the boxes `bounds`, of their control points) more than `margin` apart:
+/// the ranges of its distance over them more than that apart, less the
+/// rounding. [`Round::across`] rounds by a few ulps of `x − centre` (a
+/// difference of two floats is within half an ulp of the result, however
+/// large they are), so the rounding is relative to how far the boxes
+/// reach from the centre, which a piece far along a cylinder from the
+/// point its axis is given by makes large, and not to the coordinates: far
+/// from the origin, an allowance by those kept pieces along a line of
+/// closest points from being dropped until they were within the
+/// resolution across.
 fn round_apart(rounds: &[Round], [x, y]: [&Shape; 2], bounds: [&Bounds3; 2], margin: f64) -> bool {
-    let coords = bounds
-        .iter()
-        .map(|b| b.min.abs().max(b.max.abs()).max_element())
-        .fold(0.0, f64::max);
     rounds.iter().any(|round| {
         let (Some((xlo, xhi)), Some((ylo, yhi))) = (round.range(x), round.range(y)) else {
             return false;
         };
         let gap = (ylo - xhi).max(xlo - yhi);
-        let scale = round.centre.abs().max_element() + coords + xhi.max(yhi);
+        let reach = bounds
+            .iter()
+            .map(|b| {
+                (b.min - round.centre)
+                    .abs()
+                    .max((b.max - round.centre).abs())
+                    .length()
+            })
+            .fold(0.0, f64::max);
+        let scale = reach + xhi.max(yhi);
         gap - 64.0 * f64::EPSILON * scale > margin
     })
 }

@@ -840,9 +840,15 @@ pub(crate) fn tight_bounds(
         }
     }
 
+    // Points evaluated on an edge or inside a patch may round past the
+    // box of the control points, which holds the solid: kept within it.
+    let control = mesh
+        .edges()
+        .iter()
+        .fold(corners, |b, edge| b.include(edge.ctrl));
     let bounds = Bounds3 {
-        min: DVec3::new(-best[1], -best[3], -best[5]),
-        max: DVec3::new(best[0], best[2], best[4]),
+        min: DVec3::new(-best[1], -best[3], -best[5]).max(control.min),
+        max: DVec3::new(best[0], best[2], best[4]).min(control.max),
     };
     Ok(Some(bounds))
 }

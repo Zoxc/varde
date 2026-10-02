@@ -3006,7 +3006,10 @@ tol, budget)` gives the minimum distance between two targets (below).
   (`ruled`): a coordinate is linear along each ruling, which runs on to
   the patch's boundary, so the extremes are on the edges, to the
   resolution of the tag. Each side is a point of the solid, within the
-  resolution of the extreme. Without Newton a sphere zone's box cost
+  resolution of the extreme, kept within the control points' box
+  (`Solid::bounds3`): a coordinate's extreme on an edge is a point whose
+  other coordinates may round an ulp past it (fuzzing found one at an
+  extrude's top). Without Newton a sphere zone's box cost
   330 000 visits at the finest tolerance (centres creep up to an
   isolated maximum as slowly as hulls come down on it); with it, 1 100
   to 2 400 at any tolerance, its sides within `3e-15` of the sphere's.
@@ -3053,10 +3056,15 @@ coefficients of `|Q_⊥|²` and `W²` (both quartics, `Q/W` the piece about
 the centre, across the axis): the ratio lies between their least and
 greatest coefficient ratios, which on a piece of the round are all `r²`
 (exact to rounding) and on a piece ending on it (a cap at a circular
-edge) the least is. The gap is taken less 64 roundings of the
-centre's and the pieces' coordinates (`Q_⊥` rounds relative to the
-point's distance from the centre, which along a cylinder's axis may be
-far more than its distance across). Upper bounds: the pieces' corners and middles, and
+edge) the least is. The gap is taken less 64 roundings of how far the
+pieces' boxes reach from the centre (`Q_⊥` rounds by a few ulps of `x −
+centre`, a difference within half an ulp of its result however large its
+terms; that reach along a cylinder's axis may be far more than the
+distance across). An allowance by the coordinates instead (the first
+version) was more than the finest resolution near the coordinate limit
+(`64 ε · 2·10⁶ ≈ 3·10⁻⁸`), so pieces along a line of closest points were
+never dropped by their rounds there: a pin off centre in a tube at
+`10⁶` cost 3 million units at the finest fit, under 200 000 now. Upper bounds: the pieces' corners and middles, and
 Newton's method on the squared distance over both pieces' parameters
 (`closest`: second derivatives by central differences,
 Levenberg–Marquardt on Gauss–Newton's matrix damped by the gradient's size
@@ -3104,7 +3112,8 @@ each other, their sphere faces, a lid over one (its top off its poles,
 to rounding), a lid over the other's pole (within its cap's fit), and a
 box's corner and edge; random points and a cylinder, boxes
 and skew rods; a plate with 64 holes against boxes near and far, and rods
-far out; rounds' ranges holding samples of random patches; the same bits
+far out; a pin off centre in a tube near the coordinate limit at the
+finest fit (its walls' gaps, and their cost); rounds' ranges holding samples of random patches; the same bits
 at 1 and 8 threads; out of budget refused; picks naming nothing and the
 empty body.
 
@@ -3114,7 +3123,8 @@ centres, axes), walls and caps; a half cylinder's centroid; an ellipse
 quarter's length alone and as a tilted extrude's rims (semi-axes,
 centre, axis); a tilted box's tight box equal to its corners' (and to
 the control box) and a tilted cylinder's against `r·√(1 − a_k²)` beyond
-its rims' centres, well inside its control box; a sphere zone's sides
+its rims' centres, well inside its control box; a fuzz-found extrude
+whose tight box stays within its control box; a sphere zone's sides
 inside its patches and its centroid; a frustum's centroid, half-angle
 and wall area; angles; random conics' lengths and edge extremes; the
 same bits at 1 and 8 threads; out of budget refused; picks naming
