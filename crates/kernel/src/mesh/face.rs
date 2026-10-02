@@ -10,6 +10,14 @@ pub struct Face {
     pub name: FaceName,
     pub surface: Surface,
     pub form: Form,
+    /// How many fit tolerances, beyond the one fitted patches start
+    /// within, the face's patches may stray from its form: 1 as built,
+    /// multiplied by the largest stretch of every scale up
+    /// ([`Solid::transformed`](crate::Solid::transformed)), since a
+    /// scale maps a fitted patch exactly but stretches its distance from
+    /// the form with it. The debug form check allows `slack × fit`, and a
+    /// later fit against the form starts that far from it.
+    pub slack: f64,
 }
 
 /// A face's stable name: the feature that made it, which part of that

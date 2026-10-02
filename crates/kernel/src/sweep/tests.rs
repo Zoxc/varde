@@ -482,6 +482,7 @@ fn solid_of_revolution(
             name: name(part),
             surface: Surface::Plane { n, d },
             form: Form::plane(n, d),
+            slack: 1.0,
         })
     };
     let start = cap(FacePart::StartCap, -axis.z, stations[0].1);
@@ -499,6 +500,7 @@ fn solid_of_revolution(
             }),
             surface: Surface::Quadric(surface.quadric()),
             form: surface.form(),
+            slack: 1.0,
         });
         // Heights from the surface's own origin on the axis.
         let shift = (surface.axis.origin - axis.origin).dot(axis.z);

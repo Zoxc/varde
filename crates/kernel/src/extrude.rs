@@ -247,12 +247,14 @@ fn build(
         name: name(FacePart::StartCap),
         surface,
         form,
+        slack: 1.0,
     });
     let (surface, form) = plane(normal, normal.dot(frame.origin + normal * to));
     let end = builder.face(Face {
         name: name(FacePart::EndCap),
         surface,
         form,
+        slack: 1.0,
     });
     let sides: Vec<u32> = chain
         .sides
@@ -277,6 +279,7 @@ fn build(
                 }),
                 surface,
                 form,
+                slack: 1.0,
             })
         })
         .collect();

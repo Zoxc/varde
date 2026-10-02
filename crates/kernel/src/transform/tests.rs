@@ -538,3 +538,5 @@ fn side_names_survive_a_turn() {
     .key();
     assert!(topology.face(&turned, &key, DVec3::ZERO).is_ok());
 }
+
+mod scale;

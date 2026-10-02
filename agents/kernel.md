@@ -760,8 +760,8 @@ triangle `t` as a `Patch`: corners from the starts, edge `i` from halfedge
 `i`'s record. All ids are `u32`; `MAX_PATCHES` (`1 << 22`) keeps three per
 patch well inside.
 
-`faces: Vec<Face>`: `Face { name: FaceName, surface: Surface, form: Form }`
-(the form below, under "Forms").
+`faces: Vec<Face>`: `Face { name: FaceName, surface: Surface, form: Form,
+slack: f64 }` (the form and slack below, under "Forms").
 `FaceName { feature: u64, part: FacePart, instance: u64 }` is stable
 across regenerations (see "Topology and names"); `FacePart` is
 `StartCap`, `EndCap`, `Side { curve, segment }`, `Split(n)` (a face an
@@ -928,6 +928,7 @@ pub enum Form {
     Sphere { centre: DVec3, radius: f64 },
     Torus { centre: DVec3, axis: DVec3, major: f64, minor: f64 },
     Revolved { origin: DVec3, axis: DVec3, meridian: Conic2 },  // meridian in (ρ, h)
+    Quadric(Quadric),   // none of the above: a cone or sphere scaled per axis
 }
 ```
 
@@ -940,7 +941,8 @@ both by it), `Unknown` for a zero or non-finite one. `Form::distance` is
 exact for planes, cylinders, cones (behind the apex, the distance to it),
 spheres and tori, and first order for the conic forms (`|F|/|∇F|` of
 `λ1² − 4w²·λ0·λ2` on the conic's control triangle, along the cylinder or
-in the meridian half-plane), 0 for `Unknown`. `Form::signed` gives the
+in the meridian half-plane) and quadrics (`|F|/|∇F|`, as their claims
+are measured), 0 for `Unknown`. `Form::signed` gives the
 signed distance with the unit direction it grows along, which fitted
 strips are fitted against (`None` for `Unknown` and where the direction
 isn't defined, on an axis or a tube's centre circle).
@@ -958,8 +960,15 @@ whose sagitta is under that is a line to rounding); the centre is `c +
 (m − c)·|c − p0|²/|c − m|²` (`m` the chord's middle), the radius the mean
 distance to the ends. It names intent only; no topology depends on it.
 
-Checked in debug builds by `check` (above) within the fit tolerance, so
-every construction and boolean in the debug test suites holds its forms.
+Checked in debug builds by `check` (above) within the fit tolerance
+times the face's `slack`, so every construction and boolean in the debug
+test suites holds its forms. `slack` is 1 as built; a scale up multiplies
+it by the motion's stretch (see "Transforms and assembly"), since it maps
+fitted patches exactly but stretches their distance from the form with
+them. Booleans copy it with the face; the seams' merge of plane faces
+gives the face kept the larger of the two (the merge pass of one surface,
+one face keeps every entry's own). A later fit against a form starts
+`slack × fit` from it.
 Tests (`mesh/form/tests.rs`): plane normalizing and flipping, distances
 against points placed off each form, conic forms to first order on both
 arcs of the conic, circles told from ellipse arcs and from a weight off by
@@ -2947,8 +2956,11 @@ one name: nothing is decided by distance.
 normals and of planes' and quadrics' coefficients (`L`'s inverse
 transpose, kept rather than worked out, so a turn's is its own matrix to
 the bit), and whether it mirrors (an odd number of mirrors: a flag, not
-the determinant's sign). So far every motion is rigid; the constructors
-are the only way to make one:
+the determinant's sign), its `stretch` (at least the most it stretches a
+length: 1 for rigid motions, a scale's largest factor, the product for a
+composition) and whether it is `uniform` (`L` is `stretch` times an
+orthogonal matrix: rigid motions, uniform scales and their compositions).
+The constructors are the only way to make one:
 
 - `translation(t)`; `pattern_step(direction, spacing, k)`, the move by
   `k·spacing` along the unit direction, placed directly;
@@ -2965,11 +2977,19 @@ are the only way to make one:
 - `mirror(point, normal)`: `I − 2·n·nᵀ/|n|²` (symmetric and
   orthogonal, its own `N`), offset `2·(n·point)/|n|²·n`; exact in planes
   square to a coordinate axis whatever the normal's length.
+- `scale(centre, factors)`: `x ↦ c + S·(x − c)`, `S = diag(factors)`
+  along the world axes (`DVec3::splat(f)` for a uniform one), `N =
+  S⁻¹`, offset `c − S·c`. Each factor within `1/MAX_SCALE ..=
+  MAX_SCALE` (`1e6`: the feature allows `1e3`; it keeps a quadric's
+  coefficients, which grow by `1/s²`, far inside `f64`), positive (a
+  negative one is a mirror). Exact for powers of two about a centre they
+  scale exactly.
 - `then(next)` composes (`self` first); `point`, `vector`, `normal` apply
   it.
 
 Constructors give `None` for input that isn't finite, a zero axis or
-normal, or an offset that overflows (`k·spacing`); points the motion
+normal, a factor out of range, or an offset that overflows (`k·spacing`,
+`c − S·c`); points the motion
 takes past `MAX_COORD` are refused when it is applied.
 
 `Solid::transformed(motion, copy, tol, budget)` maps every vertex and edge
@@ -2978,10 +2998,23 @@ curve of the mapped control points, same weights), refusing one past
 `MAX_COORD` (`KernelError::Patch`). Claims map with the motion: a plane
 `n·x = d` to `N·n`, `d + (N·n)·t`; a quadric's origin as a point, `A` to
 `N·A·Nᵀ`, `b` to `N·b`, `c` kept (on the image `y = M·y'` with `M = L⁻¹ =
-Nᵀ`). Forms map rigidly: points as points, axes as unit directions,
-radii, half-angles and a revolved face's meridian (drawn in distance from
-the axis and height along it) unchanged, a plane's normal by `N`, so it
-still points out. A mirror reverses every triangle: corners `[a, b, c]`
+Nᵀ`), exact for a scale by powers of two. Under a uniform motion forms
+keep their kinds: points as points, axes as unit directions, radii, a
+torus's radii and a revolved face's meridian (drawn in distance from the
+axis and height along it) times the stretch, half-angles unchanged, a
+plane's normal by `N`, so it still points out. Under any other (a scale
+per axis, alone or composed) circles become ellipses: planes stay planes
+and `Quadric` forms map as claims; a circular cylinder's quarter circle
+square to its axis is mapped and projected along the mapped axis onto the
+plane square to it (an affine map: the conic of the mapped control
+points, same weight), a `Cylinder` again if that stays round (equal
+stretches across the axis, judged within `1e-12`, naming intent only),
+else a `ConicCylinder` over it; a conic cylinder's conic is mapped and
+projected the same way; a cone whose circles stay round and square to
+its axis (a scale along it) stays a `Cone` with `tan` times the stretch
+across over the stretch along, any other cone (both nappes) and a sphere
+become `Form::Quadric`; tori and revolved conics become `Unknown`. Each
+face's `slack` is multiplied by the stretch when it is above 1. A mirror reverses every triangle: corners `[a, b, c]`
 become `[a, c, b]`, halfedge `i` becomes `2 − i` with its start the old
 next corner and the same edge record, and its pair the old pair's image;
 the patch is the same surface, facing the other way. Names: with `copy:
@@ -2989,7 +3022,8 @@ Some(Instance { feature, index })` every face's name becomes
 `FaceName::copy(feature, index)` and every alias `FaceKey::copy`, the same
 mix of the parent instance, the feature and the index; `None` keeps the
 names (a move). The result goes through `check` (rounding can bring hulls
-a hair closer, so a solid at the margin can fail with `Invalid`), charged
+a hair closer, so a solid at the margin can fail with `Invalid`, as a
+scale down taking detail under the resolution does), charged
 5 units a patch plus the volumes the check integrates.
 
 `assemble(parts, tol, budget)` makes one solid of several, such as a
@@ -3028,8 +3062,20 @@ volumes; 100 copies of a pin within a budget linear in the patches; a
 row of touching cubes one box of six faces; a cube inside another and a
 ring of pins by quarter turns; spokes overlapping at a hub against the
 unions chained; out of bounds refused (and non-finite motions not made);
-the budget; determinism at 1 and 8 threads. Cones and spheres (revolve
-isn't in this kernel yet) are untested here.
+the budget; determinism at 1 and 8 threads. Revolved cones and spheres
+moved, turned and mirrored (volume, area, tags, the forms' apex, axis,
+half-angle, centre and radius). Scales (`transform/tests/scale.rs`): a
+box, a revolved cylinder, cone and sphere scaled uniformly (volumes `f³`
+times to `1e-12`, tags, forms' kinds and sizes) and per axis (volumes
+`sx·sy·sz` times, cylinders circular or conic, cones circular when
+scaled along their axis, else quadrics, spheres quadrics); a cylinder
+off the axes scaled and turned; a sphere scaled per axis an ellipsoid to
+`1e-12` on its exact strips, its fitted caps within the stretched fit;
+powers of two exact to the bit (points, weights, plane and quadric
+tags) and back; a torus scaled × 25.4 (slack 25.4, the debug form check
+failing without it, slacks multiplying and kept on scales down; per axis
+`Unknown`); scales down under the resolution refused; factors and
+bounds; determinism.
 
 ## Booleans (`src/boolean.rs`, `src/boolean/`)
 
@@ -7343,3 +7389,15 @@ parameter, or a split outside the patch bounds),
   chains on such frames), so a result that fails the check after the
   rule fired is made again without it ("Unfold"). The soup is copied
   before every clean-up for it.
+- **Scales as built.** `Motion::scale` takes factors within
+  `1/MAX_SCALE ..= MAX_SCALE` (`1e6`), a kernel bound beside the
+  feature's `1e-3 ..= 1e3`. Where the plan made every circular cylinder
+  scaled per axis a cylinder over an ellipse and every cone a quadric, a
+  cylinder or cone the scale keeps round (equal stretches across its
+  axis, a cone's also square to it) keeps its circular form: a
+  `ConicCylinder` is never over a circle. A cone's `Form::Quadric` is
+  both nappes. `slack` multiplies on every face scaled up, not only
+  fitted ones (an exact face is on its form to rounding, so it costs
+  nothing), by the motion's stretch, which for compositions is the
+  product of their stretches (an upper bound of the largest). Picking
+  summarizes a `Form::Quadric` as `Other` ("Curved") for now.

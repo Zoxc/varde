@@ -332,7 +332,8 @@ impl Mesh {
 
     /// Debug builds' check of the faces' forms on a mesh that passes the
     /// rest of `check`: the first triangle with a sample ([`samples`])
-    /// further than `tol`'s fit tolerance from its face's
+    /// further than `tol`'s fit tolerance, times the face's
+    /// [`slack`](super::Face::slack), from its face's
     /// [`Form`](super::Form) (fitted faces are on theirs only that
     /// closely), or on a plane form whose normal at its middle points
     /// against the form's, and what is wrong with it. A form is intent
@@ -346,12 +347,13 @@ impl Mesh {
     ) -> Option<(u32, &'static str)> {
         use super::Form;
         let fit = tol.fit();
-        // NaN fails both.
-        let within = |d: f64| d <= fit;
         let along = |x: f64| x > 0.0;
         let tris: Vec<u32> = (0..self.tris.len() as u32).collect();
         let off = par_map(&tris, |&t| {
-            let form = self.faces[self.tris[t as usize].face as usize].form;
+            let face = &self.faces[self.tris[t as usize].face as usize];
+            let form = face.form;
+            // NaN fails both.
+            let within = |d: f64| d <= fit * face.slack;
             let patch = &patches[t as usize];
             if samples().any(|u| !within(form.distance(patch.eval(u)))) {
                 return Some("strays from its face's form");

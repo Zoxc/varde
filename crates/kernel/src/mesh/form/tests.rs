@@ -478,8 +478,8 @@ mod constructed {
 
 #[test]
 fn signed_distances_agree_with_distances_and_grow_along_their_normals() {
-    // `|signed|` is `distance` (to first order for the conic forms, near
-    // them), and a small step along the normal grows it by the step.
+    // `|signed|` is `distance` (to first order for the conic forms and
+    // quadrics, near them), and a small step along the normal grows it by the step.
     let mut rng = Rng::new(9);
     for _ in 0..200 {
         let (o, axis) = (rng.point(1e3), rng.direction());
@@ -515,6 +515,15 @@ fn signed_distances_agree_with_distances_and_grow_along_their_normals() {
                 axis,
                 meridian,
             },
+            // An ellipsoid of semi-axes r, 1.5·r and 0.7·r.
+            Form::Quadric(crate::mesh::Quadric {
+                origin: o,
+                a: glam::DMat3::from_diagonal(
+                    DVec3::new(1.0, 1.5 * 1.5, 0.7 * 0.7).recip() / (r * r),
+                ),
+                b: DVec3::ZERO,
+                c: -1.0,
+            }),
         ];
         let reach = o.length() + 4.0 * r;
         for form in forms {
@@ -525,6 +534,7 @@ fn signed_distances_agree_with_distances_and_grow_along_their_normals() {
                     let q = meridian.eval(0.5);
                     o + x * q.x + axis * q.y + rng.direction() * r * 1e-3
                 }
+                Form::Quadric(_) => o + DVec3::X * r + rng.direction() * r * 1e-5,
                 _ => o + x * 2.0 * r + axis * r * 0.4 + rng.direction() * r * 0.05,
             };
             let (d, n) = form.signed(p).unwrap();

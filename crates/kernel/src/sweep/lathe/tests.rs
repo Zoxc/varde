@@ -110,11 +110,13 @@ impl<'a> Assembly<'a> {
             name,
             surface,
             form,
+            slack: 1.0,
         });
         let free = self.builder.face(Face {
             name,
             surface: Surface::Free,
             form,
+            slack: 1.0,
         });
         (face, free)
     }
@@ -199,6 +201,7 @@ impl<'a> Assembly<'a> {
             ),
             surface: Surface::Plane { n, d },
             form: Form::plane(n, d),
+            slack: 1.0,
         });
         let v = rim - self.lathe.origin();
         let centre = self.builder.vert(self.lathe.origin() + axis * v.dot(axis));
@@ -248,6 +251,7 @@ impl<'a> Assembly<'a> {
             ),
             surface: Surface::Plane { n, d },
             form: Form::plane(n, d),
+            slack: 1.0,
         });
         let centre = if lathe.on_axis(centre) {
             self.ring(centre)[0]

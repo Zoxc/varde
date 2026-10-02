@@ -21,6 +21,7 @@ pub(crate) fn face(part: u32, surface: Surface) -> Face {
         name: FaceName::new(1, FacePart::Split(part)),
         surface,
         form: Form::Unknown,
+        slack: 1.0,
     }
 }
 

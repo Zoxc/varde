@@ -124,7 +124,7 @@ impl Summary {
                 origin: a(&origin),
                 axis: a(&axis),
             },
-            Form::Unknown => Summary::Other,
+            Form::Quadric(_) | Form::Unknown => Summary::Other,
         };
         if summary.valid() {
             summary

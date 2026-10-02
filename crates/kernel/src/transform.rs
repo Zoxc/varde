@@ -1,13 +1,23 @@
-//! Rigid motions of solids, and copies of them assembled into one.
+//! Motions and scales of solids, and copies of them assembled into one.
 //!
 //! A [`Motion`] is an affine map `x ↦ L·x + t`, built as a move, a turn
-//! about a line or a mirror in a plane, or composed of them
-//! ([`Motion::then`]). [`Solid::transformed`] maps every vertex and edge
+//! about a line, a mirror in a plane or a scale about a point (uniform or
+//! per world axis), or composed of them ([`Motion::then`]). [`Solid::transformed`] maps every vertex and edge
 //! control point by it (weights stay: a rational curve's image under an
 //! affine map is the curve of the mapped control points with the same
 //! weights), each face's claim and form with it, and reverses every
 //! triangle of a mirror, which would otherwise face in. Copies are named
 //! by an [`Instance`]; a move keeps the names.
+//!
+//! A scale maps claims exactly as a rigid motion does (a plane's normal
+//! and a quadric's coefficients by the inverse of the scale), so exact
+//! faces stay exact to a rounding, none for powers of two. Forms scale
+//! with a uniform scale; a scale per axis makes ellipses of circles: a
+//! circular cylinder becomes a cylinder over an ellipse, cones and
+//! spheres [`Form::Quadric`]s (cylinders and cones it keeps round stay
+//! circular), tori and other surfaces of revolution [`Form::Unknown`]. A
+//! fitted face's patches map exactly but stray further from its form, by
+//! the largest factor: [`Face::slack`] records it.
 //!
 //! [`assemble`] makes one solid of several, such as a pattern's copies:
 //! those that can't meet are put side by side in one mesh, the others
@@ -26,16 +36,28 @@ use glam::{DMat3, DVec3};
 use crate::boolean::{Op, boolean};
 use crate::budget::Work;
 use crate::mesh::{Edge, Face, FaceKey, FaceName, Form, Halfedge, Mesh, Quadric, Surface, Tri};
-use crate::patch::Bounds3;
+use crate::patch::{Bounds3, Conic, Conic3};
 use crate::{Budget, KernelError, MAX_PATCHES, Solid, Tolerance, in_range};
+
+/// The largest factor [`Motion::scale`] takes, and the inverse of the
+/// smallest: far beyond what a design asks (a scale's feature allows a
+/// thousand), so a quadric's coefficients, which grow by the square of
+/// the inverse, stay well within `f64`. The scaled points are bounded by
+/// [`MAX_COORD`](crate::MAX_COORD) on their own.
+pub const MAX_SCALE: f64 = 1e6;
+
+/// How close two lengths, or how near square two directions (as a cosine),
+/// must be for a map to keep a circle round (see [`Motion::form`]): it
+/// names a form's intent, nothing is decided by it.
+const ROUND: f64 = 1e-12;
 
 /// Units of work a patch for [`Solid::transformed`], beside the check's
 /// integration ([`Solid::new_within`]): mapping it and checking its hulls
 /// and tags again, a few units, as a boolean's final check is charged.
 const TRANSFORM_WORK: usize = 5;
 
-/// An affine map of space, `x ↦ linear·x + offset`: so far always rigid
-/// (a move, turn, mirror, or a composition of them).
+/// An affine map of space, `x ↦ linear·x + offset`: a move, turn,
+/// mirror or scale with positive factors, or a composition of them.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Motion {
     linear: DMat3,
@@ -47,6 +69,13 @@ pub struct Motion {
     /// Whether it turns space inside out (`linear`'s determinant is
     /// negative): an odd number of mirrors.
     mirrors: bool,
+    /// At least the most it stretches a length: 1 for a rigid motion, the
+    /// largest factor of a scale, their product for a composition.
+    stretch: f64,
+    /// Whether it stretches every length by `stretch` (`linear` is
+    /// `stretch` times an orthogonal matrix): rigid motions and uniform
+    /// scales, and their compositions.
+    uniform: bool,
 }
 
 /// Which copy a [`Solid::transformed`] makes: copy `index` that feature
@@ -65,6 +94,8 @@ impl Motion {
         normal: DMat3::IDENTITY,
         offset: DVec3::ZERO,
         mirrors: false,
+        stretch: 1.0,
+        uniform: true,
     };
 
     /// The move by `offset`; `None` if it isn't finite.
@@ -97,7 +128,7 @@ impl Motion {
             linear,
             normal: linear,
             offset: point - linear * point,
-            mirrors: false,
+            ..Motion::IDENTITY
         })
     }
 
@@ -119,6 +150,32 @@ impl Motion {
             normal: linear,
             offset: n * (2.0 * n.dot(point) / nn),
             mirrors: true,
+            ..Motion::IDENTITY
+        })
+    }
+
+    /// The scale about `centre` by `factors` along the world axes, `x ↦
+    /// centre + S·(x − centre)` with `S = diag(factors)`; uniform when the
+    /// three are equal (`DVec3::splat(f)`). Each factor must lie within
+    /// `1/MAX_SCALE ..= MAX_SCALE` (a negative one would be a mirror, its
+    /// own motion). Exact to the bit for powers of two about a centre
+    /// whose coordinates they scale exactly (the origin, say). `None` for
+    /// a factor out of range or NaN, or a centre that isn't finite or
+    /// would put the offset past `f64`'s range.
+    pub fn scale(centre: DVec3, factors: DVec3) -> Option<Motion> {
+        let range = 1.0 / MAX_SCALE..=MAX_SCALE;
+        if !factors.to_array().iter().all(|f| range.contains(f)) || !centre.is_finite() {
+            return None;
+        }
+        let linear = DMat3::from_diagonal(factors);
+        let offset = centre - factors * centre;
+        offset.is_finite().then_some(Motion {
+            linear,
+            normal: DMat3::from_diagonal(factors.recip()),
+            offset,
+            mirrors: false,
+            stretch: factors.max_element(),
+            uniform: factors.x == factors.y && factors.y == factors.z,
         })
     }
 
@@ -154,6 +211,8 @@ impl Motion {
             normal: next.normal * self.normal,
             offset: next.linear * self.offset + next.offset,
             mirrors: self.mirrors != next.mirrors,
+            stretch: self.stretch * next.stretch,
+            uniform: self.uniform && next.uniform,
         }
     }
 
@@ -179,6 +238,12 @@ impl Motion {
         self.mirrors
     }
 
+    /// At least the most it stretches a length: 1 for rigid motions, a
+    /// scale's largest factor, the product of those it is composed of.
+    pub fn stretch(&self) -> f64 {
+        self.stretch
+    }
+
     /// The plane `n·x = d` mapped: `(n', d')` with `n'·x = d'` on the
     /// image, `n'` pointing to the image of the side `n` points to.
     fn plane(&self, n: DVec3, d: f64) -> (DVec3, f64) {
@@ -193,23 +258,34 @@ impl Motion {
                 let (n, d) = self.plane(n, d);
                 Surface::Plane { n, d }
             }
-            // F(x) = y·A·y + 2·b·y + c for y = x − origin; on the image
-            // y = M·y' with M = linear⁻¹ = normalᵀ and y' = x' − origin'.
-            Surface::Quadric(q) => Surface::Quadric(Quadric {
-                origin: self.point(q.origin),
-                a: self.normal * q.a * self.normal.transpose(),
-                b: self.normal * q.b,
-                c: q.c,
-            }),
+            Surface::Quadric(q) => Surface::Quadric(self.quadric(q)),
             Surface::Free => Surface::Free,
         }
     }
 
-    /// The form mapped, for a rigid motion: lengths, radii and angles
-    /// stay; points map as points, axes as directions; a plane's normal
-    /// as a normal, so it still points out of the mapped solid (whose
-    /// triangles a mirror reverses).
+    /// The quadric mapped: `F(x) = y·A·y + 2·b·y + c` for `y = x −
+    /// origin`; on the image `y = M·y'` with `M = linear⁻¹ = normalᵀ` and
+    /// `y' = x' − origin'`, so `A' = normal·A·normalᵀ`, `b' = normal·b`.
+    fn quadric(&self, q: Quadric) -> Quadric {
+        Quadric {
+            origin: self.point(q.origin),
+            a: self.normal * q.a * self.normal.transpose(),
+            b: self.normal * q.b,
+            c: q.c,
+        }
+    }
+
+    /// The form mapped. A motion that stretches every length alike (rigid,
+    /// or a uniform scale by `s`) keeps every kind: points map as points,
+    /// axes as directions, a plane's normal as a normal (so it still
+    /// points out of the mapped solid, whose triangles a mirror reverses),
+    /// radii and lengths times `s`, angles as they are. Any other map
+    /// changes kinds ([`Motion::stretched`]).
     fn form(&self, form: Form) -> Form {
+        if !self.uniform {
+            return self.stretched(form);
+        }
+        let s = self.stretch;
         let unit = |v: DVec3| self.vector(v).normalize_or_zero();
         match form {
             Form::Unknown => Form::Unknown,
@@ -224,10 +300,10 @@ impl Motion {
             } => Form::Cylinder {
                 point: self.point(point),
                 axis: unit(axis),
-                radius,
+                radius: radius * s,
             },
             Form::ConicCylinder { conic, along } => Form::ConicCylinder {
-                conic: crate::patch::Conic3 {
+                conic: Conic3 {
                     p0: self.point(conic.p0),
                     c: self.point(conic.c),
                     w: conic.w,
@@ -248,7 +324,7 @@ impl Motion {
             },
             Form::Sphere { centre, radius } => Form::Sphere {
                 centre: self.point(centre),
-                radius,
+                radius: radius * s,
             },
             Form::Torus {
                 centre,
@@ -258,12 +334,11 @@ impl Motion {
             } => Form::Torus {
                 centre: self.point(centre),
                 axis: unit(axis),
-                major,
-                minor,
+                major: major * s,
+                minor: minor * s,
             },
             // The meridian is drawn in a half-plane through the axis, in
-            // distance from it and height along it: a rigid motion keeps
-            // both.
+            // distance from it and height along it: both scale by `s`.
             Form::Revolved {
                 origin,
                 axis,
@@ -271,8 +346,134 @@ impl Motion {
             } => Form::Revolved {
                 origin: self.point(origin),
                 axis: unit(axis),
-                meridian,
+                meridian: Conic {
+                    p0: meridian.p0 * s,
+                    c: meridian.c * s,
+                    w: meridian.w,
+                    p1: meridian.p1 * s,
+                },
             },
+            Form::Quadric(q) => Form::Quadric(self.quadric(q)),
+        }
+    }
+
+    /// The form under a map that stretches lengths unevenly (a scale per
+    /// axis, alone or with other motions). Planes stay planes and
+    /// quadrics quadrics, mapped as claims are.
+    ///
+    /// A circular cylinder's sections square to its mapped axis are the
+    /// circles square to its axis, mapped and then projected along the
+    /// mapped axis: an affine map, so a quarter circle's image is the
+    /// conic of its mapped control points with the same weight. Where
+    /// that stays round (equal stretches across the axis) it is a
+    /// circular cylinder again, else a [`Form::ConicCylinder`] over the
+    /// quarter's image. A cylinder over a conic maps its conic the same
+    /// way, onto the plane square to the mapped axis through its first
+    /// point.
+    ///
+    /// A cone whose circles round its axis stay round and square to it
+    /// (a scale along its axis) stays a cone, its half-angle's tangent
+    /// times the stretch across over the stretch along; any other cone
+    /// and a sphere become [`Form::Quadric`]s (a cone's both nappes).
+    /// Tori and other surfaces of revolution become [`Form::Unknown`]:
+    /// their images are no form there is.
+    ///
+    /// Whether a circle stays round is judged within [`ROUND`], naming
+    /// intent only.
+    fn stretched(&self, form: Form) -> Form {
+        let unit = |v: DVec3| self.vector(v).try_normalize();
+        // `|a|` if `a` and `b` are as long as each other and square.
+        let round = |a: DVec3, b: DVec3| {
+            let (la, lb) = (a.length(), b.length());
+            ((la - lb).abs() <= ROUND * la && a.dot(b).abs() <= ROUND * la * lb).then_some(la)
+        };
+        match form {
+            Form::Unknown | Form::Torus { .. } | Form::Revolved { .. } => Form::Unknown,
+            Form::Plane { n, d } => {
+                let (n, d) = self.plane(n, d);
+                Form::plane(n, d)
+            }
+            Form::Quadric(q) => Form::Quadric(self.quadric(q)),
+            Form::Sphere { centre, radius } => {
+                Form::Quadric(self.quadric(Quadric::sphere(centre, radius)))
+            }
+            Form::Cone {
+                apex,
+                axis,
+                cos,
+                sin,
+            } => {
+                let (Some(k), Some(axis)) = (unit(axis), axis.try_normalize()) else {
+                    return Form::Unknown;
+                };
+                let (u, v) = axis.any_orthonormal_pair();
+                let (lu, lv) = (self.vector(u), self.vector(v));
+                let square = |w: DVec3| w.dot(k).abs() <= ROUND * w.length();
+                if let Some(across) = round(lu, lv).filter(|_| square(lu) && square(lv)) {
+                    let along = self.vector(axis).length();
+                    let (c, s) = (cos * along, sin * across);
+                    let length = crate::mesh::hypot(c, s);
+                    return Form::Cone {
+                        apex: self.point(apex),
+                        axis: k,
+                        cos: c / length,
+                        sin: s / length,
+                    };
+                }
+                Quadric::cone(apex, axis, cos, sin)
+                    .map_or(Form::Unknown, |q| Form::Quadric(self.quadric(q)))
+            }
+            Form::Cylinder {
+                point,
+                axis,
+                radius,
+            } => {
+                let (Some(k), Some(axis)) = (unit(axis), axis.try_normalize()) else {
+                    return Form::Unknown;
+                };
+                let (u, v) = axis.any_orthonormal_pair();
+                let across = |w: DVec3| {
+                    let w = self.vector(w);
+                    w - k * k.dot(w)
+                };
+                let (pu, pv) = (across(u), across(v));
+                let centre = self.point(point);
+                if let Some(r) = round(pu, pv) {
+                    return Form::Cylinder {
+                        point: centre,
+                        axis: k,
+                        radius: radius * r,
+                    };
+                }
+                Form::ConicCylinder {
+                    conic: Conic {
+                        p0: centre + pu * radius,
+                        c: centre + (pu + pv) * radius,
+                        w: std::f64::consts::FRAC_1_SQRT_2,
+                        p1: centre + pv * radius,
+                    },
+                    along: k,
+                }
+            }
+            Form::ConicCylinder { conic, along } => {
+                let Some(k) = unit(along) else {
+                    return Form::Unknown;
+                };
+                let p0 = self.point(conic.p0);
+                let flat = |p: DVec3| {
+                    let q = self.point(p);
+                    q - k * k.dot(q - p0)
+                };
+                Form::ConicCylinder {
+                    conic: Conic {
+                        p0,
+                        c: flat(conic.c),
+                        w: conic.w,
+                        p1: flat(conic.p1),
+                    },
+                    along: k,
+                }
+            }
         }
     }
 }
@@ -330,8 +531,11 @@ impl Solid {
     /// [`MAX_COORD`](crate::MAX_COORD) is refused
     /// ([`KernelError::Patch`]), and the result passes `check` or fails
     /// with [`KernelError::Invalid`] (rounding can bring hulls a hair
-    /// closer), within `budget`: a few units a patch, and the volumes the
-    /// check integrates.
+    /// closer, and a scale down can bring detail under the resolution),
+    /// within `budget`: a few units a patch, and the volumes the check
+    /// integrates. A motion stretching lengths by more than 1 multiplies
+    /// each face's [`slack`](Face::slack) by its
+    /// [`stretch`](Motion::stretch).
     pub fn transformed(
         &self,
         motion: &Motion,
@@ -377,6 +581,11 @@ impl Solid {
                 name: name(f.name),
                 surface: motion.surface(f.surface),
                 form: motion.form(f.form),
+                slack: if motion.stretch > 1.0 {
+                    f.slack * motion.stretch
+                } else {
+                    f.slack
+                },
             })
             .collect();
         let aliases = mesh

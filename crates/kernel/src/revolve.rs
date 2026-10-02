@@ -1110,6 +1110,7 @@ impl Assembly<'_> {
             ),
             surface: if free { Surface::Free } else { kind.surface() },
             form: kind.form(),
+            slack: 1.0,
         });
         self.faces.insert((side, free), face);
         face
@@ -1160,6 +1161,7 @@ impl Assembly<'_> {
                 name: FaceName::new(self.build.feature, part),
                 surface: Surface::Plane { n, d },
                 form: Form::plane(n, d),
+                slack: 1.0,
             }),
         };
         for &p in &patchwork.rings {

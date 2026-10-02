@@ -2486,6 +2486,7 @@ fn far_tetrahedron() -> Solid {
         name: FaceName::new(1, FacePart::Split(0)),
         surface: Surface::Free,
         form: Form::Unknown,
+        slack: 1.0,
     });
     let at = glam::DVec3::splat(3e6);
     let v = [

@@ -64,6 +64,7 @@ impl Mesh {
                     d: n.dot(rect[k][0]),
                 },
                 form: Form::plane(n, n.dot(rect[k][0])),
+                slack: 1.0,
             });
             let (a, b) = (k, (k + 1) % 4);
             builder.wall([bottom[a], bottom[b]], [top[a], top[b]], face);
@@ -124,6 +125,7 @@ impl Mesh {
                     axis: DVec3::Z,
                     radius,
                 },
+                slack: 1.0,
             });
             let next = (k + 1) % 4;
             let (a, b) = ([bottom[k], bottom[next]], [top[k], top[next]]);
@@ -142,6 +144,7 @@ fn caps(builder: &mut MeshBuilder, feature: u64, z0: f64, z1: f64) -> [u32; 2] {
         name: FaceName::new(feature, part),
         surface: Surface::Plane { n, d: n.z * z },
         form: Form::plane(n, n.z * z),
+        slack: 1.0,
     };
     [
         builder.face(cap(FacePart::StartCap, DVec3::NEG_Z, z0)),

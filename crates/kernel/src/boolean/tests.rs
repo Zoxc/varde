@@ -28,6 +28,7 @@ fn polytope(verts: &[DVec3], tris: &[[u32; 3]]) -> Solid {
             name: FaceName::new(2, FacePart::Split(i as u32)),
             surface: Surface::Plane { n, d: n.dot(p) },
             form: Form::plane(n, n.dot(p)),
+            slack: 1.0,
         });
         builder.tri([a, b, c], f);
     }

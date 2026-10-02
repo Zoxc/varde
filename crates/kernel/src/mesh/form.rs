@@ -2,6 +2,7 @@
 
 use glam::{DMat3, DVec2, DVec3};
 
+use super::Quadric;
 use crate::patch::{Conic2, Conic3};
 
 /// What surface a face was built to lie on: the construction's intent,
@@ -16,7 +17,8 @@ use crate::patch::{Conic2, Conic3};
 /// face faces (its normal points out of the solid, as its tag's does); a
 /// curved form is the same surface either way, and which side is out is
 /// the patches' normals'. Debug builds check every triangle against its
-/// face's form within the fit tolerance (see
+/// face's form within the fit tolerance times the face's
+/// [`slack`](super::Face::slack) (see
 /// [`Mesh::check`](super::Mesh::check)).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Form {
@@ -64,6 +66,9 @@ pub enum Form {
         axis: DVec3,
         meridian: Conic2,
     },
+    /// The quadric `F(x) = 0`, of no kind above: what a scale per axis
+    /// makes of a cone (both nappes) or a sphere (an ellipsoid).
+    Quadric(Quadric),
 }
 
 impl Form {
@@ -93,7 +98,7 @@ impl Form {
 
     /// About how far `x` is from the surface: exactly for planes,
     /// cylinders, cones, spheres and tori, to first order for the
-    /// conic-based forms (as quadric tags are measured), 0 for
+    /// conic-based forms and quadrics (as quadric tags are measured), 0 for
     /// [`Form::Unknown`]. NaN where the form isn't well defined.
     pub fn distance(&self, x: DVec3) -> f64 {
         match *self {
@@ -134,6 +139,7 @@ impl Form {
                 axis,
                 meridian,
             } => conic_distance(&meridian, polar(x - origin, axis)),
+            Form::Quadric(q) => q.distance(x),
         }
     }
 
@@ -141,9 +147,10 @@ impl Form {
     /// it grows along (the surface's normal near it), what fitted patches
     /// are fitted against: exact for planes, cylinders, cones (to the
     /// whole line of the half-angle, either side of the apex), spheres
-    /// and tori, to first order for the conic forms. Which side is
-    /// positive is the form's own (out of a sphere or a torus's tube,
-    /// away from a cylinder's or cone's axis), not the solid's. `None`
+    /// and tori, to first order for the conic forms and quadrics. Which
+    /// side is positive is the form's own (out of a sphere or a torus's
+    /// tube, away from a cylinder's or cone's axis, where a quadric's `F`
+    /// is positive), not the solid's. `None`
     /// for [`Form::Unknown`], or where it isn't defined (on a cylinder's,
     /// cone's or torus's axis or tube circle, at a sphere's centre).
     pub(crate) fn signed(&self, x: DVec3) -> Option<(f64, DVec3)> {
@@ -208,6 +215,11 @@ impl Form {
                 let (r, h, radial) = split(x - origin, axis);
                 let (d, g) = conic_signed(&meridian, DVec2::new(r, h))?;
                 radial.and_then(|radial| Some((d, unit(radial * g.x + axis * g.y)?)))
+            }
+            Form::Quadric(q) => {
+                let (f, g) = (q.value(x), q.gradient(x));
+                let length = g.length();
+                (length > 0.0).then(|| (f / length, g / length))
             }
         };
         found.filter(|(d, n)| d.is_finite() && n.is_finite())
@@ -286,6 +298,16 @@ impl Form {
                 axis: unit(axis),
                 meridian,
             },
+            Form::Quadric(q) => {
+                // F'(x) = F(f⁻¹(x)): y = r⁻¹·y' around the moved origin.
+                let m = r.inverse();
+                Form::Quadric(Quadric {
+                    origin: f(q.origin),
+                    a: m.transpose() * q.a * m,
+                    b: m.transpose() * q.b,
+                    c: q.c,
+                })
+            }
         }
     }
 }

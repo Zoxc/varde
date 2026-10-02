@@ -160,7 +160,9 @@ impl Cleaner<'_> {
     /// a face whose triangles all lie in the plane of that lowest one
     /// moves onto it, its key an alias of it from then on
     /// ([`Soup::absorb`](super::Soup::absorb)), with the copies of it
-    /// claiming no surface (which take its name and form). A face whose
+    /// claiming no surface (which take its name and form). The lowest
+    /// face's [`slack`](crate::mesh::Face::slack) becomes the larger of
+    /// the two. A face whose
     /// triangles don't stays as it is.
     pub(super) fn merge_joined(&mut self, faces: &mut [Face]) {
         if self.joined.is_empty() {
@@ -208,8 +210,10 @@ impl Cleaner<'_> {
             for &t in tris {
                 self.soup.faces[t as usize] = r;
             }
-            // Its key names `r` from now on.
+            // Its key names `r` from now on, and `r` allows its slack.
             self.soup.absorb(f, r);
+            let slack = faces[r as usize].slack.max(faces[f as usize].slack);
+            faces[r as usize].slack = slack;
             // Copies of it claiming no surface go with it.
             for c in 0..faces.len() {
                 if c as u32 != f
@@ -219,6 +223,7 @@ impl Cleaner<'_> {
                     self.soup.sources[c] = r;
                     faces[c].name = faces[r as usize].name;
                     faces[c].form = faces[r as usize].form;
+                    faces[c].slack = slack;
                 }
             }
         }

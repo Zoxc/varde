@@ -36,6 +36,7 @@ fn ramp(tops: &[f64], tags: &[f64], end: FaceName) -> Mesh {
         name: end,
         surface: Surface::Free,
         form: Form::Unknown,
+        slack: 1.0,
     });
     for i in 0..k {
         let top = builder.face(face(
