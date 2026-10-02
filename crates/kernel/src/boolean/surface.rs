@@ -18,6 +18,7 @@ use super::input::Input;
 use super::segment;
 use crate::mesh::{Quadric, Surface};
 use crate::patch::{Conic3, Patch, Point, W_MAX};
+use crate::sweep::cone_ruling;
 
 /// What a patch is known to lie on, exactly.
 #[derive(Debug, Clone, Copy)]
@@ -481,7 +482,8 @@ fn section_into(
                 w,
                 p1: y,
             },
-            None if q.distance(m) <= 1e-9 * len => segment(x, y),
+            // On a cone, a ruling through its apex, paced as one.
+            None if q.distance(m) <= 1e-9 * len => ruling(q, x, y),
             None => return None,
         };
         out.push(arc);
@@ -560,6 +562,46 @@ fn section_into(
     out.push(Conic3 { p0: x, c, w, p1: y });
     Some(())
 }
+
+/// The straight edge from `x` to `y` along a line lying on `q`: on a
+/// cone's ruling (the line runs through a point where `q`'s gradient
+/// vanishes, the apex, on the far side of both ends), the cone's ruling
+/// with its control point at the geometric mean of the ends' distances
+/// from the apex ([`cone_ruling`]), which is what a triangle on the cone
+/// with that side needs, whatever its other sides' planes (as a linear
+/// ruling is on a cylinder); else the segment.
+///
+/// Along the line `x + s·(y − x)` the gradient is affine in `s`, `g₀ +
+/// s·H·(y − x)` with `H = A + Aᵀ`, and on a cone it keeps its direction
+/// and shrinks to 0 at the apex: so the apex is at `s = −g₀·h / h·h` for
+/// `h = H·(y − x)`, where `g₀` and `h` are parallel (to `1e-9`). On a
+/// cylinder `h` is 0 (the apex at infinity): the segment, the ruling's
+/// limit.
+pub(super) fn ruling(q: &Quadric, x: DVec3, y: DVec3) -> Conic3 {
+    let apex = || {
+        let g0 = q.gradient(x);
+        let h = (q.a + q.a.transpose()) * (y - x);
+        let hh = h.length_squared();
+        let parallel = g0.cross(h).length() <= 1e-9 * g0.length() * h.length();
+        if !(hh > 0.0 && hh.is_finite() && parallel) {
+            return None;
+        }
+        let s = -g0.dot(h) / hh;
+        // Behind `x` or past `y`: both ends on one side of it. Further
+        // than a million chords off, the control point is the midpoint to
+        // a millionth of the chord: a cylinder, whose `h` is a rounding
+        // (pointing anywhere, square to the axis as `g₀` is).
+        (s.is_finite() && !(-1e-9..=1.0 + 1e-9).contains(&s) && s.abs() <= MAX_APEX)
+            .then(|| lerp(x, y, s))
+    };
+    apex()
+        .and_then(|apex| cone_ruling(x, y, apex).ok())
+        .unwrap_or_else(|| segment(x, y))
+}
+
+/// How many chords from a ruling's first end [`ruling`] looks for a
+/// cone's apex: further off it is a cylinder's, the midpoint.
+const MAX_APEX: f64 = 1e6;
 
 /// The arc from `x` to `y` of the section of `q` by the plane through
 /// them with unit normal `n`, where `q` is an elliptic (or circular)
@@ -1206,6 +1248,35 @@ mod tests {
         assert!((s - first).abs() < 1e-15, "{s}");
         let (s, _) = polish(&arc, 0.4, &plane, &placed(&right, -1));
         assert!((s - second).abs() < 1e-15, "{s}");
+    }
+
+    #[test]
+    fn rulings_of_cones_are_paced_by_the_geometric_mean() {
+        // A plane through a cone's apex cuts it in rulings: each a straight
+        // edge whose control point is at the geometric mean of its ends'
+        // distances from the apex (the cone's own rulings), on any axis;
+        // a cylinder's along its rulings, the midpoint.
+        let apex = DVec3::new(0.3, -1.2, 2.0);
+        let axis = DVec3::new(0.2, 0.5, -0.8).normalize();
+        let (cos, sin) = (0.8, 0.6);
+        let q = Quadric::cone(apex, axis, cos, sin).unwrap();
+        let across = axis.any_orthonormal_vector();
+        let dir = axis * cos + across * sin;
+        let (x, y) = (apex + dir * 0.7, apex + dir * 2.9);
+        // The plane through the axis and the ruling.
+        let n = axis.cross(dir).normalize();
+        let arcs = section(&q, n, x, y, Guide::Near(x)).unwrap();
+        let want = cone_ruling(x, y, apex).unwrap();
+        assert_eq!(arcs.len(), 1);
+        assert!(arcs[0].c.distance(want.c) < 1e-14, "{:?} {want:?}", arcs[0]);
+        assert_eq!(arcs[0].w, 1.0);
+        // Either way round, from either end.
+        let back = section(&q, n, y, x, Guide::Near(x)).unwrap();
+        assert!(back[0].c.distance(want.c) < 1e-14);
+        let cylinder = Quadric::cylinder(apex, axis, 1.3).unwrap();
+        let p = apex + across * 1.3;
+        let line = ruling(&cylinder, p, p + axis * 4.0);
+        assert_eq!(line, segment(p, p + axis * 4.0));
     }
 
     #[test]

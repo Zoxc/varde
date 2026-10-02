@@ -3495,6 +3495,7 @@ fn a_cross_hole_through_a_round_boss() {
     }
 }
 
+mod cones;
 mod flush_seams;
 mod holes;
 mod one_face;

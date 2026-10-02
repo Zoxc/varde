@@ -45,7 +45,9 @@
 //!
 //! Then each decided arc gets its geometry (see [`chain`]): two planes
 //! meet in a line and a plane cuts a quadric in a conic, both exact (the
-//! faces' tags say which, see [`surface`]); anything else is traced where
+//! faces' tags say which, see [`surface`]), and cylinders, cones and
+//! spheres on one axis meet in parallels, exact too (their forms say so,
+//! see [`coaxial`]); anything else is traced where
 //! the patches meet and fitted with conics within the fit tolerance. Cut
 //! curved faces keep their own surface wherever they can: their new inner
 //! edges are the patch's own curves, and along a cut of a quadric they are
@@ -68,6 +70,7 @@ use crate::{Evidence, Failure, KernelError, Solid, Tolerance};
 mod assemble;
 mod chain;
 mod cleanup;
+mod coaxial;
 mod count;
 mod curved;
 mod evidence;

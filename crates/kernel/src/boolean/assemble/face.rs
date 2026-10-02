@@ -26,7 +26,7 @@ use super::super::evidence::Gather;
 use super::super::exact::orient2d;
 use super::super::input::Input;
 use super::super::surface::{Guide, Shape, second_point, section};
-use super::super::triangulate::{Bends, Meter, NO_CUT, Vert, triangulate};
+use super::super::triangulate::{Bends, Meter, NO_CUT, Vert, bulging, triangulate};
 use super::super::{BooleanError, segment};
 use super::{Along, Curves, key};
 use crate::mesh::{Edge, MIN_CURVED_SPLIT, Quadric, Surface, off_surface, samples, straight};
@@ -300,12 +300,33 @@ pub(super) fn cut_face(
         let across = p0.distance(p1).max(p1.distance(p2)).max(p2.distance(p0));
         MIN_CURVED_SPLIT * tol.resolution() / across
     });
+    // On a plane, curved sides whose bulges hold something of the loops,
+    // to be split: by their middles laid out.
+    let bulging = if layout == Layout::Planar {
+        let middles: BTreeMap<(u32, u32), DVec2> = bends
+            .keys()
+            .filter_map(|&(u, v)| {
+                let edge = curves.get(&key(u, v))?;
+                let curve = Conic3 {
+                    p0: pos[u as usize],
+                    c: edge.ctrl,
+                    w: edge.weight,
+                    p1: pos[v as usize],
+                };
+                Some(((u, v), project(corner_pos, curve.eval(0.5))))
+            })
+            .collect();
+        bulging(&loops, &middles, meter)?
+    } else {
+        Vec::new()
+    };
     let triangulation = triangulate(loops, &bends, FIRST_STEINER, shapes, meter)?;
     let tris = triangulation.tris;
     // Curves the triangulation wants split for its corners.
     let wanted: Vec<(u32, u32)> = triangulation
         .split
         .iter()
+        .chain(&bulging)
         .map(|&(u, v)| key(u, v))
         .collect();
     // The points added inside: where they are.

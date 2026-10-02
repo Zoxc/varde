@@ -287,7 +287,8 @@ a balanced tree.
    A curved pair is decided from its ends only with a **certificate** that
    no closed loop hides in it (normal cones apart, both planar, a plane
    against a cylinder patch, or with no ends hulls apart or walls along
-   one direction that come near each other). Two patches on
+   one direction that come near each other, or cylinders and cones on
+   one axis, which meet only in a curve round it). Two patches on
    one surface have no cut. On walls along one direction the ends join
    line by line (grouped by where they lie in the cross-section) where
    the walls cross clearly, at an angle that leaves no sliver under a
@@ -298,8 +299,10 @@ a balanced tree.
    pairs at the size floor are decided by fixed rules (no certificate means
    no loop; ends joined in order round their middle).
 5. **Chains.** Each arc becomes a chain of shared edge records: a straight
-   edge between two planes; the exact conic where a plane cuts a quadric;
-   elsewhere (quadric against quadric, free surfaces) **traced**
+   edge between two planes; the exact conic where a plane cuts a quadric
+   (through a cone's apex, its rulings paced as a cone's); the exact
+   parallel where two quadrics of revolution on one axis meet (told by
+   their faces' forms, within the resolution); elsewhere (quadric against quadric, free surfaces) **traced**
    (predictor–corrector on `P_A = P_B`) and **fitted** as conics within a
    quarter of the fit tolerance. A failed trace falls back to a simpler
    curve between the same ends, kept only if it is verified to follow the
@@ -367,8 +370,9 @@ work.
 | cone strips, quadrics of revolution between parallels and meridians | exact |
 | tori and other surfaces of revolution, poles and apexes | fitted within half the fit tolerance |
 | spline profiles | fitted chains of conics within the fit tolerance |
-| plane ∩ plane, plane ∩ quadric (boolean cuts) | exact lines and conics |
-| quadric ∩ quadric, anything on a `Free` face | traced and fitted within a quarter of the fit tolerance |
+| plane ∩ plane, plane ∩ quadric (boolean cuts) | exact lines and conics (a cone's rulings at the geometric mean) |
+| cylinders, cones and spheres on one axis (by their forms) | exact parallels |
+| other quadric ∩ quadric, anything on a `Free` face | traced and fitted within a quarter of the fit tolerance |
 | bands beside a cut | exact on planes and quadrics where the common-point construction allows, else within the fit tolerance on a claim-free copy of the face |
 
 Exactness only improves geometry. Topology comes from the same counting

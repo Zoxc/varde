@@ -167,6 +167,11 @@ impl<'a> Input<'a> {
         self.mesh.tris()[t as usize].face
     }
 
+    /// What the face triangle `t` is on was built to be.
+    pub(super) fn form(&self, t: u32) -> crate::mesh::Form {
+        self.mesh.faces()[self.face(t) as usize].form
+    }
+
     /// Each vertex's direction out of the solid: one that leaves by
     /// every triangle round the vertex (on the outer side of each one's
     /// plane, a curved patch's normal at the corner standing in for its

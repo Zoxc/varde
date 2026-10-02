@@ -3756,13 +3756,14 @@ elsewhere (see "Cutting curved faces").
 | `boolean/count.rs` | broad phase, the stored primitives, `x12`/`x21`, winding numbers; what an edge or vertex that doesn't fit shows (`edge_failure`, `vertex_failure`) |
 | `boolean/count/tests.rs` | the counting's `Inconsistent` failures from primitives made to disagree (`Doubled`), and what they show |
 | `boolean/evidence.rs` | `Gather`: the evidence of a boolean's own failures as it is gathered (an operand's edges, triangles or pairs of them with their faces' names, faces by name alone, points); its tests' `on_operands`, which the seeded suite runs on every `Inconsistent` |
-| `boolean/surface.rs` | the exact paths: what a patch lies on (`Shape`), crossings solved again on planes and quadrics, a plane's conic on a quadric (`section`) |
+| `boolean/surface.rs` | the exact paths: what a patch lies on (`Shape`), crossings solved again on planes and quadrics, a plane's conic on a quadric (`section`), a cone's rulings (`ruling`) |
+| `boolean/coaxial.rs` | quadrics of revolution on one axis by their forms (`common_axis`): parallels as exact arcs (`parallel`), circles where a plane is square to a cone's axis or cuts a sphere (`square_axis`), the coaxial walls' certificate and their ends joined round the axis (`walls`, `along`) |
 | `boolean/chain.rs` | each arc's chain of shared edges: straight, exact, or traced and fitted; halving its curves |
 | `boolean/chain/trace.rs` | the point where two patches meet (Newton on four unknowns), marching along the cut, fitting conics, inverting a point into a patch |
 | `boolean/assemble.rs` | new vertices, kept pieces of edges, cut edges, the rounds of cutting the faces, the faces' copies |
 | `boolean/assemble/face.rs` | one face cut: its layout, loops, curved sides, triangles, their inner edges' curves (exact bands on quadrics); the boundary of one that can't be cut (`boundary_failure`) |
 | `boolean/assemble/merge.rs` | merging refinement's pieces that came through whole |
-| `boolean/triangulate.rs` | a face's kept loops in its parameter domain into triangles, curved sides' corners, Steiner points |
+| `boolean/triangulate.rs` | a face's kept loops in its parameter domain into triangles, curved sides' corners and bulges, Steiner points |
 | `boolean/cleanup.rs` | collapsing and flipping the degenerate triangles flush operands leave |
 | `boolean/cleanup/seams.rs` | curved edges between two triangles in one plane: straightened, regions triangulated again, the plane faces they joined merged (for the sliver flips after them) |
 | `boolean/cleanup/fold.rs` | sheets folded onto a flush face, their two sides triangulated differently: the folded vertex moved within its star's planes; its tests on a box whose top is folded |
@@ -3770,6 +3771,7 @@ elsewhere (see "Cutting curved faces").
 | `boolean/tests.rs` | boxes in every flush, edge-on and vertex-on configuration, tori, determinism |
 | `boolean/curved_tests.rs` | cylinders and boxes (exact), crossing cylinders, a free surface, a saddle, extrudes, chains, merging, random bars, walls over arcs with level ends |
 | `boolean/curved_tests/flush_seams.rs` | flush unions with curved rims in either order: bosses in and on plates, over holes and edges, overlapping, a flange at a shaft's foot, a slot, at millimetre scale and on a turned frame, a chain of flush joins, caps a hair apart, bosses on a rounded corner |
+| `boolean/curved_tests/cones.rs` | cones and coaxial walls, exact: a countersink upright and turned, half of one (rulings), slabs tilted through a cone, a cylinder and a cone crossing on one axis, cones through a cylinder's cap, a turned shaft joined end to end and cut by a cone, a V groove and a centre drill, random coaxial frustums against closed forms, ring tops sloping down to nearly flat |
 | `boolean/curved_tests/one_face.rs` | faces on one surface after booleans: tops at a crease either side of the bar, flush stacks on turned frames far from the origin, chains of joins and cuts with every operand's names resolving, faces meeting only at a corner |
 | `boolean/curved_tests/tangent.rs` | tangent contacts: cylinders against a plate's side from outside and inside, standing on it or through its top, slots ending in, beside and across a hole, a cylinder on a cylinder (in millimetres at the default tolerance, and at unit size at the finest), unions touching along a line refused at once (a pin plugging a hole it touches inside never named so), and solids tangent to a rounded edge or the faces it runs into |
 | `boolean/seeded_tests.rs` | the seeded random suite: related pairs, parts built in chains of twenty, turned solids, near tangencies, pins and coaxial cylinders, flush bosses, bosses sunk through drilled plates |
@@ -4497,6 +4499,35 @@ radius 1 at the default tolerance. Walls closer than 64 resolutions
 with a ring between them are left to fail (see Deviations for the round
 gate this replaces).
 
+**Coaxial walls** (`coaxial::walls`, `coaxial::along`): both patches lie
+on cylinders or cones, by their faces' **forms** (not their tags: a cone
+too nearly flat for its quadric claims none, though its patches lie on
+it exactly), each patch within the resolution of its form at the sampled
+points (not a fitted patch), on one axis within the resolution where the
+pair is (the axes' nearest points within it at the patches' corners,
+their directions apart by no more over the patches' reach from the axis:
+a choice of path, not a decision); their meridians cross at slopes
+`dρ/dh` at least `MIN_SLOPE` = `1e-3` apart (two cylinders never cross,
+and are told before any sample); and one patch lies on one side of a
+plane through the axis (its control points do). Then the surfaces meet
+in one curve going once round the axis, a parallel within the
+resolution (wandering in height by up to the axes' offset over the
+slope, as long as the slope outweighs their tilt), which no patch on one
+side of such a plane holds whole: no closed loop, every arc runs out
+through ends. No ends is no cut; two ends one arc; more are joined in
+turn round the axis (sorted by the tangent of their angle from that
+patch's direction), each with the next, which must be of the other sign,
+and all within `4·resolution/slope + resolution` in height (else the
+pair is split as before). A swap of two ends of one arc in that order is
+harmless and any swap across two arcs pairs two of one sign, which is
+refused. Without it a cylinder and a cone on one axis crossing in a
+circle were split until their normal cones parted (1 412 patches for
+their union, their intersection and difference `Invalid`); with it, 98
+to 476. Pairs of such walls with no ends are certified however far
+apart, so a cap's ring between a cylinder's rim and a coaxial cone's
+section comes whole to the triangulation, which is why curved sides are
+split for their bulges (see "Curved sides when triangulating").
+
 **Ends along one direction** (`along_generators`): a pair on such walls
 that has ends and no certificate is joined line by line before it is
 split. Each line's stretch inside both patches runs between two ends
@@ -4819,6 +4850,26 @@ over `0..1` and one over `0..2`, `Invalid(Hull)` too).
   at 24 offsets, took the wrong arc near the silhouette in about 40 of
   48 operations, which were then traced and fitted: right, but not
   exact.
+- **A plane through a cone's apex** cuts it in rulings: the section's
+  straight case (both tangents along the chord) on a quadric whose
+  gradient, affine along the chord, keeps its direction and vanishes
+  beyond both ends (`surface::ruling`: at `s = −g₀·h/h·h`, `h = (A +
+  Aᵀ)·(y − x)`, parallel to `g₀` to `1e-9`, within `MAX_APEX` = `10⁶`
+  chords) is the cone's ruling, its control point at the geometric mean
+  of the ends' distances from that apex (`cone_ruling`), which every
+  triangle on the cone with that side needs; with the midpoint (a
+  cylinder's ruling, what it was) half a countersink cut through its
+  axis had four triangles `1e-5` off the cone on copies claiming no
+  surface, volumes `1.2e-5` off. A cylinder's `h` is a rounding, which
+  can point anywhere square to the axis, as `g₀` does: past `MAX_APEX`
+  the segment.
+- **A plane square to a cone's axis** (to `1e-12`), **or any plane
+  through a sphere**, with the quadric patch on its form within the
+  resolution: the section is a circle round the line through the apex
+  or centre along the plane's normal, whose arcs come from their angles
+  (`coaxial::square_axis`, `coaxial::parallel`, below), as an elliptic
+  cylinder's do, kept if their points at `¼`, `½` and `¾` invert into the
+  patch within the resolution; else the section as below.
 - **On an elliptic or circular cylinder** (`surface::elliptic_cylinder`:
   the matrix's symmetric part `S` takes an axis to 0 and is definite
   square to it, the linear part square to the axis, both to `1e-12`
@@ -4846,6 +4897,27 @@ over `0..1` and one over `0..2`, `Invalid(Hull)` too).
   off a cylinder before crossings went to their roots: 580 patches on
   copies claiming no surface, unions and intersections `Invalid`).
   Parabolic and hyperbolic cylinders and other quadrics keep `σ`.
+- **Two quadrics of revolution on one axis** (`chain::parallel`; cylinders,
+  cones and spheres by their faces' forms, each patch on its form and the
+  axes one within the resolution: `coaxial::common_axis`; a sphere turns
+  about the other's axis where its centre is that near it, two spheres
+  aren't taken) meet in parallels. An edge of either patch from end to
+  end lying on both forms (to `1e-12` of the coordinates: two turned
+  walls joined end to end, a cylinder's rim on a cone of its radius
+  there) is the cut, whole (`along_edge_on`); else, with the ends'
+  heights and distances from the axis within the resolution of each
+  other, the parallel's shorter arc between them (`coaxial::parallel`):
+  weight `cos(Δφ/2) = |r̂x + r̂y|/2` and control point `m + tan²(Δφ/2)·(m
+  − m̂)` (`r̂` the unit directions from the axis to the ends, `m` the
+  chord's middle, `m̂` its foot on the axis, `tan²(Δφ/2) = |r̂x − r̂y|² /
+  |r̂x + r̂y|²`), halved at the turn's middle direction (the ends' mean
+  height and distance) past about 45°; kept if its points at `¼`, `½`
+  and `¾` invert into both patches within the resolution (the argument
+  of `chain::verified`: the material between it and the true cut is no
+  thicker than a few resolutions). Exact, so its bands are built by the
+  common-point construction; and either patch's curved edges lying on
+  both forms get vertices at the cut's (`parallel_extras`), as a flush
+  rim's do. Before, such cuts were traced and fitted.
 - **Anything else** (quadric against quadric, `Free` faces): **traced**
   and **fitted** (`chain/trace.rs`). A point where the patches meet solves
   `P(u) = Q(v)` and lies on a given plane: four equations in `u0, u1, v0,
@@ -4965,6 +5037,23 @@ corner between a curved and a straight side asks for that curve to be
 left vertices at one place) aren't judged. A loop of two vertices (a lens
 between two curves) asks for its curves to be split and is left out
 until they are.
+
+**Curved sides bulging over the loops** (`triangulate::bulging`, on
+planar layouts only: a curved patch's domain doesn't hold its curves'
+bulges so): the triangulation works on the chords, so a curved side of
+the loops whose bulge holds something of them, a vertex strictly inside
+the triangle from its ends to its middle (inside the region between the
+curve and its chord) or a straight side crossing into it, asks to be
+split, as a closed corner's curve does. A curved side's chord crossing
+another's bulge doesn't count (its own bulge holds that one's vertices,
+and it is split). A cylinder's top cut by a coaxial cone in a circle
+nearer the rim than a quarter arc's chord (radius 0.87 in 1) left a ring
+whose rim chords cross the circle; it was fanned from a rim vertex past
+the circle's tangent point, the circle halved there round after round
+(`Invalid` in 4 of 12 such operations once the walls' pairs were
+certified rather than refined). The seeded tallies didn't fall (flush
+unions 59 → 60 of 60, flush operations 210 → 213 of 240, related 113 →
+114 of 120).
 
 Before those rounds, a face laid out in a curved patch's parameter
 domain takes points for its triangles' **shapes** (`triangulate::shape`).
@@ -6428,6 +6517,26 @@ and difference but the 6 below; the 24 that fail are of two kinds:
 No wrong `Ok` among them: every result passed the volumes, tags and
 sampled points.
 
+Cones and coaxial walls (`curved_tests/cones.rs`): a countersink (a
+revolved hole of radius ½ widening at 45° to 1½) cut into a plate,
+upright and on a frame turned and moved, all four operations against the
+closed form to `1e-12`, every patch on its plane or quadric to `1e-12`
+relative and none claim-free; half of one, the plate's side through the
+axis cutting the cone in rulings; slabs tilted through the cone at three
+angles; a cylinder and a cone crossing on one axis (under 200 patches
+for their intersection); cones through a cylinder's top near its rim; a
+turned shaft of a cylinder, a cone and a cylinder joined end to end (36
+patches, one wall each), then a cone overlapping all three, a V groove
+and a centre drill (its fitted tip within the fit), against closed forms
+from the radii (`turned_volume`, exact for walls linear in height); 40
+random pairs of coaxial stacks (a frustum and a cylinder each, upright
+and on random frames, 159 of 160 operations, every volume within `1e-9`
+relative, the upright ones exact); ring tops sloping from `3e-6` to 1
+cut by a cylinder on their axis (the nearly flat ones may be refused);
+the same bits at 1 and 8 threads. Unit tests: parallels' arcs on their
+circles to `1e-14`, cone rulings from sections at the geometric mean,
+bulging curves split.
+
 ### Known gaps
 
 - **Coaxial unions on turned frames.** After per-crossing decisions for
@@ -6519,7 +6628,9 @@ sampled points.
   a copy of the face claiming no surface; a later boolean then traces
   and fits where they are cut again instead of cutting exactly.
 - **Section weights from `σ` off elliptic cylinders**: on parabolic and
-  hyperbolic cylinders and other quadrics a plane section's weight still
+  hyperbolic cylinders and other quadrics (but a cone cut square to its
+  axis and a sphere, whose circles take their angles' weights) a plane
+  section's weight still
   comes from where the line from the chord's middle to the control point
   meets the quadric, noise for an arc bulging by a rounding, and an arc
   within `1e-9` of straight is a straight edge (up to `1e-9` of its
@@ -6527,6 +6638,19 @@ sampled points.
   affine image of a parabola arc), which isn't used yet. Of 800 random
   bars through boxes, two (seed 7, case 189; seed 1, case 97) fail their
   intersection and difference as `Degenerate`, as before.
+- **Nearly flat cones cut on their axis are refused.** A cone too nearly
+  flat to claim its quadric (`Free`, its form the cone) cut by a
+  cylinder on its axis takes the coaxial path by the forms, but its
+  crossings aren't solved again on any surface and the operation fails
+  (a ring's top rising `3e-6` over 100 at a fit of `1e-4`:
+  `Invalid(VertexNeighbours)`; rising `1e-4`: `TooComplex`, as both did
+  before). Sloping a hundredth, the cone claims its quadric and the cut
+  is exact.
+- **Thin coaxial wedges cost patches.** Where a cone's wall meets a
+  cylinder's at a small angle in the result (a cylinder less a cone
+  crossing it at 18°, a cone inside a cylinder's wall within a hundredth
+  of it), the hull rules between the two walls' bands are kept by repair
+  splitting them: 476 to 1 068 patches where the cut faces have some 100.
 - **Plane sections nearly along a cylinder's rulings trace near the
   tip, or are refused**: a plane `α` off the rulings cuts a cylinder of
   radius `r` and height `h` in the tip of an ellipse whose curvature
@@ -9070,3 +9194,15 @@ see `agents/features.md`, "Failures and where they are").
   bending into each other with a gap from a pin plugging a smaller hole
   it touches inside (a manifold union too: the counting's ties gave its
   pairs ends, which were named so until the slit was asked).
+- **Coaxial cuts are certified, not only made exact.** The plan asked
+  for two quadrics of revolution on one axis to be cut in parallels
+  exactly; without a certificate their pairs were still split until
+  their normal cones parted (1 412 patches for a cylinder and a cone,
+  two of four results `Invalid`), so cylinders and cones on one axis
+  whose meridians cross at slopes at least `1e-3` apart are certified
+  and their ends joined round the axis ("Coaxial walls"). Spheres take
+  the exact parallels but not the certificate (their meridian isn't
+  linear in height, and a sphere can touch a cylinder along its
+  equator). Certified with no ends however far apart, these walls leave
+  a cap's ring between them whole, so curved sides bulging over the
+  loops are split (planar layouts), which the plan didn't have either.

@@ -12,7 +12,9 @@
 //! needs somewhere they are), both planar (planes meet in a line), or,
 //! with no ends, their control hulls apart, or walls along one direction
 //! that come near each other (they meet only in lines along it, which
-//! run out of the pair through ends). Then no ends is no cut, and
+//! run out of the pair through ends), or cylinders and cones on one axis
+//! (they meet in one curve round it, see `coaxial::walls`, whose ends
+//! join in turn round the axis). Then no ends is no cut, and
 //! two ends are one arc; the ends of two planar patches, on the line
 //! their planes meet in, join in order along it. On walls along one
 //! direction, ends join line by line where the walls cross clearly
@@ -35,6 +37,7 @@ use std::cmp::Ordering;
 use glam::{DVec2, DVec3};
 
 use super::BooleanError;
+use super::coaxial;
 use super::count::{self, Counts};
 use super::curved::Curved;
 use super::evidence::Gather;
@@ -486,7 +489,9 @@ fn pair_decision(
             Err(BooleanError::Inconsistent)
         };
     }
+    let coaxial = coaxial::walls([&a.form(p), &b.form(q)], [pa, pb], resolution);
     let certified = planar
+        || coaxial.is_some()
         || cones[0][p as usize].apart(&cones[1][q as usize])
         || plane_and_cylinder(a, p, b, q, cones)
         || (ends.is_empty() && apart(&pa.hull(), &pb.hull(), 0.0))
@@ -505,7 +510,17 @@ fn pair_decision(
                     return Ok(arcs(joined));
                 }
             }
-            _ => {}
+            _ => {
+                let at: Vec<(DVec3, i8)> = ends.iter().map(|e| (e.at, e.sign)).collect();
+                if let Some(joined) = coaxial.and_then(|walls| coaxial::along(&walls, &at)) {
+                    return Ok(arcs(
+                        joined
+                            .into_iter()
+                            .map(|(x, y)| (ends[x], ends[y]))
+                            .collect(),
+                    ));
+                }
+            }
         }
     }
     if join

@@ -8,7 +8,12 @@
 //! - **A plane and a quadric** (by the faces' tags) meet in a conic: the
 //!   exact arc, halved where it turns far ([`section`]): the one on the
 //!   side of the chord the quadric patch's middle is on, else the other,
-//!   whichever lies on the patch.
+//!   whichever lies on the patch; through a cone's apex its rulings
+//!   ([`super::surface::ruling`]); square to a cone's axis, or on a
+//!   sphere, a circle's arcs by their angles.
+//! - **Two quadrics of revolution on one axis** (by the faces' forms)
+//!   meet in a parallel: its exact arcs ([`super::coaxial`]), or an edge
+//!   of either patch lying on both, whole.
 //! - **Anything else**, or a conic that doesn't, is traced and fitted
 //!   within the fit tolerance ([`trace`]). If tracing fails, the arc
 //!   falls back to a simpler curve between the same ends: the conic
@@ -25,10 +30,11 @@
 
 use glam::DVec3;
 
+use super::coaxial;
 use super::surface::{Guide, Shape, section};
 use super::{segment, tie};
 use crate::Tolerance;
-use crate::mesh::Quadric;
+use crate::mesh::{Form, Quadric};
 use crate::par::par_map;
 use crate::patch::{Conic3, Patch};
 
@@ -43,6 +49,8 @@ pub(super) struct Job<'a> {
     pub(super) p: &'a Patch,
     pub(super) q: &'a Patch,
     pub(super) shapes: [Shape; 2],
+    /// What each patch's face was built to be.
+    pub(super) forms: [Form; 2],
     /// Whether each patch is planar.
     pub(super) planar: [bool; 2],
     /// The `+` end, then the `−` end.
@@ -210,7 +218,10 @@ pub(super) fn chain(job: &Job, tol: &Tolerance) -> Result<Chain, Conic3> {
     if job.planar[0] && job.planar[1] || x.distance(y) <= tie(tol) {
         return Ok(straight(true));
     }
-    if let Some(chain) = exact(job) {
+    if let Some(chain) = exact(job, tol.resolution()) {
+        return Ok(chain);
+    }
+    if let Some(chain) = parallel(job, tol.resolution()) {
         return Ok(chain);
     }
     if let Some(chain) = traced(job, tol.fit()) {
@@ -277,7 +288,7 @@ fn verified(job: &Job, chain: &Chain, tol: &Tolerance) -> bool {
 
 /// The exact arcs of a plane against a quadric, if the pair is one and
 /// they stay on its patches.
-fn exact(job: &Job) -> Option<Chain> {
+fn exact(job: &Job, resolution: f64) -> Option<Chain> {
     let (plane, quadric, k) = plane_and_quadric(job)?;
     if let Some(edge) = along_edge(job, plane, &quadric) {
         return Some(Chain {
@@ -290,12 +301,32 @@ fn exact(job: &Job) -> Option<Chain> {
             exact: true,
         });
     }
+    // A circle round an axis square to the plane (a cone's, a sphere's):
+    // its arcs by their angles.
+    let patch = [job.p, job.q][k];
+    if let Some(axis) = coaxial::square_axis(&job.forms[k], plane, patch, resolution)
+        && let Some(curves) = coaxial::parallel(&axis, job.ends[0], job.ends[1], resolution)
+    {
+        let points: Vec<DVec3> = curves[1..].iter().map(|c| c.p0).collect();
+        let dom = domains(job, &points);
+        if curves
+            .iter()
+            .enumerate()
+            .all(|(i, c)| coaxial::on_patch(patch, c, dom[k][i], dom[k][i + 1], resolution))
+        {
+            return Some(Chain {
+                points,
+                dom,
+                curves,
+                exact: true,
+            });
+        }
+    }
     // Near the arc: the quadric patch's point halfway between the ends in
     // its domain. Where the arc turns back within the patch, or the plane
     // nearly touches the patch along it, that point is on the chord or
     // nearly, and its side of it a rounding's: then the arc on the other
     // side. At most one of the two lies on the patch.
-    let patch = [job.p, job.q][k];
     let guide = patch.eval((job.dom[0][k] + job.dom[1][k]) * 0.5);
     exact_with(job, plane, &quadric, k, Guide::Near(guide))
         .or_else(|| exact_with(job, plane, &quadric, k, Guide::Away(guide)))
@@ -310,7 +341,27 @@ fn exact_with(job: &Job, plane: DVec3, quadric: &Quadric, k: usize, guide: Guide
     let [x, y] = job.ends;
     let curves = section(quadric, plane, x, y, guide)?;
     let points: Vec<DVec3> = curves[1..].iter().map(|c| c.p0).collect();
-    let dom = [0, 1].map(|side| {
+    let dom = domains(job, &points);
+    // The arcs must lie on the quadric's patch, not the conic's other side.
+    let on_patch = curves.iter().all(|c| {
+        let m = c.eval(0.5);
+        let u = invert(patch, m, DVec3::splat(1.0 / 3.0));
+        u.min_element() >= -0.25 && patch.eval(u).distance(m) <= 1e-9 * (1.0 + m.length())
+    });
+    on_patch.then_some(Chain {
+        points,
+        dom,
+        curves,
+        exact: true,
+    })
+}
+
+/// Every vertex's position in each of `job`'s patches, the ends' as
+/// given and those of `points` between them inverted (from where they
+/// would be spaced evenly).
+fn domains(job: &Job, points: &[DVec3]) -> [Vec<DVec3>; 2] {
+    let patches = [job.p, job.q];
+    [0, 1].map(|side| {
         let (d0, d1) = (job.dom[0][side], job.dom[1][side]);
         let n = points.len() + 1;
         let mut dom = vec![d0];
@@ -320,14 +371,45 @@ fn exact_with(job: &Job, plane: DVec3, quadric: &Quadric, k: usize, guide: Guide
         }
         dom.push(d1);
         dom
+    })
+}
+
+/// The arcs of the parallel two quadrics of revolution on one axis meet
+/// in (see [`coaxial`]), if the pair's are such and the arcs lie on both
+/// patches within the resolution.
+fn parallel(job: &Job, resolution: f64) -> Option<Chain> {
+    let patches = [job.p, job.q];
+    let axis = coaxial::common_axis(
+        [&job.forms[0], &job.forms[1]],
+        patches,
+        &job.ends,
+        resolution,
+    )?;
+    let [x, y] = job.ends;
+    // Along an edge lying on both (two turned walls joined end to end): the
+    // edge, whole.
+    if let Some(edge) = along_edge_on(job, |m, size| {
+        job.forms.iter().all(|f| f.distance(m) <= size)
+    }) {
+        return Some(Chain {
+            points: Vec::new(),
+            dom: [
+                vec![job.dom[0][0], job.dom[1][0]],
+                vec![job.dom[0][1], job.dom[1][1]],
+            ],
+            curves: vec![edge],
+            exact: true,
+        });
+    }
+    let curves = coaxial::parallel(&axis, x, y, resolution)?;
+    let points: Vec<DVec3> = curves[1..].iter().map(|c| c.p0).collect();
+    let dom = domains(job, &points);
+    let on = curves.iter().enumerate().all(|(i, c)| {
+        (0..2).all(|side| {
+            coaxial::on_patch(patches[side], c, dom[side][i], dom[side][i + 1], resolution)
+        })
     });
-    // The arcs must lie on the quadric's patch, not the conic's other side.
-    let on_patch = curves.iter().all(|c| {
-        let m = c.eval(0.5);
-        let u = invert(patch, m, DVec3::splat(1.0 / 3.0));
-        u.min_element() >= -0.25 && patch.eval(u).distance(m) <= 1e-9 * (1.0 + m.length())
-    });
-    on_patch.then_some(Chain {
+    on.then_some(Chain {
         points,
         dom,
         curves,
@@ -352,8 +434,17 @@ fn plane_and_quadric(job: &Job) -> Option<(DVec3, Quadric, usize)> {
 /// would leave the cut beside the edge in pieces the edge isn't, a band
 /// of zero width no split mends.
 fn along_edge(job: &Job, n: DVec3, quadric: &Quadric) -> Option<Conic3> {
+    let d = n.dot(job.ends[0]);
+    along_edge_on(job, |m, size| {
+        (n.dot(m) - d).abs() <= size && quadric.distance(m) <= size
+    })
+}
+
+/// An edge of either patch from one end of the arc to the other (at their
+/// very places) on which `on(x, size)` holds at `¼`, `½` and `¾`, `size`
+/// a rounding of the ends' coordinates.
+fn along_edge_on(job: &Job, on: impl Fn(DVec3, f64) -> bool) -> Option<Conic3> {
     let [x, y] = job.ends;
-    let d = n.dot(x);
     [job.p, job.q]
         .iter()
         .flat_map(|patch| (0..3).map(|i| patch.edge(i)))
@@ -366,11 +457,10 @@ fn along_edge(job: &Job, n: DVec3, quadric: &Quadric) -> Option<Conic3> {
                 return None;
             };
             let size = 1e-12 * (1.0 + x.abs().max_element().max(y.abs().max_element()));
-            let on = [0.25, 0.5, 0.75].into_iter().all(|t| {
-                let m = e.eval(t);
-                (n.dot(m) - d).abs() <= size && quadric.distance(m) <= size
-            });
-            on.then_some(e)
+            [0.25, 0.5, 0.75]
+                .into_iter()
+                .all(|t| on(e.eval(t), size))
+                .then_some(e)
         })
 }
 

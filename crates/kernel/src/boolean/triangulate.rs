@@ -386,6 +386,87 @@ fn triangulate_counted(
     Ok(out)
 }
 
+/// The curved sides of the loops (by the ids they run from and to, with
+/// the curve's point at `½` in the layout: `middles`) whose bulge holds
+/// something of the loops: a vertex strictly inside the triangle from
+/// the side's ends to its middle (inside the region between the curve
+/// and its chord, which holds that triangle on a plane), or a straight
+/// side crossing into it. The triangulation works on the chords, which such a
+/// curve crosses: a thin ring on a cap between a rim of quarter arcs and
+/// a circle nearer it than a quarter arc's chord (a cylinder's top cut
+/// by a coaxial cone), whose rim chords cut across the inner circle, was
+/// fanned from a rim vertex over the circle past its tangent point, the
+/// circle halved there round after round. Each such side is to be split,
+/// as a closed corner's is. On planar layouts only: a curved patch's
+/// domain doesn't hold its curves' bulges so.
+pub(super) fn bulging(
+    loops: &[Vec<Vert>],
+    middles: &BTreeMap<(u32, u32), DVec2>,
+    meter: &Meter,
+) -> Result<Vec<(u32, u32)>, BooleanError> {
+    if middles.is_empty() {
+        return Ok(Vec::new());
+    }
+    let sides: Vec<(Vert, Vert)> = loops
+        .iter()
+        .flat_map(|l| (0..l.len()).map(move |i| (l[i], l[(i + 1) % l.len()])))
+        .collect();
+    if !meter.take(middles.len().saturating_mul(sides.len())) {
+        return Err(BooleanError::Degenerate);
+    }
+    let cross = |a: DVec2, b: DVec2, c: DVec2| (b - a).perp_dot(c - a);
+    let mut out = Vec::new();
+    for &(u, v) in &sides {
+        let Some(&m) = middles.get(&(u.id, v.id)) else {
+            continue;
+        };
+        let (a, b) = (u.at, v.at);
+        let size = a.distance(m).max(m.distance(b)).max(a.distance(b));
+        let turn = cross(a, m, b);
+        if turn.is_nan() || turn.abs() <= 1e-9 * size * size {
+            continue;
+        }
+        let margin = 1e-9 * size * size;
+        // Strictly inside the triangle `a`, `m`, `b`.
+        let inside = |p: DVec2| {
+            [(a, m), (m, b), (b, a)]
+                .iter()
+                .all(|&(x, y)| cross(x, y, p) * turn.signum() > margin)
+        };
+        // Whether the segments `p`–`q` and `x`–`y` cross properly.
+        let crosses = |p: DVec2, q: DVec2, x: DVec2, y: DVec2| {
+            let (d1, d2) = (cross(p, q, x), cross(p, q, y));
+            let (d3, d4) = (cross(x, y, p), cross(x, y, q));
+            let tiny = 1e-9 * size * size;
+            ((d1 > tiny && d2 < -tiny) || (d1 < -tiny && d2 > tiny))
+                && ((d3 > tiny && d4 < -tiny) || (d3 < -tiny && d4 > tiny))
+        };
+        let held = sides.iter().any(|&(x, y)| {
+            if (x.id, y.id) == (u.id, v.id) {
+                return false;
+            }
+            let point = |w: Vert| {
+                w.id != u.id
+                    && w.id != v.id
+                    && w.at.distance(a) > SHORT
+                    && w.at.distance(b) > SHORT
+                    && inside(w.at)
+            };
+            // A curved side's chord crossing in stands for no curve there:
+            // its own bulge holds this one's vertices, and it is split.
+            let shared = [x.id, y.id].iter().any(|&id| id == u.id || id == v.id);
+            let curved = middles.contains_key(&(x.id, y.id));
+            point(x)
+                || point(y)
+                || (!shared && !curved && (crosses(x.at, y.at, a, m) || crosses(x.at, y.at, m, b)))
+        });
+        if held {
+            out.push((u.id, v.id));
+        }
+    }
+    Ok(out)
+}
+
 /// How many points [`shape`] may add to a face: so many per vertex of its
 /// loops, and so many more.
 const SHAPE_PER_VERTEX: usize = 4;
@@ -1527,6 +1608,40 @@ mod tests {
         } else {
             all[id as usize]
         }
+    }
+
+    #[test]
+    fn curves_bulging_over_the_loops_are_split() {
+        // A ring between an outer quarter arc of radius 1 and an inner one
+        // of radius 0.9: the outer arc's chord crosses the inner circle,
+        // so its bulge holds inner vertices; the inner arc's bulge (towards
+        // the outer) holds none.
+        let at = |r: f64, deg: f64| {
+            let a = deg.to_radians();
+            DVec2::new(r * a.cos(), r * a.sin())
+        };
+        let vert = |id: u32, at: DVec2| Vert {
+            id,
+            at,
+            sides: 0,
+            cuts: [NO_CUT; 2],
+        };
+        let ring = vec![
+            vert(0, at(1.0, 0.0)),
+            vert(1, at(1.0, 90.0)),
+            vert(2, at(0.9, 90.0)),
+            vert(3, at(0.9, 45.0)),
+            vert(4, at(0.9, 0.0)),
+        ];
+        let middles: BTreeMap<(u32, u32), DVec2> = [
+            ((0, 1), at(1.0, 45.0)),
+            ((2, 3), at(0.9, 67.5)),
+            ((3, 4), at(0.9, 22.5)),
+        ]
+        .into_iter()
+        .collect();
+        let meter = Meter::new(1 << 20);
+        assert_eq!(bulging(&[ring], &middles, &meter).unwrap(), vec![(0, 1)]);
     }
 
     #[test]

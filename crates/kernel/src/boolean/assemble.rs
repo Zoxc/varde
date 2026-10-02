@@ -27,6 +27,7 @@ use glam::DVec3;
 
 use super::chain::{self, Chain};
 use super::cleanup::Soup;
+use super::coaxial;
 use super::count::{Counts, Crossing};
 use super::curved::solve::near_patch;
 use super::evidence::Gather;
@@ -773,6 +774,7 @@ impl Cutting<'_> {
             p: &a.patches[p as usize],
             q: &b.patches[q as usize],
             shapes: [Shape::of(a, p), Shape::of(b, q)],
+            forms: [a.form(p), b.form(q)],
             planar: [a.planar[p as usize], b.planar[q as usize]],
             ends: ends.map(|id| self.base[id as usize]),
             dom,
@@ -804,6 +806,7 @@ impl Cutting<'_> {
         for i in which {
             let (arc, job, chain) = (&self.arcs[i], &jobs[i], &chains[i]);
             let Some((plane, quadric, k)) = plane_cut(job, chain) else {
+                self.parallel_extras(arc, job, chain, extras);
                 continue;
             };
             let on_plane = |x: DVec3| (plane.0.dot(x) - plane.1).abs() <= resolution;
@@ -850,6 +853,64 @@ impl Cutting<'_> {
         for list in extras.iter_mut().flat_map(|m| m.values_mut()) {
             list.sort_by(f64::total_cmp);
             list.dedup();
+        }
+    }
+
+    /// [`Self::flush_extras`] for a cut of two quadrics of revolution on
+    /// one axis in a parallel (see [`coaxial`]): either triangle's curved
+    /// edges lying on both forms (a cylinder's rim on a cone of its radius
+    /// there, two turned walls joined end to end) get vertices at the
+    /// cut's, so the edge and the cut come in the same pieces.
+    fn parallel_extras(
+        &self,
+        arc: &Arc,
+        job: &chain::Job,
+        chain: &Chain,
+        extras: &mut [BTreeMap<u32, Vec<f64>>; 2],
+    ) {
+        let resolution = self.tol.resolution();
+        if !chain.exact
+            || coaxial::common_axis(
+                [&job.forms[0], &job.forms[1]],
+                [job.p, job.q],
+                &job.ends,
+                resolution,
+            )
+            .is_none()
+        {
+            return;
+        }
+        let on_both = |x: DVec3| job.forms.iter().all(|f| f.distance(x) <= resolution);
+        let verts: Vec<DVec3> = std::iter::once(job.ends[0])
+            .chain(chain.points.iter().copied())
+            .chain(std::iter::once(job.ends[1]))
+            .collect();
+        for k in 0..2 {
+            let side = if k == 0 { Side::A } else { Side::B };
+            let (input, _) = self.operand(side);
+            for &(e, _) in &input.tri_edges[arc.tris[k] as usize] {
+                if lined(input, e) {
+                    continue;
+                }
+                let conic = input.conic(e);
+                if ![0.25, 0.5, 0.75]
+                    .into_iter()
+                    .all(|t| on_both(conic.eval(t)))
+                {
+                    continue;
+                }
+                for &x in &verts {
+                    if x == conic.p0 || x == conic.p1 {
+                        continue;
+                    }
+                    if let Some(t) = param_on(&conic, x, resolution)
+                        && t > 1e-9
+                        && t < 1.0 - 1e-9
+                    {
+                        extras[k].entry(e).or_default().push(t);
+                    }
+                }
+            }
         }
     }
 
