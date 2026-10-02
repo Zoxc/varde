@@ -795,7 +795,8 @@ fn a_tangent_hole_dragged_reruns_its_touch_test_which_holds() {
         let committed = answered(regenerator.handle(regenerate(&editor, None)));
         for (revision, depth) in [(1, "20"), (2, "21"), (3, "22")] {
             draft.revision = revision;
-            draft.extrude_mut().extent = crate::history::tests::two_sides(editor.document(), depth, "20");
+            draft.extrude_mut().extent =
+                crate::history::tests::two_sides(editor.document(), depth, "20");
             let (_, before) = regenerator.cache().counts();
             let answer =
                 answered(regenerator.handle(regenerate_with(&editor, Some(draft.clone()))));

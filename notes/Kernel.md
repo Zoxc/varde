@@ -285,8 +285,8 @@ a balanced tree.
    one direction that come near each other). Two patches on
    one surface have no cut. On walls along one direction the ends join
    line by line (grouped by where they lie in the cross-section) where
-   the walls cross clearly, at an angle that leaves no sliver under
-   two resolutions thick. Any other pair is **refined**: both operands
+   the walls cross clearly, at an angle that leaves no sliver under a
+   quarter of the resolution thick. Any other pair is **refined**: both operands
    are split red–green where the pair is, and everything is counted again;
    pairs at the size floor are decided by fixed rules (no certificate means
    no loop; ends joined in order round their middle).

@@ -604,12 +604,11 @@ fn wall_pairs(a: &Input, b: &Input) -> Vec<([u32; 2], Vec<End>, DVec3)> {
 
 #[test]
 fn walls_crossing_in_two_lines_in_one_pair_give_two_arcs() {
-    // Centres 1.9 apart: the walls cross in two lines 0.62 apart, at
-    // ±18° on `a`, in one quarter of each wall. Near the ends of `a`'s
-    // span some pair (of a triangle of each quarter, split by its
-    // diagonal) holds stretches of both: four ends, joined one arc per
-    // line.
-    let (a, b) = walls_apart(1.9);
+    // Centres 1.997 apart: the walls cross in two lines 0.11 apart, at
+    // ±3° on `a`, at an angle of 6°, in one quarter of each wall. Some
+    // pair (of a triangle of each quarter, split by its diagonal) holds
+    // stretches of both: four ends, joined one arc per line.
+    let (a, b) = walls_apart(1.997);
     let (ia, ib) = (Input::new(a.mesh(), &TOL), Input::new(b.mesh(), &TOL));
     let pairs = wall_pairs(&ia, &ib);
     let res = TOL.resolution();
@@ -628,7 +627,7 @@ fn walls_crossing_in_two_lines_in_one_pair_give_two_arcs() {
             let [(x, _), (y, _)] = joined[..] else {
                 unreachable!()
             };
-            assert!((x.at.y - y.at.y).abs() > 0.6, "{x:?} {y:?}");
+            assert!((x.at.y - y.at.y).abs() > 0.1, "{x:?} {y:?}");
         }
     }
     assert!(both > 0, "{pairs:?}");
@@ -638,7 +637,7 @@ fn walls_crossing_in_two_lines_in_one_pair_give_two_arcs() {
 fn ends_on_one_line_more_than_twice_or_a_hair_apart_are_split() {
     // A line leaving the pair and coming back gives a group of four ends:
     // no arcs, the pair is split.
-    let (a, b) = walls_apart(1.6);
+    let (a, b) = walls_apart(1.997);
     let (ia, ib) = (Input::new(a.mesh(), &TOL), Input::new(b.mesh(), &TOL));
     let pairs = wall_pairs(&ia, &ib);
     let res = TOL.resolution();

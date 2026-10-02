@@ -555,6 +555,88 @@ fn walls_overlapping_along_two_lines_are_cut_within_a_small_budget() {
     }
 }
 
+/// The ellipse round the origin with half-axes `a` along `x` and `b`,
+/// exact: four quarters of weight `1/√2`.
+fn ellipse(a: f64, b: f64, curve: u64) -> Loop {
+    let p = DVec2::new;
+    let ends = [p(a, 0.0), p(0.0, b), p(-a, 0.0), p(0.0, -b)];
+    let corners = [p(a, b), p(-a, b), p(-a, -b), p(a, -b)];
+    Loop {
+        segments: (0..4)
+            .map(|i| Segment {
+                conic: crate::patch::Conic2::new(
+                    ends[i],
+                    corners[i],
+                    std::f64::consts::FRAC_1_SQRT_2,
+                    ends[(i + 1) % 4],
+                )
+                .unwrap(),
+                curve,
+            })
+            .collect(),
+    }
+}
+
+/// The area the ellipse of half-axes `a` and `b` round the origin
+/// shares with the unit circle round `(c, 0)`, `c` a little under
+/// `a + 1`: the lens about the ellipse's tip, by Green's theorem from its
+/// crossings (found by bisection along the ellipse).
+fn tip_lens(a: f64, b: f64, c: f64) -> f64 {
+    let outside = |t: f64| (a * t.cos() - c).hypot(b * t.sin()) > 1.0;
+    let (mut lo, mut hi) = (0.0, PI / 2.0);
+    for _ in 0..200 {
+        let mid = 0.5 * (lo + hi);
+        if outside(mid) {
+            hi = mid;
+        } else {
+            lo = mid;
+        }
+    }
+    let t = 0.5 * (lo + hi);
+    // `½∮(x dy − y dx)` about the tip `(a, 0)`: along the ellipse from
+    // `−t` to `t`, then along the circle from the upper crossing, at `φ`
+    // round its centre, round its far side to the lower one, at `−φ`.
+    let phi = (b * t.sin()).atan2(a * t.cos() - c);
+    let ellipse = a * b * (t - t.sin());
+    let circle = (PI - phi) - (c - a) * phi.sin();
+    ellipse + circle
+}
+
+#[test]
+fn walls_of_different_conics_are_cut_along_their_lines() {
+    // An ellipse's tip (curvature 8 there, less either side) poking into
+    // a unit circle's wall by 3e-5 and by 1e-3 at the default tolerance:
+    // the walls cross in two lines whose ends join along them. Exact.
+    let a = extruded(vec![ellipse(2.0, 0.5, 0)], 0.0, 2.0, 1);
+    for overlap in [3e-5, 1e-3] {
+        let c = 3.0 - overlap;
+        let b = extruded(
+            vec![circle(DVec2::new(c, 0.0), 1.0, 10, false)],
+            0.5,
+            1.5,
+            2,
+        );
+        let lens = tip_lens(2.0, 0.5, c);
+        let (va, vb) = (a.volume(), b.volume());
+        let budget = Budget::new(500_000);
+        for (x, y, op, want) in [
+            (&a, &b, Op::Union, va + vb - lens),
+            (&a, &b, Op::Intersection, lens),
+            (&a, &b, Op::Difference, va - lens),
+            (&b, &a, Op::Difference, vb - lens),
+        ] {
+            let got = boolean(x, y, op, &TOL, &budget)
+                .unwrap_or_else(|e| panic!("{overlap} {op:?}: {e:?}"));
+            assert!(
+                (got.volume() - want).abs() < 1e-12,
+                "{overlap} {op:?}: {} vs {want}",
+                got.volume()
+            );
+        }
+        assert_deterministic(|| boolean(&a, &b, Op::Intersection, &TOL, &budget)).unwrap();
+    }
+}
+
 #[test]
 fn a_bar_cut_at_its_refinement_midpoints_keeps_its_planes() {
     // A box's face through the middle of a bar's wall, where refinement

@@ -4141,6 +4141,38 @@ one. Results: 61 without the joins (176 spending over a million units,
 565 M units in all), 177 at `LENS` 2 (106, 356 M), 214 at 1/4 (65,
 205 M), 229 at 1/16.
 
+Probed again against exact volumes (the lens by Green's theorem from
+the curves' crossings; each result to `1e-10`, or, where the lens is
+thinner than the resolution, within a skin a resolution thick over
+it): an ellipse's tip, flank and side (half-axes 2 × 0.5 and 3 × 0.3,
+curvature up to 33) against a unit circle's wall; pins of radius 0.5
+to 0.999 poking out of a hole's wall (curvatures nearly cancelling);
+unit walls on the XY plane, on a frame turned off every axis and on
+one some 3 700 from the origin, the second's span inside the first's,
+flush with its top, `1e-7` over it, `3e-7` under it, or overlapping it
+by `1e-5` or half a resolution; walls a hair off parallel, in one plane
+(a V from a gap at one end to an overlap at the other) or skew (a long
+loop); overlaps from a twentieth of a resolution to a thousand, at fits
+0.1, 0.01 and 0.001 (3 204 operations). No result was wrong. Where
+the lens is thinner than the resolution an intersection may come out
+empty while the differences cut it, and caps within the tie of each
+other move a result by up to a resolution times their area, as without
+the joins. Against no joins: ellipses 405 → 578 work (545 M → 114 M
+units), the spans 207 → 511 (932 M → 123 M), the tilted walls 4 and 4,
+the pins 258 against at most 94; but some results that refinement
+got are lost (see "Joining lines on large pieces loses some results"
+in Known gaps). The grouping
+holds by construction: lines along `d` cross the cross-section at
+points at least `2θ/κ` apart, a line's two ends lie on one of them (up
+to where the counting put them), so groups within `θ/κ` are the
+lines'. An end the counting only placed at a tie may lie off its line:
+a rim flush within the tie with the other wall's put one `0.3·θ/κ`
+along it; asking each end to lie within `θ²/4κ` of both walls (a
+quarter of the grouping distance across) refused it and lost the
+results the join got right, so ends aren't checked. Leaving steep
+crossings to refinement (`sin θ` over 1/8 to 3/4) won back as many
+results as it lost, so every clear line is joined.
+
 Two patches on **one surface** (their faces claim quadrics and points
 sampled on each lie on the other's within the resolution: a pin in a
 hole cut by the same circle, cylinders of one radius stacked or
@@ -5540,7 +5572,10 @@ refused); walls tangent along a line at the default tolerance
 (cylinders side by side, a pin of radius 0.5 against a plate's hole of
 radius 1, off the seams): the differences both ways the first operand
 to `1e-9` in volume and the intersections empty, within 200 000 units,
-the same at 1 and 8 threads; a box's face through a bar's refinement midpoints (its plane
+the same at 1 and 8 threads; an ellipse's tip (half-axes 2 × 0.5)
+poking `3e-5` and `1e-3` into a unit circle's wall, all four exact to
+`1e-12` against the lens by Green's theorem; a box's face through a
+bar's refinement midpoints (its plane
 tag true), and a tilted bar's arc crossing a plate's cap where the
 search misses it (on the cap's plane). Walls over arcs whose ends are
 level (a 10 × 10 square whose top side is the arc, extruded): 60°
@@ -6320,6 +6355,24 @@ sampled points.
   of a wall by 10 to 30 resolutions fold in unions and differences.
   These failed before too (out of budget, or the same refusals after
   millions of units).
+- **Joining lines on large pieces loses some results**: joined in an
+  early round, a pair's lines leave the pieces beside them as large as
+  they were, and some results that refinement got right now fail the
+  hull or neighbour rules (`Hull`, `VertexNeighbours`, `EdgeNeighbours`)
+  or fold. Probed (see "Ends along one direction"): 16 of 864 ellipse
+  operations, mostly overlaps of a thousand resolutions (an ellipse
+  of half-axes 3 × 0.3 whose tip pokes 0.1 into a unit circle's wall at
+  fit 0.1: union and `B − A`; the same ellipses' sides at fit 0.01 and
+  0.001), and 17 of 1 080 on spans, all walls overlapping by 0.3
+  resolutions (just over `LENS`: a cylinder turned off the axes over
+  the middle of another at fit 0.1, `A − B` folds; the second's span
+  overlapping the first's top by `1e-5` at fits 0.01 and 0.001), and 1
+  of 1 152 on pins (radius 0.9 poking 0.1 out of its hole at fit 0.1,
+  the union), against 189, 321 and at least 165 won. Neither a larger
+  `LENS` (17 lost at 0.3 resolutions against 83 won) nor leaving steep
+  crossings to refinement wins more than it loses. Repro: the second operand a unit
+  circle round `(4 − 0.1, 0)` from 0.5 to 1.5, the first the ellipse
+  of half-axes 3 and 0.3 round the origin from 0 to 2, at fit 0.1.
 - Merging restores only whole nodes of the refinement tree with no finer
   neighbour: pieces next to a cut stay as refined.
 - **Tangent unions and thin overlaps run out**: what joining ends
@@ -8065,4 +8118,7 @@ parameter, or a split outside the patch bounds),
   more (177 at 2, 194 at 1/2, 214 at 1/4 and 1/8, 229 at 1/16, which
   turned one). The tangent tally holds from 8 down to 1/32 and every
   tally at 2 and 1/4; at 1/2000 the tangent tally fell from 72 to 70,
-  as with the plan's 64-resolution prototype. `LENS` is 1/4.
+  as with the plan's 64-resolution prototype. `LENS` is 1/4. On wider
+  probes it does turn some results into errors ("Joining lines on large
+  pieces loses some results", in the booleans' known gaps), far fewer
+  than it wins.
