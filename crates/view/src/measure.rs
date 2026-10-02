@@ -343,6 +343,7 @@ pub(crate) fn panel<'a>(state: &MeasureState<'a>) -> Element<'a, Message> {
         body: body.into(),
         message: None,
         ok: None,
+        accept: None,
         cancel: Message::Look(Look::Measure(MeasureLook::Close)),
         close: true,
     })

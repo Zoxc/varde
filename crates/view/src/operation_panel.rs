@@ -1,6 +1,7 @@
 //! The floating panel an operation is set up in, over the right of the
 //! viewport: a header with its title and a summary, a body with its
-//! options, and a footer with its message and Cancel and OK. The header
+//! options, and a footer with its message and Cancel and OK (and Accept
+//! error while the preview failed). The header
 //! and footer always show; the body scrolls when the panel would run past
 //! the room it has, so OK and Cancel stay on screen however many options
 //! there are or however short the window is.
@@ -168,6 +169,11 @@ pub(crate) struct Parts<'a> {
     pub message: Option<Element<'a, Message>>,
     /// What OK sends, or nothing while it can't be pressed.
     pub ok: Option<Message>,
+    /// What Accept error sends, left of OK in the danger colour, shown
+    /// only while it can be pressed: the preview failed, and pressing it
+    /// keeps the operation with its error (marked failed in the
+    /// Timeline, to fix later).
+    pub accept: Option<Message>,
     /// What Cancel sends.
     pub cancel: Message,
     /// Whether the footer has only a Close button, sending `cancel`, in
@@ -185,6 +191,7 @@ pub(crate) fn operation_panel(parts: Parts<'_>) -> Element<'_, Message> {
         body,
         message,
         ok,
+        accept,
         cancel,
         close,
     } = parts;
@@ -221,9 +228,15 @@ pub(crate) fn operation_panel(parts: Parts<'_>) -> Element<'_, Message> {
             small_button("Close", Emphasis::Secondary).on_press(cancel),
         ]
     } else {
+        let accept = accept.map(|accept| {
+            small_button("Accept error", Emphasis::Primary)
+                .style(theme::danger_button)
+                .on_press(accept)
+        });
         row![
             space::horizontal(),
             small_button("Cancel", Emphasis::Secondary).on_press(cancel),
+            accept,
             small_button("OK", Emphasis::Primary).on_press_maybe(ok),
         ]
     }

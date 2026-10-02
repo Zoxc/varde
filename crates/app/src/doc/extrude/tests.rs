@@ -541,7 +541,7 @@ fn a_cut_lists_the_bodies_it_touches_and_goes_through_all() {
 }
 
 /// An intersect that would leave nothing of the plate: the draft says
-/// why, and committed it's marked failed in the Timeline while the plate
+/// why, OK waits, and accepted with its error it's marked failed in the Timeline while the plate
 /// stays drawn, rather than an empty body and an empty mesh.
 #[test]
 fn an_intersect_leaving_nothing_is_marked_failed_and_the_plate_kept() {
@@ -559,7 +559,15 @@ fn an_intersect_leaving_nothing_is_marked_failed_and_the_plate_kept() {
     assert_eq!(doc.feed.mesh().triangle_count(), triangles);
     let _ = doc.view_in(Mode::default());
 
+    // OK and `Enter` wait while the preview fails; Accept error doesn't.
+    let state = doc.extrude_state().unwrap();
+    assert!(!state.ready && state.accept);
+    let revision = doc.editor.revision();
     doc.update(Edit::CommitExtrude);
+    assert_eq!(doc.editor.revision(), revision);
+    assert!(doc.extrude.is_some());
+    doc.update(Edit::AcceptError);
+    assert!(doc.extrude.is_none());
     answer(&mut doc, &requests);
     let feature = doc.editor.document().features().last().unwrap().id;
     let failed = doc.feed.failed_features();
@@ -1725,7 +1733,11 @@ fn a_body_taken_out_and_undone_away_leaves_the_draft_whole() {
     answer(&mut doc, &requests);
     assert_eq!(listed(&doc), [body, peg]);
     assert!(doc.extrude_state().unwrap().targets[1].included);
+    // The cut would empty the peg: OK waits, and Accept error takes it.
+    assert!(doc.feed.draft_error().is_some());
     doc.update(Edit::CommitExtrude);
+    assert!(doc.extrude.is_some());
+    doc.update(Edit::AcceptError);
     assert_eq!(doc.edit_error, None);
     assert!(doc.extrude.is_none());
 }

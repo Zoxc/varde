@@ -292,10 +292,11 @@ impl Doc {
 
     /// Adds the combine being set up, or changes the one edited, as one
     /// undo step, and ends the session: if it's ready
-    /// ([`Doc::combine_ready`]), and the document takes it. Refused, the
+    /// ([`Doc::combine_ready`]), its preview failed only if `accept`
+    /// ([`Doc::commit_by`]), and the document takes it. Refused, the
     /// session stays, and why shows.
-    pub(crate) fn commit_combine(&mut self) {
-        if !self.combine_ready() {
+    pub(crate) fn commit_combine(&mut self, accept: bool) {
+        if !self.commit_by(self.combine_ready(), accept) {
             return;
         }
         let Some(session) = &self.combine else {
@@ -430,7 +431,8 @@ impl Doc {
             enough: self.combinable(),
             error: self.feed.draft_error(),
             checking: self.proposals.slow(),
-            ready: self.combine_ready(),
+            ready: self.commit_by(self.combine_ready(), false),
+            accept: self.commit_by(self.combine_ready(), true),
             editable: self.editable(),
         })
     }

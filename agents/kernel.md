@@ -7513,6 +7513,12 @@ back, so a new edit may give theirs to other bodies), and under it, for a
 join ticked for two or more (not counting one merged away before),
 "Joined into Body 1", the first ticked (`extrude::joined_into`), which holds them all once it's committed; its footer the
 refusal, the draft's error or "Checking the sketch…", then Cancel and OK.
+While the draft's error shows, OK and `Enter` wait, and an "Accept error"
+button left of OK, in the danger fill, commits anyway (`Edit::AcceptError`,
+`Parts::accept`, `Doc::commit_by`; every operation's panel, never a key):
+the feature is kept with its error, marked failed in the Timeline, to fix
+later. The error is the newest draft's, none while it's unanswered, so OK
+doesn't wait on the preview.
 Errors that stand alone, the field errors, the refusal and the draft's
 error here and a failed feature's tooltip, are shown as sentences,
 capitalised by the view (`chrome::sentence`): the messages themselves

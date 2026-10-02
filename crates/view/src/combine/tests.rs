@@ -14,6 +14,7 @@ fn state_of<'a>(target: Option<CombineBody<'a>>, tools: Vec<CombineBody<'a>>) ->
         error: None,
         checking: false,
         ready: false,
+        accept: false,
         editable: true,
     }
 }

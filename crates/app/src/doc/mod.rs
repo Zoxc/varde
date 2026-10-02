@@ -413,9 +413,14 @@ impl Doc {
             Edit::ConvertSplines => self.convert_splines(),
             Edit::ToggleHandles => self.toggle_handles(),
             Edit::InsertSplinePoint { spline, at } => self.insert_spline_point(spline, at),
-            Edit::CommitExtrude => self.commit_extrude(),
-            Edit::CommitRevolve => self.commit_revolve(),
-            Edit::CommitCombine => self.commit_combine(),
+            Edit::CommitExtrude => self.commit_extrude(false),
+            Edit::CommitRevolve => self.commit_revolve(false),
+            Edit::CommitCombine => self.commit_combine(false),
+            Edit::AcceptError => {
+                self.commit_extrude(true);
+                self.commit_revolve(true);
+                self.commit_combine(true);
+            }
             Edit::CommitOpacity => {
                 if let Some((id, opacity)) = self.opacity_preview.take() {
                     self.change(Change::SetOpacity(id, opacity));

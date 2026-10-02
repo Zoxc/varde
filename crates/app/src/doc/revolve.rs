@@ -325,10 +325,11 @@ impl Doc {
 
     /// Adds the revolve being set up, or changes the one edited, as one
     /// undo step, and ends the session: if it's ready
-    /// ([`Doc::revolve_ready`]), and the document takes it. Refused, the
+    /// ([`Doc::revolve_ready`]), its preview failed only if `accept`
+    /// ([`Doc::commit_by`]), and the document takes it. Refused, the
     /// session stays, and why shows.
-    pub(crate) fn commit_revolve(&mut self) {
-        if !self.revolve_ready() {
+    pub(crate) fn commit_revolve(&mut self, accept: bool) {
+        if !self.commit_by(self.revolve_ready(), accept) {
             return;
         }
         let Some(session) = &self.revolve else {
@@ -400,7 +401,8 @@ impl Doc {
             refused: session.refused(document),
             held: self.held(session.feature, session.operation),
             checking: self.proposals.slow(),
-            ready: self.revolve_ready(),
+            ready: self.commit_by(self.revolve_ready(), false),
+            accept: self.commit_by(self.revolve_ready(), true),
             editable: self.editable(),
         })
     }

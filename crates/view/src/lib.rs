@@ -253,6 +253,12 @@ pub enum Edit {
     /// Adds the combine being set up, or changes the one being edited, as
     /// one undo step, and ends its session: OK, or `Enter`.
     CommitCombine,
+    /// Commits the extrude, revolve or combine being set up as
+    /// [`Edit::CommitExtrude`] and the others do, though its preview
+    /// failed: the feature is kept with its error, marked failed in the
+    /// Timeline, to fix later. The Accept error button only, never
+    /// `Enter`.
+    AcceptError,
     /// Sets the opacity previewed ([`Look::PreviewOpacity`]) as one undo
     /// step, keeping the context menu open: letting go of the slider.
     CommitOpacity,

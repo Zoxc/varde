@@ -472,6 +472,15 @@ impl Doc {
         true
     }
 
+    /// Whether a session ready to be committed (`ready`) is to be by OK
+    /// and `Enter` (`accept` false), which wait while the preview failed,
+    /// or by Accept error (`accept`), which takes only a failed one, to
+    /// be fixed later. The error is the newest draft's, none while it's
+    /// unanswered: OK doesn't wait on the preview.
+    pub(crate) fn commit_by(&self, ready: bool, accept: bool) -> bool {
+        ready && self.feed.draft_error().is_some() == accept
+    }
+
     /// Why the feature `edited` can't do `operation`, if it makes a new
     /// body that a combine after it names and `operation` would stop it
     /// making one: the document refuses that ("combines body 2, which

@@ -424,6 +424,7 @@ first angle's field and "90°" in the second, a new body.
   order, and screens of several sizes, checking after every step: the
   sessions apart and none read-only, the draft last sent the session's
   and the panel's values, OK never with a refusal or a refused field,
+  nor with the draft's error (Accept error only with it),
   `Esc` leaving the document as it was, a commit one undo step, and the
   draft's error the newest answer's. The viewport's
   (`viewport/revolve/tests.rs`) clicks random sketches and cameras.

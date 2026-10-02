@@ -63,6 +63,7 @@ fn state_of<'a>(
         held: None,
         checking: false,
         ready: false,
+        accept: false,
         editable: true,
     }
 }

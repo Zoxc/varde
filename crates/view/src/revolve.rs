@@ -177,8 +177,12 @@ pub struct RevolveState<'a> {
     /// Whether sketch edits have waited on the solver long enough to say
     /// so: OK waits for them, and the panel says why.
     pub checking: bool,
-    /// Whether OK can be pressed.
+    /// Whether OK (and `Enter`) can be pressed: not while the preview
+    /// failed.
     pub ready: bool,
+    /// Whether Accept error can be pressed: the preview failed
+    /// ([`RevolveState::error`]), and the operation could be committed otherwise.
+    pub accept: bool,
     /// Whether the document can be changed.
     pub editable: bool,
 }
@@ -364,6 +368,7 @@ pub(crate) fn panel<'a>(state: &RevolveState<'a>) -> Element<'a, Message> {
         body: body.into(),
         message,
         ok: state.ready.then_some(Message::Edit(Edit::CommitRevolve)),
+        accept: state.accept.then_some(Message::Edit(Edit::AcceptError)),
         cancel: Message::Look(Look::Revolve(RevolveLook::Cancel)),
         close: false,
     })

@@ -21,6 +21,7 @@ fn panel_saying(rows: usize, message: &'static str) -> Element<'static, Message>
         ok: Some(Message::Look(crate::Look::Extrude(
             crate::ExtrudeLook::Cancel,
         ))),
+        accept: None,
         cancel: Message::Look(crate::Look::Extrude(crate::ExtrudeLook::Cancel)),
         close: false,
     })
@@ -248,4 +249,38 @@ fn the_body_s_scroller_is_faint() {
         .filter(|&y| near((y * size.width as usize + x) * 4))
         .count();
     assert!(hits >= 10, "{hits} faint pixels");
+}
+
+/// Accept error shows left of OK while it can be pressed, and not at
+/// all otherwise, OK waiting either way.
+#[test]
+fn accept_error_shows_beside_ok_while_it_can_be_pressed() {
+    let cancel = || Message::Look(crate::Look::Extrude(crate::ExtrudeLook::Cancel));
+    for accept in [true, false] {
+        let panel = operation_panel(Parts {
+            title: "New thing",
+            summary: None,
+            body: text("Row 1").into(),
+            message: Some(message_text("It failed", theme::danger_text)),
+            ok: None,
+            accept: accept.then(cancel),
+            cancel: cancel(),
+            close: false,
+        });
+        let shown = Laid::new(panel, Size::new(400.0, 600.0)).texts();
+        let ok = find(&shown, "OK");
+        let found = shown.iter().find(|shown| shown.text == "Accept error");
+        assert_eq!(found.is_some(), accept, "{shown:?}");
+        if let Some(found) = found {
+            assert!(found.whole(), "{found:?}");
+            assert!(
+                found.bounds.x + found.bounds.width < ok.bounds.x,
+                "{shown:?}"
+            );
+            assert!(
+                found.bounds.x > find(&shown, "Cancel").bounds.x,
+                "{shown:?}"
+            );
+        }
+    }
 }

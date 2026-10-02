@@ -80,6 +80,7 @@ fn state<'a>(
         held: None,
         checking: false,
         ready: axis.is_some() && !picked.is_empty(),
+        accept: false,
         editable: true,
     }
 }

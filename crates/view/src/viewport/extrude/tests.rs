@@ -80,6 +80,7 @@ fn state<'a>(
         held: None,
         checking: false,
         ready: !picked.is_empty(),
+        accept: false,
         editable: true,
         units: LengthUnit::Mm,
     }

@@ -309,10 +309,11 @@ impl Doc {
     /// Adds the extrude being set up, or changes the one edited, as one
     /// undo step, and ends the session: if it's ready
     /// ([`Doc::extrude_ready`]: the edits left with the solver answered),
-    /// and the document takes it. Refused, the session stays, and why
+    /// its preview failed only if `accept` ([`Doc::commit_by`]), and the
+    /// document takes it. Refused, the session stays, and why
     /// shows.
-    pub(crate) fn commit_extrude(&mut self) {
-        if !self.extrude_ready() {
+    pub(crate) fn commit_extrude(&mut self, accept: bool) {
+        if !self.commit_by(self.extrude_ready(), accept) {
             return;
         }
         let Some(session) = &self.extrude else {
@@ -401,7 +402,8 @@ impl Doc {
             refused: session.refused(&document.design()),
             held: self.held(session.feature, session.operation),
             checking: self.proposals.slow(),
-            ready: self.extrude_ready(),
+            ready: self.commit_by(self.extrude_ready(), false),
+            accept: self.commit_by(self.extrude_ready(), true),
             editable: self.editable(),
             units: document.units(),
         })

@@ -100,7 +100,14 @@ fn check(lathe: &Lathe, step: usize, what: &str) {
     }
     drop(requests);
     if let Some(state) = doc.revolve_state() {
-        if state.ready {
+        // OK waits while the preview fails, and Accept error takes only that.
+        let failed = doc.feed.draft_error().is_some();
+        assert!(
+            !(state.ready && failed) && !(state.accept && !failed),
+            "{}",
+            at()
+        );
+        if state.ready || state.accept {
             for angle in state.extent.angles() {
                 assert!(state.fields[angle.index()].error.is_none(), "{}", at());
             }
@@ -140,8 +147,16 @@ fn check(lathe: &Lathe, step: usize, what: &str) {
             }
         }
     }
+    if let Some(state) = doc.extrude_state() {
+        let failed = doc.feed.draft_error().is_some();
+        assert!(
+            !(state.ready && failed) && !(state.accept && !failed),
+            "{}",
+            at()
+        );
+    }
     if let Some(state) = doc.extrude_state()
-        && state.ready
+        && (state.ready || state.accept)
     {
         for distance in state.extent.distances() {
             assert!(state.fields[distance.index()].error.is_none(), "{}", at());
@@ -254,7 +269,12 @@ fn run(seed: u64, steps: usize) {
             }
             23 => {
                 committed = true;
-                lathe.doc.update(Edit::CommitRevolve);
+                let accept = rng.below(3) == 0;
+                (lathe.doc).update(if accept {
+                    Edit::AcceptError
+                } else {
+                    Edit::CommitRevolve
+                });
             }
             24 => {
                 let region = rng.below(regions + 1);
@@ -277,7 +297,12 @@ fn run(seed: u64, steps: usize) {
             }
             28 => {
                 committed = true;
-                lathe.doc.update(Edit::CommitExtrude);
+                let accept = rng.below(3) == 0;
+                (lathe.doc).update(if accept {
+                    Edit::AcceptError
+                } else {
+                    Edit::CommitExtrude
+                });
             }
             29 => lathe.doc.update(Edit::Undo),
             30 => lathe.doc.update(Edit::Redo),
