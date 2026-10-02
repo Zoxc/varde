@@ -10,7 +10,10 @@
 //! an edge where the two sides agree within [`Display::SMOOTH_DEGREES`]
 //! and split where they don't; splits and the boundaries between faces of
 //! different keys ([`FaceName::key`](crate::mesh::FaceName::key)) are the
-//! feature edges drawn with the mesh.
+//! feature edges drawn with the mesh. The triangles go face by face, a
+//! face being a region of the solid's [`Topology`], and the feature edges
+//! are polylines from corner to corner: first the topology's chains, then
+//! the creases inside one region.
 //!
 //! The rules and reasons are written down in `agents/kernel.md`.
 
@@ -20,7 +23,8 @@ use crate::manifold::{ManifoldError, ManifoldMesh};
 use crate::mesh::Mesh;
 use crate::par::par_map;
 use crate::patch::{Bounds3, Conic3, Patch};
-use crate::{MeshError, RenderMesh, Tolerance, Topology};
+use crate::render_mesh::split;
+use crate::{MeshError, MeshParts, RenderMesh, Tolerance, Topology};
 
 /// How finely [`Solid::tessellate`](crate::Solid::tessellate) samples:
 /// each edge curve is cut into segments whose chords are at most
@@ -75,7 +79,7 @@ const COS_SMOOTH: f64 = 0.9998476951563913;
 pub(crate) struct Limits {
     pub(crate) vertices: u64,
     pub(crate) indices: u64,
-    pub(crate) edges: u64,
+    pub(crate) edge_points: u64,
 }
 
 impl Limits {
@@ -84,52 +88,30 @@ impl Limits {
     pub(crate) const EXPORT: Limits = Limits {
         vertices: ManifoldMesh::MAX_VERTICES as u64,
         indices: 3 * ManifoldMesh::MAX_TRIANGLES as u64,
-        edges: 0,
+        edge_points: 0,
     };
 
     /// [`RenderMesh::MAX_VERTICES`] and the others.
     pub(crate) const RENDER: Limits = Limits {
         vertices: RenderMesh::MAX_VERTICES as u64,
         indices: RenderMesh::MAX_INDICES as u64,
-        edges: RenderMesh::MAX_EDGES as u64,
+        edge_points: RenderMesh::MAX_EDGE_POINTS as u64,
     };
 }
 
-/// Which face and which edge of a solid's [`Topology`] each part of its
-/// tessellation draws, for picking: the region of each triangle of the
-/// [`RenderMesh`] and the chain of each of its edges, in their order.
-/// Regions are faces as users see them, so the pieces of one face (a
-/// circle's quarter walls, flush faces merged under one name) are one.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct Picking {
-    /// One per triangle: the index of its region in
-    /// [`Topology::regions`].
-    pub triangles: Vec<u32>,
-    /// One per edge: the index of its chain in [`Topology::chains`], or
-    /// [`Picking::NONE`] for a crease inside one region, where the
-    /// patches' normals split but no other face begins.
-    pub edges: Vec<u32>,
-}
-
-impl Picking {
-    /// An edge that is on no chain.
-    pub const NONE: u32 = u32::MAX;
-}
-
 /// `mesh`, which must pass [`Mesh::check`], as triangles: see the module
-/// docs.
+/// docs. The result is one part, even if it's empty.
 pub(crate) fn tessellate(mesh: &Mesh, display: &Display) -> Result<RenderMesh, MeshError> {
     tessellate_within(mesh, display, &Limits::RENDER)
 }
 
-/// [`tessellate`], with which region and chain of `topology` (the
-/// mesh's) each triangle and edge draws.
-pub(crate) fn tessellate_picking(
+/// [`tessellate`] with `mesh`'s topology already worked out.
+pub(crate) fn tessellate_with(
     mesh: &Mesh,
     display: &Display,
     topology: &Topology,
-) -> Result<(RenderMesh, Picking), MeshError> {
-    draw(mesh, display, &Limits::RENDER, Some(topology))
+) -> Result<RenderMesh, MeshError> {
+    draw(mesh, display, &Limits::RENDER, topology)
 }
 
 /// What a tessellation of a mesh is made of, worked out from the edges'
@@ -297,26 +279,27 @@ pub(crate) fn tessellate_within(
     display: &Display,
     limits: &Limits,
 ) -> Result<RenderMesh, MeshError> {
-    draw(mesh, display, limits, None).map(|(drawn, _)| drawn)
+    draw(mesh, display, limits, &Topology::of(mesh))
 }
 
-/// [`tessellate_within`], with the [`Picking`] of `topology` if there is
-/// one (otherwise an empty one).
+/// [`tessellate_within`], its faces and chains those of `topology`, which
+/// must be `mesh`'s.
 fn draw(
     mesh: &Mesh,
     display: &Display,
     limits: &Limits,
-    topology: Option<&Topology>,
-) -> Result<(RenderMesh, Picking), MeshError> {
-    if let Some(topology) = topology {
-        assert_eq!(
-            topology.triangles(),
-            mesh.tris().len(),
-            "the topology is the mesh's"
-        );
-    }
+    topology: &Topology,
+) -> Result<RenderMesh, MeshError> {
+    assert_eq!(
+        topology.triangles(),
+        mesh.tris().len(),
+        "the topology is the mesh's"
+    );
     let Some(plan) = Plan::new(mesh, display)? else {
-        return Ok(Default::default());
+        return RenderMesh::from_parts(MeshParts {
+            part_ends: vec![[0; 3]],
+            ..MeshParts::default()
+        });
     };
     if !plan.fits(limits) {
         return Err(MeshError::TooLarge);
@@ -328,7 +311,6 @@ fn draw(
         counts,
         tri_ids,
         edge_ids,
-        levels,
         inner,
         inner_total,
         triangles,
@@ -336,6 +318,9 @@ fn draw(
     } = &plan;
     let (halfedges, inner_total, triangles) = (*halfedges, *inner_total, *triangles);
     let n_of = |h: u32| plan.n_of(h);
+
+    // Each halfedge's face: its triangle's region.
+    let face_of = |h: u32| topology.region_of(h / 3);
 
     // Unit normals along each halfedge of each patch, at its edge's
     // sample points in the halfedge's own direction.
@@ -371,20 +356,16 @@ fn draw(
         .map(|&e| {
             let a = first[e as usize];
             let b = mesh.halfedge(a).pair;
-            let key = |h: u32| {
-                mesh.faces()[mesh.tris()[h as usize / 3].face as usize]
-                    .name
-                    .key()
-            };
-            !smooth[e as usize] || key(a) != key(b)
+            !smooth[e as usize] || face_of(a) != face_of(b)
         })
         .collect();
-    let feature_segments: u64 = edge_ids
-        .iter()
-        .filter(|&&e| feature[e as usize])
-        .map(|&e| u64::from(counts[e as usize]))
-        .sum();
-    if feature_segments > limits.edges {
+    let chains = Chains::new(mesh, first, &feature, face_of, topology);
+    // Each polyline has a point more than its segments.
+    let feature_points = (chains.halfedges.iter())
+        .map(|&h| u64::from(n_of(h)))
+        .sum::<u64>()
+        .saturating_add(chains.ends.len() as u64);
+    if feature_points > limits.edge_points {
         return Err(MeshError::TooLarge);
     }
 
@@ -518,60 +499,242 @@ fn draw(
         });
         (points, indices)
     });
-    let mut picking = Picking::default();
-    if let Some(topology) = topology {
-        // Each patch's triangles follow the patch's, in order.
-        picking.triangles.reserve(triangles as usize);
-        for (t, level) in levels.iter().enumerate() {
-            let region = topology.region_of(t as u32);
-            picking
-                .triangles
-                .extend((0..level.triangles()).map(|_| region));
-        }
-    }
-    let mut indices = Vec::new();
-    for (points, tri_indices) in patches {
+    let mut tri_indices = Vec::with_capacity(patches.len());
+    for (points, indices) in patches {
         for (p, n) in points {
             positions.push(p);
             normals.push(n);
         }
-        indices.extend(tri_indices);
+        tri_indices.push(indices);
     }
-    debug_assert_eq!(indices.len() as u64, 3 * triangles);
     debug_assert_eq!(positions.len() as u64, inner_base + inner_total);
 
-    // Each mesh edge's chain. Chains run between different regions, of
-    // different keys, so all their edges are feature edges.
-    let mut chain_of = Vec::new();
-    if let Some(topology) = topology {
-        chain_of = vec![Picking::NONE; mesh.edges().len()];
-        for (c, chain) in topology.chains().iter().enumerate() {
+    // The triangles region by region, each region's in the order of its
+    // patches.
+    let mut indices = Vec::new();
+    let mut face_ends = Vec::with_capacity(topology.regions().len());
+    for region in topology.regions() {
+        for &t in &region.tris {
+            indices.extend_from_slice(&tri_indices[t as usize]);
+        }
+        // Within `MAX_INDICES`, checked above.
+        face_ends.push(indices.len() as u32);
+    }
+    drop(tri_indices);
+    debug_assert_eq!(indices.len() as u64, 3 * triangles);
+
+    // Each chain's samples, its joints once. Where a crease ends at a
+    // joint, the halfedges either side of it may have their own vertices
+    // there (the corner groups split at the crease), at the same position:
+    // the one before stands for both, and a closed chain ends on the
+    // vertex it starts on.
+    let mut edge_vertices = Vec::new();
+    let mut edge_ends = Vec::with_capacity(chains.ends.len());
+    for (halfedges, &[begin, finish]) in
+        split(&chains.halfedges, &chains.ends).zip(&chains.edge_corners)
+    {
+        let first = sample_vertex(halfedges[0], 0);
+        edge_vertices.push(first);
+        for &h in halfedges {
+            debug_assert_eq!(
+                edge_vertices.last().map(|&v| positions[v as usize]),
+                Some(positions[sample_vertex(h, 0) as usize]),
+            );
+            edge_vertices.extend((1..=n_of(h)).map(|r| sample_vertex(h, r)));
+        }
+        if begin == finish
+            && let Some(last) = edge_vertices.last_mut()
+        {
+            *last = first;
+        }
+        // Within `MAX_EDGE_POINTS`, checked above.
+        edge_ends.push(edge_vertices.len() as u32);
+    }
+    debug_assert_eq!(edge_vertices.len() as u64, feature_points);
+    let corners = (chains.corners.iter())
+        .map(|&v| mesh.verts()[v as usize].as_vec3().to_array())
+        .collect();
+
+    // Within `MAX_FACES`, `MAX_EDGE_POLYLINES` and `MAX_CORNERS`, as
+    // there are fewer faces than triangles, edges than half their points
+    // and corners than edges' ends.
+    let part_ends = vec![[
+        face_ends.len() as u32,
+        edge_ends.len() as u32,
+        chains.corners.len() as u32,
+    ]];
+    RenderMesh::from_parts(MeshParts {
+        positions,
+        normals,
+        indices,
+        face_ends,
+        edge_vertices,
+        edge_ends,
+        edge_faces: chains.faces,
+        corners,
+        edge_corners: chains.edge_corners,
+        part_ends,
+    })
+}
+
+/// The feature edges as polylines: first the [`Topology`]'s chains, in
+/// its order, each a maximal run of [`Edge`](crate::mesh::Edge) records
+/// between the same two regions; then the creases, the feature edges
+/// inside one region, each a maximal run of records end to end through
+/// the mesh vertices where exactly two feature edges meet, both creases
+/// of the same region. Every mesh vertex a polyline ends at is a corner;
+/// a run that closes without one gets a corner where it starts.
+///
+/// A chain runs along the halfedges on its first region's side. A crease
+/// runs along the halfedges on one side of it, which keep to that side:
+/// where two records meet, the halfedge starting there on the side of the
+/// one ending there. Only the two creases cross the fan round such a
+/// vertex, and a corner group (see [`tessellate_within`]) ends only at a
+/// split edge, which is a feature edge, so the two halfedges share their
+/// vertex there. A chain may run on through a vertex a crease ends at, so
+/// its halfedges there may have vertices of their own, at the same
+/// position.
+struct Chains {
+    /// The chains' halfedges, chain after chain, each from its start.
+    halfedges: Vec<u32>,
+    /// One past each chain's last halfedge.
+    ends: Vec<u32>,
+    /// Each chain's faces: its halfedges' side, then the other.
+    faces: Vec<[u32; 2]>,
+    /// The corners' mesh vertices.
+    corners: Vec<u32>,
+    /// Each chain's corners, where it starts and where it ends.
+    edge_corners: Vec<[u32; 2]>,
+    /// Each mesh vertex's corner, or `u32::MAX`.
+    corner_of: Vec<u32>,
+}
+
+impl Chains {
+    /// The polylines of the edges of `mesh` that are `feature`, each
+    /// along its `first` halfedge, between faces `face_of` their
+    /// halfedges: `topology`'s chains, then the creases. Creases start at
+    /// the lowest corner first, closed ones at their lowest edge's first
+    /// halfedge, so they come out the same every time.
+    fn new(
+        mesh: &Mesh,
+        first: &[u32],
+        feature: &[bool],
+        face_of: impl Fn(u32) -> u32,
+        topology: &Topology,
+    ) -> Chains {
+        let verts = mesh.verts().len();
+        let mut chains = Chains {
+            halfedges: Vec::new(),
+            ends: Vec::new(),
+            faces: Vec::new(),
+            corners: Vec::new(),
+            edge_corners: Vec::new(),
+            corner_of: vec![u32::MAX; verts],
+        };
+        let mut done = vec![false; feature.len()];
+        for chain in topology.chains() {
+            let (Some(&start), Some(&last)) = (chain.halfedges.first(), chain.halfedges.last())
+            else {
+                continue;
+            };
             for &h in &chain.halfedges {
-                chain_of[mesh.halfedge(h).edge as usize] = c as u32;
+                done[mesh.halfedge(h).edge as usize] = true;
             }
+            chains.halfedges.extend_from_slice(&chain.halfedges);
+            chains.push(chain.regions, mesh.halfedge(start).start, mesh.end(last));
         }
         debug_assert!(
-            (edge_ids.iter())
-                .all(|&e| feature[e as usize] || chain_of[e as usize] == Picking::NONE),
+            (0..feature.len()).all(|e| !done[e] || feature[e]),
             "every chain's edges are feature edges"
         );
-    }
-    let mut edges = Vec::new();
-    for &e in edge_ids {
-        if feature[e as usize] {
-            let (h, n) = (first[e as usize], counts[e as usize]);
-            edges.extend((0..n).map(|s| [sample_vertex(h, s), sample_vertex(h, s + 1)]));
-            if let Some(&chain) = chain_of.get(e as usize) {
-                picking.edges.extend((0..n).map(|_| chain));
-            }
+
+        // The creases.
+        let pair_of = |e: u32| {
+            let h = first[e as usize];
+            let pair = [face_of(h), face_of(mesh.halfedge(h).pair)];
+            [pair[0].min(pair[1]), pair[0].max(pair[1])]
+        };
+        // The feature edges at each vertex, as (edge, whether the edge's
+        // first halfedge starts there), in the order of the edges.
+        let mut at: Vec<Vec<(u32, bool)>> = vec![Vec::new(); verts];
+        for (e, _) in feature.iter().enumerate().filter(|(_, f)| **f) {
+            let h = first[e];
+            at[mesh.halfedge(h).start as usize].push((e as u32, true));
+            at[mesh.end(h) as usize].push((e as u32, false));
         }
+        // A crease runs on through a vertex only to another crease of
+        // its region: a chain's edges are between two regions.
+        let through: Vec<bool> = at
+            .iter()
+            .map(|ends| matches!(ends[..], [(a, _), (b, _)] if pair_of(a) == pair_of(b)))
+            .collect();
+        // The halfedge of edge `e` starting at the vertex `start` says it
+        // is at.
+        let from = |(e, start): (u32, bool)| {
+            let h = first[e as usize];
+            if start { h } else { mesh.halfedge(h).pair }
+        };
+        let starts = (0..verts)
+            .filter(|&v| !through[v])
+            .flat_map(|v| at[v].iter().copied())
+            .chain((0..feature.len() as u32).map(|e| (e, true)));
+        for (e, start) in starts {
+            if !feature[e as usize] || done[e as usize] {
+                continue;
+            }
+            let mut h = from((e, start));
+            let begin = mesh.halfedge(h).start;
+            let faces = [face_of(h), face_of(mesh.halfedge(h).pair)];
+            debug_assert_eq!(faces[0], faces[1], "what isn't on a chain is a crease");
+            let mut edge = e;
+            let end = loop {
+                done[edge as usize] = true;
+                chains.halfedges.push(h);
+                let w = mesh.end(h);
+                // The other feature edge here, the way on.
+                let came = (edge, first[edge as usize] != h);
+                let next = at[w as usize].iter().copied().find(|&end| end != came);
+                match next {
+                    Some(next) if through[w as usize] && !done[next.0 as usize] => {
+                        edge = next.0;
+                        h = from(next);
+                    }
+                    _ => break w,
+                }
+            };
+            chains.push(faces, begin, end);
+        }
+        chains
     }
-    debug_assert!(topology.is_none() || picking.triangles.len() as u64 == triangles);
-    debug_assert!(topology.is_none() || picking.edges.len() == edges.len());
-    Ok((
-        RenderMesh::from_parts(positions, normals, indices, edges)?,
-        picking,
-    ))
+
+    /// Ends the polyline whose halfedges were pushed last: between
+    /// `faces`, from mesh vertex `begin` to `end`.
+    fn push(&mut self, faces: [u32; 2], begin: u32, end: u32) {
+        // Within `MAX_EDGE_POINTS`, checked by the caller before it
+        // samples.
+        self.ends.push(self.halfedges.len() as u32);
+        self.faces.push(faces);
+        let corners = [begin, end].map(|v| {
+            if self.corner_of[v as usize] == u32::MAX {
+                self.corner_of[v as usize] = self.corners.len() as u32;
+                self.corners.push(v);
+            }
+            self.corner_of[v as usize]
+        });
+        self.edge_corners.push(corners);
+    }
+}
+
+/// How many triangles each patch of `mesh`, which must pass
+/// [`Mesh::check`], is drawn as within `display`: [`tessellate`] draws
+/// them face by face and [`weld`] patch by patch.
+#[cfg(test)]
+pub(crate) fn patch_triangles(mesh: &Mesh, display: &Display) -> Vec<u64> {
+    Plan::new(mesh, display)
+        .unwrap()
+        .map_or(Vec::new(), |plan| {
+            plan.levels.iter().map(Level::triangles).collect()
+        })
 }
 
 /// A welded tessellation's origin, positions about it and triangles,

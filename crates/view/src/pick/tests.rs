@@ -54,7 +54,7 @@ fn sides(index: &PickIndex, target: Picked) -> Vec<([f64; 3], f64)> {
     let Picked::Edge(chain) = target else {
         panic!("{target:?} isn't an edge");
     };
-    let faces = index.picking().chains()[chain as usize].faces;
+    let faces = index.edge_faces(chain).unwrap();
     let mut sides: Vec<_> = (faces.iter())
         .map(|&face| plane(index, Picked::Face(face)))
         .collect();
@@ -70,7 +70,7 @@ const BACK: ([f64; 3], f64) = ([0.0, 1.0, 0.0], 20.0);
 #[test]
 fn rays_at_known_pixels_hit_the_plates_faces() {
     let index = plate();
-    let body = index.picking().faces()[0].body;
+    let body = index.face_body(0).unwrap();
     for projection in [Projection::Orthographic, Projection::Perspective] {
         let top = camera(View::Top, projection);
         let at = shown(&top, DVec3::new(20.0, 5.0, 10.0));
@@ -227,33 +227,6 @@ fn highlights_hold_a_faces_triangles_and_an_edges_lines() {
 }
 
 #[test]
-fn a_chains_segments_join_into_polylines() {
-    let p = |x: f32, y: f32| Vec3::new(x, y, 0.0);
-    // Out of order and either way round: an open run and a closed square.
-    let lines = polylines(vec![
-        [p(1.0, 0.0), p(2.0, 0.0)],
-        [p(10.0, 0.0), p(11.0, 0.0)],
-        [p(1.0, 0.0), p(0.0, 0.0)],
-        [p(11.0, 1.0), p(11.0, 0.0)],
-        [p(10.0, 1.0), p(11.0, 1.0)],
-        [p(10.0, 0.0), p(10.0, 1.0)],
-    ]);
-    assert_eq!(
-        lines,
-        vec![
-            vec![p(0.0, 0.0), p(1.0, 0.0), p(2.0, 0.0)],
-            vec![
-                p(10.0, 0.0),
-                p(11.0, 0.0),
-                p(11.0, 1.0),
-                p(10.0, 1.0),
-                p(10.0, 0.0)
-            ],
-        ]
-    );
-}
-
-#[test]
 fn the_index_is_the_same_built_twice() {
     let [a, b] = [plate(), plate()];
     let camera = camera(View::Front, Projection::Perspective);
@@ -387,11 +360,11 @@ fn measure_the_index_of_a_plate_with_400_holes() {
     }
     let picked = start.elapsed();
     eprintln!(
-        "triangles {} edges {} faces {} chains {}: model {built:?}, index {indexed:?}, 1200 picks {picked:?} ({n} hits)",
+        "triangles {} edge points {} faces {} edges {}: model {built:?}, index {indexed:?}, 1200 picks {picked:?} ({n} hits)",
         mesh.triangle_count(),
-        mesh.edges().len(),
+        mesh.edge_vertices().len(),
         picking.faces().len(),
-        picking.chains().len()
+        mesh.edge_count()
     );
 }
 

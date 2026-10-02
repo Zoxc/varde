@@ -6,9 +6,10 @@
 //!
 //! ```text
 //! request = postcard(Request)
-//! reply   = postcard(Head) | positions | normals | indices | edges
+//! reply   = postcard(Head) | positions | normals | indices | face ends
+//!                           | edge vertices | edge ends | edge faces
+//!                           | corners | edge corners | part ends
 //!                           | line points | line ends
-//!                           | face per triangle | chain per edge
 //!         | postcard(Head) | postcard(Vec<ExportedBody>)
 //!         | postcard(Head)
 //! ```
@@ -19,9 +20,9 @@
 //! transferred, not copied. A [`Response`] crosses as its [`Head`], which
 //! has no model: the model's parts follow only a [`Head::Regenerated`] and
 //! are the bytes of the [`RenderMesh`]'s and the sketches' [`RenderLines`]'
-//! vectors and the [`Picking`]'s two index arrays as they are in memory
-//! (little endian on wasm). The picking tables' faces and chains ride in
-//! the head.
+//! vectors as they are in memory (little endian on wasm). The [`Picking`]
+//! tables (the parts' bodies, the faces' keys and summaries, the edges'
+//! closed flags) ride in the head.
 //!
 //! A request is copied out of its buffer only if it's within
 //! `MAX_REQUEST_BYTES`. Replies are checked on receipt: the head is within
@@ -29,13 +30,12 @@
 //! [`RenderMesh`] and [`RenderLines`] limits, both before they're copied,
 //! so a broken reply doesn't allocate without bound, and together the parts
 //! make a [`RenderMesh`] by [`RenderMesh::from_parts`] and [`RenderLines`]
-//! by [`RenderLines::from_parts`] and [`Picking`] by
-//! [`Picking::from_parts`] (one face per triangle and one chain or none
-//! per edge, every index within its table, each chain between two faces
-//! of one body, summaries finite and within bounds), every face of a body
-//! the head lists; the bodies' boxes in the head are
-//! finite with their corners in order, and the merged bodies name each
-//! consumed body once, never as a holder. The failed features' ids, the
+//! by [`RenderLines::from_parts`] and, with the head's tables, a
+//! [`Picking`] by [`Picking::from_parts`] (a body per part of the mesh,
+//! each one the head lists, a face per face, summaries finite and within
+//! bounds, a flag per edge); the bodies' boxes in the head are finite
+//! with their corners in order, and the merged bodies name each consumed
+//! body once, never as a holder. The failed features' ids, the
 //! sketches that don't solve and the bodies a draft or a feature touches
 //! are only marks, so they aren't checked against a document. Malformed
 //! bytes are refused, never a panic; see [`decode_request`] and [`decode_reply`]. A
@@ -59,15 +59,17 @@ use std::sync::Arc;
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 use varde_document::{BodyId, DecodeError, FeatureId, Generation, codec};
-use varde_kernel::{Aabb, LinesError, LinesPart, MeshError, MeshPart, RenderLines, RenderMesh};
+use varde_kernel::{
+    Aabb, LinesError, LinesPart, MeshError, MeshPart, MeshParts, RenderLines, RenderMesh,
+};
 use varde_lane::bytes::Buffer;
 
-use crate::{Drafted, ExportedBody, PickChain, PickFace, Picking, PickingError, Request, Response};
+use crate::{Drafted, ExportedBody, PickFace, Picking, PickingError, Request, Response};
 
 /// The most bytes a reply's head may have. A head is a generation, a few
 /// feature ids, the failed features' messages, the bodies each join, cut
 /// or intersect touches, a box per body and the picking tables (some 60
-/// bytes a face and 10 an edge), or an error message, so this is far more
+/// bytes a face and up to 6 an edge), or an error message, so this is far more
 /// than any real one needs. A model whose head would be larger is
 /// answered as failed ([`encode_reply`]). It's no larger because a few
 /// bytes of a head can stand for many more on the page (a feature id is
@@ -76,22 +78,20 @@ pub const MAX_HEAD_BYTES: usize = 1 << 26;
 
 /// The most faces a reply's picking tables may have: past any real
 /// model's, and few enough that decoding them can't take the page's
-/// memory (a face is about 130 bytes there and as few as 6 in the head).
+/// memory (a face is about 120 bytes there and as few as 5 in the head).
 /// A model with more is answered as failed ([`encode_reply`]).
 pub const MAX_FACES: usize = 1 << 20;
-
-/// The most chains a reply's picking tables may have (12 bytes each on
-/// the page, as few as 3 in the head).
-pub const MAX_CHAINS: usize = 1 << 22;
 
 /// The bounded decoding of a head's picking tables: refused as soon as
 /// they're past their bounds, mostly before any element is read.
 mod bounded {
     use serde::Deserializer;
+    use varde_document::BodyId;
+    use varde_kernel::RenderMesh;
 
-    use super::{MAX_CHAINS, MAX_FACES};
+    use super::MAX_FACES;
     use crate::picking::bounded::seq;
-    use crate::{PickChain, PickFace, Picking};
+    use crate::{PickFace, Picking};
 
     /// At most [`MAX_FACES`] faces with at most [`Picking::MAX_ALIASES`] aliases
     /// together.
@@ -104,9 +104,19 @@ mod bounded {
         )
     }
 
-    /// At most [`MAX_CHAINS`] chains.
-    pub(super) fn chains<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<PickChain>, D::Error> {
-        seq(d, MAX_CHAINS, |_| 0, 0)
+    /// At most [`RenderMesh::MAX_PARTS`] parts' bodies.
+    pub(super) fn parts<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<BodyId>, D::Error> {
+        seq(d, RenderMesh::MAX_PARTS, |_| 0, 0)
+    }
+
+    /// At most [`RenderMesh::MAX_EDGE_POLYLINES`] edges' flags.
+    pub(super) fn closed<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<bool>, D::Error> {
+        seq(d, RenderMesh::MAX_EDGE_POLYLINES, |_| 0, 0)
+    }
+
+    /// At most [`RenderMesh::MAX_EDGE_POLYLINES`] edges' tangent chains.
+    pub(super) fn tangents<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<u32>, D::Error> {
+        seq(d, RenderMesh::MAX_EDGE_POLYLINES, |_| 0, 0)
     }
 }
 
@@ -136,6 +146,10 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request, Error> {
 /// What a reply is, in front of its mesh parts. That the worker is ready,
 /// or panicked, isn't a reply: [`varde_lane`] says so.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "a head is decoded once per answer and taken apart at once"
+)]
 pub enum Head {
     /// A [`Response::Regenerated`], followed by its model's
     /// [`MODEL_PARTS`] parts.
@@ -158,14 +172,24 @@ pub enum Head {
         /// Each body's box, its least and greatest corner, checked to be
         /// finite and in order ([`Error::Bounds`]).
         bodies: Vec<(BodyId, [[f32; 3]; 2])>,
-        /// The picking tables' faces, each of a body in `bodies`
-        /// ([`Error::Picking`]), at most [`MAX_FACES`] with at most
-        /// [`Picking::MAX_ALIASES`] aliases together, refused as they're decoded.
+        /// The picking tables' body of each of the mesh's parts, each in
+        /// `bodies` ([`Error::Picking`]), at most
+        /// [`RenderMesh::MAX_PARTS`], refused as they're decoded.
+        #[serde(deserialize_with = "bounded::parts")]
+        parts: Vec<BodyId>,
+        /// The picking tables' faces, at most [`MAX_FACES`] with at most
+        /// [`Picking::MAX_ALIASES`] aliases together, refused as they're
+        /// decoded.
         #[serde(deserialize_with = "bounded::faces")]
         faces: Vec<PickFace>,
-        /// The picking tables' edges, at most [`MAX_CHAINS`].
-        #[serde(deserialize_with = "bounded::chains")]
-        chains: Vec<PickChain>,
+        /// The picking tables' closed flags, one per edge, at most
+        /// [`RenderMesh::MAX_EDGE_POLYLINES`].
+        #[serde(deserialize_with = "bounded::closed")]
+        closed: Vec<bool>,
+        /// The picking tables' tangent chains, one per edge, at most
+        /// [`RenderMesh::MAX_EDGE_POLYLINES`].
+        #[serde(deserialize_with = "bounded::tangents")]
+        tangents: Vec<u32>,
     },
     /// A [`Response::Failed`].
     Failed {
@@ -193,18 +217,16 @@ impl Head {
     }
 }
 
-/// How many parts follow a [`Head::Regenerated`]: the mesh's positions,
-/// normals, indices and edges, the sketches' points and ends, and the
-/// face of each triangle and the chain of each edge.
-pub const MODEL_PARTS: usize = 8;
+/// How many parts follow a [`Head::Regenerated`]: the mesh's ten
+/// ([`MeshParts`]' fields, in order), and the sketches' points and ends.
+pub const MODEL_PARTS: usize = 12;
 
 /// The reply answering `response`, the mirror of [`decode_reply`]: its
 /// encoded head, and the parts following it: its model's as bytes if it
 /// has one, see [`MODEL_PARTS`], or an export's bodies. A model whose
 /// head would be over [`MAX_HEAD_BYTES`], or whose picking tables are
-/// past [`MAX_FACES`], [`MAX_CHAINS`] or [`Picking::MAX_ALIASES`], is
-/// answered as failed, which the page would otherwise refuse with no
-/// generation to answer.
+/// past [`MAX_FACES`] or [`Picking::MAX_ALIASES`], is answered as failed,
+/// which the page would otherwise refuse with no generation to answer.
 pub fn encode_reply(response: &Response) -> (Vec<u8>, Vec<Cow<'_, [u8]>>) {
     match response {
         Response::Regenerated {
@@ -232,22 +254,23 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Vec<Cow<'_, [u8]>>) {
                     .iter()
                     .map(|(body, aabb)| (*body, [aabb.min.to_array(), aabb.max.to_array()]))
                     .collect(),
+                parts: picking.bodies().to_vec(),
                 faces: picking.faces().to_vec(),
-                chains: picking.chains().to_vec(),
+                closed: picking.closed().to_vec(),
+                tangents: picking.tangents().to_vec(),
             }
             .encode();
             let aliases = (picking.faces().iter())
                 .fold(0usize, |sum, face| sum.saturating_add(face.aliases.len()));
             if head.len() > MAX_HEAD_BYTES
                 || picking.faces().len() > MAX_FACES
-                || picking.chains().len() > MAX_CHAINS
                 || aliases > Picking::MAX_ALIASES
             {
                 let failed = Head::Failed {
                     generation: *generation,
                     exclude: *exclude,
                     draft: draft.as_ref().map(|draft| draft.revision),
-                    error: "the model has more faces and edges than can be sent".to_owned(),
+                    error: "the model has more faces than can be sent".to_owned(),
                 };
                 return (failed.encode(), Vec::new());
             }
@@ -257,11 +280,15 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Vec<Cow<'_, [u8]>>) {
                     bytemuck::cast_slice(mesh.positions()),
                     bytemuck::cast_slice(mesh.normals()),
                     bytemuck::cast_slice(mesh.indices()),
-                    bytemuck::cast_slice(mesh.edges()),
+                    bytemuck::cast_slice(mesh.face_ends()),
+                    bytemuck::cast_slice(mesh.edge_vertices()),
+                    bytemuck::cast_slice(mesh.edge_ends()),
+                    bytemuck::cast_slice(mesh.edge_faces()),
+                    bytemuck::cast_slice(mesh.corners()),
+                    bytemuck::cast_slice(mesh.edge_corners()),
+                    bytemuck::cast_slice(mesh.part_ends()),
                     bytemuck::cast_slice(sketches.points()),
                     bytemuck::cast_slice(sketches.ends()),
-                    bytemuck::cast_slice(picking.triangles()),
-                    bytemuck::cast_slice(picking.edges()),
                 ]
                 .map(Cow::Borrowed)
                 .into(),
@@ -314,22 +341,26 @@ pub fn decode_reply(
             touched,
             merged,
             bodies,
+            parts: part_bodies,
             faces,
-            chains,
+            closed,
+            tangents,
         } => {
             let model = check_merged(&merged)
                 .and_then(|()| decode_bodies(&bodies))
                 .and_then(|bodies| {
                     let mut listed: Vec<BodyId> = bodies.iter().map(|&(body, _)| body).collect();
                     listed.sort_unstable();
-                    let listed = |body: &BodyId| listed.binary_search(body).is_ok();
-                    if !faces.iter().all(|face| listed(&face.body)) {
-                        return Err(Error::Picking(PickingError::Face));
+                    if !(part_bodies.iter()).all(|body| listed.binary_search(body).is_ok()) {
+                        return Err(Error::Picking(PickingError::Body));
                     }
-                    Ok((bodies, decode_model(parts, faces, chains)?))
+                    let (mesh, sketches) = decode_model(parts)?;
+                    let picking = Picking::from_parts(part_bodies, faces, closed, tangents, &mesh)
+                        .map_err(Error::Picking)?;
+                    Ok((bodies, mesh, sketches, picking))
                 });
             match model {
-                Ok((bodies, (mesh, sketches, picking))) => Response::Regenerated {
+                Ok((bodies, mesh, sketches, picking)) => Response::Regenerated {
                     generation,
                     exclude,
                     draft,
@@ -408,70 +439,52 @@ fn decode_bodies(bodies: &[(BodyId, [[f32; 3]; 2])]) -> Result<Vec<(BodyId, Aabb
         .collect()
 }
 
-/// Decodes and checks the model's parts following a [`Head::Regenerated`]
-/// whose picking tables are `faces` and `chains`: the mesh, the sketches'
-/// lines and the picking.
-pub fn decode_model(
-    parts: &[impl Buffer],
-    faces: Vec<PickFace>,
-    chains: Vec<PickChain>,
-) -> Result<(RenderMesh, RenderLines, Picking), Error> {
-    let [
+/// Decodes and checks the model's parts following a [`Head::Regenerated`]:
+/// the mesh and the sketches' lines.
+pub fn decode_model(parts: &[impl Buffer]) -> Result<(RenderMesh, RenderLines), Error> {
+    let Ok([mesh @ .., points, ends]) = <&[_; MODEL_PARTS]>::try_from(parts) else {
+        return Err(Error::Parts(parts.len()));
+    };
+    Ok((decode_mesh(mesh)?, decode_lines([points, ends])?))
+}
+
+/// Decodes and checks a mesh's parts, [`MeshParts`]' fields in order.
+fn decode_mesh<B: Buffer>(
+    [
         positions,
         normals,
         indices,
-        edges,
-        points,
-        ends,
-        triangle_faces,
-        edge_chains,
-    ] = parts
-    else {
-        return Err(Error::Parts(parts.len()));
-    };
-    let mesh = decode_mesh([positions, normals, indices, edges])?;
-    let lines = decode_lines([points, ends])?;
-    let triangles = copy(
-        Part::Picking(PickingPart::Triangles),
-        triangle_faces,
-        RenderMesh::MAX_INDICES / 3,
-    )?;
-    let edges = copy(
-        Part::Picking(PickingPart::Edges),
-        edge_chains,
-        RenderMesh::MAX_EDGES,
-    )?;
-    let picking =
-        Picking::from_parts(faces, chains, triangles, edges, &mesh).map_err(Error::Picking)?;
-    Ok((mesh, lines, picking))
-}
-
-/// Decodes and checks a mesh's positions, normals, indices and edges.
-fn decode_mesh<B: Buffer + ?Sized>(
-    [positions, normals, indices, edges]: [&B; 4],
+        face_ends,
+        edge_vertices,
+        edge_ends,
+        edge_faces,
+        corners,
+        edge_corners,
+        part_ends,
+    ]: &[B; MODEL_PARTS - 2],
 ) -> Result<RenderMesh, Error> {
-    RenderMesh::from_parts(
-        copy(
-            Part::RenderMesh(MeshPart::Positions),
-            positions,
-            RenderMesh::MAX_VERTICES,
+    use RenderMesh as M;
+    let part = Part::RenderMesh;
+    RenderMesh::from_parts(MeshParts {
+        positions: copy(part(MeshPart::Positions), positions, M::MAX_VERTICES)?,
+        normals: copy(part(MeshPart::Normals), normals, M::MAX_VERTICES)?,
+        indices: copy(part(MeshPart::Indices), indices, M::MAX_INDICES)?,
+        face_ends: copy(part(MeshPart::FaceEnds), face_ends, M::MAX_FACES)?,
+        edge_vertices: copy(
+            part(MeshPart::EdgeVertices),
+            edge_vertices,
+            M::MAX_EDGE_POINTS,
         )?,
-        copy(
-            Part::RenderMesh(MeshPart::Normals),
-            normals,
-            RenderMesh::MAX_VERTICES,
+        edge_ends: copy(part(MeshPart::EdgeEnds), edge_ends, M::MAX_EDGE_POLYLINES)?,
+        edge_faces: copy(part(MeshPart::EdgeFaces), edge_faces, M::MAX_EDGE_POLYLINES)?,
+        corners: copy(part(MeshPart::Corners), corners, M::MAX_CORNERS)?,
+        edge_corners: copy(
+            part(MeshPart::EdgeCorners),
+            edge_corners,
+            M::MAX_EDGE_POLYLINES,
         )?,
-        copy(
-            Part::RenderMesh(MeshPart::Indices),
-            indices,
-            RenderMesh::MAX_INDICES,
-        )?,
-        copy(
-            Part::RenderMesh(MeshPart::Edges),
-            edges,
-            RenderMesh::MAX_EDGES,
-        )?,
-    )
+        part_ends: copy(part(MeshPart::PartEnds), part_ends, M::MAX_PARTS)?,
+    })
     .map_err(Error::RenderMesh)
 }
 
@@ -523,18 +536,8 @@ pub enum Part {
     Head,
     RenderMesh(MeshPart),
     RenderLines(LinesPart),
-    Picking(PickingPart),
     /// An export's bodies.
     Export,
-}
-
-/// One of the picking's index arrays.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PickingPart {
-    /// The face of each triangle.
-    Triangles,
-    /// The chain of each edge.
-    Edges,
 }
 
 impl fmt::Display for Part {
@@ -543,8 +546,6 @@ impl fmt::Display for Part {
             Part::Head => f.write_str("head"),
             Part::RenderMesh(part) => part.fmt(f),
             Part::RenderLines(part) => part.fmt(f),
-            Part::Picking(PickingPart::Triangles) => f.write_str("triangles' faces"),
-            Part::Picking(PickingPart::Edges) => f.write_str("edges' chains"),
             Part::Export => f.write_str("exported bodies"),
         }
     }

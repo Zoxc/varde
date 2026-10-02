@@ -428,7 +428,8 @@ fn a_draft_still_shown_after_the_extrude_doesnt_drop_the_selection() {
     let (face, body) = (index.picking().faces().iter().enumerate())
         .find_map(|(i, face)| match face.summary {
             varde_regen::Summary::Plane { n, .. } if n[2] == 0.0 => {
-                Some((u32::try_from(i).unwrap(), face.body))
+                let face = u32::try_from(i).unwrap();
+                Some((face, index.face_body(face).unwrap()))
             }
             _ => None,
         })
@@ -578,8 +579,9 @@ fn a_join_merging_a_body_keeps_its_faces_selected_in_the_holder() {
     let bottom = (index.picking().faces().iter().enumerate())
         .find_map(|(i, face)| match face.summary {
             Summary::Plane { n, d } if n[2] < -0.5 && (d - 3.0).abs() < 1e-9 => {
-                assert_eq!(face.body, below);
-                Some(u32::try_from(i).unwrap())
+                let face = u32::try_from(i).unwrap();
+                assert_eq!(index.face_body(face), Some(below));
+                Some(face)
             }
             _ => None,
         })
@@ -615,8 +617,8 @@ fn a_join_merging_a_body_keeps_its_faces_selected_in_the_holder() {
     let [Picked::Face(face)] = targets[..] else {
         panic!("{targets:?}");
     };
+    assert_eq!(index.face_body(face), Some(top));
     let face = &index.picking().faces()[face as usize];
-    assert_eq!(face.body, top);
     assert!(
         matches!(face.summary, Summary::Plane { n, d } if n[2] < -0.5 && (d - 3.0).abs() < 1e-9)
     );
@@ -634,7 +636,7 @@ fn a_join_merging_a_body_keeps_its_faces_selected_in_the_holder() {
     let [Picked::Face(face)] = targets[..] else {
         panic!("{targets:?}");
     };
-    assert_eq!(index.picking().faces()[face as usize].body, below);
+    assert_eq!(index.face_body(face), Some(below));
     // Redone, Body 2's row selects Body 1, which holds it.
     for _ in 0..3 {
         doc.update(Edit::Redo);

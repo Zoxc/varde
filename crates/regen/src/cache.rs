@@ -24,9 +24,9 @@
 //! the boolean of a body taken out of a cut, which putting it back asks
 //! for.
 //!
-//! A body's mesh is kept with its picking tables (its faces' and edges'
-//! keys and summaries, and which of them each triangle and edge draws),
-//! counted with it. The model's mesh and tables, the shown bodies' joined,
+//! A body's mesh is kept with its picking tables (its faces' keys and
+//! summaries, and which of its edges close), counted with it. The model's
+//! mesh and tables, the shown bodies' joined with the body of each part,
 //! are one more kind of result, a scene ([`Cache::scene`]), filed by the
 //! shown bodies and their mesh keys: a request whose shown bodies and
 //! tolerance didn't change
@@ -175,7 +175,13 @@ fn mesh_bytes(mesh: &RenderMesh) -> usize {
     (size_of_val(mesh.positions()))
         .saturating_add(size_of_val(mesh.normals()))
         .saturating_add(size_of_val(mesh.indices()))
-        .saturating_add(size_of_val(mesh.edges()))
+        .saturating_add(size_of_val(mesh.face_ends()))
+        .saturating_add(size_of_val(mesh.edge_vertices()))
+        .saturating_add(size_of_val(mesh.edge_ends()))
+        .saturating_add(size_of_val(mesh.edge_faces()))
+        .saturating_add(size_of_val(mesh.corners()))
+        .saturating_add(size_of_val(mesh.edge_corners()))
+        .saturating_add(size_of_val(mesh.part_ends()))
         .saturating_add(size_of_val(mesh))
 }
 

@@ -3,9 +3,9 @@ use varde_document::{
     BodyId, Command, Document, Editor, Extent, Extrude, Operation, OriginPlane, Plane,
 };
 use varde_expr::Value;
-use varde_kernel::RenderMesh;
 use varde_kernel::mesh::PartKey;
-use varde_regen::{Cache, PickChain, PickFace, Picking, Summary, evaluate, tessellate_picking};
+use varde_kernel::{MeshParts, RenderMesh};
+use varde_regen::{Cache, PickFace, Picking, Summary, evaluate, tessellate_picking};
 use varde_render::{Projection, View};
 use varde_sketch::{Curve, Sketch};
 
@@ -234,7 +234,8 @@ fn a_tangent_chain_is_selected_and_toggled_as_one() {
         keys.iter().any(|key| key.part == PartKey::EndCap)
     };
     assert!(members.iter().all(|&c| cap(c)));
-    for c in 0..index.picking().chains().len() as u32 {
+    let chains = (0..index.mesh().edge_count() as u32).filter(|&c| index.edge_faces(c).is_some());
+    for c in chains {
         assert_eq!(members.contains(&c), cap(c), "{c}");
     }
     let mut selection = Selection::new(SelectionMode::Edges { tangent: true });
@@ -306,7 +307,7 @@ fn selection_is_found_again_in_a_new_model_or_dropped() {
     let Picked::Edge(chain) = found[1] else {
         panic!("{found:?}");
     };
-    let [a, b] = coarse.picking().chains()[chain as usize].faces;
+    let [a, b] = coarse.edge_faces(chain).unwrap();
     let mut sides = [a, b].map(|f| plane(&coarse, Picked::Face(f)));
     sides.sort_by(|a, b| a.partial_cmp(b).unwrap());
     assert_eq!(sides, [FRONT, THICKER]);
@@ -336,28 +337,37 @@ fn selection_is_found_again_in_a_new_model_or_dropped() {
     assert!(selection.is_empty());
 }
 
-/// Two triangles far apart: face 0 named `a`, face 1 named `b` with `a`
-/// merged into it, and face 2 of `b` too, of one body.
+/// Three triangles far apart: face 0 named `a`, face 1 named `b` with `a`
+/// merged into it, and face 2 of `b` too, of one body; an edge between
+/// faces 0 and 1 along the first's side, one between faces 1 and 2 along
+/// the second's, and a crease of face 2 along the third's.
 fn aliased() -> PickIndex {
-    let mesh = RenderMesh::from_parts(
-        vec![
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [10.0, 0.0, 0.0],
-            [11.0, 0.0, 0.0],
-            [10.0, 1.0, 0.0],
-            [20.0, 0.0, 0.0],
-            [21.0, 0.0, 0.0],
-            [20.0, 1.0, 0.0],
-        ],
-        vec![[0.0, 0.0, 1.0]; 9],
-        vec![0, 1, 2, 3, 4, 5, 6, 7, 8],
-        vec![[0, 1], [3, 4], [6, 7]],
-    )
+    let positions = vec![
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [10.0, 0.0, 0.0],
+        [11.0, 0.0, 0.0],
+        [10.0, 1.0, 0.0],
+        [20.0, 0.0, 0.0],
+        [21.0, 0.0, 0.0],
+        [20.0, 1.0, 0.0],
+    ];
+    let corners = [0, 1, 3, 4, 6, 7].map(|v| positions[v]).to_vec();
+    let mesh = RenderMesh::from_parts(MeshParts {
+        positions,
+        normals: vec![[0.0, 0.0, 1.0]; 9],
+        indices: vec![0, 1, 2, 3, 4, 5, 6, 7, 8],
+        face_ends: vec![3, 6, 9],
+        edge_vertices: vec![0, 1, 3, 4, 6, 7],
+        edge_ends: vec![2, 4, 6],
+        edge_faces: vec![[0, 1], [1, 2], [2, 2]],
+        corners,
+        edge_corners: vec![[0, 1], [2, 3], [4, 5]],
+        part_ends: vec![[3, 3, 6]],
+    })
     .unwrap();
     let face = |part: PartKey, aliases: Vec<FaceKey>| PickFace {
-        body: BodyId::NEW,
         key: FaceKey {
             feature: 1,
             part,
@@ -372,23 +382,11 @@ fn aliased() -> PickIndex {
     let a = face(PartKey::StartCap, Vec::new());
     let b = face(PartKey::EndCap, vec![a.key]);
     let b2 = face(PartKey::EndCap, Vec::new());
-    let chain = |faces| PickChain {
-        faces,
-        closed: false,
-        tangent: 0,
-    };
-    let chains = vec![
-        chain([0, 1]),
-        PickChain {
-            tangent: 1,
-            ..chain([1, 2])
-        },
-    ];
     let picking = Picking::from_parts(
+        vec![BodyId::NEW],
         vec![a, b, b2],
-        chains,
+        vec![false; 3],
         vec![0, 1, 2],
-        vec![0, 1, Picking::NONE],
         &mesh,
     )
     .unwrap();
@@ -419,7 +417,7 @@ fn names_find_faces_and_edges_by_alias_and_the_nearest() {
     // Edges: between `a` and `b` either way round, and by alias.
     let [a, b] = [key(0), key(1)];
     assert_eq!(index.find_edge(body, [b, a], at(0.0)), Some(0));
-    // `a`–`b` names chain 1 too, faces 1 (by alias) and 2.
+    // `a`–`b` names edge 1 too, faces 1 (by alias) and 2.
     assert_eq!(index.find_edge(body, [a, b], at(10.5)), Some(1));
     assert_eq!(
         index.find_edge(body, [a, b], DVec3::new(20.5, 0.0, 0.0)),
@@ -427,7 +425,7 @@ fn names_find_faces_and_edges_by_alias_and_the_nearest() {
     );
     assert_eq!(index.find_edge(body, [b, b], at(0.0)), Some(1));
     assert_eq!(index.find_edge(body, [a, other], at(0.0)), None);
-    // Each chain its own tangent chain.
+    // Each edge its own tangent chain, and a crease in none.
     assert_eq!(index.tangent_chain(0), [0]);
     assert_eq!(index.tangent_chain(1), [1]);
     assert_eq!(index.tangent_chain(2), []);

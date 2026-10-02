@@ -5,7 +5,7 @@ use crate::mesh::tests::{TOL, add_round_octahedron, half_cylinder, round_octahed
 use crate::mesh::{Mesh, MeshBuilder};
 use crate::par::assert_deterministic;
 use crate::profile::tests::{circle, rect};
-use crate::tessellate::Limits;
+use crate::tessellate::{Limits, patch_triangles};
 use crate::{Budget, Display, Frame, Op, Profile, Solid, Tolerance, boolean, extrude};
 
 /// The unit tetrahedron's corners and outward triangles.
@@ -295,7 +295,7 @@ fn a_mesh_past_the_limits_is_too_large() {
     let exact = Limits {
         vertices: mesh.positions().len() as u64,
         indices: 3 * mesh.triangles().len() as u64,
-        edges: 0,
+        edge_points: 0,
     };
     assert_eq!(
         solid.manifold_mesh_within(&display, &exact).as_ref(),
@@ -610,21 +610,28 @@ fn drawing_picking_and_welding_share_their_triangles() {
         for display in [Display::default(), fine] {
             let drawn = solid.tessellate(&display).unwrap();
             let topology = solid.topology();
-            let (picked, picking) = solid.tessellate_picking(&display, &topology).unwrap();
+            let picked = solid.tessellate_with(&display, &topology).unwrap();
             assert_eq!(picked, drawn, "solid {i}");
-            assert_eq!(picking.triangles.len(), drawn.triangle_count());
-            assert_eq!(picking.edges.len(), drawn.edges().len());
 
             let mesh = solid.manifold_mesh(&display).unwrap();
             assert_eq!(mesh.triangles().len(), drawn.triangle_count(), "solid {i}");
+            // The welded triangles go patch by patch, the drawn ones face
+            // by face: the welded in the drawn order.
+            let counts = patch_triangles(solid.mesh(), &display);
+            let mut starts = vec![0usize];
+            for &n in &counts {
+                starts.push(starts.last().unwrap() + n as usize);
+            }
+            let welded: Vec<[u32; 3]> = (topology.regions().iter())
+                .flat_map(|region| region.tris.iter())
+                .flat_map(|&t| &mesh.triangles()[starts[t as usize]..starts[t as usize + 1]])
+                .copied()
+                .collect();
             let origin = DVec3::from_array(mesh.origin());
             let bounds = solid.bounds3().unwrap();
             let size = bounds.max.abs().max(bounds.min.abs()).max_element();
             let step = 2.0 * f64::from(f32::EPSILON) * size.max(1.0);
-            for (t, (welded, shown)) in (mesh.triangles().iter())
-                .zip(drawn.indices().chunks(3))
-                .enumerate()
-            {
+            for (t, (welded, shown)) in (welded.iter()).zip(drawn.indices().chunks(3)).enumerate() {
                 for (&w, &d) in welded.iter().zip(shown) {
                     let w = origin + DVec3::from_array(mesh.positions()[w as usize]);
                     let d = Vec3::from(drawn.positions()[d as usize]).as_dvec3();

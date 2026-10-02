@@ -3462,8 +3462,8 @@ fn feature_edges(solid: &Solid) -> usize {
     solid
         .tessellate(&crate::Display::new(&TOL))
         .unwrap()
-        .edges()
-        .len()
+        .edge_segments()
+        .count()
 }
 
 #[test]

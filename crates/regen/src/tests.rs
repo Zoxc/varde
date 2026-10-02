@@ -140,6 +140,27 @@ fn with_bodies(hidden_too: bool) -> Document {
     editor.document().clone()
 }
 
+/// A scene [`tessellate_picking`] draws: its mesh and the body of each of
+/// its parts.
+struct Shown {
+    mesh: Arc<RenderMesh>,
+    bodies: Vec<BodyId>,
+}
+
+fn shown_scene(
+    document: &Document,
+    evaluation: &Evaluation,
+    cache: &mut Cache,
+) -> Result<Shown, varde_kernel::MeshError> {
+    let (mesh, picking) = tessellate_picking(document, evaluation, cache)?;
+    assert_eq!(picking.bodies().len(), mesh.part_ends().len());
+    assert_eq!(tessellate(document, evaluation, cache)?, mesh);
+    Ok(Shown {
+        mesh,
+        bodies: picking.bodies().to_vec(),
+    })
+}
+
 #[test]
 fn solids_are_drawn_into_one_mesh() {
     let document = with_bodies(true);
@@ -149,7 +170,9 @@ fn solids_are_drawn_into_one_mesh() {
     let mut both = a.tessellate(&display).unwrap();
     both.append(&b.tessellate(&display).unwrap()).unwrap();
     let evaluation = made([(body, a), (body, b)]);
-    let mesh = tessellate(&document, &evaluation, &mut Cache::default()).unwrap();
+    let scene = shown_scene(&document, &evaluation, &mut Cache::default()).unwrap();
+    assert_eq!(scene.bodies, [body, body]);
+    let mesh = scene.mesh;
     assert_eq!(*mesh, both);
     assert_eq!(mesh.triangle_count(), 24);
     assert_eq!(
@@ -159,8 +182,9 @@ fn solids_are_drawn_into_one_mesh() {
             max: Vec3::splat(5.0)
         }
     );
-    let none = tessellate(&document, &made([]), &mut Cache::default()).unwrap();
-    assert_eq!(*none, RenderMesh::default());
+    let none = shown_scene(&document, &made([]), &mut Cache::default()).unwrap();
+    assert_eq!(*none.mesh, RenderMesh::default());
+    assert!(none.bodies.is_empty());
 }
 
 #[test]
@@ -180,8 +204,11 @@ fn only_the_solids_of_shown_bodies_are_drawn() {
     let alone = solids.bodies[0].solid.tessellate(&display).unwrap();
     // Hidden, or not in the document at all.
     let mut cache = Cache::default();
-    assert_eq!(*tessellate(&both, &solids, &mut cache).unwrap(), alone);
-    assert_eq!(*tessellate(&one, &solids, &mut cache).unwrap(), alone);
+    for document in [&both, &one] {
+        let scene = shown_scene(document, &solids, &mut cache).unwrap();
+        assert_eq!(*scene.mesh, alone);
+        assert_eq!(scene.bodies, [shown]);
+    }
 }
 
 /// Solids are drawn to the document's tolerance: a coarser one gives a
@@ -195,10 +222,14 @@ fn solids_are_drawn_to_the_document_s_tolerance() {
     let solids = made([(body, cylinder)]);
     // One cache: the mesh is filed by the tolerance too.
     let mut cache = Cache::default();
-    let fine = tessellate(editor.document(), &solids, &mut cache).unwrap();
+    let fine = shown_scene(editor.document(), &solids, &mut cache)
+        .unwrap()
+        .mesh;
     let coarse = Tolerance::new(Tolerance::MAX_FIT).unwrap();
     editor.apply(Command::SetTolerance(coarse)).unwrap();
-    let drawn = tessellate(editor.document(), &solids, &mut cache).unwrap();
+    let drawn = shown_scene(editor.document(), &solids, &mut cache)
+        .unwrap()
+        .mesh;
     assert_eq!(
         *drawn,
         solids.bodies[0]
@@ -430,6 +461,7 @@ pub(crate) fn regenerate_with(editor: &Editor, draft: Option<Draft>) -> Request 
 pub(crate) struct Answer {
     pub(crate) draft: Option<Drafted>,
     pub(crate) mesh: Arc<RenderMesh>,
+    pub(crate) parts: Vec<BodyId>,
     pub(crate) failed: Vec<(FeatureId, String)>,
     pub(crate) bodies: Vec<(BodyId, varde_kernel::Aabb)>,
 }
@@ -438,6 +470,7 @@ pub(crate) fn answered(response: Response) -> Answer {
     let Response::Regenerated {
         draft,
         mesh,
+        picking,
         failed,
         bodies,
         ..
@@ -445,9 +478,12 @@ pub(crate) fn answered(response: Response) -> Answer {
     else {
         panic!("regeneration failed: {response:?}");
     };
+    let parts = picking.bodies().to_vec();
+    assert_eq!(parts.len(), mesh.part_ends().len());
     Answer {
         draft,
         mesh,
+        parts,
         failed,
         bodies,
     }
@@ -459,13 +495,14 @@ fn the_example_plate_regenerates_and_draws() {
     let answer = answered(handle(regenerate(&editor, None)));
     assert!(answer.failed.is_empty(), "{:?}", answer.failed);
     assert!(answer.mesh.triangle_count() > 0);
-    assert!(!answer.mesh.edges().is_empty());
+    assert!(answer.mesh.edge_count() > 0);
     let body = editor.document().bodies()[0].id;
     let bounds = varde_kernel::Aabb {
         min: Vec3::new(-30.0, -20.0, 0.0),
         max: Vec3::new(30.0, 20.0, 10.0),
     };
     assert_eq!(answer.bodies, [(body, bounds)]);
+    assert_eq!(answer.parts, [body]);
     assert_eq!(answer.mesh.bounds(), Some(bounds));
 }
 
@@ -518,10 +555,11 @@ fn a_draft_is_answered_as_if_applied() {
         })
     );
     assert!(answer.failed.is_empty());
-    let [(first, _), (_, below)] = answer.bodies[..] else {
+    let [(first, _), (new, below)] = answer.bodies[..] else {
         panic!("two bodies");
     };
     assert_eq!(first, editor.document().bodies()[0].id);
+    assert_eq!(answer.parts, [first, new]);
     assert_eq!((below.min.z, below.max.z), (-3.0, 0.0));
     assert_eq!(answer.mesh.bounds().unwrap().min.z, -3.0);
 
@@ -1009,27 +1047,56 @@ fn the_scene_key_holds_each_shown_body_in_order() {
         mesh
     };
     let mut cache = Cache::default();
-    let one = tessellate(&document, &scene(&[(shown, 0)]), &mut cache).unwrap();
-    assert_eq!(*one, joined(&[0]));
-    let twice = tessellate(&document, &scene(&[(shown, 0), (shown, 0)]), &mut cache).unwrap();
-    assert_eq!(*twice, joined(&[0, 0]));
+    let one = shown_scene(&document, &scene(&[(shown, 0)]), &mut cache).unwrap();
+    assert_eq!(*one.mesh, joined(&[0]));
+    assert_eq!(one.bodies, [shown]);
+    let twice = shown_scene(&document, &scene(&[(shown, 0), (shown, 0)]), &mut cache).unwrap();
+    assert_eq!(*twice.mesh, joined(&[0, 0]));
+    assert_eq!(twice.bodies, [shown, shown]);
     // A hidden body between two shown ones, and the two swapped.
     let ab = scene(&[(shown, 0), (hidden, 2), (shown, 1)]);
-    let ab = tessellate(&document, &ab, &mut cache).unwrap();
-    assert_eq!(*ab, joined(&[0, 1]));
+    let ab = shown_scene(&document, &ab, &mut cache).unwrap();
+    assert_eq!(*ab.mesh, joined(&[0, 1]));
     let ba = scene(&[(shown, 1), (hidden, 2), (shown, 0)]);
-    let ba = tessellate(&document, &ba, &mut cache).unwrap();
-    assert_eq!(*ba, joined(&[1, 0]));
+    let ba = shown_scene(&document, &ba, &mut cache).unwrap();
+    assert_eq!(*ba.mesh, joined(&[1, 0]));
+    assert_eq!(ba.bodies, [shown, shown]);
     // Without the hidden body, the same scene as with it.
-    let without = tessellate(&document, &scene(&[(shown, 1), (shown, 0)]), &mut cache).unwrap();
-    assert!(Arc::ptr_eq(&without, &ba));
+    let without = shown_scene(&document, &scene(&[(shown, 1), (shown, 0)]), &mut cache).unwrap();
+    assert!(Arc::ptr_eq(&without.mesh, &ba.mesh));
     assert_eq!(cache.joins(), 4);
     // No bodies: one empty mesh, found again.
-    let none = tessellate(&document, &scene(&[]), &mut cache).unwrap();
-    let again = tessellate(&document, &scene(&[(hidden, 2)]), &mut cache).unwrap();
-    assert!(Arc::ptr_eq(&none, &again));
-    assert_eq!(*none, RenderMesh::default());
+    let none = shown_scene(&document, &scene(&[]), &mut cache).unwrap();
+    let again = shown_scene(&document, &scene(&[(hidden, 2)]), &mut cache).unwrap();
+    assert!(Arc::ptr_eq(&none.mesh, &again.mesh));
+    assert_eq!(*none.mesh, RenderMesh::default());
+    assert!(none.bodies.is_empty());
     assert_eq!(cache.joins(), 5);
+}
+
+/// The scene key holds the shown bodies' ids too: the same solid shown as
+/// another body is another scene, whose part is that body's.
+#[test]
+fn the_scene_key_holds_the_bodies_ids() {
+    let mut document = with_bodies(true);
+    let [first, second] = [document.bodies()[0].id, document.bodies()[1].id];
+    let mut editor = Editor::new(document);
+    editor.apply(Command::SetVisible(second, true)).unwrap();
+    document = editor.document().clone();
+    let as_body = |body| Evaluation {
+        bodies: vec![BodySolid {
+            body,
+            solid: Arc::new(cuboid(0.0, 1.0)),
+            key: Keyer::new("test").finish(),
+        }],
+        ..Evaluation::default()
+    };
+    let mut cache = Cache::default();
+    let a = shown_scene(&document, &as_body(first), &mut cache).unwrap();
+    let b = shown_scene(&document, &as_body(second), &mut cache).unwrap();
+    assert_eq!((a.bodies, b.bodies), (vec![first], vec![second]));
+    assert_eq!(a.mesh, b.mesh);
+    assert_eq!(cache.joins(), 2);
 }
 
 /// Scenes are held like any other result: within the budget, a scene
@@ -1385,8 +1452,8 @@ fn drawn(mesh: &RenderMesh) -> Drawn {
     Drawn {
         mesh: mesh.clone(),
         faces: Vec::new(),
-        chains: Vec::new(),
-        picking: varde_kernel::Picking::default(),
+        closed: Vec::new(),
+        tangents: Vec::new(),
     }
 }
 
@@ -2029,50 +2096,58 @@ fn off_surface(summary: &Summary, p: glam::DVec3) -> f64 {
     .abs()
 }
 
-/// Checks that `picking` goes with `mesh`: each triangle's corners on its
-/// face's surface, each edge's ends on both of its chain's faces', every
-/// face and chain drawn.
+/// Checks that `picking` goes with `mesh`: a body per part, a face per
+/// face and a flag per edge; each face's triangles on its surface, each
+/// edge between two faces on both of theirs and of one body.
 fn assert_picks_match(mesh: &RenderMesh, picking: &Picking) {
     let at = |v: u32| Vec3::from(mesh.positions()[v as usize]).as_dvec3();
     let faces = picking.faces();
-    assert_eq!(picking.triangles().len(), mesh.triangle_count());
-    assert_eq!(picking.edges().len(), mesh.edges().len());
-    for (tri, &f) in mesh.indices().chunks(3).zip(picking.triangles()) {
-        for &v in tri {
-            let off = off_surface(&faces[f as usize].summary, at(v));
-            assert!(off < 1e-4, "{:?} is {off} off face {f}", at(v));
-        }
-        // A plane's normal points out, as the triangle's winding does.
-        if let Summary::Plane { n, .. } = faces[f as usize].summary {
-            let [a, b, c] = [tri[0], tri[1], tri[2]].map(at);
-            let normal = (b - a).cross(c - a);
-            assert!(
-                normal.dot(n.into()) > 0.5 * normal.length(),
-                "face {f} faces {n:?}, its triangle {normal:?}"
-            );
-        }
-    }
-    for (edge, &c) in mesh.edges().iter().zip(picking.edges()) {
-        if c == Picking::NONE {
-            continue;
-        }
-        for f in picking.chains()[c as usize].faces {
-            for &v in edge {
-                let off = off_surface(&faces[f as usize].summary, at(v));
-                assert!(off < 1e-4, "{:?} is {off} off face {f} of chain {c}", at(v));
+    assert_eq!(picking.bodies().len(), mesh.part_ends().len());
+    assert_eq!(faces.len(), mesh.face_count());
+    assert_eq!(picking.closed().len(), mesh.edge_count());
+    // Checked as the page checks them, the tangent chains too.
+    Picking::from_parts(
+        picking.bodies().to_vec(),
+        faces.to_vec(),
+        picking.closed().to_vec(),
+        picking.tangents().to_vec(),
+        mesh,
+    )
+    .unwrap();
+    for (f, face) in mesh.faces().enumerate() {
+        for tri in face.chunks(3) {
+            for &v in tri {
+                let off = off_surface(&faces[f].summary, at(v));
+                assert!(off < 1e-4, "{:?} is {off} off face {f}", at(v));
+            }
+            // A plane's normal points out, as the triangle's winding does.
+            if let Summary::Plane { n, .. } = faces[f].summary {
+                let [a, b, c] = [tri[0], tri[1], tri[2]].map(at);
+                let normal = (b - a).cross(c - a);
+                assert!(
+                    normal.dot(n.into()) > 0.5 * normal.length(),
+                    "face {f} faces {n:?}, its triangle {normal:?}"
+                );
             }
         }
     }
-    let mut drawn = picking.triangles().to_vec();
-    drawn.sort_unstable();
-    drawn.dedup();
-    assert_eq!(drawn.len(), faces.len());
-    let mut drawn: Vec<u32> = (picking.edges().iter().copied())
-        .filter(|&c| c != Picking::NONE)
-        .collect();
-    drawn.sort_unstable();
-    drawn.dedup();
-    assert_eq!(drawn.len(), picking.chains().len());
+    for (e, (polyline, &[a, b])) in mesh.polylines().zip(mesh.edge_faces()).enumerate() {
+        if a == b {
+            continue;
+        }
+        assert_eq!(picking.face_body(mesh, a), picking.face_body(mesh, b));
+        for f in [a, b] {
+            for &v in polyline {
+                let off = off_surface(&faces[f as usize].summary, at(v));
+                assert!(off < 1e-4, "{:?} is {off} off face {f} of edge {e}", at(v));
+            }
+        }
+    }
+}
+
+/// How many of `mesh`'s edges are between two faces, not creases.
+fn chains(mesh: &RenderMesh) -> usize {
+    (mesh.edge_faces().iter()).filter(|[a, b]| a != b).count()
 }
 
 #[test]
@@ -2087,7 +2162,8 @@ fn the_answer_s_picking_tables_name_the_example_s_faces_and_edges() {
     // are one face; its rims are closed edges, the plate's twelve open.
     let faces = picking.faces();
     assert_eq!(faces.len(), 7);
-    assert!(faces.iter().all(|face| face.body == body));
+    assert_eq!(picking.bodies(), [body]);
+    assert!((0..7).all(|f| picking.face_body(&mesh, f) == body));
     let tops = (faces.iter()).filter(|face| {
         face.summary
             == Summary::Plane {
@@ -2099,8 +2175,9 @@ fn the_answer_s_picking_tables_name_the_example_s_faces_and_edges() {
     let hole = (faces.iter())
         .filter(|face| matches!(face.summary, Summary::Cylinder { radius, .. } if (radius - 8.0).abs() < 1e-9));
     assert_eq!(hole.count(), 1, "{faces:?}");
-    assert_eq!(picking.chains().len(), 14);
-    assert_eq!(picking.chains().iter().filter(|c| c.closed).count(), 2);
+    assert_eq!(mesh.edge_count(), 14);
+    assert_eq!(chains(&mesh), 14);
+    assert_eq!(picking.closed().iter().filter(|&&c| c).count(), 2);
     // A sketch on the top would find it by its key.
     let top = faces.iter().position(|face| {
         face.summary
@@ -2110,7 +2187,10 @@ fn the_answer_s_picking_tables_name_the_example_s_faces_and_edges() {
             }
     });
     let top_key = faces[top.unwrap()].key;
-    assert!((0..picking.chains().len() as u32).any(|c| picking.chain_keys(c).contains(&top_key)));
+    assert!(
+        (0..mesh.edge_count() as u32)
+            .any(|e| picking.edge_keys(&mesh, e).unwrap().contains(&top_key))
+    );
 }
 
 /// Two plates stacked flush and a boss joined through both: the plates'
@@ -2188,9 +2268,11 @@ fn picking_tables_are_deterministic_and_the_same_from_the_cache() {
     regenerator.handle(regenerate(&hidden, None));
     let rejoined = tables(regenerator.handle(regenerate(&editor, None)));
     assert_eq!(rejoined, first);
-    // Two bodies: the second's faces and chains follow the first's.
-    let (_, picking) = &first;
-    let bodies: Vec<BodyId> = picking.faces().iter().map(|face| face.body).collect();
+    // Two bodies: the second's faces and edges follow the first's.
+    let (mesh, picking) = &first;
+    let bodies: Vec<BodyId> = (0..picking.faces().len() as u32)
+        .map(|f| picking.face_body(mesh, f))
+        .collect();
     assert_eq!(bodies.len(), 14);
     assert!(
         bodies[..7]
@@ -2198,10 +2280,11 @@ fn picking_tables_are_deterministic_and_the_same_from_the_cache() {
             .all(|&b| b == editor.document().bodies()[0].id)
     );
     assert!(bodies[7..].iter().all(|&b| b == below));
+    assert_eq!(mesh.edge_count(), 28);
     assert!(
-        picking.chains()[14..]
+        mesh.edge_faces()[14..]
             .iter()
-            .all(|c| c.faces.iter().all(|&f| f >= 7))
+            .all(|faces| faces.iter().all(|&f| f >= 7))
     );
 }
 
@@ -2217,13 +2300,11 @@ fn the_cache_counts_the_picking_tables() {
     let mesh_bytes = std::mem::size_of_val(mesh.positions())
         + std::mem::size_of_val(mesh.normals())
         + std::mem::size_of_val(mesh.indices())
-        + std::mem::size_of_val(mesh.edges());
-    let index_bytes =
-        std::mem::size_of_val(picking.triangles()) + std::mem::size_of_val(picking.edges());
+        + std::mem::size_of_val(mesh.edge_vertices());
     let table_bytes =
-        std::mem::size_of_val(picking.faces()) + std::mem::size_of_val(picking.chains());
+        std::mem::size_of_val(picking.faces()) + std::mem::size_of_val(picking.closed());
     // The body's drawing and the scene, each with its tables.
-    assert!(regenerator.cache().bytes() >= 2 * (mesh_bytes + index_bytes + table_bytes));
+    assert!(regenerator.cache().bytes() >= 2 * (mesh_bytes + table_bytes));
     let (total, _) = regenerator.cache().audit();
     assert_eq!(regenerator.cache().bytes(), total);
 }
@@ -2242,21 +2323,15 @@ fn picked(response: Response) -> (Arc<RenderMesh>, Arc<Picking>, Vec<BodyId>) {
     };
     assert!(failed.is_empty(), "{failed:?}");
     assert_picks_match(&mesh, &picking);
-    // Every face of a body the answer lists, every chain within one body.
+    // Every part of a body the answer lists.
     let listed: Vec<BodyId> = bodies.iter().map(|&(body, _)| body).collect();
-    assert!(picking.faces().iter().all(|f| listed.contains(&f.body)));
-    for chain in picking.chains() {
-        let [a, b] = chain.faces.map(|f| picking.faces()[f as usize].body);
-        assert_eq!(a, b);
-    }
+    assert!(picking.bodies().iter().all(|b| listed.contains(b)));
     (mesh, picking, listed)
 }
 
-/// The bodies `picking`'s faces are of, in order, each once.
+/// The bodies `picking`'s parts are of, in order.
 fn bodies_picked(picking: &Picking) -> Vec<BodyId> {
-    let mut bodies: Vec<BodyId> = picking.faces().iter().map(|f| f.body).collect();
-    bodies.dedup();
-    bodies
+    picking.bodies().to_vec()
 }
 
 /// Hiding and showing bodies changes the tables with the mesh: a hidden
@@ -2361,7 +2436,7 @@ fn picking_tables_follow_merges_drafts_and_edits() {
     let (mesh, drafted, listed) = picked(response);
     assert!(!listed.contains(&consumed));
     assert_eq!(bodies_picked(&drafted), [holder]);
-    assert_eq!(drafted.triangles().len(), mesh.triangle_count());
+    assert_eq!(drafted.faces().len(), mesh.face_count());
 
     // Committed: the same tables.
     let (_, joined, _) = picked(regenerator.handle(regenerate(&probe, None)));
@@ -2467,9 +2542,9 @@ fn summaries_of_an_extrude_on_a_tilted_plane() {
             }
             summary => panic!("the wall is {summary:?}"),
         }
-        // The wall's three chains: two rims, closed.
-        assert_eq!(picking.chains().len(), 2);
-        assert!(picking.chains().iter().all(|c| c.closed));
+        // The wall's two rims, closed edges.
+        assert_eq!(drawn.mesh.edge_count(), 2);
+        assert_eq!(picking.closed(), [true, true]);
     }
 }
 

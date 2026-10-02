@@ -159,7 +159,11 @@ impl Topology {
     /// numbered by their lowest triangle, chains by their lowest
     /// halfedge, corners by vertex.
     pub fn new(solid: &Solid) -> Topology {
-        let mesh = solid.mesh();
+        Topology::of(solid.mesh())
+    }
+
+    /// [`Topology::new`] of a mesh that passes `check`.
+    pub(crate) fn of(mesh: &Mesh) -> Topology {
         let (regions, region_of) = regions(mesh);
         let chains = chains(mesh, &region_of);
         let corners = corners(mesh, &region_of);

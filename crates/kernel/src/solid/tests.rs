@@ -15,7 +15,7 @@ fn cuboid_normals_point_outwards() {
     // Four corners to a side, each with the side's normal.
     assert_eq!(mesh.positions().len(), 24);
     // The box's twelve edges, not the sides' diagonals.
-    assert_eq!(mesh.edges().len(), 12);
+    assert_eq!(mesh.edge_count(), 12);
     for (p, n) in mesh.positions().iter().zip(mesh.normals()) {
         let (p, n) = (Vec3::from(*p), Vec3::from(*n));
         assert!((p - center).dot(n) > 0.0);
@@ -74,9 +74,15 @@ fn the_empty_solid_draws_nothing() {
     let solid = Solid::empty();
     assert!(solid.is_empty());
     assert_eq!(solid.bounds(), None);
+    // One part, with nothing in it.
+    let drawn = solid.tessellate(&Display::default()).unwrap();
+    assert_eq!(drawn.part_ends(), [[0; 3]]);
     assert_eq!(
-        solid.tessellate(&Display::default()),
-        Ok(RenderMesh::default())
+        drawn.into_parts(),
+        crate::MeshParts {
+            part_ends: vec![[0; 3]],
+            ..crate::MeshParts::default()
+        }
     );
     assert_eq!(Solid::new(Mesh::default(), &TOL), Ok(solid));
 }

@@ -74,7 +74,7 @@ use varde_sketch::{Budget, Goal};
 
 pub use cache::Cache;
 pub use history::{BodySolid, Evaluation, evaluate, note_merge};
-pub use picking::{PickChain, PickFace, Picking, PickingError, Summary};
+pub use picking::{PickFace, Picking, PickingError, Summary};
 pub use profile::{ProfileError, profile};
 
 use cache::Keyer;
@@ -245,8 +245,8 @@ pub enum Response {
         /// How the request's draft went, if it had one.
         draft: Option<Drafted>,
         mesh: Arc<RenderMesh>,
-        /// Which face and edge each triangle and edge of `mesh` draws,
-        /// and the faces' and edges' tables, see [`Picking`].
+        /// The body of each of `mesh`'s parts, and its faces' and edges'
+        /// tables, see [`Picking`].
         picking: Arc<Picking>,
         /// The visible sketches' curves, see [`flatten_sketches`].
         sketches: Arc<RenderLines>,
@@ -485,14 +485,15 @@ pub fn handle(request: Request) -> Response {
 }
 
 /// Tessellates the solids of the visible bodies of `document` in
-/// `evaluation` into a single mesh in world space, within the [`Display`]
-/// of the document's tolerance ([`Document::tolerance`]), each drawn once
-/// and kept in `cache`. The joined mesh is kept too, filed by the shown
-/// bodies and their mesh keys in order (which hold the tolerance): a
-/// scene that didn't change gives the same `Arc` without joining again
-/// (see [`Cache`]). Fails if it would have more vertices, indices or
-/// edges than a [`RenderMesh`] may hold, which a file with enough bodies
-/// in it can ask for.
+/// `evaluation` into a single mesh in world space, a part per body in
+/// the order they were made, within the [`Display`] of the document's
+/// tolerance ([`Document::tolerance`]), each drawn once and kept in
+/// `cache`. The joined mesh is kept too, filed by the shown bodies and
+/// their mesh keys in order (which hold the tolerance): a scene that
+/// didn't change gives the same `Arc` without joining again (see
+/// [`Cache`]). Fails if it would have more vertices, indices or edges
+/// than a [`RenderMesh`] may hold, which a file with enough bodies in it
+/// can ask for.
 pub fn tessellate(
     document: &Document,
     evaluation: &Evaluation,
@@ -526,7 +527,7 @@ fn tessellate_scene(
         .filter(|made| document.body(made.body).is_some_and(|body| body.visible))
         .map(|made| (made, Keyer::new("mesh").key(made.key).number(fit).finish()))
         .collect();
-    // The bodies too: the picking tables name them.
+    // The bodies too: the picking tables name the body of each part.
     let mut scene = Keyer::new("scene");
     for (made, key) in &shown {
         scene.value(&made.body).key(*key);

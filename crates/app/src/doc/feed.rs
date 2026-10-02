@@ -21,7 +21,8 @@ pub(crate) struct MeshFeed {
     /// [`Varde::regen_lane`]: crate::Varde::regen_lane
     regen: Option<Box<dyn Transport<Request>>>,
     mesh: Arc<RenderMesh>,
-    /// Which face and edge each triangle and edge of `mesh` draws.
+    /// `mesh`'s picking tables: the body each of its parts is of, its
+    /// faces' keys and summaries, its edges' tangent chains.
     picking: Arc<Picking>,
     /// Counts the models shown, up as `mesh` or `picking` changes: what
     /// picks name the model by ([`varde_view::Pick::model`]).
@@ -405,6 +406,15 @@ impl MeshFeed {
     pub(crate) fn pick_index(&self) -> &PickIndex {
         self.index
             .get_or_init(|| PickIndex::new(self.mesh.clone(), self.picking.clone(), self.model))
+    }
+
+    /// The body each of [`mesh`](Self::mesh)'s parts is of, in order.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "drawing bodies by part will use it")
+    )]
+    pub(crate) fn parts(&self) -> &[BodyId] {
+        self.picking.bodies()
     }
 
     pub(crate) fn sketches(&self) -> &Arc<RenderLines> {

@@ -1,6 +1,6 @@
 use glam::Vec3;
 
-use crate::render_mesh::within;
+use crate::render_mesh::{split, splits, within};
 use crate::{Aabb, MAX_COORD};
 
 /// Curves flattened for drawing: polylines in world space, such as the
@@ -41,17 +41,7 @@ impl RenderLines {
         if points.len() > Self::MAX_POINTS || ends.len() > Self::MAX_POLYLINES {
             return Err(LinesError::TooLarge);
         }
-        let mut start = 0usize;
-        for &end in &ends {
-            // Each polyline has two points or more, so each end is at
-            // least two past the one before.
-            let end = usize::try_from(end).map_err(|_| LinesError::Ends)?;
-            if end.checked_sub(start).is_none_or(|len| len < 2) {
-                return Err(LinesError::Ends);
-            }
-            start = end;
-        }
-        if start != points.len() {
+        if !splits(&ends, points.len(), |len| len >= 2) {
             return Err(LinesError::Ends);
         }
         if !within(&points, Self::MAX_POSITION) {
@@ -72,12 +62,7 @@ impl RenderLines {
 
     /// Each polyline's points.
     pub fn polylines(&self) -> impl Iterator<Item = &[[f32; 3]]> {
-        let mut start = 0;
-        self.ends.iter().map(move |&end| {
-            let polyline = &self.points[start..end as usize];
-            start = end as usize;
-            polyline
-        })
+        split(&self.points, &self.ends)
     }
 
     /// How many segments the polylines have together: each has one fewer

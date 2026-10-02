@@ -5,7 +5,7 @@ use crate::mesh::Mesh;
 use crate::par::par_map;
 use crate::patch::{Bounds3, Patch};
 use crate::quadrature::triangle_rule;
-use crate::tessellate::{Display, Limits, Picking, tessellate, tessellate_picking, weld};
+use crate::tessellate::{Display, Limits, tessellate, tessellate_with, weld};
 use crate::{
     Aabb, KernelError, ManifoldError, ManifoldMesh, MeshError, RenderMesh, Tolerance, Topology,
 };
@@ -223,15 +223,16 @@ impl Solid {
         tessellate(&self.mesh, display)
     }
 
-    /// [`Solid::tessellate`], with which region and chain of `topology`
-    /// each triangle and edge of the mesh draws, for picking. `topology`
-    /// must be this solid's ([`Solid::topology`]).
-    pub fn tessellate_picking(
+    /// [`Solid::tessellate`] with the solid's topology already worked out:
+    /// the mesh's faces are `topology`'s regions and its first edges its
+    /// chains, in order. `topology` must be this solid's
+    /// ([`Solid::topology`]).
+    pub fn tessellate_with(
         &self,
         display: &Display,
         topology: &Topology,
-    ) -> Result<(RenderMesh, Picking), MeshError> {
-        tessellate_picking(&self.mesh, display, topology)
+    ) -> Result<RenderMesh, MeshError> {
+        tessellate_with(&self.mesh, display, topology)
     }
 
     /// The solid as a closed, oriented manifold of triangles for export,

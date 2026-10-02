@@ -606,3 +606,29 @@ fn the_same_model_answered_anew_keeps_its_count() {
     assert_ne!(feed.model(), model);
     assert!(feed.index.get().is_none());
 }
+
+/// The body of each of the mesh's parts is kept with the mesh, and kept
+/// while a failure is shown next to it.
+#[test]
+fn the_parts_bodies_follow_the_mesh_shown() {
+    let editor = Editor::new(Document::example());
+    let body = editor.document().bodies()[0].id;
+    let (mut feed, regen) = connected();
+    assert!(feed.parts().is_empty());
+    feed.request(&editor, None);
+    feed.apply(handle(regen.take().pop().unwrap()));
+    assert_eq!(feed.parts(), [body]);
+    assert_eq!(feed.mesh().part_ends().len(), 1);
+
+    let mut editor = editor;
+    editor.apply(Command::SetVisible(body, false)).unwrap();
+    feed.request(&editor, None);
+    let request = regen.take().pop().unwrap();
+    feed.apply(Response::Failed {
+        generation: request.generation().unwrap(),
+        exclude: None,
+        draft: None,
+        error: "no".to_owned(),
+    });
+    assert_eq!(feed.parts(), [body]);
+}

@@ -1,19 +1,30 @@
+use std::ops::Range;
+
 use glam::Vec3;
 
 use crate::{Aabb, MAX_COORD};
 
 /// A solid tessellated for drawing: an indexed triangle mesh with
-/// per-vertex normals and the feature edges to outline.
+/// per-vertex normals, its triangles grouped by face, and the feature
+/// edges to outline as polylines between the faces either side, ending at
+/// corners.
 ///
 /// Vertices are duplicated where normals split (along sharp edges), and
 /// shared where the surface is smooth.
 ///
+/// Meshes are joined by [`RenderMesh::append`], one part per mesh
+/// appended: a part's faces, edges and corners follow one another, and an
+/// edge refers only to faces and corners of its own part.
+///
 /// A mesh is always drawable: there is a normal for every position, the
-/// indices make whole triangles, indices and edges refer to vertices that
-/// exist, every part is within [`RenderMesh::MAX_VERTICES`] and the others,
-/// every normal is finite and every position within
-/// [`RenderMesh::MAX_POSITION`], so the renderer's bounds and depth range
-/// stay finite.
+/// indices make whole triangles, each face is one or more of them, each
+/// edge two or more vertices, the parts take up every face, edge and
+/// corner in order, indices and edge vertices refer to vertices that exist
+/// and edges to faces and corners of their part, every corner is where the
+/// edges it ends end, every part of the mesh is within
+/// [`RenderMesh::MAX_VERTICES`] and the others, every normal is finite and
+/// every position within [`RenderMesh::MAX_POSITION`], so the renderer's
+/// bounds and depth range stay finite.
 /// The fields are private so that holds; a mesh built outside the kernel
 /// comes in through [`RenderMesh::from_parts`], which checks it.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -21,7 +32,46 @@ pub struct RenderMesh {
     positions: Vec<[f32; 3]>,
     normals: Vec<[f32; 3]>,
     indices: Vec<u32>,
-    edges: Vec<[u32; 2]>,
+    face_ends: Vec<u32>,
+    edge_vertices: Vec<u32>,
+    edge_ends: Vec<u32>,
+    edge_faces: Vec<[u32; 2]>,
+    corners: Vec<[f32; 3]>,
+    edge_corners: Vec<[u32; 2]>,
+    part_ends: Vec<[u32; 3]>,
+}
+
+/// What a [`RenderMesh`] is made of, as [`RenderMesh::from_parts`] takes
+/// it and [`RenderMesh::into_parts`] gives it back. See the accessors of
+/// the same names for what each holds.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MeshParts {
+    pub positions: Vec<[f32; 3]>,
+    pub normals: Vec<[f32; 3]>,
+    pub indices: Vec<u32>,
+    pub face_ends: Vec<u32>,
+    pub edge_vertices: Vec<u32>,
+    pub edge_ends: Vec<u32>,
+    pub edge_faces: Vec<[u32; 2]>,
+    pub corners: Vec<[f32; 3]>,
+    pub edge_corners: Vec<[u32; 2]>,
+    pub part_ends: Vec<[u32; 3]>,
+}
+
+/// One appended mesh's share of a [`RenderMesh`], as ranges of each of its
+/// vectors.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenderPart {
+    /// Its faces' ids.
+    pub faces: Range<usize>,
+    /// Its faces' triangle indices, in [`RenderMesh::indices`].
+    pub indices: Range<usize>,
+    /// Its edges' ids.
+    pub edges: Range<usize>,
+    /// Its edges' vertices, in [`RenderMesh::edge_vertices`].
+    pub edge_vertices: Range<usize>,
+    /// Its corners' ids.
+    pub corners: Range<usize>,
 }
 
 impl RenderMesh {
@@ -32,8 +82,19 @@ impl RenderMesh {
     /// The most triangle indices a mesh may have: three for each of about
     /// 16 million triangles.
     pub const MAX_INDICES: usize = 3 << 24;
-    /// The most edges a mesh may have, about 33 million.
-    pub const MAX_EDGES: usize = 1 << 25;
+    /// The most faces a mesh may have: each has a triangle or more.
+    pub const MAX_FACES: usize = Self::MAX_INDICES / 3;
+    /// The most vertices the edges may have together, about 8 million, so
+    /// that the renderer's stream of edge points fits one GPU buffer.
+    pub const MAX_EDGE_POINTS: usize = 1 << 23;
+    /// The most edges a mesh may have: each has two vertices or more.
+    pub const MAX_EDGE_POLYLINES: usize = Self::MAX_EDGE_POINTS / 2;
+    /// The most corners a mesh may have: each ends an edge, and an edge
+    /// has two ends.
+    pub const MAX_CORNERS: usize = 2 * Self::MAX_EDGE_POLYLINES;
+    /// The most parts a mesh may have, about a million: one per mesh
+    /// appended, which may be empty.
+    pub const MAX_PARTS: usize = 1 << 20;
     /// The largest coordinate a position may have: the farthest a point
     /// within [`MAX_COORD`] gets moved by a length within it, as a sketch
     /// at the limit extruded by the longest distance would be.
@@ -41,15 +102,28 @@ impl RenderMesh {
 
     /// A mesh of these parts, if they make one; see [`RenderMesh`] for what is
     /// checked.
-    pub fn from_parts(
-        positions: Vec<[f32; 3]>,
-        normals: Vec<[f32; 3]>,
-        indices: Vec<u32>,
-        edges: Vec<[u32; 2]>,
-    ) -> Result<RenderMesh, MeshError> {
+    pub fn from_parts(parts: MeshParts) -> Result<RenderMesh, MeshError> {
+        let MeshParts {
+            positions,
+            normals,
+            indices,
+            face_ends,
+            edge_vertices,
+            edge_ends,
+            edge_faces,
+            corners,
+            edge_corners,
+            part_ends,
+        } = parts;
         if positions.len() > Self::MAX_VERTICES
             || indices.len() > Self::MAX_INDICES
-            || edges.len() > Self::MAX_EDGES
+            || face_ends.len() > Self::MAX_FACES
+            || edge_vertices.len() > Self::MAX_EDGE_POINTS
+            || edge_ends.len() > Self::MAX_EDGE_POLYLINES
+            || edge_faces.len() > Self::MAX_EDGE_POLYLINES
+            || corners.len() > Self::MAX_CORNERS
+            || edge_corners.len() > Self::MAX_EDGE_POLYLINES
+            || part_ends.len() > Self::MAX_PARTS
         {
             return Err(MeshError::TooLarge);
         }
@@ -62,20 +136,91 @@ impl RenderMesh {
         if !indices.len().is_multiple_of(3) {
             return Err(MeshError::Triangles(indices.len()));
         }
+        if !splits(&face_ends, indices.len(), |len| {
+            len > 0 && len.is_multiple_of(3)
+        }) {
+            return Err(MeshError::Ends(MeshPart::FaceEnds));
+        }
+        if !splits(&edge_ends, edge_vertices.len(), |len| len >= 2) {
+            return Err(MeshError::Ends(MeshPart::EdgeEnds));
+        }
+        for (part, len) in [
+            (MeshPart::EdgeFaces, edge_faces.len()),
+            (MeshPart::EdgeCorners, edge_corners.len()),
+        ] {
+            if len != edge_ends.len() {
+                return Err(MeshError::Count {
+                    part,
+                    len,
+                    edges: edge_ends.len(),
+                });
+            }
+        }
+        part_runs(
+            &part_ends,
+            [face_ends.len(), edge_ends.len(), corners.len()],
+        )?;
         in_range(MeshPart::Indices, &indices, positions.len())?;
-        in_range(MeshPart::Edges, edges.as_flattened(), positions.len())?;
+        in_range(MeshPart::EdgeVertices, &edge_vertices, positions.len())?;
+        in_parts(&part_ends, &edge_faces, &edge_corners)?;
         if !within(&positions, Self::MAX_POSITION) {
             return Err(MeshError::Values(MeshPart::Positions));
         }
         if !within(&normals, f32::MAX) {
             return Err(MeshError::Values(MeshPart::Normals));
         }
-        Ok(RenderMesh {
+        let mesh = RenderMesh {
             positions,
             normals,
             indices,
-            edges,
-        })
+            face_ends,
+            edge_vertices,
+            edge_ends,
+            edge_faces,
+            corners,
+            edge_corners,
+            part_ends,
+        };
+        mesh.check_corners()?;
+        Ok(mesh)
+    }
+
+    /// The parts this mesh is made of, as [`RenderMesh::from_parts`] takes
+    /// them.
+    pub fn into_parts(self) -> MeshParts {
+        MeshParts {
+            positions: self.positions,
+            normals: self.normals,
+            indices: self.indices,
+            face_ends: self.face_ends,
+            edge_vertices: self.edge_vertices,
+            edge_ends: self.edge_ends,
+            edge_faces: self.edge_faces,
+            corners: self.corners,
+            edge_corners: self.edge_corners,
+            part_ends: self.part_ends,
+        }
+    }
+
+    /// Checks that each edge's corners are where it starts and ends, and
+    /// that every corner ends an edge. The rest must hold already.
+    fn check_corners(&self) -> Result<(), MeshError> {
+        let mut ends_one = vec![false; self.corners.len()];
+        for (polyline, corners) in self.polylines().zip(&self.edge_corners) {
+            // To the bit: `==` would take -0 for 0.
+            let bits = |p: [f32; 3]| p.map(f32::to_bits);
+            let at = |vertex: Option<&u32>| vertex.map(|&v| bits(self.positions[v as usize]));
+            for (vertex, &corner) in [polyline.first(), polyline.last()].into_iter().zip(corners) {
+                if at(vertex) != Some(bits(self.corners[corner as usize])) {
+                    return Err(MeshError::Corners);
+                }
+                ends_one[corner as usize] = true;
+            }
+        }
+        if ends_one.contains(&false) {
+            return Err(MeshError::Corners);
+        }
+        Ok(())
     }
 
     pub fn positions(&self) -> &[[f32; 3]] {
@@ -87,14 +232,97 @@ impl RenderMesh {
         &self.normals
     }
 
-    /// Three per triangle.
+    /// Three per triangle, face after face.
     pub fn indices(&self) -> &[u32] {
         &self.indices
     }
 
-    /// Feature edges (face boundaries) as pairs of vertex indices.
-    pub fn edges(&self) -> &[[u32; 2]] {
-        &self.edges
+    /// One past each face's last index in [`indices`](Self::indices), in
+    /// increasing order, the last one the number of indices. A face is
+    /// what users see as one: all the patches of a
+    /// [`FaceKey`](crate::mesh::FaceKey) in one solid.
+    pub fn face_ends(&self) -> &[u32] {
+        &self.face_ends
+    }
+
+    /// The feature edges' vertex indices, polyline after polyline. An
+    /// edge is the boundary between two faces from one corner to the
+    /// next; one that closes on itself repeats its first vertex at its
+    /// end.
+    pub fn edge_vertices(&self) -> &[u32] {
+        &self.edge_vertices
+    }
+
+    /// One past each edge's last vertex in
+    /// [`edge_vertices`](Self::edge_vertices), in increasing order, the
+    /// last one the number of edge vertices.
+    pub fn edge_ends(&self) -> &[u32] {
+        &self.edge_ends
+    }
+
+    /// Each edge's faces: the one whose vertices it runs along (seen from
+    /// outside, on its left), then the one on its other side. The two are
+    /// the same face where a face creases.
+    pub fn edge_faces(&self) -> &[[u32; 2]] {
+        &self.edge_faces
+    }
+
+    /// Where the edges end: the model's vertices. Each is at an end of one
+    /// edge or more, to the bit.
+    pub fn corners(&self) -> &[[f32; 3]] {
+        &self.corners
+    }
+
+    /// Each edge's corners, at its first vertex and at its last. An edge
+    /// that closes on itself has the same corner at both.
+    pub fn edge_corners(&self) -> &[[u32; 2]] {
+        &self.edge_corners
+    }
+
+    /// One past each part's last face, edge and corner, in that order.
+    pub fn part_ends(&self) -> &[[u32; 3]] {
+        &self.part_ends
+    }
+
+    pub fn triangle_count(&self) -> usize {
+        self.indices.len() / 3
+    }
+
+    pub fn face_count(&self) -> usize {
+        self.face_ends.len()
+    }
+
+    pub fn edge_count(&self) -> usize {
+        self.edge_ends.len()
+    }
+
+    /// Each face's indices.
+    pub fn faces(&self) -> impl ExactSizeIterator<Item = &[u32]> {
+        split(&self.indices, &self.face_ends)
+    }
+
+    /// Each edge's vertex indices.
+    pub fn polylines(&self) -> impl ExactSizeIterator<Item = &[u32]> {
+        split(&self.edge_vertices, &self.edge_ends)
+    }
+
+    /// Each part's ranges, in the order they were appended.
+    pub fn parts(&self) -> impl ExactSizeIterator<Item = RenderPart> {
+        // Where the runs of `ends` up to `n` end.
+        let end = |ends: &[u32], n: usize| n.checked_sub(1).map_or(0, |i| ends[i] as usize);
+        let mut from = [0usize; 3];
+        self.part_ends.iter().map(move |to| {
+            let to = to.map(|n| n as usize);
+            let part = RenderPart {
+                faces: from[0]..to[0],
+                indices: end(&self.face_ends, from[0])..end(&self.face_ends, to[0]),
+                edges: from[1]..to[1],
+                edge_vertices: end(&self.edge_ends, from[1])..end(&self.edge_ends, to[1]),
+                corners: from[2]..to[2],
+            };
+            from = to;
+            part
+        })
     }
 
     /// Appends another mesh, as [`append_at`](Self::append_at) does
@@ -103,12 +331,14 @@ impl RenderMesh {
         self.append_at(other, Vec3::ZERO)
     }
 
-    /// Appends another mesh, its vertices moved by `offset`.
+    /// Appends another mesh, its vertices and corners moved by `offset`,
+    /// and its parts after ours, its faces', edges' and corners' ids after
+    /// ours.
     ///
     /// Fails, leaving `self` as it was, with [`MeshError::TooLarge`] if
-    /// the result would have more vertices, indices or edges than
-    /// [`RenderMesh::MAX_VERTICES`] and the others allow, and with
-    /// [`MeshError::Values`] if a moved position would be past
+    /// the result would have more vertices, indices, edges or any other
+    /// part than [`RenderMesh::MAX_VERTICES`] and the others allow, and
+    /// with [`MeshError::Values`] if a moved position would be past
     /// [`RenderMesh::MAX_POSITION`]. Documents are tessellated by
     /// appending one mesh per body, and a file can hold any number of
     /// bodies.
@@ -120,7 +350,19 @@ impl RenderMesh {
                 Self::MAX_VERTICES,
             ),
             (self.indices.len(), other.indices.len(), Self::MAX_INDICES),
-            (self.edges.len(), other.edges.len(), Self::MAX_EDGES),
+            (self.face_ends.len(), other.face_ends.len(), Self::MAX_FACES),
+            (
+                self.edge_vertices.len(),
+                other.edge_vertices.len(),
+                Self::MAX_EDGE_POINTS,
+            ),
+            (
+                self.edge_ends.len(),
+                other.edge_ends.len(),
+                Self::MAX_EDGE_POLYLINES,
+            ),
+            (self.corners.len(), other.corners.len(), Self::MAX_CORNERS),
+            (self.part_ends.len(), other.part_ends.len(), Self::MAX_PARTS),
         ];
         if !sizes
             .iter()
@@ -129,7 +371,8 @@ impl RenderMesh {
             return Err(MeshError::TooLarge);
         }
         // Moving is monotonic, so the moved bounds' corners are the
-        // extremes of every moved position.
+        // extremes of every moved position, and every corner is at a
+        // position.
         if let Some(Aabb { min, max }) = other.bounds()
             && !within(
                 &[(min + offset).to_array(), (max + offset).to_array()],
@@ -138,32 +381,125 @@ impl RenderMesh {
         {
             return Err(MeshError::Values(MeshPart::Positions));
         }
-        // Every index of `other` is below its vertex count, so `base + i`
-        // is below `MAX_VERTICES`, checked above.
-        let base = u32::try_from(self.positions.len()).map_err(|_| MeshError::TooLarge)?;
+        // Every index and id of `other` is below its own count, so adding
+        // our count stays within the limits, checked above.
+        let base = |len: usize| u32::try_from(len).map_err(|_| MeshError::TooLarge);
+        let vertices = base(self.positions.len())?;
+        let indices = base(self.indices.len())?;
+        let faces = base(self.face_ends.len())?;
+        let edge_points = base(self.edge_vertices.len())?;
+        let edges = base(self.edge_ends.len())?;
+        let corners = base(self.corners.len())?;
 
-        self.positions.extend(
-            other
-                .positions
-                .iter()
-                .map(|p| (Vec3::from(*p) + offset).to_array()),
-        );
+        // Corners move as their positions do, so they stay equal.
+        let moved = |p: &[f32; 3]| (Vec3::from(*p) + offset).to_array();
+        self.positions.extend(other.positions.iter().map(moved));
         // Moving doesn't turn faces.
         self.normals.extend_from_slice(&other.normals);
-        self.indices.extend(other.indices.iter().map(|i| base + i));
-        self.edges
-            .extend(other.edges.iter().map(|[a, b]| [base + a, base + b]));
+        self.indices
+            .extend(other.indices.iter().map(|i| vertices + i));
+        self.face_ends
+            .extend(other.face_ends.iter().map(|end| indices + end));
+        self.edge_vertices
+            .extend(other.edge_vertices.iter().map(|v| vertices + v));
+        self.edge_ends
+            .extend(other.edge_ends.iter().map(|end| edge_points + end));
+        self.edge_faces
+            .extend(other.edge_faces.iter().map(|f| f.map(|f| faces + f)));
+        self.corners.extend(other.corners.iter().map(moved));
+        self.edge_corners
+            .extend(other.edge_corners.iter().map(|c| c.map(|c| corners + c)));
+        self.part_ends.extend(
+            other
+                .part_ends
+                .iter()
+                .map(|&[f, e, c]| [faces + f, edges + e, corners + c]),
+        );
         Ok(())
     }
 
-    pub fn triangle_count(&self) -> usize {
-        self.indices.len() / 3
+    /// Every edge's segments, as pairs of vertex indices, edge after edge.
+    pub fn edge_segments(&self) -> impl Iterator<Item = [u32; 2]> + '_ {
+        self.polylines()
+            .flat_map(|polyline| polyline.windows(2).map(|pair| [pair[0], pair[1]]))
     }
 
     /// Axis-aligned bounds, or `None` for an empty mesh.
     pub fn bounds(&self) -> Option<Aabb> {
         Aabb::around(&self.positions)
     }
+}
+
+/// Whether `ends`, each one past a run's last item, split `total` items
+/// into runs, each of a length `whole` takes.
+pub(crate) fn splits(ends: &[u32], total: usize, whole: impl Fn(usize) -> bool) -> bool {
+    let mut start = 0usize;
+    for &end in ends {
+        let Ok(end) = usize::try_from(end) else {
+            return false;
+        };
+        if end.checked_sub(start).is_none_or(|len| !whole(len)) {
+            return false;
+        }
+        start = end;
+    }
+    start == total
+}
+
+/// The runs `ends` split `items` into, which they must ([`splits`]).
+pub(crate) fn split<'a, T>(
+    items: &'a [T],
+    ends: &'a [u32],
+) -> impl ExactSizeIterator<Item = &'a [T]> + 'a {
+    let mut start = 0;
+    ends.iter().map(move |&end| {
+        let run = &items[start..end as usize];
+        start = end as usize;
+        run
+    })
+}
+
+/// Checks that the parts' ends of faces, edges and corners each never
+/// fall, and that the last are `totals` (none if there are no parts).
+fn part_runs(part_ends: &[[u32; 3]], totals: [usize; 3]) -> Result<(), MeshError> {
+    let mut start = [0usize; 3];
+    for ends in part_ends {
+        for (start, &end) in start.iter_mut().zip(ends) {
+            let end = usize::try_from(end).map_err(|_| MeshError::Ends(MeshPart::PartEnds))?;
+            if end < *start {
+                return Err(MeshError::Ends(MeshPart::PartEnds));
+            }
+            *start = end;
+        }
+    }
+    if start != totals {
+        return Err(MeshError::Ends(MeshPart::PartEnds));
+    }
+    Ok(())
+}
+
+/// Checks that each edge's faces and corners are of its own part. The
+/// parts must take up every face, edge and corner.
+fn in_parts(
+    part_ends: &[[u32; 3]],
+    edge_faces: &[[u32; 2]],
+    edge_corners: &[[u32; 2]],
+) -> Result<(), MeshError> {
+    let mut from = [0u32; 3];
+    for &to in part_ends {
+        for edge in from[1] as usize..to[1] as usize {
+            for (part, ids, range) in [
+                (MeshPart::EdgeFaces, edge_faces[edge], from[0]..to[0]),
+                (MeshPart::EdgeCorners, edge_corners[edge], from[2]..to[2]),
+            ] {
+                if let Some(&id) = ids.iter().find(|id| !range.contains(id)) {
+                    return Err(MeshError::OutsidePart { part, id });
+                }
+            }
+        }
+        from = to;
+    }
+    Ok(())
 }
 
 /// Checks that every vertex index in `part` is below `vertices`.
@@ -194,7 +530,13 @@ pub enum MeshPart {
     Positions,
     Normals,
     Indices,
-    Edges,
+    FaceEnds,
+    EdgeVertices,
+    EdgeEnds,
+    EdgeFaces,
+    Corners,
+    EdgeCorners,
+    PartEnds,
 }
 
 impl std::fmt::Display for MeshPart {
@@ -203,7 +545,13 @@ impl std::fmt::Display for MeshPart {
             MeshPart::Positions => "positions",
             MeshPart::Normals => "normals",
             MeshPart::Indices => "indices",
-            MeshPart::Edges => "edges",
+            MeshPart::FaceEnds => "face ends",
+            MeshPart::EdgeVertices => "edge vertices",
+            MeshPart::EdgeEnds => "edge ends",
+            MeshPart::EdgeFaces => "edge faces",
+            MeshPart::Corners => "corners",
+            MeshPart::EdgeCorners => "edge corners",
+            MeshPart::PartEnds => "part ends",
         })
     }
 }
@@ -211,19 +559,37 @@ impl std::fmt::Display for MeshPart {
 /// Why parts don't make a [`RenderMesh`], or a mesh can't be appended to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MeshError {
-    /// The mesh would have more vertices, indices or edges than
-    /// [`RenderMesh::MAX_VERTICES`] and the others allow.
+    /// The mesh would have more vertices, indices, edges or any other
+    /// part than [`RenderMesh::MAX_VERTICES`] and the others allow.
     TooLarge,
     /// There aren't as many normals as positions.
     Normals { positions: usize, normals: usize },
     /// This many indices don't make whole triangles.
     Triangles(usize),
-    /// An index or edge refers to a vertex past the last.
+    /// These ends ([`MeshPart::FaceEnds`], [`MeshPart::EdgeEnds`] or
+    /// [`MeshPart::PartEnds`]) fall, don't end at the last of what they
+    /// split, or leave a face without a whole triangle or an edge without
+    /// two vertices.
+    Ends(MeshPart),
+    /// There aren't as many of an edge's part
+    /// ([`MeshPart::EdgeFaces`] or [`MeshPart::EdgeCorners`]) as edges.
+    Count {
+        part: MeshPart,
+        len: usize,
+        edges: usize,
+    },
+    /// An index or edge vertex refers to a vertex past the last.
     OutOfRange {
         part: MeshPart,
         index: u32,
         vertices: usize,
     },
+    /// An edge refers to a face or corner ([`MeshPart::EdgeFaces`] or
+    /// [`MeshPart::EdgeCorners`]) that isn't of its part.
+    OutsidePart { part: MeshPart, id: u32 },
+    /// A corner isn't where an edge it ends starts or ends, or ends no
+    /// edge.
+    Corners,
     /// A position isn't within [`RenderMesh::MAX_POSITION`]
     /// ([`MeshPart::Positions`]), or a normal isn't finite
     /// ([`MeshPart::Normals`]).
@@ -240,6 +606,10 @@ impl std::fmt::Display for MeshError {
                 write!(f, "mesh has {normals} normals for {positions} positions")
             }
             MeshError::Triangles(n) => write!(f, "{n} mesh indices don't make whole triangles"),
+            MeshError::Ends(part) => write!(f, "mesh {part} don't split what they end"),
+            MeshError::Count { part, len, edges } => {
+                write!(f, "mesh has {len} {part} for {edges} edges")
+            }
             MeshError::OutOfRange {
                 part,
                 index,
@@ -248,6 +618,10 @@ impl std::fmt::Display for MeshError {
                 f,
                 "mesh {part} refer to vertex {index} of {vertices} vertices"
             ),
+            MeshError::OutsidePart { part, id } => {
+                write!(f, "mesh {part} refer to {id}, outside their part")
+            }
+            MeshError::Corners => f.write_str("mesh corners aren't where their edges end"),
             MeshError::Values(part) => write!(f, "mesh {part} hold values out of range"),
         }
     }

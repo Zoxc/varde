@@ -375,8 +375,8 @@ tolerance and its inputs' keys, bounded by bytes (256 MiB natively, 64
 MiB on the web, least recently used out, never what the last request
 used), so an edit or a draft being dragged reruns only what it changes,
 and undo, redo or an option changed and changed back finds what it had.
-It also keeps the joined model mesh by scene (the shown bodies and their
-mesh keys in order; the committed model's scene is never evicted, however long a
+It also keeps the joined model mesh and its picking tables by scene (the
+shown bodies and their mesh keys in order; the committed model's scene is never evicted, however long a
 draft is dragged), so an answer whose shown bodies and tolerance didn't change
 carries the same `Arc<RenderMesh>` as before and the renderer, keyed by
 that `Arc`, doesn't upload it again (natively; the web wire still sends
@@ -396,26 +396,32 @@ the Timeline marks those features (see "The extrude UI" in
 `agents/kernel.md`).
 
 An answer carries the model's **picking tables** (`regen::Picking`, with
-the mesh): its faces (`PickFace`: the body, the face key, its aliases,
-sorted, and a `Summary` of its form: a plane's outward unit `n` and `d`,
-a cylinder's point, axis and radius, a cone's, sphere's or torus's
-numbers, a conic cylinder's direction, a revolved conic's axis, else
-`Other`: no known form, or numbers past the bound), its edges (`PickChain`: the two faces either
-side, indices into the faces, and whether it closes on itself), the face
-of each triangle of the mesh and the chain of each of its edges
-(`Picking::NONE` for a crease inside one face). Faces are the kernel
-topology's regions and edges its chains (see "Topology and names" in
-`agents/kernel.md`), so a circle's quarter walls, or flush faces merged
-under one name, are one face, and a face cut in two by a groove is two
-faces of one key; `Picking::chain_keys` gives an edge's two keys sorted,
-as an edge reference stores them. Each body's tables are made with its
-mesh (`Solid::tessellate_picking`) and cached with it, counted in its
-bytes; the scene's are theirs joined in the shown bodies' order, the
-indices moved on (checked). A `Picking` always goes with its mesh (one
-face per triangle, one chain or none per edge, indices within the tables,
-each chain between two different faces of one body, summaries finite,
-within `Picking::MAX_VALUE`, their directions unit vectors): the fields
-are private and `Picking::from_parts` checks parts from elsewhere.
+the mesh), by the mesh's own ids: the body of each of the mesh's parts
+(the shown bodies in order; `Picking::face_body` finds a face's), its
+faces (`PickFace`: the face key, its aliases, sorted, and a `Summary` of
+its form: a plane's outward unit `n` and `d`, a cylinder's point, axis
+and radius, a cone's, sphere's or torus's numbers, a conic cylinder's
+direction, a revolved conic's axis, else `Other`: no known form, or
+numbers past the bound), and for each edge whether it's a chain closing
+on itself and its tangent chain (below). The mesh's faces are the kernel topology's regions and its first
+edges in each part its chains, in the topology's order, the creases
+inside one face after them (see "Topology and names" and "Tessellation"
+in `agents/kernel.md`), so a circle's quarter walls, or flush faces
+merged under one name, are one face, a face cut in two by a groove is
+two faces of one key, and which face a triangle is on (its `face_ends`
+range) and which faces an edge is between (`edge_faces`; a crease has
+the same face twice) are the mesh's to say. `Picking::edge_keys` gives
+an edge's two keys sorted, as an edge reference stores them (none for a
+crease). Each body's tables are made with its mesh (`Solid::topology`,
+then `Solid::tessellate_with`) and cached with it, counted in its
+bytes; the scene's are theirs joined in the shown bodies' order, as the
+mesh is, the tangent chains moved on (checked). A `Picking` always goes
+with its mesh (a body per part, a face per face, a flag and a tangent
+chain per edge, a closed edge between two faces and on one corner,
+summaries finite, within `Picking::MAX_VALUE`, their directions
+unit vectors, aliases sorted apart from the key): the fields are private
+and `Picking::from_parts` checks parts from elsewhere. The app keeps
+them with the mesh (`MeshFeed::parts` gives the parts' bodies).
 
 **Picking the model** (`view/src/pick.rs`, the app's `doc/pick.rs`) is on
 the CPU, against the mesh drawn and its tables; no GPU id buffer (WebGL2
@@ -425,8 +431,8 @@ up whenever the mesh or the tables change; natively an unchanged scene
 comes back as the same `Arc`s, from the web worker as copies, which are
 compared, and either way it keeps its index). A
 `PickIndex` (the mesh, the tables, the model's count, a bounding volume
-hierarchy over the triangles and one over the edges on a chain, each
-face's triangles and each chain's edges) is built the first time it's
+hierarchy over the triangles and one over the segments of the edges
+between two faces, and each tangent chain's edges) is built the first time it's
 asked for (`MeshFeed::pick_index`, a `OnceCell`), sequentially (each
 node split along the longest side of its items' middles at that side's
 middle, in one pass, or at the median where that leaves a quarter or
@@ -441,7 +447,8 @@ build without debug assertions). Not capped. Tables that don't go with
 the mesh pick nothing. `PickIndex::pick(camera, size, at)` casts the
 cursor's ray (`Projector::ray`; in an orthographic view from far enough
 back that the whole mesh is ahead, in perspective from the near plane):
-the nearest triangle names the face. A feature edge wins over it if a
+the nearest triangle names the face (the one whose `face_ends` range
+holds it). An edge between two faces (not a crease) wins over it if a
 segment of it shows within `EDGE_REACH` (6) pixels of the cursor and
 isn't hidden: the candidates, found through the edge tree with each
 node's box grown by 6 pixels at its deepest, are cut at the near plane,
@@ -452,8 +459,8 @@ hidden means the ray from the eye to it meets a triangle nearer by more
 than 0.002 view heights (what the renderer pulls edges by) and the
 mesh's `f32` rounding. So an edge either side of a face shows, and one
 behind the plate isn't picked. The `Pick` carries the model's count,
-the target (`Picked::Face` or `Picked::Edge`, indices into the tables),
-the body (the face's, or the chain's first face's) and the point (the
+the target (`Picked::Face` or `Picked::Edge`, the mesh's ids),
+the body (the face's part's, or the edge's first face's) and the point (the
 ray's hit, or the edge's point).
 
 Outside sketches and the extrude session, and not over a draft's preview
@@ -506,7 +513,7 @@ model it was last found in (`Selection::model`). When another model
 shows (an edit, an undo, a tolerance), `Selection::resolve` finds each
 again as the kernel resolves references (`PickIndex::find_face`,
 `find_edge`): the faces of that body named by the key (key or alias),
-or the chains between faces so named either way round; one is taken
+or the edges between faces so named either way round; one is taken
 wherever the point is, of several the nearest to the point (measured to
 the drawn triangles or segments; a later one counts only where it comes
 nearer by more than a billionth of the mesh's size, so ties go to the
@@ -532,10 +539,10 @@ built for.
 
 Tangent chains come from the kernel: `Topology::tangent_chains` (see
 `agents/kernel.md`) gives each chain its tangent chain's lowest chain,
-regen carries it as `PickChain::tangent` (checked on the page: the
-first of a tangent chain is a chain of the same body, no later than
-its members and its own first), and `PickIndex::tangent_chain` groups
-them. Hovering in `Edges { tangent: true }` highlights the whole chain,
+regen carries it for each edge of the mesh as `Picking::tangents` (a
+crease its own; checked on the page: the first of a tangent chain is an
+edge between two faces of the same part, no later than its members and
+its own first), and `PickIndex::tangent_chain` groups them. Hovering in `Edges { tangent: true }` highlights the whole chain,
 in `Bodies` the whole body.
 
 The app's highlight (`Doc::highlight`) is `Selection::highlight`: what's
@@ -555,9 +562,8 @@ many faces, edges and bodies. Its hints: "Select" and a double-click
 
 The **highlight** (`render::Highlight`, `Frame::highlight`, keyed by its
 `Arc` and the colours) is the faces' triangles, copied from the mesh
-with their normals by `PickIndex::highlight`, and the chains' segments
-joined end to end by their ends' bits into polylines, each with an
-`Emphasis`, hovered or selected. Faces are drawn after the model and
+with their normals by `PickIndex::highlight`, and the edges' polylines,
+each with an `Emphasis`, hovered or selected. Faces are drawn after the model and
 before its edges, lit as the model is but in `Colors::hovered_face` or
 `selected_face` (the mock's hues, hsl 110 and 188, at the model's
 lightness: light #cde4c8 and #b9e3e9, dark #8ab582 and #72bac5), culled
@@ -598,18 +604,20 @@ with the page, so a request is the generation, the postcard-encoded
 document (the encoding `.vrdp` records use) and the sketch to leave out, and
 the answer is a postcard head (with the failed features, the
 bodies each join, cut or intersect touches, the bodies' boxes, the
-draft's outcome and the picking tables' faces and edges) and the mesh's
-positions, normals, indices and edges, the sketches' line points and
-ends, and the picking's face per triangle and chain per edge as raw
-bytes. A model whose head would be over its bound (64 MiB), or with
-more faces, chains or aliases than a reply may carry (2²⁰, 2²² and 2²⁰
-all faces' together, decoded within those bounds so a short head can't
-make the page build more), is answered as failed. Both
+draft's outcome and the picking tables: the body of each of the mesh's
+parts, the faces, and the edges' closed flags and tangent chains) and the mesh's vectors
+(positions, normals, indices, face ends, edge vertices, edge ends, edge
+faces, corners, edge corners, part ends) and the sketches' line points
+and ends as raw bytes. A model whose head would be over its bound (64
+MiB), or with more faces or aliases than a reply may carry (2²⁰ and 2²⁰
+all faces' together, decoded within those bounds, and the parts and
+flags within the mesh's, so a short head can't make the page build
+more), is answered as failed. Both
 directions transfer their `ArrayBuffer`s instead of copying them. The page
 checks what comes back before using it (whole elements, a size bound,
-indices and edges within the vertex count, positions and points within
-their bound, line ends splitting the points into polylines of two or more,
-bodies' boxes finite and in order, the picking tables checked by
+the mesh through `RenderMesh::from_parts`, points within their bound,
+line ends splitting the points into polylines of two or more, bodies'
+boxes finite and in order, the picking tables checked by
 `Picking::from_parts` against the mesh and naming only bodies the head
 lists; see `regen::wire`). An export's answer is a head and one part,
 the bodies' postcard, copied within 1 GiB and decoded with every

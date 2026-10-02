@@ -59,9 +59,10 @@ fn names_in(solid: &Solid, frame: &Frame, height: f64) -> BTreeSet<FaceName> {
 fn lines_inside(solid: &Solid, height: f64, half: f64) -> usize {
     let mesh = solid.tessellate(&Display::new(&TOL)).unwrap();
     let at = |i: u32| DVec3::from(mesh.positions()[i as usize].map(f64::from));
-    mesh.edges()
-        .iter()
-        .filter(|&&[a, b]| {
+    mesh.polylines()
+        .flat_map(|polyline| polyline.windows(2))
+        .filter(|segment| {
+            let [a, b] = [segment[0], segment[1]];
             let m = (at(a) + at(b)) / 2.0;
             (m.z - height).abs() < 1e-5 && m.x.abs() < half - 1e-3 && m.y.abs() < half - 1e-3
         })

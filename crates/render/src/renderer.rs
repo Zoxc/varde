@@ -203,10 +203,11 @@ const _: () = assert!(size_of::<Uniforms>().is_multiple_of(16));
 const MAX_BUFFER_BYTES: usize = 256 << 20;
 
 // Every mesh the kernel allows fits, one buffer per part: positions and
-// normals are uploaded as they are, and indices and edges too.
+// normals are uploaded as they are, and indices too. Edges are uploaded a
+// pair of vertex indices per segment, fewer than edge points.
 const _: () = assert!(size_of::<[f32; 3]>() * RenderMesh::MAX_VERTICES <= MAX_BUFFER_BYTES);
 const _: () = assert!(size_of::<u32>() * RenderMesh::MAX_INDICES <= MAX_BUFFER_BYTES);
-const _: () = assert!(size_of::<[u32; 2]>() * RenderMesh::MAX_EDGES <= MAX_BUFFER_BYTES);
+const _: () = assert!(size_of::<[u32; 2]>() * RenderMesh::MAX_EDGE_POINTS <= MAX_BUFFER_BYTES);
 // Lines are uploaded a segment of two points each, fewer than points.
 const _: () = assert!(size_of::<Segment>() * RenderLines::MAX_POINTS <= MAX_BUFFER_BYTES);
 
@@ -1032,10 +1033,16 @@ fn upload_mesh(device: &wgpu::Device, mesh: &RenderMesh) -> Result<Option<GpuMes
     // The kernel's limits keep every part within `MAX_BUFFER_BYTES`, so
     // this doesn't saturate.
     let bytes = |len: usize, size: usize| len.saturating_mul(size) as u64;
+    // Each edge's polyline as segments, a pair of vertex indices each, for
+    // the `LineList` pipeline.
+    let edges: Vec<[u32; 2]> = mesh
+        .polylines()
+        .flat_map(|polyline| polyline.windows(2).map(|pair| [pair[0], pair[1]]))
+        .collect();
     let largest = [
         bytes(mesh.positions().len(), size_of::<[f32; 3]>()),
         bytes(mesh.indices().len(), size_of::<u32>()),
-        bytes(mesh.edges().len(), size_of::<[u32; 2]>()),
+        bytes(edges.len(), size_of::<[u32; 2]>()),
     ]
     .into_iter()
     .max()
@@ -1048,8 +1055,7 @@ fn upload_mesh(device: &wgpu::Device, mesh: &RenderMesh) -> Result<Option<GpuMes
     }
     // The kernel's limits keep these well within `u32`.
     let index_count = u32::try_from(mesh.indices().len()).expect("kernel bounds indices");
-    let edge_count = mesh
-        .edges()
+    let edge_count = edges
         .len()
         .checked_mul(2)
         .and_then(|n| u32::try_from(n).ok())
@@ -1075,7 +1081,7 @@ fn upload_mesh(device: &wgpu::Device, mesh: &RenderMesh) -> Result<Option<GpuMes
         index_count,
         edges: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("varde mesh edges"),
-            contents: bytemuck::cast_slice(mesh.edges()),
+            contents: bytemuck::cast_slice(&edges),
             usage: wgpu::BufferUsages::INDEX,
         }),
         edge_count,

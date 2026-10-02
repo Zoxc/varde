@@ -520,7 +520,7 @@ fn a_join_touching_two_bodies_merges_them() {
     // flush at z = 0: no line is drawn there.
     let render = solid.tessellate(&varde_kernel::Display::default()).unwrap();
     let z = |i: u32| render.positions()[i as usize][2];
-    for &[a, b] in render.edges() {
+    for [a, b] in render.edge_segments() {
         assert!(z(a).abs() > 1e-4 || z(b).abs() > 1e-4, "a line at the seam");
     }
 }

@@ -1,12 +1,16 @@
-//! The picking tables a model's answer carries: which face and which edge
-//! of which body each triangle and edge of its mesh draws, and what the
-//! viewport says about and builds on each face and edge.
+//! The picking tables a model's answer carries: which body each part of
+//! its mesh is of, and what the viewport says about and builds on each
+//! face and edge of the mesh.
 //!
-//! Faces are the kernel's regions ([`Topology::regions`](varde_kernel::Topology::regions)): connected
-//! triangles of one [`FaceKey`], so a circle's quarter walls, or flush
-//! faces merged under one name, are one face, and a face cut in two by a
-//! groove is two of one key. Edges are its chains ([`Topology::chains`](varde_kernel::Topology::chains)):
-//! maximal runs of mesh edges between the same two faces. Each body's
+//! The mesh's faces are the kernel's regions ([`Topology::regions`](varde_kernel::Topology::regions)):
+//! connected triangles of one [`FaceKey`], so a circle's quarter walls, or
+//! flush faces merged under one name, are one face, and a face cut in two
+//! by a groove is two of one key. Its first edges in each part are the
+//! chains ([`Topology::chains`](varde_kernel::Topology::chains)): maximal
+//! runs of mesh edges between the same two faces; the rest are creases
+//! inside one face (see [`RenderMesh`]). So the tables here are indexed
+//! by the mesh's own face and edge ids, and which face a triangle is on
+//! and which faces an edge is between are the mesh's to say. Each body's
 //! tables are worked out with its mesh ([`Drawn`]) and the scene's are
 //! theirs joined, in the shown bodies' order, as the mesh is.
 //!
@@ -172,7 +176,6 @@ impl Summary {
 /// A face of the model: a region of a body's solid.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PickFace {
-    pub body: BodyId,
     /// Its name, which references store.
     pub key: FaceKey,
     /// The keys merged into it, which name it too, sorted, without `key`.
@@ -182,46 +185,29 @@ pub struct PickFace {
     pub summary: Summary,
 }
 
-/// An edge of the model: a chain of a body's solid.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PickChain {
-    /// The faces either side, indices into [`Picking::faces`]: two
-    /// different faces of one body.
-    pub faces: [u32; 2],
-    /// Whether it closes on itself (a hole's rim) rather than running
-    /// from one corner to another.
-    pub closed: bool,
-    /// Its tangent chain, as the lowest-indexed chain in it, an index
-    /// into [`Picking::chains`]: the edges of its body it runs on into
-    /// smoothly, end to end (see
-    /// [`Topology::tangent_chains`](varde_kernel::Topology::tangent_chains)).
-    /// Itself if none.
-    pub tangent: u32,
-}
-
-/// The picking tables of a model's mesh: its faces and edges, and which
-/// of them each triangle and edge of the mesh draws.
+/// The picking tables of a model's mesh: the body of each of its parts,
+/// and its faces' keys and summaries, and which of its edges close on
+/// themselves and which tangent chain each is in, by the mesh's face and
+/// edge ids.
 ///
-/// It's always consistent with the mesh it came with: one face per
-/// triangle, one chain (or [`Picking::NONE`]) per edge, every index within
-/// its table, each chain between two different faces of one body, its
-/// tangent chain's first a chain of that body no later than it and its
-/// own first, every
-/// summary [`Summary::valid`], each face's aliases sorted and apart from
-/// its key, no more faces than triangles nor chains than edges. The
-/// fields are private so that holds; one from the other side of the web
-/// worker comes in through [`Picking::from_parts`], which checks it.
+/// It's always consistent with the mesh it came with: one body per part,
+/// one face per face of the mesh, one flag and one tangent chain per edge,
+/// a closed edge between two different faces and starting and ending at
+/// one corner, each edge's tangent chain's first an edge of its part
+/// between two different faces, no later than it and its own first (a
+/// crease's itself), every summary [`Summary::valid`], each face's aliases
+/// sorted and apart from its key. The fields are private so that holds; one from the other
+/// side of the web worker comes in through [`Picking::from_parts`], which
+/// checks it.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Picking {
+    bodies: Vec<BodyId>,
     faces: Vec<PickFace>,
-    chains: Vec<PickChain>,
-    triangles: Vec<u32>,
-    edges: Vec<u32>,
+    closed: Vec<bool>,
+    tangents: Vec<u32>,
 }
 
 impl Picking {
-    /// An edge on no chain: a crease inside one face.
-    pub const NONE: u32 = varde_kernel::Picking::NONE;
     /// The largest number a summary may hold: past any plane's offset
     /// or point a solid within the kernel's limits has.
     pub const MAX_VALUE: f64 = 1e8;
@@ -237,42 +223,18 @@ impl Picking {
     /// The tables of `mesh` of these parts, if they make them; see
     /// [`Picking`] for what is checked.
     pub fn from_parts(
+        bodies: Vec<BodyId>,
         faces: Vec<PickFace>,
-        chains: Vec<PickChain>,
-        triangles: Vec<u32>,
-        edges: Vec<u32>,
+        closed: Vec<bool>,
+        tangents: Vec<u32>,
         mesh: &RenderMesh,
     ) -> Result<Picking, PickingError> {
-        if triangles.len() != mesh.triangle_count() || edges.len() != mesh.edges().len() {
-            return Err(PickingError::Lengths);
-        }
-        // Every face and chain is drawn, so there are no more of them
-        // than of what draws them.
-        if faces.len() > triangles.len() || chains.len() > edges.len() {
-            return Err(PickingError::Tables);
-        }
-        if triangles.iter().any(|&f| f as usize >= faces.len())
-            || (edges.iter()).any(|&c| c != Self::NONE && c as usize >= chains.len())
+        if bodies.len() != mesh.part_ends().len()
+            || faces.len() != mesh.face_count()
+            || closed.len() != mesh.edge_count()
+            || tangents.len() != mesh.edge_count()
         {
-            return Err(PickingError::Index);
-        }
-        let chain_ok = |chain: &PickChain| {
-            let [a, b] = chain.faces.map(|f| faces.get(f as usize));
-            matches!((a, b), (Some(a), Some(b)) if chain.faces[0] != chain.faces[1] && a.body == b.body)
-        };
-        // A tangent chain's first is no later than its members, its own
-        // first, and of the same body.
-        let tangent_ok = |(c, chain): (usize, &PickChain)| {
-            let first = chains.get(chain.tangent as usize);
-            let body = |chain: &PickChain| faces.get(chain.faces[0] as usize).map(|f| f.body);
-            first.is_some_and(|first| {
-                chain.tangent as usize <= c
-                    && first.tangent == chain.tangent
-                    && body(first) == body(chain)
-            })
-        };
-        if !chains.iter().all(chain_ok) || !chains.iter().enumerate().all(tangent_ok) {
-            return Err(PickingError::Chain);
+            return Err(PickingError::Lengths);
         }
         let face_ok = |face: &PickFace| {
             face.summary.valid()
@@ -282,97 +244,121 @@ impl Picking {
         if !faces.iter().all(face_ok) {
             return Err(PickingError::Face);
         }
+        let closes = |(&[a, b], &[start, end]): (&[u32; 2], &[u32; 2])| a != b && start == end;
+        let edges = mesh.edge_faces().iter().zip(mesh.edge_corners());
+        if !(closed.iter().zip(edges)).all(|(&closed, edge)| !closed || closes(edge)) {
+            return Err(PickingError::Closed);
+        }
+        // Each part's first edge, by edge.
+        let mut part_start = 0;
+        let mut part_ends = mesh.part_ends().iter();
+        let mut part_end = part_ends.next().map_or(0, |&[_, edges, _]| edges);
+        for (e, &first) in tangents.iter().enumerate() {
+            let e = e as u32;
+            while e >= part_end {
+                part_start = part_end;
+                part_end = part_ends.next().map_or(u32::MAX, |&[_, edges, _]| edges);
+            }
+            let chain = |e: u32| {
+                let [a, b] = mesh.edge_faces()[e as usize];
+                a != b
+            };
+            let ok = if chain(e) {
+                (part_start..=e).contains(&first)
+                    && tangents[first as usize] == first
+                    && chain(first)
+            } else {
+                first == e
+            };
+            if !ok {
+                return Err(PickingError::Tangent);
+            }
+        }
         Ok(Picking {
+            bodies,
             faces,
-            chains,
-            triangles,
-            edges,
+            closed,
+            tangents,
         })
     }
 
-    /// The model's faces.
+    /// The body of each of the mesh's parts, in order: the shown bodies,
+    /// in the order they were made.
+    pub fn bodies(&self) -> &[BodyId] {
+        &self.bodies
+    }
+
+    /// The mesh's faces' keys and summaries, by face id.
     pub fn faces(&self) -> &[PickFace] {
         &self.faces
     }
 
-    /// The model's edges.
-    pub fn chains(&self) -> &[PickChain] {
-        &self.chains
+    /// Whether each of the mesh's edges, by edge id, is a chain that
+    /// closes on itself (a hole's rim) rather than running from one corner
+    /// to another. A crease's is `false`.
+    pub fn closed(&self) -> &[bool] {
+        &self.closed
     }
 
-    /// One per triangle of the mesh: its face.
-    pub fn triangles(&self) -> &[u32] {
-        &self.triangles
+    /// Each of the mesh's edges' tangent chain, by edge id, as the
+    /// lowest edge in it: the edges of its part it runs on into smoothly,
+    /// end to end (see
+    /// [`Topology::tangent_chains`](varde_kernel::Topology::tangent_chains)).
+    /// Itself if none, and a crease's itself.
+    pub fn tangents(&self) -> &[u32] {
+        &self.tangents
     }
 
-    /// One per edge of the mesh: its chain, or [`Picking::NONE`].
-    pub fn edges(&self) -> &[u32] {
-        &self.edges
+    /// The body face `face` of `mesh`, the mesh these tables came with,
+    /// is of.
+    pub fn face_body(&self, mesh: &RenderMesh, face: u32) -> BodyId {
+        let part = (mesh.part_ends()).partition_point(|&[faces, _, _]| faces <= face);
+        self.bodies[part]
     }
 
-    /// The keys of the faces either side of chain `chain`, sorted, as an
-    /// edge reference stores them.
-    pub fn chain_keys(&self, chain: u32) -> [FaceKey; 2] {
-        let [a, b] = self.chains[chain as usize]
-            .faces
-            .map(|f| self.faces[f as usize].key);
-        [a.min(b), a.max(b)]
+    /// The keys of the faces either side of edge `edge` of `mesh`, the
+    /// mesh these tables came with, sorted, as an edge reference stores
+    /// them; `None` for a crease, which is inside one face.
+    pub fn edge_keys(&self, mesh: &RenderMesh, edge: u32) -> Option<[FaceKey; 2]> {
+        let [a, b] = mesh.edge_faces()[edge as usize];
+        let [a, b] = [a, b].map(|f| self.faces[f as usize].key);
+        (a != b).then(|| [a.min(b), a.max(b)])
     }
 
     /// About how many bytes it holds, for the cache.
     pub(crate) fn bytes(&self) -> usize {
-        let aliases = (self.faces.iter()).fold(0usize, |sum, face| {
-            sum.saturating_add(size_of_val(&face.aliases[..]))
-        });
-        size_of_val(&self.faces[..])
-            .saturating_add(aliases)
-            .saturating_add(size_of_val(&self.chains[..]))
-            .saturating_add(size_of_val(&self.triangles[..]))
-            .saturating_add(size_of_val(&self.edges[..]))
+        faces_bytes(&self.faces)
+            .saturating_add(size_of_val(&self.bodies[..]))
+            .saturating_add(size_of_val(&self.closed[..]))
+            .saturating_add(size_of_val(&self.tangents[..]))
             .saturating_add(size_of_val(self))
     }
 
-    /// Appends one body's drawing's tables, its faces given to `body`.
-    /// Fails with [`MeshError::TooLarge`] where an index wouldn't fit,
+    /// Appends one body's drawing's tables, its parts (one, as a solid is
+    /// drawn) given to `body`, as its mesh is appended to the scene's.
+    /// Fails with [`MeshError::TooLarge`] where an edge id wouldn't fit,
     /// which a mesh within its limits never reaches.
     pub(crate) fn append(&mut self, body: BodyId, drawn: &Drawn) -> Result<(), MeshError> {
-        let base = |len: usize| u32::try_from(len).map_err(|_| MeshError::TooLarge);
-        let (faces, chains) = (base(self.faces.len())?, base(self.chains.len())?);
-        let moved = |i: u32, by: u32| i.checked_add(by).filter(|&i| i != Self::NONE);
-        let moved = |i: u32, by: u32| moved(i, by).ok_or(MeshError::TooLarge);
-        let mut triangles = Vec::with_capacity(drawn.picking.triangles.len());
-        for &r in &drawn.picking.triangles {
-            triangles.push(moved(r, faces)?);
+        let base = u32::try_from(self.tangents.len()).map_err(|_| MeshError::TooLarge)?;
+        let mut tangents = Vec::with_capacity(drawn.tangents.len());
+        for &first in &drawn.tangents {
+            tangents.push(first.checked_add(base).ok_or(MeshError::TooLarge)?);
         }
-        let mut edges = Vec::with_capacity(drawn.picking.edges.len());
-        for &c in &drawn.picking.edges {
-            edges.push(if c == Self::NONE {
-                c
-            } else {
-                moved(c, chains)?
-            });
-        }
-        let mut new_chains = Vec::with_capacity(drawn.chains.len());
-        for chain in &drawn.chains {
-            let [a, b] = chain.faces;
-            new_chains.push(PickChain {
-                faces: [moved(a, faces)?, moved(b, faces)?],
-                closed: chain.closed,
-                tangent: moved(chain.tangent, chains)?,
-            });
-        }
-        self.faces
-            .extend(drawn.faces.iter().map(|(key, aliases, summary)| PickFace {
-                body,
-                key: *key,
-                aliases: aliases.clone(),
-                summary: *summary,
-            }));
-        self.chains.extend(new_chains);
-        self.triangles.extend(triangles);
-        self.edges.extend(edges);
+        let parts = drawn.mesh.part_ends().len();
+        self.bodies.extend(std::iter::repeat_n(body, parts));
+        self.faces.extend_from_slice(&drawn.faces);
+        self.closed.extend_from_slice(&drawn.closed);
+        self.tangents.extend(tangents);
         Ok(())
     }
+}
+
+/// About how many bytes `faces` hold, their aliases too.
+fn faces_bytes(faces: &[PickFace]) -> usize {
+    let aliases = (faces.iter()).fold(0usize, |sum, face| {
+        sum.saturating_add(size_of_val(&face.aliases[..]))
+    });
+    size_of_val(faces).saturating_add(aliases)
 }
 
 /// Decoding sequences no longer than a bound, refused as soon as they
@@ -443,16 +429,18 @@ pub(crate) mod bounded {
 }
 
 /// One body's solid drawn, with its picking tables: what the cache keeps
-/// per body. Its faces have no body yet: the same solid may be shown as
+/// per body. Its parts have no body yet: the same solid may be shown as
 /// several.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Drawn {
+    /// Its faces are the solid's regions and its first edges its chains.
     pub(crate) mesh: RenderMesh,
-    /// Per region: its key, aliases and summary.
-    pub(crate) faces: Vec<(FaceKey, Vec<FaceKey>, Summary)>,
-    /// Per chain: its regions, as faces of this body.
-    pub(crate) chains: Vec<PickChain>,
-    pub(crate) picking: varde_kernel::Picking,
+    /// Per face (region): its key, aliases and summary.
+    pub(crate) faces: Vec<PickFace>,
+    /// Per edge: whether it's a closed chain.
+    pub(crate) closed: Vec<bool>,
+    /// Per edge: its tangent chain's first edge, a crease itself.
+    pub(crate) tangents: Vec<u32>,
 }
 
 impl Drawn {
@@ -460,7 +448,7 @@ impl Drawn {
     /// chains.
     pub(crate) fn new(solid: &Solid, display: &Display) -> Result<Drawn, MeshError> {
         let topology = solid.topology();
-        let (mesh, picking) = solid.tessellate_picking(display, &topology)?;
+        let mesh = solid.tessellate_with(display, &topology)?;
         let faces = solid.mesh().faces();
         let tris = solid.mesh().tris();
         let faces = (topology.regions().iter())
@@ -468,35 +456,35 @@ impl Drawn {
                 // A region's faces lie on one surface: its first's form
                 // stands for them.
                 let face = &faces[tris[region.tris[0] as usize].face as usize];
-                (region.key, region.aliases.clone(), Summary::of(&face.form))
+                PickFace {
+                    key: region.key,
+                    aliases: region.aliases.clone(),
+                    summary: Summary::of(&face.form),
+                }
             })
             .collect();
-        let tangent = topology.tangent_chains(solid);
-        let chains = (topology.chains().iter().zip(tangent))
-            .map(|(chain, tangent)| PickChain {
-                faces: chain.regions,
-                closed: chain.closed,
-                tangent,
-            })
+        let chains = topology.chains();
+        let closed = (0..mesh.edge_count())
+            .map(|e| chains.get(e).is_some_and(|chain| chain.closed))
             .collect();
+        // The chains are the first edges, in the topology's order; the
+        // creases after them are their own.
+        let mut tangents = topology.tangent_chains(solid);
+        tangents.extend(chains.len() as u32..mesh.edge_count() as u32);
         Ok(Drawn {
             mesh,
             faces,
-            chains,
-            picking,
+            closed,
+            tangents,
         })
     }
 
-    /// About how many bytes it holds, for the cache.
+    /// About how many bytes its tables hold, for the cache, besides its
+    /// mesh's.
     pub(crate) fn bytes(&self) -> usize {
-        let aliases = (self.faces.iter()).fold(0usize, |sum, (_, aliases, _)| {
-            sum.saturating_add(size_of_val(&aliases[..]))
-        });
-        size_of_val(&self.faces[..])
-            .saturating_add(aliases)
-            .saturating_add(size_of_val(&self.chains[..]))
-            .saturating_add(size_of_val(&self.picking.triangles[..]))
-            .saturating_add(size_of_val(&self.picking.edges[..]))
+        faces_bytes(&self.faces)
+            .saturating_add(size_of_val(&self.closed[..]))
+            .saturating_add(size_of_val(&self.tangents[..]))
     }
 }
 
@@ -510,31 +498,31 @@ pub(crate) struct Scene {
 /// Why parts don't make a [`Picking`] of a mesh.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PickingError {
-    /// There isn't one face per triangle and one chain per edge.
+    /// There isn't one body per part, one face per face and one flag per
+    /// edge of the mesh.
     Lengths,
-    /// There are more faces than triangles or more chains than edges.
-    Tables,
-    /// A triangle's face or an edge's chain is past its table.
-    Index,
-    /// A chain's faces are past the table, the same face, or of two
-    /// bodies, or its tangent chain's first isn't a first chain of its
-    /// body no later than it.
-    Chain,
     /// A face's summary isn't valid, or its aliases aren't sorted apart
     /// from its key.
     Face,
+    /// An edge said to close is a crease, or doesn't start and end at one
+    /// corner.
+    Closed,
+    /// A part's body isn't one the answer lists.
+    Body,
+    /// An edge's tangent chain's first isn't an edge of its part between
+    /// two faces, no later than it and its own first, or a crease's isn't
+    /// itself.
+    Tangent,
 }
 
 impl fmt::Display for PickingError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             PickingError::Lengths => "the picking tables don't match the mesh",
-            PickingError::Tables => "the picking tables are larger than the mesh",
-            PickingError::Index => "a picking index is past its table",
-            PickingError::Chain => {
-                "a picked edge's faces aren't two of one body, or its tangent chain isn't"
-            }
             PickingError::Face => "a picked face's summary or aliases aren't valid",
+            PickingError::Closed => "a closed edge isn't one",
+            PickingError::Body => "a part's body isn't one the answer lists",
+            PickingError::Tangent => "a picked edge's tangent chain isn't one",
         })
     }
 }

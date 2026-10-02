@@ -1704,9 +1704,8 @@ fn feature_middles(solid: &Solid) -> Vec<DVec3> {
     let render = solid.tessellate(&crate::Display::new(&TOL)).unwrap();
     let at = |i: u32| DVec3::from(render.positions()[i as usize].map(f64::from));
     render
-        .edges()
-        .iter()
-        .map(|&[a, b]| (at(a) + at(b)) * 0.5)
+        .edge_segments()
+        .map(|[a, b]| (at(a) + at(b)) * 0.5)
         .collect()
 }
 

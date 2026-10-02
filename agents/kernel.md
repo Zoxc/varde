@@ -1938,22 +1938,39 @@ tessellation too).
   and each side gets its own vertices. Round a mesh vertex, the corners
   between two split edges are one vertex, with their normals summed and
   normalized; a vertex with no split edge is one vertex.
-- **Feature edges** (`RenderMesh` edges, along the edge's samples): every
-  split edge, and every edge between two faces of different keys
-  (`FaceName::key`, which drops the `segment` that numbers one wall's
-  pieces). So a cylinder draws its two rims, not the seams between its
-  four quarter walls, and a box its twelve edges, not the diagonals of
-  its sides; a blend's or a revolve's pieces will draw as one face too.
-  Flush joins draw no line where the two pieces of a plane or cylinder
-  meet, since `Mesh::merge_faces` gave them one key ("Structure").
-- **Picking.** `Solid::tessellate_picking(display, &topology)` draws
-  the same mesh and says which region of the solid's `Topology` each
-  triangle draws (a patch's triangles follow it, in order) and which
-  chain each edge draws (`kernel::Picking`). Chains run between regions
-  of different keys, so all their edges are feature edges; a feature
-  edge on no chain (a crease inside one region, where the normals split
-  but no other face begins) is `Picking::NONE`.
-- **Limits.** Triangle, vertex and feature-edge counts are worked out
+- **Faces.** The triangles go face by face (`RenderMesh::face_ends`), a
+  face per region of the solid's `Topology` (connected triangles of one
+  face key, see "Topology and names"), in the topology's order (by their
+  lowest triangle), each face's triangles in the order of their patches.
+  So face `i` of a solid's mesh is region `i`.
+- **Feature edges** (along the edge's samples): every split edge, and
+  every edge between two faces of different keys (`FaceName::key`, which
+  drops the `segment` that numbers one wall's pieces). So a cylinder
+  draws its two rims, not the seams between its four quarter walls, and
+  a box its twelve edges, not the diagonals of its sides; a blend's or a
+  revolve's pieces will draw as one face too. Flush joins draw no line
+  where the two pieces of a plane or cylinder meet, since
+  `Mesh::merge_faces` gave them one key ("Structure"). They're polylines
+  (`RenderMesh::edge_vertices`, `edge_ends`), first the topology's
+  chains, one each, in its order, so edge `i` of a solid's mesh is chain
+  `i`, along the halfedges on the chain's first region's side, with its
+  two regions as faces (`edge_faces`). Chains run between regions of
+  different keys, so all their edges are feature edges. Then the
+  creases, feature edges inside one region where the normals split but
+  no other face begins, with that face twice, chained through the mesh
+  vertices where exactly two creases of the region meet, along the
+  halfedges on one side; creases start from the lowest corner first,
+  closed ones from their lowest edge. Every mesh vertex an edge ends at
+  is a corner (`corners`, `edge_corners`), and an edge that closes
+  without one gets a corner where it starts. Where a crease ends on a
+  chain, the chain's halfedges either side may have their own vertices
+  at the same position (the corner groups split at the crease): the
+  polyline keeps the first, and an edge ending at its start ends on its
+  first vertex. A solid's mesh is one part (`part_ends`), even empty;
+  `RenderMesh::append` adds a part per mesh. `Solid::tessellate` works
+  out the topology itself; `Solid::tessellate_with(display, &topology)`
+  takes one already made.
+- **Limits.** Triangle, vertex and feature-edge point counts are worked out
   from the segment counts before any point inside a patch is evaluated,
   and more than `RenderMesh::MAX_*` fails with `MeshError::TooLarge`.
   The limits are a parameter (`Limits`, `tessellate_within`) so tests
@@ -1991,13 +2008,14 @@ sizes) are watertight: every triangle side is met by one running the other
 way between the same positions, to the bit; edge counts meet the chord and
 turn by dense sampling and one fewer wouldn't; the strip joins any two
 counts; results are the same at 1 and 8 threads; far positions are
-refused. Picking: a box's 12 triangles name its 6 regions two each and its
-12 edges its 12 chains; a cylinder's quarter walls are one region and its
-rims two closed chains; two flush boxes joined are 6 regions and 12
-chains, the top's triangles of both boxes' faces one region; a flat
-torus's creases are on no chain; every triangle's corners lie on its
-region's form and every edge's ends on both of its chain's regions';
-the same at 1 and 8 threads.
+refused. Faces and edges: a box's 6 faces of 2 triangles are its 6
+regions and its 12 edges its 12 chains; a cylinder's quarter walls are
+one region and its rims two closed chains, closing on their first
+vertex; two flush boxes joined are 6 regions and 12 chains, the top's
+triangles of both boxes' faces one region; a flat torus's creases are
+on no chain, all after the chains with one face twice; every face's
+vertices lie on its region's form and every chain's on both of its
+regions'; given the topology or not, the same mesh, at 1 and 8 threads.
 
 ### Manifold meshes for export (`src/manifold.rs`, `tessellate::weld`)
 
@@ -3257,7 +3275,7 @@ chain) and joined by a union-find under the lowest index, so it's one
 sequential pass, the same at any thread count, and independent of the
 tolerance (the curves, not the drawn segments). The edge sessions'
 "tangent chain" and the viewport's selection use it through regen's
-`PickChain::tangent`.
+`Picking::tangents`.
 
 **Resolving.** `Topology::face(solid, key, near)`: the regions named by
 `key` (their key, or an alias); `Topology::edge(solid, [a, b], near)`:
@@ -6897,14 +6915,16 @@ evaluation's, (consumed, holder) pairs) and `bodies:
 Vec<(BodyId, Aabb)>` (each body with a solid, shown or not, from
 `Solid::bounds`; a consumed body has none). `tessellate(document, evaluation, cache)` draws the
 visible bodies' solids at `Display::new(&document.tolerance())`, joined
-by `RenderMesh::append` into an `Arc<RenderMesh>`; a mesh past
-`RenderMesh`'s limits fails the generation with the `MeshError` (and isn't
-kept). Each body is drawn with its picking tables (`Drawn`, made by
-`Solid::tessellate_picking` with the body's `Topology`; see "The
-document mesh" in `agents/viewport.md`), and the answer's `picking` is
-the shown bodies' joined. The joined mesh and tables are kept in the
-cache under a scene key (`"scene"`, then each shown body's id and mesh
-key in order, which holds the tolerance, then the count), as one more kind of entry under the same budget, except that
+by `RenderMesh::append` into an `Arc<RenderMesh>`, a part per body in
+the order they were made; a mesh past `RenderMesh`'s limits fails the
+generation with the `MeshError` (and isn't kept). Each body is drawn
+with its picking tables (`Drawn`, made by `Solid::tessellate_with` with
+the body's `Topology`: its faces' keys, aliases and summaries and its
+edges' closed flags; see "The document mesh" in `agents/viewport.md`),
+and the answer's `picking` is the shown bodies' joined, with the body of
+each part. The joined mesh and tables are kept in the cache under a
+scene key (`"scene"`, then each shown body's id and mesh key in order,
+which holds the tolerance, then the count), as one more kind of entry under the same budget, except that
 the scene the last answer without a draft used (a failing draft's answer
 is one) is never evicted either, so the committed model's scene survives
 any number of draft revisions, even when a revision's scene is an older
@@ -6921,12 +6941,13 @@ mesh would hit again, so it is logged once. On the web the mesh still crosses th
 On the web the reply's head
 carries `draft`, `failed`, `touched`, `merged` and the boxes as corner
 arrays, checked finite and in order on receipt (`wire::Error::Bounds`);
-`MAX_HEAD_BYTES` is 64 MiB (the head carries the picking tables' faces
-and chains too, at most `MAX_FACES` 2²⁰ faces, `Picking::MAX_ALIASES` 2²⁰
-aliases among them and `MAX_CHAINS` 2²² chains, each refused as soon as
-it's past its bound, since a face is some 130 bytes on the page and as
-few as 6 in the head; a model whose head would be larger or whose
-tables are past those is answered as failed). The draft's and each feature's touched bodies
+`MAX_HEAD_BYTES` is 64 MiB (the head carries the picking tables too:
+the parts' bodies, at most `RenderMesh::MAX_PARTS`, the faces, at most
+`MAX_FACES` 2²⁰ with `Picking::MAX_ALIASES` 2²⁰ aliases among them, and
+the edges' closed flags, at most `RenderMesh::MAX_EDGE_POLYLINES`, each
+refused as soon as it's past its bound, since a face is some 120 bytes
+on the page and as few as 5 in the head; a model whose head would be
+larger or whose faces are past those is answered as failed). The draft's and each feature's touched bodies
 cross in the head as marks, unchecked; `merged` is checked to name each
 consumed body once and none as a holder (`wire::Error::Merged`), and is
 otherwise display only. Either failing answers the generation with

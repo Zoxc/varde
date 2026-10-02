@@ -43,6 +43,45 @@ fn assert_watertight(mesh: &RenderMesh) {
     }
 }
 
+/// How many segments the feature edges have together.
+fn edge_segments(mesh: &RenderMesh) -> usize {
+    mesh.edge_vertices().len() - mesh.edge_count()
+}
+
+/// The positions of `vertices` of `mesh`, to the bit.
+fn bits_of(mesh: &RenderMesh, vertices: &[u32]) -> Vec<[u32; 3]> {
+    (vertices.iter())
+        .map(|&v| bits(mesh.positions()[v as usize]))
+        .collect()
+}
+
+/// Each edge runs along the vertices of its first face and the positions
+/// of its second, starts and ends at its corners, and every corner ends
+/// an edge (as `from_parts` checks too); a face's triangles all face the
+/// same way where it's flat. Returns how many edge ends each corner is.
+fn assert_faces_and_edges(mesh: &RenderMesh) -> Vec<usize> {
+    let faces: Vec<&[u32]> = mesh.faces().collect();
+    assert_eq!(faces.len(), mesh.face_count());
+    let mut ends = vec![0; mesh.corners().len()];
+    for ((polyline, &[a, b]), &[start, end]) in mesh
+        .polylines()
+        .zip(mesh.edge_faces())
+        .zip(mesh.edge_corners())
+    {
+        let on_a = faces[a as usize];
+        assert!(polyline.iter().all(|v| on_a.contains(v)));
+        let on_b = bits_of(mesh, faces[b as usize]);
+        assert!(bits_of(mesh, polyline).iter().all(|p| on_b.contains(p)));
+        let at = |c: u32| bits(mesh.corners()[c as usize]);
+        assert_eq!(bits_of(mesh, &polyline[..1])[0], at(start));
+        assert_eq!(bits_of(mesh, &polyline[polyline.len() - 1..])[0], at(end));
+        ends[start as usize] += 1;
+        ends[end as usize] += 1;
+    }
+    assert!(ends.iter().all(|&n| n > 0));
+    ends
+}
+
 /// Normals are unit length, and the mesh encloses a positive volume,
 /// which it returns.
 fn assert_normals_and_volume(mesh: &RenderMesh) -> f64 {
@@ -237,7 +276,9 @@ fn a_cylinder_is_drawn_within_the_chord() {
     }
     assert!(worst <= 2.5, "{worst}");
 
-    // The two rims are the feature edges, and the walls' seams aren't.
+    // The two rims are the feature edges, and the walls' seams aren't:
+    // each rim one edge round, closing on one corner, between the wall
+    // and a cap.
     let quarter = Conic3::new(
         base + DVec3::X * radius,
         base + DVec3::new(1.0, 1.0, 0.0) * radius,
@@ -246,12 +287,26 @@ fn a_cylinder_is_drawn_within_the_chord() {
     )
     .unwrap();
     let n = segments(&quarter, chord);
-    assert_eq!(mesh.edges().len(), 2 * 4 * n as usize);
-    for &[a, b] in mesh.edges() {
-        for x in [p(a), p(b)] {
+    assert_eq!(mesh.face_count(), 3);
+    assert_eq!(mesh.edge_count(), 2);
+    assert_eq!(mesh.corners().len(), 2);
+    assert_eq!(assert_faces_and_edges(&mesh), [2, 2]);
+    for (polyline, faces) in mesh.polylines().zip(mesh.edge_faces()) {
+        assert_eq!(polyline.len(), 4 * n as usize + 1);
+        assert_ne!(faces[0], faces[1]);
+        let z = p(polyline[0]).z;
+        for &v in polyline {
+            let x = p(v);
             assert!((off_axis(x) - radius).abs() < 1e-5);
-            assert!((x.z - base.z).abs() < 1e-5 || (x.z - base.z - height).abs() < 1e-5);
+            assert_eq!(x.z, z);
         }
+    }
+    assert_eq!(mesh.edge_corners(), [[0, 0], [1, 1]]);
+    // A cap's triangles are all its own, flat.
+    for face in mesh.faces() {
+        let normals: Vec<[f32; 3]> = (face.iter()).map(|&v| mesh.normals()[v as usize]).collect();
+        let flat = normals.iter().all(|&n| n == normals[0]);
+        assert_eq!(flat, normals[0][2].abs() == 1.0);
     }
     // A rim point is one vertex for the smooth wall and one for the cap.
     let rim = (base + DVec3::X * radius).as_vec3().to_array();
@@ -284,13 +339,18 @@ fn a_round_octahedron_is_smooth_where_its_patches_meet_smoothly() {
         let (x, n) = (Vec3::from(*x), Vec3::from(*n));
         assert!(x.normalize().dot(n) > 0.9, "{x} {n}");
     }
-    // Twelve quarter circles, each drawn once: every patch is its own
-    // face.
+    // Twelve quarter circles, each drawn once.
     let n = segments(
         &Conic3::new(DVec3::X, DVec3::new(1.0, 1.0, 0.0), FRAC_1_SQRT_2, DVec3::Y).unwrap(),
         Display::default().chord(2.0 * 3f64.sqrt()),
     );
-    assert_eq!(mesh.edges().len(), 12 * n as usize);
+    assert_eq!(edge_segments(&mesh), 12 * n as usize);
+    // One face creased along each quarter circle, four meeting at each
+    // of six corners.
+    assert_eq!(mesh.face_count(), 1);
+    assert_eq!(mesh.edge_count(), 12);
+    assert!(mesh.edge_faces().iter().all(|&faces| faces == [0, 0]));
+    assert_eq!(assert_faces_and_edges(&mesh), [4; 6]);
 }
 
 #[test]
@@ -301,7 +361,58 @@ fn a_flat_torus_splits_its_normals() {
     // vertices, and the quads' sides drawn but not their diagonals.
     assert_eq!(mesh.positions().len(), 24 * 12 * 4);
     assert_eq!(mesh.triangle_count(), 24 * 12 * 2);
-    assert_eq!(mesh.edges().len(), 24 * 12 * 2);
+    assert_eq!(edge_segments(&mesh), 24 * 12 * 2);
+    assert_faces_and_edges(&mesh);
+}
+
+#[test]
+fn a_box_has_six_faces_twelve_edges_and_eight_corners() {
+    let (min, max) = (DVec3::new(-1.0, 0.5, 2.0), DVec3::new(3.0, 1.5, 4.0));
+    let mesh = Solid::new(Mesh::cuboid(min, max - min, 1, &TOL).unwrap(), &TOL)
+        .unwrap()
+        .tessellate(&Display::default())
+        .unwrap();
+    assert_eq!(mesh.face_count(), 6);
+    assert_eq!(mesh.face_ends(), [6, 12, 18, 24, 30, 36]);
+    // Each face one flat side.
+    for face in mesh.faces() {
+        let n = mesh.normals()[face[0] as usize];
+        assert!(face.iter().all(|&v| mesh.normals()[v as usize] == n));
+    }
+    assert_eq!(mesh.edge_count(), 12);
+    for (polyline, faces) in mesh.polylines().zip(mesh.edge_faces()) {
+        assert_eq!(polyline.len(), 2);
+        assert_ne!(faces[0], faces[1]);
+    }
+    assert_eq!(assert_faces_and_edges(&mesh), [3; 8]);
+    let mut corners: Vec<[u32; 3]> = mesh.corners().iter().map(|&c| bits(c)).collect();
+    corners.sort_unstable();
+    let mut expected: Vec<[u32; 3]> = (0..8)
+        .map(|i| {
+            let pick = |bit: usize, axis: usize| {
+                if i >> bit & 1 == 0 {
+                    min[axis]
+                } else {
+                    max[axis]
+                }
+            };
+            bits([0, 1, 2].map(|axis| pick(axis, axis) as f32))
+        })
+        .collect();
+    expected.sort_unstable();
+    assert_eq!(corners, expected);
+    assert_eq!(mesh.part_ends(), [[6, 12, 8]]);
+}
+
+#[test]
+fn chained_edges_pass_through_the_vertices_between_them() {
+    // A half cylinder: its flat side meets each cap along a line, the
+    // round wall along two quarter circles chained into one.
+    let mesh = draw(half_cylinder(4.0, DVec3::ZERO));
+    let ends = assert_faces_and_edges(&mesh);
+    // Each corner of the flat side is where three edges meet.
+    assert_eq!(ends, [3; 4]);
+    assert_eq!(mesh.edge_count(), 6);
 }
 
 #[test]
@@ -371,9 +482,9 @@ fn a_mesh_past_any_limit_is_too_large() {
         let exact = Limits {
             vertices: full.positions().len() as u64,
             indices: full.indices().len() as u64,
-            edges: full.edges().len() as u64,
+            edge_points: full.edge_vertices().len() as u64,
         };
-        assert!(exact.edges > 0);
+        assert!(exact.edge_points > 0);
         assert_eq!(
             tessellate_within(&mesh, &display, &exact).as_ref(),
             Ok(&full)
@@ -388,7 +499,7 @@ fn a_mesh_past_any_limit_is_too_large() {
                 ..exact
             },
             Limits {
-                edges: exact.edges - 1,
+                edge_points: exact.edge_points - 1,
                 ..exact
             },
         ] {
@@ -405,7 +516,10 @@ fn a_mesh_past_any_limit_is_too_large() {
 fn the_limits_are_the_render_meshs() {
     assert_eq!(Limits::RENDER.vertices, RenderMesh::MAX_VERTICES as u64);
     assert_eq!(Limits::RENDER.indices, RenderMesh::MAX_INDICES as u64);
-    assert_eq!(Limits::RENDER.edges, RenderMesh::MAX_EDGES as u64);
+    assert_eq!(
+        Limits::RENDER.edge_points,
+        RenderMesh::MAX_EDGE_POINTS as u64
+    );
 }
 
 /// A solid smaller than an `f32` step where it is loses its shape to
@@ -438,119 +552,116 @@ fn a_tiny_solid_far_out_opens_no_cracks() {
     }
 }
 
-/// Checks `picking` against `solid`'s `topology` and its drawing `drawn`:
-/// one entry per triangle and per edge; every triangle's corners on its
-/// region's surface (its first triangle's face's form: a region's faces
-/// share one surface) and every edge's ends on both of its chain's
-/// regions'; every region and chain drawn. Positions are `f32`, so within
+/// Checks that `drawn`, `solid` tessellated with its `topology`, has the
+/// topology's regions for faces and its chains for first edges: one face
+/// per region, every triangle's corners on its region's surface (its
+/// first triangle's face's form: a region's faces share one surface);
+/// edge `c` of chain `c` between the chain's regions, its vertices on
+/// both of their surfaces, closed where the chain is; the edges after the
+/// chains creases, one face either side. Positions are `f32`, so within
 /// `within`.
-fn assert_picks(
-    solid: &Solid,
-    topology: &Topology,
-    drawn: &RenderMesh,
-    picking: &Picking,
-    within: f64,
-) {
+fn assert_regions_and_chains(solid: &Solid, topology: &Topology, drawn: &RenderMesh, within: f64) {
     let mesh = solid.mesh();
     let form = |r: u32| {
         let t = topology.regions()[r as usize].tris[0];
         mesh.faces()[mesh.tris()[t as usize].face as usize].form
     };
     let at = |v: u32| Vec3::from(drawn.positions()[v as usize]).as_dvec3();
-    assert_eq!(picking.triangles.len(), drawn.triangle_count());
-    assert_eq!(picking.edges.len(), drawn.edges().len());
-    for (tri, &r) in drawn.indices().chunks(3).zip(&picking.triangles) {
-        assert!((r as usize) < topology.regions().len());
-        for &v in tri {
-            let d = form(r).distance(at(v));
+    assert_eq!(drawn.face_count(), topology.regions().len());
+    for (r, face) in drawn.faces().enumerate() {
+        for &v in face {
+            let d = form(r as u32).distance(at(v));
             assert!(d <= within, "region {r}: {:?} is {d} off", at(v));
         }
     }
-    for (edge, &c) in drawn.edges().iter().zip(&picking.edges) {
-        if c == Picking::NONE {
+    let chains = topology.chains();
+    assert!(drawn.edge_count() >= chains.len());
+    for (c, (polyline, faces)) in drawn.polylines().zip(drawn.edge_faces()).enumerate() {
+        let Some(chain) = chains.get(c) else {
+            assert_eq!(faces[0], faces[1], "edge {c} is a crease");
             continue;
-        }
-        for r in topology.chains()[c as usize].regions {
-            for &v in edge {
+        };
+        assert_eq!(*faces, chain.regions);
+        for r in chain.regions {
+            for &v in polyline {
                 let d = form(r).distance(at(v));
                 assert!(d <= within, "chain {c}, region {r}: {:?} is {d} off", at(v));
             }
         }
+        if chain.closed {
+            assert_eq!(polyline.first(), polyline.last());
+            let [start, end] = drawn.edge_corners()[c];
+            assert_eq!(start, end);
+        }
     }
-    let mut regions = picking.triangles.clone();
-    regions.sort_unstable();
-    regions.dedup();
-    assert_eq!(regions.len(), topology.regions().len());
-    let mut chains: Vec<u32> = (picking.edges.iter().copied())
-        .filter(|&c| c != Picking::NONE)
-        .collect();
-    chains.sort_unstable();
-    chains.dedup();
-    assert_eq!(chains.len(), topology.chains().len());
 }
 
 #[test]
-fn a_box_s_triangles_and_edges_name_its_faces_and_edges() {
+fn a_box_s_faces_and_edges_are_its_regions_and_chains() {
     let solid = Solid::cuboid(DVec3::ZERO, DVec3::new(1.0, 2.0, 3.0), 1, &TOL).unwrap();
     let topology = solid.topology();
-    let (drawn, picking) = solid
-        .tessellate_picking(&Display::default(), &topology)
+    let drawn = solid
+        .tessellate_with(&Display::default(), &topology)
         .unwrap();
-    // The same mesh as without picking.
+    // The same mesh as without the topology given.
     assert_eq!(drawn, solid.tessellate(&Display::default()).unwrap());
-    assert_picks(&solid, &topology, &drawn, &picking, 1e-6);
-    // Two triangles a face, one segment an edge.
-    for r in 0..6 {
-        assert_eq!(picking.triangles.iter().filter(|&&p| p == r).count(), 2);
-    }
-    let mut edges = picking.edges.clone();
-    edges.sort_unstable();
-    assert_eq!(edges, (0..12).collect::<Vec<u32>>());
+    assert_regions_and_chains(&solid, &topology, &drawn, 1e-6);
+    // Two triangles a face, one segment an edge, no creases.
+    assert_eq!(drawn.face_ends(), [6, 12, 18, 24, 30, 36]);
+    assert_eq!(drawn.edge_count(), 12);
+    assert!(drawn.polylines().all(|polyline| polyline.len() == 2));
 }
 
 #[test]
 fn a_cylinder_s_quarter_walls_are_one_face_and_its_rims_two_edges() {
     let solid = Solid::cylinder(DVec3::ZERO, 2.0, 1.0, 1, &TOL).unwrap();
     let topology = solid.topology();
-    let (drawn, picking) = solid
-        .tessellate_picking(&Display::default(), &topology)
+    let drawn = solid
+        .tessellate_with(&Display::default(), &topology)
         .unwrap();
-    assert_picks(&solid, &topology, &drawn, &picking, 1e-5);
+    assert_regions_and_chains(&solid, &topology, &drawn, 1e-5);
     assert_eq!(topology.regions().len(), 3);
     assert_eq!(topology.chains().len(), 2);
     assert!(topology.chains().iter().all(|c| c.closed));
-    // Each rim is drawn in many segments, all of its one chain.
-    for c in 0..2 {
-        assert!(picking.edges.iter().filter(|&&p| p == c).count() > 8);
-    }
+    // Each rim is one edge of many segments.
+    assert_eq!(drawn.edge_count(), 2);
+    assert!(drawn.polylines().all(|polyline| polyline.len() > 9));
 }
 
 #[test]
 fn flush_faces_merged_under_one_name_are_one_face() {
     // Two boxes of different features side by side: their tops, bottoms,
     // fronts and backs meet flush and take one name each, so the union
-    // draws and picks as one box of six faces and twelve edges.
+    // draws as one box of six faces and twelve edges.
     let tol = &TOL;
     let left = Solid::cuboid(DVec3::ZERO, DVec3::new(1.0, 1.0, 1.0), 1, tol).unwrap();
     let right =
         Solid::cuboid(DVec3::new(1.0, 0.0, 0.0), DVec3::new(2.0, 1.0, 1.0), 2, tol).unwrap();
     let solid = crate::boolean(&left, &right, crate::Op::Union, tol, &Budget::DEFAULT).unwrap();
     let topology = solid.topology();
-    let (drawn, picking) = solid
-        .tessellate_picking(&Display::default(), &topology)
+    let drawn = solid
+        .tessellate_with(&Display::default(), &topology)
         .unwrap();
-    assert_picks(&solid, &topology, &drawn, &picking, 1e-6);
+    assert_regions_and_chains(&solid, &topology, &drawn, 1e-6);
     assert_eq!(topology.regions().len(), 6);
     assert_eq!(topology.chains().len(), 12);
+    assert_eq!(drawn.edge_count(), 12);
     // The top has pieces of both boxes' faces, all one region.
     let mesh = solid.mesh();
-    let top: Vec<u32> = (drawn.indices().chunks(3).zip(&picking.triangles))
-        .filter(|(tri, _)| tri.iter().all(|&v| drawn.positions()[v as usize][2] == 1.0))
-        .map(|(_, &r)| r)
+    let top: Vec<usize> = (drawn.faces().enumerate())
+        .filter(|(_, face)| {
+            face.iter()
+                .all(|&v| drawn.positions()[v as usize][2] == 1.0)
+        })
+        .map(|(r, face)| {
+            assert!(face.len() >= 12);
+            r
+        })
         .collect();
-    assert!(top.len() >= 4);
-    assert!(top.iter().all(|&r| r == top[0]));
-    let faces: std::collections::BTreeSet<u32> = (topology.regions()[top[0] as usize].tris)
+    let [top] = top[..] else {
+        panic!("one face on top: {top:?}");
+    };
+    let faces: std::collections::BTreeSet<u32> = (topology.regions()[top].tris)
         .iter()
         .map(|&t| mesh.tris()[t as usize].face)
         .collect();
@@ -563,32 +674,28 @@ fn a_crease_inside_one_face_is_on_no_chain() {
     // drawn but border no other face.
     let solid = Solid::new(torus(24, 12, 3.0, 1.0), &TOL).unwrap();
     let topology = solid.topology();
-    let (drawn, picking) = solid
-        .tessellate_picking(&Display::default(), &topology)
+    let drawn = solid
+        .tessellate_with(&Display::default(), &topology)
         .unwrap();
-    assert_picks(&solid, &topology, &drawn, &picking, 0.0);
-    assert!(!picking.edges.is_empty());
-    assert!(picking.edges.iter().all(|&c| c == Picking::NONE));
-    assert!(picking.triangles.iter().all(|&r| r == 0));
+    assert_regions_and_chains(&solid, &topology, &drawn, 0.0);
+    assert!(topology.chains().is_empty());
+    assert_eq!(drawn.face_count(), 1);
+    assert!(drawn.edge_count() > 0);
+    assert!(drawn.edge_faces().iter().all(|&faces| faces == [0, 0]));
 }
 
 #[test]
-fn picking_is_deterministic() {
+fn drawing_with_the_topology_is_deterministic() {
     let left = Solid::cuboid(DVec3::ZERO, DVec3::new(10.0, 4.0, 2.0), 1, &TOL).unwrap();
     let hole = Solid::cylinder(DVec3::new(5.0, 2.0, -1.0), 1.0, 4.0, 2, &TOL).unwrap();
     let solid =
         crate::boolean(&left, &hole, crate::Op::Difference, &TOL, &Budget::DEFAULT).unwrap();
-    let (_, picking) = assert_deterministic(|| {
-        let topology = solid.topology();
+    let topology = solid.topology();
+    let drawn = assert_deterministic(|| {
         solid
-            .tessellate_picking(&Display::default(), &topology)
+            .tessellate_with(&Display::default(), &topology)
             .unwrap()
     });
-    assert_eq!(
-        picking.triangles.len(),
-        solid
-            .tessellate(&Display::default())
-            .unwrap()
-            .triangle_count()
-    );
+    assert_regions_and_chains(&solid, &topology, &drawn, 1e-5);
+    assert_eq!(drawn, solid.tessellate(&Display::default()).unwrap());
 }

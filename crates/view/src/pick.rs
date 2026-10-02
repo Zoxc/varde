@@ -2,17 +2,18 @@
 //! under the cursor, on the CPU, against the mesh the viewport draws and
 //! its picking tables ([`Picking`]); no GPU picking. A [`PickIndex`]
 //! holds a bounding volume hierarchy over the mesh's triangles and one
-//! over its feature edges. The cursor's ray meets the nearest triangle,
-//! whose face is picked; but a feature edge within [`EDGE_REACH`] pixels
+//! over the segments of its edges between two faces (its creases aren't
+//! picked). The cursor's ray meets the nearest triangle, whose face is
+//! picked; but an edge within [`EDGE_REACH`] pixels
 //! of the cursor on screen, not hidden by what's in front of it (a ray
 //! from the eye to its point nearest the cursor meets nothing nearer by
 //! more than [`HIDDEN_PULL`] view heights), wins over the face. A body is
 //! the body of the face or edge picked.
 //!
 //! The index also builds the [`Highlight`] of picked faces and edges
-//! from the mesh's triangles and edges.
+//! from the mesh's faces and edges.
 
-use std::collections::BTreeMap;
+use std::ops::Range;
 use std::sync::Arc;
 
 use glam::{DVec2, DVec3, Vec3};
@@ -50,8 +51,10 @@ pub enum Picks {
     Edges,
 }
 
-/// A face or an edge of the model shown: an index into its picking
-/// tables' [`Picking::faces`] or [`Picking::chains`].
+/// A face or an edge of the model shown: a face or edge of its mesh, so an
+/// index into its picking tables' [`Picking::faces`], or its
+/// [`Picking::closed`] and [`Picking::tangents`]. Only edges between two
+/// faces are picked, not creases.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Picked {
     Face(u32),
@@ -74,7 +77,8 @@ pub struct Pick {
 }
 
 /// The model shown, made ready for picking: its mesh, its tables, and
-/// hierarchies over the mesh's triangles and feature edges.
+/// hierarchies over the mesh's triangles and the segments of its edges
+/// between two faces.
 #[derive(Debug)]
 pub struct PickIndex {
     mesh: Arc<RenderMesh>,
@@ -82,13 +86,10 @@ pub struct PickIndex {
     model: u64,
     /// Over the mesh's triangles, by index.
     triangles: Bvh,
-    /// Over the mesh's edges on a chain, by index into the mesh's edges.
-    edges: Bvh,
-    /// Each face's triangles.
-    face_triangles: Groups,
-    /// Each chain's edges.
-    chain_edges: Groups,
-    /// Each tangent chain's chains, by its first.
+    /// Over the segments of the mesh's edges between two faces, each by
+    /// where it starts in [`RenderMesh::edge_vertices`].
+    segments: Bvh,
+    /// Each tangent chain's edges, by its first.
     tangent_chains: Groups,
 }
 
@@ -97,27 +98,34 @@ impl PickIndex {
     /// its picks carry `model`. Tables that don't go with the mesh pick
     /// nothing.
     pub fn new(mesh: Arc<RenderMesh>, picking: Arc<Picking>, model: u64) -> Self {
-        let fits = picking.triangles().len() == mesh.triangle_count()
-            && picking.edges().len() == mesh.edges().len();
-        let (triangles, edges, face_triangles, chain_edges, tangent_chains) = if fits {
+        let fits = picking.bodies().len() == mesh.part_ends().len()
+            && picking.faces().len() == mesh.face_count()
+            && picking.tangents().len() == mesh.edge_count();
+        let (triangles, segments, tangent_chains) = if fits {
             let corners = |triangle: &[u32; 3]| triangle.map(|i| position(&mesh, i));
             let triangles = mesh.indices().as_chunks::<3>().0;
             let boxes = triangles.iter().map(|t| bounds(&corners(t)));
-            let on_chains = |&(_, &chain): &(usize, &u32)| chain != Picking::NONE;
-            let edges: Vec<u32> = (picking.edges().iter().enumerate())
-                .filter(on_chains)
-                .filter_map(|(edge, _)| u32::try_from(edge).ok())
+            let chain = |edge: usize| matches!(mesh.edge_faces()[edge], [a, b] if a != b);
+            let segments: Vec<u32> = (0..mesh.edge_count())
+                .filter(|&edge| chain(edge))
+                .flat_map(|edge| {
+                    let range = edge_range(&mesh, edge).unwrap_or_default();
+                    range.start..range.end.saturating_sub(1)
+                })
+                .filter_map(|start| u32::try_from(start).ok())
                 .collect();
-            let edge_boxes = edges.iter().map(|&edge| {
-                let [a, b] = mesh.edges()[edge as usize];
-                bounds(&[position(&mesh, a), position(&mesh, b)])
+            let segment_boxes = segments.iter().map(|&start| {
+                let ends = segment(&mesh, start).unwrap_or_default();
+                bounds(&ends)
             });
+            // A crease is in no tangent chain.
+            let tangents: Vec<u32> = (picking.tangents().iter().enumerate())
+                .map(|(edge, &first)| if chain(edge) { first } else { u32::MAX })
+                .collect();
             (
                 Bvh::new(boxes.collect()),
-                Bvh::with_items(edge_boxes.collect(), edges),
-                Groups::new(picking.faces().len(), picking.triangles()),
-                Groups::new(picking.chains().len(), picking.edges()),
-                Groups::new(picking.chains().len(), &tangents(&picking)),
+                Bvh::with_items(segment_boxes.collect(), segments),
+                Groups::new(mesh.edge_count(), &tangents),
             )
         } else {
             Default::default()
@@ -127,9 +135,7 @@ impl PickIndex {
             picking,
             model,
             triangles,
-            edges,
-            face_triangles,
-            chain_edges,
+            segments,
             tangent_chains,
         }
     }
@@ -151,9 +157,25 @@ impl PickIndex {
     pub fn body(&self, target: Picked) -> Option<BodyId> {
         let face = match target {
             Picked::Face(face) => face,
-            Picked::Edge(chain) => self.picking.chains().get(chain as usize)?.faces[0],
+            Picked::Edge(edge) => self.edge_faces(edge)?[0],
         };
-        Some(self.picking.faces().get(face as usize)?.body)
+        self.face_body(face)
+    }
+
+    /// The body of face `face`, if there's such a face.
+    pub fn face_body(&self, face: u32) -> Option<BodyId> {
+        if face as usize >= self.picking.faces().len() {
+            return None;
+        }
+        let part = (self.mesh.part_ends()).partition_point(|&[faces, _, _]| faces <= face);
+        self.picking.bodies().get(part).copied()
+    }
+
+    /// The faces either side of `edge`, if it's an edge between two
+    /// faces, not a crease.
+    pub fn edge_faces(&self, edge: u32) -> Option<[u32; 2]> {
+        let [a, b] = *self.mesh.edge_faces().get(edge as usize)?;
+        (a != b).then_some([a, b])
     }
 
     /// What's under the screen position `at`, in logical pixels from the
@@ -174,7 +196,7 @@ impl PickIndex {
         let (target, at) = match (edge, face) {
             (Some((chain, at)), _) => (Picked::Edge(chain), at),
             (None, Some((t, triangle))) => {
-                let face = *self.picking.triangles().get(triangle as usize)?;
+                let face = self.triangle_face(triangle)?;
                 (Picked::Face(face), ray.at(t))
             }
             (None, None) => return None,
@@ -188,37 +210,41 @@ impl PickIndex {
         Some(pick)
     }
 
-    /// The chains of `chain`'s tangent chain, ascending: the edges it runs
+    /// The edges of `chain`'s tangent chain, ascending: the edges it runs
     /// on into smoothly, end to end, and itself. None if there's no such
-    /// chain.
+    /// edge between two faces.
     pub fn tangent_chain(&self, chain: u32) -> &[u32] {
-        let Some(first) = self.picking.chains().get(chain as usize) else {
+        if self.edge_faces(chain).is_none() {
+            return &[];
+        }
+        let Some(&first) = self.picking.tangents().get(chain as usize) else {
             return &[];
         };
-        self.tangent_chains.get(first.tangent)
+        self.tangent_chains.get(first)
     }
 
     /// The faces of `body`, ascending.
     pub fn body_faces(&self, body: BodyId) -> impl Iterator<Item = u32> + '_ {
-        (self.picking.faces().iter().enumerate())
-            .filter(move |(_, face)| face.body == body)
-            .filter_map(|(face, _)| u32::try_from(face).ok())
+        let starts = std::iter::once(0).chain(self.mesh.part_ends().iter().map(|&[f, _, _]| f));
+        (self.picking.bodies().iter())
+            .zip(starts.zip(self.mesh.part_ends()))
+            .filter(move |(part, _)| **part == body)
+            .flat_map(|(_, (start, &[end, _, _]))| start..end)
     }
 
     /// The keys of the faces either side of `chain`, sorted, as an edge
-    /// reference keeps them, if there's such a chain.
+    /// reference keeps them, if it's an edge between two faces.
     pub fn chain_keys(&self, chain: u32) -> Option<[FaceKey; 2]> {
-        let faces = self.picking.chains().get(chain as usize)?.faces;
+        let faces = self.edge_faces(chain)?;
         let [a, b] = faces.map(|f| self.picking.faces().get(f as usize).map(|face| face.key));
         let (a, b) = (a?, b?);
         Some([a.min(b), a.max(b)])
     }
 
-    /// A point on `chain`: the middle of its first edge in the mesh.
+    /// A point on `chain`: the middle of its first segment.
     pub fn chain_point(&self, chain: u32) -> Option<DVec3> {
-        let &edge = self.chain_edges.get(chain).first()?;
-        let [a, b] = self.mesh.edges().get(edge as usize)?;
-        let (a, b) = (position(&self.mesh, *a), position(&self.mesh, *b));
+        let start = edge_range(&self.mesh, chain as usize)?.start;
+        let [a, b] = segment(&self.mesh, u32::try_from(start).ok()?)?;
         Some(((a + b) / 2.0).as_dvec3())
     }
 
@@ -229,13 +255,13 @@ impl PickIndex {
     /// model's size, so ties go to the lowest. Measured to the mesh as
     /// drawn, which is all the view has.
     pub fn find_face(&self, body: BodyId, key: &FaceKey, near: DVec3) -> Option<u32> {
-        let named = |face: &&PickFace| face.key == *key || face.aliases.binary_search(key).is_ok();
-        let found = (self.picking.faces().iter().enumerate())
-            .filter(|(_, face)| face.body == body && named(face))
-            .filter_map(|(face, _)| u32::try_from(face).ok());
+        let named = |face: &PickFace| face.key == *key || face.aliases.binary_search(key).is_ok();
+        let found = self
+            .body_faces(body)
+            .filter(|&face| (self.picking.faces().get(face as usize)).is_some_and(named));
         self.nearest(found, near, |face| {
-            (self.face_triangles.get(face).iter())
-                .filter_map(|&triangle| self.corners(triangle))
+            (self.face_triangles(face))
+                .filter_map(|triangle| self.corners(triangle))
                 .map(|corners| {
                     let corners = corners.map(|i| position(&self.mesh, i).as_dvec3());
                     triangle_distance(near, corners)
@@ -249,24 +275,22 @@ impl PickIndex {
     /// [`PickIndex::find_face`] finds faces.
     pub fn find_edge(&self, body: BodyId, faces: [FaceKey; 2], near: DVec3) -> Option<u32> {
         let named = |face: u32, key: &FaceKey| {
-            (self.picking.faces().get(face as usize)).is_some_and(|face| {
-                face.body == body && (face.key == *key || face.aliases.binary_search(key).is_ok())
-            })
+            self.face_body(face) == Some(body)
+                && (self.picking.faces().get(face as usize))
+                    .is_some_and(|face| face.key == *key || face.aliases.binary_search(key).is_ok())
         };
-        let found = (self.picking.chains().iter().enumerate())
-            .filter(|(_, chain)| {
-                let [a, b] = chain.faces;
-                (named(a, &faces[0]) && named(b, &faces[1]))
-                    || (named(a, &faces[1]) && named(b, &faces[0]))
-            })
-            .filter_map(|(chain, _)| u32::try_from(chain).ok());
-        self.nearest(found, near, |chain| {
-            (self.chain_edges.get(chain).iter())
-                .filter_map(|&edge| self.mesh.edges().get(edge as usize))
-                .map(|&[a, b]| {
-                    let [a, b] = [a, b].map(|i| position(&self.mesh, i).as_dvec3());
-                    segment_distance_3d(near, a, b)
+        let found = (0..self.mesh.edge_count())
+            .filter_map(|edge| u32::try_from(edge).ok())
+            .filter(|&edge| {
+                self.edge_faces(edge).is_some_and(|[a, b]| {
+                    (named(a, &faces[0]) && named(b, &faces[1]))
+                        || (named(a, &faces[1]) && named(b, &faces[0]))
                 })
+            });
+        self.nearest(found, near, |chain| {
+            (self.edge_segments(chain))
+                .filter_map(|start| segment(&self.mesh, start))
+                .map(|[a, b]| segment_distance_3d(near, a.as_dvec3(), b.as_dvec3()))
                 .fold(f64::INFINITY, f64::min)
         })
     }
@@ -307,7 +331,7 @@ impl PickIndex {
         for (target, emphasis) in items {
             match target {
                 Picked::Face(face) => {
-                    for &triangle in self.face_triangles.get(face) {
+                    for triangle in self.face_triangles(face) {
                         let Some(corners) = self.corners(triangle) else {
                             continue;
                         };
@@ -320,16 +344,45 @@ impl PickIndex {
                     }
                 }
                 Picked::Edge(chain) => {
-                    let segments = (self.chain_edges.get(chain).iter())
-                        .filter_map(|&edge| self.mesh.edges().get(edge as usize))
-                        .map(|&[a, b]| [a, b].map(|i| position(&self.mesh, i)));
-                    for polyline in polylines(segments.collect()) {
-                        highlight.edge(emphasis, polyline);
-                    }
+                    let Some(range) = edge_range(&self.mesh, chain as usize) else {
+                        continue;
+                    };
+                    let polyline = (self.mesh.edge_vertices().get(range).unwrap_or_default())
+                        .iter()
+                        .map(|&i| position(&self.mesh, i))
+                        .collect();
+                    highlight.edge(emphasis, polyline);
                 }
             }
         }
         highlight
+    }
+
+    /// The face triangle `triangle` is of, if there's such a triangle.
+    fn triangle_face(&self, triangle: u32) -> Option<u32> {
+        let start = u64::from(triangle) * 3;
+        let face = (self.mesh.face_ends()).partition_point(|&end| u64::from(end) <= start);
+        (face < self.mesh.face_count()).then_some(face as u32)
+    }
+
+    /// The triangles of face `face`, none if there's no such face.
+    fn face_triangles(&self, face: u32) -> Range<u32> {
+        let ends = self.mesh.face_ends();
+        let Some(&end) = ends.get(face as usize) else {
+            return 0..0;
+        };
+        let start = face
+            .checked_sub(1)
+            .map_or(0, |before| ends[before as usize]);
+        start / 3..end / 3
+    }
+
+    /// Where each segment of edge `edge` starts in the mesh's edge
+    /// vertices, none if there's no such edge.
+    fn edge_segments(&self, edge: u32) -> Range<u32> {
+        let range = edge_range(&self.mesh, edge as usize).unwrap_or_default();
+        // Within the mesh's edge points, a `u32`.
+        range.start as u32..range.end.saturating_sub(1) as u32
     }
 
     /// The corners of the mesh's triangle `triangle`, if it has one.
@@ -402,12 +455,8 @@ impl PickIndex {
             EDGE_REACH * projector.pixel_at(deepest)
         };
         let mut near = Vec::new();
-        self.edges.near(ray, reach, |edge| {
-            let [a, b] = self
-                .mesh
-                .edges()
-                .get(edge as usize)?
-                .map(|i| position(&self.mesh, i));
+        self.segments.near(ray, reach, |start| {
+            let [a, b] = segment(&self.mesh, start)?;
             let (a, b) = projector.in_front(a.as_dvec3(), b.as_dvec3())?;
             let (pa, pb) = (projector.show(a), projector.show(b));
             let (distance, s) = segment_distance(at, pa, pb);
@@ -428,7 +477,7 @@ impl PickIndex {
                 s
             };
             let point = a + (b - a) * u.clamp(0.0, 1.0);
-            near.push((distance, projector.world_depth(point), edge, point));
+            near.push((distance, projector.world_depth(point), start, point));
             Some(())
         });
         near.sort_by(|a, b| {
@@ -440,9 +489,11 @@ impl PickIndex {
         near.into_iter()
             .take(MAX_EDGE_TESTS)
             .find(|&(_, _, _, point)| !self.hidden(projector, point, view_height))
-            .and_then(|(_, _, edge, point)| {
-                let chain = *self.picking.edges().get(edge as usize)?;
-                (chain != Picking::NONE).then_some((chain, point))
+            .map(|(_, _, start, point)| {
+                // The edge whose vertices the segment starts among.
+                let edges = self.mesh.edge_ends();
+                let edge = edges.partition_point(|&end| end <= start);
+                (edge as u32, point)
             })
     }
 
@@ -506,9 +557,23 @@ fn position(mesh: &RenderMesh, index: u32) -> Vec3 {
     )
 }
 
-/// Each chain's tangent chain's first, as `picking` has them.
-fn tangents(picking: &Picking) -> Vec<u32> {
-    picking.chains().iter().map(|chain| chain.tangent).collect()
+/// Where `mesh`'s edge `edge`'s vertices are in its edge vertices, if it
+/// has such an edge.
+fn edge_range(mesh: &RenderMesh, edge: usize) -> Option<Range<usize>> {
+    let ends = mesh.edge_ends();
+    let end = *ends.get(edge)? as usize;
+    let start = edge
+        .checked_sub(1)
+        .map_or(0, |before| ends[before] as usize);
+    Some(start..end)
+}
+
+/// The ends of `mesh`'s edge segment starting at `start` in its edge
+/// vertices, if there's one.
+fn segment(mesh: &RenderMesh, start: u32) -> Option<[Vec3; 2]> {
+    let start = start as usize;
+    let ends = mesh.edge_vertices().get(start..start.checked_add(2)?)?;
+    Some([position(mesh, ends[0]), position(mesh, ends[1])])
 }
 
 /// How far `p` is from the segment from `a` to `b`.
@@ -560,52 +625,6 @@ fn segment_distance(p: DVec2, a: DVec2, b: DVec2) -> (f64, f64) {
         0.0
     };
     (p.distance(a + ab * s), s)
-}
-
-/// The segments joined end to end into polylines where they meet, by
-/// their ends' bits: a polyline closing on itself ends where it starts.
-/// In the order of their first segments, each running the way its first
-/// segment does.
-fn polylines(segments: Vec<[Vec3; 2]>) -> Vec<Vec<Vec3>> {
-    let key = |p: Vec3| p.to_array().map(f32::to_bits);
-    let mut at: BTreeMap<[u32; 3], Vec<usize>> = BTreeMap::new();
-    for (i, segment) in segments.iter().enumerate() {
-        for &end in segment {
-            at.entry(key(end)).or_default().push(i);
-        }
-    }
-    let mut used = vec![false; segments.len()];
-    // The unused segment at `p`, and its other end.
-    let next = |p: Vec3, used: &mut Vec<bool>| {
-        let i = *at.get(&key(p))?.iter().find(|&&i| !used[i])?;
-        used[i] = true;
-        let [a, b] = segments[i];
-        Some(if key(a) == key(p) { b } else { a })
-    };
-    let mut polylines = Vec::new();
-    for i in 0..segments.len() {
-        if used[i] {
-            continue;
-        }
-        used[i] = true;
-        let [a, b] = segments[i];
-        let mut forward = vec![a, b];
-        let mut end = b;
-        while let Some(p) = next(end, &mut used) {
-            forward.push(p);
-            end = p;
-        }
-        let mut backward = Vec::new();
-        let mut start = a;
-        while let Some(p) = next(start, &mut used) {
-            backward.push(p);
-            start = p;
-        }
-        backward.reverse();
-        backward.extend(forward);
-        polylines.push(backward);
-    }
-    polylines
 }
 
 /// How far along the ray from `origin` along `direction` it meets the

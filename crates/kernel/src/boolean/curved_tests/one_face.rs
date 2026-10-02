@@ -86,7 +86,11 @@ fn keys(solid: &Solid) -> usize {
 
 /// How many feature edges `solid` draws.
 fn lines(solid: &Solid) -> usize {
-    solid.tessellate(&Display::new(&TOL)).unwrap().edges().len()
+    solid
+        .tessellate(&Display::new(&TOL))
+        .unwrap()
+        .edge_segments()
+        .count()
 }
 
 fn cuboid(min: DVec3, size: DVec3, feature: u64) -> Solid {
