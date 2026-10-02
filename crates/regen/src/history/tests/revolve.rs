@@ -2,6 +2,7 @@
 //! plane and axis, joins, cuts and intersects, regions found again,
 //! the axis lost, and drafts answered from the cache.
 
+use glam::DVec3;
 use varde_document::{AxisLine, Revolve, Turn};
 use varde_sketch::Id;
 
@@ -232,6 +233,70 @@ fn part_turns_go_right_handed_about_the_axis() {
             let near = |a: f64, b: f64| (a - b).abs() <= 1e-9;
             assert!(near(bounds.min[axis], min[axis]), "case {k}: {bounds:?}");
             assert!(near(bounds.max[axis], max[axis]), "case {k}: {bounds:?}");
+        }
+    }
+}
+
+/// `at` turned by `angle` (a quarter turn either way) right-handed about
+/// the line through `point` along the unit `along`, by Rodrigues'
+/// formula: worked out on its own, not by the frame regen builds.
+fn turned(at: DVec3, point: DVec3, along: DVec3, angle: f64) -> DVec3 {
+    let v = at - point;
+    let parallel = along * along.dot(v);
+    point + parallel + (v - parallel) * angle.cos() + along.cross(v) * angle.sin()
+}
+
+/// A quarter turn of a square off a slanted line, on every plane, on
+/// either side of the line, about the line either way and flipped or
+/// not, has the square's corners where they started and where Rodrigues'
+/// formula turns them, and none where turning the other way would.
+#[test]
+fn a_quarter_turn_about_a_slanted_line_lands_where_rodrigues_says() {
+    let (a, b) = ((1.0, 0.0), (3.0, 1.0));
+    // Left of the line from a to b, and right of it.
+    let squares = [((0.0, 4.0), (2.0, 6.0)), ((4.0, -4.0), (6.0, -2.0))];
+    for plane in OriginPlane::ALL {
+        let placement = plane.placement();
+        let world = |(x, y): (f64, f64)| placement.to_world(DVec2::new(x, y));
+        for (min, max) in squares {
+            for (start, end) in [(a, b), (b, a)] {
+                for flip in [false, true] {
+                    let mut editor = Editor::new(Document::default());
+                    let quarter = Turn::OneSide(angle(editor.document(), "90"));
+                    add_revolve(
+                        &mut editor,
+                        plane,
+                        rectangle_and_line(min, max, start, end),
+                        quarter,
+                        flip,
+                        Operation::NewBody(BodyId::NEW),
+                    );
+                    let evaluation = evaluated(editor.document());
+                    let solid = only_body(&evaluation);
+                    let case = format!("{plane:?} {min:?} {start:?} flip {flip}");
+                    // Pappus: the square's area times the length of the
+                    // quarter circle its middle runs along.
+                    let middle = DVec2::new((min.0 + max.0) / 2.0, (min.1 + max.1) / 2.0);
+                    let (s, e) = (DVec2::new(start.0, start.1), DVec2::new(end.0, end.1));
+                    let radius = (middle - s).perp_dot(e - s).abs() / (e - s).length();
+                    assert_close(solid.volume(), 4.0 * radius * PI / 2.0);
+                    let point = world(start);
+                    let along = (world(end) - point).normalize();
+                    let angle = if flip { -PI / 2.0 } else { PI / 2.0 };
+                    let corners = [min, (max.0, min.1), max, (min.0, max.1)].map(world);
+                    let near = |p: DVec3| {
+                        let verts = solid.mesh().verts();
+                        verts.iter().any(|v| v.distance(p) <= 1e-9)
+                    };
+                    for corner in corners {
+                        assert!(near(corner), "{case}: {corner} at the start");
+                        let to = turned(corner, point, along, angle);
+                        assert!(near(to), "{case}: {corner} turned to {to}");
+                        let away = turned(corner, point, along, -angle);
+                        assert!(!near(away), "{case}: {corner} turned the other way");
+                    }
+                }
+            }
         }
     }
 }
@@ -693,7 +758,7 @@ fn a_draft_may_change_the_kind_of_its_feature() {
     let draft = Draft {
         revision: 1,
         feature: Some(revolve),
-        kind: extrude.into(),
+        kind: extrude.clone().into(),
     };
     let answer = answered(crate::handle(regenerate_with(&editor, Some(draft))));
     assert_eq!(answer.draft.unwrap().error, None);
@@ -705,6 +770,31 @@ fn a_draft_may_change_the_kind_of_its_feature() {
         (
             glam::Vec3::new(5.0, 0.0, 0.0),
             glam::Vec3::new(10.0, 4.0, 3.0)
+        )
+    );
+
+    // Back: the extrude committed, a draft making it a revolve again.
+    editor
+        .apply(Command::SetFeature {
+            feature: revolve,
+            kind: Box::new(extrude.into()),
+        })
+        .unwrap();
+    let draft = Draft {
+        revision: 2,
+        feature: Some(revolve),
+        kind: made.into(),
+    };
+    let answer = answered(crate::handle(regenerate_with(&editor, Some(draft))));
+    assert_eq!(answer.draft.unwrap().error, None);
+    let [(_, bounds)] = answer.bodies[..] else {
+        panic!("one body");
+    };
+    assert_eq!(
+        (bounds.min, bounds.max),
+        (
+            glam::Vec3::new(-10.0, 0.0, -10.0),
+            glam::Vec3::new(10.0, 4.0, 10.0)
         )
     );
 }
@@ -734,5 +824,107 @@ fn regions_too_far_from_the_axis_fail() {
             revolve,
             "its regions are too far from the axis to revolve".to_owned()
         )]
+    );
+}
+
+/// Moving a profile into the axis's frame puts the ends of the axis
+/// line's own segments, and the ends of the others there, at `x = 0`
+/// exactly, and moves every other point rigidly, even one on the line
+/// past its end (the kernel's to put on the axis, not regen's).
+#[test]
+fn only_the_axis_line_s_own_points_are_put_on_the_axis() {
+    let p = |x: f64, y: f64| DVec2::new(x, y);
+    let (start, end) = (p(0.3, 0.1), p(2.9, 1.7));
+    // On the line, past its end, to rounding.
+    let past = start + (end - start) * 1.5;
+    // The axis, a line of a sketch, and other curves' ids.
+    let mut sketch = Sketch::default();
+    let [a, b] = [start, end].map(|at| sketch.add_point(at).unwrap());
+    let line = (sketch.add_curve(Curve::Line { start: a, end: b }, true)).unwrap();
+    let id = u64::from(line.get());
+    let corners = [
+        (start, id),
+        (end, id + 1),
+        (past, id + 2),
+        (p(2.0, 5.0), id + 3),
+    ];
+    let segments = (0..corners.len())
+        .map(|k| {
+            let (a, curve) = corners[k];
+            let b = corners[(k + 1) % corners.len()].0;
+            Segment {
+                conic: Conic2::line(a, b).unwrap(),
+                curve,
+            }
+        })
+        .collect();
+    let profile = Profile {
+        loops: vec![Loop { segments }],
+    };
+    let axis = Axis {
+        at: start,
+        along: end - start,
+        curve: Some(line),
+    };
+    let placement = OriginPlane::XY.placement();
+    let (moved, frame, _) = axis_frame(&profile, &axis, &placement).unwrap();
+    let (x, y) = (frame.x.truncate(), frame.y.truncate());
+    let map = |q: DVec2| p((q - start).dot(x), (q - start).dot(y));
+    let moved = &moved.loops[0].segments;
+    for (k, segment) in moved.iter().enumerate() {
+        let (from, to) = (corners[k].0, corners[(k + 1) % corners.len()].0);
+        for (got, was) in [(segment.conic.p0, from), (segment.conic.p1, to)] {
+            if was == start || was == end {
+                assert_eq!(got, p(0.0, map(was).y), "{was}");
+            } else {
+                assert_eq!(got, map(was), "{was}");
+            }
+        }
+    }
+    // The axis segment's control point too; the next one's is moved.
+    assert_eq!(moved[0].conic.c.x, 0.0);
+    assert_eq!(moved[1].conic.c, map((end + past) * 0.5));
+}
+
+/// A slanted edge of a triangle as the axis, whose ends a float doesn't
+/// put on the line through them exactly: a whole turn makes the two
+/// cones, as Pappus says, not a refusal for touching or crossing the
+/// axis.
+#[test]
+fn a_slanted_edge_of_the_region_can_be_the_axis() {
+    let corners = [(0.3, 0.1), (2.9, 1.7), (1.0, 3.0)];
+    let mut editor = Editor::new(Document::default());
+    add_revolve(
+        &mut editor,
+        OriginPlane::XZ,
+        |sketch| {
+            let ids = corners.map(|(x, y)| sketch.add_point(DVec2::new(x, y)).unwrap());
+            let lines: Vec<Id> = (0..3)
+                .map(|k| {
+                    let (start, end) = (ids[k], ids[(k + 1) % 3]);
+                    sketch.add_curve(Curve::Line { start, end }, false).unwrap()
+                })
+                .collect();
+            AxisLine::Curve(lines[0])
+        },
+        Turn::Full,
+        false,
+        Operation::NewBody(BodyId::NEW),
+    );
+    let evaluation = evaluated(editor.document());
+    assert_eq!(evaluation.failed, []);
+    let [a, b, c] = corners.map(|(x, y)| DVec2::new(x, y));
+    let area = (b - a).perp_dot(c - a).abs() / 2.0;
+    let middle = (a + b + c) / 3.0;
+    let distance = (b - a).perp_dot(middle - a).abs() / (b - a).length();
+    // Its apexes are fitted caps: within half the fit tolerance over
+    // its area, as the kernel's own revolves are.
+    let solid = only_body(&evaluation);
+    let slack = 0.5 * editor.document().tolerance().fit() * solid.area();
+    let volume = area * 2.0 * PI * distance;
+    assert!(
+        (solid.volume() - volume).abs() <= slack,
+        "{}",
+        solid.volume()
     );
 }

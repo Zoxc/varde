@@ -148,6 +148,134 @@ fn a_revolve_and_its_draft_round_trip() {
     assert_eq!(failed, [(revolve, crosses)]);
 }
 
+/// A revolve that works crosses the wire in its reply: a boss turned
+/// onto the example's plate joins it, and a quarter ring drafted as a
+/// new body goes, the bodies' boxes, mesh and picking tables with them.
+#[test]
+fn a_revolve_that_works_crosses_in_the_reply() {
+    use varde_document::{AxisLine, Operation, OriginPlane, Plane, Revolve, Targets, Turn};
+    use varde_sketch::{Curve, Sketch};
+
+    // A sketch on XZ (the world's x and z) of two rectangles.
+    let mut editor = Editor::new(Document::example());
+    editor
+        .apply(editor.document().add_sketch(Plane::Origin(OriginPlane::XZ)))
+        .unwrap();
+    let sketch = editor.document().features().last().unwrap().id;
+    let mut drawn = Sketch::default();
+    for (min, max) in [((0.0, 10.0), (12.0, 14.0)), ((35.0, 0.0), (40.0, 5.0))] {
+        let corners = [min, (max.0, min.1), max, (min.0, max.1)]
+            .map(|(x, y)| drawn.add_point(glam::DVec2::new(x, y)).unwrap());
+        for k in 0..4 {
+            let (start, end) = (corners[k], corners[(k + 1) % 4]);
+            drawn.add_curve(Curve::Line { start, end }, false).unwrap();
+        }
+    }
+    let profiles = drawn.profiles().unwrap();
+    let region = |inside: (f64, f64)| {
+        let at = glam::DVec2::new(inside.0, inside.1);
+        profiles.reference(profiles.region_at(at).unwrap()).unwrap()
+    };
+    let (boss, ring) = (region((6.0, 12.0)), region((37.0, 2.0)));
+    editor
+        .apply(Command::SetSketch {
+            feature: sketch,
+            sketch: Box::new(drawn),
+        })
+        .unwrap();
+    // A disc of radius 12 from z = 10 to 14 about the world's z, on the
+    // plate's top.
+    let join = Revolve {
+        sketch,
+        regions: vec![boss],
+        axis: AxisLine::SketchY,
+        extent: Turn::Full,
+        flip: false,
+        operation: Operation::Join(Targets::default()),
+    };
+    editor
+        .apply(editor.document().add_feature(join.clone().into()))
+        .unwrap();
+    let revolve = editor.document().features().last().unwrap().id;
+    let plate = editor.document().bodies()[0].id;
+    // A quarter turn about the world's +z: +x toward +y.
+    let quarter = varde_expr::Value::new("90", &Turn::ask(&editor.document().design())).unwrap();
+    let draft = Draft {
+        revision: 5,
+        feature: None,
+        kind: Revolve {
+            regions: vec![ring],
+            extent: Turn::OneSide(quarter),
+            operation: Operation::NewBody(BodyId::NEW),
+            ..join
+        }
+        .into(),
+    };
+    let request = Request::Regenerate {
+        generation: editor.generation(),
+        document: editor.snapshot(),
+        exclude: None,
+        draft: Some(draft.clone()),
+    };
+    let request = decode_request(&encode_request(&request)).unwrap();
+    let response = handle(request);
+    let Response::Regenerated {
+        draft,
+        failed,
+        touched,
+        merged,
+        bodies,
+        mesh,
+        picking,
+        ..
+    } = round_trip(&response)
+    else {
+        panic!("regeneration failed");
+    };
+    assert_eq!(
+        draft,
+        Some(Drafted {
+            revision: 5,
+            error: None,
+            touched: None,
+        })
+    );
+    assert_eq!(failed, []);
+    assert_eq!(touched, [(revolve, vec![plate])]);
+    assert_eq!(merged, []);
+    let boxes: Vec<[[f32; 3]; 2]> = bodies
+        .iter()
+        .map(|(_, aabb)| [aabb.min.to_array(), aabb.max.to_array()])
+        .collect();
+    assert_eq!(
+        boxes,
+        [
+            [[-30.0, -20.0, 0.0], [30.0, 20.0, 14.0]],
+            [[0.0, 0.0, 0.0], [40.0, 40.0, 5.0]],
+        ]
+    );
+    assert_eq!(bodies[0].0, plate);
+    // The joined plate's faces and the quarter ring's, all drawn.
+    assert!(mesh.triangle_count() > 0);
+    let Response::Regenerated {
+        mesh: sent,
+        picking: sent_picking,
+        ..
+    } = &response
+    else {
+        unreachable!()
+    };
+    assert_eq!(*mesh, **sent);
+    assert_eq!(*picking, **sent_picking);
+    let feature = |face: &PickFace| face.key.feature;
+    assert!(
+        picking
+            .faces()
+            .iter()
+            .any(|face| feature(face) == revolve.get())
+    );
+}
+
 #[test]
 fn request_with_a_draft_round_trips() {
     let editor = Editor::new(Document::example());

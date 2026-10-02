@@ -559,6 +559,39 @@ fn revolves_round_trip() {
     );
 }
 
+/// A file whose revolve holds an axis, turn or flip of no known value is
+/// refused, as one with a kind past the revolve.
+#[test]
+fn unknown_revolve_bytes_are_refused() {
+    let (editor, id) = added(ring(Operation::NewBody(BodyId::NEW)));
+    let document = editor.document();
+    let bytes = document.to_postcard();
+    let kind = &document.feature(id).unwrap().kind;
+    let FeatureKind::Revolve(revolve) = kind else {
+        unreachable!()
+    };
+    // Where the revolve's bytes are in the file's, and its axis, turn
+    // (a whole turn, one byte) and flip in them.
+    let encoded = postcard::to_stdvec(kind).unwrap();
+    let at = (0..bytes.len() - encoded.len())
+        .find(|&k| bytes[k..].starts_with(&encoded))
+        .unwrap();
+    let sketch = postcard::to_stdvec(&revolve.sketch).unwrap().len();
+    let regions = postcard::to_stdvec(&revolve.regions).unwrap().len();
+    let axis = at + 1 + sketch + regions;
+    assert_eq!(bytes[axis], 2, "the sketch's y axis");
+    assert_eq!(bytes[axis + 1], 0, "a whole turn");
+    assert_eq!(bytes[axis + 2], 0, "not flipped");
+    for (offset, byte) in [(0, 3), (1, 4), (2, 2)] {
+        let mut bad = bytes.clone();
+        bad[axis + offset] = byte;
+        assert!(Document::from_postcard(&bad).is_err(), "{offset}: {byte}");
+    }
+    let mut bad = bytes.clone();
+    bad[at] = 3;
+    assert!(Document::from_postcard(&bad).is_err());
+}
+
 /// Kinds are appended, so the kinds before keep their bytes, and so the
 /// files holding them.
 #[test]

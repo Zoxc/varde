@@ -126,7 +126,7 @@ enum Entry {
     Profiles(Arc<Result<Profiles, TooComplex>>),
     /// Whether a sketch solves.
     Solves(bool),
-    /// An extrude's solid, or why it has none.
+    /// A feature's tool solid, or why it has none.
     Solid(Result<Arc<Solid>, String>),
     /// Whether two solids touch.
     Touches(Result<bool, KernelError>),
@@ -143,8 +143,8 @@ impl Entry {
     /// [`OVERHEAD`]. Capacities aren't counted: a vector grown by pushes
     /// (a solid's arrays, a scene of several bodies joined) may hold up
     /// to about twice its length, so what the cache really holds can be
-    /// up to about twice its count. Results shared between entries (a solid both an
-    /// extrude's and a boolean's operand) count once in each. Saturating,
+    /// up to about twice its count. Results shared between entries (a solid both a
+    /// feature's tool and a boolean's operand) count once in each. Saturating,
     /// since the sizes come from what the user drew.
     fn bytes(&self) -> usize {
         let data = match self {

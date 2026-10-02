@@ -1,12 +1,12 @@
 //! Why a feature failed, in words for the Timeline's tooltip and the
-//! extrude panel: what the user did and what to try, rather than the
+//! feature's panel: what the user did and what to try, rather than the
 //! kernel's terms. Messages start in lower case, to follow a colon; the
 //! view capitalises them where they stand alone, in the Timeline's
 //! tooltip and the panel (`varde_view`'s `chrome::sentence`).
 
 use varde_kernel::{BooleanError, KernelError, ProfileError};
 
-/// What an extrude was doing with a body when the kernel gave up.
+/// What a feature was doing with a body when the kernel gave up.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Doing {
     /// Finding whether it touches the body.
@@ -120,15 +120,15 @@ fn profile(making: Making, error: ProfileError, finest: bool) -> String {
     }
 }
 
-/// Why `doing` the extrude and the body named `body` failed.
+/// Why `doing` the feature's tool and the body named `body` failed.
 pub(crate) fn boolean(doing: Doing, body: &str, error: KernelError) -> String {
     failed(&format!("{} {body}", doing.name()), error)
 }
 
 /// Why merging the body named `other`, which a join touches, into the
 /// body named `into`, which it touches too and which already holds the
-/// extrude, failed, and that unticking `other` keeps it apart. Mostly
-/// the two meet along an edge or at a corner the extrude doesn't cover:
+/// feature's tool, failed, and that unticking `other` keeps it apart. Mostly
+/// the two meet along an edge or at a corner the tool doesn't cover:
 /// joined to each on its own they were fine, merged they're no solid.
 pub(crate) fn merging(into: &str, other: &str, error: KernelError) -> String {
     let why = failed(&format!("merging {other} into {into}"), error);
@@ -170,7 +170,7 @@ pub(crate) fn leave_out(message: String, body: &str) -> String {
     format!("{message}; untick {body} under Bodies to leave it out")
 }
 
-/// Why `doing` the extrude and the body named `body` fails though the
+/// Why `doing` the feature's tool and the body named `body` fails though the
 /// kernel worked it out: it would leave nothing of the body. Bodies are
 /// the document's, so an emptied one would stay listed with no geometry.
 pub(crate) fn emptied(doing: Doing, body: &str) -> String {
