@@ -135,6 +135,15 @@ impl Lathe {
         answer(&mut self.doc, &self.requests);
     }
 
+    /// The curve `id` of the lathe's sketch.
+    fn sketch_curve(&self, id: Id) -> Option<&Curve> {
+        let document = self.doc.editor.document();
+        match &document.feature(self.sketch)?.kind {
+            FeatureKind::Sketch { sketch, .. } => Some(&sketch.curve(id)?.curve),
+            _ => None,
+        }
+    }
+
     /// The revolves of the document.
     fn revolves(&self) -> Vec<(FeatureId, &Revolve)> {
         (self.doc.editor.document().features().iter())
@@ -224,6 +233,56 @@ fn a_circle_is_no_axis() {
     assert_eq!(session.axis, None);
     assert_eq!(session.picking, RevolvePick::Axis);
     assert!(lathe.last_draft().is_none());
+}
+
+/// The lathe's sketch as `edit` changes it, set.
+fn edit_sketch(lathe: &mut Lathe, edit: impl FnOnce(&mut Sketch)) {
+    let document = lathe.doc.editor.document();
+    let Some(FeatureKind::Sketch { sketch, .. }) = document.feature(lathe.sketch).map(|f| &f.kind)
+    else {
+        panic!("no sketch");
+    };
+    let mut sketch = sketch.clone();
+    edit(&mut sketch);
+    let feature = lathe.sketch;
+    lathe.doc.apply(Command::SetSketch {
+        feature,
+        sketch: Box::new(sketch),
+    });
+    lathe.doc.sync();
+}
+
+#[test]
+fn a_line_of_no_length_is_no_axis() {
+    let mut lathe = lathe();
+    // The construction line's end dragged onto its start: no direction.
+    let Some(&Curve::Line { start, end }) = lathe.sketch_curve(lathe.construction) else {
+        panic!("a line");
+    };
+    lathe.set_up(AxisLine::Curve(lathe.construction));
+    assert!(lathe.doc.revolve_state().unwrap().ready);
+    edit_sketch(&mut lathe, |sketch| {
+        let at = sketch.point(start).unwrap().at;
+        sketch.point_mut(end).unwrap().at = at;
+    });
+    // Picked, it waits as a deleted line does: no preview, no OK.
+    let state = lathe.doc.revolve_state().unwrap();
+    assert_eq!(state.axis, None);
+    assert!(!state.ready);
+    assert!(lathe.last_draft().is_none());
+    // Nor can it be picked again.
+    let sketch = lathe.sketch;
+    lathe.revolve(RevolveLook::Picking(RevolvePick::Axis));
+    let axis = AxisLine::Curve(lathe.construction);
+    lathe.revolve(RevolveLook::PickAxis { sketch, axis });
+    assert!(!lathe.doc.revolve_state().unwrap().ready);
+    // Its length back, it's the axis again.
+    edit_sketch(&mut lathe, |sketch| {
+        sketch.point_mut(end).unwrap().at = DVec2::new(0.0, 30.0);
+    });
+    let state = lathe.doc.revolve_state().unwrap();
+    assert_eq!(state.axis, Some(axis));
+    assert!(state.ready);
 }
 
 #[test]
@@ -770,3 +829,5 @@ fn the_session_ends_when_its_revolve_or_its_document_goes() {
     assert!(lathe.doc.revolve.is_none());
     assert!(lathe.last_draft().is_none());
 }
+
+mod fuzz;

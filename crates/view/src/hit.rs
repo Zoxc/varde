@@ -61,13 +61,16 @@ pub(crate) fn hit_line(sketch: &Sketch, at: DVec2, tolerance: f64) -> Option<Id>
 /// The line or axis under the cursor at `at`, the nearest within
 /// `tolerance`, construction lines included: what a revolve turns about.
 /// Unlike [`hit_line`], an axis counts only within `reach` of the origin,
-/// as far as it's drawn.
+/// as far as it's drawn, and a line with both ends at one point not at
+/// all: it has no direction to turn about.
 pub(crate) fn hit_axis(sketch: &Sketch, at: DVec2, tolerance: f64, reach: f64) -> Option<Id> {
     if !at.is_finite() {
         return None;
     }
     let lines = sketch.curves.iter().filter_map(|entry| match entry.curve {
-        Curve::Line { .. } => Some((entry.id, curve_distance(sketch, &entry.curve, at)?)),
+        Curve::Line { start, end } if sketch.point(start)?.at != sketch.point(end)?.at => {
+            Some((entry.id, curve_distance(sketch, &entry.curve, at)?))
+        }
         _ => None,
     });
     let axes = [(Id::X_AXIS, DVec2::X), (Id::Y_AXIS, DVec2::Y)]

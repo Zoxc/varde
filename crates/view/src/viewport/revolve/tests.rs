@@ -218,3 +218,80 @@ fn the_arrow_follows_the_line_and_flip() {
     let (_, live) = Revolving::new(revolve).layers(&input, colors, &top_camera(), bounds());
     assert!(!live.is_empty());
 }
+
+/// Random sketches (degenerate and far lines among them), cameras and
+/// cursors: clicks pick only what the state lets them, an axis only of
+/// the source's lines and axes, and drawing never panics.
+#[test]
+fn random_clicks_pick_only_what_they_may() {
+    let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
+    let mut next = move || {
+        seed ^= seed >> 12;
+        seed ^= seed << 25;
+        seed ^= seed >> 27;
+        seed.wrapping_mul(0x2545_f491_4f6c_dd1d)
+    };
+    let mut unit = move || (next() >> 11) as f64 / (1u64 << 53) as f64;
+    let (mut axes, mut regions) = (0, 0);
+    for round in 0..200 {
+        let (mut sketch, left, _) = lathe();
+        let scale = [1.0, 1e3, 1e6, 1e-3][round % 4];
+        // A line of no length, one far off, one through the origin.
+        let a = testing::point(&mut sketch, 3.0 * scale, 3.0 * scale);
+        let b = testing::point(&mut sketch, 3.0 * scale, 3.0 * scale);
+        let degenerate = testing::line(&mut sketch, a, b);
+        let c = testing::point(&mut sketch, -1e9, 5.0);
+        let d = testing::point(&mut sketch, 1e9, 5.0 + scale);
+        testing::line(&mut sketch, c, d);
+        let profiles = Arc::new(sketch.profiles().unwrap_or_default());
+        let picked = BTreeSet::from([0]);
+        let picking = [RevolvePick::Axis, RevolvePick::Regions][round % 2];
+        let axis = [
+            None,
+            Some(AxisLine::SketchX),
+            Some(AxisLine::SketchY),
+            Some(AxisLine::Curve(left)),
+            Some(AxisLine::Curve(degenerate)),
+        ][(round / 2) % 5];
+        let mut revolve = state(&sketch, &profiles, &picked, picking, axis);
+        revolve.extent = TurnKind::ALL[round % 4];
+        revolve.flip = round % 3 == 0;
+        let mut camera = top_camera();
+        camera.orbit((unit() * 6.0 - 3.0) as f32, (unit() * 3.0 - 1.5) as f32);
+        camera.zoom((unit() * 4.0 + 0.1) as f32);
+        let revolving = Revolving::new(revolve.clone());
+        let colors = Mode::Light.palette().sketching;
+        for _ in 0..20 {
+            let at = Point::new(
+                (unit() * 240.0 - 20.0) as f32,
+                (unit() * 240.0 - 20.0) as f32,
+            );
+            let mut input = Input::default();
+            let cursor = mouse::Cursor::Available(at);
+            let moved = mouse::Event::CursorMoved { position: at };
+            let _ = revolving.mouse(&mut input, moved, bounds(), cursor, &camera);
+            let _ = revolving.layers(&input, colors, &camera, bounds());
+            let pressed = mouse::Event::ButtonPressed(mouse::Button::Left);
+            let action = revolving.mouse(&mut input, pressed, bounds(), cursor, &camera);
+            if let Some(message) = action.and_then(|action| action.into_inner().0) {
+                match message {
+                    Message::Look(Look::Revolve(RevolveLook::PickAxis { axis, .. })) => {
+                        assert_eq!(picking, RevolvePick::Axis, "round {round}");
+                        axes += 1;
+                        assert!(
+                            axis_line(&sketch, axis).is_some(),
+                            "round {round}: {axis:?}"
+                        );
+                    }
+                    Message::Look(Look::Revolve(RevolveLook::PickRegion { region, .. })) => {
+                        assert!(region < profiles.regions.len(), "round {round}");
+                        regions += 1;
+                    }
+                    other => panic!("round {round}: {other:?}"),
+                }
+            }
+        }
+    }
+    eprintln!("{axes} axes, {regions} regions picked");
+    assert!(axes > 20 && regions > 20, "{axes} {regions}");
+}

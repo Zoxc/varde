@@ -200,7 +200,10 @@ first angle's field and "90°" in the second, a new body.
 - **The axis** is stored as the document wants it: a line as
   `AxisLine::Curve`, the sketch's axes as `SketchX` / `SketchY` (their
   built-in ids never as curves; `varde_view`'s `axis_of`). A curve that
-  isn't a line isn't taken. The session keeps the axis while the source
+  isn't a line isn't taken, nor a line with both ends at one point
+  (regeneration would fail it, "its axis line has no length"): the
+  viewport's `hit_axis` passes over it, and one a sketch edit shrinks to
+  a point waits as a deleted one does. The session keeps the axis while the source
   doesn't have it (its line deleted by an edit, then undone): the
   revolve isn't whole then (no preview, no OK), and is again once it's
   back. An edited revolve whose line is gone opens without an axis,
@@ -224,6 +227,17 @@ first angle's field and "90°" in the second, a new body.
   nothing. `Esc` or Cancel drops it and its draft. A replacement of the
   whole document, read-only, or the edited revolve or the source gone
   end it (`Doc::prune_revolve`).
+- **Random sequences** (`app/src/doc/revolve/tests/fuzz.rs`; more with
+  `VARDE_FUZZ_SEEDS`, `VARDE_FUZZ_FROM`) drive both sessions with picks,
+  typed angles and distances (bad ones too), keys, undo and redo, sketch
+  edits deleting the axis or regions, replacements, read-only, deletes
+  from the Timeline, unit and tolerance changes, answers late or out of
+  order, and screens of several sizes, checking after every step: the
+  sessions apart and none read-only, the draft last sent the session's
+  and the panel's values, OK never with a refusal or a refused field,
+  `Esc` leaving the document as it was, a commit one undo step, and the
+  draft's error the newest answer's. The viewport's
+  (`viewport/revolve/tests.rs`) clicks random sketches and cameras.
 
 **The panel** (`view/src/revolve.rs`) is the extrude's floating panel
 (`operation_panel`), built of the same parts (choices, ticks, typed

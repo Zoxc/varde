@@ -211,14 +211,23 @@ fn sketch_of(document: &Document, id: FeatureId) -> Option<&varde_document::Sket
     }
 }
 
-/// Whether `sketch` has `axis`: a line of it, or one of its axes. What
-/// adding or setting a revolve requires of it ([`Revolve::check_axis`]).
+/// Whether `sketch` has `axis`: a line of it with its ends apart, or one
+/// of its axes. What adding or setting a revolve requires of it
+/// ([`Revolve::check_axis`]), and that the line has a length, which
+/// regeneration requires ("its axis line has no length"): a line whose
+/// ends are at one point is no axis to pick, nor to commit.
 fn axis_holds(sketch: &varde_document::Sketch, axis: AxisLine) -> bool {
     match axis {
         AxisLine::SketchX | AxisLine::SketchY => true,
-        AxisLine::Curve(id) => sketch
-            .curve(id)
-            .is_some_and(|entry| matches!(entry.curve, varde_sketch::Curve::Line { .. })),
+        AxisLine::Curve(id) => match sketch.curve(id).map(|entry| &entry.curve) {
+            Some(&varde_sketch::Curve::Line { start, end }) => {
+                let at = |point| sketch.point(point).map(|point| point.at);
+                at(start)
+                    .zip(at(end))
+                    .is_some_and(|(start, end)| start != end)
+            }
+            _ => false,
+        },
     }
 }
 
