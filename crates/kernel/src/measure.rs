@@ -33,8 +33,9 @@
 //! [`MeasureError::TooComplex`].
 //!
 //! A pick ([`Pick`]) is an entity of one solid's topology, a [`Target`]
-//! names it with the solid; minimum distances between two targets are to
-//! come beside [`measure`].
+//! names it with the solid. [`measure`] measures one target;
+//! [`distance()`] gives the minimum distance between two and the points
+//! where it is reached.
 
 use std::ops::{Add, RangeInclusive};
 
@@ -46,9 +47,13 @@ use crate::par::par_map;
 use crate::patch::{Bounds3, Conic3, Patch};
 use crate::quadrature::{GAUSS8, triangle_rule};
 use crate::solid::{INTEGRATE_WORK, piece_count, pieces};
-use crate::topology::NotFound;
 use crate::topology::distance::{blossom_point, quarters};
+use crate::topology::{Chain, NotFound, Region};
 use crate::{KernelError, MAX_REFINE_DEPTH, Solid, Tolerance, Topology, trig};
+
+mod distance;
+
+pub use distance::{Distance, distance};
 
 /// The weights within which a curve's piece is integrated as it is.
 const CURVE_SHAPED: RangeInclusive<f64> = 0.97..=1.03;
@@ -131,6 +136,44 @@ pub struct Target<'a> {
     pub pick: Pick,
 }
 
+impl<'a> Target<'a> {
+    /// Region `r` of the topology, if it has one whose triangles are all
+    /// the solid's, and at least one.
+    fn region(&self, r: u32) -> Result<&'a Region, MeasureError> {
+        let tris = self.solid.mesh().tris().len();
+        self.topology
+            .regions()
+            .get(r as usize)
+            .filter(|region| region.tris.iter().all(|&t| (t as usize) < tris))
+            .filter(|region| !region.tris.is_empty())
+            .ok_or(MeasureError::NotFound(NotFound::Face))
+    }
+
+    /// Chain `c` of the topology, if it has one whose halfedges are all
+    /// the solid's, and at least one.
+    fn chain(&self, c: u32) -> Result<&'a Chain, MeasureError> {
+        let tris = self.solid.mesh().tris().len();
+        self.topology
+            .chains()
+            .get(c as usize)
+            .filter(|chain| chain.halfedges.iter().all(|&h| (h as usize) / 3 < tris))
+            .filter(|chain| !chain.halfedges.is_empty())
+            .ok_or(MeasureError::NotFound(NotFound::Edge))
+    }
+
+    /// The point of corner `c` of the topology, if it has one whose
+    /// vertex is the solid's.
+    fn corner(&self, c: u32) -> Result<DVec3, MeasureError> {
+        let verts = self.solid.mesh().verts();
+        self.topology
+            .corners()
+            .get(c as usize)
+            .and_then(|corner| verts.get(corner.vertex as usize))
+            .copied()
+            .ok_or(MeasureError::NotFound(NotFound::Corner))
+    }
+}
+
 /// Why a measure has no answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MeasureError {
@@ -140,6 +183,8 @@ pub enum MeasureError {
     /// The pick names nothing in its topology, or the topology isn't its
     /// solid's.
     NotFound(NotFound),
+    /// A distance to a body with nothing in it (the empty solid).
+    Empty,
 }
 
 impl std::fmt::Display for MeasureError {
@@ -147,6 +192,7 @@ impl std::fmt::Display for MeasureError {
         match self {
             MeasureError::TooComplex => f.write_str("too complex to measure"),
             MeasureError::NotFound(e) => e.fmt(f),
+            MeasureError::Empty => f.write_str("the body is empty"),
         }
     }
 }
@@ -334,19 +380,13 @@ pub fn measure(
     tol: &Tolerance,
     budget: &Budget,
 ) -> Result<Measured, MeasureError> {
-    let (solid, topology) = (target.solid, target.topology);
+    let solid = target.solid;
     let mesh = solid.mesh();
-    let tris = mesh.tris().len();
     let mut work = Work::new(budget);
     match target.pick {
         Pick::Body => Ok(Measured::Body(body(solid, tol, &mut work)?)),
         Pick::Face(r) => {
-            let region = topology
-                .regions()
-                .get(r as usize)
-                .filter(|region| region.tris.iter().all(|&t| (t as usize) < tris))
-                .filter(|region| !region.tris.is_empty())
-                .ok_or(MeasureError::NotFound(NotFound::Face))?;
+            let region = target.region(r)?;
             // Only the area is read, which doesn't depend on the origin.
             let area = integrate(mesh, &region.tris, DVec3::ZERO, &mut work)?.area;
             let face = mesh.faces()[mesh.tris()[region.tris[0] as usize].face as usize];
@@ -356,12 +396,7 @@ pub fn measure(
             }))
         }
         Pick::Edge(c) => {
-            let chain = topology
-                .chains()
-                .get(c as usize)
-                .filter(|chain| chain.halfedges.iter().all(|&h| (h as usize) / 3 < tris))
-                .filter(|chain| !chain.halfedges.is_empty())
-                .ok_or(MeasureError::NotFound(NotFound::Edge))?;
+            let chain = target.chain(c)?;
             let curves: Vec<Conic3> = chain.halfedges.iter().map(|&h| mesh.curve(h)).collect();
             Ok(Measured::Edge(EdgeMeasure {
                 length: chain_length(&curves, &mut work)?,
@@ -369,14 +404,7 @@ pub fn measure(
                 shape: edge_shape(&curves),
             }))
         }
-        Pick::Corner(c) => {
-            let corner = topology
-                .corners()
-                .get(c as usize)
-                .filter(|corner| (corner.vertex as usize) < mesh.verts().len())
-                .ok_or(MeasureError::NotFound(NotFound::Corner))?;
-            Ok(Measured::Corner(mesh.verts()[corner.vertex as usize]))
-        }
+        Pick::Corner(c) => Ok(Measured::Corner(target.corner(c)?)),
     }
 }
 

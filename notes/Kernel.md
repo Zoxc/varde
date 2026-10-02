@@ -394,9 +394,17 @@ pieces split until even), areas, volumes and centres of mass
 (`Solid::moments`) by the same rule, tight boxes (`Solid::tight_bounds`:
 edges' extremes exact, patch insides by a bounded search with Newton's
 method, to the resolution), and a face's form, an edge's shape (line,
-circle, ellipse), points, directions and the angles between them. Only
-`+ − × ÷ √` and `trig`; every part within a `Budget` ("too complex to
-measure" past it); the same bits at any thread count.
+circle, ellipse), points, directions and the angles between them; and
+`measure::distance`, the minimum distance between two picks (faces,
+edges, corners or bodies, of one solid or two) with the two points where
+it is reached: a branch and bound over pairs of pieces (the touches
+search's), lower bounds from boxes, control hulls and the distance from a
+round's axis or centre (exact on cylinders and spheres, so coaxial walls
+cost nothing), upper bounds from Newton's method on the closest points,
+edges and corners included; within the resolution of the least, to
+rounding in practice. Only `+ − × ÷ √` and `trig`; every part within a
+`Budget` ("too complex to measure" past it); the same bits at any thread
+count.
 
 ## Topology and names
 

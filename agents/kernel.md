@@ -2961,8 +2961,8 @@ patch order; searches sequential). A `Pick` is `Body`, or a region,
 chain or corner of the solid's `Topology` by index; a `Target` is a pick
 with its solid and topology, and `measure(target, tol, budget)` gives a
 `Measured` (a pick naming nothing, or a topology that isn't the
-solid's, is `MeasureError::NotFound`, never a panic). Minimum distances
-between two targets are to come beside it.
+solid's, is `MeasureError::NotFound`, never a panic). `distance(a, b,
+tol, budget)` gives the minimum distance between two targets (below).
 
 - **Lengths** of chains, curve by curve in chain order: a curve whose
   control point is on the segment between its ends (to 64 roundings of
@@ -3029,6 +3029,78 @@ between two targets are to come beside it.
   middle, a round one's its centre; a corner's its vertex; a body's its
   centre of mass. `angle(a, b)` is `atan2(|a × b|, a · b)`, folded to
   `[0, π/2]` (`|a · b|`) where either is a line.
+
+**Minimum distances** (`measure/distance.rs`): `distance(a, b, tol,
+budget)` gives a `Distance { distance, points }` between two targets
+(faces, edges, corners, bodies; one solid or two; a body's is its
+surface's, so a body inside another is its surface's gap from the
+other's; the empty solid's body is `MeasureError::Empty`). The picks are
+cut into elements (patches, a chain's curves, a corner's point), and the
+search is `near::search` (now generic over what it visits, its visit
+taking the item `&mut` and the `Work`), over pairs of nodes of a box tree
+of each pick's elements (median splits, at most four a leaf, the larger
+node split, children nearest first), then of their elements' pieces
+(`split4`, a curve's halves; a point never splits). The best (closest
+points found) drops a pair whose lower bound clears it less the
+resolution `eps`; the search stops once the best is within `eps` of 0.
+Lower bounds: boxes' gap, GJK on control hulls (`apart`), for flat pieces
+the projections on their corners' normals (`near::apart_along`), and
+**rounds**: a cylindrical face's axis, a spherical one's centre, a
+circular edge's axis and centre (`circle_of`); the distance `f` from one
+moves no faster than the point, so the gap between its ranges over two
+pieces bounds their distance. A piece's range is from the Bernstein
+coefficients of `|Q_⊥|²` and `W²` (both quartics, `Q/W` the piece about
+the centre, across the axis): the ratio lies between their least and
+greatest coefficient ratios, which on a piece of the round are all `r²`
+(exact to rounding) and on a piece ending on it (a cap at a circular
+edge) the least is. Upper bounds: the pieces' corners and middles, and
+Newton's method on the squared distance over both pieces' parameters
+(`closest`: second derivatives by central differences,
+Levenberg–Marquardt on Gauss–Newton's matrix damped by the gradient's size
+where Newton's isn't positive definite, steps at most a piece across and
+halved while they move the points apart by more than rounding); a step
+leaving a piece stops on its boundary and goes on along that edge, then at
+that corner, stepping back up when moving into the piece (or along the
+other edge at a corner) brings the points nearer, at most four times.
+Newton runs at every pair of elements' first visit, at pairs of flat
+pieces every second split down a lineage, at up to 64 pairs that can beat
+the best only by less than `eps` (and by more than `1e-9` of it: ties
+don't count; the nodes they are in are gone down while tries are left),
+and on the best at the end. A pair is dropped too when both pieces are
+within `eps/2` across (their corners are then within `eps`). So the
+answer is two points of the picks within `eps` of the least distance (up
+to the splits' rounding, as `near`'s), and to rounding in practice:
+random points against a cylinder at all three tolerances `1e-14`
+relative (inside, outside, past the rims), random boxes exact, random
+skew rods `2e-15`, a point on a cylinder's axis `r`. Where they touch
+along a line on curved faces (rods side by side), the squared distance
+grows as the fourth power of the way round, so the points settle to about
+`√ε` and the distance is about `1e-13`; crossing, `1e-16`.
+
+Costs (release, one thread; a unit is a visit, 32 a Newton search, one
+more for rounds' ranges: measured 0.4 to 0.57 µs a unit where the search
+dominates): skew rods 1 800 units (0.7 ms); a pin through a tube or off
+centre in a plate's hole, bodies, 700 to 1 500 (about 1 ms, the ends'
+pieces at the hole's rim dropped by the pin's round); the pin's wall
+alone along the hole's wall (a line of closest points, which only
+splitting resolves) 46 000 (18 ms), and 660 000 (0.28 s) at the finest
+tolerance; two holes' walls 43 000 (25 ms); a plate with 64 holes (3 724
+patches) against a box over it 15 000 (1.6 ms), the trees dropping the
+rest. Without rounds the pin through the tube cost 408 000 visits (0.3
+s), and ten times that at the finest tolerance (refused); a broad phase
+by `Bvh::hits_within` within a first bound (the first version) made
+`n·m` pairs for bodies far apart.
+
+Tests (`measure/distance/tests.rs`): two boxes face to face, edge to
+edge, corner to corner, exact, by bodies, faces, edges and corners;
+picks of one box; a point and a cylinder (off the wall, past the rim, on
+the axis); skew cylinders; touching and crossing boxes and rods; a tube
+and a pin (rounds, and their cost); a pin along a hole's wall, two holes'
+walls and rims; concentric spheres; random points and a cylinder, boxes
+and skew rods; a plate with 64 holes against boxes near and far, and rods
+far out; rounds' ranges holding samples of random patches; the same bits
+at 1 and 8 threads; out of budget refused; picks naming nothing and the
+empty body.
 
 Tests (`measure/tests.rs`): a box's twelve lengths, six areas and
 normals, volume, centre and box; a cylinder's rims (circles, `2πr`,
@@ -4068,10 +4140,11 @@ user can place. `touches` only picks what an operation works on
 can't make a wrong solid; at worst a body that grazes the tool is a
 target whose boolean fails or is a no-op.
 
-The search is written for a minimum distance to reuse: the same stack
-of pairs, with a visit that drops the pairs whose hulls are further
-apart than the closest points found so far (`apart` with that margin)
-and settles the rest. Cost: a unit per visit (`NEAR_WORK`, measured 0.24
+The search is what minimum distances run on (`measure::distance`, see
+"Volume, area and measuring"): generic over what it visits (pairs of
+patches here, tree nodes and pieces of patches, curves and points
+there), with a visit that may change the item before it is split and
+spend work of its own. Cost: a unit per visit (`NEAR_WORK`, measured 0.24
 to 0.44 µs a visit, release, one thread), spent each 256 visits and at
 the end; a piece `split4` can't split is `TooComplex`. Measured,
 release, one thread, the counting included: tangencies 1.5 to 4 ms (up
@@ -7663,3 +7736,18 @@ parameter, or a split outside the patch bounds),
   search runs Newton's method during the search rather than only at the
   end (330 000 visits down to 2 400), and skips patches on planes and
   ruled quadrics, whose extremes are on their edges.
+- **Minimum distances go further than the plan's hulls and Newton.** The
+  plan bounded pairs by their hulls' distance alone, over the broad
+  phase's pairs. Coaxial walls (a tube's, a pin in a hole) are equally
+  far everywhere, and a pin's wall from the hole's rim, so hulls only
+  drop their pairs once split to `√(8·eps·r)`: 408 000 visits for a pin
+  through a tube, refused at the finest tolerance. So rounds bound pairs
+  too (the distance from a cylinder's axis or a sphere's or circle's
+  centre, ranged over a piece by its Bernstein coefficients). The broad
+  phase is a descent of two box trees in the search itself, since a
+  margin from a first bound made `n·m` pairs for bodies far apart.
+  Newton's method steps back up from edges it overshot onto, and runs on
+  a bounded number of pairs within `eps` of the best, so answers are to
+  rounding in practice rather than within `eps`. A body's distance is its
+  surface's (a body inside another is not 0): the simplest reading, as a
+  containment test would need the booleans' counting.

@@ -10,10 +10,11 @@
 //! [`Patch::split4`] and visit the pieces' pairs. [`near`]'s visit drops
 //! a pair whose hulls are more than the distance apart (GJK,
 //! [`apart`], or for settled pieces [`apart_across`]) and stops on a
-//! pair of [`settled`] pieces. A minimum
-//! distance is the same search with a bound in place of the yes or no:
-//! drop the pairs whose hulls are further apart than the closest points
-//! found so far, and settle the rest.
+//! pair of [`settled`] pieces. A minimum distance
+//! ([`measure::distance`](crate::measure::distance)) is the same search
+//! with a bound in place of the yes or no: it drops the pairs whose hulls
+//! are further apart than the closest points found so far, less the
+//! resolution, and settles the rest.
 //!
 //! **Why the answer holds.** A patch lies in the convex hull of its six
 //! control points (its weights are positive, which `check` sees to), and
@@ -80,33 +81,36 @@ pub(crate) enum Step {
     Split(Which),
 }
 
-/// Visits pairs of pieces depth first, from each pair of `roots` in
-/// order, as `visit` says (see the [module](self) docs), and says
-/// whether a visit stopped it. A split pair's pieces are visited in a
-/// fixed order (the first's four pieces in [`Patch::split4`]'s order,
-/// each against the second's in theirs) before the next pair, so the
-/// visits and the work charged are the same every time.
+/// Visits pairs of pieces depth first, from each of `roots` in order, as
+/// `visit` says (see the [module](self) docs), and says whether a visit
+/// stopped it. A pair `visit` splits is handed to `split`, which pushes
+/// its children onto the vector it is given in the order they are to be
+/// visited, and they are all visited before the next pair, so the visits
+/// and the work charged are the same every time. `visit` may change the
+/// pair before it is split (what its children inherit) and spend work of
+/// its own.
 ///
 /// Every visit costs [`NEAR_WORK`], spent each [`NEAR_CHUNK`] visits and
-/// at the end; a piece `split4` can't split is
-/// [`KernelError::TooComplex`].
-pub(crate) fn search(
-    roots: impl IntoIterator<Item = [Patch; 2]>,
-    mut visit: impl FnMut(&[Patch; 2]) -> Step,
+/// at the end.
+pub(crate) fn search<P>(
+    roots: impl IntoIterator<Item = P>,
+    mut visit: impl FnMut(&mut P, &mut Work) -> Result<Step, KernelError>,
+    mut split: impl FnMut(&P, Which, &mut Vec<P>) -> Result<(), KernelError>,
     work: &mut Work,
 ) -> Result<bool, KernelError> {
-    let mut stack: Vec<[Patch; 2]> = Vec::new();
+    let mut stack: Vec<P> = Vec::new();
+    let mut children: Vec<P> = Vec::new();
     let mut visits = 0usize;
     let mut stopped = false;
     'roots: for root in roots {
         stack.push(root);
-        while let Some(pair) = stack.pop() {
+        while let Some(mut pair) = stack.pop() {
             visits += 1;
             if visits == NEAR_CHUNK {
                 work.spend(NEAR_CHUNK * NEAR_WORK)?;
                 visits = 0;
             }
-            let which = match visit(&pair) {
+            let which = match visit(&mut pair, work)? {
                 Step::Drop => continue,
                 Step::Stop => {
                     stopped = true;
@@ -114,26 +118,41 @@ pub(crate) fn search(
                 }
                 Step::Split(which) => which,
             };
-            let pieces = |patch: &Patch, split: bool| -> Result<([Patch; 4], usize), KernelError> {
-                if split {
-                    let pieces = patch.split4().map_err(|_| KernelError::TooComplex)?;
-                    Ok((pieces, 4))
-                } else {
-                    Ok(([*patch; 4], 1))
-                }
-            };
-            let (xs, nx) = pieces(&pair[0], which != Which::Second)?;
-            let (ys, ny) = pieces(&pair[1], which != Which::First)?;
+            children.clear();
+            split(&pair, which, &mut children)?;
             // Pushed last to first, so popped first to last.
-            for x in xs[..nx].iter().rev() {
-                for y in ys[..ny].iter().rev() {
-                    stack.push([*x, *y]);
-                }
-            }
+            stack.extend(children.drain(..).rev());
         }
     }
     work.spend(visits * NEAR_WORK)?;
     Ok(stopped)
+}
+
+/// The children of a pair of patches' pieces for [`search`]: the first's
+/// four [`Patch::split4`] pieces (or itself, if it isn't split), each
+/// against the second's in theirs. A piece `split4` can't split is
+/// [`KernelError::TooComplex`].
+fn split_patches(
+    pair: &[Patch; 2],
+    which: Which,
+    out: &mut Vec<[Patch; 2]>,
+) -> Result<(), KernelError> {
+    let pieces = |patch: &Patch, split: bool| -> Result<([Patch; 4], usize), KernelError> {
+        if split {
+            let pieces = patch.split4().map_err(|_| KernelError::TooComplex)?;
+            Ok((pieces, 4))
+        } else {
+            Ok(([*patch; 4], 1))
+        }
+    };
+    let (xs, nx) = pieces(&pair[0], which != Which::Second)?;
+    let (ys, ny) = pieces(&pair[1], which != Which::First)?;
+    for x in &xs[..nx] {
+        for y in &ys[..ny] {
+            out.push([*x, *y]);
+        }
+    }
+    Ok(())
 }
 
 /// Whether a piece needs no more splitting in a search within `within`:
@@ -154,22 +173,43 @@ pub(crate) fn settled(patch: &Patch, within: f64, floor: f64) -> bool {
 /// points rounds relative to the hulls' size over their distance, so on
 /// a small piece by a large flat face (a ball by a slab, at the finest
 /// tolerance) it stopped short at some 3 resolutions; near a tangency
-/// the pieces' own planes are the direction it was after. Measured from
-/// a corner of `x`, so the rounding is relative to the pieces' size,
-/// not to their distance from the origin.
+/// the pieces' own planes are the direction it was after.
 fn apart_across(x: &Patch, y: &Patch, within: f64) -> bool {
-    let origin = x.p[0];
-    let span = |patch: &Patch, n: DVec3| {
-        let along = patch.hull().map(|p| (p - origin).dot(n));
-        let lo = along.iter().copied().fold(f64::INFINITY, f64::min);
-        let hi = along.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-        (lo, hi)
+    apart_along(
+        &x.hull(),
+        &y.hull(),
+        [corner_normal(x), corner_normal(y)].into_iter().flatten(),
+        within,
+    )
+}
+
+/// The unit normal of `patch`'s corners' plane, if they span one.
+pub(crate) fn corner_normal(patch: &Patch) -> Option<DVec3> {
+    let [p0, p1, p2] = patch.p;
+    (p1 - p0).cross(p2 - p0).try_normalize()
+}
+
+/// Whether the convex hulls of the points `x` and `y` (neither empty) are
+/// more than `within` apart along one of the unit `normals`: a lower
+/// bound on their distance where [`apart`]'s rounds. Measured from a
+/// point of `x`, so the rounding is relative to the hulls' size, not to
+/// their distance from the origin.
+pub(crate) fn apart_along(
+    x: &[DVec3],
+    y: &[DVec3],
+    normals: impl IntoIterator<Item = DVec3>,
+    within: f64,
+) -> bool {
+    let origin = x[0];
+    let span = |points: &[DVec3], n: DVec3| {
+        points
+            .iter()
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), p| {
+                let along = (*p - origin).dot(n);
+                (lo.min(along), hi.max(along))
+            })
     };
-    [x, y].into_iter().any(|piece| {
-        let [p0, p1, p2] = piece.p;
-        let Some(n) = (p1 - p0).cross(p2 - p0).try_normalize() else {
-            return false;
-        };
+    normals.into_iter().any(|n| {
         let ((xlo, xhi), (ylo, yhi)) = (span(x, n), span(y, n));
         ylo - xhi > within || xlo - yhi > within
     })
@@ -212,18 +252,21 @@ pub(super) fn near(
         .map(|&[p, q]| [a.patches[p as usize], b.patches[q as usize]]);
     search(
         roots,
-        |[x, y]| {
+        |[x, y], _| {
             if apart(&x.hull(), &y.hull(), within) {
-                return Step::Drop;
+                return Ok(Step::Drop);
             }
-            match (settled(x, within, floor), settled(y, within, floor)) {
-                (true, true) if apart_across(x, y, within) => Step::Drop,
-                (true, true) => Step::Stop,
-                (true, false) => Step::Split(Which::Second),
-                (false, true) => Step::Split(Which::First),
-                (false, false) => Step::Split(Which::Both),
-            }
+            Ok(
+                match (settled(x, within, floor), settled(y, within, floor)) {
+                    (true, true) if apart_across(x, y, within) => Step::Drop,
+                    (true, true) => Step::Stop,
+                    (true, false) => Step::Split(Which::Second),
+                    (false, true) => Step::Split(Which::First),
+                    (false, false) => Step::Split(Which::Both),
+                },
+            )
         },
+        split_patches,
         work,
     )
 }
