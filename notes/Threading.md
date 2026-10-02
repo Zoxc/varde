@@ -342,8 +342,8 @@ Sending the document per request needs cheap snapshots.
   and sketches as `Arc<Body>` etc. (or `im`/`rpds` persistent vectors)
   would do that, and would also cut the snapshot undo stack's memory use.
 - Web Worker: the snapshot is `postcard` bytes of `Document`
-  (`Document::to_postcard` in `document::codec`), the same encoding a
-  `.vrdp` record's payload uses. A few KB to MB, fine per edit. If it gets big,
+  (`Document::to_postcard` in `document::codec`); a `.vrdp` record holds
+  MessagePack by name instead. A few KB to MB, fine per edit. If it gets big,
   send `Command`s instead and keep a replica document in the worker (needs
   `Command: Serialize` and undo/redo as commands too).
 
@@ -419,7 +419,7 @@ struct Opened {
 - The UI sends a snapshot and the revision it's of: the same cheap `Arc`
   snapshot as regeneration natively; on the web the postcard bytes already
   encoded for the regeneration lane, posted to both workers. Encoding
-  (postcard, snappy, CRC), locking and writing all happen in the lane.
+  (MessagePack, snappy, CRC), locking and writing all happen in the lane.
 - `saved_revision` is set from the response, to the snapshot's revision,
   not the current one: edits made while saving keep the document marked
   edited. The title shows "Saving…" while a save is in flight.

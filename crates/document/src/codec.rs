@@ -1,13 +1,12 @@
 //! A [`Document`] as bytes: postcard, checked as it's decoded.
 //!
-//! These bytes are a `.vrdp` record's payload before compression (see
-//! `varde-io`'s `vrdp` module), and what the regeneration and IO lanes send a
-//! Web Worker to work on, through [`document`] and [`snapshot`]. The two
-//! share the encoding, not the file format: a worker is sent no records.
+//! These bytes are what the regeneration and IO lanes send a Web Worker to
+//! work on, through [`document`] and [`snapshot`]. Files hold MessagePack
+//! instead (see `varde-io`'s `vrdp` module).
 
 use std::fmt;
 
-use serde::de::{self, DeserializeOwned, Visitor};
+use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serializer};
 
 use crate::{CheckError, Document, Snapshot, Unchecked};
@@ -22,7 +21,7 @@ impl Document {
     /// Malformed input, or a document that fails [`Document::check`], is an
     /// error, never a panic.
     pub fn from_postcard(bytes: &[u8]) -> Result<Document, DecodeError> {
-        from_postcard(bytes, Unchecked::check)
+        Ok(from_postcard_exact::<Unchecked>(bytes)?.check()?)
     }
 }
 
@@ -71,30 +70,23 @@ impl std::error::Error for DecodeError {
     }
 }
 
-/// Decodes a `T` from all of `bytes`, as postcard. Bytes left over are an
-/// error: they're what tells another payload, like an auto-save holding a
-/// document, from a prefix that decodes as this one. The one place that
-/// rule is kept, for files and for what the lanes send their workers.
+/// Decodes a `T` from all of `bytes`, as postcard, see [`whole`].
 pub fn from_postcard_exact<'a, T: Deserialize<'a>>(bytes: &'a [u8]) -> Result<T, DecodeError> {
     let (value, rest) =
         postcard::take_from_bytes(bytes).map_err(|e| DecodeError::new(e.to_string()))?;
-    if !rest.is_empty() {
-        return Err(DecodeError::new(format!(
-            "{} bytes after the end",
-            rest.len()
-        )));
-    }
-    Ok(value)
+    whole(value, rest.len())
 }
 
-/// Decodes an unchecked `U` from all of `bytes`, see
-/// [`from_postcard_exact`], and has `check` make it a `T`. Also how
-/// `varde-io` decodes what else a file record may hold.
-pub fn from_postcard<U: DeserializeOwned, T, E: Into<DecodeError>>(
-    bytes: &[u8],
-    check: impl FnOnce(U) -> Result<T, E>,
-) -> Result<T, DecodeError> {
-    check(from_postcard_exact(bytes)?).map_err(Into::into)
+/// `value`, decoded with `rest` bytes left over, if none are. Bytes left
+/// over are an error: they're what tells another payload, like an
+/// auto-save holding a document, from a prefix that decodes as this one.
+/// The one place that rule is kept, for what the lanes send their workers
+/// and for files' MessagePack in `varde-io`.
+pub fn whole<T>(value: T, rest: usize) -> Result<T, DecodeError> {
+    if rest != 0 {
+        return Err(DecodeError::new(format!("{rest} bytes after the end")));
+    }
+    Ok(value)
 }
 
 /// A document as the bytes of [`Document::to_postcard`], for

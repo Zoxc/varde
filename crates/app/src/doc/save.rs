@@ -906,8 +906,8 @@ impl Doc {
     }
 
     /// Hands the document to the browser with `download`, encoded on the
-    /// page: one pass of snappy over the postcard every auto-save makes
-    /// here anyway, which the lane would have to send back.
+    /// page: one encoding and one pass of snappy, cheaper than sending it
+    /// to the lane and having the file sent back.
     fn download(&self, download: &Downloader) -> Result<(), String> {
         let name = varde_document::name::download_name(&self.name);
         varde_io::vrdp::to_bytes(self.editor.document())

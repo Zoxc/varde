@@ -32,8 +32,8 @@ pub struct Feature {
     pub kind: FeatureKind,
 }
 
-/// What a feature is. New kinds are appended: a kind's place in the list
-/// is how files store it.
+/// What a feature is. Files store a kind by its variant name, so new kinds
+/// can go anywhere; a name is never renamed or reused.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum FeatureKind {
     Sketch { plane: Plane, sketch: Sketch },

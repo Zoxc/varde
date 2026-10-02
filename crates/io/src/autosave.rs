@@ -50,9 +50,6 @@ pub(crate) struct AutoSaved {
 /// outlives a clean close, going back to it (see [`keep_downloaded`]), and
 /// is listed apart from designs never saved while it's the newest record.
 /// Natively always [`Origin::Edited`].
-///
-/// Encoded as the `bool` it replaced was, `false` and `true`: postcard
-/// writes a unit variant as its index.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum Origin {
     Edited,

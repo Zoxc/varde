@@ -41,6 +41,8 @@ bytemuck = { version = "1", features = ["derive"] }
 pollster = "0.4"
 serde = { version = "1", features = ["derive"] }
 postcard = { version = "1", features = ["use-std"] }
+# The .vrdp payload (crates/io/src/vrdp.rs): MessagePack, fields by name.
+rmp-serde = "1"
 snap = "1"
 # Linear algebra for the sketch solver: sparse Cholesky for its steps,
 # dense column-pivoted QR for its analysis. Without rayon, which the web

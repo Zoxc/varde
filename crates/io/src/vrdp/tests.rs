@@ -737,9 +737,9 @@ struct UncheckedBased {
 
 impl Payload for Based {
     type Unchecked = UncheckedBased;
-    type Error = varde_document::CheckError;
+    type Error = CheckError;
 
-    fn check(unchecked: UncheckedBased) -> std::result::Result<Based, varde_document::CheckError> {
+    fn check(unchecked: UncheckedBased) -> std::result::Result<Based, CheckError> {
         Ok(Based {
             base: unchecked.base,
             document: unchecked.document.check()?,
@@ -1022,4 +1022,105 @@ fn a_save_and_the_web_check_agree() {
         assert_eq!(web, expected);
         assert_eq!(native, expected);
     }
+}
+
+/// [`Based`] as a later build might extend it, with a defaulted field.
+#[derive(Debug, PartialEq, Serialize)]
+struct Noted {
+    base: Option<Tail>,
+    document: Document,
+    note: String,
+}
+
+/// [`Noted`] before its check.
+#[derive(Deserialize)]
+struct UncheckedNoted {
+    base: Option<Tail>,
+    document: Unchecked,
+    #[serde(default)]
+    note: String,
+}
+
+impl Payload for Noted {
+    type Unchecked = UncheckedNoted;
+    type Error = CheckError;
+
+    fn check(unchecked: UncheckedNoted) -> std::result::Result<Noted, CheckError> {
+        Ok(Noted {
+            base: unchecked.base,
+            document: unchecked.document.check()?,
+            note: unchecked.note,
+        })
+    }
+}
+
+/// A field added with a default reads from records written without it as
+/// its default, and a build without it skips it.
+#[test]
+fn a_new_field_reads_from_old_records_and_old_builds_skip_it() {
+    let mut file = HeldFile::<Memory, Based>::new(Memory::default());
+    file.append(&Based {
+        base: None,
+        document: edited(1),
+    })
+    .unwrap();
+    let mut newer = HeldFile::<Memory, Noted>::new(file.into_storage());
+    let noted = Noted {
+        base: None,
+        document: edited(1),
+        note: String::new(),
+    };
+    assert_eq!(newer.read().unwrap(), Some(noted));
+
+    let noted = Noted {
+        base: None,
+        document: edited(2),
+        note: "kept by a later build".to_owned(),
+    };
+    newer.append(&noted).unwrap();
+    let mut older = HeldFile::<Memory, Based>::new(newer.into_storage());
+    assert_eq!(
+        older.read().unwrap(),
+        Some(Based {
+            base: None,
+            document: edited(2),
+        })
+    );
+}
+
+/// A payload followed by more bytes isn't taken for the payload alone.
+#[test]
+fn bytes_after_a_payload_are_refused() {
+    let mut raw = rmp_serde::to_vec_named(&edited(1)).unwrap();
+    assert_eq!(from_msgpack::<Document>(&raw), Ok(edited(1)));
+    raw.push(0xc0);
+    assert!(matches!(
+        from_msgpack::<Document>(&raw),
+        Err(error) if error.to_string().contains("1 bytes after the end")
+    ));
+}
+
+/// Values nested past anything a payload holds, in a field skipped as
+/// unknown, are refused rather than recursed into until the stack runs
+/// out.
+#[test]
+fn deeply_nested_values_are_refused() {
+    let mut raw = rmp_serde::to_vec_named(&edited(1)).unwrap();
+    // A map of the document's five fields, given a sixth.
+    assert_eq!(raw[0], 0x85);
+    raw[0] = 0x86;
+    raw.extend_from_slice(&[0xa1, b'x']);
+    // Arrays of one element, each holding the next, the last nil.
+    raw.extend(std::iter::repeat_n(0x91, 1000));
+    raw.push(0xc0);
+    let decoded = std::thread::Builder::new()
+        .stack_size(256 * 1024)
+        .spawn(move || from_msgpack::<Document>(&raw).map_err(|e| e.to_string()))
+        .unwrap()
+        .join()
+        .unwrap();
+    assert!(
+        matches!(&decoded, Err(error) if error.contains("depth")),
+        "{decoded:?}"
+    );
 }

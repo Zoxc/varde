@@ -15,10 +15,11 @@
 
 - **No file format versioning while the app is WIP.** The `.vrdp` format
   (`crates/io/src/vrdp.rs`) has a `version` field, but it stays at 1:
-  don't bump it, and don't add migrations or backwards-compatibility code.
-  The payload is postcard-encoded, so any change to the serialized types
-  (`Document`, `Body`, `Shape`, `Sketch`, ...) breaks old files. That's fine
-  for now. Revisit once the format needs to be stable.
+  don't bump it, and don't add migrations. Prefer changes that keep older
+  files working, as `vrdp.rs`'s module docs describe (defaulted fields,
+  new variants, names never reused); one that can't breaks old files,
+  which is fine for now. Those docs also hold the design for once the
+  format must be stable.
 - **No wildcard deletes.** `rm -f dir/*` and other globbed or recursive
   deletes trigger permission prompts. For headless Firefox runs, give each
   run fresh directories in the scratchpad rather than clearing old ones: a
@@ -130,6 +131,6 @@ have no UI code; `render` has no iced dependency.
   `varde_render::Renderer`, compositing onto iced's frame; GPU objects stay on the
   UI thread, workers only produce CPU-side `RenderMesh`es.
 - **`.vrdp` format** (`crates/io/src/vrdp.rs`): append-only, checksummed,
-  snappy-compressed postcard snapshots; its internals are `pub(crate)` to
+  snappy-compressed MessagePack snapshots; its internals are `pub(crate)` to
   `varde-io` (only `to_bytes`, `from_bytes`, `Error` are public).
 

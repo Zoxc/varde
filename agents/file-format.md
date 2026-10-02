@@ -7,11 +7,23 @@ crash-safe (a torn final record is ignored and later truncated), access is
 guarded by file locks, and a save fails with a conflict if the file changed
 since it was opened.
 
+The framing (magic, `version`, records) is binary; each record's payload
+is MessagePack with fields and variants by name, so the format can be
+extended with new features: a new field `#[serde(default)]` reads from
+older files as its default and older builds skip it, a new variant can go
+anywhere, and names are never renamed or reused. Prefer keeping older
+files working that way; while the app is WIP a change that can't be made
+so just breaks them. Once the format must be stable, the preferred design
+is `version` bumps with migrations, records listing the features they
+need so an older build refuses a newer file, and unknown fields kept
+through a save; `crates/io/src/vrdp.rs`'s module docs hold the detail.
+The workers get documents as postcard instead (`varde_document::codec`).
+
 A document (`crates/document/src/lib.rs`) holds its bodies (a name,
 whether it's visible, its opacity, a `u8` percent, and the extrude or
 revolve that makes it: no geometry, which regenerating the feature
 history gives), its features (a name, whether it's visible, and a kind,
-stored by its place in `FeatureKind`, new kinds appended: a sketch, an
+stored by its variant name in `FeatureKind`: a sketch, an
 extrude,
 `crates/document/src/extrude.rs`: the sketch feature it uses, its
 regions as `varde_sketch::RegionRef`s (curve ids of the outer loop and of
@@ -67,7 +79,9 @@ turn). Ids
 running out refuses the edit instead of overflowing. The length a record
 claims to decompress to is bounded by 32 times its compressed length
 (snappy expands at most about 21 times) and 1 GiB, since the decoder
-allocates it up front. See `crates/io/src/vrdp.rs`, and for the locking
+allocates it up front. Arrays and maps in the MessagePack may nest 31
+deep (a payload needs 11), so skipping an unknown field can't overflow the
+stack. See `crates/io/src/vrdp.rs`, and for the locking
 and replacing of files natively
 `crates/io/src/native/files/document_file.rs`. The version field stays at
 1 while the app is WIP. Auto-save sidecars and store entries use the same

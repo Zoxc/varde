@@ -5,10 +5,31 @@
 //! record = len: u32 LE | crc: u32 LE | payload: [u8; len] | FOOTER
 //! ```
 //!
-//! `payload` is a postcard-encoded [`Document`] (see [`codec`]), compressed
-//! with raw snappy, and `crc` is the CRC-32 of `payload`. Every save appends
-//! one record, so the file holds every saved version and the last valid
-//! record is the current one.
+//! `payload` is a [`Document`] as MessagePack, compressed with raw snappy,
+//! and `crc` is the CRC-32 of `payload`. Every save appends one record, so
+//! the file holds every saved version and the last valid record is the
+//! current one.
+//!
+//! The MessagePack is designed to be extended with new features: structs
+//! are maps by field name and enum variants go by name
+//! (`rmp_serde::to_vec_named`), so a new field `#[serde(default)]` (on the
+//! type and its `Unchecked` twin) reads from older files as its default and
+//! older builds skip it, and a new variant can go anywhere. Names are what
+//! the file holds: never rename or reuse one (`#[serde(rename)]` keeps it
+//! if the Rust name changes). Prefer keeping older files working this way;
+//! while the app is WIP `version` stays 1 with no migrations, so a change
+//! that can't be made so breaks them. The preferred design once the format
+//! must be stable:
+//!
+//! - incompatible changes bump `version`, and every older version is still
+//!   decoded, into its own types, and migrated forward before the check;
+//! - each record lists the features it needs (names, e.g. `"revolve"`), and
+//!   a build lacking one refuses the file or opens it read-only rather than
+//!   silently dropping what it doesn't know;
+//! - unknown fields are kept and written back on save.
+//!
+//! The workers are sent documents as postcard instead (see [`codec`]), by
+//! position, which is fine as they're built along with the page.
 //!
 //! Saves are atomic because existing bytes are never rewritten: a crash while
 //! appending leaves a torn record at the end, which readers ignore and the next
@@ -365,13 +386,12 @@ impl<S: Storage, P: Payload> HeldFile<S, P> {
     }
 }
 
-/// What a record holds, postcard-encoded: a [`Document`] in a design's
-/// file, or what the owner of a [`HeldFile`] keeps in it.
+/// What a record holds: a [`Document`] in a design's file, or what the
+/// owner of a [`HeldFile`] keeps in it. Extended as the module docs say.
 pub(crate) trait Payload: Serialize + Sized {
     /// The payload as decoded from a file, before [`Payload::check`]: the
-    /// same fields in the same order, holding an [`Unchecked`] where the
-    /// payload holds a [`Document`], so the message of a document failing
-    /// its check isn't lost in decoding.
+    /// same fields, holding an [`Unchecked`] where the payload holds a
+    /// [`Document`], so a document failing its check says what's wrong.
     type Unchecked: DeserializeOwned;
 
     /// What [`Payload::check`] says is wrong, which becomes an
@@ -672,7 +692,7 @@ fn parse_header(header: &[u8; HEADER_LEN as usize]) -> (u64, u32) {
 /// A payload [`decode`] would refuse as too large is [`Error::TooLarge`],
 /// rather than a record that saves but won't open.
 fn encode(payload: &impl Payload) -> Result<(Vec<u8>, u32)> {
-    let raw = postcard::to_stdvec(payload).expect("payloads always serialize");
+    let raw = rmp_serde::to_vec_named(payload).expect("payloads always serialize");
     if raw.len() > MAX_DECOMPRESSED {
         return Err(Error::TooLarge);
     }
@@ -718,8 +738,26 @@ fn decode<P: Payload>(payload: &[u8]) -> Result<P> {
     let raw = snap::raw::Decoder::new()
         .decompress_vec(payload)
         .map_err(|e| Error::Decode(DecodeError::new(e.to_string())))?;
-    // As `Document::from_postcard`, for any payload.
-    codec::from_postcard(&raw, P::check).map_err(Error::Decode)
+    from_msgpack(&raw).map_err(Error::Decode)
+}
+
+/// rmp-serde's depth limit for a payload: arrays and maps may nest one
+/// less deep than this. An auto-save's spline handles, the deepest, are 11
+/// levels down. A value skipped as an unknown field can nest as deep as the
+/// file likes, and rmp-serde's default of 1024 overflows the stack of an
+/// unoptimized build's lane thread or Web Worker.
+const MAX_DEPTH: usize = 32;
+
+/// Decodes a `P` from all of `raw`, as MessagePack, and checks it. Bytes
+/// left over are an error, see [`codec::whole`].
+fn from_msgpack<P: Payload>(raw: &[u8]) -> std::result::Result<P, DecodeError> {
+    let mut de = rmp_serde::Deserializer::new(raw);
+    de.set_max_depth(MAX_DEPTH);
+    let unchecked =
+        P::Unchecked::deserialize(&mut de).map_err(|e| DecodeError::new(e.to_string()))?;
+    // Reading takes bytes off the front of the slice.
+    let unchecked = codec::whole(unchecked, de.get_ref().len())?;
+    P::check(unchecked).map_err(Into::into)
 }
 
 fn checksum(bytes: &[u8]) -> u32 {

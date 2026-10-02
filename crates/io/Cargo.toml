@@ -10,8 +10,10 @@ varde-document.workspace = true
 varde-kernel.workspace = true
 varde-lane.workspace = true
 serde.workspace = true
-# The .vrdp format, src/vrdp.rs, and the wire format, src/wire.rs.
+# The wire format, src/wire.rs.
 postcard.workspace = true
+# The .vrdp payload, src/vrdp.rs.
+rmp-serde.workspace = true
 snap.workspace = true
 crc32fast.workspace = true
 # The 3MF packages' zip, src/three_mf.rs.
@@ -70,3 +72,5 @@ futures.workspace = true
 # Reading back the 3MF packages' XML, and the solids written.
 roxmltree.workspace = true
 glam.workspace = true
+# Sketches with splines, the deepest a payload nests.
+varde-sketch.workspace = true

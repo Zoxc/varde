@@ -86,6 +86,10 @@ pub struct Body {
 /// by construction: the ways to get one are [`Document::default`],
 /// [`Document::example`], an [`Editor`] edit, which is checked, and
 /// deserializing one, which goes through [`Unchecked::check`].
+///
+/// Files store it by field and variant names, to be extended as `varde-io`'s
+/// `vrdp` module says: a new field goes here and on [`Unchecked`],
+/// `#[serde(default)]` on both.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "Unchecked")]
 pub struct Document {
@@ -117,12 +121,13 @@ impl Default for Document {
 }
 
 /// A [`Document`] as deserialized, before [`Document::check`]: the same
-/// fields in the same order, so it reads the same bytes.
+/// fields by the same names in the same order, so it reads the same bytes.
 ///
 /// Deserializing a [`Document`] checks it too, but postcard drops the
-/// message of an error raised while deserializing, so decoders that want
-/// to say what's wrong decode this and [`check`](Unchecked::check) it, as
-/// [`Document::from_postcard`] does.
+/// message of an error raised while deserializing, and the [`CheckError`]
+/// is lost as a string either way, so decoders that want to say what's
+/// wrong decode this and [`check`](Unchecked::check) it, as
+/// [`Document::from_postcard`] and `varde-io`'s files do.
 #[derive(Debug, Deserialize)]
 pub struct Unchecked {
     bodies: Vec<Body>,

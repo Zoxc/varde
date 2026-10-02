@@ -127,12 +127,46 @@ fn checking_an_auto_save_says_what_is_wrong() {
     ));
 }
 
-/// [`Origin`] is written as the `bool` it replaced, so files written
-/// before read the same.
+/// What a payload holds deepest, a spline's handle in an auto-saved
+/// sketch, is within the depth decoding allows.
 #[test]
-fn an_origin_encodes_as_a_bool() {
-    let bytes = |origin: Origin| postcard::to_stdvec(&origin).unwrap();
-    assert_eq!(bytes(Edited), postcard::to_stdvec(&false).unwrap());
-    assert_eq!(bytes(Downloaded), postcard::to_stdvec(&true).unwrap());
-    assert_eq!(postcard::from_bytes::<Origin>(&[1]).unwrap(), Downloaded);
+fn a_spline_s_handle_is_read_back() {
+    use glam::DVec2;
+    use varde_document::{Command, Document, Editor, OriginPlane, Plane};
+    use varde_sketch::{Curve, Handle, Sketch, Spline};
+
+    let mut sketch = Sketch::default();
+    let fit = [(0.0, 0.0), (10.0, 5.0), (20.0, 0.0)]
+        .map(|(x, y)| sketch.add_point(DVec2::new(x, y)).unwrap());
+    let tip = sketch.add_point(DVec2::new(13.0, 8.0)).unwrap();
+    let mut through = Spline::through(fit.to_vec(), false);
+    through.handles.push(Handle { at: fit[1], tip });
+    sketch.add_curve(Curve::Spline(through), false).unwrap();
+    let mut editor = Editor::new(Document::default());
+    editor
+        .apply(Command::AddSketch {
+            name: "Sketch 1".into(),
+            plane: Plane::Origin(OriginPlane::XY),
+        })
+        .unwrap();
+    let feature = editor.document().features()[0].id;
+    editor
+        .apply(Command::SetSketch {
+            feature,
+            sketch: Box::new(sketch),
+        })
+        .unwrap();
+    let document = Arc::new(editor.document().clone());
+
+    let dir = TempDir::new("held-spline-handle");
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(dir.0.join("entry"))
+        .unwrap();
+    let mut held = Held::new(file);
+    held.append(None, None, &document, Edited).unwrap();
+    assert_eq!(held.read().unwrap().unwrap().document, document);
 }
