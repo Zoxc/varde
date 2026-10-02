@@ -225,7 +225,10 @@ takes a line's fillets and chamfers with it; deleting a fillet takes its
 points and radius and gives the sharp corner back.
 
 A sketch is a feature of the document (`FeatureKind::Sketch`) on a `Plane`,
-whose `placement` maps sketch coordinates into the world.
+whose `placement` maps sketch coordinates into the world: an origin
+plane's, or for a sketch on a flat face of a body the one regenerating
+finds for it (`agents/features.md`; the app reads either through
+`Doc::placement`).
 
 **The origin and axes** (`origin.rs`) are built into every sketch rather
 than stored: reserved ids at the top of the counter (`Id::ORIGIN`,
@@ -800,6 +803,28 @@ edited and its id still names a sketch, which stays selected with the
 session; an id naming something else now ends the session. A
 document that can't be edited, as a Save As can leave it, has no tool and no drag;
 the Save As answer syncs for that.
+
+**A new sketch** (`S`, the toolbar's or the rail's Sketch) first asks
+for its plane (`Look::PickPlane`, `Doc::picking_plane`): the toolbar
+offers XY, XZ and YZ (`Edit::NewSketch`), and the viewport picks flat
+faces (only faces, `ModelPicking::planes`): a flat face hovered is
+highlighted with the pointer cursor, a curved one isn't and the status
+bar says "Only flat faces can be sketched on" (`CURVED_FACE`), and a
+click on a flat face sends `Edit::SketchOnFace(FaceRef)` (its body, key
+and the point clicked), a click elsewhere nothing; `Esc` backs out. With
+a face alone selected in the model (`Selection::single_face`,
+`DocumentKeys::face_selected`), `S` and the button, then labelled
+"Sketch on face", send `Edit::SketchOnSelection` instead. Either way
+`Doc::new_sketch` works the placement out from the model shown first
+(see `agents/features.md`): a curved face, one not in the model shown or
+one too far out is refused with the reason in the status bar
+(`Doc::notice`), and nothing is added; else one `AddSketch` with
+`Plane::Face`, one undo step, and the sketch is entered, the camera
+facing the face with its `y` up (for a side face, world Z projected).
+A sketch is entered only once it's placed (`Doc::enter_sketch`); the
+session keeps its placement (`SketchSession::placement`), which moves
+with its face as answers come (`Doc::follow_placement`) and stays as it
+was while none is known.
 
 Every change to the sketch is a `SketchEdit`, proposed to the solver lane
 (`Doc::propose`, `doc/sketch/propose.rs`) and committed once it's

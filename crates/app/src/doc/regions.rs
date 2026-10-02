@@ -8,7 +8,8 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use varde_document::{
-    BodyId, Command, Document, FeatureId, FeatureKind, Operation, RegionRef, Sketch, Targets,
+    BodyId, Command, Document, FeatureId, FeatureKind, Operation, Placement, RegionRef, Sketch,
+    Targets,
 };
 use varde_expr::{Ask, Value};
 use varde_sketch::{MAX_WORK, Profiles};
@@ -272,18 +273,18 @@ impl RegionPick {
         true
     }
 
-    /// The sketches whose regions show, for the view: each found's, with
-    /// its plane in `document`.
-    pub(crate) fn candidates<'a>(&'a self, document: &'a Document) -> Vec<Candidate<'a>> {
+    /// The sketches whose regions show, for the view: each found's that
+    /// `placement` places ([`Doc::placement`]), there. A sketch on a face
+    /// that isn't placed has no regions to pick.
+    pub(crate) fn candidates(
+        &self,
+        placement: impl Fn(FeatureId) -> Option<Placement>,
+    ) -> Vec<Candidate<'_>> {
         (self.found.iter())
             .filter_map(|found| {
-                let FeatureKind::Sketch { plane, .. } = &document.feature(found.feature)?.kind
-                else {
-                    return None;
-                };
                 Some(Candidate {
                     feature: found.feature,
-                    placement: plane.placement()?,
+                    placement: placement(found.feature)?,
                     sketch: &found.sketch,
                     profiles: &found.profiles,
                 })

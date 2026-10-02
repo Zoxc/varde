@@ -761,7 +761,12 @@ send `Look::Hover(pick)`, and `Hover(None)` once the cursor leaves the
 model or the viewport, or the camera is dragged (past a click's slop:
 from the first frame drawn while it is; the hover is worked out again
 once the drag ends). The cursor is a pointer while
-something is hovered. A pick of a model no longer shown (its count
+something is hovered. While the plane for a new sketch is picked
+(`ModelPicking::planes`) only faces are picked, a click on a flat one
+sends `Edit::SketchOnFace` instead of selecting and a click elsewhere
+nothing, and only a flat face hovered is highlighted
+(`Doc::shown_hover`) or gets the pointer (`ModelPicking::takes`); the
+status bar says why a curved one isn't (see `agents/sketch.md`). A pick of a model no longer shown (its count
 differs) is dropped, and the hover is dropped once the model changes or
 the cursor stops picking (`Doc::prune_picks`, after answers, edits and
 looks); a hover names nothing else (no document change, no request).

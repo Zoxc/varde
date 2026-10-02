@@ -14,14 +14,15 @@ use std::sync::Arc;
 
 use glam::DVec2;
 use varde_document::{
-    Feature, FeatureId, FeatureKind, Generation, OriginPlane, Placement, Plane, Revision, Sketch,
+    FaceRef, Feature, FeatureId, FeatureKind, Generation, Placement, Plane, Revision, Sketch,
 };
 use varde_expr::Value;
 use varde_render::{Camera, Projection};
 use varde_sketch::{Analysis, Id, Profiles, Rejected, Role, SketchEdit, TooComplex};
 use varde_view::typed::{DEFAULT_SIDES, Field};
 use varde_view::{
-    ActiveTool, RowMenu, SketchState, Snap, Target, Tool, ToolClick, ValueField, ValueTarget,
+    ActiveTool, CURVED_FACE, RowMenu, SketchState, Snap, Target, Tool, ToolClick, ValueField,
+    ValueTarget,
 };
 
 use super::extrude::is_sketch;
@@ -37,6 +38,11 @@ pub(crate) use propose::{Analyses, Proposals};
 pub(crate) struct SketchSession {
     /// The sketch feature edited.
     pub(crate) feature: FeatureId,
+    /// Where it is: [`Doc::placement`] as it was last known, kept while
+    /// that knows none (a model of a document replaced whole shown, its
+    /// face lost upstream by an undo in the sketch), so the session goes
+    /// on where it was.
+    pub(crate) placement: Placement,
     /// The tool drawing in the sketch, if one is in use.
     pub(crate) tool: Option<Drawing>,
     /// The items selected, which the viewport and the Geometry list show.
@@ -86,9 +92,10 @@ pub(crate) struct SketchSession {
 }
 
 impl SketchSession {
-    fn new(feature: FeatureId) -> Self {
+    fn new(feature: FeatureId, placement: Placement) -> Self {
         Self {
             feature,
+            placement,
             tool: None,
             selection: BTreeSet::new(),
             listed_on: BTreeSet::new(),
@@ -295,6 +302,17 @@ pub(crate) struct Drag {
     pub(crate) solution: Option<Arc<Sketch>>,
 }
 
+/// Where a new sketch on a face was placed when its face was picked, kept
+/// until a model at least as new as the sketch shows, which places it
+/// itself: see [`Doc::placement`].
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Placed {
+    pub(crate) feature: FeatureId,
+    pub(crate) placement: Placement,
+    /// The editor's generation once the sketch was added.
+    pub(crate) generation: Generation,
+}
+
 /// The share of the Sketch tab the Geometry list takes until the divider
 /// is dragged.
 pub(crate) const GEOMETRY_SHARE: f32 = 0.6;
@@ -312,33 +330,132 @@ impl Doc {
             !self.picking_plane && self.editable() && self.sketch.is_none() && !self.operating();
     }
 
-    /// Adds a sketch on `plane` and edits it, unless that's refused.
-    pub(crate) fn new_sketch(&mut self, plane: OriginPlane) {
+    /// Adds a sketch on `plane` and edits it, unless that's refused. A
+    /// face is found in the model shown, and must be flat there: its
+    /// placement is worked out from it at once, as regenerating will
+    /// (see [`Doc::placement`]), so the session starts facing it.
+    pub(crate) fn new_sketch(&mut self, plane: Plane) {
         self.picking_plane = false;
+        let placed = match plane {
+            Plane::Origin(_) => None,
+            Plane::Face(face) => match self.face_placement(&face) {
+                Ok(placement) => Some(placement),
+                Err(why) => {
+                    self.notice = Some(why.to_owned());
+                    return;
+                }
+            },
+        };
         let before = self.editor.revision();
-        self.apply(self.editor.document().add_sketch(Plane::Origin(plane)));
+        self.apply(self.editor.document().add_sketch(plane));
         if self.editor.revision() != before {
             // New features get the highest id, so it's the last.
             if let Some(feature) = self.editor.document().features().last() {
-                self.enter_sketch(feature.id);
+                let feature = feature.id;
+                if let Some(placement) = placed {
+                    self.placed = Some(Placed {
+                        feature,
+                        placement,
+                        generation: self.editor.generation(),
+                    });
+                }
+                self.enter_sketch(feature);
             }
         }
     }
 
-    /// Edits the sketch feature `id`, if the document holds it: the camera
-    /// turns to face it, the model fades behind it, and the Sketch tab
-    /// takes the Timeline's place. It stays selected in the Timeline for
-    /// after, and leaving it turns the camera back to the view before.
+    /// The face selected in the model, if a face alone is and the cursor
+    /// picks the model, outside picking a plane: what `S` puts a new
+    /// sketch on.
+    pub(crate) fn selected_face(&self) -> Option<FaceRef> {
+        (self.picks() && !self.picking_plane)
+            .then(|| self.pick.selection.single_face())
+            .flatten()
+    }
+
+    /// Where a sketch on `face` goes, as the model shown has the face:
+    /// [`Placement::on_plane`] of its plane, the bits regenerating will
+    /// place it by. Refused, why, if the face isn't found there (the
+    /// cursor doesn't pick that model), isn't flat, or is too far out to
+    /// sketch on.
+    fn face_placement(&self, face: &FaceRef) -> Result<Placement, &'static str> {
+        if !self.picks() {
+            return Err("The model shown is out of date: try again once it's regenerated");
+        }
+        let index = self.feed.pick_index();
+        let found = index
+            .find_face(face.body, &face.key, face.near)
+            .ok_or("That face isn't in the model shown")?;
+        let placement = index.face_placement(found).ok_or(CURVED_FACE)?;
+        if placement.valid() {
+            Ok(placement)
+        } else {
+            Err("That face is too far out to sketch on")
+        }
+    }
+
+    /// Where the sketch feature `id` is, if it's a sketch and placed: an
+    /// origin plane's placement, or a sketch on a face's as the model
+    /// shown placed it ([`MeshFeed::placement`](super::feed::MeshFeed::placement)),
+    /// or as worked out where its face was picked until a model at least
+    /// as new as that shows, so nothing waits or jumps. None for a sketch
+    /// on a face that failed to be placed, or before any model places it.
+    pub(crate) fn placement(&self, id: FeatureId) -> Option<Placement> {
+        let FeatureKind::Sketch { plane, .. } = &self.editor.document().feature(id)?.kind else {
+            return None;
+        };
+        match plane {
+            Plane::Origin(plane) => Some(plane.placement()),
+            Plane::Face(_) => {
+                let pending = self.placed.filter(|placed| {
+                    placed.feature == id
+                        && (self.feed.generation()).is_none_or(|shown| shown < placed.generation)
+                });
+                match pending {
+                    Some(placed) => Some(placed.placement),
+                    None => self.feed.placement(id),
+                }
+            }
+        }
+    }
+
+    /// Keeps the placement of the sketch being edited in step with
+    /// [`Doc::placement`], where that knows one: a new model may move its
+    /// face. Lets go of the placement worked out at a pick once a model
+    /// as new as it shows.
+    pub(crate) fn follow_placement(&mut self) {
+        let shown = self.feed.generation();
+        (self.placed).take_if(|placed| shown.is_some_and(|shown| shown >= placed.generation));
+        let Some(feature) = self.sketch.as_ref().map(|session| session.feature) else {
+            return;
+        };
+        if let Some(placement) = self.placement(feature)
+            && let Some(session) = &mut self.sketch
+        {
+            session.placement = placement;
+        }
+    }
+
+    /// Edits the sketch feature `id`, if the document holds it and it's
+    /// placed: the camera turns to face it, the model fades behind it,
+    /// and the Sketch tab takes the Timeline's place. It stays selected
+    /// in the Timeline for after, and leaving it turns the camera back to
+    /// the view before. A sketch on a face that isn't placed isn't
+    /// edited, and the status bar says why.
     pub(crate) fn enter_sketch(&mut self, id: FeatureId) {
-        // A sketch on a face is placed by regenerating, which the app
-        // doesn't read yet: it isn't edited until then.
-        let placed = matches!(
-            self.editor.document().feature(id).map(|feature| &feature.kind),
-            Some(FeatureKind::Sketch { plane, .. }) if plane.placement().is_some()
-        );
-        if !placed {
+        let Some(feature) = self.editor.document().feature(id) else {
+            return;
+        };
+        if !matches!(feature.kind, FeatureKind::Sketch { .. }) {
             return;
         }
+        let Some(placement) = self.placement(id) else {
+            let why = (self.feed.failed_features().iter())
+                .find(|(failed, _)| *failed == id)
+                .map_or("it isn't placed yet", |(_, why)| why.as_str());
+            self.notice = Some(format!("Can't edit {}: {why}", feature.name));
+            return;
+        };
         self.picking_plane = false;
         self.extrude = None;
         self.revolve = None;
@@ -357,7 +474,7 @@ impl Doc {
         if self.sketch.is_none() {
             self.before_sketch = Some(self.animation.as_ref().map_or(self.camera, |a| a.to));
         }
-        self.sketch = Some(SketchSession::new(id));
+        self.sketch = Some(SketchSession::new(id, placement));
         self.panel = self.panel.for_sketching(true);
         // The rail's sets are the sketch's now.
         self.rail.close();
@@ -720,7 +837,7 @@ impl Doc {
         Some(SketchState {
             name: &feature.name,
             plane: *plane,
-            placement: plane.placement()?,
+            placement: session.placement,
             sketch: self.shown_sketch()?,
             pending: waiting.map_or(&NONE, |waiting| &waiting.added),
             selection: &session.selection,
@@ -836,8 +953,9 @@ impl Doc {
     /// The camera looking straight at the sketch being edited, if one is,
     /// framing it: what Home turns to in a sketch.
     pub(crate) fn sketch_camera(&self) -> Option<Camera> {
-        let (plane, sketch) = self.edited_sketch()?;
-        Some(facing(self.camera.projection(), plane.placement()?, sketch))
+        let (_, sketch) = self.edited_sketch()?;
+        let placement = self.sketch.as_ref()?.placement;
+        Some(facing(self.camera.projection(), placement, sketch))
     }
 }
 

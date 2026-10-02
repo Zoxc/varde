@@ -151,6 +151,15 @@ impl Entry {
         }
     }
 
+    /// Its label as `keys` show it: Sketch is "Sketch on face" while a
+    /// face alone is selected, which it puts the new sketch on.
+    pub(crate) fn shown_label(self, keys: DocumentKeys) -> &'static str {
+        match self {
+            Entry::Sketch if keys.face_selected => "Sketch on face",
+            _ => self.label(),
+        }
+    }
+
     /// What it does and its own key: the toolbar's binding for it, so the
     /// rail does what the toolbar does, and is disabled where it is.
     pub(crate) fn binding(self, keys: DocumentKeys) -> Binding {
@@ -521,7 +530,7 @@ fn card_tool<'a>(entry: Entry, keys: DocumentKeys, using: Using) -> Element<'a, 
     let tool = mouse_area(tool)
         .on_enter(hover(RailSpot::Tool, true))
         .on_exit(hover(RailSpot::Tool, false));
-    side_tip(tool, entry.label(), binding.shortcut)
+    side_tip(tool, entry.shown_label(keys), binding.shortcut)
 }
 
 /// The list of the set `set`, open as `open` says: its name, its key
@@ -596,7 +605,7 @@ fn list_row<'a>(
     button(
         row![
             icons::icon(entry.icon(), icons::INLINE),
-            text(entry.label()),
+            text(entry.shown_label(keys)),
             letter,
         ]
         .spacing(9)

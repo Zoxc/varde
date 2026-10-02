@@ -69,6 +69,10 @@ pub struct DocumentState<'a> {
     pub read_only: Option<&'a str>,
     /// Why the last edit was refused, if it was.
     pub edit_error: Option<&'a EditError>,
+    /// Why the last thing asked couldn't be done, if the app refused it
+    /// itself (a sketch on a curved face, a sketch that isn't placed
+    /// entered), until the next thing asked.
+    pub notice: Option<&'a str>,
     /// A sketch edit the solver refused after its sketch was left, if
     /// there's one not dismissed: a banner over the viewport says so.
     pub refused_edit: Option<RefusedEdit<'a>>,
@@ -137,6 +141,15 @@ pub struct DocumentState<'a> {
 }
 
 impl DocumentState<'_> {
+    /// Whether a face and nothing else is selected in the model while the
+    /// cursor picks it, outside picking a plane: what a new sketch goes
+    /// on.
+    pub(crate) fn face_selected(&self) -> bool {
+        self.picking.is_some()
+            && !self.picking_plane
+            && self.model_selection.single_face().is_some()
+    }
+
     /// Whether the document can be changed, including by undo, and saved.
     pub(crate) fn editable(&self) -> bool {
         self.read_only.is_none()
@@ -151,6 +164,7 @@ impl DocumentState<'_> {
     /// What the screen's shortcuts depend on.
     pub(crate) fn keys(&self) -> DocumentKeys {
         DocumentKeys::new(self.editable(), self.selected_feature, self.sketch)
+            .with_face_selected(self.face_selected())
             .with_extrude(self.extrudable, self.extrude.as_ref())
             .with_revolve(self.revolve.as_ref())
             .with_measure(self.measure.is_some())
@@ -1190,6 +1204,11 @@ fn listed<'a>(names: impl ExactSizeIterator<Item = &'a str>) -> String {
     list
 }
 
+/// What the status bar says while picking the plane for a new sketch
+/// with a curved face under the cursor, and the app when a sketch is
+/// asked for on one.
+pub const CURVED_FACE: &str = "Only flat faces can be sketched on";
+
 /// What the status bar says is going on: what's asked of the user while
 /// picking a plane, what the sketch being edited holds or the extrude being
 /// set up. Whether the mesh is still being regenerated, or why it couldn't
@@ -1199,12 +1218,25 @@ fn listed<'a>(names: impl ExactSizeIterator<Item = &'a str>) -> String {
 /// where the bar doesn't fit (`status::status_bar`).
 fn info<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
     if state.picking_plane {
+        // A curved face hovered isn't highlighted: this says why.
+        let curved = (state.picking.as_ref()).is_some_and(|picking| match picking.hovered {
+            Some(crate::Picked::Face(face)) => picking.index.face_placement(face).is_none(),
+            _ => false,
+        });
+        let (line, style): (_, fn(&iced::Theme) -> text::Style) = if curved {
+            (CURVED_FACE, theme::danger_text)
+        } else {
+            (
+                "Pick a plane or a flat face for the new sketch",
+                theme::accent_text,
+            )
+        };
         return Some(
-            text("Pick a plane for the new sketch")
+            text(line)
                 .size(12)
                 .wrapping(Wrapping::None)
                 .font(theme::SEMIBOLD)
-                .style(theme::accent_text)
+                .style(style)
                 .into(),
         );
     }
@@ -1586,9 +1618,10 @@ fn status_notes(state: &DocumentState<'_>) -> Vec<String> {
     let edit_error = state
         .edit_error
         .map(|error| format!("Couldn't edit: {error}"));
+    let notice = state.notice.map(str::to_owned);
     let saving = state.saving.then(|| "Saving…".to_owned());
     let exporting = state.exporting.then(|| "Exporting…".to_owned());
-    [regenerating, edit_error, saving, exporting]
+    [regenerating, edit_error, notice, saving, exporting]
         .into_iter()
         .flatten()
         .collect()

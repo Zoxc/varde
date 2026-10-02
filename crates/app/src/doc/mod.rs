@@ -23,7 +23,7 @@ use iced::time::Instant;
 use varde_document::name::UNTITLED;
 use varde_document::{
     BodyId, Command, Document, EditError, Editor, FeatureId, FeatureKind, LengthUnit, Opacity,
-    OriginPlane, Removable, Removal, Revision, Tolerance,
+    Plane, Removable, Removal, Revision, Tolerance,
 };
 use varde_io::{Access, Offer, OpenId};
 use varde_render::{Camera, Projection};
@@ -81,6 +81,13 @@ pub(crate) struct Doc {
     pub(crate) read_only: Option<String>,
     /// Why the last edit was refused, if it was.
     pub(crate) edit_error: Option<EditError>,
+    /// Why the last thing asked couldn't be done, if the app refused it
+    /// itself (a sketch on a curved face, a sketch that isn't placed
+    /// entered): shown in the status bar until the next thing asked.
+    pub(crate) notice: Option<String>,
+    /// Where the newest sketch on a face was placed when its face was
+    /// picked, until a model places it: see [`Doc::placement`].
+    placed: Option<sketch::Placed>,
     /// A sketch edit the solver refused after its sketch was left, which
     /// sketch it was of and why: shown in a banner over the viewport
     /// until dismissed, see [`Doc::refused_edit`].
@@ -226,6 +233,8 @@ impl Doc {
             proposals: Proposals::default(),
             read_only: read_only(access),
             edit_error: None,
+            notice: None,
+            placed: None,
             refused_edit: None,
             name,
             panel: Panel::default(),
@@ -281,6 +290,7 @@ impl Doc {
         self.refresh_profiles();
         self.prune_picks();
         self.prune_preview();
+        self.follow_placement();
     }
 
     /// Asks for the model if the document changed, the sketch left out of
@@ -341,6 +351,7 @@ impl Doc {
     /// the solver last refused shows until then.
     pub(crate) fn update(&mut self, message: Edit) {
         self.end_refusal();
+        self.notice = None;
         // Letting go of the Opacity slider leaves its menu open, to go on.
         if !matches!(message, Edit::CommitOpacity) {
             self.row_menu = None;
@@ -369,7 +380,19 @@ impl Doc {
             // Not another plane picked while the new sketch waits.
             Edit::NewSketch(plane) => {
                 self.picking_plane = false;
-                self.change(Change::NewSketch(plane));
+                self.change(Change::NewSketch(Plane::Origin(plane)));
+            }
+            Edit::SketchOnFace(face) => {
+                // Only while picking the plane: a click sent before it
+                // ended may come after.
+                if std::mem::take(&mut self.picking_plane) {
+                    self.change(Change::NewSketch(Plane::Face(face)));
+                }
+            }
+            Edit::SketchOnSelection => {
+                if let Some(face) = self.selected_face() {
+                    self.change(Change::NewSketch(Plane::Face(face)));
+                }
             }
             Edit::RemoveFeature(id) => self.remove(Removable::Feature(id)),
             Edit::ConfirmDelete => self.confirm_delete(),
@@ -495,6 +518,24 @@ impl Doc {
                 | Look::PickPlane
         ) {
             self.close_value();
+        }
+        // What the app refused shows until something else is asked.
+        if !matches!(
+            message,
+            Look::Hover(_)
+                | Look::HoverItem(_)
+                | Look::HoverCube(_)
+                | Look::Snap(_)
+                | Look::Aim(_)
+                | Look::Rail(_)
+                | Look::ScrollGeometry(_)
+                | Look::ScrollConstraints(_)
+                | Look::Orbit { .. }
+                | Look::Pan { .. }
+                | Look::Zoom { .. }
+                | Look::SetPivot(_)
+        ) {
+            self.notice = None;
         }
         // A row's context menu does its job or is left by anything else
         // done: `Esc` closes it alone.
@@ -713,6 +754,7 @@ impl Doc {
     pub(crate) fn computed(&mut self, response: varde_regen::Response) {
         self.feed.apply(response);
         self.prune_picks();
+        self.follow_placement();
     }
 
     /// Starts sending requests to `lane`, the document's solver lane:
@@ -740,6 +782,7 @@ impl Doc {
         let dragging = self.opacity_preview.is_some();
         (self.dialog().is_none() && !dragging).then(|| {
             DocumentKeys::new(self.editable(), self.selected_feature, self.sketch_state())
+                .with_face_selected(self.selected_face().is_some())
                 .with_extrude(self.extrudable(), self.extrude_state().as_ref())
                 .with_revolve(self.revolve_state().as_ref())
                 .with_measure(self.measure.is_some())
@@ -838,6 +881,7 @@ impl Doc {
             edited: self.edited(),
             read_only: self.read_only.as_deref(),
             edit_error: self.edit_error.as_ref(),
+            notice: self.notice.as_deref(),
             refused_edit: self.refused_edit(),
             saving: self.saving(),
             save_error: self.banner_error(),
@@ -898,7 +942,7 @@ pub(crate) enum Change {
     ToggleVisible(BodyId),
     ToggleFeatureVisible(FeatureId),
     SetOpacity(BodyId, Opacity),
-    NewSketch(OriginPlane),
+    NewSketch(Plane),
     SetUnits(LengthUnit),
     SetTolerance(Tolerance),
 }

@@ -359,13 +359,15 @@ impl Doc {
     }
 
     /// Whether there's a sketch to extrude regions of: a visible one, or
-    /// the one selected in the Timeline. Whether it has regions is found
-    /// once the session starts.
+    /// the one selected in the Timeline, that's placed (not one on a face
+    /// that failed). Whether it has regions is found once the session
+    /// starts.
     pub(crate) fn extrudable(&self) -> bool {
         let document = self.editor.document();
         document.features().iter().any(|feature| {
             matches!(feature.kind, FeatureKind::Sketch { .. })
                 && (feature.visible || self.selected_feature == Some(feature.id))
+                && self.placement(feature.id).is_some()
         })
     }
 
@@ -373,7 +375,7 @@ impl Doc {
     pub(crate) fn extrude_state(&self) -> Option<ExtrudeState<'_>> {
         let session = self.extrude.as_ref()?;
         let document = self.editor.document();
-        let candidates = session.regions.candidates(document);
+        let candidates = session.regions.candidates(|id| self.placement(id));
         let editing = session
             .feature
             .and_then(|feature| document.feature(feature))

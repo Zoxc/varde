@@ -379,7 +379,7 @@ impl Doc {
             .map(|feature| feature.name.as_str());
         Some(RevolveState {
             editing,
-            candidates: session.regions.candidates(document),
+            candidates: session.regions.candidates(|id| self.placement(id)),
             source: session.regions.source,
             picked: &session.regions.picked,
             missing: session.regions.missing,

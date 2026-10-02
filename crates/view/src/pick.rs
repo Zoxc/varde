@@ -19,10 +19,10 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use glam::{DVec2, DVec3, Vec3};
-use varde_document::{BodyId, OriginPlane};
+use varde_document::{BodyId, FaceRef, OriginPlane, Placement};
 use varde_kernel::RenderMesh;
 use varde_kernel::mesh::FaceKey;
-use varde_regen::Picking;
+use varde_regen::{Picking, Summary};
 use varde_render::{Camera, Highlights, Vertex};
 
 use crate::projection::Projector;
@@ -257,6 +257,27 @@ impl PickIndex {
     /// The body of face `face`, if there's such a face.
     pub fn face_body(&self, face: u32) -> Option<BodyId> {
         self.picking.face_body(&self.mesh, face)
+    }
+
+    /// Where a sketch on face `face` is placed, if it's flat:
+    /// [`Placement::on_plane`] of its plane, the bits regenerating places
+    /// a sketch on it by. It may not be [`Placement::valid`] (a face too
+    /// far out), which regenerating refuses.
+    pub fn face_placement(&self, face: u32) -> Option<Placement> {
+        match self.picking.faces().get(face as usize)?.summary {
+            Summary::Plane { n, d } => Placement::on_plane(DVec3::from(n), d),
+            _ => None,
+        }
+    }
+
+    /// The reference to face `face` picked at `near`, as a sketch plane
+    /// stores it, if there's such a face.
+    pub fn face_ref(&self, face: u32, near: DVec3) -> Option<FaceRef> {
+        Some(FaceRef {
+            body: self.face_body(face)?,
+            key: self.picking.faces().get(face as usize)?.key,
+            near,
+        })
     }
 
     /// The faces either side of `edge`, if it's an edge between two

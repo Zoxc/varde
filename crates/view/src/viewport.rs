@@ -28,7 +28,7 @@ use crate::operation_panel::placed;
 use crate::pick::{ModelHighlight, Pick, PickIndex, Picked, Picks, Snapped};
 use crate::shortcut::Held;
 use crate::theme::{Palette, SketchColors};
-use crate::{Look, Message, controls};
+use crate::{Edit, Look, Message, controls};
 
 pub(crate) use extrude::Extruding;
 pub(crate) use measure::Measuring;
@@ -77,6 +77,19 @@ pub struct ModelPicking<'a> {
     /// hovered while it's within reach of one of them, so it can leave a
     /// round edge to reach its centre.
     pub snaps: bool,
+    /// Whether the plane for a new sketch is being picked: a click on a
+    /// flat face asks for a sketch on it ([`Edit::SketchOnFace`]) rather
+    /// than selecting, and a click elsewhere does nothing.
+    pub planes: bool,
+}
+
+impl ModelPicking<'_> {
+    /// Whether `target`, hovered, is what a click acts on: anything
+    /// picked, or while picking a plane only a flat face.
+    pub fn takes(&self, target: Picked) -> bool {
+        !self.planes
+            || matches!(target, Picked::Face(face) if self.index.face_placement(face).is_some())
+    }
 }
 
 /// The 3D viewport showing `mesh` and the finished `sketches` from
@@ -483,7 +496,9 @@ impl shader::Program<Message> for Program<'_> {
                     // Over what a click would select.
                     let picking = self.picking.as_ref()?;
                     cursor.position_over(bounds)?;
-                    picking.hovered.map(|_| mouse::Interaction::Pointer)
+                    (picking.hovered)
+                        .filter(|&target| picking.takes(target))
+                        .map(|_| mouse::Interaction::Pointer)
                 })
                 .unwrap_or_default(),
         }
@@ -608,6 +623,21 @@ impl Program<'_> {
                         return Some(Action::capture());
                     };
                     let pick = self.pick_point(picking, bounds, at);
+                    if picking.planes {
+                        // A flat face takes the new sketch; anything else
+                        // nothing.
+                        let face = pick.and_then(|pick| match pick.target {
+                            Picked::Face(face) if picking.takes(pick.target) => {
+                                picking.index.face_ref(face, pick.at)
+                            }
+                            _ => None,
+                        });
+                        return Some(match face {
+                            Some(face) => Action::publish(Message::Edit(Edit::SketchOnFace(face)))
+                                .and_capture(),
+                            None => Action::capture(),
+                        });
+                    }
                     let local = DVec2::new((at.x - bounds.x).into(), (at.y - bounds.y).into());
                     let double = sketch::double_click(&mut state.last_click, local);
                     let add = Held::TOGGLE.is_held(state.modifiers);

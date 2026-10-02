@@ -4,7 +4,9 @@
 use std::cell::OnceCell;
 use std::sync::Arc;
 
-use varde_document::{BodyId, Document, Editor, FeatureId, FeatureKind, Generation, Operation};
+use varde_document::{
+    BodyId, Document, Editor, FeatureId, FeatureKind, Generation, Operation, Placement,
+};
 use varde_kernel::{RenderLines, RenderMesh};
 use varde_regen::{
     Draft, Drafted, Inspect, InspectPick, Inspected, Picking, Request, Response, Transport,
@@ -48,6 +50,10 @@ pub(crate) struct MeshFeed {
     /// The bodies that have a solid, shown or not, of the same generation
     /// as `mesh`, in the order they were made.
     solid_bodies: Vec<BodyId>,
+    /// Where each sketch on a face that was placed is, of the same
+    /// generation as `mesh`, in the document's order: those that failed
+    /// aren't listed.
+    placements: Vec<(FeatureId, Placement)>,
     /// Tags the next [`Request::Export`].
     next_export: u64,
     /// The generation the document was last replaced whole by, if it was,
@@ -251,6 +257,7 @@ impl MeshFeed {
                 touched,
                 merged,
                 draft,
+                placements,
                 bodies,
                 inspected,
                 ..
@@ -275,6 +282,7 @@ impl MeshFeed {
                 self.failed_features = failed;
                 self.touched_features = touched;
                 self.merged_bodies = merged;
+                self.placements = placements;
                 if let Some(Drafted {
                     revision,
                     touched: Some(touched),
@@ -412,7 +420,6 @@ impl MeshFeed {
     }
 
     /// The generation of the mesh shown, if there is one yet.
-    #[cfg(test)]
     pub(crate) fn generation(&self) -> Option<Generation> {
         self.shown.map(|shown| shown.generation)
     }
@@ -491,6 +498,21 @@ impl MeshFeed {
             (Some(shown), Some(replaced)) => shown.generation >= replaced,
             (shown, _) => shown.is_some(),
         }
+    }
+
+    /// Where the sketch on a face `feature` is, as the model shown placed
+    /// it: with a draft, as the document with the draft applied did.
+    /// None if it wasn't placed, the model shown doesn't know it, or the
+    /// document was replaced since.
+    pub(crate) fn placement(&self, feature: FeatureId) -> Option<Placement> {
+        let placements = if self.marks() {
+            &self.placements[..]
+        } else {
+            &[]
+        };
+        (placements.iter())
+            .find(|(placed, _)| *placed == feature)
+            .map(|&(_, placement)| placement)
     }
 
     /// The sketches that don't solve, as the model shown found, unless

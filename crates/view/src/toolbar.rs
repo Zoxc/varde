@@ -284,7 +284,11 @@ fn ops<'a>(state: &DocumentState<'a>) -> Vec<Element<'a, Message>> {
     }
     let sketch = bound_op(
         Icon::Sketch,
-        "Sketch",
+        if keys.face_selected {
+            "Sketch on face"
+        } else {
+            "Sketch"
+        },
         sketch_binding(keys),
         state.picking_plane,
     );

@@ -47,15 +47,15 @@ mod welcome;
 use std::path::PathBuf;
 
 use glam::DVec2;
-use varde_document::{BodyId, FeatureId, Opacity, OriginPlane, Tolerance};
+use varde_document::{BodyId, FaceRef, FeatureId, Opacity, OriginPlane, Tolerance};
 use varde_expr::LengthUnit;
 use varde_render::{Projection, View};
 use varde_sketch::{Id, Sketch};
 
 pub use constrain::{ConstraintKind, ConstraintSet};
 pub use document::{
-    ActiveTool, DeletePrompt, DocumentState, MeshStatus, Overlay, RecoveredChanges, RefusedEdit,
-    SketchState, ValueField, ValueTarget, document,
+    ActiveTool, CURVED_FACE, DeletePrompt, DocumentState, MeshStatus, Overlay, RecoveredChanges,
+    RefusedEdit, SketchState, ValueField, ValueTarget, document,
 };
 pub use extrude::{Distance, ExtentKind, ExtrudeLook, ExtrudeState, Handle, snap_step};
 pub use icons::LOGO_SVG;
@@ -174,6 +174,13 @@ pub enum Edit {
     ToggleVisible(BodyId),
     /// Adds a sketch on `plane` and edits it.
     NewSketch(OriginPlane),
+    /// Adds a sketch on the flat face picked in the viewport while
+    /// picking the plane for a new sketch, and edits it.
+    SketchOnFace(FaceRef),
+    /// Adds a sketch on the face selected in the model, if it's the only
+    /// thing selected and it's flat, and edits it: `S`, or the rail's
+    /// Sketch on face.
+    SketchOnSelection,
     /// Removes the feature and the bodies it makes, as one undo step, at
     /// once if no other feature depends on it, or else asking first (see
     /// [`DeletePrompt`]).

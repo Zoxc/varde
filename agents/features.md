@@ -173,10 +173,30 @@ placement, skipping one that isn't listed. `regen::Request::Regenerate`
 boxes its draft (`Option<Box<Draft>>`): a feature kind is large next to
 the rest of the request.
 
-**The app, for now**: it doesn't read the answer's placements yet, so a
-sketch on a face isn't an extrude or revolve candidate (`Candidate`
-carries the `Placement`) and isn't opened for editing
-(`Doc::enter_sketch`); `SketchState` carries the `Placement`.
+**The app** reads every placement through `Doc::placement(feature)`: an
+origin plane's, or a face sketch's from the model shown (`MeshFeed`
+keeps the answer's `placements`, given out as `MeshFeed::placement`
+only while the model shown is of the document as it is, as the failed
+features are). Right after a face is picked, before any answer places
+the new sketch, the app works the placement out itself: the face is
+found in the model shown (`PickIndex::find_face`), its picking summary
+must be `Summary::Plane { n, d }`, and `Placement::on_plane(n, d)` on
+those bits (`PickIndex::face_placement`) is what regen will get, so
+nothing jumps when the answer comes; it's kept as `Doc::placed` (the
+sketch, the placement, the generation it was added at) until a model at
+least that new shows, and refused if not `Placement::valid` ("That face
+is too far out to sketch on"). The sketch session (`SketchSession::placement`,
+kept in step by `Doc::follow_placement` after every sync and answer, and
+kept as it was while `Doc::placement` knows none), so the viewport's
+hit testing, snapping, grid and anchors, Home and the camera facing it,
+reads it from there; the extrude and revolve sessions' candidates
+(`RegionPick::candidates`, given `Doc::placement`, which their regions,
+handle and axis are drawn on) leave out a sketch with none, and
+`Doc::extrudable` counts only placed sketches. A sketch on a face that
+isn't placed (failed, or before the first answer) isn't entered: the
+status bar says "Can't edit Sketch 2: <regen's reason>" (`Doc::notice`,
+until the next thing asked). It's still listed in the Timeline, red with
+its reason, and isn't drawn.
 
 ## Revolve
 

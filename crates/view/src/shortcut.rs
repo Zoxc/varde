@@ -364,6 +364,10 @@ pub struct DocumentKeys {
     /// The constraints that fit what's selected in the sketch being
     /// edited.
     pub constraints: ConstraintSet,
+    /// Whether a face and nothing else is selected in the model, outside
+    /// sketches, operations and picking a plane: a new sketch goes on it
+    /// (if it's flat).
+    pub face_selected: bool,
     /// Whether there's a sketch to extrude or revolve regions of,
     /// outside a sketch.
     pub extrudable: bool,
@@ -439,6 +443,7 @@ impl DocumentKeys {
                     .into_iter()
                     .collect()
             }),
+            face_selected: false,
             extrudable: false,
             extruding: false,
             extrude_ready: false,
@@ -449,6 +454,15 @@ impl DocumentKeys {
             undo: false,
             redo: false,
             rail: None,
+        }
+    }
+
+    /// The same keys where a face and nothing else is selected in the
+    /// model if `face_selected`.
+    pub fn with_face_selected(self, face_selected: bool) -> Self {
+        Self {
+            face_selected,
+            ..self
         }
     }
 
@@ -524,13 +538,19 @@ pub fn history_bindings(keys: DocumentKeys) -> [Binding; 3] {
     ]
 }
 
-/// Starting a new sketch, which asks for its plane first. Disabled in a
-/// sketch or an operation being set up, and unless the document can be
-/// changed.
+/// Starting a new sketch: on the face selected in the model if a face
+/// alone is, else asking for its plane first (or backing out of that).
+/// Disabled in a sketch or an operation being set up, and unless the
+/// document can be changed.
 pub fn sketch_binding(keys: DocumentKeys) -> Binding {
+    let message = if keys.face_selected {
+        Message::Edit(Edit::SketchOnSelection)
+    } else {
+        Message::Look(Look::PickPlane)
+    };
     Binding::new(
         Shortcut::SKETCH,
-        Message::Look(Look::PickPlane),
+        message,
         keys.editable && !keys.sketching && !keys.operating(),
     )
 }
@@ -1013,6 +1033,15 @@ mod tests {
             Some(Message::Look(Look::PickPlane))
         ));
         assert!(sketch(keys(false)).is_none());
+        // On the face selected, if one alone is.
+        let face = DocumentKeys {
+            face_selected: true,
+            ..keys(true)
+        };
+        assert!(matches!(
+            sketch(face),
+            Some(Message::Edit(Edit::SketchOnSelection))
+        ));
         let sketching = DocumentKeys {
             sketching: true,
             ..keys(true)

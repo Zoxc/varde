@@ -25,7 +25,7 @@
 //! or, if it's all selected already, takes it out.
 
 use glam::DVec3;
-use varde_document::BodyId;
+use varde_document::{BodyId, FaceRef};
 use varde_kernel::mesh::FaceKey;
 
 use crate::pick::{ModelHighlight, Pick, PickIndex, Picked, Picks};
@@ -160,6 +160,16 @@ impl Selection {
     /// [`Selection::model`].
     pub fn targets(&self) -> impl Iterator<Item = Picked> + '_ {
         self.found().filter_map(|entry| entry.target)
+    }
+
+    /// The face selected, as a sketch plane stores it, if a face and
+    /// nothing else is: what a new sketch is put on (`S`).
+    pub fn single_face(&self) -> Option<FaceRef> {
+        let mut items = self.items();
+        match (items.next(), items.next()) {
+            (Some(&Selected::Face { body, key, near }), None) => Some(FaceRef { body, key, near }),
+            _ => None,
+        }
     }
 
     /// The bodies selected, as bodies.

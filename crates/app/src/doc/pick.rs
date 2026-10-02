@@ -61,7 +61,12 @@ impl Doc {
     /// [`Selection::click`]. Selecting in the model lets go of the
     /// feature selected in the Timeline.
     pub(crate) fn click_model(&mut self, pick: Option<Pick>, add: bool, double: bool) {
-        if !self.picks() || pick.is_some_and(|pick| pick.model != self.feed.model()) {
+        // Picking a plane, a click on a flat face asks for a sketch on it
+        // instead (`Edit::SketchOnFace`), and one elsewhere does nothing.
+        if !self.picks()
+            || self.picking_plane
+            || pick.is_some_and(|pick| pick.model != self.feed.model())
+        {
             return;
         }
         let index = self.feed.pick_index();
@@ -140,27 +145,41 @@ impl Doc {
             self.refresh_measure_highlight();
             return;
         }
+        let hover = self.shown_hover();
         let key = (
             self.feed.model(),
-            self.pick.hover.map(|pick| pick.target),
+            hover.map(|pick| pick.target),
             self.pick.selection.clone(),
         );
         if self.pick.built.as_ref() == Some(&key) {
             return;
         }
-        let highlight = if self.pick.hover.is_none() && self.pick.selection.is_empty() {
+        let highlight = if hover.is_none() && self.pick.selection.is_empty() {
             ModelHighlight::default()
         } else {
             let index = self.feed.pick_index();
-            self.pick.selection.highlight(index, self.pick.hover)
+            self.pick.selection.highlight(index, hover)
         };
         self.pick.highlight = Arc::new(highlight);
         self.pick.built = Some(key);
     }
 
+    /// What's hovered as it's highlighted: while picking the plane for a
+    /// new sketch, only a flat face, which a click puts the sketch on (the
+    /// status bar says why a curved one isn't).
+    fn shown_hover(&self) -> Option<Pick> {
+        let index = || self.feed.pick_index();
+        (self.pick.hover).filter(|pick| match pick.target {
+            _ if !self.picking_plane => true,
+            Picked::Face(face) => index().face_placement(face).is_some(),
+            _ => false,
+        })
+    }
+
     /// Picking for the viewport, if the cursor picks the model: faces
     /// and edges and the snap points of what it's over while measuring,
-    /// else what the selection's mode takes.
+    /// only faces while picking the plane for a new sketch, else what the
+    /// selection's mode takes.
     pub(crate) fn model_picking(&self) -> Option<ModelPicking<'_>> {
         let measuring = self.measure.is_some();
         self.picks().then(|| ModelPicking {
@@ -169,10 +188,13 @@ impl Doc {
             hovered_snap: self.pick.hover().and_then(|pick| pick.snap),
             picks: if measuring {
                 Picks::All
+            } else if self.picking_plane {
+                Picks::Faces
             } else {
                 self.pick.selection.mode().picks()
             },
             snaps: measuring,
+            planes: self.picking_plane && !measuring,
         })
     }
 

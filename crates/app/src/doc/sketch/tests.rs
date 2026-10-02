@@ -13,6 +13,8 @@ use super::*;
 use crate::doc::{Origin, Target};
 use crate::tests::{SolveLane, answer, key_in, press_in, with_sketch};
 
+mod faces;
+
 /// A pixel's size in sketch units in the clicks here.
 pub(super) const PIXEL: f64 = 0.1;
 
@@ -1017,11 +1019,12 @@ fn a_sketch_too_complex_for_profiles_says_so() {
     ));
 }
 
-/// A sketch on a face isn't placed until regenerating places it, which
-/// the app doesn't read yet: it isn't opened for editing.
+/// A sketch put on a face by a command isn't placed until regenerating
+/// places it: it isn't opened for editing until then, and the status bar
+/// says why.
 #[test]
-fn a_sketch_on_a_face_is_not_edited_yet() {
-    let (mut doc, _requests) = crate::tests::example();
+fn a_sketch_on_a_face_is_edited_once_placed() {
+    let (mut doc, requests) = crate::tests::example();
     let xy = varde_document::Plane::Origin(OriginPlane::XY);
     doc.apply(doc.editor.document().add_sketch(xy));
     let document = doc.editor.document();
@@ -1050,6 +1053,17 @@ fn a_sketch_on_a_face_is_not_edited_yet() {
     doc.look(Look::EditFeature(feature));
     assert!(doc.sketch.is_none());
     assert!(doc.sketch_state().is_none());
+    assert_eq!(
+        doc.notice.as_deref(),
+        Some("Can't edit Sketch 2: it isn't placed yet")
+    );
+    doc.sync();
+    answer(&mut doc, &requests);
+    doc.look(Look::EditFeature(feature));
+    assert_eq!(doc.notice, None);
+    let placement = doc.sketch_state().unwrap().placement;
+    assert_eq!(placement.origin, glam::DVec3::new(0.0, 0.0, 10.0));
+    doc.look(Look::FinishSketch);
 
     doc.apply(Command::SetSketchPlane {
         feature,
