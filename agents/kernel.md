@@ -5621,18 +5621,19 @@ operation })`:
 
 Commands:
 
-- `AddExtrude { name, extrude }` (`Document::add_extrude` names it
-  "Extrude N") adds it and hides its sketch; a `NewBody` extrude also adds
-  "Body N" with the id after the feature's, replacing whatever id the
-  command held (`BodyId::NEW` stands for it, an id no body has). One undo
-  step.
-- `SetExtrude { feature, extrude }` replaces it whole, the caller passing
+- `AddFeature { name, kind }` (`Document::add_feature` names it
+  "Extrude N"; the commands are shared by every kind, see
+  `agents/features.md`) adds it and hides its sketch; a `NewBody`
+  extrude also adds "Body N" with the id after the feature's, replacing
+  whatever id the command held (`BodyId::NEW` stands for it, an id no
+  body has). One undo step.
+- `SetFeature { feature, kind }` replaces it whole, the caller passing
   regions freshly referenced from the sketch as it is. A `NewBody` that
   stays one keeps its body; one that stops removes the body and drops it
   from other features' excluded lists; one that starts adds a body.
 - `RemoveFeature` and `RemoveBody` apply `Document::removal(Removable)`:
   the feature (a body's maker, for a body) and every later feature using
-  one removed (`FeatureKind::uses`: an extrude's sketch), in timeline
+  one removed (`FeatureKind::uses`, a list: an extrude's sketch), in timeline
   order, and the bodies they make; the removed bodies are dropped from
   the rest's excluded lists. One undo step. The app asks `removal` before
   sending the command to show what goes.
@@ -5975,7 +5976,7 @@ thread's closure, or the worker's `serve`.
 
 **Drafts.** `Request::Regenerate` has `draft: Option<Draft { revision,
 feature, extrude }>`: an extrude being set up (`feature: None`, applied as
-`AddExtrude`, the body `BodyId::NEW`) or edited (`SetExtrude`), applied to
+`AddFeature`, the body `BodyId::NEW`) or edited (`SetFeature`), applied to
 a copy of the document through an `Editor`, so its checks apply. The
 answer carries `Drafted { revision, error, touched }`; a draft the
 document refuses, or whose feature fails, is answered with the committed
@@ -6099,8 +6100,8 @@ the source sketch changes under it (undo), the picked regions are found
 again by their references (`Profiles::resolve`); while its regions can't
 be found none are picked, and the references wait for them. An edited extrude's
 references that aren't found are counted (`missing`, shown in the panel)
-and dropped: `SetExtrude` gets fresh references of what's picked. Editing
-never changes the extrude's sketch, so `SetExtrude` doesn't hide one.
+and dropped: `SetFeature` gets fresh references of what's picked. Editing
+never changes the extrude's sketch, so `SetFeature` doesn't hide one.
 A replacement of the whole document (restoring recovered changes, or
 undoing or redoing that: `Editor::lineage` changes from the one `Doc`
 saw at its last sync) ends the session and its draft, as its ids
@@ -6145,8 +6146,8 @@ there's neither a refusal nor a draft error to show. OK, the screen's
 `extrude_ready`; `commit_extrude` checks `extrude_ready` itself, since a
 field's `Enter` sends `CommitExtrude` whatever the state. A draft whose
 feature fails can still be committed; it shows red in the Timeline. It
-applies `AddExtrude` (the document's name "Extrude N", adding the body
-and hiding the sketch) or `SetExtrude`, one undo step, selects the new
+applies `AddFeature` (the document's name "Extrude N", adding the body
+and hiding the sketch) or `SetFeature`, one undo step, selects the new
 extrude and ends the session; refused by the document (left to the
 cross-references, which the session keeps valid, so no test reaches
 it), the session stays and the edit error shows. `Esc` or Cancel drops
@@ -6467,7 +6468,7 @@ parameter, or a split outside the patch bounds),
   distances are at least `MIN_LENGTH` (1 µm), as dimensions are, rather
   than only above zero.
 - **`BodyId::NEW`** stands for the body an extrude not yet added makes;
-  `AddExtrude` and `SetExtrude` give the body its id whatever the
+  `AddFeature` and `SetFeature` give the body its id whatever the
   command held, so callers never guess ids. Bodies are named by the
   command ("Body N").
 - **`Document::removal` takes a `Removable`** (`Feature` or `Body`) and
@@ -6617,7 +6618,7 @@ parameter, or a split outside the patch bounds),
   profiles on each change was more than the button needs. A session
   without regions to pick says so in its panel.
 - **Editing an extrude keeps its sketch**: the session only picks among
-  that sketch's regions, so `SetExtrude` never moves an extrude to
+  that sketch's regions, so `SetFeature` never moves an extrude to
   another sketch, and nothing needs hiding. References the edit can't
   find again are dropped on OK, not kept failing.
 - **Booleans on flat patches first, with exact predicates**: the

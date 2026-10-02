@@ -218,7 +218,9 @@ pub(crate) fn two_plates() -> (Editor, [varde_document::BodyId; 2]) {
         extent: varde_document::Extent::OneSide(length(editor.document(), "3")),
         ..plate.clone()
     };
-    editor.apply(editor.document().add_extrude(below)).unwrap();
+    editor
+        .apply(editor.document().add_feature(below.into()))
+        .unwrap();
     let below = editor.document().bodies()[1].id;
     (editor, [top, below])
 }
@@ -286,7 +288,7 @@ pub(crate) fn add_disc(
         operation,
     };
     editor
-        .apply(editor.document().add_extrude(extrude))
+        .apply(editor.document().add_feature(extrude.into()))
         .unwrap();
     editor.document().features().last().unwrap().id
 }
@@ -1046,7 +1048,7 @@ fn a_save_waiting_for_an_edit_and_a_delete_behind_it_saves_both() {
     let doc = document(&varde);
     let points = match &doc.editor.document().feature(feature).unwrap().kind {
         varde_document::FeatureKind::Sketch { sketch, .. } => sketch.points.len(),
-        varde_document::FeatureKind::Extrude(_) => panic!("a sketch"),
+        _ => panic!("a sketch"),
     };
     assert_eq!(points, 1);
 }

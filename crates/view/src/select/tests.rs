@@ -68,7 +68,7 @@ fn slot() -> PickIndex {
         operation: Operation::NewBody(BodyId::NEW),
     };
     editor
-        .apply(editor.document().add_extrude(extrude))
+        .apply(editor.document().add_feature(extrude.into()))
         .unwrap();
     index_of(editor.document(), 3)
 }
@@ -290,9 +290,9 @@ fn selection_is_found_again_in_a_new_model_or_dropped() {
         ..extrude
     };
     editor
-        .apply(Command::SetExtrude {
+        .apply(Command::SetFeature {
             feature,
-            extrude: Box::new(extrude),
+            kind: Box::new(extrude.into()),
         })
         .unwrap();
     let coarse = index_of(editor.document(), 8);

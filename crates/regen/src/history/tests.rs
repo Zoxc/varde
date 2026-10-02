@@ -17,7 +17,7 @@ use super::*;
 pub(crate) fn example_extrude(document: &Document) -> Extrude {
     match &document.features()[1].kind {
         FeatureKind::Extrude(extrude) => extrude.clone(),
-        FeatureKind::Sketch { .. } => panic!("the example's second feature is its extrude"),
+        _ => panic!("the example's second feature is its extrude"),
     }
 }
 
@@ -37,7 +37,7 @@ pub(crate) fn add_failing(editor: &mut Editor) -> FeatureId {
         ..example_extrude(editor.document())
     };
     editor
-        .apply(editor.document().add_extrude(extrude))
+        .apply(editor.document().add_feature(extrude.into()))
         .unwrap();
     editor.document().features().last().unwrap().id
 }
@@ -85,7 +85,7 @@ pub(crate) fn add_extrude_on(
         operation,
     };
     editor
-        .apply(editor.document().add_extrude(extrude))
+        .apply(editor.document().add_feature(extrude.into()))
         .unwrap();
     editor.document().features().last().unwrap().id
 }
@@ -266,9 +266,9 @@ fn several_regions_are_merged() {
         ..example_extrude(editor.document())
     };
     editor
-        .apply(Command::SetExtrude {
+        .apply(Command::SetFeature {
             feature,
-            extrude: Box::new(extrude),
+            kind: Box::new(extrude.into()),
         })
         .unwrap();
     let evaluation = evaluated(editor.document());
@@ -316,7 +316,7 @@ pub(crate) fn plate_below(editor: &mut Editor) -> BodyId {
         ..example_extrude(editor.document())
     };
     editor
-        .apply(editor.document().add_extrude(extrude))
+        .apply(editor.document().add_feature(extrude.into()))
         .unwrap();
     editor.document().bodies().last().unwrap().id
 }
@@ -373,7 +373,7 @@ fn the_plate_joined_again_taller_is_one_body() {
             ..example_extrude(d)
         };
         editor
-            .apply(editor.document().add_extrude(extrude))
+            .apply(editor.document().add_feature(extrude.into()))
             .unwrap();
         let evaluation = evaluated(editor.document());
         let solid = only_body(&evaluation);
@@ -443,9 +443,9 @@ fn a_tall_plate_is_drilled_through_all() {
             ..example_extrude(editor.document())
         };
         editor
-            .apply(Command::SetExtrude {
+            .apply(Command::SetFeature {
                 feature,
-                extrude: Box::new(extrude),
+                kind: Box::new(extrude.into()),
             })
             .unwrap();
         add_extrude(
@@ -969,9 +969,9 @@ fn editing_the_plate_regenerates_the_cut() {
         ..example_extrude(editor.document())
     };
     editor
-        .apply(Command::SetExtrude {
+        .apply(Command::SetFeature {
             feature,
-            extrude: Box::new(extrude),
+            kind: Box::new(extrude.into()),
         })
         .unwrap();
     cache.begin();
@@ -1054,9 +1054,9 @@ fn names_resolve_alike_after_dimensions_and_the_tolerance_change() {
         ..example_extrude(editor.document())
     };
     editor
-        .apply(Command::SetExtrude {
+        .apply(Command::SetFeature {
             feature,
-            extrude: Box::new(extrude),
+            kind: Box::new(extrude.into()),
         })
         .unwrap();
     let (thicker, _) = names(editor.document());
@@ -1121,9 +1121,9 @@ fn an_unchanged_feature_is_taken_from_the_cache() {
             ..example_extrude(editor.document())
         };
         editor
-            .apply(Command::SetExtrude {
+            .apply(Command::SetFeature {
                 feature,
-                extrude: Box::new(extrude),
+                kind: Box::new(extrude.into()),
             })
             .unwrap();
     };
@@ -1223,7 +1223,7 @@ fn a_spline_is_extruded_within_the_tolerance() {
         operation: Operation::NewBody(BodyId::NEW),
     };
     editor
-        .apply(editor.document().add_extrude(extrude))
+        .apply(editor.document().add_feature(extrude.into()))
         .unwrap();
     let evaluation = evaluated(editor.document());
     assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
@@ -1263,9 +1263,9 @@ pub(crate) fn set_extrude(
     let mut extrude = extrude.clone();
     change(&mut extrude);
     editor
-        .apply(Command::SetExtrude {
+        .apply(Command::SetFeature {
             feature,
-            extrude: Box::new(extrude),
+            kind: Box::new(extrude.into()),
         })
         .unwrap();
 }
@@ -1512,3 +1512,33 @@ fn a_join_tangent_to_a_second_body_fails_until_it_is_unticked() {
 }
 
 mod merging;
+
+/// Revolves aren't made yet: one fails, making nothing, and the bodies
+/// before it and after it are as they were.
+#[test]
+fn a_revolve_fails_until_revolves_are_made() {
+    let mut editor = Editor::new(Document::example());
+    let extrude = example_extrude(editor.document());
+    let revolve = varde_document::Revolve {
+        sketch: extrude.sketch,
+        regions: extrude.regions.clone(),
+        axis: varde_document::AxisLine::SketchY,
+        extent: varde_document::Turn::Full,
+        flip: false,
+        operation: Operation::NewBody(BodyId::NEW),
+    };
+    editor
+        .apply(editor.document().add_feature(revolve.into()))
+        .unwrap();
+    let revolve = editor.document().features().last().unwrap().id;
+    let below = plate_below(&mut editor);
+    let evaluation = evaluate(editor.document(), &mut Cache::default());
+    assert_eq!(
+        evaluation.failed,
+        [(revolve, "revolves can't be made yet".to_owned())]
+    );
+    let bodies = editor.document().bodies();
+    let made: Vec<BodyId> = evaluation.bodies.iter().map(|made| made.body).collect();
+    assert_eq!(made, [bodies[0].id, below]);
+    assert_near(evaluation.bodies[0].solid.volume(), plate(8.0, 10.0));
+}

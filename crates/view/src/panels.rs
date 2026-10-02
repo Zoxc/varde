@@ -176,7 +176,8 @@ fn timeline<'a>(
 pub(crate) fn feature_icon(feature: &Feature) -> Icon {
     match feature.kind {
         FeatureKind::Sketch { .. } => Icon::Sketch,
-        FeatureKind::Extrude(_) => Icon::Extrude,
+        // Its own icon comes with the revolve tool.
+        FeatureKind::Extrude(_) | FeatureKind::Revolve(_) => Icon::Extrude,
     }
 }
 
@@ -195,6 +196,7 @@ fn feature_row<'a>(
         FeatureKind::Sketch { .. } if unsolved => "Doesn't solve".into(),
         FeatureKind::Sketch { plane, .. } => plane.name().into(),
         FeatureKind::Extrude(extrude) => extent_note(&extrude.extent, units).into(),
+        FeatureKind::Revolve(revolve) => turn_note(&revolve.extent).into(),
     };
     let row = SelectableRow {
         icon: feature_icon(feature),
@@ -246,6 +248,7 @@ fn edit_label(feature: &Feature) -> &'static str {
     match feature.kind {
         FeatureKind::Sketch { .. } => "Edit sketch",
         FeatureKind::Extrude(_) => "Edit extrude",
+        FeatureKind::Revolve(_) => "Edit revolve",
     }
 }
 
@@ -266,6 +269,21 @@ pub(crate) fn extent_note(extent: &Extent, units: LengthUnit) -> String {
         Extent::Symmetric(d) => format!("{} symmetric", length(d)),
         Extent::TwoSides(a, b) => format!("{} + {}", length(a), length(b)),
         Extent::ThroughAll => "Through all".to_owned(),
+    }
+}
+
+/// How far a revolve turns, for its Timeline row: "Full turn", "90°",
+/// "90° symmetric", "90° + 45°".
+pub(crate) fn turn_note(turn: &varde_document::Turn) -> String {
+    use varde_document::Turn;
+    let angle = |value: &varde_expr::Value| {
+        varde_expr::format(value.value, Some(varde_expr::AngleUnit::Deg.into()))
+    };
+    match turn {
+        Turn::Full => "Full turn".to_owned(),
+        Turn::OneSide(a) => angle(a),
+        Turn::Symmetric(a) => format!("{} symmetric", angle(a)),
+        Turn::TwoSides(a, b) => format!("{} + {}", angle(a), angle(b)),
     }
 }
 
@@ -932,7 +950,7 @@ mod tests {
         let FeatureKind::Extrude(extrude) = &editor.document().features()[1].kind else {
             panic!("the example's second feature is its extrude");
         };
-        let command = editor.document().add_extrude(extrude.clone());
+        let command = editor.document().add_feature(extrude.clone().into());
         editor.apply(command).unwrap();
         let [top, below] = [0, 1].map(|k| editor.document().bodies()[k].id);
         let merged = [(below, top)];

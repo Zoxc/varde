@@ -434,7 +434,7 @@ fn a_cut_of_many(more: usize) -> (Doc, Requests) {
     for _ in 0..more {
         let mut extrude = plate.clone();
         extrude.operation = Operation::NewBody(varde_document::BodyId::NEW);
-        doc.apply(doc.editor.document().add_extrude(extrude));
+        doc.apply(doc.editor.document().add_feature(extrude.into()));
     }
     doc.sync();
     answer(&mut doc, &requests);

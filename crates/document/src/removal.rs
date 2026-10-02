@@ -1,6 +1,6 @@
 //! What removing a feature or a body takes with it: [`Document::removal`].
 
-use crate::{BodyId, Document, FeatureId};
+use crate::{BodyId, Document, FeatureId, Operation};
 
 /// A feature or a body to remove, see [`Document::removal`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,8 +51,11 @@ impl Document {
         // all, and the list stays sorted by id for searching.
         let mut features = vec![feature];
         for later in &self.features[first + 1..] {
-            if let Some(used) = later.kind.uses()
-                && features.binary_search(&used).is_ok()
+            if later
+                .kind
+                .uses()
+                .iter()
+                .any(|used| features.binary_search(used).is_ok())
             {
                 features.push(later.id);
             }
@@ -79,8 +82,10 @@ impl Document {
     /// Drops `bodies`, sorted, from every feature's excluded list.
     pub(crate) fn drop_excluded(&mut self, bodies: &[BodyId]) {
         for feature in &mut self.features {
-            if let crate::FeatureKind::Extrude(extrude) = &mut feature.kind
-                && let Some(excluded) = extrude.operation.excluded_mut()
+            if let Some(excluded) = feature
+                .kind
+                .operation_mut()
+                .and_then(Operation::excluded_mut)
             {
                 excluded.retain(|body| bodies.binary_search(body).is_err());
             }

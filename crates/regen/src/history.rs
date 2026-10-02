@@ -174,6 +174,13 @@ pub(crate) fn evaluate_within(
                     evaluation.failed.push((feature.id, error));
                 }
             }
+            FeatureKind::Revolve(_) => {
+                // Not evaluated yet: it fails, making nothing and leaving
+                // the bodies before it as they were.
+                evaluation
+                    .failed
+                    .push((feature.id, "revolves can't be made yet".to_owned()));
+            }
         }
     }
     // In the document's order (bodies are kept in increasing id order).

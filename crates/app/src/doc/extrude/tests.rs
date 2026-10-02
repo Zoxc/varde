@@ -79,7 +79,7 @@ fn extrudes(doc: &Doc) -> Vec<&varde_document::Extrude> {
         .iter()
         .filter_map(|feature| match &feature.kind {
             FeatureKind::Extrude(extrude) => Some(extrude),
-            FeatureKind::Sketch { .. } => None,
+            _ => None,
         })
         .collect()
 }
@@ -577,13 +577,18 @@ fn add_cut(doc: &mut Doc, min: (f64, f64), max: (f64, f64)) -> FeatureId {
         feature: sketch,
         sketch: Box::new(drawn),
     });
-    doc.apply(doc.editor.document().add_extrude(varde_document::Extrude {
-        sketch,
-        regions: vec![region],
-        extent: varde_document::Extent::ThroughAll,
-        flip: false,
-        operation: Operation::Cut(varde_document::Targets::default()),
-    }));
+    doc.apply(
+        doc.editor.document().add_feature(
+            varde_document::Extrude {
+                sketch,
+                regions: vec![region],
+                extent: varde_document::Extent::ThroughAll,
+                flip: false,
+                operation: Operation::Cut(varde_document::Targets::default()),
+            }
+            .into(),
+        ),
+    );
     doc.editor.document().features().last().unwrap().id
 }
 
@@ -801,9 +806,9 @@ fn a_failing_extrude_is_marked_in_the_timeline() {
     // nothing.
     let mut extrude = extrudes(&doc)[0].clone();
     extrude.operation = Operation::Join(Default::default());
-    doc.apply(Command::SetExtrude {
+    doc.apply(Command::SetFeature {
         feature,
-        extrude: Box::new(extrude),
+        kind: Box::new(extrude.into()),
     });
     doc.sync();
     answer(&mut doc, &requests);
@@ -1888,7 +1893,7 @@ fn point_at(doc: &mut Doc, x: f64, y: f64) {
 fn points(doc: &Doc, sketch: FeatureId) -> Option<usize> {
     match &doc.editor.document().feature(sketch)?.kind {
         FeatureKind::Sketch { sketch, .. } => Some(sketch.points.len()),
-        FeatureKind::Extrude(_) => None,
+        _ => None,
     }
 }
 
@@ -2240,7 +2245,7 @@ fn a_cut_listing(more: usize) -> (Doc, FeatureId) {
     for _ in 0..more {
         let mut extrude = plate.clone();
         extrude.operation = Operation::NewBody(varde_document::BodyId::NEW);
-        doc.apply(doc.editor.document().add_extrude(extrude));
+        doc.apply(doc.editor.document().add_feature(extrude.into()));
     }
     doc.sync();
     doc.look(Look::SelectFeature(sketch));

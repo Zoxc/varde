@@ -408,9 +408,9 @@ fn a_cut_that_took_the_body_out_isnt_warned_of() {
     extrude.operation = varde_document::Operation::Cut(varde_document::Targets {
         excluded: vec![body],
     });
-    doc.apply(Command::SetExtrude {
+    doc.apply(Command::SetFeature {
         feature: cut,
-        extrude,
+        kind: Box::new((*extrude).into()),
     });
     doc.sync();
     crate::tests::answer(&mut doc, &requests);

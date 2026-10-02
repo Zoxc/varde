@@ -356,7 +356,7 @@ pub(crate) fn plate_of(scale: f64, offset: f64, holes: u32) -> PickIndex {
         operation: Operation::NewBody(varde_document::BodyId::NEW),
     };
     editor
-        .apply(editor.document().add_extrude(extrude))
+        .apply(editor.document().add_feature(extrude.into()))
         .unwrap();
     let document = editor.document().clone();
     let mut cache = Cache::default();

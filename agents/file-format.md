@@ -8,15 +8,21 @@ guarded by file locks, and a save fails with a conflict if the file changed
 since it was opened.
 
 A document (`crates/document/src/lib.rs`) holds its bodies (a name,
-whether it's visible and the extrude that makes it: no geometry, which
-regenerating the feature history gives), its features (a name, whether
-it's visible, and a kind: a sketch, or an extrude,
+whether it's visible and the extrude or revolve that makes it: no
+geometry, which regenerating the feature history gives), its features (a
+name, whether it's visible, and a kind, stored by its place in
+`FeatureKind`, new kinds appended: a sketch, an extrude,
 `crates/document/src/extrude.rs`: the sketch feature it uses, its
 regions as `varde_sketch::RegionRef`s (curve ids of the outer loop and of
 each hole, and a point inside), the extent (one side, symmetric, two
 sides, each distance a typed expression and its value, or through all),
 flip, and the operation: a new body, by id, or join, cut or intersect
-with the bodies taken out of its targets. A sketch is an origin plane,
+with the bodies taken out of its targets; or a revolve,
+`crates/document/src/revolve.rs`: the sketch, regions, flip and
+operation as an extrude's, the axis (a line of the sketch by curve id,
+or the sketch's x or y axis) and the turn (full, one side, symmetric or
+two sides, each angle a typed expression and its value in radians). A
+sketch is an origin plane,
 XY, XZ or YZ, and the `varde_sketch::Sketch`, whose points, lines, circles, arcs
 (a fillet an arc and a chamfer a line with a `Corner`: the two lines and
 the point they meet at), splines (through fit points or by control
@@ -32,12 +38,15 @@ typed and its value), the design's units (a
 bodies and features take. A document read from a file is checked
 (`Document::check`, which runs `Sketch::check` on each sketch): body and
 feature ids increasing and below the next id, every body made by an
-extrude the document holds whose operation makes it as its new body,
-and every such body there, an extrude's sketch a sketch feature before
-it, 1 to 256 regions, each within the coordinate limit with its id
-lists sorted, distances their expressions give in the document's units
-from 1 µm to the coordinate limit (two sides together too), through all
-only for a cut, excluded bodies sorted and made by earlier features,
+extrude or revolve the document holds whose operation makes it as its
+new body, and every such body there, an extrude's or revolve's sketch a
+sketch feature before it, 1 to 256 regions, each within the coordinate
+limit with its id lists sorted, distances their expressions give in the
+document's units from 1 µm to the coordinate limit (two sides together
+too), through all only for a cut, revolve angles their expressions give
+above zero and at most a turn (two sides together too; a revolve's axis
+line isn't required to exist, as a region isn't: regeneration reports
+it), excluded bodies sorted and made by earlier features,
 the tolerance within its range, names, coordinates, radii
 and labels within bounds, a sketch's item counts bounded, every reference
 naming an item of the right kind, every fillet and chamfer on a corner

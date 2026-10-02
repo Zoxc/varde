@@ -148,7 +148,9 @@ fn removing_a_sketch_removes_the_extrudes_using_it_and_their_bodies() {
     let cut = plate(Operation::Cut(Targets {
         excluded: vec![first_body, body],
     }));
-    editor.apply(editor.document().add_extrude(cut)).unwrap();
+    editor
+        .apply(editor.document().add_feature(cut.into()))
+        .unwrap();
     let document = editor.document().clone();
     let [sketch, first, _, third] = [0, 1, 2, 3].map(|index| document.features[index].id);
     // A sketch the extrudes don't use.
@@ -343,7 +345,7 @@ fn sketch_of(editor: &Editor, id: FeatureId) -> &Sketch {
         .kind
     {
         FeatureKind::Sketch { sketch, .. } => sketch,
-        FeatureKind::Extrude(_) => panic!("feature {} is an extrude", id.0),
+        _ => panic!("feature {} isn't a sketch", id.0),
     }
 }
 

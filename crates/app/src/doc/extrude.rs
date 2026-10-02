@@ -609,11 +609,11 @@ impl Doc {
         };
         let feature = session.feature;
         let command = match feature {
-            Some(feature) => Command::SetExtrude {
+            Some(feature) => Command::SetFeature {
                 feature,
-                extrude: Box::new(extrude),
+                kind: Box::new(extrude.into()),
             },
-            None => self.editor.document().add_extrude(extrude),
+            None => self.editor.document().add_feature(extrude.into()),
         };
         let before = self.editor.revision();
         self.apply(command);

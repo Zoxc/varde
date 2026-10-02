@@ -121,7 +121,9 @@ fn adding_an_extrude_hides_its_sketch_and_adds_its_body_in_one_step() {
 
     // A cut adds no body.
     let cut = plate(Operation::Cut(Targets::default()));
-    editor.apply(editor.document().add_extrude(cut)).unwrap();
+    editor
+        .apply(editor.document().add_feature(cut.into()))
+        .unwrap();
     assert_eq!(editor.document().bodies, before.bodies);
     assert_eq!(editor.document().features.len(), 3);
 
@@ -134,7 +136,7 @@ fn adding_an_extrude_hides_its_sketch_and_adds_its_body_in_one_step() {
         .unwrap();
     let extrude = plate(Operation::NewBody(BodyId::NEW));
     assert_eq!(
-        editor.apply(editor.document().add_extrude(extrude)),
+        editor.apply(editor.document().add_feature(extrude.into())),
         Err(EditError::OutOfIds)
     );
     assert_eq!(*editor.document(), full);
@@ -237,7 +239,7 @@ fn only_a_cut_goes_through_all() {
         ..plate(Operation::Cut(Targets::default()))
     };
     editor
-        .apply(editor.document().add_extrude(through.clone()))
+        .apply(editor.document().add_feature(through.clone().into()))
         .unwrap();
     for operation in [
         Operation::Join(Targets::default()),
@@ -249,7 +251,7 @@ fn only_a_cut_goes_through_all() {
             ..through.clone()
         };
         assert!(matches!(
-            editor.apply(editor.document().add_extrude(extrude)),
+            editor.apply(editor.document().add_feature(extrude.into())),
             Err(EditError::Invalid(crate::CheckError::Extrude(
                 _,
                 ExtrudeError::ThroughAll
@@ -267,7 +269,9 @@ fn excluded_bodies_are_sorted_and_made_earlier() {
     let cut = plate(Operation::Join(Targets {
         excluded: vec![first, second],
     }));
-    editor.apply(editor.document().add_extrude(cut)).unwrap();
+    editor
+        .apply(editor.document().add_feature(cut.into()))
+        .unwrap();
     let document = editor.document().clone();
     let join = document.features[3].id;
     let excluding = |excluded: Vec<BodyId>| {
@@ -303,19 +307,16 @@ fn excluded_bodies_are_sorted_and_made_earlier() {
     };
     let [first_extrude, second_extrude] = [1, 2].map(|index| document.features[index].id);
     assert!(matches!(
-        editor.apply(Command::SetExtrude {
-            feature: first_extrude,
-            extrude: cut(vec![second]),
-        }),
+        editor.apply(Command::SetFeature { feature: first_extrude, kind: Box::new((*cut(vec![second])).into()) }),
         Err(EditError::Invalid(crate::CheckError::Extrude(
             feature,
             ExtrudeError::Excluded(body)
         ))) if feature == first_extrude && body == second
     ));
     editor
-        .apply(Command::SetExtrude {
+        .apply(Command::SetFeature {
             feature: second_extrude,
-            extrude: cut(vec![first]),
+            kind: Box::new((*cut(vec![first])).into()),
         })
         .unwrap();
 }
@@ -329,7 +330,9 @@ fn set_extrude_keeps_adds_or_removes_its_body() {
     let join = plate(Operation::Join(Targets {
         excluded: vec![first_body, body],
     }));
-    editor.apply(editor.document().add_extrude(join)).unwrap();
+    editor
+        .apply(editor.document().add_feature(join.into()))
+        .unwrap();
     let join = editor.document().features[3].id;
     let start = editor.document().clone();
 
@@ -339,9 +342,9 @@ fn set_extrude_keeps_adds_or_removes_its_body() {
         ..plate(Operation::NewBody(BodyId::NEW))
     };
     editor
-        .apply(Command::SetExtrude {
+        .apply(Command::SetFeature {
             feature: second,
-            extrude: Box::new(deeper.clone()),
+            kind: Box::new(deeper.clone().into()),
         })
         .unwrap();
     let document = editor.document();
@@ -354,9 +357,9 @@ fn set_extrude_keeps_adds_or_removes_its_body() {
     // The same again changes nothing.
     let revision = editor.revision();
     editor
-        .apply(Command::SetExtrude {
+        .apply(Command::SetFeature {
             feature: second,
-            extrude: Box::new(deeper),
+            kind: Box::new(deeper.into()),
         })
         .unwrap();
     assert_eq!(editor.revision(), revision);
@@ -364,9 +367,9 @@ fn set_extrude_keeps_adds_or_removes_its_body() {
     // Made a cut, it loses its body, and the join no longer excludes it.
     let cut = plate(Operation::Cut(Targets::default()));
     editor
-        .apply(Command::SetExtrude {
+        .apply(Command::SetFeature {
             feature: second,
-            extrude: Box::new(cut),
+            kind: Box::new(cut.into()),
         })
         .unwrap();
     let document = editor.document();
@@ -379,9 +382,9 @@ fn set_extrude_keeps_adds_or_removes_its_body() {
     // Made a new body again, it gets a new one.
     let next = BodyId(document.next_id);
     editor
-        .apply(Command::SetExtrude {
+        .apply(Command::SetFeature {
             feature: second,
-            extrude: Box::new(plate(Operation::NewBody(first_body))),
+            kind: Box::new(plate(Operation::NewBody(first_body)).into()),
         })
         .unwrap();
     let document = editor.document();
@@ -398,17 +401,24 @@ fn set_extrude_keeps_adds_or_removes_its_body() {
     }
     assert_eq!(*editor.document(), start);
 
-    // A sketch isn't an extrude to set, nor is a missing feature.
+    // A sketch isn't set this way, and a missing feature isn't set.
+    let cut = || Box::new(plate(Operation::Cut(Targets::default())).into());
     let sketch = start.features[0].id;
-    for feature in [sketch, FeatureId(start.next_id)] {
-        editor
-            .apply(Command::SetExtrude {
-                feature,
-                extrude: Box::new(plate(Operation::Cut(Targets::default()))),
-            })
-            .unwrap();
-        assert_eq!(*editor.document(), start);
-    }
+    assert_eq!(
+        editor.apply(Command::SetFeature {
+            feature: sketch,
+            kind: cut()
+        }),
+        Err(EditError::SketchKind)
+    );
+    let missing = FeatureId(start.next_id);
+    editor
+        .apply(Command::SetFeature {
+            feature: missing,
+            kind: cut(),
+        })
+        .unwrap();
+    assert_eq!(*editor.document(), start);
 }
 
 #[test]
@@ -420,9 +430,9 @@ fn set_units_pins_the_distances() {
         ..plate(Operation::NewBody(BodyId::NEW))
     };
     editor
-        .apply(Command::SetExtrude {
+        .apply(Command::SetFeature {
             feature: id,
-            extrude: Box::new(two),
+            kind: Box::new(two.into()),
         })
         .unwrap();
     editor.apply(Command::SetUnits(LengthUnit::In)).unwrap();

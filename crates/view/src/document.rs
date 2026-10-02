@@ -1331,6 +1331,10 @@ fn feature_info(feature: &Feature, units: LengthUnit) -> String {
             let operation = OperationKind::of(&extrude.operation).label();
             format!("{extent} · {operation}")
         }
+        FeatureKind::Revolve(revolve) => {
+            let operation = OperationKind::of(&revolve.operation).label();
+            format!("{} · {operation}", panels::turn_note(&revolve.extent))
+        }
     }
 }
 

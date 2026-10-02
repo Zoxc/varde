@@ -2,9 +2,7 @@
 //! or when a join, cut or intersect that stays worked only on bodies that
 //! go: see [`Doc::remove`].
 
-use varde_document::{
-    BodyId, Command, FeatureId, FeatureKind, Generation, Operation, Removable, Removal,
-};
+use varde_document::{BodyId, Command, FeatureId, Generation, Operation, Removable, Removal};
 use varde_view::DeletePrompt;
 
 use super::feed::Merges;
@@ -124,8 +122,8 @@ impl Doc {
         // The bodies made by the features before the one at hand.
         let mut made: Vec<BodyId> = Vec::new();
         for feature in document.features() {
-            if let FeatureKind::Extrude(extrude) = &feature.kind
-                && !matches!(extrude.operation, Operation::NewBody(_))
+            if let Some(operation) = feature.kind.operation()
+                && !matches!(operation, Operation::NewBody(_))
                 && removal.features.binary_search(&feature.id).is_err()
             {
                 // A checked document's ids go up in its order.
@@ -140,7 +138,7 @@ impl Doc {
                         worked
                     }
                     None => {
-                        let excluded = extrude.operation.excluded();
+                        let excluded = operation.excluded();
                         (made.iter())
                             .filter(|body| !excluded.contains(body))
                             .copied()

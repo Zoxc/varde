@@ -4,9 +4,7 @@
 use std::cell::OnceCell;
 use std::sync::Arc;
 
-use varde_document::{
-    BodyId, Document, Editor, Extrude, FeatureId, FeatureKind, Generation, Operation,
-};
+use varde_document::{BodyId, Document, Editor, Extrude, FeatureId, Generation, Operation};
 use varde_kernel::{RenderLines, RenderMesh};
 use varde_regen::{Draft, Drafted, Picking, Request, Response, Transport};
 use varde_view::{MeshStatus, PickIndex};
@@ -499,10 +497,9 @@ impl MeshFeed {
     /// Whether `feature` of `document` is a join the model shown has
     /// working: one that merges the bodies it touches.
     pub(crate) fn merges(&self, document: &Document, feature: FeatureId) -> bool {
-        let join = document.feature(feature).is_some_and(|feature| {
-            matches!(&feature.kind, FeatureKind::Extrude(extrude)
-                if matches!(extrude.operation, Operation::Join(_)))
-        });
+        let join = document
+            .feature(feature)
+            .is_some_and(|feature| matches!(feature.kind.operation(), Some(Operation::Join(_))));
         join && !(self.failed_features().iter()).any(|(failed, _)| *failed == feature)
     }
 }

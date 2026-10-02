@@ -6,8 +6,8 @@ use varde_kernel::Tolerance;
 use varde_sketch::Sketch;
 
 use crate::{
-    Body, BodyId, Document, EditError, Extent, Extrude, FeatureId, FeatureKind, Operation, Plane,
-    Removable, Snapshot,
+    Body, BodyId, CheckError, Document, EditError, Extent, FeatureId, FeatureKind, Operation,
+    Plane, Removable, Snapshot, Turn,
 };
 
 /// An edit to a [`Document`]. [`Editor::apply`] refuses one that would
@@ -29,23 +29,31 @@ pub enum Command {
         feature: FeatureId,
         sketch: Box<Sketch>,
     },
-    /// Adds an extrude, hiding the sketch it uses. One making a new body
-    /// adds the body, "Body N" one past the bodies so named, and gives it
-    /// its id whatever [`Operation::NewBody`] held ([`BodyId::NEW`]).
-    AddExtrude {
+    /// Adds a feature of any kind but a sketch's ([`Command::AddSketch`]
+    /// adds those), hiding the sketch whose regions it takes
+    /// ([`FeatureKind::sketch`]). One making a new body adds the body,
+    /// "Body N" one past the bodies so named, and gives it its id whatever
+    /// [`Operation::NewBody`] held ([`BodyId::NEW`]). A revolve's axis
+    /// must be a line of its sketch ([`Revolve::check_axis`]).
+    ///
+    /// [`Revolve::check_axis`]: crate::Revolve::check_axis
+    AddFeature {
         name: String,
-        extrude: Box<Extrude>,
+        kind: Box<FeatureKind>,
     },
-    /// Replaces an extrude feature's extrude, as edited: the caller passes
-    /// the regions as references made again from the sketch as it is now
+    /// Replaces a feature's kind, as edited, keeping its id, name and
+    /// visibility. Neither may be a sketch's: [`Command::SetSketch`] sets
+    /// those. The caller passes the regions as
+    /// references made again from the sketch as it is now
     /// (`varde_sketch::Profiles::reference`), not the old ones. One that
     /// made a new body and still does keeps the body; one that stops
     /// making it removes it, dropping it from the other features'
     /// excluded lists; one that starts making one adds it, as
-    /// [`Command::AddExtrude`] does.
-    SetExtrude {
+    /// [`Command::AddFeature`] does. A revolve's axis must be a line of
+    /// its sketch, as for [`Command::AddFeature`].
+    SetFeature {
         feature: FeatureId,
-        extrude: Box<Extrude>,
+        kind: Box<FeatureKind>,
     },
     /// Removes a feature with every later feature that uses it, directly
     /// or through others, and the bodies they all make, dropping those
@@ -77,13 +85,15 @@ impl Document {
         }
     }
 
-    /// The command adding `extrude`, named one past the highest
-    /// "Extrude N" in the document, like [`Document::add_sketch`].
-    pub fn add_extrude(&self, extrude: Extrude) -> Command {
+    /// The command adding a feature of `kind`, named one past the highest
+    /// of its kind's names in the document ("Extrude N", "Revolve N"),
+    /// like [`Document::add_sketch`].
+    pub fn add_feature(&self, kind: FeatureKind) -> Command {
         let names = self.features.iter().map(|feature| feature.name.as_str());
-        Command::AddExtrude {
-            name: format!("Extrude {}", next_number(names, "Extrude")),
-            extrude: Box::new(extrude),
+        let noun = kind.noun();
+        Command::AddFeature {
+            name: format!("{noun} {}", next_number(names, noun)),
+            kind: Box::new(kind),
         }
     }
 
@@ -120,13 +130,28 @@ fn next_number<'a>(names: impl Iterator<Item = &'a str>, kind: &str) -> u64 {
 }
 
 impl Document {
-    /// Has extrude `feature` make `body` as its new body.
+    /// Has `feature` make `body` as its new body.
     fn set_new_body(&mut self, feature: FeatureId, body: BodyId) {
         if let Some(index) = self.feature_index(feature)
-            && let FeatureKind::Extrude(extrude) = &mut self.features[index].kind
+            && let Some(operation) = self.features[index].kind.operation_mut()
         {
-            extrude.operation = Operation::NewBody(body);
+            *operation = Operation::NewBody(body);
         }
+    }
+
+    /// Checks what [`Command::AddFeature`] and [`Command::SetFeature`]
+    /// require of `kind`, feature `index` of this document, beyond
+    /// [`Document::check`]: a revolve's axis is a line of its sketch.
+    fn check_new(&self, index: usize, kind: &FeatureKind) -> Result<(), EditError> {
+        if let FeatureKind::Revolve(revolve) = kind
+            && let Some(sketch) = self.sketch_before(index, revolve.sketch)
+        {
+            let id = self.features[index].id;
+            revolve
+                .check_axis(sketch)
+                .map_err(|why| EditError::Invalid(CheckError::Revolve(id, why)))?;
+        }
+        Ok(())
     }
 }
 
@@ -297,7 +322,7 @@ impl Editor {
             Command::AddSketch { name, plane } => {
                 let mut next = Document::clone(document);
                 let sketch = Sketch::default();
-                next.add_feature(name, FeatureKind::Sketch { plane, sketch })?;
+                next.push_feature(name, FeatureKind::Sketch { plane, sketch })?;
                 next
             }
             Command::SetSketch { feature, sketch } => {
@@ -305,7 +330,7 @@ impl Editor {
                     .feature_index(feature)
                     .filter(|&index| match &document.features[index].kind {
                         FeatureKind::Sketch { sketch: old, .. } => *old != *sketch,
-                        FeatureKind::Extrude(_) => false,
+                        FeatureKind::Extrude(_) | FeatureKind::Revolve(_) => false,
                     })
                 else {
                     return Ok(());
@@ -316,42 +341,47 @@ impl Editor {
                 }
                 next
             }
-            Command::AddExtrude { name, extrude } => {
+            Command::AddFeature { name, kind } => {
+                if matches!(*kind, FeatureKind::Sketch { .. }) {
+                    return Err(EditError::SketchKind);
+                }
                 let mut next = Document::clone(document);
-                let sketch = extrude.sketch;
-                let makes_body = extrude.operation.new_body().is_some();
-                let id = next.add_feature(name, FeatureKind::Extrude(*extrude))?;
+                let sketch = kind.sketch();
+                let makes_body = kind.new_body().is_some();
+                let id = next.push_feature(name, *kind)?;
                 if makes_body {
                     let body = next.add_body(id)?;
                     next.set_new_body(id, body);
                 }
-                if let Some(index) = next.feature_index(sketch) {
+                if let Some(index) = sketch.and_then(|sketch| next.feature_index(sketch)) {
                     next.features[index].visible = false;
                 }
+                let index = next.features.len() - 1;
+                next.check_new(index, &next.features[index].kind)?;
                 next
             }
-            Command::SetExtrude {
-                feature,
-                mut extrude,
-            } => {
-                let Some((index, old)) = document.feature_index(feature).and_then(|index| {
-                    match &document.features[index].kind {
-                        FeatureKind::Extrude(old) => Some((index, old)),
-                        FeatureKind::Sketch { .. } => None,
-                    }
-                }) else {
+            Command::SetFeature { feature, mut kind } => {
+                let Some((index, old)) = document
+                    .feature_index(feature)
+                    .map(|index| (index, &document.features[index].kind))
+                else {
                     return Ok(());
                 };
-                let kept = old.operation.new_body();
-                if let (Some(body), Operation::NewBody(new)) = (kept, &mut extrude.operation) {
+                if matches!(old, FeatureKind::Sketch { .. })
+                    || matches!(*kind, FeatureKind::Sketch { .. })
+                {
+                    return Err(EditError::SketchKind);
+                }
+                let kept = old.new_body();
+                if let (Some(body), Some(Operation::NewBody(new))) = (kept, kind.operation_mut()) {
                     *new = body;
                 }
-                if *old == *extrude {
+                if *old == *kind {
                     return Ok(());
                 }
                 let mut next = Document::clone(document);
-                let makes_body = extrude.operation.new_body().is_some();
-                next.features[index].kind = FeatureKind::Extrude(*extrude);
+                let makes_body = kind.new_body().is_some();
+                next.features[index].kind = *kind;
                 match (kept, makes_body) {
                     (Some(body), false) => {
                         if let Some(at) = next.body_index(body) {
@@ -365,6 +395,7 @@ impl Editor {
                     }
                     _ => {}
                 }
+                next.check_new(index, &next.features[index].kind)?;
                 next
             }
             Command::RemoveFeature(id) => {
@@ -393,13 +424,19 @@ impl Editor {
                 }
                 let mut next = Document::clone(document);
                 let before = document.design();
-                let ask = Extent::ask(&before);
+                let length = Extent::ask(&before);
+                let angle = Turn::ask(&before);
                 for feature in &mut next.features {
                     match &mut feature.kind {
                         FeatureKind::Sketch { sketch, .. } => sketch.pin_units(&before),
                         FeatureKind::Extrude(extrude) => {
                             for value in extrude.extent.values_mut() {
-                                value.pin_units(&ask);
+                                value.pin_units(&length);
+                            }
+                        }
+                        FeatureKind::Revolve(revolve) => {
+                            for value in revolve.extent.values_mut() {
+                                value.pin_units(&angle);
                             }
                         }
                     }

@@ -188,7 +188,7 @@ impl Analyses {
 pub(super) fn sketch_of(document: &Document, feature: FeatureId) -> Option<&Sketch> {
     match &document.feature(feature)?.kind {
         FeatureKind::Sketch { sketch, .. } => Some(sketch),
-        FeatureKind::Extrude(_) => None,
+        FeatureKind::Extrude(_) | FeatureKind::Revolve(_) => None,
     }
 }
 

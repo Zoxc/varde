@@ -114,9 +114,9 @@ pub enum Request {
 }
 
 /// An extrude being set up, new or edited, that isn't committed: a
-/// request answers with it applied, as [`Command::AddExtrude`] (with
+/// request answers with it applied, as [`Command::AddFeature`] (with
 /// [`Operation::NewBody`] holding [`BodyId::NEW`]) or
-/// [`Command::SetExtrude`] would apply it, for a preview.
+/// [`Command::SetFeature`] would apply it, for a preview.
 ///
 /// [`Operation::NewBody`]: varde_document::Operation::NewBody
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -445,19 +445,22 @@ struct Model {
 /// `document` with `draft` applied, and the draft's feature, or why it
 /// can't be applied.
 fn applied(document: &Document, draft: &Draft) -> Result<(Document, FeatureId), String> {
-    let extrude = Box::new(draft.extrude.clone());
+    let kind = FeatureKind::Extrude(draft.extrude.clone());
     let command = match draft.feature {
-        None => document.add_extrude(draft.extrude.clone()),
+        None => document.add_feature(kind),
         Some(feature) => {
-            // `SetExtrude` leaves anything else as it is, which would
-            // answer the draft as applied.
+            // `SetFeature` would make another kind an extrude, or refuse
+            // a sketch: the draft edits an extrude.
             let is_extrude = document
                 .feature(feature)
                 .is_some_and(|feature| matches!(feature.kind, FeatureKind::Extrude(_)));
             if !is_extrude {
                 return Err("the draft's feature isn't an extrude".to_owned());
             }
-            Command::SetExtrude { feature, extrude }
+            Command::SetFeature {
+                feature,
+                kind: Box::new(kind),
+            }
         }
     };
     let mut editor = Editor::new(document.clone());

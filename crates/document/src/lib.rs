@@ -11,6 +11,7 @@ mod extrude;
 mod feature;
 pub mod name;
 mod removal;
+mod revolve;
 #[cfg(test)]
 mod testing;
 
@@ -19,6 +20,7 @@ pub use editor::{Command, Editor, Generation, Revision};
 pub use extrude::{Extent, Extrude, ExtrudeError, MAX_EXTRUDE_REGIONS, Operation, Targets};
 pub use feature::{Feature, FeatureId, FeatureKind, OriginPlane, Placement, Plane};
 pub use removal::{Removable, Removal};
+pub use revolve::{AxisLine, MAX_REVOLVE_REGIONS, Revolve, RevolveError, Turn};
 
 use std::fmt;
 use std::sync::Arc;
@@ -28,7 +30,7 @@ use serde::{Deserialize, Serialize};
 // document need only this crate.
 pub use varde_expr::LengthUnit;
 pub use varde_kernel::{MAX_COORD, Tolerance};
-pub use varde_sketch::{Design, RegionRef, Sketch, SketchError};
+pub use varde_sketch::{Design, Id, RegionRef, Sketch, SketchError};
 
 /// The application's name, as the user sees it.
 pub const APP_NAME: &str = "Varde CAD";
@@ -46,7 +48,7 @@ pub type Snapshot = Arc<Document>;
 pub struct BodyId(u64);
 
 impl BodyId {
-    /// Stands for the body an extrude not added yet will make
+    /// Stands for the body an extrude or revolve not added yet will make
     /// ([`Operation::NewBody`]), which a command adding it gives a new id.
     /// No document's body has it: ids are below the next id, which is at
     /// most this.
@@ -61,7 +63,8 @@ pub const MAX_NAME_LEN: usize = 1024;
 
 /// A body: a solid the feature history makes. The document holds only
 /// its name and whether it's shown, and which feature makes it (an
-/// extrude making a new body, [`Operation::NewBody`]); its geometry is
+/// extrude or revolve making a new body, [`Operation::NewBody`]); its
+/// geometry is
 /// whatever regenerating the history gives it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Body {
@@ -166,7 +169,7 @@ impl Document {
     /// [`new_id`](Document::new_id). New ids are the highest, so it goes
     /// last, keeping the features in order. The rest of
     /// [`Document::check`] is up to the caller, as [`Editor::apply`] does.
-    pub(crate) fn add_feature(
+    pub(crate) fn push_feature(
         &mut self,
         name: impl Into<String>,
         kind: FeatureKind,
@@ -241,13 +244,15 @@ impl Document {
     /// ids and come last, where an edit adds them, and the same for
     /// feature ids; no name is longer than [`MAX_NAME_LEN`]; the tolerance
     /// is one [`Tolerance::new`] takes; every body is made by an extrude
-    /// the document holds that names it as its new body, and every such
-    /// body is there; every sketch passes [`Sketch::check`] against
-    /// [`MAX_COORD`] and the document's units ([`Document::design`]), so
-    /// every dimension's expression gives its value in them; and every
-    /// extrude uses a sketch feature before it, has regions, distances and
-    /// an operation as [`Extrude`] describes, and excludes only bodies
-    /// features before it make.
+    /// or revolve the document holds that names it as its new body, and
+    /// every such body is there; every sketch passes [`Sketch::check`]
+    /// against [`MAX_COORD`] and the document's units
+    /// ([`Document::design`]), so every dimension's expression gives its
+    /// value in them; and every extrude and revolve uses a sketch feature
+    /// before it, has regions, distances or angles and an operation as
+    /// [`Extrude`] and [`Revolve`] describe, and excludes only bodies
+    /// features before it make. A revolve's axis line isn't checked
+    /// against its sketch here (see [`Revolve::check_axis`]).
     pub fn check(&self) -> Result<(), CheckError> {
         // Orders first: features and bodies are found by binary search.
         if let Some(pair) = self
@@ -268,10 +273,9 @@ impl Document {
             if body.name.len() > MAX_NAME_LEN {
                 return Err(CheckError::NameLength(id, body.name.len()));
             }
-            let made = self.feature(body.created_by).is_some_and(|feature| {
-                matches!(&feature.kind, FeatureKind::Extrude(extrude)
-                    if extrude.operation.new_body() == Some(id))
-            });
+            let made = self
+                .feature(body.created_by)
+                .is_some_and(|feature| feature.kind.new_body() == Some(id));
             if !made {
                 return Err(CheckError::Creator(id, body.created_by));
             }
@@ -289,6 +293,9 @@ impl Document {
                 FeatureKind::Extrude(extrude) => self
                     .check_extrude(index, extrude)
                     .map_err(|why| CheckError::Extrude(id, why))?,
+                FeatureKind::Revolve(revolve) => self
+                    .check_revolve(index, revolve)
+                    .map_err(|why| CheckError::Revolve(id, why))?,
             }
         }
         if let Some(last) = self.bodies.last()
@@ -304,24 +311,68 @@ impl Document {
 
     /// Checks `extrude`, feature `index`, see [`Document::check`].
     fn check_extrude(&self, index: usize, extrude: &Extrude) -> Result<(), ExtrudeError> {
-        let before = &self.features[..index];
-        let sketch = before
-            .binary_search_by_key(&extrude.sketch, |feature| feature.id)
-            .ok()
-            .filter(|&at| matches!(before[at].kind, FeatureKind::Sketch { .. }));
-        if sketch.is_none() {
+        if self.sketch_before(index, extrude.sketch).is_none() {
             return Err(ExtrudeError::Sketch(extrude.sketch));
         }
         extrude.check_own(&self.design())?;
+        self.check_uses(index, extrude.sketch, &extrude.operation)
+            .map_err(|why| match why {
+                Uses::Sketch(sketch) => ExtrudeError::Sketch(sketch),
+                Uses::NewBody(body) => ExtrudeError::NewBody(body),
+                Uses::Excluded(body) => ExtrudeError::Excluded(body),
+                Uses::ExcludedOrder => ExtrudeError::ExcludedOrder,
+            })
+    }
+
+    /// Checks `revolve`, feature `index`, see [`Document::check`].
+    fn check_revolve(&self, index: usize, revolve: &Revolve) -> Result<(), RevolveError> {
+        if self.sketch_before(index, revolve.sketch).is_none() {
+            return Err(RevolveError::Sketch(revolve.sketch));
+        }
+        revolve.check_own(&self.design())?;
+        self.check_uses(index, revolve.sketch, &revolve.operation)
+            .map_err(|why| match why {
+                Uses::Sketch(sketch) => RevolveError::Sketch(sketch),
+                Uses::NewBody(body) => RevolveError::NewBody(body),
+                Uses::Excluded(body) => RevolveError::Excluded(body),
+                Uses::ExcludedOrder => RevolveError::ExcludedOrder,
+            })
+    }
+
+    /// The sketch feature before feature `index` whose id is `sketch`.
+    pub(crate) fn sketch_before(&self, index: usize, sketch: FeatureId) -> Option<&Sketch> {
+        let before = &self.features[..index];
+        let at = before
+            .binary_search_by_key(&sketch, |feature| feature.id)
+            .ok()?;
+        match &before[at].kind {
+            FeatureKind::Sketch { sketch, .. } => Some(sketch),
+            _ => None,
+        }
+    }
+
+    /// Checks what extrudes and revolves share, of feature `index`: its
+    /// sketch `sketch` is a sketch feature before it, and `operation`'s
+    /// new body names it as its maker and its excluded bodies are sorted
+    /// and made by features before it.
+    fn check_uses(
+        &self,
+        index: usize,
+        sketch: FeatureId,
+        operation: &Operation,
+    ) -> Result<(), Uses> {
+        if self.sketch_before(index, sketch).is_none() {
+            return Err(Uses::Sketch(sketch));
+        }
         let id = self.features[index].id;
-        if let Some(body) = extrude.operation.new_body()
+        if let Some(body) = operation.new_body()
             && self.body(body).is_none_or(|body| body.created_by != id)
         {
-            return Err(ExtrudeError::NewBody(body));
+            return Err(Uses::NewBody(body));
         }
-        let excluded = extrude.operation.excluded();
+        let excluded = operation.excluded();
         if !excluded.windows(2).all(|pair| pair[0] < pair[1]) {
-            return Err(ExtrudeError::ExcludedOrder);
+            return Err(Uses::ExcludedOrder);
         }
         for &body in excluded {
             let earlier = self
@@ -329,11 +380,20 @@ impl Document {
                 .and_then(|body| self.feature_index(body.created_by))
                 .is_some_and(|maker| maker < index);
             if !earlier {
-                return Err(ExtrudeError::Excluded(body));
+                return Err(Uses::Excluded(body));
             }
         }
         Ok(())
     }
+}
+
+/// What [`Document::check_uses`] finds wrong, which each kind's error
+/// says in its own words.
+enum Uses {
+    Sketch(FeatureId),
+    NewBody(BodyId),
+    Excluded(BodyId),
+    ExcludedOrder,
 }
 
 /// Why a [`Document`] fails [`Document::check`], and where.
@@ -341,8 +401,8 @@ impl Document {
 pub enum CheckError {
     /// A body's name is this many bytes, over [`MAX_NAME_LEN`].
     NameLength(BodyId, usize),
-    /// A body's maker isn't an extrude the document holds that makes it
-    /// as its new body.
+    /// A body's maker isn't an extrude or revolve the document holds that
+    /// makes it as its new body.
     Creator(BodyId, FeatureId),
     /// The first body's id doesn't come after the second's, the one
     /// before it.
@@ -355,6 +415,8 @@ pub enum CheckError {
     Sketch(FeatureId, SketchError),
     /// An extrude feature is wrong, see [`ExtrudeError`].
     Extrude(FeatureId, ExtrudeError),
+    /// A revolve feature is wrong, see [`RevolveError`].
+    Revolve(FeatureId, RevolveError),
     /// The fit tolerance, in millimetres, isn't one [`Tolerance::new`]
     /// takes.
     Tolerance(f64),
@@ -375,7 +437,7 @@ impl fmt::Display for CheckError {
             ),
             CheckError::Creator(id, feature) => write!(
                 f,
-                "body {} is made by feature {}, which isn't an extrude making it",
+                "body {} is made by feature {}, which isn't an extrude or revolve making it",
                 id.0, feature.0
             ),
             CheckError::Order(id, before) => {
@@ -389,6 +451,7 @@ impl fmt::Display for CheckError {
             ),
             CheckError::Sketch(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::Extrude(id, why) => write!(f, "feature {}: {why}", id.0),
+            CheckError::Revolve(id, why) => write!(f, "feature {}: {why}", id.0),
             CheckError::Tolerance(fit) => write!(
                 f,
                 "the tolerance {fit} mm isn't from {} to {} mm",
@@ -410,6 +473,7 @@ impl std::error::Error for CheckError {
         match self {
             CheckError::Sketch(_, why) => Some(why),
             CheckError::Extrude(_, why) => Some(why),
+            CheckError::Revolve(_, why) => Some(why),
             _ => None,
         }
     }
@@ -426,6 +490,10 @@ pub enum EditError {
     /// An edit of the sketch of this feature can't be made, see
     /// [`SketchEdit::apply`](varde_sketch::SketchEdit::apply).
     Sketch(FeatureId, varde_sketch::EditError),
+    /// [`Command::AddFeature`] or [`Command::SetFeature`] was given a
+    /// sketch, or asked to set one: sketches are added by
+    /// [`Command::AddSketch`] and set by [`Command::SetSketch`].
+    SketchKind,
 }
 
 impl fmt::Display for EditError {
@@ -434,6 +502,9 @@ impl fmt::Display for EditError {
             EditError::OutOfIds => f.write_str("the document has no ids left"),
             EditError::Invalid(why) => why.fmt(f),
             EditError::Sketch(id, why) => write!(f, "feature {}: {why}", id.0),
+            EditError::SketchKind => {
+                f.write_str("sketches are added and set by their own commands")
+            }
         }
     }
 }
@@ -441,7 +512,7 @@ impl fmt::Display for EditError {
 impl std::error::Error for EditError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            EditError::OutOfIds => None,
+            EditError::OutOfIds | EditError::SketchKind => None,
             EditError::Invalid(why) => Some(why),
             EditError::Sketch(_, why) => Some(why),
         }

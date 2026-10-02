@@ -130,7 +130,7 @@ fn with_bodies(hidden_too: bool) -> Document {
             ..example_extrude(editor.document())
         };
         editor
-            .apply(editor.document().add_extrude(extrude))
+            .apply(editor.document().add_feature(extrude.into()))
             .unwrap();
         let body = editor.document().bodies()[1].id;
         editor.apply(Command::SetVisible(body, false)).unwrap();
@@ -561,7 +561,9 @@ fn a_failing_draft_leaves_the_model_as_it_was() {
         (
             refused.clone(),
             {
-                let command = editor.document().add_extrude(refused.extrude.clone());
+                let command = editor
+                    .document()
+                    .add_feature(refused.extrude.clone().into());
                 let mut probe = Editor::new(editor.document().clone());
                 probe.apply(command).unwrap_err().to_string()
             },
@@ -825,7 +827,7 @@ fn an_unchanged_model_is_answered_with_the_same_mesh() {
     let draft = new_body_draft(editor.document(), 2, "3");
     let mut probe = Editor::new(editor.document().clone());
     probe
-        .apply(probe.document().add_extrude(draft.extrude.clone()))
+        .apply(probe.document().add_feature(draft.extrude.clone().into()))
         .unwrap();
     let drafted = ask(&mut regenerator, regenerate_with(&editor, Some(draft))).mesh;
     assert!(!Arc::ptr_eq(&drafted, &first));
@@ -877,7 +879,7 @@ fn a_scene_found_keeps_its_bodies_meshes() {
     let mut editor = Editor::new(Document::example());
     let draft = new_body_draft(editor.document(), 0, "3");
     editor
-        .apply(editor.document().add_extrude(draft.extrude))
+        .apply(editor.document().add_feature(draft.extrude.into()))
         .unwrap();
     let mut regenerator = Regenerator::default();
     let first = answered(regenerator.handle(regenerate(&editor, None))).mesh;
@@ -1050,7 +1052,7 @@ fn a_dragged_draft_is_found_within_the_budget() {
     assert!(Arc::ptr_eq(&answer.mesh, &dragged));
     let before = editor.clone();
     editor
-        .apply(editor.document().add_extrude(draft.extrude))
+        .apply(editor.document().add_feature(draft.extrude.into()))
         .unwrap();
     let done = answered(regenerator.handle(regenerate(&editor, None))).mesh;
     assert!(Arc::ptr_eq(&done, &dragged));
@@ -1155,7 +1157,7 @@ fn removed_bodies_undo_and_replace_draw_what_is_shown() {
         ..new_body_draft(editor.document(), 0, "3").extrude
     };
     editor
-        .apply(editor.document().add_extrude(extrude))
+        .apply(editor.document().add_feature(extrude.into()))
         .unwrap();
     let two = editor.document().clone();
     let mut regenerator = Regenerator::default();
@@ -2223,7 +2225,7 @@ fn picking_tables_name_each_body_even_when_their_solids_match() {
     let top = editor.document().bodies()[0].id;
     let extrude = example_extrude(editor.document());
     editor
-        .apply(editor.document().add_extrude(extrude))
+        .apply(editor.document().add_feature(extrude.into()))
         .unwrap();
     let twin = editor.document().bodies().last().unwrap().id;
     let mut regenerator = Regenerator::default();

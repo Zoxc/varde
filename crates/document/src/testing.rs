@@ -16,7 +16,7 @@ pub(crate) fn extrude_of(document: &Document, feature: FeatureId) -> &Extrude {
         .kind
     {
         FeatureKind::Extrude(extrude) => extrude,
-        FeatureKind::Sketch { .. } => panic!("feature {} is a sketch", feature.0),
+        _ => panic!("feature {} isn't an extrude", feature.0),
     }
 }
 
@@ -34,7 +34,7 @@ pub(crate) fn plate(operation: Operation) -> Extrude {
 pub(crate) fn extrude_again(editor: &mut Editor) -> (FeatureId, BodyId) {
     let extrude = plate(Operation::NewBody(BodyId::NEW));
     editor
-        .apply(editor.document().add_extrude(extrude))
+        .apply(editor.document().add_feature(extrude.into()))
         .unwrap();
     let document = editor.document();
     let feature = document.features.last().unwrap().id;

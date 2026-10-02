@@ -491,6 +491,8 @@ impl Doc {
             Look::PickPlane => self.pick_plane(),
             Look::EditFeature(id) => match self.editor.document().feature(id).map(|f| &f.kind) {
                 Some(FeatureKind::Extrude(_)) => self.edit_extrude(id),
+                // Revolves have no session to edit them in yet.
+                Some(FeatureKind::Revolve(_)) => {}
                 _ => self.enter_sketch(id),
             },
             Look::StartExtrude => self.start_extrude(),

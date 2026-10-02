@@ -45,9 +45,9 @@ fn thicken(doc: &mut Doc) {
         extent: varde_document::Extent::OneSide(distance),
         ..extrude
     };
-    doc.apply(varde_document::Command::SetExtrude {
+    doc.apply(varde_document::Command::SetFeature {
         feature,
-        extrude: Box::new(extrude),
+        kind: Box::new(extrude.into()),
     });
     doc.sync();
 }

@@ -73,7 +73,7 @@ impl Document {
             operation: Operation::NewBody(crate::BodyId::NEW),
         };
         editor
-            .apply(editor.document().add_extrude(extrude))
+            .apply(editor.document().add_feature(extrude.into()))
             .expect("the extrude is valid");
         editor.document().clone()
     }
