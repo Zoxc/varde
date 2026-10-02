@@ -22,8 +22,8 @@ use std::{fmt, io};
 use serde::{Deserialize, Serialize, Serializer};
 use varde_document::{CheckError, DecodeError, MAX_NAME_LEN, Snapshot, Unchecked};
 
-use crate::Closing;
-use crate::vrdp::{Error as FileError, HeldFile, Payload, Storage, Tail};
+use crate::vrdp::{Error as FileError, HeldFile, Opened, Payload, Storage, Tail};
+use crate::{Closing, Damage};
 
 /// What each record of a sidecar or store entry holds: an auto-saved
 /// document, and the saved version of the design it was based on.
@@ -64,10 +64,16 @@ impl Origin {
 }
 
 /// The design in an entry left behind, to open, from `read` of it: its
-/// newest record, or why there's none.
-pub(crate) fn to_open(read: Result<Option<AutoSaved>, FileError>) -> Result<AutoSaved, String> {
+/// newest intact record, with how reading found the entry damaged, if it
+/// did, or why there's none.
+pub(crate) fn to_open(
+    read: Result<Option<Opened<AutoSaved>>, FileError>,
+) -> Result<(AutoSaved, Option<Damage>), String> {
     match read {
-        Ok(Some(saved)) => Ok(saved),
+        Ok(Some(opened)) => {
+            let damage = Damage::of(&opened.report, None);
+            Ok((opened.payload, damage))
+        }
         Ok(None) => Err("there's nothing in it".to_owned()),
         Err(error) => Err(error.to_string()),
     }
@@ -221,8 +227,15 @@ impl<S: Storage> Held<S> {
     }
 
     /// The newest auto-save, if there is one.
+    #[cfg(test)]
     pub(crate) fn read(&mut self) -> Result<Option<AutoSaved>, FileError> {
         self.file.read()
+    }
+
+    /// The newest intact auto-save, if there is one, with how reading
+    /// found the file, see [`HeldFile::read_with_report`].
+    pub(crate) fn read_with_report(&mut self) -> Result<Option<Opened<AutoSaved>>, FileError> {
+        self.file.read_with_report()
     }
 
     /// Auto-saves `document`, based on the design's file at `base`, if it

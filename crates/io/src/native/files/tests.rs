@@ -234,7 +234,7 @@ fn a_link_to_an_open_design_is_read_only() {
 fn an_abandoned_open_lets_go_of_the_lock() {
     let dir = TempDir::new("files-abandon");
     let other = dir.0.join("other.vrdp");
-    DocumentFile::create(&other, &Document::example()).unwrap();
+    DocumentFile::create(&other, &Document::example(), &[]).unwrap();
     let mut files = Files::new(Stores::default());
     let requests = [
         Request::Open {
@@ -341,8 +341,8 @@ fn a_save_over_changes_made_elsewhere_is_a_conflict() {
     let dir = TempDir::new("files-conflict");
     let mut files = Files::new(Stores::default());
     let opened = open(&mut files, &dir.design()).unwrap();
-    let (mut other, _) = DocumentFile::open(dir.design()).unwrap();
-    other.save(&edited()).unwrap();
+    let (mut other, _, _) = DocumentFile::open(dir.design()).unwrap();
+    other.save(&edited(), &[]).unwrap();
     assert_eq!(
         save(&mut files, opened.file, Arc::new(Document::example())),
         Err(SaveError::Conflict)
@@ -416,7 +416,7 @@ fn save_as_over_a_design_open_elsewhere_is_refused() {
     let dir = TempDir::new("files-save-as-locked");
     let mut files = Files::new(Stores::default());
     let other = dir.0.join("other.vrdp");
-    DocumentFile::create(&other, &Document::example()).unwrap();
+    DocumentFile::create(&other, &Document::example(), &[]).unwrap();
     let elsewhere = sidecar::lock(&other).unwrap();
     let opened = open(&mut files, &dir.design()).unwrap();
 
@@ -498,7 +498,7 @@ fn save_as_sees_through_other_spellings_of_a_path() {
     let dir = TempDir::new("files-save-as-spellings");
     let mut files = Files::new(Stores::default());
     let other = dir.0.join("other.vrdp");
-    DocumentFile::create(&other, &Document::example()).unwrap();
+    DocumentFile::create(&other, &Document::example(), &[]).unwrap();
     let elsewhere = sidecar::lock(&other).unwrap();
     let link = dir.0.join("link.vrdp");
     std::os::unix::fs::symlink(&other, &link).unwrap();
@@ -526,8 +526,8 @@ fn save_as_gets_past_a_conflict() {
     let dir = TempDir::new("files-conflict-save-as");
     let mut files = Files::new(Stores::default());
     let opened = open(&mut files, &dir.design()).unwrap();
-    let (mut other, _) = DocumentFile::open(dir.design()).unwrap();
-    other.save(&edited()).unwrap();
+    let (mut other, _, _) = DocumentFile::open(dir.design()).unwrap();
+    other.save(&edited(), &[]).unwrap();
     for _ in 0..2 {
         assert_eq!(
             save(&mut files, opened.file, edited()),
@@ -540,7 +540,7 @@ fn save_as_gets_past_a_conflict() {
     assert_eq!(DocumentFile::open(&copy).unwrap().1, Document::example());
 
     other = DocumentFile::open(&copy).unwrap().0;
-    other.save(&edited()).unwrap();
+    other.save(&edited(), &[]).unwrap();
     assert_eq!(
         save(&mut files, opened.file, edited()),
         Err(SaveError::Conflict)
@@ -596,7 +596,7 @@ fn auto_saved(path: &Path) -> Option<Document> {
 /// `path`, based on the design as it is: the sidecar is left behind,
 /// unlocked.
 fn crashed_with(path: &Path, document: &Document) {
-    let (file, _) = DocumentFile::open(path).unwrap();
+    let (file, _, _) = DocumentFile::open(path).unwrap();
     let mut sidecar = sidecar::lock(path).unwrap();
     sidecar
         .append(
@@ -728,6 +728,31 @@ fn a_damaged_sidecar_is_ignored() {
     assert_eq!(offered(&opened), Some(&*edited()));
 }
 
+/// A sidecar whose records are framed but none intact, say damaged by the
+/// disk, is kept for whatever can be got out of it: the design opens,
+/// saying so, auto-saves fail rather than write over it, and saves leave
+/// it be, until the user discards it.
+#[test]
+fn a_sidecar_of_damaged_records_is_kept_until_discarded() {
+    let dir = TempDir::new("files-recover-damaged-records");
+    crashed_with(&dir.design(), &edited());
+    let mut bytes = std::fs::read(dir.sidecar()).unwrap();
+    // Within its one record's payload.
+    bytes[crate::vrdp::FILE_HEADER_LEN + 80] ^= 0xff;
+    std::fs::write(dir.sidecar(), &bytes).unwrap();
+    let mut files = Files::new(Stores::default());
+    let opened = open(&mut files, &dir.design()).unwrap();
+    assert_eq!(opened.access, Access::Edit);
+    assert!(opened.recovered.is_err());
+    assert!(auto_save(&mut files, opened.file, edited()).is_err());
+    save(&mut files, opened.file, edited()).unwrap();
+    assert_eq!(std::fs::read(dir.sidecar()).unwrap(), bytes);
+
+    files.handle(Request::DiscardRecovery { file: opened.file });
+    auto_save(&mut files, opened.file, edited()).unwrap();
+    assert_eq!(auto_saved(&dir.sidecar()), Some((*edited()).clone()));
+}
+
 /// A sidecar of plain documents, as auto-saves were before they kept what
 /// they were based on, is no auto-save: it's said so and the design opens,
 /// and auto-saving starts over.
@@ -769,7 +794,7 @@ fn a_sidecar_of_plain_documents_is_ignored() {
 fn save_as_empties_the_sidecar_it_ends_up_with() {
     let dir = TempDir::new("files-save-as-sidecar");
     let other = dir.0.join("other.vrdp");
-    DocumentFile::create(&other, &Document::example()).unwrap();
+    DocumentFile::create(&other, &Document::example(), &[]).unwrap();
     crashed_with(&other, &Document::default());
     let mut files = Files::new(Stores::default());
     let opened = open(&mut files, &dir.design()).unwrap();
@@ -1259,7 +1284,7 @@ fn a_clean_close_deletes_a_sidecar_whatever_it_holds() {
 fn a_failed_save_as_keeps_what_the_target_auto_saved() {
     let dir = TempDir::new("files-save-as-failed");
     let other = dir.0.join("other.vrdp");
-    DocumentFile::create(&other, &Document::example()).unwrap();
+    DocumentFile::create(&other, &Document::example(), &[]).unwrap();
     crashed_with(&other, &edited());
     let mut files = Files::new(Stores::default());
     let opened = open(&mut files, &dir.design()).unwrap();
@@ -1374,8 +1399,7 @@ fn recovered_changes_based_on_the_design_as_it_is_are_offered() {
     crash_after_auto_saving(&design, &edited());
     assert!(!reopened_changed(&design));
 
-    // The sidecar older than the design, or the design rewritten as it
-    // was: still the same version.
+    // The sidecar older than the design: still the same version.
     let hour_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
     std::fs::File::options()
         .write(true)
@@ -1383,8 +1407,6 @@ fn recovered_changes_based_on_the_design_as_it_is_are_offered() {
         .unwrap()
         .set_modified(hour_ago)
         .unwrap();
-    assert!(!reopened_changed(&design));
-    DocumentFile::replace(&design, &Document::example()).unwrap();
     assert!(!reopened_changed(&design));
 
     // Saved by the session first, then auto-saved from what it saved.
@@ -1406,14 +1428,20 @@ fn recovered_changes_from_an_older_design_say_so() {
     let dir = TempDir::new("files-recover-other-handle");
     let design = dir.design();
     crash_after_auto_saving(&design, &edited());
-    let (mut other, _) = DocumentFile::open(&design).unwrap();
-    other.save(&saved_elsewhere()).unwrap();
+    let (mut other, _, _) = DocumentFile::open(&design).unwrap();
+    other.save(&saved_elsewhere(), &[]).unwrap();
     assert!(reopened_changed(&design));
 
     let dir = TempDir::new("files-recover-rewritten");
     let design = dir.design();
     crash_after_auto_saving(&design, &edited());
-    DocumentFile::replace(&design, &saved_elsewhere()).unwrap();
+    DocumentFile::replace(&design, &saved_elsewhere(), &[]).unwrap();
+    assert!(reopened_changed(&design));
+    // Rewritten as it was, too: a new file.
+    let dir = TempDir::new("files-recover-rewritten-same");
+    let design = dir.design();
+    crash_after_auto_saving(&design, &edited());
+    DocumentFile::replace(&design, &Document::example(), &[]).unwrap();
     assert!(reopened_changed(&design));
 
     let dir = TempDir::new("files-recover-saved-by-us");
@@ -1446,8 +1474,8 @@ fn a_torn_auto_save_is_compared_by_the_one_before() {
     assert!(!reopened_changed(&design));
 
     std::fs::write(dir.sidecar(), &bytes).unwrap();
-    let (mut other, _) = DocumentFile::open(&design).unwrap();
-    other.save(&saved_elsewhere()).unwrap();
+    let (mut other, _, _) = DocumentFile::open(&design).unwrap();
+    other.save(&saved_elsewhere(), &[]).unwrap();
     assert!(reopened_changed(&design));
 }
 
@@ -1460,7 +1488,7 @@ fn auto_saves_after_save_as_are_based_on_the_new_file() {
     let design = dir.0.join("new.vrdp");
     save_as(&mut files, Some(file), &design, false).unwrap();
     auto_save(&mut files, file, edited()).unwrap();
-    let (saved, _) = DocumentFile::open(&design).unwrap();
+    let (saved, _, _) = DocumentFile::open(&design).unwrap();
     let auto_saved = auto_saved_at(&sidecar_path(&design).unwrap()).unwrap();
     assert!(auto_saved.based_on(saved.tail()));
 }
@@ -1503,3 +1531,5 @@ fn picked_files_are_refused_natively() {
     ));
     assert!(files.open.is_empty());
 }
+
+mod damaged;

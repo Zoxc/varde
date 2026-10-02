@@ -11,7 +11,7 @@ use super::sidecar::{self, LockFile};
 use super::unique;
 use crate::UnixSeconds;
 use crate::autosave::Ending;
-use crate::store::{ATTEMPTS, Recovered, listed_entry, newest_first};
+use crate::store::{ATTEMPTS, Listing, Recovered, listed_entry, listing, newest_first};
 
 /// Creates and locks a new, empty entry in `dir`, making `dir` if needed.
 pub(crate) fn create(dir: &Path) -> io::Result<LockFile> {
@@ -68,8 +68,7 @@ pub(crate) fn open(dir: &Path, path: &Path) -> Result<LockFile, String> {
 /// The new designs in `dir` left behind by sessions that crashed, newest
 /// first: entries nobody holds with a design in them. Empty ones, of
 /// sessions that crashed before their design was first auto-saved, are
-/// deleted. Damaged ones are left alone, and not listed: they can't be
-/// opened.
+/// deleted. Damaged ones are listed, marked so, see [`listing`].
 pub(crate) fn list(dir: &Path) -> Vec<Recovered> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
@@ -89,14 +88,14 @@ fn recovered(dir: &Path, path: &Path) -> Option<Recovered> {
     // left behind.
     let mut entry = open(dir, path).ok()?;
     let modified = modified(&entry);
-    match entry.read() {
+    match listing(path.to_owned(), modified, entry.read_with_report()) {
         // Unlocked again as `entry` goes, and kept.
-        Ok(Some(auto_saved)) => Some(Recovered::new(path.to_owned(), modified, auto_saved)),
-        Ok(None) => {
+        Listing::Listed(recovered) => Some(recovered),
+        Listing::Empty => {
             let _ = entry.end(Ending::Close);
             None
         }
-        Err(_) => None,
+        Listing::Skipped => None,
     }
 }
 

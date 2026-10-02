@@ -7,6 +7,15 @@ use std::fmt;
 
 use crate::{FileId, OpenId, Request, SaveError};
 
+/// Why a document isn't auto-saved while what a crashed session left
+/// can't be read, see [`RecoveryError::kept`](crate::RecoveryError::kept).
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+pub(crate) const KEPT: &str =
+    "what was auto-saved before is damaged, and kept until it's discarded";
+
+/// Why a [`Request::OpenFound`] is refused.
+pub(crate) const NOT_FOUND: &str = "no such save was found in the file";
+
 /// The files a lane has open, each with the open or new design that
 /// opened it, for [`Request::Abandon`]: `None` if a Save As did.
 ///

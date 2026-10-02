@@ -965,7 +965,7 @@ bodies that have a solid in the model shown, for the File menu's Export
 
 On the web the lane is a Web Worker with the same API. It shares no memory
 with the page, so a request is the generation, the postcard-encoded
-document (the encoding `.vrdp` records use) and the sketch to leave out, and
+document (`varde_document::codec`) and the sketch to leave out, and
 the answer is a postcard head (with the failed features, the
 bodies each join, cut or intersect touches, the bodies' boxes, the
 draft's outcome, the picking tables and the measure's answer) and the
@@ -1030,7 +1030,7 @@ makes its own wgpu instance, under a lock, so run them one at a time:
 VARDE_SHOTS=$PWD/target/shots cargo test -p varde-app shots_ -- --ignored --test-threads=1
 ```
 
-Scenarios (`shots_01` .. `shots_24`, each at 1280×800, scale 1, light,
+Scenarios (`shots_01` .. `shots_26`, each at 1280×800, scale 1, light,
 the busiest also at scale 2 and dark): `X` with every candidate's regions
 (and one hovered); a region picked before and after its answer; flip,
 symmetric, two sides, a refused distance and a draft the document
@@ -1075,7 +1075,10 @@ on faces (`shots_24`): `S` with the top hovered, a circle in a sketch on the top
 with the Sketch tab naming the face, its row menu with Change plane, the
 first sketch's plane changed with the later top hovered (refused, red),
 and the top's sketch failing once the plate is gone, its tip and the
-plane asked for. Shots
+plane asked for; the banners of a file found damaged and of a damaged
+auto-save (`shots_25`); the welcome screen's prompt about a file damaged
+past the save opened, with a save found and with it failing to open
+(`shots_26`, drawn with `Shooter::take_view`, from a `Varde`). Shots
 are for looking (pixels differ by GPU and driver), never compared and
 never committed: a fault a shot finds gets an ordinary headless test of
 the state or layout behind it. A scenario answers each regeneration it

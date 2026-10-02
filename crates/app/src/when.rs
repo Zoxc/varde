@@ -33,35 +33,44 @@ const DAY_BEFORE: i64 = 2 * DAY;
 /// "Yesterday" means 24 to 48 hours ago, and dates are in UTC, since there
 /// is no time zone database.
 pub(crate) fn ago(time: UnixSeconds, now: UnixSeconds) -> String {
-    let elapsed = match now.checked_since(time) {
-        Some(elapsed) if elapsed >= 0 => elapsed,
-        _ => return date(time, now),
-    };
-    match elapsed {
-        0..MINUTE => "Just now".to_owned(),
-        MINUTE..HOUR => format!("{} min ago", elapsed / MINUTE),
-        HOUR..DAY => format!("{} h ago", elapsed / HOUR),
-        DAY..DAY_BEFORE => "Yesterday".to_owned(),
-        DAY_BEFORE..WEEK => format!("{} days ago", elapsed / DAY),
-        _ => date(time, now),
+    said(time, now, ["Just now", "Yesterday", "Unknown date"])
+}
+
+/// [`ago`] to go in a sentence, after "from": "just now", "5 min ago",
+/// "yesterday", "Sep 12", "an unknown date".
+pub(crate) fn ago_in_sentence(time: UnixSeconds, now: UnixSeconds) -> String {
+    said(time, now, ["just now", "yesterday", "an unknown date"])
+}
+
+/// [`ago`], saying "just now", "yesterday" and an unknown date as `words`
+/// have them.
+fn said(time: UnixSeconds, now: UnixSeconds, words: [&str; 3]) -> String {
+    let [just_now, yesterday, unknown] = words;
+    match now.checked_since(time) {
+        Some(0..MINUTE) => just_now.to_owned(),
+        Some(elapsed @ MINUTE..HOUR) => format!("{} min ago", elapsed / MINUTE),
+        Some(elapsed @ HOUR..DAY) => format!("{} h ago", elapsed / HOUR),
+        Some(DAY..DAY_BEFORE) => yesterday.to_owned(),
+        Some(elapsed @ DAY_BEFORE..WEEK) => format!("{} days ago", elapsed / DAY),
+        _ => date(time, now).unwrap_or_else(|| unknown.to_owned()),
     }
 }
 
 /// `time` as a date like "Sep 12", with the year added unless it is the
-/// year of `now`.
-fn date(time: UnixSeconds, now: UnixSeconds) -> String {
+/// year of `now`, if it's within the years 1 to 9999.
+fn date(time: UnixSeconds, now: UnixSeconds) -> Option<String> {
     const MONTHS: [&str; 12] = [
         "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
     ];
-    let Some((year, month, day)) = civil(time) else {
-        return "Unknown date".to_owned();
-    };
+    let (year, month, day) = civil(time)?;
     let month = MONTHS[month as usize - 1];
-    if civil(now).is_some_and(|(now_year, _, _)| now_year == year) {
-        format!("{month} {day}")
-    } else {
-        format!("{month} {day}, {year}")
-    }
+    Some(
+        if civil(now).is_some_and(|(now_year, _, _)| now_year == year) {
+            format!("{month} {day}")
+        } else {
+            format!("{month} {day}, {year}")
+        },
+    )
 }
 
 /// The UTC (year, month, day) of `time`, for the years 1 to 9999.

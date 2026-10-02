@@ -21,8 +21,8 @@ use varde_view::{Edit, MeshStatus, Panel, RowMenu, Welcome as WelcomeUi};
 
 use super::*;
 use crate::doc::{
-    AutoSave, CAMERA_ANIMATION, CameraAnimation, Origin, PIVOT_FADE, PIVOT_SHOWN, Picking, Refusal,
-    Target,
+    AutoSave, CAMERA_ANIMATION, CameraAnimation, Origin, PIVOT_FADE, PIVOT_SHOWN, Picking,
+    Recovery, Refusal, Target,
 };
 
 #[test]
@@ -563,6 +563,7 @@ fn opened(id: OpenId, path: PathBuf, file: u64, access: Access) -> Message {
             access,
             recovered: Ok(None),
             downloaded: false,
+            damage: None,
         }),
     })
 }
@@ -934,10 +935,12 @@ fn a_refused_edit_is_shown() {
 fn a_read_only_document_keeps_offering_what_was_recovered() {
     let read_only = Access::ReadOnly(ReadOnly::InUse);
     let origin = Origin {
-        recovered: Some(Offer {
+        recovered: Some(Recovery::Offered(Offer {
             document: Document::default(),
             design_changed: false,
-        }),
+            damage: None,
+            newer_base: false,
+        })),
         ..Origin::new(Target::None, read_only, "Design".to_owned())
     };
     let mut doc = Doc::new(Document::default(), origin);
@@ -1871,7 +1874,7 @@ fn quitting_while_asked_about_closing_quits() {
 
 /// Writes a design file holding `document` at `path`.
 fn write_design(path: &std::path::Path, document: &Document) {
-    let (bytes, _) = varde_io::vrdp::to_bytes(document).unwrap();
+    let (bytes, _) = varde_io::vrdp::to_bytes(document, &[]).unwrap();
     std::fs::write(path, bytes).unwrap();
 }
 
@@ -2313,8 +2316,11 @@ fn with_recovered_changed(
             recovered: Ok(Some(Offer {
                 document: recovered,
                 design_changed: changed,
+                damage: None,
+                newer_base: false,
             })),
             downloaded: false,
+            damage: None,
         }),
     }));
     requests.borrow_mut().clear();
@@ -2890,6 +2896,7 @@ fn save_error(varde: &Varde) -> Option<&str> {
     match doc.save_error() {
         Some(SaveError::Failed(error)) => Some(error),
         Some(SaveError::Conflict) => Some("conflict"),
+        Some(SaveError::OpenedDamaged | SaveError::Damaged) => Some("damaged"),
         None => doc.auto_save_error(),
     }
 }
@@ -3099,12 +3106,14 @@ fn recovered_designs_are_offered_on_the_welcome_screen() {
             modified: Some(varde_io::UnixSeconds(1_790_424_000)),
             name: None,
             downloaded: false,
+            damage: None,
         },
         Recovered {
             path: "/data/designs/b.vrdp".into(),
             modified: None,
             name: None,
             downloaded: false,
+            damage: None,
         },
     ];
     let _ = varde.update(Message::Io(IoResponse::RecoveredListed { designs }));
@@ -3154,6 +3163,7 @@ fn recovered_designs_are_offered_on_the_welcome_screen() {
             access: Access::Edit,
             recovered: Ok(None),
             downloaded: false,
+            damage: None,
         }),
     }));
     let doc = document(&varde);
@@ -3909,6 +3919,7 @@ fn a_listed_design_opens_as_its_entry_holds_it() {
                 modified: None,
                 name: None,
                 downloaded: listed,
+                damage: None,
             }],
         }));
         let _ = varde.update(Message::Ui(Ui::Welcome(WelcomeUi::OpenStored(
@@ -3927,6 +3938,7 @@ fn a_listed_design_opens_as_its_entry_holds_it() {
                 access: Access::Edit,
                 recovered: Ok(None),
                 downloaded: holds,
+                damage: None,
             }),
         }));
         let doc = document(&varde);
@@ -4225,6 +4237,7 @@ fn a_recovered_design_is_known_by_its_name() {
             modified: None,
             name: Some("bracket.vrdp".to_owned()),
             downloaded: false,
+            damage: None,
         }],
     }));
     let _ = varde.view();
@@ -5395,4 +5408,5 @@ fn a_long_status_leaves_the_key_hints_on_the_screen() {
     assert!(status.bounds.height < 20.0, "{status:?}");
 }
 
+mod damaged;
 mod export;

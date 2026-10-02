@@ -37,8 +37,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use varde_document::EXTENSION;
 
-use crate::UnixSeconds;
 use crate::autosave::AutoSaved;
+use crate::vrdp::{Error as FileError, Opened};
+use crate::{Damage, UnixSeconds};
 
 /// How many lost names `create` skips before giving up, and how many
 /// taken ones for each.
@@ -94,6 +95,61 @@ pub struct Recovered {
     /// web, rather than changes never saved: kept in case the download
     /// didn't finish, see [`Request::KeepDownload`](crate::Request::KeepDownload).
     pub downloaded: bool,
+    /// Whether reading it found damage, and if so whether it opens.
+    pub damage: Option<StoredDamage>,
+}
+
+/// How a [`Recovered`] design's entry is damaged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StoredDamage {
+    /// Its newest intact auto-save opens, with the damage noted in
+    /// [`Opened::damage`](crate::Opened::damage). Auto-saving it cuts the
+    /// damage off.
+    Opens,
+    /// Its auto-saves are there, framed, but none can be read: it can only
+    /// be discarded. Nothing is known of its design, so it has no `name`.
+    Unreadable,
+}
+
+/// What listing the store makes of an entry left behind, see
+/// [`listing`].
+#[derive(Debug)]
+pub(crate) enum Listing {
+    /// Listed.
+    Listed(Recovered),
+    /// Empty: to delete.
+    Empty,
+    /// Neither listed nor deleted: it couldn't be read just now, or holds
+    /// what isn't of use to anyone and that opening wouldn't take.
+    Skipped,
+}
+
+/// How to list the entry at `path`, last written at `modified`, given
+/// `read`, what reading it found: one with damaged auto-saves is listed,
+/// marked so.
+pub(crate) fn listing(
+    path: PathBuf,
+    modified: Option<UnixSeconds>,
+    read: Result<Option<Opened<AutoSaved>>, FileError>,
+) -> Listing {
+    match read {
+        Ok(Some(opened)) => {
+            let damage = Damage::of(&opened.report, None).map(|_| StoredDamage::Opens);
+            Listing::Listed(Recovered {
+                damage,
+                ..Recovered::new(path, modified, opened.payload)
+            })
+        }
+        Ok(None) => Listing::Empty,
+        Err(FileError::Corrupt { .. }) => Listing::Listed(Recovered {
+            path,
+            modified,
+            name: None,
+            downloaded: false,
+            damage: Some(StoredDamage::Unreadable),
+        }),
+        Err(_) => Listing::Skipped,
+    }
 }
 
 /// The file name of the entry at `path` in the store `dir`, to open or
@@ -111,6 +167,7 @@ impl Recovered {
             modified,
             name: saved.name,
             downloaded: saved.origin.is_download(),
+            damage: None,
         }
     }
 }

@@ -9,11 +9,12 @@ use varde_document::{Document, Snapshot};
 use super::sidecar::{self, LockFile};
 use super::{recent, settings, store};
 use crate::autosave::{Ending, Origin, to_open};
-use crate::open::OpenFiles;
+use crate::open::{KEPT, NOT_FOUND, OpenFiles};
 use crate::store::{NO_RECOVERED, NO_STORE, entry_in};
+use crate::vrdp::{self, Error as FileError};
 use crate::{
-    Access, Chosen, Closing, FileId, Offer, OpenId, Opened, ReadOnly, RecentFile, Request,
-    Response, SaveError, SaveTo, SavedAs, Settings, Stores,
+    Access, Chosen, Closing, Damage, FileId, Offer, OpenId, Opened, ReadOnly, RecentFile,
+    RecoveryError, Request, Response, SaveError, SaveTo, SavedAs, Settings, Stores,
 };
 
 mod document_file;
@@ -37,7 +38,7 @@ enum Kind {
     /// its auto-saves go to.
     New(LockFile),
     /// A design with a file of its own.
-    Design(Design),
+    Design(Box<Design>),
 }
 
 /// A design's own file.
@@ -47,6 +48,9 @@ struct Design {
     /// The path the lock is next to, see [`resolved`].
     real: PathBuf,
     lock: Lock,
+    /// The newest save a search found past damage in the file, offered as
+    /// [`FoundSave`](crate::FoundSave) for [`Request::OpenFound`], till it's opened.
+    found: Option<vrdp::Opened<Document>>,
 }
 
 /// A design's lock, which auto-saves go to if it's editable.
@@ -57,8 +61,14 @@ enum Lock {
         sidecar: LockFile,
         /// Whether it holds what a crashed session left, offered to the
         /// user as [`Opened::recovered`] and not answered yet: until it's
-        /// discarded or auto-saved over, saves leave it be.
+        /// discarded or auto-saved over, saves leave it be. So is one
+        /// whose records are all damaged, or that couldn't be read, which
+        /// [`Opened::recovered`] says why.
         offered: bool,
+        /// Whether it's offered so, as one that can't be read
+        /// ([`RecoveryError::kept`]): auto-saves are refused till it's
+        /// discarded.
+        kept: bool,
     },
     /// Not held: the document is read-only.
     ReadOnly(ReadOnly),
@@ -72,12 +82,7 @@ impl Kind {
     /// directly.
     fn editable_design(&mut self) -> Option<&mut Design> {
         match self {
-            Kind::Design(
-                design @ Design {
-                    lock: Lock::Sidecar { .. },
-                    ..
-                },
-            ) => Some(design),
+            Kind::Design(design) if matches!(design.lock, Lock::Sidecar { .. }) => Some(design),
             _ => None,
         }
     }
@@ -136,6 +141,7 @@ impl Lock {
             Ok(sidecar) => Lock::Sidecar {
                 sidecar,
                 offered: false,
+                kept: false,
             },
             Err(read_only) => Lock::ReadOnly(read_only),
         }
@@ -143,24 +149,65 @@ impl Lock {
 
     /// What a crashed session left in the sidecar of the design `file`,
     /// just opened holding `document`, to offer the user, or why it
-    /// couldn't be read. Marks the lock `offered` if there's an offer.
-    fn offer(&mut self, file: &DocumentFile, document: &Document) -> Result<Option<Offer>, String> {
+    /// couldn't be read. Marks the lock `offered` if there's an offer, and
+    /// `kept` too if it's kept as it can't be read.
+    fn offer(
+        &mut self,
+        file: &DocumentFile,
+        document: &Document,
+    ) -> Result<Option<Offer>, RecoveryError> {
         // Only the editor holding the lock may look: otherwise the sidecar
         // is another editor's, auto-saving as it goes.
-        let Lock::Sidecar { sidecar, offered } = self else {
+        let Lock::Sidecar {
+            sidecar,
+            offered,
+            kept,
+        } = self
+        else {
             return Ok(None);
         };
-        match sidecar.read() {
-            Ok(Some(recovered)) if *recovered.document != *document => {
+        (*offered, *kept) = (false, false);
+        match sidecar.read_with_report() {
+            Ok(Some(read)) if *read.payload.document != *document => {
                 *offered = true;
+                let recovered = read.payload;
+                let newer_base = recovered
+                    .base
+                    .is_some_and(|base| base != file.tail() && file.based_past(base));
                 Ok(Some(Offer {
                     design_changed: !recovered.based_on(file.tail()),
                     document: Snapshot::unwrap_or_clone(recovered.document),
+                    damage: Damage::of(&read.report, None),
+                    newer_base,
                 }))
             }
             Ok(_) => Ok(None),
-            Err(error) => Err(format!("couldn't read what was auto-saved: {error}")),
+            Err(error) => {
+                // What may yet be got out of it, damaged records or one that
+                // couldn't be read, stays until the user answers, as an
+                // offer does: auto-saves are refused rather than start it
+                // over, nor do saves empty it. What can't ever be read,
+                // auto-saving starts over.
+                let unreadable = matches!(error, FileError::Corrupt { .. } | FileError::Io(_));
+                (*offered, *kept) = (unreadable, unreadable);
+                let message = match error {
+                    FileError::Corrupt { .. } => {
+                        "what was auto-saved is damaged and can't be read".to_owned()
+                    }
+                    error => format!("couldn't read what was auto-saved: {error}"),
+                };
+                Err(RecoveryError {
+                    message,
+                    kept: unreadable,
+                })
+            }
         }
+    }
+
+    /// Whether it holds what a crashed session left that can't be read,
+    /// kept till the user discards it, see [`RecoveryError::kept`].
+    fn kept(&self) -> bool {
+        matches!(self, Lock::Sidecar { kept: true, .. })
     }
 
     fn access(&self) -> Access {
@@ -182,8 +229,8 @@ impl Lock {
     }
 
     fn answered(&mut self) {
-        if let Lock::Sidecar { offered, .. } = self {
-            *offered = false;
+        if let Lock::Sidecar { offered, kept, .. } = self {
+            (*offered, *kept) = (false, false);
         }
     }
 
@@ -195,6 +242,7 @@ impl Lock {
         if let Lock::Sidecar {
             sidecar,
             offered: false,
+            ..
         } = self
         {
             let _ = sidecar.clear();
@@ -241,6 +289,7 @@ impl Files {
                 id,
                 from: Chosen::Path(path),
             } => self.open(id, absolute(path)),
+            Request::OpenFound { id, file, found } => self.open_found(id, file, found),
             Request::New { id } => Response::Created {
                 id,
                 result: self.create(id),
@@ -372,21 +421,29 @@ impl Files {
         // Read first, so a path that isn't a design never gets a sidecar.
         // Should another editor save in between, the conflict check on
         // saving catches it.
-        let result = match DocumentFile::open(&path) {
-            Ok((file, document)) => {
+        let result = match DocumentFile::open_with_found(&path) {
+            // One found damaged past what was opened refuses saves.
+            Ok((file, read)) => {
+                let damage = Damage::of_design(&read);
+                let document = read.opened.payload;
                 let real = resolved(&path);
                 let mut lock = Lock::of_design(&real);
                 let recovered = lock.offer(&file, &document);
                 let access = lock.access();
-                let id = self
-                    .open
-                    .add(Some(open_id), Kind::Design(Design { file, real, lock }));
+                let design = Design {
+                    file,
+                    real,
+                    lock,
+                    found: read.found,
+                };
+                let id = self.open.add(Some(open_id), Kind::Design(Box::new(design)));
                 Ok(Opened {
                     file: id,
                     document,
                     access,
                     recovered,
                     downloaded: false,
+                    damage,
                 })
             }
             Err(error) => Err(error.to_string()),
@@ -394,6 +451,44 @@ impl Files {
         Response::Opened {
             id: open_id,
             path: Some(path),
+            result,
+        }
+    }
+
+    /// Opens the save a search found past damage in `file`'s design,
+    /// named by its tail `found`, instead of the one opened, see
+    /// [`Request::OpenFound`].
+    fn open_found(&mut self, open_id: OpenId, file: FileId, found: vrdp::Tail) -> Response {
+        let mut path = None;
+        let result = self
+            .open
+            .get_mut(file)
+            .map_err(String::from)
+            .and_then(|open| match open {
+                Kind::Design(design) => Ok(design),
+                Kind::New(_) => Err(NOT_FOUND.to_owned()),
+            })
+            .and_then(|design| {
+                path = Some(design.file.path().to_owned());
+                let chosen = design
+                    .found
+                    .take_if(|chosen| chosen.tail == found)
+                    .ok_or_else(|| NOT_FOUND.to_owned())?;
+                let damage = Damage::of(&chosen.report, None);
+                let document = design.file.open_found(chosen);
+                let recovered = design.lock.offer(&design.file, &document);
+                Ok(Opened {
+                    file,
+                    document,
+                    access: design.lock.access(),
+                    recovered,
+                    downloaded: false,
+                    damage,
+                })
+            });
+        Response::Opened {
+            id: open_id,
+            path,
             result,
         }
     }
@@ -413,12 +508,13 @@ impl Files {
             .designs(NO_RECOVERED)
             .and_then(|dir| store::open(dir, &path));
         let result = entry.and_then(|mut entry| {
-            let saved = to_open(entry.read())?;
+            let (saved, damage) = to_open(entry.read_with_report())?;
             let id = self.open.add(Some(open_id), Kind::New(entry));
             Ok(Opened::editable(
                 id,
                 Snapshot::unwrap_or_clone(saved.document),
                 saved.origin.is_download(),
+                damage,
             ))
         });
         Response::Opened {
@@ -436,7 +532,8 @@ impl Files {
             .get_mut(file)?
             .editable_design()
             .ok_or_else(|| SaveError::Failed(READ_ONLY.to_owned()))?;
-        design.file.save(document)?;
+        // Nothing makes previews yet.
+        design.file.save(document, &[])?;
         design.lock.saved();
         Ok(())
     }
@@ -457,6 +554,11 @@ impl Files {
             Kind::New(_) => None,
             Kind::Design(design) => Some(design.file.tail()),
         };
+        // What a crashed session left that can't be read is kept as it
+        // is till the user discards it.
+        if matches!(open, Kind::Design(design) if design.lock.kept()) {
+            return Err(KEPT.to_owned());
+        }
         let sidecar = open.held().ok_or_else(|| READ_ONLY.to_owned())?;
         sidecar
             .append(base, document, origin)
@@ -495,6 +597,7 @@ impl Files {
             && design.real == real
         {
             design.file = write(&real, path, overwrite, document)?;
+            design.found = None;
             // What it held is older than what was just saved.
             design.lock.saved();
             return Ok(SavedAs {
@@ -518,12 +621,13 @@ impl Files {
             file: written,
             real,
             lock,
+            found: None,
         };
         // Whatever it held was left by a crashed editor of the file just
         // replaced, and is older than what was just saved.
         design.lock.saved();
         let access = design.lock.access();
-        let kind = Kind::Design(design);
+        let kind = Kind::Design(Box::new(design));
         let id = match current {
             Some((file, open)) => {
                 std::mem::replace(open, kind).saved_elsewhere();
@@ -641,9 +745,9 @@ fn write(
     document: &Document,
 ) -> Result<DocumentFile, SaveError> {
     let written = if overwrite {
-        DocumentFile::replace(real, document)
+        DocumentFile::replace(real, document, &[])
     } else {
-        DocumentFile::create(real, document)
+        DocumentFile::create(real, document, &[])
     };
     written.map_err(|error| match error {
         crate::vrdp::Error::Io(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {

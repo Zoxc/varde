@@ -112,6 +112,7 @@ impl Request {
             | Request::AutoSave { file, .. }
             | Request::KeepDownload { file, .. }
             | Request::DiscardRecovery { file }
+            | Request::OpenFound { file, .. }
             | Request::Close { file, .. }
             | Request::SaveAs {
                 file: Some(file), ..

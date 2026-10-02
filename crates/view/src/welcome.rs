@@ -4,13 +4,13 @@
 use std::path::Path;
 use std::sync::LazyLock;
 
-use iced::widget::{Space, button, column, container, grid, hover, row, stack, svg, text};
+use iced::widget::{Space, button, column, container, grid, hover, row, space, stack, svg, text};
 use iced::{Alignment, Element, Length, Padding};
 use varde_document::APP_NAME;
 
-use crate::chrome::{self, ChipSize, key_hint};
+use crate::chrome::{self, ChipSize, dialog, dialog_button, key_hint};
 use crate::icons::{self, Icon, LOGO_SVG};
-use crate::shortcut::{Binding, welcome_bindings};
+use crate::shortcut::{Binding, Shortcut, welcome_bindings};
 use crate::status::{Status, status_bar};
 use crate::theme::{self, Emphasis};
 use crate::{Message, Welcome};
@@ -27,9 +27,37 @@ pub struct WelcomeState<'a> {
     /// On the web, designs downloaded and closed since, newest first: kept
     /// in case the download didn't finish, which the page isn't told.
     pub downloaded: Vec<StoredDesign<'a>>,
+    /// The damaged file just opened, asked about before its design shows,
+    /// if one is.
+    pub damaged: Option<DamagedPrompt<'a>>,
     pub mode: theme::Mode,
     /// The theme chosen, which the theme button shows.
     pub theme: theme::ThemeChoice,
+}
+
+/// Asks what to do about a file found damaged as it was opened, before
+/// its design shows: open the newest save that can be read, or the one
+/// found after the damage, or leave it.
+pub struct DamagedPrompt<'a> {
+    /// What the file is called: "part.vrdp", or for the store entry of a
+    /// new design, "the recovered design".
+    pub name: String,
+    /// How much of it can't be read, like "12 KB".
+    pub unreadable: String,
+    /// When the newest save that can be read was saved, like "2 h ago",
+    /// lower case, to go in a sentence.
+    pub from: String,
+    /// When the save found after the damage was saved, likewise, if one
+    /// was found.
+    pub found: Option<String>,
+    /// Whether the file is the store entry of a new design, holding
+    /// auto-saves, whose damage the next auto-save cuts off, rather than
+    /// a design's own file, which opening leaves as it is.
+    pub auto_saves: bool,
+    /// Whether the save found is being opened.
+    pub opening: bool,
+    /// Why opening the save found failed, if it did.
+    pub error: Option<&'a str>,
 }
 
 /// A card in the welcome screen's recent files.
@@ -60,16 +88,26 @@ pub struct StoredDesign<'a> {
     /// known: auto-saved for a recovered design, downloaded for a
     /// downloaded one.
     pub written: Option<String>,
+    /// Whether its entry is damaged: marked so.
+    pub damaged: bool,
+    /// Whether it opens: not if it's damaged so that nothing of it can be
+    /// read, which can only be discarded.
+    pub opens: bool,
 }
 
 /// The screen shown when no document is open: buttons to start a design
 /// and the recently opened files.
 pub fn welcome<'a>(state: WelcomeState<'a>) -> Element<'a, Message> {
     let [new, open] = welcome_bindings();
-    let hints = [
-        key_hint(new.shortcut, "New design"),
-        key_hint(open.shortcut, "Open"),
-    ];
+    // The prompt takes every key but `Esc`.
+    let hints = if state.damaged.is_some() {
+        vec![key_hint(Shortcut::ESCAPE, "Cancel")]
+    } else {
+        vec![
+            key_hint(new.shortcut, "New design"),
+            key_hint(open.shortcut, "Open"),
+        ]
+    };
     let new = welcome_button(Icon::Plus, "New design", new, Emphasis::Primary);
     let open = welcome_button(Icon::Folder, "Open…", open, Emphasis::Secondary);
     let mut start = column![row![new, open].spacing(10)].spacing(10);
@@ -140,11 +178,75 @@ pub fn welcome<'a>(state: WelcomeState<'a>) -> Element<'a, Message> {
     let status = status_bar(Status {
         selection: None,
         info: None,
-        hints: hints.into(),
+        hints,
         mouse_hints: true,
         view_menu: None,
     });
-    chrome::window(page, status)
+    let window = chrome::window(page, status);
+    match state.damaged {
+        Some(prompt) => stack![window, damaged_prompt(prompt)].into(),
+        None => window,
+    }
+}
+
+/// Asks what to do about a damaged file, see [`DamagedPrompt`], as a
+/// dialog over the whole screen like the document screen's prompts.
+fn damaged_prompt<'a>(prompt: DamagedPrompt<'a>) -> Element<'a, Message> {
+    let line = |line: String| text(line).style(theme::muted_text);
+    let found = prompt.found.as_ref().map(|found| {
+        line(format!(
+            "A newer save, from {found}, was found after the damage."
+        ))
+    });
+    let leaves = line(
+        if prompt.auto_saves {
+            "Opening it cuts off what can't be read at the next auto-save."
+        } else {
+            "Opening it leaves the file as it is: saving it saves another file."
+        }
+        .to_owned(),
+    );
+    let error = prompt.error.map(|error| {
+        text(format!("Couldn't open the save found: {error}")).style(theme::danger_text)
+    });
+    // Nothing else while the save found opens, but leaving it.
+    let idle = |message| (!prompt.opening).then_some(message);
+    let cancel = dialog_button(
+        "Cancel",
+        theme::secondary_button,
+        Some(Message::Welcome(Welcome::CancelDamaged)),
+    );
+    let open_found = prompt.found.is_some().then(|| {
+        dialog_button(
+            if prompt.opening {
+                "Opening…"
+            } else {
+                "Open found save"
+            },
+            theme::secondary_button,
+            idle(Message::Welcome(Welcome::OpenFound)),
+        )
+    });
+    let open = dialog_button(
+        "Open",
+        theme::primary_button,
+        idle(Message::Welcome(Welcome::OpenDamaged)),
+    );
+    dialog(
+        column![
+            text("This file is damaged.").size(14).font(theme::SEMIBOLD),
+            line(format!(
+                "{} of {} can't be read. The newest save that can is from {}.",
+                prompt.unreadable, prompt.name, prompt.from
+            )),
+            found,
+            leaves,
+            error,
+            Space::new().height(4),
+            row![space::horizontal(), cancel, open_found, open].spacing(8),
+        ]
+        .spacing(8),
+    )
 }
 
 /// The logo and the app's name over the page, on the web only: there the
@@ -279,23 +381,30 @@ fn recent_card<'a>(file: RecentCard<'a>) -> Element<'a, Message> {
         56.0,
         150.0,
         meta,
-        Message::Welcome(Welcome::OpenPath(file.path.to_owned())),
+        Some(Message::Welcome(Welcome::OpenPath(file.path.to_owned()))),
     )
 }
 
 /// A design's changes left behind by a session that crashed: a card like a
 /// recent file's, opening it, and a button under it to delete it.
 fn recovered_card<'a>(design: StoredDesign<'a>) -> Element<'a, Message> {
-    let saved = design.written.map_or_else(
+    let saved = design.written.as_ref().map_or_else(
         || "Auto-saved".to_owned(),
         |saved| format!("Auto-saved · {saved}"),
     );
+    let damage = damage_note(&design);
     let meta = || {
         column![
             text(design.name.clone()).font(theme::SEMIBOLD),
             text(saved.clone())
                 .size(11.5)
                 .wrapping(text::Wrapping::None),
+            damage.map(|note| {
+                text(note)
+                    .size(11.5)
+                    .style(theme::warning_text)
+                    .wrapping(text::Wrapping::None)
+            }),
         ]
         .spacing(2)
         .into()
@@ -304,18 +413,30 @@ fn recovered_card<'a>(design: StoredDesign<'a>) -> Element<'a, Message> {
         40.0,
         96.0,
         meta,
-        Message::Welcome(Welcome::OpenStored(design.path.to_owned())),
+        design
+            .opens
+            .then(|| Message::Welcome(Welcome::OpenStored(design.path.to_owned()))),
     );
     column![card, discard_button(design.path)].spacing(6).into()
 }
 
+/// What a recovered or downloaded design's card or row says of its
+/// entry's damage, if it's damaged.
+fn damage_note(design: &StoredDesign<'_>) -> Option<&'static str> {
+    match (design.damaged, design.opens) {
+        (false, _) => None,
+        (true, true) => Some("Damaged"),
+        (true, false) => Some("Damaged, can't be read"),
+    }
+}
+
 /// A card on the welcome screen: a thumbnail over the rows `meta` builds.
-/// Clicking it sends `on_press`.
+/// Clicking it sends `on_press`, if there's that.
 fn card<'a>(
     icon_size: f32,
     thumbnail_height: f32,
     meta: impl Fn() -> Element<'a, Message>,
-    on_press: Message,
+    on_press: Option<Message>,
 ) -> Element<'a, Message> {
     let content = |hovered: bool| {
         // No real thumbnails yet: a large body icon stands in.
@@ -339,7 +460,7 @@ fn card<'a>(
         .padding(1)
         .width(Length::Fill)
         .style(theme::card)
-        .on_press(on_press)
+        .on_press_maybe(on_press)
         .into()
 }
 
@@ -354,16 +475,23 @@ fn discard_button<'a>(path: &Path) -> Element<'a, Message> {
 /// recovered design's card, a row with its name and when it was downloaded,
 /// opening it, and a button beside it to delete it.
 fn downloaded_row<'a>(design: StoredDesign<'a>) -> Element<'a, Message> {
-    let when = design.written.map_or_else(
+    let when = design.written.as_ref().map_or_else(
         || "Downloaded".to_owned(),
         |saved| format!("Downloaded · {saved}"),
     );
+    let damage = damage_note(&design).map(|note| {
+        text(note)
+            .size(11.5)
+            .style(theme::warning_text)
+            .wrapping(text::Wrapping::None)
+    });
     let open = button(
         row![
             icons::tinted(Icon::Body, icons::INLINE, |p| p.muted),
             container(text(design.name).wrapping(text::Wrapping::None))
                 .width(Length::Fill)
                 .clip(true),
+            damage,
             text(when)
                 .size(11.5)
                 .style(theme::muted_text)
@@ -375,9 +503,11 @@ fn downloaded_row<'a>(design: StoredDesign<'a>) -> Element<'a, Message> {
     .padding([6, 10])
     .width(Length::Fill)
     .style(theme::file_cell(false))
-    .on_press(Message::Welcome(Welcome::OpenStored(
-        design.path.to_owned(),
-    )));
+    .on_press_maybe(
+        design
+            .opens
+            .then(|| Message::Welcome(Welcome::OpenStored(design.path.to_owned()))),
+    );
     row![open, discard_button(design.path)]
         .spacing(8)
         .align_y(Alignment::Center)

@@ -57,8 +57,8 @@ use varde_sketch::{Id, Sketch};
 pub use combine::{CombineBody, CombineLook, CombinePick, CombineState};
 pub use constrain::{ConstraintKind, ConstraintSet};
 pub use document::{
-    ActiveTool, CURVED_FACE, DeletePrompt, DocumentState, MeshStatus, Overlay, RecoveredChanges,
-    RefusedEdit, SketchState, ValueField, ValueTarget, document,
+    ActiveTool, CURVED_FACE, Damage, DamagedFile, DeletePrompt, DocumentState, MeshStatus,
+    Overlay, RecoveredChanges, RefusedEdit, SketchState, ValueField, ValueTarget, document,
 };
 pub use extrude::{Distance, ExtentKind, ExtrudeLook, ExtrudeState, Handle, snap_step};
 pub use icons::LOGO_SVG;
@@ -79,7 +79,7 @@ pub use snap::{Inference, Level, SNAP_TOLERANCE, Snap, Target};
 pub use status::{STATUS_BAR_HEIGHT, STATUS_BAR_ROOM};
 pub use theme::{Mode, SIDE_PANEL_WIDTH, ThemeChoice, theme as iced_theme};
 pub use viewport::ModelPicking;
-pub use welcome::{RecentCard, StoredDesign, WelcomeState, welcome};
+pub use welcome::{DamagedPrompt, RecentCard, StoredDesign, WelcomeState, welcome};
 
 /// The text field a dimension's value is typed in, placing it or editing
 /// it in place: there's one at a time, focused as it opens.
@@ -140,6 +140,14 @@ pub enum Welcome {
     OpenStored(PathBuf),
     /// Deletes a design kept in the store.
     DiscardStored(PathBuf),
+    /// Opens the newest save that can be read of the damaged file the
+    /// prompt asks about.
+    OpenDamaged,
+    /// Opens the save found after the damage instead, see
+    /// [`DamagedPrompt::found`].
+    OpenFound,
+    /// Leaves the damaged file the prompt asks about as it is, unopened.
+    CancelDamaged,
 }
 
 /// What the user asks of the document's file: saving it, leaving it, and
@@ -171,6 +179,8 @@ pub enum Edit {
     DismissSaveError,
     /// Hides why the last export failed.
     DismissExportError,
+    /// Hides the banner saying the file was found damaged.
+    DismissDamage,
     /// Hides the sketch edit the solver refused after its sketch was
     /// left.
     DismissRefusedEdit,

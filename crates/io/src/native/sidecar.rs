@@ -37,7 +37,7 @@ use varde_document::Snapshot;
 
 use crate::ReadOnly;
 use crate::autosave::{AutoSaved, Ending, Held, Origin};
-use crate::vrdp::{Error as FileError, Tail};
+use crate::vrdp::{Error as FileError, Opened, Tail};
 
 /// How often [`lock`] starts over when the sidecar it locked was deleted.
 /// Each retry means another editor closed the document meanwhile, so
@@ -229,8 +229,15 @@ impl LockFile {
     }
 
     /// The newest auto-save, if there is one.
+    #[cfg(test)]
     pub(crate) fn read(&mut self) -> Result<Option<AutoSaved>, FileError> {
         self.held.read()
+    }
+
+    /// The newest intact auto-save, if there is one, with how reading
+    /// found the file.
+    pub(crate) fn read_with_report(&mut self) -> Result<Option<Opened<AutoSaved>>, FileError> {
+        self.held.read_with_report()
     }
 
     /// Auto-saves `document`, based on the design's file at `base`, if

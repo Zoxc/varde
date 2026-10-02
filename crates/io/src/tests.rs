@@ -22,7 +22,7 @@ impl TempDir {
     pub(crate) fn design(&self) -> PathBuf {
         let path = self.0.join("doc.vrdp");
         if !path.exists() {
-            std::fs::write(&path, to_bytes(&Document::example()).unwrap().0).unwrap();
+            std::fs::write(&path, to_bytes(&Document::example(), &[]).unwrap().0).unwrap();
         }
         path
     }

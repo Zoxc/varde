@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use glam::DVec2;
 use iced::widget::text::Wrapping;
-use iced::widget::{Space, button, column, container, opaque, row, space, stack, text};
+use iced::widget::{Space, column, container, row, space, stack, text};
 use iced::{Alignment, Element, Length};
 use varde_document::EXTENSION;
 use varde_document::{
@@ -21,7 +21,9 @@ use varde_sketch::{
     Analysis, Failure, Id, Kind, Measure, Profiles, Rejected, Side, Sketch, TooComplex,
 };
 
-use crate::chrome::{self, Hint, chord_hint, key_hint, mouse_hint, small_button};
+use crate::chrome::{
+    self, Hint, chord_hint, dialog, dialog_button, key_hint, mouse_hint, small_button,
+};
 use crate::icons::{self, Icon, MouseButton};
 use crate::shortcut::{DocumentKeys, Held, Shortcut};
 use crate::status::{self, Status};
@@ -85,6 +87,9 @@ pub struct DocumentState<'a> {
     /// Unsaved changes a session that crashed left of the document, if
     /// there are any to offer to restore.
     pub recovered: Option<RecoveredChanges>,
+    /// How the file the document was opened from was found damaged, if
+    /// it was, until dismissed.
+    pub damage: Option<DamagedFile>,
     /// Whether the visible bodies can be exported now: there are some,
     /// regenerating hasn't failed, and no export is on its way.
     pub exportable: bool,
@@ -457,6 +462,37 @@ pub struct RecoveredChanges {
     /// Whether the design changed since the changes were made to it, so
     /// restoring them may undo changes saved since.
     pub design_changed: bool,
+    /// Whether they were made to a newer save of the design than the one
+    /// that could be read: then they may be the best copy there is, and
+    /// aren't warned against.
+    pub newer_base: bool,
+    /// How the file they were auto-saved to was found damaged, if it was.
+    pub damage: Option<Damage>,
+    /// Whether they can't be read at all: the file holding them is
+    /// damaged, and kept until discarded, so there's nothing to restore.
+    pub unreadable: bool,
+}
+
+/// How reading a file found it damaged, and so which of its saves is
+/// open, with when that one was saved, like "2 h ago" (lower case, to go
+/// in a sentence).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Damage {
+    /// Some earlier saves are damaged; the newest is open.
+    Bridged,
+    /// The newest save is damaged; the one before it, from `from`, is open.
+    NewestDamaged { from: String },
+    /// Damaged past the save from `from`, which the user chose to open.
+    Damaged { from: String },
+}
+
+/// The file a document was opened from, found damaged.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DamagedFile {
+    pub damage: Damage,
+    /// Whether the file is the store entry of a new design, holding
+    /// auto-saves, rather than a design's own file.
+    pub auto_saves: bool,
 }
 
 /// How the mesh shown stands against the document.
@@ -551,36 +587,48 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
     });
 
     let recovered = state.recovered.as_ref().map(|recovered| {
-        let restore = small_button("Restore", Emphasis::Primary)
-            .on_press(Message::File(File::RestoreChanges));
+        // Nothing to restore of what can't be read.
+        let restore = (!recovered.unreadable).then(|| {
+            small_button("Restore", Emphasis::Primary).on_press(Message::File(File::RestoreChanges))
+        });
         let discard = small_button("Discard", Emphasis::Secondary)
             .on_press(Message::File(File::DiscardChanges));
         banner(
             text("Unsaved changes found").font(theme::SEMIBOLD),
-            &format!(
-                "{APP_NAME} closed unexpectedly while this design had changes that weren't \
-                 saved{}",
-                if recovered.design_changed {
-                    ", but the design has changed since: restoring them may undo newer changes"
-                } else {
-                    ""
-                }
-            ),
+            &recovered_detail(recovered),
             Some(row![restore, discard].spacing(6).into()),
         )
     });
 
-    // On the panel's colour, as the banners under the toolbar are on the
-    // window's: the banner's own is translucent.
+    let damage = state.damage.as_ref().map(|damaged| {
+        let dismiss = small_button("Dismiss", Emphasis::Secondary)
+            .on_press(Message::Edit(Edit::DismissDamage));
+        banner(
+            text("Damaged file")
+                .font(theme::SEMIBOLD)
+                .style(theme::warning_text),
+            &damage_detail(damaged),
+            Some(dismiss.into()),
+        )
+    });
+
+    // On the panel's colour, the window's, rather than over whatever's
+    // behind: a banner's own is translucent.
+    let banners = container(column![
+        read_only,
+        damage,
+        recovered,
+        save_error,
+        export_error
+    ])
+    .width(Length::Fill)
+    .style(theme::toolbar);
     let refused = (state.refused_edit)
         .map(|refused| container(refused_banner(refused)).style(theme::toolbar));
 
     let content = column![
         toolbar::toolbar(&state),
-        read_only,
-        recovered,
-        save_error,
-        export_error,
+        banners,
         row![
             panels::side_panel(&state),
             column![
@@ -1042,6 +1090,53 @@ fn banner<'a>(
     .into()
 }
 
+/// What the banner offering the changes a crashed session left says of
+/// them: that there are some, and whether the design changed since, or
+/// they were made to a newer save of it than could be read, how damaged
+/// the file holding them is, or that they can't be read.
+fn recovered_detail(recovered: &RecoveredChanges) -> String {
+    let found =
+        format!("{APP_NAME} closed unexpectedly while this design had changes that weren't saved");
+    if recovered.unreadable {
+        return format!("{found}, but the auto-save is damaged and can't be read");
+    }
+    let base = if recovered.newer_base {
+        ", auto-saved from a newer save than could be read"
+    } else if recovered.design_changed {
+        ", but the design has changed since: restoring them may undo newer changes"
+    } else {
+        ""
+    };
+    let damage = match &recovered.damage {
+        None => String::new(),
+        Some(Damage::Bridged) => "; some earlier auto-saves of them are damaged".to_owned(),
+        Some(Damage::NewestDamaged { from }) => {
+            format!("; the newest auto-save of them is damaged, so these are from {from}")
+        }
+        Some(Damage::Damaged { from }) => format!(
+            "; the auto-save of them is damaged, so these are the newest that can be read, \
+             from {from}"
+        ),
+    };
+    format!("{found}{base}{damage}")
+}
+
+/// What the banner about a damaged file says: which save is open.
+fn damage_detail(damaged: &DamagedFile) -> String {
+    let save = if damaged.auto_saves {
+        "auto-save"
+    } else {
+        "save"
+    };
+    match &damaged.damage {
+        Damage::Bridged => format!("Some earlier {save}s in this file are damaged"),
+        Damage::NewestDamaged { from } => {
+            format!("The newest {save} in this file is damaged; opened the one from {from}")
+        }
+        Damage::Damaged { from } => format!("This file is damaged; opened the {save} from {from}"),
+    }
+}
+
 /// Asks whether to save the changes to the document `name` before it's
 /// closed, as a dialog over the whole screen, which dims the rest and
 /// keeps it from being clicked.
@@ -1050,7 +1145,7 @@ fn unsaved_prompt(name: &str) -> Element<'_, Message> {
         dialog_button(
             label,
             emphasis.button_style(),
-            Message::File(File::Unsaved(choice)),
+            Some(Message::File(File::Unsaved(choice))),
         )
     };
     dialog(
@@ -1070,29 +1165,6 @@ fn unsaved_prompt(name: &str) -> Element<'_, Message> {
         ]
         .spacing(8),
     )
-}
-
-/// `content` as a dialog over the whole screen, which dims the rest and
-/// keeps it from being clicked.
-fn dialog<'a>(content: iced::widget::Column<'a, Message>) -> Element<'a, Message> {
-    let dialog = container(content.width(380)).padding(18).style(theme::menu);
-    opaque(
-        container(opaque(dialog))
-            .center(Length::Fill)
-            .style(theme::scrim),
-    )
-}
-
-/// A dialog's button, labelled `label`, in `style`, sending `message`.
-fn dialog_button<'a>(
-    label: &'a str,
-    style: fn(&iced::Theme, button::Status) -> button::Style,
-    message: Message,
-) -> iced::widget::Button<'a, Message> {
-    button(text(label).font(theme::SEMIBOLD))
-        .padding([6, 14])
-        .style(style)
-        .on_press(message)
 }
 
 /// Asks whether to delete what `prompt` lists, as a dialog over the
@@ -1129,12 +1201,12 @@ fn delete_prompt<'a>(prompt: &DeletePrompt<'a>) -> Element<'a, Message> {
     let cancel = dialog_button(
         "Cancel",
         theme::secondary_button,
-        Message::Look(Look::CancelDelete),
+        Some(Message::Look(Look::CancelDelete)),
     );
     let delete = dialog_button(
         "Delete",
         theme::danger_button,
-        Message::Edit(Edit::ConfirmDelete),
+        Some(Message::Edit(Edit::ConfirmDelete)),
     );
     dialog(
         column![

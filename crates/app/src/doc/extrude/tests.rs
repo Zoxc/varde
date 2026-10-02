@@ -1080,10 +1080,12 @@ fn recovery_restored_while_the_sketch_edits_wait_frees_ok() {
     let (plate_doc, sketch, _) = plate();
     let document = plate_doc.editor.document().clone();
     let origin = crate::doc::Origin {
-        recovered: Some(varde_io::Offer {
+        recovered: Some(crate::doc::Recovery::Offered(varde_io::Offer {
             document: document.clone(),
             design_changed: false,
-        }),
+            damage: None,
+            newer_base: false,
+        })),
         ..crate::doc::Origin::new(
             crate::doc::Target::None,
             varde_io::Access::Edit,
@@ -1571,10 +1573,12 @@ fn restoring_drops_the_session_and_the_changes_waiting() {
     let sketch = opened.features()[0].id;
     let units = opened.units();
     let origin = crate::doc::Origin {
-        recovered: Some(varde_io::Offer {
+        recovered: Some(crate::doc::Recovery::Offered(varde_io::Offer {
             document: recovered.clone(),
             design_changed: false,
-        }),
+            damage: None,
+            newer_base: false,
+        })),
         ..crate::doc::Origin::new(
             crate::doc::Target::None,
             varde_io::Access::Edit,

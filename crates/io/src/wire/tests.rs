@@ -5,9 +5,15 @@ use varde_document::{Command, Document, Editor, Revision};
 
 use super::*;
 use crate::{
-    Access, Chosen, Closing, FileId, Offer, OpenId, Opened, Picked, PickedFrom, ReadOnly,
-    RecentFile, Recovered, SaveError, SaveTo, SavedAs, Settings, settings::Theme,
+    Access, Chosen, Closing, Damage, DamageKind, FileId, FoundSave, Offer, OpenId, Opened, Picked,
+    PickedFrom, ReadOnly, RecentFile, Recovered, RecoveryError, SaveError, SaveTo, SavedAs,
+    Settings, StoredDamage, UnixSeconds, settings::Theme,
 };
+
+/// The tail of a design file, to name a save by.
+fn tail() -> crate::vrdp::Tail {
+    crate::vrdp::to_bytes(&Document::example(), &[]).unwrap().1
+}
 
 fn round_trip<T: Serialize + for<'a> Deserialize<'a>>(message: &T) -> T {
     decode(&encode(message, MAX_MESSAGE_BYTES).unwrap()).unwrap()
@@ -46,6 +52,11 @@ fn requests() -> Vec<Request> {
             from: Chosen::Path(PathBuf::from("/home/me/design.vrdp")),
         },
         Request::New { id: OpenId(2) },
+        Request::OpenFound {
+            id: OpenId(1),
+            file: FileId(3),
+            found: tail(),
+        },
         Request::Save {
             file: FileId(3),
             revision: 4.into(),
@@ -162,8 +173,24 @@ fn responses() -> Vec<Response> {
                 recovered: Ok(Some(Offer {
                     document: edited,
                     design_changed: true,
+                    damage: Some(Damage {
+                        kind: DamageKind::NewestDamaged,
+                        time: UnixSeconds(-3),
+                        unreadable: 70,
+                    }),
+                    newer_base: true,
                 })),
                 downloaded: false,
+                damage: Some(Damage {
+                    kind: DamageKind::Damaged {
+                        found: Some(FoundSave {
+                            tail: tail(),
+                            time: UnixSeconds(1_700_000_000),
+                        }),
+                    },
+                    time: UnixSeconds(1_600_000_000),
+                    unreadable: u64::MAX,
+                }),
             }),
         },
         Response::Opened {
@@ -173,8 +200,12 @@ fn responses() -> Vec<Response> {
                 file: FileId(3),
                 document: Document::default(),
                 access: Access::ReadOnly(ReadOnly::InUse),
-                recovered: Err("damaged".to_owned()),
+                recovered: Err(RecoveryError {
+                    message: "damaged".to_owned(),
+                    kept: true,
+                }),
                 downloaded: true,
+                damage: None,
             }),
         },
         Response::Opened {
@@ -190,6 +221,16 @@ fn responses() -> Vec<Response> {
             file: FileId(7),
             revision: 8.into(),
             result: Err(SaveError::Conflict),
+        },
+        Response::Saved {
+            file: FileId(7),
+            revision: 8.into(),
+            result: Err(SaveError::OpenedDamaged),
+        },
+        Response::Saved {
+            file: FileId(7),
+            revision: 8.into(),
+            result: Err(SaveError::Damaged),
         },
         Response::SavedAs {
             file: None,
@@ -268,12 +309,21 @@ fn responses() -> Vec<Response> {
                     modified: Some(crate::UnixSeconds(1_700_000_000)),
                     name: Some("bracket.vrdp".to_owned()),
                     downloaded: true,
+                    damage: Some(StoredDamage::Opens),
                 },
                 Recovered {
                     path: PathBuf::from("designs/b.vrdp"),
                     modified: None,
                     name: None,
                     downloaded: false,
+                    damage: Some(StoredDamage::Unreadable),
+                },
+                Recovered {
+                    path: PathBuf::from("designs/c.vrdp"),
+                    modified: None,
+                    name: None,
+                    downloaded: false,
+                    damage: None,
                 },
             ],
         },
@@ -450,8 +500,11 @@ fn a_document_that_fails_its_checks_is_refused() {
                     recovered: Ok(Some(Offer {
                         document: hidden(),
                         design_changed: false,
+                        damage: None,
+                        newer_base: false,
                     })),
                     downloaded: false,
+                    damage: None,
                 }),
             },
         },

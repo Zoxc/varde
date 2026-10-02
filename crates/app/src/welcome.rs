@@ -7,11 +7,12 @@ use iced::Element;
 use varde_document::Document;
 use varde_document::name::UNTITLED;
 use varde_io::{
-    Access, Chosen, OpenId, Opened, PickedFrom, Recovered, Request as IoRequest, UnixSeconds,
+    Access, Chosen, Closing, Damage, DamageKind, OpenId, Opened, PickedFrom, Recovered,
+    RecoveryError, Request as IoRequest, StoredDamage, UnixSeconds,
 };
 use varde_view::{Message as Ui, Mode, ThemeChoice, Welcome as WelcomeUi};
 
-use crate::doc::{Doc, Leave, Origin, Target, design_name};
+use crate::doc::{Doc, FileDamage, Leave, Origin, Recovery, Target, design_name};
 use crate::{Files, Next, when};
 
 /// State of the welcome screen.
@@ -27,6 +28,30 @@ pub(crate) struct Welcome {
     ///
     /// [`Io::abandon`]: crate::io::Io::abandon
     opening: Option<Opening>,
+    /// The file just opened and found damaged, asked about before its
+    /// design shows, if one is.
+    damaged: Option<Box<Damaged>>,
+}
+
+/// A file opened and found damaged past the save opened (see
+/// [`DamageKind::Damaged`]), whose design waits for the user to choose:
+/// the save opened, the one found after the damage, if one was, or
+/// neither. Its file is open in the IO lane meanwhile, and nothing is
+/// auto-saved, as there's no document.
+struct Damaged {
+    source: Source,
+    /// The path the lane made absolute, if it has one.
+    path: Option<PathBuf>,
+    /// The name a store entry's design is known by, as listed when it was
+    /// opened: the lane lists the store again without the entry, which it
+    /// holds now.
+    title: Option<String>,
+    opened: Opened,
+    damage: Damage,
+    /// The tag of the [`IoRequest::OpenFound`] asked for, until answered.
+    finding: Option<OpenId>,
+    /// Why opening the save found failed, if it did.
+    error: Option<String>,
 }
 
 /// An open the welcome screen is waiting for.
@@ -65,6 +90,64 @@ impl Welcome {
             WelcomeUi::OpenPath(path) => self.open(files, Source::Chosen(Chosen::Path(path))),
             WelcomeUi::OpenStored(path) => self.open(files, Source::Recovered(path)),
             WelcomeUi::DiscardStored(path) => self.discard_recovered(files, path),
+            WelcomeUi::OpenDamaged => self.open_damaged(files),
+            WelcomeUi::OpenFound => self.open_found(files),
+            WelcomeUi::CancelDamaged => {
+                self.cancel_damaged(files);
+                Next::Stay
+            }
+        }
+    }
+
+    /// Whether a damaged file is being asked about, see [`Damaged`]: no
+    /// key opens anything else meanwhile.
+    pub(crate) fn prompting(&self) -> bool {
+        self.damaged.is_some()
+    }
+
+    /// Opens the newest save that can be read of the damaged file asked
+    /// about, unless the save found is on its way.
+    fn open_damaged(&mut self, files: &mut Files) -> Next {
+        match self.damaged.take_if(|damaged| damaged.finding.is_none()) {
+            Some(damaged) => Next::Show(Box::new(show(
+                files,
+                damaged.source,
+                damaged.path,
+                damaged.title,
+                damaged.opened,
+            ))),
+            None => Next::Stay,
+        }
+    }
+
+    /// Asks the lane for the save found after the damage of the file asked
+    /// about instead, answered like an open, see [`Welcome::found`].
+    fn open_found(&mut self, files: &mut Files) -> Next {
+        if let Some(damaged) = &mut self.damaged
+            && damaged.finding.is_none()
+            && let DamageKind::Damaged { found: Some(found) } = damaged.damage.kind
+        {
+            let id = files.io.tag();
+            files.io.send(IoRequest::OpenFound {
+                id,
+                file: damaged.opened.file,
+                found: found.tail,
+            });
+            damaged.finding = Some(id);
+            damaged.error = None;
+        }
+        Next::Stay
+    }
+
+    /// Leaves the damaged file asked about as it is, if one is: the lane
+    /// closes it, keeping what a crashed session left beside it for next
+    /// time.
+    fn cancel_damaged(&mut self, files: &mut Files) {
+        if let Some(damaged) = self.damaged.take() {
+            files.io.send(IoRequest::Close {
+                file: damaged.opened.file,
+                closing: Closing::Keep,
+            });
         }
     }
 
@@ -81,8 +164,16 @@ impl Welcome {
         Next::Show(Box::new(Doc::new(Document::default(), origin)))
     }
 
-    /// Opens `source`.
+    /// Opens `source`. Not a store entry listed as one nothing can be read
+    /// of, which can only be discarded.
     fn open(&mut self, files: &mut Files, source: Source) -> Next {
+        if let Source::Recovered(path) = &source
+            && files.recovered.iter().any(|design| {
+                design.path == *path && design.damage == Some(StoredDamage::Unreadable)
+            })
+        {
+            return Next::Stay;
+        }
         // Clicking a file that is already on its way doesn't open it again.
         if self.opening.as_ref().is_none_or(|o| o.source != source) {
             self.error = None;
@@ -117,6 +208,9 @@ impl Welcome {
     /// Forgets the new design at `path` left behind by a crash, or
     /// downloaded on the web.
     fn discard_recovered(&mut self, files: &mut Files, path: PathBuf) -> Next {
+        if self.prompting() {
+            return Next::Stay;
+        }
         // Gone from the list at once. The lane lists what's left after:
         // changes never saved may be on top of a download, which it goes
         // back to, to be listed as such.
@@ -144,17 +238,20 @@ impl Welcome {
     }
 
     /// Stops waiting for the open in flight, if any: the lane closes what
-    /// it opened, see [`Io::abandon`].
+    /// it opened, see [`Io::abandon`]. A damaged file being asked about is
+    /// left as it is, as by Cancel.
     ///
     /// [`Io::abandon`]: crate::io::Io::abandon
     fn give_up(&mut self, files: &mut Files) {
         files
             .io
             .abandon(self.opening.take().map(|opening| opening.id));
+        self.cancel_damaged(files);
     }
 
     /// Takes the answer to the open tagged `id`, of `path` as the lane
-    /// made it absolute, if it has one.
+    /// made it absolute, if it has one. A file found damaged past the save
+    /// opened is asked about first, see [`Damaged`].
     pub(crate) fn opened(
         &mut self,
         files: &mut Files,
@@ -162,87 +259,82 @@ impl Welcome {
         path: Option<PathBuf>,
         result: Result<Opened, String>,
     ) -> Next {
+        if self
+            .damaged
+            .as_ref()
+            .is_some_and(|damaged| damaged.finding == Some(id))
+        {
+            return self.found(files, result);
+        }
         // An answer the screen isn't waiting for is stale: the user moved
         // on, and the lane closes the file once told so, see `Io::abandon`.
         let Some(opening) = self.opening.take_if(|o| o.id == id) else {
             return Next::Stay;
         };
-        let doc = match (opening.source, result) {
-            // Picked on the web: the design goes on from the file if it can
-            // be written to, otherwise it's a copy.
-            (Source::Chosen(Chosen::File(picked)), Ok(opened)) => {
-                let title = design_name(Path::new(&picked.name));
-                let file = opened.file;
-                let target = match picked.from {
-                    PickedFrom::Handle => Target::File {
-                        file,
-                        picked: Some(picked),
-                    },
-                    PickedFrom::Input => Target::Entry {
-                        file,
-                        downloaded: false,
-                    },
-                };
-                let origin = Origin::new(target, opened.access, title);
-                Doc::new(opened.document, origin)
-            }
-            (Source::Chosen(Chosen::Path(asked)), Ok(opened)) => {
-                let path = path.unwrap_or(asked);
-                files.remember(path.clone());
-                let recovered = opened.recovered.unwrap_or_else(|error| {
-                    log::error!("Ignored what was auto-saved of {}: {error}", path.display());
-                    None
+        let opened = match result {
+            Ok(opened) => opened,
+            Err(error) => {
+                self.error = Some(match (opening.source, path) {
+                    // The lane lists what's there now, as the entry may be
+                    // gone or changed.
+                    (Source::Recovered(_), _) => {
+                        format!("Couldn't open the recovered design: {error}")
+                    }
+                    (Source::Chosen(Chosen::Path(asked)), path) => {
+                        let path = path.unwrap_or(asked);
+                        format!("Couldn't open {}: {error}", path.display())
+                    }
+                    (Source::Chosen(Chosen::File(picked)), _) => {
+                        format!("Couldn't open {}: {error}", picked.name)
+                    }
                 });
-                let target = Target::File {
-                    file: opened.file,
-                    picked: None,
-                };
-                let origin = Origin {
-                    recovered,
-                    ..Origin::new(target, opened.access, design_name(&path))
-                };
-                Doc::new(opened.document, origin)
-            }
-            // A new design left behind by a crash: never saved, and its
-            // store entry is auto-saved to from now on. Known by the name
-            // of the file it was opened from, if it was, as on the web. One
-            // downloaded on the web goes on as a copy too, but isn't
-            // edited: it's what was downloaded, as far as is known, so
-            // closing it again keeps it listed rather than asking. As its
-            // entry holds it now, not as listed: another tab may have left
-            // changes in it since.
-            (Source::Recovered(path), Ok(opened)) => {
-                let title = files.recovered_title(&path);
-                files.recovered.retain(|design| design.path != path);
-                // Changes recovered may be on top of a download, which the
-                // entry goes back to if they aren't saved.
-                let target = Target::Entry {
-                    file: opened.file,
-                    downloaded: true,
-                };
-                let origin = Origin {
-                    saved: opened.downloaded,
-                    ..Origin::new(target, opened.access, title)
-                };
-                Doc::new(opened.document, origin)
-            }
-            (Source::Recovered(_), Err(error)) => {
-                // The lane lists what's there now, as the entry may be gone
-                // or changed.
-                self.error = Some(format!("Couldn't open the recovered design: {error}"));
-                return Next::Stay;
-            }
-            (Source::Chosen(Chosen::Path(asked)), Err(error)) => {
-                let path = path.unwrap_or(asked);
-                self.error = Some(format!("Couldn't open {}: {error}", path.display()));
-                return Next::Stay;
-            }
-            (Source::Chosen(Chosen::File(picked)), Err(error)) => {
-                self.error = Some(format!("Couldn't open {}: {error}", picked.name));
                 return Next::Stay;
             }
         };
-        Next::Show(Box::new(doc))
+        if let Some(damage) = opened.damage
+            && matches!(damage.kind, DamageKind::Damaged { .. })
+        {
+            let title = match &opening.source {
+                Source::Recovered(path) => Some(files.recovered_title(path)),
+                Source::Chosen(_) => None,
+            };
+            self.damaged = Some(Box::new(Damaged {
+                source: opening.source,
+                path,
+                title,
+                opened,
+                damage,
+                finding: None,
+                error: None,
+            }));
+            return Next::Stay;
+        }
+        Next::Show(Box::new(show(files, opening.source, path, None, opened)))
+    }
+
+    /// Takes the answer to the save found after the damage of the file
+    /// asked about: shown in its place, or why it couldn't be opened, in
+    /// the prompt, which then offers the save opened alone.
+    fn found(&mut self, files: &mut Files, result: Result<Opened, String>) -> Next {
+        let Some(mut damaged) = self.damaged.take() else {
+            return Next::Stay;
+        };
+        match result {
+            Ok(opened) => Next::Show(Box::new(show(
+                files,
+                damaged.source,
+                damaged.path,
+                damaged.title,
+                opened,
+            ))),
+            Err(error) => {
+                damaged.finding = None;
+                damaged.error = Some(error);
+                damaged.damage.kind = DamageKind::Damaged { found: None };
+                self.damaged = Some(damaged);
+                Next::Stay
+            }
+        }
     }
 
     /// Why the last open failed, if it did.
@@ -293,14 +385,151 @@ impl Welcome {
                 recovered_design(design, name, now)
             })
             .collect();
+        let damaged = self
+            .damaged
+            .as_ref()
+            .map(|damaged| damaged.prompt(files, now));
         varde_view::welcome(varde_view::WelcomeState {
             error: self.error.as_deref(),
             recent,
             recovered,
             downloaded,
+            damaged,
             mode,
             theme,
         })
+    }
+}
+
+impl Damaged {
+    /// The prompt asking about it, with times relative to `now`.
+    fn prompt(&self, files: &Files, now: UnixSeconds) -> varde_view::DamagedPrompt<'_> {
+        let name = match &self.source {
+            Source::Chosen(Chosen::Path(asked)) => {
+                let path = self.path.as_deref().unwrap_or(asked);
+                path.file_name().map_or_else(
+                    || path.display().to_string(),
+                    |name| name.to_string_lossy().into_owned(),
+                )
+            }
+            Source::Chosen(Chosen::File(picked)) => picked.name.clone(),
+            Source::Recovered(path) => {
+                let title = (self.title.clone()).unwrap_or_else(|| files.recovered_title(path));
+                format!("the recovered {title}")
+            }
+        };
+        let found = match self.damage.kind {
+            DamageKind::Damaged { found } => found,
+            _ => None,
+        };
+        varde_view::DamagedPrompt {
+            name,
+            unreadable: kilobytes(self.damage.unreadable),
+            from: when::ago_in_sentence(self.damage.time, now),
+            found: found.map(|found| when::ago_in_sentence(found.time, now)),
+            auto_saves: matches!(self.source, Source::Recovered(_)),
+            opening: self.finding.is_some(),
+            error: self.error.as_deref(),
+        }
+    }
+}
+
+/// The document `opened` from `source`, at `path` as the lane made it
+/// absolute, if it has one. A store entry's design is known by `title`,
+/// if it's known already, else as it's listed.
+fn show(
+    files: &mut Files,
+    source: Source,
+    path: Option<PathBuf>,
+    title: Option<String>,
+    opened: Opened,
+) -> Doc {
+    // Of a file of the user's: a store entry's is said of auto-saves.
+    let damage = |entry| opened.damage.map(|damage| FileDamage { damage, entry });
+    match source {
+        // Picked on the web: the design goes on from the file if it can
+        // be written to, otherwise it's a copy.
+        Source::Chosen(Chosen::File(picked)) => {
+            let title = design_name(Path::new(&picked.name));
+            let file = opened.file;
+            let target = match picked.from {
+                PickedFrom::Handle => Target::File {
+                    file,
+                    picked: Some(picked),
+                },
+                PickedFrom::Input => Target::Entry {
+                    file,
+                    downloaded: false,
+                },
+            };
+            let origin = Origin {
+                recovered: offered(opened.recovered, &title),
+                damage: damage(false),
+                ..Origin::new(target, opened.access, title)
+            };
+            Doc::new(opened.document, origin)
+        }
+        Source::Chosen(Chosen::Path(asked)) => {
+            let path = path.unwrap_or(asked);
+            files.remember(path.clone());
+            let recovered = offered(opened.recovered, &path.display().to_string());
+            let target = Target::File {
+                file: opened.file,
+                picked: None,
+            };
+            let origin = Origin {
+                recovered,
+                damage: damage(false),
+                ..Origin::new(target, opened.access, design_name(&path))
+            };
+            Doc::new(opened.document, origin)
+        }
+        // A new design left behind by a crash: never saved, and its
+        // store entry is auto-saved to from now on. Known by the name
+        // of the file it was opened from, if it was, as on the web. One
+        // downloaded on the web goes on as a copy too, but isn't
+        // edited: it's what was downloaded, as far as is known, so
+        // closing it again keeps it listed rather than asking. As its
+        // entry holds it now, not as listed: another tab may have left
+        // changes in it since.
+        Source::Recovered(path) => {
+            let title = title.unwrap_or_else(|| files.recovered_title(&path));
+            files.recovered.retain(|design| design.path != path);
+            // Changes recovered may be on top of a download, which the
+            // entry goes back to if they aren't saved.
+            let target = Target::Entry {
+                file: opened.file,
+                downloaded: true,
+            };
+            let origin = Origin {
+                saved: opened.downloaded,
+                damage: damage(true),
+                ..Origin::new(target, opened.access, title)
+            };
+            Doc::new(opened.document, origin)
+        }
+    }
+}
+
+/// `bytes` in kilobytes, as the prompt about a damaged file says how much
+/// can't be read: rounded up, so that any is at least "1 KB".
+fn kilobytes(bytes: u64) -> String {
+    format!("{} KB", bytes.div_ceil(1024).max(1))
+}
+
+/// What a crashed session left of a design, from `recovered` as the lane
+/// read it for the design `name`: an error is logged, and the design opens
+/// without it, kept if it can't be read.
+fn offered(
+    recovered: Result<Option<varde_io::Offer>, RecoveryError>,
+    name: &str,
+) -> Option<Recovery> {
+    match recovered {
+        Ok(offer) => offer.map(Recovery::Offered),
+        Err(error) => {
+            log::error!("Ignored what was auto-saved of {name}: {error}");
+            error.kept.then_some(Recovery::Kept)
+        }
     }
 }
 
@@ -335,6 +564,8 @@ fn recovered_design(
         path: &design.path,
         name,
         written: design.modified.map(|modified| when::ago(modified, now)),
+        damaged: design.damage.is_some(),
+        opens: design.damage != Some(StoredDamage::Unreadable),
     }
 }
 

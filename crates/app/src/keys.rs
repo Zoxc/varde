@@ -4,9 +4,11 @@ use iced::keyboard;
 
 use crate::Message;
 
-/// The welcome screen's shortcuts, see [`varde_view::welcome_bindings`].
-pub(crate) fn welcome_key(event: keyboard::Event) -> Option<Message> {
-    pressed(event, varde_view::welcome_bindings())
+/// The welcome screen's shortcuts, see [`varde_view::welcome_bindings`],
+/// if they're `on`: not while a prompt shows over it.
+pub(crate) fn welcome_key((on, event): (bool, keyboard::Event)) -> Option<Message> {
+    on.then(|| pressed(event, varde_view::welcome_bindings()))
+        .flatten()
 }
 
 /// The document screen's shortcuts, given what they depend on, see

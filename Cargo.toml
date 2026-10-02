@@ -61,7 +61,14 @@ spade = { version = "2.15", default-features = false, features = ["std"] }
 # natively and on wasm (where std's own is this code already), so angles
 # give the same bits everywhere. The platform's maths library would not.
 libm = "0.2.16"
+# The checksums of 3MF packages' zip entries (crates/io).
 crc32fast = "1"
+# The sums of .vrdp blocks (crates/io/src/vrdp.rs): XXH3-128. Pure Rust,
+# builds for wasm.
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+# The random id of each .vrdp file. On the web its `wasm_js` backend, which
+# crates/io enables for wasm only.
+getrandom = "0.4"
 # Deflates the parts of 3MF packages (crates/io). Pure Rust, builds for
 # wasm; the version png already pulls in.
 miniz_oxide = "0.8"

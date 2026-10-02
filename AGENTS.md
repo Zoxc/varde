@@ -13,6 +13,10 @@
 
 # Agent notes
 
+- **No change to the `.vrdp` format without the user's permission.** That
+  covers the framing in `crates/io/src/vrdp.rs` and the serialized types
+  (`Document`, `Sketch`, the auto-save payload, ...). Ask first, even
+  when a change keeps old files working.
 - **No file format versioning while the app is WIP.** The `.vrdp` format
   (`crates/io/src/vrdp.rs`) has a `version` field, but it stays at 1:
   don't bump it, and don't add migrations. Prefer changes that keep older
@@ -45,7 +49,8 @@ it describes changes:
 - `agents/files.md`: the IO lane, sidecar locks, auto-save, recovery, saving,
   closing and quitting.
 - `agents/web-files.md`: the web IO worker, OPFS, pickers, downloads.
-- `agents/file-format.md`: the `.vrdp` format.
+- `agents/file-format.md`: the `.vrdp` format: its blocks, reading past
+  damage, saving, previews, records and the document they hold.
 - `agents/features.md`: the features after sketches and extrudes (revolve
   so far): their document types and checks, the commands every kind
   shares, their regeneration and UI.
@@ -130,7 +135,10 @@ have no UI code; `render` has no iced dependency.
 - **Rendering**: the viewport is an iced `shader` widget whose primitive calls
   `varde_render::Renderer`, compositing onto iced's frame; GPU objects stay on the
   UI thread, workers only produce CPU-side `RenderMesh`es.
-- **`.vrdp` format** (`crates/io/src/vrdp.rs`): append-only, checksummed,
-  snappy-compressed MessagePack snapshots; its internals are `pub(crate)` to
-  `varde-io` (only `to_bytes`, `from_bytes`, `Error` are public).
+- **`.vrdp` format** (`crates/io/src/vrdp.rs`, `agents/file-format.md`): an
+  append-only chain of checksummed blocks, one snappy-compressed MessagePack
+  record per save, read past damage where it can be; its internals are
+  `pub(crate)` to `varde-io` (only the whole-file `to_bytes` and
+  `from_bytes` and the types around them, such as `Error`, `Tail`,
+  `Report` and `Preview`, are public).
 

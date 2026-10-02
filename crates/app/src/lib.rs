@@ -19,7 +19,7 @@ use iced::keyboard::{self, key};
 use iced::{Element, Subscription, Task, window};
 
 use varde_document::APP_NAME;
-use varde_document::{EXTENSION, Revision};
+use varde_document::Revision;
 use varde_io::{
     Chosen, FileId, OpenId, Picked, Recovered, Request as IoRequest, Response as IoResponse,
     SaveError,
@@ -478,18 +478,21 @@ impl Varde {
         match &self.screen {
             Screen::Welcome(_) => format!("Welcome — {APP_NAME}"),
             Screen::Document(doc) if doc.saving() => {
-                format!("{}.{EXTENSION} — Saving… — {APP_NAME}", doc.name)
+                format!("{} — Saving… — {APP_NAME}", doc.title_name())
             }
             Screen::Document(doc) if doc.edited() => {
-                format!("{}.{EXTENSION} — Edited — {APP_NAME}", doc.name)
+                format!("{} — Edited — {APP_NAME}", doc.title_name())
             }
-            Screen::Document(doc) => format!("{}.{EXTENSION} — {APP_NAME}", doc.name),
+            Screen::Document(doc) => format!("{} — {APP_NAME}", doc.title_name()),
         }
     }
 
     pub(crate) fn subscription(&self) -> Subscription<Message> {
         let doc = self.screen.doc();
-        let dialog = doc.and_then(Doc::dialog);
+        let dialog = match &self.screen {
+            Screen::Document(doc) => doc.dialog(),
+            Screen::Welcome(welcome) => welcome.prompting().then_some(Dialog::Damaged),
+        };
         Subscription::batch([
             keyboard::listen().filter_map(peek_key),
             keyboard::listen().filter_map(command_key),
@@ -497,9 +500,14 @@ impl Varde {
             // The release is never seen if the window loses focus while
             // the peek key is held, e.g. to an Alt+Tab.
             window::events().filter_map(unfocused),
-            match doc {
-                None => keyboard::listen().filter_map(welcome_key),
-                Some(doc) => keyboard::listen().with(doc.keys()).filter_map(document_key),
+            match &self.screen {
+                // No key opens anything behind the prompt.
+                Screen::Welcome(welcome) => keyboard::listen()
+                    .with(!welcome.prompting())
+                    .filter_map(welcome_key),
+                Screen::Document(doc) => {
+                    keyboard::listen().with(doc.keys()).filter_map(document_key)
+                }
             },
             // Closing waits for saves and asks about unsaved changes, see
             // `run`.
@@ -694,6 +702,7 @@ fn escape_key((dialog, event): (Option<Dialog>, keyboard::Event)) -> Option<Mess
     Some(Message::Ui(match dialog {
         Some(Dialog::Unsaved) => Ui::File(File::Unsaved(Unsaved::Cancel)),
         Some(Dialog::Delete) => Ui::Look(Look::CancelDelete),
+        Some(Dialog::Damaged) => Ui::Welcome(varde_view::Welcome::CancelDamaged),
         None => Ui::Look(Look::Escape),
     }))
 }

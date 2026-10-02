@@ -11,13 +11,13 @@ use std::time::Duration;
 use iced::time::Instant;
 use iced::window;
 use varde_document::name::with_extension;
-use varde_document::{Command, Revision, Snapshot};
+use varde_document::{Command, EXTENSION, Revision, Snapshot};
 use varde_io::{
-    Chosen, Closing, FileId, Offer, OpenId, Picked, Request as IoRequest, SaveError, SaveTo,
+    Chosen, Closing, FileId, OpenId, Picked, Request as IoRequest, SaveError, SaveTo, UnixSeconds,
 };
 use varde_view::Unsaved;
 
-use super::{Doc, design_name, read_only};
+use super::{Doc, FileDamage, Recovery, design_name, read_only, shown_damage};
 use crate::io::Io;
 use crate::{Files, Next};
 
@@ -36,10 +36,21 @@ pub(super) struct Persist {
     saved_revision: Option<Revision>,
     /// When to auto-save.
     auto_save: AutoSave,
-    /// Unsaved changes a session that crashed left of the document, offered
-    /// to be restored. Auto-saves wait for the user's answer, so as not to
-    /// replace them, and closing keeps them if there's none.
-    recovered: Option<Offer>,
+    /// What a session that crashed left of the document, offered to be
+    /// restored or kept as it can't be read. Auto-saves wait for the
+    /// user's answer, so as not to replace it, and closing keeps it if
+    /// there's none.
+    recovered: Option<Recovery>,
+    /// How the file the document was opened from was found damaged, if it
+    /// was and a banner says so ([`FileDamage::has_banner`]), until
+    /// dismissed or saved as another file.
+    damage: Option<FileDamage>,
+    /// Whether the document's file of the user's was opened past damage
+    /// (see [`FileDamage::kept_as_it_is`]), or the IO lane said so
+    /// ([`SaveError::OpenedDamaged`]): the title says so, and Save acts as
+    /// Save As, leaving the file as it is. Saved as another file, it's no
+    /// longer.
+    damaged_file: bool,
     /// The saves sent to the IO lane and not answered yet.
     saves: Saves,
     /// Why the newest save failed, if it did. One failing while a newer
@@ -61,13 +72,14 @@ pub(super) struct Persist {
 }
 
 impl Persist {
-    /// Writing to `target`, with `creating` and `recovered` as in an
-    /// [`Origin`](super::Origin), loaded at editor `revision` and saved at
-    /// `saved_revision`.
+    /// Writing to `target`, with `creating`, `recovered` and `damage` as
+    /// in an [`Origin`](super::Origin),
+    /// loaded at editor `revision` and saved at `saved_revision`.
     pub(super) fn new(
         target: Target,
         creating: Option<OpenId>,
-        recovered: Option<Offer>,
+        recovered: Option<Recovery>,
+        damage: Option<FileDamage>,
         saved_revision: Option<Revision>,
         revision: Revision,
     ) -> Self {
@@ -81,6 +93,8 @@ impl Persist {
                 ..AutoSave::default()
             },
             recovered,
+            damaged_file: damage.is_some_and(|damage| damage.kept_as_it_is()),
+            damage: damage.filter(FileDamage::has_banner),
             saves: Saves::default(),
             save_error: None,
             auto_save_error: None,
@@ -418,8 +432,71 @@ impl Doc {
     }
 
     /// Unsaved changes a crashed session left, offered to be restored.
-    pub(crate) fn recovered(&self) -> Option<&Offer> {
-        self.persist.recovered.as_ref()
+    #[cfg(test)]
+    pub(crate) fn recovered(&self) -> Option<&varde_io::Offer> {
+        match &self.persist.recovered {
+            Some(Recovery::Offered(offer)) => Some(offer),
+            _ => None,
+        }
+    }
+
+    /// Whether what a crashed session left can't be read, and is kept
+    /// until discarded, see [`Recovery::Kept`].
+    #[cfg(test)]
+    pub(crate) fn recovery_kept(&self) -> bool {
+        self.persist.recovered == Some(Recovery::Kept)
+    }
+
+    /// What the banner offering what a crashed session left shows, if
+    /// there's that, with times relative to `now`.
+    pub(crate) fn recovered_changes(
+        &self,
+        now: UnixSeconds,
+    ) -> Option<varde_view::RecoveredChanges> {
+        Some(match self.persist.recovered.as_ref()? {
+            Recovery::Offered(offer) => varde_view::RecoveredChanges {
+                design_changed: offer.design_changed,
+                newer_base: offer.newer_base,
+                damage: offer.damage.map(|damage| shown_damage(&damage, now)),
+                unreadable: false,
+            },
+            Recovery::Kept => varde_view::RecoveredChanges {
+                design_changed: false,
+                newer_base: false,
+                damage: None,
+                unreadable: true,
+            },
+        })
+    }
+
+    /// How the file the document was opened from was found damaged, see
+    /// [`Persist::damage`].
+    pub(crate) fn damage(&self) -> Option<&FileDamage> {
+        self.persist.damage.as_ref()
+    }
+
+    /// Hides the banner saying the file was found damaged.
+    pub(super) fn dismiss_damage(&mut self) {
+        self.persist.damage = None;
+    }
+
+    /// Whether the document's file was opened past damage, see
+    /// [`Persist::damaged_file`].
+    #[cfg(test)]
+    pub(crate) fn damaged_file(&self) -> bool {
+        self.persist.damaged_file
+    }
+
+    /// The design's name as the window's title shows it: with its
+    /// extension, marked "(damaged file)" while its file was opened past
+    /// damage.
+    pub(crate) fn title_name(&self) -> String {
+        let damaged = if self.persist.damaged_file {
+            " (damaged file)"
+        } else {
+            ""
+        };
+        format!("{}.{EXTENSION}{damaged}", self.name)
     }
 
     /// Where the document is written, see [`Persist::target`].
@@ -583,12 +660,36 @@ impl Doc {
         if self.persist.target.file() != Some(file) {
             return Next::Stay;
         }
+        if result == Err(SaveError::OpenedDamaged) {
+            return self.save_refused_as_damaged(cx, revision);
+        }
         self.saved(SaveKind::Save, revision, result);
         self.resume_leaving(cx)
     }
 
-    /// Takes the answer to a save of kind `kind` of `revision`.
-    fn saved(&mut self, kind: SaveKind, revision: Revision, result: Result<(), SaveError>) {
+    /// The Save of `revision` was refused, as the file was opened past
+    /// damage, which the document didn't know: from now on Save acts as
+    /// Save As, and it's asked where to save now, unless a newer save
+    /// decides, or the user is being asked something else, when the
+    /// banner says so instead.
+    fn save_refused_as_damaged(&mut self, cx: &mut Files, revision: Revision) -> Next {
+        self.persist.damaged_file = true;
+        self.answered(SaveKind::Save, revision, false);
+        if self.persist.saves.supersede(SaveKind::Save) {
+            return Next::Stay;
+        }
+        if self.persist.picking.is_some() {
+            self.persist.save_error = Some(SaveError::OpenedDamaged);
+            self.stop_leaving_unless_discarding();
+            return self.resume_leaving(cx);
+        }
+        // Leaving for it waits for the Save As instead.
+        self.request_save_as(cx)
+    }
+
+    /// Takes the answer to a save of kind `kind` of `revision` off the
+    /// saves in flight, `ok` or not.
+    fn answered(&mut self, kind: SaveKind, revision: Revision, ok: bool) {
         match kind {
             SaveKind::SaveAs => {
                 if let Some(at) = self
@@ -607,9 +708,14 @@ impl Doc {
                 }
             }
         }
-        if result.is_err() {
+        if !ok {
             self.persist.auto_save.not_saved(revision);
         }
+    }
+
+    /// Takes the answer to a save of kind `kind` of `revision`.
+    fn saved(&mut self, kind: SaveKind, revision: Revision, result: Result<(), SaveError>) {
+        self.answered(kind, revision, result.is_ok());
         match result {
             // Not the current revision: edits made while saving keep the
             // document edited. The IO lane answers saves in the order sent,
@@ -792,7 +898,8 @@ impl Doc {
     /// goes on.
     pub(crate) fn restore_recovered(&mut self, cx: &mut Files) -> Next {
         if self.editable()
-            && let Some(offer) = self.persist.recovered.take()
+            && let Some(Recovery::Offered(offer)) = (self.persist.recovered)
+                .take_if(|recovery| matches!(recovery, Recovery::Offered(_)))
         {
             self.drop_proposals();
             self.apply(Command::Replace(Box::new(offer.document)));
@@ -802,8 +909,8 @@ impl Doc {
         self.proposals_settled(cx)
     }
 
-    /// Drops the changes offered as recovered, and has the IO lane delete
-    /// them.
+    /// Drops the changes offered as recovered, or kept as they can't be
+    /// read, and has the IO lane delete them.
     pub(crate) fn discard_recovered(&mut self, cx: &mut Files) {
         if self.persist.recovered.take().is_some()
             && let Some(file) = self.persist.target.file()
@@ -822,10 +929,11 @@ impl Doc {
     }
 
     /// Saves the document to its own file if it may be, else waits for a
-    /// Save As on its way, else asks where to save.
+    /// Save As on its way, else asks where to save. A file opened past
+    /// damage is never saved to, see [`Persist::damaged_file`].
     fn save_or_ask(&mut self, cx: &mut Files) -> Next {
         match self.persist.target.design_file() {
-            Some(_) if self.editable() => self.save_design(cx),
+            Some(_) if self.editable() && !self.persist.damaged_file => self.save_design(cx),
             // A Save As on its way: saving again waits for it, and asks
             // again once it's answered, when the document may have a file
             // to save to.
@@ -910,7 +1018,7 @@ impl Doc {
     /// to the lane and having the file sent back.
     fn download(&self, download: &Downloader) -> Result<(), String> {
         let name = varde_document::name::download_name(&self.name);
-        varde_io::vrdp::to_bytes(self.editor.document())
+        varde_io::vrdp::to_bytes(self.editor.document(), &[])
             .map_err(|e| e.to_string())
             .and_then(|(bytes, _)| download(&name, &bytes))
     }
@@ -1054,6 +1162,10 @@ impl Doc {
             if !saved.offered {
                 self.persist.recovered = None;
             }
+            // Another file, or the damaged one written whole: what was
+            // said of the damage is of the file left behind.
+            self.persist.damage = None;
+            self.persist.damaged_file = false;
         });
         let ok = result.is_ok();
         // The access may have changed, which the sketch's tool depends on.

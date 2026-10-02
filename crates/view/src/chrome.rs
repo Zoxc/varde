@@ -8,8 +8,8 @@ use std::borrow::Cow;
 
 use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::{
-    Button, Container, Rule, Scrollable, Text, button, column, container, row, rule, scrollable,
-    stack, text, tooltip,
+    Button, Column, Container, Rule, Scrollable, Text, button, column, container, opaque, row,
+    rule, scrollable, stack, text, tooltip,
 };
 use iced::{Alignment, Element, Font, Length};
 
@@ -254,4 +254,28 @@ pub fn sentence(message: &str) -> Cow<'_, str> {
         }
         _ => Cow::Borrowed(message),
     }
+}
+
+/// `content` as a dialog over the whole screen, which dims the rest and
+/// keeps it from being clicked.
+pub(crate) fn dialog<'a>(content: Column<'a, Message>) -> Element<'a, Message> {
+    let dialog = container(content.width(380)).padding(18).style(theme::menu);
+    opaque(
+        container(opaque(dialog))
+            .center(Length::Fill)
+            .style(theme::scrim),
+    )
+}
+
+/// A dialog's button, labelled `label`, in `style`, sending `message`,
+/// or disabled without one.
+pub(crate) fn dialog_button<'a>(
+    label: &'a str,
+    style: fn(&iced::Theme, button::Status) -> button::Style,
+    message: Option<Message>,
+) -> Button<'a, Message> {
+    button(text(label).font(theme::SEMIBOLD))
+        .padding([6, 14])
+        .style(style)
+        .on_press_maybe(message)
 }

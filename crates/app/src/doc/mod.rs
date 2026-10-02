@@ -26,7 +26,7 @@ use varde_document::{
     BodyId, Command, Document, EditError, Editor, FeatureId, FeatureKind, LengthUnit, Opacity,
     Plane, Removable, Removal, Revision, Tolerance,
 };
-use varde_io::{Access, Offer, OpenId};
+use varde_io::{Access, Damage, DamageKind, Offer, OpenId, UnixSeconds};
 use varde_render::{Camera, Projection};
 use varde_solve::{Request as SolveRequest, Transport};
 use varde_view::{
@@ -59,7 +59,7 @@ use sketch::GEOMETRY_SHARE;
 pub(crate) use sketch::Refusal;
 pub(crate) use sketch::{Focus, Proposals, SketchSession};
 
-use crate::{Files, ForDoc, Next};
+use crate::{Files, ForDoc, Next, when};
 
 /// An open document and the state of its view.
 pub(crate) struct Doc {
@@ -180,8 +180,66 @@ pub(crate) struct Origin {
     pub(crate) saved: bool,
     /// The store entry asked for for a new design, see [`Persist::creating`].
     pub(crate) creating: Option<OpenId>,
-    /// Unsaved changes a crashed session left, see [`Persist::recovered`].
-    pub(crate) recovered: Option<Offer>,
+    /// What a crashed session left, see [`Persist::recovered`].
+    pub(crate) recovered: Option<Recovery>,
+    /// How the file it was opened from was found damaged, if it was.
+    pub(crate) damage: Option<FileDamage>,
+}
+
+/// What a crashed session left of a design, waiting for the user's
+/// answer: auto-saves wait meanwhile, so as not to replace it, and
+/// closing keeps it.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Recovery {
+    /// Unsaved changes, offered to be restored.
+    Offered(Offer),
+    /// What can't be read, kept for whatever can still be got out of it
+    /// until the user discards it (see [`varde_io::RecoveryError::kept`]):
+    /// the IO lane refuses auto-saves meanwhile.
+    Kept,
+}
+
+/// How the file a document was opened from was found damaged, see
+/// [`Origin::damage`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct FileDamage {
+    pub(crate) damage: Damage,
+    /// Whether the file is the store entry of a new design, holding
+    /// auto-saves, rather than a file of the user's.
+    pub(crate) entry: bool,
+}
+
+impl FileDamage {
+    /// Whether the file is a user's, opened past damage the user was
+    /// asked about: never saved to, so as not to cut off what can still be
+    /// got out of it.
+    pub(crate) fn kept_as_it_is(&self) -> bool {
+        !self.entry && matches!(self.damage.kind, DamageKind::Damaged { .. })
+    }
+
+    /// Whether a banner says so: not for damage past the save opened,
+    /// which the user was asked about before it showed.
+    pub(crate) fn has_banner(&self) -> bool {
+        !matches!(self.damage.kind, DamageKind::Damaged { .. })
+    }
+
+    /// How the banner shows it, with times relative to `now`.
+    fn shown(&self, now: UnixSeconds) -> varde_view::DamagedFile {
+        varde_view::DamagedFile {
+            damage: shown_damage(&self.damage, now),
+            auto_saves: self.entry,
+        }
+    }
+}
+
+/// How the view shows `damage`, with its time relative to `now`.
+pub(crate) fn shown_damage(damage: &Damage, now: UnixSeconds) -> varde_view::Damage {
+    let from = || when::ago_in_sentence(damage.time, now);
+    match damage.kind {
+        DamageKind::Bridged => varde_view::Damage::Bridged,
+        DamageKind::NewestDamaged => varde_view::Damage::NewestDamaged { from: from() },
+        DamageKind::Damaged { .. } => varde_view::Damage::Damaged { from: from() },
+    }
 }
 
 impl Origin {
@@ -195,6 +253,7 @@ impl Origin {
             saved: true,
             creating: None,
             recovered: None,
+            damage: None,
         }
     }
 }
@@ -219,6 +278,7 @@ impl Doc {
             saved,
             creating,
             recovered,
+            damage,
         } = origin;
         let editor = Editor::new(document);
         let revision = editor.revision();
@@ -229,6 +289,7 @@ impl Doc {
                 target,
                 creating,
                 recovered,
+                damage,
                 saved.then_some(revision),
                 revision,
             ),
@@ -388,6 +449,7 @@ impl Doc {
             Edit::ToggleFileMenu => self.file_menu = !self.file_menu,
             Edit::DismissSaveError => self.dismiss_save_error(),
             Edit::DismissExportError => self.dismiss_export_error(),
+            Edit::DismissDamage => self.dismiss_damage(),
             Edit::DismissRefusedEdit => self.refused_edit = None,
             Edit::RemoveBody(id) => self.remove(Removable::Body(id)),
             Edit::ToggleVisible(id) => self.change(Change::ToggleVisible(id)),
@@ -901,6 +963,7 @@ impl Doc {
         options: ViewOptions,
     ) -> varde_view::DocumentState<'_> {
         let peek = self.peeks(peek);
+        let now = when::now();
         varde_view::DocumentState {
             editor: &self.editor,
             camera: &self.camera,
@@ -921,9 +984,8 @@ impl Doc {
             refused_edit: self.refused_edit(),
             saving: self.saving(),
             save_error: self.banner_error(),
-            recovered: self.recovered().map(|offer| varde_view::RecoveredChanges {
-                design_changed: offer.design_changed,
-            }),
+            recovered: self.recovered_changes(now),
+            damage: self.damage().map(|damage| damage.shown(now)),
             exportable: self.exportable(),
             exporting: self.exporting(),
             export_error: self.export_error(),
@@ -993,13 +1055,16 @@ pub(crate) enum Change {
     SetTolerance(Tolerance),
 }
 
-/// A prompt over the document screen, see [`Doc::dialog`].
+/// A prompt over a screen, see [`Doc::dialog`] and
+/// [`Welcome::prompting`](crate::welcome::Welcome::prompting).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum Dialog {
     /// About unsaved changes, before the document is closed.
     Unsaved,
     /// About deleting more than was asked for.
     Delete,
+    /// About a damaged file, before its design is shown.
+    Damaged,
 }
 
 /// The name shown for the design at `path`: its file name without the

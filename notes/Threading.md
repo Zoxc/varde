@@ -419,7 +419,7 @@ struct Opened {
 - The UI sends a snapshot and the revision it's of: the same cheap `Arc`
   snapshot as regeneration natively; on the web the postcard bytes already
   encoded for the regeneration lane, posted to both workers. Encoding
-  (MessagePack, snappy, CRC), locking and writing all happen in the lane.
+  (MessagePack, snappy, XXH3), locking and writing all happen in the lane.
 - `saved_revision` is set from the response, to the snapshot's revision,
   not the current one: edits made while saving keep the document marked
   edited. The title shows "Saving…" while a save is in flight.

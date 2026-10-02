@@ -62,7 +62,7 @@ lane holds the lock on: `DocumentFile`'s own lock per operation would be
 refused by that lock (`flock` locks per open file description,
 `LockFileEx` per handle), so the sidecar is written by `HeldFile`, which
 takes none. Each auto-save also records which saved version of the design
-it was made from: the offset and checksum of the design file's last
+it was made from: the offset, sum and end of the design file's last
 record, as the lane last read or wrote it (new designs have none). Save
 and Save As empty the sidecar once the design is written, and so does
 undoing or redoing back to the state last saved, at the next tick, so a
@@ -96,10 +96,46 @@ clock tick doesn't go unnoticed. Until then auto-saves wait, so as not to
 replace it, and closing keeps it to be offered again. Store entries left
 behind show up on the welcome screen as recovered designs, which open as
 untitled designs backed by their entry, or can be discarded; empty ones are
-deleted. A damaged sidecar never keeps a design from opening: it's ignored,
-reported, and the next auto-save starts it over; a torn one gives up its
-last complete record. If the UI dies without closing a document, the lane
+deleted, and damaged ones listed, marked so (`StoredDamage`; "Damaged"
+on the welcome screen): one with an intact auto-save opens it with the
+damage in `Opened::damage` (see "Damaged files"); one with
+none ("Damaged, can't be read") can only be discarded. A damaged
+sidecar never keeps a design from opening. Its newest intact auto-save is
+offered, the damage in `Offer::damage`. One that isn't an auto-save, or
+won't decode, is reported and the next auto-save starts over; one whose
+records are all damaged, or that couldn't be read, is reported as kept
+(`RecoveryError::kept`) and kept as an unanswered offer is, until it's
+discarded or the design is closed cleanly, the lane refusing auto-saves
+meanwhile rather than write over it; a torn one gives up its last complete
+record. An offer whose auto-save was based on a newer save of the design
+than could be read says so (`Offer::newer_base`). If the UI dies without closing a document, the lane
 lets go of it as a crash would, keeping what was auto-saved.
+
+**Damaged files.** How opening found a file damaged (`Opened::damage`)
+shows before anything else. Earlier saves stepped over (`Bridged`), or the
+newest save damaged and the one before it opened (`NewestDamaged`), open
+with a "Damaged file" banner under the toolbar saying so (of auto-saves,
+for a store entry), and for the latter when the save opened was made,
+until dismissed; saving goes on as usual, a save going after the damaged
+newest one rather than cutting it off. A file damaged past the save opened (`Damaged`) is asked about on the welcome
+screen before its design shows (`Welcome::damaged`): how many KB can't be
+read, when the newest save that can was made, and the save a search found
+after the damage, if any, which `Request::OpenFound` opens instead.
+Cancel, or leaving the welcome screen meanwhile, closes the file with
+`Closing::Keep`, keeping any sidecar a crash left. There's no document
+while it asks, so nothing is auto-saved, and a recovery offer shows once
+the design does, with no banner, as the user was asked. A design opened
+so from a file of the user's, read-only or not, says "(damaged file)" in
+the title, and Save acts as Save As, never writing the damaged file; a
+`SaveError::OpenedDamaged` the app didn't expect makes it so too and asks
+where to save. A Save As ends both. For a store entry the prompt says its
+next auto-save cuts the damage off instead.
+Times are relative, as on the welcome screen (`when::ago_in_sentence`).
+Recovery offers say how the sidecar was damaged and, for
+`Offer::newer_base`, that the changes were auto-saved from a newer save
+than could be read, rather than warn they may undo newer changes; a
+sidecar kept as it can't be read (`RecoveryError::kept`) is offered with
+Discard alone, auto-saves waiting till it's answered.
 
 **Saving.** Save (`Ctrl S`, or in the file menu) sends the lane a cheap
 `Arc` snapshot of the document and the editor revision it's of; encoding,
@@ -115,8 +151,14 @@ takes the
 `.vrdp`'s own lock like opening does, waiting at most two seconds for
 another program to let go of it. If the file was changed by someone else
 since it was opened or last saved, the save is refused; a banner says so
-and offers Save As. Other errors show in the same banner, and the document
-stays as it is. Only the newest save's outcome counts: a save that fails
+and offers Save As. So is a save to a file damaged since
+(`SaveError::Damaged`), and to one opened damaged past a save that
+couldn't be read (`SaveError::OpenedDamaged`, see `DamageKind::Damaged`):
+that one is only saved as another file. A save that fails partway cuts
+the file back; should that fail too, the next save takes what landed for
+its own (see `file-format.md`). Saves write no previews yet. Other errors
+show in the same banner, and the document stays as it is. Only the newest
+save's outcome counts: a save that fails
 while a newer one is still in flight shows nothing, and the newer one
 succeeding leaves no banner behind. Except a Save As failing while only
 Saves are in flight: they write the design's own file, not the one the

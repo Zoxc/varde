@@ -132,12 +132,23 @@ impl Shooter {
     /// `<name>.png`. Fails if anything of the window is left undrawn: the
     /// viewport's scene among it.
     fn take(&mut self, doc: &Doc, name: &str, shot: Shot) {
+        self.take_view(|mode| doc.view_in(mode), name, shot);
+    }
+
+    /// Draws the screen `view` makes in a mode, as [`Shooter::take`] does
+    /// a document's.
+    fn take_view<'a>(
+        &mut self,
+        view: impl FnOnce(Mode) -> iced::Element<'a, varde_view::Message>,
+        name: &str,
+        shot: Shot,
+    ) {
         use iced::advanced::Renderer as _;
         use iced::mouse::{Cursor, Event};
         use iced::theme::Base;
 
         let renderer = &mut self.renderer;
-        let mut ui: Headless<'_> = shown(doc.view_in(shot.mode), shot.size, renderer);
+        let mut ui: Headless<'_> = shown(view(shot.mode), shot.size, renderer);
         if shot.scrolled {
             let end = RelativeOffset {
                 x: None,
@@ -1489,5 +1500,149 @@ fn shots_24_sketch_on_face() {
         );
         doc.look(Look::EditFeature(id));
         camera.take(&doc, "24-face-gone-pick", Shot::new());
+    });
+}
+
+/// Scenario 25: a file found damaged: the banner saying its newest save
+/// is damaged, over the offer of a damaged auto-save made from a newer
+/// save than could be read; then a file with earlier saves damaged,
+/// beside an auto-save that can't be read, in a small window.
+#[test]
+#[ignore = "writes screenshots, see the module"]
+fn shots_25_damage() {
+    use varde_io::{Access, Damage, DamageKind, Offer, UnixSeconds};
+
+    use crate::doc::{FileDamage, Origin, Recovery, Target};
+
+    let damage = |kind| Damage {
+        kind,
+        time: UnixSeconds(crate::when::now().0 - 2 * 3600),
+        unreadable: 3000,
+    };
+    let shown = |origin: Origin| {
+        let requests = Rc::default();
+        let mut doc = Doc::new(Document::example(), origin);
+        doc.feed
+            .connect(crate::tests::Deferred(Rc::clone(&requests)));
+        doc.sync();
+        answer(&mut doc, &requests);
+        framed(&mut doc);
+        doc
+    };
+    shooting(|camera| {
+        let doc = shown(Origin {
+            damage: Some(FileDamage {
+                damage: damage(DamageKind::NewestDamaged),
+                entry: false,
+            }),
+            recovered: Some(Recovery::Offered(Offer {
+                document: Document::default(),
+                design_changed: true,
+                damage: Some(damage(DamageKind::Bridged)),
+                newer_base: true,
+            })),
+            ..Origin::new(Target::None, Access::Edit, "part".to_owned())
+        });
+        camera.take(&doc, "25-newest-damaged", Shot::new());
+        camera.take(&doc, "25-newest-damaged-dark", Shot::new().dark());
+        let doc = shown(Origin {
+            damage: Some(FileDamage {
+                damage: damage(DamageKind::Bridged),
+                entry: false,
+            }),
+            recovered: Some(Recovery::Kept),
+            ..Origin::new(Target::None, Access::Edit, "part".to_owned())
+        });
+        camera.take(
+            &doc,
+            "25-bridged-unreadable-small",
+            Shot::new().size(1024.0, 600.0),
+        );
+    });
+}
+
+/// Scenario 26: the prompt before a design damaged past the save opened
+/// shows, offering the save found after the damage too, light and dark;
+/// and the save found failing to open, in a small window.
+#[test]
+#[ignore = "writes screenshots, see the module"]
+fn shots_26_damaged_prompt() {
+    use varde_io::{
+        Access, Chosen, Damage, DamageKind, FileId, FoundSave, Opened, Request as IoRequest,
+        Response as IoResponse, UnixSeconds,
+    };
+    use varde_view::Welcome as WelcomeUi;
+
+    use crate::{Message, Screen, Varde};
+
+    let hours_ago = |hours: i64| UnixSeconds(crate::when::now().0 - hours * 3600);
+    let requests = Rc::<RefCell<Vec<IoRequest>>>::default();
+    let mut varde = Varde::new();
+    varde
+        .files
+        .io
+        .ready(Box::new(crate::tests::Deferred(Rc::clone(&requests))));
+    let _ = varde.update(Message::Ui(varde_view::Message::Welcome(
+        WelcomeUi::OpenPath("/d/part.vrdp".into()),
+    )));
+    let open = requests.borrow().iter().find_map(|request| match request {
+        IoRequest::Open {
+            id,
+            from: Chosen::Path(_),
+        } => Some(*id),
+        _ => None,
+    });
+    let found = FoundSave {
+        tail: varde_io::vrdp::to_bytes(&Document::default(), &[])
+            .unwrap()
+            .1,
+        time: hours_ago(1),
+    };
+    let _ = varde.update(Message::Io(IoResponse::Opened {
+        id: open.expect("opened"),
+        path: Some("/d/part.vrdp".into()),
+        result: Ok(Opened {
+            file: FileId(0),
+            document: Document::example(),
+            access: Access::Edit,
+            recovered: Ok(None),
+            downloaded: false,
+            damage: Some(Damage {
+                kind: DamageKind::Damaged { found: Some(found) },
+                time: hours_ago(26),
+                unreadable: 40_000,
+            }),
+        }),
+    }));
+    shooting(|camera| {
+        let welcome = |mode| match &varde.screen {
+            Screen::Welcome(welcome) => welcome.view(&varde.files, mode, varde.options.theme),
+            Screen::Document(_) => panic!("not on the welcome screen"),
+        };
+        camera.take_view(welcome, "26-damaged-prompt", Shot::new());
+        camera.take_view(welcome, "26-damaged-prompt-dark", Shot::new().dark());
+    });
+    let _ = varde.update(Message::Ui(varde_view::Message::Welcome(
+        WelcomeUi::OpenFound,
+    )));
+    let finding = requests.borrow().iter().find_map(|request| match request {
+        IoRequest::OpenFound { id, .. } => Some(*id),
+        _ => None,
+    });
+    let _ = varde.update(Message::Io(IoResponse::Opened {
+        id: finding.expect("the save found asked for"),
+        path: None,
+        result: Err("no such save was found in the file".to_owned()),
+    }));
+    shooting(|camera| {
+        let welcome = |mode| match &varde.screen {
+            Screen::Welcome(welcome) => welcome.view(&varde.files, mode, varde.options.theme),
+            Screen::Document(_) => panic!("not on the welcome screen"),
+        };
+        camera.take_view(
+            welcome,
+            "26-damaged-prompt-failed-small",
+            Shot::new().size(1024.0, 600.0),
+        );
     });
 }

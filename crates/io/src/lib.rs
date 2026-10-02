@@ -104,7 +104,7 @@ use crate::vrdp::Error as FileError;
 
 pub use crate::recent::RecentFile;
 pub use crate::settings::Settings;
-pub use crate::store::Recovered;
+pub use crate::store::{Recovered, StoredDamage};
 /// Carries [`Request`]s to the lane without waiting for them to be handled.
 pub use varde_lane::Transport;
 
@@ -162,6 +162,20 @@ pub enum Request {
     /// file refers to the picked file from then on, which [`Request::Save`]
     /// writes; otherwise the design is a copy, never saved.
     Open { id: OpenId, from: Chosen },
+    /// Opens the save a search found past damage in `file`'s design
+    /// instead of the one it opened, answered with [`Response::Opened`]
+    /// for the same `file`: the user chose the [`FoundSave`] its
+    /// [`Opened::damage`] offered, named by its `found` tail. Its answer's
+    /// damage is [`DamageKind::Damaged`] with nothing found, its time the
+    /// found save's, and the recovery offer is looked for again, against
+    /// that save. `id` tags the answer; the open's own keeps
+    /// [`Request::Abandon`] of it closing `file`. Refused for a save that
+    /// wasn't offered, or once it's opened.
+    OpenFound {
+        id: OpenId,
+        file: FileId,
+        found: vrdp::Tail,
+    },
     /// Creates and locks an entry in the store of new designs for a new
     /// design, which its auto-saves go to until it's first saved as a file
     /// of the user's. Answered with [`Response::Created`].
@@ -266,10 +280,15 @@ pub enum Request {
 
 /// The answer to a [`Request`]. Errors are the messages to show.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "a response is made once per request and handled at once"
+)]
 pub enum Response {
-    /// Answers [`Request::Open`] and [`Request::OpenRecovered`] with the
-    /// path opened, made absolute, or the store entry's. A file picked on
-    /// the web has none.
+    /// Answers [`Request::Open`], [`Request::OpenRecovered`] and
+    /// [`Request::OpenFound`] with the path opened, made absolute, or the
+    /// store entry's. A file picked on the web has none, nor has a failed
+    /// [`Request::OpenFound`].
     Opened {
         id: OpenId,
         path: Option<PathBuf>,
@@ -367,6 +386,11 @@ impl Request {
             Request::OpenRecovered { id, path } => Response::Opened {
                 id,
                 path: Some(path),
+                result: Err(error),
+            },
+            Request::OpenFound { id, .. } => Response::Opened {
+                id,
+                path: None,
                 result: Err(error),
             },
             Request::New { id } => Response::Created {
@@ -477,6 +501,29 @@ impl UnixSeconds {
     pub fn checked_since(self, earlier: UnixSeconds) -> Option<i64> {
         self.0.checked_sub(earlier.0)
     }
+
+    /// Now, by the system clock natively and `Date.now()` on the web,
+    /// rounded down to the second. A clock can be wrong, so it's only for
+    /// showing.
+    pub(crate) fn now() -> UnixSeconds {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            use std::time::{SystemTime, UNIX_EPOCH};
+            UnixSeconds(match SystemTime::now().duration_since(UNIX_EPOCH) {
+                Ok(since) => i64::try_from(since.as_secs()).unwrap_or(i64::MAX),
+                // Before the epoch: at most `i64::MAX` seconds back, so
+                // negating it can't overflow.
+                Err(before) => {
+                    i64::try_from(before.duration().as_secs()).map_or(i64::MIN, |secs| -secs)
+                }
+            })
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            // Milliseconds. `as` saturates, and makes NaN 0.
+            UnixSeconds((js_sys::Date::now() / 1000.0).floor() as i64)
+        }
+    }
 }
 
 /// Why a save failed.
@@ -485,6 +532,15 @@ pub enum SaveError {
     /// The file was changed by someone else since it was opened or last
     /// saved, so saving would lose their changes. Nothing was written.
     Conflict,
+    /// The file was found damaged when it was opened, past a save that
+    /// couldn't be read (see [`DamageKind::Damaged`]), so it's never saved
+    /// to: saving would cut off what can still be got out of it. Saved
+    /// as another file instead, Save acts as Save As. Nothing was written.
+    OpenedDamaged,
+    /// The file was damaged since it was opened or last saved: saving
+    /// could cut off what's still readable. Nothing was written; Save As
+    /// keeps the design.
+    Damaged,
     /// Anything else, as the message to show.
     Failed(String),
 }
@@ -496,6 +552,14 @@ impl fmt::Display for SaveError {
                 "the file was changed elsewhere since it was opened or saved. \
                  Save As keeps both versions.",
             ),
+            SaveError::OpenedDamaged => f.write_str(
+                "the file is damaged, so it can only be saved as another file. \
+                 Save As keeps the design.",
+            ),
+            SaveError::Damaged => f.write_str(
+                "the file was damaged since it was opened or saved. Save As keeps \
+                 the design.",
+            ),
             SaveError::Failed(error) => f.write_str(error),
         }
     }
@@ -505,6 +569,8 @@ impl From<FileError> for SaveError {
     fn from(error: FileError) -> Self {
         match error {
             FileError::Conflict => SaveError::Conflict,
+            FileError::OpenedDamaged => SaveError::OpenedDamaged,
+            FileError::Damaged => SaveError::Damaged,
             error => SaveError::Failed(error.to_string()),
         }
     }
@@ -540,27 +606,137 @@ pub struct Opened {
     /// looked for when the design is opened for editing. Saves leave it in
     /// the sidecar until the user answers: [`Request::DiscardRecovery`], or
     /// an [`Request::AutoSave`] once it's restored. An error says why it
-    /// couldn't be read, e.g. it was damaged; the design opens anyway.
-    pub recovered: Result<Option<Offer>, String>,
+    /// couldn't be read, e.g. it was damaged; the design opens anyway. If
+    /// its records are all damaged, or reading it failed, it's kept until
+    /// [`Request::DiscardRecovery`] or the clean close
+    /// ([`RecoveryError::kept`]): auto-saves are refused while it's kept,
+    /// never starting it over, and saves leave it be.
+    pub recovered: Result<Option<Offer>, RecoveryError>,
     /// For a store entry opened with [`Request::OpenRecovered`], whether
     /// `document` is the design as downloaded on the web, its newest
     /// record, rather than changes never saved: see
     /// [`Recovered::downloaded`], which may be out of date by now.
     pub downloaded: bool,
+    /// How reading the design's file, or the store entry, found it
+    /// damaged, if it did, and so which save `document` is: `None` for an
+    /// intact file, or one whose torn tail (an interrupted save, say) the
+    /// next save cuts off.
+    pub damage: Option<Damage>,
 }
 
 impl Opened {
     /// `document`, opened as `file` for editing with nothing to offer, as
     /// a store entry and on the web a design the user picked are:
-    /// `downloaded` says whether it's the design as downloaded.
-    pub(crate) fn editable(file: FileId, document: Document, downloaded: bool) -> Self {
+    /// `downloaded` says whether it's the design as downloaded, `damage`
+    /// how reading found the file.
+    pub(crate) fn editable(
+        file: FileId,
+        document: Document,
+        downloaded: bool,
+        damage: Option<Damage>,
+    ) -> Self {
         Self {
             file,
             document,
             access: Access::Edit,
             recovered: Ok(None),
             downloaded,
+            damage,
         }
+    }
+}
+
+/// How reading a file found it damaged: a design's file, a sidecar or a
+/// store entry, see [`Opened::damage`] and [`Offer::damage`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Damage {
+    pub kind: DamageKind,
+    /// When the save opened was written, by the writer's clock: only for
+    /// showing, as a clock can be wrong.
+    pub time: UnixSeconds,
+    /// How many bytes of the file can't be read.
+    pub unreadable: u64,
+}
+
+/// What [`Damage`] there is, and so what's opened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DamageKind {
+    /// Some earlier saves are damaged, and were stepped over: the newest
+    /// save opened. Saves go on as usual.
+    Bridged,
+    /// The newest save is damaged, its header intact: the one before it
+    /// opened. A save goes after the damaged one, cutting nothing off.
+    NewestDamaged,
+    /// The file is damaged past the save opened, the newest the file
+    /// proves, in a way only a search could get past, if anything could.
+    /// Shown only once the user agrees, and a design's file is never saved
+    /// to, only saved as another file ([`SaveError::OpenedDamaged`]); a
+    /// store entry's damage is cut off by its next auto-save.
+    Damaged {
+        /// The newest save the search found after the damage, if it's
+        /// another than the one opened and can be read, which
+        /// [`Request::OpenFound`] opens instead. Never for a store entry
+        /// or a sidecar.
+        found: Option<FoundSave>,
+    },
+}
+
+/// A save found by searching a damaged design file, see
+/// [`DamageKind::Damaged`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FoundSave {
+    /// Names it to [`Request::OpenFound`].
+    pub tail: vrdp::Tail,
+    /// When it was written, by the writer's clock.
+    pub time: UnixSeconds,
+}
+
+impl Damage {
+    /// The damage `report` says reading found, if any, with `found`, the
+    /// save a search found that [`Request::OpenFound`] can open.
+    pub(crate) fn of(report: &vrdp::Report, found: Option<FoundSave>) -> Option<Damage> {
+        let kind = match report.outcome {
+            vrdp::Outcome::Intact | vrdp::Outcome::TornTail => return None,
+            vrdp::Outcome::Bridged => DamageKind::Bridged,
+            vrdp::Outcome::NewestDamaged(_) => DamageKind::NewestDamaged,
+            vrdp::Outcome::Damaged { .. } => DamageKind::Damaged { found },
+        };
+        Some(Damage {
+            kind,
+            time: report.time,
+            unreadable: report.unreadable,
+        })
+    }
+
+    /// How reading a design's file found it, as [`Damage::of`], `found`
+    /// being the search's newest save, opened in case it's chosen.
+    pub(crate) fn of_design(read: &vrdp::WithFound) -> Option<Damage> {
+        let found = read.found.as_ref().map(|found| FoundSave {
+            tail: found.tail,
+            time: found.report.time,
+        });
+        Damage::of(&read.opened.report, found)
+    }
+}
+
+/// Why what a crashed session auto-saved of a design couldn't be offered,
+/// see [`Opened::recovered`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecoveryError {
+    /// What's wrong, as the message to show.
+    pub message: String,
+    /// Whether it's kept for whatever can still be got out of it: its
+    /// records are framed but none intact, or reading it failed. Then the
+    /// lane refuses auto-saves of the design, keeping it as it is, until
+    /// the user answers with [`Request::DiscardRecovery`], as for an
+    /// [`Offer`]; the app holds them till then. Otherwise it's of no use
+    /// to anyone, and auto-saving starts it over.
+    pub kept: bool,
+}
+
+impl fmt::Display for RecoveryError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
     }
 }
 
@@ -577,6 +753,14 @@ pub struct Offer {
     /// each auto-save records the saved version of the design it was based
     /// on (see `src/autosave.rs`), compared with the design's as opened.
     pub design_changed: bool,
+    /// How reading the sidecar found it damaged, if it did: `document` is
+    /// its newest intact auto-save, which may not be the newest.
+    pub damage: Option<Damage>,
+    /// Whether `document` was auto-saved from a newer save of the design
+    /// than the one opened, which couldn't be read: its newest save
+    /// damaged, say. The design changed since, then, but `document` may
+    /// be the best copy there is.
+    pub newer_base: bool,
 }
 
 /// A file the user chose in the Open or Save As dialog: natively its path,

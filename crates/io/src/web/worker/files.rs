@@ -16,17 +16,20 @@ use super::disk::{self, Handed};
 use super::opfs::{self, Handle, file, modified, names};
 use super::settings;
 use crate::autosave::{AutoSaved, Ending, Held, Origin, to_open};
-use crate::open::OpenFiles;
+use crate::open::{NOT_FOUND, OpenFiles};
 use crate::opfs::{lost_to_another_tab, new_name};
-use crate::store::{ATTEMPTS, NO_RECOVERED, NO_STORE, is_entry_name, listed_entry, newest_first};
+use crate::store::{
+    ATTEMPTS, Listing, NO_RECOVERED, NO_STORE, is_entry_name, listed_entry, listing, newest_first,
+};
 use crate::three_mf;
 use crate::vrdp::{
-    Error as FileError, HeldFile, ReadAt, Tail, check_unchanged, from_bytes, to_bytes,
+    self, Error as FileError, HeldFile, Known, ReadAt, Tail, check_unchanged,
+    from_bytes_with_found, whole_file,
 };
 use crate::web::js::call;
 use crate::{
-    Access, Chosen, Closing, FileId, OpenId, Opened, Picked, PickedFrom, ReadOnly, Recovered,
-    Request, Response, SaveError, SaveTo, SavedAs, Stores,
+    Access, Chosen, Closing, Damage, FileId, OpenId, Opened, Picked, PickedFrom, ReadOnly,
+    Recovered, Request, Response, SaveError, SaveTo, SavedAs, Stores,
 };
 
 /// What the web build answers requests for files at a path with: it only
@@ -61,6 +64,11 @@ struct Open {
     /// The name of the file of the user's the design was opened from or
     /// saved as, kept with its auto-saves; `None` for a new design.
     title: Option<String>,
+    /// The newest save a search found past damage in the file of the
+    /// user's the design was opened from, offered as
+    /// [`FoundSave`](crate::FoundSave) for [`Request::OpenFound`], till
+    /// it's opened.
+    found: Option<vrdp::Opened<Document>>,
 }
 
 /// A design's entry in the store, held.
@@ -77,8 +85,8 @@ struct Entry {
 struct Disk {
     handle: FileSystemFileHandle,
     /// What the file held when last read or written, see
-    /// [`check_unchanged`].
-    tail: Tail,
+    /// [`check_unchanged`]: one read as damaged is never saved to.
+    known: Known,
 }
 
 impl Open {
@@ -164,6 +172,11 @@ impl Files {
                 revision,
                 result: self.save_as(file, &picked, object, &document).await,
                 to: Chosen::File(picked),
+            },
+            Request::OpenFound { id, file, found } => Response::Opened {
+                id,
+                path: None,
+                result: self.open_found(file, found),
             },
             Request::New { id } => Response::Created {
                 id,
@@ -254,6 +267,7 @@ impl Files {
                 entry: Ok(entry),
                 disk: None,
                 title: None,
+                found: None,
             },
         ))
     }
@@ -297,7 +311,7 @@ impl Files {
         let open = self.open.get_mut(file)?;
         // Based on the file as last read or written, like natively. New
         // designs have none.
-        let base = open.disk.as_ref().map(|disk| disk.tail);
+        let base = open.disk.as_ref().map(|disk| disk.known.tail());
         let entry = open.entry.as_mut().map_err(|e| e.clone())?;
         entry
             .held
@@ -368,8 +382,8 @@ impl Files {
     /// The new designs left behind by tabs closed or reloaded with them
     /// open, or downloaded and closed since, newest first: entries nobody
     /// holds with a design in them.
-    /// Empty ones are deleted. Damaged ones are left alone, and not
-    /// listed: they can't be opened.
+    /// Empty ones are deleted. Damaged ones are listed, marked so, see
+    /// [`listing`].
     async fn list(&mut self) -> Vec<Recovered> {
         let (Some(designs), Ok(dir)) = (self.designs.clone(), self.dir().await) else {
             return Vec::new();
@@ -393,20 +407,16 @@ impl Files {
                 continue;
             };
             let mut entry = HeldFile::<_, AutoSaved>::new(handle);
-            let read = entry.read();
+            let read = entry.read_with_report();
             // Let go of before anything else: it can't be deleted, nor its
             // time read, while it's held.
             drop(entry);
-            match read {
-                Ok(Some(auto_saved)) => found.push(Recovered::new(
-                    designs.join(&name),
-                    modified(&file).await,
-                    auto_saved,
-                )),
-                Ok(None) => {
+            match listing(designs.join(&name), modified(&file).await, read) {
+                Listing::Listed(recovered) => found.push(recovered),
+                Listing::Empty => {
                     let _ = self.remove(&name).await;
                 }
-                Err(_) => {}
+                Listing::Skipped => {}
             }
         }
         newest_first(&mut found);
@@ -433,7 +443,7 @@ impl Files {
     /// Opens the entry at `path` as a new design, to go on editing it.
     async fn open_recovered(&mut self, open_id: OpenId, path: PathBuf) -> Response {
         let result = match self.take(&path).await {
-            Ok(mut entry) => to_open(entry.held.read()).map(|saved| {
+            Ok(mut entry) => to_open(entry.held.read_with_report()).map(|(saved, damage)| {
                 let id = self.open.add(
                     Some(open_id),
                     Open {
@@ -441,12 +451,14 @@ impl Files {
                         // Its handle went with the tab that had it.
                         disk: None,
                         title: saved.name,
+                        found: None,
                     },
                 );
                 Opened::editable(
                     id,
                     Snapshot::unwrap_or_clone(saved.document),
                     saved.origin.is_download(),
+                    damage,
                 )
             }),
             Err(error) => Err(error),
@@ -467,9 +479,12 @@ impl Files {
     ) -> Result<Opened, String> {
         let object = object.ok_or_else(|| format!("{} isn't there anymore", picked.name))?;
         let bytes = disk::read(&object).await.map_err(|e| e.to_string())?;
-        let (document, tail) = from_bytes(&bytes).map_err(|e| e.to_string())?;
+        // One found damaged past what was opened refuses saves.
+        let read = from_bytes_with_found(&bytes).map_err(|e| e.to_string())?;
+        let damage = Damage::of_design(&read);
+        let (known, document) = (read.opened.known(), read.opened.payload);
         let disk = match (picked.from, object) {
-            (PickedFrom::Handle, Handed::Handle(handle)) => Some(Disk { handle, tail }),
+            (PickedFrom::Handle, Handed::Handle(handle)) => Some(Disk { handle, known }),
             (PickedFrom::Input, Handed::File(_)) => None,
             _ => {
                 return Err(format!(
@@ -487,11 +502,30 @@ impl Files {
                 entry,
                 disk,
                 title: Some(picked.name.clone()),
+                found: read.found,
             },
         );
         // Editable: nothing can lock a file of the user's; the conflict
         // check on saving keeps two tabs from saving over each other.
-        Ok(Opened::editable(file, document, false))
+        Ok(Opened::editable(file, document, false, damage))
+    }
+
+    /// Opens the save a search found past damage in the file `file` was
+    /// opened from, named by its tail `found`, instead of the one opened,
+    /// see [`Request::OpenFound`]. Nothing is offered on opening here, so
+    /// there's no offer to look for again.
+    fn open_found(&mut self, file: FileId, found: Tail) -> Result<Opened, String> {
+        let open = self.open.get_mut(file)?;
+        let chosen = open
+            .found
+            .take_if(|chosen| chosen.tail == found)
+            .ok_or_else(|| NOT_FOUND.to_owned())?;
+        let damage = Damage::of(&chosen.report, None);
+        // Auto-saves are based on it from now on, and saves still refused.
+        if let Some(disk) = &mut open.disk {
+            disk.known = chosen.known();
+        }
+        Ok(Opened::editable(file, chosen.payload, false, damage))
     }
 
     /// Replaces the file `file` was opened from or saved as with
@@ -510,12 +544,14 @@ impl Files {
             FileError::Io(e) => SaveError::Failed(e.to_string()),
             _ => SaveError::Conflict,
         })?;
-        check_unchanged(current.as_slice(), disk.tail)?;
-        let (bytes, tail) = to_bytes(document)?;
+        // No failed save to allow for: the browser replaces the file as a
+        // write is closed, a failure leaving it as it was.
+        check_unchanged(current.as_slice(), &disk.known)?;
+        let (bytes, known) = whole_file(document, &[])?;
         disk::write(&disk.handle, &bytes)
             .await
             .map_err(|e| SaveError::Failed(e.to_string()))?;
-        disk.tail = tail;
+        disk.known = known;
         open.saved();
         Ok(())
     }
@@ -539,17 +575,18 @@ impl Files {
         if let Some(file) = file {
             self.open.get_mut(file)?;
         }
-        let (bytes, tail) = to_bytes(document)?;
+        let (bytes, known) = whole_file(document, &[])?;
         disk::write(&handle, &bytes)
             .await
             .map_err(|e| SaveError::Failed(e.to_string()))?;
-        let disk = Some(Disk { handle, tail });
+        let disk = Some(Disk { handle, known });
         let title = Some(picked.name.clone());
         let file = match file {
             Some(file) => {
                 let open = self.open.get_mut(file)?;
                 open.disk = disk;
                 open.title = title;
+                open.found = None;
                 open.saved();
                 file
             }
@@ -559,7 +596,15 @@ impl Files {
             // leaves nothing behind.
             None => {
                 let entry = self.entry().await;
-                self.open.add(None, Open { entry, disk, title })
+                self.open.add(
+                    None,
+                    Open {
+                        entry,
+                        disk,
+                        title,
+                        found: None,
+                    },
+                )
             }
         };
         // Designs are only recovered from the welcome screen here, never

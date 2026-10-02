@@ -41,3 +41,13 @@ fn edge_times() {
     assert_eq!(relative_time(NOW, i64::MAX), "Sep 26, 2026");
     assert_eq!(relative_time(i64::MAX, i64::MIN), "Unknown date");
 }
+
+#[test]
+fn relative_times_in_a_sentence() {
+    let shown = |time| ago_in_sentence(UnixSeconds(time), UnixSeconds(NOW));
+    assert_eq!(shown(NOW), "just now");
+    assert_eq!(shown(NOW - 5 * MINUTE), "5 min ago");
+    assert_eq!(shown(NOW - DAY), "yesterday");
+    assert_eq!(shown(NOW - 14 * DAY), "Sep 12");
+    assert_eq!(shown(i64::MAX), "an unknown date");
+}

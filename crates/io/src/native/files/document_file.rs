@@ -1,7 +1,8 @@
 //! A design's own `.vrdp` file, natively: the format
 //! ([`vrdp`]) on a [`File`] at a path, opened and locked for
 //! each operation. Readers take a shared lock and writers an exclusive one,
-//! each waiting at most a moment for it. A new file is created without
+//! each waiting at most a moment for it, except that reading a file's
+//! preview never waits. A new file is created without
 //! replacing anything, or written next to the one it replaces and renamed
 //! over it, and made durable along with its directory entry.
 
@@ -13,7 +14,9 @@ use std::time::{Duration, Instant};
 use varde_document::Document;
 
 use crate::native::unique;
-use crate::vrdp::{self, Error, Result, Tail};
+#[cfg(test)]
+use crate::vrdp::Report;
+use crate::vrdp::{self, Error, Known, Opened, Preview, Result, Tail, WithFound};
 
 /// An open `.vrdp` file that [`Document`]s can be saved to.
 ///
@@ -21,7 +24,9 @@ use crate::vrdp::{self, Error, Result, Tail};
 #[derive(Debug)]
 pub(crate) struct DocumentFile {
     path: PathBuf,
-    tail: Tail,
+    /// The file as last read or written, see [`vrdp::save`]: its tail, how
+    /// it was found after it, and a failed save.
+    known: Known,
 }
 
 /// A step on a path that tests step in at, see [`Hooks`].
@@ -43,9 +48,14 @@ struct Hooks<'a> {
 }
 
 impl DocumentFile {
-    /// Creates a new file containing `document`. Fails if `path` exists.
-    pub(crate) fn create(path: impl Into<PathBuf>, document: &Document) -> Result<Self> {
-        Self::create_with(path.into(), document, None, &mut Hooks::default())
+    /// Creates a new file containing `document`, followed by `previews`,
+    /// see [`vrdp::to_bytes`]. Fails if `path` exists.
+    pub(crate) fn create(
+        path: impl Into<PathBuf>,
+        document: &Document,
+        previews: &[Preview],
+    ) -> Result<Self> {
+        Self::create_with(path.into(), document, previews, None, &mut Hooks::default())
     }
 
     /// [`create`](DocumentFile::create), with `permissions` from the start
@@ -53,6 +63,7 @@ impl DocumentFile {
     fn create_with(
         path: PathBuf,
         document: &Document,
+        previews: &[Preview],
         permissions: Option<&std::fs::Permissions>,
         hooks: &mut Hooks,
     ) -> Result<Self> {
@@ -69,7 +80,7 @@ impl DocumentFile {
             options.mode(permissions.mode() & 0o7777);
         }
         let file = options.open(&path)?;
-        let result = Self::write_new(file, path.clone(), document, permissions, hooks);
+        let result = Self::write_new(file, path.clone(), document, previews, permissions, hooks);
         if result.is_err() {
             let _ = std::fs::remove_file(&path);
         }
@@ -82,6 +93,7 @@ impl DocumentFile {
         mut file: File,
         path: PathBuf,
         document: &Document,
+        previews: &[Preview],
         permissions: Option<&std::fs::Permissions>,
         hooks: &mut Hooks,
     ) -> Result<Self> {
@@ -96,34 +108,83 @@ impl DocumentFile {
         }
         lock(&file, Lock::Exclusive)?;
 
-        let tail = vrdp::write_new(&mut file, document)?;
+        let known = vrdp::write_new(&mut file, document, previews)?;
         file.sync_all()?;
         sync_parent(&path)?;
-        Ok(Self { path, tail })
+        Ok(Self { path, known })
     }
 
-    /// Opens an existing file and reads its newest document.
-    pub(crate) fn open(path: impl Into<PathBuf>) -> Result<(Self, Document)> {
+    /// Opens an existing file and reads its newest document, with how
+    /// reading found the file, see
+    /// [`open_with_found`](DocumentFile::open_with_found).
+    #[cfg(test)]
+    pub(crate) fn open(path: impl Into<PathBuf>) -> Result<(Self, Document, Report)> {
+        let (file, read) = Self::open_with_found(path)?;
+        Ok((file, read.opened.payload, read.opened.report))
+    }
+
+    /// Opens an existing file and reads its newest document, with how
+    /// reading found the file and the newest save a search found past
+    /// damage, if it's another than the one opened, see
+    /// [`vrdp::from_bytes_with_found`]: [`DocumentFile::open_found`] goes
+    /// over to it. One read as [`vrdp::Outcome::Damaged`] is never saved
+    /// to, see [`DocumentFile::save`]: that's how the caller knows to save
+    /// it as another file instead.
+    pub(crate) fn open_with_found(path: impl Into<PathBuf>) -> Result<(Self, WithFound)> {
         let path = path.into();
         let file = File::open(&path)?;
         lock(&file, Lock::Shared)?;
-        let (document, tail) = vrdp::read(&file)?;
-        Ok((Self { path, tail }, document))
+        let read = vrdp::read_with_found(&file)?;
+        let file = Self {
+            path,
+            known: read.opened.known(),
+        };
+        Ok((file, read))
     }
 
-    /// Writes `document` as a new file at `path`, like [`create`], but
+    /// Goes over to `found`, the save a search found past damage that
+    /// [`DocumentFile::open_with_found`] read, returning what it holds:
+    /// auto-saves are based on it from now on, and saves still refused.
+    pub(crate) fn open_found(&mut self, found: Opened<Document>) -> Document {
+        self.known = found.known();
+        found.payload
+    }
+
+    /// Whether an auto-save based on the save at `base` was based on a
+    /// newer save than the one this last read or wrote, which couldn't be
+    /// read, see [`vrdp::based_past`]. Not if the file can't be read.
+    pub(crate) fn based_past(&self, base: Tail) -> bool {
+        let read = || -> Result<bool> {
+            let file = File::open(&self.path)?;
+            lock(&file, Lock::Shared)?;
+            Ok(vrdp::based_past(&file, self.tail(), base)?)
+        };
+        read().unwrap_or(false)
+    }
+
+    /// Writes `document` and `previews` as a new file at `path`, like
+    /// [`create`], but
     /// replacing whatever file is there already. The new file is written
     /// next to it under a temporary name and renamed over it, so a crash
     /// leaves either the old file or the new one, never a mix. It takes
     /// the replaced file's permissions.
     ///
     /// [`create`]: DocumentFile::create
-    pub(crate) fn replace(path: impl Into<PathBuf>, document: &Document) -> Result<Self> {
-        Self::replace_with(path.into(), document, Hooks::default())
+    pub(crate) fn replace(
+        path: impl Into<PathBuf>,
+        document: &Document,
+        previews: &[Preview],
+    ) -> Result<Self> {
+        Self::replace_with(path.into(), document, previews, Hooks::default())
     }
 
     /// [`replace`](DocumentFile::replace), with `hooks` for tests.
-    fn replace_with(path: PathBuf, document: &Document, mut hooks: Hooks) -> Result<Self> {
+    fn replace_with(
+        path: PathBuf,
+        document: &Document,
+        previews: &[Preview],
+        mut hooks: Hooks,
+    ) -> Result<Self> {
         let permissions = std::fs::metadata(&path).ok().map(|m| m.permissions());
         let mut temps = hooks.temps.take();
         // A name that's taken is someone else's: another instance saving
@@ -136,8 +197,14 @@ impl DocumentFile {
                 None => temp_path(&path, name)?,
             };
             // A temporary file it fails to finish is removed.
-            Self::create_with(temp.clone(), document, permissions.as_ref(), &mut hooks)
-                .map(|file| (temp, file))
+            Self::create_with(
+                temp.clone(),
+                document,
+                previews,
+                permissions.as_ref(),
+                &mut hooks,
+            )
+            .map(|file| (temp, file))
         })?;
         let result = std::fs::rename(&temp, &path);
         if let Err(error) = result {
@@ -156,25 +223,45 @@ impl DocumentFile {
         Ok(file)
     }
 
-    #[cfg(test)]
+    /// The path it was opened or written at.
     pub(crate) fn path(&self) -> &Path {
         &self.path
     }
 
     /// The saved version the file held when `self` last read or wrote it.
     pub(crate) fn tail(&self) -> Tail {
-        self.tail
+        self.known.tail()
     }
 
-    /// Appends `document` as a new version, see [`vrdp::save`].
+    /// Appends `document` as a new version, followed by `previews`, which
+    /// replace the save before's, see [`vrdp::save`].
     ///
     /// Returns [`Error::Conflict`] if another writer has changed the file since
-    /// it was opened or last saved by `self`.
-    pub(crate) fn save(&mut self, document: &Document) -> Result<()> {
+    /// it was opened or last saved by `self`, and [`Error::Damaged`] if it
+    /// was damaged since. A file opened as [`vrdp::Outcome::Damaged`] is
+    /// refused, [`Error::OpenedDamaged`], with nothing written: it can only
+    /// be saved as another file, which may replace it.
+    pub(crate) fn save(&mut self, document: &Document, previews: &[Preview]) -> Result<()> {
         let mut file = OpenOptions::new().read(true).write(true).open(&self.path)?;
         lock(&file, Lock::Exclusive)?;
-        self.tail = vrdp::save(&mut file, self.tail, document)?;
+        vrdp::save(&mut file, &mut self.known, document, previews)?;
         Ok(())
+    }
+
+    /// The first preview `supported` accepts of the design file at `path`,
+    /// see [`vrdp::read_preview`], which reads no record's payload. It
+    /// takes the shared lock without waiting, as it's for listing files
+    /// on the one IO lane: a lock it can't get, as while another program
+    /// saves where locks are mandatory, is no preview this time, as is any
+    /// other failure.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn read_preview(
+        path: &Path,
+        supported: impl Fn(&Preview) -> bool,
+    ) -> Option<Preview> {
+        let file = File::open(path).ok()?;
+        file.try_lock_shared().ok()?;
+        vrdp::read_preview(&file, supported)
     }
 }
 

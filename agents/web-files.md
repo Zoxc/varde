@@ -18,8 +18,13 @@ recovered, and can't open it. The browser lets go of the handle when the
 tab closes or reloads. Entries left behind with a design in them show up on
 the welcome screen as recovered designs, like after a crash natively, and
 open as untitled designs backed by their entry; Discard deletes one, empty
-ones are deleted when listed. Closing the design cleanly, saved or not
-kept, empties and deletes its entry, except after a download, see below.
+ones are deleted when listed, and damaged ones are listed marked so, as
+natively (see `agents/files.md`). A picked file opened damaged comes with
+its `Opened::damage` and the save a search found, as natively, and one
+damaged past a save that couldn't be read is asked about the same way and
+only saved as another file: Save acts as Save As for a file with a
+handle, and a file-input copy is a copy anyway. Closing the design
+cleanly, saved or not kept, empties and deletes its entry, except after a download, see below.
 
 **The user's files** (`crates/io/src/pick.rs`) are only the ones the user
 picks; the page shows the pickers, from the app's `update` right after the
@@ -33,12 +38,15 @@ moves the design to the new file. The page keeps the handle and the app a
 bytes, handles being structured-cloneable. The worker reads the file whole
 (`getFile()`) and replaces it whole (`createWritable()`, which writes a
 copy and moves it over the file on close), with the design as the file's
-one record: a file of the user's has no sync access handle to append
-through. Chromium asks the user before a page first writes to a file it
-opened, and only the page can ask, so the app asks as the user saves,
-before sending the save. Before writing, the worker checks the file still
-holds the record it last read or wrote, and refuses the save as a conflict
-otherwise, like natively; another program writing between that check and
+one record, with a new file `id`: a file of the user's has no sync access
+handle to append through. So a file saved on the web keeps no history,
+which saves space too: one saved elsewhere comes back with one record,
+a damaged newest save dropped with the rest. Chromium asks the user
+before a page first writes to a file it opened, and only the page can
+ask, so the app asks as the user saves, before sending the save. Before
+writing, the worker makes the native save's check (that the file still
+holds the record it last read or wrote, undamaged), refusing the save as
+a conflict or damage like natively; another program writing between that check and
 the write isn't caught. Nor can a file of the user's be locked: two tabs
 can have it open for editing, and only the conflict check keeps one from
 saving over the other.
@@ -93,8 +101,8 @@ sync access handle, which every browser with OPFS has in workers.
 The page and the worker share no memory. Each message is postcard bytes in
 a transferred `ArrayBuffer` (with a picked file's handle or `File` cloned
 alongside): requests numbered in the order sent, and responses carrying
-the number, with documents as the encoding `.vrdp` records use. Both sides
-check what they get (a size bound, no bytes left over, documents that
+the number, with documents as postcard too (`varde_document::codec`).
+Both sides check what they get (a size bound, no bytes left over, documents that
 decode and pass their checks; see `io::wire`), and a picked file is read
 only up to the same bound. Requests sent before the worker is ready wait
 on the page. The worker queues them and replaces waiting saves and

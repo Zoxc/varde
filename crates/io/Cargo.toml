@@ -15,9 +15,11 @@ postcard.workspace = true
 # The .vrdp payload, src/vrdp.rs.
 rmp-serde.workspace = true
 snap.workspace = true
-crc32fast.workspace = true
+xxhash-rust.workspace = true
+getrandom.workspace = true
 # The 3MF packages' zip, src/three_mf.rs.
 miniz_oxide.workspace = true
+crc32fast.workspace = true
 # recent.toml and settings.toml.
 toml.workspace = true
 
@@ -30,6 +32,8 @@ rfd.workspace = true
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # The worker's wake channel and the page's responses.
 futures.workspace = true
+# A file's id from the browser's `crypto.getRandomValues`.
+getrandom = { workspace = true, features = ["wasm_js"] }
 wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true
 js-sys.workspace = true
