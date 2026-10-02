@@ -61,11 +61,13 @@ pub mod lane {
 #[doc(hidden)]
 pub use crate::worker::serve as serve_worker;
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use varde_document::{
-    BodyId, Command, Document, Editor, FeatureId, FeatureKind, Generation, Snapshot,
+    BodyId, Command, Document, Editor, FeatureId, FeatureKind, Generation, Placement, Plane,
+    Snapshot,
 };
 use varde_kernel::{
     Aabb, Display, LinesError, ManifoldError, ManifoldMesh, MeshError, RenderLines, RenderMesh,
@@ -85,10 +87,6 @@ use picking::{Drawn, Scene};
 pub use varde_lane::Transport;
 
 /// Work for the regeneration side.
-// A draft's kind holds a sketch plane, which a face reference makes
-// larger than an export; one request goes per edit, so the size doesn't
-// matter.
-#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Request {
     /// Builds the mesh and the sketch lines of the committed document as
@@ -102,8 +100,8 @@ pub enum Request {
         /// viewport draws over everything instead.
         exclude: Option<FeatureId>,
         /// A feature being set up and not committed yet, answered as if
-        /// it were.
-        draft: Option<Draft>,
+        /// it were. Boxed: a feature's kind is large next to the rest.
+        draft: Option<Box<Draft>>,
     },
     /// Welds the visible bodies of the committed `document` for export
     /// (see [`export`]), answered with [`Response::Exported`] tagged
@@ -268,6 +266,11 @@ pub enum Response {
         /// now, see [`Evaluation::merged`]: a consumed body has no solid
         /// and isn't in `bodies`.
         merged: Vec<(BodyId, BodyId)>,
+        /// Each sketch on a face that was placed, and where, in the
+        /// document's order, see [`Evaluation::placements`]: with a draft
+        /// that goes, as the document with it applied placed them. A
+        /// sketch on a face that isn't listed isn't placed (it failed).
+        placements: Vec<(FeatureId, Placement)>,
         /// The box around each body that has a solid, shown or not, in
         /// the order they were made.
         bodies: Vec<(BodyId, Aabb)>,
@@ -317,7 +320,7 @@ impl Regenerator {
                 draft,
             } => {
                 self.cache.begin();
-                match self.regenerate(&document, exclude, draft.as_ref()) {
+                match self.regenerate(&document, exclude, draft.as_deref()) {
                     Ok(model) => Response::Regenerated {
                         generation,
                         exclude,
@@ -329,6 +332,7 @@ impl Regenerator {
                         failed: model.failed,
                         touched: model.touched,
                         merged: model.merged,
+                        placements: model.placements,
                         bodies: model.bodies,
                     },
                     Err(error) => Response::Failed {
@@ -413,7 +417,8 @@ impl Regenerator {
         let drafted = draft.as_ref().is_some_and(|draft| draft.error.is_none());
         let scene = tessellate_scene(document, &evaluation, drafted, &mut self.cache)
             .map_err(|error| error.to_string())?;
-        let sketches = flatten_sketches(document, exclude).map_err(|error| error.to_string())?;
+        let sketches = flatten_sketches(document, &evaluation.placements, exclude)
+            .map_err(|error| error.to_string())?;
         let bodies = evaluation
             .bodies
             .iter()
@@ -427,6 +432,7 @@ impl Regenerator {
             failed: evaluation.failed,
             touched: evaluation.touched,
             merged: evaluation.merged,
+            placements: evaluation.placements,
             bodies,
         })
     }
@@ -446,6 +452,7 @@ struct Model {
     failed: Vec<(FeatureId, String)>,
     touched: Vec<(FeatureId, Vec<BodyId>)>,
     merged: Vec<(BodyId, BodyId)>,
+    placements: Vec<(FeatureId, Placement)>,
     bodies: Vec<(BodyId, Aabb)>,
 }
 
@@ -622,17 +629,21 @@ pub fn export(
 /// The non-construction curves of the visible sketches of `document`,
 /// except `exclude`, flattened (see [`Sketch::flatten`]), lines without
 /// the ends fillets and chamfers cut off ([`Sketch::cut_back`]), and placed on
-/// their planes in world space, a polyline each (a sketch on a face, not
-/// placed yet, isn't drawn). Fails if there would be
-/// more points than [`RenderLines`] may hold, which a file with enough
+/// their planes in world space, a polyline each: a sketch on an origin
+/// plane at the plane's placement, one on a face at its placement in
+/// `placements` ([`Evaluation::placements`]); one on a face that isn't
+/// there isn't placed, and isn't drawn. Fails if there would be more
+/// points than [`RenderLines`] may hold, which a file with enough
 /// sketches in it can ask for.
 ///
 /// [`Sketch::flatten`]: varde_document::Sketch::flatten
 /// [`Sketch::cut_back`]: varde_document::Sketch::cut_back
 pub fn flatten_sketches(
     document: &Document,
+    placements: &[(FeatureId, Placement)],
     exclude: Option<FeatureId>,
 ) -> Result<RenderLines, LinesError> {
+    let placements: BTreeMap<FeatureId, Placement> = placements.iter().copied().collect();
     let mut lines = RenderLines::default();
     let shown = document
         .features()
@@ -642,9 +653,12 @@ pub fn flatten_sketches(
         let FeatureKind::Sketch { plane, sketch } = &feature.kind else {
             continue;
         };
-        // A sketch on a face isn't placed yet, so it's drawn nowhere.
-        let Some(placement) = plane.placement() else {
-            continue;
+        let placement = match plane {
+            Plane::Origin(origin) => origin.placement(),
+            Plane::Face(_) => match placements.get(&feature.id) {
+                Some(placement) => *placement,
+                None => continue,
+            },
         };
         let cut_back = sketch.cut_back();
         for entry in sketch.curves.iter().filter(|entry| !entry.construction) {

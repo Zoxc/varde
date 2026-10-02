@@ -6,9 +6,23 @@
 
 use varde_kernel::{BooleanError, KernelError, ProfileError};
 
-/// Why a sketch on a face isn't drawn or used: placing sketches on faces
-/// isn't done yet.
-pub(crate) const FACE_NOT_PLACED: &str = "sketches on faces can't be placed yet";
+/// Why a sketch on a face isn't placed: no face of its body as the
+/// features before it leave it has the face's name.
+pub(crate) const FACE_NOT_FOUND: &str = "its face wasn't found";
+
+/// Why a sketch on a face isn't placed: the face found isn't a plane.
+pub(crate) const FACE_NOT_FLAT: &str = "its face isn't flat";
+
+/// Why a sketch on a face isn't placed: the face's body has no solid
+/// when the history reaches the sketch (its maker failed or is gone).
+pub(crate) const FACE_BODY_GONE: &str = "its face's body is gone";
+
+/// Why a sketch on a face isn't placed: the placement the face gives
+/// isn't one ([`Placement::valid`]), its origin past the coordinate
+/// limit.
+///
+/// [`Placement::valid`]: varde_document::Placement::valid
+pub(crate) const FACE_TOO_FAR: &str = "its face is too far out to sketch on";
 
 /// Why a feature made from a sketch that isn't placed fails.
 pub(crate) const SKETCH_NOT_PLACED: &str = "its sketch isn't placed";

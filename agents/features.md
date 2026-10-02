@@ -103,16 +103,59 @@ pub struct FaceRef { pub body: BodyId, pub key: FaceKey, pub near: DVec3 }
   made from it.
 - `SetUnits` leaves planes alone (no values in them).
 
-**Regeneration, for now**: a sketch with no placement (on a face) fails
-with "sketches on faces can't be placed yet", is drawn nowhere
-(`flatten_sketches` skips it) and every extrude or revolve made from it
-fails with "its sketch isn't placed" (`SketchOutput::placement` is
-`None`). Its profiles are still worked out. Placements resolved in
-history order come next.
+**Regeneration** (`regen/src/history.rs`, `place_on_face`): the history
+runs in order, so when it reaches a sketch on a face, the face's body is
+as the features before the sketch left it. The sketch is placed:
 
-**The app, for now**: a sketch with no placement isn't an extrude
-candidate (`Candidate` carries the `Placement`) and isn't opened for
-editing (`Doc::enter_sketch`); `SketchState` carries the `Placement`.
+- the body through `Evaluation::holder(face.body)`: a body a join
+  consumed is followed to the body holding it, where its faces live on;
+  one with no solid fails, "its face's body is gone" (its maker failed,
+  was removed, or no longer makes it);
+- the face on that solid's `Topology` by `Topology::face(solid, &key,
+  near)` (name or alias, the nearest to `near` among several); none
+  fails, "its face wasn't found";
+- the region's form (its first triangle's face's, `picking::region_form`,
+  the same the picking tables summarize, so the app's pick gives the
+  same bits) must be `Form::Plane { n, d }`, else "its face isn't flat";
+- `Placement::on_plane(n, d)`, refused unless `Placement::valid` (every
+  number finite, axes unit and square within `Placement::SLACK` = 1e-9,
+  `normal = x × y` within it, origin within `MAX_COORD` on each axis):
+  "its face is too far out to sketch on" (a tilted face near the
+  coordinate limit can have its origin past it).
+
+A placed one is listed in `Evaluation::placements` (face sketches only,
+in the document's order) and its extrudes and revolves run on that
+frame; a failed one is drawn nowhere, its profiles are still worked out,
+and every extrude or revolve made from it fails with "its sketch isn't
+placed". No last plane is kept.
+
+Caches: a sketch's profiles are keyed by the sketch alone (not the
+plane: they're 2D, so the same drawing on another plane finds them);
+the placement by the face's solid's key, the face's key and `near`'s
+bits (`Entry::Placement`, the result or its message), so the topology is
+worked out again only when that solid changes; an extrude's or
+revolve's tool key adds the placement's twelve numbers' bits
+(`Keyer::placement`) to the sketch's key. An edit upstream changes the
+body's key, which re-places the sketch, which changes the tool keys
+after it: the sketch and what it made follow the face. Drafts need
+nothing new: a draft runs the history in order as a commit does, so its
+preview shows the sketches on its faces following.
+
+The answer carries `placements: Vec<(FeatureId, Placement)>` (as
+`Evaluation::placements`, with a draft that goes as the document with it
+applied placed them); on the wire (`Head::Regenerated::placements`, the
+four vectors as `[[f64; 3]; 4]`) each is checked `Placement::valid` and
+each sketch listed once (`wire::Error::Placement`, the generation
+answered as failed). `flatten_sketches(document, placements, exclude)`
+draws an origin plane's sketch at the plane and a face sketch at its
+placement, skipping one that isn't listed. `regen::Request::Regenerate`
+boxes its draft (`Option<Box<Draft>>`): a feature kind is large next to
+the rest of the request.
+
+**The app, for now**: it doesn't read the answer's placements yet, so a
+sketch on a face isn't an extrude or revolve candidate (`Candidate`
+carries the `Placement`) and isn't opened for editing
+(`Doc::enter_sketch`); `SketchState` carries the `Placement`.
 
 ## Revolve
 
@@ -222,8 +265,8 @@ into a kernel profile in the sketch's coordinates, then:
   failing, `Evaluation::touched` listing what it touches.
 - **Cache key** of the tool: `"revolve"`, the feature id, the regions,
   the `AxisLine`, the fit tolerance's bits, `span()` (its bits, or none),
-  and the sketch's key (which holds where the axis line is and the
-  plane). Booleans and touches are keyed by tool and body keys as an
+  the sketch's key (which holds where the axis line is) and the
+  placement's bits. Booleans and touches are keyed by tool and body keys as an
   extrude's.
 
 **Drafts** are of any kind: `regen::Draft { revision, feature, kind:

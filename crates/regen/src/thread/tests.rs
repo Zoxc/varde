@@ -61,7 +61,7 @@ fn round_trip() {
     assert_eq!(generation, editor.generation());
     assert_eq!(
         *sketches,
-        crate::flatten_sketches(editor.document(), None).unwrap()
+        crate::flatten_sketches(editor.document(), &[], None).unwrap()
     );
 }
 

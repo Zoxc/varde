@@ -28,6 +28,7 @@ fn regenerated(generation: u64) -> Head {
         failed: Vec::new(),
         touched: Vec::new(),
         merged: Vec::new(),
+        placements: Vec::new(),
         bodies: vec![(BodyId::NEW, [[0.0; 3], [1.0; 3]])],
         parts: vec![BodyId::NEW],
         faces: vec![face()],
@@ -117,7 +118,7 @@ fn a_revolve_and_its_draft_round_trip() {
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
-        draft: Some(draft.clone()),
+        draft: Some(Box::new(draft.clone())),
     };
     let Request::Regenerate {
         document,
@@ -128,7 +129,7 @@ fn a_revolve_and_its_draft_round_trip() {
         panic!("not a regeneration");
     };
     assert_eq!(*document, *editor.document());
-    assert_eq!(back, Some(draft));
+    assert_eq!(back, Some(Box::new(draft)));
 
     // Both cross the plate's axes, so both fail, the draft with the
     // model without it, and say why.
@@ -215,7 +216,7 @@ fn a_revolve_that_works_crosses_in_the_reply() {
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
-        draft: Some(draft.clone()),
+        draft: Some(Box::new(draft.clone())),
     };
     let request = decode_request(&encode_request(&request)).unwrap();
     let response = handle(request);
@@ -291,14 +292,14 @@ fn request_with_a_draft_round_trips() {
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
-        draft: Some(draft.clone()),
+        draft: Some(Box::new(draft.clone())),
     };
     let decoded = decode_request(&encode_request(&request)).unwrap();
     assert_eq!(decoded.draft(), Some(7));
     let Request::Regenerate { draft: back, .. } = decoded else {
         panic!("not a regeneration");
     };
-    assert_eq!(back, Some(draft));
+    assert_eq!(back, Some(Box::new(draft)));
 
     // The answer says which draft it had.
     let Response::Regenerated { draft, .. } = round_trip(&handle(request)) else {
@@ -321,11 +322,11 @@ fn request_with_a_draft_round_trips() {
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
-        draft: Some(Draft {
+        draft: Some(Box::new(Draft {
             revision: 8,
             feature: None,
             kind: join.into(),
-        }),
+        })),
     };
     let Response::Regenerated { draft, .. } = round_trip(&handle(request)) else {
         panic!("regeneration failed");
@@ -415,6 +416,7 @@ fn regenerated_round_trips() {
         failed,
         touched,
         merged,
+        placements,
         bodies,
     } = round_trip(&response)
     else {
@@ -429,6 +431,7 @@ fn regenerated_round_trips() {
     // The join takes out the one body there is, so touches none.
     assert_eq!(touched, [(cut, Vec::new())]);
     assert!(merged.is_empty());
+    assert!(placements.is_empty());
     assert_eq!(mesh, *sent);
     assert!(mesh.triangle_count() > 0);
     assert!(mesh.edge_count() > 0);
@@ -441,7 +444,7 @@ fn regenerated_round_trips() {
     assert_eq!(picking.bodies(), [bodies[0].0]);
     assert_eq!(
         *sketches,
-        crate::flatten_sketches(editor.document(), None).unwrap()
+        crate::flatten_sketches(editor.document(), &[], None).unwrap()
     );
     assert_eq!(sketches.ends().len(), 6);
 }
@@ -730,6 +733,7 @@ fn answer(mesh: RenderMesh, parts: Vec<BodyId>) -> Response {
         failed: Vec::new(),
         touched: Vec::new(),
         merged: Vec::new(),
+        placements: Vec::new(),
         bodies: boxes,
     }
 }
@@ -1534,6 +1538,7 @@ fn a_model_with_too_many_faces_is_answered_as_failed() {
             failed: Vec::new(),
             touched: Vec::new(),
             merged: Vec::new(),
+            placements: Vec::new(),
             bodies: vec![(
                 BodyId::NEW,
                 Aabb {
@@ -1704,4 +1709,122 @@ fn tangent_chains_must_hang_together() {
     // A crease is its own, and no chain's.
     assert!(tables([0, 1], 1, true).is_ok());
     assert_eq!(tables([0, 0], 1, true), Err(PickingError::Tangent));
+}
+
+/// A sketch on the example plate's top, shown: its placement crosses
+/// with the model, and its lines drawn there.
+#[test]
+fn placements_round_trip() {
+    use varde_document::{FaceRef, Plane};
+    let mut editor = Editor::new(Document::example());
+    let top = FaceRef {
+        body: editor.document().bodies()[0].id,
+        key: FaceKey {
+            feature: editor.document().features()[1].id.get(),
+            part: PartKey::EndCap,
+            instance: 0,
+        },
+        near: glam::DVec3::new(20.0, 0.0, 10.0),
+    };
+    editor
+        .apply(editor.document().add_sketch(Plane::Face(top)))
+        .unwrap();
+    let sketch = editor.document().features().last().unwrap().id;
+    let FeatureKind::Sketch { sketch: drawn, .. } = &editor.document().features()[0].kind else {
+        unreachable!()
+    };
+    let drawn = Box::new(drawn.clone());
+    editor
+        .apply(Command::SetSketch {
+            feature: sketch,
+            sketch: drawn,
+        })
+        .unwrap();
+    editor
+        .apply(Command::SetFeatureVisible(sketch, true))
+        .unwrap();
+    let response = handle(decode_request(&encode_request(&regenerate(&editor))).unwrap());
+    let Response::Regenerated {
+        placements: sent, ..
+    } = &response
+    else {
+        panic!("regeneration failed");
+    };
+    let Response::Regenerated {
+        placements,
+        sketches,
+        failed,
+        ..
+    } = round_trip(&response)
+    else {
+        panic!("regeneration failed");
+    };
+    assert!(failed.is_empty(), "{failed:?}");
+    assert_eq!(placements, *sent);
+    let [(id, placement)] = placements[..] else {
+        panic!("one placement: {placements:?}");
+    };
+    assert_eq!(id, sketch);
+    assert_eq!(placement.origin, glam::DVec3::new(0.0, 0.0, 10.0));
+    assert_eq!(sketches.ends().len(), 5);
+    assert!(sketches.points().iter().all(|point| point[2] == 10.0));
+}
+
+/// A placement that isn't one, or a sketch placed twice, answers the
+/// generation as failed.
+#[test]
+fn hostile_placements_are_refused() {
+    let document = Document::example();
+    let [a, b] = [0, 1].map(|i| document.features()[i].id);
+    let good = [
+        [0.0, 0.0, 10.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0],
+    ];
+    let with = |change: fn(&mut [[f64; 3]; 4])| {
+        let mut placement = good;
+        change(&mut placement);
+        vec![(a, placement)]
+    };
+    let max = f64::from(varde_document::MAX_COORD);
+    for bad in [
+        with(|p| p[0][0] = f64::NAN),
+        with(|p| p[0][2] = f64::INFINITY),
+        with(|p| p[0][1] = 2.0 * f64::from(varde_document::MAX_COORD)),
+        // Not unit.
+        with(|p| p[1][0] = 1.0 + 1e-6),
+        // Not square.
+        with(|p| p[2] = [1e-6, 1.0, 0.0]),
+        // The normal isn't x × y.
+        with(|p| p[3] = [0.0, 0.0, -1.0]),
+        with(|p| p[3] = [0.0, 0.0, 0.0]),
+        vec![(a, good), (b, good), (a, good)],
+    ] {
+        let mut head = regenerated(7);
+        if let Head::Regenerated { placements, .. } = &mut head {
+            *placements = bad.clone();
+        }
+        let Response::Failed {
+            generation, error, ..
+        } = decode_reply(&head.encode()[..], &slices(&triangle())).unwrap()
+        else {
+            panic!("bad placements were taken: {bad:?}");
+        };
+        assert_eq!(u64::from(generation), 7);
+        assert_eq!(error, Error::Placement.to_string());
+    }
+    // At the bound, and two sketches, are fine.
+    let mut head = regenerated(8);
+    let mut far = good;
+    far[0] = [max, -max, max];
+    if let Head::Regenerated { placements, .. } = &mut head {
+        *placements = vec![(a, far), (b, good)];
+    }
+    let reply = decode_reply(&head.encode()[..], &slices(&triangle())).unwrap();
+    let Response::Regenerated { placements, .. } = reply else {
+        panic!("good placements were refused");
+    };
+    assert_eq!(placements.len(), 2);
+    assert_eq!(placements[0].1.origin, glam::DVec3::new(max, -max, max));
 }

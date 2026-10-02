@@ -3,8 +3,10 @@
 //!
 //! Each result is filed under a [`Key`]: a hash of everything it depends
 //! on, the feature's own settings, the tolerance, and the keys of its
-//! inputs (an extrude's sketch, a boolean's operands). A feature that didn't change, and whose
-//! inputs didn't, has the same key, and its result is taken as it was.
+//! inputs (an extrude's sketch and where it's placed, a boolean's
+//! operands, the solid a sketch's face is on). A feature that didn't
+//! change, and whose inputs didn't, has the same key, and its result is
+//! taken as it was.
 //! The cache lives in the lane (a thread natively, the worker on the web).
 //!
 //! It's bounded by size: each result records about how many bytes it
@@ -44,6 +46,7 @@ use std::mem::size_of_val;
 use std::sync::Arc;
 
 use serde::Serialize;
+use varde_document::Placement;
 use varde_kernel::{KernelError, RenderMesh, Solid};
 use varde_sketch::{Profiles, TooComplex};
 
@@ -107,6 +110,16 @@ impl Keyer {
         self.bytes(&number.to_le_bytes())
     }
 
+    /// A sketch's placement, by its numbers' bits.
+    pub(crate) fn placement(&mut self, placement: &Placement) -> &mut Keyer {
+        for v in [placement.origin, placement.x, placement.y, placement.normal] {
+            for number in v.to_array() {
+                self.number(number.to_bits());
+            }
+        }
+        self
+    }
+
     /// An input's key.
     pub(crate) fn key(&mut self, key: Key) -> &mut Keyer {
         self.number(key.0[0]).number(key.0[1])
@@ -122,6 +135,8 @@ impl Keyer {
 enum Entry {
     /// A sketch's profiles.
     Profiles(Arc<Result<Profiles, TooComplex>>),
+    /// Where a sketch on a face is, or why it isn't anywhere.
+    Placement(Result<Placement, &'static str>),
     /// Whether a sketch solves.
     Solves(bool),
     /// A feature's tool solid, or why it has none.
@@ -154,7 +169,9 @@ impl Entry {
             Entry::Solid(Err(error)) => error.len(),
             Entry::Drawn(drawn) => mesh_bytes(&drawn.mesh).saturating_add(drawn.bytes()),
             Entry::Scene(scene) => mesh_bytes(&scene.mesh).saturating_add(scene.picking.bytes()),
-            Entry::Solves(_) | Entry::Touches(_) | Entry::Boolean(Err(_)) => 0,
+            Entry::Solves(_) | Entry::Placement(_) | Entry::Touches(_) | Entry::Boolean(Err(_)) => {
+                0
+            }
         };
         data.saturating_add(OVERHEAD)
     }
@@ -348,6 +365,17 @@ impl Cache {
     ) -> Arc<Result<Profiles, TooComplex>> {
         match self.entry(key, || Entry::Profiles(Arc::new(make()))) {
             Entry::Profiles(profiles) => profiles,
+            _ => unreachable!("keys of different kinds differ"),
+        }
+    }
+
+    pub(crate) fn placement(
+        &mut self,
+        key: Key,
+        make: impl FnOnce() -> Result<Placement, &'static str>,
+    ) -> Result<Placement, &'static str> {
+        match self.entry(key, || Entry::Placement(make())) {
+            Entry::Placement(placement) => placement,
             _ => unreachable!("keys of different kinds differ"),
         }
     }

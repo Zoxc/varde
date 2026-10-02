@@ -178,6 +178,28 @@ impl Placement {
         self.origin + self.x * at.x + self.y * at.y
     }
 
+    /// Whether it's a placement a sketch can be drawn and built on: every
+    /// number finite, `x` and `y` unit and square to each other within
+    /// [`Placement::SLACK`], `normal` equal to `x × y` within it, and the
+    /// origin within [`MAX_COORD`] on each axis. What regeneration
+    /// refuses to place a sketch at, and what the page checks a
+    /// placement from the regeneration worker against.
+    pub fn valid(&self) -> bool {
+        let vectors = [self.origin, self.x, self.y, self.normal];
+        let near = |a: f64, b: f64| (a - b).abs() <= Self::SLACK;
+        vectors.iter().all(|v| v.is_finite())
+            && self.origin.abs().max_element() <= f64::from(MAX_COORD)
+            && near(self.x.length_squared(), 1.0)
+            && near(self.y.length_squared(), 1.0)
+            && near(self.x.dot(self.y), 0.0)
+            && (self.normal - self.x.cross(self.y)).abs().max_element() <= Self::SLACK
+    }
+
+    /// How far from unit, square and `x × y` [`Placement::valid`] lets a
+    /// placement's axes be: far more than [`Placement::on_plane`]'s
+    /// rounding, far less than anything drawn would show.
+    pub const SLACK: f64 = 1e-9;
+
     /// The placement of a sketch on the plane `n·p = d`, a flat face's
     /// form with `n` out of the solid: one rule, so that regeneration and
     /// the app, calling it on the same bits, get the same bits.

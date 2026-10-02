@@ -70,6 +70,7 @@ fn regenerate_tessellates_the_snapshot() {
         failed,
         touched,
         merged,
+        placements,
         bodies,
     } = handle(regenerate(&editor, None))
     else {
@@ -91,6 +92,7 @@ fn regenerate_tessellates_the_snapshot() {
     assert!(failed.is_empty());
     assert!(touched.is_empty());
     assert!(merged.is_empty());
+    assert!(placements.is_empty());
     assert!(bodies.is_empty());
 }
 
@@ -291,7 +293,7 @@ fn regenerate_flattens_the_sketches() {
     assert_eq!(mesh.triangle_count(), 0);
     assert_eq!(
         *sketches,
-        flatten_sketches(editor.document(), None).unwrap()
+        flatten_sketches(editor.document(), &[], None).unwrap()
     );
     assert_eq!(sketches.ends().len(), 2);
 
@@ -309,7 +311,7 @@ fn regenerate_flattens_the_sketches() {
 #[test]
 fn sketches_are_placed_on_their_planes() {
     let (editor, _) = sketched();
-    let lines = flatten_sketches(editor.document(), None).unwrap();
+    let lines = flatten_sketches(editor.document(), &[], None).unwrap();
     // The construction circle is left out.
     let polylines: Vec<_> = lines.polylines().collect();
     assert_eq!(polylines.len(), 2);
@@ -346,10 +348,10 @@ fn hidden_and_excluded_sketches_are_left_out() {
         .unwrap();
     let only_second = [[[1.0, 2.0, 0.0], [3.0, 4.0, 0.0]]];
 
-    let lines = flatten_sketches(editor.document(), Some(feature)).unwrap();
+    let lines = flatten_sketches(editor.document(), &[], Some(feature)).unwrap();
     assert_eq!(lines.polylines().collect::<Vec<_>>(), only_second);
     assert_eq!(
-        flatten_sketches(editor.document(), None)
+        flatten_sketches(editor.document(), &[], None)
             .unwrap()
             .ends()
             .len(),
@@ -359,9 +361,9 @@ fn hidden_and_excluded_sketches_are_left_out() {
     editor
         .apply(Command::SetFeatureVisible(feature, false))
         .unwrap();
-    let lines = flatten_sketches(editor.document(), None).unwrap();
+    let lines = flatten_sketches(editor.document(), &[], None).unwrap();
     assert_eq!(lines.polylines().collect::<Vec<_>>(), only_second);
-    let lines = flatten_sketches(editor.document(), Some(second)).unwrap();
+    let lines = flatten_sketches(editor.document(), &[], Some(second)).unwrap();
     assert_eq!(lines, RenderLines::default());
 }
 
@@ -388,7 +390,7 @@ fn sketches_far_out_stay_within_the_lines_bound() {
             sketch: Box::new(sketch),
         })
         .unwrap();
-    let lines = flatten_sketches(editor.document(), None).unwrap();
+    let lines = flatten_sketches(editor.document(), &[], None).unwrap();
     assert_eq!(lines.points().len(), CIRCLE_SEGMENTS + 1);
 }
 
@@ -437,7 +439,7 @@ fn lines_are_drawn_without_the_ends_a_chamfer_cuts_off() {
             sketch: Box::new(sketch),
         })
         .unwrap();
-    let lines = flatten_sketches(editor.document(), None).unwrap();
+    let lines = flatten_sketches(editor.document(), &[], None).unwrap();
     assert_eq!(
         lines.polylines().collect::<Vec<_>>(),
         [
@@ -453,7 +455,7 @@ pub(crate) fn regenerate_with(editor: &Editor, draft: Option<Draft>) -> Request 
         generation: editor.generation(),
         document: editor.snapshot(),
         exclude: None,
-        draft,
+        draft: draft.map(Box::new),
     }
 }
 
@@ -464,6 +466,8 @@ pub(crate) struct Answer {
     pub(crate) parts: Vec<BodyId>,
     pub(crate) failed: Vec<(FeatureId, String)>,
     pub(crate) bodies: Vec<(BodyId, varde_kernel::Aabb)>,
+    pub(crate) sketches: Arc<RenderLines>,
+    pub(crate) placements: Vec<(FeatureId, varde_document::Placement)>,
 }
 
 pub(crate) fn answered(response: Response) -> Answer {
@@ -473,6 +477,8 @@ pub(crate) fn answered(response: Response) -> Answer {
         picking,
         failed,
         bodies,
+        sketches,
+        placements,
         ..
     } = response
     else {
@@ -486,6 +492,8 @@ pub(crate) fn answered(response: Response) -> Answer {
         parts,
         failed,
         bodies,
+        sketches,
+        placements,
     }
 }
 

@@ -1,7 +1,11 @@
 //! Evaluating the feature history into the bodies' solids.
 //!
 //! Features run in the document's order. A sketch gives its profiles
-//! ([`Sketch::profiles`]). An extrude or a revolve finds its regions
+//! ([`Sketch::profiles`]) and where it is: an origin plane's placement,
+//! or, for a sketch on a face, the placement of the face's plane
+//! ([`Placement::on_plane`]) on the body as the features before the
+//! sketch leave it (see [`place_on_face`]); one that isn't placed fails,
+//! and so does every extrude or revolve made from it. An extrude or a revolve finds its regions
 //! again in its sketch's profiles ([`Profiles::resolve`]; one that's gone
 //! is "region not found"), merges them ([`Profiles::merge`]) and turns
 //! the loops into a kernel profile ([`profile`]). An extrude sweeps it
@@ -40,9 +44,10 @@ use std::sync::Arc;
 
 use glam::DVec2;
 use varde_document::{
-    AxisLine, BodyId, Document, Extrude, Feature, FeatureId, FeatureKind, MAX_COORD, Operation,
-    Placement, Revolve, Sketch,
+    AxisLine, BodyId, Document, Extrude, FaceRef, Feature, FeatureId, FeatureKind, MAX_COORD,
+    Operation, Placement, Plane, Revolve, Sketch,
 };
+use varde_kernel::mesh::Form;
 use varde_kernel::patch::Conic2;
 use varde_kernel::{
     Budget, Frame, KernelError, Loop, Op, Profile, Segment, Solid, Sweep, Tolerance,
@@ -51,6 +56,7 @@ use varde_sketch::{Curve, Id, Profiles, RegionRef, TooComplex};
 
 use crate::cache::{Cache, Key, Keyer};
 use crate::message::{self, Doing, Making};
+use crate::picking::region_form;
 use crate::profile::profile;
 
 /// What the history gives: the solids of the bodies, and the features
@@ -76,14 +82,22 @@ pub struct Evaluation {
     /// One failing while finding them lists those found before and the
     /// body it couldn't tell, which taking out gets past.
     pub touched: Vec<(FeatureId, Vec<BodyId>)>,
+    /// Each sketch on a face that was placed, and where, in the
+    /// document's order: on the plane of its face on the body as the
+    /// features before it leave it, by [`Placement::on_plane`]. A
+    /// sketch on an origin plane isn't listed: its placement is the
+    /// plane's. A sketch on a face that isn't listed failed, and is
+    /// drawn nowhere.
+    pub placements: Vec<(FeatureId, Placement)>,
 }
 
 impl Evaluation {
     /// The body in [`Evaluation::bodies`] holding `body`'s solid: `body`
     /// itself, or the body it was merged into. `None` for a body with no
     /// solid (its maker failed, or it isn't the document's). Whatever
-    /// lives on a consumed body (a sketch on one of its faces, once
-    /// sketches can be placed on faces) is looked for here.
+    /// lives on a consumed body is looked for here: a sketch on one of
+    /// its faces is placed on the holder's solid, where the face lives
+    /// on.
     pub fn holder(&self, body: BodyId) -> Option<BodyId> {
         let body = (self.merged.iter())
             .find(|(consumed, _)| *consumed == body)
@@ -122,8 +136,8 @@ pub struct BodySolid {
 }
 
 /// A sketch evaluated: the sketch, its profiles, where it is (`None` for
-/// one that isn't placed: on a face, which isn't resolved yet), and its
-/// key.
+/// one that isn't placed: on a face that wasn't found, isn't flat or
+/// whose body is gone), and its key, which is of the sketch alone.
 struct SketchOutput<'a> {
     id: FeatureId,
     sketch: &'a Sketch,
@@ -155,17 +169,22 @@ pub(crate) fn evaluate_within(
     for feature in document.features() {
         match &feature.kind {
             FeatureKind::Sketch { plane, sketch } => {
-                let key = Keyer::new("sketch").value(plane).value(sketch).finish();
+                // Its profiles are 2D: they don't depend on where it is.
+                let key = Keyer::new("sketch").value(sketch).finish();
                 let profiles = cache.profiles(key, || sketch.profiles());
-                // Sketches on faces aren't resolved yet: such a sketch
-                // fails, and so does whatever is made from it, rather
-                // than being put anywhere.
-                let placement = plane.placement();
-                if placement.is_none() {
-                    evaluation
-                        .failed
-                        .push((feature.id, message::FACE_NOT_PLACED.to_owned()));
-                }
+                let placement = match plane {
+                    Plane::Origin(origin) => Some(origin.placement()),
+                    Plane::Face(face) => match place_on_face(face, &evaluation, cache) {
+                        Ok(placement) => {
+                            evaluation.placements.push((feature.id, placement));
+                            Some(placement)
+                        }
+                        Err(error) => {
+                            evaluation.failed.push((feature.id, error.to_owned()));
+                            None
+                        }
+                    },
+                };
                 sketches.push(SketchOutput {
                     id: feature.id,
                     sketch,
@@ -532,6 +551,7 @@ impl Run<'_> {
             .number(from.to_bits())
             .number(to.to_bits())
             .key(self.sketch.key)
+            .placement(&placement)
             .finish();
         let solid = cache.solid(key, || {
             let profile = self.profile()?;
@@ -563,6 +583,7 @@ impl Run<'_> {
             .number(self.tolerance.fit().to_bits())
             .value(&span)
             .key(self.sketch.key)
+            .placement(&placement)
             .finish();
         let solid = cache.solid(key, || {
             let profile = self.profile()?;
@@ -589,8 +610,6 @@ impl Run<'_> {
         Ok((solid, key))
     }
 
-    /// The kernel profile of the regions, merged, in the sketch's
-    /// coordinates.
     /// Where its sketch is, or why it isn't anywhere.
     fn placement(&self) -> Result<Placement, String> {
         self.sketch
@@ -598,6 +617,8 @@ impl Run<'_> {
             .ok_or_else(|| message::SKETCH_NOT_PLACED.to_owned())
     }
 
+    /// The kernel profile of the regions, merged, in the sketch's
+    /// coordinates.
     fn profile(&self) -> Result<Profile, String> {
         let profiles = match &*self.sketch.profiles {
             Ok(profiles) => profiles,
@@ -621,6 +642,54 @@ impl Run<'_> {
             self.tolerance.fit() <= Tolerance::MIN_FIT,
         )
     }
+}
+
+/// Where a sketch on `face` is, given the bodies the features before it
+/// made (`evaluation`), or why it isn't anywhere. The face's body is
+/// looked for through [`Evaluation::holder`] (a body a join consumed
+/// lives on in the one holding it; one with no solid is "gone"); the
+/// face is found on its solid's [`Topology`](varde_kernel::Topology) by
+/// name or alias, the nearest to its point among several
+/// ([`Topology::face`](varde_kernel::Topology::face); none is "wasn't
+/// found"); its form must be a plane ("isn't flat"), whose `n` and `d`
+/// give the placement by [`Placement::on_plane`], the same rule and the
+/// same bits as the app's from the picking tables' summary of the face
+/// (both take the region's form by [`region_form`]). A placement that
+/// isn't [`Placement::valid`] (its origin past the coordinate limit) is
+/// refused. Cached by the solid's key and the face's name and point,
+/// so the topology is worked out again only when the solid changes.
+pub(crate) fn place_on_face(
+    face: &FaceRef,
+    evaluation: &Evaluation,
+    cache: &mut Cache,
+) -> Result<Placement, &'static str> {
+    let holder = evaluation.holder(face.body);
+    let made = (evaluation.bodies.iter())
+        .find(|made| Some(made.body) == holder)
+        .ok_or(message::FACE_BODY_GONE)?;
+    let near = face.near.to_array().map(f64::to_bits);
+    let key = Keyer::new("placement")
+        .key(made.key)
+        .value(&face.key)
+        .number(near[0])
+        .number(near[1])
+        .number(near[2])
+        .finish();
+    cache.placement(key, || {
+        let solid = &made.solid;
+        let topology = solid.topology();
+        let region =
+            (topology.face(solid, &face.key, face.near)).map_err(|_| message::FACE_NOT_FOUND)?;
+        let Form::Plane { n, d } = *region_form(solid, &topology.regions()[region as usize]) else {
+            return Err(message::FACE_NOT_FLAT);
+        };
+        let placement = Placement::on_plane(n, d).ok_or(message::FACE_NOT_FLAT)?;
+        if placement.valid() {
+            Ok(placement)
+        } else {
+            Err(message::FACE_TOO_FAR)
+        }
+    })
 }
 
 /// A revolve's axis in its sketch's coordinates.

@@ -308,75 +308,6 @@ fn a_failing_feature_changes_no_body_and_later_ones_still_run() {
     assert_eq!(evaluation.touched, [(failing, vec![])]);
 }
 
-/// Sketches on faces aren't placed yet: one fails, is drawn nowhere, and
-/// what's made from it fails, rather than being put anywhere. Its
-/// profiles are still worked out.
-#[test]
-fn a_sketch_on_a_face_is_not_placed_yet() {
-    let mut editor = Editor::new(Document::example());
-    let body = editor.document().bodies()[0].clone();
-    let top = varde_document::FaceRef {
-        body: body.id,
-        key: FaceKey {
-            feature: body.created_by.get(),
-            part: varde_kernel::mesh::PartKey::EndCap,
-            instance: 0,
-        },
-        near: glam::DVec3::new(20.0, 0.0, 10.0),
-    };
-    editor
-        .apply(editor.document().add_sketch(Plane::Face(top)))
-        .unwrap();
-    let sketch = editor.document().features().last().unwrap().id;
-    let FeatureKind::Sketch {
-        sketch: drawing, ..
-    } = &editor.document().features()[0].kind
-    else {
-        panic!("a sketch first");
-    };
-    let drawing = Box::new(drawing.clone());
-    editor
-        .apply(Command::SetSketch {
-            feature: sketch,
-            sketch: drawing,
-        })
-        .unwrap();
-    let boss = Extrude {
-        sketch,
-        operation: Operation::Join(Targets::default()),
-        ..example_extrude(editor.document())
-    };
-    editor
-        .apply(editor.document().add_feature(boss.into()))
-        .unwrap();
-    let boss = editor.document().features().last().unwrap().id;
-    editor
-        .apply(Command::SetFeatureVisible(sketch, true))
-        .unwrap();
-
-    let mut cache = Cache::default();
-    let evaluation = evaluate(editor.document(), &mut cache);
-    assert_eq!(
-        evaluation.failed,
-        [
-            (sketch, "sketches on faces can't be placed yet".to_owned()),
-            (boss, "its sketch isn't placed".to_owned()),
-        ]
-    );
-    // The plate as it was.
-    let [made] = &evaluation.bodies[..] else {
-        panic!("one body");
-    };
-    assert_near(made.solid.volume(), plate(8.0, 10.0));
-    // Both sketches' profiles, and the plate.
-    assert_eq!(cache.counts().1, 3);
-    // Shown, it's drawn nowhere (the example's sketch is hidden).
-    assert_eq!(
-        crate::flatten_sketches(editor.document(), None),
-        Ok(varde_kernel::RenderLines::default())
-    );
-}
-
 /// Adds a second plate, 3 mm thick, below the example's: its body.
 pub(crate) fn plate_below(editor: &mut Editor) -> BodyId {
     let extrude = Extrude {
@@ -1630,5 +1561,6 @@ fn a_join_tangent_to_a_second_body_fails_until_it_is_unticked() {
     assert_near(evaluation.bodies[1].solid.volume(), 24.0 + PI - inside);
 }
 
+mod faces;
 mod merging;
 mod revolve;

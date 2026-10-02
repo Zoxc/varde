@@ -227,6 +227,58 @@ fn degenerate_planes_have_no_placement() {
     }
 }
 
+/// What `on_plane` gives is valid, origin planes too; a placement with
+/// axes not unit or not square, a normal not `x × y`, a number not
+/// finite or the origin out of bounds isn't.
+#[test]
+fn placements_are_checked_valid() {
+    for plane in OriginPlane::ALL {
+        assert!(plane.placement().valid());
+    }
+    let max = f64::from(MAX_COORD);
+    for (n, d) in [
+        (DVec3::new(0.3, -0.7, 0.2), 25.0),
+        (DVec3::new(1.0, 1.0, 1.0), max),
+        (DVec3::NEG_Z, -max),
+        (DVec3::new(1e-10, 0.0, 1.0), 3.0),
+    ] {
+        assert!(Placement::on_plane(n, d).unwrap().valid(), "{n} {d}");
+    }
+    // Past the bound on an axis.
+    let far = Placement::on_plane(DVec3::X, max * 1.000_001).unwrap();
+    assert!(!far.valid());
+    let good = Placement::on_plane(DVec3::new(0.3, -0.7, 0.2), 25.0).unwrap();
+    let off = 1e-8;
+    for bad in [
+        Placement {
+            x: good.x * (1.0 + off),
+            ..good
+        },
+        Placement {
+            y: good.y + good.x * off,
+            ..good
+        },
+        Placement {
+            normal: -good.normal,
+            ..good
+        },
+        Placement {
+            normal: good.normal + good.x * off,
+            ..good
+        },
+        Placement {
+            origin: DVec3::new(f64::NAN, 0.0, 0.0),
+            ..good
+        },
+        Placement {
+            x: DVec3::new(f64::INFINITY, 0.0, 0.0),
+            ..good
+        },
+    ] {
+        assert!(!bad.valid(), "{bad:?}");
+    }
+}
+
 #[test]
 fn face_points_are_checked_in_bounds() {
     let face = |near| FaceRef {

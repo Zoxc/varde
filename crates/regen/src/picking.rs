@@ -25,6 +25,7 @@ use glam::DVec3;
 use serde::{Deserialize, Serialize};
 use varde_document::BodyId;
 use varde_kernel::mesh::{FaceKey, Form};
+use varde_kernel::topology::Region;
 use varde_kernel::{Display, MeshError, RenderMesh, Solid};
 
 /// What a face is, as far as the viewport needs to know: a plane's
@@ -431,6 +432,16 @@ pub(crate) mod bounded {
     }
 }
 
+/// The form of `region`, a region of `solid`'s topology: a region's
+/// faces lie on one surface, so its first triangle's face's form stands
+/// for them. What the picking tables summarize and what a sketch on the
+/// face is placed by, so the two agree to the bit.
+pub(crate) fn region_form<'a>(solid: &'a Solid, region: &Region) -> &'a Form {
+    let mesh = solid.mesh();
+    let tri = &mesh.tris()[region.tris[0] as usize];
+    &mesh.faces()[tri.face as usize].form
+}
+
 /// One body's solid drawn, with its picking tables: what the cache keeps
 /// per body. Its parts have no body yet: the same solid may be shown as
 /// several.
@@ -452,18 +463,11 @@ impl Drawn {
     pub(crate) fn new(solid: &Solid, display: &Display) -> Result<Drawn, MeshError> {
         let topology = solid.topology();
         let mesh = solid.tessellate_with(display, &topology)?;
-        let faces = solid.mesh().faces();
-        let tris = solid.mesh().tris();
         let faces = (topology.regions().iter())
-            .map(|region| {
-                // A region's faces lie on one surface: its first's form
-                // stands for them.
-                let face = &faces[tris[region.tris[0] as usize].face as usize];
-                PickFace {
-                    key: region.key,
-                    aliases: region.aliases.clone(),
-                    summary: Summary::of(&face.form),
-                }
+            .map(|region| PickFace {
+                key: region.key,
+                aliases: region.aliases.clone(),
+                summary: Summary::of(region_form(solid, region)),
             })
             .collect();
         let chains = topology.chains();

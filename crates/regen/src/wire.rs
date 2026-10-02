@@ -32,11 +32,14 @@
 //! by [`RenderLines::from_parts`] and, with the head's tables, a
 //! [`Picking`] by [`Picking::from_parts`], each part's body one the head
 //! lists; the bodies' boxes in the head are finite with their corners in
-//! order, and the merged bodies name each consumed body once, never as a
-//! holder. The failed features' ids, the sketches that don't solve and
-//! the bodies a draft or a feature touches are only marks, so they aren't
-//! checked against a document. Malformed
-//! bytes are refused, never a panic; see [`decode_request`] and
+//! order, the merged bodies name each consumed body once, never as a
+//! holder, and each placement of a sketch on a face is one a sketch can be
+//! drawn at ([`Placement::valid`]: finite, its axes unit and square within
+//! `1e-9`, its normal `x × y` within that, its origin within the
+//! coordinate limit), each sketch listed once. The failed features' ids,
+//! the sketches that don't solve and the bodies a draft or a feature
+//! touches are only marks, so they aren't checked against a document.
+//! Malformed bytes are refused, never a panic; see [`decode_request`] and
 //! [`decode_reply`]. A request's draft isn't checked as it's decoded:
 //! applying it goes through the document's checks.
 //!
@@ -56,7 +59,7 @@ use std::sync::Arc;
 
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
-use varde_document::{BodyId, DecodeError, FeatureId, Generation, codec};
+use varde_document::{BodyId, DecodeError, FeatureId, Generation, Placement, codec};
 use varde_kernel::{
     Aabb, LinesError, LinesPart, MeshError, MeshPart, MeshParts, RenderLines, RenderMesh,
 };
@@ -165,6 +168,10 @@ pub enum Head {
         /// consumed body once and none as a holder ([`Error::Merged`]);
         /// otherwise only marks.
         merged: Vec<(BodyId, BodyId)>,
+        /// Each placed sketch on a face and its placement's origin, `x`,
+        /// `y` and normal, checked to be [`Placement::valid`] and to list
+        /// each sketch once ([`Error::Placement`]); otherwise only marks.
+        placements: Vec<(FeatureId, [[f64; 3]; 4])>,
         /// Each body's box, its least and greatest corner, checked to be
         /// finite and in order ([`Error::Bounds`]).
         bodies: Vec<(BodyId, [[f32; 3]; 2])>,
@@ -236,6 +243,7 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Vec<Cow<'_, [u8]>>) {
             failed,
             touched,
             merged,
+            placements,
             bodies,
         } => {
             let head = Head::Regenerated {
@@ -246,6 +254,14 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Vec<Cow<'_, [u8]>>) {
                 failed: failed.clone(),
                 touched: touched.clone(),
                 merged: merged.clone(),
+                placements: (placements.iter())
+                    .map(|(feature, p)| {
+                        (
+                            *feature,
+                            [p.origin, p.x, p.y, p.normal].map(|v| v.to_array()),
+                        )
+                    })
+                    .collect(),
                 bodies: bodies
                     .iter()
                     .map(|(body, aabb)| (*body, [aabb.min.to_array(), aabb.max.to_array()]))
@@ -336,6 +352,7 @@ pub fn decode_reply(
             failed,
             touched,
             merged,
+            placements,
             bodies,
             parts: part_bodies,
             faces,
@@ -343,8 +360,9 @@ pub fn decode_reply(
             tangents,
         } => {
             let model = check_merged(&merged)
-                .and_then(|()| decode_bodies(&bodies))
-                .and_then(|bodies| {
+                .and_then(|()| decode_placements(&placements))
+                .and_then(|placements| Ok((placements, decode_bodies(&bodies)?)))
+                .and_then(|(placements, bodies)| {
                     let mut listed: Vec<BodyId> = bodies.iter().map(|&(body, _)| body).collect();
                     listed.sort_unstable();
                     if !(part_bodies.iter()).all(|body| listed.binary_search(body).is_ok()) {
@@ -353,10 +371,10 @@ pub fn decode_reply(
                     let (mesh, sketches) = decode_model(parts)?;
                     let picking = Picking::from_parts(part_bodies, faces, closed, tangents, &mesh)
                         .map_err(Error::Picking)?;
-                    Ok((bodies, mesh, sketches, picking))
+                    Ok((placements, bodies, mesh, sketches, picking))
                 });
             match model {
-                Ok((bodies, mesh, sketches, picking)) => Response::Regenerated {
+                Ok((placements, bodies, mesh, sketches, picking)) => Response::Regenerated {
                     generation,
                     exclude,
                     draft,
@@ -367,6 +385,7 @@ pub fn decode_reply(
                     failed,
                     touched,
                     merged,
+                    placements,
                     bodies,
                 },
                 Err(error) => Response::Failed {
@@ -417,6 +436,34 @@ fn check_merged(merged: &[(BodyId, BodyId)]) -> Result<(), Error> {
     } else {
         Ok(())
     }
+}
+
+/// The placements of a [`Head::Regenerated`], each checked to be
+/// [`Placement::valid`], each sketch listed once.
+fn decode_placements(
+    placements: &[(FeatureId, [[f64; 3]; 4])],
+) -> Result<Vec<(FeatureId, Placement)>, Error> {
+    let mut features: Vec<FeatureId> = placements.iter().map(|&(feature, _)| feature).collect();
+    features.sort_unstable();
+    if features.windows(2).any(|pair| pair[0] == pair[1]) {
+        return Err(Error::Placement);
+    }
+    placements
+        .iter()
+        .map(|&(feature, [origin, x, y, normal])| {
+            let placement = Placement {
+                origin: origin.into(),
+                x: x.into(),
+                y: y.into(),
+                normal: normal.into(),
+            };
+            if placement.valid() {
+                Ok((feature, placement))
+            } else {
+                Err(Error::Placement)
+            }
+        })
+        .collect()
 }
 
 /// The bodies' boxes of a [`Head::Regenerated`], each checked to be
@@ -568,6 +615,9 @@ pub enum Error {
     Bounds,
     /// A consumed body is listed twice, or as a holder.
     Merged,
+    /// A sketch's placement isn't [`Placement::valid`], or a sketch is
+    /// listed twice.
+    Placement,
     /// The picking tables don't go with the mesh, or name a body the head
     /// doesn't list.
     Picking(PickingError),
@@ -592,6 +642,7 @@ impl fmt::Display for Error {
             Error::RenderLines(e) => e.fmt(f),
             Error::Bounds => f.write_str("a body's box isn't one"),
             Error::Merged => f.write_str("a merged body is listed twice or holds another"),
+            Error::Placement => f.write_str("a sketch's placement isn't one"),
             Error::Picking(e) => e.fmt(f),
             Error::ExportParts(n) => write!(f, "exported bodies in {n} parts instead of 1"),
             Error::Export(e) => write!(f, "couldn't decode the exported bodies: {e}"),
@@ -610,6 +661,7 @@ impl std::error::Error for Error {
             | Error::RenderLines(_)
             | Error::Bounds
             | Error::Merged
+            | Error::Placement
             | Error::Picking(_)
             | Error::ExportParts(_) => None,
         }

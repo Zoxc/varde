@@ -6571,8 +6571,9 @@ and the later ones still run.
 - An **extrude** resolves its regions (`Profiles::resolve`; one gone is
   "region not found"), merges them (`Profiles::merge`), turns the loops
   into a kernel `Profile` (below), and calls `kernel::extrude` on the
-  sketch plane's `Frame` (from `Plane::placement`; a sketch on a face,
-  not placed yet, fails it, see `agents/features.md`), over `Extrude::span()`,
+  sketch plane's `Frame` (an origin plane's placement, or a face
+  sketch's as regeneration placed it; one not placed fails it, see
+  `agents/features.md`), over `Extrude::span()`,
   with the document's tolerance and `Budget::DEFAULT`, faces named by
   `FeatureId::get()`: the tool solid. A `NewBody` body gets it. Through
   all's span is worked out first (`through_all`): the extent along the
@@ -6856,10 +6857,11 @@ bit:
 
 **Cache** (`src/cache.rs`). Every result is filed under a 128-bit key (two
 SipHash runs, one salted, over the length-prefixed parts): a sketch's
-profiles by its plane and sketch (postcard-encoded), whether it solves by
-the sketch, an extrude's solid (or error) by its feature id,
-the regions, the tolerance's bits, its span's bits and its sketch's key
-(not the operation, the extent or the excluded bodies, so toggling those
+profiles by the sketch alone (postcard-encoded; not its plane), whether
+it solves by the sketch, a face sketch's placement by the face's solid's
+key and the face reference, an extrude's solid (or error) by its feature
+id, the regions, the tolerance's bits, its span's bits, its sketch's key
+and its placement's bits (not the operation, the extent or the excluded bodies, so toggling those
 finds the tool; the span stands for the extent and flip), whether a body touches a tool by the two solids' keys, a
 boolean's result (or `KernelError`) by the operation and the two solids'
 keys, which then keys the body's solid (a merge step's likewise, by the

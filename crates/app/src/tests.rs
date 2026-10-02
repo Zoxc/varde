@@ -2532,6 +2532,7 @@ fn failure_marks_of_before_a_replacement_mark_nothing() {
                     failed: vec![(id, "failed".to_owned())],
                     touched: vec![(id, Vec::new())],
                     merged: Vec::new(),
+                    placements: Vec::new(),
                     bodies,
                 },
                 failed => failed,
