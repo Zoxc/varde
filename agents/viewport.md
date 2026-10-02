@@ -848,9 +848,9 @@ The app's highlight (`Doc::highlight`, a `ModelHighlight`) is
 and what's hovered, in the mode (a tangent chain, a body's faces), by
 the mesh's ids (`PickIndex::highlight`, which leaves out ids the mesh
 hasn't). That's the faces hovered and selected and a small layer of
-edges and vertices (`varde_render::Highlights`): the edges outlined (the
-hovered ones and those bounding a hovered face), the selected edges, and
-the vertices hovered or selected, flagged which. It's rebuilt only when
+edges and vertices (`varde_render::Highlights`): the hovered edges
+outlined (not a hovered face's: they're drawn as they are), the
+selected edges, and the vertices hovered or selected, flagged which. It's rebuilt only when
 the model, the target hovered or the selection changes, so moving over
 one face uploads nothing; the renderer rewrites the layer only when it's
 another `Arc` or the mesh is (it holds ids, the positions come from the

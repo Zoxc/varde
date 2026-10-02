@@ -17,8 +17,7 @@ use crate::renderer::{EdgePoint, EdgeStream};
 /// only when the hover or the selection changes.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Highlights {
-    /// The edges outlined, as hovered (the hovered edge, or the edges of
-    /// the hovered face): drawn again
+    /// The edges outlined, as hovered: drawn again
     /// [`HOVERED_EDGE_WIDTH`](crate::HOVERED_EDGE_WIDTH) wide in the edges'
     /// colour, with a rim [`HOVER_RIM`](crate::HOVER_RIM) wide outside
     /// them in [`Colors::hover_outline`](crate::Colors::hover_outline).

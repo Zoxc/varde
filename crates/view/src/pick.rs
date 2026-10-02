@@ -111,9 +111,8 @@ pub struct Pick {
 /// What the viewport draws of what's hovered and selected over the model
 /// it was built for, by the mesh's ids (see
 /// [`varde_render::Frame::hovered_faces`]): the faces hovered, drawn
-/// brighter, and selected, tinted; the edges outlined (the hovered ones,
-/// and those bordering the hovered faces), the selected edges, and the
-/// hovered and selected vertices.
+/// brighter, and selected, tinted; the hovered edges outlined, the
+/// selected edges, and the hovered and selected vertices.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ModelHighlight {
     pub hovered_faces: Vec<u32>,
@@ -561,10 +560,10 @@ impl PickIndex {
     }
 
     /// What's drawn of `hovered` and `selected`: the faces hovered
-    /// brighter, the edges bordering them outlined, and those selected
-    /// tinted; an edge hovered outlined, one selected drawn in the
-    /// selection's colour; a vertex hovered or selected as a disc, the
-    /// hovered one last. What the mesh hasn't is left out.
+    /// brighter (their edges as they are), and those selected tinted; an
+    /// edge hovered outlined, one selected drawn in the selection's
+    /// colour; a vertex hovered or selected as a disc, the hovered one
+    /// last. What the mesh hasn't is left out.
     pub fn highlight(&self, hovered: &[Picked], selected: &[Picked]) -> ModelHighlight {
         self.highlight_with(hovered, selected, &[])
     }
@@ -598,18 +597,6 @@ impl PickIndex {
                 Picked::Edge(edge) => highlights.outlined.push(edge),
                 Picked::Vertex(_) => {}
             }
-        }
-        // The edges between a face hovered and another face.
-        let mut faces = highlight.hovered_faces.clone();
-        faces.sort_unstable();
-        if !faces.is_empty() {
-            let bordering = (self.mesh.edge_faces().iter().enumerate())
-                .filter(|(_, [a, b])| a != b)
-                .filter(|(_, faces_of)| {
-                    (faces_of.iter()).any(|face| faces.binary_search(face).is_ok())
-                })
-                .filter_map(|(edge, _)| u32::try_from(edge).ok());
-            highlights.outlined.extend(bordering);
         }
         for &target in &selected {
             match target {

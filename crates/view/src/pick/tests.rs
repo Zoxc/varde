@@ -183,7 +183,7 @@ fn an_edge_behind_the_plate_isnt_picked() {
 }
 
 #[test]
-fn a_hovered_face_is_drawn_with_the_edges_around_it_outlined() {
+fn a_hovered_face_is_drawn_with_its_edges_as_they_are() {
     let index = plate();
     let top = camera(View::Top, Projection::Orthographic);
     let at = shown(&top, DVec3::new(20.0, 5.0, 10.0));
@@ -193,12 +193,8 @@ fn a_hovered_face_is_drawn_with_the_edges_around_it_outlined() {
     };
     let drawn = index.highlight(&[target], &[]);
     assert_eq!(drawn.hovered_faces, [face]);
-    // The top's four sides and the hole's rim.
-    let outlined = &drawn.highlights.outlined;
-    assert_eq!(outlined.len(), 5, "{outlined:?}");
-    for &edge in outlined {
-        assert!(index.edge_faces(edge).unwrap().contains(&face));
-    }
+    // Its edges aren't outlined.
+    assert!(drawn.highlights.outlined.is_empty());
     assert!(drawn.selected_faces.is_empty());
     assert!(drawn.highlights.vertices.is_empty());
     assert!(index.highlight(&[], &[]).is_empty());
