@@ -630,3 +630,44 @@ fn the_cursor_picks_faces_whatever_the_selection_s_mode() {
     plates.doc.look(Look::Escape);
     assert_eq!(picks(&plates.doc), Some(Picks::Edges));
 }
+
+/// Bodies picked before the model shows a join merging them (committed,
+/// not answered yet) move on to the body holding them once it does, as a
+/// click then would pick: the combine would otherwise fail naming them.
+#[test]
+fn picks_follow_a_merge_the_model_shows_late() {
+    for tool_is_holder in [false, true] {
+        let mut plates = plates();
+        let [plate, right, left] = plates.bodies;
+        // A join over the plate and the right disc: it merges the disc
+        // into the plate.
+        let join = Operation::Join(Default::default());
+        fuzz::add_disc_in(&mut plates.doc, (20.0, 0.0), join);
+        plates.doc.sync();
+        assert!(plates.doc.feed.merged_bodies().is_empty());
+        plates.doc.look(Look::StartCombine);
+        let tool = if tool_is_holder { plate } else { left };
+        for body in [right, tool] {
+            plates.doc.look(Look::ClickBody { body, add: false });
+        }
+        assert_eq!(plates.doc.combine.as_ref().unwrap().target, Some(right));
+        plates.answer();
+        assert_eq!(plates.doc.feed.merged_bodies(), [(right, plate)]);
+        let session = plates.doc.combine.as_ref().unwrap();
+        assert_eq!(session.target, Some(plate));
+        if tool_is_holder {
+            // Now the target: taken out of the tools.
+            assert!(session.tools.is_empty());
+            assert!(plates.last_draft().is_none());
+            continue;
+        }
+        assert_eq!(session.tools, [left]);
+        // The preview asked for again, of the bodies as they are now.
+        let (_, draft) = plates.last_draft().expect("a draft");
+        assert_eq!((draft.target, draft.tools), (plate, vec![left]));
+        plates.answer();
+        assert_eq!(plates.doc.feed.draft_error(), None);
+    }
+}
+
+mod fuzz;

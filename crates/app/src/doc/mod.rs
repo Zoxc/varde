@@ -781,6 +781,9 @@ impl Doc {
         // Which bodies are merged, which faces show as whose, may change.
         self.prune_plane_pick(false);
         self.prune_picks();
+        if self.follow_merges() {
+            self.request_model();
+        }
         self.follow_placement();
     }
 

@@ -607,6 +607,26 @@ fn a_sketch_whose_face_is_gone_fails_and_entering_it_asks_for_a_plane() {
     );
 }
 
+/// Entering a sketch whose face is gone while a combine is set up ends
+/// the combine before asking for a plane: picking a plane never runs
+/// beside an operation, whose clicks would take the faces.
+#[test]
+fn entering_a_sketch_whose_face_is_gone_ends_a_combine() {
+    let (mut doc, id, requests) = on_the_top();
+    doc.look(Look::FinishSketch);
+    circle_in(&mut doc, &requests, id, DVec2::new(20.0, 10.0), 4.0);
+    let extrude = doc.editor.document().features()[1].id;
+    doc.apply(Command::RemoveFeature(extrude));
+    doc.sync();
+    answer(&mut doc, &requests);
+    assert_eq!(doc.placement(id), None);
+    doc.look(Look::StartCombine);
+    assert!(doc.combine.is_some());
+    doc.look(Look::EditFeature(id));
+    assert!(doc.picking_plane.is_some());
+    assert!(doc.combine.is_none());
+}
+
 /// The sketch feature `id`'s drawing.
 fn sketch_of(doc: &Doc, id: FeatureId) -> varde_sketch::Sketch {
     match &doc.editor.document().feature(id).unwrap().kind {

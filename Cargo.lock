@@ -4199,6 +4199,7 @@ dependencies = [
  "js-sys",
  "log",
  "postcard",
+ "rmp-serde",
  "serde",
  "varde-document",
  "varde-expr",

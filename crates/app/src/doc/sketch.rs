@@ -670,6 +670,7 @@ impl Doc {
                 self.finish_sketch();
                 self.extrude = None;
                 self.revolve = None;
+                self.combine = None;
                 self.selected_feature = Some(id);
                 self.picking_plane = pick.map(|pick| PickingPlane { pick, enter: true });
                 return;

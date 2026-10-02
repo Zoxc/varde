@@ -478,3 +478,5 @@ fn a_combine_draft_is_previewed() {
     assert!(error.contains("is one of its tools too"), "{error}");
     assert_eq!(answer.parts, [a, b], "the committed model");
 }
+
+mod fuzz;

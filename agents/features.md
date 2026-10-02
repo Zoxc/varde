@@ -590,6 +590,22 @@ is, so it sees the bodies as the features before it leave them:
   `Evaluation::touched`, and a combine draft's `Drafted::touched` is
   `None`. Drafts need nothing new (`Draft::kind` is any kind); the wire
   carries the kind in the document's postcard and `merged` as before.
+- **Random histories** (`regen/src/history/tests/combine/fuzz.rs`;
+  more with `VARDE_COMBINE_SEEDS`, `VARDE_COMBINE_FROM`): blocks and
+  discs on a grid (overlapping and flush), joins, cuts and intersects,
+  combines of every operation naming any bodies (used up ones too),
+  edits of earlier combines and upstream extrudes, removals, undo and
+  redo, combine drafts. After each step the cache warm and cold give the
+  same bits; each combine that worked equals the kernel's booleans on
+  the bodies the history before it leaves (every step held to the
+  boolean identities against the intersection's volume), its tools used
+  up into the target or kept as they were and other bodies left alone,
+  and one that failed changed nothing; every feature and body can still
+  be removed, every feature set as it is and each combine given every
+  operation and keep; postcard and MessagePack by name round trip, and
+  with bits flipped never panic (what's still taken regenerates and can
+  be edited); requests with a combine draft and their answers cross the
+  wire as they went.
 
 ### UI
 
@@ -601,7 +617,8 @@ double-click or `Enter` on its row, Edit combine in its menu), in a
 document that can be changed, outside sketches and the other
 operations, as the revolve's: editing an extrude or a revolve drops it,
 editing a combine drops theirs, entering a sketch drops it, and it
-drops the measure tool. A new one takes its bodies from what's selected
+drops the measure tool (entering a sketch whose face is gone, which
+asks for a plane first, drops it too). A new one takes its bodies from what's selected
 in the model: the first item's body is the target, the others' bodies
 the tools (as the UI mock's init takes the body selected); else it
 starts empty, picking the target. A union using the tools up, to begin
@@ -625,7 +642,13 @@ with.
   draws it as: the combine would fail naming it ("Body 3 is in Body 2
   now"). Only bodies made before the edited combine are picked
   (`combine::pickable`, the document's rule), and the session lets go
-  of bodies the document no longer has (`CombineSession::prune`).
+  of bodies the document no longer has (`CombineSession::prune`). Bodies
+  picked on a model that didn't show a merge yet (a join committed and
+  not answered) move on to the body holding them once the model shows
+  it, after each edit and answer (`CombineSession::follow`,
+  `Doc::follow_merges`), a tool landing on the target taken out, and the
+  preview is asked for again: otherwise the combine would fail naming
+  them.
 - **The highlight** is its own while it's set up, as the measure
   tool's: the target's faces in the selection's colour, the tools' in
   the second colour (a tool the preview uses up has no faces of its
@@ -645,6 +668,18 @@ with.
   the session; OK with nothing changed writes nothing. `Esc` or Cancel
   drops it and its draft. A replacement of the whole document,
   read-only, or the edited combine gone end it (`Doc::prune_combine`).
+- **Random sequences** (`app/src/doc/combine/tests/fuzz.rs`; more with
+  `VARDE_FUZZ_SEEDS`, `VARDE_FUZZ_FROM`) start it from `B`, Look and the
+  Timeline, pick in the viewport (stale picks too) and Objects, drop
+  chips, switch the fields, operation and Keep, cancel, `Esc`, commit,
+  undo and redo, add bodies and joins, delete features and bodies,
+  replace the document, go read-only, start the other tools mid-way and
+  answer late or out of order, checking after every step: no other
+  session or plane picking beside it and none read-only, its bodies
+  ones it can name, the tools sorted without the target, the panel
+  showing the session, the draft last sent the session's, `Esc` leaving
+  no trace, a commit one undo step, and once all is answered the error
+  shown the newest's.
 
 **The panel** (`view/src/combine.rs`, in `operation_panel`): title "New
 combine" or the combine's name, the tool count as its summary; Target

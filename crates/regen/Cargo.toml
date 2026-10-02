@@ -35,3 +35,5 @@ varde-lane = { workspace = true, features = ["testing"] }
 futures.workspace = true
 # src/wire.rs is tested natively.
 bytemuck.workspace = true
+# Documents as files hold them, bits flipped, in the combine fuzz.
+rmp-serde.workspace = true

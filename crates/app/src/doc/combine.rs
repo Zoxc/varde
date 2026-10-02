@@ -22,6 +22,7 @@ use varde_view::{
 };
 
 use super::Doc;
+use super::feed::Merges;
 
 /// The combine being set up, while one is: [`Doc::combine`].
 #[derive(Debug)]
@@ -138,6 +139,25 @@ impl CombineSession {
             self.picking = CombinePick::Target;
         }
         self.tools.retain(|&tool| keep(tool));
+    }
+
+    /// Moves the bodies `merges` (the merges before the combine) have
+    /// merged into others on to the bodies holding them, as a click on
+    /// one picks: one picked on a model that didn't show the merge yet
+    /// (a join committed and not answered) would fail the combine ("Body
+    /// 2 is in Body 1 now"). A tool landing on the target, or on another
+    /// tool, is taken once. Whether anything moved.
+    fn follow(&mut self, merges: &Merges) -> bool {
+        let held = |body: BodyId| merges.holder(body).unwrap_or(body);
+        let target = self.target.map(held);
+        let mut tools: Vec<BodyId> = self.tools.iter().map(|&tool| held(tool)).collect();
+        tools.retain(|&tool| Some(tool) != target);
+        tools.sort_unstable();
+        tools.dedup();
+        let moved = target != self.target || tools != self.tools;
+        self.target = target;
+        self.tools = tools;
+        moved
     }
 }
 
@@ -310,6 +330,20 @@ impl Doc {
             return;
         }
         session.prune(document);
+        // `sync` asks for the preview after.
+        self.follow_merges();
+    }
+
+    /// Moves the combine's bodies on to the bodies holding them where
+    /// the model shown has them merged before it
+    /// ([`CombineSession::follow`]), after an edit and with each answer:
+    /// whether they moved, and the preview is to be asked for again.
+    pub(crate) fn follow_merges(&mut self) -> bool {
+        let Some(session) = &self.combine else {
+            return false;
+        };
+        let merges = (self.feed).merged_before(self.editor.document(), session.feature);
+        (self.combine.as_mut()).is_some_and(|session| session.follow(&merges))
     }
 
     /// The combine being set up as the regeneration lane previews it, and
