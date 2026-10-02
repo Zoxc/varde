@@ -11,7 +11,10 @@
 //!   and the other patch's on the other ([`edge_neighbours_apart`]); or,
 //!   for a curved edge, the two patches lie on opposite sides of the
 //!   cylinder over the edge's conic ([`cylinder_apart`]), which is what
-//!   parts them where the surface touches the edge's plane all along it.
+//!   parts them where the surface touches the edge's plane all along it;
+//!   or, at a crease where both leave the edge on one side of its plane
+//!   and of that cylinder, opposite sides of a quadric from the pencil of
+//!   the two ([`pencil_apart`]).
 //! - **Vertex neighbours** (sharing one vertex only): a plane through the
 //!   vertex has the other five control points of each on opposite sides
 //!   ([`vertex_neighbours_apart`]).
@@ -139,7 +142,8 @@ pub(crate) fn edge_neighbours_apart(
 
 /// Two patches sharing edge `ea` of `a`, which is edge `eb` of `b`: the
 /// plane rule ([`edge_neighbours_apart`]), else the cylinder rule
-/// ([`cylinder_apart`]). What `check` and repair ask of edge neighbours.
+/// ([`cylinder_apart`]), else the pencil rule ([`pencil_apart`]). What
+/// `check` and repair ask of edge neighbours.
 ///
 /// Bands and caps (`sweep/lathe.rs`) grade their strips by the plane rule
 /// alone: its failure on a fitted diagonal is what tells them a strip is
@@ -152,7 +156,9 @@ pub(crate) fn edge_neighbours_parted(
     eb: usize,
     margin: f64,
 ) -> bool {
-    edge_neighbours_apart(a, ea, b, eb, margin) || cylinder_apart(a, ea, b, eb, margin)
+    edge_neighbours_apart(a, ea, b, eb, margin)
+        || cylinder_apart(a, ea, b, eb, margin)
+        || pencil_apart(a, ea, b, eb, margin)
 }
 
 /// Two patches sharing the curved edge `ea` of `a`, which is edge `eb` of
@@ -217,43 +223,286 @@ pub(crate) fn edge_neighbours_parted(
 /// nearly degenerate control triangle, different edges, and anything not
 /// finite are refused.
 pub(crate) fn cylinder_apart(a: &Patch, ea: usize, b: &Patch, eb: usize, margin: f64) -> bool {
-    let (p, c, q, w) = (a.p[ea], a.c[ea], a.p[(ea + 1) % 3], a.w[ea]);
-    let same_edge = b.p[eb] == q && b.p[(eb + 1) % 3] == p && b.c[eb] == c && b.w[eb] == w;
-    if !same_edge || straight(p, c, q, margin) {
+    let Some(edge) = CurvedEdge::new(a, ea, b, eb, margin) else {
         return false;
-    }
-    let (e1, e2) = (p - c, q - c);
-    let n = e1.cross(e2);
-    let nn = n.dot(n);
-    if nn.is_nan() || nn <= 1e-24 * e1.length_squared() * e2.length_squared() {
-        return false;
-    }
-    let root = nn.sqrt();
-    let (l1, l2) = (e1.length(), e2.length());
-    let (kappa, reach) = (l1 * l2 / root, l1.max(l2) / root);
-    // Barycentric coordinates (λP, λC, λQ) of a homogeneous point
-    // `(s, ω)`, `s = ω·(x − C)`, projected onto the control triangle, the
-    // largest's size and a bound on their rounding errors.
-    let lambda = |s: DVec3, omega: f64| {
-        let lp = n.dot(s.cross(e2)) / nn;
-        let lq = n.dot(e1.cross(s)) / nn;
-        let lc = omega - lp - lq;
-        let m = lp.abs().max(lc.abs()).max(lq.abs());
-        let e = LAMBDA_ROUNDING * kappa * (s.length() * reach + m + omega);
-        ([lp, lc, lq], m, e)
     };
-    let w2 = w * w;
-    // F's polar form, on the points' coordinates.
-    let polar =
-        |[xp, xc, xq]: [f64; 3], [yp, yc, yq]: [f64; 3]| xc * yc - 2.0 * w2 * (xp * yq + xq * yp);
     // `|∇F|` at the end where it is smaller: `4w²/hQ` at `P`, `hQ` the
     // height of `Q` above the line through `P` and `C`.
-    let threshold = margin * 4.0 * w2 / (root / l1).max(root / l2);
+    let threshold = margin * edge.gradient();
     // The sign of F on the patch, or None.
     let side = |x: &Patch, e: usize| -> Option<f64> {
+        let mut sign = 0.0;
+        for k in edge.coefficients(x, e)? {
+            // NaN fails the comparison.
+            let clear = k.f.abs() > threshold + k.ef;
+            if !clear || (sign != 0.0 && k.f.signum() != sign) {
+                return None;
+            }
+            sign = k.f.signum();
+        }
+        Some(sign)
+    };
+    matches!((side(a, ea), side(b, eb)), (Some(sa), Some(sb)) if sa == -sb)
+}
+
+/// Two patches sharing the curved edge `ea` of `a`, which is edge `eb` of
+/// `b`: some member `G = α·F + β·P` of the pencil of the cylinder over
+/// the edge's conic (`F`, as in [`cylinder_apart`]) and the edge's plane
+/// (`P`, the signed distance from it) has one sign on `a` and the other
+/// on `b`, each clear of `G = 0` but along the edge. See
+/// [`pencil_member`].
+pub(crate) fn pencil_apart(a: &Patch, ea: usize, b: &Patch, eb: usize, margin: f64) -> bool {
+    pencil_member(a, ea, b, eb, margin).is_some()
+}
+
+/// The member `(α, β)` of the pencil `G = α·F + β·P` that parts `a`
+/// (where `G > 0`) from `b` (where `G < 0`), if [`pencil_apart`] finds one.
+///
+/// At a crease (two faces meeting at an angle along a curved edge) both
+/// faces may leave the edge on one side of its plane and on one side of
+/// the cylinder over its conic, or one along it: an acute corner of a
+/// revolved profile against a wall, two sides leaving a corner into one
+/// quadrant of the meridian plane. Neither the plane rule nor the
+/// cylinder rule parts them then. Every `G` of the pencil vanishes on the
+/// edge (both `F` and `P` do) and is quadratic in space; near the edge,
+/// in the plane square to it, `F = 0` and `P = 0` are two lines square to
+/// each other (for a circle `G = 0` is a paraboloid of revolution through
+/// the ring), and their mixtures turn the line through any direction, so
+/// to first order some member parts any two faces that leave the edge in
+/// different directions. Curvature is second order: on coarse pieces it
+/// may still spoil it, and repair's splitting mends that.
+///
+/// **Coefficients.** On a patch `G = (α·N_F + β·N_P)/W²`, `N_P` the
+/// degree-four numerator of `P`: `P·W` is quadratic, with control values
+/// `ν = n·s/|n|` for a homogeneous control point `(s, ω)`, `s = ω·(x − C)`,
+/// and `P·W²`'s polar form is `(ν(X)·ω(Y) + ν(Y)·ω(X))/2`. One pass over
+/// the pairs ([`CurvedEdge::coefficients`]) gives, per coefficient `γ` in
+/// rows 1 to 4, `rF_γ = N_F,γ/W²_γ`, `rP_γ = N_P,γ/W²_γ` and bounds on
+/// their rounding. Row 0 (the edge) is exactly zero for both: the edge's
+/// three control points lie on the conic's cylinder and in its plane.
+///
+/// **The search.** `F` is scaled by `g`, the cylinder rule's `|∇F|`, so
+/// `F/g` and `P` both have unit gradient at the edge (on a circle; a scale
+/// on other conics) and square to each other (`∇F` lies in the plane,
+/// `∇P` is its normal). A unit `u = (α', β)` gives `G = α'·F/g + β·P` with
+/// `|∇G| = 1`, and does it when `s_γ·(α'·rF_γ/g + β·rP_γ) > m_γ` for every
+/// coefficient of both patches (`s = +1` on `a`, `−1` on `b`), with `m_γ =
+/// margin + eF_γ/g + eP_γ` (the threshold plus the rounding bound for any
+/// unit `u`). So the 20 points `p_γ = s_γ·(rF_γ/g, rP_γ)/m_γ` must all
+/// have `u·p_γ > 1`: the distance from the origin to their convex hull
+/// must be more than 1, as for the plane rule's straight edge in two
+/// dimensions. The best `u` points at the hull's closest point, a vertex
+/// or the foot on a segment, so every vertex direction and both normals
+/// of every segment are tried (400 directions against 20 points, in a
+/// fixed order) and the best kept. No trigonometry.
+///
+/// **The check.** The chosen member is then checked with its own bounds,
+/// so nothing rests on the search: every `s_γ·r_γ > margin + |α'|·eF_γ/g +
+/// |β|·eP_γ + 4ε·(|α'·rF_γ/g| + |β·rP_γ|)`, `r_γ = α'·rF_γ/g + β·rP_γ` (the
+/// last term the rounding of `r_γ` itself and of the division by `g`).
+///
+/// **Soundness.** `G` is a quadratic function of space vanishing on the
+/// edge. With its exact ratios in rows 1 to 4 positive on `a` and negative
+/// on `b`, `N_G = Σ B_γ·W²_γ·r_γ` (row 0 zero, the weights' coefficients
+/// positive) is positive on `a` but on the edge and negative on `b` but on
+/// it, so the two meet only on the edge: the cylinder rule's argument for
+/// another quadric through the edge (`F` and `P` are the members `β = 0`
+/// and `α = 0`). The floating-point ratios carry the cylinder rule's
+/// bounds on `F` and [`NU_ROUNDING`]'s on `ν`; a ratio clearing the
+/// threshold plus its bound has the exact ratio's sign.
+///
+/// **Splitting** keeps it in exact arithmetic: a piece of the edge lies on
+/// the same conic and in the same plane, its `F` the parent's times a
+/// positive constant and its `P` the parent's (its control triangle turns
+/// the same way), so the parent's member is in the piece's pencil, and the
+/// piece's ratios are weighted means of the parent's. Under the margin
+/// they may fail, as the plane's and the cylinder's do.
+///
+/// **The threshold** is `margin` times `|∇G|` at the edge: exactly that on
+/// a circle, a scale on other conics, as for the cylinder; not a distance
+/// of control points as the plane rule's.
+///
+/// The cylinder rule's refusals come first (a straight edge, a nearly
+/// degenerate control triangle, different edges); anything not finite is
+/// refused too.
+fn pencil_member(a: &Patch, ea: usize, b: &Patch, eb: usize, margin: f64) -> Option<(f64, f64)> {
+    let edge = CurvedEdge::new(a, ea, b, eb, margin)?;
+    let g = edge.gradient();
+    let finite = |k: &Coefficient| {
+        k.f.is_finite() && k.ef.is_finite() && k.p.is_finite() && k.ep.is_finite()
+    };
+    let (ka, kb) = (edge.coefficients(a, ea)?, edge.coefficients(b, eb)?);
+    if !(g.is_finite() && g > 0.0 && ka.iter().chain(&kb).all(finite)) {
+        return None;
+    }
+    // Each coefficient with its side's sign: `(s, F/g, eF/g, P, eP)`.
+    let signed = |i: usize| {
+        let (s, k) = if i < 10 {
+            (1.0, ka[i])
+        } else {
+            (-1.0, kb[i - 10])
+        };
+        (s, k.f / g, k.ef / g, k.p, k.ep)
+    };
+    let mut points = [(0.0, 0.0); 20];
+    for (i, point) in points.iter_mut().enumerate() {
+        let (s, f, ef, p, ep) = signed(i);
+        let m = margin + ef + ep;
+        *point = (s * f / m, s * p / m);
+    }
+    // The least of `u·p` over the points, for a unit `u`.
+    let score = |u: (f64, f64)| {
+        points
+            .iter()
+            .map(|p| u.0 * p.0 + u.1 * p.1)
+            .fold(f64::INFINITY, f64::min)
+    };
+    let mut best = (f64::NEG_INFINITY, (0.0, 0.0));
+    let mut consider = |u: (f64, f64)| {
+        let length = (u.0 * u.0 + u.1 * u.1).sqrt();
+        // Also skips NaN.
+        if !(length > 0.0 && length.is_finite()) {
+            return;
+        }
+        let u = (u.0 / length, u.1 / length);
+        let s = score(u);
+        if s > best.0 {
+            best = (s, u);
+        }
+    };
+    for i in 0..20 {
+        consider(points[i]);
+        for j in i + 1..20 {
+            let d = (points[j].0 - points[i].0, points[j].1 - points[i].1);
+            consider((-d.1, d.0));
+            consider((d.1, -d.0));
+        }
+    }
+    let (score, (alpha, beta)) = best;
+    // NaN fails the comparison.
+    let found = score > 1.0;
+    if !found {
+        return None;
+    }
+    // The member checked with its own bounds.
+    let parts = (0..20).all(|i| {
+        let (s, f, ef, p, ep) = signed(i);
+        let r = alpha * f + beta * p;
+        let bound = margin
+            + alpha.abs() * ef
+            + beta.abs() * ep
+            + 4.0 * f64::EPSILON * (alpha.abs() * f.abs() + beta.abs() * p.abs());
+        s * r > bound
+    });
+    parts.then_some((alpha / g, beta))
+}
+
+/// What the cylinder and pencil rules know about a curved edge `P, C, Q`
+/// of weight `w` shared by two patches: its control triangle's edges from
+/// `C`, their normal `n` and the sizes the rounding bounds use.
+struct CurvedEdge {
+    c: DVec3,
+    w2: f64,
+    e1: DVec3,
+    e2: DVec3,
+    n: DVec3,
+    nn: f64,
+    root: f64,
+    l1: f64,
+    l2: f64,
+    kappa: f64,
+    reach: f64,
+}
+
+/// One Bernstein coefficient (rows 1 to 4) of [`cylinder_apart`]'s `F`
+/// and [`pencil_member`]'s `P` over the patch's `W²`: the ratios `f`, `p`
+/// and bounds `ef`, `ep` on their rounding.
+#[derive(Debug, Clone, Copy, Default)]
+struct Coefficient {
+    f: f64,
+    ef: f64,
+    p: f64,
+    ep: f64,
+}
+
+impl CurvedEdge {
+    /// The edge `ea` of `a`, if `b`'s edge `eb` is the same (bit for bit,
+    /// run the other way), it isn't straight within `margin` and its
+    /// control triangle isn't nearly degenerate.
+    fn new(a: &Patch, ea: usize, b: &Patch, eb: usize, margin: f64) -> Option<Self> {
+        let (p, c, q, w) = (a.p[ea], a.c[ea], a.p[(ea + 1) % 3], a.w[ea]);
+        let same_edge = b.p[eb] == q && b.p[(eb + 1) % 3] == p && b.c[eb] == c && b.w[eb] == w;
+        if !same_edge || straight(p, c, q, margin) {
+            return None;
+        }
+        let (e1, e2) = (p - c, q - c);
+        let n = e1.cross(e2);
+        let nn = n.dot(n);
+        if nn.is_nan() || nn <= 1e-24 * e1.length_squared() * e2.length_squared() {
+            return None;
+        }
+        let root = nn.sqrt();
+        let (l1, l2) = (e1.length(), e2.length());
+        Some(CurvedEdge {
+            c,
+            w2: w * w,
+            e1,
+            e2,
+            n,
+            nn,
+            root,
+            l1,
+            l2,
+            kappa: l1 * l2 / root,
+            reach: l1.max(l2) / root,
+        })
+    }
+
+    /// `|∇F|` taken as `4w²` over the larger of the far ends' heights above
+    /// the lines through the other end and `C`: `4w²/hQ` at `P`, `hQ` the
+    /// height of `Q` above the line through `P` and `C`.
+    fn gradient(&self) -> f64 {
+        4.0 * self.w2 / (self.root / self.l1).max(self.root / self.l2)
+    }
+
+    /// The coefficients of `F` and `P` on patch `x`, whose edge `e` is
+    /// this one, rows 1 to 4 in a fixed order; `None` if a weights'
+    /// coefficient isn't positive.
+    fn coefficients(&self, x: &Patch, e: usize) -> Option<[Coefficient; 10]> {
+        let CurvedEdge {
+            c,
+            w2,
+            e1,
+            e2,
+            n,
+            nn,
+            root,
+            kappa,
+            reach,
+            ..
+        } = *self;
+        // Barycentric coordinates (λP, λC, λQ) of a homogeneous point
+        // `(s, ω)`, `s = ω·(x − C)`, projected onto the control triangle,
+        // the largest's size and a bound on their rounding errors; and its
+        // height `ν` over the triangle's plane, times `ω`, with its bound.
+        let lambda = |s: DVec3, omega: f64| {
+            let lp = n.dot(s.cross(e2)) / nn;
+            let lq = n.dot(e1.cross(s)) / nn;
+            let lc = omega - lp - lq;
+            let m = lp.abs().max(lc.abs()).max(lq.abs());
+            let length = s.length();
+            let e = LAMBDA_ROUNDING * kappa * (length * reach + m + omega);
+            let nu = n.dot(s) / root;
+            let enu = NU_ROUNDING * kappa * length;
+            ([lp, lc, lq], m, e, nu, enu)
+        };
+        // F's polar form, on the points' coordinates.
+        let polar = |[xp, xc, xq]: [f64; 3], [yp, yc, yq]: [f64; 3]| {
+            xc * yc - 2.0 * w2 * (xp * yq + xq * yp)
+        };
         let (next, last) = ((e + 1) % 3, (e + 2) % 3);
         // Each control point's coordinates (with their size and error
-        // bound) and its weight.
+        // bound, and its height with its bound) and its weight.
         let corner = |i: usize| (lambda(x.p[i] - c, 1.0), 1.0);
         let edge = |i: usize| (lambda((x.c[i] - c) * x.w[i], x.w[i]), x.w[i]);
         // Row 0's three (the edge's start, its control point, its end)
@@ -278,15 +527,17 @@ pub(crate) fn cylinder_apart(a: &Patch, ea: usize, b: &Patch, eb: usize, margin:
         // The quadratic multinomials: 2 for a mixed index, else 1.
         let multi = |g: [usize; 3]| if g.contains(&1) { 2.0 } else { 1.0 };
         // Coefficients scaled by the quartic multinomial, by the first
-        // two exponents, and bounds on their rounding errors (but for the
-        // factor `1 + 4w²`). Pairs within row 0 only add to row 0, which
-        // is skipped.
+        // two exponents, and bounds on their rounding errors (for F but
+        // for the factor `1 + 4w²`). Pairs within row 0 only add to row 0,
+        // which is skipped.
         let mut num = [[0.0; 5]; 5];
         let mut den = [[0.0; 5]; 5];
         let mut size = [[0.0; 5]; 5];
+        let mut height = [[0.0; 5]; 5];
+        let mut height_size = [[0.0; 5]; 5];
         for i in 0..6 {
             for j in i.max(3)..6 {
-                let (((xa, ma, da), wa), ((xb, mb, db), wb)) = (net[i], net[j]);
+                let (((xa, ma, da, na, ena), wa), ((xb, mb, db, nb, enb), wb)) = (net[i], net[j]);
                 let (ga, gb) = (index[i], index[j]);
                 // A pair of different points comes twice.
                 let k = multi(ga) * multi(gb) * if i == j { 1.0 } else { 2.0 };
@@ -294,23 +545,32 @@ pub(crate) fn cylinder_apart(a: &Patch, ea: usize, b: &Patch, eb: usize, margin:
                 num[g0][g1] += k * polar(xa, xb);
                 den[g0][g1] += k * wa * wb;
                 size[g0][g1] += k * (da * mb + ma * db + da * db + CYLINDER_ROUNDING * ma * mb);
+                height[g0][g1] += k * (0.5 * (na * wb + nb * wa));
+                height_size[g0][g1] += k
+                    * (0.5 * (ena * wb + enb * wa)
+                        + CYLINDER_ROUNDING * (na.abs() * wb + nb.abs() * wa));
             }
         }
-        let mut sign = 0.0;
+        let mut out = [Coefficient::default(); 10];
+        let mut slot = out.iter_mut();
         for g0 in 0..4 {
             for g1 in 0..4 - g0 {
-                let (r, d) = (num[g0][g1] / den[g0][g1], den[g0][g1]);
-                let bound = threshold + (1.0 + 4.0 * w2) * size[g0][g1] / d;
+                let d = den[g0][g1];
                 // NaN fails the comparison.
-                if !(d > 0.0 && r.abs() > bound) || (sign != 0.0 && r.signum() != sign) {
+                let positive = d > 0.0;
+                if !positive {
                     return None;
                 }
-                sign = r.signum();
+                *slot.next()? = Coefficient {
+                    f: num[g0][g1] / d,
+                    ef: (1.0 + 4.0 * w2) * size[g0][g1] / d,
+                    p: height[g0][g1] / d,
+                    ep: height_size[g0][g1] / d,
+                };
             }
         }
-        Some(sign)
-    };
-    matches!((side(a, ea), side(b, eb)), (Some(sa), Some(sb)) if sa == -sb)
+        Some(out)
+    }
 }
 
 /// A bound on the rounding of [`cylinder_apart`]'s coordinates `λ`,
@@ -327,8 +587,21 @@ const LAMBDA_ROUNDING: f64 = 64.0 * f64::EPSILON;
 /// relative to the sizes of the coordinates multiplied: a polar form's
 /// products and sums round by about `4·u·(1 + 4w²)·mx·my`, adding up to
 /// four terms and dividing by `W²_γ` (itself off by about `5·u`) adds a
-/// few `u` more. `16·ε = 32·u` has room.
+/// few `u` more. `16·ε = 32·u` has room. [`pencil_member`]'s `P·W²` takes
+/// it too, times `|νX|·ωY + |νY|·ωX` (twice the size of its polar form).
 const CYLINDER_ROUNDING: f64 = 16.0 * f64::EPSILON;
+
+/// A bound on the rounding of [`pencil_member`]'s heights `ν = n·s/|n|`,
+/// times `κ·|s|`. With `u = ε/2`: `n` is off by about `7·u·κ·|n|` (from
+/// `P − C`, `Q − C` and the cross product, as for [`LAMBDA_ROUNDING`]),
+/// which tilts `n·s` by `7·u·κ·|n|·|s|`; `s` itself is off by `2·u·|s|`,
+/// the dot product by `3·u·|n|·|s|`; `|n|` by about `7·u·κ + 2·u` of
+/// itself (its square by twice that and the root halving it), moving `ν`
+/// (at most `|s|`) by as much, and the division by `u` more. In all under
+/// `(14·κ + 8)·u·|s| ≤ 22·u·κ·|s|`: `32·ε = 64·u` has room. Without the
+/// bound, flat control triangles far out let `n` tilt enough under
+/// rounding to make up certificates.
+const NU_ROUNDING: f64 = 32.0 * f64::EPSILON;
 
 /// The unit direction from `p` to `q`, and the part of `x - p` across the
 /// line through them, or `None` if they are the same point.

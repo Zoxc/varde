@@ -591,9 +591,9 @@ fn a_spindle_and_a_lemon() {
         ],
     };
     // From 60° below the outside to 60° above, off the tube's turns,
-    // closed by two lines in towards the axis (a wall straight down
-    // would meet the arcs in creases neither edge rule parts, a known
-    // gap: 229 136 patches, past the budget).
+    // closed by two lines in towards the axis, or by a wall straight down
+    // (which meets the arcs in creases only the pencil parts: without it
+    // 229 136 patches, past the budget).
     let (c, r) = (v(2.0, 0.0), 3.0);
     let at = |a: f64| c + DVec2::new(a.cos(), a.sin()) * r;
     let (low, high) = (at(-PI / 3.0), at(PI / 3.0));
@@ -605,7 +605,18 @@ fn a_spindle_and_a_lemon() {
             line(v(3.0, 0.0), low, 3),
         ],
     };
-    for (name, lp) in [("lemon", lemon), ("spindle", spindle)] {
+    let walled = Loop {
+        segments: vec![
+            arc(c, low, v(5.0, 0.0), 1),
+            arc(c, v(5.0, 0.0), high, 1),
+            line(high, low, 2),
+        ],
+    };
+    for (name, lp) in [
+        ("lemon", lemon),
+        ("spindle", spindle),
+        ("walled spindle", walled),
+    ] {
         let shape = Shape {
             name,
             profile: profile(vec![lp]),
@@ -751,18 +762,160 @@ fn a_profile_running_the_wrong_way_is_refused() {
     );
 }
 
+/// The lens between two circular arcs from `p` to `q`, each turning
+/// through `2·half` (radians), bulging either side of the chord.
+fn lens(p: DVec2, q: DVec2, half: f64, curve: u64) -> Loop {
+    let m = (p + q) / 2.0;
+    let d = q - p;
+    let right = DVec2::new(d.y, -d.x).normalize();
+    let t = 0.5 * d.length() / half.tan();
+    Loop {
+        segments: vec![
+            arc(m - right * t, p, q, curve),
+            arc(m + right * t, q, p, curve + 1),
+        ],
+    }
+}
+
+/// Profiles whose corners are creases where both faces leave the ring on
+/// one side of its plane and on one side of the cylinder over it (or one
+/// along it), with a ceiling on a full turn's patches (about twice those
+/// measured at `1e-1` to `1e-5`); and a dovetail, whose acute corner the
+/// plane parts, as a control.
+fn crease_shapes() -> Vec<(Shape, usize)> {
+    let line = |a, b, curve| Segment::line(a, b, curve).unwrap();
+    let deg = |a: f64| a.to_radians();
+    let lines =
+        |name, points: &[DVec2], ceiling| (shape(name, vec![polygon(points, 1)], None), ceiling);
+    // The wedge's sides leave its corner at 26.565° and 36.565°.
+    let wedge = 3.0 + 6.0 * (deg(36.565).tan() - deg(26.565).tan());
+    // A round just past its turn against a wall straight down.
+    let centre = v(5.3, 1.0);
+    let at = |a: f64| centre + DVec2::new(a.cos(), a.sin()) * 2.0;
+    let (top, end) = (at(deg(100.0)), at(deg(200.0)));
+    vec![
+        // The triangle's inner corners: a wall up, cones up and out.
+        lines("triangle", &[v(2.0, 0.0), v(5.0, 1.0), v(2.0, 2.0)], 304),
+        // The same turned onto an outer wall.
+        lines(
+            "triangle flipped",
+            &[v(5.0, 0.0), v(5.0, 2.0), v(2.0, 1.0)],
+            192,
+        ),
+        // Two lines leaving a corner up and out.
+        lines(
+            "one quadrant",
+            &[v(2.0, 0.0), v(6.0, 1.0), v(4.0, 3.0)],
+            608,
+        ),
+        lines(
+            "wedge 10°",
+            &[v(2.0, 0.0), v(8.0, 3.0), v(8.0, wedge)],
+            1_824,
+        ),
+        (
+            shape(
+                "lens 40°",
+                vec![lens(v(2.0, 0.0), v(6.0, 2.0), deg(20.0), 1)],
+                Some(6.5),
+            ),
+            2_048,
+        ),
+        (
+            shape(
+                "lens 10°",
+                vec![lens(v(2.0, 0.0), v(6.0, 2.0), deg(5.0), 1)],
+                Some(25.0),
+            ),
+            5_632,
+        ),
+        // A D: an arc from the bottom of its circle out and up, a wall
+        // down from its top.
+        (
+            shape(
+                "D",
+                vec![Loop {
+                    segments: vec![
+                        arc(v(3.0, 2.0), v(3.0, 0.0), v(5.0, 2.0), 1),
+                        arc(v(3.0, 2.0), v(5.0, 2.0), v(3.0, 4.0), 1),
+                        line(v(3.0, 4.0), v(3.0, 0.0), 2),
+                    ],
+                }],
+                Some(2.0),
+            ),
+            4_352,
+        ),
+        (
+            shape(
+                "round past its turn",
+                vec![Loop {
+                    segments: vec![
+                        arc(centre, top, end, 1),
+                        line(end, v(top.x, end.y), 2),
+                        line(v(top.x, end.y), top, 3),
+                    ],
+                }],
+                Some(2.0),
+            ),
+            4_096,
+        ),
+        lines(
+            "dovetail",
+            &[
+                v(2.0, 0.0),
+                v(8.0, 0.0),
+                v(6.0, 3.0),
+                v(9.0, 3.0),
+                v(9.0, 4.0),
+                v(2.0, 4.0),
+            ],
+            192,
+        ),
+    ]
+}
+
 #[test]
-fn creases_neither_rule_parts_are_repaired_at_great_cost() {
-    // A triangle's inner corners: at each ring both faces leave on one
-    // side of its plane, and the wall stays on the cylinder over it, so
-    // neither the plane rule nor the cylinder rule parts them, and repair
-    // splits the rings until their arcs are straight to the resolution.
-    // Right, but costly (a known gap: a rule from the pencil of the plane
-    // and the cylinder would part them in about a hundred patches).
-    let tri = profile(vec![polygon(&[v(2.0, 0.0), v(5.0, 1.0), v(2.0, 2.0)], 1)]);
-    let tol = Tolerance::new(1e-1).unwrap();
-    let solid = revolve(&tri, &Z, Sweep::Full, 7, &tol, &Budget::DEFAULT).unwrap();
-    let volume = TAU * moments(&tri).0;
-    assert!((solid.volume() - volume).abs() <= 1e-10 * volume);
-    assert!(solid.mesh().tris().len() > 4_000);
+fn creases_are_parted_by_the_pencil() {
+    // At a ring where two faces meet at a crease into one quadrant of the
+    // meridian plane, neither the plane through the ring nor the cylinder
+    // over it parts the patches either side, but a member of their pencil
+    // does. Without it repair split the rings until their arcs were
+    // straight to the resolution: the triangle took 14 192 patches at
+    // `1e-1` and 229 232 at `1e-3`, and finer fits ran out of budget.
+    let mut rng = Rng::new(96);
+    let frame = random_frame(&mut rng, 1e3);
+    let mut fits = vec![1e-2, 1e-3, 1e-4];
+    if !cfg!(debug_assertions) {
+        fits.push(1e-5);
+    }
+    for (shape, ceiling) in crease_shapes() {
+        for &fit in &fits {
+            let tol = Tolerance::new(fit).unwrap();
+            for (frame, sweep) in [
+                (&Z, Sweep::Full),
+                (&Z, Sweep::Part { from: 0.3, to: 2.0 }),
+                (&frame, Sweep::Full),
+            ] {
+                let patches = revolved(&shape, frame, sweep, &tol).mesh().tris().len();
+                assert!(
+                    patches <= ceiling,
+                    "{} {sweep:?} at {fit:e}: {patches} patches",
+                    shape.name
+                );
+            }
+        }
+    }
+    let shapes = crease_shapes();
+    assert_deterministic(|| {
+        let solid = revolve(
+            &shapes[0].0.profile,
+            &frame,
+            Sweep::Full,
+            7,
+            &TOL,
+            &Budget::DEFAULT,
+        )
+        .unwrap();
+        (solid.volume(), solid)
+    });
 }

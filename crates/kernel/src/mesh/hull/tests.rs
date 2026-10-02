@@ -332,6 +332,7 @@ fn a_support_point_square_to_the_closest_is_kept() {
 
 /// A meridian piece in the `x`-`z` half-plane, about the `z` axis: an
 /// arc of the circle about `(rho, h)` of `radius`, or a line.
+#[derive(Debug)]
 enum Piece {
     Arc([f64; 2], f64, [f64; 2], [f64; 2]),
     Line([f64; 2], [f64; 2]),
@@ -347,6 +348,21 @@ fn at([rho, h]: [f64; 2]) -> DVec3 {
 /// edge 1 (run the other way).
 fn ring_strip(piece: &Piece) -> [Patch; 2] {
     let lathe = crate::sweep::Lathe::new(DVec3::ZERO, DVec3::Z, None, 64).unwrap();
+    if let Piece::Line(a, b) = *piece
+        && a[0] != b[0]
+        && a[1] != b[1]
+    {
+        // A cone's strip, exact, its apex where the line meets the axis.
+        let apex = DVec3::Z * (a[1] - a[0] * (b[1] - a[1]) / (b[0] - a[0]));
+        let strip = crate::sweep::cone_strip(
+            &lathe.parallel(at(a), 0).unwrap(),
+            &lathe.parallel(at(b), 0).unwrap(),
+            apex,
+        )
+        .unwrap();
+        assert!(strip.iter().all(|p| p.fold_direction().is_some()));
+        return strip;
+    }
     let (meridian, form) = match *piece {
         Piece::Arc(centre, minor, a, b) => (
             Conic3::arc_between(at(centre), minor, at(a), at(b)).unwrap(),
@@ -379,7 +395,10 @@ fn ring_strip(piece: &Piece) -> [Patch; 2] {
     )
     .unwrap()
     .patches;
-    assert!(strip.iter().all(|p| p.fold_direction().is_some()));
+    assert!(
+        strip.iter().all(|p| p.fold_direction().is_some()),
+        "{piece:?}"
+    );
     strip
 }
 
@@ -567,5 +586,306 @@ fn the_cylinder_rule_is_sound_on_random_pairs() {
     assert!(
         tried > 100_000 && passed > 100,
         "tried {tried}, passed {passed}"
+    );
+}
+
+/// The centres of the two arcs from `p` to `q` turning through `2·half`
+/// each, bulging either side of the chord: a lens. The first arc runs from
+/// `p` to `q` (bulging right of the chord), the second back.
+fn lens_centres(p: [f64; 2], q: [f64; 2], half: f64) -> ([f64; 2], [f64; 2], f64) {
+    let (m, d) = (
+        [(p[0] + q[0]) / 2.0, (p[1] + q[1]) / 2.0],
+        [q[0] - p[0], q[1] - p[1]],
+    );
+    let length = d[0].hypot(d[1]);
+    let right = [d[1] / length, -d[0] / length];
+    let t = 0.5 * length / half.tan();
+    let c1 = [m[0] - right[0] * t, m[1] - right[1] * t];
+    let c2 = [m[0] + right[0] * t, m[1] + right[1] * t];
+    (c1, c2, (0.5 * length).hypot(t))
+}
+
+/// Creases of revolved profiles where both faces leave the ring on one
+/// side of its plane and on one side of the cylinder over it (or one
+/// along it): neither the plane nor the cylinder parts them, a member of
+/// their pencil does, either way round.
+#[test]
+fn creases_are_parted_by_the_pencil() {
+    use Piece::{Arc, Line};
+    let (c1, c2, r) = lens_centres([2.0, 0.0], [6.0, 2.0], 20f64.to_radians());
+    let (t1, t2, s) = lens_centres([2.0, 0.0], [6.0, 2.0], 5f64.to_radians());
+    // The point `deg` degrees round the circle about `centre` through the
+    // tip `(2, 0)`, towards the lens's other tip.
+    let along = |centre: [f64; 2], deg: f64| {
+        let (x, y) = (2.0 - centre[0], 0.0 - centre[1]);
+        let turned = [-deg, deg].map(|d: f64| {
+            let (sin, cos) = d.to_radians().sin_cos();
+            [centre[0] + x * cos - y * sin, centre[1] + x * sin + y * cos]
+        });
+        let far = |p: [f64; 2]| (p[0] - 6.0).hypot(p[1] - 2.0);
+        if far(turned[0]) < far(turned[1]) {
+            turned[0]
+        } else {
+            turned[1]
+        }
+    };
+    let round = |deg: f64| {
+        let a = deg.to_radians();
+        [5.3 + 2.0 * a.cos(), 1.0 + 2.0 * a.sin()]
+    };
+    let (top, end) = (round(100.0), round(200.0));
+    let cases = [
+        // A triangle's inner corner: a wall up, a cone up and out.
+        (
+            "triangle",
+            Line([2.0, 2.0], [2.0, 0.0]),
+            Line([2.0, 0.0], [5.0, 1.0]),
+        ),
+        // Two lines leaving a corner up and out.
+        (
+            "one quadrant",
+            Line([4.0, 3.0], [2.0, 0.0]),
+            Line([2.0, 0.0], [6.0, 1.0]),
+        ),
+        // A D: a wall down onto the bottom of a circle, the arc leaving
+        // out along the ring's plane and the wall up along its cylinder.
+        (
+            "D bottom",
+            Line([3.0, 4.0], [3.0, 0.0]),
+            Arc([3.0, 2.0], 2.0, [3.0, 0.0], [5.0, 2.0]),
+        ),
+        (
+            "D top",
+            Arc([3.0, 2.0], 2.0, [5.0, 2.0], [3.0, 4.0]),
+            Line([3.0, 4.0], [3.0, 0.0]),
+        ),
+        // A round just past its turn against a wall straight down.
+        (
+            "round past turn",
+            Line([top[0], end[1]], top),
+            Arc([5.3, 1.0], 2.0, top, end),
+        ),
+        // The tips of lenses of two arcs (an eighth of each: a coarse
+        // piece's curvature spoils the first-order picture, and repair
+        // would split it).
+        (
+            "lens tip",
+            Arc(c2, r, along(c2, 5.0), [2.0, 0.0]),
+            Arc(c1, r, [2.0, 0.0], along(c1, 5.0)),
+        ),
+        (
+            "thin lens tip",
+            Arc(t2, s, along(t2, 1.25), [2.0, 0.0]),
+            Arc(t1, s, [2.0, 0.0], along(t1, 1.25)),
+        ),
+    ];
+    for (name, below, above) in cases {
+        let (a, b) = ring_pair(&below, &above);
+        for (x, ex, y, ey) in [(&a, 0, &b, 1), (&b, 1, &a, 0)] {
+            assert!(!edge_neighbours_apart(x, ex, y, ey, MARGIN), "{name}");
+            assert!(!cylinder_apart(x, ex, y, ey, MARGIN), "{name}");
+            assert!(pencil_apart(x, ex, y, ey, MARGIN), "{name}");
+            assert!(edge_neighbours_parted(x, ex, y, ey, MARGIN), "{name}");
+        }
+        // Either way round the member is the same up to its sign: `F`
+        // keeps its sign, the plane's normal turns over.
+        let (alpha, beta) = pencil_member(&a, 0, &b, 1, MARGIN).unwrap();
+        let (alpha2, beta2) = pencil_member(&b, 1, &a, 0, MARGIN).unwrap();
+        assert!(alpha * alpha2 <= 0.0 && beta * beta2 >= 0.0, "{name}");
+        // The edge off by a bit of its weight or control point: the
+        // patches no longer share it.
+        let bit = |x: f64| f64::from_bits(x.to_bits() + 1);
+        let mut off = b;
+        off.w[1] = bit(off.w[1]);
+        assert!(!pencil_apart(&a, 0, &off, 1, MARGIN), "{name}");
+        let mut off = b;
+        off.c[1].z = bit(off.c[1].z);
+        assert!(!pencil_apart(&off, 1, &a, 0, MARGIN), "{name}");
+    }
+}
+
+#[test]
+fn the_pencil_refuses_folds() {
+    use Piece::{Arc, Line};
+    // A profile turning back on itself: the cone's two strips lie on each
+    // other.
+    let (a, b) = ring_pair(&Line([5.0, 1.0], [2.0, 0.0]), &Line([2.0, 0.0], [5.0, 1.0]));
+    assert!(!pencil_apart(&a, 0, &b, 1, MARGIN));
+    assert!(!pencil_apart(&b, 1, &a, 0, MARGIN));
+    // An arc turning back along the cone, tangent to it at the ring and
+    // bending away from it, but on the side of the cone away from where
+    // the pencil's parabolas bend: no member passes between the two.
+    let (a, b) = ring_pair(
+        &Line([5.0, 1.0], [2.0, 0.0]),
+        &Arc(
+            [2.0 + 1.0, -3.0],
+            10f64.sqrt(),
+            [2.0, 0.0],
+            [2.0 + 1.0 + 10f64.sqrt(), -3.0],
+        ),
+    );
+    assert!(!edge_neighbours_parted(&a, 0, &b, 1, MARGIN));
+    assert!(!edge_neighbours_parted(&b, 1, &a, 0, MARGIN));
+}
+
+/// A pair from an adversarial hunt (an edge some 250 out, weights at
+/// both limits, a margin of `6e-13`): with the rounding bounds zeroed the
+/// pencil passed it, and exact rational arithmetic on these values shows
+/// the member it chose has coefficients of the wrong sign. With them it
+/// is refused.
+#[test]
+fn rounding_does_not_make_up_a_pencil() {
+    let v = DVec3::new;
+    let a = Patch {
+        p: [
+            v(-160.5231787678521, -96.0347965575042, 162.34118757734277),
+            v(-161.19436234639616, -95.84506881712997, 161.9603534193856),
+            v(-161.15380992307692, -95.85653202911998, 161.98336314203456),
+        ],
+        c: [
+            v(-160.99966166839172, -95.90010609883242, 162.07082791716695),
+            v(-161.17040967833125, -95.8500660058536, 161.96924734463906),
+            v(-160.83856980546628, -95.94393594784135, 162.16362719048277),
+        ],
+        w: [0.30320805521398614, 0.015625, 64.0],
+    };
+    let b = Patch {
+        p: [
+            v(-160.5231787678521, -96.0347965575042, 162.34118757734277),
+            v(-160.59487367096213, -96.0158794174747, 162.30564656240352),
+            v(-161.19436234639616, -95.84506881712997, 161.9603534193856),
+        ],
+        c: [
+            v(-160.55902638926102, -96.02534000914608, 162.3234159725943),
+            v(-160.89767007791013, -95.93093588624055, 162.13499737685885),
+            v(-160.99966166839172, -95.90010609883242, 162.07082791716695),
+        ],
+        w: [0.12441390840394971, 0.015625, 0.30320805521398614],
+    };
+    let margin = 6.225597036426252e-13;
+    assert!(!pencil_apart(&a, 0, &b, 2, margin));
+    assert!(!pencil_apart(&b, 2, &a, 0, margin));
+    assert!(!edge_neighbours_parted(&a, 0, &b, 2, margin));
+}
+
+/// Random pairs sharing a random conic edge, the far corners leaving it
+/// into one quadrant of (across, up) or anywhere: wherever the pencil
+/// parts them, `G = α·F + β·P` evaluated at points of each, away from the
+/// edge, has the promised signs, positive on the first and negative on
+/// the second.
+#[test]
+fn the_pencil_rule_is_sound_on_random_pairs() {
+    use std::f64::consts::FRAC_PI_2;
+    let mut rng = Rng::new(96);
+    let (mut tried, mut passed, mut only) = (0, 0, 0);
+    let sign = |rng: &mut Rng| if rng.unit() < 0.5 { 1.0 } else { -1.0 };
+    for _ in 0..100_000 {
+        // An edge from `p` to `q` across the x axis in the xy plane, its
+        // control point above it, in a random frame.
+        let length = rng.log_range(1e-1, 1e1);
+        let (p, q) = (DVec3::new(-length, 0.0, 0.0), DVec3::new(length, 0.0, 0.0));
+        let c = DVec3::new(
+            rng.range(-0.5, 0.5) * length,
+            rng.log_range(1e-3, 2.0) * length,
+            0.0,
+        );
+        let w = rng.log_range(0.2, 5.0);
+        let margin = length * rng.log_range(1e-9, 1e-6);
+        // A point of the edge at `t`, moved `across` in its plane (square
+        // to it) and `up` out of it.
+        let near = |t: f64, across: f64, up: f64| {
+            let b = [(1.0 - t) * (1.0 - t), 2.0 * w * t * (1.0 - t), t * t];
+            let wt = b[0] + b[1] + b[2];
+            let x = (p * b[0] + c * b[1] + q * b[2]) / wt;
+            let db = [-2.0 * (1.0 - t), 2.0 * w * (1.0 - 2.0 * t), 2.0 * t];
+            let dw = db[0] + db[1] + db[2];
+            let tangent = ((p * db[0] + c * db[1] + q * db[2]) - x * dw) / wt;
+            x + DVec3::Z.cross(tangent).normalize() * across + DVec3::Z * up
+        };
+        let far = |rng: &mut Rng, angle: f64| {
+            let reach = length * rng.log_range(1e-2, 2.0);
+            near(
+                rng.range(0.1, 0.9),
+                reach * angle.cos(),
+                reach * angle.sin(),
+            )
+        };
+        let (ra, rb) = if rng.unit() < 0.8 {
+            // A crease into one quadrant.
+            let (sx, sy) = (sign(&mut rng), sign(&mut rng));
+            let fa = rng.range(0.0, FRAC_PI_2);
+            let fb = rng.range(0.0, FRAC_PI_2);
+            let mirrored = |f: f64| (sy * f.sin()).atan2(sx * f.cos());
+            (far(&mut rng, mirrored(fa)), far(&mut rng, mirrored(fb)))
+        } else {
+            let fa = rng.range(-3.2, 3.2);
+            let fb = rng.range(-3.2, 3.2);
+            (far(&mut rng, fa), far(&mut rng, fb))
+        };
+        let m = rotation(&mut rng);
+        let o = rng.point(1.0) * rng.log_range(1e-2, 1e2);
+        let g = |x: DVec3| m * x + o;
+        let ctl =
+            |x: DVec3, y: DVec3, rng: &mut Rng| (x + y) / 2.0 + rng.point(0.2 * (x - y).length());
+        let (pg, cg, qg, rag, rbg) = (g(p), g(c), g(q), g(ra), g(rb));
+        let a = Patch {
+            p: [pg, qg, rag],
+            c: [cg, ctl(qg, rag, &mut rng), ctl(rag, pg, &mut rng)],
+            w: [w, rng.log_range(0.3, 3.0), rng.log_range(0.3, 3.0)],
+        };
+        let b = Patch {
+            p: [qg, pg, rbg],
+            c: [cg, ctl(pg, rbg, &mut rng), ctl(rbg, qg, &mut rng)],
+            w: [w, rng.log_range(0.3, 3.0), rng.log_range(0.3, 3.0)],
+        };
+        if a.check().is_err() || b.check().is_err() {
+            continue;
+        }
+        tried += 1;
+        let Some((alpha, beta)) = pencil_member(&a, 0, &b, 0, margin) else {
+            continue;
+        };
+        passed += 1;
+        if !edge_neighbours_apart(&a, 0, &b, 0, margin) && !cylinder_apart(&a, 0, &b, 0, margin) {
+            only += 1;
+        }
+        let (e1, e2) = (pg - cg, qg - cg);
+        let n = e1.cross(e2);
+        let nn = n.dot(n);
+        let gee = |x: DVec3| {
+            let s = x - cg;
+            let lp = n.dot(s.cross(e2)) / nn;
+            let lq = n.dot(e1.cross(s)) / nn;
+            let lc = 1.0 - lp - lq;
+            alpha * (lc * lc - 4.0 * w * w * lp * lq) + beta * n.dot(s) / nn.sqrt()
+        };
+        let sign_of = |x: &Patch| {
+            let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+            for i in 0..=30 {
+                for j in 0..=30 - i {
+                    let far = (30 - i - j) as f64 / 30.0;
+                    if far < 0.02 {
+                        continue;
+                    }
+                    let v = gee(x.eval(DVec3::new(i as f64 / 30.0, j as f64 / 30.0, far)));
+                    (lo, hi) = (lo.min(v), hi.max(v));
+                }
+            }
+            if lo > 0.0 {
+                1.0
+            } else if hi < 0.0 {
+                -1.0
+            } else {
+                0.0
+            }
+        };
+        assert!(
+            sign_of(&a) == 1.0 && sign_of(&b) == -1.0,
+            "{a:?} {b:?} {margin:e}"
+        );
+    }
+    assert!(
+        tried > 50_000 && passed > 5_000 && only > 1_000,
+        "tried {tried}, passed {passed}, pencil only {only}"
     );
 }

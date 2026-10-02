@@ -46,8 +46,9 @@ pub enum CheckError {
     Face(u32),
     /// Triangles that share no vertex have hulls within the resolution.
     Hull(u32, u32),
-    /// Triangles sharing an edge aren't split by a plane through it (or
-    /// the cylinder over it, for a curved edge).
+    /// Triangles sharing an edge aren't split by a plane through it (or,
+    /// for a curved edge, the cylinder over it or a quadric of the pencil
+    /// of that cylinder and the edge's plane).
     EdgeNeighbours(u32, u32),
     /// Triangles sharing only a vertex aren't split by a plane through it.
     VertexNeighbours(u32, u32),

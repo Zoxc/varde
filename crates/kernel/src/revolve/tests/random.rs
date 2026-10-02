@@ -1,7 +1,7 @@
-//! Random profiles revolved: right or refused, never wrong. About 20 s
-//! in release (creases neither of `check`'s edge rules parts are
-//! repaired into tens of thousands of patches, see `agents/kernel.md`;
-//! 103 of the 120 right, 14 `TooComplex`); not run in debug builds.
+//! Random profiles revolved: right or refused, never wrong. A few
+//! seconds in release (116 of the 120 right: three refused for the
+//! profile, crossing or touching the axis, and one part turn far out
+//! `TooComplex` before repair); not run in debug builds.
 #![cfg(not(debug_assertions))]
 
 use super::*;
@@ -118,5 +118,5 @@ fn random_profiles_are_right_or_refused() {
             Err(e) => refused.push((i, e)),
         }
     }
-    assert!(ok >= 80, "{ok} right, refused: {refused:?}");
+    assert!(ok >= 112, "{ok} right, refused: {refused:?}");
 }

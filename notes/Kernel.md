@@ -144,8 +144,11 @@ Each **face** carries:
    (GJK); edge and vertex neighbours separated by a plane through what they
    share, with rules for straight and curved shared edges; across a
    curved edge the plane fails on, by the cylinder over the edge's conic
-   (the signs of a quadratic that vanishes on it, one per patch). For flat
-   triangles this says exactly that the mesh is embedded.
+   (the signs of a quadratic that vanishes on it, one per patch), or at a
+   crease both fail on, by a quadric of the pencil of that cylinder and
+   the edge's plane (found by a two-variable search, then checked with
+   its own rounding bounds). For flat triangles this says exactly that
+   the mesh is embedded.
 5. **Orientation**: every shell faces out, or in where it bounds a void, so
    the winding number is 0 or 1 everywhere (shell volume signs with error
    bounds and exact fallbacks, nesting by exact, perturbed rays).
@@ -461,13 +464,13 @@ extrude being set up) are regenerated the same way. See `agents/kernel.md`
   along the line converges come out right with many patches. Coaxial walls
   a little apart, or of different conics meeting smoothly, refine until
   they run out of budget.
-- **Revolved creases.** Where two revolved faces meet at a ring and both
-  leave it on one side of its plane and of the cylinder over it (an acute
-  corner against a wall, both edges into one quadrant), neither edge
-  rule of `check` parts them, and repair splits the ring until its arcs
-  are straight to the resolution: tens of thousands of patches, or
-  `TooComplex` at fine tolerances. Right or refused; a rule from the
-  pencil of the plane and the cylinder would part them.
+- **Revolved creases.** Creases into one quadrant of the meridian plane
+  (an acute corner against a wall) are parted by the pencil rule, but a
+  full turn still repairs vertex pairs at the crease's stations (a
+  triangle: 304 patches at any fit, 14 for a part turn), and on thin
+  creases at fine fits the faces' curvature, not their direction,
+  decides some edge pairs, which repair splits (a 10° lens: 2 816
+  patches at `1e-5`).
 - **Cap quality.** Refined caps cost patches (plates with holes 10 to
   20% more, thin ribs and rings far more), as do the plane faces a boolean
   cuts, refined in its clean-up; caps past about 65 000 segments run out

@@ -1206,6 +1206,105 @@ its triangles share, which is topology:
     rule too, pieces near the edge are closer to it): repair splits on; booleans of the profiles below with boxes and
     cylinders through their rounds match Pappus volumes of the clipped
     profile and the identities, deterministic at 1 and 8 threads.
+  - **The pencil** (`hull::pencil_apart`), for a curved edge both the
+    plane and the cylinder fail on, in `check` and repair (third in
+    `edge_neighbours_parted`). At a **crease** (two faces meeting at an
+    angle along a curved edge, a revolved profile's corner) both faces
+    may leave the edge on one side of its plane and on one side of the
+    cylinder over its conic, or one along it: in the meridian plane,
+    with the faces leaving along `(ρ, h)` directions, the plane fails
+    when both `h` have one sign and the cylinder when both `ρ` do (or
+    one is zero). So a corner whose two sides lie in one quadrant of the
+    axes through it gets neither: a triangle's inner corners against a
+    wall, two lines leaving a corner up and out, a D (an arc from the
+    bottom of its circle out and up against a wall), a round just past
+    its turn against a wall straight down, a lens's tips, a thin wedge,
+    a nearly flat top against a wall. Every member `G = α·F + β·P` of
+    the pencil of the cylinder's `F` and the plane's signed distance `P`
+    vanishes on the edge and is quadratic in space (for a circle `G = 0`
+    is a paraboloid of revolution through the ring), and near the edge,
+    in the plane square to it, the mixtures turn the zero line through
+    every direction: to first order some member parts any two faces
+    leaving the edge in different directions. On a patch `G = (α·N_F +
+    β·N_P)/W²`; `P·W` is quadratic with control values `ν = n·s/|n|` for
+    a homogeneous control point `(s, ω)` (one more coordinate beside the
+    cylinder's `λ`s), so `P·W²`'s polar form is `(ν(X)·ω(Y) +
+    ν(Y)·ω(X))/2`, summed over the same pairs in the same pass
+    (`CurvedEdge::coefficients`, shared with the cylinder rule, whose
+    test is unchanged bit for bit). Row 0 is exactly zero for both (the
+    edge's control points lie on the cylinder and in the plane), so the
+    20 ratios `rF_γ`, `rP_γ` of rows 1 to 4 of both patches decide.
+    **Search**: `F` scaled by `g` (the cylinder's `|∇F|`) so `F/g` and `P`
+    have unit, mutually square gradients at the edge; a unit `u = (α',
+    β)` parts them when `s_γ·(α'·rF_γ/g + β·rP_γ) > m_γ` for all 20 (`s =
+    +1` on `a`, `−1` on `b`, `m_γ` the margin plus both rounding bounds),
+    which is the distance from the origin to the hull of the points
+    `s_γ·(rF_γ/g, rP_γ)/m_γ` exceeding 1 (the straight-edge plane test in
+    two dimensions). The best `u` points at a vertex or a segment's foot,
+    so the 20 vertex directions and both normals of the 190 segments are
+    tried in a fixed order (400 directions against 20 points, no
+    trigonometry).
+    **Check**: the chosen member is checked with its own bounds, every
+    `s_γ·r_γ > margin + |α'|·eF_γ/g + |β|·eP_γ + 4ε·(|α'·rF_γ/g| +
+    |β·rP_γ|)`, so nothing rests on the search. **Soundness**: the
+    cylinder's argument for another quadric through the edge (`F` and `P`
+    are the members `β = 0`, `α = 0`): `N_G = Σ B_γ·W²_γ·r_γ` with row 0
+    zero is positive on `a` and negative on `b` but on the edge.
+    **Splitting** keeps it in exact arithmetic: a piece of the edge has
+    the parent's `F` times a positive constant and the parent's `P`, so
+    the parent's member is in the piece's pencil and the piece's ratios
+    are means of the parent's (under the margin they may fail, as the
+    other rules' do). **Threshold**: `margin` times `|∇G|` at the edge
+    (exactly so on a circle, a scale on other conics), not a distance of
+    control points. **Rounding**: `ν` carries `NU_ROUNDING·κ·|s|`
+    (`32·ε`; `n` tilts by about `7·u·κ` under rounding, as for the `λ`s),
+    and `P·W²`'s ratios `Σ k·((eνX·ωY + eνY·ωX)/2 + 16·ε·(|νX|·ωY +
+    |νY|·ωX))/W²_γ`. The bounds are load-bearing: with them zeroed, 64
+    adversarial pairs (flat control triangles far out, weights at the
+    limits) passed with members wrong in exact arithmetic; with them all
+    are refused (test `rounding_does_not_make_up_a_pencil` keeps one).
+    Bands and caps keep the plane rule alone, as for the cylinder.
+    Measured: random pairs sharing a random conic edge, creases into one
+    quadrant and anything (100 000, 8 527 parted, 5 741 by the pencil
+    alone): `G` at 465 points of each away from the edge always has the
+    promised signs (test). Hunted (scratch): 2 million adversarial pairs
+    in five layouts (the cylinder's hunt plus crease layouts `1e-9` rad
+    to a quadrant apart, sometimes exactly in the plane or on the
+    cylinder; tangent joins leaning anywhere; crease angles within
+    `1e-12` to `1e-2` of 180°; one face nearly in the plane and the
+    other nearly on the cylinder; edges just over the straight-edge
+    threshold), 705 765 pencil passes, every one true in exact
+    rational arithmetic (`|n|` bracketed to `2^-160`), the true error at
+    most 0.037 of the bound, the exact `G` clearing the margin times
+    `|∇G|` on every pair; either order of a pair gives the same answer
+    but where the straight-edge test itself flips with the order (its
+    threshold, as for the other rules). Pieces of 34 658 pencil-only
+    pairs split down their edge (`split4`, three levels) fail about one
+    in a thousand for other conics and one or two in 100 000 for
+    circles; repair splits on. Revolved creases (eight crease profiles and a dovetail control,
+    full and part turns, `Frame::Z` and frames out to `1.6e4`, fits
+    `1e-1` to `1e-5`): all right, none refused, a few hundred patches
+    (the triangle 304 at every fit, the wedge 912, the lenses up to 2 816
+    at `1e-5`, 2 to 400 ms each) where repair made 14 192 to 229 232 or
+    ran out of budget. Random revolves (`revolve/tests/random.rs`'s
+    120): 116 right against 103 (the others `TooComplex`), 36 022
+    patches against 410 224 over the cases both build, none more. Nearly
+    flat tops and bottoms (slopes `1e-4` to `1e-3`) against walls, 60
+    random profiles at `1e-4` and `1e-5` (scratch): all right, against 8
+    (the rest `TooComplex` after 2 to 22 s). Over the kernel's tests the
+    rule passes 13 567 distinct pairs, all true in exact arithmetic (the
+    error at most 0.02 of the bound, the exact `G` clearing the margin 5
+    times over); the booleans refuse the same operations with the same
+    kinds (two refusals in a chain name a triangle 90 lower). What
+    repair is left there is not the edge rule:
+    vertex neighbours at a full turn's stations (a cone strip's diagonal
+    triangle a quarter turn wide shares only a station with the wall's,
+    and no plane through it parts them though they are apart: repaired,
+    the triangle's full turn to 304 patches; its part turn needs none,
+    14), non-neighbours across thin
+    tips, and on thin creases at fine fits edge pairs where the faces'
+    curvature, not their direction, decides (the pencil plus `γ·P²`, a
+    free curvature, would part those: kept for if fillets need it).
 - **One: vertex neighbours.** A plane through the shared vertex `V` with
   the other five control points of each more than the resolution to either
   side. With unit normal `n` that is `n·x > margin` for every `x` in
@@ -2749,41 +2848,37 @@ badly nested loops, the budget; random profiles of lines and conics, off
 the axis and fanned from it, on random frames and sweeps
 (`revolve/tests/random.rs`, release only): right by Pappus, volume and
 area, or refused,
-never wrong; a triangle's creases repaired at great cost (the first gap
-below).
+never wrong (116 of 120 right; the rest refused for the profile, or a
+part turn far out `TooComplex` before repair); creases only the pencil
+parts (a triangle's inner corners, its flip onto an outer wall, two
+lines into one quadrant, a 10° wedge, lenses of 40° and 10°, a D, a
+round past its turn against a wall, and a dovetail as a control), full
+and part turns on `Frame::Z` and a random frame at `1e-2` to `1e-4`
+(`1e-5` in release) through the same checks, under a ceiling of about
+twice the measured patches (the triangle 304), the same bits at 1 and 8
+threads; and a spindle's arcs closed by a wall straight down.
 
 Known gaps:
 
-- **Creases neither edge rule parts.** At a ring where two faces meet
-  (a profile vertex), `check` parts their patches by the plane through
-  the ring (one face beyond it, the other in it or beyond on the other
-  side) or by the cylinder over the ring (one leaving it inwards, the
-  other outwards). A crease where both faces leave on one side of the
-  plane and one side of the cylinder, or one along it, gets neither: an
-  acute corner against a wall (the inner corners of a triangle `(2, 0)`,
-  `(5, 1)`, `(2, 2)`, both faces above or below and the wall on the
-  cylinder), two lines or arcs leaving a corner into one quadrant of
-  `(ρ, h)`, a D (an arc from the bottom of its circle out and up, a wall
-  up from there), a round just past its turn against a wall straight
-  down. Repair then splits the ring's arcs until they are straight to
-  the resolution, where the plane may turn about them: the triangle at
-  `1e-1` comes out right with 14 192 patches (0.2 s), at `1e-2` with 57 200
-  (1.8 s); finer, `TooComplex`. Random profiles of lines and conics hit
-  it about half the time (`revolve/tests/random.rs`, on a quarter of the
-  budget: 103 of 120 right, 14 `TooComplex` and 3 refused for the
-  region). These ran up to 4 s each before the check after repair was
-  charged (`CHECK_WORK`, as a boolean's; extrude's and revolve's weren't,
-  and a 57 000-patch result's check took a third of the time): 110 then
-  came out right, the spindle among the shapes with 229 136 patches in
-  20 s. Repair itself is charged a unit a pair tested and a unit a split,
-  which measured (on a loaded machine) about 3 to 5 µs a unit at 57 000
-  patches, against the half microsecond the units stand for: its pair
-  tests near creases cost several units each. Never wrong. The fix is a third certificate in
-  `check` and repair: a member of the pencil of the plane and the
-  cylinder, `α·F + β·P·W` (`P` the plane's value, `W` the weights' square
-  to match `F`'s degree), with one sign on each patch, found by a
-  two-variable LP over the Bernstein coefficients (the deviation "Rings
-  at turns" anticipated it), with rounding bounded as the cylinder's.
+- **Repair left at creases.** Creases into one quadrant of the
+  meridian plane (an acute corner against a wall, two sides leaving a
+  corner up and out, a D, a round past its turn against a wall, a lens's
+  tips) are parted by the pencil rule ("Control hulls"), so they cost a
+  few hundred patches at any fit, where repair once split their rings
+  until the arcs were straight to the resolution (the triangle `(2, 0)`,
+  `(5, 1)`, `(2, 2)`: 14 192 patches at `1e-1`, 229 232 at `1e-3`,
+  `TooComplex` finer). Some repair is left, none of it the edge rule: in
+  a full turn a cone strip's diagonal triangle a quarter turn wide shares
+  only a station with the wall's ring triangle, and no plane through the
+  station parts them though they are apart, so repair splits them (the
+  triangle comes out with 304 patches, its part turn with 14); thin tips
+  (a 10° wedge, a thin lens) have non-neighbours closer than the
+  resolution across them; and on thin creases at fine fits the faces'
+  curvature, not their direction, decides some edge pairs (the 10° lens
+  at `1e-5`: 2 816 patches). Repair is charged a unit a pair tested and
+  a unit a split, which measured (on a loaded machine) about 3 to 5 µs a
+  unit at 57 000 patches against the half microsecond the units stand
+  for: its pair tests near creases cost several units each.
 - **Arcs tangent to the axis at a pole** (a horn torus's piece, in a
   part turn; a full turn makes them a cusp or a lone vertex): the pole
   is a zero-angle apex its cap can't be fitted to, `TooComplex`, or
@@ -7316,7 +7411,8 @@ parameter, or a split outside the patch bounds),
   ("At a turn" under "Fitted strips"). A
   pencil of the plane and the cylinder (`α·F + β·plane·W`, a two-variable
   LP) would cover creases where both sides leave the edge the same way
-  at different angles; nothing needs it yet. Bands and caps keep the
+  at different angles; revolve's creases needed it, and it is now the
+  third edge rule ("The pencil" under "Control hulls"). Bands and caps keep the
   plane rule alone (with the cylinder they chose coarser strips that
   failed the vertex rule). An existing test's pair, two patches across a
   sideways curved edge, now passes (it really is embedded); the folded
@@ -7419,3 +7515,13 @@ parameter, or a split outside the patch bounds),
   nothing), by the motion's stretch, which for compositions is the
   product of their stretches (an upper bound of the largest). Picking
   summarizes a `Form::Quadric` as `Other` ("Curved") for now.
+- **Creases: the pencil rule.** Edge neighbours were to be parted by a
+  plane through the shared edge; the cylinder over a curved edge's conic
+  came second (rings at turns, above), and revolve's creases into one
+  quadrant of the meridian plane needed a third certificate: a member of
+  the pencil of the two, `α·F + β·P`, found by a two-variable search and
+  checked with its own rounding bounds ("The pencil" under "Control
+  hulls"). The three-member family `α·F + β·P + γ·P²` (a free curvature
+  in the meridian plane) would also part thin creases where curvature
+  decides; it changed nothing on random revolves, so it waits for a
+  case that needs it.
