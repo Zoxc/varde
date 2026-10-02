@@ -688,7 +688,85 @@ fn a_revolve_s_timeline_row_shows_its_turn_and_a_double_click_edits_it() {
     assert!(
         shown_texts
             .iter()
-            .any(|text| text.text == "Two sides 100° + 20° · about Y axis · New body"),
+            .any(|text| text.text == "Two sides 100° + 20° · New body · about Y axis"),
         "{shown_texts:?}"
     );
+}
+
+/// The turn goes the way the viewport's arrow says: right-handed about
+/// the axis line from its start to its end, the other way flipped (the
+/// arrow on the line's end, or its start, is the view's test). The
+/// lathe's sketch is on XZ: its +y is world +Z and the rectangle is on
+/// world +X, so a quarter turn about the construction line, along +Z,
+/// sweeps it into +Y, and one about the rectangle's left side, along −Z,
+/// into −Y.
+#[test]
+fn the_turn_goes_right_handed_about_the_axis_line_as_the_arrow_points() {
+    let mut lathe = lathe();
+    // Which side of the XZ plane the preview's mesh is on: the least
+    // and the most world y of its vertices.
+    let side = |lathe: &mut Lathe| {
+        lathe.answer();
+        assert_eq!(lathe.doc.feed.draft_error(), None);
+        let bounds = lathe.doc.feed.mesh().bounds().expect("a preview");
+        (bounds.min.y, bounds.max.y)
+    };
+    lathe.set_up(AxisLine::Curve(lathe.construction));
+    lathe.revolve(RevolveLook::Extent(TurnKind::OneSide));
+    lathe.input(Angle::First, "90");
+    let (low, high) = side(&mut lathe);
+    assert!(low > -1e-3 && high > 19.0, "{low} {high}");
+    lathe.revolve(RevolveLook::Flip);
+    let (low, high) = side(&mut lathe);
+    assert!(low < -19.0 && high < 1e-3, "{low} {high}");
+
+    // About the left side, against +y: the other way round, still
+    // flipped, then not.
+    let sketch = lathe.sketch;
+    lathe.revolve(RevolveLook::Picking(RevolvePick::Axis));
+    let axis = AxisLine::Curve(lathe.left);
+    lathe.revolve(RevolveLook::PickAxis { sketch, axis });
+    let (low, high) = side(&mut lathe);
+    assert!(low > -1e-3 && high > 9.0, "{low} {high}");
+    lathe.revolve(RevolveLook::Flip);
+    let (low, high) = side(&mut lathe);
+    assert!(low < -9.0 && high < 1e-3, "{low} {high}");
+
+    // The sketch's Y axis is along +y, as the construction line.
+    lathe.revolve(RevolveLook::Picking(RevolvePick::Axis));
+    let axis = AxisLine::SketchY;
+    lathe.revolve(RevolveLook::PickAxis { sketch, axis });
+    let (low, high) = side(&mut lathe);
+    assert!(low > -1e-3 && high > 19.0, "{low} {high}");
+}
+
+#[test]
+fn the_session_ends_when_its_revolve_or_its_document_goes() {
+    let mut lathe = lathe();
+    lathe.set_up(AxisLine::SketchY);
+    lathe.doc.update(Edit::CommitRevolve);
+    let [(feature, _)] = lathe.revolves()[..] else {
+        panic!("one revolve");
+    };
+    // Undone away while it's edited, the session ends: OK would write
+    // over whatever the id names.
+    lathe.doc.look(Look::EditFeature(feature));
+    assert!(lathe.doc.revolve.is_some());
+    lathe.doc.update(Edit::Undo);
+    assert!(lathe.revolves().is_empty());
+    assert!(lathe.doc.revolve.is_none());
+    assert!(lathe.last_draft().is_none());
+
+    // Replaced whole (restoring recovered changes, say) by one still
+    // holding its sketch, a new one's ends too: its ids may name others.
+    lathe.set_up(AxisLine::SketchY);
+    assert!(lathe.doc.revolve_state().unwrap().ready);
+    let mut replaced = Editor::new(lathe.doc.editor.document().clone());
+    let coarse = varde_document::Tolerance::new(1e-2).unwrap();
+    replaced.apply(Command::SetTolerance(coarse)).unwrap();
+    let replaced = replaced.document().clone();
+    lathe.doc.apply(Command::Replace(Box::new(replaced)));
+    lathe.doc.sync();
+    assert!(lathe.doc.revolve.is_none());
+    assert!(lathe.last_draft().is_none());
 }

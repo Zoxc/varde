@@ -217,7 +217,8 @@ first angle's field and "90°" in the second, a new body.
   (`Doc::revolve_draft`, after the extrude's in `Doc::request_model`),
   `NewBody(BodyId::NEW)` for a new body; its error shows in the panel.
 - **Committing** (`Edit::CommitRevolve`: OK, `Enter` in an angle's field
-  or the screen's `Enter`) applies `AddFeature` ("Revolve N", hiding the
+  or the screen's `Enter`; `Doc::commit_feature`, the extrude's too)
+  applies `AddFeature` ("Revolve N", hiding the
   sketch, adding the body) or `SetFeature`, one undo step, selects the
   new revolve and ends the session; OK with nothing changed writes
   nothing. `Esc` or Cancel drops it and its draft. A replacement of the
@@ -251,7 +252,14 @@ colour with an arrowhead (screen space) at the end positive angles turn
 right-handed about: the line's end, or a built-in axis's +x / +y end,
 and the other end when flipped for one side or two sides (as the
 revolve's `span` does). The knobs' layer under the panel is an empty
-placeholder for a revolve, so the panel's state keeps its place.
+placeholder for a revolve, so the panel's state keeps its place. A test
+checks the turn against regeneration's: a quarter turn's preview lies
+on the side right-handed about the line from its start to its end (or
+the other side flipped). The 1 px jogs seen on a revolved cylinder's
+silhouette (where the world X axis passes behind it in the screenshot
+scenario) are its tessellation, not the axis's drawing or a crack: the
+mesh is welded with no open edges, and the wall's inside vertices sit
+at other angles than its rings', so its outline steps by up to a pixel.
 
 The status bar says "New revolve · 1 region picked · about Line 3"
 (or "pick the regions to revolve", "pick the axis"), with the hints
@@ -279,10 +287,11 @@ up and `O` while an extrude is.
 the icon mock's: an open circle with an arrowhead about a dashed axis)
 and, as its note, how far it turns in all (`panels::turn_note`: "360°",
 "270°", "120°" for two sides of 100° and 20°). Selected, the status bar
-says its turn, axis and operation (`feature_info`: "Full 360° · about Y
-axis · New body", "One side 90° · about Line 3 · Cut", "Symmetric 90°
-...", "Two sides 100° + 20° ..."; the axis left out while its sketch
-doesn't have it). Double-click, `Enter` or Edit revolve reopen it.
+says its turn, operation and axis (`feature_info`: "Full 360° · New
+body · about Y axis", "One side 90° · Cut · about Line 3", "Symmetric
+90° ...", "Two sides 100° + 20° ..."; the axis last, as the selection's
+box clips what doesn't fit at 1280 px and the axis says least, and left
+out while its sketch doesn't have it). Double-click, `Enter` or Edit revolve reopen it.
 
 Not yet: a handle dragging the angle; Extrude's key following the mock's
 `X`.

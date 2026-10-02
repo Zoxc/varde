@@ -9,8 +9,8 @@
 use std::f64::consts::PI;
 
 use varde_document::{
-    AxisLine, BodyId, Command, Design, Document, FeatureId, FeatureKind, MAX_REVOLVE_REGIONS,
-    Operation, Revolve, RevolveError, Turn,
+    AxisLine, Design, Document, FeatureId, FeatureKind, MAX_REVOLVE_REGIONS, Revolve, RevolveError,
+    Turn,
 };
 use varde_expr::{AngleUnit, Unit};
 use varde_view::{Angle, OperationKind, RevolveLook, RevolvePick, RevolveState, TurnKind};
@@ -168,22 +168,13 @@ impl RevolveSession {
             TurnKind::Symmetric => Turn::Symmetric(value(Angle::First)?),
             TurnKind::TwoSides => Turn::TwoSides(value(Angle::First)?, value(Angle::Second)?),
         };
-        let targets = varde_document::Targets {
-            excluded: self.targets.excluded.clone(),
-        };
-        let operation = match self.operation {
-            OperationKind::NewBody => Operation::NewBody(BodyId::NEW),
-            OperationKind::Join => Operation::Join(targets),
-            OperationKind::Cut => Operation::Cut(targets),
-            OperationKind::Intersect => Operation::Intersect(targets),
-        };
         Some(Revolve {
             sketch,
             regions: self.regions.references().to_vec(),
             axis,
             extent,
             flip: self.flip,
-            operation,
+            operation: self.targets.operation(self.operation),
         })
     }
 
@@ -332,24 +323,9 @@ impl Doc {
         let Some(revolve) = session.revolve(self.editor.document()) else {
             return;
         };
-        let feature = session.feature;
-        let command = match feature {
-            Some(feature) => Command::SetFeature {
-                feature,
-                kind: Box::new(revolve.into()),
-            },
-            None => self.editor.document().add_feature(revolve.into()),
-        };
-        let before = self.editor.revision();
-        self.apply(command);
-        if self.edit_error.is_some() {
-            return;
+        if self.commit_feature(session.feature, revolve.into()) {
+            self.revolve = None;
         }
-        if feature.is_none() && self.editor.revision() != before {
-            // New features get the highest id, so it's the last.
-            self.selected_feature = self.editor.document().features().last().map(|f| f.id);
-        }
-        self.revolve = None;
     }
 
     /// Ends the revolve session if what it's about is gone, the document

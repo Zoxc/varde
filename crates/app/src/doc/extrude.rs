@@ -5,8 +5,7 @@
 //! trace.
 
 use varde_document::{
-    BodyId, Command, Design, Document, Extent, Extrude, ExtrudeError, FeatureId, FeatureKind,
-    MAX_EXTRUDE_REGIONS, Operation, Targets,
+    Design, Document, Extent, Extrude, ExtrudeError, FeatureId, FeatureKind, MAX_EXTRUDE_REGIONS,
 };
 use varde_expr::Unit;
 use varde_view::{Distance, ExtentKind, ExtrudeLook, ExtrudeState, OperationKind};
@@ -123,21 +122,12 @@ impl ExtrudeSession {
             }
             ExtentKind::ThroughAll => Extent::ThroughAll,
         };
-        let targets = Targets {
-            excluded: self.targets.excluded.clone(),
-        };
-        let operation = match self.operation {
-            OperationKind::NewBody => Operation::NewBody(BodyId::NEW),
-            OperationKind::Join => Operation::Join(targets),
-            OperationKind::Cut => Operation::Cut(targets),
-            OperationKind::Intersect => Operation::Intersect(targets),
-        };
         Some(Extrude {
             sketch,
             regions: self.regions.references().to_vec(),
             extent,
             flip: self.flip,
-            operation,
+            operation: self.targets.operation(self.operation),
         })
     }
 
@@ -326,25 +316,9 @@ impl Doc {
         let Some(extrude) = session.extrude() else {
             return;
         };
-        let feature = session.feature;
-        let command = match feature {
-            Some(feature) => Command::SetFeature {
-                feature,
-                kind: Box::new(extrude.into()),
-            },
-            None => self.editor.document().add_feature(extrude.into()),
-        };
-        let before = self.editor.revision();
-        self.apply(command);
-        if self.edit_error.is_some() {
-            return;
+        if self.commit_feature(session.feature, extrude.into()) {
+            self.extrude = None;
         }
-        let added = feature.is_none() && self.editor.revision() != before;
-        if added {
-            // New features get the highest id, so it's the last.
-            self.selected_feature = self.editor.document().features().last().map(|f| f.id);
-        }
-        self.extrude = None;
     }
 
     /// Ends the extrude session if what it's about is gone, e.g. by undo,

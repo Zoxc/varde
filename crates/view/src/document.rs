@@ -1370,9 +1370,10 @@ fn surface_name(summary: &varde_regen::Summary) -> &'static str {
 /// The status bar's info on the selected `feature` of `document`, after
 /// its name: a sketch's curves and plane, "4 lines · 1 circle · 5 points
 /// · on XY", an extrude's extent in the document's units and operation,
-/// "Distance 10 mm · New body", or a revolve's turn, axis and operation,
-/// "One side 90° · about Line 3 · Join" (the axis left out while its
-/// sketch doesn't have it).
+/// "Distance 10 mm · New body", or a revolve's turn, operation and axis,
+/// "One side 90° · Join · about Line 3" (the axis left out while its
+/// sketch doesn't have it; last, as the box clips what doesn't fit and
+/// a line's name says least).
 fn feature_info(feature: &Feature, document: &Document) -> String {
     let units = document.units();
     match &feature.kind {
@@ -1400,7 +1401,7 @@ fn feature_info(feature: &Feature, document: &Document) -> String {
             };
             let turn = panels::turn_info(&revolve.extent);
             match axis {
-                Some(axis) => format!("{turn} · about {axis} · {operation}"),
+                Some(axis) => format!("{turn} · {operation} · about {axis}"),
                 None => format!("{turn} · {operation}"),
             }
         }
@@ -1760,21 +1761,21 @@ mod tests {
         };
         let x = AxisLine::SketchX;
         let cases = [
-            (Turn::Full, "360°", "Full 360° · about X axis · Cut"),
+            (Turn::Full, "360°", "Full 360° · Cut · about X axis"),
             (
                 Turn::OneSide(angle("90")),
                 "90°",
-                "One side 90° · about X axis · Cut",
+                "One side 90° · Cut · about X axis",
             ),
             (
                 Turn::Symmetric(angle("90")),
                 "90°",
-                "Symmetric 90° · about X axis · Cut",
+                "Symmetric 90° · Cut · about X axis",
             ),
             (
                 Turn::TwoSides(angle("90"), angle("45")),
                 "135°",
-                "Two sides 90° + 45° · about X axis · Cut",
+                "Two sides 90° + 45° · Cut · about X axis",
             ),
         ];
         for (extent, note, info) in cases {
@@ -1785,7 +1786,7 @@ mod tests {
         let y = revolve(Turn::Full, AxisLine::SketchY);
         assert_eq!(
             feature_info(&y, &document),
-            "Full 360° · about Y axis · Cut"
+            "Full 360° · Cut · about Y axis"
         );
         let FeatureKind::Sketch { sketch: drawn, .. } = &sketch.kind else {
             panic!("the example's first feature is its sketch");
@@ -1794,7 +1795,7 @@ mod tests {
         let on_line = revolve(Turn::Full, AxisLine::Curve(line.id));
         assert_eq!(
             feature_info(&on_line, &document),
-            format!("Full 360° · about {} · Cut", line.name())
+            format!("Full 360° · Cut · about {}", line.name())
         );
         assert_eq!(panels::feature_icon(&y), Icon::Revolve);
     }

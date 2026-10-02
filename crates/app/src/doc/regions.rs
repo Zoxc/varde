@@ -1,12 +1,15 @@
 //! What the operation sessions share, the extrude's and the revolve's:
 //! picking regions of a sketch ([`RegionPick`]), the bodies a join, cut or
-//! intersect takes out ([`BodyTargets`]), and the fields values are typed
-//! in ([`TypedText`]).
+//! intersect takes out ([`BodyTargets`]), the fields values are typed in
+//! ([`TypedText`]), and committing what's set up
+//! ([`Doc::commit_feature`]).
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use varde_document::{BodyId, Document, FeatureId, FeatureKind, RegionRef, Sketch};
+use varde_document::{
+    BodyId, Command, Document, FeatureId, FeatureKind, Operation, RegionRef, Sketch, Targets,
+};
 use varde_expr::{Ask, Value};
 use varde_sketch::{MAX_WORK, Profiles};
 use varde_view::{BodyTarget, Candidate, OperationKind, TypedField};
@@ -347,6 +350,20 @@ impl BodyTargets {
         }
     }
 
+    /// What the feature does with its solid as `kind`, leaving these
+    /// bodies out of a join, cut or intersect.
+    pub(crate) fn operation(&self, kind: OperationKind) -> Operation {
+        let targets = Targets {
+            excluded: self.excluded.clone(),
+        };
+        match kind {
+            OperationKind::NewBody => Operation::NewBody(BodyId::NEW),
+            OperationKind::Join => Operation::Join(targets),
+            OperationKind::Cut => Operation::Cut(targets),
+            OperationKind::Intersect => Operation::Intersect(targets),
+        }
+    }
+
     /// Lets go of the bodies `document` no longer holds (undone, say),
     /// which can't be taken out, nor put back.
     pub(crate) fn prune(&mut self, document: &Document) {
@@ -430,6 +447,30 @@ impl TypedText {
 }
 
 impl Doc {
+    /// Adds a feature of `kind` set up in a session, or sets the feature
+    /// `edited` to it, as one undo step: false if the document refuses
+    /// it, which then shows why, and the session stays. A feature added
+    /// is selected; one set with nothing changed writes nothing.
+    pub(crate) fn commit_feature(&mut self, edited: Option<FeatureId>, kind: FeatureKind) -> bool {
+        let command = match edited {
+            Some(feature) => Command::SetFeature {
+                feature,
+                kind: Box::new(kind),
+            },
+            None => self.editor.document().add_feature(kind),
+        };
+        let before = self.editor.revision();
+        self.apply(command);
+        if self.edit_error.is_some() {
+            return false;
+        }
+        if edited.is_none() && self.editor.revision() != before {
+            // New features get the highest id, so it's the last.
+            self.selected_feature = self.editor.document().features().last().map(|f| f.id);
+        }
+        true
+    }
+
     /// The bodies a session's `operation` lists, of the feature `edited`
     /// (or a new one) with `targets`: those its preview touches, those
     /// taken out, and those put back since the touch test last answered,
