@@ -236,3 +236,200 @@ fn larger_grids_of_holes_cut_at_once() {
     }
     assert!(failed.is_empty(), "{failed:?}");
 }
+
+/// Frames away from the world's for the sketches: far from the origin,
+/// turned about `z`, tilted off every axis, and tilted far away.
+fn moved_frames() -> [(&'static str, Frame); 4] {
+    let tilt =
+        DQuat::from_rotation_x(0.7) * DQuat::from_rotation_y(-0.4) * DQuat::from_rotation_z(1.1);
+    let turn = DQuat::from_rotation_z(0.6);
+    let frame = |origin: DVec3, q: DQuat| Frame {
+        origin,
+        x: q * DVec3::X,
+        y: q * DVec3::Y,
+    };
+    [
+        (
+            "far",
+            frame(DVec3::new(1234.5, -2345.25, 512.0), DQuat::IDENTITY),
+        ),
+        ("turned", frame(DVec3::new(3.7, -2.2, 0.9), turn)),
+        ("tilted", frame(DVec3::new(-1.5, 2.0, 0.5), tilt)),
+        (
+            "tilted far",
+            frame(DVec3::new(4321.0, -987.0, 2345.0), tilt),
+        ),
+    ]
+}
+
+#[test]
+fn holes_in_line_on_moved_frames() {
+    // The holes of `holes_in_line_on_a_large_plate`, sketched on frames
+    // away from the world's: the clean-up's quality pass works in each
+    // plane face's own plane, its points put back onto it. Every step
+    // must work, its volume the plate's less `k·π/4`, the same at 1 and 8
+    // threads.
+    let mut failed = Vec::new();
+    for (name, frame) in moved_frames() {
+        let plate = extruded_on(
+            vec![rect(DVec2::ZERO, DVec2::splat(20.0), 0)],
+            frame,
+            0.0,
+            1.0,
+            1,
+        );
+        let v0 = plate.volume();
+        let holes = [(1.0, 1.0), (3.4, 1.0), (1.0, 3.4)];
+        let steps = assert_deterministic(|| {
+            let mut current = plate.clone();
+            let mut out = Vec::new();
+            for (k, &(x, y)) in holes.iter().enumerate() {
+                let feature = 10 + k as u64;
+                let pin = extruded_on(
+                    vec![circle(DVec2::new(x, y), 0.5, feature, false)],
+                    frame,
+                    -1.0,
+                    2.0,
+                    feature,
+                );
+                let step = boolean(&current, &pin, Op::Difference, &TOL, &Budget::DEFAULT);
+                if let Ok(next) = &step {
+                    current = next.clone();
+                }
+                out.push(step.map(|s| s.volume()));
+            }
+            out
+        });
+        for (k, step) in steps.iter().enumerate() {
+            match step {
+                Ok(got) => {
+                    let want = v0 - (k + 1) as f64 * PI / 4.0;
+                    assert!(
+                        (got - want).abs() < 1e-9 * v0,
+                        "{name}, hole {}: {got} vs {want}",
+                        k + 1
+                    );
+                }
+                Err(e) => failed.push(format!("{name}, hole {}: {e:?}", k + 1)),
+            }
+        }
+    }
+    assert!(failed.is_empty(), "{failed:?}");
+}
+
+/// A closed uniform quadratic B-spline round `c` (parabola pieces, as
+/// a sketch's spline is drawn), through the middles of the sides of the
+/// polygon on `points` (offsets from `c`), clockwise for a hole.
+fn spline_hole(c: DVec2, points: &[DVec2], curve: u64) -> Loop {
+    let n = points.len();
+    let q = |i: usize| c + points[i % n];
+    let mid = |i: usize| (q(i) + q(i + 1)) * 0.5;
+    Loop {
+        segments: (0..n)
+            .rev()
+            .map(|i| Segment {
+                conic: crate::patch::Conic2::new(mid(i + 1), q(i + 1), 1.0, mid(i)).unwrap(),
+                curve,
+            })
+            .collect(),
+    }
+}
+
+#[test]
+fn fitted_grooves_across_drilled_plates() {
+    // A plate with a round hole and a spline-shaped one, on a frame tilted
+    // off every axis, grooved along its length through both holes (the
+    // cuts between the groove and the holes' walls are fitted, on face
+    // copies claiming no surface), then a pocket whose floor and walls
+    // cross those bands and a hole through it. The quality pass works on
+    // the plane faces round the bands: no curve off the plane may go onto
+    // a triangle keeping the plane's tag. Each step checked by `a − b +
+    // a ∩ b = a` within the fit tolerance's allowance, the same at 1 and 8
+    // threads.
+    let (_, frame) = moved_frames()[2];
+    let along_x = Frame {
+        origin: frame.origin,
+        x: frame.y,
+        y: frame.normal(),
+    };
+    let spline = [
+        (1.2, 0.0),
+        (0.7, 0.9),
+        (-0.5, 1.1),
+        (-1.2, 0.1),
+        (-0.6, -1.0),
+        (0.6, -1.1),
+    ]
+    .map(|(x, y)| DVec2::new(x, y));
+    let plate = extruded_on(
+        vec![
+            rect(DVec2::ZERO, DVec2::new(12.0, 8.0), 0),
+            circle(DVec2::new(3.5, 4.0), 1.0, 10, true),
+            spline_hole(DVec2::new(8.5, 4.0), &spline, 11),
+        ],
+        frame,
+        0.0,
+        2.0,
+        1,
+    );
+    let tools = [
+        extruded_on(
+            vec![circle(DVec2::new(4.3, 2.1), 0.6, 20, false)],
+            along_x,
+            -1.0,
+            13.0,
+            20,
+        ),
+        extruded_on(
+            vec![rect(DVec2::new(2.0, 3.3), DVec2::new(10.0, 5.5), 21)],
+            frame,
+            1.75,
+            3.0,
+            21,
+        ),
+        extruded_on(
+            vec![circle(DVec2::new(6.3, 4.5), 0.4, 22, false)],
+            frame,
+            -1.0,
+            3.0,
+            22,
+        ),
+    ];
+    let steps = assert_deterministic(|| {
+        let mut current = plate.clone();
+        let mut out = Vec::new();
+        for tool in &tools {
+            let less = boolean(&current, tool, Op::Difference, &TOL, &Budget::DEFAULT);
+            let both = boolean(&current, tool, Op::Intersection, &TOL, &Budget::DEFAULT);
+            let free = less.as_ref().ok().map(|s| {
+                s.mesh()
+                    .faces()
+                    .iter()
+                    .filter(|f| matches!(f.surface, Surface::Free))
+                    .count()
+            });
+            out.push((
+                current.volume(),
+                current.area() + tool.area(),
+                less.as_ref().ok().map(Solid::volume),
+                both.ok().map(|s| s.volume()),
+                free,
+            ));
+            match less {
+                Ok(next) => current = next,
+                Err(e) => panic!("step {}: {e:?}", out.len() - 1),
+            }
+        }
+        out
+    });
+    for (k, (va, area, less, both, free)) in steps.into_iter().enumerate() {
+        println!("step {k}: {less:?} {both:?}, {free:?} faces claiming no surface");
+        assert!(free.is_some_and(|n| n > 0), "step {k}: no fitted bands");
+        let (less, both) = (less.unwrap(), both.expect("the intersection"));
+        let within = TOL.fit() * area / 5.0;
+        assert!(
+            (less + both - va).abs() <= within,
+            "step {k}: {less} + {both} vs {va}"
+        );
+    }
+}

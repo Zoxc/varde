@@ -4455,6 +4455,25 @@ line (`drilled_grids_in_line`, one thread for the test), 40 s before and
 patches, 0.59 s → 0.53 s. The 150 plates of bosses sunk through
 drilled plates, 117 s → 113 s; the release kernel suite 218 s → 262 s,
 `drilled_grids_in_line` now in it.
+On the 210 × 210 × 5 plate with 400 holes (23 112 patches), cuts beside
+them (a box at a corner, a hole and a boss in a web, a pocket across
+four holes) take 1 to 3 s each, the pass 6 to 50 ms of that, adding at
+most 40 patches. Fuzzed in release, about 6 000 operations: plates
+drilled and pocketed one feature at a time (holes of many sizes and
+pitches, slots, rounded and spline pockets, ends flush with the faces or
+`1e-6` and `1e-9` past them) on frames far from the origin (`1e3`,
+`3e4`), turned and tilted, at fit tolerances `1e-2` to `1e-4`, and
+plates grooved across round and spline holes (fitted cuts) then
+pocketed, drilled and bossed across the bands: no result wrong by
+closed-form volume, the identities or sampled points, no curve off a
+plane on a triangle keeping its tag, 1 and 8 threads alike, `TooComplex`
+no more often; 5 to 10 % more of the drilling chains' steps work with
+the pass (549 against 523 of 768 at `1e-3`, 229 against 205 of 288 at
+`1e-2`). The exception is a tie: a
+box whose face runs exactly along a groove's rim on a plate's top and
+through a hole's quarter points fails 10 more of 400 operations with
+the pass (the face moved `1e-9` to `1e-3` either way fails with and
+without it).
 
 **Threads.** Release, one thread and seven (the budget's units in
 brackets): two flat tori of 36 864 patches each united, 0.71 s and
@@ -5045,6 +5064,14 @@ to 72 of its 96 operations and left the others as they were.
       resolution. 24 of the 32 were under 10°, the worst of sine
       `3.75e-3` (fans from the box's far corners to the rim); now none
       of the 80 is under 5.7°.
+    - `holes_in_line_on_moved_frames`: the same three holes sketched on
+      frames far from the origin, turned and tilted, each step against
+      the plate's volume less `k·π/4`, at 1 and 8 threads.
+    - `fitted_grooves_across_drilled_plates`: a plate with a round and a
+      spline hole on a tilted frame, grooved through both (fitted cuts),
+      then pocketed and drilled across the bands, each step against its
+      intersection within the fit tolerance's allowance, at 1 and 8
+      threads.
     - `drilled_grids_in_line` and `boxes_drilled_in_grids`
       (`seeded_tests.rs`, the second `#[ignore]`d as slow): 60 holes
       drilled one at a time in rows of 8 from (1, 1), a failed step
@@ -6824,7 +6851,8 @@ parameter, or a split outside the patch bounds),
   tangent 1.85° came out of one boolean and, halved by the next one's
   refinement, closed (a flush boss on a drilled plate). The shapes
   points' code in `triangulate.rs` works on one input triangle's layout
-  with its sides fixed; this pass shares its circumcircle and in-circle
-  tests and its bound, and the seams' triangulation of a region, but
+  with its sides fixed; this pass shares its in-circle test, the bound
+  and the circumcentre (`mesh/shape.rs`, with the extrude caps' quality
+  refinement), and the seams' triangulation of a region, but
   walks and flips on the soup, where a side between two plane faces can
   be split in both.
