@@ -14,7 +14,9 @@
 //! that come near each other (they meet only in lines along it, which
 //! run out of the pair through ends). Then no ends is no cut, and
 //! two ends are one arc; the ends of two planar patches, on the line
-//! their planes meet in, join in order along it.
+//! their planes meet in, join in order along it. On walls along one
+//! direction, ends join line by line where the walls cross clearly
+//! (`along_generators`).
 //!
 //! Any other pair is **refined**: both patches are split exactly
 //! (red–green, so the neighbours across split edges are split too, see
@@ -24,6 +26,8 @@
 //! no certificate means no loop, and the ends, taken round the pair in
 //! order, join each going in to the next coming out (as parentheses
 //! match), so the arcs don't cross.
+
+use std::cmp::Ordering;
 
 use glam::{DVec2, DVec3};
 
@@ -377,6 +381,12 @@ fn pair_decision(
             _ => {}
         }
     }
+    if !ends.is_empty()
+        && let Some(d) = parallel_generators(a, p, b, q, resolution)
+        && let Some(joined) = along_generators(a, p, b, q, ends, d, resolution)
+    {
+        return Ok(arcs(joined));
+    }
     let size = |b: crate::patch::Bounds3| (b.max - b.min).max_element();
     let (split_a, split_b) = (size(pa.bounds()) > floor, size(pb.bounds()) > floor);
     if split_a || split_b {
@@ -489,6 +499,112 @@ fn parallel_generators(a: &Input, p: u32, b: &Input, q: u32, resolution: f64) ->
     (x.cross(y).length() * extent <= resolution).then_some(x)
 }
 
+/// How thick, in resolutions, the sliver beside a line along walls'
+/// common direction must be at least for [`along_generators`] to join
+/// the line's ends: a quarter, 16 tie distances.
+const LENS: f64 = 0.25;
+
+/// The ends of triangle `p` of `A` and `q` of `B`, on walls along `d`
+/// ([`parallel_generators`]), joined one arc per line along `d`, if
+/// every line is clear of any other.
+///
+/// Such walls meet in lines along `d`, and each line's stretch inside
+/// both patches runs between two ends, where it leaves one patch or the
+/// other: at the same point of the cross-section (`at − d·(at·d)`), with
+/// opposite signs, apart along `d`. So the ends are grouped by where they
+/// are in the cross-section, and each group of exactly two is a line's
+/// arc. Anything else (a group of one, three or four, as two lines a hair
+/// apart or a line leaving and coming back give; two ends at one place
+/// along `d`) gives `None`, and the pair is refined as before.
+///
+/// A line is clear where the walls cross at an angle `θ` with
+/// `θ² ≥ 2·LENS·resolution·κ`, `κ` the sum of their cross-sections'
+/// curvatures there (`sin θ` stands in for `θ`, which only asks more).
+/// Two curves crossing so bound a sliver that closes no sooner than
+/// `2θ/κ` away and is at least `θ²/2κ` thick: [`LENS`] resolutions. A
+/// thinner one (walls overlapping by a fraction of the resolution, down
+/// to crossings only the counting's ties make) is left to refinement,
+/// whose later counts may drop its ends: joined in an early round, they
+/// fold. For walls of one radius `R` side by side this joins lines at
+/// least `√(R·resolution)` apart. Ends are grouped within `θ/κ` (the
+/// smallest angle and the largest `κ` of the pair's ends): half the
+/// distance to another line.
+fn along_generators(
+    a: &Input,
+    p: u32,
+    b: &Input,
+    q: u32,
+    ends: &[End],
+    d: DVec3,
+    resolution: f64,
+) -> Option<Vec<(End, End)>> {
+    let quadric = |input: &Input, t: u32| match input.mesh.faces()[input.face(t) as usize].surface {
+        Surface::Quadric(quadric) => Some(quadric),
+        _ => None,
+    };
+    let (qa, qb) = (quadric(a, p)?, quadric(b, q)?);
+    if !ends.len().is_multiple_of(2) {
+        return None;
+    }
+    // The curvature of a wall's cross-section at `x`: `tᵀ·H·t / |∇F|`,
+    // `t` the unit tangent there square to `d`.
+    let curvature = |quadric: &crate::mesh::Quadric, x: DVec3| {
+        let gradient = quadric.gradient(x);
+        let t = d.cross(gradient).try_normalize()?;
+        let hessian = quadric.a + quadric.a.transpose();
+        Some((t.dot(hessian * t).abs() / gradient.length(), gradient))
+    };
+    let (mut bend, mut least) = (0.0f64, f64::INFINITY);
+    for e in ends {
+        let (ka, ga) = curvature(&qa, e.at)?;
+        let (kb, gb) = curvature(&qb, e.at)?;
+        let kappa = ka + kb;
+        let sine = ga.normalize().cross(gb.normalize()).length();
+        // Not clear also where any of it isn't finite.
+        let clear = (sine * sine).partial_cmp(&(2.0 * LENS * resolution * kappa));
+        if !matches!(clear, Some(Ordering::Greater | Ordering::Equal)) {
+            return None;
+        }
+        bend = bend.max(kappa);
+        least = least.min(sine);
+    }
+    let group = least / bend;
+    let across: Vec<DVec3> = ends.iter().map(|e| e.at - d * e.at.dot(d)).collect();
+    // Grouped by single linkage: each end's group is the smallest index
+    // linked to it.
+    let n = ends.len();
+    let mut label: Vec<usize> = (0..n).collect();
+    for i in 0..n {
+        for j in 0..i {
+            if across[i].distance(across[j]) <= group {
+                let (from, to) = (label[i].max(label[j]), label[i].min(label[j]));
+                for l in &mut label {
+                    if *l == from {
+                        *l = to;
+                    }
+                }
+            }
+        }
+    }
+    let mut joined = Vec::with_capacity(n / 2);
+    for i in 0..n {
+        if label[i] != i {
+            continue;
+        }
+        let members: Vec<usize> = (0..n).filter(|&k| label[k] == i).collect();
+        let [x, y] = members[..] else {
+            return None;
+        };
+        let (x, y) = (ends[x], ends[y]);
+        let apart = (x.at - y.at).dot(d).abs().partial_cmp(&resolution);
+        if x.sign + y.sign != 0 || apart != Some(Ordering::Greater) {
+            return None;
+        }
+        joined.push((x, y));
+    }
+    Some(joined)
+}
+
 /// The direction a quadric doesn't change along, if it is a cylinder: a
 /// null direction of its (symmetric) matrix along which its linear part
 /// vanishes too, to rounding. For a matrix of rank 2 (circles, ellipses,
@@ -530,9 +646,7 @@ fn along_line(a: &Input, b: &Input, p: u32, q: u32, ends: &[End]) -> Option<Vec<
     let (na, nb) = (normal(a.corners(p)), normal(b.corners(q)));
     let d = na.cross(nb);
     // Planes too near parallel (or not finite) give no line.
-    if d.length().partial_cmp(&(1e-9 * na.length() * nb.length()))
-        != Some(std::cmp::Ordering::Greater)
-    {
+    if d.length().partial_cmp(&(1e-9 * na.length() * nb.length())) != Some(Ordering::Greater) {
         return None;
     }
     // An odd number can't pair up (the counting balances every pair's

@@ -4105,6 +4105,42 @@ radius 1 at the default tolerance. Walls closer than 64 resolutions
 with a ring between them are left to fail (see Deviations for the round
 gate this replaces).
 
+**Ends along one direction** (`along_generators`): a pair on such walls
+that has ends and no certificate is joined line by line before it is
+split. Each line's stretch inside both patches runs between two ends
+where it leaves one or the other, at the same point of the
+cross-section (`at − d·(at·d)`), with opposite signs, apart along `d`.
+So the ends are grouped by their cross-section point (single linkage),
+and if every group is exactly two such ends, each group is an arc; any
+other grouping (one end, three, four: two lines a hair apart, a line
+leaving and coming back; two ends at one place along `d`) leaves the
+pair to be split as before. A line is joined only where it is **clear**:
+at every end of the pair the walls cross at an angle `θ` with
+`θ² ≥ 2·LENS·resolution·κ` (`LENS` = 1/4, `κ` the sum of the two
+cross-sections' curvatures there, `tᵀ·H·t/|∇F|`; `sin θ` for `θ`). Two
+curves crossing at `θ` bound a sliver that closes no sooner than `2θ/κ`
+away and is at least `θ²/2κ` thick, so a clear line's sliver is at
+least a quarter of a resolution thick (16 tie distances), wherever its
+other line lies, in the pair or not. Thinner ones (walls overlapping by
+less, down to crossings only the counting's ties make) are left to
+refinement, whose later counts may drop their ends and give the
+operands unchanged; joined in an early round they fold (at `LENS` =
+1/2000, the tangent suite's differences at fit 0.1 overlapping by
+`1e-6`, a hundredth of the resolution, did). For two walls of radius
+`R` side by side a line is clear at least `√(R·resolution)` from the
+other. Ends group within `θ/κ` (the pair's smallest angle, largest
+`κ`): half the distance to another clear line. The joins are sound for
+the same reason as the certificate: such walls meet only in lines along
+`d`, and a group of two is one stretch of one line.
+
+Measured on unit cylinders side by side overlapping by 0.02 to 30
+resolutions at fits 0.1, 0.01 and 0.001 (four placements, four
+operations: 384), `LENS` from 2 down to 1/8 turned no result into an
+error against no joins at all, and every volume was right; 1/16 turned
+one. Results: 61 without the joins (176 spending over a million units,
+565 M units in all), 177 at `LENS` 2 (106, 356 M), 214 at 1/4 (65,
+205 M), 229 at 1/16.
+
 Two patches on **one surface** (their faces claim quadrics and points
 sampled on each lie on the other's within the resolution: a pin in a
 hole cut by the same circle, cylinders of one radius stacked or
@@ -6246,10 +6282,23 @@ sampled points.
   angle and fit in 20 to 320 ms (was 3 of 12, 0.24 to 5.2 s), and join
   as "no clean solid" off the seams at fits down to `1e-3` in 15 ms to
   2 s (the repair of the refused union) instead of 0.3 to 2 s and
-  `TooComplex` at `1e-3`. What still runs out: unions where the line
-  lies on a seam, or overlaps from `−1e-9` to `−1e-5` (the pairs along
-  the line have ends: two lines a hair apart, or ties on the seam),
-  every join at `1e-4`, and coaxial walls `64` resolutions to a few
+  `TooComplex` at `1e-3`. Since ends along one direction join line by
+  line, walls overlapping by a quarter of the resolution or more cut in
+  thousands of units where they refined for millions: the
+  default-tolerance probe (`near_tangent_cylinders_at_the_default`,
+  ignored: gaps and overlaps `1e-12` to `1e-4`, two placements, four
+  operations, 88 in all) works 67, every overlap of `1e-5` and `1e-4`
+  among them (the `1e-5` ones were refused after 2.6 to 4.2 million
+  units), and 23 spend over a million units. Unit cylinders and pins
+  overlapping by 0.02 to 30 resolutions at fits 0.1 to 0.001 (768
+  operations, two sweeps): 107 → 431 work, operations over a million
+  units 536 → 221, work 1.8 G → 0.75 G, no result lost. What still runs
+  out: unions at a tie (the walls tangent within the tie distance: 11
+  of the probe's 23, every regen join at `1e-4`, and the regen joins
+  with the line on a seam at `1e-3`), since `A` grown is two lines
+  infinitely close, a group of four; overlaps under a quarter of the
+  resolution (`1e-9`, `1e-7` at the default tolerance: the probe's
+  other 12), left to refinement; and coaxial walls `64` resolutions to a few
   thousandths apart over a millimetre or more (refined until their
   hulls part, as before: radii 1 and 1.0001 or 1.001 over 1 mm run out,
   and 1.004 the union; radii 1 and 1.00001, within the 64 resolutions,
@@ -6258,6 +6307,18 @@ sampled points.
   patches the result's check integrates), so none runs unbounded; the price is that an
   operation full of ties runs out sooner (a flat torus of 9 216 patches
   united with itself, 4.2 s on one thread, is `TooComplex` now).
+- **Thin lenses between walls fail after their cut is decided**: walls
+  overlapping by some resolutions, joined along their lines at once,
+  still give results some stage refuses. A cylinder over the middle of
+  another (`1e-5` deep, turned 0.1 to 0.7 about its axis off the other's
+  seam): the lens cap's corner at the seam is two arcs of one circle,
+  the triangulation adds a point at the cap's centroid, 3.3 resolutions
+  from that corner (`VertexNeighbours`, `EdgeNeighbours`); `1e-4` deep,
+  cut vertices along a line from `A`'s crossings and `B`'s land
+  `5e-5` apart and their triangles fail the hull rules; pins poking out
+  of a wall by 10 to 30 resolutions fold in unions and differences.
+  These failed before too (out of budget, or the same refusals after
+  millions of units).
 - Merging restores only whole nodes of the refinement tree with no finer
   neighbour: pieces next to a cut stay as refined.
 
@@ -7912,3 +7973,19 @@ parameter, or a split outside the patch bounds),
   test passes, every tally holds (`related` 113, bosses in drilled
   plates 148 → 149), and the probes match the plan's gate 2. Rings
   narrower than 64 resolutions between such walls are left to fail.
+- **Ends along one direction join where the crossing is clear, not by a
+  grouping distance from the larger radius.** The plan grouped a pair's
+  ends within the planarity size `√(8·R·resolution)` (`R` the larger
+  radius) and left closer lines to refinement. That sees the other line
+  only when the same pair holds it, and the larger radius undercounts
+  a pin nearly the size of its hole (relative curvature `1/r − 1/R`).
+  Each end's crossing angle bounds the sliver beside its line wherever
+  the other line lies, so the test is `θ² ≥ 2·LENS·resolution·κ` with
+  `κ` the sum of the curvatures, and ends group within `θ/κ`. At
+  `LENS` = 2 it is the plan's distance for equal radii; measured from 2
+  down to 1/16 on 384 overlaps of 0.02 to 30 resolutions, no value down
+  to 1/8 turned a result into an error and every one below 2 worked
+  more (177 at 2, 194 at 1/2, 214 at 1/4 and 1/8, 229 at 1/16, which
+  turned one). The tangent tally holds from 8 down to 1/32 and every
+  tally at 2 and 1/4; at 1/2000 the tangent tally fell from 72 to 70,
+  as with the plan's 64-resolution prototype. `LENS` is 1/4.

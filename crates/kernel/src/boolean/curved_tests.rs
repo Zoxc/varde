@@ -513,6 +513,49 @@ fn walls_tangent_along_a_line_are_decided_within_a_small_budget() {
 }
 
 #[test]
+fn walls_overlapping_along_two_lines_are_cut_within_a_small_budget() {
+    // Cylinders side by side overlapping by 1e-5 and 1e-4 at the default
+    // tolerance meet in two lines 6e-3 and 2e-2 apart. The pairs along
+    // them have ends, two lines' worth where the pieces hold both, and
+    // were refined until their pieces were flat (running out of the
+    // default budget, or failing the hull rules after millions of
+    // units); each line's ends join along it now. The second cylinder
+    // over the middle of the first, its seam in the lens as the first's
+    // is, or as tall as the first and turned off its seams.
+    for overlap in [1e-5, 1e-4] {
+        for (z0, h, turn) in [(0.5, 1.0, 0.0), (0.0, 2.0, 0.3)] {
+            let a = cylinder([0.0, 0.0, 0.0], 1.0, 2.0);
+            let q = DQuat::from_rotation_z(turn);
+            let b = moved_at(
+                &Solid::cylinder(DVec3::ZERO, 1.0, h, 3, &TOL).unwrap(),
+                &TOL,
+                |p| q * p + DVec3::new(2.0 - overlap, 0.0, z0),
+            );
+            // The lens the circles share, over b's height.
+            let d = 2.0 - overlap;
+            let lens = h * (2.0 * (d / 2.0).acos() - d / 2.0 * (4.0 - d * d).sqrt());
+            let (va, vb) = (a.volume(), b.volume());
+            let budget = Budget::new(500_000);
+            for (x, y, op, want) in [
+                (&a, &b, Op::Union, va + vb - lens),
+                (&a, &b, Op::Intersection, lens),
+                (&a, &b, Op::Difference, va - lens),
+                (&b, &a, Op::Difference, vb - lens),
+            ] {
+                let got = boolean(x, y, op, &TOL, &budget)
+                    .unwrap_or_else(|e| panic!("{overlap} {turn} {op:?}: {e:?}"));
+                assert!(
+                    (got.volume() - want).abs() < 1e-12,
+                    "{overlap} {turn} {op:?}: {} vs {want}",
+                    got.volume()
+                );
+            }
+            assert_deterministic(|| boolean(&a, &b, Op::Intersection, &TOL, &budget)).unwrap();
+        }
+    }
+}
+
+#[test]
 fn a_bar_cut_at_its_refinement_midpoints_keeps_its_planes() {
     // A box's face through the middle of a bar's wall, where refinement
     // put its midpoints: crossings at one place, which the clean-up

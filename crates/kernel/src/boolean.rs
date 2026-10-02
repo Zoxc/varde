@@ -213,14 +213,24 @@ pub fn boolean(
     tol: &Tolerance,
     budget: &Budget,
 ) -> Result<Solid, KernelError> {
-    let mut work = Work::new(budget);
+    boolean_within(a, b, op, tol, &mut Work::new(budget))
+}
+
+/// [`boolean`], charging `work`.
+fn boolean_within(
+    a: &Solid,
+    b: &Solid,
+    op: Op,
+    tol: &Tolerance,
+    work: &mut Work,
+) -> Result<Solid, KernelError> {
     match (a.is_empty(), b.is_empty(), op) {
         (true, _, Op::Union) => return Ok(b.clone()),
         (_, true, Op::Union | Op::Difference) => return Ok(a.clone()),
         (true, _, _) | (_, true, _) => return Ok(Solid::empty()),
         _ => {}
     }
-    let (soup, faces) = assembled(a, b, op, tol, &mut work)?;
+    let (soup, faces) = assembled(a, b, op, tol, work)?;
     // The clean-up's last resort, unfolding sheets folded onto a flush
     // face, can leave a soup that fails where the clean-up without it
     // would have mended it by other means (Delaunay flips on a face a
@@ -228,10 +238,10 @@ pub fn boolean(
     // passes, so the rule never loses a result.
     let kept = (soup.clone(), faces.clone());
     let mut unfolded = false;
-    match checked(a, b, op, soup, faces, true, &mut unfolded, tol, &mut work) {
+    match checked(a, b, op, soup, faces, true, &mut unfolded, tol, work) {
         Err(KernelError::Invalid(e)) if unfolded => {
             let (soup, faces) = kept;
-            checked(a, b, op, soup, faces, false, &mut unfolded, tol, &mut work)
+            checked(a, b, op, soup, faces, false, &mut unfolded, tol, work)
                 .map_err(|_| KernelError::Invalid(e))
         }
         result => result,

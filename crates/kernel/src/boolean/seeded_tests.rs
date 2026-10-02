@@ -723,6 +723,78 @@ fn near_tangent_cylinders_are_right_or_refused() {
     assert!(lost.is_empty(), "failed but must work: {lost:#?}");
 }
 
+#[test]
+#[ignore = "a probe: the work tangent walls cost at the default tolerance"]
+fn near_tangent_cylinders_at_the_default_tolerance() {
+    // As `near_tangent_cylinders_are_right_or_refused`, at the default
+    // tolerance (a resolution of 1e-6), gaps and overlaps from 1e-12 to
+    // 1e-4: what each operation costs, and that what works is right.
+    let tol = Tolerance::DEFAULT;
+    let mut samples = Rng::new(43);
+    let (mut worked, mut over, mut total) = (0, Vec::new(), 0u64);
+    let gaps = [
+        0.0, 1e-12, -1e-12, 1e-9, -1e-9, 1e-7, -1e-7, 1e-5, -1e-5, 1e-4, -1e-4,
+    ];
+    let ops = ["union", "intersection", "a less b", "b less a"];
+    for gap in gaps {
+        for (z0, h, turn) in [(0.5, 1.0, 0.0), (0.0, 2.0, 0.3)] {
+            let a = Solid::cylinder(DVec3::ZERO, 1.0, 2.0, 2, &tol).unwrap();
+            let b = Solid::cylinder(DVec3::ZERO, 1.0, h, 3, &tol).unwrap();
+            let q = DQuat::from_rotation_z(turn);
+            let b = moved(&b, &tol, |p| q * p + DVec3::new(2.0 + gap, 0.0, z0));
+            // The lens the unit circles share, centres `2 + gap` apart.
+            let d = 2.0 + gap;
+            let lens = if d < 2.0 {
+                2.0 * (d / 2.0).acos() - d / 2.0 * (4.0 - d * d).sqrt()
+            } else {
+                0.0
+            };
+            let both = lens * (2.0f64.min(z0 + h) - z0.max(0.0));
+            let (va, vb) = (a.volume(), b.volume());
+            let want = [va + vb - both, both, va - both, vb - both];
+            let within = tol.fit() * (a.area() + b.area()) / 5.0 + 1e-9;
+            let jobs = [
+                (&a, &b, Op::Union),
+                (&a, &b, Op::Intersection),
+                (&a, &b, Op::Difference),
+                (&b, &a, Op::Difference),
+            ];
+            for (k, (x, y, op)) in jobs.into_iter().enumerate() {
+                let start = std::time::Instant::now();
+                let mut work = Work::new(&Budget::DEFAULT);
+                let r = boolean_within(x, y, op, &tol, &mut work);
+                let spent = Budget::DEFAULT.work() - work.left();
+                total += spent;
+                let name = format!("gap {gap:e}, z0 {z0}, turn {turn}: {}", ops[k]);
+                if let Ok(solid) = &r {
+                    let wrong = wrong_points(x, y, op, solid, &tol, &mut samples);
+                    assert_eq!(wrong, 0, "{name}: {wrong} points on the wrong side");
+                    if let Err(why) = shells_face_out(solid.mesh(), &tol) {
+                        panic!("{name}: {why}");
+                    }
+                    let v = solid.volume();
+                    assert!((v - want[k]).abs() <= within, "{name}: {v} vs {}", want[k]);
+                    worked += 1;
+                }
+                if spent > 1_000_000 {
+                    over.push(format!("{name}: {:?}", r.as_ref().map(|_| ())));
+                }
+                println!(
+                    "NEAR {name}: {:?}, {spent} units, {:.2?}",
+                    r.map(|s| s.volume()),
+                    start.elapsed()
+                );
+            }
+        }
+    }
+    println!(
+        "NEAR worked {worked} of {}, {} over a million units, {total} units",
+        gaps.len() * 8,
+        over.len()
+    );
+    println!("NEAR over a million: {over:#?}");
+}
+
 /// The frames the coaxial cases are built on: the three sketch planes
 /// (on XZ and YZ a cap's plane lies nearly along `UP`, and a rim's shadow
 /// is a thin ellipse), a frame turned off every axis and moved, and one

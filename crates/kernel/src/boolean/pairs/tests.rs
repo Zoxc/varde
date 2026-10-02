@@ -552,3 +552,118 @@ fn along_takes_parabolic_walls_too() {
     };
     assert_eq!(along(&cone), None);
 }
+
+/// Unit cylinders, `a` about the origin 2 tall, `b` 3 tall from −0.5
+/// with its axis `gap` from `a`'s along `x`, both turned 45° about it (so
+/// a quarter of each wall faces the other).
+fn walls_apart(gap: f64) -> (Solid, Solid) {
+    let q = DQuat::from_rotation_z(std::f64::consts::FRAC_PI_4);
+    let a = cylinder([0.0, 0.0, 0.0], 1.0, 2.0);
+    let a = crate::boolean::curved_tests::moved_at(&a, &TOL, |p| q * p);
+    let b = Solid::cylinder(DVec3::ZERO, 1.0, 3.0, 3, &TOL).unwrap();
+    let b =
+        crate::boolean::curved_tests::moved_at(&b, &TOL, |p| q * p + DVec3::new(gap, 0.0, -0.5));
+    (a, b)
+}
+
+/// Each pair of faces of `a` and `b` on walls along one direction that
+/// has ends, with its ends and that direction.
+fn wall_pairs(a: &Input, b: &Input) -> Vec<([u32; 2], Vec<End>, DVec3)> {
+    let mut work = Work::new(&Budget::DEFAULT);
+    let counts = counted(a, b, false, &TOL, &mut work).unwrap();
+    let at12: Vec<DVec3> = counts
+        .x12
+        .iter()
+        .map(|c| a.conic(c.edge).eval(c.t))
+        .collect();
+    let at21: Vec<DVec3> = counts
+        .x21
+        .iter()
+        .map(|c| b.conic(c.edge).eval(c.t))
+        .collect();
+    let [first12, first21] = first_ids(a, b, &counts);
+    let mut pairs: Vec<([u32; 2], Vec<End>, DVec3)> = Vec::new();
+    for (pair, id, sign) in ends(a, b, &counts) {
+        let at = if id < first21 {
+            at12[(id - first12) as usize]
+        } else {
+            at21[(id - first21) as usize]
+        };
+        let end = End { id, sign, at };
+        match pairs.last_mut() {
+            Some((last, here, _)) if *last == pair => here.push(end),
+            _ => {
+                if let Some(d) = parallel_generators(a, pair[0], b, pair[1], TOL.resolution()) {
+                    pairs.push((pair, vec![end], d));
+                }
+            }
+        }
+    }
+    pairs
+}
+
+#[test]
+fn walls_crossing_in_two_lines_in_one_pair_give_two_arcs() {
+    // Centres 1.9 apart: the walls cross in two lines 0.62 apart, at
+    // ±18° on `a`, in one quarter of each wall. Near the ends of `a`'s
+    // span some pair (of a triangle of each quarter, split by its
+    // diagonal) holds stretches of both: four ends, joined one arc per
+    // line.
+    let (a, b) = walls_apart(1.9);
+    let (ia, ib) = (Input::new(a.mesh(), &TOL), Input::new(b.mesh(), &TOL));
+    let pairs = wall_pairs(&ia, &ib);
+    let res = TOL.resolution();
+    let mut both = 0;
+    for ([p, q], ends, d) in &pairs {
+        let joined = along_generators(&ia, *p, &ib, *q, ends, *d, res)
+            .unwrap_or_else(|| panic!("{p} {q}: {ends:?}"));
+        assert_eq!(2 * joined.len(), ends.len());
+        for (x, y) in &joined {
+            assert_eq!(x.sign + y.sign, 0);
+            let across = |e: &End| e.at - *d * e.at.dot(*d);
+            assert!(across(x).distance(across(y)) < 1e-9, "{x:?} {y:?}");
+        }
+        if ends.len() == 4 {
+            both += 1;
+            let [(x, _), (y, _)] = joined[..] else {
+                unreachable!()
+            };
+            assert!((x.at.y - y.at.y).abs() > 0.6, "{x:?} {y:?}");
+        }
+    }
+    assert!(both > 0, "{pairs:?}");
+}
+
+#[test]
+fn ends_on_one_line_more_than_twice_or_a_hair_apart_are_split() {
+    // A line leaving the pair and coming back gives a group of four ends:
+    // no arcs, the pair is split.
+    let (a, b) = walls_apart(1.6);
+    let (ia, ib) = (Input::new(a.mesh(), &TOL), Input::new(b.mesh(), &TOL));
+    let pairs = wall_pairs(&ia, &ib);
+    let res = TOL.resolution();
+    let ([p, q], ends, d) = pairs.iter().find(|(_, ends, _)| ends.len() == 2).unwrap();
+    let x = ends[0];
+    let on = |id: u32, sign: i8, z: f64| End {
+        id,
+        sign,
+        at: x.at + *d * (z - x.at.dot(*d)),
+    };
+    let four = [on(0, 1, 0.6), on(1, -1, 0.7), on(2, 1, 0.8), on(3, -1, 0.9)];
+    assert!(along_generators(&ia, *p, &ib, *q, &four, *d, res).is_none());
+    // Two ends at one place along the line are no arc either.
+    let flat = [on(0, 1, 0.6), on(1, -1, 0.6)];
+    assert!(along_generators(&ia, *p, &ib, *q, &flat, *d, res).is_none());
+    assert!(along_generators(&ia, *p, &ib, *q, &four[..2], *d, res).is_some());
+
+    // Walls overlapping by 1e-7 (a tenth of the resolution) cross in two
+    // lines 6e-4 apart at an angle of 6e-4: the sliver between them is
+    // too thin to join either line, wherever the pairs hold them.
+    let (a, b) = walls_apart(2.0 - 1e-7);
+    let (ia, ib) = (Input::new(a.mesh(), &TOL), Input::new(b.mesh(), &TOL));
+    let pairs = wall_pairs(&ia, &ib);
+    assert!(pairs.iter().any(|(_, ends, _)| !ends.is_empty()));
+    for ([p, q], ends, d) in &pairs {
+        assert!(along_generators(&ia, *p, &ib, *q, ends, *d, res).is_none());
+    }
+}
