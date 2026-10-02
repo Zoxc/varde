@@ -17,7 +17,7 @@ use crate::escape::OnEscape;
 use crate::icons::{self, Icon};
 use crate::mouse_only::MouseOnly;
 use crate::shortcut::{Held, Shortcut};
-use crate::theme::{self, SEMIBOLD, SIDE_PANEL_WIDTH, TAB_HEIGHT, TabLook, Tone};
+use crate::theme::{self, SEMIBOLD, SIDE_PANEL_WIDTH, TAB_HEIGHT, TAB_LINE, TabLook, Tone};
 use crate::toolbar::{menu_item, menu_separator};
 use crate::{
     ConstraintKind, DocumentState, Edit, Look, Message, Panel, RowMenu, SketchState, VALUE_FIELD,
@@ -48,24 +48,29 @@ pub fn side_panel<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
             TabLook::Raised
         };
         let alt = (panel != selected && !peek).then(|| key_chip(Held::PEEK, ChipSize::Small));
-        button(
-            row![
-                icons::tinted(icon, icons::INLINE, move |p| look.content(p)),
-                text(panel.label()).font(if look == TabLook::Flat {
-                    Font::DEFAULT
-                } else {
-                    SEMIBOLD
-                }),
-                alt,
-            ]
-            .spacing(6)
+        let label = row![
+            icons::tinted(icon, icons::INLINE, move |p| look.content(p)),
+            text(panel.label()).font(if look == TabLook::Flat {
+                Font::DEFAULT
+            } else {
+                SEMIBOLD
+            }),
+            alt,
+        ]
+        .spacing(6)
+        .height(Length::Fill)
+        .align_y(Alignment::Center);
+        // The face sits `TAB_LINE` down; as much padding below it keeps the
+        // label in the tab's middle.
+        let face = container(label)
             .height(Length::Fill)
-            .align_y(Alignment::Center),
-        )
-        .height(TAB_HEIGHT)
-        .padding([0, 12])
-        .style(theme::tab(look))
-        .on_press(Message::Look(Look::SelectPanel(panel)))
+            .padding(Padding::from([0, 12]).bottom(TAB_LINE))
+            .style(theme::tab_face(look));
+        button(face)
+            .height(TAB_HEIGHT)
+            .padding(Padding::ZERO.top(TAB_LINE))
+            .style(theme::tab(look))
+            .on_press(Message::Look(Look::SelectPanel(panel)))
     };
 
     let features = if sketching {

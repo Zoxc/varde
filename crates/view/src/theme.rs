@@ -8,9 +8,7 @@ use std::sync::LazyLock;
 use iced::theme::palette::Extended;
 use iced::widget::slider::{self as slide, HandleShape};
 use iced::widget::{button, checkbox, container, rule, scrollable, text};
-use iced::{
-    Background, Border, Color, Font, Gradient, Radians, Shadow, Theme, Vector, border, color, font,
-};
+use iced::{Background, Border, Color, Font, Shadow, Theme, Vector, border, color, font};
 use varde_render::{Colors, Srgb};
 
 /// Whether the UI is light or dark.
@@ -579,47 +577,48 @@ impl TabLook {
     }
 }
 
-/// A folder tab in the [`tab_strip`], [`TAB_HEIGHT`] tall.
+/// A folder tab in the [`tab_strip`], [`TAB_HEIGHT`] tall, around a
+/// [`tab_face`] with [`TAB_LINE`] of padding at the top.
 ///
 /// A raised tab has the panel colour, so it joins the panel below, and a
-/// 2px accent line along its top.
+/// 2px accent line along its top: the button is the accent, and its face
+/// the panel colour below the line. A gradient would do it in one quad,
+/// but iced draws none on the web.
 pub fn tab(look: TabLook) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |theme, status| {
         let p = palette(theme);
-        match look {
-            TabLook::Raised | TabLook::Peek => raised_tab(p, look.content(p)),
-            TabLook::Flat if is_hovered(status) => button::Style {
-                background: Some(Background::Color(p.hl)),
-                text_color: p.text,
-                ..flat_tab(p)
-            },
-            TabLook::Flat => flat_tab(p),
+        let background = match look {
+            TabLook::Raised | TabLook::Peek => Some(p.accent),
+            TabLook::Flat if is_hovered(status) => Some(p.hl),
+            TabLook::Flat => None,
+        };
+        let text_color = match look {
+            TabLook::Flat if is_hovered(status) => p.text,
+            _ => look.content(p),
+        };
+        button::Style {
+            background: background.map(Background::Color),
+            text_color,
+            border: border::rounded(border::top(TAB_RADIUS)),
+            ..button::Style::default()
         }
     }
 }
 
-fn flat_tab(p: &Palette) -> button::Style {
-    button::Style {
-        background: None,
-        text_color: TabLook::Flat.content(p),
-        border: border::rounded(border::top(TAB_RADIUS)),
-        ..button::Style::default()
-    }
-}
+/// How far a [`tab`]'s face is below its top: the raised tab's accent line.
+pub const TAB_LINE: f32 = 2.0;
 
-fn raised_tab(p: &Palette, text: Color) -> button::Style {
-    // A hard-edged gradient, since iced has no inset shadow or one-sided
-    // border. Starts at the top (angle PI).
-    let line = 2.0 / TAB_HEIGHT;
-    let gradient = iced::gradient::Linear::new(Radians::PI)
-        .add_stop(0.0, p.accent)
-        .add_stop(line, p.accent)
-        .add_stop(line + 0.5 / TAB_HEIGHT, p.panel)
-        .add_stop(1.0, p.panel);
-    button::Style {
-        background: Some(Background::Gradient(Gradient::Linear(gradient))),
-        text_color: text,
-        ..flat_tab(p)
+/// The face of a [`tab`] below its accent line: the panel colour when
+/// raised. Its top corners are rounded less than the tab's, so they stay
+/// inside the tab's: they meet its sides where its corners end.
+pub fn tab_face(look: TabLook) -> impl Fn(&Theme) -> container::Style {
+    move |theme| {
+        let p = palette(theme);
+        container::Style {
+            background: (look != TabLook::Flat).then_some(Background::Color(p.panel)),
+            border: border::rounded(border::top(TAB_RADIUS - TAB_LINE)),
+            ..container::Style::default()
+        }
     }
 }
 
