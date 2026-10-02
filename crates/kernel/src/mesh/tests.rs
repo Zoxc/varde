@@ -46,8 +46,8 @@ pub(crate) fn tetrahedron(offset: DVec3) -> Mesh {
 }
 
 /// One mesh of the `parts`' shells, each copied with its faces and edge
-/// curves, and turned inside out (every triangle reversed) where its flag
-/// says so. Unchecked.
+/// curves, and turned inside out (every triangle reversed, plane tags and
+/// forms turned with them) where its flag says so. Unchecked.
 pub(crate) fn joined(parts: &[(&Mesh, bool)]) -> Mesh {
     let mut builder = MeshBuilder::new();
     for &(mesh, turned) in parts {
@@ -56,8 +56,18 @@ pub(crate) fn joined(parts: &[(&Mesh, bool)]) -> Mesh {
             .faces()
             .iter()
             .map(|&f| {
+                if !turned {
+                    return builder.face(f);
+                }
+                // A plane tag's normal points out of the solid: turned
+                // with it.
+                let surface = match f.surface {
+                    Surface::Plane { n, d } => Surface::Plane { n: -n, d: -d },
+                    s => s,
+                };
                 builder.face(Face {
-                    form: if turned { f.form.flipped() } else { f.form },
+                    surface,
+                    form: f.form.flipped(),
                     ..f
                 })
             })
@@ -574,6 +584,25 @@ fn wrong_face_tags_are_caught() {
         Surface::Quadric(Quadric::cylinder(DVec3::ZERO, DVec3::Z, radius).unwrap());
     assert_eq!(mesh.check_faces(&TOL), Err(CheckError::Face(8)));
     assert_eq!(mesh.check(&TOL), Err(CheckError::Face(8)));
+}
+
+#[test]
+fn plane_tags_facing_in_are_caught() {
+    // A plane tag's normal points out of the solid, in every build: the
+    // side on x = 1 (face 3, triangles 6 and 7) tagged with the same
+    // plane facing −x is on it, but faces against its triangles.
+    let mut mesh = Mesh::cuboid(DVec3::ZERO, DVec3::ONE, 1, &TOL).unwrap();
+    assert_eq!(mesh.check(&TOL), Ok(()));
+    mesh.faces[3].surface = Surface::Plane {
+        n: DVec3::NEG_X,
+        d: -1.0,
+    };
+    assert_eq!(mesh.check_faces(&TOL), Err(CheckError::FacesAgainst(6)));
+    assert_eq!(mesh.check(&TOL), Err(CheckError::FacesAgainst(6)));
+    assert_eq!(
+        Solid::new(mesh, &TOL),
+        Err(KernelError::Invalid(CheckError::FacesAgainst(6)))
+    );
 }
 
 #[test]

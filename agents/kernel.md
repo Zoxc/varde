@@ -879,20 +879,29 @@ and release builds alike (face tags come last).
 6. **Face tags**, in every build (so every `Solid`'s tags are true
    claims), and on their own with `check_faces` on a mesh that passes the
    rest: a patch
-   on a `Plane` has all six control points within the resolution of it; a
+   on a `Plane` has all six control points within the resolution of it
+   (`Face`) and its normal at its middle (barycentric `(⅓, ⅓, ⅓)`) along
+   the plane's `n`, which points out of the solid (`FacesAgainst`; NaN
+   fails, as in the debug form check); a
    patch on a `Quadric` has 15 points (a grid four steps along each edge)
    within the resolution to first order. A plane with a zero or non-finite
    normal fails. It is cheap next to 1 to 4 (release, measured): about 13%
    of their time single-threaded on extruded plates with 16 and 64 holes
    (1 004 and 4 012 patches), 6 to 10% on 7 threads, and 0.5% on a
-   262 144-patch torus of `Free` faces.
+   262 144-patch torus of `Free` faces. The facing test costs about 40 ns
+   a patch, under 1% of `check` (0.15 of 16.6 ms on a plate with 64 holes,
+   3 756 patches). Before it, only the debug form check looked at which
+   way a plane face faced: flush faces a hair apart could give an `Ok`
+   whose triangle sat on the other operand's face, facing against its tag
+   (see "Exact predicates and the perturbation").
 
 Debug builds then check the faces' forms (see "Forms"): a triangle with a
 sample further than the fit tolerance from its face's form, or on a plane
 form with its normal at the middle pointing against the form's, panics.
 A form is the construction's promise, so that is a bug, not an input to
 refuse (and release builds can't tell it, so `check`'s errors stay the
-same in both).
+same in both). A plane tag's orientation is a claim, checked in every
+build by step 6.
 
 Steps 2–3, 6 and the hull tests of 4 run per patch or per pair through
 `par_map`, and step 5 per triangle and per shell. `check_counted` is
@@ -1793,8 +1802,10 @@ half), edge neighbours folded flat onto each other across a straight
 edge and across one curved up out of their plane (both inside the
 cylinder over it), passing across a sideways curved edge (parted by the
 cylinder) and one curving outwards (by the plane), crossing vertex
-neighbours, triangles on the same corners, and wrong plane and cylinder
-tags. The cylinder rule (`mesh/hull/tests.rs`) parts fitted strips at
+neighbours, triangles on the same corners, wrong plane and cylinder
+tags, and a plane tag on its face but facing in (`FacesAgainst`, also
+through `Solid::new`); the orientation fixtures turn plane tags with the
+shells they turn into voids. The cylinder rule (`mesh/hull/tests.rs`) parts fitted strips at
 rings at turns (a torus's top, round into flat, flat into a concave
 fillet, an S) where the plane can't, both orders, and refuses them once
 one patch's edge is off by `1e-3` of its weight or a bit of its weight
@@ -3797,9 +3808,54 @@ together, and the worst outcome is `Invalid`. The second try spends
 from the same budget, only on that failure. The curved path has no
 retry: the `Flat` inside `Curved` must keep the curved primitives'
 ties. Turned grid boxes with one moved by `10^±1.5` tie distances
-(seed 5, 3 000 operations): 103 `Inconsistent` with the ties, of them
-61 right and 42 `Invalid` (parts closer than the resolution) once
-retried, none `Inconsistent` and none wrong.
+(seed 5, 3 000 operations): 74 `Inconsistent` with the ties (100 before
+in-plane crossings, below), of them 38 right and 36 `Invalid` (parts
+closer than the resolution) once retried, none `Inconsistent` and none
+wrong; 2 623 of the 3 000 right (2 617 before).
+
+**In-plane crossings.** The tie is one distance, but not measured the
+same way everywhere: `Reach` measures it square to the face's plane,
+`Height` along `UP`. On a plane at angle `θ` to `UP`, two edges a gap
+in `(tie·cos θ, tie)` apart square to it are tied for `Reach` and not
+for `Height`. Flush faces a hair apart (boxes extruded on frames turned
+and moved by `1e-11` to `1e-7`) put gaps there all the time: an edge of
+`A` with both ends within the tie of a face of `B` (decided as lying
+in its plane) still crossed it by the counting, the edge passing under
+one of `B`'s by `Height`. `crossing` gave where the edge's line meets
+the plane as rounding has it, anywhere along the line, here beyond the
+edge and clamped to an end half a unit outside the triangle crossed. The
+loop through two such crossings wound the wrong way, and the result
+(the volume right, the release check passing) had the tool's side
+filling the target's flush face, facing against its own plane tag
+(about 1 operation in 750 on such frames; debug builds panicked in the
+form check). So for an edge decided to lie in a flat face's plane (both
+ends' `Reach` tied, `exact::is_tie`; only with a tie, and only against
+a flat patch, `Input::flat`), `Flat::crossing` keeps the crossing to
+the part of the edge inside the triangle seen along its normal, each
+side `a → b` widened by the tie (`((b − a) × (x − a))·n ≥
+−tie·|b − a|·|n|`, linear along the edge; `Flat::inside`). The vertex
+moves along its own edge, so it stays on the faces beside the edge, and
+within the tie of the crossed plane, so on its patch to the resolution;
+only positions change, in floating point. If no part of the edge is
+inside, the decisions fit no configuration: `crossings` gives
+`Inconsistent`, which the flat path decides again exactly (the curved
+path, with no retry, fails). Without the widening, edges along a
+triangle's side gave empty intervals from rounding (9 to 15 more
+refusals per 4 000 turned chains). Measured on random chains of 5
+steps, each result fed on (release): grid boxes on hair frames, 4 000
+chains at each of three seeds, went from 22 to 26 results with a
+triangle facing against its tag to none, with 41 to 51 more `Ok`s of
+about 11 000; polygons on hair frames (2 500 chains) from 23 to none
+and 15 more `Ok`s; cylinders on hair frames (1 500) from 8 to none and
+2 fewer `Ok`s (`Inconsistent` 272 → 260); turned frames 6 and 7 more
+`Ok`s; plain frames the same. No result had a wrong volume, and the
+check's facing test refused none of them: these crossings were the only
+source seen. Making the tie one measure for every
+predicate (`Height` square to the edges' plane, say) would remove the
+cause, but changes every flat decision near a tie and would leave such a
+window between some pair of predicates whatever is chosen; the release
+check's facing test (step 6 of `check`) backs this up wherever else a
+plane patch faces against its tag.
 
 The seeded suite's tallies didn't move but for one step: the rule at
 every order took chains from 203 to 202 of 240 (of its fed-on steps
@@ -4956,7 +5012,10 @@ now take 20 ms.
   point only when both are known to a relative `1e-12`; else they are
   worked out exactly (a near tie: two tiny numbers that are all rounding
   put vertices off the result, with the wrong volume), and for an exact
-  tie the ratio of the first powers of `ε` that aren't zero.
+  tie the ratio of the first powers of `ε` that aren't zero. An edge
+  decided to lie in a flat face's plane has its crossing kept inside the
+  triangle (widened by the tie), and one with no part inside fails as
+  `Inconsistent` (see "In-plane crossings").
 - **Crossings only placed are certified** (`Cutting::certify`): a
   crossing the search didn't solve (see "Curved primitives") lies on its
   edge, and on the other surface where it went to a root on the patch
@@ -5612,7 +5671,12 @@ once `Inconsistent` for a first order that was only rounding and one
 whose edges' shadows rounded parallel, all right now; chains of them fed
 on, never `Inconsistent`); the same boxes, one moved by about the tie
 distance, whose near ties don't fit together, decided again exactly
-(right, both tries paid for); the same boxes, one moved along `UP` by 1
+(right, both tries paid for); grid boxes extruded on frames a hair
+apart whose in-plane crossings landed outside their triangles (a union
+and difference chain once leaving the tool's side on the target's flush
+face facing against its tag, and a difference whose in-plane edge
+misses its triangle, decided again exactly, once `Invalid(Fold)`); the
+turned grid boxes, one moved along `UP` by 1
 to `10⁷` tie distances, near the origin and a million from it, every
 result the moved boxes' volume (two were wrong while edges whose
 shadows lie along each other took their height as it came); a hexagonal prism upright and on six
@@ -6151,19 +6215,22 @@ sampled points.
   clean-up ("Unfold"); one where every collapse onto the folded vertex
   leaves a pinch (two vertex ids at one point) would still fail, as one
   did before other fixes, but none was seen in these runs.
-- **Flush faces a hair off each other: a triangle against its tag.**
-  Grid boxes extruded each on its own frame, the frames turned alike but
-  for `1e-11` to `1e-7` rad, fail about 1 operation in 9 (`Invalid`),
-  and about 1 in 500 comes out with a triangle facing against its plane
-  face's normal: the volume is right and the check passes in release
-  builds (a plane tag is a distance), but debug builds stop at the check
-  of the faces' forms. The triangle comes so out of assembly (one
-  operand's flush side carrying the other's face, turned the other way),
-  not out of the clean-up. For example, on frames at about
-  `(44.37, −9.08, −6.46)` with `x ≈ (0.7455, −0.6157, 0.2553)` and
-  `y ≈ (−0.5521, −0.7850, −0.2812)`, the box at `[0,2,0]` of size
-  `[6,2,3]` united with `[3,3,0]`+`[2,4,3]` less `[0,3,1]`+`[1,3,5]`
-  (each frame a hair from those values).
+- **Flush faces a hair off each other.** Grid boxes extruded each on
+  its own frame, the frames turned alike but for `1e-11` to `1e-7` rad,
+  fail about 1 operation in 9 (`Invalid`). About 1 in 750 used to come
+  out with a triangle facing against its plane tag (an in-plane crossing
+  placed outside its triangle, see "In-plane crossings"); none does now,
+  and `check` refuses any that would. What is left of the window: edges
+  near a face's plane but not within the tie of it, decided by the same
+  mismatch of `Reach` and `Height`, still have crossings placed up to
+  well beyond the resolution outside their triangles (some 850 per
+  12 600 hair-frame steps; none gave a false tag in the hunt), planar
+  patches with curved sides aren't `Input::flat` and are left alone, and
+  on the curved path an edge missing its triangle fails as
+  `Inconsistent` with no exact retry. Unit cylinders tangent along a
+  line on a far turned frame, one's top a tie above the other's, gave a
+  difference with a cap triangle against its form; it is now refused
+  (`Invalid(EdgeNeighbours)`).
 - **Flush faces after rounding**: flat solids flush in exact arithmetic
   but turned and moved work (2 653 of 2 700 turned grid boxes'
   operations, 349 of 359 steps of turned chains); the rest fail as

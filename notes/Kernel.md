@@ -154,7 +154,8 @@ Each **face** carries:
    the winding number is 0 or 1 everywhere (shell volume signs with error
    bounds and exact fallbacks, nesting by exact, perturbed rays).
 6. **Face tags**: patches lie within the resolution of their claimed plane
-   or quadric.
+   or quadric, and a plane patch faces along its tag's normal (out of the
+   solid).
 
 **Refinement** is red–green and exact, every split at `½`, so neighbours
 across a split edge are bisected to the bit and pieces keep their shapes.

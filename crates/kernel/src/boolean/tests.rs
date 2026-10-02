@@ -139,13 +139,14 @@ fn case(name: &str, a: &Solid, b: &Solid, expect: [Option<f64>; 4]) {
 }
 
 /// Checks that each plane face's normal points the way its triangles
-/// face (that every patch is on its face's surface, `Solid::new` checks).
+/// face at their middles. `check` makes the same test (and that every
+/// patch is on its face's surface), so this only names the patch.
 fn faces_face_out(solid: &Solid) {
     let mesh = solid.mesh();
     for (t, tri) in mesh.tris().iter().enumerate() {
         if let Surface::Plane { n, .. } = mesh.faces()[tri.face as usize].surface {
-            let p = mesh.patch(t).p;
-            assert!((p[1] - p[0]).cross(p[2] - p[0]).dot(n) > 0.0, "patch {t}");
+            let normal = mesh.patch(t).normal(DVec3::splat(1.0 / 3.0));
+            assert!(normal.dot(n) > 0.0, "patch {t}");
         }
     }
 }
@@ -1051,6 +1052,41 @@ fn grid_boxes_folded_sheets_on_turned_frames() {
     }
 }
 
+/// The grid box at `min` of `size` (half units, as [`grid_box`]),
+/// extruded as `feature` on the frame of origin, `x` and `y` `frame`,
+/// with its cells in the grid's own frame.
+fn framed_grid_box(
+    min: [i32; 3],
+    size: [i32; 3],
+    frame: [[f64; 3]; 3],
+    feature: u64,
+) -> (Solid, Cells) {
+    use crate::profile::tests::rect;
+    use crate::{Frame, Profile, extrude};
+    let at = |i: i32| -0.5 + 0.5 * f64::from(i);
+    let frame = Frame {
+        origin: DVec3::from_array(frame[0]),
+        x: DVec3::from_array(frame[1]),
+        y: DVec3::from_array(frame[2]),
+    };
+    let lo = glam::DVec2::new(at(min[0]), at(min[1]));
+    let hi = glam::DVec2::new(at(min[0] + size[0]), at(min[1] + size[1]));
+    let profile = Profile {
+        loops: vec![rect(lo, hi, 0)],
+    };
+    let solid = extrude(
+        &profile,
+        &frame,
+        at(min[2]),
+        at(min[2] + size[2]),
+        feature,
+        &TOL,
+        &Budget::DEFAULT,
+    )
+    .unwrap();
+    (solid, grid_box(min, size).1)
+}
+
 #[test]
 fn grid_boxes_a_hair_off_each_other_keep_their_result_when_unfolding_fails() {
     // Grid boxes each extruded on its own frame, turned and moved alike
@@ -1060,32 +1096,7 @@ fn grid_boxes_a_hair_off_each_other_keep_their_result_when_unfolding_fails() {
     // other where the Delaunay flips no longer mend it, which the check
     // refused (`VertexNeighbours`). The clean-up without the rule gives
     // the result.
-    use crate::profile::tests::rect;
-    use crate::{Frame, Profile, extrude};
-    let at = |i: i32| -0.5 + 0.5 * f64::from(i);
-    let framed = |min: [i32; 3], size: [i32; 3], frame: [[f64; 3]; 3], feature| {
-        let frame = Frame {
-            origin: DVec3::from_array(frame[0]),
-            x: DVec3::from_array(frame[1]),
-            y: DVec3::from_array(frame[2]),
-        };
-        let lo = glam::DVec2::new(at(min[0]), at(min[1]));
-        let hi = glam::DVec2::new(at(min[0] + size[0]), at(min[1] + size[1]));
-        let profile = Profile {
-            loops: vec![rect(lo, hi, 0)],
-        };
-        let solid = extrude(
-            &profile,
-            &frame,
-            at(min[2]),
-            at(min[2] + size[2]),
-            feature,
-            &TOL,
-            &Budget::DEFAULT,
-        )
-        .unwrap();
-        (solid, grid_box(min, size).1)
-    };
+    let framed = framed_grid_box;
     let (a, ca) = framed(
         [3, 1, 2],
         [1, 5, 3],
@@ -1127,6 +1138,110 @@ fn grid_boxes_a_hair_off_each_other_keep_their_result_when_unfolding_fails() {
         abc.volume()
     );
     faces_face_out(&abc);
+}
+
+#[test]
+fn grid_boxes_a_hair_off_each_other_keep_their_faces() {
+    // Grid boxes each extruded on its own frame, a hair apart, with flush
+    // sides. An edge of one lying in the other's flush plane within the
+    // tie (decided as in it) met that plane, as rounding had it, beyond
+    // the triangle it crossed, so the crossing sat half a unit off the
+    // face: the loop through it wound the wrong way, and the tool's side
+    // was left filling the target's flush face, facing against its own
+    // plane tag (debug builds' form check panicked; release passed).
+    // Such crossings are now kept inside the triangle, and where no part
+    // of the edge is, the operation is decided again exactly; `check`
+    // refuses a plane patch facing against its tag.
+    let framed = framed_grid_box;
+    let (a, ca) = framed(
+        [0, 2, 0],
+        [6, 2, 3],
+        [
+            [44.36970915246301, -9.081799137530764, -6.457953029287201],
+            [0.7454606892761992, -0.6157373509965998, 0.2552564893034927],
+            [
+                -0.5520700001061614,
+                -0.7849507655031489,
+                -0.2811956804767876,
+            ],
+        ],
+        1,
+    );
+    let (b, cb) = framed(
+        [3, 3, 0],
+        [2, 4, 3],
+        [
+            [44.36970915321567, -9.081799138079475, -6.457953030961496],
+            [0.745460688454698, -0.615737349980998, 0.25525649415250073],
+            [
+                -0.5520700026312176,
+                -0.7849507672528597,
+                -0.2811956706350831,
+            ],
+        ],
+        2,
+    );
+    let (c, cc) = framed(
+        [0, 3, 1],
+        [1, 3, 5],
+        [
+            [44.36970915256131, -9.08179913750429, -6.45795302922593],
+            [0.7454606883685, -0.6157373500903354, 0.2552564941404899],
+            [
+                -0.5520700026895156,
+                -0.7849507671606006,
+                -0.2811956707781665,
+            ],
+        ],
+        3,
+    );
+    let first = combine(&ca, &cb, Op::Union);
+    let ab = run(&a, &b, Op::Union).unwrap();
+    assert!((ab.volume() - cells_volume(&first)).abs() < 1e-5);
+    faces_face_out(&ab);
+    let want = cells_volume(&combine(&first, &cc, Op::Difference));
+    let abc = run(&ab, &c, Op::Difference).unwrap();
+    assert!(
+        (abc.volume() - want).abs() < 1e-5,
+        "{} not {want}",
+        abc.volume()
+    );
+    faces_face_out(&abc);
+
+    // One difference whose in-plane edge misses the triangle it was
+    // decided to cross: decided again exactly (it was `Invalid(Fold)`).
+    let (a, ca) = framed(
+        [0, 2, 4],
+        [3, 2, 2],
+        [
+            [-29.443174343512496, 54.03706875218741, -74.92980968005651],
+            [0.2964563634555907, -0.09998156461713209, 0.9497985635403946],
+            [
+                0.3965998278277893,
+                0.9175886042653624,
+                -0.027197975831156074,
+            ],
+        ],
+        1,
+    );
+    let (b, cb) = framed(
+        [2, 2, 3],
+        [4, 5, 3],
+        [
+            [-29.443174343485115, 54.0370687528298, -74.92980968118371],
+            [0.2964563636353201, -0.09998156415167433, 0.9497985635332934],
+            [0.39659982785630565, 0.917588604237126, -0.02719797636795357],
+        ],
+        2,
+    );
+    let want = cells_volume(&combine(&ca, &cb, Op::Difference));
+    let ab = run(&a, &b, Op::Difference).unwrap();
+    assert!(
+        (ab.volume() - want).abs() < 1e-5,
+        "{} not {want}",
+        ab.volume()
+    );
+    faces_face_out(&ab);
 }
 
 /// The tetrahedron on four points, facing out.
@@ -1244,7 +1359,7 @@ fn crossings_are_where_the_perturbed_edges_cross() {
             };
             for (side, crossings) in [(Side::A, &counts.x12), (Side::B, &counts.x21)] {
                 for c in crossings {
-                    let got = prims.crossing(side, c.edge, c.face);
+                    let got = prims.crossing(side, c.edge, c.face).unwrap();
                     let want = at(side, c.edge, c.face, 1e-7).clamp(0.0, 1.0);
                     assert!(
                         (got - want).abs() < 1e-4,
@@ -1383,17 +1498,19 @@ fn near_ties_that_dont_fit_together_are_decided_again_exactly() {
     // with near ties as ties, these give decisions no one configuration
     // has (`Inconsistent`), and the boolean decides them again exactly,
     // from the same budget: right. Of 3 000 such operations (seed 5),
-    // 103 were `Inconsistent`; with the retry 61 of those are right and
+    // 74 are `Inconsistent`; with the retry 38 of those are right and
     // the rest `Invalid` (parts closer than the resolution), none
-    // `Inconsistent`.
+    // `Inconsistent`. (100 were before crossings of edges decided to lie
+    // in a face's plane were kept inside the triangle; the cases once
+    // here, pairs 6, 68 and 141, are now right on the first try.)
     let mut rng = crate::test_rng::Rng::new(5);
     let t = tie(&TOL);
     let cases = [
-        (6, Op::Intersection),
-        (68, Op::Union),
-        (141, Op::Difference),
+        (49, Op::Intersection),
+        (157, Op::Difference),
+        (225, Op::Union),
     ];
-    for i in 0..=141 {
+    for i in 0..=225 {
         let (ga, gb) = (random_grid_corner(&mut rng), random_grid_corner(&mut rng));
         let turn = random_turn(&mut rng);
         let nudge = rng.direction() * t * 10f64.powf(rng.range(-1.5, 1.5));

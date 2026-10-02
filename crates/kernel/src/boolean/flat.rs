@@ -128,15 +128,61 @@ impl<'a> Flat<'a> {
     /// Where along edge `e` of `side` (0 at its start, 1 at its end) the
     /// line through it meets the plane of the corners of face `f` of the
     /// other: only the position, never a decision.
-    pub(super) fn crossing(&self, side: Side, e: u32, f: u32) -> f64 {
+    ///
+    /// An edge decided to lie in a flat face's plane (both ends within
+    /// the tie of it, [`exact::is_tie`]) meets the plane anywhere along
+    /// its line, as rounding has it: its crossing is kept to the part of
+    /// the edge inside the triangle, each side widened by the tie
+    /// ([`Self::inside`]), so the vertex lies on the face it crosses.
+    /// `None` if no part of the edge is: the near ties were decided as no
+    /// one configuration has them (`Reach` measures the tie square to the
+    /// plane, `Height` along [`UP`], so on a plane steep to `UP` a gap can
+    /// be a tie for one and not the other).
+    pub(super) fn crossing(&self, side: Side, e: u32, f: u32) -> Option<f64> {
         let [x0, x1] = self.edge(side, e);
         let t = self.tri(side.other(), f);
         let at = exact::ratio(&Reach { x0, t }, &Across { x0, x1, t });
-        if at.is_finite() {
+        let at = if at.is_finite() {
             at.clamp(0.0, 1.0)
         } else {
             0.5
+        };
+        if self.tie == 0.0
+            || !self.input(side.other()).flat[f as usize]
+            || !exact::is_tie(&Reach { x0, t }, self.tie)
+            || !exact::is_tie(&Reach { x0: x1, t }, self.tie)
+        {
+            return Some(at);
         }
+        let [lo, hi] = self.inside([x0.p, x1.p], t.map(|t| t.p));
+        (lo <= hi).then(|| at.clamp(lo, hi))
+    }
+
+    /// The interval of parameters along the segment `p0 → p1` (within
+    /// `[0, 1]`) where it is inside the triangle `t` seen along its
+    /// normal, each side moved out by the tie distance; empty (`lo > hi`)
+    /// where the segment misses it. Each side `a → b` keeps where
+    /// `((b − a) × (x − a))·n ≥ −tie·|b − a|·|n|`, linear along the
+    /// segment. Floating point: a position, never a decision.
+    fn inside(&self, [p0, p1]: [DVec3; 2], t: [DVec3; 3]) -> [f64; 2] {
+        let n = (t[1] - t[0]).cross(t[2] - t[0]);
+        let (mut lo, mut hi) = (0.0f64, 1.0f64);
+        for i in 0..3 {
+            let (a, b) = (t[i], t[(i + 1) % 3]);
+            let slack = self.tie * (b - a).length() * n.length();
+            let g = |x: DVec3| (b - a).cross(x - a).dot(n) + slack;
+            let (g0, g1) = (g(p0), g(p1));
+            // `g0 + s·(g1 − g0) ≥ 0`.
+            let d = g1 - g0;
+            if d > 0.0 {
+                lo = lo.max(-g0 / d);
+            } else if d < 0.0 {
+                hi = hi.min(-g0 / d);
+            } else if g0 < 0.0 {
+                return [1.0, 0.0];
+            }
+        }
+        [lo, hi]
     }
 
     /// The order along edge `e` of `side`, in its direction, of where its
@@ -207,7 +253,12 @@ impl Primitives for Flat<'_> {
     fn crossings(&self, side: Side, e: u32, f: u32, x: i32) -> Result<Found, BooleanError> {
         match x {
             0 => Ok((Vec::new(), 1)),
-            -1 | 1 => Ok((vec![(x as i8, self.crossing(side, e, f), true)], 1)),
+            -1 | 1 => {
+                let at = self
+                    .crossing(side, e, f)
+                    .ok_or(BooleanError::Inconsistent)?;
+                Ok((vec![(x as i8, at, true)], 1))
+            }
             // A straight edge meets a flat face once at most.
             _ => Err(BooleanError::Inconsistent),
         }

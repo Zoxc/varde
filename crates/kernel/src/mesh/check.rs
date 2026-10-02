@@ -44,6 +44,9 @@ pub enum CheckError {
     /// Triangle `t` doesn't lie on its face's surface within the
     /// resolution, or the surface isn't well defined.
     Face(u32),
+    /// Triangle `t` is on a `Plane` face but faces against the plane's
+    /// normal (or its normal isn't well defined) at its middle.
+    FacesAgainst(u32),
     /// Triangles that share no vertex have hulls within the resolution.
     Hull(u32, u32),
     /// Triangles sharing an edge aren't split by a plane through it (or,
@@ -84,6 +87,7 @@ impl std::fmt::Display for CheckError {
             CheckError::Patch(t, e) => write!(f, "patch {t}: {e}"),
             CheckError::Fold(t) => write!(f, "patch {t} may fold"),
             CheckError::Face(t) => write!(f, "patch {t} is off its face's surface"),
+            CheckError::FacesAgainst(t) => write!(f, "patch {t} faces against its face's plane"),
             CheckError::Hull(a, b) => write!(f, "the hulls of patches {a} and {b} come too close"),
             CheckError::EdgeNeighbours(a, b) => {
                 write!(f, "patches {a} and {b} aren't split by their shared edge")
@@ -308,10 +312,12 @@ impl Mesh {
     }
 
     /// Invariant 6: every patch on a `Plane` face has its six control
-    /// points within `tol`'s resolution of the plane, and every patch on
-    /// a `Quadric` face has sampled points within it of the quadric (to
-    /// first order). [`Self::check`] runs this last; on its own, call it
-    /// on a mesh that passes the rest of `check` (orientation aside).
+    /// points within `tol`'s resolution of the plane and faces along its
+    /// normal at its middle (the normal points out of the solid), and
+    /// every patch on a `Quadric` face has sampled points within it of
+    /// the quadric (to first order). [`Self::check`] runs this last; on
+    /// its own, call it on a mesh that passes the rest of `check`
+    /// (orientation aside).
     pub fn check_faces(&self, tol: &Tolerance) -> Result<(), CheckError> {
         let patches: Vec<Patch> = (0..self.tris.len()).map(|t| self.patch(t)).collect();
         self.check_faces_of(&patches, tol)
@@ -322,10 +328,19 @@ impl Mesh {
         let tris: Vec<u32> = (0..self.tris.len() as u32).collect();
         let on = par_map(&tris, |&t| {
             let surface = self.faces[self.tris[t as usize].face as usize].surface;
-            if on_surface(&patches[t as usize], &surface, resolution) {
-                Ok(())
-            } else {
-                Err(CheckError::Face(t))
+            let patch = &patches[t as usize];
+            if !on_surface(patch, &surface, resolution) {
+                return Err(CheckError::Face(t));
+            }
+            // NaN fails, as in the debug form check.
+            let along = |x: f64| x > 0.0;
+            match surface {
+                super::Surface::Plane { n, .. }
+                    if !along(patch.normal(glam::DVec3::splat(1.0 / 3.0)).dot(n)) =>
+                {
+                    Err(CheckError::FacesAgainst(t))
+                }
+                _ => Ok(()),
             }
         });
         on.into_iter().collect()
