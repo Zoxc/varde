@@ -12,8 +12,8 @@
     </style>
     
 <script type="module">
-import init, * as bindings from './varde-web-c52dc7603aca93be.js';
-const wasm = await init({ module_or_path: './varde-web-c52dc7603aca93be_bg.wasm' });
+import init, * as bindings from './varde-web-b63eec256e60489f.js';
+const wasm = await init({ module_or_path: './varde-web-b63eec256e60489f_bg.wasm' });
 
 
 window.wasmBindings = bindings;
@@ -30,6 +30,6 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
     
     <!-- Starts any of the workers, see the script. -->
     
-  <link rel="modulepreload" href="./varde-web-c52dc7603aca93be.js" crossorigin="anonymous" integrity="sha384-D2oSIOZCOVNTnBY/R210iR/Nb7n4Mzq1xkX7kBl2+QahprjorGoro6uLxfjCqVXd"><link rel="preload" href="./varde-web-c52dc7603aca93be_bg.wasm" crossorigin="anonymous" integrity="sha384-qlcW+bSc1gkkOIakC9WGafMPJzEmRiC+tmbyqMnmTyvu42Zg05jxpGLJSsC0E199" as="fetch" type="application/wasm"></head>
+  <link rel="modulepreload" href="./varde-web-b63eec256e60489f.js" crossorigin="anonymous" integrity="sha384-gEOau9tKIys1nonNPHSYuXh4+69/BW8NR6Q+ShSeV/MXthhC7yAbeMWh8JZ1xgBK"><link rel="preload" href="./varde-web-b63eec256e60489f_bg.wasm" crossorigin="anonymous" integrity="sha384-ZkjX3tJUBLjaARKbc332xNc+TM6t/Sfx7HEUk4D6v2XaKT1Fn9/1sBL9EVMzEv3H" as="fetch" type="application/wasm"></head>
   <body></body>
 </html>
