@@ -26,6 +26,7 @@ mod pick;
 pub mod probe;
 mod projection;
 mod rail;
+mod revolve;
 mod select;
 mod shortcut;
 mod snap;
@@ -54,14 +55,12 @@ pub use document::{
     ActiveTool, DeletePrompt, DocumentState, MeshStatus, Overlay, RecoveredChanges, RefusedEdit,
     SketchState, ValueField, ValueTarget, document,
 };
-pub use extrude::{
-    Candidate, Distance, DistanceField, ExtentKind, ExtrudeLook, ExtrudeState, ExtrudeTarget,
-    Handle, OperationKind, snap_step,
-};
+pub use extrude::{Distance, ExtentKind, ExtrudeLook, ExtrudeState, Handle, snap_step};
 pub use icons::LOGO_SVG;
-pub use operation_panel::PANEL_BODY;
+pub use operation_panel::{BodyTarget, Candidate, OperationKind, PANEL_BODY, TypedField};
 pub use pick::{EDGE_REACH, Pick, PickIndex, Picked, Picks};
 pub use rail::{RAIL_LIST, RailLook, RailOpen, RailSpot, rail_rows, rail_sets};
+pub use revolve::{Angle, RevolveLook, RevolvePick, RevolveState, TurnKind};
 pub use select::{Selected, Selection, SelectionMode};
 pub use shortcut::{Binding, DocumentKeys, Held, document_bindings, pressed, welcome_bindings};
 pub use snap::{Inference, Level, SNAP_TOLERANCE, Snap, Target};
@@ -197,6 +196,9 @@ pub enum Edit {
     /// Adds the extrude being set up, or changes the one being edited, as
     /// one undo step, and ends its session: OK, or `Enter`.
     CommitExtrude,
+    /// Adds the revolve being set up, or changes the one being edited, as
+    /// one undo step, and ends its session: OK, or `Enter`.
+    CommitRevolve,
     /// Changes the design's units.
     SetUnits(LengthUnit),
     /// Changes the design's tolerance, which regenerates everything.
@@ -220,15 +222,16 @@ pub enum Look {
     CancelDelete,
     /// Backs out of whatever is open, the innermost first: the delete
     /// prompt, the rail's list, the feature's context menu, the file menu,
-    /// the view options menu, picking a plane, the extrude being set up,
+    /// the view options menu, picking a plane, the extrude or revolve being set up,
     /// dragging geometry, the shape the sketch's tool is drawing, the tool
     /// (or the Constrain tool), the sketch, the selection.
     Escape,
     SelectPanel(Panel),
     /// Starts picking the plane for a new sketch, or backs out of it.
     PickPlane,
-    /// Edits the feature: a sketch is entered, an extrude opens its
-    /// session (see [`Look::StartExtrude`]) with its values.
+    /// Edits the feature: a sketch is entered, an extrude or a revolve
+    /// opens its session (see [`Look::StartExtrude`],
+    /// [`Look::StartRevolve`]) with its values.
     EditFeature(FeatureId),
     /// Starts setting up a new extrude, from the sketch selected in the
     /// Timeline if one is, or backs out of the extrude being set up.
@@ -236,6 +239,12 @@ pub enum Look {
     /// Changes the extrude being set up, see [`ExtrudeLook`]: it isn't in
     /// the document until [`Edit::CommitExtrude`].
     Extrude(ExtrudeLook),
+    /// Starts setting up a new revolve, from the sketch selected in the
+    /// Timeline if one is, or backs out of the revolve being set up.
+    StartRevolve,
+    /// Changes the revolve being set up, see [`RevolveLook`]: it isn't in
+    /// the document until [`Edit::CommitRevolve`].
+    Revolve(RevolveLook),
     /// Leaves the sketch being edited.
     FinishSketch,
     /// Selects a feature in the Timeline.

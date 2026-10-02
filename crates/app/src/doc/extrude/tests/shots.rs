@@ -536,7 +536,7 @@ fn shots_08_missing_region() {
         doc.sync();
         answer(&mut doc, &requests);
         doc.look(Look::EditFeature(feature));
-        assert!(doc.extrude.as_ref().unwrap().missing > 0);
+        assert!(doc.extrude.as_ref().unwrap().regions.missing > 0);
         answer(&mut doc, &requests);
         camera.take(&doc, "08-missing-region", Shot::new());
         camera.take(&doc, "08-missing-region-dark", Shot::new().dark());

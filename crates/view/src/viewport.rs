@@ -4,6 +4,8 @@
 
 mod extrude;
 mod pivot;
+mod regions;
+mod revolve;
 mod sketch;
 
 use std::sync::{Arc, Weak};
@@ -28,7 +30,16 @@ use crate::theme::{Palette, SketchColors};
 use crate::{Look, Message, controls};
 
 pub(crate) use extrude::Extruding;
+pub(crate) use revolve::Revolving;
 pub(crate) use sketch::Sketching;
+
+/// The operation being set up in the viewport, if one is: never with a
+/// sketch.
+#[derive(Debug, Clone)]
+pub(crate) enum Operating<'a> {
+    Extrude(Extruding<'a>),
+    Revolve(Revolving<'a>),
+}
 
 /// How far below the viewport's top the camera controls are, in pixels.
 pub(crate) const CONTROLS_TOP: f32 = 10.0;
@@ -59,7 +70,8 @@ pub struct ModelPicking<'a> {
 /// The 3D viewport showing `mesh` and the finished `sketches` from
 /// `camera`, with the controls over its top-right corner, and in a sketch
 /// the sketch being edited, with the layer of widgets anchored to it, or
-/// setting up an extrude, its regions and handle, and `panel`, floating
+/// setting up an operation, an extrude's regions and handle or a
+/// revolve's regions and axis, and `panel`, floating
 /// over the viewport's right under the controls, and the tool `rail`
 /// over its left. `pivot`, the point the camera orbits if one was picked,
 /// is marked, and `highlight` drawn over the model. With `picking`, the
@@ -74,7 +86,7 @@ pub(crate) fn viewport<'a>(
     highlight: Option<&Arc<Highlight>>,
     palette: &Palette,
     sketching: Option<Sketching<'a>>,
-    extruding: Option<Extruding<'a>>,
+    operating: Option<Operating<'a>>,
     panel: Option<Element<'a, Message>>,
     rail: Element<'a, Message>,
 ) -> Element<'a, Message> {
@@ -97,19 +109,22 @@ pub(crate) fn viewport<'a>(
             fields.beside(sketch::FIELDS_OFFSET).into(),
         ]
     });
-    // The handle's knobs, on its axis, those the model doesn't hide. A
-    // layer even without them, so the panel's layer above keeps its place
-    // in the stack, and with it its widgets' state (the field's focus, the
-    // body's scroll), as the last region is unpicked or the first picked.
-    let knobs = extruding.as_ref().map(|extruding| {
-        extruding
-            .knobs(camera, mesh)
-            .unwrap_or_else(|| iced::widget::Space::new().into())
+    // An extrude's handle's knobs, on its axis, those the model doesn't
+    // hide. A layer even without them (and for a revolve, which has
+    // none), so the panel's layer above keeps its place in the stack,
+    // and with it its widgets' state (the field's focus, the body's
+    // scroll), as the last region is unpicked or the first picked.
+    let knobs = operating.as_ref().map(|operating| {
+        let knobs = match operating {
+            Operating::Extrude(extruding) => extruding.knobs(camera, mesh),
+            Operating::Revolve(_) => None,
+        };
+        knobs.unwrap_or_else(|| iced::widget::Space::new().into())
     });
     let program = Program {
         picking,
         highlight: highlight.cloned(),
-        ..program(mesh, sketches, camera, pivot, palette, sketching, extruding)
+        ..program(mesh, sketches, camera, pivot, palette, sketching, operating)
     };
     let scene = iced::widget::shader(program)
         .width(Length::Fill)
@@ -133,7 +148,7 @@ pub(crate) fn viewport<'a>(
 
 /// The shader program drawing `mesh` and `sketches` from `camera` in
 /// `palette`'s colors, in `sketching`'s sketch if there is one, or
-/// setting up `extruding`'s extrude.
+/// setting up `operating`'s operation.
 fn program<'a>(
     mesh: &Arc<RenderMesh>,
     sketches: &Arc<RenderLines>,
@@ -141,7 +156,7 @@ fn program<'a>(
     pivot: Option<Pivot>,
     palette: &Palette,
     sketching: Option<Sketching<'a>>,
-    extruding: Option<Extruding<'a>>,
+    operating: Option<Operating<'a>>,
 ) -> Program<'a> {
     Program {
         scene: Scene {
@@ -153,7 +168,7 @@ fn program<'a>(
             sketch_plane: sketching.as_ref().map(Sketching::grid),
         },
         sketching,
-        extruding,
+        operating,
         picking: None,
         highlight: None,
         sketch_colors: palette.sketching,
@@ -166,8 +181,8 @@ struct Program<'a> {
     scene: Scene,
     /// The sketch being edited, if one is.
     sketching: Option<Sketching<'a>>,
-    /// The extrude being set up, if one is: never with a sketch.
-    extruding: Option<Extruding<'a>>,
+    /// The operation being set up, if one is: never with a sketch.
+    operating: Option<Operating<'a>>,
     /// Picking the model, if the cursor does.
     picking: Option<ModelPicking<'a>>,
     /// Drawn over the model.
@@ -256,6 +271,8 @@ struct Interaction {
     sketch: sketch::Input,
     /// What's kept of the extrude being set up.
     extrude: extrude::Input,
+    /// What's kept of the revolve being set up.
+    revolve: revolve::Input,
     /// Names this widget's [`Slot`] in the [`Pipeline`], for as long as the
     /// widget lives.
     slot: Arc<SlotKey>,
@@ -287,20 +304,24 @@ impl shader::Program<Message> for Program<'_> {
                 *modifiers,
             );
         }
-        // The extrude's picking and handle come first, unless the camera
-        // is being dragged; the rest goes on as outside a sketch.
-        if let Some(extruding) = &self.extruding
+        // The operation's picking and handle come first, unless the
+        // camera is being dragged; the rest goes on as outside a sketch.
+        if let Some(operating) = &self.operating
             && state.drag.is_none()
             && let Event::Mouse(event) = event
-            && let Some(action) = extruding.mouse(
-                &mut state.extrude,
-                *event,
-                bounds,
-                cursor,
-                &self.scene.camera,
-            )
         {
-            return Some(action);
+            let camera = &self.scene.camera;
+            let action = match operating {
+                Operating::Extrude(extruding) => {
+                    extruding.mouse(&mut state.extrude, *event, bounds, cursor, camera)
+                }
+                Operating::Revolve(revolving) => {
+                    revolving.mouse(&mut state.revolve, *event, bounds, cursor, camera)
+                }
+            };
+            if action.is_some() {
+                return action;
+            }
         }
         if let Some(picking) = &self.picking
             && state.drag.is_none()
@@ -351,12 +372,21 @@ impl shader::Program<Message> for Program<'_> {
     }
 
     fn draw(&self, state: &Interaction, _cursor: mouse::Cursor, bounds: Rectangle) -> Primitive {
-        // The model isn't faded behind an extrude, and hides what's
-        // behind it of the extrude's regions and handle.
-        let extrude = self.extruding.as_ref().map(|extruding| {
-            let (base, live) = extruding.layers(&state.extrude, self.sketch_colors);
+        // The model isn't faded behind an operation, and hides what's
+        // behind it of its regions, handle and axis.
+        let operation = self.operating.as_ref().map(|operating| {
+            let colors = self.sketch_colors;
+            let (plane, (base, live)) = match operating {
+                Operating::Extrude(extruding) => {
+                    (extruding.plane(), extruding.layers(&state.extrude, colors))
+                }
+                Operating::Revolve(revolving) => (
+                    revolving.plane(),
+                    revolving.layers(&state.revolve, colors, &self.scene.camera, bounds),
+                ),
+            };
             SketchFrame {
-                plane: extruding.plane(),
+                plane,
                 depth_tested: true,
                 base,
                 live,
@@ -380,7 +410,7 @@ impl shader::Program<Message> for Program<'_> {
         });
         Primitive {
             scene: self.scene.clone(),
-            sketch: sketch.or(extrude),
+            sketch: sketch.or(operation),
             highlight: self.highlight.clone(),
             slot: state.slot.clone(),
         }
@@ -399,9 +429,13 @@ impl shader::Program<Message> for Program<'_> {
                 .sketching
                 .as_ref()
                 .and_then(|sketching| sketching.mouse_interaction(&state.sketch, bounds, cursor))
-                .or_else(|| {
-                    let extruding = self.extruding.as_ref()?;
-                    extruding.mouse_interaction(&state.extrude, bounds, cursor)
+                .or_else(|| match self.operating.as_ref()? {
+                    Operating::Extrude(extruding) => {
+                        extruding.mouse_interaction(&state.extrude, bounds, cursor)
+                    }
+                    Operating::Revolve(revolving) => {
+                        revolving.mouse_interaction(&state.revolve, bounds, cursor)
+                    }
                 })
                 .or_else(|| {
                     // Over what a click would select.

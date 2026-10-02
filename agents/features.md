@@ -168,7 +168,100 @@ an extrude's.
 
 ### UI
 
-None yet: the Timeline shows a revolve with the extrude's icon, its turn
-("Full turn", "90°", "90° symmetric", "90° + 45°") and "Edit revolve" in
-its menu, which does nothing; the status bar shows the turn and the
+**The session** (`app/src/doc/revolve.rs`, `Doc::revolve`, a
+`RevolveSession`) follows the extrude's (see "The extrude UI" in
+`agents/kernel.md`), sharing its parts (`app/src/doc/regions.rs`):
+`RegionPick` (the source sketch, the candidates' profiles found within
+`REFRESH_WORK`, the regions picked and their references, found again
+when the sketch changes, the edited feature's missing ones counted),
+`BodyTargets` (the bodies taken out and those just put back, as the
+Bodies list shows them, `Doc::body_targets`) and `TypedText` (a typed
+value's text, last value and error, read for an `Ask`, pinned to the
+design's units when they change). It's started by `Look::StartRevolve`
+(again, or `Esc`, cancels it; outside sketches and an extrude, in a
+document that can be changed; the sketch selected in the Timeline is
+the source) or by editing a revolve (`Look::EditFeature`, a
+double-click or `Enter` on its row, or Edit revolve in its menu), and
+never runs with a sketch session or an extrude session: editing an
+extrude drops it, editing a revolve drops an extrude's, entering a
+sketch drops either. A new one starts with a full turn, "180°" in the
+first angle's field and "90°" in the second, a new body.
+
+- **Picking** (`RevolveSession::picking`, `RevolvePick`): clicks pick
+  regions, or the axis. A click on a region picks or un-picks it either
+  way; a line of the source (construction or not) or one of its two
+  axes picks the axis only while the axis is picked, and goes before a
+  region there. The first region picked hands the clicks to the axis if
+  there's none; picking the axis hands them back to regions; the
+  panel's Profile and Axis rows choose (`RevolveLook::Picking`). Before
+  there's a source, an axis picked sets it, as a region does
+  (`RevolveLook::PickAxis { sketch, axis }`), and while an axis is
+  picked, un-picking every region keeps the source.
+- **The axis** is stored as the document wants it: a line as
+  `AxisLine::Curve`, the sketch's axes as `SketchX` / `SketchY` (their
+  built-in ids never as curves; `varde_view`'s `axis_of`). A curve that
+  isn't a line isn't taken. The session keeps the axis while the source
+  doesn't have it (its line deleted by an edit, then undone): the
+  revolve isn't whole then (no preview, no OK), and is again once it's
+  back. An edited revolve whose line is gone opens without an axis,
+  saying so ("The axis line wasn't found"), until another is picked.
+- **Whole and ready**: a source, regions picked, an axis the source has,
+  and the angles the extent takes as they last read
+  (`RevolveSession::revolve`). Ready (`Doc::revolve_ready`) adds the
+  extrude's conditions: editable, no sketch edits waiting on the solver,
+  no field refused, and `Revolve::check_own` passing (two sides over a
+  turn together shows its refusal in the panel at once, as
+  `RevolveState::refused`). The axis is the source's, so the document's
+  `check_axis` on `AddFeature` / `SetFeature` passes.
+- **Preview**: the whole revolve is the request's draft
+  (`Doc::revolve_draft`, after the extrude's in `Doc::request_model`),
+  `NewBody(BodyId::NEW)` for a new body; its error shows in the panel.
+- **Committing** (`Edit::CommitRevolve`: OK, `Enter` in an angle's field
+  or the screen's `Enter`) applies `AddFeature` ("Revolve N", hiding the
+  sketch, adding the body) or `SetFeature`, one undo step, selects the
+  new revolve and ends the session; OK with nothing changed writes
+  nothing. `Esc` or Cancel drops it and its draft. A replacement of the
+  whole document, read-only, or the edited revolve or the source gone
+  end it (`Doc::prune_revolve`).
+
+**The panel** (`view/src/revolve.rs`) is the extrude's floating panel
+(`operation_panel`), built of the same parts (choices, ticks, typed
+fields, the Bodies list, the footer's message, now in
+`operation_panel.rs`): title "New revolve" or the revolve's name; a
+Profile row (the region count, or "Click regions") and an Axis row
+("Line 3", "X axis", or "Click a line or axis"), each a field outlined
+while it's the one picking, a click on it making it so; what an edited
+revolve lost; Extent (Full 360°, One side, Symmetric, Two sides), the
+angle fields ("Angle", or "Side 1" and "Side 2"; the first is
+`VALUE_FIELD`, focused as the session opens), Flip for one side and two
+sides; Operation and Bodies as an extrude's; the refusal, the draft's
+error or "Checking the sketch…". No handle in this plan.
+
+**The viewport** (`view/src/viewport/revolve.rs`, `Revolving`, one of
+`viewport::Operating`): the regions as an extrude's
+(`viewport/regions.rs`, shared); while the axis is picked, the
+candidates' lines (construction ones dashed) and their two axes
+(dashed, in the sketch's axis colour, `axis_reach` either side of the
+origin: a quarter past the sketch's farthest point, at least 10 mm)
+drawn in the live layer on their planes, the one under the cursor
+wider in the hover colour; hit testing is `hit::hit_axis` (lines within
+6 px first, then the axes within their reach), the nearest by depth over
+the candidates. The axis picked is drawn on the source in the selected
+colour with an arrowhead (screen space) at the end positive angles turn
+right-handed about: the line's end, or a built-in axis's +x / +y end,
+and the other end when flipped for one side or two sides (as the
+revolve's `span` does). The knobs' layer under the panel is an empty
+placeholder for a revolve, so the panel's state keeps its place.
+
+The status bar says "New revolve · 1 region picked · about Line 3"
+(or "pick the regions to revolve", "pick the axis"), with the hints
+"Pick regions" or "Pick the axis", `Enter` OK and `Esc` Cancel; the
+toolbar's tag "Revolve" or "Editing Revolve 1". While a revolve is set
+up `S`, `E` and the selected feature's `Enter` and `Delete` don't act,
+and the cursor doesn't pick the model.
+
+Not yet (the next stage): the toolbar's Revolve button (`R`), the
+Timeline's revolve icon and rows, README. The Timeline shows a revolve
+with the extrude's icon and its turn ("Full turn", "90°", "90°
+symmetric", "90° + 45°"); the status bar shows the turn and the
 operation.

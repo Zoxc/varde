@@ -305,13 +305,11 @@ const FRAME_MARGIN: f32 = 1.5;
 
 impl Doc {
     /// Starts picking the plane for a new sketch, or backs out of it.
-    /// Only outside a sketch and an extrude, in a document that can be
+    /// Only outside a sketch and an operation, in a document that can be
     /// edited.
     pub(crate) fn pick_plane(&mut self) {
-        self.picking_plane = !self.picking_plane
-            && self.editable()
-            && self.sketch.is_none()
-            && self.extrude.is_none();
+        self.picking_plane =
+            !self.picking_plane && self.editable() && self.sketch.is_none() && !self.operating();
     }
 
     /// Adds a sketch on `plane` and edits it, unless that's refused.
@@ -337,6 +335,7 @@ impl Doc {
         }
         self.picking_plane = false;
         self.extrude = None;
+        self.revolve = None;
         self.selected_feature = Some(id);
         // Back in the sketch, the edit refused after it was left is seen
         // to be missing.
@@ -386,7 +385,7 @@ impl Doc {
 
     /// Backs out of whatever is open, the innermost first: the delete
     /// prompt, the rail's list, the feature's context menu, the file menu, the view options menu, picking a plane, the
-    /// extrude being set up, the value field, a label grabbed, the drag of
+    /// extrude or revolve being set up, the value field, a label grabbed, the drag of
     /// geometry, the shape the tool is drawing (or what the Dimension or
     /// Mirror tool has picked), the tool, the sketch, the feature selected
     /// and what's selected in the model.
@@ -404,6 +403,8 @@ impl Doc {
             self.picking_plane = false;
         } else if self.extrude.is_some() {
             self.extrude = None;
+        } else if self.revolve.is_some() {
+            self.revolve = None;
         } else if let Some(session) = &mut self.sketch {
             if session.value.take().is_some()
                 || session.label.take().is_some()

@@ -5,20 +5,21 @@
 //! `viewport/extrude.rs`.
 
 use std::collections::BTreeSet;
-use std::sync::Arc;
 
 use glam::{DVec2, DVec3};
+use iced::Element;
 use iced::widget::text::Wrapping;
-use iced::widget::{button, checkbox, column, container, row, space, text, text_input};
-use iced::{Alignment, Element, Length};
-use varde_document::{BodyId, ExtrudeError, FeatureId, Operation, Placement, Plane};
+use iced::widget::{column, text};
+use varde_document::{BodyId, ExtrudeError, FeatureId, Placement};
 use varde_expr::LengthUnit;
-use varde_sketch::{Profiles, Region, angle};
+use varde_sketch::{Region, angle};
 
-use crate::chrome::{hrule, sentence, tip};
-use crate::escape::OnEscape;
-use crate::operation_panel::{Parts, message_text, operation_panel};
-use crate::theme::{self, SEMIBOLD};
+use crate::chrome::{hrule, tip};
+use crate::operation_panel::{
+    BodyTarget, Candidate, OperationKind, Parts, TypedField, bodies, choice, footer_message, grid,
+    heading, operation_panel, tick, value_field,
+};
+use crate::theme;
 use crate::{Edit, Look, Message, VALUE_FIELD};
 
 /// The field of an extrude's second distance, for two sides. The first
@@ -29,14 +30,6 @@ const SECOND_FIELD: iced::widget::Id = iced::widget::Id::new("extrude-second");
 /// the target: a step is the roundest length in the design's units at
 /// least this many pixels long.
 const SNAP_PIXELS: f64 = 6.0;
-
-/// How far in from the panel's side a distance's field starts: its
-/// label's width and the gap after it. Why its text is refused shows
-/// under it, as far in.
-const FIELD_INDENT: f32 = 68.0;
-
-/// The gap between a distance's label and its field.
-const FIELD_GAP: f32 = 6.0;
 
 /// How an extrude's extent is given, see `varde_document::Extent`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -77,50 +70,6 @@ impl ExtentKind {
     /// Whether Flip changes it.
     pub fn flips(self) -> bool {
         matches!(self, ExtentKind::OneSide | ExtentKind::TwoSides)
-    }
-}
-
-/// What an extrude does with its solid, see `varde_document::Operation`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum OperationKind {
-    #[default]
-    NewBody,
-    Join,
-    Cut,
-    Intersect,
-}
-
-impl OperationKind {
-    pub const ALL: [OperationKind; 4] = [
-        OperationKind::NewBody,
-        OperationKind::Join,
-        OperationKind::Cut,
-        OperationKind::Intersect,
-    ];
-
-    /// The kind of `operation`.
-    pub fn of(operation: &Operation) -> Self {
-        match operation {
-            Operation::NewBody(_) => OperationKind::NewBody,
-            Operation::Join(_) => OperationKind::Join,
-            Operation::Cut(_) => OperationKind::Cut,
-            Operation::Intersect(_) => OperationKind::Intersect,
-        }
-    }
-
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            OperationKind::NewBody => "New body",
-            OperationKind::Join => "Join",
-            OperationKind::Cut => "Cut",
-            OperationKind::Intersect => "Intersect",
-        }
-    }
-
-    /// Whether it works on bodies already there, which the panel then
-    /// lists.
-    pub fn has_targets(self) -> bool {
-        self != OperationKind::NewBody
     }
 }
 
@@ -181,37 +130,6 @@ pub enum ExtrudeLook {
     Cancel,
 }
 
-/// A sketch whose regions can be picked, and where they are.
-#[derive(Debug, Clone, Copy)]
-pub struct Candidate<'a> {
-    pub feature: FeatureId,
-    pub plane: Plane,
-    pub profiles: &'a Arc<Profiles>,
-}
-
-/// A distance's field: its text, and why it's refused, if it is.
-#[derive(Debug, Clone, Copy)]
-pub struct DistanceField<'a> {
-    pub text: &'a str,
-    pub error: Option<&'a varde_expr::Error>,
-    /// The last value it gave, in millimetres, which the preview and the
-    /// handle show while the text is refused.
-    pub value: Option<f64>,
-}
-
-/// A body a join, cut or intersect touches, or one taken out of it.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ExtrudeTarget<'a> {
-    pub body: BodyId,
-    pub name: &'a str,
-    /// Whether it's worked on: not taken out.
-    pub included: bool,
-    /// The name of the body an earlier join merged it into, if one did:
-    /// it's listed only while it's taken out (or just put back), which
-    /// does nothing then, so that can be seen and undone.
-    pub holder: Option<&'a str>,
-}
-
 /// The extrude being set up, and how it's shown.
 #[derive(Debug, Clone)]
 pub struct ExtrudeState<'a> {
@@ -229,12 +147,12 @@ pub struct ExtrudeState<'a> {
     pub missing: usize,
     pub extent: ExtentKind,
     /// The first distance's field, and two sides' second.
-    pub fields: [DistanceField<'a>; 2],
+    pub fields: [TypedField<'a>; 2],
     pub flip: bool,
     pub operation: OperationKind,
     /// For a join, cut or intersect, the bodies its preview touches and
     /// those taken out of it, in the order they were made.
-    pub targets: Vec<ExtrudeTarget<'a>>,
+    pub targets: Vec<BodyTarget<'a>>,
     /// The knob grabbed, if one is.
     pub grabbed: Option<Distance>,
     /// Why the preview failed, if it did.
@@ -455,47 +373,13 @@ pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
             send(ExtrudeLook::Operation(kind)),
         )
     });
-    let targets = (state.operation.has_targets() && !state.targets.is_empty()).then(|| {
-        let rows = state.targets.iter().map(|&target| {
-            let message = Message::Look(Look::Extrude(ExtrudeLook::Target(target.body)));
-            let tick = tick(target.name, target.included, editable.then_some(message));
-            match target.holder {
-                // Faint, as the Objects list notes a merged body.
-                Some(holder) => row![
-                    tick,
-                    space::horizontal(),
-                    text(format!("in {holder}"))
-                        .size(12)
-                        .wrapping(Wrapping::None)
-                        .style(theme::faint_text),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center)
-                .into(),
-                None => tick,
-            }
-        });
-        let merging = joined_into(state).map(|holder| {
-            // The mock's panel note: faint, 12 px.
-            text(format!("Joined into {holder}"))
-                .size(12)
-                .wrapping(Wrapping::WordOrGlyph)
-                .style(theme::faint_text)
-        });
-        column![heading("Bodies"), column(rows).spacing(4), merging].spacing(6)
+    let targets = bodies(state.operation, &state.targets, |body| {
+        editable.then_some(Message::Look(Look::Extrude(ExtrudeLook::Target(body))))
     });
     // Why OK can't be pressed, or the preview failed, or that OK waits
     // on the solver.
-    let message = match (state.refused, state.error) {
-        (Some(refused), _) => Some(message_text(
-            sentence(&refused.to_string()).into_owned(),
-            theme::danger_text,
-        )),
-        (None, Some(error)) => Some(message_text(sentence(error), theme::danger_text)),
-        (None, None) => state
-            .checking
-            .then(|| message_text("Checking the sketch…", theme::muted_text)),
-    };
+    let refused = state.refused.map(|refused| refused.to_string());
+    let message = footer_message(refused, state.error, state.checking);
 
     let body = column![
         missing,
@@ -525,114 +409,28 @@ pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
     })
 }
 
-/// The body a join merges the bodies it's ticked for into, if it's
-/// ticked for two or more: the first made of them, which then holds them
-/// all. A body merged away before isn't one of them.
-pub(crate) fn joined_into<'a>(state: &ExtrudeState<'a>) -> Option<&'a str> {
-    if state.operation != OperationKind::Join {
-        return None;
-    }
-    let mut included =
-        (state.targets.iter()).filter(|target| target.included && target.holder.is_none());
-    let first = included.next()?;
-    included.next().map(|_| first.name)
-}
-
-/// A small heading in the panel.
-fn heading<'a>(label: &'a str) -> Element<'a, Message> {
-    text(label)
-        .size(11.5)
-        .font(SEMIBOLD)
-        .style(theme::muted_text)
-        .into()
-}
-
-/// Four choices in two rows of two.
-fn grid<'a>(choices: [Element<'a, Message>; 4]) -> Element<'a, Message> {
-    let [a, b, c, d] = choices;
-    column![row![a, b].spacing(4), row![c, d].spacing(4)]
-        .spacing(4)
-        .into()
-}
-
-/// A choice of the panel's, highlighted while `on`, sending `message`, or
-/// disabled without one.
-fn choice<'a>(label: &'a str, on: bool, message: Option<Message>) -> Element<'a, Message> {
-    let font = if on { SEMIBOLD } else { iced::Font::DEFAULT };
-    button(
-        text(label)
-            .size(12)
-            .font(font)
-            .width(Length::Fill)
-            .align_x(Alignment::Center),
-    )
-    .width(Length::Fill)
-    .padding([3, 6])
-    .style(theme::choice(on))
-    .on_press_maybe(message)
-    .into()
-}
-
-/// A checkbox of the panel's, ticked while `on`, sending `message` when
-/// clicked, or disabled without one.
-fn tick<'a>(label: &'a str, on: bool, message: Option<Message>) -> Element<'a, Message> {
-    checkbox(on)
-        .label(label)
-        .size(15)
-        .spacing(7)
-        .text_size(12)
-        // A name with no spaces breaks where the panel ends.
-        .text_wrapping(Wrapping::WordOrGlyph)
-        .style(theme::tick)
-        .on_toggle_maybe(message.map(|message| move |_| message.clone()))
-        .into()
-}
-
 /// The field of `distance`, named `label`, showing why its text is
 /// refused under it. `Enter` in it is OK, `Esc` Cancel.
 fn distance_field<'a>(
     label: &'a str,
     distance: Distance,
-    field: DistanceField<'a>,
+    field: TypedField<'a>,
     editable: bool,
 ) -> Element<'a, Message> {
     let id = match distance {
         Distance::First => VALUE_FIELD,
         Distance::Second => SECOND_FIELD,
     };
-    let input = text_input("Distance", field.text)
-        .id(id)
-        .size(12)
-        .padding([2, 4])
-        .width(Length::Fill);
-    let input = if editable {
-        input
-            .on_input(move |text| {
-                Message::Look(Look::Extrude(ExtrudeLook::Input { distance, text }))
-            })
-            .on_submit(Message::Edit(Edit::CommitExtrude))
-    } else {
-        input
-    };
-    let input = OnEscape::new(input, Message::Look(Look::Extrude(ExtrudeLook::Cancel)));
-    let error = field.error.map(|error| {
-        container(
-            text(sentence(&error.to_string()).into_owned())
-                .size(11.5)
-                .wrapping(Wrapping::WordOrGlyph)
-                .style(theme::danger_text),
-        )
-        .padding(iced::Padding::ZERO.left(FIELD_INDENT))
-    });
-    let label = text(label).size(12).width(FIELD_INDENT - FIELD_GAP);
-    column![
-        row![label, input]
-            .spacing(FIELD_GAP)
-            .align_y(Alignment::Center),
-        error,
-    ]
-    .spacing(2)
-    .into()
+    let input = editable
+        .then_some(move |text| Message::Look(Look::Extrude(ExtrudeLook::Input { distance, text })));
+    value_field(
+        label,
+        id,
+        field,
+        input,
+        Message::Edit(Edit::CommitExtrude),
+        Message::Look(Look::Extrude(ExtrudeLook::Cancel)),
+    )
 }
 
 #[cfg(test)]

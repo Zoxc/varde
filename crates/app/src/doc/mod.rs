@@ -8,6 +8,8 @@ mod extrude;
 mod feed;
 mod pick;
 mod rail;
+mod regions;
+mod revolve;
 mod save;
 mod sketch;
 
@@ -41,6 +43,7 @@ pub(crate) use extrude::ExtrudeSession;
 use feed::MeshFeed;
 use pick::ModelPick;
 use rail::Rail;
+pub(crate) use revolve::RevolveSession;
 use save::Persist;
 #[cfg(test)]
 pub(crate) use save::{AutoSave, Picking};
@@ -102,6 +105,9 @@ pub(crate) struct Doc {
     pub(crate) sketch: Option<SketchSession>,
     /// The extrude being set up, if one is: never with a sketch.
     pub(crate) extrude: Option<ExtrudeSession>,
+    /// The revolve being set up, if one is: never with a sketch or an
+    /// extrude.
+    pub(crate) revolve: Option<RevolveSession>,
     /// The share of the Sketch tab's height the Geometry list takes, kept
     /// from one sketch to the next.
     pub(crate) sketch_split: f32,
@@ -222,6 +228,7 @@ impl Doc {
             row_menu: None,
             sketch: None,
             extrude: None,
+            revolve: None,
             sketch_split: GEOMETRY_SHARE,
             focus: None,
             animation: None,
@@ -255,6 +262,7 @@ impl Doc {
         self.prune_deleting();
         self.prune(replaced);
         self.prune_extrude(replaced);
+        self.prune_revolve(replaced);
         self.request_analysis();
         self.request_model();
         self.refresh_profiles();
@@ -262,12 +270,17 @@ impl Doc {
     }
 
     /// Asks for the model if the document changed, the sketch left out of
-    /// it (the one being edited) or the extrude being set up did, which is
-    /// previewed as a draft.
+    /// it (the one being edited) or the extrude or revolve being set up
+    /// did, which is previewed as a draft.
     fn request_model(&mut self) {
         let exclude = self.sketch.as_ref().map(|session| session.feature);
-        let draft = self.draft();
+        let draft = self.extrude_draft().or_else(|| self.revolve_draft());
         self.feed.request_with(&self.editor, exclude, draft);
+    }
+
+    /// Whether an operation is being set up: an extrude or a revolve.
+    pub(crate) fn operating(&self) -> bool {
+        self.extrude.is_some() || self.revolve.is_some()
     }
 
     /// Whether the camera is turning to a new view, the pivot's marker
@@ -352,6 +365,7 @@ impl Doc {
             Edit::ToggleHandles => self.toggle_handles(),
             Edit::InsertSplinePoint { spline, at } => self.insert_spline_point(spline, at),
             Edit::CommitExtrude => self.commit_extrude(),
+            Edit::CommitRevolve => self.commit_revolve(),
             Edit::SetUnits(units) => self.change(Change::SetUnits(units)),
             Edit::SetTolerance(tolerance) => self.change(Change::SetTolerance(tolerance)),
             // What waits on the solver, and what waits behind it, is newer
@@ -475,6 +489,7 @@ impl Doc {
                 | Look::ToggleConstrain
                 | Look::PickPlane
                 | Look::StartExtrude
+                | Look::StartRevolve
                 | Look::EditFeature(_)
         ) {
             self.rail.close();
@@ -491,12 +506,13 @@ impl Doc {
             Look::PickPlane => self.pick_plane(),
             Look::EditFeature(id) => match self.editor.document().feature(id).map(|f| &f.kind) {
                 Some(FeatureKind::Extrude(_)) => self.edit_extrude(id),
-                // Revolves have no session to edit them in yet.
-                Some(FeatureKind::Revolve(_)) => {}
+                Some(FeatureKind::Revolve(_)) => self.edit_revolve(id),
                 _ => self.enter_sketch(id),
             },
             Look::StartExtrude => self.start_extrude(),
             Look::Extrude(message) => self.extrude_look(message),
+            Look::StartRevolve => self.start_revolve(),
+            Look::Revolve(message) => self.revolve_look(message),
             Look::FinishSketch => self.finish_sketch(),
             Look::SelectFeature(id) => {
                 if self.editor.document().feature(id).is_some() {
@@ -661,6 +677,7 @@ impl Doc {
         self.dialog().is_none().then(|| {
             DocumentKeys::new(self.editable(), self.selected_feature, self.sketch_state())
                 .with_extrude(self.extrudable(), self.extrude_state().as_ref())
+                .with_revolve(self.revolve_state().as_ref())
                 .with_rail(self.rail.state())
                 .with_edited(self.edited())
                 .with_history(
@@ -766,6 +783,7 @@ impl Doc {
             row_menu: self.row_menu,
             sketch: self.sketch_state(),
             extrude: self.extrude_state(),
+            revolve: self.revolve_state(),
             extrudable: self.extrudable(),
             unsolved: self.feed.unsolved(),
             failed: self.feed.failed_features(),

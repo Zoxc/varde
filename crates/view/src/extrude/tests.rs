@@ -1,8 +1,12 @@
-use varde_document::OriginPlane;
+use std::sync::Arc;
+
+use varde_document::{OriginPlane, Plane};
+use varde_sketch::Profiles;
 use varde_sketch::{Curve, Sketch};
 
 use super::*;
 use crate::operation_panel::PANEL_WIDTH;
+use crate::operation_panel::{FIELD_INDENT, joined_into};
 
 /// A sketch of a 4 × 2 rectangle from the origin with a unit square hole
 /// from (1, 0.5), and its profiles.
@@ -21,7 +25,7 @@ fn plate() -> Arc<Profiles> {
 }
 
 fn state_of<'a>(profiles: &'a Arc<Profiles>, picked: &'a BTreeSet<usize>) -> ExtrudeState<'a> {
-    let field = |value| DistanceField {
+    let field = |value| TypedField {
         text: "",
         error: None,
         value,
@@ -37,6 +41,7 @@ fn state_of<'a>(profiles: &'a Arc<Profiles>, picked: &'a BTreeSet<usize>) -> Ext
         candidates: vec![Candidate {
             feature,
             plane: Plane::Origin(OriginPlane::XZ),
+            sketch: Box::leak(Box::default()),
             profiles,
         }],
         source: Some(feature),
@@ -183,7 +188,7 @@ fn a_long_name_without_spaces_breaks_inside_the_panel() {
     state.operation = OperationKind::Cut;
     let size = iced::Size::new(400, 600);
     let max = iced::Size::new(size.width as f32, size.height as f32);
-    let target = |name| ExtrudeTarget {
+    let target = |name| BodyTarget {
         body: BodyId::NEW,
         name,
         included: true,
@@ -245,7 +250,7 @@ fn flip_is_a_tick_like_the_bodies() {
     let picked = BTreeSet::from([0]);
     let mut state = state_of(&profiles, &picked);
     state.operation = OperationKind::Cut;
-    state.targets = vec![ExtrudeTarget {
+    state.targets = vec![BodyTarget {
         body: BodyId::NEW,
         name: "Body 1",
         included: true,
@@ -303,7 +308,7 @@ fn a_join_ticked_for_two_bodies_says_which_it_merges_into() {
     let picked = BTreeSet::from([0]);
     let mut state = state_of(&profiles, &picked);
     state.operation = OperationKind::Join;
-    let target = |name, included| ExtrudeTarget {
+    let target = |name, included| BodyTarget {
         body: BodyId::NEW,
         name,
         included,
@@ -314,15 +319,15 @@ fn a_join_ticked_for_two_bodies_says_which_it_merges_into() {
         target("Body 2", true),
         target("Body 3", true),
     ];
-    assert_eq!(joined_into(&state), Some("Body 2"));
+    assert_eq!(joined_into(state.operation, &state.targets), Some("Body 2"));
     found(&texts_of(&state), "Joined into Body 2");
 
     // One ticked merges nothing, nor does a cut.
     state.targets[2].included = false;
-    assert_eq!(joined_into(&state), None);
+    assert_eq!(joined_into(state.operation, &state.targets), None);
     state.targets[2].included = true;
     state.operation = OperationKind::Cut;
-    assert_eq!(joined_into(&state), None);
+    assert_eq!(joined_into(state.operation, &state.targets), None);
     let shown = texts_of(&state);
     assert!(!shown.iter().any(|shown| shown.text.starts_with("Joined")));
 
@@ -331,7 +336,7 @@ fn a_join_ticked_for_two_bodies_says_which_it_merges_into() {
     state.operation = OperationKind::Join;
     state.targets[0].included = false;
     state.targets[2].holder = Some("Body 1");
-    assert_eq!(joined_into(&state), None);
+    assert_eq!(joined_into(state.operation, &state.targets), None);
     let shown = texts_of(&state);
     assert!(!shown.iter().any(|shown| shown.text.starts_with("Joined")));
     found(&shown, "in Body 1");

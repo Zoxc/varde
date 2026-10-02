@@ -27,8 +27,8 @@ use crate::status::{self, Status};
 use crate::theme::Emphasis;
 use crate::typed::Field;
 use crate::{
-    ConstraintKind, Edit, ExtrudeState, File, Look, Message, OperationKind, Panel, RowMenu, Snap,
-    Target, Tool, Unsaved, panels, theme, toolbar, viewport,
+    ConstraintKind, Edit, ExtrudeState, File, Look, Message, OperationKind, Panel, RevolvePick,
+    RevolveState, RowMenu, Snap, Target, Tool, Unsaved, panels, theme, toolbar, viewport,
 };
 
 /// Borrowed state needed to build the document screen.
@@ -100,6 +100,9 @@ pub struct DocumentState<'a> {
     pub sketch: Option<SketchState<'a>>,
     /// The extrude being set up, if one is: never with a sketch.
     pub extrude: Option<ExtrudeState<'a>>,
+    /// The revolve being set up, if one is: never with a sketch or an
+    /// extrude.
+    pub revolve: Option<RevolveState<'a>>,
     /// Whether there's a sketch to extrude regions of: the Extrude tool
     /// works outside sketches then.
     pub extrudable: bool,
@@ -133,6 +136,7 @@ impl DocumentState<'_> {
     pub(crate) fn keys(&self) -> DocumentKeys {
         DocumentKeys::new(self.editable(), self.selected_feature, self.sketch)
             .with_extrude(self.extrudable, self.extrude.as_ref())
+            .with_revolve(self.revolve.as_ref())
             .with_rail(self.rail)
             .with_edited(self.edited)
             .with_history(
@@ -554,8 +558,9 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
                         state
                             .sketch
                             .map(|sketch| viewport::Sketching::new(sketch, editable)),
-                        state.extrude.clone().map(viewport::Extruding::new),
-                        state.extrude.as_ref().map(crate::extrude::panel),
+                        operating(&state),
+                        (state.extrude.as_ref().map(crate::extrude::panel))
+                            .or_else(|| state.revolve.as_ref().map(crate::revolve::panel)),
                         crate::rail::rail(&state),
                     ),
                     status::status_bar(status(&state)),
@@ -590,6 +595,14 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
     }
 }
 
+/// The operation being set up, as the viewport shows it, if one is.
+fn operating<'a>(state: &DocumentState<'a>) -> Option<viewport::Operating<'a>> {
+    let extruding = state.extrude.clone().map(viewport::Extruding::new);
+    let revolving = state.revolve.clone().map(viewport::Revolving::new);
+    (extruding.map(viewport::Operating::Extrude))
+        .or_else(|| revolving.map(viewport::Operating::Revolve))
+}
+
 /// What the status bar shows: the feature selected, what's going on, the
 /// hints, and the view options menu's button.
 fn status<'a>(state: &DocumentState<'a>) -> Status<'a> {
@@ -619,6 +632,19 @@ fn hints<'a>(state: &DocumentState<'a>) -> Vec<Hint<'a>> {
             .editable
             .then(|| mouse_hint(MouseButton::Left, "Pick regions"));
         let ok = extrude.ready.then(|| key_hint(Shortcut::ENTER, "OK"));
+        [pick, ok, Some(key_hint(Shortcut::ESCAPE, "Cancel"))]
+            .into_iter()
+            .flatten()
+            .collect()
+    } else if let Some(revolve) = &state.revolve {
+        let pick = revolve.editable.then(|| {
+            let what = match revolve.picking {
+                RevolvePick::Regions => "Pick regions",
+                RevolvePick::Axis => "Pick the axis",
+            };
+            mouse_hint(MouseButton::Left, what)
+        });
+        let ok = revolve.ready.then(|| key_hint(Shortcut::ENTER, "OK"));
         [pick, ok, Some(key_hint(Shortcut::ESCAPE, "Cancel"))]
             .into_iter()
             .flatten()
@@ -1183,6 +1209,30 @@ fn info<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
             .into(),
         );
     }
+    if let Some(revolve) = &state.revolve {
+        let regions = match revolve.picked.len() {
+            0 => "pick the regions to revolve".to_owned(),
+            n => format!("{} picked", counted(n, "region", "regions")),
+        };
+        let axis = match revolve.axis_name() {
+            Some(name) => format!("about {name}"),
+            None => "pick the axis".to_owned(),
+        };
+        return Some(
+            row![
+                text(revolve.editing.unwrap_or("New revolve"))
+                    .size(12)
+                    .wrapping(Wrapping::None)
+                    .font(theme::SEMIBOLD),
+                text(format!("· {regions} · {axis}{}", status_suffix(state)))
+                    .size(12)
+                    .wrapping(Wrapping::None)
+                    .style(theme::muted_text),
+            ]
+            .spacing(4)
+            .into(),
+        );
+    }
     let notes = status_notes(state);
     (!notes.is_empty()).then(|| {
         text(notes.join(" · "))
@@ -1195,9 +1245,14 @@ fn info<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
 
 /// The feature selected in the Timeline, for the status bar's box of the
 /// selection: its icon, its name and [`feature_info`]. Nothing in a sketch,
-/// setting up an extrude or picking a plane, which the bar tells of instead.
+/// setting up an extrude or a revolve or picking a plane, which the bar
+/// tells of instead.
 fn selection<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
-    if state.picking_plane || state.sketch.is_some() || state.extrude.is_some() {
+    if state.picking_plane
+        || state.sketch.is_some()
+        || state.extrude.is_some()
+        || state.revolve.is_some()
+    {
         return None;
     }
     let document = state.editor.document();

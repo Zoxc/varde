@@ -8,8 +8,8 @@ use iced::keyboard::{Key as KeyPress, Modifiers, key::Named};
 use varde_document::FeatureId;
 
 use crate::{
-    ConstraintKind, ConstraintSet, Edit, ExtrudeState, File, Look, Message, SketchState, Tool,
-    Welcome,
+    ConstraintKind, ConstraintSet, Edit, ExtrudeState, File, Look, Message, RevolveState,
+    SketchState, Tool, Welcome,
 };
 
 /// A key pressed on its own, or with the platform's command modifier
@@ -364,6 +364,10 @@ pub struct DocumentKeys {
     pub extruding: bool,
     /// Whether the extrude being set up can be committed.
     pub extrude_ready: bool,
+    /// Whether a revolve is being set up.
+    pub revolving: bool,
+    /// Whether the revolve being set up can be committed.
+    pub revolve_ready: bool,
     /// Whether the document has changes not saved.
     pub edited: bool,
     /// Whether undo can take anything back.
@@ -429,6 +433,8 @@ impl DocumentKeys {
             extrudable: false,
             extruding: false,
             extrude_ready: false,
+            revolving: false,
+            revolve_ready: false,
             edited: false,
             undo: false,
             redo: false,
@@ -465,6 +471,22 @@ impl DocumentKeys {
     }
 }
 
+impl DocumentKeys {
+    /// The same keys with `revolve` being set up, if one is.
+    pub fn with_revolve(self, revolve: Option<&RevolveState<'_>>) -> Self {
+        Self {
+            revolving: revolve.is_some(),
+            revolve_ready: revolve.is_some_and(|revolve| revolve.ready),
+            ..self
+        }
+    }
+
+    /// Whether an operation is being set up: an extrude or a revolve.
+    pub fn operating(&self) -> bool {
+        self.extruding || self.revolving
+    }
+}
+
 /// Undo and Redo, in that order, then Redo's other key: while there's
 /// something to take back or bring back, in a document that can be
 /// changed.
@@ -488,23 +510,24 @@ pub fn history_bindings(keys: DocumentKeys) -> [Binding; 3] {
 }
 
 /// Starting a new sketch, which asks for its plane first. Disabled in a
-/// sketch or an extrude, and unless the document can be changed.
+/// sketch or an operation being set up, and unless the document can be
+/// changed.
 pub fn sketch_binding(keys: DocumentKeys) -> Binding {
     Binding::new(
         Shortcut::SKETCH,
         Message::Look(Look::PickPlane),
-        keys.editable && !keys.sketching && !keys.extruding,
+        keys.editable && !keys.sketching && !keys.operating(),
     )
 }
 
 /// Starting a new extrude, or backing out of the one being set up:
-/// outside a sketch, while there's a sketch to extrude, in a document
-/// that can be changed.
+/// outside a sketch and a revolve being set up, while there's a sketch to
+/// extrude, in a document that can be changed.
 pub fn extrude_binding(keys: DocumentKeys) -> Binding {
     Binding::new(
         Shortcut::EXTRUDE,
         Message::Look(Look::StartExtrude),
-        keys.editable && !keys.sketching && (keys.extrudable || keys.extruding),
+        keys.editable && !keys.sketching && !keys.revolving && (keys.extrudable || keys.extruding),
     )
 }
 
@@ -645,7 +668,9 @@ pub fn comb_binding(keys: DocumentKeys) -> Binding {
 /// curvature comb. The rail's open set's keys come before them all, and
 /// its sets' keys after (see the rail's module).
 pub fn document_bindings(keys: DocumentKeys) -> Vec<Binding> {
-    let feature = keys.selected.filter(|_| !keys.sketching && !keys.extruding);
+    let feature = keys
+        .selected
+        .filter(|_| !keys.sketching && !keys.operating());
     let feature = feature.into_iter().flat_map(|id| {
         [
             Binding::new(Shortcut::ENTER, Message::Look(Look::EditFeature(id)), true),
@@ -690,6 +715,13 @@ pub fn document_bindings(keys: DocumentKeys) -> Vec<Binding> {
             keys.editable && keys.extrude_ready,
         )
     });
+    let commit_revolve = keys.revolving.then(|| {
+        Binding::new(
+            Shortcut::ENTER,
+            Message::Edit(Edit::CommitRevolve),
+            keys.editable && keys.revolve_ready,
+        )
+    });
     crate::rail::letter_bindings(keys)
         .into_iter()
         .chain(file_bindings(keys.editable, keys.edited))
@@ -700,6 +732,7 @@ pub fn document_bindings(keys: DocumentKeys) -> Vec<Binding> {
         ])
         .chain(extrude)
         .chain(commit)
+        .chain(commit_revolve)
         .chain(feature)
         .chain(sketch.into_iter().flatten())
         .chain(crate::rail::set_bindings(keys.sketching))

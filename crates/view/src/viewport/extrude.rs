@@ -1,26 +1,23 @@
 //! The extrude being set up, in the viewport: its sketches' regions
-//! shaded, hovering and picking them with the left button, and its
-//! handle, the shaft drawn by the renderer and the knobs widgets over it
-//! (`crate::extrude`) that the viewport follows while one is dragged.
-//! Picking casts the cursor's ray onto each sketch's plane and asks
-//! [`Profiles::region_at`] there, the nearest hit winning; no GPU picking.
-//! The model hides what's behind it: the renderer depth tests the regions
-//! and the shaft, and a knob the model's mesh is in front of isn't shown.
+//! shaded, hovering and picking them with the left button (`regions.rs`),
+//! and its handle, the shaft drawn by the renderer and the knobs widgets
+//! over it (`crate::extrude`) that the viewport follows while one is
+//! dragged. The model hides what's behind it: the renderer depth tests
+//! the regions and the shaft, and a knob the model's mesh is in front of
+//! isn't shown.
 
-use std::cell::RefCell;
-use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use glam::{DVec2, DVec3};
 use iced::widget::shader::Action;
 use iced::widget::{Space, container, mouse_area};
 use iced::{Element, Point, Rectangle, mouse};
-use varde_document::{FeatureId, MAX_COORD, Placement};
+use varde_document::MAX_COORD;
 use varde_kernel::RenderMesh;
 use varde_render::{Camera, GridPlane, Projection, SketchLayer, Space as LayerSpace};
-use varde_sketch::Profiles;
 
-use super::sketch::{fill_region, fill_region_in, line};
+use super::regions::{self, Regions, grid_plane};
+use super::sketch::line;
 use crate::anchors::Anchors;
 use crate::extrude::{Distance, ExtrudeLook, ExtrudeState, Handle, snap_step};
 use crate::pick::{aabb, ray_hits, through_box};
@@ -28,12 +25,8 @@ use crate::projection::Projector;
 use crate::theme::{self, SketchColors};
 use crate::{Look, Message};
 
-/// How wide the handle's shaft and the outline of picked regions are, in
-/// pixels.
+/// How wide the handle's shaft is, in pixels.
 const SHAFT_WIDTH: f32 = 2.0;
-const OUTLINE_WIDTH: f32 = 1.8;
-/// How opaque the fill of a picked region is.
-const PICKED_ALPHA: f32 = 0.35;
 /// The side of a knob of the handle, in pixels.
 const KNOB: f32 = 14.0;
 /// How near to along the handle's axis the cursor's ray may run and still
@@ -57,23 +50,7 @@ pub(crate) struct Extruding<'a> {
 }
 
 /// What the viewport keeps of the extrude between events and frames.
-#[derive(Default)]
-pub(crate) struct Input {
-    /// The region under the cursor as it last moved, and its sketch.
-    hover: Option<(FeatureId, usize)>,
-    /// The base layer last built, and what from.
-    base: RefCell<Option<Base>>,
-}
-
-/// The base layer as built, and what it was built from.
-struct Base {
-    /// Compared by pointer: the app finds them again only when the sketch
-    /// changes.
-    profiles: Arc<Profiles>,
-    picked: BTreeSet<usize>,
-    colors: SketchColors,
-    layer: Arc<SketchLayer>,
-}
+pub(crate) type Input = regions::Input;
 
 impl<'a> Extruding<'a> {
     pub(crate) fn new(state: ExtrudeState<'a>) -> Self {
@@ -81,13 +58,18 @@ impl<'a> Extruding<'a> {
         Self { state, handle }
     }
 
-    /// Where its layers are drawn: on the source sketch's plane, or XY
-    /// before there is one, when each candidate is drawn on its own.
+    /// Its sketches and the regions picked.
+    fn regions(&self) -> Regions<'_, 'a> {
+        Regions {
+            candidates: &self.state.candidates,
+            source: self.state.source,
+            picked: self.state.picked,
+        }
+    }
+
+    /// Where its layers are drawn: see [`Regions::plane`].
     pub(crate) fn plane(&self) -> GridPlane {
-        self.state
-            .source()
-            .and_then(|source| grid_plane(source.plane.placement()))
-            .unwrap_or(GridPlane::XY)
+        self.regions().plane()
     }
 
     /// The handle's knobs, anchored over the viewport seen by `camera`
@@ -138,13 +120,13 @@ impl<'a> Extruding<'a> {
                     return Some(Action::publish(Message::Look(Look::Extrude(look))).and_capture());
                 }
                 let over = cursor.position_over(bounds).map(local);
-                let hover = over.and_then(|at| self.region_under(at, camera, bounds));
+                let hover = over.and_then(|at| self.regions().region_under(at, camera, bounds));
                 (std::mem::replace(&mut input.hover, hover) != hover).then(Action::request_redraw)
             }
             mouse::Event::CursorLeft => input.hover.take().map(|_| Action::request_redraw()),
             mouse::Event::ButtonPressed(mouse::Button::Left) => {
                 let at = local(cursor.position_over(bounds)?);
-                let (sketch, region) = self.region_under(at, camera, bounds)?;
+                let (sketch, region) = self.regions().region_under(at, camera, bounds)?;
                 if !self.state.editable {
                     return None;
                 }
@@ -172,35 +154,6 @@ impl<'a> Extruding<'a> {
         }
         cursor.position_over(bounds)?;
         (input.hover.is_some() && self.state.editable).then_some(mouse::Interaction::Pointer)
-    }
-
-    /// The region under the screen position `at`, and its sketch: of the
-    /// candidates' regions the cursor's ray meets, the nearest.
-    fn region_under(
-        &self,
-        at: DVec2,
-        camera: &Camera,
-        bounds: Rectangle,
-    ) -> Option<(FeatureId, usize)> {
-        let mut nearest: Option<(f64, FeatureId, usize)> = None;
-        for candidate in &self.state.candidates {
-            let placement = candidate.plane.placement();
-            let Some(projector) = Projector::new(camera, placement, bounds.width, bounds.height)
-            else {
-                continue;
-            };
-            let Some(cursor) = projector.cursor(at) else {
-                continue;
-            };
-            let Some(region) = candidate.profiles.region_at(cursor.at) else {
-                continue;
-            };
-            let depth = projector.depth(cursor.at);
-            if nearest.is_none_or(|(nearest, ..)| depth < nearest) {
-                nearest = Some((depth, candidate.feature, region));
-            }
-        }
-        nearest.map(|(_, feature, region)| (feature, region))
     }
 
     /// Where on the handle's axis the screen position `at` drags a knob:
@@ -238,31 +191,10 @@ impl<'a> Extruding<'a> {
         input: &Input,
         colors: SketchColors,
     ) -> (Arc<SketchLayer>, SketchLayer) {
-        let base = self.base_layer(input, colors);
+        let regions = self.regions();
+        let base = regions.base_layer(input, colors);
         let mut live = SketchLayer::default();
-        let source = self.state.source();
-        for candidate in &self.state.candidates {
-            let hovered = input
-                .hover
-                .filter(|(feature, _)| *feature == candidate.feature)
-                .and_then(|(_, region)| candidate.profiles.regions.get(region));
-            if source.is_some() {
-                if let Some(region) = hovered {
-                    fill_region(&mut live, region, colors.region_hovered);
-                }
-                continue;
-            }
-            let Some(plane) = grid_plane(candidate.plane.placement()) else {
-                continue;
-            };
-            let space = LayerSpace::On(plane);
-            for region in &candidate.profiles.regions {
-                fill_region_in(&mut live, space, region, colors.region);
-            }
-            if let Some(region) = hovered {
-                fill_region_in(&mut live, space, region, colors.region_hovered);
-            }
-        }
+        regions.live(input.hover, colors, &mut live);
         if let Some(handle) = &self.handle
             && self.state.refused.is_none()
             && let Some(plane) = grid_plane(handle.placement())
@@ -277,58 +209,6 @@ impl<'a> Extruding<'a> {
         }
         (base, live)
     }
-
-    /// The source sketch's regions shaded, and those picked filled and
-    /// outlined, kept in `input` until they change.
-    fn base_layer(&self, input: &Input, colors: SketchColors) -> Arc<SketchLayer> {
-        let Some(source) = self.state.source() else {
-            return Arc::default();
-        };
-        let mut base = input.base.borrow_mut();
-        let current = base.as_ref().is_some_and(|base| {
-            Arc::ptr_eq(&base.profiles, source.profiles)
-                && base.picked == *self.state.picked
-                && base.colors == colors
-        });
-        if let Some(base) = base.as_ref().filter(|_| current) {
-            return base.layer.clone();
-        }
-        let mut layer = SketchLayer::default();
-        let picked = colors.selected.scale_alpha(PICKED_ALPHA);
-        for (index, region) in source.profiles.regions.iter().enumerate() {
-            if self.state.picked.contains(&index) {
-                fill_region(&mut layer, region, picked);
-                for polyline in &region.outline {
-                    let mut closed = polyline.clone();
-                    closed.extend(polyline.first().copied());
-                    layer.polyline(
-                        LayerSpace::Sketch,
-                        &closed,
-                        line(colors.selected, OUTLINE_WIDTH, false),
-                    );
-                }
-            } else {
-                fill_region(&mut layer, region, colors.region);
-            }
-        }
-        let layer = Arc::new(layer);
-        *base = Some(Base {
-            profiles: source.profiles.clone(),
-            picked: self.state.picked.clone(),
-            colors,
-            layer: layer.clone(),
-        });
-        layer
-    }
-}
-
-/// The renderer's plane of `placement`, unless it's too far out for it.
-fn grid_plane(placement: Placement) -> Option<GridPlane> {
-    GridPlane::new(
-        placement.origin.as_vec3(),
-        placement.x.as_vec3(),
-        placement.y.as_vec3(),
-    )
 }
 
 /// Whether `mesh` hides the world point `at` from `camera`: a triangle

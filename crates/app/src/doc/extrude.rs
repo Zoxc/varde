@@ -4,20 +4,14 @@
 //! and committing it as one undo step or cancelling it, which leaves no
 //! trace.
 
-use std::collections::BTreeSet;
-use std::sync::Arc;
-
 use varde_document::{
     BodyId, Command, Design, Document, Extent, Extrude, ExtrudeError, FeatureId, FeatureKind,
-    MAX_EXTRUDE_REGIONS, Operation, RegionRef, Sketch, Targets,
+    MAX_EXTRUDE_REGIONS, Operation, Targets,
 };
-use varde_expr::{Unit, Value};
-use varde_sketch::{MAX_WORK, Profiles};
-use varde_view::{
-    Candidate, Distance, DistanceField, ExtentKind, ExtrudeLook, ExtrudeState, ExtrudeTarget,
-    OperationKind,
-};
+use varde_expr::Unit;
+use varde_view::{Distance, ExtentKind, ExtrudeLook, ExtrudeState, OperationKind};
 
+use super::regions::{BodyTargets, RegionPick, TypedText};
 use super::{Doc, Focus};
 
 /// The extrude being set up, while one is: [`Doc::extrude`].
@@ -25,47 +19,16 @@ use super::{Doc, Focus};
 pub(crate) struct ExtrudeSession {
     /// The extrude edited, or `None` for a new one.
     pub(crate) feature: Option<FeatureId>,
-    /// The sketch the extrude takes regions of, once there is one.
-    pub(crate) source: Option<FeatureId>,
-    /// Whether the source stays when no region is picked: one the
-    /// session started from, selected or edited, rather than picked.
-    fixed: bool,
-    /// The profiles of the source, or before there is one of the visible
-    /// sketches, those with regions.
-    found: Vec<Found>,
-    /// The sketches found to have no regions to pick: too complex within
-    /// the whole of [`MAX_WORK`], or but for the source with none. Kept,
-    /// as those found are, and also while not wanted, so as not to work
-    /// them out again on every change to the document until they change.
-    /// Those past what's left of [`REFRESH_WORK`] aren't: they're tried
-    /// again on the next change.
-    skipped: Vec<(FeatureId, Sketch)>,
-    /// How many times profiles were worked out, for tests.
-    #[cfg(test)]
-    worked_out: usize,
-    /// The regions picked, by index into the source's profiles.
-    pub(crate) picked: BTreeSet<usize>,
-    /// The references to them, in the same order, made as they're picked
-    /// (and again when the sketch changes). Kept while the source's
-    /// regions can't be found, which leaves none picked, to find them
-    /// again once they can.
-    references: Vec<RegionRef>,
-    /// How many of the edited extrude's regions weren't found.
-    pub(crate) missing: usize,
+    /// The regions picked, and the sketch they're of.
+    pub(crate) regions: RegionPick,
     pub(crate) extent: ExtentKind,
     /// The first distance's field, and two sides' second.
-    pub(crate) fields: [DistanceText; 2],
+    pub(crate) fields: [TypedText; 2],
     pub(crate) flip: bool,
     pub(crate) operation: OperationKind,
-    /// The bodies a join, cut or intersect leaves out, sorted: the
-    /// edited extrude's to start with.
-    pub(crate) excluded: Vec<BodyId>,
-    /// The bodies put back after being taken out, each with the newest
-    /// draft revision before it was: listed until a touch test of a later
-    /// draft answers, which they were part of, so a body ticked again
-    /// doesn't drop out of the list while that answer is on its way.
-    /// One entry per body, so no longer than the document's bodies.
-    reticked: Vec<(BodyId, u64)>,
+    /// The bodies a join, cut or intersect leaves out: the edited
+    /// extrude's to start with.
+    pub(crate) targets: BodyTargets,
     /// The handle's knob being dragged, if one is.
     pub(crate) grabbed: Option<Distance>,
     /// The design as the fields' texts were last read, whose units bare
@@ -73,99 +36,24 @@ pub(crate) struct ExtrudeSession {
     design: Design,
 }
 
-/// A sketch's profiles, and the sketch they're of.
-#[derive(Debug)]
-struct Found {
-    feature: FeatureId,
-    sketch: Sketch,
-    profiles: Arc<Profiles>,
-}
-
-/// A distance's field: the text as typed, the value it last gave, and why
-/// the text is refused, if it is.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct DistanceText {
-    pub(crate) text: String,
-    pub(crate) value: Option<Value>,
-    pub(crate) error: Option<varde_expr::Error>,
-}
-
 /// The distance a new extrude starts with, in millimetres.
 const DEFAULT_DISTANCE: f64 = 10.0;
-
-/// The most work finding the profiles of the visible sketches may take
-/// in all, in the unit of [`MAX_WORK`], on the UI thread: a file can hold
-/// any number of sketches, each as complex as [`MAX_WORK`] allows.
-/// Those past it have no regions to pick.
-const REFRESH_WORK: usize = 2 * MAX_WORK;
-
-impl DistanceText {
-    /// The field holding `value`, a distance of `document`'s. It shows
-    /// the text with the design's unit written after its bare numbers,
-    /// "10 mm" for "10", as a new extrude's does; the value stays as it
-    /// was typed, so OK with nothing changed writes nothing.
-    fn of(value: &Value, document: &Document) -> Self {
-        let mut shown = value.clone();
-        shown.pin_units(&Extent::ask(&document.design()));
-        Self {
-            text: shown.text,
-            value: Some(value.clone()),
-            error: None,
-        }
-    }
-
-    /// The field as the view shows it.
-    fn field(&self) -> DistanceField<'_> {
-        DistanceField {
-            text: &self.text,
-            error: self.error.as_ref(),
-            value: self.value.as_ref().map(|value| value.value),
-        }
-    }
-
-    /// Reads `text` as a distance of `document`'s: the value it gives,
-    /// or why it's refused, keeping the last value.
-    fn input(&mut self, text: String, document: &Document) {
-        match Value::new(&text, &Extent::ask(&document.design())) {
-            Ok(value) => {
-                self.value = Some(value);
-                self.error = None;
-            }
-            Err(error) => self.error = Some(error),
-        }
-        self.text = text;
-    }
-}
 
 impl ExtrudeSession {
     /// A session setting up a new extrude, in `document`'s units, taking
     /// the regions of `source` if given, else of the one the first region
     /// picked is in.
     fn new(document: &Document, source: Option<FeatureId>) -> Self {
-        let mut distance = DistanceText {
-            text: String::new(),
-            value: None,
-            error: None,
-        };
         let text = varde_expr::format(DEFAULT_DISTANCE, Some(Unit::Length(document.units())));
-        distance.input(text, document);
+        let distance = TypedText::read(text, &Extent::ask(&document.design()));
         Self {
             feature: None,
-            source,
-            fixed: source.is_some(),
-            found: Vec::new(),
-            skipped: Vec::new(),
-            #[cfg(test)]
-            worked_out: 0,
-            picked: BTreeSet::new(),
-            references: Vec::new(),
-            missing: 0,
+            regions: RegionPick::new(source, MAX_EXTRUDE_REGIONS),
             extent: ExtentKind::OneSide,
             fields: [distance.clone(), distance],
             flip: false,
             operation: OperationKind::NewBody,
-            excluded: Vec::new(),
-            reticked: Vec::new(),
+            targets: BodyTargets::default(),
             grabbed: None,
             design: document.design(),
         }
@@ -176,14 +64,12 @@ impl ExtrudeSession {
     fn editing(document: &Document, feature: FeatureId, extrude: &Extrude) -> Self {
         let mut session = Self::new(document, Some(extrude.sketch));
         session.feature = Some(feature);
-        session.refresh(document);
-        let found = session
-            .found(extrude.sketch)
-            .map(|found| found.profiles.resolve(&extrude.regions));
-        let resolved = found.unwrap_or_else(|| vec![None; extrude.regions.len()]);
-        session.missing = resolved.iter().filter(|index| index.is_none()).count();
-        let picked = resolved.into_iter().flatten().collect();
-        session.pick(picked);
+        session.regions = RegionPick::editing(
+            document,
+            extrude.sketch,
+            &extrude.regions,
+            MAX_EXTRUDE_REGIONS,
+        );
         let (extent, [first, second]) = match &extrude.extent {
             Extent::OneSide(d) => (ExtentKind::OneSide, [Some(d), None]),
             Extent::Symmetric(d) => (ExtentKind::Symmetric, [Some(d), None]),
@@ -191,47 +77,18 @@ impl ExtrudeSession {
             Extent::ThroughAll => (ExtentKind::ThroughAll, [None, None]),
         };
         session.extent = extent;
-        let first = first.map(|first| DistanceText::of(first, document));
+        let ask = Extent::ask(&document.design());
+        let first = first.map(|first| TypedText::of(first, &ask));
         if let Some(first) = &first {
             session.fields = [first.clone(), first.clone()];
         }
         if let Some(second) = second {
-            session.fields[1] = DistanceText::of(second, document);
+            session.fields[1] = TypedText::of(second, &ask);
         }
         session.flip = extrude.flip;
         session.operation = OperationKind::of(&extrude.operation);
-        session.excluded = extrude.operation.excluded().to_vec();
+        session.targets = BodyTargets::new(extrude.operation.excluded());
         session
-    }
-
-    /// The profiles found of `feature`, if it's a candidate.
-    fn found(&self, feature: FeatureId) -> Option<&Found> {
-        self.found.iter().find(|found| found.feature == feature)
-    }
-
-    /// Picks the regions `picked` of the source, making their references.
-    /// Those that can't be referenced, too thin for a point inside to be
-    /// found, are left out.
-    fn pick(&mut self, picked: BTreeSet<usize>) {
-        let profiles = self
-            .source
-            .and_then(|source| self.found(source))
-            .map(|found| found.profiles.clone());
-        let Some(profiles) = profiles else {
-            self.picked.clear();
-            self.references.clear();
-            return;
-        };
-        let referenced: Vec<(usize, RegionRef)> = picked
-            .into_iter()
-            .filter_map(|index| Some((index, profiles.reference(index)?)))
-            .take(MAX_EXTRUDE_REGIONS)
-            .collect();
-        self.picked = referenced.iter().map(|(index, _)| *index).collect();
-        self.references = referenced
-            .into_iter()
-            .map(|(_, reference)| reference)
-            .collect();
     }
 
     /// Keeps each distance's length where the design's units changed
@@ -245,113 +102,16 @@ impl ExtrudeSession {
         }
         let ask = Extent::ask(&self.design);
         for field in &mut self.fields {
-            if let Some(value) = &mut field.value {
-                value.pin_units(&ask);
-                if field.error.is_none() {
-                    field.text = value.text.clone();
-                }
-            }
+            field.follow_units(&ask);
         }
         self.design = design;
-    }
-
-    /// Finds the profiles of the sketches of `document` whose regions can
-    /// be picked again where their sketch changed, and those picked in
-    /// the source again by their references. False if the source is gone.
-    /// The source's within [`MAX_WORK`], or before there is one the
-    /// visible sketches' within [`REFRESH_WORK`] in all.
-    fn refresh(&mut self, document: &Document) -> bool {
-        let wanted: Vec<FeatureId> = match self.source {
-            Some(source) => vec![source],
-            None => document
-                .features()
-                .iter()
-                .filter(|feature| feature.visible)
-                .map(|feature| feature.id)
-                .collect(),
-        };
-        let mut old = std::mem::take(&mut self.found);
-        let mut old_skipped = std::mem::take(&mut self.skipped);
-        let mut left = REFRESH_WORK;
-        let mut remap = false;
-        for id in wanted {
-            let Some(FeatureKind::Sketch { sketch, .. }) = document.feature(id).map(|f| &f.kind)
-            else {
-                if Some(id) == self.source {
-                    return false;
-                }
-                continue;
-            };
-            let kept = old.iter().position(|found| found.feature == id);
-            let is_source = Some(id) == self.source;
-            if let Some(at) = kept.filter(|&at| old[at].sketch == *sketch) {
-                self.found.push(old.swap_remove(at));
-                continue;
-            }
-            let skipped = old_skipped.iter().position(|(feature, _)| *feature == id);
-            if let Some(at) = skipped {
-                let skipped = old_skipped.swap_remove(at);
-                if skipped.1 == *sketch {
-                    self.skipped.push(skipped);
-                    continue;
-                }
-            }
-            remap |= is_source;
-            // Past the budget, not even its splines' shapes are worked
-            // out: a file may hold any number of sketches. Nor kept as
-            // skipped, as it's no more complex than those that took the
-            // work: tried again on a later change, when those found are
-            // kept and spend none.
-            if !is_source && left == 0 {
-                continue;
-            }
-            #[cfg(test)]
-            {
-                self.worked_out += 1;
-            }
-            // A sketch too complex for its regions to be found has none
-            // to pick; too complex for less than the whole of
-            // [`MAX_WORK`], as with that left of the budget, it may not
-            // be, and it's tried again on a later change.
-            let whole = is_source || left >= MAX_WORK;
-            let found = if is_source {
-                sketch.profiles()
-            } else {
-                sketch.profiles_spending(&mut left)
-            };
-            match found {
-                Ok(profiles) if is_source || !profiles.regions.is_empty() => {
-                    self.found.push(Found {
-                        feature: id,
-                        sketch: sketch.clone(),
-                        profiles: Arc::new(profiles),
-                    });
-                }
-                Err(_) if !whole => {}
-                _ => self.skipped.push((id, sketch.clone())),
-            }
-        }
-        // Those not wanted now, while there's a source, may be again
-        // once there isn't.
-        let others = old_skipped.into_iter();
-        (self.skipped).extend(others.filter(|(id, _)| is_sketch(document, *id)));
-        if remap {
-            let source = self.source.and_then(|source| self.found(source));
-            match source.map(|found| found.profiles.resolve(&self.references)) {
-                Some(resolved) => self.pick(resolved.into_iter().flatten().collect()),
-                // Its regions can't be found for now: the references wait
-                // for the sketch to have them again.
-                None => self.picked.clear(),
-            }
-        }
-        true
     }
 
     /// The extrude as set up, if it's whole: a source, regions picked, and
     /// the distances its extent takes, as they last read.
     fn extrude(&self) -> Option<Extrude> {
-        let sketch = self.source?;
-        if self.picked.is_empty() {
+        let sketch = self.regions.source?;
+        if self.regions.picked.is_empty() {
             return None;
         }
         let value = |distance: Distance| self.fields[distance.index()].value.clone();
@@ -364,7 +124,7 @@ impl ExtrudeSession {
             ExtentKind::ThroughAll => Extent::ThroughAll,
         };
         let targets = Targets {
-            excluded: self.excluded.clone(),
+            excluded: self.targets.excluded.clone(),
         };
         let operation = match self.operation {
             OperationKind::NewBody => Operation::NewBody(BodyId::NEW),
@@ -374,7 +134,7 @@ impl ExtrudeSession {
         };
         Some(Extrude {
             sketch,
-            regions: self.references.clone(),
+            regions: self.regions.references().to_vec(),
             extent,
             flip: self.flip,
             operation,
@@ -406,35 +166,6 @@ impl ExtrudeSession {
                 .is_some_and(|extrude| extrude.check_own(design).is_ok())
     }
 
-    /// Takes `body` out of the join, cut or intersect, or puts it back,
-    /// if it's one of `document`'s made before the extrude edited.
-    /// `revision` is the newest draft revision given out: a body put back
-    /// is listed until a touch test of a later one answers.
-    fn toggle_target(&mut self, body: BodyId, document: &Document, revision: u64) {
-        match self.excluded.binary_search(&body) {
-            Ok(at) => {
-                self.excluded.remove(at);
-                self.reticked.retain(|(reticked, _)| *reticked != body);
-                self.reticked.push((body, revision));
-            }
-            Err(at) => {
-                let made_before = document.body(body).is_some_and(|made| {
-                    let maker = document
-                        .features()
-                        .iter()
-                        .position(|f| f.id == made.created_by);
-                    let edited = self.feature.and_then(|feature| {
-                        document.features().iter().position(|f| f.id == feature)
-                    });
-                    maker.is_some_and(|maker| edited.is_none_or(|edited| maker < edited))
-                });
-                if made_before {
-                    self.excluded.insert(at, body);
-                }
-            }
-        }
-    }
-
     /// Moves the knob of `distance` to `to`, in millimetres along the
     /// sketch plane's normal: one side's goes past the plane by flipping.
     /// A knob on the plane changes nothing, and so does one where the
@@ -454,7 +185,7 @@ impl ExtrudeSession {
         }
         let text = varde_expr::format(length, Some(Unit::Length(document.units())));
         let mut field = self.fields[distance.index()].clone();
-        field.input(text, document);
+        field.input(text, &Extent::ask(&document.design()));
         if field.error.is_some() {
             return;
         }
@@ -484,25 +215,30 @@ impl ExtrudeSession {
 
 impl Doc {
     /// Starts setting up a new extrude, in a document that can be changed
-    /// and outside a sketch, taking the regions of the sketch selected in
+    /// and outside a sketch and a revolve, taking the regions of the sketch selected in
     /// the Timeline if one is; or cancels the one being set up. The first
     /// distance's field takes the focus.
     pub(crate) fn start_extrude(&mut self) {
-        if self.extrude.take().is_some() || !self.editable() || self.sketch.is_some() {
+        if self.extrude.take().is_some()
+            || !self.editable()
+            || self.sketch.is_some()
+            || self.revolve.is_some()
+        {
             return;
         }
         self.picking_plane = false;
         let document = self.editor.document();
         let selected = self.selected_feature.filter(|&id| is_sketch(document, id));
         let mut session = ExtrudeSession::new(document, selected);
-        session.refresh(document);
+        session.regions.refresh(document);
         self.extrude = Some(session);
         self.focus = Some(Focus::All);
     }
 
     /// Edits the extrude feature `id`, if the document holds it, in a
     /// session with its values, outside a sketch, in a document that can
-    /// be changed: a read-only one has no session.
+    /// be changed: a read-only one has no session. A revolve being set up
+    /// is dropped.
     pub(crate) fn edit_extrude(&mut self, id: FeatureId) {
         let document = self.editor.document();
         let Some(FeatureKind::Extrude(extrude)) = document.feature(id).map(|f| &f.kind) else {
@@ -512,6 +248,7 @@ impl Doc {
             return;
         }
         self.picking_plane = false;
+        self.revolve = None;
         self.selected_feature = Some(id);
         self.extrude = Some(ExtrudeSession::editing(document, id, extrude));
         self.focus = Some(Focus::All);
@@ -528,27 +265,7 @@ impl Doc {
             ExtrudeLook::Cancel => self.extrude = None,
             _ if !editable => {}
             ExtrudeLook::PickRegion { sketch, region } => {
-                if session.source.is_some_and(|source| source != sketch) {
-                    return;
-                }
-                let Some(found) = session.found(sketch) else {
-                    return;
-                };
-                if region >= found.profiles.regions.len() {
-                    return;
-                }
-                session.source = Some(sketch);
-                let mut picked = session.picked.clone();
-                if !picked.remove(&region) {
-                    picked.insert(region);
-                }
-                session.pick(picked);
-                // All taken out again, another sketch's may be picked,
-                // unless the session started from this one.
-                if session.picked.is_empty() && !session.fixed {
-                    session.source = None;
-                }
-                session.refresh(document);
+                session.regions.toggle(sketch, region, false, document);
             }
             ExtrudeLook::Extent(kind) => {
                 // Only a cut goes through all.
@@ -557,7 +274,8 @@ impl Doc {
                 }
             }
             ExtrudeLook::Input { distance, text } => {
-                session.fields[distance.index()].input(text, document);
+                let ask = Extent::ask(&document.design());
+                session.fields[distance.index()].input(text, &ask);
             }
             ExtrudeLook::Flip => session.flip = !session.flip,
             ExtrudeLook::Operation(kind) => {
@@ -567,7 +285,8 @@ impl Doc {
                 }
             }
             ExtrudeLook::Target(body) => {
-                session.toggle_target(body, document, self.feed.revision());
+                let revision = self.feed.revision();
+                (session.targets).toggle(body, session.feature, document, revision);
             }
             ExtrudeLook::GrabHandle(distance) => session.grabbed = Some(distance),
             ExtrudeLook::DragHandle { distance, to } => {
@@ -650,23 +369,17 @@ impl Doc {
                 Some(FeatureKind::Extrude(_))
             )
         });
-        if !(editable && !replaced && edited && session.refresh(document)) {
+        if !(editable && !replaced && edited && session.regions.refresh(document)) {
             self.extrude = None;
             return;
         }
         session.follow_units(document);
-        // Bodies gone (by undo, say) can't be taken out, nor put back.
-        session
-            .excluded
-            .retain(|&body| document.body(body).is_some());
-        session
-            .reticked
-            .retain(|&(body, _)| document.body(body).is_some());
+        session.targets.prune(document);
     }
 
     /// The extrude being set up as the regeneration lane previews it, and
     /// the extrude it edits, if it's whole.
-    pub(crate) fn draft(&self) -> Option<(Option<FeatureId>, FeatureKind)> {
+    pub(crate) fn extrude_draft(&self) -> Option<(Option<FeatureId>, FeatureKind)> {
         let session = self.extrude.as_ref()?;
         Some((session.feature, session.extrude()?.into()))
     }
@@ -686,21 +399,7 @@ impl Doc {
     pub(crate) fn extrude_state(&self) -> Option<ExtrudeState<'_>> {
         let session = self.extrude.as_ref()?;
         let document = self.editor.document();
-        let candidates = session
-            .found
-            .iter()
-            .filter_map(|found| {
-                let FeatureKind::Sketch { plane, .. } = &document.feature(found.feature)?.kind
-                else {
-                    return None;
-                };
-                Some(Candidate {
-                    feature: found.feature,
-                    plane: *plane,
-                    profiles: &found.profiles,
-                })
-            })
-            .collect();
+        let candidates = session.regions.candidates(document);
         let editing = session
             .feature
             .and_then(|feature| document.feature(feature))
@@ -708,14 +407,14 @@ impl Doc {
         Some(ExtrudeState {
             editing,
             candidates,
-            source: session.source,
-            picked: &session.picked,
-            missing: session.missing,
+            source: session.regions.source,
+            picked: &session.regions.picked,
+            missing: session.regions.missing,
             extent: session.extent,
             fields: [session.fields[0].field(), session.fields[1].field()],
             flip: session.flip,
             operation: session.operation,
-            targets: self.extrude_targets(session),
+            targets: self.body_targets(session.operation, session.feature, &session.targets),
             grabbed: session.grabbed,
             error: self.feed.draft_error(),
             refused: session.refused(&document.design()),
@@ -724,46 +423,6 @@ impl Doc {
             editable: self.editable(),
             units: document.units(),
         })
-    }
-}
-
-impl Doc {
-    /// The bodies the session's join, cut or intersect lists: those its
-    /// preview touches, those taken out, and those put back since the
-    /// touch test last answered, in the order they were made. A body an
-    /// earlier join merged into another (as the model shown found) is
-    /// never touched, so it's listed only while it's taken out, which
-    /// does nothing then, or just put back: with the body holding it, so
-    /// that it can be seen and put back.
-    fn extrude_targets(&self, session: &ExtrudeSession) -> Vec<ExtrudeTarget<'_>> {
-        if !session.operation.has_targets() {
-            return Vec::new();
-        }
-        let document = self.editor.document();
-        let merged = self.feed.merged_before(document, session.feature);
-        let touched = self.feed.draft_touched();
-        let answered = self.feed.draft_touched_revision();
-        let reticked = |body: BodyId| {
-            session.reticked.iter().any(|&(reticked, since)| {
-                reticked == body && answered.is_none_or(|answered| answered <= since)
-            })
-        };
-        (document.bodies().iter())
-            .filter(|body| {
-                touched.contains(&body.id)
-                    || session.excluded.contains(&body.id)
-                    || reticked(body.id)
-            })
-            .map(|body| ExtrudeTarget {
-                body: body.id,
-                name: &body.name,
-                included: session.excluded.binary_search(&body.id).is_err(),
-                holder: (merged.holder(body.id))
-                    .filter(|_| !touched.contains(&body.id))
-                    .and_then(|holder| document.body(holder))
-                    .map(|holder| holder.name.as_str()),
-            })
-            .collect()
     }
 }
 

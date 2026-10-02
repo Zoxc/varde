@@ -147,8 +147,11 @@ follows the cursor while the app says a label is grabbed, and sends the
 drag and the release.
 
 Setting up an extrude (`viewport/extrude.rs`, `crate::extrude`, the
-app's `doc/extrude.rs`), the `Program` is given the session
-(`Extruding`) in place of a sketch: the model isn't faded and the grid
+app's `doc/extrude.rs`) or a revolve (`viewport/revolve.rs`, see
+`agents/features.md`), the `Program` is given the session
+(`viewport::Operating`: `Extruding` or `Revolving`; the region picking
+and shading below is theirs alike, `viewport/regions.rs`) in place of a
+sketch: the model isn't faded and the grid
 stays on XY, and the renderer's sketch layers carry the extrude, depth
 tested (`SketchScene::depth_tested`), so the model, the preview body
 included, hides what's behind it of them. Before
@@ -189,8 +192,9 @@ panel is the viewport's last layer, at its right under the camera
 controls (over them in a short viewport, `operation_panel::placed`) and
 12 px clear of the status bar (its body scrolls rather than run past
 it), `opaque` so clicks and the wheel on it don't reach the scene;
-the knobs' layer under it stays, empty, without knobs, so the panel's
-widget state survives the handle coming and going.
+the knobs' layer under it stays, empty, without knobs (and always for
+a revolve, which has none), so the panel's widget state survives the
+handle coming and going.
 
 The panel follows the mock's: its text in the text colour
 (`theme::operation_panel`, headings and the summary muted); extents and

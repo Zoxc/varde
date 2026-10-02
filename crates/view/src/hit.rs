@@ -58,6 +58,23 @@ pub(crate) fn hit_line(sketch: &Sketch, at: DVec2, tolerance: f64) -> Option<Id>
     nearest(lines, tolerance).or_else(|| nearest(axes.into_iter(), tolerance))
 }
 
+/// The line or axis under the cursor at `at`, the nearest within
+/// `tolerance`, construction lines included: what a revolve turns about.
+/// Unlike [`hit_line`], an axis counts only within `reach` of the origin,
+/// as far as it's drawn.
+pub(crate) fn hit_axis(sketch: &Sketch, at: DVec2, tolerance: f64, reach: f64) -> Option<Id> {
+    if !at.is_finite() {
+        return None;
+    }
+    let lines = sketch.curves.iter().filter_map(|entry| match entry.curve {
+        Curve::Line { .. } => Some((entry.id, curve_distance(sketch, &entry.curve, at)?)),
+        _ => None,
+    });
+    let axes = [(Id::X_AXIS, DVec2::X), (Id::Y_AXIS, DVec2::Y)]
+        .map(|(id, along)| (id, segment_distance(at, -along * reach, along * reach)));
+    nearest(lines, tolerance).or_else(|| nearest(axes.into_iter(), tolerance))
+}
+
 /// The point under the cursor at `at` where lines make a corner a fillet
 /// or a chamfer can go on ([`Sketch::corner_lines`]), the nearest within
 /// `tolerance`: what Fillet and Chamfer take.

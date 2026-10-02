@@ -6248,7 +6248,11 @@ for again without it.
 
 **The panel** (`view/src/extrude.rs`) floats at the viewport's right in
 the operation panel (`view/src/operation_panel.rs`, meant to hold every
-operation's panel): a fixed header (the title on one line, clipped, and
+operation's panel, with the parts the extrude and the revolve share:
+`Candidate`, `TypedField`, `OperationKind`, `BodyTarget`, the choices,
+ticks, typed fields, Bodies list and footer message; the app's session
+parts they share are in `app/src/doc/regions.rs`, see "UI" under
+Revolve in `agents/features.md`): a fixed header (the title on one line, clipped, and
 the region count), a body that scrolls (`PANEL_BODY`) when the panel would
 run past the viewport's bottom margin, and a fixed footer (the message and
 Cancel and OK), so OK and Cancel show and take clicks however many bodies
@@ -6260,7 +6264,7 @@ chosen, else disabled with "Only a cut goes through all"; choosing
 another operation while through all goes back to one side), the distance fields (the first is `VALUE_FIELD`, which
 takes the focus as the session opens, all selected; `Esc` in it cancels),
 Flip for one side and two sides, the operations, for Join, Cut and
-Intersect a "Bodies" list with a checkbox per body (`ExtrudeTarget`: the
+Intersect a "Bodies" list with a checkbox per body (`BodyTarget`: the
 draft's touched bodies as the newest answer of the current run of drafts
 that ran the touch test gave them, `MeshFeed::draft_touched`: kept while a
 changed draft is on its way, and while one fails before its tool exists
@@ -6273,7 +6277,7 @@ touch test of a later draft answers (`MeshFeed::draft_touched_revision`),
 so a body taken out and put back doesn't drop out of the list while its
 answer is on its way; a body that a join before the extrude merged
 into another is never touched, so it's listed only while taken out or
-just ticked again, with "in Body 1" after it (`ExtrudeTarget::holder`,
+just ticked again, with "in Body 1" after it (`BodyTarget::holder`,
 faint): taking it out does nothing then (its material is in its
 holder), and the row shows that and lets it be put back, after which
 it drops out once the touch test answers. Which bodies are merged there

@@ -5,18 +5,27 @@
 //! the room it has, so OK and Cancel stay on screen however many options
 //! there are or however short the window is.
 //!
-//! The extrude is its only user yet (`extrude::panel`); the other
-//! operations are to set themselves up in it too.
+//! The extrude (`extrude::panel`) and the revolve (`revolve::panel`) are
+//! set up in it, from the parts here they share: what a session hands the
+//! view of the sketches whose regions it picks, the choices, ticks and
+//! typed fields, the Bodies list of a join, cut or intersect, and the
+//! footer's message. The other operations are to set themselves up in it
+//! too.
+
+use std::sync::Arc;
 
 use iced::advanced::widget::{Operation, Tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer};
 use iced::widget::text::Wrapping;
-use iced::widget::{column, container, opaque, row, space, text};
+use iced::widget::{button, checkbox, column, container, opaque, row, space, text, text_input};
 use iced::{Alignment, Element, Event, Length, Rectangle, Size, Vector};
+use varde_document::{BodyId, FeatureId, Plane};
+use varde_sketch::{Profiles, Sketch};
 
 use crate::Message;
-use crate::chrome::{hrule, scrolled, small_button};
+use crate::chrome::{hrule, scrolled, sentence, small_button};
 use crate::controls::CONTROLS_HEIGHT;
+use crate::escape::OnEscape;
 use crate::status::STATUS_BAR_ROOM;
 use crate::theme::{self, Emphasis, SEMIBOLD};
 use crate::viewport::CONTROLS_TOP;
@@ -54,6 +63,95 @@ const MESSAGE_HEIGHT: f32 = 80.0;
 /// scrollbars of the body and the message float in its right padding,
 /// clear of the text.
 const SIDE: f32 = 10.0;
+
+/// How far in from the panel's side a typed value's field starts: its
+/// label's width and the gap after it. Why its text is refused shows
+/// under it, as far in.
+pub(crate) const FIELD_INDENT: f32 = 68.0;
+
+/// The gap between a typed value's label and its field.
+const FIELD_GAP: f32 = 6.0;
+
+/// A sketch whose regions can be picked, and where they are.
+#[derive(Debug, Clone, Copy)]
+pub struct Candidate<'a> {
+    pub feature: FeatureId,
+    pub plane: Plane,
+    /// The sketch, whose lines a revolve's axis is picked from.
+    pub sketch: &'a Sketch,
+    pub profiles: &'a Arc<Profiles>,
+}
+
+/// A typed value's field, a distance or an angle: its text, and why it's
+/// refused, if it is.
+#[derive(Debug, Clone, Copy)]
+pub struct TypedField<'a> {
+    pub text: &'a str,
+    pub error: Option<&'a varde_expr::Error>,
+    /// The last value it gave, in model units (millimetres or radians),
+    /// which the preview and an extrude's handle show while the text is
+    /// refused.
+    pub value: Option<f64>,
+}
+
+/// What an extrude or a revolve does with its solid, see
+/// `varde_document::Operation`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OperationKind {
+    #[default]
+    NewBody,
+    Join,
+    Cut,
+    Intersect,
+}
+
+impl OperationKind {
+    pub const ALL: [OperationKind; 4] = [
+        OperationKind::NewBody,
+        OperationKind::Join,
+        OperationKind::Cut,
+        OperationKind::Intersect,
+    ];
+
+    /// The kind of `operation`.
+    pub fn of(operation: &varde_document::Operation) -> Self {
+        use varde_document::Operation;
+        match operation {
+            Operation::NewBody(_) => OperationKind::NewBody,
+            Operation::Join(_) => OperationKind::Join,
+            Operation::Cut(_) => OperationKind::Cut,
+            Operation::Intersect(_) => OperationKind::Intersect,
+        }
+    }
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            OperationKind::NewBody => "New body",
+            OperationKind::Join => "Join",
+            OperationKind::Cut => "Cut",
+            OperationKind::Intersect => "Intersect",
+        }
+    }
+
+    /// Whether it works on bodies already there, which the panel then
+    /// lists.
+    pub fn has_targets(self) -> bool {
+        self != OperationKind::NewBody
+    }
+}
+
+/// A body a join, cut or intersect touches, or one taken out of it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BodyTarget<'a> {
+    pub body: BodyId,
+    pub name: &'a str,
+    /// Whether it's worked on: not taken out.
+    pub included: bool,
+    /// The name of the body an earlier join merged it into, if one did:
+    /// it's listed only while it's taken out (or just put back), which
+    /// does nothing then, so that can be seen and undone.
+    pub holder: Option<&'a str>,
+}
 
 /// What an operation's panel shows.
 pub(crate) struct Parts<'a> {
@@ -280,6 +378,187 @@ impl Widget<Message, iced::Theme, iced::Renderer> for Placed<'_> {
             viewport,
             translation,
         )
+    }
+}
+
+/// A small heading in the panel.
+pub(crate) fn heading<'a>(label: &'a str) -> Element<'a, Message> {
+    text(label)
+        .size(11.5)
+        .font(SEMIBOLD)
+        .style(theme::muted_text)
+        .into()
+}
+
+/// Four choices in two rows of two.
+pub(crate) fn grid<'a>(choices: [Element<'a, Message>; 4]) -> Element<'a, Message> {
+    let [a, b, c, d] = choices;
+    column![row![a, b].spacing(4), row![c, d].spacing(4)]
+        .spacing(4)
+        .into()
+}
+
+/// A choice of the panel's, highlighted while `on`, sending `message`, or
+/// disabled without one.
+pub(crate) fn choice<'a>(
+    label: &'a str,
+    on: bool,
+    message: Option<Message>,
+) -> Element<'a, Message> {
+    let font = if on { SEMIBOLD } else { iced::Font::DEFAULT };
+    button(
+        text(label)
+            .size(12)
+            .font(font)
+            .width(Length::Fill)
+            .align_x(Alignment::Center),
+    )
+    .width(Length::Fill)
+    .padding([3, 6])
+    .style(theme::choice(on))
+    .on_press_maybe(message)
+    .into()
+}
+
+/// A checkbox of the panel's, ticked while `on`, sending `message` when
+/// clicked, or disabled without one.
+pub(crate) fn tick<'a>(label: &'a str, on: bool, message: Option<Message>) -> Element<'a, Message> {
+    checkbox(on)
+        .label(label)
+        .size(15)
+        .spacing(7)
+        .text_size(12)
+        // A name with no spaces breaks where the panel ends.
+        .text_wrapping(Wrapping::WordOrGlyph)
+        .style(theme::tick)
+        .on_toggle_maybe(message.map(|message| move |_| message.clone()))
+        .into()
+}
+
+/// A labelled row of the panel: `label` as wide as a typed value's,
+/// then `content`.
+pub(crate) fn labelled<'a>(
+    label: &'a str,
+    content: impl Into<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    let label = text(label).size(12).width(FIELD_INDENT - FIELD_GAP);
+    row![label, content.into()]
+        .spacing(FIELD_GAP)
+        .align_y(Alignment::Center)
+        .into()
+}
+
+/// A typed value's field, named `label`, with the id `id`, showing why its
+/// text is refused under it. It sends `input` of the text typed, if the
+/// document can be changed; `Enter` in it sends `submit` (OK), `Esc`
+/// `cancel`.
+pub(crate) fn value_field<'a>(
+    label: &'a str,
+    id: iced::widget::Id,
+    field: TypedField<'a>,
+    input: Option<impl Fn(String) -> Message + 'a>,
+    submit: Message,
+    cancel: Message,
+) -> Element<'a, Message> {
+    let field_input = text_input(label, field.text)
+        .id(id)
+        .size(12)
+        .padding([2, 4])
+        .width(Length::Fill);
+    let field_input = match input {
+        Some(input) => field_input.on_input(input).on_submit(submit),
+        None => field_input,
+    };
+    let field_input = OnEscape::new(field_input, cancel);
+    let error = field.error.map(|error| {
+        container(
+            text(sentence(&error.to_string()).into_owned())
+                .size(11.5)
+                .wrapping(Wrapping::WordOrGlyph)
+                .style(theme::danger_text),
+        )
+        .padding(iced::Padding::ZERO.left(FIELD_INDENT))
+    });
+    column![labelled(label, field_input), error]
+        .spacing(2)
+        .into()
+}
+
+/// The Bodies list of a join, cut or intersect: a checkbox per body of
+/// `targets`, each sending `toggle` of it if the document can be
+/// changed, a body an earlier join merged into another with "in Body 1"
+/// after it, and for a join ticked for two or more, which body it
+/// merges them into. None for a new body, or with nothing to list.
+pub(crate) fn bodies<'a>(
+    operation: OperationKind,
+    targets: &[BodyTarget<'a>],
+    toggle: impl Fn(BodyId) -> Option<Message>,
+) -> Option<Element<'a, Message>> {
+    if !operation.has_targets() || targets.is_empty() {
+        return None;
+    }
+    let rows = targets.iter().map(|&target| {
+        let tick = tick(target.name, target.included, toggle(target.body));
+        match target.holder {
+            // Faint, as the Objects list notes a merged body.
+            Some(holder) => row![
+                tick,
+                space::horizontal(),
+                text(format!("in {holder}"))
+                    .size(12)
+                    .wrapping(Wrapping::None)
+                    .style(theme::faint_text),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .into(),
+            None => tick,
+        }
+    });
+    let merging = joined_into(operation, targets).map(|holder| {
+        // The mock's panel note: faint, 12 px.
+        text(format!("Joined into {holder}"))
+            .size(12)
+            .wrapping(Wrapping::WordOrGlyph)
+            .style(theme::faint_text)
+    });
+    Some(
+        column![heading("Bodies"), column(rows).spacing(4), merging]
+            .spacing(6)
+            .into(),
+    )
+}
+
+/// The body a join merges the bodies it's ticked for into, if it's
+/// ticked for two or more of `targets`: the first made of them, which
+/// then holds them all. A body merged away before isn't one of them.
+pub(crate) fn joined_into<'a>(
+    operation: OperationKind,
+    targets: &[BodyTarget<'a>],
+) -> Option<&'a str> {
+    if operation != OperationKind::Join {
+        return None;
+    }
+    let mut included = (targets.iter()).filter(|target| target.included && target.holder.is_none());
+    let first = included.next()?;
+    included.next().map(|_| first.name)
+}
+
+/// The footer's message: why OK can't be pressed (`refused`, by the
+/// operation's own check), else why the preview failed (`error`), else,
+/// if `checking`, that OK waits on the solver.
+pub(crate) fn footer_message<'a>(
+    refused: Option<String>,
+    error: Option<&'a str>,
+    checking: bool,
+) -> Option<Element<'a, Message>> {
+    match (refused, error) {
+        (Some(refused), _) => Some(message_text(
+            sentence(&refused).into_owned(),
+            theme::danger_text,
+        )),
+        (None, Some(error)) => Some(message_text(sentence(error), theme::danger_text)),
+        (None, None) => checking.then(|| message_text("Checking the sketch…", theme::muted_text)),
     }
 }
 

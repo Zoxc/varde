@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use iced::keyboard::{self, key};
@@ -7,6 +8,7 @@ use varde_regen::Request;
 use varde_view::{Distance, Edit, ExtentKind, ExtrudeLook, Look, Mode, OperationKind};
 
 use super::*;
+use crate::doc::regions::REFRESH_WORK;
 use crate::doc::sketch::CHECKING;
 use crate::tests::{answer, deferred, example, example_and_a_hole, key_in, press_in};
 
@@ -106,7 +108,7 @@ fn e_starts_a_session_where_a_click_picks_a_region_previewed() {
     key_in(&mut doc, key("e"));
     let session = doc.extrude.as_ref().expect("E starts a session");
     // Nothing selected: the first region picked sets the sketch.
-    assert_eq!(session.source, None);
+    assert_eq!(session.regions.source, None);
     let state = doc.extrude_state().unwrap();
     assert_eq!(state.candidates.len(), 1);
     assert!(!state.ready);
@@ -115,8 +117,8 @@ fn e_starts_a_session_where_a_click_picks_a_region_previewed() {
     let region = plate_region(&doc, sketch);
     extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region });
     let session = doc.extrude.as_ref().unwrap();
-    assert_eq!(session.source, Some(sketch));
-    assert_eq!(session.picked, BTreeSet::from([region]));
+    assert_eq!(session.regions.source, Some(sketch));
+    assert_eq!(session.regions.picked, BTreeSet::from([region]));
     assert!(doc.extrude_state().unwrap().ready);
 
     // The preview is the draft applied, a new body.
@@ -133,7 +135,7 @@ fn e_starts_a_session_where_a_click_picks_a_region_previewed() {
 
     // Clicked again, it's taken out, and the preview goes.
     extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region });
-    assert!(doc.extrude.as_ref().unwrap().picked.is_empty());
+    assert!(doc.extrude.as_ref().unwrap().regions.picked.is_empty());
     assert!(last_draft(&requests).is_none());
     answer(&mut doc, &requests);
     assert_eq!(doc.feed.shown_draft(), None);
@@ -145,7 +147,7 @@ fn a_selected_sketch_is_the_source() {
     let (mut doc, sketch, _) = plate();
     doc.look(Look::SelectFeature(sketch));
     doc.look(Look::StartExtrude);
-    assert_eq!(doc.extrude.as_ref().unwrap().source, Some(sketch));
+    assert_eq!(doc.extrude.as_ref().unwrap().regions.source, Some(sketch));
     // The toolbar's button again backs out.
     doc.look(Look::StartExtrude);
     assert!(doc.extrude.is_none());
@@ -240,9 +242,9 @@ fn a_double_clicked_extrude_reopens_with_its_values_and_is_set_again() {
     doc.look(Look::EditFeature(feature));
     let session = doc.extrude.as_ref().expect("editing it");
     assert_eq!(session.feature, Some(feature));
-    assert_eq!(session.source, Some(sketch));
-    assert_eq!(session.picked.len(), 1);
-    assert_eq!(session.missing, 0);
+    assert_eq!(session.regions.source, Some(sketch));
+    assert_eq!(session.regions.picked.len(), 1);
+    assert_eq!(session.regions.missing, 0);
     assert_eq!(session.extent, ExtentKind::OneSide);
     // Typed "10", it shows with its unit, as a new extrude's does.
     assert_eq!(session.fields[0].text, "10 mm");
@@ -518,7 +520,7 @@ fn a_cut_lists_the_bodies_it_touches_and_goes_through_all() {
         Some("it doesn't touch any body not taken out of it")
     );
     extrude(&mut doc, ExtrudeLook::Target(body));
-    assert_eq!(doc.extrude.as_ref().unwrap().excluded, []);
+    assert_eq!(doc.extrude.as_ref().unwrap().targets.excluded, []);
 
     // Joining can't go through all: it goes back to one side.
     extrude(&mut doc, ExtrudeLook::Operation(OperationKind::Join));
@@ -726,11 +728,17 @@ fn a_sketch_changed_under_the_session_keeps_its_regions_picked() {
     });
     doc.sync();
     let session = doc.extrude.as_ref().unwrap();
-    assert_eq!(session.picked, BTreeSet::from([plate_region(&doc, sketch)]));
+    assert_eq!(
+        session.regions.picked,
+        BTreeSet::from([plate_region(&doc, sketch)])
+    );
     // And undone, too.
     doc.update(Edit::Undo);
     let session = doc.extrude.as_ref().unwrap();
-    assert_eq!(session.picked, BTreeSet::from([plate_region(&doc, sketch)]));
+    assert_eq!(
+        session.regions.picked,
+        BTreeSet::from([plate_region(&doc, sketch)])
+    );
 }
 
 #[test]
@@ -942,7 +950,10 @@ fn ok_waits_for_the_sketch_edits_left_with_the_solver() {
         panic!("{:?}", profiles.regions);
     };
     assert!(whole.holes.is_empty());
-    assert_eq!(doc.extrude.as_ref().unwrap().picked, BTreeSet::from([0]));
+    assert_eq!(
+        doc.extrude.as_ref().unwrap().regions.picked,
+        BTreeSet::from([0])
+    );
     assert!(doc.extrude_state().unwrap().ready);
     let draft = last_draft(&requests).expect("the preview is asked for again");
     assert_eq!(profiles.resolve(&draft.extrude.regions), [Some(0)]);
@@ -985,7 +996,10 @@ fn undo_while_the_sketch_edits_wait_frees_ok() {
     assert!(!doc.proposing());
     assert_eq!(doc.editor.revision(), before);
     let session = doc.extrude.as_ref().unwrap();
-    assert_eq!(session.picked, BTreeSet::from([plate_region(&doc, sketch)]));
+    assert_eq!(
+        session.regions.picked,
+        BTreeSet::from([plate_region(&doc, sketch)])
+    );
     assert!(doc.extrude_state().unwrap().ready);
     // The dropped edit's answer changes nothing.
     lane.answer(&mut doc);
@@ -1100,7 +1114,10 @@ fn recovery_restored_while_the_sketch_edits_wait_frees_ok() {
     // The recovered plate has its hole: the session found its region
     // again, and OK is free.
     let session = doc.extrude.as_ref().unwrap();
-    assert_eq!(session.picked, BTreeSet::from([plate_region(&doc, sketch)]));
+    assert_eq!(
+        session.regions.picked,
+        BTreeSet::from([plate_region(&doc, sketch)])
+    );
     assert!(doc.extrude_state().unwrap().ready);
     lane.answer(&mut doc);
     assert_eq!(drawn(&doc, sketch).profiles().unwrap().regions.len(), 2);
@@ -1167,7 +1184,7 @@ fn an_edit_the_solver_rejects_while_waiting_frees_ok_and_keeps_the_pick() {
     assert!(!doc.proposing());
     assert_eq!(*drawn(&doc, sketch), committed);
     assert_eq!(
-        doc.extrude.as_ref().unwrap().picked,
+        doc.extrude.as_ref().unwrap().regions.picked,
         BTreeSet::from([region])
     );
     assert!(doc.extrude_state().unwrap().ready);
@@ -1433,7 +1450,7 @@ fn a_body_ticked_again_stays_listed_until_the_answer() {
     // Ticked again: still listed while its touch test is on its way,
     // and after it, which finds it touched.
     extrude(&mut doc, ExtrudeLook::Target(body));
-    assert!(doc.extrude.as_ref().unwrap().excluded.is_empty());
+    assert!(doc.extrude.as_ref().unwrap().targets.excluded.is_empty());
     assert_eq!(listed(&doc), [body]);
     assert!(doc.extrude_state().unwrap().targets[0].included);
     answer(&mut doc, &requests);
@@ -1467,7 +1484,7 @@ fn a_body_ticked_again_that_isn_t_touched_goes_with_the_answer() {
         sketch: Box::new(drawn),
     });
     doc.sync();
-    assert_eq!(doc.extrude.as_ref().unwrap().picked.len(), 1);
+    assert_eq!(doc.extrude.as_ref().unwrap().regions.picked.len(), 1);
     extrude(&mut doc, ExtrudeLook::Target(body));
     assert_eq!(listed(&doc), [body]);
     answer(&mut doc, &requests);
@@ -1648,12 +1665,12 @@ fn a_body_ticked_again_and_undone_away_is_forgotten() {
     extrude(&mut doc, ExtrudeLook::Target(peg));
     answer(&mut doc, &requests);
     extrude(&mut doc, ExtrudeLook::Target(peg));
-    assert_eq!(doc.extrude.as_ref().unwrap().reticked.len(), 1);
+    assert_eq!(doc.extrude.as_ref().unwrap().targets.reticked.len(), 1);
     doc.update(Edit::Undo);
     assert!(doc.editor.document().body(peg).is_none());
     let session = doc.extrude.as_ref().unwrap();
-    assert_eq!(session.excluded, []);
-    assert_eq!(session.reticked, []);
+    assert_eq!(session.targets.excluded, []);
+    assert_eq!(session.targets.reticked, []);
 }
 
 #[test]
@@ -1684,7 +1701,7 @@ fn a_body_taken_out_and_undone_away_leaves_the_draft_whole() {
     assert_eq!(listed(&doc), [body, peg]);
     extrude(&mut doc, ExtrudeLook::Target(peg));
     answer(&mut doc, &requests);
-    assert_eq!(doc.extrude.as_ref().unwrap().excluded, [peg]);
+    assert_eq!(doc.extrude.as_ref().unwrap().targets.excluded, [peg]);
     assert_eq!(listed(&doc), [body, peg]);
     assert_eq!(doc.feed.draft_error(), None);
 
@@ -1693,7 +1710,7 @@ fn a_body_taken_out_and_undone_away_leaves_the_draft_whole() {
     doc.update(Edit::Undo);
     assert!(doc.editor.document().body(peg).is_none());
     assert!(doc.extrude.is_some());
-    assert_eq!(doc.extrude.as_ref().unwrap().excluded, []);
+    assert_eq!(doc.extrude.as_ref().unwrap().targets.excluded, []);
     let draft = last_draft(&requests).unwrap();
     assert_eq!(draft.extrude.operation, Operation::Cut(Default::default()));
     assert_eq!(listed(&doc), [body]);
@@ -1704,7 +1721,7 @@ fn a_body_taken_out_and_undone_away_leaves_the_draft_whole() {
     // edit could have given its id to another body. The list shows it.
     doc.update(Edit::Redo);
     assert!(doc.editor.document().body(peg).is_some());
-    assert_eq!(doc.extrude.as_ref().unwrap().excluded, []);
+    assert_eq!(doc.extrude.as_ref().unwrap().targets.excluded, []);
     answer(&mut doc, &requests);
     assert_eq!(listed(&doc), [body, peg]);
     assert!(doc.extrude_state().unwrap().targets[1].included);
@@ -2154,12 +2171,17 @@ fn a_sketch_too_complex_is_skipped_quickly_and_once() {
     let took = started.elapsed().as_secs_f64();
     assert!(took < ui_bound(), "{took}");
     let session = doc.extrude.as_ref().unwrap();
-    assert_eq!(session.source, None);
-    let found: Vec<FeatureId> = session.found.iter().map(|found| found.feature).collect();
+    assert_eq!(session.regions.source, None);
+    let found: Vec<FeatureId> = session
+        .regions
+        .found
+        .iter()
+        .map(|found| found.feature)
+        .collect();
     assert_eq!(found, vec![plate]);
-    assert_eq!(session.skipped.len(), 1);
-    assert_eq!(session.skipped[0].0, hostile);
-    assert_eq!(session.worked_out, 2);
+    assert_eq!(session.regions.skipped.len(), 1);
+    assert_eq!(session.regions.skipped[0].0, hostile);
+    assert_eq!(session.regions.worked_out, 2);
     // Changes to the document elsewhere don't work it out again.
     let region = plate_region(&doc, plate);
     extrude(
@@ -2181,9 +2203,9 @@ fn a_sketch_too_complex_is_skipped_quickly_and_once() {
     doc.sync();
     let session = doc.extrude.as_ref().unwrap();
     assert_eq!(session.flip, flip);
-    assert_eq!(session.source, None);
-    assert_eq!(session.skipped.len(), 1);
-    assert_eq!(session.worked_out, 2);
+    assert_eq!(session.regions.source, None);
+    assert_eq!(session.regions.skipped.len(), 1);
+    assert_eq!(session.regions.worked_out, 2);
     // Selected, it's the source, which has no regions to pick.
     doc.look(Look::StartExtrude);
     doc.look(Look::SelectFeature(hostile));
@@ -2192,9 +2214,9 @@ fn a_sketch_too_complex_is_skipped_quickly_and_once() {
     let took = started.elapsed().as_secs_f64();
     assert!(took < ui_bound(), "{took}");
     let session = doc.extrude.as_ref().unwrap();
-    assert_eq!(session.source, Some(hostile));
-    assert!(session.found.is_empty());
-    assert_eq!(session.skipped.len(), 1);
+    assert_eq!(session.regions.source, Some(hostile));
+    assert!(session.regions.found.is_empty());
+    assert_eq!(session.regions.skipped.len(), 1);
 }
 
 #[test]
@@ -2218,12 +2240,17 @@ fn the_visible_sketches_share_the_work() {
     let took = started.elapsed().as_secs_f64();
     assert!(took < ui_bound(), "{took}");
     let session = doc.extrude.as_ref().unwrap();
-    let found: Vec<FeatureId> = session.found.iter().map(|found| found.feature).collect();
+    let found: Vec<FeatureId> = session
+        .regions
+        .found
+        .iter()
+        .map(|found| found.feature)
+        .collect();
     // The plate's is cheap, but worked out first, so it eats into the
     // last that would fit.
     let mut expected = vec![plate];
     expected.extend(&sketches[..fit - 1]);
-    let skipped: Vec<FeatureId> = session.skipped.iter().map(|(id, _)| *id).collect();
+    let skipped: Vec<FeatureId> = session.regions.skipped.iter().map(|(id, _)| *id).collect();
     if found.len() == fit + 1 {
         expected.push(sketches[fit - 1]);
     }
@@ -2232,11 +2259,11 @@ fn the_visible_sketches_share_the_work() {
     assert!(skipped.is_empty(), "{skipped:?}");
     // The first past it takes all that's left, and those after aren't
     // worked out at all.
-    assert_eq!(session.worked_out, found.len() + 1);
+    assert_eq!(session.regions.worked_out, found.len() + 1);
     // Those found are kept, so the work's there for the rest as the
     // document changes, a share each time.
     let mut rounds = 0;
-    while doc.extrude.as_ref().unwrap().found.len() < sketches.len() + 1 {
+    while doc.extrude.as_ref().unwrap().regions.found.len() < sketches.len() + 1 {
         rounds += 1;
         assert!(rounds <= sketches.len(), "{rounds}");
         let visible = rounds % 2 == 0;
@@ -2247,7 +2274,7 @@ fn the_visible_sketches_share_the_work() {
         assert!(took < ui_bound(), "{took}");
     }
     let session = doc.extrude.as_ref().unwrap();
-    assert!(session.skipped.is_empty());
+    assert!(session.regions.skipped.is_empty());
 }
 
 /// [`example_and_a_hole`] with `more` New body extrudes of the plate

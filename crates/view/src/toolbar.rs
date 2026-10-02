@@ -42,11 +42,15 @@ pub fn toolbar<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
             if state.picking_plane {
                 Some("New sketch".to_owned())
             } else {
-                state.extrude.as_ref().map(|extrude| {
-                    extrude
-                        .editing
-                        .map_or_else(|| "Extrude".to_owned(), |name| format!("Editing {name}"))
-                })
+                let editing = |editing: Option<&str>, noun: &str| {
+                    editing.map_or_else(|| noun.to_owned(), |name| format!("Editing {name}"))
+                };
+                (state.extrude.as_ref())
+                    .map(|extrude| editing(extrude.editing, "Extrude"))
+                    .or_else(|| {
+                        let revolve = state.revolve.as_ref()?;
+                        Some(editing(revolve.editing, "Revolve"))
+                    })
             },
         ),
     };

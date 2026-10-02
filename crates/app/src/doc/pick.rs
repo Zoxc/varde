@@ -37,14 +37,14 @@ impl ModelPick {
 
 impl Doc {
     /// Whether the cursor picks the model: outside sketches and the
-    /// extrude being set up, which pick what they need themselves, and
+    /// extrude or revolve being set up, which pick what they need themselves, and
     /// not while a draft's preview is still shown after it, where what's
     /// selected would be looked for in a model that isn't the document's,
     /// nor while the model shown is of a document since replaced whole,
     /// whose bodies' ids may name others now.
     pub(crate) fn picks(&self) -> bool {
         self.sketch.is_none()
-            && self.extrude.is_none()
+            && !self.operating()
             && !self.feed.shows_draft()
             && !self.feed.predates_replacement()
     }

@@ -1,10 +1,14 @@
 use iced::widget::shader::Program as _;
 use iced::{Event, Point, Size};
-use varde_document::{OriginPlane, Plane};
+use std::collections::BTreeSet;
+
+use varde_document::{FeatureId, OriginPlane, Plane};
 use varde_expr::LengthUnit;
+use varde_sketch::Profiles;
 
 use super::*;
-use crate::extrude::{DistanceField, ExtentKind, OperationKind};
+use crate::extrude::ExtentKind;
+use crate::operation_panel::{OperationKind, TypedField};
 use crate::projection::top_camera;
 use crate::testing;
 use crate::theme::Mode;
@@ -49,7 +53,7 @@ fn state<'a>(
     picked: &'a BTreeSet<usize>,
     grabbed: Option<Distance>,
 ) -> ExtrudeState<'a> {
-    let field = DistanceField {
+    let field = TypedField {
         text: "10",
         error: None,
         value: Some(10.0),
@@ -59,6 +63,7 @@ fn state<'a>(
         candidates: vec![crate::Candidate {
             feature,
             plane: Plane::Origin(plane),
+            sketch: Box::leak(Box::default()),
             profiles,
         }],
         source: source.then_some(feature),
@@ -88,7 +93,7 @@ fn shown(state: ExtrudeState<'_>) -> Program<'_> {
         None,
         Mode::Light.palette(),
         None,
-        Some(Extruding::new(state)),
+        Some(crate::viewport::Operating::Extrude(Extruding::new(state))),
     )
 }
 
