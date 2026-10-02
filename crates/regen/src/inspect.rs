@@ -8,7 +8,10 @@
 //! references are ([`Topology::face`], [`Topology::edge`],
 //! [`Topology::corner`]: by key or alias, the nearest to the point among
 //! several), on the model the answer draws, so the same picks sent after
-//! an edit measure what they name now. A pick that names nothing (keys
+//! an edit measure what they name now. A pick of a body a join merged
+//! into another is resolved on the body holding it
+//! ([`Evaluation::holder`]): its faces and edges keep their keys there,
+//! and the body whole is the holder. A pick that names nothing (keys
 //! no entity has, a corner's keys not all different, no finite
 //! point) is answered not found, never with another entity. The answer
 //! says where each pick is in its own picking tables ([`At`]), for the
@@ -530,8 +533,12 @@ fn resolve<'a>(
     picking: &Picking,
     cache: &mut Cache,
 ) -> Result<Resolved<'a>, String> {
+    // A body a join merged into another is measured as the body holding
+    // it: its faces and edges are there by the same keys, and the body
+    // whole is the holder now.
+    let holder = evaluation.holder(pick.body).ok_or("body not found")?;
     let made = (evaluation.bodies.iter())
-        .find(|made| made.body == pick.body)
+        .find(|made| made.body == holder)
         .ok_or("body not found")?;
     let solid = &*made.solid;
     let topology = topology(made, cache);
@@ -542,7 +549,7 @@ fn resolve<'a>(
         return Err("the pick has no point".to_owned());
     }
     let found = |e: varde_kernel::topology::NotFound| e.to_string();
-    let places = Places::of(mesh, picking, pick.body, &topology, solid);
+    let places = Places::of(mesh, picking, holder, &topology, solid);
     let (pick, at) = match pick.entity {
         Entity::Body => (Pick::Body, None),
         Entity::Face(key) => {

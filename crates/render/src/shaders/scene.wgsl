@@ -814,14 +814,14 @@ fn vs_selected_edge(in: EdgeIn) -> LineOut {
     return highlight_segment(in, half, selected_edge());
 }
 
-// The edges in the second colour, as the selected edges are in theirs,
-// shaded alike.
+// The edges in the second colour, as wide as the selected edges, in it
+// unshaded: the selection's shade, far towards white in the dark theme,
+// would wash it out, and it stands apart from the selection's tint as
+// it is.
 @vertex
 fn vs_second_edge(in: EdgeIn) -> LineOut {
     let half = SELECTED_EDGE_WIDTH * 0.5 * u.viewport.z;
-    let shade = u.selected.w;
-    let towards = select(vec3<f32>(0.0), vec3<f32>(1.0), shade > 0.0);
-    return highlight_segment(in, half, vec4<f32>(mix(second_color(), towards, abs(shade)), 1.0));
+    return highlight_segment(in, half, vec4<f32>(second_color(), 1.0));
 }
 
 // Where the sketch point `at` is in the world.

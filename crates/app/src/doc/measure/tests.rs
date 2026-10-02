@@ -484,3 +484,106 @@ fn the_copy_button_copies_the_value_with_its_unit_at_full_precision() {
     });
     assert_eq!(copied.as_deref(), Some("0.3937007874015748 in"));
 }
+
+/// The viewport picks vertices too: a vertex's snap point is its corner,
+/// measured as the corner; one picked without it picks nothing.
+#[test]
+fn a_vertex_snaps_to_its_corner() {
+    let (mut doc, requests) = example();
+    doc.look(Look::StartMeasure);
+    let index = doc.feed.pick_index();
+    let at = glam::Vec3::new(30.0, 20.0, 10.0);
+    let corner = (index.mesh().corners().iter())
+        .position(|&c| glam::Vec3::from(c) == at)
+        .unwrap() as u32;
+    let target = Picked::Vertex(corner);
+    let snaps = index.snaps(target);
+    assert_eq!(snaps.len(), 1, "{snaps:?}");
+    let (snapped, point) = snaps[0];
+    assert_eq!(point, at.as_dvec3());
+    let pick = Pick {
+        model: index.model(),
+        target,
+        body: index.body(target).unwrap(),
+        at: point,
+        snap: None,
+    };
+    click(&mut doc, move |_| pick, false);
+    assert_eq!(doc.measure.as_ref().unwrap().picks[0], None);
+    let snapped = Pick {
+        snap: Some(snapped),
+        ..pick
+    };
+    click(&mut doc, move |_| snapped, false);
+    answer(&mut doc, &requests);
+    let Some(Ok(probed)) = doc.probed()[0] else {
+        panic!("{:?}", doc.feed.inspected());
+    };
+    assert_eq!(probed.measure, Ok(Measure::Point([30.0, 20.0, 10.0])));
+}
+
+/// The example with a second plate below it, its body.
+pub(super) fn two_plates() -> (Doc, std::rc::Rc<RefCell<Vec<Request>>>, BodyId) {
+    let (mut doc, requests) = example();
+    let document = doc.editor.document();
+    let Some(varde_document::FeatureKind::Extrude(plate)) = document
+        .features()
+        .get(1)
+        .map(|feature| feature.kind.clone())
+    else {
+        panic!("the example's second feature is its extrude");
+    };
+    let ask = varde_document::Extent::ask(&document.design());
+    let below = varde_document::Extrude {
+        flip: true,
+        extent: varde_document::Extent::OneSide(varde_expr::Value::new("3", &ask).unwrap()),
+        ..plate
+    };
+    doc.apply(document.add_feature(below.into()));
+    doc.sync();
+    answer(&mut doc, &requests);
+    let below = doc.editor.document().bodies().last().unwrap().id;
+    (doc, requests, below)
+}
+
+/// A body a join merged into another, picked by its row in Objects, is
+/// measured and highlighted as the body holding it; and a face of it
+/// picked before the join is found on the holder.
+#[test]
+fn picks_of_a_merged_body_are_of_its_holder() {
+    let (mut doc, requests, below) = two_plates();
+    let plate = doc.editor.document().bodies()[0].id;
+    doc.look(Look::StartMeasure);
+    let under = face(
+        &doc,
+        DVec3::new(-20.0, 15.0, -3.0),
+        |summary| matches!(summary, Summary::Plane { n, d } if n[2] < -0.5 && *d == 3.0),
+    );
+    assert_eq!(under.body, below);
+    click(&mut doc, move |_| under, false);
+    doc.look(Look::ClickBody {
+        body: below,
+        add: true,
+    });
+    let extent = crate::tests::two_sides(doc.editor.document(), "15", "5");
+    let join = varde_document::Operation::Join(varde_document::Targets::default());
+    crate::tests::add_disc(&mut doc.editor, (20.0, 0.0), extent, join);
+    doc.sync();
+    answer(&mut doc, &requests);
+    assert_eq!(doc.feed.merged_bodies(), [(below, plate)]);
+    let [Some(Ok(face)), Some(Ok(body))] = doc.probed() else {
+        panic!("{:?}", doc.feed.inspected());
+    };
+    assert!(matches!(face.at, Some(At::Face(_))), "{face:?}");
+    assert!(matches!(body.measure, Ok(Measure::Body { .. })), "{body:?}");
+    let index = doc.feed.pick_index();
+    let mut faces: Vec<u32> = index.body_faces(plate).collect();
+    let highlight = doc.highlight().unwrap();
+    let mut second = highlight.second_faces.clone();
+    faces.sort_unstable();
+    second.sort_unstable();
+    assert_eq!(second, faces);
+    assert!(!highlight.selected_faces.is_empty());
+}
+
+mod fuzz;

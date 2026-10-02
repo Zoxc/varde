@@ -230,7 +230,13 @@ impl Doc {
                 (Some(At::Face(face)), _) => targets.push(Picked::Face(face)),
                 (Some(At::Edge(edge)), _) if !point => targets.push(Picked::Edge(edge)),
                 (None, Entity::Body) => {
-                    targets.extend(index.body_faces(pick.body).map(Picked::Face));
+                    // A body a join merged into another is measured, and
+                    // drawn, as the body holding it.
+                    let merged = self.feed.merged_bodies();
+                    let holder = (merged.iter())
+                        .find(|(merged, _)| *merged == pick.body)
+                        .map_or(pick.body, |&(_, holder)| holder);
+                    targets.extend(index.body_faces(holder).map(Picked::Face));
                 }
                 _ => {}
             }

@@ -2803,8 +2803,19 @@ fn faces_and_edges_in_the_second_colour_are_drawn_in_it() {
     assert!(tint(second) < -40, "{second:?}");
     assert!(tint(over) < -20, "{over:?} over the selection");
 
+    // The selection's edges shaded far towards white, as the dark theme
+    // has them: the second colour's aren't, so they keep their hue.
     let (mesh, edge) = box_under_top_camera();
-    let edges = |highlights| render_sketch(&top_camera(), &mesh, highlighted(highlights), 1.0);
+    let edges = |highlights| {
+        let extras = Extras {
+            colors: Some(Colors {
+                selected_edge_shade: 0.85,
+                ..COLORS
+            }),
+            ..highlighted(highlights)
+        };
+        render_sketch(&top_camera(), &mesh, extras, 1.0)
+    };
     let (Some(second), Some(selected)) = (
         edges(Highlights {
             second_edges: vec![edge],
@@ -2819,6 +2830,7 @@ fn faces_and_edges_in_the_second_colour_are_drawn_in_it() {
     };
     for x in [90, 150, 180] {
         let (b, a) = (pixel(&second, x, 84), pixel(&selected, x, 84));
-        assert!(tint(b) < -60 && tint(a) > 60, "{b:?} and {a:?} at {x}");
+        assert!(tint(b) < -150, "{b:?} at {x}");
+        assert!(brighter(a, b) > 100, "{a:?} for {b:?} at {x}");
     }
 }

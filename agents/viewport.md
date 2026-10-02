@@ -556,8 +556,10 @@ first, second }>`, each an `InspectPick { body, entity, near }` whose
 `corner_keys`) and `near` the point picked at. Regen resolves each on
 its body's `Topology` as references resolve (by key or alias, the
 nearest to `near` among several) on the model the answer draws (a draft
-applied if it worked), so the same picks sent after an edit measure what
-they name now, and answers `Response::Regenerated.inspected:
+applied if it worked), a body a join merged into another on the body
+holding it (`Evaluation::holder`: its faces and edges keep their keys
+there, and the body whole is the holder; its places are the holder's),
+so the same picks sent after an edit measure what they name now, and answers `Response::Regenerated.inspected:
 Option<Inspected { revision, first, second, between }>`: per pick
 `Err("face not found")` (or edge, corner, "body not found", "the pick
 has no point" for a face, edge or corner whose `near` isn't finite: of
@@ -651,7 +653,7 @@ faces are, `Highlights::second_edges` drawn as selected edges are, both
 over the selection's; the renderer keeps its red, green and blue in the
 sketch plane's unused uniform w's, the uniforms being full), built only
 from the newest answer's `Probed::at` (a face's, an edge's; a body's
-faces from the body id
+faces from the body id, or its holder's for a body a join merged,
 once its measure came back), so it always names entries of the model
 shown; a point is drawn as a dot instead. On top of the model (not depth
 tested, so a distance through the plate or a point behind it shows) the
@@ -906,9 +908,9 @@ own. Selection is in the accent (`Colors::selected`). In a sketch
   (1 logical pixel) wide either side in white at half alpha
   (`vs_selected_outline`), for contrast with what's behind it.
 - Edges in the second colour (`Highlights::second_edges`, the measure
-  tool's B): a third range after the selected, drawn as those are in
-  `Colors::second`, shaded alike (`vs_second_outline`,
-  `vs_second_edge`); its faces (`Frame::second_faces`) are tinted as
+  tool's B): a third range after the selected, drawn as those are but
+  in `Colors::second` unshaded (the dark theme's shade, far towards
+  white, would wash it out) (`vs_second_outline`, `vs_second_edge`); its faces (`Frame::second_faces`) are tinted as
   selected faces are, in it (`fs_second_face`), after them.
 - Vertices: only those hovered or selected, an instance each
   (`VertexInstance`: position and flags), drawn as a sketch point is

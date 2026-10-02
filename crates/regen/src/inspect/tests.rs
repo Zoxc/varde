@@ -953,3 +953,48 @@ fn places_in_tables_that_don_t_line_up_are_none() {
         }
     }
 }
+
+/// Picks of a body a later join merges into another are measured on the
+/// body holding it: a face by its key, and the body whole as the holder;
+/// their places are the holder's in the tables.
+#[test]
+fn picks_of_a_merged_body_are_measured_on_its_holder() {
+    let mut editor = Editor::new(Document::example());
+    let plate = editor.document().bodies()[0].id;
+    let below = plate_below(&mut editor);
+    let before = tables(&editor);
+    let n = [0.0, 0.0, -1.0];
+    let under = face(&before, below, Summary::Plane { n, d: 3.0 });
+    let under = face_pick(&before, under, [-20.0, 15.0, -3.0]);
+    assert_eq!(under.body, below);
+    let extent = crate::history::tests::two_sides(editor.document(), "15", "5");
+    crate::history::tests::add_extrude(
+        &mut editor,
+        crate::history::tests::disc((20.0, 0.0), 5.0),
+        extent,
+        varde_document::Operation::Join(varde_document::Targets::default()),
+    );
+    let inspect = two(1, under, body_pick(below));
+    let (after, inspected) = ask(&mut Regenerator::default(), &editor, inspect);
+    assert_eq!(after.bodies(), [plate]);
+    let Some(At::Face(f)) = probed(&inspected.first).at else {
+        panic!("{inspected:?}");
+    };
+    assert_eq!(after.body(f), plate);
+    let Entity::Face(key) = under.entity else {
+        unreachable!()
+    };
+    assert_eq!(after.faces()[f as usize].key, key);
+    let Measure::Face { area, .. } = measured(&inspected.first) else {
+        panic!("a face");
+    };
+    // The lower plate's bottom, its hole and the boss's foot cut out.
+    assert_near(area, TOP_AREA - PI * 25.0);
+    let Measure::Body { volume, .. } = measured(&inspected.second.clone().unwrap()) else {
+        panic!("a body");
+    };
+    let joined = VOLUME + TOP_AREA * 3.0 + PI * 25.0 * (20.0 - 13.0);
+    assert_near(volume, joined);
+    // The face is on the body, so 0 between.
+    assert_near(gap(&inspected).distance, 0.0);
+}

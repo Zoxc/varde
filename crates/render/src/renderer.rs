@@ -220,7 +220,8 @@ pub struct Colors {
     pub selected_edge_shade: f32,
     /// The second colour, for the second of two picks (the measure
     /// tool's B), where the first is in [`Self::selected`]: faces tinted
-    /// with it and edges drawn in it as the selected are with theirs. See
+    /// with it as the selected are with theirs, and edges drawn in it,
+    /// unshaded. See
     /// [`Frame::second_faces`] and [`Highlights::second_edges`].
     pub second: Srgb,
 }
