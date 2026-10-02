@@ -430,16 +430,24 @@ impl Round {
     }
 }
 
-/// Whether one of the rounds `rounds` shows the pieces `x` and `y` more
-/// than `margin` apart: the ranges of its distance over them more than
-/// that apart, less the rounding of the coordinates.
-fn round_apart(rounds: &[Round], x: &Shape, y: &Shape, margin: f64) -> bool {
+/// Whether one of the rounds `rounds` shows the pieces `x` and `y` (in
+/// the boxes `bounds`) more than `margin` apart: the ranges of its
+/// distance over them more than that apart, less the rounding of the
+/// coordinates. That rounding is relative to the points' and the
+/// centre's coordinates, not only to their distance across the axis: a
+/// piece far along a cylinder from the point its axis is given by rounds
+/// by that much more in [`Round::across`].
+fn round_apart(rounds: &[Round], [x, y]: [&Shape; 2], bounds: [&Bounds3; 2], margin: f64) -> bool {
+    let coords = bounds
+        .iter()
+        .map(|b| b.min.abs().max(b.max.abs()).max_element())
+        .fold(0.0, f64::max);
     rounds.iter().any(|round| {
         let (Some((xlo, xhi)), Some((ylo, yhi))) = (round.range(x), round.range(y)) else {
             return false;
         };
         let gap = (ylo - xhi).max(xlo - yhi);
-        let scale = round.centre.abs().max_element() + xhi.max(yhi);
+        let scale = round.centre.abs().max_element() + coords + xhi.max(yhi);
         gap - 64.0 * f64::EPSILON * scale > margin
     })
 }
@@ -1100,7 +1108,12 @@ fn least(
                 return Ok(false);
             }
             work.spend(ROUND_WORK)?;
-            Ok(round_apart(rounds, &pair.x, &pair.y, margin))
+            Ok(round_apart(
+                rounds,
+                [&pair.x, &pair.y],
+                [&bpx, &bpy],
+                margin,
+            ))
         };
         if beyond(margin, work)? {
             // A pair of elements that may still come nearer than the best

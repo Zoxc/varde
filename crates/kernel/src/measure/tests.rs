@@ -777,3 +777,172 @@ fn reference_length(curve: &Conic3) -> f64 {
     }
     piece(curve, 0.0, 1.0, 0)
 }
+
+/// `profile` turned fully about `frame`'s `y`, at [`TOL`].
+fn turned(loops: Vec<Loop>, frame: &Frame) -> Solid {
+    crate::revolve(
+        &Profile { loops },
+        frame,
+        crate::Sweep::Full,
+        1,
+        &TOL,
+        &Budget::DEFAULT,
+    )
+    .unwrap()
+}
+
+/// The frames the revolve-based tests turn about: the `z` axis through
+/// the origin, and a tilted one off it.
+fn axes() -> [Frame; 2] {
+    let tilted = tilted();
+    [
+        Frame {
+            origin: DVec3::ZERO,
+            x: DVec3::X,
+            y: DVec3::Z,
+        },
+        Frame {
+            origin: tilted.origin,
+            x: tilted.x,
+            y: tilted.x.cross(tilted.y),
+        },
+    ]
+}
+
+/// Checks a revolved body's volume, area and centre against the exact
+/// ones: the solid is within half the fit tolerance of the shape it
+/// stands for, so its volume within that times the area, its area within
+/// that times the area over `radius` (the least radius of curvature of
+/// its fitted faces), and its centre within twice that shell's moment
+/// (half the fit times the area times `size`) over the volume.
+fn assert_turned(
+    what: &str,
+    body: &BodyMeasure,
+    (volume, area, centre): (f64, f64, DVec3),
+    radius: f64,
+    size: f64,
+) {
+    let half = TOL.fit() / 2.0;
+    let got = body.centre.unwrap();
+    assert!(
+        (body.volume - volume).abs() <= half * area,
+        "{what}: volume {} for {volume}",
+        body.volume
+    );
+    assert!(
+        (body.area - area).abs() <= 4.0 * half * area / radius,
+        "{what}: area {} for {area}",
+        body.area
+    );
+    assert!(
+        got.distance(centre) <= 2.0 * half * area * size / volume,
+        "{what}: centre {got} for {centre}"
+    );
+}
+
+#[test]
+fn revolved_cone_and_hemisphere_have_their_centroids() {
+    use crate::profile::tests::{arc, polygon};
+    let v = DVec2::new;
+    for frame in axes() {
+        // A cone of radius 4 and height 3: its centroid a quarter up. Its
+        // wall is exact but for the cap round its apex.
+        let (r, h) = (4.0, 3.0);
+        let cone = turned(
+            vec![polygon(&[v(0.0, 0.0), v(r, 0.0), v(0.0, h)], 1)],
+            &frame,
+        );
+        let slant = (r * r + h * h).sqrt();
+        let exact = (
+            PI * r * r * h / 3.0,
+            PI * r * (r + slant),
+            frame.origin + frame.y * (h / 4.0),
+        );
+        let body = body_of(&cone);
+        assert_turned("cone", &body, exact, 1.0, r);
+        // Exact to far better than the fit: only the apex's cap is fitted.
+        assert!(close(body.volume, exact.0, 1e-8), "{}", body.volume);
+        let wall = faces(&cone)
+            .into_iter()
+            .find(|f| matches!(f.form, Form::Cone { .. }))
+            .unwrap();
+        assert!(close(wall.half_angle().unwrap(), (r / h).atan(), 1e-15));
+        assert!(close(wall.area, PI * r * slant, 1e-6), "{}", wall.area);
+        let axis = wall.direction().unwrap();
+        assert!(axis.line && close(axis.v.dot(frame.y).abs(), 1.0, 1e-15));
+
+        // A hemisphere of radius 5: its centroid 3/8 of the radius up.
+        let radius = 5.0;
+        let hemisphere = turned(
+            vec![Loop {
+                segments: vec![
+                    Segment::line(v(0.0, 0.0), v(radius, 0.0), 1).unwrap(),
+                    arc(v(0.0, 0.0), v(radius, 0.0), v(0.0, radius), 2),
+                    Segment::line(v(0.0, radius), v(0.0, 0.0), 3).unwrap(),
+                ],
+            }],
+            &frame,
+        );
+        let exact = (
+            2.0 * PI * radius.powi(3) / 3.0,
+            3.0 * PI * radius * radius,
+            frame.origin + frame.y * (3.0 * radius / 8.0),
+        );
+        let body = body_of(&hemisphere);
+        assert_turned("hemisphere", &body, exact, radius, radius);
+        // Its box: along a direction on the dome's side, the sphere's
+        // extreme; on the base's side, the rim's. Within the pole cap's
+        // fit.
+        let tight = body.bounds.unwrap();
+        for k in 0..3 {
+            let rim = radius * (1.0 - frame.y[k] * frame.y[k]).sqrt();
+            let reach = |up: bool| if up { radius } else { rim };
+            let (lo, hi) = (
+                frame.origin[k] - reach(frame.y[k] <= 0.0),
+                frame.origin[k] + reach(frame.y[k] >= 0.0),
+            );
+            assert!((tight.min[k] - lo).abs() <= TOL.fit(), "{k}: {tight:?}");
+            assert!((tight.max[k] - hi).abs() <= TOL.fit(), "{k}: {tight:?}");
+        }
+        let dome = faces(&hemisphere)
+            .into_iter()
+            .find(|f| matches!(f.form, Form::Sphere { .. }))
+            .unwrap();
+        assert!(matches!(dome.form, Form::Sphere { radius: r, .. } if close(r, radius, 1e-15)));
+        assert!(close(dome.area, 2.0 * PI * radius * radius, 1e-6));
+    }
+}
+
+#[test]
+fn a_revolved_torus_has_its_area_volume_and_box() {
+    use crate::profile::tests::circle;
+    let (big, small) = (10.0, 2.0);
+    for frame in axes() {
+        let torus = turned(vec![circle(DVec2::new(big, 0.0), small, 1, false)], &frame);
+        let body = body_of(&torus);
+        let exact = (
+            2.0 * PI * PI * big * small * small,
+            4.0 * PI * PI * big * small,
+            frame.origin,
+        );
+        assert_turned("torus", &body, exact, small, big + small);
+        // Its box: the middle circle's extremes and the tube's radius,
+        // within the fit (the fitted patches' insides searched).
+        let tight = body.bounds.unwrap();
+        let control = torus.bounds3().unwrap();
+        for k in 0..3 {
+            let reach = big * (1.0 - frame.y[k] * frame.y[k]).sqrt() + small;
+            let (lo, hi) = (frame.origin[k] - reach, frame.origin[k] + reach);
+            assert!((tight.min[k] - lo).abs() <= TOL.fit(), "{k}: {tight:?}");
+            assert!((tight.max[k] - hi).abs() <= TOL.fit(), "{k}: {tight:?}");
+            assert!(control.min[k] <= tight.min[k] && tight.max[k] <= control.max[k]);
+        }
+        let tube = faces(&torus);
+        assert_eq!(tube.len(), 1);
+        assert!(matches!(
+            tube[0].form,
+            Form::Torus { major, minor, .. } if close(major, big, 1e-15) && close(minor, small, 1e-15)
+        ));
+        assert!(close(tube[0].area, body.area, 1e-15));
+    }
+}

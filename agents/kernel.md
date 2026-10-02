@@ -3053,7 +3053,10 @@ coefficients of `|Q_⊥|²` and `W²` (both quartics, `Q/W` the piece about
 the centre, across the axis): the ratio lies between their least and
 greatest coefficient ratios, which on a piece of the round are all `r²`
 (exact to rounding) and on a piece ending on it (a cap at a circular
-edge) the least is. Upper bounds: the pieces' corners and middles, and
+edge) the least is. The gap is taken less 64 roundings of the
+centre's and the pieces' coordinates (`Q_⊥` rounds relative to the
+point's distance from the centre, which along a cylinder's axis may be
+far more than its distance across). Upper bounds: the pieces' corners and middles, and
 Newton's method on the squared distance over both pieces' parameters
 (`closest`: second derivatives by central differences,
 Levenberg–Marquardt on Gauss–Newton's matrix damped by the gradient's size
@@ -3096,7 +3099,10 @@ edge, corner to corner, exact, by bodies, faces, edges and corners;
 picks of one box; a point and a cylinder (off the wall, past the rim, on
 the axis); skew cylinders; touching and crossing boxes and rods; a tube
 and a pin (rounds, and their cost); a pin along a hole's wall, two holes'
-walls and rims; concentric spheres; random points and a cylinder, boxes
+walls and rims; concentric spheres; revolved balls (`revolve`) to
+each other, their sphere faces, a lid over one (its top off its poles,
+to rounding), a lid over the other's pole (within its cap's fit), and a
+box's corner and edge; random points and a cylinder, boxes
 and skew rods; a plate with 64 holes against boxes near and far, and rods
 far out; rounds' ranges holding samples of random patches; the same bits
 at 1 and 8 threads; out of budget refused; picks naming nothing and the
@@ -3112,8 +3118,16 @@ its rims' centres, well inside its control box; a sphere zone's sides
 inside its patches and its centroid; a frustum's centroid, half-angle
 and wall area; angles; random conics' lengths and edge extremes; the
 same bits at 1 and 8 threads; out of budget refused; picks naming
-nothing. Cases needing revolve (a cone's and a hemisphere's centroid,
-a torus within the fit tolerance) wait for it.
+nothing. Revolved (`revolve`, on the `z` axis and a tilted one off the
+origin): a cone's and a hemisphere's volume, area and centroid (`h/4`,
+`3r/8`), the cone's half-angle, axis and wall area, the hemisphere's
+box and sphere face; a torus's area and volume, its tight box against
+`R·√(1 − a_k²) + r` and its form. Each within what half the fit
+tolerance allows of a shell over its area: the volume within `fit/2·A`,
+the area within `2·fit·A/r` (`r` the least radius of its fitted
+faces), the centre within `fit·A·size/V` (measured: the cone, exact but
+for its apex cap, `1e-9` relative; the hemisphere `1e-7`; the torus
+`1.2e-5`, its box within the fit).
 
 ## Topology and names (`src/topology.rs`, `src/topology/`)
 

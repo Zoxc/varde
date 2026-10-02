@@ -775,3 +775,152 @@ fn bodies_far_apart_or_far_out_cost_little() {
     let o = DVec3::new(9000.0, -7000.0, 5000.0);
     assert!((at(o) - at(DVec3::ZERO)).abs() < 64.0 * f64::EPSILON * 9000.0);
 }
+
+/// A ball of `radius` round `centre`, turned fully about the axis `y`
+/// (unit) through it.
+fn ball(centre: DVec3, y: DVec3, radius: f64) -> Picked {
+    use crate::profile::tests::arc;
+    let v = DVec2::new;
+    let profile = Profile {
+        loops: vec![Loop {
+            segments: vec![
+                arc(v(0.0, 0.0), v(0.0, -radius), v(radius, 0.0), 1),
+                arc(v(0.0, 0.0), v(radius, 0.0), v(0.0, radius), 1),
+                Segment::line(v(0.0, radius), v(0.0, -radius), 2).unwrap(),
+            ],
+        }],
+    };
+    let frame = Frame {
+        origin: centre,
+        x: y.any_orthonormal_vector(),
+        y,
+    };
+    Picked::new(
+        crate::revolve(
+            &profile,
+            &frame,
+            crate::Sweep::Full,
+            1,
+            &TOL,
+            &Budget::DEFAULT,
+        )
+        .unwrap(),
+    )
+}
+
+#[test]
+fn revolved_balls_are_their_analytic_distance_from_others() {
+    // Exact sphere strips but for the fitted caps round the poles, within
+    // half the fit of the sphere.
+    let near_pole = TOL.fit() / 2.0 + TOL.resolution();
+    let (ca, cb) = (DVec3::new(1.0, 2.0, -1.0), DVec3::new(6.0, -2.0, 1.5));
+    let a = ball(ca, DVec3::new(0.3, -0.2, 1.0).normalize(), 3.0);
+    let b = ball(cb, DVec3::Y, 1.5);
+    let on = |p: DVec3, c: DVec3, r: f64, slack: f64| (p.distance(c) - r).abs() <= slack;
+
+    // Ball to ball, away from their poles: to rounding, and cheap, their
+    // centres' rounds bounding every pair of pieces.
+    let d = between(&a.body(), &b.body());
+    assert!(
+        (d.distance - (ca.distance(cb) - 4.5)).abs() < 1e-12,
+        "{d:?}"
+    );
+    assert!(on(d.points[0], ca, 3.0, 1e-12) && on(d.points[1], cb, 1.5, 1e-12));
+    assert!(spent(&a.body(), &b.body()) < 20_000);
+    // Their sphere faces, the same.
+    fn sphere(p: &Picked) -> Target<'_> {
+        p.face(|f| matches!(f, Form::Sphere { .. }))
+    }
+    let faces = between(&sphere(&a), &sphere(&b));
+    assert!((faces.distance - d.distance).abs() < 1e-12, "{faces:?}");
+
+    // A lid over the tilted ball: its top, off its poles, to rounding.
+    let lid = cuboid(DVec3::new(-3.0, -2.0, 3.0), DVec3::new(8.0, 8.0, 1.0));
+    let d = between(&a.body(), &lid.body());
+    assert!((d.distance - 1.0).abs() < 1e-12, "{d:?}");
+    assert!(d.points[0].distance(ca + DVec3::Z * 3.0) < 1e-6, "{d:?}");
+    let d = between(&sphere(&a), &lid.plane(DVec3::NEG_Z));
+    assert!((d.distance - 1.0).abs() < 1e-12, "{d:?}");
+
+    // A lid over the upright ball's pole: within its cap's fit.
+    let over = cuboid(DVec3::new(4.0, 0.5, -0.5), DVec3::new(4.0, 1.0, 4.0));
+    let d = between(&b.body(), &over.body());
+    assert!((d.distance - 1.0).abs() <= near_pole, "{d:?}");
+    assert!(on(d.points[0], cb, 1.5, near_pole), "{d:?}");
+    assert!((d.points[1].y - 0.5).abs() < 1e-12, "{d:?}");
+
+    // A box's corner and edge to the tilted ball.
+    let corner = DVec3::new(6.0, 6.0, 4.0);
+    let block = cuboid(corner, DVec3::ONE);
+    let d = between(&a.body(), &block.corner(corner));
+    assert!(
+        (d.distance - (corner.distance(ca) - 3.0)).abs() < 1e-12,
+        "{d:?}"
+    );
+    assert_eq!(d.points[1], corner);
+    let end = corner + DVec3::X;
+    let d = between(&sphere(&a), &block.edge(corner, end));
+    assert!(
+        (d.distance - (corner.distance(ca) - 3.0)).abs() < 1e-12,
+        "{d:?}"
+    );
+}
+
+#[test]
+fn random_revolved_bodies_are_no_further_apart_than_their_points() {
+    // A torus and a part turn of a cone placed at random: the distance is
+    // between points of the two (checked by `between`) and no more than
+    // that of any two of their patches' sampled points; where they cross,
+    // 0.
+    use crate::profile::tests::{circle, polygon};
+    let v = DVec2::new;
+    let mut rng = crate::test_rng::Rng::new(77);
+    let samples = |s: &Solid| -> Vec<DVec3> {
+        let mesh = s.mesh();
+        (0..mesh.tris().len())
+            .flat_map(|t| {
+                let patch = mesh.patch(t);
+                (0..=3).flat_map(move |i| {
+                    (0..=3 - i).map(move |j| {
+                        patch.eval(DVec3::new(i as f64, j as f64, (3 - i - j) as f64) / 3.0)
+                    })
+                })
+            })
+            .collect()
+    };
+    let mut frame = |extent: f64| {
+        let y = rng.direction();
+        Frame {
+            origin: rng.point(extent),
+            x: y.any_orthonormal_vector(),
+            y,
+        }
+    };
+    let mut crossing = 0;
+    for _ in 0..20 {
+        let (fa, fb) = (frame(3.0), frame(12.0));
+        let torus = Profile {
+            loops: vec![circle(v(4.0, 0.0), 1.0, 1, false)],
+        };
+        let cone = Profile {
+            loops: vec![polygon(&[v(0.0, 0.0), v(2.0, 0.0), v(0.0, 3.0)], 1)],
+        };
+        let part = crate::Sweep::Part { from: 0.3, to: 4.0 };
+        let a = Picked::new(
+            crate::revolve(&torus, &fa, crate::Sweep::Full, 1, &TOL, &Budget::DEFAULT).unwrap(),
+        );
+        let b = Picked::new(crate::revolve(&cone, &fb, part, 1, &TOL, &Budget::DEFAULT).unwrap());
+        let d = between(&a.body(), &b.body());
+        let (sa, sb) = (samples(&a.solid), samples(&b.solid));
+        let sampled = sa
+            .iter()
+            .flat_map(|p| sb.iter().map(move |q| p.distance(*q)))
+            .fold(f64::INFINITY, f64::min);
+        assert!(d.distance <= sampled, "{d:?} {sampled}");
+        if d.distance < 1e-12 {
+            crossing += 1;
+        }
+    }
+    // Seed 77 places two of them crossing.
+    assert_eq!(crossing, 2);
+}
