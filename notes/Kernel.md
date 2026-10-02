@@ -373,13 +373,16 @@ either way.
   diagonal, whichever is larger; at most 10° of turn a step; at most 64), and
   its samples are evaluated once, so neighbours share boundary points to the
   bit: no cracks.
-- Patch interiors are a regular barycentric grid stitched to the edges.
+- Patch interiors are a regular barycentric grid stitched to the edges,
+  as fine as the finest edge, finer on patches curved both ways (spheres,
+  tori, revolved conics) until their triangles are within the chord too.
 - Normals are the patches' analytic ones, shared across an edge where the
   two sides agree within 1°, split otherwise.
 - Feature edges are split edges and edges between faces of different keys,
   so a cylinder draws its rims, not its quarter-wall seams.
-- Counts are worked out before evaluating, and meshes past `RenderMesh`'s
-  limits fail rather than allocate.
+- Counts are worked out before any vertex is made (round patches'
+  grids measured first, in rounds bounded by the limits), and meshes past
+  `RenderMesh`'s limits fail rather than allocate.
 
 The renderer, wire format and `MeshFeed` are unaware of patches.
 Evaluating patches in the vertex shader (a barycentric grid, control data in

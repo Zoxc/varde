@@ -1930,6 +1930,34 @@ tessellation too).
   (the outer one on a tie), so its triangles follow the geometry where
   the grid runs skewed to the edges. With `l = 0` the ring is a fan round
   the single inner point.
+- **Patches curved both ways** (faces whose form is a sphere, torus,
+  revolved conic or unknown: not a plane, cylinder or cone, which are
+  straight along their rulings) get a finer grid where `m` leaves a
+  triangle more than the chord off the patch. `Plan::refine` measures in
+  rounds: each patch still open is triangulated in `f64` at its level and
+  measured (`level_error`: the patch at each triangle's middle, in
+  parameters, against the triangle's plane, and at the middle of each
+  side that isn't an edge's own segment against its line); one too far
+  moves to `m·√(error / chord)` steps, at least a quarter more, at most
+  `4 × 64 = 256`. The edges' counts, and so the shared samples, never
+  change: only the grid and the ring's inner sides do, and the strips
+  join any two counts. The rounds stop as soon as the plan is past the
+  limits (it is then refused), so each round's work is bounded by them;
+  when the plan fits, the levels depend only on the mesh and the chord,
+  so the drawn and welded tessellations agree. A NaN error counts as
+  within. On today's solids the inner grid alone is within the chord: the
+  refinement is driven by the ring's corners, where the diagonal from a
+  patch corner to the inner grid's corner spans a step along both edges
+  (about 2.5 chords at `m = max(counts)`); a finer grid brings that
+  corner in. At the default tolerance: a ball of radius 2 goes from
+  4 304 to 8 016 triangles (worst 2.55 to 0.99 chords, densely sampled
+  along the patches' normals), a hollow ball 8 656 to 15 296, a part torus
+  5 628 to 7 932, a spindle torus's outside 3 200 to 6 400, a turned
+  ellipse 7 382 to 13 334, the round octahedron 800 to 2 144; a full torus
+  (major 10, minor 2) is within at 0.78 and keeps its 10 496. Planes,
+  cylinders, cones and extruded walls keep exactly their levels. The
+  measuring about doubles the time to draw a round solid (tens of
+  milliseconds for these, release); a 400-hole plate is unchanged.
 - **Normals** are the patches' own (`Patch::normal`, normalized; the fold
   direction stands in should it vanish). Along an edge, the two sides'
   normals are compared at every sample: if they agree within 1° everywhere
@@ -1970,8 +1998,8 @@ tessellation too).
   works out the topology itself; `Solid::tessellate_with(display,
   &topology)` takes one already made.
 - **Limits.** Triangle, vertex and feature-edge point counts are worked out
-  from the segment counts before any point inside a patch is evaluated,
-  and more than `RenderMesh::MAX_*` fails with `MeshError::TooLarge`.
+  from the segment counts and the refined levels before any vertex is
+  made, and more than `RenderMesh::MAX_*` fails with `MeshError::TooLarge`.
   The limits are a parameter (`Limits`, `tessellate_within`) so tests
   reach them with small meshes: each part may be exactly its limit, one
   more fails. The parts go
@@ -1982,12 +2010,17 @@ tessellation too).
   groups by vertex, then edge samples by edge, then patch interiors by
   triangle).
 
-The chord target holds on the edges. Inside a patch the grid spacing
-follows the largest count, but at a corner of a skewed patch (a cylinder
-wall triangle, whose far corner is round the arc) the inner grid's corner
-is two steps round from the patch's, and the triangle there is two steps
-wide: on the test cylinder the worst triangle's middle is 1.85 chords off
-the surface. Very skewed patches (a wall a hundredth of its arc
+The chord target holds on the edges, and inside patches curved both
+ways (within about 1.05 chords densely sampled, as the edges are). On
+planes, cylinders and cones the grid spacing follows the largest count,
+but at a corner of a skewed patch (a cylinder wall triangle, whose far
+corner is round the arc) the inner grid's corner is two steps round from
+the patch's, and the triangle there is two steps wide: on the test
+cylinder the worst triangle's middle is 1.85 chords off the surface, and
+densely sampled about 3 (4 on tall walls). Those patches are not
+refined; a better ring (flipping the corner diagonals, choosing the
+strips' diagonals by deviation) would mend them without more triangles,
+and would also let the refinement of round patches stop sooner. Very skewed patches (a wall a hundredth of its arc
 high) stitch into slivers whose face normals are far from their vertex
 normals; shading uses the vertex normals, so it doesn't show. Positions
 are `f32`: far from the origin, features smaller than an `f32` step
@@ -2007,7 +2040,16 @@ sizes) are watertight: every triangle side is met by one running the other
 way between the same positions, to the bit; edge counts meet the chord and
 turn by dense sampling and one fewer wouldn't; the strip joins any two
 counts; results are the same at 1 and 8 threads; far positions are
-refused. Faces and edges: a box's 6 faces of 2 triangles are its 6
+refused. Patches curved both ways (a ball, a hollow ball, a torus and a
+part torus, a spindle torus's outside, a turned ellipse, the round
+octahedron, at the default tolerance and a coarse one) are within 1.05
+chords of their patches along the normals on a 12-step grid of every
+triangle, their triangles tile each patch's parameter triangle
+(positively oriented, areas summing to the domain's), and they are
+watertight and weld into a `ManifoldMesh`, the same at 1 and 8 threads;
+a cylinder, a drilled plate, a thin disc and a revolved tube keep exactly the levels
+their counts give; a refined level counts what it makes; a part torus meets
+its exact limits and fails one under each. Faces and edges: a box's 6 faces of 2 triangles are its 6
 regions and its 12 edges its 12 chains; a cylinder's quarter walls are
 one region and its rims two closed chains, closing on their first
 vertex; two flush boxes joined are 6 regions and 12 chains, the top's
@@ -7424,9 +7466,12 @@ parameter, or a split outside the patch bounds),
 - **`Solid::bounds` is an `Option`** (`None` for the empty solid), and
   `Solid::bounds3` gives the `f64` box. `Display` holds only the fit
   tolerance; the other targets are its constants.
-- **The chord target is kept on edges only**; inside a patch it can be
-  about twice off at the corners of skewed patches (see "Solids and
-  tessellation").
+- **The chord target is kept on edges, and inside patches curved both
+  ways only**; inside planes, cylinders and cones it can be about three
+  times off at the corners of skewed patches (see "Solids and
+  tessellation"). The plan counted every part from the segment counts
+  alone; patches curved both ways are now measured first, still before
+  any vertex is made, in rounds bounded by the limits.
 - **`Shape` is gone**, not kept as a test helper: `Solid::cuboid` and
   `Solid::cylinder` are the test solids, so `Shape`, `ShapeError` and
   `position_in_range` were removed from the kernel.

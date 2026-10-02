@@ -472,8 +472,11 @@ fn a_mesh_past_any_limit_is_too_large() {
         .repair(&TOL, &Budget::default())
         .unwrap();
     let display = Display::default();
+    let (_, part_torus) = round_solids().swap_remove(3);
     for mesh in [
         Mesh::cylinder(DVec3::ZERO, 3.0, 5.0, 1, &TOL).unwrap(),
+        // Refined inner grids: the same at the exact limits.
+        part_torus.into_mesh(),
         // Split corners: more vertices than points.
         torus(24, 12, 3.0, 1.0),
         refined,
@@ -681,4 +684,309 @@ fn drawing_with_the_topology_is_deterministic() {
             .unwrap()
     });
     assert_regions_and_chains(&solid, &topology, &drawn, 1e-5);
+}
+
+/// One triangle of a tessellation in its patch: the patch's index, and
+/// its corners' barycentric parameters and points.
+struct InPatch {
+    t: usize,
+    params: [DVec3; 3],
+    points: [DVec3; 3],
+}
+
+/// The triangles `plan` makes of each patch, as the drawing does (the
+/// strips choosing from points rounded to `f32`), with their parameters,
+/// and the points in `f64`.
+fn in_patches(plan: &Plan) -> Vec<InPatch> {
+    let mut out = Vec::new();
+    for &t in &plan.tri_ids {
+        let patch = plan.mesh.patch(t as usize);
+        let level = &plan.levels[t as usize];
+        let mut params = Vec::new();
+        let mut first = [0u32; 3];
+        for (i, &n) in level.counts.iter().enumerate() {
+            first[i] = params.len() as u32;
+            for r in 0..=n {
+                let s = f64::from(r) / f64::from(n);
+                let mut u = DVec3::ZERO;
+                u[i] = 1.0 - s;
+                u[(i + 1) % 3] = s;
+                params.push(u);
+            }
+        }
+        let base = params.len() as u32;
+        params.extend(level.inner_params());
+        let points: Vec<DVec3> = params.iter().map(|&u| patch.eval(u)).collect();
+        let rounded: Vec<DVec3> = (points.iter()).map(|p| p.as_vec3().as_dvec3()).collect();
+        let indices = level.triangulate(base, &rounded[base as usize..], |i, r| {
+            let v = first[i as usize] + r;
+            (v, rounded[v as usize])
+        });
+        for tri in indices.as_chunks::<3>().0 {
+            out.push(InPatch {
+                t: t as usize,
+                params: tri.map(|v| params[v as usize]),
+                points: tri.map(|v| points[v as usize]),
+            });
+        }
+    }
+    out
+}
+
+/// The farthest `tri` gets from its patch, along the patch's normal, by
+/// dense sampling: the points of the 12-step barycentric grid of the
+/// triangle against the patch at the same mix of the corners' parameters.
+fn off_patch(mesh: &Mesh, tri: &InPatch) -> f64 {
+    let patch = mesh.patch(tri.t);
+    let steps = 12;
+    let mut far = 0.0f64;
+    for a in 0..=steps {
+        for b in 0..=steps - a {
+            let l =
+                DVec3::new(f64::from(a), f64::from(b), f64::from(steps - a - b)) / f64::from(steps);
+            let x = tri.points[0] * l.x + tri.points[1] * l.y + tri.points[2] * l.z;
+            let u = tri.params[0] * l.x + tri.params[1] * l.y + tri.params[2] * l.z;
+            let n = unit_normal(&patch, u);
+            far = far.max((x - patch.eval(u)).dot(n).abs());
+        }
+    }
+    far
+}
+
+/// What a tessellation of `mesh` is like, before and after the inner
+/// grids are refined: the triangles, and the farthest a triangle of a
+/// patch curved both ways ([`curved_both_ways`]) gets from it, over the
+/// chord.
+#[derive(Debug, PartialEq)]
+struct Drawn {
+    triangles: (u64, u64),
+    worst: (f64, f64),
+}
+
+fn drawn(mesh: &Mesh, display: &Display) -> Drawn {
+    let plan = Plan::new(mesh, display, &Limits::RENDER).unwrap().unwrap();
+    let bounds = Bounds3::around(mesh.verts()).unwrap();
+    let chord = display.chord((bounds.max - bounds.min).length());
+    let form = |t: usize| &mesh.faces()[mesh.tris()[t].face as usize].form;
+    let worst = |plan: &Plan| {
+        (in_patches(plan).iter())
+            .filter(|tri| curved_both_ways(form(tri.t)))
+            .map(|tri| off_patch(mesh, tri) / chord)
+            .fold(0.0, f64::max)
+    };
+    let mut before = Plan::new(mesh, display, &Limits::RENDER).unwrap().unwrap();
+    before.levels = (before.levels.iter())
+        .map(|level| Level::new(level.counts))
+        .collect();
+    before.count();
+    Drawn {
+        triangles: (before.triangles, plan.triangles),
+        worst: (worst(&before), worst(&plan)),
+    }
+}
+
+/// Whether every patch's triangles, in its parameters, turn the same way
+/// as the patch and cover it once: positive areas summing to the
+/// domain's.
+fn assert_tiled(mesh: &Mesh, display: &Display) {
+    let plan = Plan::new(mesh, display, &Limits::RENDER).unwrap().unwrap();
+    let mut area = vec![0.0f64; plan.tri_ids.len()];
+    for tri in in_patches(&plan) {
+        let [a, b, c] = tri.params.map(|u| glam::DVec2::new(u.y, u.z));
+        let twice = (b - a).perp_dot(c - a);
+        assert!(twice > 0.0, "patch {}: {:?}", tri.t, tri.params);
+        area[tri.t] += 0.5 * twice;
+    }
+    for (t, a) in area.iter().enumerate() {
+        assert!((a - 0.5).abs() < 1e-12, "patch {t}: {a}");
+    }
+}
+
+/// The revolved solids curved both ways: a ball, a hollow ball, a torus,
+/// the outside of a spindle torus and an ellipse turned (fitted bands),
+/// and a part turn of a torus.
+fn round_solids() -> Vec<(&'static str, Solid)> {
+    use crate::extrude::Frame;
+    use crate::profile::tests::{arc, circle};
+    use crate::{Loop, Profile, Segment, Sweep, revolve};
+    let v = glam::DVec2::new;
+    let line = |a, b, curve| Segment::line(a, b, curve).unwrap();
+    let z = Frame {
+        origin: DVec3::new(1.0, -2.0, 0.5),
+        x: DVec3::X,
+        y: DVec3::Z,
+    };
+    let ball = Loop {
+        segments: vec![
+            arc(v(0.0, 0.0), v(0.0, -2.0), v(2.0, 0.0), 1),
+            arc(v(0.0, 0.0), v(2.0, 0.0), v(0.0, 2.0), 1),
+            line(v(0.0, 2.0), v(0.0, -2.0), 2),
+        ],
+    };
+    let shell = Loop {
+        segments: vec![
+            arc(v(0.0, 0.0), v(0.0, -3.0), v(3.0, 0.0), 1),
+            arc(v(0.0, 0.0), v(3.0, 0.0), v(0.0, 3.0), 1),
+            line(v(0.0, 3.0), v(0.0, 2.0), 2),
+            arc(v(0.0, 0.0), v(0.0, 2.0), v(2.0, 0.0), 3),
+            arc(v(0.0, 0.0), v(2.0, 0.0), v(0.0, -2.0), 3),
+            line(v(0.0, -2.0), v(0.0, -3.0), 4),
+        ],
+    };
+    let (c, r) = (v(2.0, 0.0), 3.0);
+    let at = |a: f64| c + glam::DVec2::new(a.cos(), a.sin()) * r;
+    let (low, high) = (at(-PI / 3.0), at(PI / 3.0));
+    let spindle = Loop {
+        segments: vec![
+            arc(c, low, v(5.0, 0.0), 1),
+            arc(c, v(5.0, 0.0), high, 1),
+            line(high, v(3.0, 0.0), 2),
+            line(v(3.0, 0.0), low, 3),
+        ],
+    };
+    let ellipse = Loop {
+        segments: vec![
+            line(v(0.0, 0.0), v(3.0, 0.0), 1),
+            Segment {
+                conic: crate::patch::Conic2::new(
+                    v(3.0, 0.0),
+                    v(3.0, 2.0),
+                    FRAC_1_SQRT_2,
+                    v(0.0, 4.0),
+                )
+                .unwrap(),
+                curve: 2,
+            },
+            line(v(0.0, 4.0), v(0.0, 0.0), 3),
+        ],
+    };
+    let torus = || vec![circle(v(10.0, 0.0), 2.0, 1, false)];
+    let turn = |loops: Vec<Loop>, sweep: Sweep| {
+        revolve(&Profile { loops }, &z, sweep, 7, &TOL, &Budget::DEFAULT).unwrap()
+    };
+    let part = Sweep::Part {
+        from: -0.5,
+        to: 2.0,
+    };
+    vec![
+        ("ball", turn(vec![ball], Sweep::Full)),
+        ("hollow ball", turn(vec![shell], Sweep::Full)),
+        ("torus", turn(torus(), Sweep::Full)),
+        ("part torus", turn(torus(), part)),
+        ("spindle", turn(vec![spindle], Sweep::Full)),
+        ("ellipse", turn(vec![ellipse], Sweep::Full)),
+    ]
+}
+
+#[test]
+fn doubly_curved_patches_are_drawn_within_the_chord() {
+    // Coarse enough for the fit tolerance to set the chord.
+    let coarse = Display::new(&Tolerance::new(0.05).unwrap());
+    let mut solids = round_solids();
+    solids.push((
+        "round octahedron",
+        Solid::new(round_octahedron(DVec3::ZERO), &TOL).unwrap(),
+    ));
+    for (name, solid) in &solids {
+        for display in [Display::default(), coarse] {
+            let d = drawn(solid.mesh(), &display);
+            eprintln!("{name} at {display:?}: {d:?}");
+            // The edges' own segments are within the chord at their
+            // middles, a hair more between.
+            assert!(d.worst.1 <= 1.05, "{name}: {d:?}");
+            assert!(d.triangles.1 >= d.triangles.0);
+            assert_tiled(solid.mesh(), &display);
+            let mesh = solid.tessellate(&display).unwrap();
+            assert_watertight(&mesh);
+            assert_normals_and_volume(&mesh);
+            solid.manifold_mesh(&display).unwrap();
+        }
+    }
+}
+
+#[test]
+fn planes_and_cylinders_keep_their_grids() {
+    use crate::profile::tests::circle;
+    let plate = Solid::cuboid(DVec3::ZERO, DVec3::new(10.0, 4.0, 2.0), 1, &TOL).unwrap();
+    let hole = Solid::cylinder(DVec3::new(5.0, 2.0, -1.0), 1.0, 4.0, 2, &TOL).unwrap();
+    let drilled =
+        crate::boolean(&plate, &hole, crate::Op::Difference, &TOL, &Budget::DEFAULT).unwrap();
+    let frame = crate::Frame {
+        origin: DVec3::ZERO,
+        x: DVec3::X,
+        y: DVec3::Y,
+    };
+    let disc = crate::extrude(
+        &crate::Profile {
+            loops: vec![circle(glam::DVec2::ZERO, 50.0, 1, false)],
+        },
+        &frame,
+        0.0,
+        0.1,
+        3,
+        &TOL,
+        &Budget::DEFAULT,
+    )
+    .unwrap();
+    // A tube turned from a rectangle: cylinders and flat rings.
+    let tube = crate::revolve(
+        &crate::Profile {
+            loops: vec![crate::profile::tests::rect(
+                glam::DVec2::new(2.0, 0.0),
+                glam::DVec2::new(3.0, 6.0),
+                1,
+            )],
+        },
+        &frame,
+        crate::Sweep::Full,
+        4,
+        &TOL,
+        &Budget::DEFAULT,
+    )
+    .unwrap();
+    for (name, solid) in [
+        ("revolved tube", tube),
+        (
+            "cylinder",
+            Solid::cylinder(DVec3::ZERO, 3.0, 5.0, 1, &TOL).unwrap(),
+        ),
+        ("drilled plate", drilled),
+        ("thin disc", disc),
+    ] {
+        let plan = Plan::new(solid.mesh(), &Display::default(), &Limits::RENDER)
+            .unwrap()
+            .unwrap();
+        assert!(
+            (plan.levels.iter()).all(|level| *level == Level::new(level.counts)),
+            "{name}"
+        );
+        eprintln!("{name}: {} triangles", plan.triangles);
+    }
+}
+
+#[test]
+fn round_solids_draw_the_same_on_any_thread_count() {
+    for (_, solid) in round_solids() {
+        assert_deterministic(|| solid.tessellate(&Display::default()).unwrap());
+        assert_deterministic(|| solid.manifold_mesh(&Display::default()).unwrap());
+    }
+}
+
+#[test]
+fn a_refined_level_counts_its_points_and_triangles() {
+    // Finer than the counts ask: the ring's strips join each edge's
+    // segments to a longer inner side.
+    let level = Level::with_steps([2, 5, 1], 9);
+    assert_eq!((level.inner, level.steps()), (Some(6), 9));
+    assert_eq!(level.inner_points(), 7 * 8 / 2);
+    assert_eq!(level.triangles(), 36 + 18 + 8);
+    let inner: Vec<DVec3> = level.inner_params();
+    assert_eq!(inner.len() as u64, level.inner_points());
+    let indices = level.triangulate(100, &inner, |i, r| {
+        (10 * i + r, DVec3::new(f64::from(i), f64::from(r), 0.0))
+    });
+    assert_eq!(indices.len() as u64, 3 * level.triangles());
+    // Never coarser than the counts ask, and a single triangle stays one.
+    assert_eq!(Level::with_steps([7, 1, 1], 4), Level::new([7, 1, 1]));
+    assert_eq!(Level::with_steps([1, 1, 1], 9), Level::new([1, 1, 1]));
 }
