@@ -20,7 +20,7 @@ fn state_of<'a>(target: Option<CombineBody<'a>>, tools: Vec<CombineBody<'a>>) ->
 
 /// A body named `name`: the panel only sends ids, so they're all the
 /// example's.
-fn body(_: u64, name: &str) -> CombineBody<'_> {
+fn body(name: &str) -> CombineBody<'_> {
     let example = varde_document::Document::example();
     CombineBody {
         body: example.bodies()[0].id,
@@ -67,10 +67,7 @@ fn the_panel_shows_the_bodies_as_chips_and_what_to_click() {
 
     // Picked: the chips in their fields, the tools one under another and
     // "+ Click bodies" after them while they're picked.
-    let state = state_of(
-        Some(body(1, "Body 1")),
-        vec![body(2, "Body 2"), body(3, "Body 3")],
-    );
+    let state = state_of(Some(body("Body 1")), vec![body("Body 2"), body("Body 3")]);
     let shown = texts_of(&state);
     let target = found(&shown, "Body 1");
     let (two, three) = (found(&shown, "Body 2"), found(&shown, "Body 3"));
@@ -91,14 +88,14 @@ fn the_panel_shows_the_bodies_as_chips_and_what_to_click() {
 
 #[test]
 fn the_footer_says_why_it_can_t_be_done() {
-    let mut state = state_of(Some(body(1, "Body 1")), Vec::new());
+    let mut state = state_of(Some(body("Body 1")), Vec::new());
     state.enough = false;
     found(
         &texts_of(&state),
         "There’s only one body: make another to combine with",
     );
     state.enough = true;
-    state.tools = vec![body(2, "Body 2")];
+    state.tools = vec![body("Body 2")];
     state.error = Some("cutting Body 2 from Body 1 would leave nothing of Body 1");
     found(
         &texts_of(&state),

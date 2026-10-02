@@ -56,8 +56,7 @@ pub struct CombineState<'a> {
     /// The name of the combine edited, or none for a new one.
     pub editing: Option<&'a str>,
     pub target: Option<CombineBody<'a>>,
-    /// The tools, in the order they were made, which is the order they're
-    /// combined in.
+    /// The tools, sorted by id as the document keeps them.
     pub tools: Vec<CombineBody<'a>>,
     /// What a click on a body picks.
     pub picking: CombinePick,

@@ -183,8 +183,9 @@ impl Doc {
 
     /// Picking for the viewport, if the cursor picks the model: faces
     /// and edges and the snap points of what it's over while measuring,
-    /// only faces while picking a plane, else what the selection's mode
-    /// takes.
+    /// only faces while picking a plane or a combine's bodies (a click
+    /// anywhere on a body picks it, whatever the selection's mode), else
+    /// what the selection's mode takes.
     pub(crate) fn model_picking(&self) -> Option<ModelPicking<'_>> {
         let measuring = self.measure.is_some();
         self.picks().then(|| ModelPicking {
@@ -193,7 +194,7 @@ impl Doc {
             hovered_snap: self.pick.hover().and_then(|pick| pick.snap),
             picks: if measuring {
                 Picks::All
-            } else if self.picking_plane.is_some() {
+            } else if self.picking_plane.is_some() || self.combine.is_some() {
                 Picks::Faces
             } else {
                 self.pick.selection.mode().picks()

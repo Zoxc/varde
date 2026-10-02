@@ -611,3 +611,22 @@ fn a_click_in_the_viewport_picks_the_body_under_the_cursor() {
     assert!(plates.doc.pick.hover().is_some());
     assert!(!plates.doc.highlight().unwrap().selected_faces.is_empty());
 }
+
+/// Whatever the selection's mode, a combine's cursor picks faces, so a
+/// click anywhere on a body picks it (an edges-only mode would pick
+/// nothing on a face), and it's back to the mode's once it ends.
+#[test]
+fn the_cursor_picks_faces_whatever_the_selection_s_mode() {
+    use varde_view::{Picks, Selection, SelectionMode};
+    let mut plates = plates();
+    let [plate, ..] = plates.bodies;
+    plates.doc.pick.selection = Selection::new(SelectionMode::Edges { tangent: false });
+    let picks = |doc: &Doc| doc.model_picking().map(|picking| picking.picks);
+    assert_eq!(picks(&plates.doc), Some(Picks::Edges));
+    plates.doc.look(Look::StartCombine);
+    assert_eq!(picks(&plates.doc), Some(Picks::Faces));
+    plates.click(plate);
+    assert_eq!(plates.doc.combine.as_ref().unwrap().target, Some(plate));
+    plates.doc.look(Look::Escape);
+    assert_eq!(picks(&plates.doc), Some(Picks::Edges));
+}

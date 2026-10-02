@@ -1063,17 +1063,17 @@ above, dark), for their silhouettes; the measure tool
 dots, the corner picked and the hole's rim's centre reached from the
 rim, the distance between them with its segment and label (light,
 dark), the top and the rim highlighted in the two colours with the
-rim's values unfolded, and the body double-clicked in inches; sketches
-on faces (`shots_24`): `S` with the top hovered, a circle in a sketch on the top
-with the Sketch tab naming the face, its row menu with Change plane, the
-first sketch's plane changed with the later top hovered (refused, red),
-and the top's sketch failing once the plate is gone, its tip and the
-plane asked for; the
+rim's values unfolded, and the body double-clicked in inches; the
 combine (`shots_23`): `B` with nothing picked, the plate the target
 and a disc a kept tool in their two colours with the other disc
 hovered, a union using both discs up (Objects listing them faint), a
 subtract (light, dark), its Timeline row, and a disc's extrude edited
-into a join, its panel saying why it stays a new body. Shots
+into a join, its panel saying why it stays a new body; sketches
+on faces (`shots_24`): `S` with the top hovered, a circle in a sketch on the top
+with the Sketch tab naming the face, its row menu with Change plane, the
+first sketch's plane changed with the later top hovered (refused, red),
+and the top's sketch failing once the plate is gone, its tip and the
+plane asked for. Shots
 are for looking (pixels differ by GPU and driver), never compared and
 never committed: a fault a shot finds gets an ordinary headless test of
 the state or layout behind it. A scenario answers each regeneration it

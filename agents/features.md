@@ -610,8 +610,9 @@ with.
 - **Picking**: while it's set up the cursor picks the model as outside
   the sessions (`Doc::picks` is true with a combine even while its
   preview shows: a combine draft makes no body, so the model's bodies
-  are the document's), and a click on a face, edge or vertex picks its
-  body (`Look::ClickModel` → `Doc::combine_click`); a body's row in
+  are the document's), only faces whatever the selection's mode
+  (`Doc::model_picking`), and a click on one picks its body
+  (`Look::ClickModel` → `Doc::combine_click`); a body's row in
   Objects does too (`Look::ClickBody` → `Doc::combine_body`). What a
   click picks is `CombineSession::picking` (`CombinePick`): the target
   (taking it out of the tools if it's one, then handing the clicks to
@@ -683,7 +684,12 @@ found merging and the combines using their tools up that it didn't find
 failing (`MeshFeed::consumes`), by regen's rule (`note_merge`, a
 combine as its target then its tools): the extrude's and revolve's
 Bodies lists and the combine's picking use it, and the delete prompt's
-warning replays combines alike.
+warning replays combines alike. `feed/tests.rs`'s
+`merged_before_agrees_with_regen_on_random_histories` holds the two to
+the same answer on random histories of bodies, joins, combines (some
+naming used-up bodies, so failing) and edits of earlier combines, for
+the whole history and stopped before each feature
+(`VARDE_MERGES_SEEDS`, 4 by default).
 
 **An extrude or revolve making a combined body** can't stop making it
 (the document refuses the edit, above). Its panel says so at once when

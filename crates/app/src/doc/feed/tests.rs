@@ -652,3 +652,210 @@ fn the_parts_bodies_follow_the_mesh_shown() {
     feed.apply(handle(regen.take().pop().unwrap()));
     assert_eq!(feed.parts(), [editor.document().bodies()[0].id]);
 }
+
+/// A small deterministic generator (xorshift64*).
+struct Rng(u64);
+
+impl Rng {
+    fn next(&mut self) -> u64 {
+        self.0 ^= self.0 >> 12;
+        self.0 ^= self.0 << 25;
+        self.0 ^= self.0 >> 27;
+        self.0.wrapping_mul(0x2545_f491_4f6c_dd1d)
+    }
+
+    fn below(&mut self, n: usize) -> usize {
+        (self.next() % n.max(1) as u64) as usize
+    }
+}
+
+/// Adds a sketch on XY holding the block from `x` to `x + width` along
+/// x and 0 to 10 along y, and an extrude of it `height` up with
+/// `operation`.
+fn add_block(editor: &mut Editor, x: f64, width: f64, height: &str, operation: Operation) {
+    use varde_document::{Extent, OriginPlane, Plane};
+    editor
+        .apply(editor.document().add_sketch(Plane::Origin(OriginPlane::XY)))
+        .unwrap();
+    let feature = editor.document().features().last().unwrap().id;
+    let mut sketch = varde_sketch::Sketch::default();
+    let corners = [(x, 0.0), (x + width, 0.0), (x + width, 10.0), (x, 10.0)]
+        .map(|(x, y)| sketch.add_point(glam::DVec2::new(x, y)).unwrap());
+    for (k, &start) in corners.iter().enumerate() {
+        let end = corners[(k + 1) % 4];
+        let line = varde_sketch::Curve::Line { start, end };
+        sketch.add_curve(line, false).unwrap();
+    }
+    let profiles = sketch.profiles().unwrap();
+    let regions = (0..profiles.regions.len())
+        .map(|index| profiles.reference(index).unwrap())
+        .collect();
+    editor
+        .apply(Command::SetSketch {
+            feature,
+            sketch: Box::new(sketch),
+        })
+        .unwrap();
+    let ask = Extent::ask(&editor.document().design());
+    let extent = Extent::OneSide(varde_expr::Value::new(height, &ask).unwrap());
+    let extrude = varde_document::Extrude {
+        sketch: feature,
+        regions,
+        extent,
+        flip: false,
+        operation,
+    };
+    editor
+        .apply(editor.document().add_feature(extrude.into()))
+        .unwrap();
+}
+
+/// A combine of some of `document`'s bodies, picked by `rng`: any of
+/// them, consumed or not (one naming a consumed body fails, as regen
+/// says), with a random operation and Keep tools. `None` with fewer than
+/// two bodies.
+fn random_combine(document: &Document, rng: &mut Rng) -> Option<varde_document::Combine> {
+    use varde_document::BodyOp;
+    let bodies: Vec<BodyId> = document.bodies().iter().map(|body| body.id).collect();
+    if bodies.len() < 2 {
+        return None;
+    }
+    let target = bodies[rng.below(bodies.len())];
+    let mut tools: Vec<BodyId> = (bodies.iter().copied())
+        .filter(|&body| body != target && rng.below(2) == 0)
+        .collect();
+    if tools.is_empty() {
+        let others: Vec<BodyId> = bodies.into_iter().filter(|&b| b != target).collect();
+        tools.push(others[rng.below(others.len())]);
+    }
+    let op = [BodyOp::Union, BodyOp::Subtract, BodyOp::Intersect][rng.below(3)];
+    Some(varde_document::Combine {
+        target,
+        tools,
+        op,
+        keep_tools: rng.below(3) == 0,
+    })
+}
+
+/// On random histories of blocks made as bodies, joins over them and
+/// combines (later ones naming bodies earlier ones used up, some
+/// failing), and edits of earlier combines: the app's replay of the
+/// merges agrees with regen's evaluation, of the whole history
+/// (`merged_bodies`) and stopped before each feature (regen evaluating
+/// the history with the features from there on removed).
+#[test]
+fn merged_before_agrees_with_regen_on_random_histories() {
+    let seeds: u64 = std::env::var("VARDE_MERGES_SEEDS")
+        .ok()
+        .and_then(|seeds| seeds.parse().ok())
+        .unwrap_or(4);
+    for seed in 0..seeds {
+        let mut rng = Rng(0x9e37_79b9_7f4a_7c15 ^ (seed + 1).wrapping_mul(0x1000_0001));
+        let mut editor = Editor::new(Document::default());
+        let mut regen = varde_regen::Regenerator::default();
+        let (mut feed, requests) = connected();
+        // Where the blocks are, every 8 mm, each 10 mm long: neighbours
+        // overlap.
+        let mut places: Vec<f64> = Vec::new();
+        for step in 0..14 {
+            let what = format!("seed {seed} step {step}");
+            let document = editor.document();
+            // Three bodies first.
+            let roll = if step < 3 { 0 } else { rng.below(6) };
+            match roll {
+                0 | 1 => {
+                    let x = 8.0 * rng.below(6) as f64;
+                    places.push(x);
+                    let height = ["5", "10"][rng.below(2)];
+                    add_block(
+                        &mut editor,
+                        x,
+                        10.0,
+                        height,
+                        Operation::NewBody(BodyId::NEW),
+                    );
+                }
+                2 => {
+                    // From a block's place over the next one or two: it
+                    // merges what it touches.
+                    let x = places[rng.below(places.len())] + 4.0;
+                    let join = Operation::Join(varde_document::Targets::default());
+                    add_block(&mut editor, x, 8.0 * (1 + rng.below(2)) as f64, "7", join);
+                }
+                3 | 4 => {
+                    if let Some(combine) = random_combine(document, &mut rng) {
+                        editor
+                            .apply(document.add_feature(combine.into()))
+                            .unwrap_or_else(|error| panic!("{what}: {error}"));
+                    }
+                }
+                _ => {
+                    // An earlier combine edited: its keep and operation
+                    // changed, or its bodies picked again.
+                    let combines: Vec<FeatureId> = (document.features().iter())
+                        .filter(|f| matches!(f.kind, FeatureKind::Combine(_)))
+                        .map(|f| f.id)
+                        .collect();
+                    if combines.is_empty() {
+                        continue;
+                    }
+                    let id = combines[rng.below(combines.len())];
+                    let index = document.features().iter().position(|f| f.id == id).unwrap();
+                    let FeatureKind::Combine(mut combine) = document.features()[index].kind.clone()
+                    else {
+                        unreachable!()
+                    };
+                    combine.keep_tools = !combine.keep_tools;
+                    if rng.below(2) == 0 {
+                        combine.op = random_combine(document, &mut rng).unwrap().op;
+                    }
+                    // Refused where it names a body made after it.
+                    let _ = editor.apply(Command::SetFeature {
+                        feature: id,
+                        kind: Box::new(combine.into()),
+                    });
+                }
+            }
+            feed.request(&editor, None);
+            // Nothing changed: nothing asked.
+            let Some(request) = requests.borrow_mut().pop() else {
+                continue;
+            };
+            feed.apply(regen.handle(request));
+            assert_eq!(feed.generation(), Some(editor.generation()), "{what}");
+            let document = editor.document();
+            let bodies: Vec<BodyId> = document.bodies().iter().map(|b| b.id).collect();
+            // The whole history.
+            let replayed = feed.merged_before(document, None);
+            for &body in &bodies {
+                let regen = (feed.merged_bodies().iter())
+                    .find(|(consumed, _)| *consumed == body)
+                    .map(|&(_, holder)| holder);
+                assert_eq!(replayed.holder(body), regen, "{what}: body {body:?}");
+            }
+            // Stopped before each feature.
+            let features: Vec<FeatureId> = document.features().iter().map(|f| f.id).collect();
+            for (at, &until) in features.iter().enumerate() {
+                let mut before = Editor::new(document.clone());
+                for &later in features[at..].iter().rev() {
+                    if before.document().feature(later).is_some() {
+                        before.apply(Command::RemoveFeature(later)).unwrap();
+                    }
+                }
+                let evaluation =
+                    varde_regen::evaluate(before.document(), &mut varde_regen::Cache::default());
+                let replayed = feed.merged_before(document, Some(until));
+                for &body in &bodies {
+                    let regen = (evaluation.merged.iter())
+                        .find(|(consumed, _)| *consumed == body)
+                        .map(|&(_, holder)| holder);
+                    assert_eq!(
+                        replayed.holder(body),
+                        regen,
+                        "{what}: before feature {at}, body {body:?}"
+                    );
+                }
+            }
+        }
+    }
+}

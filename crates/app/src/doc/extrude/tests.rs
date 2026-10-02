@@ -103,10 +103,10 @@ fn extrudes(doc: &Doc) -> Vec<&varde_document::Extrude> {
 }
 
 #[test]
-fn e_starts_a_session_where_a_click_picks_a_region_previewed() {
+fn x_starts_a_session_where_a_click_picks_a_region_previewed() {
     let (mut doc, sketch, requests) = plate();
     key_in(&mut doc, key("x"));
-    let session = doc.extrude.as_ref().expect("E starts a session");
+    let session = doc.extrude.as_ref().expect("X starts a session");
     // Nothing selected: the first region picked sets the sketch.
     assert_eq!(session.regions.source, None);
     let state = doc.extrude_state().unwrap();
