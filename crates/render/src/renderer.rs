@@ -50,10 +50,18 @@ pub const HIDDEN_EDGE_WIDTH: f32 = 1.0;
 /// along the edge, in logical pixels at the target.
 pub const HIDDEN_DASH: [f32; 2] = [4.0, 3.0];
 
+/// How wide the hovered edges are drawn, in logical pixels, within their
+/// rim: see [`Highlights::outlined`].
+pub const HOVERED_EDGE_WIDTH: f32 = 2.5;
+
 /// How wide the rim of [`Colors::hover_outline`] is around the hovered
 /// edges and a hovered vertex, in logical pixels: see
 /// [`Highlights::outlined`].
 pub const HOVER_RIM: f32 = 1.5;
+
+/// How wide the faint white rim around the selected edges and vertices
+/// is, in logical pixels, for contrast with what's behind them.
+pub const SELECTED_RIM: f32 = 1.0;
 
 /// How wide the selected edges are drawn, in logical pixels, over their
 /// [`EDGE_WIDTH`]: see [`Highlights::selected_edges`].
@@ -194,9 +202,18 @@ pub struct Colors {
     /// The rim around the hovered edges and vertex, bright for contrast:
     /// see [`HOVER_RIM`].
     pub hover_outline: Srgb,
-    /// The accent: selected faces are tinted with it, selected edges and
-    /// vertices drawn in it.
+    /// The accent: selected faces are tinted with it, by
+    /// [`Self::selected_tint`], selected edges and vertices drawn in it,
+    /// shaded by [`Self::selected_edge_shade`].
     pub selected: Srgb,
+    /// How far a selected face is tinted towards [`Self::selected`], from
+    /// 0 to 1. Out of range or NaN is 0.6.
+    pub selected_tint: f32,
+    /// How far the selected edges' and vertices' colour is from
+    /// [`Self::selected`], so they stand out on a selected face: from -1,
+    /// black, through 0, the accent itself, to 1, white, of the way in
+    /// linear light. Out of range or NaN is 0.
+    pub selected_edge_shade: f32,
 }
 
 /// The scene shader's uniforms. `Uniforms` in `scene.wgsl` mirrors this
@@ -252,8 +269,9 @@ struct Uniforms {
     sketch_origin: [f32; 4],
     sketch_x: [f32; 4],
     sketch_y: [f32; 4],
-    /// [`Colors::hover_face`], [`Colors::hover_outline`] and
-    /// [`Colors::selected`], with w = 1.
+    /// [`Colors::hover_face`], with w [`Colors::selected_tint`],
+    /// [`Colors::hover_outline`], with w = 1, and [`Colors::selected`],
+    /// with w [`Colors::selected_edge_shade`].
     hover_face: [f32; 4],
     hover_outline: [f32; 4],
     selected: [f32; 4],
@@ -667,9 +685,11 @@ pub struct Renderer {
     /// Faces drawn again over themselves (`Equal`), hovered and selected.
     hover_face: wgpu::RenderPipeline,
     selected_face: wgpu::RenderPipeline,
-    /// The rim of the hovered edges' outline, the selected edges, and the
-    /// hovered and selected vertices.
+    /// The rim of the hovered edges' outline, the hovered edges within
+    /// it, the selected edges, and the hovered and selected vertices.
     outline: wgpu::RenderPipeline,
+    hovered_edges: wgpu::RenderPipeline,
+    selected_outline: wgpu::RenderPipeline,
     selected_edges: wgpu::RenderPipeline,
     vertices: wgpu::RenderPipeline,
     lines: wgpu::RenderPipeline,
@@ -785,7 +805,9 @@ impl Renderer {
                 ("HIDDEN_EDGE_WIDTH", f64::from(HIDDEN_EDGE_WIDTH)),
                 ("HIDDEN_DASH", f64::from(HIDDEN_DASH[0])),
                 ("HIDDEN_GAP", f64::from(HIDDEN_DASH[1])),
+                ("HOVERED_EDGE_WIDTH", f64::from(HOVERED_EDGE_WIDTH)),
                 ("HOVER_RIM", f64::from(HOVER_RIM)),
+                ("SELECTED_RIM", f64::from(SELECTED_RIM)),
                 ("SELECTED_EDGE_WIDTH", f64::from(SELECTED_EDGE_WIDTH)),
                 ("VERTEX_RADIUS", f64::from(VERTEX_RADIUS)),
                 ("ENCODE_SRGB", if format.is_srgb() { 0.0 } else { 1.0 }),
@@ -964,6 +986,12 @@ impl Renderer {
             buffers: &edge_points,
             ..Pass::overlay(label, vs, "fs_line")
         };
+        // The hover and the selection's lines, pulled in by their distance
+        // from the edge (`highlight_slope` in the shader).
+        let highlight_pass = |label, vs| Pass {
+            fs: "fs_highlight_line",
+            ..edge_pass(label, vs)
+        };
         // Over the faces' own pixels and no others: the same vertex
         // shader, its position invariant, at exactly their depth.
         let redrawn = |label, fs| {
@@ -1024,11 +1052,16 @@ impl Renderer {
             mesh: pipeline(mesh),
             // Entry points of their own, which wgpu's GL backend keys
             // programs by.
-            outline: pipeline(edge_pass("varde hover outline", "vs_outline")),
-            selected_edges: pipeline(edge_pass("varde selected edges", "vs_selected_edge")),
+            outline: pipeline(highlight_pass("varde hover outline", "vs_outline")),
+            hovered_edges: pipeline(highlight_pass("varde hovered edges", "vs_hovered_edge")),
+            selected_outline: pipeline(highlight_pass(
+                "varde selected outline",
+                "vs_selected_outline",
+            )),
+            selected_edges: pipeline(highlight_pass("varde selected edges", "vs_selected_edge")),
             vertices: pipeline(Pass {
                 buffers: std::slice::from_ref(&vertices),
-                ..Pass::overlay("varde vertices", "vs_vertex", "fs_point")
+                ..Pass::overlay("varde vertices", "vs_vertex", "fs_highlight_point")
             }),
             edges: pipeline(edge_pass("varde edges", "vs_edge")),
             // Exactly the pixels the visible edges didn't draw: the same
@@ -1263,6 +1296,16 @@ impl Renderer {
         };
         let faded = |color| with_alpha(color, alpha);
         // Out of range, as faint as can be rather than solid.
+        let selected_tint = if (0.0..=1.0).contains(&colors.selected_tint) {
+            colors.selected_tint
+        } else {
+            0.6
+        };
+        let selected_edge_shade = if (-1.0..=1.0).contains(&colors.selected_edge_shade) {
+            colors.selected_edge_shade
+        } else {
+            0.0
+        };
         let hidden_alpha = if (0.0..=1.0).contains(&colors.hidden_edge_alpha) {
             colors.hidden_edge_alpha
         } else {
@@ -1302,9 +1345,9 @@ impl Renderer {
             sketch_origin: sketch_plane.origin().extend(0.0).to_array(),
             sketch_x: sketch_plane.x().extend(0.0).to_array(),
             sketch_y: sketch_plane.y().extend(0.0).to_array(),
-            hover_face: linear(colors.hover_face),
+            hover_face: with_alpha(colors.hover_face, selected_tint),
             hover_outline: linear(colors.hover_outline),
-            selected: linear(colors.selected),
+            selected: with_alpha(colors.selected, selected_edge_shade),
         };
         queue.write_buffer(&slot.uniforms, 0, bytemuck::bytes_of(&uniforms));
 
@@ -1504,15 +1547,17 @@ impl Renderer {
         }
     }
 
-    /// Records drawing `slot`'s hovered edges' outline (a rim, leaving the
-    /// edges' own pixels as they are), selected edges, and hovered and
-    /// selected vertices.
+    /// Records drawing `slot`'s hovered edges within their outline,
+    /// selected edges, and hovered and selected vertices.
     fn draw_highlights(&self, pass: &mut wgpu::RenderPass<'_>, slot: &Slot) {
         let highlights = &slot.highlights;
         self.alphas.set(pass, self.alphas.opaque);
         if let Some(edges) = highlights.edges.held() {
-            draw_stream(pass, &self.outline, edges, highlights.outlined.clone());
+            let outlined = highlights.outlined.clone();
+            draw_stream(pass, &self.outline, edges, outlined.clone());
+            draw_stream(pass, &self.hovered_edges, edges, outlined);
             let selected = highlights.selected.clone();
+            draw_stream(pass, &self.selected_outline, edges, selected.clone());
             draw_stream(pass, &self.selected_edges, edges, selected);
         }
         if let Some(vertices) = highlights.vertices.drawn() {

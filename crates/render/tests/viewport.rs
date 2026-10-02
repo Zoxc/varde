@@ -8,9 +8,9 @@ use std::sync::Arc;
 use glam::{DVec3, Vec3};
 use varde_kernel::{MeshParts, RenderLines, RenderMesh, Solid, Tolerance};
 use varde_render::{
-    Camera, ClipRect, Colors, EDGE_WIDTH, Frame, GridPlane, HIDDEN_DASH, HOVER_RIM, Highlights,
-    LINE_WIDTH, LineStyle, Pivot, PointStyle, Projection, Renderer, SketchLayer, SketchScene,
-    Space, Srgb, Srgba, VERTEX_RADIUS, Vertex, View, Viewport, wgpu,
+    Camera, ClipRect, Colors, EDGE_WIDTH, Frame, GridPlane, HIDDEN_DASH, HOVER_RIM,
+    HOVERED_EDGE_WIDTH, Highlights, LINE_WIDTH, LineStyle, Pivot, PointStyle, Projection, Renderer,
+    SketchLayer, SketchScene, Space, Srgb, Srgba, VERTEX_RADIUS, Vertex, View, Viewport, wgpu,
 };
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -36,6 +36,8 @@ const COLORS: Colors = Colors {
     hover_face: Srgb([0.8; 3]),
     hover_outline: Srgb([0.75, 1.0, 0.6]),
     selected: Srgb([0.04, 0.58, 0.68]),
+    selected_tint: 0.6,
+    selected_edge_shade: 0.0,
 };
 const SIZE: [u32; 2] = [512, 256];
 const SENTINEL: [u8; 4] = [255, 0, 255, 255];
@@ -2528,13 +2530,53 @@ fn highlighted(highlights: Highlights) -> Extras {
 }
 
 #[test]
-fn outlined_edges_keep_their_pixels_within_a_bright_rim() {
+fn an_outline_is_as_wide_beside_a_face_rising_towards_the_eye() {
+    // A box standing on the grid's plane, seen 25 degrees from the top:
+    // its front face rises from its bottom edge towards the eye, seen that
+    // steeply. The edge's rim is as wide on that face as on the plane
+    // below, rather than hidden by the face beyond its middle.
+    let mesh = block(Vec3::new(-6.0, -2.05, 0.0), Vec3::new(12.0, 4.1, 4.0));
+    let edge = mesh.polylines().position(|polyline| {
+        polyline.iter().all(|&v| {
+            let [_, y, z] = mesh.positions()[v as usize];
+            (y + 2.05).abs() < 1e-4 && z.abs() < 1e-4
+        })
+    });
+    let edge = edge.unwrap() as u32;
+    let mut camera = top_camera();
+    camera.orbit(0.0, -25f32.to_radians());
+    let render = |outlined| {
+        let extras = highlighted(Highlights {
+            outlined,
+            ..Highlights::default()
+        });
+        render_sketch(&camera, &mesh, extras, 1.0)
+    };
+    let (Some(plain), Some(hovered)) = (render(vec![]), render(vec![edge])) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let up = (Vec3::new(0.0, -2.05, 0.0) - camera.target()).dot(camera.up());
+    let row = (SKETCH_VIEW[1] * (0.5 - up / camera.view_height())) as u32;
+    // The rim's colour, full, the same either side.
+    let green = |y| pixel(&hovered, 128, y) == [191, 255, 153, 255];
+    let rims = [
+        (row - 6..row).filter(|&y| green(y)).count(),
+        (row + 1..row + 7).filter(|&y| green(y)).count(),
+    ];
+    assert!(rims[0] > 0 && rims[0] == rims[1], "{rims:?} at {row}");
+    assert_ne!(pixel(&plain, 128, row - 3), pixel(&plain, 128, row + 3));
+}
+
+#[test]
+fn outlined_edges_are_drawn_wider_within_a_bright_rim() {
     // From the top, the box's top face's corner at x = -6.05, y = -2.05
     // in the middle of pixel (67, 84), its edges along row 84 and column
-    // 67, both outlined with the face's other two: their middles keep
-    // what they were, near the corner too, where the other's rim would
-    // reach them, and on a body at 30 % as well as an opaque one. The rim
-    // shows outside them, and nothing past it.
+    // 67, both outlined with the face's other two: their middles are in
+    // the edges' colour about as an opaque body's are, near the corner too,
+    // where the other's rim would reach them, and on a body at 30 % as
+    // well; the face's pixel beside it is darker than unhovered, as the
+    // edge is wider. The rim shows outside them, and nothing past it.
     let mesh = block(Vec3::new(-6.05, -2.05, -4.0), Vec3::new(12.1, 4.1, 4.0));
     let top = face_facing(&mesh, Vec3::Z);
     let camera = top_camera();
@@ -2560,22 +2602,31 @@ fn outlined_edges_keep_their_pixels_within_a_bright_rim() {
             eprintln!("no GPU adapter, skipping");
             return;
         };
+        let Some(edge) = render_sketch(&camera, &mesh, Extras::default(), 1.0) else {
+            return;
+        };
         for k in 0..12 {
             for (x, y) in [(67 + k, 84), (67, 84 - k)] {
-                assert_eq!(
-                    pixel(&hovered, x, y),
-                    pixel(&plain, x, y),
-                    "({x}, {y}) at {opacity}"
+                let (drawn, opaque) = (pixel(&hovered, x, y), pixel(&edge, x, y));
+                assert!(
+                    brighter(drawn, opaque).abs() < 30,
+                    "({x}, {y}) at {opacity}: {drawn:?} for {opaque:?}"
                 );
             }
         }
+        // On the face, not the black background below.
+        let (wider, was) = (pixel(&hovered, 120, 83), pixel(&plain, 120, 83));
+        assert!(
+            brighter(was, wider) > 50,
+            "{wider:?} for {was:?} at {opacity}"
+        );
         // Away from the corner, the rim either side of the edge along row
         // 84 is brighter than what's there unhovered.
         for y in [82, 86] {
             let (rim, was) = (pixel(&hovered, 120, y), pixel(&plain, 120, y));
             assert!(brighter(rim, was) > 60, "{rim:?} for {was:?} at {opacity}");
         }
-        let reach = (EDGE_WIDTH / 2.0 + HOVER_RIM + 1.0).ceil() as u32;
+        let reach = (HOVERED_EDGE_WIDTH / 2.0 + HOVER_RIM + 1.0).ceil() as u32;
         for y in [84 - reach, 84 + reach] {
             assert_eq!(pixel(&hovered, 120, y), pixel(&plain, 120, y), "row {y}");
         }
@@ -2583,19 +2634,45 @@ fn outlined_edges_keep_their_pixels_within_a_bright_rim() {
 }
 
 #[test]
-fn a_selected_edge_is_drawn_in_the_selection_colour() {
+fn a_selected_edge_is_drawn_in_the_selection_colour_shaded() {
+    // In the selection's colour, and darker or lighter by the shade,
+    // within a faint white rim either side.
     let (mesh, edge) = box_under_top_camera();
-    let extras = highlighted(Highlights {
-        selected_edges: vec![edge],
-        ..Highlights::default()
-    });
-    let Some(pixels) = render_sketch(&top_camera(), &mesh, extras, 1.0) else {
+    let unselected = render_sketch(
+        &top_camera(),
+        &mesh,
+        highlighted(Highlights::default()),
+        1.0,
+    );
+    let render = |selected_edge_shade| {
+        let extras = Extras {
+            colors: Some(Colors {
+                selected_edge_shade,
+                ..COLORS
+            }),
+            ..highlighted(Highlights {
+                selected_edges: vec![edge],
+                ..Highlights::default()
+            })
+        };
+        render_sketch(&top_camera(), &mesh, extras, 1.0)
+    };
+    let (Some(unselected), Some(plain), Some(darker), Some(lighter)) =
+        (unselected, render(0.0), render(-0.6), render(0.6))
+    else {
         eprintln!("no GPU adapter, skipping");
         return;
     };
     for x in [90, 150, 180] {
-        let core = pixel(&pixels, x, 84);
+        let core = pixel(&plain, x, 84);
         assert!(tint(core) > 60 && core[1] > 100, "{core:?} at {x}");
+        let (dark, light) = (pixel(&darker, x, 84), pixel(&lighter, x, 84));
+        assert!(brighter(core, dark) > 100, "{dark:?} for {core:?}");
+        assert!(brighter(light, core) > 100, "{light:?} for {core:?}");
+        for y in [82, 86] {
+            let (rim, was) = (pixel(&plain, x, y), pixel(&unselected, x, y));
+            assert!(brighter(rim, was) > 60, "{rim:?} for {was:?} at ({x}, {y})");
+        }
     }
 }
 

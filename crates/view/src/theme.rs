@@ -319,14 +319,17 @@ const LIGHT: Palette = Palette {
         sketch: srgb(LIGHT_SKETCH),
         faded_alpha: FADED_ALPHA,
         hidden_edge_alpha: HIDDEN_EDGE_ALPHA,
-        // hsl(258 22% 95%): the model's hue, lighter.
-        hover_face: srgb(color!(0xf1eff5)),
-        // A light green, the sketch's hover's hue: brighter than the
-        // lit faces, and around the dark edge it shows on the light
-        // background too.
-        hover_outline: srgb(color!(0xa8ec8c)),
+        // Neutral, lighter than the model.
+        hover_face: srgb(color!(0xf4f4f4)),
+        // White: brighter than the lit faces, and around the dark edge
+        // it shows on the light background too.
+        hover_outline: srgb(color!(0xffffff)),
         // The accent.
         selected: srgb(color!(0x0a95ad)),
+        // A light tint, so the selected edges, the accent a little
+        // darker, show on it and apart from the near black edges.
+        selected_tint: 0.3,
+        selected_edge_shade: -0.3,
     },
     icons: LIGHT_ICONS,
     // hsl(258 10% 80%) to hsl(258 10% 96%).
@@ -386,12 +389,14 @@ const DARK: Palette = Palette {
         sketch: srgb(DARK_SKETCH),
         faded_alpha: FADED_ALPHA,
         hidden_edge_alpha: HIDDEN_EDGE_ALPHA,
-        // hsl(258 16% 73%): the model's hue, lighter.
-        hover_face: srgb(color!(0xb6afc5)),
-        // A bright green, the sketch's hover's hue.
-        hover_outline: srgb(color!(0x9cf07f)),
+        // Neutral, lighter than the model.
+        hover_face: srgb(color!(0xbababa)),
+        hover_outline: srgb(color!(0xffffff)),
         // The accent.
         selected: srgb(color!(0x39b9cf)),
+        selected_tint: 0.6,
+        // Lighter than a selected face's tint, to show on it.
+        selected_edge_shade: 0.85,
     },
     icons: DARK_ICONS,
     // hsl(258 8% 30%) to hsl(258 8% 50%).

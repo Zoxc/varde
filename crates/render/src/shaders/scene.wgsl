@@ -54,11 +54,13 @@ override EDGE_WIDTH: f32;
 override HIDDEN_EDGE_WIDTH: f32;
 override HIDDEN_DASH: f32;
 override HIDDEN_GAP: f32;
-// How wide the rim around the hovered edges and vertex is, how wide the
-// selected edges are, and the radius of a vertex's disc within its rim, in
-// logical pixels.
+// How wide the hovered edges are, the rim around them and the hovered
+// vertex, how wide the selected edges are, and the radius of a vertex's
+// disc within its rim, in logical pixels.
+override HOVERED_EDGE_WIDTH: f32;
 override HOVER_RIM: f32;
 override SELECTED_EDGE_WIDTH: f32;
+override SELECTED_RIM: f32;
 override VERTEX_RADIUS: f32;
 // Set for the pipelines drawing the sketch's layers depth tested: they're
 // given their depth, pulled towards the camera, rather than drawn on top.
@@ -314,9 +316,6 @@ fn fs_mesh(in: MeshOut, @builtin(front_facing) front: bool) -> @location(0) vec4
     return output(vec4<f32>(shaded(in, front, u.model.rgb), u.model.a * part.alpha.x));
 }
 
-// How far a selected face is tinted towards the selection's colour.
-const SELECTED_TINT: f32 = 0.6;
-
 // The hovered face, drawn again over itself (depth tested Equal) in the
 // hover's colour, lit the same, as opaque as its part.
 @fragment
@@ -324,12 +323,11 @@ fn fs_hover_face(in: MeshOut, @builtin(front_facing) front: bool) -> @location(0
     return output(vec4<f32>(shaded(in, front, u.hover_face.rgb), part.alpha.x));
 }
 
-// A selected face, likewise, tinted SELECTED_TINT of the way towards the
-// selection's colour, over the hover if it's hovered too.
-
+// A selected face, likewise, tinted `u.hover_face.w` of the way towards
+// the selection's colour, over the hover if it's hovered too.
 @fragment
 fn fs_selected_face(in: MeshOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    return output(vec4<f32>(shaded(in, front, u.selected.rgb), SELECTED_TINT * part.alpha.x));
+    return output(vec4<f32>(shaded(in, front, u.selected.rgb), u.hover_face.w * part.alpha.x));
 }
 
 // --- Feature edges ---
@@ -401,6 +399,8 @@ struct LineOut {
     @location(5) @interpolate(flat) along: vec2<f32>,
     // HAS_PREV and HAS_NEXT.
     @location(6) @interpolate(flat) flags: u32,
+    // For `fs_highlight_line`: see `highlight_slope`.
+    @location(7) @interpolate(flat) slope: f32,
 };
 
 // A segment as it's drawn: its ends, and where they are along the segment
@@ -688,19 +688,100 @@ fn vs_hidden_edge(in: EdgeIn) -> LineOut {
     return out;
 }
 
-// The rim of the hovered edges' outline: HOVER_RIM wide either side, in
-// `u.hover_outline`, depth tested and pulled like the edges. It's hollow
-// (`style.w`), so the edge keeps its own pixels. Outlined edges that meet
-// come as one polyline (`Highlights::build` in highlight.rs), so neither's
-// rim covers the other.
+// Normalized depth a highlight's pixel is pulled in by per physical pixel
+// from its middle, at `at`, so a face that falls away steeply from the
+// edge or vertex it borders doesn't hide its outer pixels: HIGHLIGHT_SLOPE
+// pixels' worth of the world towards the eye, so faces as steep as about
+// 18 degrees from the line of sight. The middle is pulled only as the
+// edges are, so a highlight's hidden as they are.
+const HIGHLIGHT_SLOPE: f32 = 3.0;
+
+fn highlight_slope(at: vec3<f32>) -> f32 {
+    let pixel = view_height() / u.viewport.y;
+    let a = u.view_proj * vec4<f32>(at, 1.0);
+    let b = u.view_proj * vec4<f32>(at + u.backward.xyz * pixel * HIGHLIGHT_SLOPE, 1.0);
+    if a.w <= 0.0 || b.w <= 0.0 {
+        return 0.0;
+    }
+    return max(a.z / a.w - b.z / b.w, 0.0);
+}
+
+// A highlight's line from `edge_segment`, its depth pulled in by its
+// distance from the edge (`highlight_slope`).
+fn highlight_segment(in: EdgeIn, half: f32, color: vec4<f32>) -> LineOut {
+    var out = edge_segment(in, half, half, color, vec2<f32>(0.0), vec2<f32>(0.0));
+    out.slope = highlight_slope(mix(in.start, in.end, 0.5));
+    return out;
+}
+
+struct HighlightOut {
+    @location(0) color: vec4<f32>,
+    @builtin(frag_depth) depth: f32,
+};
+
+@fragment
+fn fs_highlight_line(in: LineOut) -> HighlightOut {
+    let own = segment_distance(fragment_pixels(in.position), in.ends.xy, in.ends.zw);
+    var out: HighlightOut;
+    out.color = line_color(in, own);
+    out.depth = max(in.position.z - in.slope * own.x, 0.0);
+    return out;
+}
+
+@fragment
+fn fs_highlight_point(in: PointOut) -> HighlightOut {
+    var out: HighlightOut;
+    out.color = point_color(in);
+    let r = distance(fragment_pixels(in.position), in.center);
+    out.depth = max(in.position.z - in.slope * r, 0.0);
+    return out;
+}
+
+// The rim of the hovered edges' outline: HOVER_RIM wide either side of
+// their HOVERED_EDGE_WIDTH, in `u.hover_outline`, depth tested and pulled
+// like the edges. It's hollow (`style.w`), leaving the edge to
+// `vs_hovered_edge`. Outlined edges that meet come as one polyline
+// (`Highlights::build` in highlight.rs), so neither's rim covers the
+// other.
 @vertex
 fn vs_outline(in: EdgeIn) -> LineOut {
-    let core = EDGE_WIDTH * 0.5 * u.viewport.z;
+    let core = HOVERED_EDGE_WIDTH * 0.5 * u.viewport.z;
     let half = core + HOVER_RIM * u.viewport.z;
-    var out = edge_segment(in, half, half, vec4<f32>(u.hover_outline.rgb, 1.0), vec2<f32>(0.0),
-        vec2<f32>(0.0));
+    var out = highlight_segment(in, half, vec4<f32>(u.hover_outline.rgb, 1.0));
     out.style.w = core;
     return out;
+}
+
+// How opaque the white rim around the selected edges and vertices is.
+const SELECTED_RIM_ALPHA: f32 = 0.5;
+
+// The rim around the selected edges: SELECTED_RIM wide either side of
+// their SELECTED_EDGE_WIDTH, white at SELECTED_RIM_ALPHA, for contrast
+// with what's behind them; hollow, as the hover's is.
+@vertex
+fn vs_selected_outline(in: EdgeIn) -> LineOut {
+    let core = SELECTED_EDGE_WIDTH * 0.5 * u.viewport.z;
+    let half = core + SELECTED_RIM * u.viewport.z;
+    var out = highlight_segment(in, half, vec4<f32>(1.0, 1.0, 1.0, SELECTED_RIM_ALPHA));
+    out.style.w = core;
+    return out;
+}
+
+// The hovered edges, HOVERED_EDGE_WIDTH wide in the edges' colour, within
+// their rim.
+@vertex
+fn vs_hovered_edge(in: EdgeIn) -> LineOut {
+    let half = HOVERED_EDGE_WIDTH * 0.5 * u.viewport.z;
+    return highlight_segment(in, half, vec4<f32>(u.edge.rgb, 1.0));
+}
+
+// The selected edges' and vertices' colour: the selection's, shaded by
+// `u.selected.w` towards black or white, so it stands out on a selected
+// face.
+fn selected_edge() -> vec4<f32> {
+    let shade = u.selected.w;
+    let towards = select(vec3<f32>(0.0), vec3<f32>(1.0), shade > 0.0);
+    return vec4<f32>(mix(u.selected.rgb, towards, abs(shade)), 1.0);
 }
 
 // The selected edges, SELECTED_EDGE_WIDTH wide in the selection's colour,
@@ -708,8 +789,7 @@ fn vs_outline(in: EdgeIn) -> LineOut {
 @vertex
 fn vs_selected_edge(in: EdgeIn) -> LineOut {
     let half = SELECTED_EDGE_WIDTH * 0.5 * u.viewport.z;
-    return edge_segment(in, half, half, vec4<f32>(u.selected.rgb, 1.0), vec2<f32>(0.0),
-        vec2<f32>(0.0));
+    return highlight_segment(in, half, selected_edge());
 }
 
 // Where the sketch point `at` is in the world.
@@ -825,8 +905,13 @@ fn dashed_to(x: f32, on: f32, period: f32) -> f32 {
 
 @fragment
 fn fs_line(in: LineOut) -> @location(0) vec4<f32> {
+    return line_color(in, segment_distance(fragment_pixels(in.position), in.ends.xy, in.ends.zw));
+}
+
+// What `fs_line` draws, a pixel `own` from the segment (its distance and
+// how far along it is).
+fn line_color(in: LineOut, own: vec2<f32>) -> vec4<f32> {
     let p = fragment_pixels(in.position);
-    let own = segment_distance(p, in.ends.xy, in.ends.zw);
     // A pixel as near the segment before as this one is that one's, and
     // one nearer the segment after is that one's.
     if (in.flags & HAS_PREV) != 0u && segment_distance(p, in.prev.xy, in.prev.zw).x <= own.x {
@@ -1008,6 +1093,8 @@ struct PointOut {
     @location(1) @interpolate(flat) size: vec2<f32>,
     @location(2) @interpolate(flat) rim: vec4<f32>,
     @location(3) @interpolate(flat) fill: vec4<f32>,
+    // For `fs_highlight_point`: see `highlight_slope`.
+    @location(4) @interpolate(flat) slope: f32,
 };
 
 // Whether a disc at clip position `clip`, showing at `center` and
@@ -1057,6 +1144,10 @@ fn vs_point(
 
 @fragment
 fn fs_point(in: PointOut) -> @location(0) vec4<f32> {
+    return point_color(in);
+}
+
+fn point_color(in: PointOut) -> vec4<f32> {
     let r = distance(fragment_pixels(in.position), in.center);
     let coverage = clamp(in.size.x + 0.5 - r, 0.0, 1.0);
     let inside = clamp(in.size.x - in.size.y + 0.5 - r, 0.0, 1.0);
@@ -1084,7 +1175,8 @@ fn vs_vertex(
     let center = to_pixels(clip);
     let s = u.viewport.z;
     let hovered = (flags & HOVERED) != 0u;
-    let rim = select(1.0, HOVER_RIM, hovered) * s;
+    let selected = (flags & SELECTED) != 0u;
+    let rim = select(select(1.0, SELECTED_RIM, selected), HOVER_RIM, hovered) * s;
     let radius = VERTEX_RADIUS * s + rim;
     let reach = radius + 1.0;
     if clip.w <= 0.0 || disc_hidden(clip, center, reach) {
@@ -1095,8 +1187,11 @@ fn vs_vertex(
     out.center = center;
     out.size = vec2<f32>(radius, rim);
     let edge = vec4<f32>(u.edge.rgb, 1.0);
-    out.rim = select(edge, vec4<f32>(u.hover_outline.rgb, 1.0), hovered);
-    out.fill = select(edge, vec4<f32>(u.selected.rgb, 1.0), (flags & SELECTED) != 0u);
+    let selected_rim = vec4<f32>(1.0, 1.0, 1.0, SELECTED_RIM_ALPHA);
+    out.rim = select(select(edge, selected_rim, selected), vec4<f32>(u.hover_outline.rgb, 1.0),
+        hovered);
+    out.fill = select(edge, selected_edge(), selected);
+    out.slope = highlight_slope(at);
     return out;
 }
 

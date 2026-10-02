@@ -703,23 +703,32 @@ own. Selection is in the accent (`Colors::selected`). In a sketch
 - Faces: drawn again over themselves by their index range, a draw
   each, so nothing per vertex, with `vs_mesh` (its position
   `@invariant`), `depth_compare: Equal` and no depth written, so exactly
-  their own pixels: the hovered ones lit in `Colors::hover_face` (the
-  model's hue, lighter) at their part's alpha (`fs_hover_face`), then
-  each selected one blended `SELECTED_TINT` (0.6) of the way to the
-  accent (`fs_selected_face`), so a hovered selected face is tinted and
+  their own pixels: the hovered ones lit in `Colors::hover_face` (a
+  neutral grey, lighter than the model) at their part's alpha
+  (`fs_hover_face`), then each selected one blended
+  `Colors::selected_tint` (0.3 light, 0.6 dark) of the way to the accent
+  (`fs_selected_face`), so a hovered selected face is tinted and
   brighter. An opaque part's are drawn before anything else writes depth
   where they are, so one behind glass is dimmed by it but still tinted;
   a transparent part's after the glass's depth, so only where it's the
   nearest glass (behind other glass it shows untinted).
 - Outline: the outlined edges' polylines in a stream of their own
   (`EdgeStream`, as the mesh's), drawn with the edges' quads, depth
-  tested and pulled like them, so only what shows is outlined: a rim
-  `HOVER_RIM` (1.5 logical pixels) wide either side of the edge in
-  `Colors::hover_outline` (`vs_outline`), a green of the sketch's hover
-  hue brighter than the lit faces. The rim is hollow: its coverage is a
-  line `HOVER_RIM` wider than the edge less the edge's own (`style.w` in
-  `fs_line`), so the edge's pixels stay as its own pass drew them, as
-  faint as its part (an edge on a 30 % body stays faint). The outlined
+  tested and pulled like them, so only what shows is outlined: the edge
+  drawn again `HOVERED_EDGE_WIDTH` (2.5 logical pixels) wide in the
+  edges' colour, opaque whatever its part's alpha (`vs_hovered_edge`),
+  within a rim `HOVER_RIM` (1.5) wide either side of it in
+  `Colors::hover_outline` (`vs_outline`), white, brighter than the lit
+  faces. The rim is hollow: its coverage is a line `HOVER_RIM` wider
+  than the hovered edge less the edge's own (`style.w` in `fs_line`),
+  drawn before the edge. The hover's and the selection's lines and
+  vertices (`fs_highlight_line`, `fs_highlight_point`) write their
+  depth pulled in further the farther a pixel is from their middle
+  (`highlight_slope`: `HIGHLIGHT_SLOPE`, 3, pixels' worth of the world
+  per pixel), so a face rising steeply towards the eye from the edge,
+  as a wall does from its bottom edge seen from above, doesn't hide
+  their outer pixels on its side; their middle is hidden as the edges'
+  is. The outlined
   edges meeting at a corner are joined into one polyline
   (`Highlights::build`, either way round, until the loop closes; past
   two at a corner the others start their own), so neither's rim covers
@@ -729,22 +738,30 @@ own. Selection is in the accent (`Colors::selected`). In a sketch
   seen nearly edge on), it covers it.
 - Selected edges: the same stream's other range (a point of no edge
   between them, so an edge both outlined and selected isn't joined to
-  itself), `SELECTED_EDGE_WIDTH` (2.5) wide in the accent
-  (`vs_selected_edge`), over the outline.
+  itself), `SELECTED_EDGE_WIDTH` (2.5) wide in the accent shaded by
+  `Colors::selected_edge_shade` towards black or white (a little darker
+  in the light theme, over a light face tint; much lighter in the dark),
+  so it shows on a selected face's tint (`vs_selected_edge`,
+  `selected_edge`), over the outline, within a hollow rim `SELECTED_RIM`
+  (1 logical pixel) wide either side in white at half alpha
+  (`vs_selected_outline`), for contrast with what's behind it.
 - Vertices: only those hovered or selected, an instance each
   (`VertexInstance`: position and flags), drawn as a sketch point is
-  (`vs_vertex` into `fs_point`): a disc of `VERTEX_RADIUS` (3.5 logical
-  pixels) within a rim, depth tested at its centre's pulled depth. Hovered, the disc is in the edge colour, its
-  rim `HOVER_RIM` wide in `hover_outline`; selected, it's filled with the
-  accent, within a pixel's rim in the edge colour, or the hover's if it's
-  hovered too.
+  (`vs_vertex` into `fs_highlight_point`): a disc of `VERTEX_RADIUS`
+  (3.5 logical pixels) within a rim, depth tested at its centre's pulled
+  depth. Hovered, the disc is in the edge colour, its rim `HOVER_RIM`
+  wide in `hover_outline`; selected, it's filled with the selected
+  edges' colour, within the selected edges' faint white rim, or the
+  hover's if it's hovered too.
 
 Pipelines that differ only by what they draw each have their own entry
 point, since wgpu's GL backend keys programs by module and entry point. The uniforms stay within 512 bytes (the limits
 tests' device's largest buffer): the grid's axis lines' colours are
 picked in the shader by which world axis each lies along (the `w` of
-`grid_x` and `grid_y`), and the hidden edges' alpha is `edge`'s `w`,
-the model's faded alpha being `model`'s.
+`grid_x` and `grid_y`), the hidden edges' alpha is `edge`'s `w`, the
+selected edges' shade `selected`'s, the selected faces' tint
+`hover_face`'s, and the model's faded alpha
+`model`'s.
 
 Natively each open document has a regeneration thread (`regen::lane`),
 started by an iced subscription keyed by the document's id. The

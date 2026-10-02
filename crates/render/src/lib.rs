@@ -14,8 +14,9 @@ mod sketch;
 pub use camera::{Camera, Projection, View};
 pub use highlight::{Highlights, Vertex};
 pub use renderer::{
-    ClipRect, Colors, EDGE_WIDTH, Frame, HIDDEN_DASH, HIDDEN_EDGE_WIDTH, HOVER_RIM, LINE_WIDTH,
-    Pivot, PrepareError, Renderer, SELECTED_EDGE_WIDTH, Slot, Srgb, VERTEX_RADIUS, Viewport,
+    ClipRect, Colors, EDGE_WIDTH, Frame, HIDDEN_DASH, HIDDEN_EDGE_WIDTH, HOVER_RIM,
+    HOVERED_EDGE_WIDTH, LINE_WIDTH, Pivot, PrepareError, Renderer, SELECTED_EDGE_WIDTH,
+    SELECTED_RIM, Slot, Srgb, VERTEX_RADIUS, Viewport,
 };
 pub use scene::{GRID_FADE_HEIGHTS, GridPlane};
 pub use sketch::{LineStyle, PointStyle, SketchLayer, SketchScene, Space, Srgba};

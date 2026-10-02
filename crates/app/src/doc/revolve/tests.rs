@@ -595,11 +595,7 @@ fn clicking_text(doc: &Doc, text: &str) -> Vec<Vec<varde_view::Message>> {
 
     let size = iced::Size::new(1280.0, 800.0);
     let mut renderer = varde_view::probe::renderer();
-    let mut ui = shown(
-        doc.view_in(varde_view::Mode::Light),
-        size,
-        &mut renderer,
-    );
+    let mut ui = shown(doc.view_in(varde_view::Mode::Light), size, &mut renderer);
     let mut found: Vec<_> = texts(&mut ui, &renderer)
         .into_iter()
         .filter(|shown| shown.text == text && !shown.hidden())
