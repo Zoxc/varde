@@ -1939,10 +1939,16 @@ tessellation too).
   measures in rounds: each patch still open is triangulated in `f64` at
   its level and measured (`level_error`: the patch at each triangle's
   middle, in parameters, and at the middle of each side that isn't an
-  edge's own segment, each against the triangle's plane: against a
-  side's line it would also count the patch drifting along the surface
-  where its parameters run unevenly, which refined a scaled ball that
-  was already within); one too far moves to `m·√(error / chord)` steps,
+  edge's own segment, each from the triangle's point at the same mix of
+  its corners along the patch's normal there. The full distance would
+  also count the patch drifting along the surface where its parameters
+  run unevenly, which refined a scaled ball that was already within; the
+  distance from the triangle's plane misses a triangle steep to the
+  patch, as ring corners are on fat tori and cut balls, where the patch
+  sits near the plane but well outside the triangle: up to 2.7 chords
+  passed as within). A patch that is a single triangle is measured at
+  its middle and, if too far, gets a grid of 3 steps (one inner point)
+  with its edges unchanged. One too far moves to `m·√(error / chord)` steps,
   at least one more in the first four rounds and a quarter more after
   (so at most about two dozen rounds), at most `4 × 64 = 256`. The
   square law undershoots near the chord, since the ring's triangles keep
@@ -1957,18 +1963,25 @@ tessellation too).
   only on the mesh and the chord: the drawn and welded tessellations
   agree. A NaN error counts as within. The four samples per triangle read
   a few percent under a dense sampling (a turned ellipse's worst is 1.03
-  chords, next to an edge segment). On today's solids the inner grid
+  chords, next to an edge segment; random revolves, cuts and stretched
+  copies up to about 1.06). On today's solids the inner grid
   alone is within the chord: the refinement is driven by the ring's
   corners, where the diagonal from a patch corner to the inner grid's
   corner spans a step along both edges (about 2.5 chords at `m =
   max(counts)`); a finer grid brings that corner in. At the default
-  tolerance: a ball of radius 2 goes from 4 304 to 7 120 triangles (worst
+  tolerance: a ball of radius 2 goes from 4 304 to 6 720 triangles (worst
   2.55 to 0.99 chords, densely sampled along the patches' normals), a
-  hollow ball 8 656 to 13 168, a part torus 5 628 to 6 652, a spindle
-  torus's outside 3 200 to 6 208, a turned ellipse 7 382 to 11 862, the
+  hollow ball 8 656 to 12 736, a part torus 5 628 to 6 396, a spindle
+  torus's outside 3 200 to 6 016, a turned ellipse 7 382 to 12 566, the
   round octahedron 800 to 2 144; a full torus (major 10, minor 2) is
-  within at 0.78 and keeps its 10 496, and so does the ball scaled by
-  (1, ½, 2) (its patches are smaller). Planes, cylinders, cones and
+  within at 0.78 and keeps its 10 496. Over random revolves, their cuts
+  and stretched copies the refinement adds about a tenth to the
+  triangles, at most 3.7 times (a long thin lemon, whose quarter patches
+  have few steps round it), and no inner grid came near 256 steps nor
+  any edge past its 64 segments' chord: the chord is at least a
+  thousandth of the solid's diagonal, which a conic within it meets in
+  about two dozen segments, so only the turn rule reaches 64, where the
+  chord error is far below the chord. Planes, cylinders, cones and
   extruded walls keep exactly their levels. The measuring about doubles
   the time to draw a round solid (tens of
 milliseconds for these, release); a 400-hole plate is unchanged.
@@ -2087,9 +2100,10 @@ rounded to the nearest `f32`. Drawing (with picking or without, one
 the edges' first halfedges, curves and segment counts, the patches'
 levels and inner offsets, the counts and the limit check) and one
 triangulation of a patch (`Plan::patch_triangles`), so they have the
-same samples and triangles; only the stitching's choice of diagonals
-reads the points about the origin here where drawing reads its `f32`
-ones about zero. A test holds the three together on boxes, cylinders,
+same samples and triangles, the strips of both choosing their diagonals
+from the `f64` points (when drawing read its `f32` points and welding
+its rounded ones about the origin, far-out and finely refined solids
+differed in a few diagonals). A test holds the three together on boxes, cylinders,
 curved and flat-patched solids and a joined plate at two tolerances:
 the drawn mesh the same with picking, a picking entry per drawn
 triangle and edge, and the welded triangles the drawn ones in order,

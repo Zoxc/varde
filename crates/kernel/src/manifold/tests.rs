@@ -581,7 +581,9 @@ fn mutated_meshes_are_refused_unless_still_manifolds() {
 /// mesh is the same with picking as without, the picking has an entry per
 /// drawn triangle, and the welded triangles are the drawn ones in their
 /// order, corner for corner, apart from rounding (the drawn positions are
-/// `f32` about the world's origin, the welded about the solid's middle).
+/// `f32` about the world's origin, the welded about the solid's middle),
+/// far out too: the strips of both choose their diagonals from the `f64`
+/// points, not from the two roundings.
 #[test]
 fn drawing_picking_and_welding_share_their_triangles() {
     let mut loops = vec![rect(DVec2::ZERO, DVec2::new(40.0, 20.0), 0)];
@@ -596,6 +598,23 @@ fn drawing_picking_and_welding_share_their_triangles() {
     let plate = extruded(loops, Frame::XY, 0.0, 3.0, 1);
     let boss = Solid::cylinder(DVec3::new(8.0, 10.0, 1.0), 5.0, 6.0, 2, &TOL).unwrap();
     let joined = boolean(&plate, &boss, Op::Union, &TOL, &Budget::DEFAULT).unwrap();
+    let away = crate::Motion::translation(DVec3::new(4096.7, -1515.8, 2130.3)).unwrap();
+    let far = |solid: Solid| (solid.transformed(&away, None, &TOL, &Budget::DEFAULT)).unwrap();
+    let turned = crate::revolve(
+        &Profile {
+            loops: vec![circle(DVec2::new(10.0, 0.0), 2.0, 1, false)],
+        },
+        &Frame {
+            origin: DVec3::ZERO,
+            x: DVec3::X,
+            y: DVec3::Z,
+        },
+        crate::Sweep::Full,
+        3,
+        &TOL,
+        &Budget::DEFAULT,
+    )
+    .unwrap();
     let solids = [
         Solid::cuboid(DVec3::splat(-1.0), DVec3::new(2.0, 3.0, 4.0), 1, &TOL).unwrap(),
         Solid::cylinder(DVec3::new(1.0, 2.0, 3.0), 5.0, 2.0, 1, &TOL).unwrap(),
@@ -604,6 +623,8 @@ fn drawing_picking_and_welding_share_their_triangles() {
         Solid::new(torus(24, 12, 3.0, 1.0), &TOL).unwrap(),
         plate,
         joined,
+        far(Solid::new(round_octahedron(DVec3::ZERO), &TOL).unwrap()),
+        far(turned),
     ];
     let fine = Display::new(&Tolerance::new(1e-4).unwrap());
     for (i, solid) in solids.iter().enumerate() {

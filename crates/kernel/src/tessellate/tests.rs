@@ -694,9 +694,8 @@ struct InPatch {
     points: [DVec3; 3],
 }
 
-/// The triangles `plan` makes of each patch, as the drawing does (the
-/// strips choosing from points rounded to `f32`), with their parameters,
-/// and the points in `f64`.
+/// The triangles `plan` makes of each patch, as the drawing does, with
+/// their parameters and points.
 fn in_patches(plan: &Plan) -> Vec<InPatch> {
     let mut out = Vec::new();
     for &t in &plan.tri_ids {
@@ -704,10 +703,9 @@ fn in_patches(plan: &Plan) -> Vec<InPatch> {
         let level = &plan.levels[t as usize];
         let (params, first, base) = level.params();
         let points: Vec<DVec3> = params.iter().map(|&u| patch.eval(u)).collect();
-        let rounded: Vec<DVec3> = (points.iter()).map(|p| p.as_vec3().as_dvec3()).collect();
-        let indices = level.triangulate(base, &rounded[base as usize..], |i, r| {
+        let indices = level.triangulate(base, &points[base as usize..], |i, r| {
             let v = first[i as usize] + r;
-            (v, rounded[v as usize])
+            (v, points[v as usize])
         });
         for tri in indices.as_chunks::<3>().0 {
             out.push(InPatch {
@@ -975,7 +973,8 @@ fn a_refined_level_counts_its_points_and_triangles() {
     assert_eq!(indices.len() as u64, 3 * level.triangles());
     // Never coarser than the counts ask, and a single triangle stays one.
     assert_eq!(Level::with_steps([7, 1, 1], 4), Level::new([7, 1, 1]));
-    assert_eq!(Level::with_steps([1, 1, 1], 9), Level::new([1, 1, 1]));
+    assert_eq!(Level::with_steps([1, 1, 1], 1), Level::new([1, 1, 1]));
+    assert_eq!(Level::with_steps([1, 1, 1], 2).inner, Some(0));
 }
 
 #[test]
@@ -1044,5 +1043,75 @@ fn scaled_balls_are_measured_and_scaled_cones_keep_their_grids() {
             (plan.levels.iter()).all(|level| *level == Level::new(level.counts)),
             "{name}"
         );
+    }
+}
+/// Ring corners steep to their patches: on fat tori and next to a ball's
+/// cuts the patch bends hard near a corner, and the triangle from it to
+/// the inner grid runs well off the patch while the patch stays near the
+/// triangle's plane (measured against the plane, a nearly horn torus read
+/// within at 2 chords). And a single-triangle patch of a ball's piece
+/// whose middle is past the chord gets an inner point (it was 1.12).
+#[test]
+fn steep_ring_corners_and_single_triangles_are_measured() {
+    use crate::extrude::Frame;
+    use crate::profile::tests::circle;
+    use crate::{Profile, Sweep, revolve};
+    let v = glam::DVec2::new;
+    let z = Frame {
+        origin: DVec3::ZERO,
+        x: DVec3::X,
+        y: DVec3::Z,
+    };
+    let torus = |major: f64, minor: f64, sweep: Sweep| {
+        let profile = Profile {
+            loops: vec![circle(v(major, 0.0), minor, 1, false)],
+        };
+        revolve(&profile, &z, sweep, 7, &TOL, &Budget::DEFAULT).unwrap()
+    };
+    let (_, ball) = round_solids().swap_remove(0);
+    let corner = DVec3::new(1.0, -2.0, 0.5) + DVec3::splat(0.6);
+    let block = Solid::cuboid(corner, DVec3::splat(4.0), 11, &TOL).unwrap();
+    let cut = crate::boolean(&ball, &block, crate::Op::Difference, &TOL, &Budget::DEFAULT).unwrap();
+    // A corner of a box, rounded by the ball: one of its patches is a
+    // small single triangle bulging past the chord.
+    let block = Solid::cuboid(
+        DVec3::new(0.6302371828494238, -0.2586836385809508, 0.8276457806392021),
+        DVec3::new(2.3076261783934213, 2.470170510860735, 1.6083669627111867),
+        11,
+        &TOL,
+    )
+    .unwrap();
+    let corner = crate::boolean(
+        &ball,
+        &block,
+        crate::Op::Intersection,
+        &TOL,
+        &Budget::DEFAULT,
+    );
+    let part = Sweep::Part {
+        from: -0.43,
+        to: 3.2,
+    };
+    let display = Display::default();
+    for (name, solid) in [
+        ("fat torus", torus(2.85, 1.42, Sweep::Full)),
+        ("fat part torus", torus(1.8, 0.83, part)),
+        ("nearly horn torus", torus(34.0, 30.0, part)),
+        ("cut ball", cut),
+        ("rounded corner", corner.unwrap()),
+    ] {
+        let d = drawn(solid.mesh(), &display);
+        eprintln!("{name}: {d:?}");
+        assert!(d.worst.1 <= 1.05, "{name}: {d:?}");
+        assert_tiled(solid.mesh(), &display);
+        assert_watertight(&solid.tessellate(&display).unwrap());
+        solid.manifold_mesh(&display).unwrap();
+        let plan = Plan::new(solid.mesh(), &display, &Limits::RENDER)
+            .unwrap()
+            .unwrap();
+        let opened = (plan.levels.iter())
+            .filter(|level| level.counts == [1, 1, 1] && level.inner.is_some())
+            .count();
+        assert_eq!(opened > 0, name == "rounded corner", "{name}");
     }
 }
