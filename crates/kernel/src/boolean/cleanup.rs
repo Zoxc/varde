@@ -9,16 +9,18 @@
 //! operands' own vertices come first) when the collapse keeps a manifold
 //! (every vertex round it keeps one fan, once two triangles it makes the
 //! same but facing each other, a sheet of zero thickness, are taken out
-//! together) and turns no proper triangle over; a
-//! triangle of zero height whose edges aren't short has its longest edge
-//! flipped, which splits the triangle beyond at the far corner and leaves
-//! the same surface. Components that enclose no volume go. It never
-//! decides that two separate vertices are one: a collapse removes an
-//! edge, keeping the surface a closed manifold. Then slivers left on
-//! plane faces (each input triangle is cut on its own, and long thin ones
-//! leave slivers) are flipped towards the Delaunay triangulation of their
-//! face, and last the triangles the boolean made on plane faces are
-//! refined for their shapes ([`quality`]).
+//! together) and turns no proper triangle over; a triangle of zero height
+//! whose edges aren't short has its longest edge flipped, which splits
+//! the triangle beyond at the far corner and leaves the same surface.
+//! Where nothing else changes, a vertex at which a folded sheet's two
+//! sides are triangulated differently is moved within its star's planes
+//! ([`fold`]). Components that enclose no volume go. It never decides
+//! that two separate vertices are one: a collapse removes an edge,
+//! keeping the surface a closed manifold. Then slivers left on plane
+//! faces (each input triangle is cut on its own, and long thin ones leave
+//! slivers) are flipped towards the Delaunay triangulation of their face,
+//! and last the triangles the boolean made on plane faces are refined for
+//! their shapes ([`quality`]).
 //!
 //! Curved edges (those whose record in [`Soup::curves`] bends by more
 //! than the short length) are never collapsed or flipped: the clean-up
@@ -46,6 +48,7 @@ use crate::solid::patch_volume;
 use crate::trig;
 use crate::{KernelError, Tolerance};
 
+mod fold;
 mod quality;
 mod seams;
 
@@ -93,6 +96,20 @@ impl Soup {
             self.absorbed.push((from, into));
         }
     }
+}
+
+/// What a collapse may turn over.
+#[derive(Clone, Copy)]
+enum Turn<'a> {
+    /// No proper triangle: a short edge.
+    Proper,
+    /// No triangle at all, and their corners along curves stay open: a
+    /// vertex inside a plane face.
+    Strict,
+    /// Proper triangles only in a plane of the folded star where they
+    /// face both ways, each then on a face facing its way: see
+    /// [`fold`].
+    Fold(&'a fold::Star),
 }
 
 struct Cleaner<'a> {
@@ -169,12 +186,12 @@ pub(super) fn clean(
         for [u, v] in c.short_edges() {
             // An earlier collapse may have taken the edge already: then no
             // triangle has both ends.
-            if c.collapse(u, v, false) {
+            if c.collapse(u, v, Turn::Proper) {
                 changed = true;
             }
         }
         for [u, v] in c.plane_edges() {
-            if c.inside_plane(v) && c.collapse(u, v, true) {
+            if c.inside_plane(v) && c.collapse(u, v, Turn::Strict) {
                 changed = true;
             }
         }
@@ -189,6 +206,12 @@ pub(super) fn clean(
             if c.alive[t as usize] && (c.straighten(t) | c.unbend(t)) {
                 changed = true;
             }
+        }
+        // Last resort, where nothing else changed: folded sheets whose
+        // two sides are triangulated differently.
+        if !changed {
+            work.spend(c.soup.tris.len())?;
+            changed = c.unfold();
         }
         if !changed {
             break;
@@ -208,7 +231,7 @@ pub(super) fn clean(
             }
         }
         for [u, v] in c.plane_edges() {
-            if c.inside_plane(v) && c.collapse(u, v, true) {
+            if c.inside_plane(v) && c.collapse(u, v, Turn::Strict) {
                 changed = true;
             }
         }
@@ -388,13 +411,12 @@ impl Cleaner<'_> {
     }
 
     /// Collapses the edge `u`–`v` onto `u`, if allowed: every vertex round
-    /// it keeps one fan (the surface stays a manifold), and no proper
-    /// triangle turns over (`strict`: none at all, and their corners along
-    /// curves stay open). Two triangles the collapse makes the same but
-    /// facing each other (a sheet of zero thickness folded onto the
-    /// surface, which flush operands leave at vertices where the
-    /// perturbation can't move every face outwards) both go.
-    fn collapse(&mut self, u: u32, v: u32, strict: bool) -> bool {
+    /// it keeps one fan (the surface stays a manifold), and no triangle
+    /// turns over that `turn` doesn't allow. Two triangles the collapse
+    /// makes the same but facing each other (a sheet of zero thickness
+    /// folded onto the surface, which flush operands leave at vertices
+    /// where the perturbation can't move every face outwards) both go.
+    fn collapse(&mut self, u: u32, v: u32, turn: Turn) -> bool {
         let shared = self.shared(u, v);
         if shared.len() != 2 {
             return false;
@@ -488,13 +510,10 @@ impl Cleaner<'_> {
         let cancelled = self.cancel_pairs(u);
 
         let turned = cancelled.is_none()
-            || moved.iter().zip(&saved_tris).any(|(&t, &old)| {
-                let new = self.soup.tris[t as usize];
-                self.alive[t as usize]
-                    && (strict || self.height(old).0 > self.small)
-                    && (self.normal(old).dot(self.normal(new)) <= 0.0
-                        || (strict && !(self.height(new).0 > self.small && self.open(new))))
-            });
+            || moved
+                .iter()
+                .zip(&saved_tris)
+                .any(|(&t, &old)| self.alive[t as usize] && self.turned(t, old, turn));
         if turned || affected.iter().any(|&w| w != v && !self.one_fan(w)) {
             // Undo.
             for &t in shared.iter().chain(cancelled.iter().flatten()) {
@@ -530,6 +549,18 @@ impl Cleaner<'_> {
             self.recurved.extend(on);
         }
         true
+    }
+
+    /// Whether triangle `t`, `old` before a collapse, turned over in a way
+    /// `turn` doesn't allow.
+    fn turned(&self, t: u32, old: [u32; 3], turn: Turn) -> bool {
+        let new = self.soup.tris[t as usize];
+        let over = self.normal(old).dot(self.normal(new)) <= 0.0;
+        match turn {
+            Turn::Proper => self.height(old).0 > self.small && over,
+            Turn::Strict => over || !(self.height(new).0 > self.small && self.open(new)),
+            Turn::Fold(star) => self.retag(star, t, old).is_none(),
+        }
     }
 
     /// Moves the triangles a collapse gave a curve off their face's
@@ -1138,7 +1169,7 @@ mod tests {
             small: 1e-9,
             thin: 1e-9,
         };
-        assert!(c.collapse(0, 1, false));
+        assert!(c.collapse(0, 1, Turn::Proper));
         assert_eq!(c.shared(0, 2).len(), 2);
         assert!(!c.curved(0, 2));
     }

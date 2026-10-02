@@ -290,7 +290,9 @@ plane.
    cut are merged back into the operand's original patches.
 7. **Clean-up.** The curved version of Manifold's degenerate clean-up on the
    triangle soup: collapse edges of about zero length, flip triangles of
-   zero height, drop parts enclosing no volume, straighten and dissolve
+   zero height, move a vertex of a sheet folded onto a flush face (its
+   two sides triangulated differently) within its star's planes so the
+   sheet cancels, drop parts enclosing no volume, straighten and dissolve
    seams where flush caps with curved rims meet in one plane (merging the
    faces, their names becoming aliases), flip slivers on plane faces
    towards Delaunay, and refine the plane faces the boolean cut for their

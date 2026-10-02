@@ -845,6 +845,95 @@ fn grid_boxes_chained() {
     }
 }
 
+#[test]
+fn grid_boxes_folded_sheets() {
+    // Chains of grid boxes (from seeded runs like the one above) whose
+    // last step leaves a sheet of zero thickness folded onto a flush
+    // face, its two sides triangulated differently: a vertex whose star
+    // lies in one plane, or on a crease, with triangles in a plane facing
+    // both ways. No two of its triangles are the same, so no short
+    // collapse cancels them, and the result failed the check (`Fold`,
+    // `EdgeNeighbours`, `VertexNeighbours`). Moving the vertex within
+    // its star's planes takes the sheet out. The first three failed this
+    // way before other fixes mended them; they stay as cases of the
+    // kind.
+    use Op::{Difference as D, Intersection as I, Union as U};
+    type Step = (Op, [i32; 3], [i32; 3]);
+    type Chain = (([i32; 3], [i32; 3]), &'static [Step]);
+    let chains: [Chain; 9] = [
+        (
+            ([4, 0, 4], [3, 6, 1]),
+            &[(U, [0, 2, 3], [4, 3, 2]), (D, [0, 2, 3], [4, 1, 3])],
+        ),
+        (
+            ([1, 3, 5], [3, 3, 1]),
+            &[
+                (I, [2, 0, 2], [5, 5, 4]),
+                (I, [0, 2, 3], [4, 3, 4]),
+                (U, [3, 3, 3], [2, 4, 2]),
+                (I, [2, 4, 5], [2, 3, 1]),
+            ],
+        ),
+        (
+            ([3, 0, 5], [4, 3, 1]),
+            &[
+                (I, [3, 2, 5], [2, 3, 2]),
+                (I, [1, 3, 2], [6, 2, 3]),
+                (U, [1, 1, 3], [6, 1, 1]),
+                (U, [1, 2, 3], [4, 4, 3]),
+                (U, [2, 0, 2], [5, 2, 4]),
+            ],
+        ),
+        (
+            ([5, 2, 2], [1, 2, 4]),
+            &[
+                (D, [3, 5, 1], [4, 1, 6]),
+                (U, [2, 4, 3], [4, 2, 3]),
+                (U, [2, 1, 5], [3, 2, 2]),
+                (U, [1, 0, 2], [2, 7, 1]),
+                (D, [1, 0, 3], [3, 5, 2]),
+            ],
+        ),
+        (
+            ([1, 4, 4], [5, 2, 2]),
+            &[
+                (U, [0, 3, 3], [5, 2, 1]),
+                (D, [4, 2, 2], [1, 3, 5]),
+                (U, [1, 5, 3], [6, 1, 2]),
+            ],
+        ),
+        (
+            ([2, 4, 2], [4, 2, 4]),
+            &[(U, [0, 1, 0], [2, 4, 3]), (D, [2, 2, 1], [4, 5, 4])],
+        ),
+        (
+            ([4, 5, 1], [3, 1, 6]),
+            &[(U, [0, 1, 4], [6, 4, 1]), (D, [3, 5, 5], [4, 2, 2])],
+        ),
+        (
+            ([5, 2, 3], [2, 4, 4]),
+            &[(U, [3, 1, 1], [2, 3, 6]), (U, [2, 3, 3], [3, 4, 2])],
+        ),
+        (
+            ([2, 3, 4], [1, 2, 1]),
+            &[
+                (D, [4, 0, 4], [3, 1, 1]),
+                (U, [0, 2, 3], [2, 2, 2]),
+                (U, [0, 3, 0], [2, 2, 7]),
+            ],
+        ),
+    ];
+    for (k, (start, steps)) in chains.into_iter().enumerate() {
+        let (mut s, mut c) = grid_box(start.0, start.1);
+        for (i, &(op, min, size)) in steps.iter().enumerate() {
+            let (b, cb) = grid_box(min, size);
+            c = combine(&c, &cb, op);
+            s = against_cells(&format!("chain {k} step {i}"), &s, &b, op, &c).expect("a manifold");
+            faces_face_out(&s);
+        }
+    }
+}
+
 /// The tetrahedron on four points, facing out.
 fn tetrahedron(p: [DVec3; 4]) -> Solid {
     let n = (p[1] - p[0]).cross(p[2] - p[0]);

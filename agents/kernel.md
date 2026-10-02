@@ -2990,6 +2990,8 @@ elsewhere (see "Cutting curved faces").
 | `boolean/triangulate.rs` | a face's kept loops in its parameter domain into triangles, curved sides' corners, Steiner points |
 | `boolean/cleanup.rs` | collapsing and flipping the degenerate triangles flush operands leave |
 | `boolean/cleanup/seams.rs` | curved edges between two triangles in one plane: straightened, regions triangulated again, the plane faces they joined merged (for the sliver flips after them) |
+| `boolean/cleanup/fold.rs` | sheets folded onto a flush face, their two sides triangulated differently: the folded vertex moved within its star's planes |
+| `boolean/cleanup/quality.rs` | refining the plane faces the boolean cut for their triangles' shapes |
 | `boolean/tests.rs` | boxes in every flush, edge-on and vertex-on configuration, tori, determinism |
 | `boolean/curved_tests.rs` | cylinders and boxes (exact), crossing cylinders, a free surface, a saddle, extrudes, chains, merging, random bars, walls over arcs with level ends |
 | `boolean/curved_tests/flush_seams.rs` | flush unions with curved rims in either order: bosses in and on plates, over holes and edges, overlapping, a flange at a shaft's foot, a slot, at millimetre scale and on a turned frame, a chain of flush joins, caps a hair apart, bosses on a rounded corner |
@@ -4394,6 +4396,39 @@ before the mesh is built, at most 64 rounds:
   face's surface) and the flip leaves nothing thinner. The far corner of a
   flat triangle lies on that side, so the two new triangles cover the one
   across exactly.
+- **Unfold** a vertex whose star is folded (`cleanup/fold.rs`), last in
+  a round and only where nothing else in it changed. A sheet folded onto
+  a flush face at a saddle has one side from each operand, each
+  triangulated on its own, so no collapse makes two of its triangles the
+  same and cancels them: its vertices have every triangle round them of
+  straight sides and within an eighth of the resolution of one of at most
+  three planes through the vertex (each the normal of its largest proper
+  triangle, one plane, or two or three on a crease), with proper
+  triangles in some plane facing both ways. Moving such a vertex onto a
+  neighbour lying in every plane of its star keeps each plane's signed
+  area (a fan's signed area is its link polygon's; on a crease the vertex
+  moves along the line bounding each plane's part), so the oriented
+  surface and the volume stay as they were and the folded part cancels.
+  The candidates go by the unsigned area left round the vertex, then id,
+  and one is taken only if that area is less than before by more than
+  the short length squared (turned triangles cover theirs twice over, so
+  the area is what bounds the rule: a first try onto any neighbour, and
+  before the other rules, made a turned triangle overlapping others
+  outside the star and broke a chain that worked). The collapse is the
+  same as the others (one fan round every vertex, the pairs made the
+  same cancelled), except that a proper triangle may turn over, only in
+  a plane of the star whose triangles face both ways; one that turned,
+  or that now faces against its plane face's normal, goes on the face of
+  the star's largest proper triangle in its plane facing its way, and if
+  there is none the collapse isn't made, so plane tags stay true for
+  repair. The scan goes over the vertices in id order and is charged the
+  soup's size, as a round is. Chained grid boxes (random half-grid
+  boxes, chains of five, as `grid_boxes_chained`; seeds 1 and 3–29,
+  140 000 steps): 11 failed on a manifold result before, 1 now (a hull
+  failure, not a fold: see Known gaps), none new and no wrong volume;
+  the `Invalid` counts where the result isn't a manifold are unchanged.
+  The seeded chains of parts went from 201 to 203 of 240, every other
+  seeded tally as before.
 - **Drop** connected parts enclosing no volume (at most an eighth of the
   resolution times their area): what is left of flush faces meeting.
   The volume counts the triangles' curved sides (each triangle with one
@@ -5285,9 +5320,14 @@ to 72 of its 96 operations and left the others as they were.
   walls at fits `1e-4` and `1e-5` found no result where the bound on
   triangles off their quadric (not only those along a cut) changed the
   outcome: it is a backstop.
-- **Coplanar faces facing each other, triangulated differently**: a
-  folded sheet whose two sides don't share their triangles can't be
-  collapsed away (seen once in about 3 600 chained grid-box booleans).
+- **Chained flush grid boxes**: 1 of 140 000 steps fails on a manifold
+  result, `Invalid(Hull)` (in half-grid units: the box at `[2,2,1]` of
+  size `[2,5,4]`, less `[0,3,3]`+`[5,2,2]`, intersected with
+  `[2,3,1]`+`[1,4,2]`, united with `[3,0,2]`+`[4,6,2]`). Folded sheets
+  whose two sides are triangulated differently are unfolded by the
+  clean-up ("Unfold"); one where every collapse onto the folded vertex
+  leaves a pinch (two vertex ids at one point) would still fail, as one
+  did before other fixes, but none was seen in these runs.
 - **Flush faces after rounding**: flat solids flush in exact arithmetic
   but turned and moved work (2 653 of 2 700 turned grid boxes'
   operations, 349 of 359 steps of turned chains); the rest fail as
