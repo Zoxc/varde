@@ -224,7 +224,13 @@ impl<'a> Revolving<'a> {
     /// straight and in the source's plane ([`axis_edge`]).
     fn axis_edge(&self, edge: u32) -> Option<[DVec3; 2]> {
         let source = self.regions().source()?;
-        axis_edge(self.state.index, edge, &source.placement).ok()
+        axis_edge(
+            self.state.index,
+            edge,
+            &source.placement,
+            self.state.resolution,
+        )
+        .ok()
     }
 
     /// The model's edges that can be the axis while it's picked, and
@@ -239,7 +245,12 @@ impl<'a> Revolving<'a> {
         let index = self.state.index;
         (0..index.mesh().edge_count())
             .filter_map(|edge| u32::try_from(edge).ok())
-            .filter_map(|edge| Some((edge, axis_edge(index, edge, &source.placement).ok()?)))
+            .filter_map(|edge| {
+                Some((
+                    edge,
+                    axis_edge(index, edge, &source.placement, self.state.resolution).ok()?,
+                ))
+            })
             .collect()
     }
 

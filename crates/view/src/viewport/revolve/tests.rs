@@ -73,6 +73,7 @@ fn state<'a>(
         edge_ends: None,
         edge_body: None,
         index: crate::pick::empty_index(),
+        resolution: varde_kernel::Tolerance::DEFAULT.resolution(),
         picking,
         extent: TurnKind::Full,
         fields: [field; 2],
@@ -436,4 +437,83 @@ fn model_edges_in_the_plane_can_be_the_axis() {
         pointed,
         Some([right.1[1], right.1[0]].map(|p| p.truncate()))
     );
+}
+
+/// The model shown directs a straight edge as regenerating does, with
+/// the face of its reference's first key on its left seen from outside:
+/// on every straight edge of the example plate, that face's outward
+/// normal (its triangles run round anticlockwise from outside) crossed
+/// with the way the ends run points into it.
+#[test]
+fn the_model_shown_directs_edges_as_regenerating_does() {
+    let document = varde_document::Document::example();
+    let mut cache = varde_regen::Cache::default();
+    let evaluation = varde_regen::evaluate(&document, &mut cache);
+    let (mesh, picking) =
+        varde_regen::tessellate_picking(&document, &evaluation, &mut cache).unwrap();
+    let index = PickIndex::new(mesh, picking, 1);
+    let mesh = index.mesh();
+    let at = |i: u32| DVec3::from(mesh.positions()[i as usize].map(f64::from));
+    let faces: Vec<&[u32]> = mesh.faces().collect();
+    let mut checked = 0;
+    for edge in 0..mesh.edge_count() as u32 {
+        let Some(keys) = index.chain_keys(edge) else {
+            continue;
+        };
+        let Some([from, to]) = index.edge_ends(edge, &keys) else {
+            continue;
+        };
+        let [a, b] = index.edge_faces(edge).unwrap();
+        let left = if index.face_ref(a, DVec3::ZERO).unwrap().key == keys[0] {
+            a
+        } else {
+            b
+        };
+        let tris = faces[left as usize];
+        let [p, q, r] = [0, 1, 2].map(|k| at(tris[k]));
+        let outward = (q - p).cross(r - p);
+        let inside = tris.iter().map(|&i| at(i)).sum::<DVec3>() / tris.len() as f64;
+        let into = outward.cross(to - from);
+        assert!(into.dot(inside - (from + to) / 2.0) > 0.0, "edge {edge}");
+        checked += 1;
+    }
+    // The plate's twelve box edges.
+    assert_eq!(checked, 12);
+}
+
+/// A model edge is in the source's plane as regenerating tells it:
+/// within the resolution of the document's tolerance, not the rounding
+/// of the mesh's `f32` points. The block's top edges are in XY, and in
+/// planes parallel to it nearer than the resolution, not in ones
+/// further off; a coarser tolerance takes planes further off.
+#[test]
+fn a_model_edge_is_in_the_plane_within_the_resolution() {
+    use crate::revolve::{EDGE_OFF_PLANE, axis_edge};
+    let index = block();
+    let fine = varde_kernel::Tolerance::DEFAULT.resolution();
+    let coarse = varde_kernel::Tolerance::new(0.1).unwrap().resolution();
+    let top: Vec<u32> = (0..index.mesh().edge_count() as u32)
+        .filter(|&edge| axis_edge(&index, edge, &OriginPlane::XY.placement(), fine).is_ok())
+        .collect();
+    assert_eq!(top.len(), 4);
+    let at = |height: f64| varde_document::Placement {
+        origin: DVec3::new(0.0, 0.0, height),
+        ..OriginPlane::XY.placement()
+    };
+    for &edge in &top {
+        for (height, resolution, taken) in [
+            (0.5 * fine, fine, true),
+            (-0.5 * fine, fine, true),
+            (3.0 * fine, fine, false),
+            (-3.0 * fine, fine, false),
+            (0.5 * coarse, coarse, true),
+            (3.0 * coarse, coarse, false),
+        ] {
+            let found = axis_edge(&index, edge, &at(height), resolution);
+            match taken {
+                true => assert!(found.is_ok(), "{height}: {found:?}"),
+                false => assert_eq!(found, Err(EDGE_OFF_PLANE), "{height}"),
+            }
+        }
+    }
 }

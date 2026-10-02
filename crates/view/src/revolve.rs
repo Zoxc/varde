@@ -19,7 +19,7 @@ use crate::operation_panel::{
     BodyTarget, Candidate, Framing, OperationKind, PanelHover, Parts, TypedField, bodies, field,
     footer_message, operation_panel, pick_field, picked_row, tile, tiles, toggle, value_field,
 };
-use crate::pick::PickIndex;
+use crate::pick::{PickIndex, Snapped};
 use crate::theme;
 use crate::{Edit, Look, Message, VALUE_FIELD};
 
@@ -182,6 +182,9 @@ pub struct RevolveState<'a> {
     /// The model shown, whose straight edges in the source's plane a
     /// click picks as the axis while it's picked.
     pub index: &'a PickIndex,
+    /// The resolution of the document's tolerance, within which a model
+    /// edge must be in the source's plane to be the axis ([`axis_edge`]).
+    pub resolution: f64,
     /// Whether the edited revolve's axis line wasn't found.
     pub axis_missing: bool,
     /// What a click picks first.
@@ -283,24 +286,31 @@ pub const EDGE_OFF_PLANE: &str = "That edge isn't in the sketch's plane";
 
 /// Edge `edge` of `index`'s model as a revolve's axis on a sketch placed
 /// at `placement`: its ends in the order its reference runs
-/// ([`PickIndex::edge_ends`], its keys sorted), if it's straight and both
-/// ends are on the sketch's plane within the rounding of the mesh's
-/// `f32` points; else why not. Regenerating decides exactly, on its
-/// curves and within the tolerance's resolution, what this tells the
-/// cursor beforehand.
+/// ([`PickIndex::edge_ends`], its keys sorted), if it's straight and in
+/// the sketch's plane as regenerating tells it, within `resolution` (the
+/// document's tolerance's); else why not. Regenerating requires the
+/// curves' ends within the resolution of the plane: here the middle of
+/// those ends (the edge's snap point, from the exact curves) must be,
+/// and the mesh's ends, `f32` points, within it and their rounding. So
+/// an edge regenerating takes is taken, and one it refuses is refused
+/// unless it's tilted across the plane by less than that rounding.
 pub fn axis_edge(
     index: &PickIndex,
     edge: u32,
     placement: &Placement,
+    resolution: f64,
 ) -> Result<[DVec3; 2], &'static str> {
     let keys = index.chain_keys(edge).ok_or(EDGE_NOT_STRAIGHT)?;
-    let ends = index.edge_ends(edge, &keys[0]).ok_or(EDGE_NOT_STRAIGHT)?;
+    let ends = index.edge_ends(edge, &keys).ok_or(EDGE_NOT_STRAIGHT)?;
+    let middle = (index.snap_point(Snapped::EdgePoint(edge))).ok_or(EDGE_NOT_STRAIGHT)?;
     let scale = (ends.iter())
         .map(|p| p.abs().max_element())
-        .fold(placement.origin.abs().max_element(), f64::max);
-    let slack = 8.0 * f64::from(f32::EPSILON) * scale.max(1.0);
-    let height = |p: DVec3| (p - placement.origin).dot(placement.normal);
-    if ends.iter().all(|&p| height(p).abs() <= slack) {
+        .fold(placement.origin.abs().max_element(), f64::max)
+        .max(1.0);
+    let height = |p: DVec3| ((p - placement.origin).dot(placement.normal)).abs();
+    let rounded = resolution + 8.0 * f64::from(f32::EPSILON) * scale;
+    let exact = resolution + 16.0 * f64::EPSILON * scale;
+    if height(middle) <= exact && ends.iter().all(|&p| height(p) <= rounded) {
         Ok(ends)
     } else {
         Err(EDGE_OFF_PLANE)

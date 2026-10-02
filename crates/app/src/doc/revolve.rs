@@ -305,7 +305,7 @@ impl Doc {
             .find(|(merged, _)| *merged == edge.body)
             .map_or(edge.body, |&(_, holder)| holder);
         let found = index.find_edge(shown, edge.faces, edge.near)?;
-        index.edge_ends(found, &edge.faces[0])
+        index.edge_ends(found, &edge.faces)
     }
 
     /// Picks edge `edge` of the model shown, of the index `model` names,
@@ -354,8 +354,9 @@ impl Doc {
             .placement(source)
             .ok_or("The profile's sketch isn't placed")?;
         let index = self.feed.pick_index();
-        let ends = axis_edge(index, edge, &placement)?;
         let document = self.editor.document();
+        let resolution = document.tolerance().resolution();
+        let ends = axis_edge(index, edge, &placement, resolution)?;
         let features = document.features();
         let before = (session.feature)
             .and_then(|id| features.iter().position(|feature| feature.id == id))
@@ -496,6 +497,7 @@ impl Doc {
                 _ => None,
             },
             index: self.feed.pick_index(),
+            resolution: document.tolerance().resolution(),
             picking: session.picking,
             extent: session.extent,
             fields: [session.fields[0].field(), session.fields[1].field()],

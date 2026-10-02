@@ -199,7 +199,7 @@ fn edges_that_cant_be_the_axis_are_refused() {
         .find(|&edge| {
             index.chain_keys(edge).is_some_and(|keys| {
                 keys.iter().any(|key| key.part == PartKey::EndCap)
-                    && index.edge_ends(edge, &keys[0]).is_none()
+                    && index.edge_ends(edge, &keys).is_none()
             })
         })
         .expect("a round edge on the top");
@@ -277,7 +277,7 @@ fn editing_a_revolve_about_an_edge_keeps_it() {
             index.chain_keys(edge).is_some_and(|keys| {
                 keys.iter().all(|key| key.feature == feature.get())
                     && index
-                        .edge_ends(edge, &keys[0])
+                        .edge_ends(edge, &keys)
                         .is_some_and(|ends| ends.iter().all(|p| (p.y + 20.0).abs() < 1e-9))
             })
         })

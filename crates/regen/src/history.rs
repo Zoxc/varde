@@ -1022,13 +1022,18 @@ pub(crate) fn edge_axis(
 /// The ends of the straight edge `edge` names on `solid`, in the order
 /// it runs with the face of its first key on its left seen from outside
 /// (see [`EdgeRef`]), or why there's none: no edge has its names ("wasn't
-/// found"), or the one found isn't a line ("isn't straight"). A chain's
-/// halfedges run on its first region's side, along that region's own
-/// boundary, so they run the right way where that region is the first
-/// key's. An edge that isn't straight shows its curves, drawn at the
+/// found"), the one found isn't a line ("isn't straight"), or aliases
+/// name both its faces by both keys so which is the first key's can't be
+/// told ("direction can't be told"). A chain's halfedges run on its
+/// first region's side, along that region's own boundary (its triangles
+/// run round anticlockwise seen from outside, a mirrored copy's too, as
+/// a mirror reverses them), so they run the right way where that region
+/// is the first key's ([`EdgeRef::runs_with`]). An edge that isn't
+/// straight shows its curves, drawn at the
 /// [`Display`](varde_kernel::Display) of `tolerance` (the first
 /// [`MAX_EVIDENCE`](varde_kernel::MAX_EVIDENCE)`.curves`), by value as a
-/// face that isn't flat is ([`face_geometry`]).
+/// face that isn't flat is ([`face_geometry`]); one whose direction
+/// can't be told, itself.
 pub(crate) fn edge_ends(
     solid: &Solid,
     edge: &EdgeRef,
@@ -1052,12 +1057,22 @@ pub(crate) fn edge_ends(
             geometry: ErrorGeometry::of_evidence(&evidence, tolerance),
         });
     };
-    let first = &topology.regions()[chain.regions[0] as usize];
-    Ok(if first.named(&edge.faces[0]) {
-        [from, to]
-    } else {
-        [to, from]
-    })
+    let [left, right] = chain.regions.map(|r| {
+        let region = &topology.regions()[r as usize];
+        (&region.key, &region.aliases[..])
+    });
+    match EdgeRef::runs_with(&edge.faces, left, right) {
+        Some(true) => Ok([from, to]),
+        Some(false) => Ok([to, from]),
+        None => {
+            let mut evidence = varde_kernel::Evidence::default();
+            evidence.add_curves(Conic3::line(from, to).ok());
+            Err(Failed {
+                message: message::EDGE_UNDIRECTED.to_owned(),
+                geometry: ErrorGeometry::of_evidence(&evidence, tolerance),
+            })
+        }
+    }
 }
 
 /// `profile`, in its sketch's coordinates, moved into the frame the

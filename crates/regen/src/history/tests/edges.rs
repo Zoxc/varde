@@ -3,11 +3,14 @@
 //! reference runs), following the edge when an earlier feature moves
 //! it, and through a join that consumes its body; failing when the edge
 //! is off the sketch's plane, isn't straight, or is gone; and what's
-//! cached.
+//! cached. Edges are directed with their first face on their left from
+//! outside, on mirrored solids too.
 
 use glam::DVec3;
 use varde_document::{AxisLine, EdgeRef, Placement, Revolve, Turn};
 use varde_kernel::mesh::{FaceKey, Form, PartKey};
+use varde_kernel::topology::Region;
+use varde_kernel::{Budget, Motion};
 
 use super::*;
 use crate::Draft;
@@ -611,4 +614,51 @@ fn a_profile_along_its_edge_turns_into_a_cylinder() {
         last_body(&editor, &evaluation).volume(),
         ring(0.0, 5.0, 20.0),
     );
+}
+
+/// Every straight edge between flat faces of the example plate, and of
+/// its image in an oblique mirror, runs with its first key's face on its
+/// left seen from outside: that face's outward normal (its triangles run
+/// round it anticlockwise from outside) crossed with the edge's
+/// direction points into the face. The mirror reverses the triangles, so
+/// the rule holds on the copy as on the source.
+#[test]
+fn edges_run_with_their_first_face_on_their_left_mirrored_too() {
+    let document = Document::example();
+    let evaluation = evaluated(&document);
+    let plate = solid_of(&evaluation, document.bodies()[0].id);
+    let mirror = Motion::mirror(DVec3::new(3.0, 0.0, 0.0), DVec3::new(1.0, 2.0, 0.5)).unwrap();
+    let image = (plate.transformed(&mirror, None, &Tolerance::DEFAULT, &Budget::DEFAULT)).unwrap();
+    for solid in [plate, &image] {
+        let topology = solid.topology();
+        let mesh = solid.mesh();
+        let corners = |tri: u32| [0, 1, 2].map(|k| mesh.curve(3 * tri + k).p0);
+        let mut checked = 0;
+        for chain in topology.chains() {
+            let regions = chain.regions.map(|r| &topology.regions()[r as usize]);
+            let flat = |region: &&Region| matches!(region_form(solid, region), Form::Plane { .. });
+            if !regions.iter().all(flat)
+                || !matches!(edge_shape(solid, chain), EdgeShape::Line { .. })
+            {
+                continue;
+            }
+            let [a, b] = regions.map(|region| region.key);
+            let first = mesh.curve(chain.halfedges[0]);
+            let reference = edge(document.bodies()[0].id, a, b, (first.p0 + first.p1) / 2.0);
+            let [from, to] = edge_ends(solid, &reference, &Tolerance::DEFAULT).unwrap();
+            let left = regions
+                .iter()
+                .find(|r| r.key == reference.faces[0])
+                .unwrap();
+            let [p, q, r] = corners(left.tris[0]);
+            let outward = (q - p).cross(r - p);
+            let points: Vec<DVec3> = left.tris.iter().flat_map(|&t| corners(t)).collect();
+            let inside = points.iter().sum::<DVec3>() / points.len() as f64;
+            let into = outward.cross(to - from);
+            assert!(into.dot(inside - (from + to) / 2.0) > 0.0, "{reference:?}");
+            checked += 1;
+        }
+        // The plate's twelve box edges.
+        assert_eq!(checked, 12);
+    }
 }

@@ -508,8 +508,16 @@ into a kernel profile in the sketch's coordinates, then:
   axis edge wasn't found"); `measure::edge_shape` must be a `Line` ("its
   axis edge isn't straight", showing the edge's curves, by value as a
   face that isn't flat shows the face), its ends ordered as `EdgeRef`
-  runs (`edge_ends`: as the chain's halfedges where its first region is
-  named by the first key, else reversed). Both ends must be within the
+  runs (`edge_ends`: as the chain's halfedges, which run on its first
+  region's triangles, where `EdgeRef::runs_with` says that region is
+  the first key's, else reversed; a mirrored solid's triangles are
+  reversed, so the rule holds on it too). `runs_with` takes a face as
+  the first key's where that key names it and the second names the
+  other; aliases naming both faces by both keys fall back to the faces'
+  own keys, and where those don't tell either, "its axis edge's
+  direction can't be told", showing the edge. The model shown directs
+  an edge by the same function, so the arrow drawn is the way the
+  revolve turns. Both ends must be within the
   tolerance's resolution of the sketch's plane, a decision on geometry
   stated as one ("its axis edge isn't in the sketch's plane", showing
   the edge and its two ends): an edge of the face the sketch is on is
@@ -607,9 +615,13 @@ first angle's field and "90°" in the second, a new body.
 - **A model edge as the axis** (`RevolveLook::PickEdge { model, edge,
   at }`, `Doc::pick_axis_edge`): once there's a source, a straight edge
   of the model shown in the source's plane (`varde_view::axis_edge`:
-  `PickIndex::edge_ends`, straight as the mesh draws it, and both ends
-  on the plane within the `f32` points' rounding; regeneration decides
-  exactly). It's named as a sketch on a face is
+  `PickIndex::edge_ends`, straight as the mesh draws it, and in the
+  plane as regeneration tells it, within the document's tolerance's
+  resolution (`RevolveState::resolution`): the edge's snap point, the
+  exact ends' middle, within it, and the mesh's `f32` ends within it
+  and their rounding. So every edge regeneration takes is taken, and
+  one it refuses is taken only if tilted across the plane by less than
+  the `f32` rounding, which regeneration then reports). It's named as a sketch on a face is
   (`varde_view::Naming`, `PlanePick`'s naming with the history stopped
   at the revolve: the edited one's place, or the end): the two faces'
   keys sorted, the point clicked, and the body its first face is on as

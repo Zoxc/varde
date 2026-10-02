@@ -50,6 +50,10 @@ pub(crate) const EDGE_NOT_FOUND: &str = "its axis edge wasn't found";
 /// Why a revolve about a model edge fails: the edge found isn't a line.
 pub(crate) const EDGE_NOT_STRAIGHT: &str = "its axis edge isn't straight";
 
+/// Why a revolve about a model edge fails: aliases name both of the
+/// edge's faces by both of its keys, so its direction can't be told.
+pub(crate) const EDGE_UNDIRECTED: &str = "its axis edge's direction can't be told";
+
 /// Why a revolve about a model edge fails: an end of the edge is further
 /// than the resolution from its sketch's plane.
 pub(crate) const EDGE_OFF_PLANE: &str = "its axis edge isn't in the sketch's plane";

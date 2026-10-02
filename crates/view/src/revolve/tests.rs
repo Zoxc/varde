@@ -54,6 +54,7 @@ fn state_of<'a>(
         edge_ends: None,
         edge_body: None,
         index: crate::pick::empty_index(),
+        resolution: varde_kernel::Tolerance::DEFAULT.resolution(),
         picking: RevolvePick::Regions,
         extent: TurnKind::Full,
         fields: [field(Some(1.0)), field(Some(0.5))],

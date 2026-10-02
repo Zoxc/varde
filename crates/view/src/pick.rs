@@ -19,7 +19,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use glam::{DVec2, DVec3, Vec3};
-use varde_document::{BodyId, FaceRef, OriginPlane, Placement};
+use varde_document::{BodyId, EdgeRef, FaceRef, OriginPlane, Placement};
 use varde_kernel::RenderMesh;
 use varde_kernel::mesh::FaceKey;
 use varde_regen::{Picking, Summary};
@@ -476,17 +476,21 @@ impl PickIndex {
     }
 
     /// The ends of `chain`, if it's a straight edge between two faces, in
-    /// the order an edge reference whose first key is `first` runs (see
-    /// [`varde_document::EdgeRef`]): with the face `first` names on its
-    /// left seen from outside, which the mesh's edge runs along (else
-    /// the other way). Straight as the mesh draws it: not closed, its
+    /// the order an edge reference with the keys `faces` runs: with the
+    /// face its first key names on its left seen from outside, as
+    /// regenerating directs it ([`EdgeRef::runs_with`]); the mesh's edge
+    /// runs with its first face on its left. None if the keys don't tell
+    /// which face is which. Straight as the mesh draws it: not closed, its
     /// snap point (a straight edge's middle, a round one's centre) at
     /// the middle of its ends, and every point of its polyline on the
     /// line through them, within the rounding of the mesh's `f32`
     /// points and a millionth of its length. Regenerating decides from
     /// the exact curves.
-    pub fn edge_ends(&self, chain: u32, first: &FaceKey) -> Option<[DVec3; 2]> {
-        let [left, _] = self.edge_faces(chain)?;
+    pub fn edge_ends(&self, chain: u32, faces: &[FaceKey; 2]) -> Option<[DVec3; 2]> {
+        let [left, right] = self.edge_faces(chain)?.map(|face| {
+            let face = self.picking.faces().get(face as usize)?;
+            Some((&face.key, &face.aliases[..]))
+        });
         if *self.picking.closed().get(chain as usize)? {
             return None;
         }
@@ -508,7 +512,7 @@ impl PickIndex {
         if snap.distance((from + to) / 2.0) > slack || points.iter().any(|&p| off(p) > slack) {
             return None;
         }
-        Some(if self.named(left, first) {
+        Some(if EdgeRef::runs_with(faces, left?, right?)? {
             [from, to]
         } else {
             [to, from]
