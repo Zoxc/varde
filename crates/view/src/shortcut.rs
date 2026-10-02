@@ -8,8 +8,8 @@ use iced::keyboard::{Key as KeyPress, Modifiers, key::Named};
 use varde_document::FeatureId;
 
 use crate::{
-    ConstraintKind, ConstraintSet, Edit, ExtrudeState, File, Look, Message, RevolveState,
-    SketchState, Tool, Welcome,
+    CombineState, ConstraintKind, ConstraintSet, Edit, ExtrudeState, File, Look, Message,
+    RevolveState, SketchState, Tool, Welcome,
 };
 
 /// A key pressed on its own, or with the platform's command modifier
@@ -54,14 +54,19 @@ impl Shortcut {
     pub const REDO_Y: Self = Self::command('y');
     /// Starts a new sketch.
     pub const SKETCH: Self = Self::plain('s');
-    /// Starts a new extrude: outside sketches, where `E` is Equal's.
-    pub const EXTRUDE: Self = Self::plain('e');
+    /// Starts a new extrude: outside sketches, where `X` turns geometry
+    /// into construction. The UI mock's key: `E` opens the model rail's
+    /// third set.
+    pub const EXTRUDE: Self = Self::plain('x');
     /// Starts a new revolve: outside sketches, where `O` takes up the
     /// Offset tool.
     pub const REVOLVE: Self = Self::plain('o');
     /// Starts the measure tool, or leaves it: outside sketches, where
     /// `I` is Coincident's.
     pub const MEASURE: Self = Self::plain('i');
+    /// Starts a new combine: outside sketches, where `B` takes up the
+    /// Rectangle tool.
+    pub const COMBINE: Self = Self::plain('b');
     pub const ENTER: Self = Self::named(Key::Enter);
     pub const DELETE: Self = Self::named(Key::Delete);
     /// Only labels the key: the app matches it itself, with any
@@ -379,6 +384,12 @@ pub struct DocumentKeys {
     pub revolving: bool,
     /// Whether the revolve being set up can be committed.
     pub revolve_ready: bool,
+    /// Whether the document has two bodies or more, to combine.
+    pub combinable: bool,
+    /// Whether a combine is being set up.
+    pub combining: bool,
+    /// Whether the combine being set up can be committed.
+    pub combine_ready: bool,
     /// Whether the measure tool is in use.
     pub measuring: bool,
     /// Whether the document has changes not saved.
@@ -449,6 +460,9 @@ impl DocumentKeys {
             extrude_ready: false,
             revolving: false,
             revolve_ready: false,
+            combinable: false,
+            combining: false,
+            combine_ready: false,
             measuring: false,
             edited: false,
             undo: false,
@@ -505,14 +519,26 @@ impl DocumentKeys {
         }
     }
 
+    /// The same keys where there are bodies to combine if `combinable`,
+    /// with `combine` being set up, if one is.
+    pub fn with_combine(self, combinable: bool, combine: Option<&CombineState<'_>>) -> Self {
+        Self {
+            combinable,
+            combining: combine.is_some(),
+            combine_ready: combine.is_some_and(|combine| combine.ready),
+            ..self
+        }
+    }
+
     /// The same keys with the measure tool in use if `measuring`.
     pub fn with_measure(self, measuring: bool) -> Self {
         Self { measuring, ..self }
     }
 
-    /// Whether an operation is being set up: an extrude or a revolve.
+    /// Whether an operation is being set up: an extrude, a revolve or a
+    /// combine.
     pub fn operating(&self) -> bool {
-        self.extruding || self.revolving
+        self.extruding || self.revolving || self.combining
     }
 }
 
@@ -556,24 +582,47 @@ pub fn sketch_binding(keys: DocumentKeys) -> Binding {
 }
 
 /// Starting a new extrude, or backing out of the one being set up:
-/// outside a sketch and a revolve being set up, while there's a sketch to
-/// extrude, in a document that can be changed.
+/// outside a sketch and the other operations being set up, while there's
+/// a sketch to extrude, in a document that can be changed.
 pub fn extrude_binding(keys: DocumentKeys) -> Binding {
     Binding::new(
         Shortcut::EXTRUDE,
         Message::Look(Look::StartExtrude),
-        keys.editable && !keys.sketching && !keys.revolving && (keys.extrudable || keys.extruding),
+        keys.editable
+            && !keys.sketching
+            && !keys.revolving
+            && !keys.combining
+            && (keys.extrudable || keys.extruding),
     )
 }
 
 /// Starting a new revolve, or backing out of the one being set up:
-/// outside a sketch and an extrude being set up, while there's a sketch
-/// to revolve regions of, in a document that can be changed.
+/// outside a sketch and the other operations being set up, while there's
+/// a sketch to revolve regions of, in a document that can be changed.
 pub fn revolve_binding(keys: DocumentKeys) -> Binding {
     Binding::new(
         Shortcut::REVOLVE,
         Message::Look(Look::StartRevolve),
-        keys.editable && !keys.sketching && !keys.extruding && (keys.extrudable || keys.revolving),
+        keys.editable
+            && !keys.sketching
+            && !keys.extruding
+            && !keys.combining
+            && (keys.extrudable || keys.revolving),
+    )
+}
+
+/// Starting a new combine, or backing out of the one being set up:
+/// outside a sketch and the other operations being set up, while the
+/// document has two bodies or more, in a document that can be changed.
+pub fn combine_binding(keys: DocumentKeys) -> Binding {
+    Binding::new(
+        Shortcut::COMBINE,
+        Message::Look(Look::StartCombine),
+        keys.editable
+            && !keys.sketching
+            && !keys.extruding
+            && !keys.revolving
+            && (keys.combinable || keys.combining),
     )
 }
 
@@ -763,12 +812,13 @@ pub fn document_bindings(keys: DocumentKeys) -> Vec<Binding> {
                     .filter_map(move |kind| constraint_binding(kind, keys)),
             )
     });
-    // Outside a sketch, where `E` is Equal's, `O` Offset's and `I`
-    // Coincident's.
+    // Outside a sketch, where `X` is construction's, `O` Offset's, `B`
+    // the Rectangle's and `I` Coincident's.
     let extrude = (!keys.sketching).then(|| {
         [
             extrude_binding(keys),
             revolve_binding(keys),
+            combine_binding(keys),
             measure_binding(keys),
         ]
     });
@@ -786,6 +836,13 @@ pub fn document_bindings(keys: DocumentKeys) -> Vec<Binding> {
             keys.editable && keys.revolve_ready,
         )
     });
+    let commit_combine = keys.combining.then(|| {
+        Binding::new(
+            Shortcut::ENTER,
+            Message::Edit(Edit::CommitCombine),
+            keys.editable && keys.combine_ready,
+        )
+    });
     crate::rail::letter_bindings(keys)
         .into_iter()
         .chain(file_bindings(keys.editable, keys.edited))
@@ -797,6 +854,7 @@ pub fn document_bindings(keys: DocumentKeys) -> Vec<Binding> {
         .chain(extrude.into_iter().flatten())
         .chain(commit)
         .chain(commit_revolve)
+        .chain(commit_combine)
         .chain(feature)
         .chain(sketch.into_iter().flatten())
         .chain(crate::rail::set_bindings(keys.sketching))
@@ -1420,9 +1478,9 @@ mod tests {
     }
 
     #[test]
-    fn e_starts_an_extrude_outside_sketches_and_enter_commits_it() {
+    fn x_starts_an_extrude_outside_sketches_and_enter_commits_it() {
         let none = Modifiers::empty();
-        let e = |keys| pressed(document_bindings(keys), &key("e"), none);
+        let e = |keys| pressed(document_bindings(keys), &key("x"), none);
         let enter = |keys| {
             let enter = KeyPress::Named(Named::Enter);
             pressed(document_bindings(keys), &enter, none)
@@ -1441,7 +1499,7 @@ mod tests {
             ..extrudable
         };
         assert!(e(read_only).is_none());
-        // In a sketch, E is Equal's.
+        // In a sketch, X turns geometry into construction.
         let sketching = DocumentKeys {
             sketching: true,
             ..extrudable
@@ -1474,9 +1532,9 @@ mod tests {
             enter(ready),
             Some(Message::Edit(Edit::CommitExtrude))
         ));
-        // E again backs out.
+        // X again backs out.
         assert!(matches!(e(ready), Some(Message::Look(Look::StartExtrude))));
-        assert_eq!(Shortcut::EXTRUDE.label(), "E");
+        assert_eq!(Shortcut::EXTRUDE.label(), "X");
     }
 
     #[test]
@@ -1510,7 +1568,7 @@ mod tests {
             press(sketching, "o"),
             Some(Message::Look(Look::SelectTool(Tool::Offset)))
         ));
-        // While an extrude is set up, O does nothing, nor E while a
+        // While an extrude is set up, O does nothing, nor X while a
         // revolve is.
         let extruding = DocumentKeys {
             extruding: true,
@@ -1521,7 +1579,7 @@ mod tests {
             revolving: true,
             ..revolvable
         };
-        assert!(press(revolving, "e").is_none());
+        assert!(press(revolving, "x").is_none());
         // Setting one up, Enter is OK once it's ready, S starts no sketch,
         // and O again backs out.
         assert!(enter(revolving).is_none());
@@ -1539,6 +1597,69 @@ mod tests {
             Some(Message::Look(Look::StartRevolve))
         ));
         assert_eq!(Shortcut::REVOLVE.label(), "O");
+    }
+
+    #[test]
+    fn b_starts_a_combine_outside_sketches_and_enter_commits_it() {
+        let none = Modifiers::empty();
+        let press = |keys, k: &str| pressed(document_bindings(keys), &key(k), none);
+        let enter = |keys| {
+            let enter = KeyPress::Named(Named::Enter);
+            pressed(document_bindings(keys), &enter, none)
+        };
+        // One body or none: nothing to combine.
+        assert!(press(keys(true), "b").is_none());
+        let combinable = DocumentKeys {
+            combinable: true,
+            ..keys(true)
+        };
+        assert!(matches!(
+            press(combinable, "b"),
+            Some(Message::Look(Look::StartCombine))
+        ));
+        let read_only = DocumentKeys {
+            editable: false,
+            ..combinable
+        };
+        assert!(press(read_only, "b").is_none());
+        // In a sketch, B takes up the Rectangle tool.
+        let sketching = DocumentKeys {
+            sketching: true,
+            ..combinable
+        };
+        assert!(matches!(
+            press(sketching, "b"),
+            Some(Message::Look(Look::SelectTool(Tool::Rectangle)))
+        ));
+        // Not while another operation is set up, nor they while it is.
+        let extruding = DocumentKeys {
+            extruding: true,
+            extrudable: true,
+            ..combinable
+        };
+        assert!(press(extruding, "b").is_none());
+        let combining = DocumentKeys {
+            combining: true,
+            extrudable: true,
+            ..combinable
+        };
+        for other in ["x", "o", "s", "i"] {
+            assert!(press(combining, other).is_none(), "{other}");
+        }
+        assert!(enter(combining).is_none());
+        let ready = DocumentKeys {
+            combine_ready: true,
+            ..combining
+        };
+        assert!(matches!(
+            enter(ready),
+            Some(Message::Edit(Edit::CommitCombine))
+        ));
+        assert!(matches!(
+            press(ready, "b"),
+            Some(Message::Look(Look::StartCombine))
+        ));
+        assert_eq!(Shortcut::COMBINE.label(), "B");
     }
 
     #[test]

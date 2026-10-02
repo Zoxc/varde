@@ -10,6 +10,7 @@
 
 mod anchors;
 mod chrome;
+mod combine;
 mod constrain;
 mod context_menu;
 mod controls;
@@ -53,6 +54,7 @@ use varde_expr::LengthUnit;
 use varde_render::{Projection, View};
 use varde_sketch::{Id, Sketch};
 
+pub use combine::{CombineBody, CombineLook, CombinePick, CombineState};
 pub use constrain::{ConstraintKind, ConstraintSet};
 pub use document::{
     ActiveTool, CURVED_FACE, DeletePrompt, DocumentState, MeshStatus, Overlay, RecoveredChanges,
@@ -244,6 +246,9 @@ pub enum Edit {
     /// Adds the revolve being set up, or changes the one being edited, as
     /// one undo step, and ends its session: OK, or `Enter`.
     CommitRevolve,
+    /// Adds the combine being set up, or changes the one being edited, as
+    /// one undo step, and ends its session: OK, or `Enter`.
+    CommitCombine,
     /// Sets the opacity previewed ([`Look::PreviewOpacity`]) as one undo
     /// step, keeping the context menu open: letting go of the slider.
     CommitOpacity,
@@ -271,8 +276,8 @@ pub enum Look {
     /// Backs out of whatever is open, the innermost first: the delete
     /// prompt, a drag of a body's Opacity slider with its menu, the rail's
     /// list, a row's context menu, the file menu, the view options menu,
-    /// picking a plane, the extrude or revolve being set up, the measure
-    /// tool, dragging geometry, the shape the sketch's tool is drawing, the
+    /// picking a plane, the extrude, revolve or combine being set up, the
+    /// measure tool, dragging geometry, the shape the sketch's tool is drawing, the
     /// tool (or the Constrain tool), the sketch, the selection.
     Escape,
     SelectPanel(Panel),
@@ -283,9 +288,9 @@ pub enum Look {
     /// row's context menu, or the Sketch tab while it's edited, which is
     /// left for it and entered again after.
     ChangePlane(FeatureId),
-    /// Edits the feature: a sketch is entered, an extrude or a revolve
-    /// opens its session (see [`Look::StartExtrude`],
-    /// [`Look::StartRevolve`]) with its values.
+    /// Edits the feature: a sketch is entered, an extrude, a revolve or a
+    /// combine opens its session (see [`Look::StartExtrude`],
+    /// [`Look::StartRevolve`], [`Look::StartCombine`]) with its values.
     EditFeature(FeatureId),
     /// Starts setting up a new extrude, from the sketch selected in the
     /// Timeline if one is, or backs out of the extrude being set up.
@@ -299,6 +304,13 @@ pub enum Look {
     /// Changes the revolve being set up, see [`RevolveLook`]: it isn't in
     /// the document until [`Edit::CommitRevolve`].
     Revolve(RevolveLook),
+    /// Starts setting up a new combine, its target and tools from what's
+    /// selected in the model if anything is, or backs out of the combine
+    /// being set up.
+    StartCombine,
+    /// Changes the combine being set up, see [`CombineLook`]: it isn't in
+    /// the document until [`Edit::CommitCombine`].
+    Combine(CombineLook),
     /// Starts the measure tool, outside sketches and operations being
     /// set up, or leaves it.
     StartMeasure,
@@ -348,7 +360,8 @@ pub enum Look {
     /// up, on `pick` or on nothing: selects it, or with `add` (`Shift`
     /// or `Ctrl` held, see [`Held::TOGGLE`]) adds it or takes it out;
     /// `double` is the second click of a double-click, which selects the
-    /// body. See [`Selection::click`].
+    /// body. See [`Selection::click`]. While a combine is set up it picks
+    /// the body of what it's on; while measuring, A or B.
     ClickModel {
         pick: Option<Pick>,
         add: bool,
@@ -356,7 +369,8 @@ pub enum Look {
     },
     /// A body's row in Objects clicked: selects the body alone, or with
     /// `Ctrl` (`Cmd` on macOS) held, which the app knows, adds it or takes
-    /// it out. See [`Selection::click_body`].
+    /// it out. See [`Selection::click_body`]. While a combine is set up
+    /// it picks the body.
     ClickBody {
         body: BodyId,
         add: bool,

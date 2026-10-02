@@ -56,7 +56,12 @@ fn every_entry_has_a_letter_of_its_own_and_its_key_s_where_it_s_a_letter_alone()
         .into_iter()
         .flatten()
         .collect();
-    assert_eq!(create, "seo");
+    assert_eq!(create, "sxo");
+    let modify: String = letters(MODEL[1].entries, false)
+        .into_iter()
+        .flatten()
+        .collect();
+    assert_eq!(modify, "b");
 }
 
 #[test]
@@ -91,11 +96,12 @@ fn the_sets_hold_every_tool_the_app_has_and_only_those() {
             Entry::Sketch,
             Entry::Extrude,
             Entry::Revolve,
+            Entry::Combine,
             Entry::Measure
         ]
     );
     // I is Measure's own, in the Inspect set.
-    assert_eq!(letters(MODEL[1].entries, false), [Some('i')]);
+    assert_eq!(letters(MODEL[2].entries, false), [Some('i')]);
     for set in SKETCH.iter().chain(&MODEL) {
         // No set without tools, and a card shows its first ones.
         assert!(!set.entries.is_empty(), "{}", set.name);
@@ -130,7 +136,8 @@ fn the_top_row_s_letters_open_the_mode_s_sets() {
             ));
         }
     }
-    // Outside a sketch, with one set, E is still Extrude's.
+    // Outside a sketch, with three sets, E opens the third and Extrude
+    // is X.
     let keys = DocumentKeys {
         editable: true,
         extrudable: true,
@@ -138,6 +145,10 @@ fn the_top_row_s_letters_open_the_mode_s_sets() {
     };
     assert!(matches!(
         pressed(document_bindings(keys), &key("e"), none),
+        Some(Message::Look(Look::Rail(RailLook::Toggle(2))))
+    ));
+    assert!(matches!(
+        pressed(document_bindings(keys), &key("x"), none),
         Some(Message::Look(Look::StartExtrude))
     ));
 }
@@ -192,7 +203,7 @@ fn a_set_index_past_the_mode_s_sets_has_no_letters() {
         ..DocumentKeys::default()
     };
     assert!(matches!(
-        pressed(letter_bindings(keys), &key("e"), Modifiers::empty()),
+        pressed(letter_bindings(keys), &key("x"), Modifiers::empty()),
         Some(Message::Look(Look::StartExtrude))
     ));
     // Revolve's letter is its own key, O.

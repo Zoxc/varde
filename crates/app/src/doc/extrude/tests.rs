@@ -105,7 +105,7 @@ fn extrudes(doc: &Doc) -> Vec<&varde_document::Extrude> {
 #[test]
 fn e_starts_a_session_where_a_click_picks_a_region_previewed() {
     let (mut doc, sketch, requests) = plate();
-    key_in(&mut doc, key("e"));
+    key_in(&mut doc, key("x"));
     let session = doc.extrude.as_ref().expect("E starts a session");
     // Nothing selected: the first region picked sets the sketch.
     assert_eq!(session.regions.source, None);
@@ -156,7 +156,7 @@ fn a_selected_sketch_is_the_source() {
 #[test]
 fn a_typed_distance_updates_the_draft_and_a_refused_one_blocks_ok() {
     let (mut doc, sketch, requests) = plate();
-    key_in(&mut doc, key("e"));
+    key_in(&mut doc, key("x"));
     let region = plate_region(&doc, sketch);
     extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region });
     let first = last_draft(&requests).unwrap().revision;
@@ -189,7 +189,7 @@ fn a_typed_distance_updates_the_draft_and_a_refused_one_blocks_ok() {
 fn enter_commits_the_extrude_as_one_undo_step() {
     let (mut doc, sketch, requests) = plate();
     let before = doc.editor.document().clone();
-    key_in(&mut doc, key("e"));
+    key_in(&mut doc, key("x"));
     let region = plate_region(&doc, sketch);
     extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region });
     extrude(&mut doc, ExtrudeLook::Extent(ExtentKind::Symmetric));
@@ -218,7 +218,7 @@ fn escape_leaves_no_trace() {
     let (mut doc, sketch, requests) = plate();
     let before = doc.editor.document().clone();
     let revision = doc.editor.revision();
-    key_in(&mut doc, key("e"));
+    key_in(&mut doc, key("x"));
     let region = plate_region(&doc, sketch);
     extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region });
     answer(&mut doc, &requests);
@@ -293,7 +293,7 @@ fn enter_on_a_selected_extrude_edits_it() {
 #[test]
 fn the_handle_drags_the_distance_and_flips_one_side() {
     let (mut doc, sketch, requests) = plate();
-    key_in(&mut doc, key("e"));
+    key_in(&mut doc, key("x"));
     let region = plate_region(&doc, sketch);
     extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region });
     let handle = doc.extrude_state().unwrap().handle().expect("a handle");
@@ -325,7 +325,7 @@ fn the_handle_drags_the_distance_and_flips_one_side() {
 #[test]
 fn two_sides_over_the_limit_block_ok() {
     let (mut doc, sketch, requests) = plate();
-    key_in(&mut doc, key("e"));
+    key_in(&mut doc, key("x"));
     let region = plate_region(&doc, sketch);
     extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region });
     extrude(&mut doc, ExtrudeLook::Extent(ExtentKind::TwoSides));
@@ -369,7 +369,7 @@ fn two_sides_over_the_limit_block_ok() {
 #[test]
 fn a_two_sides_knob_stops_at_the_limit() {
     let (mut doc, sketch, _) = plate();
-    key_in(&mut doc, key("e"));
+    key_in(&mut doc, key("x"));
     let region = plate_region(&doc, sketch);
     extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region });
     extrude(&mut doc, ExtrudeLook::Extent(ExtentKind::TwoSides));
@@ -399,7 +399,7 @@ fn a_two_sides_knob_stops_at_the_limit() {
 /// first distance typed as `first`.
 fn plate_session(kind: ExtentKind, first: &str) -> (Doc, Requests) {
     let (mut doc, sketch, requests) = plate();
-    key_in(&mut doc, key("e"));
+    key_in(&mut doc, key("x"));
     let region = plate_region(&doc, sketch);
     extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region });
     extrude(&mut doc, ExtrudeLook::Extent(kind));
@@ -775,7 +775,7 @@ fn a_read_only_document_has_no_session() {
     doc.look(Look::EditFeature(feature));
     doc.look(Look::StartExtrude);
     assert!(doc.extrude.is_none());
-    assert!(press_in(&doc, key("e")).is_none());
+    assert!(press_in(&doc, key("x")).is_none());
 }
 
 #[test]
@@ -784,7 +784,7 @@ fn the_panel_s_field_takes_typing_enter_as_ok_and_escape_as_cancel() {
     use varde_view::Message as Ui;
 
     let (mut doc, sketch, _) = plate();
-    key_in(&mut doc, key("e"));
+    key_in(&mut doc, key("x"));
     let region = plate_region(&doc, sketch);
     extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region });
 
@@ -870,7 +870,7 @@ fn the_tolerance_is_set_from_the_file_menu() {
 #[test]
 fn a_bare_distance_keeps_its_length_when_the_units_change() {
     let (mut doc, sketch, requests) = plate();
-    key_in(&mut doc, key("e"));
+    key_in(&mut doc, key("x"));
     let region = plate_region(&doc, sketch);
     extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region });
     let text = "20".to_owned();
@@ -922,7 +922,7 @@ fn plate_with_the_hole_deleted_waiting() -> (Doc, FeatureId, Requests, crate::te
     doc.look(Look::FinishSketch);
     assert!(doc.sketch.is_none());
     assert!(doc.proposing());
-    key_in(&mut doc, key("e"));
+    key_in(&mut doc, key("x"));
     let region = plate_region(&doc, sketch);
     extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region });
     (doc, sketch, requests, lane)
@@ -1032,7 +1032,7 @@ fn the_sketch_deleted_while_its_edits_wait_frees_ok() {
     assert!(doc.editor.document().feature(sketch).is_some());
     answer(&mut doc, &requests);
     doc.look(Look::SelectFeature(sketch));
-    key_in(&mut doc, key("e"));
+    key_in(&mut doc, key("x"));
     // The plate alone, its hole deleted.
     let regions = drawn(&doc, sketch).profiles().unwrap().regions;
     let [plate] = &regions[..] else {
@@ -1061,7 +1061,7 @@ fn read_only_while_the_sketch_edits_wait_ends_the_session() {
     // Editable again (a Save As to a file of its own), OK is free.
     doc.read_only = None;
     doc.sync();
-    key_in(&mut doc, key("e"));
+    key_in(&mut doc, key("x"));
     let region = plate_region(&doc, sketch);
     extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region });
     assert!(doc.extrude_state().unwrap().ready);
@@ -1103,7 +1103,7 @@ fn recovery_restored_while_the_sketch_edits_wait_frees_ok() {
     });
     doc.update(Edit::DeleteSelection);
     doc.look(Look::FinishSketch);
-    key_in(&mut doc, key("e"));
+    key_in(&mut doc, key("x"));
     let region = plate_region(&doc, sketch);
     extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region });
     assert!(doc.proposing());
@@ -1176,7 +1176,7 @@ fn an_edit_the_solver_rejects_while_waiting_frees_ok_and_keeps_the_pick() {
     constrain(&mut doc);
     assert!(doc.proposing());
     doc.look(Look::FinishSketch);
-    key_in(&mut doc, key("e"));
+    key_in(&mut doc, key("x"));
     let region = plate_region(&doc, sketch);
     extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region });
     assert!(!doc.extrude_state().unwrap().ready);
@@ -1210,7 +1210,7 @@ fn ok_waits_for_a_solver_lane_not_started_yet() {
     doc.update(Edit::DeleteSelection);
     doc.look(Look::FinishSketch);
     assert!(doc.proposing());
-    key_in(&mut doc, key("e"));
+    key_in(&mut doc, key("x"));
     let region = plate_region(&doc, sketch);
     extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region });
     assert!(!doc.extrude_state().unwrap().ready);

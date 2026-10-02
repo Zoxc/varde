@@ -170,6 +170,10 @@ pub struct RevolveState<'a> {
     /// refuses it (two sides over a turn together, say): shown in place
     /// of [`RevolveState::error`].
     pub refused: Option<RevolveError>,
+    /// Why the edited feature can't stop making a new body, if a join,
+    /// cut or intersect is picked while a combine names its body: shown
+    /// in place of the preview's error, and OK waits.
+    pub held: Option<String>,
     /// Whether sketch edits have waited on the solver long enough to say
     /// so: OK waits for them, and the panel says why.
     pub checking: bool,
@@ -336,7 +340,7 @@ pub(crate) fn panel<'a>(state: &RevolveState<'a>) -> Element<'a, Message> {
     let targets = bodies(state.operation, &state.targets, |body| {
         send(RevolveLook::Target(body))
     });
-    let refused = state.refused.map(|refused| refused.to_string());
+    let refused = (state.refused.map(|refused| refused.to_string())).or_else(|| state.held.clone());
     let message = footer_message(refused, state.error, state.checking);
 
     let body = column![

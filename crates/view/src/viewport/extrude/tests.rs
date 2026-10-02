@@ -77,6 +77,7 @@ fn state<'a>(
         grabbed,
         error: None,
         refused: None,
+        held: None,
         checking: false,
         ready: !picked.is_empty(),
         editable: true,

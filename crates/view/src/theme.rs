@@ -830,6 +830,32 @@ pub fn choice(on: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
     }
 }
 
+/// A field an operation's panel picks into by clicks in the viewport,
+/// holding chips: a thin border, the hover background on hover, and an
+/// accent border while it's the one picking (`on`).
+pub fn pick_field(on: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |theme, status| {
+        let p = palette(theme);
+        let enabled = status != button::Status::Disabled;
+        let border = if on && enabled { p.accent } else { p.line };
+        button::Style {
+            background: (enabled && is_hovered(status)).then_some(Background::Color(p.hl)),
+            text_color: flat_content(p, Tone::Text, enabled, false),
+            border: outline(border, CONTROL_RADIUS),
+            ..button::Style::default()
+        }
+    }
+}
+
+/// A chip naming something picked, in a [`pick_field`]: the chip colour.
+pub fn chip(theme: &Theme) -> container::Style {
+    let p = palette(theme);
+    container::Style {
+        border: border::rounded(4),
+        ..filled(p.chip, p.text)
+    }
+}
+
 /// Corner radius of a [`tick`]'s box.
 const TICK_RADIUS: f32 = 4.0;
 

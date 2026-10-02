@@ -77,6 +77,7 @@ fn state<'a>(
         targets: Vec::new(),
         error: None,
         refused: None,
+        held: None,
         checking: false,
         ready: axis.is_some() && !picked.is_empty(),
         editable: true,

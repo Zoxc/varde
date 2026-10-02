@@ -40,11 +40,13 @@ impl Doc {
     /// not while a draft's preview is still shown after it, where what's
     /// selected would be looked for in a model that isn't the document's,
     /// nor while the model shown is of a document since replaced whole,
-    /// whose bodies' ids may name others now.
+    /// whose bodies' ids may name others now. While a combine is set up
+    /// it picks bodies, its preview's too: a combine's draft makes no
+    /// body, so the bodies its model has are the document's.
     pub(crate) fn picks(&self) -> bool {
+        let combining = self.combine.is_some();
         self.sketch.is_none()
-            && !self.operating()
-            && !self.feed.shows_draft()
+            && (combining || (!self.operating() && !self.feed.shows_draft()))
             && !self.feed.predates_replacement()
     }
 
@@ -120,7 +122,8 @@ impl Doc {
         if self.pick.hover.is_some_and(stale) {
             self.pick.hover = None;
         }
-        if self.picks() && !self.pick.selection.holds_nothing() {
+        // Not in a combine's preview, which isn't the document's model.
+        if self.picks() && self.combine.is_none() && !self.pick.selection.holds_nothing() {
             let document = self.editor.document();
             let merged = self.feed.merged_bodies();
             let drawn = |body| {
@@ -140,9 +143,14 @@ impl Doc {
         if !self.picks() {
             return;
         }
-        // The measure tool's own, leaving the selection's as it was.
+        // The measure tool's own, leaving the selection's as it was, and
+        // likewise the combine's.
         if self.measure.is_some() {
             self.refresh_measure_highlight();
+            return;
+        }
+        if self.combine.is_some() {
+            self.refresh_combine_highlight();
             return;
         }
         let hover = self.shown_hover();
@@ -203,6 +211,9 @@ impl Doc {
         // While measuring, the measure tool's, and not the selection's.
         if self.measure.is_some() {
             return self.measure_highlight().filter(|_| self.picks());
+        }
+        if self.combine.is_some() {
+            return self.combine_highlight().filter(|_| self.picks());
         }
         // Only of the model shown: one built for an earlier model would be
         // drawn over another.

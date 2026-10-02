@@ -571,7 +571,7 @@ fn while_revolving_other_tools_wait() {
     );
     // No extrude, new sketch, or edit of the selected feature.
     let key = |c: &str| keyboard::Key::Character(c.into());
-    for pressed in ["e", "s"] {
+    for pressed in ["x", "s"] {
         assert!(press_in(&lathe.doc, key(pressed)).is_none(), "{pressed}");
     }
     lathe.doc.look(Look::StartExtrude);

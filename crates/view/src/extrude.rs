@@ -161,6 +161,10 @@ pub struct ExtrudeState<'a> {
     /// refuses it (two sides over the limit together, say): shown in
     /// place of [`ExtrudeState::error`].
     pub refused: Option<ExtrudeError>,
+    /// Why the edited feature can't stop making a new body, if a join,
+    /// cut or intersect is picked while a combine names its body: shown
+    /// in place of the preview's error, and OK waits.
+    pub held: Option<String>,
     /// Whether sketch edits have waited on the solver long enough to say
     /// so: OK waits for them, and the panel says why.
     pub checking: bool,
@@ -378,7 +382,7 @@ pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
     });
     // Why OK can't be pressed, or the preview failed, or that OK waits
     // on the solver.
-    let refused = state.refused.map(|refused| refused.to_string());
+    let refused = (state.refused.map(|refused| refused.to_string())).or_else(|| state.held.clone());
     let message = footer_message(refused, state.error, state.checking);
 
     let body = column![

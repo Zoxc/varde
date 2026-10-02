@@ -110,18 +110,26 @@ impl Doc {
     /// after the document was replaced) is taken to touch every body made
     /// before it that it doesn't take out: warned of if they all go, as
     /// then it surely has nothing to work on. A body that holds bodies
-    /// earlier joins merged into it counts as those too: one of them
-    /// staying takes its place once it goes.
+    /// earlier joins (or combines using their tools up) merged into it
+    /// counts as those too: one of them staying takes its place once it
+    /// goes.
     fn worked(&self, removal: &Removal) -> (Vec<FeatureId>, Vec<BodyId>) {
         let document = self.editor.document();
         let shown = self.feed.touched_features();
         let mut features = Vec::new();
         let mut worked_on = Vec::new();
-        // The bodies merged into others by the joins before.
+        // The bodies merged into others by the joins and combines before.
         let mut merges = Merges::default();
         // The bodies made by the features before the one at hand.
         let mut made: Vec<BodyId> = Vec::new();
         for feature in document.features() {
+            // A combine using its tools up merges them into its target.
+            if let varde_document::FeatureKind::Combine(combine) = &feature.kind
+                && removal.features.binary_search(&feature.id).is_err()
+                && self.feed.consumes(document, feature.id)
+            {
+                merges.join(&combine.bodies().collect::<Vec<_>>());
+            }
             if let Some(operation) = feature.kind.operation()
                 && !matches!(operation, Operation::NewBody(_))
                 && removal.features.binary_search(&feature.id).is_err()

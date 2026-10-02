@@ -60,6 +60,7 @@ fn state_of<'a>(
         targets: Vec::new(),
         error: None,
         refused: None,
+        held: None,
         checking: false,
         ready: false,
         editable: true,

@@ -18,8 +18,8 @@ use iced::{Alignment, Element, Event, Font, Length, Padding, Rectangle, Size, Ve
 use crate::chrome::{ChipSize, key_chip, scrolled, side_tip};
 use crate::icons::{self, Icon};
 use crate::shortcut::{
-    Binding, DocumentKeys, Shortcut, constrain_binding, constraint_binding, extrude_binding,
-    measure_binding, revolve_binding, sketch_binding, tool_binding,
+    Binding, DocumentKeys, Shortcut, combine_binding, constrain_binding, constraint_binding,
+    extrude_binding, measure_binding, revolve_binding, sketch_binding, tool_binding,
 };
 use crate::status::STATUS_BAR_ROOM;
 use crate::theme::{self, SEMIBOLD};
@@ -117,6 +117,7 @@ pub(crate) enum Entry {
     Sketch,
     Extrude,
     Revolve,
+    Combine,
     Measure,
     /// A sketch's tool.
     Tool(Tool),
@@ -132,6 +133,7 @@ impl Entry {
             Entry::Sketch => Icon::Sketch,
             Entry::Extrude => Icon::Extrude,
             Entry::Revolve => Icon::Revolve,
+            Entry::Combine => Icon::Combine,
             Entry::Measure => Icon::Measure,
             Entry::Tool(tool) => tool_icon(tool),
             Entry::Constrain => Icon::Constrain,
@@ -144,6 +146,7 @@ impl Entry {
             Entry::Sketch => "Sketch",
             Entry::Extrude => "Extrude",
             Entry::Revolve => "Revolve",
+            Entry::Combine => "Combine",
             Entry::Measure => "Measure",
             Entry::Tool(tool) => tool.label(),
             Entry::Constrain => "Constrain",
@@ -167,6 +170,7 @@ impl Entry {
             Entry::Sketch => sketch_binding(keys),
             Entry::Extrude => extrude_binding(keys),
             Entry::Revolve => revolve_binding(keys),
+            Entry::Combine => combine_binding(keys),
             Entry::Measure => measure_binding(keys),
             Entry::Tool(tool) => tool_binding(tool, keys),
             Entry::Constrain => constrain_binding(keys),
@@ -182,6 +186,7 @@ impl Entry {
             Entry::Sketch => using.picking_plane,
             Entry::Extrude => using.extruding,
             Entry::Revolve => using.revolving,
+            Entry::Combine => using.combining,
             Entry::Measure => using.measuring,
             Entry::Tool(tool) => using.tool == Some(tool),
             Entry::Constrain => using.constraining,
@@ -197,6 +202,7 @@ struct Using {
     picking_plane: bool,
     extruding: bool,
     revolving: bool,
+    combining: bool,
     measuring: bool,
     /// The sketch's tool, if one is.
     tool: Option<Tool>,
@@ -212,6 +218,7 @@ impl Using {
                 .is_some_and(|pick| pick.sketch.is_none()),
             extruding: state.extrude.is_some(),
             revolving: state.revolve.is_some(),
+            combining: state.combine.is_some(),
             measuring: state.measure.is_some(),
             tool: sketch.and_then(|s| s.tool).map(|t| t.tool),
             constraining: sketch.is_some_and(|s| s.constraining),
@@ -230,13 +237,18 @@ pub(crate) struct ToolSet {
 }
 
 /// The sets outside a sketch: a new sketch is made with the solids.
-/// Modify, Transform and Construct join them once they have tools, before
+/// Transform and Construct join them once they have tools, before
 /// Inspect, as the mock orders them.
-const MODEL: [ToolSet; 2] = [
+const MODEL: [ToolSet; 3] = [
     ToolSet {
         name: "Create",
         icon: Icon::CatCreate,
         entries: &[Entry::Sketch, Entry::Extrude, Entry::Revolve],
+    },
+    ToolSet {
+        name: "Modify",
+        icon: Icon::CatModify,
+        entries: &[Entry::Combine],
     },
     ToolSet {
         name: "Inspect",

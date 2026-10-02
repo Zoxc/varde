@@ -73,11 +73,13 @@ fn set_keys_open_and_close_sets_and_picking_or_escape_closes_them() {
     assert_eq!(doc.rail.open, Some(0));
     key_in(&mut doc, letter("q"));
     assert_eq!(doc.rail.open, None);
-    // The model has two sets: Create and Inspect.
+    // The model has three sets: Create, Modify and Inspect.
     key_in(&mut doc, letter("w"));
     assert_eq!(doc.rail.open, Some(1));
+    key_in(&mut doc, letter("r"));
+    assert_eq!(doc.rail.open, Some(1), "R opens no fourth set");
     key_in(&mut doc, letter("e"));
-    assert_eq!(doc.rail.open, Some(1), "E opens no third set");
+    assert_eq!(doc.rail.open, Some(2));
     // I in the open Inspect set starts the measure tool, and closes it.
     key_in(&mut doc, keyboard::Key::Character("i".into()));
     assert!(doc.measure.is_some());

@@ -681,6 +681,7 @@ impl Doc {
         self.picking_plane = None;
         self.extrude = None;
         self.revolve = None;
+        self.combine = None;
         self.selected_feature = Some(id);
         // Back in the sketch, the edit refused after it was left is seen
         // to be missing.
@@ -731,7 +732,7 @@ impl Doc {
     /// Backs out of whatever is open, the innermost first: the delete
     /// prompt, a drag of the Opacity slider with its context menu, the
     /// rail's list, a row's context menu, the file menu, the view options
-    /// menu, picking a plane, the extrude or revolve being set up, the
+    /// menu, picking a plane, the extrude, revolve or combine being set up, the
     /// value field, a label grabbed, the drag of geometry, the shape the
     /// tool is drawing (or what the Dimension or Mirror tool has picked),
     /// the tool, the sketch, the feature selected and what's selected in
@@ -754,6 +755,8 @@ impl Doc {
             self.extrude = None;
         } else if self.revolve.is_some() {
             self.revolve = None;
+        } else if self.combine.is_some() {
+            self.combine = None;
         } else if self.measure.is_some() {
             self.measure = None;
         } else if let Some(session) = &mut self.sketch {

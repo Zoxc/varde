@@ -590,20 +590,36 @@ impl MeshFeed {
             &[]
         }
     }
-    /// The bodies the joins of `document` before `until` (all of them
-    /// without one) merged into others, as the model shown found them
-    /// touch bodies: what [`MeshFeed::merged_bodies`] would be with the
-    /// history stopped there. A join merges only if it touched two or
-    /// more bodies and didn't fail; one the model shown doesn't know
-    /// (added since, or a new extrude's draft) merges nothing.
+    /// The bodies the joins and combines of `document` before `until`
+    /// (all of them without one) merged into others, in the document's
+    /// order, as the model shown found them: what
+    /// [`MeshFeed::merged_bodies`] would be with the history stopped
+    /// there. A join merges the bodies the model shown found it touch, if
+    /// it touched two or more and didn't fail; one the model shown doesn't
+    /// know (added since, or a new extrude's draft) merges nothing. A
+    /// combine that uses its tools up merges them into its target unless
+    /// it failed, as regen's own rule has it.
     pub(crate) fn merged_before(&self, document: &Document, until: Option<FeatureId>) -> Merges {
         let mut merges = Merges::default();
-        for (feature, touched) in self.touched_features() {
-            if Some(*feature) == until {
+        for feature in document.features() {
+            if Some(feature.id) == until {
                 break;
             }
-            if self.merges(document, *feature) {
-                merges.join(touched);
+            match &feature.kind {
+                FeatureKind::Combine(combine) => {
+                    if self.consumes(document, feature.id) {
+                        let bodies: Vec<BodyId> = combine.bodies().collect();
+                        merges.join(&bodies);
+                    }
+                }
+                _ if self.merges(document, feature.id) => {
+                    let touched = (self.touched_features().iter())
+                        .find(|(touched, _)| *touched == feature.id);
+                    if let Some((_, touched)) = touched {
+                        merges.join(touched);
+                    }
+                }
+                _ => {}
             }
         }
         merges
@@ -615,21 +631,38 @@ impl MeshFeed {
         let join = document
             .feature(feature)
             .is_some_and(|feature| matches!(feature.kind.operation(), Some(Operation::Join(_))));
-        join && !(self.failed_features().iter()).any(|(failed, _)| *failed == feature)
+        join && !self.failed(feature)
+    }
+
+    /// Whether `feature` of `document` is a combine using its tools up
+    /// that the model shown didn't find failing: one that merges them
+    /// into its target.
+    pub(crate) fn consumes(&self, document: &Document, feature: FeatureId) -> bool {
+        let consuming = document.feature(feature).is_some_and(
+            |feature| matches!(&feature.kind, FeatureKind::Combine(combine) if !combine.keep_tools),
+        );
+        consuming && !self.failed(feature)
+    }
+
+    /// Whether the model shown found `feature` failing.
+    fn failed(&self, feature: FeatureId) -> bool {
+        (self.failed_features().iter()).any(|(failed, _)| *failed == feature)
     }
 }
 
-/// Which bodies joins merged into which, replayed from the bodies each
-/// join touched in the document's order by regen's own rule
-/// ([`varde_regen::note_merge`]): a join touching two or more merges them
-/// into the first made (the *holder*), and a body merged into one that's
-/// merged later moves on to the later holder.
+/// Which bodies joins and combines merged into which, replayed in the
+/// document's order by regen's own rule ([`varde_regen::note_merge`]): a
+/// join touching two or more merges them into the first made (the
+/// *holder*), a combine using its tools up merges them into its target,
+/// and a body merged into one that's merged later moves on to the later
+/// holder.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct Merges(Vec<(BodyId, BodyId)>);
 
 impl Merges {
     /// Notes a working join that touched `touched`, in the order they
-    /// were made.
+    /// were made, or a combine using its tools up: its target, then its
+    /// tools.
     pub(crate) fn join(&mut self, touched: &[BodyId]) {
         varde_regen::note_merge(&mut self.0, touched);
     }

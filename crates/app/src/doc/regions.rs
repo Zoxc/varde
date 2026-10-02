@@ -472,6 +472,33 @@ impl Doc {
         true
     }
 
+    /// Why the feature `edited` can't do `operation`, if it makes a new
+    /// body that a combine after it names and `operation` would stop it
+    /// making one: the document refuses that ("combines body 2, which
+    /// isn't there"), rather than drop the combine, so the panel says so
+    /// at once, and how to get past it.
+    pub(crate) fn held(
+        &self,
+        edited: Option<FeatureId>,
+        operation: OperationKind,
+    ) -> Option<String> {
+        if operation == OperationKind::NewBody {
+            return None;
+        }
+        let document = self.editor.document();
+        let edited = edited?;
+        let body = document
+            .bodies()
+            .iter()
+            .find(|body| body.created_by == edited)?;
+        let combine = (document.features().iter())
+            .find(|feature| feature.kind.bodies().contains(&body.id))?;
+        Some(format!(
+            "{} combines {}, so this stays a new body: take {} out of {} or delete it first",
+            combine.name, body.name, body.name, combine.name
+        ))
+    }
+
     /// The bodies a session's `operation` lists, of the feature `edited`
     /// (or a new one) with `targets`: those its preview touches, those
     /// taken out, and those put back since the touch test last answered,

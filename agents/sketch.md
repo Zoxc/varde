@@ -1175,15 +1175,16 @@ bar says why (`EditError::Sketch`).
   the same tools in sets, over the viewport's left (see
   `agents/viewport.md`). In a sketch: Draw (the drawing tools), Modify
   (Trim to Chamfer), Constraints (the Constrain tool, then every kind with
-  a key) and Dimension; outside one: Create (Sketch, Extrude); a set
-  with nothing the app has yet isn't shown. An entry sends what the
+  a key) and Dimension; outside one: Create (Sketch, Extrude, Revolve),
+  Modify (Combine) and Inspect (Measure); a set with nothing the app has
+  yet isn't shown. An entry sends what the
   toolbar's button does (its binding, `Entry::binding`), enabled where
   that is. The top row's letters, `Q`, `W`, `E`, `R`, ... (`rail::SET_KEYS`),
   open the mode's sets' lists, or close the one open (`RailLook::Toggle`,
   last in `document_bindings`): no tool has one of them (so the Rectangle
   tool is `B`, Chamfer `Shift B`, Mirror `Shift M`, Equal `Shift E`, the
-  Rectangle's and Spline's switch `Z`), and outside a sketch, with one
-  set, only `Q` does, so `E` is still Extrude; while one is open
+  Rectangle's and Spline's switch `Z`), and outside a sketch, with three
+  sets, `Q`, `W` and `E` do, so Extrude is `X`, the UI mock's key; while one is open
   (`DocumentKeys::rail`, `Doc::rail`), its letters come before every other
   binding (`rail::letter_bindings`), and claim their key even while their
   tool can't be used (`Binding::claiming`), so a constraint that doesn't

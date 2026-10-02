@@ -100,6 +100,9 @@ icons! {
     Fillet => r#"<path d="M5 20v-8M12 5h7"/><path class="r" d="M5 12V5h7" stroke-dasharray="1.6 2"/><path class="a" d="M5 12a7 7 0 0 1 7-7"/>"#,
     Chamfer => r#"<path d="M5 20v-9M13 5h6"/><path class="r" d="M5 11V5h8" stroke-dasharray="1.6 2"/><path class="a" d="M5 11l8-6"/>"#,
     Measure => r#"<path class="t" d="M3 17L17 3l4 4L7 21z"/><path class="a" d="M7 13l2 2M10 10l2 2M13 7l2 2"/>"#,
+    // Two overlapping boxes; the mock's tinted overlap is a fill, which
+    // the line-only set leaves out.
+    Combine => r#"<rect x="3" y="3" width="11" height="11" rx="1.5"/><rect x="10" y="10" width="11" height="11" rx="1.5"/>"#,
     // Not in the icon mock: the offset constraint's nested squares, arrows
     // each way, a handle on a curve, a comb's teeth over one.
     OffsetConstraint => r#"<rect x="3" y="3" width="18" height="18" rx="2"/><rect x="8" y="8" width="8" height="8" rx="1"/>"#,
@@ -110,6 +113,7 @@ icons! {
     // behind.
     CatCreate => r#"<path class="r" d="M5 17.5a7 3 0 0 1 14 0" stroke-dasharray="1.6 1.8"/><path d="M5 6.5v11a7 3 0 0 0 14 0v-11"/><ellipse class="a" cx="12" cy="6.5" rx="7" ry="3"/>"#,
     CatDraw => r#"<path d="M5 20V10a7 7 0 0 1 14 0v10z"/><circle class="af" cx="5" cy="20" r="1.5"/><circle class="af" cx="19" cy="20" r="1.5"/><circle class="af" cx="12" cy="3" r="1.5"/>"#,
+    CatModify => r#"<path d="M10.5 9H3.5v11h12v-6M3.5 9l5-5h7M20.5 9v6l-5 5M10.5 9l5-5M15.5 14l5-5"/><path class="a" d="M10.5 9a5 5 0 0 1 5 5M15.5 4a5 5 0 0 1 5 5"/>"#,
     CatSketchModify => r#"<path d="M2.5 9H15v12.5"/><path class="r" d="M19.5 9h2"/><path class="a" d="M17.25 5.5v7"/>"#,
     // The mock's group turned, each element turned instead, as an icon
     // is a list of empty tags.
@@ -139,9 +143,13 @@ impl Icon {
             | Icon::Handles
             | Icon::Comb
             | Icon::CatDraw => IconCategory::Sketch,
-            Icon::Trim | Icon::Extend | Icon::Mirror | Icon::Offset | Icon::CatSketchModify => {
-                IconCategory::Modify
-            }
+            Icon::Trim
+            | Icon::Extend
+            | Icon::Mirror
+            | Icon::Offset
+            | Icon::Combine
+            | Icon::CatModify
+            | Icon::CatSketchModify => IconCategory::Modify,
             Icon::Constrain
             | Icon::Coincident
             | Icon::Horizontal

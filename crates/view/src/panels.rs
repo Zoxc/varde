@@ -187,8 +187,7 @@ pub(crate) fn feature_icon(feature: &Feature) -> Icon {
         FeatureKind::Sketch { .. } => Icon::Sketch,
         FeatureKind::Extrude(_) => Icon::Extrude,
         FeatureKind::Revolve(_) => Icon::Revolve,
-        // Until the combine's own icon comes with its tool.
-        FeatureKind::Combine(_) => Icon::Body,
+        FeatureKind::Combine(_) => Icon::Combine,
     }
 }
 

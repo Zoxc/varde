@@ -207,7 +207,7 @@ fn run(seed: u64, steps: usize) {
         let roll = rng.below(59);
         let mut escaped = false;
         let mut committed = false;
-        // While revolving, `E` and `Delete` don't act.
+        // While revolving, `X` and `Delete` don't act.
         let mut quiet = false;
         let what = format!("roll {roll}");
         match roll {
@@ -318,7 +318,7 @@ fn run(seed: u64, steps: usize) {
             34 if !features.is_empty() => lathe.doc.look(Look::EditFeature(*rng.pick(&features))),
             35 if !features.is_empty() => lathe.doc.look(Look::SelectFeature(*rng.pick(&features))),
             36..=40 => {
-                let keys = ["e", "o", "Enter", "Escape", "Delete"];
+                let keys = ["x", "o", "Enter", "Escape", "Delete"];
                 let pressed = *rng.pick(&keys);
                 let key = match pressed {
                     "Enter" => keyboard::Key::Named(key::Named::Enter),
@@ -327,7 +327,7 @@ fn run(seed: u64, steps: usize) {
                     c => keyboard::Key::Character(c.into()),
                 };
                 escaped = pressed == "Escape" && lathe.doc.operating();
-                quiet = lathe.doc.revolve.is_some() && matches!(pressed, "e" | "Delete");
+                quiet = lathe.doc.revolve.is_some() && matches!(pressed, "x" | "Delete");
                 committed = pressed == "Enter";
                 // `Esc` is the app's, not a binding's.
                 if pressed == "Escape" {

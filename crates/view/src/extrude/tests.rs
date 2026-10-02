@@ -55,6 +55,7 @@ fn state_of<'a>(profiles: &'a Arc<Profiles>, picked: &'a BTreeSet<usize>) -> Ext
         grabbed: None,
         error: None,
         refused: None,
+        held: None,
         checking: false,
         ready: true,
         editable: true,

@@ -1,5 +1,5 @@
-//! Screenshots of the document screen, to look at: the extrude and
-//! revolve sessions, their panels and the extrude's handle, the measure
+//! Screenshots of the document screen, to look at: the extrude, revolve
+//! and combine sessions, their panels and the extrude's handle, the measure
 //! tool, the Timeline, the delete prompt and the file menu, drawn offscreen by iced's headless wgpu renderer, which draws the
 //! viewport's scene too. Every test is `#[ignore]`d and writes nothing
 //! unless `VARDE_SHOTS` names the directory for the PNGs, see
@@ -263,24 +263,24 @@ fn type_in(doc: &mut Doc, distance: Distance, text: &str) {
     extrude(doc, ExtrudeLook::Input { distance, text });
 }
 
-/// The plate, `E`, its region picked, answered.
+/// The plate, `X`, its region picked, answered.
 fn plate_picked() -> (Doc, FeatureId, Requests) {
     let (mut doc, sketch, requests) = plate();
-    key_in(&mut doc, key("e"));
+    key_in(&mut doc, key("x"));
     let region = plate_region(&doc, sketch);
     extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region });
     answer(&mut doc, &requests);
     (doc, sketch, requests)
 }
 
-/// Scenario 1: `E` with nothing selected, every candidate's regions
+/// Scenario 1: `X` with nothing selected, every candidate's regions
 /// filled; one hovered.
 #[test]
 #[ignore = "writes screenshots, see the module"]
 fn shots_01_candidates() {
     shooting(|camera| {
         let (mut doc, _, _) = plate();
-        key_in(&mut doc, key("e"));
+        key_in(&mut doc, key("x"));
         camera.take(&doc, "01-candidates-home", Shot::new());
         framed(&mut doc);
         camera.take(&doc, "01-candidates", Shot::new());
@@ -300,7 +300,7 @@ fn shots_02_picked() {
     shooting(|camera| {
         let (mut doc, sketch, requests) = plate();
         framed(&mut doc);
-        key_in(&mut doc, key("e"));
+        key_in(&mut doc, key("x"));
         let region = plate_region(&doc, sketch);
         extrude(&mut doc, ExtrudeLook::PickRegion { sketch, region });
         camera.take(&doc, "02-picked-waiting", Shot::new());
@@ -346,7 +346,7 @@ fn shots_03_extents() {
     });
 }
 
-/// The example and a hole sketched on its plate, `E`, the hole picked.
+/// The example and a hole sketched on its plate, `X`, the hole picked.
 fn hole_picked() -> (Doc, FeatureId, Requests) {
     let (mut doc, sketch, requests) = example_and_a_hole();
     framed(&mut doc);
@@ -422,7 +422,7 @@ fn shots_05_join_intersect() {
     });
 }
 
-/// The example, a hole, `more` bodies made like the plate's, `E` on the
+/// The example, a hole, `more` bodies made like the plate's, `X` on the
 /// hole, a cut of every body, answered: every shot of a session is taken
 /// with its answers in, unless it's of the wait for one.
 fn a_cut_of_many(more: usize) -> (Doc, Requests) {
@@ -1322,6 +1322,77 @@ fn shots_22_measure() {
         click(&mut doc, false, true);
         answer(&mut doc, &requests);
         camera.take(&doc, "22-measure-body-in", Shot::new());
+    });
+}
+
+/// Scenario 23: the example's plate and two discs through it made as
+/// bodies of their own, combined: `B` with nothing picked, the plate the
+/// target and the right disc a kept tool (their highlights, the left disc
+/// hovered), a union using both discs up (Objects listing them faint),
+/// a subtract, dark, and the right disc's extrude edited into a join,
+/// its panel saying why it stays a new body.
+#[test]
+#[ignore = "writes screenshots, see the module"]
+fn shots_23_combine() {
+    shooting(|camera| {
+        let mut editor = varde_document::Editor::new(varde_document::Document::example());
+        for center in [(20.0, 0.0), (-20.0, 0.0)] {
+            let extent = crate::tests::two_sides(editor.document(), "15", "5");
+            let new = varde_document::Operation::NewBody(varde_document::BodyId::NEW);
+            crate::tests::add_disc(&mut editor, center, extent, new);
+        }
+        let (mut doc, requests) = crate::tests::holding(editor.document().clone());
+        let bodies: Vec<varde_document::BodyId> = doc
+            .editor
+            .document()
+            .bodies()
+            .iter()
+            .map(|b| b.id)
+            .collect();
+        aim(&mut doc, 0.0, 0.3, PLATE_ZOOM);
+        key_in(&mut doc, key("b"));
+        camera.take(&doc, "23-combine-start", Shot::new());
+        doc.look(Look::ClickBody {
+            body: bodies[0],
+            add: false,
+        });
+        doc.look(Look::ClickBody {
+            body: bodies[1],
+            add: false,
+        });
+        doc.look(Look::Combine(varde_view::CombineLook::KeepTools));
+        answer(&mut doc, &requests);
+        // The left disc hovered.
+        let left = Point::new(620.0, 285.0);
+        camera.hover(&mut doc, left);
+        camera.take(
+            &doc,
+            "23-combine-kept",
+            Shot::new().pointer(Pointer::At(left)),
+        );
+        doc.look(Look::Combine(varde_view::CombineLook::KeepTools));
+        doc.look(Look::ClickBody {
+            body: bodies[2],
+            add: false,
+        });
+        answer(&mut doc, &requests);
+        doc.look(Look::SelectPanel(varde_view::Panel::Objects));
+        camera.take(&doc, "23-combine-union", Shot::new());
+        doc.look(Look::Combine(varde_view::CombineLook::Operation(
+            varde_document::BodyOp::Subtract,
+        )));
+        answer(&mut doc, &requests);
+        camera.take(&doc, "23-combine-subtract", Shot::new());
+        camera.take(&doc, "23-combine-subtract-dark", Shot::new().dark());
+        doc.update(Edit::CommitCombine);
+        answer(&mut doc, &requests);
+        doc.look(Look::SelectPanel(varde_view::Panel::Timeline));
+        camera.take(&doc, "23-combine-timeline", Shot::new());
+        let maker = doc.editor.document().body(bodies[1]).unwrap().created_by;
+        doc.look(Look::EditFeature(maker));
+        extrude(&mut doc, ExtrudeLook::Operation(OperationKind::Join));
+        answer(&mut doc, &requests);
+        camera.take(&doc, "23-combine-held-extrude", Shot::new());
     });
 }
 

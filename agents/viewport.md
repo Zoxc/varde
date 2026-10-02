@@ -1028,8 +1028,8 @@ makes its own wgpu instance, under a lock, so run them one at a time:
 VARDE_SHOTS=$PWD/target/shots cargo test -p varde-app shots_ -- --ignored --test-threads=1
 ```
 
-Scenarios (`shots_01` .. `shots_22`, `shots_24`, each at 1280×800,
-scale 1, light, the busiest also at scale 2 and dark): `E` with every candidate's regions
+Scenarios (`shots_01` .. `shots_24`, each at 1280×800, scale 1, light,
+the busiest also at scale 2 and dark): `X` with every candidate's regions
 (and one hovered); a region picked before and after its answer; flip,
 symmetric, two sides, a refused distance and a draft the document
 refuses; a cut, through all, with its Bodies list, a row hovered, a body
@@ -1068,7 +1068,12 @@ on faces (`shots_24`): `S` with the top hovered, a circle in a sketch on the top
 with the Sketch tab naming the face, its row menu with Change plane, the
 first sketch's plane changed with the later top hovered (refused, red),
 and the top's sketch failing once the plate is gone, its tip and the
-plane asked for. Shots
+plane asked for; the
+combine (`shots_23`): `B` with nothing picked, the plate the target
+and a disc a kept tool in their two colours with the other disc
+hovered, a union using both discs up (Objects listing them faint), a
+subtract (light, dark), its Timeline row, and a disc's extrude edited
+into a join, its panel saying why it stays a new body. Shots
 are for looking (pixels differ by GPU and driver), never compared and
 never committed: a fault a shot finds gets an ordinary headless test of
 the state or layout behind it. A scenario answers each regeneration it

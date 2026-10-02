@@ -7220,8 +7220,8 @@ coplanar side faces.
 ## The extrude UI (`crates/view`, `crates/app`)
 
 **The session** (`app/src/doc/extrude.rs`, `Doc::extrude`, an
-`ExtrudeSession`) is started by the Extrude tool (`E`, `Look::StartExtrude`,
-outside sketches, where `E` is Equal's; again, or `Esc`, cancels it) or by
+`ExtrudeSession`) is started by the Extrude tool (`X`, `Look::StartExtrude`,
+outside sketches, where `X` turns geometry into construction; again, or `Esc`, cancels it) or by
 editing an extrude (`Look::EditFeature` on one: a double-click in the
 Timeline, or `Enter` with it selected). It never runs with a sketch
 session, nor in a read-only document. It holds: the extrude edited, if

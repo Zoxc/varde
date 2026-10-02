@@ -116,6 +116,12 @@ pub struct DocumentState<'a> {
     /// The revolve being set up, if one is: never with a sketch or an
     /// extrude.
     pub revolve: Option<RevolveState<'a>>,
+    /// The combine being set up, if one is: never with a sketch or another
+    /// operation.
+    pub combine: Option<crate::CombineState<'a>>,
+    /// Whether the document has two bodies or more: the Combine tool works
+    /// outside sketches then.
+    pub combinable: bool,
     /// The measure tool, while it's in use: never with a sketch or an
     /// operation being set up.
     pub measure: Option<crate::MeasureState<'a>>,
@@ -169,6 +175,7 @@ impl DocumentState<'_> {
             .with_face_selected(self.face_selected())
             .with_extrude(self.extrudable, self.extrude.as_ref())
             .with_revolve(self.revolve.as_ref())
+            .with_combine(self.combinable, self.combine.as_ref())
             .with_measure(self.measure.is_some())
             .with_rail(self.rail)
             .with_edited(self.edited)
@@ -599,6 +606,7 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
                         operating(&state),
                         (state.extrude.as_ref().map(crate::extrude::panel))
                             .or_else(|| state.revolve.as_ref().map(crate::revolve::panel))
+                            .or_else(|| state.combine.as_ref().map(crate::combine::panel))
                             .or_else(|| state.measure.as_ref().map(crate::measure::panel)),
                         crate::rail::rail(&state),
                     ),
@@ -709,6 +717,19 @@ fn hints<'a>(state: &DocumentState<'a>) -> Vec<Hint<'a>> {
             mouse_hint(MouseButton::Left, what)
         });
         let ok = revolve.ready.then(|| key_hint(Shortcut::ENTER, "OK"));
+        [pick, ok, Some(key_hint(Shortcut::ESCAPE, "Cancel"))]
+            .into_iter()
+            .flatten()
+            .collect()
+    } else if let Some(combine) = &state.combine {
+        let pick = combine.editable.then(|| {
+            let what = match combine.picking {
+                crate::CombinePick::Target => "Pick the target",
+                crate::CombinePick::Tools => "Pick tools",
+            };
+            mouse_hint(MouseButton::Left, what)
+        });
+        let ok = combine.ready.then(|| key_hint(Shortcut::ENTER, "OK"));
         [pick, ok, Some(key_hint(Shortcut::ESCAPE, "Cancel"))]
             .into_iter()
             .flatten()
@@ -1330,6 +1351,26 @@ fn info<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
             .into(),
         );
     }
+    if let Some(combine) = &state.combine {
+        return Some(
+            row![
+                text(combine.editing.unwrap_or("New combine"))
+                    .size(12)
+                    .wrapping(Wrapping::None)
+                    .font(theme::SEMIBOLD),
+                text(format!(
+                    "· {}{}",
+                    combine_info(combine),
+                    status_suffix(state)
+                ))
+                .size(12)
+                .wrapping(Wrapping::None)
+                .style(theme::muted_text),
+            ]
+            .spacing(4)
+            .into(),
+        );
+    }
     let notes = status_notes(state);
     (!notes.is_empty()).then(|| {
         text(notes.join(" · "))
@@ -1338,6 +1379,23 @@ fn info<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
             .style(theme::muted_text)
             .into()
     })
+}
+
+/// What the status bar says of the combine being set up: "Body 1 with 2
+/// tools · Union", or what's still to pick.
+fn combine_info(combine: &crate::CombineState<'_>) -> String {
+    let Some(target) = combine.target else {
+        return "pick the target body".to_owned();
+    };
+    match combine.tools.len() {
+        0 => format!("{} · pick the tool bodies", target.name),
+        n => format!(
+            "{} with {} · {}",
+            target.name,
+            counted(n, "tool", "tools"),
+            combine.op.label()
+        ),
+    }
 }
 
 /// The feature selected in the Timeline, for the status bar's box of the
@@ -1349,6 +1407,7 @@ fn selection<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
         || state.sketch.is_some()
         || state.extrude.is_some()
         || state.revolve.is_some()
+        || state.combine.is_some()
         || state.measure.is_some()
     {
         return None;

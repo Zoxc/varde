@@ -233,7 +233,7 @@ fn axis_holds(sketch: &varde_document::Sketch, axis: AxisLine) -> bool {
 
 impl Doc {
     /// Starts setting up a new revolve, in a document that can be changed
-    /// and outside a sketch and an extrude, taking the regions of the
+    /// and outside a sketch and the other operations, taking the regions of the
     /// sketch selected in the Timeline if one is; or cancels the one being
     /// set up. The first angle's field, if the extent has one, takes the
     /// focus.
@@ -242,6 +242,7 @@ impl Doc {
             || !self.editable()
             || self.sketch.is_some()
             || self.extrude.is_some()
+            || self.combine.is_some()
         {
             return;
         }
@@ -256,8 +257,8 @@ impl Doc {
 
     /// Edits the revolve feature `id`, if the document holds it, in a
     /// session with its values, outside a sketch, in a document that can
-    /// be changed: a read-only one has no session. An extrude being set
-    /// up is dropped.
+    /// be changed: a read-only one has no session. An extrude or combine
+    /// being set up is dropped.
     pub(crate) fn edit_revolve(&mut self, id: FeatureId) {
         let document = self.editor.document();
         let Some(FeatureKind::Revolve(revolve)) = document.feature(id).map(|f| &f.kind) else {
@@ -268,6 +269,7 @@ impl Doc {
         }
         self.picking_plane = None;
         self.extrude = None;
+        self.combine = None;
         self.selected_feature = Some(id);
         self.revolve = Some(RevolveSession::editing(document, id, revolve));
         self.focus = Some(Focus::All);
@@ -314,7 +316,10 @@ impl Doc {
     /// ([`Doc::extrude_ready`]).
     pub(crate) fn revolve_ready(&self) -> bool {
         self.revolve.as_ref().is_some_and(|session| {
-            self.editable() && !self.proposing() && session.ready(self.editor.document())
+            self.editable()
+                && !self.proposing()
+                && session.ready(self.editor.document())
+                && self.held(session.feature, session.operation).is_none()
         })
     }
 
@@ -393,6 +398,7 @@ impl Doc {
             targets: self.body_targets(session.operation, session.feature, &session.targets),
             error: self.feed.draft_error(),
             refused: session.refused(document),
+            held: self.held(session.feature, session.operation),
             checking: self.proposals.slow(),
             ready: self.revolve_ready(),
             editable: self.editable(),

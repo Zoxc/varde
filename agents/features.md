@@ -468,7 +468,7 @@ The status bar says "New revolve · 1 region picked · about Line 3"
 (or "pick the regions to revolve", "pick the axis"), with the hints
 "Pick regions" or "Pick the axis", `Enter` OK and `Esc` Cancel; the
 toolbar's tag "Revolve" or "Editing Revolve 1". While a revolve is set
-up `S`, `E` and the selected feature's `Enter` and `Delete` don't act,
+up `S`, `X`, `B` and the selected feature's `Enter` and `Delete` don't act,
 and the cursor doesn't pick the model.
 
 **Starting it**: the toolbar's Revolve button after Extrude, the rail's
@@ -480,11 +480,12 @@ extrude's `extrudable`: a visible sketch or the selected one) or a
 revolve being set up, in a document that can be changed. The button and
 the rail's entry are highlighted while a revolve is set up. `O` is the
 UI mock's key: its model rail's sets open with `Q` .. `T` (five sets),
-so `R` would open its fourth and Revolve takes `O`, Extrude `X` (the app
-keeps `E` for Extrude while the model rail has one set). In a sketch `O`
-is the Offset tool's; outside one it's free, and the rail's set keys
-reach `O` only with a ninth set. `E` is disabled while a revolve is set
-up and `O` while an extrude is.
+so `R` would open its fourth and Revolve takes `O`, Extrude `X` (the
+app's model rail has three sets since Combine's Modify set, so `E` opens
+the third and Extrude is `X` too). In a sketch `O` is the Offset tool's
+and `X` construction's; outside one they're free, and the rail's set
+keys reach `O` only with a ninth set. `X` is disabled while a revolve
+is set up and `O` while an extrude is, and both while a combine is.
 
 **The Timeline** shows a revolve with its own icon (`Icon::Revolve`,
 the icon mock's: an open circle with an arrowhead about a dashed axis)
@@ -496,8 +497,7 @@ body · about Y axis", "One side 90° · Cut · about Line 3", "Symmetric
 box clips what doesn't fit at 1280 px and the axis says least, and left
 out while its sketch doesn't have it). Double-click, `Enter` or Edit revolve reopen it.
 
-Not yet: a handle dragging the angle; Extrude's key following the mock's
-`X`.
+Not yet: a handle dragging the angle.
 
 ## Combine
 
@@ -591,10 +591,115 @@ is, so it sees the bodies as the features before it leave them:
   `None`. Drafts need nothing new (`Draft::kind` is any kind); the wire
   carries the kind in the document's postcard and `merged` as before.
 
-### The app, for now
+### UI
 
-There's no combine session yet (`B`, the panel, picking bodies, the
-preview): `Look::EditFeature` on a combine does nothing. The Timeline
-shows its row with `Icon::Body` and its operation as the note, and the
-status bar's `feature_info` "Body 1 with Body 2, Body 3 · Union · tools
-kept" (the mock's row info).
+**The session** (`app/src/doc/combine.rs`, `Doc::combine`, a
+`CombineSession`) is started by `Look::StartCombine` (`B`, the toolbar's
+Combine button after Revolve, the rail's Modify set; again, or `Esc`,
+cancels it) or by editing a combine (`Look::EditFeature`: a
+double-click or `Enter` on its row, Edit combine in its menu), in a
+document that can be changed, outside sketches and the other
+operations, as the revolve's: editing an extrude or a revolve drops it,
+editing a combine drops theirs, entering a sketch drops it, and it
+drops the measure tool. A new one takes its bodies from what's selected
+in the model: the first item's body is the target, the others' bodies
+the tools (as the UI mock's init takes the body selected); else it
+starts empty, picking the target. A union using the tools up, to begin
+with.
+
+- **Picking**: while it's set up the cursor picks the model as outside
+  the sessions (`Doc::picks` is true with a combine even while its
+  preview shows: a combine draft makes no body, so the model's bodies
+  are the document's), and a click on a face, edge or vertex picks its
+  body (`Look::ClickModel` → `Doc::combine_click`); a body's row in
+  Objects does too (`Look::ClickBody` → `Doc::combine_body`). What a
+  click picks is `CombineSession::picking` (`CombinePick`): the target
+  (taking it out of the tools if it's one, then handing the clicks to
+  the tools), or a tool (added, kept sorted as the document wants, or
+  taken out if it's one; the target is no tool, nor are tools added
+  past `MAX_FEATURE_BODIES`). The panel's Target and Tools fields
+  choose (`CombineLook::Picking`). A body an earlier join or consuming
+  combine merged into another is picked as the body holding it
+  (`MeshFeed::merged_before` up to the edited combine), which the model
+  draws it as: the combine would fail naming it ("Body 3 is in Body 2
+  now"). Only bodies made before the edited combine are picked
+  (`combine::pickable`, the document's rule), and the session lets go
+  of bodies the document no longer has (`CombineSession::prune`).
+- **The highlight** is its own while it's set up, as the measure
+  tool's: the target's faces in the selection's colour, the tools' in
+  the second colour (a tool the preview uses up has no faces of its
+  own), the body under the cursor hovered (`PickIndex::highlight_with`);
+  the selection is kept, and not looked for in the preview's model.
+- **Whole and ready**: a target and a tool (`CombineSession::combine`);
+  ready (`Doc::combine_ready`) when editable, no sketch edits wait on
+  the solver, and `Combine::check_own` passes.
+- **Preview**: the whole combine is the request's draft
+  (`Doc::combine_draft`, after the extrude's and revolve's in
+  `Doc::request_model`); its error shows in the panel. A draft using its
+  tools up merges them in the answer's `merged`, so Objects lists them
+  faint, "in Body 1", as the committed combine will.
+- **Committing** (`Edit::CommitCombine`: OK, the screen's `Enter`)
+  applies `AddFeature` ("Combine N") or `SetFeature` through
+  `Doc::commit_feature`, one undo step, selects the new combine and ends
+  the session; OK with nothing changed writes nothing. `Esc` or Cancel
+  drops it and its draft. A replacement of the whole document,
+  read-only, or the edited combine gone end it (`Doc::prune_combine`).
+
+**The panel** (`view/src/combine.rs`, in `operation_panel`): title "New
+combine" or the combine's name, the tool count as its summary; Target
+and Tools rows, each a field (`theme::pick_field`, outlined in the
+accent while it's the one picking, a click on it making it so) holding
+the bodies as chips (`theme::chip`: the name and a button taking it
+out, `CombineLook::Drop`; dropping the target hands the clicks to it),
+the tools one under another, and "Click a body" / "Click bodies" while
+empty, "+ Click bodies" after the tools while they're picked; Operation
+(Union, Subtract, Intersect: `BodyOp::label`); "Keep tool bodies" with
+"Otherwise the tools are used up" under it; the footer's draft error,
+"Checking the sketch…", or with fewer than two bodies "There’s only one
+body: make another to combine with". The mock's warnings for a tool
+clear of the target are left out: regen answers that case (a subtract
+takes nothing, a union is in pieces, an intersect fails as emptying).
+
+The status bar says "New combine · Body 1 with 2 tools · Union" (or
+"pick the target body", "Body 1 · pick the tool bodies"), with the hints
+"Pick the target" or "Pick tools", `Enter` OK and `Esc` Cancel; the
+toolbar's tag "Combine" or "Editing Combine 1". `B` (`Shortcut::COMBINE`,
+`shortcut::combine_binding`, the UI mock's key; the Rectangle tool's in a
+sketch) is enabled outside a sketch and the other operations, with two
+bodies or more (`Doc::combinable`, `DocumentKeys::combinable`) or a
+combine being set up, in a document that can be changed. While it's set
+up `S`, `X`, `O`, `I` and the selected feature's `Enter` and `Delete`
+don't act.
+
+**The Timeline** shows a combine with its own icon (`Icon::Combine`,
+the mock's two overlapping boxes, in the Modify colours; the mock's
+tinted overlap is a fill the line-only set leaves out) and its operation
+as the note; selected, the status bar says "Body 1 with Body 2, Body 3 ·
+Union · tools kept" (`feature_info`).
+
+**Merges replayed in the app**: `MeshFeed::merged_before(document,
+until)` replays, in the document's order, the joins the model shown
+found merging and the combines using their tools up that it didn't find
+failing (`MeshFeed::consumes`), by regen's rule (`note_merge`, a
+combine as its target then its tools): the extrude's and revolve's
+Bodies lists and the combine's picking use it, and the delete prompt's
+warning replays combines alike.
+
+**An extrude or revolve making a combined body** can't stop making it
+(the document refuses the edit, above). Its panel says so at once when
+Join, Cut or Intersect is picked (`Doc::held`, `ExtrudeState::held`,
+`RevolveState::held`): "Combine 1 combines Body 2, so this stays a new
+body: take Body 2 out of Combine 1 or delete it first", in the footer
+in place of the preview's error, and OK waits.
+
+Tests: `app/src/doc/combine/tests.rs` (keys, viewport and Objects
+picks, the chips' buttons through the panel, the draft, Objects' faint
+rows, one undo step, `Esc` without a trace, editing, merged bodies
+picked as their holder, the highlight, read-only, the other tools, a
+body going, the held extrude, the Timeline row, the delete prompt);
+`view/src/combine/tests.rs` (the panel's texts and layout); shot
+scenario 23.
+
+Known gaps: a kept tool overlapping the target's union shows both
+bodies' faces in the same place, which z-fight (as two overlapping
+bodies always do); the panel doesn't warn before the preview answers.

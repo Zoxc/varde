@@ -2,6 +2,7 @@
 //! [`save`].
 
 mod camera;
+mod combine;
 mod delete;
 mod export;
 mod extrude;
@@ -38,6 +39,7 @@ pub(crate) use camera::CameraAnimation;
 use camera::Pivot;
 #[cfg(test)]
 pub(crate) use camera::{PIVOT_FADE, PIVOT_SHOWN};
+pub(crate) use combine::CombineSession;
 use delete::Deleting;
 use export::Export;
 #[cfg(test)]
@@ -123,6 +125,9 @@ pub(crate) struct Doc {
     /// The revolve being set up, if one is: never with a sketch or an
     /// extrude.
     pub(crate) revolve: Option<RevolveSession>,
+    /// The combine being set up, if one is: never with a sketch or another
+    /// operation.
+    pub(crate) combine: Option<CombineSession>,
     /// The measure tool, while it's in use: never with a sketch or an
     /// operation being set up.
     pub(crate) measure: Option<MeasureSession>,
@@ -250,6 +255,7 @@ impl Doc {
             sketch: None,
             extrude: None,
             revolve: None,
+            combine: None,
             measure: None,
             sketch_split: GEOMETRY_SHARE,
             focus: None,
@@ -288,6 +294,7 @@ impl Doc {
         self.prune_plane_pick(replaced);
         self.prune_extrude(replaced);
         self.prune_revolve(replaced);
+        self.prune_combine(replaced);
         self.prune_measure(replaced);
         self.request_analysis();
         self.request_model();
@@ -298,22 +305,25 @@ impl Doc {
     }
 
     /// Asks for the model if the document changed, the sketch left out of
-    /// it (the one being edited) or the extrude or revolve being set up
-    /// did, which is previewed as a draft, or the measure tool's picks,
+    /// it (the one being edited) or the extrude, revolve or combine being
+    /// set up did, which is previewed as a draft, or the measure tool's picks,
     /// measured on it. The measure tool is never in use with a draft, so
     /// no request carries both: a draft dragged never measures again at
     /// each step.
     fn request_model(&mut self) {
         let exclude = self.sketch.as_ref().map(|session| session.feature);
-        let draft = self.extrude_draft().or_else(|| self.revolve_draft());
+        let draft = (self.extrude_draft())
+            .or_else(|| self.revolve_draft())
+            .or_else(|| self.combine_draft());
         let inspect = self.measure.as_ref().and_then(MeasureSession::inspect);
         self.feed
             .request_with(&self.editor, exclude, draft, inspect);
     }
 
-    /// Whether an operation is being set up: an extrude or a revolve.
+    /// Whether an operation is being set up: an extrude, a revolve or a
+    /// combine.
     pub(crate) fn operating(&self) -> bool {
-        self.extrude.is_some() || self.revolve.is_some()
+        self.extrude.is_some() || self.revolve.is_some() || self.combine.is_some()
     }
 
     /// Whether the camera is turning to a new view, the pivot's marker
@@ -405,6 +415,7 @@ impl Doc {
             Edit::InsertSplinePoint { spline, at } => self.insert_spline_point(spline, at),
             Edit::CommitExtrude => self.commit_extrude(),
             Edit::CommitRevolve => self.commit_revolve(),
+            Edit::CommitCombine => self.commit_combine(),
             Edit::CommitOpacity => {
                 if let Some((id, opacity)) = self.opacity_preview.take() {
                     self.change(Change::SetOpacity(id, opacity));
@@ -564,6 +575,7 @@ impl Doc {
                 | Look::ChangePlane(_)
                 | Look::StartExtrude
                 | Look::StartRevolve
+                | Look::StartCombine
                 | Look::StartMeasure
                 | Look::EditFeature(_)
         ) {
@@ -576,6 +588,7 @@ impl Doc {
                 | Look::ChangePlane(_)
                 | Look::StartExtrude
                 | Look::StartRevolve
+                | Look::StartCombine
                 | Look::EditFeature(_)
         ) {
             self.measure = None;
@@ -594,14 +607,15 @@ impl Doc {
             Look::EditFeature(id) => match self.editor.document().feature(id).map(|f| &f.kind) {
                 Some(FeatureKind::Extrude(_)) => self.edit_extrude(id),
                 Some(FeatureKind::Revolve(_)) => self.edit_revolve(id),
-                // No combine session yet.
-                Some(FeatureKind::Combine(_)) => {}
+                Some(FeatureKind::Combine(_)) => self.edit_combine(id),
                 _ => self.enter_sketch(id),
             },
             Look::StartExtrude => self.start_extrude(),
             Look::Extrude(message) => self.extrude_look(message),
             Look::StartRevolve => self.start_revolve(),
             Look::Revolve(message) => self.revolve_look(message),
+            Look::StartCombine => self.start_combine(),
+            Look::Combine(message) => self.combine_look(message),
             Look::StartMeasure => self.start_measure(),
             Look::Measure(message) => self.measure_look(message),
             Look::FinishSketch => self.finish_sketch(),
@@ -620,10 +634,12 @@ impl Doc {
             Look::ClickRow(id) => self.click_geometry(Some(id), false),
             Look::HoverItem(id) => self.hover_item(id),
             Look::Hover(pick) => self.hover(pick),
+            Look::ClickModel { pick, .. } if self.combine.is_some() => self.combine_click(pick),
             Look::ClickModel { pick, add, double } if self.measure.is_some() => {
                 self.measure_click(pick, add, double);
             }
             Look::ClickModel { pick, add, double } => self.click_model(pick, add, double),
+            Look::ClickBody { body, .. } if self.combine.is_some() => self.combine_body(body),
             Look::ClickBody { body, add } if self.measure.is_some() => self.measure_body(body, add),
             Look::ClickBody { body, add } => self.click_body(body, add),
             Look::Snap(snap) => {
@@ -796,6 +812,7 @@ impl Doc {
                 .with_face_selected(self.selected_face().is_some())
                 .with_extrude(self.extrudable(), self.extrude_state().as_ref())
                 .with_revolve(self.revolve_state().as_ref())
+                .with_combine(self.combinable(), self.combine_state().as_ref())
                 .with_measure(self.measure.is_some())
                 .with_rail(self.rail.state())
                 .with_edited(self.edited())
@@ -918,6 +935,8 @@ impl Doc {
             sketch: self.sketch_state(),
             extrude: self.extrude_state(),
             revolve: self.revolve_state(),
+            combine: self.combine_state(),
+            combinable: self.combinable(),
             measure: self.measure_state(),
             extrudable: self.extrudable(),
             unsolved: self.feed.unsolved(),

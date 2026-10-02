@@ -205,7 +205,7 @@ impl ExtrudeSession {
 
 impl Doc {
     /// Starts setting up a new extrude, in a document that can be changed
-    /// and outside a sketch and a revolve, taking the regions of the sketch selected in
+    /// and outside a sketch and the other operations, taking the regions of the sketch selected in
     /// the Timeline if one is; or cancels the one being set up. The first
     /// distance's field takes the focus.
     pub(crate) fn start_extrude(&mut self) {
@@ -213,6 +213,7 @@ impl Doc {
             || !self.editable()
             || self.sketch.is_some()
             || self.revolve.is_some()
+            || self.combine.is_some()
         {
             return;
         }
@@ -227,8 +228,8 @@ impl Doc {
 
     /// Edits the extrude feature `id`, if the document holds it, in a
     /// session with its values, outside a sketch, in a document that can
-    /// be changed: a read-only one has no session. A revolve being set up
-    /// is dropped.
+    /// be changed: a read-only one has no session. A revolve or combine
+    /// being set up is dropped.
     pub(crate) fn edit_extrude(&mut self, id: FeatureId) {
         let document = self.editor.document();
         let Some(FeatureKind::Extrude(extrude)) = document.feature(id).map(|f| &f.kind) else {
@@ -239,6 +240,7 @@ impl Doc {
         }
         self.picking_plane = None;
         self.revolve = None;
+        self.combine = None;
         self.selected_feature = Some(id);
         self.extrude = Some(ExtrudeSession::editing(document, id, extrude));
         self.focus = Some(Focus::All);
@@ -297,7 +299,10 @@ impl Doc {
     /// the undo history.
     pub(crate) fn extrude_ready(&self) -> bool {
         self.extrude.as_ref().is_some_and(|session| {
-            self.editable() && !self.proposing() && session.ready(&self.editor.document().design())
+            self.editable()
+                && !self.proposing()
+                && session.ready(&self.editor.document().design())
+                && self.held(session.feature, session.operation).is_none()
         })
     }
 
@@ -394,6 +399,7 @@ impl Doc {
             grabbed: session.grabbed,
             error: self.feed.draft_error(),
             refused: session.refused(&document.design()),
+            held: self.held(session.feature, session.operation),
             checking: self.proposals.slow(),
             ready: self.extrude_ready(),
             editable: self.editable(),

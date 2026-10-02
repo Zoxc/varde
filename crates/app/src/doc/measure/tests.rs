@@ -77,9 +77,16 @@ fn click(doc: &mut Doc, pick: impl FnOnce(&Doc) -> Pick, add: bool) {
     });
 }
 
-/// The panel's value labelled `label` and its text, the first of them.
+/// The panel's value labelled `label` and its text, the first of them
+/// past the toolbar (whose key chips read "X" and "I").
 fn value_after(texts: &[String], label: &str) -> String {
-    let at = texts.iter().position(|text| text == label);
+    let past = texts
+        .iter()
+        .position(|text| text == "Timeline")
+        .unwrap_or(0);
+    let at = (texts.iter().skip(past))
+        .position(|text| text == label)
+        .map(|at| at + past);
     let at = at.unwrap_or_else(|| panic!("no {label} in {texts:?}"));
     texts[at + 1].clone()
 }
@@ -100,7 +107,7 @@ fn i_starts_and_leaves_the_measure_tool_and_so_does_the_rail() {
     key_in(&mut doc, keyboard::Key::Character("i".into()));
     assert!(doc.measure.is_none());
     // The rail's Inspect set: its list, then Enter on Measure.
-    doc.look(Look::Rail(RailLook::Open(1)));
+    doc.look(Look::Rail(RailLook::Open(2)));
     key_in(&mut doc, keyboard::Key::Named(keyboard::key::Named::Enter));
     assert!(doc.measure.is_some());
     assert_eq!(doc.rail.open, None);
