@@ -1438,9 +1438,10 @@ fn tangent_discs(fit: f64, angle: f64, operation: Operation) -> (Editor, BodyId,
 
 /// A boss tangent to a body only along a line touches it, so the join
 /// fails naming the body (the union refuses the line contact, saying the
-/// result would touch itself), never as touching no body; the body is listed and kept as it was. At the
-/// default tolerance `touches` finds it, and the union refuses it,
-/// within less than the old refinement took (which ran out of it).
+/// result would touch itself), never as touching no body; the body is
+/// listed and kept as it was. At the default tolerance `touches` finds
+/// it, and the union refuses it, within less than the old refinement
+/// took (which ran out of it).
 #[test]
 fn a_join_tangent_to_a_body_along_a_line_names_it() {
     let (editor, body, join) =

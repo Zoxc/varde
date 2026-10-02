@@ -289,6 +289,64 @@ fn unions_touching_along_a_line_fail_at_once() {
     }
 }
 
+#[test]
+fn a_pin_plugging_a_hole_it_touches_inside_is_no_pinch() {
+    // A pin of radius 1.1 through a hole of radius 1, tangent to its wall
+    // from inside the pin: the walls face opposite ways, but bend into
+    // each other, so the solids overlap all round the line and the union
+    // (the block with the hole filled, the pin standing out of both
+    // sides) is a manifold. Where the pin's seam is on the line it works;
+    // turned off it, the counting's ties give the pairs along the line
+    // ends, which were named `NotManifold` within a million units; it is
+    // refined as before, and runs out.
+    let v = DVec2::new;
+    let block = ex(
+        vec![
+            rect(v(-3.0, -3.0), v(3.0, 3.0), 0),
+            circle(v(0.0, 0.0), 1.0, 10, true),
+        ],
+        0.0,
+        1.0,
+        1,
+        &TOL,
+    );
+    let want = 36.0 + 1.21 * PI;
+    for turn in [0.0f64, 0.3] {
+        let at = v(turn.cos(), turn.sin()) * -0.1;
+        let pin = ex(vec![circle(at, 1.1, 0, false)], -0.5, 1.5, 2, &TOL);
+        for (x, y) in [(&block, &pin), (&pin, &block)] {
+            let budget = if turn > 0.0 {
+                Budget::new(1_000_000)
+            } else {
+                Budget::DEFAULT
+            };
+            match boolean(x, y, Op::Union, &TOL, &budget) {
+                Ok(solid) => assert!(
+                    (solid.volume() - want).abs() < 1e-9,
+                    "{turn}: {}",
+                    solid.volume()
+                ),
+                Err(e) => {
+                    assert!(turn > 0.0, "{e:?}");
+                    assert_ne!(e, KernelError::Boolean(BooleanError::NotManifold));
+                }
+            }
+        }
+        // Moved a third of a resolution further, the pin leaves a slit of
+        // the hole open that deep, whose sides come within the resolution
+        // of each other: named so at once.
+        let at = v(turn.cos(), turn.sin()) * -(0.1 + TOL.resolution() / 3.0);
+        let pin = ex(vec![circle(at, 1.1, 0, false)], -0.5, 1.5, 2, &TOL);
+        for (x, y) in [(&block, &pin), (&pin, &block)] {
+            assert_eq!(
+                boolean(x, y, Op::Union, &TOL, &Budget::new(100_000)).map(|s| s.volume()),
+                Err(KernelError::Boolean(BooleanError::NotManifold)),
+                "{turn}"
+            );
+        }
+    }
+}
+
 /// The plate `[0, 4] × [0, 3] × [0, 2]` with its top edge at `x = 4`
 /// rounded by radius 1 (the axis at `x = 3`, `z = 1`, along `y`).
 fn rounded_plate(tol: &Tolerance) -> Solid {

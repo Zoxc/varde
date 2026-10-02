@@ -572,7 +572,9 @@ const LENS: f64 = 0.25;
 ///
 /// A line is clear where the walls cross at an angle `θ` with
 /// `θ² ≥ 2·LENS·resolution·κ`, `κ` the sum of their cross-sections'
-/// curvatures there (`sin θ` stands in for `θ`, which only asks more).
+/// curvatures' sizes there, however they bend (more than the gap between
+/// them bends, which only asks more, as `sin θ` standing in for `θ`
+/// does).
 /// Two curves crossing so bound a sliver that closes no sooner than
 /// `2θ/κ` away and is at least `θ²/2κ` thick: [`LENS`] resolutions. A
 /// thinner one (walls overlapping by a fraction of the resolution, down
@@ -591,10 +593,6 @@ fn along_generators(
     d: DVec3,
     resolution: f64,
 ) -> Option<Vec<(End, End)>> {
-    let quadric = |input: &Input, t: u32| match input.mesh.faces()[input.face(t) as usize].surface {
-        Surface::Quadric(quadric) => Some(quadric),
-        _ => None,
-    };
     let (qa, qb) = (quadric(a, p)?, quadric(b, q)?);
     if !ends.len().is_multiple_of(2) {
         return None;
@@ -603,7 +601,7 @@ fn along_generators(
     for e in ends {
         let (ka, ga) = section(&qa, e.at, d)?;
         let (kb, gb) = section(&qb, e.at, d)?;
-        let kappa = ka + kb;
+        let kappa = ka.abs() + kb.abs();
         let sine = ga.normalize().cross(gb.normalize()).length();
         // Not clear also where any of it isn't finite.
         if !clear(sine, kappa, resolution) {
@@ -649,43 +647,69 @@ fn along_generators(
     Some(joined)
 }
 
+/// The quadric face `t` of `input` claims, if it claims one.
+fn quadric(input: &Input, t: u32) -> Option<crate::mesh::Quadric> {
+    match input.mesh.faces()[input.face(t) as usize].surface {
+        Surface::Quadric(quadric) => Some(quadric),
+        _ => None,
+    }
+}
+
 /// The curvature of a wall's cross-section square to `d` at `x`,
-/// `tᵀ·H·t / |∇F|` with `t` the unit tangent there square to `d`, and
-/// the quadric's gradient there.
+/// `tᵀ·H·t / |∇F|` with `t` the unit tangent there square to `d`
+/// (positive where the wall bends away from the way its gradient points,
+/// as a cylinder's from its outward normal), and the quadric's gradient
+/// there.
 fn section(quadric: &crate::mesh::Quadric, x: DVec3, d: DVec3) -> Option<(f64, DVec3)> {
     let gradient = quadric.gradient(x);
     let t = d.cross(gradient).try_normalize()?;
     let hessian = quadric.a + quadric.a.transpose();
-    Some((t.dot(hessian * t).abs() / gradient.length(), gradient))
+    Some((t.dot(hessian * t) / gradient.length(), gradient))
 }
 
 /// Whether walls crossing at an angle of sine `sine`, their
-/// cross-sections' curvatures adding up to `kappa`, bound a sliver at
-/// least [`LENS`] resolutions thick (see [`along_generators`]); not where
-/// any of it isn't finite.
+/// cross-sections' curvatures' sizes adding up to `kappa`, bound a sliver
+/// at least [`LENS`] resolutions thick (see [`along_generators`]); not
+/// where any of it isn't finite.
 fn clear(sine: f64, kappa: f64, resolution: f64) -> bool {
     let clear = (sine * sine).partial_cmp(&(2.0 * LENS * resolution * kappa));
     matches!(clear, Some(Ordering::Greater | Ordering::Equal))
 }
 
+/// How deep, in resolutions, a slit between walls bending into each other
+/// must be for [`pinched_line`] to take their ends: four tie distances.
+const SLIT: f64 = 1.0 / 16.0;
+
 /// Whether triangle `p` of `A` and `q` of `B`, on walls along `d`
 /// ([`parallel_generators`]), touch along a line from either side, for a
-/// union: it has ends, and at every one the walls aren't clear of each
-/// other (see [`along_generators`]: tangent, or crossing so near tangent
-/// that the sliver between is thinner than [`LENS`] resolutions) and
-/// face opposite ways (each wall's normal there, the quadric's gradient,
-/// turned the way its patch faces at its middle).
+/// union: it has ends, and at every one the walls face opposite ways
+/// (each wall's normal there, the quadric's gradient, turned the way its
+/// patch faces at its middle) and aren't clear of each other (see
+/// [`along_generators`]: tangent, or crossing at so small an angle `θ`
+/// that `θ² < 2·LENS·resolution·κ`, `κ` the sizes of their
+/// cross-sections' curvatures added); and where they bend into each
+/// other (those curvatures, each signed by the way its wall faces, add
+/// up to less than zero), the slit they leave is at least [`SLIT`]
+/// resolutions deep (`θ²/2|κ'|`, `κ'` that sum).
 ///
 /// Walls tangent within the tie distance, `A` grown by the perturbation,
 /// cross in two lines infinitely close, whose ends (two or four to a
 /// pair, as the patches' edges fall) no join takes, and refinement split
-/// the pairs along the line until the budget ran out (seconds). The exact union of solids touching along a
-/// line from either side isn't a manifold, and one overlapping by less
-/// than a quarter of the resolution has a neck thinner than that: either
-/// way the result touches itself at the kernel's resolution, so the
-/// union fails as such at once. Walls facing the same way (one solid
-/// inside the other, touching its skin from inside) give a manifold
-/// union, the outer solid there, and are refined as before.
+/// the pairs along the line until the budget ran out (seconds). The exact
+/// union of solids touching along a line from either side, bending away
+/// from each other there, isn't a manifold. Walls crossing at such an
+/// angle unite into a crease, or leave a slit, whose two sides stay
+/// within the resolution of each other for `resolution/θ` beside it,
+/// more than `√(2·resolution/κ)`: half the width of a piece bent by `κ`
+/// that is flat to the resolution (for solids side by side, an overlap
+/// under [`LENS`] resolutions). Either way the result touches itself at
+/// the kernel's resolution, so the union fails as such at once. Others
+/// are refined as before: walls facing the same way (one solid inside
+/// the other, touching its skin from inside: the outer one there, a
+/// manifold); and walls bending into each other with no slit, a pin
+/// against the wall of a smaller hole tangent to it inside (it plugs the
+/// hole: a manifold, but the counting's ties give the pairs along the
+/// line ends where the walls come within a tie of each other).
 fn pinched_line(
     a: &Input,
     p: u32,
@@ -695,10 +719,6 @@ fn pinched_line(
     d: DVec3,
     resolution: f64,
 ) -> bool {
-    let quadric = |input: &Input, t: u32| match input.mesh.faces()[input.face(t) as usize].surface {
-        Surface::Quadric(quadric) => Some(quadric),
-        _ => None,
-    };
     let (Some(qa), Some(qb)) = (quadric(a, p), quadric(b, q)) else {
         return false;
     };
@@ -710,16 +730,16 @@ fn pinched_line(
         a.patches[p as usize].normal(middle),
         b.patches[q as usize].normal(middle),
     );
-    // A gradient turned the way `n` faces; `None` where the two are within
-    // 60° of square (a patch so bent that its middle tells nothing), or
-    // not finite.
-    let outward = |g: DVec3, n: DVec3| {
+    // 1 where the gradient `g` points the way `n` faces, −1 where it
+    // points against it; `None` where the two are within 60° of square
+    // (a patch so bent that its middle tells nothing), or not finite.
+    let facing = |g: DVec3, n: DVec3| {
         let along = g.dot(n);
         let half = 0.5 * g.length() * n.length();
         if along > half {
-            Some(g)
+            Some(1.0)
         } else if -along > half {
-            Some(-g)
+            Some(-1.0)
         } else {
             None
         }
@@ -729,13 +749,23 @@ fn pinched_line(
         else {
             return false;
         };
-        let (Some(ga), Some(gb)) = (outward(ga, na), outward(gb, nb)) else {
+        let (Some(sa), Some(sb)) = (facing(ga, na), facing(gb, nb)) else {
             return false;
         };
-        let (ua, ub) = (ga.normalize(), gb.normalize());
+        let (ua, ub) = ((ga * sa).normalize(), (gb * sb).normalize());
         let sine = ua.cross(ub).length();
-        let kappa = ka + kb;
-        sine.is_finite() && kappa.is_finite() && !clear(sine, kappa, resolution) && ua.dot(ub) < 0.0
+        // Each wall bends away from its outward normal by its signed
+        // curvature; facing opposite ways, the gap between them opens by
+        // their sum.
+        let gap = sa * ka + sb * kb;
+        // Bending into each other, they overlap all round the line but
+        // for a slit, which only a crossing that far from tangent shows:
+        // the counting's ties give ends where walls overlapping all round
+        // come within a tie of each other.
+        let slit = gap > 0.0 || sine * sine > 2.0 * SLIT * resolution * -gap;
+        let kappa = ka.abs() + kb.abs();
+        let finite = sine.is_finite() && kappa.is_finite();
+        ua.dot(ub) < 0.0 && slit && finite && !clear(sine, kappa, resolution)
     })
 }
 

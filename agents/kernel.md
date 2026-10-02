@@ -3604,7 +3604,7 @@ elsewhere (see "Cutting curved faces").
 | `boolean/curved_tests.rs` | cylinders and boxes (exact), crossing cylinders, a free surface, a saddle, extrudes, chains, merging, random bars, walls over arcs with level ends |
 | `boolean/curved_tests/flush_seams.rs` | flush unions with curved rims in either order: bosses in and on plates, over holes and edges, overlapping, a flange at a shaft's foot, a slot, at millimetre scale and on a turned frame, a chain of flush joins, caps a hair apart, bosses on a rounded corner |
 | `boolean/curved_tests/one_face.rs` | faces on one surface after booleans: tops at a crease either side of the bar, flush stacks on turned frames far from the origin, chains of joins and cuts with every operand's names resolving, faces meeting only at a corner |
-| `boolean/curved_tests/tangent.rs` | tangent contacts: cylinders against a plate's side from outside and inside, standing on it or through its top, slots ending in, beside and across a hole, a cylinder on a cylinder (in millimetres at the default tolerance, and at unit size at the finest), unions touching along a line refused at once, and solids tangent to a rounded edge or the faces it runs into |
+| `boolean/curved_tests/tangent.rs` | tangent contacts: cylinders against a plate's side from outside and inside, standing on it or through its top, slots ending in, beside and across a hole, a cylinder on a cylinder (in millimetres at the default tolerance, and at unit size at the finest), unions touching along a line refused at once (a pin plugging a hole it touches inside never named so), and solids tangent to a rounded edge or the faces it runs into |
 | `boolean/seeded_tests.rs` | the seeded random suite: related pairs, parts built in chains of twenty, turned solids, near tangencies, pins and coaxial cylinders, flush bosses, bosses sunk through drilled plates |
 
 ### The primitives
@@ -5637,18 +5637,36 @@ aren't clear (see "Ends along one direction"), so no join takes them,
 and refinement split the pairs along the line until the budget ran out.
 So in a union (`grow`), a pair on walls along one direction
 (`parallel_generators`) whose ends aren't joined fails the operation as
-`NotManifold` where at every end the walls aren't clear of each other
-(`θ² < 2·LENS·resolution·κ`: tangent, or crossing so near tangent that
-the sliver between is under a quarter of the resolution) and face
-opposite ways: each wall's normal there, the quadric's gradient, turned
-the way its patch faces at its middle (within 60° of it, else the rule
-doesn't apply), with a negative dot. Solids touching along a line from
-either side unite into no manifold, and walls overlapping by under a
-quarter of the resolution leave a neck thinner than that; both are what
-the error names. Walls facing the same way (a solid inside another,
-touching its skin from inside) unite into the outer one, a manifold,
-and are refined as before (a cylinder inside another touching it,
-united either way round, is never named so). An error
+`NotManifold` where at every end the walls face opposite ways (each
+wall's normal there, the quadric's gradient, turned the way its patch
+faces at its middle: within 60° of it, else the rule doesn't apply; a
+negative dot) and aren't clear of each other (`θ² <
+2·LENS·resolution·κ`, `κ` the sizes of the cross-sections' curvatures
+`tᵀ·H·t/|∇F|` added: tangent, or crossing at so small an angle). Solids
+touching along a line from either side unite into no manifold. Walls
+crossing at such an angle unite into a crease, or leave a slit, whose
+two sides stay within the resolution of each other for `resolution/θ`
+beside it, more than `√(2·resolution/κ)`, half the width of a piece
+bent by `κ` that is flat to the resolution: the result comes closer to
+itself than the resolution, which the error names. For solids side by
+side that is an overlap under a quarter of the resolution; for a pin of
+radius 0.99 against the wall of a hole of radius 1, whose gap opens
+only by the difference of the curvatures, overlaps of up to 50
+resolutions. Refinement never made such a union (measured below).
+Walls facing the same way (a solid inside another, touching its skin
+from inside) unite into the outer one, a manifold, and are refined as
+before (a cylinder inside another touching it, united either way round,
+is never named so). Walls bending into each other (the curvatures, each
+signed by the way its wall faces, adding up to `κ' < 0`: a pin against
+the wall of a smaller hole) overlap all round the line but for a slit
+`θ²/2|κ'|` deep, and are named so only where that is at least `SLIT`,
+a sixteenth of the resolution (four tie distances). With no slit the
+pin plugs the hole, a manifold, but the counting's ties give its pairs
+ends where the walls come within a tie of each other, at most a tie
+deep, which the rule named `NotManifold` until the slit was asked
+(`a_pin_plugging_a_hole_it_touches_inside_is_no_pinch`: on the seam it
+works; off it, refined, it runs out at the default tolerance, as it did
+before the rule). An error
 from the decisions comes before any line is joined, so the operation
 returns it without the second try. Only ends of a first try (joining
 lines) are looked at, and only unions: differences and intersections
@@ -5668,6 +5686,17 @@ fit `1e-4` and on the seam at `1e-3`, 1.5 to 6.4 s). On the seeded
 suites every tally is as before; four refusals change kind (three
 `Inconsistent` unions and one `TooComplex`, gaps of `±1e-9` and
 `±1e-6` at fits 0.1 and 0.01, become `NotManifold`).
+A sweep of 1152 unions (release; unit cylinders side by side, radii 1
+and 1 or 1 and 0.3; pins of radius 0.5, 0.9 and 0.99 through a hole of
+radius 1, crossing its wall, and of 1.01, 1.1 and 1.5 leaving a slit;
+overlaps or slits of −1 to 100 resolutions; fits 0.1, 0.01 and 0.001;
+the line on the seam and turned 0.3 off it; both orders), with the rule
+and without: no result lost or wrong (136 right either way), the
+sweep's time 2640 → 490 s, `NotManifold` 81 → 690 (the rest
+`Inconsistent`, `TooComplex` or `Invalid` either way). Asking for the
+slit took back only the six plugging unions (turned, fits 0.01 and
+0.001: `TooComplex` again, as without the rule) and 28 of the 36 slits
+of 0.05 resolutions.
 
 Measured on the release kernel suites (the default ones, and the slow
 bosses-in-drilled-plates, bars-through-boxes and drilled-grid ones):
@@ -8600,7 +8629,8 @@ parameter, or a split outside the patch bounds),
   that corner or that strip, moving a vertex only onto a point on all
   its faces' surfaces ("Collapse what a tangency leaves").
 - **Unions touching along a line are named by the decisions for any
-  ends whose walls aren't clear and face opposite ways**, not for a
+  ends whose walls aren't clear and face opposite ways, with a slit
+  where they bend into each other**, not for a
   group of four ends within the tie distance. Where the line falls on
   the patches' edges (on the seams, the probe's placement at `z0` 0.5)
   a pair holds two ends, and the four-end rule named one of the probe's
@@ -8608,4 +8638,8 @@ parameter, or a split outside the patch bounds),
   the resolution, whose lines aren't clear either, ran out the same way.
   So the test is the joins' own clearness at every end, with the faces'
   directions telling solids touching from either side (no manifold)
-  from one inside the other (a manifold union, refined as before).
+  from one inside the other (a manifold union, refined as before), and
+  a slit at least a sixteenth of the resolution deep telling walls
+  bending into each other with a gap from a pin plugging a smaller hole
+  it touches inside (a manifold union too: the counting's ties gave its
+  pairs ends, which were named so until the slit was asked).

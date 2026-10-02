@@ -411,14 +411,15 @@ impl Cleaner<'_> {
     }
 
     /// The straight edges of living triangles longer than `small` and no
-    /// longer than `thin` (four resolutions) that a tangency left: as `[u, v]`, `v` the end
-    /// to be moved onto `u`, which lies on the surface of every face
-    /// round `v` (within `small`), so no vertex leaves a surface it
-    /// claims. A wall tangent to a face along a line, or to an edge at a
-    /// point, is solved to cross it twice, about `1e-8` of the part's
-    /// size apart (the root is double), where the exact result has one
-    /// place; shorter than `small` those pairs collapse as any short edge
-    /// does, longer (a fine tolerance, a large part) they leave:
+    /// longer than `thin` (four resolutions) that a tangency left: as
+    /// `[u, v]`, `v` the end to be moved onto `u`, which lies on the
+    /// surface of every face round `v` (within `small`), so no vertex
+    /// leaves a surface it claims. A wall tangent to a face along a line,
+    /// or to an edge at a point, is solved to cross it twice, about `1e-8`
+    /// of the part's size apart (the root is double), where the exact
+    /// result has one place; shorter than `small` those pairs collapse as
+    /// any short edge does, longer (a fine tolerance, a large part) they
+    /// leave:
     /// - a corner of 180° along a curve on a plane face, which no patch
     ///   holds: in a triangle there, a curved side leaving one end of the
     ///   edge back the way the edge came (the piece of a face's straight
