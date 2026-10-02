@@ -1,5 +1,7 @@
 use glam::{DVec2, Vec3};
-use varde_document::{Command, Document, Editor, Extent, Operation, OriginPlane, Plane, Sketch};
+use varde_document::{
+    Command, Document, Editor, Extent, Extrude, Operation, OriginPlane, Plane, Sketch,
+};
 use varde_kernel::{Solid, Tolerance};
 use varde_sketch::{CIRCLE_SEGMENTS, Constraint, Curve};
 
@@ -415,7 +417,7 @@ fn lines_are_drawn_without_the_ends_a_chamfer_cuts_off() {
     );
 }
 
-fn regenerate_with(editor: &Editor, draft: Option<Draft>) -> Request {
+pub(crate) fn regenerate_with(editor: &Editor, draft: Option<Draft>) -> Request {
     Request::Regenerate {
         generation: editor.generation(),
         document: editor.snapshot(),
@@ -425,14 +427,14 @@ fn regenerate_with(editor: &Editor, draft: Option<Draft>) -> Request {
 }
 
 /// The model of a regeneration that worked.
-struct Answer {
-    draft: Option<Drafted>,
-    mesh: Arc<RenderMesh>,
-    failed: Vec<(FeatureId, String)>,
-    bodies: Vec<(BodyId, varde_kernel::Aabb)>,
+pub(crate) struct Answer {
+    pub(crate) draft: Option<Drafted>,
+    pub(crate) mesh: Arc<RenderMesh>,
+    pub(crate) failed: Vec<(FeatureId, String)>,
+    pub(crate) bodies: Vec<(BodyId, varde_kernel::Aabb)>,
 }
 
-fn answered(response: Response) -> Answer {
+pub(crate) fn answered(response: Response) -> Answer {
     let Response::Regenerated {
         draft,
         mesh,
@@ -467,18 +469,37 @@ fn the_example_plate_regenerates_and_draws() {
     assert_eq!(answer.mesh.bounds(), Some(bounds));
 }
 
+impl Draft {
+    /// The extrude it is.
+    pub(crate) fn extrude(&self) -> &Extrude {
+        match &self.kind {
+            FeatureKind::Extrude(extrude) => extrude,
+            _ => panic!("not an extrude's draft"),
+        }
+    }
+
+    /// The same, to change.
+    pub(crate) fn extrude_mut(&mut self) -> &mut Extrude {
+        match &mut self.kind {
+            FeatureKind::Extrude(extrude) => extrude,
+            _ => panic!("not an extrude's draft"),
+        }
+    }
+}
+
 /// A draft of revision `revision` making a new body from the example's
 /// regions, `text` long, flipped.
 fn new_body_draft(document: &Document, revision: u64, text: &str) -> Draft {
     Draft {
         revision,
         feature: None,
-        extrude: Extrude {
+        kind: Extrude {
             extent: varde_document::Extent::OneSide(crate::history::tests::length(document, text)),
             flip: true,
             operation: Operation::NewBody(BodyId::NEW),
             ..example_extrude(document)
-        },
+        }
+        .into(),
     }
 }
 
@@ -509,10 +530,11 @@ fn a_draft_is_answered_as_if_applied() {
     let draft = Draft {
         revision: 8,
         feature: Some(feature),
-        extrude: Extrude {
+        kind: Extrude {
             flip: false,
-            ..new_body_draft(editor.document(), 0, "20").extrude
-        },
+            ..new_body_draft(editor.document(), 0, "20").extrude().clone()
+        }
+        .into(),
     };
     let answer = answered(handle(regenerate_with(&editor, Some(draft))));
     assert_eq!(answer.draft.unwrap().error, None);
@@ -529,17 +551,18 @@ fn a_failing_draft_leaves_the_model_as_it_was() {
     // A join taking out the only body it touches.
     let body = editor.document().bodies()[0].id;
     let join = Draft {
-        extrude: Extrude {
+        kind: Extrude {
             operation: Operation::Join(varde_document::Targets {
                 excluded: vec![body],
             }),
-            ..new_body_draft(editor.document(), 0, "3").extrude
-        },
+            ..new_body_draft(editor.document(), 0, "3").extrude().clone()
+        }
+        .into(),
         ..new_body_draft(editor.document(), 3, "3")
     };
     // One the document refuses: its sketch is the extrude.
     let mut refused = new_body_draft(editor.document(), 4, "3");
-    refused.extrude.sketch = editor.document().features()[1].id;
+    refused.extrude_mut().sketch = editor.document().features()[1].id;
     // One editing a feature that isn't an extrude.
     let sketch = Draft {
         feature: Some(editor.document().features()[0].id),
@@ -554,16 +577,19 @@ fn a_failing_draft_leaves_the_model_as_it_was() {
         ),
         (
             sketch,
-            "the draft's feature isn't an extrude".to_owned(),
+            {
+                let FeatureKind::Sketch { .. } = &editor.document().features()[0].kind else {
+                    panic!("the example's first feature is its sketch");
+                };
+                varde_document::EditError::SketchKind.to_string()
+            },
             // Refused before any tool: not tested.
             None,
         ),
         (
             refused.clone(),
             {
-                let command = editor
-                    .document()
-                    .add_feature(refused.extrude.clone().into());
+                let command = editor.document().add_feature(refused.kind.clone());
                 let mut probe = Editor::new(editor.document().clone());
                 probe.apply(command).unwrap_err().to_string()
             },
@@ -598,8 +624,8 @@ fn a_draft_leaving_nothing_fails_each_time_it_is_dragged_there() {
     let committed = answered(regenerator.handle(regenerate(&editor, None)));
     let intersect = |revision, flip| {
         let mut draft = new_body_draft(editor.document(), revision, "5");
-        draft.extrude.operation = Operation::Intersect(varde_document::Targets::default());
-        draft.extrude.flip = flip;
+        draft.extrude_mut().operation = Operation::Intersect(varde_document::Targets::default());
+        draft.extrude_mut().flip = flip;
         draft
     };
     let emptied = crate::message::emptied(crate::message::Doing::Intersecting, "Body 1");
@@ -674,7 +700,7 @@ fn pocket_drafted() -> (Editor, Draft, BodyId) {
     let draft = Draft {
         revision: 1,
         feature: None,
-        extrude: extrude.clone(),
+        kind: extrude.clone().into(),
     };
     (editor, draft, body)
 }
@@ -716,7 +742,7 @@ fn a_cut_draft_is_answered_from_the_cache(regenerator: &mut Regenerator, rejoine
     // never evicted: nothing is worked out.
     let mut out = draft.clone();
     out.revision = 2;
-    out.extrude.operation = Operation::Cut(varde_document::Targets {
+    out.extrude_mut().operation = Operation::Cut(varde_document::Targets {
         excluded: vec![body],
     });
     let answer = answered(regenerator.handle(regenerate_with(&editor, Some(out))));
@@ -741,7 +767,7 @@ fn a_cut_draft_is_answered_from_the_cache(regenerator: &mut Regenerator, rejoine
 
     // Dragging the pocket deeper: only its tool, touching, cut and mesh.
     draft.revision = 4;
-    draft.extrude.extent = crate::history::tests::two_sides(editor.document(), "5", "1");
+    draft.extrude_mut().extent = crate::history::tests::two_sides(editor.document(), "5", "1");
     let deeper = answered(regenerator.handle(regenerate_with(&editor, Some(draft))));
     assert_eq!(deeper.draft.unwrap().error, None);
     assert_eq!(regenerator.cache().counts().1, worked + 4);
@@ -809,12 +835,13 @@ fn an_unchanged_model_is_answered_with_the_same_mesh() {
 
     // A draft that fails: the committed model's mesh.
     let join = Draft {
-        extrude: Extrude {
+        kind: Extrude {
             operation: Operation::Join(varde_document::Targets {
                 excluded: vec![plate],
             }),
-            ..new_body_draft(editor.document(), 0, "3").extrude
-        },
+            ..new_body_draft(editor.document(), 0, "3").extrude().clone()
+        }
+        .into(),
         ..new_body_draft(editor.document(), 1, "3")
     };
     let failing = ask(&mut regenerator, regenerate_with(&editor, Some(join)));
@@ -827,7 +854,7 @@ fn an_unchanged_model_is_answered_with_the_same_mesh() {
     let draft = new_body_draft(editor.document(), 2, "3");
     let mut probe = Editor::new(editor.document().clone());
     probe
-        .apply(probe.document().add_feature(draft.extrude.clone().into()))
+        .apply(probe.document().add_feature(draft.kind.clone()))
         .unwrap();
     let drafted = ask(&mut regenerator, regenerate_with(&editor, Some(draft))).mesh;
     assert!(!Arc::ptr_eq(&drafted, &first));
@@ -879,7 +906,7 @@ fn a_scene_found_keeps_its_bodies_meshes() {
     let mut editor = Editor::new(Document::example());
     let draft = new_body_draft(editor.document(), 0, "3");
     editor
-        .apply(editor.document().add_feature(draft.extrude.into()))
+        .apply(editor.document().add_feature(draft.kind))
         .unwrap();
     let mut regenerator = Regenerator::default();
     let first = answered(regenerator.handle(regenerate(&editor, None))).mesh;
@@ -1052,7 +1079,7 @@ fn a_dragged_draft_is_found_within_the_budget() {
     assert!(Arc::ptr_eq(&answer.mesh, &dragged));
     let before = editor.clone();
     editor
-        .apply(editor.document().add_feature(draft.extrude.into()))
+        .apply(editor.document().add_feature(draft.kind))
         .unwrap();
     let done = answered(regenerator.handle(regenerate(&editor, None))).mesh;
     assert!(Arc::ptr_eq(&done, &dragged));
@@ -1154,7 +1181,7 @@ fn removed_bodies_undo_and_replace_draw_what_is_shown() {
     let mut editor = Editor::new(Document::example());
     let extrude = Extrude {
         operation: Operation::NewBody(BodyId::NEW),
-        ..new_body_draft(editor.document(), 0, "3").extrude
+        ..new_body_draft(editor.document(), 0, "3").extrude().clone()
     };
     editor
         .apply(editor.document().add_feature(extrude.into()))
@@ -1201,7 +1228,7 @@ fn switching_the_operation_away_and_back_finds_it() {
     assert_eq!(cut.draft.unwrap().error, None);
     draft.revision = 2;
     let operation = std::mem::replace(
-        &mut draft.extrude.operation,
+        &mut draft.extrude_mut().operation,
         Operation::Join(varde_document::Targets::default()),
     );
     let join = answered(regenerator.handle(regenerate_with(&editor, Some(draft.clone()))));
@@ -1210,7 +1237,7 @@ fn switching_the_operation_away_and_back_finds_it() {
     let (_, worked) = regenerator.cache().counts();
     let joins = regenerator.cache().joins();
     draft.revision = 3;
-    draft.extrude.operation = operation;
+    draft.extrude_mut().operation = operation;
     let again = answered(regenerator.handle(regenerate_with(&editor, Some(draft))));
     assert_eq!(again.draft.unwrap().error, None);
     assert!(Arc::ptr_eq(&again.mesh, &cut.mesh));
@@ -1274,7 +1301,7 @@ fn an_edit_undone_after_several_requests_finds_it() {
         let draft = Draft {
             revision,
             feature: Some(plate),
-            extrude: extrude(&editor, depth),
+            kind: extrude(&editor, depth).into(),
         };
         let answer = answered(regenerator.handle(regenerate_with(&editor, Some(draft))));
         assert_eq!(answer.draft.unwrap().error, None);
@@ -1537,8 +1564,8 @@ fn churn_answers_as_a_fresh_cache_would() {
                     let text = ["3", "4", "5", "12"][churn.below(4) as usize];
                     if drafts_from(editor.document()) {
                         let mut new = new_body_draft(editor.document(), revision, text);
-                        new.extrude.flip = churn.below(2) == 0;
-                        new.extrude.operation = match churn.below(4) {
+                        new.extrude_mut().flip = churn.below(2) == 0;
+                        new.extrude_mut().operation = match churn.below(4) {
                             0 => Operation::NewBody(BodyId::NEW),
                             1 => Operation::Join(varde_document::Targets::default()),
                             2 => Operation::Cut(varde_document::Targets::default()),
@@ -1548,7 +1575,8 @@ fn churn_answers_as_a_fresh_cache_would() {
                             && let Some(plate) = plate
                         {
                             new.feature = Some(plate);
-                            new.extrude.operation = example_extrude(editor.document()).operation;
+                            new.extrude_mut().operation =
+                                example_extrude(editor.document()).operation;
                         }
                         draft = Some(new);
                     }
@@ -1772,7 +1800,7 @@ fn a_join_draft_merging_two_bodies(regenerator: &mut Regenerator, remeshed: usiz
     let mut draft = Draft {
         revision: 1,
         feature: None,
-        extrude: extrude.clone(),
+        kind: extrude.clone().into(),
     };
     let first = answered(regenerator.handle(regenerate_with(&editor, Some(draft.clone()))));
     assert_eq!(first.draft.unwrap().touched, Some(vec![top, below]));
@@ -1781,7 +1809,7 @@ fn a_join_draft_merging_two_bodies(regenerator: &mut Regenerator, remeshed: usiz
     // Dragged: the tool, two touches, one union and one mesh.
     let (_, before) = regenerator.cache().counts();
     draft.revision = 2;
-    draft.extrude.extent = two_sides(editor.document(), "16", "5");
+    draft.extrude_mut().extent = two_sides(editor.document(), "16", "5");
     let dragged = answered(regenerator.handle(regenerate_with(&editor, Some(draft.clone()))));
     assert_eq!(dragged.draft.unwrap().error, None);
     assert_eq!(dragged.bodies.len(), 1);
@@ -1792,7 +1820,7 @@ fn a_join_draft_merging_two_bodies(regenerator: &mut Regenerator, remeshed: usiz
     // alone and both plates' meshes are new.
     let mut out = draft.clone();
     out.revision = 3;
-    out.extrude.operation = Operation::Join(Targets {
+    out.extrude_mut().operation = Operation::Join(Targets {
         excluded: vec![below],
     });
     let apart = answered(regenerator.handle(regenerate_with(&editor, Some(out))));
@@ -2271,7 +2299,7 @@ fn picking_tables_follow_merges_drafts_and_edits() {
     let draft = Draft {
         revision: 1,
         feature: None,
-        extrude: extrude.clone(),
+        kind: extrude.clone().into(),
     };
     let response = regenerator.handle(regenerate_with(&sketched, Some(draft)));
     let Response::Regenerated { draft, merged, .. } = &response else {

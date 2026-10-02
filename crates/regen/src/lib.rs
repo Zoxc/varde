@@ -4,7 +4,7 @@
 //! The UI sends a [`Request`] tagged with the editor generation it's of
 //! (see [`Editor::generation`]) and never waits; the [`Response`] comes back
 //! later tagged with the same one. The work is evaluating the feature
-//! history into the bodies' solids ([`evaluate`], with an extrude being
+//! history into the bodies' solids ([`evaluate`], with a feature being
 //! set up applied as a [`Draft`]) and tessellating the visible ones,
 //! flattening the visible sketches' curves and solving every sketch, to
 //! tell those that don't solve, and, asked for an export, welding the
@@ -65,7 +65,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use varde_document::{
-    BodyId, Command, Document, Editor, Extrude, FeatureId, FeatureKind, Generation, Snapshot,
+    BodyId, Command, Document, Editor, FeatureId, FeatureKind, Generation, Snapshot,
 };
 use varde_kernel::{
     Aabb, Display, LinesError, ManifoldError, ManifoldMesh, MeshError, RenderLines, RenderMesh,
@@ -97,7 +97,7 @@ pub enum Request {
         /// A sketch left out of the lines, the one being edited, which the
         /// viewport draws over everything instead.
         exclude: Option<FeatureId>,
-        /// An extrude being set up and not committed yet, answered as if
+        /// A feature being set up and not committed yet, answered as if
         /// it were.
         draft: Option<Draft>,
     },
@@ -113,10 +113,11 @@ pub enum Request {
     },
 }
 
-/// An extrude being set up, new or edited, that isn't committed: a
-/// request answers with it applied, as [`Command::AddFeature`] (with
-/// [`Operation::NewBody`] holding [`BodyId::NEW`]) or
-/// [`Command::SetFeature`] would apply it, for a preview.
+/// A feature being set up, new or edited, that isn't committed (an
+/// extrude, a revolve): a request answers with it applied, as
+/// [`Command::AddFeature`] (with [`Operation::NewBody`] holding
+/// [`BodyId::NEW`]) or [`Command::SetFeature`] would apply it, for a
+/// preview.
 ///
 /// [`Operation::NewBody`]: varde_document::Operation::NewBody
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -125,9 +126,11 @@ pub struct Draft {
     /// newest answer can be told apart from older ones of the same
     /// generation.
     pub revision: u64,
-    /// The extrude being edited, or `None` for a new one.
+    /// The feature being edited, or `None` for a new one.
     pub feature: Option<FeatureId>,
-    pub extrude: Extrude,
+    /// What it is to be. A sketch kind is refused, as the commands
+    /// refuse it.
+    pub kind: FeatureKind,
 }
 
 /// How a [`Draft`] went.
@@ -445,23 +448,19 @@ struct Model {
 /// `document` with `draft` applied, and the draft's feature, or why it
 /// can't be applied.
 fn applied(document: &Document, draft: &Draft) -> Result<(Document, FeatureId), String> {
-    let kind = FeatureKind::Extrude(draft.extrude.clone());
+    let kind = draft.kind.clone();
     let command = match draft.feature {
         None => document.add_feature(kind),
-        Some(feature) => {
-            // `SetFeature` would make another kind an extrude, or refuse
-            // a sketch: the draft edits an extrude.
-            let is_extrude = document
-                .feature(feature)
-                .is_some_and(|feature| matches!(feature.kind, FeatureKind::Extrude(_)));
-            if !is_extrude {
-                return Err("the draft's feature isn't an extrude".to_owned());
-            }
-            Command::SetFeature {
-                feature,
-                kind: Box::new(kind),
-            }
+        // `SetFeature` of a missing feature changes nothing, and the
+        // draft would seem to go; a sketch feature, or a sketch kind, the
+        // editor refuses.
+        Some(feature) if document.feature(feature).is_none() => {
+            return Err("the draft's feature isn't there".to_owned());
         }
+        Some(feature) => Command::SetFeature {
+            feature,
+            kind: Box::new(kind),
+        },
     };
     let mut editor = Editor::new(document.clone());
     editor.apply(command).map_err(|error| error.to_string())?;

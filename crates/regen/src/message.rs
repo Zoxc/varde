@@ -32,30 +32,60 @@ impl Doing {
     }
 }
 
-/// Why sweeping an extrude's regions failed, at the finest tolerance
-/// there is if `finest` (where a finer one can't be suggested).
-pub(crate) fn extrude(error: KernelError, finest: bool) -> String {
+/// What a feature makes its tool solid by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Making {
+    Extrude,
+    Revolve,
+}
+
+impl Making {
+    /// The verb: "extrude", "revolve".
+    fn verb(self) -> &'static str {
+        match self {
+            Making::Extrude => "extrude",
+            Making::Revolve => "revolve",
+        }
+    }
+
+    /// Its past participle: "extruded", "revolved".
+    fn done(self) -> &'static str {
+        match self {
+            Making::Extrude => "extruded",
+            Making::Revolve => "revolved",
+        }
+    }
+}
+
+/// Why making a feature's tool from its regions (`making` them) failed,
+/// at the finest tolerance there is if `finest` (where a finer one can't
+/// be suggested).
+pub(crate) fn tool(making: Making, error: KernelError, finest: bool) -> String {
+    let verb = making.verb();
     match error {
         // Out of budget or past a limit: a coarser tolerance changes
         // neither, so it isn't offered.
         KernelError::TooComplex => {
-            "its regions are too complex to extrude: try fewer or simpler curves".to_owned()
+            format!("its regions are too complex to {verb}: try fewer or simpler curves")
         }
-        KernelError::Invalid(_) if finest => "its regions have parts too thin or too close \
-             together to extrude, even at the finest tolerance"
-            .to_owned(),
+        KernelError::Invalid(_) if finest => format!(
+            "its regions have parts too thin or too close together to {verb}, even at the \
+             finest tolerance"
+        ),
         KernelError::Invalid(_) => "its regions have parts too thin or too close together for \
              this tolerance: try a finer tolerance"
             .to_owned(),
-        KernelError::Patch(_) => "its regions are too far out or too large to extrude".to_owned(),
-        KernelError::Profile(error) => profile(error, finest),
-        // An extrude makes no boolean.
-        KernelError::Boolean(error) => format!("it couldn't be extruded: {error}"),
+        KernelError::Patch(_) => format!("its regions are too far out or too large to {verb}"),
+        KernelError::Profile(error) => profile(making, error, finest),
+        // Making a tool makes no boolean.
+        KernelError::Boolean(error) => format!("it couldn't be {}: {error}", making.done()),
     }
 }
 
-/// Why a profile can't be extruded, at the finest tolerance if `finest`.
-fn profile(error: ProfileError, finest: bool) -> String {
+/// Why a profile can't be made into a tool (`making` it), at the finest
+/// tolerance if `finest`.
+fn profile(making: Making, error: ProfileError, finest: bool) -> String {
+    let verb = making.verb();
     match error {
         ProfileError::Touching(_) => {
             "its outline touches or crosses itself, or comes too close to itself".to_owned()
@@ -65,7 +95,7 @@ fn profile(error: ProfileError, finest: bool) -> String {
         ProfileError::Area(_) => "a loop of its outline encloses no area".to_owned(),
         ProfileError::TooManySegments(_) => "its outline has too many curves".to_owned(),
         ProfileError::TooFine(..) if finest => {
-            "its outline has detail too small to extrude, even at the finest tolerance".to_owned()
+            format!("its outline has detail too small to {verb}, even at the finest tolerance")
         }
         ProfileError::TooFine(..) => {
             "its outline has detail too small for this tolerance: try a finer tolerance".to_owned()
@@ -86,7 +116,7 @@ fn profile(error: ProfileError, finest: bool) -> String {
         | ProfileError::Short(_)
         | ProfileError::Segment(..)
         | ProfileError::Degenerate(..)
-        | ProfileError::Open(..) => format!("its outline can't be extruded: {error}"),
+        | ProfileError::Open(..) => format!("its outline can't be {}: {error}", making.done()),
     }
 }
 

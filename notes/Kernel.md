@@ -471,8 +471,8 @@ extrude being set up) are regenerated the same way. See `agents/kernel.md`
   50 000 to 200 000 patches can take no boolean within the budget. A
   failing operation runs for seconds, and on the web the regen worker is
   single-threaded and a running operation isn't interrupted.
-- **Not built yet**: revolve as a feature (the kernel's `revolve` is
-  built), taper, sketches on faces, fillets and other features the reserved
+- **Not built yet**: the revolve feature's UI (the kernel's `revolve`
+  is built and the history evaluates revolves), taper, sketches on faces, fillets and other features the reserved
   face parts are for, picking by face, a batch boolean of many operands,
   GPU patch evaluation, and wasm threads (which would need cross-origin
   isolation; results would be identical either way).

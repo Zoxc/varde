@@ -1,14 +1,18 @@
 //! Evaluating the feature history into the bodies' solids.
 //!
 //! Features run in the document's order. A sketch gives its profiles
-//! ([`Sketch::profiles`]). An extrude finds its regions again in its
-//! sketch's profiles ([`Profiles::resolve`]; one that's gone is "region
-//! not found"), merges them ([`Profiles::merge`]), turns the loops into a
-//! kernel profile ([`profile`]) and sweeps it
+//! ([`Sketch::profiles`]). An extrude or a revolve finds its regions
+//! again in its sketch's profiles ([`Profiles::resolve`]; one that's gone
+//! is "region not found"), merges them ([`Profiles::merge`]) and turns
+//! the loops into a kernel profile ([`profile`]). An extrude sweeps it
 //! with [`varde_kernel::extrude`] on the sketch's plane, over
-//! [`Extrude::span`], within the document's tolerance and the default
-//! budget, its faces named by its feature id: the tool solid. A new body
-//! gets it. A join, cut or intersect finds the bodies made before it,
+//! [`Extrude::span`]; a revolve finds its axis in the sketch
+//! ([`axis_line`]; a line that's gone is "axis not found"), moves the
+//! profile into the axis's frame ([`axis_frame`]) and turns it with
+//! [`varde_kernel::revolve`] over [`Revolve::span`]. Both run within the
+//! document's tolerance and the default budget, their faces named by
+//! their feature id: the tool solid. A new body gets it. A join, cut or
+//! intersect finds the bodies made before it,
 //! less those it excludes, that the tool touches
 //! ([`varde_kernel::touches`]). A cut or intersect replaces each of those
 //! by its difference from or intersection with the tool
@@ -31,16 +35,22 @@
 //!
 //! [`Sketch::profiles`]: varde_sketch::Sketch::profiles
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use glam::DVec2;
 use varde_document::{
-    BodyId, Document, Extrude, Feature, FeatureId, FeatureKind, MAX_COORD, Operation, Plane, Sketch,
+    AxisLine, BodyId, Document, Extrude, Feature, FeatureId, FeatureKind, MAX_COORD, Operation,
+    Placement, Plane, Revolve, Sketch,
 };
-use varde_kernel::{Budget, Frame, Op, Solid, Tolerance};
-use varde_sketch::{Profiles, TooComplex};
+use varde_kernel::patch::Conic2;
+use varde_kernel::{
+    Budget, Frame, KernelError, Loop, Op, Profile, Segment, Solid, Sweep, Tolerance,
+};
+use varde_sketch::{Curve, Id, Profiles, RegionRef, TooComplex};
 
 use crate::cache::{Cache, Key, Keyer};
-use crate::message::{self, Doing};
+use crate::message::{self, Doing, Making};
 use crate::profile::profile;
 
 /// What the history gives: the solids of the bodies, and the features
@@ -154,9 +164,19 @@ pub(crate) fn evaluate_within(
                     key,
                 });
             }
-            FeatureKind::Extrude(extrude) => {
-                // A checked document's extrude names a sketch before it.
-                let Some(sketch) = sketches.iter().find(|s| s.id == extrude.sketch) else {
+            FeatureKind::Extrude(_) | FeatureKind::Revolve(_) => {
+                let (sketch, shape, operation) = match &feature.kind {
+                    FeatureKind::Extrude(extrude) => {
+                        (extrude.sketch, Shape::Extrude(extrude), &extrude.operation)
+                    }
+                    FeatureKind::Revolve(revolve) => {
+                        (revolve.sketch, Shape::Revolve(revolve), &revolve.operation)
+                    }
+                    FeatureKind::Sketch { .. } => unreachable!("matched above"),
+                };
+                // A checked document's extrude or revolve names a sketch
+                // before it.
+                let Some(sketch) = sketches.iter().find(|s| s.id == sketch) else {
                     evaluation
                         .failed
                         .push((feature.id, "its sketch isn't there".to_owned()));
@@ -165,7 +185,8 @@ pub(crate) fn evaluate_within(
                 let run = Run {
                     document,
                     feature,
-                    extrude,
+                    shape,
+                    operation,
                     sketch,
                     tolerance,
                     touching,
@@ -174,18 +195,11 @@ pub(crate) fn evaluate_within(
                     evaluation.failed.push((feature.id, error));
                 }
             }
-            FeatureKind::Revolve(_) => {
-                // Not evaluated yet: it fails, making nothing and leaving
-                // the bodies before it as they were.
-                evaluation
-                    .failed
-                    .push((feature.id, "revolves can't be made yet".to_owned()));
-            }
         }
     }
     // In the document's order (bodies are kept in increasing id order).
     evaluation.merged.sort_by_key(|&(consumed, _)| consumed);
-    // A new body's extrude is never empty, a union of two solids that
+    // A new body's tool is never empty, a union of two solids that
     // aren't isn't, and a cut or intersect that would empty one fails.
     debug_assert!(
         evaluation.bodies.iter().all(|made| !made.solid.is_empty()),
@@ -201,11 +215,37 @@ pub(crate) fn evaluate_within(
     evaluation
 }
 
-/// An extrude being evaluated.
+/// What a feature making a tool solid makes it with.
+#[derive(Clone, Copy)]
+enum Shape<'a> {
+    Extrude(&'a Extrude),
+    Revolve(&'a Revolve),
+}
+
+impl<'a> Shape<'a> {
+    /// Its regions.
+    fn regions(self) -> &'a [RegionRef] {
+        match self {
+            Shape::Extrude(extrude) => &extrude.regions,
+            Shape::Revolve(revolve) => &revolve.regions,
+        }
+    }
+
+    /// What it makes, for the messages.
+    fn making(self) -> Making {
+        match self {
+            Shape::Extrude(_) => Making::Extrude,
+            Shape::Revolve(_) => Making::Revolve,
+        }
+    }
+}
+
+/// An extrude or revolve being evaluated.
 struct Run<'a> {
     document: &'a Document,
     feature: &'a Feature,
-    extrude: &'a Extrude,
+    shape: Shape<'a>,
+    operation: &'a Operation,
     sketch: &'a SketchOutput<'a>,
     tolerance: Tolerance,
     /// The budget of each [`varde_kernel::touches`].
@@ -216,30 +256,14 @@ impl Run<'_> {
     /// Adds the body it makes to `evaluation`, or changes those it works
     /// on, given those made before it; or why it fails, changing none.
     fn evaluate(&self, evaluation: &mut Evaluation, cache: &mut Cache) -> Result<(), String> {
-        let placement = self.sketch.plane.placement();
-        let frame = Frame {
-            origin: placement.origin,
-            x: placement.x,
-            y: placement.y,
-        };
-        let span = match self.extrude.span() {
-            Some(span) => span,
-            None => through_all(&frame, evaluation.bodies.iter().map(|made| &*made.solid))
-                .ok_or("there's no body to go through")?,
-        };
         // The tool depends on the regions and where it runs, not on what
         // it's then used for, so changing the operation or its bodies
         // finds it again.
-        let tool_key = Keyer::new("extrude")
-            .number(self.feature.id.get())
-            .value(&self.extrude.regions)
-            .number(self.tolerance.fit().to_bits())
-            .number(span.0.to_bits())
-            .number(span.1.to_bits())
-            .key(self.sketch.key)
-            .finish();
-        let tool = cache.solid(tool_key, || self.solid(&frame, span))?;
-        let (op, doing) = match &self.extrude.operation {
+        let (tool, tool_key) = match self.shape {
+            Shape::Extrude(extrude) => self.extruded(extrude, evaluation, cache)?,
+            Shape::Revolve(revolve) => self.revolved(revolve, cache)?,
+        };
+        let (op, doing) = match self.operation {
             Operation::NewBody(body) => {
                 evaluation.bodies.push(BodySolid {
                     body: *body,
@@ -252,7 +276,7 @@ impl Run<'_> {
             Operation::Cut(_) => (Op::Difference, Doing::Cutting),
             Operation::Intersect(_) => (Op::Intersection, Doing::Intersecting),
         };
-        let excluded = self.extrude.operation.excluded();
+        let excluded = self.operation.excluded();
         let touched = self.touched(&evaluation.bodies, excluded, (&tool, tool_key), cache);
         let found = touched.as_ref().unwrap_or_else(|(found, _)| found).clone();
         evaluation.touched.push((self.feature.id, found));
@@ -471,31 +495,255 @@ impl Run<'_> {
             .map_or("a body", |body| body.name.as_str())
     }
 
-    /// The solid swept from the regions over `span` on `frame`.
-    fn solid(&self, frame: &Frame, (from, to): (f64, f64)) -> Result<Solid, String> {
+    /// An extrude's tool solid and the key it's filed under: the
+    /// regions swept over its span (worked out from the bodies made
+    /// before it for through all) on its sketch's plane.
+    fn extruded(
+        &self,
+        extrude: &Extrude,
+        evaluation: &Evaluation,
+        cache: &mut Cache,
+    ) -> Result<(Arc<Solid>, Key), String> {
+        let placement = self.sketch.plane.placement();
+        let frame = Frame {
+            origin: placement.origin,
+            x: placement.x,
+            y: placement.y,
+        };
+        let (from, to) = match extrude.span() {
+            Some(span) => span,
+            None => through_all(&frame, evaluation.bodies.iter().map(|made| &*made.solid))
+                .ok_or("there's no body to go through")?,
+        };
+        let key = Keyer::new("extrude")
+            .number(self.feature.id.get())
+            .value(&extrude.regions)
+            .number(self.tolerance.fit().to_bits())
+            .number(from.to_bits())
+            .number(to.to_bits())
+            .key(self.sketch.key)
+            .finish();
+        let solid = cache.solid(key, || {
+            let profile = self.profile()?;
+            varde_kernel::extrude(
+                &profile,
+                &frame,
+                from,
+                to,
+                self.feature.id.get(),
+                &self.tolerance,
+                &Budget::DEFAULT,
+            )
+            .map_err(|error| self.kernel_error(error))
+        })?;
+        Ok((solid, key))
+    }
+
+    /// A revolve's tool solid and the key it's filed under: the regions
+    /// turned about its axis over its span (see [`axis_frame`]).
+    fn revolved(&self, revolve: &Revolve, cache: &mut Cache) -> Result<(Arc<Solid>, Key), String> {
+        let span = revolve.span();
+        // The axis is the sketch's, so its key holds where the axis line
+        // is.
+        let key = Keyer::new("revolve")
+            .number(self.feature.id.get())
+            .value(&revolve.regions)
+            .value(&revolve.axis)
+            .number(self.tolerance.fit().to_bits())
+            .value(&span)
+            .key(self.sketch.key)
+            .finish();
+        let solid = cache.solid(key, || {
+            let profile = self.profile()?;
+            let axis = axis_line(self.sketch.sketch, revolve.axis)?;
+            let (profile, frame, same_way) =
+                axis_frame(&profile, &axis, &self.sketch.plane.placement())?;
+            let sweep = match span {
+                None => Sweep::Full,
+                Some((from, to)) if same_way => Sweep::Part { from, to },
+                Some((from, to)) => Sweep::Part {
+                    from: -to,
+                    to: -from,
+                },
+            };
+            varde_kernel::revolve(
+                &profile,
+                &frame,
+                sweep,
+                self.feature.id.get(),
+                &self.tolerance,
+                &Budget::DEFAULT,
+            )
+            .map_err(|error| self.kernel_error(error))
+        })?;
+        Ok((solid, key))
+    }
+
+    /// The kernel profile of the regions, merged, in the sketch's
+    /// coordinates.
+    fn profile(&self) -> Result<Profile, String> {
         let profiles = match &*self.sketch.profiles {
             Ok(profiles) => profiles,
             Err(e) => return Err(format!("its sketch is {e}")),
         };
         let regions = profiles
-            .resolve(&self.extrude.regions)
+            .resolve(self.shape.regions())
             .into_iter()
             .collect::<Option<Vec<usize>>>()
             .ok_or("region not found")?;
         let loops = profiles.merge(&regions).map_err(|e| e.to_string())?;
-        let profile = profile(self.sketch.sketch, profiles, &loops, self.tolerance.fit())
-            .map_err(|e| e.to_string())?;
-        varde_kernel::extrude(
-            &profile,
-            frame,
-            from,
-            to,
-            self.feature.id.get(),
-            &self.tolerance,
-            &Budget::DEFAULT,
-        )
-        .map_err(|error| message::extrude(error, self.tolerance.fit() <= Tolerance::MIN_FIT))
+        profile(self.sketch.sketch, profiles, &loops, self.tolerance.fit())
+            .map_err(|e| e.to_string())
     }
+
+    /// Why the kernel couldn't make the tool, in words.
+    fn kernel_error(&self, error: KernelError) -> String {
+        message::tool(
+            self.shape.making(),
+            error,
+            self.tolerance.fit() <= Tolerance::MIN_FIT,
+        )
+    }
+}
+
+/// A revolve's axis in its sketch's coordinates.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Axis {
+    /// A point on it: the line's start, or the sketch's origin.
+    pub(crate) at: DVec2,
+    /// The way it points, not zero (not unit).
+    pub(crate) along: DVec2,
+    /// The line it is, if it's one of the sketch's curves.
+    pub(crate) curve: Option<Id>,
+}
+
+/// The axis `axis` names in `sketch`, or why there's none: the curve it
+/// names isn't there or isn't a line any more ("axis not found"), or
+/// the line has no length.
+pub(crate) fn axis_line(sketch: &Sketch, axis: AxisLine) -> Result<Axis, String> {
+    let (at, along, curve) = match axis {
+        AxisLine::SketchX => (DVec2::ZERO, DVec2::X, None),
+        AxisLine::SketchY => (DVec2::ZERO, DVec2::Y, None),
+        AxisLine::Curve(id) => {
+            let not_found = || "axis not found".to_owned();
+            let entry = sketch.curve(id).ok_or_else(not_found)?;
+            let Curve::Line { start, end } = entry.curve else {
+                return Err(not_found());
+            };
+            let at = |point| (sketch.point(point).map(|point| point.at)).ok_or_else(not_found);
+            let (start, end) = (at(start)?, at(end)?);
+            // Both within the coordinate limit, so the difference is
+            // finite.
+            (start, end - start, Some(id))
+        }
+    };
+    if along == DVec2::ZERO {
+        return Err("its axis line has no length".to_owned());
+    }
+    Ok(Axis { at, along, curve })
+}
+
+/// `profile`, in its sketch's coordinates, moved into the frame the
+/// kernel revolves it on about `axis`, and that frame, on the sketch
+/// placed at `placement`; and whether the kernel's angles turn as the
+/// revolve's do (otherwise they're the other way).
+///
+/// The frame's origin is the axis's point, its `y` along the axis and its
+/// `x` square to it in the sketch's plane, toward the profile: to the
+/// side of the profile's point farthest from the axis (of its segments'
+/// ends and middles). `y` points along or against the axis so that `x ×
+/// y` is the sketch's normal: the map is a rigid motion of the plane,
+/// keeping the loops' turning. The kernel turns `x` toward `x × y`,
+/// right-handed about `−y`, and the revolve right-handed about the
+/// axis's direction, so they agree where `y` points against the axis.
+///
+/// The ends of the segments of the axis line itself, and every segment
+/// end at the same point, are put at `x = 0` exactly (and the axis
+/// segments' control points); the kernel puts the others within its
+/// resolution there, and refuses any reaching across. Fails if the axis
+/// has no direction a float can hold, or the profile moved isn't within
+/// the coordinate limit.
+pub(crate) fn axis_frame(
+    profile: &Profile,
+    axis: &Axis,
+    placement: &Placement,
+) -> Result<(Profile, Frame, bool), String> {
+    let along = (axis.along.try_normalize()).ok_or("its axis line has no length")?;
+    let left = along.perp();
+    let segments = || profile.loops.iter().flat_map(|lp| lp.segments.iter());
+    // The side of the farthest point; the first of equals.
+    let mut far = 0.0_f64;
+    for segment in segments() {
+        let c = &segment.conic;
+        // The conic's middle; its weight is positive.
+        let middle = (c.p0 + c.c * (2.0 * c.w) + c.p1) / (2.0 + 2.0 * c.w);
+        for p in [c.p0, middle, c.p1] {
+            let distance = (p - axis.at).dot(left);
+            if distance.abs() > far.abs() {
+                far = distance;
+            }
+        }
+    }
+    let same_way = far >= 0.0;
+    let (x, y) = if same_way {
+        (left, -along)
+    } else {
+        (-left, along)
+    };
+    let map = |p: DVec2| {
+        let q = p - axis.at;
+        DVec2::new(q.dot(x), q.dot(y))
+    };
+    let on_axis =
+        |segment: &Segment| (axis.curve).is_some_and(|id| segment.curve == u64::from(id.get()));
+    // The ends of the axis line's own segments, as mapped.
+    let bits = |p: DVec2| (p.x.to_bits(), p.y.to_bits());
+    let ends: BTreeSet<(u64, u64)> = segments()
+        .filter(|segment| on_axis(segment))
+        .flat_map(|segment| [map(segment.conic.p0), map(segment.conic.p1)])
+        .map(bits)
+        .collect();
+    let snap = |p: DVec2| {
+        let p = map(p);
+        if ends.contains(&bits(p)) {
+            DVec2::new(0.0, p.y)
+        } else {
+            p
+        }
+    };
+    let max = f64::from(MAX_COORD);
+    let within = |p: DVec2| p.is_finite() && p.abs().max_element() <= max;
+    let mut moved = Profile::default();
+    for lp in &profile.loops {
+        let mut segments = Vec::with_capacity(lp.segments.len());
+        for segment in &lp.segments {
+            let c = segment.conic;
+            let mut conic = Conic2 {
+                p0: snap(c.p0),
+                c: map(c.c),
+                w: c.w,
+                p1: snap(c.p1),
+            };
+            if on_axis(segment) {
+                conic.c.x = 0.0;
+            }
+            if ![conic.p0, conic.c, conic.p1].into_iter().all(within) {
+                return Err("its regions are too far from the axis to revolve".to_owned());
+            }
+            segments.push(Segment {
+                conic,
+                curve: segment.curve,
+            });
+        }
+        moved.loops.push(Loop { segments });
+    }
+    let world = |v: DVec2| placement.x * v.x + placement.y * v.y;
+    let frame = Frame {
+        origin: placement.to_world(axis.at),
+        x: world(x),
+        y: world(y),
+    };
+    Ok((moved, frame, same_way))
 }
 
 /// The key of whether the tool filed under `tool` touches the body's

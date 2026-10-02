@@ -355,8 +355,9 @@ share) and placed with the document's `Plane::placement`.
 An answer also carries the features that failed and why (`failed`, an
 extrude whose region is gone, whose profile the kernel refuses, or whose
 join, cut or intersect touches no body or can't be worked out) and the box of each
-body that has a solid (`bodies`). A request can carry a `Draft`, an
-extrude being set up and not committed (new, or one being edited), with a
+body that has a solid (`bodies`). A request can carry a `Draft`, a
+feature (an extrude, a revolve) being set up and not committed (new, or
+one being edited), with a
 revision the app counts up: the lane answers with it applied as its
 command would apply it, and says how it went (`Drafted`, with the
 revision, its error and the bodies a join, cut or intersect touches,

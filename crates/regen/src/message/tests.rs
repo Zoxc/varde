@@ -2,6 +2,11 @@ use varde_kernel::mesh::CheckError;
 
 use super::*;
 
+/// Why extruding failed.
+fn extrude(error: KernelError, finest: bool) -> String {
+    tool(Making::Extrude, error, finest)
+}
+
 #[test]
 fn boolean_failures_name_the_body_and_what_to_try() {
     let invalid = KernelError::Invalid(CheckError::Counts);
@@ -245,4 +250,41 @@ fn emptied_names_the_body_and_the_way_past_it() {
     assert!(text.contains("flip it or move it to overlap"), "{text}");
     let text = emptied(Doing::Joining, "Body 3");
     assert_eq!(text, "joining it to Body 3 would leave nothing of it");
+}
+
+#[test]
+fn revolve_failures_say_revolve() {
+    assert_eq!(
+        tool(Making::Revolve, KernelError::TooComplex, false),
+        "its regions are too complex to revolve: try fewer or simpler curves"
+    );
+    assert_eq!(
+        tool(
+            Making::Revolve,
+            KernelError::Profile(ProfileError::TooFine(1, 2)),
+            true
+        ),
+        "its outline has detail too small to revolve, even at the finest tolerance"
+    );
+    assert_eq!(
+        tool(
+            Making::Revolve,
+            KernelError::Profile(ProfileError::CrossesAxis(0, 1)),
+            false
+        ),
+        "its outline crosses the axis"
+    );
+    let text = tool(
+        Making::Revolve,
+        KernelError::Profile(ProfileError::Degenerate(0, 1)),
+        false,
+    );
+    assert!(
+        text.starts_with("its outline can't be revolved: "),
+        "{text}"
+    );
+    for error in extrude_errors() {
+        let text = tool(Making::Revolve, error, false);
+        assert!(!text.contains("extrude"), "{text}");
+    }
 }

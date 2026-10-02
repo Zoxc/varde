@@ -1512,33 +1512,4 @@ fn a_join_tangent_to_a_second_body_fails_until_it_is_unticked() {
 }
 
 mod merging;
-
-/// Revolves aren't made yet: one fails, making nothing, and the bodies
-/// before it and after it are as they were.
-#[test]
-fn a_revolve_fails_until_revolves_are_made() {
-    let mut editor = Editor::new(Document::example());
-    let extrude = example_extrude(editor.document());
-    let revolve = varde_document::Revolve {
-        sketch: extrude.sketch,
-        regions: extrude.regions.clone(),
-        axis: varde_document::AxisLine::SketchY,
-        extent: varde_document::Turn::Full,
-        flip: false,
-        operation: Operation::NewBody(BodyId::NEW),
-    };
-    editor
-        .apply(editor.document().add_feature(revolve.into()))
-        .unwrap();
-    let revolve = editor.document().features().last().unwrap().id;
-    let below = plate_below(&mut editor);
-    let evaluation = evaluate(editor.document(), &mut Cache::default());
-    assert_eq!(
-        evaluation.failed,
-        [(revolve, "revolves can't be made yet".to_owned())]
-    );
-    let bodies = editor.document().bodies();
-    let made: Vec<BodyId> = evaluation.bodies.iter().map(|made| made.body).collect();
-    assert_eq!(made, [bodies[0].id, below]);
-    assert_near(evaluation.bodies[0].solid.volume(), plate(8.0, 10.0));
-}
+mod revolve;

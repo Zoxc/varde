@@ -5975,8 +5975,9 @@ which was the policy before the budget. The lane owns it: the native
 thread's closure, or the worker's `serve`.
 
 **Drafts.** `Request::Regenerate` has `draft: Option<Draft { revision,
-feature, extrude }>`: an extrude being set up (`feature: None`, applied as
-`AddFeature`, the body `BodyId::NEW`) or edited (`SetFeature`), applied to
+feature, kind }>`: a feature of any kind (an extrude, a revolve) being set
+up (`feature: None`, applied as `AddFeature`, the body `BodyId::NEW`) or
+edited (`SetFeature`, which may change its kind), applied to
 a copy of the document through an `Editor`, so its checks apply. The
 answer carries `Drafted { revision, error, touched }`; a draft the
 document refuses, or whose feature fails, is answered with the committed

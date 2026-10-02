@@ -666,9 +666,9 @@ impl Doc {
 
     /// The extrude being set up as the regeneration lane previews it, and
     /// the extrude it edits, if it's whole.
-    pub(crate) fn draft(&self) -> Option<(Option<FeatureId>, Extrude)> {
+    pub(crate) fn draft(&self) -> Option<(Option<FeatureId>, FeatureKind)> {
         let session = self.extrude.as_ref()?;
-        Some((session.feature, session.extrude()?))
+        Some((session.feature, session.extrude()?.into()))
     }
 
     /// Whether there's a sketch to extrude regions of: a visible one, or

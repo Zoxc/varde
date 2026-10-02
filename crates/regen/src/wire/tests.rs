@@ -80,6 +80,74 @@ fn request_round_trips() {
     assert_eq!(draft, None);
 }
 
+/// A document holding a revolve and a revolve's draft cross and come
+/// back as they went, and the answer says what the draft touches.
+#[test]
+fn a_revolve_and_its_draft_round_trip() {
+    use varde_document::{AxisLine, Operation, Revolve, Targets, Turn};
+
+    let mut editor = Editor::new(Document::example());
+    let extrude = crate::history::tests::example_extrude(editor.document());
+    // The plate's regions about a line clear of it, on its −x side.
+    let revolve = Revolve {
+        sketch: extrude.sketch,
+        regions: extrude.regions.clone(),
+        axis: AxisLine::SketchY,
+        extent: Turn::Full,
+        flip: false,
+        operation: Operation::Cut(Targets::default()),
+    };
+    editor
+        .apply(editor.document().add_feature(revolve.clone().into()))
+        .unwrap();
+    let turn = varde_expr::Value::new("30", &Turn::ask(&editor.document().design())).unwrap();
+    let draft = Draft {
+        revision: 3,
+        feature: None,
+        kind: Revolve {
+            axis: AxisLine::SketchX,
+            extent: Turn::TwoSides(turn.clone(), turn),
+            flip: true,
+            operation: Operation::Join(Targets::default()),
+            ..revolve
+        }
+        .into(),
+    };
+    let request = Request::Regenerate {
+        generation: editor.generation(),
+        document: editor.snapshot(),
+        exclude: None,
+        draft: Some(draft.clone()),
+    };
+    let Request::Regenerate {
+        document,
+        draft: back,
+        ..
+    } = decode_request(&encode_request(&request)).unwrap()
+    else {
+        panic!("not a regeneration");
+    };
+    assert_eq!(*document, *editor.document());
+    assert_eq!(back, Some(draft));
+
+    // Both cross the plate's axes, so both fail, the draft with the
+    // model without it, and say why.
+    let Response::Regenerated { draft, failed, .. } = round_trip(&handle(request)) else {
+        panic!("regeneration failed");
+    };
+    let crosses = "its outline crosses the axis".to_owned();
+    assert_eq!(
+        draft,
+        Some(Drafted {
+            revision: 3,
+            error: Some(crosses.clone()),
+            touched: None,
+        })
+    );
+    let revolve = editor.document().features().last().unwrap().id;
+    assert_eq!(failed, [(revolve, crosses)]);
+}
+
 #[test]
 fn request_with_a_draft_round_trips() {
     let editor = Editor::new(Document::example());
@@ -89,7 +157,7 @@ fn request_with_a_draft_round_trips() {
     let draft = Draft {
         revision: 7,
         feature: Some(editor.document().features()[1].id),
-        extrude: extrude.clone(),
+        kind: extrude.clone().into(),
     };
     let request = Request::Regenerate {
         generation: editor.generation(),
@@ -128,7 +196,7 @@ fn request_with_a_draft_round_trips() {
         draft: Some(Draft {
             revision: 8,
             feature: None,
-            extrude: join,
+            kind: join.into(),
         }),
     };
     let Response::Regenerated { draft, .. } = round_trip(&handle(request)) else {

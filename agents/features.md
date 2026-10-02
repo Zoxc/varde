@@ -101,21 +101,67 @@ pub enum Turn { Full, OneSide(Value), Symmetric(Value), TwoSides(Value, Value) }
 - `removal`: removing its sketch removes it and its body; it's in
   `drop_excluded` like an extrude.
 
-### Regeneration (until the revolve is built in regen)
+### Regeneration
 
-`crates/regen/src/history.rs` fails every revolve with "revolves can't be
-made yet": it makes no body and changes none, and the history goes on (a
-later feature naming its body sees no solid there, as after a failed
-extrude). The draft (`regen::Draft`) is still an extrude's.
+`crates/regen/src/history.rs`. A revolve runs as an extrude does (`Run`,
+with a `Shape` of either kind): its regions are found again and merged
+into a kernel profile in the sketch's coordinates, then:
 
-What regen has to do (the next step): the axis frame from `AxisLine`
-(origin on the axis, `y` along its direction, `x` toward the profile),
-the profile mapped into it, the on-axis rules, `span()` to the kernel's
-sweep (a full or part turn; mind the kernel's own turning direction
-against the right-handed convention here), then touches and booleans as
-an extrude's; failures for a missing or no longer straight axis line;
-cache keys by regions, axis, sweep bits, tolerance and the sketch's key;
-drafts of any `FeatureKind`.
+- **The axis** (`axis_line`): `SketchX` / `SketchY` the sketch's origin
+  and `+x` / `+y`; `Curve(id)` the line's start and `end − start`. A
+  curve that's gone or isn't a line fails the revolve with "axis not
+  found" (a sketch edit may delete it: `Document::check` doesn't require
+  it); a line with both ends at one point, "its axis line has no
+  length".
+- **The frame** (`axis_frame`): origin the axis's point, `y` along the
+  axis (unit), `x` square to it in the sketch's plane toward the
+  profile: the side of the profile point (segment ends and middles)
+  farthest from the axis line. `y` is then chosen along or against the
+  axis so that `x × y` is the sketch's normal: the 2D map is a rotation,
+  so loops keep their turning (outer loops counter-clockwise, as the
+  kernel wants). The kernel turns `x` toward `x × y`, which is
+  right-handed about `−y`; the revolve turns right-handed about the
+  axis's direction. So where the profile lies left of the axis (`y`
+  against the axis) the kernel's `Sweep::Part { from, to }` is
+  `span()` as it is, and where it lies right of it (`y` along the
+  axis), `{ from: −to, to: −from }`. `span()` `None` is `Sweep::Full`.
+- **On-axis rules**: the ends of the axis line's own segments (by curve
+  id), every segment end at the same mapped point (bits), and the axis
+  segments' control points are put at `x = 0` exactly; the kernel puts
+  other ends within its resolution there and refuses anything reaching
+  across (`CrossesAxis`: "its outline crosses the axis"), a vertex alone
+  on the axis in a full turn or a segment coming within the resolution
+  (`TouchesAxis`: "its outline touches the axis at a single point") and
+  a part turn so nearly full its ends touch (`NearlyFullTurn`). Segments
+  along the axis make no face.
+- **Checked range**: the moved profile's points (ends and control
+  points) must be finite and within `MAX_COORD` (they're up to about
+  2.8 × `MAX_COORD` from an axis at the far side of the sketch), else
+  "its regions are too far from the axis to revolve", before the
+  kernel is asked. Angles are the document's, checked by `Turn::ask`.
+- **The tool** is `varde_kernel::revolve(profile, frame, sweep, feature
+  id, tolerance, Budget::DEFAULT)`, its faces named by the feature id as
+  an extrude's. Kernel errors are worded as an extrude's with
+  "revolve"/"revolved" for "extrude"/"extruded" (`message::tool`,
+  `Making`).
+- **Touches and booleans** are the extrude's code, unchanged: join, cut
+  and intersect on the bodies made before it less those taken out, a
+  join touching several merging them into the first, empty results
+  failing, `Evaluation::touched` listing what it touches.
+- **Cache key** of the tool: `"revolve"`, the feature id, the regions,
+  the `AxisLine`, the fit tolerance's bits, `span()` (its bits, or none),
+  and the sketch's key (which holds where the axis line is and the
+  plane). Booleans and touches are keyed by tool and body keys as an
+  extrude's.
+
+**Drafts** are of any kind: `regen::Draft { revision, feature, kind:
+FeatureKind }`, applied as `AddFeature` (feature `None`) or `SetFeature`
+would (so a draft may change its feature's kind; a missing feature is
+refused with "the draft's feature isn't there", a sketch feature or kind
+by the editor). The app's `MeshFeed::request_with` takes `(Option<FeatureId>,
+FeatureKind)`; the extrude session passes its extrude `.into()`.
+`Drafted.touched` is filled for a revolve's join, cut or intersect as for
+an extrude's.
 
 ### UI
 

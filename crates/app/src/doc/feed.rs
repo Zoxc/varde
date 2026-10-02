@@ -4,7 +4,7 @@
 use std::cell::OnceCell;
 use std::sync::Arc;
 
-use varde_document::{BodyId, Document, Editor, Extrude, FeatureId, Generation, Operation};
+use varde_document::{BodyId, Document, Editor, FeatureId, FeatureKind, Generation, Operation};
 use varde_kernel::{RenderLines, RenderMesh};
 use varde_regen::{Draft, Drafted, Picking, Request, Response, Transport};
 use varde_view::{MeshStatus, PickIndex};
@@ -126,10 +126,11 @@ impl MeshFeed {
     }
 
     /// Asks the lane for the document's mesh, leaving the sketch `exclude`
-    /// out of the lines, with `draft` applied, the extrude being set up
-    /// and the extrude it's edited from, if any: if the editor moved on
-    /// since the last request, the sketch to leave out changed, as it does
-    /// on entering or leaving one, or the draft did. A draft differing
+    /// out of the lines, with `draft` applied, the feature being set up
+    /// (an extrude, a revolve) and the feature it's edited from, if any:
+    /// if the editor moved on since the last request, the sketch to leave
+    /// out changed, as it does on entering or leaving one, or the draft
+    /// did. A draft differing
     /// from the one asked for last is given the next revision; without
     /// one, the model is asked for again without the last. Nothing, not
     /// even remembering it, before the lane has started: then the first
@@ -138,13 +139,13 @@ impl MeshFeed {
         &mut self,
         editor: &Editor,
         exclude: Option<FeatureId>,
-        draft: Option<(Option<FeatureId>, Extrude)>,
+        draft: Option<(Option<FeatureId>, FeatureKind)>,
     ) {
         let Some(regen) = &mut self.regen else {
             return;
         };
-        let draft = draft.map(|(feature, extrude)| match &self.draft {
-            Some(last) if last.feature == feature && last.extrude == extrude => last.clone(),
+        let draft = draft.map(|(feature, kind)| match &self.draft {
+            Some(last) if last.feature == feature && last.kind == kind => last.clone(),
             last => {
                 // One per change of a draft: a u64 won't run out.
                 self.revision += 1;
@@ -154,7 +155,7 @@ impl MeshFeed {
                 Draft {
                     revision: self.revision,
                     feature,
-                    extrude,
+                    kind,
                 }
             }
         });

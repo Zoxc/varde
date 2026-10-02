@@ -63,12 +63,28 @@ fn extrude(doc: &mut Doc, message: ExtrudeLook) {
 }
 
 /// The draft the last request waiting carries, if any.
-fn last_draft(requests: &Requests) -> Option<varde_regen::Draft> {
+fn last_draft(requests: &Requests) -> Option<ExtrudeDraft> {
     let requests = requests.borrow();
     let Request::Regenerate { draft, .. } = requests.last()? else {
         return None;
     };
-    draft.clone()
+    let draft = draft.as_ref()?;
+    let FeatureKind::Extrude(extrude) = &draft.kind else {
+        panic!("the draft is an extrude's");
+    };
+    Some(ExtrudeDraft {
+        revision: draft.revision,
+        feature: draft.feature,
+        extrude: extrude.clone(),
+    })
+}
+
+/// A request's draft of an extrude.
+#[derive(Debug)]
+struct ExtrudeDraft {
+    revision: u64,
+    feature: Option<FeatureId>,
+    extrude: varde_document::Extrude,
 }
 
 /// The extrudes of `doc`'s document.
