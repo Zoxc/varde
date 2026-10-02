@@ -13,7 +13,7 @@ use crate::mesh::{CheckError, FaceKey, PartKey};
 use crate::par::assert_deterministic;
 use crate::profile::tests::{arc, circle, polygon, rect, reversed};
 use crate::test_rng::Rng;
-use crate::{Budget, Display};
+use crate::{Budget, Display, Op, boolean, extrude};
 
 mod random;
 mod refusals;
@@ -775,6 +775,85 @@ fn lens(p: DVec2, q: DVec2, half: f64, curve: u64) -> Loop {
             arc(m + right * t, q, p, curve + 1),
         ],
     }
+}
+
+/// The crease profiles turned all the way round, cut by a box through a
+/// crease's ring, a cylinder round the axis through it and a drill across
+/// it: where the pencil left a ring's patches whole, repair and the
+/// boolean's refinement meet them. Every result is checked with its face
+/// tags, and the volumes add up: `a ∪ b` and `a ∩ b` to `a` and `b`, `a −
+/// b` to `a` less `a ∩ b`.
+#[test]
+fn crease_revolves_through_booleans() {
+    let mut ok = 0;
+    // Slow in debug builds: there only the first three with the box.
+    let shapes = crease_shapes();
+    let shapes = if cfg!(debug_assertions) {
+        &shapes[..3]
+    } else {
+        &shapes[..]
+    };
+    for (shape, _) in shapes {
+        let a = revolve(&shape.profile, &Z, Sweep::Full, 7, &TOL, &Budget::DEFAULT).unwrap();
+        // The crease: the profile's first corner, at radius `r`, height `h`.
+        let corner = shape.profile.loops[0].segments[0].conic.p0;
+        let (r, h) = (corner.x, corner.y);
+        let box_through = Solid::cuboid(
+            DVec3::new(r - 0.4, -0.3, h - 0.35),
+            DVec3::new(0.8, 0.6, 0.7),
+            8,
+            &TOL,
+        )
+        .unwrap();
+        let round_it =
+            Solid::cylinder(DVec3::new(0.0, 0.0, h - 0.5), r * 1.03, 1.0, 8, &TOL).unwrap();
+        // Along `x` through the ring at `y = 0`.
+        let across = Frame {
+            origin: DVec3::ZERO,
+            x: DVec3::Y,
+            y: DVec3::Z,
+        };
+        let drill = extrude(
+            &profile(vec![circle(v(0.1, h + 0.05), 0.3, 1, false)]),
+            &across,
+            r - 1.0,
+            r + 1.0,
+            8,
+            &TOL,
+            &Budget::DEFAULT,
+        )
+        .unwrap();
+        let tools = [("box", box_through), ("round", round_it), ("drill", drill)];
+        let tools = if cfg!(debug_assertions) {
+            &tools[..1]
+        } else {
+            &tools[..]
+        };
+        for (tool, b) in tools {
+            let what = format!("{} with the {tool}", shape.name);
+            let volumes = [Op::Union, Op::Intersection, Op::Difference].map(|op| {
+                let result = boolean(&a, b, op, &TOL, &Budget::DEFAULT).ok()?;
+                result.mesh().check(&TOL).unwrap();
+                result.mesh().check_faces(&TOL).unwrap();
+                ok += 1;
+                Some(result.volume())
+            });
+            let (va, vb) = (a.volume(), b.volume());
+            let within = TOL.fit() * (a.area() + b.area()) / 5.0 + 1e-9;
+            if let [Some(u), Some(i), _] = volumes {
+                assert!(
+                    (u + i - va - vb).abs() <= within,
+                    "{what}: {u} + {i} vs {va} + {vb}"
+                );
+            }
+            if let [_, Some(i), Some(d)] = volumes {
+                assert!((d - (va - i)).abs() <= within, "{what}: {d} vs {va} - {i}");
+            }
+        }
+    }
+    // 72 of the 81 work; the rest are refused as `Invalid` (thin tips and
+    // the cylinder brushing the rings).
+    assert!(ok >= 72 || cfg!(debug_assertions), "{ok} results");
 }
 
 /// Profiles whose corners are creases where both faces leave the ring on

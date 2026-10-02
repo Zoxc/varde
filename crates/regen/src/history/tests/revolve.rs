@@ -956,3 +956,59 @@ fn a_slanted_edge_of_the_region_can_be_the_axis() {
         solid.volume()
     );
 }
+
+/// A half disc whose flat side runs along the axis some way off it,
+/// turned all the way round and nearly so: a half torus whose two faces
+/// meet at creases leaving their rings into one quadrant of the
+/// meridian plane (the flat side's cylinder and the round's top or
+/// bottom). Repair used to split those rings until straight to the
+/// resolution, and gave up at the default tolerance.
+#[test]
+fn a_half_torus_revolves_at_the_default_tolerance() {
+    let (radius, height) = (5.0, 17.5);
+    for (turn, fraction) in [("360", 1.0), ("358.8", 358.8 / 360.0)] {
+        let mut editor = Editor::new(Document::default());
+        let extent = Turn::OneSide(angle(editor.document(), turn));
+        add_revolve(
+            &mut editor,
+            OriginPlane::XY,
+            |sketch| {
+                let [center, start, end] = [
+                    (1.0, height),
+                    (1.0 + radius, height),
+                    (1.0 - radius, height),
+                ]
+                .map(|(x, y)| sketch.add_point(DVec2::new(x, y)).unwrap());
+                sketch
+                    .add_curve(Curve::Arc { center, start, end }, false)
+                    .unwrap();
+                sketch
+                    .add_curve(
+                        Curve::Line {
+                            start: end,
+                            end: start,
+                        },
+                        false,
+                    )
+                    .unwrap();
+                AxisLine::SketchX
+            },
+            extent,
+            false,
+            Operation::NewBody(BodyId::NEW),
+        );
+        let evaluation = evaluated(editor.document());
+        let solid = only_body(&evaluation);
+        // Pappus: the half disc's area times the turn of its centroid.
+        let centroid = height + 4.0 * radius / (3.0 * PI);
+        let volume = PI * radius * radius / 2.0 * 2.0 * PI * centroid * fraction;
+        let slack = 0.5 * editor.document().tolerance().fit() * solid.area();
+        assert!(
+            (solid.volume() - volume).abs() <= slack,
+            "{turn}: {} for {volume}",
+            solid.volume()
+        );
+        let patches = solid.mesh().tris().len();
+        assert!(patches <= 1_000, "{turn}: {patches} patches");
+    }
+}

@@ -1311,8 +1311,27 @@ its triangles share, which is topology:
     rule passes 13 567 distinct pairs, all true in exact arithmetic (the
     error at most 0.02 of the bound, the exact `G` clearing the margin 5
     times over); the booleans refuse the same operations with the same
-    kinds (two refusals in a chain name a triangle 90 lower). What
-    repair is left there is not the edge rule:
+    kinds (two refusals in a chain name a triangle 90 lower). End to end
+    (scratch hunt): random crease profiles (triangles, spiked polygons,
+    lenses of 1° to 80°, D shapes, sloped tops on and off the axis,
+    rounds past their turns, rounded and chamfered rectangles, conic
+    stars), scales `1e-2` to `1e2`, fits `1e-2` to `1e-5`, frames out to
+    `5e5`, full and part turns: 1 400 revolves checked by `check`, face
+    tags, Pappus and sampled points, none wrong; against the code
+    before, on 709 of them, 660 right against 486 (169 `TooComplex`),
+    1.1 million patches against 11 million, none more on any case; the
+    same bits at 1 and 8 threads, and under every budget that passes. Booleans of
+    those with boxes and drills through a crease, cylinders round the
+    axis through its ring and other crease revolves (820 cases, all
+    three operations, 120 of them at 1 and 8 threads too): every result
+    checked with its tags, the volume identities and sampled points,
+    none wrong; 210 000 distinct pencil passes in these revolves and
+    booleans, all true in exact arithmetic (the error at most 0.037 of
+    the bound). Over the cases both build, 31 operations
+    work that were refused and 7 are refused that worked (small parts
+    at coarse fits, and a cylinder brushing a ring, where the finer
+    rings happened to pass). What repair is left there is not the edge
+    rule:
     vertex neighbours at a full turn's stations (a cone strip's diagonal
     triangle a quarter turn wide shares only a station with the wall's,
     and no plane through it parts them though they are apart: repaired,
@@ -2872,7 +2891,12 @@ round past its turn against a wall, and a dovetail as a control), full
 and part turns on `Frame::Z` and a random frame at `1e-2` to `1e-4`
 (`1e-5` in release) through the same checks, under a ceiling of about
 twice the measured patches (the triangle 304), the same bits at 1 and 8
-threads; and a spindle's arcs closed by a wall straight down.
+threads; the same crease profiles turned fully and cut by a box through
+a crease's ring, a cylinder round the axis through it and a drill across
+it, all three operations (release; the first three with the box in
+debug), each result checked with its tags and the volumes adding up (72
+of the 81 work, the rest `Invalid`); and a spindle's arcs closed by a
+wall straight down.
 
 Known gaps:
 
