@@ -6,6 +6,7 @@
 
 pub mod codec;
 mod combine;
+mod edge;
 mod editor;
 mod example;
 mod extrude;
@@ -20,6 +21,7 @@ mod testing;
 
 pub use codec::DecodeError;
 pub use combine::{BodyOp, Combine, CombineError, MAX_FEATURE_BODIES};
+pub use edge::{EdgeError, EdgeRef};
 pub use editor::{Command, Editor, Generation, Revision};
 pub use extrude::{Extent, Extrude, ExtrudeError, MAX_EXTRUDE_REGIONS, Operation, Targets};
 pub use feature::{Feature, FeatureId, FeatureKind};
@@ -267,9 +269,11 @@ impl Document {
     /// it, as [`PlaneError`] lists; and every extrude and revolve uses a
     /// sketch feature before it, has regions, distances or angles and an
     /// operation as [`Extrude`] and [`Revolve`] describe, and excludes
-    /// only bodies features before it make; and every combine's target
-    /// and tools are bodies features before it make, its tools as
-    /// [`Combine::check_own`] wants them. A revolve's axis line isn't checked
+    /// only bodies features before it make; a revolve about a model edge
+    /// names a body and faces' makers before it, as a sketch on a face
+    /// does; and every combine's target and tools are bodies features
+    /// before it make, its tools as [`Combine::check_own`] wants them. A
+    /// revolve's axis line isn't checked
     /// against its sketch here (see [`Revolve::check_axis`]).
     pub fn check(&self) -> Result<(), CheckError> {
         // Orders first: features and bodies are found by binary search.
@@ -351,21 +355,34 @@ impl Document {
             return Ok(());
         };
         face.check_own()?;
-        let before = |feature: FeatureId| match self.feature_index(feature) {
-            Some(maker) => maker < index,
-            None => feature.0 < self.next_id,
-        };
-        let body_before = match self.body(face.body) {
-            Some(body) => before(body.created_by),
-            None => face.body.0 < self.next_id,
-        };
-        if !body_before {
+        if !self.body_before(index, face.body) {
             return Err(PlaneError::Body(face.body));
         }
-        if !before(face.maker()) {
+        if !self.maker_before(index, face.maker()) {
             return Err(PlaneError::Maker(face.maker()));
         }
         Ok(())
+    }
+
+    /// Whether `feature`, as a face's maker that a reference of feature
+    /// `index` names, comes before it: there and before it, or not there
+    /// with an id below `next_id`, one no feature made later can take
+    /// (see [`Document::check_plane`]).
+    fn maker_before(&self, index: usize, feature: FeatureId) -> bool {
+        match self.feature_index(feature) {
+            Some(maker) => maker < index,
+            None => feature.0 < self.next_id,
+        }
+    }
+
+    /// Whether `body`, as one that a reference of feature `index` names,
+    /// is made before it: there and made by a feature before it, or not
+    /// there with an id below `next_id` (see [`Document::check_plane`]).
+    fn body_before(&self, index: usize, body: BodyId) -> bool {
+        match self.body(body) {
+            Some(body) => self.maker_before(index, body.created_by),
+            None => body.0 < self.next_id,
+        }
     }
 
     /// Checks `extrude`, feature `index`, see [`Document::check`].
@@ -389,6 +406,15 @@ impl Document {
             return Err(RevolveError::Sketch(revolve.sketch));
         }
         revolve.check_own(&self.design())?;
+        if let AxisLine::Edge(edge) = &revolve.axis {
+            edge.check_own().map_err(RevolveError::Edge)?;
+            if !self.body_before(index, edge.body) {
+                return Err(RevolveError::EdgeBody(edge.body));
+            }
+            if let Some(&maker) = (edge.makers().iter()).find(|&&m| !self.maker_before(index, m)) {
+                return Err(RevolveError::EdgeMaker(maker));
+            }
+        }
         self.check_uses(index, revolve.sketch, &revolve.operation)
             .map_err(|why| match why {
                 Uses::Sketch(sketch) => RevolveError::Sketch(sketch),

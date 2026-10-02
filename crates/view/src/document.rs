@@ -11,8 +11,8 @@ use iced::widget::{Space, column, container, row, space, stack, text};
 use iced::{Alignment, Element, Length};
 use varde_document::EXTENSION;
 use varde_document::{
-    APP_NAME, Body, BodyId, Document, EditError, Editor, Extent, Feature, FeatureId, FeatureKind,
-    Opacity, Placement, Plane,
+    APP_NAME, AxisLine, Body, BodyId, Document, EditError, Editor, Extent, Feature, FeatureId,
+    FeatureKind, Opacity, Placement, Plane,
 };
 use varde_expr::LengthUnit;
 use varde_kernel::{RenderLines, RenderMesh};
@@ -1657,9 +1657,13 @@ fn feature_info(feature: &Feature, document: &Document) -> String {
         }
         FeatureKind::Revolve(revolve) => {
             let operation = OperationKind::of(&revolve.operation).label();
-            let axis = match document.feature(revolve.sketch).map(|f| &f.kind) {
-                Some(FeatureKind::Sketch { sketch, .. }) => {
-                    sketch.name(crate::revolve::axis_id(revolve.axis))
+            let axis = match (
+                revolve.axis,
+                document.feature(revolve.sketch).map(|f| &f.kind),
+            ) {
+                (AxisLine::Edge(edge), _) => Some(crate::revolve::edge_axis_name(document, &edge)),
+                (axis, Some(FeatureKind::Sketch { sketch, .. })) => {
+                    crate::revolve::axis_id(axis).and_then(|id| sketch.name(id))
                 }
                 _ => None,
             };

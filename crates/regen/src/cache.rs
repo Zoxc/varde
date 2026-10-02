@@ -4,9 +4,9 @@
 //! Each result is filed under a [`Key`]: a hash of everything it depends
 //! on, the feature's own settings, the tolerance, and the keys of its
 //! inputs (an extrude's sketch and where it's placed, a boolean's
-//! operands, the solid a sketch's face is on). A feature that didn't
-//! change, and whose inputs didn't, has the same key, and its result is
-//! taken as it was.
+//! operands, the solid a sketch's face or a revolve's axis edge is on).
+//! A feature that didn't change, and whose inputs didn't, has the same
+//! key, and its result is taken as it was.
 //! The cache lives in the lane (a thread natively, the worker on the web).
 //!
 //! It's bounded by size: each result records about how many bytes it
@@ -48,6 +48,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::mem::{size_of, size_of_val};
 use std::sync::Arc;
 
+use glam::DVec3;
 use serde::Serialize;
 use varde_document::Placement;
 use varde_kernel::{RenderMesh, Solid, Topology};
@@ -144,6 +145,10 @@ enum Entry {
     /// Where a sketch on a face is, or why it isn't anywhere (with what
     /// to draw of where: a face that isn't flat).
     Placement(Result<Placement, Failed>),
+    /// Where a straight edge's ends are, in the order it runs, or why
+    /// it's no line there (with what to draw of it: an edge that isn't
+    /// straight).
+    Edge(Result<[DVec3; 2], Failed>),
     /// Whether a sketch solves.
     Solves(bool),
     /// A feature's tool solid, or why it has none (with what to draw of
@@ -180,7 +185,9 @@ impl Entry {
                 Err(TooComplex) => 0,
             },
             Entry::Solid(Ok(solid)) | Entry::Boolean(Ok(solid)) => solid_bytes(solid),
-            Entry::Solid(Err(failed)) | Entry::Placement(Err(failed)) => (failed.message.len())
+            Entry::Solid(Err(failed))
+            | Entry::Placement(Err(failed))
+            | Entry::Edge(Err(failed)) => (failed.message.len())
                 .saturating_add(failed.geometry.as_deref().map_or(0, ErrorGeometry::bytes)),
             Entry::Touches(Err(failure)) | Entry::Boolean(Err(failure)) => failure.bytes(),
             Entry::Drawn(drawn) => mesh_bytes(&drawn.mesh).saturating_add(drawn.bytes()),
@@ -188,7 +195,10 @@ impl Entry {
             Entry::Topology(topology) => topology_bytes(topology),
             Entry::Measure(kept) => kept.as_ref().as_ref().err().map_or(0, String::len),
             Entry::Distance(gap) => gap.as_ref().err().map_or(0, String::len),
-            Entry::Solves(_) | Entry::Placement(Ok(_)) | Entry::Touches(Ok(_)) => 0,
+            Entry::Solves(_)
+            | Entry::Placement(Ok(_))
+            | Entry::Edge(Ok(_))
+            | Entry::Touches(Ok(_)) => 0,
         };
         data.saturating_add(OVERHEAD)
     }
@@ -431,6 +441,17 @@ impl Cache {
     ) -> Result<Placement, Failed> {
         match self.entry(key, || Entry::Placement(make())) {
             Entry::Placement(placement) => placement,
+            _ => unreachable!("keys of different kinds differ"),
+        }
+    }
+
+    pub(crate) fn edge(
+        &mut self,
+        key: Key,
+        make: impl FnOnce() -> Result<[DVec3; 2], Failed>,
+    ) -> Result<[DVec3; 2], Failed> {
+        match self.entry(key, || Entry::Edge(make())) {
+            Entry::Edge(ends) => ends,
             _ => unreachable!("keys of different kinds differ"),
         }
     }

@@ -278,11 +278,13 @@ flip, and the operation: a new body, by id, or join, cut or intersect
 with the bodies taken out of its targets; or a revolve,
 `crates/document/src/revolve.rs`: the sketch, regions, flip and
 operation as an extrude's, the axis (a line of the sketch by curve id,
-or the sketch's x or y axis) and the turn (full, one side, symmetric or
-two sides, each angle a typed expression and its value in radians); or a
-combine, `crates/document/src/combine.rs`: the target body's id, the
-tool bodies' ids (sorted), the operation (union, subtract or intersect)
-and whether the tools are kept. A
+the sketch's x or y axis, or a straight edge of a body,
+`crates/document/src/edge.rs`: the body's id, the keys of the faces
+either side, sorted, and a picked point) and the turn (full, one side,
+symmetric or two sides, each angle a typed expression and its value in
+radians); or a combine, `crates/document/src/combine.rs`: the target
+body's id, the tool bodies' ids (sorted), the operation (union, subtract
+or intersect) and whether the tools are kept. A
 sketch is a plane, `crates/document/src/plane.rs` (an origin plane,
 XY, XZ or YZ, or a face of a body: the body's id, the face's key, the
 kernel's `FaceKey` and `PartKey` with serde, whose fields and order are
@@ -314,7 +316,8 @@ line isn't required to exist, as a region isn't: regeneration reports
 it), excluded bodies sorted and made by earlier features, a sketch's face
 point finite and within the coordinate limit, its body (if there) made
 and its key's feature (if there) placed before the sketch, and either
-id, if nothing has it, below the next id,
+id, if nothing has it, below the next id; the same of a revolve's axis
+edge (both keys' features), its keys sorted and different,
 the tolerance within its range, names, coordinates, radii
 and labels within bounds, a sketch's item counts bounded, every reference
 naming an item of the right kind, every fillet and chamfer on a corner

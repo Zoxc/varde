@@ -75,9 +75,12 @@ pub use operation_panel::{
 pub use pick::{
     EDGE_REACH, ModelHighlight, Pick, PickIndex, Picked, Picks, SNAP_REACH, Snapped, VERTEX_REACH,
 };
-pub use plane_pick::{PlanePick, Shown, plane_note};
+pub use plane_pick::{Naming, PlanePick, Shown, Unnamed, plane_note};
 pub use rail::{RAIL_LIST, RailLook, RailOpen, RailSpot, rail_rows, rail_sets};
-pub use revolve::{Angle, RevolveLook, RevolvePick, RevolveState, TurnKind};
+pub use revolve::{
+    Angle, EDGE_NOT_STRAIGHT, EDGE_OFF_PLANE, RevolveLook, RevolvePick, RevolveState, TurnKind,
+    axis_edge,
+};
 pub use select::{Selected, Selection, SelectionMode};
 pub use shortcut::{Binding, DocumentKeys, Held, document_bindings, pressed, welcome_bindings};
 pub use snap::{Inference, Level, SNAP_TOLERANCE, Snap, Target};

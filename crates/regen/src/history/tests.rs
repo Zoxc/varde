@@ -1608,6 +1608,7 @@ fn a_join_tangent_to_a_second_body_fails_until_it_is_unticked() {
 mod boolean_evidence;
 mod check_evidence;
 mod combine;
+mod edges;
 mod faces;
 mod merging;
 mod profile_evidence;

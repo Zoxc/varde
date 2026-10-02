@@ -2648,3 +2648,129 @@ fn a_head_too_large_with_failure_geometry_is_sent_without_it() {
     assert_eq!(draft.error.as_deref(), Some("it failed too"));
     assert_eq!(draft.geometry, None);
 }
+
+/// A revolve about a model edge crosses the wire and comes back as it
+/// went, and works in the reply; a draft about an edge whose point isn't
+/// finite is refused as the editor refuses it, and a document holding
+/// one doesn't decode.
+#[test]
+fn a_revolve_about_an_edge_round_trips() {
+    use varde_document::{AxisLine, EdgeRef, FaceRef, Operation, Plane, Revolve, Turn};
+    use varde_sketch::{Curve, Sketch};
+    let mut editor = Editor::new(Document::example());
+    let plate = editor.document().bodies()[0].id;
+    let maker = editor.document().features()[1].id.get();
+    let top = FaceKey {
+        feature: maker,
+        part: PartKey::EndCap,
+        instance: 0,
+    };
+    // The plate's front, y = −20, is the side its sketch's first line
+    // (from (−30, −20) to (30, −20)) makes.
+    let FeatureKind::Sketch { sketch: drawn, .. } = &editor.document().features()[0].kind else {
+        unreachable!()
+    };
+    let first = drawn.curves[0].id;
+    let front = FaceKey {
+        feature: maker,
+        part: PartKey::Side {
+            curve: u64::from(first.get()),
+        },
+        instance: 0,
+    };
+    let face = FaceRef {
+        body: plate,
+        key: front,
+        near: glam::DVec3::new(0.0, -20.0, 5.0),
+    };
+    editor
+        .apply(editor.document().add_sketch(Plane::Face(face)))
+        .unwrap();
+    let sketch = editor.document().features().last().unwrap().id;
+    // On the front, x along +x and y up, the origin's projection at
+    // (0, −20, 0): a rectangle 2 to 5 above the top edge.
+    let mut drawn = Sketch::default();
+    let corners = [(-10.0, 12.0), (10.0, 12.0), (10.0, 15.0), (-10.0, 15.0)]
+        .map(|(x, y)| drawn.add_point(glam::DVec2::new(x, y)).unwrap());
+    for k in 0..4 {
+        let (start, end) = (corners[k], corners[(k + 1) % 4]);
+        drawn.add_curve(Curve::Line { start, end }, false).unwrap();
+    }
+    let region = drawn.profiles().unwrap().reference(0).unwrap();
+    editor
+        .apply(Command::SetSketch {
+            feature: sketch,
+            sketch: Box::new(drawn),
+        })
+        .unwrap();
+    let edge = EdgeRef {
+        body: plate,
+        faces: [top.min(front), top.max(front)],
+        near: glam::DVec3::new(0.0, -20.0, 10.0),
+    };
+    let revolve = Revolve {
+        sketch,
+        regions: vec![region],
+        axis: AxisLine::Edge(edge),
+        extent: Turn::Full,
+        flip: false,
+        operation: Operation::NewBody(BodyId::NEW),
+    };
+    editor
+        .apply(editor.document().add_feature(revolve.clone().into()))
+        .unwrap();
+    let request = regenerate(&editor);
+    let back = decode_request(&encode_request(&request)).unwrap();
+    let Request::Regenerate { document, .. } = &back else {
+        panic!("not a regeneration");
+    };
+    assert_eq!(**document, *editor.document());
+    let Response::Regenerated { failed, bodies, .. } = round_trip(&handle(back)) else {
+        panic!("regeneration failed");
+    };
+    assert!(failed.is_empty(), "{failed:?}");
+    // A tube of radius 5 about the edge.
+    let (_, bounds) = bodies[1];
+    let (min, max) = (bounds.min, bounds.max);
+    assert_eq!([min.y, min.z, max.y, max.z], [-25.0, 5.0, -15.0, 15.0]);
+
+    let hostile = Revolve {
+        axis: AxisLine::Edge(EdgeRef {
+            near: glam::DVec3::new(f64::NAN, 0.0, 0.0),
+            ..edge
+        }),
+        ..revolve
+    };
+    let feature = editor.document().features().last().unwrap().id;
+    let request = Request::Regenerate {
+        generation: editor.generation(),
+        document: editor.snapshot(),
+        exclude: None,
+        draft: Some(Box::new(Draft {
+            revision: 1,
+            feature: Some(feature),
+            kind: hostile.clone().into(),
+        })),
+        inspect: None,
+    };
+    let back = decode_request(&encode_request(&request)).unwrap();
+    let Response::Regenerated { draft, failed, .. } = round_trip(&handle(back)) else {
+        panic!("regeneration failed");
+    };
+    assert!(failed.is_empty(), "{failed:?}");
+    assert!(draft.unwrap().error.is_some());
+    // The same in the document itself doesn't decode.
+    let bytes = editor.document().to_postcard();
+    let hostile_bytes = {
+        let good = postcard::to_stdvec(&edge.near).unwrap();
+        let bad = postcard::to_stdvec(&glam::DVec3::new(f64::NAN, 0.0, 0.0)).unwrap();
+        let at = (0..bytes.len() - good.len())
+            .rfind(|&k| bytes[k..].starts_with(&good))
+            .unwrap();
+        let mut hostile = bytes.clone();
+        hostile[at..at + good.len()].copy_from_slice(&bad);
+        hostile
+    };
+    assert!(Document::from_postcard(&hostile_bytes).is_err());
+    assert_eq!(Document::from_postcard(&bytes).unwrap(), *editor.document());
+}

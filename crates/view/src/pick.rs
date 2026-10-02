@@ -164,6 +164,14 @@ pub struct PickIndex {
     tangent_chains: Groups,
 }
 
+/// An index of no model, for tests that pick nothing in the model.
+#[cfg(test)]
+pub(crate) fn empty_index() -> &'static PickIndex {
+    static EMPTY: std::sync::LazyLock<PickIndex> =
+        std::sync::LazyLock::new(|| PickIndex::new(Arc::default(), Arc::default(), 0));
+    &EMPTY
+}
+
 impl PickIndex {
     /// The index of `mesh` and its tables `picking`, which came with it;
     /// its picks carry `model`. Tables that don't go with the mesh pick
@@ -465,6 +473,46 @@ impl PickIndex {
         let start = self.mesh.polyline_range(chain as usize)?.start;
         let [a, b] = segment(&self.mesh, u32::try_from(start).ok()?)?;
         Some(((a + b) / 2.0).as_dvec3())
+    }
+
+    /// The ends of `chain`, if it's a straight edge between two faces, in
+    /// the order an edge reference whose first key is `first` runs (see
+    /// [`varde_document::EdgeRef`]): with the face `first` names on its
+    /// left seen from outside, which the mesh's edge runs along (else
+    /// the other way). Straight as the mesh draws it: not closed, its
+    /// snap point (a straight edge's middle, a round one's centre) at
+    /// the middle of its ends, and every point of its polyline on the
+    /// line through them, within the rounding of the mesh's `f32`
+    /// points and a millionth of its length. Regenerating decides from
+    /// the exact curves.
+    pub fn edge_ends(&self, chain: u32, first: &FaceKey) -> Option<[DVec3; 2]> {
+        let [left, _] = self.edge_faces(chain)?;
+        if *self.picking.closed().get(chain as usize)? {
+            return None;
+        }
+        let snap = DVec3::from((*self.picking.snaps().get(chain as usize)?)?);
+        let points: Vec<DVec3> = (self.mesh.polyline(chain as usize)?.iter())
+            .map(|&i| position(&self.mesh, i).as_dvec3())
+            .collect();
+        let (&from, &to) = (points.first()?, points.last()?);
+        let chord = to - from;
+        let along = chord.try_normalize()?;
+        let scale = (points.iter())
+            .map(|p| p.abs().max_element())
+            .fold(snap.abs().max_element(), f64::max);
+        let slack = 1e-6 * chord.length() + 8.0 * f64::from(f32::EPSILON) * scale;
+        let off = |p: DVec3| {
+            let d = p - from;
+            (d - along * d.dot(along)).length()
+        };
+        if snap.distance((from + to) / 2.0) > slack || points.iter().any(|&p| off(p) > slack) {
+            return None;
+        }
+        Some(if self.named(left, first) {
+            [from, to]
+        } else {
+            [to, from]
+        })
     }
 
     /// The face of `body` that `key` names (its key or an alias), the

@@ -12,7 +12,9 @@
 //! ([`profile`]). An extrude sweeps it
 //! with [`varde_kernel::extrude`] on the sketch's plane, over
 //! [`Extrude::span`]; a revolve finds its axis in the sketch
-//! ([`axis_line`]; a line that's gone is "axis not found"), moves the
+//! ([`axis_line`]; a line that's gone is "axis not found") or, about a
+//! model edge, on the edge's body as the features before it leave it
+//! ([`edge_axis`]: straight and in the sketch's plane), moves the
 //! profile into the axis's frame ([`axis_frame`]) and turns it with
 //! [`varde_kernel::revolve`] over [`Revolve::span`]. Both run within the
 //! document's tolerance and the default budget, their faces named by
@@ -57,13 +59,14 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use glam::DVec2;
+use glam::{DVec2, DVec3};
 use varde_document::{
-    AxisLine, BodyId, Document, Extrude, FaceRef, Feature, FeatureId, FeatureKind, MAX_COORD,
-    Operation, Placement, Plane, Revolve, Sketch,
+    AxisLine, BodyId, Document, EdgeRef, Extrude, FaceRef, Feature, FeatureId, FeatureKind,
+    MAX_COORD, Operation, Placement, Plane, Revolve, Sketch,
 };
+use varde_kernel::measure::{EdgeShape, edge_shape};
 use varde_kernel::mesh::Form;
-use varde_kernel::patch::Conic2;
+use varde_kernel::patch::{Conic2, Conic3};
 use varde_kernel::{Budget, Failure, Frame, Loop, Op, Profile, Segment, Solid, Sweep, Tolerance};
 use varde_sketch::{Curve, Id, Profiles, RegionRef, TooComplex};
 
@@ -367,7 +370,7 @@ impl Run<'_> {
         // finds it again.
         let (tool, tool_key) = match self.shape {
             Shape::Extrude(extrude) => self.extruded(extrude, evaluation, cache)?,
-            Shape::Revolve(revolve) => self.revolved(revolve, cache)?,
+            Shape::Revolve(revolve) => self.revolved(revolve, evaluation, cache)?,
         };
         let (op, doing) = match self.operation {
             Operation::NewBody(body) => {
@@ -668,16 +671,45 @@ impl Run<'_> {
     }
 
     /// A revolve's tool solid and the key it's filed under: the regions
-    /// turned about its axis over its span (see [`axis_frame`]).
-    fn revolved(&self, revolve: &Revolve, cache: &mut Cache) -> Result<(Arc<Solid>, Key), Failed> {
+    /// turned about its axis over its span (see [`axis_frame`]). An axis
+    /// edge is found on its body as the features before the revolve
+    /// (`evaluation`) leave it ([`edge_axis`]).
+    fn revolved(
+        &self,
+        revolve: &Revolve,
+        evaluation: &Evaluation,
+        cache: &mut Cache,
+    ) -> Result<(Arc<Solid>, Key), Failed> {
         let span = revolve.span();
         let placement = self.placement()?;
-        // The axis is the sketch's, so its key holds where the axis line
-        // is.
-        let key = Keyer::new("revolve")
-            .number(self.feature.id.get())
-            .value(&revolve.regions)
-            .value(&revolve.axis)
+        let edge = match &revolve.axis {
+            AxisLine::Edge(edge) => Some(edge_axis(
+                edge,
+                evaluation,
+                &placement,
+                self.tolerance,
+                cache,
+            )?),
+            AxisLine::Curve(_) | AxisLine::SketchX | AxisLine::SketchY => None,
+        };
+        let mut keyer = Keyer::new("revolve");
+        keyer.number(self.feature.id.get()).value(&revolve.regions);
+        match &edge {
+            // An edge by where it lies in the sketch, so the tool follows
+            // the body under it, and a reference picked again on the same
+            // edge finds it.
+            Some(axis) => {
+                keyer.bytes(b"edge");
+                for number in [axis.at.x, axis.at.y, axis.along.x, axis.along.y] {
+                    keyer.number(number.to_bits());
+                }
+            }
+            // A line or axis of the sketch, whose key holds where it is.
+            None => {
+                keyer.value(&revolve.axis);
+            }
+        }
+        let key = keyer
             .number(self.tolerance.fit().to_bits())
             .value(&span)
             .key(self.sketch.key)
@@ -685,8 +717,11 @@ impl Run<'_> {
             .finish();
         let solid = cache.solid(key, || {
             let profile = self.profile()?;
-            let axis = axis_line(self.sketch.sketch, revolve.axis)
-                .map_err(|error| self.axis_failed(error, &placement))?;
+            let axis = match edge {
+                Some(axis) => axis,
+                None => axis_line(self.sketch.sketch, revolve.axis)
+                    .map_err(|error| self.axis_failed(error, &placement))?,
+            };
             let (profile, frame, same_way) = axis_frame(&profile, &axis, &placement)
                 .map_err(|error| self.axis_failed(error, &placement))?;
             let sweep = match span {
@@ -884,9 +919,11 @@ impl AxisError {
 
 /// The axis `axis` names in `sketch`, or why there's none: the curve it
 /// names isn't there or isn't a line any more ([`AxisError::NotFound`]),
-/// or the line has no length.
+/// or the line has no length. A model edge isn't the sketch's: it's
+/// found on its body ([`edge_axis`]), and is "not found" here.
 pub(crate) fn axis_line(sketch: &Sketch, axis: AxisLine) -> Result<Axis, AxisError> {
     let (at, along, curve) = match axis {
+        AxisLine::Edge(_) => return Err(AxisError::NotFound),
         AxisLine::SketchX => (DVec2::ZERO, DVec2::X, None),
         AxisLine::SketchY => (DVec2::ZERO, DVec2::Y, None),
         AxisLine::Curve(id) => {
@@ -905,6 +942,122 @@ pub(crate) fn axis_line(sketch: &Sketch, axis: AxisLine) -> Result<Axis, AxisErr
         return Err(AxisError::NoLength { at, curve });
     }
     Ok(Axis { at, along, curve })
+}
+
+/// The axis a revolve about the model edge `edge` turns about, in the
+/// coordinates of its sketch placed at `placement`, given the bodies the
+/// features before it made (`evaluation`), or why there's none. The
+/// edge's body is looked for through [`Evaluation::holder`], as a sketch
+/// on a face's is (one with no solid is "gone"); the edge is found on its
+/// solid's [`Topology`](varde_kernel::Topology) between faces of its two
+/// names, the nearest to its point among several
+/// ([`Topology::edge`](varde_kernel::Topology::edge); none is "wasn't
+/// found"); it must be a line ([`edge_shape`]; "isn't straight"),
+/// directed as [`EdgeRef`] says ([`edge_ends`]). Both its ends must be
+/// within the tolerance's resolution of the sketch's plane, a decision
+/// on geometry stated as one ("isn't in the sketch's plane"): an edge of
+/// the face a sketch is on is in its plane to the bit where the face is
+/// square to the world's axes, and to rounding elsewhere. The axis is
+/// the line from the first end to the second, mapped into the sketch.
+/// The edge's ends are cached by the solid's key, the reference's names
+/// and point and the fit tolerance (which a curved edge is drawn at), so
+/// a revolve edited in other ways finds them again. An edge off the plane
+/// shows itself and its ends; one that isn't straight, its curves.
+pub(crate) fn edge_axis(
+    edge: &EdgeRef,
+    evaluation: &Evaluation,
+    placement: &Placement,
+    tolerance: Tolerance,
+    cache: &mut Cache,
+) -> Result<Axis, Failed> {
+    let holder = evaluation.holder(edge.body);
+    let made = (evaluation.bodies.iter())
+        .find(|made| Some(made.body) == holder)
+        .ok_or(message::EDGE_BODY_GONE)?;
+    let near = edge.near.to_array().map(f64::to_bits);
+    let key = Keyer::new("edge")
+        .key(made.key)
+        .value(&edge.faces)
+        .number(near[0])
+        .number(near[1])
+        .number(near[2])
+        .number(tolerance.fit().to_bits())
+        .finish();
+    let [from, to] = cache.edge(key, || edge_ends(&made.solid, edge, &tolerance))?;
+    let local = |p: DVec3| {
+        let q = p - placement.origin;
+        let height = q.dot(placement.normal);
+        (DVec2::new(q.dot(placement.x), q.dot(placement.y)), height)
+    };
+    let ((at, a), (end, b)) = (local(from), local(to));
+    let resolution = tolerance.resolution();
+    if !(a.abs() <= resolution && b.abs() <= resolution) {
+        // The edge, and its ends: those off the plane show where.
+        let mut evidence = varde_kernel::Evidence::default();
+        evidence.add_curves(Conic3::line(from, to).ok());
+        evidence.add_points([from, to]);
+        return Err(Failed {
+            message: message::EDGE_OFF_PLANE.to_owned(),
+            geometry: ErrorGeometry::of_evidence(&evidence, &tolerance),
+        });
+    }
+    // The ends are a solid's vertices, within the coordinate limit, and
+    // the placement's origin too, so the difference is finite.
+    let along = end - at;
+    if along == DVec2::ZERO {
+        let mut evidence = varde_kernel::Evidence::default();
+        evidence.add_points([from]);
+        return Err(Failed {
+            message: message::AXIS_NO_LENGTH.to_owned(),
+            geometry: ErrorGeometry::of_evidence(&evidence, &tolerance),
+        });
+    }
+    Ok(Axis {
+        at,
+        along,
+        curve: None,
+    })
+}
+
+/// The ends of the straight edge `edge` names on `solid`, in the order
+/// it runs with the face of its first key on its left seen from outside
+/// (see [`EdgeRef`]), or why there's none: no edge has its names ("wasn't
+/// found"), or the one found isn't a line ("isn't straight"). A chain's
+/// halfedges run on its first region's side, along that region's own
+/// boundary, so they run the right way where that region is the first
+/// key's. An edge that isn't straight shows its curves, drawn at the
+/// [`Display`](varde_kernel::Display) of `tolerance` (the first
+/// [`MAX_EVIDENCE`](varde_kernel::MAX_EVIDENCE)`.curves`), by value as a
+/// face that isn't flat is ([`face_geometry`]).
+pub(crate) fn edge_ends(
+    solid: &Solid,
+    edge: &EdgeRef,
+    tolerance: &Tolerance,
+) -> Result<[DVec3; 2], Failed> {
+    let topology = solid.topology();
+    let chain =
+        (topology.edge(solid, edge.faces, edge.near)).map_err(|_| message::EDGE_NOT_FOUND)?;
+    let chain = &topology.chains()[chain as usize];
+    let EdgeShape::Line { from, to } = edge_shape(solid, chain) else {
+        let mesh = solid.mesh();
+        let tris = mesh.tris().len();
+        let mut evidence = varde_kernel::Evidence::default();
+        evidence.add_curves(
+            (chain.halfedges.iter())
+                .filter(|&&h| (h as usize) / 3 < tris)
+                .map(|&h| mesh.curve(h)),
+        );
+        return Err(Failed {
+            message: message::EDGE_NOT_STRAIGHT.to_owned(),
+            geometry: ErrorGeometry::of_evidence(&evidence, tolerance),
+        });
+    };
+    let first = &topology.regions()[chain.regions[0] as usize];
+    Ok(if first.named(&edge.faces[0]) {
+        [from, to]
+    } else {
+        [to, from]
+    })
 }
 
 /// `profile`, in its sketch's coordinates, moved into the frame the

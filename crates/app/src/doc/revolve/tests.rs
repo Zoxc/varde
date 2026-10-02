@@ -833,4 +833,5 @@ fn the_session_ends_when_its_revolve_or_its_document_goes() {
     assert!(lathe.last_draft().is_none());
 }
 
+mod edges;
 mod fuzz;

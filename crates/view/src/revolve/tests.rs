@@ -51,6 +51,9 @@ fn state_of<'a>(
         missing: 0,
         axis: None,
         axis_missing: false,
+        edge_ends: None,
+        edge_body: None,
+        index: crate::pick::empty_index(),
         picking: RevolvePick::Regions,
         extent: TurnKind::Full,
         fields: [field(Some(1.0)), field(Some(0.5))],
@@ -96,7 +99,7 @@ fn the_panel_names_the_profile_and_the_axis() {
         "Profile",
         "Click regions",
         "Axis",
-        "Click a line or axis",
+        "Click a line, axis or edge",
     ] {
         found(&shown, text);
     }
@@ -113,7 +116,7 @@ fn the_panel_names_the_profile_and_the_axis() {
     found(&shown, "Line 5");
     // Picking regions, the profile asks for more; the axis, picked, doesn't.
     found(&shown, "Click regions");
-    assert!(!has(&shown, "Click a line or axis"));
+    assert!(!has(&shown, "Click a line, axis or edge"));
     state.picking = RevolvePick::Axis;
     assert!(!has(&texts_of(&state), "Click regions"));
     state.picking = RevolvePick::Regions;

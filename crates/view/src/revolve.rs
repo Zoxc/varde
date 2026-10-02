@@ -1,15 +1,16 @@
 //! The revolve being set up: what the app hands the view of it, the
 //! messages changing it, and the floating panel holding its options over
 //! the right of the viewport. The viewport's side, picking regions and
-//! the axis, is in `viewport/revolve.rs`.
+//! the axis (a line or axis of the sketch, or a straight model edge in
+//! its plane), is in `viewport/revolve.rs`.
 
 use std::collections::BTreeSet;
 
-use glam::DVec2;
+use glam::{DVec2, DVec3};
 use iced::Element;
 use iced::widget::text::Wrapping;
 use iced::widget::{column, text};
-use varde_document::{AxisLine, BodyId, FeatureId, RevolveError};
+use varde_document::{AxisLine, BodyId, Document, EdgeRef, FeatureId, Placement, RevolveError};
 use varde_sketch::{Curve, Id, Sketch};
 
 use crate::extrude::region_name;
@@ -18,6 +19,7 @@ use crate::operation_panel::{
     BodyTarget, Candidate, Framing, OperationKind, PanelHover, Parts, TypedField, bodies, field,
     footer_message, operation_panel, pick_field, picked_row, tile, tiles, toggle, value_field,
 };
+use crate::pick::PickIndex;
 use crate::theme;
 use crate::{Edit, Look, Message, VALUE_FIELD};
 
@@ -126,6 +128,16 @@ pub enum RevolveLook {
         sketch: FeatureId,
         axis: AxisLine,
     },
+    /// An edge of the model shown clicked while the axis is picked, at
+    /// `at`: the axis from then on if it's a straight edge in the source
+    /// sketch's plane made before the revolve, else refused, saying why.
+    /// `model` is the [`PickIndex::model`] of the index whose `edge` it
+    /// is.
+    PickEdge {
+        model: u64,
+        edge: u32,
+        at: DVec3,
+    },
     /// Whether clicks pick regions or the axis: the panel's Profile and
     /// Axis rows clicked.
     Picking(RevolvePick),
@@ -159,9 +171,17 @@ pub struct RevolveState<'a> {
     pub picked: &'a BTreeSet<usize>,
     /// How many of the edited revolve's regions weren't found.
     pub missing: usize,
-    /// The axis picked, a line of the source or one of its axes, if one
-    /// is.
+    /// The axis picked, a line of the source or one of its axes or a
+    /// model edge, if one is.
     pub axis: Option<AxisLine>,
+    /// Where the axis picked is, if it's a model edge found in the model
+    /// shown: its ends, in the order it runs ([`EdgeRef`]).
+    pub edge_ends: Option<[DVec3; 2]>,
+    /// The name of the body of the axis picked, if it's a model edge.
+    pub edge_body: Option<&'a str>,
+    /// The model shown, whose straight edges in the source's plane a
+    /// click picks as the axis while it's picked.
+    pub index: &'a PickIndex,
     /// Whether the edited revolve's axis line wasn't found.
     pub axis_missing: bool,
     /// What a click picks first.
@@ -211,11 +231,14 @@ impl<'a> RevolveState<'a> {
         self.candidates.iter().find(|c| c.feature == source)
     }
 
-    /// The axis's name, "Line 3" or "X axis", if one is picked and its
-    /// source shows.
+    /// The axis's name, "Line 3", "X axis" or "Edge of Body 1", if one
+    /// is picked and its source shows.
     pub fn axis_name(&self) -> Option<String> {
         let sketch = self.source()?.sketch;
-        sketch.name(axis_id(self.axis?))
+        match self.axis? {
+            AxisLine::Edge(_) => Some(edge_name(self.edge_body)),
+            axis => sketch.name(axis_id(axis)?),
+        }
     }
 
     /// Whether the turn goes against the axis's direction: flipped, for
@@ -226,13 +249,68 @@ impl<'a> RevolveState<'a> {
     }
 }
 
-/// The id the sketch knows `axis` by: the line's, or its built-in axis's.
-pub(crate) fn axis_id(axis: AxisLine) -> Id {
+/// The id the sketch knows `axis` by: the line's, or its built-in axis's;
+/// none for a model edge, which isn't the sketch's.
+pub(crate) fn axis_id(axis: AxisLine) -> Option<Id> {
     match axis {
-        AxisLine::Curve(id) => id,
-        AxisLine::SketchX => Id::X_AXIS,
-        AxisLine::SketchY => Id::Y_AXIS,
+        AxisLine::Curve(id) => Some(id),
+        AxisLine::SketchX => Some(Id::X_AXIS),
+        AxisLine::SketchY => Some(Id::Y_AXIS),
+        AxisLine::Edge(_) => None,
     }
+}
+
+/// A model edge as the axis's name: "Edge of Body 1", by the name of
+/// its body if that's known.
+pub(crate) fn edge_name(body: Option<&str>) -> String {
+    match body {
+        Some(body) => format!("Edge of {body}"),
+        None => "Model edge".to_owned(),
+    }
+}
+
+/// The name of the axis of a revolve of `document` about `edge`: see
+/// [`edge_name`].
+pub(crate) fn edge_axis_name(document: &Document, edge: &EdgeRef) -> String {
+    edge_name(document.body(edge.body).map(|body| body.name.as_str()))
+}
+
+/// Why a model edge can't be a revolve's axis: it isn't straight.
+pub const EDGE_NOT_STRAIGHT: &str = "Only a straight edge can be the axis";
+/// Why a model edge can't be a revolve's axis: it isn't in the plane of
+/// the sketch the revolve takes regions of.
+pub const EDGE_OFF_PLANE: &str = "That edge isn't in the sketch's plane";
+
+/// Edge `edge` of `index`'s model as a revolve's axis on a sketch placed
+/// at `placement`: its ends in the order its reference runs
+/// ([`PickIndex::edge_ends`], its keys sorted), if it's straight and both
+/// ends are on the sketch's plane within the rounding of the mesh's
+/// `f32` points; else why not. Regenerating decides exactly, on its
+/// curves and within the tolerance's resolution, what this tells the
+/// cursor beforehand.
+pub fn axis_edge(
+    index: &PickIndex,
+    edge: u32,
+    placement: &Placement,
+) -> Result<[DVec3; 2], &'static str> {
+    let keys = index.chain_keys(edge).ok_or(EDGE_NOT_STRAIGHT)?;
+    let ends = index.edge_ends(edge, &keys[0]).ok_or(EDGE_NOT_STRAIGHT)?;
+    let scale = (ends.iter())
+        .map(|p| p.abs().max_element())
+        .fold(placement.origin.abs().max_element(), f64::max);
+    let slack = 8.0 * f64::from(f32::EPSILON) * scale.max(1.0);
+    let height = |p: DVec3| (p - placement.origin).dot(placement.normal);
+    if ends.iter().all(|&p| height(p).abs() <= slack) {
+        Ok(ends)
+    } else {
+        Err(EDGE_OFF_PLANE)
+    }
+}
+
+/// The sketch coordinates of the world point `at` on `placement`.
+pub(crate) fn on_sketch(placement: &Placement, at: DVec3) -> DVec2 {
+    let offset = at - placement.origin;
+    DVec2::new(offset.dot(placement.x), offset.dot(placement.y))
 }
 
 /// The axis line the sketch's id `id` names, if it names a line of
@@ -251,7 +329,8 @@ pub(crate) fn axis_of(sketch: &Sketch, id: Id) -> Option<AxisLine> {
 /// `axis` of `sketch` as a point on it and its direction, in the sketch's
 /// coordinates, as regeneration takes it: an axis from the origin along
 /// +x or +y, a line from its start to its end. `None` for a line that's
-/// gone or isn't one, or has no length.
+/// gone or isn't one, or has no length, and for a model edge, which isn't
+/// the sketch's.
 pub(crate) fn axis_line(sketch: &Sketch, axis: AxisLine) -> Option<(DVec2, DVec2)> {
     let (at, along) = match axis {
         AxisLine::SketchX => (DVec2::ZERO, DVec2::X),
@@ -263,6 +342,7 @@ pub(crate) fn axis_line(sketch: &Sketch, axis: AxisLine) -> Option<(DVec2, DVec2
             let start = sketch.point(start)?.at;
             (start, sketch.point(end)?.at - start)
         }
+        AxisLine::Edge(_) => return None,
     };
     (along != DVec2::ZERO && along.is_finite() && at.is_finite()).then_some((at, along))
 }
@@ -331,7 +411,7 @@ pub(crate) fn panel<'a>(state: &RevolveState<'a>) -> Element<'a, Message> {
     });
     let axis_place = axis_row
         .is_none()
-        .then(|| "Click a line or axis".to_owned());
+        .then(|| "Click a line, axis or edge".to_owned());
     let axis = field(
         "Axis",
         pick_field(
@@ -347,9 +427,13 @@ pub(crate) fn panel<'a>(state: &RevolveState<'a>) -> Element<'a, Message> {
             1 => Some("1 region wasn't found".to_owned()),
             n => Some(format!("{n} regions weren't found")),
         };
-        let axis = state
-            .axis_missing
-            .then(|| "The axis line wasn't found".to_owned());
+        let axis = state.axis_missing.then(|| {
+            match state.axis {
+                Some(AxisLine::Edge(_)) => "The axis edge wasn't found",
+                _ => "The axis line wasn't found",
+            }
+            .to_owned()
+        });
         let notes = regions.into_iter().chain(axis).map(|note| {
             text(note)
                 .size(12)

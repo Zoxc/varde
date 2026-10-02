@@ -39,6 +39,21 @@ pub(crate) const AXIS_NO_LENGTH: &str = "its axis line has no length";
 /// past the coordinate limit.
 pub(crate) const AXIS_TOO_FAR: &str = "its regions are too far from the axis to revolve";
 
+/// Why a revolve about a model edge fails: the edge's body has no solid
+/// when the history reaches the revolve (its maker failed or is gone).
+pub(crate) const EDGE_BODY_GONE: &str = "its axis edge's body is gone";
+
+/// Why a revolve about a model edge fails: no edge of its body as the
+/// features before it leave it is between faces of the edge's names.
+pub(crate) const EDGE_NOT_FOUND: &str = "its axis edge wasn't found";
+
+/// Why a revolve about a model edge fails: the edge found isn't a line.
+pub(crate) const EDGE_NOT_STRAIGHT: &str = "its axis edge isn't straight";
+
+/// Why a revolve about a model edge fails: an end of the edge is further
+/// than the resolution from its sketch's plane.
+pub(crate) const EDGE_OFF_PLANE: &str = "its axis edge isn't in the sketch's plane";
+
 /// What a feature was doing with a body when the kernel gave up.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Doing {

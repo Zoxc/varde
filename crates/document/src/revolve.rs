@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use varde_expr::{Ask, Value};
 use varde_sketch::{Curve, Id, RegionRef, RegionRefError, Sketch};
 
-use crate::{BodyId, Design, FeatureId, MAX_COORD, Operation};
+use crate::{BodyId, Design, EdgeError, EdgeRef, FeatureId, MAX_COORD, Operation};
 
 /// The most regions one revolve may take, as [`MAX_EXTRUDE_REGIONS`]
 /// for an extrude.
@@ -42,8 +42,9 @@ pub struct Revolve {
 
 /// The line a revolve turns about, in its sketch's plane, and its
 /// direction, which says which way positive angles turn (right-handed
-/// about it).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// about it). New kinds are appended: a kind's place in the list is how
+/// files store it.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum AxisLine {
     /// A line of the sketch, construction or not, directed from its start
     /// point to its end. The sketch may lose it or the line may stop
@@ -56,6 +57,14 @@ pub enum AxisLine {
     SketchX,
     /// The sketch's own y axis, directed along +y.
     SketchY,
+    /// A straight edge of a body, as the features before the revolve
+    /// leave it, directed as [`EdgeRef`] says. Regenerating finds it on
+    /// the body (or the body a join merged it into) when the history
+    /// reaches the revolve, and requires it straight and in the sketch's
+    /// plane: the axis is then the line through its two ends, mapped into
+    /// the sketch. The document requires only that it names a body and
+    /// features before the revolve ([`Document::check`](crate::Document::check)).
+    Edge(EdgeRef),
 }
 
 /// How far a revolve turns about its axis. Angles are in radians, typed as
@@ -172,7 +181,7 @@ impl Revolve {
                 Some(entry) if matches!(entry.curve, Curve::Line { .. }) => Ok(()),
                 _ => Err(RevolveError::Axis(id)),
             },
-            AxisLine::SketchX | AxisLine::SketchY => Ok(()),
+            AxisLine::SketchX | AxisLine::SketchY | AxisLine::Edge(_) => Ok(()),
         }
     }
 }
@@ -201,6 +210,17 @@ pub enum RevolveError {
     Excluded(BodyId),
     /// Its excluded bodies aren't sorted, or one is repeated.
     ExcludedOrder,
+    /// Its axis edge's reference fails its own check
+    /// ([`EdgeRef::check_own`]).
+    Edge(EdgeError),
+    /// Its axis edge's body, this one, is made by the revolve or a
+    /// feature after it, or isn't there and has an id a body made later
+    /// could take.
+    EdgeBody(BodyId),
+    /// A key of its axis edge's faces names this feature, which is the
+    /// revolve or comes after it, or isn't there and has an id a feature
+    /// made later could take.
+    EdgeMaker(FeatureId),
 }
 
 impl fmt::Display for RevolveError {
@@ -232,6 +252,17 @@ impl fmt::Display for RevolveError {
             RevolveError::ExcludedOrder => {
                 f.write_str("its excluded bodies are out of order or repeated")
             }
+            RevolveError::Edge(why) => write!(f, "its axis: {why}"),
+            RevolveError::EdgeBody(body) => write!(
+                f,
+                "its axis is an edge of body {}, which isn't made before it",
+                body.0
+            ),
+            RevolveError::EdgeMaker(feature) => write!(
+                f,
+                "its axis is an edge of a face made by feature {}, which doesn't come before it",
+                feature.0
+            ),
         }
     }
 }
@@ -240,6 +271,7 @@ impl std::error::Error for RevolveError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             RevolveError::Region(why) => Some(why),
+            RevolveError::Edge(why) => Some(why),
             _ => None,
         }
     }

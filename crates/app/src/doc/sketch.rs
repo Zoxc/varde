@@ -554,7 +554,7 @@ impl Doc {
     }
 
     /// What the model shown found that naming its faces needs.
-    fn shown(&self) -> Shown<'_> {
+    pub(crate) fn shown(&self) -> Shown<'_> {
         Shown {
             merged: self.feed.merged_bodies(),
             touched: self.feed.touched_features(),

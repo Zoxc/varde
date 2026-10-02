@@ -420,7 +420,8 @@ pub struct Revolve {
     pub flip: bool,
     pub operation: Operation,       // the extrude's: NewBody, Join, Cut, Intersect
 }
-pub enum AxisLine { Curve(Id), SketchX, SketchY }
+pub enum AxisLine { Curve(Id), SketchX, SketchY, Edge(EdgeRef) }   // appended
+pub struct EdgeRef { pub body: BodyId, pub faces: [FaceKey; 2], pub near: DVec3 }  // faces sorted
 pub enum Turn { Full, OneSide(Value), Symmetric(Value), TwoSides(Value, Value) }
 ```
 
@@ -428,8 +429,17 @@ pub enum Turn { Full, OneSide(Value), Symmetric(Value), TwoSides(Value, Value) }
   directed from its start point to its end; `SketchX` / `SketchY` the
   sketch's own axes, directed along +x / +y. The sketch's built-in axis
   ids (`Id::X_AXIS`, `Id::Y_AXIS`) aren't curves: a pick of one is stored
-  as `SketchX` / `SketchY`, and `Curve` of them is refused. An axis on a
-  straight model edge (`AxisLine::Edge`) comes later, appended.
+  as `SketchX` / `SketchY`, and `Curve` of them is refused.
+  `Edge(EdgeRef)` is a straight edge of a body as the features before
+  the revolve leave it (`crates/document/src/edge.rs`): the body, the
+  keys of the faces either side, sorted and different, and the picked
+  point (finite, within `MAX_COORD`), which chooses among several edges
+  between faces of those keys, as a face reference's does. Its
+  direction is the way the edge runs with the face of its first key on
+  its left seen from outside the body: a face's own boundary runs round
+  it that way (its halfedges, and the mesh's drawn edge, which runs
+  along its first face), so the direction follows the faces and an edit
+  keeping them keeps it.
 - **Direction**: positive angles turn right-handed about the axis's
   direction, starting from the sketch plane. `flip` turns one side and
   swaps two sides the other way, as an extrude's; full and symmetric
@@ -463,8 +473,18 @@ pub enum Turn { Full, OneSide(Value), Symmetric(Value), TwoSides(Value, Value) }
   one: regeneration fails the revolve then ("axis not found"), as it
   does a region it can't find. Setting such a revolve again needs a new
   axis.
+- **Edge check** (`Document::check`, for every document): an `Edge`
+  axis's reference passes `EdgeRef::check_own` (`RevolveError::Edge`:
+  keys sorted and different, point in bounds); its body is made before
+  the revolve (`EdgeBody`) and both keys' features come before it
+  (`EdgeMaker`), as a sketch on a face's (`Document::made_before`,
+  `body_before`, shared): one that isn't there is allowed with an id
+  below `next_id`, one no later body or feature can take. Whether the
+  edge is there, straight and in the plane is regeneration's.
 - `removal`: removing its sketch removes it and its body; it's in
-  `drop_excluded` like an extrude.
+  `drop_excluded` like an extrude. Its axis edge's body or faces' makers
+  don't cascade: removing them leaves the revolve failing ("its axis
+  edge's body is gone", "wasn't found"), to be edited.
 
 ### Regeneration
 
@@ -481,6 +501,25 @@ into a kernel profile in the sketch's coordinates, then:
   (`Run::axis_failed`). The reasons are `AxisError`s (`NotFound`,
   `NoLength`, and `TooFar` from `axis_frame`), worded by
   `AxisError::message`.
+- **A model edge** (`edge_axis`, before the tool's cache key): the
+  edge's body through `Evaluation::holder` as of the revolve (one with
+  no solid: "its axis edge's body is gone"); on its solid's
+  `Topology::edge` by the two keys (name or alias) and the point ("its
+  axis edge wasn't found"); `measure::edge_shape` must be a `Line` ("its
+  axis edge isn't straight", showing the edge's curves, by value as a
+  face that isn't flat shows the face), its ends ordered as `EdgeRef`
+  runs (`edge_ends`: as the chain's halfedges where its first region is
+  named by the first key, else reversed). Both ends must be within the
+  tolerance's resolution of the sketch's plane, a decision on geometry
+  stated as one ("its axis edge isn't in the sketch's plane", showing
+  the edge and its two ends): an edge of the face the sketch is on is
+  in its plane to the bit on faces square to the world's axes, to
+  rounding on tilted ones. The axis is then the line from the first end
+  to the second mapped into the sketch, `curve: None` (no ends snapped
+  to `x = 0`: the kernel puts a profile edge along it within its
+  resolution there, as any other). The ends, or the failure, are cached
+  (`Entry::Edge`) by the solid's key, the keys, the point's bits and the
+  fit tolerance (which a curved edge's failure is drawn at).
 - **The frame** (`axis_frame`): origin the axis's point, `y` along the
   axis (unit), `x` square to it in the sketch's plane toward the
   profile: the side of the profile point (segment ends and middles)
@@ -517,9 +556,11 @@ into a kernel profile in the sketch's coordinates, then:
   join touching several merging them into the first, empty results
   failing, `Evaluation::touched` listing what it touches.
 - **Cache key** of the tool: `"revolve"`, the feature id, the regions,
-  the `AxisLine`, the fit tolerance's bits, `span()` (its bits, or none),
-  the sketch's key (which holds where the axis line is) and the
-  placement's bits. Booleans and touches are keyed by tool and body keys as an
+  the `AxisLine` (for a model edge, the resolved axis's `at` and
+  `along` bits instead, so the tool follows the body under it and the
+  edge picked again elsewhere finds it), the fit tolerance's bits,
+  `span()` (its bits, or none), the sketch's key (which holds where the
+  axis line is) and the placement's bits. Booleans and touches are keyed by tool and body keys as an
   extrude's.
 
 **Drafts** are of any kind: `regen::Draft { revision, feature, kind:
@@ -563,6 +604,29 @@ first angle's field and "90°" in the second, a new body.
   there's a source, an axis picked sets it, as a region does
   (`RevolveLook::PickAxis { sketch, axis }`), and while an axis is
   picked, un-picking every region keeps the source.
+- **A model edge as the axis** (`RevolveLook::PickEdge { model, edge,
+  at }`, `Doc::pick_axis_edge`): once there's a source, a straight edge
+  of the model shown in the source's plane (`varde_view::axis_edge`:
+  `PickIndex::edge_ends`, straight as the mesh draws it, and both ends
+  on the plane within the `f32` points' rounding; regeneration decides
+  exactly). It's named as a sketch on a face is
+  (`varde_view::Naming`, `PlanePick`'s naming with the history stopped
+  at the revolve: the edited one's place, or the end): the two faces'
+  keys sorted, the point clicked, and the body its first face is on as
+  of the revolve, the merges before it replayed. Refused, with a notice
+  saying why: before there's a source ("Pick the profile first, then
+  its axis"), a round edge ("Only a straight edge can be the axis"), one
+  off the plane ("That edge isn't in the sketch's plane"), one a feature
+  at or after the revolve made, the revolve's own included ("Only an
+  edge made before the revolve can be its axis"), one whose faces may be
+  on several bodies there ("Which body that edge is on at the revolve
+  can't be told: pick another"), and a pick of a model no longer shown.
+  The session keeps the edge's ends where the model shown had it when
+  picked (`RevolveSession::edge_ends`), or, editing, where it shows it
+  then (`Doc::shown_edge`, on the body holding the reference's), for the
+  arrow only; a model edge is always the source's axis
+  (`axis_holds`), and an edited revolve's isn't "missing": regeneration
+  says when it's gone.
 - **The axis** is stored as the document wants it: a line as
   `AxisLine::Curve`, the sketch's axes as `SketchX` / `SketchY` (their
   built-in ids never as curves; `varde_view`'s `axis_of`). A curve that
@@ -613,7 +677,9 @@ in `operation_panel.rs`; their look is in `agents/viewport.md`): title
 "New revolve" or the revolve's name; a Profile field (the regions
 picked as rows, "Region 1" with a cross taking it out, then "Click
 regions" while it's the one picking or empty) and an Axis field ("Line
-3", "X axis" as a row, or "Click a line or axis"), each outlined while
+3", "X axis", "Edge of Body 1" as a row, or "Click a line, axis or
+edge"; the mock's revolve has no edges, so the wording joins its Move
+axis's "Click an axis or edge"), each outlined while
 it's the one picking, a click on it making it so; what an edited
 revolve lost; Extent tiles (Full 360°, One side, Symmetric, Two sides,
 seen down the axis), the angle fields ("Angle", or "Side 1" and "Side
@@ -632,11 +698,17 @@ origin: a quarter past the sketch's farthest point, at least 10 mm)
 drawn in the live layer on their planes, the one under the cursor
 wider in the hover colour; hit testing is `hit::hit_axis` (lines within
 6 px first, then the axes within their reach), the nearest by depth over
-the candidates. The axis picked is drawn on the source in the selected
+the candidates. Once there's a source, the model's edges that can be
+the axis (`axis_edge`) are drawn too, as world lines, the one under the
+cursor wider in the hover colour; the model picks them as it picks
+edges (`PickIndex::pick` with `Picks::Edges`), after the sketch's lines
+and before the regions, and a click on another edge where there's no
+region sends it to be refused. The axis picked is drawn on the source in the selected
 colour with an arrowhead (screen space) at the end positive angles turn
-right-handed about: the line's end, or a built-in axis's +x / +y end,
-and the other end when flipped for one side or two sides (as the
-revolve's `span` does). The knobs' layer under the panel is an empty
+right-handed about: the line's end, a built-in axis's +x / +y end, or a
+model edge's end as its reference runs (its ends mapped onto the
+source's plane), and the other end when flipped for one side or two
+sides (as the revolve's `span` does). The knobs' layer under the panel is an empty
 placeholder for a revolve, so the panel's state keeps its place. A test
 checks the turn against regeneration's: a quarter turn's preview lies
 on the side right-handed about the line from its start to its end (or

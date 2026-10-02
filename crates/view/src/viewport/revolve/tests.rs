@@ -7,6 +7,7 @@ use varde_sketch::{Id, Profiles};
 
 use super::*;
 use crate::operation_panel::{OperationKind, TypedField};
+use crate::pick::PickIndex;
 use crate::projection::top_camera;
 use crate::revolve::TurnKind;
 use crate::testing;
@@ -69,6 +70,9 @@ fn state<'a>(
         missing: 0,
         axis,
         axis_missing: false,
+        edge_ends: None,
+        edge_body: None,
+        index: crate::pick::empty_index(),
         picking,
         extent: TurnKind::Full,
         fields: [field; 2],
@@ -298,4 +302,138 @@ fn random_clicks_pick_only_what_they_may() {
     }
     eprintln!("{axes} axes, {regions} regions picked");
     assert!(axes > 20 && regions > 20, "{axes} {regions}");
+}
+
+/// A block from z = −5 up to 0, x from −6 to −3 and y from −6 to 6: its
+/// top edges lie in XY, the right one at x = −3, 30 pixels left of the
+/// middle through [`top_camera`] (where y = 3 is 30 pixels above it). Made ready for picking as model 5.
+fn block() -> PickIndex {
+    use varde_document::{BodyId, Command, Document, Editor, Extent, Extrude, Operation};
+    let mut editor = Editor::new(Document::default());
+    let plane = Plane::Origin(OriginPlane::XY);
+    editor.apply(editor.document().add_sketch(plane)).unwrap();
+    let feature = editor.document().features()[0].id;
+    let mut sketch = Sketch::default();
+    let corners = [(-6.0, -6.0), (-3.0, -6.0), (-3.0, 6.0), (-6.0, 6.0)]
+        .map(|(x, y)| testing::point(&mut sketch, x, y));
+    for k in 0..4 {
+        testing::line(&mut sketch, corners[k], corners[(k + 1) % 4]);
+    }
+    let region = sketch.profiles().unwrap().reference(0).unwrap();
+    editor
+        .apply(Command::SetSketch {
+            feature,
+            sketch: Box::new(sketch),
+        })
+        .unwrap();
+    let design = editor.document().design();
+    let depth = varde_expr::Value::new("5", &Extent::ask(&design)).unwrap();
+    let extrude = Extrude {
+        sketch: feature,
+        regions: vec![region],
+        extent: Extent::OneSide(depth),
+        flip: true,
+        operation: Operation::NewBody(BodyId::NEW),
+    };
+    editor
+        .apply(editor.document().add_feature(extrude.into()))
+        .unwrap();
+    let document = editor.document().clone();
+    let mut cache = varde_regen::Cache::default();
+    let evaluation = varde_regen::evaluate(&document, &mut cache);
+    let (mesh, picking) =
+        varde_regen::tessellate_picking(&document, &evaluation, &mut cache).unwrap();
+    PickIndex::new(mesh, picking, 5)
+}
+
+/// While the axis is picked, a model edge in the source's plane is
+/// picked after the sketch's lines and before its regions, drawn and
+/// hovered; while regions are, edges aren't. The arrow on a model edge
+/// runs between its ends, mapped onto the source.
+#[test]
+fn model_edges_in_the_plane_can_be_the_axis() {
+    let (sketch, left, profiles) = lathe();
+    let picked = BTreeSet::from([0]);
+    let index = block();
+    let revolve = RevolveState {
+        index: &index,
+        ..state(&sketch, &profiles, &picked, RevolvePick::Axis, None)
+    };
+    let revolving = Revolving::new(revolve.clone());
+    let edges = revolving.axis_edges();
+    // The block's four top edges, nothing of its sides or bottom.
+    assert_eq!(edges.len(), 4, "{edges:?}");
+    assert!(
+        edges
+            .iter()
+            .all(|(_, ends)| ends.iter().all(|p| p.z == 0.0))
+    );
+    let right = edges
+        .iter()
+        .find(|(_, [a, b])| a.x == -3.0 && b.x == -3.0)
+        .unwrap();
+
+    let viewport = shown(revolve.clone());
+    let picked_edge = |at: Point| match click(&viewport, at)[..] {
+        [Message::Look(Look::Revolve(RevolveLook::PickEdge { model, edge, at }))] => {
+            assert_eq!(model, 5);
+            Some((edge, at))
+        }
+        _ => None,
+    };
+    let (edge, at) = picked_edge(Point::new(70.0, 70.0))
+        .unwrap_or_else(|| panic!("{:?}", click(&viewport, Point::new(70.0, 70.0))));
+    assert_eq!(edge, right.0);
+    assert!((at - DVec3::new(-3.0, 3.0, 0.0)).length() < 0.2, "{at}");
+    // The sketch's left line, 10 pixels off, still goes first when it's
+    // the nearer.
+    assert_eq!(
+        axis_picked(&viewport, Point::new(118.0, 70.0)),
+        Some(AxisLine::Curve(left))
+    );
+    // Hovered, it's drawn stronger.
+    let mut input = Input::default();
+    let at = Point::new(70.0, 70.0);
+    let moved = mouse::Event::CursorMoved { position: at };
+    let cursor = mouse::Cursor::Available(at);
+    let _ = revolving.mouse(&mut input, moved, bounds(), cursor, &top_camera());
+    assert_eq!(input.edge.map(|(edge, _)| edge), Some(right.0));
+    assert_eq!(
+        revolving.mouse_interaction(&input, bounds(), cursor),
+        Some(mouse::Interaction::Pointer)
+    );
+
+    // Picking regions, a click on the edge picks nothing.
+    let regions = shown(RevolveState {
+        picking: RevolvePick::Regions,
+        ..revolve.clone()
+    });
+    assert!(click(&regions, Point::new(70.0, 70.0)).is_empty());
+
+    // Picked, the arrow runs between its ends on the source.
+    let edge_ref = varde_document::EdgeRef {
+        body: index.face_body(0).unwrap(),
+        faces: index.chain_keys(right.0).unwrap(),
+        near: DVec3::new(-3.0, 0.0, 0.0),
+    };
+    let about = RevolveState {
+        axis: Some(AxisLine::Edge(edge_ref)),
+        edge_ends: Some(right.1),
+        picking: RevolvePick::Regions,
+        ..revolve
+    };
+    let pointed = Revolving::new(about.clone())
+        .pointed()
+        .map(|(_, ends)| ends);
+    assert_eq!(pointed, Some(right.1.map(|p| p.truncate())));
+    let flipped = RevolveState {
+        extent: TurnKind::OneSide,
+        flip: true,
+        ..about
+    };
+    let pointed = Revolving::new(flipped).pointed().map(|(_, ends)| ends);
+    assert_eq!(
+        pointed,
+        Some([right.1[1], right.1[0]].map(|p| p.truncate()))
+    );
 }

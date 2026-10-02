@@ -1,20 +1,24 @@
 //! Setting up a revolve: its session, started by `Look::StartRevolve` or
 //! by editing a revolve, picking regions and the axis (a line of the
-//! source sketch or one of its axes), its angles typed, the preview
+//! source sketch or one of its axes, or a straight model edge in its
+//! plane), its angles typed, the preview
 //! through the regeneration lane's drafts, and committing it as one undo
 //! step or cancelling it, which leaves no trace. Picking regions, the
 //! Bodies list and the typed fields are the extrude's
 //! ([`super::regions`]).
 
+use std::borrow::Cow;
 use std::f64::consts::PI;
 
+use glam::DVec3;
 use varde_document::{
-    AxisLine, Design, Document, FeatureId, FeatureKind, MAX_REVOLVE_REGIONS, Revolve, RevolveError,
-    Turn,
+    AxisLine, Design, Document, EdgeRef, FeatureId, FeatureKind, MAX_REVOLVE_REGIONS, Revolve,
+    RevolveError, Turn,
 };
 use varde_expr::{AngleUnit, Unit};
 use varde_view::{
-    Angle, OperationKind, PanelHover, RevolveLook, RevolvePick, RevolveState, TurnKind,
+    Angle, Naming, OperationKind, PanelHover, RevolveLook, RevolvePick, RevolveState, TurnKind,
+    Unnamed, axis_edge,
 };
 
 use super::extrude::is_sketch;
@@ -35,6 +39,11 @@ pub(crate) struct RevolveSession {
     /// Whether the edited revolve's axis line wasn't found: until another
     /// is picked.
     pub(crate) axis_missing: bool,
+    /// Where the axis is, if it's a model edge found in the model shown
+    /// when it was picked, or when the session started: its ends, in the
+    /// order it runs. For the arrow only: regenerating finds the edge
+    /// again.
+    pub(crate) edge_ends: Option<[DVec3; 2]>,
     /// What a click picks first.
     pub(crate) picking: RevolvePick,
     pub(crate) extent: TurnKind,
@@ -74,6 +83,7 @@ impl RevolveSession {
             hover: None,
             axis: None,
             axis_missing: false,
+            edge_ends: None,
             picking: RevolvePick::Regions,
             extent: TurnKind::Full,
             fields: DEFAULT_ANGLES.map(field),
@@ -96,8 +106,10 @@ impl RevolveSession {
             &revolve.regions,
             MAX_REVOLVE_REGIONS,
         );
-        let found = sketch_of(document, revolve.sketch)
-            .is_some_and(|sketch| revolve.check_axis(sketch).is_ok());
+        // A model edge isn't the sketch's: regenerating says if it's gone.
+        let found = matches!(revolve.axis, AxisLine::Edge(_))
+            || sketch_of(document, revolve.sketch)
+                .is_some_and(|sketch| revolve.check_axis(sketch).is_ok());
         session.axis = found.then_some(revolve.axis);
         session.axis_missing = !found;
         let ask = Turn::ask(&document.design());
@@ -121,7 +133,8 @@ impl RevolveSession {
     }
 
     /// The axis picked, if the source has it as `document` is: a line of
-    /// it, or one of its axes.
+    /// it, or one of its axes; or a model edge, which the document
+    /// checks.
     fn axis(&self, document: &Document) -> Option<AxisLine> {
         let axis = self.axis?;
         let sketch = sketch_of(document, self.regions.source?)?;
@@ -138,6 +151,7 @@ impl RevolveSession {
         }
         self.axis = Some(axis);
         self.axis_missing = false;
+        self.edge_ends = None;
         self.picking = RevolvePick::Regions;
         self.regions.refresh(document);
     }
@@ -223,7 +237,7 @@ fn sketch_of(document: &Document, id: FeatureId) -> Option<&varde_document::Sket
 /// ends are at one point is no axis to pick, nor to commit.
 fn axis_holds(sketch: &varde_document::Sketch, axis: AxisLine) -> bool {
     match axis {
-        AxisLine::SketchX | AxisLine::SketchY => true,
+        AxisLine::SketchX | AxisLine::SketchY | AxisLine::Edge(_) => true,
         AxisLine::Curve(id) => match sketch.curve(id).map(|entry| &entry.curve) {
             Some(&varde_sketch::Curve::Line { start, end }) => {
                 let at = |point| sketch.point(point).map(|point| point.at);
@@ -273,8 +287,88 @@ impl Doc {
         self.extrude = None;
         self.combine = None;
         self.selected_feature = Some(id);
-        self.revolve = Some(RevolveSession::editing(document, id, revolve));
+        let mut session = RevolveSession::editing(document, id, revolve);
+        if let AxisLine::Edge(edge) = &revolve.axis {
+            session.edge_ends = self.shown_edge(edge);
+        }
+        self.revolve = Some(session);
         self.focus = Some(Focus::All);
+    }
+
+    /// Where the model shown has the edge `edge` names, if it has it and
+    /// it's straight: its ends, in the order the reference runs. It's
+    /// looked for on the body holding `edge`'s body at the end of the
+    /// history, which the model shows.
+    fn shown_edge(&self, edge: &EdgeRef) -> Option<[DVec3; 2]> {
+        let index = self.feed.pick_index();
+        let shown = (self.feed.merged_bodies().iter())
+            .find(|(merged, _)| *merged == edge.body)
+            .map_or(edge.body, |&(_, holder)| holder);
+        let found = index.find_edge(shown, edge.faces, edge.near)?;
+        index.edge_ends(found, &edge.faces[0])
+    }
+
+    /// Picks edge `edge` of the model shown, of the index `model` names,
+    /// clicked at `at`, as the axis of the revolve being set up, or says
+    /// why it can't be ([`Doc::axis_edge`]).
+    fn pick_axis_edge(&mut self, model: u64, edge: u32, at: DVec3) {
+        let Some(session) = &self.revolve else {
+            return;
+        };
+        match self.axis_edge(session, model, edge, at) {
+            Ok((reference, ends)) => {
+                let document = self.editor.document();
+                let Some(session) = &mut self.revolve else {
+                    return;
+                };
+                session.axis = Some(AxisLine::Edge(reference));
+                session.axis_missing = false;
+                session.edge_ends = Some(ends);
+                session.picking = RevolvePick::Regions;
+                session.regions.refresh(document);
+            }
+            Err(why) => self.notice = Some(why.into_owned()),
+        }
+    }
+
+    /// Edge `edge` of the model shown, of the index `model` names, clicked
+    /// at `at`, as the axis of the revolve `session` sets up: the
+    /// reference the revolve stores ([`Naming::edge_ref`], with the
+    /// history stopped at the revolve) and the edge's ends. Refused, why,
+    /// if the model shown isn't the one clicked or the cursor doesn't pick
+    /// it, there's no source to take the plane of yet, or the edge isn't
+    /// straight or in the source's plane ([`axis_edge`]), isn't made
+    /// before the revolve, or which body it's on there can't be told.
+    fn axis_edge(
+        &self,
+        session: &RevolveSession,
+        model: u64,
+        edge: u32,
+        at: DVec3,
+    ) -> Result<(EdgeRef, [DVec3; 2]), Cow<'static, str>> {
+        if model != self.feed.model() || self.feed.predates_replacement() {
+            return Err("The model shown is out of date: try again once it's regenerated".into());
+        }
+        let source = (session.regions.source).ok_or("Pick the profile first, then its axis")?;
+        let placement = self
+            .placement(source)
+            .ok_or("The profile's sketch isn't placed")?;
+        let index = self.feed.pick_index();
+        let ends = axis_edge(index, edge, &placement)?;
+        let document = self.editor.document();
+        let features = document.features();
+        let before = (session.feature)
+            .and_then(|id| features.iter().position(|feature| feature.id == id))
+            .unwrap_or(features.len());
+        let naming = Naming::before(document, before, self.shown());
+        let reference = naming.edge_ref(index, edge, at).map_err(|why| match why {
+            Unnamed::Missing => "That edge isn't in the model",
+            Unnamed::Later => "Only an edge made before the revolve can be its axis",
+            Unnamed::Unclear => {
+                "Which body that edge is on at the revolve can't be told: pick another"
+            }
+        })?;
+        Ok((reference, ends))
     }
 
     /// Takes `message`, changing the revolve being set up.
@@ -297,6 +391,7 @@ impl Doc {
                 }
             }
             RevolveLook::PickAxis { sketch, axis } => session.pick_axis(sketch, axis, document),
+            RevolveLook::PickEdge { model, edge, at } => self.pick_axis_edge(model, edge, at),
             RevolveLook::Picking(picking) => session.picking = picking,
             RevolveLook::Extent(kind) => session.extent = kind,
             RevolveLook::Input { angle, text } => {
@@ -393,6 +488,14 @@ impl Doc {
             missing: session.regions.missing,
             axis: session.axis(document),
             axis_missing: session.axis_missing,
+            edge_ends: session
+                .edge_ends
+                .filter(|_| matches!(session.axis, Some(AxisLine::Edge(_)))),
+            edge_body: match &session.axis {
+                Some(AxisLine::Edge(edge)) => document.body(edge.body).map(|b| b.name.as_str()),
+                _ => None,
+            },
+            index: self.feed.pick_index(),
             picking: session.picking,
             extent: session.extent,
             fields: [session.fields[0].field(), session.fields[1].field()],

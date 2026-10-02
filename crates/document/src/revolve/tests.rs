@@ -3,6 +3,9 @@ use std::f64::consts::{PI, TAU};
 use varde_expr::Value;
 use varde_sketch::{Curve, RegionRefError};
 
+use glam::DVec3;
+use varde_kernel::mesh::{FaceKey, PartKey};
+
 use super::*;
 use crate::testing::{extrude_of, plate, with_body};
 use crate::{
@@ -621,7 +624,7 @@ fn unknown_revolve_bytes_are_refused() {
     assert_eq!(bytes[axis], 2, "the sketch's y axis");
     assert_eq!(bytes[axis + 1], 0, "a whole turn");
     assert_eq!(bytes[axis + 2], 0, "not flipped");
-    for (offset, byte) in [(0, 3), (1, 4), (2, 2)] {
+    for (offset, byte) in [(0, 4), (1, 4), (2, 2)] {
         let mut bad = bytes.clone();
         bad[axis + offset] = byte;
         assert!(Document::from_postcard(&bad).is_err(), "{offset}: {byte}");
@@ -644,6 +647,9 @@ fn a_revolve_is_the_third_kind() {
         axes.map(|axis| postcard::to_stdvec(&axis).unwrap()),
         [vec![1], vec![2]]
     );
+    // A model edge is appended after them.
+    let edge = AxisLine::Edge(plate_edge(&with_body()));
+    assert_eq!(postcard::to_stdvec(&edge).unwrap()[0], 3);
     assert_eq!(postcard::to_stdvec(&Turn::Full).unwrap(), [0]);
     let _ = Extent::ThroughAll;
 }
@@ -668,5 +674,158 @@ fn revolve_errors_say_what_is_wrong() {
     assert_eq!(
         RevolveError::Axis(circle).to_string(),
         format!("its axis, curve {circle}, isn't a line of its sketch")
+    );
+}
+
+/// The example plate's edge between its top (its extrude's end cap) and
+/// the side its sketch's first line makes, picked at its middle.
+fn plate_edge(document: &Document) -> EdgeRef {
+    let maker = document.features[1].id.get();
+    let (_, drawn, _, _) = sketch_of(document);
+    let top = FaceKey {
+        feature: maker,
+        part: PartKey::EndCap,
+        instance: 0,
+    };
+    let side = FaceKey {
+        feature: maker,
+        part: PartKey::Side {
+            curve: u64::from(drawn.curves[0].id.get()),
+        },
+        instance: 0,
+    };
+    EdgeRef {
+        body: document.bodies[0].id,
+        faces: [top.min(side), top.max(side)],
+        near: DVec3::new(0.0, -20.0, 10.0),
+    }
+}
+
+/// A revolve about a model edge names a body and faces' makers before
+/// it, as a sketch on a face does: one that isn't there is allowed with
+/// an id no later one can take. Its keys are sorted and different, its
+/// point in bounds. What it names isn't removed with it, nor it with
+/// them, and it round trips.
+#[test]
+fn an_axis_edge_names_only_what_comes_before_its_revolve() {
+    let document = with_body();
+    let edge = plate_edge(&document);
+    let about = |edge: EdgeRef| Revolve {
+        axis: AxisLine::Edge(edge),
+        ..ring(Operation::NewBody(BodyId::NEW))
+    };
+    let (mut editor, id) = added(about(edge));
+    let document = editor.document().clone();
+    assert_eq!(revolve_of(&document, id).axis, AxisLine::Edge(edge));
+    assert_eq!(
+        Document::from_postcard(&document.to_postcard()),
+        Ok(document.clone())
+    );
+
+    // Its own body and itself come after it; ids at or past the next a
+    // later body or feature would take.
+    let own = document.body(document.bodies[1].id).unwrap().id;
+    let next = document.next_id;
+    let [a, b] = edge.faces;
+    let made_by = |feature: u64| {
+        let key = FaceKey { feature, ..b };
+        [a.min(key), a.max(key)]
+    };
+    let cases = [
+        (EdgeRef { body: own, ..edge }, RevolveError::EdgeBody(own)),
+        (
+            EdgeRef {
+                body: BodyId(next),
+                ..edge
+            },
+            RevolveError::EdgeBody(BodyId(next)),
+        ),
+        (
+            EdgeRef {
+                faces: made_by(id.get()),
+                ..edge
+            },
+            RevolveError::EdgeMaker(id),
+        ),
+        (
+            EdgeRef {
+                faces: made_by(next + 3),
+                ..edge
+            },
+            RevolveError::EdgeMaker(FeatureId(next + 3)),
+        ),
+        (
+            EdgeRef {
+                faces: [b, a],
+                ..edge
+            },
+            RevolveError::Edge(EdgeError::Faces),
+        ),
+        (
+            EdgeRef {
+                faces: [a, a],
+                ..edge
+            },
+            RevolveError::Edge(EdgeError::Faces),
+        ),
+    ];
+    for (bad, why) in cases {
+        let changed = changed(&document, id, |revolve| revolve.axis = AxisLine::Edge(bad));
+        refused(&changed, id, why);
+        assert_eq!(
+            editor.apply(Command::SetFeature {
+                feature: id,
+                kind: Box::new(about(bad).into()),
+            }),
+            Err(EditError::Invalid(CheckError::Revolve(id, why)))
+        );
+    }
+    for near in [
+        DVec3::new(f64::NAN, 0.0, 0.0),
+        DVec3::new(0.0, f64::INFINITY, 0.0),
+        DVec3::new(0.0, 0.0, f64::from(MAX_COORD) * 2.0),
+    ] {
+        let bad = EdgeRef { near, ..edge };
+        let changed = changed(&document, id, |revolve| revolve.axis = AxisLine::Edge(bad));
+        assert!(matches!(
+            changed.check(),
+            Err(CheckError::Revolve(
+                _,
+                RevolveError::Edge(EdgeError::Near(_))
+            ))
+        ));
+        assert!(Document::from_postcard(&changed.to_postcard()).is_err());
+    }
+
+    // Removing the plate's extrude takes its body, not the revolve, which
+    // still checks naming them, as its ids stay below the next.
+    let plate_maker = document.features[1].id;
+    editor.apply(Command::RemoveFeature(plate_maker)).unwrap();
+    let removed = editor.document().clone();
+    assert!(removed.body(edge.body).is_none());
+    assert_eq!(revolve_of(&removed, id).axis, AxisLine::Edge(edge));
+    assert_eq!(removed.check(), Ok(()));
+    // An edge of a body or a feature that's gone, set again, is allowed.
+    let flipped = Revolve {
+        flip: true,
+        ..revolve_of(&removed, id).clone()
+    };
+    editor
+        .apply(Command::SetFeature {
+            feature: id,
+            kind: Box::new(flipped.into()),
+        })
+        .unwrap();
+
+    assert_eq!(
+        RevolveError::EdgeBody(own).to_string(),
+        format!(
+            "its axis is an edge of body {}, which isn't made before it",
+            own.0
+        )
+    );
+    assert_eq!(
+        RevolveError::Edge(EdgeError::Faces).to_string(),
+        "its axis: its edge's faces are out of order or the same"
     );
 }

@@ -2,14 +2,19 @@
 //! shaded, hovering and picking them with the left button (`regions.rs`),
 //! and while the axis is picked, the sketches' lines and axes drawn and
 //! hit tested as in a sketch (`hit::hit_axis`), a click on one picking
-//! it. The axis picked is drawn on the source with an arrow at the end
-//! positive angles turn right-handed about (against the line when
-//! flipped). No handle. The renderer depth tests all of it, so the model
-//! hides what's behind it; the arrow, in screen space, is on top.
+//! it; and once there's a source, the model's straight edges in its
+//! plane ([`axis_edge`]) drawn and picked as the model picks edges
+//! ([`PickIndex::pick`](crate::pick::PickIndex::pick)), after the lines
+//! and before the regions. A click on another edge, where there's no
+//! region, sends it to be refused, saying why. The axis picked is drawn
+//! on the source with an arrow at the end positive angles turn
+//! right-handed about (against the line or edge when flipped). No
+//! handle. The renderer depth tests all of it, so the model hides what's
+//! behind it; the arrow, in screen space, is on top.
 
 use std::sync::Arc;
 
-use glam::DVec2;
+use glam::{DVec2, DVec3};
 use iced::widget::shader::Action;
 use iced::{Point, Rectangle, mouse};
 use varde_document::{AxisLine, FeatureId};
@@ -20,8 +25,11 @@ use super::regions::{self, Regions, grid_plane};
 use super::sketch::{line, srgba};
 use crate::hit;
 use crate::operation_panel::{Candidate, PanelHover};
+use crate::pick::{Picked, Picks};
 use crate::projection::Projector;
-use crate::revolve::{RevolveLook, RevolvePick, RevolveState, axis_line, axis_of, axis_reach};
+use crate::revolve::{
+    RevolveLook, RevolvePick, RevolveState, axis_edge, axis_line, axis_of, axis_reach, on_sketch,
+};
 use crate::theme::SketchColors;
 use crate::{Look, Message};
 
@@ -51,6 +59,9 @@ pub(crate) struct Input {
     /// The line or axis under the cursor as it last moved while the axis
     /// is picked, and its sketch.
     axis: Option<(FeatureId, AxisLine)>,
+    /// The model edge that could be the axis under the cursor as it last
+    /// moved while the axis is picked, and its ends.
+    edge: Option<(u32, [DVec3; 2])>,
 }
 
 impl<'a> Revolving<'a> {
@@ -90,25 +101,44 @@ impl<'a> Revolving<'a> {
             mouse::Event::CursorMoved { .. } => {
                 let over = cursor.position_over(bounds).map(local);
                 let axis = over.and_then(|at| self.axis_under(at, camera, bounds));
-                let region = over
+                let edge = over
                     .filter(|_| axis.is_none())
+                    .and_then(|at| self.edge_under(at, camera, bounds))
+                    .and_then(|(edge, _)| Some((edge, self.axis_edge(edge)?)));
+                let region = over
+                    .filter(|_| axis.is_none() && edge.is_none())
                     .and_then(|at| self.regions().region_under(at, camera, bounds));
                 let changed = std::mem::replace(&mut input.axis, axis) != axis
+                    || std::mem::replace(&mut input.edge, edge).map(|(e, _)| e)
+                        != edge.map(|(e, _)| e)
                     || std::mem::replace(&mut input.regions.hover, region) != region;
                 changed.then(Action::request_redraw)
             }
             mouse::Event::CursorLeft => {
-                let had = input.axis.take().is_some() | input.regions.hover.take().is_some();
+                let had = input.axis.take().is_some()
+                    | input.edge.take().is_some()
+                    | input.regions.hover.take().is_some();
                 had.then(Action::request_redraw)
             }
             mouse::Event::ButtonPressed(mouse::Button::Left) => {
                 let at = local(cursor.position_over(bounds)?);
+                let model = self.state.index.model();
+                let edge = self.edge_under(at, camera, bounds);
                 let look = match self.axis_under(at, camera, bounds) {
                     Some((sketch, axis)) => RevolveLook::PickAxis { sketch, axis },
-                    None => {
-                        let (sketch, region) = self.regions().region_under(at, camera, bounds)?;
-                        RevolveLook::PickRegion { sketch, region }
-                    }
+                    None => match edge {
+                        Some((edge, at)) if self.axis_edge(edge).is_some() => {
+                            RevolveLook::PickEdge { model, edge, at }
+                        }
+                        _ => match self.regions().region_under(at, camera, bounds) {
+                            Some((sketch, region)) => RevolveLook::PickRegion { sketch, region },
+                            // Another edge, to be refused, saying why.
+                            None => {
+                                let (edge, at) = edge?;
+                                RevolveLook::PickEdge { model, edge, at }
+                            }
+                        },
+                    },
                 };
                 if !self.state.editable {
                     return None;
@@ -127,7 +157,7 @@ impl<'a> Revolving<'a> {
         cursor: mouse::Cursor,
     ) -> Option<mouse::Interaction> {
         cursor.position_over(bounds)?;
-        let over = input.axis.is_some() || input.regions.hover.is_some();
+        let over = input.axis.is_some() || input.edge.is_some() || input.regions.hover.is_some();
         (over && self.state.editable).then_some(mouse::Interaction::Pointer)
     }
 
@@ -174,13 +204,59 @@ impl<'a> Revolving<'a> {
         nearest.map(|(_, feature, axis)| (feature, axis))
     }
 
+    /// The model edge under the screen position `at` while the axis is
+    /// picked, and the point on it the cursor's at, if there's a source
+    /// whose plane it could be in: the edge the model picks there.
+    fn edge_under(&self, at: DVec2, camera: &Camera, bounds: Rectangle) -> Option<(u32, DVec3)> {
+        if self.state.picking != RevolvePick::Axis {
+            return None;
+        }
+        self.regions().source()?;
+        let size = [bounds.width, bounds.height];
+        let pick = (self.state.index).pick(camera, size, at, Picks::Edges)?;
+        match pick.target {
+            Picked::Edge(edge) => Some((edge, pick.at)),
+            _ => None,
+        }
+    }
+
+    /// The ends of edge `edge` of the model shown, if it can be the axis:
+    /// straight and in the source's plane ([`axis_edge`]).
+    fn axis_edge(&self, edge: u32) -> Option<[DVec3; 2]> {
+        let source = self.regions().source()?;
+        axis_edge(self.state.index, edge, &source.placement).ok()
+    }
+
+    /// The model's edges that can be the axis while it's picked, and
+    /// their ends: none before there's a source.
+    fn axis_edges(&self) -> Vec<(u32, [DVec3; 2])> {
+        if self.state.picking != RevolvePick::Axis {
+            return Vec::new();
+        }
+        let Some(source) = self.regions().source() else {
+            return Vec::new();
+        };
+        let index = self.state.index;
+        (0..index.mesh().edge_count())
+            .filter_map(|edge| u32::try_from(edge).ok())
+            .filter_map(|edge| Some((edge, axis_edge(index, edge, &source.placement).ok()?)))
+            .collect()
+    }
+
     /// The axis picked as it's drawn on the source, from the end its arrow
     /// points away from to the end it's at: along the axis's direction,
     /// or against it flipped ([`RevolveState::reversed`]). Positive
-    /// angles turn right-handed about the arrow.
+    /// angles turn right-handed about the arrow. A model edge is drawn
+    /// where the model shown has it, mapped onto the source's plane.
     fn pointed(&self) -> Option<(&Candidate<'a>, [DVec2; 2])> {
         let source = self.regions().source()?;
-        let [start, end] = drawn(source.sketch, self.state.axis?)?;
+        let [start, end] = match self.state.axis? {
+            AxisLine::Edge(_) => {
+                let ends = self.state.edge_ends?;
+                ends.map(|at| on_sketch(&source.placement, at))
+            }
+            axis => drawn(source.sketch, axis)?,
+        };
         let ends = if self.state.reversed() {
             [end, start]
         } else {
@@ -193,8 +269,8 @@ impl<'a> Revolving<'a> {
     /// by `camera` over `bounds`: the base layer, the source's regions
     /// shaded and those picked marked; the live layer, the region
     /// hovered, before there's a source every candidate's regions, while
-    /// the axis is picked the lines and axes a click picks (the one
-    /// hovered stronger), and the axis picked with its arrow.
+    /// the axis is picked the lines, axes and model edges a click picks
+    /// (the one hovered stronger), and the axis picked with its arrow.
     pub(crate) fn layers(
         &self,
         input: &Input,
@@ -218,6 +294,15 @@ impl<'a> Revolving<'a> {
             {
                 live.polyline(space, &ends, line(colors.hovered, HOVERED_WIDTH, false));
             }
+        }
+        let hovered_edge = input.edge.map(|(edge, _)| edge);
+        for (edge, ends) in self.axis_edges() {
+            let (color, width) = if hovered_edge == Some(edge) {
+                (colors.hovered, HOVERED_WIDTH)
+            } else {
+                (colors.curve, LINE_WIDTH)
+            };
+            live.world_polyline(&ends.map(|at| at.as_vec3()), line(color, width, false));
         }
         if let Some((source, [from, to])) = self.pointed()
             && let Some(plane) = grid_plane(source.placement)
@@ -270,7 +355,7 @@ fn draw_targets(live: &mut SketchLayer, space: LayerSpace, sketch: &Sketch, colo
 fn drawn(sketch: &Sketch, axis: AxisLine) -> Option<[DVec2; 2]> {
     let (at, along) = axis_line(sketch, axis)?;
     Some(match axis {
-        AxisLine::Curve(_) => [at, at + along],
+        AxisLine::Curve(_) | AxisLine::Edge(_) => [at, at + along],
         AxisLine::SketchX | AxisLine::SketchY => {
             let reach = axis_reach(sketch);
             [-along * reach, along * reach]
