@@ -21,11 +21,12 @@ struct Uniforms {
     grid_origin: vec4<f32>,
     grid_x: vec4<f32>,
     grid_y: vec4<f32>,
-    grid_axes: array<vec4<f32>, 2>,
     sketch_origin: vec4<f32>,
     sketch_x: vec4<f32>,
     sketch_y: vec4<f32>,
-    hidden_edge: vec4<f32>,
+    hover_face: vec4<f32>,
+    hover_outline: vec4<f32>,
+    selected: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -53,6 +54,12 @@ override EDGE_WIDTH: f32;
 override HIDDEN_EDGE_WIDTH: f32;
 override HIDDEN_DASH: f32;
 override HIDDEN_GAP: f32;
+// How wide the rim around the hovered edges and vertex is, how wide the
+// selected edges are, and the radius of a vertex's disc within its rim, in
+// logical pixels.
+override HOVER_RIM: f32;
+override SELECTED_EDGE_WIDTH: f32;
+override VERTEX_RADIUS: f32;
 // Set for the pipelines drawing the sketch's layers depth tested: they're
 // given their depth, pulled towards the camera, rather than drawn on top.
 override SKETCH_DEPTH: bool = false;
@@ -191,6 +198,7 @@ fn fs_grid(in: FullscreenOut) -> GridOut {
         axis_line(pixel_at, origin, dir, u.grid_x.xyz),
         axis_line(pixel_at, origin, dir, u.grid_y.xyz),
     );
+    var axis_colors = array<vec3<f32>, 2>(axis_color(u.grid_x.w), axis_color(u.grid_y.w));
     var color = u.grid.rgb;
     var alpha = lines * fade * valid;
     var out_depth = clamp(depth, 0.0, 1.0);
@@ -198,7 +206,7 @@ fn fs_grid(in: FullscreenOut) -> GridOut {
         let line = axes[i];
         if line.x > 0.0 {
             let a = line.x + alpha * (1.0 - line.x);
-            color = (u.grid_axes[i].rgb * line.x + color * alpha * (1.0 - line.x)) / a;
+            color = (axis_colors[i] * line.x + color * alpha * (1.0 - line.x)) / a;
             alpha = a;
             out_depth = line.y;
         }
@@ -208,6 +216,16 @@ fn fs_grid(in: FullscreenOut) -> GridOut {
     out.color = output(vec4<f32>(color, alpha));
     out.depth = out_depth;
     return out;
+}
+
+// The colour of a grid's axis line along the world axis `index` names, 0
+// to 2, or the grid's for 3: see `Uniforms::grid_x` in renderer.rs.
+fn axis_color(index: f32) -> vec3<f32> {
+    let i = u32(index);
+    if i < 3u {
+        return u.axes[i].rgb;
+    }
+    return u.grid.rgb;
 }
 
 // How wide the grid's axis lines are, in logical pixels.
@@ -259,7 +277,9 @@ struct MeshIn {
 };
 
 struct MeshOut {
-    @builtin(position) position: vec4<f32>,
+    // Invariant, so a face drawn again over itself, hovered or selected,
+    // from another program, is at exactly the depth it was.
+    @builtin(position) @invariant position: vec4<f32>,
     @location(0) world: vec3<f32>,
     @location(1) normal: vec3<f32>,
 };
@@ -273,10 +293,11 @@ fn vs_mesh(in: MeshIn) -> MeshOut {
     return out;
 }
 
-// `base` lit where the surface's normal is `normal`: bright, low contrast
-// shading.
-fn lit(base: vec3<f32>, normal: vec3<f32>) -> vec3<f32> {
-    let n = normalize(normal);
+// The face at `in` of colour `base` lit: bright, low contrast shading. A
+// back face, drawn only for a part less than opaque, is lit as seen from
+// inside.
+fn shaded(in: MeshOut, front: bool, base: vec3<f32>) -> vec3<f32> {
+    let n = select(-1.0, 1.0, front) * normalize(in.normal);
     let view = u.backward.xyz;
     let key = normalize(vec3<f32>(0.4, -0.6, 1.0));
 
@@ -286,48 +307,30 @@ fn lit(base: vec3<f32>, normal: vec3<f32>) -> vec3<f32> {
     return base * (ambient + diffuse) + spec;
 }
 
-// A back face, drawn only for a part less than opaque, is lit as seen from
-// inside.
 @fragment
 fn fs_mesh(in: MeshOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    let normal = select(-1.0, 1.0, front) * in.normal;
     // Less than opaque when faded, or as its part is, blended over what's
     // behind it.
-    return output(vec4<f32>(lit(u.model.rgb, normal), u.model.a * part.alpha.x));
+    return output(vec4<f32>(shaded(in, front, u.model.rgb), u.model.a * part.alpha.x));
 }
 
-// --- Highlight ---
-//
-// The hovered and selected faces: the model's triangles again, lit the
-// same in another colour, their depth pulled towards the camera like the
-// sketch's depth tested layers, so the face they lie on doesn't hide them
-// and what's in front of it does. Their edges are drawn as the sketch's
-// depth tested lines, in the world.
+// How far a selected face is tinted towards the selection's colour.
+const SELECTED_TINT: f32 = 0.6;
 
-struct HighlightOut {
-    @builtin(position) position: vec4<f32>,
-    @location(0) normal: vec3<f32>,
-    @location(1) color: vec4<f32>,
-};
-
-@vertex
-fn vs_highlight(
-    @location(0) position: vec3<f32>,
-    @location(1) normal: vec3<f32>,
-    @location(2) color: vec4<f32>,
-) -> HighlightOut {
-    var out: HighlightOut;
-    let clip = u.view_proj * vec4<f32>(position, 1.0);
-    // Behind the eye it's clipped whatever its depth.
-    out.position = vec4<f32>(clip.xy, overlay_depth(position) * clip.w, clip.w);
-    out.normal = normal;
-    out.color = color;
-    return out;
-}
-
+// The hovered face, drawn again over itself (depth tested Equal) in the
+// hover's colour, lit the same, as opaque as its part, so it shows as
+// brighter as the rest of its body does.
 @fragment
-fn fs_highlight(in: HighlightOut) -> @location(0) vec4<f32> {
-    return output(vec4<f32>(lit(in.color.rgb, in.normal), in.color.a));
+fn fs_hover_face(in: MeshOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    return output(vec4<f32>(shaded(in, front, u.hover_face.rgb), part.alpha.x));
+}
+
+// A selected face, likewise, tinted SELECTED_TINT of the way towards the
+// selection's colour lit, of its part's opacity: over the hover, if it's
+// hovered too.
+@fragment
+fn fs_selected_face(in: MeshOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    return output(vec4<f32>(shaded(in, front, u.selected.rgb), SELECTED_TINT * part.alpha.x));
 }
 
 // --- Feature edges ---
@@ -392,7 +395,8 @@ struct LineOut {
     @location(2) @interpolate(flat) next: vec4<f32>,
     @location(3) @interpolate(flat) color: vec4<f32>,
     // x: half the width; y, z: a dash's and a gap's lengths, 0 for a solid
-    // line.
+    // line; w: half the width of the middle left out of a hollow line, 0
+    // for a full one.
     @location(4) @interpolate(flat) style: vec4<f32>,
     // How far along the polyline the segment's start and end are.
     @location(5) @interpolate(flat) along: vec2<f32>,
@@ -621,12 +625,14 @@ struct EdgeIn {
 // start and end, and the point after it. It's drawn if its start and end
 // are of the same edge, and joined to the points either side that are of
 // that edge too, marked NEIGHBOUR_ONLY or not, so a polyline's joins are
-// drawn once, a closed one's where it closes too. The quad is EDGE_WIDTH
-// wide either way, so the visible and hidden passes put the same pixels at
-// the same depth and split them between them; `half`, `color`, `dash` and
-// `along` are the line's as in `line_vertex`.
+// drawn once, a closed one's where it closes too. The quad reaches `quad`
+// pixels either side, EDGE_WIDTH wide for the visible and hidden passes
+// either way, so they put the same pixels at the same depth and split them
+// between them; `half`, `color`, `dash` and `along` are the line's as in
+// `line_vertex`.
 fn edge_segment(
     in: EdgeIn,
+    quad: f32,
     half: f32,
     color: vec4<f32>,
     dash: vec2<f32>,
@@ -637,7 +643,6 @@ fn edge_segment(
         return line_vertex(in.index, none(), none(), none(), 0u, vec2<f32>(0.0), 0.0,
             vec4<f32>(0.0), vec2<f32>(0.0), vec2<f32>(0.0));
     }
-    let quad = EDGE_WIDTH * 0.5 * u.viewport.z;
     let margin = quad + 2.0;
     var flags = 0u;
     var before = none();
@@ -662,15 +667,16 @@ fn edge_segment(
 // faded, and their part.
 @vertex
 fn vs_edge(in: EdgeIn) -> LineOut {
-    let color = vec4<f32>(u.edge.rgb, u.edge.a * part.alpha.x);
-    return edge_segment(in, EDGE_WIDTH * 0.5 * u.viewport.z, color, vec2<f32>(0.0),
-        vec2<f32>(0.0));
+    let color = vec4<f32>(u.edge.rgb, u.model.a * part.alpha.x);
+    let half = EDGE_WIDTH * 0.5 * u.viewport.z;
+    return edge_segment(in, half, half, color, vec2<f32>(0.0), vec2<f32>(0.0));
 }
 
 // The feature edges where the model hides them, depth tested Greater, so
 // exactly the pixels `vs_edge` didn't draw: HIDDEN_EDGE_WIDTH wide, dashed
 // along the edge by its length at the scale of the target, as the sketch's
-// dashes are, in `u.hidden_edge`, as faint again as their part is.
+// dashes are, in the edges' colour at `u.edge.a`, as faint again as their
+// part is.
 //
 // The dashes' phase is worked out a segment at a time, so it keeps its
 // precision zoomed far into a long edge, where how far along the edge a
@@ -689,11 +695,38 @@ fn vs_hidden_edge(in: EdgeIn) -> LineOut {
     let scale = u.viewport.y / view_height();
     let phase = wrapped(in.start_along * scale, period);
     let length = distance(in.start, in.end) * scale;
-    let color = vec4<f32>(u.hidden_edge.rgb, u.hidden_edge.a * part.alpha.x);
-    var out = edge_segment(in, HIDDEN_EDGE_WIDTH * 0.5 * s, color, dash,
+    let color = vec4<f32>(u.edge.rgb, u.edge.a * part.alpha.x);
+    var out = edge_segment(in, EDGE_WIDTH * 0.5 * s, HIDDEN_EDGE_WIDTH * 0.5 * s, color, dash,
         vec2<f32>(phase, phase + length));
     out.along -= vec2<f32>(floor(out.along.x / period) * period);
     return out;
+}
+
+// The rim of the hovered edges' outline: HOVER_RIM wide either side of the
+// edge, in `u.hover_outline`, depth tested and pulled like the edges, so
+// only what shows of them is outlined. It's hollow: the edge's own width
+// is left out (`style.w`), so the edge keeps its pixels as they were, and
+// as faint as its part is. The outlined edges that meet come as one
+// polyline (see `Highlights::build` in highlight.rs), so where they meet,
+// a pixel is the rim of the one nearest it and neither's rim covers the
+// other.
+@vertex
+fn vs_outline(in: EdgeIn) -> LineOut {
+    let core = EDGE_WIDTH * 0.5 * u.viewport.z;
+    let half = core + HOVER_RIM * u.viewport.z;
+    var out = edge_segment(in, half, half, vec4<f32>(u.hover_outline.rgb, 1.0), vec2<f32>(0.0),
+        vec2<f32>(0.0));
+    out.style.w = core;
+    return out;
+}
+
+// The selected edges, SELECTED_EDGE_WIDTH wide in the selection's colour,
+// over the edges and their outline, depth tested and pulled like them.
+@vertex
+fn vs_selected_edge(in: EdgeIn) -> LineOut {
+    let half = SELECTED_EDGE_WIDTH * 0.5 * u.viewport.z;
+    return edge_segment(in, half, half, vec4<f32>(u.selected.rgb, 1.0), vec2<f32>(0.0),
+        vec2<f32>(0.0));
 }
 
 // Where the sketch point `at` is in the world.
@@ -820,6 +853,10 @@ fn fs_line(in: LineOut) -> @location(0) vec4<f32> {
         discard;
     }
     var coverage = clamp(in.style.x + 0.5 - own.x, 0.0, 1.0);
+    // A hollow line leaves out its middle, `style.w` either side.
+    if in.style.w > 0.0 {
+        coverage -= clamp(in.style.w + 0.5 - own.x, 0.0, 1.0);
+    }
     let on = in.style.y;
     if on > 0.0 {
         let period = on + in.style.z;
@@ -898,15 +935,20 @@ fn image_of(direction: vec3<f32>, clip: vec4<f32>) -> vec2<f32> {
     return (d.xy - clip.xy / clip.w * d.w) / clip.w * 0.5 * u.viewport.xy;
 }
 
+// Corner `index` of a square from -1 to 1 drawn as two triangles.
+fn square_corner(index: u32) -> vec2<f32> {
+    var corners = array<vec2<f32>, 6>(
+        vec2(-1.0, -1.0), vec2(1.0, -1.0), vec2(1.0, 1.0),
+        vec2(-1.0, -1.0), vec2(1.0, 1.0), vec2(-1.0, 1.0),
+    );
+    return corners[index];
+}
+
 @vertex
 fn vs_origin(
     @builtin(vertex_index) index: u32,
     @builtin(instance_index) instance: u32,
 ) -> OriginOut {
-    var corners = array<vec2<f32>, 6>(
-        vec2(-1.0, -1.0), vec2(1.0, -1.0), vec2(1.0, 1.0),
-        vec2(-1.0, -1.0), vec2(1.0, 1.0), vec2(-1.0, 1.0),
-    );
     let pivot = instance == 1u;
     let at = select(vec3<f32>(0.0), u.pivot.xyz, pivot);
     let clip = u.view_proj * vec4<f32>(at, 1.0);
@@ -936,7 +978,7 @@ fn vs_origin(
     let major = sqrt(0.5 * (sum + sqrt(max(sum * sum - 4.0 * det * det, 0.0))));
     let scale = RING_RADIUS * s / max(major, 1e-30);
     let reach = (RING_RADIUS + RING_CORE + RIM + 1.0) * s;
-    out.position = from_pixels(center + corners[index] * reach, clip);
+    out.position = from_pixels(center + square_corner(index) * reach, clip);
     out.center = center;
     out.ring_x = ex * scale;
     out.ring_y = ey * scale;
@@ -1010,11 +1052,7 @@ fn vs_point(
         out.position = vec4<f32>(0.0, 0.0, -1.0, 1.0);
         return out;
     }
-    var corners = array<vec2<f32>, 6>(
-        vec2(-1.0, -1.0), vec2(1.0, -1.0), vec2(1.0, 1.0),
-        vec2(-1.0, -1.0), vec2(1.0, 1.0), vec2(-1.0, 1.0),
-    );
-    let pixels = center + corners[index] * reach;
+    let pixels = center + square_corner(index) * reach;
     var z = 0.0;
     if SKETCH_DEPTH {
         z = overlay_depth(on_plane(at));
@@ -1034,6 +1072,46 @@ fn fs_point(in: PointOut) -> @location(0) vec4<f32> {
     let inside = clamp(in.size.x - in.size.y + 0.5 - r, 0.0, 1.0);
     let color = mix(in.rim, in.fill, inside);
     return output(vec4<f32>(color.rgb, color.a * coverage));
+}
+
+// Flags of a hovered or selected vertex of the model, as in highlight.rs.
+const HOVERED: u32 = 1u;
+const SELECTED: u32 = 2u;
+
+// A vertex of the model, hovered or selected, drawn as a sketch point is
+// (`fs_point`): a disc VERTEX_RADIUS across in the edges' colour, or
+// filled with the selection's if selected, within a rim HOVER_RIM wide in
+// `u.hover_outline` if hovered, else a pixel's in the edges' colour; the
+// same size on screen at any zoom, depth tested and pulled like the
+// edges, at its centre's depth.
+@vertex
+fn vs_vertex(
+    @builtin(vertex_index) index: u32,
+    @location(0) at: vec3<f32>,
+    @location(1) flags: u32,
+) -> PointOut {
+    var out: PointOut;
+    let clip = pulled(at);
+    let center = to_pixels(clip);
+    let s = u.viewport.z;
+    let hovered = (flags & HOVERED) != 0u;
+    let rim = select(1.0, HOVER_RIM, hovered) * s;
+    let radius = VERTEX_RADIUS * s + rim;
+    let reach = radius + 1.0;
+    // Behind the near plane, or off the screen.
+    if (perspective() && clip.w < near()) || clip.w <= 0.0
+        || any(abs(center) > 0.5 * u.viewport.xy + reach) {
+        out.position = vec4<f32>(0.0, 0.0, -1.0, 1.0);
+        return out;
+    }
+    let pixels = center + square_corner(index) * reach;
+    out.position = vec4<f32>(pixels / (0.5 * u.viewport.xy), clip.z / clip.w, 1.0);
+    out.center = center;
+    out.size = vec2<f32>(radius, rim);
+    let edge = vec4<f32>(u.edge.rgb, 1.0);
+    out.rim = select(edge, vec4<f32>(u.hover_outline.rgb, 1.0), hovered);
+    out.fill = select(edge, vec4<f32>(u.selected.rgb, 1.0), (flags & SELECTED) != 0u);
+    return out;
 }
 
 struct FillOut {

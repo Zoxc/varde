@@ -9,8 +9,7 @@
 use std::sync::Arc;
 
 use varde_document::BodyId;
-use varde_render::Highlight;
-use varde_view::{ModelPicking, Pick, Picked, Selection};
+use varde_view::{ModelHighlight, ModelPicking, Pick, Picked, Selection};
 
 use super::Doc;
 
@@ -22,14 +21,14 @@ pub(crate) struct ModelPick {
     pub(crate) selection: Selection,
     /// Built when what it's of changes, so the renderer uploads it only
     /// then.
-    highlight: Arc<Highlight>,
+    highlight: Arc<ModelHighlight>,
     /// What `highlight` was built of: the model, the target hovered and
     /// the selection.
     built: Option<(u64, Option<Picked>, Selection)>,
 }
 
 impl ModelPick {
-    /// The face or edge hovered, if any.
+    /// The face, edge or vertex hovered, if any.
     pub(crate) fn hover(&self) -> Option<Pick> {
         self.hover
     }
@@ -145,7 +144,7 @@ impl Doc {
             return;
         }
         let highlight = if self.pick.hover.is_none() && self.pick.selection.is_empty() {
-            Highlight::default()
+            ModelHighlight::default()
         } else {
             let index = self.feed.pick_index();
             self.pick.selection.highlight(index, self.pick.hover)
@@ -165,7 +164,7 @@ impl Doc {
 
     /// What the viewport draws over the model, if anything: nothing while
     /// the cursor doesn't pick it.
-    pub(crate) fn highlight(&self) -> Option<&Arc<Highlight>> {
+    pub(crate) fn highlight(&self) -> Option<&Arc<ModelHighlight>> {
         // Only of the model shown: one built for an earlier model would be
         // drawn over another.
         let current = (self.pick.built.as_ref()).is_some_and(|built| built.0 == self.feed.model());

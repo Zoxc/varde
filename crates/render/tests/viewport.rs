@@ -8,9 +8,9 @@ use std::sync::Arc;
 use glam::{DVec3, Vec3};
 use varde_kernel::{MeshParts, RenderLines, RenderMesh, Solid, Tolerance};
 use varde_render::{
-    Camera, ClipRect, Colors, EDGE_WIDTH, Emphasis, Frame, GridPlane, HIDDEN_DASH, Highlight,
+    Camera, ClipRect, Colors, EDGE_WIDTH, Frame, GridPlane, HIDDEN_DASH, HOVER_RIM, Highlights,
     LINE_WIDTH, LineStyle, Pivot, PointStyle, Projection, Renderer, SketchLayer, SketchScene,
-    Space, Srgb, Srgba, View, Viewport, wgpu,
+    Space, Srgb, Srgba, VERTEX_RADIUS, Vertex, View, Viewport, wgpu,
 };
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -32,12 +32,10 @@ const COLORS: Colors = Colors {
     // Pure yellow, found by its lack of blue.
     sketch: Srgb([1.0, 1.0, 0.0]),
     faded_alpha: 0.3,
-    // Pure green and pure blue faces, pure red and pure cyan edges.
-    hovered_face: Srgb([0.0, 1.0, 0.0]),
-    selected_face: Srgb([0.0, 0.0, 1.0]),
-    hovered_edge: Srgba([1.0, 0.0, 0.0, 1.0]),
-    selected_edge: Srgba([0.0, 1.0, 1.0, 1.0]),
     hidden_edge_alpha: 0.45,
+    hover_face: Srgb([0.8; 3]),
+    hover_outline: Srgb([0.75, 1.0, 0.6]),
+    selected: Srgb([0.04, 0.58, 0.68]),
 };
 const SIZE: [u32; 2] = [512, 256];
 const SENTINEL: [u8; 4] = [255, 0, 255, 255];
@@ -91,9 +89,11 @@ fn render_to(
             grid: GridPlane::XY,
             faded: false,
             hidden_edges: true,
+            hovered_faces: &[],
+            selected_faces: &[],
+            highlights: &Arc::default(),
             sketch: None,
             pivot: None,
-            highlight: None,
             viewport,
             target_size: SIZE,
             scale_factor,
@@ -118,12 +118,15 @@ struct Extras {
     /// Whether the sketch is hidden by the model in front of it.
     depth_tested: bool,
     pivot: Option<Pivot>,
-    /// The faces and edges hovered and selected.
-    highlight: Option<Highlight>,
     /// Colours other than [`COLORS`].
     colors: Option<Colors>,
     /// How opaque each part of the mesh is, opaque past its end.
     opacity: Vec<f32>,
+    /// The faces hovered, the faces selected, and the edges and vertices
+    /// hovered and selected.
+    hovered_faces: Vec<u32>,
+    selected_faces: Vec<u32>,
+    highlights: Highlights,
 }
 
 /// Renders `mesh` and `extras` into [`VIEWPORT`] at a scale factor of 1.
@@ -148,7 +151,6 @@ fn render_scaled(
         };
         (plane, Arc::new(base), live)
     });
-    let highlight = extras.highlight.map(Arc::new);
     let sketch = layers.as_ref().map(|(plane, base, live)| SketchScene {
         plane: *plane,
         depth_tested: extras.depth_tested,
@@ -165,9 +167,11 @@ fn render_scaled(
             grid: extras.grid,
             faded: extras.faded,
             hidden_edges: extras.hidden_edges,
+            hovered_faces: &extras.hovered_faces,
+            selected_faces: &extras.selected_faces,
+            highlights: &Arc::new(extras.highlights),
             sketch,
             pivot: extras.pivot,
-            highlight: highlight.as_ref(),
             viewport,
             target_size: SIZE,
             scale_factor,
@@ -650,85 +654,6 @@ fn cube(size: f32, at: Vec3) -> RenderMesh {
     let mut moved = RenderMesh::default();
     moved.append_at(&mesh.unwrap(), at).unwrap();
     moved
-}
-
-/// The triangles of `mesh` facing along `normal`, as a highlight's.
-fn face(mesh: &RenderMesh, normal: Vec3, emphasis: Emphasis) -> Highlight {
-    let mut highlight = Highlight::default();
-    for triangle in mesh.indices().as_chunks::<3>().0 {
-        let corner = |i: usize| Vec3::from(mesh.positions()[triangle[i] as usize]);
-        let normals = [0, 1, 2].map(|i| Vec3::from(mesh.normals()[triangle[i] as usize]));
-        if normals.iter().all(|n| n.dot(normal) > 0.9) {
-            highlight.triangle(emphasis, [0, 1, 2].map(corner), normals);
-        }
-    }
-    highlight
-}
-
-#[test]
-fn highlight_shows_faces_and_edges_in_front_only() {
-    // From the top, a cube 2 on a side from (2, -1, 0), clear of the
-    // origin's marker: its top shows, its bottom doesn't, and a line
-    // across either face likewise.
-    let mut camera = Camera::default();
-    camera.look_from(View::Top);
-    let mesh = cube(2.0, Vec3::new(2.0, -1.0, 0.0));
-    let render = |highlight| {
-        let extras = Extras {
-            highlight,
-            ..Extras::default()
-        };
-        render_with(&camera, &mesh, extras)
-    };
-    let Some(plain) = render(None) else {
-        eprintln!("no GPU adapter, skipping");
-        return;
-    };
-    let (x, y) = on_screen(&camera, Vec3::new(3.0, -0.5, 2.0));
-    let shade = pixel(&plain, x, y);
-    assert!(shade[0].abs_diff(shade[1]) < 8, "{shade:?}");
-
-    let top = render(Some(face(&mesh, Vec3::Z, Emphasis::Hovered))).unwrap();
-    let [r, g, b, _] = pixel(&top, x, y);
-    assert!(
-        g > r.saturating_add(60) && g > b.saturating_add(60),
-        "{r} {g} {b}"
-    );
-    let selected = render(Some(face(&mesh, Vec3::Z, Emphasis::Selected))).unwrap();
-    let [r, g, b, _] = pixel(&selected, x, y);
-    assert!(
-        b > r.saturating_add(60) && b > g.saturating_add(60),
-        "{r} {g} {b}"
-    );
-    // The model's edges still draw over it, where they did: dark pixels
-    // around the cube, the background black.
-    let (left, top_row) = on_screen(&camera, Vec3::new(1.5, 1.5, 2.0));
-    let (right, bottom_row) = on_screen(&camera, Vec3::new(4.5, -1.5, 2.0));
-    let edges = |pixels: &[[u8; 4]]| {
-        let dark = |p: [u8; 4]| (15..80).contains(&p[0]) && p[1] < 80 && p[2] < 80;
-        (left..right)
-            .flat_map(|x| (top_row..bottom_row).map(move |y| (x, y)))
-            .filter(|&(x, y)| dark(pixel(pixels, x, y)))
-            .collect::<Vec<_>>()
-    };
-    assert!(!edges(&plain).is_empty());
-    assert_eq!(edges(&top), edges(&plain));
-    let bottom = render(Some(face(&mesh, -Vec3::Z, Emphasis::Hovered))).unwrap();
-    assert_eq!(pixel(&bottom, x, y), shade);
-
-    for (z, shows) in [(2.0, true), (0.0, false)] {
-        let mut highlight = Highlight::default();
-        let line = vec![Vec3::new(2.0, 0.0, z), Vec3::new(4.0, 0.0, z)];
-        highlight.edge(Emphasis::Hovered, line);
-        let pixels = render(Some(highlight)).unwrap();
-        let (x, y) = on_screen(&camera, Vec3::new(3.0, 0.0, z));
-        let [r, g, b, _] = pixel(&pixels, x, y);
-        let red = r > g.saturating_add(100) && r > b.saturating_add(100);
-        assert_eq!(red, shows, "z {z}: {r} {g} {b}");
-        if !shows {
-            assert_eq!(pixel(&pixels, x, y), pixel(&plain, x, y));
-        }
-    }
 }
 
 #[test]
@@ -2406,4 +2331,426 @@ fn opacity_out_of_range_is_opaque() {
         let drawn = render_with(&camera, &both, extras).unwrap();
         assert!(drawn == opaque, "{opacity:?}");
     }
+}
+
+/// The id of `mesh`'s first face whose normals point along `normal`.
+fn face_facing(mesh: &RenderMesh, normal: Vec3) -> u32 {
+    let faces = mesh.faces().position(|indices| {
+        let at = Vec3::from(mesh.normals()[indices[0] as usize]);
+        at.dot(normal) > 0.99
+    });
+    faces.unwrap() as u32
+}
+
+/// How much brighter `a` is than `b`, summed over its channels.
+fn brighter(a: [u8; 4], b: [u8; 4]) -> i32 {
+    (0..3).map(|c| i32::from(a[c]) - i32::from(b[c])).sum()
+}
+
+/// How much bluer than red a pixel is: the selection's teal over the
+/// grey model.
+fn tint([r, _, b, _]: [u8; 4]) -> i32 {
+    i32::from(b) - i32::from(r)
+}
+
+#[test]
+fn a_hovered_face_is_brighter_and_only_where_it_shows() {
+    // From the front, the cube's front face under the middle: hovered, it's
+    // brighter; its back face hovered, hidden behind it, changes nothing.
+    let (camera, near, _) = cube_behind_cube();
+    let front = face_facing(&near, -Vec3::Y);
+    let back = face_facing(&near, Vec3::Y);
+    let hovering = |hover: Option<u32>| Extras {
+        hovered_faces: hover.into_iter().collect(),
+        ..Extras::default()
+    };
+    let (Some(plain), Some(hovered), Some(behind)) = (
+        render_with(&camera, &near, Extras::default()),
+        render_with(&camera, &near, hovering(Some(front))),
+        render_with(&camera, &near, hovering(Some(back))),
+    ) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let (cx, cy) = CENTER;
+    let (plain_at, hovered_at) = (pixel(&plain, cx, cy), pixel(&hovered, cx, cy));
+    assert!(
+        brighter(hovered_at, plain_at) > 60,
+        "{hovered_at:?} hovered, {plain_at:?} not"
+    );
+    assert!(behind == plain);
+    // The background around the cube is as it was.
+    assert_eq!(
+        pixel(&hovered, CLIP.x + 2, CLIP.y + 2),
+        pixel(&plain, CLIP.x + 2, CLIP.y + 2)
+    );
+}
+
+#[test]
+fn a_selected_face_is_tinted_with_the_selection_colour() {
+    // Hovered too, it's tinted over the hover, brighter still.
+    let (camera, near, _) = cube_behind_cube();
+    let front = face_facing(&near, -Vec3::Y);
+    let (Some(plain), Some(selected), Some(both)) = (
+        render_with(&camera, &near, Extras::default()),
+        render_with(
+            &camera,
+            &near,
+            Extras {
+                selected_faces: vec![front],
+                ..Extras::default()
+            },
+        ),
+        render_with(
+            &camera,
+            &near,
+            Extras {
+                hovered_faces: vec![front],
+                selected_faces: vec![front],
+                ..Extras::default()
+            },
+        ),
+    ) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let (cx, cy) = CENTER;
+    let [plain, selected, both] = [&plain, &selected, &both].map(|p| pixel(p, cx, cy));
+    assert!(tint(plain).abs() < 4, "{plain:?}");
+    assert!(tint(selected) > 40, "{selected:?}");
+    assert!(tint(both) > 40 && brighter(both, selected) > 30, "{both:?}");
+}
+
+#[test]
+fn a_selected_face_behind_a_transparent_body_is_still_tinted() {
+    // The far cube's front face, selected, seen through the near one at
+    // 30 %; and the near one's own front face, selected.
+    let (camera, _, both) = cube_behind_cube();
+    let far_front = face_facing(&both, -Vec3::Y);
+    let near_front = far_front + 6;
+    let render = |selected_faces| {
+        let extras = Extras {
+            opacity: vec![1.0, 0.3],
+            selected_faces,
+            ..Extras::default()
+        };
+        render_with(&camera, &both, extras)
+    };
+    let (Some(plain), Some(far), Some(near)) = (
+        render(vec![]),
+        render(vec![far_front]),
+        render(vec![near_front]),
+    ) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let (cx, cy) = CENTER;
+    let [plain, far, near] = [&plain, &far, &near].map(|p| pixel(p, cx, cy));
+    assert!(tint(plain).abs() < 4, "{plain:?}");
+    assert!(tint(far) > 20, "{far:?} behind the glass");
+    assert!(tint(near) > 10, "{near:?} on the glass");
+}
+
+#[test]
+fn a_selected_edge_and_vertex_behind_a_transparent_body_are_still_drawn() {
+    // From the front, a cube 2 on a side behind one 4 on a side at 30 %,
+    // both above the grid's axis:
+    // the far one's front face's bottom edge and its corner, selected,
+    // show through the glass in the selection's colour, as a selected
+    // face behind it does.
+    let mut camera = Camera::default();
+    camera.set_target(Vec3::new(1.0, 1.0, 2.0));
+    camera.look_from(View::Front);
+    let mut mesh = cube(2.0, Vec3::new(0.0, 5.0, 1.0));
+    mesh.append(&cube(4.0, Vec3::new(-1.0, 0.0, 0.0))).unwrap();
+    let edge = mesh
+        .polylines()
+        .position(|polyline| {
+            polyline.iter().all(|&v| {
+                let [_, y, z] = mesh.positions()[v as usize];
+                y == 5.0 && z == 1.0
+            })
+        })
+        .unwrap() as u32;
+    let corner = mesh
+        .corners()
+        .iter()
+        .position(|&p| p == [2.0, 5.0, 3.0])
+        .unwrap() as u32;
+    let render = |highlights| {
+        let extras = Extras {
+            opacity: vec![1.0, 0.3],
+            highlights,
+            ..Extras::default()
+        };
+        render_with(&camera, &mesh, extras)
+    };
+    let (Some(plain), Some(selected)) = (
+        render(Highlights::default()),
+        render(Highlights {
+            selected_edges: vec![edge],
+            vertices: vec![Vertex {
+                corner,
+                hovered: false,
+                selected: true,
+            }],
+            ..Highlights::default()
+        }),
+    ) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    for at in [Vec3::new(1.0, 5.0, 1.0), Vec3::new(2.0, 5.0, 3.0)] {
+        let (x, y) = on_screen(&camera, at);
+        let (was, now) = (pixel(&plain, x, y), pixel(&selected, x, y));
+        assert!(tint(now) - tint(was) > 20, "{now:?} for {was:?} at {at}");
+    }
+}
+
+/// From the top, through [`top_camera`], a box whose top face is level
+/// with the grid's plane, its edge along y = -2.05 drawn along the middle
+/// of row 84 in [`SKETCH_VIEW`], from x = -6 at column 68 to x = 6; and
+/// that edge's id.
+fn box_under_top_camera() -> (RenderMesh, u32) {
+    let mesh = block(Vec3::new(-6.0, -2.05, -4.0), Vec3::new(12.0, 4.1, 4.0));
+    let edge = mesh.polylines().position(|polyline| {
+        polyline.iter().all(|&v| {
+            let [_, y, z] = mesh.positions()[v as usize];
+            (y + 2.05).abs() < 1e-4 && z.abs() < 1e-4
+        })
+    });
+    (mesh, edge.unwrap() as u32)
+}
+
+/// What draws `highlights` over the box from the top, its grid hidden.
+fn highlighted(highlights: Highlights) -> Extras {
+    Extras {
+        highlights,
+        ..yellow_edges(false)
+    }
+}
+
+#[test]
+fn a_hovered_edge_keeps_its_colour_within_a_bright_outline() {
+    let (mesh, edge) = box_under_top_camera();
+    let camera = top_camera();
+    let plain_extras = || Extras {
+        colors: Some(COLORS),
+        ..highlighted(Highlights::default())
+    };
+    let outlined = Extras {
+        colors: Some(COLORS),
+        ..highlighted(Highlights {
+            outlined: vec![edge],
+            ..Highlights::default()
+        })
+    };
+    let (Some(plain), Some(hovered)) = (
+        render_sketch(&camera, &mesh, plain_extras(), 1.0),
+        render_sketch(&camera, &mesh, outlined, 1.0),
+    ) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let row = 84;
+    for x in [90, 150, 180] {
+        let at = |pixels: &[[u8; 4]], y| pixel(pixels, x, y);
+        // The core, as it was.
+        let (core, was) = (at(&hovered, row), at(&plain, row));
+        assert!(
+            brighter(core, was).abs() <= 6,
+            "{core:?} for {was:?} at {x}"
+        );
+        // The rim, outside the core, and brighter than the face it's on.
+        let face = at(&plain, row - 6);
+        let rim = row - 2;
+        let (inside, outside) = (at(&hovered, rim), at(&hovered, row + 2));
+        assert!(brighter(inside, face) > 60, "{inside:?} on {face:?} at {x}");
+        assert!(
+            brighter(outside, at(&plain, row + 2)) > 120,
+            "{outside:?} at {x}"
+        );
+        // Nothing past it.
+        let reach = (EDGE_WIDTH / 2.0 + HOVER_RIM + 1.0).ceil() as u32;
+        for y in [row - reach, row + reach] {
+            assert_eq!(at(&hovered, y), at(&plain, y), "row {y} at {x}");
+        }
+    }
+}
+
+#[test]
+fn outlined_edges_keep_their_pixels_on_a_body_less_than_opaque_too() {
+    // From the top, the box's top face's corner at x = -6.05, y = -2.05
+    // in the middle of pixel (67, 84), its edges along row 84 and column
+    // 67, both outlined with the face's other two: their middles keep
+    // what they were, near the corner too, where the other's rim would
+    // reach them, and on a body at 30 % as well as an opaque one. The rim
+    // shows outside them.
+    let mesh = block(Vec3::new(-6.05, -2.05, -4.0), Vec3::new(12.1, 4.1, 4.0));
+    let top = face_facing(&mesh, Vec3::Z);
+    let camera = top_camera();
+    let bordering: Vec<u32> = (0..mesh.edge_count() as u32)
+        .filter(|&edge| {
+            let [a, b] = mesh.edge_faces()[edge as usize];
+            a != b && (a == top || b == top)
+        })
+        .collect();
+    assert_eq!(bordering.len(), 4);
+    for opacity in [1.0, 0.3] {
+        let render = |outlined: Vec<u32>| {
+            let extras = Extras {
+                colors: Some(COLORS),
+                opacity: vec![opacity],
+                ..highlighted(Highlights {
+                    outlined,
+                    ..Highlights::default()
+                })
+            };
+            render_sketch(&camera, &mesh, extras, 1.0)
+        };
+        let (Some(plain), Some(hovered)) = (render(vec![]), render(bordering.clone())) else {
+            eprintln!("no GPU adapter, skipping");
+            return;
+        };
+        for k in 0..12 {
+            for (x, y) in [(67 + k, 84), (67, 84 - k)] {
+                assert_eq!(
+                    pixel(&hovered, x, y),
+                    pixel(&plain, x, y),
+                    "({x}, {y}) at {opacity}"
+                );
+            }
+        }
+        // The rim either side of the edge along row 84, away from the
+        // corner, brighter than what's there unhovered.
+        for y in [82, 86] {
+            let (rim, was) = (pixel(&hovered, 120, y), pixel(&plain, 120, y));
+            assert!(brighter(rim, was) > 60, "{rim:?} for {was:?} at {opacity}");
+        }
+    }
+}
+
+#[test]
+fn a_selected_edge_is_drawn_in_the_selection_colour() {
+    let (mesh, edge) = box_under_top_camera();
+    let extras = Extras {
+        colors: Some(COLORS),
+        ..highlighted(Highlights {
+            selected_edges: vec![edge],
+            ..Highlights::default()
+        })
+    };
+    let Some(pixels) = render_sketch(&top_camera(), &mesh, extras, 1.0) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    for x in [90, 150, 180] {
+        let core = pixel(&pixels, x, 84);
+        assert!(tint(core) > 60 && core[1] > 100, "{core:?} at {x}");
+    }
+}
+
+#[test]
+fn a_vertex_shows_only_hovered_or_selected_and_round() {
+    // The box's corner at (-6, -2.05, 0), at (68, 84.5) on the screen.
+    let (mesh, _) = box_under_top_camera();
+    let corner = mesh
+        .corners()
+        .iter()
+        .position(|&[x, y, z]| x == -6.0 && (y + 2.05).abs() < 1e-4 && z == 0.0)
+        .unwrap() as u32;
+    let camera = top_camera();
+    let render = |vertices| {
+        let extras = Extras {
+            colors: Some(COLORS),
+            ..highlighted(Highlights {
+                vertices,
+                ..Highlights::default()
+            })
+        };
+        render_sketch(&camera, &mesh, extras, 1.0)
+    };
+    let vertex = |hovered, selected| Vertex {
+        corner,
+        hovered,
+        selected,
+    };
+    let (Some(plain), Some(none), Some(hovered), Some(selected)) = (
+        render(vec![]),
+        // Neither hovered nor selected, it isn't drawn.
+        render(vec![vertex(false, false)]),
+        render(vec![vertex(true, false)]),
+        render(vec![vertex(false, true)]),
+    ) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    assert!(none == plain);
+    let center = glam::Vec2::new(68.0, 84.5);
+    // Hovered, its middle is the edges' colour, as the corner was, so
+    // only its rim must show; selected, all of it is the selection's.
+    for (drawn, inner, rim) in [(&hovered, VERTEX_RADIUS, HOVER_RIM), (&selected, 0.0, 1.0)] {
+        let outer = VERTEX_RADIUS + rim;
+        for y in 74..96 {
+            for x in 58..80 {
+                let distance = (glam::Vec2::new(x as f32 + 0.5, y as f32 + 0.5) - center).length();
+                let changed = pixel(drawn, x, y) != pixel(&plain, x, y);
+                // Within the disc it's drawn, and past it, even along the
+                // diagonal, nothing is: it's round.
+                if (inner + 0.75..outer - 0.75).contains(&distance) {
+                    assert!(changed, "({x}, {y}) at {distance} not drawn");
+                } else if distance > outer + 0.75 {
+                    assert!(!changed, "({x}, {y}) at {distance} drawn");
+                }
+            }
+        }
+    }
+    // Hovered, its middle is the edges' colour, its rim bright; selected,
+    // its middle is the selection's.
+    let middle = |pixels: &[[u8; 4]]| pixel(pixels, 68, 84);
+    assert!(
+        brighter(middle(&hovered), [31, 33, 38, 255]).abs() < 30,
+        "{:?}",
+        middle(&hovered)
+    );
+    assert!(
+        pixel(&hovered, 68, 80)[1] > 200,
+        "{:?}",
+        pixel(&hovered, 68, 80)
+    );
+    assert!(tint(middle(&selected)) > 60, "{:?}", middle(&selected));
+}
+
+#[test]
+fn hover_and_selection_are_not_drawn_faded() {
+    let (mesh, edge) = box_under_top_camera();
+    let camera = top_camera();
+    let face = face_facing(&mesh, Vec3::Z);
+    let render = |picked: bool| {
+        let extras = Extras {
+            faded: true,
+            colors: Some(COLORS),
+            hovered_faces: picked.then_some(face).into_iter().collect(),
+            selected_faces: if picked { vec![face] } else { vec![] },
+            ..highlighted(if picked {
+                Highlights {
+                    outlined: vec![edge],
+                    selected_edges: vec![edge],
+                    vertices: vec![Vertex {
+                        corner: 0,
+                        hovered: true,
+                        selected: true,
+                    }],
+                }
+            } else {
+                Highlights::default()
+            })
+        };
+        render_sketch(&camera, &mesh, extras, 1.0)
+    };
+    let (Some(plain), Some(picked)) = (render(false), render(true)) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    assert!(picked == plain);
 }

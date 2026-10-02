@@ -79,7 +79,7 @@ Plan sections: "Body opacity", "Pass order"; steps list item 4.
 
 Plan section: "Hover and selection"; steps list item 5.
 
-- [ ] Implement
+- [x] Implement
   - 5a. `varde-view` picking: `Selectable`, `Picked`, vertex/edge/face
     picking with reach, hidden test and the 2¹⁸ cap, `Look::Hover`, on
     the mesh's faces (regions, by `face_ends`), chains (polylines whose
@@ -97,16 +97,16 @@ Plan section: "Hover and selection"; steps list item 5.
     and round vertices (a hovered face's outline: its part's edges
     whose `edge_faces` hold it), `hover_face`, `hover_outline`, `selected` in both
     themes. GPU tests.
-- [ ] Review
-- [ ] Bugs
+- [x] Review
+- [x] Bugs
 
 ## Step 6: Docs and browser check
 
 Plan steps list item 6.
 
-- [ ] Implement: `agents/viewport.md`, `agents/kernel.md`,
+- [x] Implement: `agents/viewport.md`, `agents/kernel.md`,
   `agents/file-format.md`, `agents/sketch.md` if touched, `README.md`;
   a headless Firefox run of the web build per `AGENTS.md`, fixing what
   it finds.
-- [ ] Review
-- [ ] Bugs
+- [x] Review
+- [x] Bugs

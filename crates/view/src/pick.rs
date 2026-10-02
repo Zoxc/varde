@@ -1,17 +1,19 @@
-//! Picking the model shown in the viewport: which face, edge and body is
-//! under the cursor, on the CPU, against the mesh the viewport draws and
-//! its picking tables ([`Picking`]); no GPU picking. A [`PickIndex`]
-//! holds a bounding volume hierarchy over the mesh's triangles and one
-//! over the segments of its edges between two faces (its creases aren't
-//! picked). The cursor's ray meets the nearest triangle, whose face is
-//! picked; but an edge within [`EDGE_REACH`] pixels
-//! of the cursor on screen, not hidden by what's in front of it (a ray
-//! from the eye to its point nearest the cursor meets nothing nearer by
-//! more than [`HIDDEN_PULL`] view heights), wins over the face. A body is
-//! the body of the face or edge picked.
+//! Picking the model shown in the viewport: which face, edge, vertex and
+//! body is under the cursor, on the CPU, against the mesh the viewport
+//! draws and its picking tables ([`Picking`]); no GPU picking. A
+//! [`PickIndex`] holds a bounding volume hierarchy over the mesh's
+//! triangles, one over the segments of its edges between two faces (its
+//! creases aren't picked) and one over its vertices, the corners where
+//! three faces or more meet. The cursor's ray meets the nearest triangle
+//! it sees the front of, whose face is picked; but an edge within
+//! [`EDGE_REACH`] pixels of the cursor on screen, not hidden by what's in
+//! front of it (a ray from the eye to its point nearest the cursor meets
+//! nothing nearer by more than [`HIDDEN_PULL`] view heights), wins over
+//! the face, and a vertex within [`VERTEX_REACH`] that isn't hidden over
+//! both. A body is the body of the face, edge or vertex picked.
 //!
-//! The index also builds the [`Highlight`] of picked faces and edges
-//! from the mesh's faces and edges.
+//! The index also builds the [`ModelHighlight`] of what's hovered and
+//! selected, by the mesh's faces, edges and corners.
 
 use std::ops::Range;
 use std::sync::Arc;
@@ -21,12 +23,16 @@ use varde_document::{BodyId, OriginPlane, Plane};
 use varde_kernel::RenderMesh;
 use varde_kernel::mesh::FaceKey;
 use varde_regen::{PickFace, Picking};
-use varde_render::{Camera, Emphasis, Highlight};
+use varde_render::{Camera, Highlights, Vertex};
 
 use crate::projection::Projector;
 
 /// How near the cursor an edge must show to be picked, in pixels.
 pub const EDGE_REACH: f64 = 6.0;
+
+/// How near the cursor a vertex must show to be picked, in pixels: a
+/// vertex within it wins over the edges it ends.
+pub const VERTEX_REACH: f64 = 6.0;
 
 /// How much nearer the eye than an edge's point, in view heights, what's
 /// in front of it must be to hide it: as far as the renderer pulls the
@@ -34,31 +40,41 @@ pub const EDGE_REACH: f64 = 6.0;
 /// would hide but for that pull isn't hidden here either.
 const HIDDEN_PULL: f64 = 0.002;
 
-/// The most edges near the cursor looked at for one that isn't hidden,
-/// nearest first: the rest are as good as hidden.
+/// The most edges or vertices near the cursor looked at for one that
+/// isn't hidden, nearest first: the rest are as good as hidden.
 const MAX_EDGE_TESTS: usize = 64;
+
+/// How near the cursor, in pixels, two edges or vertices show as near as
+/// each other: the nearer the eye goes first. A corner seen straight down
+/// an edge and the one behind it show in one place, and the hidden test
+/// can take the one behind for seen, its ray running along the faces
+/// there.
+const SAME_PLACE: f64 = 0.5;
 
 /// The most triangles or edges in a leaf of a hierarchy.
 const LEAF: usize = 4;
 
-/// What the cursor picks in the model: faces and edges (an edge near
-/// the cursor winning), or only one of the two.
+/// What the cursor picks in the model: faces, edges and vertices (a
+/// vertex near the cursor winning over an edge, and an edge over a face),
+/// or only faces or only edges.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Picks {
     #[default]
-    FacesAndEdges,
+    All,
     Faces,
     Edges,
 }
 
-/// A face or an edge of the model shown: a face or edge of its mesh, so an
-/// index into its picking tables' [`Picking::faces`], or its
-/// [`Picking::closed`] and [`Picking::tangents`]. Only edges between two
-/// faces are picked, not creases.
+/// A face, an edge or a vertex of the model shown: a face or edge of its
+/// mesh, so an index into its picking tables' [`Picking::faces`], or its
+/// [`Picking::closed`] and [`Picking::tangents`], or a corner of its mesh
+/// ([`RenderMesh::corners`]). Only edges between two faces are picked,
+/// not creases, and only corners where three faces or more meet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Picked {
     Face(u32),
     Edge(u32),
+    Vertex(u32),
 }
 
 /// What's under the cursor in the model shown.
@@ -68,17 +84,46 @@ pub struct Pick {
     /// [`PickIndex::model`] of the index that picked it.
     pub model: u64,
     pub target: Picked,
-    /// The body of the face or edge.
+    /// The body of the face, edge or vertex.
     pub body: BodyId,
-    /// Where on it: where the cursor's ray meets the face, or the edge's
-    /// point that shows nearest the cursor. In world coordinates, as the
-    /// mesh is drawn.
+    /// Where on it: where the cursor's ray meets the face, the edge's
+    /// point that shows nearest the cursor, or the vertex. In world
+    /// coordinates, as the mesh is drawn.
     pub at: DVec3,
 }
 
+/// What the viewport draws of what's hovered and selected over the model
+/// it was built for, by the mesh's ids (see
+/// [`varde_render::Frame::hovered_faces`]): the faces hovered, drawn
+/// brighter, and selected, tinted; the edges outlined (the hovered ones,
+/// and those bordering the hovered faces), the selected edges, and the
+/// hovered and selected vertices.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ModelHighlight {
+    pub hovered_faces: Vec<u32>,
+    pub selected_faces: Vec<u32>,
+    pub highlights: Arc<Highlights>,
+}
+
+impl ModelHighlight {
+    /// Whether it draws nothing.
+    pub fn is_empty(&self) -> bool {
+        let Highlights {
+            outlined,
+            selected_edges,
+            vertices,
+        } = &*self.highlights;
+        self.hovered_faces.is_empty()
+            && self.selected_faces.is_empty()
+            && outlined.is_empty()
+            && selected_edges.is_empty()
+            && vertices.is_empty()
+    }
+}
+
 /// The model shown, made ready for picking: its mesh, its tables, and
-/// hierarchies over the mesh's triangles and the segments of its edges
-/// between two faces.
+/// hierarchies over the mesh's triangles, the segments of its edges
+/// between two faces and its vertices.
 #[derive(Debug)]
 pub struct PickIndex {
     mesh: Arc<RenderMesh>,
@@ -89,6 +134,11 @@ pub struct PickIndex {
     /// Over the segments of the mesh's edges between two faces, each by
     /// where it starts in [`RenderMesh::edge_vertices`].
     segments: Bvh,
+    /// Over the mesh's corners where three faces or more meet, by index.
+    vertices: Bvh,
+    /// The faces at each corner an edge between two faces ends at, as
+    /// `(corner, face)`, sorted, each once.
+    corner_faces: Vec<(u32, u32)>,
     /// Each tangent chain's edges, by its first.
     tangent_chains: Groups,
 }
@@ -101,7 +151,7 @@ impl PickIndex {
         let fits = picking.bodies().len() == mesh.part_ends().len()
             && picking.faces().len() == mesh.face_count()
             && picking.tangents().len() == mesh.edge_count();
-        let (triangles, segments, tangent_chains) = if fits {
+        let (triangles, segments, vertices, corner_faces, tangent_chains) = if fits {
             let corners = |triangle: &[u32; 3]| triangle.map(|i| position(&mesh, i));
             let triangles = mesh.indices().as_chunks::<3>().0;
             let boxes = triangles.iter().map(|t| bounds(&corners(t)));
@@ -118,6 +168,21 @@ impl PickIndex {
                 let ends = segment(&mesh, start).unwrap_or_default();
                 bounds(&ends)
             });
+            let mut corner_faces: Vec<(u32, u32)> = (0..mesh.edge_count())
+                .filter(|&edge| chain(edge))
+                .flat_map(|edge| {
+                    let faces = mesh.edge_faces()[edge];
+                    (mesh.edge_corners()[edge].into_iter())
+                        .flat_map(move |corner| faces.map(|face| (corner, face)))
+                })
+                .collect();
+            corner_faces.sort_unstable();
+            corner_faces.dedup();
+            let vertices: Vec<u32> = vertex_runs(&corner_faces).map(|run| run[0].0).collect();
+            let vertex_boxes = vertices.iter().map(|&corner| {
+                let at = corner_position(&mesh, corner).unwrap_or_default();
+                [at, at]
+            });
             // A crease is in no tangent chain.
             let tangents: Vec<u32> = (picking.tangents().iter().enumerate())
                 .map(|(edge, &first)| if chain(edge) { first } else { u32::MAX })
@@ -125,6 +190,8 @@ impl PickIndex {
             (
                 Bvh::new(boxes.collect()),
                 Bvh::with_items(segment_boxes.collect(), segments),
+                Bvh::with_items(vertex_boxes.collect(), vertices),
+                corner_faces,
                 Groups::new(mesh.edge_count(), &tangents),
             )
         } else {
@@ -136,6 +203,8 @@ impl PickIndex {
             model,
             triangles,
             segments,
+            vertices,
+            corner_faces,
             tangent_chains,
         }
     }
@@ -158,6 +227,7 @@ impl PickIndex {
         let face = match target {
             Picked::Face(face) => face,
             Picked::Edge(edge) => self.edge_faces(edge)?[0],
+            Picked::Vertex(corner) => self.corner_faces(corner).first()?.1,
         };
         self.face_body(face)
     }
@@ -179,28 +249,34 @@ impl PickIndex {
     }
 
     /// What's under the screen position `at`, in logical pixels from the
-    /// top left of a viewport `size` big seen by `camera`: a feature edge
-    /// showing within [`EDGE_REACH`] of it that nothing hides, the
-    /// nearest, or else the face the cursor's ray first meets; of those
-    /// only what `picks` takes.
+    /// top left of a viewport `size` big seen by `camera`: a vertex
+    /// showing within [`VERTEX_REACH`] of it that nothing hides, the
+    /// nearest, or else such an edge within [`EDGE_REACH`], or else the
+    /// face the cursor's ray first meets the front of; of those only what
+    /// `picks` takes.
     pub fn pick(&self, camera: &Camera, size: [f32; 2], at: DVec2, picks: Picks) -> Option<Pick> {
         let placement = Plane::Origin(OriginPlane::XY).placement();
         let projector = Projector::new(camera, placement, size[0], size[1])?;
         let ray = self.ray(camera, &projector, at)?;
-        let face = (picks != Picks::Edges)
-            .then(|| self.first_hit(&ray, ray.from, f64::INFINITY))
-            .flatten();
-        let edge = (picks != Picks::Faces)
-            .then(|| self.edge_near(camera, &projector, &ray, at))
-            .flatten();
-        let (target, at) = match (edge, face) {
-            (Some((chain, at)), _) => (Picked::Edge(chain), at),
-            (None, Some((t, triangle))) => {
-                let face = self.triangle_face(triangle)?;
-                (Picked::Face(face), ray.at(t))
-            }
-            (None, None) => return None,
+        let vertex = || {
+            (picks == Picks::All)
+                .then(|| self.vertex_near(camera, &projector, &ray, at))
+                .flatten()
+                .map(|(corner, at)| (Picked::Vertex(corner), at))
         };
+        let edge = || {
+            (picks != Picks::Faces)
+                .then(|| self.edge_near(camera, &projector, &ray, at))
+                .flatten()
+                .map(|(chain, at)| (Picked::Edge(chain), at))
+        };
+        let face = || {
+            let (t, triangle) = (picks != Picks::Edges)
+                .then(|| self.first_front(&ray))
+                .flatten()?;
+            Some((Picked::Face(self.triangle_face(triangle)?), ray.at(t)))
+        };
+        let (target, at) = vertex().or_else(edge).or_else(face)?;
         let pick = Pick {
             model: self.model,
             target,
@@ -239,6 +315,25 @@ impl PickIndex {
         let [a, b] = faces.map(|f| self.picking.faces().get(f as usize).map(|face| face.key));
         let (a, b) = (a?, b?);
         Some([a.min(b), a.max(b)])
+    }
+
+    /// The keys that name `corner`, a vertex: the lowest three of those of
+    /// the faces meeting there, sorted, if three faces or more do.
+    pub fn vertex_keys(&self, corner: u32) -> Option<[FaceKey; 3]> {
+        let mut keys: Vec<FaceKey> = (self.corner_faces(corner).iter())
+            .filter_map(|&(_, face)| Some(self.picking.faces().get(face as usize)?.key))
+            .collect();
+        keys.sort_unstable();
+        keys.dedup();
+        match keys[..] {
+            [a, b, c, ..] => Some([a, b, c]),
+            _ => None,
+        }
+    }
+
+    /// Where `corner` is, if the mesh has it.
+    pub fn corner_point(&self, corner: u32) -> Option<DVec3> {
+        Some(corner_position(&self.mesh, corner)?.as_dvec3())
     }
 
     /// A point on `chain`: the middle of its first segment.
@@ -295,6 +390,24 @@ impl PickIndex {
         })
     }
 
+    /// The vertex of `body` where faces that `keys` name meet (each by key
+    /// or alias, among the faces there), the nearest to `near` among
+    /// several, as [`PickIndex::find_face`] finds faces.
+    pub fn find_vertex(&self, body: BodyId, keys: [FaceKey; 3], near: DVec3) -> Option<u32> {
+        let named = |face: u32, key: &FaceKey| {
+            (self.picking.faces().get(face as usize))
+                .is_some_and(|face| face.key == *key || face.aliases.binary_search(key).is_ok())
+        };
+        let found = vertex_runs(&self.corner_faces)
+            .filter(|run| self.face_body(run[0].1) == Some(body))
+            .filter(|run| (keys.iter()).all(|key| run.iter().any(|&(_, face)| named(face, key))))
+            .map(|run| run[0].0);
+        self.nearest(found, near, |corner| {
+            self.corner_point(corner)
+                .map_or(f64::INFINITY, |at| at.distance(near))
+        })
+    }
+
     /// Of `found`, ascending, the only one, or the one at the least
     /// `distance` from `near`, a later one counting only where it comes
     /// nearer by more than a billionth of the mesh's size; the first where
@@ -324,37 +437,67 @@ impl PickIndex {
         best.map(|(_, item)| item)
     }
 
-    /// The highlight of `items`: each face's triangles and each edge's
-    /// lines in its emphasis. Items not in the tables are left out.
-    pub fn highlight(&self, items: impl IntoIterator<Item = (Picked, Emphasis)>) -> Highlight {
-        let mut highlight = Highlight::default();
-        for (target, emphasis) in items {
+    /// What's drawn of `hovered` and `selected`: the faces hovered
+    /// brighter, the edges bordering them outlined, and those selected
+    /// tinted; an edge hovered outlined, one selected drawn in the
+    /// selection's colour; a vertex hovered or selected as a disc, the
+    /// hovered one last. What the mesh hasn't is left out.
+    pub fn highlight(&self, hovered: &[Picked], selected: &[Picked]) -> ModelHighlight {
+        let has = |target: &&Picked| {
+            let (id, count) = match **target {
+                Picked::Face(face) => (face, self.mesh.face_count()),
+                Picked::Edge(edge) => (edge, self.mesh.edge_count()),
+                Picked::Vertex(corner) => (corner, self.mesh.corners().len()),
+            };
+            (id as usize) < count
+        };
+        let hovered: Vec<Picked> = hovered.iter().filter(has).copied().collect();
+        let selected: Vec<Picked> = selected.iter().filter(has).copied().collect();
+        let mut highlight = ModelHighlight::default();
+        let mut highlights = Highlights::default();
+        for &target in &hovered {
             match target {
-                Picked::Face(face) => {
-                    for triangle in self.face_triangles(face) {
-                        let Some(corners) = self.corners(triangle) else {
-                            continue;
-                        };
-                        let normal = |i: u32| {
-                            let normal = self.mesh.normals().get(i as usize).copied();
-                            Vec3::from(normal.unwrap_or_default())
-                        };
-                        let positions = corners.map(|i| position(&self.mesh, i));
-                        highlight.triangle(emphasis, positions, corners.map(normal));
-                    }
-                }
-                Picked::Edge(chain) => {
-                    let Some(range) = edge_range(&self.mesh, chain as usize) else {
-                        continue;
-                    };
-                    let polyline = (self.mesh.edge_vertices().get(range).unwrap_or_default())
-                        .iter()
-                        .map(|&i| position(&self.mesh, i))
-                        .collect();
-                    highlight.edge(emphasis, polyline);
-                }
+                Picked::Face(face) => highlight.hovered_faces.push(face),
+                Picked::Edge(edge) => highlights.outlined.push(edge),
+                Picked::Vertex(_) => {}
             }
         }
+        // The edges between a face hovered and another face.
+        let mut faces = highlight.hovered_faces.clone();
+        faces.sort_unstable();
+        if !faces.is_empty() {
+            let bordering = (self.mesh.edge_faces().iter().enumerate())
+                .filter(|(_, [a, b])| a != b)
+                .filter(|(_, faces_of)| {
+                    (faces_of.iter()).any(|face| faces.binary_search(face).is_ok())
+                })
+                .filter_map(|(edge, _)| u32::try_from(edge).ok());
+            highlights.outlined.extend(bordering);
+        }
+        for &target in &selected {
+            match target {
+                Picked::Face(face) => highlight.selected_faces.push(face),
+                Picked::Edge(edge) => highlights.selected_edges.push(edge),
+                Picked::Vertex(corner) => highlights.vertices.push(Vertex {
+                    corner,
+                    hovered: hovered.contains(&target),
+                    selected: true,
+                }),
+            }
+        }
+        // The hovered vertices last, over the others.
+        for &target in &hovered {
+            if let Picked::Vertex(corner) = target
+                && !selected.contains(&target)
+            {
+                highlights.vertices.push(Vertex {
+                    corner,
+                    hovered: true,
+                    selected: false,
+                });
+            }
+        }
+        highlight.highlights = Arc::new(highlights);
         highlight
     }
 
@@ -367,14 +510,9 @@ impl PickIndex {
 
     /// The triangles of face `face`, none if there's no such face.
     fn face_triangles(&self, face: u32) -> Range<u32> {
-        let ends = self.mesh.face_ends();
-        let Some(&end) = ends.get(face as usize) else {
-            return 0..0;
-        };
-        let start = face
-            .checked_sub(1)
-            .map_or(0, |before| ends[before as usize]);
-        start / 3..end / 3
+        // Within the mesh's indices, `u32`s.
+        let indices = self.mesh.face_indices(face as usize).unwrap_or_default();
+        (indices.start / 3) as u32..(indices.end / 3) as u32
     }
 
     /// Where each segment of edge `edge` starts in the mesh's edge
@@ -435,6 +573,45 @@ impl PickIndex {
         })
     }
 
+    /// Where along `ray`, from its `from` on, it first meets the front of a
+    /// triangle, and which, if it does: what's drawn there, the backs of
+    /// the triangles being culled.
+    fn first_front(&self, ray: &Ray) -> Option<(f64, u32)> {
+        self.triangles
+            .nearest(ray, ray.from, f64::INFINITY, |triangle| {
+                let corners = self.corners(triangle)?;
+                let [a, b, c] = corners.map(|i| position(&self.mesh, i).as_dvec3());
+                // Its corners run counterclockwise seen from its front.
+                let facing = (b - a).cross(c - a).dot(ray.direction) < 0.0;
+                facing.then(|| ray_hits(ray.origin, ray.direction, [a, b, c]))?
+            })
+    }
+
+    /// The vertex showing nearest `at` within [`VERTEX_REACH`] that
+    /// nothing hides, of those [`MAX_EDGE_TESTS`] nearest: its corner and
+    /// where it is.
+    fn vertex_near(
+        &self,
+        camera: &Camera,
+        projector: &Projector,
+        ray: &Ray,
+        at: DVec2,
+    ) -> Option<(u32, DVec3)> {
+        let mut near = Vec::new();
+        self.vertices
+            .near(ray, reach(projector, VERTEX_REACH), |corner| {
+                let point = self.corner_point(corner)?;
+                let (point, _) = projector.in_front(point, point)?;
+                let distance = projector.show(point).distance(at);
+                if distance.is_nan() || distance > VERTEX_REACH {
+                    return None;
+                }
+                near.push((distance, projector.world_depth(point), corner, point));
+                Some(())
+            });
+        self.nearest_shown(camera, projector, near)
+    }
+
     /// The edge showing nearest `at` within [`EDGE_REACH`] that nothing
     /// hides, of those [`MAX_EDGE_TESTS`] nearest, and its point showing
     /// nearest `at`: its chain and that point.
@@ -445,43 +622,52 @@ impl PickIndex {
         ray: &Ray,
         at: DVec2,
     ) -> Option<(u32, DVec3)> {
-        // An edge showing within reach is within that many pixels of the
-        // ray, at its depth, so within a box grown by that much at its
-        // deepest.
-        let reach = |min: DVec3, max: DVec3| {
-            let (_, backward) = projector.eye();
-            let half = (max - min) / 2.0;
-            let deepest = projector.world_depth((min + max) / 2.0) + half.dot(backward.abs());
-            EDGE_REACH * projector.pixel_at(deepest)
-        };
         let mut near = Vec::new();
-        self.segments.near(ray, reach, |start| {
-            let [a, b] = segment(&self.mesh, start)?;
-            let (a, b) = projector.in_front(a.as_dvec3(), b.as_dvec3())?;
-            let (pa, pb) = (projector.show(a), projector.show(b));
-            let (distance, s) = segment_distance(at, pa, pb);
-            if distance.is_nan() || distance > EDGE_REACH {
-                return None;
-            }
-            // Perspective divides by depth, so the point showing `s` of
-            // the way along isn't `s` of the way along in the world.
-            let u = if projector.perspective() {
-                let (da, db) = (projector.world_depth(a), projector.world_depth(b));
-                let denominator = (1.0 - s) * db + s * da;
-                if denominator > 0.0 {
-                    s * da / denominator
+        self.segments
+            .near(ray, reach(projector, EDGE_REACH), |start| {
+                let [a, b] = segment(&self.mesh, start)?;
+                let (a, b) = projector.in_front(a.as_dvec3(), b.as_dvec3())?;
+                let (pa, pb) = (projector.show(a), projector.show(b));
+                let (distance, s) = segment_distance(at, pa, pb);
+                if distance.is_nan() || distance > EDGE_REACH {
+                    return None;
+                }
+                // Perspective divides by depth, so the point showing `s` of
+                // the way along isn't `s` of the way along in the world.
+                let u = if projector.perspective() {
+                    let (da, db) = (projector.world_depth(a), projector.world_depth(b));
+                    let denominator = (1.0 - s) * db + s * da;
+                    if denominator > 0.0 {
+                        s * da / denominator
+                    } else {
+                        s
+                    }
                 } else {
                     s
-                }
-            } else {
-                s
-            };
-            let point = a + (b - a) * u.clamp(0.0, 1.0);
-            near.push((distance, projector.world_depth(point), start, point));
-            Some(())
-        });
+                };
+                let point = a + (b - a) * u.clamp(0.0, 1.0);
+                near.push((distance, projector.world_depth(point), start, point));
+                Some(())
+            });
+        let (start, point) = self.nearest_shown(camera, projector, near)?;
+        // The edge whose vertices the segment starts among.
+        let edge = (self.mesh.edge_ends()).partition_point(|&end| end <= start);
+        Some((edge as u32, point))
+    }
+
+    /// Of the items `near` the cursor, as how far from it they show, how
+    /// deep, which and where, the nearest that nothing hides, of the
+    /// [`MAX_EDGE_TESTS`] nearest: sorted by distance (to [`SAME_PLACE`]),
+    /// depth and item.
+    fn nearest_shown(
+        &self,
+        camera: &Camera,
+        projector: &Projector,
+        mut near: Vec<(f64, f64, u32, DVec3)>,
+    ) -> Option<(u32, DVec3)> {
+        let place = |distance: f64| (distance / SAME_PLACE).round();
         near.sort_by(|a, b| {
-            (a.0.total_cmp(&b.0))
+            (place(a.0).total_cmp(&place(b.0)))
                 .then(a.1.total_cmp(&b.1))
                 .then(a.2.cmp(&b.2))
         });
@@ -489,12 +675,14 @@ impl PickIndex {
         near.into_iter()
             .take(MAX_EDGE_TESTS)
             .find(|&(_, _, _, point)| !self.hidden(projector, point, view_height))
-            .map(|(_, _, start, point)| {
-                // The edge whose vertices the segment starts among.
-                let edges = self.mesh.edge_ends();
-                let edge = edges.partition_point(|&end| end <= start);
-                (edge as u32, point)
-            })
+            .map(|(_, _, item, point)| (item, point))
+    }
+
+    /// The faces at `corner`, as `(corner, face)`, ascending.
+    fn corner_faces(&self, corner: u32) -> &[(u32, u32)] {
+        let from = (self.corner_faces).partition_point(|&(at, _)| at < corner);
+        let to = (self.corner_faces).partition_point(|&(at, _)| at <= corner);
+        &self.corner_faces[from..to]
     }
 
     /// Whether something of the mesh is in front of the world point
@@ -566,6 +754,29 @@ fn edge_range(mesh: &RenderMesh, edge: usize) -> Option<Range<usize>> {
         .checked_sub(1)
         .map_or(0, |before| ends[before] as usize);
     Some(start..end)
+}
+
+/// Where `mesh`'s corner `corner` is, if it has it.
+fn corner_position(mesh: &RenderMesh, corner: u32) -> Option<Vec3> {
+    Some(Vec3::from(*mesh.corners().get(corner as usize)?))
+}
+
+/// The runs of `corner_faces`, sorted by corner, of each corner where
+/// three faces or more meet: the vertices.
+fn vertex_runs(corner_faces: &[(u32, u32)]) -> impl Iterator<Item = &[(u32, u32)]> {
+    (corner_faces.chunk_by(|a, b| a.0 == b.0)).filter(|run| run.len() >= 3)
+}
+
+/// How far a box of the world, from `min` to `max`, must be grown for
+/// what's in it showing within `pixels` of the cursor to be within it
+/// grown: that many pixels at its deepest, as far from the ray.
+fn reach(projector: &Projector, pixels: f64) -> impl Fn(DVec3, DVec3) -> f64 + '_ {
+    move |min, max| {
+        let (_, backward) = projector.eye();
+        let half = (max - min) / 2.0;
+        let deepest = projector.world_depth((min + max) / 2.0) + half.dot(backward.abs());
+        pixels * projector.pixel_at(deepest)
+    }
 }
 
 /// The ends of `mesh`'s edge segment starting at `start` in its edge
@@ -687,7 +898,8 @@ struct Groups {
 
 impl Groups {
     /// The items of `groups` groups, item `i` in group `of[i]`, unless
-    /// that's past the groups ([`Picking::NONE`]). None if there are more
+    /// that's past the groups (as a crease's tangent chain is made out to
+    /// be, `u32::MAX`). None if there are more
     /// items than `u32`s number, which no mesh has.
     fn new(groups: usize, of: &[u32]) -> Self {
         if u32::try_from(of.len()).is_err() {

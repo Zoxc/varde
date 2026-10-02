@@ -1133,7 +1133,8 @@ bar says why (`EditError::Sketch`).
   `Ctrl`-click (`Cmd` on macOS) adds or takes out. A box selects what's
   inside it dragged left to right, what it touches right to left, `Ctrl`
   adding to the selection. `Space` clears the selection everywhere: the
-  sketch's in a sketch, else the Timeline's. A row of the Geometry or
+  sketch's in a sketch, else the model's and the Timeline's (see
+  "Selecting" in `agents/viewport.md`). A row of the Geometry or
   Constraints list, or a glyph, sends `Look::ClickRow`, which the app
   turns into a click adding with the command modifier held (tracked from
   `ModifiersChanged`, `Message::CommandHeld`). Hovering one sends

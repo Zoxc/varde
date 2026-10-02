@@ -7,9 +7,9 @@ use varde_kernel::{Aabb, RenderLines, RenderMesh};
 use wgpu::util::DeviceExt;
 
 use crate::Camera;
-use crate::highlight::{Highlight, HighlightVertex};
+use crate::highlight::{Highlights, VertexInstance};
 use crate::scene::{self, GRID_FADE_HEIGHTS, GridPlane};
-use crate::sketch::{FillVertex, LineInstance, PointInstance, SketchLayer, SketchScene, Srgba};
+use crate::sketch::{FillVertex, LineInstance, PointInstance, SketchLayer, SketchScene};
 
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
@@ -37,6 +37,19 @@ pub const HIDDEN_EDGE_WIDTH: f32 = 1.0;
 /// The dashes of the edges the model hides: how long a dash and a gap are
 /// along the edge, in logical pixels at the target.
 pub const HIDDEN_DASH: [f32; 2] = [4.0, 3.0];
+
+/// How wide the rim of [`Colors::hover_outline`] is around the hovered
+/// edges and a hovered vertex, in logical pixels: see
+/// [`Highlights::outlined`].
+pub const HOVER_RIM: f32 = 1.5;
+
+/// How wide the selected edges are drawn, in logical pixels, over their
+/// [`EDGE_WIDTH`]: see [`Highlights::selected_edges`].
+pub const SELECTED_EDGE_WIDTH: f32 = 2.5;
+
+/// The radius of a hovered or selected vertex's disc, in logical pixels,
+/// within its rim: see [`Highlights::vertices`].
+pub const VERTEX_RADIUS: f32 = 3.5;
 
 /// A rectangle on the render target, in physical pixels.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -92,6 +105,19 @@ pub struct Frame<'a> {
     /// ([`HIDDEN_DASH`]), [`HIDDEN_EDGE_WIDTH`] wide, at
     /// [`Colors::hidden_edge_alpha`]. Never while [`Self::faded`].
     pub hidden_edges: bool,
+    /// The faces hovered, by their ids in the mesh (their runs of
+    /// [`RenderMesh::face_ends`]): the one the cursor is over, or all of
+    /// what it would select (a body's). Each is drawn again over itself
+    /// towards [`Colors::hover_face`], as opaque as its part. Not drawn
+    /// while [`Self::faded`], nor a face the mesh hasn't.
+    pub hovered_faces: &'a [u32],
+    /// The faces selected, by their ids likewise: drawn again over
+    /// themselves, tinted with [`Colors::selected`], over the hover.
+    pub selected_faces: &'a [u32],
+    /// The edges and vertices hovered and selected, drawn over the model.
+    /// Only re-uploaded when it's another `Arc` than the last one
+    /// prepared, or the mesh is. Not drawn while [`Self::faded`].
+    pub highlights: &'a Arc<Highlights>,
     /// The sketch being edited, or the extrude being set up, if one is:
     /// drawn over everything else, or hidden by the model in front of it
     /// ([`SketchScene::depth_tested`]).
@@ -100,10 +126,6 @@ pub struct Frame<'a> {
     /// everything but the sketch being edited, unless it shows where the
     /// origin does.
     pub pivot: Option<Pivot>,
-    /// The faces and edges of the model hovered and selected, drawn over
-    /// it, hidden by what's in front of them. Only re-uploaded when it's
-    /// another `Arc` than the last one prepared, or the colours change.
-    pub highlight: Option<&'a Arc<Highlight>>,
     /// Where to draw on the target.
     pub viewport: Viewport,
     /// Size of the whole render target in physical pixels.
@@ -150,14 +172,6 @@ pub struct Colors {
     pub pivot: Srgb,
     /// Finished sketches' curves.
     pub sketch: Srgb,
-    /// The base colours of a hovered and a selected face of
-    /// [`Frame::highlight`], lit as [`Colors::model`] is: the model's
-    /// lightness in another hue, so they still read as 3D.
-    pub hovered_face: Srgb,
-    pub selected_face: Srgb,
-    /// A hovered and a selected edge of [`Frame::highlight`].
-    pub hovered_edge: Srgba,
-    pub selected_edge: Srgba,
     /// How opaque the model's faces and edges are when [`Frame::faded`],
     /// from 0 to 1. Only its nearest faces are drawn, and they still hide
     /// what's behind them from the grid and the sketches.
@@ -165,6 +179,15 @@ pub struct Colors {
     /// How opaque the edges the model hides are drawn, from 0 to 1, of
     /// [`Self::edge`]: see [`Frame::hidden_edges`].
     pub hidden_edge_alpha: f32,
+    /// What the face the cursor is over is drawn in, before lighting:
+    /// brighter than [`Self::model`]. See [`Frame::hovered_faces`].
+    pub hover_face: Srgb,
+    /// The rim around the hovered edges and vertex, bright, for contrast
+    /// against the faces and the background: see [`HOVER_RIM`].
+    pub hover_outline: Srgb,
+    /// What's selected: the faces are tinted with it, the edges and
+    /// vertices drawn in it. The accent.
+    pub selected: Srgb,
 }
 
 /// The scene shader's uniforms. `Uniforms` in `scene.wgsl` mirrors this
@@ -194,8 +217,9 @@ struct Uniforms {
     /// xy: the viewport's top left corner on the target, in physical
     /// pixels, where fragment positions count from; zw unused.
     viewport_origin: [f32; 4],
-    /// [`Colors`], converted to linear with w = 1, except `model` and
-    /// `edge`, whose w is how opaque the model is.
+    /// [`Colors`], converted to linear with w = 1, except `model`, whose
+    /// w is how opaque the model is, its faces and edges, and `edge`, whose
+    /// w is [`Colors::hidden_edge_alpha`], for the edges the model hides.
     background_top: [f32; 4],
     background_bottom: [f32; 4],
     model: [f32; 4],
@@ -208,25 +232,32 @@ struct Uniforms {
     /// drawn; and its core's colour.
     pivot: [f32; 4],
     pivot_color: [f32; 4],
-    /// [`Frame::grid`]: xyz its origin, and unit x and y axes; w unused.
+    /// [`Frame::grid`]: xyz its origin, and unit x and y axes. The axes'
+    /// w is which world axis each lies along, 0 to 2, or 3 if none, for
+    /// the colour of its axis line (see [`axis_index`]); the origin's is
+    /// unused.
     grid_origin: [f32; 4],
     grid_x: [f32; 4],
     grid_y: [f32; 4],
-    /// The colours of the grid's x and y axis lines: of the world axis
-    /// each lies along, or of the grid if it lies along none.
-    grid_axes: [[f32; 4]; 2],
     /// [`SketchScene::plane`]: xyz its origin, and unit x and y axes; w
     /// unused.
     sketch_origin: [f32; 4],
     sketch_x: [f32; 4],
     sketch_y: [f32; 4],
-    /// [`Colors::edge`] with w [`Colors::hidden_edge_alpha`], for the
-    /// edges the model hides.
-    hidden_edge: [f32; 4],
+    /// [`Colors::hover_face`], [`Colors::hover_outline`] and
+    /// [`Colors::selected`], with w = 1.
+    hover_face: [f32; 4],
+    hover_outline: [f32; 4],
+    selected: [f32; 4],
 }
 
 // WGSL lays out uniform structs in 16-byte steps.
 const _: () = assert!(size_of::<Uniforms>().is_multiple_of(16));
+// The limits tests' device takes buffers of 512 bytes at most, the
+// uniforms' too. They're at that: a new value takes a `w` that's unused,
+// or one that can be worked out from another (as the grid's axis lines'
+// colours are from `grid_x.w` and `grid_y.w`).
+const _: () = assert!(size_of::<Uniforms>() <= 512);
 
 /// The largest buffer the renderer relies on, in bytes: WebGPU's default
 /// `maxBufferSize`, which the devices iced asks for have natively and on
@@ -261,12 +292,12 @@ type Segment = [[f32; 3]; 2];
 /// that are of it too, marked or not. See `edge_segment` in the shader.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
-struct EdgePoint {
-    position: [f32; 3],
+pub(crate) struct EdgePoint {
+    pub(crate) position: [f32; 3],
     /// How far along its polyline it is, in world units.
     along: f32,
     /// Which polyline it's on.
-    edge: u32,
+    pub(crate) edge: u32,
 }
 
 /// The edge of the points at the ends of the stream, which no polyline is,
@@ -402,9 +433,35 @@ struct GpuMesh {
     bounds: Option<Aabb>,
 }
 
+impl GpuMesh {
+    /// The indices of face `face` of `mesh`, the mesh uploaded, and the
+    /// part it's of, if it has one.
+    fn face(&self, mesh: &RenderMesh, face: u32) -> Option<(Range<u32>, usize)> {
+        let indices = mesh.face_indices(usize::try_from(face).ok()?)?;
+        let part = self.parts.partition_point(|part| part.faces.end <= face);
+        // The kernel bounds indices well within `u32`.
+        let to_u32 = |n| u32::try_from(n).ok();
+        let indices = to_u32(indices.start)?..to_u32(indices.end)?;
+        (part < self.parts.len()).then_some((indices, part))
+    }
+}
+
+/// A face of the mesh drawn again over itself, hovered or selected: see
+/// [`Frame::hovered_faces`].
+#[derive(Debug, Clone)]
+struct FaceDraw {
+    indices: Range<u32>,
+    /// Its part's alpha's step, see [`Alphas`].
+    step: u32,
+    /// Tinted as selected, else brightened as hovered.
+    selected: bool,
+}
+
 /// What the renderer keeps of a part of the mesh to draw it on its own.
 #[derive(Debug, Clone)]
 struct GpuPart {
+    /// Its faces' ids.
+    faces: Range<u32>,
     /// Its triangles' indices.
     indices: Range<u32>,
     /// Its edges' points in the [`EdgePoint`] stream, the neighbour only
@@ -547,6 +604,8 @@ pub enum PrepareError {
     LinesTooLarge { bytes: u64, limit: u64 },
     /// The same for a layer of the sketch being edited.
     SketchTooLarge { bytes: u64, limit: u64 },
+    /// The same for the hovered and selected edges and vertices.
+    HighlightsTooLarge { bytes: u64, limit: u64 },
 }
 
 impl std::fmt::Display for PrepareError {
@@ -565,6 +624,11 @@ impl std::fmt::Display for PrepareError {
                 f,
                 "the sketch being edited needs a {bytes}-byte buffer, but the device allows at \
                  most {limit} bytes"
+            ),
+            PrepareError::HighlightsTooLarge { bytes, limit } => write!(
+                f,
+                "what's hovered and selected needs a {bytes}-byte buffer, but the device allows \
+                 at most {limit} bytes"
             ),
         }
     }
@@ -589,11 +653,16 @@ pub struct Renderer {
     glass_back: wgpu::RenderPipeline,
     glass_front: wgpu::RenderPipeline,
     edges: wgpu::RenderPipeline,
-    /// The faces of [`Frame::highlight`]; its edges are drawn as the
-    /// sketch's depth tested lines.
-    highlight: wgpu::RenderPipeline,
     /// The edges again where the model hides them, dashed.
     hidden_edges: wgpu::RenderPipeline,
+    /// Faces drawn again over themselves (`Equal`), hovered and selected.
+    hover_face: wgpu::RenderPipeline,
+    selected_face: wgpu::RenderPipeline,
+    /// The rim of the hovered edges' outline, the selected edges, and the
+    /// hovered and selected vertices.
+    outline: wgpu::RenderPipeline,
+    selected_edges: wgpu::RenderPipeline,
+    vertices: wgpu::RenderPipeline,
     lines: wgpu::RenderPipeline,
     origin: wgpu::RenderPipeline,
     /// The sketch being edited: its fills, lines and points, drawn over
@@ -627,12 +696,6 @@ pub struct Slot {
     sketch_base: SketchBuffers,
     sketch_source: Weak<SketchLayer>,
     sketch_live: SketchBuffers,
-    /// [`Frame::highlight`]'s faces and edges, the `Arc` they were
-    /// uploaded from like `source`, and the colours they were uploaded in.
-    highlight_faces: Instances,
-    highlight_lines: SketchBuffers,
-    highlight_source: Weak<Highlight>,
-    highlight_colors: Option<Colors>,
     /// Whether the frame has a sketch to draw, and whether it's depth
     /// tested.
     sketching: bool,
@@ -645,6 +708,12 @@ pub struct Slot {
     /// Whether the edges the model hides are drawn: [`Frame::hidden_edges`]
     /// and not [`Frame::faded`].
     hidden_edges: bool,
+    /// The faces hovered and selected, the hovered first: none while
+    /// [`Frame::faded`].
+    faces: Vec<FaceDraw>,
+    /// [`Frame::highlights`] as uploaded, and its `Arc` like `source`.
+    highlights: HighlightBuffers,
+    highlights_source: Weak<Highlights>,
 }
 
 impl Renderer {
@@ -714,6 +783,9 @@ impl Renderer {
                 ("HIDDEN_EDGE_WIDTH", f64::from(HIDDEN_EDGE_WIDTH)),
                 ("HIDDEN_DASH", f64::from(HIDDEN_DASH[0])),
                 ("HIDDEN_GAP", f64::from(HIDDEN_DASH[1])),
+                ("HOVER_RIM", f64::from(HOVER_RIM)),
+                ("SELECTED_EDGE_WIDTH", f64::from(SELECTED_EDGE_WIDTH)),
+                ("VERTEX_RADIUS", f64::from(VERTEX_RADIUS)),
                 ("ENCODE_SRGB", if format.is_srgb() { 0.0 } else { 1.0 }),
                 ("SKETCH_DEPTH", if sketch_depth { 1.0 } else { 0.0 }),
             ]
@@ -808,11 +880,6 @@ impl Renderer {
                 0 => Float32x2, 1 => Uint32, 2 => Float32x4, 3 => Float32,
             ],
         };
-        let highlight_vertices = wgpu::VertexBufferLayout {
-            array_stride: size_of::<HighlightVertex>() as u64,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x4],
-        };
         // The feature edges: the `EdgePoint` stream in slots 0 to 3, a
         // point apart, an instance per segment: the points before, at its
         // start, at its end and after it. Its neighbours' positions and
@@ -856,6 +923,12 @@ impl Renderer {
             step_mode: wgpu::VertexStepMode::Instance,
             attributes,
         });
+        // The hovered and selected vertices, a disc per instance.
+        let vertices = wgpu::VertexBufferLayout {
+            array_stride: size_of::<VertexInstance>() as u64,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Uint32],
+        };
         let mesh = Pass {
             label: "varde mesh",
             vs: "vs_mesh",
@@ -868,6 +941,18 @@ impl Renderer {
             topology: wgpu::PrimitiveTopology::TriangleList,
             cull_mode: Some(wgpu::Face::Back),
             sketch_depth: false,
+        };
+        // Over the faces' own pixels and no others: the same vertex
+        // shader, its position invariant, at exactly their depth.
+        let redrawn = |label, fs| {
+            pipeline(Pass {
+                label,
+                fs,
+                blend: wgpu::BlendState::ALPHA_BLENDING,
+                depth_write: false,
+                depth_compare: wgpu::CompareFunction::Equal,
+                ..mesh.clone()
+            })
         };
 
         Self {
@@ -901,17 +986,26 @@ impl Renderer {
                 depth_write: false,
                 ..mesh.clone()
             }),
+            hover_face: redrawn("varde hovered face", "fs_hover_face"),
+            selected_face: redrawn("varde selected face", "fs_selected_face"),
             mesh: pipeline(mesh),
+            // Entry points of their own, which wgpu's GL backend keys
+            // programs by.
+            outline: pipeline(Pass {
+                buffers: &edge_points,
+                ..Pass::overlay("varde hover outline", "vs_outline", "fs_line")
+            }),
+            selected_edges: pipeline(Pass {
+                buffers: &edge_points,
+                ..Pass::overlay("varde selected edges", "vs_selected_edge", "fs_line")
+            }),
+            vertices: pipeline(Pass {
+                buffers: std::slice::from_ref(&vertices),
+                ..Pass::overlay("varde vertices", "vs_vertex", "fs_point")
+            }),
             edges: pipeline(Pass {
                 buffers: &edge_points,
                 ..Pass::overlay("varde edges", "vs_edge", "fs_line")
-            }),
-            // Over the faces they lie on, pulled towards the camera like
-            // the edges, culled like the model.
-            highlight: pipeline(Pass {
-                buffers: std::slice::from_ref(&highlight_vertices),
-                cull_mode: Some(wgpu::Face::Back),
-                ..Pass::overlay("varde highlight faces", "vs_highlight", "fs_highlight")
             }),
             // Exactly the pixels the visible edges didn't draw: the same
             // quads at the same depth, tested the other way round. Its own
@@ -997,10 +1091,6 @@ impl Renderer {
             sketch_base: SketchBuffers::default(),
             sketch_source: Weak::new(),
             sketch_live: SketchBuffers::default(),
-            highlight_faces: Instances::default(),
-            highlight_lines: SketchBuffers::default(),
-            highlight_source: Weak::new(),
-            highlight_colors: None,
             sketching: false,
             sketch_depth: false,
             depth: None,
@@ -1008,6 +1098,9 @@ impl Renderer {
             faded: false,
             draws: PartDraws::default(),
             hidden_edges: false,
+            faces: Vec::new(),
+            highlights: HighlightBuffers::default(),
+            highlights_source: Weak::new(),
         }
     }
 
@@ -1046,7 +1139,8 @@ impl Renderer {
         // so this skips its upload. A failed upload isn't tried again for
         // the same `Arc`: it can only fail on the device's buffer limit,
         // which the same mesh would hit again.
-        if !std::ptr::eq(slot.source.as_ptr(), Arc::as_ptr(frame.mesh)) {
+        let new_mesh = !std::ptr::eq(slot.source.as_ptr(), Arc::as_ptr(frame.mesh));
+        if new_mesh {
             slot.source = Arc::downgrade(frame.mesh);
             slot.mesh = upload_mesh(device, frame.mesh).unwrap_or_else(|error| {
                 result = Err(error);
@@ -1057,6 +1151,37 @@ impl Renderer {
         let opacity = if frame.faded { &[] } else { frame.opacity };
         let parts = slot.mesh.as_ref().map_or(&[][..], |mesh| &mesh.parts);
         slot.draws = PartDraws::new(parts, opacity, &self.alphas, frame.camera);
+
+        // What's hovered and selected names the mesh's faces, edges and
+        // vertices, so it's written again with the mesh too.
+        if new_mesh
+            || !std::ptr::eq(
+                slot.highlights_source.as_ptr(),
+                Arc::as_ptr(frame.highlights),
+            )
+        {
+            slot.highlights_source = Arc::downgrade(frame.highlights);
+            let written = slot
+                .highlights
+                .write(device, queue, frame.mesh, frame.highlights);
+            result = result.and(written);
+        }
+        slot.faces.clear();
+        if !frame.faded
+            && let Some(gpu) = &slot.mesh
+        {
+            let hovered = frame.hovered_faces.iter().map(|&face| (face, false));
+            let selected = frame.selected_faces.iter().map(|&face| (face, true));
+            for (face, selected) in hovered.into_iter().chain(selected) {
+                if let Some((indices, part)) = gpu.face(frame.mesh, face) {
+                    slot.faces.push(FaceDraw {
+                        indices,
+                        step: self.alphas.step(opacity.get(part).copied()),
+                        selected,
+                    });
+                }
+            }
+        }
 
         slot.sketching = frame.sketch.is_some();
         slot.sketch_depth = frame.sketch.is_some_and(|sketch| sketch.depth_tested);
@@ -1073,8 +1198,6 @@ impl Renderer {
             }
             result = result.and(sketch_result);
         }
-
-        result = result.and(slot.prepare_highlight(device, queue, frame));
 
         // A depth tested sketch is hidden by what's in front of it, and
         // so needs the depth range to cover it.
@@ -1132,7 +1255,7 @@ impl Renderer {
             background_top: linear(colors.background_top),
             background_bottom: linear(colors.background_bottom),
             model: faded(colors.model),
-            edge: faded(colors.edge),
+            edge: with_alpha(colors.edge, hidden_alpha),
             grid: linear(colors.grid),
             axes: colors.axes.map(linear),
             origin_outline: linear(colors.origin_outline),
@@ -1143,13 +1266,14 @@ impl Renderer {
                 .map_or([0.0; 4], |pivot| pivot.at.extend(pivot.opacity).to_array()),
             pivot_color: linear(colors.pivot),
             grid_origin: grid.origin().extend(0.0).to_array(),
-            grid_x: grid.x().extend(0.0).to_array(),
-            grid_y: grid.y().extend(0.0).to_array(),
-            grid_axes: [grid.x(), grid.y()].map(|axis| linear(axis_color(axis, &colors))),
+            grid_x: grid.x().extend(axis_index(grid.x())).to_array(),
+            grid_y: grid.y().extend(axis_index(grid.y())).to_array(),
             sketch_origin: sketch_plane.origin().extend(0.0).to_array(),
             sketch_x: sketch_plane.x().extend(0.0).to_array(),
             sketch_y: sketch_plane.y().extend(0.0).to_array(),
-            hidden_edge: with_alpha(colors.edge, hidden_alpha),
+            hover_face: linear(colors.hover_face),
+            hover_outline: linear(colors.hover_outline),
+            selected: linear(colors.selected),
         };
         queue.write_buffer(&slot.uniforms, 0, bytemuck::bytes_of(&uniforms));
 
@@ -1164,17 +1288,23 @@ impl Renderer {
     /// `encoder`, compositing over `target`, within `clip`.
     ///
     /// Outside a sketch, in order: the background; the opaque parts'
-    /// faces, writing depth, and their edges; the grid and the finished
+    /// faces, writing depth, their hovered and selected faces again over
+    /// themselves (`Equal`), and their edges; the grid and the finished
     /// sketches; the edges the opaque parts hide, of every part, dashed;
     /// the edges of the parts less than opaque, against the opaque parts'
-    /// depth; the extrude's depth tested layers, if there are parts less
-    /// than opaque; those parts far to near, each its back faces then its
-    /// front faces, blended at its alpha without writing depth; their
-    /// front faces' depth, then their edges again, over the glass they lie
-    /// on; the origin marker and the pivot's; and the sketch being edited,
-    /// or the extrude's layers if they weren't drawn yet. In a sketch
+    /// depth; the extrude's depth tested layers, and the hovered edges'
+    /// outline, the selected edges and the hovered and selected vertices,
+    /// if there are parts less than opaque; those parts far to near, each
+    /// its back faces then its front faces, blended at its alpha without
+    /// writing depth; their front faces' depth, their hovered and
+    /// selected faces, then their edges again, over the glass they lie
+    /// on; the hovered edges' outline, the selected edges and the hovered
+    /// and selected vertices (again, if they were drawn under the glass);
+    /// the origin marker and the pivot's; and the sketch being edited, or
+    /// the extrude's layers if they weren't drawn yet. In a sketch
     /// ([`Frame::faded`]), the model's depth, its nearest faces blended
-    /// and its edges, every part alike, and no hidden edges.
+    /// and its edges, every part alike, and no hidden edges, hover or
+    /// selection.
     pub fn render(
         &self,
         slot: &Slot,
@@ -1235,25 +1365,11 @@ impl Renderer {
                 for run in &draws.opaque {
                     draw_faces(&mut pass, mesh, run.clone());
                 }
-
-                // The highlighted faces over the model's, under its edges,
-                // which are pulled as far towards the camera.
-                if let Some(buffer) = slot.highlight_faces.drawn() {
-                    pass.set_pipeline(&self.highlight);
-                    pass.set_vertex_buffer(0, buffer);
-                    pass.draw(0..slot.highlight_faces.count, 0..1);
-                }
-
+                // Before anything else writes depth where they are.
+                self.draw_picked_faces(&mut pass, &slot.faces, false);
                 for run in &draws.opaque {
                     draw_edges(&mut pass, &self.edges, mesh, run.clone());
                 }
-            }
-
-            // The highlighted edges over the model's.
-            if let Some(buffer) = slot.highlight_lines.lines.drawn() {
-                pass.set_pipeline(&self.sketch_depth_tested.lines);
-                pass.set_vertex_buffer(0, buffer);
-                pass.draw(0..LINE_VERTICES, 0..slot.highlight_lines.lines.count);
             }
         }
 
@@ -1301,8 +1417,14 @@ impl Renderer {
         // The parts less than opaque, far to near: each one's back faces,
         // then its front faces, over what's behind them. Then their front
         // faces' depth, and their edges again, so the edges on the nearest
-        // faces show on them undimmed.
+        // faces show on them undimmed. The hover and the selection are
+        // drawn under them too, against the opaque parts' depth, so what's
+        // of them behind the glass shows through it, dimmed, as its edges
+        // do; and again over it below.
         if let Some(mesh) = mesh.filter(|_| glass) {
+            if !slot.faded {
+                self.draw_highlights(&mut pass, slot);
+            }
             bind_faces(&mut pass, mesh);
             for &(part, step) in &draws.transparent {
                 self.alphas.set(&mut pass, step);
@@ -1315,7 +1437,13 @@ impl Renderer {
             for &(part, _) in &draws.transparent {
                 draw_faces(&mut pass, mesh, part..part + 1);
             }
+            self.draw_picked_faces(&mut pass, &slot.faces, true);
             self.draw_glass_edges(&mut pass, &self.edges, mesh, draws);
+        }
+
+        // The hover and the selection over everything of the model.
+        if !slot.faded && mesh.is_some() {
+            self.draw_highlights(&mut pass, slot);
         }
 
         pass.set_pipeline(&self.origin);
@@ -1335,6 +1463,48 @@ impl Renderer {
         }
     }
 
+    /// Records drawing `faces` again over themselves, hovered or selected,
+    /// those of parts less than opaque if `transparent`, else the opaque
+    /// ones', with the mesh's buffers bound ([`bind_faces`]).
+    fn draw_picked_faces(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        faces: &[FaceDraw],
+        transparent: bool,
+    ) {
+        for face in faces {
+            if (face.step < self.alphas.opaque) != transparent || face.indices.is_empty() {
+                continue;
+            }
+            let pipeline = if face.selected {
+                &self.selected_face
+            } else {
+                &self.hover_face
+            };
+            pass.set_pipeline(pipeline);
+            self.alphas.set(pass, face.step);
+            pass.draw_indexed(face.indices.clone(), 0, 0..1);
+        }
+    }
+
+    /// Records drawing the hovered edges' outline, a rim around them that
+    /// leaves their own pixels as they are, then the selected edges, and
+    /// the hovered and selected vertices, of `slot`.
+    fn draw_highlights(&self, pass: &mut wgpu::RenderPass<'_>, slot: &Slot) {
+        let highlights = &slot.highlights;
+        self.alphas.set(pass, self.alphas.opaque);
+        if let Some(edges) = highlights.edges.held() {
+            draw_stream(pass, &self.outline, edges, highlights.outlined.clone());
+            let selected = highlights.selected.clone();
+            draw_stream(pass, &self.selected_edges, edges, selected);
+        }
+        if let Some(vertices) = highlights.vertices.drawn() {
+            pass.set_pipeline(&self.vertices);
+            pass.set_vertex_buffer(0, vertices);
+            pass.draw(0..POINT_VERTICES, 0..highlights.vertices.count);
+        }
+    }
+
     /// Records drawing the edges of `mesh`'s parts less than opaque, as
     /// `draws` has them, each at its alpha, with `pipeline`.
     fn draw_glass_edges(
@@ -1348,46 +1518,6 @@ impl Renderer {
             self.alphas.set(pass, step);
             draw_edges(pass, pipeline, mesh, part..part + 1);
         }
-    }
-}
-
-impl Slot {
-    /// Uploads `frame`'s highlight if it's another than the one uploaded,
-    /// or its colours changed. On failing, holds none.
-    fn prepare_highlight(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        frame: &Frame<'_>,
-    ) -> Result<(), PrepareError> {
-        let Some(highlight) = frame.highlight.filter(|highlight| !highlight.is_empty()) else {
-            self.highlight_source = Weak::new();
-            self.highlight_colors = None;
-            self.highlight_faces.count = 0;
-            self.highlight_lines.lines.count = 0;
-            return Ok(());
-        };
-        let current = std::ptr::eq(self.highlight_source.as_ptr(), Arc::as_ptr(highlight))
-            && self.highlight_colors == Some(frame.colors);
-        if current {
-            return Ok(());
-        }
-        self.highlight_source = Arc::downgrade(highlight);
-        self.highlight_colors = Some(frame.colors);
-        let colors = &frame.colors;
-        let written = (self.highlight_faces)
-            .write(
-                device,
-                queue,
-                "varde highlight faces",
-                &highlight.vertices(colors),
-            )
-            .and_then(|()| (self.highlight_lines).write(device, queue, &highlight.lines(colors)));
-        if written.is_err() {
-            self.highlight_faces.count = 0;
-            self.highlight_lines = SketchBuffers::default();
-        }
-        written
     }
 }
 
@@ -1433,10 +1563,27 @@ fn draw_edges(
     parts: Range<usize>,
 ) {
     let Some(edges) = &mesh.edges else { return };
-    let points = span(mesh, parts, |part| &part.points);
-    // A segment needs two points; and a part's points come after the
-    // stream's first, so there's a point before them.
-    if points.end.saturating_sub(points.start) < 2 {
+    draw_stream(
+        pass,
+        pipeline,
+        edges,
+        span(mesh, parts, |part| &part.points),
+    );
+}
+
+/// Records drawing the polylines of the [`EdgePoint`] stream in `edges`
+/// whose points are `points`, with `pipeline`: by the instances whose
+/// segments start at their first point up to their last but one, each
+/// slot bound from the first of those instances' points. The points
+/// either side must be there, and of other polylines or of none.
+fn draw_stream(
+    pass: &mut wgpu::RenderPass<'_>,
+    pipeline: &wgpu::RenderPipeline,
+    edges: &wgpu::Buffer,
+    points: Range<u32>,
+) {
+    // A segment needs two points; and there's a point before them.
+    if points.start == 0 || points.end.saturating_sub(points.start) < 2 {
         return;
     }
     pass.set_pipeline(pipeline);
@@ -1478,13 +1625,14 @@ impl SketchPipelines {
     }
 }
 
-/// The colour of the grid's axis line along `axis`, a unit vector: the
-/// world axis it lies along, or the grid's if none.
-fn axis_color(axis: Vec3, colors: &Colors) -> Srgb {
+/// Which world axis `axis`, a unit vector, lies along, 0 to 2, or 3 if
+/// none: the grid's axis line along it is in [`Colors::axes`]' colour of
+/// that axis, or in the grid's.
+fn axis_index(axis: Vec3) -> f32 {
     let along = axis.abs();
     (0..3)
         .find(|&i| along[i] > 1.0 - 1e-6)
-        .map_or(colors.grid, |i| colors.axes[i])
+        .map_or(3.0, |i| i as f32)
 }
 
 /// Converts a colour to linear, which the shader works in.
@@ -1554,17 +1702,19 @@ fn upload_mesh(device: &wgpu::Device, mesh: &RenderMesh) -> Result<Option<GpuMes
         let at = |n| u32::try_from(n).expect("kernel bounds indices");
         at(range.start)..at(range.end)
     };
-    let part = |indices: Range<usize>, edges: Range<usize>| GpuPart {
+    let part = |faces: Range<usize>, indices: Range<usize>, edges: Range<usize>| GpuPart {
         bounds: bounds_of(mesh.positions(), &mesh.indices()[indices.clone()]),
+        faces: to_u32(faces),
         indices: to_u32(indices),
         points: point(edges.start)..point(edges.end),
     };
     let mut parts: Vec<GpuPart> = mesh
         .parts()
-        .map(|part_of| part(part_of.indices, part_of.edges))
+        .map(|part_of| part(part_of.faces, part_of.indices, part_of.edges))
         .collect();
     if parts.is_empty() {
-        parts.push(part(0..mesh.indices().len(), 0..mesh.edge_count()));
+        let (faces, indices) = (0..mesh.face_count(), 0..mesh.indices().len());
+        parts.push(part(faces, indices, 0..mesh.edge_count()));
     }
 
     Ok(Some(GpuMesh {
@@ -1602,22 +1752,42 @@ fn bounds_of(positions: &[[f32; 3]], indices: &[u32]) -> Option<Aabb> {
 /// The [`EdgePoint`] stream of `mesh`'s feature edges, and where each
 /// polyline's points end in it, one past its last.
 fn edge_stream(mesh: &RenderMesh) -> (Vec<EdgePoint>, Vec<u32>) {
-    let none = EdgePoint {
-        position: [0.0; 3],
-        along: 0.0,
-        edge: NO_EDGE,
-    };
-    let mut points = Vec::with_capacity(mesh.edge_vertices().len().saturating_add(2));
+    let mut stream = EdgeStream::with_capacity(mesh.edge_vertices().len());
     let mut ends = Vec::with_capacity(mesh.edge_count());
-    points.push(none);
-    let positions = mesh.positions();
-    // A polyline's points, a point again in a row left out: a segment of
-    // no length between two others would keep them from seeing each
-    // other, and both would draw where they overlap at the join.
-    let mut kept: Vec<[f32; 3]> = Vec::new();
     // The kernel bounds the polylines well within `u32`, below
     // `NEIGHBOUR_ONLY`.
     for (edge, polyline) in (0..).zip(mesh.polylines()) {
+        stream.push(edge, mesh.positions(), polyline);
+        ends.push(stream.len());
+    }
+    (stream.finish(), ends)
+}
+
+/// An [`EdgePoint`] stream being built: polylines one after another, from
+/// a point of no edge, which ends it too.
+pub(crate) struct EdgeStream {
+    points: Vec<EdgePoint>,
+    /// A polyline's points, a point again in a row left out: a segment of
+    /// no length between two others would keep them from seeing each
+    /// other, and both would draw where they overlap at the join.
+    kept: Vec<[f32; 3]>,
+}
+
+impl EdgeStream {
+    /// A stream with room for `points` points of polylines.
+    pub(crate) fn with_capacity(points: usize) -> EdgeStream {
+        let mut stream = EdgeStream {
+            points: Vec::with_capacity(points.saturating_add(2)),
+            kept: Vec::new(),
+        };
+        stream.separate();
+        stream
+    }
+
+    /// Appends the polyline through `polyline`'s vertices of `positions`
+    /// as edge `edge`, below [`NEIGHBOUR_ONLY`].
+    pub(crate) fn push(&mut self, edge: u32, positions: &[[f32; 3]], polyline: &[u32]) {
+        let (points, kept) = (&mut self.points, &mut self.kept);
         kept.clear();
         for &vertex in polyline {
             let position = positions[vertex as usize];
@@ -1660,11 +1830,28 @@ fn edge_stream(mesh: &RenderMesh) -> (Vec<EdgePoint>, Vec<u32>) {
                 edge,
             });
         }
-        // The kernel's limits keep the stream well within `u32`.
-        ends.push(u32::try_from(points.len()).expect("kernel bounds edges"));
     }
-    points.push(none);
-    (points, ends)
+
+    /// Appends a point of no edge, which no segment joins.
+    pub(crate) fn separate(&mut self) {
+        self.points.push(EdgePoint {
+            position: [0.0; 3],
+            along: 0.0,
+            edge: NO_EDGE,
+        });
+    }
+
+    /// How many points it has.
+    pub(crate) fn len(&self) -> u32 {
+        // The kernel's limits keep the stream well within `u32`.
+        u32::try_from(self.points.len()).expect("kernel bounds edges")
+    }
+
+    /// The stream, ended by a point of no edge.
+    pub(crate) fn finish(mut self) -> Vec<EdgePoint> {
+        self.separate();
+        self.points
+    }
 }
 
 /// Uploads `lines` a segment each, or nothing if there are none. See
@@ -1749,7 +1936,8 @@ impl Instances {
     const MIN_BYTES: u64 = 4096;
 
     /// Replaces what it holds with `items`, in a larger buffer if they
-    /// don't fit.
+    /// don't fit. Past the device's buffer size, holds nothing and fails
+    /// with [`PrepareError::SketchTooLarge`].
     fn write<T: Pod>(
         &mut self,
         device: &wgpu::Device,
@@ -1792,8 +1980,60 @@ impl Instances {
 
     /// The part of the buffer to draw from, if it holds anything.
     fn drawn(&self) -> Option<wgpu::BufferSlice<'_>> {
-        let buffer = self.buffer.as_ref().filter(|_| self.count > 0)?;
-        Some(buffer.slice(..))
+        Some(self.held()?.slice(..))
+    }
+
+    /// The buffer, if it holds anything.
+    fn held(&self) -> Option<&wgpu::Buffer> {
+        self.buffer.as_ref().filter(|_| self.count > 0)
+    }
+}
+
+/// [`Frame::highlights`] on the GPU: the edges as an [`EdgePoint`] stream,
+/// written again as they change, which of its points are of the outlined
+/// edges and which of the selected ones, and the vertices.
+#[derive(Default)]
+struct HighlightBuffers {
+    edges: Instances,
+    outlined: Range<u32>,
+    selected: Range<u32>,
+    vertices: Instances,
+}
+
+impl HighlightBuffers {
+    /// Replaces what the buffers hold with `highlights` in `mesh`. On
+    /// failing, holds nothing.
+    fn write(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        mesh: &RenderMesh,
+        highlights: &Highlights,
+    ) -> Result<(), PrepareError> {
+        let built = highlights.build(mesh);
+        let too_large = |error| match error {
+            PrepareError::SketchTooLarge { bytes, limit } => {
+                PrepareError::HighlightsTooLarge { bytes, limit }
+            }
+            error => error,
+        };
+        let written = self
+            .edges
+            .write(device, queue, "varde highlighted edges", &built.edges)
+            .and_then(|()| {
+                self.vertices
+                    .write(device, queue, "varde vertices", &built.vertices)
+            })
+            .map_err(too_large);
+        *self = match written {
+            Ok(()) => HighlightBuffers {
+                outlined: built.outlined,
+                selected: built.selected,
+                ..std::mem::take(self)
+            },
+            Err(_) => HighlightBuffers::default(),
+        };
+        written
     }
 }
 

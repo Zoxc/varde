@@ -16,15 +16,15 @@ use iced::widget::{container, stack};
 use iced::{Element, Event, Length, Point, Rectangle, keyboard, mouse};
 use varde_kernel::{RenderLines, RenderMesh};
 use varde_render::{
-    Camera, ClipRect, Colors, Frame, GridPlane, Highlight, Pivot, PrepareError, Renderer,
-    SketchLayer, SketchScene, Slot, wgpu,
+    Camera, ClipRect, Colors, Frame, GridPlane, Pivot, PrepareError, Renderer, SketchLayer,
+    SketchScene, Slot, wgpu,
 };
 
 use crate::anchors::Anchors;
 use crate::chrome::{Hint, chord_hint, mouse_hint};
 use crate::icons::MouseButton;
 use crate::operation_panel::placed;
-use crate::pick::{Pick, PickIndex, Picked, Picks};
+use crate::pick::{ModelHighlight, Pick, PickIndex, Picked, Picks};
 use crate::shortcut::Held;
 use crate::theme::{Palette, SketchColors};
 use crate::{Look, Message, controls};
@@ -86,7 +86,7 @@ pub(crate) fn viewport<'a>(
     camera: &'a Camera,
     pivot: Option<Pivot>,
     picking: Option<ModelPicking<'a>>,
-    highlight: Option<&Arc<Highlight>>,
+    highlight: Option<&Arc<ModelHighlight>>,
     hidden_edges: bool,
     palette: &Palette,
     sketching: Option<Sketching<'a>>,
@@ -120,14 +120,14 @@ pub(crate) fn viewport<'a>(
     // scroll), as the last region is unpicked or the first picked.
     let knobs = operating.as_ref().map(|operating| {
         let knobs = match operating {
-            Operating::Extrude(extruding) => extruding.knobs(camera, mesh),
+            Operating::Extrude(extruding) => extruding.knobs(camera, mesh, &opacity),
             Operating::Revolve(_) => None,
         };
         knobs.unwrap_or_else(|| iced::widget::Space::new().into())
     });
     let mut program = Program {
         picking,
-        highlight: highlight.cloned(),
+        highlight: highlight.cloned().unwrap_or_else(|| NO_HIGHLIGHT.clone()),
         ..program(mesh, sketches, camera, pivot, palette, sketching, operating)
     };
     program.scene.hidden_edges = hidden_edges;
@@ -179,10 +179,15 @@ fn program<'a>(
         sketching,
         operating,
         picking: None,
-        highlight: None,
+        highlight: NO_HIGHLIGHT.clone(),
         sketch_colors: palette.sketching,
     }
 }
+
+/// What's drawn over the model while nothing is: one for all frames, so
+/// the renderer uploads nothing again for it.
+static NO_HIGHLIGHT: std::sync::LazyLock<Arc<ModelHighlight>> =
+    std::sync::LazyLock::new(Arc::default);
 
 /// The viewport's shader program: handles input and hands iced the scene it
 /// was built with to draw.
@@ -195,7 +200,7 @@ struct Program<'a> {
     /// Picking the model, if the cursor does.
     picking: Option<ModelPicking<'a>>,
     /// Drawn over the model.
-    highlight: Option<Arc<Highlight>>,
+    highlight: Arc<ModelHighlight>,
     sketch_colors: SketchColors,
 }
 
@@ -635,7 +640,7 @@ struct Primitive {
     /// The sketch being edited, if one is.
     sketch: Option<SketchFrame>,
     /// Drawn over the model.
-    highlight: Option<Arc<Highlight>>,
+    highlight: Arc<ModelHighlight>,
     /// The widget's key to its slot in the [`Pipeline`].
     slot: Arc<SlotKey>,
 }
@@ -679,7 +684,9 @@ impl shader::Primitive for Primitive {
                 faded: scene.sketch_plane.is_some(),
                 hidden_edges: scene.hidden_edges,
                 pivot: scene.pivot,
-                highlight: self.highlight.as_ref(),
+                hovered_faces: &self.highlight.hovered_faces,
+                selected_faces: &self.highlight.selected_faces,
+                highlights: &self.highlight.highlights,
                 sketch: self.sketch.as_ref().map(|sketch| SketchScene {
                     plane: sketch.plane,
                     depth_tested: sketch.depth_tested,

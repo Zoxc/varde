@@ -342,9 +342,15 @@ fn knobs_the_model_hides_are_left_out() {
     let at = knob.origin + knob.normal * knob.knobs[0].1;
     assert!(hidden(&mesh, &top_camera(), at));
     assert!(!hidden(&RenderMesh::default(), &top_camera(), at));
-    let shown = |mesh: &RenderMesh| extruding.shown_knobs(&top_camera(), mesh).count();
-    assert_eq!(shown(&RenderMesh::default()), 1);
-    assert_eq!(shown(&mesh), 0);
+    let shown = |mesh: &RenderMesh, opacity: &[f32]| {
+        extruding.shown_knobs(&top_camera(), mesh, opacity).count()
+    };
+    assert_eq!(shown(&RenderMesh::default(), &[]), 1);
+    assert_eq!(shown(&mesh, &[]), 0);
+    assert_eq!(shown(&mesh, &[1.0]), 0);
+    // Less than opaque, the box hides nothing: the shaft is drawn through
+    // it, and the knob shows at its end.
+    assert_eq!(shown(&mesh, &[0.3]), 1);
 }
 
 #[test]

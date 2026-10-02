@@ -10,9 +10,15 @@ Plan for:
   face's edges, and vertices drawn round when hovered or selected;
 - an opacity per body, set from the body's context menu.
 
-Nothing here is built yet. Where this differs from the code once it's
-built, the code wins, and `agents/viewport.md` and `agents/kernel.md` are
-kept in step as each step lands.
+All of it is built (`notes/SolidRenderingWork.md` tracks the steps).
+This is the plan as it was made; where it differs from the code, the
+code wins, and `agents/viewport.md` and `agents/kernel.md` describe what
+was built. "Where things are now" below is how things were before it.
+Picking and selecting ended up as built beside this plan on the main
+line (`view/src/pick.rs`'s `PickIndex`, `view/src/select.rs`'s
+`Selection`, kept by name across models, with selection modes and
+tangent chains), with this plan's drawing of them, its vertices (only
+where three faces or more meet) and its tables keyed by the mesh's ids.
 
 ## Where things are now
 

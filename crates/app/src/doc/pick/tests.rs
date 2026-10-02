@@ -23,7 +23,7 @@ fn top() -> Camera {
 fn on_top(doc: &Doc) -> varde_view::Pick {
     let index = doc.feed.pick_index();
     let pick = index
-        .pick(&top(), SIZE, DVec2::new(250.0, 125.0), Picks::FacesAndEdges)
+        .pick(&top(), SIZE, DVec2::new(250.0, 125.0), Picks::All)
         .unwrap();
     assert!(matches!(pick.target, Picked::Face(_)), "{pick:?}");
     pick
@@ -106,6 +106,32 @@ fn a_new_model_drops_the_hover_and_picks_of_the_old_one() {
     let pick = on_top(&doc);
     doc.look(Look::Hover(Some(pick)));
     assert_eq!(doc.pick.hover(), Some(pick));
+}
+
+#[test]
+fn a_vertex_hovered_and_clicked_is_drawn_and_told_of() {
+    let (mut doc, _requests) = example();
+    // The plate's top front left corner, at (-30, -20), 5 pixels a
+    // millimetre from (0, 0) in the middle: 3 pixels off it, on the top.
+    let index = doc.feed.pick_index();
+    let at = DVec2::new(200.0 - 150.0 + 3.0, 150.0 + 100.0 - 3.0);
+    let pick = index.pick(&top(), SIZE, at, Picks::All).unwrap();
+    let Picked::Vertex(corner) = pick.target else {
+        panic!("{pick:?}");
+    };
+    doc.look(Look::Hover(Some(pick)));
+    let vertices = &doc.highlight().unwrap().highlights.vertices;
+    assert_eq!(vertices.len(), 1);
+    assert!(vertices[0].corner == corner && vertices[0].hovered && !vertices[0].selected);
+    doc.look(Look::ClickModel {
+        pick: Some(pick),
+        add: false,
+        double: false,
+    });
+    let vertices = &doc.highlight().unwrap().highlights.vertices;
+    assert!(vertices[0].hovered && vertices[0].selected);
+    let bar = status_bar(&doc);
+    assert_eq!(bar[..2], ["Vertex", "Body 1"], "{bar:?}");
 }
 
 #[test]
@@ -320,10 +346,8 @@ fn objects_and_the_viewport_select_bodies_alike() {
     assert_eq!(doc.pick.selection.bodies().collect::<Vec<_>>(), [body]);
     // Its faces show selected in the viewport.
     let index = doc.feed.pick_index();
-    let faces = index
-        .body_faces(body)
-        .map(|f| (Picked::Face(f), varde_render::Emphasis::Selected));
-    assert_eq!(**doc.highlight().unwrap(), index.highlight(faces));
+    let faces: Vec<_> = index.body_faces(body).map(Picked::Face).collect();
+    assert_eq!(**doc.highlight().unwrap(), index.highlight(&[], &faces));
     // And the status bar tells of it.
     let bar = status_bar(&doc);
     assert!(
@@ -720,7 +744,7 @@ fn objects_and_the_viewport_agree_on_many_bodies() {
         .flat_map(|&body| index.body_faces(body).collect::<Vec<_>>());
     let mut faces: Vec<_> = faces.map(Picked::Face).collect();
     faces.sort_unstable();
-    let expected = index.highlight(faces.iter().map(|&f| (f, varde_render::Emphasis::Selected)));
+    let expected = index.highlight(&[], &faces);
     assert_eq!(**doc.highlight().unwrap(), expected);
     // Body 4 hidden: it stays selected, as the document holds it.
     doc.update(Edit::ToggleVisible(bodies[3]));

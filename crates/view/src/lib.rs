@@ -59,7 +59,7 @@ pub use document::{
 pub use extrude::{Distance, ExtentKind, ExtrudeLook, ExtrudeState, Handle, snap_step};
 pub use icons::LOGO_SVG;
 pub use operation_panel::{BodyTarget, Candidate, OperationKind, PANEL_BODY, TypedField};
-pub use pick::{EDGE_REACH, Pick, PickIndex, Picked, Picks};
+pub use pick::{EDGE_REACH, ModelHighlight, Pick, PickIndex, Picked, Picks, VERTEX_REACH};
 pub use rail::{RAIL_LIST, RailLook, RailOpen, RailSpot, rail_rows, rail_sets};
 pub use revolve::{Angle, RevolveLook, RevolvePick, RevolveState, TurnKind};
 pub use select::{Selected, Selection, SelectionMode};

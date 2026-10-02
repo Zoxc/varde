@@ -4,7 +4,8 @@
 //! over it (`crate::extrude`) that the viewport follows while one is
 //! dragged. The model hides what's behind it: the renderer depth tests
 //! the regions and the shaft, and a knob the model's mesh is in front of
-//! isn't shown.
+//! isn't shown ([`hidden_by`]), its parts less than opaque hiding nothing,
+//! as the renderer draws what's behind them through them.
 
 use std::sync::Arc;
 
@@ -74,26 +75,35 @@ impl<'a> Extruding<'a> {
 
     /// The handle's knobs, anchored over the viewport seen by `camera`
     /// on its axis, if there's a handle: those `mesh`, the model shown,
-    /// doesn't hide ([`hidden`]).
-    pub(crate) fn knobs(&self, camera: &Camera, mesh: &RenderMesh) -> Option<Element<'a, Message>> {
+    /// its parts as opaque as `opacity` says, doesn't hide
+    /// ([`hidden_by`]).
+    pub(crate) fn knobs(
+        &self,
+        camera: &Camera,
+        mesh: &RenderMesh,
+        opacity: &[f32],
+    ) -> Option<Element<'a, Message>> {
         let handle = self.handle.as_ref()?;
         let editable = self.state.editable;
         let knobs = self
-            .shown_knobs(camera, mesh)
+            .shown_knobs(camera, mesh, opacity)
             .map(|(distance, at)| (DVec2::new(at, 0.0), knob(distance, editable)));
         Some(Anchors::new(*camera, handle.placement(), knobs).into())
     }
 
-    /// The handle's knobs `mesh` doesn't hide from `camera`.
-    fn shown_knobs(
-        &self,
-        camera: &Camera,
-        mesh: &RenderMesh,
-    ) -> impl Iterator<Item = (Distance, f64)> {
+    /// The handle's knobs `mesh`'s opaque parts don't hide from `camera`:
+    /// what's behind one less than opaque shows through it, as the
+    /// renderer draws the shaft.
+    fn shown_knobs<'s>(
+        &'s self,
+        camera: &'s Camera,
+        mesh: &'s RenderMesh,
+        opacity: &'s [f32],
+    ) -> impl Iterator<Item = (Distance, f64)> + 's {
         let handle = self.handle.as_ref();
         let knobs = handle.map_or(&[][..], |handle| &handle.knobs);
         knobs.iter().copied().filter(move |&(_, at)| {
-            handle.is_some_and(|h| !hidden(mesh, camera, h.origin + h.normal * at))
+            handle.is_some_and(|h| !hidden_by(mesh, opacity, camera, h.origin + h.normal * at))
         })
     }
 
@@ -211,15 +221,25 @@ impl<'a> Extruding<'a> {
     }
 }
 
-/// Whether `mesh` hides the world point `at` from `camera`: a triangle
-/// of it is in front of `at`, more than [`KNOB_PULL`] view heights nearer
-/// the eye, so one `at` lies on doesn't. Nor does one whose plane passes
-/// within the mesh's `f32` rounding of `at` (a few units in the last
-/// place of the largest coordinate), which seen at a grazing angle can
-/// be far along the ray: a knob on the cap it ends on, far from the
-/// origin, would be hidden by the cap's rounded corners. Never with more
-/// than [`MAX_HIDING_TRIANGLES`].
+/// [`hidden_by`] with every part of `mesh` opaque.
+#[cfg(test)]
 pub(crate) fn hidden(mesh: &RenderMesh, camera: &Camera, at: DVec3) -> bool {
+    hidden_by(mesh, &[], camera, at)
+}
+
+/// Whether `mesh`, its parts as opaque as `opacity` has them (see
+/// [`varde_render::Frame::opacity`]), hides the world point `at` from
+/// `camera`: a triangle of an opaque part is in front of `at`, more than
+/// [`KNOB_PULL`] view heights nearer the eye, so one `at` lies on
+/// doesn't. Nor does one whose plane passes within the mesh's `f32`
+/// rounding of `at` (a few units in the last place of the largest
+/// coordinate), which seen at a grazing angle can be far along the ray: a
+/// knob on the cap it ends on, far from the origin, would be hidden by
+/// the cap's rounded corners. A part less than opaque hides nothing: the
+/// renderer draws what's behind it through it; one past `opacity`'s end,
+/// or out of its range, is opaque. Never with more than
+/// [`MAX_HIDING_TRIANGLES`].
+pub(crate) fn hidden_by(mesh: &RenderMesh, opacity: &[f32], camera: &Camera, at: DVec3) -> bool {
     if mesh.triangle_count() > MAX_HIDING_TRIANGLES || !at.is_finite() {
         return false;
     }
@@ -256,7 +276,18 @@ pub(crate) fn hidden(mesh: &RenderMesh, camera: &Camera, at: DVec3) -> bool {
         let p = mesh.positions().get(usize::try_from(*index).ok()?)?;
         Some(glam::Vec3::from(*p).as_dvec3())
     };
-    mesh.indices().as_chunks::<3>().0.iter().any(|triangle| {
+    // The parts' runs of indices that hide nothing, in order.
+    let see_through: Vec<_> = (mesh.parts().zip(opacity))
+        .filter(|&(_, &alpha)| (0.0..1.0).contains(&alpha))
+        .map(|(part, _)| part.indices)
+        .collect();
+    let hides = |triangle: usize| {
+        let index = triangle.saturating_mul(3);
+        let at = see_through.partition_point(|run| run.end <= index);
+        see_through.get(at).is_none_or(|run| !run.contains(&index))
+    };
+    let triangles = mesh.indices().as_chunks::<3>().0.iter().enumerate();
+    triangles.filter(|&(i, _)| hides(i)).any(|(_, triangle)| {
         let [Some(a), Some(b), Some(c)] = triangle.each_ref().map(corner) else {
             return false;
         };

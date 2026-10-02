@@ -1,128 +1,185 @@
-//! What's hovered and selected in the model, drawn over it: faces'
-//! triangles shaded as the model is but in the hover's or the
-//! selection's hue, and edges as wide lines, both hidden by what's in
-//! front of them and pulled towards the camera like the feature edges, so
-//! the face or edge they cover doesn't hide them.
+//! What of the model is hovered and selected, drawn over it: its edges
+//! and vertices. The faces are drawn by their index ranges instead, see
+//! [`Frame::hovered_faces`](crate::Frame::hovered_faces).
+
+use std::ops::Range;
 
 use bytemuck::{Pod, Zeroable};
-use glam::{DVec2, Vec3};
+use varde_kernel::RenderMesh;
 
-use crate::renderer::{Colors, srgb_to_linear};
-use crate::sketch::{LineStyle, SketchLayer};
+use crate::renderer::{EdgePoint, EdgeStream};
 
-/// How wide a highlighted edge is drawn, in logical pixels.
-pub const HIGHLIGHT_WIDTH: f32 = 3.0;
-
-/// Which of the highlight's colours something is drawn in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Emphasis {
-    /// Under the cursor.
-    Hovered,
-    Selected,
+/// The edges and vertices of a [`Frame`](crate::Frame)'s mesh that are
+/// hovered or selected, by their ids in it: an edge by its polyline
+/// ([`RenderMesh::edge_ends`]), a vertex by its corner
+/// ([`RenderMesh::corners`]). Ids the mesh hasn't are left out. Small, and
+/// built again only when the hover or the selection changes, so the
+/// renderer uploads it only then.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Highlights {
+    /// The edges outlined, as hovered: in their own colour, as they were,
+    /// with a rim [`HOVER_RIM`](crate::HOVER_RIM) wide outside them in
+    /// [`Colors::hover_outline`](crate::Colors::hover_outline). The
+    /// hovered edge, or the edges bordering the hovered face.
+    pub outlined: Vec<u32>,
+    /// The edges selected: drawn again in
+    /// [`Colors::selected`](crate::Colors::selected),
+    /// [`SELECTED_EDGE_WIDTH`](crate::SELECTED_EDGE_WIDTH) wide, over the
+    /// outline.
+    pub selected_edges: Vec<u32>,
+    /// The vertices drawn, as round discs
+    /// [`VERTEX_RADIUS`](crate::VERTEX_RADIUS) across within a rim: those
+    /// hovered or selected, the others aren't.
+    pub vertices: Vec<Vertex>,
 }
 
-/// Faces and edges of the model to draw over it, each in its
-/// [`Emphasis`]'s colour from [`Colors`]. The view builds it from the
-/// model's mesh: its triangles are the mesh's, so they lie on what they
-/// cover.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct Highlight {
-    pub(crate) triangles: Vec<Triangle>,
-    pub(crate) edges: Vec<(Emphasis, Vec<Vec3>)>,
+/// A vertex of [`Highlights::vertices`]: its corner, and whether it's
+/// hovered and selected. Hovered, it's in the edges' colour within a rim
+/// [`HOVER_RIM`](crate::HOVER_RIM) wide in
+/// [`Colors::hover_outline`](crate::Colors::hover_outline); selected, it's
+/// filled with [`Colors::selected`](crate::Colors::selected), within a
+/// pixel's rim in the edges' colour unless it's hovered too.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Vertex {
+    pub corner: u32,
+    pub hovered: bool,
+    pub selected: bool,
 }
 
-/// A triangle of a highlighted face: its corners and their normals.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct Triangle {
-    pub(crate) emphasis: Emphasis,
-    pub(crate) corners: [Vec3; 3],
-    pub(crate) normals: [Vec3; 3],
-}
+/// Set in [`VertexInstance::flags`] for a hovered vertex, and a selected
+/// one. As `HOVERED` and `SELECTED` in the shader.
+const HOVERED: u32 = 1;
+const SELECTED: u32 = 2;
 
-/// A corner of a highlighted face's triangle as the GPU takes it:
-/// `vs_highlight` in the scene shader.
+/// A vertex as the GPU takes it, an instance each: see `vs_vertex`.
 #[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Pod, Zeroable)]
-pub(crate) struct HighlightVertex {
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+pub(crate) struct VertexInstance {
     pub(crate) position: [f32; 3],
-    pub(crate) normal: [f32; 3],
-    /// Linear, straight alpha.
-    pub(crate) color: [f32; 4],
+    /// [`HOVERED`] and [`SELECTED`].
+    pub(crate) flags: u32,
 }
 
-impl Highlight {
-    pub fn is_empty(&self) -> bool {
-        self.triangles.is_empty() && self.edges.is_empty()
-    }
+/// [`Highlights`] in `mesh` as the renderer draws them: the edges as an
+/// [`EdgePoint`] stream, the outlined ones' points and the selected ones',
+/// apart, and a [`VertexInstance`] per vertex.
+pub(crate) struct Built {
+    pub(crate) edges: Vec<EdgePoint>,
+    pub(crate) outlined: Range<u32>,
+    pub(crate) selected: Range<u32>,
+    pub(crate) vertices: Vec<VertexInstance>,
+}
 
-    /// Adds the triangle `corners`, whose normals there are `normals`,
-    /// unless a corner or normal isn't finite.
-    pub fn triangle(&mut self, emphasis: Emphasis, corners: [Vec3; 3], normals: [Vec3; 3]) {
-        if corners.iter().chain(&normals).all(|v| v.is_finite()) {
-            self.triangles.push(Triangle {
-                emphasis,
-                corners,
-                normals,
-            });
+impl Highlights {
+    /// What's drawn of these in `mesh`. The outlined edges that meet at a
+    /// corner are one polyline in the stream (see [`joined`]), so the
+    /// outline's rim around one leaves alone the pixels of the other,
+    /// whose own they are where they meet, as a polyline's joins do. The
+    /// outlined and selected edges' points are apart, so an edge both
+    /// outlined and selected isn't joined to itself where they meet.
+    pub(crate) fn build(&self, mesh: &RenderMesh) -> Built {
+        let mut stream = EdgeStream::with_capacity(0);
+        let start = stream.len();
+        for (edge, polyline) in joined(mesh, &self.outlined) {
+            stream.push(edge, mesh.positions(), &polyline);
         }
-    }
-
-    /// Adds the polyline through `points`, an edge of the model, drawn
-    /// [`HIGHLIGHT_WIDTH`] wide. A polyline through three points or more
-    /// ending where it starts is closed. Nothing is added for one with a
-    /// point that isn't finite, or of fewer than two distinct points.
-    pub fn edge(&mut self, emphasis: Emphasis, points: Vec<Vec3>) {
-        let mut points = points;
-        points.dedup();
-        if points.len() >= 2 && points.iter().all(|p| p.is_finite()) {
-            self.edges.push((emphasis, points));
-        }
-    }
-
-    /// Its faces' corners as the GPU takes them, in `colors`.
-    pub(crate) fn vertices(&self, colors: &Colors) -> Vec<HighlightVertex> {
-        let color = |emphasis| {
-            let [r, g, b] = match emphasis {
-                Emphasis::Hovered => colors.hovered_face,
-                Emphasis::Selected => colors.selected_face,
+        let outlined = start..stream.len();
+        stream.separate();
+        let start = stream.len();
+        for &edge in &self.selected_edges {
+            if let Some(polyline) = mesh.polyline(edge as usize) {
+                stream.push(edge, mesh.positions(), polyline);
             }
-            .0
-            .map(srgb_to_linear);
-            [r, g, b, 1.0]
-        };
-        self.triangles
-            .iter()
-            .flat_map(|triangle| {
-                let color = color(triangle.emphasis);
-                (0..3).map(move |i| HighlightVertex {
-                    position: triangle.corners[i].to_array(),
-                    normal: triangle.normals[i].to_array(),
-                    color,
-                })
-            })
-            .collect()
-    }
-
-    /// Its edges as lines of a layer, in `colors`.
-    pub(crate) fn lines(&self, colors: &Colors) -> SketchLayer {
-        let mut layer = SketchLayer::default();
-        for (emphasis, points) in &self.edges {
-            let color = match emphasis {
-                Emphasis::Hovered => colors.hovered_edge,
-                Emphasis::Selected => colors.selected_edge,
-            };
-            let style = LineStyle {
-                color,
-                width: HIGHLIGHT_WIDTH,
-                dash: None,
-            };
-            layer.world_polyline(points, style);
         }
-        layer
+        let selected = start..stream.len();
+        let vertices = self
+            .vertices
+            .iter()
+            .filter(|vertex| vertex.hovered || vertex.selected)
+            .filter_map(|vertex| {
+                let position = *mesh.corners().get(usize::try_from(vertex.corner).ok()?)?;
+                let flags =
+                    u32::from(vertex.hovered) * HOVERED + u32::from(vertex.selected) * SELECTED;
+                Some(VertexInstance { position, flags })
+            })
+            .collect();
+        Built {
+            edges: stream.finish(),
+            outlined,
+            selected,
+            vertices,
+        }
     }
 }
 
-/// `point`'s x and y, and its z apart, as a layer's world lines take them.
-pub(crate) fn split(point: Vec3) -> (DVec2, f32) {
-    (point.truncate().as_dvec2(), point.z)
+/// `edges` of `mesh`, each once, joined where they meet into polylines of
+/// its vertices, each named by its lowest edge: an edge is followed, either
+/// way round, by one not yet taken that ends at the corner it ends at,
+/// and likewise before it, until none does or the polyline closes. Where
+/// more than two of them meet at a corner, the others start polylines of
+/// their own. Ids the mesh hasn't are left out.
+fn joined(mesh: &RenderMesh, edges: &[u32]) -> Vec<(u32, Vec<u32>)> {
+    let mut edges = edges.to_vec();
+    edges.sort_unstable();
+    edges.dedup();
+    let found: Vec<(u32, &[u32], [u32; 2])> = edges
+        .into_iter()
+        .filter_map(|edge| {
+            let at = edge as usize;
+            Some((edge, mesh.polyline(at)?, *mesh.edge_corners().get(at)?))
+        })
+        .collect();
+    // Each edge by each of its corners, sorted by corner.
+    let mut ends: Vec<(u32, usize)> = found
+        .iter()
+        .enumerate()
+        .flat_map(|(i, &(_, _, corners))| corners.map(|corner| (corner, i)))
+        .collect();
+    ends.sort_unstable();
+    let mut taken = vec![false; found.len()];
+    // The next edge not taken that ends at `corner`, its vertices from
+    // there, and the corner it ends at at the other end.
+    let next = |corner: u32, taken: &mut [bool]| {
+        let from = ends.partition_point(|&(at, _)| at < corner);
+        let &(_, i) = ends[from..]
+            .iter()
+            .take_while(|&&(at, _)| at == corner)
+            .find(|&&(_, i)| !taken[i])?;
+        taken[i] = true;
+        let (_, polyline, [start, end]) = found[i];
+        let mut vertices = polyline.to_vec();
+        if start != corner {
+            vertices.reverse();
+            return Some((vertices, start));
+        }
+        Some((vertices, end))
+    };
+    let mut joined = Vec::new();
+    for i in 0..found.len() {
+        if taken[i] {
+            continue;
+        }
+        taken[i] = true;
+        let (edge, polyline, [head, mut tail]) = found[i];
+        let mut vertices = polyline.to_vec();
+        while tail != head
+            && let Some((more, end)) = next(tail, &mut taken)
+        {
+            // The corner's vertex once.
+            vertices.extend_from_slice(&more[1..]);
+            tail = end;
+        }
+        let mut front = head;
+        while tail != front
+            && let Some((more, end)) = next(front, &mut taken)
+        {
+            vertices.splice(..1, more.into_iter().rev());
+            front = end;
+        }
+        joined.push((edge, vertices));
+    }
+    joined
 }
+
+#[cfg(test)]
+mod tests;

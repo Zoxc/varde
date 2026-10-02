@@ -669,7 +669,7 @@ impl Plate {
         program.picking = Some(ModelPicking {
             index: &self.index,
             hovered,
-            picks: Picks::FacesAndEdges,
+            picks: Picks::All,
         });
         program
     }

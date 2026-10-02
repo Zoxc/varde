@@ -82,7 +82,7 @@ fn from_top(index: &PickIndex, at: DVec3, picks: Picks) -> Pick {
 
 /// The plate's top, picked at its middle-ish.
 fn top_of(index: &PickIndex) -> Pick {
-    from_top(index, DVec3::new(20.0, 5.0, 10.0), Picks::FacesAndEdges)
+    from_top(index, DVec3::new(20.0, 5.0, 10.0), Picks::All)
 }
 
 /// The plate's top front edge.
@@ -180,8 +180,11 @@ fn a_double_click_selects_the_body() {
     selection.click_body(top.body, false);
     let faces: Vec<_> = index.body_faces(top.body).collect();
     assert!(faces.len() >= 7, "{faces:?}");
-    let all = faces.iter().map(|&f| (Picked::Face(f), Emphasis::Selected));
-    assert_eq!(selection.highlight(&index, None), index.highlight(all));
+    let all: Vec<Picked> = faces.iter().map(|&f| Picked::Face(f)).collect();
+    assert_eq!(
+        selection.highlight(&index, None),
+        index.highlight(&[], &all)
+    );
 }
 
 #[test]
@@ -267,16 +270,9 @@ fn a_tangent_chain_is_selected_and_toggled_as_one() {
     assert_eq!(single.hovered(&index, rim), [rim.target]);
 }
 
-#[test]
-fn selection_is_found_again_in_a_new_model_or_dropped() {
-    let index = plate();
-    let (top, edge) = (top_of(&index), front_edge(&index));
-    let mut selection = Selection::default();
-    selection.click(&index, Some(top), false, false);
-    selection.click(&index, Some(edge), true, false);
-    selection.click_body(top.body, true);
-    assert_eq!(selection.model(), Some(7));
-    // The plate made 12 mm thick: another mesh, the same faces by name.
+/// The example's plate made `thickness` mm thick, made ready for picking
+/// as model `model`.
+fn plate_thick(thickness: &str, model: u64) -> PickIndex {
     let mut editor = Editor::new(Document::example());
     let feature = editor.document().features()[1].id;
     let Some(varde_document::FeatureKind::Extrude(extrude)) =
@@ -285,7 +281,7 @@ fn selection_is_found_again_in_a_new_model_or_dropped() {
         panic!("the example's second feature is its extrude");
     };
     let design = editor.document().design();
-    let distance = Value::new("12", &Extent::ask(&design)).unwrap();
+    let distance = Value::new(thickness, &Extent::ask(&design)).unwrap();
     let extrude = Extrude {
         extent: Extent::OneSide(distance),
         ..extrude
@@ -296,7 +292,60 @@ fn selection_is_found_again_in_a_new_model_or_dropped() {
             kind: Box::new(extrude.into()),
         })
         .unwrap();
-    let coarse = index_of(editor.document(), 8);
+    index_of(editor.document(), model)
+}
+
+#[test]
+fn a_vertex_is_selected_by_the_faces_meeting_there_and_found_again() {
+    let index = plate();
+    let corner = DVec3::new(-30.0, -20.0, 10.0);
+    let pick = from_top(&index, corner + DVec3::new(0.6, 0.6, 0.0), Picks::All);
+    let Picked::Vertex(vertex) = pick.target else {
+        panic!("{pick:?}");
+    };
+    let mut selection = Selection::default();
+    assert!(selection.click(&index, Some(pick), false, false));
+    let [Selected::Vertex { body, faces, near }] =
+        selection.items().copied().collect::<Vec<_>>()[..]
+    else {
+        panic!("{selection:?}");
+    };
+    assert_eq!((body, near), (pick.body, pick.at));
+    assert_eq!(Some(faces), index.vertex_keys(vertex));
+    assert_eq!(selection.hovered(&index, pick), [pick.target]);
+    // Thicker, the corner on top is found again, where it is now.
+    let thicker = plate_thick("12", 8);
+    assert!(selection.resolve(&thicker, Some));
+    let [Picked::Vertex(found)] = targets(&selection)[..] else {
+        panic!("{selection:?}");
+    };
+    let at = thicker.corner_point(found).unwrap();
+    assert!(at.distance(DVec3::new(-30.0, -20.0, 12.0)) < 1e-4, "{at}");
+    // Sessions taking faces, edges or bodies take no vertex.
+    for mode in [
+        SelectionMode::Faces,
+        SelectionMode::Edges { tangent: false },
+    ] {
+        let mut selection = Selection::new(mode);
+        assert!(!selection.click(&index, Some(pick), false, false));
+        assert!(selection.hovered(&index, pick).is_empty());
+    }
+    let mut bodies = Selection::new(SelectionMode::Bodies);
+    bodies.click(&index, Some(pick), false, false);
+    assert_eq!(bodies.bodies().collect::<Vec<_>>(), [pick.body]);
+}
+
+#[test]
+fn selection_is_found_again_in_a_new_model_or_dropped() {
+    let index = plate();
+    let (top, edge) = (top_of(&index), front_edge(&index));
+    let mut selection = Selection::default();
+    selection.click(&index, Some(top), false, false);
+    selection.click(&index, Some(edge), true, false);
+    selection.click_body(top.body, true);
+    assert_eq!(selection.model(), Some(7));
+    // The plate made 12 mm thick: another mesh, the same faces by name.
+    let coarse = plate_thick("12", 8);
     assert_ne!(coarse.mesh().positions(), index.mesh().positions());
     assert!(selection.resolve(&coarse, Some));
     assert_eq!(selection.model(), Some(8));
@@ -432,30 +481,27 @@ fn names_find_faces_and_edges_by_alias_and_the_nearest() {
 }
 
 #[test]
-fn hovering_what_s_selected_keeps_its_colour() {
+fn a_hover_is_drawn_with_what_s_selected() {
     let index = plate();
     let (top, edge) = (top_of(&index), front_edge(&index));
     let mut selection = Selection::default();
     selection.click(&index, Some(top), false, false);
-    let selected = [(top.target, Emphasis::Selected)];
+    let selected = [top.target];
     assert_eq!(
         selection.highlight(&index, Some(top)),
-        index.highlight(selected)
+        index.highlight(&[top.target], &selected)
     );
     assert_eq!(
         selection.highlight(&index, Some(edge)),
-        index.highlight([
-            (top.target, Emphasis::Selected),
-            (edge.target, Emphasis::Hovered)
-        ])
+        index.highlight(&[edge.target], &selected)
     );
     // A hover of another model shows nothing.
     let other = Pick { model: 8, ..edge };
     assert_eq!(
         selection.highlight(&index, Some(other)),
-        index.highlight(selected)
+        index.highlight(&[], &selected)
     );
     // Nor what was found in another model.
     let coarse = index_of(&Document::example(), 8);
-    assert_eq!(selection.highlight(&coarse, None), Highlight::default());
+    assert!(selection.highlight(&coarse, None).is_empty());
 }

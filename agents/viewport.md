@@ -59,7 +59,8 @@ The status bar (`status.rs`) floats over the viewport's bottom right, 12
 px in from its right and 10 px up from its bottom (`STATUS_BAR_ROOM` is
 what it takes of the height), `opaque` so a drag on it doesn't orbit; on
 the welcome screen it floats over the window's. The feature selected in
-the Timeline is in a box of its own, with the key clearing it (`Space`);
+the Timeline, or what's selected in the model (see "Selecting" below), is
+in a box of its own, with the key clearing it (`Space`);
 then a bar with what's going on (picking a plane, the sketch's or the
 extrude's status, regenerating, a failed edit, saving: nothing with
 nothing selected), the hints, and the button of the view options menu,
@@ -176,8 +177,10 @@ knob is a widget in an `Anchors` layer whose placement has the axis as
 its x axis, so the knob at `t` mm is the "sketch point" `(t, 0)`. One
 side has a knob at its distance (negative when flipped), symmetric at
 half of it, two sides one per side. A knob the model's mesh hides isn't
-laid out (`viewport/extrude.rs`'s `hidden`: a ray from the knob towards
-the eye meets a triangle more than 0.002 view heights in front of it, as
+laid out (`viewport/extrude.rs`'s `hidden_by`: a ray from the knob
+towards the eye meets a triangle of an opaque part, as the frame's
+opacity has it, since the shaft shows through glass, more than 0.002
+view heights in front of it, as
 far as the renderer pulls the layers, so a knob on the cap it ends on
 shows; a triangle whose plane passes within the mesh's `f32` rounding of
 the knob doesn't count either, or far from the origin, seen at a grazing
@@ -273,18 +276,24 @@ on a short table is drawn at the next step up rather than not at
 all), each at the device's uniform offset alignment, written once, and
 bound as group 1 of every pipeline at the step's dynamic offset. The
 faces' alpha and the edges' (visible and hidden) are multiplied by it.
-Outside a sketch, the opaque parts are drawn first as above, their depth
-the only depth there is up to the glass: the hidden edges are drawn for
+Outside a sketch, the opaque parts are drawn first as above, and their
+hovered and selected faces over them, their depth the only depth there
+is up to the glass: the hidden edges are drawn for
 every part against it, so an edge behind glass is seen, not dashed, and
 a transparent part's edges hidden by an opaque one are dashed at its
 alpha too; then the transparent parts' edges, visible against the
 opaque depth, under the glass in front of them, which dims them; the
-extrude's layers, if any; then each transparent part, far to near, its
+extrude's layers, if any, and the hovered edges' outline, the selected
+edges and the hovered and selected vertices, so what of them is behind
+glass shows through it, dimmed; then each transparent part, far to near, its
 back faces (culled front, lit as seen from inside: `fs_mesh` flips the
 normal of a face that isn't front facing) then its front faces, blended
 at its alpha, depth tested, writing no depth; then their front faces'
-depth only (`mesh_depth`), and their edges again, so the edges on the
-nearest surface show undimmed on the glass they lie on. Bodies are one
+depth only (`mesh_depth`), their hovered and selected faces (see "The
+highlight" below), and their edges again, so the edges on the nearest
+surface show undimmed on the glass they lie on; then the hovered edges'
+outline, the selected edges and the hovered and selected vertices
+again, undimmed where they're in front of the glass. Bodies are one
 colour each, so blending their layers in another order changes little,
 only their shading; sorting by the bounds' centres is enough, but for
 bodies whose bounds interleave. In a sketch every part is drawn faded
@@ -537,8 +546,10 @@ up whenever the mesh or the tables change; natively an unchanged scene
 comes back as the same `Arc`s, from the web worker as copies, which are
 compared, and either way it keeps its index). A
 `PickIndex` (the mesh, the tables, the model's count, a bounding volume
-hierarchy over the triangles and one over the segments of the edges
-between two faces, and each tangent chain's edges) is built the first time it's
+hierarchy over the triangles, one over the segments of the edges
+between two faces and one over the vertices, the faces at each corner
+an edge between two faces ends at, and each tangent chain's edges) is
+built the first time it's
 asked for (`MeshFeed::pick_index`, a `OnceCell`), sequentially (each
 node split along the longest side of its items' middles at that side's
 middle, in one pass, or at the median where that leaves a quarter or
@@ -553,26 +564,37 @@ build without debug assertions). Not capped. Tables that don't go with
 the mesh pick nothing. `PickIndex::pick(camera, size, at)` casts the
 cursor's ray (`Projector::ray`; in an orthographic view from far enough
 back that the whole mesh is ahead, in perspective from the near plane):
-the nearest triangle names the face (the one whose `face_ends` range
-holds it). An edge between two faces (not a crease) wins over it if a
-segment of it shows within `EDGE_REACH` (6) pixels of the cursor and
-isn't hidden: the candidates, found through the edge tree with each
+the nearest triangle it meets the front of, as the renderer draws them
+with their backs culled, names the face (the one whose `face_ends`
+range holds it). An edge between two faces (not a crease) wins over it
+if a segment of it shows within `EDGE_REACH` (6) pixels of the cursor
+and isn't hidden: the candidates, found through the edge tree with each
 node's box grown by 6 pixels at its deepest, are cut at the near plane,
-measured on screen, sorted by distance, depth and index, and the first
-of at most 64 whose point showing nearest the cursor (found back in the
-world with the perspective divide undone) no triangle hides wins:
-hidden means the ray from the eye to it meets a triangle nearer by more
-than 0.002 view heights (what the renderer pulls edges by) and the
-mesh's `f32` rounding. So an edge either side of a face shows, and one
-behind the plate isn't picked. The `Pick` carries the model's count,
-the target (`Picked::Face` or `Picked::Edge`, the mesh's ids),
-the body (the face's part's, or the edge's first face's) and the point (the
-ray's hit, or the edge's point).
+measured on screen, sorted by distance (to `SAME_PLACE`, half a pixel),
+depth and index, and the first of at most 64 whose point showing
+nearest the cursor (found back in the world with the perspective divide
+undone) no triangle hides wins: hidden means the ray from the eye to it
+meets a triangle nearer by more than 0.002 view heights (what the
+renderer pulls edges by) and the mesh's `f32` rounding. So an edge
+either side of a face shows, and one behind the plate isn't picked. A
+vertex wins over both, found the same way within `VERTEX_REACH` (6): a
+corner of the mesh where three faces or more meet (those of the edges
+between two faces ending there), so a box's corners are vertices and a
+hole's rim, closing on itself, has none. Distances within half a pixel
+go by depth because what shows in one place, as a corner seen straight
+down the edge below it and the corner at its other end, is tried
+nearest the eye first: the ray from the one behind runs along the faces
+between them, where the hidden test can miss them. With `Picks::Faces`
+or `Picks::Edges` only that kind is picked, and no vertex. The `Pick`
+carries the model's count, the target (`Picked::Face`, `Picked::Edge`
+or `Picked::Vertex`, the mesh's ids, a vertex by its corner), the body
+(the face's part's, or the first face's at the edge or the vertex) and
+the point (the ray's hit, the edge's point, or the vertex).
 
 Outside sketches and the extrude session, and not over a draft's preview
 (`Doc::picks`; they pick what they need themselves) the viewport is given `ModelPicking` (the index,
 the target the app holds hovered, and what the cursor picks, `Picks`:
-faces and edges, or only one of them, from the selection's mode). It
+all, or only faces or only edges, from the selection's mode). It
 picks on each cursor move while the camera isn't dragged, and on each
 frame drawn (`RedrawRequested`) whose camera, model or cursor position
 differs from those it last picked with (`Interaction::hover_seen`), so the
@@ -595,8 +617,8 @@ down, as the middle button's pivot click is: letting go sends
 button went down, `add` with `Held::TOGGLE` (Shift, or Ctrl/Cmd as in a
 sketch) and `double` for a second click within 400 ms and 4 pixels
 (the sketch's double-click rule). What a click selects depends on the
-`SelectionMode`: `Any` outside the sessions (the face or edge clicked;
-a double-click its body), `Faces`, `Edges { tangent }` (with the whole
+`SelectionMode`: `Any` outside the sessions (the face, edge or vertex
+clicked; a double-click its body), `Faces`, `Edges { tangent }` (with the whole
 tangent chain clicked if `tangent`) and `Bodies` (the body of whatever is
 clicked), which the face, edge and body sessions will set. A click alone
 selects what it's on, or nothing (a click off the model clears); with
@@ -614,16 +636,19 @@ and selecting in the model lets go of the feature.
 What's selected is kept by name, as a reference would be: a face as its
 body, key and the point it was picked at (`Selected::Face`), an edge as
 its body, the sorted keys of the faces either side and the point
-(`Selected::Edge`), a body by id. Each item also holds its target in the
+(`Selected::Edge`), a vertex as its body, the lowest three keys of the
+faces meeting there, sorted (as a corner reference names one), and the
+point (`Selected::Vertex`), a body by id. Each item also holds its target in the
 model it was last found in (`Selection::model`). When another model
 shows (an edit, an undo, a tolerance), `Selection::resolve` finds each
 again as the kernel resolves references (`PickIndex::find_face`,
-`find_edge`): the faces of that body named by the key (key or alias),
-or the edges between faces so named either way round; one is taken
+`find_edge`, `find_vertex`): the faces of that body named by the key
+(key or alias), the edges between faces so named either way round, or
+the vertices where faces so named meet; one is taken
 wherever the point is, of several the nearest to the point (measured to
 the drawn triangles or segments; a later one counts only where it comes
 nearer by more than a billionth of the mesh's size, so ties go to the
-lowest; the first where the point isn't finite). A face or edge of a
+lowest; the first where the point isn't finite). A face, edge or vertex of a
 body a join merged into another is looked for in that one (the merges
 the model shown found, `MeshFeed::merged_bodies`), so it stays selected
 through the join, and the status bar names the body it's in now. What
@@ -651,35 +676,89 @@ edge between two faces of the same part, no later than its members and
 its own first), and `PickIndex::tangent_chain` groups them. Hovering in `Edges { tangent: true }` highlights the whole chain,
 in `Bodies` the whole body.
 
-The app's highlight (`Doc::highlight`) is `Selection::highlight`: what's
-selected in `Emphasis::Selected` (a body as all of its faces), then
-what's hovered that isn't selected in `Emphasis::Hovered` (a selected
-face hovered keeps its colour, and nothing is drawn twice). It's rebuilt
+The app's highlight (`Doc::highlight`, a `ModelHighlight`) is
+`Selection::highlight`: what's selected (a body as all of its faces)
+and what's hovered, in the mode (a tangent chain, a body's faces), by
+the mesh's ids (`PickIndex::highlight`, which leaves out ids the mesh
+hasn't): the faces hovered and selected, and a small layer of edges and
+vertices (`varde_render::Highlights`): the edges outlined, those hovered
+and those between a hovered face and another face, the selected edges,
+and the vertices hovered or selected, each flagged which. It's rebuilt
 only when the model, the target hovered or the selection changes, so
-moving over one face uploads nothing.
+moving over one face uploads nothing; the renderer writes the layer to
+its buffers again only when it's another `Arc` or the mesh is (it holds
+ids, and the positions come from the mesh). With nothing to draw the
+viewport hands every frame one shared empty highlight.
 
 The status bar's box tells of the selection when no feature is
 selected: one face as "Face", its surface ("Plane", "Cylinder", "Cone",
-"Sphere", "Torus", "Curved") and its body's name; one edge as "Edge" and
-the body; one body by name and "Body"; several as "N selected" and how
-many faces, edges and bodies. Its hints: "Select" and a double-click
+"Sphere", "Torus", "Curved") and its body's name; one edge or vertex as
+"Edge" or "Vertex" and the body; one body by name and "Body"; several
+as "N selected" and how many faces, edges, vertices and bodies. Its hints: "Select" and a double-click
 "Body" with nothing selected, then Shift-click "Add or remove" and
 "Body", before the camera's.
 
-The **highlight** (`render::Highlight`, `Frame::highlight`, keyed by its
-`Arc` and the colours) is the faces' triangles, copied from the mesh
-with their normals by `PickIndex::highlight`, and the edges' polylines,
-each with an `Emphasis`, hovered or selected. Faces are drawn after the model and
-before its edges, lit as the model is but in `Colors::hovered_face` or
-`selected_face` (the mock's hues, hsl 110 and 188, at the model's
-lightness: light #cde4c8 and #b9e3e9, dark #8ab582 and #72bac5), culled
-like the model, their depth pulled towards the camera as the sketch's
-depth tested layers are (`overlay_depth`), so the face they lie on
-doesn't hide them and what's in front does. Edges are drawn after the
-model's edges as the sketch's depth tested lines in the world
-(`SketchLayer::world_polyline`), `HIGHLIGHT_WIDTH` (3) pixels wide, in
-`hovered_edge` (the mock's highlight line: light #9dd488, dark #76cc60 at
-half opacity) or `selected_edge` (the accent).
+The **highlight** reaches the frame as the faces hovered
+(`Frame::hovered_faces`), the faces selected (`Frame::selected_faces`)
+and the layer (`Frame::highlights`). Hover changes no colour but the
+hovered faces': the hovered edges keep theirs, the rest of the body its
+own. Selection is in the accent (`Colors::selected`). In a sketch
+(`Frame::faded`) none of it is drawn; the app doesn't pick there anyway.
+
+- Faces: drawn again over themselves by their index range, with
+  `vs_mesh` (its position `@invariant`), `depth_compare: Equal` and no
+  depth written, so exactly their own pixels: the hovered ones lit in
+  `Colors::hover_face` (the model's hue, lighter) at their part's alpha
+  (`fs_hover_face`), then each selected one blended `SELECTED_TINT` (0.6)
+  of the way to the accent lit (`fs_selected_face`), so a hovered
+  selected face is tinted and brighter. Each is a draw of its own, which
+  needs nothing per vertex. An opaque part's go right after the opaque
+  faces, before anything else writes depth where they are, so one behind
+  glass is drawn and then dimmed by the glass, tinted still; a
+  transparent part's after the glass's front faces' depth, at its alpha,
+  so only where it's the nearest glass (one behind another transparent
+  body shows untinted there).
+- Outline: the outlined edges are the edge stream's polylines again, in
+  a stream of their own (`EdgeStream`, which the mesh's is built with
+  too), drawn after everything of the model (and under the glass too,
+  if there is any: see the pass order above) with the edges' quads, depth
+  tested and pulled like them, so only what shows is outlined: a rim
+  `HOVER_RIM` (1.5 logical pixels) wide either side of the edge in
+  `Colors::hover_outline` (`vs_outline`), a bright green of the sketch's
+  hover's hue that's brighter than the lit faces. The rim is hollow: its
+  coverage is that of a line `HOVER_RIM` wider than the edge less the
+  edge's own (`style.w` in `fs_line`), so the edge's pixels stay as its
+  own pass drew them, in its colour and as faint as its part (a faint
+  edge on a 30 % body stays faint), and its fringe gets the rim's share.
+  The outlined edges that meet at a corner are joined into one polyline
+  (`Highlights::build`, either way round, until the loop closes; past
+  two at a corner the others start their own), so where they meet a
+  pixel is the rim of the one nearest it, as at a polyline's joins, and
+  neither's rim covers the other's middle. A polyline's rim knows only
+  its own segments and their neighbours, so where it comes within
+  `HOVER_RIM` of another's middle elsewhere (a third edge at a corner,
+  where a face meets itself; the two sides of a face seen nearly edge
+  on), it covers it.
+- Selected edges: the same stream's other range (a point of no edge
+  between them, so an edge both outlined and selected isn't joined to
+  itself), `SELECTED_EDGE_WIDTH` (2.5) wide in the accent
+  (`vs_selected_edge`), over the outline.
+- Vertices: only those hovered or selected, an instance each
+  (`VertexInstance`, the corner's position and flags), drawn as a sketch
+  point is (`vs_vertex` into `fs_point`): a disc of `VERTEX_RADIUS` (3.5
+  logical pixels) within a rim, the same size at any zoom, depth tested at
+  its centre's pulled depth. Hovered, the disc is in the edge colour, its
+  rim `HOVER_RIM` wide in `hover_outline`; selected, it's filled with the
+  accent, within a pixel's rim in the edge colour, or the hover's if it's
+  hovered too.
+
+Each pass with a pipeline that differs from another only by what it
+draws has its own entry point, since wgpu's GL backend keys programs by
+module and entry points. The uniforms stay within 512 bytes (the limits
+tests' device's largest buffer): the grid's axis lines' colours are
+picked in the shader by which world axis each lies along (the `w` of
+`grid_x` and `grid_y`), and the hidden edges' alpha is `edge`'s `w`,
+the model's faded alpha being `model`'s.
 
 Natively each open document has a regeneration thread (`regen::lane`),
 started by an iced subscription keyed by the document's id. The

@@ -7,11 +7,13 @@ use std::sync::Arc;
 use glam::{DVec2, DVec3, Vec3};
 use varde_kernel::{RenderLines, RenderMesh, Solid, Tolerance};
 use varde_render::{
-    Camera, ClipRect, Colors, Frame, GridPlane, Projection, Renderer, SketchLayer, SketchScene,
-    Space, Srgb, Srgba, View, Viewport, wgpu,
+    Camera, ClipRect, Colors, Frame, GridPlane, Highlights, Projection, Renderer, SketchLayer,
+    SketchScene, Space, Srgb, Srgba, Vertex, View, Viewport, wgpu,
 };
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+/// Nothing hovered or selected.
+static NO_HIGHLIGHTS: std::sync::LazyLock<Arc<Highlights>> = std::sync::LazyLock::new(Arc::default);
 const SIZE: [u32; 2] = [128, 128];
 
 /// A black background and a grey model.
@@ -30,12 +32,10 @@ const COLORS: Colors = Colors {
     pivot: Srgb([0.04, 0.58, 0.68]),
     sketch: Srgb([1.0, 1.0, 0.0]),
     faded_alpha: 0.3,
-    // Pure green and pure blue faces, pure red and pure cyan edges.
-    hovered_face: Srgb([0.0, 1.0, 0.0]),
-    selected_face: Srgb([0.0, 0.0, 1.0]),
-    hovered_edge: Srgba([1.0, 0.0, 0.0, 1.0]),
-    selected_edge: Srgba([0.0, 1.0, 1.0, 1.0]),
     hidden_edge_alpha: 0.45,
+    hover_face: Srgb([0.8; 3]),
+    hover_outline: Srgb([0.75, 1.0, 0.6]),
+    selected: Srgb([0.04, 0.58, 0.68]),
 };
 
 /// A device on the GL backend, if there's an adapter for it.
@@ -81,9 +81,11 @@ fn frame<'a>(
         grid: GridPlane::XY,
         faded: false,
         hidden_edges: true,
+        hovered_faces: &[],
+        selected_faces: &[],
+        highlights: &NO_HIGHLIGHTS,
         sketch: None,
         pivot: None,
-        highlight: None,
         viewport: Viewport {
             x: 0.0,
             y: 0.0,
@@ -361,4 +363,71 @@ fn transparent_parts_are_drawn_on_gl() {
             );
         }
     }
+}
+
+#[test]
+fn hover_and_selection_are_drawn_on_gl() {
+    // From the top, the cube's top face hovered, then selected, drawn
+    // again over itself by programs of their own at exactly its depth
+    // (`Equal`, the position invariant); its edges outlined and a corner
+    // hovered, by entry points of their own.
+    let Some((device, queue)) = gl_device() else {
+        eprintln!("no GL adapter, skipping");
+        return;
+    };
+    let (camera, mesh) = cube_from_top();
+    let top = mesh
+        .faces()
+        .position(|indices| mesh.normals()[indices[0] as usize][2] > 0.99)
+        .unwrap() as u32;
+    let renderer = Renderer::new(&device, FORMAT);
+    let sketches = Arc::default();
+    let draw_with = |hovered_faces: &[u32], selected_faces: &[u32], highlights: Highlights| {
+        let highlights = Arc::new(highlights);
+        let frame = Frame {
+            hovered_faces,
+            selected_faces,
+            highlights: &highlights,
+            grid: GridPlane::new(Vec3::new(0.0, 1000.0, 0.0), Vec3::X, Vec3::Z).unwrap(),
+            ..frame(&camera, &mesh, &sketches)
+        };
+        draw(&device, &queue, &renderer, &frame)
+    };
+    let plain = draw_with(&[], &[], Highlights::default());
+    let hovered = draw_with(&[top], &[], Highlights::default());
+    let selected = draw_with(&[], &[top], Highlights::default());
+    // Up and left of the origin marker.
+    let at =
+        |pixels: &[[u8; 4]]| pixels[((SIZE[1] / 2 - 15) * SIZE[0] + SIZE[0] / 2 - 15) as usize];
+    let [plain_at, hovered_at, selected_at] = [&plain, &hovered, &selected].map(|p| at(p));
+    let sum = |p: [u8; 4]| (0..3).map(|c| i32::from(p[c])).sum::<i32>();
+    assert!(
+        sum(hovered_at) > sum(plain_at) + 60,
+        "{hovered_at:?} hovered, {plain_at:?} not"
+    );
+    assert!(
+        i32::from(selected_at[2]) - i32::from(selected_at[0]) > 40,
+        "{selected_at:?} selected"
+    );
+
+    let edges = (0..mesh.edge_count() as u32).collect();
+    let outlined = draw_with(
+        &[],
+        &[],
+        Highlights {
+            outlined: edges,
+            vertices: vec![Vertex {
+                corner: 0,
+                hovered: true,
+                selected: false,
+            }],
+            ..Highlights::default()
+        },
+    );
+    // The outline's rim, bright green, around the top's square.
+    let green = outlined
+        .iter()
+        .filter(|[r, g, b, _]| *g > 200 && *g > r.saturating_add(20) && *g > b.saturating_add(40))
+        .count();
+    assert!(green > 200, "{green} pixels of outline");
 }

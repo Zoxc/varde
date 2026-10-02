@@ -306,6 +306,17 @@ impl RenderMesh {
         split(&self.edge_vertices, &self.edge_ends)
     }
 
+    /// Where face `face`'s indices are in [`indices`](Self::indices), if
+    /// the mesh has it.
+    pub fn face_indices(&self, face: usize) -> Option<Range<usize>> {
+        run(&self.face_ends, face)
+    }
+
+    /// Edge `edge`'s vertex indices, if the mesh has it.
+    pub fn polyline(&self, edge: usize) -> Option<&[u32]> {
+        Some(&self.edge_vertices[run(&self.edge_ends, edge)?])
+    }
+
     /// Each part's ranges, in the order they were appended.
     pub fn parts(&self) -> impl ExactSizeIterator<Item = RenderPart> {
         // Where the runs of `ends` up to `n` end.
@@ -444,6 +455,13 @@ pub(crate) fn splits(ends: &[u32], total: usize, whole: impl Fn(usize) -> bool) 
         start = end;
     }
     start == total
+}
+
+/// Where run `i` of those `ends` split items into is, if there is one.
+fn run(ends: &[u32], i: usize) -> Option<Range<usize>> {
+    let end = *ends.get(i)? as usize;
+    let start = i.checked_sub(1).map_or(0, |before| ends[before] as usize);
+    Some(start..end)
 }
 
 /// The runs `ends` split `items` into, which they must ([`splits`]).

@@ -57,7 +57,7 @@ pub struct DocumentState<'a> {
     /// sketches and sessions.
     pub picking: Option<crate::ModelPicking<'a>>,
     /// What's hovered and selected in `mesh`, drawn over it, if anything.
-    pub highlight: Option<&'a Arc<varde_render::Highlight>>,
+    pub highlight: Option<&'a Arc<crate::ModelHighlight>>,
     /// What's selected in the model: Objects marks the bodies selected,
     /// and the status bar tells of it.
     pub model_selection: &'a crate::Selection,
@@ -1318,9 +1318,9 @@ fn selection<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
 
 /// What's selected in the model, for the status bar's box of the
 /// selection: one face, as "Face", what surface it's on and its body's
-/// name; one edge, as "Edge" and its body's; one body, by name; or how
-/// many, of each kind. Nothing if nothing is, or the cursor doesn't pick
-/// the model.
+/// name; one edge or vertex, as "Edge" or "Vertex" and its body's; one
+/// body, by name; or how many, of each kind. Nothing if nothing is, or
+/// the cursor doesn't pick the model.
 fn model_selection<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
     use crate::{Picked, Selected};
 
@@ -1350,16 +1350,19 @@ fn model_selection<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>
             ("Face".into(), surface.into(), drawn_in(*body))
         }
         [Selected::Edge { body, .. }] => ("Edge".into(), String::new(), drawn_in(*body)),
+        [Selected::Vertex { body, .. }] => ("Vertex".into(), String::new(), drawn_in(*body)),
         [Selected::Body(body)] => (body_name(*body).into(), String::new(), "Body"),
         _ => {
             let count =
                 |kind: fn(&Selected) -> bool| items.iter().filter(|item| kind(item)).count();
             let faces = count(|item| matches!(item, Selected::Face { .. }));
             let edges = count(|item| matches!(item, Selected::Edge { .. }));
+            let vertices = count(|item| matches!(item, Selected::Vertex { .. }));
             let bodies = count(|item| matches!(item, Selected::Body(_)));
             let parts: Vec<String> = [
                 (faces, "face", "faces"),
                 (edges, "edge", "edges"),
+                (vertices, "vertex", "vertices"),
                 (bodies, "body", "bodies"),
             ]
             .into_iter()

@@ -29,6 +29,13 @@ sketches and editable features. It runs natively and in the browser.
 - Trim, extend, offset, mirror, fillet and chamfer.
 - Extrudes and revolves that make bodies or join, cut or intersect them,
   editable in a timeline.
+- Faces, edges, vertices and bodies selected by clicking them with no tool
+  open (a double-click takes the body); `Shift`- or `Ctrl`-click (`Cmd` on
+  macOS) adds or removes one, `Space` clears.
+- A body's opacity, set in its context menu in the side panel, to see
+  what's behind it.
+- Edges hidden behind bodies shown dashed; "Hidden edges" in the view
+  options turns them off.
 - Solids of rational quadratic triangle patches: closed meshes to allow for
   robust booleans, but with conic edges, so planes, arcs, cylinders and
   cones are exact. Other shapes, such as splines, tori and curved-on-curved
