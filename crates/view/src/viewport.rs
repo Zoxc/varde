@@ -51,7 +51,16 @@ pub(crate) const CONTROLS_TOP: f32 = 10.0;
 
 const ORBIT_SPEED: f32 = 0.008;
 const ZOOM_PER_LINE: f32 = 0.9;
+/// Natively pixels come from touchpads, a few per event.
+#[cfg(not(target_arch = "wasm32"))]
 const ZOOM_PER_PIXEL: f32 = 0.995;
+/// Browsers report a wheel notch in pixels too, 40 to 130 or more by
+/// browser and settings (Firefox: 44 a line, 3 lines a notch), where
+/// natively it's a line. So on the web a pixel zooms less, and one event
+/// at most a line, as a native notch does; touchpads, a few pixels an
+/// event, zoom slower than natively.
+#[cfg(target_arch = "wasm32")]
+const ZOOM_PER_PIXEL: f32 = 0.998;
 /// How far the cursor may move, in pixels, between pressing and letting go
 /// of the middle button for it to be a click, which picks the point the
 /// camera orbits, rather than an orbit.
@@ -703,6 +712,8 @@ impl Program<'_> {
                     mouse::ScrollDelta::Lines { y, .. } => ZOOM_PER_LINE.powf(y),
                     mouse::ScrollDelta::Pixels { y, .. } => ZOOM_PER_PIXEL.powf(y),
                 };
+                #[cfg(target_arch = "wasm32")]
+                let factor = factor.clamp(ZOOM_PER_LINE, ZOOM_PER_LINE.recip());
                 let center = bounds.center();
                 Some(
                     Action::publish(Message::Look(Look::Zoom {

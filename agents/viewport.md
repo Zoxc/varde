@@ -93,7 +93,9 @@ mock does: `Look::Zoom` carries the cursor's offset from the viewport's
 middle in fractions of its height, and `Camera::zoom_at` moves the
 target towards the point at the target's depth there by the proportion
 the distance changes, so that point stays under the cursor in either
-projection.
+projection. A native wheel notch is a line (`ZOOM_PER_LINE`) and touchpads
+give pixels; browsers give a notch as pixels too, tens of them, so on the
+web a pixel zooms less and one event at most a line.
 
 A middle click, the cursor let go within `CLICK_SLOP` (3 px) of where
 it was pressed, picks the point the camera orbits (until the cursor

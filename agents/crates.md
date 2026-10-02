@@ -49,6 +49,11 @@ The look follows `notes/ui-mock.html`. The logo is `assets/logo.svg`; the
 checked-in `assets/logo.ico` is embedded as the Windows executable icon by
 `crates/binary/build.rs`, which has the command to regenerate it.
 
+Natively text uses the system's fonts. The web has none, so `crates/web`
+loads Fira Sans SemiBold and Fira Mono from `crates/web/fonts` (OFL, its
+license beside them) beside iced's Fira Sans Regular, and maps the generic
+sans-serif and monospace families to them (`main.rs`, `load_fonts`).
+
 The tools' icons (`crates/view/src/icons.rs`) are the default set of
 `notes/ui-mock-icons.html`: its "outline with accents, line only" drawings
 in its "Distinct, purple constraints" colours with the softer accent. The
