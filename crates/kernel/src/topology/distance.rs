@@ -126,7 +126,7 @@ pub(super) fn to_curves(
 }
 
 /// The point of `patch` over the barycentric pair `(a, b)`'s blossom.
-fn blossom_point(patch: &Patch, a: DVec3, b: DVec3) -> DVec3 {
+pub(crate) fn blossom_point(patch: &Patch, a: DVec3, b: DVec3) -> DVec3 {
     let h = patch.blossom(a, b);
     h.truncate() / h.w
 }
@@ -147,7 +147,7 @@ fn piece_box(patch: &Patch, d: [DVec3; 3]) -> Bounds3 {
 
 /// The four pieces of the barycentric triangle `d`, split at its sides'
 /// midpoints.
-fn quarters(d: [DVec3; 3]) -> [[DVec3; 3]; 4] {
+pub(crate) fn quarters(d: [DVec3; 3]) -> [[DVec3; 3]; 4] {
     let m01 = (d[0] + d[1]) * 0.5;
     let m12 = (d[1] + d[2]) * 0.5;
     let m20 = (d[2] + d[0]) * 0.5;

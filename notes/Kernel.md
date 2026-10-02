@@ -23,7 +23,8 @@ both. Varde ports Manifold's structure; it doesn't link it.
   faces with names, surface tags and forms, `check` of the invariants, a
   BVH, exact red–green refinement and `repair`, box and cylinder meshes.
 - **Solids** (`Solid`): a mesh that passed `check`; its tessellation for
-  drawing (`RenderMesh`), volume and area.
+  drawing (`RenderMesh`), volume and area, and measurements of it and its
+  faces, edges and corners (`measure`).
 - **Extrude** (`extrude`): a `Profile` (closed loops of 2D conics) placed on
   a `Frame` swept into an exact solid.
 - **Swept strips and lathes** (`sweep`): exact strips on cones and quadrics
@@ -385,6 +386,17 @@ tessellation gets too slow.
 triangle by fixed Gauss–Legendre rules (patches with weights far from 1
 split first), summed in patch order. The tests hold them to `1e-12` relative
 on boxes, cylinders and extrudes.
+
+`measure` (for the measure tool) measures a solid as built, of a picked
+body, face, edge or corner of its `Topology`: lengths of chains (lines
+and circular arcs in closed form, other conics by Gauss–Legendre over
+pieces split until even), areas, volumes and centres of mass
+(`Solid::moments`) by the same rule, tight boxes (`Solid::tight_bounds`:
+edges' extremes exact, patch insides by a bounded search with Newton's
+method, to the resolution), and a face's form, an edge's shape (line,
+circle, ellipse), points, directions and the angles between them. Only
+`+ − × ÷ √` and `trig`; every part within a `Budget` ("too complex to
+measure" past it); the same bits at any thread count.
 
 ## Topology and names
 

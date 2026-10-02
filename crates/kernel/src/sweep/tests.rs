@@ -19,22 +19,22 @@ use crate::{KernelError, Solid};
 /// An axis: a point on it, and square unit axes `u`, `v` across it and
 /// `z` along it.
 #[derive(Debug, Clone, Copy)]
-struct Axis {
-    origin: DVec3,
-    u: DVec3,
-    v: DVec3,
-    z: DVec3,
+pub(crate) struct Axis {
+    pub(crate) origin: DVec3,
+    pub(crate) u: DVec3,
+    pub(crate) v: DVec3,
+    pub(crate) z: DVec3,
 }
 
 impl Axis {
-    const Z: Axis = Axis {
+    pub(crate) const Z: Axis = Axis {
         origin: DVec3::ZERO,
         u: DVec3::X,
         v: DVec3::Y,
         z: DVec3::Z,
     };
 
-    fn random(rng: &mut Rng, extent: f64) -> Axis {
+    pub(crate) fn random(rng: &mut Rng, extent: f64) -> Axis {
         let z = rng.direction();
         let u = z.any_orthonormal_vector();
         Axis {
@@ -73,14 +73,14 @@ enum Meridians {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct Revolution {
+pub(crate) struct Revolution {
     axis: Axis,
     r: [f64; 3],
     meridians: Meridians,
 }
 
 impl Revolution {
-    fn sphere(axis: Axis, radius: f64) -> Self {
+    pub(crate) fn sphere(axis: Axis, radius: f64) -> Self {
         Revolution {
             axis,
             r: [radius * radius, 0.0, -1.0],
@@ -90,7 +90,7 @@ impl Revolution {
 
     /// The cone through the apex at height `h0` with `ρ = t·|h − h0|`, its
     /// nappe above the apex if `up`.
-    fn cone(axis: Axis, h0: f64, t: f64, up: bool) -> Self {
+    pub(crate) fn cone(axis: Axis, h0: f64, t: f64, up: bool) -> Self {
         let t2 = t * t;
         Revolution {
             axis,
@@ -115,7 +115,7 @@ impl Revolution {
         }
     }
 
-    fn rho(&self, h: f64) -> f64 {
+    pub(crate) fn rho(&self, h: f64) -> f64 {
         let [r0, r1, r2] = self.r;
         (r0 + r1 * h + r2 * h * h).sqrt()
     }
@@ -451,7 +451,7 @@ fn bad_strips_are_refused() {
 /// and `j + 1`, and flat caps at both ends. Strips by
 /// [`revolution_strip`], or for cones by [`cone_strip`] if `cones` says
 /// so.
-fn solid_of_revolution(
+pub(crate) fn solid_of_revolution(
     axis: Axis,
     stations: &[(f64, f64)],
     surfaces: &[Revolution],

@@ -3,7 +3,7 @@
 use glam::{DMat3, DVec2, DVec3};
 
 use super::Quadric;
-use crate::patch::{Conic2, Conic3};
+use crate::patch::{Conic, Conic2, Conic3, Point};
 
 /// What surface a face was built to lie on: the construction's intent,
 /// with its parameters. [`Surface`](super::Surface) is the claim the
@@ -336,22 +336,24 @@ fn polar(y: DVec3, axis: DVec3) -> DVec2 {
 /// the ends. Only `+ − × ÷ √`.
 ///
 /// It names an arc's intent (an extrude's wall is a [`Form::Cylinder`]
-/// over one); no topology depends on it.
-pub(crate) fn circle_of(conic: &Conic2) -> Option<(DVec2, f64)> {
+/// over one, and measuring takes an edge's length, centre and radius
+/// from it), in the plane or in space; no topology depends on it.
+pub(crate) fn circle_of<P: Point>(conic: &Conic<P>) -> Option<(P, f64)> {
     const SLACK: f64 = 1e-10;
+    let length = |v: P| v.dot(v).sqrt();
     let (p0, c, p1) = (conic.p0, conic.c, conic.p1);
-    let (l0, l1) = ((c - p0).length(), (c - p1).length());
-    let half = (p1 - p0).length() * 0.5;
+    let (l0, l1) = (length(c - p0), length(c - p1));
+    let half = length(p1 - p0) * 0.5;
     let m = (p0 + p1) * 0.5;
-    let rise = (c - m).length();
+    let rise = length(c - m);
     let leg = (l0 + l1) * 0.5;
-    let coords = p0.abs().max(c.abs()).max(p1.abs()).max_element();
+    let coords = p0.max_abs().max(c.max_abs()).max(p1.max_abs());
     let slack = SLACK * leg + 64.0 * f64::EPSILON * coords;
     if !(rise > slack && (l0 - l1).abs() <= slack && (conic.w * leg - half).abs() <= slack) {
         return None;
     }
     let centre = c + (m - c) * (leg * leg / (rise * rise));
-    let radius = ((centre - p0).length() + (centre - p1).length()) * 0.5;
+    let radius = (length(centre - p0) + length(centre - p1)) * 0.5;
     (centre.is_finite() && radius.is_finite()).then_some((centre, radius))
 }
 

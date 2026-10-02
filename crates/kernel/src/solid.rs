@@ -264,18 +264,34 @@ impl Solid {
 /// crowd towards some corner or edge where the rule can't follow them, is
 /// split first ([`Patch::split4`], up to five times) until its pieces'
 /// weights are near 1, and `f` summed over them.
-fn pieces<T: std::iter::Sum>(patch: &Patch, depth: u32, f: &impl Fn(&Patch) -> T) -> T {
+pub(crate) fn pieces<T: std::iter::Sum>(patch: &Patch, depth: u32, f: &impl Fn(&Patch) -> T) -> T {
+    match quartered(patch, depth) {
+        Some(children) => children.iter().map(|c| pieces(c, depth + 1, f)).sum(),
+        None => f(patch),
+    }
+}
+
+/// How many pieces [`pieces`] integrates `patch` in: what measuring
+/// charges before integrating.
+pub(crate) fn piece_count(patch: &Patch, depth: u32) -> usize {
+    match quartered(patch, depth) {
+        Some(children) => children.iter().map(|c| piece_count(c, depth + 1)).sum(),
+        None => 1,
+    }
+}
+
+/// The four pieces [`pieces`] splits `patch` into at `depth`, or `None`
+/// where it integrates the patch as it is.
+fn quartered(patch: &Patch, depth: u32) -> Option<[Patch; 4]> {
     /// The weights within which a patch is integrated as it is: a
     /// quarter circle's `√½` is, to rounding.
     const WELL_SHAPED: std::ops::RangeInclusive<f64> = 0.7..=1.4;
     let shaped = patch.w.iter().all(|w| WELL_SHAPED.contains(w));
-    if depth < 5
-        && !shaped
-        && let Ok(children) = patch.split4()
-    {
-        return children.iter().map(|c| pieces(c, depth + 1, f)).sum();
+    if depth < 5 && !shaped {
+        patch.split4().ok()
+    } else {
+        None
     }
-    f(patch)
 }
 
 /// A third of the integral of `(P − o)·n` over `patch`: its share of the

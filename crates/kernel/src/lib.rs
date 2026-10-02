@@ -24,7 +24,10 @@
 //! elsewhere.
 //! [`touches`] says whether two solids meet. [`Solid::transformed`]
 //! moves, turns or mirrors a solid by a [`Motion`], and [`assemble`]
-//! makes one solid of copies. The math of one curve or
+//! makes one solid of copies. [`measure`] measures a
+//! solid as built: lengths, areas, volumes, centres of mass
+//! ([`Solid::moments`]), tight boxes ([`Solid::tight_bounds`]), forms,
+//! points, directions and angles of what is picked of it. The math of one curve or
 //! triangle is in [`patch`]; closed
 //! meshes of them, the check of their invariants, the BVH over them,
 //! their refinement and repair, and box and cylinder meshes are in
@@ -38,6 +41,7 @@ mod budget;
 mod error;
 mod extrude;
 mod manifold;
+pub mod measure;
 pub mod mesh;
 mod par;
 pub mod patch;

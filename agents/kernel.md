@@ -2940,7 +2940,7 @@ Known gaps:
   arc centred on the axis with an axis along it) are fitted, not exact
   (above).
 
-## Volume and area (`Solid::volume`, `Solid::area`, `src/quadrature.rs`)
+## Volume, area and measuring (`Solid::volume`, `Solid::area`, `src/quadrature.rs`, `src/measure.rs`)
 
 The volume is a third of `∫ (P − o)·n` over the surface (divergence
 theorem, `o` the middle of the bounds), the area `∫ |P_u × P_v|`, each
@@ -2952,6 +2952,96 @@ first. The tests hold it to `1e-12` relative on boxes, cylinders and
 extrudes. Patch sums are added sequentially in patch order.
 The Gauss nodes and weights are written out, not computed, so no
 platform's `cos` decides them.
+
+**Measuring** (`measure.rs`, for the measure tool) works on a solid as
+built, with `+ − × ÷ √` and `trig` only, each part charged to a `Budget`
+(past it `MeasureError::TooComplex`, "too complex to measure"), the same
+bits at any thread count (integrals per patch by `par_map`, summed in
+patch order; searches sequential). A `Pick` is `Body`, or a region,
+chain or corner of the solid's `Topology` by index; a `Target` is a pick
+with its solid and topology, and `measure(target, tol, budget)` gives a
+`Measured` (a pick naming nothing, or a topology that isn't the
+solid's, is `MeasureError::NotFound`, never a panic). Minimum distances
+between two targets are to come beside it.
+
+- **Lengths** of chains, curve by curve in chain order: a curve whose
+  control point is on the segment between its ends (to 64 roundings of
+  its coordinates) is that segment, its length the distance (it runs
+  one way along it, whatever its weight); a circle's arc (`circle_of`,
+  now generic over the plane and space) is `r·θ`, `θ/2 =
+  atan2(rise, half chord)` (the tangent–chord angle); any other conic
+  8-point Gauss–Legendre over pieces halved (`split_half`) until their
+  weights are within `0.97..=1.03`, their control legs turn at most 45°
+  and neither leg is over 1.2 times the other, at most 24 halvings
+  (`TooComplex` past). The weights alone (the plan's rule) left `1.6e-7`
+  on random conics: a nearly half ellipse (`w = 0.017`) halves into
+  lopsided pieces whose speed changes too fast for the rule. With the
+  three: `2e-14` worst on 300 random conics of weights `1/64 ..= 64`
+  against an adaptive rule, the parabola `y = x²` over `[−1, 1]` exact
+  to the bit, a `10 × 4` ellipse's quarter `1e-13` against `a·E(e)`
+  (by the arithmetic-geometric mean), arcs to rounding. A unit a piece.
+- **Areas, volumes, centres of mass**: `Solid::area`'s rule (the patch
+  split by `pieces` as `Solid::volume` splits it), over a region's
+  triangles for a face; `Solid::moments` (volume and centre) with the
+  centre from `∫ x_i dV = ½ ∮ (x − o)_i² n_i dA`, `o` the middle of the
+  control box. The pieces are counted first (`piece_count`, a unit a
+  patch) and charged `INTEGRATE_WORK` each before any is integrated.
+  Boxes, cylinders, a half cylinder's centroid (`4r/3π`), a tilted
+  extrude's, a frustum's (exact cone strips) to `1e-12`; a sphere zone
+  (exact strips) to `1e-10`.
+- **The tight box** (`Solid::tight_bounds`, and the body's): the
+  vertices; each edge's extremes along the axes, where the numerator of
+  a coordinate's derivative, `w(c − x0)(1 − t)² + (x1 − x0)t(1 − t) +
+  w(x1 − c)t²`, vanishes (with `s = t/(1 − t)` a quadratic, solved
+  stably), exact to rounding; and the insides of patches by a depth-first
+  search over pieces of the patch's domain (`quarters`, control points
+  by blossoming), the control points the upper bound and the piece's
+  middle the lower one, dropping pieces that can't come more than the
+  resolution above the best so far, with Newton's method on the
+  coordinate's gradient (second derivatives by central differences)
+  from the patch's middle and from new bests of pieces a quarter of the
+  patch across or smaller, four tries a patch. A patch is searched only
+  where its hull reaches more than the resolution past the best, and
+  never on a plane or a cylinder, conic cylinder or cone tagged as such
+  (`ruled`): a coordinate is linear along each ruling, which runs on to
+  the patch's boundary, so the extremes are on the edges, to the
+  resolution of the tag. Each side is a point of the solid, within the
+  resolution of the extreme. Without Newton a sphere zone's box cost
+  330 000 visits at the finest tolerance (centres creep up to an
+  isolated maximum as slowly as hulls come down on it); with it, 1 100
+  to 2 400 at any tolerance, its sides within `3e-15` of the sphere's.
+  Booleans of crossing cylinders (most patches claim-free bands) cost
+  1 300 to 17 000 visits; the integrals dominate (32 units a piece).
+- **Forms, edges, points, directions**: a face's `FaceMeasure` is its
+  area and the form of its first triangle's face (a cone's half-angle
+  by `atan2(sin, cos)`); a plane's normal is a direction, a cylinder's,
+  cone's, torus's or revolved surface's axis and a conic cylinder's
+  `along` are lines. An edge's `EdgeShape` is a `Line` (every curve
+  straight, every point within `1e-9` of the chain's size of the line
+  through its ends), a `Circle` (from `circle_of` of the curve of least
+  weight, the axis the sum of the curves' control-leg crosses, five
+  points of every curve on the circle and in its plane: five points fix
+  a conic) or an `Ellipse` (the same from the least weight's ellipse:
+  centre `c + (m − c)/(1 − w²)`, conjugate semi-diameters `(c − O)·w`
+  and `(p1 − p0)/(2√(1 − w²))`, semi-axes `(√(S + 2P) ± √(S − 2P))/2`
+  with `S` their squares' sum and `P` their cross's length; not for
+  `1 − w² < 1e-6`), else `Other`. A straight edge's point is its
+  middle, a round one's its centre; a corner's its vertex; a body's its
+  centre of mass. `angle(a, b)` is `atan2(|a × b|, a · b)`, folded to
+  `[0, π/2]` (`|a · b|`) where either is a line.
+
+Tests (`measure/tests.rs`): a box's twelve lengths, six areas and
+normals, volume, centre and box; a cylinder's rims (circles, `2πr`,
+centres, axes), walls and caps; a half cylinder's centroid; an ellipse
+quarter's length alone and as a tilted extrude's rims (semi-axes,
+centre, axis); a tilted box's tight box equal to its corners' (and to
+the control box) and a tilted cylinder's against `r·√(1 − a_k²)` beyond
+its rims' centres, well inside its control box; a sphere zone's sides
+inside its patches and its centroid; a frustum's centroid, half-angle
+and wall area; angles; random conics' lengths and edge extremes; the
+same bits at 1 and 8 threads; out of budget refused; picks naming
+nothing. Cases needing revolve (a cone's and a hemisphere's centroid,
+a torus within the fit tolerance) wait for it.
 
 ## Topology and names (`src/topology.rs`, `src/topology/`)
 
@@ -7565,3 +7655,11 @@ parameter, or a split outside the patch bounds),
   in the meridian plane) would also part thin creases where curvature
   decides; it changed nothing on random revolves, so it waits for a
   case that needs it.
+- **Measuring's curve pieces and box search go further than the plan.**
+  The plan integrated a conic's length over pieces whose weights are
+  within `0.97..=1.03`; that left `1.6e-7` on lopsided pieces of nearly
+  half ellipses, so pieces also turn at most 45° and keep their legs
+  within a factor 1.2 (see "Volume, area and measuring"). The box's
+  search runs Newton's method during the search rather than only at the
+  end (330 000 visits down to 2 400), and skips patches on planes and
+  ruled quadrics, whose extremes are on their edges.
