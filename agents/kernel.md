@@ -1967,9 +1967,21 @@ tessellation too).
   grid and the boundary is three strips, one per edge, from the edge's `n`
   segments to the inner grid's side of `l`, split at the diagonals from
   each corner to the inner grid's corner next to it: `n + l` triangles
-  each. A strip advances the side that makes the shorter new diagonal
-  (the outer one on a tie), so its triangles follow the geometry where
-  the grid runs skewed to the edges. With `l = 0` the ring is a fan round
+  each. A strip advances the side whose new diagonal keeps closer to the
+  patch at its middle (in parameters, along the patch's normal there),
+  and where the two are as close (within a millionth of the longer
+  diagonal, as on a plane) the side that makes the shorter one, the
+  outer one on a tie; so its triangles follow the geometry where the
+  grid runs skewed to the edges. Length alone was fooled on tall walls:
+  there the heights of the inner points differ by more than a step round
+  the arc, and the strips paired points three steps apart, slivers near
+  the caps 3 chords inside a 5 × 100 cylinder with their faces 43° off
+  their vertex normals (a visible pinch). Then each corner's diagonal is
+  flipped, to join the edges' samples either side of the corner, when
+  that diagonal keeps closer to the patch by the same rule, both strips
+  end there in an edge segment and the quad is convex in parameters: on
+  a cylinder wall triangle the inner grid's corner is two steps round
+  the arc from the patch's corner. With `l = 0` the ring is a fan round
   the single inner point.
 - **Patches curved both ways** (faces whose form is a sphere, torus,
   revolved conic, ellipsoid or unknown: not a plane, cylinder or cone,
@@ -2094,16 +2106,25 @@ milliseconds for these, release); a 400-hole plate is unchanged.
 The chord target holds on the edges, and inside patches curved both
 ways (within about 1.05 chords densely sampled, as the edges are). On
 planes, cylinders and cones the grid spacing follows the largest count,
-but at a corner of a skewed patch (a cylinder wall triangle, whose far
-corner is round the arc) the inner grid's corner is two steps round from
-the patch's, and the triangle there is two steps wide: on the test
-cylinder the worst triangle's middle is 1.85 chords off the surface, and
-densely sampled about 3 (4 on tall walls). Those patches are not
-refined; a better ring (flipping the corner diagonals, choosing the
-strips' diagonals by deviation) would mend them without more triangles,
-and would also let the refinement of round patches stop sooner. Very skewed patches (a wall a hundredth of its arc
-high) stitch into slivers whose face normals are far from their vertex
-normals; shading uses the vertex normals, so it doesn't show. Positions
+and those patches are not refined; the ring's choice of diagonals keeps
+them near the chord: on the test cylinder the worst triangle's middle
+is 0.77 chords off the surface (1.85 when the strips chose by length
+and the corners weren't flipped), densely sampled 0.86 (about 3 before);
+on 5 × 50 to 5 × 200 cylinders within the chord densely sampled (4
+before). The flips don't reach the round patches' refinement, which is
+still driven by the ring's corners: their levels and counts are as
+before. A patch's diagonal edge is counted from its own curve, so a
+tall wall's diagonals get few segments (3 on a 5 × 200 cylinder) and
+the triangles along them turn about 30°; on a needle (0.5 × 200) the
+diagonal is one segment and the triangles beside it fold over it,
+within the chord but facing inwards, so the mesh pass culls them.
+Shading uses the vertex normals, so slivers whose face normals are far
+from them don't show; a wall a fortieth of its arc high (20 × 0.5) no
+longer makes them (its faces within 4° of their vertex normals, 84°
+before). Choosing the diagonals against the patch takes two patch
+evaluations per strip step, up to about 1.8 times the time to draw a
+round solid (whose rounds triangulate each level), a few milliseconds;
+the flat torus below is unchanged. Positions
 are `f32`: far from the origin, features smaller than an `f32` step
 there (about 0.03 mm at 5e5 mm) collapse into degenerate or flipped
 triangles, as in any `f32` mesh, but no cracks open: both sides of an
@@ -2113,9 +2134,11 @@ A flat torus of 262 144 patches tessellates in about 0.13 s
 
 Tests: a cube is 12 triangles, 24 vertices and 12 edges with axis
 normals; a cylinder's normals are radial on the wall and axial on the
-caps, it encloses slightly less than `πr²h`, its triangles are within the
-chord (2.5 chords at the skewed corners), only its rims are feature
-edges, and a rim point is two vertices (wall and cap); round octahedra,
+caps, it encloses slightly less than `πr²h`, its triangles' middles are
+within the chord, the skewed corners too, only its rims are feature
+edges, and a rim point is two vertices (wall and cap); the walls of tall
+cylinders (5 × 50 to 5 × 200) are within the chord densely sampled, their
+faces within about 30° of their vertex normals; round octahedra,
 half cylinders, a torus, a box, and a repaired thin shell (pieces of mixed
 sizes) are watertight: every triangle side is met by one running the other
 way between the same positions, to the bit; edge counts meet the chord and

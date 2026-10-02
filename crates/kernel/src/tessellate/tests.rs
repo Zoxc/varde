@@ -210,12 +210,17 @@ fn stitching_joins_any_two_counts() {
         for b in 0..8usize {
             let along =
                 |i: u32, n: usize, y: f64| DVec3::new(f64::from(i) / n.max(1) as f64, y, 0.0);
-            let outer: Vec<(u32, DVec3)> = (0..=a as u32).map(|i| (i, along(i, a, 0.0))).collect();
-            let inner: Vec<(u32, DVec3)> = (0..=b as u32)
-                .map(|i| (100 + i, along(i, b, 0.3) * 0.8 + DVec3::X * 0.1))
+            let outer: Vec<Sample> = (0..=a as u32)
+                .map(|i| (i, along(i, a, 0.0), along(i, a, 0.0)))
+                .collect();
+            let inner: Vec<Sample> = (0..=b as u32)
+                .map(|i| {
+                    let x = along(i, b, 0.3) * 0.8 + DVec3::X * 0.1;
+                    (100 + i, x, x)
+                })
                 .collect();
             let mut out = Vec::new();
-            stitch(&mut out, &outer, &inner);
+            stitch(&mut out, &outer, &inner, |_, _| 0.0);
             assert_eq!(out.len(), 3 * (a + b));
             // Each outer segment once, forwards; each inner one once,
             // backwards.
@@ -261,9 +266,10 @@ fn a_cylinder_is_drawn_within_the_chord() {
             assert!((off_axis(x) - radius).abs() < 1e-5);
         }
     }
-    // Every triangle's centre within the chord of the surface, but at the
-    // corners of the walls' skewed patches, where the inner grid is two
-    // steps round the arc from the corner: there about twice (1.85).
+    // Every triangle's centre within the chord of the surface (0.77), the
+    // corners of the walls' skewed patches too, where the inner grid is
+    // two steps round the arc from the corner but the diagonal there is
+    // flipped (1.85 before).
     let mut worst = 0.0f64;
     for t in mesh.indices().chunks(3) {
         let centre = (p(t[0]) + p(t[1]) + p(t[2])) / 3.0;
@@ -274,7 +280,7 @@ fn a_cylinder_is_drawn_within_the_chord() {
             worst = worst.max((off_axis(centre) - radius).abs() / chord);
         }
     }
-    assert!(worst <= 2.5, "{worst}");
+    assert!(worst <= 1.0, "{worst}");
 
     // The two rims are the feature edges, and the walls' seams aren't:
     // each rim one edge round, closing on one corner, between the wall
@@ -733,7 +739,7 @@ fn in_patches(plan: &Plan) -> Vec<InPatch> {
         let level = &plan.levels[t as usize];
         let (params, first, base) = level.params();
         let points: Vec<DVec3> = params.iter().map(|&u| patch.eval(u)).collect();
-        let indices = level.triangulate(base, &points[base as usize..], |i, r| {
+        let indices = level.triangulate(&patch, base, &points[base as usize..], |i, r| {
             let v = first[i as usize] + r;
             (v, points[v as usize])
         });
@@ -997,7 +1003,8 @@ fn a_refined_level_counts_its_points_and_triangles() {
     assert_eq!(level.triangles(), 36 + 18 + 8);
     let inner: Vec<DVec3> = level.inner_params();
     assert_eq!(inner.len() as u64, level.inner_points());
-    let indices = level.triangulate(100, &inner, |i, r| {
+    let patch = tetrahedron(DVec3::ZERO).patch(0);
+    let indices = level.triangulate(&patch, 100, &inner, |i, r| {
         (10 * i + r, DVec3::new(f64::from(i), f64::from(r), 0.0))
     });
     assert_eq!(indices.len() as u64, 3 * level.triangles());
@@ -1199,6 +1206,46 @@ fn a_loose_patch_is_sampled_as_a_face_is() {
         for p in display.flatten(&curve, diagonal) {
             let at = |q: &DVec3| (*q - p).length() < 1e-12;
             assert!(samples.points.iter().any(at), "edge sample {p} is a sample");
+        }
+    }
+}
+
+#[test]
+fn a_tall_cylinder_s_walls_follow_the_surface() {
+    // On a tall wall the heights of a strip's inner points differ by more
+    // than a step round the arc, and choosing the shorter diagonals
+    // paired points steps apart: slivers near the caps up to 4 chords
+    // inside the surface, their faces 43° off their vertex normals. At
+    // 200 the patches' diagonals are 3 segments each (their own curve's
+    // count), and the triangles along them turn about 30°.
+    for height in [50.0, 100.0, 200.0] {
+        let radius = 5.0;
+        let solid = Solid::cylinder(DVec3::ZERO, radius, height, 7, &TOL).unwrap();
+        let display = Display::default();
+        let mesh = solid.tessellate(&display).unwrap();
+        assert_watertight(&mesh);
+        let chord = display.chord(DVec3::new(2.0 * radius, 2.0 * radius, height).length());
+        let p = |i: u32| Vec3::from(mesh.positions()[i as usize]).as_dvec3();
+        let n = |i: u32| Vec3::from(mesh.normals()[i as usize]).as_dvec3();
+        for t in mesh.indices().as_chunks::<3>().0 {
+            let x = t.map(p);
+            if x.iter().all(|y| y.z == x[0].z) {
+                continue; // a cap
+            }
+            let steps = 12;
+            for a in 0..=steps {
+                for b in 0..=steps - a {
+                    let c = steps - a - b;
+                    let y = (x[0] * f64::from(a) + x[1] * f64::from(b) + x[2] * f64::from(c))
+                        / f64::from(steps);
+                    let off = radius - y.truncate().length();
+                    assert!(off < chord, "{height}: {} chords at {y}", off / chord);
+                }
+            }
+            let face = (x[1] - x[0]).cross(x[2] - x[0]).normalize();
+            for v in t {
+                assert!(face.dot(n(*v)) > 0.85, "{height}: {face} against {}", n(*v));
+            }
         }
     }
 }

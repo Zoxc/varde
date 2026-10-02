@@ -104,7 +104,7 @@ impl Display {
         }
         let (params, first, base) = level.params();
         let points: Vec<DVec3> = params.iter().map(|&u| patch.eval(u)).collect();
-        let indices = level.triangulate(base, &points[base as usize..], |i, r| {
+        let indices = level.triangulate(patch, base, &points[base as usize..], |i, r| {
             let v = first[i as usize] + r;
             (v, points[v as usize])
         });
@@ -332,15 +332,17 @@ impl<'a> Plan<'a> {
 
     /// Patch `t`'s triangles, as vertex ids: its inner points are `base`
     /// on, at `inner` (as [`Plan::inner_params`] orders them), and
-    /// `outer(h, r)` is the id and position of halfedge `h`'s sample `r`.
+    /// `outer(h, r)` is the id and position of halfedge `h`'s sample `r`;
+    /// `patch` is patch `t`.
     fn patch_triangles(
         &self,
+        patch: &Patch,
         t: u32,
         base: u32,
         inner: &[DVec3],
         outer: impl Fn(u32, u32) -> (u32, DVec3),
     ) -> Vec<u32> {
-        self.levels[t as usize].triangulate(base, inner, |i, r| outer(3 * t + i, r))
+        self.levels[t as usize].triangulate(patch, base, inner, |i, r| outer(3 * t + i, r))
     }
 }
 
@@ -569,7 +571,7 @@ fn draw(
             })
             .collect();
         let base = (inner_base + inner[t as usize]) as u32;
-        let indices = plan.patch_triangles(t, base, &inner_points, |h, r| {
+        let indices = plan.patch_triangles(&patch, t, base, &inner_points, |h, r| {
             let v = sample_vertex(h, r);
             (v, exact[v as usize])
         });
@@ -919,7 +921,7 @@ pub(crate) fn weld(
             .map(|u| patch.eval(u))
             .collect();
         let base = (inner_base + inner[t as usize]) as u32;
-        let indices = plan.patch_triangles(t, base, &points, |h, r| {
+        let indices = plan.patch_triangles(&patch, t, base, &points, |h, r| {
             let v = sample_vertex(h, r);
             (v, exact[v as usize])
         });
@@ -1092,7 +1094,7 @@ fn curved_both_ways(form: &Form) -> bool {
 fn level_error(patch: &Patch, level: &Level) -> f64 {
     let (params, first, base) = level.params();
     let points: Vec<DVec3> = params.iter().map(|&u| patch.eval(u)).collect();
-    let indices = level.triangulate(base, &points[base as usize..], |i, r| {
+    let indices = level.triangulate(patch, base, &points[base as usize..], |i, r| {
         let v = first[i as usize] + r;
         (v, points[v as usize])
     });
@@ -1206,9 +1208,11 @@ impl Level {
     /// The triangles, as vertex ids: the inner points are `base` on, at
     /// `inner` (as [`Level::inner_params`] orders them), and `outer(i, r)`
     /// is the id and position of side `i`'s sample `r` (from corner `i`
-    /// towards corner `i + 1`, `0..=counts[i]`).
+    /// towards corner `i + 1`, `0..=counts[i]`). The ring's diagonals are
+    /// chosen against `patch`, the patch they sample.
     fn triangulate(
         &self,
+        patch: &Patch,
         base: u32,
         inner: &[DVec3],
         outer: impl Fn(u32, u32) -> (u32, DVec3),
@@ -1216,10 +1220,12 @@ impl Level {
         let Some(l) = self.inner else {
             return [0, 1, 2].map(|i| outer(i, 0).0).to_vec();
         };
+        let m = f64::from(l + 3);
         let idx = |j: u32, k: u32| base + Level::index(l, j, k);
         let inner_at = |j: u32, k: u32| {
             let i = Level::index(l, j, k);
-            (base + i, inner[i as usize])
+            let u = DVec3::new(f64::from(l - j - k + 1), f64::from(j + 1), f64::from(k + 1)) / m;
+            (base + i, inner[i as usize], u)
         };
         let mut indices = Vec::new();
         for k in 0..l {
@@ -1230,15 +1236,53 @@ impl Level {
                 }
             }
         }
-        let sides: [Vec<(u32, DVec3)>; 3] = [
+        let sides: [Vec<Sample>; 3] = [
             (0..=l).map(|s| inner_at(s, 0)).collect(),
             (0..=l).map(|s| inner_at(l - s, s)).collect(),
             (0..=l).map(|s| inner_at(0, l - s)).collect(),
         ];
-        for (i, inner) in (0..3).zip(&sides) {
-            let outer: Vec<(u32, DVec3)> =
-                (0..=self.counts[i as usize]).map(|r| outer(i, r)).collect();
-            stitch(&mut indices, &outer, inner);
+        // Side `i`'s sample `r`.
+        let edge_at = |i: usize, r: u32| {
+            let (v, x) = outer(i as u32, r);
+            let s = f64::from(r) / f64::from(self.counts[i]);
+            let mut u = DVec3::ZERO;
+            u[i] = 1.0 - s;
+            u[(i + 1) % 3] = s;
+            (v, x, u)
+        };
+        let off = |u: DVec3, x: DVec3| (patch.eval(u) - x).dot(unit_normal(patch, u)).abs();
+        // Where each strip's triangles start and where its last one is.
+        let mut strips = [(0, 0); 3];
+        for (i, inner) in sides.iter().enumerate() {
+            let outer: Vec<Sample> = (0..=self.counts[i]).map(|r| edge_at(i, r)).collect();
+            let first = indices.len();
+            stitch(&mut indices, &outer, inner, off);
+            strips[i] = (first, indices.len() - 3);
+        }
+        // The diagonal from each corner to the inner grid's corner next to
+        // it, flipped to join the edges' samples either side when that
+        // keeps closer to the patch: where the grid runs skewed to the
+        // edges (a cylinder triangle whose far corner is round the arc),
+        // the inner grid's corner is two steps round from the patch's.
+        // Only where both strips end in an edge segment there, and the
+        // quad is convex in parameters, so the new triangles keep the
+        // patch's orientation.
+        let orient = |p: &Sample, q: &Sample, r: &Sample| p.2.dot(q.2.cross(r.2));
+        for i in 0..3 {
+            let before = (i + 2) % 3;
+            let (a, b) = (strips[before].1, strips[i].0);
+            let prev = edge_at(before, self.counts[before] - 1);
+            let (corner, next, g) = (edge_at(i, 0), edge_at(i, 1), sides[i][0]);
+            let turn = orient(&prev, &corner, &g);
+            if indices[a..a + 3] == [prev.0, corner.0, g.0]
+                && indices[b..b + 3] == [corner.0, next.0, g.0]
+                && prefer(diagonal(&prev, &next, off), diagonal(&corner, &g, off))
+                && orient(&prev, &corner, &next) * turn > 0.0
+                && orient(&prev, &next, &g) * turn > 0.0
+            {
+                indices[a..a + 3].copy_from_slice(&[prev.0, corner.0, next.0]);
+                indices[b..b + 3].copy_from_slice(&[prev.0, next.0, g.0]);
+            }
         }
         indices
     }
@@ -1267,22 +1311,52 @@ impl Level {
     }
 }
 
+/// A sample of a patch: its vertex id, position and parameters.
+type Sample = (u32, DVec3, DVec3);
+
+/// How far the diagonal between `p` and `q` is from the patch at its
+/// middle (`off`, from the parameters and position there), and its
+/// squared length.
+fn diagonal(p: &Sample, q: &Sample, off: impl Fn(DVec3, DVec3) -> f64) -> (f64, f64) {
+    let error = off((p.2 + q.2) * 0.5, (p.1 + q.1) * 0.5);
+    (error, p.1.distance_squared(q.1))
+}
+
+/// Whether the diagonal measured `x` ([`diagonal`]) is to be taken over
+/// `y`: the one closer to the patch, and where the two are as close
+/// (within a millionth of the longer), the shorter, `x` on a tie.
+fn prefer((ex, lx): (f64, f64), (ey, ly): (f64, f64)) -> bool {
+    if (ex - ey).abs() > 1e-6 * lx.max(ly).sqrt() {
+        ex < ey
+    } else {
+        lx <= ly
+    }
+}
+
 /// Appends the triangles of the strip between the polylines `outer` (an
 /// edge's points) and `inner` (the inner grid's side next to it), which
-/// run the same way with the patch to the left, as vertex ids and
-/// positions. Each step advances the side that makes the shorter new
-/// diagonal, the outer one on a tie: a patch's grid can run skewed to its
-/// edges (a cylinder triangle whose far corner is round the arc), and
-/// pairing points by their parameters alone then makes triangles two
-/// steps wide.
-fn stitch(out: &mut Vec<u32>, outer: &[(u32, DVec3)], inner: &[(u32, DVec3)]) {
+/// run the same way with the patch to the left, as vertex ids. Each step
+/// advances the side whose new diagonal [`prefer`] takes, the outer one
+/// on a tie. A patch's grid can run skewed to its edges (a cylinder
+/// triangle whose far corner is round the arc), and pairing points by
+/// their parameters alone then makes triangles steps wide; so does
+/// pairing them by length alone on a tall wall, where the heights of the
+/// inner points differ by more than a step round.
+fn stitch(
+    out: &mut Vec<u32>,
+    outer: &[Sample],
+    inner: &[Sample],
+    off: impl Fn(DVec3, DVec3) -> f64,
+) {
     let (a, b) = (outer.len() - 1, inner.len() - 1);
     let (mut s, mut t) = (0, 0);
     while s < a || t < b {
         let advance_outer = t == b
             || (s < a
-                && outer[s + 1].1.distance_squared(inner[t].1)
-                    <= outer[s].1.distance_squared(inner[t + 1].1));
+                && prefer(
+                    diagonal(&outer[s + 1], &inner[t], &off),
+                    diagonal(&outer[s], &inner[t + 1], &off),
+                ));
         if advance_outer {
             out.extend([outer[s].0, outer[s + 1].0, inner[t].0]);
             s += 1;
