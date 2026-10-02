@@ -64,10 +64,9 @@ impl BodyId {
 pub const MAX_NAME_LEN: usize = 1024;
 
 /// A body: a solid the feature history makes. The document holds only
-/// its name, whether it's shown and how opaque, and which feature makes it
-/// (an extrude or revolve making a new body, [`Operation::NewBody`]); its
-/// geometry is
-/// whatever regenerating the history gives it.
+/// its name, whether it's shown and how opaque, and which feature makes
+/// it (an extrude or revolve making a new body, [`Operation::NewBody`]);
+/// its geometry is whatever regenerating the history gives it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Body {
     pub id: BodyId,
@@ -248,9 +247,9 @@ impl Document {
     /// increasing order and below `next_id`, so bodies added later get new
     /// ids and come last, where an edit adds them, and the same for
     /// feature ids; no name is longer than [`MAX_NAME_LEN`]; every body's
-    /// opacity is one [`Opacity::new`] takes; the tolerance
-    /// is one [`Tolerance::new`] takes; every body is made by an extrude
-    /// or revolve the document holds that names it as its new body, and
+    /// opacity is one [`Opacity::new`] takes; the tolerance is one
+    /// [`Tolerance::new`] takes; every body is made by an extrude or
+    /// revolve the document holds that names it as its new body, and
     /// every such body is there; every sketch passes [`Sketch::check`]
     /// against [`MAX_COORD`] and the document's units
     /// ([`Document::design`]), so every dimension's expression gives its

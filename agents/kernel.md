@@ -1951,25 +1951,24 @@ tessellation too).
   revolve's pieces will draw as one face too. Flush joins draw no line
   where the two pieces of a plane or cylinder meet, since
   `Mesh::merge_faces` gave them one key ("Structure"). They're polylines
-  (`RenderMesh::edge_vertices`, `edge_ends`), first the topology's
-  chains, one each, in its order, so edge `i` of a solid's mesh is chain
-  `i`, along the halfedges on the chain's first region's side, with its
-  two regions as faces (`edge_faces`). Chains run between regions of
-  different keys, so all their edges are feature edges. Then the
-  creases, feature edges inside one region where the normals split but
-  no other face begins, with that face twice, chained through the mesh
-  vertices where exactly two creases of the region meet, along the
-  halfedges on one side; creases start from the lowest corner first,
-  closed ones from their lowest edge. Every mesh vertex an edge ends at
-  is a corner (`corners`, `edge_corners`), and an edge that closes
-  without one gets a corner where it starts. Where a crease ends on a
-  chain, the chain's halfedges either side may have their own vertices
-  at the same position (the corner groups split at the crease): the
-  polyline keeps the first, and an edge ending at its start ends on its
-  first vertex. A solid's mesh is one part (`part_ends`), even empty;
-  `RenderMesh::append` adds a part per mesh. `Solid::tessellate` works
-  out the topology itself; `Solid::tessellate_with(display, &topology)`
-  takes one already made.
+  (`RenderMesh::edge_vertices`, `edge_ends`): first the topology's
+  chains, in its order, so edge `i` of a solid's mesh is chain `i`
+  (chains run between regions of different keys, so all their edges are
+  feature edges), along the halfedges on its first region's side, its
+  two regions its faces (`edge_faces`); then the creases, feature edges
+  inside one region where the normals split but no other face begins,
+  with that face twice, chained through the mesh vertices where exactly
+  two creases of the region meet, open ones from the lowest corner
+  first, closed ones from their lowest edge. Every mesh vertex an edge
+  ends at is a corner (`corners`, `edge_corners`), and an edge that
+  closes without one gets a corner where it starts. Where a crease ends
+  on a chain, the chain's halfedges either side may have their own
+  vertices at the same position (the corner groups split at the crease):
+  the polyline keeps the first, and an edge ending at its start ends on
+  its first vertex. A solid's mesh is one part (`part_ends`), even
+  empty; `RenderMesh::append` adds a part per mesh. `Solid::tessellate`
+  works out the topology itself; `Solid::tessellate_with(display,
+  &topology)` takes one already made.
 - **Limits.** Triangle, vertex and feature-edge point counts are worked out
   from the segment counts before any point inside a patch is evaluated,
   and more than `RenderMesh::MAX_*` fails with `MeshError::TooLarge`.
@@ -6944,8 +6943,9 @@ arrays, checked finite and in order on receipt (`wire::Error::Bounds`);
 `MAX_HEAD_BYTES` is 64 MiB (the head carries the picking tables too:
 the parts' bodies, at most `RenderMesh::MAX_PARTS`, the faces, at most
 `MAX_FACES` 2²⁰ with `Picking::MAX_ALIASES` 2²⁰ aliases among them, and
-the edges' closed flags, at most `RenderMesh::MAX_EDGE_POLYLINES`, each
-refused as soon as it's past its bound, since a face is some 120 bytes
+the edges' closed flags and tangent chains, at most
+`RenderMesh::MAX_EDGE_POLYLINES` each, all refused as soon as they're
+past their bound, since a face is some 120 bytes
 on the page and as few as 5 in the head; a model whose head would be
 larger or whose faces are past those is answered as failed). The draft's and each feature's touched bodies
 cross in the head as marks, unchecked; `merged` is checked to name each
@@ -7205,15 +7205,14 @@ to 100 % in steps of 5 with the percentage beside it, wrapped in
 slider also steps on arrow keys and `Ctrl`-wheel, with no release to
 commit after. Dragging sends `Look::PreviewOpacity` (the value through
 `Opacity::clamped`), kept in `Doc::opacity_preview` while the body's
-menu is open and the document editable, which the view draws in place
-of the body's own (`DocumentState::opacity_preview`, `shown_opacity`) and
-shows in the row; the document isn't touched, and the shortcuts are off
-(`Doc::keys` is `None`) until it's let go, nor does the peek key swap
-the tab (`Doc::peeks`), which would take the slider and its release
-with it. Letting go sends
-`Edit::CommitOpacity`, one `Command::SetOpacity` (none if unchanged),
-which leaves the menu open. `Esc` mid-drag closes the menu, and the
-preview goes whenever the menu does (`Doc::prune_preview`). `Esc` or a
+menu is open and the document editable, and drawn and shown in the row
+in place of the body's own (`DocumentState::opacity_preview`,
+`shown_opacity`) without touching the document. Until it's let go the
+shortcuts are off (`Doc::keys` is `None`) and the peek key doesn't swap
+the tab (`Doc::peeks`), which would take the slider and its release with
+it. Letting go sends `Edit::CommitOpacity`, one `Command::SetOpacity`
+(none if unchanged), and leaves the menu open. The preview goes whenever
+the menu does (`Doc::prune_preview`), so `Esc` mid-drag drops it. `Esc` or a
 press off a menu closes it alone; any other message closes it too, and
 it goes with what its row lists. Outside a
 sketch or a session the floating status bar (`view/src/status.rs`, as

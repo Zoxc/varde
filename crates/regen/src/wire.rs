@@ -21,8 +21,7 @@
 //! has no model: the model's parts follow only a [`Head::Regenerated`] and
 //! are the bytes of the [`RenderMesh`]'s and the sketches' [`RenderLines`]'
 //! vectors as they are in memory (little endian on wasm). The [`Picking`]
-//! tables (the parts' bodies, the faces' keys and summaries, the edges'
-//! closed flags) ride in the head.
+//! tables ride in the head.
 //!
 //! A request is copied out of its buffer only if it's within
 //! `MAX_REQUEST_BYTES`. Replies are checked on receipt: the head is within
@@ -31,16 +30,15 @@
 //! so a broken reply doesn't allocate without bound, and together the parts
 //! make a [`RenderMesh`] by [`RenderMesh::from_parts`] and [`RenderLines`]
 //! by [`RenderLines::from_parts`] and, with the head's tables, a
-//! [`Picking`] by [`Picking::from_parts`] (a body per part of the mesh,
-//! each one the head lists, a face per face, summaries finite and within
-//! bounds, a flag per edge); the bodies' boxes in the head are finite
-//! with their corners in order, and the merged bodies name each consumed
-//! body once, never as a holder. The failed features' ids, the
-//! sketches that don't solve and the bodies a draft or a feature touches
-//! are only marks, so they aren't checked against a document. Malformed
-//! bytes are refused, never a panic; see [`decode_request`] and [`decode_reply`]. A
-//! request's draft isn't checked as it's decoded: applying it goes through
-//! the document's checks.
+//! [`Picking`] by [`Picking::from_parts`], each part's body one the head
+//! lists; the bodies' boxes in the head are finite with their corners in
+//! order, and the merged bodies name each consumed body once, never as a
+//! holder. The failed features' ids, the sketches that don't solve and
+//! the bodies a draft or a feature touches are only marks, so they aren't
+//! checked against a document. Malformed
+//! bytes are refused, never a panic; see [`decode_request`] and
+//! [`decode_reply`]. A request's draft isn't checked as it's decoded:
+//! applying it goes through the document's checks.
 //!
 //! An export's bodies follow a [`Head::Exported`] that went as one part,
 //! their postcard, copied only within [`MAX_EXPORT_BYTES`]; each
@@ -69,8 +67,8 @@ use crate::{Drafted, ExportedBody, PickFace, Picking, PickingError, Request, Res
 /// The most bytes a reply's head may have. A head is a generation, a few
 /// feature ids, the failed features' messages, the bodies each join, cut
 /// or intersect touches, a box per body and the picking tables (some 60
-/// bytes a face and up to 6 an edge), or an error message, so this is far more
-/// than any real one needs. A model whose head would be larger is
+/// bytes a face and up to 6 an edge), or an error message, so this is far
+/// more than any real one needs. A model whose head would be larger is
 /// answered as failed ([`encode_reply`]). It's no larger because a few
 /// bytes of a head can stand for many more on the page (a feature id is
 /// 8 bytes there and as few as 1 here).
@@ -85,7 +83,7 @@ pub const MAX_FACES: usize = 1 << 20;
 /// The bounded decoding of a head's picking tables: refused as soon as
 /// they're past their bounds, mostly before any element is read.
 mod bounded {
-    use serde::Deserializer;
+    use serde::{Deserialize, Deserializer};
     use varde_document::BodyId;
     use varde_kernel::RenderMesh;
 
@@ -93,8 +91,8 @@ mod bounded {
     use crate::picking::bounded::seq;
     use crate::{PickFace, Picking};
 
-    /// At most [`MAX_FACES`] faces with at most [`Picking::MAX_ALIASES`] aliases
-    /// together.
+    /// At most [`MAX_FACES`] faces with at most [`Picking::MAX_ALIASES`]
+    /// aliases together.
     pub(super) fn faces<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<PickFace>, D::Error> {
         seq(
             d,
@@ -109,13 +107,11 @@ mod bounded {
         seq(d, RenderMesh::MAX_PARTS, |_| 0, 0)
     }
 
-    /// At most [`RenderMesh::MAX_EDGE_POLYLINES`] edges' flags.
-    pub(super) fn closed<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<bool>, D::Error> {
-        seq(d, RenderMesh::MAX_EDGE_POLYLINES, |_| 0, 0)
-    }
-
-    /// At most [`RenderMesh::MAX_EDGE_POLYLINES`] edges' tangent chains.
-    pub(super) fn tangents<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<u32>, D::Error> {
+    /// At most [`RenderMesh::MAX_EDGE_POLYLINES`] edges' entries: their
+    /// closed flags or tangent chains.
+    pub(super) fn edges<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
+        d: D,
+    ) -> Result<Vec<T>, D::Error> {
         seq(d, RenderMesh::MAX_EDGE_POLYLINES, |_| 0, 0)
     }
 }
@@ -184,11 +180,11 @@ pub enum Head {
         faces: Vec<PickFace>,
         /// The picking tables' closed flags, one per edge, at most
         /// [`RenderMesh::MAX_EDGE_POLYLINES`].
-        #[serde(deserialize_with = "bounded::closed")]
+        #[serde(deserialize_with = "bounded::edges")]
         closed: Vec<bool>,
         /// The picking tables' tangent chains, one per edge, at most
         /// [`RenderMesh::MAX_EDGE_POLYLINES`].
-        #[serde(deserialize_with = "bounded::tangents")]
+        #[serde(deserialize_with = "bounded::edges")]
         tangents: Vec<u32>,
     },
     /// A [`Response::Failed`].

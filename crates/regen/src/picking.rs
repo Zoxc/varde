@@ -2,10 +2,11 @@
 //! its mesh is of, and what the viewport says about and builds on each
 //! face and edge of the mesh.
 //!
-//! The mesh's faces are the kernel's regions ([`Topology::regions`](varde_kernel::Topology::regions)):
-//! connected triangles of one [`FaceKey`], so a circle's quarter walls, or
-//! flush faces merged under one name, are one face, and a face cut in two
-//! by a groove is two of one key. Its first edges in each part are the
+//! The mesh's faces are the kernel's regions
+//! ([`Topology::regions`](varde_kernel::Topology::regions)): connected
+//! triangles of one [`FaceKey`], so a circle's quarter walls, or flush
+//! faces merged under one name, are one face, and a face cut in two by a
+//! groove is two of one key. Its first edges in each part are the
 //! chains ([`Topology::chains`](varde_kernel::Topology::chains)): maximal
 //! runs of mesh edges between the same two faces; the rest are creases
 //! inside one face (see [`RenderMesh`]). So the tables here are indexed
@@ -138,8 +139,8 @@ impl Summary {
     }
 
     /// Whether its numbers are finite and within [`Picking::MAX_VALUE`],
-    /// its directions unit vectors (within [`Picking::UNIT`]), its sizes positive
-    /// and a cone's cosine and sine within `(0, 1]`.
+    /// its directions unit vectors (within [`Picking::UNIT`]), its sizes
+    /// positive and a cone's cosine and sine within `(0, 1]`.
     pub fn valid(&self) -> bool {
         let value = |x: f64| x.abs() <= Picking::MAX_VALUE;
         let point = |p: [f64; 3]| p.into_iter().all(value);
@@ -196,9 +197,9 @@ pub struct PickFace {
 /// one corner, each edge's tangent chain's first an edge of its part
 /// between two different faces, no later than it and its own first (a
 /// crease's itself), every summary [`Summary::valid`], each face's aliases
-/// sorted and apart from its key. The fields are private so that holds; one from the other
-/// side of the web worker comes in through [`Picking::from_parts`], which
-/// checks it.
+/// sorted and apart from its key. The fields are private so that holds;
+/// one from the other side of the web worker comes in through
+/// [`Picking::from_parts`], which checks it.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Picking {
     bodies: Vec<BodyId>,
@@ -253,16 +254,16 @@ impl Picking {
         let mut part_start = 0;
         let mut part_ends = mesh.part_ends().iter();
         let mut part_end = part_ends.next().map_or(0, |&[_, edges, _]| edges);
+        let chain = |e: u32| {
+            let [a, b] = mesh.edge_faces()[e as usize];
+            a != b
+        };
         for (e, &first) in tangents.iter().enumerate() {
             let e = e as u32;
             while e >= part_end {
                 part_start = part_end;
                 part_end = part_ends.next().map_or(u32::MAX, |&[_, edges, _]| edges);
             }
-            let chain = |e: u32| {
-                let [a, b] = mesh.edge_faces()[e as usize];
-                a != b
-            };
             let ok = if chain(e) {
                 (part_start..=e).contains(&first)
                     && tangents[first as usize] == first
@@ -310,18 +311,20 @@ impl Picking {
     }
 
     /// The body face `face` of `mesh`, the mesh these tables came with,
-    /// is of.
-    pub fn face_body(&self, mesh: &RenderMesh, face: u32) -> BodyId {
+    /// is of, if there's such a face.
+    pub fn face_body(&self, mesh: &RenderMesh, face: u32) -> Option<BodyId> {
         let part = (mesh.part_ends()).partition_point(|&[faces, _, _]| faces <= face);
-        self.bodies[part]
+        self.bodies.get(part).copied()
     }
 
     /// The keys of the faces either side of edge `edge` of `mesh`, the
     /// mesh these tables came with, sorted, as an edge reference stores
-    /// them; `None` for a crease, which is inside one face.
+    /// them; `None` for a crease, which is inside one face, or if there's
+    /// no such edge.
     pub fn edge_keys(&self, mesh: &RenderMesh, edge: u32) -> Option<[FaceKey; 2]> {
-        let [a, b] = mesh.edge_faces()[edge as usize];
-        let [a, b] = [a, b].map(|f| self.faces[f as usize].key);
+        let [a, b] = *mesh.edge_faces().get(usize::try_from(edge).ok()?)?;
+        let key = |f: u32| Some(self.faces.get(usize::try_from(f).ok()?)?.key);
+        let (a, b) = (key(a)?, key(b)?);
         (a != b).then(|| [a.min(b), a.max(b)])
     }
 
@@ -498,8 +501,8 @@ pub(crate) struct Scene {
 /// Why parts don't make a [`Picking`] of a mesh.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PickingError {
-    /// There isn't one body per part, one face per face and one flag per
-    /// edge of the mesh.
+    /// There isn't one body per part, one face per face and one flag and
+    /// tangent chain per edge of the mesh.
     Lengths,
     /// A face's summary isn't valid, or its aliases aren't sorted apart
     /// from its key.

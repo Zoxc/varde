@@ -98,9 +98,22 @@ impl Document {
         }
     }
 
-    /// Adds a visible, opaque body made by `feature` with a new id, "Body N" one
-    /// past the bodies so named, see [`Document::add_sketch`]. New ids are
-    /// the highest, so it goes last.
+    /// A copy with body `id` as `change` leaves it, or `None` if there's
+    /// no such body or `change` leaves it as it was.
+    fn with_body(&self, id: BodyId, change: impl FnOnce(&mut Body)) -> Option<Document> {
+        let index = self.body_index(id)?;
+        let mut body = self.bodies[index].clone();
+        change(&mut body);
+        (body != self.bodies[index]).then(|| {
+            let mut next = Document::clone(self);
+            next.bodies[index] = body;
+            next
+        })
+    }
+
+    /// Adds a visible, opaque body made by `feature` with a new id, "Body
+    /// N" one past the bodies so named, see [`Document::add_sketch`]. New
+    /// ids are the highest, so it goes last.
     fn add_body(&mut self, feature: FeatureId) -> Result<BodyId, EditError> {
         let names = self.bodies.iter().map(|body| body.name.as_str());
         let name = format!("Body {}", next_number(names, "Body"));
@@ -311,25 +324,15 @@ impl Editor {
                 next
             }
             Command::SetVisible(id, visible) => {
-                let Some(index) = document
-                    .body_index(id)
-                    .filter(|&index| document.bodies[index].visible != visible)
-                else {
+                let Some(next) = document.with_body(id, |body| body.visible = visible) else {
                     return Ok(());
                 };
-                let mut next = Document::clone(document);
-                next.bodies[index].visible = visible;
                 next
             }
             Command::SetOpacity(id, opacity) => {
-                let Some(index) = document
-                    .body_index(id)
-                    .filter(|&index| document.bodies[index].opacity != opacity)
-                else {
+                let Some(next) = document.with_body(id, |body| body.opacity = opacity) else {
                     return Ok(());
                 };
-                let mut next = Document::clone(document);
-                next.bodies[index].opacity = opacity;
                 next
             }
             Command::AddSketch { name, plane } => {

@@ -38,6 +38,17 @@ const COLORS: Colors = Colors {
     selected: Srgb([0.04, 0.58, 0.68]),
 };
 
+/// [`COLORS`] with yellow edges.
+const YELLOW_EDGES: Colors = Colors {
+    edge: Srgb([1.0, 1.0, 0.0]),
+    ..COLORS
+};
+
+/// A grid plane seen edge on from the top, so the grid doesn't show.
+fn hidden_grid() -> GridPlane {
+    GridPlane::new(Vec3::new(0.0, 1000.0, 0.0), Vec3::X, Vec3::Z).unwrap()
+}
+
 /// A device on the GL backend, if there's an adapter for it.
 fn gl_device() -> Option<(wgpu::Device, wgpu::Queue)> {
     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
@@ -200,43 +211,13 @@ fn a_depth_tested_sketch_is_hidden_by_the_model_on_gl() {
 }
 
 #[test]
-fn edges_are_drawn_on_gl() {
-    // From the top, a cube from (-2, -2, 0) to (2, 2, 4), its edges
-    // yellow: the edge stream bound at offsets of a point and more, which
-    // GL takes as attribute offsets.
-    let Some((device, queue)) = gl_device() else {
-        eprintln!("no GL adapter, skipping");
-        return;
-    };
-    let (camera, mesh) = cube_from_top();
-    let renderer = Renderer::new(&device, FORMAT);
-    let sketches = Arc::default();
-    let frame = Frame {
-        colors: Colors {
-            edge: Srgb([1.0, 1.0, 0.0]),
-            ..COLORS
-        },
-        ..frame(&camera, &mesh, &sketches)
-    };
-    let pixels = draw(&device, &queue, &renderer, &frame);
-    // The edge at x = 2, 2 / 12 of the view's height right of its middle,
-    // looked for in a row above the origin marker.
-    let column = SIZE[0] / 2 + 2 * SIZE[1] / 12;
-    let yellow = (column - 2..=column + 2).any(|x| {
-        let [r, g, b, _] = pixels[(50 * SIZE[0] + x) as usize];
-        r > 150 && g > 150 && b < 100
-    });
-    assert!(yellow, "no edge near column {column}");
-}
-
-#[test]
 fn a_closed_edge_is_joined_where_it_closes_on_gl() {
     // From the top in perspective, the circle round a cylinder's top, one
-    // edge closing on itself, the one round its bottom smaller within it
-    // and hidden. Faded, a pixel drawn twice would be more opaque than the
-    // faded colour over what's drawn opaque. The points either side of
-    // where it closes are marked in their edge's top bit, which GL takes
-    // as an integer attribute.
+    // edge closing on itself. Faded, a pixel drawn twice would be more
+    // opaque than the faded colour over what's drawn opaque. This also
+    // covers the edge stream bound at offsets of a point (GL attribute
+    // offsets) and the neighbour mark in the edge's top bit (an integer
+    // attribute).
     let Some((device, queue)) = gl_device() else {
         eprintln!("no GL adapter, skipping");
         return;
@@ -257,19 +238,14 @@ fn a_closed_edge_is_joined_where_it_closes_on_gl() {
             faded,
             // The bottom's circle, hidden, isn't drawn faded.
             hidden_edges: false,
-            // Its plane seen edge on, so the grid doesn't show.
-            grid: GridPlane::new(Vec3::new(0.0, 1000.0, 0.0), Vec3::X, Vec3::Z).unwrap(),
-            colors: Colors {
-                edge: Srgb([1.0, 1.0, 0.0]),
-                ..COLORS
-            },
+            grid: hidden_grid(),
+            colors: YELLOW_EDGES,
             ..frame(&camera, &mesh, &sketches)
         };
         draw(&device, &queue, &renderer, &frame)
     };
     let (faded, opaque) = (render(true), render(false));
-    // How much yellow covers a pixel: over the grey faces, red and green
-    // gain on blue as much as it does.
+    // How much yellow covers a pixel, over the grey faces.
     let yellowness = |[r, g, b, _]: [u8; 4]| f32::from(r.min(g).saturating_sub(b)) / 255.0;
     let alpha = COLORS.faded_alpha;
     let mut drawn = 0;
@@ -288,9 +264,8 @@ fn a_closed_edge_is_joined_where_it_closes_on_gl() {
 #[test]
 fn hidden_edges_are_drawn_on_gl() {
     // From the top in perspective, the cube's bottom square shows within
-    // its top face, hidden by it: drawn dashed with the option on, by a
-    // pipeline of its own entry point, which GL keys programs by; nothing
-    // with it off.
+    // its top face, hidden by it: drawn with the option on, by an entry
+    // point of its own, which GL keys programs by; nothing with it off.
     let Some((device, queue)) = gl_device() else {
         eprintln!("no GL adapter, skipping");
         return;
@@ -302,11 +277,8 @@ fn hidden_edges_are_drawn_on_gl() {
     let yellow = |hidden_edges| {
         let frame = Frame {
             hidden_edges,
-            grid: GridPlane::new(Vec3::new(0.0, 1000.0, 0.0), Vec3::X, Vec3::Z).unwrap(),
-            colors: Colors {
-                edge: Srgb([1.0, 1.0, 0.0]),
-                ..COLORS
-            },
+            grid: hidden_grid(),
+            colors: YELLOW_EDGES,
             ..frame(&camera, &mesh, &sketches)
         };
         let pixels = draw(&device, &queue, &renderer, &frame);
@@ -331,8 +303,7 @@ fn transparent_parts_are_drawn_on_gl() {
     // From the top, the cube at 30 % and at 60 %: each part's alpha is
     // picked with a dynamic offset into a uniform buffer, which GL binds
     // as a range of it. Its middle is its bottom's back face, lit as its
-    // top is, and its top over it, each at that alpha, over the black
-    // background.
+    // top is, and its top over it, each at that alpha, over black.
     let Some((device, queue)) = gl_device() else {
         eprintln!("no GL adapter, skipping");
         return;
@@ -341,10 +312,9 @@ fn transparent_parts_are_drawn_on_gl() {
     let renderer = Renderer::new(&device, FORMAT);
     let sketches = Arc::default();
     let middle = |opacity: &[f32]| {
-        // The grid seen edge on, so it doesn't show through.
         let frame = Frame {
             opacity,
-            grid: GridPlane::new(Vec3::new(0.0, 1000.0, 0.0), Vec3::X, Vec3::Z).unwrap(),
+            grid: hidden_grid(),
             ..frame(&camera, &mesh, &sketches)
         };
         let pixels = draw(&device, &queue, &renderer, &frame);
@@ -388,7 +358,7 @@ fn hover_and_selection_are_drawn_on_gl() {
             hovered_faces,
             selected_faces,
             highlights: &highlights,
-            grid: GridPlane::new(Vec3::new(0.0, 1000.0, 0.0), Vec3::X, Vec3::Z).unwrap(),
+            grid: hidden_grid(),
             ..frame(&camera, &mesh, &sketches)
         };
         draw(&device, &queue, &renderer, &frame)

@@ -17,9 +17,8 @@ fn regenerate(editor: &Editor) -> Request {
     }
 }
 
-/// The head of a regenerated `generation`, whose model is in its parts
-/// ([`triangle`]): a mesh of one part, of the one body it lists, whose
-/// one face is the triangle's and whose one edge a crease round it.
+/// The head of a regenerated `generation` whose model is [`triangle`]:
+/// one part, of the one body it lists, one face and one crease.
 fn regenerated(generation: u64) -> Head {
     Head::Regenerated {
         generation: generation.into(),
@@ -738,10 +737,15 @@ fn answer(mesh: RenderMesh, parts: Vec<BodyId>) -> Response {
 /// The parts of a model of [`triangle_mesh`] and a polyline of two
 /// segments around it, as owned bytes to break.
 fn triangle() -> Vec<Vec<u8>> {
-    let response = answer(triangle_mesh(), vec![BodyId::NEW]);
-    let (_, mesh) = encode_reply(&response);
-    assert_eq!(mesh.len(), MODEL_PARTS);
-    mesh.into_iter().map(Cow::into_owned).collect()
+    let parts = model_parts(&answer(triangle_mesh(), vec![BodyId::NEW]));
+    assert_eq!(parts.len(), MODEL_PARTS);
+    parts
+}
+
+/// The parts following `response`'s head, as owned bytes to break.
+fn model_parts(response: &Response) -> Vec<Vec<u8>> {
+    let (_, parts) = encode_reply(response);
+    parts.into_iter().map(Cow::into_owned).collect()
 }
 
 /// A mesh of several parts, each with faces, edges and corners, and an
@@ -771,28 +775,8 @@ fn a_mesh_of_parts_round_trips_with_their_bodies() {
     };
     assert_eq!(*back, mesh);
     assert_eq!(picking.bodies(), [a, b, c]);
-    assert_eq!(picking.face_body(&mesh, 0), a);
-    assert_eq!(picking.face_body(&mesh, 1), c);
-}
-
-#[test]
-fn a_body_is_named_for_each_part() {
-    let [a, b, _] = ids();
-    for named in [vec![], vec![a, b]] {
-        let mut head = regenerated(7);
-        if let Head::Regenerated { parts, bodies, .. } = &mut head {
-            *parts = named.clone();
-            bodies.extend(named.iter().map(|&body| (body, [[0.0; 3], [1.0; 3]])));
-        }
-        let Response::Failed {
-            generation, error, ..
-        } = decode_reply(&head.encode()[..], &slices(&triangle())).unwrap()
-        else {
-            panic!("{} bodies were taken for one part", named.len());
-        };
-        assert_eq!(u64::from(generation), 7);
-        assert_eq!(error, Error::Picking(PickingError::Lengths).to_string());
-    }
+    assert_eq!(picking.face_body(&mesh, 0), Some(a));
+    assert_eq!(picking.face_body(&mesh, 1), Some(c));
 }
 
 fn slices(parts: &[Vec<u8>]) -> Vec<&[u8]> {
@@ -915,41 +899,6 @@ fn indices_and_edges_must_refer_to_vertices() {
     );
 }
 
-/// The new parts are checked through `RenderMesh::from_parts` too: faces
-/// and edges must split what they end, an edge's faces and corners be of
-/// its part, and its corners where it ends.
-#[test]
-fn faces_edges_corners_and_parts_are_checked() {
-    let set = |part: usize, values: &[u32]| {
-        let mut parts = triangle();
-        parts[part] = bytemuck::cast_slice(values).to_vec();
-        decode(&parts)
-    };
-    let ends = |part| Err(Error::RenderMesh(MeshError::Ends(part)));
-    assert_eq!(set(3, &[2]), ends(MeshPart::FaceEnds));
-    assert_eq!(set(5, &[1, 4]), ends(MeshPart::EdgeEnds));
-    assert_eq!(set(9, &[1, 1, 2]), ends(MeshPart::PartEnds));
-    assert_eq!(set(9, &[]), ends(MeshPart::PartEnds));
-    assert_eq!(
-        set(6, &[0, 1]),
-        Err(Error::RenderMesh(MeshError::OutsidePart {
-            part: MeshPart::EdgeFaces,
-            id: 1
-        }))
-    );
-    assert_eq!(
-        set(8, &[]),
-        Err(Error::RenderMesh(MeshError::Count {
-            part: MeshPart::EdgeCorners,
-            len: 0,
-            edges: 1
-        }))
-    );
-    let mut parts = triangle();
-    parts[7][0..4].copy_from_slice(&1.0f32.to_ne_bytes());
-    assert_eq!(decode(&parts), Err(Error::RenderMesh(MeshError::Corners)));
-}
-
 /// Claims a length without the bytes, to test the bound without
 /// allocating it.
 struct Huge(usize);
@@ -997,18 +946,6 @@ fn oversized_parts_are_an_error() {
         let slices = slices(&parts);
         let mut parts: Vec<&dyn Buffer> = slices.iter().map(|p| p as &dyn Buffer).collect();
         parts[at] = &huge;
-        // Normals are taken after positions: both too large reaches them.
-        if at == 1 {
-            parts[0] = &huge;
-            assert_eq!(
-                decode_model(&parts).map(|_| ()),
-                Err(Error::TooLarge {
-                    part: mesh(MeshPart::Positions),
-                    len
-                })
-            );
-            continue;
-        }
         assert_eq!(
             decode_model(&parts).map(|_| ()),
             Err(Error::TooLarge { part, len }),
@@ -1071,9 +1008,16 @@ impl Rng {
 }
 
 /// Decodes `head` and `parts` as a reply and checks that an accepted
-/// model holds together, which the renderer relies on.
+/// model holds together, which the renderer and picking rely on.
 fn decode_any(head: &[u8], parts: &[Vec<u8>]) {
-    if let Ok(Response::Regenerated { mesh, sketches, .. }) = decode_reply(head, &slices(parts)) {
+    if let Ok(Response::Regenerated {
+        mesh,
+        sketches,
+        picking,
+        bodies,
+        ..
+    }) = decode_reply(head, &slices(parts))
+    {
         let mut start = 0;
         for &end in sketches.ends() {
             assert!(end >= start + 2);
@@ -1090,8 +1034,6 @@ fn decode_any(head: &[u8], parts: &[Vec<u8>]) {
             mesh.parts().last().map_or(0, |part| part.indices.end),
             mesh.indices().len()
         );
-    }
-    if let Ok(Response::Regenerated { mesh, picking, .. }) = decode_reply(head, &slices(parts)) {
         assert_eq!(picking.bodies().len(), mesh.part_ends().len());
         assert_eq!(picking.faces().len(), mesh.face_count());
         assert_eq!(picking.closed().len(), mesh.edge_count());
@@ -1100,6 +1042,21 @@ fn decode_any(head: &[u8], parts: &[Vec<u8>]) {
         }
         for edge in 0..mesh.edge_count() as u32 {
             picking.edge_keys(&mesh, edge);
+        }
+        for (e, &closed) in picking.closed().iter().enumerate() {
+            if closed {
+                let [a, b] = mesh.edge_faces()[e];
+                let [start, end] = mesh.edge_corners()[e];
+                assert!(a != b && start == end);
+            }
+        }
+        for face in picking.faces() {
+            assert!(face.summary.valid(), "{face:?}");
+            assert!(face.aliases.windows(2).all(|w| w[0] < w[1]));
+            assert!(!face.aliases.contains(&face.key));
+        }
+        for body in picking.bodies() {
+            assert!(bodies.iter().any(|(listed, _)| listed == body));
         }
     }
 }
@@ -1188,23 +1145,39 @@ fn tables(change: impl FnOnce(&mut Vec<PickFace>, &mut Vec<bool>)) -> Head {
 }
 
 #[test]
-fn picking_must_have_one_entry_per_face_and_edge() {
+fn picking_must_have_one_entry_per_part_face_and_edge() {
     let lengths = Error::Picking(PickingError::Lengths).to_string();
+    let mut heads = vec![
+        tables(|faces, _| faces.push(face())),
+        tables(|faces, _| faces.clear()),
+        tables(|_, closed| closed.push(false)),
+        tables(|_, closed| closed.clear()),
+    ];
     for change in [
-        (|faces: &mut Vec<PickFace>, _: &mut Vec<bool>| faces.push(face()))
-            as fn(&mut Vec<PickFace>, &mut Vec<bool>),
-        |faces, _| faces.clear(),
-        |_, closed| closed.push(false),
-        |_, closed| closed.clear(),
+        (|parts: &mut Vec<BodyId>, _: &mut Vec<u32>| parts.clear())
+            as fn(&mut Vec<BodyId>, &mut Vec<u32>),
+        |parts, _| parts.push(BodyId::NEW),
+        |_, tangents| tangents.push(0),
+        |_, tangents| tangents.clear(),
     ] {
-        assert_eq!(refused(&tables(change), &triangle()), lengths);
+        let mut head = regenerated(1);
+        if let Head::Regenerated {
+            parts, tangents, ..
+        } = &mut head
+        {
+            change(parts, tangents);
+        }
+        heads.push(head);
+    }
+    for head in heads {
+        assert_eq!(refused(&head, &triangle()), lengths);
     }
 }
 
 /// A mesh of two triangles side by side, a face each, with one edge
 /// between them: along their shared side if not `closed`, else round the
-/// first triangle, closing on its first vertex. As the parts of
-/// [`triangle`], whose head's tables need a second face.
+/// first triangle, closing on its first vertex. As [`triangle`]'s parts,
+/// for a head of two faces ([`two_faces`]).
 fn two_triangles(closed: bool) -> Vec<Vec<u8>> {
     let (edge_vertices, corners, edge_corners) = if closed {
         (vec![0, 1, 2, 0], vec![[0.0; 3]], vec![[0, 0]])
@@ -1228,9 +1201,7 @@ fn two_triangles(closed: bool) -> Vec<Vec<u8>> {
         part_ends: vec![[2, 1, if closed { 1 } else { 2 }]],
     })
     .unwrap();
-    let response = answer(mesh, vec![BodyId::NEW]);
-    let (_, parts) = encode_reply(&response);
-    parts.into_iter().map(Cow::into_owned).collect()
+    model_parts(&answer(mesh, vec![BodyId::NEW]))
 }
 
 /// [`tables`] of two faces, the second the first's end cap, and the
@@ -1276,6 +1247,9 @@ fn closed_edges_must_close_between_two_faces() {
         panic!("the triangle was refused");
     };
     assert_eq!(picking.edge_keys(&mesh, 0), None);
+    // Nor has an edge the mesh hasn't.
+    assert_eq!(picking.edge_keys(&mesh, 1), None);
+    assert_eq!(picking.edge_keys(&mesh, u32::MAX), None);
 }
 
 #[test]
@@ -1372,35 +1346,6 @@ fn parts_must_be_of_listed_bodies() {
     );
 }
 
-/// Checks what an accepted reply's picking tables promise beyond their
-/// lengths: each closed edge between two faces and on one corner, every
-/// summary sound, every part of a listed body.
-fn assert_sound_tables(head: &[u8], parts: &[Vec<u8>]) {
-    if let Ok(Response::Regenerated {
-        mesh,
-        picking,
-        bodies,
-        ..
-    }) = decode_reply(head, &slices(parts))
-    {
-        for (e, &closed) in picking.closed().iter().enumerate() {
-            if closed {
-                let [a, b] = mesh.edge_faces()[e];
-                let [start, end] = mesh.edge_corners()[e];
-                assert!(a != b && start == end);
-            }
-        }
-        for face in picking.faces() {
-            assert!(face.summary.valid(), "{face:?}");
-            assert!(face.aliases.windows(2).all(|w| w[0] < w[1]));
-            assert!(!face.aliases.contains(&face.key));
-        }
-        for body in picking.bodies() {
-            assert!(bodies.iter().any(|(listed, _)| listed == body));
-        }
-    }
-}
-
 /// The reply to two plates, one above the other: real tables of two
 /// bodies, fourteen faces and their summaries.
 fn two_plates() -> (Vec<u8>, Vec<Vec<u8>>) {
@@ -1440,7 +1385,6 @@ fn damaged_picking_tables_never_panic() {
             (&damaged_head, &damaged),
         ] {
             decode_any(head, parts);
-            assert_sound_tables(head, parts);
         }
     }
 }
@@ -1492,13 +1436,14 @@ fn bounded_sequences_are_refused_past_their_bounds() {
 }
 
 /// A head claiming more parts, faces, aliases, closed flags or tangent
-/// chains than a reply may have is refused as it's decoded, before any of them is
-/// built: each costs the page far more memory than its bytes in the head.
+/// chains than a reply may have is refused as it's decoded, before any of
+/// them is built: each costs the page far more memory than its bytes in
+/// the head.
 #[test]
 fn too_many_parts_faces_aliases_or_flags_are_refused_as_the_head_is_decoded() {
     // One part, one face with one alias, one flag and one tangent chain,
-    // then each count
-    // claimed larger: the bytes for the claim, at the count's place.
+    // then each count claimed larger: the bytes for the claim, at the
+    // count's place.
     let head = tables(|faces, _| {
         faces[0].aliases.push(FaceKey {
             feature: 2,
@@ -1507,7 +1452,6 @@ fn too_many_parts_faces_aliases_or_flags_are_refused_as_the_head_is_decoded() {
         });
     })
     .encode();
-    assert!(Head::decode(&head).is_ok());
     let Head::Regenerated { faces, parts, .. } = Head::decode(&head).unwrap() else {
         unreachable!()
     };

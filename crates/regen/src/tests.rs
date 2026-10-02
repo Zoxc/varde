@@ -2102,10 +2102,7 @@ fn off_surface(summary: &Summary, p: glam::DVec3) -> f64 {
 fn assert_picks_match(mesh: &RenderMesh, picking: &Picking) {
     let at = |v: u32| Vec3::from(mesh.positions()[v as usize]).as_dvec3();
     let faces = picking.faces();
-    assert_eq!(picking.bodies().len(), mesh.part_ends().len());
-    assert_eq!(faces.len(), mesh.face_count());
-    assert_eq!(picking.closed().len(), mesh.edge_count());
-    // Checked as the page checks them, the tangent chains too.
+    // Checked as the page checks them.
     Picking::from_parts(
         picking.bodies().to_vec(),
         faces.to_vec(),
@@ -2163,7 +2160,7 @@ fn the_answer_s_picking_tables_name_the_example_s_faces_and_edges() {
     let faces = picking.faces();
     assert_eq!(faces.len(), 7);
     assert_eq!(picking.bodies(), [body]);
-    assert!((0..7).all(|f| picking.face_body(&mesh, f) == body));
+    assert!((0..7).all(|f| picking.face_body(&mesh, f) == Some(body)));
     let tops = (faces.iter()).filter(|face| {
         face.summary
             == Summary::Plane {
@@ -2271,7 +2268,7 @@ fn picking_tables_are_deterministic_and_the_same_from_the_cache() {
     // Two bodies: the second's faces and edges follow the first's.
     let (mesh, picking) = &first;
     let bodies: Vec<BodyId> = (0..picking.faces().len() as u32)
-        .map(|f| picking.face_body(mesh, f))
+        .map(|f| picking.face_body(mesh, f).unwrap())
         .collect();
     assert_eq!(bodies.len(), 14);
     assert!(
@@ -2329,11 +2326,6 @@ fn picked(response: Response) -> (Arc<RenderMesh>, Arc<Picking>, Vec<BodyId>) {
     (mesh, picking, listed)
 }
 
-/// The bodies `picking`'s parts are of, in order.
-fn bodies_picked(picking: &Picking) -> Vec<BodyId> {
-    picking.bodies().to_vec()
-}
-
 /// Hiding and showing bodies changes the tables with the mesh: a hidden
 /// body's faces are gone, the other's indices start at 0, and showing it
 /// again gives the first tables back.
@@ -2344,12 +2336,12 @@ fn picking_tables_follow_the_bodies_shown() {
     let below = plate_below(&mut editor);
     let mut regenerator = Regenerator::default();
     let (_, both, _) = picked(regenerator.handle(regenerate(&editor, None)));
-    assert_eq!(bodies_picked(&both), [top, below]);
+    assert_eq!(both.bodies(), [top, below]);
 
     editor.apply(Command::SetVisible(top, false)).unwrap();
     let (mesh, picking, listed) = picked(regenerator.handle(regenerate(&editor, None)));
     assert_eq!(listed, [top, below], "hidden bodies keep their boxes");
-    assert_eq!(bodies_picked(&picking), [below]);
+    assert_eq!(picking.bodies(), [below]);
     assert_eq!(picking.faces().len(), 7);
     assert_eq!(picking.faces(), &both.faces()[7..]);
     // Below the top plate, which is gone.
@@ -2383,13 +2375,13 @@ fn picking_tables_name_each_body_even_when_their_solids_match() {
     let twin = editor.document().bodies().last().unwrap().id;
     let mut regenerator = Regenerator::default();
     let (_, both, _) = picked(regenerator.handle(regenerate(&editor, None)));
-    let shown = bodies_picked(&both);
+    let shown = both.bodies();
     assert!(shown.contains(&top));
     for (hidden, kept) in [(top, twin), (twin, top)] {
         let mut one = editor.clone();
         one.apply(Command::SetVisible(hidden, false)).unwrap();
         let (_, picking, _) = picked(regenerator.handle(regenerate(&one, None)));
-        assert_eq!(bodies_picked(&picking), [kept], "{hidden:?} hidden");
+        assert_eq!(picking.bodies(), [kept], "{hidden:?} hidden");
     }
 }
 
@@ -2405,7 +2397,7 @@ fn picking_tables_follow_merges_drafts_and_edits() {
     let below = plate_below(&mut editor);
     let mut regenerator = Regenerator::default();
     let (_, apart, _) = picked(regenerator.handle(regenerate(&editor, None)));
-    assert_eq!(bodies_picked(&apart), [top, below]);
+    assert_eq!(apart.bodies(), [top, below]);
 
     // The join as a draft first.
     let mut probe = editor.clone();
@@ -2435,13 +2427,13 @@ fn picking_tables_follow_merges_drafts_and_edits() {
     let (consumed, holder) = merged[0];
     let (mesh, drafted, listed) = picked(response);
     assert!(!listed.contains(&consumed));
-    assert_eq!(bodies_picked(&drafted), [holder]);
+    assert_eq!(drafted.bodies(), [holder]);
     assert_eq!(drafted.faces().len(), mesh.face_count());
 
     // Committed: the same tables.
     let (_, joined, _) = picked(regenerator.handle(regenerate(&probe, None)));
     assert_eq!(joined.faces(), drafted.faces());
-    assert_eq!(bodies_picked(&joined), [holder]);
+    assert_eq!(joined.bodies(), [holder]);
     assert!([top, below].contains(&holder) && holder != consumed);
 
     // The top plate made thicker: its top face's plane follows, in the

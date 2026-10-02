@@ -236,8 +236,7 @@ fn viewports_in_one_frame_show_their_own_mesh() {
     assert!(draw(&device, &queue, &pipeline, &b) == alone(&empty));
 }
 
-/// The cube's edges behind it show dashed unless the view options turn
-/// them off; they're on unless told otherwise.
+/// The cube's hidden edges show dashed, by default, until turned off.
 #[test]
 fn hidden_edges_show_unless_turned_off() {
     let Some((device, queue)) = device() else {

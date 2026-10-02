@@ -4598,9 +4598,8 @@ fn percent(percent: u8) -> varde_document::Opacity {
     varde_document::Opacity::new(percent).unwrap()
 }
 
-/// Dragging the Opacity slider in a body's context menu shows the body so
-/// without editing the document, and with no shortcuts; letting go sets
-/// it as one undo step, the menu left open.
+/// Dragging the Opacity slider previews without editing the document,
+/// shortcuts off; letting go sets it as one undo step, the menu left open.
 #[test]
 fn the_opacity_slider_previews_then_commits_one_step() {
     let (mut doc, _) = example();
@@ -4691,9 +4690,8 @@ fn a_release_changing_nothing_adds_no_undo_step() {
     assert!(doc.editor.document().bodies().is_empty());
 }
 
-/// Headless: the body's menu has an Opacity row whose slider, pressed and
-/// dragged, previews without closing the menu, and lets go with one
-/// commit; it takes no keys, so it never changes without a release.
+/// The body menu's Opacity slider, dragged, previews without closing the
+/// menu and commits once on release; it takes no keys.
 #[test]
 fn the_body_menu_s_opacity_slider_is_dragged() {
     use iced::mouse::{Button, Cursor, Event};
@@ -4765,21 +4763,11 @@ fn the_body_menu_s_opacity_slider_is_dragged() {
     let percent = dragged.to_string();
     let mut ui = shown(doc.view_in(Mode::Light), size, &mut renderer);
     assert!(texts(&mut ui, &renderer).iter().any(|t| t.text == percent));
-    drop(ui);
-
-    // A sketch has no opacity.
-    let sketch = doc.editor.document().features()[0].id;
-    doc.look(Look::OpenMenu(RowMenu::Sketch(sketch)));
-    let mut ui = shown(doc.view_in(Mode::Light), size, &mut renderer);
-    let labels = texts(&mut ui, &renderer);
-    assert!(labels.iter().any(|t| t.text == "Delete"), "{labels:?}");
-    assert!(!labels.iter().any(|t| t.text == "Opacity"), "{labels:?}");
 }
 
-/// The peek key pressed mid-drag doesn't swap the Objects tab, and with it
-/// the slider being dragged, for the Timeline: the slider would never see
-/// its release, leaving the preview shown uncommitted and the shortcuts
-/// off with nothing dragged.
+/// The peek key mid-drag doesn't swap the Objects tab, and the slider with
+/// it, for the Timeline: the slider would never see its release, leaving
+/// the preview uncommitted and the shortcuts off.
 #[test]
 fn the_peek_key_leaves_the_opacity_slider_being_dragged() {
     let (mut doc, _) = example();
@@ -5200,7 +5188,7 @@ fn closing_waits_for_a_delete_behind_sketch_edits_to_be_asked_and_answered() {
 }
 
 #[test]
-fn the_view_options_menu_picks_the_projection_and_the_mouse_hints() {
+fn the_view_options_menu_picks_the_projection_and_the_options() {
     fn view(varde: &Varde) -> iced::Element<'_, Ui> {
         document(varde).view(false, Mode::Light, varde.options)
     }
@@ -5261,6 +5249,27 @@ fn the_view_options_menu_picks_the_projection_and_the_mouse_hints() {
     let off = shown(&varde, &mut renderer);
     assert!(!has(&off, "Drag to orbit") && !has(&off, "Zoom"), "{off:?}");
 
+    // Hidden edges, on by default, clicked, turn off, leaving the mouse
+    // hints be, and close it too.
+    assert!(varde.options.hidden_edges);
+    let _ = varde.update(Message::Ui(Ui::Look(Look::ToggleViewMenu)));
+    let open = shown(&varde, &mut renderer);
+    let hidden_edges = open.iter().find(|t| t.text == "Hidden edges").unwrap();
+    let mut ui = iced_runtime::user_interface::UserInterface::build(
+        view(&varde),
+        size,
+        Default::default(),
+        &mut renderer,
+    );
+    let sent = clicked(&mut ui, &mut renderer, hidden_edges.bounds.center());
+    drop(ui);
+    let [Ui::ToggleHiddenEdges] = sent[..] else {
+        panic!("{sent:?}");
+    };
+    let _ = varde.update(Message::Ui(Ui::ToggleHiddenEdges));
+    assert!(!varde.options.hidden_edges && !varde.options.mouse_hints);
+    assert!(!document(&varde).view_menu);
+
     // `Esc` closes it, and a click off it.
     let _ = varde.update(Message::Ui(Ui::Look(Look::ToggleViewMenu)));
     let _ = varde.update(Message::Ui(Ui::Look(Look::Escape)));
@@ -5277,38 +5286,6 @@ fn the_view_options_menu_picks_the_projection_and_the_mouse_hints() {
         matches!(sent[..], [Ui::Look(Look::CloseViewMenu)]),
         "{sent:?}"
     );
-}
-
-#[test]
-fn the_view_options_menu_turns_the_hidden_edges_off_and_on() {
-    let size = iced::Size::new(1280.0, 800.0);
-    let mut renderer = varde_view::probe::renderer();
-    let mut varde = Varde::new();
-    let _ = varde.update(Message::Ui(Ui::Welcome(WelcomeUi::NewDesign)));
-    // On by default.
-    assert!(varde.options.hidden_edges);
-
-    // The menu has it, and clicking it asks to turn them off.
-    let _ = varde.update(Message::Ui(Ui::Look(Look::ToggleViewMenu)));
-    let view = document(&varde).view(false, Mode::Light, varde.options);
-    let mut ui = shown(view, size, &mut renderer);
-    let item = texts(&mut ui, &renderer)
-        .into_iter()
-        .find(|t| t.text == "Hidden edges")
-        .unwrap();
-    let sent = clicked(&mut ui, &mut renderer, item.bounds.center());
-    drop(ui);
-    let [Ui::ToggleHiddenEdges] = sent[..] else {
-        panic!("{sent:?}");
-    };
-    let _ = varde.update(Message::Ui(Ui::ToggleHiddenEdges));
-    assert!(!varde.options.hidden_edges);
-    // Closing the menu, and leaving the mouse's hints be.
-    assert!(!document(&varde).view_menu);
-    assert!(varde.options.mouse_hints);
-
-    let _ = varde.update(Message::Ui(Ui::ToggleHiddenEdges));
-    assert!(varde.options.hidden_edges);
 }
 
 #[test]

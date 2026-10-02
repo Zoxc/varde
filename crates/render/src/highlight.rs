@@ -12,24 +12,24 @@ use crate::renderer::{EdgePoint, EdgeStream};
 /// The edges and vertices of a [`Frame`](crate::Frame)'s mesh that are
 /// hovered or selected, by their ids in it: an edge by its polyline
 /// ([`RenderMesh::edge_ends`]), a vertex by its corner
-/// ([`RenderMesh::corners`]). Ids the mesh hasn't are left out. Small, and
-/// built again only when the hover or the selection changes, so the
-/// renderer uploads it only then.
+/// ([`RenderMesh::corners`]). Ids the mesh hasn't are left out. The
+/// renderer uploads it again only when it's another `Arc`, so build it
+/// only when the hover or the selection changes.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Highlights {
-    /// The edges outlined, as hovered: in their own colour, as they were,
-    /// with a rim [`HOVER_RIM`](crate::HOVER_RIM) wide outside them in
-    /// [`Colors::hover_outline`](crate::Colors::hover_outline). The
-    /// hovered edge, or the edges bordering the hovered face.
+    /// The edges outlined, as hovered (the hovered edge, or the edges of
+    /// the hovered face): left as they are, with a rim
+    /// [`HOVER_RIM`](crate::HOVER_RIM) wide outside them in
+    /// [`Colors::hover_outline`](crate::Colors::hover_outline).
     pub outlined: Vec<u32>,
     /// The edges selected: drawn again in
     /// [`Colors::selected`](crate::Colors::selected),
     /// [`SELECTED_EDGE_WIDTH`](crate::SELECTED_EDGE_WIDTH) wide, over the
     /// outline.
     pub selected_edges: Vec<u32>,
-    /// The vertices drawn, as round discs
-    /// [`VERTEX_RADIUS`](crate::VERTEX_RADIUS) across within a rim: those
-    /// hovered or selected, the others aren't.
+    /// The vertices, drawn as discs of radius
+    /// [`VERTEX_RADIUS`](crate::VERTEX_RADIUS) within a rim if hovered or
+    /// selected.
     pub vertices: Vec<Vertex>,
 }
 
@@ -71,12 +71,10 @@ pub(crate) struct Built {
 }
 
 impl Highlights {
-    /// What's drawn of these in `mesh`. The outlined edges that meet at a
-    /// corner are one polyline in the stream (see [`joined`]), so the
-    /// outline's rim around one leaves alone the pixels of the other,
-    /// whose own they are where they meet, as a polyline's joins do. The
-    /// outlined and selected edges' points are apart, so an edge both
-    /// outlined and selected isn't joined to itself where they meet.
+    /// What's drawn of these in `mesh`. Outlined edges that meet are one
+    /// polyline in the stream (see [`joined`]), so one's rim doesn't draw
+    /// over the other's pixels where they meet. The outlined and selected
+    /// edges are kept apart, so an edge both isn't joined to itself.
     pub(crate) fn build(&self, mesh: &RenderMesh) -> Built {
         let mut stream = EdgeStream::with_capacity(0);
         let start = stream.len();
@@ -112,12 +110,10 @@ impl Highlights {
     }
 }
 
-/// `edges` of `mesh`, each once, joined where they meet into polylines of
-/// its vertices, each named by its lowest edge: an edge is followed, either
-/// way round, by one not yet taken that ends at the corner it ends at,
-/// and likewise before it, until none does or the polyline closes. Where
-/// more than two of them meet at a corner, the others start polylines of
-/// their own. Ids the mesh hasn't are left out.
+/// `edges` of `mesh`, each once, joined end to end into polylines of its
+/// vertices, each named by its lowest edge, until none goes on or the
+/// polyline closes. Where more than two meet at a corner, the others start
+/// polylines of their own. Ids the mesh hasn't are left out.
 fn joined(mesh: &RenderMesh, edges: &[u32]) -> Vec<(u32, Vec<u32>)> {
     let mut edges = edges.to_vec();
     edges.sort_unstable();

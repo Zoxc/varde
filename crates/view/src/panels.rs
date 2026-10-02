@@ -387,9 +387,9 @@ fn group<'a>(label: &'a str, count: usize) -> Element<'a, Message> {
 
 /// The bodies, then the sketches. A body a join merged into another
 /// (`merged`, see [`DocumentState::merged`]) is listed faint, with the body
-/// holding it as its note: it's drawn as that one is, so it has no eye,
-/// but it can still be removed, nor an opacity of its own. Right-clicking
-/// a row asks for its context menu, shown on the one `menu` is on, with a
+/// holding it as its note: it's drawn as that one is, so it has no eye
+/// nor opacity of its own, but it can still be removed. Right-clicking a
+/// row asks for its context menu, shown on the one `menu` is on, with a
 /// body's opacity as `preview` has it while its slider is dragged.
 /// Clicking a body's row selects it where bodies are selected, as
 /// `selection`, which marks the rows of the bodies it holds, says.
@@ -405,7 +405,6 @@ fn objects<'a>(
     let takes_bodies = selection.mode().takes_bodies();
     let bodies = document.bodies().iter().map(|body| {
         let note = consumed_note(document, merged, body.id);
-        // A merged body is drawn as its holder is.
         let own = note.is_none();
         object_row(Object {
             icon: Icon::Body,
@@ -566,9 +565,9 @@ const OPACITY_STEP: f32 = 5.0;
 
 /// The Opacity rows of `body`'s context menu: a heading over a slider from
 /// [`Opacity::MIN`] to [`Opacity::MAX`] showing `opacity`, the percentage
-/// beside it. Dragging it previews the body so, letting go commits that,
-/// and it's only dragged, so it's never changed without a release. Unless
-/// the document is `editable`, it's faded and the app ignores it.
+/// beside it. Dragging previews, letting go commits; it takes only the
+/// mouse ([`MouseOnly`]). Unless the document is `editable`, it's faded
+/// and the app ignores it.
 fn opacity_rows<'a>(body: BodyId, opacity: Opacity, editable: bool) -> Element<'a, Message> {
     let percent = |opacity: Opacity| f32::from(opacity.percent());
     let slider = slider(
@@ -1062,7 +1061,7 @@ mod tests {
     }
 
     /// A body's menu has an Opacity row between Hide and Delete, the
-    /// slider's value beside it; a sketch's, or a merged body's, none.
+    /// slider's value beside it; a menu without an opacity, none.
     #[test]
     fn a_body_s_menu_has_an_opacity_row() {
         let body = Document::example().bodies()[0].id;

@@ -7,9 +7,8 @@ use iced::advanced::widget::{Operation, Tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, renderer};
 use iced::{Element, Event, Length, Rectangle, Size};
 
-/// `content`, given the window's events and the presses, releases and
-/// moves of the mouse or a finger, but no keys, which also leaves it
-/// knowing of no modifiers held, and no wheel.
+/// `content`, given every event but the keys (so it sees no modifiers
+/// held either) and the wheel.
 pub(crate) struct MouseOnly<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer> {
     content: Element<'a, Message, Theme, Renderer>,
 }

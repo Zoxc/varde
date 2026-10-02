@@ -24,13 +24,11 @@
 //! the boolean of a body taken out of a cut, which putting it back asks
 //! for.
 //!
-//! A body's mesh is kept with its picking tables (its faces' keys and
-//! summaries, and which of its edges close), counted with it. The model's
-//! mesh and tables, the shown bodies' joined with the body of each part,
-//! are one more kind of result, a scene ([`Cache::scene`]), filed by the
-//! shown bodies and their mesh keys: a request whose shown bodies and
-//! tolerance didn't change
-//! (a sketch edit no body depends on, a sketch hidden or left out, a
+//! A body's mesh is kept with its picking tables, counted with it. The
+//! model's mesh and tables, the shown bodies' joined with the body of
+//! each part, are one more kind of result, a scene ([`Cache::scene`]),
+//! filed by the shown bodies and their mesh keys: a request whose shown
+//! bodies and tolerance didn't change (a sketch edit no body depends on, a sketch hidden or left out, a
 //! draft that fails, or the committed model asked again after a draft)
 //! is answered with the very same `Arc`, so neither the join nor,
 //! natively, the renderer's upload (which keys its buffers by the `Arc`)

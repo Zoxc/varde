@@ -217,9 +217,8 @@ struct Scene {
     colors: Colors,
     /// The plane of the sketch being edited, if one is.
     sketch_plane: Option<GridPlane>,
-    /// Whether the edges the model hides are drawn, dashed: the view
-    /// option, which the renderer ignores in a sketch, where the model is
-    /// faded.
+    /// Whether the edges the model hides are drawn, dashed (the renderer
+    /// ignores it in a sketch).
     hidden_edges: bool,
 }
 

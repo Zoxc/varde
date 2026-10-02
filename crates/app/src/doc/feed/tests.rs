@@ -607,11 +607,13 @@ fn the_same_model_answered_anew_keeps_its_count() {
     assert!(feed.index.get().is_none());
 }
 
-/// The body of each of the mesh's parts is kept with the mesh, and kept
-/// while a failure is shown next to it.
+/// The body of each of the mesh's parts is kept with the mesh, through a
+/// failure shown next to it; across a replacement of the document it's
+/// given out as none, as the model's other ids are, until a model of the
+/// new document shows: a body's id may name another, of another opacity.
 #[test]
 fn the_parts_bodies_follow_the_mesh_shown() {
-    let editor = Editor::new(Document::example());
+    let mut editor = Editor::new(Document::example());
     let body = editor.document().bodies()[0].id;
     let (mut feed, regen) = connected();
     assert!(feed.parts().is_empty());
@@ -620,7 +622,6 @@ fn the_parts_bodies_follow_the_mesh_shown() {
     assert_eq!(feed.parts(), [body]);
     assert_eq!(feed.mesh().part_ends().len(), 1);
 
-    let mut editor = editor;
     editor.apply(Command::SetVisible(body, false)).unwrap();
     feed.request(&editor, None);
     let request = regen.take().pop().unwrap();
@@ -631,32 +632,15 @@ fn the_parts_bodies_follow_the_mesh_shown() {
         error: "no".to_owned(),
     });
     assert_eq!(feed.parts(), [body]);
-}
 
-/// Across a replacement of the document the parts' bodies are given out
-/// as none, as the other ids of the model shown are: until a model of the
-/// new document is shown, a body's id may name another, of another
-/// opacity.
-#[test]
-fn the_parts_bodies_aren_t_given_out_across_a_replacement() {
-    let editor = Editor::new(Document::example());
-    let body = editor.document().bodies()[0].id;
-    let (mut feed, regen) = connected();
-    feed.request(&editor, None);
-    feed.apply(handle(regen.take().pop().unwrap()));
-    assert_eq!(feed.parts(), [body]);
-    // Replaced, as restoring recovered changes does: the model shown is
-    // of the document before.
+    // Replaced, as restoring recovered changes does.
     let mut other = Editor::new(Document::example());
     let faint = varde_document::Opacity::MIN;
     other.apply(Command::SetOpacity(body, faint)).unwrap();
-    let mut editor = editor;
     let document = other.document().clone();
     editor.apply(Command::Replace(Box::new(document))).unwrap();
     feed.replaced(editor.generation());
     assert_eq!(feed.parts(), []);
-
-    // A model of the new document gives them out again.
     feed.request(&editor, None);
     feed.apply(handle(regen.take().pop().unwrap()));
     assert_eq!(feed.parts(), [editor.document().bodies()[0].id]);

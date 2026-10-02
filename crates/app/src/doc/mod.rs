@@ -103,9 +103,8 @@ pub(crate) struct Doc {
     /// The row of the side panel whose context menu is open, if one is:
     /// a feature of the Timeline's only while it's selected.
     pub(crate) row_menu: Option<RowMenu>,
-    /// The opacity shown for a body in place of its own while the slider
-    /// in its context menu is dragged, if it is: only while that menu is
-    /// open, see [`Doc::preview_opacity`].
+    /// A body's opacity previewed while its context menu's slider is
+    /// dragged: only while that menu is open ([`Doc::preview_opacity`]).
     pub(crate) opacity_preview: Option<(BodyId, Opacity)>,
     /// The sketch being edited, if one is.
     pub(crate) sketch: Option<SketchSession>,
@@ -658,19 +657,18 @@ impl Doc {
         self.row_menu = Some(menu);
     }
 
-    /// Shows the body `id` as `opacity` has it while the slider in its
-    /// context menu is dragged, if that menu is open and the document is
-    /// editable, without changing the document: [`Edit::CommitOpacity`]
-    /// does on letting go. It's dropped, going back to the body's own, if
-    /// the menu closes first, `Esc` included (see [`Doc::prune_preview`]).
+    /// Previews `opacity` for the body `id` while its context menu's
+    /// slider is dragged, if that menu is open and the document editable;
+    /// [`Edit::CommitOpacity`] commits it on letting go, and
+    /// [`Doc::prune_preview`] drops it if the menu closes first.
     fn preview_opacity(&mut self, id: BodyId, opacity: Opacity) {
         if self.editable() && self.row_menu == Some(RowMenu::Body(id)) {
             self.opacity_preview = Some((id, opacity));
         }
     }
 
-    /// Drops the opacity previewed unless its body's context menu is still
-    /// open: the slider in it is gone with it.
+    /// Drops the opacity previewed unless its body's context menu, and so
+    /// the slider, is still open.
     fn prune_preview(&mut self) {
         let menu = self.row_menu;
         (self.opacity_preview).take_if(|(id, _)| menu != Some(RowMenu::Body(*id)));
@@ -710,9 +708,8 @@ impl Doc {
 
     /// What the document screen's shortcuts depend on, or `None` while
     /// the user is asked about unsaved changes or deleting, or drags the
-    /// Opacity slider: only the prompt's buttons and `Esc` act then, not
-    /// keys changing the document behind it, or the body's opacity before
-    /// it's committed.
+    /// Opacity slider: no key changes the document behind the prompt, or
+    /// before the opacity is committed.
     pub(crate) fn keys(&self) -> Option<DocumentKeys> {
         let dragging = self.opacity_preview.is_some();
         (self.dialog().is_none() && !dragging).then(|| {

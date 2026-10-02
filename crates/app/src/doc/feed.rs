@@ -409,9 +409,8 @@ impl MeshFeed {
     }
 
     /// The body each of [`mesh`](Self::mesh)'s parts is of, in order.
-    /// None if the document was replaced since, whose ids may name other
-    /// bodies: the parts are drawn as of none, opaque, until a model of it
-    /// is shown.
+    /// None after the document is replaced, whose ids may name other
+    /// bodies, until a model of it shows: the parts are drawn opaque.
     pub(crate) fn parts(&self) -> &[BodyId] {
         if self.marks() {
             self.picking.bodies()

@@ -42,9 +42,8 @@ pub struct DocumentState<'a> {
     /// The document's mesh, which the app gets from the regeneration side,
     /// so it may lag behind the document.
     pub mesh: &'a Arc<RenderMesh>,
-    /// The body each of `mesh`'s parts is of, in order, which gives each
-    /// part the opacity of its body in `editor`'s document, or
-    /// `opacity_preview`'s.
+    /// The body each of `mesh`'s parts is of, in order, whose opacity it's
+    /// drawn with ([`DocumentState::part_opacity`]).
     pub parts: &'a [BodyId],
     /// A body's opacity shown in place of the document's while its context
     /// menu's slider is dragged, if one is.
@@ -140,8 +139,8 @@ impl DocumentState<'_> {
         self.read_only.is_none()
     }
 
-    /// How opaque the viewport draws each part of the mesh, see
-    /// [`DocumentState::parts`].
+    /// How opaque the viewport draws each part of the mesh: as its body
+    /// in `editor`'s document, or `opacity_preview`, has it.
     pub fn part_opacity(&self) -> Arc<[f32]> {
         part_opacity(self.editor.document(), self.parts, self.opacity_preview)
     }
@@ -633,8 +632,8 @@ fn part_opacity(
         .collect()
 }
 
-/// How opaque `body` is shown: as `preview` has it if it's of `body`, while
-/// the Opacity slider in its context menu is dragged, else its own.
+/// How opaque `body` is shown: as `preview` has it if it's of `body`, else
+/// its own.
 pub(crate) fn shown_opacity(body: &Body, preview: Option<(BodyId, Opacity)>) -> Opacity {
     match preview {
         Some((id, opacity)) if id == body.id => opacity,

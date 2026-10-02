@@ -277,8 +277,8 @@ struct MeshIn {
 };
 
 struct MeshOut {
-    // Invariant, so a face drawn again over itself, hovered or selected,
-    // from another program, is at exactly the depth it was.
+    // Invariant, so a face drawn again over itself by another program is
+    // at exactly the depth it was.
     @builtin(position) @invariant position: vec4<f32>,
     @location(0) world: vec3<f32>,
     @location(1) normal: vec3<f32>,
@@ -318,16 +318,15 @@ fn fs_mesh(in: MeshOut, @builtin(front_facing) front: bool) -> @location(0) vec4
 const SELECTED_TINT: f32 = 0.6;
 
 // The hovered face, drawn again over itself (depth tested Equal) in the
-// hover's colour, lit the same, as opaque as its part, so it shows as
-// brighter as the rest of its body does.
+// hover's colour, lit the same, as opaque as its part.
 @fragment
 fn fs_hover_face(in: MeshOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     return output(vec4<f32>(shaded(in, front, u.hover_face.rgb), part.alpha.x));
 }
 
 // A selected face, likewise, tinted SELECTED_TINT of the way towards the
-// selection's colour lit, of its part's opacity: over the hover, if it's
-// hovered too.
+// selection's colour, over the hover if it's hovered too.
+
 @fragment
 fn fs_selected_face(in: MeshOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     return output(vec4<f32>(shaded(in, front, u.selected.rgb), SELECTED_TINT * part.alpha.x));
@@ -335,18 +334,18 @@ fn fs_selected_face(in: MeshOut, @builtin(front_facing) front: bool) -> @locatio
 
 // --- Feature edges ---
 
-// Least normalized depth that edges are pulled in by, well clear of
-// Depth32Float precision. The depth range is fitted to the scene, so zooming
-// into a large one shrinks the pull by view height below that.
+// Least normalized depth that edges are pulled in by, well clear of the
+// depth buffer's precision: 24 bits where the device has no
+// Depth32FloatStencil8, which iced's devices don't ask for. The depth range
+// is fitted to the scene, so zooming into a large one shrinks the pull by
+// view height below that.
 const EDGE_DEPTH_BIAS: f32 = 1e-5;
 
 // `position` in clip space, its depth pulled towards the camera so that
-// edges and lines win the depth test against the faces they lie on, rather
-// than by a pipeline's depth bias, which is in units of the depth buffer
-// and of the faces' slope. Where it shows stays put: in perspective, the
-// pulled point would show farther from the middle of the view, the more
-// the nearer the eye. Never before the near plane, which a pull from just
-// behind it would clip. Edges are drawn as lines, by `vs_edge` below.
+// edges and lines win the depth test against the faces they lie on (a
+// pipeline's depth bias scales with the faces' slope instead). Only the
+// depth changes: in perspective the pulled point would show elsewhere.
+// Never before the near plane, which a pull from just behind it would clip.
 fn pulled(position: vec3<f32>) -> vec4<f32> {
     let offset = u.backward.xyz * view_height() * 0.002;
     let clip = u.view_proj * vec4<f32>(position + offset, 1.0);
@@ -621,14 +620,11 @@ struct EdgeIn {
 };
 
 // A segment of a feature edge, from the stream of the edges' points (see
-// `EdgePoint` in renderer.rs): the instance sees the point before it, its
-// start and end, and the point after it. It's drawn if its start and end
-// are of the same edge, and joined to the points either side that are of
-// that edge too, marked NEIGHBOUR_ONLY or not, so a polyline's joins are
-// drawn once, a closed one's where it closes too. The quad reaches `quad`
-// pixels either side, EDGE_WIDTH wide for the visible and hidden passes
-// either way, so they put the same pixels at the same depth and split them
-// between them; `half`, `color`, `dash` and `along` are the line's as in
+// `EdgePoint` in renderer.rs): drawn if its start and end are of the same
+// edge, and joined to the points either side that are of it too, marked
+// NEIGHBOUR_ONLY or not. The quad reaches `quad` pixels either side, the
+// same for the visible and hidden passes, so they split the same pixels
+// between them; `half`, `color`, `dash` and `along` are as in
 // `line_vertex`.
 fn edge_segment(
     in: EdgeIn,
@@ -662,9 +658,8 @@ fn edge_segment(
     return out;
 }
 
-// The feature edges where the model doesn't hide them, depth tested
-// LessEqual. Their colour's alpha is how opaque the model is, fainter when
-// faded, and their part.
+// The feature edges where the model doesn't hide them, as opaque as the
+// model (faded or not) and their part.
 @vertex
 fn vs_edge(in: EdgeIn) -> LineOut {
     let color = vec4<f32>(u.edge.rgb, u.model.a * part.alpha.x);
@@ -672,20 +667,11 @@ fn vs_edge(in: EdgeIn) -> LineOut {
     return edge_segment(in, half, half, color, vec2<f32>(0.0), vec2<f32>(0.0));
 }
 
-// The feature edges where the model hides them, depth tested Greater, so
-// exactly the pixels `vs_edge` didn't draw: HIDDEN_EDGE_WIDTH wide, dashed
-// along the edge by its length at the scale of the target, as the sketch's
-// dashes are, in the edges' colour at `u.edge.a`, as faint again as their
-// part is.
-//
-// The dashes' phase is worked out a segment at a time, so it keeps its
-// precision zoomed far into a long edge, where how far along the edge a
-// pixel is, in pixels, is past what `f32` holds to a pixel: the phase at
-// the segment's start, how far along the edge it is modulo a dash and a
-// gap, and on from there by the segment's own length from its ends; and
-// again from where the segment is cut to the viewport. Only the phase
-// where a segment starts or is cut can be off by the rounding then, never
-// the dashes along what shows of it.
+// The feature edges where the model hides them (depth tested Greater, so
+// exactly the pixels `vs_edge` didn't draw): HIDDEN_EDGE_WIDTH wide, dashed
+// at the target's scale, at `u.edge.a` times their part's alpha. The
+// phase is wrapped a segment at a time, at its start and again where it's
+// cut, so it keeps its precision zoomed far into a long edge.
 @vertex
 fn vs_hidden_edge(in: EdgeIn) -> LineOut {
     let s = u.viewport.z;
@@ -702,14 +688,11 @@ fn vs_hidden_edge(in: EdgeIn) -> LineOut {
     return out;
 }
 
-// The rim of the hovered edges' outline: HOVER_RIM wide either side of the
-// edge, in `u.hover_outline`, depth tested and pulled like the edges, so
-// only what shows of them is outlined. It's hollow: the edge's own width
-// is left out (`style.w`), so the edge keeps its pixels as they were, and
-// as faint as its part is. The outlined edges that meet come as one
-// polyline (see `Highlights::build` in highlight.rs), so where they meet,
-// a pixel is the rim of the one nearest it and neither's rim covers the
-// other.
+// The rim of the hovered edges' outline: HOVER_RIM wide either side, in
+// `u.hover_outline`, depth tested and pulled like the edges. It's hollow
+// (`style.w`), so the edge keeps its own pixels. Outlined edges that meet
+// come as one polyline (`Highlights::build` in highlight.rs), so neither's
+// rim covers the other.
 @vertex
 fn vs_outline(in: EdgeIn) -> LineOut {
     let core = EDGE_WIDTH * 0.5 * u.viewport.z;
@@ -861,18 +844,14 @@ fn fs_line(in: LineOut) -> @location(0) vec4<f32> {
     if on > 0.0 {
         let period = on + in.style.z;
         let phase = wrapped(mix(in.along.x, in.along.y, own.y), period);
-        // How far along the line a pixel on the screen is: 1 for a line
-        // seen as long as it's measured, more where it's foreshortened
-        // (an edge running away from the eye), less where it's nearer the
-        // eye than the target in perspective; seen end on, all of it is
-        // in one pixel. Kept off 0 for the division below.
+        // How far along the line a pixel on the screen is: more where it's
+        // foreshortened, all of it seen end on. Kept off 0 for the
+        // division below.
         let shown = max(distance(in.ends.xy, in.ends.zw), 1e-6);
         let step = abs(in.along.y - in.along.x) / shown;
         let footprint = max(step, period * 1e-4);
-        // The dashes averaged over the pixel's footprint along the line:
-        // a box filter, so their ends fade over a pixel on the screen
-        // however long they show, and dashes shorter than a pixel blur
-        // to their average rather than beating into dashes of their own.
+        // The dashes box filtered over the pixel's footprint, so dashes
+        // shorter than a pixel blur to their average rather than alias.
         let half = 0.5 * footprint;
         coverage *= (dashed_to(phase + half, on, period) - dashed_to(phase - half, on, period))
             / footprint;
@@ -1031,6 +1010,20 @@ struct PointOut {
     @location(3) @interpolate(flat) fill: vec4<f32>,
 };
 
+// Whether a disc at clip position `clip`, showing at `center` and
+// reaching `reach` pixels from it, is behind the near plane or off the
+// screen.
+fn disc_hidden(clip: vec4<f32>, center: vec2<f32>, reach: f32) -> bool {
+    return (perspective() && clip.w < near()) || any(abs(center) > 0.5 * u.viewport.xy + reach);
+}
+
+// Corner `index` of the square quad `reach` pixels around `center`, at
+// normalized depth `z`.
+fn disc_corner(index: u32, center: vec2<f32>, reach: f32, z: f32) -> vec4<f32> {
+    let pixels = center + square_corner(index) * reach;
+    return vec4<f32>(pixels / (0.5 * u.viewport.xy), z, 1.0);
+}
+
 // A point of the sketch as a disc with a rim, a pixel wider for
 // anti-aliasing, the same size on screen at any zoom.
 @vertex
@@ -1046,18 +1039,15 @@ fn vs_point(
     let center = to_pixels(clip);
     let radius = size.x * u.viewport.z;
     let reach = radius + 1.0;
-    // Behind the near plane, or off the screen.
-    if (perspective() && clip.w < near())
-        || any(abs(center) > 0.5 * u.viewport.xy + reach) {
+    if disc_hidden(clip, center, reach) {
         out.position = vec4<f32>(0.0, 0.0, -1.0, 1.0);
         return out;
     }
-    let pixels = center + square_corner(index) * reach;
     var z = 0.0;
     if SKETCH_DEPTH {
         z = overlay_depth(on_plane(at));
     }
-    out.position = vec4<f32>(pixels / (0.5 * u.viewport.xy), z, 1.0);
+    out.position = disc_corner(index, center, reach, z);
     out.center = center;
     out.size = vec2<f32>(radius, size.y * u.viewport.z);
     out.rim = rim;
@@ -1079,11 +1069,10 @@ const HOVERED: u32 = 1u;
 const SELECTED: u32 = 2u;
 
 // A vertex of the model, hovered or selected, drawn as a sketch point is
-// (`fs_point`): a disc VERTEX_RADIUS across in the edges' colour, or
-// filled with the selection's if selected, within a rim HOVER_RIM wide in
-// `u.hover_outline` if hovered, else a pixel's in the edges' colour; the
-// same size on screen at any zoom, depth tested and pulled like the
-// edges, at its centre's depth.
+// (`fs_point`): a disc of radius VERTEX_RADIUS in the edges' colour, or the
+// selection's if selected, within a rim HOVER_RIM wide in
+// `u.hover_outline` if hovered, else a pixel's in the edges' colour. Depth
+// tested and pulled like the edges, at its centre's depth.
 @vertex
 fn vs_vertex(
     @builtin(vertex_index) index: u32,
@@ -1098,14 +1087,11 @@ fn vs_vertex(
     let rim = select(1.0, HOVER_RIM, hovered) * s;
     let radius = VERTEX_RADIUS * s + rim;
     let reach = radius + 1.0;
-    // Behind the near plane, or off the screen.
-    if (perspective() && clip.w < near()) || clip.w <= 0.0
-        || any(abs(center) > 0.5 * u.viewport.xy + reach) {
+    if clip.w <= 0.0 || disc_hidden(clip, center, reach) {
         out.position = vec4<f32>(0.0, 0.0, -1.0, 1.0);
         return out;
     }
-    let pixels = center + square_corner(index) * reach;
-    out.position = vec4<f32>(pixels / (0.5 * u.viewport.xy), clip.z / clip.w, 1.0);
+    out.position = disc_corner(index, center, reach, clip.z / clip.w);
     out.center = center;
     out.size = vec2<f32>(radius, rim);
     let edge = vec4<f32>(u.edge.rgb, 1.0);

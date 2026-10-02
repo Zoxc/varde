@@ -64,7 +64,6 @@ impl Opacity {
     }
 }
 
-/// Opaque.
 impl Default for Opacity {
     fn default() -> Self {
         Self::MAX

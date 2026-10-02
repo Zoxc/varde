@@ -75,10 +75,8 @@ fn the_empty_solid_draws_nothing() {
     assert!(solid.is_empty());
     assert_eq!(solid.bounds(), None);
     // One part, with nothing in it.
-    let drawn = solid.tessellate(&Display::default()).unwrap();
-    assert_eq!(drawn.part_ends(), [[0; 3]]);
     assert_eq!(
-        drawn.into_parts(),
+        solid.tessellate(&Display::default()).unwrap().into_parts(),
         crate::MeshParts {
             part_ends: vec![[0; 3]],
             ..crate::MeshParts::default()

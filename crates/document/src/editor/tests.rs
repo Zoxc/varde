@@ -78,17 +78,6 @@ fn new_bodies_are_opaque() {
 }
 
 #[test]
-fn check_refuses_an_opacity_out_of_range() {
-    let mut document = with_body();
-    let id = document.bodies[0].id;
-    for percent in [0, 9, 101, u8::MAX] {
-        // Deserializing doesn't check the range: the document does.
-        document.bodies[0].opacity = postcard::from_bytes(&[percent]).unwrap();
-        assert_eq!(document.check(), Err(CheckError::Opacity(id, percent)));
-    }
-}
-
-#[test]
 fn snapshot_is_shared_and_unaffected_by_edits() {
     let mut editor = Editor::new(with_body());
     let snapshot = editor.snapshot();

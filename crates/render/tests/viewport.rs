@@ -640,16 +640,16 @@ fn lines(segments: &[(Vec3, Vec3)]) -> RenderLines {
     lines
 }
 
-/// A box `size` on a side from `at`, tessellated. Built at the origin and
-/// moved, so it can reach past [`varde_kernel::MAX_COORD`], which a
-/// solid can't.
+/// A cube `size` on a side from `at`, tessellated, see [`block`].
 fn cube(size: f32, at: Vec3) -> RenderMesh {
-    let solid = Solid::cuboid(
-        DVec3::ZERO,
-        DVec3::splat(f64::from(size)),
-        0,
-        &Tolerance::DEFAULT,
-    );
+    block(at, Vec3::splat(size))
+}
+
+/// A box from `at`, `size` on each side, tessellated. Built at the origin
+/// and moved, so it can reach past [`varde_kernel::MAX_COORD`], which a
+/// solid can't.
+fn block(at: Vec3, size: Vec3) -> RenderMesh {
+    let solid = Solid::cuboid(DVec3::ZERO, size.as_dvec3(), 0, &Tolerance::DEFAULT);
     let mesh = solid.unwrap().tessellate(&varde_kernel::Display::default());
     let mut moved = RenderMesh::default();
     moved.append_at(&mesh.unwrap(), at).unwrap();
@@ -1681,12 +1681,17 @@ fn edges(polylines: &[&[Vec3]]) -> RenderMesh {
     RenderMesh::from_parts(parts).unwrap()
 }
 
+/// A grid that doesn't show: its plane is seen edge on from the top, and
+/// its axes are off the screen or seen end on.
+fn hidden_grid() -> GridPlane {
+    GridPlane::new(Vec3::new(0.0, 1000.0, 0.0), Vec3::X, Vec3::Z).unwrap()
+}
+
 /// What draws `mesh`'s edges yellow, optionally faded, over a grid that
-/// doesn't show: its plane is seen edge on from the top, and its axes are
-/// off the screen or seen end on.
+/// doesn't show ([`hidden_grid`]).
 fn yellow_edges(faded: bool) -> Extras {
     Extras {
-        grid: GridPlane::new(Vec3::new(0.0, 1000.0, 0.0), Vec3::X, Vec3::Z).unwrap(),
+        grid: hidden_grid(),
         faded,
         colors: Some(Colors {
             edge: Srgb([1.0, 1.0, 0.0]),
@@ -1832,9 +1837,8 @@ fn edges_crossing_the_near_plane_are_cut_there() {
 #[test]
 fn a_closed_edge_is_joined_where_it_closes() {
     // Faded, so a pixel drawn twice would be more opaque: a square ending
-    // where it starts, at a corner, which its first and last segments
-    // join at like any other; along the middles of pixels, so they're
-    // covered, and clear of the origin marker.
+    // where it starts, along the middles of pixels so they're covered,
+    // clear of the origin marker.
     let corners = [
         Vec3::new(-12.05, -4.95, 0.0),
         Vec3::new(-4.05, -4.95, 0.0),
@@ -1889,21 +1893,6 @@ fn edges_near_the_eye_show_where_they_are_in_perspective() {
     );
 }
 
-/// A box from `at`, `size` on each side, tessellated, like [`cube`].
-fn block(at: Vec3, size: Vec3) -> RenderMesh {
-    let solid = Solid::cuboid(DVec3::ZERO, size.as_dvec3(), 0, &Tolerance::DEFAULT);
-    let mesh = solid.unwrap().tessellate(&varde_kernel::Display::default());
-    let mut moved = RenderMesh::default();
-    moved.append_at(&mesh.unwrap(), at).unwrap();
-    moved
-}
-
-/// How much of each pixel of row `y` from `x` yellow covers, in [`FULL`].
-fn yellow_along_full(pixels: &[[u8; 4]], y: u32, x: std::ops::Range<u32>) -> Vec<f32> {
-    x.map(|x| yellowness(pixels[(y * SIZE[0] + x) as usize]))
-        .collect()
-}
-
 /// Whether `along` is dashed by [`HIDDEN_DASH`] at `alpha`: as opaque
 /// as that at most and reaching it, clear between, repeating every dash
 /// and gap.
@@ -1923,15 +1912,7 @@ fn an_edge_of_a_cube_behind_another_body_is_dashed_where_its_hidden() {
     // the target, its near edge along a row, and a thin plate over its
     // middle, nearer the eye: the edge is solid either side of the plate
     // and dashed under it. Not with the option off, nor faded.
-    let mut camera = top_camera();
-    camera.set_projection(Projection::Perspective);
-    let y = -2.025;
-    let mut mesh = cube(6.0, Vec3::new(-3.0, y, -6.0));
-    mesh.append(&block(
-        Vec3::new(-1.0, -3.0, 1.0),
-        Vec3::new(2.0, 2.0, 0.05),
-    ))
-    .unwrap();
+    let (camera, y, mesh) = cube_under_plate();
     let render = |hidden_edges, faded| {
         let extras = Extras {
             hidden_edges,
@@ -1956,17 +1937,17 @@ fn an_edge_of_a_cube_behind_another_body_is_dashed_where_its_hidden() {
     let shown = [ends[0] + 4..plate[0] - 4, plate[1] + 4..ends[1] - 4];
     assert!(hidden.len() > 25, "{hidden:?}");
     dashed(
-        &yellow_along_full(&on, row, hidden.clone()),
+        &yellow_along(&on, row, hidden.clone()),
         COLORS.hidden_edge_alpha,
     );
     for pixels in [&on, &off] {
         for span in shown.clone() {
-            let along = yellow_along_full(pixels, row, span);
+            let along = yellow_along(pixels, row, span);
             assert!(along.iter().all(|&c| c > 0.95), "{along:?}");
         }
     }
     for pixels in [&off, &faded] {
-        let along = yellow_along_full(pixels, row, hidden.clone());
+        let along = yellow_along(pixels, row, hidden.clone());
         assert!(along.iter().all(|&c| c < 0.02), "{along:?}");
     }
 }
@@ -2065,9 +2046,8 @@ fn hidden_dashes_keep_their_length_zoomed_far_into_a_long_edge() {
 fn hidden_dashes_shorter_than_a_pixel_on_the_screen_blur_to_their_average() {
     // From the top, an edge plunging through a block, 7.5 times as long
     // as it shows: a dash and a gap, 7 pixels along it, take less than a
-    // pixel on the screen. Every pixel along it is then as opaque as the
-    // dashes are on average, rather than each showing wherever its middle
-    // falls in a dash or a gap, which beats into dashes of their own.
+    // pixel on the screen, so every pixel is as opaque as the dashes are
+    // on average.
     let ratio = 7.5f32;
     let steep = (ratio * ratio - 1.0).sqrt();
     let y = -3.35;
@@ -2118,9 +2098,8 @@ fn cube_behind_cube() -> (Camera, RenderMesh, RenderMesh) {
 
 #[test]
 fn a_body_behind_a_transparent_one_shows_through_it() {
-    // A cube behind a 30 % one: the near one's back and front faces
-    // blended over the far one, which shows through both, so it adds as
-    // much as it would through two layers of the glass.
+    // A cube behind a 30 % one shows through both its back and front
+    // faces: two layers of the glass.
     let (camera, near, both) = cube_behind_cube();
     let far = cube(2.0, Vec3::Y * 5.0);
     let with = |opacity: Vec<f32>| Extras {
@@ -2193,6 +2172,15 @@ fn cube_under_top_camera() -> (Camera, f32, RenderMesh) {
     (camera, y, cube(6.0, Vec3::new(-3.0, y, -6.0)))
 }
 
+/// [`cube_under_top_camera`], and a thin plate over the middle of its
+/// near edge, nearer the eye: the plate the mesh's second part.
+fn cube_under_plate() -> (Camera, f32, RenderMesh) {
+    let (camera, y, mut mesh) = cube_under_top_camera();
+    let plate = block(Vec3::new(-1.0, -3.0, 1.0), Vec3::new(2.0, 2.0, 0.05));
+    mesh.append(&plate).unwrap();
+    (camera, y, mesh)
+}
+
 /// How much yellow covers a column `x` near `row`, in pixels.
 fn yellow_near(pixels: &[[u8; 4]], x: u32, row: u32) -> f32 {
     (row - 3..=row + 3)
@@ -2203,9 +2191,8 @@ fn yellow_near(pixels: &[[u8; 4]], x: u32, row: u32) -> f32 {
 #[test]
 fn a_transparent_bodys_back_edges_are_dimmed_and_its_front_edges_crisp() {
     // The cube at 50 %, its edges yellow: the near edge of its top face
-    // is drawn again over the glass, at its alpha, while the bottom's,
-    // seen through the cube, is dimmed by the faces in front of it, and
-    // dashed over that at the cube's alpha, as faint again as its own.
+    // is drawn again over the glass, at its alpha, while the bottom's is
+    // dimmed by the faces in front of it, and dashed over that.
     let (camera, y, mesh) = cube_under_top_camera();
     let alpha = drawn_alpha(0.5);
     let render = |opacity| {
@@ -2247,18 +2234,11 @@ fn a_transparent_bodys_back_edges_are_dimmed_and_its_front_edges_crisp() {
 
 #[test]
 fn edges_behind_glass_are_seen_and_dashed_by_its_alpha() {
-    // The cube's near edge under a thin plate over its middle, as in
-    // `an_edge_of_a_cube_behind_another_body_is_dashed_where_its_hidden`:
-    // behind a plate at 50 % it's solid, dimmed by the plate, and dashed
-    // at half the strength over that; behind one at 95 % it's much as
-    // behind an opaque one; a 50 % cube's behind an opaque plate is
-    // dashed, half as opaque as an opaque cube's.
-    let (camera, y, mut mesh) = cube_under_top_camera();
-    mesh.append(&block(
-        Vec3::new(-1.0, -3.0, 1.0),
-        Vec3::new(2.0, 2.0, 0.05),
-    ))
-    .unwrap();
+    // The cube's near edge under a thin plate over its middle: behind a
+    // plate at 50 % it's solid, dimmed by the plate, and dashed over that;
+    // behind one at 95 % it's much as behind an opaque one; a 50 % cube's
+    // behind an opaque plate is dashed at half the alpha.
+    let (camera, y, mesh) = cube_under_plate();
     let render = |opacity| {
         let extras = Extras {
             hidden_edges: true,
@@ -2280,7 +2260,7 @@ fn edges_behind_glass_are_seen_and_dashed_by_its_alpha() {
     let row = in_perspective(&camera, Vec3::new(0.0, y, 0.0)).y as u32;
     let plate = [-1.0, 1.0].map(|x| in_perspective(&camera, Vec3::new(x, y, 1.05)).x as u32);
     let under = plate[0] + 4..plate[1] - 4;
-    let seen = yellow_along_full(&half, row, under.clone());
+    let seen = yellow_along(&half, row, under.clone());
     let least = seen.iter().copied().fold(1.0, f32::min);
     let most = seen.iter().copied().fold(0.0, f32::max);
     assert!(least > 0.15 && most > least + 0.1, "{seen:?}");
@@ -2288,13 +2268,13 @@ fn edges_behind_glass_are_seen_and_dashed_by_its_alpha() {
     for (x, pair) in seen.iter().zip(&seen[period..]).enumerate() {
         assert!((pair.0 - pair.1).abs() < 0.08, "{x}: {seen:?}");
     }
-    let nearly = yellow_along_full(&nearly, row, under.clone());
-    let opaque = yellow_along_full(&opaque, row, under.clone());
+    let nearly = yellow_along(&nearly, row, under.clone());
+    let opaque = yellow_along(&opaque, row, under.clone());
     for (n, o) in nearly.iter().zip(&opaque) {
         assert!((n - o).abs() < 0.08, "{nearly:?} against {opaque:?}");
     }
     dashed(
-        &yellow_along_full(&dashes, row, under),
+        &yellow_along(&dashes, row, under),
         COLORS.hidden_edge_alpha * alpha,
     );
 }
@@ -2471,10 +2451,9 @@ fn a_selected_face_behind_a_transparent_body_is_still_tinted() {
 #[test]
 fn a_selected_edge_and_vertex_behind_a_transparent_body_are_still_drawn() {
     // From the front, a cube 2 on a side behind one 4 on a side at 30 %,
-    // both above the grid's axis:
-    // the far one's front face's bottom edge and its corner, selected,
-    // show through the glass in the selection's colour, as a selected
-    // face behind it does.
+    // both above the grid's axis: the far one's front face's bottom edge
+    // and a corner, selected, show through the glass in the selection's
+    // colour.
     let mut camera = Camera::default();
     camera.set_target(Vec3::new(1.0, 1.0, 2.0));
     camera.look_from(View::Front);
@@ -2543,66 +2522,19 @@ fn box_under_top_camera() -> (RenderMesh, u32) {
 fn highlighted(highlights: Highlights) -> Extras {
     Extras {
         highlights,
-        ..yellow_edges(false)
+        grid: hidden_grid(),
+        ..Extras::default()
     }
 }
 
 #[test]
-fn a_hovered_edge_keeps_its_colour_within_a_bright_outline() {
-    let (mesh, edge) = box_under_top_camera();
-    let camera = top_camera();
-    let plain_extras = || Extras {
-        colors: Some(COLORS),
-        ..highlighted(Highlights::default())
-    };
-    let outlined = Extras {
-        colors: Some(COLORS),
-        ..highlighted(Highlights {
-            outlined: vec![edge],
-            ..Highlights::default()
-        })
-    };
-    let (Some(plain), Some(hovered)) = (
-        render_sketch(&camera, &mesh, plain_extras(), 1.0),
-        render_sketch(&camera, &mesh, outlined, 1.0),
-    ) else {
-        eprintln!("no GPU adapter, skipping");
-        return;
-    };
-    let row = 84;
-    for x in [90, 150, 180] {
-        let at = |pixels: &[[u8; 4]], y| pixel(pixels, x, y);
-        // The core, as it was.
-        let (core, was) = (at(&hovered, row), at(&plain, row));
-        assert!(
-            brighter(core, was).abs() <= 6,
-            "{core:?} for {was:?} at {x}"
-        );
-        // The rim, outside the core, and brighter than the face it's on.
-        let face = at(&plain, row - 6);
-        let rim = row - 2;
-        let (inside, outside) = (at(&hovered, rim), at(&hovered, row + 2));
-        assert!(brighter(inside, face) > 60, "{inside:?} on {face:?} at {x}");
-        assert!(
-            brighter(outside, at(&plain, row + 2)) > 120,
-            "{outside:?} at {x}"
-        );
-        // Nothing past it.
-        let reach = (EDGE_WIDTH / 2.0 + HOVER_RIM + 1.0).ceil() as u32;
-        for y in [row - reach, row + reach] {
-            assert_eq!(at(&hovered, y), at(&plain, y), "row {y} at {x}");
-        }
-    }
-}
-
-#[test]
-fn outlined_edges_keep_their_pixels_on_a_body_less_than_opaque_too() {
+fn outlined_edges_keep_their_pixels_within_a_bright_rim() {
     // From the top, the box's top face's corner at x = -6.05, y = -2.05
     // in the middle of pixel (67, 84), its edges along row 84 and column
     // 67, both outlined with the face's other two: their middles keep
     // what they were, near the corner too, where the other's rim would
     // reach them, and on a body at 30 % as well as an opaque one. The rim
-    // shows outside them.
+    // shows outside them, and nothing past it.
     let mesh = block(Vec3::new(-6.05, -2.05, -4.0), Vec3::new(12.1, 4.1, 4.0));
     let top = face_facing(&mesh, Vec3::Z);
     let camera = top_camera();
@@ -2616,7 +2548,6 @@ fn outlined_edges_keep_their_pixels_on_a_body_less_than_opaque_too() {
     for opacity in [1.0, 0.3] {
         let render = |outlined: Vec<u32>| {
             let extras = Extras {
-                colors: Some(COLORS),
                 opacity: vec![opacity],
                 ..highlighted(Highlights {
                     outlined,
@@ -2638,11 +2569,15 @@ fn outlined_edges_keep_their_pixels_on_a_body_less_than_opaque_too() {
                 );
             }
         }
-        // The rim either side of the edge along row 84, away from the
-        // corner, brighter than what's there unhovered.
+        // Away from the corner, the rim either side of the edge along row
+        // 84 is brighter than what's there unhovered.
         for y in [82, 86] {
             let (rim, was) = (pixel(&hovered, 120, y), pixel(&plain, 120, y));
             assert!(brighter(rim, was) > 60, "{rim:?} for {was:?} at {opacity}");
+        }
+        let reach = (EDGE_WIDTH / 2.0 + HOVER_RIM + 1.0).ceil() as u32;
+        for y in [84 - reach, 84 + reach] {
+            assert_eq!(pixel(&hovered, 120, y), pixel(&plain, 120, y), "row {y}");
         }
     }
 }
@@ -2650,13 +2585,10 @@ fn outlined_edges_keep_their_pixels_on_a_body_less_than_opaque_too() {
 #[test]
 fn a_selected_edge_is_drawn_in_the_selection_colour() {
     let (mesh, edge) = box_under_top_camera();
-    let extras = Extras {
-        colors: Some(COLORS),
-        ..highlighted(Highlights {
-            selected_edges: vec![edge],
-            ..Highlights::default()
-        })
-    };
+    let extras = highlighted(Highlights {
+        selected_edges: vec![edge],
+        ..Highlights::default()
+    });
     let Some(pixels) = render_sketch(&top_camera(), &mesh, extras, 1.0) else {
         eprintln!("no GPU adapter, skipping");
         return;
@@ -2668,7 +2600,7 @@ fn a_selected_edge_is_drawn_in_the_selection_colour() {
 }
 
 #[test]
-fn a_vertex_shows_only_hovered_or_selected_and_round() {
+fn a_hovered_or_selected_vertex_is_round() {
     // The box's corner at (-6, -2.05, 0), at (68, 84.5) on the screen.
     let (mesh, _) = box_under_top_camera();
     let corner = mesh
@@ -2678,13 +2610,10 @@ fn a_vertex_shows_only_hovered_or_selected_and_round() {
         .unwrap() as u32;
     let camera = top_camera();
     let render = |vertices| {
-        let extras = Extras {
-            colors: Some(COLORS),
-            ..highlighted(Highlights {
-                vertices,
-                ..Highlights::default()
-            })
-        };
+        let extras = highlighted(Highlights {
+            vertices,
+            ..Highlights::default()
+        });
         render_sketch(&camera, &mesh, extras, 1.0)
     };
     let vertex = |hovered, selected| Vertex {
@@ -2692,17 +2621,14 @@ fn a_vertex_shows_only_hovered_or_selected_and_round() {
         hovered,
         selected,
     };
-    let (Some(plain), Some(none), Some(hovered), Some(selected)) = (
+    let (Some(plain), Some(hovered), Some(selected)) = (
         render(vec![]),
-        // Neither hovered nor selected, it isn't drawn.
-        render(vec![vertex(false, false)]),
         render(vec![vertex(true, false)]),
         render(vec![vertex(false, true)]),
     ) else {
         eprintln!("no GPU adapter, skipping");
         return;
     };
-    assert!(none == plain);
     let center = glam::Vec2::new(68.0, 84.5);
     // Hovered, its middle is the edges' colour, as the corner was, so
     // only its rim must show; selected, all of it is the selection's.
@@ -2722,8 +2648,6 @@ fn a_vertex_shows_only_hovered_or_selected_and_round() {
             }
         }
     }
-    // Hovered, its middle is the edges' colour, its rim bright; selected,
-    // its middle is the selection's.
     let middle = |pixels: &[[u8; 4]]| pixel(pixels, 68, 84);
     assert!(
         brighter(middle(&hovered), [31, 33, 38, 255]).abs() < 30,
@@ -2746,7 +2670,6 @@ fn hover_and_selection_are_not_drawn_faded() {
     let render = |picked: bool| {
         let extras = Extras {
             faded: true,
-            colors: Some(COLORS),
             hovered_faces: picked.then_some(face).into_iter().collect(),
             selected_faces: if picked { vec![face] } else { vec![] },
             ..highlighted(if picked {

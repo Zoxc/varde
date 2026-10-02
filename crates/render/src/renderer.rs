@@ -11,9 +11,9 @@ use crate::highlight::{Highlights, VertexInstance};
 use crate::scene::{self, GRID_FADE_HEIGHTS, GridPlane};
 use crate::sketch::{FillVertex, LineInstance, PointInstance, SketchLayer, SketchScene};
 
-/// The depth buffer's format on `device`: 32 bit float depth if it has
-/// it with a stencil, else 24 bits. The stencil marks which part less than
-/// opaque is the nearest at a pixel, see [`Renderer::render`].
+/// The depth buffer's format on `device`, with a stencil: 32 bit float
+/// depth if it has that, else 24 bits. The stencil marks which part less
+/// than opaque is nearest at a pixel.
 fn depth_format(device: &wgpu::Device) -> wgpu::TextureFormat {
     if device
         .features()
@@ -96,13 +96,10 @@ pub struct Frame<'a> {
     /// Only re-uploaded when it's another `Arc` than the last one prepared.
     pub mesh: &'a Arc<RenderMesh>,
     /// How opaque each of the mesh's parts is drawn, from 0 to 1, in the
-    /// order of [`RenderMesh::parts`]: its faces and its edges, hidden
-    /// ones too. A part with no entry, or one out of range or NaN, is
-    /// opaque; one within half a step of 8 bits of 1 too. Parts less than
-    /// opaque are drawn after the opaque ones, far to near by the centres
-    /// of their bounds, see [`Renderer::render`]. Ignored while
-    /// [`Self::faded`]: every part is faded alike then. Changing it
-    /// re-uploads nothing.
+    /// order of [`RenderMesh::parts`]: faces and edges, hidden ones too. A
+    /// part with no entry, out of range or NaN is opaque, and so is one
+    /// within half an 8 bit step of 1. Ignored while [`Self::faded`].
+    /// Changing it re-uploads nothing.
     pub opacity: &'a [f32],
     /// Finished sketches' curves, drawn with the model as lines
     /// [`LINE_WIDTH`] wide, hidden by what's in front of them. Only
@@ -191,14 +188,14 @@ pub struct Colors {
     /// How opaque the edges the model hides are drawn, from 0 to 1, of
     /// [`Self::edge`]: see [`Frame::hidden_edges`].
     pub hidden_edge_alpha: f32,
-    /// What the face the cursor is over is drawn in, before lighting:
-    /// brighter than [`Self::model`]. See [`Frame::hovered_faces`].
+    /// The hovered faces' colour, before lighting: brighter than
+    /// [`Self::model`]. See [`Frame::hovered_faces`].
     pub hover_face: Srgb,
-    /// The rim around the hovered edges and vertex, bright, for contrast
-    /// against the faces and the background: see [`HOVER_RIM`].
+    /// The rim around the hovered edges and vertex, bright for contrast:
+    /// see [`HOVER_RIM`].
     pub hover_outline: Srgb,
-    /// What's selected: the faces are tinted with it, the edges and
-    /// vertices drawn in it. The accent.
+    /// The accent: selected faces are tinted with it, selected edges and
+    /// vertices drawn in it.
     pub selected: Srgb,
 }
 
@@ -230,8 +227,8 @@ struct Uniforms {
     /// pixels, where fragment positions count from; zw unused.
     viewport_origin: [f32; 4],
     /// [`Colors`], converted to linear with w = 1, except `model`, whose
-    /// w is how opaque the model is, its faces and edges, and `edge`, whose
-    /// w is [`Colors::hidden_edge_alpha`], for the edges the model hides.
+    /// w is how opaque the model is, and `edge`, whose w is
+    /// [`Colors::hidden_edge_alpha`].
     background_top: [f32; 4],
     background_bottom: [f32; 4],
     model: [f32; 4],
@@ -245,9 +242,8 @@ struct Uniforms {
     pivot: [f32; 4],
     pivot_color: [f32; 4],
     /// [`Frame::grid`]: xyz its origin, and unit x and y axes. The axes'
-    /// w is which world axis each lies along, 0 to 2, or 3 if none, for
-    /// the colour of its axis line (see [`axis_index`]); the origin's is
-    /// unused.
+    /// w is [`axis_index`], for the colour of its axis line; the origin's
+    /// is unused.
     grid_origin: [f32; 4],
     grid_x: [f32; 4],
     grid_y: [f32; 4],
@@ -265,10 +261,9 @@ struct Uniforms {
 
 // WGSL lays out uniform structs in 16-byte steps.
 const _: () = assert!(size_of::<Uniforms>().is_multiple_of(16));
-// The limits tests' device takes buffers of 512 bytes at most, the
-// uniforms' too. They're at that: a new value takes a `w` that's unused,
-// or one that can be worked out from another (as the grid's axis lines'
-// colours are from `grid_x.w` and `grid_y.w`).
+// The limits tests' device takes buffers of 512 bytes at most, and the
+// uniforms are at that: a new value has to go in an unused `w`, or be
+// worked out from another (as the axis lines' colours are from `grid_x.w`).
 const _: () = assert!(size_of::<Uniforms>() <= 512);
 
 /// The largest buffer the renderer relies on, in bytes: WebGPU's default
@@ -276,11 +271,10 @@ const _: () = assert!(size_of::<Uniforms>() <= 512);
 /// the web. A larger buffer is a validation error, and wgpu panics on those.
 const MAX_BUFFER_BYTES: usize = 256 << 20;
 
-// Every mesh the kernel allows fits, one buffer per part: positions and
-// normals are uploaded as they are, and indices too. Edges are uploaded an
-// `EdgePoint` per edge vertex at most, two more for each closed polyline of
-// four points or more, so half as many again at most, and one more at each
-// end.
+// Every mesh the kernel allows fits, one buffer per part: positions,
+// normals and indices as they are; edges at most one and a half
+// `EdgePoint`s per edge vertex (closed polylines get two more), plus one at
+// each end.
 const _: () = assert!(size_of::<[f32; 3]>() * RenderMesh::MAX_VERTICES <= MAX_BUFFER_BYTES);
 const _: () = assert!(size_of::<u32>() * RenderMesh::MAX_INDICES <= MAX_BUFFER_BYTES);
 const _: () =
@@ -291,17 +285,11 @@ const _: () = assert!(size_of::<Segment>() * RenderLines::MAX_POINTS <= MAX_BUFF
 /// A segment of a line as the GPU takes it: its two ends.
 type Segment = [[f32; 3]; 2];
 
-/// A point of the stream the feature edges are drawn from: polyline after
-/// polyline, a point again in a row left out (a polyline left with one
-/// point has it twice, a dot), with a point of no edge ([`NO_EDGE`]) at
-/// each end of the stream. A polyline ending where it starts, of four
-/// points or more, has its last but one point before it and its second
-/// after it, marked [`NEIGHBOUR_ONLY`], so its first and last segments
-/// join. The stream is bound to [`EDGE_SLOTS`] vertex buffer slots a point
-/// apart, so the instance drawing the segment from point `i + 1` to
-/// `i + 2` sees the points before and after it too: the segment is drawn
-/// if its ends are of the same edge, and joined to the points either side
-/// that are of it too, marked or not. See `edge_segment` in the shader.
+/// A point of the stream the feature edges are drawn from (see
+/// [`EdgeStream`] and `agents/viewport.md`). The stream is bound to
+/// [`EDGE_SLOTS`] vertex buffer slots a point apart, so the instance
+/// drawing the segment from point `i + 1` to `i + 2` sees the points either
+/// side too. See `edge_segment` in the shader.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub(crate) struct EdgePoint {
@@ -312,13 +300,12 @@ pub(crate) struct EdgePoint {
     pub(crate) edge: u32,
 }
 
-/// The edge of the points at the ends of the stream, which no polyline is,
-/// marked or not.
+/// The edge of the points at the ends of the stream: no polyline's.
 const NO_EDGE: u32 = u32::MAX;
 
 /// Set in [`EdgePoint::edge`] for a point that is only a neighbour of its
-/// edge's segments, where a closed polyline joins itself, not an end of
-/// one. As `NEIGHBOUR_ONLY` in the shader.
+/// edge's segments, where a closed polyline joins itself. As
+/// `NEIGHBOUR_ONLY` in the shader.
 const NEIGHBOUR_ONLY: u32 = 1 << 31;
 const _: () = assert!(RenderMesh::MAX_EDGE_POLYLINES <= NEIGHBOUR_ONLY as usize);
 
@@ -330,27 +317,25 @@ const EDGE_SLOTS: u32 = 4;
 // (the browser's WebGL2) allows strides up to 255.
 const _: () = assert!(size_of::<EdgePoint>() == 20);
 
-/// The most alphas a part can be drawn at, from 0 to 1, the last opaque:
-/// 8 bits' worth, as fine as the target shows. See [`Alphas`].
+/// The most alphas a part can be drawn at, from 0 to 1: 8 bits' worth, as
+/// fine as the target shows. See [`Alphas`].
 const ALPHA_STEPS: u32 = 256;
 
-/// What a draw of a part of the mesh takes besides [`Uniforms`]: how
-/// opaque the part is. `Part` in `scene.wgsl` mirrors it.
+/// What a draw of a part of the mesh takes besides [`Uniforms`]. `Part`
+/// in `scene.wgsl` mirrors it.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 struct PartUniforms {
-    /// x: the alpha the part's faces and edges are drawn at, of the
-    /// model's and the edges' own; yzw unused.
+    /// x: the part's alpha, multiplying the faces' and edges' own; yzw
+    /// unused.
     alpha: [f32; 4],
 }
 
-/// The alphas the mesh's parts are drawn at: a uniform buffer of
-/// [`PartUniforms`], one for each of [`ALPHA_STEPS`] steps from 0 to 1,
-/// each at the device's uniform offset alignment, written once, from which
-/// a part's draws pick theirs with the bind group's dynamic offset. WebGL2
-/// has no push constants, and this needs no buffer written between draws
-/// nor anything per vertex. A device whose buffers can't hold that many
-/// gets as many as they hold, at least one, opaque.
+/// The alphas the mesh's parts are drawn at: a uniform buffer, written
+/// once, of a [`PartUniforms`] for each of [`ALPHA_STEPS`] steps from 0 to
+/// 1 at the device's uniform offset alignment, picked per draw by dynamic
+/// offset. WebGL2 has no push constants. A device whose buffers hold fewer
+/// gets fewer, at least one, opaque.
 struct Alphas {
     /// Group 1 of every pipeline.
     group: wgpu::BindGroup,
@@ -415,12 +400,10 @@ impl Alphas {
     }
 }
 
-/// The step of a table of alphas from 0 to 1 whose last step, `opaque`, is
-/// opaque, that a part of opacity `alpha` is drawn at, the nearest: opaque
-/// if it's out of range or NaN. Only 0 is drawn at step 0: on a short
-/// table, which a device with tiny buffers gets, a faint part is drawn at
-/// the first step past it, opaque if that's the last, rather than not at
-/// all.
+/// The nearest step to `alpha` of a table of alphas from 0 to 1 whose last
+/// step, `opaque`, is opaque; opaque if `alpha` is out of range or NaN.
+/// Only 0 gets step 0, so on a short table (tiny buffers) a faint part is
+/// drawn at the next step up rather than not at all.
 fn alpha_step(alpha: Option<f32>, opaque: u32) -> u32 {
     match alpha {
         Some(0.0) => 0,
@@ -476,9 +459,9 @@ struct GpuPart {
     faces: Range<u32>,
     /// Its triangles' indices.
     indices: Range<u32>,
-    /// Its edges' points in the [`EdgePoint`] stream, the neighbour only
-    /// points of closed ones included, empty if it has none. The parts'
-    /// follow one another, from after the stream's first point.
+    /// Its edges' points in the [`EdgePoint`] stream, neighbour only ones
+    /// included. The parts' follow one another from the stream's second
+    /// point.
     points: Range<u32>,
     /// Its triangles' bounds, to sort parts less than opaque by.
     bounds: Option<Aabb>,
@@ -759,37 +742,28 @@ impl Renderer {
         // the on-top program.
         let depth_shader = module("varde scene, sketch depth tested");
 
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("varde uniforms"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: wgpu::BufferSize::new(size_of::<Uniforms>() as u64),
-                },
-                count: None,
-            }],
-        });
-
+        // A uniform buffer of at least `size` bytes, at a dynamic offset
+        // if `dynamic`, seen by both stages.
+        let uniform_layout = |label, size: usize, dynamic| {
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some(label),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: dynamic,
+                        min_binding_size: wgpu::BufferSize::new(size as u64),
+                    },
+                    count: None,
+                }],
+            })
+        };
+        let bind_group_layout = uniform_layout("varde uniforms", size_of::<Uniforms>(), false);
         // How opaque the part drawn is, at a dynamic offset into the
         // alphas' buffer: see `Alphas`. Every pipeline has it, so
         // it's bound once for all of them.
-        let part_size = size_of::<PartUniforms>() as u64;
-        let part_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("varde part"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: true,
-                    min_binding_size: wgpu::BufferSize::new(part_size),
-                },
-                count: None,
-            }],
-        });
+        let part_layout = uniform_layout("varde part", size_of::<PartUniforms>(), true);
         let alphas = Alphas::new(device, &part_layout);
         let depth_format = depth_format(device);
 
@@ -909,11 +883,9 @@ impl Renderer {
             ],
         };
         // The feature edges: the `EdgePoint` stream in slots 0 to 3, a
-        // point apart, an instance per segment: the points before, at its
-        // start, at its end and after it. Its neighbours' positions and
-        // edges are all it needs of them, and the start's distance along
-        // its edge, for the hidden edges' dashes. 9 attributes and 4 slots,
-        // within WebGL2's 16 and 8.
+        // point apart, an instance per segment. Only the start needs
+        // `along`, for the dashes. 9 attributes and 4 slots, within
+        // WebGL2's 16 and 8.
         let attribute = |format, offset: usize, shader_location| wgpu::VertexAttribute {
             format,
             offset: offset as u64,
@@ -987,6 +959,11 @@ impl Renderer {
                 write_mask: 0xff,
             }
         };
+        // Lines drawn from the `EdgePoint` stream, over the scene.
+        let edge_pass = |label, vs| Pass {
+            buffers: &edge_points,
+            ..Pass::overlay(label, vs, "fs_line")
+        };
         // Over the faces' own pixels and no others: the same vertex
         // shader, its position invariant, at exactly their depth.
         let redrawn = |label, fs| {
@@ -1047,37 +1024,26 @@ impl Renderer {
             mesh: pipeline(mesh),
             // Entry points of their own, which wgpu's GL backend keys
             // programs by.
-            outline: pipeline(Pass {
-                buffers: &edge_points,
-                ..Pass::overlay("varde hover outline", "vs_outline", "fs_line")
-            }),
-            selected_edges: pipeline(Pass {
-                buffers: &edge_points,
-                ..Pass::overlay("varde selected edges", "vs_selected_edge", "fs_line")
-            }),
+            outline: pipeline(edge_pass("varde hover outline", "vs_outline")),
+            selected_edges: pipeline(edge_pass("varde selected edges", "vs_selected_edge")),
             vertices: pipeline(Pass {
                 buffers: std::slice::from_ref(&vertices),
                 ..Pass::overlay("varde vertices", "vs_vertex", "fs_point")
             }),
-            edges: pipeline(Pass {
-                buffers: &edge_points,
-                ..Pass::overlay("varde edges", "vs_edge", "fs_line")
-            }),
+            edges: pipeline(edge_pass("varde edges", "vs_edge")),
             // Exactly the pixels the visible edges didn't draw: the same
             // quads at the same depth, tested the other way round. Its own
             // entry point, which wgpu's GL backend keys programs by.
             hidden_edges: pipeline(Pass {
-                buffers: &edge_points,
                 depth_compare: wgpu::CompareFunction::Greater,
-                ..Pass::overlay("varde hidden edges", "vs_hidden_edge", "fs_line")
+                ..edge_pass("varde hidden edges", "vs_hidden_edge")
             }),
             // The same where the stencil has the reference: behind the
             // part less than opaque nearest there.
             hidden_by_glass: pipeline(Pass {
-                buffers: &edge_points,
                 depth_compare: wgpu::CompareFunction::Greater,
                 stencil: tagged(wgpu::CompareFunction::Equal, wgpu::StencilOperation::Keep),
-                ..Pass::overlay("varde edges hidden by glass", "vs_hidden_edge", "fs_line")
+                ..edge_pass("varde edges hidden by glass", "vs_hidden_edge")
             }),
             lines: pipeline(Pass {
                 buffers: &[segments],
@@ -1350,27 +1316,8 @@ impl Renderer {
     }
 
     /// Records draw commands for the frame last prepared into `slot` into
-    /// `encoder`, compositing over `target`, within `clip`.
-    ///
-    /// Outside a sketch, in order: the background; the opaque parts'
-    /// faces, writing depth, their hovered and selected faces again over
-    /// themselves (`Equal`), and their edges; the grid and the finished
-    /// sketches; the edges the opaque parts hide, of every part, dashed;
-    /// the edges of the parts less than opaque, against the opaque parts'
-    /// depth; the extrude's depth tested layers, and the hovered edges'
-    /// outline, the selected edges and the hovered and selected vertices,
-    /// if there are parts less than opaque; those parts far to near, each
-    /// its back faces then its front faces, blended at its alpha without
-    /// writing depth; their front faces' depth, far to near, each marking
-    /// in the stencil where it's the nearest and followed by the edges it
-    /// hides there, dashed at its alpha too; their hovered and selected
-    /// faces, then their edges again, over the glass they lie on; the hovered edges' outline, the selected edges and the hovered
-    /// and selected vertices (again, if they were drawn under the glass);
-    /// the origin marker and the pivot's; and the sketch being edited, or
-    /// the extrude's layers if they weren't drawn yet. In a sketch
-    /// ([`Frame::faded`]), the model's depth, its nearest faces blended
-    /// and its edges, every part alike, and no hidden edges, hover or
-    /// selection.
+    /// `encoder`, compositing over `target`, within `clip`. The order of
+    /// the draws, and why, is in `agents/viewport.md`.
     pub fn render(
         &self,
         slot: &Slot,
@@ -1454,12 +1401,9 @@ impl Renderer {
             pass.draw(0..LINE_VERTICES, 0..lines.segment_count);
         }
 
-        // Only the opaque parts have written depth so far, and nothing
-        // above writes it after them: the edges they hide, of every part,
-        // are against them alone; an edge behind a part less than opaque
-        // is seen through it, and dashed over that below. Then the visible
-        // edges of the parts less than opaque, under the faces in front of
-        // them, which are drawn next and dim them.
+        // Only the opaque parts have written depth so far, so the hidden
+        // edges here are those they hide; what glass hides is dashed below.
+        // Then the glass's visible edges, under the faces drawn next.
         if !slot.faded
             && let Some(mesh) = mesh
         {
@@ -1472,9 +1416,8 @@ impl Renderer {
             self.draw_glass_edges(&mut pass, &self.edges, mesh, draws);
         }
 
-        // The extrude's layers, depth tested: under the faces less than
-        // opaque in front of them, if there are any, and so under the
-        // origin marker too; else over it, as the sketch being edited is.
+        // The extrude's layers under the glass in front of them, if there
+        // is any, and so under the origin marker too.
         let glass = mesh.is_some() && !draws.transparent.is_empty();
         let layers = [&slot.sketch_base, &slot.sketch_live];
         if slot.sketching && slot.sketch_depth && glass {
@@ -1483,16 +1426,10 @@ impl Renderer {
             }
         }
 
-        // The parts less than opaque, far to near: each one's back faces,
-        // then its front faces, over what's behind them. Then their front
-        // faces' depth, a part at a time, far to near, each followed by
-        // the edges it hides, dashed at its alpha, over what the glass
-        // dimmed of them, so a body nearly opaque hides edges as an opaque
-        // one does. Then their edges again, so the edges on the nearest
-        // faces show on them undimmed. The hover and the selection are
-        // drawn under them too, against the opaque parts' depth, so what's
-        // of them behind the glass shows through it, dimmed, as its edges
-        // do; and again over it below.
+        // The glass: the hover and selection under it, to show through
+        // dimmed; its faces far to near; its depth a part at a time, each
+        // followed by the edges it hides, dashed; then its picked faces and
+        // its edges again, undimmed on the glass they lie on.
         if let Some(mesh) = mesh.filter(|_| glass) {
             if !slot.faded {
                 self.draw_highlights(&mut pass, slot);
@@ -1567,9 +1504,9 @@ impl Renderer {
         }
     }
 
-    /// Records drawing the hovered edges' outline, a rim around them that
-    /// leaves their own pixels as they are, then the selected edges, and
-    /// the hovered and selected vertices, of `slot`.
+    /// Records drawing `slot`'s hovered edges' outline (a rim, leaving the
+    /// edges' own pixels as they are), selected edges, and hovered and
+    /// selected vertices.
     fn draw_highlights(&self, pass: &mut wgpu::RenderPass<'_>, slot: &Slot) {
         let highlights = &slot.highlights;
         self.alphas.set(pass, self.alphas.opaque);
@@ -1600,9 +1537,8 @@ impl Renderer {
         }
     }
 
-    /// Records drawing the edges of every part of `mesh` hidden by a part
-    /// less than opaque whose front faces' depth was just written, where
-    /// it's the nearest of the model (the stencil reference), dashed, at
+    /// Records drawing, dashed, the edges of every part of `mesh` hidden by
+    /// the glass whose depth and stencil reference were just written, at
     /// its alpha's step `step` times their own part's.
     fn draw_hidden_by_glass(
         &self,
@@ -1644,9 +1580,8 @@ fn bind_faces(pass: &mut wgpu::RenderPass<'_>, mesh: &GpuMesh) {
     pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
 }
 
-/// What `parts` of `mesh`, which follow one another, take of what `of`
-/// gives each of them, from the first's start to the last's end: empty if
-/// there are no parts.
+/// The range from `of` the first of `parts` to `of` the last, which
+/// follow one another; empty if there are none.
 fn span(mesh: &GpuMesh, parts: Range<usize>, of: fn(&GpuPart) -> &Range<u32>) -> Range<u32> {
     let parts = &mesh.parts[parts];
     match (parts.first(), parts.last()) {
@@ -1665,13 +1600,8 @@ fn draw_faces(pass: &mut wgpu::RenderPass<'_>, mesh: &GpuMesh, parts: Range<usiz
 }
 
 /// Records drawing the feature edges of `mesh`'s `parts`, which follow one
-/// another, with `pipeline`. Their points follow one another in the
-/// stream, so they're drawn at once by the instances whose segments start
-/// at their first point up to their last but one, and each slot is bound
-/// from the first of those instances' points: the instance before the
-/// first point's sees the point before it, of another part's edge or of
-/// none, as its previous point, and the last one sees the one after the
-/// last point, neither of which a segment of these parts joins.
+/// another, with `pipeline`: their points follow one another in the
+/// stream, so [`draw_stream`] draws them at once.
 fn draw_edges(
     pass: &mut wgpu::RenderPass<'_>,
     pipeline: &wgpu::RenderPipeline,
@@ -1688,10 +1618,9 @@ fn draw_edges(
 }
 
 /// Records drawing the polylines of the [`EdgePoint`] stream in `edges`
-/// whose points are `points`, with `pipeline`: by the instances whose
-/// segments start at their first point up to their last but one, each
-/// slot bound from the first of those instances' points. The points
-/// either side must be there, and of other polylines or of none.
+/// whose points are `points`, with `pipeline`, an instance per segment.
+/// The points either side must be there, and of other polylines or of
+/// none, so no segment joins them.
 fn draw_stream(
     pass: &mut wgpu::RenderPass<'_>,
     pipeline: &wgpu::RenderPipeline,
@@ -1742,8 +1671,7 @@ impl SketchPipelines {
 }
 
 /// Which world axis `axis`, a unit vector, lies along, 0 to 2, or 3 if
-/// none: the grid's axis line along it is in [`Colors::axes`]' colour of
-/// that axis, or in the grid's.
+/// none, for its axis line's colour: of [`Colors::axes`], or the grid's.
 fn axis_index(axis: Vec3) -> f32 {
     let along = axis.abs();
     (0..3)
@@ -1883,9 +1811,8 @@ fn edge_stream(mesh: &RenderMesh) -> (Vec<EdgePoint>, Vec<u32>) {
 /// a point of no edge, which ends it too.
 pub(crate) struct EdgeStream {
     points: Vec<EdgePoint>,
-    /// A polyline's points, a point again in a row left out: a segment of
-    /// no length between two others would keep them from seeing each
-    /// other, and both would draw where they overlap at the join.
+    /// A polyline's points, repeats in a row left out: a segment of no
+    /// length between two others would keep them from joining.
     kept: Vec<[f32; 3]>,
 }
 
@@ -2020,17 +1947,14 @@ impl SketchBuffers {
         queue: &wgpu::Queue,
         layer: &SketchLayer,
     ) -> Result<(), PrepareError> {
-        let written = self
-            .lines
-            .write(device, queue, "varde sketch lines", &layer.lines)
+        let too_large = |bytes, limit| PrepareError::SketchTooLarge { bytes, limit };
+        let (d, q) = (device, queue);
+        let written = (self.lines)
+            .write(d, q, "varde sketch lines", &layer.lines, too_large)
             .and_then(|()| {
-                self.points
-                    .write(device, queue, "varde sketch points", &layer.points)
+                (self.points).write(d, q, "varde sketch points", &layer.points, too_large)
             })
-            .and_then(|()| {
-                self.fills
-                    .write(device, queue, "varde sketch fills", &layer.fills)
-            });
+            .and_then(|()| (self.fills).write(d, q, "varde sketch fills", &layer.fills, too_large));
         if written.is_err() {
             *self = SketchBuffers::default();
         }
@@ -2053,13 +1977,14 @@ impl Instances {
 
     /// Replaces what it holds with `items`, in a larger buffer if they
     /// don't fit. Past the device's buffer size, holds nothing and fails
-    /// with [`PrepareError::SketchTooLarge`].
+    /// with what `too_large` makes of the bytes needed and that size.
     fn write<T: Pod>(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         label: &str,
         items: &[T],
+        too_large: fn(u64, u64) -> PrepareError,
     ) -> Result<(), PrepareError> {
         let bytes: &[u8] = bytemuck::cast_slice(items);
         let size = bytes.len() as u64;
@@ -2067,7 +1992,7 @@ impl Instances {
         let count = u32::try_from(items.len()).ok().filter(|_| size <= limit);
         let Some(count) = count else {
             self.count = 0;
-            return Err(PrepareError::SketchTooLarge { bytes: size, limit });
+            return Err(too_large(size, limit));
         };
         self.count = count;
         if items.is_empty() {
@@ -2127,20 +2052,13 @@ impl HighlightBuffers {
         highlights: &Highlights,
     ) -> Result<(), PrepareError> {
         let built = highlights.build(mesh);
-        let too_large = |error| match error {
-            PrepareError::SketchTooLarge { bytes, limit } => {
-                PrepareError::HighlightsTooLarge { bytes, limit }
-            }
-            error => error,
-        };
-        let written = self
-            .edges
-            .write(device, queue, "varde highlighted edges", &built.edges)
+        let too_large = |bytes, limit| PrepareError::HighlightsTooLarge { bytes, limit };
+        let (d, q) = (device, queue);
+        let written = (self.edges)
+            .write(d, q, "varde highlighted edges", &built.edges, too_large)
             .and_then(|()| {
-                self.vertices
-                    .write(device, queue, "varde vertices", &built.vertices)
-            })
-            .map_err(too_large);
+                (self.vertices).write(d, q, "varde vertices", &built.vertices, too_large)
+            });
         *self = match written {
             Ok(()) => HighlightBuffers {
                 outlined: built.outlined,

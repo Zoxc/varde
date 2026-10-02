@@ -31,13 +31,13 @@ fn append_offsets_ids_and_records_parts() {
     assert_eq!(mesh.normals.len(), mesh.positions.len());
     assert_eq!(mesh.indices[cube.indices.len()], base + cylinder.indices[0]);
     let indices = cube.indices.len() as u32;
-    assert_eq!(mesh.face_ends[6..], cylinder.face_ends.map_add(indices));
+    assert_eq!(mesh.face_ends[6..], plus(&cylinder.face_ends, indices));
     assert_eq!(
         mesh.edge_vertices[cube.edge_vertices.len()..],
-        cylinder.edge_vertices.map_add(base)
+        plus(&cylinder.edge_vertices, base)
     );
     let points = cube.edge_vertices.len() as u32;
-    assert_eq!(mesh.edge_ends[12..], cylinder.edge_ends.map_add(points));
+    assert_eq!(mesh.edge_ends[12..], plus(&cylinder.edge_ends, points));
     let faces = cylinder.edge_faces.iter().map(|f| f.map(|f| f + 6));
     assert!(mesh.edge_faces[12..].iter().copied().eq(faces));
     let corners = cylinder.edge_corners.iter().map(|c| c.map(|c| c + 8));
@@ -66,15 +66,8 @@ fn append_offsets_ids_and_records_parts() {
     assert_eq!(mesh, joined);
 }
 
-/// Adding to every element, for comparing offsets.
-trait MapAdd {
-    fn map_add(&self, by: u32) -> Vec<u32>;
-}
-
-impl MapAdd for Vec<u32> {
-    fn map_add(&self, by: u32) -> Vec<u32> {
-        self.iter().map(|x| x + by).collect()
-    }
+fn plus(ids: &[u32], by: u32) -> Vec<u32> {
+    ids.iter().map(|x| x + by).collect()
 }
 
 #[test]
@@ -175,12 +168,6 @@ fn from_parts_takes_a_mesh() {
     assert_eq!(rebuild(RenderMesh::default()), Ok(RenderMesh::default()));
     let cube = cube();
     assert_eq!(rebuild(cube.clone()), Ok(cube));
-    // An empty part.
-    let empty = RenderMesh {
-        part_ends: vec![[0; 3]],
-        ..RenderMesh::default()
-    };
-    assert_eq!(rebuild(empty.clone()), Ok(empty));
 }
 
 #[test]

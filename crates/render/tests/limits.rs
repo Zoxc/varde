@@ -173,72 +173,36 @@ fn mesh_past_the_buffer_limit_is_skipped() {
 
 #[test]
 fn edges_fit_up_to_the_buffer_limit() {
-    // An edge of 23 points and the stream's two ends take 500 bytes, which
-    // fit; one of 24 points takes 520.
+    // 20 bytes a point. Open, an edge of 23 points and the stream's two
+    // ends take 500 bytes, which fit; one of 24 takes 520. Closed, an edge
+    // of 20 points and its first again also takes a point either side
+    // where it closes: 500 bytes; one of 21 takes 520.
     let Some((device, queue)) = device() else {
         eprintln!("no GPU adapter, skipping");
         return;
     };
-    let edge = |points: u32| {
-        let positions: Vec<[f32; 3]> = (0..points).map(|i| [i as f32, 0.0, 0.0]).collect();
-        let last = positions[positions.len() - 1];
-        Arc::new(
-            RenderMesh::from_parts(MeshParts {
-                normals: vec![[0.0, 0.0, 1.0]; positions.len()],
-                positions,
-                indices: vec![0, 1, 2],
-                face_ends: vec![3],
-                edge_vertices: (0..points).collect(),
-                edge_ends: vec![points],
-                edge_faces: vec![[0, 0]],
-                corners: vec![[0.0; 3], last],
-                edge_corners: vec![[0, 1]],
-                part_ends: vec![[1, 1, 2]],
-            })
-            .unwrap(),
-        )
-    };
-    let renderer = Renderer::new(&device, FORMAT);
-    let mut slot = renderer.slot(&device);
-    let (camera, sketches) = (Camera::default(), Arc::default());
-    let mut prepare =
-        |mesh| renderer.prepare(&mut slot, &device, &queue, &frame(&camera, mesh, &sketches));
-    let (fits, too_large) = (edge(23), edge(24));
-    assert_eq!(prepare(&fits), Ok(()));
-    assert_eq!(
-        prepare(&too_large),
-        Err(PrepareError::MeshTooLarge {
-            bytes: 520,
-            limit: 512
-        })
-    );
-}
-
-#[test]
-fn closed_edges_fit_up_to_the_buffer_limit() {
-    // An edge of 20 points and its first again, closed, takes them, a
-    // point either side where it closes and the stream's two ends: 500
-    // bytes, which fit; one of 21 points and its first takes 520.
-    let Some((device, queue)) = device() else {
-        eprintln!("no GPU adapter, skipping");
-        return;
-    };
-    let edge = |points: u32| {
+    let edge = |points: u32, closed: bool| {
         let positions: Vec<[f32; 3]> = (0..points)
             .map(|i| [i as f32, (i % 2) as f32, 0.0])
             .collect();
+        let (first, last) = (positions[0], positions[positions.len() - 1]);
+        let (vertices, corners, edge_corners, corner_count): (Vec<u32>, _, _, _) = if closed {
+            ((0..points).chain([0]).collect(), vec![first], [0, 0], 1)
+        } else {
+            ((0..points).collect(), vec![first, last], [0, 1], 2)
+        };
         Arc::new(
             RenderMesh::from_parts(MeshParts {
                 normals: vec![[0.0, 0.0, 1.0]; positions.len()],
-                corners: vec![positions[0]],
                 positions,
                 indices: vec![0, 1, 2],
                 face_ends: vec![3],
-                edge_vertices: (0..points).chain([0]).collect(),
-                edge_ends: vec![points + 1],
+                edge_ends: vec![vertices.len() as u32],
+                edge_vertices: vertices,
                 edge_faces: vec![[0, 0]],
-                edge_corners: vec![[0, 0]],
-                part_ends: vec![[1, 1, 1]],
+                corners,
+                edge_corners: vec![edge_corners],
+                part_ends: vec![[1, 1, corner_count]],
             })
             .unwrap(),
         )
@@ -246,17 +210,21 @@ fn closed_edges_fit_up_to_the_buffer_limit() {
     let renderer = Renderer::new(&device, FORMAT);
     let mut slot = renderer.slot(&device);
     let (camera, sketches) = (Camera::default(), Arc::default());
-    let mut prepare =
-        |mesh| renderer.prepare(&mut slot, &device, &queue, &frame(&camera, mesh, &sketches));
-    let (fits, too_large) = (edge(20), edge(21));
-    assert_eq!(prepare(&fits), Ok(()));
-    assert_eq!(
-        prepare(&too_large),
-        Err(PrepareError::MeshTooLarge {
-            bytes: 520,
-            limit: 512
-        })
-    );
+    let mut prepare = |mesh: &Arc<RenderMesh>| {
+        renderer.prepare(&mut slot, &device, &queue, &frame(&camera, mesh, &sketches))
+    };
+    for (fits, too_large, closed) in [(23, 24, false), (20, 21, true)] {
+        let (fits, too_large) = (edge(fits, closed), edge(too_large, closed));
+        assert_eq!(prepare(&fits), Ok(()), "closed: {closed}");
+        assert_eq!(
+            prepare(&too_large),
+            Err(PrepareError::MeshTooLarge {
+                bytes: 520,
+                limit: 512
+            }),
+            "closed: {closed}"
+        );
+    }
 }
 
 #[test]

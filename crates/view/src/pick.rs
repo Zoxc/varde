@@ -22,7 +22,7 @@ use glam::{DVec2, DVec3, Vec3};
 use varde_document::{BodyId, OriginPlane, Plane};
 use varde_kernel::RenderMesh;
 use varde_kernel::mesh::FaceKey;
-use varde_regen::{PickFace, Picking};
+use varde_regen::Picking;
 use varde_render::{Camera, Highlights, Vertex};
 
 use crate::projection::Projector;
@@ -44,11 +44,10 @@ const HIDDEN_PULL: f64 = 0.002;
 /// isn't hidden, nearest first: the rest are as good as hidden.
 const MAX_EDGE_TESTS: usize = 64;
 
-/// How near the cursor, in pixels, two edges or vertices show as near as
-/// each other: the nearer the eye goes first. A corner seen straight down
-/// an edge and the one behind it show in one place, and the hidden test
-/// can take the one behind for seen, its ray running along the faces
-/// there.
+/// Within how many pixels of each other two edges or vertices count as
+/// equally near the cursor, the nearer the eye going first: a corner seen
+/// straight down an edge shows where the one behind it does, which the
+/// hidden test can take for seen, its ray running along the faces there.
 const SAME_PLACE: f64 = 0.5;
 
 /// The most triangles or edges in a leaf of a hierarchy.
@@ -159,7 +158,7 @@ impl PickIndex {
             let segments: Vec<u32> = (0..mesh.edge_count())
                 .filter(|&edge| chain(edge))
                 .flat_map(|edge| {
-                    let range = edge_range(&mesh, edge).unwrap_or_default();
+                    let range = mesh.polyline_range(edge).unwrap_or_default();
                     range.start..range.end.saturating_sub(1)
                 })
                 .filter_map(|start| u32::try_from(start).ok())
@@ -234,11 +233,7 @@ impl PickIndex {
 
     /// The body of face `face`, if there's such a face.
     pub fn face_body(&self, face: u32) -> Option<BodyId> {
-        if face as usize >= self.picking.faces().len() {
-            return None;
-        }
-        let part = (self.mesh.part_ends()).partition_point(|&[faces, _, _]| faces <= face);
-        self.picking.bodies().get(part).copied()
+        self.picking.face_body(&self.mesh, face)
     }
 
     /// The faces either side of `edge`, if it's an edge between two
@@ -338,7 +333,7 @@ impl PickIndex {
 
     /// A point on `chain`: the middle of its first segment.
     pub fn chain_point(&self, chain: u32) -> Option<DVec3> {
-        let start = edge_range(&self.mesh, chain as usize)?.start;
+        let start = self.mesh.polyline_range(chain as usize)?.start;
         let [a, b] = segment(&self.mesh, u32::try_from(start).ok()?)?;
         Some(((a + b) / 2.0).as_dvec3())
     }
@@ -350,10 +345,7 @@ impl PickIndex {
     /// model's size, so ties go to the lowest. Measured to the mesh as
     /// drawn, which is all the view has.
     pub fn find_face(&self, body: BodyId, key: &FaceKey, near: DVec3) -> Option<u32> {
-        let named = |face: &PickFace| face.key == *key || face.aliases.binary_search(key).is_ok();
-        let found = self
-            .body_faces(body)
-            .filter(|&face| (self.picking.faces().get(face as usize)).is_some_and(named));
+        let found = (self.body_faces(body)).filter(|&face| self.named(face, key));
         self.nearest(found, near, |face| {
             (self.face_triangles(face))
                 .filter_map(|triangle| self.corners(triangle))
@@ -369,11 +361,8 @@ impl PickIndex {
     /// round, by key or alias), the nearest to `near` among several, as
     /// [`PickIndex::find_face`] finds faces.
     pub fn find_edge(&self, body: BodyId, faces: [FaceKey; 2], near: DVec3) -> Option<u32> {
-        let named = |face: u32, key: &FaceKey| {
-            self.face_body(face) == Some(body)
-                && (self.picking.faces().get(face as usize))
-                    .is_some_and(|face| face.key == *key || face.aliases.binary_search(key).is_ok())
-        };
+        let named =
+            |face: u32, key: &FaceKey| self.face_body(face) == Some(body) && self.named(face, key);
         let found = (0..self.mesh.edge_count())
             .filter_map(|edge| u32::try_from(edge).ok())
             .filter(|&edge| {
@@ -394,18 +383,22 @@ impl PickIndex {
     /// or alias, among the faces there), the nearest to `near` among
     /// several, as [`PickIndex::find_face`] finds faces.
     pub fn find_vertex(&self, body: BodyId, keys: [FaceKey; 3], near: DVec3) -> Option<u32> {
-        let named = |face: u32, key: &FaceKey| {
-            (self.picking.faces().get(face as usize))
-                .is_some_and(|face| face.key == *key || face.aliases.binary_search(key).is_ok())
-        };
         let found = vertex_runs(&self.corner_faces)
             .filter(|run| self.face_body(run[0].1) == Some(body))
-            .filter(|run| (keys.iter()).all(|key| run.iter().any(|&(_, face)| named(face, key))))
+            .filter(|run| {
+                (keys.iter()).all(|key| run.iter().any(|&(_, face)| self.named(face, key)))
+            })
             .map(|run| run[0].0);
         self.nearest(found, near, |corner| {
             self.corner_point(corner)
                 .map_or(f64::INFINITY, |at| at.distance(near))
         })
+    }
+
+    /// Whether `key` names face `face`, as its key or an alias.
+    fn named(&self, face: u32, key: &FaceKey) -> bool {
+        (self.picking.faces().get(face as usize))
+            .is_some_and(|face| face.key == *key || face.aliases.binary_search(key).is_ok())
     }
 
     /// Of `found`, ascending, the only one, or the one at the least
@@ -518,7 +511,7 @@ impl PickIndex {
     /// Where each segment of edge `edge` starts in the mesh's edge
     /// vertices, none if there's no such edge.
     fn edge_segments(&self, edge: u32) -> Range<u32> {
-        let range = edge_range(&self.mesh, edge as usize).unwrap_or_default();
+        let range = self.mesh.polyline_range(edge as usize).unwrap_or_default();
         // Within the mesh's edge points, a `u32`.
         range.start as u32..range.end.saturating_sub(1) as u32
     }
@@ -745,17 +738,6 @@ fn position(mesh: &RenderMesh, index: u32) -> Vec3 {
     )
 }
 
-/// Where `mesh`'s edge `edge`'s vertices are in its edge vertices, if it
-/// has such an edge.
-fn edge_range(mesh: &RenderMesh, edge: usize) -> Option<Range<usize>> {
-    let ends = mesh.edge_ends();
-    let end = *ends.get(edge)? as usize;
-    let start = edge
-        .checked_sub(1)
-        .map_or(0, |before| ends[before] as usize);
-    Some(start..end)
-}
-
 /// Where `mesh`'s corner `corner` is, if it has it.
 fn corner_position(mesh: &RenderMesh, corner: u32) -> Option<Vec3> {
     Some(Vec3::from(*mesh.corners().get(corner as usize)?))
@@ -899,8 +881,8 @@ struct Groups {
 impl Groups {
     /// The items of `groups` groups, item `i` in group `of[i]`, unless
     /// that's past the groups (as a crease's tangent chain is made out to
-    /// be, `u32::MAX`). None if there are more
-    /// items than `u32`s number, which no mesh has.
+    /// be, `u32::MAX`). None if there are more items than `u32`s number,
+    /// which no mesh has.
     fn new(groups: usize, of: &[u32]) -> Self {
         if u32::try_from(of.len()).is_err() {
             return Self::default();

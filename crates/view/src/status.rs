@@ -131,9 +131,7 @@ fn clipped<'a>(content: Element<'a, Message>) -> Element<'a, Message> {
 
 /// The view options menu, open above the status bar's button at the
 /// screen's bottom right: the projection, `projection` ticked, and the
-/// `options`: whether the status bar shows the mouse's hints, and whether
-/// the viewport shows the edges the model hides. A press anywhere off the
-/// menu closes it.
+/// `options`. A press anywhere off the menu closes it.
 pub fn view_menu<'a>(projection: Projection, options: ViewOptions) -> Element<'a, Message> {
     let choice = |label, choice| {
         menu_item(

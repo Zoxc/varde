@@ -610,11 +610,10 @@ struct Chains {
 }
 
 impl Chains {
-    /// The polylines of the edges of `mesh` that are `feature`, each
-    /// along its `first` halfedge, between faces `face_of` their
-    /// halfedges: `topology`'s chains, then the creases. Creases start at
-    /// the lowest corner first, closed ones at their lowest edge's first
-    /// halfedge, so they come out the same every time.
+    /// The polylines of the edges of `mesh` that are `feature`, given
+    /// each edge's `first` halfedge and each halfedge's face (`face_of`).
+    /// Creases start at the lowest corner first, closed ones at their
+    /// lowest edge's first halfedge, so they come out the same every time.
     fn new(
         mesh: &Mesh,
         first: &[u32],

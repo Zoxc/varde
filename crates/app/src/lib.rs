@@ -35,9 +35,7 @@ use crate::welcome::Welcome;
 pub(crate) struct Varde {
     screen: Screen,
     mode: Mode,
-    /// What the view options menu turns on and off: whether the status
-    /// bar shows the hints of the mouse, and whether the viewport shows
-    /// the edges the model hides.
+    /// What the view options menu turns on and off.
     options: ViewOptions,
     /// Whether the peek key is held, see [`Held::PEEK`].
     peeking: bool,

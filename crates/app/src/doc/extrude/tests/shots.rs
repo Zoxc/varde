@@ -951,11 +951,7 @@ impl Shooter {
     /// anything.
     fn hover(&mut self, doc: &mut Doc, at: Point) -> Option<varde_view::Picked> {
         use iced::mouse::{Cursor, Event};
-        let mut ui: Headless<'_> = shown(
-            doc.view(false, Mode::Light, varde_view::ViewOptions::default()),
-            WINDOW,
-            &mut self.renderer,
-        );
+        let mut ui: Headless<'_> = shown(doc.view_in(Mode::Light), WINDOW, &mut self.renderer);
         let mut sent = Vec::new();
         let _ = ui.update(
             &[iced::Event::Mouse(Event::CursorMoved { position: at })],

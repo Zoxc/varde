@@ -92,8 +92,8 @@ pub enum Message {
     ToggleHiddenEdges,
 }
 
-/// What the view options menu turns on and off, which the app keeps for
-/// every document. All on by default.
+/// What the view options menu turns on and off, kept by the app for every
+/// document. All on by default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ViewOptions {
     /// Whether the status bar shows the hints of the mouse.
@@ -222,9 +222,8 @@ pub enum Edit {
     /// Adds the revolve being set up, or changes the one being edited, as
     /// one undo step, and ends its session: OK, or `Enter`.
     CommitRevolve,
-    /// Sets the body whose opacity is previewed (see
-    /// [`Look::PreviewOpacity`]) to it, as one undo step, keeping its
-    /// context menu open: letting go of the slider.
+    /// Sets the opacity previewed ([`Look::PreviewOpacity`]) as one undo
+    /// step, keeping the context menu open: letting go of the slider.
     CommitOpacity,
     /// Changes the design's units.
     SetUnits(LengthUnit),
@@ -283,8 +282,7 @@ pub enum Look {
     /// Closes the row's context menu: a press off it.
     CloseMenu,
     /// Shows the body as `Opacity` says while its context menu's slider is
-    /// dragged, without changing the document: [`Edit::CommitOpacity`]
-    /// does that on letting go.
+    /// dragged, without changing the document.
     PreviewOpacity(BodyId, Opacity),
     /// A click in the sketch being edited without a tool, or on a row of
     /// its Geometry list, on `hit` if anything: selects it alone, or

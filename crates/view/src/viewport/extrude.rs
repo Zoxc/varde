@@ -75,8 +75,7 @@ impl<'a> Extruding<'a> {
 
     /// The handle's knobs, anchored over the viewport seen by `camera`
     /// on its axis, if there's a handle: those `mesh`, the model shown,
-    /// its parts as opaque as `opacity` says, doesn't hide
-    /// ([`hidden_by`]).
+    /// doesn't hide, its parts as opaque as `opacity` says ([`hidden_by`]).
     pub(crate) fn knobs(
         &self,
         camera: &Camera,
@@ -91,9 +90,7 @@ impl<'a> Extruding<'a> {
         Some(Anchors::new(*camera, handle.placement(), knobs).into())
     }
 
-    /// The handle's knobs `mesh`'s opaque parts don't hide from `camera`:
-    /// what's behind one less than opaque shows through it, as the
-    /// renderer draws the shaft.
+    /// The handle's knobs `mesh`'s opaque parts don't hide from `camera`.
     fn shown_knobs<'s>(
         &'s self,
         camera: &'s Camera,
@@ -235,10 +232,9 @@ pub(crate) fn hidden(mesh: &RenderMesh, camera: &Camera, at: DVec3) -> bool {
 /// rounding of `at` (a few units in the last place of the largest
 /// coordinate), which seen at a grazing angle can be far along the ray: a
 /// knob on the cap it ends on, far from the origin, would be hidden by
-/// the cap's rounded corners. A part less than opaque hides nothing: the
-/// renderer draws what's behind it through it; one past `opacity`'s end,
-/// or out of its range, is opaque. Never with more than
-/// [`MAX_HIDING_TRIANGLES`].
+/// the cap's rounded corners. A part less than opaque hides nothing; one
+/// past `opacity`'s end, or out of its range, is opaque. Never with more
+/// than [`MAX_HIDING_TRIANGLES`].
 pub(crate) fn hidden_by(mesh: &RenderMesh, opacity: &[f32], camera: &Camera, at: DVec3) -> bool {
     if mesh.triangle_count() > MAX_HIDING_TRIANGLES || !at.is_finite() {
         return false;

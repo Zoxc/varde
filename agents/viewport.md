@@ -178,10 +178,9 @@ its x axis, so the knob at `t` mm is the "sketch point" `(t, 0)`. One
 side has a knob at its distance (negative when flipped), symmetric at
 half of it, two sides one per side. A knob the model's mesh hides isn't
 laid out (`viewport/extrude.rs`'s `hidden_by`: a ray from the knob
-towards the eye meets a triangle of an opaque part, as the frame's
-opacity has it, since the shaft shows through glass, more than 0.002
-view heights in front of it, as
-far as the renderer pulls the layers, so a knob on the cap it ends on
+towards the eye meets a triangle of an opaque part (glass hides nothing,
+as the shaft shows through it) more than 0.002 view heights in front of
+it, as far as the renderer pulls the layers, so a knob on the cap it ends on
 shows; a triangle whose plane passes within the mesh's `f32` rounding of
 the knob doesn't count either, or far from the origin, seen at a grazing
 angle, the cap's rounded corners would hide its own knob; past 2¹⁸
@@ -253,60 +252,61 @@ the extrude's layers are drawn before them instead, so the glass in front
 of them dims them (and the origin marker goes over them).
 
 Each body is drawn as opaque as its `Body::opacity` (10 to 100 %), or
-as the Opacity slider in its context menu has it while that's dragged
-(`DocumentState::opacity_preview`, `shown_opacity`; the menu is described
-with the side panel's in `agents/kernel.md`): the view hands the frame an
-alpha per part of the mesh (`Frame::opacity`, from the picking tables'
-body per part, `MeshFeed::parts`, and the document; a part of no body in
-it, as a draft's new body is, is opaque, and so is one with no entry, or
-out of range or NaN). It's not part of the mesh, so changing it
+as its context menu's Opacity slider has it while that's dragged
+(`DocumentState::opacity_preview`, `shown_opacity`; the menu is in
+`agents/kernel.md`). The view hands the frame an alpha per part of the
+mesh (`Frame::opacity`, from `MeshFeed::parts` and the document); a part
+of no body in the document (a draft's new body), with no entry, or out
+of range or NaN is opaque. It isn't part of the mesh, so changing it
 uploads nothing. At upload the renderer keeps each part's index range,
-its points' range in the edge stream (the parts' points follow one
-another, so a range of parts is drawn by the instances from the one
-before its first point; the points either side are of another part's
-edges or of none, which no segment of it joins) and its triangles'
-bounds. Each prepare splits the parts into runs of opaque ones, each
-drawn at once (an all opaque model is one draw, as before), and the rest,
-sorted far to near by their bounds' centres along the view. The alpha
-is per draw: WebGL2 has no push constants, so a uniform buffer holds a
-`PartUniforms` for each of 256 steps from 0 to 1 (8 bits, what the target
-shows; a device whose buffers hold fewer gets fewer, at least an opaque
-one, and only an alpha of 0 is drawn at the first step, so a faint part
-on a short table is drawn at the next step up rather than not at
-all), each at the device's uniform offset alignment, written once, and
-bound as group 1 of every pipeline at the step's dynamic offset. The
-faces' alpha and the edges' (visible and hidden) are multiplied by it.
-Outside a sketch, the opaque parts are drawn first as above, and their
-hovered and selected faces over them, their depth the only depth there
-is up to the glass: the hidden edges are drawn for
-every part against it, so a transparent part's edges hidden by an opaque
-one are dashed at its alpha too (an edge behind glass is dashed later); then the transparent parts' edges, visible against the
-opaque depth, under the glass in front of them, which dims them; the
-extrude's layers, if any, and the hovered edges' outline, the selected
-edges and the hovered and selected vertices, so what of them is behind
-glass shows through it, dimmed; then each transparent part, far to near, its
-back faces (culled front, lit as seen from inside: `fs_mesh` flips the
-normal of a face that isn't front facing) then its front faces, blended
-at its alpha, depth tested, writing no depth; then their front faces'
-depth only (`glass_depth`), a part at a time far to near, each writing
-a stencil reference of its own (1 to 255, repeating) where it's the
-nearest of the model so far and, with hidden edges on, followed by every
-part's edges it hides there (`hidden_by_glass`: `Greater`, stencil
-`Equal`), dashed at its alpha times their own part's (`product_step`),
-over what it dimmed of them: an edge behind glass shows solid dimmed by
-it and dashed at its alpha, so a body nearly opaque hides edges much as
-an opaque one does, and one behind two layers of glass gets both layers'
-dashes. The depth buffer has a stencil for this:
-`Depth32FloatStencil8` where the device has it, else
-`Depth24PlusStencil8`. Then their hovered and selected faces (see "The
-highlight" below), and their edges again, so the edges on the nearest
-surface show undimmed on the glass they lie on; then the hovered edges'
-outline, the selected edges and the hovered and selected vertices
-again, undimmed where they're in front of the glass. Bodies are one
-colour each, so blending their layers in another order changes little,
-only their shading; sorting by the bounds' centres is enough, but for
-bodies whose bounds interleave. In a sketch every part is drawn faded
-alike at `faded_alpha`, whatever its opacity.
+its range of the edge stream (a part's points follow the last part's,
+with another part's or none either side, which no segment joins) and its
+triangles' bounds. Each prepare splits the parts into runs of opaque
+ones, a draw each, and the rest, sorted far to near by their bounds'
+centres along the view. Bodies are one colour each, so blending their
+layers in another order changes only the shading: no order-independent
+transparency is needed, and the sort is only wrong for bodies whose
+bounds interleave. The alpha is per draw and multiplies the faces' and
+edges' own. WebGL2 has no push constants, so a uniform buffer, written
+once, holds a `PartUniforms` for each of `ALPHA_STEPS` (256, the 8 bits
+the target shows) steps from 0 to 1 at the device's uniform offset
+alignment, bound as group 1 of every pipeline at the step's dynamic
+offset. A device whose buffers hold fewer gets fewer steps, at least an
+opaque one, and only an alpha of 0 gets the first, so a faint part is
+drawn a step up rather than not at all. In a sketch every part is drawn
+faded alike at `faded_alpha`, whatever its opacity.
+
+Outside a sketch, the passes round the glass (the parts less than
+opaque) go:
+
+1. The opaque parts' faces, then their hovered and selected faces (see
+   "The highlight" below), then their edges. Their depth is the only
+   depth there is until step 4.
+2. The hidden edges (below) of every part against it, so a transparent
+   part's edges an opaque one hides are dashed at its alpha too; then
+   the transparent parts' visible edges, the extrude's layers, the
+   hovered edges' outline, the selected edges and the hovered and
+   selected vertices, all under the glass in front of them, which dims
+   them.
+3. Each transparent part, far to near: its back faces (front culled, lit
+   as seen from inside: `fs_mesh` flips the normal of a face that isn't
+   front facing), then its front faces, blended at its alpha, depth
+   tested, writing no depth.
+4. Their front faces' depth only (`glass_depth`), a part at a time far to
+   near, each writing a stencil reference of its own (1 to 255,
+   repeating) where it's the nearest of the model so far, and, with
+   hidden edges on, followed by every part's edges it hides there
+   (`hidden_by_glass`: `Greater`, stencil `Equal`), dashed at its alpha
+   times theirs (`product_step`). So an edge behind glass shows solid,
+   dimmed by it, and dashed at its alpha: a body nearly opaque hides
+   edges much as an opaque one does, and two layers of glass give both
+   layers' dashes. The depth buffer has a stencil for this:
+   `Depth32FloatStencil8` where the device has it, else
+   `Depth24PlusStencil8`.
+5. Their hovered and selected faces, then their edges again, so the
+   edges on the nearest surface show undimmed on the glass they lie on;
+   then the outline, the selected edges and the vertices again, undimmed
+   where they're in front of the glass.
 
 The grid's axis lines are drawn in the grid's pass (`axis_line`) but not
 faded: they run on at full strength to the horizon, and show when the
@@ -367,63 +367,51 @@ any zoom and display scale without MSAA, with round ends and joins. A
 segment of an edge or of the sketch being edited knows its neighbours, and
 where two overlap at a join a pixel is drawn only by the nearer, so
 translucent lines don't darken there; the finished sketches' segments come
-alone, as they're uploaded, and overlap at joins, which only thickens the
-fringe of an opaque line. Dashes run along a polyline by its length (in
-sketch units at the target's scale, or logical pixels on the screen),
-averaged over what a pixel spans along the line (a box filter, from how
-much longer the segment is measured than it shows), so their ends fade
-over a pixel on the screen, and dashes shorter than a pixel there, on an
-edge seen nearly end on or far behind the target in perspective, blur to
-their average rather than beating into dashes of their own.
+alone and overlap at joins, which only thickens the fringe of an opaque
+line. Where two edges meet at a corner their fringes overlap too, as do a
+polyline's segments shorter on the screen than the line is wide. Dashes
+run along a polyline by its length (in sketch units at the target's
+scale, or logical pixels on the screen), box filtered over what a pixel
+spans along the line, so their ends fade over a pixel, and dashes shorter
+than a pixel (an edge seen nearly end on, or far off in perspective) blur
+to their average rather than beating.
 
-The edges are uploaded as a stream of points (`EdgePoint`: position, how
-far along its polyline in world units, and which polyline), polyline after
-polyline, a point again in a row left out, with a point of no edge at each
-end of the stream. An edge that closes on itself, round three segments or
-more, has its last but one point before it and its second after it, marked
-neighbours only (`NEIGHBOUR_ONLY`, the edge's top bit), so its first and
-last segments join like any others. That's 20 bytes a point, at most one
-and a half points per edge vertex, so `RenderMesh::MAX_EDGE_POINTS` fits a
-256 MiB buffer. The same buffer is bound to four vertex buffer slots a
-point apart, step mode instance, so instance `i` sees points `i` to `i + 3`
-as the point before, the segment's start and end, and the point after
-(`EdgeIn`, `edge_segment`): the segment is drawn if its ends are of the
-same edge, and joined to the points either side that are of it too,
-marked or not.
-That's 4 of WebGL2's 8 vertex buffers and 9 of its 16 attributes, and no
-storage buffers. Each segment and its neighbours are cut at the near plane
-before pulling (`pulled_segment`, which the finished sketches' lines use
-too), so they agree on where they meet. Pulling (`pulled`) only changes
-the depth: the line shows where it is, not where the pulled point would in
-perspective, off its faces' boundary near the eye. Where two edges meet at
-a corner their fringes overlap, and so do a polyline's segments where
-they're shorter on the screen than the line is wide, since a segment only
-knows the two either side of it.
+The edges are uploaded as a stream of points (`EdgePoint`, 20 bytes:
+position, how far along its polyline in world units, and which polyline),
+polyline after polyline, a point repeated in a row left out, with a point
+of no edge at each end. A closed edge of three segments or more has its
+last but one point before it and its second after it, marked neighbours
+only (`NEIGHBOUR_ONLY`, the edge's top bit), so its ends join like any
+other. That's at most one and a half points per edge vertex, so
+`RenderMesh::MAX_EDGE_POINTS` fits a 256 MiB buffer. The buffer is bound
+to four vertex buffer slots a point apart, step mode instance, so
+instance `i` sees points `i` to `i + 3` as the point before, the
+segment's ends and the point after (`EdgeIn`, `edge_segment`): the
+segment is drawn if its ends are of one edge, joined to the points
+either side that are of it too. That's 4 of WebGL2's 8 vertex buffers,
+9 of its 16 attributes and no storage buffers. A segment and its
+neighbours are cut at the near plane before pulling (`pulled_segment`,
+shared with the finished sketches), so they agree where they meet.
+Pulling (`pulled`) only changes the depth: the line shows where it is,
+not where the pulled point would in perspective.
 
 The edges the model hides are the same stream drawn again
-(`vs_hidden_edge`, its own entry point, since the GL backend keys
-programs by them) with `depth_compare: Greater` against the opaque
-parts' depth, which nothing drawn after their faces writes until the
-glass: the same quads (both
-`EDGE_WIDTH` wide, the hidden pass narrowing only the coverage, and the
-position `@invariant`), so the visible pass and this one split the
-pixels between them, and a visible stretch and a hidden one of the same
-edge meet without a gap or a pixel of both. They're `HIDDEN_EDGE_WIDTH`
-(1) logical pixel wide, in the edge colour at `Colors::hidden_edge_alpha`
-(0.45 in both themes), dashed (`HIDDEN_DASH`, 4 on and 3 off) along the
-edge by its length at the target's scale, as the sketch's dashes are. The
-dashes' phase is worked out a segment at a time: where the segment
-starts along its edge, in pixels, modulo a dash and a gap, then on by
-its own length from its ends, then again modulo the period from where
-it's cut to the viewport, so the numbers the fragment shader mixes stay
-within a period and what shows of the segment. Zoomed far into a long
-edge, where how far along it a pixel is, in pixels, is past what `f32`
-holds, only the phase where a segment starts or is cut is off by the
-rounding, not the dashes along it. An edge's fringe within a pixel of a
-silhouette is depth tested at the edge's depth, so a back edge there
-leaks a little of it past the silhouette. Not drawn faded: in a sketch
-the model already reads as see-through. Setting up an extrude, they're
-drawn.
+(`vs_hidden_edge`) with `depth_compare: Greater` against the opaque
+parts' depth. The quads are the same (`EDGE_WIDTH` wide, the hidden pass
+narrowing only the coverage, the position `@invariant`), so the two
+passes split the pixels and a visible stretch meets a hidden one without
+a gap or a pixel of both. They're `HIDDEN_EDGE_WIDTH` (1) logical pixel
+wide, in the edge colour at `Colors::hidden_edge_alpha` (0.45), dashed
+(`HIDDEN_DASH`, 4 on and 3 off) by length at the target's scale. The
+dash phase is worked out per segment (where it starts along its edge,
+modulo the period, then again from where it's cut to the viewport), so
+the numbers the fragment shader mixes stay small; zoomed far into a long
+edge only that phase is off by `f32` rounding, not the dashes. An edge's
+fringe within a pixel of a silhouette is depth tested at the edge's
+depth, so a back edge leaks a little past it there; avoiding that would
+mean sampling a copy of the depth buffer. Not drawn faded (in a sketch
+the model already reads as see-through), but drawn setting up an
+extrude.
 
 The sketch being edited comes as two `SketchLayer`s the view builds, each
 with fills (triangles, tessellated even-odd by tess2-rust, holes left out),
@@ -517,35 +505,34 @@ the Timeline marks those features (see "The extrude UI" in
 `agents/kernel.md`).
 
 An answer carries the model's **picking tables** (`regen::Picking`, with
-the mesh), by the mesh's own ids: the body of each of the mesh's parts
-(the shown bodies in order; `Picking::face_body` finds a face's), its
-faces (`PickFace`: the face key, its aliases, sorted, and a `Summary` of
-its form: a plane's outward unit `n` and `d`, a cylinder's point, axis
-and radius, a cone's, sphere's or torus's numbers, a conic cylinder's
+the mesh), by the mesh's own ids: the body of each part (the shown
+bodies in order; `Picking::face_body` finds a face's), each face
+(`PickFace`: the face key, its aliases, sorted, and a `Summary` of its
+form: a plane's outward unit `n` and `d`, a cylinder's point, axis and
+radius, a cone's, sphere's or torus's numbers, a conic cylinder's
 direction, a revolved conic's axis, else `Other`: no known form, or
 numbers past the bound), and for each edge whether it's a chain closing
-on itself and its tangent chain (below). The mesh's faces are the kernel topology's regions and its first
-edges in each part its chains, in the topology's order, the creases
-inside one face after them (see "Topology and names" and "Tessellation"
-in `agents/kernel.md`), so a circle's quarter walls, or flush faces
-merged under one name, are one face, a face cut in two by a groove is
-two faces of one key, and which face a triangle is on (its `face_ends`
-range) and which faces an edge is between (`edge_faces`; a crease has
-the same face twice) are the mesh's to say. `Picking::edge_keys` gives
-an edge's two keys sorted, as an edge reference stores them (none for a
-crease). Each body's tables are made with its mesh (`Solid::topology`,
-then `Solid::tessellate_with`) and cached with it, counted in its
-bytes; the scene's are theirs joined in the shown bodies' order, as the
-mesh is, the tangent chains moved on (checked). A `Picking` always goes
-with its mesh (a body per part, a face per face, a flag and a tangent
-chain per edge, a closed edge between two faces and on one corner,
-summaries finite, within `Picking::MAX_VALUE`, their directions
-unit vectors, aliases sorted apart from the key): the fields are private
-and `Picking::from_parts` checks parts from elsewhere. The app keeps
-them with the mesh (`MeshFeed::parts` gives the parts' bodies, none
-once the document was replaced whole until a model of it is shown, as
-for the feed's other ids: they may name other bodies, so the parts are
-drawn opaque meanwhile).
+on itself and its tangent chain (below). Everything else is the mesh's
+to say: its faces are the kernel topology's regions and the first edges
+of each part its chains, the creases after them (see "Tessellation" and
+"Topology and names" in `agents/kernel.md`), so a circle's quarter walls,
+or flush faces merged under one name, are one face, a face cut in two by
+a groove is two faces of one key, a triangle's face is the `face_ends`
+range holding it, and an edge's faces are its `edge_faces` (a crease's
+the same face twice). `Picking::edge_keys` gives an edge's two keys
+sorted, as an edge reference stores them (none for a crease). Each
+body's tables are made with its mesh (`Solid::topology`, then
+`Solid::tessellate_with`) and cached with it, counted in its bytes; the
+scene's are theirs joined as the mesh is, the tangent chains moved on
+(checked). The fields are private and `Picking::from_parts` checks parts
+from elsewhere against the mesh (a body per part, a face per face, a
+flag and a tangent chain per edge, a closed edge between two faces and
+on one corner, summaries finite, within `Picking::MAX_VALUE`, their
+directions unit vectors, aliases sorted apart from the key). The app
+keeps them with the mesh; `MeshFeed::parts` gives the parts' bodies,
+none once the document was replaced whole until a model of it shows
+(the ids may name other bodies), so the parts are drawn opaque
+meanwhile.
 
 **Picking the model** (`view/src/pick.rs`, the app's `doc/pick.rs`) is on
 the CPU, against the mesh drawn and its tables; no GPU id buffer (WebGL2
@@ -587,14 +574,13 @@ meets a triangle nearer by more than 0.002 view heights (what the
 renderer pulls edges by) and the mesh's `f32` rounding. So an edge
 either side of a face shows, and one behind the plate isn't picked. A
 vertex wins over both, found the same way within `VERTEX_REACH` (6): a
-corner of the mesh where three faces or more meet (those of the edges
-between two faces ending there), so a box's corners are vertices and a
-hole's rim, closing on itself, has none. Distances within half a pixel
-go by depth because what shows in one place, as a corner seen straight
-down the edge below it and the corner at its other end, is tried
-nearest the eye first: the ray from the one behind runs along the faces
-between them, where the hidden test can miss them. With `Picks::Faces`
-or `Picks::Edges` only that kind is picked, and no vertex. The `Pick`
+corner where three faces or more meet (those of the edges between two
+faces ending there), so a box's corners are vertices and a hole's rim
+has none. Distances within half a pixel go by depth so that of two
+things in one place (a corner seen straight down the edge to the one
+behind it) the nearer is tried first: the ray from the one behind runs
+along the faces between them, where the hidden test can miss them. With
+`Picks::Faces` or `Picks::Edges` only that kind is picked. The `Pick`
 carries the model's count, the target (`Picked::Face`, `Picked::Edge`
 or `Picked::Vertex`, the mesh's ids, a vertex by its corner), the body
 (the face's part's, or the first face's at the edge or the vertex) and
@@ -679,25 +665,25 @@ built for.
 
 Tangent chains come from the kernel: `Topology::tangent_chains` (see
 `agents/kernel.md`) gives each chain its tangent chain's lowest chain,
-regen carries it for each edge of the mesh as `Picking::tangents` (a
-crease its own; checked on the page: the first of a tangent chain is an
-edge between two faces of the same part, no later than its members and
-its own first), and `PickIndex::tangent_chain` groups them. Hovering in `Edges { tangent: true }` highlights the whole chain,
-in `Bodies` the whole body.
+regen carries it per edge of the mesh as `Picking::tangents` (a crease
+its own; checked on the page: the first of a tangent chain is an edge
+between two faces of the same part, no later than its members and its
+own first), and `PickIndex::tangent_chain` groups them. Hovering in
+`Edges { tangent: true }` highlights the whole chain, in `Bodies` the
+whole body.
 
 The app's highlight (`Doc::highlight`, a `ModelHighlight`) is
 `Selection::highlight`: what's selected (a body as all of its faces)
 and what's hovered, in the mode (a tangent chain, a body's faces), by
 the mesh's ids (`PickIndex::highlight`, which leaves out ids the mesh
-hasn't): the faces hovered and selected, and a small layer of edges and
-vertices (`varde_render::Highlights`): the edges outlined, those hovered
-and those between a hovered face and another face, the selected edges,
-and the vertices hovered or selected, each flagged which. It's rebuilt
-only when the model, the target hovered or the selection changes, so
-moving over one face uploads nothing; the renderer writes the layer to
-its buffers again only when it's another `Arc` or the mesh is (it holds
-ids, and the positions come from the mesh). With nothing to draw the
-viewport hands every frame one shared empty highlight.
+hasn't). That's the faces hovered and selected and a small layer of
+edges and vertices (`varde_render::Highlights`): the edges outlined (the
+hovered ones and those bounding a hovered face), the selected edges, and
+the vertices hovered or selected, flagged which. It's rebuilt only when
+the model, the target hovered or the selection changes, so moving over
+one face uploads nothing; the renderer rewrites the layer only when it's
+another `Arc` or the mesh is (it holds ids, the positions come from the
+mesh). With nothing to draw every frame gets one shared empty highlight.
 
 The status bar's box tells of the selection when no feature is
 selected: one face as "Face", its surface ("Plane", "Cylinder", "Cone",
@@ -714,56 +700,47 @@ hovered faces': the hovered edges keep theirs, the rest of the body its
 own. Selection is in the accent (`Colors::selected`). In a sketch
 (`Frame::faded`) none of it is drawn; the app doesn't pick there anyway.
 
-- Faces: drawn again over themselves by their index range, with
-  `vs_mesh` (its position `@invariant`), `depth_compare: Equal` and no
-  depth written, so exactly their own pixels: the hovered ones lit in
-  `Colors::hover_face` (the model's hue, lighter) at their part's alpha
-  (`fs_hover_face`), then each selected one blended `SELECTED_TINT` (0.6)
-  of the way to the accent lit (`fs_selected_face`), so a hovered
-  selected face is tinted and brighter. Each is a draw of its own, which
-  needs nothing per vertex. An opaque part's go right after the opaque
-  faces, before anything else writes depth where they are, so one behind
-  glass is drawn and then dimmed by the glass, tinted still; a
-  transparent part's after the glass's front faces' depth, at its alpha,
-  so only where it's the nearest glass (one behind another transparent
-  body shows untinted there).
-- Outline: the outlined edges are the edge stream's polylines again, in
-  a stream of their own (`EdgeStream`, which the mesh's is built with
-  too), drawn after everything of the model (and under the glass too,
-  if there is any: see the pass order above) with the edges' quads, depth
+- Faces: drawn again over themselves by their index range, a draw
+  each, so nothing per vertex, with `vs_mesh` (its position
+  `@invariant`), `depth_compare: Equal` and no depth written, so exactly
+  their own pixels: the hovered ones lit in `Colors::hover_face` (the
+  model's hue, lighter) at their part's alpha (`fs_hover_face`), then
+  each selected one blended `SELECTED_TINT` (0.6) of the way to the
+  accent (`fs_selected_face`), so a hovered selected face is tinted and
+  brighter. An opaque part's are drawn before anything else writes depth
+  where they are, so one behind glass is dimmed by it but still tinted;
+  a transparent part's after the glass's depth, so only where it's the
+  nearest glass (behind other glass it shows untinted).
+- Outline: the outlined edges' polylines in a stream of their own
+  (`EdgeStream`, as the mesh's), drawn with the edges' quads, depth
   tested and pulled like them, so only what shows is outlined: a rim
   `HOVER_RIM` (1.5 logical pixels) wide either side of the edge in
-  `Colors::hover_outline` (`vs_outline`), a bright green of the sketch's
-  hover's hue that's brighter than the lit faces. The rim is hollow: its
-  coverage is that of a line `HOVER_RIM` wider than the edge less the
-  edge's own (`style.w` in `fs_line`), so the edge's pixels stay as its
-  own pass drew them, in its colour and as faint as its part (a faint
-  edge on a 30 % body stays faint), and its fringe gets the rim's share.
-  The outlined edges that meet at a corner are joined into one polyline
+  `Colors::hover_outline` (`vs_outline`), a green of the sketch's hover
+  hue brighter than the lit faces. The rim is hollow: its coverage is a
+  line `HOVER_RIM` wider than the edge less the edge's own (`style.w` in
+  `fs_line`), so the edge's pixels stay as its own pass drew them, as
+  faint as its part (an edge on a 30 % body stays faint). The outlined
+  edges meeting at a corner are joined into one polyline
   (`Highlights::build`, either way round, until the loop closes; past
-  two at a corner the others start their own), so where they meet a
-  pixel is the rim of the one nearest it, as at a polyline's joins, and
-  neither's rim covers the other's middle. A polyline's rim knows only
-  its own segments and their neighbours, so where it comes within
-  `HOVER_RIM` of another's middle elsewhere (a third edge at a corner,
-  where a face meets itself; the two sides of a face seen nearly edge
-  on), it covers it.
+  two at a corner the others start their own), so neither's rim covers
+  the other's middle there. A rim knows only its polyline's segments and
+  their neighbours, so where it comes within `HOVER_RIM` of another's
+  middle elsewhere (a third edge at a corner, the two sides of a face
+  seen nearly edge on), it covers it.
 - Selected edges: the same stream's other range (a point of no edge
   between them, so an edge both outlined and selected isn't joined to
   itself), `SELECTED_EDGE_WIDTH` (2.5) wide in the accent
   (`vs_selected_edge`), over the outline.
 - Vertices: only those hovered or selected, an instance each
-  (`VertexInstance`, the corner's position and flags), drawn as a sketch
-  point is (`vs_vertex` into `fs_point`): a disc of `VERTEX_RADIUS` (3.5
-  logical pixels) within a rim, the same size at any zoom, depth tested at
-  its centre's pulled depth. Hovered, the disc is in the edge colour, its
+  (`VertexInstance`: position and flags), drawn as a sketch point is
+  (`vs_vertex` into `fs_point`): a disc of `VERTEX_RADIUS` (3.5 logical
+  pixels) within a rim, depth tested at its centre's pulled depth. Hovered, the disc is in the edge colour, its
   rim `HOVER_RIM` wide in `hover_outline`; selected, it's filled with the
   accent, within a pixel's rim in the edge colour, or the hover's if it's
   hovered too.
 
-Each pass with a pipeline that differs from another only by what it
-draws has its own entry point, since wgpu's GL backend keys programs by
-module and entry points. The uniforms stay within 512 bytes (the limits
+Pipelines that differ only by what they draw each have their own entry
+point, since wgpu's GL backend keys programs by module and entry point. The uniforms stay within 512 bytes (the limits
 tests' device's largest buffer): the grid's axis lines' colours are
 picked in the shader by which world axis each lies along (the `w` of
 `grid_x` and `grid_y`), and the hidden edges' alpha is `edge`'s `w`,
@@ -798,15 +775,12 @@ with the page, so a request is the generation, the postcard-encoded
 document (the encoding `.vrdp` records use) and the sketch to leave out, and
 the answer is a postcard head (with the failed features, the
 bodies each join, cut or intersect touches, the bodies' boxes, the
-draft's outcome and the picking tables: the body of each of the mesh's
-parts, the faces, and the edges' closed flags and tangent chains) and the mesh's vectors
-(positions, normals, indices, face ends, edge vertices, edge ends, edge
-faces, corners, edge corners, part ends) and the sketches' line points
-and ends as raw bytes. A model whose head would be over its bound (64
-MiB), or with more faces or aliases than a reply may carry (2²⁰ and 2²⁰
-all faces' together, decoded within those bounds, and the parts and
-flags within the mesh's, so a short head can't make the page build
-more), is answered as failed. Both
+draft's outcome and the picking tables) and the mesh's vectors and the
+sketches' line points and ends as raw bytes. A model whose head would be
+over its bound (64 MiB), or with more faces or aliases than a reply may
+carry (2²⁰ each, the aliases of all faces together; the tables are
+decoded within those bounds and the mesh's, so a short head can't make
+the page build more), is answered as failed. Both
 directions transfer their `ArrayBuffer`s instead of copying them. The page
 checks what comes back before using it (whole elements, a size bound,
 the mesh through `RenderMesh::from_parts`, points within their bound,

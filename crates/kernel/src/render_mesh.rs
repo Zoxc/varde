@@ -13,15 +13,14 @@ use crate::{Aabb, MAX_COORD};
 /// shared where the surface is smooth.
 ///
 /// Meshes are joined by [`RenderMesh::append`], one part per mesh
-/// appended: a part's faces, edges and corners follow one another, and an
-/// edge refers only to faces and corners of its own part.
+/// appended, its faces, edges and corners in a run after the last part's.
 ///
 /// A mesh is always drawable: there is a normal for every position, the
 /// indices make whole triangles, each face is one or more of them, each
 /// edge two or more vertices, the parts take up every face, edge and
 /// corner in order, indices and edge vertices refer to vertices that exist
-/// and edges to faces and corners of their part, every corner is where the
-/// edges it ends end, every part of the mesh is within
+/// and edges to faces and corners of their own part, every corner is where
+/// the edges it ends end, every vector is within
 /// [`RenderMesh::MAX_VERTICES`] and the others, every normal is finite and
 /// every position within [`RenderMesh::MAX_POSITION`], so the renderer's
 /// bounds and depth range stay finite.
@@ -202,12 +201,13 @@ impl RenderMesh {
         }
     }
 
-    /// Checks that each edge's corners are where it starts and ends, and
-    /// that every corner ends an edge. The rest must hold already.
+    /// Checks that each edge's corners are where it starts and ends, to
+    /// the bit, and that every corner ends an edge. The rest must hold
+    /// already.
     fn check_corners(&self) -> Result<(), MeshError> {
         let mut ends_one = vec![false; self.corners.len()];
         for (polyline, corners) in self.polylines().zip(&self.edge_corners) {
-            // To the bit: `==` would take -0 for 0.
+            // `==` would take -0 for 0.
             let bits = |p: [f32; 3]| p.map(f32::to_bits);
             let at = |vertex: Option<&u32>| vertex.map(|&v| bits(self.positions[v as usize]));
             for (vertex, &corner) in [polyline.first(), polyline.last()].into_iter().zip(corners) {
@@ -312,23 +312,28 @@ impl RenderMesh {
         run(&self.face_ends, face)
     }
 
+    /// Where edge `edge`'s vertex indices are in
+    /// [`edge_vertices`](Self::edge_vertices), if the mesh has it.
+    pub fn polyline_range(&self, edge: usize) -> Option<Range<usize>> {
+        run(&self.edge_ends, edge)
+    }
+
     /// Edge `edge`'s vertex indices, if the mesh has it.
     pub fn polyline(&self, edge: usize) -> Option<&[u32]> {
-        Some(&self.edge_vertices[run(&self.edge_ends, edge)?])
+        Some(&self.edge_vertices[self.polyline_range(edge)?])
     }
 
     /// Each part's ranges, in the order they were appended.
     pub fn parts(&self) -> impl ExactSizeIterator<Item = RenderPart> {
-        // Where the runs of `ends` up to `n` end.
-        let end = |ends: &[u32], n: usize| n.checked_sub(1).map_or(0, |i| ends[i] as usize);
         let mut from = [0usize; 3];
         self.part_ends.iter().map(move |to| {
             let to = to.map(|n| n as usize);
+            let (faces, edges) = (&self.face_ends, &self.edge_ends);
             let part = RenderPart {
                 faces: from[0]..to[0],
-                indices: end(&self.face_ends, from[0])..end(&self.face_ends, to[0]),
+                indices: run_start(faces, from[0])..run_start(faces, to[0]),
                 edges: from[1]..to[1],
-                edge_vertices: end(&self.edge_ends, from[1])..end(&self.edge_ends, to[1]),
+                edge_vertices: run_start(edges, from[1])..run_start(edges, to[1]),
                 corners: from[2]..to[2],
             };
             from = to;
@@ -342,9 +347,8 @@ impl RenderMesh {
         self.append_at(other, Vec3::ZERO)
     }
 
-    /// Appends another mesh, its vertices and corners moved by `offset`,
-    /// and its parts after ours, its faces', edges' and corners' ids after
-    /// ours.
+    /// Appends another mesh's parts after ours, its vertices and corners
+    /// moved by `offset`.
     ///
     /// Fails, leaving `self` as it was, with [`MeshError::TooLarge`] if
     /// the result would have more vertices, indices, edges or any other
@@ -460,8 +464,13 @@ pub(crate) fn splits(ends: &[u32], total: usize, whole: impl Fn(usize) -> bool) 
 /// Where run `i` of those `ends` split items into is, if there is one.
 fn run(ends: &[u32], i: usize) -> Option<Range<usize>> {
     let end = *ends.get(i)? as usize;
-    let start = i.checked_sub(1).map_or(0, |before| ends[before] as usize);
-    Some(start..end)
+    Some(run_start(ends, i)..end)
+}
+
+/// Where run `i` of those `ends` split items into starts, where the runs
+/// before it end, for `i` up to `ends.len()`.
+fn run_start(ends: &[u32], i: usize) -> usize {
+    i.checked_sub(1).map_or(0, |before| ends[before] as usize)
 }
 
 /// The runs `ends` split `items` into, which they must ([`splits`]).
