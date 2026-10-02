@@ -11,7 +11,19 @@ use crate::highlight::{Highlights, VertexInstance};
 use crate::scene::{self, GRID_FADE_HEIGHTS, GridPlane};
 use crate::sketch::{FillVertex, LineInstance, PointInstance, SketchLayer, SketchScene};
 
-const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+/// The depth buffer's format on `device`: 32 bit float depth if it has
+/// it with a stencil, else 24 bits. The stencil marks which part less than
+/// opaque is the nearest at a pixel, see [`Renderer::render`].
+fn depth_format(device: &wgpu::Device) -> wgpu::TextureFormat {
+    if device
+        .features()
+        .contains(wgpu::Features::DEPTH32FLOAT_STENCIL8)
+    {
+        wgpu::TextureFormat::Depth32FloatStencil8
+    } else {
+        wgpu::TextureFormat::Depth24PlusStencil8
+    }
+}
 
 /// A quad per marker, an instance each: the origin's and the pivot's. See
 /// `vs_origin`.
@@ -524,6 +536,14 @@ struct DepthTarget {
     size: [u32; 2],
 }
 
+/// A pipeline's stencil state when it neither tests nor writes it.
+const NO_STENCIL: wgpu::StencilState = wgpu::StencilState {
+    front: wgpu::StencilFaceState::IGNORE,
+    back: wgpu::StencilFaceState::IGNORE,
+    read_mask: 0,
+    write_mask: 0,
+};
+
 /// What differs between the renderer's pipelines. They all share the scene
 /// shader, the uniform layout and the depth buffer.
 #[derive(Clone)]
@@ -539,6 +559,7 @@ struct Pass<'a> {
     write_mask: wgpu::ColorWrites,
     topology: wgpu::PrimitiveTopology,
     cull_mode: Option<wgpu::Face>,
+    stencil: wgpu::StencilState,
     /// Sets the shader's `SKETCH_DEPTH`: the sketch's layers are given
     /// their depth, pulled towards the camera, rather than drawn on top.
     sketch_depth: bool,
@@ -559,6 +580,7 @@ impl<'a> Pass<'a> {
             write_mask: wgpu::ColorWrites::ALL,
             topology: wgpu::PrimitiveTopology::TriangleList,
             cull_mode: None,
+            stencil: NO_STENCIL,
             sketch_depth: false,
         }
     }
@@ -655,6 +677,10 @@ pub struct Renderer {
     edges: wgpu::RenderPipeline,
     /// The edges again where the model hides them, dashed.
     hidden_edges: wgpu::RenderPipeline,
+    /// A part less than opaque's front faces' depth, marking where it's
+    /// the nearest in the stencil, and the edges it hides there, dashed.
+    glass_depth: wgpu::RenderPipeline,
+    hidden_by_glass: wgpu::RenderPipeline,
     /// Faces drawn again over themselves (`Equal`), hovered and selected.
     hover_face: wgpu::RenderPipeline,
     selected_face: wgpu::RenderPipeline,
@@ -672,6 +698,7 @@ pub struct Renderer {
     sketch_depth_tested: SketchPipelines,
     bind_group_layout: wgpu::BindGroupLayout,
     alphas: Alphas,
+    depth_format: wgpu::TextureFormat,
 }
 
 /// One scene's state on the GPU, from [`Renderer::prepare`] to
@@ -764,6 +791,7 @@ impl Renderer {
             }],
         });
         let alphas = Alphas::new(device, &part_layout);
+        let depth_format = depth_format(device);
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("varde scene"),
@@ -827,10 +855,10 @@ impl Renderer {
                     ..Default::default()
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
-                    format: DEPTH_FORMAT,
+                    format: depth_format,
                     depth_write_enabled: pass.depth_write,
                     depth_compare: pass.depth_compare,
-                    stencil: Default::default(),
+                    stencil: pass.stencil,
                     bias: Default::default(),
                 }),
                 multisample: Default::default(),
@@ -940,7 +968,24 @@ impl Renderer {
             write_mask: wgpu::ColorWrites::ALL,
             topology: wgpu::PrimitiveTopology::TriangleList,
             cull_mode: Some(wgpu::Face::Back),
+            stencil: NO_STENCIL,
             sketch_depth: false,
+        };
+        // Tested against the stencil reference by `compare`, and on a pass
+        // of both tests, `pass` done to it.
+        let tagged = |compare, pass| {
+            let face = wgpu::StencilFaceState {
+                compare,
+                fail_op: wgpu::StencilOperation::Keep,
+                depth_fail_op: wgpu::StencilOperation::Keep,
+                pass_op: pass,
+            };
+            wgpu::StencilState {
+                front: face,
+                back: face,
+                read_mask: 0xff,
+                write_mask: 0xff,
+            }
         };
         // Over the faces' own pixels and no others: the same vertex
         // shader, its position invariant, at exactly their depth.
@@ -964,6 +1009,17 @@ impl Renderer {
             mesh_depth: pipeline(Pass {
                 label: "varde faded mesh depth",
                 write_mask: wgpu::ColorWrites::empty(),
+                ..mesh.clone()
+            }),
+            // Marking the part's pixels where it's the nearest of the model
+            // so far with the stencil reference.
+            glass_depth: pipeline(Pass {
+                label: "varde glass depth",
+                write_mask: wgpu::ColorWrites::empty(),
+                stencil: tagged(
+                    wgpu::CompareFunction::Always,
+                    wgpu::StencilOperation::Replace,
+                ),
                 ..mesh.clone()
             }),
             // Drawn over its own depth, so only the nearest faces pass.
@@ -1015,6 +1071,14 @@ impl Renderer {
                 depth_compare: wgpu::CompareFunction::Greater,
                 ..Pass::overlay("varde hidden edges", "vs_hidden_edge", "fs_line")
             }),
+            // The same where the stencil has the reference: behind the
+            // part less than opaque nearest there.
+            hidden_by_glass: pipeline(Pass {
+                buffers: &edge_points,
+                depth_compare: wgpu::CompareFunction::Greater,
+                stencil: tagged(wgpu::CompareFunction::Equal, wgpu::StencilOperation::Keep),
+                ..Pass::overlay("varde edges hidden by glass", "vs_hidden_edge", "fs_line")
+            }),
             lines: pipeline(Pass {
                 buffers: &[segments],
                 ..Pass::overlay("varde sketch lines", "vs_line", "fs_line")
@@ -1062,6 +1126,7 @@ impl Renderer {
             },
             bind_group_layout,
             alphas,
+            depth_format,
         }
     }
 
@@ -1279,7 +1344,7 @@ impl Renderer {
 
         let size = frame.target_size.map(|s| s.max(1));
         if slot.depth.as_ref().map(|d| d.size) != Some(size) {
-            slot.depth = Some(create_depth(device, size));
+            slot.depth = Some(create_depth(device, self.depth_format, size));
         }
         result
     }
@@ -1296,9 +1361,10 @@ impl Renderer {
     /// outline, the selected edges and the hovered and selected vertices,
     /// if there are parts less than opaque; those parts far to near, each
     /// its back faces then its front faces, blended at its alpha without
-    /// writing depth; their front faces' depth, their hovered and
-    /// selected faces, then their edges again, over the glass they lie
-    /// on; the hovered edges' outline, the selected edges and the hovered
+    /// writing depth; their front faces' depth, far to near, each marking
+    /// in the stencil where it's the nearest and followed by the edges it
+    /// hides there, dashed at its alpha too; their hovered and selected
+    /// faces, then their edges again, over the glass they lie on; the hovered edges' outline, the selected edges and the hovered
     /// and selected vertices (again, if they were drawn under the glass);
     /// the origin marker and the pivot's; and the sketch being edited, or
     /// the extrude's layers if they weren't drawn yet. In a sketch
@@ -1334,7 +1400,10 @@ impl Renderer {
                     load: wgpu::LoadOp::Clear(1.0),
                     store: wgpu::StoreOp::Discard,
                 }),
-                stencil_ops: None,
+                stencil_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(0),
+                    store: wgpu::StoreOp::Discard,
+                }),
             }),
             timestamp_writes: None,
             occlusion_query_set: None,
@@ -1387,8 +1456,8 @@ impl Renderer {
 
         // Only the opaque parts have written depth so far, and nothing
         // above writes it after them: the edges they hide, of every part,
-        // are against them alone, so an edge behind a part less than
-        // opaque is seen through it rather than hidden. Then the visible
+        // are against them alone; an edge behind a part less than opaque
+        // is seen through it, and dashed over that below. Then the visible
         // edges of the parts less than opaque, under the faces in front of
         // them, which are drawn next and dim them.
         if !slot.faded
@@ -1416,7 +1485,10 @@ impl Renderer {
 
         // The parts less than opaque, far to near: each one's back faces,
         // then its front faces, over what's behind them. Then their front
-        // faces' depth, and their edges again, so the edges on the nearest
+        // faces' depth, a part at a time, far to near, each followed by
+        // the edges it hides, dashed at its alpha, over what the glass
+        // dimmed of them, so a body nearly opaque hides edges as an opaque
+        // one does. Then their edges again, so the edges on the nearest
         // faces show on them undimmed. The hover and the selection are
         // drawn under them too, against the opaque parts' depth, so what's
         // of them behind the glass shows through it, dimmed, as its edges
@@ -1433,10 +1505,18 @@ impl Renderer {
                     draw_faces(&mut pass, mesh, part..part + 1);
                 }
             }
-            pass.set_pipeline(&self.mesh_depth);
-            for &(part, _) in &draws.transparent {
+            for (i, &(part, step)) in draws.transparent.iter().enumerate() {
+                // Never 0, what the stencil is cleared to; repeating only
+                // past 255 parts less than opaque.
+                pass.set_stencil_reference(i as u32 % 255 + 1);
+                bind_faces(&mut pass, mesh);
+                pass.set_pipeline(&self.glass_depth);
                 draw_faces(&mut pass, mesh, part..part + 1);
+                if slot.hidden_edges {
+                    self.draw_hidden_by_glass(&mut pass, mesh, draws, step);
+                }
             }
+            bind_faces(&mut pass, mesh);
             self.draw_picked_faces(&mut pass, &slot.faces, true);
             self.draw_glass_edges(&mut pass, &self.edges, mesh, draws);
         }
@@ -1519,6 +1599,42 @@ impl Renderer {
             draw_edges(pass, pipeline, mesh, part..part + 1);
         }
     }
+
+    /// Records drawing the edges of every part of `mesh` hidden by a part
+    /// less than opaque whose front faces' depth was just written, where
+    /// it's the nearest of the model (the stencil reference), dashed, at
+    /// its alpha's step `step` times their own part's.
+    fn draw_hidden_by_glass(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        mesh: &GpuMesh,
+        draws: &PartDraws,
+        step: u32,
+    ) {
+        let opaque = self.alphas.opaque;
+        let runs = draws.opaque.iter().map(|run| (run.clone(), step));
+        let glass = draws
+            .transparent
+            .iter()
+            .map(|&(part, own)| (part..part + 1, product_step(step, own, opaque)));
+        for (parts, step) in runs.chain(glass) {
+            if step > 0 {
+                self.alphas.set(pass, step);
+                draw_edges(pass, &self.hidden_by_glass, mesh, parts);
+            }
+        }
+    }
+}
+
+/// The step of a table of alphas whose last step, `opaque`, is opaque,
+/// nearest the product of steps `a`'s and `b`'s alphas.
+fn product_step(a: u32, b: u32, opaque: u32) -> u32 {
+    if opaque == 0 {
+        return 0;
+    }
+    let product = u64::from(a) * u64::from(b) + u64::from(opaque / 2);
+    // At most `opaque` for steps within the table.
+    u32::try_from(product / u64::from(opaque)).map_or(opaque, |step| step.min(opaque))
 }
 
 /// Binds `mesh`'s buffers for drawing its faces.
@@ -2037,7 +2153,11 @@ impl HighlightBuffers {
     }
 }
 
-fn create_depth(device: &wgpu::Device, [width, height]: [u32; 2]) -> DepthTarget {
+fn create_depth(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    [width, height]: [u32; 2],
+) -> DepthTarget {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("varde depth"),
         size: wgpu::Extent3d {
@@ -2048,7 +2168,7 @@ fn create_depth(device: &wgpu::Device, [width, height]: [u32; 2]) -> DepthTarget
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: DEPTH_FORMAT,
+        format,
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
         view_formats: &[],
     });

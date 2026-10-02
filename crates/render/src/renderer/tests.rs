@@ -13,6 +13,17 @@ fn alpha_steps_are_the_nearest_of_the_table() {
 }
 
 #[test]
+fn alpha_steps_multiply_to_the_nearest_step() {
+    assert_eq!(product_step(255, 77, 255), 77);
+    assert_eq!(product_step(128, 128, 255), 64);
+    assert_eq!(product_step(0, 255, 255), 0);
+    assert_eq!(product_step(3, 3, 3), 3);
+    assert_eq!(product_step(1, 2, 3), 1);
+    // A table of a single step has none to multiply.
+    assert_eq!(product_step(0, 0, 0), 0);
+}
+
+#[test]
 fn a_part_less_than_opaque_is_never_drawn_invisible_on_a_short_table() {
     // A device whose buffers hold two steps, 0 and 1: a body at 10 or
     // 30 % is drawn opaque rather than not at all.

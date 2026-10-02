@@ -315,15 +315,19 @@ Outside a sketch:
 3. Opaque parts' edges, visible (`LessEqual`, pulled).
 4. Grid; finished sketches' lines.
 5. Hidden edges of every part, dashed (`Greater` against the opaque
-   depth only, so an edge behind glass counts as seen, not hidden).
+   depth only; an edge behind glass is dashed in step 9).
 6. Transparent parts' edges, visible against the opaque depth. They go
    before the transparent faces, so the faces in front of them dim them.
 7. The extrude's depth tested layers, if any, likewise dimmed by glass in
    front of them.
 8. Transparent parts, far to near: back faces then front faces, blended,
    depth tested, not writing depth.
-9. Transparent parts' front faces to depth only, then their hovered and
-   selected faces (`Equal`), then their edges again (`LessEqual`). The
+9. Transparent parts' front faces to depth only, far to near, each
+   marking in the stencil where it's nearest and followed by the edges
+   it hides there, dashed at its alpha over what it dimmed of them, so a
+   body nearly opaque hides edges as an opaque one does; then their
+   hovered and selected faces (`Equal`), then their edges again
+   (`LessEqual`). The
    edges on the nearest surface show crisp on top of the glass they lie
    on.
 10. Selected edges, the hover outline, then hovered and selected

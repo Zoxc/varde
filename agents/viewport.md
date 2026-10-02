@@ -279,9 +279,8 @@ faces' alpha and the edges' (visible and hidden) are multiplied by it.
 Outside a sketch, the opaque parts are drawn first as above, and their
 hovered and selected faces over them, their depth the only depth there
 is up to the glass: the hidden edges are drawn for
-every part against it, so an edge behind glass is seen, not dashed, and
-a transparent part's edges hidden by an opaque one are dashed at its
-alpha too; then the transparent parts' edges, visible against the
+every part against it, so a transparent part's edges hidden by an opaque
+one are dashed at its alpha too (an edge behind glass is dashed later); then the transparent parts' edges, visible against the
 opaque depth, under the glass in front of them, which dims them; the
 extrude's layers, if any, and the hovered edges' outline, the selected
 edges and the hovered and selected vertices, so what of them is behind
@@ -289,7 +288,17 @@ glass shows through it, dimmed; then each transparent part, far to near, its
 back faces (culled front, lit as seen from inside: `fs_mesh` flips the
 normal of a face that isn't front facing) then its front faces, blended
 at its alpha, depth tested, writing no depth; then their front faces'
-depth only (`mesh_depth`), their hovered and selected faces (see "The
+depth only (`glass_depth`), a part at a time far to near, each writing
+a stencil reference of its own (1 to 255, repeating) where it's the
+nearest of the model so far and, with hidden edges on, followed by every
+part's edges it hides there (`hidden_by_glass`: `Greater`, stencil
+`Equal`), dashed at its alpha times their own part's (`product_step`),
+over what it dimmed of them: an edge behind glass shows solid dimmed by
+it and dashed at its alpha, so a body nearly opaque hides edges much as
+an opaque one does, and one behind two layers of glass gets both layers'
+dashes. The depth buffer has a stencil for this:
+`Depth32FloatStencil8` where the device has it, else
+`Depth24PlusStencil8`. Then their hovered and selected faces (see "The
 highlight" below), and their edges again, so the edges on the nearest
 surface show undimmed on the glass they lie on; then the hovered edges'
 outline, the selected edges and the hovered and selected vertices

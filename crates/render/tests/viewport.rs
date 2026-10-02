@@ -2204,8 +2204,8 @@ fn yellow_near(pixels: &[[u8; 4]], x: u32, row: u32) -> f32 {
 fn a_transparent_bodys_back_edges_are_dimmed_and_its_front_edges_crisp() {
     // The cube at 50 %, its edges yellow: the near edge of its top face
     // is drawn again over the glass, at its alpha, while the bottom's,
-    // seen through the cube, is dimmed by the faces in front of it. Not
-    // hidden by them, so not dashed.
+    // seen through the cube, is dimmed by the faces in front of it, and
+    // dashed over that at the cube's alpha, as faint again as its own.
     let (camera, y, mesh) = cube_under_top_camera();
     let alpha = drawn_alpha(0.5);
     let render = |opacity| {
@@ -2236,19 +2236,23 @@ fn a_transparent_bodys_back_edges_are_dimmed_and_its_front_edges_crisp() {
         .map(|x| yellow_near(&glass, x, bottom))
         .collect();
     let dimmed = solid * alpha * (1.0 - alpha) * (1.0 - alpha);
-    for &c in &back {
-        assert!((c - dimmed).abs() < 0.1, "{dimmed} expected: {back:?}");
-    }
-    assert!(front > 2.0 * dimmed, "{front} not crisper than {dimmed}");
+    // Dimmed between the dashes, and dashed over that by the glass
+    // hiding them, at its alpha.
+    let least = back.iter().copied().fold(f32::MAX, f32::min);
+    let most = back.iter().copied().fold(0.0, f32::max);
+    assert!((least - dimmed).abs() < 0.05, "{dimmed} expected: {back:?}");
+    assert!(most > least + 0.05, "not dashed: {back:?}");
+    assert!(front > 2.0 * most, "{front} not crisper than {back:?}");
 }
 
 #[test]
-fn edges_behind_glass_are_seen_and_behind_an_opaque_body_dashed() {
+fn edges_behind_glass_are_seen_and_dashed_by_its_alpha() {
     // The cube's near edge under a thin plate over its middle, as in
     // `an_edge_of_a_cube_behind_another_body_is_dashed_where_its_hidden`:
-    // behind a plate at 50 % it's solid, dimmed by the plate; a 50 %
-    // cube's behind an opaque plate is dashed, half as opaque as an
-    // opaque cube's.
+    // behind a plate at 50 % it's solid, dimmed by the plate, and dashed
+    // at half the strength over that; behind one at 95 % it's much as
+    // behind an opaque one; a 50 % cube's behind an opaque plate is
+    // dashed, half as opaque as an opaque cube's.
     let (camera, y, mut mesh) = cube_under_top_camera();
     mesh.append(&block(
         Vec3::new(-1.0, -3.0, 1.0),
@@ -2263,7 +2267,12 @@ fn edges_behind_glass_are_seen_and_behind_an_opaque_body_dashed() {
         };
         render_scaled(&camera, &mesh, extras, FULL, FULL_CLIP, 1.0)
     };
-    let (Some(through), Some(dashes)) = (render(vec![1.0, 0.5]), render(vec![0.5, 1.0])) else {
+    let (Some(half), Some(nearly), Some(opaque), Some(dashes)) = (
+        render(vec![1.0, 0.5]),
+        render(vec![1.0, 0.95]),
+        render(vec![1.0, 1.0]),
+        render(vec![0.5, 1.0]),
+    ) else {
         eprintln!("no GPU adapter, skipping");
         return;
     };
@@ -2271,10 +2280,18 @@ fn edges_behind_glass_are_seen_and_behind_an_opaque_body_dashed() {
     let row = in_perspective(&camera, Vec3::new(0.0, y, 0.0)).y as u32;
     let plate = [-1.0, 1.0].map(|x| in_perspective(&camera, Vec3::new(x, y, 1.05)).x as u32);
     let under = plate[0] + 4..plate[1] - 4;
-    let seen = yellow_along_full(&through, row, under.clone());
+    let seen = yellow_along_full(&half, row, under.clone());
+    let least = seen.iter().copied().fold(1.0, f32::min);
     let most = seen.iter().copied().fold(0.0, f32::max);
-    for &c in &seen {
-        assert!(c > 0.15 && most - c < 0.05, "{seen:?}");
+    assert!(least > 0.15 && most > least + 0.1, "{seen:?}");
+    let period = (HIDDEN_DASH[0] + HIDDEN_DASH[1]) as usize;
+    for (x, pair) in seen.iter().zip(&seen[period..]).enumerate() {
+        assert!((pair.0 - pair.1).abs() < 0.08, "{x}: {seen:?}");
+    }
+    let nearly = yellow_along_full(&nearly, row, under.clone());
+    let opaque = yellow_along_full(&opaque, row, under.clone());
+    for (n, o) in nearly.iter().zip(&opaque) {
+        assert!((n - o).abs() < 0.08, "{nearly:?} against {opaque:?}");
     }
     dashed(
         &yellow_along_full(&dashes, row, under),
