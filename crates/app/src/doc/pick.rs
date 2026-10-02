@@ -62,9 +62,9 @@ impl Doc {
     /// feature selected in the Timeline.
     pub(crate) fn click_model(&mut self, pick: Option<Pick>, add: bool, double: bool) {
         // Picking a plane, a click on a flat face asks for a sketch on it
-        // instead (`Edit::SketchOnFace`), and one elsewhere does nothing.
+        // instead (`Edit::FacePicked`), and one elsewhere does nothing.
         if !self.picks()
-            || self.picking_plane
+            || self.picking_plane.is_some()
             || pick.is_some_and(|pick| pick.model != self.feed.model())
         {
             return;
@@ -164,22 +164,24 @@ impl Doc {
         self.pick.built = Some(key);
     }
 
-    /// What's hovered as it's highlighted: while picking the plane for a
-    /// new sketch, only a flat face, which a click puts the sketch on (the
-    /// status bar says why a curved one isn't).
+    /// What's hovered as it's highlighted: while picking a plane, only a
+    /// face that can take the sketch, which a click puts it on (the
+    /// status bar says why another isn't): flat, and for a sketch whose
+    /// plane is changed, of a body made before it.
     fn shown_hover(&self) -> Option<Pick> {
         let index = || self.feed.pick_index();
-        (self.pick.hover).filter(|pick| match pick.target {
-            _ if !self.picking_plane => true,
-            Picked::Face(face) => index().face_placement(face).is_some(),
-            _ => false,
+        let picking = self.picking_plane.as_ref();
+        (self.pick.hover).filter(|pick| match (picking, pick.target) {
+            (None, _) => true,
+            (Some(picking), Picked::Face(face)) => picking.pick.takes(index(), face),
+            (Some(_), _) => false,
         })
     }
 
     /// Picking for the viewport, if the cursor picks the model: faces
     /// and edges and the snap points of what it's over while measuring,
-    /// only faces while picking the plane for a new sketch, else what the
-    /// selection's mode takes.
+    /// only faces while picking a plane, else what the selection's mode
+    /// takes.
     pub(crate) fn model_picking(&self) -> Option<ModelPicking<'_>> {
         let measuring = self.measure.is_some();
         self.picks().then(|| ModelPicking {
@@ -188,13 +190,15 @@ impl Doc {
             hovered_snap: self.pick.hover().and_then(|pick| pick.snap),
             picks: if measuring {
                 Picks::All
-            } else if self.picking_plane {
+            } else if self.picking_plane.is_some() {
                 Picks::Faces
             } else {
                 self.pick.selection.mode().picks()
             },
             snaps: measuring,
-            planes: self.picking_plane && !measuring,
+            planes: (self.picking_plane.as_ref())
+                .filter(|_| !measuring)
+                .map(|picking| &picking.pick),
         })
     }
 

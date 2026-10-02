@@ -88,21 +88,21 @@ fn set_keys_open_and_close_sets_and_picking_or_escape_closes_them() {
     // S in the open Create set picks the plane, and closes it.
     key_in(&mut doc, letter("q"));
     key_in(&mut doc, keyboard::Key::Character("s".into()));
-    assert!(doc.picking_plane);
+    assert!(doc.picking_plane.is_some());
     assert_eq!(doc.rail.open, None);
 
     // Esc closes the list before anything else.
     key_in(&mut doc, letter("q"));
     doc.look(Look::Escape);
     assert_eq!(doc.rail.open, None);
-    assert!(doc.picking_plane);
+    assert!(doc.picking_plane.is_some());
 }
 
 #[test]
 fn entering_or_leaving_a_sketch_closes_the_list_and_its_letters_pick_its_tools() {
     let mut doc = untitled();
     doc.look(Look::Rail(RailLook::Open(0)));
-    doc.update(Edit::NewSketch(OriginPlane::XY));
+    doc.update(Edit::PlanePicked(OriginPlane::XY));
     assert!(doc.sketch.is_some());
     assert_eq!(doc.rail.open, None);
 
@@ -184,6 +184,6 @@ fn enter_picks_the_row_the_keys_are_on() {
         keyboard::Key::Named(keyboard::key::Named::ArrowUp),
     );
     key_in(&mut doc, keyboard::Key::Named(keyboard::key::Named::Enter));
-    assert!(doc.picking_plane);
+    assert!(doc.picking_plane.is_some());
     assert_eq!(doc.rail.open, None);
 }

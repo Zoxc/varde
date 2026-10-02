@@ -150,7 +150,7 @@ impl Doc {
         if self.measure.take().is_some() || self.sketch.is_some() || self.operating() {
             return;
         }
-        self.picking_plane = false;
+        self.picking_plane = None;
         self.measure = Some(MeasureSession::new());
     }
 

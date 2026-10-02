@@ -245,7 +245,7 @@ impl Doc {
         {
             return;
         }
-        self.picking_plane = false;
+        self.picking_plane = None;
         let document = self.editor.document();
         let selected = self.selected_feature.filter(|&id| is_sketch(document, id));
         let mut session = RevolveSession::new(document, selected);
@@ -266,7 +266,7 @@ impl Doc {
         if self.sketch.is_some() || !self.editable() {
             return;
         }
-        self.picking_plane = false;
+        self.picking_plane = None;
         self.extrude = None;
         self.selected_feature = Some(id);
         self.revolve = Some(RevolveSession::editing(document, id, revolve));

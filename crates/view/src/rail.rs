@@ -193,6 +193,7 @@ impl Entry {
 /// What's in use, which the rail highlights.
 #[derive(Debug, Clone, Copy)]
 struct Using {
+    /// Whether the plane for a new sketch is being picked.
     picking_plane: bool,
     extruding: bool,
     revolving: bool,
@@ -206,7 +207,9 @@ impl Using {
     fn of(state: &DocumentState<'_>) -> Self {
         let sketch = state.sketch.as_ref();
         Self {
-            picking_plane: state.picking_plane,
+            picking_plane: state
+                .picking_plane
+                .is_some_and(|pick| pick.sketch.is_none()),
             extruding: state.extrude.is_some(),
             revolving: state.revolve.is_some(),
             measuring: state.measure.is_some(),

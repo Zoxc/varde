@@ -170,7 +170,7 @@ fn s_then_a_click_on_the_plates_top_starts_a_sketch_there() {
     let body = doc.editor.document().bodies()[0].id;
     let revision = doc.editor.revision();
     key_in(&mut doc, letter("s"));
-    assert!(doc.picking_plane);
+    assert!(doc.picking_plane.is_some());
     let bar = status_bar(&doc);
     assert!(bar.iter().any(|t| t.contains("flat face")), "{bar:?}");
 
@@ -181,7 +181,7 @@ fn s_then_a_click_on_the_plates_top_starts_a_sketch_there() {
             _ => None,
         })
         .collect();
-    let [Edit::SketchOnFace(face)] = edits[..] else {
+    let [Edit::FacePicked(face)] = edits[..] else {
         panic!("{sent:?}");
     };
     assert!(
@@ -193,7 +193,7 @@ fn s_then_a_click_on_the_plates_top_starts_a_sketch_there() {
     assert_eq!(face.body, body);
     assert_eq!(face.near.z, 10.0);
     take(&mut doc, sent);
-    assert!(!doc.picking_plane);
+    assert!(doc.picking_plane.is_none());
     let id = edited(&doc).expect("the sketch is entered");
     assert!(matches!(plane(&doc, id), Plane::Face(f) if f.body == body));
 
@@ -229,7 +229,7 @@ fn esc_while_picking_leaves_no_trace() {
     let revision = doc.editor.revision();
     doc.look(Look::PickPlane);
     doc.look(Look::Escape);
-    assert!(!doc.picking_plane);
+    assert!(doc.picking_plane.is_none());
     assert_eq!(doc.editor.revision(), revision);
     assert_eq!(doc.notice, None);
     // A click once picking ended selects, as before.
@@ -240,7 +240,7 @@ fn esc_while_picking_leaves_no_trace() {
     );
     // A face click that was on its way when picking ended does nothing.
     let face = face_on(&doc, DVec3::Z, 10.0);
-    doc.update(Edit::SketchOnFace(face));
+    doc.update(Edit::FacePicked(face));
     assert_eq!(doc.editor.revision(), revision);
 }
 
@@ -265,11 +265,11 @@ fn a_curved_face_isnt_highlighted_or_sketched_on() {
     let bar = status_bar(&doc);
     assert!(bar.iter().any(|t| t == varde_view::CURVED_FACE), "{bar:?}");
     let picking = doc.model_picking().unwrap();
-    assert!(picking.planes && !picking.takes(pick.target));
+    assert!(picking.planes.is_some() && !picking.takes(pick.target));
 
     // Asked for anyway, it's refused, and says why.
     let face = doc.feed.pick_index().face_ref(wall, near).unwrap();
-    doc.update(Edit::SketchOnFace(face));
+    doc.update(Edit::FacePicked(face));
     assert_eq!(doc.editor.revision(), revision);
     assert_eq!(edited(&doc), None);
     assert_eq!(doc.notice.as_deref(), Some(varde_view::CURVED_FACE));
@@ -474,7 +474,7 @@ fn a_sketch_on_a_tilted_face_is_placed_up_and_extruded() {
     };
     let face = doc.feed.pick_index().face_ref(wall, near).unwrap();
     doc.look(Look::PickPlane);
-    doc.update(Edit::SketchOnFace(face));
+    doc.update(Edit::FacePicked(face));
     let id = edited(&doc).expect("the sketch is entered");
     let placement = doc.sketch_state().unwrap().placement;
     assert_eq!(placement, Placement::on_plane(DVec3::from(n), d).unwrap());
@@ -516,10 +516,11 @@ fn a_sketch_on_a_tilted_face_is_placed_up_and_extruded() {
 }
 
 #[test]
-fn a_sketch_whose_face_is_gone_is_shown_but_not_edited() {
+fn a_sketch_whose_face_is_gone_fails_and_entering_it_asks_for_a_plane() {
     let (mut doc, id, requests) = on_the_top();
     doc.look(Look::FinishSketch);
     circle_in(&mut doc, &requests, id, DVec2::new(20.0, 10.0), 4.0);
+    let drawn = sketch_of(&doc, id);
     // Its face's body goes with the plate's extrude; the sketch stays.
     let extrude = doc.editor.document().features()[1].id;
     doc.apply(Command::RemoveFeature(extrude));
@@ -534,18 +535,77 @@ fn a_sketch_whose_face_is_gone_is_shown_but_not_edited() {
     assert!(doc.feed.sketches().points().is_empty());
     assert!(!doc.extrudable());
 
-    // Listed in the Timeline, failing.
+    // Listed in the Timeline, failing, its note naming the face as it
+    // can: its maker and body are gone.
     let state = doc.state(false, Mode::Light, varde_view::ViewOptions::default());
     assert!(state.failed.iter().any(|(f, _)| *f == id));
     drop(state);
+    doc.look(Look::SelectPanel(varde_view::Panel::Timeline));
+    let shown = all_texts(&doc);
+    assert!(shown.iter().any(|t| t == "on a face"), "{shown:?}");
 
+    // Entering it asks for a plane first, saying why.
+    let revision = doc.editor.revision();
     doc.look(Look::EditFeature(id));
     assert_eq!(edited(&doc), None);
-    let notice = doc.notice.clone().expect("it says why");
-    assert!(
-        notice.contains(&why) && notice.contains("Sketch 2"),
-        "{notice}"
-    );
+    assert!(doc.picking_plane.is_some());
     let bar = status_bar(&doc);
-    assert!(bar.iter().any(|t| t.contains(&why)), "{bar:?}");
+    assert!(
+        bar.iter()
+            .any(|t| t.contains(&why) && t.contains("Sketch 2") && t.contains("Pick a plane")),
+        "{bar:?}"
+    );
+    // `Esc` leaves it as it is.
+    doc.look(Look::Escape);
+    assert!(doc.picking_plane.is_none());
+    assert_eq!(edited(&doc), None);
+    assert_eq!(doc.editor.revision(), revision);
+
+    // A plane picked puts it there, one undo step, its drawing kept, and
+    // it's entered.
+    doc.look(Look::EditFeature(id));
+    doc.update(Edit::PlanePicked(OriginPlane::XY));
+    assert_eq!(plane(&doc, id), Plane::Origin(OriginPlane::XY));
+    assert_eq!(sketch_of(&doc, id), drawn);
+    assert_eq!(edited(&doc), Some(id));
+    assert_eq!(
+        doc.sketch_state().unwrap().placement,
+        OriginPlane::XY.placement()
+    );
+    doc.look(Look::FinishSketch);
+    answer(&mut doc, &requests);
+    assert!(doc.feed.failed_features().iter().all(|(f, _)| *f != id));
+    doc.update(Edit::Undo);
+    assert_eq!(doc.editor.revision(), revision);
+    assert!(matches!(plane(&doc, id), Plane::Face(_)));
 }
+
+/// The sketch feature `id`'s drawing.
+fn sketch_of(doc: &Doc, id: FeatureId) -> varde_sketch::Sketch {
+    match &doc.editor.document().feature(id).unwrap().kind {
+        FeatureKind::Sketch { sketch, .. } => sketch.clone(),
+        _ => panic!("not a sketch"),
+    }
+}
+
+/// Every text on `doc`'s screen.
+fn all_texts(doc: &Doc) -> Vec<String> {
+    let mut renderer = varde_view::probe::renderer();
+    let mut ui = shown(doc.view_in(Mode::Light), SIZE, &mut renderer);
+    (texts(&mut ui, &renderer).into_iter())
+        .map(|text| text.text)
+        .collect()
+}
+
+/// Where the middle of the first text reading `label` is on `doc`'s
+/// screen.
+fn text_at(doc: &Doc, label: &str) -> iced::Point {
+    let mut renderer = varde_view::probe::renderer();
+    let mut ui = shown(doc.view_in(Mode::Light), SIZE, &mut renderer);
+    let found = (texts(&mut ui, &renderer).into_iter())
+        .find(|text| text.text == label)
+        .unwrap_or_else(|| panic!("no {label:?} on the screen"));
+    found.bounds.center()
+}
+
+mod change;

@@ -9,24 +9,26 @@ mod shape;
 mod spline;
 mod typed;
 
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use glam::DVec2;
 use varde_document::{
-    FaceRef, Feature, FeatureId, FeatureKind, Generation, Placement, Plane, Revision, Sketch,
+    Command, FaceRef, Feature, FeatureId, FeatureKind, Generation, Placement, Plane, Revision,
+    Sketch,
 };
 use varde_expr::Value;
 use varde_render::{Camera, Projection};
 use varde_sketch::{Analysis, Id, Profiles, Rejected, Role, SketchEdit, TooComplex};
 use varde_view::typed::{DEFAULT_SIDES, Field};
 use varde_view::{
-    ActiveTool, CURVED_FACE, RowMenu, SketchState, Snap, Target, Tool, ToolClick, ValueField,
-    ValueTarget,
+    ActiveTool, CURVED_FACE, PlanePick, RowMenu, SketchState, Snap, Target, Tool, ToolClick,
+    ValueField, ValueTarget,
 };
 
 use super::extrude::is_sketch;
-use super::{Doc, HOME_TARGET, home_camera};
+use super::{Change, Doc, HOME_TARGET, home_camera};
 pub(crate) use dimension::Focus;
 #[cfg(test)]
 pub(crate) use propose::CHECKING;
@@ -308,9 +310,21 @@ pub(crate) struct Drag {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Placed {
     pub(crate) feature: FeatureId,
+    /// The plane it was put on: if an undo takes it off, the placement
+    /// is no longer its.
+    pub(crate) plane: Plane,
     pub(crate) placement: Placement,
     /// The editor's generation once the sketch was added.
     pub(crate) generation: Generation,
+}
+
+/// A plane being picked: what for, and whether the sketch whose plane is
+/// changed is edited once that's done or backed out of (it was left for
+/// it, or entered while it wasn't placed).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct PickingPlane {
+    pub(crate) pick: PlanePick,
+    pub(crate) enter: bool,
 }
 
 /// The share of the Sketch tab the Geometry list takes until the divider
@@ -322,12 +336,134 @@ pub(crate) const GEOMETRY_SHARE: f32 = 0.6;
 const FRAME_MARGIN: f32 = 1.5;
 
 impl Doc {
-    /// Starts picking the plane for a new sketch, or backs out of it.
-    /// Only outside a sketch and an operation, in a document that can be
-    /// edited.
+    /// Starts picking the plane for a new sketch, or backs out of
+    /// picking a plane. Only outside a sketch and an operation, in a
+    /// document that can be edited.
     pub(crate) fn pick_plane(&mut self) {
-        self.picking_plane =
-            !self.picking_plane && self.editable() && self.sketch.is_none() && !self.operating();
+        if self.picking_plane.is_some() {
+            self.stop_picking_plane();
+        } else if self.editable() && self.sketch.is_none() && !self.operating() {
+            self.picking_plane = Some(PickingPlane {
+                pick: PlanePick::new_sketch(),
+                enter: false,
+            });
+        }
+    }
+
+    /// Starts picking another plane for the sketch feature `id`, in a
+    /// document that can be edited, outside an operation: from its
+    /// Timeline row, or while it's edited, which is left for it and
+    /// entered again once a plane is picked or picking is backed out of.
+    /// Not while another sketch is edited.
+    pub(crate) fn change_plane(&mut self, id: FeatureId) {
+        if !self.editable()
+            || self.operating()
+            || (self.sketch.as_ref()).is_some_and(|session| session.feature != id)
+        {
+            return;
+        }
+        let Some(pick) = PlanePick::change(self.editor.document(), id, None) else {
+            return;
+        };
+        let enter = self.sketch.is_some();
+        self.finish_sketch();
+        self.selected_feature = Some(id);
+        self.picking_plane = Some(PickingPlane { pick, enter });
+    }
+
+    /// Keeps the plane being picked for a sketch in step with the
+    /// document: which faces take it may change with an undo, and it goes
+    /// with the sketch, or across a replacement, where its id may name
+    /// another.
+    pub(crate) fn prune_plane_pick(&mut self, replaced: bool) {
+        let Some(picking) = &mut self.picking_plane else {
+            return;
+        };
+        let Some((id, _)) = picking.pick.sketch else {
+            return;
+        };
+        let failed = picking.pick.failed.take();
+        match PlanePick::change(self.editor.document(), id, failed).filter(|_| !replaced) {
+            Some(pick) => picking.pick = pick,
+            None => self.picking_plane = None,
+        }
+    }
+
+    /// Backs out of picking a plane, leaving the document as it was: the
+    /// sketch left for it is edited again, if it's placed.
+    fn stop_picking_plane(&mut self) {
+        let Some(picking) = self.picking_plane.take() else {
+            return;
+        };
+        if let (true, Some((id, _))) = (picking.enter, picking.pick.sketch)
+            && self.placement(id).is_some()
+        {
+            self.enter_sketch(id);
+        }
+    }
+
+    /// Takes the plane picked: a new sketch on it, or the sketch whose
+    /// plane is changed put on it, one undo step. A face is found in the
+    /// model shown, and must take the sketch there (see
+    /// [`PlanePick::refusal`]): if it doesn't, picking goes on and the
+    /// status bar says why. An origin plane is taken for a new sketch
+    /// without picking (the toolbar's buttons); a face only while picking:
+    /// a click sent before picking ended may come after.
+    pub(crate) fn plane_picked(&mut self, plane: Plane) {
+        let Some(picking) = self.picking_plane.take() else {
+            if let Plane::Origin(_) = plane {
+                self.change(Change::NewSketch(plane));
+            }
+            return;
+        };
+        let Some((feature, _)) = picking.pick.sketch.clone() else {
+            self.change(Change::NewSketch(plane));
+            return;
+        };
+        let placed = match &plane {
+            Plane::Origin(_) => None,
+            Plane::Face(face) => match self.face_placement(face, Some(&picking.pick)) {
+                Ok(placement) => Some(placement),
+                Err(why) => {
+                    self.notice = Some(why.into_owned());
+                    self.picking_plane = Some(picking);
+                    return;
+                }
+            },
+        };
+        self.change(Change::SetPlane {
+            feature,
+            plane,
+            placed,
+            enter: picking.enter,
+        });
+    }
+
+    /// Puts the sketch `feature` on `plane`, one undo step, its drawing
+    /// as it is in its own coordinates, `placed` there if that's a face
+    /// (see [`Doc::placement`]); then edits it if `enter`.
+    pub(crate) fn set_sketch_plane(
+        &mut self,
+        feature: FeatureId,
+        plane: Plane,
+        placed: Option<Placement>,
+        enter: bool,
+    ) {
+        let before = self.editor.revision();
+        self.apply(Command::SetSketchPlane { feature, plane });
+        if self.editor.revision() != before
+            && let Some(placement) = placed
+        {
+            self.placed = Some(Placed {
+                feature,
+                plane,
+                placement,
+                generation: self.editor.generation(),
+            });
+        }
+        if enter {
+            self.enter_sketch(feature);
+        }
     }
 
     /// Adds a sketch on `plane` and edits it, unless that's refused. A
@@ -335,13 +471,13 @@ impl Doc {
     /// placement is worked out from it at once, as regenerating will
     /// (see [`Doc::placement`]), so the session starts facing it.
     pub(crate) fn new_sketch(&mut self, plane: Plane) {
-        self.picking_plane = false;
+        self.picking_plane = None;
         let placed = match plane {
             Plane::Origin(_) => None,
-            Plane::Face(face) => match self.face_placement(&face) {
+            Plane::Face(face) => match self.face_placement(&face, None) {
                 Ok(placement) => Some(placement),
                 Err(why) => {
-                    self.notice = Some(why.to_owned());
+                    self.notice = Some(why.into_owned());
                     return;
                 }
             },
@@ -355,6 +491,7 @@ impl Doc {
                 if let Some(placement) = placed {
                     self.placed = Some(Placed {
                         feature,
+                        plane,
                         placement,
                         generation: self.editor.generation(),
                     });
@@ -368,7 +505,7 @@ impl Doc {
     /// picks the model, outside picking a plane: what `S` puts a new
     /// sketch on.
     pub(crate) fn selected_face(&self) -> Option<FaceRef> {
-        (self.picks() && !self.picking_plane)
+        (self.picks() && self.picking_plane.is_none())
             .then(|| self.pick.selection.single_face())
             .flatten()
     }
@@ -376,21 +513,28 @@ impl Doc {
     /// Where a sketch on `face` goes, as the model shown has the face:
     /// [`Placement::on_plane`] of its plane, the bits regenerating will
     /// place it by. Refused, why, if the face isn't found there (the
-    /// cursor doesn't pick that model), isn't flat, or is too far out to
-    /// sketch on.
-    fn face_placement(&self, face: &FaceRef) -> Result<Placement, &'static str> {
+    /// cursor doesn't pick that model), isn't flat, can't take the sketch
+    /// `pick` is for, or is too far out to sketch on.
+    fn face_placement(
+        &self,
+        face: &FaceRef,
+        pick: Option<&PlanePick>,
+    ) -> Result<Placement, Cow<'static, str>> {
         if !self.picks() {
-            return Err("The model shown is out of date: try again once it's regenerated");
+            return Err("The model shown is out of date: try again once it's regenerated".into());
         }
         let index = self.feed.pick_index();
         let found = index
             .find_face(face.body, &face.key, face.near)
             .ok_or("That face isn't in the model shown")?;
+        if let Some(why) = pick.and_then(|pick| pick.refusal(index, found)) {
+            return Err(why);
+        }
         let placement = index.face_placement(found).ok_or(CURVED_FACE)?;
         if placement.valid() {
             Ok(placement)
         } else {
-            Err("That face is too far out to sketch on")
+            Err("That face is too far out to sketch on".into())
         }
     }
 
@@ -409,6 +553,7 @@ impl Doc {
             Plane::Face(_) => {
                 let pending = self.placed.filter(|placed| {
                     placed.feature == id
+                        && placed.plane == *plane
                         && (self.feed.generation()).is_none_or(|shown| shown < placed.generation)
                 });
                 match pending {
@@ -440,8 +585,12 @@ impl Doc {
     /// placed: the camera turns to face it, the model fades behind it,
     /// and the Sketch tab takes the Timeline's place. It stays selected
     /// in the Timeline for after, and leaving it turns the camera back to
-    /// the view before. A sketch on a face that isn't placed isn't
-    /// edited, and the status bar says why.
+    /// the view before. A sketch on a face that failed to be placed (its
+    /// face is gone, or isn't flat) is put on another plane first, in a
+    /// document that can be edited: picking it starts, the status bar
+    /// saying why, and the sketch is entered once one is picked (`Esc`
+    /// leaves it as it is). Otherwise one that isn't placed isn't edited,
+    /// and the status bar says why.
     pub(crate) fn enter_sketch(&mut self, id: FeatureId) {
         let Some(feature) = self.editor.document().feature(id) else {
             return;
@@ -450,13 +599,25 @@ impl Doc {
             return;
         }
         let Some(placement) = self.placement(id) else {
-            let why = (self.feed.failed_features().iter())
+            let failed = (self.feed.failed_features().iter())
                 .find(|(failed, _)| *failed == id)
-                .map_or("it isn't placed yet", |(_, why)| why.as_str());
+                .map(|(_, why)| why.clone());
+            if let Some(why) = &failed
+                && self.editable()
+            {
+                let pick = PlanePick::change(self.editor.document(), id, Some(why.clone()));
+                self.finish_sketch();
+                self.extrude = None;
+                self.revolve = None;
+                self.selected_feature = Some(id);
+                self.picking_plane = pick.map(|pick| PickingPlane { pick, enter: true });
+                return;
+            }
+            let why = failed.as_deref().unwrap_or("it isn't placed yet");
             self.notice = Some(format!("Can't edit {}: {why}", feature.name));
             return;
         };
-        self.picking_plane = false;
+        self.picking_plane = None;
         self.extrude = None;
         self.revolve = None;
         self.selected_feature = Some(id);
@@ -526,8 +687,8 @@ impl Doc {
             self.file_menu = false;
         } else if self.view_menu {
             self.view_menu = false;
-        } else if self.picking_plane {
-            self.picking_plane = false;
+        } else if self.picking_plane.is_some() {
+            self.stop_picking_plane();
         } else if self.extrude.is_some() {
             self.extrude = None;
         } else if self.revolve.is_some() {

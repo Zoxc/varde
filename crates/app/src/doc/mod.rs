@@ -100,8 +100,9 @@ pub(crate) struct Doc {
     pub(crate) view_menu: bool,
     /// The removal the user is asked about, if one is: see [`Doc::remove`].
     pub(crate) deleting: Option<Deleting>,
-    /// Whether the plane for a new sketch is being picked.
-    pub(crate) picking_plane: bool,
+    /// The plane being picked, if one is: for a new sketch, or for the
+    /// sketch whose plane is changed.
+    pub(crate) picking_plane: Option<sketch::PickingPlane>,
     /// The editor's [`lineage`](varde_document::Editor::lineage) as of
     /// the last [`Doc::sync`]: the ids held across edits (the feature
     /// selected, the sessions') name things in it, see [`Doc::prune`] and
@@ -241,7 +242,7 @@ impl Doc {
             file_menu: false,
             view_menu: false,
             deleting: None,
-            picking_plane: false,
+            picking_plane: None,
             lineage,
             selected_feature: None,
             row_menu: None,
@@ -282,6 +283,7 @@ impl Doc {
         }
         self.prune_deleting();
         self.prune(replaced);
+        self.prune_plane_pick(replaced);
         self.prune_extrude(replaced);
         self.prune_revolve(replaced);
         self.prune_measure(replaced);
@@ -377,18 +379,8 @@ impl Doc {
             Edit::DismissRefusedEdit => self.refused_edit = None,
             Edit::RemoveBody(id) => self.remove(Removable::Body(id)),
             Edit::ToggleVisible(id) => self.change(Change::ToggleVisible(id)),
-            // Not another plane picked while the new sketch waits.
-            Edit::NewSketch(plane) => {
-                self.picking_plane = false;
-                self.change(Change::NewSketch(Plane::Origin(plane)));
-            }
-            Edit::SketchOnFace(face) => {
-                // Only while picking the plane: a click sent before it
-                // ended may come after.
-                if std::mem::take(&mut self.picking_plane) {
-                    self.change(Change::NewSketch(Plane::Face(face)));
-                }
-            }
+            Edit::PlanePicked(plane) => self.plane_picked(Plane::Origin(plane)),
+            Edit::FacePicked(face) => self.plane_picked(Plane::Face(face)),
             Edit::SketchOnSelection => {
                 if let Some(face) = self.selected_face() {
                     self.change(Change::NewSketch(Plane::Face(face)));
@@ -460,6 +452,12 @@ impl Doc {
                 }
             }
             Change::NewSketch(plane) => self.new_sketch(plane),
+            Change::SetPlane {
+                feature,
+                plane,
+                placed,
+                enter,
+            } => self.set_sketch_plane(feature, plane, placed, enter),
             // Nothing if it's as it was: the editor adds no undo step.
             Change::SetOpacity(id, opacity) => self.apply(Command::SetOpacity(id, opacity)),
             Change::SetUnits(units) => self.apply(Command::SetUnits(units)),
@@ -516,6 +514,7 @@ impl Doc {
                 | Look::EditFeature(_)
                 | Look::FinishSketch
                 | Look::PickPlane
+                | Look::ChangePlane(_)
         ) {
             self.close_value();
         }
@@ -560,6 +559,7 @@ impl Doc {
             Look::SelectTool(_)
                 | Look::ToggleConstrain
                 | Look::PickPlane
+                | Look::ChangePlane(_)
                 | Look::StartExtrude
                 | Look::StartRevolve
                 | Look::StartMeasure
@@ -570,7 +570,7 @@ impl Doc {
         // Another tool leaves the measure tool.
         if matches!(
             message,
-            Look::PickPlane | Look::StartExtrude | Look::StartRevolve | Look::EditFeature(_)
+            Look::PickPlane | Look::ChangePlane(_) | Look::StartExtrude | Look::StartRevolve | Look::EditFeature(_)
         ) {
             self.measure = None;
         }
@@ -584,6 +584,7 @@ impl Doc {
             // entering or leaving a sketch may come after.
             Look::SelectPanel(panel) => self.panel = panel.for_sketching(self.sketch.is_some()),
             Look::PickPlane => self.pick_plane(),
+            Look::ChangePlane(id) => self.change_plane(id),
             Look::EditFeature(id) => match self.editor.document().feature(id).map(|f| &f.kind) {
                 Some(FeatureKind::Extrude(_)) => self.edit_extrude(id),
                 Some(FeatureKind::Revolve(_)) => self.edit_revolve(id),
@@ -901,7 +902,7 @@ impl Doc {
             peek,
             mode,
             options,
-            picking_plane: self.picking_plane,
+            picking_plane: self.picking_plane.as_ref().map(|picking| &picking.pick),
             selected_feature: self.selected_feature,
             row_menu: self.row_menu,
             sketch: self.sketch_state(),
@@ -943,6 +944,15 @@ pub(crate) enum Change {
     ToggleFeatureVisible(FeatureId),
     SetOpacity(BodyId, Opacity),
     NewSketch(Plane),
+    /// Puts the sketch `feature` on `plane`, where it's `placed` if
+    /// that's a face (as worked out where it was picked), and edits it if
+    /// `enter`.
+    SetPlane {
+        feature: FeatureId,
+        plane: Plane,
+        placed: Option<varde_document::Placement>,
+        enter: bool,
+    },
     SetUnits(LengthUnit),
     SetTolerance(Tolerance),
 }

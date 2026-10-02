@@ -91,7 +91,13 @@ pub fn side_panel<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
     let document = state.editor.document();
     let editable = state.editable();
     let content = match (shown, state.sketch) {
-        (Panel::Sketch, Some(sketch)) => sketch_tab(sketch),
+        (Panel::Sketch, Some(sketch)) => {
+            // The sketch edited stays selected in the Timeline.
+            let change = (state.selected_feature)
+                .filter(|_| editable)
+                .map(|id| Message::Look(Look::ChangePlane(id)));
+            sketch_tab(document, sketch, change)
+        }
         (Panel::Objects, _) => scrolled(objects(
             document,
             state.merged,
@@ -161,7 +167,7 @@ fn timeline<'a>(
             .find(|(id, _)| *id == feature.id)
             .map(|(_, why)| why.as_str());
         let selected = selected == Some(feature.id);
-        let row = feature_row(feature, units, selected, unsolved, failed);
+        let row = feature_row(document, feature, units, selected, unsolved, failed);
         let on = RowMenu::Feature(feature.id);
         let menu = (selected && menu == Some(on)).then(|| feature_menu(feature, editable));
         ContextMenu::new(
@@ -184,11 +190,13 @@ pub(crate) fn feature_icon(feature: &Feature) -> Icon {
     }
 }
 
-/// A feature in the Timeline, with its note: a sketch's plane, an
-/// extrude's distances in `units`, how far a revolve turns in all. Marked failed if it's `unsolved`, or
-/// `failed` and why, which hovering it tells. Clicking selects it,
-/// double-clicking edits it.
+/// A feature of `document` in the Timeline, with its note: a sketch's
+/// plane ([`plane_note`](crate::plane_note)), an extrude's distances in
+/// `units`, how far a revolve turns in all. Marked failed if it's
+/// `unsolved`, or `failed` and why, which hovering it tells. Clicking
+/// selects it, double-clicking edits it.
 fn feature_row<'a>(
+    document: &Document,
     feature: &'a Feature,
     units: LengthUnit,
     selected: bool,
@@ -197,7 +205,7 @@ fn feature_row<'a>(
 ) -> Element<'a, Message> {
     let note = match &feature.kind {
         FeatureKind::Sketch { .. } if unsolved => "Doesn't solve".into(),
-        FeatureKind::Sketch { plane, .. } => plane.name().into(),
+        FeatureKind::Sketch { plane, .. } => crate::plane_note(document, plane).into(),
         FeatureKind::Extrude(extrude) => extent_note(&extrude.extent, units).into(),
         FeatureKind::Revolve(revolve) => turn_note(&revolve.extent).into(),
     };
@@ -222,29 +230,49 @@ fn feature_row<'a>(
     }
 }
 
-/// The context menu of `feature` in the Timeline: edit it, or delete it
-/// if the document is `editable`, by the keys that do the same to the
-/// feature selected.
+/// The context menu of `feature` in the Timeline: edit it, put a sketch
+/// on another plane, or delete it, those two if the document is
+/// `editable`, by the keys that do the same to the feature selected.
 fn feature_menu<'a>(feature: &Feature, editable: bool) -> Element<'a, Message> {
     let id = feature.id;
-    row_menu(vec![
+    let edit = menu_item(
+        feature_icon(feature),
+        edit_label(feature).into(),
+        Some(Shortcut::ENTER),
+        Some(Message::Look(Look::EditFeature(id))),
+    );
+    let change_plane = matches!(feature.kind, FeatureKind::Sketch { .. }).then(|| {
         menu_item(
-            feature_icon(feature),
-            edit_label(feature).into(),
-            Some(Shortcut::ENTER),
-            Some(Message::Look(Look::EditFeature(id))),
+            Icon::Plane,
+            CHANGE_PLANE.into(),
+            None,
+            editable.then_some(Message::Look(Look::ChangePlane(id))),
         )
-        .into(),
-        menu_separator().into(),
-        menu_item(
-            Icon::Trash,
-            "Delete".into(),
-            Some(Shortcut::DELETE),
-            editable.then_some(Message::Edit(Edit::RemoveFeature(id))),
-        )
-        .into(),
-    ])
+        .into()
+    });
+    row_menu(
+        vec![
+            Some(edit.into()),
+            change_plane,
+            Some(menu_separator().into()),
+            Some(
+                menu_item(
+                    Icon::Trash,
+                    "Delete".into(),
+                    Some(Shortcut::DELETE),
+                    editable.then_some(Message::Edit(Edit::RemoveFeature(id))),
+                )
+                .into(),
+            ),
+        ]
+        .into_iter()
+        .flatten()
+        .collect(),
+    )
 }
+
+/// What putting a sketch on another plane is called.
+pub(crate) const CHANGE_PLANE: &str = "Change plane";
 
 /// What editing `feature` is called in its context menu.
 fn edit_label(feature: &Feature) -> &'static str {
@@ -676,15 +704,38 @@ fn object_row(object: Object<'_>) -> Element<'_, Message> {
     .into()
 }
 
-/// The sketch being edited: the Geometry list over the Constraints list,
-/// split by a divider that can be dragged.
-fn sketch_tab(sketch: SketchState<'_>) -> Element<'_, Message> {
-    split::vertical_split(
+/// The sketch of `document` being edited: where it is, with a button
+/// sending `change` to put it on another plane (disabled without), over
+/// the Geometry list over the Constraints list, split by a divider that
+/// can be dragged.
+fn sketch_tab<'a>(
+    document: &Document,
+    sketch: SketchState<'a>,
+    change: Option<Message>,
+) -> Element<'a, Message> {
+    let plane = row![
+        icons::icon(Icon::Plane, icons::INLINE),
+        text(crate::plane_pick::on_plane(document, &sketch.plane))
+            .size(12)
+            .width(Length::Fill)
+            .wrapping(text::Wrapping::None)
+            .style(theme::muted_text),
+        button(text(CHANGE_PLANE).size(12).wrapping(text::Wrapping::None))
+            .padding([2, 10])
+            .style(theme::Emphasis::Secondary.button_style())
+            .on_press_maybe(change),
+    ]
+    .spacing(8)
+    .height(ROW_HEIGHT)
+    .padding([0, 16])
+    .align_y(Alignment::Center);
+    let lists = split::vertical_split(
         sketch.split,
         move |height| geometry(sketch, height),
         move |height| constraints(sketch, height),
         |share| Message::Look(Look::SplitSketchTab(share)),
-    )
+    );
+    column![container(plane).padding(Padding::ZERO.top(6)), lists].into()
 }
 
 /// The sketch's curves, then its points, by name, each selected on a

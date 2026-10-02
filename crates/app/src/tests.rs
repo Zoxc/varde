@@ -835,7 +835,7 @@ fn a_read_only_document_refuses_edits_but_moves_the_camera() {
     let sketch = document(&varde).editor.document().features()[0].id;
     for message in [
         Message::Ui(Ui::Edit(an_edit(document(&varde)))),
-        Message::Ui(Ui::Edit(Edit::NewSketch(OriginPlane::XY))),
+        Message::Ui(Ui::Edit(Edit::PlanePicked(OriginPlane::XY))),
         Message::Ui(Ui::Edit(Edit::RemoveFeature(sketch))),
         Message::Ui(Ui::Edit(Edit::ToggleFeatureVisible(sketch))),
         Message::Ui(Ui::Edit(Edit::Undo)),
@@ -867,7 +867,7 @@ fn a_refused_edit_is_shown() {
         full,
         Origin::new(Target::None, Access::Edit, "Full".to_owned()),
     );
-    doc.update(Edit::NewSketch(OriginPlane::XY));
+    doc.update(Edit::PlanePicked(OriginPlane::XY));
     assert!(doc.editor.document().features().is_empty());
     assert_eq!(
         doc.edit_error.as_ref().map(ToString::to_string).as_deref(),
@@ -948,7 +948,7 @@ fn window_id() -> window::Id {
 /// answers, the requests sent so far forgotten.
 fn sketching_in_open_file() -> (Varde, Rc<RefCell<Vec<IoRequest>>>, SolveLane) {
     let (mut varde, requests) = with_open_file();
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::NewSketch(OriginPlane::XY))));
+    let _ = varde.update(Message::Ui(Ui::Edit(Edit::PlanePicked(OriginPlane::XY))));
     let mut lane = SolveLane::new();
     varde
         .screen
@@ -1011,7 +1011,7 @@ fn save_waits_for_the_edits_on_the_solver() {
 #[test]
 fn a_save_waiting_for_an_edit_and_a_delete_behind_it_saves_both() {
     let (mut varde, requests) = with_open_file();
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::NewSketch(OriginPlane::XY))));
+    let _ = varde.update(Message::Ui(Ui::Edit(Edit::PlanePicked(OriginPlane::XY))));
     let feature = document(&varde).sketch.as_ref().unwrap().feature;
     let _ = varde.update(Message::Ui(Ui::Look(Look::SelectTool(
         varde_view::Tool::Point,
@@ -1366,7 +1366,7 @@ fn a_read_only_design_is_saved_as_and_becomes_editable() {
 #[test]
 fn a_save_as_leaving_the_design_read_only_puts_the_sketch_tool_down() {
     let (mut varde, requests) = with_open_file();
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::NewSketch(OriginPlane::XY))));
+    let _ = varde.update(Message::Ui(Ui::Edit(Edit::PlanePicked(OriginPlane::XY))));
     let _ = varde.update(Message::Ui(Ui::Look(Look::SelectTool(
         varde_view::Tool::Line,
     ))));
@@ -2334,7 +2334,7 @@ fn restoring_recovered_changes_drops_the_edits_waiting() {
         .unwrap();
     let recovered = editor.document().clone();
     let (mut varde, requests) = with_recovered(recovered.clone());
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::NewSketch(OriginPlane::XY))));
+    let _ = varde.update(Message::Ui(Ui::Edit(Edit::PlanePicked(OriginPlane::XY))));
     assert_eq!(document(&varde).sketch.as_ref().unwrap().feature, feature);
     let mut lane = SolveLane::new();
     varde
@@ -2471,7 +2471,7 @@ fn restoring_recovered_changes_lets_go_of_the_selected_feature() {
 fn restoring_recovered_changes_keeps_the_sketch_edited_selected() {
     let (recovered, theirs) = with_a_line_and_a_sketch();
     let (mut varde, _) = with_recovered(recovered.clone());
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::NewSketch(OriginPlane::XY))));
+    let _ = varde.update(Message::Ui(Ui::Edit(Edit::PlanePicked(OriginPlane::XY))));
     assert_eq!(document(&varde).sketch.as_ref().unwrap().feature, theirs);
     assert_eq!(document(&varde).selected_feature, Some(theirs));
 
@@ -2492,7 +2492,7 @@ fn restoring_recovered_changes_lets_go_of_the_sketch_edited_if_not_a_sketch() {
         varde_document::FeatureKind::Extrude(_)
     ));
     let (mut varde, _) = with_recovered(recovered.clone());
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::NewSketch(OriginPlane::XY))));
+    let _ = varde.update(Message::Ui(Ui::Edit(Edit::PlanePicked(OriginPlane::XY))));
     assert_eq!(document(&varde).sketch.as_ref().unwrap().feature, extrude);
 
     let _ = varde.update(Message::Ui(Ui::File(File::RestoreChanges)));
@@ -2592,7 +2592,7 @@ fn failure_marks_of_before_a_replacement_mark_nothing() {
 fn restoring_recovered_changes_lets_go_of_the_refusal_and_hover() {
     let (recovered, theirs) = with_a_line_and_a_sketch();
     let (mut varde, _) = with_recovered(recovered.clone());
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::NewSketch(OriginPlane::XY))));
+    let _ = varde.update(Message::Ui(Ui::Edit(Edit::PlanePicked(OriginPlane::XY))));
     // An item of the sketch recovered, with the id of none edited yet.
     let varde_document::FeatureKind::Sketch { sketch, .. } =
         &recovered.feature(theirs).unwrap().kind
@@ -4257,18 +4257,18 @@ fn a_new_sketch_is_made_on_the_plane_picked_and_entered() {
     let mut doc = untitled();
     doc.look(Look::SelectPanel(Panel::Timeline));
     doc.look(Look::PickPlane);
-    assert!(doc.picking_plane);
+    assert!(doc.picking_plane.is_some());
     // Again backs out, and so does Escape.
     doc.look(Look::PickPlane);
-    assert!(!doc.picking_plane);
+    assert!(doc.picking_plane.is_none());
     doc.look(Look::PickPlane);
     doc.look(Look::Escape);
-    assert!(!doc.picking_plane);
+    assert!(doc.picking_plane.is_none());
     assert_eq!(edited(&doc), None);
 
     doc.look(Look::PickPlane);
-    doc.update(Edit::NewSketch(OriginPlane::XZ));
-    assert!(!doc.picking_plane);
+    doc.update(Edit::PlanePicked(OriginPlane::XZ));
+    assert!(doc.picking_plane.is_none());
     assert_eq!(sketches(&doc), [("Sketch 1", true)]);
     let feature = doc.editor.document().features()[0].id;
     assert_eq!(edited(&doc), Some(feature));
@@ -4307,8 +4307,8 @@ fn a_sketch_is_not_made_in_a_read_only_document() {
         ),
     );
     doc.look(Look::PickPlane);
-    assert!(!doc.picking_plane);
-    doc.update(Edit::NewSketch(OriginPlane::XY));
+    assert!(doc.picking_plane.is_none());
+    doc.update(Edit::PlanePicked(OriginPlane::XY));
     assert_eq!(sketches(&doc).len(), 1);
     assert_eq!(edited(&doc), None);
 
@@ -4324,7 +4324,7 @@ fn a_sketch_is_not_made_in_a_read_only_document() {
 /// requests wait for the test, and the list they wait in.
 pub(crate) fn with_sketch() -> (Doc, FeatureId, Rc<RefCell<Vec<Request>>>) {
     let (mut doc, requests) = deferred();
-    doc.update(Edit::NewSketch(OriginPlane::XY));
+    doc.update(Edit::PlanePicked(OriginPlane::XY));
     let feature = edited(&doc).unwrap();
     doc.look(Look::FinishSketch);
     answer(&mut doc, &requests);
@@ -4852,7 +4852,7 @@ fn leaving_a_sketch_turns_the_camera_back() {
 fn undoing_a_sketch_s_creation_leaves_it() {
     let (mut doc, requests) = deferred();
     doc.look(Look::SelectPanel(Panel::Timeline));
-    doc.update(Edit::NewSketch(OriginPlane::YZ));
+    doc.update(Edit::PlanePicked(OriginPlane::YZ));
     answer(&mut doc, &requests);
     assert!(edited(&doc).is_some());
 
@@ -4924,12 +4924,12 @@ fn s_starts_a_sketch_outside_sketches() {
     let (mut doc, feature, _) = with_sketch();
     let s = || keyboard::Key::Character("s".into());
     key_in(&mut doc, s());
-    assert!(doc.picking_plane);
+    assert!(doc.picking_plane.is_some());
     doc.look(Look::EditFeature(feature));
-    assert!(!doc.picking_plane);
+    assert!(doc.picking_plane.is_none());
     assert!(press_in(&doc, s()).is_none());
     doc.look(Look::PickPlane);
-    assert!(!doc.picking_plane);
+    assert!(doc.picking_plane.is_none());
 }
 
 #[test]
@@ -4944,7 +4944,7 @@ fn no_shortcut_acts_under_the_unsaved_changes_prompt() {
             "Part".to_owned(),
         ),
     );
-    doc.update(Edit::NewSketch(OriginPlane::XY));
+    doc.update(Edit::PlanePicked(OriginPlane::XY));
     let feature = edited(&doc).unwrap();
     doc.look(Look::FinishSketch);
     doc.look(Look::SelectFeature(feature));
@@ -5028,9 +5028,9 @@ fn a_sketch_is_made_and_left_through_the_app() {
     let mut varde = Varde::new();
     let _ = varde.update(Message::Ui(Ui::Welcome(WelcomeUi::NewDesign)));
     let _ = varde.update(Message::Ui(Ui::Look(Look::PickPlane)));
-    assert!(document(&varde).picking_plane);
+    assert!(document(&varde).picking_plane.is_some());
     let _ = varde.view();
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::NewSketch(OriginPlane::XY))));
+    let _ = varde.update(Message::Ui(Ui::Edit(Edit::PlanePicked(OriginPlane::XY))));
     assert!(edited(document(&varde)).is_some());
     let _ = varde.view();
     // Peeking in a sketch shows Objects, and the Sketch tab from it.
@@ -5162,7 +5162,7 @@ fn closing_waits_for_a_delete_behind_sketch_edits_to_be_asked_and_answered() {
     doc.apply(Command::Replace(Box::new(Document::example())));
     doc.sync();
     let example = doc.editor.document().features()[0].id;
-    let _ = varde.update(Message::Ui(Ui::Edit(Edit::NewSketch(OriginPlane::XY))));
+    let _ = varde.update(Message::Ui(Ui::Edit(Edit::PlanePicked(OriginPlane::XY))));
     let mut lane = SolveLane::new();
     varde
         .screen

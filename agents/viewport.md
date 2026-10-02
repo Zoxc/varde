@@ -761,12 +761,14 @@ send `Look::Hover(pick)`, and `Hover(None)` once the cursor leaves the
 model or the viewport, or the camera is dragged (past a click's slop:
 from the first frame drawn while it is; the hover is worked out again
 once the drag ends). The cursor is a pointer while
-something is hovered. While the plane for a new sketch is picked
-(`ModelPicking::planes`) only faces are picked, a click on a flat one
-sends `Edit::SketchOnFace` instead of selecting and a click elsewhere
-nothing, and only a flat face hovered is highlighted
-(`Doc::shown_hover`) or gets the pointer (`ModelPicking::takes`); the
-status bar says why a curved one isn't (see `agents/sketch.md`). A pick of a model no longer shown (its count
+something is hovered. While a plane is picked for a sketch
+(`ModelPicking::planes`, the `PlanePick`) only faces are picked, a click
+on one that takes the sketch sends `Edit::FacePicked` instead of
+selecting and a click elsewhere nothing, and only such a face hovered is
+highlighted (`Doc::shown_hover`) or gets the pointer
+(`ModelPicking::takes`, `PlanePick::takes`: flat, and for a sketch whose
+plane is changed, of a body made before it); the status bar says why
+another isn't (see `agents/sketch.md`). A pick of a model no longer shown (its count
 differs) is dropped, and the hover is dropped once the model changes or
 the cursor stops picking (`Doc::prune_picks`, after answers, edits and
 looks); a hover names nothing else (no document change, no request).
@@ -1026,8 +1028,8 @@ makes its own wgpu instance, under a lock, so run them one at a time:
 VARDE_SHOTS=$PWD/target/shots cargo test -p varde-app shots_ -- --ignored --test-threads=1
 ```
 
-Scenarios (`shots_01` .. `shots_22`, each at 1280×800, scale 1, light,
-the busiest also at scale 2 and dark): `E` with every candidate's regions
+Scenarios (`shots_01` .. `shots_22`, `shots_24`, each at 1280×800,
+scale 1, light, the busiest also at scale 2 and dark): `E` with every candidate's regions
 (and one hovered); a region picked before and after its answer; flip,
 symmetric, two sides, a refused distance and a draft the document
 refuses; a cut, through all, with its Bodies list, a row hovered, a body
@@ -1061,7 +1063,12 @@ above, dark), for their silhouettes; the measure tool
 dots, the corner picked and the hole's rim's centre reached from the
 rim, the distance between them with its segment and label (light,
 dark), the top and the rim highlighted in the two colours with the
-rim's values unfolded, and the body double-clicked in inches. Shots
+rim's values unfolded, and the body double-clicked in inches; sketches
+on faces (`shots_24`): `S` with the top hovered, a circle in a sketch on the top
+with the Sketch tab naming the face, its row menu with Change plane, the
+first sketch's plane changed with the later top hovered (refused, red),
+and the top's sketch failing once the plate is gone, its tip and the
+plane asked for. Shots
 are for looking (pixels differ by GPU and driver), never compared and
 never committed: a fault a shot finds gets an ordinary headless test of
 the state or layout behind it. A scenario answers each regeneration it

@@ -24,6 +24,7 @@ mod mouse_only;
 mod operation_panel;
 mod panels;
 mod pick;
+mod plane_pick;
 #[cfg(any(test, feature = "probe"))]
 pub mod probe;
 mod projection;
@@ -67,6 +68,7 @@ pub use operation_panel::{BodyTarget, Candidate, OperationKind, PANEL_BODY, Type
 pub use pick::{
     EDGE_REACH, ModelHighlight, Pick, PickIndex, Picked, Picks, SNAP_REACH, Snapped, VERTEX_REACH,
 };
+pub use plane_pick::{PlanePick, plane_note};
 pub use rail::{RAIL_LIST, RailLook, RailOpen, RailSpot, rail_rows, rail_sets};
 pub use revolve::{Angle, RevolveLook, RevolvePick, RevolveState, TurnKind};
 pub use select::{Selected, Selection, SelectionMode};
@@ -172,11 +174,14 @@ pub enum Edit {
     /// [`DeletePrompt`]).
     RemoveBody(BodyId),
     ToggleVisible(BodyId),
-    /// Adds a sketch on `plane` and edits it.
-    NewSketch(OriginPlane),
-    /// Adds a sketch on the flat face picked in the viewport while
-    /// picking the plane for a new sketch, and edits it.
-    SketchOnFace(FaceRef),
+    /// The origin plane picked while picking a plane: a new sketch on it,
+    /// edited, or the sketch whose plane is changed put on it (see
+    /// [`PlanePick`]).
+    PlanePicked(OriginPlane),
+    /// The flat face picked in the viewport while picking a plane: a new
+    /// sketch on it, edited, or the sketch whose plane is changed put on
+    /// it.
+    FacePicked(FaceRef),
     /// Adds a sketch on the face selected in the model, if it's the only
     /// thing selected and it's flat, and edits it: `S`, or the rail's
     /// Sketch on face.
@@ -273,6 +278,11 @@ pub enum Look {
     SelectPanel(Panel),
     /// Starts picking the plane for a new sketch, or backs out of it.
     PickPlane,
+    /// Starts picking another plane for the sketch feature, an origin
+    /// plane or a flat face of a body made before it: from its Timeline
+    /// row's context menu, or the Sketch tab while it's edited, which is
+    /// left for it and entered again after.
+    ChangePlane(FeatureId),
     /// Edits the feature: a sketch is entered, an extrude or a revolve
     /// opens its session (see [`Look::StartExtrude`],
     /// [`Look::StartRevolve`]) with its values.

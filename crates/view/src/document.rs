@@ -28,8 +28,9 @@ use crate::status::{self, Status};
 use crate::theme::Emphasis;
 use crate::typed::Field;
 use crate::{
-    ConstraintKind, Edit, ExtrudeState, File, Look, Message, OperationKind, Panel, RevolvePick,
-    RevolveState, RowMenu, Snap, Target, Tool, Unsaved, panels, theme, toolbar, viewport,
+    ConstraintKind, Edit, ExtrudeState, File, Look, Message, OperationKind, Panel, PlanePick,
+    RevolvePick, RevolveState, RowMenu, Snap, Target, Tool, Unsaved, panels, theme, toolbar,
+    viewport,
 };
 
 /// Borrowed state needed to build the document screen.
@@ -101,8 +102,9 @@ pub struct DocumentState<'a> {
     pub mode: theme::Mode,
     /// What the view options menu turns on and off.
     pub options: crate::ViewOptions,
-    /// Whether the plane for a new sketch is being picked.
-    pub picking_plane: bool,
+    /// What a plane is being picked for, if one is: a new sketch, or the
+    /// sketch whose plane is changed.
+    pub picking_plane: Option<&'a PlanePick>,
     /// The feature selected in the Timeline, if any.
     pub selected_feature: Option<FeatureId>,
     /// The row of the side panel whose context menu is open, if one is.
@@ -146,7 +148,7 @@ impl DocumentState<'_> {
     /// on.
     pub(crate) fn face_selected(&self) -> bool {
         self.picking.is_some()
-            && !self.picking_plane
+            && self.picking_plane.is_none()
             && self.model_selection.single_face().is_some()
     }
 
@@ -687,7 +689,7 @@ fn hints<'a>(state: &DocumentState<'a>) -> Vec<Hint<'a>> {
         return vec![key_hint(Shortcut::ESCAPE, "Cancel")];
     }
     let sketching = state.sketch.is_some();
-    let keys: Vec<_> = if state.picking_plane {
+    let keys: Vec<_> = if state.picking_plane.is_some() {
         vec![key_hint(Shortcut::ESCAPE, "Cancel")]
     } else if let Some(extrude) = &state.extrude {
         let pick = extrude
@@ -1217,19 +1219,16 @@ pub const CURVED_FACE: &str = "Only flat faces can be sketched on";
 /// nothing selected the bar has only its hints. On one line, cut short
 /// where the bar doesn't fit (`status::status_bar`).
 fn info<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
-    if state.picking_plane {
-        // A curved face hovered isn't highlighted: this says why.
-        let curved = (state.picking.as_ref()).is_some_and(|picking| match picking.hovered {
-            Some(crate::Picked::Face(face)) => picking.index.face_placement(face).is_none(),
-            _ => false,
+    if let Some(pick) = state.picking_plane {
+        // A face hovered that can't take the sketch isn't highlighted:
+        // this says why.
+        let refused = (state.picking.as_ref()).and_then(|picking| match picking.hovered {
+            Some(crate::Picked::Face(face)) => pick.refusal(picking.index, face),
+            _ => None,
         });
-        let (line, style): (_, fn(&iced::Theme) -> text::Style) = if curved {
-            (CURVED_FACE, theme::danger_text)
-        } else {
-            (
-                "Pick a plane or a flat face for the new sketch",
-                theme::accent_text,
-            )
+        let (line, style): (String, fn(&iced::Theme) -> text::Style) = match refused {
+            Some(why) => (why.into_owned(), theme::danger_text),
+            None => (pick.asking(), theme::accent_text),
         };
         return Some(
             text(line)
@@ -1271,10 +1270,10 @@ fn info<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
                     .font(theme::SEMIBOLD),
                 standing,
                 text(format!(
-                    "{}{} · on {}{}",
+                    "{}{} · {}{}",
                     sketch_summary(sketch.sketch),
                     profile_count(sketch).map_or_else(String::new, |count| format!(" · {count}")),
-                    sketch.plane.name(),
+                    crate::plane_pick::on_plane(state.editor.document(), &sketch.plane),
                     status_suffix(state)
                 ))
                 .size(12)
@@ -1346,7 +1345,7 @@ fn info<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
 /// setting up an extrude or a revolve or picking a plane, which the bar
 /// tells of instead.
 fn selection<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
-    if state.picking_plane
+    if state.picking_plane.is_some()
         || state.sketch.is_some()
         || state.extrude.is_some()
         || state.revolve.is_some()
@@ -1479,7 +1478,8 @@ fn feature_info(feature: &Feature, document: &Document) -> String {
     let units = document.units();
     match &feature.kind {
         FeatureKind::Sketch { plane, sketch } => {
-            format!("{} · on {}", sketch_summary(sketch), plane.name())
+            let on = crate::plane_pick::on_plane(document, plane);
+            format!("{} · {on}", sketch_summary(sketch))
         }
         FeatureKind::Extrude(extrude) => {
             let note = panels::extent_note(&extrude.extent, units);

@@ -193,10 +193,12 @@ reads it from there; the extrude and revolve sessions' candidates
 (`RegionPick::candidates`, given `Doc::placement`, which their regions,
 handle and axis are drawn on) leave out a sketch with none, and
 `Doc::extrudable` counts only placed sketches. A sketch on a face that
-isn't placed (failed, or before the first answer) isn't entered: the
-status bar says "Can't edit Sketch 2: <regen's reason>" (`Doc::notice`,
-until the next thing asked). It's still listed in the Timeline, red with
-its reason, and isn't drawn.
+failed to be placed is still listed in the Timeline, red with its
+reason, and isn't drawn; entering it asks for another plane first (Change
+plane, `agents/sketch.md`), which `SetSketchPlane` puts it on, a face's
+placement worked out at the pick as for a new sketch. Before the first
+answer, or read-only, it isn't entered: the status bar says "Can't edit
+Sketch 2: <reason>" (`Doc::notice`, until the next thing asked).
 
 ## Revolve
 

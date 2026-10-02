@@ -671,7 +671,7 @@ impl Plate {
             hovered_snap: None,
             picks: Picks::All,
             snaps: false,
-            planes: false,
+            planes: None,
         });
         program
     }

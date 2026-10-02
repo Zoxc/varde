@@ -216,7 +216,7 @@ impl Doc {
         {
             return;
         }
-        self.picking_plane = false;
+        self.picking_plane = None;
         let document = self.editor.document();
         let selected = self.selected_feature.filter(|&id| is_sketch(document, id));
         let mut session = ExtrudeSession::new(document, selected);
@@ -237,7 +237,7 @@ impl Doc {
         if self.sketch.is_some() || !self.editable() {
             return;
         }
-        self.picking_plane = false;
+        self.picking_plane = None;
         self.revolve = None;
         self.selected_feature = Some(id);
         self.extrude = Some(ExtrudeSession::editing(document, id, extrude));

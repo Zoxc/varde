@@ -1324,3 +1324,99 @@ fn shots_22_measure() {
         camera.take(&doc, "22-measure-body-in", Shot::new());
     });
 }
+
+/// Scenario 24: sketches on faces: `S` with the plate's top hovered; a
+/// circle in a sketch on the top, the Sketch tab naming the face; its
+/// Timeline row's menu with Change plane; changing the example's first
+/// sketch's plane with the top hovered, which came after it; the top's
+/// sketch failing once the plate is gone, and entering it asking for a
+/// plane.
+#[test]
+#[ignore = "writes screenshots, see the module"]
+fn shots_24_sketch_on_face() {
+    use varde_document::Plane;
+    use varde_view::{Panel, Picked, RowMenu};
+
+    shooting(|camera| {
+        let (mut doc, requests) = example();
+        framed(&mut doc);
+        let top = Point::new(WINDOW.width * 0.66, WINDOW.height * 0.5);
+        doc.look(Look::PickPlane);
+        let hovered = camera.hover(&mut doc, top);
+        assert!(matches!(hovered, Some(Picked::Face(_))), "{hovered:?}");
+        let shot = Shot::new().pointer(Pointer::At(top));
+        camera.take(&doc, "24-pick-top", shot);
+        camera.take(&doc, "24-pick-top-dark", shot.dark());
+
+        let pick = doc.pick.hover().expect("the top under the cursor");
+        let Picked::Face(face) = pick.target else {
+            unreachable!()
+        };
+        let face = doc.feed.pick_index().face_ref(face, pick.at).unwrap();
+        doc.update(Edit::FacePicked(face));
+        let id = doc.sketch.as_ref().expect("in the sketch").feature;
+        let mut drawn = varde_sketch::Sketch::default();
+        let center = drawn.add_point(glam::DVec2::new(20.0, 10.0)).unwrap();
+        drawn
+            .add_curve(
+                varde_sketch::Curve::Circle {
+                    center,
+                    radius: 6.0,
+                },
+                false,
+            )
+            .unwrap();
+        doc.apply(Command::SetSketch {
+            feature: id,
+            sketch: Box::new(drawn),
+        });
+        doc.sync();
+        answer(&mut doc, &requests);
+        doc.animation_frame(Instant::now() + 2 * crate::doc::CAMERA_ANIMATION);
+        doc.look(Look::SelectPanel(Panel::Sketch));
+        // Home frames the circle drawn since.
+        doc.look(Look::ResetCamera);
+        doc.animation_frame(Instant::now() + 2 * crate::doc::CAMERA_ANIMATION);
+        doc.look(Look::Zoom {
+            factor: 3.0,
+            x: 0.0,
+            y: 0.0,
+        });
+        camera.take(&doc, "24-sketch-on-top", Shot::new());
+
+        doc.look(Look::FinishSketch);
+        answer(&mut doc, &requests);
+        framed(&mut doc);
+        doc.look(Look::SelectPanel(Panel::Timeline));
+        doc.look(Look::OpenMenu(RowMenu::Feature(id)));
+        camera.take(&doc, "24-timeline-menu", Shot::new());
+        doc.look(Look::Escape);
+
+        // The first sketch, before the plate: its top can't take it.
+        let first = doc.editor.document().features()[0].id;
+        doc.look(Look::ChangePlane(first));
+        camera.hover(&mut doc, top);
+        camera.take(&doc, "24-change-later-face", shot);
+        doc.look(Look::Escape);
+
+        // The plate gone, the top's sketch fails.
+        let extrude = doc.editor.document().features()[1].id;
+        doc.update(Edit::RemoveFeature(extrude));
+        doc.update(Edit::ConfirmDelete);
+        answer(&mut doc, &requests);
+        assert!(matches!(
+            doc.editor.document().feature(id).map(|f| &f.kind),
+            Some(FeatureKind::Sketch {
+                plane: Plane::Face(_),
+                ..
+            })
+        ));
+        camera.take(
+            &doc,
+            "24-face-gone-timeline",
+            Shot::new().pointer(Pointer::Over("on a face")),
+        );
+        doc.look(Look::EditFeature(id));
+        camera.take(&doc, "24-face-gone-pick", Shot::new());
+    });
+}

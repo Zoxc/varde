@@ -805,12 +805,13 @@ document that can't be edited, as a Save As can leave it, has no tool and no dra
 the Save As answer syncs for that.
 
 **A new sketch** (`S`, the toolbar's or the rail's Sketch) first asks
-for its plane (`Look::PickPlane`, `Doc::picking_plane`): the toolbar
-offers XY, XZ and YZ (`Edit::NewSketch`), and the viewport picks flat
+for its plane (`Look::PickPlane`, `Doc::picking_plane` holding a
+`PlanePick`): the toolbar offers XY, XZ and YZ (`Edit::PlanePicked`),
+and the viewport picks flat
 faces (only faces, `ModelPicking::planes`): a flat face hovered is
 highlighted with the pointer cursor, a curved one isn't and the status
 bar says "Only flat faces can be sketched on" (`CURVED_FACE`), and a
-click on a flat face sends `Edit::SketchOnFace(FaceRef)` (its body, key
+click on a flat face sends `Edit::FacePicked(FaceRef)` (its body, key
 and the point clicked), a click elsewhere nothing; `Esc` backs out. With
 a face alone selected in the model (`Selection::single_face`,
 `DocumentKeys::face_selected`), `S` and the button, then labelled
@@ -825,6 +826,43 @@ A sketch is entered only once it's placed (`Doc::enter_sketch`); the
 session keeps its placement (`SketchSession::placement`), which moves
 with its face as answers come (`Doc::follow_placement`) and stays as it
 was while none is known.
+
+**Change plane** (`Look::ChangePlane(feature)`): from a sketch's
+Timeline row menu, or the Sketch tab's row naming the plane ("on XY",
+"on Extrude 1's end") while it's edited, which leaves the sketch for it
+(`PickingPlane::enter`, to come back). The same picking as for a new
+sketch, with `PlanePick::change`: only faces of bodies made by features
+before the sketch and named by such a feature (the rule
+`Document::check` holds a face plane to, which a face of a later body
+would break), so `PlanePick::refusal` says "Sketch 1 can only go on a
+face made before it" for the others, which aren't highlighted nor
+clickable; the toolbar's tag reads "Sketch 2's plane". The plane
+picked is one `SetSketchPlane` (`Change::SetPlane`, waiting behind
+edits on the solver like any change), the drawing kept in its own
+coordinates; a face's placement is worked out at the pick and kept as
+`Doc::placed` (with the plane, so an undo that takes it off drops it) as
+for a new sketch. A face refused at the pick keeps picking, the reason
+in the status bar. `Esc` (or `S`) backs out leaving the document as it
+was, and enters the sketch again if it was left for it. The picking is
+kept in step with the document (`Doc::prune_plane_pick`): which faces
+take the sketch is worked out again after every edit, and it ends if
+the sketch goes or the document is replaced.
+
+**A sketch whose face is gone** (regen failed to place it: its face
+wasn't found, isn't flat, its body is gone) is red in the Timeline with
+regen's reason as its tip. Entering it (`Doc::enter_sketch`) in a
+document that can be edited starts Change plane for it instead, the
+status bar saying "Sketch 2: its face wasn't found. Pick a plane for
+it"; the plane picked puts it there and enters it, `Esc` leaves it as
+it was. Read-only, or before the first answer places it, it isn't
+entered and the status bar says why (`Doc::notice`).
+
+**The Timeline note** of a sketch names its plane
+(`varde_view::plane_note`): "XY", or the face by the feature that made
+it and the part of it ("on Extrude 1's end", "start", "side"; "on a
+face of Revolve 1" for other parts), by its body if that feature is
+gone ("on Body 1"), else "on a face". The status bar's says "on XY" or
+the same.
 
 Every change to the sketch is a `SketchEdit`, proposed to the solver lane
 (`Doc::propose`, `doc/sketch/propose.rs`) and committed once it's

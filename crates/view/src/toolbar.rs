@@ -40,8 +40,11 @@ pub fn toolbar<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
         ),
         None => (
             text("Model").font(SEMIBOLD).into(),
-            if state.picking_plane {
-                Some("New sketch".to_owned())
+            if let Some(pick) = state.picking_plane {
+                Some(match &pick.sketch {
+                    None => "New sketch".to_owned(),
+                    Some((_, name)) => format!("{name}'s plane"),
+                })
             } else {
                 let editing = |editing: Option<&str>, noun: &str| {
                     editing.map_or_else(|| noun.to_owned(), |name| format!("Editing {name}"))
@@ -290,7 +293,9 @@ fn ops<'a>(state: &DocumentState<'a>) -> Vec<Element<'a, Message>> {
             "Sketch"
         },
         sketch_binding(keys),
-        state.picking_plane,
+        state
+            .picking_plane
+            .is_some_and(|pick| pick.sketch.is_none()),
     );
     let extrude = bound_op(
         Icon::Extrude,
@@ -304,14 +309,14 @@ fn ops<'a>(state: &DocumentState<'a>) -> Vec<Element<'a, Message>> {
         revolve_binding(keys),
         state.revolve.is_some(),
     );
-    if state.picking_plane {
+    if state.picking_plane.is_some() {
         // Picking a plane in the viewport comes with picking, so the
         // origin planes are offered here.
         let planes = OriginPlane::ALL.map(|plane| {
             op(
                 Icon::Plane,
                 plane_label(plane),
-                editable.then_some(Message::Edit(Edit::NewSketch(plane))),
+                editable.then_some(Message::Edit(Edit::PlanePicked(plane))),
             )
         });
         return [sketch, extrude, revolve, separator()]
