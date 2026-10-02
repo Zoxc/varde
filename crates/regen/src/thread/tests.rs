@@ -10,6 +10,7 @@ fn regenerate(editor: &Editor) -> Request {
         document: editor.snapshot(),
         exclude: None,
         draft: None,
+        inspect: None,
     }
 }
 

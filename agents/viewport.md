@@ -513,8 +513,16 @@ bodies in order; `Picking::face_body` finds a face's), each face
 form: a plane's outward unit `n` and `d`, a cylinder's point, axis and
 radius, a cone's, sphere's or torus's numbers, a conic cylinder's
 direction, a revolved conic's axis, else `Other`: no known form, or
-numbers past the bound), and for each edge whether it's a chain closing
-on itself and its tangent chain (below). Everything else is the mesh's
+numbers past the bound), for each edge whether it's a chain closing
+on itself, its tangent chain (below) and its snap point
+(`Picking::snaps`: a straight edge's middle or a round edge's centre
+from `measure::edge_shape`, else none, a crease's none), and the
+corners (`PickCorner`: three of the faces meeting at a vertex where
+three or more meet, the lowest regions ascending, as face ids of one
+part, and the vertex's point exactly, in f64; `Picking::corner_keys`
+gives their keys sorted, as a corner reference stores them). The snap
+points and corners are the measure tool's points (and later align's and
+scale's). Everything else is the mesh's
 to say: its faces are the kernel topology's regions and the first edges
 of each part its chains, the creases after them (see "Tessellation" and
 "Topology and names" in `agents/kernel.md`), so a circle's quarter walls,
@@ -523,18 +531,58 @@ a groove is two faces of one key, a triangle's face is the `face_ends`
 range holding it, and an edge's faces are its `edge_faces` (a crease's
 the same face twice). `Picking::edge_keys` gives an edge's two keys
 sorted, as an edge reference stores them (none for a crease). Each
-body's tables are made with its mesh (`Solid::topology`, then
-`Solid::tessellate_with`) and cached with it, counted in its bytes; the
-scene's are theirs joined as the mesh is, the tangent chains moved on
-(checked). The fields are private and `Picking::from_parts` checks parts
-from elsewhere against the mesh (a body per part, a face per face, a
-flag and a tangent chain per edge, a closed edge between two faces and
-on one corner, summaries finite, within `Picking::MAX_VALUE`, their
-directions unit vectors, aliases sorted apart from the key). The app
+body's tables are made with its mesh (`Solid::topology`, kept in the
+cache for the measure tool too, then `Solid::tessellate_with`) and
+cached with it, counted in its bytes; the scene's are theirs joined as
+the mesh is, the tangent chains and corners' faces moved on (checked).
+The fields are private and `Picking::from_parts` checks parts from
+elsewhere against the mesh (a body per part, a face per face, a flag, a
+tangent chain and a snap point or none per edge, a closed edge between
+two faces and on one corner, a crease without a snap point, each corner
+between three faces of one part, ascending, no more corners than the
+mesh's vertices, summaries, snap points and corners' points finite and
+within `Picking::MAX_VALUE`, their directions unit vectors, aliases
+sorted apart from the key). The app
 keeps them with the mesh; `MeshFeed::parts` gives the parts' bodies,
 none once the document was replaced whole until a model of it shows
 (the ids may name other bodies), so the parts are drawn opaque
 meanwhile.
+
+**Measuring** goes through regeneration too (`regen/src/inspect.rs`):
+`Request::Regenerate` carries `inspect: Option<Inspect { revision,
+first, second }>`, each an `InspectPick { body, entity, near }` whose
+`Entity` is `Body`, `Face(key)`, `Edge(keys)`, `EdgePoint(keys)` or
+`Corner(keys)`, the keys a reference stores (`Picking::edge_keys`,
+`corner_keys`) and `near` the point picked at. Regen resolves each on
+its body's `Topology` as references resolve (by key or alias, the
+nearest to `near` among several) on the model the answer draws (a draft
+applied if it worked), so the same picks sent after an edit measure what
+they name now, and answers `Response::Regenerated.inspected:
+Option<Inspected { revision, first, second, between }>`: per pick
+`Err("face not found")` (or edge, corner, "body not found"), else
+`Probed { at, measure }`, `at` its entry in the answer's own tables
+(`At::Face` a face id, `Edge` an edge id for an edge or its point,
+`Corner` an index into the corners; `None` for a
+body or a hidden body's entity), `measure` a `Measure` (`Body` volume,
+area, centre, tight box; `Face` area, its form's `Summary`, a cone's
+half-angle; `Edge` length, closed, `EdgeForm` line/circle/ellipse;
+`Point`) or "too complex to measure"; `between` (both found) the
+`Gap` (distance and the two points) or its error, and the angle between
+their directions (`measure::angle`). Each measure runs within
+`Budget::DEFAULT`, the most a kernel operation may do (`Budget::new`
+caps at it): coaxial revolved faces can take ~10M units, which then
+come back "too complex to measure". Measures, distances and topologies
+are kept in the cache (outside its feature counts), keyed by the bodies'
+solid keys, the resolved picks and the fit, so picks asked again, or
+after an edit elsewhere, cost nothing. `Response::Failed.inspect` and
+`Response::inspect()`/`Request::inspect()` give the revision. The
+inspect rides the regeneration slot, latest wins, rather than queueing
+as exports do: the newest request always carries the session's current
+picks, so a request it replaces had only an answer the panel would drop,
+and a measure is always of the model the same answer draws (its `at`
+indices name that model's tables). The app must count the revision into
+what it compares to tell a new request is needed and an answer is the
+one asked for last, as it does a draft's.
 
 **Picking the model** (`view/src/pick.rs`, the app's `doc/pick.rs`) is on
 the CPU, against the mesh drawn and its tables; no GPU id buffer (WebGL2
@@ -794,12 +842,18 @@ with the page, so a request is the generation, the postcard-encoded
 document (the encoding `.vrdp` records use) and the sketch to leave out, and
 the answer is a postcard head (with the failed features, the
 bodies each join, cut or intersect touches, the bodies' boxes, the
-draft's outcome and the picking tables) and the mesh's vectors and the
-sketches' line points and ends as raw bytes. A model whose head would be
-over its bound (64 MiB), or with more faces or aliases than a reply may
-carry (2²⁰ each, the aliases of all faces together; the tables are
-decoded within those bounds and the mesh's, so a short head can't make
-the page build more), is answered as failed. Both
+draft's outcome, the picking tables and the measure's answer) and the
+mesh's vectors and the sketches' line points and ends as raw bytes. A
+model whose head would be over its bound (64 MiB), or with more faces,
+corners or aliases than a reply may carry (2²⁰, 2²² and 2²⁰ all faces'
+together; the tables are decoded within those bounds and the mesh's, so
+a short head can't make the page build more), is answered as failed. A
+measure's answer is checked against the decoded mesh and tables
+(`Inspected::checked`, also run where it's made: numbers finite, sizes
+not negative, points within `Picking::MAX_VALUE`, directions unit,
+`at` within its table, an edge a chain, angles within range); one that
+fails becomes errors ("the measure came back broken") with the model
+taken as usual. Both
 directions transfer their `ArrayBuffer`s instead of copying them. The page
 checks what comes back before using it (whole elements, a size bound,
 the mesh through `RenderMesh::from_parts`, points within their bound,

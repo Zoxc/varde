@@ -125,6 +125,10 @@ pub enum Pick {
     Edge(u32),
     /// A corner.
     Corner(u32),
+    /// A chain's point ([`EdgeMeasure::point`]): a straight edge's
+    /// middle, a round edge's centre. An edge of another shape has none
+    /// ([`MeasureError::NotFound`]).
+    EdgePoint(u32),
 }
 
 /// A pick of a solid: the solid, its topology ([`Solid::topology`]) and
@@ -161,9 +165,21 @@ impl<'a> Target<'a> {
             .ok_or(MeasureError::NotFound(NotFound::Edge))
     }
 
+    /// The point of chain `c` of the topology: a straight one's middle, a
+    /// round one's centre, if it has one of those shapes.
+    pub(crate) fn edge_point(&self, c: u32) -> Result<DVec3, MeasureError> {
+        let chain = self.chain(c)?;
+        let edge = EdgeMeasure {
+            length: 0.0,
+            closed: chain.closed,
+            shape: edge_shape(self.solid, chain),
+        };
+        edge.point().ok_or(MeasureError::NotFound(NotFound::Edge))
+    }
+
     /// The point of corner `c` of the topology, if it has one whose
     /// vertex is the solid's.
-    fn corner(&self, c: u32) -> Result<DVec3, MeasureError> {
+    pub(crate) fn corner(&self, c: u32) -> Result<DVec3, MeasureError> {
         let verts = self.solid.mesh().verts();
         self.topology
             .corners()
@@ -240,8 +256,8 @@ pub enum Measured {
     Body(BodyMeasure),
     Face(FaceMeasure),
     Edge(EdgeMeasure),
-    /// A corner's point.
-    Corner(DVec3),
+    /// A point: a corner's, or an edge's ([`Pick::EdgePoint`]).
+    Point(DVec3),
 }
 
 impl Measured {
@@ -252,7 +268,7 @@ impl Measured {
             Measured::Body(body) => body.centre,
             Measured::Face(_) => None,
             Measured::Edge(edge) => edge.point(),
-            Measured::Corner(p) => Some(*p),
+            Measured::Point(p) => Some(*p),
         }
     }
 
@@ -262,7 +278,7 @@ impl Measured {
         match self {
             Measured::Face(face) => face.direction(),
             Measured::Edge(edge) => edge.direction(),
-            Measured::Body(_) | Measured::Corner(_) => None,
+            Measured::Body(_) | Measured::Point(_) => None,
         }
     }
 }
@@ -401,10 +417,11 @@ pub fn measure(
             Ok(Measured::Edge(EdgeMeasure {
                 length: chain_length(&curves, &mut work)?,
                 closed: chain.closed,
-                shape: edge_shape(&curves),
+                shape: curves_shape(&curves),
             }))
         }
-        Pick::Corner(c) => Ok(Measured::Corner(target.corner(c)?)),
+        Pick::Corner(c) => Ok(Measured::Point(target.corner(c)?)),
+        Pick::EdgePoint(c) => Ok(Measured::Point(target.edge_point(c)?)),
     }
 }
 
@@ -629,10 +646,24 @@ fn even(curve: &Conic3) -> bool {
         && lb <= CURVE_LEGS * la
 }
 
+/// What `chain`, a chain of `solid`'s topology, makes, read off its
+/// curves as [`measure`] reads an edge's shape, without its length: a
+/// few passes over its curves, cheap enough for every edge of a model
+/// (the picking tables' snap points).
+pub fn edge_shape(solid: &Solid, chain: &Chain) -> EdgeShape {
+    let mesh = solid.mesh();
+    let tris = mesh.tris().len();
+    if chain.halfedges.iter().any(|&h| (h as usize) / 3 >= tris) {
+        return EdgeShape::Other;
+    }
+    let curves: Vec<Conic3> = chain.halfedges.iter().map(|&h| mesh.curve(h)).collect();
+    curves_shape(&curves)
+}
+
 /// What `curves`, a chain end to end, make: a line, a circle or an
 /// ellipse within [`SHAPE_SLACK`] of their size, else
 /// [`EdgeShape::Other`].
-fn edge_shape(curves: &[Conic3]) -> EdgeShape {
+fn curves_shape(curves: &[Conic3]) -> EdgeShape {
     let (Some(first), Some(last)) = (curves.first(), curves.last()) else {
         return EdgeShape::Other;
     };

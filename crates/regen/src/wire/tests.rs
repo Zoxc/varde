@@ -14,6 +14,7 @@ fn regenerate(editor: &Editor) -> Request {
         document: editor.snapshot(),
         exclude: None,
         draft: None,
+        inspect: None,
     }
 }
 
@@ -34,6 +35,9 @@ fn regenerated(generation: u64) -> Head {
         faces: vec![face()],
         closed: vec![false],
         tangents: vec![0],
+        snaps: vec![None],
+        corners: Vec::new(),
+        inspected: None,
     }
 }
 
@@ -71,6 +75,7 @@ fn request_round_trips() {
         document,
         exclude,
         draft,
+        inspect: None,
     } = decode_request(&bytes).unwrap()
     else {
         panic!("not a regeneration");
@@ -119,6 +124,7 @@ fn a_revolve_and_its_draft_round_trip() {
         document: editor.snapshot(),
         exclude: None,
         draft: Some(Box::new(draft.clone())),
+        inspect: None,
     };
     let Request::Regenerate {
         document,
@@ -217,6 +223,7 @@ fn a_revolve_that_works_crosses_in_the_reply() {
         document: editor.snapshot(),
         exclude: None,
         draft: Some(Box::new(draft.clone())),
+        inspect: None,
     };
     let request = decode_request(&encode_request(&request)).unwrap();
     let response = handle(request);
@@ -293,6 +300,7 @@ fn request_with_a_draft_round_trips() {
         document: editor.snapshot(),
         exclude: None,
         draft: Some(Box::new(draft.clone())),
+        inspect: None,
     };
     let decoded = decode_request(&encode_request(&request)).unwrap();
     assert_eq!(decoded.draft(), Some(7));
@@ -327,6 +335,7 @@ fn request_with_a_draft_round_trips() {
             feature: None,
             kind: join.into(),
         })),
+        inspect: None,
     };
     let Response::Regenerated { draft, .. } = round_trip(&handle(request)) else {
         panic!("regeneration failed");
@@ -343,6 +352,7 @@ fn request_leaving_out_a_sketch_round_trips() {
         document: editor.snapshot(),
         exclude: Some(feature),
         draft: None,
+        inspect: None,
     };
     let Request::Regenerate {
         document, exclude, ..
@@ -418,10 +428,12 @@ fn regenerated_round_trips() {
         merged,
         placements,
         bodies,
+        inspected,
     } = round_trip(&response)
     else {
         panic!("regeneration failed");
     };
+    assert_eq!(inspected, None);
     assert_eq!(generation, editor.generation());
     assert_eq!(exclude, None);
     assert_eq!(draft, None);
@@ -551,6 +563,7 @@ fn failed_round_trips() {
         generation: Generation::from(u64::MAX),
         exclude: Some(feature),
         draft: Some(2),
+        inspect: Some(5),
         error: "the kernel gave up".to_owned(),
     };
     assert!(encode_reply(&response).1.is_empty());
@@ -558,6 +571,7 @@ fn failed_round_trips() {
         generation,
         exclude,
         draft,
+        inspect,
         error,
     } = round_trip(&response)
     else {
@@ -566,6 +580,7 @@ fn failed_round_trips() {
     assert_eq!(u64::from(generation), u64::MAX);
     assert_eq!(exclude, Some(feature));
     assert_eq!(draft, Some(2));
+    assert_eq!(inspect, Some(5));
     assert_eq!(error, "the kernel gave up");
 }
 
@@ -721,7 +736,9 @@ fn answer(mesh: RenderMesh, parts: Vec<BodyId>) -> Response {
     let faces = vec![face(); mesh.face_count()];
     let closed = vec![false; mesh.edge_count()];
     let tangents = (0..mesh.edge_count() as u32).collect();
-    let picking = Picking::from_parts(parts, faces, closed, tangents, &mesh).unwrap();
+    let snaps = vec![None; mesh.edge_count()];
+    let picking =
+        Picking::from_parts(parts, faces, closed, tangents, snaps, Vec::new(), &mesh).unwrap();
     Response::Regenerated {
         generation: Generation::from(0),
         exclude: None,
@@ -735,6 +752,7 @@ fn answer(mesh: RenderMesh, parts: Vec<BodyId>) -> Response {
         merged: Vec::new(),
         placements: Vec::new(),
         bodies: boxes,
+        inspected: None,
     }
 }
 
@@ -1088,6 +1106,7 @@ fn damaged_encodings_never_panic() {
         generation: Generation::from(3),
         exclude: None,
         draft: Some(1),
+        inspect: Some(2),
         error: "no".to_owned(),
     }
     .encode();
@@ -1121,6 +1140,7 @@ fn huge_lengths_are_refused_without_allocating_them() {
         generation: Generation::from(3),
         exclude: None,
         draft: None,
+        inspect: None,
         error: String::new(),
     }
     .encode();
@@ -1464,8 +1484,10 @@ fn too_many_parts_faces_aliases_or_flags_are_refused_as_the_head_is_decoded() {
     let summary = postcard::to_stdvec(&faces[0].summary).unwrap();
     let alias = postcard::to_stdvec(&faces[0].aliases[0]).unwrap();
     // [.. parts: 1, body, faces: 1, face [.., aliases: 1, alias,
-    // summary], closed: 1, false, tangents: 1, 0]
-    let tangents_at = head.len() - 2;
+    // summary], closed: 1, false, tangents: 1, 0, snaps: 1, None,
+    // corners: 0, inspected: None]
+    let snaps_at = head.len() - 4;
+    let tangents_at = snaps_at - 2;
     let closed_at = tangents_at - 2;
     let faces_at = closed_at - face.len() - 1;
     let aliases_at = closed_at - summary.len() - alias.len() - 1;
@@ -1476,6 +1498,7 @@ fn too_many_parts_faces_aliases_or_flags_are_refused_as_the_head_is_decoded() {
         (aliases_at, Picking::MAX_ALIASES),
         (closed_at, RenderMesh::MAX_EDGE_POLYLINES),
         (tangents_at, RenderMesh::MAX_EDGE_POLYLINES),
+        (snaps_at, RenderMesh::MAX_EDGE_POLYLINES),
     ] {
         assert_eq!(head[at], 1);
         for claim in [max as u64 + 1, u64::MAX] {
@@ -1524,6 +1547,8 @@ fn a_model_with_too_many_faces_is_answered_as_failed() {
             vec![face(); faces],
             Vec::new(),
             Vec::new(),
+            Vec::new(),
+            Vec::new(),
             &mesh,
         )
         .unwrap();
@@ -1546,6 +1571,7 @@ fn a_model_with_too_many_faces_is_answered_as_failed() {
                     max: Vec3::ONE,
                 },
             )],
+            inspected: None,
         }
     };
     assert!(matches!(
@@ -1692,7 +1718,15 @@ fn tangent_chains_must_hang_together() {
             })
             .collect();
         let bodies = [a, b][..parts].to_vec();
-        Picking::from_parts(bodies, faces, vec![false; 2], tangents.to_vec(), &mesh)
+        Picking::from_parts(
+            bodies,
+            faces,
+            vec![false; 2],
+            tangents.to_vec(),
+            vec![None; 2],
+            Vec::new(),
+            &mesh,
+        )
     };
     assert!(tables([0, 1], 1, false).is_ok());
     assert!(tables([0, 0], 1, false).is_ok());
@@ -1827,4 +1861,292 @@ fn hostile_placements_are_refused() {
     };
     assert_eq!(placements.len(), 2);
     assert_eq!(placements[0].1.origin, glam::DVec3::new(max, -max, max));
+}
+
+/// A request measuring two faces of the example round trips, and so does
+/// its answer, measures and all.
+#[test]
+fn a_measure_round_trips() {
+    let editor = Editor::new(Document::example());
+    let body = editor.document().bodies()[0].id;
+    let Response::Regenerated { picking, .. } = handle(regenerate(&editor)) else {
+        panic!("regeneration failed");
+    };
+    assert_eq!(picking.corners().len(), 8);
+    let pick = |f: usize, near: [f64; 3]| crate::InspectPick {
+        body,
+        entity: crate::Entity::Face(picking.faces()[f].key),
+        near,
+    };
+    let plane = |d: f64| {
+        let n = [0.0, 0.0, if d > 0.0 { 1.0 } else { -1.0 }];
+        (picking.faces().iter())
+            .position(|f| f.summary == crate::Summary::Plane { n, d: d.abs() })
+            .unwrap()
+    };
+    let inspect = crate::Inspect {
+        revision: 6,
+        first: pick(plane(10.0), [20.0, 10.0, 10.0]),
+        second: Some(crate::InspectPick {
+            entity: crate::Entity::Corner(picking.corner_keys(0)),
+            near: picking.corners()[0].point,
+            ..pick(0, [0.0; 3])
+        }),
+    };
+    let mut request = regenerate(&editor);
+    if let Request::Regenerate { inspect: asked, .. } = &mut request {
+        *asked = Some(Box::new(inspect.clone()));
+    }
+    let decoded = decode_request(&encode_request(&request)).unwrap();
+    let Request::Regenerate { inspect: back, .. } = &decoded else {
+        panic!("not a regeneration");
+    };
+    assert_eq!(back.as_ref(), Some(&Box::new(inspect.clone())));
+    let response = handle(decoded);
+    let Response::Regenerated {
+        inspected: Some(sent),
+        ..
+    } = &response
+    else {
+        panic!("regeneration failed");
+    };
+    assert!(sent.first.is_ok() && matches!(sent.second, Some(Ok(_))));
+    assert!(sent.between.as_ref().unwrap().distance.is_ok());
+    let Response::Regenerated {
+        inspected,
+        picking: back,
+        ..
+    } = round_trip(&response)
+    else {
+        panic!("the reply was refused");
+    };
+    assert_eq!(inspected.as_ref(), Some(sent));
+    assert_eq!(*back, *picking);
+}
+
+/// A broken measure in a reply is answered as an error, the model with
+/// it taken as usual.
+#[test]
+fn a_broken_measure_is_answered_as_an_error() {
+    let measure = |measure| crate::Inspected {
+        revision: 2,
+        first: Ok(crate::Probed {
+            at: Some(crate::At::Face(0)),
+            measure: Ok(measure),
+        }),
+        second: None,
+        between: None,
+    };
+    for (good, sent) in [
+        (true, measure(crate::Measure::Point([1.0, 2.0, 3.0]))),
+        (false, measure(crate::Measure::Point([f64::NAN, 2.0, 3.0]))),
+        (
+            false,
+            crate::Inspected {
+                first: Ok(crate::Probed {
+                    at: Some(crate::At::Edge(0)),
+                    measure: Err("too complex to measure".to_owned()),
+                }),
+                ..measure(crate::Measure::Point([0.0; 3]))
+            },
+        ),
+        (
+            false,
+            crate::Inspected {
+                first: Ok(crate::Probed {
+                    at: Some(crate::At::Corner(0)),
+                    measure: Err("too complex to measure".to_owned()),
+                }),
+                ..measure(crate::Measure::Point([0.0; 3]))
+            },
+        ),
+    ] {
+        let mut head = regenerated(1);
+        if let Head::Regenerated { inspected, .. } = &mut head {
+            *inspected = Some(Box::new(sent.clone()));
+        }
+        let reply = decode_reply(&head.encode()[..], &slices(&triangle())).unwrap();
+        assert_eq!(reply.inspect(), Some(2));
+        let Response::Regenerated {
+            inspected: Some(inspected),
+            ..
+        } = reply
+        else {
+            panic!("the model was refused");
+        };
+        if good {
+            assert_eq!(*inspected, sent);
+        } else {
+            assert!(inspected.first.is_err(), "{inspected:?}");
+        }
+    }
+}
+
+/// A model refused fails its generation with the measure's revision.
+#[test]
+fn a_refused_model_keeps_its_measure_s_revision() {
+    let mut head = regenerated(1);
+    if let Head::Regenerated { inspected, .. } = &mut head {
+        *inspected = Some(Box::new(crate::Inspected {
+            revision: 8,
+            first: Err("face not found".to_owned()),
+            second: None,
+            between: None,
+        }));
+    }
+    let reply = decode_reply(&head.encode()[..], &slices(&triangle()[..7])).unwrap();
+    assert!(matches!(reply, Response::Failed { .. }));
+    assert_eq!(reply.inspect(), Some(8));
+}
+
+/// Three triangles round a vertex, a face each, in one part or (if
+/// `split`) the first two in one and the third in another, of another
+/// body, and their head, with a corner where they meet.
+fn fan(split: bool) -> (Head, Vec<Vec<u8>>) {
+    let mesh = RenderMesh::from_parts(MeshParts {
+        positions: vec![
+            [0.0; 3],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [-1.0, -1.0, 0.0],
+        ],
+        normals: vec![[0.0, 0.0, 1.0]; 4],
+        indices: vec![0, 1, 2, 0, 2, 3, 0, 3, 1],
+        face_ends: vec![3, 6, 9],
+        part_ends: if split {
+            vec![[2, 0, 0], [3, 0, 0]]
+        } else {
+            vec![[3, 0, 0]]
+        },
+        ..MeshParts::default()
+    })
+    .unwrap();
+    let other = ids()[1];
+    let bodies = if split {
+        vec![BodyId::NEW, other]
+    } else {
+        vec![BodyId::NEW]
+    };
+    let parts = model_parts(&answer(mesh, bodies.clone()));
+    let mut head = regenerated(1);
+    if let Head::Regenerated {
+        faces,
+        corners,
+        closed,
+        tangents,
+        snaps,
+        parts,
+        bodies: boxes,
+        ..
+    } = &mut head
+    {
+        for part in [PartKey::EndCap, PartKey::Side { curve: 0 }] {
+            let mut next = face();
+            next.key.part = part;
+            faces.push(next);
+        }
+        corners.push(PickCorner {
+            faces: [0, 1, 2],
+            point: [0.0; 3],
+        });
+        closed.clear();
+        tangents.clear();
+        snaps.clear();
+        *parts = bodies;
+        boxes.push((other, [[0.0; 3], [1.0; 3]]));
+    }
+    (head, parts)
+}
+
+#[test]
+fn picked_corners_are_three_faces_of_one_part() {
+    let (head, parts) = fan(false);
+    let reply = decode_reply(&head.encode()[..], &slices(&parts)).unwrap();
+    let Response::Regenerated { picking, .. } = reply else {
+        panic!("a good corner was refused");
+    };
+    assert_eq!(picking.corners().len(), 1);
+    let keys = picking.corner_keys(0);
+    assert!(keys.windows(2).all(|pair| pair[0] < pair[1]));
+
+    let corner = Error::Picking(PickingError::Corner).to_string();
+    type Change = fn(&mut Vec<PickCorner>);
+    let changes: [Change; 6] = [
+        |corners| corners[0].faces = [0, 2, 1],
+        |corners| corners[0].faces = [0, 0, 1],
+        |corners| corners[0].faces = [0, 1, 3],
+        |corners| corners[0].faces = [0, 1, u32::MAX],
+        |corners| corners[0].point = [f64::NAN, 0.0, 0.0],
+        |corners| corners[0].point = [0.0, 0.0, 1e9],
+    ];
+    for change in changes {
+        let mut head = head.clone();
+        if let Head::Regenerated { corners, .. } = &mut head {
+            change(corners);
+        }
+        assert_eq!(refused(&head, &parts), corner);
+    }
+    // Faces of two parts.
+    let (split, split_parts) = fan(true);
+    assert_eq!(refused(&split, &split_parts), corner);
+    // More corners than vertices.
+    let mut more = head.clone();
+    if let Head::Regenerated { corners, .. } = &mut more {
+        let first = corners[0];
+        corners.extend([first; 4]);
+    }
+    assert_eq!(refused(&more, &parts), corner);
+}
+
+#[test]
+fn snap_points_are_within_bounds_and_only_on_chains() {
+    let snap = |at: [f64; 3]| {
+        let mut head = two_faces(false);
+        if let Head::Regenerated { snaps, .. } = &mut head {
+            snaps[0] = Some(at);
+        }
+        head
+    };
+    let reply = decode_reply(
+        &snap([0.5, 0.5, 0.0]).encode()[..],
+        &slices(&two_triangles(false)),
+    )
+    .unwrap();
+    let Response::Regenerated { picking, .. } = reply else {
+        panic!("a good snap point was refused");
+    };
+    assert_eq!(picking.snaps(), [Some([0.5, 0.5, 0.0])]);
+    let bad = Error::Picking(PickingError::Snap).to_string();
+    assert_eq!(
+        refused(&snap([0.0, f64::INFINITY, 0.0]), &two_triangles(false)),
+        bad
+    );
+    assert_eq!(refused(&snap([0.0, 2e8, 0.0]), &two_triangles(false)), bad);
+    // A crease has none.
+    let mut crease = regenerated(1);
+    if let Head::Regenerated { snaps, .. } = &mut crease {
+        snaps[0] = Some([0.0; 3]);
+    }
+    assert_eq!(refused(&crease, &triangle()), bad);
+}
+
+#[test]
+fn too_many_corners_are_refused_as_the_head_is_decoded() {
+    let (head, _) = fan(false);
+    let head = head.encode();
+    assert!(Head::decode(&head).is_ok());
+    let corner = postcard::to_stdvec(&PickCorner {
+        faces: [0, 1, 2],
+        point: [0.0; 3],
+    })
+    .unwrap();
+    // [.., corners: 1, corner, inspected: None]
+    let at = head.len() - corner.len() - 1 - 1;
+    assert_eq!(head[at], 1);
+    for claim in [MAX_CORNERS as u64 + 1, u64::MAX] {
+        let mut claimed = head[..at].to_vec();
+        claimed.extend(postcard::to_stdvec(&claim).unwrap());
+        claimed.extend(&head[at + 1..]);
+        assert!(Head::decode(&claimed).is_err(), "{claim}");
+    }
 }

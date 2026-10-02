@@ -153,7 +153,7 @@ struct Element {
 }
 
 /// The elements of a pick: a body's patches, a face's, an edge's curves,
-/// a corner's point.
+/// a corner's or an edge's point.
 fn elements(target: &Target<'_>) -> Result<Vec<Element>, MeasureError> {
     let mesh = target.solid.mesh();
     let patch = |t: u32| {
@@ -163,6 +163,10 @@ fn elements(target: &Target<'_>) -> Result<Vec<Element>, MeasureError> {
             shape: Shape::Patch(patch),
             rounds: Round::of_form(&face.form),
         }
+    };
+    let point = |p: DVec3| Element {
+        shape: Shape::Point(p),
+        rounds: [None, None],
     };
     Ok(match target.pick {
         Pick::Body => (0..mesh.tris().len() as u32).map(patch).collect(),
@@ -179,13 +183,8 @@ fn elements(target: &Target<'_>) -> Result<Vec<Element>, MeasureError> {
                 }
             })
             .collect(),
-        Pick::Corner(c) => {
-            let p = target.corner(c)?;
-            vec![Element {
-                shape: Shape::Point(p),
-                rounds: [None, None],
-            }]
-        }
+        Pick::Corner(c) => vec![point(target.corner(c)?)],
+        Pick::EdgePoint(c) => vec![point(target.edge_point(c)?)],
     })
 }
 

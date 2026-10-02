@@ -424,6 +424,7 @@ fn one_line() -> Response {
         document: Arc::new(with_a_line()),
         exclude: None,
         draft: None,
+        inspect: None,
     })
 }
 
@@ -2534,6 +2535,7 @@ fn failure_marks_of_before_a_replacement_mark_nothing() {
                     merged: Vec::new(),
                     placements: Vec::new(),
                     bodies,
+                    inspected: None,
                 },
                 failed => failed,
             };
@@ -5303,6 +5305,7 @@ fn a_long_status_leaves_the_key_hints_on_the_screen() {
     for request in requests.take() {
         doc.computed(Response::Failed {
             draft: None,
+            inspect: None,
             generation: request.generation().unwrap(),
             exclude: request.exclude(),
             error: "the kernel ran out of room splitting the faces of a body with very \

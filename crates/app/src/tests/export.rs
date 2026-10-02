@@ -79,6 +79,7 @@ fn export_goes_while_a_body_is_shown_and_regenerating_works() {
         generation: request.generation().unwrap(),
         exclude: None,
         draft: None,
+        inspect: None,
         error: "the kernel gave up".to_owned(),
     });
     assert!(matches!(

@@ -20,6 +20,7 @@
 
 mod cache;
 mod history;
+mod inspect;
 mod message;
 mod newest;
 mod picking;
@@ -76,7 +77,10 @@ use varde_sketch::{Budget, Goal};
 
 pub use cache::Cache;
 pub use history::{BodySolid, Evaluation, evaluate, note_merge};
-pub use picking::{PickFace, Picking, PickingError, Summary};
+pub use inspect::{
+    At, Between, EdgeForm, Entity, Gap, Inspect, InspectPick, Inspected, Measure, Probed,
+};
+pub use picking::{PickCorner, PickFace, Picking, PickingError, Summary};
 pub use profile::{ProfileError, profile};
 
 use cache::Keyer;
@@ -102,6 +106,13 @@ pub enum Request {
         /// A feature being set up and not committed yet, answered as if
         /// it were. Boxed: a feature's kind is large next to the rest.
         draft: Option<Box<Draft>>,
+        /// The measure tool's picks, measured on the model answered
+        /// (see [`Inspect`]). It rides on the regeneration, latest wins,
+        /// as a draft does: the newest request carries the newest picks,
+        /// so one it replaces only had an answer the panel would no
+        /// longer show, and the picks are always measured on the very
+        /// model the answer draws, whose tables say where they are.
+        inspect: Option<Box<Inspect>>,
     },
     /// Welds the visible bodies of the committed `document` for export
     /// (see [`export`]), answered with [`Response::Exported`] tagged
@@ -180,6 +191,15 @@ impl Response {
             Response::Exported { .. } => None,
         }
     }
+
+    /// The revision of the measure the request answered had, if any.
+    pub fn inspect(&self) -> Option<u64> {
+        match self {
+            Response::Regenerated { inspected, .. } => inspected.as_ref().map(|i| i.revision),
+            Response::Failed { inspect, .. } => *inspect,
+            Response::Exported { .. } => None,
+        }
+    }
 }
 
 impl Request {
@@ -208,6 +228,14 @@ impl Request {
         }
     }
 
+    /// The revision of the request's measure, if it has one.
+    pub fn inspect(&self) -> Option<u64> {
+        match self {
+            Request::Regenerate { inspect, .. } => inspect.as_ref().map(|i| i.revision),
+            Request::Export { .. } => None,
+        }
+    }
+
     /// The answer to this request should handling it fail with `error`,
     /// e.g. by a panic: every request has one. Keeps only what the
     /// answer needs, not the document.
@@ -217,15 +245,22 @@ impl Request {
                 generation,
                 exclude,
                 draft,
+                inspect,
                 ..
-            } => Err((*generation, *exclude, draft.as_ref().map(|d| d.revision))),
+            } => Err((
+                *generation,
+                *exclude,
+                draft.as_ref().map(|d| d.revision),
+                inspect.as_ref().map(|i| i.revision),
+            )),
             Request::Export { export, .. } => Ok(*export),
         };
         move |error| match failed {
-            Err((generation, exclude, draft)) => Response::Failed {
+            Err((generation, exclude, draft, inspect)) => Response::Failed {
                 generation,
                 exclude,
                 draft,
+                inspect,
                 error,
             },
             Ok(export) => Response::Exported {
@@ -274,6 +309,9 @@ pub enum Response {
         /// The box around each body that has a solid, shown or not, in
         /// the order they were made.
         bodies: Vec<(BodyId, Aabb)>,
+        /// The answer to the request's measure, if it had one, measured
+        /// on this model.
+        inspected: Option<Box<Inspected>>,
     },
     /// The work for `generation` failed, e.g. the kernel panicked. The
     /// request leaving out `exclude` did: one of the same generation
@@ -283,6 +321,8 @@ pub enum Response {
         exclude: Option<FeatureId>,
         /// The revision of the request's draft, if it had one.
         draft: Option<u64>,
+        /// The revision of the request's measure, if it had one.
+        inspect: Option<u64>,
         error: String,
     },
     /// Answers [`Request::Export`] tagged `export`: the visible bodies
@@ -318,9 +358,10 @@ impl Regenerator {
                 document,
                 exclude,
                 draft,
+                inspect,
             } => {
                 self.cache.begin();
-                match self.regenerate(&document, exclude, draft.as_deref()) {
+                match self.regenerate(&document, exclude, draft.as_deref(), inspect.as_deref()) {
                     Ok(model) => Response::Regenerated {
                         generation,
                         exclude,
@@ -334,11 +375,13 @@ impl Regenerator {
                         merged: model.merged,
                         placements: model.placements,
                         bodies: model.bodies,
+                        inspected: model.inspected.map(Box::new),
                     },
                     Err(error) => Response::Failed {
                         generation,
                         exclude,
                         draft: draft.map(|draft| draft.revision),
+                        inspect: inspect.map(|inspect| inspect.revision),
                         error,
                     },
                 }
@@ -355,15 +398,17 @@ impl Regenerator {
     }
 
     /// The model of `document` with `draft` applied, or without it if it
-    /// fails, leaving out the lines of the sketch `exclude`.
+    /// fails, leaving out the lines of the sketch `exclude`, with
+    /// `inspect` measured on it.
     fn regenerate(
         &mut self,
         document: &Document,
         exclude: Option<FeatureId>,
         draft: Option<&Draft>,
+        inspect: Option<&Inspect>,
     ) -> Result<Model, String> {
         let Some(draft) = draft else {
-            return self.model(document, exclude, None);
+            return self.model(document, exclude, None, inspect);
         };
         let (error, touched) = match applied(document, draft) {
             Ok((drafted, feature)) => {
@@ -379,7 +424,7 @@ impl Regenerator {
                             error: None,
                             touched,
                         };
-                        return self.draw(&drafted, evaluation, exclude, Some(done));
+                        return self.draw(&drafted, evaluation, exclude, Some(done), inspect);
                     }
                 }
             }
@@ -390,7 +435,7 @@ impl Regenerator {
             error: Some(error),
             touched,
         };
-        self.model(document, exclude, Some(failed))
+        self.model(document, exclude, Some(failed), inspect)
     }
 
     /// The model of `document`.
@@ -399,18 +444,21 @@ impl Regenerator {
         document: &Document,
         exclude: Option<FeatureId>,
         draft: Option<Drafted>,
+        inspect: Option<&Inspect>,
     ) -> Result<Model, String> {
         let evaluation = evaluate(document, &mut self.cache);
-        self.draw(document, evaluation, exclude, draft)
+        self.draw(document, evaluation, exclude, draft, inspect)
     }
 
-    /// The model of `document`, whose history gave `evaluation`.
+    /// The model of `document`, whose history gave `evaluation`, with
+    /// `inspect` measured on it.
     fn draw(
         &mut self,
         document: &Document,
         evaluation: Evaluation,
         exclude: Option<FeatureId>,
         draft: Option<Drafted>,
+        inspect: Option<&Inspect>,
     ) -> Result<Model, String> {
         // Only a draft that worked is drawn: one that failed is answered
         // with the committed model.
@@ -424,6 +472,16 @@ impl Regenerator {
             .iter()
             .filter_map(|made| Some((made.body, made.solid.bounds()?)))
             .collect();
+        let inspected = inspect.map(|inspect| {
+            inspect::inspect(
+                inspect,
+                document,
+                &evaluation,
+                &scene.mesh,
+                &scene.picking,
+                &mut self.cache,
+            )
+        });
         Ok(Model {
             draft,
             scene,
@@ -434,6 +492,7 @@ impl Regenerator {
             merged: evaluation.merged,
             placements: evaluation.placements,
             bodies,
+            inspected,
         })
     }
 
@@ -454,6 +513,7 @@ struct Model {
     merged: Vec<(BodyId, BodyId)>,
     placements: Vec<(FeatureId, Placement)>,
     bodies: Vec<(BodyId, Aabb)>,
+    inspected: Option<Inspected>,
 }
 
 /// `document` with `draft` applied, and the draft's feature, or why it
@@ -551,7 +611,15 @@ fn tessellate_scene(
         let mut mesh = RenderMesh::default();
         let mut picking = Picking::default();
         for (made, key) in &shown {
-            let drawn = cache.mesh(*key, || Drawn::new(&made.solid, &display))?;
+            // The topology is kept too, for the measure tool's picks.
+            let topology = (!cache.holds(*key)).then(|| {
+                let topology = Keyer::new("topology").key(made.key).finish();
+                cache.topology(topology, || made.solid.topology())
+            });
+            let drawn = cache.mesh(*key, || match &topology {
+                Some(topology) => Drawn::new(&made.solid, topology, &display),
+                None => Drawn::new(&made.solid, &made.solid.topology(), &display),
+            })?;
             mesh.append(&drawn.mesh)?;
             picking.append(made.body, &drawn)?;
         }

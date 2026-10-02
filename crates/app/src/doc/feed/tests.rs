@@ -141,6 +141,7 @@ fn failure_ends_regenerating_and_keeps_the_last_mesh() {
     let request = regen.borrow_mut().remove(0);
     feed.apply(Response::Failed {
         draft: None,
+        inspect: None,
         generation: request.generation().unwrap(),
         exclude: request.exclude(),
         error: "the kernel failed".to_owned(),
@@ -228,6 +229,7 @@ fn sketches_are_shown_with_their_mesh() {
     let request = regen.borrow_mut().remove(0);
     feed.apply(Response::Failed {
         draft: None,
+        inspect: None,
         generation: request.generation().unwrap(),
         exclude: request.exclude(),
         error: "no".to_owned(),
@@ -298,6 +300,7 @@ fn only_the_sketch_asked_for_last_is_shown_left_out() {
     // A failure of the same generation doesn't replace it.
     feed.apply(Response::Failed {
         draft: None,
+        inspect: None,
         generation: editor.generation(),
         exclude: Some(feature),
         error: "no".to_owned(),
@@ -318,6 +321,7 @@ fn a_failure_doesn_t_hold_back_leaving_out_another_sketch() {
     let request = regen.borrow_mut().remove(0);
     feed.apply(Response::Failed {
         draft: None,
+        inspect: None,
         generation: request.generation().unwrap(),
         exclude: None,
         error: "the worker stopped".to_owned(),
@@ -340,6 +344,7 @@ fn a_failure_doesn_t_hold_back_leaving_out_another_sketch() {
     let request = regen.borrow_mut().remove(0);
     feed.apply(Response::Failed {
         draft: None,
+        inspect: None,
         generation: request.generation().unwrap(),
         exclude: None,
         error: "again".to_owned(),
@@ -515,6 +520,7 @@ fn merged_bodies_follow_the_model_shown() {
         generation: editor.generation(),
         exclude: None,
         draft: None,
+        inspect: None,
         error: "failed".to_owned(),
     });
     assert_eq!(feed.merged_bodies(), [(below, top)]);
@@ -629,6 +635,7 @@ fn the_parts_bodies_follow_the_mesh_shown() {
         generation: request.generation().unwrap(),
         exclude: None,
         draft: None,
+        inspect: None,
         error: "no".to_owned(),
     });
     assert_eq!(feed.parts(), [body]);

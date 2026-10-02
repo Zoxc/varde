@@ -3062,7 +3062,10 @@ built, with `+ − × ÷ √` and `trig` only, each part charged to a `Budget`
 (past it `MeasureError::TooComplex`, "too complex to measure"), the same
 bits at any thread count (integrals per patch by `par_map`, summed in
 patch order; searches sequential). A `Pick` is `Body`, or a region,
-chain or corner of the solid's `Topology` by index; a `Target` is a pick
+chain or corner of the solid's `Topology` by index, or a chain's point
+(`EdgePoint`: its `EdgeMeasure::point`, a straight edge's middle or a
+round one's centre, `NotFound` for an edge of another shape), measured
+as `Measured::Point` as a corner is and a single point in a distance; a `Target` is a pick
 with its solid and topology, and `measure(target, tol, budget)` gives a
 `Measured` (a pick naming nothing, or a topology that isn't the
 solid's, is `MeasureError::NotFound`, never a panic). `distance(a, b,
@@ -3132,7 +3135,9 @@ tol, budget)` gives the minimum distance between two targets (below).
   centre `c + (m − c)/(1 − w²)`, conjugate semi-diameters `(c − O)·w`
   and `(p1 − p0)/(2√(1 − w²))`, semi-axes `(√(S + 2P) ± √(S − 2P))/2`
   with `S` their squares' sum and `P` their cross's length; not for
-  `1 − w² < 1e-6`), else `Other`. A straight edge's point is its
+  `1 − w² < 1e-6`), else `Other` (`measure::edge_shape(solid, chain)` gives it without
+  the length, cheap enough for every edge of a model: the picking
+  tables' snap points). A straight edge's point is its
   middle, a round one's its centre; a corner's its vertex; a body's its
   centre of mass. `angle(a, b)` is `atan2(|a × b|, a · b)`, folded to
   `[0, π/2]` (`|a · b|`) where either is a line.

@@ -14,6 +14,7 @@ fn regenerate(editor: &Editor, exclude: Option<FeatureId>) -> Request {
         document: editor.snapshot(),
         exclude,
         draft: None,
+        inspect: None,
     }
 }
 
@@ -72,6 +73,7 @@ fn regenerate_tessellates_the_snapshot() {
         merged,
         placements,
         bodies,
+        inspected,
     } = handle(regenerate(&editor, None))
     else {
         panic!("regeneration failed");
@@ -79,6 +81,7 @@ fn regenerate_tessellates_the_snapshot() {
     assert_eq!(generation, editor.generation());
     assert_eq!(exclude, None);
     assert_eq!(draft, None);
+    assert_eq!(inspected, None);
     // Sketches make no bodies.
     assert!(
         evaluate(editor.document(), &mut Cache::default())
@@ -456,6 +459,7 @@ pub(crate) fn regenerate_with(editor: &Editor, draft: Option<Draft>) -> Request 
         document: editor.snapshot(),
         exclude: None,
         draft: draft.map(Box::new),
+        inspect: None,
     }
 }
 
@@ -1462,6 +1466,8 @@ fn drawn(mesh: &RenderMesh) -> Drawn {
         faces: Vec::new(),
         closed: Vec::new(),
         tangents: Vec::new(),
+        snaps: Vec::new(),
+        corners: Vec::new(),
     }
 }
 
@@ -2116,6 +2122,8 @@ fn assert_picks_match(mesh: &RenderMesh, picking: &Picking) {
         faces.to_vec(),
         picking.closed().to_vec(),
         picking.tangents().to_vec(),
+        picking.snaps().to_vec(),
+        picking.corners().to_vec(),
         mesh,
     )
     .unwrap();
@@ -2506,7 +2514,7 @@ fn summaries_of_an_extrude_on_a_tilted_plane() {
             loops: vec![ellipse_loop(centre, 2.0, b, 7)],
         };
         let solid = extrude(&profile, &frame, 1.0, 4.0, 3, &tol, &Budget::DEFAULT).unwrap();
-        let drawn = Drawn::new(&solid, &Display::new(&tol)).unwrap();
+        let drawn = Drawn::new(&solid, &solid.topology(), &Display::new(&tol)).unwrap();
         let mut picking = Picking::default();
         picking.append(body, &drawn).unwrap();
         assert_picks_match(&drawn.mesh, &picking);

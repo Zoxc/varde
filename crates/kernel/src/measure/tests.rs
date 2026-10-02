@@ -161,7 +161,7 @@ fn a_box_measures_its_lengths_areas_volume_and_centre() {
         let p = measured(&solid, &topology, Pick::Corner(c as u32));
         assert_eq!(
             p,
-            Measured::Corner(solid.mesh().verts()[corner.vertex as usize])
+            Measured::Point(solid.mesh().verts()[corner.vertex as usize])
         );
         assert_eq!(
             p.point(),
@@ -758,6 +758,7 @@ fn picks_naming_nothing_are_not_found() {
         (Pick::Face(6), NotFound::Face),
         (Pick::Edge(12), NotFound::Edge),
         (Pick::Corner(8), NotFound::Corner),
+        (Pick::EdgePoint(12), NotFound::Edge),
     ];
     for (pick, error) in missing {
         assert_eq!(
@@ -771,7 +772,13 @@ fn picks_naming_nothing_are_not_found() {
     let small_topology = small.topology();
     let big_topology = big.topology();
     // Still well-formed lookups: never a panic.
-    for pick in [Pick::Face(0), Pick::Edge(0), Pick::Corner(0), Pick::Body] {
+    for pick in [
+        Pick::Face(0),
+        Pick::Edge(0),
+        Pick::EdgePoint(0),
+        Pick::Corner(0),
+        Pick::Body,
+    ] {
         let _ = measure(&target(&small, &big_topology, pick), &TOL, &Budget::DEFAULT);
         let _ = measure(&target(&big, &small_topology, pick), &TOL, &Budget::DEFAULT);
     }
@@ -1040,4 +1047,40 @@ fn a_revolved_torus_has_its_area_volume_and_box() {
         ));
         assert!(close(tube[0].area, body.area, 1e-15));
     }
+}
+
+/// An edge's point is a straight edge's middle and a round edge's
+/// centre, as `edge_shape` reads it, and is a point in a distance.
+#[test]
+fn edge_points_are_middles_and_centres() {
+    let size = DVec3::new(2.0, 3.0, 4.0);
+    let solid = Solid::cuboid(DVec3::ZERO, size, 1, &TOL).unwrap();
+    let topology = solid.topology();
+    for (c, chain) in topology.chains().iter().enumerate() {
+        let EdgeShape::Line { from, to } = edge_shape(&solid, chain) else {
+            panic!("a box's edges are straight");
+        };
+        let p = measured(&solid, &topology, Pick::EdgePoint(c as u32));
+        assert_eq!(p, Measured::Point((from + to) * 0.5));
+        assert_eq!(p.direction(), None);
+    }
+    let cylinder = Solid::cylinder(DVec3::ZERO, 2.0, 3.0, 1, &TOL).unwrap();
+    let rounds = cylinder.topology();
+    let rim = (0..rounds.chains().len() as u32)
+        .find(|&c| rounds.chains()[c as usize].closed)
+        .unwrap();
+    let Measured::Point(centre) = measured(&cylinder, &rounds, Pick::EdgePoint(rim)) else {
+        panic!("a point");
+    };
+    assert!(centre.x.abs() < 1e-12 && centre.y.abs() < 1e-12, "{centre}");
+    // From the rim's centre to the rim: its radius.
+    let gap = distance(
+        &target(&cylinder, &rounds, Pick::EdgePoint(rim)),
+        &target(&cylinder, &rounds, Pick::Edge(rim)),
+        &TOL,
+        &Budget::DEFAULT,
+    )
+    .unwrap();
+    assert!(close(gap.distance, 2.0, 1e-9), "{}", gap.distance);
+    assert_eq!(gap.points[0], centre);
 }

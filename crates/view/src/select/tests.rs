@@ -436,6 +436,8 @@ fn aliased() -> PickIndex {
         vec![a, b, b2],
         vec![false; 3],
         vec![0, 1, 2],
+        vec![None; 3],
+        Vec::new(),
         &mesh,
     )
     .unwrap();

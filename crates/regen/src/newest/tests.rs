@@ -10,6 +10,7 @@ fn regenerate(generation: u64) -> Request {
         document: Arc::new(Document::default()),
         exclude: None,
         draft: None,
+        inspect: None,
     }
 }
 
@@ -81,4 +82,45 @@ fn exports_wait_in_order_and_no_regeneration_replaces_them() {
     assert_eq!(generation(newest.push(regenerate(1))), Some(1));
     assert_eq!(exported(newest.pop()), Some(9));
     assert!(newest.is_empty());
+}
+
+/// A regeneration of `generation` measuring with revision `revision`.
+fn measuring(generation: u64, revision: u64) -> Request {
+    let mut request = regenerate(generation);
+    if let Request::Regenerate { inspect, .. } = &mut request {
+        *inspect = Some(Box::new(crate::Inspect {
+            revision,
+            first: crate::InspectPick {
+                body: varde_document::BodyId::NEW,
+                entity: crate::Entity::Body,
+                near: [0.0; 3],
+            },
+            second: None,
+        }));
+    }
+    request
+}
+
+/// Measures ride on the regeneration: a newer pick of the same
+/// generation replaces the one waiting, so the newest picks are always
+/// what's answered next, and one of an older generation never follows.
+#[test]
+fn a_newer_measure_replaces_the_one_waiting() {
+    let mut newest = Newest::default();
+    assert!(newest.push(measuring(3, 1)).is_none());
+    let replaced = newest.push(measuring(3, 2)).unwrap();
+    assert_eq!(replaced.inspect(), Some(1));
+    // An older generation's, picked on a model the app no longer shows.
+    let refused = newest.push(measuring(2, 3)).unwrap();
+    assert_eq!(refused.inspect(), Some(3));
+    let next = newest.pop().unwrap();
+    assert_eq!(
+        (generation(Some(next.clone())), next.inspect()),
+        (Some(3), Some(2))
+    );
+    // An export waiting doesn't drop the measure behind it.
+    newest.push(measuring(4, 4));
+    newest.push(export(1));
+    assert_eq!(exported(newest.pop()), Some(1));
+    assert_eq!(newest.pop().unwrap().inspect(), Some(4));
 }

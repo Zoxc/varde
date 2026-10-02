@@ -397,7 +397,8 @@ split first), summed in patch order. The tests hold them to `1e-12` relative
 on boxes, cylinders and extrudes.
 
 `measure` (for the measure tool) measures a solid as built, of a picked
-body, face, edge or corner of its `Topology`: lengths of chains (lines
+body, face, edge, edge's point (a straight edge's middle, a round one's
+centre) or corner of its `Topology`: lengths of chains (lines
 and circular arcs in closed form, other conics by Gauss–Legendre over
 pieces split until even), areas, volumes and centres of mass
 (`Solid::moments`) by the same rule, tight boxes (`Solid::tight_bounds`:

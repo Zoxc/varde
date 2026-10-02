@@ -21,7 +21,8 @@
 //! has no model: the model's parts follow only a [`Head::Regenerated`] and
 //! are the bytes of the [`RenderMesh`]'s and the sketches' [`RenderLines`]'
 //! vectors as they are in memory (little endian on wasm). The [`Picking`]
-//! tables ride in the head.
+//! tables ride in the head, and so does the answer to a measure
+//! ([`Inspected`]).
 //!
 //! A request is copied out of its buffer only if it's within
 //! `MAX_REQUEST_BYTES`. Replies are checked on receipt: the head is within
@@ -30,18 +31,24 @@
 //! so a broken reply doesn't allocate without bound, and together the parts
 //! make a [`RenderMesh`] by [`RenderMesh::from_parts`] and [`RenderLines`]
 //! by [`RenderLines::from_parts`] and, with the head's tables, a
-//! [`Picking`] by [`Picking::from_parts`], each part's body one the head
-//! lists; the bodies' boxes in the head are finite with their corners in
-//! order, the merged bodies name each consumed body once, never as a
-//! holder, and each placement of a sketch on a face is one a sketch can be
-//! drawn at ([`Placement::valid`]: finite, its axes unit and square within
-//! `1e-9`, its normal `x × y` within that, its origin within the
-//! coordinate limit), each sketch listed once. The failed features' ids,
-//! the sketches that don't solve and the bodies a draft or a feature
-//! touches are only marks, so they aren't checked against a document.
-//! Malformed bytes are refused, never a panic; see [`decode_request`] and
+//! [`Picking`] by [`Picking::from_parts`] (snap points and corners'
+//! points within bounds, each corner between three faces of one part),
+//! each part's body one the head lists; a measure's answer is checked
+//! against those tables ([`Inspected::checked`]: numbers finite, sizes not
+//! negative, points within bounds, places within the tables), one that
+//! fails answered as an error with the model as usual; the bodies' boxes
+//! in the head are finite with their corners in order, the merged bodies
+//! name each consumed body once, never as a holder, and each placement of
+//! a sketch on a face is one a sketch can be drawn at
+//! ([`Placement::valid`]: finite, its axes unit and square within `1e-9`,
+//! its normal `x × y` within that, its origin within the coordinate
+//! limit), each sketch listed once. The failed features' ids, the
+//! sketches that don't solve and the bodies a draft or a feature touches
+//! are only marks, so they aren't checked against a document. Malformed
+//! bytes are refused, never a panic; see [`decode_request`] and
 //! [`decode_reply`]. A request's draft isn't checked as it's decoded:
-//! applying it goes through the document's checks.
+//! applying it goes through the document's checks; nor are its measure's
+//! picks: a pick naming nothing is answered "not found".
 //!
 //! An export's bodies follow a [`Head::Exported`] that went as one part,
 //! their postcard, copied only within [`MAX_EXPORT_BYTES`]; each
@@ -65,7 +72,10 @@ use varde_kernel::{
 };
 use varde_lane::bytes::Buffer;
 
-use crate::{Drafted, ExportedBody, PickFace, Picking, PickingError, Request, Response};
+use crate::{
+    Drafted, ExportedBody, Inspected, PickCorner, PickFace, Picking, PickingError, Request,
+    Response,
+};
 
 /// The most bytes a reply's head may have. A head is a generation, a few
 /// feature ids, the failed features' messages, the bodies each join, cut
@@ -83,6 +93,10 @@ pub const MAX_HEAD_BYTES: usize = 1 << 26;
 /// A model with more is answered as failed ([`encode_reply`]).
 pub const MAX_FACES: usize = 1 << 20;
 
+/// The most corners a reply's picking tables may have (40 bytes each on
+/// the page, at least 27 in the head).
+pub const MAX_CORNERS: usize = 1 << 22;
+
 /// The bounded decoding of a head's picking tables: refused as soon as
 /// they're past their bounds, mostly before any element is read.
 mod bounded {
@@ -90,9 +104,9 @@ mod bounded {
     use varde_document::BodyId;
     use varde_kernel::RenderMesh;
 
-    use super::MAX_FACES;
+    use super::{MAX_CORNERS, MAX_FACES};
     use crate::picking::bounded::seq;
-    use crate::{PickFace, Picking};
+    use crate::{PickCorner, PickFace, Picking};
 
     /// At most [`MAX_FACES`] faces with at most [`Picking::MAX_ALIASES`]
     /// aliases together.
@@ -111,11 +125,16 @@ mod bounded {
     }
 
     /// At most [`RenderMesh::MAX_EDGE_POLYLINES`] edges' entries: their
-    /// closed flags or tangent chains.
+    /// closed flags, tangent chains or snap points.
     pub(super) fn edges<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
         d: D,
     ) -> Result<Vec<T>, D::Error> {
         seq(d, RenderMesh::MAX_EDGE_POLYLINES, |_| 0, 0)
+    }
+
+    /// At most [`MAX_CORNERS`] corners.
+    pub(super) fn corners<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<PickCorner>, D::Error> {
+        seq(d, MAX_CORNERS, |_| 0, 0)
     }
 }
 
@@ -193,12 +212,24 @@ pub enum Head {
         /// [`RenderMesh::MAX_EDGE_POLYLINES`].
         #[serde(deserialize_with = "bounded::edges")]
         tangents: Vec<u32>,
+        /// The picking tables' snap points, one per edge or none, at most
+        /// [`RenderMesh::MAX_EDGE_POLYLINES`].
+        #[serde(deserialize_with = "bounded::edges")]
+        snaps: Vec<Option<[f64; 3]>>,
+        /// The picking tables' corners, at most [`MAX_CORNERS`].
+        #[serde(deserialize_with = "bounded::corners")]
+        corners: Vec<PickCorner>,
+        /// The answer to the request's measure, checked against the
+        /// tables ([`Inspected::checked`]): one that fails is answered as
+        /// an error, the model with it as usual.
+        inspected: Option<Box<Inspected>>,
     },
     /// A [`Response::Failed`].
     Failed {
         generation: Generation,
         exclude: Option<FeatureId>,
         draft: Option<u64>,
+        inspect: Option<u64>,
         error: String,
     },
     /// A [`Response::Exported`]: if `Ok`, followed by one part, the
@@ -228,7 +259,7 @@ pub const MODEL_PARTS: usize = 12;
 /// encoded head, and the parts following it: its model's as bytes if it
 /// has one, see [`MODEL_PARTS`], or an export's bodies. A model whose
 /// head would be over [`MAX_HEAD_BYTES`], or whose picking tables are
-/// past [`MAX_FACES`] or [`Picking::MAX_ALIASES`], is answered as failed,
+/// past [`MAX_FACES`], [`MAX_CORNERS`] or [`Picking::MAX_ALIASES`], is answered as failed,
 /// which the page would otherwise refuse with no generation to answer.
 pub fn encode_reply(response: &Response) -> (Vec<u8>, Vec<Cow<'_, [u8]>>) {
     match response {
@@ -245,6 +276,7 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Vec<Cow<'_, [u8]>>) {
             merged,
             placements,
             bodies,
+            inspected,
         } => {
             let head = Head::Regenerated {
                 generation: *generation,
@@ -270,18 +302,23 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Vec<Cow<'_, [u8]>>) {
                 faces: picking.faces().to_vec(),
                 closed: picking.closed().to_vec(),
                 tangents: picking.tangents().to_vec(),
+                snaps: picking.snaps().to_vec(),
+                corners: picking.corners().to_vec(),
+                inspected: inspected.clone(),
             }
             .encode();
             let aliases = (picking.faces().iter())
                 .fold(0usize, |sum, face| sum.saturating_add(face.aliases.len()));
             if head.len() > MAX_HEAD_BYTES
                 || picking.faces().len() > MAX_FACES
+                || picking.corners().len() > MAX_CORNERS
                 || aliases > Picking::MAX_ALIASES
             {
                 let failed = Head::Failed {
                     generation: *generation,
                     exclude: *exclude,
                     draft: draft.as_ref().map(|draft| draft.revision),
+                    inspect: inspected.as_ref().map(|inspected| inspected.revision),
                     error: "the model has more faces than can be sent".to_owned(),
                 };
                 return (failed.encode(), Vec::new());
@@ -310,12 +347,14 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Vec<Cow<'_, [u8]>>) {
             generation,
             exclude,
             draft,
+            inspect,
             error,
         } => (
             Head::Failed {
                 generation: *generation,
                 exclude: *exclude,
                 draft: *draft,
+                inspect: *inspect,
                 error: error.clone(),
             }
             .encode(),
@@ -358,7 +397,11 @@ pub fn decode_reply(
             faces,
             closed,
             tangents,
+            snaps,
+            corners,
+            inspected,
         } => {
+            let inspect = inspected.as_ref().map(|inspected| inspected.revision);
             let model = check_merged(&merged)
                 .and_then(|()| decode_placements(&placements))
                 .and_then(|placements| Ok((placements, decode_bodies(&bodies)?)))
@@ -369,8 +412,16 @@ pub fn decode_reply(
                         return Err(Error::Picking(PickingError::Body));
                     }
                     let (mesh, sketches) = decode_model(parts)?;
-                    let picking = Picking::from_parts(part_bodies, faces, closed, tangents, &mesh)
-                        .map_err(Error::Picking)?;
+                    let picking = Picking::from_parts(
+                        part_bodies,
+                        faces,
+                        closed,
+                        tangents,
+                        snaps,
+                        corners,
+                        &mesh,
+                    )
+                    .map_err(Error::Picking)?;
                     Ok((placements, bodies, mesh, sketches, picking))
                 });
             match model {
@@ -378,6 +429,8 @@ pub fn decode_reply(
                     generation,
                     exclude,
                     draft,
+                    inspected: inspected
+                        .map(|inspected| Box::new(inspected.checked(&mesh, &picking))),
                     mesh: Arc::new(mesh),
                     picking: Arc::new(picking),
                     sketches: Arc::new(sketches),
@@ -392,6 +445,7 @@ pub fn decode_reply(
                     generation,
                     exclude,
                     draft: draft.map(|draft| draft.revision),
+                    inspect,
                     error: error.to_string(),
                 },
             }
@@ -400,11 +454,13 @@ pub fn decode_reply(
             generation,
             exclude,
             draft,
+            inspect,
             error,
         } => Response::Failed {
             generation,
             exclude,
             draft,
+            inspect,
             error,
         },
         Head::Exported { export, result } => Response::Exported {

@@ -35,21 +35,25 @@
 //! is answered with the very same `Arc`, so neither the join nor,
 //! natively, the renderer's upload (which keys its buffers by the `Arc`)
 //! is done again. Scenes aren't counted in [`Cache::counts`], which stay
-//! counts of features, but in [`Cache::joins`]. Besides what the request
+//! counts of features, but in [`Cache::joins`]. Nor are the other results
+//! that aren't a feature's: a solid's topology (made once for drawing it
+//! and resolving picks on it), and what the measure tool's picks measure
+//! (see `src/inspect.rs`). Besides what the request
 //! before used, the scene of the last answer without a draft is never
 //! evicted either: however long a draft is dragged, the committed model's
 //! scene stays, and putting the draft away finds it.
 
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::mem::size_of_val;
+use std::mem::{size_of, size_of_val};
 use std::sync::Arc;
 
 use serde::Serialize;
 use varde_document::Placement;
-use varde_kernel::{KernelError, RenderMesh, Solid};
+use varde_kernel::{KernelError, RenderMesh, Solid, Topology};
 use varde_sketch::{Profiles, TooComplex};
 
+use crate::inspect::{Gap, Kept};
 use crate::picking::{Drawn, Scene};
 
 /// How many bytes of results a cache holds before it evicts the least
@@ -149,6 +153,12 @@ enum Entry {
     Drawn(Arc<Drawn>),
     /// The model's mesh and picking tables: the shown bodies' joined.
     Scene(Scene),
+    /// A solid's regions, chains and corners.
+    Topology(Arc<Topology>),
+    /// What a pick of the measure tool measures.
+    Measure(Arc<Kept>),
+    /// The minimum distance between two picks.
+    Distance(Result<Gap, String>),
 }
 
 impl Entry {
@@ -169,6 +179,9 @@ impl Entry {
             Entry::Solid(Err(error)) => error.len(),
             Entry::Drawn(drawn) => mesh_bytes(&drawn.mesh).saturating_add(drawn.bytes()),
             Entry::Scene(scene) => mesh_bytes(&scene.mesh).saturating_add(scene.picking.bytes()),
+            Entry::Topology(topology) => topology_bytes(topology),
+            Entry::Measure(kept) => kept.as_ref().as_ref().err().map_or(0, String::len),
+            Entry::Distance(gap) => gap.as_ref().err().map_or(0, String::len),
             Entry::Solves(_) | Entry::Placement(_) | Entry::Touches(_) | Entry::Boolean(Err(_)) => {
                 0
             }
@@ -184,6 +197,25 @@ fn solid_bytes(solid: &Solid) -> usize {
         .saturating_add(size_of_val(mesh.tris()))
         .saturating_add(size_of_val(mesh.faces()))
         .saturating_add(size_of_val(solid))
+}
+
+fn topology_bytes(topology: &Topology) -> usize {
+    let mut bytes = (size_of_val(topology))
+        .saturating_add(size_of_val(topology.regions()))
+        .saturating_add(size_of_val(topology.chains()))
+        .saturating_add(size_of_val(topology.corners()))
+        .saturating_add(topology.triangles().saturating_mul(size_of::<u32>()));
+    for region in topology.regions() {
+        bytes = (bytes.saturating_add(size_of_val(&region.tris[..])))
+            .saturating_add(size_of_val(&region.aliases[..]));
+    }
+    for chain in topology.chains() {
+        bytes = bytes.saturating_add(size_of_val(&chain.halfedges[..]));
+    }
+    for corner in topology.corners() {
+        bytes = bytes.saturating_add(size_of_val(&corner.regions[..]));
+    }
+    bytes
 }
 
 fn mesh_bytes(mesh: &RenderMesh) -> usize {
@@ -358,6 +390,23 @@ impl Cache {
         })
     }
 
+    /// Whether a result is filed under `key`, without using it.
+    pub(crate) fn holds(&self, key: Key) -> bool {
+        self.slots.contains_key(&key)
+    }
+
+    /// The result filed under `key`, or `make`'s, filed, without
+    /// counting it in [`Cache::counts`]: what isn't a feature's result
+    /// (a topology, a measure).
+    fn uncounted(&mut self, key: Key, make: impl FnOnce() -> Entry) -> Entry {
+        if let Some(slot) = self.touch(key) {
+            return slot.entry.clone();
+        }
+        let entry = make();
+        self.insert(key, entry.clone());
+        entry
+    }
+
     pub(crate) fn profiles(
         &mut self,
         key: Key,
@@ -435,6 +484,34 @@ impl Cache {
                 self.insert(key, Entry::Drawn(Arc::clone(&drawn)));
                 Ok(drawn)
             }
+        }
+    }
+
+    /// A solid's topology, filed under `key`.
+    pub(crate) fn topology(&mut self, key: Key, make: impl FnOnce() -> Topology) -> Arc<Topology> {
+        match self.uncounted(key, || Entry::Topology(Arc::new(make()))) {
+            Entry::Topology(topology) => topology,
+            _ => unreachable!("keys of different kinds differ"),
+        }
+    }
+
+    /// What a pick of the measure tool measures, filed under `key`.
+    pub(crate) fn measure(&mut self, key: Key, make: impl FnOnce() -> Kept) -> Arc<Kept> {
+        match self.uncounted(key, || Entry::Measure(Arc::new(make()))) {
+            Entry::Measure(kept) => kept,
+            _ => unreachable!("keys of different kinds differ"),
+        }
+    }
+
+    /// The minimum distance between two picks, filed under `key`.
+    pub(crate) fn distance(
+        &mut self,
+        key: Key,
+        make: impl FnOnce() -> Result<Gap, String>,
+    ) -> Result<Gap, String> {
+        match self.uncounted(key, || Entry::Distance(make())) {
+            Entry::Distance(gap) => gap,
+            _ => unreachable!("keys of different kinds differ"),
         }
     }
 

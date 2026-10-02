@@ -176,6 +176,7 @@ impl MeshFeed {
                 document: editor.snapshot(),
                 exclude,
                 draft: draft.map(Box::new),
+                inspect: None,
             });
         }
     }
