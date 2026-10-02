@@ -1,3 +1,4 @@
+use std::ops::Range;
 use std::sync::{Arc, Weak};
 
 use bytemuck::{Pod, Zeroable};
@@ -69,6 +70,15 @@ pub struct Frame<'a> {
     pub camera: &'a Camera,
     /// Only re-uploaded when it's another `Arc` than the last one prepared.
     pub mesh: &'a Arc<RenderMesh>,
+    /// How opaque each of the mesh's parts is drawn, from 0 to 1, in the
+    /// order of [`RenderMesh::parts`]: its faces and its edges, hidden
+    /// ones too. A part with no entry, or one out of range or NaN, is
+    /// opaque; one within half a step of 8 bits of 1 too. Parts less than
+    /// opaque are drawn after the opaque ones, far to near by the centres
+    /// of their bounds, see [`Renderer::render`]. Ignored while
+    /// [`Self::faded`]: every part is faded alike then. Changing it
+    /// re-uploads nothing.
+    pub opacity: &'a [f32],
     /// Finished sketches' curves, drawn with the model as lines
     /// [`LINE_WIDTH`] wide, hidden by what's in front of them. Only
     /// re-uploaded when it's another `Arc` than the last one prepared.
@@ -277,16 +287,172 @@ const EDGE_SLOTS: u32 = 4;
 // (the browser's WebGL2) allows strides up to 255.
 const _: () = assert!(size_of::<EdgePoint>() == 20);
 
+/// The most alphas a part can be drawn at, from 0 to 1, the last opaque:
+/// 8 bits' worth, as fine as the target shows. See [`Alphas`].
+const ALPHA_STEPS: u32 = 256;
+
+/// What a draw of a part of the mesh takes besides [`Uniforms`]: how
+/// opaque the part is. `Part` in `scene.wgsl` mirrors it.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+struct PartUniforms {
+    /// x: the alpha the part's faces and edges are drawn at, of the
+    /// model's and the edges' own; yzw unused.
+    alpha: [f32; 4],
+}
+
+/// The alphas the mesh's parts are drawn at: a uniform buffer of
+/// [`PartUniforms`], one for each of [`ALPHA_STEPS`] steps from 0 to 1,
+/// each at the device's uniform offset alignment, written once, from which
+/// a part's draws pick theirs with the bind group's dynamic offset. WebGL2
+/// has no push constants, and this needs no buffer written between draws
+/// nor anything per vertex. A device whose buffers can't hold that many
+/// gets as many as they hold, at least one, opaque.
+struct Alphas {
+    /// Group 1 of every pipeline.
+    group: wgpu::BindGroup,
+    /// How far apart the steps are in the buffer, in bytes.
+    stride: u32,
+    /// The last step, opaque.
+    opaque: u32,
+}
+
+impl Alphas {
+    fn new(device: &wgpu::Device, layout: &wgpu::BindGroupLayout) -> Alphas {
+        let size = size_of::<PartUniforms>() as u32;
+        let limits = device.limits();
+        let stride = limits.min_uniform_buffer_offset_alignment.max(size);
+        let fit = limits.max_buffer_size / u64::from(stride);
+        let steps = u32::try_from(fit).unwrap_or(u32::MAX).clamp(1, ALPHA_STEPS);
+        let opaque = steps - 1;
+        let mut table = vec![0u8; (steps * stride) as usize];
+        for (step, entry) in (0..steps).zip(table.chunks_exact_mut(stride as usize)) {
+            let alpha = if step == opaque {
+                1.0
+            } else {
+                step as f32 / opaque as f32
+            };
+            let part = PartUniforms {
+                alpha: [alpha, 0.0, 0.0, 0.0],
+            };
+            entry[..size as usize].copy_from_slice(bytemuck::bytes_of(&part));
+        }
+        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("varde part alphas"),
+            contents: &table,
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("varde part alphas"),
+            layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &buffer,
+                    offset: 0,
+                    size: wgpu::BufferSize::new(u64::from(size)),
+                }),
+            }],
+        });
+        Alphas {
+            group,
+            stride,
+            opaque,
+        }
+    }
+
+    /// The step a part of opacity `alpha` is drawn at, see [`alpha_step`].
+    fn step(&self, alpha: Option<f32>) -> u32 {
+        alpha_step(alpha, self.opaque)
+    }
+
+    /// Sets the alpha the parts drawn next are drawn at to `step`'s.
+    fn set(&self, pass: &mut wgpu::RenderPass<'_>, step: u32) {
+        pass.set_bind_group(1, &self.group, &[step * self.stride]);
+    }
+}
+
+/// The step of a table of alphas from 0 to 1 whose last step, `opaque`, is
+/// opaque, that a part of opacity `alpha` is drawn at, the nearest: opaque
+/// if it's out of range or NaN. Only 0 is drawn at step 0: on a short
+/// table, which a device with tiny buffers gets, a faint part is drawn at
+/// the first step past it, opaque if that's the last, rather than not at
+/// all.
+fn alpha_step(alpha: Option<f32>, opaque: u32) -> u32 {
+    match alpha {
+        Some(0.0) => 0,
+        // In range, so the cast is exact.
+        Some(alpha) if (0.0..=1.0).contains(&alpha) => {
+            ((alpha * opaque as f32).round() as u32).max(1).min(opaque)
+        }
+        _ => opaque,
+    }
+}
+
 struct GpuMesh {
     positions: wgpu::Buffer,
     normals: wgpu::Buffer,
     indices: wgpu::Buffer,
-    index_count: u32,
-    /// The [`EdgePoint`] stream, if there are any edges, and how many
-    /// instances draw it: one per point, but for the last three.
-    edges: Option<(wgpu::Buffer, u32)>,
+    /// The [`EdgePoint`] stream, if there are any edges.
+    edges: Option<wgpu::Buffer>,
+    /// The mesh's parts, as [`RenderMesh::parts`] gives them; one for the
+    /// whole mesh if it has none.
+    parts: Vec<GpuPart>,
     /// To fit the depth range to.
     bounds: Option<Aabb>,
+}
+
+/// What the renderer keeps of a part of the mesh to draw it on its own.
+#[derive(Debug, Clone)]
+struct GpuPart {
+    /// Its triangles' indices.
+    indices: Range<u32>,
+    /// Its edges' points in the [`EdgePoint`] stream, the neighbour only
+    /// points of closed ones included, empty if it has none. The parts'
+    /// follow one another, from after the stream's first point.
+    points: Range<u32>,
+    /// Its triangles' bounds, to sort parts less than opaque by.
+    bounds: Option<Aabb>,
+}
+
+/// Which parts of a frame's mesh are drawn how, worked out in
+/// [`Renderer::prepare`] from [`Frame::opacity`].
+#[derive(Debug, Default)]
+struct PartDraws {
+    /// The runs of opaque parts, one after another, each drawn at once.
+    opaque: Vec<Range<usize>>,
+    /// The parts less than opaque, far to near, and their alphas' steps.
+    transparent: Vec<(usize, u32)>,
+}
+
+impl PartDraws {
+    /// How `parts` are drawn at `opacity`, at `alphas`' steps, seen from
+    /// `camera`.
+    fn new(parts: &[GpuPart], opacity: &[f32], alphas: &Alphas, camera: &Camera) -> PartDraws {
+        let mut draws = PartDraws::default();
+        for i in 0..parts.len() {
+            let step = alphas.step(opacity.get(i).copied());
+            if step < alphas.opaque {
+                draws.transparent.push((i, step));
+            } else if let Some(run) = draws.opaque.last_mut().filter(|run| run.end == i) {
+                run.end = i + 1;
+            } else {
+                draws.opaque.push(i..i + 1);
+            }
+        }
+        // Far to near by their bounds' centres along the view, the same in
+        // either projection.
+        let backward = camera.backward();
+        let depth = |&(i, _): &(usize, u32)| {
+            parts[i]
+                .bounds
+                .map_or(0.0, |bounds| bounds.center().dot(backward))
+        };
+        draws
+            .transparent
+            .sort_by(|a, b| depth(a).total_cmp(&depth(b)));
+        draws
+    }
 }
 
 struct GpuLines {
@@ -418,6 +584,10 @@ pub struct Renderer {
     /// The faded model: its depth first, then its nearest faces blended.
     mesh_depth: wgpu::RenderPipeline,
     mesh_faded: wgpu::RenderPipeline,
+    /// Parts less than opaque: their back faces, then their front faces,
+    /// blended, not writing depth.
+    glass_back: wgpu::RenderPipeline,
+    glass_front: wgpu::RenderPipeline,
     edges: wgpu::RenderPipeline,
     /// The faces of [`Frame::highlight`]; its edges are drawn as the
     /// sketch's depth tested lines.
@@ -432,6 +602,7 @@ pub struct Renderer {
     sketch_on_top: SketchPipelines,
     sketch_depth_tested: SketchPipelines,
     bind_group_layout: wgpu::BindGroupLayout,
+    alphas: Alphas,
 }
 
 /// One scene's state on the GPU, from [`Renderer::prepare`] to
@@ -469,6 +640,8 @@ pub struct Slot {
     depth: Option<DepthTarget>,
     viewport: Viewport,
     faded: bool,
+    /// How the mesh's parts are drawn, by [`Frame::opacity`].
+    draws: PartDraws,
     /// Whether the edges the model hides are drawn: [`Frame::hidden_edges`]
     /// and not [`Frame::faded`].
     hidden_edges: bool,
@@ -504,9 +677,28 @@ impl Renderer {
             }],
         });
 
+        // How opaque the part drawn is, at a dynamic offset into the
+        // alphas' buffer: see `Alphas`. Every pipeline has it, so
+        // it's bound once for all of them.
+        let part_size = size_of::<PartUniforms>() as u64;
+        let part_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("varde part"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: true,
+                    min_binding_size: wgpu::BufferSize::new(part_size),
+                },
+                count: None,
+            }],
+        });
+        let alphas = Alphas::new(device, &part_layout);
+
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("varde scene"),
-            bind_group_layouts: &[&bind_group_layout],
+            bind_group_layouts: &[&bind_group_layout, &part_layout],
             push_constant_ranges: &[],
         });
 
@@ -695,6 +887,20 @@ impl Renderer {
                 blend: wgpu::BlendState::ALPHA_BLENDING,
                 ..mesh.clone()
             }),
+            // Hidden by the opaque parts, and leaving the depth to them.
+            glass_back: pipeline(Pass {
+                label: "varde glass, back faces",
+                blend: wgpu::BlendState::ALPHA_BLENDING,
+                depth_write: false,
+                cull_mode: Some(wgpu::Face::Front),
+                ..mesh.clone()
+            }),
+            glass_front: pipeline(Pass {
+                label: "varde glass, front faces",
+                blend: wgpu::BlendState::ALPHA_BLENDING,
+                depth_write: false,
+                ..mesh.clone()
+            }),
             mesh: pipeline(mesh),
             edges: pipeline(Pass {
                 buffers: &edge_points,
@@ -761,6 +967,7 @@ impl Renderer {
                 )),
             },
             bind_group_layout,
+            alphas,
         }
     }
 
@@ -799,6 +1006,7 @@ impl Renderer {
             depth: None,
             viewport: Viewport::default(),
             faded: false,
+            draws: PartDraws::default(),
             hidden_edges: false,
         }
     }
@@ -845,6 +1053,10 @@ impl Renderer {
                 None
             });
         }
+        // Faded, every part is drawn alike.
+        let opacity = if frame.faded { &[] } else { frame.opacity };
+        let parts = slot.mesh.as_ref().map_or(&[][..], |mesh| &mesh.parts);
+        slot.draws = PartDraws::new(parts, opacity, &self.alphas, frame.camera);
 
         slot.sketching = frame.sketch.is_some();
         slot.sketch_depth = frame.sketch.is_some_and(|sketch| sketch.depth_tested);
@@ -950,6 +1162,19 @@ impl Renderer {
 
     /// Records draw commands for the frame last prepared into `slot` into
     /// `encoder`, compositing over `target`, within `clip`.
+    ///
+    /// Outside a sketch, in order: the background; the opaque parts'
+    /// faces, writing depth, and their edges; the grid and the finished
+    /// sketches; the edges the opaque parts hide, of every part, dashed;
+    /// the edges of the parts less than opaque, against the opaque parts'
+    /// depth; the extrude's depth tested layers, if there are parts less
+    /// than opaque; those parts far to near, each its back faces then its
+    /// front faces, blended at its alpha without writing depth; their
+    /// front faces' depth, then their edges again, over the glass they lie
+    /// on; the origin marker and the pivot's; and the sketch being edited,
+    /// or the extrude's layers if they weren't drawn yet. In a sketch
+    /// ([`Frame::faded`]), the model's depth, its nearest faces blended
+    /// and its edges, every part alike, and no hidden edges.
     pub fn render(
         &self,
         slot: &Slot,
@@ -989,33 +1214,39 @@ impl Renderer {
         pass.set_viewport(vp.x, vp.y, vp.width, vp.height, 0.0, 1.0);
         pass.set_scissor_rect(clip.x, clip.y, clip.width, clip.height);
         pass.set_bind_group(0, &slot.bind_group, &[]);
+        self.alphas.set(&mut pass, self.alphas.opaque);
 
         pass.set_pipeline(&self.background);
         pass.draw(0..3, 0..1);
 
-        if let Some(mesh) = &slot.mesh {
-            pass.set_vertex_buffer(0, mesh.positions.slice(..));
-            pass.set_vertex_buffer(1, mesh.normals.slice(..));
-            pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+        let mesh = slot.mesh.as_ref();
+        let draws = &slot.draws;
+        if let Some(mesh) = mesh {
+            bind_faces(&mut pass, mesh);
             if slot.faded {
+                let all = 0..mesh.parts.len();
                 pass.set_pipeline(&self.mesh_depth);
-                pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                draw_faces(&mut pass, mesh, all.clone());
                 pass.set_pipeline(&self.mesh_faded);
+                draw_faces(&mut pass, mesh, all.clone());
+                draw_edges(&mut pass, &self.edges, mesh, all);
             } else {
                 pass.set_pipeline(&self.mesh);
-            }
-            pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                for run in &draws.opaque {
+                    draw_faces(&mut pass, mesh, run.clone());
+                }
 
-            // The highlighted faces over the model's, under its edges,
-            // which are pulled as far towards the camera.
-            if let Some(buffer) = slot.highlight_faces.drawn() {
-                pass.set_pipeline(&self.highlight);
-                pass.set_vertex_buffer(0, buffer);
-                pass.draw(0..slot.highlight_faces.count, 0..1);
-            }
+                // The highlighted faces over the model's, under its edges,
+                // which are pulled as far towards the camera.
+                if let Some(buffer) = slot.highlight_faces.drawn() {
+                    pass.set_pipeline(&self.highlight);
+                    pass.set_vertex_buffer(0, buffer);
+                    pass.draw(0..slot.highlight_faces.count, 0..1);
+                }
 
-            if let Some(edges) = &mesh.edges {
-                draw_edges(&mut pass, &self.edges, edges);
+                for run in &draws.opaque {
+                    draw_edges(&mut pass, &self.edges, mesh, run.clone());
+                }
             }
 
             // The highlighted edges over the model's.
@@ -1038,12 +1269,53 @@ impl Renderer {
             pass.draw(0..LINE_VERTICES, 0..lines.segment_count);
         }
 
-        // The edges the model hides, against its depth alone: nothing
-        // above writes depth after it.
-        if slot.hidden_edges
-            && let Some(edges) = slot.mesh.as_ref().and_then(|mesh| mesh.edges.as_ref())
+        // Only the opaque parts have written depth so far, and nothing
+        // above writes it after them: the edges they hide, of every part,
+        // are against them alone, so an edge behind a part less than
+        // opaque is seen through it rather than hidden. Then the visible
+        // edges of the parts less than opaque, under the faces in front of
+        // them, which are drawn next and dim them.
+        if !slot.faded
+            && let Some(mesh) = mesh
         {
-            draw_edges(&mut pass, &self.hidden_edges, edges);
+            if slot.hidden_edges {
+                for run in &draws.opaque {
+                    draw_edges(&mut pass, &self.hidden_edges, mesh, run.clone());
+                }
+                self.draw_glass_edges(&mut pass, &self.hidden_edges, mesh, draws);
+            }
+            self.draw_glass_edges(&mut pass, &self.edges, mesh, draws);
+        }
+
+        // The extrude's layers, depth tested: under the faces less than
+        // opaque in front of them, if there are any, and so under the
+        // origin marker too; else over it, as the sketch being edited is.
+        let glass = mesh.is_some() && !draws.transparent.is_empty();
+        let layers = [&slot.sketch_base, &slot.sketch_live];
+        if slot.sketching && slot.sketch_depth && glass {
+            for layer in layers {
+                self.sketch_depth_tested.draw(&mut pass, layer);
+            }
+        }
+
+        // The parts less than opaque, far to near: each one's back faces,
+        // then its front faces, over what's behind them. Then their front
+        // faces' depth, and their edges again, so the edges on the nearest
+        // faces show on them undimmed.
+        if let Some(mesh) = mesh.filter(|_| glass) {
+            bind_faces(&mut pass, mesh);
+            for &(part, step) in &draws.transparent {
+                self.alphas.set(&mut pass, step);
+                for pipeline in [&self.glass_back, &self.glass_front] {
+                    pass.set_pipeline(pipeline);
+                    draw_faces(&mut pass, mesh, part..part + 1);
+                }
+            }
+            pass.set_pipeline(&self.mesh_depth);
+            for &(part, _) in &draws.transparent {
+                draw_faces(&mut pass, mesh, part..part + 1);
+            }
+            self.draw_glass_edges(&mut pass, &self.edges, mesh, draws);
         }
 
         pass.set_pipeline(&self.origin);
@@ -1051,15 +1323,30 @@ impl Renderer {
 
         // The sketch being edited, over everything, the origin marker
         // included, since its points often lie on it; or depth tested.
-        if slot.sketching {
+        if slot.sketching && !(slot.sketch_depth && glass) {
             let pipelines = if slot.sketch_depth {
                 &self.sketch_depth_tested
             } else {
                 &self.sketch_on_top
             };
-            for layer in [&slot.sketch_base, &slot.sketch_live] {
+            for layer in layers {
                 pipelines.draw(&mut pass, layer);
             }
+        }
+    }
+
+    /// Records drawing the edges of `mesh`'s parts less than opaque, as
+    /// `draws` has them, each at its alpha, with `pipeline`.
+    fn draw_glass_edges(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        pipeline: &wgpu::RenderPipeline,
+        mesh: &GpuMesh,
+        draws: &PartDraws,
+    ) {
+        for &(part, step) in &draws.transparent {
+            self.alphas.set(pass, step);
+            draw_edges(pass, pipeline, mesh, part..part + 1);
         }
     }
 }
@@ -1104,19 +1391,61 @@ impl Slot {
     }
 }
 
-/// Records drawing the feature edges' stream `edges`, with how many
-/// instances draw it, with `pipeline`.
+/// Binds `mesh`'s buffers for drawing its faces.
+fn bind_faces(pass: &mut wgpu::RenderPass<'_>, mesh: &GpuMesh) {
+    pass.set_vertex_buffer(0, mesh.positions.slice(..));
+    pass.set_vertex_buffer(1, mesh.normals.slice(..));
+    pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+}
+
+/// What `parts` of `mesh`, which follow one another, take of what `of`
+/// gives each of them, from the first's start to the last's end: empty if
+/// there are no parts.
+fn span(mesh: &GpuMesh, parts: Range<usize>, of: fn(&GpuPart) -> &Range<u32>) -> Range<u32> {
+    let parts = &mesh.parts[parts];
+    match (parts.first(), parts.last()) {
+        (Some(first), Some(last)) => of(first).start..of(last).end,
+        _ => 0..0,
+    }
+}
+
+/// Records drawing the faces of `mesh`'s `parts`, which follow one another,
+/// with the pipeline set and its buffers bound ([`bind_faces`]).
+fn draw_faces(pass: &mut wgpu::RenderPass<'_>, mesh: &GpuMesh, parts: Range<usize>) {
+    let indices = span(mesh, parts, |part| &part.indices);
+    if !indices.is_empty() {
+        pass.draw_indexed(indices, 0, 0..1);
+    }
+}
+
+/// Records drawing the feature edges of `mesh`'s `parts`, which follow one
+/// another, with `pipeline`. Their points follow one another in the
+/// stream, so they're drawn at once by the instances whose segments start
+/// at their first point up to their last but one, and each slot is bound
+/// from the first of those instances' points: the instance before the
+/// first point's sees the point before it, of another part's edge or of
+/// none, as its previous point, and the last one sees the one after the
+/// last point, neither of which a segment of these parts joins.
 fn draw_edges(
     pass: &mut wgpu::RenderPass<'_>,
     pipeline: &wgpu::RenderPipeline,
-    (edges, instances): &(wgpu::Buffer, u32),
+    mesh: &GpuMesh,
+    parts: Range<usize>,
 ) {
+    let Some(edges) = &mesh.edges else { return };
+    let points = span(mesh, parts, |part| &part.points);
+    // A segment needs two points; and a part's points come after the
+    // stream's first, so there's a point before them.
+    if points.end.saturating_sub(points.start) < 2 {
+        return;
+    }
     pass.set_pipeline(pipeline);
     let stride = size_of::<EdgePoint>() as u64;
+    let from = u64::from(points.start - 1);
     for slot in 0..EDGE_SLOTS {
-        pass.set_vertex_buffer(slot, edges.slice(u64::from(slot) * stride..));
+        pass.set_vertex_buffer(slot, edges.slice((from + u64::from(slot)) * stride..));
     }
-    pass.draw(0..LINE_VERTICES, 0..*instances);
+    pass.draw(0..LINE_VERTICES, 0..points.end - points.start - 1);
 }
 
 /// The pipelines drawing the sketch's layers, one way or the other: see
@@ -1184,7 +1513,12 @@ fn upload_mesh(device: &wgpu::Device, mesh: &RenderMesh) -> Result<Option<GpuMes
     // The kernel's limits keep every part within `MAX_BUFFER_BYTES`, so
     // this doesn't saturate.
     let bytes = |len: usize, size: usize| len.saturating_mul(size) as u64;
-    let edge_points = (!mesh.edge_vertices().is_empty()).then(|| edge_stream(mesh));
+    let (edge_points, polyline_ends) = if mesh.edge_vertices().is_empty() {
+        (None, Vec::new())
+    } else {
+        let (points, ends) = edge_stream(mesh);
+        (Some(points), ends)
+    };
     let largest = [
         bytes(mesh.positions().len(), size_of::<[f32; 3]>()),
         bytes(mesh.indices().len(), size_of::<u32>()),
@@ -1202,18 +1536,36 @@ fn upload_mesh(device: &wgpu::Device, mesh: &RenderMesh) -> Result<Option<GpuMes
             limit,
         });
     }
-    // The kernel's limits keep these well within `u32`.
-    let index_count = u32::try_from(mesh.indices().len()).expect("kernel bounds indices");
     let edges = edge_points.map(|points| {
-        // Every polyline has two points or more, so there are four or more.
-        let instances = u32::try_from(points.len() - 3).expect("kernel bounds edges");
-        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("varde mesh edges"),
             contents: bytemuck::cast_slice(&points),
             usage: wgpu::BufferUsages::VERTEX,
-        });
-        (buffer, instances)
+        })
     });
+    // Where a part's edges' points start in the stream: after the
+    // stream's first point, and after the edges before it.
+    let point = |edge: usize| {
+        edge.checked_sub(1)
+            .map_or(1, |before| polyline_ends[before])
+    };
+    // The kernel's limits keep these well within `u32`.
+    let to_u32 = |range: Range<usize>| {
+        let at = |n| u32::try_from(n).expect("kernel bounds indices");
+        at(range.start)..at(range.end)
+    };
+    let part = |indices: Range<usize>, edges: Range<usize>| GpuPart {
+        bounds: bounds_of(mesh.positions(), &mesh.indices()[indices.clone()]),
+        indices: to_u32(indices),
+        points: point(edges.start)..point(edges.end),
+    };
+    let mut parts: Vec<GpuPart> = mesh
+        .parts()
+        .map(|part_of| part(part_of.indices, part_of.edges))
+        .collect();
+    if parts.is_empty() {
+        parts.push(part(0..mesh.indices().len(), 0..mesh.edge_count()));
+    }
 
     Ok(Some(GpuMesh {
         positions: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -1232,20 +1584,31 @@ fn upload_mesh(device: &wgpu::Device, mesh: &RenderMesh) -> Result<Option<GpuMes
             contents: bytemuck::cast_slice(mesh.indices()),
             usage: wgpu::BufferUsages::INDEX,
         }),
-        index_count,
         edges,
+        parts,
         bounds: mesh.bounds(),
     }))
 }
 
-/// The [`EdgePoint`] stream of `mesh`'s feature edges.
-fn edge_stream(mesh: &RenderMesh) -> Vec<EdgePoint> {
+/// The bounds of the positions `indices` refer to, or `None` if there are
+/// none.
+fn bounds_of(positions: &[[f32; 3]], indices: &[u32]) -> Option<Aabb> {
+    let mut points = indices.iter().map(|&i| Vec3::from(positions[i as usize]));
+    let first = points.next()?;
+    let (min, max) = points.fold((first, first), |(min, max), p| (min.min(p), max.max(p)));
+    Some(Aabb { min, max })
+}
+
+/// The [`EdgePoint`] stream of `mesh`'s feature edges, and where each
+/// polyline's points end in it, one past its last.
+fn edge_stream(mesh: &RenderMesh) -> (Vec<EdgePoint>, Vec<u32>) {
     let none = EdgePoint {
         position: [0.0; 3],
         along: 0.0,
         edge: NO_EDGE,
     };
     let mut points = Vec::with_capacity(mesh.edge_vertices().len().saturating_add(2));
+    let mut ends = Vec::with_capacity(mesh.edge_count());
     points.push(none);
     let positions = mesh.positions();
     // A polyline's points, a point again in a row left out: a segment of
@@ -1297,9 +1660,11 @@ fn edge_stream(mesh: &RenderMesh) -> Vec<EdgePoint> {
                 edge,
             });
         }
+        // The kernel's limits keep the stream well within `u32`.
+        ends.push(u32::try_from(points.len()).expect("kernel bounds edges"));
     }
     points.push(none);
-    points
+    (points, ends)
 }
 
 /// Uploads `lines` a segment each, or nothing if there are none. See
@@ -1453,3 +1818,6 @@ fn create_depth(device: &wgpu::Device, [width, height]: [u32; 2]) -> DepthTarget
         size: [width, height],
     }
 }
+
+#[cfg(test)]
+mod tests;

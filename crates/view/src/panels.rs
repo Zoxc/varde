@@ -2,18 +2,20 @@
 //! Sketch tab in place of the Timeline.
 
 use iced::widget::{
-    MouseArea, Space, button, column, container, hover, mouse_area, row, space, stack, text,
-    text_input,
+    MouseArea, Space, button, column, container, hover, mouse_area, row, slider, space, stack,
+    text, text_input,
 };
 use iced::{Alignment, Element, Font, Length, Padding};
-use varde_document::{BodyId, Document, Extent, Feature, FeatureId, FeatureKind};
+use varde_document::{BodyId, Document, Extent, Feature, FeatureId, FeatureKind, Opacity};
 use varde_expr::LengthUnit;
 use varde_sketch::{ConstraintEntry, Curve, DimensionEntry, Id, Sketch};
 
 use crate::chrome::{self, ChipSize, Edge, edged, icon_button, key_chip};
 use crate::context_menu::ContextMenu;
+use crate::document::shown_opacity;
 use crate::escape::OnEscape;
 use crate::icons::{self, Icon};
+use crate::mouse_only::MouseOnly;
 use crate::shortcut::{Held, Shortcut};
 use crate::theme::{self, SEMIBOLD, SIDE_PANEL_WIDTH, TAB_HEIGHT, TabLook, Tone};
 use crate::toolbar::{menu_item, menu_separator};
@@ -96,6 +98,7 @@ pub fn side_panel<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
             editable,
             state.row_menu,
             state.model_selection,
+            state.opacity_preview,
         )),
         _ => scrolled(timeline(
             document,
@@ -372,10 +375,7 @@ fn name<'a>(name: impl text::IntoFragment<'a>, visible: bool) -> iced::widget::T
 fn group<'a>(label: &'a str, count: usize) -> Element<'a, Message> {
     row![
         icons::tinted(Icon::Chev, icons::INLINE, |p| p.muted),
-        text(label)
-            .size(11.5)
-            .font(SEMIBOLD)
-            .style(theme::muted_text),
+        chrome::heading(label),
         text(count).size(11.5).style(theme::faint_text),
     ]
     .spacing(8)
@@ -388,29 +388,31 @@ fn group<'a>(label: &'a str, count: usize) -> Element<'a, Message> {
 /// The bodies, then the sketches. A body a join merged into another
 /// (`merged`, see [`DocumentState::merged`]) is listed faint, with the body
 /// holding it as its note: it's drawn as that one is, so it has no eye,
-/// but it can still be removed. Right-clicking a row asks for its context
-/// menu, shown on the one `menu` is on. Clicking a body's row selects it
-/// where bodies are selected, as `selection`, which marks the rows of the
-/// bodies it holds, says.
+/// but it can still be removed, nor an opacity of its own. Right-clicking
+/// a row asks for its context menu, shown on the one `menu` is on, with a
+/// body's opacity as `preview` has it while its slider is dragged.
+/// Clicking a body's row selects it where bodies are selected, as
+/// `selection`, which marks the rows of the bodies it holds, says.
 fn objects<'a>(
     document: &'a Document,
     merged: &[(BodyId, BodyId)],
     editable: bool,
     menu: Option<RowMenu>,
     selection: &crate::Selection,
+    preview: Option<(BodyId, Opacity)>,
 ) -> Element<'a, Message> {
     let selected: Vec<BodyId> = selection.bodies().collect();
     let takes_bodies = selection.mode().takes_bodies();
     let bodies = document.bodies().iter().map(|body| {
         let note = consumed_note(document, merged, body.id);
+        // A merged body is drawn as its holder is.
+        let own = note.is_none();
         object_row(Object {
             icon: Icon::Body,
             label: &body.name,
-            visible: body.visible && note.is_none(),
+            visible: body.visible && own,
             editable,
-            toggle: note
-                .is_none()
-                .then_some(Message::Edit(Edit::ToggleVisible(body.id))),
+            toggle: own.then_some(Message::Edit(Edit::ToggleVisible(body.id))),
             remove: Some(Message::Edit(Edit::RemoveBody(body.id))),
             note,
             selected: selected.contains(&body.id),
@@ -422,6 +424,7 @@ fn objects<'a>(
                 on: RowMenu::Body(body.id),
                 open: menu == Some(RowMenu::Body(body.id)),
                 edit: None,
+                opacity: own.then(|| (body.id, shown_opacity(body, preview))),
                 delete: Message::Edit(Edit::RemoveBody(body.id)),
             },
         })
@@ -446,6 +449,7 @@ fn objects<'a>(
                     edit_label(feature),
                     Message::Look(Look::EditFeature(feature.id)),
                 )),
+                opacity: None,
                 delete: Message::Edit(Edit::RemoveFeature(feature.id)),
             },
         })
@@ -506,15 +510,18 @@ struct ObjectMenu {
     open: bool,
     /// What editing the object is called and sends, if it can be edited.
     edit: Option<(&'static str, Message)>,
+    /// The body it is and how opaque it's shown, if it has an opacity.
+    opacity: Option<(BodyId, Opacity)>,
     /// What deleting it sends.
     delete: Message,
 }
 
 impl ObjectMenu {
     /// The menu, for an object `visible` or not, whose eye sends
-    /// `toggle` if it has one: editing it, showing or hiding it and
-    /// deleting it, the last two only if the document is `editable`. No
-    /// keys are given, as the keys act on the Timeline's selection.
+    /// `toggle` if it has one: editing it, showing or hiding it, its
+    /// opacity if it has one and deleting it, the last three only if the
+    /// document is `editable`. No keys are given, as the keys act on the
+    /// Timeline's selection.
     fn view<'a>(
         self,
         icon: Icon,
@@ -532,6 +539,12 @@ impl ObjectMenu {
             };
             menu_item(eye, label.into(), None, editable.then_some(toggle)).into()
         });
+        let opacity = (self.opacity.into_iter()).flat_map(|(body, opacity)| {
+            [
+                menu_separator().into(),
+                opacity_rows(body, opacity, editable),
+            ]
+        });
         let delete = menu_item(
             Icon::Trash,
             "Delete".into(),
@@ -541,11 +554,50 @@ impl ObjectMenu {
         row_menu(
             edit.into_iter()
                 .chain(toggle)
+                .chain(opacity)
                 .chain([menu_separator().into(), delete.into()])
                 .collect(),
         )
     }
 }
+
+/// How far the Opacity slider moves at a time, in percent.
+const OPACITY_STEP: f32 = 5.0;
+
+/// The Opacity rows of `body`'s context menu: a heading over a slider from
+/// [`Opacity::MIN`] to [`Opacity::MAX`] showing `opacity`, the percentage
+/// beside it. Dragging it previews the body so, letting go commits that,
+/// and it's only dragged, so it's never changed without a release. Unless
+/// the document is `editable`, it's faded and the app ignores it.
+fn opacity_rows<'a>(body: BodyId, opacity: Opacity, editable: bool) -> Element<'a, Message> {
+    let percent = |opacity: Opacity| f32::from(opacity.percent());
+    let slider = slider(
+        percent(Opacity::MIN)..=percent(Opacity::MAX),
+        percent(opacity),
+        move |percent| Message::Look(Look::PreviewOpacity(body, Opacity::clamped(percent))),
+    )
+    .step(OPACITY_STEP)
+    .on_release(Message::Edit(Edit::CommitOpacity))
+    .height(2.0 * theme::SLIDER_HANDLE_RADIUS)
+    .style(theme::slider(editable));
+    let heading = container(chrome::heading("Opacity")).padding([4, 8]);
+    let value = text(opacity.to_string())
+        .width(OPACITY_VALUE_WIDTH)
+        .align_x(Alignment::End)
+        .style(theme::muted_text);
+    column![
+        heading,
+        row![MouseOnly::new(slider), value]
+            .spacing(10)
+            .height(28)
+            .padding([0, 8])
+            .align_y(Alignment::Center),
+    ]
+    .into()
+}
+
+/// The room the Opacity slider's percentage takes, "100 %" at the widest.
+const OPACITY_VALUE_WIDTH: f32 = 40.0;
 
 /// An object's row in the Objects list. The eye, sending `toggle`, and the
 /// remove button, sending `remove` if there is one, show on hover; the eye
@@ -985,7 +1037,7 @@ mod tests {
         assert_eq!(consumed_note(document, &[], below), None);
 
         let texts = |merged: &[(BodyId, BodyId)]| -> Vec<String> {
-            let objects = objects(document, merged, true, None, &Default::default());
+            let objects = objects(document, merged, true, None, &Default::default(), None);
             let mut laid = crate::testing::Laid::new(objects, iced::Size::new(300.0, 400.0));
             laid.texts().into_iter().map(|shown| shown.text).collect()
         };
@@ -999,7 +1051,7 @@ mod tests {
         // The row hovered is drawn over the plain one, which shows through
         // a translucent highlight: its note is laid out in the same place
         // in both, though the hovered one has its bin.
-        let objects = objects(document, &merged, true, None, &Default::default());
+        let objects = objects(document, &merged, true, None, &Default::default(), None);
         let mut laid = crate::testing::Laid::new(objects, iced::Size::new(300.0, 400.0));
         let notes: Vec<_> = (laid.texts().into_iter())
             .filter(|shown| shown.text == "in Body 1")
@@ -1007,6 +1059,30 @@ mod tests {
             .collect();
         assert_eq!(notes.len(), 2, "plain and hovered");
         assert_eq!(notes[0], notes[1]);
+    }
+
+    /// A body's menu has an Opacity row between Hide and Delete, the
+    /// slider's value beside it; a sketch's, or a merged body's, none.
+    #[test]
+    fn a_body_s_menu_has_an_opacity_row() {
+        let body = Document::example().bodies()[0].id;
+        let menu = |opacity| {
+            let menu = ObjectMenu {
+                on: RowMenu::Body(body),
+                open: true,
+                edit: None,
+                opacity,
+                delete: Message::Edit(Edit::RemoveBody(body)),
+            };
+            let toggle = Some(Message::Edit(Edit::ToggleVisible(body)));
+            let view = menu.view(Icon::Body, true, toggle, true);
+            let mut laid = crate::testing::Laid::new(view, iced::Size::new(300.0, 400.0));
+            let shown = laid.texts().into_iter().map(|shown| shown.text);
+            shown.collect::<Vec<_>>()
+        };
+        let shown = menu(Some((body, Opacity::new(40).unwrap())));
+        assert_eq!(shown, ["Hide", "Opacity", "40 %", "Delete"]);
+        assert_eq!(menu(None), ["Hide", "Delete"]);
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 
-use varde_document::{Command, Editor, OriginPlane, Plane};
+use varde_document::{Command, Editor, Opacity, OriginPlane, Plane};
 
 use super::*;
 
@@ -85,6 +85,20 @@ fn save_and_reopen() {
     assert_eq!(tail, saved);
     save_at(&dir.file(), tail, &edited(3)).unwrap();
     assert_eq!(open_at(&dir.file()).unwrap().0, edited(3));
+}
+
+/// A body's opacity is kept through a file.
+#[test]
+fn opacity_round_trips() {
+    let mut editor = Editor::new(Document::example());
+    let body = editor.document().bodies()[0].id;
+    let opacity = Opacity::new(35).unwrap();
+    editor.apply(Command::SetOpacity(body, opacity)).unwrap();
+    let document = editor.document();
+    let (bytes, _) = to_bytes(document).unwrap();
+    let (read, _) = from_bytes(&bytes).unwrap();
+    assert_eq!(read.body(body).unwrap().opacity, opacity);
+    assert_eq!(&read, document);
 }
 
 #[test]

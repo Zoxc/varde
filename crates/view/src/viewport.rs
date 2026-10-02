@@ -76,10 +76,12 @@ pub struct ModelPicking<'a> {
 /// over its left. `pivot`, the point the camera orbits if one was picked,
 /// is marked, and `highlight` drawn over the model. With `picking`, the
 /// cursor picks the model. The edges the model hides are drawn dashed if
-/// `hidden_edges`, outside a sketch.
+/// `hidden_edges`, outside a sketch. Each of the mesh's parts is drawn as
+/// opaque as `opacity` says, see [`Frame::opacity`].
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn viewport<'a>(
     mesh: &Arc<RenderMesh>,
+    opacity: Arc<[f32]>,
     sketches: &Arc<RenderLines>,
     camera: &'a Camera,
     pivot: Option<Pivot>,
@@ -129,6 +131,7 @@ pub(crate) fn viewport<'a>(
         ..program(mesh, sketches, camera, pivot, palette, sketching, operating)
     };
     program.scene.hidden_edges = hidden_edges;
+    program.scene.opacity = opacity;
     let scene = iced::widget::shader(program)
         .width(Length::Fill)
         .height(Length::Fill);
@@ -151,7 +154,8 @@ pub(crate) fn viewport<'a>(
 
 /// The shader program drawing `mesh` and `sketches` from `camera` in
 /// `palette`'s colors, in `sketching`'s sketch if there is one, or
-/// setting up `operating`'s operation, with the edges the model hides.
+/// setting up `operating`'s operation, with the edges the model hides,
+/// every part opaque.
 fn program<'a>(
     mesh: &Arc<RenderMesh>,
     sketches: &Arc<RenderLines>,
@@ -164,6 +168,7 @@ fn program<'a>(
     Program {
         scene: Scene {
             mesh: mesh.clone(),
+            opacity: Arc::new([]),
             sketches: sketches.clone(),
             camera: *camera,
             pivot,
@@ -198,6 +203,8 @@ struct Program<'a> {
 #[derive(Debug, Clone)]
 struct Scene {
     mesh: Arc<RenderMesh>,
+    /// How opaque each of the mesh's parts is: see [`Frame::opacity`].
+    opacity: Arc<[f32]>,
     sketches: Arc<RenderLines>,
     camera: Camera,
     /// The point the camera orbits, marked, if one was picked.
@@ -664,6 +671,7 @@ impl shader::Primitive for Primitive {
             &Frame {
                 camera: &scene.camera,
                 mesh: &scene.mesh,
+                opacity: &scene.opacity,
                 sketches: &scene.sketches,
                 // A sketch being edited moves the grid onto its plane and
                 // fades the model.

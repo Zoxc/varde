@@ -409,12 +409,15 @@ impl MeshFeed {
     }
 
     /// The body each of [`mesh`](Self::mesh)'s parts is of, in order.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "drawing bodies by part will use it")
-    )]
+    /// None if the document was replaced since, whose ids may name other
+    /// bodies: the parts are drawn as of none, opaque, until a model of it
+    /// is shown.
     pub(crate) fn parts(&self) -> &[BodyId] {
-        self.picking.bodies()
+        if self.marks() {
+            self.picking.bodies()
+        } else {
+            &[]
+        }
     }
 
     pub(crate) fn sketches(&self) -> &Arc<RenderLines> {

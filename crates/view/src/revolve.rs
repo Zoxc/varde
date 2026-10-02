@@ -13,10 +13,10 @@ use iced::{Alignment, Length};
 use varde_document::{AxisLine, BodyId, FeatureId, RevolveError};
 use varde_sketch::{Curve, Id, Sketch};
 
-use crate::chrome::hrule;
+use crate::chrome::{heading, hrule};
 use crate::operation_panel::{
     BodyTarget, Candidate, OperationKind, Parts, TypedField, bodies, choice, footer_message, grid,
-    heading, labelled, operation_panel, tick, value_field,
+    labelled, operation_panel, tick, value_field,
 };
 use crate::theme;
 use crate::{Edit, Look, Message, VALUE_FIELD};

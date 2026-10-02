@@ -86,6 +86,7 @@ fn render_to(
         &Frame {
             camera,
             mesh: &Arc::new(mesh.clone()),
+            opacity: &[],
             sketches: &Arc::default(),
             grid: GridPlane::XY,
             faded: false,
@@ -121,6 +122,8 @@ struct Extras {
     highlight: Option<Highlight>,
     /// Colours other than [`COLORS`].
     colors: Option<Colors>,
+    /// How opaque each part of the mesh is, opaque past its end.
+    opacity: Vec<f32>,
 }
 
 /// Renders `mesh` and `extras` into [`VIEWPORT`] at a scale factor of 1.
@@ -157,6 +160,7 @@ fn render_scaled(
         &Frame {
             camera,
             mesh: &Arc::new(mesh.clone()),
+            opacity: &extras.opacity,
             sketches: &Arc::new(extras.sketches),
             grid: extras.grid,
             faded: extras.faded,
@@ -2166,5 +2170,240 @@ fn hidden_dashes_shorter_than_a_pixel_on_the_screen_blur_to_their_average() {
             (c - average).abs() < 0.03,
             "{average} on average: {along:?}"
         );
+    }
+}
+
+/// `alpha` as a part is drawn at: in steps of 8 bits.
+fn drawn_alpha(alpha: f32) -> f32 {
+    (alpha * 255.0).round() / 255.0
+}
+
+/// From the front, the middle of the front face of a cube from 0 to 2,
+/// and a cube behind it: the far one the mesh's first part, the near one
+/// its second.
+fn cube_behind_cube() -> (Camera, RenderMesh, RenderMesh) {
+    let mut camera = Camera::default();
+    camera.set_target(Vec3::ONE);
+    camera.look_from(View::Front);
+    let near = cube(2.0, Vec3::ZERO);
+    let mut both = cube(2.0, Vec3::Y * 5.0);
+    both.append(&near).unwrap();
+    (camera, near, both)
+}
+
+#[test]
+fn a_body_behind_a_transparent_one_shows_through_it() {
+    // A cube behind a 30 % one: the near one's back and front faces
+    // blended over the far one, which shows through both, so it adds as
+    // much as it would through two layers of the glass.
+    let (camera, near, both) = cube_behind_cube();
+    let far = cube(2.0, Vec3::Y * 5.0);
+    let with = |opacity: Vec<f32>| Extras {
+        opacity,
+        ..Extras::default()
+    };
+    let (Some(glass), Some(through), Some(behind), Some(opaque)) = (
+        render_with(&camera, &near, with(vec![0.3])),
+        render_with(&camera, &both, with(vec![1.0, 0.3])),
+        render_with(&camera, &far, Extras::default()),
+        render_with(&camera, &both, Extras::default()),
+    ) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let (cx, cy) = CENTER;
+    let [glass, through, behind, opaque] =
+        [&glass, &through, &behind, &opaque].map(|pixels| pixel(pixels, cx, cy));
+    let alpha = drawn_alpha(0.3);
+    for c in 0..3 {
+        let shown = f32::from(through[c]) - f32::from(glass[c]);
+        let expected = f32::from(behind[c]) * (1.0 - alpha) * (1.0 - alpha);
+        assert!(
+            (shown - expected).abs() <= 2.0,
+            "{through:?} over {glass:?} for {behind:?}"
+        );
+    }
+    // The glass alone tints the black background, and is fainter than
+    // the cube opaque.
+    for c in 0..3 {
+        assert!(
+            glass[c] > 20 && glass[c] < opaque[c],
+            "{glass:?}, {opaque:?}"
+        );
+    }
+}
+
+#[test]
+fn a_transparent_body_behind_an_opaque_one_is_hidden() {
+    // The same cubes, the far one 30 %: the near one hides it, as if it
+    // were opaque.
+    let (camera, near, both) = cube_behind_cube();
+    let (Some(alone), Some(hiding)) = (
+        render_with(&camera, &near, Extras::default()),
+        render_with(
+            &camera,
+            &both,
+            Extras {
+                opacity: vec![0.3, 1.0],
+                ..Extras::default()
+            },
+        ),
+    ) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let (cx, cy) = CENTER;
+    for (dx, dy) in [(0, 0), (-4, -4), (4, 4), (4, -4)] {
+        let (x, y) = (cx.wrapping_add_signed(dx), cy.wrapping_add_signed(dy));
+        assert_eq!(pixel(&hiding, x, y), pixel(&alone, x, y), "at {x}, {y}");
+    }
+}
+
+/// From the top in perspective, a cube 6 on a side whose top face is level
+/// with the target, its near edge along the middle of a row, at `y`.
+fn cube_under_top_camera() -> (Camera, f32, RenderMesh) {
+    let mut camera = top_camera();
+    camera.set_projection(Projection::Perspective);
+    let y = -2.025;
+    (camera, y, cube(6.0, Vec3::new(-3.0, y, -6.0)))
+}
+
+/// How much yellow covers a column `x` near `row`, in pixels.
+fn yellow_near(pixels: &[[u8; 4]], x: u32, row: u32) -> f32 {
+    (row - 3..=row + 3)
+        .map(|y| yellowness(pixel(pixels, x, y)))
+        .sum()
+}
+
+#[test]
+fn a_transparent_bodys_back_edges_are_dimmed_and_its_front_edges_crisp() {
+    // The cube at 50 %, its edges yellow: the near edge of its top face
+    // is drawn again over the glass, at its alpha, while the bottom's,
+    // seen through the cube, is dimmed by the faces in front of it. Not
+    // hidden by them, so not dashed.
+    let (camera, y, mesh) = cube_under_top_camera();
+    let alpha = drawn_alpha(0.5);
+    let render = |opacity| {
+        let extras = Extras {
+            hidden_edges: true,
+            opacity: vec![opacity],
+            ..yellow_edges(false)
+        };
+        render_scaled(&camera, &mesh, extras, FULL, FULL_CLIP, 1.0)
+    };
+    let (Some(glass), Some(opaque)) = (render(0.5), render(1.0)) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let top = in_perspective(&camera, Vec3::new(0.0, y, 0.0)).y as u32;
+    let bottom = in_perspective(&camera, Vec3::new(0.0, y, -6.0)).y as u32;
+    let ends = [-2.0, 2.0].map(|x| in_perspective(&camera, Vec3::new(x, y, -6.0)).x as u32);
+    let middle = (ends[0] + ends[1]) / 2;
+    let front = yellow_near(&glass, middle, top);
+    let solid = yellow_near(&opaque, middle, top);
+    // As opaque as the part, over its width.
+    assert!(
+        front >= solid * alpha - 0.05,
+        "{front} of the front edge, {solid} opaque"
+    );
+    // Seen through the bottom's back face and the top face.
+    let back: Vec<f32> = (ends[0]..ends[1])
+        .map(|x| yellow_near(&glass, x, bottom))
+        .collect();
+    let dimmed = solid * alpha * (1.0 - alpha) * (1.0 - alpha);
+    for &c in &back {
+        assert!((c - dimmed).abs() < 0.1, "{dimmed} expected: {back:?}");
+    }
+    assert!(front > 2.0 * dimmed, "{front} not crisper than {dimmed}");
+}
+
+#[test]
+fn edges_behind_glass_are_seen_and_behind_an_opaque_body_dashed() {
+    // The cube's near edge under a thin plate over its middle, as in
+    // `an_edge_of_a_cube_behind_another_body_is_dashed_where_its_hidden`:
+    // behind a plate at 50 % it's solid, dimmed by the plate; a 50 %
+    // cube's behind an opaque plate is dashed, half as opaque as an
+    // opaque cube's.
+    let (camera, y, mut mesh) = cube_under_top_camera();
+    mesh.append(&block(
+        Vec3::new(-1.0, -3.0, 1.0),
+        Vec3::new(2.0, 2.0, 0.05),
+    ))
+    .unwrap();
+    let render = |opacity| {
+        let extras = Extras {
+            hidden_edges: true,
+            opacity,
+            ..yellow_edges(false)
+        };
+        render_scaled(&camera, &mesh, extras, FULL, FULL_CLIP, 1.0)
+    };
+    let (Some(through), Some(dashes)) = (render(vec![1.0, 0.5]), render(vec![0.5, 1.0])) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let alpha = drawn_alpha(0.5);
+    let row = in_perspective(&camera, Vec3::new(0.0, y, 0.0)).y as u32;
+    let plate = [-1.0, 1.0].map(|x| in_perspective(&camera, Vec3::new(x, y, 1.05)).x as u32);
+    let under = plate[0] + 4..plate[1] - 4;
+    let seen = yellow_along_full(&through, row, under.clone());
+    let most = seen.iter().copied().fold(0.0, f32::max);
+    for &c in &seen {
+        assert!(c > 0.15 && most - c < 0.05, "{seen:?}");
+    }
+    dashed(
+        &yellow_along_full(&dashes, row, under),
+        COLORS.hidden_edge_alpha * alpha,
+    );
+}
+
+#[test]
+fn the_order_of_two_transparent_bodies_barely_changes_the_pixels() {
+    // A cube and a bar through it, their bounds' centres the same, so
+    // they're drawn in the mesh's order, at 50 % each: either way round,
+    // each pixel is about the same.
+    let mut camera = Camera::default();
+    camera.set_target(Vec3::ONE);
+    let a = cube(2.0, Vec3::ZERO);
+    let b = block(Vec3::new(-1.0, 0.5, 0.5), Vec3::new(4.0, 1.0, 1.0));
+    let mut ab = a.clone();
+    ab.append(&b).unwrap();
+    let mut ba = b;
+    ba.append(&a).unwrap();
+    let extras = || Extras {
+        opacity: vec![0.5, 0.5],
+        ..Extras::default()
+    };
+    let (Some(ab), Some(ba)) = (
+        render_with(&camera, &ab, extras()),
+        render_with(&camera, &ba, extras()),
+    ) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let most = ab
+        .iter()
+        .zip(&ba)
+        .flat_map(|(p, q)| (0..3).map(move |c| p[c].abs_diff(q[c])))
+        .max()
+        .unwrap_or(0);
+    assert!(most <= 12, "{most} apart");
+}
+
+#[test]
+fn opacity_out_of_range_is_opaque() {
+    // NaN, past 1, below 0 or missing: each drawn as an opaque part.
+    let (camera, _, both) = cube_behind_cube();
+    let Some(opaque) = render_with(&camera, &both, Extras::default()) else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    for opacity in [vec![f32::NAN, 1.5], vec![-0.5], vec![1.0, 1.0, 0.3]] {
+        let extras = Extras {
+            opacity: opacity.clone(),
+            ..Extras::default()
+        };
+        let drawn = render_with(&camera, &both, extras).unwrap();
+        assert!(drawn == opaque, "{opacity:?}");
     }
 }

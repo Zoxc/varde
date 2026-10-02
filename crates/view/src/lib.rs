@@ -19,6 +19,7 @@ mod escape;
 mod extrude;
 mod hit;
 mod icons;
+mod mouse_only;
 mod operation_panel;
 mod panels;
 mod pick;
@@ -45,7 +46,7 @@ mod welcome;
 use std::path::PathBuf;
 
 use glam::DVec2;
-use varde_document::{BodyId, FeatureId, OriginPlane, Tolerance};
+use varde_document::{BodyId, FeatureId, Opacity, OriginPlane, Tolerance};
 use varde_expr::LengthUnit;
 use varde_render::{Projection, View};
 use varde_sketch::{Id, Sketch};
@@ -221,6 +222,10 @@ pub enum Edit {
     /// Adds the revolve being set up, or changes the one being edited, as
     /// one undo step, and ends its session: OK, or `Enter`.
     CommitRevolve,
+    /// Sets the body whose opacity is previewed (see
+    /// [`Look::PreviewOpacity`]) to it, as one undo step, keeping its
+    /// context menu open: letting go of the slider.
+    CommitOpacity,
     /// Changes the design's units.
     SetUnits(LengthUnit),
     /// Changes the design's tolerance, which regenerates everything.
@@ -243,10 +248,11 @@ pub enum Look {
     /// `Esc`.
     CancelDelete,
     /// Backs out of whatever is open, the innermost first: the delete
-    /// prompt, the rail's list, the feature's context menu, the file menu,
-    /// the view options menu, picking a plane, the extrude or revolve being set up,
-    /// dragging geometry, the shape the sketch's tool is drawing, the tool
-    /// (or the Constrain tool), the sketch, the selection.
+    /// prompt, a drag of a body's Opacity slider with its menu, the rail's
+    /// list, a row's context menu, the file menu, the view options menu,
+    /// picking a plane, the extrude or revolve being set up, dragging
+    /// geometry, the shape the sketch's tool is drawing, the tool (or the
+    /// Constrain tool), the sketch, the selection.
     Escape,
     SelectPanel(Panel),
     /// Starts picking the plane for a new sketch, or backs out of it.
@@ -276,6 +282,10 @@ pub enum Look {
     OpenMenu(RowMenu),
     /// Closes the row's context menu: a press off it.
     CloseMenu,
+    /// Shows the body as `Opacity` says while its context menu's slider is
+    /// dragged, without changing the document: [`Edit::CommitOpacity`]
+    /// does that on letting go.
+    PreviewOpacity(BodyId, Opacity),
     /// A click in the sketch being edited without a tool, or on a row of
     /// its Geometry list, on `hit` if anything: selects it alone, or
     /// nothing, or with `add` (`Ctrl`, or `Cmd` on macOS) adds it to the

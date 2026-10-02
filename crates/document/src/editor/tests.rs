@@ -1,8 +1,8 @@
 use super::*;
 use crate::testing::{extrude_again, extrude_of, plate, with_body};
 use crate::{
-    CheckError, Design, ExtrudeError, FeatureId, FeatureKind, Operation, Plane, Removable, Removal,
-    Sketch, Targets,
+    CheckError, Design, ExtrudeError, FeatureId, FeatureKind, Opacity, Operation, Plane, Removable,
+    Removal, Sketch, Targets,
 };
 
 #[test]
@@ -50,6 +50,45 @@ fn undo_and_redo_give_a_state_back_its_revision() {
 }
 
 #[test]
+fn set_opacity_undoes_and_redoes() {
+    let mut editor = Editor::new(with_body());
+    let id = editor.document().bodies[0].id;
+    assert!(editor.document().bodies[0].opacity.is_opaque());
+    let half = Opacity::new(50).unwrap();
+
+    editor.apply(Command::SetOpacity(id, half)).unwrap();
+    assert_eq!(editor.document().bodies[0].opacity, half);
+    let set = editor.revision();
+    editor.undo();
+    assert_eq!(editor.document().bodies[0].opacity, Opacity::MAX);
+    assert_eq!(editor.revision(), Revision(0));
+    editor.redo();
+    assert_eq!(editor.document().bodies[0].opacity, half);
+    assert_eq!(editor.revision(), set);
+}
+
+/// A body added later starts opaque, whatever the others are.
+#[test]
+fn new_bodies_are_opaque() {
+    let mut editor = Editor::new(with_body());
+    let id = editor.document().bodies[0].id;
+    editor.apply(Command::SetOpacity(id, Opacity::MIN)).unwrap();
+    let (_, body) = extrude_again(&mut editor);
+    assert!(editor.document().body(body).unwrap().opacity.is_opaque());
+}
+
+#[test]
+fn check_refuses_an_opacity_out_of_range() {
+    let mut document = with_body();
+    let id = document.bodies[0].id;
+    for percent in [0, 9, 101, u8::MAX] {
+        // Deserializing doesn't check the range: the document does.
+        document.bodies[0].opacity = postcard::from_bytes(&[percent]).unwrap();
+        assert_eq!(document.check(), Err(CheckError::Opacity(id, percent)));
+    }
+}
+
+#[test]
 fn snapshot_is_shared_and_unaffected_by_edits() {
     let mut editor = Editor::new(with_body());
     let snapshot = editor.snapshot();
@@ -71,6 +110,12 @@ fn edits_that_change_nothing_are_dropped() {
     editor.apply(Command::RemoveBody(missing)).unwrap();
     editor.apply(Command::SetVisible(missing, false)).unwrap();
     editor.apply(Command::SetVisible(id, true)).unwrap();
+    editor
+        .apply(Command::SetOpacity(missing, Opacity::MIN))
+        .unwrap();
+    editor
+        .apply(Command::SetOpacity(id, Opacity::default()))
+        .unwrap();
     editor
         .apply(Command::Replace(Box::new(with_body())))
         .unwrap();

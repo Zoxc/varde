@@ -12,7 +12,7 @@ use iced::{Alignment, Element, Length};
 use varde_document::EXTENSION;
 use varde_document::{
     APP_NAME, Body, BodyId, Document, EditError, Editor, Extent, Feature, FeatureId, FeatureKind,
-    Plane,
+    Opacity, Plane,
 };
 use varde_expr::LengthUnit;
 use varde_kernel::{RenderLines, RenderMesh};
@@ -42,6 +42,13 @@ pub struct DocumentState<'a> {
     /// The document's mesh, which the app gets from the regeneration side,
     /// so it may lag behind the document.
     pub mesh: &'a Arc<RenderMesh>,
+    /// The body each of `mesh`'s parts is of, in order, which gives each
+    /// part the opacity of its body in `editor`'s document, or
+    /// `opacity_preview`'s.
+    pub parts: &'a [BodyId],
+    /// A body's opacity shown in place of the document's while its context
+    /// menu's slider is dragged, if one is.
+    pub opacity_preview: Option<(BodyId, Opacity)>,
     /// The finished sketches' curves, which come with `mesh`.
     pub sketches: &'a Arc<RenderLines>,
     /// How `mesh` and `sketches` stand against the document.
@@ -131,6 +138,12 @@ impl DocumentState<'_> {
     /// Whether the document can be changed, including by undo, and saved.
     pub(crate) fn editable(&self) -> bool {
         self.read_only.is_none()
+    }
+
+    /// How opaque the viewport draws each part of the mesh, see
+    /// [`DocumentState::parts`].
+    pub fn part_opacity(&self) -> Arc<[f32]> {
+        part_opacity(self.editor.document(), self.parts, self.opacity_preview)
     }
 
     /// What the screen's shortcuts depend on.
@@ -550,6 +563,7 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
                 stack![
                     viewport::viewport(
                         state.mesh,
+                        state.part_opacity(),
                         state.sketches,
                         state.camera,
                         state.pivot,
@@ -603,6 +617,29 @@ fn operating<'a>(state: &DocumentState<'a>) -> Option<viewport::Operating<'a>> {
     let revolving = state.revolve.clone().map(viewport::Revolving::new);
     (extruding.map(viewport::Operating::Extrude))
         .or_else(|| revolving.map(viewport::Operating::Revolve))
+}
+
+/// How opaque each part of the mesh is drawn, the parts being of `parts`'
+/// bodies in order: as its body in `document` is shown ([`shown_opacity`]),
+/// or opaque if it's of none there, as a draft's new body is.
+fn part_opacity(
+    document: &Document,
+    parts: &[BodyId],
+    preview: Option<(BodyId, Opacity)>,
+) -> Arc<[f32]> {
+    parts
+        .iter()
+        .map(|&id| (document.body(id)).map_or(1.0, |body| shown_opacity(body, preview).alpha()))
+        .collect()
+}
+
+/// How opaque `body` is shown: as `preview` has it if it's of `body`, while
+/// the Opacity slider in its context menu is dragged, else its own.
+pub(crate) fn shown_opacity(body: &Body, preview: Option<(BodyId, Opacity)>) -> Opacity {
+    match preview {
+        Some((id, opacity)) if id == body.id => opacity,
+        _ => body.opacity,
+    }
 }
 
 /// What the status bar shows: the feature selected, what's going on, the
@@ -1541,6 +1578,23 @@ mod tests {
     use varde_sketch::Curve;
 
     use super::*;
+
+    #[test]
+    fn parts_are_as_opaque_as_their_bodies() {
+        let mut editor = Editor::new(Document::example());
+        let body = editor.document().bodies()[0].id;
+        let opacity = Opacity::new(30).unwrap();
+        editor
+            .apply(varde_document::Command::SetOpacity(body, opacity))
+            .unwrap();
+        // A draft's new body isn't in the document: opaque.
+        let parts = [body, BodyId::NEW, body];
+        let document = editor.document();
+        assert_eq!(*part_opacity(document, &parts, None), [0.3, 1.0, 0.3]);
+        // The slider's preview stands in for its body's, and only its.
+        let preview = Some((body, Opacity::new(55).unwrap()));
+        assert_eq!(*part_opacity(document, &parts, preview), [0.55, 1.0, 0.55]);
+    }
 
     #[test]
     fn a_sketch_stands_as_its_analysis_says() {

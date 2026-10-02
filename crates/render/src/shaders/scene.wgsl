@@ -30,6 +30,14 @@ struct Uniforms {
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
 
+// See `PartUniforms` in renderer.rs: how opaque the part of the model being
+// drawn is, bound at its step's offset for each part's draws.
+struct Part {
+    alpha: vec4<f32>,
+};
+
+@group(1) @binding(0) var<uniform> part: Part;
+
 // Set by the renderer. True if the target stores output as is, so it must be
 // sRGB encoded here, false if the target encodes it.
 override ENCODE_SRGB: bool;
@@ -278,10 +286,14 @@ fn lit(base: vec3<f32>, normal: vec3<f32>) -> vec3<f32> {
     return base * (ambient + diffuse) + spec;
 }
 
+// A back face, drawn only for a part less than opaque, is lit as seen from
+// inside.
 @fragment
-fn fs_mesh(in: MeshOut) -> @location(0) vec4<f32> {
-    // Less than opaque when faded, blended over the background.
-    return output(vec4<f32>(lit(u.model.rgb, in.normal), u.model.a));
+fn fs_mesh(in: MeshOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    let normal = select(-1.0, 1.0, front) * in.normal;
+    // Less than opaque when faded, or as its part is, blended over what's
+    // behind it.
+    return output(vec4<f32>(lit(u.model.rgb, normal), u.model.a * part.alpha.x));
 }
 
 // --- Highlight ---
@@ -647,17 +659,18 @@ fn edge_segment(
 
 // The feature edges where the model doesn't hide them, depth tested
 // LessEqual. Their colour's alpha is how opaque the model is, fainter when
-// faded.
+// faded, and their part.
 @vertex
 fn vs_edge(in: EdgeIn) -> LineOut {
-    return edge_segment(in, EDGE_WIDTH * 0.5 * u.viewport.z, u.edge, vec2<f32>(0.0),
+    let color = vec4<f32>(u.edge.rgb, u.edge.a * part.alpha.x);
+    return edge_segment(in, EDGE_WIDTH * 0.5 * u.viewport.z, color, vec2<f32>(0.0),
         vec2<f32>(0.0));
 }
 
 // The feature edges where the model hides them, depth tested Greater, so
 // exactly the pixels `vs_edge` didn't draw: HIDDEN_EDGE_WIDTH wide, dashed
 // along the edge by its length at the scale of the target, as the sketch's
-// dashes are, in `u.hidden_edge`.
+// dashes are, in `u.hidden_edge`, as faint again as their part is.
 //
 // The dashes' phase is worked out a segment at a time, so it keeps its
 // precision zoomed far into a long edge, where how far along the edge a
@@ -676,7 +689,8 @@ fn vs_hidden_edge(in: EdgeIn) -> LineOut {
     let scale = u.viewport.y / view_height();
     let phase = wrapped(in.start_along * scale, period);
     let length = distance(in.start, in.end) * scale;
-    var out = edge_segment(in, HIDDEN_EDGE_WIDTH * 0.5 * s, u.hidden_edge, dash,
+    let color = vec4<f32>(u.hidden_edge.rgb, u.hidden_edge.a * part.alpha.x);
+    var out = edge_segment(in, HIDDEN_EDGE_WIDTH * 0.5 * s, color, dash,
         vec2<f32>(phase, phase + length));
     out.along -= vec2<f32>(floor(out.along.x / period) * period);
     return out;

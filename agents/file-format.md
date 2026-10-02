@@ -8,10 +8,11 @@ guarded by file locks, and a save fails with a conflict if the file changed
 since it was opened.
 
 A document (`crates/document/src/lib.rs`) holds its bodies (a name,
-whether it's visible and the extrude or revolve that makes it: no
-geometry, which regenerating the feature history gives), its features (a
-name, whether it's visible, and a kind, stored by its place in
-`FeatureKind`, new kinds appended: a sketch, an extrude,
+whether it's visible, its opacity, a `u8` percent, and the extrude or
+revolve that makes it: no geometry, which regenerating the feature
+history gives), its features (a name, whether it's visible, and a kind,
+stored by its place in `FeatureKind`, new kinds appended: a sketch, an
+extrude,
 `crates/document/src/extrude.rs`: the sketch feature it uses, its
 regions as `varde_sketch::RegionRef`s (curve ids of the outer loop and of
 each hole, and a point inside), the extent (one side, symmetric, two
@@ -37,7 +38,8 @@ typed and its value), the design's units (a
 `f64` in millimetres, `1e-5 ..= 1e-1`, 1 µm by default) and the next id
 bodies and features take. A document read from a file is checked
 (`Document::check`, which runs `Sketch::check` on each sketch): body and
-feature ids increasing and below the next id, every body made by an
+feature ids increasing and below the next id, every body's opacity from
+10 to 100, every body made by an
 extrude or revolve the document holds whose operation makes it as its
 new body, and every such body there, an extrude's or revolve's sketch a
 sketch feature before it, 1 to 256 regions, each within the coordinate

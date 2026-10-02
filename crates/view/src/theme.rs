@@ -6,6 +6,7 @@
 use std::sync::LazyLock;
 
 use iced::theme::palette::Extended;
+use iced::widget::slider::{self as slide, HandleShape};
 use iced::widget::{button, checkbox, container, rule, scrollable, text};
 use iced::{
     Background, Border, Color, Font, Gradient, Radians, Shadow, Theme, Vector, border, color, font,
@@ -858,6 +859,50 @@ pub fn tick(theme: &Theme, status: checkbox::Status) -> checkbox::Style {
             border: outline(fade(edge), TICK_RADIUS),
             text_color: Some(fade(p.text)),
             ..style
+        }
+    }
+}
+
+/// The radius of a [`slider`]'s handle.
+pub const SLIDER_HANDLE_RADIUS: f32 = 6.0;
+
+/// A slider: a thin rail, accent up to the handle and the line colour
+/// after it, and a round handle in the panel's colour ringed in the
+/// accent, filled with the hover colour while hovered or dragged; faded
+/// as a disabled button is unless `enabled`.
+pub fn slider(enabled: bool) -> impl Fn(&Theme, slide::Status) -> slide::Style {
+    move |theme, status| {
+        let p = palette(theme);
+        let fade = |color: Color| {
+            if enabled {
+                color
+            } else {
+                color.scale_alpha(DISABLED_OPACITY)
+            }
+        };
+        let fill = match status {
+            slide::Status::Hovered | slide::Status::Dragged if enabled => {
+                mix(p.accent, p.panel, 0.2)
+            }
+            _ => p.panel,
+        };
+        slide::Style {
+            rail: slide::Rail {
+                backgrounds: (
+                    Background::Color(fade(p.accent)),
+                    Background::Color(fade(p.line)),
+                ),
+                width: 4.0,
+                border: border::rounded(2.0),
+            },
+            handle: slide::Handle {
+                shape: HandleShape::Circle {
+                    radius: SLIDER_HANDLE_RADIUS,
+                },
+                background: Background::Color(fill),
+                border_width: 2.0,
+                border_color: fade(p.accent),
+            },
         }
     }
 }

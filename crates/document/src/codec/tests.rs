@@ -52,6 +52,29 @@ fn deserializing_a_document_checks_it() {
     ));
 }
 
+/// A body's opacity out of range in the bytes is refused, with what's
+/// wrong.
+#[test]
+fn an_opacity_out_of_range_is_refused() {
+    let mut bytes = with_body().to_postcard();
+    // One body: its id, "Body 1", visible, then its opacity, 100.
+    let at = 10;
+    assert_eq!(bytes[..at], [1, 2, 6, 66, 111, 100, 121, 32, 49, 1]);
+    assert_eq!(bytes[at], 100);
+    bytes[at] = 101;
+    assert!(postcard::from_bytes::<Document>(&bytes).is_err());
+    assert!(matches!(
+        Document::from_postcard(&bytes),
+        Err(error) if matches!(
+            error.source().and_then(|why| why.downcast_ref()),
+            Some(CheckError::Opacity(_, 101))
+        )
+            && error.to_string().contains("opacity of 101 %")
+    ));
+    bytes[at] = 10;
+    assert!(Document::from_postcard(&bytes).is_ok());
+}
+
 /// Checking a document as it's deserialized doesn't change its bytes.
 #[test]
 fn a_document_encodes_as_before() {

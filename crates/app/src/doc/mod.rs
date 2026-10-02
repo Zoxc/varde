@@ -21,8 +21,8 @@ use iced::Element;
 use iced::time::Instant;
 use varde_document::name::UNTITLED;
 use varde_document::{
-    BodyId, Command, Document, EditError, Editor, FeatureId, FeatureKind, LengthUnit, OriginPlane,
-    Removable, Removal, Revision, Tolerance,
+    BodyId, Command, Document, EditError, Editor, FeatureId, FeatureKind, LengthUnit, Opacity,
+    OriginPlane, Removable, Removal, Revision, Tolerance,
 };
 use varde_io::{Access, Offer, OpenId};
 use varde_render::{Camera, Projection};
@@ -103,6 +103,10 @@ pub(crate) struct Doc {
     /// The row of the side panel whose context menu is open, if one is:
     /// a feature of the Timeline's only while it's selected.
     pub(crate) row_menu: Option<RowMenu>,
+    /// The opacity shown for a body in place of its own while the slider
+    /// in its context menu is dragged, if it is: only while that menu is
+    /// open, see [`Doc::preview_opacity`].
+    pub(crate) opacity_preview: Option<(BodyId, Opacity)>,
     /// The sketch being edited, if one is.
     pub(crate) sketch: Option<SketchSession>,
     /// The extrude being set up, if one is: never with a sketch.
@@ -228,6 +232,7 @@ impl Doc {
             lineage,
             selected_feature: None,
             row_menu: None,
+            opacity_preview: None,
             sketch: None,
             extrude: None,
             revolve: None,
@@ -269,6 +274,7 @@ impl Doc {
         self.request_model();
         self.refresh_profiles();
         self.prune_picks();
+        self.prune_preview();
     }
 
     /// Asks for the model if the document changed, the sketch left out of
@@ -324,7 +330,10 @@ impl Doc {
     /// the solver last refused shows until then.
     pub(crate) fn update(&mut self, message: Edit) {
         self.end_refusal();
-        self.row_menu = None;
+        // Letting go of the Opacity slider leaves its menu open, to go on.
+        if !matches!(message, Edit::CommitOpacity) {
+            self.row_menu = None;
+        }
         // Any other edit, a click of the Dimension tool included, leaves
         // the value field; placing one opens another. Not a label let go
         // of: the release of a double-click opening the field on it. Nor
@@ -368,6 +377,11 @@ impl Doc {
             Edit::InsertSplinePoint { spline, at } => self.insert_spline_point(spline, at),
             Edit::CommitExtrude => self.commit_extrude(),
             Edit::CommitRevolve => self.commit_revolve(),
+            Edit::CommitOpacity => {
+                if let Some((id, opacity)) = self.opacity_preview.take() {
+                    self.change(Change::SetOpacity(id, opacity));
+                }
+            }
             Edit::SetUnits(units) => self.change(Change::SetUnits(units)),
             Edit::SetTolerance(tolerance) => self.change(Change::SetTolerance(tolerance)),
             // What waits on the solver, and what waits behind it, is newer
@@ -412,6 +426,8 @@ impl Doc {
                 }
             }
             Change::NewSketch(plane) => self.new_sketch(plane),
+            // Nothing if it's as it was: the editor adds no undo step.
+            Change::SetOpacity(id, opacity) => self.apply(Command::SetOpacity(id, opacity)),
             Change::SetUnits(units) => self.apply(Command::SetUnits(units)),
             Change::SetTolerance(tolerance) => self.apply(Command::SetTolerance(tolerance)),
         }
@@ -434,6 +450,7 @@ impl Doc {
         // The extrude being set up is previewed as it changes.
         self.request_model();
         self.prune_picks();
+        self.prune_preview();
     }
 
     /// Takes `message`, see [`Doc::look`].
@@ -473,6 +490,7 @@ impl Doc {
         if !matches!(
             message,
             Look::OpenMenu(_)
+                | Look::PreviewOpacity(..)
                 | Look::Escape
                 | Look::HoverItem(_)
                 | Look::Hover(_)
@@ -524,6 +542,7 @@ impl Doc {
             }
             Look::OpenMenu(menu) => self.open_menu(menu),
             Look::CloseMenu => {}
+            Look::PreviewOpacity(id, opacity) => self.preview_opacity(id, opacity),
             Look::ClickGeometry { hit, add } => self.click_geometry(hit, add),
             // The app turns this into a `ClickGeometry`, knowing the keys
             // held; alone, it selects.
@@ -639,6 +658,24 @@ impl Doc {
         self.row_menu = Some(menu);
     }
 
+    /// Shows the body `id` as `opacity` has it while the slider in its
+    /// context menu is dragged, if that menu is open and the document is
+    /// editable, without changing the document: [`Edit::CommitOpacity`]
+    /// does on letting go. It's dropped, going back to the body's own, if
+    /// the menu closes first, `Esc` included (see [`Doc::prune_preview`]).
+    fn preview_opacity(&mut self, id: BodyId, opacity: Opacity) {
+        if self.editable() && self.row_menu == Some(RowMenu::Body(id)) {
+            self.opacity_preview = Some((id, opacity));
+        }
+    }
+
+    /// Drops the opacity previewed unless its body's context menu is still
+    /// open: the slider in it is gone with it.
+    fn prune_preview(&mut self) {
+        let menu = self.row_menu;
+        (self.opacity_preview).take_if(|(id, _)| menu != Some(RowMenu::Body(*id)));
+    }
+
     /// Starts sending requests to `lane`, the document's regeneration
     /// lane.
     pub(crate) fn lane_ready(&mut self, lane: varde_regen::lane::Lane) {
@@ -672,11 +709,13 @@ impl Doc {
     }
 
     /// What the document screen's shortcuts depend on, or `None` while
-    /// the user is asked about unsaved changes or deleting: only the
-    /// prompt's buttons and `Esc` act then, not keys changing the document
-    /// behind it.
+    /// the user is asked about unsaved changes or deleting, or drags the
+    /// Opacity slider: only the prompt's buttons and `Esc` act then, not
+    /// keys changing the document behind it, or the body's opacity before
+    /// it's committed.
     pub(crate) fn keys(&self) -> Option<DocumentKeys> {
-        self.dialog().is_none().then(|| {
+        let dragging = self.opacity_preview.is_some();
+        (self.dialog().is_none() && !dragging).then(|| {
             DocumentKeys::new(self.editable(), self.selected_feature, self.sketch_state())
                 .with_extrude(self.extrudable(), self.extrude_state().as_ref())
                 .with_revolve(self.revolve_state().as_ref())
@@ -702,9 +741,11 @@ impl Doc {
     }
 
     /// Whether the other panel tab shows with the peek key `held`: not in
-    /// the Dimension tool, where it's held to place references.
+    /// the Dimension tool, where it's held to place references, nor while
+    /// the Opacity slider is dragged, which would go with its tab and so
+    /// never see its release.
     pub(crate) fn peeks(&self, held: bool) -> bool {
-        held && !self.dimensioning()
+        held && !self.dimensioning() && self.opacity_preview.is_none()
     }
 
     /// Takes `message`, an answer for this document: the app has checked
@@ -746,12 +787,24 @@ impl Doc {
     /// the Dimension tool is in use, where the peek key places references,
     /// with the view `options`.
     pub(crate) fn view(&self, peek: bool, mode: Mode, options: ViewOptions) -> Element<'_, Ui> {
+        varde_view::document(self.state(peek, mode, options))
+    }
+
+    /// What the document screen is built from, see [`Doc::view`].
+    pub(crate) fn state(
+        &self,
+        peek: bool,
+        mode: Mode,
+        options: ViewOptions,
+    ) -> varde_view::DocumentState<'_> {
         let peek = self.peeks(peek);
-        varde_view::document(varde_view::DocumentState {
+        varde_view::DocumentState {
             editor: &self.editor,
             camera: &self.camera,
             pivot: self.pivot_marker(),
             mesh: self.feed.mesh(),
+            parts: self.feed.parts(),
+            opacity_preview: self.opacity_preview,
             sketches: self.feed.sketches(),
             mesh_status: self.feed.status(&self.editor),
             picking: self.model_picking(),
@@ -793,7 +846,7 @@ impl Doc {
             deleting: self.delete_prompt(),
             proposing: self.proposing(),
             rail: self.rail.state(),
-        })
+        }
     }
 
     /// The document screen in `mode` as the app first shows it: not
@@ -819,6 +872,7 @@ pub(crate) enum Change {
     },
     ToggleVisible(BodyId),
     ToggleFeatureVisible(FeatureId),
+    SetOpacity(BodyId, Opacity),
     NewSketch(OriginPlane),
     SetUnits(LengthUnit),
     SetTolerance(Tolerance),

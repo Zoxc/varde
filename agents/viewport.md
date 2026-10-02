@@ -217,9 +217,10 @@ opacity (`DISABLED_OPACITY`), so a disabled OK reads as one in dark too;
 dark danger text is #f07563, the Delete button keeps #e0564b
 (`Palette::danger_fill`) under its white text.
 
-The renderer draws, in order: the background; the model's faces, or with
-`Frame::faded` its depth and then only its nearest faces blended at
-`Colors::faded_alpha` (depth still written); its feature edges, `EDGE_WIDTH`
+The renderer draws, in order: the background; the model's opaque parts'
+faces (below for the parts less than opaque), or with `Frame::faded` the
+whole model's depth and then only its nearest faces blended at
+`Colors::faded_alpha` (depth still written); their feature edges, `EDGE_WIDTH`
 logical pixels wide, depth tested and pulled towards the camera, so the
 faces they bound don't hide them, at `faded_alpha` too when faded; the grid,
 ray traced per pixel on `Frame::grid`, a `GridPlane` (the XY plane, or a
@@ -229,7 +230,8 @@ axis they lie along; the finished sketches (`Frame::sketches`, `RenderLines`), `
 logical pixels wide, cut at the near plane, depth tested and pulled
 towards the camera like the edges, so bodies in front hide them but a face
 they lie on doesn't; the edges again where the model hides them, if
-`Frame::hidden_edges` and not faded (below); the origin marker; and on top of it all the sketch
+`Frame::hidden_edges` and not faded (below); the parts less than opaque
+(below); the origin marker; and on top of it all the sketch
 being edited (`Frame::sketch`, a `SketchScene`), not depth tested, so the
 faded model never hides it. Setting up an extrude, the same layers are
 depth tested instead (`SketchScene::depth_tested`, the shader's
@@ -243,7 +245,50 @@ the depth range is fitted to the layers' bounds too
 (`SketchLayer::bounds`), so nothing of them is cut at the far plane.
 Screen-space items are on top either way. An outline lying on a side
 face (a region in the middle of a two-sided body) shows on it, as a
-finished sketch's line would.
+finished sketch's line would. With parts less than opaque in the model,
+the extrude's layers are drawn before them instead, so the glass in front
+of them dims them (and the origin marker goes over them).
+
+Each body is drawn as opaque as its `Body::opacity` (10 to 100 %), or
+as the Opacity slider in its context menu has it while that's dragged
+(`DocumentState::opacity_preview`, `shown_opacity`; the menu is described
+with the side panel's in `agents/kernel.md`): the view hands the frame an
+alpha per part of the mesh (`Frame::opacity`, from the picking tables'
+body per part, `MeshFeed::parts`, and the document; a part of no body in
+it, as a draft's new body is, is opaque, and so is one with no entry, or
+out of range or NaN). It's not part of the mesh, so changing it
+uploads nothing. At upload the renderer keeps each part's index range,
+its points' range in the edge stream (the parts' points follow one
+another, so a range of parts is drawn by the instances from the one
+before its first point; the points either side are of another part's
+edges or of none, which no segment of it joins) and its triangles'
+bounds. Each prepare splits the parts into runs of opaque ones, each
+drawn at once (an all opaque model is one draw, as before), and the rest,
+sorted far to near by their bounds' centres along the view. The alpha
+is per draw: WebGL2 has no push constants, so a uniform buffer holds a
+`PartUniforms` for each of 256 steps from 0 to 1 (8 bits, what the target
+shows; a device whose buffers hold fewer gets fewer, at least an opaque
+one, and only an alpha of 0 is drawn at the first step, so a faint part
+on a short table is drawn at the next step up rather than not at
+all), each at the device's uniform offset alignment, written once, and
+bound as group 1 of every pipeline at the step's dynamic offset. The
+faces' alpha and the edges' (visible and hidden) are multiplied by it.
+Outside a sketch, the opaque parts are drawn first as above, their depth
+the only depth there is up to the glass: the hidden edges are drawn for
+every part against it, so an edge behind glass is seen, not dashed, and
+a transparent part's edges hidden by an opaque one are dashed at its
+alpha too; then the transparent parts' edges, visible against the
+opaque depth, under the glass in front of them, which dims them; the
+extrude's layers, if any; then each transparent part, far to near, its
+back faces (culled front, lit as seen from inside: `fs_mesh` flips the
+normal of a face that isn't front facing) then its front faces, blended
+at its alpha, depth tested, writing no depth; then their front faces'
+depth only (`mesh_depth`), and their edges again, so the edges on the
+nearest surface show undimmed on the glass they lie on. Bodies are one
+colour each, so blending their layers in another order changes little,
+only their shading; sorting by the bounds' centres is enough, but for
+bodies whose bounds interleave. In a sketch every part is drawn faded
+alike at `faded_alpha`, whatever its opacity.
 
 The grid's axis lines are drawn in the grid's pass (`axis_line`) but not
 faded: they run on at full strength to the horizon, and show when the
@@ -339,8 +384,9 @@ knows the two either side of it.
 
 The edges the model hides are the same stream drawn again
 (`vs_hidden_edge`, its own entry point, since the GL backend keys
-programs by them) with `depth_compare: Greater` against the model's
-depth, which nothing drawn after the faces writes: the same quads (both
+programs by them) with `depth_compare: Greater` against the opaque
+parts' depth, which nothing drawn after their faces writes until the
+glass: the same quads (both
 `EDGE_WIDTH` wide, the hidden pass narrowing only the coverage, and the
 position `@invariant`), so the visible pass and this one split the
 pixels between them, and a visible stretch and a hidden one of the same
@@ -478,7 +524,10 @@ chain per edge, a closed edge between two faces and on one corner,
 summaries finite, within `Picking::MAX_VALUE`, their directions
 unit vectors, aliases sorted apart from the key): the fields are private
 and `Picking::from_parts` checks parts from elsewhere. The app keeps
-them with the mesh (`MeshFeed::parts` gives the parts' bodies).
+them with the mesh (`MeshFeed::parts` gives the parts' bodies, none
+once the document was replaced whole until a model of it is shown, as
+for the feed's other ids: they may name other bodies, so the parts are
+drawn opaque meanwhile).
 
 **Picking the model** (`view/src/pick.rs`, the app's `doc/pick.rs`) is on
 the CPU, against the mesh drawn and its tables; no GPU id buffer (WebGL2

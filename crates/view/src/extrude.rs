@@ -14,10 +14,10 @@ use varde_document::{BodyId, ExtrudeError, FeatureId, Placement};
 use varde_expr::LengthUnit;
 use varde_sketch::{Region, angle};
 
-use crate::chrome::{hrule, tip};
+use crate::chrome::{heading, hrule, tip};
 use crate::operation_panel::{
     BodyTarget, Candidate, OperationKind, Parts, TypedField, bodies, choice, footer_message, grid,
-    heading, operation_panel, tick, value_field,
+    operation_panel, tick, value_field,
 };
 use crate::theme;
 use crate::{Edit, Look, Message, VALUE_FIELD};

@@ -10,6 +10,7 @@ mod example;
 mod extrude;
 mod feature;
 pub mod name;
+mod opacity;
 mod removal;
 mod revolve;
 #[cfg(test)]
@@ -19,6 +20,7 @@ pub use codec::DecodeError;
 pub use editor::{Command, Editor, Generation, Revision};
 pub use extrude::{Extent, Extrude, ExtrudeError, MAX_EXTRUDE_REGIONS, Operation, Targets};
 pub use feature::{Feature, FeatureId, FeatureKind, OriginPlane, Placement, Plane};
+pub use opacity::Opacity;
 pub use removal::{Removable, Removal};
 pub use revolve::{AxisLine, MAX_REVOLVE_REGIONS, Revolve, RevolveError, Turn};
 
@@ -62,8 +64,8 @@ impl BodyId {
 pub const MAX_NAME_LEN: usize = 1024;
 
 /// A body: a solid the feature history makes. The document holds only
-/// its name and whether it's shown, and which feature makes it (an
-/// extrude or revolve making a new body, [`Operation::NewBody`]); its
+/// its name, whether it's shown and how opaque, and which feature makes it
+/// (an extrude or revolve making a new body, [`Operation::NewBody`]); its
 /// geometry is
 /// whatever regenerating the history gives it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -71,6 +73,9 @@ pub struct Body {
     pub id: BodyId,
     pub name: String,
     pub visible: bool,
+    /// How opaque it's drawn, in range in a checked document, see
+    /// [`Opacity`].
+    pub opacity: Opacity,
     /// The feature that makes the body, listed in the document.
     pub created_by: FeatureId,
 }
@@ -242,7 +247,8 @@ impl Document {
     /// [`Editor::apply`] refuses a command that does: body ids are in
     /// increasing order and below `next_id`, so bodies added later get new
     /// ids and come last, where an edit adds them, and the same for
-    /// feature ids; no name is longer than [`MAX_NAME_LEN`]; the tolerance
+    /// feature ids; no name is longer than [`MAX_NAME_LEN`]; every body's
+    /// opacity is one [`Opacity::new`] takes; the tolerance
     /// is one [`Tolerance::new`] takes; every body is made by an extrude
     /// or revolve the document holds that names it as its new body, and
     /// every such body is there; every sketch passes [`Sketch::check`]
@@ -272,6 +278,9 @@ impl Document {
             let id = body.id;
             if body.name.len() > MAX_NAME_LEN {
                 return Err(CheckError::NameLength(id, body.name.len()));
+            }
+            if !body.opacity.in_range() {
+                return Err(CheckError::Opacity(id, body.opacity.percent()));
             }
             let made = self
                 .feature(body.created_by)
@@ -401,6 +410,9 @@ enum Uses {
 pub enum CheckError {
     /// A body's name is this many bytes, over [`MAX_NAME_LEN`].
     NameLength(BodyId, usize),
+    /// A body's opacity is this percent, out of [`Opacity::MIN`] to
+    /// [`Opacity::MAX`].
+    Opacity(BodyId, u8),
     /// A body's maker isn't an extrude or revolve the document holds that
     /// makes it as its new body.
     Creator(BodyId, FeatureId),
@@ -434,6 +446,13 @@ impl fmt::Display for CheckError {
                 f,
                 "body {} has a name of {len} bytes, over the limit of {MAX_NAME_LEN}",
                 id.0
+            ),
+            CheckError::Opacity(id, percent) => write!(
+                f,
+                "body {} has an opacity of {percent} %, not from {} to {}",
+                id.0,
+                Opacity::MIN,
+                Opacity::MAX
             ),
             CheckError::Creator(id, feature) => write!(
                 f,

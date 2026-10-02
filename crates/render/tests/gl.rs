@@ -76,6 +76,7 @@ fn frame<'a>(
     Frame {
         camera,
         mesh,
+        opacity: &[],
         sketches,
         grid: GridPlane::XY,
         faded: false,
@@ -321,4 +322,43 @@ fn hidden_edges_are_drawn_on_gl() {
     let (on, off) = (yellow(true), yellow(false));
     assert!(on > 40, "{on} pixels of hidden edges");
     assert_eq!(off, 0);
+}
+
+#[test]
+fn transparent_parts_are_drawn_on_gl() {
+    // From the top, the cube at 30 % and at 60 %: each part's alpha is
+    // picked with a dynamic offset into a uniform buffer, which GL binds
+    // as a range of it. Its middle is its bottom's back face, lit as its
+    // top is, and its top over it, each at that alpha, over the black
+    // background.
+    let Some((device, queue)) = gl_device() else {
+        eprintln!("no GL adapter, skipping");
+        return;
+    };
+    let (camera, mesh) = cube_from_top();
+    let renderer = Renderer::new(&device, FORMAT);
+    let sketches = Arc::default();
+    let middle = |opacity: &[f32]| {
+        // The grid seen edge on, so it doesn't show through.
+        let frame = Frame {
+            opacity,
+            grid: GridPlane::new(Vec3::new(0.0, 1000.0, 0.0), Vec3::X, Vec3::Z).unwrap(),
+            ..frame(&camera, &mesh, &sketches)
+        };
+        let pixels = draw(&device, &queue, &renderer, &frame);
+        // Up and left of the origin marker.
+        pixels[((SIZE[1] / 2 - 15) * SIZE[0] + SIZE[0] / 2 - 15) as usize]
+    };
+    let opaque = middle(&[]);
+    for opacity in [0.3, 0.6] {
+        let drawn = middle(&[opacity]);
+        let alpha = (opacity * 255.0).round() / 255.0;
+        for c in 0..3 {
+            let expected = f32::from(opaque[c]) * alpha * (2.0 - alpha);
+            assert!(
+                (f32::from(drawn[c]) - expected).abs() <= 2.0,
+                "{drawn:?} at {opacity}, {opaque:?} opaque"
+            );
+        }
+    }
 }

@@ -21,6 +21,12 @@ kept in step as each step lands.
   `tessellate` emits each feature `Edge` record's samples as separate
   pairs. It has no faces, no edge polylines, no bodies: regen
   (`tessellate_scene`) appends the shown bodies' meshes into one.
+- Regen sends picking tables with the mesh (`regen::Picking`): faces as
+  the kernel topology's regions (body, key, aliases, form `Summary`) and
+  edges as its chains (two faces, closed or not). Step 1 makes the mesh's
+  faces and polylines those same regions and chains, so the tables are
+  keyed by the mesh's face and edge ids and say only what the mesh
+  doesn't (see "Bodies in the mesh").
 - The renderer draws feature edges as hardware `LineList`: 1 physical
   pixel, aliased, with a fixed `pulled` depth offset. `agents/viewport.md`
   explains why they never became quads: a segment buffer of every edge's
@@ -48,11 +54,19 @@ kept in step as each step lands.
 - `edge_faces: Vec<[u32; 2]>`: the faces (below) on either side of each
   polyline.
 
-A polyline is one hoverable edge: `tessellate` chains the feature `Edge`
-records that separate the same two faces end to end into maximal
-polylines. A cylinder's circle split over several patches is then one
-edge for hover, and the dash pattern runs on round it without restarting
-at every record.
+Edges are the kernel topology's chains (`Topology::chains`: maximal runs
+of mesh edges with the same two regions either side, open from corner to
+corner or closed), the same edges regen's picking tables and edge
+references name. `tessellate` draws one polyline per chain, in the
+topology's order, along the halfedges on the chain's first region's
+side, so within a solid's mesh polyline `i` is chain `i` and its
+`edge_faces` are the chain's two regions. The creases, feature edges
+inside one region where the normals split but no other face begins
+(which no chain holds), follow the chains as polylines of their own with
+that face on both sides; they're drawn, but aren't edges to pick. A
+cylinder's circle split over several patches is then one edge for hover,
+and the dash pattern runs on round it without restarting at every
+record.
 
 The kernel's `Limits::RENDER.edges` and `RenderMesh::MAX_EDGES` become a
 bound on edge points, lowered so the GPU stream (below) fits one 256 MiB
@@ -64,17 +78,23 @@ buffers.
 
 ### Faces and vertices in the mesh
 
-Picking needs to know which face a triangle is on. `tessellate` orders the
-triangles by face (all of a `FaceName::key`'s patches together) and
-records `face_ends: Vec<u32>`, one past each face's last index. Each face
-is then one contiguous index range: picking maps a triangle to its face by
-binary search, and the renderer draws a face again by drawing its range
-(hover and selection, below). No per-vertex face id is needed.
+Picking needs to know which face a triangle is on. Faces are the kernel
+topology's regions (`Topology::regions`: connected triangles of one
+`FaceKey`), so a circle's quarter walls, or flush faces merged under one
+name, are one face, and a face cut in two by a groove is two faces of
+one key. `tessellate` orders the triangles region by region, in the
+topology's order, and records `face_ends: Vec<u32>`, one past each
+face's last index, so within a solid's mesh face `i` is region `i`. Each
+face is then one contiguous index range: picking maps a triangle to its
+face by binary search, and the renderer draws a face again by drawing its
+range (hover and selection, below). No per-vertex or per-triangle face id
+is needed.
 
-The model's vertices, where edges meet, are the polylines' ends:
-`tessellate` merges the ends that are the same sample point (they are to
-the bit, see `agents/kernel.md`) into `corners: Vec<[f32; 3]>`, and each
-polyline records its two (`edge_corners: Vec<[u32; 2]>`). A closed loop
+The model's vertices, where edges meet, are the polylines' ends (the
+chains' ends, and the creases'): `tessellate` merges the ends at the same
+mesh vertex (the same point to the bit, see `agents/kernel.md`) into
+`corners: Vec<[f32; 3]>`, and each polyline records its two
+(`edge_corners: Vec<[u32; 2]>`). A closed loop
 that meets no other edge, such as a lone circle, has a corner where it
 starts. Its two corner ids are then the same.
 
@@ -83,11 +103,15 @@ starts. Its two corner ids are then the same.
 `RenderMesh::append` records a part per appended mesh: `parts: Vec<Part>`
 with the ends of its faces and edge polylines (and so its index range).
 Face, edge and corner ids are offset on append, so they are unique within the
-joined mesh. Regen's answer gains the `BodyId` of each part in order (the
-order the scene key already fixes). The joined mesh stays cached by
-scene: a body's opacity is not part of the mesh, so changing it
-never regenerates or re-uploads. `regen::wire` and the cache's byte
-count follow the new fields.
+joined mesh. Regen's picking tables (`regen::Picking`, sent with the
+mesh) hold the `BodyId` of each part in order (the order the scene key
+already fixes), and are keyed by the mesh's own face and edge ids: each
+face's key, aliases and form `Summary`, and whether each edge is a closed
+chain. A face's body is its part's (`Picking::face_body`), an edge's two
+faces are the mesh's `edge_faces`, its keys `Picking::edge_keys`. The
+joined mesh stays cached by scene: a body's opacity is not part of the
+mesh, so changing it never regenerates or re-uploads. `regen::wire` and
+the cache's byte count follow the new fields.
 
 ### Edge drawing on the GPU
 
@@ -166,6 +190,9 @@ reached where they lie on the larger:
   logical pixels), the nearest on screen that isn't hidden.
 - Face: the nearest triangle hit by the cursor's ray (`Projector::ray`,
   `pivot.rs`'s `on_mesh`), mapped to its face through `face_ends`.
+- Edges and vertices are the chains' polylines and their corners. A
+  crease (an edge with the same face on both sides) is drawn but isn't
+  picked as an edge: the face under it is.
 - Not hidden: the ray from the point towards the eye meets no triangle in
   front of it, reusing the knobs' `hidden` test and its tolerances, so a
   point on the face the ray hits counts as seen.
@@ -178,7 +205,11 @@ reached where they lie on the larger:
 
 The `Program` sends `Look::Hover(Option<Picked>)` when what's under the
 cursor changes (`Picked::Face(u32)`, `Edge(u32)` or `Vertex(u32)`, ids in
-the joined mesh). `Doc` keeps it and clears it when the mesh `Arc`
+the joined mesh, which are also the picking tables' ids). What the app
+says about it comes from the tables: the face's body
+(`Picking::face_body`), its `Summary` (a plane to sketch on, a cylinder's
+axis and radius), an edge's two faces and keys (`edge_keys`) and whether
+it's closed. `Doc` keeps it and clears it when the mesh `Arc`
 changes, when the cursor leaves the viewport, when the context changes
 what can be selected, and while the camera is dragged.
 
@@ -190,8 +221,10 @@ also orbits, so a press counts as a click only if it's let go within
 `CLICK_SLOP`, like the middle click that picks the pivot. A longer drag
 orbits as now. The selection is a set of `Picked` in `Doc`, cleared when
 the mesh `Arc` changes, since the ids are only the joined mesh's. Keeping
-it across an edit needs stable names (faces' `FaceName` keys, edges by
-their two faces), which is left for when something acts on the selection.
+it across an edit needs stable names, which the picking tables already
+give (a face's key and aliases, an edge's two faces' keys, as references
+store them, which `Topology::face` and `Topology::edge` resolve again);
+using them is left for when something acts on the selection.
 For now nothing does. The status bar's selection box says what's
 selected ("Face", "2 edges"), as it does for a Timeline feature.
 Selecting geometry clears the Timeline's selection and the other way
@@ -208,9 +241,9 @@ is drawn in the accent.
   its body's opacity. A set of selected faces is a draw per face, which
   needs nothing per vertex.
 - Outline: the polylines to outline are the hovered edge, or every
-  polyline bordering the hovered face, which the view finds through a
-  face → polylines table built once per mesh and kept with it in
-  `MeshFeed`. A halo pipeline draws them after the edges, depth tested
+  chain bordering the hovered face: the edges of its part whose
+  `edge_faces` hold it, found by a pass over the part's edges when hover
+  changes, so no other table is kept. A halo pipeline draws them after the edges, depth tested
   and pulled like them. Its fragment shader does what `fs_origin` does
   for core and rim: a core the edge's own colour and width, and outside
   it a rim `HOVER_RIM` (about 1.5 logical pixels) wide in
@@ -249,8 +282,8 @@ than opaque could show it, for example as the percentage greyed beside
 its name. That's a detail for when it's built.
 
 **What's drawn:** the view gives the frame each part's opacity
-(`Frame::opacity: &[f32]`, by part, from regen's part → body list and the
-document, or the slider's preview), so changing it only changes what's
+(`Frame::opacity: &[f32]`, by part, from the picking tables' body per
+part and the document, or the slider's preview), so changing it only changes what's
 drawn. A part below 1 is drawn in the transparent passes with that
 alpha, its edges too. The renderer draws each part's index and edge
 ranges in the passes below. Each part's bounds are worked out at upload,
@@ -302,12 +335,12 @@ Each step is a commit (or a few), builds on both targets and keeps the
 tests passing.
 
 1. **Kernel: faces, edge polylines, corners, parts.** `tessellate` orders
-   triangles by face, chains feature edges into polylines with their two
-   faces and two corners; `RenderMesh` gets `face_ends`, `edge_vertices`,
+   triangles by topology region, draws a polyline per topology chain
+   and then the creases, with their two faces and two corners; `RenderMesh` gets `face_ends`, `edge_vertices`,
    `edge_ends`, `edge_faces`, `corners`, `edge_corners`, `parts`, checked
    in `from_parts`; `append` offsets them;
    the edge limit becomes a point count. Regen's wire, cache size and
-   answer (part → body) follow. Until step 2, the renderer expands the
+   answer (the picking tables' body per part) follow. Until step 2, the renderer expands the
    polylines into the old pairs for `LineList`. Tests: a box has six faces
    and twelve edge polylines, each with two different faces, and eight
    corners, each the end of three polylines; a cylinder's circles are one
@@ -337,7 +370,9 @@ tests passing.
    transparent bodies barely changes the pixels.
 5. **Hover and selection.** `Selectable` from the app's mode (all
    three kinds with no tool open, none otherwise), picking in `viewport`
-   (unit tests in the view crate: cursor over a face, near an edge, near
+   against the mesh's faces and chains, the picking tables kept with the
+   mesh in `MeshFeed` for what a pick is (its body, keys, summary; a
+   crease isn't an edge to pick) (unit tests in the view crate: cursor over a face, near an edge, near
    a vertex where its edges and faces are also in reach, near an edge
    hidden behind a face, off the model, past the cap, nothing picked of a
    kind the context can't select), `Look::Hover`, clicks and `Ctrl`-clicks

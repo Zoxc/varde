@@ -4582,6 +4582,226 @@ fn a_right_click_on_a_body_opens_its_menu() {
     assert!(shown.iter().any(|t| t.text == "Delete"));
 }
 
+/// How opaque the viewport draws each part of `doc`'s mesh.
+fn part_opacity(doc: &Doc) -> Vec<f32> {
+    let state = doc.state(false, Mode::Light, ViewOptions::default());
+    state.part_opacity().to_vec()
+}
+
+/// The example's body and how opaque the document has it.
+fn body_opacity(doc: &Doc) -> (varde_document::BodyId, varde_document::Opacity) {
+    let body = &doc.editor.document().bodies()[0];
+    (body.id, body.opacity)
+}
+
+fn percent(percent: u8) -> varde_document::Opacity {
+    varde_document::Opacity::new(percent).unwrap()
+}
+
+/// Dragging the Opacity slider in a body's context menu shows the body so
+/// without editing the document, and with no shortcuts; letting go sets
+/// it as one undo step, the menu left open.
+#[test]
+fn the_opacity_slider_previews_then_commits_one_step() {
+    let (mut doc, _) = example();
+    doc.look(Look::SelectPanel(Panel::Objects));
+    let (body, before) = body_opacity(&doc);
+    assert!(before.is_opaque());
+    assert!(!part_opacity(&doc).is_empty());
+    assert!(part_opacity(&doc).iter().all(|&alpha| alpha == 1.0));
+    let generation = doc.editor.generation();
+
+    // Not without the body's menu open.
+    doc.look(Look::PreviewOpacity(body, percent(40)));
+    assert_eq!(doc.opacity_preview, None);
+
+    doc.look(Look::OpenMenu(RowMenu::Body(body)));
+    for step in [30, 55, 40] {
+        doc.look(Look::PreviewOpacity(body, percent(step)));
+    }
+    assert_eq!(doc.row_menu, Some(RowMenu::Body(body)));
+    assert_eq!(doc.editor.generation(), generation);
+    assert_eq!(body_opacity(&doc).1, before);
+    assert!(part_opacity(&doc).iter().all(|&alpha| alpha == 0.4));
+    assert!(doc.keys().is_none());
+
+    doc.update(Edit::CommitOpacity);
+    assert_eq!(doc.opacity_preview, None);
+    assert_eq!(doc.row_menu, Some(RowMenu::Body(body)));
+    assert_eq!(body_opacity(&doc).1, percent(40));
+    assert!(part_opacity(&doc).iter().all(|&alpha| alpha == 0.4));
+    assert!(doc.keys().is_some());
+
+    doc.update(Edit::Undo);
+    assert_eq!(body_opacity(&doc).1, before);
+    assert!(part_opacity(&doc).iter().all(|&alpha| alpha == 1.0));
+    doc.update(Edit::Redo);
+    assert_eq!(body_opacity(&doc).1, percent(40));
+}
+
+/// `Esc` mid-drag, or the menu closing, goes back to the body's own
+/// opacity, and letting go after changes nothing.
+#[test]
+fn escape_or_closing_the_menu_drops_the_opacity_preview() {
+    let (mut doc, _) = example();
+    doc.look(Look::SelectPanel(Panel::Objects));
+    let (body, before) = body_opacity(&doc);
+    let generation = doc.editor.generation();
+    for close in [
+        Look::Escape,
+        Look::CloseMenu,
+        Look::SelectPanel(Panel::Timeline),
+    ] {
+        doc.look(Look::SelectPanel(Panel::Objects));
+        doc.look(Look::OpenMenu(RowMenu::Body(body)));
+        doc.look(Look::PreviewOpacity(body, percent(25)));
+        assert!(part_opacity(&doc).iter().all(|&alpha| alpha == 0.25));
+        doc.look(close.clone());
+        assert_eq!(doc.row_menu, None, "{close:?}");
+        assert_eq!(doc.opacity_preview, None, "{close:?}");
+        assert!(part_opacity(&doc).iter().all(|&alpha| alpha == 1.0));
+        doc.update(Edit::CommitOpacity);
+        assert_eq!(doc.editor.generation(), generation, "{close:?}");
+        assert_eq!(body_opacity(&doc).1, before);
+    }
+    // An edit closes the menu too.
+    doc.look(Look::OpenMenu(RowMenu::Body(body)));
+    doc.look(Look::PreviewOpacity(body, percent(25)));
+    doc.update(Edit::SetUnits(LengthUnit::In));
+    assert_eq!(doc.opacity_preview, None);
+}
+
+/// Letting go of the slider where it started, or with nothing previewed,
+/// adds no history.
+#[test]
+fn a_release_changing_nothing_adds_no_undo_step() {
+    let (mut doc, _) = example();
+    doc.look(Look::SelectPanel(Panel::Objects));
+    let (body, before) = body_opacity(&doc);
+    let generation = doc.editor.generation();
+    doc.look(Look::OpenMenu(RowMenu::Body(body)));
+    doc.update(Edit::CommitOpacity);
+    doc.look(Look::PreviewOpacity(body, percent(60)));
+    doc.look(Look::PreviewOpacity(body, before));
+    doc.update(Edit::CommitOpacity);
+    assert_eq!(doc.editor.generation(), generation);
+    assert_eq!(doc.opacity_preview, None);
+    // Undo still takes back the example.
+    doc.update(Edit::Undo);
+    assert!(doc.editor.document().bodies().is_empty());
+}
+
+/// Headless: the body's menu has an Opacity row whose slider, pressed and
+/// dragged, previews without closing the menu, and lets go with one
+/// commit; it takes no keys, so it never changes without a release.
+#[test]
+fn the_body_menu_s_opacity_slider_is_dragged() {
+    use iced::mouse::{Button, Cursor, Event};
+    let (mut doc, _) = example();
+    doc.look(Look::SelectPanel(Panel::Objects));
+    let (body, _) = body_opacity(&doc);
+    doc.look(Look::OpenMenu(RowMenu::Body(body)));
+    let size = iced::Size::new(1280.0, 800.0);
+    let mut renderer = varde_view::probe::renderer();
+
+    let mut ui = shown(doc.view_in(Mode::Light), size, &mut renderer);
+    let labels = texts(&mut ui, &renderer);
+    let heading = labels.iter().find(|t| t.text == "Opacity").unwrap();
+    let value = labels.iter().find(|t| t.text == "100 %").unwrap();
+    // The slider runs under the heading up to the value, on its line.
+    let y = value.bounds.center_y();
+    assert!(value.bounds.y > heading.bounds.y, "{heading:?} {value:?}");
+    let (left, right) = (heading.bounds.x, value.bounds.x - 10.0);
+    let middle = iced::Point::new((left + right) / 2.0, y);
+    let mut sent = Vec::new();
+    let mut update = |ui: &mut Headless<'_>, event, at| {
+        let (_, statuses) = ui.update(
+            &[event],
+            Cursor::Available(at),
+            &mut renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut sent,
+        );
+        statuses
+    };
+    // An arrow key over it is left for the shortcuts.
+    let up = iced::Event::Keyboard(press(
+        keyboard::Key::Named(key::Named::ArrowUp),
+        Default::default(),
+    ));
+    let statuses = update(&mut ui, up, middle);
+    assert_eq!(statuses, [iced::event::Status::Ignored]);
+    let start = iced::Point::new(left + 1.0, y);
+    for (event, at) in [
+        (Event::CursorMoved { position: start }, start),
+        (Event::ButtonPressed(Button::Left), start),
+        (Event::CursorMoved { position: middle }, middle),
+        (Event::ButtonReleased(Button::Left), middle),
+    ] {
+        update(&mut ui, iced::Event::Mouse(event), at);
+    }
+    drop(ui);
+    let [
+        Ui::Look(Look::PreviewOpacity(first, low)),
+        Ui::Look(Look::PreviewOpacity(_, dragged)),
+        Ui::Edit(Edit::CommitOpacity),
+    ] = sent[..]
+    else {
+        panic!("{sent:?}");
+    };
+    assert_eq!((first, low), (body, varde_document::Opacity::MIN));
+    // Halfway along, on a step of 5.
+    assert!((50..=60).contains(&dragged.percent()), "{dragged}");
+    assert_eq!(dragged.percent() % 5, 0);
+    for message in sent {
+        match message {
+            Ui::Look(look) => doc.look(look),
+            Ui::Edit(edit) => doc.update(edit),
+            _ => unreachable!(),
+        }
+    }
+    assert_eq!(doc.row_menu, Some(RowMenu::Body(body)));
+    assert_eq!(body_opacity(&doc).1, dragged);
+    let percent = dragged.to_string();
+    let mut ui = shown(doc.view_in(Mode::Light), size, &mut renderer);
+    assert!(texts(&mut ui, &renderer).iter().any(|t| t.text == percent));
+    drop(ui);
+
+    // A sketch has no opacity.
+    let sketch = doc.editor.document().features()[0].id;
+    doc.look(Look::OpenMenu(RowMenu::Sketch(sketch)));
+    let mut ui = shown(doc.view_in(Mode::Light), size, &mut renderer);
+    let labels = texts(&mut ui, &renderer);
+    assert!(labels.iter().any(|t| t.text == "Delete"), "{labels:?}");
+    assert!(!labels.iter().any(|t| t.text == "Opacity"), "{labels:?}");
+}
+
+/// The peek key pressed mid-drag doesn't swap the Objects tab, and with it
+/// the slider being dragged, for the Timeline: the slider would never see
+/// its release, leaving the preview shown uncommitted and the shortcuts
+/// off with nothing dragged.
+#[test]
+fn the_peek_key_leaves_the_opacity_slider_being_dragged() {
+    let (mut doc, _) = example();
+    doc.look(Look::SelectPanel(Panel::Objects));
+    let (body, _) = body_opacity(&doc);
+    doc.look(Look::OpenMenu(RowMenu::Body(body)));
+    let size = iced::Size::new(1280.0, 800.0);
+    let mut renderer = varde_view::probe::renderer();
+    let peeking = |doc: &Doc, renderer: &mut iced::Renderer| {
+        let view = doc.view(true, Mode::Light, ViewOptions::default());
+        let mut ui = shown(view, size, renderer);
+        let labels = texts(&mut ui, renderer);
+        labels.iter().any(|t| t.text == "Opacity")
+    };
+    // Not dragged, the peek shows the other tab, as it does any menu.
+    assert!(!peeking(&doc, &mut renderer));
+    doc.look(Look::PreviewOpacity(body, percent(40)));
+    assert!(peeking(&doc, &mut renderer));
+    doc.update(Edit::CommitOpacity);
+    assert!(!peeking(&doc, &mut renderer));
+}
+
 /// `Ctrl Z` and `Ctrl Shift Z` undo and redo while there's something to.
 #[test]
 fn undo_and_redo_keys_follow_the_history() {

@@ -72,6 +72,7 @@ fn frame<'a>(
     Frame {
         camera,
         mesh,
+        opacity: &[],
         sketches,
         grid: GridPlane::XY,
         faded: false,

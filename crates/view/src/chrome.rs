@@ -73,6 +73,14 @@ pub fn hrule<'a>() -> Rule<'a> {
     rule::horizontal(1).style(theme::separator)
 }
 
+/// A small heading in a panel or menu, or of a group in a list.
+pub(crate) fn heading<'a>(label: &'a str) -> Text<'a> {
+    text(label)
+        .size(11.5)
+        .font(theme::SEMIBOLD)
+        .style(theme::muted_text)
+}
+
 /// `content` scrolled up and down with the app's one scrollbar: a thin
 /// faint scroller on no rail ([`theme::scrollbar`]), `margin` in from the
 /// right edge. It floats over the content, so leave it room in a padding

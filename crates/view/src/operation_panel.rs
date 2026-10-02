@@ -23,7 +23,7 @@ use varde_document::{BodyId, FeatureId, Plane};
 use varde_sketch::{Profiles, Sketch};
 
 use crate::Message;
-use crate::chrome::{hrule, scrolled, sentence, small_button};
+use crate::chrome::{heading, hrule, scrolled, sentence, small_button};
 use crate::controls::CONTROLS_HEIGHT;
 use crate::escape::OnEscape;
 use crate::status::STATUS_BAR_ROOM;
@@ -379,15 +379,6 @@ impl Widget<Message, iced::Theme, iced::Renderer> for Placed<'_> {
             translation,
         )
     }
-}
-
-/// A small heading in the panel.
-pub(crate) fn heading<'a>(label: &'a str) -> Element<'a, Message> {
-    text(label)
-        .size(11.5)
-        .font(SEMIBOLD)
-        .style(theme::muted_text)
-        .into()
 }
 
 /// Four choices in two rows of two.

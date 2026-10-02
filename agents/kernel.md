@@ -7198,9 +7198,24 @@ with `RowMenu::Feature`, `Doc::row_menu`; the widget is
 offset allowed for): Edit sketch or Edit extrude, and Delete if the
 document is editable. The rows of Objects have one too, selecting
 nothing (`RowMenu::Body`, `RowMenu::Sketch`): Edit sketch for a sketch,
-Hide or Show where the row has an eye, and Delete. `Esc` or a press off
-a menu closes it alone; any other message closes it too, and it goes
-with what its row lists. Outside a
+Hide or Show where the row has an eye, a body's Opacity (not a merged
+one's, drawn as its holder is), and Delete. Opacity is a slider from 10
+to 100 % in steps of 5 with the percentage beside it, wrapped in
+`MouseOnly` (`view/src/mouse_only.rs`) so it's only dragged: iced's
+slider also steps on arrow keys and `Ctrl`-wheel, with no release to
+commit after. Dragging sends `Look::PreviewOpacity` (the value through
+`Opacity::clamped`), kept in `Doc::opacity_preview` while the body's
+menu is open and the document editable, which the view draws in place
+of the body's own (`DocumentState::opacity_preview`, `shown_opacity`) and
+shows in the row; the document isn't touched, and the shortcuts are off
+(`Doc::keys` is `None`) until it's let go, nor does the peek key swap
+the tab (`Doc::peeks`), which would take the slider and its release
+with it. Letting go sends
+`Edit::CommitOpacity`, one `Command::SetOpacity` (none if unchanged),
+which leaves the menu open. `Esc` mid-drag closes the menu, and the
+preview goes whenever the menu does (`Doc::prune_preview`). `Esc` or a
+press off a menu closes it alone; any other message closes it too, and
+it goes with what its row lists. Outside a
 sketch or a session the floating status bar (`view/src/status.rs`, as
 the mock's; see `agents/viewport.md`) shows the feature selected in a
 box of its own, its icon, name and `feature_info` (`view/src/document.rs`:

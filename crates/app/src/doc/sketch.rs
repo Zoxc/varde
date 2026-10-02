@@ -384,14 +384,18 @@ impl Doc {
     }
 
     /// Backs out of whatever is open, the innermost first: the delete
-    /// prompt, the rail's list, the feature's context menu, the file menu, the view options menu, picking a plane, the
-    /// extrude or revolve being set up, the value field, a label grabbed, the drag of
-    /// geometry, the shape the tool is drawing (or what the Dimension or
-    /// Mirror tool has picked), the tool, the sketch, the feature selected
-    /// and what's selected in the model.
+    /// prompt, a drag of the Opacity slider with its context menu, the
+    /// rail's list, a row's context menu, the file menu, the view options
+    /// menu, picking a plane, the extrude or revolve being set up, the
+    /// value field, a label grabbed, the drag of geometry, the shape the
+    /// tool is drawing (or what the Dimension or Mirror tool has picked),
+    /// the tool, the sketch, the feature selected and what's selected in
+    /// the model.
     pub(crate) fn escape(&mut self) {
         if self.deleting.is_some() {
             self.deleting = None;
+        } else if self.opacity_preview.take().is_some() {
+            self.row_menu = None;
         } else if self.rail.open.is_some() {
             self.rail.close();
         } else if self.row_menu.take().is_some() {

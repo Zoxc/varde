@@ -26,11 +26,12 @@ the mesh", "Bodies in the mesh"; steps list item 1.
   - 1a. `varde-kernel`: `RenderMesh` gets `face_ends`, `edge_vertices`,
     `edge_ends`, `edge_faces`, `corners`, `edge_corners`, `parts`, checked
     in `from_parts`, offset in `append`; the edge limit becomes a point
-    count (2²³). `tessellate` orders triangles by face and chains feature
-    edge records separating the same two faces into polylines with their
-    corners. Kernel tests.
+    count (2²³). `tessellate` orders triangles by topology region (face
+    `i` is region `i`) and draws a polyline per topology chain (edge `i`
+    is chain `i`), then the creases, with their corners. Kernel tests.
   - 1b. Consumers: `varde-regen` (wire with validation, cache byte count,
-    the answer's part → body list), `varde-render` (expand polylines into
+    the picking tables' body per part, faces and closed flags keyed by
+    the mesh's ids), `varde-render` (expand polylines into
     pairs for the existing `LineList` until step 2; const asserts), and
     any other users. Wire round-trip test.
 - [x] Review
@@ -62,7 +63,7 @@ Plan section: "Hidden edges, striped"; steps list item 3.
 
 Plan sections: "Body opacity", "Pass order"; steps list item 4.
 
-- [ ] Implement
+- [x] Implement
   - 4a. `varde-document`: `Opacity` (10–100 %, checked), `Body::opacity`,
     the command with undo, file round trip in `varde-io`. Tests.
   - 4b. `varde-render`: `Frame::opacity` per part, per-part bounds, the
@@ -71,8 +72,8 @@ Plan sections: "Body opacity", "Pass order"; steps list item 4.
     context menu, preview while dragging, one command on release, Esc
     back; the view handing per-part opacity to the frame. Headless app
     tests.
-- [ ] Review
-- [ ] Bugs
+- [x] Review
+- [x] Bugs
 
 ## Step 5: Hover and selection
 
@@ -80,16 +81,21 @@ Plan section: "Hover and selection"; steps list item 5.
 
 - [ ] Implement
   - 5a. `varde-view` picking: `Selectable`, `Picked`, vertex/edge/face
-    picking with reach, hidden test and the 2¹⁸ cap, `Look::Hover`. Unit
-    tests.
-  - 5b. `varde-app`: hover and selection state in `Doc`, click within
+    picking with reach, hidden test and the 2¹⁸ cap, `Look::Hover`, on
+    the mesh's faces (regions, by `face_ends`), chains (polylines whose
+    two faces differ; creases aren't picked) and their corners, ids that
+    are the `regen::Picking` tables' too. Unit tests.
+  - 5b. `varde-app`: the picking tables kept with the mesh in
+    `MeshFeed` (the face's body, `Summary`, an edge's keys by
+    `Picking::edge_keys`, closed), hover and selection state in `Doc`, click within
     `CLICK_SLOP` vs orbit drag, `Ctrl`-click, `Space`, clearing on mesh
     change and mode change, exclusive with the Timeline's selection, the
     status bar's box. Headless app tests.
   - 5c. `varde-render` (and the view's frame building): `Frame::hover`
     and `Frame::selected_faces` drawn by index range with `Equal`
     (`@invariant` position), the edge and vertex layer with the outline
-    and round vertices, `hover_face`, `hover_outline`, `selected` in both
+    and round vertices (a hovered face's outline: its part's edges
+    whose `edge_faces` hold it), `hover_face`, `hover_outline`, `selected` in both
     themes. GPU tests.
 - [ ] Review
 - [ ] Bugs

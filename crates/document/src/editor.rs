@@ -6,8 +6,8 @@ use varde_kernel::Tolerance;
 use varde_sketch::Sketch;
 
 use crate::{
-    Body, BodyId, CheckError, Document, EditError, Extent, FeatureId, FeatureKind, Operation,
-    Plane, Removable, Snapshot, Turn,
+    Body, BodyId, CheckError, Document, EditError, Extent, FeatureId, FeatureKind, Opacity,
+    Operation, Plane, Removable, Snapshot, Turn,
 };
 
 /// An edit to a [`Document`]. [`Editor::apply`] refuses one that would
@@ -18,6 +18,7 @@ pub enum Command {
     /// [`Document::removal`] lists for it.
     RemoveBody(BodyId),
     SetVisible(BodyId, bool),
+    SetOpacity(BodyId, Opacity),
     /// Adds a feature holding an empty sketch on `plane`.
     AddSketch {
         name: String,
@@ -97,7 +98,7 @@ impl Document {
         }
     }
 
-    /// Adds a visible body made by `feature` with a new id, "Body N" one
+    /// Adds a visible, opaque body made by `feature` with a new id, "Body N" one
     /// past the bodies so named, see [`Document::add_sketch`]. New ids are
     /// the highest, so it goes last.
     fn add_body(&mut self, feature: FeatureId) -> Result<BodyId, EditError> {
@@ -108,6 +109,7 @@ impl Document {
             id,
             name,
             visible: true,
+            opacity: Opacity::default(),
             created_by: feature,
         });
         Ok(id)
@@ -317,6 +319,17 @@ impl Editor {
                 };
                 let mut next = Document::clone(document);
                 next.bodies[index].visible = visible;
+                next
+            }
+            Command::SetOpacity(id, opacity) => {
+                let Some(index) = document
+                    .body_index(id)
+                    .filter(|&index| document.bodies[index].opacity != opacity)
+                else {
+                    return Ok(());
+                };
+                let mut next = Document::clone(document);
+                next.bodies[index].opacity = opacity;
                 next
             }
             Command::AddSketch { name, plane } => {
