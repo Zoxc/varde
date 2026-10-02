@@ -76,13 +76,16 @@ pub enum Turn { Full, OneSide(Value), Symmetric(Value), TwoSides(Value, Value) }
   (`Ask::angle(units, TAU).positive()`): above zero, at most a turn, bare
   numbers in degrees, stored in radians. Two sides together at most a
   turn (the sum of two checked values, each at most `TAU`, can't
-  overflow). No smaller bound than "above zero": a sliver turn is the
+  overflow), to the rounding of degrees in radians: "0.5" and "359.5"
+  come to an ulp over `TAU`, "1.1" and "358.9" an ulp under, and both
+  are a turn (`TURN_ROUNDING`, 8 ε `TAU`, in the check and in `span()`). No smaller bound than "above zero": a sliver turn is the
   kernel's to refuse.
 - `Revolve::span() -> Option<(f64, f64)>`: `(from, to)` in radians,
   `from < to`, the sketch plane at 0, positive right-handed about the
   axis; `None` for a whole turn, which is `Full` and also any part that
   comes to a turn (one side or symmetric of 360°, two sides adding up to
-  it): the same solid, and the kernel's part turns need `to − from < 2π`.
+  it, to `TURN_ROUNDING`): the same solid, and the kernel's part turns
+  need `to − from < 2π`.
   Of a checked revolve `0 < to − from < 2π` when `Some`.
 - **Checks** (`Document::check`, `CheckError::Revolve(id,
   RevolveError)`): its sketch a sketch feature before it; 1..=256

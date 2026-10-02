@@ -17,6 +17,12 @@ use crate::{BodyId, Design, FeatureId, MAX_COORD, Operation};
 /// [`MAX_EXTRUDE_REGIONS`]: crate::MAX_EXTRUDE_REGIONS
 pub const MAX_REVOLVE_REGIONS: usize = 256;
 
+/// How far two sides' angles may add up past a turn, or a turn's span
+/// fall short of one, and still be a whole turn: the rounding of angles
+/// typed in degrees. "0.5" and "359.5" come to a little over `TAU` in
+/// radians, "180.1" and "179.9" a little under; both are a turn.
+const TURN_ROUNDING: f64 = 8.0 * f64::EPSILON * TAU;
+
 /// A revolve: the regions of sketch `sketch` it takes, the line they turn
 /// about, how far they turn, and what it does with the solid it makes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -102,7 +108,8 @@ impl Revolve {
     /// right-handed about the axis: flipped, one side turns back from the
     /// plane and two sides swap. None for a whole turn: [`Turn::Full`],
     /// or any other that comes to a turn (one side or symmetric of a
-    /// turn, two sides adding up to one), which is the same solid.
+    /// turn, two sides adding up to one, to the rounding of angles typed
+    /// in degrees), which is the same solid.
     ///
     /// Of a checked revolve, `0 < to - from < TAU` when it's some, both
     /// ends within a turn of 0.
@@ -114,7 +121,7 @@ impl Revolve {
             Turn::TwoSides(a, b) => (-b.value, a.value),
         };
         // Within a turn each, as checked, so no overflow.
-        if to - from >= TAU {
+        if to - from >= TAU - TURN_ROUNDING {
             return None;
         }
         let flips = matches!(self.extent, Turn::OneSide(_) | Turn::TwoSides(..));
@@ -146,7 +153,7 @@ impl Revolve {
         }
         if let Turn::TwoSides(a, b) = &self.extent
             // Both finite and within a turn, as checked above.
-            && a.value + b.value > TAU
+            && a.value + b.value > TAU + TURN_ROUNDING
         {
             return Err(RevolveError::Turn);
         }

@@ -379,6 +379,34 @@ fn symmetric_and_two_sided_turns_take_their_angles() {
     );
 }
 
+/// Two sides typed in degrees adding up to 360 make the whole turn,
+/// though in radians they come a rounding over it (0.5 and 359.5, which
+/// the document took for over a turn) or under it (1.1 and 358.9, which
+/// the kernel refused as a part turn so nearly full its ends touch).
+#[test]
+fn two_sides_adding_up_to_a_turn_make_the_whole_turn() {
+    let whole = |extent: Turn| {
+        let mut editor = Editor::new(Document::default());
+        add_revolve(
+            &mut editor,
+            OriginPlane::XY,
+            rectangle_about((5.0, 0.0), (10.0, 4.0), AxisLine::SketchY),
+            extent,
+            false,
+            Operation::NewBody(BodyId::NEW),
+        );
+        let evaluation = evaluated(editor.document());
+        assert_eq!(evaluation.failed, []);
+        only_body(&evaluation).volume()
+    };
+    let full = whole(Turn::Full);
+    let document = Document::default();
+    for [a, b] in [["0.5", "359.5"], ["1.1", "358.9"]] {
+        let extent = Turn::TwoSides(angle(&document, a), angle(&document, b));
+        assert_eq!(whole(extent).to_bits(), full.to_bits(), "{a} + {b}");
+    }
+}
+
 /// A plate 40 × 40 and 5 thick on XY, from z = 0. Its body.
 fn add_plate(editor: &mut Editor) -> BodyId {
     let extent = Extent::OneSide(length(editor.document(), "5"));

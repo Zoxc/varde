@@ -176,6 +176,45 @@ fn spans_follow_the_turn_and_flip() {
     assert_eq!(span(Turn::TwoSides(c, d), false), None);
 }
 
+/// Two sides typed in degrees that add up to 360 are a whole turn, though
+/// in radians they come a rounding over (0.5 and 359.5) or under (1.1
+/// and 358.9) it.
+#[test]
+fn two_sides_adding_up_to_a_turn_in_degrees_are_a_whole_turn() {
+    let (editor, id) = added(ring(Operation::NewBody(BodyId::NEW)));
+    let document = editor.document().clone();
+    for (a, b) in [
+        ("0.5", "359.5"),
+        ("2.2", "357.8"),
+        ("1.1", "358.9"),
+        ("180", "180"),
+    ] {
+        let (a, b) = (angle(a), angle(b));
+        let sum = a.value + b.value;
+        let two = Turn::TwoSides(a, b);
+        let set = changed(&document, id, |revolve| revolve.extent = two.clone());
+        assert_eq!(set.check(), Ok(()), "{two:?} ({sum} vs {TAU})");
+        for flip in [false, true] {
+            let revolve = Revolve {
+                extent: two.clone(),
+                flip,
+                ..ring(Operation::NewBody(BodyId::NEW))
+            };
+            assert_eq!(revolve.span(), None, "{two:?}");
+        }
+    }
+    // Over or under by more than rounding isn't.
+    let over = changed(&document, id, |revolve| {
+        revolve.extent = Turn::TwoSides(angle("0.5"), angle("359.5000001"));
+    });
+    assert!(over.check().is_err());
+    let under = Revolve {
+        extent: Turn::TwoSides(angle("0.5"), angle("359.4999999")),
+        ..ring(Operation::NewBody(BodyId::NEW))
+    };
+    assert!(under.span().is_some());
+}
+
 #[test]
 fn angles_are_above_zero_and_at_most_a_turn() {
     let (editor, id) = added(ring(Operation::NewBody(BodyId::NEW)));
