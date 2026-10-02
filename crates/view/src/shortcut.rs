@@ -56,6 +56,9 @@ impl Shortcut {
     pub const SKETCH: Self = Self::plain('s');
     /// Starts a new extrude: outside sketches, where `E` is Equal's.
     pub const EXTRUDE: Self = Self::plain('e');
+    /// Starts a new revolve: outside sketches, where `O` takes up the
+    /// Offset tool.
+    pub const REVOLVE: Self = Self::plain('o');
     pub const ENTER: Self = Self::named(Key::Enter);
     pub const DELETE: Self = Self::named(Key::Delete);
     /// Only labels the key: the app matches it itself, with any
@@ -358,7 +361,8 @@ pub struct DocumentKeys {
     /// The constraints that fit what's selected in the sketch being
     /// edited.
     pub constraints: ConstraintSet,
-    /// Whether there's a sketch to extrude regions of, outside a sketch.
+    /// Whether there's a sketch to extrude or revolve regions of,
+    /// outside a sketch.
     pub extrudable: bool,
     /// Whether an extrude is being set up.
     pub extruding: bool,
@@ -528,6 +532,17 @@ pub fn extrude_binding(keys: DocumentKeys) -> Binding {
         Shortcut::EXTRUDE,
         Message::Look(Look::StartExtrude),
         keys.editable && !keys.sketching && !keys.revolving && (keys.extrudable || keys.extruding),
+    )
+}
+
+/// Starting a new revolve, or backing out of the one being set up:
+/// outside a sketch and an extrude being set up, while there's a sketch
+/// to revolve regions of, in a document that can be changed.
+pub fn revolve_binding(keys: DocumentKeys) -> Binding {
+    Binding::new(
+        Shortcut::REVOLVE,
+        Message::Look(Look::StartRevolve),
+        keys.editable && !keys.sketching && !keys.extruding && (keys.extrudable || keys.revolving),
     )
 }
 
@@ -706,8 +721,8 @@ pub fn document_bindings(keys: DocumentKeys) -> Vec<Binding> {
                     .filter_map(move |kind| constraint_binding(kind, keys)),
             )
     });
-    // Outside a sketch, where `E` is Equal's.
-    let extrude = (!keys.sketching).then(|| extrude_binding(keys));
+    // Outside a sketch, where `E` is Equal's and `O` Offset's.
+    let extrude = (!keys.sketching).then(|| [extrude_binding(keys), revolve_binding(keys)]);
     let commit = keys.extruding.then(|| {
         Binding::new(
             Shortcut::ENTER,
@@ -730,7 +745,7 @@ pub fn document_bindings(keys: DocumentKeys) -> Vec<Binding> {
             sketch_binding(keys),
             Binding::new(Shortcut::SPACE, Message::Look(Look::ClearSelection), true),
         ])
-        .chain(extrude)
+        .chain(extrude.into_iter().flatten())
         .chain(commit)
         .chain(commit_revolve)
         .chain(feature)
@@ -1404,6 +1419,68 @@ mod tests {
         // E again backs out.
         assert!(matches!(e(ready), Some(Message::Look(Look::StartExtrude))));
         assert_eq!(Shortcut::EXTRUDE.label(), "E");
+    }
+
+    #[test]
+    fn o_starts_a_revolve_outside_sketches_and_enter_commits_it() {
+        let none = Modifiers::empty();
+        let press = |keys, k: &str| pressed(document_bindings(keys), &key(k), none);
+        let enter = |keys| {
+            let enter = KeyPress::Named(Named::Enter);
+            pressed(document_bindings(keys), &enter, none)
+        };
+        assert!(press(keys(true), "o").is_none());
+        let revolvable = DocumentKeys {
+            extrudable: true,
+            ..keys(true)
+        };
+        assert!(matches!(
+            press(revolvable, "o"),
+            Some(Message::Look(Look::StartRevolve))
+        ));
+        let read_only = DocumentKeys {
+            editable: false,
+            ..revolvable
+        };
+        assert!(press(read_only, "o").is_none());
+        // In a sketch, O takes up the Offset tool.
+        let sketching = DocumentKeys {
+            sketching: true,
+            ..revolvable
+        };
+        assert!(matches!(
+            press(sketching, "o"),
+            Some(Message::Look(Look::SelectTool(Tool::Offset)))
+        ));
+        // While an extrude is set up, O does nothing, nor E while a
+        // revolve is.
+        let extruding = DocumentKeys {
+            extruding: true,
+            ..revolvable
+        };
+        assert!(press(extruding, "o").is_none());
+        let revolving = DocumentKeys {
+            revolving: true,
+            ..revolvable
+        };
+        assert!(press(revolving, "e").is_none());
+        // Setting one up, Enter is OK once it's ready, S starts no sketch,
+        // and O again backs out.
+        assert!(enter(revolving).is_none());
+        assert!(press(revolving, "s").is_none());
+        let ready = DocumentKeys {
+            revolve_ready: true,
+            ..revolving
+        };
+        assert!(matches!(
+            enter(ready),
+            Some(Message::Edit(Edit::CommitRevolve))
+        ));
+        assert!(matches!(
+            press(ready, "o"),
+            Some(Message::Look(Look::StartRevolve))
+        ));
+        assert_eq!(Shortcut::REVOLVE.label(), "O");
     }
 
     #[test]

@@ -56,7 +56,7 @@ fn every_entry_has_a_letter_of_its_own_and_its_key_s_where_it_s_a_letter_alone()
         .into_iter()
         .flatten()
         .collect();
-    assert_eq!(create, "se");
+    assert_eq!(create, "seo");
 }
 
 #[test]
@@ -85,7 +85,7 @@ fn the_sets_hold_every_tool_the_app_has_and_only_those() {
     }
     assert!(sketch.contains(&Entry::Constrain));
     let model: Vec<Entry> = MODEL.iter().flat_map(|set| set.entries).copied().collect();
-    assert_eq!(model, [Entry::Sketch, Entry::Extrude]);
+    assert_eq!(model, [Entry::Sketch, Entry::Extrude, Entry::Revolve]);
     for set in SKETCH.iter().chain(&MODEL) {
         // No set without tools, and a card shows its first ones.
         assert!(!set.entries.is_empty(), "{}", set.name);
@@ -184,6 +184,11 @@ fn a_set_index_past_the_mode_s_sets_has_no_letters() {
     assert!(matches!(
         pressed(letter_bindings(keys), &key("e"), Modifiers::empty()),
         Some(Message::Look(Look::StartExtrude))
+    ));
+    // Revolve's letter is its own key, O.
+    assert!(matches!(
+        pressed(letter_bindings(keys), &key("o"), Modifiers::empty()),
+        Some(Message::Look(Look::StartRevolve))
     ));
 }
 

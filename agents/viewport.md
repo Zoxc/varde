@@ -654,7 +654,7 @@ makes its own wgpu instance, under a lock, so run them one at a time:
 VARDE_SHOTS=$PWD/target/shots cargo test -p varde-app shots_ -- --ignored --test-threads=1
 ```
 
-Scenarios (`shots_01` .. `shots_19`, each at 1280×800, scale 1, light,
+Scenarios (`shots_01` .. `shots_20`, each at 1280×800, scale 1, light,
 the busiest also at scale 2 and dark): `E` with every candidate's regions
 (and one hovered); a region picked before and after its answer; flip,
 symmetric, two sides, a refused distance and a draft the document
@@ -679,7 +679,10 @@ and an edge of the plate hovered (`shots_18`, light, dark, scale 2, and
 from below; the scenario applies the `Look::Hover` the cursor's move
 sends, `Shooter::hover`); the top selected with an edge hovered, then
 the edge added, then the body double-clicked and marked in Objects
-(`shots_19`, light and dark). Shots
+(`shots_19`, light and dark); the revolve (`shots_20`): `O` with the
+lathe's regions, the axis asked for, a full turn about the construction
+line, one side of 270° flipped, two sides (also scale 2, dark), then its
+Timeline row selected and the rail's Create list. Shots
 are for looking (pixels differ by GPU and driver), never compared and
 never committed: a fault a shot finds gets an ordinary headless test of
 the state or layout behind it. A scenario answers each regeneration it

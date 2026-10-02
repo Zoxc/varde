@@ -22,18 +22,18 @@ type Requests = Rc<RefCell<Vec<Request>>>;
 /// in the sketch, a construction line from (0, 0) to (0, 30) along its
 /// y axis, and a circle of radius 2 about (40, 15), shown and not
 /// revolved.
-struct Lathe {
-    doc: Doc,
+pub(crate) struct Lathe {
+    pub(crate) doc: Doc,
     requests: Requests,
-    sketch: FeatureId,
+    pub(crate) sketch: FeatureId,
     /// The rectangle's left side, from (10, 30) to (10, 0): against +y.
     left: Id,
     /// The construction line, from (0, 0) to (0, 30).
-    construction: Id,
+    pub(crate) construction: Id,
     circle: Id,
 }
 
-fn lathe() -> Lathe {
+pub(crate) fn lathe() -> Lathe {
     let mut editor = Editor::new(Document::default());
     editor
         .apply(editor.document().add_sketch(Plane::Origin(OriginPlane::XZ)))
@@ -86,7 +86,7 @@ fn lathe() -> Lathe {
 
 impl Lathe {
     /// The rectangle's region, by its index.
-    fn rectangle(&self) -> usize {
+    pub(crate) fn rectangle(&self) -> usize {
         let Some(FeatureKind::Sketch { sketch, .. }) = self
             .doc
             .editor
@@ -100,19 +100,19 @@ impl Lathe {
         profiles.region_at(DVec2::new(15.0, 15.0)).unwrap()
     }
 
-    fn revolve(&mut self, message: RevolveLook) {
+    pub(crate) fn revolve(&mut self, message: RevolveLook) {
         self.doc.look(Look::Revolve(message));
     }
 
     /// Starts a session and picks the rectangle and `axis`.
-    fn set_up(&mut self, axis: AxisLine) {
+    pub(crate) fn set_up(&mut self, axis: AxisLine) {
         self.doc.look(Look::StartRevolve);
         let (sketch, region) = (self.sketch, self.rectangle());
         self.revolve(RevolveLook::PickRegion { sketch, region });
         self.revolve(RevolveLook::PickAxis { sketch, axis });
     }
 
-    fn input(&mut self, angle: Angle, text: &str) {
+    pub(crate) fn input(&mut self, angle: Angle, text: &str) {
         let text = text.to_owned();
         self.revolve(RevolveLook::Input { angle, text });
     }
@@ -131,7 +131,7 @@ impl Lathe {
         Some((draft.feature, revolve.clone()))
     }
 
-    fn answer(&mut self) {
+    pub(crate) fn answer(&mut self) {
         answer(&mut self.doc, &self.requests);
     }
 
@@ -527,4 +527,168 @@ fn while_revolving_other_tools_wait() {
     assert!(lathe.doc.revolve.is_none());
     lathe.doc.look(Look::StartRevolve);
     assert!(lathe.doc.revolve.is_none());
+}
+
+/// What clicking each text `text` of `doc`'s screen sends, one click on
+/// a fresh screen each, top to bottom.
+fn clicking_text(doc: &Doc, text: &str) -> Vec<Vec<varde_view::Message>> {
+    use crate::tests::{clicked, shown, texts};
+
+    let size = iced::Size::new(1280.0, 800.0);
+    let mut renderer = varde_view::probe::renderer();
+    let mut ui = shown(
+        doc.view(false, varde_view::Mode::Light, true),
+        size,
+        &mut renderer,
+    );
+    let mut found: Vec<_> = texts(&mut ui, &renderer)
+        .into_iter()
+        .filter(|shown| shown.text == text && !shown.hidden())
+        .collect();
+    drop(ui);
+    found.sort_by(|a, b| a.bounds.y.total_cmp(&b.bounds.y));
+    found
+        .iter()
+        .map(|shown| {
+            let view = doc.view(false, varde_view::Mode::Light, true);
+            let mut ui = crate::tests::shown(view, size, &mut renderer);
+            clicked(&mut ui, &mut renderer, shown.bounds.center())
+        })
+        .collect()
+}
+
+#[test]
+fn the_toolbar_s_revolve_button_starts_a_session_and_backs_out() {
+    use varde_view::Message as Ui;
+
+    let mut lathe = lathe();
+    let start = |sent: &Vec<Ui>| matches!(sent[..], [Ui::Look(Look::StartRevolve)]);
+    let sent = clicking_text(&lathe.doc, "Revolve");
+    assert_eq!(
+        sent.iter().filter(|sent| start(sent)).count(),
+        1,
+        "{sent:?}"
+    );
+    lathe.doc.look(Look::StartRevolve);
+    assert!(lathe.doc.revolve.is_some());
+    // While it's set up, the button backs out (the toolbar's tag
+    // "Revolve" beside it sends nothing).
+    let sent = clicking_text(&lathe.doc, "Revolve");
+    assert_eq!(
+        sent.iter().filter(|sent| start(sent)).count(),
+        1,
+        "{sent:?}"
+    );
+    lathe.doc.look(Look::StartRevolve);
+    assert!(lathe.doc.revolve.is_none());
+    // An extrude being set up leaves it disabled.
+    lathe.doc.look(Look::StartExtrude);
+    let sent = clicking_text(&lathe.doc, "Revolve");
+    assert!(!sent.iter().any(start), "{sent:?}");
+}
+
+#[test]
+fn o_starts_a_session_and_backs_out_and_the_rail_s_o_does_too() {
+    let mut lathe = lathe();
+    let o = || keyboard::Key::Character("o".into());
+    key_in(&mut lathe.doc, o());
+    assert!(lathe.doc.revolve.is_some());
+    key_in(&mut lathe.doc, o());
+    assert!(lathe.doc.revolve.is_none());
+    // With the Create set's list open, O is its Revolve.
+    lathe.doc.look(Look::Rail(varde_view::RailLook::Toggle(0)));
+    assert!(matches!(
+        press_in(&lathe.doc, o()),
+        Some(crate::Message::Ui(varde_view::Message::Look(
+            Look::StartRevolve
+        )))
+    ));
+    // In a sketch, O is the Offset tool's.
+    lathe.doc.look(Look::Rail(varde_view::RailLook::Close));
+    lathe.doc.look(Look::EditFeature(lathe.sketch));
+    assert!(matches!(
+        press_in(&lathe.doc, o()),
+        Some(crate::Message::Ui(varde_view::Message::Look(
+            Look::SelectTool(varde_view::Tool::Offset)
+        )))
+    ));
+}
+
+#[test]
+fn a_revolve_s_timeline_row_shows_its_turn_and_a_double_click_edits_it() {
+    use crate::tests::{clicked, shown, texts};
+    use varde_view::Message as Ui;
+
+    let mut lathe = lathe();
+    lathe.set_up(AxisLine::SketchY);
+    lathe.revolve(RevolveLook::Extent(TurnKind::TwoSides));
+    lathe.input(Angle::First, "100");
+    lathe.input(Angle::Second, "20");
+    lathe.doc.update(Edit::CommitRevolve);
+    lathe.answer();
+    let [(feature, _)] = lathe.revolves()[..] else {
+        panic!("one revolve");
+    };
+    lathe
+        .doc
+        .look(Look::SelectPanel(varde_view::Panel::Timeline));
+
+    let size = iced::Size::new(1280.0, 800.0);
+    let mut renderer = varde_view::probe::renderer();
+    let mut ui = shown(
+        lathe.doc.view(false, varde_view::Mode::Light, true),
+        size,
+        &mut renderer,
+    );
+    let shown_texts = texts(&mut ui, &renderer);
+    let name = shown_texts
+        .iter()
+        .find(|text| text.text == "Revolve 1")
+        .expect("the revolve's row");
+    // Its note, on its row, is the whole turn.
+    assert!(
+        shown_texts.iter().any(|text| text.text == "120°"
+            && (text.bounds.center_y() - name.bounds.center_y()).abs() < 2.0),
+        "{shown_texts:?}"
+    );
+    // Clicked, it's selected; clicked again at once, edited.
+    let at = name.bounds.center();
+    let mut sent = clicked(&mut ui, &mut renderer, at);
+    sent.extend(clicked(&mut ui, &mut renderer, at));
+    drop(ui);
+    assert!(
+        sent.iter()
+            .any(|m| matches!(m, Ui::Look(Look::SelectFeature(id)) if *id == feature)),
+        "{sent:?}"
+    );
+    assert!(
+        sent.iter()
+            .any(|m| matches!(m, Ui::Look(Look::EditFeature(id)) if *id == feature)),
+        "{sent:?}"
+    );
+    for message in sent {
+        if let Ui::Look(look) = message {
+            lathe.doc.look(look);
+        }
+    }
+    let session = lathe.doc.revolve.as_ref().expect("editing it");
+    assert_eq!(session.feature, Some(feature));
+    assert_eq!(session.extent, TurnKind::TwoSides);
+    assert_eq!(session.axis, Some(AxisLine::SketchY));
+
+    // Selected, its status bar says what it does.
+    lathe.revolve(RevolveLook::Cancel);
+    lathe.doc.look(Look::SelectFeature(feature));
+    let mut ui = shown(
+        lathe.doc.view(false, varde_view::Mode::Light, true),
+        size,
+        &mut renderer,
+    );
+    let shown_texts = texts(&mut ui, &renderer);
+    assert!(
+        shown_texts
+            .iter()
+            .any(|text| text.text == "Two sides 100° + 20° · about Y axis · New body"),
+        "{shown_texts:?}"
+    );
 }

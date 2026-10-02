@@ -19,7 +19,7 @@ use crate::chrome::{ChipSize, key_chip, scrolled, side_tip};
 use crate::icons::{self, Icon};
 use crate::shortcut::{
     Binding, DocumentKeys, Shortcut, constrain_binding, constraint_binding, extrude_binding,
-    sketch_binding, tool_binding,
+    revolve_binding, sketch_binding, tool_binding,
 };
 use crate::status::STATUS_BAR_ROOM;
 use crate::theme::{self, SEMIBOLD};
@@ -116,6 +116,7 @@ pub(crate) enum Entry {
     /// Picking the plane for a new sketch.
     Sketch,
     Extrude,
+    Revolve,
     /// A sketch's tool.
     Tool(Tool),
     /// The Constrain tool.
@@ -129,6 +130,7 @@ impl Entry {
         match self {
             Entry::Sketch => Icon::Sketch,
             Entry::Extrude => Icon::Extrude,
+            Entry::Revolve => Icon::Revolve,
             Entry::Tool(tool) => tool_icon(tool),
             Entry::Constrain => Icon::Constrain,
             Entry::Constraint(kind) => kind.icon(),
@@ -139,6 +141,7 @@ impl Entry {
         match self {
             Entry::Sketch => "Sketch",
             Entry::Extrude => "Extrude",
+            Entry::Revolve => "Revolve",
             Entry::Tool(tool) => tool.label(),
             Entry::Constrain => "Constrain",
             Entry::Constraint(kind) => kind.label(),
@@ -151,6 +154,7 @@ impl Entry {
         match self {
             Entry::Sketch => sketch_binding(keys),
             Entry::Extrude => extrude_binding(keys),
+            Entry::Revolve => revolve_binding(keys),
             Entry::Tool(tool) => tool_binding(tool, keys),
             Entry::Constrain => constrain_binding(keys),
             Entry::Constraint(kind) => {
@@ -164,6 +168,7 @@ impl Entry {
         match self {
             Entry::Sketch => using.picking_plane,
             Entry::Extrude => using.extruding,
+            Entry::Revolve => using.revolving,
             Entry::Tool(tool) => using.tool == Some(tool),
             Entry::Constrain => using.constraining,
             Entry::Constraint(_) => false,
@@ -176,6 +181,7 @@ impl Entry {
 struct Using {
     picking_plane: bool,
     extruding: bool,
+    revolving: bool,
     /// The sketch's tool, if one is.
     tool: Option<Tool>,
     constraining: bool,
@@ -187,6 +193,7 @@ impl Using {
         Self {
             picking_plane: state.picking_plane,
             extruding: state.extrude.is_some(),
+            revolving: state.revolve.is_some(),
             tool: sketch.and_then(|s| s.tool).map(|t| t.tool),
             constraining: sketch.is_some_and(|s| s.constraining),
         }
@@ -209,7 +216,7 @@ pub(crate) struct ToolSet {
 const MODEL: [ToolSet; 1] = [ToolSet {
     name: "Create",
     icon: Icon::CatCreate,
-    entries: &[Entry::Sketch, Entry::Extrude],
+    entries: &[Entry::Sketch, Entry::Extrude, Entry::Revolve],
 }];
 
 /// The sets in a sketch.

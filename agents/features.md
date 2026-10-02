@@ -178,7 +178,7 @@ when the sketch changes, the edited feature's missing ones counted),
 Bodies list shows them, `Doc::body_targets`) and `TypedText` (a typed
 value's text, last value and error, read for an `Ask`, pinned to the
 design's units when they change). It's started by `Look::StartRevolve`
-(again, or `Esc`, cancels it; outside sketches and an extrude, in a
+(see "Starting it" below; again, or `Esc`, cancels it; outside sketches and an extrude, in a
 document that can be changed; the sketch selected in the Timeline is
 the source) or by editing a revolve (`Look::EditFeature`, a
 double-click or `Enter` on its row, or Edit revolve in its menu), and
@@ -260,8 +260,29 @@ toolbar's tag "Revolve" or "Editing Revolve 1". While a revolve is set
 up `S`, `E` and the selected feature's `Enter` and `Delete` don't act,
 and the cursor doesn't pick the model.
 
-Not yet (the next stage): the toolbar's Revolve button (`R`), the
-Timeline's revolve icon and rows, README. The Timeline shows a revolve
-with the extrude's icon and its turn ("Full turn", "90°", "90°
-symmetric", "90° + 45°"); the status bar shows the turn and the
-operation.
+**Starting it**: the toolbar's Revolve button after Extrude, the rail's
+Create set (Sketch, Extrude, Revolve; its list's letter `O`) and the key
+`O` all send `Look::StartRevolve` through one binding
+(`shortcut::revolve_binding`, `Shortcut::REVOLVE`): enabled outside a
+sketch and an extrude session, with a sketch to take regions of (the
+extrude's `extrudable`: a visible sketch or the selected one) or a
+revolve being set up, in a document that can be changed. The button and
+the rail's entry are highlighted while a revolve is set up. `O` is the
+UI mock's key: its model rail's sets open with `Q` .. `T` (five sets),
+so `R` would open its fourth and Revolve takes `O`, Extrude `X` (the app
+keeps `E` for Extrude while the model rail has one set). In a sketch `O`
+is the Offset tool's; outside one it's free, and the rail's set keys
+reach `O` only with a ninth set. `E` is disabled while a revolve is set
+up and `O` while an extrude is.
+
+**The Timeline** shows a revolve with its own icon (`Icon::Revolve`,
+the icon mock's: an open circle with an arrowhead about a dashed axis)
+and, as its note, how far it turns in all (`panels::turn_note`: "360°",
+"270°", "120°" for two sides of 100° and 20°). Selected, the status bar
+says its turn, axis and operation (`feature_info`: "Full 360° · about Y
+axis · New body", "One side 90° · about Line 3 · Cut", "Symmetric 90°
+...", "Two sides 100° + 20° ..."; the axis left out while its sketch
+doesn't have it). Double-click, `Enter` or Edit revolve reopen it.
+
+Not yet: a handle dragging the angle; Extrude's key following the mock's
+`X`.

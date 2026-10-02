@@ -1,5 +1,5 @@
-//! Screenshots of the document screen, to look at: the extrude session,
-//! its panel and handle, the Timeline, the delete prompt and the file
+//! Screenshots of the document screen, to look at: the extrude and
+//! revolve sessions, their panels and the extrude's handle, the Timeline, the delete prompt and the file
 //! menu, drawn offscreen by iced's headless wgpu renderer, which draws the
 //! viewport's scene too. Every test is `#[ignore]`d and writes nothing
 //! unless `VARDE_SHOTS` names the directory for the PNGs, see
@@ -1064,5 +1064,59 @@ fn shots_19_select() {
         let away = Shot::new();
         camera.take(&doc, "19-select-body", away);
         camera.take(&doc, "19-select-body-dark", away.dark());
+    });
+}
+
+/// Scenario 20: the revolve: `O` with the lathe's regions offered, the
+/// rectangle picked and the axis asked for, a full turn about the
+/// construction line previewed, one side of 270° flipped, two sides,
+/// then the revolve in the Timeline with the rail's Create list open.
+#[test]
+#[ignore = "writes screenshots, see the module"]
+fn shots_20_revolve() {
+    use varde_document::AxisLine;
+    use varde_view::{Angle, RevolveLook, TurnKind};
+
+    shooting(|camera| {
+        let mut lathe = crate::doc::revolve::tests::lathe();
+        aim(&mut lathe.doc, -0.3, -0.2, 15.0);
+        key_in(&mut lathe.doc, key("o"));
+        camera.take(&lathe.doc, "20-revolve-regions", Shot::new());
+        let (sketch, region) = (lathe.sketch, lathe.rectangle());
+        lathe.revolve(RevolveLook::PickRegion { sketch, region });
+        lathe.answer();
+        camera.take(&lathe.doc, "20-revolve-axis", Shot::new());
+        let axis = AxisLine::Curve(lathe.construction);
+        lathe.revolve(RevolveLook::PickAxis { sketch, axis });
+        lathe.answer();
+        camera.take(&lathe.doc, "20-revolve-full", Shot::new());
+        camera.take(&lathe.doc, "20-revolve-full-dark", Shot::new().dark());
+        lathe.revolve(RevolveLook::Extent(TurnKind::OneSide));
+        lathe.input(Angle::First, "270");
+        lathe.revolve(RevolveLook::Flip);
+        lathe.answer();
+        camera.take(&lathe.doc, "20-revolve-one-side", Shot::new());
+        lathe.revolve(RevolveLook::Extent(TurnKind::TwoSides));
+        lathe.input(Angle::First, "100");
+        lathe.input(Angle::Second, "45");
+        lathe.answer();
+        camera.take(&lathe.doc, "20-revolve-two-sides", Shot::new());
+        camera.take(
+            &lathe.doc,
+            "20-revolve-two-sides-scale2-dark",
+            Shot::new().scale(2.0).dark(),
+        );
+        lathe.doc.update(Edit::CommitRevolve);
+        lathe.answer();
+        assert!(lathe.doc.revolve.is_none());
+        lathe
+            .doc
+            .look(Look::SelectPanel(varde_view::Panel::Timeline));
+        let feature = lathe.doc.editor.document().features()[1].id;
+        lathe.doc.look(Look::SelectFeature(feature));
+        camera.take(&lathe.doc, "20-revolve-timeline", Shot::new());
+        lathe.doc.look(Look::Rail(varde_view::RailLook::Open(0)));
+        camera.take(&lathe.doc, "20-revolve-rail", Shot::new());
+        camera.take(&lathe.doc, "20-revolve-rail-dark", Shot::new().dark());
     });
 }

@@ -27,8 +27,8 @@ sketches and editable features. It runs natively and in the browser.
 - Constraints and dimensions, solved as you edit; dimensions take
   expressions with units (`1 in + 3 mm`).
 - Trim, extend, offset, mirror, fillet and chamfer.
-- Extrudes that make bodies or join, cut or intersect them, editable in a
-  timeline.
+- Extrudes and revolves that make bodies or join, cut or intersect them,
+  editable in a timeline.
 - Solids of rational quadratic triangle patches: closed meshes to allow for
   robust booleans, but with conic edges, so planes, arcs, cylinders and
   cones are exact. Other shapes, such as splines, tori and curved-on-curved

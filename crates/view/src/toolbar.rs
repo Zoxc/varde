@@ -13,7 +13,8 @@ use crate::chrome::{Edge, edged, hrule, icon_button, key_label, vrule};
 use crate::icons::{self, Icon};
 use crate::shortcut::{
     Binding, Shortcut, comb_binding, constrain_binding, constraint_binding, extrude_binding,
-    file_bindings, handles_binding, history_bindings, sketch_binding, switch_binding, tool_binding,
+    file_bindings, handles_binding, history_bindings, revolve_binding, sketch_binding,
+    switch_binding, tool_binding,
 };
 use crate::theme::{self, Emphasis, SEMIBOLD, SIDE_PANEL_INNER_WIDTH, Tone};
 use crate::{ActiveTool, ConstraintKind, DocumentState, Edit, File, Look, Message, Overlay, Tool};
@@ -292,6 +293,12 @@ fn ops<'a>(state: &DocumentState<'a>) -> Vec<Element<'a, Message>> {
         extrude_binding(keys),
         state.extrude.is_some(),
     );
+    let revolve = bound_op(
+        Icon::Revolve,
+        "Revolve",
+        revolve_binding(keys),
+        state.revolve.is_some(),
+    );
     if state.picking_plane {
         // Picking a plane in the viewport comes with picking, so the
         // origin planes are offered here.
@@ -302,12 +309,12 @@ fn ops<'a>(state: &DocumentState<'a>) -> Vec<Element<'a, Message>> {
                 editable.then_some(Message::Edit(Edit::NewSketch(plane))),
             )
         });
-        return [sketch, extrude, separator()]
+        return [sketch, extrude, revolve, separator()]
             .into_iter()
             .chain(planes)
             .collect();
     }
-    vec![sketch, extrude]
+    vec![sketch, extrude, revolve]
 }
 
 /// The label of the button making a sketch on `plane`.

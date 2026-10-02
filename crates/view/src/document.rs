@@ -11,7 +11,8 @@ use iced::widget::{Space, button, column, container, opaque, row, space, stack, 
 use iced::{Alignment, Element, Length};
 use varde_document::EXTENSION;
 use varde_document::{
-    APP_NAME, Body, BodyId, EditError, Editor, Extent, Feature, FeatureId, FeatureKind, Plane,
+    APP_NAME, Body, BodyId, Document, EditError, Editor, Extent, Feature, FeatureId, FeatureKind,
+    Plane,
 };
 use varde_expr::LengthUnit;
 use varde_kernel::{RenderLines, RenderMesh};
@@ -103,8 +104,8 @@ pub struct DocumentState<'a> {
     /// The revolve being set up, if one is: never with a sketch or an
     /// extrude.
     pub revolve: Option<RevolveState<'a>>,
-    /// Whether there's a sketch to extrude regions of: the Extrude tool
-    /// works outside sketches then.
+    /// Whether there's a sketch to extrude or revolve regions of: the
+    /// Extrude and Revolve tools work outside sketches then.
     pub extrudable: bool,
     /// The sketches that don't solve, as regenerating found.
     pub unsolved: &'a [FeatureId],
@@ -1266,7 +1267,7 @@ fn selection<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
                 .size(12)
                 .wrapping(Wrapping::None)
                 .font(theme::SEMIBOLD),
-            text(feature_info(feature, document.units()))
+            text(feature_info(feature, document))
                 .size(12)
                 .wrapping(Wrapping::None)
                 .style(theme::muted_text),
@@ -1366,11 +1367,14 @@ fn surface_name(summary: &varde_regen::Summary) -> &'static str {
     }
 }
 
-/// The status bar's info on the selected `feature`, after its name: a
-/// sketch's curves and plane, "4 lines · 1 circle · 5 points · on XY", or
-/// an extrude's extent in `units` and operation, "Distance 10 mm · New
-/// body".
-fn feature_info(feature: &Feature, units: LengthUnit) -> String {
+/// The status bar's info on the selected `feature` of `document`, after
+/// its name: a sketch's curves and plane, "4 lines · 1 circle · 5 points
+/// · on XY", an extrude's extent in the document's units and operation,
+/// "Distance 10 mm · New body", or a revolve's turn, axis and operation,
+/// "One side 90° · about Line 3 · Join" (the axis left out while its
+/// sketch doesn't have it).
+fn feature_info(feature: &Feature, document: &Document) -> String {
+    let units = document.units();
     match &feature.kind {
         FeatureKind::Sketch { plane, sketch } => {
             format!("{} · on {}", sketch_summary(sketch), plane.name())
@@ -1388,7 +1392,17 @@ fn feature_info(feature: &Feature, units: LengthUnit) -> String {
         }
         FeatureKind::Revolve(revolve) => {
             let operation = OperationKind::of(&revolve.operation).label();
-            format!("{} · {operation}", panels::turn_note(&revolve.extent))
+            let axis = match document.feature(revolve.sketch).map(|f| &f.kind) {
+                Some(FeatureKind::Sketch { sketch, .. }) => {
+                    sketch.name(crate::revolve::axis_id(revolve.axis))
+                }
+                _ => None,
+            };
+            let turn = panels::turn_info(&revolve.extent);
+            match axis {
+                Some(axis) => format!("{turn} · about {axis} · {operation}"),
+                None => format!("{turn} · {operation}"),
+            }
         }
     }
 }
@@ -1685,13 +1699,15 @@ mod tests {
         use varde_document::{Document, Extent, FeatureKind, Operation};
 
         let document = Document::example();
-        let units = document.units();
         let [sketch, extrude] = [0, 1].map(|k| &document.features()[k]);
         assert_eq!(
-            feature_info(sketch, units),
+            feature_info(sketch, &document),
             "4 lines · 1 circle · 5 points · on XY"
         );
-        assert_eq!(feature_info(extrude, units), "Distance 10 mm · New body");
+        assert_eq!(
+            feature_info(extrude, &document),
+            "Distance 10 mm · New body"
+        );
 
         let FeatureKind::Extrude(mut changed) = extrude.kind.clone() else {
             panic!("the example's second feature is its extrude");
@@ -1706,7 +1722,7 @@ mod tests {
                 kind: FeatureKind::Extrude(changed.clone()),
                 ..extrude.clone()
             };
-            feature_info(&feature, units)
+            feature_info(&feature, &document)
         };
         let cut = Operation::Cut(Default::default());
         assert_eq!(
@@ -1718,6 +1734,69 @@ mod tests {
             "Two sides 10 mm + 10 mm · Cut"
         );
         assert_eq!(info(Extent::ThroughAll, cut), "Through all · Cut");
+    }
+
+    #[test]
+    fn a_revolve_s_row_says_its_total_turn_and_the_status_bar_its_axis() {
+        use varde_document::{AxisLine, FeatureKind, Operation, Revolve, Turn};
+
+        let document = Document::example();
+        let [sketch, extrude] = [0, 1].map(|k| &document.features()[k]);
+        let FeatureKind::Extrude(extrude_kind) = &extrude.kind else {
+            panic!("the example's second feature is its extrude");
+        };
+        let ask = Turn::ask(&document.design());
+        let angle = |text| varde_expr::Value::new(text, &ask).unwrap();
+        let revolve = |extent: Turn, axis: AxisLine| Feature {
+            kind: FeatureKind::Revolve(Revolve {
+                sketch: sketch.id,
+                regions: extrude_kind.regions.clone(),
+                axis,
+                extent,
+                flip: false,
+                operation: Operation::Cut(Default::default()),
+            }),
+            ..extrude.clone()
+        };
+        let x = AxisLine::SketchX;
+        let cases = [
+            (Turn::Full, "360°", "Full 360° · about X axis · Cut"),
+            (
+                Turn::OneSide(angle("90")),
+                "90°",
+                "One side 90° · about X axis · Cut",
+            ),
+            (
+                Turn::Symmetric(angle("90")),
+                "90°",
+                "Symmetric 90° · about X axis · Cut",
+            ),
+            (
+                Turn::TwoSides(angle("90"), angle("45")),
+                "135°",
+                "Two sides 90° + 45° · about X axis · Cut",
+            ),
+        ];
+        for (extent, note, info) in cases {
+            assert_eq!(panels::turn_note(&extent), note);
+            assert_eq!(feature_info(&revolve(extent, x), &document), info);
+        }
+        // The Y axis, and a line of the sketch, by their names.
+        let y = revolve(Turn::Full, AxisLine::SketchY);
+        assert_eq!(
+            feature_info(&y, &document),
+            "Full 360° · about Y axis · Cut"
+        );
+        let FeatureKind::Sketch { sketch: drawn, .. } = &sketch.kind else {
+            panic!("the example's first feature is its sketch");
+        };
+        let line = drawn.curves.first().unwrap();
+        let on_line = revolve(Turn::Full, AxisLine::Curve(line.id));
+        assert_eq!(
+            feature_info(&on_line, &document),
+            format!("Full 360° · about {} · Cut", line.name())
+        );
+        assert_eq!(panels::feature_icon(&y), Icon::Revolve);
     }
 
     #[test]

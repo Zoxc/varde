@@ -176,13 +176,13 @@ fn timeline<'a>(
 pub(crate) fn feature_icon(feature: &Feature) -> Icon {
     match feature.kind {
         FeatureKind::Sketch { .. } => Icon::Sketch,
-        // Its own icon comes with the revolve tool.
-        FeatureKind::Extrude(_) | FeatureKind::Revolve(_) => Icon::Extrude,
+        FeatureKind::Extrude(_) => Icon::Extrude,
+        FeatureKind::Revolve(_) => Icon::Revolve,
     }
 }
 
 /// A feature in the Timeline, with its note: a sketch's plane, an
-/// extrude's distances in `units`. Marked failed if it's `unsolved`, or
+/// extrude's distances in `units`, how far a revolve turns in all. Marked failed if it's `unsolved`, or
 /// `failed` and why, which hovering it tells. Clicking selects it,
 /// double-clicking edits it.
 fn feature_row<'a>(
@@ -272,19 +272,41 @@ pub(crate) fn extent_note(extent: &Extent, units: LengthUnit) -> String {
     }
 }
 
-/// How far a revolve turns, for its Timeline row: "Full turn", "90°",
-/// "90° symmetric", "90° + 45°".
+/// How far a revolve turns in all, for its Timeline row: "360°", "90°",
+/// "135°" for two sides of 90° and 45°.
 pub(crate) fn turn_note(turn: &varde_document::Turn) -> String {
     use varde_document::Turn;
-    let angle = |value: &varde_expr::Value| {
-        varde_expr::format(value.value, Some(varde_expr::AngleUnit::Deg.into()))
+    let total = match turn {
+        Turn::Full => std::f64::consts::TAU,
+        Turn::OneSide(a) | Turn::Symmetric(a) => a.value,
+        // Each side is checked to be at most a turn, so the sum is
+        // finite.
+        Turn::TwoSides(a, b) => a.value + b.value,
     };
+    angle_note(total)
+}
+
+/// How far a revolve turns, for the status bar: "Full 360°", "One side
+/// 90°", "Symmetric 90°", "Two sides 90° + 45°".
+pub(crate) fn turn_info(turn: &varde_document::Turn) -> String {
+    use varde_document::Turn;
     match turn {
-        Turn::Full => "Full turn".to_owned(),
-        Turn::OneSide(a) => angle(a),
-        Turn::Symmetric(a) => format!("{} symmetric", angle(a)),
-        Turn::TwoSides(a, b) => format!("{} + {}", angle(a), angle(b)),
+        Turn::Full => format!("Full {}", angle_note(std::f64::consts::TAU)),
+        Turn::OneSide(a) => format!("One side {}", angle_note(a.value)),
+        Turn::Symmetric(a) => format!("Symmetric {}", angle_note(a.value)),
+        Turn::TwoSides(a, b) => {
+            format!(
+                "Two sides {} + {}",
+                angle_note(a.value),
+                angle_note(b.value)
+            )
+        }
     }
+}
+
+/// An angle of `radians`, in degrees: "90°".
+fn angle_note(radians: f64) -> String {
+    varde_expr::format(radians, Some(varde_expr::AngleUnit::Deg.into()))
 }
 
 /// A distance of an extrude in `units`: "10 mm".
