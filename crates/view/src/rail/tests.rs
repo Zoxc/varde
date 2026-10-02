@@ -218,9 +218,9 @@ fn rail_height(shown: &[usize]) -> f32 {
 
 #[test]
 fn cards_show_as_many_tools_as_fit_shared_evenly() {
-    // Three tools on a card, as the mock's, is 120 px.
-    assert_eq!(card_height(3), 120.0);
-    assert_eq!(card_height(0), 36.0);
+    // Three tools on a card, as the mock's, is 140 px.
+    assert_eq!(card_height(3), 140.0);
+    assert_eq!(card_height(0), 38.0);
     for room in (0..1200).step_by(7).map(|room| room as f32) {
         let shown = fitting(&SKETCH, room);
         let fits = rail_height(&shown) <= room;

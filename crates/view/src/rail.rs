@@ -47,22 +47,23 @@ const LIST_PADDING: f32 = 8.0;
 /// How wide the list of the open set is, in pixels.
 const LIST_WIDTH: f32 = 230.0;
 
-/// How tall a card's tool is, in pixels, and the gap under it but the
-/// last's.
-const TOOL_HEIGHT: f32 = 26.0;
+/// How wide and tall a card's tool is, in pixels, and the gap under it
+/// but the last's.
+const TOOL_WIDTH: f32 = 34.0;
+const TOOL_HEIGHT: f32 = 32.0;
 const TOOL_GAP: f32 = 1.0;
 
 /// The padding above and below the tools in a card's strip, in pixels.
 const STRIP_PADDING: f32 = 2.0;
 
-/// The size of a head's icon, in pixels.
-const HEAD_ICON: f32 = 22.0;
+/// The size of a head's icon and of a tool's, in pixels.
+const ICON: f32 = 24.0;
 
 /// The padding above and below a head's icon, in pixels.
 const HEAD_PADDING: [f32; 2] = [7.0, 5.0];
 
 /// How tall a card's head shows, in pixels: its icon and padding.
-const HEAD_HEIGHT: f32 = HEAD_PADDING[0] + HEAD_ICON + HEAD_PADDING[1];
+const HEAD_HEIGHT: f32 = HEAD_PADDING[0] + ICON + HEAD_PADDING[1];
 
 /// What changes about the rail, from the rail, the keys and the cursor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -486,7 +487,7 @@ fn card<'a>(
     let shown = &set.entries[..set.entries.len().min(shown)];
     let strip = !shown.is_empty();
     let head = button(
-        container(icons::icon(set.icon, HEAD_ICON))
+        container(icons::icon(set.icon, ICON))
             .center_x(Length::Fill)
             .padding(Padding::ZERO.top(HEAD_PADDING[0])),
     )
@@ -533,11 +534,11 @@ fn card<'a>(
 fn card_tool<'a>(entry: Entry, keys: DocumentKeys, using: Using) -> Element<'a, Message> {
     let binding = entry.binding(keys);
     let tool = button(
-        container(icons::icon(entry.icon(), 18.0))
+        container(icons::icon(entry.icon(), ICON))
             .center_x(Length::Fill)
             .center_y(Length::Fill),
     )
-    .width(28)
+    .width(TOOL_WIDTH)
     .height(TOOL_HEIGHT)
     .padding(0)
     .style(theme::flat_button(entry.on(using)))
