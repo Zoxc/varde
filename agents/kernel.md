@@ -965,7 +965,11 @@ times the face's `slack`, so every construction and boolean in the debug
 test suites holds its forms. `slack` is 1 as built; a scale up multiplies
 it by the motion's stretch (see "Transforms and assembly"), since it maps
 fitted patches exactly but stretches their distance from the form with
-them. Booleans copy it with the face; the seams' merge of plane faces
+them. Booleans copy it with the face, one more on a fitted face
+(claiming no surface) that they cut: a piece along a cut strays from the
+patch it is cut from by up to the fit tolerance (the last round's limit),
+the patch from the form by `slack × fit` (a ball's cap cut by a turned
+L strayed `1.03e-3` from its sphere at fit `1e-3`); the seams' merge of plane faces
 gives the face kept the larger of the two (the merge pass of one surface,
 one face keeps every entry's own). A later fit against a form starts
 `slack × fit` from it.

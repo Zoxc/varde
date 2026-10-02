@@ -1255,6 +1255,21 @@ impl Cutting<'_> {
                 .iter()
                 .map(|&f| if keep.flip_b { flipped(f) } else { f }),
         );
+        // A fitted face cut along: the pieces along a cut stray from its
+        // patch by up to the fit tolerance, and the patch from the face's
+        // form by its slack times that, so the form holds to one more.
+        let mut cut_faces: Vec<u32> = jobs
+            .iter()
+            .map(|job| face_id(job.side, self.operand(job.side).0, job.tri, face_offset))
+            .collect();
+        cut_faces.sort_unstable();
+        cut_faces.dedup();
+        for f in cut_faces {
+            let face = &mut out_faces[f as usize];
+            if face.surface == Surface::Free {
+                face.slack += 1.0;
+            }
+        }
         // Copies claiming no surface, for the faces with triangles off
         // theirs.
         let mut copies: BTreeMap<u32, u32> = BTreeMap::new();

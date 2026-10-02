@@ -582,3 +582,60 @@ fn scales_compose_with_turns_and_mirrors() {
         }
     }
 }
+
+#[test]
+fn a_fitted_face_cut_by_a_boolean_allows_one_more_fit() {
+    // A box joined with a ball, cut by the L turned and moved over it:
+    // a piece of the ball's fitted cap along the cut strayed 1.03e-3 from
+    // the sphere (the cap's own fit plus the cut's), and the debug form
+    // check failed on a face still allowing one fit.
+    let block = Solid::cuboid(DVec3::splat(-0.5), DVec3::splat(2.0), 14, &TOL).unwrap();
+    let ball = sphere(DVec3::ZERO);
+    let joined = crate::boolean(&block, &ball, crate::Op::Union, &TOL, &Budget::DEFAULT).unwrap();
+    assert!(joined.mesh().faces().iter().all(|f| f.slack == 1.0));
+    let (l, _) = part();
+    let place = Motion::turn(
+        DVec3::new(0.3800680210834311, 0.6794740101030943, 0.847678893350077),
+        DVec3::new(
+            -0.6192876841546426,
+            -0.9610570583583982,
+            0.07245988323845487,
+        ),
+        -159.36022650728265,
+    )
+    .unwrap()
+    .then(
+        &Motion::translation(DVec3::new(
+            -1.8738366605760248,
+            -2.116014889694864,
+            0.8466653632539509,
+        ))
+        .unwrap(),
+    );
+    let l = transformed(&l, &place, None);
+    let cut = crate::boolean(&joined, &l, crate::Op::Intersection, &TOL, &Budget::DEFAULT).unwrap();
+    // The cut fitted faces allow one more fit; exact ones keep theirs.
+    let faces = cut.mesh().faces();
+    assert!(
+        faces
+            .iter()
+            .any(|f| f.surface == Surface::Free && f.slack == 2.0)
+    );
+    assert!(
+        faces
+            .iter()
+            .filter(|f| f.surface != Surface::Free)
+            .all(|f| f.slack == 1.0)
+    );
+    // Within the fit of the volume the parts' shared material has, by
+    // the identity A ∩ B = A − (A − B).
+    let rest = crate::boolean(&joined, &l, crate::Op::Difference, &TOL, &Budget::DEFAULT).unwrap();
+    let area = joined.area() + l.area();
+    assert!(
+        (cut.volume() - (joined.volume() - rest.volume())).abs() <= area * TOL.fit() / 2.0,
+        "{} {} {}",
+        cut.volume(),
+        joined.volume(),
+        rest.volume()
+    );
+}
