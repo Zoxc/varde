@@ -254,7 +254,6 @@ impl DocumentFile {
     /// on the one IO lane: a lock it can't get, as while another program
     /// saves where locks are mandatory, is no preview this time, as is any
     /// other failure.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn read_preview(
         path: &Path,
         supported: impl Fn(&Preview) -> bool,

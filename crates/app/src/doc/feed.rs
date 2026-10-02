@@ -107,6 +107,17 @@ pub(crate) struct MeshFeed {
     /// What the measure asked with the model shown came to, if it had
     /// one: its places name entries of `picking`.
     inspected: Option<Inspected>,
+    /// The newest model shown without a draft, if there's been one: what
+    /// a save's thumbnail shows, see [`MeshFeed::committed`].
+    committed: Option<Committed>,
+}
+
+/// A model shown without a draft: its mesh, its picking tables for the
+/// bodies of its parts, and what it's of.
+struct Committed {
+    mesh: Arc<RenderMesh>,
+    picking: Arc<Picking>,
+    generation: Generation,
 }
 
 /// How many of the documents asked about [`MeshFeed`] keeps for their
@@ -324,6 +335,13 @@ impl MeshFeed {
                 {
                     self.touched = Some((*revision, touched.clone()));
                 }
+                if draft.is_none() {
+                    self.committed = Some(Committed {
+                        mesh: self.mesh.clone(),
+                        picking: self.picking.clone(),
+                        generation: asked.generation,
+                    });
+                }
                 self.drafted = draft;
                 self.inspected = inspected.map(|inspected| *inspected);
                 self.shown = Some(asked);
@@ -475,6 +493,24 @@ impl MeshFeed {
     /// without it comes.
     pub(crate) fn shows_draft(&self) -> bool {
         self.shown.is_some_and(|shown| shown.draft.is_some())
+    }
+
+    /// The mesh of the newest model shown without a draft, the last the
+    /// committed document regenerated to, with the body each of its parts
+    /// is of: none once the document was replaced whole until a model of
+    /// it shows, as for [`MeshFeed::parts`]. `None` before there's been
+    /// one.
+    pub(crate) fn committed(&self) -> Option<(&Arc<RenderMesh>, &[BodyId])> {
+        let committed = self.committed.as_ref()?;
+        let current = self
+            .replaced
+            .is_none_or(|replaced| committed.generation >= replaced);
+        let parts = if current {
+            committed.picking.bodies()
+        } else {
+            &[]
+        };
+        Some((&committed.mesh, parts))
     }
 
     /// Counts the models shown: see [`varde_view::Pick::model`].

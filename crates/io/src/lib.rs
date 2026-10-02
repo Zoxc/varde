@@ -34,7 +34,8 @@
 //! are [`lane`]. Files of the user's are picked on the web by the page,
 //! see [`pick`], and handed to the worker as a [`Picked`].
 //!
-//! [`three_mf`] writes bodies' meshes as a 3MF package, for printing.
+//! [`three_mf`] writes bodies' meshes as a 3MF package, for printing, and
+//! [`thumbnail`] encodes and decodes the PNG thumbnails saves write.
 
 // Modules at the root are compiled for both targets. What only native
 // builds have, with a path based file system, is under `native`; what only
@@ -55,6 +56,7 @@ pub mod recent;
 pub mod settings;
 mod store;
 pub mod three_mf;
+pub mod thumbnail;
 pub mod vrdp;
 #[cfg(target_arch = "wasm32")]
 mod web;
@@ -180,14 +182,17 @@ pub enum Request {
     /// design, which its auto-saves go to until it's first saved as a file
     /// of the user's. Answered with [`Response::Created`].
     New { id: OpenId },
-    /// Appends `document`, the editor's state at `revision`, to `file`.
-    /// Encoding, locking and writing all happen in the lane. Replaces a
-    /// `Save` of the same file still waiting, see the crate docs.
+    /// Appends `document`, the editor's state at `revision`, to `file`,
+    /// with its `thumbnail`, if it has one, as the save's preview (see
+    /// [`thumbnail`]). Encoding, locking and writing all happen in the
+    /// lane. Replaces a `Save` of the same file still waiting, see the
+    /// crate docs.
     Save {
         file: FileId,
         revision: Revision,
         #[serde(with = "varde_document::codec::snapshot")]
         document: Snapshot,
+        thumbnail: Option<thumbnail::Image>,
     },
     /// Writes `document` as a new file where `to` says, and makes `file`
     /// refer to it from then on, letting go of the old file. Without a
@@ -195,13 +200,15 @@ pub enum Request {
     /// new [`FileId`]. Natively the new file's lock is taken and the old
     /// one's let go of; refused if another editor has the design at the
     /// path open: `file` stays as it was. On the web, `file` keeps its
-    /// store entry for auto-saves.
+    /// store entry for auto-saves. The `thumbnail` is written as for a
+    /// [`Request::Save`].
     SaveAs {
         file: Option<FileId>,
         to: SaveTo,
         revision: Revision,
         #[serde(with = "varde_document::codec::snapshot")]
         document: Snapshot,
+        thumbnail: Option<thumbnail::Image>,
     },
     /// Appends `document`, the editor's state at `revision`, to the
     /// sidecar of `file`, or its store entry if it's a new design. Never to
@@ -228,6 +235,11 @@ pub enum Request {
     Abandon { id: OpenId },
     /// Reads the recent files list.
     LoadRecent,
+    /// Reads the thumbnails of the designs at `paths`, the recent files
+    /// (see [`thumbnail`]), answered with [`Response::ThumbnailsLoaded`].
+    /// Natively a design another program is writing just then has none;
+    /// the web has no paths to read.
+    LoadThumbnails { paths: Vec<PathBuf> },
     /// Lists the new designs left behind by sessions that crashed: store
     /// entries nobody holds with something in them, and on the web the
     /// designs downloaded and closed since. Deletes empty ones.
@@ -345,6 +357,12 @@ pub enum Response {
     RecentWritten {
         result: Result<(), String>,
     },
+    /// Answers [`Request::LoadThumbnails`] with the thumbnails found, in
+    /// the order asked, each with its path as asked. A design without one,
+    /// or that couldn't be read, isn't listed.
+    ThumbnailsLoaded {
+        thumbnails: Vec<(PathBuf, thumbnail::Image)>,
+    },
     /// Answers [`Request::ListRecovered`], newest first. Also follows the
     /// answer to a request that may have changed which there are: an
     /// [`Request::OpenRecovered`], a [`Request::DiscardRecovered`], or a
@@ -432,6 +450,9 @@ impl Request {
                 entries: Vec::new(),
                 home: None,
             },
+            Request::LoadThumbnails { .. } => Response::ThumbnailsLoaded {
+                thumbnails: Vec::new(),
+            },
             Request::WriteRecent { .. } => Response::RecentWritten { result: Err(error) },
             Request::ListRecovered => Response::RecoveredListed {
                 designs: Vec::new(),
@@ -466,6 +487,32 @@ impl Request {
                 title: title.clone(),
                 bodies: Vec::new(),
             },
+            // Nor of the thumbnail's pixels, nor of the paths.
+            Request::Save {
+                file,
+                revision,
+                document,
+                ..
+            } => Request::Save {
+                file: *file,
+                revision: *revision,
+                document: document.clone(),
+                thumbnail: None,
+            },
+            Request::SaveAs {
+                file,
+                to,
+                revision,
+                document,
+                ..
+            } => Request::SaveAs {
+                file: *file,
+                to: to.clone(),
+                revision: *revision,
+                document: document.clone(),
+                thumbnail: None,
+            },
+            Request::LoadThumbnails { .. } => Request::LoadThumbnails { paths: Vec::new() },
             // Snapshots are shared, so this clone is cheap.
             request => request.clone(),
         };

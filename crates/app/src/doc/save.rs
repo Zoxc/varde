@@ -260,11 +260,13 @@ pub(crate) struct Saves {
     pub(crate) save_as: Vec<Revision>,
     /// Saves the user asked for while edits waited on the solver, in the
     /// order asked: sent once the edits are answered, so what's on screen
-    /// is saved, see [`Doc::proposals_settled`].
+    /// is saved, see [`Doc::proposals_settled`]. Then, or once there's
+    /// nothing to wait for, they wait for their thumbnail, see
+    /// `thumbnail.rs`.
     pub(crate) waiting: Vec<Deferred>,
 }
 
-/// A save waiting for the edits waiting on the solver.
+/// A save waiting for the edits waiting on the solver, or its thumbnail.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Deferred {
     Save,
@@ -560,7 +562,8 @@ impl Doc {
 
     /// Goes on with what waited for the edits waiting on the solver, once
     /// they're answered or dropped: the saves asked for meanwhile, then
-    /// leaving.
+    /// leaving. The same once a thumbnail is rendered, which they may have
+    /// waited for too (see `thumbnail.rs`).
     pub(crate) fn proposals_settled(&mut self, cx: &mut Files) -> Next {
         if self.proposing() {
             return Next::Stay;
@@ -581,11 +584,26 @@ impl Doc {
         if !self.proposing() {
             return false;
         }
+        self.wait(deferred);
+        true
+    }
+
+    /// Keeps `deferred` to send once its thumbnail is rendered, if it must
+    /// wait for one (see [`Doc::thumbnail_waits`]): whether it waits.
+    fn defer_for_thumbnail(&mut self, deferred: Deferred) -> bool {
+        if !self.thumbnail_waits() {
+            return false;
+        }
+        self.wait(deferred);
+        true
+    }
+
+    /// Keeps `deferred` waiting, unless it's a Save and one waits already.
+    fn wait(&mut self, deferred: Deferred) {
         let waiting = &mut self.persist.saves.waiting;
         if deferred != Deferred::Save || !waiting.contains(&deferred) {
             waiting.push(deferred);
         }
-        true
     }
 
     /// Hides why the last save or auto-save failed.
@@ -606,7 +624,8 @@ impl Doc {
         let Some(file) = self.persist.target.design_file() else {
             return;
         };
-        if self.defer(Deferred::Save) || !self.unsent() {
+        if self.defer(Deferred::Save) || !self.unsent() || self.defer_for_thumbnail(Deferred::Save)
+        {
             return;
         }
         let revision = self.editor.revision();
@@ -614,6 +633,7 @@ impl Doc {
             file,
             revision,
             document: self.editor.snapshot(),
+            thumbnail: self.thumbnail(),
         });
         self.persist.saves.save = Some(revision);
         self.persist.save_error = None;
@@ -623,7 +643,9 @@ impl Doc {
     /// Sends the document to the new file the user `chose` in the Save As
     /// dialog, which asked about replacing the one there.
     fn save_as(&mut self, cx: &mut Files, chose: Chosen) {
-        if self.defer(Deferred::SaveAs(chose.clone())) {
+        if self.defer(Deferred::SaveAs(chose.clone()))
+            || self.defer_for_thumbnail(Deferred::SaveAs(chose.clone()))
+        {
             return;
         }
         let revision = self.editor.revision();
@@ -642,6 +664,7 @@ impl Doc {
             to,
             revision,
             document,
+            thumbnail: self.thumbnail(),
         });
         self.persist.saves.save_as.push(revision);
         self.persist.save_error = None;

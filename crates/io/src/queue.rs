@@ -127,6 +127,7 @@ impl Request {
             | Request::OpenRecovered { .. }
             | Request::DiscardRecovered { .. }
             | Request::Export { .. }
+            | Request::LoadThumbnails { .. }
             | Request::Flush => None,
         }
     }

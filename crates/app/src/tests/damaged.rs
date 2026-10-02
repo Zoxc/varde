@@ -533,10 +533,13 @@ fn an_auto_save_that_cannot_be_read_is_kept_on_closing() {
     let _ = varde.update(Message::Ui(Ui::File(File::CloseDocument)));
     assert!(matches!(
         sent(&requests)[..],
-        [IoRequest::Close {
-            file: FileId(0),
-            closing: Closing::Keep
-        }]
+        [
+            IoRequest::Close {
+                file: FileId(0),
+                closing: Closing::Keep
+            },
+            IoRequest::LoadThumbnails { .. }
+        ]
     ));
 }
 

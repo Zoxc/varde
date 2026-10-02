@@ -61,6 +61,7 @@ fn requests() -> Vec<Request> {
             file: FileId(3),
             revision: 4.into(),
             document: Arc::clone(&document),
+            thumbnail: Some(thumbnail()),
         },
         Request::SaveAs {
             file: Some(FileId(5)),
@@ -70,6 +71,7 @@ fn requests() -> Vec<Request> {
             },
             revision: u64::MAX.into(),
             document: Arc::clone(&document),
+            thumbnail: None,
         },
         Request::SaveAs {
             file: None,
@@ -79,6 +81,7 @@ fn requests() -> Vec<Request> {
             },
             revision: 0.into(),
             document: Arc::new(Document::default()),
+            thumbnail: None,
         },
         Request::AutoSave {
             file: FileId(6),
@@ -97,6 +100,9 @@ fn requests() -> Vec<Request> {
         },
         Request::Abandon { id: OpenId(10) },
         Request::LoadRecent,
+        Request::LoadThumbnails {
+            paths: vec!["a.vrdp".into(), "b/c.vrdp".into()],
+        },
         Request::LoadSettings,
         Request::WriteSettings {
             settings: Settings { theme: Theme::Dark },
@@ -126,6 +132,7 @@ fn requests() -> Vec<Request> {
             }),
             revision: 15.into(),
             document: Arc::new(Document::example()),
+            thumbnail: None,
         },
         Request::SaveAs {
             file: None,
@@ -136,6 +143,7 @@ fn requests() -> Vec<Request> {
             }),
             revision: 0.into(),
             document: Arc::new(Document::default()),
+            thumbnail: None,
         },
         Request::WriteRecent {
             entries: vec![RecentFile {
@@ -160,6 +168,11 @@ fn requests() -> Vec<Request> {
 }
 
 /// Every response, one of each kind and result.
+/// A thumbnail of three pixels.
+fn thumbnail() -> crate::thumbnail::Image {
+    crate::thumbnail::Image::new(3, 1, (0..12).collect()).unwrap()
+}
+
 fn responses() -> Vec<Response> {
     let edited = hidden();
     vec![
@@ -282,6 +295,9 @@ fn responses() -> Vec<Response> {
         Response::Abandoned {
             id: OpenId(15),
             result: Ok(()),
+        },
+        Response::ThumbnailsLoaded {
+            thumbnails: vec![("a.vrdp".into(), thumbnail())],
         },
         Response::RecentLoaded {
             entries: vec![crate::recent::Listed {

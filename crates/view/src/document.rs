@@ -110,6 +110,9 @@ pub struct DocumentState<'a> {
     /// What a plane is being picked for, if one is: a new sketch, or the
     /// sketch whose plane is changed.
     pub picking_plane: Option<&'a PlanePick>,
+    /// A thumbnail for the viewport to render on its next frame, if one
+    /// is asked for (see [`ThumbnailRequest`](crate::ThumbnailRequest)).
+    pub thumbnail: Option<&'a Arc<crate::ThumbnailRequest>>,
     /// The feature selected in the Timeline, if any.
     pub selected_feature: Option<FeatureId>,
     /// The row of the side panel whose context menu is open, if one is.
@@ -654,6 +657,7 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
                             .or_else(|| state.combine.as_ref().map(crate::combine::panel))
                             .or_else(|| state.measure.as_ref().map(crate::measure::panel)),
                         crate::rail::rail(&state),
+                        state.thumbnail,
                     ),
                     status::status_bar(status(&state)),
                 ],

@@ -69,6 +69,7 @@ fn save(file: u64, revision: u64) -> Request {
         file: FileId(file),
         revision: revision.into(),
         document: Arc::new(varde_document::Document::default()),
+        thumbnail: None,
     }
 }
 
@@ -122,6 +123,7 @@ fn a_waiting_save_is_replaced_by_a_newer_one_of_the_same_file() {
         },
         revision: 2.into(),
         document: Arc::new(varde_document::Document::default()),
+        thumbnail: None,
     });
     assert!(queue.push(save(1, 3)).is_none());
     queue.push(Request::Close {
@@ -149,6 +151,7 @@ fn a_save_as_to_a_picked_file_is_ordered_and_answered_like_a_save_as() {
         to: SaveTo::Picked(picked.clone()),
         revision: 2.into(),
         document: Arc::new(varde_document::Document::default()),
+        thumbnail: None,
     });
     assert!(queue.push(save(1, 3)).is_none());
     assert_eq!(queue.requests.len(), 3);
@@ -235,6 +238,7 @@ fn a_waiting_auto_save_is_replaced_by_a_newer_one() {
             },
             revision: 3.into(),
             document: Arc::new(varde_document::Document::default()),
+            thumbnail: None,
         },
         Request::DiscardRecovery { file: FileId(1) },
         Request::Close {

@@ -29,8 +29,9 @@
 //! over any kind it doesn't know, and they're never needed to open or save
 //! it: damaged, missing or stale, they're ignored. `read_preview` reads
 //! them from the end of the file, walking back to the newest record and
-//! reading no record's payload. Nothing makes previews yet: every caller
-//! writes none.
+//! reading no record's payload. Saves write one, the design's thumbnail
+//! as a PNG (see [`thumbnail`](crate::thumbnail)), when the app rendered
+//! it.
 //!
 //! `len` is the length of `tag_len`, `tag` and `payload`, written before
 //! and after them, so a block is 64 + `len` bytes and `kind` ends it.

@@ -149,8 +149,10 @@ turns out damaged); then going forward each block must be intact and
 follow on, and the previews among them are taken until one isn't. A
 preview whose media type isn't UTF-8 or that's out of bounds is stepped
 over. Natively `DocumentFile::read_preview` takes the shared lock without
-waiting, no lock being no preview. Nothing makes previews yet: every
-caller writes none, and nothing reads them.
+waiting, no lock being no preview. The app's saves write one, the
+design's thumbnail, `image/png` (`crates/io/src/thumbnail.rs`), when it
+was rendered, and the welcome screen reads it back (see "Thumbnails" in
+`files.md`); a download on the web writes none.
 
 ## Saving
 

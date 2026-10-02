@@ -156,7 +156,8 @@ and offers Save As. So is a save to a file damaged since
 couldn't be read (`SaveError::OpenedDamaged`, see `DamageKind::Damaged`):
 that one is only saved as another file. A save that fails partway cuts
 the file back; should that fail too, the next save takes what landed for
-its own (see `file-format.md`). Saves write no previews yet. Other errors
+its own (see `file-format.md`). Each save writes the design's thumbnail
+too (see "Thumbnails" below). Other errors
 show in the same banner, and the document stays as it is. Only the newest
 save's outcome counts: a save that fails
 while a newer one is still in flight shows nothing, and the newer one
@@ -173,6 +174,44 @@ has open is never written over, and then lets go of the old file and its
 lock. A read-only design can't be saved (Save is disabled, and `Ctrl S`
 does nothing), but can be saved as a copy, which is editable if its lock
 could be taken. The new file joins the recent files.
+
+**Thumbnails.** A Save or Save As writes the design's thumbnail with
+it, as the record's `PREVIEW` block (see `file-format.md`), for the
+welcome screen's recent file cards: the bodies of the last model the
+committed document regenerated to (`MeshFeed::committed`: the newest
+answer without a draft, so a regeneration still on its way, or one that
+failed, leaves the one before), from where Home looks, orthographic,
+framed as large as fits `varde_view::THUMBNAIL_ROOM` (what a card has
+inside its padding) at twice that in pixels and cropped to the model,
+with a margin for the edges, on nothing: no background, grid, sketches,
+markers, hover or selection, each body as opaque as it is, in the
+theme's colours. Only the viewport has the GPU, so the app asks for it
+(`doc/thumbnail.rs`, a `varde_view::ThumbnailRequest` in the document
+state), the viewport's next frame renders it offscreen and reads it back
+(see "Thumbnails" in `viewport.md`), and the pixels come back as a
+message, with which the save is sent. The save waits meanwhile like one
+waiting on the solver (`Saves::waiting`; it counts as in flight, so
+leaving waits too), after the solver; frames are drawn and the timer
+ticks while it waits. One that doesn't come within two seconds (a window
+that isn't drawn), or fails, is saved without; the next save asks again.
+One rendered is kept while the model and its opacities are the same
+(the mesh by its `Arc`), so saving again goes at once; no model, or none
+with a body, is saved without at once. The IO lane encodes the pixels as
+a PNG (`thumbnail::encode`, `png`; the wire checks an `Image`'s size)
+and writes it after the record, so a save without one drops the old one.
+A download on the web writes none: it's encoded on the page as the user
+clicks.
+
+The welcome screen asks the lane for the recent files' thumbnails
+(`Request::LoadThumbnails`) as the list arrives and whenever it shows
+again, a design maybe saved since. The lane reads each from the end of
+the file (`DocumentFile::read_preview`, taking no lock that's held) and
+decodes the PNG (`thumbnail::decode`: any colour type made 8 bit RGBA,
+sides at most `thumbnail::MAX_SIDE`, refused before its pixels are
+allocated), all off the UI thread; the app makes each an iced image
+handle once, shown in its card fitted inside the padding, or the body
+icon for a design without one. The web has no recent files, so it reads
+none.
 
 **Closing and quitting.** Closing the document, or the window, waits for
 sketch edits waiting on the solver first, and the changes waiting behind

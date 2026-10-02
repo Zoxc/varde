@@ -725,6 +725,8 @@ pub struct Renderer {
     bind_group_layout: wgpu::BindGroupLayout,
     alphas: Alphas,
     depth_format: wgpu::TextureFormat,
+    /// The target's format, which the pipelines are built for.
+    format: wgpu::TextureFormat,
 }
 
 /// One scene's state on the GPU, from [`Renderer::prepare`] to
@@ -1153,7 +1155,13 @@ impl Renderer {
             bind_group_layout,
             alphas,
             depth_format,
+            format,
         }
+    }
+
+    /// The format of the targets it draws to, as it was made for.
+    pub fn format(&self) -> wgpu::TextureFormat {
+        self.format
     }
 
     /// Creates a slot to draw a scene with, empty until it's prepared.
@@ -1401,6 +1409,21 @@ impl Renderer {
         target: &wgpu::TextureView,
         clip: ClipRect,
     ) {
+        self.record(slot, encoder, target, clip, true);
+    }
+
+    /// Records the frame last prepared into `slot` as [`Self::render`]
+    /// does, with the background, the grid, the finished sketches and the
+    /// origin and pivot markers only if `backdrop`: without, the model
+    /// alone, over what `target` holds (a preview's, see `preview.rs`).
+    pub(crate) fn record(
+        &self,
+        slot: &Slot,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        clip: ClipRect,
+        backdrop: bool,
+    ) {
         let Some(depth) = &slot.depth else { return };
         if clip.width == 0 || clip.height == 0 {
             return;
@@ -1438,8 +1461,10 @@ impl Renderer {
         pass.set_bind_group(0, &slot.bind_group, &[]);
         self.alphas.set(&mut pass, self.alphas.opaque);
 
-        pass.set_pipeline(&self.background);
-        pass.draw(0..3, 0..1);
+        if backdrop {
+            pass.set_pipeline(&self.background);
+            pass.draw(0..3, 0..1);
+        }
 
         let mesh = slot.mesh.as_ref();
         let draws = &slot.draws;
@@ -1468,10 +1493,12 @@ impl Renderer {
         // Drawn after the model so they blend over the background and are
         // occluded by geometry. The sketches go over the grid, since they
         // often lie on it.
-        pass.set_pipeline(&self.grid);
-        pass.draw(0..3, 0..1);
+        if backdrop {
+            pass.set_pipeline(&self.grid);
+            pass.draw(0..3, 0..1);
+        }
 
-        if let Some(lines) = &slot.lines {
+        if let Some(lines) = slot.lines.as_ref().filter(|_| backdrop) {
             pass.set_pipeline(&self.lines);
             pass.set_vertex_buffer(0, lines.segments.slice(..));
             pass.draw(0..LINE_VERTICES, 0..lines.segment_count);
@@ -1539,8 +1566,10 @@ impl Renderer {
             self.draw_highlights(&mut pass, slot);
         }
 
-        pass.set_pipeline(&self.origin);
-        pass.draw(0..ORIGIN_VERTICES, 0..MARKERS);
+        if backdrop {
+            pass.set_pipeline(&self.origin);
+            pass.draw(0..ORIGIN_VERTICES, 0..MARKERS);
+        }
 
         // The sketch being edited, over everything, the origin marker
         // included, since its points often lie on it; or depth tested.

@@ -65,6 +65,9 @@ struct Files {
     /// New designs left behind by sessions that crashed, newest first, and
     /// on the web designs downloaded and closed since.
     recovered: Vec<Recovered>,
+    /// The recent files' thumbnails, by path, as last read: see
+    /// [`Files::load_thumbnails`].
+    thumbnails: Vec<(PathBuf, iced::widget::image::Handle)>,
 }
 
 impl Files {
@@ -75,6 +78,7 @@ impl Files {
             downloader,
             recent: Recent::default(),
             recovered: Vec::new(),
+            thumbnails: Vec::new(),
         }
     }
 
@@ -183,8 +187,16 @@ impl Varde {
             None => task,
         };
         // The rail's list scrolled to show the row the keys moved to.
-        match self.screen.doc_mut().and_then(|doc| doc.rail.take_scroll()) {
+        let task = match self.screen.doc_mut().and_then(|doc| doc.rail.take_scroll()) {
             Some(share) => Task::batch([task, scroll_rail(share)]),
+            None => task,
+        };
+        // A thumbnail asked for, rendered by the viewport's next frame.
+        match self.screen.doc_mut() {
+            Some(doc) => match doc.take_thumbnail() {
+                Some((tag, answer)) => Task::batch([task, thumbnail(doc.id, tag, answer)]),
+                None => task,
+            },
             None => task,
         }
     }
@@ -204,7 +216,12 @@ impl Varde {
                 return self.welcome(|welcome, files| welcome.picked(files, chosen));
             }
             Message::Ui(Ui::File(message)) => return self.file(message),
-            Message::AutoSaveTick(now) => self.with_doc(|doc, files| doc.auto_save(files, now)),
+            Message::AutoSaveTick(now) => {
+                return self.step(|doc, cx| {
+                    doc.auto_save(cx, now);
+                    doc.thumbnail_overdue(cx, now)
+                });
+            }
             Message::CloseRequested(window) => return self.leave(Leave::Quit(window)),
             Message::PageLeaving => {
                 // Auto-saved now, in case it's gone before the next tick.
@@ -358,6 +375,8 @@ impl Varde {
             }
             Next::Left(Leave::Close) => {
                 self.screen = Screen::Welcome(Welcome::default());
+                // Saved since, with another.
+                self.files.load_thumbnails();
                 Task::none()
             }
             Next::Left(Leave::Quit(window)) => self.quit(window),
@@ -408,6 +427,21 @@ impl Varde {
                 if let Some(write) = self.files.recent.loaded(entries, home) {
                     self.files.io.send(write);
                 }
+                self.files.load_thumbnails();
+            }
+            IoResponse::ThumbnailsLoaded { thumbnails } => {
+                // Made once here: a handle is uploaded once per id.
+                self.files.thumbnails = (thumbnails.into_iter())
+                    .map(|(path, image)| {
+                        let (width, height) = (image.width(), image.height());
+                        let handle = iced::widget::image::Handle::from_rgba(
+                            width,
+                            height,
+                            image.into_rgba(),
+                        );
+                        (path, handle)
+                    })
+                    .collect();
             }
             IoResponse::RecentWritten { result } => {
                 report_failure("save the recent files", result);
@@ -518,16 +552,22 @@ impl Varde {
             // changes.
             only_if(self.at_stake(), platform::guard),
             // While the camera turns, and edits wait on the solver until
-            // they've waited long enough to say so.
+            // they've waited long enough to say so; and while a thumbnail
+            // is rendered, by the viewport's next frame, and on the web
+            // read back on a later one.
             only_if(
-                doc.is_some_and(|doc| doc.animating() || doc.timing()),
+                doc.is_some_and(|doc| doc.animating() || doc.timing() || doc.rendering_thumbnail()),
                 || window::frames().map(Message::AnimationFrame),
             ),
             iced::system::theme_changes().map(Message::SystemTheme),
             self.regen_lane(),
             self.solve_lane(),
             Self::io_lane(),
-            only_if(self.auto_saving(), platform::auto_save_ticks),
+            // Also giving up on a thumbnail that isn't drawn.
+            only_if(
+                self.auto_saving() || doc.is_some_and(Doc::rendering_thumbnail),
+                platform::auto_save_ticks,
+            ),
         ])
     }
 
@@ -645,6 +685,22 @@ fn while_quitting(message: &Message) -> bool {
             | Message::SystemTheme(_)
             | Message::Ui(Ui::Look(_) | Ui::ToggleMouseHints | Ui::ToggleHiddenEdges | Ui::Copy(_))
     )
+}
+
+/// Waits for the thumbnail tagged `tag` of document `id` to come back on
+/// `answer`, see `doc/thumbnail.rs`: `None` if it couldn't be rendered,
+/// its sender dropped uncalled.
+fn thumbnail(
+    id: DocId,
+    tag: u64,
+    answer: iced::futures::channel::oneshot::Receiver<Option<varde_render::PreviewImage>>,
+) -> Task<Message> {
+    Task::perform(answer, move |image| {
+        let image = image.ok().flatten().and_then(|image| {
+            varde_io::thumbnail::Image::new(image.width, image.height, image.rgba)
+        });
+        Message::Doc(id, ForDoc::Thumbnail(tag, image))
+    })
 }
 
 /// Reports `result` if it failed to do `what`, for the IO lane's answers

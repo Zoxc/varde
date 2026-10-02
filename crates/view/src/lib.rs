@@ -40,6 +40,7 @@ mod status;
 #[cfg(test)]
 mod testing;
 mod theme;
+mod thumbnail;
 mod toolbar;
 pub mod typed;
 mod view_cube;
@@ -57,8 +58,8 @@ use varde_sketch::{Id, Sketch};
 pub use combine::{CombineBody, CombineLook, CombinePick, CombineState};
 pub use constrain::{ConstraintKind, ConstraintSet};
 pub use document::{
-    ActiveTool, CURVED_FACE, Damage, DamagedFile, DeletePrompt, DocumentState, MeshStatus,
-    Overlay, RecoveredChanges, RefusedEdit, SketchState, ValueField, ValueTarget, document,
+    ActiveTool, CURVED_FACE, Damage, DamagedFile, DeletePrompt, DocumentState, MeshStatus, Overlay,
+    RecoveredChanges, RefusedEdit, SketchState, ValueField, ValueTarget, document,
 };
 pub use extrude::{Distance, ExtentKind, ExtrudeLook, ExtrudeState, Handle, snap_step};
 pub use icons::LOGO_SVG;
@@ -78,6 +79,7 @@ pub use shortcut::{Binding, DocumentKeys, Held, document_bindings, pressed, welc
 pub use snap::{Inference, Level, SNAP_TOLERANCE, Snap, Target};
 pub use status::{STATUS_BAR_HEIGHT, STATUS_BAR_ROOM};
 pub use theme::{Mode, SIDE_PANEL_WIDTH, ThemeChoice, theme as iced_theme};
+pub use thumbnail::{THUMBNAIL_ROOM, THUMBNAIL_SCALE, ThumbnailRequest};
 pub use viewport::ModelPicking;
 pub use welcome::{DamagedPrompt, RecentCard, StoredDesign, WelcomeState, welcome};
 

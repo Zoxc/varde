@@ -14,6 +14,7 @@ mod regions;
 mod revolve;
 mod save;
 mod sketch;
+mod thumbnail;
 
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -154,6 +155,8 @@ pub(crate) struct Doc {
     persist: Persist,
     /// Exporting its bodies, see [`Doc::request_export`].
     export: Export,
+    /// The thumbnails its saves write, see `thumbnail.rs`.
+    thumbnails: thumbnail::Thumbnails,
 }
 
 /// Tells open documents apart, so work done for a closed document is never
@@ -327,6 +330,7 @@ impl Doc {
             pick: ModelPick::default(),
             rail: Rail::default(),
             export: Export::default(),
+            thumbnails: thumbnail::Thumbnails::default(),
         };
         doc.sync();
         doc
@@ -945,6 +949,7 @@ impl Doc {
                 self.solved(response);
                 self.proposals_settled(cx)
             }
+            ForDoc::Thumbnail(tag, image) => self.thumbnail_rendered(cx, tag, image),
         }
     }
 
@@ -1000,6 +1005,7 @@ impl Doc {
             mode,
             options,
             picking_plane: self.picking_plane.as_ref().map(|picking| &picking.pick),
+            thumbnail: self.thumbnail_request(),
             selected_feature: self.selected_feature,
             row_menu: self.row_menu,
             sketch: self.sketch_state(),

@@ -28,6 +28,7 @@ use crate::operation_panel::placed;
 use crate::pick::{ModelHighlight, Pick, PickIndex, Picked, Picks, Snapped};
 use crate::shortcut::Held;
 use crate::theme::{Palette, SketchColors};
+use crate::thumbnail::{THUMBNAIL_SCALE, ThumbnailRequest};
 use crate::{Edit, Look, Message, PlanePick, controls};
 
 pub(crate) use extrude::Extruding;
@@ -131,6 +132,7 @@ pub(crate) fn viewport<'a>(
     operating: Option<Operating<'a>>,
     panel: Option<Element<'a, Message>>,
     rail: Element<'a, Message>,
+    thumbnail: Option<&Arc<ThumbnailRequest>>,
 ) -> Element<'a, Message> {
     // Constraint glyphs, nudged apart; dimensions' labels, where they're
     // put; the value field, in a layer of its own so its state stays its
@@ -172,6 +174,7 @@ pub(crate) fn viewport<'a>(
     };
     program.scene.hidden_edges = hidden_edges;
     program.scene.opacity = opacity;
+    program.scene.thumbnail = thumbnail.cloned();
     let scene = iced::widget::shader(program)
         .width(Length::Fill)
         .height(Length::Fill);
@@ -215,6 +218,7 @@ fn program<'a>(
             colors: palette.scene,
             sketch_plane: sketching.as_ref().map(Sketching::grid),
             hidden_edges: true,
+            thumbnail: None,
         },
         sketching,
         operating,
@@ -260,6 +264,9 @@ struct Scene {
     /// Whether the edges the model hides are drawn, dashed (the renderer
     /// ignores it in a sketch).
     hidden_edges: bool,
+    /// A thumbnail to render offscreen beside the frame, if one is asked
+    /// for: once, by the first frame prepared with it.
+    thumbnail: Option<Arc<ThumbnailRequest>>,
 }
 
 /// What dragging in the viewport does.
@@ -804,6 +811,24 @@ impl shader::Primitive for Primitive {
         // `prepare` can't send a message, so this can't reach the UI.
         if let Err(error) = prepared {
             log::error!("Couldn't draw the design: {error}");
+        }
+        // Its own slot and target, the colours the model is drawn in; on
+        // failure, what waits for it is dropped, so it saves without.
+        if let Some(thumbnail) = &scene.thumbnail
+            && let Some(done) = thumbnail.take()
+            && let Err(error) = varde_render::render_preview(
+                &pipeline.renderer,
+                device,
+                queue,
+                &thumbnail.mesh,
+                &thumbnail.opacity,
+                &thumbnail.shot,
+                scene.colors,
+                THUMBNAIL_SCALE as f32,
+                done,
+            )
+        {
+            log::error!("Couldn't draw the thumbnail: {error}");
         }
     }
 

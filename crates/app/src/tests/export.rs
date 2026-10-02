@@ -6,13 +6,13 @@ use super::*;
 use crate::doc::Exporting;
 
 /// What a test's lane stand-in keeps of the requests sent to it.
-type Sent<R> = Rc<RefCell<Vec<R>>>;
+pub(super) type Sent<R> = Rc<RefCell<Vec<R>>>;
 
 /// An app showing `/d/part.vrdp` as [`with_open_file`] does, holding the
 /// example's plate, its model shown, with a regeneration lane whose
 /// requests wait for the test: the app, the IO requests and the
 /// regeneration requests, both lists empty.
-fn with_plate() -> (Varde, Sent<IoRequest>, Sent<Request>) {
+pub(super) fn with_plate() -> (Varde, Sent<IoRequest>, Sent<Request>) {
     let (mut varde, io) = with_open_file();
     let regen = Rc::default();
     let doc = varde.screen.doc_mut().unwrap();

@@ -1646,3 +1646,57 @@ fn shots_26_damaged_prompt() {
         );
     });
 }
+
+/// Scenario 27: a save's thumbnail, the example's plate, rendered by the
+/// viewport's frame as the app's is (beside the document screen, which
+/// is shot too), written as `27-thumbnail.png` as the save would write
+/// it; then the welcome screen showing it in a recent file's card beside
+/// a design without one, light and dark.
+#[test]
+#[ignore = "writes screenshots, see the module"]
+fn shots_27_thumbnail() {
+    use varde_io::recent::Listed;
+    use varde_io::{RecentFile, UnixSeconds};
+
+    use crate::{Files, welcome::Welcome};
+
+    shooting(|camera| {
+        let (mut doc, _) = example();
+        framed(&mut doc);
+        assert!(doc.thumbnail_waits());
+        let (_, mut answer) = doc.take_thumbnail().unwrap();
+        camera.take(&doc, "27-thumbnail-asked", Shot::new());
+        let image = answer
+            .try_recv()
+            .expect("not dropped")
+            .expect("drawn with the frame")
+            .expect("read back");
+        let size = Size::new(image.width, image.height);
+        write_png(&camera.dir.join("27-thumbnail.png"), size, &image.rgba);
+        // As the lane reads it back.
+        let image = varde_io::thumbnail::Image::new(image.width, image.height, image.rgba);
+        let image = image.unwrap();
+
+        let mut files = Files::new(None);
+        let path = |name: &str| PathBuf::from(format!("/home/user/designs/{name}.vrdp"));
+        let entries = ["plate", "bracket"].map(|name| Listed {
+            entry: RecentFile {
+                path: path(name),
+                opened: UnixSeconds(crate::when::now().0 - 3600),
+            },
+            available: true,
+        });
+        let _ = files.recent.loaded(entries.into(), None);
+        let handle = iced::widget::image::Handle::from_rgba(
+            image.width(),
+            image.height(),
+            image.into_rgba(),
+        );
+        files.thumbnails = vec![(path("plate"), handle)];
+        let welcome = Welcome::default();
+        let view = |mode| welcome.view(&files, mode, varde_view::ThemeChoice::Auto);
+        camera.take_view(view, "27-welcome", Shot::new());
+        camera.take_view(view, "27-welcome-dark", Shot::new().dark());
+        camera.take_view(view, "27-welcome-scale-2", Shot::new().scale(2.0));
+    });
+}

@@ -2834,3 +2834,79 @@ fn faces_and_edges_in_the_second_colour_are_drawn_in_it() {
         assert!(brighter(a, b) > 100, "{a:?} for {b:?} at {x}");
     }
 }
+
+#[test]
+fn a_preview_is_the_model_alone_on_nothing() {
+    let Some((device, queue)) = device() else {
+        eprintln!("no GPU adapter, skipping");
+        return;
+    };
+    let mesh = Arc::new(block(Vec3::ZERO, Vec3::new(4.0, 1.0, 1.0)));
+    let margin = 4;
+    let shot = varde_render::frame(&mesh, &Camera::default(), [300, 200], margin).unwrap();
+    for format in [
+        wgpu::TextureFormat::Rgba8Unorm,
+        wgpu::TextureFormat::Bgra8UnormSrgb,
+    ] {
+        let (send, read) = std::sync::mpsc::channel();
+        varde_render::render_preview(
+            &renderer(&device, format),
+            &device,
+            &queue,
+            &mesh,
+            &[],
+            &shot,
+            COLORS,
+            2.0,
+            // The tests share the device: another's poll may call it.
+            move |image| {
+                let _ = send.send(image);
+            },
+        )
+        .unwrap();
+        let image = read
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap()
+            .unwrap();
+        assert_eq!([image.width, image.height], shot.size);
+        let pixels = bytemuck_pixels(&image.rgba);
+        let (width, height) = (image.width, image.height);
+        let at = |x: u32, y: u32| pixels[(y * width + x) as usize];
+        // Nothing drawn in the corners, nor anywhere in the margins but
+        // where the outline's edges reach into them (half their width and
+        // their smoothing, under 2.5 pixels at this scale): no
+        // background, grid or markers.
+        for (x, y) in [
+            (0, 0),
+            (width - 1, 0),
+            (0, height - 1),
+            (width - 1, height - 1),
+        ] {
+            assert_eq!(at(x, y), [0; 4], "{format:?} at {x}, {y}");
+        }
+        let clear = margin - 2;
+        let outside =
+            |x: u32, y: u32| x < clear || y < clear || x >= width - clear || y >= height - clear;
+        for y in 0..height {
+            for x in 0..width {
+                if outside(x, y) {
+                    assert_eq!(at(x, y)[3], 0, "{format:?} at {x}, {y}");
+                }
+            }
+        }
+        // The model opaque in the middle, in its grey, lit.
+        let middle = at(width / 2, height / 2);
+        assert_eq!(middle[3], 255, "{format:?}: {middle:?}");
+        assert!(
+            middle[0] > 20 && middle[0].abs_diff(middle[2]) < 8,
+            "{format:?}: {middle:?}"
+        );
+        // It reaches out to the margins either way across.
+        let row = height / 2;
+        assert!((0..margin + 2).any(|x| at(x, row)[3] > 0), "{format:?}");
+        assert!(
+            (width - margin - 2..width).any(|x| at(x, row)[3] > 0),
+            "{format:?}"
+        );
+    }
+}

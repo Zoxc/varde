@@ -171,6 +171,17 @@ impl Camera {
         2.0 * self.distance * (self.fov_y * 0.5).tan()
     }
 
+    /// Moves the eye along its line of sight so the view is `height` tall
+    /// at the target, see [`Self::view_height`], within the distance's
+    /// bounds as [`Self::zoom`] keeps it. A height that isn't positive and
+    /// finite is ignored.
+    pub fn set_view_height(&mut self, height: f32) {
+        let distance = height / (2.0 * (self.fov_y * 0.5).tan());
+        if height > 0.0 && distance.is_finite() {
+            self.distance = distance.clamp(Self::MIN_DISTANCE, Self::EXTENT);
+        }
+    }
+
     /// Half the visible width and height at the target, for a viewport of
     /// `aspect`.
     pub(crate) fn half_extents(&self, aspect: f32) -> Vec2 {

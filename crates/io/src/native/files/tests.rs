@@ -283,6 +283,7 @@ fn save(files: &mut Files, file: FileId, document: Arc<Document>) -> Result<(), 
         file,
         revision: 4.into(),
         document,
+        thumbnail: None,
     }) {
         Response::Saved {
             file: saved,
@@ -310,6 +311,7 @@ fn save_as(
         },
         revision: 9.into(),
         document: edited(),
+        thumbnail: None,
     }) {
         Response::SavedAs {
             file: asked,
@@ -334,6 +336,65 @@ fn a_save_shows_on_reopening() {
     close(&mut files, opened.file).unwrap();
     let again = open(&mut files, &dir.design()).unwrap();
     assert_eq!(again.document, *edited());
+}
+
+/// The thumbnails `files` finds for `paths`.
+fn thumbnails(files: &mut Files, paths: &[PathBuf]) -> Vec<(PathBuf, Image)> {
+    match files.handle(Request::LoadThumbnails {
+        paths: paths.to_vec(),
+    }) {
+        Response::ThumbnailsLoaded { thumbnails } => thumbnails,
+        response => panic!("unexpected {response:?}"),
+    }
+}
+
+#[test]
+fn saves_write_their_thumbnail_for_the_list_to_read() {
+    let dir = TempDir::new("files-thumbnail");
+    let mut files = Files::new(Stores::default());
+    let design = dir.design();
+    let other = dir.0.join("other.vrdp");
+    let missing = dir.0.join("missing.vrdp");
+    let paths = [design.clone(), other.clone(), missing];
+    // Written as the example, with no thumbnail.
+    assert_eq!(thumbnails(&mut files, &paths), []);
+
+    let image = |shade| Image::new(2, 1, vec![shade, 2, 3, 255, 4, 5, 6, 128]).unwrap();
+    let opened = open(&mut files, &design).unwrap();
+    let saved = files.handle(Request::Save {
+        file: opened.file,
+        revision: 4.into(),
+        document: edited(),
+        thumbnail: Some(image(1)),
+    });
+    assert!(
+        matches!(saved, Response::Saved { result: Ok(()), .. }),
+        "{saved:?}"
+    );
+    let saved_as = files.handle(Request::SaveAs {
+        file: None,
+        to: SaveTo::Path {
+            path: other.clone(),
+            overwrite: false,
+        },
+        revision: 9.into(),
+        document: edited(),
+        thumbnail: Some(image(7)),
+    });
+    assert!(
+        matches!(saved_as, Response::SavedAs { result: Ok(_), .. }),
+        "{saved_as:?}"
+    );
+    // Read while they're open, in the order asked.
+    let found = thumbnails(&mut files, &paths);
+    assert_eq!(found, [(design.clone(), image(1)), (other, image(7))]);
+
+    // A save without one drops the one before.
+    save(&mut files, opened.file, edited()).unwrap();
+    assert_eq!(thumbnails(&mut files, std::slice::from_ref(&design)), []);
+    // And the design opens as saved.
+    close(&mut files, opened.file).unwrap();
+    assert_eq!(open(&mut files, &design).unwrap().document, *edited());
 }
 
 #[test]
@@ -1520,6 +1581,7 @@ fn picked_files_are_refused_natively() {
         to: SaveTo::Picked(picked),
         revision: 3.into(),
         document: Arc::new(Document::example()),
+        thumbnail: None,
     });
     assert!(matches!(
         response,

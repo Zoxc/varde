@@ -1000,6 +1000,28 @@ started again for the request waiting on it, which is reported as failed
 too, so a worker that always crashes can't restart without end. Closing the
 document terminates it.
 
+## Thumbnails
+
+A save's thumbnail (see "Thumbnails" in `files.md`) is drawn by the
+viewport, which has the GPU: `DocumentState::thumbnail` hands the
+viewport a `ThumbnailRequest` (`view/src/thumbnail.rs`: the mesh, its
+parts' opacities, and the `varde_render::PreviewShot` that
+`varde_render::frame` worked out: the home camera made orthographic,
+targeting the middle of the mesh's extent across the view, zoomed so it
+fills the room less the margin, and the image cropped to it). The first
+frame prepared with it takes its callback (once) and calls
+`varde_render::render_preview` beside the frame: a slot and a texture of
+its own, in the pipeline's format, cleared transparent, the model drawn
+by `Renderer::record` without the backdrop (background, grid, finished
+sketches, origin and pivot markers), lines at a scale of two, then
+copied to a buffer and mapped. Natively it waits for the GPU there, a
+small image's worth; on the web the buffer maps on a later submit, which
+the frames drawn while a thumbnail waits bring. The pixels are read back
+as straight alpha sRGB RGBA (`Layout::straight`: drawn over transparent
+black they're premultiplied, so the alpha is divided out in the space the
+target blends in, linear for an sRGB format); only 8 bit RGBA and BGRA
+targets are read, another fails, and the save goes without.
+
 ## Screenshots of the screen
 
 The app's tests can draw the document screen to PNGs, to look at what
@@ -1030,7 +1052,7 @@ makes its own wgpu instance, under a lock, so run them one at a time:
 VARDE_SHOTS=$PWD/target/shots cargo test -p varde-app shots_ -- --ignored --test-threads=1
 ```
 
-Scenarios (`shots_01` .. `shots_26`, each at 1280×800, scale 1, light,
+Scenarios (`shots_01` .. `shots_27`, each at 1280×800, scale 1, light,
 the busiest also at scale 2 and dark): `X` with every candidate's regions
 (and one hovered); a region picked before and after its answer; flip,
 symmetric, two sides, a refused distance and a draft the document
@@ -1078,7 +1100,11 @@ and the top's sketch failing once the plate is gone, its tip and the
 plane asked for; the banners of a file found damaged and of a damaged
 auto-save (`shots_25`); the welcome screen's prompt about a file damaged
 past the save opened, with a save found and with it failing to open
-(`shots_26`, drawn with `Shooter::take_view`, from a `Varde`). Shots
+(`shots_26`, drawn with `Shooter::take_view`, from a `Varde`); a
+save's thumbnail of the example's plate, rendered by the viewport's
+frame and written as `27-thumbnail.png`, then the welcome screen showing
+it in a recent file's card beside one without, light, dark and at scale
+2 (`shots_27`). Shots
 are for looking (pixels differ by GPU and driver), never compared and
 never committed: a fault a shot finds gets an ordinary headless test of
 the state or layout behind it. A scenario answers each regeneration it

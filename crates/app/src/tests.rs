@@ -609,9 +609,15 @@ fn an_open_answered_shows_the_document() {
 
     let _ = varde.update(Message::Ui(Ui::File(File::CloseDocument)));
     assert!(is_welcome(&varde));
+    // Then the thumbnails again, the design maybe saved with another.
+    let requests = requests.borrow();
     assert!(matches!(
-        requests.borrow().last(),
-        Some(IoRequest::Close { file, closing: Closing::Clean }) if *file == FileId(0)
+        requests[requests.len() - 2],
+        IoRequest::Close { file, closing: Closing::Clean } if file == FileId(0)
+    ));
+    assert!(matches!(
+        requests.last(),
+        Some(IoRequest::LoadThumbnails { paths }) if *paths == [path]
     ));
 }
 
@@ -1494,10 +1500,13 @@ fn closing_waits_for_a_save_in_flight() {
     assert!(is_welcome(&varde));
     assert!(matches!(
         sent(&requests)[..],
-        [IoRequest::Close {
-            file: FileId(0),
-            closing: Closing::Clean
-        }]
+        [
+            IoRequest::Close {
+                file: FileId(0),
+                closing: Closing::Clean
+            },
+            IoRequest::LoadThumbnails { .. }
+        ]
     ));
 }
 
@@ -1719,10 +1728,13 @@ fn closing_unsaved_changes_without_saving() {
     assert!(is_welcome(&varde));
     assert!(matches!(
         sent(&requests)[..],
-        [IoRequest::Close {
-            file: FileId(0),
-            closing: Closing::Clean
-        }]
+        [
+            IoRequest::Close {
+                file: FileId(0),
+                closing: Closing::Clean
+            },
+            IoRequest::LoadThumbnails { .. }
+        ]
     ));
 }
 
@@ -1738,10 +1750,13 @@ fn closing_unsaved_changes_saves_first() {
     assert!(is_welcome(&varde));
     assert!(matches!(
         sent(&requests)[..],
-        [IoRequest::Close {
-            file: FileId(0),
-            closing: Closing::Clean
-        }]
+        [
+            IoRequest::Close {
+                file: FileId(0),
+                closing: Closing::Clean
+            },
+            IoRequest::LoadThumbnails { .. }
+        ]
     ));
 }
 
@@ -2358,10 +2373,13 @@ fn recovered_changes_are_restored_as_one_edit() {
     let _ = varde.update(Message::Ui(Ui::File(File::Unsaved(Unsaved::Discard))));
     assert!(matches!(
         sent(&requests)[..],
-        [IoRequest::Close {
-            file: FileId(0),
-            closing: Closing::Clean
-        }]
+        [
+            IoRequest::Close {
+                file: FileId(0),
+                closing: Closing::Clean
+            },
+            IoRequest::LoadThumbnails { .. }
+        ]
     ));
 }
 
@@ -2788,10 +2806,13 @@ fn recovered_changes_not_answered_are_kept_on_closing() {
     assert!(is_welcome(&varde));
     assert!(matches!(
         sent(&requests)[..],
-        [IoRequest::Close {
-            file: FileId(0),
-            closing: Closing::Keep
-        }]
+        [
+            IoRequest::Close {
+                file: FileId(0),
+                closing: Closing::Keep
+            },
+            IoRequest::LoadThumbnails { .. }
+        ]
     ));
 }
 
@@ -5410,3 +5431,4 @@ fn a_long_status_leaves_the_key_hints_on_the_screen() {
 
 mod damaged;
 mod export;
+mod thumbnail;

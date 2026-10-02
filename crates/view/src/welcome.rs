@@ -4,8 +4,10 @@
 use std::path::Path;
 use std::sync::LazyLock;
 
-use iced::widget::{Space, button, column, container, grid, hover, row, space, stack, svg, text};
-use iced::{Alignment, Element, Length, Padding};
+use iced::widget::{
+    Space, button, column, container, grid, hover, image, row, space, stack, svg, text,
+};
+use iced::{Alignment, ContentFit, Element, Length, Padding};
 use varde_document::APP_NAME;
 
 use crate::chrome::{self, ChipSize, dialog, dialog_button, key_hint};
@@ -74,6 +76,10 @@ pub struct RecentCard<'a> {
     /// Whether the file is there, as far as is known. One that isn't may
     /// be on a drive that isn't mounted just now; it's still listed.
     pub available: bool,
+    /// The design's thumbnail, saved with it, if it has one: rendered at
+    /// [`THUMBNAIL_SCALE`](crate::THUMBNAIL_SCALE), fitting
+    /// [`THUMBNAIL_ROOM`](crate::THUMBNAIL_ROOM) at it.
+    pub thumbnail: Option<image::Handle>,
 }
 
 /// A card in the welcome screen's recovered designs, or a row in its
@@ -379,11 +385,20 @@ fn recent_card<'a>(file: RecentCard<'a>) -> Element<'a, Message> {
     };
     card(
         56.0,
-        150.0,
+        RECENT_THUMBNAIL_HEIGHT,
+        file.thumbnail.clone(),
         meta,
         Some(Message::Welcome(Welcome::OpenPath(file.path.to_owned()))),
     )
 }
+
+/// How tall a recent file's thumbnail is, with its padding.
+const RECENT_THUMBNAIL_HEIGHT: f32 = 150.0;
+
+/// The room around a thumbnail in its card: what's left of the card's
+/// width, at its widest, and of [`RECENT_THUMBNAIL_HEIGHT`] past
+/// [`THUMBNAIL_ROOM`](crate::THUMBNAIL_ROOM), split either side.
+const THUMBNAIL_PADDING: f32 = 12.0;
 
 /// A design's changes left behind by a session that crashed: a card like a
 /// recent file's, opening it, and a button under it to delete it.
@@ -412,6 +427,7 @@ fn recovered_card<'a>(design: StoredDesign<'a>) -> Element<'a, Message> {
     let card = card(
         40.0,
         96.0,
+        None,
         meta,
         design
             .opens
@@ -430,17 +446,29 @@ fn damage_note(design: &StoredDesign<'_>) -> Option<&'static str> {
     }
 }
 
-/// A card on the welcome screen: a thumbnail over the rows `meta` builds.
+/// A card on the welcome screen: `thumbnail` over the rows `meta` builds,
+/// shrunk to fit as needed, or a large body icon standing in for it.
 /// Clicking it sends `on_press`, if there's that.
 fn card<'a>(
     icon_size: f32,
     thumbnail_height: f32,
+    thumbnail: Option<image::Handle>,
     meta: impl Fn() -> Element<'a, Message>,
     on_press: Option<Message>,
 ) -> Element<'a, Message> {
     let content = |hovered: bool| {
-        // No real thumbnails yet: a large body icon stands in.
-        let thumbnail = container(icons::tinted(Icon::Body, icon_size, |p| p.muted))
+        let picture: Element<'a, Message> = match thumbnail.clone() {
+            Some(handle) => container(
+                image(handle)
+                    .content_fit(ContentFit::Contain)
+                    .width(Length::Fill)
+                    .height(Length::Fill),
+            )
+            .padding(THUMBNAIL_PADDING)
+            .into(),
+            None => icons::tinted(Icon::Body, icon_size, |p| p.muted).into(),
+        };
+        let thumbnail = container(picture)
             .center_x(Length::Fill)
             .center_y(thumbnail_height)
             .style(theme::card_thumbnail);

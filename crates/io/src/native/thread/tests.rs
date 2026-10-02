@@ -151,6 +151,7 @@ fn save(file: u64, revision: u64) -> Request {
         file: FileId(file),
         revision: revision.into(),
         document: Arc::new(varde_document::Document::default()),
+        thumbnail: None,
     }
 }
 
@@ -187,6 +188,7 @@ fn saves_waiting_behind_a_running_one_collapse() {
             file: opened.file,
             revision: revision.into(),
             document: snapshot(sketches),
+            thumbnail: None,
         });
         if revision == 1 {
             running.recv_timeout(TIMEOUT).unwrap();
@@ -225,6 +227,7 @@ fn a_failed_save_is_answered_with_its_revision() {
         },
         revision: 8.into(),
         document: Arc::new(varde_document::Document::default()),
+        thumbnail: None,
     });
     lane.send(Request::Flush);
     assert!(matches!(

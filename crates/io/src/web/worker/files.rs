@@ -22,8 +22,9 @@ use crate::store::{
     ATTEMPTS, Listing, NO_RECOVERED, NO_STORE, is_entry_name, listed_entry, listing, newest_first,
 };
 use crate::three_mf;
+use crate::thumbnail::previews;
 use crate::vrdp::{
-    self, Error as FileError, HeldFile, Known, ReadAt, Tail, check_unchanged,
+    self, Error as FileError, HeldFile, Known, Preview, ReadAt, Tail, check_unchanged,
     from_bytes_with_found, whole_file,
 };
 use crate::web::js::call;
@@ -157,22 +158,31 @@ impl Files {
                 file,
                 revision,
                 document,
+                thumbnail,
             } => Response::Saved {
                 file,
                 revision,
-                result: self.save(file, &document).await,
+                result: self
+                    .save(file, &document, &previews(thumbnail.as_ref()))
+                    .await,
             },
             Request::SaveAs {
                 file,
                 to: SaveTo::Picked(picked),
                 revision,
                 document,
-            } => Response::SavedAs {
-                file,
-                revision,
-                result: self.save_as(file, &picked, object, &document).await,
-                to: Chosen::File(picked),
-            },
+                thumbnail,
+            } => {
+                let previews = previews(thumbnail.as_ref());
+                Response::SavedAs {
+                    file,
+                    revision,
+                    result: self
+                        .save_as(file, &picked, object, &document, &previews)
+                        .await,
+                    to: Chosen::File(picked),
+                }
+            }
             Request::OpenFound { id, file, found } => Response::Opened {
                 id,
                 path: None,
@@ -215,6 +225,10 @@ impl Files {
             Request::LoadRecent => Response::RecentLoaded {
                 entries: Vec::new(),
                 home: None,
+            },
+            // Nor are there paths to read thumbnails from.
+            Request::LoadThumbnails { .. } => Response::ThumbnailsLoaded {
+                thumbnails: Vec::new(),
             },
             // There's no list to write to; the app never has entries for it.
             Request::WriteRecent { .. } => Response::RecentWritten { result: Ok(()) },
@@ -530,7 +544,12 @@ impl Files {
 
     /// Replaces the file `file` was opened from or saved as with
     /// `document`, unless someone else changed it since.
-    async fn save(&mut self, file: FileId, document: &Document) -> Result<(), SaveError> {
+    async fn save(
+        &mut self,
+        file: FileId,
+        document: &Document,
+        previews: &[Preview],
+    ) -> Result<(), SaveError> {
         let open = self.open.get_mut(file)?;
         let disk = open
             .disk
@@ -547,7 +566,7 @@ impl Files {
         // No failed save to allow for: the browser replaces the file as a
         // write is closed, a failure leaving it as it was.
         check_unchanged(current.as_slice(), &disk.known)?;
-        let (bytes, known) = whole_file(document, &[])?;
+        let (bytes, known) = whole_file(document, previews)?;
         disk::write(&disk.handle, &bytes)
             .await
             .map_err(|e| SaveError::Failed(e.to_string()))?;
@@ -564,6 +583,7 @@ impl Files {
         picked: &Picked,
         object: Option<Handed>,
         document: &Document,
+        previews: &[Preview],
     ) -> Result<SavedAs, SaveError> {
         let Some(Handed::Handle(handle)) = object else {
             return Err(SaveError::Failed(format!(
@@ -575,7 +595,7 @@ impl Files {
         if let Some(file) = file {
             self.open.get_mut(file)?;
         }
-        let (bytes, known) = whole_file(document, &[])?;
+        let (bytes, known) = whole_file(document, previews)?;
         disk::write(&handle, &bytes)
             .await
             .map_err(|e| SaveError::Failed(e.to_string()))?;

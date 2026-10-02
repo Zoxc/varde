@@ -11,7 +11,8 @@ use super::{recent, settings, store};
 use crate::autosave::{Ending, Origin, to_open};
 use crate::open::{KEPT, NOT_FOUND, OpenFiles};
 use crate::store::{NO_RECOVERED, NO_STORE, entry_in};
-use crate::vrdp::{self, Error as FileError};
+use crate::thumbnail::{self, Image, previews};
+use crate::vrdp::{self, Error as FileError, Preview};
 use crate::{
     Access, Chosen, Closing, Damage, FileId, Offer, OpenId, Opened, ReadOnly, RecentFile,
     RecoveryError, Request, Response, SaveError, SaveTo, SavedAs, Settings, Stores,
@@ -298,22 +299,25 @@ impl Files {
                 file,
                 revision,
                 document,
+                thumbnail,
             } => Response::Saved {
                 file,
                 revision,
-                result: self.save(file, &document),
+                result: self.save(file, &document, &previews(thumbnail.as_ref())),
             },
             Request::SaveAs {
                 file,
                 to: SaveTo::Path { path, overwrite },
                 revision,
                 document,
+                thumbnail,
             } => {
                 let path = absolute(path);
+                let previews = previews(thumbnail.as_ref());
                 Response::SavedAs {
                     file,
                     revision,
-                    result: self.save_as(file, &path, overwrite, &document),
+                    result: self.save_as(file, &path, overwrite, &document, &previews),
                     to: Chosen::Path(path),
                 }
             }
@@ -358,6 +362,12 @@ impl Files {
                         .unwrap_or_default(),
                 ),
                 home: recent::home(),
+            },
+            Request::LoadThumbnails { paths } => Response::ThumbnailsLoaded {
+                thumbnails: paths
+                    .into_iter()
+                    .filter_map(|path| thumbnail(&path).map(|image| (path, image)))
+                    .collect(),
             },
             Request::WriteRecent { entries } => Response::RecentWritten {
                 result: self.write_recent(&entries),
@@ -524,7 +534,12 @@ impl Files {
         }
     }
 
-    fn save(&mut self, file: FileId, document: &Document) -> Result<(), SaveError> {
+    fn save(
+        &mut self,
+        file: FileId,
+        document: &Document,
+        previews: &[Preview],
+    ) -> Result<(), SaveError> {
         // The UI doesn't offer it otherwise: someone else may be editing
         // it, or it's a new design, which is saved as.
         let design = self
@@ -532,8 +547,7 @@ impl Files {
             .get_mut(file)?
             .editable_design()
             .ok_or_else(|| SaveError::Failed(READ_ONLY.to_owned()))?;
-        // Nothing makes previews yet.
-        design.file.save(document, &[])?;
+        design.file.save(document, previews)?;
         design.lock.saved();
         Ok(())
     }
@@ -583,6 +597,7 @@ impl Files {
         path: &Path,
         overwrite: bool,
         document: &Document,
+        previews: &[Preview],
     ) -> Result<SavedAs, SaveError> {
         let real = resolved(path);
         self.refuse_app_file(&real, path)?;
@@ -596,7 +611,7 @@ impl Files {
             && let Some(design) = open.editable_design()
             && design.real == real
         {
-            design.file = write(&real, path, overwrite, document)?;
+            design.file = write(&real, path, overwrite, document, previews)?;
             design.found = None;
             // What it held is older than what was just saved.
             design.lock.saved();
@@ -607,7 +622,7 @@ impl Files {
             });
         }
         let lock = target_lock(&real, path)?;
-        let written = match write(&real, path, overwrite, document) {
+        let written = match write(&real, path, overwrite, document, previews) {
             Ok(written) => written,
             Err(error) => {
                 // Best effort: the error to show is the one above. Anything
@@ -735,19 +750,20 @@ fn target_lock(real: &Path, shown: &Path) -> Result<Lock, SaveError> {
     }
 }
 
-/// Writes `document` to `real`, shown to the user as `shown`, replacing
-/// what's there if `overwrite`. Written to where a symbolic link points, so
-/// the link stays.
+/// Writes `document` and `previews` to `real`, shown to the user as
+/// `shown`, replacing what's there if `overwrite`. Written to where a
+/// symbolic link points, so the link stays.
 fn write(
     real: &Path,
     shown: &Path,
     overwrite: bool,
     document: &Document,
+    previews: &[Preview],
 ) -> Result<DocumentFile, SaveError> {
     let written = if overwrite {
-        DocumentFile::replace(real, document, &[])
+        DocumentFile::replace(real, document, previews)
     } else {
-        DocumentFile::create(real, document, &[])
+        DocumentFile::create(real, document, previews)
     };
     written.map_err(|error| match error {
         crate::vrdp::Error::Io(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
@@ -755,6 +771,12 @@ fn write(
         }
         error => error.into(),
     })
+}
+
+/// The thumbnail of the design at `path`, if it has one that decodes.
+fn thumbnail(path: &Path) -> Option<Image> {
+    let preview = DocumentFile::read_preview(path, |preview| preview.is(thumbnail::MEDIA_TYPE))?;
+    thumbnail::decode(&preview)
 }
 
 /// The file name of `path`, for messages.

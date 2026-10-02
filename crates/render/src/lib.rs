@@ -5,14 +5,20 @@
 //! hosted inside an iced shader widget, an offscreen texture for thumbnails,
 //! or a headless test.
 
+// The preview's read back callback holds a `wgpu::Buffer`, and asking
+// whether it's `Send` goes deeper than the default limit.
+#![recursion_limit = "256"]
+
 mod camera;
 mod highlight;
+mod preview;
 mod renderer;
 mod scene;
 mod sketch;
 
 pub use camera::{Camera, Projection, View};
 pub use highlight::{Highlights, Vertex};
+pub use preview::{PreviewError, PreviewImage, PreviewShot, frame, render_preview};
 pub use renderer::{
     ClipRect, Colors, EDGE_WIDTH, Frame, HIDDEN_DASH, HIDDEN_EDGE_WIDTH, HOVER_RIM,
     HOVERED_EDGE_WIDTH, LINE_WIDTH, Pivot, PrepareError, Renderer, SELECTED_EDGE_WIDTH,
