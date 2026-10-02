@@ -485,7 +485,12 @@ extrude being set up) are regenerated the same way. See `agents/kernel.md`
 - **Tangencies.** Surfaces touching along a line leave corners of zero
   angle that no patch holds, and unions of solids meeting only along a line
   aren't manifolds: such operations fail (`Invalid`), or where refinement
-  along the line converges come out right with many patches. Coaxial walls
+  along the line converges come out right with many patches. Walls along
+  one direction are certified or joined line by line, but a union of walls
+  tangent within the tie distance, and walls overlapping by under a
+  quarter of the resolution, still refine until they run out of budget
+  (seconds); refusing such a union at once waits on an error kind for
+  results that aren't manifolds. Coaxial walls
   a little apart, or of different conics meeting smoothly, refine until
   they run out of budget.
 - **Revolved creases.** Creases into one quadrant of the meridian plane

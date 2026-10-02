@@ -1327,6 +1327,67 @@ fn a_body_that_cant_be_told_is_passed_over_or_listed() {
     assert_near(evaluation.bodies[1].solid.volume(), plate(8.0, 3.0));
 }
 
+/// Adds a cut through the example plate of a disc of `radius` whose
+/// centre is `distance` from the plate's hole's at `angle` from x. The
+/// cut's id.
+pub(crate) fn add_drilled(
+    editor: &mut Editor,
+    distance: f64,
+    angle: f64,
+    radius: f64,
+) -> FeatureId {
+    let extent = two_sides(editor.document(), "20", "20");
+    let center = DVec2::from_angle(angle) * distance;
+    add_extrude(
+        editor,
+        disc((center.x, center.y), radius),
+        extent,
+        Operation::Cut(Targets::default()),
+    )
+}
+
+/// A hole drilled tangent to the plate's hole touches the plate, so it
+/// is listed and the cut is decided by its boolean, within a small
+/// budget for `touches` (which used to run out of the whole budget and
+/// fail the cut "finding where it meets" the plate). Inside the hole,
+/// tangent to its wall, the cut is a no-op; outside it, the two holes
+/// would meet along a line, which no clean solid holds.
+#[test]
+fn a_hole_drilled_tangent_to_a_hole_is_decided_by_its_cut() {
+    for angle in [0.0, 0.7] {
+        let mut editor = Editor::new(Document::example());
+        let body = editor.document().bodies()[0].id;
+        let cut = add_drilled(&mut editor, 5.0, angle, 3.0);
+        let evaluation = evaluate_within(
+            editor.document(),
+            &mut Cache::default(),
+            Budget::new(200_000),
+        );
+        assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
+        assert_eq!(evaluation.touched, [(cut, vec![body])]);
+        assert_near(only_body(&evaluation).volume(), plate(8.0, 10.0));
+    }
+
+    let mut editor = Editor::new(Document::example());
+    let body = editor.document().bodies()[0].id;
+    let cut = add_drilled(&mut editor, 11.0, 0.7, 3.0);
+    let evaluation = evaluate_within(
+        editor.document(),
+        &mut Cache::default(),
+        Budget::new(200_000),
+    );
+    let [(failed, error)] = &evaluation.failed[..] else {
+        panic!("{:?}", evaluation.failed);
+    };
+    assert_eq!(*failed, cut);
+    assert!(
+        error.starts_with("cutting it from Body 1 leaves no clean solid"),
+        "{error}"
+    );
+    assert_eq!(evaluation.touched, [(cut, vec![body])]);
+    assert_near(evaluation.bodies[0].solid.volume(), plate(8.0, 10.0));
+}
+
 #[test]
 fn too_thin_at_the_finest_tolerance_suggests_none_finer() {
     // A strip 1e-7 mm wide: 10 resolutions at the finest tolerance, too

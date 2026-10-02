@@ -670,9 +670,15 @@ fn dragging_a_draft_reruns_only_the_draft() {
 /// The example with the pocket's sketch committed, the pocket's cut as a
 /// draft of revision 1, and the plate.
 fn pocket_drafted() -> (Editor, Draft, BodyId) {
+    drafted(crate::history::tests::add_pocket)
+}
+
+/// The example with the sketch of the extrude `add` adds committed, the
+/// extrude as a draft of revision 1, and the plate.
+fn drafted(add: impl FnOnce(&mut Editor) -> FeatureId) -> (Editor, Draft, BodyId) {
     let mut editor = Editor::new(Document::example());
     let mut probe = Editor::new(editor.document().clone());
-    let pocket = crate::history::tests::add_pocket(&mut probe);
+    let added = add(&mut probe);
     let [.., sketch, cut] = probe.document().features() else {
         unreachable!()
     };
@@ -686,7 +692,7 @@ fn pocket_drafted() -> (Editor, Draft, BodyId) {
     else {
         unreachable!()
     };
-    assert_eq!(cut.id, pocket);
+    assert_eq!(cut.id, added);
     editor.apply(editor.document().add_sketch(*plane)).unwrap();
     let feature = editor.document().features()[2].id;
     assert_eq!(feature, sketch.id);
@@ -771,6 +777,49 @@ fn a_cut_draft_is_answered_from_the_cache(regenerator: &mut Regenerator, rejoine
     let deeper = answered(regenerator.handle(regenerate_with(&editor, Some(draft))));
     assert_eq!(deeper.draft.unwrap().error, None);
     assert_eq!(regenerator.cache().counts().1, worked + 4);
+}
+
+/// A hole drafted tangent to the plate's hole and dragged deeper twice:
+/// whether the tool touches the plate is worked out again for each
+/// tool, and says it does, so the plate is listed and the cut decided by
+/// its boolean, never failed by the touch test. Inside the hole the cut
+/// is a no-op; outside it the holes would meet along a line, which the
+/// boolean refuses.
+#[test]
+fn a_tangent_hole_dragged_reruns_its_touch_test_which_holds() {
+    let refused = "cutting it from Body 1 leaves no clean solid";
+    for (distance, error) in [(5.0, None), (11.0, Some(refused))] {
+        let (editor, mut draft, body) =
+            drafted(|editor| crate::history::tests::add_drilled(editor, distance, 0.7, 3.0));
+        let mut regenerator = Regenerator::default();
+        let committed = answered(regenerator.handle(regenerate(&editor, None)));
+        for (revision, depth) in [(1, "20"), (2, "21"), (3, "22")] {
+            draft.revision = revision;
+            draft.extrude_mut().extent = crate::history::tests::two_sides(editor.document(), depth, "20");
+            let (_, before) = regenerator.cache().counts();
+            let answer =
+                answered(regenerator.handle(regenerate_with(&editor, Some(draft.clone()))));
+            let drafted = answer.draft.unwrap();
+            assert_eq!(drafted.revision, revision);
+            assert_eq!(drafted.touched, Some(vec![body]));
+            assert!(answer.failed.is_empty(), "{:?}", answer.failed);
+            let (_, worked) = regenerator.cache().counts();
+            match error {
+                // The tool, whether it touches, the cut and its mesh.
+                None => {
+                    assert_eq!(drafted.error, None);
+                    assert_eq!(worked, before + 4);
+                }
+                // The tool, whether it touches and the refused cut.
+                Some(error) => {
+                    let message = drafted.error.unwrap();
+                    assert!(message.starts_with(error), "{message}");
+                    assert_eq!(worked, before + 3);
+                    assert_eq!(answer.mesh, committed.mesh);
+                }
+            }
+        }
+    }
 }
 
 /// The model's mesh is joined once per scene: requests whose shown bodies

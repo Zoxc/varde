@@ -6298,7 +6298,8 @@ sampled points.
   with the line on a seam at `1e-3`), since `A` grown is two lines
   infinitely close, a group of four; overlaps under a quarter of the
   resolution (`1e-9`, `1e-7` at the default tolerance: the probe's
-  other 12), left to refinement; and coaxial walls `64` resolutions to a few
+  other 12), left to refinement (both in "Tangent unions and thin
+  overlaps run out", below, with repros); and coaxial walls `64` resolutions to a few
   thousandths apart over a millimetre or more (refined until their
   hulls part, as before: radii 1 and 1.0001 or 1.001 over 1 mm run out,
   and 1.004 the union; radii 1 and 1.00001, within the 64 resolutions,
@@ -6321,6 +6322,61 @@ sampled points.
   millions of units).
 - Merging restores only whole nodes of the refinement tree with no finer
   neighbour: pieces next to a cut stay as refined.
+- **Tangent unions and thin overlaps run out**: what joining ends
+  along one direction leaves refining to the budget (release, a loaded
+  machine, the default tolerance unless said):
+  - *Unions at a tie.* Walls tangent within the tie distance: `A` grown
+    by the perturbation and `B` are two lines infinitely close, so each
+    pair along the line has a group of four ends, which is never joined,
+    and the pairs refine until the budget runs out, though the exact
+    union touches along a line and is never a manifold. Unions of walls
+    overlapping by under a quarter of the resolution have two lines, but
+    not clear ones (see "Ends along one direction"), and refine alike.
+    On the probe `near_tangent_cylinders_at_the_default_tolerance` (unit
+    cylinders side by side, the placement with the seams on the line,
+    `z0` 0.5, and the one turned 0.3): the unions at gaps 0, `1e-12`
+    and `−1e-12` on both placements, `1e-9` on the seam placement and
+    `−1e-9` on both (9, at a tie), and `−1e-7` on both (2), each 2.7 to
+    4.2 million units, 1.8 to 6.6 s, `TooComplex` or, where repair gets
+    the refused union in time, `Invalid` (`Hull`, `EdgeNeighbours`). In
+    the regen (`tangent_discs` in `regen/src/history/tests.rs`: a disc
+    of radius 1 joined 1 mm tall beside a round body of radius 1):
+    every join at fit `1e-4` (angles 0, 0.3 and 0.7, 3.3 to 4.3 s) and
+    at `1e-3` the join with the line on the seam (angle 0, 2.4 s), "too
+    complex". The fix waits on an error kind for results that aren't
+    manifolds (today they fail `check` as `Invalid`, or run out):
+    `refined` would return it for a union (`grow`) one of whose pairs on
+    walls along one direction has a group of four ends within the tie
+    distance, instead of splitting it, with its wording merged into that
+    error's. Measure it first: it must turn no `Ok` of the seeded suite
+    into an error, and the 9 unions at a tie and the regen joins should
+    then fail within thousands of units (the 2 at `−1e-7`, if they have
+    no such group, stay with the overlaps below). The near-tangent test
+    allows every union within the resolution to fail, so it holds
+    either way.
+  - *Overlaps under a quarter of the resolution.* Differences and
+    intersections of walls overlapping by less than a clear line needs
+    (`1e-9` and `1e-7` at the default tolerance) have ends that aren't
+    joined, and refinement settles them slowly or not at all: the
+    probe's other 12 over a million units. At `−1e-9` all six fail
+    (`TooComplex` on the seam placement after 1.7 to 4.1 s,
+    `Inconsistent` on the turned one after 2.9 million units); at
+    `−1e-7` five work after 2.7 to 3.7 million units (1.2 to 3.9 s,
+    volumes right) and `a less b` on the seam placement runs out. Not
+    covered by the union's fix (the operands do overlap); they wait on
+    a redesign of ties at tangencies.
+  - *A hole drilled tangent to a hole from outside, on the seam*: the
+    example plate (60 × 40 × 10, a hole of radius 8 at the origin) cut
+    through by a disc of radius 3 centred 11 from the origin at angle 0
+    (`add_drilled(&mut editor, 11.0, 0.0, 3.0)` in the regen's history
+    tests) runs out in 4 s; at angles 0.3 and 0.7 it is refused as "no
+    clean solid" in 0.3 to 0.6 s. Not diagnosed further.
+
+  Repros: `cargo test -p varde-kernel --release
+  near_tangent_cylinders_at_the_default_tolerance -- --ignored
+  --nocapture` prints each operation's result, units and time (`NEAR`)
+  and the list over a million units; the regen cases evaluate those
+  documents with `evaluate` and a fresh `Cache`.
 
 ## Bodies from the history (`varde-document`, `varde-regen`)
 
@@ -6426,7 +6482,16 @@ and the later ones still run.
   out (every tangent disc from the coarsest tolerance to `1e-4`, with
   the walls along one direction certified) and otherwise fails naming
   the body ("cutting it from Body 1 can't be worked out…", "…is too
-  complex…"), changing nothing. So a tool that meets one body and grazes another
+  complex…"), changing nothing; a hole drilled tangent to a hole's wall
+  from inside it is a no-op too, and one tangent to it from outside
+  (the holes meeting along a line) "leaves no clean solid". `touches`
+  answers a tangency within milliseconds (one counting and its search,
+  see "Touches"), so a draft dragged with its tool tangent to a body
+  asks it again for each tool and lists the body, and the draft is
+  decided by its boolean, never failed by the touch test (it used to
+  run out of the whole budget on every draft change and fail "finding
+  where it meets Body 1"; `a_hole_drilled_tangent_to_a_hole_is_decided_by_its_cut`,
+  `a_tangent_hole_dragged_reruns_its_touch_test_which_holds`). So a tool that meets one body and grazes another
   along a line fails as a whole (it used to skip the grazed body) until
   that body is taken out. Where a feature has more than one target, a
   target's failing boolean (or an intersect emptying it) ends its
@@ -6788,7 +6853,19 @@ off it in 0.1 to 2 s (most of it repairing the refused union); a
 join with the line on the seam (`Inconsistent` at `1e-1` and `1e-2`,
 `TooComplex` from the default) and every join at `1e-4` (1.5 to 2.8
 s, `TooComplex`) are as before: the pairs along the line have ends
-there. An operation
+there, and joining them line by line leaves those of a union at a tie
+alone (see "Tangent unions and thin overlaps run out" in the
+booleans' known gaps; measured since, on a loaded machine: the seam
+joins "can't be worked out" in 0.2 to 0.55 s at `1e-1` and `1e-2`,
+run out in 2.4 s at `1e-3`, and every join at `1e-4` runs out in 3.3 to
+4.3 s, the cuts no-ops in 7 to 490 ms). Holes drilled tangent to the
+example plate's hole (radius 8; a disc of radius 3 through it, at
+angles 0, 0.3 and 0.7, release): from inside, no-ops in 0.06 to 2 s;
+from outside, refused as "no clean solid" in 0.3 to 0.6 s off the
+seam, and with the line on the seam (angle 0) out of budget in 4 s, a
+difference at a tie on a seam that refinement doesn't settle. In each
+the touch test is milliseconds, so the time per draft change is the
+boolean's, cached per tool. An operation
 that runs out of budget takes about 2–3.5 s on one native thread and holds the
 single-threaded web worker longer, with drafts queued behind it (latest
 wins, so only the newest waits). The cache's sizes are estimates
