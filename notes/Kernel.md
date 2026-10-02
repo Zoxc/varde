@@ -292,7 +292,9 @@ plane.
    triangle soup: collapse edges of about zero length, flip triangles of
    zero height, move a vertex of a sheet folded onto a flush face (its
    two sides triangulated differently) within its star's planes so the
-   sheet cancels, drop parts enclosing no volume, straighten and dissolve
+   sheet cancels (as a last resort; should the result then fail the
+   check, the clean-up runs again without it), drop parts enclosing no
+   volume, straighten and dissolve
    seams where flush caps with curved rims meet in one plane (merging the
    faces, their names becoming aliases), flip slivers on plane faces
    towards Delaunay, and refine the plane faces the boolean cut for their

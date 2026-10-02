@@ -139,16 +139,19 @@ struct Cleaner<'a> {
 /// Cleans `soup`: see the module docs. `small` is the size below which
 /// edges and heights count as zero, and `thin` the height below which a
 /// triangle is flipped into its neighbour on the same face (which keeps
-/// every triangle on its face). Fails as too complex where a collapse
-/// leaves a triangle further than the fit tolerance off its face.
+/// every triangle on its face). Folded sheets are unfolded ([`fold`])
+/// only if `unfold`; gives whether any was. Fails as too complex where a
+/// collapse leaves a triangle further than the fit tolerance off its
+/// face.
 pub(super) fn clean(
     soup: &mut Soup,
     faces: &mut Vec<Face>,
     small: f64,
     thin: f64,
+    unfold: bool,
     tol: &Tolerance,
     work: &mut Work,
-) -> Result<(), KernelError> {
+) -> Result<bool, KernelError> {
     let planar = faces
         .iter()
         .map(|f| matches!(f.surface, Surface::Plane { .. }))
@@ -180,6 +183,7 @@ pub(super) fn clean(
         small,
         thin,
     };
+    let mut unfolded = false;
     for _ in 0..ROUNDS {
         work.spend(c.soup.tris.len())?;
         let mut changed = false;
@@ -209,9 +213,10 @@ pub(super) fn clean(
         }
         // Last resort, where nothing else changed: folded sheets whose
         // two sides are triangulated differently.
-        if !changed {
+        if !changed && unfold {
             work.spend(c.soup.tris.len())?;
             changed = c.unfold();
+            unfolded |= changed;
         }
         if !changed {
             break;
@@ -250,7 +255,7 @@ pub(super) fn clean(
     soup.tris.retain(|_| *keep.next().expect("a flag"));
     let mut keep = alive.iter();
     soup.made.retain(|_| *keep.next().expect("a flag"));
-    Ok(())
+    Ok(unfolded)
 }
 
 impl Cleaner<'_> {

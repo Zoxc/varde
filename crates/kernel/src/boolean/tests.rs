@@ -934,6 +934,200 @@ fn grid_boxes_folded_sheets() {
     }
 }
 
+#[test]
+fn grid_boxes_folded_sheets_on_turned_frames() {
+    // Chains of grid boxes extruded on one turned and moved frame (from
+    // a seeded run), so their faces keep their plane tags but are flush
+    // only to rounding: each last step left a sheet folded onto a flush
+    // face (`Fold`, or the hull check) until the clean-up unfolded it,
+    // turning triangles over onto faces of their way, a hair off the
+    // star's plane. The turned grid boxes of the tests above claim no
+    // surfaces, which the rule leaves alone.
+    use crate::profile::tests::rect;
+    use crate::{Frame, Profile, extrude};
+    use Op::{Difference as D, Intersection as I, Union as U};
+    type Step = (Op, [i32; 3], [i32; 3]);
+    type Chain = ([f64; 4], [f64; 3], ([i32; 3], [i32; 3]), &'static [Step]);
+    let chains: [Chain; 5] = [
+        (
+            [
+                0.5023521821698758,
+                -0.1780177652138604,
+                -0.06758011658996597,
+                0.8434363569227458,
+            ],
+            [
+                -23.084401332986687,
+                32.466619415219384,
+                -0.16877942517028544,
+            ],
+            ([3, 0, 5], [1, 7, 2]),
+            &[(U, [2, 2, 4], [5, 3, 1]), (D, [4, 1, 1], [1, 3, 4])],
+        ),
+        (
+            [
+                -0.41213562876180715,
+                0.22182897020007855,
+                0.06923044229435728,
+                0.8809899416819753,
+            ],
+            [-63.004230059066366, -94.38223617030962, 76.1774928746695],
+            ([0, 4, 3], [7, 2, 4]),
+            &[(U, [3, 2, 3], [4, 4, 3]), (U, [5, 4, 0], [2, 2, 3])],
+        ),
+        (
+            [
+                0.5108323374739001,
+                0.3300633684368514,
+                -0.17828588009453525,
+                -0.7735131807319043,
+            ],
+            [-46.65199374376567, 12.548537585258131, -52.433518810422505],
+            ([3, 4, 2], [1, 1, 3]),
+            &[(U, [4, 3, 1], [3, 2, 3]), (I, [4, 2, 3], [1, 5, 3])],
+        ),
+        (
+            [
+                0.25370145257231175,
+                0.16921646175829835,
+                -0.11027560823277095,
+                0.9459601747756582,
+            ],
+            [-51.33443578067143, -54.98174984730111, 60.233360154727336],
+            ([1, 5, 5], [3, 2, 1]),
+            &[
+                (U, [1, 1, 0], [5, 4, 6]),
+                (U, [1, 5, 2], [3, 2, 4]),
+                (U, [0, 4, 5], [3, 1, 2]),
+            ],
+        ),
+        (
+            [
+                0.3055451280551021,
+                0.6287398789296482,
+                -0.23645682453364247,
+                0.6748455449188271,
+            ],
+            [98.86112526908661, 9.914054616353269, 6.898593799041095],
+            ([4, 4, 5], [2, 2, 2]),
+            &[(U, [4, 3, 2], [1, 1, 4]), (I, [2, 4, 1], [3, 2, 6])],
+        ),
+    ];
+    let at = |i: i32| -0.5 + 0.5 * f64::from(i);
+    for (k, (q, shift, start, steps)) in chains.into_iter().enumerate() {
+        let q = glam::DQuat::from_array(q);
+        let frame = Frame {
+            origin: DVec3::from_array(shift),
+            x: (q * DVec3::X).normalize(),
+            y: (q * DVec3::Y).normalize(),
+        };
+        let framed = |(min, size): ([i32; 3], [i32; 3]), feature| {
+            let lo = glam::DVec2::new(at(min[0]), at(min[1]));
+            let hi = glam::DVec2::new(at(min[0] + size[0]), at(min[1] + size[1]));
+            let profile = Profile {
+                loops: vec![rect(lo, hi, 0)],
+            };
+            let solid = extrude(
+                &profile,
+                &frame,
+                at(min[2]),
+                at(min[2] + size[2]),
+                feature,
+                &TOL,
+                &Budget::DEFAULT,
+            )
+            .unwrap();
+            (solid, grid_box(min, size).1)
+        };
+        let (mut s, mut c) = framed(start, 1);
+        for (i, &(op, min, size)) in steps.iter().enumerate() {
+            let (b, cb) = framed((min, size), 2 + i as u64);
+            c = combine(&c, &cb, op);
+            s = turned_against_cells(&format!("chain {k} step {i}"), &s, &b, op, &c)
+                .unwrap_or_else(|e| panic!("chain {k} step {i}: {e}"));
+            faces_face_out(&s);
+        }
+    }
+}
+
+#[test]
+fn grid_boxes_a_hair_off_each_other_keep_their_result_when_unfolding_fails() {
+    // Grid boxes each extruded on its own frame, turned and moved alike
+    // but for a hair (about 1e-9 apart), less one and then another. The
+    // second leaves a triangle facing against its plane face on each side
+    // of a vertex; unfolding the vertex takes one out and leaves the
+    // other where the Delaunay flips no longer mend it, which the check
+    // refused (`VertexNeighbours`). The clean-up without the rule gives
+    // the result.
+    use crate::profile::tests::rect;
+    use crate::{Frame, Profile, extrude};
+    let at = |i: i32| -0.5 + 0.5 * f64::from(i);
+    let framed = |min: [i32; 3], size: [i32; 3], frame: [[f64; 3]; 3], feature| {
+        let frame = Frame {
+            origin: DVec3::from_array(frame[0]),
+            x: DVec3::from_array(frame[1]),
+            y: DVec3::from_array(frame[2]),
+        };
+        let lo = glam::DVec2::new(at(min[0]), at(min[1]));
+        let hi = glam::DVec2::new(at(min[0] + size[0]), at(min[1] + size[1]));
+        let profile = Profile {
+            loops: vec![rect(lo, hi, 0)],
+        };
+        let solid = extrude(
+            &profile,
+            &frame,
+            at(min[2]),
+            at(min[2] + size[2]),
+            feature,
+            &TOL,
+            &Budget::DEFAULT,
+        )
+        .unwrap();
+        (solid, grid_box(min, size).1)
+    };
+    let (a, ca) = framed(
+        [3, 1, 2],
+        [1, 5, 3],
+        [
+            [-77.83999764203944, -39.74511370412731, -25.954402152041855],
+            [0.5048189834550261, -0.8611838342182273, 0.05933125335459444],
+            [0.6550176505623232, 0.4269187505317222, 0.6234518889988606],
+        ],
+        1,
+    );
+    let (b, cb) = framed(
+        [4, 4, 1],
+        [2, 1, 5],
+        [
+            [-77.83999764173862, -39.74511370319701, -25.954402149762235],
+            [0.5048189834352008, -0.8611838342012809, 0.05933125376925241],
+            [0.6550176504534279, 0.42691875075858077, 0.6234518889579244],
+        ],
+        2,
+    );
+    let (c, cc) = framed(
+        [2, 2, 4],
+        [2, 1, 1],
+        [
+            [-77.83999764944019, -39.7451137082906, -25.954402156326395],
+            [0.5048189835852241, -0.8611838341317449, 0.05933125350208318],
+            [0.6550176504170823, 0.42691875069793017, 0.6234518890376416],
+        ],
+        3,
+    );
+    let first = combine(&ca, &cb, Op::Difference);
+    let ab = run(&a, &b, Op::Difference).unwrap();
+    assert!((ab.volume() - cells_volume(&first)).abs() < 1e-5);
+    let want = cells_volume(&combine(&first, &cc, Op::Difference));
+    let abc = run(&ab, &c, Op::Difference).unwrap();
+    assert!(
+        (abc.volume() - want).abs() < 1e-5,
+        "{} not {want}",
+        abc.volume()
+    );
+    faces_face_out(&abc);
+}
+
 /// The tetrahedron on four points, facing out.
 fn tetrahedron(p: [DVec3; 4]) -> Solid {
     let n = (p[1] - p[0]).cross(p[2] - p[0]);

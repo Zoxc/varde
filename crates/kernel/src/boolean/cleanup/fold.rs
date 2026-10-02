@@ -136,9 +136,13 @@ impl Cleaner<'_> {
     /// goes on: its own, or where it turned over, or now faces against
     /// its face's plane, a face of the star in its plane facing its way.
     /// `None` where it turned over in a plane that isn't folded, no face
-    /// of the star faces its way, or it ends further off its face's plane
-    /// than it was (or than `small`, if more): the collapse isn't made. A
-    /// triangle of zero height keeps its face for the rounds to take out.
+    /// of the star faces its way, it ends further off its face's plane
+    /// than it was (or than `small`, if more), or it doesn't face along
+    /// that plane's normal (a sliver no higher than about twice `small`
+    /// can lie within `small` of the star's plane steeply, facing its
+    /// way by the star's plane but not by its face's, a hair off): the
+    /// collapse isn't made. A triangle of zero height keeps its face for
+    /// the rounds to take out.
     pub(super) fn retag(&self, star: &Star, t: u32, old: [u32; 3]) -> Option<u32> {
         let face = self.soup.faces[t as usize];
         let new = self.soup.tris[t as usize];
@@ -163,7 +167,9 @@ impl Cleaner<'_> {
                 face
             }
         };
-        (self.off_face(new, to) <= self.off_face(old, face).max(self.small)).then_some(to)
+        let along = self.height(new).0 <= self.small
+            || self.planes[to as usize].is_none_or(|(m, _)| self.normal(new).dot(m) > 0.0);
+        (along && self.off_face(new, to) <= self.off_face(old, face).max(self.small)).then_some(to)
     }
 
     /// How far the furthest corner of `tri` is off the plane of `face`
@@ -236,5 +242,215 @@ impl Cleaner<'_> {
             }
         }
         changed
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::Soup;
+    use super::*;
+    use crate::boolean::assemble::Curves;
+
+    // A unit box whose top, at z = 1, is a fan round `V` (at x = 1.3,
+    // outside the box) over the pentagon D A B E C (E halfway along the
+    // top edge of the wall at x = 1): the two triangles round `V` over
+    // B E C face down, a folded sheet, and lie on face 1, a plane facing
+    // down (the sheet's other side, from the other operand); the rest
+    // of the top is face 0, facing up. Ids put D first, so the collapse
+    // onto D (which turns the two over: every candidate leaves the
+    // pentagon's area, and ties go by id) is tried first.
+    const D: u32 = 0;
+    const A: u32 = 1;
+    const B: u32 = 2;
+    const E: u32 = 3;
+    const C: u32 = 4;
+    const V: u32 = 5;
+    const SMALL: f64 = 1e-9;
+
+    fn folded_box() -> Soup {
+        let p = DVec3::new;
+        let pos = vec![
+            p(0.0, 1.0, 1.0),
+            p(0.0, 0.0, 1.0),
+            p(1.0, 0.0, 1.0),
+            p(1.0, 0.5, 1.0),
+            p(1.0, 1.0, 1.0),
+            p(1.3, 0.5, 1.0),
+            p(0.0, 0.0, 0.0),
+            p(1.0, 0.0, 0.0),
+            p(1.0, 1.0, 0.0),
+            p(0.0, 1.0, 0.0),
+        ];
+        let (a, b, c, d) = (6, 7, 8, 9);
+        let tris: Vec<([u32; 3], u32)> = vec![
+            ([V, A, B], 0),
+            ([V, B, E], 1),
+            ([V, E, C], 1),
+            ([V, C, D], 0),
+            ([V, D, A], 0),
+            ([b, c, E], 2),
+            ([c, C, E], 2),
+            ([b, E, B], 2),
+            ([a, b, B], 3),
+            ([a, B, A], 3),
+            ([c, d, D], 4),
+            ([c, D, C], 4),
+            ([a, A, D], 5),
+            ([a, D, d], 5),
+            ([a, c, b], 6),
+            ([a, d, c], 6),
+        ];
+        Soup {
+            pos,
+            faces: tris.iter().map(|t| t.1).collect(),
+            made: vec![true; tris.len()],
+            tris: tris.into_iter().map(|t| t.0).collect(),
+            curves: Curves::new(),
+            sources: (0..7).collect(),
+            absorbed: Vec::new(),
+        }
+    }
+
+    /// The planes of [`folded_box`]'s faces: the top's two, the walls'
+    /// and the bottom's.
+    fn planes() -> Vec<Option<Plane>> {
+        let z = DVec3::Z;
+        [
+            (z, 1.0),
+            (-z, -1.0),
+            (DVec3::X, 1.0),
+            (-DVec3::Y, 0.0),
+            (DVec3::Y, 1.0),
+            (-DVec3::X, 0.0),
+            (-z, 0.0),
+        ]
+        .into_iter()
+        .map(Some)
+        .collect()
+    }
+
+    fn cleaner(soup: &mut Soup, planes: Vec<Option<Plane>>) -> Cleaner<'_> {
+        let mut around = vec![Vec::new(); soup.pos.len()];
+        for (t, tri) in soup.tris.iter().enumerate() {
+            for &v in tri {
+                around[v as usize].push(t as u32);
+            }
+        }
+        Cleaner {
+            alive: vec![true; soup.tris.len()],
+            planar: planes.iter().map(Option::is_some).collect(),
+            soup,
+            around,
+            recurved: Vec::new(),
+            planes,
+            joined: Vec::new(),
+            small: SMALL,
+            thin: SMALL,
+        }
+    }
+
+    /// The living triangles on `face`, their corners sorted.
+    fn on_face(c: &Cleaner, face: u32) -> Vec<[u32; 3]> {
+        let mut out: Vec<[u32; 3]> = (0..c.soup.tris.len())
+            .filter(|&t| c.alive[t] && c.soup.faces[t] == face)
+            .map(|t| {
+                let mut tri = c.soup.tris[t];
+                tri.sort_unstable();
+                tri
+            })
+            .collect();
+        out.sort_unstable();
+        out
+    }
+
+    #[test]
+    fn a_folded_top_is_unfolded_and_turned_triangles_change_face() {
+        let mut soup = folded_box();
+        let mut c = cleaner(&mut soup, planes());
+        assert!(c.folded(V).is_some());
+        assert!(c.unfold());
+        // Onto D: the two triangles that faced down turned up, onto the
+        // top's face, which now has the pentagon, facing up.
+        assert_eq!(on_face(&c, 0), [[D, A, B], [D, B, E], [D, E, C]]);
+        assert!(on_face(&c, 1).is_empty());
+        for t in 0..c.soup.tris.len() {
+            if c.alive[t] && c.soup.faces[t] == 0 {
+                assert!(c.normal(c.soup.tris[t]).z > 0.0);
+            }
+        }
+        assert!(c.folded(D).is_none());
+    }
+
+    #[test]
+    fn a_star_with_a_triangle_off_every_plane_face_is_left() {
+        // The face facing down claims no plane (as a curved face's
+        // triangle, straight-sided and thin, can lie in the star's
+        // plane): moving along the plane could take it off its surface.
+        let mut soup = folded_box();
+        let mut planes = planes();
+        planes[1] = None;
+        let mut c = cleaner(&mut soup, planes);
+        assert!(c.folded(V).is_none());
+        assert!(!c.unfold());
+        assert_eq!(on_face(&c, 1).len(), 2);
+    }
+
+    #[test]
+    fn a_steep_sliver_never_stays_on_a_face_it_faces_against() {
+        // A sliver 1.4 short lengths high, standing steeply within that
+        // of the star's plane (z = 1), faces up by it, as the top's face
+        // does, but against the top's face once that is tilted 0.2 rad
+        // about x: it can't stay on it. Untilted, it stays.
+        let p1 = DVec3::new(0.2, 0.2, 1.0);
+        let (l, s) = (0.1, SMALL);
+        let sliver = [10, 11, 12];
+        for tilt in [-0.2f64, 0.0] {
+            let (sin, cos) = crate::trig::sin_cos(tilt);
+            let m = DVec3::new(0.0, sin, cos);
+            let mut tilted = planes();
+            tilted[0] = Some((m, m.dot(p1)));
+            let mut soup = folded_box();
+            soup.pos.extend([
+                p1,
+                p1 + DVec3::new(l, 0.0, 0.0),
+                p1 + DVec3::new(l / 2.0, 0.1 * s, -1.4 * s),
+            ]);
+            let c = cleaner(&mut soup, tilted);
+            let star = c.folded(V).expect("folded");
+            assert!(c.height(sliver).0 > SMALL);
+            assert!(c.normal(sliver).z > 0.0);
+            assert_eq!(c.normal(sliver).dot(m) > 0.0, tilt == 0.0);
+            // Triangle 0 ([V, A, B], on the top's face) as it.
+            c.soup.tris[0] = sliver;
+            let want = (tilt == 0.0).then_some(0);
+            assert_eq!(c.retag(&star, 0, sliver), want, "tilted {tilt}");
+        }
+    }
+
+    #[test]
+    fn a_turned_triangle_never_goes_onto_a_face_a_hair_off() {
+        // The top's face tilted about the edge D A by 10 times the short
+        // length over the box: the triangles turned onto it by the
+        // collapse onto D (or onto A) would end further off it than they
+        // were off theirs, so the vertex goes onto B, where nothing turns
+        // and the triangles kept on the top come no further off it.
+        let s = 10.0 * SMALL;
+        let n = DVec3::new(-s, 0.0, 1.0);
+        let len = n.length();
+        let mut planes = planes();
+        planes[0] = Some((n / len, 1.0 / len));
+        let mut soup = folded_box();
+        let mut c = cleaner(&mut soup, planes);
+        let before: f64 = (0..c.soup.tris.len() as u32)
+            .filter(|&t| c.soup.faces[t as usize] == 0)
+            .map(|t| c.off_face(c.soup.tris[t as usize], 0))
+            .fold(0.0, f64::max);
+        assert!(c.unfold());
+        assert_eq!(on_face(&c, 0), [[D, A, B], [D, B, C]]);
+        for t in 0..c.soup.tris.len() as u32 {
+            if c.alive[t as usize] && c.soup.faces[t as usize] == 0 {
+                assert!(c.off_face(c.soup.tris[t as usize], 0) <= before);
+            }
+        }
     }
 }

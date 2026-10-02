@@ -2990,7 +2990,7 @@ elsewhere (see "Cutting curved faces").
 | `boolean/triangulate.rs` | a face's kept loops in its parameter domain into triangles, curved sides' corners, Steiner points |
 | `boolean/cleanup.rs` | collapsing and flipping the degenerate triangles flush operands leave |
 | `boolean/cleanup/seams.rs` | curved edges between two triangles in one plane: straightened, regions triangulated again, the plane faces they joined merged (for the sliver flips after them) |
-| `boolean/cleanup/fold.rs` | sheets folded onto a flush face, their two sides triangulated differently: the folded vertex moved within its star's planes |
+| `boolean/cleanup/fold.rs` | sheets folded onto a flush face, their two sides triangulated differently: the folded vertex moved within its star's planes; its tests on a box whose top is folded |
 | `boolean/cleanup/quality.rs` | refining the plane faces the boolean cut for their triangles' shapes |
 | `boolean/tests.rs` | boxes in every flush, edge-on and vertex-on configuration, tori, determinism |
 | `boolean/curved_tests.rs` | cylinders and boxes (exact), crossing cylinders, a free surface, a saddle, extrudes, chains, merging, random bars, walls over arcs with level ends |
@@ -4432,15 +4432,41 @@ before the mesh is built, at most 64 rounds:
   there is none the collapse isn't made, so plane tags stay true for
   repair; nor is it where a triangle ends further off its face's plane
   than it was (or than the short length), as one could on a face a hair
-  off the star's plane. The scan goes over the vertices in id order and
-  is charged the soup's size, as a round is (on a plate with 64 square
-  pockets, 8 flush bars and 8 holes it took under 1 % of the clean-up). Chained grid boxes (random half-grid
+  off the star's plane, nor where a proper triangle ends facing against
+  the normal of its face's plane (a sliver no higher than about twice
+  the short length can lie that close to the star's plane steeply,
+  facing its way by the star's plane but not by its face's). The scan
+  goes over the vertices in id order and is charged the soup's size, as
+  a round is (on a plate with 64 square pockets, 8 flush bars and 8
+  holes it took under 1 % of the clean-up). Chained grid boxes (random half-grid
   boxes, chains of five, as `grid_boxes_chained`; seeds 1 and 3–29,
   140 000 steps): 11 failed on a manifold result before, 1 now (a hull
   failure, not a fold: see Known gaps), none new and no wrong volume;
   the `Invalid` counts where the result isn't a manifold are unchanged.
   The seeded chains of parts went from 201 to 203 of 240, every other
   seeded tally as before.
+  The rule needs plane tags, so the turned grid boxes of the tests,
+  which claim no surfaces, never meet it; boxes extruded on a turned or
+  tilted frame keep theirs, flush only to rounding, and there it mends
+  about 20 of 12 700 chained steps that failed. On boxes each turned a
+  hair (`1e-11` to `1e-7` rad) off the others it fires in 1 step in 13
+  and mends about 370 of 12 600. There it once left a soup the check
+  refused (`VertexNeighbours`) that the clean-up without it would have
+  mended: a triangle faced against its plane face on each side of a
+  vertex, unfolding took out one, and the Delaunay flips that took out
+  both no longer could. So a boolean whose result fails the check
+  (`Invalid`) after the rule fired is cleaned again without it, from a
+  copy of the soup taken before the clean-up, and the first error
+  stands if that fails too: the rule never loses a result the clean-up
+  without it gives (budget allowing). Over 680 000 steps of chains on
+  such frames (boxes, cylinders on a quarter grid, prisms over lattice
+  polygons; at the origin, far off, turned, tilted, a hair off, at a
+  hundredth and a hundred times the size), the results with the rule
+  were within `4e-8` of the volumes without it where both worked, kept
+  the volume identities and the cells' volumes, left no plane face's
+  triangle further off its plane or facing against it more often than
+  without it, and were the same bits at 1 and 8 threads; every budget
+  gave the full result or `TooComplex`.
 - **Drop** connected parts enclosing no volume (at most an eighth of the
   resolution times their area): what is left of flush faces meeting.
   The volume counts the triangles' curved sides (each triangle with one
@@ -5340,6 +5366,19 @@ to 72 of its 96 operations and left the others as they were.
   clean-up ("Unfold"); one where every collapse onto the folded vertex
   leaves a pinch (two vertex ids at one point) would still fail, as one
   did before other fixes, but none was seen in these runs.
+- **Flush faces a hair off each other: a triangle against its tag.**
+  Grid boxes extruded each on its own frame, the frames turned alike but
+  for `1e-11` to `1e-7` rad, fail about 1 operation in 9 (`Invalid`),
+  and about 1 in 500 comes out with a triangle facing against its plane
+  face's normal: the volume is right and the check passes in release
+  builds (a plane tag is a distance), but debug builds stop at the check
+  of the faces' forms. The triangle comes so out of assembly (one
+  operand's flush side carrying the other's face, turned the other way),
+  not out of the clean-up. For example, on frames at about
+  `(44.37, −9.08, −6.46)` with `x ≈ (0.7455, −0.6157, 0.2553)` and
+  `y ≈ (−0.5521, −0.7850, −0.2812)`, the box at `[0,2,0]` of size
+  `[6,2,3]` united with `[3,3,0]`+`[2,4,3]` less `[0,3,1]`+`[1,3,5]`
+  (each frame a hair from those values).
 - **Flush faces after rounding**: flat solids flush in exact arithmetic
   but turned and moved work (2 653 of 2 700 turned grid boxes'
   operations, 349 of 359 steps of turned chains); the rest fail as
@@ -7203,3 +7242,10 @@ parameter, or a split outside the patch bounds),
   ("At a turn"), which the groove needed. The faces' and ends' caps
   are the plain caps (`Mode::PLAIN`, then `Mode::FLAT_CORNERS_PLAIN`),
   without the extrude's quality refinement.
+- **The fold rule falls back to the clean-up without it.** Its plan
+  kept the rule safe by running it last and only where the area round
+  the vertex drops; on faces a hair off each other that still lost a
+  result the clean-up without it gave (1 in about 440 000 steps of
+  chains on such frames), so a result that fails the check after the
+  rule fired is made again without it ("Unfold"). The soup is copied
+  before every clean-up for it.

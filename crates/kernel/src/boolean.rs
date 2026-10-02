@@ -220,10 +220,43 @@ pub fn boolean(
         (true, _, _) | (_, true, _) => return Ok(Solid::empty()),
         _ => {}
     }
-    let mesh = unchecked(a, b, op, tol, &mut work)?;
+    let (soup, faces) = assembled(a, b, op, tol, &mut work)?;
+    // The clean-up's last resort, unfolding sheets folded onto a flush
+    // face, can leave a soup that fails where the clean-up without it
+    // would have mended it by other means (Delaunay flips on a face a
+    // hair off another): then the result is the one without it, if that
+    // passes, so the rule never loses a result.
+    let kept = (soup.clone(), faces.clone());
+    let mut unfolded = false;
+    match checked(a, b, op, soup, faces, true, &mut unfolded, tol, &mut work) {
+        Err(KernelError::Invalid(e)) if unfolded => {
+            let (soup, faces) = kept;
+            checked(a, b, op, soup, faces, false, &mut unfolded, tol, &mut work)
+                .map_err(|_| KernelError::Invalid(e))
+        }
+        result => result,
+    }
+}
+
+/// The result of the assembled `soup` and `faces`, cleaned (unfolding
+/// folded sheets if `unfold`, and setting `unfolded` if it did),
+/// repaired and checked.
+#[allow(clippy::too_many_arguments)]
+fn checked(
+    a: &Solid,
+    b: &Solid,
+    op: Op,
+    soup: cleanup::Soup,
+    faces: Vec<Face>,
+    unfold: bool,
+    unfolded: &mut bool,
+    tol: &Tolerance,
+    work: &mut Work,
+) -> Result<Solid, KernelError> {
+    let mesh = cleaned(a, b, op, soup, faces, unfold, unfolded, tol, work)?;
     // Faces of one surface that meet merge, so a flush join leaves no
     // line between the two operands' pieces of a plane or cylinder.
-    Solid::finished(mesh, tol, &mut work)
+    Solid::finished(mesh, tol, work)
 }
 
 #[cfg(test)]
@@ -235,6 +268,7 @@ thread_local! {
 }
 
 /// The result's mesh, before repair and the check.
+#[cfg(test)]
 fn unchecked(
     a: &Solid,
     b: &Solid,
@@ -242,11 +276,23 @@ fn unchecked(
     tol: &Tolerance,
     work: &mut Work,
 ) -> Result<Mesh, KernelError> {
+    let (soup, faces) = assembled(a, b, op, tol, work)?;
+    cleaned(a, b, op, soup, faces, true, &mut false, tol, work)
+}
+
+/// The result's triangles and faces, before the clean-up.
+fn assembled(
+    a: &Solid,
+    b: &Solid,
+    op: Op,
+    tol: &Tolerance,
+    work: &mut Work,
+) -> Result<(cleanup::Soup, Vec<Face>), KernelError> {
     #[cfg(test)]
     THIN_ACROSS.set((0, 0));
     let (ia, ib) = (Input::new(a.mesh(), tol), Input::new(b.mesh(), tol));
     let grow = op == Op::Union;
-    let (mut soup, faces) = if ia.curved || ib.curved {
+    let (soup, faces) = if ia.curved || ib.curved {
         // Counted and decided pair by pair, the operands refined where a
         // pair needs it.
         let refined = pairs::refined(a.mesh(), b.mesh(), grow, tol, work)?;
@@ -270,12 +316,30 @@ fn unchecked(
     } else {
         flat_soup(op, &ia, &ib, tie(tol), tol, work)?
     };
-    let mut faces = faces;
-    cleanup::clean(
+    Ok((soup, faces))
+}
+
+/// The mesh of the assembled `soup` and `faces`, cleaned (unfolding
+/// folded sheets if `unfold`, and setting `unfolded` if it did), before
+/// repair and the check.
+#[allow(clippy::too_many_arguments)]
+fn cleaned(
+    a: &Solid,
+    b: &Solid,
+    op: Op,
+    mut soup: cleanup::Soup,
+    mut faces: Vec<Face>,
+    unfold: bool,
+    unfolded: &mut bool,
+    tol: &Tolerance,
+    work: &mut Work,
+) -> Result<Mesh, KernelError> {
+    *unfolded = cleanup::clean(
         &mut soup,
         &mut faces,
         short(tol),
         4.0 * tol.resolution(),
+        unfold,
         tol,
         work,
     )?;
