@@ -1931,33 +1931,47 @@ tessellation too).
   the grid runs skewed to the edges. With `l = 0` the ring is a fan round
   the single inner point.
 - **Patches curved both ways** (faces whose form is a sphere, torus,
-  revolved conic or unknown: not a plane, cylinder or cone, which are
-  straight along their rulings) get a finer grid where `m` leaves a
-  triangle more than the chord off the patch. `Plan::refine` measures in
-  rounds: each patch still open is triangulated in `f64` at its level and
-  measured (`level_error`: the patch at each triangle's middle, in
-  parameters, against the triangle's plane, and at the middle of each
-  side that isn't an edge's own segment against its line); one too far
-  moves to `m·√(error / chord)` steps, at least a quarter more, at most
-  `4 × 64 = 256`. The edges' counts, and so the shared samples, never
-  change: only the grid and the ring's inner sides do, and the strips
-  join any two counts. The rounds stop as soon as the plan is past the
-  limits (it is then refused), so each round's work is bounded by them;
-  when the plan fits, the levels depend only on the mesh and the chord,
-  so the drawn and welded tessellations agree. A NaN error counts as
-  within. On today's solids the inner grid alone is within the chord: the
-  refinement is driven by the ring's corners, where the diagonal from a
-  patch corner to the inner grid's corner spans a step along both edges
-  (about 2.5 chords at `m = max(counts)`); a finer grid brings that
-  corner in. At the default tolerance: a ball of radius 2 goes from
-  4 304 to 8 016 triangles (worst 2.55 to 0.99 chords, densely sampled
-  along the patches' normals), a hollow ball 8 656 to 15 296, a part torus
-  5 628 to 7 932, a spindle torus's outside 3 200 to 6 400, a turned
-  ellipse 7 382 to 13 334, the round octahedron 800 to 2 144; a full torus
-  (major 10, minor 2) is within at 0.78 and keeps its 10 496. Planes,
-  cylinders, cones and extruded walls keep exactly their levels. The
-  measuring about doubles the time to draw a round solid (tens of
-  milliseconds for these, release); a 400-hole plate is unchanged.
+  revolved conic, ellipsoid or unknown: not a plane, cylinder or cone,
+  circular or not, which are straight along their rulings; a quadric
+  form is a scaled sphere or cone, and the cone is the one written about
+  its apex, with no linear or constant term) get a finer grid where `m`
+  leaves a triangle more than the chord off the patch. `Plan::refine`
+  measures in rounds: each patch still open is triangulated in `f64` at
+  its level and measured (`level_error`: the patch at each triangle's
+  middle, in parameters, and at the middle of each side that isn't an
+  edge's own segment, each against the triangle's plane: against a
+  side's line it would also count the patch drifting along the surface
+  where its parameters run unevenly, which refined a scaled ball that
+  was already within); one too far moves to `m·√(error / chord)` steps,
+  at least one more in the first four rounds and a quarter more after
+  (so at most about two dozen rounds), at most `4 × 64 = 256`. The
+  square law undershoots near the chord, since the ring's triangles keep
+  their edge sides, and stepping by one there lands on the smallest grid
+  within it on every solid below (a quarter more at once overshot by up
+  to a fifth). The edges' counts, and so the shared samples, never
+  change, whatever kind of face is on the other side: only the grid and
+  the ring's inner sides do, and the strips join any two counts. The
+  rounds stop as soon as the plan is past the limits (it is then
+  refused), so each round's work is bounded by them; the counts only
+  grow, so when the plan fits, every round fitted and the levels depend
+  only on the mesh and the chord: the drawn and welded tessellations
+  agree. A NaN error counts as within. The four samples per triangle read
+  a few percent under a dense sampling (a turned ellipse's worst is 1.03
+  chords, next to an edge segment). On today's solids the inner grid
+  alone is within the chord: the refinement is driven by the ring's
+  corners, where the diagonal from a patch corner to the inner grid's
+  corner spans a step along both edges (about 2.5 chords at `m =
+  max(counts)`); a finer grid brings that corner in. At the default
+  tolerance: a ball of radius 2 goes from 4 304 to 7 120 triangles (worst
+  2.55 to 0.99 chords, densely sampled along the patches' normals), a
+  hollow ball 8 656 to 13 168, a part torus 5 628 to 6 652, a spindle
+  torus's outside 3 200 to 6 208, a turned ellipse 7 382 to 11 862, the
+  round octahedron 800 to 2 144; a full torus (major 10, minor 2) is
+  within at 0.78 and keeps its 10 496, and so does the ball scaled by
+  (1, ½, 2) (its patches are smaller). Planes, cylinders, cones and
+  extruded walls keep exactly their levels. The measuring about doubles
+  the time to draw a round solid (tens of
+milliseconds for these, release); a 400-hole plate is unchanged.
 - **Normals** are the patches' own (`Patch::normal`, normalized; the fold
   direction stands in should it vanish). Along an edge, the two sides'
   normals are compared at every sample: if they agree within 1° everywhere
@@ -2048,7 +2062,8 @@ triangle, their triangles tile each patch's parameter triangle
 (positively oriented, areas summing to the domain's), and they are
 watertight and weld into a `ManifoldMesh`, the same at 1 and 8 threads;
 a cylinder, a drilled plate, a thin disc and a revolved tube keep exactly the levels
-their counts give; a refined level counts what it makes; a part torus meets
+their counts give, and so do a cone and a tube scaled into quadric and
+conic forms, while the scaled ball's patches are measured; a refined level counts what it makes; a part torus meets
 its exact limits and fails one under each. Faces and edges: a box's 6 faces of 2 triangles are its 6
 regions and its 12 edges its 12 chains; a cylinder's quarter walls are
 one region and its rims two closed chains, closing on their first

@@ -702,20 +702,7 @@ fn in_patches(plan: &Plan) -> Vec<InPatch> {
     for &t in &plan.tri_ids {
         let patch = plan.mesh.patch(t as usize);
         let level = &plan.levels[t as usize];
-        let mut params = Vec::new();
-        let mut first = [0u32; 3];
-        for (i, &n) in level.counts.iter().enumerate() {
-            first[i] = params.len() as u32;
-            for r in 0..=n {
-                let s = f64::from(r) / f64::from(n);
-                let mut u = DVec3::ZERO;
-                u[i] = 1.0 - s;
-                u[(i + 1) % 3] = s;
-                params.push(u);
-            }
-        }
-        let base = params.len() as u32;
-        params.extend(level.inner_params());
+        let (params, first, base) = level.params();
         let points: Vec<DVec3> = params.iter().map(|&u| patch.eval(u)).collect();
         let rounded: Vec<DVec3> = (points.iter()).map(|p| p.as_vec3().as_dvec3()).collect();
         let indices = level.triangulate(base, &rounded[base as usize..], |i, r| {
@@ -989,4 +976,73 @@ fn a_refined_level_counts_its_points_and_triangles() {
     // Never coarser than the counts ask, and a single triangle stays one.
     assert_eq!(Level::with_steps([7, 1, 1], 4), Level::new([7, 1, 1]));
     assert_eq!(Level::with_steps([1, 1, 1], 9), Level::new([1, 1, 1]));
+}
+
+#[test]
+fn scaled_balls_are_measured_and_scaled_cones_keep_their_grids() {
+    use crate::profile::tests::rect;
+    use crate::{Loop, Motion, Profile, Segment, Sweep, revolve};
+    let v = glam::DVec2::new;
+    // Unequal across every axis: no circle stays round.
+    let stretch = Motion::scale(DVec3::new(1.0, -2.0, 0.5), DVec3::new(1.0, 0.5, 2.0)).unwrap();
+    let scaled =
+        |solid: &Solid| (solid.transformed(&stretch, None, &TOL, &Budget::DEFAULT)).unwrap();
+    let quadrics = |solid: &Solid| -> Vec<crate::mesh::Quadric> {
+        (solid.mesh().faces().iter())
+            .filter_map(|face| match face.form {
+                Form::Quadric(q) => Some(q),
+                _ => None,
+            })
+            .collect()
+    };
+    let (_, ball) = round_solids().swap_remove(0);
+    let ellipsoid = scaled(&ball);
+    let ellipsoids = quadrics(&ellipsoid);
+    assert!(!ellipsoids.is_empty());
+    assert!((ellipsoids.iter()).all(|&q| q.c < 0.0 && curved_both_ways(&Form::Quadric(q))));
+    let display = Display::default();
+    let d = drawn(ellipsoid.mesh(), &display);
+    assert!(d.worst.1 <= 1.05, "{d:?}");
+    assert_tiled(ellipsoid.mesh(), &display);
+    assert_watertight(&ellipsoid.tessellate(&display).unwrap());
+
+    // A cone turned from a triangle, and a cylinder from a rectangle.
+    let frame = crate::Frame {
+        origin: DVec3::new(1.0, -2.0, 0.5),
+        x: DVec3::X,
+        y: DVec3::Z,
+    };
+    let line = |a, b, curve| Segment::line(a, b, curve).unwrap();
+    let triangle = Loop {
+        segments: vec![
+            line(v(0.0, 0.0), v(2.0, 0.0), 1),
+            line(v(2.0, 0.0), v(0.0, 3.0), 2),
+            line(v(0.0, 3.0), v(0.0, 0.0), 3),
+        ],
+    };
+    let turn = |loops: Vec<Loop>| {
+        revolve(
+            &Profile { loops },
+            &frame,
+            Sweep::Full,
+            5,
+            &TOL,
+            &Budget::DEFAULT,
+        )
+        .unwrap()
+    };
+    let cone = scaled(&turn(vec![triangle]));
+    let cones = quadrics(&cone);
+    assert!(!cones.is_empty());
+    assert!((cones.iter()).all(|&q| q.c == 0.0 && !curved_both_ways(&Form::Quadric(q))));
+    let tube = scaled(&turn(vec![rect(v(2.0, 0.0), v(3.0, 6.0), 1)]));
+    for (name, solid) in [("cone", cone), ("tube", tube)] {
+        let plan = Plan::new(solid.mesh(), &Display::default(), &Limits::RENDER)
+            .unwrap()
+            .unwrap();
+        assert!(
+            (plan.levels.iter()).all(|level| *level == Level::new(level.counts)),
+            "{name}"
+        );
+    }
 }

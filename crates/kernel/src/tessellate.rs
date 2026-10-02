@@ -7,17 +7,18 @@
 //! cracks. Each patch is sampled on a regular grid inside, one step in
 //! from its boundary, and strips of triangles join that grid to the
 //! points of its three edges. The grid has as many steps as the patch's
-//! finest edge, more on patches curved both ways (spheres, tori, revolved
-//! conics) where that leaves a triangle farther than the chord from the
-//! patch: measured and refined in rounds before anything is made, so the
-//! counts are still known up front. Normals are the patches' own, shared across
-//! an edge where the two sides agree within [`Display::SMOOTH_DEGREES`]
-//! and split where they don't; splits and the boundaries between faces of
-//! different keys ([`FaceName::key`](crate::mesh::FaceName::key)) are the
-//! feature edges drawn with the mesh. The triangles go face by face, a
-//! face being a region of the solid's [`Topology`], and the feature edges
-//! are polylines from corner to corner: first the topology's chains, then
-//! the creases inside one region.
+//! finest edge, more on patches curved both ways (spheres, ellipsoids,
+//! tori, revolved conics) where that leaves a triangle farther than the
+//! chord from the patch: measured and refined in rounds before anything
+//! is made, so the counts are still known up front. Normals are the
+//! patches' own, shared across an edge where the two sides agree within
+//! [`Display::SMOOTH_DEGREES`] and split where they don't; splits and the
+//! boundaries between faces of different keys
+//! ([`FaceName::key`](crate::mesh::FaceName::key)) are the feature edges
+//! drawn with the mesh. The triangles go face by face, a face being a
+//! region of the solid's [`Topology`], and the feature edges are
+//! polylines from corner to corner: first the topology's chains, then the
+//! creases inside one region.
 //!
 //! The rules and reasons are written down in `agents/kernel.md`.
 
@@ -213,8 +214,10 @@ impl<'a> Plan<'a> {
     /// are within `chord` of it ([`level_error`]) or its grid has
     /// [`MAX_INNER_STEPS`]: each round measures the patches still open at
     /// their levels and moves those too far to a grid of `√(error /
-    /// chord)` times the steps, at least a quarter more. Edge counts, and
-    /// so the shared samples, stay as they are. Stops as soon as the plan
+    /// chord)` times the steps, at least one more in the first
+    /// [`FINE_ROUNDS`] and a quarter more after, so there are at most
+    /// about two dozen rounds. Edge counts, and so the shared samples,
+    /// stay as they are. Stops as soon as the plan
     /// no longer fits `limits`, so a round's work is bounded by them (the
     /// caller then refuses the plan); the levels depend only on the mesh
     /// and `chord`, whatever the limits, when it fits.
@@ -224,6 +227,7 @@ impl<'a> Plan<'a> {
         let mut open: Vec<u32> = (self.tri_ids.iter().copied())
             .filter(|&t| self.levels[t as usize].inner.is_some() && curved_both_ways(form(t)))
             .collect();
+        let mut round = 0;
         while !open.is_empty() && self.fits(limits) {
             let levels = &self.levels;
             let errors = par_map(&open, |&t| {
@@ -238,20 +242,29 @@ impl<'a> Plan<'a> {
                     continue;
                 }
                 // The error inside a smooth patch falls with the square
-                // of the step.
+                // of the step. Where the ring's triangles set it, it falls
+                // slower (their edge sides stay as they are), so this
+                // undershoots near the chord: one step more at a time
+                // reaches the smallest grid within it, and a quarter more
+                // once that has taken a few rounds bounds them.
                 let wanted = (f64::from(m) * (error / chord).sqrt()).ceil();
-                let at_least = m + m.div_ceil(4);
+                let at_least = if round < FINE_ROUNDS {
+                    m + 1
+                } else {
+                    m + m.div_ceil(4)
+                };
                 let steps = if wanted < f64::from(MAX_INNER_STEPS) {
                     // Below the most, so the cast is exact.
                     (wanted as u32).max(at_least)
                 } else {
                     MAX_INNER_STEPS
                 };
-                *level = Level::with_steps(level.counts, steps.min(MAX_INNER_STEPS));
+                *level = Level::with_steps(level.counts, steps);
                 next.push(t);
             }
             self.count();
             open = next;
+            round += 1;
         }
     }
 
@@ -957,46 +970,41 @@ fn distance_to_line(x: DVec3, a: DVec3, b: DVec3) -> f64 {
 /// ([`Plan::refine`]).
 const MAX_INNER_STEPS: u32 = 4 * Display::MAX_SEGMENTS;
 
+/// The rounds of [`Plan::refine`] that refine by as little as one step.
+const FINE_ROUNDS: u32 = 4;
+
 /// Whether the patches of a face of `form` may be curved both ways, so
 /// that their inner grids are measured and refined ([`Plan::refine`]):
-/// spheres, tori, revolved conics and faces of no known form. A plane,
-/// cylinder or cone is straight along its rulings, and its grid is
-/// within the chord where the edges are (but at the corners of skewed
-/// patches; see `agents/kernel.md`).
+/// spheres, tori, revolved conics, ellipsoids and faces of no known form.
+/// A plane, cylinder or cone, circular or not, is straight along its
+/// rulings, and its grid is within the chord where the edges are (but at
+/// the corners of skewed patches; see `agents/kernel.md`). A quadric form
+/// is a scaled cone or sphere: the cone written about its apex, with no
+/// linear or constant term (a scale keeps both at 0), the ellipsoid with
+/// its constant below 0.
 fn curved_both_ways(form: &Form) -> bool {
-    !matches!(
-        form,
-        Form::Plane { .. } | Form::Cylinder { .. } | Form::ConicCylinder { .. } | Form::Cone { .. }
-    )
+    match form {
+        Form::Plane { .. }
+        | Form::Cylinder { .. }
+        | Form::ConicCylinder { .. }
+        | Form::Cone { .. } => false,
+        Form::Quadric(q) => q.c != 0.0 || q.b != DVec3::ZERO,
+        Form::Unknown | Form::Sphere { .. } | Form::Torus { .. } | Form::Revolved { .. } => true,
+    }
 }
 
 /// The farthest the triangles `level` makes of `patch` get from it inside,
 /// in `f64`, by the patch at the middle of each triangle (in parameters)
-/// against the triangle's plane and at the middle of each side that isn't
-/// a segment of an edge against that side's line: the edges' own
-/// segments are [`segments`]'. The strips choose their diagonals from the
-/// `f64` points, so the triangles may differ from those drawn from `f32`
-/// ones; it only steers the grid's size. 0 for a single triangle.
+/// and at the middle of each side that isn't a segment of an edge (the
+/// edges' own segments are [`segments`]'), each against the triangle's
+/// plane. The strips choose their diagonals from the `f64` points, so the
+/// triangles may differ from those drawn from `f32` ones; it only steers
+/// the grid's size. 0 for a single triangle.
 fn level_error(patch: &Patch, level: &Level) -> f64 {
     if level.inner.is_none() {
         return 0.0;
     }
-    // The edges' samples, side by side (corners twice), then the inner
-    // points.
-    let mut params = Vec::new();
-    let mut first = [0u32; 3];
-    for (i, &n) in level.counts.iter().enumerate() {
-        first[i] = params.len() as u32;
-        for r in 0..=n {
-            let s = f64::from(r) / f64::from(n);
-            let mut u = DVec3::ZERO;
-            u[i] = 1.0 - s;
-            u[(i + 1) % 3] = s;
-            params.push(u);
-        }
-    }
-    let base = params.len() as u32;
-    params.extend(level.inner_params());
+    let (params, first, base) = level.params();
     let points: Vec<DVec3> = params.iter().map(|&u| patch.eval(u)).collect();
     let indices = level.triangulate(base, &points[base as usize..], |i, r| {
         let v = first[i as usize] + r;
@@ -1012,22 +1020,24 @@ fn level_error(patch: &Patch, level: &Level) -> f64 {
     let mut error = 0.0f64;
     for tri in indices.as_chunks::<3>().0 {
         let [pa, pb, pc] = tri.map(|v| points[v as usize]);
-        let [ua, ub, uc] = tri.map(|v| params[v as usize]);
-        let middle = patch.eval((ua + ub + uc) / 3.0);
         let normal = (pb - pa).cross(pc - pa);
         let length = normal.length();
-        let off_plane = if length > 0.0 {
-            (middle - pa).dot(normal).abs() / length
-        } else {
-            distance_to_line(middle, pa, pb).max(distance_to_line(middle, pa, pc))
+        // Off the triangle's plane: the patch also drifts along it where
+        // its parameters run unevenly, which is no error.
+        let off = |x: DVec3| {
+            if length > 0.0 {
+                (x - pa).dot(normal).abs() / length
+            } else {
+                distance_to_line(x, pa, pb).max(distance_to_line(x, pa, pc))
+            }
         };
-        error = error.max(off_plane);
+        let [ua, ub, uc] = tri.map(|v| params[v as usize]);
+        error = error.max(off(patch.eval((ua + ub + uc) / 3.0)));
         for i in 0..3 {
             let (a, b) = (tri[i], tri[(i + 1) % 3]);
             if !along_edge(a, b) {
                 let (ua, ub) = (params[a as usize], params[b as usize]);
-                let x = patch.eval((ua + ub) * 0.5);
-                error = error.max(distance_to_line(x, points[a as usize], points[b as usize]));
+                error = error.max(off(patch.eval((ua + ub) * 0.5)));
             }
         }
     }
@@ -1069,6 +1079,28 @@ impl Level {
     /// The grid's steps `m` (1 for a single triangle).
     fn steps(&self) -> u32 {
         self.inner.map_or(1, |l| l + 3)
+    }
+
+    /// The barycentric parameters of all the samples: each side's, from
+    /// corner `i` to corner `i + 1` (so the corners twice), then the inner
+    /// points ([`Level::inner_params`]); with where each side's start and
+    /// where the inner points start.
+    fn params(&self) -> (Vec<DVec3>, [u32; 3], u32) {
+        let mut params = Vec::new();
+        let mut first = [0u32; 3];
+        for (i, &n) in self.counts.iter().enumerate() {
+            first[i] = params.len() as u32;
+            for r in 0..=n {
+                let s = f64::from(r) / f64::from(n);
+                let mut u = DVec3::ZERO;
+                u[i] = 1.0 - s;
+                u[(i + 1) % 3] = s;
+                params.push(u);
+            }
+        }
+        let base = params.len() as u32;
+        params.extend(self.inner_params());
+        (params, first, base)
     }
 
     /// The barycentric parameters of the inner points, in the order

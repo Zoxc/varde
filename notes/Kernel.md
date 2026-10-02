@@ -375,7 +375,7 @@ either way.
   bit: no cracks.
 - Patch interiors are a regular barycentric grid stitched to the edges,
   as fine as the finest edge, finer on patches curved both ways (spheres,
-  tori, revolved conics) until their triangles are within the chord too.
+  ellipsoids, tori, revolved conics) until their triangles are within the chord too.
 - Normals are the patches' analytic ones, shared across an edge where the
   two sides agree within 1°, split otherwise.
 - Feature edges are split edges and edges between faces of different keys,

@@ -1116,3 +1116,85 @@ fn shots_20_revolve() {
         camera.take(&lathe.doc, "20-revolve-rail-dark", Shot::new().dark());
     });
 }
+
+/// A ball and a torus turned about one line, close up: their patches are
+/// curved both ways, so the tessellation refines inside them.
+#[test]
+#[ignore = "writes screenshots where VARDE_SHOTS says"]
+fn shots_21_round_solids() {
+    use glam::DVec2;
+    use varde_document::{AxisLine, OriginPlane, Plane, Sketch};
+    use varde_sketch::Curve;
+    use varde_view::RevolveLook;
+
+    shooting(|camera| {
+        let mut editor = Editor::new(Document::default());
+        let add = editor.document().add_sketch(Plane::Origin(OriginPlane::XZ));
+        editor.apply(add).unwrap();
+        let sketch = editor.document().features()[0].id;
+        let mut drawn = Sketch::default();
+        let mut point = |x, y| drawn.add_point(DVec2::new(x, y)).unwrap();
+        let [low, high, top, centre, ring] = [
+            (0.0, -10.0),
+            (0.0, 10.0),
+            (0.0, 30.0),
+            (0.0, 0.0),
+            (25.0, 18.0),
+        ]
+        .map(|(x, y)| point(x, y));
+        let axis = (drawn.add_curve(
+            Curve::Line {
+                start: low,
+                end: top,
+            },
+            true,
+        ))
+        .unwrap();
+        // A half disc against the axis, and a circle away from it.
+        let arc = Curve::Arc {
+            center: centre,
+            start: low,
+            end: high,
+        };
+        drawn.add_curve(arc, false).unwrap();
+        let side = Curve::Line {
+            start: high,
+            end: low,
+        };
+        drawn.add_curve(side, false).unwrap();
+        let circle = Curve::Circle {
+            center: ring,
+            radius: 6.0,
+        };
+        drawn.add_curve(circle, false).unwrap();
+        let profiles = drawn.profiles().unwrap();
+        let regions = [DVec2::new(5.0, 0.0), DVec2::new(25.0, 18.0)]
+            .map(|at| profiles.region_at(at).unwrap());
+        editor
+            .apply(Command::SetSketch {
+                feature: sketch,
+                sketch: Box::new(drawn),
+            })
+            .unwrap();
+        let (mut doc, requests) = deferred();
+        doc.apply(Command::Replace(Box::new(editor.document().clone())));
+        doc.sync();
+        answer(&mut doc, &requests);
+
+        doc.look(Look::StartRevolve);
+        for region in regions {
+            doc.look(Look::Revolve(RevolveLook::PickRegion { sketch, region }));
+        }
+        let axis = AxisLine::Curve(axis);
+        doc.look(Look::Revolve(RevolveLook::PickAxis { sketch, axis }));
+        answer(&mut doc, &requests);
+        doc.update(Edit::CommitRevolve);
+        answer(&mut doc, &requests);
+        assert!(doc.revolve.is_none());
+        aim(&mut doc, -0.3, -0.25, 9.0);
+        camera.take(&doc, "21-round-solids", Shot::new());
+        camera.take(&doc, "21-round-solids-scale2", Shot::new().scale(2.0));
+        aim(&mut doc, 0.6, 0.5, 5.0);
+        camera.take(&doc, "21-round-solids-close-dark", Shot::new().dark());
+    });
+}
