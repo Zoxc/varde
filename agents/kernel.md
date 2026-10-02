@@ -2941,6 +2941,96 @@ where any candidate is as good. A `near` that isn't finite takes the
 lowest candidate without measuring. It only chooses among candidates of
 one name: nothing is decided by distance.
 
+## Transforms and assembly (`src/transform.rs`)
+
+`Motion` is an affine map `x ↦ L·x + t`, kept with `N`, the map of
+normals and of planes' and quadrics' coefficients (`L`'s inverse
+transpose, kept rather than worked out, so a turn's is its own matrix to
+the bit), and whether it mirrors (an odd number of mirrors: a flag, not
+the determinant's sign). So far every motion is rigid; the constructors
+are the only way to make one:
+
+- `translation(t)`; `pattern_step(direction, spacing, k)`, the move by
+  `k·spacing` along the unit direction, placed directly;
+- `turn(point, axis, degrees)`, Rodrigues' `cos·I + sin·[k]× + (1 −
+  cos)·k·kᵀ` about the unit axis, offset `point − L·point`;
+  `pattern_turn(point, axis, degrees, k, count)` turns by
+  `k·degrees/count`, placed directly (copy `k` is never `k` steps
+  composed, so no error piles up). **Angles are in degrees**: `%` on
+  floats is exact, so the angle is reduced to `[−180°, 180°]` exactly
+  and a multiple of 90° takes its sine and cosine as `0` and `±1`; about
+  a coordinate axis the matrix then has only those entries and maps
+  coordinates to the bit. Other angles go through `trig::sin_cos` of
+  the reduced angle in radians.
+- `mirror(point, normal)`: `I − 2·n·nᵀ/|n|²` (symmetric and
+  orthogonal, its own `N`), offset `2·(n·point)/|n|²·n`; exact in planes
+  square to a coordinate axis whatever the normal's length.
+- `then(next)` composes (`self` first); `point`, `vector`, `normal` apply
+  it.
+
+Constructors give `None` for input that isn't finite, a zero axis or
+normal, or an offset that overflows (`k·spacing`); points the motion
+takes past `MAX_COORD` are refused when it is applied.
+
+`Solid::transformed(motion, copy, tol, budget)` maps every vertex and edge
+control point (weights stay: an affine image of a rational curve is the
+curve of the mapped control points, same weights), refusing one past
+`MAX_COORD` (`KernelError::Patch`). Claims map with the motion: a plane
+`n·x = d` to `N·n`, `d + (N·n)·t`; a quadric's origin as a point, `A` to
+`N·A·Nᵀ`, `b` to `N·b`, `c` kept (on the image `y = M·y'` with `M = L⁻¹ =
+Nᵀ`). Forms map rigidly: points as points, axes as unit directions,
+radii, half-angles and a revolved face's meridian (drawn in distance from
+the axis and height along it) unchanged, a plane's normal by `N`, so it
+still points out. A mirror reverses every triangle: corners `[a, b, c]`
+become `[a, c, b]`, halfedge `i` becomes `2 − i` with its start the old
+next corner and the same edge record, and its pair the old pair's image;
+the patch is the same surface, facing the other way. Names: with `copy:
+Some(Instance { feature, index })` every face's name becomes
+`FaceName::copy(feature, index)` and every alias `FaceKey::copy`, the same
+mix of the parent instance, the feature and the index; `None` keeps the
+names (a move). The result goes through `check` (rounding can bring hulls
+a hair closer, so a solid at the margin can fail with `Invalid`), charged
+5 units a patch plus the volumes the check integrates.
+
+`assemble(parts, tol, budget)` makes one solid of several, such as a
+pattern's copies. Empty parts are dropped. Pairs of parts whose boxes
+come within the resolution (a BVH over the parts' boxes, a unit a pair)
+are linked unless they can go side by side: no vertex of either within
+the other's box (grown by the resolution), and every pair of their
+patches whose boxes come that close has hulls more than the resolution
+apart (GJK, as `check`'s non-neighbours; a unit a vertex and a pair). The
+vertex rule is what keeps nested parts from being put side by side: a
+part inside another, or in its void, has its surface apart from the
+other's and every vertex in its box. Each connected group of linked
+parts is unioned pairwise in a balanced tree by index (`0 ∪ 1`, `2 ∪ 3`,
+…, then those results), each `boolean` with `budget`; the groups'
+results, in the order of their lowest parts, are concatenated (vertices,
+edges, triangles, faces and aliases numbered on, more than `MAX_PATCHES`
+patches `TooComplex`) and checked within `budget` (5 units a patch and
+the integration). One result is returned as it is. A part nested in a
+void that only several others close, with none of their boxes holding
+its vertices, would go side by side and fail the check's orientation:
+an error, never a wrong solid. Spaced copies cost a pass over their
+vertices and the check: linear.
+
+Tests (`transform/tests.rs`), on an L-shaped extrude with a round hole
+and a half-ellipse top (planes, a cylinder, a conic cylinder): moves
+shifting every vertex to the bit and keeping names; quarter turns about
+each axis exact (four of them the solid to the bit, `(x, y, z) ↦ (−y, x,
+z)` about z) and the sine and cosine of multiples of 90° either side of a
+turn; turns about tilted lines keeping volume and area to `1e-12`, tags
+and forms, and turning back to `1e-13`; mirrors facing out (volume
+positive, plane forms and tags along the patches' normals), twice the
+same triangles; two mirrors a half turn to the bit; copies' names and
+aliases renamed and resolving; a mirrored copy apart (side by side, the
+two meshes as they were), flush and overlapping its source with analytic
+volumes; 100 copies of a pin within a budget linear in the patches; a
+row of touching cubes one box of six faces; a cube inside another and a
+ring of pins by quarter turns; spokes overlapping at a hub against the
+unions chained; out of bounds refused (and non-finite motions not made);
+the budget; determinism at 1 and 8 threads. Cones and spheres (revolve
+isn't in this kernel yet) are untested here.
+
 ## Booleans (`src/boolean.rs`, `src/boolean/`)
 
 `boolean(a, b, op, tol, budget)` gives `a ∪ b`, `a − b` or `a ∩ b`

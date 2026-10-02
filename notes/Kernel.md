@@ -243,6 +243,14 @@ plane.
    profile pieces where they need it.
 4. **Repair, the merge pass and check**, as extrude.
 
+**Moves, turns and mirrors.** A `Motion` (a move, a turn about a line by
+degrees, exact at multiples of 90°, a mirror in a plane, or a composition)
+maps a solid's control points, keeps its weights, maps its faces' claims and
+forms with it and reverses every triangle of a mirror; copies are renamed by
+an instance, and the result is checked. `assemble` makes one solid of
+copies: those that can't meet side by side in one mesh, the rest unioned in
+a balanced tree.
+
 ## The boolean pipeline
 
 `boolean(a, b, op, tol, budget)` follows Manifold's `boolean3.cpp` and

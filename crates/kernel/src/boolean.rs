@@ -712,7 +712,7 @@ fn segment(p0: DVec3, p1: DVec3) -> crate::patch::Conic3 {
 
 /// Each vertex's connected part, as its lowest vertex id, of `n`
 /// vertices joined by `links`.
-fn parts(n: usize, links: impl IntoIterator<Item = [u32; 2]>) -> Vec<u32> {
+pub(crate) fn parts(n: usize, links: impl IntoIterator<Item = [u32; 2]>) -> Vec<u32> {
     fn root(part: &mut [u32], mut v: u32) -> u32 {
         while part[v as usize] != v {
             part[v as usize] = part[part[v as usize] as usize];

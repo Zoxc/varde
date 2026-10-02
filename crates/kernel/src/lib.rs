@@ -22,7 +22,9 @@
 //! result is always a closed manifold, with curved patches cut along
 //! exact conics where planes meet quadrics and along fitted ones
 //! elsewhere.
-//! [`touches`] says whether two solids meet. The math of one curve or
+//! [`touches`] says whether two solids meet. [`Solid::transformed`]
+//! moves, turns or mirrors a solid by a [`Motion`], and [`assemble`]
+//! makes one solid of copies. The math of one curve or
 //! triangle is in [`patch`]; closed
 //! meshes of them, the check of their invariants, the BVH over them,
 //! their refinement and repair, and box and cylinder meshes are in
@@ -51,6 +53,7 @@ mod tessellate;
 mod test_rng;
 mod tolerance;
 pub mod topology;
+pub mod transform;
 pub mod trig;
 
 pub use aabb::Aabb;
@@ -67,6 +70,7 @@ pub use solid::Solid;
 pub use tessellate::{Display, Picking};
 pub use tolerance::Tolerance;
 pub use topology::Topology;
+pub use transform::{Instance, Motion, assemble};
 
 /// The largest coordinate or size, in model units, a design may have: its
 /// sketches' coordinates and lengths, and so the solids built from them. A
