@@ -430,3 +430,125 @@ fn ends_join_round_the_pair_as_parentheses_do() {
     // Unbalanced ends are refused.
     assert!(round_order(corners, &ends[..3]).is_err());
 }
+
+#[test]
+fn parallel_walls_with_no_ends_are_certified() {
+    // Cylinders side by side: no edge crosses, the normal cones along the
+    // line hold opposite normals and the hulls overlap. Their unrefined
+    // walls aren't near each other anywhere they are sampled, so they
+    // are split; once their pieces are, the walls along one direction
+    // are certified, long before the pieces are flat (which ran out of
+    // the default budget at the default tolerance), with no arcs.
+    let (a, b, _) = tangent_cylinders();
+    let (ia, ib) = (Input::new(a.mesh(), &TOL), Input::new(b.mesh(), &TOL));
+    let mut work = Work::new(&Budget::DEFAULT);
+    let counts = counted(&ia, &ib, false, &TOL, &mut work).unwrap();
+    assert!(counts.x12.is_empty() && counts.x21.is_empty());
+    let floor = MIN_SPLIT * TOL.resolution();
+    let decision = decide(&ia, &ib, &counts, floor, TOL.resolution(), &mut work).unwrap();
+    assert!(matches!(decision, Decision::Split(_)));
+    for grow in [false, true] {
+        let mut work = Work::new(&Budget::new(50_000));
+        let r = refined(a.mesh(), b.mesh(), grow, &TOL, &mut work).unwrap();
+        assert!(r.arcs.is_empty());
+    }
+}
+
+#[test]
+fn parallel_walls_apart_are_refined_until_their_hulls_part() {
+    // Coaxial walls of radii 1 and 1.01, one over part of the other's
+    // span: not near enough to be certified, they are split until their
+    // hulls part (their pieces bulge less than the gap) where their
+    // normals don't tell them apart, as before.
+    let inner = Solid::cylinder(DVec3::ZERO, 1.0, 2.0, 1, &TOL).unwrap();
+    let outer = Solid::cylinder(DVec3::new(0.0, 0.0, 0.5), 1.01, 0.25, 2, &TOL).unwrap();
+    let r = refine(&inner, &outer, true);
+    let (ia, ib) = (Input::new(&r.a, &TOL), Input::new(&r.b, &TOL));
+    let wall = |input: &Input, t: u32| {
+        matches!(
+            input.mesh.faces()[input.face(t) as usize].surface,
+            Surface::Quadric(_)
+        )
+    };
+    let mut walls = 0;
+    for &[p, q] in &r.counts.pairs {
+        if wall(&ia, p) && wall(&ib, q) {
+            walls += 1;
+            let (pp, pq) = (&ia.patches[p as usize], &ib.patches[q as usize]);
+            assert!(!parallel_walls(&ia, p, &ib, q, TOL.resolution()));
+            if !pp.normal_cone().apart(&pq.normal_cone()) {
+                assert!(apart(&pp.hull(), &pq.hull(), 0.0), "{p} {q}");
+            }
+        }
+    }
+    assert!(walls > 0);
+}
+
+#[test]
+fn walls_along_directions_apart_are_not_parallel() {
+    // The certificate wants the directions within the resolution over
+    // the pair: a wall turned by a hair more isn't certified.
+    let (a, _, tol) = tangent_cylinders();
+    let ia = Input::new(a.mesh(), &tol);
+    let wall = (0..a.mesh().tris().len() as u32)
+        .find(|&t| {
+            matches!(
+                a.mesh().faces()[ia.face(t) as usize].surface,
+                Surface::Quadric(_)
+            )
+        })
+        .unwrap();
+    let res = tol.resolution();
+    assert!(parallel_generators(&ia, wall, &ia, wall, res).is_some());
+    let bounds = ia.patches[wall as usize].bounds();
+    let extent = (bounds.max - bounds.min).length();
+    for (angle, parallel) in [(0.5 * res / extent, true), (2.0 * res / extent, false)] {
+        let q = DQuat::from_rotation_x(angle);
+        let tilted = crate::boolean::curved_tests::moved_at(&a, &tol, |p| q * p);
+        let ib = Input::new(tilted.mesh(), &tol);
+        assert_eq!(
+            parallel_generators(&ia, wall, &ib, wall, res).is_some(),
+            parallel,
+            "{angle}"
+        );
+    }
+}
+
+#[test]
+fn along_takes_parabolic_walls_too() {
+    // A parabola's wall has a quadric of rank 1, a hyperbola's of rank 2:
+    // both along the frame's normal, on a frame turned off the axes.
+    let q = DQuat::from_axis_angle(DVec3::new(1.0, 2.0, 3.0).normalize(), 0.7);
+    for frame in [
+        Frame::XY,
+        Frame {
+            origin: DVec3::new(0.3, -1.2, 2.5),
+            x: q * DVec3::X,
+            y: q * DVec3::Y,
+        },
+    ] {
+        let profile = Profile {
+            loops: vec![crate::profile::tests::folding_cap(true)],
+        };
+        let solid = extrude(&profile, &frame, 0.0, 1.0, 1, &TOL, &Budget::DEFAULT).unwrap();
+        let normal = frame.normal().normalize();
+        let mut walls = 0;
+        for face in solid.mesh().faces() {
+            if let Surface::Quadric(quadric) = face.surface {
+                let d = along(&quadric).unwrap();
+                assert!(d.cross(normal).length() < 1e-12, "{d} {normal}");
+                walls += 1;
+            }
+        }
+        assert_eq!(walls, 2);
+    }
+    // A sphere and a cone run along nothing.
+    assert_eq!(along(&crate::mesh::Quadric::sphere(DVec3::ONE, 2.0)), None);
+    let cone = crate::mesh::Quadric {
+        origin: DVec3::ZERO,
+        a: glam::DMat3::from_diagonal(DVec3::new(1.0, 1.0, -1.0)),
+        b: DVec3::ZERO,
+        c: 0.0,
+    };
+    assert_eq!(along(&cone), None);
+}

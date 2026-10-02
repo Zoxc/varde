@@ -1376,11 +1376,10 @@ fn tangent_discs(fit: f64, angle: f64, operation: Operation) -> (Editor, BodyId,
 }
 
 /// A boss tangent to a body only along a line touches it, so the join
-/// fails naming the body (the union refuses the line contact, or runs
-/// out working it out at the default tolerance), never as touching no
-/// body; the body is listed and kept as it was. At the default
-/// tolerance `touches` finds it within less than the old refinement
-/// took.
+/// fails naming the body (the union refuses the line contact), never as
+/// touching no body; the body is listed and kept as it was. At the
+/// default tolerance `touches` finds it, and the union refuses it,
+/// within less than the old refinement took (which ran out of it).
 #[test]
 fn a_join_tangent_to_a_body_along_a_line_names_it() {
     let (editor, body, join) =
@@ -1408,39 +1407,29 @@ fn a_join_tangent_to_a_body_along_a_line_names_it() {
     };
     assert_eq!(*failed, join);
     assert!(
-        error.starts_with("joining it to Body 1 is too complex"),
+        error.starts_with("joining it to Body 1 leaves no clean solid"),
         "{error}"
     );
     assert_eq!(evaluation.touched, [(join, vec![body])]);
     assert_near(evaluation.bodies[0].solid.volume(), PI * 4.0);
 }
 
-/// A cut tangent to a body along a line targets it: with the line on
-/// the circles' seam the difference is the body unchanged, a no-op;
-/// off it the kernel can't tell the tangent faces apart and the cut
-/// fails naming the body, changing nothing.
+/// A cut tangent to a body along a line targets it, and the difference
+/// is the body unchanged, a no-op, with the line on the circles' seam or
+/// off it, at the coarsest tolerance and the default one.
 #[test]
-fn a_cut_tangent_to_a_body_along_a_line_is_a_no_op_or_names_it() {
-    let (editor, body, cut) =
-        tangent_discs(Tolerance::MAX_FIT, 0.0, Operation::Cut(Targets::default()));
-    let evaluation = evaluated(editor.document());
-    assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
-    assert_eq!(evaluation.touched, [(cut, vec![body])]);
-    assert_near(evaluation.bodies[0].solid.volume(), PI * 4.0);
-
-    let (editor, body, cut) =
-        tangent_discs(Tolerance::MAX_FIT, 0.7, Operation::Cut(Targets::default()));
-    let evaluation = evaluated(editor.document());
-    let [(failed, error)] = &evaluation.failed[..] else {
-        panic!("{:?}", evaluation.failed);
-    };
-    assert_eq!(*failed, cut);
-    assert!(
-        error.starts_with("cutting it from Body 1 can't be worked out"),
-        "{error}"
-    );
-    assert_eq!(evaluation.touched, [(cut, vec![body])]);
-    assert_near(evaluation.bodies[0].solid.volume(), PI * 4.0);
+fn a_cut_tangent_to_a_body_along_a_line_is_a_no_op() {
+    for (fit, angle) in [
+        (Tolerance::MAX_FIT, 0.0),
+        (Tolerance::MAX_FIT, 0.7),
+        (1e-3, 0.7),
+    ] {
+        let (editor, body, cut) = tangent_discs(fit, angle, Operation::Cut(Targets::default()));
+        let evaluation = evaluated(editor.document());
+        assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
+        assert_eq!(evaluation.touched, [(cut, vec![body])]);
+        assert_near(evaluation.bodies[0].solid.volume(), PI * 4.0);
+    }
 }
 
 /// A join overlapping one body and tangent to another along a line

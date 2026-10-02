@@ -10,7 +10,9 @@
 //! with a **certificate** that no loop hides in it: the two patches'
 //! normal cones apart (the surfaces are never parallel there, and a loop
 //! needs somewhere they are), both planar (planes meet in a line), or,
-//! with no ends, their control hulls apart. Then no ends is no cut, and
+//! with no ends, their control hulls apart, or walls along one direction
+//! that come near each other (they meet only in lines along it, which
+//! run out of the pair through ends). Then no ends is no cut, and
 //! two ends are one arc; the ends of two planar patches, on the line
 //! their planes meet in, join in order along it.
 //!
@@ -356,7 +358,8 @@ fn pair_decision(
     let certified = planar
         || cones[0][p as usize].apart(&cones[1][q as usize])
         || plane_and_cylinder(a, p, b, q, cones)
-        || (ends.is_empty() && apart(&pa.hull(), &pb.hull(), 0.0));
+        || (ends.is_empty() && apart(&pa.hull(), &pb.hull(), 0.0))
+        || (ends.is_empty() && parallel_walls(a, p, b, q, resolution));
     if certified {
         match ends {
             [] => return Ok(PairDecision::Arcs(Vec::new())),
@@ -424,23 +427,100 @@ fn plane_and_cylinder(a: &Input, p: u32, b: &Input, q: u32, cones: [&[NormalCone
         || (b.planar[q as usize] && cylinder(a, p, &cones[0][p as usize]))
 }
 
-/// The direction a quadric doesn't change along, if it is a cylinder: the
-/// null direction of its (symmetric) matrix, along which its linear part
-/// vanishes too, to rounding.
+/// How near two walls along one direction must come in a pair, in
+/// resolutions, for [`parallel_walls`] to certify it.
+const PARALLEL_NEAR: f64 = 64.0;
+
+/// Whether triangle `p` of `A` and `q` of `B` lie on walls along one
+/// direction ([`parallel_generators`]) that come within [`PARALLEL_NEAR`]
+/// resolutions of each other there: some point sampled on either patch
+/// is that near the other's surface. With no ends such a pair has no cut.
+///
+/// Walls further apart are refined as any other pair, until their hulls
+/// part, though they don't meet either: later stages rely on it. Where a
+/// cap's flat ring lies between two such walls (a cylinder inside a
+/// larger one sharing its top, cylinders of radii 1 and 1.001 stacked, a
+/// coaxial one a few thousandths larger over part of the other's span),
+/// the ring is cut along both walls' rims and triangulated from their
+/// pieces: from unrefined walls, whose quarter arcs bulge across a ring
+/// narrower than their sag, its triangles fail the hull rules against
+/// the walls' (or, on a rim through a cap vertex in line with two of the
+/// rim's, fold). Refined until their hulls part, the walls' pieces bulge
+/// less than the ring is wide. Walls within the resolution of each other
+/// (a tangency) never part: refined until their pieces were flat, a line
+/// contact of a few millimetres ran out of the budget, the pairs along it
+/// doubling every round. Between the two the certificate takes walls
+/// that come nearer than 64 resolutions, which leaves a ring narrower
+/// than that between them to fail, and stops a tangency's refinement once
+/// a sample of its pieces comes that near the other wall: pieces about
+/// 0.1 across for walls of radius 1 at the default tolerance, where
+/// flat ones are about 0.003.
+fn parallel_walls(a: &Input, p: u32, b: &Input, q: u32, resolution: f64) -> bool {
+    if parallel_generators(a, p, b, q, resolution).is_none() {
+        return false;
+    }
+    let within = PARALLEL_NEAR * resolution;
+    let surface = |input: &Input, t: u32| input.mesh.faces()[input.face(t) as usize].surface;
+    let near = |patch: &crate::patch::Patch, other: &Surface| {
+        samples().any(|u| other.distance(patch.eval(u)) <= within)
+    };
+    near(&a.patches[p as usize], &surface(b, q)) || near(&b.patches[q as usize], &surface(a, p))
+}
+
+/// The direction triangle `p` of `A` and `q` of `B` both don't change
+/// along, if their faces claim quadrics that are cylinders ([`along`]) with
+/// directions parallel to within `resolution` over the pair's extent (its
+/// boxes' diagonal): then two lines, one along each, drift apart by less
+/// than the resolution across the pair. Such walls meet only in lines
+/// along it (the cross-sections' common points, swept along it), and a
+/// line runs out of both patches through their edges, where the counting
+/// gives it ends: with none, they don't meet.
+fn parallel_generators(a: &Input, p: u32, b: &Input, q: u32, resolution: f64) -> Option<DVec3> {
+    let dir = |input: &Input, t: u32| match input.mesh.faces()[input.face(t) as usize].surface {
+        Surface::Quadric(quadric) => along(&quadric),
+        _ => None,
+    };
+    let (x, y) = (dir(a, p)?, dir(b, q)?);
+    let bounds = a.patches[p as usize]
+        .bounds()
+        .union(b.patches[q as usize].bounds());
+    let extent = (bounds.max - bounds.min).length();
+    // A non-finite extent gives `None`.
+    (x.cross(y).length() * extent <= resolution).then_some(x)
+}
+
+/// The direction a quadric doesn't change along, if it is a cylinder: a
+/// null direction of its (symmetric) matrix along which its linear part
+/// vanishes too, to rounding. For a matrix of rank 2 (circles, ellipses,
+/// hyperbolas swept) that is its one null direction; for rank 1 (a
+/// parabola swept: the matrix is `g·gᵀ`, its null directions a plane)
+/// the one in that plane square to the linear part.
 pub(super) fn along(q: &crate::mesh::Quadric) -> Option<DVec3> {
     let m = (q.a + q.a.transpose()) * 0.5;
     let rows = [m.row(0), m.row(1), m.row(2)];
-    let d = [
+    let size = rows.iter().map(|r| r.length()).fold(0.0, f64::max);
+    if !(size > 0.0 && size.is_finite()) {
+        return None;
+    }
+    let longest = |v: [DVec3; 3]| {
+        v.into_iter()
+            .max_by(|x, y| x.length_squared().total_cmp(&y.length_squared()))
+    };
+    let fits = |d: DVec3| {
+        (m * d).length() <= 1e-9 * size && q.b.dot(d).abs() <= 1e-9 * (size + q.b.length())
+    };
+    // Rank 2: the rows' largest cross product.
+    let crossed = longest([
         rows[0].cross(rows[1]),
         rows[1].cross(rows[2]),
         rows[2].cross(rows[0]),
-    ]
-    .into_iter()
-    .max_by(|x, y| x.length_squared().total_cmp(&y.length_squared()))?
-    .try_normalize()?;
-    let size = rows.iter().map(|r| r.length()).fold(0.0, f64::max);
-    let flat = |v: DVec3| v.length() <= 1e-9 * size;
-    (size > 0.0 && flat(m * d) && q.b.dot(d).abs() <= 1e-9 * (size + q.b.length())).then_some(d)
+    ])?;
+    if let Some(d) = crossed.try_normalize().filter(|&d| fits(d)) {
+        return Some(d);
+    }
+    // Rank 1: square to the largest row and to the linear part.
+    let row = longest(rows)?;
+    row.cross(q.b).try_normalize().filter(|&d| fits(d))
 }
 
 /// The ends of a pair of planar patches, on the line their planes meet

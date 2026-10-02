@@ -4052,7 +4052,8 @@ planar and the other on a **cylinder** (its face's quadric, unchanged
 along a direction: `pairs::along`) with its normals within a half-space
 (a plane cuts a cylinder in lines along it, which run out of the patch,
 or in a conic round it, whose normals turn right round), or, with no
-ends, their control hulls apart (GJK). Then no ends is no cut, two ends
+ends, their control hulls apart (GJK) or **walls along one direction**
+that come near each other (below). Then no ends is no cut, two ends
 are one arc, and more ends of two planar patches join in order along the
 line their planes meet in (if they alternate). Without the cylinder
 certificate a box's side against a boss's wall along it refined without
@@ -4061,6 +4062,48 @@ are only within the resolution of them, so a loop the certificate
 misses lies within about the resolution of both surfaces (a near
 tangency),
 and leaving it out moves the result by less than that.
+
+`along` takes the null direction of the quadric's matrix along which
+its linear part vanishes too: for a matrix of rank 2 (a circle, ellipse
+or hyperbola swept) the rows' largest cross product; for rank 1 (a
+parabola swept, from a conic segment of weight 1: the matrix is `g·gᵀ`,
+whose null directions are a plane) the direction square to the largest
+row and to the linear part. A plane cuts a parabolic or hyperbolic wall
+in lines along it or in an open conic, so the plane-and-cylinder
+certificate holds there too.
+
+**Walls along one direction** (`parallel_walls`): both faces claim
+cylinders (`along`) whose directions are parallel within the resolution
+over the pair (`|d1 × d2|` times the diagonal of the pair's boxes at
+most the resolution: lines along each drift apart by less than that
+across the pair; extrudes from one normal agree to rounding). Such walls
+meet only in lines along that direction (their cross-sections' common
+points, swept), and a line runs out of both patches through their edges,
+where the counting gives it ends: with no ends there is no cut. Sound
+for any pair, but certified only where the walls come within
+`PARALLEL_NEAR` = 64 resolutions of each other (a point sampled on
+either patch, `samples`, that near the other's quadric). Walls further
+apart are refined as before until their hulls part, though they don't
+meet either, and later stages rely on that refinement: where a cap's
+flat ring lies between two such walls (a cylinder inside a larger one
+sharing its top, cylinders of radii 1 and 1.001 stacked, a coaxial one
+0.004 larger over part of the other's span), the ring is cut along both
+rims and triangulated from the walls' pieces; from unrefined walls,
+whose quarter arcs bulge across a ring narrower than their sag, its
+triangles fail the hull rules against the walls' (`Hull`), or, where a
+rim's quarter runs through a cap vertex in line with its ends, the ear
+cut there has three corners on a line and a curved side and folds.
+Refined until their hulls part, the pieces bulge less than the ring is
+wide. Walls within the resolution of each other (a tangency) never part:
+before, they were refined until their pieces were flat (about
+`√(8·R·resolution)` across), the pairs along the line doubling every
+round, and a line contact of a few millimetres at the default tolerance
+ran out of the budget (3 to 4 million units, 3.6 s and more). Now a
+tangency's refinement stops once a sample of its pieces comes within 64
+resolutions of the other wall: pieces about 0.1 across for walls of
+radius 1 at the default tolerance. Walls closer than 64 resolutions
+with a ring between them are left to fail (see Deviations for the round
+gate this replaces).
 
 Two patches on **one surface** (their faces claim quadrics and points
 sampled on each lie on the other's within the resolution: a pin in a
@@ -4086,7 +4129,8 @@ means no loop, and the ends, by angle round their middle in the plane of
 as parentheses match, starting after the lowest running sum, so the
 arcs don't cross. Pieces flat within the resolution certify each other
 as planar, which is what ends refinement at a tangency long before the
-floor (at pieces about `√(8·R·resolution)` across).
+floor (at pieces about `√(8·R·resolution)` across), where walls along
+one direction don't end it sooner.
 
 `refined` returns the operands as refined (the same surfaces, split; the
 operands' vertices first, then refinement's), the tree of each operand's
@@ -5456,7 +5500,11 @@ wall, upright and turned, cut square to it through the prism and out of
 the base's wall in ellipses, all four exact to `1e-12` with volumes in
 closed form; found by fuzzing:
 cylinders side by side `1e-9` apart at the coarsest tolerance (right or
-refused), a box's face through a bar's refinement midpoints (its plane
+refused); walls tangent along a line at the default tolerance
+(cylinders side by side, a pin of radius 0.5 against a plate's hole of
+radius 1, off the seams): the differences both ways the first operand
+to `1e-9` in volume and the intersections empty, within 200 000 units,
+the same at 1 and 8 threads; a box's face through a bar's refinement midpoints (its plane
 tag true), and a tilted bar's arc crossing a plate's cap where the
 search misses it (on the cap's plane). Walls over arcs whose ends are
 level (a 10 × 10 square whose top side is the arc, extruded): 60°
@@ -6185,7 +6233,27 @@ sampled points.
   work in the counting of refinement rounds is about 0.8 µs on one
   thread (native), so an operation that runs out of budget while
   refining a tangency takes about 3.3 s; on the web's single worker,
-  slower still. The steps that ran far past what they were charged are
+  slower still. Since walls along one direction are certified near each
+  other, differences and intersections of walls tangent along a line
+  with no ends there take 3 000 to 90 000 units (milliseconds) where
+  they ran out (cylinders side by side off the seams, a pin against its
+  hole's wall, both orders): on a default-tolerance probe of two
+  cylinders of radius 1 side by side at gaps 0 to ±`1e-5` (54
+  operations) 29 work where 16 did, 25 spend over a million units
+  where 41 did, total work 147 → 89 million, no result lost; the
+  regen's tangent discs (a disc beside a round body along a line, at
+  angles 0, 0.3 and 0.7, fits `1e-1` to `1e-4`) cut as a no-op at every
+  angle and fit in 20 to 320 ms (was 3 of 12, 0.24 to 5.2 s), and join
+  as "no clean solid" off the seams at fits down to `1e-3` in 15 ms to
+  2 s (the repair of the refused union) instead of 0.3 to 2 s and
+  `TooComplex` at `1e-3`. What still runs out: unions where the line
+  lies on a seam, or overlaps from `−1e-9` to `−1e-5` (the pairs along
+  the line have ends: two lines a hair apart, or ties on the seam),
+  every join at `1e-4`, and coaxial walls `64` resolutions to a few
+  thousandths apart over a millimetre or more (refined until their
+  hulls part, as before: radii 1 and 1.0001 or 1.001 over 1 mm run out,
+  and 1.004 the union; radii 1 and 1.00001, within the 64 resolutions,
+  now cut where it ran out). The steps that ran far past what they were charged are
   counted now (the triangulations' and the counting's exact signs, the
   patches the result's check integrates), so none runs unbounded; the price is that an
   operation full of ties runs out sooner (a flat torus of 9 216 patches
@@ -6291,13 +6359,13 @@ and the later ones still run.
   boss tangent to a round boss) touches it, so that body is a target
   and its boolean decides: a join fails naming the body, as the union
   of solids meeting along a line isn't a manifold ("joining it to Body
-  1 leaves no clean solid…" at the coarsest tolerance, "…is too
-  complex to work out…" where refining the line contact runs out); a
-  tangent cut is the body unchanged where the kernel works it out (the
-  line on the circles' seam at the coarsest tolerance) and otherwise
-  fails naming the body ("cutting it from Body 1 can't be worked
-  out…", "…leaves a face that can't be made…", "…is too complex…"),
-  changing nothing. So a tool that meets one body and grazes another
+  1 leaves no clean solid…", "…can't be worked out…" or, where
+  refining the line contact runs out, "…is too complex to work
+  out…"); a tangent cut is the body unchanged where the kernel works it
+  out (every tangent disc from the coarsest tolerance to `1e-4`, with
+  the walls along one direction certified) and otherwise fails naming
+  the body ("cutting it from Body 1 can't be worked out…", "…is too
+  complex…"), changing nothing. So a tool that meets one body and grazes another
   along a line fails as a whole (it used to skip the grazed body) until
   that body is taken out. Where a feature has more than one target, a
   target's failing boolean (or an intersect emptying it) ends its
@@ -6651,7 +6719,15 @@ tolerance from `1e-1` to `1e-4`; the whole regen 0.2 to 0.45 s at
 refused for a face too thin), 1.4 to 4.1 s at the default and 4.9 to
 7.6 s at `1e-4`, there the boolean running out (`TooComplex`). So the
 time moved from `touches` (3.6 to 11 s to `false`, `TooComplex` or
-`Inconsistent`) to the boolean, whose answer is cached. An operation
+`Inconsistent`) to the boolean, whose answer is cached. With walls
+along one direction certified near each other, every such cut is a
+no-op, in 20 to 320 ms at every tolerance, and the joins are refused
+in 15 to 170 ms at `1e-1` to `1e-2` off the seam, and at the default
+off it in 0.1 to 2 s (most of it repairing the refused union); a
+join with the line on the seam (`Inconsistent` at `1e-1` and `1e-2`,
+`TooComplex` from the default) and every join at `1e-4` (1.5 to 2.8
+s, `TooComplex`) are as before: the pairs along the line have ends
+there. An operation
 that runs out of budget takes about 2–3.5 s on one native thread and holds the
 single-threaded web worker longer, with drafts queued behind it (latest
 wins, so only the newest waits). The cache's sizes are estimates
@@ -7816,3 +7892,23 @@ parameter, or a split outside the patch bounds),
   rounding in practice rather than within `eps`. A body's distance is its
   surface's (a body inside another is not 0): the simplest reading, as a
   containment test would need the booleans' counting.
+- **Walls along one direction are certified by nearness, not from a
+  round on.** The plan certified such pairs with no ends from round 2
+  of `refined` (a gate measured from 2 to 4), because certifying them
+  from round 0 lost results: refinement of walls that don't meet was
+  helping later stages. Diagnosed, those were all caps' flat rings
+  between two parallel walls a little apart (`flush_rims_take_the_halved_cuts_vertices`:
+  an ear with three corners in line and a quarter arc for a side,
+  which folds; `stacked_cylinders_a_step_apart_keep_the_step`,
+  `a_cylinder_inside_a_larger_one_over_one_span`, seeded `related`
+  coaxial walls 0.0038 apart: ring triangles failing the hull rules
+  against unrefined walls bulging across the ring), which need the walls
+  refined until their hulls part. No round gate keeps them all: at
+  round 2 `related` lost 2 (113 → 111) and the stacked step ran out,
+  from round 4 the step still failed, and from round 5 a tangency's
+  refinement no longer fitted 200 000 units. Certifying only walls
+  that come within 64 resolutions of each other keeps every refinement
+  that parts hulls (walls further apart) and stops a tangency's: every
+  test passes, every tally holds (`related` 113, bosses in drilled
+  plates 148 → 149), and the probes match the plan's gate 2. Rings
+  narrower than 64 resolutions between such walls are left to fail.

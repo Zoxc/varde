@@ -57,7 +57,7 @@ fn moved(solid: &Solid, f: impl Fn(DVec3) -> DVec3) -> Solid {
 }
 
 /// [`moved`], checked at `tol` (the seeded tests' `moved` too).
-pub(super) fn moved_at(solid: &Solid, tol: &Tolerance, f: impl Fn(DVec3) -> DVec3) -> Solid {
+pub(crate) fn moved_at(solid: &Solid, tol: &Tolerance, f: impl Fn(DVec3) -> DVec3) -> Solid {
     let mesh = solid.mesh();
     let origin = f(DVec3::ZERO);
     let turn = |d: DVec3| f(d) - origin;
@@ -458,6 +458,58 @@ fn cylinders_a_hair_apart_are_right_or_refused() {
             }
         }
     }
+}
+
+/// Walls tangent along a line at the default tolerance: cylinders side
+/// by side (`a`, `b`), and a pin of radius 0.5 inside a plate's hole of
+/// radius 1, against its wall (`plate`, `pin`), off the seams.
+fn tangent_walls() -> [Solid; 4] {
+    let a = cylinder([0.0, 0.0, 0.0], 1.0, 2.0);
+    let b = Solid::cylinder(DVec3::new(2.0, 0.0, 0.5), 1.0, 1.0, 3, &TOL).unwrap();
+    let plate = extruded(
+        vec![
+            rect(DVec2::splat(-3.0), DVec2::splat(3.0), 0),
+            circle(DVec2::ZERO, 1.0, 4, true),
+        ],
+        0.0,
+        1.0,
+        5,
+    );
+    let at = DVec2::new(0.3f64.cos(), 0.3f64.sin()) * 0.5;
+    let pin = extruded(vec![circle(at, 0.5, 10, false)], -0.5, 1.5, 7);
+    [a, b, plate, pin]
+}
+
+#[test]
+fn walls_tangent_along_a_line_are_decided_within_a_small_budget() {
+    // The pairs along the line have no ends and no certificate but that
+    // the walls run along one direction; refined until their pieces were
+    // flat, they ran out of the default budget (some 3 million units).
+    // Nothing is cut: the difference is the first operand as it is, the
+    // intersection empty.
+    let [a, b, plate, pin] = tangent_walls();
+    let budget = Budget::new(200_000);
+    let less = |x: &Solid, y: &Solid| {
+        let got = boolean(x, y, Op::Difference, &TOL, &budget)
+            .unwrap_or_else(|e| panic!("difference failed: {e:?}"));
+        assert!(
+            (got.volume() - x.volume()).abs() < 1e-9,
+            "{} {}",
+            got.volume(),
+            x.volume()
+        );
+    };
+    less(&a, &b);
+    less(&b, &a);
+    less(&plate, &pin);
+    less(&pin, &plate);
+    for (x, y) in [(&a, &b), (&plate, &pin)] {
+        let both = boolean(x, y, Op::Intersection, &TOL, &budget)
+            .unwrap_or_else(|e| panic!("intersection failed: {e:?}"));
+        assert!(both.is_empty(), "{}", both.volume());
+    }
+    assert_deterministic(|| boolean(&a, &b, Op::Difference, &TOL, &budget)).unwrap();
+    assert_deterministic(|| boolean(&pin, &plate, Op::Difference, &TOL, &budget)).unwrap();
 }
 
 #[test]

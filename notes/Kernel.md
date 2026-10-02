@@ -281,7 +281,8 @@ a balanced tree.
 4. **Pairs of faces.** Flat pairs have two ends or none: one straight arc.
    A curved pair is decided from its ends only with a **certificate** that
    no closed loop hides in it (normal cones apart, both planar, a plane
-   against a cylinder patch, or hulls apart with no ends). Two patches on
+   against a cylinder patch, or with no ends hulls apart or walls along
+   one direction that come near each other). Two patches on
    one surface have no cut. Any other pair is **refined**: both operands
    are split red–green where the pair is, and everything is counted again;
    pairs at the size floor are decided by fixed rules (no certificate means
