@@ -23,7 +23,7 @@ use varde_render::{Camera, Projection};
 use varde_sketch::{Analysis, Id, Profiles, Rejected, Role, SketchEdit, TooComplex};
 use varde_view::typed::{DEFAULT_SIDES, Field};
 use varde_view::{
-    ActiveTool, CURVED_FACE, PlanePick, RowMenu, SketchState, Snap, Target, Tool, ToolClick,
+    ActiveTool, CURVED_FACE, PlanePick, RowMenu, Shown, SketchState, Snap, Target, Tool, ToolClick,
     ValueField, ValueTarget,
 };
 
@@ -385,6 +385,12 @@ impl Doc {
         let Some(picking) = &self.picking_plane else {
             return;
         };
+        // Saved where it can't be written, the document can't take it:
+        // backed out of, as `Esc` does.
+        if !self.editable() {
+            self.stop_picking_plane();
+            return;
+        }
         let pick = match &picking.pick.sketch {
             None => Some(self.new_sketch_pick()),
             Some(_) if replaced => None,
@@ -532,19 +538,23 @@ impl Doc {
     /// Picking the plane for a new sketch, as the document and the model
     /// shown have it.
     fn new_sketch_pick(&self) -> PlanePick {
-        PlanePick::new_sketch(self.editor.document(), self.feed.merged_bodies())
+        PlanePick::new_sketch(self.editor.document(), self.shown())
     }
 
     /// Picking another plane for the sketch `id`, which `failed` to be
     /// placed if it says why, as the document and the model shown have
     /// it: none if it isn't a sketch.
     fn change_pick(&self, id: FeatureId, failed: Option<String>) -> Option<PlanePick> {
-        PlanePick::change(
-            self.editor.document(),
-            id,
-            failed,
-            self.feed.merged_bodies(),
-        )
+        PlanePick::change(self.editor.document(), id, failed, self.shown())
+    }
+
+    /// What the model shown found that naming its faces needs.
+    fn shown(&self) -> Shown<'_> {
+        Shown {
+            merged: self.feed.merged_bodies(),
+            touched: self.feed.touched_features(),
+            failed: self.feed.failed_features(),
+        }
     }
 
     /// The face a sketch on `face` goes on and where, as the model shown

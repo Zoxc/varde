@@ -572,7 +572,11 @@ impl Doc {
         // Another tool leaves the measure tool.
         if matches!(
             message,
-            Look::PickPlane | Look::ChangePlane(_) | Look::StartExtrude | Look::StartRevolve | Look::EditFeature(_)
+            Look::PickPlane
+                | Look::ChangePlane(_)
+                | Look::StartExtrude
+                | Look::StartRevolve
+                | Look::EditFeature(_)
         ) {
             self.measure = None;
         }

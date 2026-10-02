@@ -370,3 +370,162 @@ fn a_face_of_a_body_merged_after_the_sketch_is_named_by_its_own_body() {
     );
     assert_eq!(doc.feed.placement(id, &plane(&doc, id)), Some(picked));
 }
+
+#[test]
+fn a_cut_face_of_a_body_merged_after_the_sketch_is_named_by_the_body_it_was_cut_in() {
+    // Two plates, a pocket cut into Body 2's top alone, a sketch, then a
+    // join merging Body 2 into Body 1: the pocket's floor shows as Body
+    // 1's, and was made by the cut, not by Body 2's maker, but at the
+    // sketch it's Body 2's.
+    let (mut editor, [top, below]) = crate::tests::two_plates();
+    let xy = Plane::Origin(OriginPlane::XY);
+    editor.apply(editor.document().add_sketch(xy)).unwrap();
+    let pocket = editor.document().features().last().unwrap().id;
+    let mut square = varde_sketch::Sketch::default();
+    let corners = [(-25.0, 5.0), (-15.0, 5.0), (-15.0, 15.0), (-25.0, 15.0)]
+        .map(|(x, y)| square.add_point(DVec2::new(x, y)).unwrap());
+    for k in 0..4 {
+        let line = Curve::Line {
+            start: corners[k],
+            end: corners[(k + 1) % 4],
+        };
+        square.add_curve(line, false).unwrap();
+    }
+    let region = square.profiles().unwrap().reference(0).unwrap();
+    editor
+        .apply(Command::SetSketch {
+            feature: pocket,
+            sketch: Box::new(square),
+        })
+        .unwrap();
+    let ask = Extent::ask(&editor.document().design());
+    let cut = Extrude {
+        sketch: pocket,
+        regions: vec![region],
+        extent: Extent::OneSide(Value::new("2", &ask).unwrap()),
+        flip: true,
+        operation: Operation::Cut(varde_document::Targets {
+            excluded: vec![top],
+        }),
+    };
+    editor
+        .apply(editor.document().add_feature(cut.into()))
+        .unwrap();
+    editor.apply(editor.document().add_sketch(xy)).unwrap();
+    let id = editor.document().features().last().unwrap().id;
+    crate::tests::add_join(&mut editor);
+    let (mut doc, requests) = crate::tests::holding(editor.document().clone());
+    assert!(doc.feed.failed_features().is_empty());
+    assert_eq!(doc.feed.merged_bodies(), [(below, top)]);
+    doc.look(Look::ChangePlane(id));
+    let floor = face_on(&doc, DVec3::Z, -2.0);
+    assert_eq!(floor.body, top, "shown on the holder");
+    doc.update(Edit::FacePicked(floor));
+    let Plane::Face(face) = plane(&doc, id) else {
+        panic!("on a face: {:?}", doc.notice);
+    };
+    assert_eq!(face.body, below, "named by the body it was cut in");
+    let picked = doc.placement(id).unwrap();
+    answer(&mut doc, &requests);
+    assert!(
+        doc.feed.failed_features().is_empty(),
+        "{:?}",
+        doc.feed.failed_features()
+    );
+    assert_eq!(doc.feed.placement(id, &plane(&doc, id)), Some(picked));
+}
+
+#[test]
+fn a_face_cut_through_two_bodies_merged_after_the_sketch_is_refused() {
+    // Two plates, a square hole cut through both, a sketch, then a join
+    // merging Body 2 into Body 1: a wall of the hole shows on Body 1, but
+    // at the sketch it may be on either plate, which can't be told.
+    let (mut editor, [top, below]) = crate::tests::two_plates();
+    let xy = Plane::Origin(OriginPlane::XY);
+    editor.apply(editor.document().add_sketch(xy)).unwrap();
+    let hole = editor.document().features().last().unwrap().id;
+    let mut square = varde_sketch::Sketch::default();
+    let corners = [(-25.0, 5.0), (-15.0, 5.0), (-15.0, 15.0), (-25.0, 15.0)]
+        .map(|(x, y)| square.add_point(DVec2::new(x, y)).unwrap());
+    for k in 0..4 {
+        let line = Curve::Line {
+            start: corners[k],
+            end: corners[(k + 1) % 4],
+        };
+        square.add_curve(line, false).unwrap();
+    }
+    let region = square.profiles().unwrap().reference(0).unwrap();
+    editor
+        .apply(Command::SetSketch {
+            feature: hole,
+            sketch: Box::new(square),
+        })
+        .unwrap();
+    let cut = Extrude {
+        sketch: hole,
+        regions: vec![region],
+        extent: crate::tests::two_sides(editor.document(), "15", "5"),
+        flip: false,
+        operation: Operation::Cut(varde_document::Targets::default()),
+    };
+    editor
+        .apply(editor.document().add_feature(cut.into()))
+        .unwrap();
+    editor.apply(editor.document().add_sketch(xy)).unwrap();
+    let id = editor.document().features().last().unwrap().id;
+    crate::tests::add_join(&mut editor);
+    let (mut doc, _requests) = crate::tests::holding(editor.document().clone());
+    assert!(doc.feed.failed_features().is_empty());
+    assert_eq!(doc.feed.merged_bodies(), [(below, top)]);
+    let revision = doc.editor.revision();
+    doc.look(Look::ChangePlane(id));
+    let walls = faces(
+        &doc,
+        |s| matches!(*s, Summary::Plane { n, d } if n == [1.0, 0.0, 0.0] && d == -25.0),
+    );
+    assert!(!walls.is_empty());
+    let index = doc.feed.pick_index();
+    let picking = doc.picking_plane.as_ref().unwrap();
+    for &(wall, near) in &walls {
+        assert!(!picking.pick.takes(index, wall));
+        assert_eq!(picking.pick.face_ref(index, wall, near), None);
+        let why = picking.pick.refusal(index, wall).unwrap();
+        assert!(why.contains("can't be told"), "{why}");
+    }
+    // Asked for anyway, named by the body shown, it's refused.
+    let (wall, near) = walls[0];
+    let face = index.face_ref(wall, near).unwrap();
+    doc.update(Edit::FacePicked(face));
+    assert_eq!(doc.editor.revision(), revision);
+    assert!(doc.notice.as_deref().unwrap().contains("can't be told"));
+    // A new sketch at the end of the history takes it.
+    doc.look(Look::Escape);
+    doc.look(Look::PickPlane);
+    let index = doc.feed.pick_index();
+    let picking = doc.picking_plane.as_ref().unwrap();
+    assert!(picking.pick.takes(index, wall));
+}
+
+#[test]
+fn picking_a_plane_ends_when_the_document_turns_read_only() {
+    // Saved somewhere it can't be written while a plane is picked from
+    // the Sketch tab: backed out of, the sketch edited again.
+    let (mut doc, id, _requests) = circle_on_the_top();
+    doc.look(Look::EditFeature(id));
+    doc.look(Look::ChangePlane(id));
+    assert!(doc.picking_plane.is_some());
+    doc.read_only = Some("read only".to_owned());
+    doc.sync();
+    assert!(doc.picking_plane.is_none());
+    assert_eq!(edited(&doc), Some(id));
+    // And for a new sketch.
+    doc.read_only = None;
+    doc.look(Look::FinishSketch);
+    doc.look(Look::PickPlane);
+    assert!(doc.picking_plane.is_some());
+    doc.read_only = Some("read only".to_owned());
+    doc.sync();
+    assert!(doc.picking_plane.is_none());
+    let bar = status_bar(&doc);
+    assert!(!bar.iter().any(|t| t.contains("Pick a plane")), "{bar:?}");
+}

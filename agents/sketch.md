@@ -843,8 +843,8 @@ face made before it" for the others, which aren't highlighted nor
 clickable; the toolbar's tag reads "Sketch 2's plane". The plane
 picked is one `SetSketchPlane` (`Change::SetPlane`, waiting behind
 edits on the solver like any change; a face as `PlanePick::face_ref`
-names it, by the body made with it if a later join merged that into
-another), the drawing kept in its own
+names it, by the body it was made on if a later join merged that into
+another, see `agents/features.md`), the drawing kept in its own
 coordinates; a face's placement is worked out at the pick and kept as
 `Doc::placed` (with the plane, so an undo that takes it off drops it) as
 for a new sketch. A face refused at the pick keeps picking, the reason
@@ -852,7 +852,8 @@ in the status bar. `Esc` (or `S`) backs out leaving the document as it
 was, and enters the sketch again if it was left for it. The picking is
 kept in step with the document (`Doc::prune_plane_pick`): which faces
 take the sketch is worked out again after every edit, and it ends if
-the sketch goes or the document is replaced; after every answer too,
+the sketch goes, the document is replaced or can't be edited any more
+(backed out of, as `Esc`); after every answer too,
 which may merge bodies, and the reason a failed sketch is asked about
 goes once the model shown places it.
 

@@ -219,10 +219,19 @@ differ for Change plane is the model: the app finds the face in the
 final model, regen at the sketch's place in the history. A face a later
 feature removed can't be picked, and one moved by a later feature would
 be placed at the pick where it ends up and then where it was; faces of
-a body a later join merged into another are named by their own body
-(`PlanePick::face_ref`: the body the feature naming the face made, if
-that's merged into the one shown), which regen follows on to the holder
-wherever the join is, so they're found before the join too.
+a body a later join merged into another are named by the body they
+were made on (`PlanePick::face_ref`: the body the feature naming the
+face made, or else the body the cut, intersect or join naming it touched
+(a join only its first, which it merges into), among those merged into
+the one shown; `MeshFeed::touched_features` lists the holders as they
+were then), which regen follows on to the holder wherever the join is,
+so they're found before the join too. Where those are more than one body
+at the sketch's place (a hole cut through two bodies a join after the
+sketch merged; the merges before it are replayed from the joins that
+worked with `note_merge`), which one the face is on can't be told:
+Change plane refuses it ("Which body that face is on at Sketch 2 can't
+be told: pick another"); a new sketch, at the end, takes it on the
+holder.
 
 ## Revolve
 

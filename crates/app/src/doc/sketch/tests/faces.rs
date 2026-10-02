@@ -636,6 +636,7 @@ fn text_at(doc: &Doc, label: &str) -> iced::Point {
 }
 
 mod change;
+mod fuzz;
 
 #[test]
 fn a_face_of_a_feature_removed_since_the_model_shown_takes_no_sketch() {

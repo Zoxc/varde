@@ -68,7 +68,7 @@ pub use operation_panel::{BodyTarget, Candidate, OperationKind, PANEL_BODY, Type
 pub use pick::{
     EDGE_REACH, ModelHighlight, Pick, PickIndex, Picked, Picks, SNAP_REACH, Snapped, VERTEX_REACH,
 };
-pub use plane_pick::{PlanePick, plane_note};
+pub use plane_pick::{PlanePick, Shown, plane_note};
 pub use rail::{RAIL_LIST, RailLook, RailOpen, RailSpot, rail_rows, rail_sets};
 pub use revolve::{Angle, RevolveLook, RevolvePick, RevolveState, TurnKind};
 pub use select::{Selected, Selection, SelectionMode};
