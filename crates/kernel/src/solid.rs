@@ -102,11 +102,30 @@ impl Solid {
         tol: &Tolerance,
         work: &mut Work,
     ) -> Result<Solid, KernelError> {
+        Solid::finished_or_checked(mesh, tol, work).map_err(|(e, _)| e)
+    }
+
+    /// [`Self::finished`], giving back with the error the repaired and
+    /// merged mesh where the check (not repair) found it invalid, for the
+    /// caller to tell why: the same solid, error and work.
+    pub(crate) fn finished_or_checked(
+        mesh: Mesh,
+        tol: &Tolerance,
+        work: &mut Work,
+    ) -> Result<Solid, (KernelError, Option<Box<Mesh>>)> {
         let mesh = mesh
-            .repair_within(tol, work)?
-            .merge_faces(tol.resolution(), work)?;
-        work.spend(mesh.tris().len().saturating_mul(CHECK_WORK))?;
-        Solid::new_within(mesh, tol, work)
+            .repair_within(tol, work)
+            .and_then(|mesh| mesh.merge_faces(tol.resolution(), work))
+            .map_err(|e| (e, None))?;
+        work.spend(mesh.tris().len().saturating_mul(CHECK_WORK))
+            .map_err(|e| (e, None))?;
+        let integrated = match mesh.check_counted(tol) {
+            Ok(integrated) => integrated,
+            Err(e) => return Err((KernelError::Invalid(e), Some(Box::new(mesh)))),
+        };
+        work.spend(integrated.saturating_mul(INTEGRATE_WORK))
+            .map_err(|e| (e, None))?;
+        Ok(Solid { mesh })
     }
 
     /// The empty solid.

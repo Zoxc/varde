@@ -3577,7 +3577,7 @@ elsewhere (see "Cutting curved faces").
 
 | file | holds |
 |---|---|
-| `boolean.rs` | `Op`, `BooleanError`, `UP`, `Cross11`, the `Primitives` trait, `boolean`, `touches`, building the mesh, `parts` (connected parts, for the rays and the clean-up) |
+| `boolean.rs` | `Op`, `BooleanError`, `UP`, `Cross11`, the `Primitives` trait, `boolean`, `touches`, building the mesh, naming failed results that touch themselves (`pinched_named`, `pinched`, `apart`), `parts` (connected parts, for the rays and the clean-up) |
 | `boolean/input.rs` | `Input`: an operand's tables (corners, edges' ends and triangles, boxes, patches, which edges are straight and which patches flat or planar), vertex normals, flat volume |
 | `boolean/curved.rs` | `Curved`, the primitives with curved patches: ray-derived shadow crossings, layers above a vertex, crossings of an edge through a patch, ties |
 | `boolean/curved/ray.rs` | the ray tests `ρ` (exact for straight edges and at every edge's ends) |
@@ -5546,8 +5546,69 @@ final check.
 Where the exact result isn't a manifold (two boxes touching along an
 edge or at a corner, united; a box less a solid touching its skin from
 inside at a point or along a line), the perturbation gives parts a zero
-distance apart, and the result fails `check` with `Invalid`. The same
-operands intersected, or subtracted the other way, work.
+distance apart: for a union `A` grows by `ε·n_v`, so the perturbed
+operands overlap in an infinitesimal prism along the shared edge, and
+the counting builds a manifold with a zero-width neck, whose vertices
+coincide at `ε = 0`. The clean-up collapses short edges only where every
+vertex keeps one fan, which the neck can't, so it stays and fails
+repair or `check` (fold, hull or neighbour rules). The same operands
+intersected, or subtracted the other way, work.
+
+Such a failure is named `BooleanError::NotManifold` rather than left as
+`Invalid`, where repair or the check (not `facing`) fails with
+`Invalid` and either
+- the mesh before repair (its positions, copied before repair takes
+  it) has two distinct vertices within the clean-up's short length
+  (`resolution / 8`): the neck above; or
+- the failure is `Hull(t, u)` and triangles `t` and `u` lie on separate
+  shells (`apart`): two parts touching or closer than the resolution
+  whose shells the operation left uncut, as cylinders tangent along a
+  line, united, where the counting finds no crossing and the result is
+  both operands as they were, their hulls meeting along the line, with
+  no near vertices at all. Repair names triangles by those of its input
+  (pieces keep their origin), so for its `Hull` the shells are those
+  of the cleaned mesh (its triangles copied with its positions); for
+  the check's, after repair, those of the repaired mesh, which
+  `Solid::finished_or_checked` hands back with the error.
+
+Then the operation's last error becomes `NotManifold` (`pinched_named`,
+`pinched` and `apart` in `boolean.rs`). Only the
+error that is returned is classified, at the very end, after the
+unfolding and joining retries (both keep the first try's error, so its
+positions are the ones measured), so no `Ok` ever becomes an error;
+`TooComplex`, `Inconsistent` and `Degenerate` stay as they are (the
+budget is gone, or no mesh was built). `pinched` is a hash grid of cells
+`resolution / 8` wide keyed by `floor(p / d)` as `i64` (bounded: within
+`MAX_COORD` at the finest tolerance keys stay under about `1e15`; `as`
+and the neighbour offsets saturate, which only puts more in a cell),
+each vertex measured against those before it in its 27 cells, stopping
+at the first pair: a unit of work a vertex and one a vertex measured
+against (points `d` apart fit about a hundred to 27 cells, so that's
+bounded); `apart` is a union-find over the triangles' sides, a unit a
+triangle. If either runs out of the budget, the error stays `Invalid`. The
+answer depends only on the positions. It isn't an early exit before
+repair: short curved edges are never collapsed and can pass `check`, so
+a near pair alone proves nothing. It names parts closer than the
+resolution (curved operands overlapping by less) too, which is the same
+thing at the kernel's resolution and mended the same way; and rarely a
+manifold result that fails for another reason with two vertices that
+near (rounding residue on flush faces): wording only. The decisions may
+give `NotManifold` before any mesh is built where they show a pinch
+(see "Tangent unions and thin overlaps run out").
+
+Measured on the release kernel suites (the default ones, and the slow
+bosses-in-drilled-plates, bars-through-boxes and drilled-grid ones):
+every tally the same as before, as it must be. Of the 117 refusals the
+seeded suites print, 95 were `Invalid`; 38 of those are `NotManifold`
+now (34 by the near pair, 4 more by separate shells): tangent and
+near-tangent cylinder unions at gaps 0, ±1e-9 and −1e-6, pins against a
+hole's wall, chained app-like steps. The flat touching cases (boxes on
+an edge or a corner, the diamond and octahedron differences) are all
+named so, and the grid boxes give `NotManifold` or `Invalid` only where
+the cells aren't a manifold. What stays `Invalid` is mostly `Fold` at
+cusps where faces are tangent (a boss standing in a plate tangent to
+its side, `a_cusp_where_faces_are_tangent_stays_invalid`), and thin
+triangles.
 
 ### Errors and budget
 
@@ -5559,7 +5620,10 @@ crossing the search only placed isn't on the other operand; or a
 cut neither exact nor traced whose fallback curve isn't on the true
 cut, see "Chains"),
 `Degenerate` (a face's loops
-couldn't be triangulated, or the triangles don't pair up). `TooComplex`
+couldn't be triangulated, or the triangles don't pair up), `NotManifold`
+(the result would touch itself along an edge or at a point, or come
+closer to itself than the resolution: see "Results that aren't
+manifolds"). `TooComplex`
 past the budget or `MAX_PATCHES`, or with triangles still off their face
 by more than the fit tolerance after the rounds of cutting or the
 clean-up; `Invalid` when the result fails
@@ -6659,12 +6723,16 @@ sampled points.
     of radius 1 joined 1 mm tall beside a round body of radius 1):
     every join at fit `1e-4` (angles 0, 0.3 and 0.7, 3.3 to 4.3 s) and
     at `1e-3` the join with the line on the seam (angle 0, 2.4 s), "too
-    complex". The fix waits on an error kind for results that aren't
-    manifolds (today they fail `check` as `Invalid`, or run out):
-    `refined` would return it for a union (`grow`) one of whose pairs on
-    walls along one direction has a group of four ends within the tie
-    distance, instead of splitting it, with its wording merged into that
-    error's. Measure it first: it must turn no `Ok` of the seeded suite
+    complex". The error kind for results that aren't manifolds exists
+    now (`BooleanError::NotManifold`, given today only where a built
+    mesh fails with a pinch, see "Results that aren't manifolds"; these
+    run out before any mesh is built), so the fix left is:
+    `refined` would return `KernelError::Boolean(NotManifold)` for a
+    union (`grow`) one of whose pairs on walls along one direction has a
+    group of four ends within the tie distance, instead of splitting it,
+    the message already worded (an error from `refined` comes before
+    `joined` is set, so `boolean_within` returns it without the retry
+    that refines without joining). Measure it first: it must turn no `Ok` of the seeded suite
     into an error, and the 9 unions at a tie and the regen joins should
     then fail within thousands of units (the 2 at `−1e-7`, if they have
     no such group, stay with the overlaps below). The near-tangent test
@@ -6944,13 +7012,15 @@ one; `Triangulation` ("its end faces couldn't be made") and regen's own
 `ProfileError::Fit` ("a spline couldn't be fitted: it stops or turns
 back on itself") name none, as no finer one is known to mend them. A
 boolean's error names the body and what was being done
-("joining it to Body 2 leaves no clean solid: they may meet only along
-an edge, at a point, or on tangent faces; if so, move it to overlap
-more or to clear it" for `Invalid`, which is what edge-touching unions
-and tangent contacts give, but not only: thin cap triangles left next
-to a hole's rim fail too though the solids overlap properly, so the
-cause is hedged and no tolerance is offered; an error
-of its own for edge and point contacts would let it be said outright;
+("joining it to Body 2 leaves no clean solid: the result would touch
+itself along an edge or at a point, or come too close to itself; move
+it to overlap more or to clear it" for `NotManifold`, said outright;
+"… leaves no clean solid: parts would be too thin or too close
+together, as where faces are tangent; if so, move it to overlap more or
+to clear it" for the other `Invalid` failures, zero-angle corners where
+faces are tangent and thin triangles beside a hole's rim among them, so
+the cause is hedged and no tolerance is offered, a finer one mending
+neither;
 "… can't be worked out: they meet on faces too nearly flush or tangent
 to tell apart; move it a little" for `Inconsistent`; "… is too complex
 to work out…" for `TooComplex`; for a result that's empty, the
@@ -8446,3 +8516,14 @@ parameter, or a split outside the patch bounds),
   margin stayed 0 from before they took near ties as ties, and chained
   small boxes gave a wrong empty intersection and a whole difference
   ("Counting").
+- **Results that touch themselves are named by a second rule too, and
+  a classification out of budget keeps `Invalid`.** The plan named a
+  failed result `NotManifold` only where its mesh before repair has two
+  vertices within the clean-up's short length. Tangent unions of
+  curved operands (a disc joined beside a round body, touching along a
+  line) leave both shells uncut and fail `Hull` with no near vertices,
+  so a `Hull` failure between separate shells is named so too (see
+  "Results that aren't manifolds"). Where telling runs out of the
+  budget, the plan would give `TooComplex`; the error stays `Invalid`
+  instead, equally bounded, so out-of-budget classification never
+  changes which kind of failure the measurements count.

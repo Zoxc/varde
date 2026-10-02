@@ -417,8 +417,30 @@ fn tangent(op: Op, swap: bool) -> Result<(Solid, f64), KernelError> {
 fn tangent_cylinders_meet_in_no_manifold() {
     // Their union isn't a manifold (as boxes touching along an edge), and
     // they have nothing in common.
-    assert!(tangent(Op::Union, false).is_err());
+    assert_eq!(
+        tangent(Op::Union, false).map(|_| ()),
+        Err(KernelError::Boolean(BooleanError::NotManifold))
+    );
     assert!(tangent(Op::Intersection, false).unwrap().0.is_empty());
+}
+
+#[test]
+fn a_cusp_where_faces_are_tangent_stays_invalid() {
+    // A boss standing in a plate, tangent to its side from inside: the
+    // union is a manifold, but the plate's top ends at the tangent point
+    // in a corner of zero angle no patch holds, so it is refused. Nothing
+    // there touches itself, so the error isn't named so.
+    for fit in [Tolerance::MAX_FIT, 1e-3] {
+        let tol = Tolerance::new(fit).unwrap();
+        let plate = Solid::cuboid(DVec3::ZERO, DVec3::new(4.0, 2.0, 1.0), 1, &tol).unwrap();
+        let boss = Solid::cylinder(DVec3::new(2.0, 0.5, 0.5), 0.5, 1.5, 2, &tol).unwrap();
+        let got = boolean(&plate, &boss, Op::Union, &tol, &Budget::DEFAULT);
+        assert!(
+            matches!(got, Err(KernelError::Invalid(_))),
+            "{fit}: {:?}",
+            got.map(|s| s.volume())
+        );
+    }
 }
 
 #[test]

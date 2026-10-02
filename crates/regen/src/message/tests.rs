@@ -15,12 +15,20 @@ fn boolean_failures_name_the_body_and_what_to_try() {
         text.starts_with("joining it to Body 2 leaves no clean solid"),
         "{text}"
     );
+    assert!(text.contains("too thin or too close together"), "{text}");
     assert!(text.contains("tangent"), "{text}");
-    // Not every boolean `Invalid` is such a contact: a guess, not a fact,
-    // and no tolerance to try.
-    assert!(text.contains("they may meet"), "{text}");
+    // Not every boolean `Invalid` is a tangency: a guess, not a fact, and
+    // no tolerance to try. Touching along an edge has its own error.
     assert!(text.contains("if so, move it"), "{text}");
     assert!(!text.contains("tolerance"), "{text}");
+    assert!(!text.contains("along an edge"), "{text}");
+    let pinched = KernelError::Boolean(BooleanError::NotManifold);
+    let text = boolean(Doing::Joining, "Body 2", pinched);
+    assert_eq!(
+        text,
+        "joining it to Body 2 leaves no clean solid: the result would touch itself along an \
+         edge or at a point, or come too close to itself; move it to overlap more or to clear it"
+    );
     let text = boolean(
         Doing::Cutting,
         "Body 1",
@@ -62,6 +70,7 @@ fn merging_failures_name_both_bodies_and_how_to_keep_them_apart() {
         KernelError::Invalid(CheckError::Counts),
         KernelError::Boolean(BooleanError::Inconsistent),
         KernelError::Boolean(BooleanError::Degenerate),
+        KernelError::Boolean(BooleanError::NotManifold),
         KernelError::Patch(varde_kernel::patch::PatchError::Mismatch),
     ] {
         let text = merging("Body 1", "Body 2", error);

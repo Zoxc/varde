@@ -275,6 +275,8 @@ fn a_join_bridging_blocks_is_their_union_or_fails_where_that_isnt_a_solid() {
             let error = &evaluation.failed[0].1;
             let hints = usize::from(touched.len() > 1);
             assert_eq!(error.matches("untick").count(), hints, "{context}: {error}");
+            // Named for what it is, not a guess.
+            assert!(error.contains(TOUCHES_ITSELF), "{context}: {error}");
             ids.iter().for_each(unchanged);
             continue;
         }
@@ -303,6 +305,61 @@ fn a_join_bridging_blocks_is_their_union_or_fails_where_that_isnt_a_solid() {
         merged >= 12 && refused >= 2,
         "{merged} merged, {refused} refused"
     );
+}
+
+/// What a boolean whose result would touch itself fails with.
+const TOUCHES_ITSELF: &str = "leaves no clean solid: the result would touch itself along an \
+                              edge or at a point";
+
+/// A join whose union with the body would touch itself fails saying so,
+/// and leaves the body as it was: a box on a box's edge or corner, and a
+/// lid flush on a pocket's rim (its bottom meets the body's top only
+/// along the rim's edges, over the open pocket).
+#[test]
+fn a_join_whose_union_would_touch_itself_says_so() {
+    // Blocks start or end on the sketch plane, z = 0.
+    let body: Block = [0.0, 0.0, -10.0, 10.0, 10.0, 0.0];
+    for (name, pocket, join) in [
+        ("edge", None, [10.0, 10.0, -10.0, 20.0, 20.0, 0.0]),
+        ("corner", None, [10.0, 10.0, 0.0, 20.0, 20.0, 10.0]),
+        (
+            "lid",
+            Some([3.0, 3.0, -5.0, 7.0, 7.0, 0.0]),
+            [3.0, 3.0, 0.0, 7.0, 7.0, 2.0],
+        ),
+    ] {
+        let mut editor = Editor::new(Document::default());
+        add_block(&mut editor, body, Operation::NewBody(BodyId::NEW));
+        let id = editor.document().bodies()[0].id;
+        let mut volume = block_volume(&body);
+        if let Some(pocket) = pocket {
+            add_block(&mut editor, pocket, Operation::Cut(Targets::default()));
+            volume -= block_volume(&pocket);
+        }
+        let feature = add_block(&mut editor, join, Operation::Join(Targets::default()));
+        let evaluation = evaluated(editor.document());
+        assert_eq!(
+            evaluation.touched.last(),
+            Some(&(feature, vec![id])),
+            "{name}"
+        );
+        let [(failed, error)] = &evaluation.failed[..] else {
+            panic!("{name}: {:?}", evaluation.failed);
+        };
+        assert_eq!(*failed, feature, "{name}");
+        assert_eq!(
+            *error,
+            format!(
+                "joining it to Body 1 {TOUCHES_ITSELF}, or come too close to itself; move it \
+                 to overlap more or to clear it"
+            ),
+            "{name}"
+        );
+        let [made] = &evaluation.bodies[..] else {
+            panic!("{name}: {} bodies", evaluation.bodies.len());
+        };
+        assert_near(made.solid.volume(), volume);
+    }
 }
 
 /// Two blocks 10 mm on a side along y, `a` from y = -10 to -2 and `b`

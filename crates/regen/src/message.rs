@@ -150,7 +150,8 @@ pub(crate) fn boolean(doing: Doing, body: &str, error: KernelError) -> String {
 /// body named `into`, which it touches too and which already holds the
 /// feature's tool, failed, and that unticking `other` keeps it apart. Mostly
 /// the two meet along an edge or at a corner the tool doesn't cover:
-/// joined to each on its own they were fine, merged they're no solid.
+/// joined to each on its own they were fine, merged they're no solid
+/// ([`BooleanError::NotManifold`]).
 pub(crate) fn merging(into: &str, other: &str, error: KernelError) -> String {
     let why = failed(&format!("merging {other} into {into}"), error);
     format!("{why}; or untick {other} under Bodies to keep it apart")
@@ -163,13 +164,21 @@ fn failed(what: &str, error: KernelError) -> String {
             "{what} is too complex to work out: they may meet on faces that are tangent or \
              nearly flush"
         ),
-        // Hedged: not every boolean `Invalid` is such a contact (thin cap
-        // triangles left next to a hole's rim fail too), so the cause is
-        // a guess and moving it a suggestion. No tolerance is offered: a
-        // finer one doesn't mend those either.
+        // The kernel found the result touching itself (two vertices at a
+        // pinch), so this is said as a fact. Parts closer than the
+        // resolution are named so too: the same thing at the kernel's
+        // resolution, mended the same way.
+        KernelError::Boolean(BooleanError::NotManifold) => format!(
+            "{what} leaves no clean solid: the result would touch itself along an edge or at a \
+             point, or come too close to itself; move it to overlap more or to clear it"
+        ),
+        // What else fails the check: zero-angle corners where faces are
+        // tangent (a boss tangent to a plate's edge), thin triangles
+        // beside a hole's rim. Hedged, so moving it is a suggestion. No
+        // tolerance is offered: a finer one doesn't mend those.
         KernelError::Invalid(_) => format!(
-            "{what} leaves no clean solid: they may meet only along an edge, at a point, or on \
-             tangent faces; if so, move it to overlap more or to clear it"
+            "{what} leaves no clean solid: parts would be too thin or too close together, as \
+             where faces are tangent; if so, move it to overlap more or to clear it"
         ),
         KernelError::Boolean(BooleanError::Inconsistent) => format!(
             "{what} can't be worked out: they meet on faces too nearly flush or tangent to \

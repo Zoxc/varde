@@ -101,7 +101,7 @@ fn volumes(va: f64, vb: f64, both: f64) -> [f64; 4] {
 
 /// Runs the four operations both ways round (union and intersection
 /// swapped give the same volume), checking each result's volume, or
-/// that it fails as invalid where `expect` has `None`.
+/// that it fails as not a manifold where `expect` has `None`.
 fn case(name: &str, a: &Solid, b: &Solid, expect: [Option<f64>; 4]) {
     let jobs = [
         (a, b, Op::Union, expect[0]),
@@ -129,7 +129,7 @@ fn case(name: &str, a: &Solid, b: &Solid, expect: [Option<f64>; 4]) {
                 }
                 faces_face_out(&solid);
             }
-            (None, Err(KernelError::Invalid(_))) => {}
+            (None, Err(KernelError::Boolean(BooleanError::NotManifold))) => {}
             (want, got) => panic!(
                 "{name}: {op:?} (swapped {swapped}) gave {:?}, wanted {want:?}",
                 got.map(|s| s.volume())
@@ -298,6 +298,57 @@ fn boxes_touching_along_an_edge_or_a_corner() {
 }
 
 #[test]
+fn pinched_finds_two_vertices_within_the_distance() {
+    let d = 1e-4;
+    let mut work = Work::new(&Budget::DEFAULT);
+    let far = [DVec3::ZERO, DVec3::X, DVec3::new(2.0 * d, 0.0, 0.0)];
+    assert_eq!(pinched(&far, d, &mut work), Ok(false));
+    // Across a cell's side, and diagonally across a corner of cells.
+    let near = [DVec3::ZERO, DVec3::X, DVec3::new(0.0, 0.0, -0.9 * d)];
+    assert_eq!(pinched(&near, d, &mut work), Ok(true));
+    let corner = [DVec3::splat(-0.3 * d), DVec3::X, DVec3::splat(0.2 * d)];
+    assert_eq!(pinched(&corner, d, &mut work), Ok(true));
+    // Far out, where keys are large, and non-finite positions.
+    let out = [DVec3::splat(1e6), DVec3::splat(1e6) + DVec3::Y * (0.5 * d)];
+    assert_eq!(pinched(&out, d, &mut work), Ok(true));
+    let nan = [DVec3::NAN, DVec3::NAN, DVec3::INFINITY, DVec3::INFINITY];
+    assert_eq!(pinched(&nan, d, &mut work), Ok(false));
+    // A pile of vertices on one point stops at the first pair.
+    let pile = vec![DVec3::ONE; 100_000];
+    let mut work = Work::new(&Budget::new(10));
+    assert_eq!(pinched(&pile, d, &mut work), Ok(true));
+    // A grid of vertices just over the distance apart costs about 27
+    // units a vertex, and stops on the budget.
+    let grid: Vec<DVec3> = (0..64_000)
+        .map(|i| DVec3::new((i % 40) as f64, (i / 40 % 40) as f64, (i / 1600) as f64) * 1.01 * d)
+        .collect();
+    assert_eq!(
+        pinched(&grid, d, &mut Work::new(&Budget::DEFAULT)),
+        Ok(false)
+    );
+    let mut work = Work::new(&Budget::new(100_000));
+    assert_eq!(pinched(&grid, d, &mut work), Err(KernelError::TooComplex));
+}
+
+#[test]
+fn apart_tells_triangles_of_separate_shells() {
+    let shells = crate::mesh::tests::joined(&[
+        (cube([0.0; 3], [1.0; 3]).mesh(), false),
+        (cube([3.0; 3], [1.0; 3]).mesh(), false),
+    ]);
+    let tris: Vec<[u32; 3]> = (shells.tris().iter())
+        .map(|tri| tri.halfedges.map(|h| h.start))
+        .collect();
+    let n = shells.verts().len();
+    let mut work = Work::new(&Budget::DEFAULT);
+    let half = tris.len() as u32 / 2;
+    assert_eq!(apart(n, &tris, 0, half - 1, &mut work), Ok(false));
+    assert_eq!(apart(n, &tris, 0, half, &mut work), Ok(true));
+    // Out of range: not told apart.
+    assert_eq!(apart(n, &tris, 0, 2 * half, &mut work), Ok(false));
+}
+
+#[test]
 fn edge_and_vertex_on_faces() {
     let a = cube([0.0; 3], [2.0; 3]);
     // A diamond prism whose four long edges lie on four faces of the box:
@@ -462,15 +513,18 @@ fn a_void_thinner_than_the_resolution_fails_at_once() {
     // result's round walls are within the resolution of each other over
     // an area. Repair used to split them until the whole budget was gone
     // (`TooComplex`, about a second); points of the two found within the
-    // resolution now refuse it at once, well inside a small budget.
+    // resolution now refuse it at once, well inside a small budget. The
+    // hull failure is between the void's shell and the outer one: a
+    // result closer to itself than the resolution, named so.
     let half = 0.5 * TOL.resolution();
     for r in [5.0, 1.0] {
         let a = Solid::cylinder(DVec3::ZERO, r, 10.0, 1, &TOL).unwrap();
         let b = Solid::cylinder(DVec3::Z * 2.0, r - half, 6.0, 2, &TOL).unwrap();
         let result = boolean(&a, &b, Op::Difference, &TOL, &Budget::new(100_000));
-        assert!(
-            matches!(result, Err(KernelError::Invalid(CheckError::Hull(..)))),
-            "{r}: {result:?}"
+        assert_eq!(
+            result.map(|_| ()),
+            Err(KernelError::Boolean(BooleanError::NotManifold)),
+            "{r}"
         );
     }
 }
@@ -565,7 +619,8 @@ fn turned_and_moved() {
                     s.volume()
                 ),
                 // Apart but too close for the resolution.
-                Err(KernelError::Invalid(_)) if both == 0.0 && op == Op::Union => {}
+                Err(KernelError::Invalid(_) | KernelError::Boolean(BooleanError::NotManifold))
+                    if both == 0.0 && op == Op::Union => {}
                 Err(e) => panic!("{i} {op:?}: {e}"),
             }
         }
@@ -771,8 +826,9 @@ fn cells_manifold(c: &Cells) -> bool {
 }
 
 /// Runs `a op b` against the cells it should fill: a manifold result
-/// must come out with their volume, and one that isn't may only fail
-/// as invalid.
+/// must come out with their volume, and one that isn't may only fail,
+/// as not a manifold or, where it has no two vertices that near, as
+/// invalid.
 fn against_cells(name: &str, a: &Solid, b: &Solid, op: Op, want: &Cells) -> Option<Solid> {
     let volume = cells_volume(want);
     match run(a, b, op) {
@@ -784,7 +840,11 @@ fn against_cells(name: &str, a: &Solid, b: &Solid, op: Op, want: &Cells) -> Opti
             );
             Some(s)
         }
-        Err(KernelError::Invalid(_)) if !cells_manifold(want) => None,
+        Err(KernelError::Boolean(BooleanError::NotManifold) | KernelError::Invalid(_))
+            if !cells_manifold(want) =>
+        {
+            None
+        }
         Err(e) => panic!("{name} {op:?}: {e}"),
     }
 }
@@ -1608,7 +1668,9 @@ fn turned_grid_boxes_are_right_or_refused() {
             match turned_against_cells(&format!("{i}"), &a, &b, op, &want) {
                 Ok(_) => right += 1,
                 Err(e) if cells_manifold(&want) => panic!("{i} {op:?}: {e}"),
-                Err(KernelError::Invalid(_)) => refused += 1,
+                Err(KernelError::Invalid(_) | KernelError::Boolean(BooleanError::NotManifold)) => {
+                    refused += 1
+                }
                 Err(e) => panic!("{i} {op:?}: {e}"),
             }
         }
@@ -1759,7 +1821,7 @@ fn turned_grid_boxes_chained_are_never_inconsistent() {
                     }
                     (s, c) = (r, want);
                 }
-                Err(KernelError::Invalid(_)) => {}
+                Err(KernelError::Invalid(_) | KernelError::Boolean(BooleanError::NotManifold)) => {}
                 Err(e) => panic!("{i}/{step} {op:?}: {e}"),
             }
         }
@@ -1841,7 +1903,9 @@ fn turned_grid_boxes_moved_along_the_projection_are_right_or_refused() {
                     );
                     right += 1;
                 }
-                Err(KernelError::Invalid(_)) => refused += 1,
+                Err(KernelError::Invalid(_) | KernelError::Boolean(BooleanError::NotManifold)) => {
+                    refused += 1
+                }
                 Err(e) => panic!("{i} {op:?} (moved {gap:e}): {e}"),
             }
         }

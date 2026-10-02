@@ -349,9 +349,12 @@ where the counting shows nothing, a depth-first search for surfaces within
 the resolution decides. Regen uses it to pick the bodies a join, cut or
 intersect works on.
 
-**Results that aren't manifolds** (boxes sharing only an edge, united) fail
-with `Invalid`; the same operands intersected or subtracted the other way
-work.
+**Results that aren't manifolds** (boxes sharing only an edge, united) are
+refused, never held: the error is `BooleanError::NotManifold` where the
+failed result has two vertices nearer than the clean-up's short length
+(the zero-width neck the perturbation leaves), named only once the
+operation has failed; the same operands intersected or subtracted the
+other way work.
 
 ## Exact and fitted
 
