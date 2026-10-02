@@ -1,5 +1,7 @@
+use glam::DVec3;
+
 use super::hull::{edge_neighbours_parted, non_neighbours_apart, vertex_neighbours_apart};
-use super::{Bvh, Mesh};
+use super::{Bvh, Form, Mesh, Surface};
 use crate::budget::Work;
 use crate::par::par_map;
 use crate::patch::{Patch, PatchError};
@@ -44,8 +46,9 @@ pub enum CheckError {
     /// Triangle `t` doesn't lie on its face's surface within the
     /// resolution, or the surface isn't well defined.
     Face(u32),
-    /// Triangle `t` is on a `Plane` face but faces against the plane's
-    /// normal (or its normal isn't well defined) at its middle.
+    /// Triangle `t` is on a face claiming a plane, or with a plane form,
+    /// but faces against the plane's normal (or its normal isn't well
+    /// defined) at its middle.
     FacesAgainst(u32),
     /// Triangles that share no vertex have hulls within the resolution.
     Hull(u32, u32),
@@ -312,12 +315,13 @@ impl Mesh {
     }
 
     /// Invariant 6: every patch on a `Plane` face has its six control
-    /// points within `tol`'s resolution of the plane and faces along its
-    /// normal at its middle (the normal points out of the solid), and
-    /// every patch on a `Quadric` face has sampled points within it of
-    /// the quadric (to first order). [`Self::check`] runs this last; on
-    /// its own, call it on a mesh that passes the rest of `check`
-    /// (orientation aside).
+    /// points within `tol`'s resolution of the plane, every patch on a
+    /// `Quadric` face has sampled points within it of the quadric (to
+    /// first order), and every patch whose face claims a plane or has a
+    /// plane [`Form`] faces along that plane's normal at its
+    /// middle (the normal points out of the solid, for a face claiming no
+    /// surface too). [`Self::check`] runs this last; on its own, call it
+    /// on a mesh that passes the rest of `check` (orientation aside).
     pub fn check_faces(&self, tol: &Tolerance) -> Result<(), CheckError> {
         let patches: Vec<Patch> = (0..self.tris.len()).map(|t| self.patch(t)).collect();
         self.check_faces_of(&patches, tol)
@@ -327,20 +331,34 @@ impl Mesh {
         let resolution = tol.resolution();
         let tris: Vec<u32> = (0..self.tris.len() as u32).collect();
         let on = par_map(&tris, |&t| {
-            let surface = self.faces[self.tris[t as usize].face as usize].surface;
+            let face = &self.faces[self.tris[t as usize].face as usize];
             let patch = &patches[t as usize];
-            if !on_surface(patch, &surface, resolution) {
+            if !on_surface(patch, &face.surface, resolution) {
                 return Err(CheckError::Face(t));
             }
-            // NaN fails, as in the debug form check.
-            let along = |x: f64| x > 0.0;
-            match surface {
-                super::Surface::Plane { n, .. }
-                    if !along(patch.normal(glam::DVec3::splat(1.0 / 3.0)).dot(n)) =>
-                {
-                    Err(CheckError::FacesAgainst(t))
-                }
-                _ => Ok(()),
+            // The tag's and the form's normals: faces of one operand
+            // within a tie of the other's have come out of booleans with
+            // a triangle of one carrying the other's face, turned against
+            // it, on faces that claim a plane and on copies that claim
+            // none (and keep the plane form).
+            let tag = match face.surface {
+                Surface::Plane { n, .. } => Some(n),
+                _ => None,
+            };
+            let form = match face.form {
+                Form::Plane { n, .. } => Some(n),
+                _ => None,
+            };
+            if tag.is_none() && form.is_none() {
+                return Ok(());
+            }
+            let normal = patch.normal(DVec3::splat(1.0 / 3.0));
+            // NaN is against.
+            let along = |n: DVec3| normal.dot(n) > 0.0;
+            if tag.into_iter().chain(form).all(along) {
+                Ok(())
+            } else {
+                Err(CheckError::FacesAgainst(t))
             }
         });
         on.into_iter().collect()
@@ -350,38 +368,27 @@ impl Mesh {
     /// rest of `check`: the first triangle with a sample ([`samples`])
     /// further than `tol`'s fit tolerance, times the face's
     /// [`slack`](super::Face::slack), from its face's
-    /// [`Form`](super::Form) (fitted faces are on theirs only that
-    /// closely), or on a plane form whose normal at its middle points
-    /// against the form's, and what is wrong with it. A form is intent
-    /// the construction promises, so one that doesn't hold is a bug, not
-    /// a bad input.
+    /// [`Form`] (fitted faces are on theirs only that
+    /// closely), and what is wrong with it. A form is intent the
+    /// construction promises, so one that doesn't hold is a bug, not a
+    /// bad input. (Which way a plane form faces is checked in every
+    /// build, [`Self::check_faces`]: booleans can get it wrong near ties.)
     #[cfg(debug_assertions)]
     pub(crate) fn off_forms(
         &self,
         patches: &[Patch],
         tol: &Tolerance,
     ) -> Option<(u32, &'static str)> {
-        use super::Form;
         let fit = tol.fit();
-        let along = |x: f64| x > 0.0;
         let tris: Vec<u32> = (0..self.tris.len() as u32).collect();
         let off = par_map(&tris, |&t| {
             let face = &self.faces[self.tris[t as usize].face as usize];
-            let form = face.form;
-            // NaN fails both.
+            // NaN fails.
             let within = |d: f64| d <= fit * face.slack;
             let patch = &patches[t as usize];
-            if samples().any(|u| !within(form.distance(patch.eval(u)))) {
-                return Some("strays from its face's form");
-            }
-            match form {
-                Form::Plane { n, .. }
-                    if !along(patch.normal(glam::DVec3::splat(1.0 / 3.0)).dot(n)) =>
-                {
-                    Some("faces against its face's plane form")
-                }
-                _ => None,
-            }
+            samples()
+                .any(|u| !within(face.form.distance(patch.eval(u))))
+                .then_some("strays from its face's form")
         });
         off.iter()
             .enumerate()
@@ -452,16 +459,15 @@ pub(super) fn check_pair(
 /// Whether `patch` lies on `surface` as a face tag claims (see
 /// [`Mesh::check_faces`]): a plane's patch with its six control points
 /// within `resolution` of it, a quadric's with its [`samples`].
-pub(crate) fn on_surface(patch: &Patch, surface: &super::Surface, resolution: f64) -> bool {
+pub(crate) fn on_surface(patch: &Patch, surface: &Surface, resolution: f64) -> bool {
     off_surface(patch, surface) <= resolution
 }
 
 /// How far `patch` strays from `surface`, as [`on_surface`] measures it:
 /// the farthest of a plane's patch's six control points (which bound it),
 /// or of a quadric's patch's [`samples`]; NaN counted as infinite, so it
-/// fails every bound. 0 for [`Surface::Free`](super::Surface::Free).
-pub(crate) fn off_surface(patch: &Patch, surface: &super::Surface) -> f64 {
-    use super::Surface;
+/// fails every bound. 0 for [`Surface::Free`].
+pub(crate) fn off_surface(patch: &Patch, surface: &Surface) -> f64 {
     let far = |x| {
         let d = surface.distance(x);
         if d.is_nan() { f64::INFINITY } else { d }
@@ -475,11 +481,11 @@ pub(crate) fn off_surface(patch: &Patch, surface: &super::Surface) -> f64 {
 
 /// Barycentric points where face tags are sampled on quadrics: a grid of
 /// 15, four steps along each edge.
-pub(crate) fn samples() -> impl Iterator<Item = glam::DVec3> {
+pub(crate) fn samples() -> impl Iterator<Item = DVec3> {
     (0..=4).flat_map(|i| {
         (0..=4 - i).map(move |j| {
             let (u, v) = (i as f64 / 4.0, j as f64 / 4.0);
-            glam::DVec3::new(u, v, 1.0 - u - v)
+            DVec3::new(u, v, 1.0 - u - v)
         })
     })
 }

@@ -6,7 +6,7 @@ use glam::{DVec2, DVec3};
 
 use super::{TOL, close, forms_face_out, part, transformed};
 use crate::extrude::Frame;
-use crate::mesh::{Face, Form, Mesh, Surface, samples};
+use crate::mesh::{Form, Surface, samples};
 use crate::par::assert_deterministic;
 use crate::patch::PatchError;
 use crate::profile::tests::{arc, circle, polygon, rect};
@@ -352,6 +352,7 @@ fn a_torus_scaled_up_carries_its_slack() {
     // it, the stretched fitted patches stray past the fit tolerance.
     #[cfg(debug_assertions)]
     {
+        use crate::mesh::{Face, Mesh};
         let mesh = image.mesh();
         let patches: Vec<_> = (0..mesh.tris().len()).map(|t| mesh.patch(t)).collect();
         assert_eq!(mesh.off_forms(&patches, &TOL), None);

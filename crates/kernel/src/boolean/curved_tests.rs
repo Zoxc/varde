@@ -650,14 +650,11 @@ fn faces_its_plane_forms(solid: &Solid) -> bool {
 }
 
 #[test]
-#[cfg_attr(
-    debug_assertions,
-    ignore = "debug builds' check of the forms stops on a wrong name first"
-)]
 fn caps_a_tie_apart_keep_their_names_or_are_refused() {
     // Caps within a tie of each other: the triangles of one, flush with
     // the other's, came out named after the other and facing against
-    // its form (release builds only check the forms' surfaces). A unit
+    // its form (release builds checked only the forms' surfaces, debug
+    // builds panicked; `check` now refuses it in every build). A unit
     // cylinder less one tangent to it along the line on both seams,
     // whose top is a tie over its own, on a frame turned and far from
     // the origin; and a unit cylinder with the half y < s of it above
@@ -1345,10 +1342,9 @@ fn the_result_checks_integrations_are_charged() {
     assert!(integrated > 0);
     assert!((Solid::new(mesh.clone(), &TOL).unwrap().volume() - want).abs() < 1e-9);
     let made = Budget::DEFAULT.work() - work.left();
-    // And a unit a triangle for the boolean's look at the plane forms.
     let total = made
-        + (mesh.tris().len() * (crate::solid::CHECK_WORK + 1)
-            + integrated * crate::solid::INTEGRATE_WORK) as u64;
+        + (mesh.tris().len() * crate::solid::CHECK_WORK + integrated * crate::solid::INTEGRATE_WORK)
+            as u64;
     let with = |work: u64| boolean(&tube, &notch, Op::Difference, &TOL, &Budget::new(work));
     assert_eq!(with(total).map(|s| s.mesh().clone()), Ok(mesh));
     assert_eq!(with(total - 1), Err(KernelError::TooComplex));

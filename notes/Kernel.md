@@ -131,7 +131,8 @@ Each **face** carries:
 - a **form**: what surface it was meant to be (plane, cylinder, conic
   cylinder, cone, sphere, torus, revolved conic), with parameters. Fitted
   faces are on their form only within the fit tolerance; debug builds check
-  every face against its form;
+  every face against its form (which way a plane form faces, `check` in
+  every build);
 - **aliases**: the keys of faces merged into it, so references to them
   still resolve.
 
@@ -154,8 +155,8 @@ Each **face** carries:
    the winding number is 0 or 1 everywhere (shell volume signs with error
    bounds and exact fallbacks, nesting by exact, perturbed rays).
 6. **Face tags**: patches lie within the resolution of their claimed plane
-   or quadric, and a plane patch faces along its tag's normal (out of the
-   solid).
+   or quadric, and a patch whose face claims a plane or has a plane form
+   faces along its normal (out of the solid).
 
 **Refinement** is red–green and exact, every split at `½`, so neighbours
 across a split edge are bisected to the bit and pieces keep their shapes.

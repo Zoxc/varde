@@ -606,6 +606,36 @@ fn plane_tags_facing_in_are_caught() {
 }
 
 #[test]
+fn plane_forms_facing_in_are_caught() {
+    // A face claiming no surface keeps its plane form, which points out
+    // of the solid too: checked in every build (debug builds panicked
+    // in the form check instead). The side on x = 1 with its form turned
+    // round, claiming the plane or not.
+    let mut mesh = Mesh::cuboid(DVec3::ZERO, DVec3::ONE, 1, &TOL).unwrap();
+    let Form::Plane { n, d } = mesh.faces[3].form else {
+        panic!("{:?}", mesh.faces[3].form)
+    };
+    assert_eq!(n, DVec3::X);
+    mesh.faces[3].form = Form::plane(-n, -d);
+    assert_eq!(mesh.check(&TOL), Err(CheckError::FacesAgainst(6)));
+    mesh.faces[3].surface = Surface::Free;
+    assert_eq!(mesh.check(&TOL), Err(CheckError::FacesAgainst(6)));
+    assert_eq!(
+        Solid::new(mesh.clone(), &TOL),
+        Err(KernelError::Invalid(CheckError::FacesAgainst(6)))
+    );
+    // Facing out and claiming no surface, it passes.
+    mesh.faces[3].form = Form::plane(n, d);
+    assert_eq!(mesh.check(&TOL), Ok(()));
+    // A NaN normal is against.
+    mesh.faces[3].form = Form::Plane {
+        n: DVec3::new(f64::NAN, 0.0, 0.0),
+        d,
+    };
+    assert_eq!(mesh.check_faces(&TOL), Err(CheckError::FacesAgainst(6)));
+}
+
+#[test]
 fn solids_with_wrong_face_tags_are_refused() {
     // `check` tests face tags in every build, so `Solid::new` refuses a
     // mesh whose only fault is a wrong tag. Debug builds always did; this

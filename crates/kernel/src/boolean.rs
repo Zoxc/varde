@@ -59,7 +59,7 @@ use std::collections::btree_map::Entry;
 use glam::DVec3;
 
 use crate::budget::{Budget, Work};
-use crate::mesh::{BuildError, Bvh, CheckError, Face, FaceKey, Form, Mesh, MeshBuilder, Surface};
+use crate::mesh::{BuildError, Bvh, Face, FaceKey, Mesh, MeshBuilder, Surface};
 use crate::patch::Bounds3;
 use crate::topology::distance::{Allowance, to_patches};
 use crate::{KernelError, Solid, Tolerance};
@@ -207,7 +207,7 @@ type Found = (Vec<(i8, f64, bool)>, usize);
 /// such as two solids touching along an edge or at a point, where the
 /// exact result isn't a manifold, or parts closer than the resolution,
 /// or faces within a tie of each other that would leave a triangle
-/// facing against its face's plane form.
+/// facing against its face's plane (its tag or form).
 pub fn boolean(
     a: &Solid,
     b: &Solid,
@@ -266,34 +266,6 @@ fn boolean_within(
     }
 }
 
-/// `solid` if every triangle on a face with a plane form faces the way
-/// the form's normal does at its middle, else [`KernelError::Invalid`]
-/// ([`CheckError::Face`]). Faces within a tie of each other (caps one a
-/// tie under the other, boxes moved a tie along the counting's `UP` on a
-/// frame turned and far from the origin) have given results whose
-/// triangles of one, flush with the other's, carried the other's name and
-/// faced against its form: wrong names, which debug builds' check of the
-/// forms stops on. A unit of work a triangle.
-fn facing(solid: Solid, work: &mut Work) -> Result<Solid, KernelError> {
-    let mesh = solid.mesh();
-    work.spend(mesh.tris().len())?;
-    let middle = DVec3::splat(1.0 / 3.0);
-    let against = (0..mesh.tris().len() as u32).find(|&t| {
-        match mesh.faces()[mesh.tris()[t as usize].face as usize].form {
-            // NaN is against.
-            Form::Plane { n, .. } => {
-                let along = mesh.patch(t as usize).normal(middle).dot(n);
-                along.partial_cmp(&0.0) != Some(Ordering::Greater)
-            }
-            _ => false,
-        }
-    });
-    match against {
-        Some(t) => Err(KernelError::Invalid(CheckError::Face(t))),
-        None => Ok(solid),
-    }
-}
-
 #[cfg(test)]
 thread_local! {
     /// What [`cleanup::thin_across`] found in the last operation's cleaned
@@ -349,7 +321,7 @@ fn checked_with(
 
 /// The result of the assembled `soup` and `faces`, cleaned (unfolding
 /// folded sheets if `unfold`, and setting `unfolded` if it did),
-/// repaired and checked, [`facing`] included.
+/// repaired and checked.
 #[allow(clippy::too_many_arguments)]
 fn checked(
     a: &Solid,
@@ -365,8 +337,7 @@ fn checked(
     let mesh = cleaned(a, b, op, soup, faces, unfold, unfolded, tol, work)?;
     // Faces of one surface that meet merge, so a flush join leaves no
     // line between the two operands' pieces of a plane or cylinder.
-    let solid = Solid::finished(mesh, tol, work)?;
-    facing(solid, work)
+    Solid::finished(mesh, tol, work)
 }
 
 /// The result's triangles and faces, before the clean-up, joining ends

@@ -880,28 +880,32 @@ and release builds alike (face tags come last).
    claims), and on their own with `check_faces` on a mesh that passes the
    rest: a patch
    on a `Plane` has all six control points within the resolution of it
-   (`Face`) and its normal at its middle (barycentric `(⅓, ⅓, ⅓)`) along
-   the plane's `n`, which points out of the solid (`FacesAgainst`; NaN
-   fails, as in the debug form check); a
+   (`Face`); a
    patch on a `Quadric` has 15 points (a grid four steps along each edge)
-   within the resolution to first order. A plane with a zero or non-finite
+   within the resolution to first order; and a patch whose face claims a
+   `Plane` or has a plane form (also a face claiming no surface, a copy
+   the boolean made of a face with triangles off its plane, or an input
+   moved without its tags) has its normal at its middle (barycentric
+   `(⅓, ⅓, ⅓)`) along each of those planes' `n`, which points out of the
+   solid (`FacesAgainst`; NaN fails). A plane with a zero or non-finite
    normal fails. It is cheap next to 1 to 4 (release, measured): about 13%
    of their time single-threaded on extruded plates with 16 and 64 holes
    (1 004 and 4 012 patches), 6 to 10% on 7 threads, and 0.5% on a
    262 144-patch torus of `Free` faces. The facing test costs about 40 ns
    a patch, under 1% of `check` (0.15 of 16.6 ms on a plate with 64 holes,
    3 756 patches). Before it, only the debug form check looked at which
-   way a plane face faced: flush faces a hair apart could give an `Ok`
-   whose triangle sat on the other operand's face, facing against its tag
-   (see "Exact predicates and the perturbation").
+   way a plane face faced (and booleans, at the forms only): flush faces a
+   hair apart could give an `Ok` whose triangle sat on the other
+   operand's face, facing against its tag (see "Exact predicates and the
+   perturbation"), and caps a tie apart one facing against its form
+   (see "Forms"). Booleans give such results near ties, so it is a
+   refusal in every build, not the debug panic a construction's bug is.
 
 Debug builds then check the faces' forms (see "Forms"): a triangle with a
-sample further than the fit tolerance from its face's form, or on a plane
-form with its normal at the middle pointing against the form's, panics.
-A form is the construction's promise, so that is a bug, not an input to
-refuse (and release builds can't tell it, so `check`'s errors stay the
-same in both). A plane tag's orientation is a claim, checked in every
-build by step 6.
+sample further than the fit tolerance from its face's form panics. A form
+is the construction's promise, so that is a bug, not an input to refuse
+(and release builds can't tell it, so `check`'s errors stay the same in
+both). Which way a plane form faces is step 6's, in every build.
 
 Steps 2–3, 6 and the hull tests of 4 run per patch or per pair through
 `par_map`, and step 5 per triangle and per shell. `check_counted` is
@@ -989,13 +993,16 @@ arcs of the conic, circles told from ellipse arcs and from a weight off by
 measuring the same; the forms extrude, the box and the cylinder give (a
 D of a line and an ellipse arc with a round hole, also tilted); booleans
 keeping forms and a difference turning the tools' round; a form the
-patches are off, and a plane form facing in, panicking in debug builds,
-and one within the fit passing.
+patches are off panicking in debug builds, and one within the fit
+passing; a plane form facing in refused by `check` in every build,
+claiming its plane or no surface (and in `mesh/tests.rs`).
 
-A boolean also refuses, in every build, a result with a triangle on a
-face with a plane form that faces against the form's normal at its
-middle (`boolean::facing`, `Invalid(Face)`): faces within a tie of each
-other gave such results in release builds, the triangles of one cap
+A boolean's result with a triangle on a face with a plane form that
+faces against the form's normal at its middle is refused, in every
+build, by `check`'s step 6 (`Invalid(FacesAgainst)`; it was a separate
+look after the check, `boolean::facing`, before step 6 tested forms,
+which also made debug builds panic on these first): faces within a tie
+of each other gave such results in release builds, the triangles of one cap
 flush with the other's carrying the other's name (a unit cylinder less
 a tangent one whose top is a tie over its own, on a frame turned and
 some 3 700 from the origin; a cylinder with half its upper part cut
@@ -1004,9 +1011,11 @@ into its wall across that plane and a tie under its top, where walls joined alon
 lines: almost half the top named after the other's cap; boxes on a grid turned off the axes,
 moved a tie along the counting's `UP`, one less the other). An
 operation that joined lines and so fails is tried again without them,
-as for any other failure. The refusal is part of each try's check
-(`boolean::checked`), so a result refused by it after the fold rule
-fired is also made again without the rule ("Unfold").
+as for any other failure. The refusal is part of each try's check,
+so a result refused by it after the fold rule fired is also made again
+without the rule ("Unfold"). The cases seen so far had the bad triangle
+on a face claiming its plane; a copy claiming no surface (keeping the
+plane form) is held to it alike.
 
 ### Orientation (`mesh/orient.rs`)
 
@@ -1803,8 +1812,9 @@ edge and across one curved up out of their plane (both inside the
 cylinder over it), passing across a sideways curved edge (parted by the
 cylinder) and one curving outwards (by the plane), crossing vertex
 neighbours, triangles on the same corners, wrong plane and cylinder
-tags, and a plane tag on its face but facing in (`FacesAgainst`, also
-through `Solid::new`); the orientation fixtures turn plane tags with the
+tags, and a plane tag or plane form on its face but facing in
+(`FacesAgainst`, also through `Solid::new`, and for a form on a face
+claiming no surface; a NaN normal is against); the orientation fixtures turn plane tags with the
 shells they turn into voids. The cylinder rule (`mesh/hull/tests.rs`) parts fitted strips at
 rings at turns (a torus's top, round into flat, flat into a concave
 fillet, an S) where the plane can't, both orders, and refuses them once
@@ -3850,7 +3860,11 @@ and 15 more `Ok`s; cylinders on hair frames (1 500) from 8 to none and
 2 fewer `Ok`s (`Inconsistent` 272 → 260); turned frames 6 and 7 more
 `Ok`s; plain frames the same. No result had a wrong volume, and the
 check's facing test refused none of them: these crossings were the only
-source seen. Making the tie one measure for every
+source seen. Against the booleans' refusal of a triangle facing against
+its form (which turned the same results into `Invalid` errors, 13 to 15
+per hair grid seed), the keeping wins 56 to 64 `Ok`s per hair grid
+seed, 25 on polygons and 21 on cylinders (`Inconsistent` 178 → 148),
+and the seeded tallies are the same. Making the tie one measure for every
 predicate (`Height` square to the edges' plane, say) would remove the
 cause, but changes every flat decision near a tie and would leave such a
 window between some pair of predicates whatever is chosen; the release
@@ -8367,7 +8381,15 @@ parameter, or a split outside the patch bounds),
   a few of the results joining lost ("Tried again without the joins").
   The rules tried before (a larger `LENS`, steep crossings left
   to refinement) lost as many results as it won back.
-- **Booleans refuse results with a triangle facing against its face's
-  plane form** in every build, where only debug builds checked forms:
-  caps a tie apart gave such results (see "Forms"), one of them only
-  with walls' lines joined.
+- **Every `Solid` is refused with a triangle facing against its face's
+  plane form or plane tag** (`check`'s step 6, `FacesAgainst`), in every
+  build, where only debug builds checked forms: caps a tie apart gave
+  such results (see "Forms"), one of them only with walls' lines joined,
+  and flush faces a hair apart one against its tag. The plan for the
+  tags added the test to `check` for tags only, beside the booleans' own
+  look at the forms; the forms joined it, one test in every build for
+  every producer, so debug builds refuse these results as release ones
+  do instead of panicking first. Both cases seen were on faces claiming
+  their plane; faces claiming no surface (copies of faces with triangles
+  off their plane, inputs moved without their tags) keep the plane form,
+  which only a test of forms sees.

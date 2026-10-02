@@ -456,10 +456,15 @@ mod constructed {
     }
 
     #[test]
-    #[cfg(debug_assertions)]
-    #[should_panic(expected = "faces against its face's plane form")]
-    fn a_plane_form_facing_in_is_a_bug() {
-        let _ = Solid::new(reformed(Form::flipped), &TOL);
+    fn a_plane_form_facing_in_is_refused() {
+        // In every build: booleans near ties have given such results, so
+        // it is an error, not a debug panic. The caps' forms turned.
+        assert!(matches!(
+            Solid::new(reformed(Form::flipped), &TOL),
+            Err(crate::KernelError::Invalid(
+                crate::mesh::CheckError::FacesAgainst(_)
+            ))
+        ));
     }
 
     #[test]
