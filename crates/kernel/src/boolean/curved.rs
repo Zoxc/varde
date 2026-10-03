@@ -38,8 +38,11 @@
 //! counted.
 //!
 //! **Ties.** Heights closer than a 64th of the resolution are ties,
-//! decided the way `A`'s perturbation (out of `A` for a union, in
-//! otherwise, then the generic translations) would decide them, so flush
+//! measured as distances in space, as the exact predicates measure
+//! theirs (square to both tangents where shadows cross, to the patch
+//! over a vertex: [`square`]), decided the way `A`'s perturbation (out
+//! of `A` for a union, in otherwise, then the generic translations)
+//! would decide them, so flush
 //! faces behave as they do between flat operands; so are crossings of a
 //! ray at its vertex, shadows lying along each other (where the edges
 //! lie on each other in space too, crossing by crossing where the
@@ -425,11 +428,21 @@ impl<'a> Curved<'a> {
     /// Whether `e` is above `g` at their shadows' crossing `c`, ties as
     /// the perturbation decides them.
     fn above_at(&self, e: u32, g: u32, c: &arcs::ArcCross) -> bool {
-        if c.dh.abs() <= self.tie {
+        if self.crossing_gap(e, c.t, g, c.s, c.dh) <= self.tie {
             self.crossing_above(e, c.t, g, c.s)
         } else {
             c.dh > 0.0
         }
+    }
+
+    /// How far apart edge `e` of `A` (at `t`) and `g` of `B` (at `s`)
+    /// are where their shadows cross, `dh` apart along `UP` there: square
+    /// to both tangents, as the exact `Height` measures straight edges'
+    /// ties ([`square`] with `m = g' × e'`).
+    fn crossing_gap(&self, e: u32, t: f64, g: u32, s: f64, dh: f64) -> f64 {
+        let (_, de) = self.curve(Side::A, e).eval_deriv(t);
+        let (_, dg) = self.curve(Side::B, g).eval_deriv(s);
+        square(dh, dg.cross(de))
     }
 
     /// Whether `e` is above `g` where their shadows come closest, for
@@ -482,7 +495,7 @@ impl<'a> Curved<'a> {
                 }
             }
         }
-        if best.1.abs() <= self.tie {
+        if self.crossing_gap(e, best.2, g, best.3, best.1) <= self.tie {
             self.crossing_above(e, best.2, g, best.3)
         } else {
             best.1 > 0.0
@@ -496,10 +509,10 @@ impl<'a> Curved<'a> {
     /// further up when `v` moves by `δ` (`v` of `A`), and `n·δ / n·UP`
     /// when the patch does (`v` of `B`). Where that is zero, by `δ·UP`.
     fn hit_above(&self, side: Side, v: u32, f: u32, u: DVec3, dh: f64) -> bool {
-        if dh.abs() > self.tie {
+        let n = self.input(side.other()).patches[f as usize].normal(u);
+        if square(dh, n) > self.tie {
             return dh > 0.0;
         }
-        let n = self.input(side.other()).patches[f as usize].normal(u);
         let facing = sign(n.dot(UP));
         match side {
             // `v` moves; the point is above if it moves down.
@@ -650,10 +663,12 @@ impl<'a> Curved<'a> {
         let heights = patch.hull().map(|x| (x - p).dot(self.axes.up));
         let low = heights.iter().copied().fold(f64::INFINITY, f64::min);
         let high = heights.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-        if low > self.tie {
+        // A tie in height reaches the resolution along `UP` at most
+        // ([`square`]).
+        if low > self.resolution {
             return clamp(winding);
         }
-        if high < -self.tie {
+        if high < -self.resolution {
             return 0;
         }
         let hits = solve::hits(patch, p, &self.axes);
@@ -679,6 +694,23 @@ impl<'a> Curved<'a> {
         }
         clamp(above)
     }
+}
+
+/// A height `dh` along `UP` between two things of the operands, measured
+/// as their distance in space: square to the plane they share there,
+/// whose normal is `m` (two tangents' cross product where shadows cross,
+/// a patch's normal over a vertex), as the exact `Reach` and `Height`
+/// measure ties. Capped at the resolution along `UP` (a tie distance is
+/// at least `dh` over [`super::TIES`]), so a tie never reaches further
+/// than the broad phase's margin, as `Height`'s is. Where `m` is zero or
+/// not a number, `dh` as it is.
+fn square(dh: f64, m: DVec3) -> f64 {
+    let l = m.length();
+    if l.is_nan() || l == 0.0 {
+        return dh.abs();
+    }
+    let cos = m.dot(UP).abs() / (l * UP.length());
+    dh.abs() * cos.max(1.0 / super::TIES)
 }
 
 /// The sign of `f` of `A`'s perturbation, order by order: of its first

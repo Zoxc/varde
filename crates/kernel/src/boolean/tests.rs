@@ -1307,6 +1307,97 @@ fn grid_boxes_a_hair_off_each_other_keep_their_faces() {
 }
 
 #[test]
+fn grid_boxes_a_hair_off_each_other_tie_alike() {
+    // Grid boxes each extruded on its own frame, a hair apart, with flush
+    // sides on planes steep to the projection. An edge of one within the
+    // tie of the other's flush plane (decided as in it) had its height
+    // over the plane's sides measured along the projection, some ties
+    // there, and decided by its rounding rather than as a tie: crossings
+    // no one configuration has (`Inconsistent`, then slivers from the
+    // exact retry, refused as `NotManifold`), or a vertex whose
+    // neighbours don't fit (`Invalid(VertexNeighbours)`). Heights now tie as the lines'
+    // distance in space, as a point's from a plane does.
+    let framed = framed_grid_box;
+    let (a, ca) = framed(
+        [2, 5, 4],
+        [4, 1, 3],
+        [
+            [69.78863445174359, -47.821559964974306, -32.28451672729285],
+            [0.97389924268946, 0.05232142297905763, 0.2208681366479616],
+            [
+                -0.10082800970810134,
+                0.9715167999242447,
+                0.21445004062312145,
+            ],
+        ],
+        1,
+    );
+    let (b, cb) = framed(
+        [1, 1, 3],
+        [3, 4, 4],
+        [
+            [69.78863445135494, -47.82155996717463, -32.28451673052244],
+            [0.9738992425913537, 0.05232142247034355, 0.22086813720106244],
+            [
+                -0.10082800948389611,
+                0.9715167997933918,
+                0.21445004132133458,
+            ],
+        ],
+        2,
+    );
+    let want = cells_volume(&combine(&ca, &cb, Op::Union));
+    let got = run(&a, &b, Op::Union).unwrap();
+    assert!(
+        (got.volume() - want).abs() < 1e-5,
+        "{} not {want}",
+        got.volume()
+    );
+    faces_face_out(&got);
+
+    let (a, ca) = framed(
+        [2, 1, 5],
+        [4, 2, 2],
+        [
+            [-68.11444553534159, 61.6313551203464, 47.91295747284935],
+            [
+                -0.16535006740839767,
+                -0.39097182084770504,
+                -0.9054282912031567,
+            ],
+            [-0.38444013145550765, 0.8709954274603486, -0.30589663396258],
+        ],
+        1,
+    );
+    let (b, cb) = framed(
+        [3, 1, 1],
+        [1, 3, 5],
+        [
+            [-68.11444553913356, 61.631355124755665, 47.91295746948126],
+            [
+                -0.16535006747546266,
+                -0.39097182084403037,
+                -0.9054282911924959,
+            ],
+            [
+                -0.38444013139647704,
+                0.8709954274883486,
+                -0.3058966339570421,
+            ],
+        ],
+        2,
+    );
+    let want = cells_volume(&combine(&ca, &cb, Op::Difference));
+    let got = run(&a, &b, Op::Difference).unwrap();
+    assert!(
+        (got.volume() - want).abs() < 1e-5,
+        "{} not {want}",
+        got.volume()
+    );
+    faces_face_out(&got);
+}
+
+#[test]
 fn vertices_an_ulp_inside_a_face_pair_their_triangles_with_it() {
     // Grid boxes at a hundredth of the size, moved off the origin, chained
     // as random chains have them: the first two intersections leave
@@ -1716,19 +1807,22 @@ fn near_ties_that_dont_fit_together_are_decided_again_exactly() {
     // with near ties as ties, these give decisions no one configuration
     // has (`Inconsistent`), and the boolean decides them again exactly,
     // from the same budget: right. Of 3 000 such operations (seed 5),
-    // 60 are `Inconsistent`; with the retry 34 of those are right and
-    // the rest `Invalid` (parts closer than the resolution), none
-    // `Inconsistent`. (100 were before crossings of edges decided to lie
-    // in a face's plane were kept inside the triangle; the cases once
-    // here, pairs 6, 68 and 141, are now right on the first try.)
+    // 11 are `Inconsistent`, 9 of them right with the retry and 2
+    // unions refused (`NotManifold`, `Invalid`), none `Inconsistent`; 2 679 are right in all (of the rest, 226 are
+    // `Invalid`, parts closer than the resolution), none wrong. (100 were `Inconsistent` before crossings of edges
+    // decided to lie in a face's plane were kept inside the triangle,
+    // and 60 before every tie was measured as a distance in space,
+    // heights square to both edges rather than along the projection;
+    // the cases once here, pairs 6, 68, 141, then 49, 157 and 225, are
+    // now right on the first try.)
     let mut rng = crate::test_rng::Rng::new(5);
     let t = tie(&TOL);
     let cases = [
-        (49, Op::Intersection),
-        (157, Op::Difference),
-        (225, Op::Union),
+        (238, Op::Difference),
+        (492, Op::Intersection),
+        (646, Op::Union),
     ];
-    for i in 0..=225 {
+    for i in 0..=646 {
         let (ga, gb) = (random_grid_corner(&mut rng), random_grid_corner(&mut rng));
         let turn = random_turn(&mut rng);
         let nudge = rng.direction() * t * 10f64.powf(rng.range(-1.5, 1.5));
@@ -1756,30 +1850,33 @@ fn near_ties_that_dont_fit_together_are_decided_again_exactly() {
             Err(KernelError::Boolean(BooleanError::Inconsistent)),
             "{i}"
         );
-        // With the pair of faces whose ends don't join up: its two
-        // triangles, the operands' faces they lie on, and the ends, each
-        // where an edge of one crosses the other's plane, within the tie.
+        // With evidence on the operands: for 646's union, the pair of
+        // faces whose ends don't join up, its two triangles, the
+        // operands' faces they lie on, and the ends, each where an edge
+        // of one crosses the other's plane, within the tie.
         let failure = flat_decided(op, &ia, &ib, t, &TOL, &mut Work::new(&Budget::DEFAULT))
             .map(|_| ())
             .unwrap_err();
         evidence::tests::on_operands(&a, &b, &failure, &TOL);
         let e = &failure.evidence;
-        let [p, q] = &e.patches[..] else {
-            panic!("{i}: {e:?}");
-        };
-        assert!(matches!(
-            e.faces[..],
-            [(crate::Operand::A, _), (crate::Operand::B, _)]
-        ));
-        assert!(e.points.len() >= 2 && e.curves.is_empty(), "{i}: {e:?}");
-        let off = |patch: &crate::patch::Patch, x: DVec3| {
-            let [p0, p1, p2] = patch.p;
-            let n = (p1 - p0).cross(p2 - p0).normalize();
-            n.dot(x - p0).abs()
-        };
-        for &x in &e.points {
-            assert!(off(p, x).min(off(q, x)) <= t, "{i}: {x}");
-            assert!(off(p, x).max(off(q, x)) <= TOL.resolution(), "{i}: {x}");
+        if i == 646 {
+            let [p, q] = &e.patches[..] else {
+                panic!("{i}: {e:?}");
+            };
+            assert!(matches!(
+                e.faces[..],
+                [(crate::Operand::A, _), (crate::Operand::B, _)]
+            ));
+            assert!(e.points.len() >= 2 && e.curves.is_empty(), "{i}: {e:?}");
+            let off = |patch: &crate::patch::Patch, x: DVec3| {
+                let [p0, p1, p2] = patch.p;
+                let n = (p1 - p0).cross(p2 - p0).normalize();
+                n.dot(x - p0).abs()
+            };
+            for &x in &e.points {
+                assert!(off(p, x).min(off(q, x)) <= t, "{i}: {x}");
+                assert!(off(p, x).max(off(q, x)) <= TOL.resolution(), "{i}: {x}");
+            }
         }
         let (exact, second) = spent(0.0, false);
         assert_eq!(exact, Ok(()), "{i}");

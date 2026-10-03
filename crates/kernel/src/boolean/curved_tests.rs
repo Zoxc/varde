@@ -1235,6 +1235,66 @@ fn a_seam_a_hair_off_a_plane_is_cut_through_its_vertex() {
 }
 
 #[test]
+fn a_disc_through_a_box_a_hair_off_ties_its_heights_in_space() {
+    // A grid box and a disc of radius 1 extruded across it, each on its
+    // own frame a hair off the other's, the disc's caps flush with
+    // planes steep to the projection. Heights where shadows cross, and
+    // of a patch over a vertex, were ties along the projection while the
+    // exact `Reach` tied them square to the plane: a gap of a few ties
+    // along it was one for some decisions and not others, and the
+    // intersection was `Inconsistent` (the curved path has no exact
+    // retry). Measured in space, all three are right by the identities.
+    let at = |i: f64| -0.5 + 0.5 * i;
+    let block = extruded_on(
+        vec![rect(
+            DVec2::new(at(3.0), at(2.0)),
+            DVec2::new(at(6.0), at(7.0)),
+            0,
+        )],
+        Frame {
+            origin: DVec3::new(-76.76166483105068, 46.91986263825995, 31.25947745219386),
+            x: DVec3::new(0.9257010153590042, 0.03368163192012168, 0.3767534708990829),
+            y: DVec3::new(-0.0795700239937093, 0.9910801775738488, 0.1069050649025988),
+        },
+        at(1.0),
+        at(5.0),
+        1,
+    );
+    // The disc's frame: a turn `q` and a shift, its plane square to the
+    // turned `x` axis (`x` the turned `z`, `y` the turned `x`).
+    let q = DQuat::from_xyzw(
+        -0.06020145894259344,
+        0.19056179324632144,
+        -0.028908399880046044,
+        -0.9794009861707842,
+    );
+    let disc = extruded_on(
+        vec![circle(DVec2::new(1.5, 2.5), 1.0, 9, false)],
+        Frame {
+            origin: DVec3::new(-76.76166482710188, 46.91986262967961, 31.25947745888379),
+            x: (q * DVec3::Z).normalize(),
+            y: (q * DVec3::X).normalize(),
+        },
+        at(6.0),
+        at(7.0),
+        2,
+    );
+    let [u, x, d] = [Op::Union, Op::Intersection, Op::Difference].map(|op| {
+        let got = run(&block, &disc, op);
+        assert!(faces_its_plane_forms(&got), "{op:?}");
+        got.volume()
+    });
+    let (va, vb) = (block.volume(), disc.volume());
+    let within = 1e-6 * (va + vb);
+    assert!(x > 0.0);
+    assert!(
+        (u + x - va - vb).abs() <= within,
+        "{u} + {x} vs {va} + {vb}"
+    );
+    assert!((d - (va - x)).abs() <= within, "{d} vs {va} - {x}");
+}
+
+#[test]
 fn a_bar_cut_at_its_refinement_midpoints_keeps_its_planes() {
     // A box's face through the middle of a bar's wall, where refinement
     // put its midpoints: crossings at one place, which the clean-up

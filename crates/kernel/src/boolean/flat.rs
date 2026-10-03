@@ -135,9 +135,12 @@ impl<'a> Flat<'a> {
     /// the edge inside the triangle, each side widened by the tie
     /// ([`Self::inside`]), so the vertex lies on the face it crosses.
     /// `None` if no part of the edge is: the near ties were decided as no
-    /// one configuration has them (`Reach` measures the tie square to the
-    /// plane, `Height` along [`UP`], so on a plane steep to `UP` a gap can
-    /// be a tie for one and not the other).
+    /// one configuration has them. Every tie is a distance in space
+    /// (`Reach` square to the plane, `Height` square to both edges), so
+    /// an edge within the tie of the plane ties with the face's edges
+    /// its shadow crosses, as it lies in the plane; what is left are the
+    /// windows between measures (`Orient` across the shadows, a height
+    /// past the resolution along `UP`), rare among edges within the tie.
     ///
     /// So is one with one end decided as on the plane and the other
     /// within the resolution of it (nearly along the plane, so rounding
@@ -272,7 +275,8 @@ impl Primitives for Flat<'_> {
         // perturbation beyond it, has edges crossing that face from
         // triangles whose boxes stop an ulp short of it, and pairing none
         // of them put whole operands on the wrong side of each other.
-        // `Reach` and `Height` ties reach a tie distance; a shadow's,
+        // `Reach` and `Height` ties reach a tie distance in space, and a
+        // `Height` tie the resolution at most along `UP`; a shadow's,
         // along `UP` on a face steep to it, further.
         self.tie * super::TIES
     }
@@ -394,19 +398,36 @@ impl Pred for Height {
     }
 
     fn scale(&self) -> f64 {
-        // `λ·det[g, e, UP]`, the height `λ·|UP|`; but never below that
-        // product's own rounding. Where the edges' shadows are parallel to
-        // rounding (collinear edges, turned), `det[g, e, UP]` is only
-        // rounding, down to an exact 0, and so is the constant term
+        // The value is `(a − c)·(g × e)`: the lines' distance in space
+        // times `|g × e|`, and `λ·det[g, e, UP]` for `λ·|UP|` the height
+        // of `e`'s point over `g`'s where their shadows cross. Ties are
+        // the lines within the tie of each other, measured square to
+        // both as `Reach` measures a point's distance from a plane: two
+        // edges in a plane steep to `UP`, each within the tie of it, are
+        // ties for both, where the height along `UP` (the distance over
+        // the cosine of the plane's angle to it) left some of them to
+        // rounding and the counting found crossings of an edge decided
+        // to lie in the face. Capped at the resolution along `UP`
+        // ([`super::TIES`] ties), so a tie never reaches further than the
+        // broad phase's margin, and edges whose shadows are nearly
+        // parallel, near in space but a resolution or more apart in
+        // height where the shadows cross, are decided by their height,
+        // as `Orient` decides the shadows' sides.
+        //
+        // Never below the product's own rounding: where the edges are
+        // parallel to rounding (collinear edges, turned), `g × e` is
+        // only rounding, down to an exact 0, and so is the constant term
         // (`Height` is of second order there): taken as it came, the
-        // rounding in it decided. The floor swallows no real height:
-        // the value is the lines' distance times `|g × e|`, so a value
-        // within `tie·4ε·|g|·|e|` is lines within the tie of each other,
-        // or edges parallel to rounding in space too, whose constant term
-        // is zero at the exact parallel tie, whatever their distance.
+        // rounding in it decided. The floor swallows no real height: a
+        // value within `tie·4ε·|g|·|e|` is lines within the tie of each
+        // other, or edges parallel to rounding in space, whose constant
+        // term is zero at the exact parallel tie, whatever their
+        // distance.
         let (g, e) = (self.d.p - self.c.p, self.b.p - self.a.p);
         let rounding = 4.0 * f64::EPSILON * g.length() * e.length();
-        (g.cross(e).dot(UP).abs() / UP.length()).max(rounding)
+        let m = g.cross(e);
+        let vertical = m.dot(UP).abs() / UP.length();
+        m.length().min(super::TIES * vertical).max(rounding)
     }
 }
 
@@ -647,5 +668,84 @@ mod tests {
                 assert_eq!(exact::sign_tied(&flipped, tie), -want, "{gap} {tie}");
             }
         }
+    }
+
+    #[test]
+    fn heights_in_a_steep_plane_tie_as_reach_does() {
+        // A triangle of `B` in a plane steep to `UP` (its normal 76° from
+        // `UP`, its part along `UP` 0.24), and an edge of `A` whose shadow crosses
+        // that of the triangle's side `g`, both its ends half a tie off
+        // the plane (square to it): it is decided to lie in the plane, and
+        // so where it crosses `g` the two edges must tie in height too,
+        // though they are about two ties apart along `UP`. Measured along
+        // `UP`, the height went by the real gap, against the perturbation
+        // that decided the edge's ends, and the counting found the edge
+        // crossing the face it lies in.
+        let tie = 1e-9;
+        let up = UP.normalize();
+        let level = up.cross(DVec3::X).normalize();
+        let n = (up * 0.24 + level * (1.0 - 0.24f64 * 0.24).sqrt()).normalize();
+        let u1 = up.cross(n).normalize();
+        let u2 = n.cross(u1);
+        let p0 = DVec3::new(3.25, -1.5, 2.0);
+        let [c, d] = [p0 - u1 - u2 * 0.3, p0 + u1 + u2 * 0.3];
+        let t = [b(c.into()), b(d.into()), b((p0 - u1 + u2 * 1.5).into())];
+        let g = [t[0], t[1]];
+        // `e`'s ends `off` from the plane, the perturbation moving them
+        // to its other side.
+        let e = |off: f64| {
+            let away = -off.signum() * n;
+            [
+                a((p0 - u2 * 0.7 + u1 * 0.2 + n * off).into(), away.into()),
+                a((p0 + u2 * 0.7 + u1 * 0.1 + n * off).into(), away.into()),
+            ]
+        };
+        let height = |[a, b]: [Pt; 2]| Height {
+            a,
+            b,
+            c: g[0],
+            d: g[1],
+        };
+        for side in [1.0, -1.0] {
+            let near = e(side * 0.5 * tie);
+            for x0 in near {
+                assert!(exact::is_tie(&Reach { x0, t }, tie), "{side}");
+            }
+            assert!(exact::is_tie(&height(near), tie), "{side}");
+            // Decided as with the edge in the plane, by the perturbation.
+            let flat = [0, 1].map(|i| Pt {
+                p: near[i].p - n * n.dot(near[i].p - c),
+                ..near[i]
+            });
+            let crossed = cross11(near, g, tie);
+            assert_ne!(crossed, Cross11::default(), "{side}");
+            assert_eq!(crossed, cross11(flat, g, tie), "{side}");
+            // Two ties off the plane, neither is a tie.
+            let far = e(side * 2.0 * tie);
+            for x0 in far {
+                assert!(!exact::is_tie(&Reach { x0, t }, tie), "{side}");
+            }
+            assert!(!exact::is_tie(&height(far), tie), "{side}");
+        }
+
+        // Two edges in a common plane nearly along `UP` (its normal's part
+        // along `UP` 0.004), their shadows nearly parallel and crossing,
+        // the lines half a tie apart in space but some 125 ties along
+        // `UP` where the shadows cross: past the resolution, so not a tie.
+        let n = (up * 0.004 + level * (1.0 - 0.004f64 * 0.004).sqrt()).normalize();
+        let u1 = up.cross(n).normalize();
+        let u2 = n.cross(u1);
+        let steep = Height {
+            a: a((p0 - u1 - u2 * 0.1 + n * 0.5 * tie).into(), [1.0, 0.0, 0.0]),
+            b: a((p0 + u1 + u2 * 0.1 + n * 0.5 * tie).into(), [1.0, 0.0, 0.0]),
+            c: b((p0 - u1 + u2 * 0.1).into()),
+            d: b((p0 + u1 - u2 * 0.1).into()),
+        };
+        let shadow = |p: DVec3| p - up * p.dot(up);
+        let (ge, gg) = (shadow(steep.b.p - steep.a.p), shadow(steep.d.p - steep.c.p));
+        assert!(ge.cross(gg).dot(up).abs() > 0.0);
+        assert!(!exact::is_tie(&steep, tie));
+        // With a tie of 2.5 (a resolution of 160 ties along `UP`), it is.
+        assert!(exact::is_tie(&steep, tie * 2.5));
     }
 }

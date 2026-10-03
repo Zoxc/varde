@@ -3878,14 +3878,31 @@ three edges.
 take a constant term within the **tie distance** (a 64th of the
 resolution, `boolean::tie`) times the predicate's `scale` (how much it
 changes per unit of distance from its tie: `|UP × (q − p)|` for
-`Orient`, `|det[g, e, UP]| / |UP|` for `Height` (never below that
-product's own rounding, `4ε·|g|·|e|`: see "At every order"), the
-triangle's normal's
+`Orient`, `min(|g × e|, TIES·|det[g, e, UP]| / |UP|)` for `Height`
+(never below that product's own rounding, `4ε·|g|·|e|`: see "At every
+order"), the triangle's normal's
 length for `Reach`, `|RAY|·|(d − c)·ACROSS|` for `Ahead`) as zero, and go
 on to the perturbation's powers. The scales make the tie one distance
 for every predicate, the one the curved primitives use for heights (a
 review found `Height`'s 32 times larger and `Orient`'s and `Ahead`'s
-larger along steep or ray-wise edges). So a configuration within the tie
+larger along steep or ray-wise edges), and one direction: **each tie is
+the distance in space between the things the predicate is about**.
+`Reach` measures a point's distance from a plane; `Orient` and the ray
+tests a vertical line's from a line (the shadows' sides); `Height`'s
+value is `(a − c)·(g × e)`, the lines' distance times `|g × e|`, so
+with that scale it ties lines within the tie of each other, square to
+both. Two edges in a common plane, each within the tie of it, then tie
+for `Reach` and `Height` alike (see "In-plane crossings" for what
+measuring `Height` along `UP` did). Capped: `TIES·|det[g, e, UP]| / |UP|`
+is the scale of a height of a resolution along `UP` (`TIES` = 64 tie
+distances), so a `Height` tie also needs the edges within the
+resolution of each other along `UP` where their shadows cross. That
+keeps every tie within the broad phase's margin (see "Counting"), and
+edges whose shadows are nearly parallel (their common plane nearly
+along `UP`), near in space but a resolution or more apart in height at
+the crossing, are decided by their height as `Orient` decides their
+shadows' sides; measured on hair frames, the cap changed one
+result in 13 000 steps. So a configuration within the tie
 distance of a tie is decided as the tie it stands for: faces flush in
 exact arithmetic but turned and moved, every coordinate rounded, merge
 or part cleanly as the unmoved ones do (of 96 random flush grid boxes'
@@ -3988,22 +4005,35 @@ together, and the worst outcome is `Invalid`. The second try spends
 from the same budget, only on that failure. The curved path has no
 retry: the `Flat` inside `Curved` must keep the curved primitives'
 ties. Turned grid boxes with one moved by `10^±1.5` tie distances
-(seed 5, 3 000 operations): 60 `Inconsistent` with the ties (100 before
-in-plane crossings, below, 74 before the flat broad phase's margin and
-crossings of edges with one end in the plane), of them 34 right and 26
-`Invalid` (parts closer than the resolution) once retried, none
-`Inconsistent` and none wrong; 2 624 of the 3 000 right (2 617 before
+(seed 5, 3 000 operations): 11 `Inconsistent` with the ties (60 before
+heights were measured in space, 100 before in-plane crossings, below,
+74 before the flat broad phase's margin and crossings of edges with one
+end in the plane), of them 9 right and 2 unions refused once retried
+(`NotManifold`, `Invalid`), none `Inconsistent` and none wrong; 2 679
+of the 3 000 right (2 629 with heights along `UP`, 2 617 before
 in-plane crossings).
 
-**In-plane crossings.** The tie is one distance, but not measured the
-same way everywhere: `Reach` measures it square to the face's plane,
-`Height` along `UP`. On a plane at angle `θ` to `UP`, two edges a gap
-in `(tie·cos θ, tie)` apart square to it are tied for `Reach` and not
-for `Height`. Flush faces a hair apart (boxes extruded on frames turned
-and moved by `1e-11` to `1e-7`) put gaps there all the time: an edge of
-`A` with both ends within the tie of a face of `B` (decided as lying
-in its plane) still crossed it by the counting, the edge passing under
-one of `B`'s by `Height`. `crossing` gave where the edge's line meets
+**In-plane crossings.** The tie was one distance, but not measured
+the same way everywhere: `Reach` measured it square to the face's
+plane, `Height` along `UP`. On a plane at angle `θ` to `UP`, two edges
+a gap in `(tie·cos θ, tie)` apart square to it were tied for `Reach`
+and not for `Height`. Flush faces a hair apart (boxes extruded on frames
+turned and moved by `1e-11` to `1e-7`) put gaps there all the time: an
+edge of `A` with both ends within the tie of a face of `B` (decided as
+lying in its plane) still crossed it by the counting, the edge passing
+under one of `B`'s by `Height`. `Height` now ties as the lines'
+distance in space (see "Near ties are ties"), which removes the cause
+for edges within the tie: such events (an edge with both ends' `Reach`
+tied against a flat face whose shadow crosses a side of it with
+`Height` not tied) fell from 31 418 to 43 in 12 600 hair-frame grid
+steps, and from 145 356 to 4 on cylinders (counted with an instrumented
+copy when the change was planned). The keeping below stays for
+what is left: edges near the plane but not within the tie, and the
+windows between measures (`Orient` across the shadows, heights past
+the resolution along `UP`); it still empties some 42 intervals per
+12 600 such steps (108 before). Before that change, the counting's
+crossing of an in-plane edge went as follows. `crossing` gave where
+the edge's line meets
 the plane as rounding has it, anywhere along the line, here beyond the
 edge and clamped to an end half a unit outside the triangle crossed. The
 loop through two such crossings wound the wrong way, and the result
@@ -4036,12 +4066,31 @@ source seen. Against the booleans' refusal of a triangle facing against
 its form (which turned the same results into `Invalid` errors, 13 to 15
 per hair grid seed), the keeping wins 56 to 64 `Ok`s per hair grid
 seed, 25 on polygons and 21 on cylinders (`Inconsistent` 178 → 148),
-and the seeded tallies are the same. Making the tie one measure for every
-predicate (`Height` square to the edges' plane, say) would remove the
-cause, but changes every flat decision near a tie and would leave such a
-window between some pair of predicates whatever is chosen; the release
-check's facing test (step 6 of `check`) backs this up wherever else a
-plane patch faces against its tag.
+and the seeded tallies are the same. The release check's facing test
+(step 6 of `check`) backs this up wherever else a plane patch faces
+against its tag.
+
+Measuring every tie in space (`Height` square to both edges, capped at
+the resolution along `UP`, and the curved heights alike), on the same
+hunts (5-step chains fed on, release, the identities checked for
+cylinders and prisms): refused manifold steps (the
+cells' result a manifold; every cylinder or prism step counts) went
+
+| run (chains) | refused, along `UP` → in space | `Ok`s |
+|---|---|---|
+| grid hair 101 / 102 / 103 (4 000 each) | 1 303 / 1 272 / 1 345 → 1 122 / 1 099 / 1 152 (10.6 % → 9.1 %) | +159 / +167 / +162 |
+| grid hair 104 (2 000) | 654 → 575 | +81 |
+| polygons hair 300 (2 500) | 1 111 → 1 017 (13.1 % → 12.1 %) | +61 |
+| cylinders hair 201 (1 500) | 746 → 679 (15.7 % → 14.4 %); `Inconsistent` 140 → 120 | +38 |
+| mixed hair 300 (2 000) | 1 088 → 1 009 (16.3 % → 15.1 %); `TooComplex` 28 → 11 | +81 |
+| grid turned 101, grid plain 101 | the same bits | |
+
+No result had a wrong volume or a triangle facing against its tag, and
+every identity held within the fitted cuts' allowance `fit·(area A +
+area B)/5` (the worst at 1.3 % of it, the same step before and after).
+The seeded suite's tallies are the same but the near-tangent test's, 72
+→ 78 of 96. The curved primitives do no more work: on the cylinder
+hunt, 400 chains took 12.0 s against 14.6 s.
 
 An edge with one end decided as on the plane (its `Reach` tied) and
 the other within the resolution of it is nearly along the plane too, so
@@ -4094,9 +4143,11 @@ worse.
    beyond it, their edges crossed that side, but the triangles on its
    near side had boxes an ulp short of it, so nothing counted a crossing,
    and the intersection came out empty and the difference whole, both
-   `Ok`. A tie of `Reach` or `Height` is a tie distance at most, but a
-   shadow's along `UP`, on a face steep to it, reaches further, so the
-   margin is the resolution, as for curved ones. From the pairs the
+   `Ok`. A tie of `Reach` or `Height` is a tie distance at most in
+   space, and a height tie reaches the resolution at most along `UP`
+   (`Height`'s cap, and the curved heights'), but a shadow's along
+   `UP`, on a face steep to it, reaches further, so the margin is the
+   resolution, as for curved ones. From the pairs the
    candidate edge–face pairs of each operand, sorted.
 2. **Layer counts** for each end of a candidate edge against the face,
    and for the first and last vertex of each connected part of an
@@ -4298,7 +4349,23 @@ face and back out gets both crossings. Crossings are ordered along an
 edge by position, ties exactly (a straight edge through two planar
 patches) or by face and index.
 
-**Ties.** Heights within the tie distance are ties, decided as `A`'s
+**Ties.** Heights within the tie distance are ties, measured as the
+distance in space, as the exact `Reach` and `Height` measure theirs
+(`curved::square`): a height `dh` along `UP` where two shadows cross
+counts as `dh·|m̂·Û|`, `m = g' × e'` the two tangents' normal there (the
+curves' distance square to both), and a patch's point over a vertex as
+`dh·|n̂·Û|`, `n` the patch's normal there (the vertex's distance from
+the tangent plane); either factor no less than `1/TIES`, so a tie
+reaches the resolution at most along `UP`, as `Height`'s cap. Where
+`m` or `n` is zero, `dh` as it is. Heights where shadows run along each
+other (`along_above`, the parallel cases) stay along `UP`: there is no
+crossing to measure square at. `curved_layers`' shortcut (every point
+of the patch's hull above the vertex, or below) compares with the
+resolution rather than the tie, the furthest a tie reaches along `UP`.
+Measured along `UP`, a cap a few ties along `UP` off a box's steep
+face was a tie for the exact `Reach` and not for the heights, and the
+two counted crossings no one configuration has (`Inconsistent`, and the
+curved path has no retry). Ties are decided as `A`'s
 perturbation would (`A` moved by `ε·s·n_v + ε²·T2 + ε³·T3`), order by
 order, each to first order (`first_sign`: the first order `δ`, then the
 two translations, as the exact predicates take them; stopping at `δ`
@@ -6581,34 +6648,25 @@ offsets (564 of 882 right, the rest refused), and every result right by
 the volume identities, face tags and sampled points, and the same bits
 at 1 and 8 threads. Those counts came before the tie distance was made
 one distance for every predicate, which took the tangent test from 74
-to 72 of its 96 operations and left the others as they were.
+to 72 of its 96 operations and left the others as they were; measuring
+every tie in space then took it to 78.
 
 **The near-tangent test's refusals.** 8 (fit, gap) settings × 3
-placements × 4 operations; 72 of the 96 work. The test holds each
-operation to a rule (`tangent_may_fail`) instead of a share: any gap
-of at least the resolution must work, and so must every intersection
-and difference but the 6 below; the 24 that fail are of two kinds:
-
-- 18 unions with `|gap|` under the resolution: at gap 0 and ±`1e-9`,
-  ±`1e-6` at fit 0.1 and `1e-9` at fit 0.01 the union touches along a
-  line, or has a neck or parts closer than the resolution, which no
-  manifold at the kernel's resolution holds: `Invalid` (`Hull`,
-  `VertexNeighbours`), `Inconsistent`, and at gap −`1e-9` once
-  `TooComplex` (the tangency's refinement out of budget). Right to
-  refuse; the test allows but doesn't require it, so non-manifold
-  results or better ties won't break it.
-- 6 intersections and differences at gap −`1e-6`, fit 0.1, on the two
-  placements whose seams lie on the tangent line (not the one turned
-  0.3): `Inconsistent` from `pair_decision`'s coincidence shortcut.
-  The pieces there are refined to the floor and planar within the
-  resolution, `one_surface` says the two walls are one surface within
-  the resolution, and yet the pair has ends, because the flat
-  predicates count the overlap by heights along `UP`, which on a wall
-  nearly parallel to `UP` reads 16 times the normal distance (see "Ties
-  are decided to first order", in Known gaps). A wrong refusal: the tie
-  gives the operands unchanged, as gap 0 and the turned placement do.
-  Unreachable in the app at the default fit, where such tangencies run
-  out of budget first; they wait on a redesign of ties at tangencies.
+placements × 4 operations; 78 of the 96 work. The test holds each
+operation to a rule (`tangent_may_fail`) instead of a share: every
+intersection and difference must work, and so must any union at a gap
+of at least the resolution. The 18 that fail are unions with `|gap|`
+under the resolution: at gap 0 and ±`1e-9`, ±`1e-6` at fit 0.1 and
+`1e-9` at fit 0.01 the union touches along a line, or has a neck or
+parts closer than the resolution, which no manifold at the kernel's
+resolution holds: `NotManifold`, or `Inconsistent` (two at gap `1e-6`).
+Right to refuse; the test allows but doesn't require it, so non-manifold
+results or better ties won't break it. Until heights were measured in
+space, 6 intersections and differences at gap −`1e-6`, fit 0.1, on the
+two placements whose seams lie on the tangent line were `Inconsistent`
+too: the walls lay on one surface within the resolution, and yet the
+pair had ends, because the count's heights along `UP` read some 16
+times the normal distance on a wall nearly parallel to `UP`.
 
 No wrong `Ok` among them: every result passed the volumes, tags and
 sampled points.
@@ -6802,17 +6860,19 @@ slope not certified.
   Flat operands decided with near ties that don't fit together are
   decided again exactly, so they aren't `Inconsistent` (none seen), but refused as
   `Invalid` where the exact result has parts closer than the
-  resolution; curved operands still can be (11 of the seeded suite's 96
-  near-tangent operations). Three thresholds meet there with no order
-  between them: pieces are taken as planar within the resolution and
-  `one_surface` holds within it, both in normal distance, while the
-  count's tie is a 64th of the resolution in height along `UP`. On a
-  wall nearly parallel to `UP` a height is the normal distance over
-  `|n̂·ÛP|` (about 0.06), so an overlap of about 0.06 to 1 tie distance
-  passes `one_surface` and still counts as a crossing: the pair has ends
-  and is `Inconsistent` (6 of those 11, measured at fit 0.1 with the
-  seams on the tangent line; turned off it, overlaps up to 10 ties
-  work). Far from the origin the rounding rule's
+  resolution; curved operands still can be (2 of the seeded suite's 96
+  near-tangent operations, 11 while heights were ties along `UP`).
+  Three thresholds meet there: pieces are taken as planar within the
+  resolution and `one_surface` holds within it, both in normal
+  distance, and the count's tie is a 64th of the resolution, now a
+  distance in space too (it was a height along `UP`, the normal
+  distance over `|n̂·ÛP|`, about 0.06 on a wall nearly parallel to
+  `UP`, so an overlap of about 0.06 to 1 tie distance passed
+  `one_surface` and still counted as a crossing). Overlaps between the
+  tie and the resolution can still give decisions that don't fit:
+  near-tangent cylinders overlapping by `1.5e-6` at fit 0.1 (their seams
+  on the tangent line), intersected, are `Inconsistent` at a vertex.
+  Far from the origin the rounding rule's
   share reaches some tens of tie distances in a coefficient of many
   terms: edges stacked along `UP` 10 to 125 tie distances apart, `1e3`
   to `1e6` from the origin, are decided as touching (near it, up to
@@ -6887,13 +6947,22 @@ slope not certified.
   did before other fixes, but none was seen in these runs.
 - **Flush faces a hair off each other.** Grid boxes extruded each on
   its own frame, the frames turned alike but for `1e-11` to `1e-7` rad,
-  fail about 1 operation in 9 (`Invalid`). About 1 in 750 used to come
+  fail about 1 operation in 11 (9 %; 10.6 % before ties were measured in
+  space, see "In-plane crossings"), polygons 12 %, cylinders 14 %. Ties
+  measured along `UP` were about a seventh of those refusals, nearly all
+  of those whose contacts lie within the tie. Most of the rest are faces
+  between the tie and the resolution apart (hair frames reach some 22
+  ties), decided by their real geometry and refused by the check as
+  closer than the resolution; the rate rises with the gap, to about a
+  quarter of the steps whose frames are more than 16 ties apart. A
+  larger tie would take some of them; the curved path's `Inconsistent`s
+  (no exact retry) are the others. About 1 in 750 used to come
   out with a triangle facing against its plane tag (an in-plane crossing
   placed outside its triangle, see "In-plane crossings"); none does now,
   and `check` refuses any that would. What is left of the window: edges
-  near a face's plane with neither end within the tie of it, decided by
-  the same mismatch of `Reach` and `Height`, still have crossings placed
-  up to well beyond the resolution outside their triangles (some 850 per
+  near a face's plane with neither end within the tie of it still have
+  crossings placed up to well beyond the resolution outside their
+  triangles (some 850 per
   12 600 hair-frame steps before edges with one end in the plane were
   kept in; none gave a false tag in the hunts), so do edges with one end
   in it and no part inside the triangle, planar

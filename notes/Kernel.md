@@ -344,7 +344,9 @@ vertices move by `ε·s·n_v + ε²·T2 + ε³·T3`, outward for a union (flush 
 overlap and merge) and inward for a difference or intersection (flush faces
 part cleanly). The perturbed operands are a real configuration in general
 position, so every decision fits the others. Near ties within the tie
-distance are decided as the exact tie they stand for, and flat operands that
+distance are decided as the exact tie they stand for, the distance always
+measured in space between the things a decision is about (a point and a
+plane, two edges square to both, never along the projection), and flat operands that
 come out `Inconsistent` are decided again with exact signs. Curved
 primitives decide their ties by the same perturbation to first order in each
 power. Curved shadow crossings are derived from shared ray tests rather than

@@ -660,28 +660,19 @@ fn turned_and_moved_solids_are_right_or_refused() {
 
 /// Whether the tangent test lets operation `k` of [`four`] (union,
 /// intersection, `a − b`, `b − a`) fail at a `gap` between the cylinders,
-/// at resolution `res`, with the second turned by `turn` about its axis.
-/// Everything else must work.
+/// at resolution `res`. Everything else must work.
 ///
-/// - Unions with `|gap| < res`: the cylinders touch along a line, or
-///   leave a neck or a gap narrower than the resolution, which no
-///   manifold at the kernel's resolution can hold. They may fail; that
-///   they do isn't asserted, so non-manifold results or better ties
-///   don't break the test.
-/// - Intersections and differences at `-res < gap < 0` with both seams on
-///   the tangent line (`turn == 0`): the walls lie on one surface within
-///   the resolution in normal distance (`one_surface`) while the count,
-///   whose ties are heights along `UP`, sees the overlap as a real
-///   crossing (an overlap of about 0.06 to 1 tie on a wall near parallel
-///   to `UP`), so the pair has ends and is `Inconsistent`. The tie gives
-///   the operands unchanged, as gap 0 and the turned placement do; that
-///   waits on a redesign of ties at tangencies.
-fn tangent_may_fail(k: usize, gap: f64, res: f64, turn: f64) -> bool {
-    let within = gap.abs() < res;
-    match k {
-        0 => within,
-        _ => within && gap < 0.0 && turn == 0.0,
-    }
+/// Unions with `|gap| < res`: the cylinders touch along a line, or leave
+/// a neck or a gap narrower than the resolution, which no manifold at the
+/// kernel's resolution can hold. They may fail; that they do isn't
+/// asserted, so non-manifold results or better ties don't break the
+/// test. (Intersections and differences at `-res < gap < 0` with both
+/// seams on the tangent line failed as `Inconsistent` while the count's
+/// heights were ties along `UP`, a few times the normal distance on a
+/// wall near parallel to it: the walls lay on one surface within the
+/// resolution and the pair still had ends. Measured in space, they work.)
+fn tangent_may_fail(k: usize, gap: f64, res: f64) -> bool {
+    k == 0 && gap.abs() < res
 }
 
 #[test]
@@ -717,7 +708,7 @@ fn near_tangent_cylinders_are_right_or_refused() {
             let name = format!("fit {fit}, gap {gap}, z0 {z0}, h {h}, turn {turn}");
             let out = four(&a, &b, both, &tol, &mut samples, &mut tally, &name);
             for (k, result) in out.iter().enumerate() {
-                if result.is_none() && !tangent_may_fail(k, gap, tol.resolution(), turn) {
+                if result.is_none() && !tangent_may_fail(k, gap, tol.resolution()) {
                     lost.push(format!("{name}: {}", ops[k]));
                 }
             }
@@ -1687,10 +1678,12 @@ fn a_cut_face_that_cant_be_triangulated_shows_its_loops() {
 
 #[test]
 fn tangent_cylinders_that_dont_fit_together_show_where() {
-    // Cases of `near_tangent_cylinders_are_right_or_refused` at the
-    // coarsest tolerance, refused as `Inconsistent` at three places, each
-    // with what it is about, on the walls where they touch (`x` 1, `y`
-    // 0), and the same at 1 and 8 threads.
+    // Near-tangent cylinders at the coarsest tolerance, refused as
+    // `Inconsistent` at two kinds of place, each with what it is about,
+    // on the walls where they touch (`x` 1, `y` 0), and the same at 1 and
+    // 8 threads. (Overlaps of `1e-6`, whose pairs of walls had ends and
+    // whose edges' crossings couldn't be placed, were refused too until
+    // heights were measured in space: their intersections now work.)
     let tol = Tolerance::new(Tolerance::MAX_FIT).unwrap();
     let r = tol.resolution();
     let a = Solid::cylinder(DVec3::ZERO, 1.0, 2.0, 2, &tol).unwrap();
@@ -1711,9 +1704,9 @@ fn tangent_cylinders_that_dont_fit_together_show_where() {
     };
     let near_line = |p: DVec3| (p.x - 1.0).abs() < 0.05 && p.y.abs() < 0.15;
     for (gap, h, op) in [
-        (-1e-6, 0.25, Op::Intersection),
-        (-1e-6, 1.0, Op::Intersection),
+        (-1.5e-6, 0.75, Op::Intersection),
         (1e-6, 0.25, Op::Union),
+        (1e-6, 1.0, Op::Union),
     ] {
         let b = Solid::cylinder(DVec3::ZERO, 1.0, h, 3, &tol).unwrap();
         let b = moved(&b, &tol, |p| p + DVec3::new(2.0 + gap, 0.0, 0.5));
@@ -1725,65 +1718,41 @@ fn tangent_cylinders_that_dont_fit_together_show_where() {
         for &p in &e.points {
             assert!(near_line(p), "{p}");
         }
-        match (gap, h) {
-            (_, 0.25) if gap < 0.0 => {
-                // The walls lie on one surface within the resolution, yet
-                // the counting gave their pair ends: the pair, both
-                // patches on the walls, and its ends, on both.
-                assert_eq!(e.patches.len(), 2);
-                assert!(e.curves.is_empty());
-                assert_eq!(
-                    e.faces,
-                    [(crate::Operand::A, wall(&a)), (crate::Operand::B, wall(&b))]
-                );
-                assert!(!e.points.is_empty());
-                for patch in &e.patches {
-                    assert!(patch.p.into_iter().all(near_line), "{patch:?}");
-                }
-                for &p in &e.points {
-                    for operand in [crate::Operand::A, crate::Operand::B] {
-                        assert!(off(gap, operand, p).abs() <= r, "{p}");
-                    }
-                }
+        if gap < 0.0 {
+            // A vertex whose winding number doesn't fit what its edges
+            // carried: the vertex, on both walls, the faces of the other
+            // operand above it and the triangles round it.
+            let [point] = e.points[..] else {
+                panic!("{e:?}");
+            };
+            for operand in [crate::Operand::A, crate::Operand::B] {
+                assert!(off(gap, operand, point).abs() <= r, "{point}");
+                assert!(e.faces.iter().any(|f| f.0 == operand), "{e:?}");
             }
-            (_, 1.0) => {
-                // An edge through a face whose crossings can't be placed:
-                // the edge, on one wall, and the patch of the other's.
-                let ([curve], [patch], [(operand, key)]) =
-                    (&e.curves[..], &e.patches[..], &e.faces[..])
-                else {
-                    panic!("{e:?}");
-                };
-                let (other, solid) = match operand {
-                    crate::Operand::A => (crate::Operand::B, &a),
-                    crate::Operand::B => (crate::Operand::A, &b),
-                };
-                assert_eq!(*key, wall(solid));
-                for t in [0.0, 0.5, 1.0] {
-                    assert!(off(gap, other, curve.eval(t)).abs() <= r);
-                }
-                for &p in &patch.p {
-                    assert!(off(gap, *operand, p).abs() <= r);
-                }
-                assert!(near_line(curve.p0) && near_line(curve.p1));
-                assert!(e.points.is_empty());
-            }
-            _ => {
-                // A crossing the search only placed, off the face it
-                // crosses: its vertex, on its edge (the second's rim) and
-                // farther than the resolution from the first's wall, and
-                // that wall's patch.
-                let ([curve], [_], [point], [(crate::Operand::A, key)]) =
-                    (&e.curves[..], &e.patches[..], &e.points[..], &e.faces[..])
-                else {
-                    panic!("{e:?}");
-                };
-                assert_eq!(*key, wall(&a));
-                assert!(off(gap, crate::Operand::B, *point).abs() <= r, "{point}");
-                assert!(off(gap, crate::Operand::A, *point) > r, "{point}");
-                for t in [0.0, 0.5, 1.0] {
-                    assert!(off(gap, crate::Operand::B, curve.eval(t)).abs() <= r);
-                }
+            assert!(e.curves.is_empty() && !e.patches.is_empty());
+            assert!(
+                (e.patches.iter()).any(|patch| patch.p.contains(&point)),
+                "{e:?}"
+            );
+        } else {
+            // A crossing the search only placed, off the face it
+            // crosses: its vertex, on its edge (the other's rim) and
+            // farther than the resolution from the face's wall, and that
+            // wall's patch.
+            let ([curve], [_], [point], [(operand, key)]) =
+                (&e.curves[..], &e.patches[..], &e.points[..], &e.faces[..])
+            else {
+                panic!("{e:?}");
+            };
+            let (other, solid) = match operand {
+                crate::Operand::A => (crate::Operand::B, &a),
+                crate::Operand::B => (crate::Operand::A, &b),
+            };
+            assert_eq!(*key, wall(solid));
+            assert!(off(gap, other, *point).abs() <= r, "{point}");
+            assert!(off(gap, *operand, *point) > r, "{point}");
+            for t in [0.0, 0.5, 1.0] {
+                assert!(off(gap, other, curve.eval(t)).abs() <= r);
             }
         }
     }
