@@ -1053,11 +1053,14 @@ the states' `show_error`), only where the geometry has a box.
   draws the core over it, a kind at a time: patches, curves
   (`vs_error_line` into `fs_highlight_line`) and points
   (`vs_error_point` into `fs_highlight_point`); then the sketch being
-  edited. The composite and the core bind group 2 (`ErrorTarget::group`):
-  the errors' colours (`ErrorUniforms`, `ErrorColors` in the shader,
-  written each frame there are errors, beside the scene's uniforms,
-  which are full) and the halo's texture; the halo's own pipelines
-  don't, since they draw into that texture.
+  edited. The composite and the core bind a group 0 of their own
+  (`ErrorTarget::group`): the scene's uniforms, the errors' colours
+  (`ErrorUniforms`, `ErrorColors` in the shader, written each frame there
+  are errors; the scene's uniforms are full) and the halo's texture. Not
+  a third group: iced asks the device for `max_bind_groups: 2`. The
+  sketch drawn after them binds the scene's group 0 again. The halo's
+  own pipelines take the scene's layout, since they draw into that
+  texture.
 - Each is drawn twice, by the same programs with another depth test, so
   the two split the pixels: `LessEqual`, at full strength, and `Greater`,
   where the model hides it, at 0.4 (`ERROR_HIDDEN`), core and halo
@@ -1089,8 +1092,8 @@ the states' `show_error`), only where the geometry has a box.
 
 On WebGL2 all of it holds: `R8` is colour-renderable and blendable in
 OpenGL ES 3.0, `MIN`/`MAX` are core blend equations there, `textureLoad`
-is `texelFetch`, and the composite's and core's layout is three bind
-groups of the four WebGL2 allows. The GL tests draw it on wgpu's GL backend
+is `texelFetch`, and every layout is within the two bind groups iced's
+device has (the render tests' devices ask for that limit too). The GL tests draw it on wgpu's GL backend
 (`errors_and_their_halo_are_drawn_on_gl`), the halo off the middle of
 the target, so one read upside down would show.
 

@@ -694,7 +694,7 @@ struct Pass<'a> {
     /// The target's format if not the frame's: the errors' halo's.
     format: Option<wgpu::TextureFormat>,
     /// The layout if not the scene's: the errors' composite's and core's,
-    /// which read their colours and the halo's coverage (group 2).
+    /// which read their colours and the halo's coverage (group 0).
     layout: Option<&'a wgpu::PipelineLayout>,
 }
 
@@ -949,9 +949,11 @@ impl Renderer {
             bind_group_layouts: &[&bind_group_layout, &part_layout],
             push_constant_ranges: &[],
         });
-        // Group 2 of the halo's composite and the errors' core: their
-        // colours (`ErrorUniforms`), and the halo's coverage, read texel by
-        // texel (`textureLoad`, no sampler) by the composite.
+        // Group 0 of the halo's composite and the errors' core: the scene's
+        // uniforms as everywhere, their colours (`ErrorUniforms`), and the
+        // halo's coverage, read texel by texel (`textureLoad`, no sampler)
+        // by the composite. In group 0 rather than a group of their own:
+        // iced asks the device for two bind groups only.
         let errors_group = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("varde errors"),
             entries: &[
@@ -961,12 +963,22 @@ impl Renderer {
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(size_of::<ErrorUniforms>() as u64),
+                        min_binding_size: wgpu::BufferSize::new(size_of::<Uniforms>() as u64),
                     },
                     count: None,
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new(size_of::<ErrorUniforms>() as u64),
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Float { filterable: false },
@@ -979,7 +991,7 @@ impl Renderer {
         });
         let errors_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("varde errors"),
-            bind_group_layouts: &[&bind_group_layout, &part_layout, &errors_group],
+            bind_group_layouts: &[&errors_group, &part_layout],
             push_constant_ranges: &[],
         });
 
@@ -1686,7 +1698,12 @@ impl Renderer {
         }
         if slot.errors.any() {
             if slot.error_target.as_ref().map(|t| t.size) != Some(size) {
-                slot.error_target = Some(ErrorTarget::new(device, &self.errors.layout, size));
+                slot.error_target = Some(ErrorTarget::new(
+                    device,
+                    &self.errors.layout,
+                    &slot.uniforms,
+                    size,
+                ));
             }
             if let Some(target) = &slot.error_target {
                 let [r, g, b, a] = colors.error_halo.linear();
@@ -1840,7 +1857,7 @@ impl Renderer {
         let target = ("varde errors", target, wgpu::LoadOp::Load);
         let mut pass = self.begin(slot, encoder, target, depth, load, clip);
         pass.set_pipeline(&self.errors.composite);
-        pass.set_bind_group(2, &error_target.group, &[]);
+        pass.set_bind_group(0, &error_target.group, &[]);
         pass.draw(0..3, 0..1);
         // Hidden first, so what shows of each kind goes over it.
         let [seen, hidden] = &self.errors.core;
@@ -1849,6 +1866,7 @@ impl Renderer {
         let cores = Some(errors.cores);
         self.draw_error_layers(&mut pass, layers, [dimmed, opaque], errors, cores);
         self.alphas.set(&mut pass, opaque);
+        pass.set_bind_group(0, &slot.bind_group, &[]);
         self.draw_sketch(&mut pass, slot);
     }
 
@@ -2211,7 +2229,7 @@ struct ErrorPipelines {
     composite: wgpu::RenderPipeline,
     /// The geometry itself, over that.
     core: [ErrorLayer; 2],
-    /// Group 2 of the composite and the core: [`ErrorTarget::group`].
+    /// Group 0 of the composite and the core: [`ErrorTarget::group`].
     layout: wgpu::BindGroupLayout,
 }
 
@@ -2844,13 +2862,19 @@ struct ErrorTarget {
     view: wgpu::TextureView,
     /// [`ErrorUniforms`], written each frame there are errors.
     uniforms: wgpu::Buffer,
-    /// Group 2 of the composite and the core: the colours and the halo.
+    /// Group 0 of the composite and the core: the scene's uniforms, the
+    /// colours and the halo.
     group: wgpu::BindGroup,
     size: [u32; 2],
 }
 
 impl ErrorTarget {
-    fn new(device: &wgpu::Device, layout: &wgpu::BindGroupLayout, size: [u32; 2]) -> ErrorTarget {
+    fn new(
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        scene: &wgpu::Buffer,
+        size: [u32; 2],
+    ) -> ErrorTarget {
         let [width, height] = size;
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("varde error halo"),
@@ -2879,10 +2903,14 @@ impl ErrorTarget {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: uniforms.as_entire_binding(),
+                    resource: scene.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
+                    resource: uniforms.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
                     resource: wgpu::BindingResource::TextureView(&view),
                 },
             ],

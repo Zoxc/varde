@@ -140,8 +140,15 @@ fn errors_with_nothing_to_draw_draw_nothing() {
         eprintln!("no GPU adapter, skipping");
         return;
     };
-    let (device, queue) =
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).unwrap();
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        // As iced asks for, which allows two bind groups only.
+        required_limits: wgpu::Limits {
+            max_bind_groups: 2,
+            ..wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits())
+        },
+        ..Default::default()
+    }))
+    .unwrap();
     let mut lines = RenderLines::default();
     lines.push([Vec3::ZERO, Vec3::X]).unwrap();
     let shown = ErrorParts {

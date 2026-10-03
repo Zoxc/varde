@@ -60,6 +60,7 @@ fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
             let descriptor = wgpu::DeviceDescriptor {
                 required_limits: wgpu::Limits {
                     max_buffer_size: 512,
+                    max_bind_groups: 2,
                     ..wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits())
                 },
                 ..Default::default()

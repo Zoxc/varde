@@ -62,7 +62,15 @@ fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
             let instance = wgpu::Instance::default();
             let options = wgpu::RequestAdapterOptions::default();
             let adapter = pollster::block_on(instance.request_adapter(&options)).ok()?;
-            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()
+            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+                // As iced asks for, which allows two bind groups only.
+                required_limits: wgpu::Limits {
+                    max_bind_groups: 2,
+                    ..wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits())
+                },
+                ..Default::default()
+            }))
+            .ok()
         })
         .clone()
 }

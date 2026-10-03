@@ -1314,14 +1314,15 @@ fn fs_fill(in: FillOut) -> @location(0) vec4<f32> {
 // (`highlight_slope`), patches as the edges are (`pulled`).
 
 // The errors' colours, linear: the core's, and the halo's with its alpha.
-// `ErrorUniforms` in renderer.rs. Group 2, bound for the halo's composite
-// and the core, not for the halo's coverage, which is drawn into the
-// texture bound beside it.
+// `ErrorUniforms` in renderer.rs. In group 0 beside the scene's uniforms
+// (iced's device has two bind groups), bound for the halo's composite and
+// the core, not for the halo's coverage, which is drawn into the texture
+// bound beside it.
 struct ErrorColors {
     core: vec4<f32>,
     halo: vec4<f32>,
 };
-@group(2) @binding(0) var<uniform> errors: ErrorColors;
+@group(0) @binding(1) var<uniform> errors: ErrorColors;
 
 fn error_color() -> vec3<f32> {
     return errors.core.rgb;
@@ -1427,7 +1428,7 @@ fn vs_error_halo_point(
 
 // The halo's coverage, as large as the target and read at the pixel's own
 // texel.
-@group(2) @binding(1) var halo: texture_2d<f32>;
+@group(0) @binding(2) var halo: texture_2d<f32>;
 
 // The halo over the frame, once: its colour at its alpha times the
 // coverage.
