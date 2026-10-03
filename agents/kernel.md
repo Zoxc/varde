@@ -1538,7 +1538,21 @@ inner edges join midpoints, the case measured safe above: the straight
 red split of every one of the 13 476 folding triangles of that sweep
 has no piece failing the fold check, and the children are tested the same way when they get
 a hanging vertex. A leaf that can't be split keeps the straight
-bisector and fails in repair as before. The exact bisection
+bisector and fails in repair as before. Every leaf gets a hanging vertex
+only there (a new leaf has none: its coarser neighbours were split
+first), so the test sees each such leaf once, when it gets it, and
+depends on that leaf and its records only; `split` is sequential, so the
+order the stack takes them in, forced leaves behind their coarser
+neighbours, is the same at any thread count. The unit of work is charged
+before the leaf's own fold check, which is work as the pieces' are (in
+the repair of `the_second_try_is_charged_only_from_where_it_resumes`,
+whose totals the test moved by 8 units, measured, every leaf tested
+passes it, so charging after would give the same totals). Room is tested for the leaf's own three
+children only; what its split takes with it (coarser neighbours first,
+neighbours left with two hanging vertices) counts against `MAX_PATCHES`
+as any split's does. A straight half can't fail to build (its edges are
+records or straight between vertices); if one did, it would count as
+folding, so the test never fails where `pieces` wouldn't. The exact bisection
 (`bisect_with`, its curved inner edge in the plane) was the other
 option: it moves nothing elsewhere, but its halves meet across a curved
 edge in one plane, which the edge-neighbour rules often can't part (216

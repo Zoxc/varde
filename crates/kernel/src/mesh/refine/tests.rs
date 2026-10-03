@@ -243,6 +243,8 @@ fn a_cap_triangle_whose_bisector_would_leave_it_is_split_red() {
             (0..3).any(|i| k[i] == y && k[(i + 1) % 3] == x)
         })
         .expect("the neighbour");
+    let side = (o + 1) % 3;
+    assert!(straight_bisection_folds(&mesh.patch(t), side));
     let mut refiner = Refiner::new(mesh, TOL.resolution(), 0.0);
     split(&mut refiner, &[n]);
     assert!(refiner.leaves[t].is_none(), "the cap triangle is split");
@@ -253,6 +255,21 @@ fn a_cap_triangle_whose_bisector_would_leave_it_is_split_red() {
         .collect();
     assert!(folded.is_empty(), "folded pieces of leaves {folded:?}");
     assert_eq!(refiner.mesh(&pieces).check(&TOL), Ok(()));
+}
+
+/// Whether bisecting the plane `patch` from the middle of its side `side`
+/// to the opposite corner by a straight edge leaves a half failing the
+/// fold check: built here from the patch, not by the refiner.
+fn straight_bisection_folds(patch: &Patch, side: usize) -> bool {
+    let [h0, h1] = patch.edge(side).split_half().unwrap();
+    let (m, o) = (h0.p1, patch.p[(side + 2) % 3]);
+    let (next, prev) = (patch.edge((side + 1) % 3), patch.edge((side + 2) % 3));
+    let straight = (m + o) * 0.5;
+    let first = Patch::new([h0.p0, m, o], [h0.c, straight, prev.c], [h0.w, 1.0, prev.w]);
+    let second = Patch::new([m, h1.p1, o], [h1.c, next.c, straight], [h1.w, next.w, 1.0]);
+    [first.unwrap(), second.unwrap()]
+        .iter()
+        .any(|half| half.fold_direction().is_none())
 }
 
 /// The tetrahedron on the triangle `base` in `z = 0`, clockwise from
@@ -284,10 +301,11 @@ fn on_a_cap(base: [DVec3; 3], arc: crate::patch::Conic3) -> Mesh {
 fn cap_triangles_are_split_red_where_a_bisector_would_fold() {
     // Seeded triangles on a plane with one side an arc of the unit circle
     // bulging into them (a cap beside a hole's rim), passing the fold
-    // check: a hanging vertex on a side opposite an end of the arc. A
-    // straight bisector from that end leaves the triangle where the
-    // side's middle is past the arc's tangent there (about one in nine);
-    // the triangle is then split red, and no piece of it is inside out.
+    // check, given a hanging vertex on one side. A straight bisector from
+    // an end of the arc leaves the triangle where the opposite side's
+    // middle is past the arc's tangent there (about one in nine); the
+    // triangle is then split red, and only then, and no piece of it is
+    // inside out. One from the arc's middle never leaves it.
     use crate::patch::Conic3;
     use crate::test_rng::Rng;
     let mut rng = Rng::new(7);
@@ -309,10 +327,16 @@ fn cap_triangles_are_split_red_where_a_bisector_would_fold() {
         if base.fold_direction().is_none() {
             continue;
         }
-        // Hanging on `a → b` (side 1, triangle 2), bisected from `o`; or
-        // on `b → o` (side 2, triangle 3), from `a`.
-        for (side, from) in [(1, o), (2, a)] {
-            tried += 1;
+        // Hanging on `a → b` (side 1, triangle 2), bisected from `o`; on
+        // `b → o` (side 2, triangle 3), from `a`; or on the arc (side 0,
+        // triangle 1), from `b`.
+        for (side, from) in [(1, o), (2, a), (0, b)] {
+            let folds = straight_bisection_folds(&base, side);
+            if side == 0 {
+                assert!(!folds, "angle {angle}, b {b}: a bisector from {from} folds");
+            } else {
+                tried += 1;
+            }
             let middle = base.edge(side).split_half().unwrap()[0].p1;
             let mut refiner = Refiner::new(&mesh, TOL.resolution(), 0.0);
             split(&mut refiner, &[side as u32 + 1]);
@@ -325,13 +349,32 @@ fn cap_triangles_are_split_red_where_a_bisector_would_fold() {
                     piece.patch.p
                 );
             }
-            if refiner.leaves[0].is_some() {
+            assert_eq!(
+                refiner.leaves[0].is_none(),
+                folds,
+                "angle {angle}, b {b}, from {from}"
+            );
+            let refined = refiner.mesh(&pieces);
+            assert_eq!(
+                refined.check_embedding(&TOL).err(),
+                None,
+                "angle {angle}, b {b}, from {from}"
+            );
+            if folds {
+                // Split red: its four children, each a whole leaf.
+                red += 1;
+                let mut leaves: Vec<u32> = mine.iter().map(|p| p.leaf).collect();
+                leaves.dedup();
+                assert_eq!(leaves.len(), 4);
+                assert_eq!(
+                    mine.iter().filter(|p| p.patch.p.contains(&middle)).count(),
+                    3
+                );
+            } else {
                 // Bisected straight, from `from` to `middle`.
                 assert_eq!(mine.len(), 2);
                 assert!(mine.iter().all(|p| p.patch.p.contains(&middle)));
                 assert!(mine.iter().all(|p| p.patch.p.contains(&from)));
-            } else {
-                red += 1;
             }
         }
     }

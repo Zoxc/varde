@@ -485,9 +485,10 @@ fn a_cross_hole_near_another_holes_mouth() {
     // holes cross reached the front cap beside the first rim, and a cap
     // triangle there was bisected by a straight edge from the rim's seam
     // vertex that left it, a piece inside out. Such a triangle is split
-    // red now. Each result is held to the analytic volume within the fit
-    // over the area claiming no surface (the cut's fitted bands), and
-    // every vertex to the true surfaces.
+    // red now. Each result is held to the analytic volume within a
+    // twentieth of the fit over the area claiming no surface (the cut's
+    // fitted bands; they come within 0.000, 0.008 and 0.016 of it), and
+    // every vertex to the true surfaces, the same at 1 and 8 threads.
     let (r1, z1) = (0.8110238395601597, 1.0155982131481562);
     let (r2, z2) = (0.7809107911587168, 0.9763186052515123);
     let cube = extruded(
@@ -538,13 +539,15 @@ fn a_cross_hole_near_another_holes_mouth() {
         (Op::Union, va + vb - inside),
     ]
     .map(|(op, want)| {
-        let result = boolean(&drilled, &tool, op, &TOL, &Budget::DEFAULT).map_err(|f| f.error);
+        let result = assert_deterministic(|| {
+            boolean(&drilled, &tool, op, &TOL, &Budget::DEFAULT).map_err(|f| f.error)
+        });
         let Ok(solid) = result else {
             assert!(op != Op::Difference, "the cut: {result:?}");
             return None;
         };
         let got = solid.volume();
-        let within = TOL.fit() * claim_free_area(&solid) + 1e-9;
+        let within = 0.05 * TOL.fit() * claim_free_area(&solid) + 1e-9;
         println!(
             "{op:?}: {got} vs {want}: {:+e}, within {within:e}",
             got - want

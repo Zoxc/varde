@@ -215,8 +215,9 @@ impl<'a> Refiner<'a> {
                     if let Some(&n) = self.owner.get(&(b, a)) {
                         let leaf = self.leaves[n as usize].as_mut().expect("owners are leaves");
                         leaf.changed = true;
-                        let hanging = self.hanging(self.leaf(n).corners).count();
-                        if hanging >= 2 || (hanging == 1 && self.bisector_folds(n, work)?) {
+                        if self.hanging(self.leaf(n).corners).count() >= 2
+                            || self.bisector_folds(n, work)?
+                        {
                             stack.push(n);
                         }
                     }
@@ -226,38 +227,68 @@ impl<'a> Refiner<'a> {
         Ok(())
     }
 
-    /// Whether leaf `t`, with one hanging vertex, is a plane leaf whose
-    /// straight bisection ([`Self::pieces`]) would have a piece fail the
-    /// fold check where the leaf passes it, and which can be split
-    /// instead (not [`MAX_REFINE_DEPTH`] levels deep, not too small, and
-    /// with room for three more leaves). A piece that can't be built
-    /// counts as folding. Takes a unit of `work` for a leaf that gets as
-    /// far as the fold checks. A leaf whose plane tag is wrong isn't split
-    /// for it: that is left to [`Self::pieces`] to name.
+    /// Whether leaf `t` has exactly one hanging vertex and is a plane
+    /// leaf whose straight bisection ([`Self::straight_halves`]) would
+    /// have a piece fail the fold check where the leaf passes it, and
+    /// which can be split instead ([`Self::splittable`]). Takes a unit of
+    /// `work` for a leaf that gets as far as the fold checks (its own
+    /// included). A leaf whose plane tag is wrong isn't split for it: that
+    /// is left to [`Self::pieces`] to name. A half that can't be built
+    /// counts as folding, so the test adds no error of its own (every
+    /// half can be: its edges are records, or straight between vertices).
     fn bisector_folds(&self, t: u32, work: &mut Work) -> Result<bool, KernelError> {
         let leaf = self.leaf(t);
         let mut hanging = self.hanging(leaf.corners);
         let Some((i, m)) = hanging.next() else {
             return Ok(false);
         };
-        if hanging.next().is_some() || !matches!(self.planar(leaf), Ok(true)) {
-            return Ok(false);
-        }
-        let bounds = leaf.patch.bounds();
-        let small = (bounds.max - bounds.min).max_element() < self.min_size;
-        if leaf.level >= MAX_REFINE_DEPTH || small || self.live + 3 > self.max_leaves {
+        if hanging.next().is_some()
+            || !matches!(self.planar(leaf), Ok(true))
+            || !self.splittable(leaf)
+        {
             return Ok(false);
         }
         work.spend(1)?;
         if leaf.patch.fold_direction().is_none() {
             return Ok(false);
         }
-        let [a, b, o] = [0, 1, 2].map(|k| leaf.corners[(i + k) % 3]);
-        let folds = |corners| {
-            self.patch_at(corners, Some((m, o)))
-                .map_or(true, |piece| piece.fold_direction().is_none())
-        };
-        Ok(folds([a, m, o]) || folds([m, b, o]))
+        Ok(self
+            .straight_halves(leaf.corners, i, m)
+            .map_or(true, |halves| {
+                halves.iter().any(|half| half.fold_direction().is_none())
+            }))
+    }
+
+    /// Whether `leaf` may be split: it is less than [`MAX_REFINE_DEPTH`]
+    /// levels deep, its control points span at least the minimum size
+    /// along some axis, and there is room for three more leaves.
+    fn splittable(&self, leaf: &Leaf) -> bool {
+        let bounds = leaf.patch.bounds();
+        let small = (bounds.max - bounds.min).max_element() < self.min_size;
+        leaf.level < MAX_REFINE_DEPTH && !small && self.live + 3 <= self.max_leaves
+    }
+
+    /// The corners of the halves of a leaf with `corners` bisected at the
+    /// midpoint `m` of its side `i`, each with the opposite corner last.
+    fn halves(corners: [u32; 3], i: usize, m: u32) -> [[u32; 3]; 2] {
+        let [a, b, o] = [0, 1, 2].map(|k| corners[(i + k) % 3]);
+        [[a, m, o], [m, b, o]]
+    }
+
+    /// The halves ([`Self::halves`]) of a plane leaf with `corners`,
+    /// joined by a straight edge from `m` to the opposite corner.
+    fn straight_halves(
+        &self,
+        corners: [u32; 3],
+        i: usize,
+        m: u32,
+    ) -> Result<[Patch; 2], KernelError> {
+        let [first, second] = Self::halves(corners, i, m);
+        let o = corners[(i + 2) % 3];
+        Ok([
+            self.patch_at(first, Some((m, o)))?,
+            self.patch_at(second, Some((m, o)))?,
+        ])
     }
 
     fn leaf(&self, t: u32) -> &Leaf {
@@ -372,9 +403,7 @@ impl<'a> Refiner<'a> {
         let leaf = self.leaf(t).clone();
         // First, so a wrong tag is named whatever else stops the split.
         let planar = self.planar(&leaf)?;
-        let bounds = leaf.patch.bounds();
-        let small = (bounds.max - bounds.min).max_element() < self.min_size;
-        if leaf.level >= MAX_REFINE_DEPTH || small || self.live + 3 > self.max_leaves {
+        if !self.splittable(&leaf) {
             return Err(KernelError::TooComplex);
         }
         self.live += 3;
@@ -462,17 +491,15 @@ impl<'a> Refiner<'a> {
                 hanging.next().is_none(),
                 "refinement left a leaf with two hanging vertices"
             );
-            let [a, b, o] = [0, 1, 2].map(|k| leaf.corners[(i + k) % 3]);
-            let halves = [self.conic(a, m), self.conic(m, b)];
+            let [x, y] = Self::halves(leaf.corners, i, m);
             let [first, second] = if self.planar(leaf)? {
-                // Joined to the opposite corner by a straight edge.
-                let straight = |x: [u32; 3]| self.patch_at(x, Some((m, o)));
-                [straight([a, m, o])?, straight([m, b, o])?]
+                self.straight_halves(leaf.corners, i, m)?
             } else {
+                let halves = [self.conic(x[0], m), self.conic(m, y[1])];
                 leaf.patch.bisect_with(i, 0.5, halves)?
             };
-            pieces.push(piece([a, m, o], first));
-            pieces.push(piece([m, b, o], second));
+            pieces.push(piece(x, first));
+            pieces.push(piece(y, second));
         }
         Ok(pieces)
     }
