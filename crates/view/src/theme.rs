@@ -972,6 +972,20 @@ pub fn picked_row(hovered: bool) -> impl Fn(&Theme, button::Status) -> button::S
     }
 }
 
+/// A row of an operation's Bodies list, in a [`pick_box`] as the picked
+/// rows are: the hover background while `hovered` (it, or its body in
+/// the viewport, as the app knows).
+pub fn body_row(hovered: bool) -> impl Fn(&Theme) -> container::Style {
+    move |theme| {
+        let p = palette(theme);
+        container::Style {
+            background: hovered.then_some(Background::Color(p.hl)),
+            border: border::rounded(CONTROL_RADIUS),
+            ..container::Style::default()
+        }
+    }
+}
+
 /// The cross taking something picked out of its field: bare, a grey tile
 /// on hover.
 pub fn remove_button(theme: &Theme, status: button::Status) -> button::Style {

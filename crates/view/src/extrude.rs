@@ -421,9 +421,12 @@ pub(crate) fn panel<'a>(state: &ExtrudeState<'a>) -> Element<'a, Message> {
             send(ExtrudeLook::Operation(kind)),
         )
     });
-    let targets = bodies(state.operation, &state.targets, |body| {
-        send(ExtrudeLook::Target(body))
-    });
+    let targets = bodies(
+        state.operation,
+        &state.targets,
+        |body| send(ExtrudeLook::Target(body)),
+        state.hover,
+    );
     // Why OK can't be pressed, or the preview failed, or that OK waits
     // on the solver.
     let refused = (state.refused.map(|refused| refused.to_string())).or_else(|| state.held.clone());

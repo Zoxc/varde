@@ -217,15 +217,14 @@ fn a_long_name_without_spaces_breaks_inside_the_panel() {
         found.next_back().unwrap_or_else(|| panic!("no {text:?}"))
     };
     let line = find("Body 2").bounds.height;
-    // The name and the message break into lines, each line inside the
-    // panel: 200 glyphs at 12 px take well over four widths of it.
-    for text in [long.as_str(), &error] {
-        let text = find(text);
-        assert!(text.bounds.height >= 4.0 * line, "{text:?}");
-        assert!(text.bounds.x + text.bounds.width <= PANEL_WIDTH, "{text:?}");
-    }
+    // The message breaks into lines, each line inside the panel: 200
+    // glyphs at 12 px take well over four widths of it.
+    let text = find(&error);
+    assert!(text.bounds.height >= 4.0 * line, "{text:?}");
+    assert!(text.bounds.x + text.bounds.width <= PANEL_WIDTH, "{text:?}");
     // Nothing is drawn right of the panel and its shadow that the short
-    // name doesn't draw there: the title is clipped.
+    // name doesn't draw there: the title and the body's row, one line
+    // each as the picked rows are, are clipped.
     let pixels = laid.pixels(size);
     let shadow = 2.0 * crate::theme::CARD_SHADOW.blur_radius;
     let columns = (PANEL_WIDTH + shadow) as usize..size.width as usize;
@@ -250,7 +249,7 @@ fn found<'s>(shown: &'s [crate::probe::Shown], text: &str) -> &'s crate::probe::
 }
 
 #[test]
-fn flip_is_an_icon_toggle_and_the_bodies_ticks() {
+fn flip_is_an_icon_toggle_and_a_body_a_row_with_a_box() {
     let profiles = plate();
     let picked = BTreeSet::from([0]);
     let mut state = state_of(&profiles, &picked);
@@ -262,10 +261,13 @@ fn flip_is_an_icon_toggle_and_the_bodies_ticks() {
         holder: None,
     }];
     let shown = texts_of(&state);
-    // A checkbox reports its box and label together, from the panel's
-    // side padding; Flip's label is right of its icon's square button.
+    // From the fields' edge, where the labels start: Flip's label right
+    // of its icon's square button, the body's name right of its box and
+    // its icon, in a row in a box.
+    let edge = found(&shown, "Bodies").bounds.x;
     let (flip, body) = (found(&shown, "Flip"), found(&shown, "Body 1"));
-    assert!(flip.bounds.x >= body.bounds.x + 28.0, "{flip:?} {body:?}");
+    assert!(flip.bounds.x >= edge + 28.0, "{flip:?}");
+    assert!(body.bounds.x >= edge + 15.0 + 16.0 + 16.0, "{body:?}");
 }
 
 #[test]

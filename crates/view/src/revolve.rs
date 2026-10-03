@@ -392,9 +392,12 @@ pub(crate) fn panel<'a>(state: &RevolveState<'a>) -> Element<'a, Message> {
             send(RevolveLook::Operation(kind)),
         )
     });
-    let targets = bodies(state.operation, &state.targets, |body| {
-        send(RevolveLook::Target(body))
-    });
+    let targets = bodies(
+        state.operation,
+        &state.targets,
+        |body| send(RevolveLook::Target(body)),
+        state.hover,
+    );
     let refused = (state.refused.map(|refused| refused.to_string())).or_else(|| state.held.clone());
     let message = footer_message(
         "Revolve",

@@ -226,7 +226,13 @@ with its label still the text's. Flip and Keep tool bodies are icon
 toggles (`operation_panel::toggle`: a 28 px square with the option's
 icon beside the name, the accent's while on, the row and the square
 tinted on hover; a note, as Keep's "Otherwise the tools are used up",
-is its tooltip); the Bodies rows stay checkboxes (`theme::tick`). A
+is its tooltip); the Bodies list is rows as the picked ones in a box
+(`operation_panel::bodies`, `theme::body_row`), a checkbox (`theme::tick`)
+before the body's icon and name (muted while taken out), a click
+anywhere on the row ticking it, and hovering it lights the body as a
+picked body's row does. The operation's own check refusing it shows in
+the failure box as the kernel's failure does ("Extrude fails"), with no
+Add anyway: the document would refuse it. A
 field picked into by clicks in the viewport (`pick_field`) holds what's
 picked as rows like the Timeline's (`picked_row`: a 16 px icon, the
 name, a measure at the right, a heavy faint cross, `Icon::Remove`, with

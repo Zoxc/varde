@@ -25,7 +25,7 @@ use iced::advanced::widget::{Operation, Tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer};
 use iced::widget::text::{LineHeight, Wrapping};
 use iced::widget::{
-    Space, Text, button, checkbox, column, container, hover, mouse_area, opaque, row, space, text,
+    Space, Text, button, checkbox, column, container, hover, mouse_area, opaque, row, text,
     text_input,
 };
 use iced::{Alignment, Border, Color, Element, Event, Length, Padding, Rectangle, Size, Vector};
@@ -704,21 +704,6 @@ pub(crate) fn toggle<'a>(
     }
 }
 
-/// A checkbox of the panel's, as the Bodies list's, ticked while `on`,
-/// sending `message` when clicked, or disabled without one.
-pub(crate) fn tick<'a>(label: &'a str, on: bool, message: Option<Message>) -> Element<'a, Message> {
-    checkbox(on)
-        .label(label)
-        .size(15)
-        .spacing(7)
-        .text_size(CONTROL_TEXT)
-        // A name with no spaces breaks where the panel ends.
-        .text_wrapping(Wrapping::WordOrGlyph)
-        .style(theme::tick)
-        .on_toggle_maybe(message.map(|message| move |_| message.clone()))
-        .into()
-}
-
 /// A field picked into by clicks in the viewport: what's picked as
 /// `rows` ([`picked_row`]), then where to click for more, `place`, if
 /// there is one, under a rule (or alone, the field's one row). Outlined
@@ -868,38 +853,65 @@ pub(crate) fn value_field<'a>(
         .into()
 }
 
-/// The Bodies list of a join, cut or intersect: a checkbox per body of
-/// `targets`, each sending `toggle` of it if the document can be
-/// changed, a body an earlier join merged into another with "in Body 1"
-/// after it, and for a join ticked for two or more, which body it
-/// merges them into. None for a new body, or with nothing to list.
+/// The Bodies list of a join, cut or intersect: a row per body of
+/// `targets` in a box, as a [`pick_field`]'s, a checkbox before the
+/// body's icon and name (muted while taken out), a click anywhere on it
+/// sending `toggle` of it if the document can be changed; a body an
+/// earlier join merged into another with "in Body 1" at the right; and
+/// for a join ticked for two or more, which body it merges them into.
+/// Hovering a row lights its body in the viewport, and it shows hovered
+/// while `hovered` is it. None for a new body, or with nothing to list.
 pub(crate) fn bodies<'a>(
     operation: OperationKind,
     targets: &[BodyTarget<'a>],
     toggle: impl Fn(BodyId) -> Option<Message>,
+    hovered: Option<PanelHover>,
 ) -> Option<Element<'a, Message>> {
     if !operation.has_targets() || targets.is_empty() {
         return None;
     }
     let rows = targets.iter().map(|&target| {
-        let tick = tick(target.name, target.included, toggle(target.body));
-        let row: Element<'a, Message> = match target.holder {
-            // Faint, as the Objects list notes a merged body.
-            Some(holder) => row![
-                tick,
-                space::horizontal(),
-                text(format!("in {holder}"))
-                    .size(11.5)
-                    .wrapping(Wrapping::None)
-                    .style(theme::faint_text),
+        let message = toggle(target.body);
+        let check = checkbox(target.included)
+            .size(15)
+            .style(theme::tick)
+            .on_toggle_maybe(message.clone().map(|message| move |_| message.clone()));
+        let included = target.included;
+        let name = text(target.name)
+            .size(CONTROL_TEXT)
+            .wrapping(Wrapping::None)
+            .style(move |theme: &iced::Theme| text::Style {
+                color: (!included).then_some(theme::palette(theme).muted),
+            });
+        // Faint, as the Objects list notes a merged body.
+        let holder = target.holder.map(|holder| {
+            text(format!("in {holder}"))
+                .size(11.5)
+                .wrapping(Wrapping::None)
+                .style(theme::faint_text)
+        });
+        let what = PanelHover::Body(target.body);
+        let row = container(
+            row![
+                check,
+                icons::icon(Icon::Body, icons::INLINE),
+                container(name).width(Length::Fill).clip(true),
+                holder,
             ]
             .spacing(8)
-            .align_y(Alignment::Center)
-            .into(),
-            None => tick,
-        };
-        let (enter, exit) = hovering(PanelHover::Body(target.body));
-        Element::from(mouse_area(row).on_enter(enter).on_exit(exit))
+            .height(Length::Fill)
+            .align_y(Alignment::Center),
+        )
+        .width(Length::Fill)
+        .height(CONTROL_HEIGHT)
+        .padding(Padding::from([0.0, 8.0]).left(6.0))
+        .style(theme::body_row(hovered == Some(what)));
+        let (enter, exit) = hovering(what);
+        let row = mouse_area(row).on_enter(enter).on_exit(exit);
+        Element::from(match message {
+            Some(message) => row.on_press(message).interaction(mouse::Interaction::Pointer),
+            None => row,
+        })
     });
     let merging = joined_into(operation, targets).map(|holder| {
         // The mock's panel note: faint.
@@ -908,13 +920,14 @@ pub(crate) fn bodies<'a>(
             .wrapping(Wrapping::WordOrGlyph)
             .style(theme::faint_text)
     });
+    let list = container(column(rows))
+        .width(Length::Fill)
+        .padding(3)
+        .style(theme::pick_box(false));
     Some(
-        column![
-            label("Bodies"),
-            column![column(rows).spacing(6), merging].spacing(6)
-        ]
-        .spacing(6)
-        .into(),
+        column![label("Bodies"), column![list, merging].spacing(6)]
+            .spacing(6)
+            .into(),
     )
 }
 
@@ -947,10 +960,14 @@ pub(crate) fn footer_message<'a>(
     checking: bool,
 ) -> Option<Footer<'a>> {
     match (refused, error) {
-        (Some(refused), _) => Some(Footer::Text(message_text(
-            sentence(&refused).into_owned(),
-            theme::danger_text,
-        ))),
+        // As the kernel's, but with nothing to add: the document would
+        // refuse it.
+        (Some(refused), _) => Some(Footer::Fails {
+            noun,
+            error: sentence(&refused).into_owned().into(),
+            show: None,
+            accept: None,
+        }),
         (None, Some(error)) => Some(Footer::Fails {
             noun,
             error: sentence(error),

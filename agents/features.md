@@ -617,7 +617,8 @@ revolve lost; Extent tiles (Full 360°, One side, Symmetric, Two sides,
 seen down the axis), the angle fields ("Angle", or "Side 1" and "Side
 2"; the first is `VALUE_FIELD`, focused as the session opens), Flip
 for one side and two sides; Operation and Bodies as an extrude's; the
-refusal, the draft failing ("Revolve fails", Add anyway) or "Checking
+refusal ("Revolve fails", with no Add anyway), the draft failing
+("Revolve fails", Add anyway) or "Checking
 the sketch…". No handle in this plan.
 
 **The viewport** (`view/src/viewport/revolve.rs`, `Revolving`, one of
