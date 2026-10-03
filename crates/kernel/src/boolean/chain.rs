@@ -161,9 +161,9 @@ thread_local! {
 }
 
 /// Every job's chain (see [`chain`]), or the first job whose chain can't
-/// be found near enough the true cut to trust: the boolean fails as
-/// `Inconsistent` then.
-pub(super) fn chains(jobs: &[Job], tol: &Tolerance) -> Result<Vec<Chain>, usize> {
+/// be found near enough the true cut to trust, with the curve refused
+/// for it: the boolean fails as `Inconsistent` then.
+pub(super) fn chains(jobs: &[Job], tol: &Tolerance) -> Result<Vec<Chain>, (usize, Conic3)> {
     let chains = par_map(jobs, |job| chain(job, tol));
     #[cfg(test)]
     {
@@ -173,28 +173,30 @@ pub(super) fn chains(jobs: &[Job], tol: &Tolerance) -> Result<Vec<Chain>, usize>
                     .iter()
                     .zip(&chains)
                     .filter(|(job, chain)| {
-                        plane_and_quadric(job).is_some() && !chain.as_ref().is_some_and(|c| c.exact)
+                        plane_and_quadric(job).is_some() && !chain.as_ref().is_ok_and(|c| c.exact)
                     })
                     .count(),
         );
-        REFUSED.set(REFUSED.get() + chains.iter().filter(|c| c.is_none()).count());
+        REFUSED.set(REFUSED.get() + chains.iter().filter(|c| c.is_err()).count());
     }
-    if let Some(i) = chains.iter().position(Option::is_none) {
-        return Err(i);
+    if let Some((i, &Err(refused))) = chains.iter().enumerate().find(|(_, c)| c.is_err()) {
+        return Err((i, refused));
     }
     Ok(chains.into_iter().flatten().collect())
 }
 
 /// The chain of `job`'s arc, within the fit tolerance of the true cut:
-/// `None` where neither the exact curve nor tracing gives it and the
-/// fallbacks aren't near enough the true cut ([`verified`]).
+/// refused where neither the exact curve nor tracing gives it and the
+/// fallbacks aren't near enough the true cut ([`verified`]), with the
+/// first fallback tried (the conic along the ends' tangents if there is
+/// one, else the straight edge) as the curve refused.
 ///
 /// Ends at one place, or within the tie of each other (vertices of one
 /// place by different roundings, as where a cap's corner lies on the
 /// other operand's wall), make a straight edge of about zero length,
 /// which the clean-up collapses: the exact section through two points a
 /// rounding apart may run round the whole conic, outside both patches.
-pub(super) fn chain(job: &Job, tol: &Tolerance) -> Option<Chain> {
+pub(super) fn chain(job: &Job, tol: &Tolerance) -> Result<Chain, Conic3> {
     let [x, y] = job.ends;
     let straight = |exact| Chain {
         points: Vec::new(),
@@ -206,19 +208,25 @@ pub(super) fn chain(job: &Job, tol: &Tolerance) -> Option<Chain> {
         exact,
     };
     if job.planar[0] && job.planar[1] || x.distance(y) <= tie(tol) {
-        return Some(straight(true));
+        return Ok(straight(true));
     }
     if let Some(chain) = exact(job) {
-        return Some(chain);
+        return Ok(chain);
     }
     if let Some(chain) = traced(job, tol.fit()) {
-        return Some(chain);
+        return Ok(chain);
     }
     // The fallbacks know only the ends (and the conic its middle), not
     // where the cut runs between them: each is checked against it.
-    fallback(job)
-        .filter(|chain| verified(job, chain, tol))
-        .or_else(|| Some(straight(false)).filter(|chain| verified(job, chain, tol)))
+    let conic = match fallback(job) {
+        Some(chain) if verified(job, &chain, tol) => return Ok(chain),
+        conic => conic,
+    };
+    let chord = straight(false);
+    if verified(job, &chord, tol) {
+        return Ok(chord);
+    }
+    Err(conic.map_or(chord.curves[0], |chain| chain.curves[0]))
 }
 
 /// Whether a fallback's `chain` follows the true cut: at `¼`, `½` and `¾`
@@ -414,15 +422,6 @@ fn traced(job: &Job, fit: f64) -> Option<Chain> {
         curves,
         exact: false,
     })
-}
-
-/// The curve refused for `job`, whose [`chain`] is `None`: the conic
-/// along the ends' tangents if there is one, else the straight edge
-/// between the ends (both were refused).
-pub(super) fn refused(job: &Job) -> Conic3 {
-    fallback(job)
-        .and_then(|chain| chain.curves.first().copied())
-        .unwrap_or_else(|| segment(job.ends[0], job.ends[1]))
 }
 
 /// The conic along the ends' tangents with its middle on the curve if it

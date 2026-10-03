@@ -31,7 +31,7 @@ use super::count::{Counts, Crossing};
 use super::curved::solve::near_patch;
 use super::evidence::Gather;
 use super::input::{Input, Side};
-use super::pairs::{Arc, first_ids};
+use super::pairs::{Arc, crossing_of, first_ids};
 use super::surface::{Crossed, Shape, lerp, on_curve, point, polish, straight};
 use super::triangulate::Meter;
 use super::{BooleanError, Op, Primitives, segment};
@@ -418,17 +418,15 @@ pub(super) fn assemble(
             })
             .sum(),
     )?;
-    let mut chains: Vec<Chain> = chain::chains(&chain_jobs, tol).map_err(|i| {
+    let mut chains: Vec<Chain> = chain::chains(&chain_jobs, tol).map_err(|(i, refused)| {
         // The first arc with no chain near enough the true cut: its ends,
         // the curve refused for it, and the pair's patches.
-        let (job, [p, q]) = (&chain_jobs[i], arcs[i].tris);
         let mut gather = Gather::new();
-        for end in job.ends {
+        for end in chain_jobs[i].ends {
             gather.point(end);
         }
-        gather.curve(chain::refused(job));
-        gather.tri(Side::A, a, p);
-        gather.tri(Side::B, b, q);
+        gather.curve(refused);
+        gather.pair(a, b, arcs[i].tris);
         gather.failure(BooleanError::Inconsistent)
     })?;
     work.spend(chains.iter().map(|c| c.curves.len()).sum())?;
@@ -713,17 +711,13 @@ impl Cutting<'_> {
             return Ok(());
         }
         let mut asked = Vec::new();
-        // Each crossing asked about, by its side and edge too, for the
-        // evidence.
-        let mut whose = Vec::new();
-        for (side, crossings, other, first) in [
-            (Side::A, &self.counts.x12, self.b, self.first[0]),
-            (Side::B, &self.counts.x21, self.a, self.first[1]),
+        for (crossings, other, first) in [
+            (&self.counts.x12, self.b, self.first[0]),
+            (&self.counts.x21, self.a, self.first[1]),
         ] {
             for (k, c) in crossings.iter().enumerate() {
                 if !c.solved {
                     asked.push((other, c.face, first + k as u32));
-                    whose.push((side, c.edge));
                 }
             }
         }
@@ -754,11 +748,15 @@ impl Cutting<'_> {
                 .fold(0, usize::saturating_add),
         )?;
         if let Some(i) = near.iter().position(|&(on, _)| !on) {
-            let ((_, face, id), (side, edge)) = (asked[i], whose[i]);
-            let ((input, _), (other, _)) = (self.operand(side), self.operand(side.other()));
+            let (other, face, id) = asked[i];
+            let (side, k) = crossing_of(self.first, id);
+            let (input, crossings) = match side {
+                Side::A => (self.a, &self.counts.x12),
+                Side::B => (self.b, &self.counts.x21),
+            };
             let mut gather = Gather::new();
             gather.point(self.base[id as usize]);
-            gather.edge(input, edge);
+            gather.edge(input, crossings[k].edge);
             gather.tri(side.other(), other, face);
             return Err(gather.failure(BooleanError::Inconsistent));
         }
@@ -904,12 +902,7 @@ impl Cutting<'_> {
     /// (barycentric): on its side at its parameter, if its edge is one of
     /// the triangle's, else where the patch inverts its position.
     fn place(&self, id: u32, side: Side, t: u32) -> DVec3 {
-        let [first12, first21] = self.first;
-        let (own, k) = if id < first21 {
-            (Side::A, (id - first12) as usize)
-        } else {
-            (Side::B, (id - first21) as usize)
-        };
+        let (own, k) = crossing_of(self.first, id);
         let (input, crossing) = match side {
             Side::A => (self.a, &self.counts.x12),
             Side::B => (self.b, &self.counts.x21),
@@ -940,8 +933,8 @@ impl Cutting<'_> {
 
     /// Every face cut once, with the vertices `extras` added on the
     /// operands' edges and the cuts along `chains`. The error is the
-    /// first face's, in order, that fails; one that couldn't be
-    /// triangulated comes with its loops ([`face::loops_evidence`]).
+    /// first face's, in order, that fails, with its boundary
+    /// ([`face::boundary_failure`]).
     fn round(
         &self,
         extras: &[BTreeMap<u32, Vec<f64>>; 2],
@@ -978,22 +971,14 @@ impl Cutting<'_> {
         work.spend(usize::try_from(meter.used() / STEPS_PER_UNIT).unwrap_or(usize::MAX))?;
         let failed = (cut.iter().enumerate()).find_map(|(k, c)| c.as_ref().err().map(|&e| (k, e)));
         if let Some((k, error)) = failed {
-            let mut failure = Failure::from(KernelError::Boolean(error));
             // A face whose loops don't triangulate, or whose boundary
             // doesn't close into loops: its boundary.
-            if matches!(error, BooleanError::Degenerate | BooleanError::Inconsistent) {
-                let job = &jobs[k];
-                let (input, offset) = self.operand(job.side);
-                *failure.evidence = face::loops_evidence(
-                    input,
-                    job,
-                    &stops[job.side as usize],
-                    offset,
-                    &pos,
-                    &curves,
-                );
-            }
-            return Err(failure);
+            let job = &jobs[k];
+            let (input, offset) = self.operand(job.side);
+            let along = &stops[job.side as usize];
+            return Err(face::boundary_failure(
+                error, input, job, along, offset, &pos, &curves,
+            ));
         }
         let cut: Vec<face::Cutout> = cut.into_iter().filter_map(Result::ok).collect();
         let stray = cut.iter().map(|c| c.stray).fold(0.0, f64::max);

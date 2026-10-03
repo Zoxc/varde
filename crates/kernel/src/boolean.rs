@@ -899,11 +899,25 @@ fn flat_soup(
     tol: &Tolerance,
     work: &mut Work,
 ) -> Result<(cleanup::Soup, Vec<Face>), Failure> {
-    match flat_decided(op, ia, ib, tie, tol, work) {
+    tied_or_exact(tie, work, |tie, work| {
+        flat_decided(op, ia, ib, tie, tol, work)
+    })
+}
+
+/// `decided` with near ties within `tie` taken as ties, and where its
+/// decisions don't fit together ([`BooleanError::Inconsistent`]) and
+/// `tie` isn't 0 already, again exactly, from the same `work` (see
+/// [`flat_soup`]): the result is the last try's, its failure whole.
+fn tied_or_exact<T>(
+    tie: f64,
+    work: &mut Work,
+    mut decided: impl FnMut(f64, &mut Work) -> Result<T, Failure>,
+) -> Result<T, Failure> {
+    match decided(tie, work) {
         Err(f) if f.error == KernelError::Boolean(BooleanError::Inconsistent) && tie > 0.0 => {
-            flat_decided(op, ia, ib, 0.0, tol, work)
+            decided(0.0, work)
         }
-        soup => soup,
+        result => result,
     }
 }
 
@@ -963,16 +977,10 @@ fn touches_within(a: &Solid, b: &Solid, tol: &Tolerance, work: &mut Work) -> Res
     }
     // Counted again exactly where the near ties don't fit together, as
     // the operation does ([`flat_soup`]).
-    let counted = |tie: f64, work: &mut Work| {
+    let counts = tied_or_exact(tie(tol), work, |tie, work| {
         let prims = flat::Flat::tied(&ia, &ib, true, tie);
         count::count(&ia, &ib, &prims, tol, work)
-    };
-    let counts = match counted(tie(tol), work) {
-        Err(f) if f.error == KernelError::Boolean(BooleanError::Inconsistent) => {
-            counted(0.0, work)?
-        }
-        counts => counts?,
-    };
+    })?;
     Ok(counts.meet())
 }
 

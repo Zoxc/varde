@@ -40,11 +40,10 @@ use super::curved::Curved;
 use super::evidence::Gather;
 use super::input::{Input, Side};
 use crate::budget::Work;
-use crate::failure::evidence_work;
 use crate::mesh::{MIN_SPLIT, Mesh, Node, Refiner, Surface, apart, samples};
 use crate::par::par_map;
 use crate::patch::NormalCone;
-use crate::{Evidence, Failure, KernelError, MAX_PATCHES, MAX_REFINE_DEPTH, Operand, Tolerance};
+use crate::{Failure, KernelError, MAX_PATCHES, MAX_REFINE_DEPTH, Tolerance};
 
 /// A cut arc of a pair of faces (triangle `tris[0]` of `A`, `tris[1]` of
 /// `B`) between two of its ends, by vertex id: `plus`, the end whose
@@ -61,6 +60,16 @@ pub(super) struct Arc {
 pub(super) fn first_ids(a: &Input, b: &Input, counts: &Counts) -> [u32; 2] {
     let first12 = (a.mesh.verts().len() + b.mesh.verts().len()) as u32;
     [first12, first12 + counts.x12.len() as u32]
+}
+
+/// The crossing that is new vertex `id` (`first` from [`first_ids`]): of
+/// an edge of `A` (its index in `x12`) or of `B` (in `x21`).
+pub(super) fn crossing_of(first: [u32; 2], id: u32) -> (Side, usize) {
+    if id < first[1] {
+        (Side::A, (id - first[0]) as usize)
+    } else {
+        (Side::B, (id - first[1]) as usize)
+    }
 }
 
 /// Every pair of faces' ends, sorted by pair: (the pair, the end's vertex
@@ -90,27 +99,24 @@ fn ends(a: &Input, b: &Input, counts: &Counts) -> Vec<([u32; 2], u32, i8)> {
 /// Where the crossing that is vertex `id` (a new one: see [`first_ids`])
 /// lies, along its edge.
 fn crossing_at(a: &Input, b: &Input, counts: &Counts, id: u32) -> DVec3 {
-    let [first12, first21] = first_ids(a, b, counts);
-    let (input, c) = if id < first21 {
-        (a, &counts.x12[(id - first12) as usize])
-    } else {
-        (b, &counts.x21[(id - first21) as usize])
+    let (input, c) = match crossing_of(first_ids(a, b, counts), id) {
+        (Side::A, k) => (a, &counts.x12[k]),
+        (Side::B, k) => (b, &counts.x21[k]),
     };
     input.conic(c.edge).eval(c.t)
 }
 
-/// The pair of triangle `p` of `A` and `q` of `B` whose ends `ends` (by
-/// vertex id) don't join up, as [`BooleanError::Inconsistent`]: both
+/// The pair of faces `pair` (a triangle of `A`, one of `B`) whose ends,
+/// at `ends`, don't join up, as [`BooleanError::Inconsistent`]: both
 /// patches, the faces they lie on, and the ends as points.
 fn pair_failure(
     a: &Input,
     b: &Input,
-    [p, q]: [u32; 2],
+    pair: [u32; 2],
     ends: impl Iterator<Item = DVec3>,
 ) -> Failure {
     let mut gather = Gather::new();
-    gather.tri(Side::A, a, p);
-    gather.tri(Side::B, b, q);
+    gather.pair(a, b, pair);
     for at in ends {
         gather.point(at);
     }
@@ -182,7 +188,8 @@ pub(super) fn refined(
 /// union) or shrinks, for ties; ends along walls' common direction are
 /// joined only if `join` (else such pairs are split as any other). A
 /// union failing as [`BooleanError::NotManifold`] from the decisions
-/// comes with the pairs showing it (see [`decide`]).
+/// comes with the pairs showing it, an `Inconsistent` with what doesn't
+/// fit (see [`decide`] and the counting's [`count::count`]).
 pub(super) fn refined_with(
     a: &Mesh,
     b: &Mesh,
@@ -294,7 +301,7 @@ struct End {
 /// walls' common direction are joined only if `join`. `grow` is whether
 /// `A` grows (a union): then walls touching along a line from either
 /// side fail the operation as [`BooleanError::NotManifold`] (see
-/// [`pinched_line`]), with the pairs that show it ([`pinch_evidence`]).
+/// [`pinched_line`]), with the pairs that show it ([`pinch_failure`]).
 /// The error is the first pair's, in order, that fails; an
 /// `Inconsistent` comes with that pair's patches and ends.
 #[allow(clippy::too_many_arguments)]
@@ -319,13 +326,10 @@ fn decide(
         .iter()
         .map(|c| b.conic(c.edge).eval(c.t))
         .collect();
-    let [first12, first21] = first_ids(a, b, counts);
-    let place = |id: u32| {
-        if id < first21 {
-            at12[(id - first12) as usize]
-        } else {
-            at21[(id - first21) as usize]
-        }
+    let first = first_ids(a, b, counts);
+    let place = |id: u32| match crossing_of(first, id) {
+        (Side::A, k) => at12[k],
+        (Side::B, k) => at21[k],
     };
     let ends = ends(a, b, counts);
     // Every pair that may meet: those whose boxes do, and any with ends.
@@ -382,18 +386,17 @@ fn decide(
         )
     });
     if let Some((k, &Err(error))) = decided.iter().enumerate().find(|(_, d)| d.is_err()) {
-        if error == BooleanError::Inconsistent {
-            let (pair, ends) = &jobs[k];
-            return Err(pair_failure(a, b, *pair, ends.iter().map(|e| e.at)));
-        }
-        let mut failure = Failure::from(KernelError::Boolean(error));
-        if error == BooleanError::NotManifold {
-            let pinched = (jobs.iter().zip(&decided))
-                .filter(|(_, d)| matches!(d, Err(BooleanError::NotManifold)))
-                .map(|(job, _)| job.0);
-            *failure.evidence = pinch_evidence(a, b, pinched);
-        }
-        return Err(failure);
+        let (pair, ends) = &jobs[k];
+        return Err(match error {
+            BooleanError::Inconsistent => pair_failure(a, b, *pair, ends.iter().map(|e| e.at)),
+            BooleanError::NotManifold => {
+                let pinched = (jobs.iter().zip(&decided))
+                    .filter(|(_, d)| matches!(d, Err(BooleanError::NotManifold)))
+                    .map(|(job, _)| job.0);
+                pinch_failure(a, b, pinched)
+            }
+            error => KernelError::Boolean(error).into(),
+        });
     }
     let mut arcs = Vec::new();
     let mut joined = false;
@@ -425,28 +428,21 @@ fn decide(
     Ok(Decision::Arcs(arcs, joined))
 }
 
-/// What walls touching along a line show ([`pinched_line`]): each pair
-/// of faces named so, in order, as its two patches (`A`'s, then `B`'s:
-/// pieces of the operands' triangles, as refined), and the names of the
-/// operands' faces they lie on, each once. From a fresh allowance, a
-/// unit a pair, and up to the caps.
-fn pinch_evidence(a: &Input, b: &Input, pairs: impl Iterator<Item = [u32; 2]>) -> Evidence {
-    let mut evidence = Evidence::default();
-    let mut work = evidence_work();
-    let name = |input: &Input, t: u32| input.mesh.faces()[input.face(t) as usize].name.key();
-    let mut named = std::collections::BTreeSet::new();
-    for [p, q] in pairs {
-        if !evidence.afford(&mut work, 1) {
+/// Walls touching along a line ([`pinched_line`]), united, as
+/// [`BooleanError::NotManifold`]: each pair of faces refused so, in
+/// order, as its two patches (`A`'s, then `B`'s: pieces of the
+/// operands' triangles, as refined), and the names of the operands'
+/// faces they lie on, each once; whole pairs, up to the allowance and
+/// the caps.
+fn pinch_failure(a: &Input, b: &Input, pairs: impl Iterator<Item = [u32; 2]>) -> Failure {
+    let mut gather = Gather::new();
+    for pair in pairs {
+        if gather.truncated() {
             break;
         }
-        evidence.add_patches([a.patches[p as usize], b.patches[q as usize]]);
-        for face in [(Operand::A, name(a, p)), (Operand::B, name(b, q))] {
-            if named.insert(face) {
-                evidence.add_faces([face]);
-            }
-        }
+        gather.pair(a, b, pair);
     }
-    evidence
+    gather.failure(BooleanError::NotManifold)
 }
 
 /// Decides the pair of triangle `p` of `A` and `q` of `B` with `ends`.

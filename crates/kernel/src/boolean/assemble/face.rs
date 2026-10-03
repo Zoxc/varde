@@ -22,16 +22,16 @@ use std::collections::{BTreeMap, BTreeSet};
 use glam::{DVec2, DVec3};
 
 use super::super::chain::trace::{domain_step, invert};
+use super::super::evidence::Gather;
 use super::super::exact::orient2d;
 use super::super::input::Input;
 use super::super::surface::{Guide, Shape, second_point, section};
 use super::super::triangulate::{Bends, Meter, NO_CUT, Vert, triangulate};
 use super::super::{BooleanError, segment};
 use super::{Along, Curves, key};
-use crate::failure::evidence_work;
 use crate::mesh::{Edge, MIN_CURVED_SPLIT, Quadric, Surface, off_surface, samples, straight};
 use crate::patch::{Conic3, Patch};
-use crate::{Evidence, Tolerance};
+use crate::{Failure, Tolerance};
 
 /// How a face is laid out for triangulating: see the [module](self) docs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -510,28 +510,27 @@ pub(super) fn cut_face(
     })
 }
 
-/// What a face that couldn't be cut shows (see [`cut_face`], whose
-/// arguments these are): its kept halfedges in order, the loops that
-/// wouldn't triangulate, or the boundary that doesn't close into loops,
-/// each as its curve where it has one, else straight, between its
-/// vertices' positions (where the face's layout puts them back, but for
-/// the rounding and snapping onto the domain's sides it takes them
-/// through), and the operand's face it is. Where the boundary doesn't
-/// close (a vertex with other than one halfedge leaving it and one
-/// arriving), those vertices as points too; loops that close have none.
-/// From a fresh allowance, a unit a halfedge, and one a point.
-pub(super) fn loops_evidence(
+/// A face that couldn't be cut (see [`cut_face`], whose arguments these
+/// are) failing with `error`: its loops wouldn't triangulate
+/// (`Degenerate`), or its boundary doesn't close into loops
+/// (`Inconsistent`). With the face's boundary, its kept halfedges in
+/// their sorted order, each as its curve where it has one, else straight,
+/// between its vertices' positions (where the face's layout puts them
+/// back, but for the rounding and snapping onto the domain's sides it
+/// takes them through); the vertices where it doesn't close, with other
+/// than one halfedge leaving and one arriving, as points (loops that
+/// close have none); and the operand's face it is.
+pub(super) fn boundary_failure(
+    error: BooleanError,
     input: &Input,
     job: &Cut,
     along: &Along,
     offset: u32,
     pos: &[DVec3],
     curves: &Curves,
-) -> Evidence {
-    let mut evidence = Evidence::default();
-    let face = input.mesh.faces()[input.face(job.tri) as usize].name.key();
-    evidence.add_faces([(job.side.into(), face)]);
-    let mut work = evidence_work();
+) -> Failure {
+    let mut gather = Gather::new();
+    gather.face(job.side, input, job.tri);
     let (halfedges, _) = boundary(input, job, along, offset, pos);
     // How many halfedges leave and arrive at each vertex.
     let mut ends: BTreeMap<u32, [usize; 2]> = BTreeMap::new();
@@ -540,11 +539,8 @@ pub(super) fn loops_evidence(
         ends.entry(v).or_default()[1] += 1;
     }
     for [u, v] in halfedges {
-        if !evidence.afford(&mut work, 1) {
-            break;
-        }
         let (p, q) = (pos[u as usize], pos[v as usize]);
-        evidence.add_curves([curves.get(&key(u, v)).map_or_else(
+        gather.curve(curves.get(&key(u, v)).map_or_else(
             || segment(p, q),
             |edge| Conic3 {
                 p0: p,
@@ -552,15 +548,12 @@ pub(super) fn loops_evidence(
                 w: edge.weight,
                 p1: q,
             },
-        )]);
+        ));
     }
     for (&v, _) in ends.iter().filter(|(_, n)| **n != [1, 1]) {
-        if !evidence.afford(&mut work, 1) {
-            break;
-        }
-        evidence.add_points([pos[v as usize]]);
+        gather.point(pos[v as usize]);
     }
-    evidence
+    gather.failure(error)
 }
 
 /// A face's boundary (see [`cut_face`], whose arguments these are): its

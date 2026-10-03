@@ -2574,3 +2574,55 @@ fn a_pinch_is_told_from_the_mesh_repair_was_given() {
         assert_eq!(Budget::DEFAULT.work() - work.left(), spent, "{hull:?}");
     }
 }
+
+#[test]
+fn the_exact_retry_returns_its_own_failure() {
+    // The flat operations' retry (`flat_soup`, and `touches`' counting):
+    // decisions that don't fit together at the tie are made again
+    // exactly, and what comes back is the second try's, failure and
+    // evidence whole; any other error, or a tie of 0 already, is the
+    // first try's, with no second.
+    let at = |x: f64, error: BooleanError| {
+        let mut evidence = Evidence::default();
+        evidence.add_points([DVec3::splat(x)]);
+        Failure {
+            error: KernelError::Boolean(error),
+            evidence: Box::new(evidence),
+        }
+    };
+    let inconsistent = BooleanError::Inconsistent;
+    let tries = |first: Result<u8, Failure>, second: Result<u8, Failure>, tie: f64| {
+        let mut asked = Vec::new();
+        let mut work = Work::new(&Budget::DEFAULT);
+        let got = tied_or_exact(tie, &mut work, |tie, work| {
+            work.spend(1)?;
+            asked.push(tie);
+            if asked.len() == 1 {
+                first.clone()
+            } else {
+                second.clone()
+            }
+        });
+        // Both tries spend from the one `work`.
+        assert_eq!(Budget::DEFAULT.work() - work.left(), asked.len() as u64);
+        (got, asked)
+    };
+    let (first, second) = (at(1.0, inconsistent), at(2.0, inconsistent));
+    assert_eq!(
+        tries(Err(first.clone()), Err(second.clone()), 0.5),
+        (Err(second), vec![0.5, 0.0])
+    );
+    assert_eq!(
+        tries(Err(first.clone()), Ok(7), 0.5),
+        (Ok(7), vec![0.5, 0.0])
+    );
+    let degenerate = at(3.0, BooleanError::Degenerate);
+    assert_eq!(
+        tries(Err(degenerate.clone()), Ok(7), 0.5),
+        (Err(degenerate), vec![0.5])
+    );
+    assert_eq!(
+        tries(Err(first.clone()), Ok(7), 0.0),
+        (Err(first), vec![0.0])
+    );
+}

@@ -307,7 +307,9 @@ impl ErrorGeometry {
 
     /// Adds the triangles of the faces it names in `model` (the answer's
     /// mesh), from the `first`, to its mesh, their vertices and normals as
-    /// the model has them, face by face until one doesn't fit.
+    /// the model has them, and each face's outline to its lines
+    /// ([`outline`]), as a patch's boundary is: face by face until one
+    /// doesn't fit.
     fn add_model_faces(&mut self, model: &RenderMesh, first: usize) {
         let Some(faces) = self.faces.get(first..).filter(|f| !f.is_empty()) else {
             return;
@@ -342,6 +344,14 @@ impl ErrorGeometry {
                 normals.push(model.normals()[v as usize]);
             }
             indices.extend(corners.iter().map(|v| ids[v]));
+            for line in outline(model.positions(), corners) {
+                if (self.lines.points().len()).saturating_add(line.len()) > Self::MAX_LINE_POINTS {
+                    self.truncated = true;
+                    break;
+                }
+                // Within `MAX_POSITION`, as the model's positions are.
+                self.truncated |= self.lines.push(line).is_err();
+            }
         }
         match mesh_of(positions, normals, indices) {
             Ok(mesh) => self.mesh = mesh,
@@ -434,7 +444,8 @@ impl ErrorGeometry {
         &self.mesh
     }
 
-    /// The curves, then the patches' boundary, flattened.
+    /// The curves, then the patches' boundary, flattened; then, once
+    /// resolved, the operand faces' outlines.
     pub fn lines(&self) -> &RenderLines {
         &self.lines
     }
@@ -708,6 +719,62 @@ fn boundary(patches: &[Patch]) -> Vec<Conic3> {
         })
         .copied()
         .collect()
+}
+
+/// The outline of a face of the model drawn as the triangles `corners`
+/// (indices into `positions`): the sides no other of its triangles runs
+/// back along, by position (so a seam's vertices at one place are one),
+/// each once, joined end to end into polylines, a loop closed where it
+/// comes round, in the triangles' order. A triangle with two corners at
+/// one place is left out: its sides run there and back, and would hide
+/// a side of the outline they lie along.
+fn outline(positions: &[[f32; 3]], corners: &[u32]) -> Vec<Vec<Vec3>> {
+    // A position's bits, `-0.0` taken as `0.0`.
+    let key = |v: u32| positions[v as usize].map(|x| (x + 0.0).to_bits());
+    let sides: Vec<([u32; 3], [u32; 3])> = (corners.as_chunks::<3>().0.iter())
+        .map(|t| t.map(key))
+        .filter(|[a, b, c]| a != b && b != c && c != a)
+        .flat_map(|[a, b, c]| [(a, b), (b, c), (c, a)])
+        .collect();
+    let mut sorted = sides.clone();
+    sorted.sort_unstable();
+    let mut open: Vec<([u32; 3], [u32; 3])> = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for &(p, q) in &sides {
+        if sorted.binary_search(&(q, p)).is_err() && seen.insert((p, q)) {
+            open.push((p, q));
+        }
+    }
+    // The sides by where they start, to follow each to the next.
+    let mut starts: Vec<([u32; 3], usize)> = (open.iter().enumerate())
+        .map(|(i, &(p, _))| (p, i))
+        .collect();
+    starts.sort_unstable();
+    let mut used = vec![false; open.len()];
+    let point = |k: [u32; 3]| Vec3::from(k.map(f32::from_bits));
+    let mut lines = Vec::new();
+    for i in 0..open.len() {
+        if used[i] {
+            continue;
+        }
+        used[i] = true;
+        let (start, mut end) = open[i];
+        let mut line = vec![point(start), point(end)];
+        while end != start {
+            let from = starts.partition_point(|&(k, _)| k < end);
+            let next = (starts[from..].iter())
+                .take_while(|&&(k, _)| k == end)
+                .find(|&&(_, j)| !used[j]);
+            let Some(&(_, j)) = next else {
+                break;
+            };
+            used[j] = true;
+            end = open[j].1;
+            line.push(point(end));
+        }
+        lines.push(line);
+    }
+    lines
 }
 
 /// The diagonal of the box around `evidence`'s patches, curves and points

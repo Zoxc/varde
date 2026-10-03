@@ -180,10 +180,25 @@ fn operand_faces_are_resolved_through_the_tables() {
     // corner for corner.
     let drawn = geometry.mesh();
     assert_eq!(drawn.indices().len(), range.len());
-    for (&v, &w) in drawn.indices().iter().zip(&mesh.indices()[range]) {
+    for (&v, &w) in drawn.indices().iter().zip(&mesh.indices()[range.clone()]) {
         assert_eq!(drawn.positions()[v as usize], mesh.positions()[w as usize]);
         assert_eq!(drawn.normals()[v as usize], mesh.normals()[w as usize]);
     }
+    // With its outline, as a patch's boundary is drawn: the square cap
+    // once round, closed, through its four corners.
+    let lines: Vec<&[[f32; 3]]> = geometry.lines().polylines().collect();
+    let [line] = lines[..] else {
+        panic!("{lines:?}");
+    };
+    assert_eq!(line.first(), line.last());
+    let corners: Vec<[f32; 3]> = (mesh.indices()[range].iter())
+        .map(|&v| mesh.positions()[v as usize])
+        .collect();
+    assert!(line.iter().all(|p| corners.contains(p)), "{line:?}");
+    let mut round = line[1..].to_vec();
+    round.sort_by(|p, q| p.partial_cmp(q).unwrap());
+    round.dedup();
+    assert_eq!(round.len(), 4, "{line:?}");
 
     // Its body isn't drawn: nothing is left.
     let mut gone = made(&failure, [Some(BodyId::NEW), None]).unwrap();
@@ -440,4 +455,27 @@ fn unused_positions_do_not_stretch_the_box() {
     parts.normals.push([0.0, 0.0, 1.0]);
     let back = ErrorGeometry::from_parts(parts, &mesh, &picking).unwrap();
     assert_eq!(back.bounds(), geometry.bounds());
+}
+
+/// A face's outline is the sides of its triangles no other runs back
+/// along, by position: a seam's twin vertices are one, a triangle of no
+/// area left out; joined into one loop where it comes round.
+#[test]
+fn a_face_s_outline_runs_round_it_once() {
+    // A unit square in two triangles, its diagonal's corners given twice
+    // (a seam), and a sliver of zero width along its bottom.
+    let positions = [
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [1.0, 1.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, -0.0],
+        [1.0, 1.0, 0.0],
+    ];
+    let corners = [0, 1, 2, 4, 5, 3, 0, 1, 1];
+    let lines = super::outline(&positions, &corners);
+    let at = |v: usize| Vec3::from(positions[v]);
+    assert_eq!(lines, [vec![at(0), at(1), at(2), at(3), at(0)]]);
+    // Nothing for no triangles.
+    assert!(super::outline(&positions, &[]).is_empty());
 }

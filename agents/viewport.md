@@ -1015,9 +1015,10 @@ one), or for one drawn without its curves a `Weak` of a fresh `Arc<()>`
 then without is uploaded again; a frame borrows them into `ErrorParts` (`ShownErrors::parts`, a
 small vector a frame, since the parts borrow), so the renderer uploads
 only when they change. The operand faces an `ErrorGeometry` names
-(`faces`) are drawn through its mesh: regen copies their triangles from
-the model into it when it resolves them (see `agents/features.md`), so
-the viewport draws nothing of its own for them.
+(`faces`) are drawn through its mesh and lines: regen copies their
+triangles from the model into it, and their outlines into its lines,
+when it resolves them (see `agents/features.md`), so the viewport draws
+nothing of its own for them.
 
 **Show** frames the camera on a failure's box (`Look::ShowFailure`, a
 feature's or with `None` the draft's; `ErrorGeometry::bounds`): the

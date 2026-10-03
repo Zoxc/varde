@@ -3626,18 +3626,18 @@ elsewhere (see "Cutting curved faces").
 | `boolean/curved/arcs.rs` | where two edges' shadows cross: one conic written implicitly, the other put in, a quartic |
 | `boolean/curved/solve.rs` | points of a patch above a vertex, an edge's crossings through a patch, and a certified distance to a patch: subdivision and Newton |
 | `boolean/curved/bernstein.rs` | Bernstein polynomials: products, evaluation, root isolation |
-| `boolean/pairs.rs` | each pair of faces' ends and arcs; for curved operands the certificates, the refinement loop (`refined`) and the fixed rules; the pairs touching along a line a union is refused for (`pinch_evidence`) |
+| `boolean/pairs.rs` | each pair of faces' ends and arcs; for curved operands the certificates, the refinement loop (`refined`) and the fixed rules; the pairs touching along a line a union is refused for (`pinch_failure`) and a pair whose ends don't join (`pair_failure`); `crossing_of`, which crossing a new vertex id is |
 | `boolean/near.rs` | `touches`' search for surfaces within the resolution: pairs of patch pieces split depth first until their hulls are apart or both are flat (`search`, `settled`, `near`) |
 | `boolean/exact.rs` | exact signs: `Approx` (float with an error bound), `Exp` (expansions), `Poly` in `ε`, `Pred`, `sign`, `orient2d` |
 | `boolean/flat.rs` | `Flat`, the primitives of flat operands, with the symbolic perturbation |
 | `boolean/count.rs` | broad phase, the stored primitives, `x12`/`x21`, winding numbers; what an edge or vertex that doesn't fit shows (`edge_failure`, `vertex_failure`) |
 | `boolean/count/tests.rs` | the counting's `Inconsistent` failures from primitives made to disagree (`Doubled`), and what they show |
-| `boolean/evidence.rs` | `Gather`: the evidence of a boolean's `Inconsistent` failures as it is gathered (an operand's edges, triangles with their faces' names, points); its tests' `on_operands`, which the seeded suite runs on every `Inconsistent` |
+| `boolean/evidence.rs` | `Gather`: the evidence of a boolean's own failures as it is gathered (an operand's edges, triangles or pairs of them with their faces' names, faces by name alone, points); its tests' `on_operands`, which the seeded suite runs on every `Inconsistent` |
 | `boolean/surface.rs` | the exact paths: what a patch lies on (`Shape`), crossings solved again on planes and quadrics, a plane's conic on a quadric (`section`) |
 | `boolean/chain.rs` | each arc's chain of shared edges: straight, exact, or traced and fitted; halving its curves |
 | `boolean/chain/trace.rs` | the point where two patches meet (Newton on four unknowns), marching along the cut, fitting conics, inverting a point into a patch |
 | `boolean/assemble.rs` | new vertices, kept pieces of edges, cut edges, the rounds of cutting the faces, the faces' copies |
-| `boolean/assemble/face.rs` | one face cut: its layout, loops, curved sides, triangles, their inner edges' curves (exact bands on quadrics); the loops of one that can't be triangulated (`loops_evidence`) |
+| `boolean/assemble/face.rs` | one face cut: its layout, loops, curved sides, triangles, their inner edges' curves (exact bands on quadrics); the boundary of one that can't be cut (`boundary_failure`) |
 | `boolean/assemble/merge.rs` | merging refinement's pieces that came through whole |
 | `boolean/triangulate.rs` | a face's kept loops in its parameter domain into triangles, curved sides' corners, Steiner points |
 | `boolean/cleanup.rs` | collapsing and flipping the degenerate triangles flush operands leave |
@@ -5241,11 +5241,11 @@ Loops that can't be triangulated fail the face, and the round, as
 `Degenerate` (the first face in order that fails; a meter past its
 limit, which also stops a triangulation with `Degenerate`, is
 `TooComplex` first). Its evidence is the face's kept halfedges in
-order, each as its curve record where it has one, else straight,
-between its vertices' positions, and the operand's face by name
-(`face::loops_evidence`, run on the failing face again after the
-round: the halfedges are worked out as `cut_face` did, so they are its
-loops; positions rather than the layout put back, which differs only by
+their sorted order, each as its curve record where it has one, else
+straight, between its vertices' positions, and the operand's face by
+name (`face::boundary_failure`, run on the failing face again after the
+round: the halfedges are worked out by the same `boundary` as
+`cut_face` uses, so they are its loops; positions rather than the layout put back, which differs only by
 the rounding and snapping onto the domain's sides). Reached in the
 seeded flush pairs: a wall left with loops of two vertices, along one
 curve there and back, which no triangle takes and which aren't asked
@@ -5755,8 +5755,8 @@ shared corner for boxes. Named from separate shells, the two triangles
 pair of the round that `pinched_line` refused, in order, gives its two
 patches (`A`'s then `B`'s, pieces of the operands as refined that
 round) and the names of the operands' faces they lie on, each once
-(`pinch_evidence`): the walls along the line, which regen resolves to
-the bodies' faces. The error is the first refused pair's, as before:
+(`pinch_failure`, whole pairs while the allowance and the caps last):
+the walls along the line, which regen resolves to the bodies' faces. The error is the first refused pair's, as before:
 the decisions of every pair are made anyway (in parallel), so naming
 the others costs the operation nothing.
 
@@ -7896,20 +7896,23 @@ rather than a `KernelError` (`count::count` and its `crossings`,
 `Cutting::round`, `boolean::assembled`, `flat_soup`, `flat_decided`,
 `cleaned` and `build`; `touches_within` and `near::touching` too), the
 rest as before, converted by `?`; `chain::chains` hands up the index of
-the first arc it refused, which `assemble` makes the failure of. The
-flat retry after `Inconsistent` returns the second try's failure whole
-(none if it succeeds; its own if it fails differently), `touches`' the
-same, and the boolean's tries keep theirs as for the check's. The
-decisions' and the assembly's `Inconsistent` sites gather through
-`evidence::Gather` (a unit an item; an operand's triangle given as its
-patch and the operand's face it lies on, named once). By error:
+the first arc it refused and the curve refused for it (`chain` returns
+that curve rather than `None`), which `assemble` makes the failure of.
+The flat retry after `Inconsistent` (`tied_or_exact`, which both
+`flat_soup` and `touches_within` go through) returns the second try's
+failure whole (none if it succeeds; its own if it fails differently),
+and the boolean's tries keep theirs as for the check's. The decisions'
+and the assembly's sites gather through `evidence::Gather` (a unit an
+item, two a pair of patches given whole or not at all; an operand's
+triangle given as its patch and the operand's face it lies on, named
+once, or the face by name alone). By error:
 
 | error | evidence |
 |---|---|
 | `NotManifold` named from a near pair (`pinched_named`) | what repair or the check named, and the pair's two vertices as points, one where they are at one place |
 | `NotManifold` named from separate shells | what repair or the check named: the two triangles, or repair's pieces of them |
-| `NotManifold` from the decisions (`pinched_line`) | each pair refused, in order: its two patches as refined, and the operands' faces they lie on, each once (`pinch_evidence`, a unit a pair) |
-| `Degenerate` from a face's triangulation | the face's kept halfedges as curves, and the operand's face (`face::loops_evidence`, a unit a halfedge) |
+| `NotManifold` from the decisions (`pinched_line`) | each pair refused, in order: its two patches as refined, and the operands' faces they lie on, each once (`pinch_failure`, stopping at the first left out) |
+| `Degenerate` from a face's triangulation | the face's kept halfedges as curves, and the operand's face (`face::boundary_failure`) |
 | `Degenerate` from the mesh's builder | the triangle it names (its sides and corners) or the halfedge (its curve and ends), by the soup's positions and curve records (`built_evidence`) |
 | `Inconsistent`: an edge through a face whose crossings can't be (`Primitives::crossings`: a straight edge through a flat face more than once, or nowhere inside it) | the edge's curve, and the face crossed (its patch and name) |
 | `Inconsistent`: an edge whose winding numbers don't add up (`agree`) | the edge's curve, each of its crossings as a point, and the faces they cross, each once (`edge_failure`) |
@@ -7917,16 +7920,17 @@ patch and the operand's face it lies on, named once). By error:
 | `Inconsistent`: a pair of faces whose ends don't join (`pairs::flat`, or `decide`'s first failing pair: ends on one curved surface, two ends of one sign, ends round the pair that don't pair up) | both patches, their faces, and the ends as points (`pair_failure`) |
 | `Inconsistent`: an edge's crossings out of order along it (`Along::new`, where a grazing pair went to one place) | the edge's curve, the two crossings (where they are, not where they went), and the faces they cross |
 | `Inconsistent`: a crossing only placed that isn't on the other operand (`Cutting::certify`) | the first such in order: its vertex, its edge's curve, and the face it crosses |
-| `Inconsistent`: an arc with no chain near enough the true cut (`chain::chains`) | the first such arc's ends as points, the curve refused between them (the conic along their tangents, else the chord: `chain::refused`), and the pair's patches and faces |
-| `Inconsistent` from a face's boundary that doesn't close into loops (`cut_face`) | as for a `Degenerate` face: its kept halfedges as curves and its face, and the vertices with other than one halfedge leaving and one arriving as points (`face::loops_evidence`) |
+| `Inconsistent`: an arc with no chain near enough the true cut (`chain::chains`) | the first such arc's ends as points, the curve refused between them (the conic along their tangents, else the chord: what `chain` refused last), and the pair's patches and faces |
+| `Inconsistent` from a face's boundary that doesn't close into loops (`cut_face`) | as for a `Degenerate` face: its kept halfedges as curves and its face, and the vertices with other than one halfedge leaving and one arriving as points (`face::boundary_failure`) |
 
 Each from a fresh `EVIDENCE_WORK` allowance where it can grow; none
 changes what the operation does or spends: `pinched` hands back the
 pair it stopped at (the same work), the decisions' and the round's
 failures are the first in order as before, the face's halfedges are
 worked out again only after the round has failed, and the counting's
-and assembly's sites only look at what they had already (the refused
-arc's fallback conic is fitted again, a few Newton steps). Old against
+and assembly's sites only look at what they had already (`certify`
+finds the crossing's side and edge from its vertex id, `crossing_of`,
+rather than keeping a list beside the one it asks about). Old against
 new on the release kernel suites, ignored tests too, every operation's
 outcome and work were the same.
 

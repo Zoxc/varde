@@ -1,7 +1,7 @@
 //! Gathering what a boolean's own failure is about, for the decisions'
-//! and the assembly's `Inconsistent` sites: an operand's edges as curves,
-//! its triangles as patches with the faces they lie on by name, and
-//! points (see "Boolean evidence" in the kernel notes).
+//! and the assembly's sites: an operand's edges as curves, its triangles
+//! as patches with the faces they lie on by name, and points (see
+//! "Boolean evidence" in the kernel notes).
 
 use std::collections::BTreeSet;
 
@@ -40,14 +40,43 @@ impl Gather {
         self.evidence.afford(&mut self.work, units)
     }
 
+    /// Whether some was left out already, past the allowance or a cap:
+    /// a step adding many items stops there, so what it gave are the
+    /// first in its order, whole.
+    pub(super) fn truncated(&self) -> bool {
+        self.evidence.truncated
+    }
+
     /// Triangle `t` of `input`, operand `side`: its patch (as the operand
     /// holds it, refined where the decisions refined it), and the name of
     /// the operand's face it lies on, once.
     pub(super) fn tri(&mut self, side: Side, input: &Input, t: u32) {
-        if !self.afford(1) {
-            return;
+        if self.afford(1) {
+            self.evidence.add_patches([input.patches[t as usize]]);
+            self.name(side, input, t);
         }
-        self.evidence.add_patches([input.patches[t as usize]]);
+    }
+
+    /// Triangle `p` of `A` and `q` of `B`, both or neither: as
+    /// [`Gather::tri`], `A`'s first.
+    pub(super) fn pair(&mut self, a: &Input, b: &Input, [p, q]: [u32; 2]) {
+        if self.afford(2) {
+            self.evidence
+                .add_patches([a.patches[p as usize], b.patches[q as usize]]);
+            self.name(Side::A, a, p);
+            self.name(Side::B, b, q);
+        }
+    }
+
+    /// The name of the face triangle `t` of `input` (operand `side`) lies
+    /// on, once, without its patch.
+    pub(super) fn face(&mut self, side: Side, input: &Input, t: u32) {
+        if self.afford(1) {
+            self.name(side, input, t);
+        }
+    }
+
+    fn name(&mut self, side: Side, input: &Input, t: u32) {
         let face = (
             Operand::from(side),
             input.mesh.faces()[input.face(t) as usize].name.key(),
