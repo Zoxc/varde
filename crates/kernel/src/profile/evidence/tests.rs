@@ -295,7 +295,7 @@ fn segments_named_apart_give_the_nearest_point_on_each() {
         circle(v(3.0, 0.5), 1.0, 5, false),
     ]);
     let error = ProfileError::Touching([(0, 1), (1, 1)]);
-    let f = profile_failure(KernelError::Profile(error), &p, &TURNED, &TOL);
+    let f = profile_failure(KernelError::Profile(error).into(), &p, &TURNED, &TOL);
     segments_are(&f, error, &p, &[(0, 1), (1, 1)]);
     let [qa, qb] = f.evidence.points[..] else {
         panic!("{:?}", f.evidence.points);
@@ -340,14 +340,14 @@ fn errors_naming_the_whole_profile_or_a_segment_give_them() {
     let all: Vec<(usize, usize)> = (0..2).flat_map(|l| (0..4).map(move |s| (l, s))).collect();
     let error = KernelError::Profile(ProfileError::Triangulation);
     segments_are(
-        &profile_failure(error, &p, &TURNED, &TOL),
+        &profile_failure(error.into(), &p, &TURNED, &TOL),
         ProfileError::Triangulation,
         &p,
         &all,
     );
     let error = KernelError::Profile(ProfileError::TooFine(1, 2));
     segments_are(
-        &profile_failure(error, &p, &TURNED, &TOL),
+        &profile_failure(error.into(), &p, &TURNED, &TOL),
         ProfileError::TooFine(1, 2),
         &p,
         &[(1, 2)],
@@ -355,13 +355,13 @@ fn errors_naming_the_whole_profile_or_a_segment_give_them() {
     // Indices past the profile give nothing, and other errors none.
     let error = KernelError::Profile(ProfileError::TooFine(2, 0));
     assert!(
-        profile_failure(error, &p, &TURNED, &TOL)
+        profile_failure(error.into(), &p, &TURNED, &TOL)
             .evidence
             .is_empty()
     );
     let error = KernelError::TooComplex;
     assert!(
-        profile_failure(error, &p, &TURNED, &TOL)
+        profile_failure(error.into(), &p, &TURNED, &TOL)
             .evidence
             .is_empty()
     );
@@ -378,7 +378,7 @@ fn a_frame_unfit_to_place_by_gives_only_sketch_curves() {
         ..Frame::XY
     };
     let f = profile_failure(
-        KernelError::Profile(ProfileError::Nesting(1)),
+        KernelError::Profile(ProfileError::Nesting(1)).into(),
         &p,
         &skewed,
         &TOL,

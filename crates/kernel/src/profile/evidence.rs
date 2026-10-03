@@ -30,16 +30,19 @@ const NEAREST_WORK: usize = 1 << 12;
 /// placed.
 const SCAN_PER_UNIT: usize = 4;
 
-/// `error`, failing `profile` placed on `frame` at `tol`, with its
-/// evidence.
+/// `failure`, of `profile` placed on `frame` at `tol`, with its
+/// evidence: a profile's error with what it names of the profile (the
+/// steps raising one hand up no evidence), any other as it came (with
+/// the evidence of the step that raised it, if any).
 pub(crate) fn profile_failure(
-    error: KernelError,
+    failure: Failure,
     profile: &Profile,
     frame: &Frame,
     tol: &Tolerance,
 ) -> Failure {
+    let error = failure.error;
     let KernelError::Profile(e) = error else {
-        return error.into();
+        return failure;
     };
     let mut gather = Gather::new(profile, frame, tol);
     gather.error(e);

@@ -921,7 +921,10 @@ repairs, merges and checks it again only if the check fails: repair
 keeps a mesh that passes as it is, so the solid is the same, for one
 pass over the pairs rather than two (a mesh failing after the fold
 check pays that pass twice, the check's and repair's);
-`check_embedding` (repair's) stops after step 4.
+`check_embedding` (repair's) stops after step 4. Where they fail as
+`Invalid`, `new_repaired_within` and `Solid::finished` return a
+`Failure` with the triangles the error names, of the mesh that failed
+(see "Check evidence" under "Limits, budgets and errors").
 
 ### Forms (`mesh/form.rs`)
 
@@ -1731,6 +1734,14 @@ passes, so running out doesn't depend on the thread count. The fold and
 pair tests and the witness searches run through `par_map` over sorted
 lists; the splits, the pieces and the BVH are sequential.
 
+`repair_or_given` is `repair_within` giving the mesh back as it was
+given with the error (repair works on it by reference and builds a new
+mesh only once it passes): its `Invalid` names that mesh's triangles
+(the input triangles the failing pieces came from), so the caller can
+tell where it failed. The same result, error and work; callers that
+make solids keep it to gather a failure's evidence (see "Check
+evidence" under "Limits, budgets and errors").
+
 ### Boxes and cylinders (`mesh/primitive.rs`)
 
 Built as an extrude builds its solids, and checked (`check` with the given
@@ -2469,7 +2480,9 @@ over another conic, along the normal. The steps:
    `Invalid`, `TooComplex` or `ProfileError::TooFine` and work is left,
    they run again from the
    separated chain with flat corners mended (step 3); if that fails too,
-   the first error stands. Moving points in from every flat corner can
+   the first error stands, with the first try's evidence (the triangles
+   its error names: each try's `Solid::new_repaired_within` gives a
+   `Failure`, kept with the error, never a later try's). Moving points in from every flat corner can
    line them up into slivers of their own (along a fine polygon), so it
    isn't the first try: the second only adds solids. Flat corners are
    all the two tries do differently (the first finds them too, with the
@@ -2982,7 +2995,10 @@ make none. The steps:
    the second only where a triangulation found such a corner and the
    first failed with `Invalid`, `TooComplex` or `TooFine`; unlike the
    extrude's, the second starts over rather than resuming where the first
-   found the corner, since a round triangulates several faces.
+   found the corner, since a round triangulates several faces. If the
+   second fails too, the first try's error stands, with the triangles it
+   names (`Solid::finished` gives a `Failure`; see "Check evidence"
+   under "Limits, budgets and errors").
 
 The meshes are closed by construction: every strip, cap and flat
 triangle names its corners by ring and station, and the face tags are
@@ -4425,8 +4441,8 @@ budget, it is tried again without joining any
 (`checked_with(.., join: false, ..)`, the pairs split as before),
 within as much work again as the first try took, but at least `AGAIN`
 = 150 000 units (and what is left of the budget). The second try's
-result if it passes, else the first try's error (or `TooComplex` where
-the budget, not the bound, stopped it). Unbounded, the second try ran
+result if it passes, else the first try's error, with its evidence (or
+`TooComplex` where the budget, not the bound, stopped it). Unbounded, the second try ran
 most of the refusals on to the budget for one result in fifteen
 (ellipses 114 M → 322 M units, for 15); bounded by the first try's
 work alone it lost the spans' fast folds (a sliver under the resolution,
@@ -5627,13 +5643,15 @@ Such a failure is named `BooleanError::NotManifold` rather than left as
   (pieces keep their origin), so for its `Hull` the shells are those
   of the cleaned mesh (its triangles copied with its positions); for
   the check's, after repair, those of the repaired mesh, which
-  `Solid::finished_or_checked` hands back with the error.
+  `Solid::finished_or_checked` hands back with the error
+  (`Unfinished::Checked`; repair's input, `Unfinished::Given`, where
+  repair failed).
 
 Then the operation's last error becomes `NotManifold` (`pinched_named`,
 `pinched` and `apart` in `boolean.rs`). Only the
 error that is returned is classified, at the very end, after the
 unfolding and joining retries (both keep the first try's error, so its
-positions are the ones measured), so no `Ok` ever becomes an error;
+positions are the ones measured, and its evidence), so no `Ok` ever becomes an error;
 `TooComplex`, `Inconsistent` and `Degenerate` stay as they are (the
 budget is gone, or no mesh was built). `pinched` is a hash grid of cells
 `resolution / 8` wide keyed by `floor(p / d)` as `i64` (bounded: within
@@ -7787,6 +7805,33 @@ a sharp corner.) The axis's nearest point
 (`measure::turns`, the roots of the derivative's numerator), the least
 `|x|` of those; `axis_rules` decides by signs and finds no place
 either.
+
+**Check evidence** (`failure/check.rs`). An `Invalid(CheckError)` of a
+mesh an operation built names its triangles: `Failure::of_mesh` gives
+them as patches of that mesh, from a fresh `EVIDENCE_WORK` allowance (a
+unit a triangle looked at): one for `Fold`, `Face` and `FacesAgainst`;
+two for `Hull`, `EdgeNeighbours`, `VertexNeighbours` and `SameCorners`
+(one where both name one triangle, as repair may for two pieces of it);
+for `InsideOut` the shell whose lowest triangle it names, outward from
+that triangle breadth first through the halfedges' pairs, up to
+`MAX_EVIDENCE` and then `truncated`; for the structural errors the
+triangle named (`Patch`) or the halfedge's (`Index`, `Pair`, `Loop`,
+`DirectedEdge`, `SharedEdge`) if its indices are in range; none for
+`Fan`, `EdgeUse`, `Alias`, `Counts` and `TooManyPatches`. Patches are
+as the mesh holds them; the receiver draws those it can. The mesh is
+the one that failed: repair's input where repair failed (it names the
+input triangles its pieces came from, and gives its input back,
+`Mesh::repair_or_given`), the repaired and merged mesh where the check
+did. `Solid::new_repaired_within` (extrude's) and `Solid::finished`
+(revolve's) return the `Failure`; `Solid::finished_or_checked` returns
+the mesh (`Unfinished::Given` or `Checked`) for the boolean, which
+gathers the evidence in `checked` and keeps it with the error through
+its retries: unfolding again (the first try's error and evidence
+stand), the second try without line joins (the first's again), and
+`pinched_named`, whose `NotManifold` keeps the check's evidence. Extrude
+and revolve keep each try's `Failure` whole, so the evidence returned is
+that of the first try, whose error they return. `TooComplex` past the
+check, and `assemble`'s and the transforms' own checks, carry none.
 
 Its rules: evidence never changes an outcome (no `Ok` becomes an error
 or the reverse, and the error is the one returned without it; tests

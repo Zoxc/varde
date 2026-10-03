@@ -90,7 +90,8 @@ const NESTING_WORK: usize = 8;
 /// gives an invalid solid. A profile's error comes with the segments and
 /// points it is about, placed on `frame`, and their sketch curves, as
 /// [`Failure::evidence`]; the axis's errors with the axis or the turn's
-/// ends too.
+/// ends too. An `Invalid` comes with the triangles of the solid built
+/// that the check's error names.
 pub fn revolve(
     profile: &Profile,
     frame: &Frame,
@@ -100,7 +101,7 @@ pub fn revolve(
     budget: &Budget,
 ) -> Result<Solid, Failure> {
     revolved(profile, frame, sweep, feature, tol, budget)
-        .map_err(|error| revolve_failure(error, profile, frame, sweep, tol))
+        .map_err(|failure| revolve_failure(failure, profile, frame, sweep, tol))
 }
 
 /// `error`, revolving `profile` on `frame` through `sweep`, with its
@@ -109,16 +110,18 @@ pub fn revolve(
 /// crossing it with the axis across the profile's extent along it, a
 /// segment touching it inside with the point nearest it (a vertex on it
 /// as a cusp is given), a turn nearly full with the profile at both its
-/// ends.
+/// ends. Any other error as it came, with the evidence of the step that
+/// raised it (the triangles a check names: see [`Solid::finished`]).
 fn revolve_failure(
-    error: KernelError,
+    failure: Failure,
     profile: &Profile,
     frame: &Frame,
     sweep: Sweep,
     tol: &Tolerance,
 ) -> Failure {
+    let error = failure.error;
     let KernelError::Profile(e) = error else {
-        return error.into();
+        return failure;
     };
     let mut gather = Gather::new(profile, frame, tol);
     match e {
@@ -153,7 +156,9 @@ fn revolve_failure(
     gather.failure(error)
 }
 
-/// [`revolve`], failing with the error alone.
+/// [`revolve`], failing with the error, and for one of a mesh built
+/// ([`KernelError::Invalid`]) the triangles it names, of the try whose
+/// error it is.
 fn revolved(
     profile: &Profile,
     frame: &Frame,
@@ -161,14 +166,14 @@ fn revolved(
     feature: u64,
     tol: &Tolerance,
     budget: &Budget,
-) -> Result<Solid, KernelError> {
+) -> Result<Solid, Failure> {
     profile.check().map_err(KernelError::Profile)?;
     frame.check()?;
     let turn = Turn::new(frame, sweep)?;
     let margin = tol.resolution();
     let profile = onto_axis(profile, margin);
     profile.check().map_err(KernelError::Profile)?;
-    axis_rules(&profile, turn.is_full(), margin)?;
+    axis_rules(&profile, turn.is_full(), margin).map_err(KernelError::Profile)?;
     let mut work = Work::new(budget);
     let mut chain = Chain::new(&profile, margin)?;
     chain.separate(&mut work)?;
@@ -177,7 +182,7 @@ fn revolved(
     let (segs, starts) = chain.flat();
     work.spend(segs.len().saturating_mul(NESTING_WORK))?;
     cap::nests(&segs, &starts)?;
-    turn.apart(&segs, margin)?;
+    turn.apart(&segs, margin).map_err(KernelError::Profile)?;
     let kinds: Vec<Kind> = chain
         .sides
         .iter()
@@ -193,14 +198,21 @@ fn revolved(
     // As an extrude's: caps with slivers along short segments meeting
     // nearly straight fail the hull rules, and Steiner points moved in
     // from those corners mend most, so they are the second try, made
-    // only where the first found such a corner.
+    // only where the first found such a corner. The first try's error
+    // stands, with its evidence.
     let mut flat = false;
     match build.solid(false, &mut flat, &mut work) {
-        Err(
-            first @ (KernelError::Invalid(_)
-            | KernelError::TooComplex
-            | KernelError::Profile(ProfileError::TooFine(..))),
-        ) if flat && work.left() > 0 => build.solid(true, &mut false, &mut work).map_err(|_| first),
+        Err(first)
+            if matches!(
+                first.error,
+                KernelError::Invalid(_)
+                    | KernelError::TooComplex
+                    | KernelError::Profile(ProfileError::TooFine(..))
+            ) && flat
+                && work.left() > 0 =>
+        {
+            build.solid(true, &mut false, &mut work).map_err(|_| first)
+        }
         result => result,
     }
 }
@@ -532,7 +544,7 @@ impl Build<'_> {
         flat_corners: bool,
         flat_found: &mut bool,
         work: &mut Work,
-    ) -> Result<Solid, KernelError> {
+    ) -> Result<Solid, Failure> {
         let mut pieces: Vec<Vec<Piece>> = self
             .chain
             .loops
@@ -547,8 +559,12 @@ impl Build<'_> {
                     })
                     .collect::<Result<_, PatchError>>()
             })
-            .collect::<Result<_, _>>()?;
-        let mut lathe = self.turn.lathe(self.turn.first_pieces())?;
+            .collect::<Result<_, _>>()
+            .map_err(KernelError::from)?;
+        let mut lathe = self
+            .turn
+            .lathe(self.turn.first_pieces())
+            .map_err(KernelError::from)?;
         for _ in 0..MAX_ROUNDS {
             match self.round(&pieces, &lathe, flat_corners, flat_found, work)? {
                 Ok(solid) => return Ok(solid),
@@ -558,10 +574,12 @@ impl Build<'_> {
                 Err(Again::Split(finer)) => pieces = finer,
             }
         }
-        Err(KernelError::TooComplex)
+        Err(KernelError::TooComplex.into())
     }
 
-    /// One try at the solid on `lathe` from `pieces`.
+    /// One try at the solid on `lathe` from `pieces`: a mesh built that
+    /// fails as [`KernelError::Invalid`] fails with the triangles it
+    /// names ([`Solid::finished`]).
     fn round(
         &self,
         pieces: &[Vec<Piece>],
@@ -569,10 +587,10 @@ impl Build<'_> {
         flat_corners: bool,
         flat_found: &mut bool,
         work: &mut Work,
-    ) -> Result<Result<Solid, Again>, KernelError> {
+    ) -> Result<Result<Solid, Again>, Failure> {
         let count: usize = pieces.iter().map(Vec::len).sum();
         if count.saturating_mul(lathe.pieces()).saturating_mul(2) > MAX_PATCHES {
-            return Err(KernelError::TooComplex);
+            return Err(KernelError::TooComplex.into());
         }
         let mut walls: Vec<Vec<Wall>> = Vec::with_capacity(pieces.len());
         for lp in pieces {

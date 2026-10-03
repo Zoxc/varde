@@ -497,7 +497,14 @@ carry the segments they name, placed by the operation's frame, with
 their sketch curves, and the points they are about (where two segments
 touch, a cusp, a gap's ends, where a segment touches a revolve's axis),
 the axis a segment crosses, or the profile at both ends of a turn too
-nearly full; the other errors carry none yet.
+nearly full. An `Invalid` of a solid an extrude, revolve or boolean
+built carries the triangles its check error names, as patches of the
+mesh that failed (repair's input where repair failed, which names the
+triangles its pieces came from; the repaired mesh where the check did):
+one or two, or an inside-out shell up to the cap. Where an operation
+retries and returns the first try's error, it returns that try's
+evidence; a boolean's `Invalid` named `NotManifold` keeps it. The other
+errors carry none yet.
 
 ## In the app
 

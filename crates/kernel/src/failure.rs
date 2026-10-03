@@ -24,6 +24,8 @@ use glam::DVec3;
 
 use crate::budget::Work;
 use crate::mesh::FaceKey;
+
+mod check;
 use crate::patch::{Conic, Patch};
 use crate::{Budget, KernelError};
 
@@ -242,7 +244,7 @@ mod tests {
     };
 
     /// The error of a failed operation, its evidence checked empty (none
-    /// is gathered for these errors yet).
+    /// is gathered for these errors).
     fn bare<T: std::fmt::Debug>(result: Result<T, Failure>) -> KernelError {
         let failure = result.unwrap_err();
         assert!(failure.evidence.is_empty(), "{failure:?}");
@@ -293,20 +295,14 @@ mod tests {
             KernelError::Patch(PatchError::Coordinate(_))
         ));
         // A pinch: a hole whose wall comes within the resolution of the
-        // tube's.
+        // tube's. Named so from repair's `Hull`, whose two triangles it
+        // keeps (see `failure/check.rs`).
         let half = 0.5 * TOL.resolution();
         let tube = Solid::cylinder(DVec3::ZERO, 1.0, 10.0, 1, &TOL).unwrap();
         let hole = Solid::cylinder(DVec3::Z * 2.0, 1.0 - half, 6.0, 2, &TOL).unwrap();
-        assert_eq!(
-            bare(boolean(
-                &tube,
-                &hole,
-                Op::Difference,
-                &TOL,
-                &Budget::new(100_000)
-            )),
-            KernelError::Boolean(BooleanError::NotManifold)
-        );
+        let pinch = boolean(&tube, &hole, Op::Difference, &TOL, &Budget::new(100_000)).unwrap_err();
+        assert_eq!(pinch.error, KernelError::Boolean(BooleanError::NotManifold));
+        assert_eq!(pinch.evidence.patches.len(), 2);
     }
 
     #[test]

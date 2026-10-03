@@ -448,7 +448,8 @@ fn both_ways(mesh: &Mesh, units: u64) -> [(Result<crate::Solid, KernelError>, u6
         .and_then(|mesh| crate::Solid::new_within(mesh, &TOL, &mut work));
     let left = work.left();
     let mut work = Work::new(&budget);
-    let checked = crate::Solid::new_repaired_within(mesh.clone(), &TOL, &mut work);
+    let checked =
+        crate::Solid::new_repaired_within(mesh.clone(), &TOL, &mut work).map_err(|f| f.error);
     [(repaired, left), (checked, work.left())]
 }
 
@@ -900,4 +901,62 @@ fn only_affine_whole_leaves_failing_the_fold_check_fail_at_once() {
         run(&[piece(affine, 0, [0, 1, 2]), piece(far, 0, [3, 4, 5])]),
         Ok(vec![0])
     );
+}
+
+#[test]
+fn a_failing_repair_gives_back_what_it_was_given() {
+    // Failures no split mends at once (flat boxes face to face, round
+    // surfaces touching), and those found only after splitting (small
+    // cylinders reaching the smallest piece, a small bulging
+    // tetrahedron): repair gives the mesh back as it was, with the error
+    // and work it gave before, and the error names its triangles, which
+    // a solid finished from it (`Solid::finished`, a revolve's or a
+    // boolean's) carries as its evidence. The same at 1 and 8 threads.
+    let gap = 0.5 * TOL.resolution();
+    let coarse = Tolerance::new(Tolerance::MAX_FIT).unwrap();
+    let boxes = both(
+        &Mesh::cuboid(DVec3::ZERO, DVec3::ONE, 1, &TOL).unwrap(),
+        &Mesh::cuboid(DVec3::Z * (1.0 + gap), DVec3::ONE, 2, &TOL).unwrap(),
+    );
+    let small = 10.0 * coarse.resolution();
+    let res = TOL.resolution();
+    for (mesh, tol) in [
+        (boxes, TOL),
+        (two_spheres(1.0, gap), TOL),
+        (
+            cylinders(small, 30.0, 1.5 * coarse.resolution(), &coarse),
+            coarse,
+        ),
+        (scaled(bulging_tetrahedron(1.5), res), TOL),
+    ] {
+        let (want, units) = repair_counting(mesh.clone(), &tol);
+        let error = want.unwrap_err();
+        let KernelError::Invalid(why) = error else {
+            panic!("{error:?}");
+        };
+        let mut work = Work::new(&Budget::DEFAULT);
+        let (given_error, given) = mesh.clone().repair_or_given(&tol, &mut work).unwrap_err();
+        assert_eq!(given_error, error);
+        assert_eq!(*given, mesh);
+        assert_eq!(Budget::DEFAULT.work() - work.left(), units);
+
+        let failure = assert_deterministic(|| {
+            let mut work = Work::new(&Budget::DEFAULT);
+            let failure = crate::Solid::finished(mesh.clone(), &tol, &mut work).unwrap_err();
+            (failure, work.left())
+        });
+        assert_eq!(failure.0.error, error);
+        assert_eq!(Budget::DEFAULT.work() - failure.1, units);
+        let named: Vec<Patch> = match why {
+            CheckError::Fold(t) => vec![mesh.patch(t as usize)],
+            CheckError::Hull(t, u)
+            | CheckError::EdgeNeighbours(t, u)
+            | CheckError::VertexNeighbours(t, u) => {
+                vec![mesh.patch(t as usize), mesh.patch(u as usize)]
+            }
+            why => panic!("{why:?}"),
+        };
+        assert_eq!(failure.0.evidence.patches, named, "{why:?}");
+        assert!(!failure.0.evidence.truncated);
+    }
 }

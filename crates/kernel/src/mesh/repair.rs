@@ -102,6 +102,28 @@ impl Mesh {
         tol: &Tolerance,
         work: &mut Work,
     ) -> Result<Mesh, KernelError> {
+        self.repair_or_given(tol, work).map_err(|(e, _)| e)
+    }
+
+    /// [`Self::repair_within`], giving the mesh back as it was given with
+    /// the error: a [`KernelError::Invalid`] names its triangles (the
+    /// input triangles the failing pieces came from), so the caller can
+    /// tell where. The same result, error and work.
+    pub(crate) fn repair_or_given(
+        self,
+        tol: &Tolerance,
+        work: &mut Work,
+    ) -> Result<Mesh, (KernelError, Box<Mesh>)> {
+        match self.repaired(tol, work) {
+            Ok(Some(mesh)) => Ok(mesh),
+            Ok(None) => Ok(self),
+            Err(e) => Err((e, Box::new(self))),
+        }
+    }
+
+    /// The repaired mesh, or `None` if it passes as it is: see
+    /// [`Self::repair_within`].
+    fn repaired(&self, tol: &Tolerance, work: &mut Work) -> Result<Option<Mesh>, KernelError> {
         self.check_topology().map_err(KernelError::Invalid)?;
         let patches = self.bounded_patches().map_err(KernelError::Invalid)?;
         work.spend(patches.len())?;
@@ -125,12 +147,12 @@ impl Mesh {
             work,
         )?;
         if failing.is_empty() {
-            return Ok(self);
+            return Ok(None);
         }
         // Leaves too small to split are caught by `failures` first: the
         // refiner's own floor stops only those its rules take with them.
         let res = tol.resolution();
-        let mut refiner = Refiner::new(&self, res, MIN_CURVED_SPLIT * res);
+        let mut refiner = Refiner::new(self, res, MIN_CURVED_SPLIT * res);
         let pieces = loop {
             refiner.split(&failing, work)?;
             let pieces = refiner.pieces()?;
@@ -148,7 +170,7 @@ impl Mesh {
         // Face tags aside: unsplit patches, and any not on a plane, keep
         // the input's claims, which repair doesn't check.
         debug_assert_eq!(mesh.check_embedding(tol).err(), None);
-        Ok(mesh)
+        Ok(Some(mesh))
     }
 }
 

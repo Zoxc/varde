@@ -2250,3 +2250,87 @@ fn thin_triangles_across_two_faces() {
     );
     assert_eq!(mendable, 0);
 }
+
+/// The patches of `mesh`'s triangles that `why` names, for the errors
+/// these tests reach: one for a triangle's own failure, two (or one, if
+/// the same) for a pair's.
+fn named_patches(mesh: &Mesh, why: CheckError) -> Vec<crate::patch::Patch> {
+    let tris = match why {
+        CheckError::Fold(t) | CheckError::Face(t) | CheckError::FacesAgainst(t) => vec![t],
+        CheckError::Hull(t, u)
+        | CheckError::EdgeNeighbours(t, u)
+        | CheckError::VertexNeighbours(t, u)
+        | CheckError::SameCorners(t, u) => {
+            if t == u {
+                vec![t]
+            } else {
+                vec![t, u]
+            }
+        }
+        why => panic!("{why:?}"),
+    };
+    tris.into_iter().map(|t| mesh.patch(t as usize)).collect()
+}
+
+/// `a op b`'s failure at `tol`, the same at 1 and 8 threads, checked to
+/// be `want` (the error it gave before failures carried evidence) and
+/// to carry the triangles the first try's error names, of
+/// the mesh that failed: the cleaned mesh where repair failed, the
+/// repaired one where the check did. Each patch lies within the
+/// operands' boxes.
+fn fails_with_its_triangles(a: &Solid, b: &Solid, op: Op, tol: &Tolerance, want: KernelError) {
+    let failure = assert_deterministic(|| boolean(a, b, op, tol, &Budget::DEFAULT).unwrap_err());
+    assert_eq!(failure.error, want);
+    let mut work = Work::new(&Budget::DEFAULT);
+    let cleaned = unchecked(a, b, op, tol, &mut work).unwrap();
+    let Err((error @ KernelError::Invalid(why), Some(unfinished))) =
+        Solid::finished_or_checked(cleaned, tol, &mut work)
+    else {
+        panic!("the first try passes");
+    };
+    // Renamed `NotManifold` or not, the check's evidence.
+    assert!(
+        error == want || want == KernelError::Boolean(BooleanError::NotManifold),
+        "{error:?}"
+    );
+    let named = named_patches(unfinished.mesh(), why);
+    assert!(!named.is_empty());
+    assert_eq!(failure.evidence.patches, named, "{why:?}");
+    let evidence = crate::Evidence {
+        patches: Vec::new(),
+        ..*failure.evidence
+    };
+    assert!(evidence.is_empty());
+    let (ba, bb) = (a.bounds3().unwrap(), b.bounds3().unwrap());
+    let slack = DVec3::splat(tol.resolution());
+    let (lo, hi) = (ba.min.min(bb.min) - slack, ba.max.max(bb.max) + slack);
+    for patch in &failure.evidence.patches {
+        for p in patch.p.iter().chain(&patch.c) {
+            assert!(p.cmpge(lo).all() && p.cmple(hi).all(), "{p}");
+        }
+    }
+}
+
+#[test]
+fn failures_of_the_result_carry_the_triangles_they_name() {
+    // Boxes along an edge, united: a neck the check refuses, named a
+    // pinch, with the triangles that failed.
+    let a = cube([0.0; 3], [2.0; 3]);
+    let not_manifold = KernelError::Boolean(BooleanError::NotManifold);
+    for b in [cube([2.0, 2.0, 0.0], [2.0; 3]), cube([2.0; 3], [2.0; 3])] {
+        fails_with_its_triangles(&a, &b, Op::Union, &TOL, not_manifold);
+    }
+    // A void whose wall is half a resolution thick: repair's `Hull`
+    // between two shells, named a pinch too.
+    let half = 0.5 * TOL.resolution();
+    let tube = Solid::cylinder(DVec3::ZERO, 1.0, 10.0, 1, &TOL).unwrap();
+    let hole = Solid::cylinder(DVec3::Z * 2.0, 1.0 - half, 6.0, 2, &TOL).unwrap();
+    fails_with_its_triangles(&tube, &hole, Op::Difference, &TOL, not_manifold);
+    // A boss tangent to a plate's side from inside: a cusp no patch
+    // holds, `Invalid` as it was.
+    let coarse = Tolerance::new(Tolerance::MAX_FIT).unwrap();
+    let plate = Solid::cuboid(DVec3::ZERO, DVec3::new(4.0, 2.0, 1.0), 1, &coarse).unwrap();
+    let boss = Solid::cylinder(DVec3::new(2.0, 0.5, 0.5), 0.5, 1.5, 2, &coarse).unwrap();
+    let fold = KernelError::Invalid(CheckError::Fold(35));
+    fails_with_its_triangles(&plate, &boss, Op::Union, &coarse, fold);
+}

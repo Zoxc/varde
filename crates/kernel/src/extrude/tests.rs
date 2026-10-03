@@ -9,7 +9,7 @@ use glam::{DVec2, DVec3};
 
 use super::*;
 use crate::Stripped;
-use crate::mesh::FacePart;
+use crate::mesh::{CheckError, FacePart};
 use crate::par::assert_deterministic;
 use crate::profile::tests::{arc, circle, folding_cap, polygon, rect, reversed};
 use crate::profile::{Loop, Segment};
@@ -1556,4 +1556,161 @@ fn a_cap_whose_straight_split_folds_extrudes() {
             .iter()
             .all(|q| q.patch.fold_direction().is_some())
     );
+}
+
+/// The first try at extruding `p` on the XY plane from `from` to `to`
+/// (caps refined for quality), made as [`extruded`](super::extruded)
+/// makes it within `units`: the mesh built, and the solid or failure
+/// [`Solid::new_repaired_within`] makes of it.
+fn first_try(
+    p: &Profile,
+    from: f64,
+    to: f64,
+    tol: &Tolerance,
+    units: u64,
+) -> (Mesh, Result<Solid, Failure>) {
+    let margin = tol.resolution();
+    let mut work = Work::new(&Budget::new(units));
+    let mut chain = Chain::new(p, margin).unwrap();
+    chain.separate(&mut work).unwrap();
+    let start = Rounds::new(chain);
+    let caps = cap::triangulate(
+        start,
+        margin,
+        Mode::QUALITY,
+        &mut None,
+        &mut false,
+        &mut work,
+    );
+    let (chain, cap) = caps.unwrap();
+    let mesh = build(&chain, &cap, &Frame::XY, from, to, 9).unwrap();
+    work.spend(mesh.tris().len()).unwrap();
+    (
+        mesh.clone(),
+        Solid::new_repaired_within(mesh, tol, &mut work),
+    )
+}
+
+/// The patches of `mesh`'s triangles a pair's or a triangle's error
+/// names.
+fn named_patches(mesh: &Mesh, why: CheckError) -> Vec<crate::patch::Patch> {
+    let tris = match why {
+        CheckError::Fold(t) | CheckError::Face(t) | CheckError::FacesAgainst(t) => vec![t],
+        CheckError::Hull(t, u)
+        | CheckError::EdgeNeighbours(t, u)
+        | CheckError::VertexNeighbours(t, u)
+        | CheckError::SameCorners(t, u)
+            if t != u =>
+        {
+            vec![t, u]
+        }
+        CheckError::Hull(t, _)
+        | CheckError::EdgeNeighbours(t, _)
+        | CheckError::VertexNeighbours(t, _)
+        | CheckError::SameCorners(t, _) => vec![t],
+        why => panic!("{why:?}"),
+    };
+    tris.into_iter().map(|t| mesh.patch(t as usize)).collect()
+}
+
+#[test]
+fn a_solid_too_thin_fails_with_the_triangles_it_names() {
+    // A unit square extruded a tenth of the resolution: repair refuses
+    // the built mesh, naming two of its triangles, whose patches come
+    // with the error, on the solid's surface. The same at 1 and 8
+    // threads, and the first try's (the only one: no flat corner).
+    let square = profile(vec![rect(DVec2::ZERO, DVec2::ONE, 0)]);
+    let h = 0.1 * TOL.resolution();
+    let failure = assert_deterministic(|| {
+        extrude(&square, &Frame::XY, 0.0, h, 9, &TOL, &Budget::DEFAULT).unwrap_err()
+    });
+    // The error it gave before failures carried their triangles.
+    let why = CheckError::EdgeNeighbours(0, 1);
+    assert_eq!(failure.error, KernelError::Invalid(why));
+    let (mesh, first) = first_try(&square, 0.0, h, &TOL, Budget::DEFAULT.work());
+    assert_eq!(first.unwrap_err(), failure);
+    let named = named_patches(&mesh, why);
+    assert_eq!(failure.evidence.patches, named, "{why:?}");
+    for patch in &failure.evidence.patches {
+        for p in patch.p.iter().chain(&patch.c) {
+            let inside = (0.0..=1.0).contains(&p.x) && (0.0..=1.0).contains(&p.y);
+            assert!(inside && (0.0..=h).contains(&p.z), "{p}");
+        }
+    }
+    let rest = crate::Evidence {
+        patches: Vec::new(),
+        ..*failure.evidence
+    };
+    assert!(rest.is_empty());
+}
+
+#[test]
+fn the_first_tries_evidence_goes_with_its_error() {
+    // `late_fork` at fit 1e-2 within 18 210 units: the first try fails
+    // the check, the second runs out of work, and the first try's error
+    // stands with the first try's evidence: the triangles its error
+    // names, of its mesh. The same at 1 and 8 threads.
+    let fine = Tolerance::new(1e-2).unwrap();
+    let p = late_fork();
+    let failure = assert_deterministic(|| {
+        extrude(&p, &Frame::XY, 0.0, 2.0, 9, &fine, &Budget::new(18_210)).unwrap_err()
+    });
+    // Errors as they were before failures carried their triangles.
+    let why = CheckError::VertexNeighbours(172, 178);
+    assert_eq!(failure.error, KernelError::Invalid(why));
+    let (mesh, first) = first_try(&p, 0.0, 2.0, &fine, 18_210);
+    assert_eq!(first.unwrap_err(), failure);
+    assert_eq!(
+        failure.evidence.patches,
+        named_patches(&mesh, why),
+        "{why:?}"
+    );
+
+    // A circle cut unevenly at the coarsest tolerance: every try is
+    // refused, the second (flat corners) on caps of its own with another
+    // error. The first try's error is returned, with its evidence.
+    let (p, r, tol) = uneven_circles_from(2, [Tolerance::MAX_FIT, 1e-2, 1e-3]).swap_remove(12);
+    assert_eq!(tol, Tolerance::new(Tolerance::MAX_FIT).unwrap());
+    let failure = assert_deterministic(|| {
+        extrude(&p, &Frame::XY, 0.0, r, 9, &tol, &Budget::DEFAULT).unwrap_err()
+    });
+    let why = CheckError::VertexNeighbours(40, 42);
+    assert_eq!(failure.error, KernelError::Invalid(why));
+    let (mesh, first) = first_try(&p, 0.0, r, &tol, Budget::DEFAULT.work());
+    assert_eq!(first.unwrap_err(), failure);
+    assert_eq!(
+        failure.evidence.patches,
+        named_patches(&mesh, why),
+        "{why:?}"
+    );
+    // The second try's failure, from the first's fork.
+    let margin = tol.resolution();
+    let mut work = Work::new(&Budget::DEFAULT);
+    let mut chain = Chain::new(&p, margin).unwrap();
+    chain.separate(&mut work).unwrap();
+    let mut fork = None;
+    let start = Rounds::new(chain);
+    cap::triangulate(
+        start,
+        margin,
+        Mode::QUALITY,
+        &mut fork,
+        &mut false,
+        &mut work,
+    )
+    .unwrap();
+    let fork = fork.expect("a fork");
+    let caps = cap::triangulate(
+        fork,
+        margin,
+        Mode::FLAT_CORNERS,
+        &mut None,
+        &mut false,
+        &mut work,
+    );
+    let (chain, cap) = caps.unwrap();
+    let second = build(&chain, &cap, &Frame::XY, 0.0, r, 9).unwrap();
+    let second = Solid::new_repaired_within(second, &tol, &mut work).unwrap_err();
+    assert!(matches!(second.error, KernelError::Invalid(_)));
+    assert_ne!(second.error, failure.error);
 }

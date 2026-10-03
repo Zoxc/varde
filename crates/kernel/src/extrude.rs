@@ -112,7 +112,8 @@ impl Frame {
 /// of `budget` or past a limit with [`KernelError::TooComplex`]; it never
 /// gives an invalid solid. A profile's error comes with the segments and
 /// points it is about, placed on `frame` at height 0, and their sketch
-/// curves, as [`Failure::evidence`].
+/// curves, as [`Failure::evidence`]; an `Invalid` with the triangles of
+/// the solid built that the check's error names.
 pub fn extrude(
     profile: &Profile,
     frame: &Frame,
@@ -123,10 +124,12 @@ pub fn extrude(
     budget: &Budget,
 ) -> Result<Solid, Failure> {
     extruded(profile, frame, from, to, feature, tol, budget)
-        .map_err(|error| profile_failure(error, profile, frame, tol))
+        .map_err(|failure| profile_failure(failure, profile, frame, tol))
 }
 
-/// [`extrude`], failing with the error alone.
+/// [`extrude`], failing with the error, and for one of a mesh built
+/// ([`KernelError::Invalid`]) the triangles it names
+/// ([`Solid::new_repaired_within`]), of the try whose error it is.
 fn extruded(
     profile: &Profile,
     frame: &Frame,
@@ -135,24 +138,24 @@ fn extruded(
     feature: u64,
     tol: &Tolerance,
     budget: &Budget,
-) -> Result<Solid, KernelError> {
+) -> Result<Solid, Failure> {
     profile.check().map_err(KernelError::Profile)?;
     frame.check()?;
     let max = f64::from(MAX_COORD);
     for h in [from, to] {
         // NaN fails too.
         if h.is_nan() || h.abs() > max {
-            return Err(PatchError::Coordinate(h.abs()).into());
+            return Err(KernelError::from(PatchError::Coordinate(h.abs())).into());
         }
     }
     if from >= to {
-        return Err(PatchError::Parameter(to - from).into());
+        return Err(KernelError::from(PatchError::Parameter(to - from)).into());
     }
     let margin = tol.resolution();
     let mut work = Work::new(budget);
     let mut chain = Chain::new(profile, margin)?;
     chain.separate(&mut work)?;
-    let solid = |cap: Result<(Chain, Cap), KernelError>, work: &mut Work| {
+    let solid = |cap: Result<(Chain, Cap), KernelError>, work: &mut Work| -> Result<_, Failure> {
         let (chain, cap) = cap?;
         let mesh = build(&chain, &cap, frame, from, to, feature)?;
         work.spend(mesh.tris().len())?;
@@ -176,10 +179,11 @@ fn extruded(
     // (refinement asked for something, or mending left a halving to it
     // that the plain caps would make), else it would repeat it; then the
     // plain second try from its fork, if the refined second try did
-    // anything it wouldn't.
-    let retry = |e: &KernelError| {
+    // anything it wouldn't. The first try's error is the one returned, so
+    // its evidence is.
+    let retry = |f: &Failure| {
         matches!(
-            e,
+            f.error,
             KernelError::Invalid(_)
                 | KernelError::TooComplex
                 | KernelError::Profile(ProfileError::TooFine(..))

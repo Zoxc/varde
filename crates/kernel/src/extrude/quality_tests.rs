@@ -789,7 +789,7 @@ fn the_plain_caps_second_try_is_made() {
         );
         let solid = caps.and_then(|(chain, cap)| {
             let mesh = build(&chain, &cap, &Frame::XY, 0.0, h, 1)?;
-            Solid::new_repaired_within(mesh, &tol, &mut work)
+            Solid::new_repaired_within(mesh, &tol, &mut work).map_err(|f| f.error)
         });
         assert!(solid.is_err(), "{mode:?}");
         assert_eq!(forked.is_some(), fork, "{mode:?}");
@@ -869,7 +869,7 @@ fn a_run_of_fine_pieces_in_a_cut_circle_extrudes() {
         let caps = cap::triangulate(start, margin, mode, &mut None, &mut false, &mut work);
         let solid = caps.and_then(|(chain, cap)| {
             let mesh = build(&chain, &cap, &Frame::XY, 0.0, h, 1)?;
-            Solid::new_repaired_within(mesh, &tol, &mut work)
+            Solid::new_repaired_within(mesh, &tol, &mut work).map_err(|f| f.error)
         });
         assert_eq!(solid.is_ok(), passes, "{mode:?}");
     }

@@ -125,8 +125,12 @@ message is worded from the kernel's `failure.error` as before
   (`Segment::curve`, the sketch curve's `Id::get`), so a draft's
   `Drafted::geometry` and a committed feature's `FeatureFailure` show
   the segments where the sketch has them (tested end to end in
-  `history/tests/profile_evidence.rs`). The kernel's other errors and
-  regen's own failures have none yet.
+  `history/tests/profile_evidence.rs`). A tool, join, cut or combine
+  whose solid fails the kernel's check or repair (`Invalid`, and a
+  boolean's `Invalid` named `NotManifold`) gives the triangles the
+  error names, drawn as a patch mesh (`history/tests/check_evidence.rs`:
+  a slot too thin, two boxes joined along an edge). The kernel's other
+  errors and regen's own failures have none yet.
 - **The app** keeps `MeshFeed::failed_features` as `FeatureFailure`s
   and the draft's `Drafted` (`MeshFeed::draft_geometry`, beside
   `draft_error`). The viewport draws the geometry of the draft's

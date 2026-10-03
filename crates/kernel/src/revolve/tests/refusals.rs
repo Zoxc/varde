@@ -224,3 +224,49 @@ fn work_past_the_budget_is_too_complex() {
         );
     }
 }
+
+#[test]
+fn a_solid_too_thin_fails_with_the_triangles_it_names() {
+    // A washer, and a part of it, four resolutions thick: wide enough
+    // apart for the profile, too thin for the solid. The check's error
+    // comes with the two triangles it names, on the washer's surface.
+    // The same at 1 and 8 threads.
+    let tol = Tolerance::new(Tolerance::MAX_FIT).unwrap();
+    let h = 4.0 * tol.resolution();
+    let p = profile(vec![rect(v(1.0, 0.0), v(2.0, h), 0)]);
+    // The errors as they were before failures carried their triangles.
+    for (sweep, why) in [
+        (Sweep::Full, CheckError::Hull(0, 14)),
+        (part(1.0), CheckError::VertexNeighbours(4, 11)),
+    ] {
+        let failure =
+            assert_deterministic(|| revolve(&p, &Z, sweep, 7, &tol, &Budget::DEFAULT).unwrap_err());
+        assert_eq!(failure.error, KernelError::Invalid(why));
+        assert_eq!(failure.evidence.patches.len(), 2);
+        let slack = 1e-9;
+        for patch in &failure.evidence.patches {
+            // The corners on the washer: between its radii and its two
+            // planes, and on one of its faces (an end's on a plane
+            // through the axis).
+            for q in patch.p {
+                let r = q.truncate().length();
+                assert!((1.0 - slack..=2.0 + slack).contains(&r), "{q}");
+                assert!((-slack..=h + slack).contains(&q.z), "{q}");
+            }
+            let on = |f: &dyn Fn(DVec3) -> bool| patch.p.iter().all(|&q| f(q));
+            assert!(
+                on(&|q| q.z.abs() < slack)
+                    || on(&|q| (q.z - h).abs() < slack)
+                    || on(&|q| (q.truncate().length() - 1.0).abs() < 1e-6)
+                    || on(&|q| (q.truncate().length() - 2.0).abs() < 1e-6)
+                    || on(&|q| q.truncate().perp_dot(patch.p[0].truncate()).abs() < 1e-9),
+                "{patch:?}"
+            );
+        }
+        let rest = crate::Evidence {
+            patches: Vec::new(),
+            ..*failure.evidence
+        };
+        assert!(rest.is_empty());
+    }
+}

@@ -61,6 +61,7 @@ use glam::DVec3;
 use crate::budget::{Budget, Work};
 use crate::mesh::{BuildError, Bvh, CheckError, Face, FaceKey, Mesh, MeshBuilder, Surface};
 use crate::patch::Bounds3;
+use crate::solid::Unfinished;
 use crate::topology::distance::{Allowance, to_patches};
 use crate::{Failure, KernelError, Solid, Tolerance};
 
@@ -233,7 +234,9 @@ type Found = (Vec<(i8, f64, bool)>, usize);
 /// each other that would leave a triangle facing against its face's
 /// plane (its tag or form). Telling `NotManifold` from `Invalid` costs
 /// work only once the operation has failed, so it never turns a result
-/// into an error.
+/// into an error. An `Invalid` from repair or the check, and a
+/// `NotManifold` named from one, come with the triangles of the result
+/// the check's error names as [`Failure::evidence`].
 pub fn boolean(
     a: &Solid,
     b: &Solid,
@@ -241,7 +244,7 @@ pub fn boolean(
     tol: &Tolerance,
     budget: &Budget,
 ) -> Result<Solid, Failure> {
-    boolean_within(a, b, op, tol, &mut Work::new(budget)).map_err(Failure::from)
+    boolean_within(a, b, op, tol, &mut Work::new(budget))
 }
 
 /// The least work [`boolean`] gives its second try, without joining ends
@@ -250,14 +253,15 @@ pub fn boolean(
 /// in a few thousand units) took up to 150 000 to refine as before.
 const AGAIN: u64 = 150_000;
 
-/// [`boolean`], charging `work`.
+/// [`boolean`], charging `work`. The failure returned is a try's error
+/// with that try's evidence.
 fn boolean_within(
     a: &Solid,
     b: &Solid,
     op: Op,
     tol: &Tolerance,
     work: &mut Work,
-) -> Result<Solid, KernelError> {
+) -> Result<Solid, Failure> {
     match (a.is_empty(), b.is_empty(), op) {
         (true, _, Op::Union) => return Ok(b.clone()),
         (_, true, Op::Union | Op::Difference) => return Ok(a.clone()),
@@ -271,7 +275,7 @@ fn boolean_within(
     let mut failed = Failed::default();
     let first = checked_with(a, b, op, true, &mut joined, &mut failed, tol, work);
     let e = match first {
-        Err(e) if joined && e != KernelError::TooComplex => e,
+        Err(e) if joined && e.error != KernelError::TooComplex => e,
         result => return pinched_named(result, &failed, tol, work),
     };
     // Lines along walls' common direction joined in an early round leave
@@ -298,7 +302,9 @@ fn boolean_within(
     // What the second try took, charged to the operation's budget.
     work.spend(usize::try_from(cap - again.left()).unwrap_or(usize::MAX))?;
     match second {
-        Err(KernelError::TooComplex) if work.left() == 0 => Err(KernelError::TooComplex),
+        Err(f) if f.error == KernelError::TooComplex && work.left() == 0 => {
+            Err(KernelError::TooComplex.into())
+        }
         Err(_) => pinched_named(Err(e), &failed, tol, work),
         result => result,
     }
@@ -345,15 +351,19 @@ enum Hull {
 ///
 /// Only an error is renamed, never `Ok` made one or one made `Ok`, and
 /// not where telling runs out of what is left of the budget: then the
-/// error stays as it was, the budget spent.
+/// error stays as it was, the budget spent. A renamed error keeps the
+/// evidence it came with, the triangles the check or repair named.
 fn pinched_named(
-    result: Result<Solid, KernelError>,
+    result: Result<Solid, Failure>,
     failed: &Failed,
     tol: &Tolerance,
     work: &mut Work,
-) -> Result<Solid, KernelError> {
+) -> Result<Solid, Failure> {
     match result {
-        Err(KernelError::Invalid(e)) if !failed.verts.is_empty() => {
+        Err(Failure {
+            error: KernelError::Invalid(e),
+            evidence,
+        }) if !failed.verts.is_empty() => {
             let mut touches = || -> Result<bool, KernelError> {
                 let corners = |mesh: &Mesh| -> Vec<[u32; 3]> {
                     let tris = mesh.tris().iter();
@@ -371,10 +381,11 @@ fn pinched_named(
                         None => false,
                     })
             };
-            match touches() {
-                Ok(true) => Err(KernelError::Boolean(BooleanError::NotManifold)),
-                _ => Err(KernelError::Invalid(e)),
-            }
+            let error = match touches() {
+                Ok(true) => KernelError::Boolean(BooleanError::NotManifold),
+                _ => KernelError::Invalid(e),
+            };
+            Err(Failure { error, evidence })
         }
         result => result,
     }
@@ -479,7 +490,7 @@ fn unchecked(
 /// assembled, cleaned, repaired and checked. Where it fails as
 /// [`KernelError::Invalid`] from repair or the check, `failed` is left
 /// with what the mesh that failed shows (see [`checked`]), for
-/// [`pinched_named`].
+/// [`pinched_named`], and the failure with the triangles it names.
 #[allow(clippy::too_many_arguments)]
 fn checked_with(
     a: &Solid,
@@ -490,7 +501,7 @@ fn checked_with(
     failed: &mut Failed,
     tol: &Tolerance,
     work: &mut Work,
-) -> Result<Solid, KernelError> {
+) -> Result<Solid, Failure> {
     let (soup, faces) = assembled(a, b, op, join, joined, tol, work)?;
     // The clean-up's last resort, unfolding sheets folded onto a flush
     // face, can leave a soup that fails where the clean-up without it
@@ -511,8 +522,9 @@ fn checked_with(
         tol,
         work,
     ) {
-        Err(KernelError::Invalid(e)) if unfolded => {
-            // The first try's error stands, so its positions do.
+        Err(e) if matches!(e.error, KernelError::Invalid(_)) && unfolded => {
+            // The first try's error stands, so its positions and
+            // evidence do.
             let first = std::mem::take(failed);
             let (soup, faces) = kept;
             match checked(
@@ -529,7 +541,7 @@ fn checked_with(
             ) {
                 Err(_) => {
                     *failed = first;
-                    Err(KernelError::Invalid(e))
+                    Err(e)
                 }
                 result => result,
             }
@@ -543,7 +555,8 @@ fn checked_with(
 /// repaired and checked. `failed` is left with what the mesh shows where
 /// repair or the check fails as [`KernelError::Invalid`] (but for a
 /// triangle facing against its face's plane, never renamed), and empty
-/// otherwise.
+/// otherwise; such a failure comes with the triangles it names, of the
+/// mesh that failed ([`Failure::of_mesh`]).
 #[allow(clippy::too_many_arguments)]
 fn checked(
     a: &Solid,
@@ -556,7 +569,7 @@ fn checked(
     failed: &mut Failed,
     tol: &Tolerance,
     work: &mut Work,
-) -> Result<Solid, KernelError> {
+) -> Result<Solid, Failure> {
     *failed = Failed::default();
     let mesh = cleaned(a, b, op, soup, faces, unfold, unfolded, tol, work)?;
     // Repair takes the mesh; its positions before repair are all telling
@@ -568,17 +581,24 @@ fn checked(
     // line between the two operands' pieces of a plane or cylinder.
     match Solid::finished_or_checked(mesh, tol, work) {
         Ok(solid) => Ok(solid),
-        Err((e @ KernelError::Invalid(why), checked)) => {
-            let hull = match (why, checked) {
-                (CheckError::FacesAgainst(_), _) => return Err(e),
-                (CheckError::Hull(t, u), Some(mesh)) => Some(Hull::Repaired(mesh, t, u)),
-                (CheckError::Hull(t, u), None) => Some(Hull::Cleaned(t, u)),
+        Err((e @ KernelError::Invalid(why), unfinished)) => {
+            // The triangles it names, of the mesh that failed.
+            let failure = match &unfinished {
+                Some(unfinished) => Failure::of_mesh(e, unfinished.mesh()),
+                None => e.into(),
+            };
+            let hull = match (why, unfinished) {
+                (CheckError::FacesAgainst(_), _) => return Err(failure),
+                (CheckError::Hull(t, u), Some(Unfinished::Checked(mesh))) => {
+                    Some(Hull::Repaired(mesh, t, u))
+                }
+                (CheckError::Hull(t, u), _) => Some(Hull::Cleaned(t, u)),
                 _ => None,
             };
             *failed = Failed { verts, tris, hull };
-            Err(e)
+            Err(failure)
         }
-        Err((e, _)) => Err(e),
+        Err((e, _)) => Err(e.into()),
     }
 }
 
