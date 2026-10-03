@@ -315,10 +315,10 @@ impl<'a> Plan<'a> {
             .collect();
         let mut round = 0;
         while !open.is_empty() && self.fits(limits) {
-            let levels = &self.levels;
+            let plan = &*self;
             let errors = par_map(&open, |&t| {
-                let (patch, level) = (mesh.patch(t as usize), &levels[t as usize]);
-                level_error(&patch, level, |i, r| patch.eval(level.outer_param(i, r)))
+                let outer = |i, r| plan.sample_point(3 * t + i, r);
+                level_error(&mesh.patch(t as usize), &plan.levels[t as usize], outer)
             });
             let mut next = Vec::new();
             for (&t, &error) in open.iter().zip(&errors) {
@@ -338,6 +338,22 @@ impl<'a> Plan<'a> {
     /// Halfedge `h`'s segment count.
     fn n_of(&self, h: u32) -> u32 {
         self.counts[self.mesh.halfedge(h).edge as usize]
+    }
+
+    /// The `f64` point of halfedge `h`'s sample `r`, as drawing and
+    /// welding make it: a mesh vertex at either end, else the edge's curve
+    /// at the sample's parameter along its first halfedge.
+    fn sample_point(&self, h: u32, r: u32) -> DVec3 {
+        let (mesh, n) = (self.mesh, self.n_of(h));
+        if r == 0 {
+            return mesh.verts()[mesh.halfedge(h).start as usize];
+        }
+        if r == n {
+            return mesh.verts()[mesh.end(h) as usize];
+        }
+        let e = mesh.halfedge(h).edge as usize;
+        let s = if self.first[e] == h { r } else { n - r };
+        self.curves[e].eval(f64::from(s) / f64::from(n))
     }
 
     /// The fewest vertices the tessellation has: one per mesh vertex, per
@@ -1226,8 +1242,9 @@ impl Sampled {
 /// and at the middle of each side that isn't a segment of an edge (the
 /// edges' own segments are [`segments`]'), each from the triangle's point
 /// at the same mix of its corners, along the patch's normal there: the
-/// triangles drawn and welded ([`Sampled`]; side `i`'s sample `r` at
-/// `outer(i, r)`). A single triangle is measured too.
+/// triangles drawn and welded, their diagonals chosen from the same `f64`
+/// points ([`Sampled`]; side `i`'s sample `r` at `outer(i, r)`). A single
+/// triangle is measured too.
 fn level_error(patch: &Patch, level: &Level, outer: impl Fn(u32, u32) -> DVec3) -> f64 {
     let Sampled {
         params,
@@ -1252,7 +1269,9 @@ fn level_error(patch: &Patch, level: &Level, outer: impl Fn(u32, u32) -> DVec3) 
         error = error.max(off((ua + ub + uc) / 3.0, (pa + pb + pc) / 3.0));
         for i in 0..3 {
             let (a, b) = (tri[i], tri[(i + 1) % 3]);
-            if !along_edge(a, b) {
+            // A side inside the patch is two triangles', run the other
+            // way in the other: measured once, from the one it runs up in.
+            if a < b && !along_edge(a, b) {
                 let (ua, ub) = (params[a as usize], params[b as usize]);
                 let (pa, pb) = (points[a as usize], points[b as usize]);
                 error = error.max(off((ua + ub) * 0.5, (pa + pb) * 0.5));

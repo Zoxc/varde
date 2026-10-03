@@ -734,8 +734,8 @@ struct InPatch {
     points: [DVec3; 3],
 }
 
-/// The triangles `plan` makes of each patch, as measuring does, with
-/// their parameters and points.
+/// The triangles `plan` makes of each patch, as drawing, welding and
+/// measuring do, with their parameters and points.
 fn in_patches(plan: &Plan) -> Vec<InPatch> {
     let mut out = Vec::new();
     for &t in &plan.tri_ids {
@@ -746,7 +746,7 @@ fn in_patches(plan: &Plan) -> Vec<InPatch> {
             points,
             indices,
             ..
-        } = Sampled::new(&patch, level, |i, r| patch.eval(level.outer_param(i, r)));
+        } = Sampled::new(&patch, level, |i, r| plan.sample_point(3 * t + i, r));
         for tri in indices.as_chunks::<3>().0 {
             out.push(InPatch {
                 t: t as usize,
@@ -1191,6 +1191,58 @@ fn skewed_grids_choose_their_diagonals_by_the_patch() {
         let worst = worst_of(&plan);
         eprintln!("cylinder {height} on grids: {worst:.3}");
         assert!(worst <= 1.05, "{height}: {worst}");
+    }
+}
+
+/// The triangles drawn, welded and measured while refining are the same:
+/// each chooses its diagonals from the same `f64` points (a mesh vertex,
+/// an edge's curve, the patch inside), so a ring corner, a strip step or a
+/// flip near a tie can't go one way in one and the other in another.
+#[test]
+fn drawn_welded_and_measured_triangles_are_the_same() {
+    let display = Display::default();
+    let big = Solid::cylinder(DVec3::ZERO, 10.0, 5.0, 1, &TOL).unwrap();
+    let small = Solid::cylinder(DVec3::new(2.0, 1.0, -1.0), 5.0, 7.0, 2, &TOL).unwrap();
+    let cut = crate::boolean(&big, &small, crate::Op::Difference, &TOL, &Budget::DEFAULT);
+    let mut solids = round_solids();
+    solids.push(("cylinder less a cylinder", cut.unwrap()));
+    solids.push(("cylinder", big));
+    // A triangle as its corners' bits, from its lowest.
+    let canonical = |tri: [[u32; 3]; 3]| {
+        let k = (0..3).min_by_key(|&k| tri[k]).unwrap_or(0);
+        [0, 1, 2].map(|i| tri[(k + i) % 3])
+    };
+    for (name, solid) in solids {
+        let mesh = solid.mesh();
+        let plan = Plan::new(mesh, &display, &Limits::RENDER).unwrap().unwrap();
+        let measured = in_patches(&plan);
+        assert_eq!(measured.len() as u64, plan.triangles, "{name}");
+        // Drawn: region by region, so as sorted triangles.
+        let drawn = solid.tessellate(&display).unwrap();
+        let p = drawn.positions();
+        let mut ours: Vec<_> = (measured.iter())
+            .map(|tri| canonical(tri.points.map(|x| bits(x.as_vec3().to_array()))))
+            .collect();
+        let mut theirs: Vec<_> = (drawn.indices().chunks(3))
+            .map(|t| canonical([0, 1, 2].map(|i| bits(p[t[i] as usize]))))
+            .collect();
+        ours.sort_unstable();
+        theirs.sort_unstable();
+        assert!(ours == theirs, "{name}: drawn");
+        // Welded: patch by patch, in order, about its origin.
+        let (origin, positions, triangles) = weld(mesh, &display, &Limits::EXPORT).unwrap();
+        let origin = DVec3::from_array(origin);
+        assert_eq!(triangles.len(), measured.len(), "{name}");
+        for (tri, welded) in measured.iter().zip(&triangles) {
+            let about = tri
+                .points
+                .map(|x| (x - origin).as_vec3().as_dvec3().to_array());
+            assert_eq!(
+                about,
+                welded.map(|v| positions[v as usize]),
+                "{name}: welded"
+            );
+        }
     }
 }
 

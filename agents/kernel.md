@@ -2061,13 +2061,18 @@ tessellation too).
   its level and measured (`level_error`: the patch at each triangle's
   middle, in parameters, and at the middle of each side that isn't an
   edge's own segment, each from the triangle's point at the same mix of
-  its corners along the patch's normal there. The triangles measured are
-  those drawn and welded (`Sampled`): each sample numbered once, the
-  corners too, so the corner flips, which compare the two strips' end
-  triangles by their samples' numbers, are made as in drawing (with each
-  corner numbered once per side, as before, they were never made in the
-  measuring, and round patches were refined for corners the drawing had
-  flipped). The full distance would
+  its corners along the patch's normal there; a side inside the patch is
+  two triangles', and is measured from the one it runs up in (by the
+  samples' numbers), which reads the same and saves about a quarter of
+  the time. The triangles measured are exactly those drawn and welded
+  (`Sampled`): each sample numbered once, the corners too, so the corner
+  flips, which compare the two strips' end triangles by their samples'
+  numbers, are made as in drawing (with each corner numbered once per
+  side, as before, they were never made in the measuring, and round
+  patches were refined for corners the drawing had flipped); and their
+  diagonals chosen from the same `f64` points, the mesh vertices at the
+  corners and the edges' curves along the sides (`Plan::sample_point`),
+  not the patch at those parameters, which rounds differently. The full distance would
   also count the patch drifting along the surface where its parameters
   run unevenly, which refined a scaled ball that was already within; the
   distance from the triangle's plane misses a triangle steep to the
@@ -2236,7 +2241,9 @@ strips (not a short arc of one segment, not a ball's patch); a cylinder
 less a cylinder, less a slot and a spindle's cones, and cylinders 0.05
 to 500 high drawn on grids as if they had no ruling side, are within
 1.05 chords by the ring's diagonals alone, the same at 1 and 8 threads;
-a thin half cylinder's quadric walls tile; a refined level counts what it makes; a part torus meets
+a thin half cylinder's quadric walls tile; the round solids' and a cut
+cylinder's triangles drawn, welded and measured are the same, to the
+bit; a refined level counts what it makes; a part torus meets
 its exact limits and fails one under each. Faces and edges: a box's 6 faces of 2 triangles are its 6
 regions and its 12 edges its 12 chains; a cylinder's quarter walls are
 one region and its rims two closed chains, closing on their first
