@@ -194,6 +194,7 @@ fn patterns_round_trip() {
             count: count("3"),
             spacing: Value::new("-2 in", &Pattern::spacing_ask(&design)).unwrap(),
         },
+        copies: Default::default(),
     };
     editor
         .apply(editor.document().add_feature(row.into()))
@@ -216,6 +217,7 @@ fn patterns_round_trip() {
             count: count("2 * 3"),
             angle: Value::new("90", &Pattern::angle_ask(&design)).unwrap(),
         },
+        copies: Default::default(),
     };
     editor
         .apply(editor.document().add_feature(FeatureKind::from(ring)))
@@ -2257,6 +2259,7 @@ fn a_tampered_pattern_is_refused() {
         let pattern = Pattern {
             bodies: vec![plate],
             kind,
+            copies: Default::default(),
         };
         editor
             .apply(editor.document().add_feature(pattern.into()))
@@ -2309,4 +2312,95 @@ fn a_tampered_pattern_is_refused() {
         let decoded = from_msgpack::<Document>(&swap(&named(was), &named(now)));
         assert!(decoded.is_err(), "{was} as {now} was taken");
     }
+}
+
+/// A pattern written before "Join to original" (no `copies` field) reads
+/// as joined, its copies in their bodies; one whose copies are bodies of
+/// their own goes through a file, and one whose list of them was changed
+/// on disk, or whose kind of copies isn't one it knows, is refused.
+#[test]
+fn join_to_original_reads_from_older_files_and_is_checked() {
+    use varde_document::{Axis3, AxisRef, Copies, FeatureKind, Pattern, PatternKind};
+    use varde_expr::Value;
+    let mut editor = Editor::new(Document::example());
+    let plate = editor.document().bodies()[0].id;
+    let design = editor.document().design();
+    let row = |copies: Copies| Pattern {
+        bodies: vec![plate],
+        kind: PatternKind::Linear {
+            along: AxisRef::Origin(Axis3::Y),
+            count: Value::new("3", &Pattern::count_ask(&design)).unwrap(),
+            spacing: Value::new("40", &Pattern::spacing_ask(&design)).unwrap(),
+        },
+        copies,
+    };
+    editor
+        .apply(editor.document().add_feature(row(Copies::Joined).into()))
+        .unwrap();
+    let joined = editor.document().clone();
+    // The field taken out, as an older build wrote it: the pattern's map
+    // of three fields made two.
+    let raw = record_msgpack(&joined);
+    let mut header = vec![0x83, 0xa6];
+    header.extend_from_slice(b"bodies");
+    let at = (raw.windows(header.len()))
+        .position(|window| window == header)
+        .expect("the pattern's map");
+    let mut field = vec![0xa6];
+    field.extend_from_slice(b"copies");
+    field.push(0xa6);
+    field.extend_from_slice(b"Joined");
+    let end = (raw.windows(field.len()))
+        .position(|window| window == field)
+        .expect("its copies");
+    let mut older = raw[..end].to_vec();
+    older.extend_from_slice(&raw[end + field.len()..]);
+    older[at] = 0x82;
+    let (read, _) = from_msgpack::<Document>(&older).unwrap();
+    assert_eq!(read, joined);
+    let FeatureKind::Pattern(pattern) = &read.features()[2].kind else {
+        panic!("the pattern");
+    };
+    assert!(pattern.joins());
+
+    // Copies of their own, through a file.
+    let id = joined.features()[2].id;
+    editor
+        .apply(Command::SetFeature {
+            feature: id,
+            kind: Box::new(row(Copies::Separate(Vec::new())).into()),
+        })
+        .unwrap();
+    let separate = editor.document();
+    assert_eq!(separate.bodies().len(), 3);
+    let (bytes, _) = to_bytes(separate, &[]).unwrap();
+    let (read, _) = from_bytes(&bytes).unwrap();
+    assert_eq!(&read, separate);
+    let raw = record_msgpack(separate);
+    let mut list = vec![0xa8];
+    list.extend_from_slice(b"Separate");
+    let at = (raw.windows(list.len()))
+        .position(|window| window == list)
+        .expect("the copies' variant")
+        + list.len();
+    // Its two bodies, small ids, one each.
+    assert_eq!(raw[at], 0x92);
+    let mut short = raw[..at].to_vec();
+    short.push(0x91);
+    short.push(raw[at + 1]);
+    short.extend_from_slice(&raw[at + 3..]);
+    assert!(
+        from_msgpack::<Document>(&short).is_err(),
+        "one copy body short"
+    );
+    let mut repeated = raw.clone();
+    repeated[at + 2] = repeated[at + 1];
+    assert!(
+        from_msgpack::<Document>(&repeated).is_err(),
+        "a copy body twice"
+    );
+    let mut unknown = raw.clone();
+    unknown[at - 1] = b'z';
+    assert!(from_msgpack::<Document>(&unknown).is_err(), "Separatz");
+    assert!(from_msgpack::<Document>(&raw).is_ok());
 }

@@ -37,6 +37,8 @@ fn state(kind: MotionKind, picking: MotionPick, line: Option<[DVec3; 2]>) -> Mot
         units: LengthUnit::Mm,
         keep_original: true,
         flip: false,
+        join: true,
+        warning: None,
         mode: PatternMode::Spacing,
         spread_error: None,
         copies: None,

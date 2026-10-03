@@ -24,7 +24,7 @@ use std::f64::consts::{PI, TAU};
 
 use glam::DVec3;
 use varde_document::{
-    Axis3, AxisRef, BodyId, Design, Document, FeatureId, FeatureKind, Generation,
+    Axis3, AxisRef, BodyId, Copies, Design, Document, FeatureId, FeatureKind, Generation,
     MAX_FEATURE_BODIES, MAX_PATTERN_COUNT, Mirror, Move, Pattern, PatternKind, PlaneRef,
 };
 use varde_expr::{AngleUnit, Ask, ErrorKind, Unit, Value};
@@ -75,6 +75,11 @@ pub(crate) struct MotionSession {
     pub(crate) keep_original: bool,
     /// A linear pattern's Flip direction, stored as a negative spacing.
     pub(crate) flip: bool,
+    /// A pattern's Join to original: ticked to begin with, each body
+    /// holding its copies, as the pattern stores by default (the UI
+    /// mock's starts unticked; the user's decision is ticked); unticked,
+    /// each copy is a body of its own ([`Copies::Separate`]).
+    pub(crate) join: bool,
     /// An edited pattern's spread as it opened: see [`Opened`].
     opened: Option<Opened>,
     /// How a pattern's copies are spread: by the spacing to begin with
@@ -275,6 +280,7 @@ impl MotionSession {
             gone_reference: None,
             keep_original: true,
             flip: false,
+            join: true,
             opened: None,
             mode,
             hover: None,
@@ -323,6 +329,7 @@ impl MotionSession {
                 let kind = MotionKind::of(kind)?;
                 let mut session = Self::new(kind, document, pattern.bodies.clone());
                 session.axis = Some(*pattern.kind.axis());
+                session.join = pattern.joins();
                 session.fields[MotionField::Count.index()] =
                     TypedText::of(pattern.kind.count_value(), &Pattern::count_ask(&design));
                 session.take_shape(pattern, shape);
@@ -459,6 +466,7 @@ impl MotionSession {
                 count: count.clone(),
                 angle: angle.clone(),
             },
+            copies: Copies::Joined,
         };
         let kind = match self.kind {
             MotionKind::LinearPattern => {
@@ -548,9 +556,17 @@ impl MotionSession {
                 *spread = opened.stored.clone();
             }
         }
+        // Unjoined, the document lays the copy bodies out, keeping an
+        // edited pattern's.
+        let copies = if self.join {
+            Copies::Joined
+        } else {
+            Copies::Separate(Vec::new())
+        };
         Ok(Some(Pattern {
             bodies: self.bodies.clone(),
             kind,
+            copies,
         }))
     }
 
@@ -958,7 +974,8 @@ impl Doc {
             MotionLook::Mode(mode) if PatternMode::of(session.kind).contains(&mode) => {
                 session.mode = mode;
             }
-            MotionLook::Flip | MotionLook::Mode(_) => {}
+            MotionLook::Join if session.kind.pattern() => session.join = !session.join,
+            MotionLook::Flip | MotionLook::Mode(_) | MotionLook::Join => {}
         }
     }
 
@@ -1110,9 +1127,73 @@ impl Doc {
     /// the session is ready ([`MotionSession::ready`]).
     pub(crate) fn motion_ready(&self) -> bool {
         let design = self.editor.document().design();
-        self.motion
-            .as_ref()
-            .is_some_and(|session| self.editable() && !self.proposing() && session.ready(&design))
+        self.motion.as_ref().is_some_and(|session| {
+            self.editable()
+                && !self.proposing()
+                && session.ready(&design)
+                && self.motion_held().is_none()
+        })
+    }
+
+    /// Why the pattern being edited can't be set up as it is, if it
+    /// would drop a copy body (fewer copies, a body taken out, joined to
+    /// the original again) that a later feature names: the document
+    /// refuses that rather than drop the feature, so the panel says so
+    /// at once, and how to get past it, as an extrude's that would stop
+    /// making the body a combine names.
+    pub(crate) fn motion_held(&self) -> Option<String> {
+        let session = self.motion.as_ref()?;
+        let edited = session.feature?;
+        let kind = session.kind()?;
+        let document = self.editor.document();
+        let dropped = document.copies_dropped(edited, &kind);
+        if dropped.is_empty() {
+            return None;
+        }
+        (document.features().iter()).find_map(|feature| {
+            let named = feature.kind.bodies();
+            let body = dropped.iter().find(|body| named.contains(body))?;
+            let body = &document.body(*body)?.name;
+            Some(format!(
+                "{} uses {body}, a copy this pattern would no longer make: take {body} out of {} or delete it first",
+                feature.name, feature.name
+            ))
+        })
+    }
+
+    /// What the panel warns of for the pattern being set up, if anything:
+    /// a linear one's copies, each a body of its own, overlapping, as the
+    /// UI mock has it: the spacing shorter than its bodies are long that
+    /// way (their faces in the model shown, so within its mesh), or the
+    /// mock's words for it.
+    fn motion_warning(&self, session: &MotionSession) -> Option<String> {
+        if session.kind != MotionKind::LinearPattern
+            || session.join
+            || session.need().is_some()
+            || session.gone().is_some()
+        {
+            return None;
+        }
+        let Ok(Some(pattern)) = session.pattern() else {
+            return None;
+        };
+        let PatternKind::Linear { along, spacing, .. } = &pattern.kind else {
+            return None;
+        };
+        let direction = match along {
+            AxisRef::Origin(axis) => axis.direction(),
+            _ => self.feed.draft_reference()?[1],
+        };
+        let shown = self.shown_bodies(&session.bodies);
+        let long = self.feed.pick_index().bodies_extent(&shown, direction)?;
+        // The mock's slack, for copies end to end.
+        (spacing.value.abs() < long - 1e-6).then(|| {
+            let units = self.editor.document().units();
+            let long = varde_expr::format(long, Some(Unit::Length(units)));
+            format!(
+                "The copies overlap ({long} long this way): tick Join to original to merge them"
+            )
+        })
     }
 
     /// Adds the move or mirror being set up, or changes the one edited,
@@ -1402,6 +1483,8 @@ impl Doc {
             units: document.units(),
             keep_original: session.keep_original,
             flip: session.flip,
+            join: session.join,
+            warning: self.motion_warning(session),
             mode: session.mode,
             spread_error: session.spread_error(),
             copies: match session.kind() {
@@ -1409,7 +1492,9 @@ impl Doc {
                 _ => None,
             },
             need: session.need(),
-            refused: (session.gone().map(str::to_owned)).or_else(|| session.refused(&design)),
+            refused: (session.gone().map(str::to_owned))
+                .or_else(|| session.refused(&design))
+                .or_else(|| self.motion_held()),
             error: self.feed.draft_error(),
             show_error: self.draft_framed(),
             checking: self.proposals.slow(),

@@ -35,6 +35,8 @@ fn state_of<'a>(kind: MotionKind, bodies: Vec<CombineBody<'a>>) -> MotionState<'
         units: LengthUnit::Mm,
         keep_original: true,
         flip: false,
+        join: true,
+        warning: None,
         mode: PatternMode::Spacing,
         spread_error: None,
         copies: None,
@@ -215,9 +217,19 @@ fn a_linear_pattern_s_panel_is_the_mock_s() {
         assert!(at >= y, "{text} above what comes before it: {shown:?}");
         y = at;
     }
-    // No Join to original: copies always join their body.
-    assert!(!has(&shown, "Join to original"));
+    // Join to original last, ticked.
+    let join = found(&shown, "Join to original").bounds.y;
+    assert!(join > found(&shown, "Total").bounds.y);
     assert!(!has(&shown, "Full 360°"));
+    // Unticked, the overlap warning where there's nothing else.
+    state.join = false;
+    let warning = "The copies overlap (12 mm long this way): tick Join to original to merge them";
+    state.warning = Some(warning.to_owned());
+    found(&texts_of(&state), warning);
+    state.refused = Some("it names 0 bodies".to_owned());
+    assert!(!has(&texts_of(&state), warning));
+    state.refused = None;
+    state.warning = None;
     // The field is the mode's, its whole error under it.
     state.mode = PatternMode::Total;
     state.spread_error = Some("The pattern runs past 1000000 mm".to_owned());
@@ -246,6 +258,7 @@ fn a_circular_pattern_s_panel_has_no_field_for_a_full_turn() {
     }
     assert!(!has(&shown, "Flip direction"));
     assert!(!has(&shown, "Direction"));
+    found(&shown, "Join to original");
     // Full 360° has only the tile named Spacing; another mode its field.
     let spacings = |shown: &[Shown]| shown.iter().filter(|s| s.text == "Spacing").count();
     assert_eq!(spacings(&shown), 1);
@@ -268,12 +281,18 @@ fn a_pattern_s_infos_are_the_mock_s() {
             count: count.clone(),
             spacing,
         },
+        copies: Default::default(),
     };
     assert_eq!(pattern_note(&pattern), "×4");
     assert_eq!(
         pattern_copies(document, &pattern),
-        "4 × 25 mm along X axis, flipped"
+        "4 × 25 mm along X axis, flipped · joined"
     );
+    assert_eq!(
+        pattern_info(document, &pattern),
+        "Body 1 · 4 × 25 mm along X axis, flipped · joined"
+    );
+    pattern.copies = varde_document::Copies::Separate(Vec::new());
     assert_eq!(
         pattern_info(document, &pattern),
         "Body 1 · 4 × 25 mm along X axis, flipped"
@@ -286,5 +305,10 @@ fn a_pattern_s_infos_are_the_mock_s() {
     assert_eq!(
         pattern_info(document, &pattern),
         "Body 1 · 4 × 90° about Z axis"
+    );
+    pattern.copies = Default::default();
+    assert_eq!(
+        pattern_info(document, &pattern),
+        "Body 1 · 4 × 90° about Z axis · joined"
     );
 }

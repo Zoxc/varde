@@ -23,8 +23,8 @@ const DEGREES: Unit = Unit::Angle(AngleUnit::Deg);
 use crate::chrome::sentence;
 use crate::icons::Icon;
 use crate::operation_panel::{
-    Framing, PanelHover, Parts, TypedField, field, footer_message, label, operation_panel,
-    pick_field, picked_row, tile, tiles, toggle, value_field,
+    Footer, Framing, PanelHover, Parts, TypedField, field, footer_message, label, message_text,
+    operation_panel, pick_field, picked_row, tile, tiles, toggle, value_field,
 };
 use crate::plane_pick::face_name;
 use crate::revolve::edge_axis_name;
@@ -245,6 +245,9 @@ pub enum MotionLook {
     Copy,
     /// A linear pattern's Flip direction: runs the other way, or not.
     Flip,
+    /// A pattern's Join to original: its copies in their bodies, or each
+    /// a body of its own.
+    Join,
     /// How a pattern's copies are spread.
     Mode(PatternMode),
     /// Drops the move or mirror being set up, changing nothing: Cancel,
@@ -292,6 +295,13 @@ pub struct MotionState<'a> {
     pub keep_original: bool,
     /// A linear pattern's Flip direction.
     pub flip: bool,
+    /// A pattern's Join to original.
+    pub join: bool,
+    /// What the panel warns of, if anything, the mock's words: a linear
+    /// pattern's copies, each a body of its own, overlapping ("The copies
+    /// overlap (12 mm long this way): tick Join to original to merge
+    /// them"). Shown where nothing else is.
+    pub warning: Option<String>,
     /// How a pattern's copies are spread.
     pub mode: PatternMode,
     /// Why a pattern's spread is refused where its own text isn't, the
@@ -421,8 +431,8 @@ pub(crate) fn mirror_info(document: &Document, mirror: &varde_document::Mirror) 
 }
 
 /// What the status bar says of a selected pattern, the mock's row info:
-/// "Body 1 · 4 × 25 mm along X axis", "Body 1 · 3 × 25 mm along X axis,
-/// flipped", "Body 1 · 6 × 60° about Z axis".
+/// "Body 1 · 4 × 25 mm along X axis · joined", "Body 1 · 3 × 25 mm along
+/// X axis, flipped", "Body 1 · 6 × 60° about Z axis".
 pub(crate) fn pattern_info(document: &Document, pattern: &Pattern) -> String {
     let bodies = body_names(document, &pattern.bodies);
     format!("{bodies} · {}", pattern_copies(document, pattern))
@@ -432,20 +442,22 @@ pub(crate) fn pattern_info(document: &Document, pattern: &Pattern) -> String {
 /// bodies: the count and the step between neighbours, and the axis,
 /// "4 × 25 mm along X axis" (the spacing's size, ", flipped" for a
 /// negative one), "6 × 60° about Z axis" (as the copies turn,
-/// [`Pattern::step_degrees`]).
+/// [`Pattern::step_degrees`]), and " · joined" for copies joined to
+/// their originals.
 pub fn pattern_copies(document: &Document, pattern: &Pattern) -> String {
     let count = pattern.kind.count_value().value;
     let axis = axis_name(document, pattern.kind.axis());
+    let joined = if pattern.joins() { " · joined" } else { "" };
     match &pattern.kind {
         PatternKind::Linear { spacing, .. } => {
             let step = varde_expr::format(spacing.value.abs(), Some(document.units().into()));
             let flipped = if spacing.value < 0.0 { ", flipped" } else { "" };
-            format!("{count} × {step} along {axis}{flipped}")
+            format!("{count} × {step} along {axis}{flipped}{joined}")
         }
         PatternKind::Circular { .. } => {
             let step = pattern.step_degrees().unwrap_or(0.0).to_radians();
             let step = varde_expr::format(step, Some(DEGREES));
-            format!("{count} × {step} about {axis}")
+            format!("{count} × {step} about {axis}{joined}")
         }
     }
 }
@@ -502,7 +514,8 @@ pub(crate) fn status_info(state: &MotionState<'_>) -> String {
 /// mock's: Bodies; a move's Translate (X, Y, Z) and Rotate (Axis, Angle);
 /// a mirror's Plane and Create copy; a linear pattern's Direction and
 /// Flip direction, a circular one's Axis, then Copies: the Count, how
-/// they're spread, and the spacing, total or angle (none for Full 360°).
+/// they're spread, the spacing, total or angle (none for Full 360°), and
+/// Join to original.
 pub(crate) fn panel<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
     let editable = state.editable;
     let send = |look: MotionLook| editable.then_some(Message::Look(Look::Motion(look)));
@@ -633,6 +646,13 @@ pub(crate) fn panel<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
                     });
                 column![field_named(MotionField::Spread, label), note].spacing(3)
             });
+            let join = toggle(
+                Icon::TkJoin,
+                "Join to original",
+                state.join,
+                send(MotionLook::Join),
+                Some("One body; otherwise each copy is its own"),
+            );
             column![
                 bodies,
                 reference,
@@ -641,6 +661,7 @@ pub(crate) fn panel<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
                 field_of(MotionField::Count),
                 tiles(modes),
                 spread,
+                join,
             ]
             .spacing(10)
             .into()
@@ -653,7 +674,13 @@ pub(crate) fn panel<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
         state.show_error,
         state.accept.then_some(Message::Edit(Edit::AcceptError)),
         state.checking,
-    );
+    )
+    .or_else(|| {
+        // The mock's warning, under the failure where there's one: here
+        // only where there's no other message.
+        (state.warning.clone())
+            .map(|warning| Footer::Text(message_text(warning, theme::warning_text)))
+    });
     operation_panel(Parts {
         icon: state.kind.icon(),
         title: state.title(),

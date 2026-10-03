@@ -33,6 +33,7 @@ fn linear(document: &Document, bodies: &[BodyId], along: AxisRef, n: &str, step:
             count: count(document, n),
             spacing: Value::new(step, &Pattern::spacing_ask(&document.design())).unwrap(),
         },
+        copies: Default::default(),
     }
 }
 
@@ -51,6 +52,7 @@ fn circular(
             count: count(document, n),
             angle: Value::new(span, &Pattern::angle_ask(&document.design())).unwrap(),
         },
+        copies: Default::default(),
     }
 }
 
@@ -674,3 +676,5 @@ fn a_ring_about_a_far_axis() {
         "{centre}"
     );
 }
+
+mod separate;

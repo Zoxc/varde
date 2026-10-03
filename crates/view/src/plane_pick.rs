@@ -46,21 +46,64 @@ pub struct Naming {
     /// the joins and the combines using their tools up before it that
     /// worked, as regenerating merges.
     merged_before: Vec<(BodyId, BodyId)>,
-    /// The body each feature made, by the feature's number, ascending.
+    /// The body each extrude or revolve made, by the feature's number,
+    /// ascending (a pattern's copy bodies are in `separated`).
     made: Vec<(u64, BodyId)>,
-    /// The copies faces can be named as, ascending ([`FaceKey`]'s
-    /// `instance`): none (0), and those the mirrors keeping their
+    /// The copies faces can be named as, ascending by [`FaceKey`]'s
+    /// `instance`: none (0), and those the mirrors keeping their
     /// originals and the patterns before the feature make, of each
-    /// other's too; `None` if
+    /// other's too, with how each is made; `None` if
     /// they're past [`MAX_INSTANCES`], when any is taken. A later
     /// mirror's image or pattern's copy is shown when the feature isn't
     /// the last, but isn't there at the feature.
-    instances: Option<Vec<u64>>,
+    instances: Option<Vec<Copied>>,
+    /// The patterns before the feature whose copies are bodies of their
+    /// own, in the document's order: a face copied by one is on a copy
+    /// body, not on the body it was made on.
+    separated: Vec<Separated>,
     /// The bodies a face each join, cut or intersect made may be on, as
     /// the model shown found, by the feature's number, ascending: those
     /// it touched, as they were then, or for a join only the first, which
     /// it merges the others into.
     touched: Vec<(u64, Vec<BodyId>)>,
+}
+
+/// A copy faces can be named as: its instance ([`FaceKey`]'s), and how
+/// it's made, the copy `index` the feature numbered `feature` makes of
+/// faces of instance `parent`; none for the original's, instance 0.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Copied {
+    instance: u64,
+    from: Option<(u64, u64, u64)>,
+}
+
+/// A pattern whose copies are bodies of their own, as [`Naming`] follows
+/// faces on to them: the feature's number, the body each body whose
+/// faces it copies holds them in, by its index among the pattern's
+/// bodies (its own, and those merged into it before the pattern), sorted
+/// by body, and the copy bodies as the pattern lists them.
+#[derive(Debug, Clone, PartialEq)]
+struct Separated {
+    feature: u64,
+    sources: usize,
+    holders: Vec<(BodyId, usize)>,
+    copies: Vec<BodyId>,
+}
+
+impl Separated {
+    /// The body copy `index` of the faces of `body` is on, if `body`'s
+    /// faces are among those the pattern copies.
+    fn copy(&self, body: BodyId, index: u64) -> Option<BodyId> {
+        let at = (self.holders)
+            .binary_search_by_key(&body, |&(body, _)| body)
+            .ok()?;
+        let source = self.holders[at].1;
+        let at = usize::try_from(index.checked_sub(1)?)
+            .ok()?
+            .checked_mul(self.sources)?
+            .checked_add(source)?;
+        self.copies.get(at).copied()
+    }
 }
 
 /// How many copies [`Naming`] tells apart at most: past it, faces of
@@ -73,8 +116,11 @@ const MAX_INSTANCES: usize = 4096;
 /// be in with the history stopped at feature `before`: none's, each
 /// image a mirror keeping its original makes of those before it, and
 /// each copy a pattern makes of them. `None` past [`MAX_INSTANCES`].
-fn instances_before(document: &Document, before: usize) -> Option<Vec<u64>> {
-    let mut instances = vec![0];
+fn instances_before(document: &Document, before: usize) -> Option<Vec<Copied>> {
+    let mut instances = vec![Copied {
+        instance: 0,
+        from: None,
+    }];
     for feature in &document.features()[..before] {
         // The copies it makes of each, by index.
         let copies = match &feature.kind {
@@ -93,15 +139,20 @@ fn instances_before(document: &Document, before: usize) -> Option<Vec<u64>> {
         };
         let mut images = Vec::new();
         for index in copies {
-            images.extend(instances.iter().map(|&instance| copy(instance, index)));
+            images.extend(instances.iter().map(|copied| Copied {
+                instance: copy(copied.instance, index),
+                from: Some((copied.instance, feature.id.get(), index)),
+            }));
             if instances.len().saturating_add(images.len()) > MAX_INSTANCES {
                 return None;
             }
         }
         instances.extend(images);
     }
-    instances.sort_unstable();
-    instances.dedup();
+    // Stable: of two ways to one instance (which mixing makes all but
+    // impossible), the first made is kept.
+    instances.sort_by_key(|copied| copied.instance);
+    instances.dedup_by_key(|copied| copied.instance);
     Some(instances)
 }
 
@@ -244,7 +295,31 @@ impl Naming {
         // a working combine using its tools up merges them into its
         // target.
         let mut merged_before = Vec::new();
+        let mut separated = Vec::new();
         for feature in &document.features()[..before] {
+            if let FeatureKind::Pattern(pattern) = &feature.kind
+                && !pattern.joins()
+            {
+                // Its sources hold the faces of the bodies merged into
+                // them so far.
+                let mut holders: Vec<(BodyId, usize)> = (pattern.bodies.iter().enumerate())
+                    .map(|(source, &body)| (body, source))
+                    .collect();
+                for &(consumed, holder) in &merged_before {
+                    if let Ok(source) = pattern.bodies.binary_search(&holder) {
+                        holders.push((consumed, source));
+                    }
+                }
+                holders.sort_unstable();
+                holders.dedup_by_key(|(body, _)| *body);
+                let copies = pattern.copy_bodies().map(|(_, _, body)| body).collect();
+                separated.push(Separated {
+                    feature: feature.id.get(),
+                    sources: pattern.bodies.len(),
+                    holders,
+                    copies,
+                });
+            }
             if !worked(feature.id) {
                 continue;
             }
@@ -275,7 +350,12 @@ impl Naming {
             })
             .collect();
         touched.sort_unstable();
+        let made_new = |body: &&varde_document::Body| {
+            (document.feature(body.created_by))
+                .is_some_and(|maker| maker.kind.new_body() == Some(body.id))
+        };
         let mut made: Vec<(u64, BodyId)> = (document.bodies().iter())
+            .filter(made_new)
             .map(|body| (body.created_by.get(), body.id))
             .collect();
         made.sort_unstable();
@@ -287,6 +367,7 @@ impl Naming {
             made,
             touched,
             instances: instances_before(document, before),
+            separated,
         }
     }
 
@@ -294,9 +375,51 @@ impl Naming {
     /// the feature ([`Naming::takes_maker`]), and none's copy or the copy
     /// of a mirror before it.
     pub(crate) fn takes_key(&self, key: &FaceKey) -> bool {
-        self.takes_maker(key.feature)
-            && (self.instances.as_ref())
-                .is_none_or(|instances| instances.binary_search(&key.instance).is_ok())
+        self.takes_maker(key.feature) && self.copied(key.instance).is_some()
+    }
+
+    /// How faces of copy `instance` are made, if they can be named: a
+    /// copy made before the feature, or any past [`MAX_INSTANCES`]
+    /// (`Some(None)` then).
+    fn copied(&self, instance: u64) -> Option<Option<&Copied>> {
+        let Some(instances) = &self.instances else {
+            return Some(None);
+        };
+        let at = (instances.binary_search_by_key(&instance, |copied| copied.instance)).ok()?;
+        Some(Some(&instances[at]))
+    }
+
+    /// The body faces of copy `instance` first made on `body` are on,
+    /// where the history stops: `body` itself, or, where a pattern with
+    /// copies of their own copied them, its copy body, and so on through
+    /// each such pattern the copy comes from. None where that can't be
+    /// told (copies past [`MAX_INSTANCES`]) or the faces weren't on a
+    /// body such a pattern copies.
+    fn copy_body(&self, body: BodyId, instance: u64) -> Option<BodyId> {
+        if self.separated.is_empty() || instance == 0 {
+            return Some(body);
+        }
+        // The copies it comes from, the first made first.
+        let mut steps = Vec::new();
+        let mut at = instance;
+        while at != 0 {
+            let copied = self.copied(at)??;
+            let (parent, feature, index) = copied.from?;
+            steps.push((feature, index));
+            at = parent;
+            // Each step is to an instance made before: at most as many
+            // steps as instances.
+            if steps.len() > MAX_INSTANCES {
+                return None;
+            }
+        }
+        let mut body = body;
+        for &(feature, index) in steps.iter().rev() {
+            if let Some(pattern) = self.separated.iter().find(|p| p.feature == feature) {
+                body = pattern.copy(body, index)?;
+            }
+        }
+        Some(body)
     }
 
     /// Whether faces of `body` can be named: it's made before the
@@ -321,7 +444,7 @@ impl Naming {
     /// told.
     pub fn face_ref(&self, index: &PickIndex, face: u32, near: DVec3) -> Option<FaceRef> {
         let mut found = index.face_ref(face, near)?;
-        found.body = self.body_of(found.body, found.key.feature)?;
+        found.body = self.body_of(found.body, &found.key)?;
         Some(found)
     }
 
@@ -354,15 +477,32 @@ impl Naming {
     /// body shown; `shown` itself where neither is known. None if those
     /// are more than one body where the history stops, so which it's on
     /// there can't be told.
-    fn body_of(&self, shown: BodyId, maker: u64) -> Option<BodyId> {
+    fn body_of(&self, shown: BodyId, key: &FaceKey) -> Option<BodyId> {
+        let maker = key.feature;
         let lookup = |list: &[(u64, BodyId)]| {
             (list.binary_search_by_key(&maker, |(feature, _)| *feature)).map(|at| list[at].1)
         };
-        let mut on: Vec<BodyId> = match lookup(&self.made) {
+        let made: Vec<BodyId> = match lookup(&self.made) {
             Ok(body) => vec![body],
             Err(_) => (self.touched)
                 .binary_search_by_key(&maker, |(feature, _)| *feature)
                 .map_or_else(|_| Vec::new(), |at| self.touched[at].1.clone()),
+        };
+        // On to the copy bodies of patterns that copied it: a body such
+        // a pattern doesn't copy can't hold this copy.
+        let mut on: Vec<BodyId> = if made.is_empty() || key.instance == 0 {
+            made
+        } else {
+            let hopped: Vec<BodyId> = (made.iter())
+                .filter_map(|&body| self.copy_body(body, key.instance))
+                .collect();
+            if hopped.is_empty() && self.copied(key.instance).is_some_and(|c| c.is_none()) {
+                // Past the cap: which copy body can't be told.
+                if !self.separated.is_empty() {
+                    return None;
+                }
+            }
+            hopped
         };
         on.retain(|&body| holder(&self.merged, body) == shown);
         let Some(&first) = on.first() else {
@@ -394,7 +534,7 @@ impl Naming {
         if !keys.iter().all(|key| self.takes_key(key)) {
             return Err(Unnamed::Later);
         }
-        let [a, b] = keys.map(|key| self.body_of(shown, key.feature));
+        let [a, b] = keys.map(|key| self.body_of(shown, &key));
         let (Some(a), Some(b)) = (a, b) else {
             return Err(Unnamed::Unclear);
         };
@@ -462,7 +602,8 @@ pub(crate) fn on_plane(document: &Document, plane: &Plane) -> String {
 #[cfg(test)]
 mod tests {
     use varde_document::{
-        Axis3, AxisRef, Editor, Mirror, OriginPlane, Pattern, PatternKind, PlaneRef,
+        Axis3, AxisRef, Copies, Editor, Mirror, OriginPlane, Pattern, PatternKind, PlaneRef,
+        Targets,
     };
     use varde_expr::Value;
 
@@ -519,6 +660,7 @@ mod tests {
                 count: Value::new(count, &Pattern::count_ask(&design)).unwrap(),
                 spacing: Value::new("100", &Pattern::spacing_ask(&design)).unwrap(),
             },
+            copies: Default::default(),
         }
     }
 
@@ -605,5 +747,94 @@ mod tests {
         );
         assert!(naming(5).takes_key(&copied.copy(ids[4], 1)));
         assert_eq!(instances_before(document, 6), None);
+    }
+
+    /// Faces copied by a pattern whose copies are bodies of their own are
+    /// named on the copy body, even where a later join merged it into
+    /// the original; copies of copies on the copy's copy body; a body
+    /// joined into the original before the pattern has its faces copied
+    /// on to the copy bodies too.
+    #[test]
+    fn faces_of_copy_bodies_are_named_on_them() {
+        let mut editor = Editor::new(Document::example());
+        let document = editor.document().clone();
+        let plate = document.bodies()[0].id;
+        let FeatureKind::Extrude(extrude) = document.features()[1].kind.clone() else {
+            unreachable!()
+        };
+        let add = |editor: &mut Editor, kind: FeatureKind| {
+            editor.apply(editor.document().add_feature(kind)).unwrap();
+            editor.document().features().last().unwrap().id
+        };
+        // Another plate, joined into the first by a join touching both.
+        let mut other = extrude.clone();
+        other.operation = Operation::NewBody(varde_document::BodyId::NEW);
+        let second = add(&mut editor, other.into());
+        let other_body = editor.document().bodies()[1].id;
+        let mut join = extrude.clone();
+        join.operation = Operation::Join(Targets::default());
+        let joined = add(&mut editor, join.into());
+        let mut pattern = row(editor.document(), plate, Axis3::X, "3");
+        pattern.copies = Copies::Separate(Vec::new());
+        let first = add(&mut editor, pattern.into());
+        let copies = |document: &Document, id: FeatureId| match &document.feature(id).unwrap().kind
+        {
+            FeatureKind::Pattern(pattern) => pattern.copy_bodies().map(|(_, _, b)| b).collect(),
+            _ => Vec::<varde_document::BodyId>::new(),
+        };
+        let made = copies(editor.document(), first);
+        assert_eq!(made.len(), 2);
+        // The first copy body patterned again, unjoined.
+        let mut again = row(editor.document(), made[0], Axis3::Y, "2");
+        again.copies = Copies::Separate(Vec::new());
+        let next = add(&mut editor, again.into());
+        let twice = copies(editor.document(), next);
+        let document = editor.document().clone();
+        let touched = [(joined, vec![plate, other_body])];
+        let shown = Shown {
+            merged: &[(other_body, plate)],
+            touched: &touched,
+            failed: &[],
+        };
+        let top = |feature: FeatureId| FaceKey {
+            feature: feature.get(),
+            part: PartKey::EndCap,
+            instance: 0,
+        };
+        let naming = Naming::before(&document, document.features().len(), shown);
+        let original = top(document.features()[1].id);
+        assert_eq!(naming.body_of(plate, &original), Some(plate));
+        assert_eq!(
+            naming.body_of(made[1], &original.copy(first.get(), 2)),
+            Some(made[1])
+        );
+        // The other plate's faces, joined in before the pattern.
+        let theirs = top(second).copy(first.get(), 1);
+        assert_eq!(naming.body_of(made[0], &theirs), Some(made[0]));
+        // Copies of copies.
+        let both = original.copy(first.get(), 1).copy(next.get(), 1);
+        assert_eq!(naming.body_of(twice[0], &both), Some(twice[0]));
+        // A copy body merged into the plate at the end: named on the copy
+        // body all the same, where the history stops before the merge.
+        let merged = [(other_body, plate), (made[1], plate)];
+        let shown = Shown {
+            merged: &merged,
+            ..shown
+        };
+        let naming = Naming::before(&document, document.features().len(), shown);
+        assert_eq!(
+            naming.body_of(plate, &original.copy(first.get(), 2)),
+            Some(made[1])
+        );
+        assert!(naming.takes_body(made[1]));
+        // Before the pattern, its copy bodies can't be named.
+        let at = document
+            .features()
+            .iter()
+            .position(|f| f.id == first)
+            .unwrap();
+        let naming = Naming::before(&document, at, shown);
+        assert!(!naming.takes_body(made[0]));
+        assert!(!naming.takes_key(&original.copy(first.get(), 1)));
     }
 }

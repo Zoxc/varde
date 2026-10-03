@@ -186,6 +186,7 @@ icons! {
     TkFlip => r#"<path d="M4 8h15M15.5 4.5L19 8l-3.5 3.5M20 16H5M8.5 12.5L5 16l3.5 3.5"/>"#,
     TkKeep => r#"<circle cx="9" cy="12" r="6"/><circle cx="15" cy="12" r="6" stroke-dasharray="2 1.6"/>"#,
     TkCopy => r#"<rect x="3.5" y="3.5" width="11" height="11" rx="1.5"/><rect class="fl" x="9.5" y="9.5" width="11" height="11" rx="1.5"/>"#,
+    TkJoin => r#"<rect x="3" y="7" width="8" height="10" rx="1.5"/><rect x="13" y="7" width="8" height="10" rx="1.5"/><path d="M8 12h8"/>"#,
     // Not in the mocks: the view options menu's shading, a ball lit four
     // ways. Smooth, shaded towards its lower right; flat, in facets;
     // metal, the horizon and a glint reflected in it; both.

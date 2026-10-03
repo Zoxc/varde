@@ -263,8 +263,8 @@ postcard instead (`varde_document::codec`).
 ## Documents
 
 A document (`crates/document/src/lib.rs`) holds its bodies (a name,
-whether it's visible, its opacity, a `u8` percent, and the extrude or
-revolve that makes it: no geometry, which regenerating the feature
+whether it's visible, its opacity, a `u8` percent, and the extrude,
+revolve or pattern that makes it: no geometry, which regenerating the feature
 history gives), its features (a name, whether it's visible, and a kind,
 stored by its variant name in `FeatureKind`: a sketch, an
 extrude,
@@ -292,7 +292,13 @@ and whether the original is kept; or a pattern,
 `crates/document/src/pattern.rs`: the bodies' ids (sorted) and its
 kind, linear (an axis as a move's, the count and the spacing, typed
 expressions and their values, the spacing in millimetres) or circular
-(an axis, the count and the angle in radians the copies spread over).
+(an axis, the count and the angle in radians the copies spread over),
+and `copies`, "Join to original": `Joined` (the copies in their
+bodies) or `Separate` with the ids of the bodies the copies are, copy
+by copy then body by body. `copies` is `#[serde(default)]`: a record
+written before it (none had it) reads as `Joined`, and an older build
+skips it (reading a separate pattern's copy bodies as bodies made by a
+feature that doesn't make them, which its check refuses).
 A
 sketch is a plane, `crates/document/src/plane.rs` (an origin plane,
 XY, XZ or YZ, or a face of a body: the body's id, the face's key, the
@@ -315,7 +321,9 @@ bodies and features take. A document read from a file is checked
 feature ids increasing and below the next id, every body's opacity from
 10 to 100, every body made by an
 extrude or revolve the document holds whose operation makes it as its
-new body, and every such body there, an extrude's or revolve's sketch a
+new body, and every such body there, or by a pattern listing it as a
+copy body (one per copy, none repeated, every body it makes listed, at
+most 1024, none for a joined one), an extrude's or revolve's sketch a
 sketch feature before it, 1 to 256 regions, each within the coordinate
 limit with its id lists sorted, distances their expressions give in the
 document's units from 1 µm to the coordinate limit (two sides together

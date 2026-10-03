@@ -279,6 +279,14 @@ pub enum MotionError {
     /// [`Pattern::spacing_ask`](crate::Pattern::spacing_ask) takes, or is
     /// zero.
     Spacing,
+    /// A pattern whose copies aren't joined to their originals makes this
+    /// many new bodies, over
+    /// [`MAX_PATTERN_BODIES`](crate::pattern::MAX_PATTERN_BODIES).
+    Separate(usize),
+    /// A pattern's copy bodies aren't as [`Copies`](crate::Copies) lays
+    /// them out: not one per copy, repeated, not the pattern's own, or a
+    /// body it makes isn't listed (or a joined one makes bodies).
+    CopyBodies,
     /// Its axis edge fails its own check ([`EdgeRef::check_own`]).
     Edge(EdgeError),
     /// Its axis's or plane's face's point isn't finite, or is further
@@ -311,6 +319,14 @@ impl fmt::Display for MotionError {
             MotionError::Count => f.write_str("its count isn't a whole number from 2 to 1024"),
             MotionError::Spacing => {
                 f.write_str("its spacing's expression doesn't give its value, or it's zero")
+            }
+            MotionError::Separate(count) => write!(
+                f,
+                "makes {count} bodies of its copies, over {}",
+                crate::pattern::MAX_PATTERN_BODIES
+            ),
+            MotionError::CopyBodies => {
+                f.write_str("its copy bodies aren't one of its own per copy")
             }
             MotionError::Edge(why) => write!(f, "its axis: {why}"),
             MotionError::Near(at) => write!(f, "its face's point {at} is out of bounds"),

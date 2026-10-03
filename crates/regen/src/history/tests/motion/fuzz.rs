@@ -5,21 +5,26 @@
 //! keeping their originals or not; linear and circular patterns of two
 //! to four copies along or about the same axes, half of them of bodies
 //! patterned already, about their copies' edges and faces (copies of
-//! copies); earlier ones edited, removals, undo and redo. After each step: the cache warm and cold give
+//! copies), a third of them with each copy a body of its own (later
+//! features then moving, mirroring, patterning, combining, joining and
+//! naming the copy bodies); earlier ones edited, removals, undo and
+//! redo. After each step: the cache warm and cold give
 //! the same evaluation; every move and mirror that worked put each of its
 //! bodies where the motion worked out here takes it (the volume kept, the
 //! centre of mass moved, turned or reflected, by `glam`'s own rotations
 //! and reflections), a mirror keeping its original holding the body and
 //! its image as the boolean identities say, every pattern each body and
 //! its copies (each copy's centre where `glam` puts it, the whole as the
-//! copies united one by one), every other body left alone, the axis or
+//! copies united one by one; unjoined, the body as it was and each copy
+//! the solid of its own body, the copy itself), every other body left
+//! alone, the axis or
 //! plane found on what it names; one that failed changed nothing; every
 //! later edit can still be made; the document survives its bytes,
 //! flipped bits included; and a request with a move's, mirror's or
 //! pattern's draft and its answer cross the wire as they went.
 
 use glam::DQuat;
-use varde_document::{Pattern, PatternKind};
+use varde_document::{Copies, Pattern, PatternKind};
 use varde_kernel::measure::{EdgeShape, edge_shape};
 use varde_kernel::{Budget, Instance, Motion, Op};
 
@@ -221,7 +226,16 @@ fn random_pattern(
             angle: Value::new(SPANS[rng.below(SPANS.len())], &Pattern::angle_ask(&design)).unwrap(),
         }
     };
-    Pattern { bodies, kind }
+    let copies = if rng.below(3) == 0 {
+        Copies::Separate(Vec::new())
+    } else {
+        Copies::Joined
+    };
+    Pattern {
+        bodies,
+        kind,
+        copies,
+    }
 }
 
 fn close(a: f64, b: f64, scale: f64) -> bool {
@@ -474,13 +488,56 @@ fn check_pattern(
             turn * (p - point) + point
         }
     };
+    // Unjoined, the copy bodies are new, after the others.
+    let made_here: Vec<BodyId> = pattern.copy_bodies().map(|(_, _, body)| body).collect();
+    let mut bodies_after: Vec<BodyId> = before.bodies.iter().map(|made| made.body).collect();
+    let mut separate: Vec<BodyId> = (made_here.iter().copied())
+        .filter(|&body| solid(&after, body).is_some())
+        .collect();
+    separate.sort_unstable();
+    bodies_after.extend(&separate);
+    let order: Vec<BodyId> = after.bodies.iter().map(|made| made.body).collect();
+    assert_eq!(order, bodies_after, "{what}: the bodies after");
     for made in &before.bodies {
         let now = solid(&after, made.body).expect("still a body");
-        if pattern.bodies.binary_search(&made.body).is_err() {
+        let Ok(source) = pattern.bodies.binary_search(&made.body) else {
             assert_eq!(now, &made.solid, "{what}: {:?} changed", made.body);
             continue;
-        }
+        };
         let (volume, centre) = mass(&made.solid);
+        if !pattern.joins() {
+            assert_eq!(
+                now, &made.solid,
+                "{what}: the original {:?} changed",
+                made.body
+            );
+            for (k, motion) in (1..).zip(&motions) {
+                let body = pattern.copy_body(source, k).expect("a body per copy");
+                let copy = solid(&after, body).expect("a copy body's solid");
+                let expected = made
+                    .solid
+                    .transformed(
+                        motion,
+                        Some(Instance {
+                            feature: feature.get(),
+                            index: u64::from(k),
+                        }),
+                        &tolerance,
+                        &Budget::DEFAULT,
+                    )
+                    .unwrap();
+                assert_eq!(**copy, expected, "{what}: copy {k}'s body");
+                let (copy_volume, copy_centre) = mass(copy);
+                let scale = size(&made.solid).max(size(copy));
+                assert!(close(copy_volume, volume, volume), "{what}: copy {k}");
+                assert!(
+                    close_at(copy_centre, place(k, centre), scale),
+                    "{what}: copy {k}'s body at {copy_centre}, not {}",
+                    place(k, centre)
+                );
+            }
+            continue;
+        }
         let (volume_now, centre_now) = mass(now);
         let mut copies = vec![(*made.solid).clone()];
         for (k, motion) in (1..).zip(&motions) {
@@ -592,13 +649,21 @@ fn run(seed: u64, steps: usize) {
                     let index = motions[rng.below(motions.len())];
                     let then = evaluate(&truncated(&document, index), &mut warm);
                     if let Some(kind) = random_motion(&document, &then, &mut rng, Some(index)) {
+                        let feature = document.features()[index].id;
+                        // Refused only where it'd drop a copy body a
+                        // later feature names.
+                        let dropped = document.copies_dropped(feature, &kind);
+                        let named = (document.features().iter())
+                            .any(|f| f.kind.bodies().iter().any(|b| dropped.contains(b)));
                         let set = Command::SetFeature {
-                            feature: document.features()[index].id,
+                            feature,
                             kind: Box::new(kind),
                         };
-                        editor
-                            .apply(set)
-                            .unwrap_or_else(|error| panic!("{what}: {error}"));
+                        match editor.apply(set) {
+                            Ok(()) => {}
+                            Err(_) if named => assert_eq!(*editor.document(), document),
+                            Err(error) => panic!("{what}: {error}"),
+                        }
                     }
                 }
             }

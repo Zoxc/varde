@@ -39,6 +39,7 @@ fn linear(document: &Document, bodies: &[BodyId], n: &str, step: &str) -> Patter
             count: count(document, n),
             spacing: spacing(document, step),
         },
+        copies: Default::default(),
     }
 }
 
@@ -51,6 +52,7 @@ fn circular(document: &Document, bodies: &[BodyId], n: &str, span: &str) -> Patt
             count: count(document, n),
             angle: angle(document, span),
         },
+        copies: Default::default(),
     }
 }
 
@@ -401,9 +403,12 @@ fn a_pattern_is_the_seventh_kind() {
             count: value("2", 2.0),
             angle: value("1", 1.0),
         },
+        copies: Default::default(),
     });
     let bytes = postcard::to_stdvec(&pattern).unwrap();
     // The kind, one body, then circular about the origin axis Z, and the
     // count's text.
     assert_eq!(bytes[..8], [6, 1, 1, 1, 0, 2, 1, b'2']);
 }
+
+mod separate;

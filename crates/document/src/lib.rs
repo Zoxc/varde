@@ -29,11 +29,12 @@ pub use extrude::{Extent, Extrude, ExtrudeError, MAX_EXTRUDE_REGIONS, Operation,
 pub use feature::{Feature, FeatureId, FeatureKind};
 pub use motion::{Axis3, AxisRef, Mirror, MotionError, Move, PlaneRef};
 pub use opacity::Opacity;
-pub use pattern::{MAX_PATTERN_COUNT, Pattern, PatternKind};
+pub use pattern::{Copies, MAX_PATTERN_BODIES, MAX_PATTERN_COUNT, Pattern, PatternKind};
 pub use plane::{FaceRef, OriginPlane, Placement, Plane, PlaneError};
 pub use removal::{Removable, Removal};
 pub use revolve::{AxisLine, MAX_REVOLVE_REGIONS, Revolve, RevolveError, Turn};
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
 
@@ -76,8 +77,9 @@ pub const MAX_NAME_LEN: usize = 1024;
 
 /// A body: a solid the feature history makes. The document holds only
 /// its name, whether it's shown and how opaque, and which feature makes
-/// it (an extrude or revolve making a new body, [`Operation::NewBody`]);
-/// its geometry is whatever regenerating the history gives it.
+/// it (an extrude or revolve making a new body, [`Operation::NewBody`],
+/// or a pattern whose copies are bodies of their own,
+/// [`Copies::Separate`]); its geometry is whatever regenerating the history gives it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Body {
     pub id: BodyId,
@@ -266,7 +268,9 @@ impl Document {
     /// opacity is one [`Opacity::new`] takes; the tolerance is one
     /// [`Tolerance::new`] takes; every body is made by an extrude or
     /// revolve the document holds that names it as its new body, and
-    /// every such body is there; every sketch passes [`Sketch::check`]
+    /// every such body is there, or by a pattern listing it as a copy
+    /// body ([`Copies::Separate`]), every such body there too, one per
+    /// copy; every sketch passes [`Sketch::check`]
     /// against [`MAX_COORD`] and the document's units
     /// ([`Document::design`]), so every dimension's expression gives its
     /// value in them, and every sketch on a face names what comes before
@@ -299,6 +303,9 @@ impl Document {
         if Tolerance::new(self.tolerance).is_none() {
             return Err(CheckError::Tolerance(self.tolerance));
         }
+        // How many bodies each pattern makes, which its own check holds
+        // to the copy bodies it lists.
+        let mut copies: BTreeMap<FeatureId, usize> = BTreeMap::new();
         for body in &self.bodies {
             let id = body.id;
             if body.name.len() > MAX_NAME_LEN {
@@ -307,9 +314,14 @@ impl Document {
             if !body.opacity.in_range() {
                 return Err(CheckError::Opacity(id, body.opacity.percent()));
             }
-            let made = self
-                .feature(body.created_by)
-                .is_some_and(|feature| feature.kind.new_body() == Some(id));
+            let made = match self.feature(body.created_by).map(|feature| &feature.kind) {
+                Some(FeatureKind::Pattern(_)) => {
+                    *copies.entry(body.created_by).or_default() += 1;
+                    true
+                }
+                Some(kind) => kind.new_body() == Some(id),
+                None => false,
+            };
             if !made {
                 return Err(CheckError::Creator(id, body.created_by));
             }
@@ -356,6 +368,9 @@ impl Document {
                         .check_own(&design)
                         .map_err(|why| CheckError::Pattern(id, why))?;
                     self.check_motion(index, &pattern.bodies, pattern.referred())
+                        .map_err(|why| CheckError::Pattern(id, why))?;
+                    let made = copies.get(&id).copied().unwrap_or(0);
+                    self.check_copies(id, pattern, made)
                         .map_err(|why| CheckError::Pattern(id, why))?;
                 }
             }
@@ -531,6 +546,39 @@ impl Document {
         Ok(())
     }
 
+    /// Checks the copy bodies of `pattern`, feature `id`, which makes
+    /// `made` bodies: joined, none; else one per copy, as
+    /// [`Copies::Separate`] lays them out, each a body it makes, none
+    /// repeated, and every body it makes among them.
+    fn check_copies(
+        &self,
+        id: FeatureId,
+        pattern: &Pattern,
+        made: usize,
+    ) -> Result<(), MotionError> {
+        let listed: &[BodyId] = match &pattern.copies {
+            Copies::Joined => &[],
+            Copies::Separate(listed) => listed,
+        };
+        let wanted = if pattern.joins() {
+            Some(0)
+        } else {
+            pattern.separate_count()
+        };
+        if wanted != Some(listed.len()) || made != listed.len() {
+            return Err(MotionError::CopyBodies);
+        }
+        let mut sorted = listed.to_vec();
+        sorted.sort_unstable();
+        let repeated = sorted.windows(2).any(|pair| pair[0] == pair[1]);
+        let theirs =
+            (listed.iter()).all(|&body| self.body(body).is_some_and(|b| b.created_by == id));
+        if repeated || !theirs {
+            return Err(MotionError::CopyBodies);
+        }
+        Ok(())
+    }
+
     /// Whether `body` is there and made by a feature before feature
     /// `index`.
     fn made_before(&self, index: usize, body: BodyId) -> bool {
@@ -601,7 +649,8 @@ pub enum CheckError {
     /// [`Opacity::MAX`].
     Opacity(BodyId, u8),
     /// A body's maker isn't an extrude or revolve the document holds that
-    /// makes it as its new body.
+    /// makes it as its new body, or a pattern (whose own check holds it to
+    /// the copy bodies it lists).
     Creator(BodyId, FeatureId),
     /// The first body's id doesn't come after the second's, the one
     /// before it.
@@ -653,7 +702,7 @@ impl fmt::Display for CheckError {
             ),
             CheckError::Creator(id, feature) => write!(
                 f,
-                "body {} is made by feature {}, which isn't an extrude or revolve making it",
+                "body {} is made by feature {}, which doesn't make it",
                 id.0, feature.0
             ),
             CheckError::Order(id, before) => {

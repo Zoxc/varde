@@ -15,7 +15,9 @@ they share with the newer kinds is here. The kernel math of each is in
   "Extrude N", "Revolve N" ... (`FeatureKind::noun`). It hides the sketch
   whose regions the feature takes (`FeatureKind::sketch`); one whose
   operation is `NewBody` also adds "Body N" with the next id, replacing
-  whatever id the command held (`BodyId::NEW`). One undo step. A sketch
+  whatever id the command held (`BodyId::NEW`); a pattern whose copies
+  are bodies of their own adds one per copy, laid out as "Pattern"
+  says. One undo step. A sketch
   kind is refused (`EditError::SketchKind`): sketches are added empty by
   `AddSketch` and set by `SetSketch`.
 - `Command::SetFeature { feature, kind }` replaces a feature's kind,
@@ -24,8 +26,9 @@ they share with the newer kinds is here. The kernel math of each is in
   The kind may change (an extrude may become a revolve): what matters is
   the operation. A `NewBody` that stays one keeps its body (whatever id
   the command held); one that stops removes the body and drops it from
-  the other features' excluded lists; one that starts adds one. The
-  caller passes regions referenced afresh from the sketch as it is.
+  the other features' excluded lists; one that starts adds one. A
+  pattern's copy bodies go the same way, copy by copy (see "Pattern").
+  The caller passes regions referenced afresh from the sketch as it is.
   Setting what's already there changes nothing (no new revision).
 - Both run the document's whole check on the result, and then
   `check_new` on the added or set feature: what's required of a feature
@@ -34,7 +37,8 @@ they share with the newer kinds is here. The kernel math of each is in
   Today that's only a revolve's axis line.
 - `FeatureKind` helpers: `noun`, `sketch` (the profile sketch),
   `operation` / `new_body` (an extrude's or revolve's `Operation`; a
-  body's maker is checked by `new_body`), and `uses`, now a **list**
+  body's maker is checked by `new_body`, or a pattern's copy bodies),
+  and `uses`, now a **list**
   (sorted, no repeats) of the features this one builds on, which
   `Document::removal` follows. Every extrude-only path that only cared
   about the operation (`drop_excluded`, the app's delete prompt and its
@@ -1432,11 +1436,16 @@ that rounding (under a micrometre in millimetres) with each ring turn.
 `crates/document/src/pattern.rs`.
 
 ```rust
-pub struct Pattern { pub bodies: Vec<BodyId>, pub kind: PatternKind }   // bodies as a move's
+pub struct Pattern {
+    pub bodies: Vec<BodyId>,                 // as a move's
+    pub kind: PatternKind,
+    #[serde(default)] pub copies: Copies,    // "Join to original"
+}
 pub enum PatternKind {
     Linear { along: AxisRef, count: Value, spacing: Value },   // count 2..=1024 whole; spacing a length, not 0
     Circular { about: AxisRef, count: Value, angle: Value },   // angle above 0, at most a turn
 }
+pub enum Copies { Joined /* default */, Separate(Vec<BodyId>) }  // the copy bodies, by copy then body
 ```
 
 - **What it is**: a timeline step on bodies already made, as a move is:
@@ -1444,12 +1453,40 @@ pub enum PatternKind {
   `Linear` 0, `Circular` 1), "Pattern N", no body made, no regions.
   Body patterns only (decided). Each body becomes itself and `count − 1`
   copies of itself (the count includes the original), **kept in the
-  body** (decided): side by side where apart, united where they meet.
+  body** by default (`Copies::Joined`, the panel's "Join to original"
+  ticked; decided, and the user's later word made it an option): side
+  by side where apart, united where they meet. Unticked
+  (`Copies::Separate`) **each copy is a new body of its own** (below).
   The body keeps its id and its own faces their names; copy `k`
   (`1 ≤ k < count`) names its faces as `FaceName::copy(pattern id, k)`
   (instance `mix(parent instance, feature, k)`, so a pattern of a
-  pattern's or a mirror's copies stays unique), and later features name
-  a copy's faces by those keys.
+  pattern's or a mirror's copies stays unique), joined or not, and
+  later features name a copy's faces by those keys (on the copy's own
+  body when it has one).
+- **Copy bodies** (`Copies::Separate`, the user's request after the
+  plan; a defaulted stored field, so files from before read as joined;
+  no version bump). Ordinary document bodies ("Body N", visible, made
+  by the pattern: `Body::created_by` is the pattern), listed in the
+  pattern in a fixed layout: copy `k` of its `i`th body (in its sorted
+  bodies) at `(k − 1) · n + i`, `n` the body count
+  (`Pattern::copy_body`, `copy_bodies`), so a higher count adds bodies
+  at the end. **Identity**: `Command::AddFeature` and `SetFeature` lay
+  the list out whatever it held (as an extrude's `BodyId::NEW`,
+  `editor.rs`'s `planned_copies`): each copy, by its original's id and
+  its `k`, keeps the body the feature it replaces made of it (a spacing
+  or axis edited, a count raised, a body added or taken out, the kind
+  swapped between linear and circular: the copies left keep their
+  bodies), the others get new ids and names numbered on from the
+  bodies; bodies of copies it no longer makes (a lower count, a body
+  taken out, ticked again, set to another kind) are removed and dropped
+  from excluded lists, **refused while a later feature names one** (as
+  an extrude stopping making a body a combine names;
+  `Document::copies_dropped` says which, for the panel). Ticked again
+  and unticked, the copies get new bodies. At most `MAX_PATTERN_BODIES`
+  = 1024 copy bodies per pattern (bodies × (count − 1), a checked
+  product: each is an Objects row; joined, only the count is bounded).
+  Separate bodies **may overlap** each other and their originals: they
+  are never united (the panel warns, below).
 - **Placement**: linear copy `k` is moved `k · spacing` along the
   axis's direction (only the direction counts; a negative spacing runs
   the other way, which is how a panel's Flip is stored). Circular copy
@@ -1476,13 +1513,23 @@ pub enum PatternKind {
   1024).whole().at_least(2)`: `Count`), a linear spacing by
   `Pattern::spacing_ask` (a length within `MAX_COORD` of zero) and not
   zero (`Spacing`), a circular angle by `Pattern::angle_ask` (above zero,
-  at most a turn: `Angle`), the axis's own parts (`Edge`, `Near`).
+  at most a turn: `Angle`), unjoined at most `MAX_PATTERN_BODIES` copy
+  bodies (`Separate(n)`), the axis's own parts (`Edge`, `Near`).
   `Document::check` then wants the bodies made before it (`Body`) and
   the axis's body and makers before it (`RefBody`, `RefMaker`), as a
-  move's. `Pattern::count()` reads a checked count as a `u32`.
+  move's, and its copy bodies as laid out (`CopyBodies`): joined, no
+  body made by it; unjoined, one listed per copy, none repeated, each a
+  body whose `created_by` is the pattern, and every body made by it
+  listed (bodies made by a pattern are counted in the body loop, so the
+  check stays linear). `Pattern::count()` reads a checked count as a
+  `u32`.
 - **Removal and units** as a move's: `FeatureKind::bodies()` lists the
   bodies; `SetUnits` pins the spacing by its ask (the count and angle
-  have no length unit to pin, so stay as typed).
+  have no length unit to pin, so stay as typed). Copy bodies are the
+  pattern's (`created_by`), so **removing the pattern removes them**,
+  and every later feature naming one (`Document::removal`); removing
+  one copy body removes its maker, the pattern, with all its copy
+  bodies, as removing an extrude's body removes the extrude.
 
 ### Regeneration
 
@@ -1509,12 +1556,51 @@ pub enum PatternKind {
   to its copies ..." (`message::with_copies`), with the kernel's
   evidence by value, as a move's. All bodies are worked out before any
   changes.
-- Nothing merged or touched, as a move.
+- **Unjoined**, the same bounds hold (`count × patches` within
+  `MAX_PATCHES`, which also bounds the copies' memory together), the
+  bodies are left as they are, and each copy is
+  `Solid::transformed(motion_k, Some(Instance { feature, index: k }))`
+  alone, the solid of its body (`Pattern::copy_body`), never assembled
+  or united with anything; cached as a mirror's image is
+  (`moved_key(body key, motion_k bits, the instance, fit)`), so a count
+  raised finds the copies made before. The copy bodies go into
+  `Evaluation::bodies` after the others, in id order (the order made:
+  a later join touching copies merges them into the first made, the
+  original if it touches it too). A failing pattern leaves its copy
+  bodies with no solid: a later feature naming one fails as on any
+  body with none.
+- Nothing merged or touched, as a move. Later joins, cuts, combines,
+  moves, mirrors and patterns take copy bodies as any body (the app's
+  `merged_before` follows them merged, from the touched lists and
+  combines, unchanged).
+- **Naming** (`varde_view::Naming`, `plane_pick.rs`): a face made on
+  body `B` by its maker and copied by an unjoined pattern is on that
+  pattern's copy body, not on `B`. `Naming::before` keeps, per unjoined
+  pattern before the stop (`Separated`), the body each body whose faces
+  it copies holds them in (its sources, and the bodies merged into them
+  before it, by `merged_before` as replayed so far) and its copy
+  bodies; `instances_before` keeps how each copy instance was made
+  (parent instance, feature, index: `Copied`). `Naming::body_of` walks
+  a face key's instance back to the original and on through each
+  unjoined pattern it passed, so a face of a copy of a copy is named on
+  the last copy body, even where a later join merged that into the
+  original. `made` (the body a feature made, by its number) lists only
+  extrudes' and revolves' new bodies. Past `MAX_INSTANCES` copies the
+  body of a copy can't be told: with any unjoined pattern before the
+  stop such a face is refused as unclear.
 
 Tests: `document/src/pattern/tests.rs` (checks, spacing rules, removal (the
 axis's body removed leaves the pattern),
-units, postcard and hostile values read back), `regen/src/history/tests/
-pattern.rs` (a row of pins against its volume and box, names per copy, a
+units, postcard and hostile values read back), `document/src/pattern/
+tests/separate.rs` (copy bodies laid out and named, kept by copy across
+spacing, count, body and join edits and undo, a later combine naming one
+refusing the edits that drop it, removal both ways, the limit, wrong
+lists refused from postcard), `regen/src/history/tests/pattern/
+separate.rs` (pins patterned unjoined, overlapping, each copy a pin of
+its own with its wall named as its copy; the tick toggled and undone;
+a combine cutting a copy body from a plate, a ring about a copy's wall,
+a join merging copies into the original; the cache across a count
+raised), `regen/src/history/tests/pattern.rs` (a row of pins against its volume and box, names per copy, a
 negative spacing; copies end to end along the pin's own round face
 united into one; a ring of pins, whole turn exact at quarter turns and
 three over 90° by its centre of mass; three bars through a hub against
@@ -1531,7 +1617,11 @@ the motion fuzz (`motion/fuzz.rs`, `VARDE_MOTION_SEEDS`): random linear
 and circular patterns of 2 to 4 copies about origin axes, edges and
 round faces, half of them of bodies patterned already (copies of copies),
 each copy's centre where `glam` places it and the whole as the copies
-united one by one.
+united one by one; a third of them unjoined, the originals left alone
+and each copy body the copy itself where `glam` places it, later
+features (moves, mirrors, patterns, combines, joins, faces as axes)
+then taking copy bodies like any, and edits dropping a copy body a
+later feature names refused.
 
 Known gaps: the 10 × 10 grid of pins (100 holes) cut from a plate in
 **one** difference runs out of work (`MAX_WORK`) in about 2 s (release);
@@ -1632,8 +1722,9 @@ LinearPattern` and `CircularPattern`, following the UI mock's
 - **Preview, OK, status**: the draft is the pattern as set up (none for
   a new one while its axis is picked); OK one undo step ("Pattern N");
   the status bar says "New linear pattern · Body 2 · 4 × 12 mm along X
-  axis" (", flipped"), "· 4 × 90° about Z axis"
-  (`varde_view::pattern_copies`, by `Pattern::step_degrees`), or "pick
+  axis · joined" (", flipped"; " · joined" while ticked), "· 4 × 90°
+  about Z axis" (`varde_view::pattern_copies`, by
+  `Pattern::step_degrees`), or "pick
   the bodies to pattern", with "Pick the direction" / "Pick the axis".
 - **The panel** (`view/src/motion.rs`): title "New linear pattern" /
   "New circular pattern" with the mock's `lpattern` and `cpattern`
@@ -1641,10 +1732,33 @@ LinearPattern` and `CircularPattern`, following the UI mock's
   Axis; Flip direction (`Icon::TkFlip`, linear only); "Copies": Count,
   the mode tiles (`lp-spacing`, `lp-total`; `cp-full`, `cp-spacing`,
   `cp-total`: `Icon::LpSpacing`, `LpTotal`, `CpFull`, `CpSpacing`,
-  `CpTotal`), and the Spacing or Total field (none for Full 360°).
+  `CpTotal`), the Spacing or Total field (none for Full 360°), and Join
+  to original.
+- **Join to original** (`MotionLook::Join`, `MotionSession::join`):
+  the mock's tick on both panels, last, with its icon (`Icon::TkJoin`,
+  the mock's `tk-join`) and note "One body; otherwise each copy is its
+  own". **Ticked to begin with** (the user's decision; the mock starts
+  unticked); an edited pattern opens as it's stored. Unticked, the
+  pattern goes out as `Copies::Separate` of no bodies, which the
+  document lays out (keeping an edited one's copy bodies). Where the
+  edit would drop a copy body a later feature names (fewer copies, a
+  body taken out, ticked again), the panel refuses it at once
+  (`Doc::motion_held`, OK off): "Combine 1 uses Body 5, a copy this
+  pattern would no longer make: take Body 5 out of Combine 1 or delete
+  it first". **The overlap warning** (the mock's, linear only, as the
+  mock has it, `Doc::motion_warning`): unticked, with a spacing shorter
+  than the bodies are long along the direction ("The copies overlap (10
+  mm long this way): tick Join to original to merge them"), the length
+  from their faces in the model shown (`PickIndex::bodies_extent`, the
+  mesh's points; the direction an origin axis's or, for an edge or
+  face, the draft's reference). It doesn't stop OK (separate bodies may
+  overlap) and shows only where the panel has no other message (the
+  mock shows it under a failure too).
 - **Timeline**: the mock's icons by kind, the note "×4"; selected, the
-  status bar says "Body 1 · 4 × 25 mm along X axis, flipped", "Body 1 ·
-  6 × 60° about Z axis" (`pattern_info`).
+  status bar says "Body 1 · 4 × 25 mm along X axis, flipped · joined",
+  "Body 1 · 6 × 60° about Z axis" (`pattern_info`, the mock's " ·
+  joined" for joined copies; the session's status text too). Copy
+  bodies show in Objects as any body.
 
 Tests: `app/src/doc/motion/tests/pattern.rs` (`P`, typing a count and a
 spacing previews the row, `Enter` one undo step, the note; Total stores
@@ -1655,16 +1769,19 @@ spreads too long to wrap stored as their values, and a stored spacing
 whose text turned is too long; an undo swapping the kind; a direction
 gone by an undo and by its body's removal, the neutral preview without
 it; the axis's body and a picked body taken mid-pick; OK on a pattern
-opened writing nothing however it was typed), `pattern/fuzz.rs`
+opened writing nothing however it was typed), `pattern/separate.rs`
+(the tick ticked to begin with, unticked a body per copy committed,
+listed and undone, the overlap warning and when it goes; editing the
+tick, and a later combine's copy body holding back fewer copies or
+joining), `pattern/fuzz.rs`
 (`VARDE_PATTERN_SEEDS`: random modes, Flip, counts, long and nested
 spreads, units, undo and redo, kind swaps, commits, edits held to the
 values their fields come to);
 `view/src/motion/tests.rs` (both panels' rows and modes, the infos).
 
-Departures from the mock: no "Join to original" (decided: copies stay
-in their body; separate bodies would need a stored field, a file
-format change, so it waits on the user's word), so also no overlap
-warning (which advises ticking it); counts up to 1024 (the mock's 100)
+Departures from the mock: "Join to original" starts ticked (the mock's
+starts unticked; the user's decision), and its overlap warning shows
+only without another message; counts up to 1024 (the mock's 100)
 and the run limit the coordinate limit (the mock's 10 000 mm), with the
 fields' own error words for other refusals; the axis may also be a
 round edge or face, as a move's; no faded originals (the preview

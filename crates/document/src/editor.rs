@@ -1,4 +1,5 @@
-use std::{collections::VecDeque, sync::Arc};
+use std::collections::{BTreeMap, VecDeque};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use varde_expr::LengthUnit;
@@ -6,8 +7,8 @@ use varde_kernel::Tolerance;
 use varde_sketch::Sketch;
 
 use crate::{
-    Body, BodyId, CheckError, Document, EditError, Extent, FeatureId, FeatureKind, Move, Opacity,
-    Operation, Plane, Removable, Snapshot, Turn,
+    Body, BodyId, CheckError, Copies, Document, EditError, Extent, FeatureId, FeatureKind,
+    MAX_PATTERN_BODIES, Move, Opacity, Operation, Pattern, Plane, Removable, Snapshot, Turn,
 };
 
 /// An edit to a [`Document`]. [`Editor::apply`] refuses one that would
@@ -42,8 +43,11 @@ pub enum Command {
     /// adds those), hiding the sketch whose regions it takes
     /// ([`FeatureKind::sketch`]). One making a new body adds the body,
     /// "Body N" one past the bodies so named, and gives it its id whatever
-    /// [`Operation::NewBody`] held ([`BodyId::NEW`]). A revolve's axis
-    /// must be a line of its sketch ([`Revolve::check_axis`]).
+    /// [`Operation::NewBody`] held ([`BodyId::NEW`]). A pattern whose
+    /// copies are bodies of their own ([`Copies::Separate`]) adds them,
+    /// one per copy, named so in turn, whatever its list held. A
+    /// revolve's axis must be a line of its sketch
+    /// ([`Revolve::check_axis`]).
     ///
     /// [`Revolve::check_axis`]: crate::Revolve::check_axis
     AddFeature {
@@ -60,8 +64,13 @@ pub enum Command {
     /// excluded lists (but refused while a combine names it, as a target
     /// or a tool: removing it would leave the combine naming a body that
     /// isn't there); one that starts making one adds it, as
-    /// [`Command::AddFeature`] does. A revolve's axis must be a line of
-    /// its sketch, as for [`Command::AddFeature`].
+    /// [`Command::AddFeature`] does. A pattern's copy bodies go the same
+    /// way: each copy (by its original and its `k`) the feature made a
+    /// body of keeps it, the others get new ones, and those it no longer
+    /// makes (fewer copies, a body taken out, joined to the original
+    /// again, another kind) are removed, refused while a later feature
+    /// names one. A revolve's axis must be a line of its sketch, as for
+    /// [`Command::AddFeature`].
     SetFeature {
         feature: FeatureId,
         kind: Box<FeatureKind>,
@@ -126,7 +135,13 @@ impl Document {
     /// ids are the highest, so it goes last.
     fn add_body(&mut self, feature: FeatureId) -> Result<BodyId, EditError> {
         let names = self.bodies.iter().map(|body| body.name.as_str());
-        let name = format!("Body {}", next_number(names, "Body"));
+        let number = next_number(names, "Body");
+        self.add_numbered_body(feature, number)
+    }
+
+    /// Adds a body as [`Document::add_body`] does, named "Body `number`".
+    fn add_numbered_body(&mut self, feature: FeatureId, number: u64) -> Result<BodyId, EditError> {
+        let name = format!("Body {number}");
         let id = BodyId(self.new_id()?);
         self.bodies.push(Body {
             id,
@@ -136,6 +151,46 @@ impl Document {
             created_by: feature,
         });
         Ok(id)
+    }
+}
+
+/// The copy bodies `pattern` lists once added or set in place of `old`
+/// (see [`Copies::Separate`]): in its order, the body `old`, if it's a
+/// pattern, made of the same copy (its original and `k`), or `None` for
+/// one to add. `None` whole for a pattern joined to its originals, or
+/// with a count or a number of bodies the document refuses, whose list
+/// is then left as given, for the check to refuse.
+fn planned_copies(old: Option<&FeatureKind>, pattern: &Pattern) -> Option<Vec<Option<BodyId>>> {
+    if pattern.joins() {
+        return None;
+    }
+    let count = (pattern.separate_count()).filter(|&count| count <= MAX_PATTERN_BODIES)?;
+    let made: BTreeMap<(BodyId, u32), BodyId> = match old {
+        Some(FeatureKind::Pattern(old)) => (old.copy_bodies())
+            .map(|(source, k, body)| ((source, k), body))
+            .collect(),
+        _ => BTreeMap::new(),
+    };
+    let n = pattern.bodies.len();
+    if n == 0 {
+        return None;
+    }
+    (0..count)
+        .map(|at| {
+            let k = u32::try_from(at / n).ok()?.checked_add(1)?;
+            Some(made.get(&(pattern.bodies[at % n], k)).copied())
+        })
+        .collect::<Option<Vec<_>>>()
+}
+
+/// The bodies `old`, a pattern, makes of its copies ([`Copies::Separate`]).
+fn copy_bodies_of(old: &FeatureKind) -> Vec<BodyId> {
+    match old {
+        FeatureKind::Pattern(Pattern {
+            copies: Copies::Separate(made),
+            ..
+        }) => made.clone(),
+        _ => Vec::new(),
     }
 }
 
@@ -162,6 +217,68 @@ impl Document {
         {
             *operation = Operation::NewBody(body);
         }
+    }
+
+    /// The copy bodies of the pattern feature `id` that setting it to
+    /// `kind` ([`Command::SetFeature`]) would remove, sorted: those it
+    /// makes of copies `kind` doesn't make bodies of. For a panel to say
+    /// which a later feature names, which refuses it.
+    pub fn copies_dropped(&self, id: FeatureId, kind: &FeatureKind) -> Vec<BodyId> {
+        let Some(old) = self.feature(id).map(|feature| &feature.kind) else {
+            return Vec::new();
+        };
+        let kept: Vec<BodyId> = match kind {
+            FeatureKind::Pattern(pattern) => (planned_copies(Some(old), pattern).into_iter())
+                .flatten()
+                .flatten()
+                .collect(),
+            _ => Vec::new(),
+        };
+        let mut dropped: Vec<BodyId> = (copy_bodies_of(old).into_iter())
+            .filter(|body| !kept.contains(body))
+            .collect();
+        dropped.sort_unstable();
+        dropped
+    }
+
+    /// Gives the pattern feature `id` the copy bodies `planned`
+    /// ([`planned_copies`]): a new body for each `None`, numbered on
+    /// from the bodies named "Body N".
+    fn make_copies(
+        &mut self,
+        id: FeatureId,
+        planned: Vec<Option<BodyId>>,
+    ) -> Result<(), EditError> {
+        let names = self.bodies.iter().map(|body| body.name.as_str());
+        let mut number = next_number(names, "Body");
+        let mut made = Vec::with_capacity(planned.len());
+        for body in planned {
+            made.push(match body {
+                Some(body) => body,
+                None => {
+                    let body = self.add_numbered_body(id, number)?;
+                    number = number.saturating_add(1);
+                    body
+                }
+            });
+        }
+        if let Some(index) = self.feature_index(id)
+            && let FeatureKind::Pattern(pattern) = &mut self.features[index].kind
+        {
+            pattern.copies = Copies::Separate(made);
+        }
+        Ok(())
+    }
+
+    /// Removes `bodies`, sorted, dropping them from the other features'
+    /// excluded lists.
+    fn remove_bodies(&mut self, bodies: &[BodyId]) {
+        if bodies.is_empty() {
+            return;
+        }
+        self.bodies
+            .retain(|body| bodies.binary_search(&body.id).is_err());
+        self.drop_excluded(bodies);
     }
 
     /// Checks what [`Command::AddFeature`] and [`Command::SetFeature`]
@@ -390,10 +507,17 @@ impl Editor {
                 let mut next = Document::clone(document);
                 let sketch = kind.sketch();
                 let makes_body = kind.new_body().is_some();
+                let copies = match &*kind {
+                    FeatureKind::Pattern(pattern) => planned_copies(None, pattern),
+                    _ => None,
+                };
                 let id = next.push_feature(name, *kind)?;
                 if makes_body {
                     let body = next.add_body(id)?;
                     next.set_new_body(id, body);
+                }
+                if let Some(planned) = copies {
+                    next.make_copies(id, planned)?;
                 }
                 if let Some(index) = sketch.and_then(|sketch| next.feature_index(sketch)) {
                     next.features[index].visible = false;
@@ -418,12 +542,31 @@ impl Editor {
                 if let (Some(body), Some(Operation::NewBody(new))) = (kept, kind.operation_mut()) {
                     *new = body;
                 }
+                let copies = match &mut *kind {
+                    FeatureKind::Pattern(pattern) => {
+                        let planned = planned_copies(Some(old), pattern);
+                        // Every copy kept: the list as it'll be, for
+                        // telling an edit that changes nothing.
+                        if let Some(made) = (planned.as_ref())
+                            .and_then(|planned| planned.iter().copied().collect::<Option<Vec<_>>>())
+                        {
+                            pattern.copies = Copies::Separate(made);
+                        }
+                        planned
+                    }
+                    _ => None,
+                };
                 if *old == *kind {
                     return Ok(());
                 }
                 let mut next = Document::clone(document);
                 let makes_body = kind.new_body().is_some();
+                let dropped = document.copies_dropped(feature, &kind);
                 next.features[index].kind = *kind;
+                next.remove_bodies(&dropped);
+                if let Some(planned) = copies {
+                    next.make_copies(feature, planned)?;
+                }
                 match (kept, makes_body) {
                     (Some(body), false) => {
                         if let Some(at) = next.body_index(body) {

@@ -96,6 +96,9 @@ pub(crate) const MIRROR_FACE_NOT_FLAT: &str = "its mirror face isn't flat";
 /// Why a pattern fails: its count isn't one it takes (never, checked as
 /// it is).
 pub(crate) const PATTERN_COUNT: &str = "its count is out of range";
+/// A pattern whose copies are bodies of their own lists none for a copy:
+/// not of a checked document.
+pub(crate) const COPY_BODIES: &str = "its copy bodies aren't listed";
 
 /// What a move, a mirror or a pattern does to a body, for its messages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

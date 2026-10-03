@@ -1,11 +1,11 @@
 //! Evaluating a pattern: each of its bodies' solids, as the features
 //! before it leave it, with copies of itself placed along a line or about
-//! an axis, put together in the body.
+//! an axis, put together in the body, or each copy a body of its own.
 
 use varde_document::{Document, FeatureId, Pattern, PatternKind};
 use varde_kernel::{Budget, Instance, MAX_PATCHES, Motion, Solid, Tolerance, assemble};
 
-use super::motion::{note_reference, resolve_axis, within};
+use super::motion::{moved_key, note_reference, resolve_axis, within};
 use super::{BodySolid, Evaluation, Failed, own_solids};
 use crate::cache::{Cache, Key, Keyer};
 use crate::error_geometry::KernelFailure;
@@ -27,7 +27,13 @@ use crate::message::{self, Moving};
 /// copies, copy `k`'s faces named as copy `k` of the pattern
 /// ([`Instance`]), put together by [`assemble`]: side by side where
 /// they're apart, united where they meet. Cached by the body's key, the
-/// pattern, every copy's motion's bits and the fit tolerance.
+/// pattern, every copy's motion's bits and the fit tolerance. Unjoined
+/// ([`Copies::Separate`](varde_document::Copies::Separate)), the body is
+/// left as it is and each copy, named the same way, is the solid of its
+/// own body ([`Pattern::copy_body`]), never united with anything (they
+/// may overlap), cached as a mirror's image is, by the body's key, the
+/// copy's motion and instance and the fit tolerance; the new bodies go
+/// after the others, in the order of their ids.
 pub(super) fn evaluate_pattern(
     document: &Document,
     feature: FeatureId,
@@ -43,6 +49,7 @@ pub(super) fn evaluate_pattern(
     let motions =
         placements(pattern, count, [point, direction]).ok_or(message::AXIS_NO_DIRECTION)?;
     let mut changed = Vec::with_capacity(pattern.bodies.len());
+    let mut separate = Vec::new();
     for made in (evaluation.bodies.iter()).filter(|m| pattern.bodies.binary_search(&m.body).is_ok())
     {
         let name = document
@@ -54,6 +61,23 @@ pub(super) fn evaluate_pattern(
         }
         if !motions.iter().all(|motion| within(&made.solid, motion)) {
             return Err(message::out_of_range(Moving::Pattern, name).into());
+        }
+        if !pattern.joins() {
+            // Found: the filter above takes only the pattern's bodies.
+            let source = pattern.bodies.binary_search(&made.body).unwrap_or(0);
+            for (k, motion) in (1..).zip(&motions) {
+                // A checked pattern lists a body per copy.
+                let body = pattern.copy_body(source, k).ok_or(message::COPY_BODIES)?;
+                let copy = Instance {
+                    feature: feature.get(),
+                    index: u64::from(k),
+                };
+                let key = moved_key(made.key, motion, Some(copy), tolerance);
+                let solid =
+                    cache.solid(key, || copy_of(&made.solid, motion, copy, tolerance, name))?;
+                separate.push(BodySolid { body, solid, key });
+            }
+            continue;
         }
         let key = pattern_key(made.key, feature, &motions, tolerance);
         let solid = cache.solid(key, || {
@@ -70,7 +94,28 @@ pub(super) fn evaluate_pattern(
             *made = change;
         }
     }
+    separate.sort_by_key(|made| made.body);
+    evaluation.bodies.extend(separate);
     Ok(())
+}
+
+/// `solid`, the body named `name`'s, moved by `motion` as the copy
+/// `copy` of a pattern whose copies are bodies of their own; or why not,
+/// with the kernel's evidence, as [`copied`] has it.
+fn copy_of(
+    solid: &Solid,
+    motion: &Motion,
+    copy: Instance,
+    tolerance: &Tolerance,
+    name: &str,
+) -> Result<Solid, Failed> {
+    solid
+        .transformed(motion, Some(copy), tolerance, &Budget::DEFAULT)
+        .map_err(|failure| {
+            let words = message::moving(Moving::Pattern, name, failure.error);
+            let failure = KernelFailure::new(failure, tolerance);
+            Failed::kernel(words, &failure, [&[], &[]])
+        })
 }
 
 /// Whether `count` copies of a solid of `patches` patches are at most

@@ -70,7 +70,7 @@ fn p_starts_a_linear_pattern_typing_a_count_and_spacing_previews_the_row() {
     ] {
         assert!(shows(&plates, text), "{text}");
     }
-    assert!(!shows(&plates, "Join to original"));
+    assert!(shows(&plates, "Join to original"));
 
     // The count and spacing typed preview the row.
     plates.input(MotionField::Count, "4");
@@ -581,3 +581,5 @@ fn what_goes_away_while_the_axis_is_picked_is_gone() {
     plates.answer();
     assert!(plates.doc.feed.failed_features().is_empty());
 }
+
+mod separate;

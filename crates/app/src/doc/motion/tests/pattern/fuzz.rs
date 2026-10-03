@@ -1,6 +1,6 @@
 //! Random sequences of what the user can do around the pattern sessions:
 //! starting and editing linear and circular patterns, their modes, Flip,
-//! counts and spreads (long and deeply nested texts among them), units
+//! Join to original, counts and spreads (long and deeply nested texts among them), units
 //! changed, undo and redo while editing, the pattern's kind swapped by
 //! another edit, commits and cancels. After each step: a session that's
 //! ready drafts and commits the values its fields come to (worked out
@@ -226,7 +226,8 @@ fn run(seed: u64, steps: usize) {
                 let text = rng.pick(&spreads).clone();
                 plates.input(MotionField::Spread, &text);
             }
-            8 => plates.motion(MotionLook::Flip),
+            8 if rng.below(2) == 0 => plates.motion(MotionLook::Flip),
+            8 => plates.motion(MotionLook::Join),
             9 => {
                 let mode =
                     *rng.pick(&[PatternMode::Spacing, PatternMode::Total, PatternMode::Full]);
@@ -248,8 +249,23 @@ fn run(seed: u64, steps: usize) {
                     // Committed: the document holds what it drafted.
                     assert!(plates.doc.motion.is_none(), "{what}: not committed");
                     let id = edited.unwrap_or_else(|| plates.last_feature().0);
-                    let stored = &plates.doc.editor.document().feature(id).unwrap().kind;
-                    assert_eq!(*stored, kind, "{what}");
+                    let mut stored = plates
+                        .doc
+                        .editor
+                        .document()
+                        .feature(id)
+                        .unwrap()
+                        .kind
+                        .clone();
+                    // Unjoined, the document laid the copy bodies out.
+                    if let FeatureKind::Pattern(pattern) = &mut stored
+                        && !pattern.joins()
+                    {
+                        let made = pattern.copy_bodies().count();
+                        assert_eq!(Some(made), pattern.separate_count(), "{what}");
+                        pattern.copies = varde_document::Copies::Separate(Vec::new());
+                    }
+                    assert_eq!(stored, kind, "{what}");
                 }
             }
             15 => plates.motion(MotionLook::Cancel),

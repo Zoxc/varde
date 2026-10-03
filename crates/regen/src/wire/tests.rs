@@ -583,6 +583,7 @@ fn a_pattern_and_its_draft_round_trip() {
             count: Value::new("2", &Pattern::count_ask(&design)).unwrap(),
             spacing: Value::new(step, &Pattern::spacing_ask(&design)).unwrap(),
         },
+        copies: Default::default(),
     };
     editor
         .apply(editor.document().add_feature(row("100").into()))

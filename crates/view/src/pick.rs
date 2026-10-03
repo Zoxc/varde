@@ -437,10 +437,40 @@ impl PickIndex {
     /// corners, if any of them shows.
     pub fn bodies_bounds(&self, bodies: &[BodyId]) -> Option<[DVec3; 2]> {
         let mut bounds: Option<[Vec3; 2]> = None;
+        for at in self.body_points(bodies) {
+            bounds = Some(match bounds {
+                None => [at, at],
+                Some([low, high]) => [low.min(at), high.max(at)],
+            });
+        }
+        bounds.map(|corners| corners.map(|corner| corner.as_dvec3()))
+    }
+
+    /// How far `bodies`' faces in the model reach along `direction` (unit
+    /// or not), from the nearest point to the farthest, if any of them
+    /// shows and the direction has a length: the mesh's points, so within
+    /// its tolerance of the faces.
+    pub fn bodies_extent(&self, bodies: &[BodyId], direction: DVec3) -> Option<f64> {
+        let along = direction.try_normalize()?;
+        let mut range: Option<(f64, f64)> = None;
+        for at in self.body_points(bodies) {
+            let x = at.as_dvec3().dot(along);
+            range = Some(match range {
+                None => (x, x),
+                Some((low, high)) => (low.min(x), high.max(x)),
+            });
+        }
+        range.map(|(low, high)| high - low)
+    }
+
+    /// The points of `bodies`' faces' triangles in the model, repeated
+    /// where triangles share them.
+    fn body_points<'a>(&'a self, bodies: &'a [BodyId]) -> impl Iterator<Item = Vec3> + 'a {
         let indices = self.mesh.indices();
         let ends = self.mesh.face_ends();
-        for &body in bodies {
-            for face in self.body_faces(body) {
+        (bodies.iter())
+            .flat_map(move |&body| self.body_faces(body))
+            .flat_map(move |face| {
                 let face = face as usize;
                 let start = if face == 0 {
                     0
@@ -448,16 +478,9 @@ impl PickIndex {
                     ends[face - 1] as usize
                 };
                 let end = ends.get(face).map_or(start, |&end| end as usize);
-                for &vertex in indices.get(start..end).unwrap_or_default() {
-                    let at = position(&self.mesh, vertex);
-                    bounds = Some(match bounds {
-                        None => [at, at],
-                        Some([low, high]) => [low.min(at), high.max(at)],
-                    });
-                }
-            }
-        }
-        bounds.map(|corners| corners.map(|corner| corner.as_dvec3()))
+                indices.get(start..end).unwrap_or_default()
+            })
+            .map(|&vertex| position(&self.mesh, vertex))
     }
 
     /// The faces of `body`, ascending.
