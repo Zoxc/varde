@@ -72,7 +72,7 @@ fn cut() -> Operation {
 
 /// The example plate's top face (its extrude's end cap), picked at
 /// `(20, 0, 10)`.
-fn top(document: &Document) -> FaceRef {
+pub(super) fn top(document: &Document) -> FaceRef {
     FaceRef {
         body: document.bodies()[0].id,
         key: FaceKey {

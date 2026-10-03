@@ -26,8 +26,9 @@ use crate::{Failure, KernelError, Tolerance, in_range};
 const NEAREST_WORK: usize = 1 << 12;
 
 /// Profile segments scanned per work unit where a whole profile is only
-/// looked through (the axis's extent), not placed.
-const SCAN_PER_UNIT: usize = 16;
+/// looked through (the axis's extent: up to four evaluations each), not
+/// placed.
+const SCAN_PER_UNIT: usize = 4;
 
 /// `error`, failing `profile` placed on `frame` at `tol`, with its
 /// evidence.
@@ -271,9 +272,10 @@ impl<'a> Gather<'a> {
         }
     }
 
-    /// The least and greatest `y` of the profile's control points, if it
-    /// has any and the allowance covers looking: the extent along a
-    /// revolve's axis.
+    /// The least and greatest `y` of the profile, if it has any and the
+    /// allowance covers looking: the extent along a revolve's axis. Each
+    /// segment's own, at its ends and where its `y` turns ([`turns`]):
+    /// its control points may reach past it.
     pub(crate) fn extent_along_y(&mut self) -> Option<(f64, f64)> {
         let n = self.profile.segment_count();
         if !self.afford(n.div_ceil(SCAN_PER_UNIT)) {
@@ -284,7 +286,13 @@ impl<'a> Gather<'a> {
             .loops
             .iter()
             .flat_map(|lp| &lp.segments)
-            .flat_map(|seg| [seg.conic.p0.y, seg.conic.c.y, seg.conic.p1.y])
+            .flat_map(|seg| {
+                let c = &seg.conic;
+                [0.0, 1.0]
+                    .into_iter()
+                    .chain(turns([c.p0.y, c.c.y, c.p1.y], c.w))
+                    .map(|t| c.eval(t).y)
+            })
             .filter(|y| y.is_finite());
         ys.fold(None, |range, y| match range {
             None => Some((y, y)),

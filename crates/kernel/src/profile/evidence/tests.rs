@@ -483,4 +483,43 @@ fn the_error_and_its_evidence_are_the_same_every_time() {
         to: TAU - 1e-10,
     };
     crate::par::assert_deterministic(|| revolving(&q, sweep));
+    let nested = profile(vec![
+        rect(v(0.0, 0.0), v(10.0, 10.0), 0),
+        rect(v(4.0, 4.0), v(6.0, 6.0), 4),
+    ]);
+    crate::par::assert_deterministic(|| extruding(&nested));
+    let across = profile(vec![circle(v(1.0, 0.0), 2.0, 1, false)]);
+    crate::par::assert_deterministic(|| revolving(&across, Sweep::Full));
+}
+
+#[test]
+fn the_axis_spans_the_profile_not_its_control_points() {
+    // A circle of radius 2 round (1, 0) as four quarter arcs from 45°:
+    // their control points reach 2√2 along the axis, the circle 2.
+    let r = 2.0;
+    let at: Vec<DVec2> = (0..4)
+        .map(|k| {
+            let a = TAU / 8.0 + TAU / 4.0 * f64::from(k);
+            v(1.0, 0.0) + v(a.cos(), a.sin()) * r
+        })
+        .collect();
+    let segments = (0..4)
+        .map(|k| arc(v(1.0, 0.0), at[k], at[(k + 1) % 4], 1))
+        .collect();
+    let p = profile(vec![Loop { segments }]);
+    let f = revolving(&p, Sweep::Full);
+    assert!(
+        matches!(
+            f.error,
+            KernelError::Profile(ProfileError::CrossesAxis(0, _))
+        ),
+        "{:?}",
+        f.error
+    );
+    let axis = f.evidence.curves.last().unwrap();
+    let ys = [axis.p0, axis.p1].map(|q| q.z - TURNED.origin.z);
+    assert!(
+        (ys[0] + r).abs() < 1e-12 && (ys[1] - r).abs() < 1e-12,
+        "{ys:?}"
+    );
 }

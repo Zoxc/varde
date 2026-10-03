@@ -173,3 +173,57 @@ fn a_revolve_across_its_axis_fails_with_the_segment_and_the_axis() {
     assert!(xs.clone().any(|x| x < 0.0) && xs.clone().any(|x| x > 0.0));
     assert!(geometry.points().is_empty());
 }
+
+#[test]
+fn a_touching_extrude_on_a_face_is_placed_by_the_face() {
+    // The squares on the example plate's top face (z = 10): the
+    // geometry lies on that face, the corner where the sketch's
+    // placement puts it.
+    let mut editor = Editor::new(Document::example());
+    let plane = Plane::Face(super::faces::top(editor.document()));
+    editor.apply(editor.document().add_sketch(plane)).unwrap();
+    let sketch = editor.document().features().last().unwrap().id;
+    let mut drawn = Sketch::default();
+    let at_corner = corner_squares(&mut drawn);
+    let profiles = drawn.profiles().unwrap();
+    let regions = (0..profiles.regions.len())
+        .map(|index| profiles.reference(index).unwrap())
+        .collect();
+    editor
+        .apply(Command::SetSketch {
+            feature: sketch,
+            sketch: Box::new(drawn),
+        })
+        .unwrap();
+    let extrude = Extrude {
+        sketch,
+        regions,
+        extent: Extent::OneSide(length(editor.document(), "5")),
+        flip: false,
+        operation: Operation::NewBody(BodyId::NEW),
+    };
+    editor
+        .apply(editor.document().add_feature(extrude.into()))
+        .unwrap();
+    let extrude = editor.document().features().last().unwrap().id;
+    let evaluation = evaluated(editor.document());
+    let (_, placement) = *(evaluation.placements.iter())
+        .find(|(id, _)| *id == sketch)
+        .expect("the sketch is placed");
+    assert!((placement.origin.z - 10.0).abs() < 1e-9, "{placement:?}");
+    let geometry = failed_geometry(&evaluation, extrude);
+    let lines = geometry.lines().points();
+    assert!(!lines.is_empty());
+    assert!(
+        lines.iter().all(|p| (p[2] - 10.0).abs() < 1e-4),
+        "{lines:?}"
+    );
+    let corner = placement.origin + placement.x * 10.0 + placement.y * 10.0;
+    assert!(
+        geometry.points().iter().any(|&p| near(p, corner)),
+        "{:?} {corner}",
+        geometry.points()
+    );
+    let curves = geometry.sketch_curves();
+    assert!(curves.iter().all(|c| at_corner.contains(c)), "{curves:?}");
+}

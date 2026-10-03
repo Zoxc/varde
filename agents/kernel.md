@@ -7752,7 +7752,7 @@ profile, its frame (only if `Frame::check` passes: a profile is checked
 before its frame, so without one only the sketch curves are given), the
 evidence, the operation's resolution and its `EVIDENCE_WORK` allowance
 (a unit a segment placed, `NEAREST_WORK` for a nearest pair, a unit per
-16 segments scanned for the axis's extent). Segments are placed on the
+4 segments scanned for the axis's extent). Segments are placed on the
 frame at height 0 (`Frame::conic`), the sketch's own plane, where its
 curves are mended (extrude's `from` and `to` don't move them; a
 revolve's frame is the sketch's plane), as `Conic<DVec3>` passing
@@ -7768,7 +7768,7 @@ revolve's frame is the sketch's plane), as `Conic<DVec3>` passing
 | `Open(l, s)` | the gap's two ends (`s`'s end, the next one's start) and both segments |
 | `Cusp(l, s)` | the vertex where `s` starts, and the segments before and at it |
 | `Touching([a, b])` | both segments, and where they come nearest: one point half way between where they are within the resolution (touching, as far as the operation can tell), else the point on each |
-| `CrossesAxis(l, s)` | the segment, and the axis as a line from the least to the greatest `y` of the profile's control points |
+| `CrossesAxis(l, s)` | the segment, and the axis as a line from the least to the greatest `y` of the profile (each segment's at its ends and where its `y` turns, `measure::turns`: control points can reach past the curve) |
 | `TouchesAxis(l, s)` | a vertex on the axis (`s`'s start within the resolution of it) as a cusp is given; else the point of `s` nearest the axis, and `s` |
 | `NearlyFullTurn` | the whole profile on the frames at both ends of the turn (`x` turned to `from` and to `to`, as `Turn` turns it) |
 
@@ -7779,7 +7779,10 @@ arcs crossing, touching or nested take about a hundred) taken out of
 the allowance: past it, no point and `truncated`. The chain's
 `separate`, which raises `Touching`, finds only two pieces whose hulls
 aren't apart, not a point, and hands up indices alone, so the search is
-run again on the whole segments. The axis's nearest point
+run again on the whole segments. (Two in a row always meet at their shared end, so
+for them that end is the point; `separate` raises `Touching` on such a
+pair only when nothing else of theirs fails first, which in practice is
+a sharp corner.) The axis's nearest point
 (`nearest_axis`) is exact: the segment's ends and where its `x` turns
 (`measure::turns`, the roots of the derivative's numerator), the least
 `|x|` of those; `axis_rules` decides by signs and finds no place
