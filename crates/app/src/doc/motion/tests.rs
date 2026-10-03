@@ -564,3 +564,89 @@ fn a_straight_edge_is_an_axis_and_a_face_made_after_the_move_is_refused() {
     );
     assert!((point - ends[0]).cross(edge).length() < 1e-6 * edge.length_squared());
 }
+
+#[test]
+fn the_handles_set_the_offsets_and_a_ring_the_turn_committed_as_one_undo_step() {
+    let mut plates = plates();
+    let [_, right, _] = plates.bodies;
+    let before = plates.doc.editor.document().clone();
+    plates.click(right);
+    key_in(&mut plates.doc, character("m"));
+    // The handles stand at the body's box centre, about world axes.
+    let state = plates.doc.motion_state().expect("a move");
+    assert_eq!(state.bounds, Some(plates.bounds(right)));
+    assert_eq!(state.origin_axis, Some(Axis3::Z));
+    assert_eq!(state.units, varde_expr::LengthUnit::Mm);
+
+    // The Z arrow dragged: the viewport types the snapped offset in.
+    plates.motion(MotionLook::Input {
+        field: MotionField::Offset(Axis3::Z),
+        text: "6 mm".to_owned(),
+    });
+    let (_, draft) = plates.last_draft().expect("a draft");
+    let FeatureKind::Move(moved) = &draft else {
+        panic!("a move's draft");
+    };
+    assert_eq!(moved.offset_vector(), DVec3::new(0.0, 0.0, 6.0));
+    plates.answer();
+    let [low, high] = plates.bounds(right);
+    let centre = (low + high) / 2.0;
+    let state = plates.doc.motion_state().expect("a move");
+    assert_eq!(state.bounds, Some([low, high]));
+
+    // The Y ring dragged a quarter turn back: turned about the Y axis,
+    // and shifted so the centre stays, as the viewport works it out.
+    let shift = DVec3::new(centre.x + centre.z - 6.0, 0.0, centre.z - centre.x);
+    let units = Some(varde_expr::Unit::Length(varde_expr::LengthUnit::Mm));
+    plates.motion(MotionLook::Turn {
+        axis: Axis3::Y,
+        angle: "-90°".to_owned(),
+        offset: [shift.x, shift.y, shift.z].map(|v| varde_expr::format(v, units)),
+    });
+    let session = plates.doc.motion.as_ref().expect("a session");
+    assert_eq!(session.axis, Some(AxisRef::Origin(Axis3::Y)));
+    let (_, draft) = plates.last_draft().expect("a draft");
+    let FeatureKind::Move(moved) = &draft else {
+        panic!("a move's draft");
+    };
+    let (axis, angle) = moved.turn.as_ref().expect("a turn");
+    assert_eq!(*axis, AxisRef::Origin(Axis3::Y));
+    assert!((angle.value + std::f64::consts::FRAC_PI_2).abs() < 1e-12);
+    assert!(near(moved.offset_vector(), shift));
+    plates.answer();
+    assert_eq!(plates.doc.feed.draft_error(), None);
+    let [low, high] = plates.bounds(right);
+    assert!(near((low + high) / 2.0, centre), "turned about its centre");
+    // The disc's axis now runs along X.
+    assert!(high.x - low.x > 19.0 && high.z - low.z < 11.0);
+
+    // OK commits it, one undo step.
+    assert!(plates.doc.motion_ready());
+    plates.doc.update(Edit::CommitMotion);
+    assert!(plates.doc.motion.is_none());
+    assert_eq!(plates.last_feature().1, draft);
+    plates.doc.update(Edit::Undo);
+    assert_eq!(*plates.doc.editor.document(), before);
+}
+
+#[test]
+fn a_ring_s_turn_does_nothing_to_a_mirror() {
+    let mut plates = plates();
+    let [_, right, _] = plates.bodies;
+    plates.click(right);
+    plates.doc.start_motion(MotionKind::Mirror);
+    let turn = MotionLook::Turn {
+        axis: Axis3::X,
+        angle: "90°".to_owned(),
+        offset: ["1 mm", "2 mm", "3 mm"].map(str::to_owned),
+    };
+    plates.motion(turn);
+    let session = plates.doc.motion.as_ref().expect("a session");
+    assert_eq!(session.axis, None);
+    assert!(
+        session
+            .fields
+            .iter()
+            .all(|field| field.value.as_ref().unwrap().value == 0.0)
+    );
+}

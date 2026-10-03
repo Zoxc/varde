@@ -4,7 +4,8 @@
 //! a click picks the body of what it's on, or in Objects); a move's axis
 //! and a mirror's plane are picked in the viewport too (a model edge or
 //! face) or, while they're the ones picking, from the toolbar's origin
-//! axes or planes. The viewport's side, drawing the axis or plane, is in
+//! axes or planes. The viewport's side, drawing the axis or plane and a
+//! move's handles, which set its offsets and turn, is in
 //! `viewport/motion.rs`.
 
 use glam::DVec3;
@@ -130,6 +131,16 @@ pub enum MotionLook {
     /// An origin plane as a mirror's plane: the toolbar's, while the
     /// plane is picked.
     OriginPlane(OriginPlane),
+    /// A ring of a move's handles dragged: turns the bodies about the
+    /// world axis `axis` by `angle` and shifts them by `offset`, so they
+    /// turn about the handles' centre (the move turns about an axis
+    /// through the origin, then shifts), the texts as typed in the
+    /// angle's and the offsets' fields.
+    Turn {
+        axis: Axis3,
+        angle: String,
+        offset: [String; 3],
+    },
     /// A mirror's Create copy: keeps the original, or not.
     Copy,
     /// Drops the move or mirror being set up, changing nothing: Cancel,
@@ -157,8 +168,15 @@ pub struct MotionState<'a> {
     /// plane, or where regenerating the preview found an edge or face.
     pub line: Option<[DVec3; 2]>,
     /// Where the bodies are, the corners of their box in the model shown,
-    /// if it shows them: the axis and plane are drawn across it.
+    /// if it shows them: the axis and plane are drawn across it, and a
+    /// move's handles at its centre.
     pub bounds: Option<[DVec3; 2]>,
+    /// A move's axis, if it's a world axis: while the move turns, only
+    /// that axis's ring of the handles turns it further.
+    pub origin_axis: Option<Axis3>,
+    /// The design's units, which the handles' snapped offsets are typed
+    /// in.
+    pub units: LengthUnit,
     /// A mirror's Create copy.
     pub keep_original: bool,
     /// What's still to be done before it can be committed, if anything:

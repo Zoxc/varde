@@ -165,9 +165,10 @@ pub(crate) fn viewport<'a>(
     });
     // An extrude's handle's knobs, on its axis, those the model doesn't
     // hide. A layer even without them (and for a revolve, which has
-    // none), so the panel's layer above keeps its place in the stack,
-    // and with it its widgets' state (the field's focus, the body's
-    // scroll), as the last region is unpicked or the first picked.
+    // none, and a move, whose handles the renderer draws), so the
+    // panel's layer above keeps its place in the stack, and with it its
+    // widgets' state (the field's focus, the body's scroll), as the last
+    // region is unpicked or the first picked.
     let knobs = operating.as_ref().map(|operating| {
         let knobs = match operating {
             Operating::Extrude(extruding) => extruding.knobs(camera, mesh, &opacity),
@@ -371,6 +372,8 @@ struct Interaction {
     extrude: extrude::Input,
     /// What's kept of the revolve being set up.
     revolve: revolve::Input,
+    /// What's kept of the move being set up: its handles.
+    motion: motion::Input,
     /// Names this widget's [`Slot`] in the [`Pipeline`], for as long as the
     /// widget lives.
     slot: Arc<SlotKey>,
@@ -416,15 +419,25 @@ impl shader::Program<Message> for Program<'_> {
                 Operating::Revolve(revolving) => {
                     revolving.mouse(&mut state.revolve, *event, bounds, cursor, camera)
                 }
+                // A move's handles, ahead of picking the model.
+                Operating::Motion(moving) => {
+                    let hovered = self
+                        .picking
+                        .is_some_and(|picking| picking.hovered.is_some());
+                    moving.mouse(&mut state.motion, *event, bounds, cursor, camera, hovered)
+                }
                 // The cursor picks the model as outside the sessions.
-                Operating::Measure(_) | Operating::Motion(_) => None,
+                Operating::Measure(_) => None,
             };
             if action.is_some() {
                 return action;
             }
         }
+        // Nothing's picked under a move's handles.
+        let handled = matches!(self.operating, Some(Operating::Motion(_))) && state.motion.holds();
         if let Some(picking) = &self.picking
             && state.drag.is_none()
+            && !handled
             && let Some(action) = self.hover(state, picking, event, bounds, cursor)
         {
             return Some(action);
@@ -490,7 +503,13 @@ impl shader::Program<Message> for Program<'_> {
                 }
                 Operating::Motion(moving) => (
                     moving.plane_of_layers(),
-                    moving.layers(colors, &self.scene.camera, bounds),
+                    moving.layers(
+                        &state.motion,
+                        &self.scene.colors,
+                        colors,
+                        &self.scene.camera,
+                        bounds,
+                    ),
                 ),
             };
             // What the measure tool draws is on top: a distance through
@@ -550,7 +569,8 @@ impl shader::Program<Message> for Program<'_> {
                     Operating::Revolve(revolving) => {
                         revolving.mouse_interaction(&state.revolve, bounds, cursor)
                     }
-                    Operating::Measure(_) | Operating::Motion(_) => None,
+                    Operating::Motion(moving) => moving.mouse_interaction(&state.motion),
+                    Operating::Measure(_) => None,
                 })
                 .or_else(|| {
                     // Over what a click would select.

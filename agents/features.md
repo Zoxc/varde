@@ -1274,7 +1274,49 @@ screen at the end positive angles turn right-handed about) or the plane
 short line along its normal). An origin axis or plane is drawn as
 known; an edge or face where the newest draft answered found it. A move
 whose angle is zero shows its axis only while it's being picked. The
-knobs' layer is an empty placeholder.
+knobs' layer is an empty placeholder: the handles are drawn by the
+renderer with the rest.
+
+**A move's handles** (`viewport/motion.rs`, question 13's decision: typed
+fields and handles): at the centre of the bodies' box in the model shown
+(`MotionState::bounds`, merged bodies as their holders), a fixed size on
+the screen, an arrow along each world axis (100 px, the extrude handle's
+2 px shaft in the axis's scene colour, `Colors::axes`, with its knob at
+the end, a 7 px accent disc in a 2 px rim of the points' fill) and a ring
+square to each (70 px across, 64 segments, the axis's colour); the one
+under the cursor or dragged in the hovered colour. Not for a mirror,
+while the axis is picked, without the bodies' box, or in a document
+that can't be changed; while the move turns about another axis than a
+world axis only the arrows, while about a world axis only its ring
+(`MotionState::origin_axis`). Drawn on top of the model, as the axis is.
+They take the mouse ahead of picking the model (`Moving::mouse`,
+`viewport::Interaction::motion`): over one, the cursor is a grab hand,
+the model's hover is let go of and not worked out again until the cursor
+leaves it; a press on one grabs it, anywhere else goes to picking and
+the camera as before. Hit testing on the screen: an arrow's shaft within
+6 px or its knob (the nearest arrow first; one shown shorter than 12 px,
+nearly along the view, can't be grabbed), then the nearest ring within
+6 px. A drag keeps the centre where it was grabbed (an arrow's moving
+with its offset). Dragging an arrow sets that axis's offset: the offset
+as grabbed plus how far along the arrow's line the cursor's ray has
+passed nearest it, snapped absolute to the extrude handle's steps at the
+centre's pixel (`snap_step`), sent as `MotionLook::Input` with the text
+formatted in the design's units (`MotionState::units`). Dragging a ring
+measures the angle the cursor sweeps about the centre on the ring's plane
+(right-handed about the axis, unwrapped across half turns), the angle as
+grabbed (the angle field's value, zero if none) plus it snapped absolute
+to round degrees (1, 2, 5, 10, 15, 30, 45 or 90, the first 6 px along
+the ring: 5° at 70 px) and brought within a turn, and sends
+`MotionLook::Turn { axis, angle, offset }`: the session's axis becomes
+that world axis (`AxisRef::Origin`), and since a move turns about an axis
+through the origin before it shifts, the offsets become the grabbed
+ones turned about the centre by the angle's growth
+(`R·(offset − centre) + centre`, `angle::sin`/`cos`), so the bodies turn
+in place. A drag past the coordinate limit sends nothing. The texts go
+to the fields, so the preview, refusals and OK are those of typed values,
+one undo step. A ring dragged from a move about another world axis's
+turn isn't offered (its ring isn't shown); a move about an edge or face
+turns about its world axis only once its angle is typed back to zero.
 
 The status bar says "New move · Body 2" ("· 30° about Z axis" with a
 turn), "New mirror · Body 2 across XY plane", or what's still to do,
@@ -1306,13 +1348,20 @@ editing from the Timeline and undo, the neutral preview while the axis is
 picked, `Esc`; a field refused, a preview failing out of range with Add
 anyway; a straight edge as the axis and a face made after the move
 refused); `view/src/motion/tests.rs` (the panels' order and texts, the
-notes); `viewport/motion.rs` (the axis and plane drawn);
+notes); `viewport/motion/tests.rs` (the axis and plane drawn, the
+handles only for a move picking bodies, the Z arrow dragged to a snapped
+offset, a ring a quarter turn about the centre, only the turn's ring
+while turning, clicks off the handles picking the model and on them not,
+none while the axis is picked); the app's tests also apply what the
+handles send (an arrow's offset, a ring's turn keeping the box centre,
+OK one undo step; a mirror ignoring a turn);
 `regen/src/wire/tests.rs` (the reference on the wire, bad ones refused).
 
 Known gaps: the moved bodies' old place isn't shown faded (the mock's
 `fade`), as the preview replaces the model; a move with an angle of zero
 draws no edge or face axis (its draft names none); a draft that fails
 before its reference is resolved (a body consumed) draws none.
-
-Not yet: the move's handles (an arrow per world axis and a ring per axis
-at the moved bodies' box centre, dragging the offsets and the turn).
+A ring's turn shifts the offsets to turn about the centre, so their
+texts come out unround (rounded to the units' decimals) after a ring is
+dragged by an angle other than a quarter turn; the handles have no look
+in the UI mock, which shows none, so they take the extrude handle's.

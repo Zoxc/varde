@@ -450,6 +450,21 @@ impl Doc {
                 };
                 session.fields[field.index()].input(text, &ask);
             }
+            MotionLook::Turn {
+                axis,
+                angle,
+                offset,
+            } if session.kind == MotionKind::Move => {
+                let design = document.design();
+                session.axis = Some(AxisRef::Origin(axis));
+                (session.fields[MotionField::Angle.index()])
+                    .input(angle, &Move::angle_ask(&design));
+                let ask = Move::offset_ask(&design);
+                for (axis, text) in Axis3::ALL.into_iter().zip(offset) {
+                    session.fields[MotionField::Offset(axis).index()].input(text, &ask);
+                }
+            }
+            MotionLook::Turn { .. } => {}
             MotionLook::OriginAxis(axis) if session.kind == MotionKind::Move => {
                 session.axis = Some(AxisRef::Origin(axis));
                 session.picking = MotionPick::Bodies;
@@ -820,6 +835,11 @@ impl Doc {
             reference,
             line,
             bounds,
+            origin_axis: match session.axis {
+                Some(AxisRef::Origin(axis)) => Some(axis),
+                _ => None,
+            },
+            units: document.units(),
             keep_original: session.keep_original,
             need: session.need(),
             refused: session.refused(&design),

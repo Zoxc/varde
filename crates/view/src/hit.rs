@@ -124,7 +124,7 @@ fn curve_distance(sketch: &Sketch, curve: &Curve, at: DVec2) -> Option<f64> {
 }
 
 /// How far `p` is from the segment from `a` to `b`.
-fn segment_distance(p: DVec2, a: DVec2, b: DVec2) -> f64 {
+pub(crate) fn segment_distance(p: DVec2, a: DVec2, b: DVec2) -> f64 {
     let ab = b - a;
     let length = ab.length_squared();
     let t = if length > 0.0 {

@@ -221,8 +221,27 @@ controls (over them in a short viewport, `operation_panel::placed`) and
 12 px clear of the status bar (its body scrolls rather than run past
 it), `opaque` so clicks and the wheel on it don't reach the scene;
 the knobs' layer under it stays, empty, without knobs (and always for
-a revolve, which has none), so the panel's widget state survives the
-handle coming and going.
+a revolve, which has none, and a move, whose handles the renderer
+draws), so the panel's widget state survives the handle coming and
+going.
+
+A move's handles (`viewport/motion.rs`, `Moving`; their look and
+what they set in `agents/features.md`, Move and mirror) are drawn in the
+live layer on top of the model and hit tested in the `Program`, not as
+widgets: the rings are curves on the screen. `Moving::mouse` runs
+before picking the model, as the extrude's and revolve's input does,
+with the widget's `motion::Input` (the handle hovered and the drag:
+grip, centre, pixel size, values as grabbed, the ring's angle so far,
+the value last sent). Over a handle every cursor move is captured, the
+first sending `Look::Hover(None)` if the app holds something hovered,
+and `Program::update` skips the picking hover (`Input::holds`) on
+redraws too; leaving it requests a redraw, whose `RedrawRequested`
+works the hover out again. A press on a handle grabs it (captured); a
+press anywhere else goes on to picking and the camera. While dragging,
+moves send the snapped value only when it changes, and the release is
+captured. The cursor is a grab hand over one, grabbing while dragging.
+A move with no handles (picking its axis, a mirror, read-only) resets
+the input on its next mouse event.
 
 The panel follows the mock's (`.opp`): a card 288 px wide, 8 px round,
 with a 3 px accent line along its top and the mock's shadow, drawn by
