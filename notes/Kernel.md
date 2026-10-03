@@ -483,6 +483,18 @@ counts, refinement depth (`MAX_REFINE_DEPTH` 24), trace steps
 - `Boolean`: `Inconsistent` (decisions that don't fit together) or
   `Degenerate` (a face that can't be triangulated).
 
+Inside the kernel steps pass that small `Copy` error. The public
+operations making or combining solids (`extrude`, `revolve`, `boolean`,
+`touches`, `assemble`, `Solid::transformed`) fail with a `Failure`: the
+`KernelError` and its `Evidence`, the geometry it is about (patches,
+conics, points, the sketch curves of profile segments, and operand faces
+by name), so the app can show where an operation fails, not only why.
+Evidence never changes an outcome, is capped per kind (`MAX_EVIDENCE`,
+then `truncated`), comes from its own small allowance (`EVIDENCE_WORK`)
+rather than the operation's budget, is deterministic, and goes with the
+error actually returned. `TooComplex` carries none; for now no other
+error does either, the type being in place first.
+
 ## In the app
 
 `varde-regen` evaluates the history in its lane: a sketch's profiles, then

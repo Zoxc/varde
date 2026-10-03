@@ -62,7 +62,7 @@ use crate::budget::{Budget, Work};
 use crate::mesh::{BuildError, Bvh, CheckError, Face, FaceKey, Mesh, MeshBuilder, Surface};
 use crate::patch::Bounds3;
 use crate::topology::distance::{Allowance, to_patches};
-use crate::{KernelError, Solid, Tolerance};
+use crate::{Failure, KernelError, Solid, Tolerance};
 
 mod assemble;
 mod chain;
@@ -240,8 +240,8 @@ pub fn boolean(
     op: Op,
     tol: &Tolerance,
     budget: &Budget,
-) -> Result<Solid, KernelError> {
-    boolean_within(a, b, op, tol, &mut Work::new(budget))
+) -> Result<Solid, Failure> {
+    boolean_within(a, b, op, tol, &mut Work::new(budget)).map_err(Failure::from)
 }
 
 /// The least work [`boolean`] gives its second try, without joining ends
@@ -918,7 +918,12 @@ fn flat_decided(
 /// within it), where flat ones touch only within the tie distance; the
 /// difference is below anything a user can place. It only picks what an
 /// operation works on: every [`boolean`] decides for itself.
-pub fn touches(
+pub fn touches(a: &Solid, b: &Solid, tol: &Tolerance, budget: &Budget) -> Result<bool, Failure> {
+    touches_within(a, b, tol, budget).map_err(Failure::from)
+}
+
+/// [`touches`], failing with the error alone.
+fn touches_within(
     a: &Solid,
     b: &Solid,
     tol: &Tolerance,

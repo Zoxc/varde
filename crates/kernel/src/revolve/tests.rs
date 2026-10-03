@@ -9,6 +9,7 @@ use std::f64::consts::{FRAC_1_SQRT_2, PI, TAU};
 use glam::{DVec2, DVec3};
 
 use super::*;
+use crate::Stripped;
 use crate::mesh::{CheckError, FaceKey, PartKey};
 use crate::par::assert_deterministic;
 use crate::profile::tests::{arc, circle, polygon, rect, reversed};
@@ -757,7 +758,8 @@ fn a_profile_running_the_wrong_way_is_refused() {
             7,
             &TOL,
             &Budget::DEFAULT
-        ),
+        )
+        .stripped(),
         Err(KernelError::Profile(ProfileError::Nesting))
     );
 }

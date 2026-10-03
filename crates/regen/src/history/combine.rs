@@ -79,6 +79,7 @@ pub(super) fn evaluate(
         let next = boolean_key(doing, *key, tool.key);
         let result = cache.boolean(next, || {
             varde_kernel::boolean(solid, &tool.solid, op, tolerance, &Budget::DEFAULT)
+                .map_err(|failure| failure.error)
         });
         let words = match doing {
             // The messages say "joining" for a union.

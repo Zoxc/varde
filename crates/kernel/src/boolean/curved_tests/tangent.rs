@@ -2,6 +2,7 @@
 //! through or ends on a face.
 
 use super::*;
+use crate::Stripped;
 
 /// The loops on the XY plane extruded from `from` to `to` at `tol`.
 fn ex(loops: Vec<Loop>, from: f64, to: f64, feature: u64, tol: &Tolerance) -> Solid {
@@ -271,7 +272,9 @@ fn unions_touching_along_a_line_fail_at_once() {
     for (x, y) in [(&a, &on_seam), (&a, &off_seam), (&holed, &pin)] {
         for (x, y) in [(x, y), (y, x)] {
             assert_eq!(
-                boolean(x, y, Op::Union, &TOL, &budget).map(|s| s.volume()),
+                boolean(x, y, Op::Union, &TOL, &budget)
+                    .stripped()
+                    .map(|s| s.volume()),
                 Err(KernelError::Boolean(BooleanError::NotManifold))
             );
         }
@@ -282,7 +285,7 @@ fn unions_touching_along_a_line_fail_at_once() {
     let inner = ex(vec![circle(v(0.5, 0.0), 0.5, 0, false)], 0.0, 1.0, 2, &TOL);
     let union = boolean(&outer, &inner, Op::Union, &TOL, &Budget::DEFAULT).unwrap();
     assert!((union.volume() - PI).abs() < 1e-9, "{}", union.volume());
-    let other = boolean(&inner, &outer, Op::Union, &TOL, &budget);
+    let other = boolean(&inner, &outer, Op::Union, &TOL, &budget).stripped();
     match other {
         Ok(solid) => assert!((solid.volume() - PI).abs() < 1e-9, "{}", solid.volume()),
         Err(e) => assert_ne!(e, KernelError::Boolean(BooleanError::NotManifold)),
@@ -320,7 +323,7 @@ fn a_pin_plugging_a_hole_it_touches_inside_is_no_pinch() {
             } else {
                 Budget::DEFAULT
             };
-            match boolean(x, y, Op::Union, &TOL, &budget) {
+            match boolean(x, y, Op::Union, &TOL, &budget).stripped() {
                 Ok(solid) => assert!(
                     (solid.volume() - want).abs() < 1e-9,
                     "{turn}: {}",
@@ -339,7 +342,9 @@ fn a_pin_plugging_a_hole_it_touches_inside_is_no_pinch() {
         let pin = ex(vec![circle(at, 1.1, 0, false)], -0.5, 1.5, 2, &TOL);
         for (x, y) in [(&block, &pin), (&pin, &block)] {
             assert_eq!(
-                boolean(x, y, Op::Union, &TOL, &Budget::new(100_000)).map(|s| s.volume()),
+                boolean(x, y, Op::Union, &TOL, &Budget::new(100_000))
+                    .stripped()
+                    .map(|s| s.volume()),
                 Err(KernelError::Boolean(BooleanError::NotManifold)),
                 "{turn}"
             );
@@ -588,7 +593,9 @@ fn spheres_touching_faces_at_a_point_are_right_or_refused() {
         ];
         for (k, (x, y, op)) in jobs.into_iter().enumerate() {
             if !works[k] {
-                let e = boolean(x, y, op, &TOL, &Budget::DEFAULT).unwrap_err();
+                let e = boolean(x, y, op, &TOL, &Budget::DEFAULT)
+                    .stripped()
+                    .unwrap_err();
                 assert_eq!(
                     e,
                     KernelError::Boolean(BooleanError::NotManifold),

@@ -21,8 +21,12 @@ fn load_fonts() {
     let mut fonts = iced::advanced::graphics::text::font_system()
         .write()
         .expect("font system lock poisoned");
-    fonts.load_font(Cow::Borrowed(include_bytes!("../fonts/FiraSans-SemiBold.ttf")));
-    fonts.load_font(Cow::Borrowed(include_bytes!("../fonts/FiraMono-Regular.ttf")));
+    fonts.load_font(Cow::Borrowed(include_bytes!(
+        "../fonts/FiraSans-SemiBold.ttf"
+    )));
+    fonts.load_font(Cow::Borrowed(include_bytes!(
+        "../fonts/FiraMono-Regular.ttf"
+    )));
     let db = fonts.raw().db_mut();
     db.set_sans_serif_family("Fira Sans");
     db.set_monospace_family("Fira Mono");

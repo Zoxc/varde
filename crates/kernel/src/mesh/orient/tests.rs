@@ -8,6 +8,7 @@ use std::f64::consts::{FRAC_1_SQRT_2, PI, TAU};
 use glam::DVec2;
 
 use super::*;
+use crate::Stripped;
 use crate::mesh::MeshBuilder;
 use crate::mesh::tests::{TOL, joined};
 use crate::par::assert_deterministic;
@@ -383,7 +384,7 @@ fn try_ring(outer: f64, inner: f64, n: usize) -> Result<Solid, KernelError> {
             Loop { segments: hole },
         ],
     };
-    extrude(&profile, &Frame::XY, 0.0, 1.0, 5, &TOL, &Budget::DEFAULT)
+    extrude(&profile, &Frame::XY, 0.0, 1.0, 5, &TOL, &Budget::DEFAULT).stripped()
 }
 
 #[test]

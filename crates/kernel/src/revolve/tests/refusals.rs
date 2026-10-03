@@ -1,9 +1,10 @@
 //! What a revolve refuses, and how.
 
 use super::*;
+use crate::Stripped;
 
 fn run(p: &Profile, sweep: Sweep) -> Result<Solid, KernelError> {
-    revolve(p, &Z, sweep, 7, &TOL, &Budget::DEFAULT)
+    revolve(p, &Z, sweep, 7, &TOL, &Budget::DEFAULT).stripped()
 }
 
 fn part(to: f64) -> Sweep {
@@ -163,7 +164,7 @@ fn bad_turns_and_frames_are_refused() {
         ..Z
     };
     assert_eq!(
-        revolve(&washer, &skewed, Sweep::Full, 7, &TOL, &Budget::DEFAULT),
+        revolve(&washer, &skewed, Sweep::Full, 7, &TOL, &Budget::DEFAULT).stripped(),
         Err(KernelError::Patch(PatchError::Degenerate))
     );
     let far = Frame {
@@ -171,7 +172,7 @@ fn bad_turns_and_frames_are_refused() {
         ..Z
     };
     assert!(matches!(
-        revolve(&washer, &far, Sweep::Full, 7, &TOL, &Budget::DEFAULT),
+        revolve(&washer, &far, Sweep::Full, 7, &TOL, &Budget::DEFAULT).stripped(),
         Err(KernelError::Patch(PatchError::Coordinate(_)))
     ));
 }
@@ -217,7 +218,8 @@ fn work_past_the_budget_is_too_complex() {
                 7,
                 &TOL,
                 &Budget::new(budget)
-            ),
+            )
+            .stripped(),
             Err(KernelError::TooComplex)
         );
     }

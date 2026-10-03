@@ -17,7 +17,7 @@ use crate::mesh::tests::TOL;
 use crate::mesh::{Quadric, Surface, samples};
 use crate::par::assert_deterministic;
 use crate::profile::tests::{arc, circle, polygon, rect, reversed};
-use crate::{Frame, Loop, Profile, Segment, extrude};
+use crate::{Frame, Loop, Profile, Segment, Stripped, extrude};
 
 fn cube(min: [f64; 3], size: [f64; 3]) -> Solid {
     Solid::cuboid(DVec3::from(min), DVec3::from(size), 1, &TOL).unwrap()
@@ -410,7 +410,9 @@ fn tangent(op: Op, swap: bool) -> Result<(Solid, f64), KernelError> {
     let a = Solid::cylinder(DVec3::ZERO, 1.0, 2.0, 2, &tol).unwrap();
     let b = Solid::cylinder(DVec3::new(2.0, 0.0, 0.5), 1.0, 1.0, 3, &tol).unwrap();
     let (x, y) = if swap { (b, a) } else { (a, b) };
-    boolean(&x, &y, op, &tol, &Budget::DEFAULT).map(|s| (s, x.volume()))
+    boolean(&x, &y, op, &tol, &Budget::DEFAULT)
+        .stripped()
+        .map(|s| (s, x.volume()))
 }
 
 #[test]
@@ -434,7 +436,7 @@ fn a_cusp_where_faces_are_tangent_stays_invalid() {
         let tol = Tolerance::new(fit).unwrap();
         let plate = Solid::cuboid(DVec3::ZERO, DVec3::new(4.0, 2.0, 1.0), 1, &tol).unwrap();
         let boss = Solid::cylinder(DVec3::new(2.0, 0.5, 0.5), 0.5, 1.5, 2, &tol).unwrap();
-        let got = boolean(&plate, &boss, Op::Union, &tol, &Budget::DEFAULT);
+        let got = boolean(&plate, &boss, Op::Union, &tol, &Budget::DEFAULT).stripped();
         assert!(
             matches!(got, Err(KernelError::Invalid(_))),
             "{fit}: {:?}",
@@ -1219,7 +1221,7 @@ fn a_hole_through_a_sunk_ring_on_a_turned_frame() {
     // slot) and, below it, where it overlaps the ring's outer disc (clear
     // of its hole).
     let taken = PI * hole.1 * hole.1 + lens(hole, (DVec2::new(0.1, 0.15), 1.15));
-    match boolean(&body, &drill, Op::Difference, &TOL, &Budget::DEFAULT) {
+    match boolean(&body, &drill, Op::Difference, &TOL, &Budget::DEFAULT).stripped() {
         Ok(got) => {
             let (got, want) = (got.volume(), body.volume() - taken);
             assert!((got - want).abs() < 1e-9, "{got} not {want}");
@@ -1367,7 +1369,8 @@ fn the_result_checks_integrations_are_charged() {
     let total = made
         + (mesh.tris().len() * crate::solid::CHECK_WORK + integrated * crate::solid::INTEGRATE_WORK)
             as u64;
-    let with = |work: u64| boolean(&tube, &notch, Op::Difference, &TOL, &Budget::new(work));
+    let with =
+        |work: u64| boolean(&tube, &notch, Op::Difference, &TOL, &Budget::new(work)).stripped();
     assert_eq!(with(total).map(|s| s.mesh().clone()), Ok(mesh));
     assert_eq!(with(total - 1), Err(KernelError::TooComplex));
 }
@@ -1895,25 +1898,26 @@ fn bars_through_boxes(seed: u64, cases: std::ops::Range<usize>) -> usize {
             (&bar, &block, Op::Difference),
             (&block, &bar, Op::Difference),
         ];
-        let got = jobs.map(
-            |(x, y, op)| match boolean(x, y, op, &TOL, &Budget::DEFAULT) {
-                Ok(solid) => {
-                    exact_to(
-                        &format!("seed {seed}, case {case}, {op:?}"),
-                        &solid,
-                        4.0,
-                        1e-11,
-                    );
-                    Some(solid.volume())
-                }
-                Err(
-                    KernelError::Invalid(_)
-                    | KernelError::TooComplex
-                    | KernelError::Boolean(BooleanError::Degenerate),
-                ) => None,
-                Err(e) => panic!("seed {seed}, case {case}, {op:?}: {e:?}"),
-            },
-        );
+        let got =
+            jobs.map(
+                |(x, y, op)| match boolean(x, y, op, &TOL, &Budget::DEFAULT).stripped() {
+                    Ok(solid) => {
+                        exact_to(
+                            &format!("seed {seed}, case {case}, {op:?}"),
+                            &solid,
+                            4.0,
+                            1e-11,
+                        );
+                        Some(solid.volume())
+                    }
+                    Err(
+                        KernelError::Invalid(_)
+                        | KernelError::TooComplex
+                        | KernelError::Boolean(BooleanError::Degenerate),
+                    ) => None,
+                    Err(e) => panic!("seed {seed}, case {case}, {op:?}: {e:?}"),
+                },
+            );
         if let [Some(u), Some(i), Some(d), Some(e)] = got {
             let (va, vb) = (bar.volume(), block.volume());
             for (what, off) in [
@@ -2179,7 +2183,9 @@ fn four_off(
         (b, a, Op::Difference),
     ]
     .map(|(x, y, op)| {
-        boolean(x, y, op, tol, &Budget::DEFAULT).map(|s| (s.volume(), free_off(&s, of)))
+        boolean(x, y, op, tol, &Budget::DEFAULT)
+            .stripped()
+            .map(|s| (s.volume(), free_off(&s, of)))
     })
 }
 
@@ -2689,7 +2695,7 @@ fn random_boxes_across_walls_with_level_ends() {
             (Op::Difference, va - both),
         ] {
             all += 1;
-            match boolean(&a, &b, op, &TOL, &Budget::DEFAULT) {
+            match boolean(&a, &b, op, &TOL, &Budget::DEFAULT).stripped() {
                 Ok(solid) => {
                     let got = solid.volume();
                     assert!(
@@ -2792,7 +2798,7 @@ fn shallow_level_arcs_are_never_wrong() {
                 (Op::Intersection, both),
                 (Op::Difference, va - both),
             ] {
-                match boolean(&a, &b, op, &TOL, &Budget::DEFAULT) {
+                match boolean(&a, &b, op, &TOL, &Budget::DEFAULT).stripped() {
                     Ok(solid) => {
                         let got = solid.volume();
                         assert!(
@@ -2956,7 +2962,7 @@ fn boxes_across_parabolic_walls_are_right() {
                 (&b, &a, Op::Difference, vb - both),
             ] {
                 all += 1;
-                match boolean(x, y, op, &TOL, &Budget::DEFAULT) {
+                match boolean(x, y, op, &TOL, &Budget::DEFAULT).stripped() {
                     Ok(solid) => {
                         let got = solid.volume();
                         assert!(
@@ -3068,7 +3074,7 @@ fn a_cap_folding_when_refined_is_right_or_refused() {
     let mut volumes = Vec::new();
     for op in [Op::Union, Op::Intersection, Op::Difference] {
         for (x, y) in [(&a, &b), (&b, &a)] {
-            match boolean(x, y, op, &TOL, &Budget::DEFAULT) {
+            match boolean(x, y, op, &TOL, &Budget::DEFAULT).stripped() {
                 Ok(solid) => volumes.push((op, x.volume(), solid.volume())),
                 Err(why) => assert!(matches!(why, KernelError::Invalid(_)), "{op:?}: {why:?}"),
             }
@@ -3238,7 +3244,7 @@ fn chords_across_a_section_tip_are_refused() {
         -r + 1.7487237938396127e-4,
     );
     let before = super::chain::REFUSED.get();
-    let got = boolean(&a, &b, Op::Intersection, &TOL, &Budget::DEFAULT);
+    let got = boolean(&a, &b, Op::Intersection, &TOL, &Budget::DEFAULT).stripped();
     assert!(
         matches!(got, Err(KernelError::Boolean(BooleanError::Inconsistent))),
         "{:?}",

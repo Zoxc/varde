@@ -25,6 +25,7 @@ use glam::{DVec2, DVec3};
 
 use super::tests::{plate_with_holes, profile, straightened, uneven_circles_from};
 use super::*;
+use crate::Stripped;
 use crate::boolean::{Op, boolean};
 use crate::par::assert_deterministic;
 use crate::profile::tests::{arc, circle, polygon, rect, reversed};
@@ -46,7 +47,7 @@ fn sized<T>(release: T, debug: T) -> T {
 /// `p` extruded on the XY plane from 0 to `h` at `tol`, within the
 /// default budget.
 fn run(p: &Profile, tol: &Tolerance, h: f64) -> Result<Solid, KernelError> {
-    extrude(p, &Frame::XY, 0.0, h, 1, tol, &Budget::DEFAULT)
+    extrude(p, &Frame::XY, 0.0, h, 1, tol, &Budget::DEFAULT).stripped()
 }
 
 /// The cases a test saw refused, by name and error.
@@ -292,7 +293,7 @@ fn crowded_caps_run_out_of_budget_quickly() {
     // its first triangulation and refinement do, as soon.
     let p = fan(16_384, 100.0);
     let start = Instant::now();
-    let result = extrude(&p, &Frame::XY, 0.0, 1.0, 1, &TOL, &Budget::new(1 << 18));
+    let result = extrude(&p, &Frame::XY, 0.0, 1.0, 1, &TOL, &Budget::new(1 << 18)).stripped();
     assert_eq!(result.map(|_| ()), Err(KernelError::TooComplex));
     let bound = sized(2, 20);
     assert!(start.elapsed().as_secs() < bound, "{:?}", start.elapsed());

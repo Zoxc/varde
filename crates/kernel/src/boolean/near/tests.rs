@@ -6,6 +6,7 @@
 use glam::{DVec2, DVec3};
 
 use super::*;
+use crate::Stripped;
 use crate::boolean::pairs::tests::{poke, reach};
 use crate::budget::Budget;
 use crate::mesh::tests::{TOL, round_octahedron};
@@ -277,7 +278,7 @@ fn out_of_budget_is_too_complex() {
     let (_, left) = spent(&a, &b, &TOL);
     let needed = BUDGET - left;
     assert_eq!(
-        touches(&a, &b, &TOL, &Budget::new(needed - 1)),
+        touches(&a, &b, &TOL, &Budget::new(needed - 1)).stripped(),
         Err(KernelError::TooComplex)
     );
     assert_eq!(touches(&a, &b, &TOL, &Budget::new(needed)), Ok(false));

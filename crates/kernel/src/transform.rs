@@ -37,7 +37,7 @@ use crate::boolean::{Op, boolean};
 use crate::budget::Work;
 use crate::mesh::{Edge, Face, FaceKey, FaceName, Form, Halfedge, Mesh, Quadric, Surface, Tri};
 use crate::patch::{Bounds3, Conic, Conic3};
-use crate::{Budget, KernelError, MAX_PATCHES, Solid, Tolerance, in_range};
+use crate::{Budget, Failure, KernelError, MAX_PATCHES, Solid, Tolerance, in_range};
 
 /// The largest factor [`Motion::scale`] takes, and the inverse of the
 /// smallest: far beyond what a design asks (a scale's feature allows a
@@ -547,6 +547,18 @@ impl Solid {
         copy: Option<Instance>,
         tol: &Tolerance,
         budget: &Budget,
+    ) -> Result<Solid, Failure> {
+        self.transformed_within(motion, copy, tol, budget)
+            .map_err(Failure::from)
+    }
+
+    /// [`Solid::transformed`], failing with the error alone.
+    fn transformed_within(
+        &self,
+        motion: &Motion,
+        copy: Option<Instance>,
+        tol: &Tolerance,
+        budget: &Budget,
     ) -> Result<Solid, KernelError> {
         let mut work = Work::new(budget);
         let mesh = self.mesh();
@@ -647,7 +659,7 @@ fn reversed((t, tri): (usize, &Tri)) -> Tri {
 /// The work is linear in the patches when the parts' boxes are apart,
 /// as a pattern's spaced copies are. No parts, or only empty ones, give
 /// the empty solid; one gives itself.
-pub fn assemble(parts: &[Solid], tol: &Tolerance, budget: &Budget) -> Result<Solid, KernelError> {
+pub fn assemble(parts: &[Solid], tol: &Tolerance, budget: &Budget) -> Result<Solid, Failure> {
     let mut work = Work::new(budget);
     // The non-empty parts (those with a box) and their boxes, in step.
     let (solids, boxes): (Vec<&Solid>, Vec<Bounds3>) =
@@ -695,7 +707,7 @@ pub fn assemble(parts: &[Solid], tol: &Tolerance, budget: &Budget) -> Result<Sol
         _ => {
             let mesh = side_by_side(&results)?;
             work.spend(mesh.tris().len().saturating_mul(TRANSFORM_WORK))?;
-            Solid::new_within(mesh, tol, &mut work)
+            Ok(Solid::new_within(mesh, tol, &mut work)?)
         }
     }
 }

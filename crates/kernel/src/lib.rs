@@ -32,7 +32,9 @@
 //! meshes of them, the check of their invariants, the BVH over them,
 //! their refinement and repair, and box and cylinder meshes are in
 //! [`mesh`]. Operations on them are bounded by a [`Budget`] and the limits
-//! here, and fail with a [`KernelError`]. Angles go through [`trig`],
+//! here, and fail with a [`KernelError`]; the public operations making or
+//! combining solids fail with a [`Failure`], the error and the
+//! [`Evidence`] of where. Angles go through [`trig`],
 //! whose bits are the same on every platform.
 
 mod aabb;
@@ -40,6 +42,7 @@ mod boolean;
 mod budget;
 mod error;
 mod extrude;
+mod failure;
 mod manifold;
 pub mod measure;
 pub mod mesh;
@@ -65,6 +68,7 @@ pub use boolean::{BooleanError, Op, boolean, touches};
 pub use budget::Budget;
 pub use error::KernelError;
 pub use extrude::{Frame, extrude};
+pub use failure::{EVIDENCE_WORK, Evidence, EvidenceCaps, Failure, MAX_EVIDENCE, Operand};
 pub use manifold::{ManifoldError, ManifoldMesh};
 pub use profile::{Loop, MAX_PROFILE_SEGMENTS, Profile, ProfileError, Segment};
 pub use render_lines::{LinesError, LinesPart, RenderLines};
@@ -121,3 +125,20 @@ pub const MAX_TRACE_STEPS: usize = 4096;
 /// measured, a plate with 144 holes joined to a boss across them or two
 /// flat tori of 36 864 patches each, take about 2 million units.
 pub const MAX_WORK: u64 = 1 << 22;
+
+/// A public operation's result with its [`Failure`]'s evidence stripped,
+/// for tests comparing errors.
+#[cfg(test)]
+pub(crate) trait Stripped<T> {
+    fn stripped(self) -> Result<T, KernelError>;
+}
+
+#[cfg(test)]
+impl<T> Stripped<T> for Result<T, Failure> {
+    fn stripped(self) -> Result<T, KernelError> {
+        self.map_err(|f| {
+            assert!(f.evidence.within_caps(), "{:?}", f.error);
+            f.error
+        })
+    }
+}

@@ -12,7 +12,7 @@ use crate::patch::PatchError;
 use crate::profile::tests::{arc, circle, polygon, rect};
 use crate::profile::{Loop, Profile, Segment};
 use crate::transform::{MAX_SCALE, Motion};
-use crate::{Budget, KernelError, Solid, Sweep, revolve};
+use crate::{Budget, KernelError, Solid, Stripped, Sweep, revolve};
 
 /// The frame with its axis along `z` through `origin`, the profile in a
 /// plane through it along `x`.
@@ -386,14 +386,18 @@ fn a_scale_down_under_the_resolution_is_refused() {
     let plate = Solid::cuboid(DVec3::ZERO, DVec3::new(1.0, 1.0, 0.01), 1, &TOL).unwrap();
     let thin = Motion::scale(DVec3::ZERO, DVec3::new(1.0, 1.0, 1e-5)).unwrap();
     assert!(matches!(
-        plate.transformed(&thin, None, &TOL, &Budget::DEFAULT),
+        plate
+            .transformed(&thin, None, &TOL, &Budget::DEFAULT)
+            .stripped(),
         Err(KernelError::Invalid(_))
     ));
     // A part shrunk a millionfold is under it everywhere.
     let (solid, _) = part();
     let tiny = Motion::scale(DVec3::ZERO, DVec3::splat(1.0 / MAX_SCALE)).unwrap();
     assert!(matches!(
-        solid.transformed(&tiny, None, &TOL, &Budget::DEFAULT),
+        solid
+            .transformed(&tiny, None, &TOL, &Budget::DEFAULT)
+            .stripped(),
         Err(KernelError::Invalid(_))
     ));
     // Kept above it, it passes.
@@ -431,7 +435,8 @@ fn scale_factors_and_bounds_are_checked() {
     let cube = Solid::cuboid(DVec3::splat(1.0), DVec3::splat(1000.0), 1, &TOL).unwrap();
     let big = Motion::scale(z, DVec3::new(1.0, 2000.0, 1.0)).unwrap();
     assert!(matches!(
-        cube.transformed(&big, None, &TOL, &Budget::DEFAULT),
+        cube.transformed(&big, None, &TOL, &Budget::DEFAULT)
+            .stripped(),
         Err(KernelError::Patch(PatchError::Coordinate(_)))
     ));
     let far = Motion::scale(DVec3::splat(6e5), DVec3::splat(3.0)).unwrap();

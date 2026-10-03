@@ -374,6 +374,7 @@ impl Run<'_> {
             let solid = cache
                 .boolean(key, || {
                     varde_kernel::boolean(&made.solid, &tool, op, &self.tolerance, &Budget::DEFAULT)
+                        .map_err(|failure| failure.error)
                 })
                 .map_err(|error| fails(message::boolean(doing, name, error)))?;
             // The cached empty result stays: its key is right, and the
@@ -460,6 +461,7 @@ impl Run<'_> {
         let mut unite = |key: Key, a: &Solid, b: &Solid| {
             let solid = cache.boolean(key, || {
                 varde_kernel::boolean(a, b, Op::Union, &self.tolerance, &Budget::DEFAULT)
+                    .map_err(|failure| failure.error)
             });
             solid.map(|solid| (solid, key))
         };
@@ -521,6 +523,7 @@ impl Run<'_> {
         for made in bodies.iter().filter(|made| !excluded.contains(&made.body)) {
             let touches = cache.touches(touches_key(made.key, tool_key), || {
                 varde_kernel::touches(&made.solid, tool, &self.tolerance, &self.touching)
+                    .map_err(|failure| failure.error)
             });
             match touches {
                 Ok(true) => touched.push(made.body),
@@ -583,7 +586,7 @@ impl Run<'_> {
                 &self.tolerance,
                 &Budget::DEFAULT,
             )
-            .map_err(|error| self.kernel_error(error))
+            .map_err(|failure| self.kernel_error(failure.error))
         })?;
         Ok((solid, key))
     }
@@ -624,7 +627,7 @@ impl Run<'_> {
                 &self.tolerance,
                 &Budget::DEFAULT,
             )
-            .map_err(|error| self.kernel_error(error))
+            .map_err(|failure| self.kernel_error(failure.error))
         })?;
         Ok((solid, key))
     }

@@ -8,6 +8,7 @@ use std::f64::consts::PI;
 use glam::{DVec2, DVec3};
 
 use super::*;
+use crate::Stripped;
 use crate::mesh::FacePart;
 use crate::par::assert_deterministic;
 use crate::profile::tests::{arc, circle, folding_cap, polygon, rect, reversed};
@@ -22,7 +23,7 @@ pub(super) fn profile(loops: Vec<Loop>) -> Profile {
 }
 
 fn run(p: &Profile, frame: &Frame, from: f64, to: f64) -> Result<Solid, KernelError> {
-    extrude(p, frame, from, to, 9, &TOL, &Budget::DEFAULT)
+    extrude(p, frame, from, to, 9, &TOL, &Budget::DEFAULT).stripped()
 }
 
 /// Extrudes `p` on the XY plane from `from` to `to`, and checks what
@@ -558,7 +559,7 @@ fn bad_input_is_refused() {
         circle(DVec2::splat(5.0), 1.0, 4, true),
     ]);
     assert_eq!(
-        extrude(&plate, &Frame::XY, 0.0, 1.0, 1, &TOL, &Budget::new(10)),
+        extrude(&plate, &Frame::XY, 0.0, 1.0, 1, &TOL, &Budget::new(10)).stripped(),
         Err(KernelError::TooComplex)
     );
 }
@@ -639,7 +640,7 @@ fn random_plates_with_holes() {
     // loops touch or don't nest are refused, the rest have their volumes.
     let mut built = 0;
     for (case, (p, tol, h)) in random_plates().into_iter().enumerate() {
-        match extrude(&p, &Frame::XY, 0.0, h, 1, &tol, &Budget::DEFAULT) {
+        match extrude(&p, &Frame::XY, 0.0, h, 1, &tol, &Budget::DEFAULT).stripped() {
             Ok(solid) => {
                 let exact = p.area() * h;
                 assert!((solid.volume() - exact).abs() < 1e-12 * 1e4 * h);
@@ -667,7 +668,7 @@ fn crowded_boxes_run_out_of_budget_not_memory() {
     let star = profile(vec![polygon(&points, 0)]);
     assert_eq!(star.check(), Ok(()));
     assert_eq!(
-        extrude(&star, &Frame::XY, 0.0, 1.0, 1, &TOL, &Budget::new(1 << 20)),
+        extrude(&star, &Frame::XY, 0.0, 1.0, 1, &TOL, &Budget::new(1 << 20)).stripped(),
         Err(KernelError::TooComplex)
     );
 }
@@ -783,7 +784,7 @@ fn fine_rings_triangulate_in_time() {
     let p = profile(vec![ring(100.0), reversed(&ring(50.0))]);
     let start = std::time::Instant::now();
     // The budget runs out after the first triangulation.
-    let result = extrude(&p, &Frame::XY, 0.0, 1.0, 1, &TOL, &Budget::new(1 << 19));
+    let result = extrude(&p, &Frame::XY, 0.0, 1.0, 1, &TOL, &Budget::new(1 << 19)).stripped();
     assert_eq!(result, Err(KernelError::TooComplex));
     // About a second unoptimized; in the loops' order, over a minute.
     assert!(start.elapsed().as_secs() < 30, "{:?}", start.elapsed());
@@ -1031,7 +1032,8 @@ fn the_second_try_is_charged_only_from_where_it_resumes() {
     // it, 18 211. The same bits at 1 and 8 threads.
     let fine = Tolerance::new(1e-2).unwrap();
     let p = late_fork();
-    let run = |units: u64| extrude(&p, &Frame::XY, 0.0, 2.0, 9, &fine, &Budget::new(units));
+    let run =
+        |units: u64| extrude(&p, &Frame::XY, 0.0, 2.0, 9, &fine, &Budget::new(units)).stripped();
     let solid = assert_deterministic(|| run(400_000).unwrap());
     let exact = p.area() * 2.0;
     assert!((solid.volume() - exact).abs() < 1e-12 * exact);
@@ -1082,7 +1084,7 @@ fn a_first_try_out_of_work_in_its_fork_round_has_no_second() {
     for units in [lo, hi] {
         let budget = Budget::new(separated + units);
         assert_eq!(
-            extrude(&p, &Frame::XY, 0.0, 2.0, 9, &fine, &budget),
+            extrude(&p, &Frame::XY, 0.0, 2.0, 9, &fine, &budget).stripped(),
             Err(KernelError::TooComplex)
         );
     }

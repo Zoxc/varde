@@ -7663,7 +7663,7 @@ from a file that isn't one of those shows as a fourth, unticked row,
 named in µm, or exactly in mm where its rounded name would be one of the
 offered ones' (`tolerance_choices`).
 
-## Limits, budgets and errors (`src/lib.rs`, `src/budget.rs`, `src/error.rs`)
+## Limits, budgets and errors (`src/lib.rs`, `src/budget.rs`, `src/error.rs`, `src/failure.rs`)
 
 | constant | value | why |
 |---|---|---|
@@ -7685,6 +7685,8 @@ offered ones' (`tolerance_choices`).
 | `MAX_ROUNDS`, `MAX_CAP_DEPTH` (caps) | 32, 16 | rounds of mending the caps, and the halvings all told past which the caps halve a segment no more |
 | `MAX_MEND_DEPTH`, `MAX_QUALITY_ROUNDS` (caps) | 6, 64 | the halvings all told past which mending on the tries that refine leaves a corner to refinement, and the runs of refinement that ask for anything |
 | `CROWDED`, `MIN_CROWDED` (caps) | 32, 65 536 | pairs of the caps' triangles' boxes within the resolution, per triangle and at least, past which the caps are refined for crowding |
+| `MAX_EVIDENCE` | 4096 patches, 4096 curves, 256 points, 4096 sketch curves, 256 faces | items of each kind one failure's `Evidence` holds; past them the first ones and `truncated` |
+| `EVIDENCE_WORK` | `1 << 16` | work units gathering one failure's evidence may take, apart from the operation's budget (about 30 ms on one thread) |
 
 `Budget` is a limit (`Budget::new(work)`, at most `MAX_WORK`;
 `Budget::DEFAULT`); an operation counts it down in a `Work` its steps share
@@ -7700,6 +7702,45 @@ resolution), `Patch(PatchError)` (a
 parameter, or a split outside the patch bounds),
 `Profile(ProfileError)` (a profile that can't be extruded), and
 `Boolean(BooleanError)` (see "Booleans").
+
+**Failures and evidence.** `KernelError` stays the small `Copy` enum
+every internal step returns and matches on (extrude's and revolve's
+retries, `pinched_named`, the boolean's flat retry). The public
+operations that make or combine solids, `extrude`, `revolve`,
+`boolean`, `touches`, `assemble` and `Solid::transformed`, return
+`Result<_, Failure>`: `Failure { error: KernelError, evidence:
+Box<Evidence> }` (boxed so the `Result` stays small: five vectors
+would make every `Err` past clippy's `result_large_err`), with
+`From<KernelError>` (empty evidence) so `?` converts,
+and `Display` the error's. Each is a thin wrapper over a private
+function returning `KernelError` (`extruded`, `revolved`,
+`boolean_within`, `touches_within`, `transformed_within`); `assemble`
+returns its unions' failures as they are. Other public functions that
+can fail (`Solid::new`, `cuboid`, `cylinder`, `Mesh::repair`,
+`Solid::moments`) keep `KernelError`. `Evidence` is the geometry the
+error is about, by value and in the operation's world coordinates
+(extrude and revolve place the profile by their frame): `patches`
+(`Patch`), `curves` (`Conic<DVec3>`), `points`, `sketch_curves` (the
+`Segment::curve` ids of profile segments) and `faces` (`(Operand,
+FaceKey)`, `Operand::A` or `B` for a boolean's or `touches`' first or
+second operand; the boolean's own `Side` converts into it), plus
+`truncated`. Only a step holding both the error and its geometry fills
+it; no step does yet, so every failure's evidence is empty for now.
+
+Its rules: evidence never changes an outcome (no `Ok` becomes an error
+or the reverse, and the error is the one returned without it; tests
+compare errors with the evidence stripped, through the test-only
+`Stripped` trait); it is bounded, the adders (`Evidence::patches`,
+`curves`, `points`, `sketch_curves`, `faces`) keeping the first items in
+order up to `MAX_EVIDENCE` and setting `truncated` past it (the fields
+are open, so a receiver checks `within_caps`); it is gathered from a
+fresh `EVIDENCE_WORK` allowance (`failure::evidence_work`, spent through
+`Evidence::afford`, which sets `truncated` once it runs out), never the
+operation's budget, so finding it can't make an error `TooComplex`;
+it is deterministic; and it goes with the error returned, so where an
+operation retries and returns an earlier try's error, that try's
+evidence is kept with it (`(KernelError, Evidence)` together, not a
+side slot on `Work`). `TooComplex` carries none.
 
 ## Deviations
 

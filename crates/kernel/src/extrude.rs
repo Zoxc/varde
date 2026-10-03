@@ -26,7 +26,7 @@ use crate::budget::{Budget, Work};
 use crate::mesh::{Face, FaceName, FacePart, Form, Mesh, MeshBuilder, Quadric, Surface, circle_of};
 use crate::patch::{Conic2, Conic3, PatchError};
 use crate::profile::{Profile, ProfileError};
-use crate::{KernelError, MAX_COORD, Solid, Tolerance, in_range};
+use crate::{Failure, KernelError, MAX_COORD, Solid, Tolerance, in_range};
 
 pub(crate) mod cap;
 pub(crate) mod chain;
@@ -100,6 +100,19 @@ impl Frame {
 /// of `budget` or past a limit with [`KernelError::TooComplex`]; it never
 /// gives an invalid solid.
 pub fn extrude(
+    profile: &Profile,
+    frame: &Frame,
+    from: f64,
+    to: f64,
+    feature: u64,
+    tol: &Tolerance,
+    budget: &Budget,
+) -> Result<Solid, Failure> {
+    extruded(profile, frame, from, to, feature, tol, budget).map_err(Failure::from)
+}
+
+/// [`extrude`], failing with the error alone.
+fn extruded(
     profile: &Profile,
     frame: &Frame,
     from: f64,

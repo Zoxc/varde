@@ -9,6 +9,7 @@
 //! "Clean-up" and Known gaps).
 
 use super::*;
+use crate::Stripped;
 
 /// A pin of radius `r` through a plate 1 thick on XY, at `(x, y)`.
 fn pin(x: f64, y: f64, r: f64, feature: u64) -> Solid {
@@ -33,7 +34,8 @@ fn drilled_in_turn(plate: &Solid, holes: &[(f64, f64)], r: f64) -> Vec<Result<So
                 Op::Difference,
                 &TOL,
                 &Budget::DEFAULT,
-            );
+            )
+            .stripped();
             if let Ok(next) = &step {
                 current = next.clone();
             }
@@ -209,7 +211,7 @@ fn grid_cut_at_once(n: usize) -> Result<Solid, KernelError> {
         .map(|k| circle(DVec2::new(at(k % n), at(k / n)), 2.0, 10 + k as u64, false))
         .collect();
     let tool = extruded(discs, -1.1, 11.1, 2);
-    let cut = boolean(&plate, &tool, Op::Difference, &TOL, &Budget::DEFAULT)?;
+    let cut = boolean(&plate, &tool, Op::Difference, &TOL, &Budget::DEFAULT).stripped()?;
     let want = 100_000.0 - (n * n) as f64 * PI * 40.0;
     let got = cut.volume();
     assert!((got - want).abs() < 1e-6, "{n} × {n}: {got} vs {want}");

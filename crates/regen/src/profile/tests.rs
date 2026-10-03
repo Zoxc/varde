@@ -402,7 +402,9 @@ fn extrudes(profile: &Profile, fit: f64) -> Result<(), varde_kernel::KernelError
     let tolerance = varde_kernel::Tolerance::new(fit).unwrap();
     let frame = varde_kernel::Frame::XY;
     let budget = varde_kernel::Budget::DEFAULT;
-    varde_kernel::extrude(profile, &frame, 0.0, 10.0, 1, &tolerance, &budget).map(|_| ())
+    varde_kernel::extrude(profile, &frame, 0.0, 10.0, 1, &tolerance, &budget)
+        .map(|_| ())
+        .map_err(|failure| failure.error)
 }
 
 #[test]

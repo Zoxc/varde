@@ -29,6 +29,15 @@ impl Side {
     }
 }
 
+impl From<Side> for crate::Operand {
+    fn from(side: Side) -> Self {
+        match side {
+            Side::A => crate::Operand::A,
+            Side::B => crate::Operand::B,
+        }
+    }
+}
+
 /// One operand, checked, as tables by index.
 #[derive(Debug)]
 pub(super) struct Input<'a> {

@@ -33,7 +33,7 @@ use crate::mesh::{BuildError, Face, FaceName, FacePart, Form, MeshBuilder, Surfa
 use crate::patch::{Conic2, Conic3, Patch, PatchError};
 use crate::profile::{Loop, Profile, ProfileError, Segment};
 use crate::sweep::{Cap, Lathe, Pole, fitted_band_with, pole_cap_with, revolution_strip};
-use crate::{KernelError, MAX_PATCHES, Solid, Tolerance, in_range, trig};
+use crate::{Failure, KernelError, MAX_PATCHES, Solid, Tolerance, in_range, trig};
 
 mod kind;
 
@@ -88,6 +88,18 @@ const NESTING_WORK: usize = 8;
 /// `budget` or past a limit with [`KernelError::TooComplex`]; it never
 /// gives an invalid solid.
 pub fn revolve(
+    profile: &Profile,
+    frame: &Frame,
+    sweep: Sweep,
+    feature: u64,
+    tol: &Tolerance,
+    budget: &Budget,
+) -> Result<Solid, Failure> {
+    revolved(profile, frame, sweep, feature, tol, budget).map_err(Failure::from)
+}
+
+/// [`revolve`], failing with the error alone.
+fn revolved(
     profile: &Profile,
     frame: &Frame,
     sweep: Sweep,

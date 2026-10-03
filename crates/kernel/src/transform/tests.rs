@@ -3,6 +3,7 @@ use std::f64::consts::{FRAC_1_SQRT_2, PI};
 use glam::{DVec2, DVec3};
 
 use super::*;
+use crate::Stripped;
 use crate::extrude::Frame;
 use crate::mesh::{FacePart, Surface};
 use crate::par::assert_deterministic;
@@ -497,7 +498,8 @@ fn points_past_the_bounds_are_refused() {
     let cube = Solid::cuboid(DVec3::ZERO, DVec3::splat(1.0), 1, &TOL).unwrap();
     let far = Motion::translation(DVec3::new(f64::from(crate::MAX_COORD), 0.0, 0.0)).unwrap();
     assert!(matches!(
-        cube.transformed(&far, None, &TOL, &Budget::DEFAULT),
+        cube.transformed(&far, None, &TOL, &Budget::DEFAULT)
+            .stripped(),
         Err(KernelError::Patch(PatchError::Coordinate(_)))
     ));
     // Within: up to the bound.
@@ -545,7 +547,9 @@ fn work_is_budgeted() {
     let (solid, _) = part();
     let turn = Motion::turn(DVec3::ZERO, DVec3::Z, 33.0).unwrap();
     assert_eq!(
-        solid.transformed(&turn, None, &TOL, &Budget::new(10)),
+        solid
+            .transformed(&turn, None, &TOL, &Budget::new(10))
+            .stripped(),
         Err(KernelError::TooComplex)
     );
 }

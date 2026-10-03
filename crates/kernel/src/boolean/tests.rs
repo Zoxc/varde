@@ -6,6 +6,7 @@
 use glam::DVec3;
 
 use super::*;
+use crate::Stripped;
 use crate::mesh::tests::{OCTAHEDRON, TOL, UNIT};
 use crate::mesh::{CheckError, Face, FaceName, FacePart, Form, Mesh, MeshBuilder, Surface};
 use crate::par::assert_deterministic;
@@ -90,7 +91,7 @@ fn rebuilt_mesh(mesh: &Mesh, f: impl Fn(DVec3) -> DVec3, inverted: bool) -> Mesh
 }
 
 fn run(a: &Solid, b: &Solid, op: Op) -> Result<Solid, KernelError> {
-    boolean(a, b, op, &TOL, &Budget::DEFAULT)
+    boolean(a, b, op, &TOL, &Budget::DEFAULT).stripped()
 }
 
 /// The volumes of `a ∪ b`, `a ∩ b`, `a − b` and `b − a` from those of
@@ -445,7 +446,7 @@ fn touching() {
     assert!(!t(&Solid::empty()));
     assert!(touches(&cube([0.5; 3], [1.0; 3]), &a, &tol, &Budget::DEFAULT).unwrap());
     // Boxes apart are told without any work.
-    let apart = |b: &Solid| touches(&a, b, &tol, &Budget::new(0));
+    let apart = |b: &Solid| touches(&a, b, &tol, &Budget::new(0)).stripped();
     assert_eq!(apart(&cube([2.1, 0.0, 0.0], [1.0; 3])), Ok(false));
     assert_eq!(
         apart(&cube([2.0, 0.0, 0.0], [1.0; 3])),
@@ -502,7 +503,8 @@ fn refusals() {
             Op::Union,
             &TOL,
             &Budget::new(10)
-        ),
+        )
+        .stripped(),
         Err(KernelError::TooComplex)
     );
 }
@@ -520,7 +522,7 @@ fn a_void_thinner_than_the_resolution_fails_at_once() {
     for r in [5.0, 1.0] {
         let a = Solid::cylinder(DVec3::ZERO, r, 10.0, 1, &TOL).unwrap();
         let b = Solid::cylinder(DVec3::Z * 2.0, r - half, 6.0, 2, &TOL).unwrap();
-        let result = boolean(&a, &b, Op::Difference, &TOL, &Budget::new(100_000));
+        let result = boolean(&a, &b, Op::Difference, &TOL, &Budget::new(100_000)).stripped();
         assert_eq!(
             result.map(|_| ()),
             Err(KernelError::Boolean(BooleanError::NotManifold)),
