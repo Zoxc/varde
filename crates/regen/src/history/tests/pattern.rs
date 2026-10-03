@@ -1,15 +1,18 @@
 //! Patterns in the history: rows and rings of pins against their
 //! analytic volumes, copies touching end to end united, spokes
 //! overlapping at the hub, a 10 × 10 grid of pins cut from a plate in
-//! one difference, copies' faces named apart, refusals (out of range, a
-//! face of a copy that isn't there), the patch bound, and what's cached.
+//! one difference, copies' faces named apart (copies of copies too, 64
+//! by 64), copies touching along a line or on the original, a ring
+//! about a far axis, refusals (out of range, a face of a copy that isn't
+//! there), the patch bound, and what's cached.
 
 use std::time::Instant;
 
 use glam::DVec3;
 use varde_document::{
-    Axis3, AxisRef, BodyOp, Combine, FaceRef, MAX_PATTERN_COUNT, Pattern, PatternKind,
+    Axis3, AxisRef, BodyOp, Combine, EdgeRef, FaceRef, MAX_PATTERN_COUNT, Pattern, PatternKind,
 };
+use varde_kernel::measure::{EdgeShape, edge_shape};
 use varde_kernel::mesh::{FaceKey, Form};
 
 use super::combine::fuzz::truncated;
@@ -338,6 +341,16 @@ fn pin_grid(n: usize) -> Option<Result<(), String>> {
             Some(Ok(()))
         }
         Some(message) if message.contains("too complex to work out") => {
+            // Said as too many pieces at once, not as faces nearly flush.
+            let pieces = n * n;
+            assert_eq!(
+                message,
+                format!(
+                    "cutting Body 2 from Body 1 is too complex to work out at once: Body 2 is \
+                     {pieces} separate pieces; use fewer, or split them over more than one \
+                     combine"
+                )
+            );
             // Failing, it changed nothing.
             assert_eq!(evaluation.bodies.len(), 2);
             None
@@ -482,4 +495,182 @@ fn an_unchanged_pattern_is_found_in_the_cache() {
     assert!(!Arc::ptr_eq(&first.bodies[0].solid, &other.bodies[0].solid));
     let (volume, _) = mass(&other.bodies[0].solid);
     assert!(near(volume, 4.0 * PIN, 1e-9));
+}
+
+/// A pattern of a pattern at the copies `Naming` tells apart, 64 by 64:
+/// 4096 unit blocks side by side (volume and centre), and a later
+/// pattern along an edge of the last copy of the last copy finds it.
+#[test]
+fn a_pattern_of_a_pattern_names_its_last_copy() {
+    let mut editor = Editor::new(Document::default());
+    let body = block(&mut editor, 0.0, 0.0, 1.0, 1.0, "1");
+    let other = block(&mut editor, -10.0, -10.0, -9.0, -9.0, "1");
+    let solid = solid_of(&evaluated(editor.document()), body).clone();
+    let topology = solid.topology();
+    // The block's top edge along X at y = 0.
+    let faces = (topology.chains().iter())
+        .find_map(|chain| match edge_shape(&solid, chain) {
+            EdgeShape::Line { from, to }
+                if from.z == 1.0 && to.z == 1.0 && from.y == 0.0 && to.y == 0.0 =>
+            {
+                Some(chain.regions.map(|r| topology.regions()[r as usize].key))
+            }
+            _ => None,
+        })
+        .expect("the top edge");
+    let row = linear(editor.document(), &[body], X, "64", "2");
+    let row = add(&mut editor, row);
+    let y = AxisRef::Origin(Axis3::Y);
+    let grid = linear(editor.document(), &[body], y, "64", "2");
+    let grid = add(&mut editor, grid);
+    let last = faces.map(|key| key.copy(row.get(), 63).copy(grid.get(), 63));
+    let along = AxisRef::Edge(EdgeRef {
+        body,
+        faces: [last[0].min(last[1]), last[0].max(last[1])],
+        near: DVec3::new(126.5, 126.0, 1.0),
+    });
+    let later = linear(editor.document(), &[other], along, "2", "20");
+    let later = add(&mut editor, later);
+    let evaluation = evaluated(editor.document());
+    assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
+    let (volume, centre) = mass(solid_of(&evaluation, body));
+    assert!(near(volume, 4096.0, 1e-9), "{volume}");
+    assert!(
+        centre.abs_diff_eq(DVec3::new(63.5, 63.5, 0.5), 1e-9),
+        "{centre}"
+    );
+    let (_, [point, direction]) = *(evaluation.references.iter())
+        .find(|(id, _)| *id == later)
+        .unwrap();
+    assert!(
+        (point.y - 126.0).abs() < 1e-9 && (point.z - 1.0).abs() < 1e-9,
+        "{point}"
+    );
+    assert!(direction.normalize().abs().abs_diff_eq(DVec3::X, 1e-12));
+    let (volume, _) = mass(solid_of(&evaluation, other));
+    assert!(near(volume, 2.0, 1e-12), "{volume}");
+}
+
+/// Copies touching along a line, discs side by side (radius 5, 10
+/// apart), can't be one clean solid: refused as the kernel finds it
+/// (the union would touch itself along an edge), changing nothing. A
+/// hair closer they overlap and are united; a hair farther they're side
+/// by side. Each against its analytic volume.
+#[test]
+fn copies_touching_along_a_line_are_refused() {
+    let lens = |d: f64| {
+        // The area two discs of radius 5 share, centres `d` apart.
+        let r: f64 = 5.0;
+        2.0 * r * r * (d / (2.0 * r)).acos() - d / 2.0 * (4.0 * r * r - d * d).sqrt()
+    };
+    for (step, expected) in [
+        ("10", None),
+        ("9.5", Some(4.0 * 25.0 * PI - 3.0 * lens(9.5))),
+        ("10.5", Some(4.0 * 25.0 * PI)),
+    ] {
+        let mut editor = Editor::new(Document::default());
+        let body = add_body(&mut editor, disc((0.0, 0.0), 5.0), "10");
+        let pattern = linear(editor.document(), &[body], X, "4", step);
+        let id = add(&mut editor, pattern);
+        let evaluation = evaluated(editor.document());
+        let (volume, _) = mass(solid_of(&evaluation, body));
+        match expected {
+            None => {
+                assert_eq!(
+                    failure(&evaluation, id),
+                    Some(
+                        "joining Body 1 to its copies leaves no clean solid: the result would \
+                         touch itself along an edge or at a point, or come too close to \
+                         itself; move it to overlap more or to clear it"
+                    )
+                );
+                assert!(near(volume, 250.0 * PI, 1e-12), "{volume}");
+            }
+            Some(area) => {
+                assert_eq!(failure(&evaluation, id), None, "{step}");
+                assert!(near(volume, area * 10.0, 1e-6), "{step}: {volume}");
+            }
+        }
+    }
+}
+
+/// Copies so close they're the original to the bit (a spacing of
+/// 1e-20, a turn of 1e-300°) come out as the original; a hair apart
+/// (1e-9) they're refused. Never a wrong solid.
+#[test]
+fn copies_on_the_original_are_it_or_refused() {
+    for (n, step, circular_one) in [
+        ("3", "1e-20", false),
+        ("3", "1e-300", true),
+        ("2", "1e-9", false),
+    ] {
+        let mut editor = Editor::new(Document::default());
+        let body = pin(&mut editor, 20.0, 0.0);
+        let pattern = if circular_one {
+            circular(editor.document(), &[body], Z, n, step)
+        } else {
+            linear(editor.document(), &[body], X, n, step)
+        };
+        let id = add(&mut editor, pattern);
+        let evaluation = evaluated(editor.document());
+        let (volume, centre) = mass(solid_of(&evaluation, body));
+        assert!(near(volume, PIN, 1e-9), "{step}: {volume}");
+        assert!(centre.abs_diff_eq(DVec3::new(20.0, 0.0, 5.0), 1e-9));
+        if step == "1e-9" {
+            assert!(failure(&evaluation, id).is_some());
+        } else {
+            assert_eq!(failure(&evaluation, id), None, "{step}");
+        }
+    }
+}
+
+/// A circular pattern about the wall of a disc near the coordinate
+/// limit: a block turned a thousandth of a degree about it lands where
+/// the turn takes it (17 mm round), a whole turn is refused before
+/// anything is copied, and the disc patterned about its own wall is
+/// itself.
+#[test]
+fn a_ring_about_a_far_axis() {
+    let x = 999_990.0;
+    let mut editor = Editor::new(Document::default());
+    let body = block(&mut editor, 0.0, 0.0, 10.0, 10.0, "10");
+    let far = add_body(&mut editor, disc((x, 0.0), 5.0), "10");
+    let wall = cylinders(solid_of(&evaluated(editor.document()), far))[0];
+    let about = AxisRef::Face(FaceRef {
+        body: far,
+        key: wall,
+        near: DVec3::new(x + 5.0, 0.0, 5.0),
+    });
+    let pattern = circular(editor.document(), &[body], about, "2", "0.001");
+    let id = add(&mut editor, pattern);
+    let evaluation = evaluated(editor.document());
+    assert_eq!(failure(&evaluation, id), None);
+    let (volume, centre) = mass(solid_of(&evaluation, body));
+    assert!(near(volume, 2000.0, 1e-9), "{volume}");
+    let turn = glam::DQuat::from_rotation_z(0.001f64.to_radians());
+    let axis = DVec3::new(x, 0.0, 5.0);
+    let copy = turn * (DVec3::new(5.0, 5.0, 5.0) - axis) + axis;
+    let expected = (DVec3::new(5.0, 5.0, 5.0) + copy) / 2.0;
+    assert!(centre.abs_diff_eq(expected, 1e-6), "{centre} vs {expected}");
+
+    let whole = circular(editor.document(), &[body], about, "4", "360");
+    set(&mut editor, id, whole);
+    let evaluation = evaluated(editor.document());
+    assert_eq!(
+        failure(&evaluation, id),
+        Some(
+            "patterning Body 1 takes it out of range: every part must stay within 1000000 mm \
+             of the origin"
+        )
+    );
+    let own = circular(editor.document(), &[far], about, "4", "360");
+    set(&mut editor, id, own);
+    let evaluation = evaluated(editor.document());
+    assert_eq!(failure(&evaluation, id), None);
+    let (volume, centre) = mass(solid_of(&evaluation, far));
+    assert!(near(volume, 250.0 * PI, 1e-9), "{volume}");
+    assert!(
+        centre.abs_diff_eq(DVec3::new(x, 0.0, 5.0), 1e-6),
+        "{centre}"
+    );
 }

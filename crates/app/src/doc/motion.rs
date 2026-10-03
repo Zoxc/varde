@@ -75,6 +75,8 @@ pub(crate) struct MotionSession {
     pub(crate) keep_original: bool,
     /// A linear pattern's Flip direction, stored as a negative spacing.
     pub(crate) flip: bool,
+    /// An edited pattern's spread as it opened: see [`Opened`].
+    opened: Option<Opened>,
     /// How a pattern's copies are spread: by the spacing to begin with
     /// (a circular one's round a full turn), as the UI mock's.
     pub(crate) mode: PatternMode,
@@ -114,6 +116,20 @@ struct Pivot {
 /// hovered and whether its row in the panel is, what clicks pick, and
 /// the bodies.
 type Built = (u64, Option<(Picked, bool)>, MotionPick, Vec<BodyId>);
+
+/// An edited pattern's spacing or angle as stored, and the mode, Flip
+/// and spread field the session opened it with: while those are as they
+/// opened, the pattern keeps the stored value, text and all, so OK with
+/// nothing changed writes nothing even where the session would write the
+/// same value another way ("-15" read with Flip on would come back
+/// "-(15)", "360" for Full 360° as "360°").
+#[derive(Debug, Clone, PartialEq)]
+struct Opened {
+    mode: PatternMode,
+    flip: bool,
+    spread: TypedText,
+    stored: Value,
+}
 
 /// Angles are shown in degrees.
 const DEGREES: Unit = Unit::Angle(AngleUnit::Deg);
@@ -259,6 +275,7 @@ impl MotionSession {
             gone_reference: None,
             keep_original: true,
             flip: false,
+            opened: None,
             mode,
             hover: None,
             edited_bodies: Vec::new(),
@@ -309,6 +326,12 @@ impl MotionSession {
                 session.fields[MotionField::Count.index()] =
                     TypedText::of(pattern.kind.count_value(), &Pattern::count_ask(&design));
                 session.take_shape(pattern, shape);
+                session.opened = Some(Opened {
+                    mode: session.mode,
+                    flip: session.flip,
+                    spread: session.field(MotionField::Spread).clone(),
+                    stored: spread_of(&pattern.kind).clone(),
+                });
                 session
             }
             _ => return None,
@@ -323,7 +346,10 @@ impl MotionSession {
     /// them from it.
     fn take_shape(&mut self, pattern: &Pattern, shape: Option<&PatternShape>) {
         let ask = spread_ask(self.kind, &self.design);
-        if let Some(shape) = shape {
+        // A shape of the other kind's (a file swapped the kind since) is
+        // never taken: its mode may be none this kind offers.
+        if let Some(shape) = shape.filter(|shape| PatternMode::of(self.kind).contains(&shape.mode))
+        {
             let mut taken = Self {
                 mode: shape.mode,
                 flip: shape.flip,
@@ -512,6 +538,16 @@ impl MotionSession {
             }
             MotionKind::Move | MotionKind::Mirror => return Ok(None),
         };
+        let mut kind = kind;
+        if let Some(opened) = &self.opened
+            && (opened.mode, opened.flip) == (self.mode, self.flip)
+            && opened.spread == *self.field(MotionField::Spread)
+        {
+            let spread = spread_of_mut(&mut kind);
+            if spread.value == opened.stored.value {
+                *spread = opened.stored.clone();
+            }
+        }
         Ok(Some(Pattern {
             bodies: self.bodies.clone(),
             kind,
@@ -769,6 +805,22 @@ impl MotionSession {
                 turn,
             }),
         ))
+    }
+}
+
+/// A linear pattern's spacing, or a circular one's angle.
+fn spread_of(kind: &PatternKind) -> &Value {
+    match kind {
+        PatternKind::Linear { spacing, .. } => spacing,
+        PatternKind::Circular { angle, .. } => angle,
+    }
+}
+
+/// The same, to change.
+fn spread_of_mut(kind: &mut PatternKind) -> &mut Value {
+    match kind {
+        PatternKind::Linear { spacing, .. } => spacing,
+        PatternKind::Circular { angle, .. } => angle,
     }
 }
 

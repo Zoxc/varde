@@ -333,8 +333,26 @@ fn failed(what: &str, error: KernelError) -> String {
 /// `target` failed: "cutting Body 2 from Body 1 leaves no clean solid
 /// ...", as an extrude's [`boolean`] with the tool body named in place of
 /// "it".
-pub(crate) fn combining(doing: Doing, target: &str, tool: &str, error: KernelError) -> String {
-    failed(&combine_step(doing, target, tool), error)
+///
+/// A tool of more than one piece (`pieces`: a pattern's copies apart, a
+/// grid of pins to cut as holes) that runs out of work is said so: what
+/// tangent faces would also do isn't the likely cause there, and fewer
+/// pieces at once is what mends it.
+pub(crate) fn combining(
+    doing: Doing,
+    target: &str,
+    tool: &str,
+    pieces: usize,
+    error: KernelError,
+) -> String {
+    let step = combine_step(doing, target, tool);
+    match error {
+        KernelError::TooComplex if pieces > 1 => format!(
+            "{step} is too complex to work out at once: {tool} is {pieces} separate pieces; \
+             use fewer, or split them over more than one combine"
+        ),
+        error => failed(&step, error),
+    }
 }
 
 /// What a combine step does, in words: "joining Body 2 to Body 1",

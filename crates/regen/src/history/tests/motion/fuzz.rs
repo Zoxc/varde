@@ -3,8 +3,9 @@
 //! them: moves by offsets and turns about origin axes, straight model
 //! edges and round faces; mirrors in origin planes and flat faces,
 //! keeping their originals or not; linear and circular patterns of two
-//! to four copies along or about the same axes; earlier ones edited,
-//! removals, undo and redo. After each step: the cache warm and cold give
+//! to four copies along or about the same axes, half of them of bodies
+//! patterned already, about their copies' edges and faces (copies of
+//! copies); earlier ones edited, removals, undo and redo. After each step: the cache warm and cold give
 //! the same evaluation; every move and mirror that worked put each of its
 //! bodies where the motion worked out here takes it (the volume kept, the
 //! centre of mass moved, turned or reflected, by `glam`'s own rotations
@@ -122,6 +123,14 @@ fn random_motion(
     let picked = some_of(&bodies, rng);
     let any = bodies[rng.below(bodies.len())];
     if rng.below(4) == 0 {
+        // Half the time a pattern of bodies patterned already, about a
+        // face or edge of theirs: copies of copies.
+        let patterned = patterned(document, &bodies, before);
+        if !patterned.is_empty() && rng.below(2) == 0 {
+            let picked = some_of(&patterned, rng);
+            let any = patterned[rng.below(patterned.len())];
+            return Some(random_pattern(document, evaluation, rng, picked, any).into());
+        }
         return Some(random_pattern(document, evaluation, rng, picked, any).into());
     }
     if rng.below(3) == 0 {
@@ -153,6 +162,22 @@ fn random_motion(
     };
     let turn = axis.map(|axis| (axis, ANGLES[rng.below(ANGLES.len())]));
     Some(shift(document, &picked, offsets, turn).into())
+}
+
+/// Those of `bodies` a pattern of `document` before feature `before`
+/// (all without) patterns, sorted.
+fn patterned(document: &Document, bodies: &[BodyId], before: Option<usize>) -> Vec<BodyId> {
+    let features = &document.features()[..before.unwrap_or(document.features().len())];
+    let mut patterned: Vec<BodyId> = (bodies.iter().copied())
+        .filter(|body| {
+            features.iter().any(|feature| {
+                matches!(&feature.kind, FeatureKind::Pattern(pattern)
+                    if pattern.bodies.binary_search(body).is_ok())
+            })
+        })
+        .collect();
+    patterned.sort_unstable();
+    patterned
 }
 
 /// A random pattern of `bodies`, its axis an origin axis or named on

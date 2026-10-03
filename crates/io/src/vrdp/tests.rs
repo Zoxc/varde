@@ -2228,3 +2228,85 @@ fn a_tampered_move_or_mirror_is_refused() {
         assert!(decoded.is_err(), "{was} as {now} was taken");
     }
 }
+
+/// A record whose pattern was changed on disk to what the document
+/// refuses (a count that isn't whole, in range or what its text gives, a
+/// spacing of nothing or past the limit, an angle past a turn or none, a
+/// kind it doesn't know) is refused as it's read, never a panic; as
+/// written, it reads.
+#[test]
+fn a_tampered_pattern_is_refused() {
+    use varde_document::{Axis3, AxisRef, Pattern, PatternKind};
+    use varde_expr::Value;
+    let mut editor = Editor::new(Document::example());
+    let plate = editor.document().bodies()[0].id;
+    let design = editor.document().design();
+    let count = |text: &str| Value::new(text, &Pattern::count_ask(&design)).unwrap();
+    for kind in [
+        PatternKind::Linear {
+            along: AxisRef::Origin(Axis3::Y),
+            count: count("7"),
+            spacing: Value::new("-12.375", &Pattern::spacing_ask(&design)).unwrap(),
+        },
+        PatternKind::Circular {
+            about: AxisRef::Origin(Axis3::Z),
+            count: count("9"),
+            angle: Value::new("123.5", &Pattern::angle_ask(&design)).unwrap(),
+        },
+    ] {
+        let pattern = Pattern {
+            bodies: vec![plate],
+            kind,
+        };
+        editor
+            .apply(editor.document().add_feature(pattern.into()))
+            .unwrap();
+    }
+    let raw = record_msgpack(editor.document());
+    let (read, _) = from_msgpack::<Document>(&raw).unwrap();
+    assert_eq!(&read, editor.document());
+    let float = |x: f64| {
+        let mut bytes = vec![0xcb];
+        bytes.extend_from_slice(&x.to_bits().to_be_bytes());
+        bytes
+    };
+    let swap = |was: &[u8], now: &[u8]| {
+        let at = (raw.windows(was.len()))
+            .position(|window| window == was)
+            .unwrap_or_else(|| panic!("{was:?} isn't in the record"));
+        let mut changed = raw[..at].to_vec();
+        changed.extend_from_slice(now);
+        changed.extend_from_slice(&raw[at + was.len()..]);
+        changed
+    };
+    let angle = 123.5 * (std::f64::consts::PI / 180.0);
+    for (was, now) in [
+        (7.0, 7.5),
+        (7.0, 1.0),
+        (7.0, 1e300),
+        (7.0, f64::NAN),
+        (9.0, 2048.0),
+        (9.0, -9.0),
+        (-12.375, 0.0),
+        (-12.375, -0.0),
+        (-12.375, 2e6),
+        (-12.375, f64::NEG_INFINITY),
+        (angle, 7.0),
+        (angle, 0.0),
+        (angle, -angle),
+        (angle, f64::NAN),
+    ] {
+        let decoded = from_msgpack::<Document>(&swap(&float(was), &float(now)));
+        assert!(decoded.is_err(), "{was} as {now} was taken");
+    }
+    // A kind it doesn't know, named in place of one it does.
+    let named = |name: &str| {
+        let mut bytes = vec![0xa0 | name.len() as u8];
+        bytes.extend_from_slice(name.as_bytes());
+        bytes
+    };
+    for (was, now) in [("Linear", "Spiral"), ("Circular", "Circulaz")] {
+        let decoded = from_msgpack::<Document>(&swap(&named(was), &named(now)));
+        assert!(decoded.is_err(), "{was} as {now} was taken");
+    }
+}

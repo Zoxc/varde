@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use varde_document::{BodyId, BodyOp, Combine, Document};
-use varde_kernel::{Budget, Op, Solid, Tolerance};
+use varde_kernel::{Budget, KernelError, Op, Solid, Tolerance};
 
 use super::{BodySolid, Evaluation, Failed, boolean_key, note_merge, own_solids};
 use crate::cache::{Cache, Key};
@@ -79,7 +79,11 @@ pub(super) fn evaluate(
         };
         let tool_name = name(tool.body);
         let solid = result.map_err(|failure| {
-            let message = message::combining(words, target_name, tool_name, failure.error);
+            let pieces = match failure.error {
+                KernelError::TooComplex => shells(&tool.solid),
+                _ => 1,
+            };
+            let message = message::combining(words, target_name, tool_name, pieces, failure.error);
             Failed::kernel(message, &failure, [&running.held, &[tool.body]])
         })?;
         if solid.is_empty() {
@@ -142,4 +146,31 @@ struct Running {
     /// The bodies it holds, the target and those tools, in that order:
     /// where the faces a failing step names of it are looked for.
     held: Vec<BodyId>,
+}
+
+/// How many separate pieces `solid` is: the components of its triangles
+/// joined across their edges (a pattern's copies apart are one each).
+fn shells(solid: &Solid) -> usize {
+    let tris = solid.mesh().tris();
+    let mut seen = vec![false; tris.len()];
+    let mut stack = Vec::new();
+    let mut count = 0;
+    for start in 0..tris.len() {
+        if seen[start] {
+            continue;
+        }
+        count += 1;
+        seen[start] = true;
+        stack.push(start);
+        while let Some(t) = stack.pop() {
+            for halfedge in tris[t].halfedges {
+                let next = halfedge.pair as usize / 3;
+                if let Some(false) = seen.get(next) {
+                    seen[next] = true;
+                    stack.push(next);
+                }
+            }
+        }
+    }
+    count
 }

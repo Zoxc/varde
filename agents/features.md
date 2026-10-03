@@ -1520,11 +1520,16 @@ united into one; a ring of pins, whole turn exact at quarter turns and
 three over 90° by its centre of mass; three bars through a hub against
 the inclusion–exclusion area; a pin grid cut from a plate in one
 difference, 4 × 4 and 10 × 10, timed; a copy's face as a later axis,
-kept by its name as the count changes, and a copy that isn't there; out of range; the patch bound with
+kept by its name as the count changes, and a copy that isn't there; a
+pattern of a pattern 64 by 64, an edge of the last copy of the last
+copy found; discs touching along a line refused, a hair closer or
+farther right; copies on the original to the bit; a ring about a disc's
+wall near the coordinate limit; out of range; the patch bound with
 overflow; the cache), `regen/src/wire/tests.rs` (a draft and its axis),
-`io/src/vrdp/tests.rs` (through a file), and the motion fuzz
-(`motion/fuzz.rs`, `VARDE_MOTION_SEEDS`): random linear and circular
-patterns of 2 to 4 copies about origin axes, edges and round faces,
+`io/src/vrdp/tests.rs` (through a file; tampered records refused), and
+the motion fuzz (`motion/fuzz.rs`, `VARDE_MOTION_SEEDS`): random linear
+and circular patterns of 2 to 4 copies about origin axes, edges and
+round faces, half of them of bodies patterned already (copies of copies),
 each copy's centre where `glam` places it and the whole as the copies
 united one by one.
 
@@ -1533,11 +1538,24 @@ Known gaps: the 10 × 10 grid of pins (100 holes) cut from a plate in
 the difference's cost grows faster than the pins (a 7 × 7 grid takes 2
 to 3 million of the 4.2 million units, from 8 × 8 on it fails), so hole
 patterns past about 50 holes fail with "too complex" until the boolean's
-work is local to the change. Cutting the 100 pins one at a time works
+work is local to the change. A combine step running out of work with a
+tool of more than one piece says so rather than blaming tangent faces
+(`message::combining`, the pieces counted by `combine::shells` only
+then): "cutting Body 2 from Body 1 is too complex to work out at once:
+Body 2 is 64 separate pieces; use fewer, or split them over more than
+one combine". Cutting the 100 pins one at a time works
 but takes about 40 s. Copies that only touch (discs a diameter apart)
 fail to join ("leaves no clean solid"), as any union touching along a
-line does. `Naming` takes faces of patterns' copies made before the
-feature (`instances_before` replays patterns as it does mirrors).
+line does: the kernel's `NotManifold`, right, since the result would
+touch itself along the line. Copies a hair apart (a spacing of 1e-9,
+a turn of 1e-7° about a far axis) are refused as nearly flush, and
+from about 1e-4 to 1e-3 mm apart a union of them can take seconds to
+run out of work. `Naming` takes faces of patterns' copies made before the
+feature (`instances_before` replays patterns as it does mirrors), up to
+4096 copies in all (a pattern of a pattern 64 by 64; a mirrored row of
+1024 mirrored again); past that it takes a face of any copy, and one
+that isn't there yet at the feature fails it when regenerated ("its axis
+face wasn't found") rather than being refused as it's picked.
 
 ### UI
 
@@ -1601,7 +1619,14 @@ LinearPattern` and `CircularPattern`, following the UI mock's
   sign taken off where that gives the value exactly, else
   `"-(text)"`, else, too long for that, the size written exactly); a
   circular one in Full 360° for a whole turn, else in Total with its
-  angle. The shape is kept under the feature edited, or the one added.
+  angle. The shape is kept under the feature edited, or the one added;
+  one whose mode the pattern's kind doesn't offer (a file swapped the
+  kind) isn't taken. While the mode, Flip and spread field are as an
+  edited pattern opened with them, the pattern keeps the spacing or
+  angle it stores, text and all (`Opened`): OK with nothing changed
+  writes nothing even where the session would write the same value
+  another way ("-15" read with Flip on comes back "-(15)", "360" in
+  Full 360° as "360°").
   An undo setting another kind of feature in the edited one's place
   (`MotionKind::of` no longer the session's) ends the session.
 - **Preview, OK, status**: the draft is the pattern as set up (none for
@@ -1629,7 +1654,11 @@ errors past a turn and the limit; editing from the Timeline and undo;
 spreads too long to wrap stored as their values, and a stored spacing
 whose text turned is too long; an undo swapping the kind; a direction
 gone by an undo and by its body's removal, the neutral preview without
-it);
+it; the axis's body and a picked body taken mid-pick; OK on a pattern
+opened writing nothing however it was typed), `pattern/fuzz.rs`
+(`VARDE_PATTERN_SEEDS`: random modes, Flip, counts, long and nested
+spreads, units, undo and redo, kind swaps, commits, edits held to the
+values their fields come to);
 `view/src/motion/tests.rs` (both panels' rows and modes, the infos).
 
 Departures from the mock: no "Join to original" (decided: copies stay

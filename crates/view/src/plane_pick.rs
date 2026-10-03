@@ -461,7 +461,10 @@ pub(crate) fn on_plane(document: &Document, plane: &Plane) -> String {
 
 #[cfg(test)]
 mod tests {
-    use varde_document::{Editor, Mirror, OriginPlane, PlaneRef};
+    use varde_document::{
+        Axis3, AxisRef, Editor, Mirror, OriginPlane, Pattern, PatternKind, PlaneRef,
+    };
+    use varde_expr::Value;
 
     use super::*;
 
@@ -504,5 +507,103 @@ mod tests {
         assert!(naming(4).takes_key(&top.copy(second, 1)));
         // A copy no mirror makes.
         assert!(!naming(4).takes_key(&top.copy(second, 2)));
+    }
+
+    /// A linear pattern of `body` along `axis`, `count` copies.
+    fn row(document: &Document, body: varde_document::BodyId, axis: Axis3, count: &str) -> Pattern {
+        let design = document.design();
+        Pattern {
+            bodies: vec![body],
+            kind: PatternKind::Linear {
+                along: AxisRef::Origin(axis),
+                count: Value::new(count, &Pattern::count_ask(&design)).unwrap(),
+                spacing: Value::new("100", &Pattern::spacing_ask(&design)).unwrap(),
+            },
+        }
+    }
+
+    /// Copies of copies are named up to the cap: a pattern of a pattern
+    /// 64 by 64 is 4096 copies, each named only after both, its last
+    /// copy too; a mirror's image patterned, and a pattern mirrored, are
+    /// named copy by copy. Past the cap any copy is taken, which
+    /// regenerating then doesn't find if it isn't there yet.
+    #[test]
+    fn copies_of_copies_are_named_up_to_the_cap() {
+        let shown = Shown {
+            merged: &[],
+            touched: &[],
+            failed: &[],
+        };
+        let grid = |second: &str| {
+            let mut editor = Editor::new(Document::example());
+            let plate = editor.document().bodies()[0].id;
+            for (axis, count) in [(Axis3::X, "64"), (Axis3::Y, second)] {
+                let add = (editor.document())
+                    .add_feature(row(editor.document(), plate, axis, count).into());
+                editor.apply(add).unwrap();
+            }
+            editor.document().clone()
+        };
+        let document = grid("64");
+        let [_, extrude, first, second] = [0, 1, 2, 3].map(|k| document.features()[k].id.get());
+        let top = FaceKey {
+            feature: extrude,
+            part: PartKey::EndCap,
+            instance: 0,
+        };
+        let last = top.copy(first, 63).copy(second, 63);
+        let naming = |before: usize| Naming::before(&document, before, shown);
+        assert_eq!(
+            instances_before(&document, 4).map(|all| all.len()),
+            Some(4096)
+        );
+        assert!(naming(4).takes_key(&last));
+        assert!(naming(4).takes_key(&top.copy(second, 63)));
+        assert!(!naming(4).takes_key(&top.copy(second, 64)));
+        assert!(!naming(4).takes_key(&top.copy(first, 64)));
+        assert!(naming(3).takes_key(&top.copy(first, 63)));
+        assert!(!naming(3).takes_key(&last));
+        assert!(!naming(3).takes_key(&top.copy(second, 1)));
+        // One more row is past the cap.
+        let past = grid("65");
+        assert_eq!(instances_before(&past, 4), None);
+        assert!(Naming::before(&past, 4, shown).takes_key(&top.copy(99, 1)));
+        assert!(instances_before(&past, 3).is_some());
+
+        // A mirror's image patterned, then the whole mirrored.
+        let mut editor = Editor::new(Document::example());
+        let plate = editor.document().bodies()[0].id;
+        let mirror = Mirror {
+            bodies: vec![plate],
+            plane: PlaneRef::Origin(OriginPlane::XY),
+            keep_original: true,
+        };
+        let add = editor.document().add_feature(mirror.clone().into());
+        editor.apply(add).unwrap();
+        let add =
+            (editor.document()).add_feature(row(editor.document(), plate, Axis3::X, "1024").into());
+        editor.apply(add).unwrap();
+        for _ in 0..3 {
+            let add = editor.document().add_feature(mirror.clone().into());
+            editor.apply(add).unwrap();
+        }
+        let document = editor.document();
+        let ids: Vec<u64> = document.features().iter().map(|f| f.id.get()).collect();
+        let image = top.copy(ids[2], 1);
+        let copied = image.copy(ids[3], 1023);
+        let naming = |before: usize| Naming::before(document, before, shown);
+        assert_eq!(
+            instances_before(document, 4).map(|all| all.len()),
+            Some(2048)
+        );
+        assert!(naming(4).takes_key(&copied));
+        assert!(!naming(3).takes_key(&copied));
+        assert!(!naming(4).takes_key(&copied.copy(ids[4], 1)));
+        assert_eq!(
+            instances_before(document, 5).map(|all| all.len()),
+            Some(4096)
+        );
+        assert!(naming(5).takes_key(&copied.copy(ids[4], 1)));
+        assert_eq!(instances_before(document, 6), None);
     }
 }

@@ -484,3 +484,100 @@ fn a_pattern_s_direction_on_a_body_taken_away_is_gone() {
     let [low, high] = plates.bounds(right);
     assert!((high.z - 45.0).abs() < 1e-3, "{low} {high}");
 }
+
+mod fuzz;
+
+/// OK on a pattern edited straight away writes nothing, whichever way its
+/// values were typed: a negative spacing typed "-15" (read with Flip on),
+/// a full turn typed "360", a stored Total.
+#[test]
+fn ok_on_a_pattern_opened_writes_nothing_however_it_was_typed() {
+    let mut plates = plates();
+    let [_, right, _] = plates.bodies;
+    plates.click(right);
+    plates.doc.look(Look::StartPattern);
+    plates.doc.update(Edit::CommitMotion);
+    let (id, _) = plates.last_feature();
+    let design = plates.doc.editor.document().design();
+    let count = Value::new("3", &Pattern::count_ask(&design)).unwrap();
+    let kinds = [
+        PatternKind::Linear {
+            along: AxisRef::Origin(Axis3::Y),
+            count: count.clone(),
+            spacing: Value::new("-15", &Pattern::spacing_ask(&design)).unwrap(),
+        },
+        PatternKind::Linear {
+            along: AxisRef::Origin(Axis3::Y),
+            count: count.clone(),
+            spacing: Value::new("-(5 + 10)", &Pattern::spacing_ask(&design)).unwrap(),
+        },
+        PatternKind::Linear {
+            along: AxisRef::Origin(Axis3::Y),
+            count: count.clone(),
+            spacing: Value::new("0 - 15", &Pattern::spacing_ask(&design)).unwrap(),
+        },
+        PatternKind::Circular {
+            about: AxisRef::Origin(Axis3::Z),
+            count: count.clone(),
+            angle: Value::new("360", &Pattern::angle_ask(&design)).unwrap(),
+        },
+        PatternKind::Circular {
+            about: AxisRef::Origin(Axis3::Z),
+            count,
+            angle: Value::new("100", &Pattern::angle_ask(&design)).unwrap(),
+        },
+    ];
+    for kind in kinds {
+        set_pattern(&mut plates, id, kind.clone());
+        plates.doc.pattern_shapes.clear();
+        let revision = plates.doc.editor.revision();
+        plates.doc.look(Look::EditFeature(id));
+        assert!(plates.doc.motion_ready(), "{kind:?}");
+        plates.doc.update(Edit::CommitMotion);
+        assert!(plates.doc.motion.is_none());
+        assert_eq!(last_pattern(&plates).kind, kind);
+        assert_eq!(plates.doc.editor.revision(), revision, "{kind:?}");
+    }
+}
+
+/// What's picked going away while the axis is being picked: the body
+/// holding the axis, and a body picked, taken by an undo mid-pick. Nothing
+/// is previewed or committed while either is gone; an origin axis picked
+/// and the gone body dropped mend it, and what's committed is that.
+#[test]
+fn what_goes_away_while_the_axis_is_picked_is_gone() {
+    let mut plates = plates();
+    let [_, right, _] = plates.bodies;
+    let later = later_disc(&mut plates);
+    plates.doc.look(Look::StartCircularPattern);
+    plates.click(right);
+    plates.click(later);
+    plates.motion(MotionLook::Picking(MotionPick::Reference));
+    plates.answer();
+    let wall = plates.face(later, |summary| matches!(summary, Summary::Cylinder { .. }));
+    plates.click_at(later, Picked::Face(wall), DVec3::new(5.0, 30.0, 2.0));
+    plates.answer();
+    assert!(plates.doc.motion_ready());
+    // Picking another axis, the disc is taken away.
+    plates.motion(MotionLook::Picking(MotionPick::Reference));
+    plates.doc.update(Edit::Undo);
+    plates.answer();
+    assert!(plates.doc.motion.is_some());
+    assert!(plates.last_draft().is_none(), "nothing previewed");
+    assert!(!plates.doc.motion_ready());
+    let session = plates.doc.motion.as_ref().unwrap();
+    assert!(matches!(session.axis, Some(AxisRef::Face(face)) if face.body == later));
+    plates.motion(MotionLook::OriginAxis(Axis3::Z));
+    assert!(shows(&plates, "A picked body is gone"));
+    assert!(!plates.doc.motion_ready());
+    assert!(plates.last_draft().is_none(), "nothing previewed");
+    plates.motion(MotionLook::Drop(later));
+    assert!(plates.doc.motion_ready());
+    plates.doc.update(Edit::CommitMotion);
+    assert!(plates.doc.motion.is_none());
+    let stored = last_pattern(&plates);
+    assert_eq!(stored.bodies, [right]);
+    assert_eq!(stored.kind.axis(), &AxisRef::Origin(Axis3::Z));
+    plates.answer();
+    assert!(plates.doc.feed.failed_features().is_empty());
+}
