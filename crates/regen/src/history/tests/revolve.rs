@@ -1060,3 +1060,92 @@ fn a_half_torus_revolves_at_the_default_tolerance() {
         assert!(patches <= 1_000, "{turn}: {patches} patches");
     }
 }
+
+/// An axis line whose ends differ by less than a float can give a
+/// direction to (its length squared underflows) passes [`axis_line`]
+/// but not [`axis_frame`]: the same words as a line of no length, and
+/// the same showing, its start and the line.
+#[test]
+fn an_axis_line_too_short_for_a_direction_shows_where_it_is() {
+    let tiny = 1e-310;
+    let mut editor = Editor::new(Document::default());
+    let revolve = add_revolve(
+        &mut editor,
+        OriginPlane::XY,
+        rectangle_and_line((5.0, 0.0), (10.0, 4.0), (0.0, 2.0), (tiny, 2.0)),
+        Turn::Full,
+        false,
+        Operation::NewBody(BodyId::NEW),
+    );
+    let FeatureKind::Revolve(made) = &editor.document().feature(revolve).unwrap().kind else {
+        panic!("a revolve");
+    };
+    let AxisLine::Curve(line) = made.axis else {
+        panic!("about a line");
+    };
+    let FeatureKind::Sketch { sketch, .. } = &editor.document().feature(made.sketch).unwrap().kind
+    else {
+        panic!("a sketch");
+    };
+    let axis = axis_line(sketch, made.axis).expect("a line of some length");
+    assert_eq!(axis.along, DVec2::new(tiny, 0.0));
+    let crate::Response::Regenerated { failed, .. } = crate::handle(regenerate_with(&editor, None))
+    else {
+        panic!("regeneration failed");
+    };
+    let [failure] = &failed[..] else {
+        panic!("{failed:?}");
+    };
+    assert_eq!(
+        (failure.feature, failure.message.as_str()),
+        (revolve, "its axis line has no length")
+    );
+    let geometry = failure.geometry.as_ref().expect("the line's place");
+    assert_eq!(geometry.points(), [[0.0, 2.0, 0.0]]);
+    assert_eq!(geometry.sketch_curves(), [u64::from(line.get())]);
+}
+
+/// [`axis_frame`] refuses an axis with no direction, naming where it is
+/// and its line; the words are those before the errors were typed.
+#[test]
+fn axis_errors_keep_their_words() {
+    let axis = Axis {
+        at: DVec2::new(1.0, 2.0),
+        along: DVec2::new(0.0, -1e-200),
+        curve: Some(Id::ORIGIN),
+    };
+    let profile = Profile { loops: Vec::new() };
+    let refused = axis_frame(&profile, &axis, &OriginPlane::XY.placement()).unwrap_err();
+    assert_eq!(
+        refused,
+        AxisError::NoLength {
+            at: DVec2::new(1.0, 2.0),
+            curve: Some(Id::ORIGIN),
+        }
+    );
+    assert_eq!(refused.message(), "its axis line has no length");
+    assert_eq!(AxisError::NotFound.message(), "axis not found");
+    assert_eq!(
+        AxisError::TooFar.message(),
+        "its regions are too far from the axis to revolve"
+    );
+    // A line the axis names that isn't a line any more isn't found.
+    let mut sketch = Sketch::default();
+    let center = sketch.add_point(DVec2::ZERO).unwrap();
+    let circle = (sketch.add_curve(
+        Curve::Circle {
+            center,
+            radius: 1.0,
+        },
+        false,
+    ))
+    .unwrap();
+    assert_eq!(
+        axis_line(&sketch, AxisLine::Curve(circle)),
+        Err(AxisError::NotFound)
+    );
+    assert_eq!(
+        axis_line(&sketch, AxisLine::Curve(Id::ORIGIN)),
+        Err(AxisError::NotFound)
+    );
+}

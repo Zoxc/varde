@@ -572,3 +572,106 @@ fn an_edited_feature_s_draft_on_its_way_shows_no_failure() {
     doc.refresh_errors();
     assert!(doc.shown_errors().is_empty());
 }
+
+/// A sketch on the example plate's hole wall, which isn't flat, fails
+/// showing the wall: drawn while its Timeline row is selected or
+/// hovered, framed by Show, not otherwise.
+#[test]
+fn a_sketch_on_a_curved_face_shows_the_face_while_its_row_is_selected() {
+    let (mut doc, requests) = crate::tests::example();
+    let index = doc.feed.pick_index();
+    let mesh = index.mesh();
+    let wall = (index.picking().faces().iter())
+        .position(|face| matches!(face.summary, varde_regen::Summary::Cylinder { .. }))
+        .expect("the plate's hole");
+    let first = mesh.face_indices(wall).unwrap().start;
+    let near = (mesh.indices()[first..first + 3].iter())
+        .map(|&i| glam::Vec3::from(mesh.positions()[i as usize]).as_dvec3())
+        .sum::<glam::DVec3>()
+        / 3.0;
+    let face = index.face_ref(wall as u32, near).expect("the wall's name");
+    doc.apply((doc.editor.document()).add_sketch(varde_document::Plane::Face(face)));
+    let sketch = doc.editor.document().features().last().unwrap().id;
+    doc.sync();
+    answer(&mut doc, &requests);
+    let failed: Vec<_> = (doc.feed.failed_features().iter())
+        .map(|failed| (failed.feature, failed.message.as_str()))
+        .collect();
+    assert_eq!(failed, [(sketch, "its face isn't flat")]);
+    let geometry = failure(&doc, sketch);
+    assert!(geometry.mesh().triangle_count() > 0);
+    doc.selected_feature = None;
+    doc.refresh_errors();
+    assert!(doc.shown_errors().is_empty());
+
+    doc.look(Look::SelectFeature(sketch));
+    assert!(shows(&doc, &[&geometry]));
+    doc.look(Look::HoverFeature(Some(sketch)));
+    assert!(shows(&doc, &[&geometry]));
+    doc.look(Look::ShowFailure(Some(sketch)));
+    let bounds = geometry.bounds().expect("a box");
+    let to = doc.animation.as_ref().expect("the camera turns").to;
+    assert_eq!(to.target(), bounds.center());
+}
+
+/// A revolve about a line of no length fails, showing the line's place;
+/// while its sketch is edited, the line is marked in it and the place
+/// still shown.
+#[test]
+fn editing_the_sketch_of_a_revolve_about_a_line_of_no_length_marks_the_line() {
+    let mut editor = Editor::new(Document::default());
+    editor
+        .apply(
+            (editor.document()).add_sketch(varde_document::Plane::Origin(
+                varde_document::OriginPlane::XZ,
+            )),
+        )
+        .unwrap();
+    let sketch = editor.document().features()[0].id;
+    let mut drawn = varde_sketch::Sketch::default();
+    let corners = [(5.0, 0.0), (10.0, 0.0), (10.0, 4.0), (5.0, 4.0)]
+        .map(|(x, y)| drawn.add_point(DVec2::new(x, y)).unwrap());
+    for k in 0..4 {
+        let (start, end) = (corners[k], corners[(k + 1) % 4]);
+        drawn.add_curve(Curve::Line { start, end }, false).unwrap();
+    }
+    let [start, end] = [0, 1].map(|_| drawn.add_point(DVec2::new(0.0, 2.0)).unwrap());
+    let line = drawn.add_curve(Curve::Line { start, end }, true).unwrap();
+    let profiles = drawn.profiles().unwrap();
+    editor
+        .apply(Command::SetSketch {
+            feature: sketch,
+            sketch: Box::new(drawn),
+        })
+        .unwrap();
+    let revolve = Revolve {
+        sketch,
+        regions: vec![profiles.reference(0).unwrap()],
+        axis: AxisLine::Curve(line),
+        extent: Turn::Full,
+        flip: false,
+        operation: Operation::NewBody(BodyId::NEW),
+    };
+    editor
+        .apply(editor.document().add_feature(revolve.into()))
+        .unwrap();
+    let revolve = editor.document().features().last().unwrap().id;
+    let (mut doc, requests) = deferred();
+    doc.apply(Command::Replace(Box::new(editor.document().clone())));
+    doc.sync();
+    answer(&mut doc, &requests);
+    let geometry = failure(&doc, revolve);
+    assert_eq!(geometry.sketch_curves(), [u64::from(line.get())]);
+    assert_eq!(geometry.points().len(), 1);
+
+    doc.look(Look::EditFeature(sketch));
+    answer(&mut doc, &requests);
+    assert_eq!(failing(&doc), BTreeSet::from([line]));
+    // Its place is shown in 3D, the line left to the sketch.
+    let shown: Vec<_> = doc.shown_errors().shown().collect();
+    assert!(
+        matches!(shown[..], [only] if !only.lines && Arc::ptr_eq(&only.geometry, &failure(&doc, revolve))),
+        "{}",
+        shown.len()
+    );
+}

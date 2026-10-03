@@ -1111,3 +1111,203 @@ fn a_chain_of_sketches_on_a_far_tilted_wall_follows_its_edits() {
     editor.redo();
     check(&editor, 24.0, 36.0);
 }
+
+/// The example with a sketch on its hole's wall, a cylinder of radius
+/// 8: the editor and the sketch's id.
+fn sketch_on_the_wall() -> (Editor, FeatureId) {
+    let mut editor = Editor::new(Document::example());
+    let evaluation = evaluated(editor.document());
+    let key = key_where(only_body(&evaluation), |form| {
+        matches!(form, Form::Cylinder { .. })
+    });
+    let wall = FaceRef {
+        body: editor.document().bodies()[0].id,
+        key,
+        near: DVec3::new(8.0, 0.0, 5.0),
+    };
+    let sketch = add_sketch(&mut editor, Plane::Face(wall), disc((0.0, 0.0), 1.0));
+    (editor, sketch)
+}
+
+/// Whether every point of `geometry` lies on the cylinder of radius
+/// `radius` about z within `within`, from 0 to 10 up.
+fn on_the_wall(geometry: &ErrorGeometry, radius: f32, within: f32) -> bool {
+    let positions = geometry.mesh().positions().iter();
+    (positions.chain(geometry.lines().points().iter()))
+        .all(|&[x, y, z]| (x.hypot(y) - radius).abs() < within && (-1e-3..=10.001).contains(&z))
+}
+
+/// A face that isn't flat is drawn at the fit tolerance as the model is:
+/// another tolerance draws it again, and back at the first it's drawn as
+/// it was.
+#[test]
+fn a_curved_face_is_drawn_again_at_another_tolerance() {
+    let (mut editor, _) = sketch_on_the_wall();
+    let mut cache = Cache::default();
+    let fine = evaluate(editor.document(), &mut cache).failed[0]
+        .geometry
+        .clone()
+        .expect("the wall");
+    editor
+        .apply(Command::SetTolerance(Tolerance::new(0.1).unwrap()))
+        .unwrap();
+    let coarse = evaluate(editor.document(), &mut cache).failed[0]
+        .geometry
+        .clone()
+        .expect("the wall");
+    assert!(on_the_wall(&coarse, 8.0, 0.2));
+    assert_ne!(*coarse, *fine);
+    assert!(coarse.mesh().triangle_count() < fine.mesh().triangle_count());
+    editor.undo();
+    let again = evaluate(editor.document(), &mut cache).failed[0]
+        .geometry
+        .clone()
+        .expect("the wall");
+    assert_eq!(*again, *fine);
+}
+
+/// The face shown is the one found, on the body as the features before
+/// the sketch leave it: a later cut widening the hole doesn't change it.
+#[test]
+fn a_curved_face_shows_as_it_was_before_later_features() {
+    let (mut editor, sketch) = sketch_on_the_wall();
+    let extent = two_sides(editor.document(), "11", "1");
+    add_extrude(&mut editor, disc((0.0, 0.0), 9.0), extent, cut());
+    let crate::Response::Regenerated { failed, .. } = crate::handle(regenerate_with(&editor, None))
+    else {
+        panic!("regeneration failed");
+    };
+    let [failure] = &failed[..] else {
+        panic!("{failed:?}");
+    };
+    assert_eq!(failure.feature, sketch);
+    let geometry = failure.geometry.as_ref().expect("the wall");
+    assert!(geometry.mesh().triangle_count() > 0);
+    assert!(on_the_wall(geometry, 8.0, 1e-3));
+}
+
+/// A face that isn't flat on a body a join merged into another is
+/// found on the holder and shown, the face as the merged body made it.
+#[test]
+fn a_curved_face_of_a_consumed_body_shows() {
+    let mut editor = Editor::new(Document::example());
+    let plate = editor.document().bodies()[0].id;
+    let post = add_body(&mut editor, disc((50.0, 0.0), 4.0), "6");
+    // A bridge from the plate to the post merges the post into it.
+    add_extrude(
+        &mut editor,
+        rectangle((25.0, -2.0), (47.0, 2.0)),
+        one_side("4"),
+        join(),
+    );
+    let evaluation = evaluated(editor.document());
+    assert_eq!(evaluation.merged, [(post, plate)]);
+    let key = {
+        let maker = editor.document().features()[3].id;
+        let topology = only_body(&evaluation).topology();
+        let solid = only_body(&evaluation);
+        let walls: Vec<FaceKey> = (topology.regions().iter())
+            .filter(|region| region.key.feature == maker.get())
+            .filter(|region| matches!(region_form(solid, region), Form::Cylinder { .. }))
+            .map(|region| region.key)
+            .collect();
+        walls[0]
+    };
+    let face = FaceRef {
+        body: post,
+        key,
+        near: DVec3::new(46.0, 0.0, 5.0),
+    };
+    let sketch = add_sketch(&mut editor, Plane::Face(face), disc((0.0, 0.0), 1.0));
+    let evaluation = evaluated(editor.document());
+    assert_eq!(
+        evaluation.failed,
+        [(sketch, "its face isn't flat".to_owned())]
+    );
+    let geometry = evaluation.failed[0].geometry.as_ref().expect("the wall");
+    assert!(geometry.mesh().triangle_count() > 0);
+    let positions = geometry.mesh().positions().iter();
+    for &[x, y, z] in positions.chain(geometry.lines().points().iter()) {
+        assert!(((x - 50.0).hypot(y) - 4.0).abs() < 1e-3, "{x} {y}");
+        assert!((-1e-3..=6.001).contains(&z), "{z}");
+    }
+}
+
+/// A face of more triangles than evidence holds patches is drawn from
+/// its first ones, marked truncated.
+#[test]
+fn a_face_of_too_many_triangles_is_truncated() {
+    let evaluation = evaluated(&Document::example());
+    let solid = only_body(&evaluation);
+    let topology = solid.topology();
+    let region = &topology.regions()[0];
+    let many = varde_kernel::topology::Region {
+        tris: vec![region.tris[0]; varde_kernel::MAX_EVIDENCE.patches + 1],
+        ..region.clone()
+    };
+    let truncated = face_geometry(solid, &many, &Tolerance::DEFAULT).expect("drawn");
+    assert!(truncated.truncated());
+    let whole = face_geometry(solid, region, &Tolerance::DEFAULT).expect("drawn");
+    assert!(!whole.truncated());
+}
+
+/// A placement kept failing counts the face it shows in the cache's
+/// size.
+#[test]
+fn a_kept_curved_face_counts_in_the_cache_s_size() {
+    let (editor, _) = sketch_on_the_wall();
+    let evaluation = evaluated(editor.document());
+    let geometry = evaluation.failed[0].geometry.clone().expect("the wall");
+    let mut cache = Cache::default();
+    let key = crate::cache::Keyer::new("placement").finish();
+    let failed = Failed {
+        message: "its face isn't flat".to_owned(),
+        geometry: Some(geometry.clone()),
+    };
+    assert!(cache.placement(key, || Err(failed)).is_err());
+    assert!(cache.bytes() > geometry.bytes(), "{}", cache.bytes());
+    assert_eq!(cache.audit().0, cache.bytes());
+}
+
+/// A revolve from a sketch on the plate's top whose axis line has no
+/// length shows the line's place where the face puts it, 10 up.
+#[test]
+fn an_axis_line_of_no_length_on_a_face_shows_where_the_face_puts_it() {
+    let mut editor = Editor::new(Document::example());
+    let face = top(editor.document());
+    let mut line = None;
+    let sketch = add_sketch(&mut editor, Plane::Face(face), |sketch| {
+        rectangle((5.0, 0.0), (8.0, 2.0))(sketch);
+        let [start, end] = [0, 1].map(|_| sketch.add_point(DVec2::new(1.0, 2.0)).unwrap());
+        line = Some((sketch.add_curve(Curve::Line { start, end }, true)).unwrap());
+    });
+    let line = line.unwrap();
+    let FeatureKind::Sketch { sketch: drawn, .. } =
+        &editor.document().feature(sketch).unwrap().kind
+    else {
+        unreachable!()
+    };
+    let revolve = Revolve {
+        sketch,
+        regions: vec![drawn.profiles().unwrap().reference(0).unwrap()],
+        axis: AxisLine::Curve(line),
+        extent: Turn::Full,
+        flip: false,
+        operation: Operation::NewBody(BodyId::NEW),
+    };
+    editor
+        .apply(editor.document().add_feature(revolve.into()))
+        .unwrap();
+    let revolve = editor.document().features().last().unwrap().id;
+    let evaluation = evaluated(editor.document());
+    assert_eq!(
+        evaluation.failed,
+        [(revolve, "its axis line has no length".to_owned())]
+    );
+    let placement = placed(&evaluation, sketch);
+    let at = placement.to_world(DVec2::new(1.0, 2.0));
+    assert_eq!(at, DVec3::new(1.0, 2.0, 10.0));
+    let geometry = evaluation.failed[0].geometry.as_ref().expect("the place");
+    assert_eq!(geometry.points(), [at.as_vec3().to_array()]);
+    assert_eq!(geometry.sketch_curves(), [u64::from(line.get())]);
+}

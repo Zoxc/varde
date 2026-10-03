@@ -537,3 +537,71 @@ fn a_failing_step_shows_the_faces_on_their_bodies() {
     }
     assert!(faces.iter().all(|&(body, _)| body != target), "{faces:?}");
 }
+
+/// A union step that fails leaves the running solid as it was, so the
+/// steps after it are filed as without it: a tool put aside and tried
+/// again once another bridged it ends under the key of the bridge's step
+/// and then its own, each step keyed by the running solid's key and the
+/// tool's.
+#[test]
+fn a_tool_put_aside_is_filed_after_the_steps_that_worked() {
+    let mut editor = Editor::new(Document::default());
+    let a = block(&mut editor, 0.0, 0.0, 10.0, 10.0, "10");
+    let edge = block(&mut editor, 10.0, 10.0, 20.0, 20.0, "10");
+    let bridge = block(&mut editor, 5.0, 5.0, 15.0, 15.0, "10");
+    let before = evaluated(editor.document());
+    let key = |body: BodyId| {
+        let made = before.bodies.iter().find(|made| made.body == body);
+        made.unwrap().key
+    };
+    add_combine(&mut editor, combine(a, &[edge, bridge], BodyOp::Union));
+    let evaluation = evaluated(editor.document());
+    let [united] = &evaluation.bodies[..] else {
+        panic!("one body: {:?}", made(&evaluation));
+    };
+    let bridged = boolean_key(Doing::Merging, key(a), key(bridge));
+    assert_eq!(united.key, boolean_key(Doing::Merging, bridged, key(edge)));
+}
+
+/// A tool that fails again when tried a second time fails the union
+/// with that try's error, its faces looked for on the target and the
+/// tools united so far and on the tool; nothing changes. Another tool
+/// put aside after it isn't tried again.
+#[test]
+fn a_tool_failing_again_fails_the_union_with_the_faces_of_its_second_try() {
+    let mut editor = Editor::new(Document::default());
+    let a = block(&mut editor, 0.0, 0.0, 10.0, 10.0, "10");
+    // Along a's edge at (0, 10), which no tool bridges.
+    let alone = block(&mut editor, -10.0, 10.0, 0.0, 20.0, "10");
+    // Along a's edge at (10, 10), which the bridge covers.
+    let edge = block(&mut editor, 10.0, 10.0, 20.0, 20.0, "10");
+    let bridge = block(&mut editor, 5.0, 5.0, 15.0, 15.0, "10");
+    let united = add_combine(
+        &mut editor,
+        combine(a, &[alone, edge, bridge], BodyOp::Union),
+    );
+    let crate::Response::Regenerated { failed, .. } = crate::handle(regenerate_with(&editor, None))
+    else {
+        panic!("regeneration failed");
+    };
+    let [failure] = &failed[..] else {
+        panic!("{failed:?}");
+    };
+    assert_eq!(failure.feature, united);
+    assert!(
+        failure.message.starts_with("joining Body 2 to Body 1"),
+        "{}",
+        failure.message
+    );
+    if let Some(geometry) = &failure.geometry {
+        assert!(
+            (geometry.faces().iter()).all(|&(body, _)| [a, bridge, alone].contains(&body)),
+            "{:?}",
+            geometry.faces()
+        );
+    }
+    let evaluation = evaluated(editor.document());
+    assert_eq!(made(&evaluation), [a, alone, edge, bridge]);
+    assert!(evaluation.merged.is_empty());
+    assert_near(solid_of(&evaluation, a).volume(), 1000.0);
+}
