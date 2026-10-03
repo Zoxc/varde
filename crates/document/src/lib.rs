@@ -455,6 +455,27 @@ impl Document {
         Ok(())
     }
 
+    /// Checks `axis` as the axis of a move at feature `index` (at the
+    /// end for a new one, the count of features) would name it: its own
+    /// parts, and an edge's or face's body and its faces' makers before
+    /// it, as [`Document::check`] has them. For a panel keeping what it
+    /// sets up one the document takes.
+    pub fn check_axis_ref(&self, index: usize, axis: &AxisRef) -> Result<(), MotionError> {
+        if let Some(referred) = axis.refers() {
+            referred.check_own()?;
+        }
+        self.check_motion(index, &[], axis.refers())
+    }
+
+    /// Checks `plane` as the plane of a mirror at feature `index` would
+    /// name it, as [`Document::check_axis_ref`] does a move's axis.
+    pub fn check_plane_ref(&self, index: usize, plane: &PlaneRef) -> Result<(), MotionError> {
+        if let Some(referred) = plane.refers() {
+            referred.check_own()?;
+        }
+        self.check_motion(index, &[], plane.refers())
+    }
+
     /// Checks `combine`, feature `index`, see [`Document::check`]: its own
     /// parts, and every body it names there and made by a feature before
     /// it. A body that isn't there is refused, unlike a sketch's face's:

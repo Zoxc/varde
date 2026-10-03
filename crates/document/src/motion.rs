@@ -114,7 +114,7 @@ impl PlaneRef {
 
 impl AxisRef {
     /// The edge or face it names on a body, if it names one.
-    fn refers(&self) -> Option<Referred<'_>> {
+    pub(crate) fn refers(&self) -> Option<Referred<'_>> {
         match self {
             AxisRef::Origin(_) => None,
             AxisRef::Edge(edge) => Some(Referred::Edge(edge)),
@@ -125,7 +125,7 @@ impl AxisRef {
 
 impl PlaneRef {
     /// The face it names on a body, if it names one.
-    fn refers(&self) -> Option<Referred<'_>> {
+    pub(crate) fn refers(&self) -> Option<Referred<'_>> {
         match self {
             PlaneRef::Origin(_) => None,
             PlaneRef::Face(face) => Some(Referred::Face(face)),
@@ -142,7 +142,7 @@ pub(crate) enum Referred<'a> {
 impl Referred<'_> {
     /// Checks what needs only the reference: an edge's
     /// [`EdgeRef::check_own`], a face's point in bounds.
-    fn check_own(&self) -> Result<(), MotionError> {
+    pub(crate) fn check_own(&self) -> Result<(), MotionError> {
         match self {
             Referred::Edge(edge) => edge.check_own().map_err(MotionError::Edge),
             Referred::Face(face) => face.check_own().map_err(|_| MotionError::Near(face.near)),

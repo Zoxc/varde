@@ -5348,7 +5348,13 @@ fn a_click_on_an_empty_part_of_the_panel_or_toolbar_clears_the_selection() {
     assert!(!clears(&click(&doc, row.center())));
     let below = iced::Point::new(row.center_x(), row.y + 200.0);
     let beside_tabs = iced::Point::new(varde_view::SIDE_PANEL_WIDTH - 10.0, tab.center_y());
-    let toolbar = iced::Point::new(size.width * 0.75, 20.0);
+    // Past the last operation, Measure, and its key.
+    let measure = on_screen
+        .iter()
+        .find(|t| t.text == "Measure" && t.bounds.y < 40.0)
+        .unwrap()
+        .bounds;
+    let toolbar = iced::Point::new(measure.x + measure.width + 40.0, 20.0);
     for at in [below, beside_tabs, toolbar] {
         let sent = click(&doc, at);
         assert!(clears(&sent), "{at:?}: {sent:?}");

@@ -286,6 +286,7 @@ impl Doc {
         self.picking_plane = None;
         self.extrude = None;
         self.combine = None;
+        self.motion = None;
         let document = self.editor.document();
         let selected = self.selected_feature.filter(|&id| is_sketch(document, id));
         let mut session = RevolveSession::new(document, selected);
@@ -309,6 +310,7 @@ impl Doc {
         self.picking_plane = None;
         self.extrude = None;
         self.combine = None;
+        self.motion = None;
         self.selected_feature = Some(id);
         let mut session = RevolveSession::editing(document, id, revolve);
         if let AxisLine::Edge(edge) = &revolve.axis {

@@ -187,6 +187,7 @@ impl Doc {
             || self.sketch.is_some()
             || self.extrude.is_some()
             || self.revolve.is_some()
+            || self.motion.is_some()
         {
             return;
         }
@@ -221,6 +222,7 @@ impl Doc {
         self.picking_plane = None;
         self.extrude = None;
         self.revolve = None;
+        self.motion = None;
         self.selected_feature = Some(id);
         self.combine = Some(CombineSession::editing(id, combine));
     }

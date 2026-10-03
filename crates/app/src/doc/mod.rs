@@ -9,6 +9,7 @@ mod export;
 mod extrude;
 mod feed;
 mod measure;
+mod motion;
 mod pick;
 mod rail;
 mod regions;
@@ -50,6 +51,7 @@ pub(crate) use export::Exporting;
 pub(crate) use extrude::ExtrudeSession;
 use feed::MeshFeed;
 pub(crate) use measure::MeasureSession;
+pub(crate) use motion::MotionSession;
 use pick::ModelPick;
 use rail::Rail;
 pub(crate) use revolve::RevolveSession;
@@ -138,6 +140,9 @@ pub(crate) struct Doc {
     /// The combine being set up, if one is: never with a sketch or another
     /// operation.
     pub(crate) combine: Option<CombineSession>,
+    /// The move or mirror being set up, if one is: never with a sketch or
+    /// another operation.
+    pub(crate) motion: Option<MotionSession>,
     /// The measure tool, while it's in use: never with a sketch or an
     /// operation being set up.
     pub(crate) measure: Option<MeasureSession>,
@@ -336,6 +341,7 @@ impl Doc {
             extrude: None,
             revolve: None,
             combine: None,
+            motion: None,
             measure: None,
             sketch_split: GEOMETRY_SHARE,
             focus: None,
@@ -377,6 +383,7 @@ impl Doc {
         self.prune_extrude(replaced);
         self.prune_revolve(replaced);
         self.prune_combine(replaced);
+        self.prune_motion(replaced);
         self.prune_measure(replaced);
         self.request_analysis();
         self.request_model();
@@ -397,16 +404,20 @@ impl Doc {
         let exclude = self.sketch.as_ref().map(|session| session.feature);
         let draft = (self.extrude_draft())
             .or_else(|| self.revolve_draft())
-            .or_else(|| self.combine_draft());
+            .or_else(|| self.combine_draft())
+            .or_else(|| self.motion_draft());
         let inspect = self.measure.as_ref().and_then(MeasureSession::inspect);
         self.feed
             .request_with(&self.editor, exclude, draft, inspect);
     }
 
-    /// Whether an operation is being set up: an extrude, a revolve or a
-    /// combine.
+    /// Whether an operation is being set up: an extrude, a revolve, a
+    /// combine, a move or a mirror.
     pub(crate) fn operating(&self) -> bool {
-        self.extrude.is_some() || self.revolve.is_some() || self.combine.is_some()
+        self.extrude.is_some()
+            || self.revolve.is_some()
+            || self.combine.is_some()
+            || self.motion.is_some()
     }
 
     /// Whether the camera is turning to a new view, the pivot's marker
@@ -500,10 +511,12 @@ impl Doc {
             Edit::CommitExtrude => self.commit_extrude(false),
             Edit::CommitRevolve => self.commit_revolve(false),
             Edit::CommitCombine => self.commit_combine(false),
+            Edit::CommitMotion => self.commit_motion(false),
             Edit::AcceptError => {
                 self.commit_extrude(true);
                 self.commit_revolve(true);
                 self.commit_combine(true);
+                self.commit_motion(true);
             }
             Edit::CommitOpacity => {
                 if let Some((id, opacity)) = self.opacity_preview.take() {
@@ -674,6 +687,8 @@ impl Doc {
                 | Look::StartExtrude
                 | Look::StartRevolve
                 | Look::StartCombine
+                | Look::StartMove
+                | Look::StartMirror
                 | Look::StartMeasure
                 | Look::EditFeature(_)
         ) {
@@ -687,6 +702,8 @@ impl Doc {
                 | Look::StartExtrude
                 | Look::StartRevolve
                 | Look::StartCombine
+                | Look::StartMove
+                | Look::StartMirror
                 | Look::EditFeature(_)
         ) {
             self.measure = None;
@@ -714,6 +731,7 @@ impl Doc {
                 Some(FeatureKind::Extrude(_)) => self.edit_extrude(id),
                 Some(FeatureKind::Revolve(_)) => self.edit_revolve(id),
                 Some(FeatureKind::Combine(_)) => self.edit_combine(id),
+                Some(FeatureKind::Move(_) | FeatureKind::Mirror(_)) => self.edit_motion(id),
                 _ => self.enter_sketch(id),
             },
             Look::StartExtrude => self.start_extrude(),
@@ -722,6 +740,9 @@ impl Doc {
             Look::Revolve(message) => self.revolve_look(message),
             Look::StartCombine => self.start_combine(),
             Look::Combine(message) => self.combine_look(message),
+            Look::StartMove => self.start_motion(varde_view::MotionKind::Move),
+            Look::StartMirror => self.start_motion(varde_view::MotionKind::Mirror),
+            Look::Motion(message) => self.motion_look(message),
             Look::StartMeasure => self.start_measure(),
             Look::Measure(message) => self.measure_look(message),
             Look::FinishSketch => self.finish_sketch(),
@@ -749,11 +770,13 @@ impl Doc {
             Look::LeavePanel(left) => self.leave_panel(left),
             Look::Hover(pick) => self.hover(pick),
             Look::ClickModel { pick, .. } if self.combine.is_some() => self.combine_click(pick),
+            Look::ClickModel { pick, .. } if self.motion.is_some() => self.motion_click(pick),
             Look::ClickModel { pick, add, double } if self.measure.is_some() => {
                 self.measure_click(pick, add, double);
             }
             Look::ClickModel { pick, add, double } => self.click_model(pick, add, double),
             Look::ClickBody { body, .. } if self.combine.is_some() => self.combine_body(body),
+            Look::ClickBody { body, .. } if self.motion.is_some() => self.motion_body(body),
             Look::ClickBody { body, add } if self.measure.is_some() => self.measure_body(body, add),
             Look::ClickBody { body, add } => self.click_body(body, add),
             Look::Snap(snap) => {
@@ -895,7 +918,9 @@ impl Doc {
         // Which bodies are merged, which faces show as whose, may change.
         self.prune_plane_pick(false);
         self.prune_picks();
-        if self.follow_merges() {
+        let combine = self.follow_merges();
+        let motion = self.follow_motion_merges();
+        if combine || motion {
             self.request_model();
         }
         self.follow_edge_axis();
@@ -932,6 +957,10 @@ impl Doc {
                 .with_extrude(self.extrude_state().as_ref())
                 .with_revolve(self.revolve_state().as_ref())
                 .with_combine(self.combinable(), self.combine_state().as_ref())
+                .with_motion(
+                    !self.editor.document().bodies().is_empty(),
+                    self.motion_state().as_ref(),
+                )
                 .with_measure(self.measure.is_some())
                 .with_rail(self.rail.state())
                 .with_edited(self.edited())
@@ -1061,6 +1090,7 @@ impl Doc {
             revolve: self.revolve_state(),
             combine: self.combine_state(),
             combinable: self.combinable(),
+            motion: self.motion_state(),
             measure: self.measure_state(),
             unsolved: self.feed.unsolved(),
             failed: self.feed.failed_features(),

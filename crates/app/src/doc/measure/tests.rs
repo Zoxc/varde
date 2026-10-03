@@ -107,7 +107,7 @@ fn i_starts_and_leaves_the_measure_tool_and_so_does_the_rail() {
     key_in(&mut doc, keyboard::Key::Character("i".into()));
     assert!(doc.measure.is_none());
     // The rail's Inspect set: its list, then Enter on Measure.
-    doc.look(Look::Rail(RailLook::Open(2)));
+    doc.look(Look::Rail(RailLook::Open(3)));
     key_in(&mut doc, keyboard::Key::Named(keyboard::key::Named::Enter));
     assert!(doc.measure.is_some());
     assert_eq!(doc.rail.open, None);

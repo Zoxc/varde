@@ -94,6 +94,12 @@ use crate::{
 /// 8 bytes there and as few as 1 here).
 pub const MAX_HEAD_BYTES: usize = 1 << 26;
 
+/// How far from zero a coordinate of a draft's axis or plane
+/// ([`Drafted::reference`]) may be: its point is on a body within the
+/// coordinate limit, its direction at most the difference of two such
+/// points.
+pub const MAX_REFERENCE: f64 = 4.0 * varde_document::MAX_COORD as f64;
+
 /// The most faces a reply's picking tables may have: past any real
 /// model's, and few enough that decoding them can't take the page's
 /// memory (a face is about 120 bytes there and as few as 5 in the head).
@@ -441,6 +447,7 @@ pub fn decode_reply(
         } => {
             let inspect = inspected.as_ref().map(|inspected| inspected.revision);
             let model = check_merged(&merged)
+                .and_then(|()| check_reference(draft.as_ref()))
                 .and_then(|()| decode_placements(&placements))
                 .and_then(|placements| Ok((placements, decode_bodies(&bodies)?)))
                 .and_then(|(placements, bodies)| {
@@ -559,6 +566,17 @@ fn check_merged(merged: &[(BodyId, BodyId)]) -> Result<(), Error> {
     } else {
         Ok(())
     }
+}
+
+/// Checks the axis or plane of a draft, if it has one: finite, every
+/// coordinate within [`MAX_REFERENCE`] of zero, its direction not zero.
+fn check_reference(draft: Option<&Drafted>) -> Result<(), Error> {
+    let Some([point, along]) = draft.and_then(|draft| draft.reference.as_deref()) else {
+        return Ok(());
+    };
+    let within = |x: &f64| x.is_finite() && x.abs() <= MAX_REFERENCE;
+    let fine = point.iter().chain(along).all(within) && along.iter().any(|&x| x != 0.0);
+    if fine { Ok(()) } else { Err(Error::Reference) }
 }
 
 /// The placements of a [`Head::Regenerated`], each checked to be
@@ -754,6 +772,8 @@ pub enum Error {
     Picking(PickingError),
     /// A failure's geometry isn't one, see [`ErrorGeometry::from_parts`].
     Geometry(GeometryError),
+    /// A draft's axis or plane isn't one, see [`MAX_REFERENCE`].
+    Reference,
     /// An export's bodies came in this many parts instead of one.
     ExportParts(usize),
     /// An export's bodies couldn't be decoded, or a mesh among them
@@ -778,6 +798,7 @@ impl fmt::Display for Error {
             Error::Placement => f.write_str("a sketch's placement isn't one"),
             Error::Picking(e) => e.fmt(f),
             Error::Geometry(e) => e.fmt(f),
+            Error::Reference => f.write_str("a draft's axis or plane isn't one"),
             Error::ExportParts(n) => write!(f, "exported bodies in {n} parts instead of 1"),
             Error::Export(e) => write!(f, "couldn't decode the exported bodies: {e}"),
         }
@@ -798,6 +819,7 @@ impl std::error::Error for Error {
             | Error::Placement
             | Error::Picking(_)
             | Error::Geometry(_)
+            | Error::Reference
             | Error::ExportParts(_) => None,
         }
     }

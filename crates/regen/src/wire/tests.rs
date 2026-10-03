@@ -155,6 +155,7 @@ fn a_revolve_and_its_draft_round_trip() {
             geometry: Some(geometry),
             error: Some(crosses.clone()),
             touched: None,
+            reference: None,
         }
     );
     let revolve = editor.document().features().last().unwrap().id;
@@ -254,6 +255,7 @@ fn a_revolve_that_works_crosses_in_the_reply() {
             geometry: None,
             error: None,
             touched: None,
+            reference: None,
         })
     );
     assert!(failed.is_empty(), "{failed:?}");
@@ -328,6 +330,7 @@ fn request_with_a_draft_round_trips() {
             geometry: None,
             error: None,
             touched: None,
+            reference: None,
         })
     );
 
@@ -394,6 +397,7 @@ fn untested_and_touching_nothing_stay_apart() {
                 geometry: None,
                 error: None,
                 touched: touched.clone(),
+                reference: None,
             });
         }
         let Head::Regenerated { draft, .. } = Head::decode(&head.encode()).unwrap() else {
@@ -469,6 +473,52 @@ fn regenerated_round_trips() {
         crate::flatten_sketches(editor.document(), &[], None).unwrap()
     );
     assert_eq!(sketches.ends().len(), 6);
+}
+
+#[test]
+fn draft_references_must_be_lines_within_bounds() {
+    let far = MAX_REFERENCE * 2.0;
+    for bad in [
+        [[f64::NAN, 0.0, 0.0], [0.0, 0.0, 1.0]],
+        [[0.0; 3], [0.0; 3]],
+        [[far, 0.0, 0.0], [1.0, 0.0, 0.0]],
+        [[0.0; 3], [0.0, f64::INFINITY, 0.0]],
+    ] {
+        let mut head = regenerated(5);
+        if let Head::Regenerated { draft, .. } = &mut head {
+            *draft = Some(Drafted {
+                revision: 1,
+                geometry: None,
+                error: None,
+                touched: None,
+                reference: Some(Box::new(bad)),
+            });
+        }
+        let Response::Failed { error, .. } =
+            decode_reply(&head.encode()[..], &slices(&triangle())).unwrap()
+        else {
+            panic!("a bad reference was taken: {bad:?}");
+        };
+        assert_eq!(error, Error::Reference.to_string());
+    }
+    // A good one goes as it was.
+    let good = [[1.0, 2.0, 3.0], [0.0, -2.0, 0.5]];
+    let mut head = regenerated(5);
+    if let Head::Regenerated { draft, .. } = &mut head {
+        *draft = Some(Drafted {
+            revision: 1,
+            geometry: None,
+            error: None,
+            touched: None,
+            reference: Some(Box::new(good)),
+        });
+    }
+    let Response::Regenerated { draft, .. } =
+        decode_reply(&head.encode()[..], &slices(&triangle())).unwrap()
+    else {
+        panic!("a good reference was refused");
+    };
+    assert_eq!(draft.unwrap().reference.as_deref(), Some(&good));
 }
 
 #[test]
@@ -583,7 +633,13 @@ fn a_move_a_mirror_and_a_draft_round_trip() {
     else {
         panic!("regeneration failed");
     };
-    assert_eq!(draft.unwrap().error, None);
+    let draft = draft.unwrap();
+    assert_eq!(draft.error, None);
+    // The axis it turned about, as found: the Z axis.
+    assert_eq!(
+        draft.reference.as_deref(),
+        Some(&[[0.0; 3], [0.0, 0.0, 1.0]])
+    );
     assert!(failed.is_empty(), "{failed:?}");
     // The draft's plate turned a quarter, shifted 1 along x and 5 up,
     // and mirrored in XY.
@@ -2630,6 +2686,7 @@ fn answer_with_failures() -> Response {
             error: Some("it failed too".to_owned()),
             geometry: Some(failure_geometry()),
             touched: None,
+            reference: None,
         });
     }
     response

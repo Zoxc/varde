@@ -9,7 +9,10 @@
 use std::sync::Arc;
 
 use varde_document::BodyId;
-use varde_view::{ModelHighlight, ModelPicking, PanelHover, Pick, Picked, Picks, Selection};
+use varde_view::{
+    ModelHighlight, ModelPicking, MotionKind, MotionPick, PanelHover, Pick, Picked, Picks,
+    Selection,
+};
 
 use super::Doc;
 
@@ -49,7 +52,7 @@ impl Doc {
     /// it picks bodies, its preview's too: a combine's draft makes no
     /// body, so the bodies its model has are the document's.
     pub(crate) fn picks(&self) -> bool {
-        let combining = self.combine.is_some();
+        let combining = self.combine.is_some() || self.motion.is_some();
         self.sketch.is_none()
             && (combining || (!self.operating() && !self.feed.shows_draft()))
             && !self.feed.predates_replacement()
@@ -75,6 +78,13 @@ impl Doc {
                 .hover
                 .filter(|&hover| region(&session.regions, hover));
         }
+        if let Some(session) = &self.motion {
+            return session.hover.filter(|&hover| match hover {
+                PanelHover::Body(body) => session.bodies.contains(&body),
+                PanelHover::Axis => true,
+                PanelHover::Region { .. } => false,
+            });
+        }
         let session = self.combine.as_ref()?;
         session.hover.filter(|&hover| match hover {
             PanelHover::Body(body) => session.target == Some(body) || session.tools.contains(&body),
@@ -94,6 +104,9 @@ impl Doc {
         if let Some(session) = &mut self.combine {
             session.hover = hover;
         }
+        if let Some(session) = &mut self.motion {
+            session.hover = hover;
+        }
         self.refresh_highlight();
     }
 
@@ -103,6 +116,7 @@ impl Doc {
         let hovered = (self.extrude.as_ref().map(|session| session.hover))
             .or_else(|| self.revolve.as_ref().map(|session| session.hover))
             .or_else(|| self.combine.as_ref().map(|session| session.hover))
+            .or_else(|| self.motion.as_ref().map(|session| session.hover))
             .flatten();
         if hovered == Some(left) {
             self.hover_panel(None);
@@ -182,7 +196,11 @@ impl Doc {
             self.pick.hover = None;
         }
         // Not in a combine's preview, which isn't the document's model.
-        if self.picks() && self.combine.is_none() && !self.pick.selection.holds_nothing() {
+        if self.picks()
+            && self.combine.is_none()
+            && self.motion.is_none()
+            && !self.pick.selection.holds_nothing()
+        {
             let document = self.editor.document();
             let merged = self.feed.merged_bodies();
             let drawn = |body| {
@@ -211,6 +229,10 @@ impl Doc {
         }
         if self.combine.is_some() {
             self.refresh_combine_highlight();
+            return;
+        }
+        if self.motion.is_some() {
+            self.refresh_motion_highlight();
             return;
         }
         let hover = self.shown_hover();
@@ -278,6 +300,11 @@ impl Doc {
             hovered_snap: self.pick.hover().and_then(|pick| pick.snap),
             picks: if measuring {
                 Picks::All
+            } else if let Some(session) = &self.motion {
+                match (session.picking, session.kind) {
+                    (MotionPick::Reference, MotionKind::Move) => Picks::EdgesAndFaces,
+                    _ => Picks::Faces,
+                }
             } else if self.picking_plane.is_some() || self.combine.is_some() {
                 Picks::Faces
             } else {
@@ -299,6 +326,9 @@ impl Doc {
         }
         if self.combine.is_some() {
             return self.combine_highlight().filter(|_| self.picks());
+        }
+        if self.motion.is_some() {
+            return self.motion_highlight().filter(|_| self.picks());
         }
         // An extrude's or revolve's: the body hovered in its panel.
         if self.extrude.is_some() || self.revolve.is_some() {

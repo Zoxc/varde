@@ -9,7 +9,7 @@ use varde_document::FeatureId;
 
 use crate::{
     CombineState, ConstraintKind, ConstraintSet, Edit, ExtrudeState, File, Look, Message,
-    RevolveState, SketchState, Tool, Welcome,
+    MotionKind, MotionState, RevolveState, SketchState, Tool, Welcome,
 };
 
 /// A key pressed on its own, or with the platform's command modifier
@@ -35,6 +35,9 @@ enum Key {
     /// The arrow keys up and down.
     Up,
     Down,
+    /// No key: a tool the UI mock gives none, reached from the toolbar
+    /// and the rail. Never pressed, and shown as nothing.
+    None,
 }
 
 impl Shortcut {
@@ -67,6 +70,11 @@ impl Shortcut {
     /// Starts a new combine: outside sketches, where `B` takes up the
     /// Rectangle tool.
     pub const COMBINE: Self = Self::plain('b');
+    /// Starts a new move: outside sketches, the UI mock's key.
+    pub const MOVE: Self = Self::plain('m');
+    /// No key: what a tool the UI mock gives none is bound to, never
+    /// pressed (the mirror's).
+    pub const NONE: Self = Self::named(Key::None);
     pub const ENTER: Self = Self::named(Key::Enter);
     pub const DELETE: Self = Self::named(Key::Delete);
     /// Only labels the key: the app matches it itself, with any
@@ -134,6 +142,11 @@ impl Shortcut {
         }
     }
 
+    /// Whether it's no key ([`Shortcut::NONE`]): nothing to show.
+    pub(crate) fn is_none(self) -> bool {
+        self.key == Key::None
+    }
+
     /// Whether it's a key pressed on its own, with no modifier.
     pub(crate) fn is_plain(self) -> bool {
         !self.shift && !self.command
@@ -173,6 +186,7 @@ impl Shortcut {
             Key::Tab => "Tab".into(),
             Key::Up => "↑".into(),
             Key::Down => "↓".into(),
+            Key::None => "".into(),
         };
         format!("{command}{shift}{key}")
     }
@@ -387,6 +401,12 @@ pub struct DocumentKeys {
     pub combining: bool,
     /// Whether the combine being set up can be committed.
     pub combine_ready: bool,
+    /// Whether the document has a body, to move or mirror.
+    pub bodies: bool,
+    /// The move or mirror being set up, if one is.
+    pub motion: Option<MotionKind>,
+    /// Whether the move or mirror being set up can be committed.
+    pub motion_ready: bool,
     /// Whether the measure tool is in use.
     pub measuring: bool,
     /// Whether the document has changes not saved.
@@ -459,6 +479,9 @@ impl DocumentKeys {
             combinable: false,
             combining: false,
             combine_ready: false,
+            bodies: false,
+            motion: None,
+            motion_ready: false,
             measuring: false,
             edited: false,
             undo: false,
@@ -524,15 +547,26 @@ impl DocumentKeys {
         }
     }
 
+    /// The same keys where the document has a body if `bodies`, with
+    /// `motion`, a move or mirror, being set up, if one is.
+    pub fn with_motion(self, bodies: bool, motion: Option<&MotionState<'_>>) -> Self {
+        Self {
+            bodies,
+            motion: motion.map(|motion| motion.kind),
+            motion_ready: motion.is_some_and(|motion| motion.ready),
+            ..self
+        }
+    }
+
     /// The same keys with the measure tool in use if `measuring`.
     pub fn with_measure(self, measuring: bool) -> Self {
         Self { measuring, ..self }
     }
 
-    /// Whether an operation is being set up: an extrude, a revolve or a
-    /// combine.
+    /// Whether an operation is being set up: an extrude, a revolve, a
+    /// combine, a move or a mirror.
     pub fn operating(&self) -> bool {
-        self.extruding || self.revolving || self.combining
+        self.extruding || self.revolving || self.combining || self.motion.is_some()
     }
 }
 
@@ -604,7 +638,29 @@ pub fn combine_binding(keys: DocumentKeys) -> Binding {
             && !keys.sketching
             && !keys.extruding
             && !keys.revolving
+            && keys.motion.is_none()
             && (keys.combinable || keys.combining),
+    )
+}
+
+/// Starting a new move, or backing out of the one being set up: outside
+/// a sketch, while the document has a body, in a document that can be
+/// changed. Another operation being set up is dropped for it.
+pub fn move_binding(keys: DocumentKeys) -> Binding {
+    Binding::new(
+        Shortcut::MOVE,
+        Message::Look(Look::StartMove),
+        keys.editable && !keys.sketching && (keys.bodies || keys.motion.is_some()),
+    )
+}
+
+/// Starting a new mirror, or backing out of the one being set up, as
+/// [`move_binding`] does a move: with no key, as the UI mock has it.
+pub fn mirror_binding(keys: DocumentKeys) -> Binding {
+    Binding::new(
+        Shortcut::NONE,
+        Message::Look(Look::StartMirror),
+        keys.editable && !keys.sketching && (keys.bodies || keys.motion.is_some()),
     )
 }
 
@@ -801,6 +857,7 @@ pub fn document_bindings(keys: DocumentKeys) -> Vec<Binding> {
             extrude_binding(keys),
             revolve_binding(keys),
             combine_binding(keys),
+            move_binding(keys),
             measure_binding(keys),
         ]
     });
@@ -825,6 +882,13 @@ pub fn document_bindings(keys: DocumentKeys) -> Vec<Binding> {
             keys.editable && keys.combine_ready,
         )
     });
+    let commit_motion = keys.motion.is_some().then(|| {
+        Binding::new(
+            Shortcut::ENTER,
+            Message::Edit(Edit::CommitMotion),
+            keys.editable && keys.motion_ready,
+        )
+    });
     crate::rail::letter_bindings(keys)
         .into_iter()
         .chain(file_bindings(keys.editable, keys.edited))
@@ -837,6 +901,7 @@ pub fn document_bindings(keys: DocumentKeys) -> Vec<Binding> {
         .chain(commit)
         .chain(commit_revolve)
         .chain(commit_combine)
+        .chain(commit_motion)
         .chain(feature)
         .chain(sketch.into_iter().flatten())
         .chain(crate::rail::set_bindings(keys.sketching))

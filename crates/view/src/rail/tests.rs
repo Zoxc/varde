@@ -34,7 +34,7 @@ fn every_entry_has_a_letter_of_its_own_and_its_key_s_where_it_s_a_letter_alone()
                 // Another set opens from an open list.
                 assert!(!set_keys.contains(&letter), "{letter} opens a set");
                 let shortcut = entry.binding(DocumentKeys::default()).shortcut;
-                if shortcut.is_plain() {
+                if shortcut.is_plain() && !shortcut.is_none() {
                     assert_eq!(shortcut.letter_key(), Some(letter), "{}", entry.label());
                 }
             }
@@ -62,6 +62,13 @@ fn every_entry_has_a_letter_of_its_own_and_its_key_s_where_it_s_a_letter_alone()
         .flatten()
         .collect();
     assert_eq!(modify, "b");
+    // Move is M; Mirror, with no key, takes the first free letter of its
+    // name.
+    let transform: String = letters(MODEL[2].entries, false)
+        .into_iter()
+        .flatten()
+        .collect();
+    assert_eq!(transform, "mi");
 }
 
 #[test]
@@ -97,11 +104,13 @@ fn the_sets_hold_every_tool_the_app_has_and_only_those() {
             Entry::Extrude,
             Entry::Revolve,
             Entry::Combine,
+            Entry::Move,
+            Entry::Mirror,
             Entry::Measure
         ]
     );
     // I is Measure's own, in the Inspect set.
-    assert_eq!(letters(MODEL[2].entries, false), [Some('i')]);
+    assert_eq!(letters(MODEL[3].entries, false), [Some('i')]);
     for set in SKETCH.iter().chain(&MODEL) {
         // No set without tools, and a card shows its first ones.
         assert!(!set.entries.is_empty(), "{}", set.name);
@@ -191,7 +200,7 @@ fn an_open_set_s_letters_come_before_the_document_s_keys() {
 #[test]
 fn a_set_index_past_the_mode_s_sets_has_no_letters() {
     let keys = DocumentKeys {
-        rail: Some(RailOpen { set: 3, row: 0 }),
+        rail: Some(RailOpen { set: 4, row: 0 }),
         ..DocumentKeys::default()
     };
     assert!(letter_bindings(keys).is_empty());

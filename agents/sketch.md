@@ -1177,22 +1177,22 @@ bar says why (`EditError::Sketch`).
   `agents/viewport.md`). In a sketch: Draw (the drawing tools), Modify
   (Trim to Chamfer), Constraints (the Constrain tool, then every kind with
   a key) and Dimension; outside one: Create (Sketch, Extrude, Revolve),
-  Modify (Combine) and Inspect (Measure); a set with nothing the app has
-  yet isn't shown. An entry sends what the
+  Modify (Combine), Transform (Move, Mirror) and Inspect (Measure); a
+  set with nothing the app has yet isn't shown. An entry sends what the
   toolbar's button does (its binding, `Entry::binding`), enabled where
   that is. The top row's letters, `Q`, `W`, `E`, `R`, ... (`rail::SET_KEYS`),
   open the mode's sets' lists, or close the one open (`RailLook::Toggle`,
   last in `document_bindings`): no tool has one of them (so the Rectangle
   tool is `B`, Chamfer `Shift B`, Mirror `Shift M`, Equal `Shift E`, the
-  Rectangle's and Spline's switch `Z`), and outside a sketch, with three
-  sets, `Q`, `W` and `E` do, so Extrude is `X`, the UI mock's key; while one is open
+  Rectangle's and Spline's switch `Z`), and outside a sketch, with four
+  sets, `Q` to `R` do, so Extrude is `X`, the UI mock's key; while one is open
   (`DocumentKeys::rail`, `Doc::rail`), its letters come before every other
   binding (`rail::letter_bindings`), and claim their key even while their
   tool can't be used (`Binding::claiming`), so a constraint that doesn't
   fit does nothing rather than take up the tool with its letter. A letter
   is the tool's own key where that's a letter alone (Line is `L` there
   too), else the first free one of its key's letter (Shift dropped:
-  Parallel is `P`) and its label's, never a set's key, so another set
+  Parallel is `P`) and its label's (Mirror, with no key, is `I`), never a set's key, so another set
   opens from an open list (Equal is `U`), all from `rail::letters`, which
   the list's letters show. The keys are on a row of the open list (`RailOpen::row`, the
   first as a set opens): `Up` and `Down` move them, round from one end

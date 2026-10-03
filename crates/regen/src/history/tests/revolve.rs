@@ -772,6 +772,7 @@ fn a_revolve_draft_is_answered_from_the_cache() {
             geometry: None,
             error: None,
             touched: Some(vec![body]),
+            reference: None,
         })
     );
     assert_ne!(first.mesh, committed.mesh);

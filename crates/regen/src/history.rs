@@ -121,6 +121,12 @@ pub struct Evaluation {
     /// plane's. A sketch on a face that isn't listed failed, and is
     /// drawn nowhere.
     pub placements: Vec<(FeatureId, Placement)>,
+    /// Each move turning about an axis, and each mirror, whose axis or
+    /// plane was found, and where: a point on it and its direction (a
+    /// mirror's normal), not unit, as the feature turned or mirrored by,
+    /// in the document's order. For the app to draw a draft's axis or
+    /// plane where regenerating found it.
+    pub references: Vec<(FeatureId, [DVec3; 2])>,
 }
 
 impl Evaluation {
@@ -343,17 +349,21 @@ pub(crate) fn evaluate_within(
                 }
             }
             FeatureKind::Move(moved) => {
-                if let Err(failed) =
-                    motion::evaluate_move(document, moved, &tolerance, &mut evaluation, cache)
-                {
+                if let Err(failed) = motion::evaluate_move(
+                    document,
+                    feature.id,
+                    moved,
+                    &tolerance,
+                    &mut evaluation,
+                    cache,
+                ) {
                     evaluation.failed.push(failed.of(feature.id));
                 }
             }
             FeatureKind::Mirror(mirror) => {
-                let id = feature.id.get();
                 if let Err(failed) = motion::evaluate_mirror(
                     document,
-                    id,
+                    feature.id,
                     mirror,
                     &tolerance,
                     &mut evaluation,

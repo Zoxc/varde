@@ -263,7 +263,7 @@ on entering and `Look::LeavePanel` of it on leaving, which clears it only
 if it's still the one hovered (moving up a row, the row entered tells it
 first); each session keeps it, and
 `Doc::panel_hover` gives it while the row is still there (a region still
-picked, a combine's body still named). The row shows hovered from it
+picked, a combine's or move's body still named). The row shows hovered from it
 (`theme::picked_row(hovered)`, as a row with nothing to press can't tell
 from its status), and the viewport lights it: a region filled in the
 hover colour and outlined on the screen, over everything
@@ -271,7 +271,8 @@ hover colour and outlined on the screen, over everything
 regions' depth tested layers), the revolve's picked axis in the hover
 colour, a body's faces hovered (the extrude's and revolve's
 `ModelPick::panel_highlight` on the model shown, preview or not, whose
-bodies keep their ids; the combine's own highlight). A distance's label is over its field, and why its text is
+bodies keep their ids; the combine's and the move's own highlight),
+a move's axis or a mirror's plane in the hover colour. A distance's label is over its field, and why its text is
 refused shows under it.
 Editing an extrude shows each distance with the design's unit after its
 bare numbers ("10 mm" for a typed "10", `Value::pin_units`), as a new
@@ -862,7 +863,8 @@ the point (the ray's hit, the edge's point, or the vertex).
 Outside sketches and the extrude session, and not over a draft's preview
 (`Doc::picks`; they pick what they need themselves) the viewport is given `ModelPicking` (the index,
 the target the app holds hovered, and what the cursor picks, `Picks`:
-all, or only faces or only edges, from the selection's mode). It
+all, or only faces or only edges, from the selection's mode; edges and
+faces, never a vertex, while a move's axis is picked). It
 picks on each cursor move while the camera isn't dragged, and on each
 frame drawn (`RedrawRequested`) whose camera, model or cursor position
 differs from those it last picked with (`Interaction::hover_seen`), so the

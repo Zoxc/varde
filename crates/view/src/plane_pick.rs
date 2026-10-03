@@ -265,6 +265,29 @@ impl Naming {
         Some(found)
     }
 
+    /// The reference to face `face` of `index`'s model picked at `near`,
+    /// as a feature stores it ([`Naming::face_ref`]), refused as
+    /// [`Naming::edge_ref`] refuses an edge: not in the model's tables
+    /// ([`Unnamed::Missing`]), named by a feature that isn't before the
+    /// history's stop or on a body that isn't ([`Unnamed::Later`]), or
+    /// which body it's on there can't be told ([`Unnamed::Unclear`]).
+    pub fn checked_face_ref(
+        &self,
+        index: &PickIndex,
+        face: u32,
+        near: DVec3,
+    ) -> Result<FaceRef, Unnamed> {
+        let raw = index.face_ref(face, near).ok_or(Unnamed::Missing)?;
+        if !self.takes_maker(raw.key.feature) {
+            return Err(Unnamed::Later);
+        }
+        let found = self.face_ref(index, face, near).ok_or(Unnamed::Unclear)?;
+        if !self.takes_body(found.body) {
+            return Err(Unnamed::Later);
+        }
+        Ok(found)
+    }
+
     /// The body a face shown on `shown` and named by the feature numbered
     /// `maker` is on where the history stops: the body that feature made,
     /// or one the join, cut or intersect touched that's merged into the
@@ -342,21 +365,28 @@ fn holder(merged: &[(BodyId, BodyId)], body: BodyId) -> BodyId {
 /// face by the feature that made it, "on Extrude 1's end", or by its body
 /// if that feature is gone, "on Body 1".
 pub fn plane_note(document: &Document, plane: &Plane) -> String {
-    let Some(face) = plane.face() else {
-        return plane.name().to_owned();
-    };
+    match plane.face() {
+        Some(face) => format!("on {}", face_name(document, face)),
+        None => plane.name().to_owned(),
+    }
+}
+
+/// A face of the model as its reference `face` names it, for notes:
+/// by the feature that made it, "Extrude 1's end", "a face of Revolve
+/// 1", or by its body if that feature is gone, "Body 1", or "a face".
+pub fn face_name(document: &Document, face: &FaceRef) -> String {
     if let Some(maker) = document.feature(face.maker()) {
         let part = match face.key.part {
             PartKey::StartCap => "start",
             PartKey::EndCap => "end",
             PartKey::Side { .. } => "side",
-            _ => return format!("on a face of {}", maker.name),
+            _ => return format!("a face of {}", maker.name),
         };
-        return format!("on {}'s {part}", maker.name);
+        return format!("{}'s {part}", maker.name);
     }
     match document.body(face.body) {
-        Some(body) => format!("on {}", body.name),
-        None => "on a face".to_owned(),
+        Some(body) => body.name.clone(),
+        None => "a face".to_owned(),
     }
 }
 

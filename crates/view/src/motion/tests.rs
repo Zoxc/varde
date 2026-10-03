@@ -1,0 +1,179 @@
+use varde_document::{FaceKey, FaceRef, Move, PartKey};
+use varde_expr::Value;
+
+use super::*;
+use crate::probe::Shown;
+use crate::testing::Laid;
+
+fn field(text: &str) -> TypedField<'_> {
+    TypedField {
+        text,
+        error: None,
+        value: Some(0.0),
+    }
+}
+
+fn state_of<'a>(kind: MotionKind, bodies: Vec<CombineBody<'a>>) -> MotionState<'a> {
+    MotionState {
+        kind,
+        editing: None,
+        bodies,
+        picking: MotionPick::Bodies,
+        fields: [field("0 mm"), field("0 mm"), field("0 mm"), field("0°")],
+        reference: Some("Z axis".to_owned()),
+        line: None,
+        bounds: None,
+        keep_original: true,
+        need: None,
+        refused: None,
+        error: None,
+        show_error: None,
+        checking: false,
+        ready: false,
+        accept: false,
+        editable: true,
+        hover: None,
+    }
+}
+
+/// A body named `name`: the panel only sends ids, so they're all the
+/// example's.
+fn body(name: &str) -> CombineBody<'_> {
+    let example = Document::example();
+    CombineBody {
+        body: example.bodies()[0].id,
+        name,
+    }
+}
+
+/// Each text of `state`'s panel and where it's laid out.
+fn texts_of(state: &MotionState<'_>) -> Vec<Shown> {
+    Laid::new(panel(state), iced::Size::new(400.0, 900.0)).texts()
+}
+
+fn found<'s>(shown: &'s [Shown], text: &str) -> &'s Shown {
+    shown
+        .iter()
+        .find(|shown| shown.text == text)
+        .unwrap_or_else(|| panic!("no {text:?} in {shown:?}"))
+}
+
+fn has(shown: &[Shown], text: &str) -> bool {
+    shown.iter().any(|shown| shown.text == text)
+}
+
+#[test]
+fn a_move_s_panel_is_the_mock_s_bodies_translate_and_rotate() {
+    let state = state_of(MotionKind::Move, vec![body("Body 1"), body("Body 2")]);
+    let shown = texts_of(&state);
+    let order = [
+        "New move",
+        "Bodies",
+        "Body 1",
+        "Body 2",
+        "Click bodies",
+        "Translate",
+        "X",
+        "Y",
+        "Z",
+        "Rotate",
+        "Axis",
+        "Z axis",
+        "Angle",
+    ];
+    let mut y = f32::MIN;
+    for text in order {
+        let at = found(&shown, text).bounds.y;
+        assert!(at >= y, "{text} above what comes before it: {shown:?}");
+        y = at;
+    }
+    // No Create copy: a move has none in the document.
+    assert!(!has(&shown, "Create copy"));
+    // Nothing picked: what to click, in each field.
+    let mut state = state_of(MotionKind::Move, Vec::new());
+    state.reference = None;
+    state.picking = MotionPick::Reference;
+    let shown = texts_of(&state);
+    found(&shown, "Click bodies");
+    found(&shown, "Click an axis or edge");
+}
+
+#[test]
+fn a_mirror_s_panel_has_its_plane_and_create_copy() {
+    let mut state = state_of(MotionKind::Mirror, vec![body("Body 1")]);
+    state.reference = None;
+    state.editing = Some("Mirror 2");
+    let shown = texts_of(&state);
+    for text in [
+        "Mirror 2",
+        "Bodies",
+        "Body 1",
+        "Plane",
+        "Click a plane or face",
+        "Create copy",
+    ] {
+        found(&shown, text);
+    }
+    assert!(!has(&shown, "Translate"));
+    // A refusal shows as the operation's failure, without Add anyway.
+    state.refused = Some("it names 0 bodies".to_owned());
+    let shown = texts_of(&state);
+    found(&shown, "Mirror fails");
+    assert!(!has(&shown, "Add anyway"));
+}
+
+#[test]
+fn notes_and_infos_are_the_mock_s() {
+    let example = Document::example();
+    let document = &example;
+    let plate = document.bodies()[0].id;
+    let design = document.design();
+    let length = |text: &str| Value::new(text, &Move::offset_ask(&design)).unwrap();
+    let angle = |text: &str| Value::new(text, &Move::angle_ask(&design)).unwrap();
+    let mut moved = Move {
+        bodies: vec![plate],
+        offset: [length("-20"), length("-80"), length("0")],
+        turn: Some((AxisRef::Origin(Axis3::Z), angle("30"))),
+    };
+    let units = design.units;
+    assert_eq!(move_note(&moved, units), "82.462 mm 30°");
+    assert_eq!(
+        move_info(document, &moved),
+        "Body 1 by -20, -80, 0 mm, 30° about Z axis"
+    );
+    moved.turn = None;
+    assert_eq!(move_note(&moved, units), "82.462 mm");
+    assert_eq!(move_info(document, &moved), "Body 1 by -20, -80, 0 mm");
+    moved.offset = [length("0"), length("0"), length("0")];
+    moved.turn = Some((AxisRef::Origin(Axis3::X), angle("90")));
+    assert_eq!(move_note(&moved, units), "90°");
+    assert_eq!(move_info(document, &moved), "Body 1 90° about X axis");
+
+    let extrude = document.features()[1].id;
+    let face = FaceRef {
+        body: plate,
+        key: FaceKey {
+            feature: extrude.get(),
+            part: PartKey::EndCap,
+            instance: 0,
+        },
+        near: glam::DVec3::ZERO,
+    };
+    let mirror = varde_document::Mirror {
+        bodies: vec![plate],
+        plane: PlaneRef::Face(face),
+        keep_original: true,
+    };
+    assert_eq!(plane_short(document, &mirror.plane), "Extrude 1's end");
+    assert_eq!(
+        mirror_info(document, &mirror),
+        "Body 1 across Extrude 1's end · copy"
+    );
+    let mirror = varde_document::Mirror {
+        plane: PlaneRef::Origin(OriginPlane::XY),
+        keep_original: false,
+        ..mirror
+    };
+    assert_eq!(plane_short(document, &mirror.plane), "XY");
+    assert_eq!(mirror_info(document, &mirror), "Body 1 across XY plane");
+}

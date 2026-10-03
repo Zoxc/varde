@@ -768,8 +768,8 @@ while another operation is set up, which it drops. The button and
 the rail's entry are highlighted while a revolve is set up. `O` is the
 UI mock's key: its model rail's sets open with `Q` .. `T` (five sets),
 so `R` would open its fourth and Revolve takes `O`, Extrude `X` (the
-app's model rail has three sets since Combine's Modify set, so `E` opens
-the third and Extrude is `X` too). In a sketch `O` is the Offset tool's
+app's model rail has four sets since the Transform set, so `E` and `R`
+open the third and fourth and Extrude is `X` too). In a sketch `O` is the Offset tool's
 and `X` construction's; outside one they're free, and the rail's set
 keys reach `O` only with a ninth set. `X` while a revolve is set up,
 `O` while an extrude is, and both and `S` while a combine is, swap it
@@ -1159,6 +1159,160 @@ geometry, out of range, a consumed body, a sketch following a moved
 face, the cache), `regen/src/wire/tests.rs` (a move draft through the
 wire), `io/src/vrdp/tests.rs` (through a file).
 
-Not yet: the UI (the move's typed fields and `M`, the mirror's panel)
-and the move's handles (an arrow per world axis and a ring per axis at
-the moved bodies' box centre, dragging the offsets and the turn).
+### UI
+
+**The session** (`app/src/doc/motion.rs`, `Doc::motion`, one
+`MotionSession` for both, its `MotionKind` saying which) is started by
+`Look::StartMove` (`M`, `Shortcut::MOVE`, the UI mock's key, the
+toolbar's Move after Combine, the rail's Transform set) or
+`Look::StartMirror` (no key, as the mock has none: the toolbar's
+Mirror after Move, the rail; `Shortcut::NONE`, a binding that's never
+pressed and shows no key, so the rail's list gives it the first free
+letter of its name, `I`), again (or `Esc`, Cancel) backing out of it and
+one of the other kind replaced; or by editing one (`Look::EditFeature`: a
+double-click or `Enter` on its row, Edit move / Edit mirror in its
+menu). In a document that can be changed, outside sketches; it drops the
+other operations as they drop it, and the measure tool; the combine's
+`B` is off while one is set up, as it is during an extrude or revolve.
+Both bindings want a body in the document (`DocumentKeys::bodies`). A
+new one takes its bodies from what's selected in the model (each item's
+body, a merged one as its holder), as the mock's init does. A new move
+starts with "0 mm" offsets, "0°" and the Z axis (the mock's), clicks
+picking bodies; a new mirror keeps the original (the mock's Create copy
+on), its plane to pick, clicks picking the plane if it has bodies.
+
+- **Bodies** are picked as a combine's: the cursor picks the model,
+  preview included (a move's or mirror's draft makes no body, so the
+  model's bodies are the document's), only faces, and a click on one
+  picks or un-picks its body, as a row in Objects does
+  (`Doc::motion_body`), merged bodies as their holder
+  (`MeshFeed::merged_before` up to the feature), only those made before
+  it (`combine::pickable`), at most `MAX_FEATURE_BODIES`, kept sorted.
+  Bodies picked on a model that didn't show a merge yet follow it once
+  it does (`MotionSession::follow`, `Doc::follow_motion_merges`, after
+  each edit and answer, as the combine's `follow`), and bodies the
+  document no longer has are let go (`MotionSession::prune`).
+- **The axis or plane** is picked once its panel field is clicked
+  (`MotionPick::Reference`): the toolbar then offers the origin axes
+  ("X axis", "Y axis", "Z axis") or planes after Measure, as picking a
+  sketch's plane does (`MotionLook::OriginAxis`, `OriginPlane`), and the
+  viewport picks edges and faces (`Picks::EdgesAndFaces` for a move, a
+  pick that never takes a vertex; faces for a mirror). A move takes a
+  straight edge (`PickIndex::edge_ends`) or a round one (one with a snap
+  point, a circle's or arc's centre) and a round face (its summary a
+  cylinder, cone, torus or revolved surface); a mirror a flat face. Each
+  is named as a sketch's face or a revolve's edge is (`Naming`, the
+  history stopped at the feature: `Naming::edge_ref` and the new
+  `Naming::checked_face_ref`, which refuses as `edge_ref` does). Refused
+  with a notice in the status bar, the app's stand-in for the mock's
+  toast: "Only a straight or round edge, or a round face, can be the
+  axis", "Only a flat face can be the mirror plane", "Only a face made
+  before the move can be picked", "Which body that face is on at the
+  move can't be told: pick another", and a pick on a model that doesn't
+  answer what was asked last ("The model shown is out of date: ...",
+  `MeshFeed::answers_request`). Only what a click takes is lit while
+  hovered. A pick hands the clicks back to the bodies. While the axis or
+  plane is picked the model shown is the history as of the feature, so
+  what's clicked is where the feature finds it: a new one sends no
+  draft then, and an edited one a move of its bodies by nothing (turning
+  them by nothing about a move's axis, so regeneration still finds it).
+  An axis or plane the document no longer takes at the feature's place
+  (`Document::check_axis_ref`, `check_plane_ref`: an undo took its body
+  or a face's maker away) is dropped as the document changes, a move's
+  back to the Z axis, a mirror's to be picked again.
+- **Typed fields** (a move's): the offsets read by `Move::offset_ask`,
+  the angle by `Move::angle_ask` (`TypedText`, kept where the units
+  change, as an extrude's). An angle of zero stores no turn
+  (`Move::turn` is `None`); the axis is kept in the session for when it
+  isn't.
+- **Whole and ready**: bodies, and a move's values as they last read
+  with an axis while the angle isn't zero, or a mirror's plane
+  (`MotionSession::kind`); ready (`Doc::motion_ready`) when editable, no
+  sketch edits wait on the solver, no field is refused, nothing is still
+  to do (`MotionSession::need`, the mock's words for the status bar: "pick
+  the bodies to move", "enter a distance or an angle", "pick an axis to
+  rotate about", "pick a plane: an origin plane or a planar face") and its
+  own check passes (else its words in the panel's foot, "Move fails",
+  without Add anyway).
+- **Preview**: the feature as set up is the request's draft
+  (`Doc::motion_draft`, after the others in `Doc::request_model`); a new
+  move that moves nothing sends none. Its error shows in the panel as
+  "Move fails" or "Mirror fails" with Add anyway. Regeneration's answer
+  carries where it found the axis or plane (`Drafted::reference`,
+  below), which the viewport draws.
+- **Committing** (`Edit::CommitMotion`: OK, the screen's `Enter`, or
+  `Edit::AcceptError` for Add anyway) applies `AddFeature` ("Move N",
+  "Mirror N") or `SetFeature` through `Doc::commit_feature`, one undo
+  step, selects it and ends the session. A replacement of the document,
+  read-only, or the edited feature gone end it (`Doc::prune_motion`).
+
+**The panel** (`view/src/motion.rs`, `MotionState`, in
+`operation_panel`), the UI mock's: title "New move" / "New mirror" or the
+feature's name, with the mock's `move` and `bmirror` icons
+(`Icon::Move`, `Icon::BMirror`); a Bodies field (rows with the Body icon
+and a cross, "Click bodies"); a move's "Translate" section with the X, Y
+and Z fields (the X field is `VALUE_FIELD`, focused as it opens), then
+"Rotate" with the Axis field ("Z axis", "Edge of Body 1", "Extrude 1's
+side" as a row with the axis icon, "Click an axis or edge") and the
+Angle field; a mirror's Plane field (`Icon::SePlane`, "XY plane",
+"Extrude 1's end", "Click a plane or face") and Create copy, an icon
+toggle (`Icon::TkCopy`) with "Keep the original too" as its tooltip,
+which is `Mirror::keep_original`. The mock's Move panel also has Create
+copy; the document's `Move` has no field for it, so it's left out (a
+defaulted field later would keep files working, but it's a file format
+change, waiting on the user's word). The axis or plane row has no cross
+(as the revolve's axis row): picking another replaces it. Hovering it
+lights the axis or plane in the viewport (`PanelHover::Axis`).
+
+**The viewport** (`view/src/viewport/motion.rs`, `Moving`, one of
+`viewport::Operating`): drawn on top of the model, as the measure tool
+draws, the axis (a line across the bodies' box, `PickIndex::bodies_bounds`
+on the model shown, a quarter past half its diagonal either side of the
+point nearest its centre, at least 10 mm, with an arrowhead on the
+screen at the end positive angles turn right-handed about) or the plane
+(a square as wide across the box, dashed outline, a faint fill, and a
+short line along its normal). An origin axis or plane is drawn as
+known; an edge or face where the newest draft answered found it. A move
+whose angle is zero shows its axis only while it's being picked. The
+knobs' layer is an empty placeholder.
+
+The status bar says "New move · Body 2" ("· 30° about Z axis" with a
+turn), "New mirror · Body 2 across XY plane", or what's still to do,
+with the hints "Pick bodies", "Pick the axis" or "Pick the plane",
+`Enter` OK and `Esc` Cancel; the toolbar's pill with OK.
+
+**The Timeline**: the mock's icons and notes. A move's note is how far
+it shifts in all and its angle, "82.462 mm 30°" (`motion::move_note`,
+either left out when it's none, "0 mm" for a move doing nothing); a
+mirror's is its plane, "XY" or "Extrude 1's end" (`plane_short`).
+Selected, the status bar's info is the mock's: "Body 1 by -20, -80, 0
+mm, 30° about Z axis" (`move_info`), "Body 1 across XY plane · copy"
+(`mirror_info`).
+
+**Regen's answer** carries the axis or plane found:
+`Evaluation::references` lists, for each move turning about an axis and
+each mirror, the point and direction (normal) its motion was made from,
+and a draft's `Drafted::reference` is its feature's, as
+`[[f64; 3]; 2]`, on the wire too (checked on receipt: finite, within
+`wire::MAX_REFERENCE`, four times the coordinate limit, the direction
+not zero; else the generation fails, `wire::Error::Reference`). Not in
+`.vrdp`.
+
+Tests: `app/src/doc/motion/tests.rs` (`M` with the selection, typed
+offsets moving the preview, `Enter` one undo step, the Timeline note and
+status info; a round face's axis found by regeneration and a quarter turn
+about it; a mirror across a picked face with copy, a curved face refused;
+editing from the Timeline and undo, the neutral preview while the axis is
+picked, `Esc`; a field refused, a preview failing out of range with Add
+anyway; a straight edge as the axis and a face made after the move
+refused); `view/src/motion/tests.rs` (the panels' order and texts, the
+notes); `viewport/motion.rs` (the axis and plane drawn);
+`regen/src/wire/tests.rs` (the reference on the wire, bad ones refused).
+
+Known gaps: the moved bodies' old place isn't shown faded (the mock's
+`fade`), as the preview replaces the model; a move with an angle of zero
+draws no edge or face axis (its draft names none); a draft that fails
+before its reference is resolved (a body consumed) draws none.
+
+Not yet: the move's handles (an arrow per world axis and a ring per axis
+at the moved bodies' box centre, dragging the offsets and the turn).

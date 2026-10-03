@@ -6,7 +6,7 @@ use iced::widget::{
     Button, Container, Space, button, column, container, mouse_area, opaque, row, space, text,
 };
 use iced::{Alignment, Element, Length, Padding, mouse};
-use varde_document::{EXTENSION, OriginPlane, Tolerance};
+use varde_document::{Axis3, EXTENSION, OriginPlane, Tolerance};
 use varde_expr::LengthUnit;
 
 use crate::chrome::{Edge, edged, hrule, icon_button, key_label, vrule};
@@ -14,10 +14,13 @@ use crate::icons::{self, Icon};
 use crate::shortcut::{
     Binding, Shortcut, comb_binding, combine_binding, constrain_binding, constraint_binding,
     extrude_binding, file_bindings, handles_binding, history_bindings, measure_binding,
-    revolve_binding, sketch_binding, switch_binding, tool_binding,
+    mirror_binding, move_binding, revolve_binding, sketch_binding, switch_binding, tool_binding,
 };
 use crate::theme::{self, Emphasis, SEMIBOLD, SIDE_PANEL_INNER_WIDTH, Tone};
-use crate::{ActiveTool, ConstraintKind, DocumentState, Edit, File, Look, Message, Overlay, Tool};
+use crate::{
+    ActiveTool, ConstraintKind, DocumentState, Edit, File, Look, Message, MotionKind, MotionLook,
+    MotionPick, Overlay, Tool,
+};
 
 /// Includes the 1 px border.
 const TOOLBAR_HEIGHT: f32 = 40.0;
@@ -120,7 +123,7 @@ pub fn toolbar<'a>(state: &DocumentState<'a>) -> Element<'a, Message> {
     )
 }
 
-/// The extrude, revolve or combine being set up, as the toolbar shows it.
+/// The operation being set up, as the toolbar shows it.
 struct Operation<'a> {
     icon: Icon,
     /// "New revolve", or the feature edited.
@@ -131,8 +134,16 @@ struct Operation<'a> {
     cancel: Message,
 }
 
-/// The extrude, revolve or combine being set up, if one is.
+/// The operation being set up, if one is.
 fn operation<'a>(state: &DocumentState<'a>) -> Option<Operation<'a>> {
+    if let Some(motion) = &state.motion {
+        return Some(Operation {
+            icon: motion.kind.icon(),
+            name: motion.title(),
+            ok: motion.ready.then_some(Message::Edit(Edit::CommitMotion)),
+            cancel: Message::Look(Look::Motion(MotionLook::Cancel)),
+        });
+    }
     if let Some(extrude) = &state.extrude {
         return Some(Operation {
             icon: Icon::Extrude,
@@ -393,6 +404,53 @@ fn ops<'a>(
         combine_binding(keys),
         state.combine.is_some(),
     );
+    // Move and Mirror after Combine, as the mock's model and body bars
+    // order them.
+    let moving = state.motion.as_ref().map(|motion| motion.kind);
+    let move_op = bound_op(
+        Icon::Move,
+        "Move",
+        move_binding(keys),
+        moving == Some(MotionKind::Move),
+    );
+    let mirror_op = bound_op(
+        Icon::BMirror,
+        "Mirror",
+        mirror_binding(keys),
+        moving == Some(MotionKind::Mirror),
+    );
+    // Picking a move's axis or a mirror's plane offers the origin ones
+    // here, as picking a sketch's plane does: the viewport picks the
+    // model's edges and faces.
+    let origins: Vec<Element<'a, Message>> = match &state.motion {
+        Some(motion) if motion.picking == MotionPick::Reference => {
+            let send = |look: MotionLook| {
+                (editable && motion.editable).then_some(Message::Look(Look::Motion(look)))
+            };
+            let buttons: Vec<Element<'a, Message>> = match motion.kind {
+                MotionKind::Move => (Axis3::ALL.iter())
+                    .map(|&axis| {
+                        op(
+                            Icon::SeAxis,
+                            axis_label(axis),
+                            send(MotionLook::OriginAxis(axis)),
+                        )
+                    })
+                    .collect(),
+                MotionKind::Mirror => (OriginPlane::ALL.iter())
+                    .map(|&plane| {
+                        op(
+                            Icon::SePlane,
+                            plane_label(plane),
+                            send(MotionLook::OriginPlane(plane)),
+                        )
+                    })
+                    .collect(),
+            };
+            std::iter::once(separator()).chain(buttons).collect()
+        }
+        _ => Vec::new(),
+    };
     // Measure after a separator, as the mock has it.
     let measure = bound_op(
         Icon::Measure,
@@ -413,8 +471,27 @@ fn ops<'a>(
         ]
     });
     (cancel.into_iter().flatten())
-        .chain([sketch, extrude, revolve, combine, separator(), measure])
+        .chain([
+            sketch,
+            extrude,
+            revolve,
+            combine,
+            move_op,
+            mirror_op,
+            separator(),
+            measure,
+        ])
+        .chain(origins)
         .collect()
+}
+
+/// The label of the button turning a move about `axis`.
+fn axis_label(axis: Axis3) -> &'static str {
+    match axis {
+        Axis3::X => "X axis",
+        Axis3::Y => "Y axis",
+        Axis3::Z => "Z axis",
+    }
 }
 
 /// The label of the button making a sketch on `plane`.
@@ -445,7 +522,8 @@ fn bound_op(
     on: bool,
 ) -> Element<'static, Message> {
     let message = binding.sends();
-    op_button(icon, label, Some(binding.shortcut), on, message)
+    let key = Some(binding.shortcut).filter(|shortcut| !shortcut.is_none());
+    op_button(icon, label, key, on, message)
 }
 
 fn op_button(

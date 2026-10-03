@@ -104,6 +104,10 @@ icons! {
     // Two overlapping boxes; the mock's tinted overlap is a fill, which
     // the line-only set leaves out.
     Combine => r#"<rect x="3" y="3" width="11" height="11" rx="1.5"/><rect x="10" y="10" width="11" height="11" rx="1.5"/>"#,
+    // The model mock's: a box with arrows four ways; a body mirrored
+    // across a dashed plane.
+    Move => r#"<rect class="t" x="9" y="9" width="6" height="6" rx="1"/><path class="a" d="M12 3v3.5M12 17.5V21M3 12h3.5M17.5 12H21M10 5l2-2 2 2M10 19l2 2 2-2M5 10l-2 2 2 2M19 10l2 2-2 2"/>"#,
+    BMirror => r#"<path class="r" d="M12 3v18" stroke-dasharray="2 2"/><path class="t" d="M9 8L3.5 10.5v7L9 20z"/><path d="M15 8l5.5 2.5v7L15 20z"/><path class="a" d="M7 5.5C9 2.5 15 2.5 17 5.5M17.4 2.9L17 5.5l-2.6-.5"/>"#,
     // Not in the icon mock: the offset constraint's nested squares, arrows
     // each way, a handle on a curve, a comb's teeth over one.
     OffsetConstraint => r#"<rect x="3" y="3" width="18" height="18" rx="2"/><rect x="8" y="8" width="8" height="8" rx="1"/>"#,
@@ -119,6 +123,7 @@ icons! {
     // The mock's group turned, each element turned instead, as an icon
     // is a list of empty tags.
     CatConstrain => r#"<rect transform="rotate(-18 12 12)" x="5" y="6" width="14" height="12" rx=".5"/><path class="a" transform="rotate(-18 12 12)" d="M5 13.5h4.5V18"/><circle class="af" transform="rotate(-18 12 12)" cx="19" cy="6" r="1.5"/>"#,
+    CatTransform => r#"<path class="r" stroke-dasharray="1.6 1.8" d="M7.5 10l4.76 2.75v5.5l-4.76 2.75-4.76-2.75v-5.5z"/><path class="r" stroke-dasharray="1.6 1.8" d="M2.74 12.75l4.76 2.75 4.76-2.75M7.5 15.5v5.5"/><path d="M16.5 3l4.76 2.75v5.5l-4.76 2.75-4.76-2.75v-5.5z"/><path d="M11.74 5.75l4.76 2.75 4.76-2.75M16.5 8.5v5.5"/>"#,
     CatInspect => r#"<path d="M12 3l7.8 4.5v9L12 21l-7.8-4.5v-9zM4.2 7.5L12 12l7.8-4.5M12 12v9"/><path class="a" d="M15.1 10.2l-2.7 10.4M18 8.5l-2.8 10.5M19.8 11l-1.4 5.3"/>"#,
     CatDimension => r#"<rect x="3.5" y="13" width="17" height="7.5" rx="1"/><path class="r" d="M3.5 4.5v6.5M20.5 4.5v6.5"/><path class="a" d="M4.5 7.5h15M7 5.5l-2.5 2 2.5 2M17 5.5l2.5 2-2.5 2"/>"#,
     // The model mock's: a warning triangle, for what failed.
@@ -140,6 +145,7 @@ icons! {
     // region, an axis.
     SeRegion => r#"<path class="fl" d="M4 6h10l6 6-6 6H4z"/><circle class="af" cx="4" cy="6" r="1.5"/><circle class="af" cx="20" cy="12" r="1.5"/><circle class="af" cx="4" cy="18" r="1.5"/>"#,
     SeAxis => r#"<path d="M4 20L20 4"/><circle class="af" cx="7.5" cy="16.5" r="1.7"/><circle class="af" cx="16.5" cy="7.5" r="1.7"/>"#,
+    SePlane => r#"<path class="t" d="M3 17l4-10h14l-4 10z"/><path class="a" d="M12 15V7"/>"#,
     // The operation panel's choices, the model mock's `CHOICE_ICONS`:
     // a revolve's extents seen down its axis (the dot), the profile the
     // line out to the right; an extrude's, the profile as a slab and where
@@ -160,6 +166,7 @@ icons! {
     // The options' icons, drawn in one colour: flip, keep the tools.
     TkFlip => r#"<path d="M4 8h15M15.5 4.5L19 8l-3.5 3.5M20 16H5M8.5 12.5L5 16l3.5 3.5"/>"#,
     TkKeep => r#"<circle cx="9" cy="12" r="6"/><circle cx="15" cy="12" r="6" stroke-dasharray="2 1.6"/>"#,
+    TkCopy => r#"<rect x="3.5" y="3.5" width="11" height="11" rx="1.5"/><rect class="fl" x="9.5" y="9.5" width="11" height="11" rx="1.5"/>"#,
     // Not in the mocks: the view options menu's shading, a ball lit four
     // ways. Smooth, shaded towards its lower right; flat, in facets;
     // metal, the horizon and a glint reflected in it; both.
@@ -224,7 +231,10 @@ impl Icon {
             Icon::Body
             | Icon::Extrude
             | Icon::Revolve
+            | Icon::Move
+            | Icon::BMirror
             | Icon::CatCreate
+            | Icon::CatTransform
             | Icon::RvFull
             | Icon::RvOne
             | Icon::RvSym
@@ -237,7 +247,7 @@ impl Icon {
             | Icon::BoJoin
             | Icon::BoCut
             | Icon::BoInt => IconCategory::Solid,
-            Icon::Plane | Icon::SeAxis => IconCategory::Construction,
+            Icon::Plane | Icon::SeAxis | Icon::SePlane => IconCategory::Construction,
             Icon::Measure | Icon::CatInspect => IconCategory::Inspect,
             Icon::Folder | Icon::Save | Icon::Export => IconCategory::File,
             _ => return None,

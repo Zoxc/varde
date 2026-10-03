@@ -171,6 +171,13 @@ pub struct Drafted {
     /// it; `Some` of an empty list where it ran and touched nothing. See
     /// [`Evaluation::touched`].
     pub touched: Option<Vec<BodyId>>,
+    /// For a move turning about an axis or a mirror, where its axis or
+    /// plane is, if it was found: a point on it and its direction (a
+    /// mirror's normal), not unit, as [`Evaluation::references`] has it,
+    /// whether or not the draft goes on to work. Checked on the wire:
+    /// finite, within four times the coordinate limit, the direction not
+    /// zero.
+    pub reference: Option<Box<[[f64; 3]; 2]>>,
 }
 
 impl Response {
@@ -420,16 +427,19 @@ impl Regenerator {
         let Some(draft) = draft else {
             return self.model(document, exclude, None, inspect);
         };
-        let (error, geometry, touched) = match applied(document, draft) {
+        let (error, geometry, touched, reference) = match applied(document, draft) {
             Ok((drafted, feature)) => {
                 let mut evaluation = evaluate(&drafted, &mut self.cache);
                 let touched = (evaluation.touched.iter())
                     .find(|(id, _)| *id == feature)
                     .map(|(_, touched)| touched.clone());
+                let reference = (evaluation.references.iter())
+                    .find(|(id, _)| *id == feature)
+                    .map(|(_, [point, along])| Box::new([point.to_array(), along.to_array()]));
                 match (evaluation.failed.iter()).position(|failed| failed.feature == feature) {
                     Some(at) => {
                         let failed = evaluation.failed.swap_remove(at);
-                        (failed.message, failed.geometry, touched)
+                        (failed.message, failed.geometry, touched, reference)
                     }
                     None => {
                         let done = Drafted {
@@ -437,18 +447,20 @@ impl Regenerator {
                             error: None,
                             geometry: None,
                             touched,
+                            reference,
                         };
                         return self.draw(&drafted, evaluation, exclude, Some(done), inspect);
                     }
                 }
             }
-            Err(error) => (error, None, None),
+            Err(error) => (error, None, None, None),
         };
         let failed = Drafted {
             revision: draft.revision,
             error: Some(error),
             geometry,
             touched,
+            reference,
         };
         self.model(document, exclude, Some(failed), inspect)
     }

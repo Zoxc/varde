@@ -57,7 +57,8 @@ impl Doc {
             .flatten();
         let edited = (self.extrude.as_ref().and_then(|session| session.feature))
             .or_else(|| self.revolve.as_ref().and_then(|session| session.feature))
-            .or_else(|| self.combine.as_ref().and_then(|session| session.feature));
+            .or_else(|| self.combine.as_ref().and_then(|session| session.feature))
+            .or_else(|| self.motion.as_ref().and_then(|session| session.feature));
         // Once a draft of it is shown, the edited feature's failure in the
         // model shown is a draft's: the newest one's, as the draft's
         // above, or one before it, whose panel error is gone too.

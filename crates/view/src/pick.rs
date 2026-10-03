@@ -59,13 +59,15 @@ const LEAF: usize = 4;
 
 /// What the cursor picks in the model: faces, edges and vertices (a
 /// vertex near the cursor winning over an edge, and an edge over a face),
-/// or only faces or only edges.
+/// only faces or only edges, or edges and faces (an edge winning), as a
+/// move's axis is picked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Picks {
     #[default]
     All,
     Faces,
     Edges,
+    EdgesAndFaces,
 }
 
 /// A face, an edge or a vertex of the model shown: a face or edge of its
@@ -429,6 +431,33 @@ impl PickIndex {
             return &[];
         };
         self.tangent_chains.get(first)
+    }
+
+    /// The box of `bodies`' faces in the model, its least and greatest
+    /// corners, if any of them shows.
+    pub fn bodies_bounds(&self, bodies: &[BodyId]) -> Option<[DVec3; 2]> {
+        let mut bounds: Option<[Vec3; 2]> = None;
+        let indices = self.mesh.indices();
+        let ends = self.mesh.face_ends();
+        for &body in bodies {
+            for face in self.body_faces(body) {
+                let face = face as usize;
+                let start = if face == 0 {
+                    0
+                } else {
+                    ends[face - 1] as usize
+                };
+                let end = ends.get(face).map_or(start, |&end| end as usize);
+                for &vertex in indices.get(start..end).unwrap_or_default() {
+                    let at = position(&self.mesh, vertex);
+                    bounds = Some(match bounds {
+                        None => [at, at],
+                        Some([low, high]) => [low.min(at), high.max(at)],
+                    });
+                }
+            }
+        }
+        bounds.map(|corners| corners.map(|corner| corner.as_dvec3()))
     }
 
     /// The faces of `body`, ascending.

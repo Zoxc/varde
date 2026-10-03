@@ -565,6 +565,7 @@ fn a_draft_is_answered_as_if_applied() {
             error: None,
             // A new body isn't tested for touching.
             touched: None,
+            reference: None,
         })
     );
     assert!(answer.failed.is_empty());
@@ -656,6 +657,7 @@ fn a_failing_draft_leaves_the_model_as_it_was() {
                 error: Some(error),
                 geometry: None,
                 touched,
+                reference: None,
             })
         );
         assert_eq!(answer.mesh, committed.mesh);
@@ -788,6 +790,7 @@ fn a_cut_draft_is_answered_from_the_cache(regenerator: &mut Regenerator, rejoine
             geometry: None,
             error: None,
             touched: Some(vec![body]),
+            reference: None,
         })
     );
     assert_ne!(cut.mesh, committed.mesh);

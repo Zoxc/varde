@@ -353,6 +353,7 @@ impl Doc {
             self.extrude = None;
             self.revolve = None;
             self.combine = None;
+            self.motion = None;
             self.picking_plane = Some(PickingPlane {
                 pick: self.new_sketch_pick(),
                 enter: false,
@@ -676,6 +677,7 @@ impl Doc {
                 self.extrude = None;
                 self.revolve = None;
                 self.combine = None;
+                self.motion = None;
                 self.selected_feature = Some(id);
                 self.picking_plane = pick.map(|pick| PickingPlane { pick, enter: true });
                 return;
@@ -688,6 +690,7 @@ impl Doc {
         self.extrude = None;
         self.revolve = None;
         self.combine = None;
+        self.motion = None;
         self.selected_feature = Some(id);
         // The Timeline's rows go, with no exit: none is hovered once the
         // sketch is left, until the cursor moves onto one.
@@ -741,7 +744,7 @@ impl Doc {
     /// Backs out of whatever is open, the innermost first: the delete
     /// prompt, a drag of the Opacity slider with its context menu, the
     /// rail's list, a row's context menu, the file menu, the view options
-    /// menu, picking a plane, the extrude, revolve or combine being set up, the
+    /// menu, picking a plane, the operation being set up, the
     /// value field, a label grabbed, the drag of geometry, the shape the
     /// tool is drawing (or what the Dimension or Mirror tool has picked),
     /// the tool, the sketch, the feature selected and what's selected in
@@ -766,6 +769,8 @@ impl Doc {
             self.revolve = None;
         } else if self.combine.is_some() {
             self.combine = None;
+        } else if self.motion.is_some() {
+            self.motion = None;
         } else if self.measure.is_some() {
             self.measure = None;
         } else if let Some(session) = &mut self.sketch {

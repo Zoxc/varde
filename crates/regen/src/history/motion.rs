@@ -5,7 +5,7 @@
 use glam::DVec3;
 use std::f64::consts::PI;
 use varde_document::{
-    AxisRef, BodyId, Document, EdgeRef, FaceRef, MAX_COORD, Mirror, Move, PlaneRef,
+    AxisRef, BodyId, Document, EdgeRef, FaceRef, FeatureId, MAX_COORD, Mirror, Move, PlaneRef,
 };
 use varde_kernel::measure::{EdgeShape, edge_shape};
 use varde_kernel::mesh::Form;
@@ -33,6 +33,7 @@ use crate::picking::region_form;
 /// names.
 pub(super) fn evaluate_move(
     document: &Document,
+    feature: FeatureId,
     moved: &Move,
     tolerance: &Tolerance,
     evaluation: &mut Evaluation,
@@ -42,6 +43,7 @@ pub(super) fn evaluate_move(
     let turn = match &moved.turn {
         Some((axis, angle)) => {
             let [point, direction] = resolve_axis(axis, evaluation, tolerance, cache)?;
+            evaluation.references.push((feature, [point, direction]));
             let degrees = angle.value / (PI / 180.0);
             Motion::turn(point, direction, degrees).ok_or(message::AXIS_NO_DIRECTION)?
         }
@@ -66,7 +68,7 @@ pub(super) fn evaluate_move(
 }
 
 /// Changes the bodies of `evaluation` as the mirror `mirror`, the
-/// feature numbered `feature`, says, or says why it fails, changing nothing.
+/// feature `feature`, says, or says why it fails, changing nothing.
 ///
 /// Its bodies must have solids of their own, as a move's. Its plane is an
 /// origin plane or a flat face as the features before it leave its body
@@ -78,7 +80,7 @@ pub(super) fn evaluate_move(
 /// face).
 pub(super) fn evaluate_mirror(
     document: &Document,
-    feature: u64,
+    feature: FeatureId,
     mirror: &Mirror,
     tolerance: &Tolerance,
     evaluation: &mut Evaluation,
@@ -86,12 +88,14 @@ pub(super) fn evaluate_mirror(
 ) -> Result<(), Failed> {
     own_solids(document, mirror.bodies.iter().copied(), evaluation)?;
     let [point, normal] = resolve_plane(&mirror.plane, evaluation, tolerance, cache)?;
+    evaluation.references.push((feature, [point, normal]));
     let motion = Motion::mirror(point, normal).ok_or(message::MIRROR_FACE_NOT_FLAT)?;
     let how = How {
         moving: Moving::Mirror,
-        copy: mirror
-            .keep_original
-            .then_some(Instance { feature, index: 1 }),
+        copy: mirror.keep_original.then_some(Instance {
+            feature: feature.get(),
+            index: 1,
+        }),
     };
     place(
         document,

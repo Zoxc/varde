@@ -22,6 +22,7 @@ mod extrude;
 mod hit;
 mod icons;
 mod measure;
+mod motion;
 mod mouse_only;
 mod operation_panel;
 mod panels;
@@ -69,13 +70,16 @@ pub use measure::{
     MeasureLook, MeasureSlot, MeasureState, Outcome, Picked as MeasuredPick, Value as MeasureValue,
     between_values, face_kind, values as measure_values,
 };
+pub use motion::{
+    MotionField, MotionKind, MotionLook, MotionPick, MotionState, axis_name, plane_name,
+};
 pub use operation_panel::{
     BodyTarget, Candidate, Framing, OperationKind, PANEL_BODY, PanelHover, TypedField,
 };
 pub use pick::{
     EDGE_REACH, ModelHighlight, Pick, PickIndex, Picked, Picks, SNAP_REACH, Snapped, VERTEX_REACH,
 };
-pub use plane_pick::{Naming, PlanePick, Shown, Unnamed, plane_note};
+pub use plane_pick::{Naming, PlanePick, Shown, Unnamed, face_name, plane_note};
 pub use rail::{RAIL_LIST, RailLook, RailOpen, RailSpot, rail_rows, rail_sets};
 pub use revolve::{
     Angle, EDGE_NOT_STRAIGHT, EDGE_OFF_PLANE, RevolveLook, RevolvePick, RevolveState, TurnKind,
@@ -312,7 +316,10 @@ pub enum Edit {
     /// Adds the combine being set up, or changes the one being edited, as
     /// one undo step, and ends its session: OK, or `Enter`.
     CommitCombine,
-    /// Commits the extrude, revolve or combine being set up as
+    /// Adds the move or mirror being set up, or changes the one being
+    /// edited, as one undo step, and ends its session: OK, or `Enter`.
+    CommitMotion,
+    /// Commits the extrude, revolve, combine, move or mirror being set up as
     /// [`Edit::CommitExtrude`] and the others do, though its preview
     /// failed: the feature is kept with its error, marked failed in the
     /// Timeline, to fix later. The Accept error button only, never
@@ -360,9 +367,10 @@ pub enum Look {
     /// row's context menu, or the Sketch tab while it's edited, which is
     /// left for it and entered again after.
     ChangePlane(FeatureId),
-    /// Edits the feature: a sketch is entered, an extrude, a revolve or a
-    /// combine opens its session (see [`Look::StartExtrude`],
-    /// [`Look::StartRevolve`], [`Look::StartCombine`]) with its values.
+    /// Edits the feature: a sketch is entered, an extrude, a revolve, a
+    /// combine, a move or a mirror opens its session (see
+    /// [`Look::StartExtrude`], [`Look::StartRevolve`],
+    /// [`Look::StartCombine`], [`Look::StartMove`]) with its values.
     EditFeature(FeatureId),
     /// Starts setting up a new extrude, from the sketch selected in the
     /// Timeline if one is, or backs out of the extrude being set up.
@@ -383,6 +391,14 @@ pub enum Look {
     /// Changes the combine being set up, see [`CombineLook`]: it isn't in
     /// the document until [`Edit::CommitCombine`].
     Combine(CombineLook),
+    /// Starts setting up a new move, its bodies from what's selected in
+    /// the model if anything is, or backs out of the move being set up.
+    StartMove,
+    /// Starts setting up a new mirror, as [`Look::StartMove`] a move.
+    StartMirror,
+    /// Changes the move or mirror being set up, see [`MotionLook`]: it
+    /// isn't in the document until [`Edit::CommitMotion`].
+    Motion(MotionLook),
     /// Starts the measure tool, outside sketches and operations being
     /// set up, or leaves it.
     StartMeasure,

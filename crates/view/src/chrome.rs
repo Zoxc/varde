@@ -78,7 +78,11 @@ pub(crate) fn side_tip<'a>(
     label: &'a str,
     key: impl Into<KeyName>,
 ) -> Element<'a, Message> {
-    let tip = row![text(label).size(12), key_chip(key, ChipSize::Small)]
+    // A tool with no key ([`Shortcut::NONE`]) shows none.
+    let key: KeyName = key.into();
+    let chip = (!matches!(key, KeyName::Press(shortcut) if shortcut.is_none()))
+        .then(|| key_chip(key, ChipSize::Small));
+    let tip = row![text(label).size(12), chip]
         .spacing(6)
         .align_y(Alignment::Center);
     tooltip(

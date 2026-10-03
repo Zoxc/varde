@@ -219,6 +219,7 @@ impl Doc {
         self.picking_plane = None;
         self.revolve = None;
         self.combine = None;
+        self.motion = None;
         let document = self.editor.document();
         let selected = self.selected_feature.filter(|&id| is_sketch(document, id));
         let mut session = ExtrudeSession::new(document, selected);
@@ -242,6 +243,7 @@ impl Doc {
         self.picking_plane = None;
         self.revolve = None;
         self.combine = None;
+        self.motion = None;
         self.selected_feature = Some(id);
         self.extrude = Some(ExtrudeSession::editing(document, id, extrude));
         self.focus = Some(Focus::All);

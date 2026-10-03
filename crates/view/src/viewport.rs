@@ -4,6 +4,7 @@
 
 mod extrude;
 mod measure;
+mod motion;
 mod pivot;
 mod regions;
 mod revolve;
@@ -35,6 +36,7 @@ use crate::{Edges, Edit, Look, Message, PlanePick, ViewOptions, controls};
 
 pub(crate) use extrude::Extruding;
 pub(crate) use measure::Measuring;
+pub(crate) use motion::Moving;
 pub(crate) use revolve::Revolving;
 pub(crate) use sketch::Sketching;
 
@@ -47,6 +49,9 @@ pub(crate) enum Operating<'a> {
     /// The measure tool: not an operation, but drawn over the model as
     /// one is, while the cursor picks the model as outside the sessions.
     Measure(Measuring<'a>),
+    /// A move or mirror: its axis or plane drawn over the model, while
+    /// the cursor picks the model as outside the sessions.
+    Motion(Moving<'a>),
 }
 
 /// How far below the viewport's top the camera controls are, in pixels.
@@ -166,7 +171,7 @@ pub(crate) fn viewport<'a>(
     let knobs = operating.as_ref().map(|operating| {
         let knobs = match operating {
             Operating::Extrude(extruding) => extruding.knobs(camera, mesh, &opacity),
-            Operating::Revolve(_) => None,
+            Operating::Revolve(_) | Operating::Motion(_) => None,
             // The distance's label, in the knobs' place.
             Operating::Measure(measuring) => measuring.label(camera),
         };
@@ -412,7 +417,7 @@ impl shader::Program<Message> for Program<'_> {
                     revolving.mouse(&mut state.revolve, *event, bounds, cursor, camera)
                 }
                 // The cursor picks the model as outside the sessions.
-                Operating::Measure(_) => None,
+                Operating::Measure(_) | Operating::Motion(_) => None,
             };
             if action.is_some() {
                 return action;
@@ -483,10 +488,15 @@ impl shader::Program<Message> for Program<'_> {
                 Operating::Measure(measuring) => {
                     (GridPlane::XY, measuring.layers(&self.scene.colors, colors))
                 }
+                Operating::Motion(moving) => (
+                    moving.plane_of_layers(),
+                    moving.layers(colors, &self.scene.camera, bounds),
+                ),
             };
             // What the measure tool draws is on top: a distance through
-            // the model, or a point behind it, still shows.
-            let depth_tested = !matches!(operating, Operating::Measure(_));
+            // the model, or a point behind it, still shows; and a move's
+            // axis or a mirror's plane through the bodies.
+            let depth_tested = !matches!(operating, Operating::Measure(_) | Operating::Motion(_));
             SketchFrame {
                 plane,
                 depth_tested,
@@ -540,7 +550,7 @@ impl shader::Program<Message> for Program<'_> {
                     Operating::Revolve(revolving) => {
                         revolving.mouse_interaction(&state.revolve, bounds, cursor)
                     }
-                    Operating::Measure(_) => None,
+                    Operating::Measure(_) | Operating::Motion(_) => None,
                 })
                 .or_else(|| {
                     // Over what a click would select.

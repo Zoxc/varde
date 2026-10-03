@@ -54,6 +54,10 @@ pub(crate) enum Message {
 /// An answer for one document, tagged with its [`DocId`] in
 /// [`Message::Doc`], since the document may be gone by the time it comes.
 #[derive(Debug, Clone)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "an answer is made once per response and handled at once"
+)]
 pub(crate) enum ForDoc {
     /// The Save As dialog closed, with the chosen file if there is one.
     SaveAsPicked(Option<Chosen>),

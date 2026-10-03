@@ -132,6 +132,9 @@ pub struct DocumentState<'a> {
     /// Whether the document has two bodies or more: the Combine tool works
     /// outside sketches then.
     pub combinable: bool,
+    /// The move or mirror being set up, if one is: never with a sketch or
+    /// another operation.
+    pub motion: Option<crate::MotionState<'a>>,
     /// The measure tool, while it's in use: never with a sketch or an
     /// operation being set up.
     pub measure: Option<crate::MeasureState<'a>>,
@@ -183,6 +186,10 @@ impl DocumentState<'_> {
             .with_extrude(self.extrude.as_ref())
             .with_revolve(self.revolve.as_ref())
             .with_combine(self.combinable, self.combine.as_ref())
+            .with_motion(
+                !self.editor.document().bodies().is_empty(),
+                self.motion.as_ref(),
+            )
             .with_measure(self.measure.is_some())
             .with_rail(self.rail)
             .with_edited(self.edited)
@@ -665,6 +672,7 @@ pub fn document<'a>(state: DocumentState<'a>) -> Element<'a, Message> {
                         (state.extrude.as_ref().map(crate::extrude::panel))
                             .or_else(|| state.revolve.as_ref().map(crate::revolve::panel))
                             .or_else(|| state.combine.as_ref().map(crate::combine::panel))
+                            .or_else(|| state.motion.as_ref().map(crate::motion::panel))
                             .or_else(|| state.measure.as_ref().map(crate::measure::panel)),
                         crate::rail::rail(&state),
                         state.thumbnail,
@@ -706,8 +714,10 @@ fn operating<'a>(state: &DocumentState<'a>) -> Option<viewport::Operating<'a>> {
     let extruding = state.extrude.clone().map(viewport::Extruding::new);
     let revolving = state.revolve.clone().map(viewport::Revolving::new);
     let measuring = state.measure.clone().map(viewport::Measuring::new);
+    let moving = state.motion.clone().map(viewport::Moving::new);
     (extruding.map(viewport::Operating::Extrude))
         .or_else(|| revolving.map(viewport::Operating::Revolve))
+        .or_else(|| moving.map(viewport::Operating::Motion))
         .or_else(|| measuring.map(viewport::Operating::Measure))
 }
 
@@ -789,6 +799,20 @@ fn hints<'a>(state: &DocumentState<'a>) -> Vec<Hint<'a>> {
             mouse_hint(MouseButton::Left, what)
         });
         let ok = combine.ready.then(|| key_hint(Shortcut::ENTER, "OK"));
+        [pick, ok, Some(key_hint(Shortcut::ESCAPE, "Cancel"))]
+            .into_iter()
+            .flatten()
+            .collect()
+    } else if let Some(motion) = &state.motion {
+        let pick = motion.editable.then(|| {
+            let what = match (motion.picking, motion.kind) {
+                (crate::MotionPick::Bodies, _) => "Pick bodies",
+                (crate::MotionPick::Reference, crate::MotionKind::Move) => "Pick the axis",
+                (crate::MotionPick::Reference, crate::MotionKind::Mirror) => "Pick the plane",
+            };
+            mouse_hint(MouseButton::Left, what)
+        });
+        let ok = motion.ready.then(|| key_hint(Shortcut::ENTER, "OK"));
         [pick, ok, Some(key_hint(Shortcut::ESCAPE, "Cancel"))]
             .into_iter()
             .flatten()
@@ -1454,6 +1478,26 @@ fn info<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
             .into(),
         );
     }
+    if let Some(motion) = &state.motion {
+        return Some(
+            row![
+                text(motion.title())
+                    .size(12)
+                    .wrapping(Wrapping::None)
+                    .font(theme::SEMIBOLD),
+                text(format!(
+                    "· {}{}",
+                    crate::motion::status_info(motion),
+                    status_suffix(state)
+                ))
+                .size(12)
+                .wrapping(Wrapping::None)
+                .style(theme::muted_text),
+            ]
+            .spacing(4)
+            .into(),
+        );
+    }
     let notes = status_notes(state);
     (!notes.is_empty()).then(|| {
         text(notes.join(" · "))
@@ -1492,6 +1536,7 @@ fn selection<'a>(state: &DocumentState<'a>) -> Option<Element<'a, Message>> {
         || state.extrude.is_some()
         || state.revolve.is_some()
         || state.combine.is_some()
+        || state.motion.is_some()
         || state.measure.is_some()
     {
         return None;
@@ -1630,18 +1675,6 @@ fn surface_name(summary: &varde_regen::Summary) -> &'static str {
     }
 }
 
-/// The names of `bodies` of `document`, joined: "Body 1, Body 2".
-fn body_names(document: &Document, bodies: &[varde_document::BodyId]) -> String {
-    let names: Vec<&str> = (bodies.iter())
-        .map(|&body| {
-            document
-                .body(body)
-                .map_or("a body", |body| body.name.as_str())
-        })
-        .collect();
-    names.join(", ")
-}
-
 /// The status bar's info on the selected `feature` of `document`, after
 /// its name: a sketch's curves and plane, "4 lines · 1 circle · 5 points
 /// · on XY", an extrude's extent in the document's units and operation,
@@ -1704,19 +1737,8 @@ fn feature_info(feature: &Feature, document: &Document) -> String {
                 combine.op.label()
             )
         }
-        FeatureKind::Move(moved) => {
-            let bodies = body_names(document, &moved.bodies);
-            format!("{bodies} · {}", panels::move_note(moved, units))
-        }
-        FeatureKind::Mirror(mirror) => {
-            let bodies = body_names(document, &mirror.bodies);
-            let kept = if mirror.keep_original {
-                " · original kept"
-            } else {
-                ""
-            };
-            format!("{bodies} · in {}{kept}", mirror.plane.name())
-        }
+        FeatureKind::Move(moved) => crate::motion::move_info(document, moved),
+        FeatureKind::Mirror(mirror) => crate::motion::mirror_info(document, mirror),
     }
 }
 

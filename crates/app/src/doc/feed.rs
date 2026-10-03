@@ -417,6 +417,24 @@ impl MeshFeed {
             && (self.drafted.as_ref()).is_some_and(|drafted| drafted.revision >= self.run)
     }
 
+    /// Where the newest draft answered of the current run of drafts found
+    /// its axis or plane, a move's or a mirror's, if it did
+    /// ([`Drafted::reference`]): a point on it and its direction (a
+    /// plane's normal), while a draft is asked for.
+    pub(crate) fn draft_reference(&self) -> Option<[glam::DVec3; 2]> {
+        if !self.draft_shown() {
+            return None;
+        }
+        let [point, along] = *self.drafted.as_ref()?.reference.as_deref()?;
+        Some([point.into(), along.into()])
+    }
+
+    /// Whether the model shown answers what was asked last: picks on it
+    /// are of the document, and the draft, as they're set up now.
+    pub(crate) fn answers_request(&self) -> bool {
+        self.requested.is_some() && self.shown == self.requested
+    }
+
     /// The bodies the draft's solid touches, as the newest answer of the
     /// current run of drafts that ran the touch test found, while a draft
     /// is asked for: kept while a changed draft is on its way, and while
