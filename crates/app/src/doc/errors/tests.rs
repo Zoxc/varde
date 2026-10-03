@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::BTreeSet;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -253,4 +254,169 @@ fn editing_a_failed_feature_shows_its_failure_and_then_its_draft_s() {
     answer(&mut doc, &requests);
     let draft = doc.feed.draft_geometry().expect("the draft fails").clone();
     assert!(shows(&doc, &[&draft]));
+}
+
+/// What [`touching_extrude`] makes: the sketch's and the extrude's ids,
+/// the sketch, its corner, and the four lines at it, the second square's
+/// last.
+struct Touching {
+    doc: Doc,
+    requests: Rc<RefCell<Vec<Request>>>,
+    sketch: FeatureId,
+    extrude: FeatureId,
+    drawn: varde_sketch::Sketch,
+    corner: varde_document::Id,
+    at_corner: [varde_document::Id; 4],
+}
+
+/// A sketch on XZ of two squares meeting at the corner (10, 10) only,
+/// and an extrude of both, which fails touching there, answered.
+fn touching_extrude() -> Touching {
+    let mut editor = Editor::new(Document::default());
+    editor
+        .apply(
+            (editor.document()).add_sketch(varde_document::Plane::Origin(
+                varde_document::OriginPlane::XZ,
+            )),
+        )
+        .unwrap();
+    let sketch = editor.document().features()[0].id;
+    let mut drawn = varde_sketch::Sketch::default();
+    let mut at_corner = Vec::new();
+    let corner = drawn.add_point(DVec2::new(10.0, 10.0)).unwrap();
+    for (a, b, c) in [
+        ((0.0, 0.0), (10.0, 0.0), (0.0, 10.0)),
+        ((20.0, 10.0), (20.0, 20.0), (10.0, 20.0)),
+    ] {
+        let [a, b, c] = [a, b, c].map(|(x, y)| drawn.add_point(DVec2::new(x, y)).unwrap());
+        // Each counter-clockwise through the corner.
+        let loop_ = if at_corner.is_empty() {
+            [a, b, corner, c]
+        } else {
+            [corner, a, b, c]
+        };
+        for k in 0..4 {
+            let (start, end) = (loop_[k], loop_[(k + 1) % 4]);
+            let id = drawn.add_curve(Curve::Line { start, end }, false).unwrap();
+            if start == corner || end == corner {
+                at_corner.push(id);
+            }
+        }
+    }
+    let profiles = drawn.profiles().unwrap();
+    let regions = (0..profiles.regions.len())
+        .map(|index| profiles.reference(index).unwrap())
+        .collect();
+    editor
+        .apply(Command::SetSketch {
+            feature: sketch,
+            sketch: Box::new(drawn.clone()),
+        })
+        .unwrap();
+    let extrude = varde_document::Extrude {
+        sketch,
+        regions,
+        extent: varde_document::Extent::OneSide(crate::tests::length(editor.document(), "5")),
+        flip: false,
+        operation: Operation::NewBody(BodyId::NEW),
+    };
+    editor
+        .apply(editor.document().add_feature(extrude.into()))
+        .unwrap();
+    let extrude = editor.document().features().last().unwrap().id;
+    let (mut doc, requests) = deferred();
+    doc.apply(Command::Replace(Box::new(editor.document().clone())));
+    doc.sync();
+    answer(&mut doc, &requests);
+    let at_corner = at_corner.try_into().expect("four lines at the corner");
+    Touching {
+        doc,
+        requests,
+        sketch,
+        extrude,
+        drawn,
+        corner,
+        at_corner,
+    }
+}
+
+/// The curves the sketch being edited marks as failing.
+fn failing(doc: &Doc) -> BTreeSet<varde_document::Id> {
+    doc.sketch_state()
+        .expect("a sketch is edited")
+        .failing
+        .clone()
+}
+
+#[test]
+fn editing_the_sketch_of_a_failing_extrude_marks_the_curves_it_names() {
+    let Touching {
+        mut doc,
+        requests,
+        sketch,
+        extrude,
+        drawn,
+        corner,
+        at_corner,
+    } = touching_extrude();
+    let geometry = failure(&doc, extrude);
+    let named = geometry.sketch_curves();
+    assert!(!named.is_empty());
+    // Not outside the sketch.
+    assert!(doc.sketch.is_none());
+
+    doc.look(Look::EditFeature(sketch));
+    answer(&mut doc, &requests);
+    let marked = failing(&doc);
+    assert!(!marked.is_empty());
+    assert!(marked.iter().all(|id| at_corner.contains(id)), "{marked:?}");
+    assert_eq!(
+        (marked.iter())
+            .map(|id| u64::from(id.get()))
+            .collect::<Vec<_>>(),
+        named
+    );
+    // Selected, the 3D copy of the curves isn't drawn too.
+    doc.selected_feature = Some(extrude);
+    doc.refresh_errors();
+    assert!(doc.shown_errors().is_empty());
+
+    // A curve it names deleted: not found, so not marked, while the
+    // model shown still has the failure.
+    let mut edited = drawn.clone();
+    let deleted = *marked.first().unwrap();
+    edited.delete(&[deleted]);
+    doc.apply(Command::SetSketch {
+        feature: sketch,
+        sketch: Box::new(edited),
+    });
+    doc.sync();
+    assert!(doc.failure_geometry(extrude).is_some());
+    let left = failing(&doc);
+    assert!(!left.contains(&deleted));
+    assert_eq!(left.len(), marked.len() - 1);
+
+    // Fixed: the second square's corner moved off the first's, the
+    // extrude regenerates, and nothing is marked.
+    let mut fixed = drawn;
+    let moved = fixed.add_point(DVec2::new(12.0, 12.0)).unwrap();
+    for &id in &at_corner[2..] {
+        let entry = fixed.curve_mut(id).unwrap();
+        let Curve::Line { start, end } = &mut entry.curve else {
+            panic!("a line");
+        };
+        for point in [start, end] {
+            if *point == corner {
+                *point = moved;
+            }
+        }
+    }
+    doc.apply(Command::SetSketch {
+        feature: sketch,
+        sketch: Box::new(fixed),
+    });
+    doc.sync();
+    answer(&mut doc, &requests);
+    assert!(doc.feed.failed_features().is_empty());
+    assert!(failing(&doc).is_empty());
 }

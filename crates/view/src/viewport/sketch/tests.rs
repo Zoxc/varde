@@ -649,6 +649,67 @@ fn geometry_is_coloured_by_its_state() {
 }
 
 #[test]
+fn a_failing_curve_is_red_within_the_errors_halo() {
+    let (mut sketch, [a, b, line]) = drawn();
+    let c = sketch.add_point(DVec2::new(0.0, 5.0)).unwrap();
+    sketch
+        .add_curve(Curve::Line { start: b, end: c }, false)
+        .unwrap();
+    let gone = sketch
+        .add_curve(Curve::Line { start: c, end: a }, false)
+        .unwrap();
+    sketch.delete(&[gone]);
+    let none = BTreeSet::new();
+    // The point `a` named too, and a curve the sketch no longer holds:
+    // only its curves are marked.
+    let failing = BTreeSet::from([line, a, gone]);
+    // On XZ, so the halo's lines are placed in the world.
+    let placement = OriginPlane::XZ.placement();
+    let state = SketchState {
+        placement,
+        failing: &failing,
+        ..SketchState::plain(&sketch, &none, None)
+    };
+    let sketching = Sketching::new(state, true);
+    let interaction = Interaction::default();
+    let (base, _) = layers(&sketching, &interaction);
+
+    let colors = Mode::Light.palette().sketching;
+    let at = |id| sketch.point(id).unwrap().at;
+    let mut expected = builtins(colors);
+    let red = line_style(colors.conflict, CURVE_WIDTH, false);
+    expected.polyline(Space::Sketch, &[at(a), at(b)], red);
+    let free = line_style(colors.curve, CURVE_WIDTH, false);
+    expected.polyline(Space::Sketch, &[at(b), at(c)], free);
+    for id in [a, b, c] {
+        expected.point(at(id), dot(POINT_RADIUS, colors.point_fill, colors.curve));
+    }
+    assert_eq!(*base, expected);
+    // The red is the errors' own.
+    let error = Mode::Light.palette().scene.error;
+    assert_eq!(
+        error.0,
+        [colors.conflict.r, colors.conflict.g, colors.conflict.b]
+    );
+
+    // The failing line placed in the world, for the halo: kept with the
+    // base layer, so it isn't uploaded again while that isn't.
+    let halo = sketching
+        .failing(&interaction.sketch)
+        .expect("the halo's lines");
+    let world = |id| placement.to_world(at(id)).as_vec3().to_array();
+    assert_eq!(halo.points(), [world(a), world(b)]);
+    let _ = layers(&sketching, &interaction);
+    let again = sketching.failing(&interaction.sketch).unwrap();
+    assert!(Arc::ptr_eq(&halo, &again));
+
+    // Nothing failing, no halo.
+    let plain = Sketching::new(SketchState::plain(&sketch, &none, None), true);
+    let _ = layers(&plain, &interaction);
+    assert!(plain.failing(&interaction.sketch).is_none());
+}
+
+#[test]
 fn each_constraint_has_its_glyph_unless_they_are_hidden() {
     let (mut sketch, [a, b, line]) = drawn();
     sketch

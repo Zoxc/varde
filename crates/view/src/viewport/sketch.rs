@@ -20,6 +20,7 @@ use iced::widget::{MouseArea, column, container, mouse_area, row, text};
 use iced::{Alignment, Color, Element, Event, Padding, Point, Rectangle, Vector};
 use varde_document::{MAX_COORD, Placement};
 use varde_expr::LengthUnit;
+use varde_kernel::RenderLines;
 use varde_render::{Camera, GridPlane, LineStyle, PointStyle, SketchLayer, Space, Srgba};
 use varde_sketch::{
     Curve, DimensionEntry, Id, Kind, Measure, NearMiss, Profiles, Region, Side, Sketch, SplineKind,
@@ -148,6 +149,9 @@ pub(crate) struct States {
     fixed: BTreeSet<Id>,
     /// Constraints in conflict and what they tie together, in red.
     conflicts: BTreeSet<Id>,
+    /// Curves a failing feature using the sketch names, in red within
+    /// the halo the failures' geometry has (see [`Base::failing`]).
+    failing: BTreeSet<Id>,
     /// Items of edits waiting on the solver, faded.
     pending: BTreeSet<Id>,
 }
@@ -204,6 +208,11 @@ struct Base {
     /// the live layer to draw scaled to the view (see
     /// [`Sketch::curvature_comb`]).
     combs: Vec<Vec<[DVec2; 2]>>,
+    /// The failing curves ([`States::failing`]) placed in the world, if
+    /// any: drawn as failures' geometry is, for the halo around them,
+    /// under the base layer's red curves. A new `Arc` with each base
+    /// layer, so the renderer uploads them again only then.
+    failing: Option<Arc<RenderLines>>,
 }
 
 /// The open ends of `profiles` within `gap` of each other.
@@ -271,6 +280,8 @@ struct Drawn {
     states: States,
     colors: SketchColors,
     label_drag: Option<(Id, DVec2)>,
+    /// Where the failing curves are placed in the world.
+    placement: Placement,
     /// Compared by pointer: the app finds them again only when the sketch
     /// changes.
     profiles: Option<Arc<Profiles>>,
@@ -287,6 +298,11 @@ impl<'a> Sketching<'a> {
                 .map(|analysis| analysis.fixed.clone())
                 .unwrap_or_default(),
             conflicts: sketch.conflicting_items(),
+            // Only curves, those the sketch holds.
+            failing: (sketch.failing.iter())
+                .copied()
+                .filter(|&id| sketch.sketch.curve(id).is_some())
+                .collect(),
             pending: sketch.pending.clone(),
         };
         Self {
@@ -753,6 +769,7 @@ impl<'a> Sketching<'a> {
                 && drawn.states == self.states
                 && drawn.colors == colors
                 && drawn.label_drag == self.label_drag
+                && drawn.placement == self.placement
                 && drawn.profiles.as_ref().map(Arc::as_ptr) == self.profiles.map(Arc::as_ptr)
                 && drawn.comb == self.comb
         });
@@ -766,6 +783,7 @@ impl<'a> Sketching<'a> {
                     states: self.states.clone(),
                     colors,
                     label_drag: self.label_drag,
+                    placement: self.placement,
                     profiles: self.profiles.cloned(),
                     comb: self.comb,
                 };
@@ -774,6 +792,7 @@ impl<'a> Sketching<'a> {
                     layer: Arc::new(layer),
                     arrows,
                     combs: self.combs(),
+                    failing: self.failing_lines(),
                 })
             }
         };
@@ -783,6 +802,36 @@ impl<'a> Sketching<'a> {
             combs(&mut live, &base.combs, projector.pixel(), colors.guide);
         }
         (base.layer.clone(), live)
+    }
+
+    /// The failing curves of the base layer last built, placed in the
+    /// world, if there are any: for [`Frame::errors`], whose halo goes
+    /// around them as around the failures' geometry in the model. Call
+    /// after [`Sketching::layers`].
+    ///
+    /// [`Frame::errors`]: varde_render::Frame::errors
+    pub(crate) fn failing(&self, input: &Input) -> Option<Arc<RenderLines>> {
+        input.base.borrow().as_ref()?.failing.clone()
+    }
+
+    /// The failing curves the sketch holds, flattened and placed in the
+    /// world, if there are any. A curve that can't be placed within
+    /// [`RenderLines::MAX_POSITION`] is left out.
+    fn failing_lines(&self) -> Option<Arc<RenderLines>> {
+        let mut lines = RenderLines::default();
+        let curves =
+            (self.sketch.curves.iter()).filter(|entry| self.states.failing.contains(&entry.id));
+        for entry in curves {
+            let Some(polyline) = self.sketch.flatten(&entry.curve) else {
+                continue;
+            };
+            let placed = polyline
+                .iter()
+                .map(|&at| self.placement.to_world(at).as_vec3());
+            // Refused, it isn't drawn.
+            let _ = lines.push(placed);
+        }
+        (!lines.points().is_empty()).then(|| Arc::new(lines))
     }
 
     /// The curvature combs of the splines selected, if they show.
@@ -800,7 +849,8 @@ impl<'a> Sketching<'a> {
     /// curves, construction ones and the ends of lines fillets and
     /// chamfers cut off dashed, then its points, what's selected
     /// over the rest. Each is coloured by its state: free, fixed (darker,
-    /// a point filled) or in a conflict (red), and faded while it waits on
+    /// a point filled), in a conflict or named by a failing feature
+    /// (red), and faded while it waits on
     /// the solver. With the dimensions' arrowheads, for the live layer to
     /// draw where they show.
     fn base_layer(&self, colors: SketchColors) -> (SketchLayer, Vec<Arrows>) {
@@ -822,8 +872,9 @@ impl<'a> Sketching<'a> {
                 color
             }
         };
+        let red = |id: Id| states.conflicts.contains(&id) || states.failing.contains(&id);
         let state_color = |id: Id| {
-            if states.conflicts.contains(&id) {
+            if red(id) {
                 colors.conflict
             } else if states.fixed.contains(&id) {
                 colors.fixed
@@ -860,8 +911,7 @@ impl<'a> Sketching<'a> {
                 let Some(polyline) = sketch.flatten(&entry.curve) else {
                     continue;
                 };
-                let conflict = states.conflicts.contains(&entry.id);
-                let (color, width) = match (selected, entry.construction && !conflict) {
+                let (color, width) = match (selected, entry.construction && !red(entry.id)) {
                     (true, _) => (colors.selected, SELECTED_WIDTH),
                     (false, true) => (colors.construction, CURVE_WIDTH),
                     (false, false) => (state_color(entry.id), CURVE_WIDTH),

@@ -247,7 +247,7 @@ pub(crate) fn two_sides(document: &Document, a: &str, b: &str) -> varde_document
 }
 
 /// A length of `text` in `document`'s units.
-fn length(document: &Document, text: &str) -> varde_expr::Value {
+pub(crate) fn length(document: &Document, text: &str) -> varde_expr::Value {
     let ask = varde_document::Extent::ask(&document.design());
     varde_expr::Value::new(text, &ask).unwrap()
 }

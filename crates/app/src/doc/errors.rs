@@ -2,11 +2,13 @@
 //! it: the draft's while an operation is set up and its preview fails,
 //! a failed feature's while its Timeline row is hovered or selected or
 //! its panel is open, nothing otherwise, so a model with an old failure
-//! isn't covered in red.
+//! isn't covered in red. While a sketch is edited, the curves the
+//! failures of the features using it name are marked in it instead.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use varde_document::FeatureId;
+use varde_document::{FeatureId, Id};
 use varde_kernel::Aabb;
 use varde_regen::ErrorGeometry;
 use varde_view::ShownErrors;
@@ -38,6 +40,11 @@ impl Doc {
     ///   sketch, where the Timeline doesn't show) or selected, or whose
     ///   panel is open: the edited feature's only when the draft has none,
     ///   which is where the edit is now.
+    ///
+    /// While a sketch is edited, a failure of a feature using it that
+    /// names its curves is left out: those are marked in the sketch, in
+    /// its plane, where the 3D copy would draw them again (see
+    /// [`Doc::failing_curves`]).
     fn wanted_errors(&self) -> Vec<Arc<ErrorGeometry>> {
         let draft = self
             .operating()
@@ -55,6 +62,7 @@ impl Doc {
         {
             if let Some(geometry) = self.failure_geometry(feature)
                 && !wanted.iter().any(|shown| Arc::ptr_eq(shown, geometry))
+                && !(self.uses_edited_sketch(feature) && !geometry.sketch_curves().is_empty())
             {
                 wanted.push(geometry.clone());
             }
@@ -71,14 +79,55 @@ impl Doc {
             .as_ref()
     }
 
+    /// Whether `feature` takes its regions from the sketch being edited.
+    fn uses_edited_sketch(&self, feature: FeatureId) -> bool {
+        let edited = self.sketch.as_ref().map(|session| session.feature);
+        let document = self.editor.document();
+        edited.is_some()
+            && document
+                .feature(feature)
+                .and_then(|feature| feature.kind.sketch())
+                == edited
+    }
+
+    /// The curves of the sketch being edited that the failures of the
+    /// features using it name, as the model shown found them: every
+    /// failed one, not only one hovered or selected, since the sketch is
+    /// where they're mended. Only curves the sketch as shown holds: one
+    /// deleted since isn't found. No draft fails meanwhile: editing a
+    /// sketch ends the operation being set up.
+    fn failing_curves(&self) -> BTreeSet<Id> {
+        let named: BTreeSet<u64> = (self.feed.failed_features().iter())
+            .filter(|failed| self.uses_edited_sketch(failed.feature))
+            .filter_map(|failed| failed.geometry.as_ref())
+            .flat_map(|geometry| geometry.sketch_curves().iter().copied())
+            .collect();
+        if named.is_empty() {
+            return BTreeSet::new();
+        }
+        let curves = self
+            .shown_sketch()
+            .into_iter()
+            .flat_map(|sketch| &sketch.curves);
+        curves
+            .map(|entry| entry.id)
+            .filter(|id| named.contains(&u64::from(id.get())))
+            .collect()
+    }
+
     /// Picks the failures shown again, making what the viewport draws
     /// of them anew only if they're others than before: the same `Arc`s,
     /// as the regeneration side hands an unchanged failure back, keep
-    /// what's drawn, so the renderer uploads nothing again.
+    /// what's drawn, so the renderer uploads nothing again. Picks the
+    /// curves the sketch being edited marks as failing again too.
     pub(super) fn refresh_errors(&mut self) {
         let wanted = self.wanted_errors();
         if !self.errors.shows(&wanted) {
             self.errors = Arc::new(ShownErrors::new(wanted));
+        }
+        let failing = self.failing_curves();
+        if let Some(session) = &mut self.sketch {
+            session.failing = failing;
         }
     }
 

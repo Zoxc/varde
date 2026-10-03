@@ -91,6 +91,10 @@ pub(crate) struct SketchSession {
     /// The profiles of the sketch as it's shown, see
     /// [`Doc::refresh_profiles`].
     pub(crate) profiles: Option<Profiled>,
+    /// The curves the failures of the features using the sketch name,
+    /// as the model shown found them, marked in red within the errors'
+    /// halo: see [`Doc::refresh_errors`].
+    pub(crate) failing: BTreeSet<Id>,
 }
 
 impl SketchSession {
@@ -116,6 +120,7 @@ impl SketchSession {
             snap: None,
             aim: None,
             profiles: None,
+            failing: BTreeSet::new(),
         }
     }
 
@@ -1095,13 +1100,14 @@ impl Doc {
             aim: session.aim.map(|click| click.at),
             profiles: session.profiles.as_ref().map(|found| &found.profiles),
             comb: session.comb,
+            failing: &session.failing,
         })
     }
 
     /// The sketch being edited as it's shown: as the solver last solved it
     /// while it's dragged, else with the edits waiting on the solver
     /// applied, else as committed.
-    fn shown_sketch(&self) -> Option<&Sketch> {
+    pub(super) fn shown_sketch(&self) -> Option<&Sketch> {
         let session = self.sketch.as_ref()?;
         let dragged = session
             .drag

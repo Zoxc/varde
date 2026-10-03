@@ -1300,9 +1300,31 @@ base layer and kept with it, a hovered dimension's in the hover colour. Each
 item is coloured by its state (`States`): free in the sketch colour, fixed
 by the analysis darker (`SketchColors::fixed`, a point filled with
 `PointStyle::fixed`), in a conflict red (`conflict`: the analysis's
-redundant constraints and a refusal's, with what they tie together), and
+redundant constraints and a refusal's, with what they tie together),
+failing red too within the errors' halo (`failing`, below), and
 faded while waiting on the solver. Colours are the palette's
-`SketchColors`, light and dark.
+`SketchColors`, light and dark; `conflict` is the theme's error red,
+the renderer's `Colors::error`.
+
+**Failing curves.** While a sketch is edited, the curves that the
+failures of the features using it name (their `ErrorGeometry`'s
+`sketch_curves`, as the model shown found them) are marked:
+`SketchSession::failing`, picked again with the failures shown
+(`Doc::refresh_errors`, `Doc::failing_curves` in `app/src/doc/errors.rs`)
+and handed over as `SketchState::failing`. Every failed feature's,
+always while its sketch is edited, not only on hover or selection as in
+the model: the sketch is where it's mended, and a failure names few
+curves. No draft fails meanwhile, as editing a sketch ends the operation
+set up. Only curves the sketch as shown holds count: one deleted since
+isn't found (the numbers are `Id::get`s, matched against its curves),
+and the view keeps only ids it holds as curves. They're drawn in the
+`conflict` red, and their halo is the failures' own: the base layer
+keeps them flattened and placed in the world (`Base::failing`, a new
+`Arc` with each base layer, so uploaded again only then), and the frame
+adds them to `Frame::errors` (`SketchFrame::failing`), whose halo and
+3 px red core go under the sketch's curve, drawn after them. The model's
+copy of such a failure, in the sketch's plane, isn't drawn meanwhile
+(see `agents/viewport.md`, "Which failures show").
 
 - The **base** layer, the sketch and its selection (under it the regions
   of its profiles, each filled on its own in `SketchColors::region`, since

@@ -965,7 +965,10 @@ only when one differs, as `highlights` is; their box joins the depth
 range's bounds. A point not finite or past `RenderLines::MAX_POSITION`
 isn't drawn. Past the device's buffer size they're skipped and reported
 once (`PrepareError::ErrorsTooLarge`). Errors with nothing to draw (no
-triangles, curves or points) count as none: no passes, no target.
+triangles, curves or points) count as none: no passes, no target. The
+view adds, after the failures shown, the sketch being edited's failing
+curves (`ErrorParts` of lines only, keyed by their `Arc<RenderLines>`),
+for their halo under the sketch's red curves.
 
 **Which failures show** is the app's (`app/src/doc/errors.rs`,
 `Doc::shown_errors`, a `varde_view::ShownErrors`): the draft's geometry
@@ -976,8 +979,13 @@ is); each failed feature's whose Timeline row is hovered
 sketch, and let go of when the side panel's tab changes, since the rows
 go without an exit) or selected, or whose panel is open, the edited
 feature's only while its draft has none; nothing otherwise, so a model
-with an old failure isn't covered in red. All of it is the model
-shown's (its answer brought it), and each `Arc` is shown once.
+with an old failure isn't covered in red. While a sketch is edited, a
+failure of a feature using it that names its curves isn't drawn here,
+selected or not: the sketch marks those curves itself, red within the
+same halo (`agents/sketch.md`, "Failing curves"), and the copy in its
+plane would draw them twice, and late while a drag moves them. All of
+it is the model shown's (its answer brought it), and each `Arc` is
+shown once.
 `Doc::refresh_errors` (after `sync`, `look` and an answer) picks them
 again and makes a new `ShownErrors` only when they're other `Arc`s, in
 order, than it shows: an unchanged failure, the same `Arc` from the

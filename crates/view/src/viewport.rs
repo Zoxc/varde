@@ -9,6 +9,7 @@ mod regions;
 mod revolve;
 mod sketch;
 
+use std::any::Any;
 use std::sync::{Arc, Weak};
 
 use glam::DVec2;
@@ -17,8 +18,8 @@ use iced::widget::{container, stack};
 use iced::{Element, Event, Length, Point, Rectangle, keyboard, mouse};
 use varde_kernel::{RenderLines, RenderMesh};
 use varde_render::{
-    Camera, ClipRect, Colors, Frame, GridPlane, Pivot, PrepareError, Renderer, SketchLayer,
-    SketchScene, Slot, wgpu,
+    Camera, ClipRect, Colors, ErrorParts, Frame, GridPlane, Pivot, PrepareError, Renderer,
+    SketchLayer, SketchScene, Slot, wgpu,
 };
 
 use crate::anchors::Anchors;
@@ -241,6 +242,9 @@ fn program<'a>(
 /// the renderer uploads nothing again for it.
 static NO_HIGHLIGHT: std::sync::LazyLock<Arc<ModelHighlight>> =
     std::sync::LazyLock::new(Arc::default);
+
+/// The patches of a sketch's failing curves: none.
+static NO_MESH: std::sync::LazyLock<RenderMesh> = std::sync::LazyLock::new(RenderMesh::default);
 
 /// What's drawn of failures while none show: one for all frames.
 static NO_ERRORS: std::sync::LazyLock<Arc<ShownErrors>> = std::sync::LazyLock::new(Arc::default);
@@ -480,6 +484,7 @@ impl shader::Program<Message> for Program<'_> {
                 depth_tested,
                 base,
                 live,
+                failing: None,
             }
         });
         let sketch = self.sketching.as_ref().map(|sketching| {
@@ -496,6 +501,7 @@ impl shader::Program<Message> for Program<'_> {
                 depth_tested: false,
                 base,
                 live,
+                failing: sketching.failing(&state.sketch),
             }
         });
         Primitive {
@@ -771,6 +777,10 @@ struct SketchFrame {
     depth_tested: bool,
     base: Arc<SketchLayer>,
     live: SketchLayer,
+    /// The sketch's curves a failing feature names, placed: drawn with
+    /// the failures' geometry ([`Frame::errors`]), for its halo around
+    /// them.
+    failing: Option<Arc<RenderLines>>,
 }
 
 impl shader::Primitive for Primitive {
@@ -790,7 +800,17 @@ impl shader::Primitive for Primitive {
         let scene = &self.scene;
         // Borrowed from the geometry, so made each frame; the renderer
         // uploads them again only when their sources change.
-        let errors = scene.errors.parts();
+        let mut errors = scene.errors.parts();
+        let failing = (self.sketch.as_ref()).and_then(|sketch| sketch.failing.as_ref());
+        if let Some(lines) = failing {
+            let erased: Arc<dyn Any + Send + Sync> = lines.clone();
+            errors.push(ErrorParts {
+                mesh: &NO_MESH,
+                lines,
+                points: &[],
+                source: Arc::downgrade(&erased),
+            });
+        }
         let prepared = pipeline.prepare(
             &self.slot,
             device,

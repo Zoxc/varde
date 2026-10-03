@@ -261,6 +261,11 @@ pub struct SketchState<'a> {
     pub profiles: Option<&'a Result<Arc<Profiles>, TooComplex>>,
     /// Whether the curvature comb of the splines selected shows.
     pub comb: bool,
+    /// The curves a failing feature using the sketch names, as the model
+    /// shown found it: drawn red within the halo the failures' geometry
+    /// has in the model. Ids the sketch doesn't hold as curves are
+    /// ignored.
+    pub failing: &'a BTreeSet<Id>,
 }
 
 /// The value field of a dimension: placing one with the Dimension tool,
@@ -333,6 +338,7 @@ impl<'a> SketchState<'a> {
             aim: None,
             profiles: None,
             comb: false,
+            failing: &NONE,
         }
     }
 }

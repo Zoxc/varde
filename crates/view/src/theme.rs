@@ -375,7 +375,7 @@ const LIGHT: Palette = Palette {
     sketching: SketchColors {
         curve: LIGHT_SKETCH,
         fixed: color!(0x0b5566),
-        conflict: color!(0xe0564b),
+        conflict: ERROR,
         construction: LIGHT_CONSTRUCTION,
         selected: color!(0x2f5fd8),
         hovered: color!(0x3d9b35),
@@ -445,7 +445,7 @@ const DARK: Palette = Palette {
     sketching: SketchColors {
         curve: DARK_SKETCH,
         fixed: color!(0x1f8394),
-        conflict: color!(0xe0564b),
+        conflict: ERROR,
         construction: DARK_CONSTRUCTION,
         selected: color!(0x7ea2ff),
         hovered: color!(0x76cc60),
