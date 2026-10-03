@@ -409,6 +409,14 @@ impl MeshFeed {
             .flatten()
     }
 
+    /// Whether the model shown has a draft of the current run of drafts
+    /// (see `run`), answered or failing: the draft's failure, not the
+    /// committed feature's, is then what the edited feature's is.
+    pub(crate) fn draft_shown(&self) -> bool {
+        self.draft.is_some()
+            && (self.drafted.as_ref()).is_some_and(|drafted| drafted.revision >= self.run)
+    }
+
     /// The bodies the draft's solid touches, as the newest answer of the
     /// current run of drafts that ran the touch test found, while a draft
     /// is asked for: kept while a changed draft is on its way, and while

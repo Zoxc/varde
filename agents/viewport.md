@@ -980,10 +980,17 @@ around a selected curve's blue.
 while an operation is set up and the newest answer for its draft as it
 is fails with some (`MeshFeed::draft_geometry`, as the panel's error
 is); each failed feature's whose Timeline row is hovered
-(`Look::HoverFeature`, the row's mouse area's enter and exit; outside a
-sketch, and let go of when the side panel's tab changes, by a click or
-the peek key, since the rows go without an exit) or selected, or whose panel is open, the edited
-feature's only while its draft has none; nothing otherwise, so a model
+(`Look::HoverFeature` on the row's mouse area's enter,
+`Look::LeaveFeature(id)` on its exit, which lets go only of that row:
+moving up, the row above tells it's entered before the one below that
+it's left; outside a sketch, and let go of when the side panel's tab
+changes, by a click or the peek key, on entering a sketch, and when the
+feature is removed or the document replaced, since the rows go without
+an exit) or selected, or whose panel is open, the edited feature's only
+while its draft has none, and not at all once a draft of the current
+run is shown (`MeshFeed::draft_shown`: the model shown's failure for it
+is then a draft's, the one before while a changed draft is on its way,
+whose error the panel doesn't show either); nothing otherwise, so a model
 with an old failure isn't covered in red. While a sketch is edited, a
 failure of a feature using it that names its curves is drawn without
 its curves (`ShownError::lines` false), selected or not, as long as it

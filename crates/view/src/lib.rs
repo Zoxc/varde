@@ -385,6 +385,11 @@ pub enum Look {
     /// A feature's row in the Timeline hovered, or none: a failed
     /// feature's error geometry shows in the viewport while it is.
     HoverFeature(Option<FeatureId>),
+    /// The cursor left a feature's row in the Timeline: it's no longer
+    /// hovered, unless another row was since. The row a move enters may
+    /// tell before the one it leaves does (moving up, the row above
+    /// comes first), so leaving one doesn't let go of the other.
+    LeaveFeature(FeatureId),
     /// Frames the camera on the box of a failure's geometry, from its
     /// Show button: the failed feature's, or with `None` the preview's
     /// (the draft of the operation being set up).

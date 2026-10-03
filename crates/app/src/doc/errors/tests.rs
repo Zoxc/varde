@@ -439,3 +439,136 @@ fn editing_the_sketch_of_a_failing_extrude_marks_the_curves_it_names() {
     assert!(doc.feed.failed_features().is_empty());
     assert!(failing(&doc).is_empty());
 }
+
+/// What moving the cursor to `at` on `ui` sends.
+fn moved(
+    ui: &mut crate::tests::Headless<'_>,
+    renderer: &mut iced::Renderer,
+    at: iced::Point,
+) -> Vec<varde_view::Message> {
+    use iced::mouse::{Cursor, Event};
+    let mut sent = Vec::new();
+    let _ = ui.update(
+        &[iced::Event::Mouse(Event::CursorMoved { position: at })],
+        Cursor::Available(at),
+        renderer,
+        &mut iced::advanced::clipboard::Null,
+        &mut sent,
+    );
+    sent
+}
+
+#[test]
+fn moving_up_from_one_row_to_the_next_hovers_it() {
+    let (mut doc, _requests, revolve, _) = failing_revolve();
+    doc.look(Look::SelectPanel(varde_view::Panel::Timeline));
+    let extrude = doc.editor.document().features()[1].id;
+    let name = |id: FeatureId| doc.editor.document().feature(id).unwrap().name.clone();
+    let (extrude_name, revolve_name) = (name(extrude), name(revolve));
+    let size = iced::Size::new(1280.0, 800.0);
+    let mut renderer = varde_view::probe::renderer();
+    let mut ui = shown(doc.view_in(varde_view::Mode::Light), size, &mut renderer);
+    let found = texts(&mut ui, &renderer);
+    let at = |name: &str| {
+        (found.iter())
+            .find(|shown| shown.text == name && !shown.hidden())
+            .expect("the row")
+            .bounds
+            .center()
+    };
+    let (upper, lower) = (at(&extrude_name), at(&revolve_name));
+    assert!(upper.y < lower.y);
+    let mut sent = moved(&mut ui, &mut renderer, lower);
+    // Straight from the lower row to the one above it, as one move.
+    sent.extend(moved(&mut ui, &mut renderer, upper));
+    drop(ui);
+    for message in sent {
+        if let varde_view::Message::Look(look) = message {
+            doc.look(look);
+        }
+    }
+    assert_eq!(doc.hovered_feature, Some(extrude));
+}
+
+#[test]
+fn a_hovered_row_gone_without_an_exit_is_let_go_of() {
+    // Into a sketch, where the Timeline doesn't show, and out again.
+    let (mut doc, _requests, revolve, sketch) = failing_revolve();
+    doc.look(Look::HoverFeature(Some(revolve)));
+    assert!(!doc.shown_errors().is_empty());
+    doc.look(Look::EditFeature(sketch));
+    assert!(doc.sketch.is_some());
+    doc.look(Look::FinishSketch);
+    assert!(doc.sketch.is_none());
+    assert_eq!(doc.hovered_feature, None);
+    assert!(doc.shown_errors().is_empty());
+
+    // Its feature removed, then the removal undone.
+    let (mut doc, requests, revolve, _) = failing_revolve();
+    doc.look(Look::HoverFeature(Some(revolve)));
+    doc.apply(Command::RemoveFeature(revolve));
+    doc.sync();
+    assert_eq!(doc.hovered_feature, None);
+    assert!(doc.shown_errors().is_empty());
+    answer(&mut doc, &requests);
+    doc.update(Edit::Undo);
+    answer(&mut doc, &requests);
+    assert!(doc.failure_geometry(revolve).is_some());
+    assert!(doc.shown_errors().is_empty());
+}
+
+#[test]
+fn an_edited_failure_goes_once_its_draft_works() {
+    let mut lathe = lathe();
+    let across = crossing_line(&mut lathe);
+    let rectangle = lathe.rectangle();
+    let document = lathe.doc.editor.document();
+    let FeatureKind::Sketch { sketch, .. } = &document.feature(lathe.sketch).unwrap().kind else {
+        panic!("a sketch");
+    };
+    let regions = vec![sketch.profiles().unwrap().reference(rectangle).unwrap()];
+    let revolve = Revolve {
+        sketch: lathe.sketch,
+        regions,
+        axis: AxisLine::Curve(across),
+        extent: Turn::Full,
+        flip: false,
+        operation: Operation::NewBody(BodyId::NEW),
+    };
+    lathe.doc.apply(document.add_feature(revolve.into()));
+    lathe.doc.sync();
+    lathe.answer();
+    let revolve = lathe.doc.editor.document().features().last().unwrap().id;
+    assert!(lathe.doc.failure_geometry(revolve).is_some());
+
+    lathe.doc.look(Look::EditFeature(revolve));
+    assert!(lathe.doc.revolve.is_some());
+    assert!(!lathe.doc.shown_errors().is_empty());
+    // An axis that works, answered: the preview is whole, and no red is
+    // over it.
+    let sketch = lathe.sketch;
+    let axis = AxisLine::Curve(lathe.construction);
+    lathe.revolve(RevolveLook::PickAxis { sketch, axis });
+    lathe.answer();
+    assert_eq!(lathe.doc.feed.draft_error(), None);
+    assert!(lathe.doc.shown_errors().is_empty());
+}
+
+#[test]
+fn an_edited_feature_s_draft_on_its_way_shows_no_failure() {
+    let (mut doc, requests, revolve, sketch) = failing_revolve();
+    doc.look(Look::EditFeature(revolve));
+    // The draft answered: failing as it was.
+    answer(&mut doc, &requests);
+    assert!(doc.feed.draft_geometry().is_some());
+    // Changed, on its way: the panel shows no error, nor the viewport
+    // the draft before's, selected or not.
+    let axis = AxisLine::SketchX;
+    doc.look(Look::Revolve(RevolveLook::PickAxis { sketch, axis }));
+    assert_eq!(doc.feed.draft_error(), None);
+    assert_eq!(doc.selected_feature, Some(revolve));
+    assert!(doc.shown_errors().is_empty());
+    doc.selected_feature = None;
+    doc.refresh_errors();
+    assert!(doc.shown_errors().is_empty());
+}

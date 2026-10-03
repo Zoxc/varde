@@ -689,6 +689,9 @@ impl Doc {
         self.revolve = None;
         self.combine = None;
         self.selected_feature = Some(id);
+        // The Timeline's rows go, with no exit: none is hovered once the
+        // sketch is left, until the cursor moves onto one.
+        self.hovered_feature = None;
         // Back in the sketch, the edit refused after it was left is seen
         // to be missing.
         if self
@@ -927,6 +930,10 @@ impl Doc {
         self.selected_feature = self
             .selected_feature
             .filter(|&id| document.feature(id).is_some());
+        // A row removed goes without an exit; one coming back (an undo)
+        // isn't under the cursor for it.
+        self.hovered_feature =
+            (self.hovered_feature).filter(|&id| !replaced && document.feature(id).is_some());
         // A row's menu goes with what the row lists, a feature of the
         // Timeline's with its selection.
         self.row_menu = self.row_menu.filter(|menu| match *menu {

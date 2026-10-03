@@ -4600,7 +4600,7 @@ fn a_right_click_on_a_timeline_row_opens_its_menu_there() {
     drop(ui);
     // Moving onto the menu leaves the row.
     let [
-        Ui::Look(Look::HoverFeature(None)),
+        Ui::Look(Look::LeaveFeature(_)),
         Ui::Edit(Edit::RemoveFeature(id)),
     ] = sent[..]
     else {

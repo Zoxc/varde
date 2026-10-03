@@ -619,6 +619,7 @@ impl Doc {
             Look::Hover(_)
                 | Look::HoverItem(_)
                 | Look::HoverFeature(_)
+                | Look::LeaveFeature(_)
                 | Look::HoverCube(_)
                 | Look::Snap(_)
                 | Look::Aim(_)
@@ -641,6 +642,7 @@ impl Doc {
                 | Look::Escape
                 | Look::HoverItem(_)
                 | Look::HoverFeature(_)
+                | Look::LeaveFeature(_)
                 | Look::Hover(_)
                 | Look::HoverCube(_)
                 | Look::Snap(_)
@@ -722,6 +724,9 @@ impl Doc {
             Look::ClickRow(id) => self.click_geometry(Some(id), false),
             Look::HoverItem(id) => self.hover_item(id),
             Look::HoverFeature(feature) => self.hovered_feature = feature,
+            Look::LeaveFeature(feature) => {
+                (self.hovered_feature).take_if(|&mut hovered| hovered == feature);
+            }
             Look::ShowFailure(feature) => self.show_failure(feature),
             Look::Hover(pick) => self.hover(pick),
             Look::ClickModel { pick, .. } if self.combine.is_some() => self.combine_click(pick),

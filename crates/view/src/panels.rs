@@ -233,7 +233,7 @@ fn feature_row<'a>(
         .view_with(Message::Look(Look::SelectFeature(feature.id)), show)
         .on_double_click(Message::Look(Look::EditFeature(feature.id)))
         .on_enter(Message::Look(Look::HoverFeature(Some(feature.id))))
-        .on_exit(Message::Look(Look::HoverFeature(None)));
+        .on_exit(Message::Look(Look::LeaveFeature(feature.id)));
     match failed {
         Some(failed) => crate::chrome::tip(
             row,

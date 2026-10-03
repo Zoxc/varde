@@ -37,7 +37,10 @@ impl Doc {
     /// - each failed feature's whose Timeline row is hovered (outside a
     ///   sketch, where the Timeline doesn't show) or selected, or whose
     ///   panel is open: the edited feature's only when the draft has none,
-    ///   which is where the edit is now;
+    ///   which is where the edit is now, and only until a draft of it is
+    ///   shown, whose failure the model shown has for it then: the
+    ///   draft's, above, or while a changed draft is on its way the one
+    ///   before's, which the panel doesn't show either;
     /// - while a sketch is edited, each failed feature's using it whose
     ///   failure names its curves, as those curves are marked in it.
     ///
@@ -54,8 +57,12 @@ impl Doc {
             .flatten();
         let edited = (self.extrude.as_ref().and_then(|session| session.feature))
             .or_else(|| self.revolve.as_ref().and_then(|session| session.feature))
-            .or_else(|| self.combine.as_ref().and_then(|session| session.feature))
-            .filter(|_| draft.is_none());
+            .or_else(|| self.combine.as_ref().and_then(|session| session.feature));
+        // Once a draft of it is shown, the edited feature's failure in the
+        // model shown is a draft's: the newest one's, as the draft's
+        // above, or one before it, whose panel error is gone too.
+        let redrafted = edited.filter(|_| self.feed.draft_shown());
+        let edited = edited.filter(|_| draft.is_none());
         let hovered = self.hovered_feature.filter(|_| self.sketch.is_none());
         let sketched = (self.feed.failed_features().iter())
             .map(|failed| failed.feature)
@@ -66,6 +73,9 @@ impl Doc {
             .into_iter()
             .flatten();
         for feature in features.chain(sketched) {
+            if Some(feature) == redrafted {
+                continue;
+            }
             let Some(geometry) = self.failure_geometry(feature) else {
                 continue;
             };
