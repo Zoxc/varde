@@ -1321,10 +1321,14 @@ and the view keeps only ids it holds as curves. They're drawn in the
 `conflict` red, and their halo is the failures' own: the base layer
 keeps them flattened and placed in the world (`Base::failing`, a new
 `Arc` with each base layer, so uploaded again only then), and the frame
-adds them to `Frame::errors` (`SketchFrame::failing`), whose halo and
-3 px red core go under the sketch's curve, drawn after them. The model's
-copy of such a failure, in the sketch's plane, isn't drawn meanwhile
-(see `agents/viewport.md`, "Which failures show").
+adds them to `Frame::errors` (`SketchFrame::failing`) as their halo
+alone (`ErrorParts::halo_only`), under the sketch's curve drawn red at
+its own width after it; no error core under it, which would thicken it
+and show around a selected one's blue. The model's copy of such a
+failure, in the sketch's plane, is drawn without its curves meanwhile,
+its points (where the profile touches itself, an open gap's ends) still
+shown, for every failure marked (see `agents/viewport.md`, "Which
+failures show").
 
 - The **base** layer, the sketch and its selection (under it the regions
   of its profiles, each filled on its own in `SketchColors::region`, since

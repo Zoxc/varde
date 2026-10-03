@@ -209,8 +209,8 @@ struct Base {
     /// [`Sketch::curvature_comb`]).
     combs: Vec<Vec<[DVec2; 2]>>,
     /// The failing curves ([`States::failing`]) placed in the world, if
-    /// any: drawn as failures' geometry is, for the halo around them,
-    /// under the base layer's red curves. A new `Arc` with each base
+    /// any: drawn as failures' geometry's halo alone, under the base
+    /// layer's red curves at their own width. A new `Arc` with each base
     /// layer, so the renderer uploads them again only then.
     failing: Option<Arc<RenderLines>>,
 }

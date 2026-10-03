@@ -132,8 +132,10 @@ message is worded from the kernel's `failure.error` as before
   `draft_error`). The viewport draws the geometry of the draft's
   failure while an operation is set up, and a failed feature's while
   its Timeline row is hovered or selected or its panel is open (the
-  draft's wins while editing it), nothing otherwise (`Doc::shown_errors`,
-  see "Error geometry" in `agents/viewport.md`). A Show button on a
+  draft's wins while editing it), and while a sketch is edited the
+  points of every failure naming its curves (the sketch marks the
+  curves), nothing otherwise (`Doc::shown_errors`, see "Error geometry"
+  in `agents/viewport.md`). A Show button on a
   failed feature's Timeline row, right of its note, and beside the
   error in an operation panel's footer frames the camera on the
   geometry's box (`Look::ShowFailure`); it's there only where the

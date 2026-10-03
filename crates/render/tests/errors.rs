@@ -109,6 +109,7 @@ impl Failure {
             lines: &self.lines,
             points: &self.points,
             source: Arc::downgrade(&self.source),
+            halo_only: false,
         }
     }
 }
@@ -367,6 +368,36 @@ fn the_halo_reaches_error_halo_beyond_the_core_and_no_farther() {
     // Round ends: as far past the line's end, and no farther.
     assert!(red_of(pixels.at(228 + 10, 188), HALO_RED));
     assert_eq!(pixels.at(228 + 16, 188), [0, 0, 0, 255]);
+}
+
+#[test]
+fn parts_drawn_as_their_halo_alone_have_no_core() {
+    let Some(mut scene) = Scene::new() else {
+        return;
+    };
+    let camera = top_camera();
+    // The line across as halo only, and a point on it drawn whole: the
+    // line's own pixels take the halo, the point's disc its core.
+    let line = line_across();
+    let point = Failure::new(
+        RenderMesh::default(),
+        RenderLines::default(),
+        &[Vec3::new(9.0, -6.0, 0.0)],
+    );
+    let errors = [
+        ErrorParts {
+            halo_only: true,
+            ..line.parts()
+        },
+        point.parts(),
+    ];
+    let pixels = scene.draw(&frame(&camera, &NO_MESH, &errors, false));
+    for row in [187, 188] {
+        assert!(red_of(pixels.at(168, row), HALO_RED), "row {row}");
+    }
+    assert!(red_of(pixels.at(168, 196), HALO_RED));
+    assert_eq!(pixels.at(168, 204), [0, 0, 0, 255]);
+    assert_eq!(pixels.at(218, 188), [255, 0, 0, 255]);
 }
 
 #[test]

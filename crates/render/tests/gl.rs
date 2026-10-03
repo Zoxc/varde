@@ -438,6 +438,7 @@ fn errors_and_their_halo_are_drawn_on_gl() {
         lines,
         points: &[],
         source: Arc::downgrade(&source),
+        halo_only: false,
     };
     let errors = [parts(&lines), parts(&under)];
     let renderer = Renderer::new(&device, FORMAT);

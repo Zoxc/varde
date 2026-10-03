@@ -301,7 +301,14 @@ impl Varde {
                 self.options.wireframe = !self.options.wireframe;
                 self.with_doc(|doc, _| doc.view_menu = false);
             }
-            Message::PeekPanel(peeking) => self.peeking = peeking,
+            Message::PeekPanel(peeking) => {
+                // The tab shown changes: the Timeline's rows go, or come,
+                // without an exit or an enter.
+                if peeking != self.peeking {
+                    self.with_doc(|doc, _| doc.look(Look::HoverFeature(None)));
+                }
+                self.peeking = peeking;
+            }
             Message::CommandHeld(held) => self.command = held,
             Message::AnimationFrame(now) => self.with_doc(|doc, _| {
                 doc.animation_frame(now);

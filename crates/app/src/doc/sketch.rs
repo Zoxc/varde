@@ -27,6 +27,7 @@ use varde_view::{
     ValueField, ValueTarget,
 };
 
+use super::camera::FRAME_MARGIN;
 use super::extrude::is_sketch;
 use super::{Change, Doc, HOME_TARGET, home_camera};
 pub(crate) use dimension::Focus;
@@ -335,10 +336,6 @@ pub(crate) struct PickingPlane {
 /// The share of the Sketch tab the Geometry list takes until the divider
 /// is dragged.
 pub(crate) const GEOMETRY_SHARE: f32 = 0.6;
-
-/// How much room a sketch framed on entering it leaves around its points:
-/// the view is this many times as tall as they are.
-const FRAME_MARGIN: f32 = 1.5;
 
 /// Below what cosine between its old and new normals the sketch being
 /// edited has turned to another plane, which the camera turns to face:

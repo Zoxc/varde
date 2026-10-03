@@ -62,7 +62,7 @@ pub use document::{
     ActiveTool, CURVED_FACE, Damage, DamagedFile, DeletePrompt, DocumentState, MeshStatus, Overlay,
     RecoveredChanges, RefusedEdit, SketchState, ValueField, ValueTarget, document,
 };
-pub use errors::ShownErrors;
+pub use errors::{ShownError, ShownErrors};
 pub use extrude::{Distance, ExtentKind, ExtrudeLook, ExtrudeState, Handle, snap_step};
 pub use icons::LOGO_SVG;
 pub use measure::{

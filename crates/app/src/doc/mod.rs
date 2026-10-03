@@ -116,7 +116,7 @@ pub(crate) struct Doc {
     /// The feature selected in the Timeline, if any.
     pub(crate) selected_feature: Option<FeatureId>,
     /// The feature whose row in the Timeline the cursor is over, if any.
-    hovered_feature: Option<FeatureId>,
+    pub(crate) hovered_feature: Option<FeatureId>,
     /// The failures' geometry the viewport draws, see
     /// [`Doc::shown_errors`].
     errors: Arc<varde_view::ShownErrors>,
@@ -721,7 +721,7 @@ impl Doc {
             // held; alone, it selects.
             Look::ClickRow(id) => self.click_geometry(Some(id), false),
             Look::HoverItem(id) => self.hover_item(id),
-            Look::HoverFeature(feature) => self.hover_feature(feature),
+            Look::HoverFeature(feature) => self.hovered_feature = feature,
             Look::ShowFailure(feature) => self.show_failure(feature),
             Look::Hover(pick) => self.hover(pick),
             Look::ClickModel { pick, .. } if self.combine.is_some() => self.combine_click(pick),

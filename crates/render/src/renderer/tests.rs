@@ -56,6 +56,7 @@ fn errors_are_built_together_without_points_past_the_bound() {
         lines: &lines,
         points,
         source: Arc::downgrade(&source) as Weak<dyn Any + Send + Sync>,
+        halo_only: false,
     };
     let built = BuiltErrors::new(&[parts(&points), parts(&[])]);
     // Only the first point is drawn, and bounded.
@@ -72,6 +73,49 @@ fn errors_are_built_together_without_points_past_the_bound() {
 }
 
 #[test]
+fn errors_drawn_whole_come_before_those_drawn_as_their_halo() {
+    let mut lines = RenderLines::default();
+    lines.push([Vec3::ZERO, Vec3::X]).unwrap();
+    let mut other = RenderLines::default();
+    other.push([Vec3::Y, Vec3::Z, Vec3::ONE]).unwrap();
+    let (mesh, source) = (RenderMesh::default(), Arc::new(()));
+    let parts = |lines, points, halo_only| ErrorParts {
+        mesh: &mesh,
+        lines,
+        points,
+        source: Arc::downgrade(&source) as Weak<dyn Any + Send + Sync>,
+        halo_only,
+    };
+    let point = [[1.0, 2.0, 3.0]];
+    let built = BuiltErrors::new(&[parts(&other, &[], true), parts(&lines, &point, false)]);
+    // The whole one's two points first, then the halo's three.
+    let edges: Vec<u32> = built.edges.iter().map(|point| point.edge).collect();
+    assert_eq!(edges, [NO_EDGE, 0, 0, 1, 1, 1, NO_EDGE].to_vec());
+    assert_eq!(
+        built.cores,
+        Cores {
+            corners: 0,
+            edges: 3,
+            points: 1,
+        }
+    );
+    // All whole: the cores are all of them, the stream's end aside.
+    let built = BuiltErrors::new(&[parts(&lines, &point, false)]);
+    assert_eq!(built.cores.edges, 3);
+    assert_eq!(built.edges.len(), 4);
+    // All halo: none.
+    let built = BuiltErrors::new(&[parts(&lines, &point, true)]);
+    assert_eq!(
+        built.cores,
+        Cores {
+            corners: 0,
+            edges: 1,
+            points: 0
+        }
+    );
+}
+
+#[test]
 fn errors_with_nothing_to_draw_draw_nothing() {
     // No errors, or errors of no triangles, curves or points: the stream
     // of curves is empty rather than its two ends, which would keep the
@@ -82,6 +126,7 @@ fn errors_with_nothing_to_draw_draw_nothing() {
         lines: &lines,
         points: &[],
         source: Arc::downgrade(&source) as Weak<dyn Any + Send + Sync>,
+        halo_only: false,
     };
     for errors in [&[][..], &[empty.clone(), empty]] {
         let built = BuiltErrors::new(errors);
@@ -104,6 +149,7 @@ fn errors_with_nothing_to_draw_draw_nothing() {
         lines: &lines,
         points: &[],
         source: Arc::downgrade(&source) as Weak<dyn Any + Send + Sync>,
+        halo_only: false,
     };
     let mut buffers = ErrorBuffers::default();
     buffers.write(&device, &queue, &[shown]).unwrap();

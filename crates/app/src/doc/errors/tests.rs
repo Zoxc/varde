@@ -49,10 +49,11 @@ fn failure(doc: &Doc, feature: FeatureId) -> Arc<ErrorGeometry> {
 }
 
 /// Whether `doc` shows the geometry of exactly `geometry`, the very
-/// `Arc`s.
+/// `Arc`s, whole.
 fn shows(doc: &Doc, geometry: &[&Arc<ErrorGeometry>]) -> bool {
-    let shown: Vec<_> = doc.shown_errors().geometry().collect();
-    shown.len() == geometry.len() && (shown.iter().zip(geometry)).all(|(a, b)| Arc::ptr_eq(a, b))
+    let shown: Vec<_> = doc.shown_errors().shown().collect();
+    shown.len() == geometry.len()
+        && (shown.iter().zip(geometry)).all(|(a, b)| a.lines && Arc::ptr_eq(&a.geometry, b))
 }
 
 #[test]
@@ -376,10 +377,28 @@ fn editing_the_sketch_of_a_failing_extrude_marks_the_curves_it_names() {
             .collect::<Vec<_>>(),
         named
     );
-    // Selected, the 3D copy of the curves isn't drawn too.
+    // The 3D copy shows its points, where the squares touch, but not the
+    // curves the sketch marks: selected or not.
+    assert!(!geometry.points().is_empty());
+    let points_only = |doc: &Doc| {
+        let shown: Vec<_> = doc.shown_errors().shown().collect();
+        let geometry = failure(doc, extrude);
+        matches!(shown[..], [only] if !only.lines && Arc::ptr_eq(&only.geometry, &geometry))
+    };
+    assert!(points_only(&doc));
     doc.selected_feature = Some(extrude);
     doc.refresh_errors();
-    assert!(doc.shown_errors().is_empty());
+    assert!(points_only(&doc));
+    // Left, it's drawn whole while selected; not selected, it's drawn
+    // while its sketch is edited still.
+    doc.look(Look::FinishSketch);
+    assert!(doc.sketch.is_none());
+    assert!(shows(&doc, &[&failure(&doc, extrude)]));
+    doc.look(Look::EditFeature(sketch));
+    answer(&mut doc, &requests);
+    doc.selected_feature = None;
+    doc.refresh_errors();
+    assert!(points_only(&doc));
 
     // A curve it names deleted: not found, so not marked, while the
     // model shown still has the failure.

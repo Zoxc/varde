@@ -17,6 +17,11 @@ pub(crate) const CAMERA_ANIMATION: Duration = Duration::from_millis(325);
 pub(crate) const PIVOT_SHOWN: Duration = Duration::from_secs(2);
 pub(crate) const PIVOT_FADE: Duration = Duration::from_millis(400);
 
+/// How much room the camera leaves around what it frames: the view is
+/// this many times as tall as it (a sketch's points on entering it, a
+/// failure's box's diagonal on Show).
+pub(super) const FRAME_MARGIN: f32 = 1.5;
+
 /// The point picked for the camera to orbit, with a middle click, and how
 /// its marker shows: for [`PIVOT_SHOWN`] once picked, then fading, and
 /// while the cursor is over the view cube.

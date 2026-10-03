@@ -965,10 +965,15 @@ only when one differs, as `highlights` is; their box joins the depth
 range's bounds. A point not finite or past `RenderLines::MAX_POSITION`
 isn't drawn. Past the device's buffer size they're skipped and reported
 once (`PrepareError::ErrorsTooLarge`). Errors with nothing to draw (no
-triangles, curves or points) count as none: no passes, no target. The
-view adds, after the failures shown, the sketch being edited's failing
-curves (`ErrorParts` of lines only, keyed by their `Arc<RenderLines>`),
-for their halo under the sketch's red curves.
+triangles, curves or points) count as none: no passes, no target. Parts
+`halo_only` get their halo but no core: of each kind those drawn whole
+are built first, then the rest, and the core's draws stop at the first
+ones' counts (`Cores`), the halo's take all. The view adds, after the
+failures shown, the sketch being edited's failing curves (`ErrorParts`
+of lines only, `halo_only`, keyed by their `Arc<RenderLines>`), for their
+halo under the sketch's red curves at the sketch's own width: a red
+core under them would show as a thicker line around a thin one, and
+around a selected curve's blue.
 
 **Which failures show** is the app's (`app/src/doc/errors.rs`,
 `Doc::shown_errors`, a `varde_view::ShownErrors`): the draft's geometry
@@ -976,23 +981,31 @@ while an operation is set up and the newest answer for its draft as it
 is fails with some (`MeshFeed::draft_geometry`, as the panel's error
 is); each failed feature's whose Timeline row is hovered
 (`Look::HoverFeature`, the row's mouse area's enter and exit; outside a
-sketch, and let go of when the side panel's tab changes, since the rows
-go without an exit) or selected, or whose panel is open, the edited
+sketch, and let go of when the side panel's tab changes, by a click or
+the peek key, since the rows go without an exit) or selected, or whose panel is open, the edited
 feature's only while its draft has none; nothing otherwise, so a model
 with an old failure isn't covered in red. While a sketch is edited, a
-failure of a feature using it that names its curves isn't drawn here,
-selected or not: the sketch marks those curves itself, red within the
-same halo (`agents/sketch.md`, "Failing curves"), and the copy in its
-plane would draw them twice, and late while a drag moves them. All of
-it is the model shown's (its answer brought it), and each `Arc` is
-shown once.
+failure of a feature using it that names its curves is drawn without
+its curves (`ShownError::lines` false), selected or not, as long as it
+has points or patches: the sketch marks those curves itself, red within
+the same halo (`agents/sketch.md`, "Failing curves"), and the copy in
+its plane would draw them twice, and late while a drag moves them; but
+its points (where a profile touches itself, an open gap's ends) are the
+most precise part of it, and the sketch has nothing to mark them with.
+So, like the curves marked, every such failure's show while its sketch
+is edited, not only one selected. A revolve's axis crossing the
+profile, a curve of that failure that isn't the sketch's, goes with
+them. All of it is the model shown's (its answer brought it), and each
+`Arc` is shown once.
 `Doc::refresh_errors` (after `sync`, `look` and an answer) picks them
 again and makes a new `ShownErrors` only when they're other `Arc`s, in
 order, than it shows: an unchanged failure, the same `Arc` from the
 regeneration side's cache, keeps what's drawn. `ShownErrors` holds each
 geometry with its `Weak`, downgraded from the live `Arc` once as it's
 made (never `Weak::new()`, which would compare equal to any dangling
-one); a frame borrows them into `ErrorParts` (`ShownErrors::parts`, a
+one), or for one drawn without its curves a `Weak` of a fresh `Arc<()>`
+(held, so its allocation isn't reused), so the same geometry drawn whole
+then without is uploaded again; a frame borrows them into `ErrorParts` (`ShownErrors::parts`, a
 small vector a frame, since the parts borrow), so the renderer uploads
 only when they change. The operand faces an `ErrorGeometry` names
 (`faces`) aren't drawn yet.
@@ -1000,8 +1013,8 @@ only when they change. The operand faces an `ErrorGeometry` names
 **Show** frames the camera on a failure's box (`Look::ShowFailure`, a
 feature's or with `None` the draft's; `ErrorGeometry::bounds`): the
 camera turns as Home does, keeping its direction, its target to the
-box's middle and its view `FRAME_MARGIN` (1.5) times the box's diagonal
-tall, at least `MIN_FRAME_HEIGHT` (1 mm), and the pivot picked is let
+box's middle and its view `FRAME_MARGIN` (1.5, as a sketch entered is
+framed) times the box's diagonal tall, at least `MIN_FRAME_HEIGHT` (1 mm), and the pivot picked is let
 go of. A Show button sits at the right of a failed feature's Timeline
 row (not in its tooltip: iced's tooltips can't be clicked) and beside
 the error in an operation panel's footer (`footer_message`'s `show`,

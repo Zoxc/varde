@@ -778,8 +778,8 @@ struct SketchFrame {
     base: Arc<SketchLayer>,
     live: SketchLayer,
     /// The sketch's curves a failing feature names, placed: drawn with
-    /// the failures' geometry ([`Frame::errors`]), for its halo around
-    /// them.
+    /// the failures' geometry ([`Frame::errors`]) as their halo alone,
+    /// around the sketch's own red curves.
     failing: Option<Arc<RenderLines>>,
 }
 
@@ -798,8 +798,10 @@ impl shader::Primitive for Primitive {
         let target = viewport.physical_size();
 
         let scene = &self.scene;
-        // Borrowed from the geometry, so made each frame; the renderer
-        // uploads them again only when their sources change.
+        // Borrowed from the geometry, so made each frame (a few small
+        // structs); the renderer uploads them again only when their
+        // sources change. The sketch's failing curves only as their halo:
+        // the sketch draws them, red, at its own width.
         let mut errors = scene.errors.parts();
         let failing = (self.sketch.as_ref()).and_then(|sketch| sketch.failing.as_ref());
         if let Some(lines) = failing {
@@ -809,6 +811,7 @@ impl shader::Primitive for Primitive {
                 lines,
                 points: &[],
                 source: Arc::downgrade(&erased),
+                halo_only: true,
             });
         }
         let prepared = pipeline.prepare(

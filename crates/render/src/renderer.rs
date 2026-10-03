@@ -179,8 +179,9 @@ pub struct Frame<'a> {
     pub sketch: Option<SketchScene<'a>>,
     /// The geometry of the failures shown, drawn after everything but
     /// [`Self::sketch`], faded or not: solid red ([`Colors::error`]) within a halo of
-    /// [`Colors::error_halo`] reaching [`ERROR_HALO`] beyond it, depth
-    /// tested, and at about 40 % where the model hides it. Uploaded again
+    /// [`Colors::error_halo`] reaching [`ERROR_HALO`] beyond it (only the
+    /// halo of [`ErrorParts::halo_only`] ones), depth tested, and at
+    /// about 40 % where the model hides it. Uploaded again
     /// only when its sources ([`ErrorParts::source`]) differ from the last
     /// frame prepared's.
     pub errors: &'a [ErrorParts<'a>],
@@ -216,6 +217,10 @@ pub struct ErrorParts<'a> {
     /// allocation than the last frame's, and holds the `Weak` so that the
     /// allocation isn't reused meanwhile.
     pub source: Weak<dyn Any + Send + Sync>,
+    /// Whether only their halo is drawn, not the parts themselves:
+    /// something else draws them (a sketch's failing curves, which the
+    /// sketch draws in red at its own width).
+    pub halo_only: bool,
 }
 
 /// The marker of the point the camera orbits: a ring facing the screen
@@ -1828,7 +1833,7 @@ impl Renderer {
             load,
             clip,
         );
-        self.draw_error_layers(&mut pass, &self.errors.halo, steps, errors);
+        self.draw_error_layers(&mut pass, &self.errors.halo, steps, errors, None);
         drop(pass);
 
         let load = (wgpu::LoadOp::Load, wgpu::StoreOp::Discard);
@@ -1841,45 +1846,56 @@ impl Renderer {
         let [seen, hidden] = &self.errors.core;
         let [opaque, dimmed] = steps;
         let layers = [hidden, seen];
-        self.draw_error_layers(&mut pass, layers, [dimmed, opaque], errors);
+        let cores = Some(errors.cores);
+        self.draw_error_layers(&mut pass, layers, [dimmed, opaque], errors, cores);
         self.alphas.set(&mut pass, opaque);
         self.draw_sketch(&mut pass, slot);
     }
 
     /// Records drawing `errors` with `layers` at the alphas' steps `steps`,
-    /// their faces with each, then their lines, then their points.
+    /// their faces with each, then their lines, then their points: all of
+    /// them, or only `cores`, those of the parts drawn whole.
     fn draw_error_layers<'l>(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
         layers: impl IntoIterator<Item = &'l ErrorLayer> + Clone,
         steps: [u32; 2],
         errors: &ErrorBuffers,
+        cores: Option<Cores>,
     ) {
         let with_steps = || layers.clone().into_iter().zip(steps);
+        // Between the stream's two ends.
+        let all = Cores {
+            corners: errors.positions.count,
+            edges: errors.edges.count.saturating_sub(1),
+            points: errors.points.count,
+        };
+        let drawn = cores.unwrap_or(all);
         if let (Some(positions), Some(normals)) = (errors.positions.drawn(), errors.normals.drawn())
+            && drawn.corners > 0
         {
             pass.set_vertex_buffer(0, positions);
             pass.set_vertex_buffer(1, normals);
             for (layer, step) in with_steps() {
                 self.alphas.set(pass, step);
                 pass.set_pipeline(&layer.faces);
-                pass.draw(0..errors.positions.count, 0..1);
+                pass.draw(0..drawn.corners, 0..1);
             }
         }
         if let Some(edges) = errors.edges.held() {
-            // Between the stream's two ends.
-            let points = 1..errors.edges.count.saturating_sub(1);
             for (layer, step) in with_steps() {
                 self.alphas.set(pass, step);
-                draw_stream(pass, &layer.lines, edges, points.clone());
+                draw_stream(pass, &layer.lines, edges, 1..drawn.edges);
             }
         }
-        if let Some(points) = errors.points.drawn() {
+        if let Some(points) = errors.points.drawn()
+            && drawn.points > 0
+        {
             pass.set_vertex_buffer(0, points);
             for (layer, step) in with_steps() {
                 self.alphas.set(pass, step);
                 pass.set_pipeline(&layer.points);
-                pass.draw(0..POINT_VERTICES, 0..errors.points.count);
+                pass.draw(0..POINT_VERTICES, 0..drawn.points);
             }
         }
     }
@@ -2670,13 +2686,17 @@ impl HighlightBuffers {
 
 /// [`Frame::errors`] on the GPU, all of them together: the patches'
 /// triangles a corner at a time (positions and normals), the curves as an
-/// [`EdgePoint`] stream, a polyline each, and the points.
+/// [`EdgePoint`] stream, a polyline each, and the points. Of each kind,
+/// those of parts drawn whole come first, then those drawn only as their
+/// halo ([`ErrorParts::halo_only`]).
 #[derive(Default)]
 struct ErrorBuffers {
     positions: Instances,
     normals: Instances,
     edges: Instances,
     points: Instances,
+    /// How many of each kind are drawn whole, see [`Cores`].
+    cores: Cores,
     /// To fit the depth range to.
     bounds: Option<Aabb>,
 }
@@ -2705,6 +2725,7 @@ impl ErrorBuffers {
         *self = match written {
             Ok(()) => ErrorBuffers {
                 bounds: built.bounds,
+                cores: built.cores,
                 ..std::mem::take(self)
             },
             Err(_) => ErrorBuffers::default(),
@@ -2720,12 +2741,23 @@ impl ErrorBuffers {
     }
 }
 
+/// How many of the errors' corners, [`EdgePoint`]s and points are of
+/// parts drawn whole, rather than only as their halo: the corners and
+/// points `0..`, the stream's points `1..edges`.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+struct Cores {
+    corners: u32,
+    edges: u32,
+    points: u32,
+}
+
 /// [`Frame::errors`] as the renderer draws them, see [`ErrorBuffers`].
 struct BuiltErrors {
     positions: Vec<[f32; 3]>,
     normals: Vec<[f32; 3]>,
     edges: Vec<EdgePoint>,
     points: Vec<VertexInstance>,
+    cores: Cores,
     bounds: Option<Aabb>,
 }
 
@@ -2736,13 +2768,23 @@ impl BuiltErrors {
             normals: Vec::new(),
             edges: Vec::new(),
             points: Vec::new(),
+            cores: Cores::default(),
             bounds: None,
         };
         let mut stream = EdgeStream::with_capacity(0);
         // Each polyline a number of its own, so none joins the next; past
         // `CREASE` they start again, which only the next must differ from.
         let mut polyline = 0u32;
-        for error in errors {
+        // Those drawn whole first, then those drawn as their halo alone,
+        // counting the first.
+        let mut ordered: Vec<&ErrorParts<'_>> = errors.iter().collect();
+        ordered.sort_by_key(|error| error.halo_only);
+        let mut counted = false;
+        for error in ordered {
+            if error.halo_only && !counted {
+                built.cores = built.counts(&stream);
+                counted = true;
+            }
             let mesh = error.mesh;
             let (positions, normals) = (mesh.positions(), mesh.normals());
             // A corner at a time: the kernel's meshes index their own
@@ -2771,12 +2813,28 @@ impl BuiltErrors {
                 max: a.max.max(b.max),
             });
         }
+        if !counted {
+            built.cores = built.counts(&stream);
+        }
         // Without a curve, nothing rather than the stream's two ends, so
         // that errors of none don't count as some to draw.
         if stream.len() > 1 {
             built.edges = stream.finish();
+        } else {
+            built.cores.edges = 0;
         }
         built
+    }
+
+    /// How many corners, stream points and points are built so far.
+    fn counts(&self, stream: &EdgeStream) -> Cores {
+        // Past `u32`, writing them fails, and nothing is drawn.
+        let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+        Cores {
+            corners: count(self.positions.len()),
+            edges: stream.len(),
+            points: count(self.points.len()),
+        }
     }
 }
 

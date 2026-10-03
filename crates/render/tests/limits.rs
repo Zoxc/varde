@@ -346,6 +346,7 @@ fn errors_past_the_buffer_limit_are_skipped() {
         lines: &lines,
         points: &[],
         source: Arc::downgrade(source),
+        halo_only: false,
     };
     let errors = [parts(&source)];
     let too_large = PrepareError::ErrorsTooLarge {

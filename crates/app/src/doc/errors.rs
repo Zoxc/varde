@@ -3,7 +3,8 @@
 //! a failed feature's while its Timeline row is hovered or selected or
 //! its panel is open, nothing otherwise, so a model with an old failure
 //! isn't covered in red. While a sketch is edited, the curves the
-//! failures of the features using it name are marked in it instead.
+//! failures of the features using it name are marked in it instead, and
+//! their points shown.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -11,13 +12,10 @@ use std::sync::Arc;
 use varde_document::{FeatureId, Id};
 use varde_kernel::Aabb;
 use varde_regen::ErrorGeometry;
-use varde_view::ShownErrors;
+use varde_view::{ShownError, ShownErrors};
 
 use super::Doc;
-
-/// How much taller than its box's diagonal the view is when the camera
-/// frames a failure, so its halo and what's around it show too.
-const FRAME_MARGIN: f32 = 1.5;
+use super::camera::FRAME_MARGIN;
 
 /// The least height, in millimetres, the view is framed to: a failure at
 /// one point, or a tiny one, is shown with what's around it rather than
@@ -39,13 +37,17 @@ impl Doc {
     /// - each failed feature's whose Timeline row is hovered (outside a
     ///   sketch, where the Timeline doesn't show) or selected, or whose
     ///   panel is open: the edited feature's only when the draft has none,
-    ///   which is where the edit is now.
+    ///   which is where the edit is now;
+    /// - while a sketch is edited, each failed feature's using it whose
+    ///   failure names its curves, as those curves are marked in it.
     ///
-    /// While a sketch is edited, a failure of a feature using it that
-    /// names its curves is left out: those are marked in the sketch, in
-    /// its plane, where the 3D copy would draw them again (see
-    /// [`Doc::failing_curves`]).
-    fn wanted_errors(&self) -> Vec<Arc<ErrorGeometry>> {
+    /// A failure naming the edited sketch's curves is drawn without its
+    /// curves, which the sketch marks itself in its plane (see
+    /// [`Doc::failing_curves`]): the 3D copy would draw them again, and
+    /// late while a drag moves them. Its points (where a profile touches
+    /// itself, an open gap's ends) and patches still are, and one with
+    /// nothing else isn't shown.
+    fn wanted_errors(&self) -> Vec<ShownError> {
         let draft = self
             .operating()
             .then(|| self.feed.draft_geometry())
@@ -55,16 +57,31 @@ impl Doc {
             .or_else(|| self.combine.as_ref().and_then(|session| session.feature))
             .filter(|_| draft.is_none());
         let hovered = self.hovered_feature.filter(|_| self.sketch.is_none());
-        let mut wanted: Vec<Arc<ErrorGeometry>> = draft.into_iter().cloned().collect();
-        for feature in [hovered, self.selected_feature, edited]
+        let sketched = (self.feed.failed_features().iter())
+            .map(|failed| failed.feature)
+            .filter(|&feature| self.uses_edited_sketch(feature));
+        let mut wanted: Vec<ShownError> =
+            draft.cloned().map(ShownError::whole).into_iter().collect();
+        let features = [hovered, self.selected_feature, edited]
             .into_iter()
-            .flatten()
-        {
-            if let Some(geometry) = self.failure_geometry(feature)
-                && !wanted.iter().any(|shown| Arc::ptr_eq(shown, geometry))
-                && !(self.uses_edited_sketch(feature) && !geometry.sketch_curves().is_empty())
+            .flatten();
+        for feature in features.chain(sketched) {
+            let Some(geometry) = self.failure_geometry(feature) else {
+                continue;
+            };
+            if wanted
+                .iter()
+                .any(|shown| Arc::ptr_eq(&shown.geometry, geometry))
             {
-                wanted.push(geometry.clone());
+                continue;
+            }
+            let lines = !(self.uses_edited_sketch(feature) && !geometry.sketch_curves().is_empty());
+            let rest = !geometry.points().is_empty() || !geometry.mesh().indices().is_empty();
+            if lines || rest {
+                wanted.push(ShownError {
+                    geometry: geometry.clone(),
+                    lines,
+                });
             }
         }
         wanted
@@ -135,11 +152,6 @@ impl Doc {
     /// with a box: a Show button beside the panel's error frames it.
     pub(crate) fn draft_framed(&self) -> bool {
         (self.feed.draft_geometry()).is_some_and(|geometry| geometry.bounds().is_some())
-    }
-
-    /// A feature's row in the Timeline hovered, or none.
-    pub(super) fn hover_feature(&mut self, feature: Option<FeatureId>) {
-        self.hovered_feature = feature;
     }
 
     /// Frames the camera on the box of `feature`'s failure, or with

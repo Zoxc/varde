@@ -4290,6 +4290,23 @@ fn a_tab_clicked_while_peeking_is_shown() {
     assert!(!varde.peeking);
 }
 
+#[test]
+fn the_peek_lets_go_of_the_timeline_row_hovered() {
+    let (mut varde, _) = with_open_file();
+    let feature = document(&varde).editor.document().features()[0].id;
+    let hover = Look::HoverFeature(Some(feature));
+    let _ = varde.update(Message::Ui(Ui::Look(Look::SelectPanel(Panel::Timeline))));
+    let _ = varde.update(Message::Ui(Ui::Look(hover.clone())));
+    assert_eq!(document(&varde).hovered_feature, Some(feature));
+    // The Timeline peeked away goes without an exit.
+    let _ = varde.update(Message::PeekPanel(true));
+    assert_eq!(document(&varde).hovered_feature, None);
+    // Peeking at it, and back: the same.
+    let _ = varde.update(Message::Ui(Ui::Look(hover)));
+    let _ = varde.update(Message::PeekPanel(false));
+    assert_eq!(document(&varde).hovered_feature, None);
+}
+
 /// Pressing `key` with `modifiers`, as iced reports it.
 pub(crate) fn press(key: keyboard::Key, modifiers: keyboard::Modifiers) -> keyboard::Event {
     keyboard::Event::KeyPressed {
