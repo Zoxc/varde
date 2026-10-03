@@ -162,7 +162,7 @@ Each **face** carries:
 across a split edge are bisected to the bit and pieces keep their shapes.
 Plane faces are split with straight inner edges, and a plane leaf whose
 straight bisector would leave it (from the end of a rim bulging into it)
-is split red instead. **Repair** restores
+is split red instead, where its red children don't fold. **Repair** restores
 invariants 3 and 4 by splitting what fails, round after round, and fails at
 once where no split can mend it: a degenerate corner, two flat pieces
 failing a hull rule, a pair of surfaces found closer than the resolution (a

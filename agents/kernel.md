@@ -1530,15 +1530,31 @@ hole's mouth (a user's box drilled twice: three cap triangles in every
 operation, the cut refused). So `split`, when a same-level neighbour
 gets its first hanging vertex, also splits it red if it is a plane leaf
 that passes the fold check, can be split (below `MAX_REFINE_DEPTH`, not
-under the minimum size, with room for three more leaves), and has a
-straight green piece that fails the fold check or can't be built
-(`bisector_folds`, a unit of work per leaf that gets as far as the fold
-checks; a wrong plane tag isn't split for, `pieces` names it). Red
-inner edges join midpoints, the case measured safe above: the straight
-red split of every one of the 13 476 folding triangles of that sweep
-has no piece failing the fold check, and the children are tested the same way when they get
-a hanging vertex. A leaf that can't be split keeps the straight
-bisector and fails in repair as before. Every leaf gets a hanging vertex
+under the minimum size, with room for three more leaves), has a
+straight green piece that fails the fold check or can't be built, and
+has red children that all pass it (`forced_red`, a unit of work per
+leaf that gets as far as the fold checks; a wrong plane tag isn't split
+for, `pieces` names it). Red inner edges join midpoints, the case
+measured safe above: with one curved side the straight red split of
+every one of the 13 476 folding triangles of that sweep has no piece
+failing the fold check, and the children are tested the same way when
+they get a hanging vertex. With two or three curved sides a red
+child's straight inner edge can cross one (above), and the split would
+fold as the bisection does: of seeded plane triangles with two or three
+conic sides (weights `0.25..4`) given a hanging vertex, the straight
+bisector folds in 3 943 of 30 000, and the red children fail too in 18
+of those (about one in 220; none of 3 082 cap triangles with an arc
+bulging in and a second arc). Such a leaf was split red at first all
+the same, which only moved the refinement (11 times in the repair of
+the ignored `a_hole_of_sharply_weighted_conics_at_every_tolerance`,
+once in `a_cap_whose_straight_split_folds_extrudes`; the same errors
+and results either way, and the folded red pieces were about as likely
+to be mended by splitting further as the folded halves, about one in
+six each). So the
+children are tested first (`red_children`, built as `split_leaf` builds
+them without making them), and such a leaf keeps the straight bisector,
+as before the rule. A leaf that can't be split keeps it too and fails
+in repair as before. Every leaf gets a hanging vertex
 only there (a new leaf has none: its coarser neighbours were split
 first), so the test sees each such leaf once, when it gets it, and
 depends on that leaf and its records only; `split` is sequential, so the
@@ -1547,18 +1563,40 @@ neighbours, is the same at any thread count. The unit of work is charged
 before the leaf's own fold check, which is work as the pieces' are (in
 the repair of `the_second_try_is_charged_only_from_where_it_resumes`,
 whose totals the test moved by 8 units, measured, every leaf tested
-passes it, so charging after would give the same totals). Room is tested for the leaf's own three
-children only; what its split takes with it (coarser neighbours first,
-neighbours left with two hanging vertices) counts against `MAX_PATCHES`
-as any split's does. A straight half can't fail to build (its edges are
-records or straight between vertices); if one did, it would count as
-folding, so the test never fails where `pieces` wouldn't. The exact bisection
+passes it, so charging after would give the same totals). Room is
+tested for the leaf's own three children only; what its split takes
+with it (coarser neighbours first, neighbours left with two hanging
+vertices) counts against `MAX_PATCHES` as any split's does, and so can
+run out of room after the test, failing the round with `TooComplex`
+where the bisection would have left it. That can't change an
+operation's outcome: a round reaching `MAX_PATCHES` leaves has as many
+pieces, and spending a unit a piece on them on top of the work before
+overruns `MAX_WORK`, which is `MAX_PATCHES` and the most any budget
+holds, so the round fails `TooComplex` either way. The same cascade can
+reach a neighbour too small or too deep to split; none did in the
+kernel's suites or the cross-hole fuzz below. A straight half
+can't fail to build (its edges are records or straight between
+vertices); if one did, it would count as folding, so the test never
+fails where `pieces` wouldn't. The exact bisection
 (`bisect_with`, its curved inner edge in the plane) was the other
 option: it moves nothing elsewhere, but its halves meet across a curved
 edge in one plane, which the edge-neighbour rules often can't part (216
 of the 13 476 failed `EdgeNeighbours` at once), so repair had to split
 them again. The seeded booleans' tallies didn't move; for the cross
 holes see Known gaps under Booleans ("Cross holes through a box").
+
+Repair's refiner applies the rule too, where its splits reach such a
+leaf (in the kernel's suites 32 times: the revolve fuzz,
+`a_cap_folding_when_refined_is_right_or_refused` and the sharply
+weighted hole).
+There it only brings the split forward: without it the folded half
+fails the fold check and asks for its leaf's split a round later, the
+same red split, and in those suites every repair came out the same,
+triangle for triangle. Where the folded half also fails a pair rule
+against its neighbours, they are split along with it: a drilled box
+with a round post just in front of its cap
+(`repair_splits_a_rim_triangle_red_beside_one_it_splits`) is repaired
+into 118 triangles with the rule and 124 without.
 
 The `Plane` tag isn't trusted for this. Before an input leaf (level 0) is
 split or bisected as planar, its six control points are tested against the
@@ -7337,7 +7375,34 @@ slope not certified.
   `1e-4` and `1e-5` `Inconsistent` for the user's intersection and
   union. They grow where the holes' bottoms or tops are nearly level
   (their seam rulings nearly meet on the cut): with the nearer gap under
-  0.08, 17–58% of operations are refused; over it, 6%.
+  0.08, 17–58% of operations are refused; over it, 6%. After the exact
+  cuts on cones and coaxial surfaces, three of the six lost
+  intersections are still lost (of the radii and heights sweep), two
+  fail before the rule too, and one works again. All the cap triangles
+  split for the rule there are ones the intersection throws away, so
+  not splitting a leaf the operation discards (no pair, every corner on
+  the side not kept, from the round's counts) would give the
+  intersections back as they were before the rule; but the user's own
+  intersection, refused before the rule on the walls, works only with
+  it, so the rule stays as it is.
+  A wider fuzz (scratch, two seeds of 150 cases: the drilled box with a
+  cross hole, a slot (level or upright) across the hole, a boss on the
+  front cap beside the rim, crossing it or clear, flush or sunk, or one
+  from the side ending near the hole's wall; turned at random in 60%
+  of cases, a third moved about 100 and a third about 10 000 from the
+  origin; fits `1e-2` to `1e-4`; every operation at 1 and 8 threads,
+  held to its analytic volume within `fit · (area A + area B) / 5` and
+  the identities):
+  700 of 896 operations work (663 before the rule; none lost), the
+  same bits at 1 and 8 threads, every volume within 0.012 of that
+  bound. Left over besides the class above: intersections with a slot
+  across the hole `Invalid(Fold)` (64 of 124), and `Inconsistent` in 18
+  of the 300 cases, 17 of them about 10 000 from the origin (of 93 so
+  far out), turned or not (those tried near the origin work), all before
+  the rule too. One union of a boss from the side whose end stands in
+  the hole just under its top has a fitted band on the boss's wall with
+  an edge of weight 31 straying `1.27·fit` from the cylinder, its volume
+  and the identities right, before the rule too.
 - **Flush bosses on drilled plates**: of 150 random plates 1 thick with
   two holes and a boss standing on it, sunk from its bottom up 2 or through
   it flush with both caps (the seeded `bosses_sunk_through_drilled_plates`),
@@ -8624,7 +8689,8 @@ see `agents/features.md`, "Failures and where they are").
   by the exact blossom: see "Refinement". The region is the same; the
   exact split's curved inner edges would lie in the face's plane with both
   pieces, where no plane through the edge separates them. A flat leaf
-  whose straight green bisector would leave it is split red instead.
+  whose straight green bisector would leave it is split red instead,
+  where its red children pass the fold check.
   The `Plane` tag is tested first on every input patch split or bisected
   this way (six control points against the resolution), and a wrong one
   fails with `Invalid(Face(t))` rather than be reshaped.

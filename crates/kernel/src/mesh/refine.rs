@@ -13,7 +13,8 @@
 //!   an edge differ by at most one).
 //! - A leaf left with two or three hanging vertices is split too.
 //! - So is a leaf on a plane face left with one whose straight bisection
-//!   (below) would turn a piece inside out, where it can be split.
+//!   (below) would turn a piece inside out, where it can be split and
+//!   its red children don't.
 //!
 //! Splitting a green piece splits its leaf, so green pieces are never
 //! bisected again: every piece is a red descendant of an input patch, or
@@ -37,9 +38,11 @@
 //! it passes the fold check itself, is split red instead (its children
 //! tested the same way when they get a hanging vertex): red inner edges
 //! join midpoints, which with one curved side keeps every piece passing
-//! it. Neighbours inside a flat face stay separable by a plane through
-//! their shared edge, which an exact split's curved inner edges, lying in
-//! the face's plane with both pieces, would not be.
+//! it. With two or three a red child can fold as well, and a leaf whose
+//! children would is left bisected. Neighbours inside a flat face stay
+//! separable by a plane through their shared edge, which an exact split's
+//! curved inner edges, lying in the face's plane with both pieces, would
+//! not be.
 //! That is only right for a patch that is on its plane, so the tag isn't
 //! trusted: an input patch whose control points aren't all within the
 //! resolution of it ([`on_surface`], the test [`Mesh::check_faces`]
@@ -216,7 +219,7 @@ impl<'a> Refiner<'a> {
                         let leaf = self.leaves[n as usize].as_mut().expect("owners are leaves");
                         leaf.changed = true;
                         if self.hanging(self.leaf(n).corners).count() >= 2
-                            || self.bisector_folds(n, work)?
+                            || self.forced_red(n, work)?
                         {
                             stack.push(n);
                         }
@@ -227,16 +230,20 @@ impl<'a> Refiner<'a> {
         Ok(())
     }
 
-    /// Whether leaf `t` has exactly one hanging vertex and is a plane
-    /// leaf whose straight bisection ([`Self::straight_halves`]) would
-    /// have a piece fail the fold check where the leaf passes it, and
-    /// which can be split instead ([`Self::splittable`]). Takes a unit of
-    /// `work` for a leaf that gets as far as the fold checks (its own
-    /// included). A leaf whose plane tag is wrong isn't split for it: that
-    /// is left to [`Self::pieces`] to name. A half that can't be built
-    /// counts as folding, so the test adds no error of its own (every
-    /// half can be: its edges are records, or straight between vertices).
-    fn bisector_folds(&self, t: u32, work: &mut Work) -> Result<bool, KernelError> {
+    /// Whether leaf `t` is split red for its bisection: it has exactly one
+    /// hanging vertex, is a plane leaf passing the fold check whose
+    /// straight bisection ([`Self::straight_halves`]) would have a piece
+    /// fail it, can be split instead ([`Self::splittable`]), and its red
+    /// children ([`Self::red_children`]) all pass it. Where they don't
+    /// (two or three curved sides, a straight inner edge crossing one),
+    /// the split would fold as the bisection does, and it is left
+    /// bisected. Takes a unit of `work` for a leaf that gets as far as
+    /// the fold checks (its own included). A leaf whose plane tag is wrong
+    /// isn't split for it: that is left to [`Self::pieces`] to name. A
+    /// half that can't be built counts as folding, a child that can't as
+    /// failing, so the test adds no error of its own (every one can be:
+    /// its edges are records, halves of them, or straight).
+    fn forced_red(&self, t: u32, work: &mut Work) -> Result<bool, KernelError> {
         let leaf = self.leaf(t);
         let mut hanging = self.hanging(leaf.corners);
         let Some((i, m)) = hanging.next() else {
@@ -252,11 +259,50 @@ impl<'a> Refiner<'a> {
         if leaf.patch.fold_direction().is_none() {
             return Ok(false);
         }
-        Ok(self
+        let folds = self
             .straight_halves(leaf.corners, i, m)
             .map_or(true, |halves| {
                 halves.iter().any(|half| half.fold_direction().is_none())
-            }))
+            });
+        Ok(folds
+            && self
+                .red_children(leaf)
+                .is_ok_and(|kids| kids.iter().all(|kid| kid.fold_direction().is_some())))
+    }
+
+    /// The four red children a plane `leaf` would be split into, as
+    /// [`Self::split_leaf`] makes them (its sides halved as
+    /// [`Self::split_edge`] halves them, or by their records where they
+    /// are), without making them.
+    fn red_children(&self, leaf: &Leaf) -> Result<[Patch; 4], KernelError> {
+        let c = leaf.corners;
+        // A side's midpoint and halves, from its first corner on.
+        let side = |i: usize| -> Result<(DVec3, [Edge; 2]), KernelError> {
+            let (a, b) = (c[i], c[(i + 1) % 3]);
+            if let Some(&m) = self.mids.get(&key(a, b)) {
+                let halves = [self.edges[&key(a, m)], self.edges[&key(m, b)]];
+                return Ok((self.verts[m as usize], halves));
+            }
+            // As `split_edge` halves it, from its lower end.
+            let k = key(a, b);
+            let halves = self.conic(k.0, k.1).split_half()?;
+            let [x, y] = halves.map(|h| Edge {
+                ctrl: h.c,
+                weight: h.w,
+            });
+            Ok((halves[0].p1, if k.0 == a { [x, y] } else { [y, x] }))
+        };
+        let [(m01, h0), (m12, h1), (m20, h2)] = [side(0)?, side(1)?, side(2)?];
+        let p = c.map(|v| self.verts[v as usize]);
+        let s = Edge::straight;
+        let child =
+            |q: [DVec3; 3], e: [Edge; 3]| Patch::new(q, e.map(|e| e.ctrl), e.map(|e| e.weight));
+        Ok([
+            child([p[0], m01, m20], [h0[0], s(m01, m20), h2[1]])?,
+            child([m01, p[1], m12], [h0[1], h1[0], s(m12, m01)])?,
+            child([m20, m12, p[2]], [s(m20, m12), h1[1], h2[0]])?,
+            child([m01, m12, m20], [s(m01, m12), s(m12, m20), s(m20, m01)])?,
+        ])
     }
 
     /// Whether `leaf` may be split: it is less than [`MAX_REFINE_DEPTH`]

@@ -277,6 +277,12 @@ fn straight_bisection_folds(patch: &Patch, side: usize) -> bool {
 /// apex above its centroid, the base on the plane face. The base is
 /// triangle 0 and the triangle across its side `i` is `i + 1`.
 fn on_a_cap(base: [DVec3; 3], arc: crate::patch::Conic3) -> Mesh {
+    on_a_cap_with(base, &[(0, arc)])
+}
+
+/// [`on_a_cap`] with each side `i` of `curved` the conic given, the
+/// others straight.
+fn on_a_cap_with(base: [DVec3; 3], curved: &[(usize, crate::patch::Conic3)]) -> Mesh {
     let mut builder = MeshBuilder::new();
     let cap = builder.face(super::super::tests::face(
         1,
@@ -288,7 +294,9 @@ fn on_a_cap(base: [DVec3; 3], arc: crate::patch::Conic3) -> Mesh {
     let wall = super::super::tests::free(&mut builder);
     let v = base.map(|p| builder.vert(p));
     let apex = builder.vert((base[0] + base[1] + base[2]) / 3.0 + DVec3::Z);
-    builder.edge(v[0], v[1], arc.c, arc.w);
+    for &(i, conic) in curved {
+        builder.edge(v[i], v[(i + 1) % 3], conic.c, conic.w);
+    }
     builder.tri(v, cap);
     for i in 0..3 {
         builder.tri([v[(i + 1) % 3], v[i], apex], wall);
@@ -380,4 +388,172 @@ fn cap_triangles_are_split_red_where_a_bisector_would_fold() {
     }
     println!("{red} of {tried} split red");
     assert!((200..=600).contains(&red), "{red} of {tried} split red");
+}
+
+#[test]
+#[allow(clippy::disallowed_methods, reason = "std maths to build inputs")]
+fn a_leaf_is_split_red_for_its_bisector_only_where_its_children_pass() {
+    // Seeded triangles on a plane with two or three sides conics of
+    // weights 0.25 to 4, passing the fold check, given a hanging vertex
+    // on one side. Where the straight bisector folds, the leaf is split
+    // red instead, so that every piece passes, but with two curved sides
+    // a red child's straight inner edge can cross one, and then a child
+    // folds too (about one in 220 of them): such a leaf was split red all
+    // the same, which only moved the refinement. It is left bisected now,
+    // as before the rule. Where it is split, its children are the ones
+    // `red_children` tested.
+    use crate::patch::Conic3;
+    use crate::test_rng::Rng;
+    let mut rng = Rng::new(11);
+    let (mut red, mut left, mut tried) = (0, 0, 0);
+    while tried < 30_000 {
+        let p = [0, 1, 2].map(|_| DVec3::new(rng.range(-1.0, 1.0), rng.range(-1.0, 1.0), 0.0));
+        // Clockwise from above.
+        if (p[1] - p[0]).cross(p[2] - p[0]).z > -0.05 {
+            continue;
+        }
+        let first = (rng.next_u64() % 3) as usize;
+        let count = 2 + (rng.next_u64() % 2) as usize;
+        let curved: Vec<(usize, Conic3)> = (0..count)
+            .filter_map(|k| {
+                let i = (first + k) % 3;
+                let (a, b) = (p[i], p[(i + 1) % 3]);
+                let across = DVec3::new(a.y - b.y, b.x - a.x, 0.0);
+                let c =
+                    (a + b) / 2.0 + across * rng.range(-0.3, 0.3) + (b - a) * rng.range(-0.2, 0.2);
+                let w = rng.log_range(0.25, 4.0);
+                Conic3::new(a, c, w, b).ok().map(|conic| (i, conic))
+            })
+            .collect();
+        let mesh = on_a_cap_with(p, &curved);
+        let base = mesh.patch(0);
+        if mesh.check(&TOL).is_err() || base.fold_direction().is_none() {
+            continue;
+        }
+        for side in 0..3 {
+            tried += 1;
+            let mut refiner = Refiner::new(&mesh, TOL.resolution(), 0.0);
+            let kids = refiner.red_children(refiner.leaf(0)).unwrap();
+            let kids_pass = kids.iter().all(|k| k.fold_direction().is_some());
+            let folds = straight_bisection_folds(&base, side);
+            split(&mut refiner, &[side as u32 + 1]);
+            let pieces = refiner.pieces().unwrap();
+            let mine: Vec<&Piece> = pieces.iter().filter(|p| p.face == 0).collect();
+            let what = format!("{p:?}, {curved:?}, side {side}");
+            if refiner.leaves[0].is_none() {
+                assert!(folds && kids_pass, "{what}: split red");
+                red += 1;
+                let made: Vec<Patch> = mine.iter().map(|p| p.patch).collect();
+                assert_eq!(made, kids, "{what}");
+                assert!(
+                    mine.iter().all(|p| p.patch.fold_direction().is_some()),
+                    "{what}"
+                );
+            } else {
+                assert!(!folds || !kids_pass, "{what}: bisected");
+                left += usize::from(folds);
+                assert_eq!(mine.len(), 2, "{what}");
+            }
+        }
+    }
+    println!("{red} split red, {left} left bisected though folding, of {tried}");
+    assert!(red >= 3000 && (5..=60).contains(&left), "{red}, {left}");
+}
+
+/// `a` and `b` as one mesh, `b`'s vertices and triangles after `a`'s.
+fn both(a: &Mesh, b: &Mesh) -> Mesh {
+    let mut builder = MeshBuilder::new();
+    for (mesh, base) in [(a, 0), (b, a.verts().len() as u32)] {
+        for &p in mesh.verts() {
+            builder.vert(p);
+        }
+        let faces: Vec<u32> = mesh.faces().iter().map(|&f| builder.face(f)).collect();
+        for t in 0..mesh.tris().len() {
+            let c = mesh.corners(t as u32).map(|v| v + base);
+            let patch = mesh.patch(t);
+            for i in 0..3 {
+                builder.edge(c[i], c[(i + 1) % 3], patch.c[i], patch.w[i]);
+            }
+            builder.tri(c, faces[mesh.tris()[t].face as usize]);
+        }
+    }
+    builder.build().unwrap()
+}
+
+#[test]
+#[allow(clippy::disallowed_methods, reason = "std maths to build inputs")]
+fn repair_splits_a_rim_triangle_red_beside_one_it_splits() {
+    // Repair's own refiner meets the rule too: the drilled box with a
+    // round post standing 0.002 in front of its front cap, beside the cap
+    // triangle across the side opposite the rim's seam vertex. The post's
+    // quarter arcs start at 45°, so its control hull reaches 0.008 past
+    // its wall, through the cap's plane: repair splits that cap
+    // triangle and the post until they are apart, and the cap triangle
+    // at the seam is left with a hanging vertex whose straight bisector
+    // would fold. It is split red at once. Splitting it only for its
+    // folded half a round later passes too, with 124 triangles to these
+    // 118: the folded half is split along with what it fails against.
+    use crate::patch::Conic2;
+    use crate::{Frame, Loop, Profile, Segment, extrude};
+    use glam::DVec2;
+    let (r, z) = (0.8110238395601597, 1.0155982131481562);
+    let drilled = drilled_box(r, z);
+    let mesh = drilled.mesh();
+    let seam = DVec3::new(r, -1.0, z);
+    let corner = DVec3::new(1.0, -1.0, 2.0);
+    let at = |t: usize, q: DVec3| mesh.patch(t).p.iter().position(|&v| v.distance(q) < 1e-9);
+    let t = (0..mesh.tris().len())
+        .find(|&t| {
+            let patch = mesh.patch(t);
+            patch.p.iter().all(|v| v.y == -1.0)
+                && at(t, seam).is_some()
+                && at(t, corner).is_some()
+                && patch.w.iter().any(|&w| w < 1.0)
+        })
+        .expect("the cap triangle");
+    let corners = mesh.corners(t as u32);
+    let o = at(t, seam).unwrap();
+    let (x, y) = (corners[(o + 1) % 3], corners[(o + 2) % 3]);
+    let n = (0..mesh.tris().len())
+        .find(|&u| {
+            let k = mesh.corners(u as u32);
+            (0..3).any(|i| k[i] == y && k[(i + 1) % 3] == x)
+        })
+        .expect("the neighbour");
+    // The post: radius 0.02, 0.1 tall, centred under the neighbour's
+    // corner off the cap triangle, a third of the way to its centroid.
+    let p = mesh.patch(n).p;
+    let far = *p.iter().find(|&&v| at(t, v).is_none()).unwrap();
+    let target = far + ((p[0] + p[1] + p[2]) / 3.0 - far) * 0.3;
+    let (radius, gap) = (0.02, 0.002);
+    let c = DVec2::new(target.x, -1.0 - radius - gap);
+    let s = radius * 0.5f64.sqrt();
+    let q = [(s, s), (-s, s), (-s, -s), (s, -s)].map(|(x, y)| c + DVec2::new(x, y));
+    let circle = Loop {
+        segments: (0..4)
+            .map(|i| Segment {
+                conic: Conic2::arc_between(c, radius, q[i], q[(i + 1) % 4]).unwrap(),
+                curve: 1,
+            })
+            .collect(),
+    };
+    let profile = Profile {
+        loops: vec![circle],
+    };
+    let (lo, hi) = (target.z - 0.05, target.z + 0.05);
+    let post = extrude(&profile, &Frame::XY, lo, hi, 9, &TOL, &Budget::DEFAULT).unwrap();
+    let scene = both(mesh, post.mesh());
+    assert_eq!(scene.check(&TOL), Err(CheckError::Hull(n as u32, 60)));
+    let repaired =
+        crate::par::assert_deterministic(|| scene.clone().repair(&TOL, &Budget::DEFAULT));
+    let repaired = repaired.unwrap();
+    assert_eq!(repaired.check(&TOL), Ok(()));
+    // The cap triangle's four red children are there, whole.
+    let refiner = Refiner::new(mesh, TOL.resolution(), 0.0);
+    let kids = refiner.red_children(refiner.leaf(t as u32)).unwrap();
+    for kid in kids {
+        let found = (0..repaired.tris().len()).any(|u| repaired.patch(u) == kid);
+        assert!(found, "a red child {:?} is missing", kid.p);
+    }
+    assert_eq!(repaired.tris().len(), 118);
 }
