@@ -143,7 +143,7 @@ const MIN_SLOPE: f64 = 1e-3;
 
 /// A certificate for a pair of patches (see `pairs`): where both lie on
 /// cylinders or cones ([`common_axis`]) on one axis whose meridians cross
-/// at least [`MIN_SLOPE`] apart, and one of them lies on one side of a
+/// at least [`MIN_SLOPE`] apart (and four times the axes' tilt), and one of them lies on one side of a
 /// plane through the axis (its control points do, so its hull does), they
 /// meet in no closed loop: the two surfaces meet in one curve going once
 /// round the axis (a parallel, within the resolution), which no patch on
@@ -163,11 +163,16 @@ pub(super) fn walls(forms: [&Form; 2], patches: [&Patch; 2], resolution: f64) ->
     };
     // Told before the samples: two cylinders, the commonest pair, never
     // cross.
-    let Round::Line(first) = Round::of(forms[0])? else {
+    let (Round::Line(first), Round::Line(second)) = (Round::of(forms[0])?, Round::of(forms[1])?)
+    else {
         return None;
     };
     let slope = (slope(forms[0], first.dir)? - slope(forms[1], first.dir)?).abs();
-    if slope.is_nan() || slope < MIN_SLOPE {
+    // The slope must outweigh the axes' tilt, whatever the patches' reach
+    // (which bounds the tilt only over their distance from the axis, not
+    // along it): a quarter of it leaves the cut one curve round the axis.
+    let tilt = first.dir.cross(second.dir).length();
+    if !(slope >= MIN_SLOPE && tilt <= 0.25 * slope) {
         return None;
     }
     let corners: Vec<DVec3> = patches.iter().flat_map(|p| p.p).collect();
@@ -249,6 +254,13 @@ const MAX_DEPTH: u32 = 6;
 /// two aren't on one parallel (their heights along the axis, or their
 /// distances from it, more than `resolution` apart), lie on the axis, or
 /// are half a turn apart.
+///
+/// The shorter way is the cut's: a pair decided by a certificate holds
+/// less than half of the circle between two ends (normal cones apart
+/// leave out half a circle's normals, a certified coaxial wall lies on
+/// one side of a plane through the axis, and the revolved patches turn a
+/// quarter at most), and callers keep the arcs only where they invert
+/// into the patches.
 ///
 /// Each arc's weight is `cos(Δφ/2) = |r̂x + r̂y| / 2` and its control
 /// point `m + tan²(Δφ/2)·(m − m̂)`, `r̂` the unit vectors from the axis to
@@ -356,5 +368,54 @@ mod tests {
         // Not on one parallel, or half a turn apart.
         assert!(parallel(&axis, at(0.0), at(1.0) + dir * 1e-6, 1e-9).is_none());
         assert!(parallel(&axis, at(0.0), at(std::f64::consts::PI), 1e-9).is_none());
+    }
+
+    /// A quarter of the cone round `z` with its apex at `apex` (on the
+    /// axis) and slope `tan`, between heights `h0` and `h1`, turned by
+    /// `q` about the origin: its form and its two patches.
+    fn quarter(apex: f64, tan: f64, h0: f64, h1: f64, q: glam::DQuat) -> (Form, [Patch; 2]) {
+        let ring = |h: f64| {
+            let r = tan * (h - apex);
+            let c = DVec3::new(0.0, 0.0, h);
+            let arc = Conic3::arc_between(c, r, c + DVec3::X * r, c + DVec3::Y * r).unwrap();
+            Conic3 {
+                p0: q * arc.p0,
+                c: q * arc.c,
+                w: arc.w,
+                p1: q * arc.p1,
+            }
+        };
+        let tip = q * DVec3::new(0.0, 0.0, apex);
+        let strip = crate::sweep::cone_strip(&ring(h0), &ring(h1), tip).unwrap();
+        let cos = 1.0 / (1.0 + tan * tan).sqrt();
+        let form = Form::Cone {
+            apex: tip,
+            axis: q * DVec3::Z,
+            cos,
+            sin: tan * cos,
+        };
+        (form, strip)
+    }
+
+    #[test]
+    fn walls_lean_no_further_than_their_slope() {
+        // Two cones a millimetre across crossing at `z = 0` (slopes 0.002
+        // and 0.001); the second leaning by 3e-4, within the resolution of
+        // the first over their reach and at their corners but more than
+        // a quarter of the slope between them: not certified.
+        let resolution = 1e-6;
+        let (a, pa) = quarter(-0.5, 0.002, -0.003, 0.003, glam::DQuat::IDENTITY);
+        for (lean, certified) in [(0.0, true), (3e-4, false)] {
+            let (b, pb) = quarter(
+                -1.0,
+                0.001,
+                -0.003,
+                0.003,
+                glam::DQuat::from_rotation_x(lean),
+            );
+            let found = walls([&a, &b], [&pa[0], &pb[0]], resolution);
+            assert_eq!(found.is_some(), certified, "{lean}");
+            assert!(common_axis([&a, &b], [&pa[0], &pb[0]], &[pa[0].p[0]], resolution).is_some());
+        }
     }
 }

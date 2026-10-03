@@ -3771,7 +3771,7 @@ elsewhere (see "Cutting curved faces").
 | `boolean/tests.rs` | boxes in every flush, edge-on and vertex-on configuration, tori, determinism |
 | `boolean/curved_tests.rs` | cylinders and boxes (exact), crossing cylinders, a free surface, a saddle, extrudes, chains, merging, random bars, walls over arcs with level ends |
 | `boolean/curved_tests/flush_seams.rs` | flush unions with curved rims in either order: bosses in and on plates, over holes and edges, overlapping, a flange at a shaft's foot, a slot, at millimetre scale and on a turned frame, a chain of flush joins, caps a hair apart, bosses on a rounded corner |
-| `boolean/curved_tests/cones.rs` | cones and coaxial walls, exact: a countersink upright and turned, half of one (rulings), slabs tilted through a cone, a cylinder and a cone crossing on one axis, cones through a cylinder's cap, a turned shaft joined end to end and cut by a cone, a V groove and a centre drill, random coaxial frustums against closed forms, ring tops sloping down to nearly flat |
+| `boolean/curved_tests/cones.rs` | cones and coaxial walls, exact: a countersink upright and turned, half of one (rulings), slabs tilted through a cone, a box's face square to a frustum's axis with its diagonal across the circle, a cylinder and a cone crossing on one axis, cones through a cylinder's cap, a turned shaft joined end to end and cut by a cone, a V groove and a centre drill, random coaxial frustums against closed forms, ring tops sloping down to nearly flat |
 | `boolean/curved_tests/one_face.rs` | faces on one surface after booleans: tops at a crease either side of the bar, flush stacks on turned frames far from the origin, chains of joins and cuts with every operand's names resolving, faces meeting only at a corner |
 | `boolean/curved_tests/tangent.rs` | tangent contacts: cylinders against a plate's side from outside and inside, standing on it or through its top, slots ending in, beside and across a hole, a cylinder on a cylinder (in millimetres at the default tolerance, and at unit size at the finest), unions touching along a line refused at once (a pin plugging a hole it touches inside never named so), and solids tangent to a rounded edge or the faces it runs into |
 | `boolean/seeded_tests.rs` | the seeded random suite: related pairs, parts built in chains of twenty, turned solids, near tangencies, pins and coaxial cylinders, flush bosses, bosses sunk through drilled plates |
@@ -4508,11 +4508,14 @@ pair is (the axes' nearest points within it at the patches' corners,
 their directions apart by no more over the patches' reach from the axis:
 a choice of path, not a decision); their meridians cross at slopes
 `dρ/dh` at least `MIN_SLOPE` = `1e-3` apart (two cylinders never cross,
-and are told before any sample); and one patch lies on one side of a
+and are told before any sample), and by at least four times the sine of
+the angle between the axes (the reach bounds the tilt only across the
+axis, not along it: a thin wall long along it could otherwise lean
+further than the slope, and the cut stop being one curve round it); and one patch lies on one side of a
 plane through the axis (its control points do). Then the surfaces meet
 in one curve going once round the axis, a parallel within the
 resolution (wandering in height by up to the axes' offset over the
-slope, as long as the slope outweighs their tilt), which no patch on one
+slope), which no patch on one
 side of such a plane holds whole: no closed loop, every arc runs out
 through ends. No ends is no cut; two ends one arc; more are joined in
 turn round the axis (sorted by the tangent of their angle from that
@@ -6523,7 +6526,10 @@ upright and on a frame turned and moved, all four operations against the
 closed form to `1e-12`, every patch on its plane or quadric to `1e-12`
 relative and none claim-free; half of one, the plate's side through the
 axis cutting the cone in rulings; slabs tilted through the cone at three
-angles; a cylinder and a cone crossing on one axis (under 200 patches
+angles; a box's face square to a frustum's axis cutting it in a circle
+that the face's diagonal crosses anywhere (24 placements, all four
+results to `1e-11` and every patch on its surface); a cylinder and a
+cone crossing on one axis (under 200 patches
 for their intersection); cones through a cylinder's top near its rim; a
 turned shaft of a cylinder, a cone and a cylinder joined end to end (36
 patches, one wall each), then a cone overlapping all three, a V groove
@@ -6535,7 +6541,8 @@ relative, the upright ones exact); ring tops sloping from `3e-6` to 1
 cut by a cylinder on their axis (the nearly flat ones may be refused);
 the same bits at 1 and 8 threads. Unit tests: parallels' arcs on their
 circles to `1e-14`, cone rulings from sections at the geometric mean,
-bulging curves split.
+bulging curves split, walls leaning further than a quarter of their
+slope not certified.
 
 ### Known gaps
 

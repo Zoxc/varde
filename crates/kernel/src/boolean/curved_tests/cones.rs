@@ -442,3 +442,36 @@ fn ring_tops_sloping_cut_by_a_cylinder_on_their_axis() {
         }
     }
 }
+
+#[test]
+fn cones_cut_square_to_their_axis_across_a_faces_diagonal() {
+    // A box's face square to a cone's axis cuts it in a circle, which
+    // the face's diagonal crosses anywhere (the box moved and spun about
+    // the axis): the circle's arcs by their angles, on both triangles of
+    // the face, every result against the frustum's closed form and every
+    // patch on its surface.
+    let mut rng = Rng::new(7);
+    // A frustum of a 45° cone (its apex, which revolving fits, cut off).
+    let cone = turned(&[v(0.0, 0.1), v(0.1, 0.1), v(1.5, 1.5), v(0.0, 1.5)], 2);
+    let cases = if cfg!(debug_assertions) { 3 } else { 24 };
+    for case in 0..cases {
+        let d = rng.range(0.3, 0.95);
+        let (a, b) = (rng.range(-0.5, 0.5), rng.range(-0.5, 0.5));
+        let q = DQuat::from_rotation_z(rng.range(0.0, 6.3));
+        let block = moved(&cube([-3.0 + a, -3.0 + b, d], [6.0, 6.0, 4.0]), |p| q * p);
+        // The frustum above `d`.
+        let above = PI * (1.5 - d) / 3.0 * (d * d + d * 1.5 + 1.5 * 1.5);
+        let results = all_four(&cone, &block, 1e-12);
+        volumes(
+            &format!("case {case}"),
+            &cone,
+            &block,
+            &results,
+            above,
+            1e-11,
+        );
+        for (k, solid) in results.iter().enumerate() {
+            exact(&format!("case {case} {k}"), solid, 6.0);
+        }
+    }
+}
