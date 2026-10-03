@@ -11,15 +11,16 @@
 //! are ([`Display::flatten`]) into [`RenderLines`], the points as they
 //! are; and the box around it all, for framing it. That is done once per
 //! failure, which the cache keeps made ([`KernelFailure`]). The operand
-//! faces are resolved through the answer's
-//! [`Picking`] to the mesh faces of the body each operand is drawn as,
-//! once the model is drawn ([`ErrorGeometry::resolve`]); an operand that
-//! isn't a drawn body (a feature's tool solid) names none.
+//! faces are resolved through the answer's [`Picking`] to the mesh faces
+//! of the bodies each operand is drawn as (several for a running solid
+//! that holds several, each face drawn on every one it's found on), once
+//! the model is drawn ([`ErrorGeometry::resolve`]); an operand that isn't
+//! a drawn body (a feature's tool solid) names none.
 //!
-//! Regen's own failures make theirs the same way from evidence of their
-//! own ([`ErrorGeometry::of_evidence`]): a face that can't be sketched on
-//! for not being flat, its triangles as patches; an axis line of no
-//! length, its point and the line.
+//! Regen's own failures make theirs the same way, from evidence of their
+//! own within the same caps ([`ErrorGeometry::of_evidence`]): a face that
+//! can't be sketched on for not being flat, its triangles as patches; an
+//! axis line of no length, its point and the line.
 //!
 //! It is bounded ([`ErrorGeometry::MAX_VERTICES`] and the others): past a
 //! bound the rest is left out and [`ErrorGeometry::truncated`] says so,
@@ -86,10 +87,9 @@ impl KernelFailure {
     /// `failure`, its evidence made drawable at the [`Display`] of
     /// `tolerance`, as the model is.
     pub(crate) fn new(failure: Failure, tolerance: &Tolerance) -> KernelFailure {
-        let display = Display::new(tolerance);
         KernelFailure {
             error: failure.error,
-            geometry: ErrorGeometry::new(&failure.evidence, &display).map(Arc::new),
+            geometry: ErrorGeometry::of_evidence(&failure.evidence, tolerance),
             truncated: failure.evidence.truncated,
             faces: failure.evidence.faces,
         }
@@ -98,19 +98,27 @@ impl KernelFailure {
     /// Its geometry, the operand faces pending on the bodies `operands`
     /// are made of (`[a, b]`) until [`ErrorGeometry::resolve`]; the very
     /// geometry kept where no face is pending. An operand may hold
-    /// several bodies (a combine's or a merge's running solid: the target
-    /// and the tools already united with it), each face looked for on
-    /// each of them, or none (a feature's tool, drawn as no body).
+    /// several bodies (a combine's or a merge's running solid: its target
+    /// or first body and the bodies already combined into it), or none (a
+    /// feature's tool, drawn as no body). Each face is looked for on each of its
+    /// operand's bodies and drawn on every one it's found on: the
+    /// kernel names it by key alone, and a feature that made faces on
+    /// several of them (a cut through two bodies) gives them all one key,
+    /// so which one it meant isn't known. At most
+    /// [`ErrorGeometry::MAX_PENDING`] pairs are pending, in the evidence's
+    /// order (each face on all of its operand's bodies, then the next);
+    /// past that the rest is left out, marked truncated.
     pub(crate) fn geometry(&self, operands: [&[BodyId]; 2]) -> Option<Arc<ErrorGeometry>> {
-        let pending: Vec<(BodyId, FaceKey)> = (self.faces.iter())
-            .flat_map(|&(operand, key)| {
-                let bodies = match operand {
-                    Operand::A => operands[0],
-                    Operand::B => operands[1],
-                };
-                bodies.iter().map(move |&body| (body, key))
-            })
-            .collect();
+        let mut pairs = (self.faces.iter()).flat_map(|&(operand, key)| {
+            let bodies = match operand {
+                Operand::A => operands[0],
+                Operand::B => operands[1],
+            };
+            bodies.iter().map(move |&body| (body, key))
+        });
+        let pending: Vec<(BodyId, FaceKey)> =
+            pairs.by_ref().take(ErrorGeometry::MAX_PENDING).collect();
+        let left_out = pairs.next().is_some();
         if pending.is_empty() {
             return self.geometry.clone();
         }
@@ -119,6 +127,7 @@ impl KernelFailure {
             ..ErrorGeometry::default()
         });
         geometry.pending = pending;
+        geometry.truncated |= left_out;
         Some(Arc::new(geometry))
     }
 
@@ -170,27 +179,24 @@ impl ErrorGeometry {
     /// The largest coordinate any of it may have: as far as a model's
     /// mesh reaches.
     pub const MAX_POSITION: f32 = RenderMesh::MAX_POSITION;
+    /// The most operand faces it may hold pending on bodies before
+    /// they're resolved: each face the evidence may name on as many as
+    /// 16 bodies (an operand holding several, see
+    /// [`KernelFailure::geometry`]).
+    pub(crate) const MAX_PENDING: usize = 16 * MAX_EVIDENCE.faces;
 
-    /// Regen's own `evidence` (of a failure that isn't the kernel's, such
-    /// as a face that isn't flat) made drawable at the [`Display`] of
-    /// `tolerance`, as the model is; `None` if there's nothing to draw or
-    /// name. It names no operand faces.
+    /// `evidence` made drawable at the [`Display`] of `tolerance`, as the
+    /// model is, or `None` if there's nothing to draw or name: the
+    /// kernel's ([`KernelFailure::new`]) or regen's own (a face that
+    /// isn't flat, an axis line of no length). Its operand faces are left
+    /// to [`KernelFailure::geometry`], which knows the bodies the
+    /// operands are; regen's own evidence names none.
     pub(crate) fn of_evidence(evidence: &Evidence, tolerance: &Tolerance) -> Option<Arc<Self>> {
-        debug_assert!(
-            evidence.faces.is_empty(),
-            "regen's evidence names no operand"
-        );
-        ErrorGeometry::new(evidence, &Display::new(tolerance)).map(Arc::new)
-    }
-
-    /// `evidence` made drawable at `display`, or `None` if there's nothing
-    /// to draw or name. Its operand faces are left to
-    /// [`KernelFailure::geometry`], which knows the bodies the operands
-    /// are.
-    fn new(evidence: &Evidence, display: &Display) -> Option<ErrorGeometry> {
         if evidence.is_empty() {
             return None;
         }
+        let display = Display::new(tolerance);
+        let display = &display;
         let mut geometry = ErrorGeometry {
             truncated: evidence.truncated,
             ..ErrorGeometry::default()
@@ -213,7 +219,7 @@ impl ErrorGeometry {
             .collect();
         geometry.truncated |= evidence.sketch_curves.len() > Self::MAX_SKETCH_CURVES;
         geometry.bounds = geometry.bounds_in(None);
-        (!geometry.is_empty()).then_some(geometry)
+        (!geometry.is_empty()).then(|| Arc::new(geometry))
     }
 
     /// Adds `patches`' triangles to the mesh, each patch sampled on its
@@ -281,10 +287,10 @@ impl ErrorGeometry {
     }
 
     /// Resolves the operand faces it names to the faces of `mesh` (the
-    /// model's, as answered) of the body each operand is drawn as, by
+    /// model's, as answered) of the bodies each operand is drawn as, by
     /// `picking` (`mesh`'s tables): the face's name is a face's key or
-    /// one of its aliases, on the body `holder` gives for the operand's
-    /// (the body holding it now, `None` for one with no solid). Faces of
+    /// one of its aliases, on the body `holder` gives for each of the
+    /// operand's (the body holding it now, `None` for one with no solid). Faces of
     /// bodies not shown name none. Those faces' triangles, as the model
     /// draws them, join its mesh, so they are drawn as its patches are,
     /// and the box holds them too.

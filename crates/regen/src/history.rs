@@ -559,10 +559,11 @@ impl Run<'_> {
                 message::leave_out(message::boolean(Doing::Joining, name, failure.error), name);
             Failed::kernel(words, &failure, [&[first.body], &[]])
         })?;
-        // The bodies the running solid holds (the tool is none), whose
-        // faces a failure names on it.
-        let mut held = vec![first.body];
-        for made in rest {
+        // The bodies in the order merged: the running solid holds those
+        // up to the one being merged (the tool is none), whose faces a
+        // failure names on it.
+        let order: Vec<BodyId> = bodies.iter().map(|made| made.body).collect();
+        for (held, made) in (1..).map(|i| &order[..i]).zip(rest) {
             merged = unite(
                 boolean_key(Doing::Merging, merged.1, made.key),
                 &merged.0,
@@ -571,9 +572,8 @@ impl Run<'_> {
             .map_err(|failure| {
                 let (into, other) = (self.body_name(first.body), self.body_name(made.body));
                 let words = message::merging(into, other, failure.error);
-                Failed::kernel(words, &failure, [&held, &[made.body]])
+                Failed::kernel(words, &failure, [held, &[made.body]])
             })?;
-            held.push(made.body);
         }
         Ok(merged)
     }
@@ -686,9 +686,9 @@ impl Run<'_> {
         let solid = cache.solid(key, || {
             let profile = self.profile()?;
             let axis = axis_line(self.sketch.sketch, revolve.axis)
-                .map_err(|why| self.axis_failed(why, revolve.axis, &placement))?;
+                .map_err(|error| self.axis_failed(error, &placement))?;
             let (profile, frame, same_way) = axis_frame(&profile, &axis, &placement)
-                .map_err(|why| self.axis_failed(why, revolve.axis, &placement))?;
+                .map_err(|error| self.axis_failed(error, &placement))?;
             let sweep = match span {
                 None => Sweep::Full,
                 Some((from, to)) if same_way => Sweep::Part { from, to },
@@ -710,31 +710,20 @@ impl Run<'_> {
         Ok((solid, key))
     }
 
-    /// Why its revolve's `axis` failed, `why`, on its sketch placed at
-    /// `placement`: where the axis is a line of no length, with that
-    /// line's point and the line itself to show (nothing else of the
-    /// axis's failures has anything to show: a line that's gone isn't
-    /// anywhere).
-    fn axis_failed(&self, why: String, axis: AxisLine, placement: &Placement) -> Failed {
-        let sketch = self.sketch.sketch;
-        let start = match axis {
-            AxisLine::Curve(id) if why == message::AXIS_NO_LENGTH => match sketch.curve(id) {
-                Some(entry) => match entry.curve {
-                    Curve::Line { start, .. } => sketch.point(start).map(|point| (id, point.at)),
-                    _ => None,
-                },
-                None => None,
-            },
-            _ => None,
-        };
-        let Some((id, at)) = start else {
-            return why.into();
+    /// Why its revolve's axis gives no frame, `error`, on its sketch
+    /// placed at `placement`: a line of no length shows its point and
+    /// marks the line; the others show nothing (a line that's gone isn't
+    /// anywhere, and a profile too far from the axis is past where
+    /// anything is drawn).
+    fn axis_failed(&self, error: AxisError, placement: &Placement) -> Failed {
+        let AxisError::NoLength { at, curve } = error else {
+            return error.message().into();
         };
         let mut evidence = varde_kernel::Evidence::default();
         evidence.add_points([placement.to_world(at)]);
-        evidence.add_sketch_curves([u64::from(id.get())]);
+        evidence.add_sketch_curves(curve.map(|id| u64::from(id.get())));
         Failed {
-            message: why,
+            message: error.message().to_owned(),
             geometry: ErrorGeometry::of_evidence(&evidence, &self.tolerance),
         }
     }
@@ -835,10 +824,16 @@ pub(crate) fn place_on_face(
 
 /// What a face that can't be sketched on shows: `region` of `solid` (the
 /// face found), its triangles as patches, the first
-/// [`MAX_EVIDENCE`](varde_kernel::MAX_EVIDENCE)`.patches` of them,
-/// drawn at the [`Display`](varde_kernel::Display) of `tolerance`.
-/// By value: the solid is the body as the features before the sketch
-/// leave it, which later ones may change.
+/// [`MAX_EVIDENCE`](varde_kernel::MAX_EVIDENCE)`.patches` of them (marked
+/// truncated past that), drawn at the
+/// [`Display`](varde_kernel::Display) of `tolerance`. By value, not
+/// resolved through the picking tables as an operand face is: the solid
+/// is the body as the features before the sketch leave it, which later
+/// ones may change. Bounded as the kernel's evidence is: taking each
+/// patch costs a lookup, and drawing them is what drawing a kernel
+/// failure's patches costs, within the same caps
+/// ([`ErrorGeometry::MAX_VERTICES`] and the others), once per placement
+/// worked out (the cache keeps it).
 fn face_geometry(
     solid: &Solid,
     region: &varde_kernel::topology::Region,
@@ -861,20 +856,45 @@ pub(crate) struct Axis {
     pub(crate) curve: Option<Id>,
 }
 
+/// Why a revolve's axis gives no frame to turn its profile in
+/// ([`axis_line`], [`axis_frame`]), worded by [`AxisError::message`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum AxisError {
+    /// The curve it names isn't there or isn't a line any more.
+    NotFound,
+    /// The line has no length, or none a float can give a direction:
+    /// where it is in the sketch, and the line if it's one of the
+    /// sketch's curves.
+    NoLength { at: DVec2, curve: Option<Id> },
+    /// The profile moved into the axis's frame isn't within the
+    /// coordinate limit.
+    TooFar,
+}
+
+impl AxisError {
+    /// Why the revolve fails, in words.
+    pub(crate) fn message(self) -> &'static str {
+        match self {
+            AxisError::NotFound => message::AXIS_NOT_FOUND,
+            AxisError::NoLength { .. } => message::AXIS_NO_LENGTH,
+            AxisError::TooFar => message::AXIS_TOO_FAR,
+        }
+    }
+}
+
 /// The axis `axis` names in `sketch`, or why there's none: the curve it
-/// names isn't there or isn't a line any more ("axis not found"), or
-/// the line has no length.
-pub(crate) fn axis_line(sketch: &Sketch, axis: AxisLine) -> Result<Axis, String> {
+/// names isn't there or isn't a line any more ([`AxisError::NotFound`]),
+/// or the line has no length.
+pub(crate) fn axis_line(sketch: &Sketch, axis: AxisLine) -> Result<Axis, AxisError> {
     let (at, along, curve) = match axis {
         AxisLine::SketchX => (DVec2::ZERO, DVec2::X, None),
         AxisLine::SketchY => (DVec2::ZERO, DVec2::Y, None),
         AxisLine::Curve(id) => {
-            let not_found = || message::AXIS_NOT_FOUND.to_owned();
-            let entry = sketch.curve(id).ok_or_else(not_found)?;
+            let entry = sketch.curve(id).ok_or(AxisError::NotFound)?;
             let Curve::Line { start, end } = entry.curve else {
-                return Err(not_found());
+                return Err(AxisError::NotFound);
             };
-            let at = |point| (sketch.point(point).map(|point| point.at)).ok_or_else(not_found);
+            let at = |point| (sketch.point(point).map(|point| point.at)).ok_or(AxisError::NotFound);
             let (start, end) = (at(start)?, at(end)?);
             // Both within the coordinate limit, so the difference is
             // finite.
@@ -882,7 +902,7 @@ pub(crate) fn axis_line(sketch: &Sketch, axis: AxisLine) -> Result<Axis, String>
         }
     };
     if along == DVec2::ZERO {
-        return Err(message::AXIS_NO_LENGTH.to_owned());
+        return Err(AxisError::NoLength { at, curve });
     }
     Ok(Axis { at, along, curve })
 }
@@ -911,8 +931,11 @@ pub(crate) fn axis_frame(
     profile: &Profile,
     axis: &Axis,
     placement: &Placement,
-) -> Result<(Profile, Frame, bool), String> {
-    let along = (axis.along.try_normalize()).ok_or(message::AXIS_NO_LENGTH)?;
+) -> Result<(Profile, Frame, bool), AxisError> {
+    let along = (axis.along.try_normalize()).ok_or(AxisError::NoLength {
+        at: axis.at,
+        curve: axis.curve,
+    })?;
     let left = along.perp();
     let segments = || profile.loops.iter().flat_map(|lp| lp.segments.iter());
     // The side of the farthest point; the first of equals.
@@ -972,7 +995,7 @@ pub(crate) fn axis_frame(
                 conic.c.x = 0.0;
             }
             if ![conic.p0, conic.c, conic.p1].into_iter().all(within) {
-                return Err("its regions are too far from the axis to revolve".to_owned());
+                return Err(AxisError::TooFar);
             }
             segments.push(Segment {
                 conic,

@@ -498,3 +498,32 @@ fn operand_faces_go_in_whole() {
     assert_eq!(geometry.lines().points().len(), full);
     assert!(geometry.truncated());
 }
+
+/// Operand faces pending on an operand of many bodies stop at
+/// [`ErrorGeometry::MAX_PENDING`], in the evidence's order, marked
+/// truncated; up to it, nothing is left out.
+#[test]
+fn pending_faces_are_capped() {
+    let mut evidence = Evidence::default();
+    evidence.add_faces((0..MAX_EVIDENCE.faces as u64).map(|i| (Operand::A, cap(i))));
+    assert!(!evidence.truncated);
+    let failure = failure(evidence);
+    let per_face = ErrorGeometry::MAX_PENDING / MAX_EVIDENCE.faces;
+
+    let bodies = vec![BodyId::NEW; per_face];
+    let all = made(&failure, [&bodies, &[]]).unwrap();
+    assert_eq!(all.pending.len(), ErrorGeometry::MAX_PENDING);
+    assert!(!all.truncated());
+
+    let bodies = vec![BodyId::NEW; per_face + 1];
+    let capped = made(&failure, [&bodies, &[]]).unwrap();
+    assert_eq!(capped.pending.len(), ErrorGeometry::MAX_PENDING);
+    assert!(capped.truncated());
+    // Each face on all of the operand's bodies, then the next.
+    let keys: Vec<u64> = (capped.pending.iter())
+        .map(|(_, key)| key.feature)
+        .collect();
+    let whole = ErrorGeometry::MAX_PENDING / (per_face + 1);
+    assert!(keys.starts_with(&vec![0; per_face + 1]));
+    assert_eq!(keys[whole * (per_face + 1) - 1], whole as u64 - 1);
+}

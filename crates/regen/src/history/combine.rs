@@ -34,7 +34,7 @@ use crate::message::{self, Doing};
 /// ([`note_merge`]), unless the combine keeps them, when they stay as
 /// they were. A step that fails shows the kernel's evidence, the faces
 /// it names of the running solid looked for on the target and the tools
-/// united with it so far, and those of the tool on the tool.
+/// combined into it so far, and those of the tool on the tool.
 pub(super) fn evaluate(
     document: &Document,
     combine: &Combine,
@@ -77,13 +77,13 @@ pub(super) fn evaluate(
         BodyOp::Intersect => (Op::Intersection, Doing::Intersecting),
     };
     let target_name = name(target.body);
-    // A step on the running solid, filed under its key, which holds the
-    // bodies `held` (the target and the tools united with it so far, whose
-    // faces a failure names on it).
-    let mut step = |(solid, key): &(Arc<Solid>, Key), held: &[BodyId], tool: &BodySolid| {
-        let next = boolean_key(doing, *key, tool.key);
+    // A step on the running solid: on success it holds the tool too; on
+    // failure it stays as it was. A failure names faces of the running
+    // solid on every body it holds.
+    let mut step = |running: &mut Running, tool: &BodySolid| {
+        let next = boolean_key(doing, running.key, tool.key);
         let result = cache.boolean(next, || {
-            varde_kernel::boolean(solid, &tool.solid, op, tolerance, &Budget::DEFAULT)
+            varde_kernel::boolean(&running.solid, &tool.solid, op, tolerance, &Budget::DEFAULT)
                 .map_err(|failure| KernelFailure::new(failure, tolerance))
         });
         let words = match doing {
@@ -94,22 +94,25 @@ pub(super) fn evaluate(
         let tool_name = name(tool.body);
         let solid = result.map_err(|failure| {
             let message = message::combining(words, target_name, tool_name, failure.error);
-            Failed::kernel(message, &failure, [held, &[tool.body]])
+            Failed::kernel(message, &failure, [&running.held, &[tool.body]])
         })?;
         if solid.is_empty() {
             return Err(message::combine_emptied(words, target_name, tool_name).into());
         }
-        Ok((solid, next))
+        running.solid = solid;
+        running.key = next;
+        running.held.push(tool.body);
+        Ok(())
     };
-    let mut running = (Arc::clone(&target.solid), target.key);
-    let mut held = vec![target.body];
+    let mut running = Running {
+        solid: Arc::clone(&target.solid),
+        key: target.key,
+        held: vec![target.body],
+    };
     let mut failed = Vec::new();
     for &tool in &tools {
-        match step(&running, &held, tool) {
-            Ok(next) => {
-                running = next;
-                held.push(tool.body);
-            }
+        match step(&mut running, tool) {
+            Ok(()) => {}
             Err(error) if op == Op::Union => failed.push((tool, error)),
             Err(error) => return Err(error),
         }
@@ -119,14 +122,13 @@ pub(super) fn evaluate(
     // worked came before the failures).
     if failed.len() < tools.len() {
         for (tool, _) in std::mem::take(&mut failed) {
-            running = step(&running, &held, tool)?;
-            held.push(tool.body);
+            step(&mut running, tool)?;
         }
     }
     if let Some((_, error)) = failed.into_iter().next() {
         return Err(error);
     }
-    let (solid, key) = running;
+    let Running { solid, key, .. } = running;
     let into = target.body;
     if !combine.keep_tools {
         let merging: Vec<BodyId> = std::iter::once(into)
@@ -143,4 +145,15 @@ pub(super) fn evaluate(
         };
     }
     Ok(())
+}
+
+/// A combine's running solid: the target's, with the tools united with,
+/// taken from or intersected with it so far.
+struct Running {
+    solid: Arc<Solid>,
+    /// What it's filed under.
+    key: Key,
+    /// The bodies it holds, the target and those tools, in that order:
+    /// where the faces a failing step names of it are looked for.
+    held: Vec<BodyId>,
 }

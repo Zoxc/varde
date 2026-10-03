@@ -526,8 +526,7 @@ impl PickIndex {
 
     /// Whether `key` names face `face`, as its key or an alias.
     fn named(&self, face: u32, key: &FaceKey) -> bool {
-        (self.picking.faces().get(face as usize))
-            .is_some_and(|face| face.key == *key || face.aliases.binary_search(key).is_ok())
+        (self.picking.faces().get(face as usize)).is_some_and(|face| face.named(key))
     }
 
     /// Of `found`, ascending, the only one, or the one at the least

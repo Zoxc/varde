@@ -188,6 +188,13 @@ pub struct PickFace {
     pub summary: Summary,
 }
 
+impl PickFace {
+    /// Whether `key` names it, as its key or one of its aliases.
+    pub fn named(&self, key: &FaceKey) -> bool {
+        self.key == *key || self.aliases.binary_search(key).is_ok()
+    }
+}
+
 /// A corner of the model: a vertex of a body's solid where three or more
 /// of its faces meet.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]

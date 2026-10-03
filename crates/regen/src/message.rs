@@ -35,6 +35,10 @@ pub(crate) const AXIS_NOT_FOUND: &str = "axis not found";
 /// at one place).
 pub(crate) const AXIS_NO_LENGTH: &str = "its axis line has no length";
 
+/// Why a revolve fails: its regions, moved into the axis's frame, are
+/// past the coordinate limit.
+pub(crate) const AXIS_TOO_FAR: &str = "its regions are too far from the axis to revolve";
+
 /// What a feature was doing with a body when the kernel gave up.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Doing {
