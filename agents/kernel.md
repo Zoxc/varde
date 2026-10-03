@@ -1958,7 +1958,10 @@ tessellation too).
 - **Along rulings** (`along_rulings`). On a patch of a cylinder or cone
   (`Form::Cylinder`, `ConicCylinder`, `Cone`) with exactly one straight
   edge (its control point on the line through its ends, within `1e-12`
-  of its span), that edge is a ruling and the other two curved edges get
+  of its span or `1e-14` of its largest coordinate, `in_line`: built or
+  moved far out, a straight edge keeps its control point on its line only
+  to the rounding there, and a short one then lost the evened counts),
+  that edge is a ruling and the other two curved edges get
   the larger of their counts, through every chain of such edges (a
   union–find over the edges, each chain at its most; the counts only
   grow, whatever the order): an extruded wall's bottom, its patches'
@@ -2015,7 +2018,9 @@ tessellation too).
   **straight side**, is drawn without inner points when the lines across
   it parallel to that side are straight (`ruled`: the side itself is a
   line, its middle within a billionth of its length of the line through
-  its ends, and the lines a quarter, half and three quarters of the way
+  its ends or the rounding there, as for the rulings above; a disc
+  5e-4 thick moved 2e5 out lost its strips to that and drew twice the
+  triangles; and the lines a quarter, half and three quarters of the way
   to the opposite corner each have the patch at their middle within a
   sixteenth of the chord of the line through their ends; only `+ − × ÷
   √`). The side is held to a line, not to the chord: a cut piece of a
@@ -2241,7 +2246,9 @@ strips (not a short arc of one segment, not a ball's patch); a cylinder
 less a cylinder, less a slot and a spindle's cones, and cylinders 0.05
 to 500 high drawn on grids as if they had no ruling side, are within
 1.05 chords by the ring's diagonals alone, the same at 1 and 8 threads;
-a thin half cylinder's quadric walls tile; the round solids' and a cut
+a thin half cylinder's quadric walls tile; a thin disc and a turned tube
+moved 2e5 out have the counts, strips and triangles they have at the
+origin; the round solids' and a cut
 cylinder's triangles drawn, welded and measured are the same, to the
 bit; a refined level counts what it makes; a part torus meets
 its exact limits and fails one under each. Faces and edges: a box's 6 faces of 2 triangles are its 6

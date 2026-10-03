@@ -1543,3 +1543,63 @@ fn a_cylinder_s_walls_weld_into_a_prism() {
         }
     }
 }
+
+/// A wall moved far out is drawn as it is at the origin: its rulings are
+/// straight to the rounding there, which a test relative to their length
+/// alone missed on a thin wall (a disc 5e-4 thick, 2e5 out, lost its
+/// strips and drew twice the triangles) and on a turned tube's rulings
+/// (their counts no longer evened out).
+#[test]
+fn a_wall_far_out_is_drawn_as_at_the_origin() {
+    use crate::profile::tests::{circle, rect};
+    use crate::{Frame, Profile, Sweep};
+    let v = glam::DVec2::new;
+    let frame = Frame {
+        origin: DVec3::new(1.0, 2.0, -3.0),
+        x: DVec3::new(0.0, 0.6, 0.8),
+        y: DVec3::X,
+    };
+    let disc = crate::extrude(
+        &Profile {
+            loops: vec![circle(v(0.0, 0.0), 0.06, 1, false)],
+        },
+        &frame,
+        0.0,
+        5e-4,
+        3,
+        &TOL,
+        &Budget::DEFAULT,
+    )
+    .unwrap();
+    let tube = crate::revolve(
+        &Profile {
+            loops: vec![rect(v(0.1, 0.0), v(0.13, 0.05), 1)],
+        },
+        &frame,
+        Sweep::Full,
+        4,
+        &TOL,
+        &Budget::DEFAULT,
+    )
+    .unwrap();
+    let display = Display::default();
+    let away = crate::Motion::translation(DVec3::new(2.1e5, -1.3e5, 0.7e5)).unwrap();
+    for (name, solid) in [("disc", disc), ("tube", tube)] {
+        let far = solid
+            .transformed(&away, None, &TOL, &Budget::DEFAULT)
+            .unwrap();
+        let [here, there] = [&solid, &far].map(|s| {
+            Plan::new(s.mesh(), &display, &Limits::RENDER)
+                .unwrap()
+                .unwrap()
+        });
+        let ruled = |plan: &Plan| plan.levels.iter().filter(|l| l.straight.is_some()).count();
+        assert!(ruled(&here) > 0, "{name}");
+        assert_eq!(ruled(&here), ruled(&there), "{name}");
+        assert_eq!(here.counts, there.counts, "{name}");
+        assert_eq!(here.triangles, there.triangles, "{name}");
+        // Drawn in `f32` there the disc collapses; welded about its
+        // middle it doesn't.
+        far.manifold_mesh(&display).unwrap();
+    }
+}

@@ -1040,10 +1040,7 @@ pub(crate) fn segments(curve: &Conic3, chord: f64) -> u32 {
 /// the wall where a reader shades by the faces. The counts only grow,
 /// each to the most in its chain, whatever the order.
 fn along_rulings(mesh: &Mesh, curves: &[Conic3], mut counts: Vec<u32>) -> Vec<u32> {
-    let straight = |c: &Conic3| {
-        let span = c.p1 - c.p0;
-        distance_to_line(c.c, c.p0, c.p1) <= 1e-12 * span.length()
-    };
+    let straight = |c: &Conic3| in_line(c.c, c.p0, c.p1, 1e-12);
     let straight: Vec<bool> = curves.iter().map(straight).collect();
     // Union–find over the edges, each root holding its chain's most.
     let mut parent: Vec<u32> = (0..curves.len() as u32).collect();
@@ -1284,8 +1281,9 @@ fn level_error(patch: &Patch, level: &Level, outer: impl Fn(u32, u32) -> DVec3) 
 /// Whether the lines across `patch` parallel to its `side` (from corner
 /// `side` to the next) are straight, so that it can be drawn as a ruled
 /// strip ([`Level::ruled`]): the side itself a straight line, its middle
-/// within a billionth of its length of the line through its ends (a
-/// ruling, not an arc short enough for one segment), and the lines a
+/// within a billionth of its length of the line through its ends, or the
+/// rounding there ([`in_line`]; a ruling, not an arc short enough for one
+/// segment), and the lines a
 /// quarter, half and three quarters of the way to the opposite corner
 /// each with the patch at their middle within a sixteenth of `chord` of
 /// the line through their ends. A cylinder's or cone's strip patch is
@@ -1293,9 +1291,9 @@ fn level_error(patch: &Patch, level: &Level, outer: impl Fn(u32, u32) -> DVec3) 
 /// surfaces isn't. Only `+ − × ÷ √`, so every platform decides the same.
 fn ruled(patch: &Patch, side: usize, chord: f64) -> bool {
     let opposite = (side + 2) % 3;
-    // How far the patch at the middle of the line across at `across` is
-    // from the line through its ends, and that line's length.
-    let off = |across: f64| {
+    // The patch at the middle of the line across at `across`, and at its
+    // ends.
+    let line = |across: f64| {
         let at = |a: f64, b: f64| {
             let mut u = DVec3::ZERO;
             u[opposite] = across;
@@ -1304,18 +1302,26 @@ fn ruled(patch: &Patch, side: usize, chord: f64) -> bool {
             patch.eval(u)
         };
         let rest = 1.0 - across;
-        let (a, b) = (at(rest, 0.0), at(0.0, rest));
-        (
-            distance_to_line(at(rest * 0.5, rest * 0.5), a, b),
-            a.distance(b),
-        )
+        [at(rest * 0.5, rest * 0.5), at(rest, 0.0), at(0.0, rest)]
     };
     // NaN counts as bent.
-    let (straight, length) = off(0.0);
-    straight <= 1e-9 * length
-        && [0.25, 0.5, 0.75]
-            .into_iter()
-            .all(|across| off(across).0 <= chord / 16.0)
+    let [middle, a, b] = line(0.0);
+    in_line(middle, a, b, 1e-9)
+        && [0.25, 0.5, 0.75].into_iter().all(|across| {
+            let [middle, a, b] = line(across);
+            distance_to_line(middle, a, b) <= chord / 16.0
+        })
+}
+
+/// Whether `x` is on the line through `a` and `b` within `relative` of
+/// their distance, or within the rounding of points as far out as these
+/// are (`1e-14` of their largest coordinate, some 45 units in the last
+/// place): a straight edge built or moved far out keeps its middle on its
+/// line only to that, and a short wall's is then off by more than a
+/// billionth of its height. NaN counts as off it.
+fn in_line(x: DVec3, a: DVec3, b: DVec3, relative: f64) -> bool {
+    let far = a.abs().max(b.abs()).max(x.abs()).max_element();
+    distance_to_line(x, a, b) <= relative * a.distance(b) + 1e-14 * far
 }
 
 /// How a patch is sampled, from its three edges' segment counts: as one
