@@ -794,7 +794,7 @@ fn coincident_edges_cross_where_the_perturbation_parts_them() {
         let solid = extrude(&profile, frame, 0.0, 1.0, 7, &tol, &Budget::DEFAULT).unwrap();
         let input = Input::new(solid.mesh(), &tol);
         for grow in [false, true] {
-            let prims = Curved::new(&input, &input, grow, &tol);
+            let prims = Curved::new(&input, &input, grow, super::super::tie(&tol), &tol);
             for e in 0..input.edges.len() as u32 {
                 if input.straight[e as usize] {
                     continue;

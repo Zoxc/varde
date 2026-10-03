@@ -174,8 +174,9 @@ impl<'a> Flat<'a> {
             None
         } else {
             // One end on the plane and no part of the edge inside: where
-            // rounding has it. Refusing would lose results on the curved
-            // path, which has no exact retry, and none was seen wrong.
+            // rounding has it. Refusing lost results on the curved path
+            // (before it was decided again without ties too), and none
+            // was seen wrong.
             Some(at)
         }
     }

@@ -48,7 +48,9 @@
 //! lie on each other in space too, crossing by crossing where the
 //! perturbation parts them), crossings at an edge's end and crossings at
 //! a patch's side. The exact predicates take near ties within the same
-//! distance as ties, so both see one configuration.
+//! distance as ties, so both see one configuration. Where the decisions
+//! still don't fit together, the operation decides again with no ties
+//! (`tie` 0) for both kinds ([`super::tied_or_exact`]).
 
 use std::cmp::Ordering;
 
@@ -124,14 +126,16 @@ pub(super) struct Curved<'a> {
 }
 
 impl<'a> Curved<'a> {
-    /// `grow`: whether `A` grows (a union) or shrinks, for ties.
+    /// `grow`: whether `A` grows (a union) or shrinks, for ties; near
+    /// ties within `tie` taken as ties ([`super::tie`], or 0 for the
+    /// retry without them).
     pub(super) fn new(
         a: &'a Input<'a>,
         b: &'a Input<'a>,
         grow: bool,
+        tie: f64,
         tol: &Tolerance,
     ) -> Curved<'a> {
-        let tie = super::tie(tol);
         Curved {
             a,
             b,

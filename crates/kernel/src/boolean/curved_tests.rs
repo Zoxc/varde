@@ -7,7 +7,7 @@
     reason = "std maths as an independent reference, or to build inputs"
 )]
 
-use std::f64::consts::PI;
+use std::f64::consts::{FRAC_PI_2, PI};
 
 use glam::{DMat3, DQuat, DVec2, DVec3};
 
@@ -3712,7 +3712,10 @@ fn a_box_tangent_on_a_seam_is_exact_or_refused() {
     // wide. The arc round the tip took the straight chord, as above, and
     // the results keeping the cylinder had a band claiming no surface,
     // fanned from the chord to the far corner of its strip (area 2.34),
-    // and were 5.1e-6 off in volume on a sliver of 3.3e-7.
+    // and were 5.1e-6 off in volume on a sliver of 3.3e-7. Exact cuts
+    // must be right to 1e-9; the box less the cylinder, refused with near
+    // ties and decided again without them, has its cut traced and fitted
+    // (4.1e-9 off), and is held to 1e-8, still well under that error.
     let r = 1.8794419898132737;
     for s in [r, -r] {
         let (a, b, both) = cylinder_and_tilted_box(r, 6, 0.0, 1e-5, 0.0, s);
@@ -3723,9 +3726,15 @@ fn a_box_tangent_on_a_seam_is_exact_or_refused() {
             (&b, &a, Op::Difference, vb - both),
             (&a, &b, Op::Union, va + vb - both),
         ] {
+            let before = super::chain::NOT_EXACT.get();
             if let Ok(result) = boolean(x, y, op, &TOL, &Budget::DEFAULT) {
                 let got = result.volume();
-                assert!((got - want).abs() <= 1e-9, "{s} {op:?}: {got} not {want}");
+                let within = if super::chain::NOT_EXACT.get() == before {
+                    1e-9
+                } else {
+                    1e-8
+                };
+                assert!((got - want).abs() <= within, "{s} {op:?}: {got} not {want}");
                 let (_, free) = off_surface(&result);
                 assert_eq!(free, 0, "{s} {op:?}: {free} patches claim no surface");
             }
@@ -3987,4 +3996,52 @@ fn stacked_cylinders_a_step_apart_keep_the_step() {
     assert!((r.volume() - want).abs() < 1e-9, "{}", r.volume());
     assert_eq!(quadric_faces(&r), 2);
     assert!(feature_edges(&r) > feature_edges(&whole));
+}
+
+#[test]
+fn a_box_face_a_tie_off_a_ruling_is_decided_again_without_ties() {
+    // A box face along a cylinder's rulings, tangent to its wall, a
+    // fraction of a tie off it: inside the box (the union is the box) on
+    // a seam between two arcs, or outside and overlapping the wall by a
+    // tie off the seams. The face lies nearly along `UP` (its normal 84°
+    // to 87° from it), so the box's diagonal through the tangent line and
+    // the cylinder's ruling there are under a tie apart in space but up
+    // to 11 ties along `UP`: measured in
+    // space, their height is a tie, decided as crossing, which the search
+    // through the wall (the diagonal outside it) can't place:
+    // `Inconsistent`. Decided again without near ties, as flat operands
+    // are, they work.
+    let tie = super::tie(&TOL);
+    let cases = [
+        (4, 0.0, 0.7, Op::Union),
+        (4, FRAC_PI_2, 1.0, Op::Union),
+        (6, 0.0, 0.7, Op::Union),
+        (6, 1.0, -1.0, Op::Intersection),
+        (6, 1.0, -1.0, Op::Difference),
+    ];
+    for (arcs, phi, g, op) in cases {
+        let s = 1.0 + g * tie;
+        // A gap of `g` ties inside the box, or an overlap of `-g` from
+        // outside it.
+        let s = if g < 0.0 { -s } else { s };
+        let (a, b, _) = cylinder_and_tilted_box(1.0, arcs, 0.0, 0.0, phi, s);
+        // The part of the unit disk past the chord `|s|` from its centre
+        // (all of it inside the box), over the cylinder's height 5.
+        let w = s.abs().min(1.0);
+        let cap = w.acos() - w * (1.0 - w * w).sqrt();
+        let both = 5.0 * if s > 0.0 { PI } else { cap };
+        let (va, vb) = (a.volume(), b.volume());
+        let want = match op {
+            Op::Union => va + vb - both,
+            Op::Intersection => both,
+            Op::Difference => va - both,
+        };
+        let result = boolean(&a, &b, op, &TOL, &Budget::DEFAULT)
+            .unwrap_or_else(|e| panic!("{arcs} {phi} {g} {op:?}: {:?}", e.error));
+        let got = result.volume();
+        assert!(
+            (got - want).abs() <= 1e-9 * want.max(1.0),
+            "{arcs} {phi} {g} {op:?}: {got} not {want}"
+        );
+    }
 }

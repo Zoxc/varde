@@ -4010,9 +4010,32 @@ the same for its counting) an `Inconsistent` from the counting, the
 pairs' ends or the assembly is decided again with `tie` 0: exact signs
 are those of the perturbed operands, a real configuration, so they fit
 together, and the worst outcome is `Invalid`. The second try spends
-from the same budget, only on that failure. The curved path has no
-retry: the `Flat` inside `Curved` must keep the curved primitives'
-ties. Turned grid boxes with one moved by `10^±1.5` tie distances
+from the same budget, only on that failure (`boolean::tied_or_exact`).
+Operands with curved patches are decided again the same way
+(`boolean::curved_decided` with `tie` 0, `touches` the same for its
+one counting): the numerical primitives and the `Flat` inside
+`Curved` together, so the two kinds still share one tie, now none.
+That isn't a real configuration (the numerical heights go by their
+signs as rounding has them), but no tie pulls the exact and the
+numerical decisions apart, which is what most curved `Inconsistent`s
+were: a box face a fraction of a tie off a cylinder's ruling, nearly
+along `UP` (its normal 86° from it), has the box's diagonal and the
+ruling tied in height (under a tie apart in space, 11 along `UP`),
+decided as crossing, which the search through
+the wall (the diagonal outside it) can't place; without ties neither
+crosses. Measured on hair frames (cylinders seeds 201 and 202, mixed
+300; each result fed on): `Inconsistent` 120, 81 and 143 → 3, 4 and 7,
+right 4 048, 2 620 and 5 680 → 4 099, 2 654 and 5 722 (refused 679,
+431 and 1 009 → 619, 406 and 959), most of the
+rest now named for what they are (unions touching along a line
+`NotManifold`, slivers `Invalid`), no wrong volume and no identity
+past a hundredth of its bound; the near-tangent cylinders at the
+coarsest tolerance (unions within the tie, below) refused as
+`NotManifold` rather than `Inconsistent`. A retried cut can be traced
+and fitted where the tied one was exact (a box face `1e-5` off a
+cylinder's rulings, the box less it: 4.1e-9 off on a sliver of
+3.3e-7, within the fit). (Planned as no retry, the `Flat` inside
+`Curved` keeping the curved primitives' ties: see Deviations.) Turned grid boxes with one moved by `10^±1.5` tie distances
 (seed 5, 3 000 operations): 11 `Inconsistent` with the ties (60 before
 heights were measured in space, 100 before in-plane crossings, below,
 74 before the flat broad phase's margin and crossings of edges with one
@@ -4020,6 +4043,27 @@ end in the plane), of them 9 right and 2 unions refused once retried
 (`NotManifold`, `Invalid`), none `Inconsistent` and none wrong; 2 679
 of the 3 000 right (2 629 with heights along `UP`, 2 617 before
 in-plane crossings).
+
+**The exact retry inside the shortcut retries.** An operation with
+curved operands can be tried up to three times with fewer shortcuts
+(every shortcut, then joins without the coaxial certificate, then
+none: see "Tried again without the joins"), and each of those tries
+decides with near ties and, on `Inconsistent`, again with `tie` 0
+(`boolean::assembled` wraps `curved_decided` in `tied_or_exact` with
+the try's shortcuts). So the order is: every shortcut tied, every
+shortcut exact; then, if the operation took a shortcut and failed,
+fewer shortcuts tied, fewer exact; and so on. The exact retry is the
+inner one because its cause (ties that don't fit together) is the
+narrower one, and decided within the same shortcuts it changes only
+the ties: the shortcut retries then see that try's last failure, as
+they did before, and run only where it still fails. The shortcuts
+some pair took in either the tied or the exact try count as taken
+(`curved_decided` adds them to `used`), so a tied try that failed
+with a shortcut is still tried again without it. Both inner tries
+spend from the outer try's work: the first from the operation's
+budget, the later ones within their caps (what is left, or the work
+so far but at least `AGAIN`), so the inner retry at most doubles a
+try's decisions and never lifts the bound on the operation's work.
 
 **In-plane crossings.** The tie was one distance, but not measured
 the same way everywhere: `Reach` measured it square to the face's
@@ -4058,8 +4102,8 @@ moves along its own edge, so it stays on the faces beside the edge, and
 within the tie of the crossed plane, so on its patch to the resolution;
 only positions change, in floating point. If no part of the edge is
 inside, the decisions fit no configuration: `crossings` gives
-`Inconsistent`, which the flat path decides again exactly (the curved
-path, with no retry, fails). Without the widening, edges along a
+`Inconsistent`, which is decided again without ties (exactly on the
+flat path). Without the widening, edges along a
 triangle's side gave empty intervals from rounding (9 to 15 more
 refusals per 4 000 turned chains). Measured on random chains of 5
 steps, each result fed on (release): grid boxes on hair frames, 4 000
@@ -4108,7 +4152,7 @@ gave a crossing 0.17 outside its triangle that way (the other end
 the target from outside, came out on the target's side facing against
 its tag (refused by the check). Its crossing is kept inside the triangle
 as well, where some part of the edge is; where none is, it stays where
-rounding has it rather than fail (the curved path has no retry). On hair
+rounding has it rather than fail (the curved path had no retry then). On hair
 frames (with the flat broad phase's margin, see "Counting") that won
 back 30 more `Ok`s over 11 runs (grid boxes +3 to +7 a seed of 1 000
 chains, polygons +1 to +6 of 600, mixed +6, cylinders −1), refused none
@@ -4372,13 +4416,19 @@ number), `dh` as it is. Heights where shadows run along each other
 (`along_above`, the parallel cases) stay along `UP`: there is no
 crossing to measure square at. (Edges both steep in the vertical plane
 their shadows share are closer in space there than in height, so a
-window between the measures is left: none was seen.) `curved_layers`' shortcut (every point
+window between the measures is left. Probed with cylinders whose caps
+lie in a plane through `UP`, exactly or turned `1e-9` or `1e-5` off it,
+coaxial, apart, or a hair off each other within that plane, flush or a
+fraction of a tie apart, 3 456 operations: no wrong result, and tying
+`along_above` by the curves' distance in space changed nothing, 1 204
+right against 1 211. Such caps are refused far more than others: see
+Known gaps.) `curved_layers`' shortcut (every point
 of the patch's hull above the vertex, or below) compares with the
 resolution rather than the tie, the furthest a tie reaches along `UP`.
 Measured along `UP`, a cap a few ties along `UP` off a box's steep
 face was a tie for the exact `Reach` and not for the heights, and the
-two counted crossings no one configuration has (`Inconsistent`, and the
-curved path has no retry). Ties are decided as `A`'s
+two counted crossings no one configuration has (`Inconsistent`, then
+with no retry on the curved path). Ties are decided as `A`'s
 perturbation would (`A` moved by `ε·s·n_v + ε²·T2 + ε³·T3`), order by
 order, each to first order (`first_sign`: the first order `δ`, then the
 two translations, as the exact predicates take them; stopping at `δ`
@@ -4726,7 +4776,9 @@ along one direction neither certified nor joined): ellipses 591 work
 189 M (124 M, 930 M). The three left need over a million units
 refined. Results stay the same at 1 and 8 threads and on budget
 ladders (a budget under what the result took gives `TooComplex`, never
-another result).
+another result). Each of these tries is itself decided with near ties
+and, where they don't fit together, again exactly within its cap (see
+"The exact retry inside the shortcut retries").
 
 Two patches on **one surface** (their faces claim quadrics and points
 sampled on each lie on the other's within the resolution: a pin in a
@@ -6961,15 +7013,19 @@ slope not certified.
 - **Flush faces a hair off each other.** Grid boxes extruded each on
   its own frame, the frames turned alike but for `1e-11` to `1e-7` rad,
   fail about 1 operation in 11 (9 %; 10.6 % before ties were measured in
-  space, see "In-plane crossings"), polygons 12 %, cylinders 14 %. Ties
+  space, see "In-plane crossings"), polygons 12 %, cylinders 13 % (14 %
+  before the curved path was decided again without ties). Ties
   measured along `UP` were about a seventh of those refusals, nearly all
   of those whose contacts lie within the tie. Most of the rest are faces
   between the tie and the resolution apart (hair frames reach some 22
   ties), decided by their real geometry and refused by the check as
   closer than the resolution; the rate rises with the gap, to about a
   quarter of the steps whose frames are more than 16 ties apart. A
-  larger tie would take some of them; the curved path's `Inconsistent`s
-  (no exact retry) are the others. About 1 in 750 used to come
+  larger tie would take some of them. The curved path's `Inconsistent`s
+  (2.5 % of cylinder steps) are decided again without ties now: about
+  0.1 % are left, a third to a half of the rest come out right and most of the
+  others are named for what they are (`NotManifold`, `Invalid`; see
+  "Decided again exactly"). About 1 in 750 used to come
   out with a triangle facing against its plane tag (an in-plane crossing
   placed outside its triangle, see "In-plane crossings"); none does now,
   and `check` refuses any that would. What is left of the window: edges
@@ -6981,10 +7037,31 @@ slope not certified.
   in it and no part inside the triangle, planar
   patches with curved sides aren't `Input::flat` and are left alone, and
   on the curved path an edge missing its triangle fails as
-  `Inconsistent` with no exact retry. Unit cylinders tangent along a
+  `Inconsistent` and is decided again without ties. Unit cylinders tangent along a
   line on a far turned frame, one's top a tie above the other's, gave a
   difference with a cap triangle against its form; it is now refused
   (`Invalid(EdgeNeighbours)`).
+- **Caps in a plane through `UP`.** Cylinders whose caps lie in a
+  plane containing `UP` (to within some `1e-5` rad: the rims' shadows
+  are one line, or thin ellipses on it) are refused for most flush or
+  overlapping operations, mostly `Inconsistent` after the retry without
+  ties too: 1 211 of 3 456 right in a probe (frames with `x` along
+  `RAY`, `y` along `UP`, two unit cylinders stacked, coaxial, offset or
+  a hair apart within the cap's plane; 985 with heights along `UP` and
+  no curved retry), none wrong. E.g. on the frame with origin
+  `(0.3, −0.2, 0.7)`, `x = RAY/|RAY|`, `y = UP/|UP|`, circles round
+  `(0.5, 0.2)` of radius 1 extruded `0..1` and `1..2`: the union is
+  `Inconsistent`. Such planes need a normal square to `(2, 3, 32)`,
+  which no sketch plane on the axes has.
+- **A cylinder inside a box, tangent to a steep face within the tie.**
+  The union (the box) is refused (`Invalid`, `NotManifold`) where the
+  face's normal is far from `UP` (box from `cylinder_and_tilted_box`,
+  `r` 1, the face `0.3` tie off the wall, `φ` 0.3 or 1): the box's
+  edge and the cylinder's ruling, a tie apart in space, are a `Height`
+  tie, decided as touching, which the curved searches don't see.
+  Heights along `UP` decided them apart (11 ties) and the union was
+  right. A gap or overlap of a tie between a box's steep face and a
+  wall also runs out of budget for some operations (`TooComplex`).
 - **Flush faces after rounding**: flat solids flush in exact arithmetic
   but turned and moved work (2 653 of 2 700 turned grid boxes'
   operations, 349 of 359 steps of turned chains); the rest fail as
@@ -9406,3 +9483,16 @@ see `agents/features.md`, "Failures and where they are").
   Both the certificate and the parallels are a shortcut a failed
   operation is tried again without, so they lose no result the
   traced cuts got ("Tried again without the joins").
+- **The curved path is decided again without ties too.** The exact
+  retry was planned for flat operands only, the `Flat` inside `Curved`
+  keeping the curved primitives' ties, and the curved path left to
+  fail on `Inconsistent`. Once ties were measured in space, a few more
+  curved operations came out `Inconsistent` than before (5 to 8 a hair
+  run), mostly where an exact tie (a box's edge a tie off a cylinder's
+  ruling) met a search that ties nothing. Deciding the whole curved path
+  again with `tie` 0, exact and numerical primitives together, keeps
+  them on one tie and wins nearly all of the curved `Inconsistent`s
+  back as results or named refusals, with no wrong result in the hunts
+  ("Decided again exactly"). It runs inside each of the tries with
+  fewer shortcuts, within their caps ("The exact retry inside the
+  shortcut retries").

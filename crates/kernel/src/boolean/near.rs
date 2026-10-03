@@ -221,14 +221,18 @@ pub(crate) fn apart_along(
 /// where it shows an edge through a face or a vertex inside, else
 /// whether their surfaces come within the resolution ([`near`]) in the
 /// broad phase's pairs, whose margin is the resolution too. A counting
-/// whose decisions don't fit together fails with what it is about.
+/// whose decisions don't fit together is counted again with no near
+/// ties, as the operation's is ([`super::tied_or_exact`]), and fails with
+/// what it is about if that doesn't fit either.
 pub(super) fn touching(
     a: &Input,
     b: &Input,
     tol: &Tolerance,
     work: &mut Work,
 ) -> Result<bool, Failure> {
-    let counts = pairs::counted(a, b, true, tol, work)?;
+    let counts = super::tied_or_exact(super::tie(tol), work, |tie, work| {
+        pairs::counted(a, b, true, tie, tol, work)
+    })?;
     if counts.meet() {
         return Ok(true);
     }

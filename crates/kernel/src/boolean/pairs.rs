@@ -216,22 +216,25 @@ pub(super) fn refined(
     tol: &Tolerance,
     work: &mut Work,
 ) -> Result<Refined, KernelError> {
-    refined_with(a, b, grow, Shortcuts::ALL, tol, work).map_err(|f| f.error)
+    refined_with(a, b, grow, Shortcuts::ALL, super::tie(tol), tol, work).map_err(|f| f.error)
 }
 
 /// Counts `a` against `b` (whose meshes pass `check`, one of them with
 /// curved patches) and decides every pair of faces, refining both until
 /// it can: see the [module](self) docs. `grow` is whether `A` grows (a
 /// union) or shrinks, for ties; only the `shortcuts` given are taken
-/// (else such pairs are split as any other). A
+/// (else such pairs are split as any other), and near ties within `tie`
+/// taken as ties (0: none, see [`Curved::new`]). A
 /// union failing as [`BooleanError::NotManifold`] from the decisions
 /// comes with the pairs showing it, an `Inconsistent` with what doesn't
 /// fit (see [`decide`] and the counting's [`count::count`]).
+#[allow(clippy::too_many_arguments)]
 pub(super) fn refined_with(
     a: &Mesh,
     b: &Mesh,
     grow: bool,
     shortcuts: Shortcuts,
+    tie: f64,
     tol: &Tolerance,
     work: &mut Work,
 ) -> Result<Refined, Failure> {
@@ -255,7 +258,7 @@ pub(super) fn refined_with(
         let split = {
             let ia = Input::new(&meshes[0], tol);
             let ib = Input::new(&meshes[1], tol);
-            let counts = counted(&ia, &ib, grow, tol, work)?;
+            let counts = counted(&ia, &ib, grow, tie, tol, work)?;
             match decide(
                 &ia,
                 &ib,
@@ -311,10 +314,11 @@ pub(super) fn counted(
     a: &Input,
     b: &Input,
     grow: bool,
+    tie: f64,
     tol: &Tolerance,
     work: &mut Work,
 ) -> Result<Counts, Failure> {
-    count::count(a, b, &Curved::new(a, b, grow, tol), tol, work)
+    count::count(a, b, &Curved::new(a, b, grow, tie, tol), tol, work)
 }
 
 /// What a round of decisions comes to: every pair's arcs (and the

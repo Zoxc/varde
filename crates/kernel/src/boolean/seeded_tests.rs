@@ -1678,14 +1678,18 @@ fn a_cut_face_that_cant_be_triangulated_shows_its_loops() {
 
 #[test]
 fn tangent_cylinders_that_dont_fit_together_show_where() {
-    // Near-tangent cylinders at the coarsest tolerance, refused as
-    // `Inconsistent` at three kinds of place, each with what it is about,
-    // on the walls where they touch (`x` 1, `y` 0), and the same at 1 and
-    // 8 threads. (Overlaps of `1e-6`, whose pairs of walls had ends and
-    // whose edges' crossings couldn't be placed, were refused too until
-    // heights were measured in space: their intersections now work. No
-    // pair with ends was seen since among near-tangent cylinders; flat
-    // operands still give them, see
+    // Near-tangent cylinders at the coarsest tolerance, whose decisions
+    // with near ties don't fit together (`Inconsistent`) at three kinds
+    // of place, each with what it is about, on the walls where they
+    // touch (`x` 1, `y` 0), and the same at 1 and 8 threads: seen with
+    // the try with ties alone (`ONE_TRY`). Decided again without them,
+    // the unions are refused as touching along a line (`NotManifold`),
+    // the intersection is the overlap's sliver, under the fit. (Overlaps
+    // of `1e-6`, whose pairs of walls had ends and whose edges' crossings
+    // couldn't be placed, were refused too until heights were measured
+    // in space: their intersections now work with the ties. No pair with
+    // ends was seen since among near-tangent cylinders; flat operands
+    // still give them, see
     // `near_ties_that_dont_fit_together_are_decided_again_exactly`.)
     let tol = Tolerance::new(Tolerance::MAX_FIT).unwrap();
     let r = tol.resolution();
@@ -1714,8 +1718,26 @@ fn tangent_cylinders_that_dont_fit_together_show_where() {
     ] {
         let b = Solid::cylinder(DVec3::ZERO, 1.0, h, 3, &tol).unwrap();
         let b = moved(&b, &tol, |p| p + DVec3::new(2.0 + gap, 0.0, 0.5));
-        let failure =
-            assert_deterministic(|| boolean(&a, &b, op, &tol, &Budget::DEFAULT).unwrap_err());
+        let failure = assert_deterministic(|| {
+            super::ONE_TRY.set(true);
+            let tied = boolean(&a, &b, op, &tol, &Budget::DEFAULT);
+            super::ONE_TRY.set(false);
+            tied.unwrap_err()
+        });
+        assert_eq!(
+            failure.error,
+            KernelError::Boolean(BooleanError::Inconsistent)
+        );
+        match (op, boolean(&a, &b, op, &tol, &Budget::DEFAULT)) {
+            (Op::Union, Err(e)) => {
+                assert_eq!(e.error, KernelError::Boolean(BooleanError::NotManifold));
+            }
+            (Op::Intersection, Ok(both)) => {
+                let within = tol.fit() * (a.area() + b.area()) / 5.0;
+                assert!(both.volume() <= within, "{}", both.volume());
+            }
+            (_, again) => panic!("{gap} {h} {op:?}: {:?}", again.map(|s| s.volume())),
+        }
         super::evidence::tests::on_operands(&a, &b, &failure, &tol);
         let e = &failure.evidence;
         assert!(!e.truncated);

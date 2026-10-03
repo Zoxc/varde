@@ -306,6 +306,9 @@ fn boolean_within(
     // either, within as much work again as the tries so far took, or
     // `AGAIN` if more (and what is left). Unbounded, that last try ran
     // most refusals on to the budget, for a result in one of fifteen.
+    // Each try decides with near ties and, where those don't fit
+    // together, again exactly (`assembled`), both within the try's cap;
+    // `used` holds what either took.
     let mut shortcuts = Shortcuts {
         along: used.coaxial,
         coaxial: false,
@@ -508,6 +511,10 @@ thread_local! {
     /// soup on this thread, `(0, 0)` if it didn't get that far: for tests
     /// measuring thin triangles across two faces.
     static THIN_ACROSS: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+    /// Whether operations on this thread keep the failure of their try
+    /// with near ties, rather than deciding again without them
+    /// ([`tied_or_exact`]): for tests of what such a failure shows.
+    static ONE_TRY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// The result's mesh, before repair and the check, joining ends along
@@ -632,10 +639,16 @@ fn checked(
 }
 
 /// The result's triangles and faces, before the clean-up, taking only the
-/// `shortcuts` given (see [`pairs::refined_with`]), and setting `used` to
+/// `shortcuts` given (see [`pairs::refined_with`]), and adding to `used`
 /// those some pair took. A union
 /// of walls touching along a line comes with the pairs of faces showing
-/// it, a cut face that can't be triangulated with its loops.
+/// it, a cut face that can't be triangulated with its loops. Decisions
+/// with near ties that don't fit together
+/// ([`BooleanError::Inconsistent`]) are made again without them, flat
+/// operands' or curved ones' ([`flat_soup`]), with the same `shortcuts`
+/// and from the same `work`: the exact retry sits inside each of
+/// [`boolean_within`]'s tries with fewer shortcuts, so it is bounded by
+/// that try's cap.
 fn assembled(
     a: &Solid,
     b: &Solid,
@@ -648,39 +661,61 @@ fn assembled(
     #[cfg(test)]
     THIN_ACROSS.set((0, 0));
     let (ia, ib) = (Input::new(a.mesh(), tol), Input::new(b.mesh(), tol));
-    let grow = op == Op::Union;
     let (soup, faces) = if ia.curved || ib.curved {
-        // Counted and decided pair by pair, the operands refined where a
-        // pair needs it.
-        let refined = pairs::refined_with(a.mesh(), b.mesh(), grow, shortcuts, tol, work)?;
-        *used = refined.used;
-        let (ra, rb) = (Input::new(&refined.a, tol), Input::new(&refined.b, tol));
-        let prims = curved::Curved::new(&ra, &rb, grow, tol);
-        let refinement = assemble::Refinement {
-            tree: [&refined.tree[0], &refined.tree[1]],
-            leaf: [&refined.leaf[0], &refined.leaf[1]],
-        };
-        let mut took = false;
-        let assembled = assemble::assemble(
-            op,
-            &ra,
-            &rb,
-            &refined.counts,
-            &refined.arcs,
-            &prims,
-            tol,
-            Some(&refinement),
-            shortcuts.coaxial,
-            &mut took,
-            work,
-        );
-        // Taken even where the cut faces then fail.
-        used.coaxial |= took;
-        assembled?
+        tied_or_exact(tie(tol), work, |tie, work| {
+            curved_decided(a, b, op, shortcuts, used, tie, tol, work)
+        })?
     } else {
         flat_soup(op, &ia, &ib, tie(tol), tol, work)?
     };
     Ok((soup, faces))
+}
+
+/// [`assembled`]'s one try for operands with curved patches, near ties
+/// within `tie` taken as ties (0: none), taking only the `shortcuts`
+/// given: counted and decided pair by pair, the operands refined where a
+/// pair needs it. Adds the shortcuts some pair took to `used`, so that
+/// after the tied try and the exact one it holds what either took: a
+/// tied try that took one and failed is reason enough to try the
+/// operation again without it ([`boolean_within`]).
+#[allow(clippy::too_many_arguments)]
+fn curved_decided(
+    a: &Solid,
+    b: &Solid,
+    op: Op,
+    shortcuts: Shortcuts,
+    used: &mut Shortcuts,
+    tie: f64,
+    tol: &Tolerance,
+    work: &mut Work,
+) -> Result<(cleanup::Soup, Vec<Face>), Failure> {
+    let grow = op == Op::Union;
+    let refined = pairs::refined_with(a.mesh(), b.mesh(), grow, shortcuts, tie, tol, work)?;
+    used.along |= refined.used.along;
+    used.coaxial |= refined.used.coaxial;
+    let (ra, rb) = (Input::new(&refined.a, tol), Input::new(&refined.b, tol));
+    let prims = curved::Curved::new(&ra, &rb, grow, tie, tol);
+    let refinement = assemble::Refinement {
+        tree: [&refined.tree[0], &refined.tree[1]],
+        leaf: [&refined.leaf[0], &refined.leaf[1]],
+    };
+    let mut took = false;
+    let assembled = assemble::assemble(
+        op,
+        &ra,
+        &rb,
+        &refined.counts,
+        &refined.arcs,
+        &prims,
+        tol,
+        Some(&refinement),
+        shortcuts.coaxial,
+        &mut took,
+        work,
+    );
+    // Taken even where the cut faces then fail.
+    used.coaxial |= took;
+    assembled
 }
 
 /// The mesh of the assembled `soup` and `faces`, cleaned (unfolding
@@ -924,9 +959,12 @@ fn aliases(
 /// [`BooleanError::Inconsistent`]. Exact decisions (`tie` 0) are those
 /// of the perturbed operands, a real configuration, so they fit
 /// together; at worst the result fails `check`. The second try spends
-/// from the same `work`, and only on that failure. Only flat operands:
-/// the `Flat` inside the curved primitives keeps their ties, which the
-/// numerical primitives share. The failure is the last try's.
+/// from the same `work`, and only on that failure. The failure is the
+/// last try's. Operands with curved patches are decided again the same
+/// way ([`assembled`]), the numerical primitives and the `Flat` inside
+/// them together, so they still share one tie: their decisions are then
+/// the numbers' own, where rounding can still part them, but no tie
+/// pulls the two kinds apart.
 fn flat_soup(
     op: Op,
     ia: &Input,
@@ -949,6 +987,10 @@ fn tied_or_exact<T>(
     work: &mut Work,
     mut decided: impl FnMut(f64, &mut Work) -> Result<T, Failure>,
 ) -> Result<T, Failure> {
+    #[cfg(test)]
+    if ONE_TRY.get() {
+        return decided(tie, work);
+    }
     match decided(tie, work) {
         Err(f) if f.error == KernelError::Boolean(BooleanError::Inconsistent) && tie > 0.0 => {
             decided(0.0, work)

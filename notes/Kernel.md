@@ -346,8 +346,10 @@ part cleanly). The perturbed operands are a real configuration in general
 position, so every decision fits the others. Near ties within the tie
 distance are decided as the exact tie they stand for, the distance always
 measured in space between the things a decision is about (a point and a
-plane, two edges square to both, never along the projection), and flat operands that
-come out `Inconsistent` are decided again with exact signs. Curved
+plane, two edges square to both, never along the projection), and operands that
+come out `Inconsistent` are decided again without near ties: flat ones with
+exact signs, curved ones as the numbers have them, within each try
+with fewer shortcuts (above) and its cap. Curved
 primitives decide their ties by the same perturbation to first order in each
 power. Curved shadow crossings are derived from shared ray tests rather than
 solved pair by pair, so the counting's balance holds by construction.
@@ -540,8 +542,8 @@ faces above and round it; a pair of faces whose ends don't join, with
 both patches and the ends; a crossing off the face it crosses; an arc
 with no curve near the true cut, with its ends and the curve refused;
 or a cut face whose boundary doesn't close, with that boundary. Faces
-are given as patches and by the operand's face name. After the flat
-retry the evidence is the second try's. The rest carry none:
+are given as patches and by the operand's face name. After the retry
+without near ties the evidence is the second try's. The rest carry none:
 `TooComplex`, a bad parameter (`Patch`), an empty profile, and what
 `assemble`'s and the transforms' own checks refuse.
 
