@@ -295,9 +295,11 @@ fn free_area(solid: &Solid) -> f64 {
 }
 
 /// Checks each of `results` against its true volume in `want`: within a
-/// tenth of the fit tolerance times its claim-free area, the bound a
-/// fitted cut keeps (measured here at 0.016–0.020 of it). Returns the
-/// bounds.
+/// tenth of the fit tolerance times its claim-free area. What a fitted
+/// cut promises is the fit times that area (every band within the fit);
+/// the tenth pins what it keeps, measured at 0.016–0.020 (a volume
+/// error is the bands' mean deviation, signed, far under their worst).
+/// Returns the bounds.
 fn within_bands(name: &str, results: &[Solid], want: &[f64]) -> Vec<f64> {
     results
         .iter()
@@ -383,15 +385,19 @@ fn a_thin_bar_across_a_round_is_within_its_bands() {
             .fold(f64::INFINITY, f64::min)
     };
     for (k, solid) in results.iter().enumerate() {
-        // The bands within half the fit tolerance of their cylinders,
-        // the rest exact, every vertex within a quarter of it.
+        // The bands within the fit tolerance of their cylinders (the
+        // rounds halve a band's cut while it strays past half the fit,
+        // but keep a last round anywhere within it; measured 0.18 of
+        // it), the rest exact, and every vertex within the fit of a
+        // cylinder or plane: the cut's are on both, but a vertex a
+        // round adds on a band is only on the band.
         let off = free_off(solid, &of);
-        assert!(off <= TOL.fit() / 2.0, "result {k}: a band {off:e} off");
+        assert!(off <= TOL.fit(), "result {k}: a band {off:e} off");
         let (worst, free) = off_surface(solid);
         assert!(free > 0);
         assert!(worst <= 1e-12 * 4.0, "result {k}: {worst:e}");
         for &p in solid.mesh().verts() {
-            assert!(on(p) <= TOL.fit() / 4.0, "result {k}: {p}");
+            assert!(on(p) <= TOL.fit(), "result {k}: {p}");
         }
     }
 }
@@ -403,9 +409,6 @@ fn a_thin_bar_across_a_chained_round_on_hair_frames() {
     // own frame, the place's turned by a hair; then a bar of 0.25 along
     // `x` crossing the round's wall. Its identities missed `1e-5·(|a| +
     // |b|)`, but each result is within its bands' bound of the truth.
-    if cfg!(debug_assertions) {
-        return;
-    }
     let frame = |o: [f64; 3], x: [f64; 3], y: [f64; 3]| Frame {
         origin: DVec3::from(o),
         x: DVec3::from(x),
@@ -530,8 +533,9 @@ fn a_thin_bar_across_a_chained_round_on_hair_frames() {
     within_bands("chained", &results, &want);
     let of: Vec<_> = walls(&a).into_iter().chain(walls(&bar)).collect();
     for (k, solid) in results.iter().enumerate() {
+        // Within the fit, as above; measured 0.18 of it.
         let off = free_off(solid, &of);
-        assert!(off <= TOL.fit() / 2.0, "result {k}: a band {off:e} off");
+        assert!(off <= TOL.fit(), "result {k}: a band {off:e} off");
     }
 }
 

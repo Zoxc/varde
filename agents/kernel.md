@@ -5038,9 +5038,14 @@ over `0..1` and one over `0..2`, `Invalid(Hull)` too).
   errors, not their difference (a difference has its own conic, the
   crease turning with `B`). A bar of radius 0.25 across a round of 0.75
   at the default fit: every result 2–3e-5 off, the identity 4.7e-5,
-  every patch within `1.76e-4` of the true surfaces, every volume within
+  every patch within `1.8e-4` of the true surfaces, every volume within
   0.02 of the fit times its claim-free area
-  (`a_thin_bar_across_a_round_is_within_its_bands`). Since the error
+  (`a_thin_bar_across_a_round_is_within_its_bands`). The promise is the
+  fit times the bands' area; the tests pin a tenth of it, as they do the
+  volumes of crossing cylinders. The bands they hold only to the fit
+  tolerance and the vertices to the fit too: a round may stop with a
+  band anywhere under it, and a vertex a round adds on a band (not on
+  the cut) is only on the band. Since the error
   grows with the cut's length and the bands' width, not with the
   volumes, a bound relative to the volumes is wrong for fitted cuts: a
   thin bar makes a long cut for a small volume. Fitting the cuts
@@ -6341,11 +6346,12 @@ second's patches and 16), and the app's example plate joined again
 taller in the regen tests; crossing cylinders (volumes against a Simpson
 integral within a tenth of the fit tolerance times the area, the cut's
 vertices on both cylinders within a quarter of it, only the bands
-fitted); a thin bar across a thicker round, on the world frame and
-(release only) on a fuzzing case's hair frames after a chain of
-joins (each result's volume within a tenth of the fit times its
-claim-free area, measured at 0.016–0.020; the bands within half the
-fit of their cylinders; see "Volumes with fitted cuts"); a pin through a plate's hole wall (upright cylinders meeting in
+fitted); a thin bar across a thicker round, on the world frame and on
+a fuzzing case's hair frames after a chain of joins (each result's
+volume within a tenth of the fit times its claim-free area, measured
+at 0.016–0.020; the bands within the fit of their cylinders, measured
+at 0.18 of it; see "Volumes with fitted cuts"); a pin through a
+plate's hole wall (upright cylinders meeting in
 lines, exact); a boss joined flush on a plate; a block through the
 plate's hole, and one whose side runs exactly through a vertex of the
 plate's caps (a tie); a round octahedron cut through its middle and with
