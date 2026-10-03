@@ -15,7 +15,7 @@ use varde_sketch::{Curve, Id, Sketch};
 use crate::extrude::region_name;
 use crate::icons::Icon;
 use crate::operation_panel::{
-    BodyTarget, Candidate, OperationKind, PanelHover, Parts, TypedField, bodies, field,
+    BodyTarget, Candidate, Framing, OperationKind, PanelHover, Parts, TypedField, bodies, field,
     footer_message, operation_panel, pick_field, picked_row, tile, tiles, toggle, value_field,
 };
 use crate::theme;
@@ -176,9 +176,10 @@ pub struct RevolveState<'a> {
     pub targets: Vec<BodyTarget<'a>>,
     /// Why the preview failed, if it did.
     pub error: Option<&'a str>,
-    /// Whether the geometry of why the preview failed has a box: a Show
-    /// button beside [`RevolveState::error`] frames the camera on it.
-    pub show_error: bool,
+    /// The button framing the camera on the geometry of why the preview
+    /// failed, or going back from it, if that geometry has a box: beside
+    /// [`RevolveState::error`]'s Add anyway.
+    pub show_error: Option<Framing>,
     /// Why the revolve as set up can't be committed, if its own check
     /// refuses it (two sides over a turn together, say): shown in place
     /// of [`RevolveState::error`].

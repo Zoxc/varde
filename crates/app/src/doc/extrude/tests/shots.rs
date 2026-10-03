@@ -1745,3 +1745,30 @@ fn shots_27_thumbnail() {
         camera.take_view(view, "27-welcome-scale-2", Shot::new().scale(2.0));
     });
 }
+
+/// A revolve about a line across its region, failing with geometry: the
+/// failure box's Show left of Add anyway, then Go back once shown.
+#[test]
+#[ignore = "writes screenshots, see the module"]
+fn shots_29_show_failure() {
+    use varde_document::AxisLine;
+
+    shooting(|camera| {
+        let mut lathe = crate::doc::revolve::tests::lathe();
+        aim(&mut lathe.doc, -0.3, -0.2, 15.0);
+        let across = crate::doc::errors::tests::crossing_line(&mut lathe);
+        lathe.set_up(AxisLine::Curve(across));
+        lathe.answer();
+        assert!(lathe.doc.draft_framed().is_some());
+        camera.take(&lathe.doc, "29-show-failure", Shot::new());
+        camera.take(&lathe.doc, "29-show-failure-dark", Shot::new().dark());
+        lathe.doc.look(Look::ShowFailure);
+        (lathe.doc).animation_frame(Instant::now() + 2 * crate::doc::CAMERA_ANIMATION);
+        camera.take(&lathe.doc, "29-show-failure-shown", Shot::new());
+        camera.take(
+            &lathe.doc,
+            "29-show-failure-shown-scale2",
+            Shot::new().scale(2.0),
+        );
+    });
+}

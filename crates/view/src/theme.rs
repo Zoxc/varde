@@ -1066,24 +1066,27 @@ pub fn fail_title(theme: &Theme) -> container::Style {
     }
 }
 
-/// Add anyway, in a [`fail_box`]: a thin border on the panel's colour,
-/// its words in the strong danger colour.
-pub fn add_anyway(theme: &Theme, status: button::Status) -> button::Style {
-    let p = palette(theme);
-    let style = button::Style {
-        background: Some(Background::Color(if is_hovered(status) {
-            p.hl
+/// A button in a [`fail_box`], Add anyway and Show (or Go back): a thin
+/// border on the panel's colour, its words in the strong danger colour
+/// if `danger`, else the text's.
+pub fn fail_button(danger: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |theme, status| {
+        let p = palette(theme);
+        let style = button::Style {
+            background: Some(Background::Color(if is_hovered(status) {
+                p.hl
+            } else {
+                p.panel
+            })),
+            text_color: if danger { p.danger_strong } else { p.text },
+            border: outline(p.line, CONTROL_RADIUS),
+            ..button::Style::default()
+        };
+        if status == button::Status::Disabled {
+            faded(style)
         } else {
-            p.panel
-        })),
-        text_color: p.danger_strong,
-        border: outline(p.line, CONTROL_RADIUS),
-        ..button::Style::default()
-    };
-    if status == button::Status::Disabled {
-        faded(style)
-    } else {
-        style
+            style
+        }
     }
 }
 

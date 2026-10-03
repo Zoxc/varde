@@ -258,12 +258,19 @@ fn the_body_s_scroller_is_faint() {
 }
 
 /// A draft that fails shows why at the foot, under "Thing fails", with
-/// Add anyway while it can be pressed and Show beside the title when
-/// there's geometry to frame; OK waits either way.
+/// Add anyway while it can be pressed and Show, or Go back once pressed,
+/// left of it when there's geometry to frame; OK waits either way.
 #[test]
 fn a_failing_draft_says_so_with_add_anyway() {
     let cancel = || Message::Look(crate::Look::Extrude(crate::ExtrudeLook::Cancel));
-    for accept in [true, false] {
+    let cases = [
+        (true, Some(Framing::Show)),
+        (true, Some(Framing::GoBack)),
+        (false, Some(Framing::Show)),
+        (true, None),
+        (false, None),
+    ];
+    for (accept, framing) in cases {
         let panel = operation_panel(Parts {
             icon: Icon::Extrude,
             title: "New thing",
@@ -271,7 +278,7 @@ fn a_failing_draft_says_so_with_add_anyway() {
             message: Some(Footer::Fails {
                 noun: "Thing",
                 error: "It failed".into(),
-                show: accept.then_some(Message::Look(crate::Look::ShowFailure(None))),
+                show: framing,
                 accept: accept.then(cancel),
             }),
             ok: None,
@@ -290,23 +297,55 @@ fn a_failing_draft_says_so_with_add_anyway() {
             title.bounds.y + title.bounds.height <= why.bounds.y,
             "{shown:?}"
         );
-        let show = shown.iter().find(|shown| shown.text == "Show");
-        assert_eq!(show.is_some(), accept, "{shown:?}");
+        let words = match framing {
+            Some(Framing::Show) => Some("Show"),
+            Some(Framing::GoBack) => Some("Go back"),
+            None => None,
+        };
+        let show = words.map(|words| find(&shown, words));
+        assert!(
+            !shown.iter().any(|shown| {
+                ["Show", "Go back"].contains(&shown.text.as_str())
+                    && Some(shown.text.as_str()) != words
+            }),
+            "{shown:?}"
+        );
         if let Some(show) = show {
             assert!(show.whole(), "{show:?}");
             assert!(
-                show.bounds.x > title.bounds.x + title.bounds.width,
+                show.bounds.y >= why.bounds.y + why.bounds.height,
                 "{shown:?}"
             );
         }
         let found = shown.iter().find(|shown| shown.text == "Add anyway");
         assert_eq!(found.is_some(), accept, "{shown:?}");
+        // Show at the box's left, under the error's words, and Add
+        // anyway at its right.
+        if let Some(show) = show {
+            assert!(
+                show.bounds.x > why.bounds.x && show.bounds.x < why.bounds.x + 40.0,
+                "{shown:?}"
+            );
+        }
+        if let Some(found) = found {
+            assert!(
+                found.bounds.x + found.bounds.width > ok.bounds.x - 40.0,
+                "{shown:?}"
+            );
+        }
         if let Some(found) = found {
             assert!(found.whole(), "{found:?}");
             assert!(
                 found.bounds.y >= why.bounds.y + why.bounds.height,
                 "{shown:?}"
             );
+            if let Some(show) = show {
+                assert!(
+                    show.bounds.x + show.bounds.width < found.bounds.x,
+                    "{shown:?}"
+                );
+                assert!((show.bounds.center().y - found.bounds.center().y).abs() < 1.0);
+            }
         }
     }
 }

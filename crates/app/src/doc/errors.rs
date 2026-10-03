@@ -1,5 +1,5 @@
 //! The failures' geometry the viewport shows, and framing the camera on
-//! it: the draft's while an operation is set up and its preview fails,
+//! the draft's and going back: the draft's while an operation is set up and its preview fails,
 //! a failed feature's while its Timeline row is hovered or selected or
 //! its panel is open, nothing otherwise, so a model with an old failure
 //! isn't covered in red. While a sketch is edited, the curves the
@@ -12,7 +12,7 @@ use std::sync::Arc;
 use varde_document::{FeatureId, Id};
 use varde_kernel::Aabb;
 use varde_regen::ErrorGeometry;
-use varde_view::{ShownError, ShownErrors};
+use varde_view::{Framing, ShownError, ShownErrors};
 
 use super::Doc;
 use super::camera::FRAME_MARGIN;
@@ -146,8 +146,13 @@ impl Doc {
     /// of them anew only if they're others than before: the same `Arc`s,
     /// as the regeneration side hands an unchanged failure back, keep
     /// what's drawn, so the renderer uploads nothing again. Picks the
-    /// curves the sketch being edited marks as failing again too.
+    /// curves the sketch being edited marks as failing again too, and
+    /// forgets the view Go back would turn to once the draft has no
+    /// failure to frame.
     pub(super) fn refresh_errors(&mut self) {
+        if !self.operating() || self.draft_bounds().is_none() {
+            self.before_show = None;
+        }
         let wanted = self.wanted_errors();
         if !self.errors.shows(&wanted) {
             self.errors = Arc::new(ShownErrors::new(wanted));
@@ -158,23 +163,42 @@ impl Doc {
         }
     }
 
-    /// Whether the draft's failure, as the panel shows it, has geometry
-    /// with a box: a Show button beside the panel's error frames it.
-    pub(crate) fn draft_framed(&self) -> bool {
-        (self.feed.draft_geometry()).is_some_and(|geometry| geometry.bounds().is_some())
+    /// The box of the geometry of the draft's failure, as the panel shows
+    /// it, if it has one.
+    fn draft_bounds(&self) -> Option<Aabb> {
+        (self.feed.draft_geometry()).and_then(|geometry| geometry.bounds())
     }
 
-    /// Frames the camera on the box of `feature`'s failure, or with
-    /// `None` the draft's, if it has geometry with one, as the model
-    /// shown found it. The camera turns to it as Home does, keeping its
+    /// The button beside the panel's error, if the draft's failure has
+    /// geometry with a box: Show, framing it, or Go back once it has.
+    pub(crate) fn draft_framed(&self) -> Option<Framing> {
+        self.draft_bounds().map(|_| match self.before_show {
+            Some(_) => Framing::GoBack,
+            None => Framing::Show,
+        })
+    }
+
+    /// Frames the camera on the box of the draft's failure, if it has
+    /// geometry with one, as the model shown found it, remembering the
+    /// view for Go back. The camera turns to it as Home does, keeping its
     /// direction, and orbits its middle from then on.
-    pub(super) fn show_failure(&mut self, feature: Option<FeatureId>) {
-        let geometry = match feature {
-            Some(feature) => self.failure_geometry(feature),
-            None => self.feed.draft_geometry(),
+    pub(super) fn show_failure(&mut self) {
+        let Some(bounds) = self.draft_bounds() else {
+            return;
         };
-        if let Some(bounds) = geometry.and_then(|geometry| geometry.bounds()) {
-            self.frame(bounds);
+        if self.before_show.is_none() {
+            let camera = (self.animation.as_ref()).map_or(self.camera, |animation| animation.to);
+            self.before_show = Some((camera, self.pivot));
+        }
+        self.frame(bounds);
+    }
+
+    /// Turns the camera back to the view it had before Show, orbiting
+    /// what it did then.
+    pub(super) fn back_from_failure(&mut self) {
+        if let Some((camera, pivot)) = self.before_show.take() {
+            self.pivot = pivot;
+            self.animate_camera(camera);
         }
     }
 
@@ -191,4 +215,4 @@ impl Doc {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

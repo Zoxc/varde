@@ -70,7 +70,7 @@ pub use measure::{
     between_values, face_kind, values as measure_values,
 };
 pub use operation_panel::{
-    BodyTarget, Candidate, OperationKind, PANEL_BODY, PanelHover, TypedField,
+    BodyTarget, Candidate, Framing, OperationKind, PANEL_BODY, PanelHover, TypedField,
 };
 pub use pick::{
     EDGE_REACH, ModelHighlight, Pick, PickIndex, Picked, Picks, SNAP_REACH, Snapped, VERTEX_REACH,
@@ -428,10 +428,12 @@ pub enum Look {
     /// tell before the one it leaves does (moving up, the row above
     /// comes first), so leaving one doesn't let go of the other.
     LeaveFeature(FeatureId),
-    /// Frames the camera on the box of a failure's geometry, from its
-    /// Show button: the failed feature's, or with `None` the preview's
-    /// (the draft of the operation being set up).
-    ShowFailure(Option<FeatureId>),
+    /// Frames the camera on the box of the geometry of why the draft of
+    /// the operation being set up fails, from Show beside its Add anyway.
+    ShowFailure,
+    /// Turns the camera back to where it was before [`Look::ShowFailure`],
+    /// from Go back, which Show turned into.
+    BackFromFailure,
     /// A row of an operation's panel hovered (a region or a body picked,
     /// a body a join, cut or intersect touches), or none: the viewport
     /// lights it up too.

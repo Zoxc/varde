@@ -244,12 +244,8 @@ fn feature_row<'a>(
         indent: 8.0,
         selected,
     };
-    let framed = failed.is_some_and(|failed| {
-        (failed.geometry.as_ref()).is_some_and(|geometry| geometry.bounds().is_some())
-    });
-    let show = framed.then_some(Message::Look(Look::ShowFailure(Some(feature.id))));
     let row = row
-        .view_with(Message::Look(Look::SelectFeature(feature.id)), show)
+        .view(Message::Look(Look::SelectFeature(feature.id)))
         .on_double_click(Message::Look(Look::EditFeature(feature.id)))
         .on_enter(Message::Look(Look::HoverFeature(Some(feature.id))))
         .on_exit(Message::Look(Look::LeaveFeature(feature.id)));
@@ -403,13 +399,7 @@ struct SelectableRow<'a> {
 
 impl<'a> SelectableRow<'a> {
     /// The row, sending `on_press` when it's clicked.
-    fn view(self, on_press: Message) -> iced::widget::MouseArea<'a, Message> {
-        self.view_with(on_press, None)
-    }
-
-    /// The row, sending `on_press` when it's clicked, with a Show button
-    /// sending `show` at its right end, after the note, if there's one.
-    fn view_with(self, on_press: Message, show: Option<Message>) -> MouseArea<'a, Message> {
+    fn view(self, on_press: Message) -> MouseArea<'a, Message> {
         let content = |hovered: bool| {
             container(
                 row![
@@ -427,11 +417,6 @@ impl<'a> SelectableRow<'a> {
                     self.note
                         .clone()
                         .map(|note| text(note).size(11.5).style(theme::faint_text)),
-                    show.clone().map(|show| {
-                        chrome::small_button(chrome::SHOW_FAILURE, theme::Emphasis::Secondary)
-                            .padding([0, 6])
-                            .on_press(show)
-                    }),
                 ]
                 .spacing(8)
                 .height(ROW_HEIGHT)

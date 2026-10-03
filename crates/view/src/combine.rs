@@ -11,8 +11,8 @@ use varde_document::{BodyId, BodyOp};
 
 use crate::icons::Icon;
 use crate::operation_panel::{
-    Footer, PanelHover, Parts, field, footer_message, message_text, operation_panel, pick_field,
-    picked_row, tile, tiles, toggle,
+    Footer, Framing, PanelHover, Parts, field, footer_message, message_text, operation_panel,
+    pick_field, picked_row, tile, tiles, toggle,
 };
 use crate::theme;
 use crate::{Edit, Look, Message};
@@ -65,9 +65,10 @@ pub struct CombineState<'a> {
     pub enough: bool,
     /// Why the preview failed, if it did.
     pub error: Option<&'a str>,
-    /// Whether the geometry of why the preview failed has a box: a Show
-    /// button beside [`CombineState::error`] frames the camera on it.
-    pub show_error: bool,
+    /// The button framing the camera on the geometry of why the preview
+    /// failed, or going back from it, if that geometry has a box: beside
+    /// [`CombineState::error`]'s Add anyway.
+    pub show_error: Option<Framing>,
     /// Whether sketch edits have waited on the solver long enough to say
     /// so: OK waits for them, and the panel says why.
     pub checking: bool,

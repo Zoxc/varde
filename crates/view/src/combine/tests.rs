@@ -12,7 +12,7 @@ fn state_of<'a>(target: Option<CombineBody<'a>>, tools: Vec<CombineBody<'a>>) ->
         keep_tools: false,
         enough: true,
         error: None,
-        show_error: false,
+        show_error: None,
         checking: false,
         ready: false,
         accept: false,

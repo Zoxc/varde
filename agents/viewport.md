@@ -1117,15 +1117,23 @@ triangles from the model into it, and their outlines into its lines,
 when it resolves them (see `agents/features.md`), so the viewport draws
 nothing of its own for them.
 
-**Show** frames the camera on a failure's box (`Look::ShowFailure`, a
-feature's or with `None` the draft's; `ErrorGeometry::bounds`): the
-camera turns as Home does, keeping its direction, its target to the
-box's middle and its view `FRAME_MARGIN` (1.5, as a sketch entered is
-framed) times the box's diagonal tall, at least `MIN_FRAME_HEIGHT` (1 mm), and the pivot picked is let
-go of. A Show button sits at the right of a failed feature's Timeline
-row (not in its tooltip: iced's tooltips can't be clicked) and beside
-the error in an operation panel's footer (`footer_message`'s `show`,
-the states' `show_error`), only where the geometry has a box.
+**Show** frames the camera on the box of the draft's failure
+(`Look::ShowFailure`; `ErrorGeometry::bounds`): the camera turns as
+Home does, keeping its direction, its target to the box's middle and
+its view `FRAME_MARGIN` (1.5, as a sketch entered is framed) times the
+box's diagonal tall, at least `MIN_FRAME_HEIGHT` (1 mm), and the pivot
+picked is let go of. The view and pivot before it are kept
+(`Doc::before_show`, the first Show's if pressed again), and the button
+turns into **Go back** (`Framing::GoBack`, `Look::BackFromFailure`),
+turning the camera back to them; they're forgotten once the draft has
+no failure with a box, or no operation is set up. The button sits in
+the operation panel's failure box under the error, at its left, and
+Add anyway at its right, both
+`fail_button`s (`theme::fail_button`: a thin border on the panel's
+colour, Show's icon, `Icon::Locate` or `Icon::Back`, and words in the
+text's colour, Add anyway's in the strong danger colour), only where
+the geometry has a box (`footer_message`'s `show`, the states'
+`show_error`). A failed feature's Timeline row has none.
 
 - The halo is coverage, not colour: halos overlap everywhere (a
   polyline's joints, two segments that touch, a point on a curve), and
@@ -1314,7 +1322,7 @@ makes its own wgpu instance, under a lock, so run them one at a time:
 VARDE_SHOTS=$PWD/target/shots cargo test -p varde-app shots_ -- --ignored --test-threads=1
 ```
 
-Scenarios (`shots_01` .. `shots_28`, each at 1280×800, scale 1, light,
+Scenarios (`shots_01` .. `shots_29`, each at 1280×800, scale 1, light,
 the busiest also at scale 2 and dark): `X` with every candidate's regions
 (and one hovered); a region picked before and after its answer; flip,
 symmetric, two sides, a refused distance and a draft the document
@@ -1367,7 +1375,10 @@ save's thumbnail of the example's plate, rendered by the viewport's
 frame and written as `27-thumbnail.png`, then the welcome screen showing
 it in a recent file's card beside one without, light, dark and at scale
 2 (`shots_27`); the view options menu with its Shading submenu open, a
-choice hovered, and its Edges submenu, dark at scale 2 (`shots_28`).
+choice hovered, and its Edges submenu, dark at scale 2 (`shots_28`);
+a revolve about a line across its region, its failure box with Show
+left of Add anyway (light, dark), then Go back once shown (also scale
+2, `shots_29`).
 Shots are for looking (pixels differ by GPU and driver), never compared and
 never committed: a fault a shot finds gets an ordinary headless test of
 the state or layout behind it. A scenario answers each regeneration it

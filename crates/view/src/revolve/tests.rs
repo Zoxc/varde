@@ -58,7 +58,7 @@ fn state_of<'a>(
         operation: OperationKind::NewBody,
         targets: Vec::new(),
         error: None,
-        show_error: false,
+        show_error: None,
         refused: None,
         held: None,
         checking: false,

@@ -7655,7 +7655,8 @@ While the draft's error shows, OK and `Enter` wait, and the error shows
 in a box (`Footer::Fails`): "Extrude fails" with a red alert on a red
 wash, the error under it in muted words, and an "Add anyway" button in
 the strong danger colour that commits anyway (`Edit::AcceptError`,
-`Doc::commit_by`; every operation's panel, never a key): the feature is
+`Doc::commit_by`; every operation's panel, never a key), Show or Go
+back left of it where the error has geometry (see `agents/viewport.md`): the feature is
 kept with its error, marked failed in the Timeline, to fix later. The error is the newest draft's, none while it's unanswered, so OK
 doesn't wait on the preview.
 Errors that stand alone, the field errors, the refusal and the draft's

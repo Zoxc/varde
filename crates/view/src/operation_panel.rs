@@ -32,7 +32,7 @@ use iced::{Alignment, Border, Color, Element, Event, Length, Padding, Rectangle,
 use varde_document::{BodyId, FeatureId, Placement};
 use varde_sketch::{Profiles, Sketch};
 
-use crate::chrome::{SHOW_FAILURE, hrule, scrolled, sentence, small_button, tip};
+use crate::chrome::{hrule, scrolled, sentence, tip};
 use crate::controls::CONTROLS_HEIGHT;
 use crate::escape::OnEscape;
 use crate::icons::{self, Icon};
@@ -257,17 +257,38 @@ pub(crate) struct Parts<'a> {
 pub(crate) enum Footer<'a> {
     /// Words (see [`message_text`]), scrolled past about five lines.
     Text(Element<'a, Message>),
-    /// The draft failing: "Extrude fails" (`noun`) over why, with Show
-    /// sending `show`, if its geometry has a box, and Add anyway sending
+    /// The draft failing: "Extrude fails" (`noun`) over why, with
+    /// `show`'s button, if its geometry has a box, and Add anyway sending
     /// `accept`, if it can be pressed, which keeps the operation with its
     /// error (marked failed in the Timeline, to fix later). OK waits
     /// meanwhile.
     Fails {
         noun: &'a str,
         error: Cow<'a, str>,
-        show: Option<Message>,
+        show: Option<Framing>,
         accept: Option<Message>,
     },
+}
+
+/// The button left of Add anyway framing the camera on where a draft
+/// fails: Show, which turns into Go back once pressed, turning the camera
+/// back to where it was.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Framing {
+    /// Show, sending [`Look::ShowFailure`].
+    Show,
+    /// Go back, sending [`Look::BackFromFailure`].
+    GoBack,
+}
+
+impl Framing {
+    /// The button's icon, words and what it sends.
+    fn button(self) -> (Icon, &'static str, Message) {
+        match self {
+            Framing::Show => (Icon::Locate, "Show", Message::Look(Look::ShowFailure)),
+            Framing::GoBack => (Icon::Back, "Go back", Message::Look(Look::BackFromFailure)),
+        }
+    }
 }
 
 /// The panel showing `parts`. It's `opaque`: clicks and the wheel over it
@@ -384,13 +405,13 @@ fn head_button<'a>(
 
 /// The box of a draft that fails, at the foot: a title, "Extrude fails"
 /// (`noun`), with the alert in the danger colour on its wash, `error`
-/// under it in muted words, scrolled past about five lines, Show at the
-/// title's right sending `show`, if there's geometry to frame, and Add
-/// anyway sending `accept`, if it can be pressed.
+/// under it in muted words, scrolled past about five lines, and under
+/// that `show`'s button at the left, if there's geometry to frame, and
+/// Add anyway at the right sending `accept`, if it can be pressed.
 fn fail_box<'a>(
     noun: &'a str,
     error: Cow<'a, str>,
-    show: Option<Message>,
+    show: Option<Framing>,
     accept: Option<Message>,
 ) -> Element<'a, Message> {
     let title = container(
@@ -404,11 +425,6 @@ fn fail_box<'a>(
             )
             .width(Length::Fill),
         ]
-        .push(show.map(|show| {
-            small_button(SHOW_FAILURE, theme::Emphasis::Secondary)
-                .padding([0, 6])
-                .on_press(show)
-        }))
         .spacing(6)
         .align_y(Alignment::Center),
     )
@@ -430,19 +446,45 @@ fn fail_box<'a>(
         .width(Length::Fill),
     )
     .max_height(MESSAGE_HEIGHT);
-    let add = accept.map(|accept| {
-        container(
-            button(text("Add anyway").size(CONTROL_TEXT).font(SEMIBOLD))
-                .padding([3, 10])
-                .style(theme::add_anyway)
-                .on_press(accept),
-        )
-        .align_right(Length::Fill)
-        .padding(Padding::from([0.0, 8.0]).bottom(8.0))
+    let show = show.map(|show| {
+        let (icon, words, message) = show.button();
+        let content = row![
+            icons::tinted(icon, 14.0, |p| p.text),
+            text(words).size(CONTROL_TEXT).font(SEMIBOLD),
+        ]
+        .spacing(5)
+        .align_y(Alignment::Center);
+        fail_button(content.into(), false, message)
     });
-    container(column![title, words, add])
+    let add = accept.map(|accept| {
+        fail_button(
+            text("Add anyway").size(CONTROL_TEXT).font(SEMIBOLD).into(),
+            true,
+            accept,
+        )
+    });
+    let buttons = (show.is_some() || add.is_some()).then(|| {
+        container(row![show, Space::new().width(Length::Fill), add].spacing(6))
+            .width(Length::Fill)
+            .padding(Padding::from([0.0, 8.0]).bottom(8.0))
+    });
+    container(column![title, words, buttons])
         .width(Length::Fill)
         .style(theme::fail_box)
+        .into()
+}
+
+/// A button in a [`fail_box`] showing `content`, its words in the danger
+/// colour if `danger`, sending `message`.
+fn fail_button(
+    content: Element<'_, Message>,
+    danger: bool,
+    message: Message,
+) -> Element<'_, Message> {
+    button(content)
+        .padding([5, 12])
+        .style(theme::fail_button(danger))
+        .on_press(message)
         .into()
 }
 
@@ -950,14 +992,15 @@ pub(crate) fn joined_into<'a>(
 
 /// The foot's message: why OK can't be pressed (`refused`, by the
 /// operation's own check), else the draft failing (`error`), as "Extrude
-/// fails" (`noun`) with a Show button framing the camera on where if
-/// `show` (its geometry has a box) and Add anyway sending `accept` if it
-/// can be pressed, else, if `checking`, that OK waits on the solver.
+/// fails" (`noun`) with `show`'s button, framing the camera on where
+/// or going back, if its geometry has a box, and Add anyway sending
+/// `accept` if it can be pressed, else, if `checking`, that OK waits on
+/// the solver.
 pub(crate) fn footer_message<'a>(
     noun: &'a str,
     refused: Option<String>,
     error: Option<&'a str>,
-    show: bool,
+    show: Option<Framing>,
     accept: Option<Message>,
     checking: bool,
 ) -> Option<Footer<'a>> {
@@ -973,7 +1016,7 @@ pub(crate) fn footer_message<'a>(
         (None, Some(error)) => Some(Footer::Fails {
             noun,
             error: sentence(error),
-            show: show.then_some(Message::Look(Look::ShowFailure(None))),
+            show,
             accept,
         }),
         (None, None) => {

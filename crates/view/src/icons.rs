@@ -123,6 +123,10 @@ icons! {
     CatDimension => r#"<rect x="3.5" y="13" width="17" height="7.5" rx="1"/><path class="r" d="M3.5 4.5v6.5M20.5 4.5v6.5"/><path class="a" d="M4.5 7.5h15M7 5.5l-2.5 2 2.5 2M17 5.5l2.5 2-2.5 2"/>"#,
     // The model mock's: a warning triangle, for what failed.
     Alert => r#"<path d="M12 3.5L21.5 20h-19z"/><path d="M12 10v4.5M12 17.2v.1"/>"#,
+    // Not in the mocks: framing the camera on a failure, a viewfinder's
+    // corners round a dot, and going back from it, an arrow back.
+    Locate => r#"<path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/><circle cx="12" cy="12" r="2.5"/>"#,
+    Back => r#"<path d="M20 12H5M11 6l-6 6 6 6"/>"#,
     // The operation panel's head: Cancel and OK, at the mock's stroke of 2,
     // drawn 16 px. The check's arms both at 45°, on lines through pixel
     // centres at 16 and 32 px (a 16 px pixel is 1.5 units), as the cross's

@@ -151,6 +151,10 @@ pub(crate) struct Doc {
     /// The view the camera had before turning to the sketch being edited,
     /// which it turns back to on leaving it.
     before_sketch: Option<Camera>,
+    /// The view the camera had, and the point it orbited, before Show
+    /// framed it on where the draft fails, which Go back turns it back
+    /// to: kept while the draft fails with geometry to frame.
+    before_show: Option<(Camera, Option<Pivot>)>,
     /// The point picked for the camera to orbit, if one was.
     pivot: Option<Pivot>,
     /// Whether the cursor is over the view cube, where the pivot is
@@ -337,6 +341,7 @@ impl Doc {
             focus: None,
             animation: None,
             before_sketch: None,
+            before_show: None,
             pivot: None,
             cube_hovered: false,
             pick: ModelPick::default(),
@@ -738,7 +743,8 @@ impl Doc {
             Look::LeaveFeature(feature) => {
                 (self.hovered_feature).take_if(|&mut hovered| hovered == feature);
             }
-            Look::ShowFailure(feature) => self.show_failure(feature),
+            Look::ShowFailure => self.show_failure(),
+            Look::BackFromFailure => self.back_from_failure(),
             Look::HoverPanel(hover) => self.hover_panel(hover),
             Look::LeavePanel(left) => self.leave_panel(left),
             Look::Hover(pick) => self.hover(pick),

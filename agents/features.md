@@ -212,10 +212,12 @@ message is worded from the kernel's `failure.error` as before
   it, then the message in the text's colour; its spans take the colours
   of the document's `Mode` as they're made); selected, the status bar's
   selection box shows the alert in the danger colour, its name and the
-  message muted. A Show button on the row, right of its note, and in
-  the title of an operation panel's failure box frames the camera on
-  the geometry's box (`Look::ShowFailure`); it's there only where the
-  geometry has one.
+  message muted. The row has no Show button: a failure is framed from
+  the operation panel's failure box, where Show, left of Add anyway,
+  frames the camera on the draft's geometry's box
+  (`Look::ShowFailure`) and turns into Go back
+  (`Look::BackFromFailure`); it's there only where the geometry has
+  one.
 
 ## Sketch planes on faces
 

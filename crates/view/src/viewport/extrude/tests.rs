@@ -76,7 +76,7 @@ fn state<'a>(
         targets: Vec::new(),
         grabbed,
         error: None,
-        show_error: false,
+        show_error: None,
         refused: None,
         held: None,
         checking: false,

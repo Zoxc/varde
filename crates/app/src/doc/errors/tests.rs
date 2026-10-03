@@ -9,7 +9,7 @@ use varde_document::{
 };
 use varde_regen::{ErrorGeometry, Regenerator, Request};
 use varde_sketch::Curve;
-use varde_view::{Edit, Look, RevolveLook};
+use varde_view::{Edit, Framing, Look, RevolveLook};
 
 use super::*;
 use crate::doc::revolve::tests::lathe;
@@ -88,52 +88,57 @@ fn a_failed_feature_shows_while_its_row_is_hovered_or_selected() {
     assert!(doc.shown_errors().is_empty());
 }
 
+/// A failed feature's Timeline row has no Show: only a failing draft's
+/// panel does.
 #[test]
-fn the_timeline_row_hovered_and_its_show_button_send_their_messages() {
-    let (mut doc, _requests, revolve, _) = failing_revolve();
+fn a_failed_feature_s_timeline_row_has_no_show_button() {
+    let (mut doc, _requests, _, _) = failing_revolve();
     doc.look(Look::SelectPanel(varde_view::Panel::Timeline));
     let size = iced::Size::new(1280.0, 800.0);
     let mut renderer = varde_view::probe::renderer();
     let mut ui = shown(doc.view_in(varde_view::Mode::Light), size, &mut renderer);
     let found = texts(&mut ui, &renderer);
-    let show = (found.iter())
-        .find(|shown| shown.text == "Show" && !shown.hidden())
-        .expect("a Show button on the failed row");
-    let sent = clicked(&mut ui, &mut renderer, show.bounds.center());
-    use varde_view::Message as Ui;
-    assert!(
-        sent.iter()
-            .any(|sent| matches!(sent, Ui::Look(Look::HoverFeature(Some(id))) if *id == revolve)),
-        "{sent:?}"
-    );
-    assert!(
-        sent.iter()
-            .any(|sent| matches!(sent, Ui::Look(Look::ShowFailure(Some(id))) if *id == revolve)),
-        "{sent:?}"
-    );
-    // The button takes the click: the row isn't selected by it.
-    assert!(
-        !(sent.iter()).any(|sent| matches!(sent, Ui::Look(Look::SelectFeature(_)))),
-        "{sent:?}"
-    );
+    assert!(!found.iter().any(|shown| shown.text == "Show"), "{found:?}");
 }
 
+/// Show frames the camera on the box of where the draft fails, keeping
+/// its direction, and turns into Go back, which turns it back to where
+/// it was; fixed, the draft forgets that view.
 #[test]
-fn show_frames_the_camera_on_the_failure_s_box() {
-    let (mut doc, _requests, revolve, _) = failing_revolve();
-    let bounds = failure(&doc, revolve).bounds().expect("a box");
-    doc.look(Look::ShowFailure(Some(revolve)));
-    let to = doc.animation.as_ref().expect("the camera turns").to;
+fn show_frames_the_draft_s_failure_and_go_back_returns() {
+    let mut lathe = lathe();
+    let across = crossing_line(&mut lathe);
+    lathe.set_up(AxisLine::Curve(across));
+    lathe.answer();
+    let bounds = (lathe.doc.feed.draft_geometry())
+        .and_then(|geometry| geometry.bounds())
+        .expect("a box");
+    let before = lathe.doc.camera;
+    lathe.doc.look(Look::ShowFailure);
+    let to = lathe.doc.animation.as_ref().expect("the camera turns").to;
     assert_eq!(to.target(), bounds.center());
     let diagonal = (bounds.max - bounds.min).length();
     assert!((to.view_height() - diagonal * FRAME_MARGIN).abs() < 1e-3 * diagonal);
-    // Its direction is kept.
-    assert_eq!(to.backward(), doc.camera.backward());
+    assert_eq!(to.backward(), before.backward());
+    let framed = |doc: &Doc| doc.revolve_state().unwrap().show_error;
+    assert_eq!(framed(&lathe.doc), Some(Framing::GoBack));
 
-    // A feature that didn't fail frames nothing.
-    let (mut doc, _requests, _, sketch) = failing_revolve();
-    doc.look(Look::ShowFailure(Some(sketch)));
-    assert!(doc.animation.is_none());
+    // Shown again, it still goes back to the view before the first.
+    lathe.doc.look(Look::ShowFailure);
+    lathe.doc.look(Look::BackFromFailure);
+    let to = lathe.doc.animation.as_ref().expect("the camera turns").to;
+    assert_eq!(to.target(), before.target());
+    assert_eq!(to.view_height(), before.view_height());
+    assert_eq!(framed(&lathe.doc), Some(Framing::Show));
+
+    // Shown, then fixed: nothing to go back from.
+    lathe.doc.look(Look::ShowFailure);
+    let axis = AxisLine::Curve(lathe.construction);
+    let sketch = lathe.sketch;
+    lathe.revolve(RevolveLook::PickAxis { sketch, axis });
+    lathe.answer();
+    assert_eq!(framed(&lathe.doc), None);
+    assert!(lathe.doc.before_show.is_none());
 }
 
 #[test]
@@ -163,7 +168,7 @@ fn an_unchanged_failure_keeps_its_arc_and_what_is_drawn_of_it() {
 
 /// Adds a construction line from (15, −5) to (15, 35) to the lathe's
 /// sketch, across its rectangle: its id.
-fn crossing_line(lathe: &mut crate::doc::revolve::tests::Lathe) -> varde_document::Id {
+pub(crate) fn crossing_line(lathe: &mut crate::doc::revolve::tests::Lathe) -> varde_document::Id {
     let document = lathe.doc.editor.document();
     let Some(FeatureKind::Sketch { sketch, .. }) =
         document.feature(lathe.sketch).map(|feature| &feature.kind)
@@ -194,9 +199,12 @@ fn a_failing_draft_shows_its_geometry_until_it_is_fixed() {
     assert!(lathe.doc.feed.draft_error().is_some());
     let geometry = lathe.doc.feed.draft_geometry().expect("geometry").clone();
     assert!(shows(&lathe.doc, &[&geometry]));
-    assert!(lathe.doc.revolve_state().unwrap().show_error);
+    assert_eq!(
+        lathe.doc.revolve_state().unwrap().show_error,
+        Some(Framing::Show)
+    );
 
-    // Show beside the panel's error frames the draft's.
+    // Show beside the panel's Add anyway frames the draft's.
     let size = iced::Size::new(1280.0, 800.0);
     let mut renderer = varde_view::probe::renderer();
     let view = lathe.doc.view_in(varde_view::Mode::Light);
@@ -204,17 +212,14 @@ fn a_failing_draft_shows_its_geometry_until_it_is_fixed() {
     let found = texts(&mut ui, &renderer);
     let show = (found.iter())
         .find(|shown| shown.text == "Show" && !shown.hidden())
-        .expect("a Show button beside the panel's error");
+        .expect("a Show button beside the panel's Add anyway");
     let sent = clicked(&mut ui, &mut renderer, show.bounds.center());
     assert!(
-        matches!(
-            sent[..],
-            [varde_view::Message::Look(Look::ShowFailure(None))]
-        ),
+        matches!(sent[..], [varde_view::Message::Look(Look::ShowFailure)]),
         "{sent:?}"
     );
     drop(ui);
-    lathe.doc.look(Look::ShowFailure(None));
+    lathe.doc.look(Look::ShowFailure);
     let to = lathe.doc.animation.as_ref().expect("the camera turns").to;
     assert_eq!(to.target(), geometry.bounds().unwrap().center());
 
@@ -227,7 +232,7 @@ fn a_failing_draft_shows_its_geometry_until_it_is_fixed() {
     lathe.answer();
     assert_eq!(lathe.doc.feed.draft_error(), None);
     assert!(lathe.doc.shown_errors().is_empty());
-    assert!(!lathe.doc.revolve_state().unwrap().show_error);
+    assert_eq!(lathe.doc.revolve_state().unwrap().show_error, None);
 
     // Failing again, then cancelled: nothing shows.
     lathe.revolve(RevolveLook::PickAxis {
@@ -608,10 +613,6 @@ fn a_sketch_on_a_curved_face_shows_the_face_while_its_row_is_selected() {
     assert!(shows(&doc, &[&geometry]));
     doc.look(Look::HoverFeature(Some(sketch)));
     assert!(shows(&doc, &[&geometry]));
-    doc.look(Look::ShowFailure(Some(sketch)));
-    let bounds = geometry.bounds().expect("a box");
-    let to = doc.animation.as_ref().expect("the camera turns").to;
-    assert_eq!(to.target(), bounds.center());
 }
 
 /// A revolve about a line of no length fails, showing the line's place;
