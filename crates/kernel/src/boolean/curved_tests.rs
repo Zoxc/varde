@@ -222,10 +222,17 @@ fn a_tilted_bar_is_exact() {
 /// along `x` through `(·, y0, ·)`: `∫ 2√(1 − y²) · 2√(r² − (y − y0)²) dy`,
 /// with `y = y0 + r·sin φ`, by Simpson's rule.
 fn crossed(r: f64, y0: f64) -> f64 {
+    crossed_by(1.0, 0.0, r, y0)
+}
+
+/// [`crossed`] for a crossed cylinder of radius `big` round `c`: `∫ 2√(big²
+/// − (y − c)²) · 2√(r² − (y − y0)²) dy`. The thin one must stay within the
+/// big one's span (`|y0 − c| + r ≤ big`).
+fn crossed_by(big: f64, c: f64, r: f64, y0: f64) -> f64 {
     let n = 20_000;
     let f = |phi: f64| {
-        let y = y0 + r * phi.sin();
-        4.0 * r * r * phi.cos().powi(2) * (1.0 - y * y).sqrt()
+        let y = y0 + r * phi.sin() - c;
+        4.0 * r * r * phi.cos().powi(2) * (big * big - y * y).sqrt()
     };
     let (a, b) = (-PI / 2.0, PI / 2.0);
     let h = (b - a) / n as f64;
@@ -268,6 +275,263 @@ fn crossing_cylinders_are_traced_within_the_tolerance() {
         let (worst, free) = off_surface(solid);
         assert!(free > 0);
         assert!(worst <= 1e-12 * 4.0, "{worst:e}");
+    }
+}
+
+/// The area of `solid`'s patches on claim-free faces (the fitted bands),
+/// by their corner triangles: the scale of a fitted cut's volume error.
+fn free_area(solid: &Solid) -> f64 {
+    let mesh = solid.mesh();
+    (0..mesh.tris().len())
+        .filter(|&t| {
+            let face = mesh.tris()[t].face as usize;
+            matches!(mesh.faces()[face].surface, Surface::Free)
+        })
+        .map(|t| {
+            let p = mesh.patch(t).p;
+            0.5 * (p[1] - p[0]).cross(p[2] - p[0]).length()
+        })
+        .sum()
+}
+
+/// Checks each of `results` against its true volume in `want`: within a
+/// tenth of the fit tolerance times its claim-free area, the bound a
+/// fitted cut keeps (measured here at 0.016–0.020 of it). Returns the
+/// bounds.
+fn within_bands(name: &str, results: &[Solid], want: &[f64]) -> Vec<f64> {
+    results
+        .iter()
+        .zip(want)
+        .enumerate()
+        .map(|(k, (solid, &want))| {
+            let free = free_area(solid);
+            assert!(free > 0.0, "{name}, result {k}: no fitted band");
+            let bound = TOL.fit() * free / 10.0;
+            let got = solid.volume();
+            assert!(
+                (got - want).abs() <= bound,
+                "{name}, result {k}: volume {got}, not {want} within {bound:e}"
+            );
+            bound
+        })
+        .collect()
+}
+
+/// The area of the disc of radius `r` round `(x, z) = (cx, cz)` where `x
+/// ≥ x0` and `z ≤ z1`, for `cx ≤ x0`, `z1 < cz` and the line `x = x0`
+/// leaving the disc's bottom below `z1`: `∫ (h(x) − (cz − z1)) dx` for
+/// `h(x) = √(r² − (x − cx)²)`, from `x0` to where `h` is `cz − z1`, in
+/// closed form.
+fn corner_of_round(r: f64, cx: f64, cz: f64, x0: f64, z1: f64) -> f64 {
+    // ∫ √(r² − u²) du = (u√(r² − u²) + r²·asin(u/r)) / 2.
+    let f = |u: f64| (u * (r * r - u * u).sqrt() + r * r * (u / r).asin()) / 2.0;
+    let dz = cz - z1;
+    let u1 = (r * r - dz * dz).sqrt();
+    let u0 = x0 - cx;
+    f(u1) - f(u0) - dz * (u1 - u0)
+}
+
+#[test]
+fn a_thin_bar_across_a_round_is_within_its_bands() {
+    // A bar of radius 0.25 across a round of 0.75, crossing its wall: the
+    // two meet in a quartic, so the cut is traced and fitted, and the
+    // bands beside it are on claim-free faces. Each fitted conic bows to
+    // one side of the true curve (the crease's bisector), and both sides
+    // of the cut follow the same conic, so `∪` and `∩` are both short
+    // and `|a ∪ b| + |a ∩ b| = |a| + |b|` misses by the sum of their
+    // errors: 4.7e-5 here, twice `1e-5·(|a| + |b|)`. That is the fit's
+    // error, not a wrong result: a fitted cut keeps volumes within the
+    // fit tolerance times its bands' area, not to rounding. (With the
+    // bar's axis at z = 2.0 the intersection is refused.)
+    let frame = Frame {
+        origin: DVec3::ZERO,
+        x: DVec3::Z,
+        y: DVec3::X,
+    };
+    let round = extruded_on(
+        vec![circle(DVec2::new(1.75, 1.5), 0.75, 0, false)],
+        frame,
+        2.0,
+        3.0,
+        2,
+    );
+    let bar = cylinder_x(2.5, 2.05, 0.25, 0.0, 3.0);
+    let (va, vb) = (PI * 0.75 * 0.75, PI * 0.25 * 0.25 * 3.0);
+    assert!((round.volume() - va).abs() <= 1e-12);
+    assert!((bar.volume() - vb).abs() <= 1e-12);
+    let both = crossed_by(0.75, 1.75, 0.25, 2.05);
+    assert!((both - 0.264_432_415_23).abs() <= 1e-10, "{both}");
+    let results = all_four(&round, &bar, TOL.fit() * 1e-2);
+    let bounds = within_bands(
+        "thin bar",
+        &results,
+        &[va + vb - both, both, va - both, vb - both],
+    );
+    // The identities, within the sum of the bounds of the results in them.
+    let v = results.each_ref().map(Solid::volume);
+    assert!((v[0] + v[1] - va - vb).abs() <= bounds[0] + bounds[1]);
+    assert!((v[2] + v[1] - va).abs() <= bounds[2] + bounds[1]);
+    assert!((v[3] + v[1] - vb).abs() <= bounds[3] + bounds[1]);
+    let of: Vec<_> = walls(&round).into_iter().chain(walls(&bar)).collect();
+    let on = |p: DVec3| {
+        let a = DVec2::new(p.x - 1.5, p.z - 1.75).length() - 0.75;
+        let b = DVec2::new(p.y - 2.5, p.z - 2.05).length() - 0.25;
+        let ends = [p.y - 2.0, p.y - 3.0, p.x, p.x - 3.0];
+        ends.into_iter()
+            .chain([a, b])
+            .map(f64::abs)
+            .fold(f64::INFINITY, f64::min)
+    };
+    for (k, solid) in results.iter().enumerate() {
+        // The bands within half the fit tolerance of their cylinders,
+        // the rest exact, every vertex within a quarter of it.
+        let off = free_off(solid, &of);
+        assert!(off <= TOL.fit() / 2.0, "result {k}: a band {off:e} off");
+        let (worst, free) = off_surface(solid);
+        assert!(free > 0);
+        assert!(worst <= 1e-12 * 4.0, "result {k}: {worst:e}");
+        for &p in solid.mesh().verts() {
+            assert!(on(p) <= TOL.fit() / 4.0, "result {k}: {p}");
+        }
+    }
+}
+
+#[test]
+fn a_thin_bar_across_a_chained_round_on_hair_frames() {
+    // A fuzzing case: a box joined to a round of 0.75 along `y`, and to
+    // a second box, less a box that takes nothing, each operand on its
+    // own frame, the place's turned by a hair; then a bar of 0.25 along
+    // `x` crossing the round's wall. Its identities missed `1e-5·(|a| +
+    // |b|)`, but each result is within its bands' bound of the truth.
+    if cfg!(debug_assertions) {
+        return;
+    }
+    let frame = |o: [f64; 3], x: [f64; 3], y: [f64; 3]| Frame {
+        origin: DVec3::from(o),
+        x: DVec3::from(x),
+        y: DVec3::from(y),
+    };
+    // The frame whose normal is the place's axis `k`.
+    let axis = |q: [f64; 4], o: [f64; 3], k: usize| {
+        let q = DQuat::from_array(q);
+        let ax = [DVec3::X, DVec3::Y, DVec3::Z];
+        Frame {
+            origin: DVec3::from(o),
+            x: (q * ax[(k + 1) % 3]).normalize(),
+            y: (q * ax[(k + 2) % 3]).normalize(),
+        }
+    };
+    let block = |f: Frame, x: [f64; 2], y: [f64; 2], z: [f64; 2], feature| {
+        let profile = vec![rect(DVec2::new(x[0], y[0]), DVec2::new(x[1], y[1]), 0)];
+        extruded_on(profile, f, z[0], z[1], feature)
+    };
+    let round = |f: Frame, c: [f64; 2], r: f64, z: [f64; 2], feature| {
+        let profile = vec![circle(DVec2::from(c), r, 9, false)];
+        extruded_on(profile, f, z[0], z[1], feature)
+    };
+    let a = block(
+        frame(
+            [-35.05239107275835, 76.82711962908515, 87.56534801878263],
+            [
+                0.37145764752773247,
+                -0.5699735045974792,
+                -0.7329047824581515,
+            ],
+            [0.6892569547722283, 0.6981658109890365, -0.19362166889099897],
+        ),
+        [2.0, 2.5],
+        [2.0, 3.0],
+        [0.0, 1.5],
+        1,
+    );
+    let c1 = round(
+        axis(
+            [
+                0.07261990898260291,
+                0.4106430724008168,
+                -0.38163260278422695,
+                0.8248970677610101,
+            ],
+            [-35.052391071377556, 76.82711962752623, 87.5653480177305],
+            1,
+        ),
+        [1.75, 1.5],
+        0.75,
+        [2.0, 3.0],
+        2,
+    );
+    let a = run(&a, &c1, Op::Union);
+    let b2 = block(
+        frame(
+            [-35.0523910721122, 76.82711962947384, 87.56534801935597],
+            [
+                0.37145764560762384,
+                -0.5699735042501821,
+                -0.7329047837014088,
+            ],
+            [0.6892569560338295, 0.6981658098488281, -0.19362166851132565],
+        ),
+        [2.0, 2.5],
+        [1.0, 1.5],
+        [-0.5, 1.5],
+        3,
+    );
+    let a = run(&a, &b2, Op::Union);
+    let b3 = block(
+        frame(
+            [-35.05239107276494, 76.82711962907703, 87.5653480187956],
+            [
+                0.37145764353430805,
+                -0.5699735194273287,
+                -0.7329047729490945,
+            ],
+            [0.6892569709740818, 0.6981657950523623, -0.19362166868028152],
+        ),
+        [0.0, 1.5],
+        [0.5, 1.0],
+        [1.5, 2.0],
+        4,
+    );
+    let a = run(&a, &b3, Op::Difference);
+    let bar = round(
+        axis(
+            [
+                0.07261991279205053,
+                0.41064306885551144,
+                -0.38163259889829104,
+                0.8248970709883378,
+            ],
+            [-35.05239107216263, 76.82711962888781, 87.56534801833739],
+            0,
+        ),
+        [2.5, 2.0],
+        0.25,
+        [0.0, 3.0],
+        5,
+    );
+    // `a`: the boxes, the round, less the first box's corner inside it
+    // (`x` 2..2.25, `z` 1..1.5, `y` 2..3, so area times 1).
+    let va = 0.75 + PI * 0.75 * 0.75 + 0.5 - corner_of_round(0.75, 1.5, 1.75, 2.0, 1.5);
+    let vb = PI * 0.25 * 0.25 * 3.0;
+    // The bar lies within the round's `y` span, the round within the
+    // bar's `x` span, and the boxes are clear of the bar.
+    let both = crossed_by(0.75, 1.75, 0.25, 2.0);
+    assert!((va - 2.979_317_031_1).abs() <= 1e-10, "{va}");
+    assert!((both - 0.272_664_837_1).abs() <= 1e-10, "{both}");
+    assert!((a.volume() - va).abs() <= 1e-8, "{}", a.volume());
+    let want = [va + vb - both, both, va - both];
+    for (w, hunt) in want
+        .iter()
+        .zip([3.295_700_816_5, 0.272_664_837_1, 2.706_652_194])
+    {
+        assert!((w - hunt).abs() <= 1e-9, "{w}");
+    }
+    let results = [Op::Union, Op::Intersection, Op::Difference].map(|op| run(&a, &bar, op));
+    within_bands("chained", &results, &want);
+    let of: Vec<_> = walls(&a).into_iter().chain(walls(&bar)).collect();
+    for (k, solid) in results.iter().enumerate() {
+        let off = free_off(solid, &of);
+        assert!(off <= TOL.fit() / 2.0, "result {k}: a band {off:e} off");
     }
 }
 

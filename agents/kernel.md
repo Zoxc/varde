@@ -3773,7 +3773,7 @@ elsewhere (see "Cutting curved faces").
 | `boolean/curved_tests/flush_seams.rs` | flush unions with curved rims in either order: bosses in and on plates, over holes and edges, overlapping, a flange at a shaft's foot, a slot, at millimetre scale and on a turned frame, a chain of flush joins, caps a hair apart, bosses on a rounded corner |
 | `boolean/curved_tests/cones.rs` | cones and coaxial walls, exact: a countersink upright and turned, half of one (rulings), slabs tilted through a cone, a box's face square to a frustum's axis with its diagonal across the circle, a cylinder and a cone crossing on one axis, cones through a cylinder's cap, a turned shaft joined end to end and cut by a cone, a V groove and a centre drill, random coaxial frustums against closed forms, ring tops sloping down to nearly flat, nearly flat cones cut through their axis, coaxial shortcuts tried again |
 | `boolean/curved_tests/one_face.rs` | faces on one surface after booleans: tops at a crease either side of the bar, flush stacks on turned frames far from the origin, chains of joins and cuts with every operand's names resolving, faces meeting only at a corner |
-| `boolean/curved_tests/tangent.rs` | tangent contacts: cylinders against a plate's side from outside and inside, standing on it or through its top, slots ending in, beside and across a hole, a cylinder on a cylinder (in millimetres at the default tolerance, and at unit size at the finest), unions touching along a line refused at once (a pin plugging a hole it touches inside never named so), and solids tangent to a rounded edge or the faces it runs into |
+| `boolean/curved_tests/tangent.rs` | tangent contacts: cylinders against a plate's side from outside and inside, standing on it or through its top, slots ending in, beside and across a hole, a cylinder on a cylinder (in millimetres at the default tolerance, and at unit size at the finest), unions touching along a line refused at once (a pin plugging a hole it touches inside never named so), and solids tangent to a rounded edge or the faces it runs into; volumes against analytic ones relative to the operands' where cuts are exact, within a tenth of the fit times the claim-free area where a cut is fitted |
 | `boolean/seeded_tests.rs` | the seeded random suite: related pairs, parts built in chains of twenty, turned solids, near tangencies, pins and coaxial cylinders, flush bosses, bosses sunk through drilled plates |
 
 ### The primitives
@@ -5023,6 +5023,30 @@ over `0..1` and one over `0..2`, `Invalid(Hull)` too).
   the one through the curve's point on the line from `M` to `C` (found
   on the plane holding that line and square to the conic's plane; the
   perpendicular bisector's point is the middle only of symmetric arcs).
+- **Volumes with fitted cuts.** A result with a fitted cut has its
+  volume within the fit tolerance times its bands' area (the patches on
+  claim-free faces), not to rounding: the rounds halve a band's cut
+  while the band strays more than half the fit tolerance from its
+  face's surface, and the round kept has every band within the fit
+  tolerance at the samples (see "Rounds" below). Each conic is fitted
+  only until it is within a quarter of the fit tolerance at its three
+  samples, and lies in the crease's bisecting plane, so the conics bow
+  to one side of the true curve, and the bands beside them with them.
+  Both sides of a cut follow the same conic: `A ∪ B` keeps `B`'s wall
+  outside `A` and `A ∩ B` its wall inside, both sag the same way, so
+  `|A ∪ B| + |A ∩ B| = |A| + |B|` misses by the sum of the two results'
+  errors, not their difference (a difference has its own conic, the
+  crease turning with `B`). A bar of radius 0.25 across a round of 0.75
+  at the default fit: every result 2–3e-5 off, the identity 4.7e-5,
+  every patch within `1.76e-4` of the true surfaces, every volume within
+  0.02 of the fit times its claim-free area
+  (`a_thin_bar_across_a_round_is_within_its_bands`). Since the error
+  grows with the cut's length and the bands' width, not with the
+  volumes, a bound relative to the volumes is wrong for fitted cuts: a
+  thin bar makes a long cut for a small volume. Fitting the cuts
+  tighter (a sixteenth of the fit at the samples) cut the error 4× and
+  cost 1.8× the patches; the fit tolerance is the user's setting, so it
+  is not done.
 
 The chains' vertices get ids after the crossings (arc by arc), and their
 curves are records; a chain that isn't exact marks its edges fitted.
@@ -6317,7 +6341,11 @@ second's patches and 16), and the app's example plate joined again
 taller in the regen tests; crossing cylinders (volumes against a Simpson
 integral within a tenth of the fit tolerance times the area, the cut's
 vertices on both cylinders within a quarter of it, only the bands
-fitted); a pin through a plate's hole wall (upright cylinders meeting in
+fitted); a thin bar across a thicker round, on the world frame and
+(release only) on a fuzzing case's hair frames after a chain of
+joins (each result's volume within a tenth of the fit times its
+claim-free area, measured at 0.016–0.020; the bands within half the
+fit of their cylinders; see "Volumes with fitted cuts"); a pin through a plate's hole wall (upright cylinders meeting in
 lines, exact); a boss joined flush on a plate; a block through the
 plate's hole, and one whose side runs exactly through a vertex of the
 plate's caps (a tie); a round octahedron cut through its middle and with
@@ -6448,7 +6476,10 @@ primitive solids in the configurations CAD makes on purpose and at
 random, each of a pair's four results (`A ∪ B`, `A ∩ B`, `A − B`,
 `B − A`) right or failed, never wrong: a result passes `check` (as every
 `Solid` does) and its face tags, the four keep the volume identities
-within the fit tolerance and analytic volumes where known, and points
+within the fit tolerance (`fit·(area A + area B)/5`, the scale of what
+fitted cuts keep: see "Volumes with fitted cuts"; a bound relative to
+the volumes would flag fit error on thin bars) and analytic volumes
+where known, and points
 sampled round the operands (away from their surfaces) are inside the
 result exactly when the operation says, by the winding numbers of the
 operands' and the result's tessellations (the result's exactly 0 or

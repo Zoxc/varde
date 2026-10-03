@@ -158,9 +158,13 @@ fn tangent_cases(k: f64, tol: &Tolerance) -> Vec<Case> {
     ]
 }
 
-/// The four results of `case` at `tol` within `budget`: each right (its volume within
-/// `rel` of the volumes', relative to the operands' total) or refused,
-/// and those `case.works` names working. Gives which worked.
+/// The four results of `case` at `tol` within `budget`: each right or
+/// refused, and those `case.works` names working. Right: its volume
+/// within `rel` of the volumes', relative to the operands' total, where
+/// every cut is exact, and within a tenth of the fit tolerance times its
+/// claim-free area where a cut is fitted (what a fitted cut keeps: the
+/// error grows with the cut's length, not the volumes). Gives which
+/// worked.
 fn right_or_refused(case: &Case, tol: &Tolerance, rel: f64, budget: &Budget) -> [bool; 4] {
     let (a, b) = (&case.a, &case.b);
     let (va, vb) = (a.volume(), b.volume());
@@ -183,8 +187,14 @@ fn right_or_refused(case: &Case, tol: &Tolerance, rel: f64, budget: &Budget) -> 
         match boolean(x, y, op, tol, budget) {
             Ok(solid) => {
                 let got = solid.volume();
+                let free = free_area(&solid);
+                let within = if free > 0.0 {
+                    tol.fit() * free / 10.0
+                } else {
+                    rel * (va + vb)
+                };
                 assert!(
-                    (got - want[k]).abs() <= rel * (va + vb),
+                    (got - want[k]).abs() <= within,
                     "{}, result {k}: volume {got}, not {}",
                     case.name,
                     want[k]

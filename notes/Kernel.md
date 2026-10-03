@@ -378,6 +378,10 @@ work.
 | other quadric ∩ quadric, anything on a `Free` face | traced and fitted within a quarter of the fit tolerance |
 | bands beside a cut | exact on planes and quadrics where the common-point construction allows, else within the fit tolerance on a claim-free copy of the face |
 
+Volumes and the boolean identities (`|A ∪ B| + |A ∩ B| = |A| + |B|`)
+are exact to rounding where everything is exact, and within the fit
+tolerance times the fitted bands' area otherwise.
+
 Exactness only improves geometry. Topology comes from the same counting
 either way.
 
