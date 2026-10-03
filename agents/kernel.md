@@ -3902,7 +3902,15 @@ edges whose shadows are nearly parallel (their common plane nearly
 along `UP`), near in space but a resolution or more apart in height at
 the crossing, are decided by their height as `Orient` decides their
 shadows' sides; measured on hair frames, the cap changed one
-result in 13 000 steps. So a configuration within the tie
+result in 13 000 steps. A tied `Height` (scale at most `|g × e|`, so
+the lines within the tie of each other) stands for a configuration
+moved by under the tie: `e` moved along the lines' common normal by
+their distance meets `g`, and every `Orient` of the four ends not
+tied is more than a tie from its sign, so the moved shadows still cross
+inside both edges. The perturbation then decides by `Height`'s later
+orders, the same polynomial at points under a tie away. Only the
+rounding floor ties lines further apart, where they are parallel to
+rounding. So a configuration within the tie
 distance of a tie is decided as the tie it stands for: faces flush in
 exact arithmetic but turned and moved, every coordinate rounded, merge
 or part cleanly as the unmoved ones do (of 96 random flush grid boxes'
@@ -4356,10 +4364,15 @@ counts as `dh·|m̂·Û|`, `m = g' × e'` the two tangents' normal there (the
 curves' distance square to both), and a patch's point over a vertex as
 `dh·|n̂·Û|`, `n` the patch's normal there (the vertex's distance from
 the tangent plane); either factor no less than `1/TIES`, so a tie
-reaches the resolution at most along `UP`, as `Height`'s cap. Where
-`m` or `n` is zero, `dh` as it is. Heights where shadows run along each
-other (`along_above`, the parallel cases) stay along `UP`: there is no
-crossing to measure square at. `curved_layers`' shortcut (every point
+reaches the resolution at most along `UP`, as `Height`'s cap, and no
+more than 1. For straight edges that is the exact `Height`'s tie:
+`|dh|·|m̂·Û| ≤ tie` and `|dh| ≤ TIES·tie`. Where `m` or `n` has no
+direction (zero, so small its square underflows, infinite or not a
+number), `dh` as it is. Heights where shadows run along each other
+(`along_above`, the parallel cases) stay along `UP`: there is no
+crossing to measure square at. (Edges both steep in the vertical plane
+their shadows share are closer in space there than in height, so a
+window between the measures is left: none was seen.) `curved_layers`' shortcut (every point
 of the patch's hull above the vertex, or below) compares with the
 resolution rather than the tie, the furthest a tie reaches along `UP`.
 Measured along `UP`, a cap a few ties along `UP` off a box's steep

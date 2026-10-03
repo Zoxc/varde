@@ -1679,11 +1679,14 @@ fn a_cut_face_that_cant_be_triangulated_shows_its_loops() {
 #[test]
 fn tangent_cylinders_that_dont_fit_together_show_where() {
     // Near-tangent cylinders at the coarsest tolerance, refused as
-    // `Inconsistent` at two kinds of place, each with what it is about,
+    // `Inconsistent` at three kinds of place, each with what it is about,
     // on the walls where they touch (`x` 1, `y` 0), and the same at 1 and
     // 8 threads. (Overlaps of `1e-6`, whose pairs of walls had ends and
     // whose edges' crossings couldn't be placed, were refused too until
-    // heights were measured in space: their intersections now work.)
+    // heights were measured in space: their intersections now work. No
+    // pair with ends was seen since among near-tangent cylinders; flat
+    // operands still give them, see
+    // `near_ties_that_dont_fit_together_are_decided_again_exactly`.)
     let tol = Tolerance::new(Tolerance::MAX_FIT).unwrap();
     let r = tol.resolution();
     let a = Solid::cylinder(DVec3::ZERO, 1.0, 2.0, 2, &tol).unwrap();
@@ -1707,6 +1710,7 @@ fn tangent_cylinders_that_dont_fit_together_show_where() {
         (-1.5e-6, 0.75, Op::Intersection),
         (1e-6, 0.25, Op::Union),
         (1e-6, 1.0, Op::Union),
+        (1.5e-6, 1.0, Op::Union),
     ] {
         let b = Solid::cylinder(DVec3::ZERO, 1.0, h, 3, &tol).unwrap();
         let b = moved(&b, &tol, |p| p + DVec3::new(2.0 + gap, 0.0, 0.5));
@@ -1734,6 +1738,28 @@ fn tangent_cylinders_that_dont_fit_together_show_where() {
                 (e.patches.iter()).any(|patch| patch.p.contains(&point)),
                 "{e:?}"
             );
+        } else if e.points.is_empty() {
+            // An edge through a face whose crossings can't be placed: the
+            // edge, a piece of one wall from where it meets the other's
+            // rim, and the patch of the other's cap there, which the edge
+            // starts on.
+            let ([curve], [patch], [(operand, key)]) =
+                (&e.curves[..], &e.patches[..], &e.faces[..])
+            else {
+                panic!("{e:?}");
+            };
+            let (other, solid) = match operand {
+                crate::Operand::A => (crate::Operand::B, &a),
+                crate::Operand::B => (crate::Operand::A, &b),
+            };
+            assert_ne!(*key, wall(solid));
+            for t in [0.0, 0.5, 1.0] {
+                assert!(off(gap, other, curve.eval(t)).abs() <= r);
+            }
+            for &p in &patch.p {
+                assert!(near_line(p) && (p.z - curve.p0.z).abs() <= r, "{p}");
+            }
+            assert!(near_line(curve.p0) && near_line(curve.p1));
         } else {
             // A crossing the search only placed, off the face it
             // crosses: its vertex, on its edge (the other's rim) and

@@ -229,17 +229,23 @@ impl<'a> Curved<'a> {
         self.flat.perturb(a0) * (1.0 - t) + self.flat.perturb(a1) * t
     }
 
-    /// Whether, at a tie in height where the shadows of edge `e` of `A`
-    /// (at `t`) and `g` of `B` (at `s`) cross, `e` is above `g` once `A`
-    /// is perturbed: moving `e` by `δ` raises its point over `g`'s by
-    /// `δ·m / UP·m`, `m = g' × e'` (the crossing moves along `g` as the
-    /// shadows shift, so only the part of `δ` off the plane of the two
-    /// tangents counts). Where that is zero, by `δ·UP`.
-    fn crossing_above(&self, e: u32, t: f64, g: u32, s: f64) -> bool {
-        let delta = self.perturb_along(e, t);
+    /// Whether edge `e` of `A` (at `t`) is above `g` of `B` (at `s`)
+    /// where their shadows cross, `e`'s point `dh` above `g`'s along
+    /// `UP` there. By `dh`, but where the two are within the tie of each
+    /// other in space, measured square to both tangents as the exact
+    /// `Height` measures straight edges' ties ([`square`] with
+    /// `m = g' × e'`), as a tie, once `A` is perturbed: moving `e` by `δ`
+    /// raises its point over `g`'s by `δ·m / UP·m` (the crossing moves
+    /// along `g` as the shadows shift, so only the part of `δ` off the
+    /// plane of the two tangents counts). Where that is zero, by `δ·UP`.
+    fn crossing_above(&self, e: u32, t: f64, g: u32, s: f64, dh: f64) -> bool {
         let (_, de) = self.curve(Side::A, e).eval_deriv(t);
         let (_, dg) = self.curve(Side::B, g).eval_deriv(s);
         let m = dg.cross(de);
+        if square(dh, m) > self.tie {
+            return dh > 0.0;
+        }
+        let delta = self.perturb_along(e, t);
         if m.length() <= 1e-9 * dg.length() * de.length() {
             return self.parallel_above(e, t);
         }
@@ -266,21 +272,24 @@ impl<'a> Curved<'a> {
         }
     }
 
+    /// Point `p`'s shadow (`p` less its part along `UP`) and its height
+    /// along `UP`.
+    fn shadow(&self, p: DVec3) -> (DVec3, f64) {
+        let q = p - UP * (p.dot(UP) / UP.length_squared());
+        (q, p.dot(self.axes.up))
+    }
+
     /// Whether `e` is above `g` where their shadows run along each other:
     /// by their heights where they are nearest, or as a tie there.
     fn along_above(&self, e: u32, g: u32) -> bool {
         let (ce, cg) = (self.curve(Side::A, e), self.curve(Side::B, g));
-        let flat = |p: DVec3| {
-            let q = p - UP * (p.dot(UP) / UP.length_squared());
-            (q, p.dot(self.axes.up))
-        };
         let samples = 16;
         let mut best = (f64::INFINITY, 0.0, 0.5);
         for i in 1..samples {
             let t = i as f64 / samples as f64;
-            let (qe, he) = flat(ce.eval(t));
+            let (qe, he) = self.shadow(ce.eval(t));
             for k in 0..=samples {
-                let (qg, hg) = flat(cg.eval(k as f64 / samples as f64));
+                let (qg, hg) = self.shadow(cg.eval(k as f64 / samples as f64));
                 let d = (qe - qg).length_squared();
                 if d < best.0 {
                     best = (d, he - hg, t);
@@ -428,21 +437,7 @@ impl<'a> Curved<'a> {
     /// Whether `e` is above `g` at their shadows' crossing `c`, ties as
     /// the perturbation decides them.
     fn above_at(&self, e: u32, g: u32, c: &arcs::ArcCross) -> bool {
-        if self.crossing_gap(e, c.t, g, c.s, c.dh) <= self.tie {
-            self.crossing_above(e, c.t, g, c.s)
-        } else {
-            c.dh > 0.0
-        }
-    }
-
-    /// How far apart edge `e` of `A` (at `t`) and `g` of `B` (at `s`)
-    /// are where their shadows cross, `dh` apart along `UP` there: square
-    /// to both tangents, as the exact `Height` measures straight edges'
-    /// ties ([`square`] with `m = g' × e'`).
-    fn crossing_gap(&self, e: u32, t: f64, g: u32, s: f64, dh: f64) -> f64 {
-        let (_, de) = self.curve(Side::A, e).eval_deriv(t);
-        let (_, dg) = self.curve(Side::B, g).eval_deriv(s);
-        square(dh, dg.cross(de))
+        self.crossing_above(e, c.t, g, c.s, c.dh)
     }
 
     /// Whether `e` is above `g` where their shadows come closest, for
@@ -450,10 +445,6 @@ impl<'a> Curved<'a> {
     /// near where an end of one passes the other.
     fn above_where_closest(&self, e: u32, g: u32) -> bool {
         let (ce, cg) = (self.curve(Side::A, e), self.curve(Side::B, g));
-        let flat = |p: DVec3| {
-            let q = p - UP * (p.dot(UP) / UP.length_squared());
-            (q, p.dot(self.axes.up))
-        };
         // Each end of one against samples of the other: the height of
         // `e`'s point less `g`'s, at the pair whose shadows are nearest,
         // and where along each they are.
@@ -461,8 +452,8 @@ impl<'a> Curved<'a> {
         let samples = 32;
         for (ends, other, e_is_end) in [(&ce, &cg, true), (&cg, &ce, false)] {
             for (p, end) in [(ends.p0, 0.0), (ends.p1, 1.0)] {
-                let (qp, hp) = flat(p);
-                let gap = |x: f64| (qp - flat(other.eval(x)).0).length_squared();
+                let (qp, hp) = self.shadow(p);
+                let gap = |x: f64| (qp - self.shadow(other.eval(x)).0).length_squared();
                 let k = (0..=samples)
                     .min_by(|&i, &j| {
                         gap(i as f64 / samples as f64).total_cmp(&gap(j as f64 / samples as f64))
@@ -486,7 +477,7 @@ impl<'a> Curved<'a> {
                 let x = (lo + hi) * 0.5;
                 let d = gap(x);
                 if d < best.0 {
-                    let ho = flat(other.eval(x)).1;
+                    let ho = self.shadow(other.eval(x)).1;
                     best = if e_is_end {
                         (d, hp - ho, end, x)
                     } else {
@@ -495,11 +486,7 @@ impl<'a> Curved<'a> {
                 }
             }
         }
-        if self.crossing_gap(e, best.2, g, best.3, best.1) <= self.tie {
-            self.crossing_above(e, best.2, g, best.3)
-        } else {
-            best.1 > 0.0
-        }
+        self.crossing_above(e, best.2, g, best.3, best.1)
     }
 
     /// Whether a point of face `f` of the other operand at `u`, a height
@@ -702,15 +689,18 @@ impl<'a> Curved<'a> {
 /// a patch's normal over a vertex), as the exact `Reach` and `Height`
 /// measure ties. Capped at the resolution along `UP` (a tie distance is
 /// at least `dh` over [`super::TIES`]), so a tie never reaches further
-/// than the broad phase's margin, as `Height`'s is. Where `m` is zero or
-/// not a number, `dh` as it is.
+/// than the broad phase's margin, as `Height`'s is. Where `m`'s length is
+/// zero (an exact zero, or a vector so small its square underflows),
+/// infinite or not a number, `dh` as it is: no direction to measure
+/// along, so no tie wider than along `UP`. The cosine is kept to 1 at
+/// most, which rounding (or a length near the underflow) could pass.
 fn square(dh: f64, m: DVec3) -> f64 {
     let l = m.length();
-    if l.is_nan() || l == 0.0 {
+    if l == 0.0 || !l.is_finite() {
         return dh.abs();
     }
     let cos = m.dot(UP).abs() / (l * UP.length());
-    dh.abs() * cos.max(1.0 / super::TIES)
+    dh.abs() * cos.clamp(1.0 / super::TIES, 1.0)
 }
 
 /// The sign of `f` of `A`'s perturbation, order by order: of its first

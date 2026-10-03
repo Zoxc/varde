@@ -870,3 +870,44 @@ fn a_double_root_found_twice_is_no_crossing() {
         assert_eq!(sign_changes(&poly, &roots, zero), vec![1, -1, 1], "{rs:?}");
     }
 }
+
+#[test]
+fn heights_are_measured_square_to_the_plane_they_share() {
+    // A height along `UP` counts as the distance square to the plane
+    // with normal `m`: `dh` times the cosine of `m`'s angle to `UP`,
+    // the cosine no less than `1/TIES` (a tie reaches the resolution
+    // along `UP` at most) and no more than 1.
+    let up = UP.normalize();
+    let level = up.any_orthonormal_vector();
+    let dh = 3.0;
+    assert_eq!(square(dh, up * 5.0), dh);
+    assert_eq!(square(-dh, -up), dh);
+    let tilted = up * 0.5 + level * 0.75f64.sqrt();
+    assert!((square(dh, tilted * 7.0) - dh * 0.5).abs() < 1e-12);
+    // Nearly or exactly along `UP`'s square: capped.
+    assert_eq!(square(dh, level), dh / super::super::TIES);
+    let steep = level + up * 1e-6;
+    assert_eq!(square(dh, steep), dh / super::super::TIES);
+    // No direction to measure along: the height as it is.
+    for m in [
+        DVec3::ZERO,
+        DVec3::splat(f64::NAN),
+        DVec3::new(f64::INFINITY, 0.0, 0.0),
+        DVec3::new(f64::INFINITY, f64::INFINITY, 1.0),
+        // Its square underflows to zero.
+        up * 1e-200,
+        level * f64::from_bits(1),
+    ] {
+        assert_eq!(square(dh, m), dh, "{m}");
+    }
+    // Small but measurable: the same as at unit length, within rounding,
+    // and never past the height.
+    for scale in [1e-150, 1e-100, 1e100, 1e150] {
+        let got = square(dh, tilted * scale);
+        assert!((got - dh * 0.5).abs() < 1e-9, "{scale}: {got}");
+        assert!(square(dh, up * scale) <= dh, "{scale}");
+    }
+    // A height that isn't a number stays one (the callers then decide
+    // it as they did along `UP`).
+    assert!(square(f64::NAN, up).is_nan());
+}
