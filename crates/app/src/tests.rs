@@ -4887,7 +4887,9 @@ fn a_click_on_an_empty_part_of_the_panel_or_toolbar_clears_the_selection() {
     let feature = doc.editor.document().features()[0].id;
     assert_eq!(doc.selected_feature, Some(feature));
 
-    let size = iced::Size::new(1280.0, 800.0);
+    // Wide enough for the toolbar's operations to leave some of it
+    // empty: at 1280 px they take nearly all of it.
+    let size = iced::Size::new(1440.0, 800.0);
     let mut renderer = varde_view::probe::renderer();
     let view = doc.view(
         false,

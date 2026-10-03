@@ -644,8 +644,7 @@ fn a_ring_s_turn_does_nothing_to_a_mirror() {
     let session = plates.doc.motion.as_ref().expect("a session");
     assert_eq!(session.axis, None);
     assert!(
-        session
-            .fields
+        session.fields[..4]
             .iter()
             .all(|field| field.value.as_ref().unwrap().value == 0.0)
     );
@@ -1096,3 +1095,5 @@ fn a_move_follows_a_body_a_redone_combine_merges() {
     };
     assert_eq!(moved.bodies, [plate]);
 }
+
+mod pattern;

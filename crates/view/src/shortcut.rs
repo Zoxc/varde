@@ -72,6 +72,9 @@ impl Shortcut {
     pub const COMBINE: Self = Self::plain('b');
     /// Starts a new move: outside sketches, the UI mock's key.
     pub const MOVE: Self = Self::plain('m');
+    /// Starts a new linear pattern: outside sketches, where `P` takes up
+    /// the Point tool. The UI mock's key (its circular pattern has none).
+    pub const PATTERN: Self = Self::plain('p');
     /// No key: what a tool the UI mock gives none is bound to, never
     /// pressed (the mirror's).
     pub const NONE: Self = Self::named(Key::None);
@@ -403,7 +406,7 @@ pub struct DocumentKeys {
     pub combine_ready: bool,
     /// Whether the document has a body, to move or mirror.
     pub bodies: bool,
-    /// The move or mirror being set up, if one is.
+    /// The move, mirror or pattern being set up, if one is.
     pub motion: Option<MotionKind>,
     /// Whether the move or mirror being set up can be committed.
     pub motion_ready: bool,
@@ -548,7 +551,7 @@ impl DocumentKeys {
     }
 
     /// The same keys where the document has a body if `bodies`, with
-    /// `motion`, a move or mirror, being set up, if one is.
+    /// `motion`, a move, mirror or pattern, being set up, if one is.
     pub fn with_motion(self, bodies: bool, motion: Option<&MotionState<'_>>) -> Self {
         Self {
             bodies,
@@ -660,6 +663,27 @@ pub fn mirror_binding(keys: DocumentKeys) -> Binding {
     Binding::new(
         Shortcut::NONE,
         Message::Look(Look::StartMirror),
+        keys.editable && !keys.sketching && (keys.bodies || keys.motion.is_some()),
+    )
+}
+
+/// Starting a new linear pattern, or backing out of the one being set
+/// up, as [`move_binding`] does a move: `P`, the UI mock's key.
+pub fn pattern_binding(keys: DocumentKeys) -> Binding {
+    Binding::new(
+        Shortcut::PATTERN,
+        Message::Look(Look::StartPattern),
+        keys.editable && !keys.sketching && (keys.bodies || keys.motion.is_some()),
+    )
+}
+
+/// Starting a new circular pattern, or backing out of the one being set
+/// up, as [`move_binding`] does a move: with no key, as the UI mock has
+/// it.
+pub fn circular_pattern_binding(keys: DocumentKeys) -> Binding {
+    Binding::new(
+        Shortcut::NONE,
+        Message::Look(Look::StartCircularPattern),
         keys.editable && !keys.sketching && (keys.bodies || keys.motion.is_some()),
     )
 }
@@ -858,6 +882,7 @@ pub fn document_bindings(keys: DocumentKeys) -> Vec<Binding> {
             revolve_binding(keys),
             combine_binding(keys),
             move_binding(keys),
+            pattern_binding(keys),
             measure_binding(keys),
         ]
     });

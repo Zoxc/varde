@@ -10,8 +10,7 @@ use std::sync::Arc;
 
 use varde_document::BodyId;
 use varde_view::{
-    ModelHighlight, ModelPicking, MotionKind, MotionPick, PanelHover, Pick, Picked, Picks,
-    Selection,
+    ModelHighlight, ModelPicking, MotionPick, PanelHover, Pick, Picked, Picks, Selection,
 };
 
 use super::Doc;
@@ -301,8 +300,8 @@ impl Doc {
             picks: if measuring {
                 Picks::All
             } else if let Some(session) = &self.motion {
-                match (session.picking, session.kind) {
-                    (MotionPick::Reference, MotionKind::Move) => Picks::EdgesAndFaces,
+                match session.picking {
+                    MotionPick::Reference if session.kind.takes_axis() => Picks::EdgesAndFaces,
                     _ => Picks::Faces,
                 }
             } else if self.picking_plane.is_some() || self.combine.is_some() {

@@ -115,6 +115,10 @@ icons! {
     // across a dashed plane.
     Move => r#"<rect class="t" x="9" y="9" width="6" height="6" rx="1"/><path class="a" d="M12 3v3.5M12 17.5V21M3 12h3.5M17.5 12H21M10 5l2-2 2 2M10 19l2 2 2-2M5 10l-2 2 2 2M19 10l2 2-2 2"/>"#,
     BMirror => r#"<path class="r" d="M12 3v18" stroke-dasharray="2 2"/><path class="t" d="M9 8L3.5 10.5v7L9 20z"/><path d="M15 8l5.5 2.5v7L15 20z"/><path class="a" d="M7 5.5C9 2.5 15 2.5 17 5.5M17.4 2.9L17 5.5l-2.6-.5"/>"#,
+    // The mock's patterns: copies in a row along an arrow, the last
+    // dashed; copies round a dashed circle, one dashed.
+    LPattern => r#"<rect class="t" x="2.5" y="7" width="5" height="6" rx="1"/><rect x="9.5" y="7" width="5" height="6" rx="1"/><rect x="16.5" y="7" width="5" height="6" rx="1" stroke-dasharray="2 1.6"/><path class="a" d="M4 18h15M17 16l2 2-2 2"/>"#,
+    CPattern => r#"<circle class="a" cx="12" cy="12" r="7.5" stroke-dasharray="2 2.2"/><rect class="t" x="10" y="2.5" width="4" height="4" rx="1"/><rect x="17.5" y="10" width="4" height="4" rx="1"/><rect x="10" y="17.5" width="4" height="4" rx="1"/><rect x="2.5" y="10" width="4" height="4" rx="1" stroke-dasharray="1.6 1.4"/>"#,
     // Not in the icon mock: the offset constraint's nested squares, arrows
     // each way, a handle on a curve, a comb's teeth over one.
     OffsetConstraint => r#"<rect x="3" y="3" width="18" height="18" rx="2"/><rect x="8" y="8" width="8" height="8" rx="1"/>"#,
@@ -170,6 +174,14 @@ icons! {
     BoJoin => r#"<path class="fl" d="M12 6.8A6 6 0 1 0 12 17.2A6 6 0 1 0 12 6.8z"/>"#,
     BoCut => r#"<path class="fl" d="M12 6.8A6 6 0 1 0 12 17.2A6 6 0 0 1 12 6.8z"/><circle class="a" cx="15" cy="12" r="6" stroke-dasharray="2 1.6"/>"#,
     BoInt => r#"<circle class="r" cx="9" cy="12" r="6"/><circle class="r" cx="15" cy="12" r="6"/><path class="fl" d="M12 6.8A6 6 0 0 1 12 17.2A6 6 0 0 1 12 6.8z"/>"#,
+    // The patterns' modes: the copies as squares, spacing measuring one
+    // step and total the whole run (in the accent); round the axis (the
+    // dot), a full turn, a step's arc, or the whole arc.
+    LpSpacing => r#"<rect x="2.5" y="10" width="5" height="5" rx="1"/><rect x="9.5" y="10" width="5" height="5" rx="1"/><rect class="r" x="16.5" y="10" width="5" height="5" rx="1"/><path class="a" d="M5 6.5h7M5 5v3M12 5v3"/>"#,
+    LpTotal => r#"<rect x="2.5" y="10" width="5" height="5" rx="1"/><rect x="9.5" y="10" width="5" height="5" rx="1"/><rect x="16.5" y="10" width="5" height="5" rx="1"/><path class="a" d="M5 6.5h14M5 5v3M19 5v3"/>"#,
+    CpFull => r#"<circle cx="12" cy="12" r=".9"/><circle cx="12" cy="4.5" r="2"/><circle cx="19.5" cy="12" r="2"/><circle cx="12" cy="19.5" r="2"/><circle cx="4.5" cy="12" r="2"/><circle class="a" cx="12" cy="12" r="7.5" stroke-dasharray="1.6 1.8"/>"#,
+    CpSpacing => r#"<circle cx="12" cy="12" r=".9"/><circle cx="19.5" cy="12" r="2"/><circle cx="12" cy="4.5" r="2"/><circle class="r" cx="4.5" cy="12" r="2"/><path class="a" d="M17.3 8.3A7.5 7.5 0 0 0 15.7 6.7"/><path class="a" d="M12 12L19.5 12M12 12L12 4.5" stroke-width="1"/>"#,
+    CpTotal => r#"<circle cx="12" cy="12" r=".9"/><circle cx="19.5" cy="12" r="2"/><circle cx="12" cy="4.5" r="2"/><circle cx="4.5" cy="12" r="2"/><path class="a" d="M19.5 9A7.5 7.5 0 0 0 7.5 7.5"/>"#,
     // The options' icons, drawn in one colour: flip, keep the tools.
     TkFlip => r#"<path d="M4 8h15M15.5 4.5L19 8l-3.5 3.5M20 16H5M8.5 12.5L5 16l3.5 3.5"/>"#,
     TkKeep => r#"<circle cx="9" cy="12" r="6"/><circle cx="15" cy="12" r="6" stroke-dasharray="2 1.6"/>"#,
@@ -240,6 +252,8 @@ impl Icon {
             | Icon::Revolve
             | Icon::Move
             | Icon::BMirror
+            | Icon::LPattern
+            | Icon::CPattern
             | Icon::CatCreate
             | Icon::CatTransform
             | Icon::RvFull
@@ -253,7 +267,12 @@ impl Icon {
             | Icon::BoNew
             | Icon::BoJoin
             | Icon::BoCut
-            | Icon::BoInt => IconCategory::Solid,
+            | Icon::BoInt
+            | Icon::LpSpacing
+            | Icon::LpTotal
+            | Icon::CpFull
+            | Icon::CpSpacing
+            | Icon::CpTotal => IconCategory::Solid,
             Icon::Plane | Icon::SeAxis | Icon::SePlane => IconCategory::Construction,
             Icon::Measure | Icon::CatInspect => IconCategory::Inspect,
             Icon::Folder | Icon::Save | Icon::Export => IconCategory::File,

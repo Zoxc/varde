@@ -1,60 +1,132 @@
-//! The move or mirror being set up: what the app hands the view of it,
-//! the messages changing it, and its floating panel over the right of the
-//! viewport. Its bodies are picked as a combine's (in the viewport, where
-//! a click picks the body of what it's on, or in Objects); a move's axis
-//! and a mirror's plane are picked in the viewport too (a model edge or
-//! face) or, while they're the ones picking, from the toolbar's origin
-//! axes or planes. The viewport's side, drawing the axis or plane and a
+//! The move, mirror or pattern being set up: what the app hands the view
+//! of it, the messages changing it, and its floating panel over the right
+//! of the viewport. Its bodies are picked as a combine's (in the viewport,
+//! where a click picks the body of what it's on, or in Objects); a move's
+//! or pattern's axis and a mirror's plane are picked in the viewport too
+//! (a model edge or face) or, while they're the ones picking, from the
+//! toolbar's origin axes or planes. The viewport's side, drawing the axis or plane and a
 //! move's handles, which set its offsets and turn, is in
 //! `viewport/motion.rs`.
 
 use glam::DVec3;
 use iced::Element;
-use iced::widget::column;
-use varde_document::{Axis3, AxisRef, BodyId, Document, OriginPlane, PlaneRef};
+use iced::widget::text::Wrapping;
+use iced::widget::{column, text};
+use varde_document::{
+    Axis3, AxisRef, BodyId, Document, OriginPlane, Pattern, PatternKind, PlaneRef,
+};
 use varde_expr::{AngleUnit, LengthUnit, Unit};
 
 /// Angles are shown in degrees.
 const DEGREES: Unit = Unit::Angle(AngleUnit::Deg);
 
+use crate::chrome::sentence;
 use crate::icons::Icon;
 use crate::operation_panel::{
     Framing, PanelHover, Parts, TypedField, field, footer_message, label, operation_panel,
-    pick_field, picked_row, toggle, value_field,
+    pick_field, picked_row, tile, tiles, toggle, value_field,
 };
 use crate::plane_pick::face_name;
 use crate::revolve::edge_axis_name;
+use crate::theme;
 use crate::{CombineBody, Edit, Look, Message, VALUE_FIELD};
 
-/// Which of the two is set up.
+/// Which is set up: a move, a mirror, or a linear or circular pattern.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MotionKind {
     Move,
     Mirror,
+    LinearPattern,
+    CircularPattern,
 }
 
 impl MotionKind {
-    /// Its name as a feature's noun: "Move".
+    /// Its name as a feature's noun: "Move", "Pattern".
     pub fn noun(self) -> &'static str {
         match self {
             MotionKind::Move => "Move",
             MotionKind::Mirror => "Mirror",
+            MotionKind::LinearPattern | MotionKind::CircularPattern => "Pattern",
         }
     }
 
-    /// Its icon, the UI mock's `move` and `bmirror`.
+    /// Its icon, the UI mock's `move`, `bmirror`, `lpattern` and
+    /// `cpattern`.
     pub fn icon(self) -> Icon {
         match self {
             MotionKind::Move => Icon::Move,
             MotionKind::Mirror => Icon::BMirror,
+            MotionKind::LinearPattern => Icon::LPattern,
+            MotionKind::CircularPattern => Icon::CPattern,
         }
     }
 
-    /// The panel's title for a new one: "New move".
+    /// The panel's title for a new one, the mock's: "New move", "New
+    /// linear pattern".
     pub fn new_title(self) -> &'static str {
         match self {
             MotionKind::Move => "New move",
             MotionKind::Mirror => "New mirror",
+            MotionKind::LinearPattern => "New linear pattern",
+            MotionKind::CircularPattern => "New circular pattern",
+        }
+    }
+
+    /// Whether it's a pattern.
+    pub fn pattern(self) -> bool {
+        matches!(
+            self,
+            MotionKind::LinearPattern | MotionKind::CircularPattern
+        )
+    }
+
+    /// Whether its reference is an axis (a move's, a pattern's), not a
+    /// plane (a mirror's).
+    pub fn takes_axis(self) -> bool {
+        self != MotionKind::Mirror
+    }
+}
+
+/// How a pattern's copies are spread, the UI mock's choices: by the
+/// spacing between neighbours, by the total from the first to the last,
+/// or (a circular one's) evenly round a full turn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum PatternMode {
+    #[default]
+    Spacing,
+    Total,
+    Full,
+}
+
+impl PatternMode {
+    /// The choices a pattern of `kind` offers, in the mock's order.
+    pub fn of(kind: MotionKind) -> &'static [PatternMode] {
+        match kind {
+            MotionKind::CircularPattern => {
+                &[PatternMode::Full, PatternMode::Spacing, PatternMode::Total]
+            }
+            _ => &[PatternMode::Spacing, PatternMode::Total],
+        }
+    }
+
+    /// Its label, the mock's: "Spacing", "Total", "Full 360°".
+    pub fn label(self) -> &'static str {
+        match self {
+            PatternMode::Spacing => "Spacing",
+            PatternMode::Total => "Total",
+            PatternMode::Full => "Full 360°",
+        }
+    }
+
+    /// Its tile's icon for a pattern of `kind`, the mock's `lp-spacing`,
+    /// `lp-total`, `cp-full`, `cp-spacing` and `cp-total`.
+    fn icon(self, kind: MotionKind) -> Icon {
+        match (kind, self) {
+            (MotionKind::CircularPattern, PatternMode::Spacing) => Icon::CpSpacing,
+            (MotionKind::CircularPattern, PatternMode::Total) => Icon::CpTotal,
+            (_, PatternMode::Full) => Icon::CpFull,
+            (_, PatternMode::Spacing) => Icon::LpSpacing,
+            (_, PatternMode::Total) => Icon::LpTotal,
         }
     }
 }
@@ -69,53 +141,67 @@ pub enum MotionPick {
     Reference,
 }
 
-/// A typed field of a move: an offset along a world axis, or the angle.
+/// A typed field: a move's offset along a world axis or its angle, or a
+/// pattern's count or its spacing or total (a length, or a circular
+/// one's angle).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MotionField {
     Offset(Axis3),
     Angle,
+    Count,
+    Spread,
 }
 
 impl MotionField {
-    /// The four, in the panel's order.
-    pub const ALL: [MotionField; 4] = [
+    /// The six, a move's in the panel's order, then a pattern's.
+    pub const ALL: [MotionField; 6] = [
         MotionField::Offset(Axis3::X),
         MotionField::Offset(Axis3::Y),
         MotionField::Offset(Axis3::Z),
         MotionField::Angle,
+        MotionField::Count,
+        MotionField::Spread,
     ];
 
-    /// Where it's kept in an array of the four.
+    /// Where it's kept in an array of the six.
     pub fn index(self) -> usize {
         match self {
             MotionField::Offset(Axis3::X) => 0,
             MotionField::Offset(Axis3::Y) => 1,
             MotionField::Offset(Axis3::Z) => 2,
             MotionField::Angle => 3,
+            MotionField::Count => 4,
+            MotionField::Spread => 5,
         }
     }
 
-    /// Its text field's id: the first offset's is [`VALUE_FIELD`], which
-    /// takes the focus as the session opens.
+    /// Its text field's id: the first one of a panel's, a move's first
+    /// offset or a pattern's count, is [`VALUE_FIELD`], which takes the
+    /// focus as the session opens.
     fn id(self) -> iced::widget::Id {
         match self {
-            MotionField::Offset(Axis3::X) => VALUE_FIELD,
+            MotionField::Offset(Axis3::X) | MotionField::Count => VALUE_FIELD,
             MotionField::Offset(Axis3::Y) => iced::widget::Id::new("move-y"),
             MotionField::Offset(Axis3::Z) => iced::widget::Id::new("move-z"),
             MotionField::Angle => iced::widget::Id::new("move-angle"),
+            MotionField::Spread => iced::widget::Id::new("pattern-spread"),
         }
     }
 
-    /// Its label, the mock's: "X", "Y", "Z", "Angle".
+    /// Its label, the mock's: "X", "Y", "Z", "Angle", "Count"; a
+    /// pattern's spread is labelled by its mode.
     fn label(self) -> &'static str {
         match self {
             MotionField::Offset(axis) => axis.name(),
             MotionField::Angle => "Angle",
+            MotionField::Count => "Count",
+            MotionField::Spread => "Spacing",
         }
     }
 }
 
-/// A change to the move or mirror being set up, see [`Look::Motion`].
+/// A change to the move, mirror or pattern being set up, see
+/// [`Look::Motion`].
 #[derive(Debug, Clone, PartialEq)]
 pub enum MotionLook {
     /// Whether clicks pick bodies or the reference: the panel's fields
@@ -143,12 +229,16 @@ pub enum MotionLook {
     },
     /// A mirror's Create copy: keeps the original, or not.
     Copy,
+    /// A linear pattern's Flip direction: runs the other way, or not.
+    Flip,
+    /// How a pattern's copies are spread.
+    Mode(PatternMode),
     /// Drops the move or mirror being set up, changing nothing: Cancel,
     /// or `Esc`.
     Cancel,
 }
 
-/// The move or mirror being set up, and how it's shown.
+/// The move, mirror or pattern being set up, and how it's shown.
 #[derive(Debug, Clone)]
 pub struct MotionState<'a> {
     pub kind: MotionKind,
@@ -158,8 +248,9 @@ pub struct MotionState<'a> {
     pub bodies: Vec<CombineBody<'a>>,
     /// What a click picks.
     pub picking: MotionPick,
-    /// A move's fields: the offsets along X, Y and Z, then the angle.
-    pub fields: [TypedField<'a>; 4],
+    /// Its fields ([`MotionField::index`]): a move's offsets along X, Y
+    /// and Z and its angle, a pattern's count and spread.
+    pub fields: [TypedField<'a>; 6],
     /// The reference's name, "Z axis", "Edge of Body 1", "XY plane",
     /// "Extrude 1's end", if there's one.
     pub reference: Option<String>,
@@ -185,6 +276,17 @@ pub struct MotionState<'a> {
     pub units: LengthUnit,
     /// A mirror's Create copy.
     pub keep_original: bool,
+    /// A linear pattern's Flip direction.
+    pub flip: bool,
+    /// How a pattern's copies are spread.
+    pub mode: PatternMode,
+    /// Why a pattern's spread is refused where its own text isn't, the
+    /// mock's words under its field: "The pattern runs past 1000000 mm",
+    /// "4 copies 120° apart go past a full turn".
+    pub spread_error: Option<String>,
+    /// A whole pattern's copies as the status bar says them, "4 × 25 mm",
+    /// "6 × 60°" ([`pattern_copies`]).
+    pub copies: Option<String>,
     /// What's still to be done before it can be committed, if anything:
     /// "pick the bodies to move", for the status bar.
     pub need: Option<&'static str>,
@@ -305,26 +407,41 @@ pub(crate) fn mirror_info(document: &Document, mirror: &varde_document::Mirror) 
 }
 
 /// What the status bar says of a selected pattern, the mock's row info:
-/// "Body 1 · 4 × 25 mm along X", "Body 1 · 6 × 60° about Z".
-pub(crate) fn pattern_info(document: &Document, pattern: &varde_document::Pattern) -> String {
+/// "Body 1 · 4 × 25 mm along X axis", "Body 1 · 3 × 25 mm along X axis,
+/// flipped", "Body 1 · 6 × 60° about Z axis".
+pub(crate) fn pattern_info(document: &Document, pattern: &Pattern) -> String {
     let bodies = body_names(document, &pattern.bodies);
     let axis = axis_name(document, pattern.kind.axis());
-    let count = pattern.kind.count_value().value;
+    let copies = pattern_copies(pattern, document.units());
     match &pattern.kind {
-        varde_document::PatternKind::Linear { spacing, .. } => {
-            let step = varde_expr::format(spacing.value, Some(document.units().into()));
-            format!("{bodies} · {count} × {step} along {axis}")
+        PatternKind::Linear { spacing, .. } => {
+            let flipped = if spacing.value < 0.0 { ", flipped" } else { "" };
+            format!("{bodies} · {copies} along {axis}{flipped}")
         }
-        varde_document::PatternKind::Circular { .. } => {
-            let step = pattern.step_degrees().unwrap_or(0.0).to_radians();
-            let step = varde_expr::format(step, Some(DEGREES));
-            format!("{bodies} · {count} × {step} about {axis}")
-        }
+        PatternKind::Circular { .. } => format!("{bodies} · {copies} about {axis}"),
     }
 }
 
+/// A pattern's copies as the mock's row info says them: the count and
+/// the step between neighbours, "4 × 25 mm" (the spacing's size: a
+/// flipped one's sign is said apart), "6 × 60°" (as the copies turn,
+/// [`Pattern::step_degrees`]).
+pub fn pattern_copies(pattern: &Pattern, units: LengthUnit) -> String {
+    let count = pattern.kind.count_value().value;
+    let step = match &pattern.kind {
+        PatternKind::Linear { spacing, .. } => {
+            varde_expr::format(spacing.value.abs(), Some(units.into()))
+        }
+        PatternKind::Circular { .. } => {
+            let step = pattern.step_degrees().unwrap_or(0.0).to_radians();
+            varde_expr::format(step, Some(DEGREES))
+        }
+    };
+    format!("{count} × {step}")
+}
+
 /// A pattern's Timeline note, the mock's: its count, "×4".
-pub(crate) fn pattern_note(pattern: &varde_document::Pattern) -> String {
+pub(crate) fn pattern_note(pattern: &Pattern) -> String {
     format!("×{}", pattern.kind.count_value().value)
 }
 
@@ -340,8 +457,9 @@ pub(crate) fn body_names(document: &Document, bodies: &[BodyId]) -> String {
     names.join(", ")
 }
 
-/// What the status bar says of the move or mirror being set up: "Body 1
-/// · 10 mm, 0 mm, 0 mm", or what's still to do.
+/// What the status bar says of the move, mirror or pattern being set
+/// up: "Body 1 · 10 mm, 0 mm, 0 mm", "Body 1 · 4 × 25 mm along X axis",
+/// or what's still to do.
 pub(crate) fn status_info(state: &MotionState<'_>) -> String {
     if let Some(need) = state.need {
         return need.to_owned();
@@ -362,13 +480,26 @@ pub(crate) fn status_info(state: &MotionState<'_>) -> String {
                 None => bodies,
             }
         }
+        (MotionKind::LinearPattern, Some(axis)) => match &state.copies {
+            Some(copies) => {
+                let flipped = if state.flip { ", flipped" } else { "" };
+                format!("{bodies} · {copies} along {axis}{flipped}")
+            }
+            None => bodies,
+        },
+        (MotionKind::CircularPattern, Some(axis)) => match &state.copies {
+            Some(copies) => format!("{bodies} · {copies} about {axis}"),
+            None => bodies,
+        },
         _ => bodies,
     }
 }
 
-/// The floating panel of the move or mirror being set up, the mock's:
-/// Bodies; a move's Translate (X, Y, Z) and Rotate (Axis, Angle); a
-/// mirror's Plane and Create copy.
+/// The floating panel of the move, mirror or pattern being set up, the
+/// mock's: Bodies; a move's Translate (X, Y, Z) and Rotate (Axis, Angle);
+/// a mirror's Plane and Create copy; a linear pattern's Direction and
+/// Flip direction, a circular one's Axis, then Copies: the Count, how
+/// they're spread, and the spacing, total or angle (none for Full 360°).
 pub(crate) fn panel<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
     let editable = state.editable;
     let send = |look: MotionLook| editable.then_some(Message::Look(Look::Motion(look)));
@@ -397,7 +528,10 @@ pub(crate) fn panel<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
     let picking_reference = state.picking == MotionPick::Reference;
     let pick_reference = send(MotionLook::Picking(MotionPick::Reference));
     let (reference_label, reference_icon, reference_place) = match state.kind {
-        MotionKind::Move => ("Axis", Icon::SeAxis, "Click an axis or edge"),
+        MotionKind::Move | MotionKind::CircularPattern => {
+            ("Axis", Icon::SeAxis, "Click an axis or edge")
+        }
+        MotionKind::LinearPattern => ("Direction", Icon::SeAxis, "Click an axis or edge"),
         MotionKind::Mirror => ("Plane", Icon::SePlane, "Click a plane or face"),
     };
     let reference_row = state.reference.clone().map(|name| {
@@ -423,12 +557,12 @@ pub(crate) fn panel<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
         ),
     );
 
-    let field_of = |which: MotionField| {
+    let field_named = |which: MotionField, label: &'a str| {
         let input = editable.then_some(move |text| {
             Message::Look(Look::Motion(MotionLook::Input { field: which, text }))
         });
         value_field(
-            which.label(),
+            label,
             which.id(),
             state.fields[which.index()],
             input,
@@ -436,6 +570,7 @@ pub(crate) fn panel<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
             Message::Look(Look::Motion(MotionLook::Cancel)),
         )
     };
+    let field_of = |which: MotionField| field_named(which, which.label());
     let body: Element<'a, Message> = match state.kind {
         MotionKind::Move => {
             let translate = MotionField::ALL[..3].iter().map(|&which| field_of(which));
@@ -459,6 +594,53 @@ pub(crate) fn panel<'a>(state: &MotionState<'a>) -> Element<'a, Message> {
                 Some("Keep the original too"),
             );
             column![bodies, reference, copy].spacing(10).into()
+        }
+        MotionKind::LinearPattern | MotionKind::CircularPattern => {
+            let flip = (state.kind == MotionKind::LinearPattern).then(|| {
+                toggle(
+                    Icon::TkFlip,
+                    "Flip direction",
+                    state.flip,
+                    send(MotionLook::Flip),
+                    None,
+                )
+            });
+            let modes = PatternMode::of(state.kind).iter().map(|&mode| {
+                tile(
+                    mode.icon(state.kind),
+                    mode.label(),
+                    state.mode == mode,
+                    send(MotionLook::Mode(mode)),
+                )
+            });
+            let spread = (state.mode != PatternMode::Full).then(|| {
+                let label = match state.mode {
+                    PatternMode::Total => "Total",
+                    _ => "Spacing",
+                };
+                // The mock's error for the spread as a whole, under its
+                // field, where its text has none of its own.
+                let note = (state.spread_error.clone())
+                    .filter(|_| state.fields[MotionField::Spread.index()].error.is_none())
+                    .map(|note| {
+                        text(sentence(&note).into_owned())
+                            .size(11.5)
+                            .wrapping(Wrapping::WordOrGlyph)
+                            .style(theme::danger_text)
+                    });
+                column![field_named(MotionField::Spread, label), note].spacing(3)
+            });
+            column![
+                bodies,
+                reference,
+                flip,
+                section("Copies"),
+                field_of(MotionField::Count),
+                tiles(modes),
+                spread,
+            ]
+            .spacing(10)
+            .into()
         }
     };
     let message = footer_message(

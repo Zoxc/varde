@@ -1163,7 +1163,8 @@ wire), `io/src/vrdp/tests.rs` (through a file).
 ### UI
 
 **The session** (`app/src/doc/motion.rs`, `Doc::motion`, one
-`MotionSession` for both, its `MotionKind` saying which) is started by
+`MotionSession` for both and for patterns, its `MotionKind` saying
+which; the patterns' own parts are under "Pattern", "UI") is started by
 `Look::StartMove` (`M`, `Shortcut::MOVE`, the UI mock's key, the
 toolbar's Move after Combine, the rail's Transform set) or
 `Look::StartMirror` (no key, as the mock has none: the toolbar's
@@ -1530,8 +1531,96 @@ the difference's cost grows faster than the pins (a 7 × 7 grid takes 2
 to 3 million of the 4.2 million units, from 8 × 8 on it fails), so hole
 patterns past about 50 holes fail with "too complex" until the boolean's
 work is local to the change. Cutting the 100 pins one at a time works
-but takes about 40 s. No UI yet: `Doc` ignores Edit on a pattern's row,
-its Timeline icon is a placeholder (`Icon::Move`), and its row note
-("×4") and status text ("Body 1 · 4 × 10 mm along X") are minimal.
-`Naming` takes faces of patterns' copies made before the feature
-(`instances_before` replays patterns as it does mirrors).
+but takes about 40 s. Copies that only touch (discs a diameter apart)
+fail to join ("leaves no clean solid"), as any union touching along a
+line does. `Naming` takes faces of patterns' copies made before the
+feature (`instances_before` replays patterns as it does mirrors).
+
+### UI
+
+The move's session (`MotionSession`, above) with `MotionKind::
+LinearPattern` and `CircularPattern`, following the UI mock's
+`lpattern` and `cpattern`.
+
+- **Starting**: `Look::StartPattern` (`P`, `Shortcut::PATTERN`, the
+  mock's key, outside sketches where `P` is the Point tool's; the
+  toolbar's "Pattern" after Mirror; the rail's Transform set as "Linear
+  pattern") and `Look::StartCircularPattern` (no key, as the mock has
+  none: the rail's "Circular pattern"; not on the toolbar, which the
+  mock's model bar leaves it off too and which is nearly full at
+  1280 px), again backing out, the bindings as Move's
+  (`pattern_binding`, `circular_pattern_binding`); or editing one
+  (`Look::EditFeature`: double-click, `Enter`, "Edit pattern"). Bodies
+  as a move's (the selection, else the only body; picked in the
+  viewport or Objects; merges followed; gone bodies said "A picked body
+  is gone"). A new linear one starts as the mock's: the X axis, count
+  3, Spacing 100 (of the design's units); a circular one the Z axis,
+  count 4, Full 360° (its angle field holding 90° for the other modes).
+  The count field (`VALUE_FIELD`) takes the focus.
+- **The axis** (linear: "Direction") is picked as a move's
+  (`MotionPick::Reference`: the toolbar's origin axes, a straight or
+  round edge or a round face named by `Naming`, the neutral preview of
+  an edited one while it's picked; a linear one refuses others with
+  "Only a straight or round edge, or a round face, can give the
+  direction"), and drawn as a move's axis, always (a flipped linear
+  one's arrow pointing the way its copies go). Gone: "The direction is
+  gone: pick another" / "The axis is gone: pick another".
+- **Fields and modes** (`MotionField::Count`, `MotionField::Spread`,
+  `MotionLook::Mode(PatternMode)`, `MotionLook::Flip`): the count by
+  `Pattern::count_ask`; the spread a positive length within the
+  coordinate limit (linear: `spacing_ask().positive()`, the sign is
+  Flip's) or an angle by `Pattern::angle_ask`. Stored
+  (`MotionSession::pattern`): linear Spacing as typed, Total as
+  `"(total) / (n − 1)"`, Flip as `"-(...)"` round either (a negative
+  spacing); circular Full 360° as `"360°"`, Total as typed, Spacing as
+  `"(spacing) * (n − 1)"`. Texts, not rounded numbers, so the values are
+  exact and follow unit changes. The mock's errors under the field
+  (`MotionState::spread_error`, OK off): "The pattern runs past 1000000
+  mm" (spacing × (n − 1) past `MAX_COORD`; the mock's limit is its
+  10 000 mm), "4 copies 120° apart go past a full turn" (a Spacing
+  coming to a turn or more, within the rounding `full_turn` allows),
+  "A whole turn puts the last copy on the first: use Full 360°" (a
+  Total of a turn).
+- **Mode kept**: the stored values can't tell a Total from a Spacing
+  (or a circular Spacing from a Total), so `Doc::pattern_shapes` keeps,
+  per pattern committed in this run, the mode, Flip and spread as typed
+  (`PatternShape`); editing takes them again only if they still give
+  the values stored (an undo, another edit or another document leave
+  them out). Otherwise the rule: a linear pattern opens in Spacing with
+  its spacing's size (Flip on for a negative one, its text with the
+  sign taken off where that gives the value exactly, else
+  `"-(text)"`); a circular one in Full 360° for a whole turn, else in
+  Total with its angle.
+- **Preview, OK, status**: the draft is the pattern as set up (none for
+  a new one while its axis is picked); OK one undo step ("Pattern N");
+  the status bar says "New linear pattern · Body 2 · 4 × 12 mm along X
+  axis" (", flipped"), "· 4 × 90° about Z axis"
+  (`varde_view::pattern_copies`, by `Pattern::step_degrees`), or "pick
+  the bodies to pattern", with "Pick the direction" / "Pick the axis".
+- **The panel** (`view/src/motion.rs`): title "New linear pattern" /
+  "New circular pattern" with the mock's `lpattern` and `cpattern`
+  icons (`Icon::LPattern`, `CPattern`); Bodies; Direction (linear) or
+  Axis; Flip direction (`Icon::TkFlip`, linear only); "Copies": Count,
+  the mode tiles (`lp-spacing`, `lp-total`; `cp-full`, `cp-spacing`,
+  `cp-total`: `Icon::LpSpacing`, `LpTotal`, `CpFull`, `CpSpacing`,
+  `CpTotal`), and the Spacing or Total field (none for Full 360°).
+- **Timeline**: the mock's icons by kind, the note "×4"; selected, the
+  status bar says "Body 1 · 4 × 25 mm along X axis, flipped", "Body 1 ·
+  6 × 60° about Z axis" (`pattern_info`).
+
+Tests: `app/src/doc/motion/tests/pattern.rs` (`P`, typing a count and a
+spacing previews the row, `Enter` one undo step, the note; Total stores
+its spacing, Flip turns it, the mode kept on editing and the rule
+without it; a circular Full 360° against the copies' box; the mock's
+errors past a turn and the limit; editing from the Timeline and undo);
+`view/src/motion/tests.rs` (both panels' rows and modes, the infos).
+
+Departures from the mock: no "Join to original" (decided: copies stay
+in their body; separate bodies would need a stored field, a file
+format change, so it waits on the user's word), so also no overlap
+warning (which advises ticking it); counts up to 1024 (the mock's 100)
+and the run limit the coordinate limit (the mock's 10 000 mm), with the
+fields' own error words for other refusals; the axis may also be a
+round edge or face, as a move's; no faded originals (the preview
+replaces the model); Circular pattern isn't on the toolbar (the rail
+has it; the mock's body bar does, the app has no such bar).

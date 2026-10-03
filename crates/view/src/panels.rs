@@ -210,8 +210,10 @@ pub(crate) fn feature_icon(feature: &Feature) -> Icon {
         FeatureKind::Combine(_) => Icon::Combine,
         FeatureKind::Move(_) => Icon::Move,
         FeatureKind::Mirror(_) => Icon::BMirror,
-        // The mock's own pattern icons come with the pattern's tool.
-        FeatureKind::Pattern(_) => Icon::Move,
+        FeatureKind::Pattern(ref pattern) => match pattern.kind {
+            varde_document::PatternKind::Linear { .. } => Icon::LPattern,
+            varde_document::PatternKind::Circular { .. } => Icon::CPattern,
+        },
     }
 }
 

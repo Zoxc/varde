@@ -19,7 +19,14 @@ fn state_of<'a>(kind: MotionKind, bodies: Vec<CombineBody<'a>>) -> MotionState<'
         editing: None,
         bodies,
         picking: MotionPick::Bodies,
-        fields: [field("0 mm"), field("0 mm"), field("0 mm"), field("0°")],
+        fields: [
+            field("0 mm"),
+            field("0 mm"),
+            field("0 mm"),
+            field("0°"),
+            field("3"),
+            field("100 mm"),
+        ],
         reference: Some("Z axis".to_owned()),
         line: None,
         bounds: None,
@@ -27,6 +34,10 @@ fn state_of<'a>(kind: MotionKind, bodies: Vec<CombineBody<'a>>) -> MotionState<'
         origin_axis: Some(Axis3::Z),
         units: LengthUnit::Mm,
         keep_original: true,
+        flip: false,
+        mode: PatternMode::Spacing,
+        spread_error: None,
+        copies: None,
         need: None,
         refused: None,
         error: None,
@@ -179,4 +190,98 @@ fn notes_and_infos_are_the_mock_s() {
     };
     assert_eq!(plane_short(document, &mirror.plane), "XY");
     assert_eq!(mirror_info(document, &mirror), "Body 1 across XY plane");
+}
+
+#[test]
+fn a_linear_pattern_s_panel_is_the_mock_s() {
+    let mut state = state_of(MotionKind::LinearPattern, vec![body("Body 1")]);
+    state.reference = Some("X axis".to_owned());
+    let shown = texts_of(&state);
+    let order = [
+        "New linear pattern",
+        "Bodies",
+        "Body 1",
+        "Direction",
+        "X axis",
+        "Flip direction",
+        "Copies",
+        "Count",
+        "Spacing",
+        "Total",
+    ];
+    let mut y = f32::MIN;
+    for text in order {
+        let at = found(&shown, text).bounds.y;
+        assert!(at >= y, "{text} above what comes before it: {shown:?}");
+        y = at;
+    }
+    // No Join to original: copies always join their body.
+    assert!(!has(&shown, "Join to original"));
+    assert!(!has(&shown, "Full 360°"));
+    // The field is the mode's, its whole error under it.
+    state.mode = PatternMode::Total;
+    state.spread_error = Some("The pattern runs past 1000000 mm".to_owned());
+    let shown = texts_of(&state);
+    let labels = shown.iter().filter(|shown| shown.text == "Total").count();
+    assert_eq!(labels, 2, "the tile and the field: {shown:?}");
+    found(&shown, "The pattern runs past 1000000 mm");
+}
+
+#[test]
+fn a_circular_pattern_s_panel_has_no_field_for_a_full_turn() {
+    let mut state = state_of(MotionKind::CircularPattern, vec![body("Body 1")]);
+    state.mode = PatternMode::Full;
+    let shown = texts_of(&state);
+    for text in [
+        "New circular pattern",
+        "Axis",
+        "Z axis",
+        "Copies",
+        "Count",
+        "Full 360°",
+        "Spacing",
+        "Total",
+    ] {
+        found(&shown, text);
+    }
+    assert!(!has(&shown, "Flip direction"));
+    assert!(!has(&shown, "Direction"));
+    // Full 360° has only the tile named Spacing; another mode its field.
+    let spacings = |shown: &[Shown]| shown.iter().filter(|s| s.text == "Spacing").count();
+    assert_eq!(spacings(&shown), 1);
+    state.mode = PatternMode::Spacing;
+    assert_eq!(spacings(&texts_of(&state)), 2);
+}
+
+#[test]
+fn a_pattern_s_infos_are_the_mock_s() {
+    let example = Document::example();
+    let document = &example;
+    let plate = document.bodies()[0].id;
+    let design = document.design();
+    let count = Value::new("4", &Pattern::count_ask(&design)).unwrap();
+    let spacing = Value::new("-25", &Pattern::spacing_ask(&design)).unwrap();
+    let mut pattern = Pattern {
+        bodies: vec![plate],
+        kind: PatternKind::Linear {
+            along: AxisRef::Origin(Axis3::X),
+            count: count.clone(),
+            spacing,
+        },
+    };
+    assert_eq!(pattern_note(&pattern), "×4");
+    assert_eq!(pattern_copies(&pattern, design.units), "4 × 25 mm");
+    assert_eq!(
+        pattern_info(document, &pattern),
+        "Body 1 · 4 × 25 mm along X axis, flipped"
+    );
+    pattern.kind = PatternKind::Circular {
+        about: AxisRef::Origin(Axis3::Z),
+        count,
+        angle: Value::new("360", &Pattern::angle_ask(&design)).unwrap(),
+    };
+    assert_eq!(
+        pattern_info(document, &pattern),
+        "Body 1 · 4 × 90° about Z axis"
+    );
 }

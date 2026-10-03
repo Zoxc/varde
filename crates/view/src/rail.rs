@@ -18,9 +18,9 @@ use iced::{Alignment, Element, Event, Font, Length, Padding, Rectangle, Size, Ve
 use crate::chrome::{ChipSize, key_chip, scrolled, side_tip};
 use crate::icons::{self, Icon};
 use crate::shortcut::{
-    Binding, DocumentKeys, Shortcut, combine_binding, constrain_binding, constraint_binding,
-    extrude_binding, measure_binding, mirror_binding, move_binding, revolve_binding,
-    sketch_binding, tool_binding,
+    Binding, DocumentKeys, Shortcut, circular_pattern_binding, combine_binding, constrain_binding,
+    constraint_binding, extrude_binding, measure_binding, mirror_binding, move_binding,
+    pattern_binding, revolve_binding, sketch_binding, tool_binding,
 };
 use crate::status::STATUS_BAR_ROOM;
 use crate::theme::{self, SEMIBOLD};
@@ -122,6 +122,8 @@ pub(crate) enum Entry {
     Combine,
     Move,
     Mirror,
+    LinearPattern,
+    CircularPattern,
     Measure,
     /// A sketch's tool.
     Tool(Tool),
@@ -140,6 +142,8 @@ impl Entry {
             Entry::Combine => Icon::Combine,
             Entry::Move => Icon::Move,
             Entry::Mirror => Icon::BMirror,
+            Entry::LinearPattern => Icon::LPattern,
+            Entry::CircularPattern => Icon::CPattern,
             Entry::Measure => Icon::Measure,
             Entry::Tool(tool) => tool_icon(tool),
             Entry::Constrain => Icon::Constrain,
@@ -155,6 +159,8 @@ impl Entry {
             Entry::Combine => "Combine",
             Entry::Move => "Move",
             Entry::Mirror => "Mirror",
+            Entry::LinearPattern => "Linear pattern",
+            Entry::CircularPattern => "Circular pattern",
             Entry::Measure => "Measure",
             Entry::Tool(tool) => tool.label(),
             Entry::Constrain => "Constrain",
@@ -181,6 +187,8 @@ impl Entry {
             Entry::Combine => combine_binding(keys),
             Entry::Move => move_binding(keys),
             Entry::Mirror => mirror_binding(keys),
+            Entry::LinearPattern => pattern_binding(keys),
+            Entry::CircularPattern => circular_pattern_binding(keys),
             Entry::Measure => measure_binding(keys),
             Entry::Tool(tool) => tool_binding(tool, keys),
             Entry::Constrain => constrain_binding(keys),
@@ -199,6 +207,8 @@ impl Entry {
             Entry::Combine => using.combining,
             Entry::Move => using.motion == Some(crate::MotionKind::Move),
             Entry::Mirror => using.motion == Some(crate::MotionKind::Mirror),
+            Entry::LinearPattern => using.motion == Some(crate::MotionKind::LinearPattern),
+            Entry::CircularPattern => using.motion == Some(crate::MotionKind::CircularPattern),
             Entry::Measure => using.measuring,
             Entry::Tool(tool) => using.tool == Some(tool),
             Entry::Constrain => using.constraining,
@@ -215,7 +225,7 @@ struct Using {
     extruding: bool,
     revolving: bool,
     combining: bool,
-    /// The move or mirror being set up, if one is.
+    /// The move, mirror or pattern being set up, if one is.
     motion: Option<crate::MotionKind>,
     measuring: bool,
     /// The sketch's tool, if one is.
@@ -268,7 +278,12 @@ const MODEL: [ToolSet; 4] = [
     ToolSet {
         name: "Transform",
         icon: Icon::CatTransform,
-        entries: &[Entry::Move, Entry::Mirror],
+        entries: &[
+            Entry::Move,
+            Entry::Mirror,
+            Entry::LinearPattern,
+            Entry::CircularPattern,
+        ],
     },
     ToolSet {
         name: "Inspect",

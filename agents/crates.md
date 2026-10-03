@@ -74,7 +74,7 @@ stacks the three layers, each an SVG tinted through `svg::Style`;
 colour, as the constraint glyphs in the viewport and the panel tabs do.
 Other icons (file, undo, eye, alert, ...) are from `notes/ui-mock/mock.js` and drawn
 in the text colour, or tinted where they're used. The operation panel's
-choices (`Icon::Rv*`, `Ex*`, `Bo*`, the model mock's `CHOICE_ICONS`) are
+choices (`Icon::Rv*`, `Ex*`, `Bo*`, `Lp*`, `Cp*`, the model mock's `CHOICE_ICONS`) are
 drawn as the tools' are, in the Solid category's colours; what's picked
 (`SeRegion`, `SeAxis`, its `SELECTION_ICONS`) in the sketch's and
 construction's; the options' (`TkFlip`, `TkKeep`) in one colour. The
@@ -92,7 +92,7 @@ element, as an icon is a list of empty tags.
 
 - **kernel**: taper, sketches on faces and GPU evaluation of the patches next; the booleans' open weak spots (tangencies, cap quality refinement) are in `agents/kernel.md`.
 - **sketch**: the shape tools' geometry (trim, offset, fillet).
-- **document**: sketches on faces are in (`Plane::Face`, `Placement::on_plane`, `SetSketchPlane`), and regen places them (`Evaluation::placements`, on the wire), and the app sketches on them, changes a sketch's plane and asks for another for one whose face is gone; combines are in (`FeatureKind::Combine`, regen, and the session: `B`, bodies picked in the viewport or Objects, Keep tools); moves and mirrors are in the document and regen (`FeatureKind::Move`, `FeatureKind::Mirror`, `AxisRef`, `PlaneRef`), and their UI (`M`, typed fields, the axis or plane picked and drawn); linear and circular patterns are in the document and regen (`FeatureKind::Pattern`, `PatternKind`), their UI (`P`) next; then command-based undo instead of snapshots.
+- **document**: sketches on faces are in (`Plane::Face`, `Placement::on_plane`, `SetSketchPlane`), and regen places them (`Evaluation::placements`, on the wire), and the app sketches on them, changes a sketch's plane and asks for another for one whose face is gone; combines are in (`FeatureKind::Combine`, regen, and the session: `B`, bodies picked in the viewport or Objects, Keep tools); moves and mirrors are in the document and regen (`FeatureKind::Move`, `FeatureKind::Mirror`, `AxisRef`, `PlaneRef`), and their UI (`M`, typed fields, the axis or plane picked and drawn); linear and circular patterns are in the document, regen and the UI (`FeatureKind::Pattern`, `PatternKind`; `P`, the mock's panels with Spacing, Total and Full 360°); then command-based undo instead of snapshots.
 - **render**: silhouette lines, MSAA for the model's faces (or a post pass), a camera that can roll (for sketches on faces).
 - **solve**: cancelling a running solve; a cheaper analysis for large sketches.
 - **view**: property panel, the Alt bar, keyboard shortcuts.

@@ -18,6 +18,7 @@ mod save;
 mod sketch;
 mod thumbnail;
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -143,9 +144,14 @@ pub(crate) struct Doc {
     /// The combine being set up, if one is: never with a sketch or another
     /// operation.
     pub(crate) combine: Option<CombineSession>,
-    /// The move or mirror being set up, if one is: never with a sketch or
-    /// another operation.
+    /// The move, mirror or pattern being set up, if one is: never with a
+    /// sketch or another operation.
     pub(crate) motion: Option<MotionSession>,
+    /// How each pattern committed in this run was set up (its mode, Flip
+    /// and spread as typed), which its stored values can't always tell:
+    /// taken again on editing it while it still gives them, see
+    /// [`motion::PatternShape`].
+    pub(crate) pattern_shapes: HashMap<FeatureId, motion::PatternShape>,
     /// The measure tool, while it's in use: never with a sketch or an
     /// operation being set up.
     pub(crate) measure: Option<MeasureSession>,
@@ -350,6 +356,7 @@ impl Doc {
             revolve: None,
             combine: None,
             motion: None,
+            pattern_shapes: HashMap::new(),
             measure: None,
             sketch_split: GEOMETRY_SHARE,
             focus: None,
@@ -699,6 +706,8 @@ impl Doc {
                 | Look::StartCombine
                 | Look::StartMove
                 | Look::StartMirror
+                | Look::StartPattern
+                | Look::StartCircularPattern
                 | Look::StartMeasure
                 | Look::EditFeature(_)
         ) {
@@ -714,6 +723,8 @@ impl Doc {
                 | Look::StartCombine
                 | Look::StartMove
                 | Look::StartMirror
+                | Look::StartPattern
+                | Look::StartCircularPattern
                 | Look::EditFeature(_)
         ) {
             self.measure = None;
@@ -741,9 +752,9 @@ impl Doc {
                 Some(FeatureKind::Extrude(_)) => self.edit_extrude(id),
                 Some(FeatureKind::Revolve(_)) => self.edit_revolve(id),
                 Some(FeatureKind::Combine(_)) => self.edit_combine(id),
-                Some(FeatureKind::Move(_) | FeatureKind::Mirror(_)) => self.edit_motion(id),
-                // No pattern panel yet.
-                Some(FeatureKind::Pattern(_)) => {}
+                Some(FeatureKind::Move(_) | FeatureKind::Mirror(_) | FeatureKind::Pattern(_)) => {
+                    self.edit_motion(id)
+                }
                 _ => self.enter_sketch(id),
             },
             Look::StartExtrude => self.start_extrude(),
@@ -754,6 +765,10 @@ impl Doc {
             Look::Combine(message) => self.combine_look(message),
             Look::StartMove => self.start_motion(varde_view::MotionKind::Move),
             Look::StartMirror => self.start_motion(varde_view::MotionKind::Mirror),
+            Look::StartPattern => self.start_motion(varde_view::MotionKind::LinearPattern),
+            Look::StartCircularPattern => {
+                self.start_motion(varde_view::MotionKind::CircularPattern)
+            }
             Look::Motion(message) => self.motion_look(message),
             Look::StartMeasure => self.start_measure(),
             Look::Measure(message) => self.measure_look(message),

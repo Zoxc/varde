@@ -347,10 +347,8 @@ impl<'a> Moving<'a> {
                 colors.selected
             };
             match self.state.kind {
-                MotionKind::Move => {
-                    self.axis(&mut live, point, along, color, camera, bounds);
-                }
                 MotionKind::Mirror => self.plane(&mut live, point, along, color),
+                _ => self.axis(&mut live, point, along, color, camera, bounds),
             }
         }
         if let Some(handles) = self.handles(input, camera, bounds) {

@@ -1,12 +1,15 @@
-//! Setting up a move or a mirror: its session, started by `Look::StartMove`
-//! (`M`, the toolbar, the rail's Transform set) or `Look::StartMirror`
-//! (the toolbar, the rail), or by editing one, picking its bodies as a
+//! Setting up a move, a mirror or a pattern: its session, started by
+//! `Look::StartMove` (`M`, the toolbar, the rail's Transform set),
+//! `Look::StartMirror` (the toolbar, the rail), `Look::StartPattern`
+//! (`P`, the toolbar, the rail) or `Look::StartCircularPattern` (the
+//! toolbar, the rail), or by editing one, picking its bodies as a
 //! combine's (the body of what a click in the viewport is on, or a row
-//! in Objects), a move's axis or a mirror's plane (an origin one from
-//! the toolbar, or a model edge or face clicked, named as of the
-//! feature), a move's offsets and angle typed, the preview through the
-//! regeneration lane's drafts, and committing it as one undo step or
-//! cancelling it, which leaves no trace.
+//! in Objects), a move's or pattern's axis or a mirror's plane (an origin
+//! one from the toolbar, or a model edge or face clicked, named as of the
+//! feature), a move's offsets and angle or a pattern's count and spread
+//! typed, the preview through the regeneration lane's drafts, and
+//! committing it as one undo step or cancelling it, which leaves no
+//! trace.
 //!
 //! While the axis or plane is picked, the model shown is the history as
 //! of the feature: a new one isn't previewed then, and an edited one is
@@ -17,19 +20,19 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use std::f64::consts::PI;
+use std::f64::consts::{PI, TAU};
 
 use glam::DVec3;
 use varde_document::{
     Axis3, AxisRef, BodyId, Design, Document, FeatureId, FeatureKind, Generation,
-    MAX_FEATURE_BODIES, Mirror, Move, PlaneRef,
+    MAX_FEATURE_BODIES, MAX_PATTERN_COUNT, Mirror, Move, Pattern, PatternKind, PlaneRef,
 };
-use varde_expr::{AngleUnit, Unit, Value};
+use varde_expr::{AngleUnit, Ask, Unit, Value};
 use varde_kernel::Motion;
 use varde_regen::Summary;
 use varde_view::{
     CombineBody, ModelHighlight, MotionField, MotionKind, MotionLook, MotionPick, MotionState,
-    Naming, PanelHover, Pick, Picked, Unnamed, axis_name, plane_name,
+    Naming, PanelHover, PatternMode, Pick, Picked, Unnamed, axis_name, pattern_copies, plane_name,
 };
 
 use super::combine::pickable;
@@ -37,8 +40,9 @@ use super::feed::Merges;
 use super::regions::TypedText;
 use super::{Doc, Focus};
 
-/// The move or mirror being set up, while one is: [`Doc::motion`].
-#[derive(Debug)]
+/// The move, mirror or pattern being set up, while one is:
+/// [`Doc::motion`].
+#[derive(Debug, Clone)]
 pub(crate) struct MotionSession {
     pub(crate) kind: MotionKind,
     /// The feature edited, or `None` for a new one.
@@ -48,10 +52,13 @@ pub(crate) struct MotionSession {
     pub(crate) bodies: Vec<BodyId>,
     /// What a click picks.
     pub(crate) picking: MotionPick,
-    /// A move's fields: the offsets along X, Y and Z, then the angle.
-    pub(crate) fields: [TypedText; 4],
-    /// A move's axis: the Z axis to begin with, as the UI mock's. Only
-    /// stored with an angle other than zero.
+    /// Its fields ([`MotionField::index`]): a move's offsets along X, Y
+    /// and Z and its angle, a pattern's count and spread (its spacing or
+    /// total, a length or a circular one's angle, as its mode reads it).
+    pub(crate) fields: [TypedText; 6],
+    /// A move's or pattern's axis: the Z axis to begin with (a linear
+    /// pattern's X), as the UI mock's. A move stores it only with an
+    /// angle other than zero.
     pub(crate) axis: Option<AxisRef>,
     /// A mirror's plane, once picked.
     pub(crate) plane: Option<PlaneRef>,
@@ -66,6 +73,11 @@ pub(crate) struct MotionSession {
     gone_reference: Option<Reference>,
     /// A mirror's Create copy: on to begin with, as the UI mock's.
     pub(crate) keep_original: bool,
+    /// A linear pattern's Flip direction, stored as a negative spacing.
+    pub(crate) flip: bool,
+    /// How a pattern's copies are spread: by the spacing to begin with
+    /// (a circular one's round a full turn), as the UI mock's.
+    pub(crate) mode: PatternMode,
     /// The panel's row the cursor is over, if any.
     pub(crate) hover: Option<PanelHover>,
     /// The bodies of the feature edited, which its preview leaves where
@@ -98,22 +110,83 @@ struct Pivot {
     at: DVec3,
 }
 
-/// What a move's or mirror's highlight is built of: the model, what's
+/// What a move's, mirror's or pattern's highlight is built of: the model, what's
 /// hovered and whether its row in the panel is, what clicks pick, and
 /// the bodies.
 type Built = (u64, Option<(Picked, bool)>, MotionPick, Vec<BodyId>);
 
+/// Angles are shown in degrees.
+const DEGREES: Unit = Unit::Angle(AngleUnit::Deg);
+
 /// A value read for `ask` from `text`: one the asks take, as the fields
 /// start with.
-fn read(text: &str, ask: &varde_expr::Ask) -> TypedText {
+fn read(text: &str, ask: &Ask) -> TypedText {
     TypedText::read(text.to_owned(), ask)
+}
+
+/// What a pattern of `kind`'s spread is read with in `design`: a circular
+/// one's an angle as the pattern stores it, a linear one's a length above
+/// zero (the Flip direction gives it its sign) within the coordinate
+/// limit.
+fn spread_ask(kind: MotionKind, design: &Design) -> Ask {
+    match kind {
+        MotionKind::CircularPattern => Pattern::angle_ask(design),
+        _ => Pattern::spacing_ask(design).positive(),
+    }
+}
+
+/// What `field` of a session of `kind` is read with in `design`.
+fn field_ask(kind: MotionKind, field: MotionField, design: &Design) -> Ask {
+    match field {
+        MotionField::Offset(_) => Move::offset_ask(design),
+        MotionField::Angle => Move::angle_ask(design),
+        MotionField::Count => Pattern::count_ask(design),
+        MotionField::Spread => spread_ask(kind, design),
+    }
+}
+
+/// How a pattern was last set up in a session, kept by the app for the
+/// feature committed ([`Doc::pattern_shapes`]): the mode and Flip the
+/// user chose and the spread as typed, which the stored values can't
+/// tell apart (a spacing typed as a total, a circular angle typed as a
+/// spacing). Taken again on editing it only while it gives the values
+/// stored, see [`MotionSession::editing`].
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct PatternShape {
+    mode: PatternMode,
+    flip: bool,
+    spread: Value,
+}
+
+/// `value` with its sign turned, as text and value: the text without a
+/// leading "-" or "-(...)" where that gives the value turned exactly,
+/// else the text turned, "-(...)".
+fn negated(value: &Value, ask: &Ask) -> Option<Value> {
+    let text = value.text.trim();
+    let inner = (text
+        .strip_prefix("-(")
+        .and_then(|rest| rest.strip_suffix(')')))
+    .into_iter()
+    .chain(text.strip_prefix('-'));
+    for inner in inner {
+        if let Ok(turned) = Value::new(inner, ask)
+            && turned.value == -value.value
+        {
+            return Some(turned);
+        }
+    }
+    Value::new(&format!("-({text})"), ask)
+        .ok()
+        .filter(|turned| turned.value == -value.value)
 }
 
 impl MotionSession {
     /// A session setting up a new `kind` of `document`, of `bodies`: a
-    /// move by nothing yet about the Z axis, or a mirror keeping the
-    /// original with its plane to pick. Clicks pick bodies, or a
-    /// mirror's plane once it has bodies.
+    /// move by nothing yet about the Z axis, a mirror keeping the
+    /// original with its plane to pick, or a pattern as the UI mock's
+    /// begins: a linear one 3 copies 100 (of the design's units) apart
+    /// along the X axis, a circular one 4 round a full turn about the Z
+    /// axis. Clicks pick bodies, or a mirror's plane once it has bodies.
     fn new(kind: MotionKind, document: &Document, mut bodies: Vec<BodyId>) -> Self {
         bodies.sort_unstable();
         bodies.dedup();
@@ -121,11 +194,36 @@ impl MotionSession {
         let design = document.design();
         let offset = Move::offset_ask(&design);
         let angle = Move::angle_ask(&design);
+        let count = Pattern::count_ask(&design);
+        let spread = spread_ask(kind, &design);
         let length = |design: &Design| varde_expr::format(0.0, Some(Unit::Length(design.units)));
         let zero = length(&design);
         let picking = match kind {
             MotionKind::Mirror if !bodies.is_empty() => MotionPick::Reference,
             _ => MotionPick::Bodies,
+        };
+        let (copies, spread_field, axis, mode) = match kind {
+            MotionKind::CircularPattern => (
+                read("4", &count),
+                read(&varde_expr::format(PI / 2.0, Some(DEGREES)), &spread),
+                Some(AxisRef::Origin(Axis3::Z)),
+                PatternMode::Full,
+            ),
+            _ => {
+                // A hundred of the design's units, with their symbol.
+                let hundred =
+                    Value::new("100", &spread).map(|value| TypedText::of(&value, &spread));
+                (
+                    read("3", &count),
+                    hundred.unwrap_or_else(|_| read("100", &spread)),
+                    match kind {
+                        MotionKind::Move => Some(AxisRef::Origin(Axis3::Z)),
+                        MotionKind::LinearPattern => Some(AxisRef::Origin(Axis3::X)),
+                        _ => None,
+                    },
+                    PatternMode::Spacing,
+                )
+            }
         };
         Self {
             kind,
@@ -136,16 +234,17 @@ impl MotionSession {
                 read(&zero, &offset),
                 read(&zero, &offset),
                 read(&zero, &offset),
-                read(
-                    &varde_expr::format(0.0, Some(Unit::Angle(AngleUnit::Deg))),
-                    &angle,
-                ),
+                read(&varde_expr::format(0.0, Some(DEGREES)), &angle),
+                copies,
+                spread_field,
             ],
-            axis: (kind == MotionKind::Move).then_some(AxisRef::Origin(Axis3::Z)),
+            axis,
             plane: None,
             gone_bodies: Vec::new(),
             gone_reference: None,
             keep_original: true,
+            flip: false,
+            mode,
             hover: None,
             edited_bodies: Vec::new(),
             design,
@@ -155,9 +254,17 @@ impl MotionSession {
         }
     }
 
-    /// A session editing the move or mirror `feature` of `document`, of
-    /// `kind`, with its values; `None` if it's neither.
-    fn editing(document: &Document, feature: FeatureId) -> Option<Self> {
+    /// A session editing the move, mirror or pattern `feature` of
+    /// `document`, with its values; `None` if it's none of those. A
+    /// pattern takes `shape`, how it was last set up, if that gives the
+    /// values it stores; else a linear one's spacing is read as typed
+    /// (Flip on for a negative one, its text turned), and a circular one
+    /// as Full 360° for a whole turn, else as the Total it stores.
+    fn editing(
+        document: &Document,
+        feature: FeatureId,
+        shape: Option<&PatternShape>,
+    ) -> Option<Self> {
         let design = document.design();
         let mut session = match &document.feature(feature)?.kind {
             FeatureKind::Move(moved) => {
@@ -180,11 +287,62 @@ impl MotionSession {
                 session.picking = MotionPick::Bodies;
                 session
             }
+            FeatureKind::Pattern(pattern) => {
+                let kind = match pattern.kind {
+                    PatternKind::Linear { .. } => MotionKind::LinearPattern,
+                    PatternKind::Circular { .. } => MotionKind::CircularPattern,
+                };
+                let mut session = Self::new(kind, document, pattern.bodies.clone());
+                session.axis = Some(*pattern.kind.axis());
+                session.fields[MotionField::Count.index()] =
+                    TypedText::of(pattern.kind.count_value(), &Pattern::count_ask(&design));
+                session.take_shape(pattern, shape);
+                session
+            }
             _ => return None,
         };
         session.feature = Some(feature);
         session.edited_bodies = session.bodies.clone();
         Some(session)
+    }
+
+    /// Sets a pattern's mode, Flip and spread to `shape`'s if they give
+    /// what `pattern` stores, else as [`MotionSession::editing`] reads
+    /// them from it.
+    fn take_shape(&mut self, pattern: &Pattern, shape: Option<&PatternShape>) {
+        let ask = spread_ask(self.kind, &self.design);
+        if let Some(shape) = shape {
+            let mut taken = Self {
+                mode: shape.mode,
+                flip: shape.flip,
+                ..self.clone()
+            };
+            taken.fields[MotionField::Spread.index()] = TypedText::of(&shape.spread, &ask);
+            if matches!(taken.pattern(), Ok(Some(ref made)) if made.kind == pattern.kind) {
+                *self = taken;
+                return;
+            }
+        }
+        let spread = &mut self.fields[MotionField::Spread.index()];
+        match &pattern.kind {
+            PatternKind::Linear { spacing, .. } => {
+                self.mode = PatternMode::Spacing;
+                self.flip = spacing.value < 0.0;
+                let typed = if self.flip {
+                    negated(spacing, &ask)
+                } else {
+                    Some(spacing.clone())
+                };
+                if let Some(typed) = typed {
+                    *spread = TypedText::of(&typed, &ask);
+                }
+            }
+            PatternKind::Circular { .. } if pattern.full_turn() => self.mode = PatternMode::Full,
+            PatternKind::Circular { angle, .. } => {
+                self.mode = PatternMode::Total;
+                *spread = TypedText::of(angle, &ask);
+            }
+        }
     }
 
     /// The field `field`'s text as last read.
@@ -200,12 +358,16 @@ impl MotionSession {
 
     /// The feature as set up, if it's whole: bodies, and a move's offsets
     /// and angle as they last read with an axis if the angle isn't zero
-    /// (none stored if it is), or a mirror's plane.
+    /// (none stored if it is), a mirror's plane, or a pattern as
+    /// [`MotionSession::pattern`] makes it.
     fn kind(&self) -> Option<FeatureKind> {
         if self.bodies.is_empty() {
             return None;
         }
         match self.kind {
+            MotionKind::LinearPattern | MotionKind::CircularPattern => {
+                self.pattern().ok().flatten().map(FeatureKind::Pattern)
+            }
             MotionKind::Move => {
                 let offset = |axis: Axis3| (self.field(MotionField::Offset(axis)).value).clone();
                 let angle = self.field(MotionField::Angle).value.clone()?;
@@ -228,6 +390,124 @@ impl MotionSession {
         }
     }
 
+    /// The pattern as set up, its count and spread as they last read:
+    /// `Ok(None)` while it isn't whole (no bodies, no axis, no value),
+    /// and why its spread is refused as a whole, in the UI mock's words,
+    /// if it is (its own text read, the spacing, total or angle it comes
+    /// to is beyond what's stored). Stored, a linear pattern's spacing is
+    /// as typed, a Total's divided by the count less one, either turned
+    /// by Flip direction ("-(...)"); a circular one's angle is 360° for
+    /// Full 360°, the Total as typed, or a Spacing's times the count less
+    /// one, refused where either comes to a full turn or more.
+    fn pattern(&self) -> Result<Option<Pattern>, String> {
+        let (Some(axis), false) = (self.axis, self.bodies.is_empty()) else {
+            return Ok(None);
+        };
+        let Some(count) = self.field(MotionField::Count).value.clone() else {
+            return Ok(None);
+        };
+        // Within the count's ask, so the conversion is exact.
+        let range = 2.0..=f64::from(MAX_PATTERN_COUNT);
+        if !(range.contains(&count.value) && count.value.fract() == 0.0) {
+            return Ok(None);
+        }
+        let steps = count.value as u32 - 1;
+        let spread = self.field(MotionField::Spread).value.as_ref();
+        let design = &self.design;
+        // The spread's text in an expression, as the stored value reads
+        // it: what it can't take is refused in its words.
+        let composed =
+            |text: String, ask: &Ask| Value::new(&text, ask).map_err(|error| error.to_string());
+        let circular = |angle: &Value| Pattern {
+            bodies: Vec::new(),
+            kind: PatternKind::Circular {
+                about: axis,
+                count: count.clone(),
+                angle: angle.clone(),
+            },
+        };
+        let kind = match self.kind {
+            MotionKind::LinearPattern => {
+                let Some(spread) = spread else {
+                    return Ok(None);
+                };
+                let limit = f64::from(varde_kernel::MAX_COORD);
+                if self.mode != PatternMode::Total && spread.value * f64::from(steps) > limit {
+                    let limit = varde_expr::format(limit, Some(Unit::Length(design.units)));
+                    return Err(format!("The pattern runs past {limit}"));
+                }
+                let text = match self.mode {
+                    PatternMode::Total if steps > 1 => format!("({}) / {steps}", spread.text),
+                    _ => spread.text.clone(),
+                };
+                let text = if self.flip {
+                    format!("-({text})")
+                } else {
+                    text
+                };
+                let spacing = if text == spread.text {
+                    spread.clone()
+                } else {
+                    composed(text, &Pattern::spacing_ask(design))?
+                };
+                PatternKind::Linear {
+                    along: axis,
+                    count: count.clone(),
+                    spacing,
+                }
+            }
+            MotionKind::CircularPattern => {
+                let ask = Pattern::angle_ask(design);
+                let angle = match (self.mode, spread) {
+                    (PatternMode::Full, _) => {
+                        composed(varde_expr::format(TAU, Some(DEGREES)), &ask)?
+                    }
+                    (_, None) => return Ok(None),
+                    (PatternMode::Total, Some(spread)) => {
+                        if circular(spread).full_turn() {
+                            return Err(
+                                "A whole turn puts the last copy on the first: use Full 360°"
+                                    .to_owned(),
+                            );
+                        }
+                        spread.clone()
+                    }
+                    (PatternMode::Spacing, Some(spread)) => {
+                        let past = || {
+                            let step = varde_expr::format(spread.value, Some(DEGREES));
+                            format!("{} copies {step} apart go past a full turn", steps + 1)
+                        };
+                        if spread.value * f64::from(steps) > TAU {
+                            return Err(past());
+                        }
+                        let angle = if steps == 1 {
+                            spread.clone()
+                        } else {
+                            composed(format!("({}) * {steps}", spread.text), &ask)
+                                .map_err(|_| past())?
+                        };
+                        if circular(&angle).full_turn() {
+                            return Err(past());
+                        }
+                        angle
+                    }
+                };
+                circular(&angle).kind
+            }
+            MotionKind::Move | MotionKind::Mirror => return Ok(None),
+        };
+        Ok(Some(Pattern {
+            bodies: self.bodies.clone(),
+            kind,
+        }))
+    }
+
+    /// Why a pattern's spread is refused as a whole, if it is: see
+    /// [`MotionSession::pattern`].
+    fn spread_error(&self) -> Option<String> {
+        self.pattern().err()
+    }
+
     /// What's still to be done before it can be committed, the UI mock's
     /// words, if anything.
     fn need(&self) -> Option<&'static str> {
@@ -235,9 +515,19 @@ impl MotionSession {
             return Some(match self.kind {
                 MotionKind::Move => "pick the bodies to move",
                 MotionKind::Mirror => "pick the bodies to mirror",
+                MotionKind::LinearPattern | MotionKind::CircularPattern => {
+                    "pick the bodies to pattern"
+                }
             });
         }
         match self.kind {
+            MotionKind::LinearPattern if self.axis.is_none() => {
+                Some("pick a direction: an origin axis or a straight edge")
+            }
+            MotionKind::CircularPattern if self.axis.is_none() => {
+                Some("pick an axis: an origin axis or a straight edge")
+            }
+            MotionKind::LinearPattern | MotionKind::CircularPattern => None,
             MotionKind::Mirror if self.plane.is_none() => {
                 Some("pick a plane: an origin plane or a planar face")
             }
@@ -269,9 +559,9 @@ impl MotionSession {
     }
 
     /// What's gone that it names, the UI mock's words, if anything: a
-    /// body picked, or the axis a move turns about or a mirror's plane,
-    /// which another is to be picked for. A move's axis is only gone
-    /// while it turns.
+    /// body picked, or the axis a move turns about, a pattern's axis or a
+    /// mirror's plane, which another is to be picked for. A move's axis
+    /// is only gone while it turns.
     fn gone(&self) -> Option<&'static str> {
         if self.bodies.is_empty() {
             return None;
@@ -288,6 +578,14 @@ impl MotionSession {
             (MotionKind::Mirror, Some(Reference::Plane(plane))) if self.plane == Some(plane) => {
                 Some("The plane is gone: pick another")
             }
+            (MotionKind::LinearPattern, Some(Reference::Axis(axis))) if self.axis == Some(axis) => {
+                Some("The direction is gone: pick another")
+            }
+            (MotionKind::CircularPattern, Some(Reference::Axis(axis)))
+                if self.axis == Some(axis) =>
+            {
+                Some("The axis is gone: pick another")
+            }
             _ => None,
         }
     }
@@ -298,6 +596,7 @@ impl MotionSession {
         let refused = match self.kind()? {
             FeatureKind::Move(moved) => moved.check_own(design).err(),
             FeatureKind::Mirror(mirror) => mirror.check_own().err(),
+            FeatureKind::Pattern(pattern) => pattern.check_own(design).err(),
             _ => None,
         };
         refused.map(|why| format!("it {why}"))
@@ -308,9 +607,15 @@ impl MotionSession {
     /// check. What's left to the document, the bodies and the reference,
     /// the session keeps valid.
     fn ready(&self, design: &Design) -> bool {
+        let fine = |field: MotionField| self.field(field).error.is_none();
         let typed = match self.kind {
-            MotionKind::Move => self.fields.iter().all(|field| field.error.is_none()),
+            MotionKind::Move => MotionField::ALL[..4].iter().all(|&field| fine(field)),
             MotionKind::Mirror => true,
+            MotionKind::LinearPattern | MotionKind::CircularPattern => {
+                fine(MotionField::Count)
+                    && (self.mode == PatternMode::Full || fine(MotionField::Spread))
+                    && self.spread_error().is_none()
+            }
         };
         typed
             && self.need().is_none()
@@ -392,12 +697,7 @@ impl MotionSession {
         if design == self.design {
             return;
         }
-        let asks = [
-            Move::offset_ask(&self.design),
-            Move::offset_ask(&self.design),
-            Move::offset_ask(&self.design),
-            Move::angle_ask(&self.design),
-        ];
+        let asks = MotionField::ALL.map(|field| field_ask(self.kind, field, &self.design));
         for (field, ask) in self.fields.iter_mut().zip(&asks) {
             field.follow_units(ask);
         }
@@ -432,8 +732,8 @@ impl MotionSession {
             return None;
         }
         let zero = || Value::new("0", &Move::offset_ask(design)).ok();
-        let turn = match (self.kind, self.axis) {
-            (MotionKind::Move, Some(axis)) => {
+        let turn = match self.axis {
+            Some(axis) if self.kind.takes_axis() => {
                 Some((axis, Value::new("0", &Move::angle_ask(design)).ok()?))
             }
             _ => None,
@@ -452,16 +752,19 @@ impl MotionSession {
 /// Why a model edge or face can't be a move's axis or a mirror's plane,
 /// in the words the status bar shows.
 const NOT_AN_AXIS: &str = "Only a straight or round edge, or a round face, can be the axis";
+const NOT_A_DIRECTION: &str =
+    "Only a straight or round edge, or a round face, can give the direction";
 const NOT_A_PLANE: &str = "Only a flat face can be the mirror plane";
 const OUT_OF_DATE: &str = "The model shown is out of date: try again once it's regenerated";
 
 impl Doc {
-    /// Starts setting up a new move or mirror (`kind`), in a document
-    /// that can be changed and outside a sketch, or cancels the one being
-    /// set up (one of the other kind is replaced). What's selected in the
-    /// model gives it its bodies; with nothing selected, a model of one
-    /// body gives that one, as the UI mock's. Another operation being set
-    /// up is dropped. A move's first offset field takes the focus.
+    /// Starts setting up a new move, mirror or pattern (`kind`), in a
+    /// document that can be changed and outside a sketch, or cancels the
+    /// one being set up (one of another kind is replaced). What's
+    /// selected in the model gives it its bodies; with nothing selected, a
+    /// model of one body gives that one, as the UI mock's. Another
+    /// operation being set up is dropped. A move's first offset field, or
+    /// a pattern's count, takes the focus.
     pub(crate) fn start_motion(&mut self, kind: MotionKind) {
         if (self.motion.take()).is_some_and(|session| session.kind == kind)
             || !self.editable()
@@ -478,7 +781,7 @@ impl Doc {
             bodies.extend(self.only_body());
         }
         self.motion = Some(MotionSession::new(kind, self.editor.document(), bodies));
-        if kind == MotionKind::Move {
+        if kind != MotionKind::Mirror {
             self.focus = Some(Focus::All);
         }
     }
@@ -495,14 +798,16 @@ impl Doc {
         bodies.next().is_none().then_some(only)
     }
 
-    /// Edits the move or mirror feature `id`, if the document holds it,
-    /// in a session with its values, outside a sketch, in a document that
-    /// can be changed. Another operation being set up is dropped.
+    /// Edits the move, mirror or pattern feature `id`, if the document
+    /// holds it, in a session with its values (a pattern's mode as last
+    /// set up, [`Doc::pattern_shapes`]), outside a sketch, in a document
+    /// that can be changed. Another operation being set up is dropped.
     pub(crate) fn edit_motion(&mut self, id: FeatureId) {
         if self.sketch.is_some() || !self.editable() {
             return;
         }
-        let Some(session) = MotionSession::editing(self.editor.document(), id) else {
+        let shape = self.pattern_shapes.get(&id);
+        let Some(session) = MotionSession::editing(self.editor.document(), id, shape) else {
             return;
         };
         self.picking_plane = None;
@@ -510,13 +815,13 @@ impl Doc {
         self.revolve = None;
         self.combine = None;
         self.selected_feature = Some(id);
-        if session.kind == MotionKind::Move {
+        if session.kind != MotionKind::Mirror {
             self.focus = Some(Focus::All);
         }
         self.motion = Some(session);
     }
 
-    /// Takes `message`, changing the move or mirror being set up.
+    /// Takes `message`, changing the move, mirror or pattern being set up.
     pub(crate) fn motion_look(&mut self, message: MotionLook) {
         let editable = self.editable();
         let document = self.editor.document();
@@ -531,11 +836,7 @@ impl Doc {
                 session.bodies.retain(|&picked| picked != body);
             }
             MotionLook::Input { field, text } => {
-                let design = document.design();
-                let ask = match field {
-                    MotionField::Offset(_) => Move::offset_ask(&design),
-                    MotionField::Angle => Move::angle_ask(&design),
-                };
+                let ask = field_ask(session.kind, field, &document.design());
                 session.fields[field.index()].input(text, &ask);
             }
             // Only as the handles offer it: a move's, while its bodies
@@ -561,7 +862,7 @@ impl Doc {
                 }
             }
             MotionLook::Turn { .. } => {}
-            MotionLook::OriginAxis(axis) if session.kind == MotionKind::Move => {
+            MotionLook::OriginAxis(axis) if session.kind.takes_axis() => {
                 session.axis = Some(AxisRef::Origin(axis));
                 session.picking = MotionPick::Bodies;
             }
@@ -571,6 +872,13 @@ impl Doc {
             }
             MotionLook::OriginAxis(_) | MotionLook::OriginPlane(_) => {}
             MotionLook::Copy => session.keep_original = !session.keep_original,
+            MotionLook::Flip if session.kind == MotionKind::LinearPattern => {
+                session.flip = !session.flip;
+            }
+            MotionLook::Mode(mode) if PatternMode::of(session.kind).contains(&mode) => {
+                session.mode = mode;
+            }
+            MotionLook::Flip | MotionLook::Mode(_) => {}
         }
     }
 
@@ -668,20 +976,24 @@ impl Doc {
         };
         let summary =
             |face: u32| (index.picking().faces().get(face as usize)).map(|face| face.summary);
-        match (session.kind, target) {
-            (MotionKind::Move, Picked::Edge(edge)) => {
-                let keys = index.chain_keys(edge).ok_or(NOT_AN_AXIS)?;
+        let not_an_axis = match session.kind {
+            MotionKind::LinearPattern => NOT_A_DIRECTION,
+            _ => NOT_AN_AXIS,
+        };
+        match (session.kind.takes_axis(), target) {
+            (true, Picked::Edge(edge)) => {
+                let keys = index.chain_keys(edge).ok_or(not_an_axis)?;
                 let straight = index.edge_ends(edge, &keys).is_some();
                 let round = round_edge(index, edge);
                 if !(straight || round) {
-                    return Err(NOT_AN_AXIS.into());
+                    return Err(not_an_axis.into());
                 }
                 let edge = naming
                     .edge_ref(index, edge, at)
                     .map_err(|why| refused(why, "edge"))?;
                 Ok(Reference::Axis(AxisRef::Edge(edge)))
             }
-            (MotionKind::Move, Picked::Face(face)) => {
+            (true, Picked::Face(face)) => {
                 let round = matches!(
                     summary(face),
                     Some(
@@ -692,14 +1004,14 @@ impl Doc {
                     )
                 );
                 if !round {
-                    return Err(NOT_AN_AXIS.into());
+                    return Err(not_an_axis.into());
                 }
                 let face = naming
                     .checked_face_ref(index, face, at)
                     .map_err(|why| refused(why, "face"))?;
                 Ok(Reference::Axis(AxisRef::Face(face)))
             }
-            (MotionKind::Mirror, Picked::Face(face)) => {
+            (false, Picked::Face(face)) => {
                 if !matches!(summary(face), Some(Summary::Plane { .. })) {
                     return Err(NOT_A_PLANE.into());
                 }
@@ -708,8 +1020,8 @@ impl Doc {
                     .map_err(|why| refused(why, "face"))?;
                 Ok(Reference::Plane(PlaneRef::Face(face)))
             }
-            (MotionKind::Move, _) => Err(NOT_AN_AXIS.into()),
-            (MotionKind::Mirror, _) => Err(NOT_A_PLANE.into()),
+            (true, _) => Err(not_an_axis.into()),
+            (false, _) => Err(NOT_A_PLANE.into()),
         }
     }
 
@@ -738,8 +1050,17 @@ impl Doc {
         let Some(kind) = session.kind() else {
             return;
         };
+        let shape = (session.kind.pattern()).then(|| {
+            let spread = session.field(MotionField::Spread).value.clone();
+            (session.mode, session.flip, spread)
+        });
         if self.commit_feature(session.feature, kind) {
             self.motion = None;
+            // The pattern committed is selected: its shape is kept for
+            // editing it again.
+            if let (Some((mode, flip, Some(spread))), Some(id)) = (shape, self.selected_feature) {
+                (self.pattern_shapes).insert(id, PatternShape { mode, flip, spread });
+            }
         }
     }
 
@@ -758,6 +1079,20 @@ impl Doc {
                 (session.kind, document.feature(feature).map(|f| &f.kind)),
                 (MotionKind::Move, Some(FeatureKind::Move(_)))
                     | (MotionKind::Mirror, Some(FeatureKind::Mirror(_)))
+                    | (
+                        MotionKind::LinearPattern,
+                        Some(FeatureKind::Pattern(Pattern {
+                            kind: PatternKind::Linear { .. },
+                            ..
+                        }))
+                    )
+                    | (
+                        MotionKind::CircularPattern,
+                        Some(FeatureKind::Pattern(Pattern {
+                            kind: PatternKind::Circular { .. },
+                            ..
+                        }))
+                    )
             )
         });
         if !(editable && !replaced && edited) {
@@ -939,7 +1274,7 @@ impl Doc {
             .and_then(|feature| document.feature(feature))
             .map(|feature| feature.name.as_str());
         let (reference, origin) = match session.kind {
-            MotionKind::Move => {
+            MotionKind::Move | MotionKind::LinearPattern | MotionKind::CircularPattern => {
                 let axis = session.axis.as_ref();
                 let origin = axis.and_then(|axis| match axis {
                     AxisRef::Origin(axis) => Some([DVec3::ZERO, axis.direction()]),
@@ -958,12 +1293,15 @@ impl Doc {
         };
         // A move turning by nothing doesn't show its axis unless it's
         // being picked.
-        let turning = session.kind == MotionKind::Mirror
+        let turning = session.kind != MotionKind::Move
             || session.picking == MotionPick::Reference
             || session.angle().is_some_and(|angle| angle != 0.0);
+        // A flipped linear pattern's arrow points the way its copies go.
+        let flipped = session.kind == MotionKind::LinearPattern && session.flip;
         let line = origin
             .or_else(|| self.feed.draft_reference())
-            .filter(|_| turning && reference.is_some());
+            .filter(|_| turning && reference.is_some())
+            .map(|[point, along]| [point, if flipped { -along } else { along }]);
         // The bodies where the model shown has them: a merged one in its
         // holder.
         let shown = self.shown_bodies(&session.bodies);
@@ -995,6 +1333,15 @@ impl Doc {
             },
             units: document.units(),
             keep_original: session.keep_original,
+            flip: session.flip,
+            mode: session.mode,
+            spread_error: session.spread_error(),
+            copies: match session.kind() {
+                Some(FeatureKind::Pattern(pattern)) => {
+                    Some(pattern_copies(&pattern, document.units()))
+                }
+                _ => None,
+            },
             need: session.need(),
             refused: (session.gone().map(str::to_owned)).or_else(|| session.refused(&design)),
             error: self.feed.draft_error(),

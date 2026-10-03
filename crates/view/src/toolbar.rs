@@ -15,7 +15,8 @@ use crate::icons::{self, Icon};
 use crate::shortcut::{
     Binding, Shortcut, comb_binding, combine_binding, constrain_binding, constraint_binding,
     extrude_binding, file_bindings, handles_binding, history_bindings, measure_binding,
-    mirror_binding, move_binding, revolve_binding, sketch_binding, switch_binding, tool_binding,
+    mirror_binding, move_binding, pattern_binding, revolve_binding, sketch_binding, switch_binding,
+    tool_binding,
 };
 use crate::theme::{self, Emphasis, SEMIBOLD, SIDE_PANEL_INNER_WIDTH, Tone};
 use crate::{
@@ -516,24 +517,35 @@ fn ops<'a>(
         mirror_binding(keys),
         moving == Some(MotionKind::Mirror),
     );
-    // Picking a move's axis or a mirror's plane offers the origin ones
-    // here, as picking a sketch's plane does: the viewport picks the
-    // model's edges and faces.
+    // The linear pattern after Mirror, with its key, as the mock's model
+    // bar has it: the circular one is on the rail (the mock's model bar
+    // has none either).
+    let pattern_op = bound_op(
+        Icon::LPattern,
+        "Pattern",
+        pattern_binding(keys),
+        moving == Some(MotionKind::LinearPattern),
+    );
+    // Picking a move's or pattern's axis or a mirror's plane offers the
+    // origin ones here, as picking a sketch's plane does: the viewport
+    // picks the model's edges and faces.
     let origins: Vec<Element<'a, Message>> = match &state.motion {
         Some(motion) if motion.picking == MotionPick::Reference => {
             let send = |look: MotionLook| {
                 (editable && motion.editable).then_some(Message::Look(Look::Motion(look)))
             };
             let buttons: Vec<Element<'a, Message>> = match motion.kind {
-                MotionKind::Move => (Axis3::ALL.iter())
-                    .map(|&axis| {
-                        op(
-                            Icon::SeAxis,
-                            axis_label(axis),
-                            send(MotionLook::OriginAxis(axis)),
-                        )
-                    })
-                    .collect(),
+                MotionKind::Move | MotionKind::LinearPattern | MotionKind::CircularPattern => {
+                    (Axis3::ALL.iter())
+                        .map(|&axis| {
+                            op(
+                                Icon::SeAxis,
+                                axis_label(axis),
+                                send(MotionLook::OriginAxis(axis)),
+                            )
+                        })
+                        .collect()
+                }
                 MotionKind::Mirror => (OriginPlane::ALL.iter())
                     .map(|&plane| {
                         op(
@@ -575,6 +587,7 @@ fn ops<'a>(
             combine,
             move_op,
             mirror_op,
+            pattern_op,
             separator(),
             measure,
         ])
@@ -582,7 +595,7 @@ fn ops<'a>(
         .collect()
 }
 
-/// The label of the button turning a move about `axis`.
+/// The label of the button turning a move, or patterning, about `axis`.
 fn axis_label(axis: Axis3) -> &'static str {
     match axis {
         Axis3::X => "X axis",

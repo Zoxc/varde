@@ -1177,7 +1177,8 @@ bar says why (`EditError::Sketch`).
   `agents/viewport.md`). In a sketch: Draw (the drawing tools), Modify
   (Trim to Chamfer), Constraints (the Constrain tool, then every kind with
   a key) and Dimension; outside one: Create (Sketch, Extrude, Revolve),
-  Modify (Combine), Transform (Move, Mirror) and Inspect (Measure); a
+  Modify (Combine), Transform (Move, Mirror, Linear pattern, Circular
+  pattern) and Inspect (Measure); a
   set with nothing the app has yet isn't shown. An entry sends what the
   toolbar's button does (its binding, `Entry::binding`), enabled where
   that is. The top row's letters, `Q`, `W`, `E`, `R`, ... (`rail::SET_KEYS`),

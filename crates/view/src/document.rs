@@ -858,8 +858,11 @@ fn hints<'a>(state: &DocumentState<'a>) -> Vec<Hint<'a>> {
         let pick = motion.editable.then(|| {
             let what = match (motion.picking, motion.kind) {
                 (crate::MotionPick::Bodies, _) => "Pick bodies",
-                (crate::MotionPick::Reference, crate::MotionKind::Move) => "Pick the axis",
+                (crate::MotionPick::Reference, crate::MotionKind::LinearPattern) => {
+                    "Pick the direction"
+                }
                 (crate::MotionPick::Reference, crate::MotionKind::Mirror) => "Pick the plane",
+                (crate::MotionPick::Reference, _) => "Pick the axis",
             };
             mouse_hint(MouseButton::Left, what)
         });

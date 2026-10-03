@@ -4,6 +4,7 @@ use varde_expr::LengthUnit;
 use varde_render::{Projection, View};
 
 use super::*;
+use crate::motion::PatternMode;
 use crate::operation_panel::TypedField;
 use crate::pick::tests::{SIZE, camera, plate, shown};
 use crate::pick::{Picked, Picks};
@@ -27,7 +28,7 @@ fn state(kind: MotionKind, picking: MotionPick, line: Option<[DVec3; 2]>) -> Mot
         editing: None,
         bodies: Vec::new(),
         picking,
-        fields: [field(0.0), field(0.0), field(0.0), field(0.0)],
+        fields: [field(0.0); 6],
         reference: Some("Z axis".to_owned()),
         line,
         bounds: Some([DVec3::new(-30.0, -20.0, 0.0), DVec3::new(30.0, 20.0, 10.0)]),
@@ -35,6 +36,10 @@ fn state(kind: MotionKind, picking: MotionPick, line: Option<[DVec3; 2]>) -> Mot
         origin_axis: Some(Axis3::Z),
         units: LengthUnit::Mm,
         keep_original: true,
+        flip: false,
+        mode: PatternMode::Spacing,
+        spread_error: None,
+        copies: None,
         need: None,
         refused: None,
         error: None,
