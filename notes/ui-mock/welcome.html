@@ -6,22 +6,96 @@
 <title>Varde UI Mock: Welcome</title>
 <!--
   The varde UI mock's welcome screen. Open directly in a browser; the links
-  over the window switch to the model and the sketch pages.
+  over the window switch to the model and the sketch pages, and Desktop and
+  Web beside them between the app's welcome screen and the web build's.
+
+  Desktop: a grey column with the logo, the Start actions and a foot of
+  help, beside the recent designs. Web: the page fills the browser (framed
+  here), a header bar with the logo and the actions over what's in browser
+  storage, kept to the middle; there are no recent files on the web.
 
   Try: open a recent design (the model page), N for a new one, ? for
-  shortcuts.
-  Append /still to disable animations, /dark or /light to force the theme,
-  /persp for a perspective view, /projmenu to open the status bar's menu,
-  /nomouse to hide the mouse hints.
+  shortcuts. Click a recent design to select it, double-click or Enter to
+  open it, the arrow keys to move through them. On the web, drag a file
+  over the page.
+  Append /web for the web build, /still to disable animations, /dark or
+  /light to force the theme, /drag to show a file dragged over the web page.
 -->
 <link rel="stylesheet" href="mock.css">
 <style>
-/* ---- welcome ---- */
-.welcome { position: absolute; top: var(--title-h); left: 0; right: 0; bottom: var(--status-h); overflow: auto; background: var(--vp-top); }
-.wel-inner { max-width: 920px; margin: 0 auto; padding: 48px 40px; }
-.section-label { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--faint); margin: 0 0 12px; }
-.section-label + * { margin-bottom: 36px; }
-.cta { display: flex; gap: 10px; }
+/* ---- the welcome screen, under the title bar ---- */
+.welcome { position: absolute; top: var(--title-h); left: 0; right: 0; bottom: 0; display: flex; background: var(--vp-top); }
+/* No status bar here: the actions show their keys. */
+.sbar { display: none; }
+.ext { color: var(--faint); font-weight: 400; }
+.op.primary .k { color: rgba(255, 255, 255, .75); }
+
+/* Desktop and Web, beside the links between the pages. */
+.pages i { width: 1px; margin: 3px 4px; background: var(--line); }
+.pages button { padding: 3px 12px; border: 0; border-radius: 6px; background: none; color: var(--muted); font-weight: 600; cursor: pointer; }
+.pages button:hover { background: var(--hl); color: var(--text); }
+.pages button.on { background: var(--accent-soft); color: var(--accent); }
+
+/* The logo: the mark over "Varde CAD", or beside it in a row (row). */
+.lockup { flex: none; display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 15px; font-weight: 700; letter-spacing: .04em; line-height: 1; white-space: nowrap; color: var(--muted); }
+.lockup .logo { width: 38px; height: 38px; }
+.lockup.row { flex-direction: row; gap: 8px; font-size: 16px; }
+.lockup.row .logo { width: 30px; height: 30px; }
+
+/* ---- desktop: the column ---- */
+/* The tab strip's grey, the logo on a band of the panel's colour across
+   its head, the actions, a foot of help and the version. */
+.col { flex: none; width: 320px; min-height: 0; overflow: auto; display: flex; flex-direction: column; padding: 20px 16px 14px; background: var(--tabstrip); border-right: 1px solid var(--line); }
+.lband { margin: -20px -16px 18px; padding: 22px 16px 18px; display: flex; justify-content: center; background: var(--panel); border-bottom: 1px solid var(--line); }
+.sub { margin: 0 0 6px; padding: 0 8px; color: var(--faint); font-size: 11px; font-weight: 700; }
+.acts { display: flex; flex-direction: column; gap: 2px; }
+.acts button { display: flex; align-items: center; gap: 10px; height: 38px; padding: 0 10px; border: 0; border-radius: 7px; background: none; cursor: pointer; text-align: left; font-weight: 600; }
+.acts button:hover { background: var(--hl); }
+.acts button.primary { background: var(--accent); color: #fff; }
+.acts button.primary:hover { filter: brightness(1.08); }
+.acts button kbd { margin-left: auto; }
+.acts button.primary kbd { background: rgba(255,255,255,.18); border-color: rgba(255,255,255,.25); color: #fff; }
+.acts button svg.i { width: 18px; height: 18px; }
+.acts button.primary svg.i { color: #fff; }
+.cfoot { margin-top: auto; padding-top: 16px; display: flex; flex-direction: column; gap: 2px; }
+.cfoot button { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; border: 0; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; text-align: left; }
+.cfoot button:hover { background: var(--hl); color: var(--text); }
+.cfoot button kbd { margin-left: auto; }
+.cfoot .ver { padding: 8px 8px 0; margin-top: 6px; border-top: 1px solid var(--line); color: var(--faint); font-size: 11px; }
+
+/* ---- desktop: the recent designs, under a band ---- */
+.main { flex: 1; min-width: 0; overflow: auto; }
+.band {
+  position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 8px; min-height: 29px; padding: 0 24px;
+  background: var(--tabstrip); border-bottom: 1px solid var(--line); font-weight: 600; color: var(--muted);
+}
+.n { padding: 0 6px; border-radius: 9px; background: var(--chip); font-size: 10.5px; font-weight: 600; }
+.pad { padding: 18px 24px 26px; }
+
+/* Designs as cards: the thumbnail over the name and what's known of it. */
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
+.rc { position: relative; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; cursor: pointer; text-align: left; padding: 0; background: var(--panel); box-shadow: 0 1px 3px rgba(0,0,0,.05); }
+.rc:hover { border-color: var(--hl-line); }
+.rc:hover .rm { background: var(--hl); }
+.rc.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.rc .th { aspect-ratio: 4 / 3; display: grid; place-items: center; padding: 14px; background: var(--tabstrip); }
+.rc .th svg { width: 100%; height: 100%; }
+.rc .rm { padding: 8px 10px 9px; border-top: 1px solid var(--line); }
+.rc .rm b { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rc .rm div { color: var(--muted); font-size: 11.5px; margin-top: 2px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+
+/* ---- web ---- */
+/* The page fills the browser: no title bar, the whole width of the screen
+   here, in a frame to keep it apart from the mock's page around it. */
+#win.web { --title-h: 0px; width: calc(100vw - 24px); height: calc(100vh - 58px); align-self: start; margin-top: 46px; border-radius: 10px; }
+.page { flex: 1; min-width: 0; overflow: auto; display: flex; flex-direction: column; }
+/* The header bar: the logo at the left, the actions at the right, as wide
+   as the content under it. */
+.header { flex: none; height: 64px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.header .in { height: 100%; display: flex; align-items: center; }
+.wrap, .header .in { width: min(1040px, calc(100% - 48px)); margin: 0 auto; }
+.wrap { padding: 32px 0 28px; display: flex; flex-direction: column; gap: 12px; }
+.btns { display: flex; gap: 10px; }
 .btn {
   display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 14px 0 12px;
   border-radius: 8px; border: 1px solid var(--line); background: var(--panel); cursor: pointer; font-weight: 600;
@@ -31,19 +105,41 @@
 .btn.primary { background: var(--accent); border-color: transparent; color: #fff; }
 .btn.primary:hover { filter: brightness(1.08); }
 .btn.primary kbd { background: rgba(255,255,255,.18); border-color: rgba(255,255,255,.25); color: #fff; }
-.recent { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
-.rc { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; cursor: pointer; text-align: left; padding: 0; background: var(--panel); }
-.rc:hover { border-color: var(--hl-line); }
-.rc:hover .meta { background: var(--hl); }
-.rc .th { aspect-ratio: 4 / 3; display: grid; place-items: center; padding: 16px; background: var(--tabstrip); }
-.rc .th svg { width: 100%; height: 100%; }
-.rc .meta { padding: 10px 12px 11px; border-top: 1px solid var(--line); }
-.rc .meta b { font-weight: 600; }
-.rc .meta b span { color: var(--faint); font-weight: 400; }
-.rc .meta div { color: var(--muted); font-size: 11.5px; margin-top: 2px; display: flex; justify-content: space-between; }
+.label { display: flex; align-items: center; gap: 8px; font-weight: 600; color: var(--muted); }
+/* What's in browser storage: Open and Delete at a card's foot, and a dot for
+   its downloads: none (amber), changed since (blue), the latest (green). */
+.rc.stored { cursor: default; }
+.racts { display: flex; gap: 2px; }
+.racts .op { height: 24px; padding: 0 6px; }
+.dl { display: inline-flex; align-items: center; gap: 6px; }
+.dl::before { content: ""; width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--ok); }
+.dl.never::before { background: #e0a01a; }
+.dl.changed::before { background: var(--accent); }
+/* The drop zone, the first card: dashed, the hint where the thumbnail goes,
+   lit in the accent while a file is over the page. */
+.rc.drop { border: 2px dashed color-mix(in srgb, var(--text) 18%, transparent); background: none; box-shadow: none; }
+.rc.drop .th { flex: 1; aspect-ratio: auto; display: flex; flex-direction: column; justify-content: center; gap: 6px; background: none; color: var(--muted); text-align: center; }
+.rc.drop .th svg.i { width: 28px; height: 28px; }
+.rc.drop b { color: var(--text); font-weight: 600; }
+.rc.drop u { color: var(--accent); text-decoration: none; font-weight: 600; }
+.rc.drop:hover { background: var(--hl); border-color: var(--hl-line); }
+.rc.drop.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+/* The foot: help, the theme, the desktop app and the version, in a row. */
+.foot { flex: none; margin-top: auto; display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 2px 6px; padding: 14px 16px 18px; border-top: 1px solid var(--line); }
+.foot button { display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; border: 0; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; }
+.foot button:hover { background: var(--hl); color: var(--text); }
+.foot span { padding: 0 8px; color: var(--faint); font-size: 11px; }
+
 @media (max-width: 860px) {
-  .wel-inner { padding: 32px 16px; }
-  .recent { grid-template-columns: repeat(2, 1fr); }
+  .welcome { flex-direction: column; overflow: auto; }
+  .col { width: auto; flex: none; overflow: visible; border-right: 0; border-bottom: 1px solid var(--line); }
+  .main { overflow: visible; }
+  .pad, .band { padding-left: 16px; padding-right: 16px; }
+  .header .lockup { display: none; }
+  .header { height: auto; padding: 12px 0; }
+  .btns { flex-wrap: wrap; }
+  .btn kbd { display: none; }
+  .wrap, .header .in { width: calc(100% - 32px); }
 }
 </style>
 </head>
@@ -55,14 +151,36 @@
 </div>
 <script src="mock.js"></script>
 <script>
+// Desktop: the recent designs.
 const RECENT = [
-  { name: 'bracket', path: '~/parts', when: '2 h ago', thumb: 'bracket' },
-  { name: 'enclosure-lid', path: '~/proj/sensor', when: 'Yesterday', thumb: 'lid' },
-  { name: 'spacer-m6', path: '~/parts', when: '3 days ago', thumb: 'spacer' },
-  { name: 'gearbox-mount', path: '~/proj/rover', when: 'Sep 12', thumb: 'mount' },
+  { name: 'bracket', path: '~/parts', when: '2 h ago', kind: 'bracket' },
+  { name: 'enclosure-lid', path: '~/proj/sensor', when: 'Yesterday', kind: 'lid' },
+  { name: 'spacer-m6', path: '~/parts', when: '3 days ago', kind: 'spacer' },
+  { name: 'gearbox-mount', path: '~/proj/rover', when: 'Sep 12', kind: 'mount' },
+  { name: 'washer-m8', path: '~/parts', when: 'Sep 9', kind: 'washer' },
+  { name: 'rail-clamp', path: '~/proj/rover', when: 'Sep 2', kind: 'bar' },
 ];
+// Web: what's in browser storage, each with where it
+// stands against its downloads (dl): never downloaded, changed since the
+// last one, or the last one is the latest.
+const STORED = [
+  { name: 'Untitled', kind: 'mount', dl: 'never', when: 'Today, 14:02' },
+  { name: 'bracket', kind: 'bracket', dl: 'changed', dlWhen: 'Sep 30', when: 'Yesterday, 18:40' },
+  { name: 'washer-m8', kind: 'washer', dl: 'latest', dlWhen: 'Sep 21', when: 'Sep 21' },
+];
+const DL = {
+  never: () => 'Never downloaded',
+  changed: d => `Changed since downloaded ${d.dlWhen}`,
+  latest: d => `Latest downloaded ${d.dlWhen}`,
+};
 
-// ---------------------------------------------------------------- welcome
+st.web = flag('web');    // the web build's welcome screen
+st.drag = flag('drag');  // a file dragged over the page, on the web
+st.wsel = 0;             // the recent design selected, on desktop
+
+// ---------------------------------------------------------------- designs
+// The designs' solids, as groups of faces: the first group is the base,
+// the rest sit on it.
 function thumbGroups(kind) {
   const box = (x0, x1, y0, y1, z0, z1, holes = []) => [
     { n: [0, 0, 1], p: [[x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]], holes: holes.map(h => ({ near: h(z1), far: h(z0) })) },
@@ -74,23 +192,27 @@ function thumbGroups(kind) {
   ];
   const hc = (x, y, r) => z => circ(zc(z), x, y, r, 28);
   const slot = (x0, x1, y0, y1) => z => [[x0, y0, z], [x1, y0, z], [x1, y1, z], [x0, y1, z]];
+  // A cylinder on the origin, r across and h tall, with a hole through of radius hole.
+  const cyl = (r, h, hole) => {
+    const n = 32, faces = [];
+    for (let i = 0; i < n; i++) {
+      const a0 = i / n * Math.PI * 2, a1 = (i + 1) / n * Math.PI * 2, am = (a0 + a1) / 2;
+      const P0 = [r * Math.cos(a0), r * Math.sin(a0)], P1 = [r * Math.cos(a1), r * Math.sin(a1)];
+      faces.push({ n: [Math.cos(am), Math.sin(am), 0], smooth: true, p: [[...P0, 0], [...P1, 0], [...P1, h], [...P0, h]] });
+    }
+    faces.push({ n: [0, 0, 1], p: circ(zc(h), 0, 0, r, n), holes: [{ near: circ(zc(h), 0, 0, hole, 28), far: circ(zc(0), 0, 0, hole, 28) }] });
+    faces.push({ n: [0, 0, -1], p: circ(zc(0), 0, 0, r, n) });
+    return faces;
+  };
   if (kind === 'bracket') return [BRACKET];
   if (kind === 'lid') {
     const holes = [[6, 6], [84, 6], [6, 54], [84, 54]].map(([x, y]) => hc(x, y, 2.5));
     for (let i = 0; i < 6; i++) holes.push(slot(30, 62, 18 + i * 5, 20 + i * 5));
     return [box(0, 90, 0, 60, 0, 7, holes)];
   }
-  if (kind === 'spacer') {
-    const r = 16, h = 34, n = 32, faces = [];
-    for (let i = 0; i < n; i++) {
-      const a0 = i / n * Math.PI * 2, a1 = (i + 1) / n * Math.PI * 2, am = (a0 + a1) / 2;
-      const P0 = [r * Math.cos(a0), r * Math.sin(a0)], P1 = [r * Math.cos(a1), r * Math.sin(a1)];
-      faces.push({ n: [Math.cos(am), Math.sin(am), 0], smooth: true, p: [[...P0, 0], [...P1, 0], [...P1, h], [...P0, h]] });
-    }
-    faces.push({ n: [0, 0, 1], p: circ(zc(h), 0, 0, r, n), holes: [{ near: circ(zc(h), 0, 0, 6.5, 28), far: circ(zc(0), 0, 0, 6.5, 28) }] });
-    faces.push({ n: [0, 0, -1], p: circ(zc(0), 0, 0, r, n) });
-    return [faces];
-  }
+  if (kind === 'spacer') return [cyl(16, 34, 6.5)];
+  if (kind === 'washer') return [cyl(22, 4, 9)];
+  if (kind === 'bar') return [box(0, 120, 0, 24, 0, 10, [slot(14, 38, 9, 15), slot(82, 106, 9, 15), hc(60, 12, 4)])];
   if (kind === 'mount') {
     return [
       box(0, 100, 0, 60, 0, 8, [[7, 7], [93, 7], [7, 53], [93, 53]].map(([x, y]) => hc(x, y, 3))),
@@ -101,41 +223,148 @@ function thumbGroups(kind) {
   return [];
 }
 
+// A design's thumbnail: its solids from the home view, fitted, the base
+// first and the rest far to near.
+const thumbs = {};
 function thumb(kind) {
-  const groups = thumbGroups(kind);
-  const all = groups.flat().flatMap(f => f.p);
+  const key = kind + (isDark() ? ':dark' : '');
+  if (thumbs[key]) return thumbs[key];
+  const groups = thumbGroups(kind), all = groups.flat().flatMap(f => f.p);
   const pr = makeProj(-58, 26, bounds(all).map(([a, b]) => (a + b) / 2));
-  // The first group is the base; the rest sit on it and are painted far-to-near.
   const cen = g => depthOf(g.flatMap(f => f.p), pr);
   const [base, ...rest] = groups;
   const svg = [base, ...rest.sort((a, b) => cen(a) - cen(b))].map(g => solidSvg(g, pr)).join('');
   const [[x0, x1], [y0, y1]] = bounds(all.map(p => pr.P(...p)));
   const pad = 4;
-  return `<svg viewBox="${x0 - pad} ${y0 - pad} ${x1 - x0 + pad * 2} ${y1 - y0 + pad * 2}">${svg}</svg>`;
+  return thumbs[key] = `<svg viewBox="${x0 - pad} ${y0 - pad} ${x1 - x0 + pad * 2} ${y1 - y0 + pad * 2}">${svg}</svg>`;
 }
 
-function welcome() {
-  return `
-    <div class="welcome">
-      <div class="wel-inner">
-        <div class="section-label">Start</div>
-        <div class="cta">
-          <button class="btn primary" data-act="new">${icon('plus')}New design<kbd>N</kbd></button>
-          <button class="btn" data-act="open:bracket">${icon('folder')}Open…<kbd>O</kbd></button>
-        </div>
-        <div class="section-label">Recent</div>
-        <div class="recent">
-          ${RECENT.map(r => `
-            <button class="rc" data-act="open:${r.name}">
-              <div class="th">${thumb(r.thumb)}</div>
-              <div class="meta"><b>${r.name}<span>.vrdp</span></b><div><span>${r.path}</span><span>${r.when}</span></div></div>
-            </button>`).join('')}
-        </div>
-      </div>
-    </div>`;
+// ---------------------------------------------------------------- parts
+const lockup = (cls = '') => `<div class="lockup ${cls}">${LOGO}Varde CAD</div>`;
+const fileName = name => `${name}<span class="ext">.vrdp</span>`;
+const theme = () => `<button data-act="theme">${icon(isDark() ? 'sun' : 'moon')}${isDark() ? 'Light' : 'Dark'} theme</button>`;
+
+// ---------------------------------------------------------------- desktop
+function desktop() {
+  const card = (r, i) => `<button class="rc${st.wsel === i ? ' sel' : ''}" data-act="wsel:${i}" data-open="${r.name}">
+    <div class="th">${thumb(r.kind)}</div>
+    <div class="rm"><b>${fileName(r.name)}</b><div><span>${r.path}</span><span>${r.when}</span></div></div>
+  </button>`;
+  return `<div class="col">
+    <div class="lband">${lockup()}</div>
+    <div class="sub">Start</div>
+    <div class="acts">
+      <button class="primary" data-act="new">${icon('plus')}New design<kbd>N</kbd></button>
+      <button data-act="open:bracket">${icon('folder')}Open…<kbd>O</kbd></button>
+      <button data-act="toast:Import — not in mock">${icon('export')}Import…</button>
+    </div>
+    <div class="cfoot">
+      <button data-act="help">${icon('help')}Shortcuts<kbd>?</kbd></button>
+      <button data-act="toast:Documentation — not in mock">${icon('export')}Documentation</button>${theme()}
+      <div class="ver">varde 0.1 · work in progress</div>
+    </div>
+  </div>
+  <div class="main"><div class="band">Recent<span class="n">${RECENT.length}</span></div>
+    <div class="pad"><div class="cards">${RECENT.map(card).join('')}</div></div></div>`;
 }
 
-page.welcome = welcome;
+// ---------------------------------------------------------------- web
+// The header bar over what's in browser storage, the drop zone its first
+// card, all kept to the middle of the page. A file is opened with Open…
+// or dropped on the page; one dragged over it lights the drop zone.
+function web() {
+  const card = d => `<div class="rc stored" data-open="${d.name}">
+    <div class="th">${thumb(d.kind)}</div>
+    <div class="rm"><b>${d.name === 'Untitled' ? d.name : fileName(d.name)}</b>
+      <div><span class="dl ${d.dl}">${DL[d.dl](d)}</span></div>
+      <div><span>${d.when}</span><span class="racts"><button class="op" data-act="open:${d.name}">Open</button>
+        <button class="op icon" data-act="toast:Deleted — not in mock" title="Delete">${icon('trash')}</button></span></div></div></div>`;
+  const drop = `<div class="rc drop${st.drag ? ' on' : ''}" data-act="open:bracket">
+    <div class="th">${icon('folder')}<b>${st.drag ? 'Drop to open it' : 'Drop a .vrdp file'}</b><span>or <u>choose one</u></span></div></div>`;
+  return `<div class="page">
+    <div class="header"><div class="in">${lockup('row')}<div class="spacer"></div><div class="btns">
+      <button class="btn primary" data-act="new">${icon('plus')}New design<kbd>N</kbd></button>
+      <button class="btn" data-act="open:bracket">${icon('folder')}Open…<kbd>O</kbd></button>
+      <button class="btn" data-act="toast:Import — not in mock">${icon('export')}Import…</button></div></div></div>
+    <div class="wrap">
+      <div class="label">In browser storage<span class="n">${STORED.length}</span></div>
+      <div class="cards">${drop}${STORED.map(card).join('')}</div>
+    </div>
+    <div class="foot">
+      <button data-act="help">${icon('help')}Shortcuts<kbd>?</kbd></button>
+      <button data-act="toast:Documentation — not in mock">${icon('export')}Documentation</button>${theme()}
+      <button data-act="toast:Desktop app — not in mock">${icon('export')}Desktop app</button>
+      <span>varde 0.1 · work in progress</span>
+    </div>
+  </div>`;
+}
+
+// In the browser the page is all there is: no title bar.
+const desktopTitlebar = titlebar;
+titlebar = () => !st.web || st.doc ? desktopTitlebar() : '';
+
+page.welcome = () => {
+  $('#win').classList.toggle('web', st.web);
+  return `<div class="welcome">${st.web ? web() : desktop()}</div>`;
+};
+
+// ---------------------------------------------------------------- input
+page.act = (k, v) => {
+  if (k === 'platform') {
+    st.web = v === 'web';
+    // Kept in the hash without reloading (a hashchange would).
+    const parts = HASH.slice(1).filter(f => f !== 'web');
+    if (st.web) parts.push('web');
+    history.replaceState(null, '', '#/' + parts.join('/'));
+  } else if (k === 'wsel') st.wsel = +v;
+  else return false;
+  return true;
+};
+page.dblclick = el => {
+  const o = el.closest('[data-open]');
+  if (!o) return false;
+  go('model.html', o.dataset.open);
+  return true;
+};
+// Desktop and Web, beside the links between the pages.
+page.afterRender = () => {
+  const nav = $('.pages');
+  if (!nav) return;
+  if (!nav.querySelector('[data-act^="platform"]')) {
+    nav.insertAdjacentHTML('beforeend', `<i></i><button data-act="platform:desktop">Desktop</button><button data-act="platform:web">Web</button>`);
+  }
+  for (const b of nav.querySelectorAll('[data-act^="platform"]')) b.classList.toggle('on', b.dataset.act === 'platform:' + (st.web ? 'web' : 'desktop'));
+};
+
+// Before the shared keys, on desktop: the arrow keys through the recent
+// designs, Enter to open the one selected.
+document.addEventListener('keydown', e => {
+  if (st.web || st.doc || st.help || e.ctrlKey || e.metaKey || e.altKey) return;
+  const move = { ArrowUp: -1, ArrowDown: 1, ArrowLeft: -1, ArrowRight: 1 }[e.key];
+  if (move) { e.preventDefault(); st.wsel = clamp(st.wsel + move, 0, RECENT.length - 1); render(); e.stopImmediatePropagation(); return; }
+  if (e.key === 'Enter') { go('model.html', RECENT[st.wsel].name); e.stopImmediatePropagation(); }
+}, true);
+
+// A file dragged over the web page lights the drop zone; dropped, it would open.
+const files = e => [...(e.dataTransfer?.types || [])].includes('Files');
+addEventListener('dragover', e => {
+  if (!files(e)) return;
+  e.preventDefault();
+  if (st.web && !st.drag) { st.drag = true; render(); }
+});
+addEventListener('dragleave', e => {
+  if (e.relatedTarget || !st.drag) return;
+  st.drag = false;
+  render();
+});
+addEventListener('drop', e => {
+  if (!files(e)) return;
+  e.preventDefault();
+  st.drag = false;
+  render();
+  toast(`Open ${e.dataTransfer.files[0]?.name || 'the file'} — not in mock`);
+});
+
 start('welcome');
 </script>
 </body>
