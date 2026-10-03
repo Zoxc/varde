@@ -126,6 +126,8 @@ impl Cleaner<'_> {
             let other = self.soup.tris[s as usize];
             if self.proper_in(tri, plane.0) && self.proper_in(other, plane.0) {
                 self.rejoin(t, s);
+                self.soup.source[t as usize] = None;
+                self.soup.source[s as usize] = None;
                 any = true;
             } else {
                 self.soup.curves.insert(k, saved);
@@ -451,6 +453,7 @@ impl Cleaner<'_> {
             self.soup.faces.push(face);
             self.alive.push(true);
             self.soup.made.push(true);
+            self.soup.source.push(None);
             for v in tri {
                 self.around[v as usize].push(t);
             }

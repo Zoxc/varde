@@ -337,7 +337,12 @@ a balanced tree.
    triangles' shapes (no angle under 5°, a Delaunay refinement that may
    halve a cap's edge in both faces beside it), so the next operation
    finds no long fans from far corners to rims.
-8. **Repair and check**, then the result is a `Solid`.
+8. **Repair and check**, then the result is a `Solid`. Both test only
+   what the operation changed and what comes near it: a triangle of an
+   operand carried through bit for bit (same patch, corners mapped one to
+   one, the operand checked at the same resolution) passed the check
+   there, with every pair it makes with others kept so. The result and
+   the error are the same as testing everything.
 
 **Ties and flush geometry.** CAD makes ties on purpose (flush faces, a
 vertex on a face). For flat geometry the predicates are exact (float with
@@ -608,9 +613,11 @@ extrude being set up) are regenerated the same way. See `agents/kernel.md`
 - **Plane sections** nearly along a cylinder's rulings, and on quadrics
   other than elliptic cylinders, take less exact paths (tracing, or weights
   from a sampled point).
-- **Cost.** Much of a boolean's work scales with both whole operands
-  (refinement rounds, clean-up, repair, the check), so bodies past some
-  50 000 to 200 000 patches can take no boolean within the budget. A
+- **Cost.** Much of a boolean's work still scales with both whole
+  operands (refinement rounds, the clean-up, merging, passes over the
+  whole result; repair and the check work near the change), about 8 to 10
+  units a patch for a small cut, so bodies past some 400 000 patches can
+  take no boolean within the budget. A
   failing operation runs for seconds, and on the web the regen worker is
   single-threaded and a running operation isn't interrupted.
 - **Not built yet**: the revolve feature's UI (the kernel's `revolve`

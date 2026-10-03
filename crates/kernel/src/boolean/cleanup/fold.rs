@@ -234,6 +234,7 @@ impl Cleaner<'_> {
                         {
                             self.soup.faces[t as usize] = face;
                             self.soup.made[t as usize] = true;
+                            self.soup.source[t as usize] = None;
                         }
                     }
                     changed = true;
@@ -304,6 +305,7 @@ mod tests {
             pos,
             faces: tris.iter().map(|t| t.1).collect(),
             made: vec![true; tris.len()],
+            source: vec![None; tris.len()],
             tris: tris.into_iter().map(|t| t.0).collect(),
             curves: Curves::new(),
             sources: (0..7).collect(),

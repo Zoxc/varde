@@ -612,6 +612,7 @@ fn pieces_too_small_to_split_fail_with_what_asked_for_it() {
             pieces,
             |t| &pieces[t as usize].patch,
             &faces,
+            true,
             &TOL,
             &mut work,
         )
@@ -842,6 +843,7 @@ fn only_affine_whole_leaves_failing_the_fold_check_fail_at_once() {
             pieces,
             |t| &pieces[t as usize].patch,
             &faces,
+            true,
             &TOL,
             &mut work,
         )

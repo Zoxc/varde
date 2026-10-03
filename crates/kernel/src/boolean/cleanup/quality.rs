@@ -880,6 +880,7 @@ impl Cleaner<'_> {
             self.around[w as usize].retain(|&x| x != t);
         }
         self.soup.tris[t as usize] = tri;
+        self.soup.source[t as usize] = None;
         for w in tri {
             self.around[w as usize].push(t);
         }
@@ -892,6 +893,7 @@ impl Cleaner<'_> {
         self.soup.tris.push(tri);
         self.soup.faces.push(face);
         self.soup.made.push(self.soup.made[of as usize]);
+        self.soup.source.push(None);
         self.alive.push(true);
         for w in tri {
             self.around[w as usize].push(t);
@@ -928,6 +930,7 @@ mod tests {
             sources: vec![0],
             absorbed: Vec::new(),
             made: vec![true; n],
+            source: vec![None; n],
         };
         let mut around = vec![Vec::new(); soup.pos.len()];
         for (t, tri) in soup.tris.iter().enumerate() {

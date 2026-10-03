@@ -1871,9 +1871,10 @@ fn the_result_checks_integrations_are_charged() {
     // the corner triangles' volume can't tell which way the result
     // faces, so its check integrates some of the patches. The
     // operation's work is what making the mesh (and naming its faces)
-    // takes, a few units a patch for the check, and `INTEGRATE_WORK` for
-    // each patch it integrated, charged after: the operation fits that
-    // budget exactly.
+    // takes, repair, a unit a patch for the check's passes over the whole
+    // mesh and a few for each patch it tests near the cut, and
+    // `INTEGRATE_WORK` for each patch it integrated, charged after: the
+    // operation fits that budget exactly.
     let tube = extruded(
         vec![
             circle(DVec2::ZERO, 1.0, 1, false),
@@ -1889,19 +1890,23 @@ fn the_result_checks_integrations_are_charged() {
     let strip = |r: f64| 0.1 * (r * r - 0.01).sqrt() + r * r * crate::trig::asin(0.1 / r);
     let want = PI * (1.0 - 0.95 * 0.95) - 0.5 * (strip(1.0) - strip(0.95));
     let mut work = Work::new(&Budget::DEFAULT);
-    let mesh = unchecked(&tube, &notch, Op::Difference, &TOL, &mut work).unwrap();
-    let mesh = mesh
-        .repair_within(&TOL, &mut work)
-        .unwrap()
-        .merge_faces(TOL.resolution(), &mut work)
+    let (mesh, source) = unchecked(&tube, &notch, Op::Difference, &TOL, &mut work).unwrap();
+    let kept = crate::solid::Kept {
+        operands: [&tube, &notch],
+        source,
+    };
+    let before = work.left();
+    let solid = Solid::finished_near(mesh, CHECK_WORK, Some(kept), &TOL, &mut work)
+        .map_err(|(e, _)| e)
         .unwrap();
+    let mesh = solid.mesh().clone();
     let integrated = mesh.check_counted(&TOL).unwrap();
     assert!(integrated > 0);
-    assert!((Solid::new(mesh.clone(), &TOL).unwrap().volume() - want).abs() < 1e-9);
-    let made = Budget::DEFAULT.work() - work.left();
-    let total = made
-        + (mesh.tris().len() * crate::solid::CHECK_WORK + integrated * crate::solid::INTEGRATE_WORK)
-            as u64;
+    assert!((solid.volume() - want).abs() < 1e-9);
+    // The check's integrations are in what finishing took.
+    let finishing = before - work.left();
+    assert!(finishing > (integrated * crate::solid::INTEGRATE_WORK) as u64);
+    let total = Budget::DEFAULT.work() - work.left();
     let with =
         |work: u64| boolean(&tube, &notch, Op::Difference, &TOL, &Budget::new(work)).stripped();
     assert_eq!(with(total).map(|s| s.mesh().clone()), Ok(mesh));

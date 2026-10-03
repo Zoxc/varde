@@ -2417,7 +2417,7 @@ fn fails_with_its_triangles(
     let failure = assert_deterministic(|| boolean(a, b, op, tol, &Budget::DEFAULT).unwrap_err());
     assert_eq!(failure.error, want);
     let mut work = Work::new(&Budget::DEFAULT);
-    let cleaned = unchecked(a, b, op, tol, &mut work).unwrap();
+    let (cleaned, _) = unchecked(a, b, op, tol, &mut work).unwrap();
     let Err((error @ KernelError::Invalid(why), Some(unfinished))) =
         Solid::finished_or_unfinished(cleaned, CHECK_WORK, tol, &mut work)
     else {
@@ -2503,6 +2503,7 @@ fn a_mesh_that_doesnt_pair_up_names_what_the_builder_found() {
         sources: vec![0],
         absorbed: Vec::new(),
         made: vec![true],
+        source: vec![None],
     };
     let failure = build(soup, vec![face], &[Vec::new()]).unwrap_err();
     assert_eq!(
@@ -2531,6 +2532,7 @@ fn a_mesh_that_doesnt_pair_up_names_what_the_builder_found() {
         sources: vec![0],
         absorbed: Vec::new(),
         made: vec![true],
+        source: vec![None],
     };
     let failure = build(soup, vec![face], &[Vec::new()]).unwrap_err();
     assert_eq!(
@@ -2722,4 +2724,124 @@ fn the_exact_retry_returns_its_own_failure() {
         tries(Err(first.clone()), Ok(7), 0.0),
         (Err(first), vec![0.0])
     );
+}
+
+/// A plate `2n` square and 1 thick with an `n × n` grid of round holes
+/// of radius 0.4, one in the middle of each 2 × 2 cell.
+fn holed_plate(n: usize) -> Solid {
+    use crate::profile::tests::{circle, rect};
+    let side = 2.0 * n as f64;
+    let mut loops = vec![rect(glam::DVec2::ZERO, glam::DVec2::splat(side), 0)];
+    for i in 0..n {
+        for j in 0..n {
+            let c = glam::DVec2::new(1.0 + 2.0 * i as f64, 1.0 + 2.0 * j as f64);
+            loops.push(circle(c, 0.4, 10 + 4 * (i * n + j) as u64, true));
+        }
+    }
+    let profile = crate::Profile { loops };
+    crate::extrude(
+        &profile,
+        &crate::Frame::XY,
+        0.0,
+        1.0,
+        1,
+        &TOL,
+        &Budget::DEFAULT,
+    )
+    .unwrap()
+}
+
+/// The work `a op b` takes, and its result.
+fn work_of(a: &Solid, b: &Solid, op: Op) -> (u64, Solid) {
+    let mut work = Work::new(&Budget::DEFAULT);
+    let result = boolean_within(a, b, op, &TOL, &mut work).unwrap();
+    (Budget::DEFAULT.work() - work.left(), result)
+}
+
+#[test]
+fn a_small_cut_costs_little_a_patch_of_a_large_body() {
+    // A small box cut from the corner of plates of round holes, away from
+    // every hole: repair and the check test only what the cut changed
+    // and its neighbours, as the plate's other triangles passed the check
+    // in the plate. That took about 25 units a patch, 442 000 on the
+    // 20 × 20 plate (19 180 patches); now about 8 (157 577), and the
+    // same for any size of plate.
+    let corner = cube([-0.1, -0.1, 0.5], [0.2, 0.2, 0.2]);
+    let removed = 0.1 * 0.1 * 0.2;
+    let sizes: &[usize] = if cfg!(debug_assertions) {
+        &[10, 20]
+    } else {
+        &[10, 20, 30]
+    };
+    let mut per_patch = Vec::new();
+    for &n in sizes {
+        let plate = holed_plate(n);
+        let (units, cut) = work_of(&plate, &corner, Op::Difference);
+        assert!((cut.volume() - (plate.volume() - removed)).abs() < 1e-9);
+        let patches = plate.mesh().tris().len();
+        per_patch.push(units as f64 / patches as f64);
+        if n == 20 {
+            let within = boolean(&plate, &corner, Op::Difference, &TOL, &Budget::new(160_000));
+            assert!(within.stripped() == Ok(cut));
+        }
+    }
+    assert!(per_patch.iter().all(|&u| u < 10.0), "{per_patch:?}");
+    let spread = per_patch
+        .iter()
+        .fold(0.0f64, |m, &u| m.max((u - per_patch[0]).abs()));
+    assert!(spread < 3.0, "{per_patch:?}");
+}
+
+#[test]
+fn kept_triangles_of_both_operands_are_tested_where_they_meet() {
+    // Unions and intersections keep triangles of both operands as they
+    // were: where those of one come near those of the other (a box flush
+    // on the plate, one beside it, one a hair off it), they are tested
+    // as a pair, and the results are right, the same at 1 and 8 threads.
+    let plate = holed_plate(3);
+    let gap = TOL.resolution() / 2.0;
+    for (min, size, union, both) in [
+        // On top, flush, between holes.
+        ([1.6, 1.6, 1.0], [0.8, 0.8, 0.5], 0.32, 0.0),
+        // Beside it, flush with its side.
+        ([6.0, 1.0, 0.0], [1.0, 1.0, 1.0], 1.0, 0.0),
+        // Across its edge, half in.
+        ([5.5, 2.6, 0.25], [1.0, 0.8, 0.5], 0.4, 0.2),
+        // A hair over its top.
+        ([1.6, 1.6, 1.0 + gap], [0.8, 0.8, 0.5], 0.32, 0.0),
+    ] {
+        let tool = cube(min, size);
+        let union_ = assert_deterministic(|| run(&plate, &tool, Op::Union));
+        let inter = assert_deterministic(|| run(&plate, &tool, Op::Intersection));
+        match union_ {
+            Ok(u) => assert!(
+                (u.volume() - (plate.volume() + union - both)).abs() < 1e-9,
+                "{min:?}"
+            ),
+            Err(e) => assert_eq!(
+                e,
+                KernelError::Boolean(BooleanError::NotManifold),
+                "{min:?}"
+            ),
+        }
+        let i = inter.unwrap();
+        assert!((i.volume() - both).abs() < 1e-9, "{min:?} {}", i.volume());
+    }
+}
+
+#[test]
+fn operands_checked_at_another_resolution_are_tested_again() {
+    // Two boxes 5 µm apart pass the check at a resolution of 1 µm, not at
+    // 10 µm. Cut far from them at the coarser tolerance, the result keeps
+    // both boxes as they were, but they were never checked at it: it
+    // fails, as the whole check does, rather than pass untested.
+    let fine = TOL;
+    let coarse = Tolerance::new(1e-2).unwrap();
+    let a = Solid::cuboid(DVec3::ZERO, DVec3::ONE, 1, &fine).unwrap();
+    let b = Solid::cuboid(DVec3::new(1.0 + 5e-6, 0.0, 0.0), DVec3::ONE, 2, &fine).unwrap();
+    let pair = crate::assemble(&[a, b], &fine, &Budget::DEFAULT).unwrap();
+    let tool = Solid::cuboid(DVec3::new(-1.0, -1.0, 0.5), DVec3::splat(0.5), 3, &fine).unwrap();
+    assert!(boolean(&pair, &tool, Op::Difference, &fine, &Budget::DEFAULT).is_ok());
+    let coarse_result = boolean(&pair, &tool, Op::Difference, &coarse, &Budget::DEFAULT);
+    assert!(coarse_result.is_err(), "{coarse_result:?}");
 }

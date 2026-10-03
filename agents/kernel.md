@@ -921,7 +921,13 @@ repairs, merges and checks it again only if the check fails: repair
 keeps a mesh that passes as it is, so the solid is the same, for one
 pass over the pairs rather than two (a mesh failing after the fold
 check pays that pass twice, the check's and repair's);
-`check_embedding` (repair's) stops after step 4. Where they fail as
+`check_embedding` (repair's) stops after step 4. `check_counted_near(tol,
+tested)` runs the fold check only on the triangles `tested` marks and the
+hull rules only on the pairs with one of them (`Bvh::self_pairs_touching`,
+in `self_pairs`' order), the rest whole: for a boolean's result, whose
+other triangles and pairs are known to pass (see "Repair and the check
+near the change" under Booleans), it gives the whole check's result and
+error. Where they fail as
 `Invalid`, `new_repaired_within` and `Solid::finished` return a
 `Failure` with what the error names, of the mesh that failed: the
 pieces repair names, or the triangles the check does (see "Check
@@ -1839,6 +1845,20 @@ errors"). None for errors naming no piece (the input's topology or
 bounds, a wrong `Plane` tag, running out). The same result, error and
 work.
 
+`Mesh::repaired_from(tested, …)` is `repaired` whose first round tests
+only the triangles `tested` marks, and the pairs with one of them, for a
+mesh whose other triangles and pairs are known to pass the fold and
+hull rules (a boolean's result, see "Repair and the check near the
+change"); `None` marks all. That first round's pairs are put in the
+order testing every piece gives them (`[p, q]`, `p < q`, sorted: what
+`pairs_within` gives when every piece changed), so the failures it
+finds, the leaves it splits, the witness it looks for and the error it
+names are the whole first round's, and so are the later rounds, which
+start from the same changed pieces: the same result and error, for
+work near the change only (one unit a patch for the patches stays). A
+repaired mesh comes with the triangle of the input each of its
+triangles came from (`Piece::origin`).
+
 ### Boxes and cylinders (`mesh/primitive.rs`)
 
 Built as an extrude builds its solids, and checked (`check` with the given
@@ -2028,7 +2048,11 @@ wrap the checked primitives, and `Solid::empty()` is the empty solid.
 `mesh()`/`into_mesh()` give the patches back, `bounds3()` is the `f64`
 box around the control points (which holds the solid) and `bounds()` the
 same in `f32` (`None` when empty; rounding is monotonic, so it holds the
-tessellation too).
+tessellation too). A solid also keeps the resolution its mesh passed the
+check with (every constructor checks with the tolerance it is given;
+not part of equality, which is the meshes'): a boolean at that
+resolution doesn't test again the triangles it keeps of the solid as
+they were (see "Repair and the check near the change" under Booleans).
 
 `Solid::tessellate(&Display)` gives a `RenderMesh`. `Display::new(tol)`
 (default: the default tolerance) sets the targets:
@@ -6319,6 +6343,54 @@ cusps where faces are tangent (a boss standing in a plate tangent to
 its side, `a_cusp_where_faces_are_tangent_stays_invalid`), and thin
 triangles.
 
+### Repair and the check near the change
+
+Most of a boolean's result is its operands' triangles carried through
+untouched, and the operands passed the check, so repair and the check
+test those again for nothing (that was about 18 of the 25 units a
+patch a small cut of a large body took). A triangle of the result is
+**intact** (`mesh/intact.rs`, `tested`) when it is a triangle of an
+operand that passed the check at the same resolution (`Solid` keeps it),
+bit for bit: the same patch, corner for corner (so not turned over), on
+corners mapping one to one onto that operand's (a map for each operand
+built in triangle order, no vertex of the result the image of two; a
+triangle that doesn't fit those before it isn't intact). Then its fold
+check passes, and two intact triangles of one operand share the same
+corners as they did there, so the hull rules decide them as the
+operand's check did: they pass. The rest is tested: every triangle that
+isn't intact, and the intact ones within the resolution of the box of
+the other operand's intact ones (that box holds every one of them, so
+no pair of the two operands' kept triangles whose boxes come that near
+is missed), with every pair one of those is in.
+
+Which operand triangle a result's triangle may be is a hint, carried as
+`Soup::source`: assembly sets it for the triangles kept whole (`whole`;
+for curved operands the refined triangle's leaf, if it is a root of the
+refinement, whose id is the operand's triangle), merging sets it for a
+restored root, and none for `B`'s in a difference (turned over); the
+clean-up clears it for the triangles it changes (collapses, flips,
+unbending and Delaunay flips, straightened seams, unfolding, the quality
+pass's pieces). `tested` verifies it, so a wrong hint costs a test,
+never a pass. `Solid::finished_near` tells the tested triangles on the
+built mesh for repair (`Mesh::repaired_from`), and again on the
+repaired, merged mesh, with the hints mapped through repair's origins,
+for the check (`Mesh::check_counted_near`): the check doesn't trust
+repair's bookkeeping. Both give the whole pass's result and error, as
+they test the same failing triangles and pairs in the same order: the
+same mesh, error and evidence as testing everything, for less work.
+Debug builds also run the whole check on every boolean's result and
+assert that the two agree. Checked by hashing 402 results and errors
+(a drilling chain, plates with tools at corners and flush, random boxes
+and cylinders chained, pin grids) against the operation as it was: all
+the same bits.
+
+The charges: a unit for every 16 patches (`SCAN`) each time the tested
+triangles are told, repair's unit a patch and its pairs, a unit a patch
+(`CHECK_WHOLE_WORK`) for the check's passes over the whole mesh
+(topology, bounds, the boxes' tree, orientation, face tags: about a fifth
+of the whole check's time) and `CHECK_WORK`, 5, for each patch it
+tests.
+
 ### Errors and budget
 
 `KernelError::Boolean(BooleanError)`: `Inconsistent` (the decisions
@@ -6353,10 +6425,12 @@ ran 16 s before running out, and stops in 1.6 s now), the square of each
 edge's crossings (ordering them), a unit
 per cut face and its triangulation's steps over 16 (the `Meter`, see
 "Triangulating"; an exact orientation 4 units), the soup's size per
-clean-up round, the triangles per round of merging, repair's own, a unit a patch
-naming faces of one surface alike (`Mesh::merge_faces`), and 5
-units per patch of the result for the check that makes it a solid (about
-2.7 µs a patch; `CHECK_WORK`), spent before it, plus 32 for each patch
+clean-up round, the triangles per round of merging, repair's own
+(near the change, see "Repair and the check near the change"), a unit a
+patch naming faces of one surface alike (`Mesh::merge_faces`), and for
+the check that makes it a solid a unit a patch and 5 for each patch it
+tests near the change (the whole check is about 2.7 µs a patch;
+`CHECK_WORK`), spent before it, plus 32 for each patch
 whose volume the check integrated to tell which way the shells face
 (about 17 µs a patch; `INTEGRATE_WORK`), which `Mesh::check_counted`
 reports and `Solid::new_within` spends (revolve's check too, through
@@ -6452,14 +6526,30 @@ within about two seconds on one thread.
 **Whole-body costs.** Much of an operation's work is over everything
 both operands hold, whatever the boolean touches: every refinement
 round rebuilds and counts both operands, the clean-up looks at the whole
-soup each round, repair tests every pair of the result near each other
-and the check spends five units a patch. So a small hole drilled into a
-plate of 6 588 patches costs about 0.15 million units (0.1 s), into
-one of 17 596 about 0.38 million (0.24 s), and into a box already
-drilled with 60 holes (5 156 patches) about 0.48 million: 0.21 million
-in the pair decisions' rounds, 0.16 million in repair, 0.06 million in
-the clean-up. At roughly 20 to 100 units a patch, a body past some
-50 000 to 200 000 patches can take no boolean within `MAX_WORK`. On
+soup each round, merging names faces over the whole result, and the
+check's topology, orientation and face tags run over all of it. Repair
+and the check's fold and hull tests work near the change only (see
+"Repair and the check near the change"); before, they took about 18 of
+the 25 units a patch a small cut cost. Measured in release (units by
+bisecting the budget, to 1%), a 0.2 mm box cut at the corner of a plate
+of round holes, away from them: 5 532 patches 128 000 → 47 000 units,
+19 180 patches 442 000 → 158 000, 39 388 patches 950 000 → 362 000
+(about 24 → 8.5 a patch; plates of square holes 27 → 9.5, and a pin
+the same); the last of 100 holes drilled one at a time into a plate
+(10 242 patches) 240 000 → 81 000 (23.4 → 7.9 a patch); 60 holes drilled
+one at a time into a 20 × 20 × 1 box 4.97 → 2.46 million units all
+told, 5.9 → 4.3 s of CPU (the earlier holes, on a small body, cost
+mostly what they cut). The results and errors are the same bits. So a
+body past about 400 000 patches can take no boolean within `MAX_WORK`.
+A grid of many holes cut at once is another matter: a 100 × 100 × 5 plate
+less a 10 × 10 grid of pins assembled into one tool runs out (7 × 7
+takes 2.9 million units, 8 × 8 runs out), not for the whole body but
+for the cut faces: the plate's two caps are two triangles each, every
+hole lies in one of them, and each round of cutting the faces
+triangulates each such triangle's loops again by ear clipping, which
+grows faster than linearly in their vertices (7 × 7: about 90 000 units
+for each cap triangle each round, seven rounds; 10 × 10: 2.2 million
+for the first round alone). On
 the web the regen worker is one thread, and wasm runs slower than
 native, so a boolean that fails at the budget holds the worker for
 several seconds; drags queue behind it (latest wins, but a running
@@ -9644,3 +9734,20 @@ see `agents/features.md`, "Failures and where they are").
   ("Decided again exactly"). It runs inside each of the tries with
   fewer shortcuts, within their caps ("The exact retry inside the
   shortcut retries").
+- **Repair and the check near a boolean's change keep the results and
+  errors bit for bit, and the solids keep their resolution.** The plan
+  verified the kept triangles once, when the mesh is built, and let the
+  check select pairs as repair does. Here `tested` (`mesh/intact.rs`)
+  verifies them on the mesh repair is given and again, independently,
+  on the repaired mesh the check gets, and the pairs of both first
+  passes come in the order testing everything gives them, so the
+  failures found and the error named don't change either (the boolean
+  names some failures `NotManifold` from the pair the check names).
+  `Solid` keeps the resolution it was checked with, which the plan left
+  out: an operand checked at a finer resolution passed hull rules a
+  coarser one may break, so only operands checked at the operation's
+  own resolution count as checked. The check's passes over the whole
+  mesh (topology, bounds, orientation, face tags) stay, charged a unit
+  a patch (`CHECK_WHOLE_WORK`), which the plan's "≤ 8 units a patch"
+  didn't count: a small cut of a large plate now takes about 8 to 10 a
+  patch (17 for a pin in the smallest plate measured, 2 060 patches).

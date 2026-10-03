@@ -47,7 +47,7 @@ use glam::DVec3;
 use super::assemble::Curves;
 use super::parts;
 use crate::budget::Work;
-use crate::mesh::{Edge, Face, Surface, off_surface, straight};
+use crate::mesh::{Edge, Face, Hint, Surface, off_surface, straight};
 use crate::patch::Patch;
 use crate::solid::patch_volume;
 use crate::trig;
@@ -87,6 +87,11 @@ pub(super) struct Soup {
     /// since), not an operand's kept as it was: only those are refined
     /// for their shapes ([`quality`]).
     pub(super) made: Vec<bool>,
+    /// The triangle of an operand (`0` for `A`, `1` for `B`, and its
+    /// index) each triangle is, as it was, if it may be one: cleared for
+    /// those the clean-up makes or changes. Only a hint, which the check
+    /// verifies bit for bit (see [`Kept`](crate::solid::Kept)).
+    pub(super) source: Vec<Hint>,
 }
 
 impl Soup {
@@ -273,6 +278,8 @@ pub(super) fn clean(
     soup.tris.retain(|_| *keep.next().expect("a flag"));
     let mut keep = alive.iter();
     soup.made.retain(|_| *keep.next().expect("a flag"));
+    let mut keep = alive.iter();
+    soup.source.retain(|_| *keep.next().expect("a flag"));
     Ok(unfolded)
 }
 
@@ -649,6 +656,14 @@ impl Cleaner<'_> {
             }
             self.around[u as usize].push(t);
         }
+        // Kept until the collapse stands (undone, they are as they were).
+        let sources: Vec<Hint> = moved
+            .iter()
+            .map(|&t| self.soup.source[t as usize])
+            .collect();
+        for &t in &moved {
+            self.soup.source[t as usize] = None;
+        }
         self.around[v as usize].clear();
         let cancelled = self.cancel_pairs(u);
 
@@ -662,8 +677,9 @@ impl Cleaner<'_> {
             for &t in shared.iter().chain(cancelled.iter().flatten()) {
                 self.alive[t as usize] = true;
             }
-            for (&t, &old) in moved.iter().zip(&saved_tris) {
+            for ((&t, &old), &source) in moved.iter().zip(&saved_tris).zip(&sources) {
                 self.soup.tris[t as usize] = old;
+                self.soup.source[t as usize] = source;
             }
             for (&w, list) in affected.iter().zip(saved_around) {
                 self.around[w as usize] = list;
@@ -965,6 +981,8 @@ impl Cleaner<'_> {
         self.soup.tris[s as usize] = [a, b, v];
         self.soup.made[t as usize] = true;
         self.soup.made[s as usize] = true;
+        self.soup.source[t as usize] = None;
+        self.soup.source[s as usize] = None;
         self.around[u as usize].retain(|&x| x != s);
         self.around[v as usize].retain(|&x| x != t);
         self.around[a as usize].push(s);
@@ -1312,6 +1330,7 @@ mod tests {
             sources: vec![0],
             absorbed: Vec::new(),
             made: vec![true; 14],
+            source: (0..14).map(|t| Some((0, t))).collect(),
         };
         let mut around = vec![Vec::new(); soup.pos.len()];
         for (t, tri) in soup.tris.iter().enumerate() {
@@ -1334,6 +1353,12 @@ mod tests {
         assert!(c.collapse(0, 1, Turn::Proper));
         assert_eq!(c.shared(0, 2).len(), 2);
         assert!(!c.curved(0, 2));
+        // The triangles moved off `v` (2 and 3, round the edge to vertex
+        // 2) are no operand's as they were any more; the rest still may be.
+        let kept: Vec<bool> = (0..14).map(|t| c.soup.source[t].is_some()).collect();
+        let mut want = [true; 14];
+        want[2..4].fill(false);
+        assert_eq!(kept, want);
     }
 
     #[test]
@@ -1380,6 +1405,7 @@ mod tests {
             sources: vec![0, 0],
             absorbed: Vec::new(),
             made: vec![true; 8],
+            source: vec![None; 8],
         };
         let mut around = vec![Vec::new(); soup.pos.len()];
         for (t, tri) in soup.tris.iter().enumerate() {

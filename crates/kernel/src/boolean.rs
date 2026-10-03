@@ -61,9 +61,9 @@ use std::collections::btree_map::Entry;
 use glam::DVec3;
 
 use crate::budget::{Budget, Work};
-use crate::mesh::{BuildError, Bvh, CheckError, Face, FaceKey, Mesh, MeshBuilder, Surface};
+use crate::mesh::{BuildError, Bvh, CheckError, Face, FaceKey, Hint, Mesh, MeshBuilder, Surface};
 use crate::patch::Bounds3;
-use crate::solid::{CHECK_WORK, Unfinished};
+use crate::solid::{CHECK_WORK, Kept, Unfinished};
 use crate::topology::distance::{Allowance, to_patches};
 use crate::{Evidence, Failure, KernelError, Solid, Tolerance};
 
@@ -518,7 +518,8 @@ thread_local! {
 }
 
 /// The result's mesh, before repair and the check, joining ends along
-/// walls' common direction.
+/// walls' common direction, with the operand's triangle each of its
+/// triangles may be ([`Kept::source`]).
 #[cfg(test)]
 fn unchecked(
     a: &Solid,
@@ -526,7 +527,7 @@ fn unchecked(
     op: Op,
     tol: &Tolerance,
     work: &mut Work,
-) -> Result<Mesh, KernelError> {
+) -> Result<(Mesh, Vec<Hint>), KernelError> {
     let mut used = Shortcuts::NONE;
     let (soup, faces) =
         assembled(a, b, op, Shortcuts::ALL, &mut used, tol, work).map_err(|f| f.error)?;
@@ -619,10 +620,16 @@ fn checked(
     work: &mut Work,
 ) -> Result<Solid, Failure> {
     *failed = None;
-    let mesh = cleaned(a, b, op, soup, faces, unfold, unfolded, tol, work)?;
+    let (mesh, source) = cleaned(a, b, op, soup, faces, unfold, unfolded, tol, work)?;
     // Faces of one surface that meet merge, so a flush join leaves no
     // line between the two operands' pieces of a plane or cylinder.
-    match Solid::finished_or_unfinished(mesh, CHECK_WORK, tol, work) {
+    // Repair and the check test only what the operation changed, and
+    // what comes near the other operand's kept triangles.
+    let kept = Kept {
+        operands: [a, b],
+        source,
+    };
+    match Solid::finished_near(mesh, CHECK_WORK, Some(kept), tol, work) {
         Ok(solid) => Ok(solid),
         Err((error @ KernelError::Invalid(why), Some(unfinished))) => {
             let failure = unfinished.failure(error);
@@ -720,8 +727,9 @@ fn curved_decided(
 
 /// The mesh of the assembled `soup` and `faces`, cleaned (unfolding
 /// folded sheets if `unfold`, and setting `unfolded` if it did), before
-/// repair and the check. Triangles that don't pair up come with what the
-/// mesh's builder named (see [`build`]).
+/// repair and the check, with the operand's triangle each of its
+/// triangles may be ([`cleanup::Soup::source`]). Triangles that don't
+/// pair up come with what the mesh's builder named (see [`build`]).
 #[allow(clippy::too_many_arguments)]
 fn cleaned(
     a: &Solid,
@@ -733,7 +741,7 @@ fn cleaned(
     unfolded: &mut bool,
     tol: &Tolerance,
     work: &mut Work,
-) -> Result<Mesh, Failure> {
+) -> Result<(Mesh, Vec<Hint>), Failure> {
     *unfolded = cleanup::clean(
         &mut soup,
         &mut faces,
@@ -751,11 +759,16 @@ fn cleaned(
         4.0 * tol.resolution(),
     ));
     let aliases = aliases(a.mesh(), b.mesh(), &faces, &soup, work)?;
+    // The mesh's triangles are the soup's, in order.
+    let source = soup.source.clone();
     let mesh = build(soup, faces, &aliases)?;
     if op == Op::Difference {
-        return Ok(mesh);
+        return Ok((mesh, source));
     }
-    Ok(covered(mesh, [a.mesh(), b.mesh()], short(tol), work)?)
+    Ok((
+        covered(mesh, [a.mesh(), b.mesh()], short(tol), work)?,
+        source,
+    ))
 }
 
 /// `mesh` with an alias for each operand's plane face whose key or

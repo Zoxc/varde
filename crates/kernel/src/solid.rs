@@ -1,7 +1,7 @@
 use glam::DVec3;
 
 use crate::budget::Work;
-use crate::mesh::{Mesh, Refusal};
+use crate::mesh::{Hint, Mesh, Refusal, tested};
 use crate::par::par_map;
 use crate::patch::{Bounds3, Patch};
 use crate::quadrature::triangle_rule;
@@ -20,6 +20,18 @@ pub(crate) const INTEGRATE_WORK: usize = 32;
 /// patch on one thread), not counting the patches it integrates to tell
 /// which way the shells face ([`Solid::new_within`] charges those).
 pub(crate) const CHECK_WORK: usize = 5;
+
+/// How many patches a unit of work stands for in a pass over a whole
+/// mesh that does little for each: telling which triangles a boolean
+/// kept as they were ([`Kept`]).
+pub(crate) const SCAN: usize = 16;
+
+/// Units of work per patch that the parts of the check that run over
+/// the whole mesh take when it tests the fold and hull rules only near
+/// a boolean's changes ([`Solid::finished_near`]): topology, bounds,
+/// the boxes' tree, which way the shells face and the face tags (about
+/// 1.2 µs a patch on one thread under load, a fifth of the whole check).
+pub(crate) const CHECK_WHOLE_WORK: usize = 1;
 
 /// A mesh that failed on its way to a [`Solid`] as
 /// [`KernelError::Invalid`] ([`Solid::finished_or_unfinished`]), with
@@ -83,9 +95,47 @@ fn failure((error, unfinished): (KernelError, Option<Unfinished>)) -> Failure {
 /// The only ways to get one are [`Solid::new`], which checks, and the
 /// constructors here, which build meshes that are checked as they're
 /// made.
-#[derive(Debug, Clone, PartialEq)]
+///
+/// Two solids are equal when their meshes are.
+#[derive(Debug, Clone)]
 pub struct Solid {
     mesh: Mesh,
+    /// The resolution its mesh passed the check with: a boolean at the
+    /// same resolution needn't test again the pairs of its triangles it
+    /// keeps as they were (see [`Kept`]).
+    resolution: f64,
+}
+
+impl PartialEq for Solid {
+    fn eq(&self, other: &Self) -> bool {
+        self.mesh == other.mesh
+    }
+}
+
+/// What a boolean's result may keep of its operands as they were: the
+/// two operands, and for each triangle of the result, the triangle of an
+/// operand (`0` or `1`, and its index) it may be. Only a hint, which
+/// [`tested`] verifies bit for bit: where it is right, repair and the
+/// check test only the triangles the operation changed or that come near
+/// the other operand's kept ones, and every pair with one of them, as
+/// the rest passed the check in their operand.
+pub(crate) struct Kept<'a> {
+    pub(crate) operands: [&'a Solid; 2],
+    pub(crate) source: Vec<Hint>,
+}
+
+impl Kept<'_> {
+    /// Which triangles of `mesh`, whose triangles' operand triangles
+    /// `source` names, repair and the check must test with `tol` (see
+    /// [`tested`]): an operand counts only if it passed the check with
+    /// `tol`'s resolution.
+    fn tested(&self, mesh: &Mesh, source: &[Hint], tol: &Tolerance) -> Vec<bool> {
+        let resolution = tol.resolution();
+        let operands = self
+            .operands
+            .map(|s| (s.resolution == resolution).then_some(&s.mesh));
+        tested(mesh, operands, source, resolution)
+    }
 }
 
 impl Solid {
@@ -93,7 +143,15 @@ impl Solid {
     /// `tol`; [`KernelError::Invalid`] with the first failure if not.
     pub fn new(mesh: Mesh, tol: &Tolerance) -> Result<Solid, KernelError> {
         mesh.check(tol).map_err(KernelError::Invalid)?;
-        Ok(Solid { mesh })
+        Ok(Solid::checked(mesh, tol))
+    }
+
+    /// The solid of `mesh`, which passed the check with `tol`.
+    fn checked(mesh: Mesh, tol: &Tolerance) -> Solid {
+        Solid {
+            mesh,
+            resolution: tol.resolution(),
+        }
     }
 
     /// [`Solid::new`] for an operation with `work` left: it charges
@@ -116,13 +174,37 @@ impl Solid {
         tol: &Tolerance,
         work: &mut Work,
     ) -> Result<Solid, (KernelError, Option<Box<Mesh>>)> {
-        let integrated = match mesh.check_counted(tol) {
+        Solid::new_or_checked_near(mesh, None, tol, work)
+    }
+
+    /// [`Self::new_or_checked`], testing only the triangles `tested`
+    /// marks and the pairs with one of them for the fold and hull rules
+    /// where given ([`Mesh::check_counted_near`]), which must leave out
+    /// only triangles and pairs that pass them.
+    fn new_or_checked_near(
+        mesh: Mesh,
+        tested: Option<&[bool]>,
+        tol: &Tolerance,
+        work: &mut Work,
+    ) -> Result<Solid, (KernelError, Option<Box<Mesh>>)> {
+        let checked = match tested {
+            Some(tested) => {
+                let near = mesh.check_counted_near(tol, tested);
+                // The pairs and triangles left out pass, so the whole
+                // check comes to the same, error and all.
+                #[cfg(debug_assertions)]
+                assert_eq!(near, mesh.check_counted(tol), "the check near the changes");
+                near
+            }
+            None => mesh.check_counted(tol),
+        };
+        let integrated = match checked {
             Ok(integrated) => integrated,
             Err(e) => return Err((KernelError::Invalid(e), Some(Box::new(mesh)))),
         };
         work.spend(integrated.saturating_mul(INTEGRATE_WORK))
             .map_err(|e| (e, None))?;
-        Ok(Solid { mesh })
+        Ok(Solid::checked(mesh, tol))
     }
 
     /// The solid bounded by `mesh` with its faces merged
@@ -153,7 +235,7 @@ impl Solid {
                     return Err(Failure::of_mesh(KernelError::Invalid(e), &mesh));
                 }
                 work.spend(integrated.saturating_mul(INTEGRATE_WORK))?;
-                Ok(Solid { mesh })
+                Ok(Solid::checked(mesh, tol))
             }
             // The check already charged (`check_counted_within`), none
             // before checking the repaired mesh.
@@ -188,9 +270,34 @@ impl Solid {
         tol: &Tolerance,
         work: &mut Work,
     ) -> Result<Solid, (KernelError, Option<Unfinished>)> {
-        let (given, mesh) = match mesh.repaired(tol, work) {
-            Ok(Some(repaired)) => (Some(Box::new(mesh)), repaired),
-            Ok(None) => (None, mesh),
+        Solid::finished_near(mesh, check_work, None, tol, work)
+    }
+
+    /// [`Self::finished_or_unfinished`] for a boolean's result, which
+    /// `kept` tells what it may keep of the operands: repair starts from
+    /// the triangles [`Kept::tested`] marks and the check tests only
+    /// those it marks on the repaired mesh (and the pairs with one of
+    /// them), charged `check_work` a patch it tests, [`CHECK_WHOLE_WORK`]
+    /// a patch for what it runs over the whole mesh, and a unit for every
+    /// [`SCAN`] patches for each time the kept triangles are told. Without
+    /// `kept`, every triangle is tested, the check charged `check_work` a
+    /// patch. The same result and error either way, for less work (debug
+    /// builds check the whole mesh too, and assert that).
+    pub(crate) fn finished_near(
+        mesh: Mesh,
+        check_work: usize,
+        kept: Option<Kept>,
+        tol: &Tolerance,
+        work: &mut Work,
+    ) -> Result<Solid, (KernelError, Option<Unfinished>)> {
+        let tested = kept.as_ref().map(|k| {
+            work.spend(mesh.tris().len() / SCAN)
+                .map(|()| k.tested(&mesh, &k.source, tol))
+        });
+        let tested = tested.transpose().map_err(|e| (e, None))?;
+        let (given, mesh, origins) = match mesh.repaired_from(tested.as_deref(), tol, work) {
+            Ok(Some((repaired, origins))) => (Some(Box::new(mesh)), repaired, Some(origins)),
+            Ok(None) => (None, mesh, None),
             Err(Refusal {
                 error: error @ KernelError::Invalid(_),
                 pieces,
@@ -203,18 +310,46 @@ impl Solid {
         let mesh = mesh
             .merge_faces(tol.resolution(), work)
             .map_err(|e| (e, None))?;
-        work.spend(mesh.tris().len().saturating_mul(check_work))
-            .map_err(|e| (e, None))?;
-        Solid::new_or_checked(mesh, tol, work).map_err(|(error, checked)| {
-            let unfinished = checked.map(|checked| Unfinished::Check { given, checked });
-            (error, unfinished)
-        })
+        // Each triangle of the repaired mesh may be what the triangle it
+        // came from may be: a piece of a split one isn't, which
+        // `tested` tells.
+        let tested = match kept {
+            Some(kept) => {
+                let source: Vec<Hint> = match origins {
+                    Some(origins) => origins
+                        .iter()
+                        .map(|&t| kept.source.get(t as usize).copied().flatten())
+                        .collect(),
+                    None => kept.source.clone(),
+                };
+                let n = mesh.tris().len();
+                work.spend(n / SCAN + n.saturating_mul(CHECK_WHOLE_WORK))
+                    .map_err(|e| (e, None))?;
+                let tested = kept.tested(&mesh, &source, tol);
+                let count = tested.iter().filter(|&&t| t).count();
+                work.spend(count.saturating_mul(check_work))
+                    .map_err(|e| (e, None))?;
+                Some(tested)
+            }
+            None => {
+                work.spend(mesh.tris().len().saturating_mul(check_work))
+                    .map_err(|e| (e, None))?;
+                None
+            }
+        };
+        Solid::new_or_checked_near(mesh, tested.as_deref(), tol, work).map_err(
+            |(error, checked)| {
+                let unfinished = checked.map(|checked| Unfinished::Check { given, checked });
+                (error, unfinished)
+            },
+        )
     }
 
     /// The empty solid.
     pub fn empty() -> Solid {
         Solid {
             mesh: Mesh::default(),
+            resolution: 0.0,
         }
     }
 
@@ -227,7 +362,7 @@ impl Solid {
         tol: &Tolerance,
     ) -> Result<Solid, KernelError> {
         // `Mesh::cuboid` checks what it builds.
-        Mesh::cuboid(min, size, feature, tol).map(|mesh| Solid { mesh })
+        Mesh::cuboid(min, size, feature, tol).map(|mesh| Solid::checked(mesh, tol))
     }
 
     /// The circular cylinder standing on `base` along `+z`: see
@@ -240,7 +375,7 @@ impl Solid {
         tol: &Tolerance,
     ) -> Result<Solid, KernelError> {
         // `Mesh::cylinder` checks what it builds.
-        Mesh::cylinder(base, radius, height, feature, tol).map(|mesh| Solid { mesh })
+        Mesh::cylinder(base, radius, height, feature, tol).map(|mesh| Solid::checked(mesh, tol))
     }
 
     /// The patches bounding it.

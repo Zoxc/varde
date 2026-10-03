@@ -152,6 +152,36 @@ impl Mesh {
             .map_err(KernelError::Invalid)
     }
 
+    /// [`Self::check_counted`] testing for the fold and hull rules only
+    /// the triangles `tested` marks (one flag a triangle) and the pairs
+    /// with one of them: for a mesh whose other triangles and pairs are
+    /// known to pass them (see [`tested`](super::tested)), which then
+    /// gives the same result and error as the whole check, as the
+    /// triangles and pairs it tests come in the same order.
+    pub(crate) fn check_counted_near(
+        &self,
+        tol: &Tolerance,
+        tested: &[bool],
+    ) -> Result<usize, CheckError> {
+        self.check_topology()?;
+        let patches = self.bounded_patches()?;
+        if tested.len() != patches.len() {
+            return self.check_counted(tol);
+        }
+        let ids: Vec<u32> = (0..patches.len() as u32)
+            .filter(|&t| tested[t as usize])
+            .collect();
+        let folds = par_map(&ids, |&t| patches[t as usize].fold_direction().is_some());
+        if let Some((&t, _)) = ids.iter().zip(&folds).find(|(_, passes)| !**passes) {
+            return Err(CheckError::Fold(t));
+        }
+        let margin = tol.resolution();
+        let bvh = Bvh::new(patches.iter().map(Patch::bounds).collect());
+        let pairs = bvh.self_pairs_touching(tested, margin);
+        self.check_hulls(&patches, &pairs, margin)?;
+        self.check_rest(&patches, &bvh, tol)
+    }
+
     /// The invariants after the hulls: orientation and face tags.
     fn check_rest(
         &self,

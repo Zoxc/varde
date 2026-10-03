@@ -37,7 +37,7 @@ use super::surface::{Crossed, Shape, lerp, on_curve, point, polish, straight};
 use super::triangulate::Meter;
 use super::{BooleanError, Op, Primitives, segment};
 use crate::budget::Work;
-use crate::mesh::{Edge, Face, MIN_SPLIT, Node, Quadric, Surface};
+use crate::mesh::{Edge, Face, Hint, MIN_SPLIT, Node, Quadric, Surface};
 use crate::par::par_map;
 use crate::patch::{Conic3, Point};
 use crate::{Failure, KernelError, Tolerance};
@@ -1342,6 +1342,28 @@ impl Cutting<'_> {
         // What this boolean made: every triangle but the operands' kept
         // whole (and the refinement's pieces merged back into them).
         let mut made: Vec<bool> = whole.iter().map(Option::is_none).collect();
+        // The operand's triangle each kept whole is, where it is one
+        // unsplit (a refined triangle that is a root of the refinement:
+        // its id is the triangle's), and not turned over.
+        let mut source: Vec<Hint> = whole
+            .iter()
+            .map(|whole| {
+                let (side, t) = (*whole)?;
+                if side == Side::B && keep.flip_b {
+                    return None;
+                }
+                let t = match refinement {
+                    Some(refinement) => {
+                        let k = side as usize;
+                        let leaf = *refinement.leaf[k].get(t as usize)?;
+                        (refinement.tree[k].get(leaf as usize)?.parent == u32::MAX)
+                            .then_some(leaf)?
+                    }
+                    None => t,
+                };
+                Some((side as u8, t))
+            })
+            .collect();
         if let Some(refinement) = refinement {
             let offsets = [0, self.operand(Side::B).1];
             merge::merge(
@@ -1350,6 +1372,8 @@ impl Cutting<'_> {
                 &mut whole,
                 &mut off,
                 &mut made,
+                &mut source,
+                keep.flip_b,
                 &mut curves,
                 refinement,
                 offsets,
@@ -1415,6 +1439,7 @@ impl Cutting<'_> {
                 sources,
                 absorbed: Vec::new(),
                 made,
+                source,
             },
             out_faces,
         ))

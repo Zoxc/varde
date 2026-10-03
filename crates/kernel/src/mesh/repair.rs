@@ -117,9 +117,26 @@ impl Mesh {
         tol: &Tolerance,
         work: &mut Work,
     ) -> Result<Option<Mesh>, Refusal> {
+        Ok(self.repaired_from(None, tol, work)?.map(|(mesh, _)| mesh))
+    }
+
+    /// [`Self::repaired`], testing at first only the triangles `tested`
+    /// marks (one flag a triangle; all of them if `None`) and the pairs
+    /// with one of them, for a mesh whose other triangles and pairs are
+    /// known to pass the fold and hull rules (see
+    /// [`tested`](super::tested)): then the same result and error, for
+    /// less work. A repaired mesh comes with the triangle of this one
+    /// each of its triangles came from.
+    pub(crate) fn repaired_from(
+        &self,
+        tested: Option<&[bool]>,
+        tol: &Tolerance,
+        work: &mut Work,
+    ) -> Result<Option<(Mesh, Vec<u32>)>, Refusal> {
         self.check_topology().map_err(KernelError::Invalid)?;
         let patches = self.bounded_patches().map_err(KernelError::Invalid)?;
         work.spend(patches.len())?;
+        let tested = tested.filter(|tested| tested.len() == patches.len());
         let pieces: Vec<Piece> = (0..self.tris.len() as u32)
             .zip(patches)
             .map(|(t, patch)| Piece {
@@ -128,14 +145,16 @@ impl Mesh {
                 face: self.tris[t as usize].face,
                 leaf: t,
                 origin: t,
-                changed: true,
+                changed: tested.is_none_or(|tested| tested[t as usize]),
             })
             .collect();
-        // The input's leaves are its patches, the pieces.
+        // The input's leaves are its patches, the pieces. Its pairs in
+        // the order testing every piece gives them.
         let mut failing = failures(
             &pieces,
             |t| &pieces[t as usize].patch,
             &self.faces,
+            true,
             tol,
             work,
         )?;
@@ -154,7 +173,14 @@ impl Mesh {
             }
             work.spend(pieces.len())?;
             refiner.settle();
-            failing = failures(&pieces, |t| refiner.leaf_patch(t), &self.faces, tol, work)?;
+            failing = failures(
+                &pieces,
+                |t| refiner.leaf_patch(t),
+                &self.faces,
+                false,
+                tol,
+                work,
+            )?;
             if failing.is_empty() {
                 break pieces;
             }
@@ -163,7 +189,7 @@ impl Mesh {
         // Face tags aside: unsplit patches, and any not on a plane, keep
         // the input's claims, which repair doesn't check.
         debug_assert_eq!(mesh.check_embedding(tol).err(), None);
-        Ok(Some(mesh))
+        Ok(Some((mesh, pieces.iter().map(|p| p.origin).collect())))
     }
 }
 
@@ -200,8 +226,13 @@ impl Refusal {
 
 /// The leaves to split: those of pieces that changed and fail the fold
 /// check, and of pairs with a changed piece that fail the hull rules,
-/// sorted. A failure no split can mend fails the repair, naming the input
-/// triangles the pieces came from: a piece with a degenerate corner
+/// sorted. The pairs are taken in order of their changed piece (`[p, q]`
+/// for a changed `p`, `q` after it if it changed too), or if `sorted`, as
+/// `[p, q]` with `p < q`, sorted, the order in which they come when every
+/// piece changed: so a first pass that leaves out pieces known to pass
+/// finds and names its failures as one testing them all would. A failure
+/// no split can mend fails the repair, naming the input triangles the
+/// pieces came from: a piece with a degenerate corner
 /// ([`Patch::degenerate_corner`](crate::patch::Patch::degenerate_corner))
 /// or a whole leaf that is an [`affine`] triangle failing the fold check,
 /// a failing pair of flat pieces ([`flat`]: within the margin for the
@@ -219,6 +250,7 @@ fn failures<'p>(
     pieces: &[Piece],
     leaf: impl Fn(u32) -> &'p Patch,
     faces: &[Face],
+    sorted: bool,
     tol: &Tolerance,
     work: &mut Work,
 ) -> Result<Vec<u32>, Refusal> {
@@ -251,12 +283,18 @@ fn failures<'p>(
 
     let bvh = Bvh::new(pieces.iter().map(|p| p.patch.bounds()).collect());
     // Each pair once: with an unchanged piece, or the later one.
-    let pairs = bvh.pairs_within(
+    let mut pairs = bvh.pairs_within(
         &changed,
         margin,
         |p, q| q != p && (!pieces[q as usize].changed || q > p),
         work,
     )?;
+    if sorted {
+        for pair in &mut pairs {
+            pair.sort_unstable();
+        }
+        pairs.sort_unstable();
+    }
     // Kept as small as a pass: most pairs pass, and there may be millions.
     let tested = par_map(&pairs, |&[p, q]| {
         let (a, b) = (&pieces[p as usize], &pieces[q as usize]);

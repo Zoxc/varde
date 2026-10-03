@@ -173,6 +173,27 @@ impl Bvh {
 }
 
 impl Bvh {
+    /// The pairs of [`Self::self_pairs`] with a box `tested` marks (one
+    /// flag a box), in the same order: sorted. Only the marked boxes are
+    /// looked up, so it takes time for those and the pairs they make.
+    pub(crate) fn self_pairs_touching(&self, tested: &[bool], margin: f64) -> Vec<[u32; 2]> {
+        let ids: Vec<u32> = (0..self.boxes.len() as u32)
+            .filter(|&i| tested[i as usize])
+            .collect();
+        let found = par_map(&ids, |&i| {
+            let mut near = Vec::new();
+            self.query(&self.boxes[i as usize], margin, &mut near);
+            near.retain(|&j| j != i && (!tested[j as usize] || j > i));
+            near
+        });
+        let mut pairs = Vec::with_capacity(found.iter().map(Vec::len).sum());
+        for (&i, near) in ids.iter().zip(found) {
+            pairs.extend(near.into_iter().map(|j| [i.min(j), i.max(j)]));
+        }
+        pairs.sort_unstable();
+        pairs
+    }
+
     /// [`Self::self_pairs`], one unit of `work` each, failing with
     /// [`KernelError::TooComplex`] as soon as they would number more than
     /// `work` has left: see [`Self::pairs_within`].
@@ -287,7 +308,7 @@ impl Bvh {
 /// Whether the boxes come within `margin` of each other along every axis.
 /// Rounding the sums to the nearest float is monotone, so a box truly
 /// within `margin` is never missed.
-fn near(a: &Bounds3, b: &Bounds3, margin: f64) -> bool {
+pub(super) fn near(a: &Bounds3, b: &Bounds3, margin: f64) -> bool {
     a.min.cmple(b.max + margin).all() && b.min.cmple(a.max + margin).all()
 }
 
