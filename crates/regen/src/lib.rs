@@ -19,6 +19,7 @@
 //! [`Editor::generation`]: varde_document::Editor::generation
 
 mod cache;
+mod error_geometry;
 mod history;
 mod inspect;
 mod message;
@@ -76,6 +77,7 @@ use varde_kernel::{
 use varde_sketch::{Budget, Goal};
 
 pub use cache::Cache;
+pub use error_geometry::{ErrorGeometry, FeatureFailure, GeometryError, GeometryParts};
 pub use history::{BodySolid, Evaluation, evaluate, note_merge};
 pub use inspect::{
     At, Between, EdgeForm, Entity, Gap, Inspect, InspectPick, Inspected, Measure, Probed,
@@ -154,6 +156,13 @@ pub struct Drafted {
     /// Why the draft gives no solid, or can't be applied: the model
     /// answered is then the committed one, without it.
     pub error: Option<String>,
+    /// What to draw of where the draft fails, beside `error`, as a failed
+    /// feature's ([`FeatureFailure::geometry`]), its operand faces those
+    /// of the committed model answered. Not serialized: the web worker's
+    /// reply carries it apart and checks it against the model (see
+    /// `src/wire.rs`).
+    #[serde(skip)]
+    pub geometry: Option<Arc<ErrorGeometry>>,
     /// For a join, cut or intersect, the bodies its solid touches, less
     /// those taken out of it, in the order they were made: those the
     /// panel lists to take out, with those taken out to put back. `None`
@@ -290,9 +299,10 @@ pub enum Response {
         /// The sketches that don't solve, see [`unsolved`], in the
         /// document's order.
         unsolved: Vec<FeatureId>,
-        /// The features that failed and why, in the document's order,
-        /// see [`evaluate`].
-        failed: Vec<(FeatureId, String)>,
+        /// The features that failed, why and where, in the document's
+        /// order, see [`evaluate`]; their geometry's faces are this
+        /// model's.
+        failed: Vec<FeatureFailure>,
         /// Each join, cut or intersect that got as far as its tool, with
         /// the bodies it touches, see [`Evaluation::touched`]: with a
         /// draft that goes, as the document with it applied found.
@@ -410,29 +420,34 @@ impl Regenerator {
         let Some(draft) = draft else {
             return self.model(document, exclude, None, inspect);
         };
-        let (error, touched) = match applied(document, draft) {
+        let (error, geometry, touched) = match applied(document, draft) {
             Ok((drafted, feature)) => {
-                let evaluation = evaluate(&drafted, &mut self.cache);
+                let mut evaluation = evaluate(&drafted, &mut self.cache);
                 let touched = (evaluation.touched.iter())
                     .find(|(id, _)| *id == feature)
                     .map(|(_, touched)| touched.clone());
-                match evaluation.failed.iter().find(|(id, _)| *id == feature) {
-                    Some((_, error)) => (error.clone(), touched),
+                match (evaluation.failed.iter()).position(|failed| failed.feature == feature) {
+                    Some(at) => {
+                        let failed = evaluation.failed.swap_remove(at);
+                        (failed.message, failed.geometry, touched)
+                    }
                     None => {
                         let done = Drafted {
                             revision: draft.revision,
                             error: None,
+                            geometry: None,
                             touched,
                         };
                         return self.draw(&drafted, evaluation, exclude, Some(done), inspect);
                     }
                 }
             }
-            Err(error) => (error, None),
+            Err(error) => (error, None, None),
         };
         let failed = Drafted {
             revision: draft.revision,
             error: Some(error),
+            geometry,
             touched,
         };
         self.model(document, exclude, Some(failed), inspect)
@@ -455,9 +470,9 @@ impl Regenerator {
     fn draw(
         &mut self,
         document: &Document,
-        evaluation: Evaluation,
+        mut evaluation: Evaluation,
         exclude: Option<FeatureId>,
-        draft: Option<Drafted>,
+        mut draft: Option<Drafted>,
         inspect: Option<&Inspect>,
     ) -> Result<Model, String> {
         // Only a draft that worked is drawn: one that failed is answered
@@ -467,6 +482,14 @@ impl Regenerator {
             .map_err(|error| error.to_string())?;
         let sketches = flatten_sketches(document, &evaluation.placements, exclude)
             .map_err(|error| error.to_string())?;
+        // The failures' operand faces, on the model drawn.
+        let mut failed = std::mem::take(&mut evaluation.failed);
+        let holder = |body| evaluation.holder(body);
+        let drafted = draft.as_mut().map(|draft| &mut draft.geometry);
+        for geometry in (failed.iter_mut().map(|f| &mut f.geometry)).chain(drafted) {
+            resolve(geometry, &scene, &holder);
+        }
+        evaluation.failed = failed;
         let bodies = evaluation
             .bodies
             .iter()
@@ -508,12 +531,28 @@ struct Model {
     scene: Scene,
     sketches: RenderLines,
     unsolved: Vec<FeatureId>,
-    failed: Vec<(FeatureId, String)>,
+    failed: Vec<FeatureFailure>,
     touched: Vec<(FeatureId, Vec<BodyId>)>,
     merged: Vec<(BodyId, BodyId)>,
     placements: Vec<(FeatureId, Placement)>,
     bodies: Vec<(BodyId, Aabb)>,
     inspected: Option<Inspected>,
+}
+
+/// Resolves `geometry`'s operand faces on `scene`, the bodies holding the
+/// operands by `holder` (see [`ErrorGeometry::resolve`]); geometry that
+/// then draws and names nothing is dropped.
+fn resolve(
+    geometry: &mut Option<Arc<ErrorGeometry>>,
+    scene: &Scene,
+    holder: &impl Fn(BodyId) -> Option<BodyId>,
+) {
+    if let Some(shared) = geometry {
+        Arc::make_mut(shared).resolve(&scene.mesh, &scene.picking, holder);
+    }
+    if geometry.as_deref().is_some_and(ErrorGeometry::is_empty) {
+        *geometry = None;
+    }
 }
 
 /// `document` with `draft` applied, and the draft's feature, or why it

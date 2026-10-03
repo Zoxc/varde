@@ -611,7 +611,7 @@ fn shots_09_timeline() {
         doc.look(Look::SelectPanel(varde_view::Panel::Timeline));
         camera.take(&doc, "09-timeline", Shot::new());
         camera.take(&doc, "09-timeline-dark", Shot::new().dark());
-        let failed = doc.feed.failed_features()[0].0;
+        let failed = doc.feed.failed_features()[0].feature;
         let name = doc.editor.document().feature(failed).unwrap().name.clone();
         let name: &'static str = Box::leak(name.into_boxed_str());
         let tip = Shot::new().pointer(Pointer::Over(name));

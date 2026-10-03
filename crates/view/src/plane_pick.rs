@@ -52,7 +52,7 @@ pub struct PlanePick {
 pub struct Shown<'a> {
     pub merged: &'a [(BodyId, BodyId)],
     pub touched: &'a [(FeatureId, Vec<BodyId>)],
-    pub failed: &'a [(FeatureId, String)],
+    pub failed: &'a [varde_regen::FeatureFailure],
 }
 
 impl PlanePick {
@@ -110,7 +110,7 @@ impl PlanePick {
         let mut touched = Vec::new();
         for (feature, bodies) in shown.touched {
             let at = document.features().iter().position(|f| f.id == *feature);
-            let worked = !(shown.failed.iter()).any(|(failed, _)| failed == feature);
+            let worked = !(shown.failed.iter()).any(|failed| failed.feature == *feature);
             if join(*feature) {
                 if worked && at.is_some_and(|at| at < before) {
                     varde_regen::note_merge(&mut merged_before, bodies);

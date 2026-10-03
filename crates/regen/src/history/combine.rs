@@ -6,7 +6,7 @@ use std::sync::Arc;
 use varde_document::{BodyId, BodyOp, Combine, Document};
 use varde_kernel::{Budget, Op, Solid, Tolerance};
 
-use super::{BodySolid, Evaluation, boolean_key, note_merge};
+use super::{BodySolid, Evaluation, Failed, boolean_key, note_merge};
 use crate::cache::{Cache, Key};
 use crate::message::{self, Doing};
 
@@ -38,7 +38,7 @@ pub(super) fn evaluate(
     tolerance: &Tolerance,
     evaluation: &mut Evaluation,
     cache: &mut Cache,
-) -> Result<(), String> {
+) -> Result<(), Failed> {
     let name = |body: BodyId| {
         document
             .body(body)
@@ -48,16 +48,15 @@ pub(super) fn evaluate(
         if evaluation.bodies.iter().any(|made| made.body == body) {
             continue;
         }
-        return Err(
-            match evaluation
-                .merged
-                .iter()
-                .find(|(consumed, _)| *consumed == body)
-            {
-                Some(&(_, holder)) => message::consumed(name(body), name(holder)),
-                None => message::no_solid(name(body)),
-            },
-        );
+        return Err(match evaluation
+            .merged
+            .iter()
+            .find(|(consumed, _)| *consumed == body)
+        {
+            Some(&(_, holder)) => message::consumed(name(body), name(holder)),
+            None => message::no_solid(name(body)),
+        }
+        .into());
     }
     let find = |body: BodyId| {
         (evaluation.bodies.iter())
@@ -79,7 +78,6 @@ pub(super) fn evaluate(
         let next = boolean_key(doing, *key, tool.key);
         let result = cache.boolean(next, || {
             varde_kernel::boolean(solid, &tool.solid, op, tolerance, &Budget::DEFAULT)
-                .map_err(|failure| failure.error)
         });
         let words = match doing {
             // The messages say "joining" for a union.
@@ -87,10 +85,12 @@ pub(super) fn evaluate(
             _ => doing,
         };
         let tool_name = name(tool.body);
-        let solid =
-            result.map_err(|error| message::combining(words, target_name, tool_name, error))?;
+        let solid = result.map_err(|failure| {
+            let message = message::combining(words, target_name, tool_name, failure.error);
+            Failed::kernel(message, failure, [Some(target.body), Some(tool.body)])
+        })?;
         if solid.is_empty() {
-            return Err(message::combine_emptied(words, target_name, tool_name));
+            return Err(message::combine_emptied(words, target_name, tool_name).into());
         }
         Ok((solid, next))
     };

@@ -75,7 +75,7 @@ pub use render_lines::{LinesError, LinesPart, RenderLines};
 pub use render_mesh::{MeshError, MeshPart, MeshParts, RenderMesh, RenderPart};
 pub use revolve::{Sweep, revolve};
 pub use solid::Solid;
-pub use tessellate::Display;
+pub use tessellate::{Display, PatchSamples};
 pub use tolerance::Tolerance;
 pub use topology::Topology;
 pub use transform::{Instance, Motion, assemble};

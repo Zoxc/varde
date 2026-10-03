@@ -468,7 +468,7 @@ pub(crate) struct Answer {
     pub(crate) draft: Option<Drafted>,
     pub(crate) mesh: Arc<RenderMesh>,
     pub(crate) parts: Vec<BodyId>,
-    pub(crate) failed: Vec<(FeatureId, String)>,
+    pub(crate) failed: Vec<crate::FeatureFailure>,
     pub(crate) bodies: Vec<(BodyId, varde_kernel::Aabb)>,
     pub(crate) sketches: Arc<RenderLines>,
     pub(crate) placements: Vec<(FeatureId, varde_document::Placement)>,
@@ -561,6 +561,7 @@ fn a_draft_is_answered_as_if_applied() {
         answer.draft,
         Some(Drafted {
             revision: 7,
+            geometry: None,
             error: None,
             // A new body isn't tested for touching.
             touched: None,
@@ -653,6 +654,7 @@ fn a_failing_draft_leaves_the_model_as_it_was() {
             Some(Drafted {
                 revision,
                 error: Some(error),
+                geometry: None,
                 touched,
             })
         );
@@ -783,6 +785,7 @@ fn a_cut_draft_is_answered_from_the_cache(regenerator: &mut Regenerator, rejoine
         cut.draft,
         Some(Drafted {
             revision: 1,
+            geometry: None,
             error: None,
             touched: Some(vec![body]),
         })

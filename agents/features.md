@@ -46,6 +46,63 @@ they share with the newer kinds is here. The kernel math of each is in
   `Revolve` 2, `Combine` 3): files store a kind by its variant name, and
   the variant index is what the workers' postcard holds.
 
+## Failures and where they are
+
+`crates/regen/src/history.rs`, `crates/regen/src/error_geometry.rs`.
+A feature that fails is a `FeatureFailure { feature, message, geometry:
+Option<Arc<ErrorGeometry>> }` in `Evaluation::failed` and
+`Response::Regenerated::failed`, in the document's order; a failing
+draft's `Drafted` carries the same `geometry` beside its `error`. The
+message is worded from the kernel's `failure.error` as before
+(`src/message.rs`).
+
+- **Carried**: inside the history a failure is `Failed { message,
+  kernel: Option<(Arc<Failure>, [Option<BodyId>; 2])> }`: the kernel's
+  `Failure` (with its `Evidence`) and the bodies its operands `a` and `b`
+  are (a join's, cut's or intersect's boolean: the body, then the tool,
+  which is none; a merge step: the first body, then the body merged or
+  none for the tool; a combine step: the target, then the tool body;
+  `touches`: the body, then none; extrude and revolve: none). Failures
+  that aren't the kernel's convert from their words (`From<String>`).
+  The cache keeps the `Arc<Failure>` (`Entry::Touches`, `Entry::Boolean`;
+  a tool's `Entry::Solid` keeps the whole `Failed`), so a failure found
+  again keeps its evidence; `Entry::bytes` counts the evidence.
+- **Made drawable** (`ErrorGeometry::new`, at the document's `Display`):
+  patches tessellated each on its own as a face of no known form is
+  (`Display::sample_patch`) into one `RenderMesh` of one part and one
+  face with triangles only; the curves, then each patch's three sides,
+  flattened as a solid's edges are (`Display::flatten`) into
+  `RenderLines`; points as `[f32; 3]`; the sketch curves as ids; all
+  relative to the diagonal of the evidence's own box. Bounded
+  (`MAX_VERTICES` 2^18, `MAX_INDICES` 3·2^19, `MAX_LINE_POINTS` 2^18,
+  points and sketch curves as `MAX_EVIDENCE`, `MAX_FACES` 4 ×
+  `MAX_EVIDENCE.faces`), stopping at the first patch or curve that
+  doesn't fit; what's past a bound, a patch or curve failing the
+  kernel's check, a coordinate past `MAX_POSITION` (`RenderMesh`'s) is
+  left out and `truncated` set, as it is when the evidence was. No
+  evidence, or nothing drawn or named, is `None`. The renderer can
+  upload its mesh and lines as it does the model's and the sketches'.
+- **Operand faces** are pending until the model is drawn
+  (`Regenerator::draw`): each operand's `FaceKey` is looked for, by key
+  or alias, among the faces of the scene's parts of the body holding the
+  operand's body (`Evaluation::holder`), giving `(BodyId, face id)` of
+  the answer's mesh; the box then takes in those faces' triangles. A
+  draft's failure is resolved on the committed model answered with it.
+  Geometry left empty is dropped. In an `Evaluation` on its own
+  (export, tests) the faces stay unresolved.
+- **On the wire** a `Head::Regenerated` carries each failure as
+  `(FeatureId, String, Option<GeometryParts>)` and the draft's as
+  `draft_geometry` (`Drafted::geometry` is `serde(skip)`); the parts are
+  decoded within their bounds and checked by `ErrorGeometry::from_parts`
+  against the model (coordinates finite within `MAX_POSITION`, the
+  triangles and lines whole, each face one of the mesh's of the body
+  named; the box worked out again), one that fails answering the
+  generation as failed (`wire::Error::Geometry`). A head too large with
+  its geometry is sent without it.
+- **The app** keeps `MeshFeed::failed_features` as `FeatureFailure`s
+  and the view reads `feature` and `message`; nothing draws the
+  geometry yet.
+
 ## Sketch planes on faces
 
 `crates/document/src/plane.rs`.

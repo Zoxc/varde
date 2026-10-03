@@ -365,10 +365,10 @@ fn deleting_a_body_a_cut_worked_on_warns_and_the_cut_then_fails() {
     );
     crate::tests::answer(&mut doc, &requests);
     // Through all, it has nothing to go through either.
-    assert_eq!(
-        doc.feed.failed_features(),
-        [(cut, "there's no body to go through".to_owned())]
-    );
+    let failed = doc.feed.failed_features();
+    assert_eq!(failed.len(), 1, "{failed:?}");
+    assert_eq!(failed[0].feature, cut);
+    assert_eq!(failed[0].message, "there's no body to go through");
     doc.update(Edit::Undo);
     assert_eq!(*doc.editor.document(), before);
 }
@@ -466,10 +466,10 @@ fn a_cut_not_answered_yet_is_warned_of_when_every_body_before_it_goes() {
     );
     doc.update(Edit::ConfirmDelete);
     crate::tests::answer(&mut doc, &requests);
-    assert_eq!(
-        doc.feed.failed_features(),
-        [(cut, "there's no body to go through".to_owned())]
-    );
+    let failed = doc.feed.failed_features();
+    assert_eq!(failed.len(), 1, "{failed:?}");
+    assert_eq!(failed[0].feature, cut);
+    assert_eq!(failed[0].message, "there's no body to go through");
 }
 
 /// With another body before it that stays, a cut not answered yet isn't

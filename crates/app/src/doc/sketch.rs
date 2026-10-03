@@ -534,8 +534,8 @@ impl Doc {
     /// Why the model shown failed the feature `id`, if it did.
     fn failure(&self, id: FeatureId) -> Option<String> {
         (self.feed.failed_features().iter())
-            .find(|(failed, _)| *failed == id)
-            .map(|(_, why)| why.clone())
+            .find(|failed| failed.feature == id)
+            .map(|failed| failed.message.clone())
     }
 
     /// Picking the plane for a new sketch, as the document and the model

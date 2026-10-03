@@ -11,7 +11,8 @@ use varde_document::{
 };
 use varde_kernel::{RenderLines, RenderMesh};
 use varde_regen::{
-    Draft, Drafted, Inspect, InspectPick, Inspected, Picking, Request, Response, Transport,
+    Draft, Drafted, FeatureFailure, Inspect, InspectPick, Inspected, Picking, Request, Response,
+    Transport,
 };
 use varde_view::{MeshStatus, PickIndex};
 
@@ -41,7 +42,7 @@ pub(crate) struct MeshFeed {
     unsolved: Vec<FeatureId>,
     /// The features that failed and why, of the same generation as
     /// `mesh`, in the document's order.
-    failed_features: Vec<(FeatureId, String)>,
+    failed_features: Vec<FeatureFailure>,
     /// Each join, cut or intersect that got as far as its tool, with the
     /// bodies it touches, of the same generation as `mesh`, in the
     /// document's order.
@@ -595,7 +596,7 @@ impl MeshFeed {
     /// The features that failed and why, as the model shown found: with
     /// a draft, those of the document with the draft applied. None if the
     /// document was replaced since.
-    pub(crate) fn failed_features(&self) -> &[(FeatureId, String)] {
+    pub(crate) fn failed_features(&self) -> &[FeatureFailure] {
         if self.marks() {
             &self.failed_features
         } else {
@@ -682,7 +683,7 @@ impl MeshFeed {
 
     /// Whether the model shown found `feature` failing.
     fn failed(&self, feature: FeatureId) -> bool {
-        (self.failed_features().iter()).any(|(failed, _)| *failed == feature)
+        (self.failed_features().iter()).any(|failed| failed.feature == feature)
     }
 }
 

@@ -43,8 +43,8 @@ fn made(evaluation: &Evaluation) -> Vec<BodyId> {
 /// What `evaluation` says of `feature`'s failing, if it failed.
 fn failure(evaluation: &Evaluation, feature: FeatureId) -> Option<&str> {
     (evaluation.failed.iter())
-        .find(|(id, _)| *id == feature)
-        .map(|(_, why)| why.as_str())
+        .find(|f| f.feature == feature)
+        .map(|f| f.message.as_str())
 }
 
 #[test]

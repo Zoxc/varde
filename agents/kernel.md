@@ -2059,6 +2059,13 @@ milliseconds for these, release); a 400-hole plate is unchanged.
   more fails. The parts go
   through `RenderMesh::from_parts`, so a position past `MAX_POSITION`
   (a mesh's control points may reach `MAX_CONTROL`) fails with `Values`.
+- **Loose geometry.** A failure's evidence isn't a solid, so it's drawn
+  piece by piece: `Display::flatten(curve, diagonal)` cuts a curve as an
+  edge of a solid `diagonal` across is (`segments`, ends included), and
+  `Display::sample_patch(patch, diagonal)` samples one patch on its own
+  (`PatchSamples`: points, unit normals, triangles), its sides cut so,
+  its grid refined in rounds as a face of no known form is (the step
+  rule shared with `Plan::refine`, `finer`).
 - **Determinism.** Counts, normals, edge points and patches are pure maps
   through `par_map`; vertex numbering is one sequential pass (corner
   groups by vertex, then edge samples by edge, then patch interiors by
@@ -7740,7 +7747,10 @@ operation's budget, so finding it can't make an error `TooComplex`;
 it is deterministic; and it goes with the error returned, so where an
 operation retries and returns an earlier try's error, that try's
 evidence is kept with it (`(KernelError, Evidence)` together, not a
-side slot on `Work`). `TooComplex` carries none.
+side slot on `Work`). `TooComplex` carries none. Regen keeps the
+`Failure` in its cache and makes the evidence drawable
+(`ErrorGeometry`, with `Display::flatten` and `Display::sample_patch`;
+see `agents/features.md`, "Failures and where they are").
 
 ## Deviations
 

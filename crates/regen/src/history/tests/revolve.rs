@@ -396,7 +396,7 @@ fn two_sides_adding_up_to_a_turn_make_the_whole_turn() {
             Operation::NewBody(BodyId::NEW),
         );
         let evaluation = evaluated(editor.document());
-        assert_eq!(evaluation.failed, []);
+        assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
         only_body(&evaluation).volume()
     };
     let full = whole(Turn::Full);
@@ -500,7 +500,14 @@ fn a_revolve_touching_nothing_fails_and_one_emptying_a_body_fails() {
         Operation::Cut(Targets::default()),
     );
     let evaluation = evaluated(editor.document());
-    let [(failed, error)] = &evaluation.failed[..] else {
+    let [
+        crate::FeatureFailure {
+            feature: failed,
+            message: error,
+            ..
+        },
+    ] = &evaluation.failed[..]
+    else {
         panic!("{:?}", evaluation.failed);
     };
     assert_eq!(*failed, all);
@@ -722,6 +729,7 @@ fn a_revolve_draft_is_answered_from_the_cache() {
         first.draft,
         Some(crate::Drafted {
             revision: 1,
+            geometry: None,
             error: None,
             touched: Some(vec![body]),
         })
@@ -940,7 +948,7 @@ fn a_slanted_edge_of_the_region_can_be_the_axis() {
         Operation::NewBody(BodyId::NEW),
     );
     let evaluation = evaluated(editor.document());
-    assert_eq!(evaluation.failed, []);
+    assert!(evaluation.failed.is_empty(), "{:?}", evaluation.failed);
     let [a, b, c] = corners.map(|(x, y)| DVec2::new(x, y));
     let area = (b - a).perp_dot(c - a).abs() / 2.0;
     let middle = (a + b + c) / 3.0;

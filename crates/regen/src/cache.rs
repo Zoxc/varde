@@ -50,9 +50,10 @@ use std::sync::Arc;
 
 use serde::Serialize;
 use varde_document::Placement;
-use varde_kernel::{KernelError, RenderMesh, Solid, Topology};
+use varde_kernel::{Failure, RenderMesh, Solid, Topology};
 use varde_sketch::{Profiles, TooComplex};
 
+use crate::history::Failed;
 use crate::inspect::{Gap, Kept};
 use crate::picking::{Drawn, Scene};
 
@@ -143,12 +144,13 @@ enum Entry {
     Placement(Result<Placement, &'static str>),
     /// Whether a sketch solves.
     Solves(bool),
-    /// A feature's tool solid, or why it has none.
-    Solid(Result<Arc<Solid>, String>),
-    /// Whether two solids touch.
-    Touches(Result<bool, KernelError>),
-    /// A boolean of two solids.
-    Boolean(Result<Arc<Solid>, KernelError>),
+    /// A feature's tool solid, or why it has none (with the kernel's
+    /// failure and its evidence, where it's the kernel's).
+    Solid(Result<Arc<Solid>, Failed>),
+    /// Whether two solids touch, or the kernel's failure.
+    Touches(Result<bool, Arc<Failure>>),
+    /// A boolean of two solids, or the kernel's failure.
+    Boolean(Result<Arc<Solid>, Arc<Failure>>),
     /// A solid drawn, with its picking tables.
     Drawn(Arc<Drawn>),
     /// The model's mesh and picking tables: the shown bodies' joined.
@@ -176,18 +178,31 @@ impl Entry {
                 Err(TooComplex) => 0,
             },
             Entry::Solid(Ok(solid)) | Entry::Boolean(Ok(solid)) => solid_bytes(solid),
-            Entry::Solid(Err(error)) => error.len(),
+            Entry::Solid(Err(failed)) => (failed.message.len()).saturating_add(
+                (failed.kernel.as_ref()).map_or(0, |(failure, _)| failure_bytes(failure)),
+            ),
+            Entry::Touches(Err(failure)) | Entry::Boolean(Err(failure)) => failure_bytes(failure),
             Entry::Drawn(drawn) => mesh_bytes(&drawn.mesh).saturating_add(drawn.bytes()),
             Entry::Scene(scene) => mesh_bytes(&scene.mesh).saturating_add(scene.picking.bytes()),
             Entry::Topology(topology) => topology_bytes(topology),
             Entry::Measure(kept) => kept.as_ref().as_ref().err().map_or(0, String::len),
             Entry::Distance(gap) => gap.as_ref().err().map_or(0, String::len),
-            Entry::Solves(_) | Entry::Placement(_) | Entry::Touches(_) | Entry::Boolean(Err(_)) => {
-                0
-            }
+            Entry::Solves(_) | Entry::Placement(_) | Entry::Touches(Ok(_)) => 0,
         };
         data.saturating_add(OVERHEAD)
     }
+}
+
+/// About how many bytes a failure holds: its evidence.
+fn failure_bytes(failure: &Failure) -> usize {
+    let evidence = &*failure.evidence;
+    (size_of_val(failure))
+        .saturating_add(size_of_val(evidence))
+        .saturating_add(size_of_val(&evidence.patches[..]))
+        .saturating_add(size_of_val(&evidence.curves[..]))
+        .saturating_add(size_of_val(&evidence.points[..]))
+        .saturating_add(size_of_val(&evidence.sketch_curves[..]))
+        .saturating_add(size_of_val(&evidence.faces[..]))
 }
 
 fn solid_bytes(solid: &Solid) -> usize {
@@ -441,8 +456,8 @@ impl Cache {
     pub(crate) fn solid(
         &mut self,
         key: Key,
-        make: impl FnOnce() -> Result<Solid, String>,
-    ) -> Result<Arc<Solid>, String> {
+        make: impl FnOnce() -> Result<Solid, Failed>,
+    ) -> Result<Arc<Solid>, Failed> {
         match self.entry(key, || Entry::Solid(make().map(Arc::new))) {
             Entry::Solid(solid) => solid,
             _ => unreachable!("keys of different kinds differ"),
@@ -452,9 +467,9 @@ impl Cache {
     pub(crate) fn touches(
         &mut self,
         key: Key,
-        make: impl FnOnce() -> Result<bool, KernelError>,
-    ) -> Result<bool, KernelError> {
-        match self.entry(key, || Entry::Touches(make())) {
+        make: impl FnOnce() -> Result<bool, Failure>,
+    ) -> Result<bool, Arc<Failure>> {
+        match self.entry(key, || Entry::Touches(make().map_err(Arc::new))) {
             Entry::Touches(touches) => touches,
             _ => unreachable!("keys of different kinds differ"),
         }
@@ -463,9 +478,11 @@ impl Cache {
     pub(crate) fn boolean(
         &mut self,
         key: Key,
-        make: impl FnOnce() -> Result<Solid, KernelError>,
-    ) -> Result<Arc<Solid>, KernelError> {
-        match self.entry(key, || Entry::Boolean(make().map(Arc::new))) {
+        make: impl FnOnce() -> Result<Solid, Failure>,
+    ) -> Result<Arc<Solid>, Arc<Failure>> {
+        match self.entry(key, || {
+            Entry::Boolean(make().map(Arc::new).map_err(Arc::new))
+        }) {
             Entry::Boolean(solid) => solid,
             _ => unreachable!("keys of different kinds differ"),
         }

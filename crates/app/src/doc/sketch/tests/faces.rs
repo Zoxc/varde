@@ -534,7 +534,11 @@ fn a_sketch_whose_face_is_gone_fails_and_entering_it_asks_for_a_plane() {
     answer(&mut doc, &requests);
     assert_eq!(doc.placement(id), None);
     let failed = doc.feed.failed_features();
-    let (_, why) = failed.iter().find(|(f, _)| *f == id).expect("it fails");
+    let why = &failed
+        .iter()
+        .find(|f| f.feature == id)
+        .expect("it fails")
+        .message;
     let why = why.clone();
     // Not drawn, and nothing to extrude.
     assert!(doc.feed.sketches().points().is_empty());
@@ -546,7 +550,7 @@ fn a_sketch_whose_face_is_gone_fails_and_entering_it_asks_for_a_plane() {
     // Listed in the Timeline, failing, its note naming the face as it
     // can: its maker and body are gone.
     let state = doc.state(false, Mode::Light, varde_view::ViewOptions::default());
-    assert!(state.failed.iter().any(|(f, _)| *f == id));
+    assert!(state.failed.iter().any(|f| f.feature == id));
     drop(state);
     doc.look(Look::SelectPanel(varde_view::Panel::Timeline));
     let shown = all_texts(&doc);
@@ -582,7 +586,7 @@ fn a_sketch_whose_face_is_gone_fails_and_entering_it_asks_for_a_plane() {
     );
     doc.look(Look::FinishSketch);
     answer(&mut doc, &requests);
-    assert!(doc.feed.failed_features().iter().all(|(f, _)| *f != id));
+    assert!(doc.feed.failed_features().iter().all(|f| f.feature != id));
     doc.update(Edit::Undo);
     assert_eq!(doc.editor.revision(), revision);
     assert!(matches!(plane(&doc, id), Plane::Face(_)));

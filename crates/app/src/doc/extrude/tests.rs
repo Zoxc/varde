@@ -572,8 +572,12 @@ fn an_intersect_leaving_nothing_is_marked_failed_and_the_plate_kept() {
     let feature = doc.editor.document().features().last().unwrap().id;
     let failed = doc.feed.failed_features();
     assert_eq!(failed.len(), 1);
-    assert_eq!(failed[0].0, feature);
-    assert!(failed[0].1.starts_with(emptied), "{}", failed[0].1);
+    assert_eq!(failed[0].feature, feature);
+    assert!(
+        failed[0].message.starts_with(emptied),
+        "{}",
+        failed[0].message
+    );
     assert_eq!(doc.feed.mesh().triangle_count(), triangles);
     doc.look(Look::SelectPanel(varde_view::Panel::Timeline));
     let _ = doc.view_in(Mode::default());
@@ -632,8 +636,12 @@ fn a_cut_emptying_the_plate_fails_again_once_the_edit_saving_it_is_undone() {
     let fails = |doc: &Doc| {
         let failed = doc.feed.failed_features();
         assert_eq!(failed.len(), 1, "{failed:?}");
-        assert_eq!(failed[0].0, cut);
-        assert!(failed[0].1.starts_with(emptied), "{}", failed[0].1);
+        assert_eq!(failed[0].feature, cut);
+        assert!(
+            failed[0].message.starts_with(emptied),
+            "{}",
+            failed[0].message
+        );
         assert!(doc.feed.mesh().triangle_count() > 0);
     };
     fails(&doc);
@@ -846,8 +854,8 @@ fn a_failing_extrude_is_marked_in_the_timeline() {
     answer(&mut doc, &requests);
     let failed = doc.feed.failed_features();
     assert_eq!(failed.len(), 1);
-    assert_eq!(failed[0].0, feature);
-    assert_eq!(failed[0].1, "it doesn't touch any body");
+    assert_eq!(failed[0].feature, feature);
+    assert_eq!(failed[0].message, "it doesn't touch any body");
     assert_eq!(doc.feed.mesh().triangle_count(), 0);
     doc.look(Look::SelectPanel(varde_view::Panel::Timeline));
     let _ = doc.view_in(Mode::default());

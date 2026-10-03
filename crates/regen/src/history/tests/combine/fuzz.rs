@@ -113,7 +113,7 @@ fn check_combines(document: &Document, evaluation: &Evaluation, cache: &mut Cach
             continue;
         };
         let what = format!("{what}: combine {index}");
-        let fails = |e: &Evaluation| e.failed.iter().any(|(id, _)| *id == feature.id);
+        let fails = |e: &Evaluation| e.failed.iter().any(|f| f.feature == feature.id);
         let before = evaluate(&truncated(document, index), cache);
         let after = evaluate(&truncated(document, index + 1), cache);
         assert_eq!(fails(evaluation), fails(&after), "{what}");

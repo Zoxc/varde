@@ -2602,7 +2602,11 @@ fn failure_marks_of_before_a_replacement_mark_nothing() {
                     picking,
                     sketches,
                     unsolved: vec![id],
-                    failed: vec![(id, "failed".to_owned())],
+                    failed: vec![varde_regen::FeatureFailure {
+                        feature: id,
+                        message: "failed".to_owned(),
+                        geometry: None,
+                    }],
                     touched: vec![(id, Vec::new())],
                     merged: Vec::new(),
                     placements: Vec::new(),

@@ -43,7 +43,13 @@
 //! a sketch on a face is one a sketch can be drawn at
 //! ([`Placement::valid`]: finite, its axes unit and square within `1e-9`,
 //! its normal `x × y` within that, its origin within the coordinate
-//! limit), each sketch listed once. The failed features' ids, the
+//! limit), each sketch listed once; the failures' geometry, a feature's
+//! and the draft's, rides in the head too, decoded within its bounds and
+//! checked against the model by [`ErrorGeometry::from_parts`]
+//! (coordinates finite and within bounds, triangles and lines whole,
+//! each face one of the mesh's of the body named), one that fails
+//! answering the generation as failed; a head too large with it is sent
+//! without it. The failed features' ids, the
 //! sketches that don't solve and the bodies a draft or a feature touches
 //! are only marks, so they aren't checked against a document. Malformed
 //! bytes are refused, never a panic; see [`decode_request`] and
@@ -74,8 +80,8 @@ use varde_kernel::{
 use varde_lane::bytes::Buffer;
 
 use crate::{
-    Drafted, ExportedBody, Inspected, PickCorner, PickFace, Picking, PickingError, Request,
-    Response,
+    Drafted, ErrorGeometry, ExportedBody, FeatureFailure, GeometryError, GeometryParts, Inspected,
+    PickCorner, PickFace, Picking, PickingError, Request, Response,
 };
 
 /// The most bytes a reply's head may have. A head is a generation, a few
@@ -175,12 +181,18 @@ pub enum Head {
     Regenerated {
         generation: Generation,
         exclude: Option<FeatureId>,
+        /// Without its geometry, which follows.
         draft: Option<Drafted>,
+        /// The draft's [`Drafted::geometry`], checked as the failures'
+        /// are.
+        draft_geometry: Option<GeometryParts>,
         /// The sketches that don't solve. Only marks, so an id naming no
         /// sketch of the document marks nothing, and isn't checked.
         unsolved: Vec<FeatureId>,
-        /// The features that failed, likewise only marks.
-        failed: Vec<(FeatureId, String)>,
+        /// The features that failed, likewise only marks, and their
+        /// geometry, decoded within its bounds and checked against the
+        /// model by [`ErrorGeometry::from_parts`] ([`Error::Geometry`]).
+        failed: Vec<(FeatureId, String, Option<GeometryParts>)>,
         /// The bodies each join, cut or intersect touches, likewise only
         /// marks.
         touched: Vec<(FeatureId, Vec<BodyId>)>,
@@ -279,12 +291,18 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Vec<Cow<'_, [u8]>>) {
             bodies,
             inspected,
         } => {
-            let head = Head::Regenerated {
+            let geometry = |geometry: &Option<Arc<ErrorGeometry>>| {
+                geometry.as_deref().map(ErrorGeometry::to_parts)
+            };
+            let mut head = Head::Regenerated {
                 generation: *generation,
                 exclude: *exclude,
                 draft: draft.clone(),
+                draft_geometry: draft.as_ref().and_then(|draft| geometry(&draft.geometry)),
                 unsolved: unsolved.clone(),
-                failed: failed.clone(),
+                failed: (failed.iter())
+                    .map(|f| (f.feature, f.message.clone(), geometry(&f.geometry)))
+                    .collect(),
                 touched: touched.clone(),
                 merged: merged.clone(),
                 placements: (placements.iter())
@@ -306,8 +324,24 @@ pub fn encode_reply(response: &Response) -> (Vec<u8>, Vec<Cow<'_, [u8]>>) {
                 snaps: picking.snaps().to_vec(),
                 corners: picking.corners().to_vec(),
                 inspected: inspected.clone(),
+            };
+            let mut encoded = head.encode();
+            // Too large with the failures' geometry: the model without
+            // it, rather than none.
+            if encoded.len() > MAX_HEAD_BYTES
+                && let Head::Regenerated {
+                    draft_geometry,
+                    failed,
+                    ..
+                } = &mut head
+            {
+                *draft_geometry = None;
+                failed
+                    .iter_mut()
+                    .for_each(|(_, _, geometry)| *geometry = None);
+                encoded = head.encode();
             }
-            .encode();
+            let head = encoded;
             let aliases = (picking.faces().iter())
                 .fold(0usize, |sum, face| sum.saturating_add(face.aliases.len()));
             if head.len() > MAX_HEAD_BYTES
@@ -389,7 +423,8 @@ pub fn decode_reply(
         Head::Regenerated {
             generation,
             exclude,
-            draft,
+            mut draft,
+            draft_geometry,
             unsolved,
             failed,
             touched,
@@ -425,25 +460,54 @@ pub fn decode_reply(
                         &mesh,
                     )
                     .map_err(Error::Picking)?;
-                    Ok((placements, bodies, mesh, sketches, picking))
+                    let geometry = |parts: Option<GeometryParts>| {
+                        (parts.map(|parts| ErrorGeometry::from_parts(parts, &mesh, &picking)))
+                            .transpose()
+                            .map(|geometry| geometry.map(Arc::new))
+                            .map_err(Error::Geometry)
+                    };
+                    let failed = (failed.into_iter())
+                        .map(|(feature, message, parts)| {
+                            Ok(FeatureFailure {
+                                feature,
+                                message,
+                                geometry: geometry(parts)?,
+                            })
+                        })
+                        .collect::<Result<Vec<_>, Error>>()?;
+                    let draft_geometry = geometry(draft_geometry)?;
+                    Ok((
+                        placements,
+                        bodies,
+                        mesh,
+                        sketches,
+                        picking,
+                        failed,
+                        draft_geometry,
+                    ))
                 });
             match model {
-                Ok((placements, bodies, mesh, sketches, picking)) => Response::Regenerated {
-                    generation,
-                    exclude,
-                    draft,
-                    inspected: inspected
-                        .map(|inspected| Box::new(inspected.checked(&mesh, &picking))),
-                    mesh: Arc::new(mesh),
-                    picking: Arc::new(picking),
-                    sketches: Arc::new(sketches),
-                    unsolved,
-                    failed,
-                    touched,
-                    merged,
-                    placements,
-                    bodies,
-                },
+                Ok((placements, bodies, mesh, sketches, picking, failed, draft_geometry)) => {
+                    if let Some(draft) = &mut draft {
+                        draft.geometry = draft_geometry;
+                    }
+                    Response::Regenerated {
+                        generation,
+                        exclude,
+                        draft,
+                        inspected: inspected
+                            .map(|inspected| Box::new(inspected.checked(&mesh, &picking))),
+                        mesh: Arc::new(mesh),
+                        picking: Arc::new(picking),
+                        sketches: Arc::new(sketches),
+                        unsolved,
+                        failed,
+                        touched,
+                        merged,
+                        placements,
+                        bodies,
+                    }
+                }
                 Err(error) => Response::Failed {
                     generation,
                     exclude,
@@ -688,6 +752,8 @@ pub enum Error {
     /// The picking tables don't go with the mesh, or name a body the head
     /// doesn't list.
     Picking(PickingError),
+    /// A failure's geometry isn't one, see [`ErrorGeometry::from_parts`].
+    Geometry(GeometryError),
     /// An export's bodies came in this many parts instead of one.
     ExportParts(usize),
     /// An export's bodies couldn't be decoded, or a mesh among them
@@ -711,6 +777,7 @@ impl fmt::Display for Error {
             Error::Merged => f.write_str("a merged body is listed twice or holds another"),
             Error::Placement => f.write_str("a sketch's placement isn't one"),
             Error::Picking(e) => e.fmt(f),
+            Error::Geometry(e) => e.fmt(f),
             Error::ExportParts(n) => write!(f, "exported bodies in {n} parts instead of 1"),
             Error::Export(e) => write!(f, "couldn't decode the exported bodies: {e}"),
         }
@@ -730,6 +797,7 @@ impl std::error::Error for Error {
             | Error::Merged
             | Error::Placement
             | Error::Picking(_)
+            | Error::Geometry(_)
             | Error::ExportParts(_) => None,
         }
     }

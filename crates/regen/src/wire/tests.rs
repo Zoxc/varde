@@ -25,6 +25,7 @@ fn regenerated(generation: u64) -> Head {
         generation: generation.into(),
         exclude: None,
         draft: None,
+        draft_geometry: None,
         unsolved: Vec::new(),
         failed: Vec::new(),
         touched: Vec::new(),
@@ -147,6 +148,7 @@ fn a_revolve_and_its_draft_round_trip() {
         draft,
         Some(Drafted {
             revision: 3,
+            geometry: None,
             error: Some(crosses.clone()),
             touched: None,
         })
@@ -244,11 +246,12 @@ fn a_revolve_that_works_crosses_in_the_reply() {
         draft,
         Some(Drafted {
             revision: 5,
+            geometry: None,
             error: None,
             touched: None,
         })
     );
-    assert_eq!(failed, []);
+    assert!(failed.is_empty(), "{failed:?}");
     assert_eq!(touched, [(revolve, vec![plate])]);
     assert_eq!(merged, []);
     let boxes: Vec<[[f32; 3]; 2]> = bodies
@@ -317,6 +320,7 @@ fn request_with_a_draft_round_trips() {
         draft,
         Some(Drafted {
             revision: 7,
+            geometry: None,
             error: None,
             touched: None,
         })
@@ -382,6 +386,7 @@ fn untested_and_touching_nothing_stay_apart() {
         if let Head::Regenerated { draft, .. } = &mut head {
             *draft = Some(Drafted {
                 revision: 3,
+                geometry: None,
                 error: None,
                 touched: touched.clone(),
             });
@@ -439,7 +444,7 @@ fn regenerated_round_trips() {
     assert_eq!(draft, None);
     assert_eq!(marked, [unsolved]);
     assert_eq!(failed.len(), 1);
-    assert_eq!(failed[0].0, cut);
+    assert_eq!(failed[0].feature, cut);
     // The join takes out the one body there is, so touches none.
     assert_eq!(touched, [(cut, Vec::new())]);
     assert!(merged.is_empty());
@@ -2485,4 +2490,116 @@ fn damaged_measures_never_panic_and_what_is_taken_holds() {
         }
     }
     assert!(taken > 1000, "{taken}");
+}
+
+/// Geometry of a failure on [`triangle_mesh`]'s model: a patch, a line, a
+/// point, a sketch curve and the model's one face, of `BodyId::NEW`.
+fn failure_geometry() -> Arc<ErrorGeometry> {
+    use glam::DVec3;
+    use varde_kernel::patch::{Conic3, Patch};
+    use varde_kernel::{Display, Evidence, Failure, KernelError, Operand};
+
+    let mut evidence = Evidence::default();
+    evidence.patches([Patch::flat([DVec3::ZERO, DVec3::X, DVec3::Y]).unwrap()]);
+    evidence.curves([Conic3::line(DVec3::ZERO, DVec3::Z).unwrap()]);
+    evidence.points([DVec3::ONE]);
+    evidence.sketch_curves([4]);
+    evidence.faces([(Operand::A, face().key)]);
+    let failure = Failure {
+        error: KernelError::TooComplex,
+        evidence: Box::new(evidence),
+    };
+    let mut geometry =
+        ErrorGeometry::new(&failure, [Some(BodyId::NEW), None], &Display::default()).unwrap();
+    let Response::Regenerated { mesh, picking, .. } = answer(triangle_mesh(), vec![BodyId::NEW])
+    else {
+        unreachable!("an answer")
+    };
+    geometry.resolve(&mesh, &picking, Some);
+    assert_eq!(geometry.faces(), [(BodyId::NEW, 0)]);
+    Arc::new(geometry)
+}
+
+/// [`answer`] of [`triangle_mesh`] with a failed feature and a failed
+/// draft, each with [`failure_geometry`].
+fn answer_with_failures() -> Response {
+    let mut response = answer(triangle_mesh(), vec![BodyId::NEW]);
+    if let Response::Regenerated { draft, failed, .. } = &mut response {
+        let feature: FeatureId = postcard::from_bytes(&[5]).unwrap();
+        failed.push(FeatureFailure {
+            feature,
+            message: "it failed".to_owned(),
+            geometry: Some(failure_geometry()),
+        });
+        failed.push(FeatureFailure {
+            feature,
+            message: "no geometry".to_owned(),
+            geometry: None,
+        });
+        *draft = Some(Drafted {
+            revision: 2,
+            error: Some("it failed too".to_owned()),
+            geometry: Some(failure_geometry()),
+            touched: None,
+        });
+    }
+    response
+}
+
+/// The failures' geometry, a feature's and a draft's, crosses with the
+/// model and comes back as it went.
+#[test]
+fn failure_geometry_round_trips() {
+    let response = answer_with_failures();
+    let Response::Regenerated {
+        draft: sent_draft,
+        failed: sent,
+        ..
+    } = &response
+    else {
+        unreachable!("an answer")
+    };
+    let Response::Regenerated { draft, failed, .. } = round_trip(&response) else {
+        panic!("refused");
+    };
+    assert_eq!(failed, *sent);
+    assert_eq!(draft, *sent_draft);
+    assert!(draft.unwrap().geometry.is_some());
+}
+
+/// Geometry that doesn't go with the model, or isn't drawable, fails its
+/// generation, as a model that doesn't make one does.
+#[test]
+fn bad_failure_geometry_fails_its_generation() {
+    let response = answer_with_failures();
+    let (head, _) = encode_reply(&response);
+    let parts = model_parts(&response);
+    let changed = |change: &dyn Fn(&mut GeometryParts)| {
+        let mut head = Head::decode(&head).unwrap();
+        if let Head::Regenerated {
+            failed,
+            draft_geometry,
+            ..
+        } = &mut head
+        {
+            change(failed[0].2.as_mut().unwrap());
+            change(draft_geometry.as_mut().unwrap());
+        }
+        refused(&head, &parts)
+    };
+    assert_eq!(
+        changed(&|g| g.faces[0].1 = 1),
+        Error::Geometry(GeometryError::Face).to_string()
+    );
+    assert_eq!(
+        changed(&|g| g.points[0][0] = f32::NAN),
+        Error::Geometry(GeometryError::Position).to_string()
+    );
+    assert!(changed(&|g| g.indices[0] = 99).contains("geometry"));
+    // The draft's alone is checked too.
+    let mut head = Head::decode(&head).unwrap();
+    if let Head::Regenerated { draft_geometry, .. } = &mut head {
+        draft_geometry.as_mut().unwrap().line_ends = vec![1];
+    }
+    assert!(refused(&head, &parts).contains("geometry"));
 }

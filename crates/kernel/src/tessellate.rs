@@ -65,6 +65,58 @@ impl Display {
     }
 }
 
+/// A loose patch sampled for drawing ([`Display::sample_patch`]): its
+/// points, their unit normals, and its triangles as indices into them.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct PatchSamples {
+    pub points: Vec<DVec3>,
+    pub normals: Vec<DVec3>,
+    pub indices: Vec<u32>,
+}
+
+impl Display {
+    /// `curve` cut as an edge of a solid `diagonal` across is drawn
+    /// ([`Display::chord`], [`Display::MAX_TURN_DEGREES`],
+    /// [`Display::MAX_SEGMENTS`]): its points at equal parameter steps,
+    /// both ends included. Geometry that isn't a solid's, such as a
+    /// failure's [`Evidence`](crate::Evidence), is drawn this way.
+    pub fn flatten(&self, curve: &Conic3, diagonal: f64) -> Vec<DVec3> {
+        let n = segments(curve, self.chord(diagonal));
+        (0..=n)
+            .map(|s| curve.eval(f64::from(s) / f64::from(n)))
+            .collect()
+    }
+
+    /// `patch`, on its own, sampled as a patch of a solid `diagonal`
+    /// across is drawn: each edge cut as [`Display::flatten`] cuts it
+    /// (corners twice, once for each edge), the inside on the grid those
+    /// counts give, refined as a face of no known form is (in rounds,
+    /// until within the chord or at the finest grid). Nothing is shared
+    /// with another patch.
+    pub fn sample_patch(&self, patch: &Patch, diagonal: f64) -> PatchSamples {
+        let chord = self.chord(diagonal);
+        let counts = [0, 1, 2].map(|i| segments(&patch.edge(i), chord));
+        let mut level = Level::new(counts);
+        let mut round = 0;
+        while let Some(steps) = finer(level.steps(), level_error(patch, &level), chord, round) {
+            level = Level::with_steps(counts, steps);
+            round += 1;
+        }
+        let (params, first, base) = level.params();
+        let points: Vec<DVec3> = params.iter().map(|&u| patch.eval(u)).collect();
+        let indices = level.triangulate(base, &points[base as usize..], |i, r| {
+            let v = first[i as usize] + r;
+            (v, points[v as usize])
+        });
+        let normals = params.iter().map(|&u| unit_normal(patch, u)).collect();
+        PatchSamples {
+            points,
+            normals,
+            indices,
+        }
+    }
+}
+
 impl Default for Display {
     /// At the default [`Tolerance`].
     fn default() -> Self {
@@ -238,28 +290,8 @@ impl<'a> Plan<'a> {
             let mut next = Vec::new();
             for (&t, &error) in open.iter().zip(&errors) {
                 let level = &mut self.levels[t as usize];
-                let m = level.steps();
-                // NaN counts as within: a finer grid wouldn't mend it.
-                if error.is_nan() || error <= chord || m >= MAX_INNER_STEPS {
+                let Some(steps) = finer(level.steps(), error, chord, round) else {
                     continue;
-                }
-                // The error inside a smooth patch falls with the square
-                // of the step. Where the ring's triangles set it, it falls
-                // slower (their edge sides stay as they are), so this
-                // undershoots near the chord: one step more at a time
-                // reaches the smallest grid within it, and a quarter more
-                // once that has taken a few rounds bounds them.
-                let wanted = (f64::from(m) * (error / chord).sqrt()).ceil();
-                let at_least = if round < FINE_ROUNDS {
-                    m + 1
-                } else {
-                    m + m.div_ceil(4)
-                };
-                let steps = if wanted < f64::from(MAX_INNER_STEPS) {
-                    // Below the most, so the cast is exact.
-                    (wanted as u32).max(at_least)
-                } else {
-                    MAX_INNER_STEPS
                 };
                 *level = Level::with_steps(level.counts, steps);
                 next.push(t);
@@ -1002,6 +1034,33 @@ const MAX_INNER_STEPS: u32 = 4 * Display::MAX_SEGMENTS;
 
 /// The rounds of [`Plan::refine`] that refine by as little as one step.
 const FINE_ROUNDS: u32 = 4;
+
+/// The steps the next round of [`Plan::refine`] gives a patch whose grid
+/// of `m` steps is `error` from it, or `None` if that's within `chord`
+/// (NaN counts as within: a finer grid wouldn't mend it) or the grid has
+/// [`MAX_INNER_STEPS`] already.
+fn finer(m: u32, error: f64, chord: f64, round: u32) -> Option<u32> {
+    if error.is_nan() || error <= chord || m >= MAX_INNER_STEPS {
+        return None;
+    }
+    // The error inside a smooth patch falls with the square of the step.
+    // Where the ring's triangles set it, it falls slower (their edge sides
+    // stay as they are), so this undershoots near the chord: one step more
+    // at a time reaches the smallest grid within it, and a quarter more
+    // once that has taken a few rounds bounds them.
+    let wanted = (f64::from(m) * (error / chord).sqrt()).ceil();
+    let at_least = if round < FINE_ROUNDS {
+        m + 1
+    } else {
+        m + m.div_ceil(4)
+    };
+    Some(if wanted < f64::from(MAX_INNER_STEPS) {
+        // Below the most, so the cast is exact.
+        (wanted as u32).max(at_least)
+    } else {
+        MAX_INNER_STEPS
+    })
+}
 
 /// Whether the patches of a face of `form` may be curved both ways, so
 /// that their inner grids are measured and refined ([`Plan::refine`]):

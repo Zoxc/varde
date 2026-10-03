@@ -137,7 +137,7 @@ pub struct DocumentState<'a> {
     pub unsolved: &'a [FeatureId],
     /// The features that failed and why, as regenerating found, in the
     /// document's order.
-    pub failed: &'a [(FeatureId, String)],
+    pub failed: &'a [varde_regen::FeatureFailure],
     /// Each body a join merged into another (*consumed*), and the body
     /// holding it now, as regenerating found, in the document's order:
     /// Objects shows a consumed body in its holder.

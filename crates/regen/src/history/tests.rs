@@ -747,7 +747,11 @@ fn a_cut_leaving_nothing_of_a_body_fails() {
         evaluation.failed,
         [(cut, message::emptied(Doing::Cutting, "Body 1"))]
     );
-    assert!(evaluation.failed[0].1.starts_with("cutting it from Body 1"));
+    assert!(
+        evaluation.failed[0]
+            .message
+            .starts_with("cutting it from Body 1")
+    );
     // Listed, so the panel offers to untick it.
     assert_eq!(evaluation.touched, [(cut, vec![body]), (join, vec![body])]);
     assert_near(
@@ -1315,7 +1319,14 @@ fn a_body_that_cant_be_told_is_passed_over_or_listed() {
 
     cache.begin();
     let evaluation = evaluate_within(&all, &mut cache, Budget::new(0));
-    let [(failed, error)] = &evaluation.failed[..] else {
+    let [
+        crate::FeatureFailure {
+            feature: failed,
+            message: error,
+            ..
+        },
+    ] = &evaluation.failed[..]
+    else {
         panic!("{:?}", evaluation.failed);
     };
     assert_eq!(*failed, cut);
@@ -1376,7 +1387,14 @@ fn a_hole_drilled_tangent_to_a_hole_is_decided_by_its_cut() {
         &mut Cache::default(),
         Budget::new(200_000),
     );
-    let [(failed, error)] = &evaluation.failed[..] else {
+    let [
+        crate::FeatureFailure {
+            feature: failed,
+            message: error,
+            ..
+        },
+    ] = &evaluation.failed[..]
+    else {
         panic!("{:?}", evaluation.failed);
     };
     assert_eq!(*failed, cut);
@@ -1447,7 +1465,14 @@ fn a_join_tangent_to_a_body_along_a_line_names_it() {
     let (editor, body, join) =
         tangent_discs(Tolerance::MAX_FIT, 0.7, Operation::Join(Targets::default()));
     let evaluation = evaluated(editor.document());
-    let [(failed, error)] = &evaluation.failed[..] else {
+    let [
+        crate::FeatureFailure {
+            feature: failed,
+            message: error,
+            ..
+        },
+    ] = &evaluation.failed[..]
+    else {
         panic!("{:?}", evaluation.failed);
     };
     assert_eq!(*failed, join);
@@ -1466,7 +1491,14 @@ fn a_join_tangent_to_a_body_along_a_line_names_it() {
         &mut Cache::default(),
         Budget::new(200_000),
     );
-    let [(failed, error)] = &evaluation.failed[..] else {
+    let [
+        crate::FeatureFailure {
+            feature: failed,
+            message: error,
+            ..
+        },
+    ] = &evaluation.failed[..]
+    else {
         panic!("{:?}", evaluation.failed);
     };
     assert_eq!(*failed, join);
@@ -1534,7 +1566,14 @@ fn a_join_tangent_to_a_second_body_fails_until_it_is_unticked() {
         Operation::Join(Targets::default()),
     );
     let evaluation = evaluated(editor.document());
-    let [(failed, error)] = &evaluation.failed[..] else {
+    let [
+        crate::FeatureFailure {
+            feature: failed,
+            message: error,
+            ..
+        },
+    ] = &evaluation.failed[..]
+    else {
         panic!("{:?}", evaluation.failed);
     };
     assert_eq!(*failed, join);

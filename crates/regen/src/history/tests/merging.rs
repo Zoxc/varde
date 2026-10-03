@@ -272,7 +272,7 @@ fn a_join_bridging_blocks_is_their_union_or_fails_where_that_isnt_a_solid() {
             assert_eq!(evaluation.failed.len(), 1, "{context}");
             assert!(evaluation.merged.is_empty(), "{context}");
             // One way past it, unticking a body, where there are others.
-            let error = &evaluation.failed[0].1;
+            let error = &evaluation.failed[0].message;
             let hints = usize::from(touched.len() > 1);
             assert_eq!(error.matches("untick").count(), hints, "{context}: {error}");
             // Named for what it is, not a guess.
@@ -343,7 +343,14 @@ fn a_join_whose_union_would_touch_itself_says_so() {
             Some(&(feature, vec![id])),
             "{name}"
         );
-        let [(failed, error)] = &evaluation.failed[..] else {
+        let [
+            crate::FeatureFailure {
+                feature: failed,
+                message: error,
+                ..
+            },
+        ] = &evaluation.failed[..]
+        else {
             panic!("{name}: {:?}", evaluation.failed);
         };
         assert_eq!(*failed, feature, "{name}");

@@ -1145,3 +1145,60 @@ fn steep_ring_corners_and_single_triangles_are_measured() {
         assert_eq!(opened > 0, name == "rounded corner", "{name}");
     }
 }
+
+/// A curve is flattened from end to end, as an edge would be cut, within
+/// the chord of the curve.
+#[test]
+fn a_loose_curve_is_flattened_as_an_edge_is() {
+    let arc = Conic3::arc(DVec3::ZERO, DVec3::X, DVec3::Y, 10.0, 0.0, PI / 2.0).unwrap();
+    let display = Display::default();
+    let points = display.flatten(&arc, 20.0);
+    assert_eq!(points.len() as u32, segments(&arc, display.chord(20.0)) + 1);
+    assert!(points.len() > 2);
+    assert_eq!(points[0], arc.p0);
+    assert_eq!(*points.last().unwrap(), arc.p1);
+    for p in &points {
+        assert!((p.length() - 10.0).abs() < 1e-9, "{p}");
+    }
+    let line = Conic3::line(DVec3::ZERO, DVec3::X).unwrap();
+    assert_eq!(display.flatten(&line, 1.0), [DVec3::ZERO, DVec3::X]);
+}
+
+/// A loose patch is sampled on its own: a flat one as one triangle, a
+/// sphere's eighth on a grid within the chord of the sphere, its normals
+/// unit and outward.
+#[test]
+fn a_loose_patch_is_sampled_as_a_face_is() {
+    let display = Display::default();
+    let flat = Patch::flat([DVec3::ZERO, DVec3::X, DVec3::Y]).unwrap();
+    let samples = display.sample_patch(&flat, 1.0);
+    assert_eq!(samples.indices.len(), 3);
+    let corners: Vec<DVec3> = (samples.indices.iter())
+        .map(|&v| samples.points[v as usize])
+        .collect();
+    assert_eq!(corners, [DVec3::ZERO, DVec3::X, DVec3::Y]);
+
+    // On the sphere along its edges (inside, near it).
+    let round = round_octahedron(DVec3::ZERO).patch(0);
+    let diagonal = 2.0 * 3f64.sqrt();
+    let samples = display.sample_patch(&round, diagonal);
+    assert_eq!(samples.points.len(), samples.normals.len());
+    assert!(samples.indices.len() > 3 && samples.indices.len().is_multiple_of(3));
+    assert!(
+        (samples.indices.iter()).all(|&v| (v as usize) < samples.points.len()),
+        "indices in range"
+    );
+    for (p, n) in samples.points.iter().zip(&samples.normals) {
+        assert!((p.length() - 1.0).abs() < 0.1, "{p}");
+        assert!(
+            (n.length() - 1.0).abs() < 1e-9 && n.dot(*p) > 0.9,
+            "{n} at {p}"
+        );
+    }
+    for curve in [0, 1, 2].map(|i| round.edge(i)) {
+        for p in display.flatten(&curve, diagonal) {
+            let at = |q: &DVec3| (*q - p).length() < 1e-12;
+            assert!(samples.points.iter().any(at), "edge sample {p} is a sample");
+        }
+    }
+}

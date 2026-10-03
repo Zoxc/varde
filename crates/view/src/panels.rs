@@ -156,7 +156,7 @@ fn timeline<'a>(
     menu: Option<RowMenu>,
     editable: bool,
     unsolved: &[FeatureId],
-    failed: &'a [(FeatureId, String)],
+    failed: &'a [varde_regen::FeatureFailure],
 ) -> Element<'a, Message> {
     if document.features().is_empty() {
         return empty_note(format!(
@@ -167,10 +167,9 @@ fn timeline<'a>(
     let units = document.units();
     column(document.features().iter().map(|feature| {
         let unsolved = unsolved.contains(&feature.id);
-        let failed = failed
-            .iter()
-            .find(|(id, _)| *id == feature.id)
-            .map(|(_, why)| why.as_str());
+        let failed = (failed.iter())
+            .find(|failed| failed.feature == feature.id)
+            .map(|failed| failed.message.as_str());
         let selected = selected == Some(feature.id);
         let row = feature_row(document, feature, units, selected, unsolved, failed);
         let on = RowMenu::Feature(feature.id);

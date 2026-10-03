@@ -37,8 +37,10 @@
 //! (bodies are the document's, so an emptied one would stay listed with
 //! no geometry): no body in an [`Evaluation`] is empty.
 //! A feature that fails records why, in words for the Timeline
-//! (`src/message.rs`), and changes no body; the later ones
-//! still run.
+//! (`src/message.rs`), and, where the kernel failed, what its failure's
+//! evidence shows of where ([`FeatureFailure::geometry`], see
+//! `src/error_geometry.rs`; the operand faces are resolved once the model
+//! is drawn), and changes no body; the later ones still run.
 //!
 //! Every result goes through the [`Cache`], keyed by what it depends on,
 //! so only what an edit changes runs again.
@@ -56,11 +58,12 @@ use varde_document::{
 use varde_kernel::mesh::Form;
 use varde_kernel::patch::Conic2;
 use varde_kernel::{
-    Budget, Frame, KernelError, Loop, Op, Profile, Segment, Solid, Sweep, Tolerance,
+    Budget, Display, Failure, Frame, Loop, Op, Profile, Segment, Solid, Sweep, Tolerance,
 };
 use varde_sketch::{Curve, Id, Profiles, RegionRef, TooComplex};
 
 use crate::cache::{Cache, Key, Keyer};
+use crate::error_geometry::{ErrorGeometry, FeatureFailure};
 use crate::message::{self, Doing, Making};
 use crate::picking::region_form;
 use crate::profile::profile;
@@ -83,8 +86,9 @@ pub struct Evaluation {
     /// or combine consumed in turn names the later one, so every entry names a body
     /// in `bodies`, and no consumed body is in `bodies`.
     pub merged: Vec<(BodyId, BodyId)>,
-    /// The features that failed and why, in the document's order.
-    pub failed: Vec<(FeatureId, String)>,
+    /// The features that failed, why and where, in the document's
+    /// order.
+    pub failed: Vec<FeatureFailure>,
     /// Each join, cut or intersect that got as far as its tool solid,
     /// with the bodies made before it and not taken out of it that the
     /// tool touches, in the order they were made; in the document's
@@ -136,6 +140,57 @@ pub fn note_merge(merged: &mut Vec<(BodyId, BodyId)>, bodies: &[BodyId]) {
     merged.extend(consumed.iter().map(|&body| (body, holder)));
 }
 
+/// Why a feature fails, as the history carries it: in words, and the
+/// kernel's failure behind them, if it's the kernel's, with the bodies
+/// its operands are (`[a, b]`, `None` for an operand that isn't a body,
+/// such as the feature's tool).
+#[derive(Debug, Clone)]
+pub(crate) struct Failed {
+    pub(crate) message: String,
+    pub(crate) kernel: Option<(Arc<Failure>, [Option<BodyId>; 2])>,
+}
+
+impl Failed {
+    /// The kernel's `failure`, worded as `message`, of the bodies
+    /// `operands`.
+    pub(crate) fn kernel(
+        message: String,
+        failure: Arc<Failure>,
+        operands: [Option<BodyId>; 2],
+    ) -> Failed {
+        Failed {
+            message,
+            kernel: Some((failure, operands)),
+        }
+    }
+
+    /// The failure of `feature`, its geometry made at `display`.
+    pub(crate) fn of(self, feature: FeatureId, display: &Display) -> FeatureFailure {
+        let geometry = (self.kernel.as_ref())
+            .and_then(|(failure, operands)| ErrorGeometry::new(failure, *operands, display));
+        FeatureFailure {
+            feature,
+            message: self.message,
+            geometry: geometry.map(Arc::new),
+        }
+    }
+}
+
+impl From<String> for Failed {
+    fn from(message: String) -> Failed {
+        Failed {
+            message,
+            kernel: None,
+        }
+    }
+}
+
+impl From<&str> for Failed {
+    fn from(message: &str) -> Failed {
+        Failed::from(message.to_owned())
+    }
+}
+
 /// A body's solid.
 #[derive(Debug, Clone)]
 pub struct BodySolid {
@@ -174,6 +229,7 @@ pub(crate) fn evaluate_within(
     touching: Budget,
 ) -> Evaluation {
     let tolerance = document.tolerance();
+    let display = Display::new(&tolerance);
     let mut sketches: Vec<SketchOutput> = Vec::new();
     let mut evaluation = Evaluation::default();
     for feature in document.features() {
@@ -190,7 +246,7 @@ pub(crate) fn evaluate_within(
                             Some(placement)
                         }
                         Err(error) => {
-                            evaluation.failed.push((feature.id, error.to_owned()));
+                            (evaluation.failed).push(Failed::from(error).of(feature.id, &display));
                             None
                         }
                     },
@@ -218,9 +274,8 @@ pub(crate) fn evaluate_within(
                 // A checked document's extrude or revolve names a sketch
                 // before it.
                 let Some(sketch) = sketches.iter().find(|s| s.id == sketch) else {
-                    evaluation
-                        .failed
-                        .push((feature.id, "its sketch isn't there".to_owned()));
+                    let failed = Failed::from("its sketch isn't there");
+                    evaluation.failed.push(failed.of(feature.id, &display));
                     continue;
                 };
                 let run = Run {
@@ -232,15 +287,15 @@ pub(crate) fn evaluate_within(
                     tolerance,
                     touching,
                 };
-                if let Err(error) = run.evaluate(&mut evaluation, cache) {
-                    evaluation.failed.push((feature.id, error));
+                if let Err(failed) = run.evaluate(&mut evaluation, cache) {
+                    evaluation.failed.push(failed.of(feature.id, &display));
                 }
             }
             FeatureKind::Combine(combine) => {
-                if let Err(error) =
+                if let Err(failed) =
                     combine::evaluate(document, combine, &tolerance, &mut evaluation, cache)
                 {
-                    evaluation.failed.push((feature.id, error));
+                    evaluation.failed.push(failed.of(feature.id, &display));
                 }
             }
         }
@@ -303,7 +358,7 @@ struct Run<'a> {
 impl Run<'_> {
     /// Adds the body it makes to `evaluation`, or changes those it works
     /// on, given those made before it; or why it fails, changing none.
-    fn evaluate(&self, evaluation: &mut Evaluation, cache: &mut Cache) -> Result<(), String> {
+    fn evaluate(&self, evaluation: &mut Evaluation, cache: &mut Cache) -> Result<(), Failed> {
         // The tool depends on the regions and where it runs, not on what
         // it's then used for, so changing the operation or its bodies
         // finds it again.
@@ -352,7 +407,7 @@ impl Run<'_> {
             } else {
                 "it doesn't touch any body"
             }
-            .to_owned());
+            .into());
         }
         if doing == Doing::Joining && targets.len() > 1 {
             return self.merge_into_first(evaluation, &targets, (&tool, tool_key), cache);
@@ -374,9 +429,11 @@ impl Run<'_> {
             let solid = cache
                 .boolean(key, || {
                     varde_kernel::boolean(&made.solid, &tool, op, &self.tolerance, &Budget::DEFAULT)
-                        .map_err(|failure| failure.error)
                 })
-                .map_err(|error| fails(message::boolean(doing, name, error)))?;
+                .map_err(|failure| {
+                    let words = fails(message::boolean(doing, name, failure.error));
+                    Failed::kernel(words, failure, [Some(made.body), None])
+                })?;
             // The cached empty result stays: its key is right, and the
             // check is cheap to make again. A cut's message says to
             // untick it already.
@@ -385,7 +442,8 @@ impl Run<'_> {
                 return Err(match doing {
                     Doing::Cutting => emptied,
                     _ => fails(emptied),
-                });
+                }
+                .into());
             }
             changed.push(BodySolid {
                 body: made.body,
@@ -412,7 +470,7 @@ impl Run<'_> {
         targets: &[BodyId],
         tool: (&Solid, Key),
         cache: &mut Cache,
-    ) -> Result<(), String> {
+    ) -> Result<(), Failed> {
         let bodies: Vec<&BodySolid> = (evaluation.bodies.iter())
             .filter(|made| targets.contains(&made.body))
             .collect();
@@ -422,7 +480,7 @@ impl Run<'_> {
         // A union of solids that aren't empty isn't, but it's cheap to
         // make sure no body ever is.
         if solid.is_empty() {
-            return Err(message::emptied(Doing::Joining, self.body_name(into)));
+            return Err(message::emptied(Doing::Joining, self.body_name(into)).into());
         }
         note_merge(&mut evaluation.merged, &merging);
         (evaluation.bodies).retain(|made| !consumed.contains(&made.body));
@@ -456,12 +514,11 @@ impl Run<'_> {
         bodies: &[&BodySolid],
         (tool, tool_key): (&Solid, Key),
         cache: &mut Cache,
-    ) -> Result<(Arc<Solid>, Key), String> {
+    ) -> Result<(Arc<Solid>, Key), Failed> {
         let (first, rest) = bodies.split_first().expect("two or more bodies are merged");
         let mut unite = |key: Key, a: &Solid, b: &Solid| {
             let solid = cache.boolean(key, || {
                 varde_kernel::boolean(a, b, Op::Union, &self.tolerance, &Budget::DEFAULT)
-                    .map_err(|failure| failure.error)
             });
             solid.map(|solid| (solid, key))
         };
@@ -488,9 +545,11 @@ impl Run<'_> {
             &first.solid,
             tool,
         )
-        .map_err(|error| {
+        .map_err(|failure| {
             let name = self.body_name(first.body);
-            message::leave_out(message::boolean(Doing::Joining, name, error), name)
+            let words =
+                message::leave_out(message::boolean(Doing::Joining, name, failure.error), name);
+            Failed::kernel(words, failure, [Some(first.body), None])
         })?;
         for made in rest {
             merged = unite(
@@ -498,9 +557,10 @@ impl Run<'_> {
                 &merged.0,
                 &made.solid,
             )
-            .map_err(|error| {
+            .map_err(|failure| {
                 let (into, other) = (self.body_name(first.body), self.body_name(made.body));
-                message::merging(into, other, error)
+                let words = message::merging(into, other, failure.error);
+                Failed::kernel(words, failure, [Some(first.body), Some(made.body)])
             })?;
         }
         Ok(merged)
@@ -518,21 +578,24 @@ impl Run<'_> {
         excluded: &[BodyId],
         (tool, tool_key): (&Solid, Key),
         cache: &mut Cache,
-    ) -> Result<Vec<BodyId>, (Vec<BodyId>, String)> {
+    ) -> Result<Vec<BodyId>, (Vec<BodyId>, Failed)> {
         let mut touched = Vec::new();
         for made in bodies.iter().filter(|made| !excluded.contains(&made.body)) {
             let touches = cache.touches(touches_key(made.key, tool_key), || {
                 varde_kernel::touches(&made.solid, tool, &self.tolerance, &self.touching)
-                    .map_err(|failure| failure.error)
             });
             match touches {
                 Ok(true) => touched.push(made.body),
                 Ok(false) => {}
-                Err(error) => {
-                    let error = message::boolean(Doing::Touching, self.body_name(made.body), error);
+                Err(failure) => {
+                    let name = self.body_name(made.body);
+                    let words = message::boolean(Doing::Touching, name, failure.error);
                     // Listed, so the panel offers to take it out.
                     touched.push(made.body);
-                    return Err((touched, error));
+                    return Err((
+                        touched,
+                        Failed::kernel(words, failure, [Some(made.body), None]),
+                    ));
                 }
             }
         }
@@ -554,7 +617,7 @@ impl Run<'_> {
         extrude: &Extrude,
         evaluation: &Evaluation,
         cache: &mut Cache,
-    ) -> Result<(Arc<Solid>, Key), String> {
+    ) -> Result<(Arc<Solid>, Key), Failed> {
         let placement = self.placement()?;
         let frame = Frame {
             origin: placement.origin,
@@ -586,14 +649,14 @@ impl Run<'_> {
                 &self.tolerance,
                 &Budget::DEFAULT,
             )
-            .map_err(|failure| self.kernel_error(failure.error))
+            .map_err(|failure| self.kernel_error(failure))
         })?;
         Ok((solid, key))
     }
 
     /// A revolve's tool solid and the key it's filed under: the regions
     /// turned about its axis over its span (see [`axis_frame`]).
-    fn revolved(&self, revolve: &Revolve, cache: &mut Cache) -> Result<(Arc<Solid>, Key), String> {
+    fn revolved(&self, revolve: &Revolve, cache: &mut Cache) -> Result<(Arc<Solid>, Key), Failed> {
         let span = revolve.span();
         let placement = self.placement()?;
         // The axis is the sketch's, so its key holds where the axis line
@@ -627,7 +690,7 @@ impl Run<'_> {
                 &self.tolerance,
                 &Budget::DEFAULT,
             )
-            .map_err(|failure| self.kernel_error(failure.error))
+            .map_err(|failure| self.kernel_error(failure))
         })?;
         Ok((solid, key))
     }
@@ -656,13 +719,15 @@ impl Run<'_> {
             .map_err(|e| e.to_string())
     }
 
-    /// Why the kernel couldn't make the tool, in words.
-    fn kernel_error(&self, error: KernelError) -> String {
-        message::tool(
+    /// Why the kernel couldn't make the tool, in words, and its
+    /// failure.
+    fn kernel_error(&self, failure: Failure) -> Failed {
+        let words = message::tool(
             self.shape.making(),
-            error,
+            failure.error,
             self.tolerance.fit() <= Tolerance::MIN_FIT,
-        )
+        );
+        Failed::kernel(words, Arc::new(failure), [None, None])
     }
 }
 

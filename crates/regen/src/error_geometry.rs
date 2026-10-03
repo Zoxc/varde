@@ -1,0 +1,558 @@
+//! A failure's geometry made drawable: what a feature that failed, or a
+//! draft that did, shows of where it fails.
+//!
+//! The kernel's [`Failure`] carries its [`Evidence`]: patches, curves and
+//! points by value, the sketch curves of the profile segments it is about
+//! and the operand faces by name. Regen turns that into what the renderer
+//! uploads as it does the model's ([`ErrorGeometry`]): the patches
+//! tessellated as a solid's faces are ([`Display::sample_patch`]) into a
+//! [`RenderMesh`] of their own, the curves and the patches' boundaries
+//! flattened as a solid's edges are ([`Display::flatten`]) into
+//! [`RenderLines`], the points as they are; and the box around it all,
+//! for framing it. The operand faces are resolved through the answer's
+//! [`Picking`] to the mesh faces of the body each operand is drawn as,
+//! once the model is drawn ([`ErrorGeometry::resolve`]); an operand that
+//! isn't a drawn body (a feature's tool solid) names none.
+//!
+//! It is bounded ([`ErrorGeometry::MAX_VERTICES`] and the others): past a
+//! bound the rest is left out and [`ErrorGeometry::truncated`] says so,
+//! as it does when the evidence was. What doesn't make drawable geometry
+//! (a patch or curve the kernel's checks refuse, a point past
+//! [`ErrorGeometry::MAX_POSITION`]) is left out the same way.
+
+use std::fmt;
+use std::sync::Arc;
+
+use glam::{DVec3, Vec3};
+use serde::{Deserialize, Serialize};
+use varde_document::{BodyId, FeatureId};
+use varde_kernel::mesh::FaceKey;
+use varde_kernel::patch::{Bounds3, Conic3, Patch};
+use varde_kernel::{
+    Aabb, Display, Evidence, Failure, LinesError, MAX_EVIDENCE, MeshError, MeshParts, Operand,
+    RenderLines, RenderMesh,
+};
+
+use crate::Picking;
+use crate::picking::bounded::seq;
+
+/// A feature that failed: which, why in words for the Timeline, and what
+/// to draw of where.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FeatureFailure {
+    pub feature: FeatureId,
+    /// Why, worded from the kernel's error where it's the kernel's.
+    pub message: String,
+    /// What to draw, ready for the renderer; `None` where the failure has
+    /// no evidence (every failure but the kernel's, for now) or none of
+    /// it can be drawn.
+    pub geometry: Option<Arc<ErrorGeometry>>,
+}
+
+/// For tests, which mostly check the words: the feature and the message,
+/// the geometry aside.
+#[cfg(test)]
+impl PartialEq<(FeatureId, String)> for FeatureFailure {
+    fn eq(&self, (feature, message): &(FeatureId, String)) -> bool {
+        self.feature == *feature && self.message == *message
+    }
+}
+
+/// A [`Failure`]'s [`Evidence`] made drawable: see the module docs.
+///
+/// Always drawable and within its bounds: the mesh has one part of one
+/// face, or none, holding only triangles; every position, line point and
+/// point is within [`ErrorGeometry::MAX_POSITION`]; each face named is a
+/// face of the answer's mesh of the body named. The fields are private so
+/// that holds; one from the other side of the web worker comes in through
+/// [`ErrorGeometry::from_parts`], which checks it.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ErrorGeometry {
+    mesh: RenderMesh,
+    lines: RenderLines,
+    points: Vec<[f32; 3]>,
+    bounds: Option<Aabb>,
+    sketch_curves: Vec<u64>,
+    faces: Vec<(BodyId, u32)>,
+    truncated: bool,
+    /// The operand faces not resolved yet, by the body each operand is
+    /// and the face's name ([`ErrorGeometry::resolve`]).
+    pending: Vec<(BodyId, FaceKey)>,
+}
+
+impl ErrorGeometry {
+    /// The most vertices its mesh may have: thousands of patches as
+    /// small as a failure's usually are.
+    pub const MAX_VERTICES: usize = 1 << 18;
+    /// The most triangle indices its mesh may have.
+    pub const MAX_INDICES: usize = 3 << 19;
+    /// The most points its lines may have.
+    pub const MAX_LINE_POINTS: usize = 1 << 18;
+    /// The most points it may have: as many as evidence holds.
+    pub const MAX_POINTS: usize = MAX_EVIDENCE.points;
+    /// The most sketch curves it may name: as many as evidence holds.
+    pub const MAX_SKETCH_CURVES: usize = MAX_EVIDENCE.sketch_curves;
+    /// The most mesh faces it may name: a face's name can stand for
+    /// several (a face a groove cut in two).
+    pub const MAX_FACES: usize = 4 * MAX_EVIDENCE.faces;
+    /// The largest coordinate any of it may have: as far as a model's
+    /// mesh reaches.
+    pub const MAX_POSITION: f32 = RenderMesh::MAX_POSITION;
+
+    /// `failure`'s evidence made drawable at `display`, its operand faces
+    /// pending on the bodies `operands` are (`[a, b]`, `None` for an
+    /// operand that isn't a body, such as a feature's tool), or `None` if
+    /// there's nothing to draw or name.
+    pub(crate) fn new(
+        failure: &Failure,
+        operands: [Option<BodyId>; 2],
+        display: &Display,
+    ) -> Option<ErrorGeometry> {
+        let evidence = &*failure.evidence;
+        if evidence.is_empty() {
+            return None;
+        }
+        let mut geometry = ErrorGeometry {
+            truncated: evidence.truncated,
+            ..ErrorGeometry::default()
+        };
+        let diagonal = diagonal(evidence);
+        geometry.add_patches(&evidence.patches, display, diagonal);
+        let boundaries = (evidence.patches.iter())
+            .filter(|patch| patch.check().is_ok())
+            .flat_map(|patch| [0, 1, 2].map(|i| patch.edge(i)));
+        let curves: Vec<Conic3> = (evidence.curves.iter().copied())
+            .chain(boundaries)
+            .collect();
+        geometry.add_curves(&curves, display, diagonal);
+        for &point in &evidence.points {
+            match placed(point) {
+                Some(point) if geometry.points.len() < Self::MAX_POINTS => {
+                    geometry.points.push(point)
+                }
+                _ => geometry.truncated = true,
+            }
+        }
+        geometry.sketch_curves = (evidence.sketch_curves.iter().copied())
+            .take(Self::MAX_SKETCH_CURVES)
+            .collect();
+        geometry.truncated |= evidence.sketch_curves.len() > Self::MAX_SKETCH_CURVES;
+        for &(operand, key) in &evidence.faces {
+            let body = match operand {
+                Operand::A => operands[0],
+                Operand::B => operands[1],
+            };
+            if let Some(body) = body {
+                geometry.pending.push((body, key));
+            }
+        }
+        geometry.bounds = geometry.bounds_in(None);
+        (!geometry.is_empty()).then_some(geometry)
+    }
+
+    /// Adds `patches`' triangles to the mesh, each patch sampled on its
+    /// own, until one doesn't fit; a patch that fails its check, or
+    /// reaches past [`ErrorGeometry::MAX_POSITION`], is left out.
+    fn add_patches(&mut self, patches: &[Patch], display: &Display, diagonal: f64) {
+        let mut parts = MeshParts::default();
+        for patch in patches {
+            if patch.check().is_err() {
+                self.truncated = true;
+                continue;
+            }
+            let samples = display.sample_patch(patch, diagonal);
+            let positions: Option<Vec<[f32; 3]>> =
+                samples.points.iter().map(|&p| placed(p)).collect();
+            let base = u32::try_from(parts.positions.len()).ok();
+            let fits = (parts.positions.len()).saturating_add(samples.points.len())
+                <= Self::MAX_VERTICES
+                && (parts.indices.len()).saturating_add(samples.indices.len()) <= Self::MAX_INDICES;
+            if !fits {
+                self.truncated = true;
+                break;
+            }
+            let (Some(positions), Some(base)) = (positions, base) else {
+                self.truncated = true;
+                continue;
+            };
+            parts.positions.extend(positions);
+            parts
+                .normals
+                .extend((samples.normals.iter()).map(|n| n.as_vec3().to_array()));
+            // Within `MAX_VERTICES`, checked above.
+            parts
+                .indices
+                .extend(samples.indices.iter().map(|&v| base + v));
+        }
+        match mesh_of(parts.positions, parts.normals, parts.indices) {
+            Ok(mesh) => self.mesh = mesh,
+            // Every part is whole and within bounds, so this isn't
+            // reached; nothing is drawn of the patches if it is.
+            Err(_) => self.truncated = true,
+        }
+    }
+
+    /// Adds `curves` to the lines, flattened, until one doesn't fit; a
+    /// curve that fails its check, or reaches past
+    /// [`ErrorGeometry::MAX_POSITION`], is left out.
+    fn add_curves(&mut self, curves: &[Conic3], display: &Display, diagonal: f64) {
+        for curve in curves {
+            if curve.check().is_err() {
+                self.truncated = true;
+                continue;
+            }
+            let points = display.flatten(curve, diagonal);
+            let placed: Option<Vec<Vec3>> = (points.iter())
+                .map(|&p| placed(p).map(Vec3::from))
+                .collect();
+            if (self.lines.points().len()).saturating_add(points.len()) > Self::MAX_LINE_POINTS {
+                self.truncated = true;
+                break;
+            }
+            let pushed = placed.is_some_and(|placed| self.lines.push(placed).is_ok());
+            self.truncated |= !pushed;
+        }
+    }
+
+    /// Resolves the operand faces it names to the faces of `mesh` (the
+    /// model's, as answered) of the body each operand is drawn as, by
+    /// `picking` (`mesh`'s tables): the face's name is a face's key or
+    /// one of its aliases, on the body `holder` gives for the operand's
+    /// (the body holding it now, `None` for one with no solid). Faces of
+    /// bodies not shown name none. The box then holds those faces too.
+    pub(crate) fn resolve(
+        &mut self,
+        mesh: &RenderMesh,
+        picking: &Picking,
+        holder: impl Fn(BodyId) -> Option<BodyId>,
+    ) {
+        let mut wanted: Vec<(BodyId, FaceKey)> = std::mem::take(&mut self.pending)
+            .into_iter()
+            .filter_map(|(body, key)| Some((holder(body)?, key)))
+            .collect();
+        wanted.sort_unstable();
+        wanted.dedup();
+        if wanted.is_empty() {
+            return;
+        }
+        let names = |body: BodyId, key: &FaceKey| wanted.binary_search(&(body, *key)).is_ok();
+        'parts: for (part, &body) in mesh.parts().zip(picking.bodies()) {
+            if !(wanted.iter()).any(|&(wanted, _)| wanted == body) {
+                continue;
+            }
+            for f in part.faces {
+                let face = &picking.faces()[f];
+                if !(names(body, &face.key) || face.aliases.iter().any(|a| names(body, a))) {
+                    continue;
+                }
+                if self.faces.len() >= Self::MAX_FACES {
+                    self.truncated = true;
+                    break 'parts;
+                }
+                // A mesh's face ids fit `u32`.
+                self.faces.push((body, f as u32));
+            }
+        }
+        self.bounds = self.bounds_in(Some(mesh));
+    }
+
+    /// Whether it draws and names nothing.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.mesh.triangle_count() == 0
+            && self.lines.points().is_empty()
+            && self.points.is_empty()
+            && self.sketch_curves.is_empty()
+            && self.faces.is_empty()
+            && self.pending.is_empty()
+    }
+
+    /// The box around its mesh, lines and points, and its faces in
+    /// `model` (the answer's mesh) if given.
+    fn bounds_in(&self, model: Option<&RenderMesh>) -> Option<Aabb> {
+        let mut bounds: Option<Aabb> = None;
+        let mut take = |p: [f32; 3]| {
+            let p = Vec3::from(p);
+            bounds = Some(bounds.map_or(Aabb { min: p, max: p }, |b| Aabb {
+                min: b.min.min(p),
+                max: b.max.max(p),
+            }));
+        };
+        let positions = self.mesh.positions();
+        (self.mesh.indices().iter()).for_each(|&v| take(positions[v as usize]));
+        self.lines.points().iter().copied().for_each(&mut take);
+        self.points.iter().copied().for_each(&mut take);
+        if let Some(model) = model {
+            for &(_, face) in &self.faces {
+                let Some(range) = model.face_indices(face as usize) else {
+                    continue;
+                };
+                for &v in &model.indices()[range] {
+                    take(model.positions()[v as usize]);
+                }
+            }
+        }
+        bounds
+    }
+
+    /// The patches, tessellated: one part of one face, or no part if
+    /// there are none. Its triangles are all there is: no edges, corners
+    /// or wires (the patches' boundaries are in [`ErrorGeometry::lines`]).
+    pub fn mesh(&self) -> &RenderMesh {
+        &self.mesh
+    }
+
+    /// The curves, then each patch's three sides, flattened.
+    pub fn lines(&self) -> &RenderLines {
+        &self.lines
+    }
+
+    /// The points: a pinch, a cusp, a gap's ends.
+    pub fn points(&self) -> &[[f32; 3]] {
+        &self.points
+    }
+
+    /// The box around all of it (its faces in the answer's mesh too),
+    /// for framing it; `None` if it draws nothing, only names sketch
+    /// curves.
+    pub fn bounds(&self) -> Option<Aabb> {
+        self.bounds
+    }
+
+    /// The sketch curves of the profile segments it is about
+    /// ([`Segment::curve`](varde_kernel::Segment::curve)), for the sketch
+    /// editor to mark. Only marks: an id naming no curve marks nothing.
+    pub fn sketch_curves(&self) -> &[u64] {
+        &self.sketch_curves
+    }
+
+    /// The operand faces it is about, as the body and the face of the
+    /// answer's mesh ([`Picking`]'s face ids). Resolved once the model
+    /// is drawn: empty in an [`Evaluation`](crate::Evaluation) on its
+    /// own.
+    pub fn faces(&self) -> &[(BodyId, u32)] {
+        &self.faces
+    }
+
+    /// Whether some of the evidence was left out: by the kernel, or here,
+    /// past a bound or not drawable.
+    pub fn truncated(&self) -> bool {
+        self.truncated
+    }
+
+    /// What crosses to the page, see [`ErrorGeometry::from_parts`].
+    pub fn to_parts(&self) -> GeometryParts {
+        GeometryParts {
+            positions: self.mesh.positions().to_vec(),
+            normals: self.mesh.normals().to_vec(),
+            indices: self.mesh.indices().to_vec(),
+            line_points: self.lines.points().to_vec(),
+            line_ends: self.lines.ends().to_vec(),
+            points: self.points.clone(),
+            sketch_curves: self.sketch_curves.clone(),
+            faces: self.faces.clone(),
+            truncated: self.truncated,
+        }
+    }
+
+    /// The geometry of these parts, if they make one with `mesh` (the
+    /// answer's) and `picking` (its tables): every count within its
+    /// bound, the triangles whole and their indices in range, every
+    /// coordinate finite and within [`ErrorGeometry::MAX_POSITION`],
+    /// every normal finite, each polyline of two points or more, each
+    /// face one of `mesh`'s of the body named. Its box is worked out
+    /// again here.
+    pub fn from_parts(
+        parts: GeometryParts,
+        mesh: &RenderMesh,
+        picking: &Picking,
+    ) -> Result<ErrorGeometry, GeometryError> {
+        let GeometryParts {
+            positions,
+            normals,
+            indices,
+            line_points,
+            line_ends,
+            points,
+            sketch_curves,
+            faces,
+            truncated,
+        } = parts;
+        if positions.len() > Self::MAX_VERTICES
+            || indices.len() > Self::MAX_INDICES
+            || line_points.len() > Self::MAX_LINE_POINTS
+            || points.len() > Self::MAX_POINTS
+            || sketch_curves.len() > Self::MAX_SKETCH_CURVES
+            || faces.len() > Self::MAX_FACES
+        {
+            return Err(GeometryError::TooLarge);
+        }
+        let within = |p: &[f32; 3]| p.iter().all(|x| x.abs() <= Self::MAX_POSITION);
+        if !(positions.iter().chain(&line_points).chain(&points)).all(within) {
+            return Err(GeometryError::Position);
+        }
+        let error_mesh = mesh_of(positions, normals, indices).map_err(GeometryError::Mesh)?;
+        let lines =
+            RenderLines::from_parts(line_points, line_ends).map_err(GeometryError::Lines)?;
+        let face_ok = |&(body, face): &(BodyId, u32)| {
+            (face as usize) < mesh.face_count() && picking.face_body(mesh, face) == Some(body)
+        };
+        if !faces.iter().all(face_ok) {
+            return Err(GeometryError::Face);
+        }
+        let mut geometry = ErrorGeometry {
+            mesh: error_mesh,
+            lines,
+            points,
+            bounds: None,
+            sketch_curves,
+            faces,
+            truncated,
+            pending: Vec::new(),
+        };
+        geometry.bounds = geometry.bounds_in(Some(mesh));
+        Ok(geometry)
+    }
+}
+
+/// An [`ErrorGeometry`] as it crosses the web worker's boundary, decoded
+/// within its bounds (refused as soon as a sequence is past one) and
+/// checked by [`ErrorGeometry::from_parts`].
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct GeometryParts {
+    #[serde(deserialize_with = "bounded::vertices")]
+    pub positions: Vec<[f32; 3]>,
+    #[serde(deserialize_with = "bounded::vertices")]
+    pub normals: Vec<[f32; 3]>,
+    #[serde(deserialize_with = "bounded::indices")]
+    pub indices: Vec<u32>,
+    #[serde(deserialize_with = "bounded::line_points")]
+    pub line_points: Vec<[f32; 3]>,
+    #[serde(deserialize_with = "bounded::line_points")]
+    pub line_ends: Vec<u32>,
+    #[serde(deserialize_with = "bounded::points")]
+    pub points: Vec<[f32; 3]>,
+    #[serde(deserialize_with = "bounded::sketch_curves")]
+    pub sketch_curves: Vec<u64>,
+    #[serde(deserialize_with = "bounded::faces")]
+    pub faces: Vec<(BodyId, u32)>,
+    pub truncated: bool,
+}
+
+/// The bounded decoding of [`GeometryParts`].
+mod bounded {
+    use serde::{Deserialize, Deserializer};
+
+    use super::{ErrorGeometry, seq};
+
+    fn at_most<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
+        d: D,
+        max: usize,
+    ) -> Result<Vec<T>, D::Error> {
+        seq(d, max, |_| 0, 0)
+    }
+
+    pub(super) fn vertices<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<[f32; 3]>, D::Error> {
+        at_most(d, ErrorGeometry::MAX_VERTICES)
+    }
+
+    pub(super) fn indices<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<u32>, D::Error> {
+        at_most(d, ErrorGeometry::MAX_INDICES)
+    }
+
+    pub(super) fn line_points<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
+        d: D,
+    ) -> Result<Vec<T>, D::Error> {
+        at_most(d, ErrorGeometry::MAX_LINE_POINTS)
+    }
+
+    pub(super) fn points<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<[f32; 3]>, D::Error> {
+        at_most(d, ErrorGeometry::MAX_POINTS)
+    }
+
+    pub(super) fn sketch_curves<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<u64>, D::Error> {
+        at_most(d, ErrorGeometry::MAX_SKETCH_CURVES)
+    }
+
+    pub(super) fn faces<'de, D: Deserializer<'de>>(
+        d: D,
+    ) -> Result<Vec<(varde_document::BodyId, u32)>, D::Error> {
+        at_most(d, ErrorGeometry::MAX_FACES)
+    }
+}
+
+/// Why parts don't make an [`ErrorGeometry`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GeometryError {
+    /// A count is past its bound.
+    TooLarge,
+    /// A coordinate isn't finite or is past
+    /// [`ErrorGeometry::MAX_POSITION`].
+    Position,
+    /// The triangles don't make a mesh.
+    Mesh(MeshError),
+    /// The lines' points and ends don't make lines.
+    Lines(LinesError),
+    /// A face isn't one of the answer's mesh, or not of the body named.
+    Face,
+}
+
+impl fmt::Display for GeometryError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            GeometryError::TooLarge => f.write_str("a failure's geometry is too large"),
+            GeometryError::Position => f.write_str("a failure's geometry is out of bounds"),
+            GeometryError::Mesh(e) => write!(f, "a failure's geometry: {e}"),
+            GeometryError::Lines(e) => write!(f, "a failure's geometry: {e}"),
+            GeometryError::Face => f.write_str("a failure's face isn't one of the model"),
+        }
+    }
+}
+
+impl std::error::Error for GeometryError {}
+
+/// The mesh of these triangles: one part of one face, or none without
+/// triangles.
+fn mesh_of(
+    positions: Vec<[f32; 3]>,
+    normals: Vec<[f32; 3]>,
+    indices: Vec<u32>,
+) -> Result<RenderMesh, MeshError> {
+    let faces = u32::try_from(indices.len()).map_err(|_| MeshError::TooLarge)?;
+    let (face_ends, part_ends) = if indices.is_empty() {
+        (Vec::new(), Vec::new())
+    } else {
+        (vec![faces], vec![[1, 0, 0, 0]])
+    };
+    RenderMesh::from_parts(MeshParts {
+        positions,
+        normals,
+        indices,
+        face_ends,
+        part_ends,
+        ..MeshParts::default()
+    })
+}
+
+/// `p` as drawn, if it's within [`ErrorGeometry::MAX_POSITION`].
+fn placed(p: DVec3) -> Option<[f32; 3]> {
+    let p = p.as_vec3();
+    (p.is_finite() && p.abs().max_element() <= ErrorGeometry::MAX_POSITION).then(|| p.to_array())
+}
+
+/// The diagonal of the box around `evidence`'s patches, curves and points
+/// (their control points'), what they are flattened relative to, as a
+/// solid's edges are to its box; 0 if there's none or it isn't finite
+/// (the chord is then the fit tolerance).
+fn diagonal(evidence: &Evidence) -> f64 {
+    let boxes = (evidence.patches.iter().map(Patch::bounds))
+        .chain(evidence.curves.iter().map(Conic3::bounds))
+        .chain(evidence.points.iter().map(|&p| Bounds3::point(p)));
+    let Some(bounds) = boxes.reduce(Bounds3::union) else {
+        return 0.0;
+    };
+    let diagonal = (bounds.max - bounds.min).length();
+    if diagonal.is_finite() { diagonal } else { 0.0 }
+}
+
+#[cfg(test)]
+mod tests;
